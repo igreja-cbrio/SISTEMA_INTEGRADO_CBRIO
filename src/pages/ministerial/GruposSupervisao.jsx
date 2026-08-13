@@ -21,6 +21,7 @@ import {
   ChevronDown, ChevronRight, Calendar, MessageSquare, Plus, X,
   Users, CheckCircle2, AlertCircle, Activity,
 } from 'lucide-react';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -365,8 +366,8 @@ function TabVisitas({ grupo, visitas, onChanged }) {
       {adding && (
         <div style={{ padding: 12, background: C.inputBg, borderRadius: 8, marginBottom: 12, border: `1px solid ${C.border}` }}>
           <label style={{ display: 'block', fontSize: 11, color: C.t2, marginBottom: 4 }}>Data da visita</label>
-          <input type="date" value={form.data_visita}
-            onChange={e => setForm(f => ({ ...f, data_visita: e.target.value }))}
+          <DatePicker value={form.data_visita}
+            onChange={v => setForm(f => ({ ...f, data_visita: v }))}
             style={inpStyle} />
           <label style={{ display: 'block', fontSize: 11, color: C.t2, marginTop: 8, marginBottom: 4 }}>Observação (opcional)</label>
           <textarea value={form.observacao}

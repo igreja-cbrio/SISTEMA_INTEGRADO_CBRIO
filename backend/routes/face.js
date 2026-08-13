@@ -15,10 +15,11 @@
 // ============================================================================
 const router = require('express').Router();
 const crypto = require('crypto');
-const { authenticate, authorizeModule } = require('../middleware/auth');
+const { authenticate, authorizeModule, requireSuperAdmin } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { requireCron } = require('../utils/cronAuth');
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 
 const BUCKET = 'face-anonimos';
 const LIMIAR_PADRAO = 0.55; // distância L2 face-api (< = mesmo rosto)
@@ -61,8 +62,9 @@ router.get('/cron/expurgo', requireCron, async (_req, res) => {
   }
 });
 
-// Daqui pra baixo exige login + nível no módulo face.
-router.use(authenticate, authorizeModule('face', 1));
+// Facial foi consolidado no command center Sistema. O cron mantém CRON_SECRET;
+// toda operação humana abaixo exige superadmin estrito.
+router.use(authenticate, requireSuperAdmin);
 
 // ── Reconhecer (núcleo do device) ───────────────────────────────────────────
 // Recebe o descriptor de um rosto → tenta MEMBRO; senão ANÔNIMO recorrente;
@@ -167,15 +169,19 @@ router.post('/anonimos/:id/cadastrar', authorizeModule('face', 3), async (req, r
   try {
     const { nome, telefone, email } = req.body || {};
     if (!nome || String(nome).trim().length < 2) return res.status(400).json({ error: 'nome obrigatório' });
-    const { data: novo, error: eIns } = await supabase.from('mem_membros')
-      .insert({ nome: String(nome).trim(), telefone: telefone || null, email: email || null, status: 'visitante', origem: 'reconhecimento_facial' })
-      .select('id, nome').single();
-    if (eIns) throw eIns;
+    const resultado = await acharOuCriarGuardado({
+      nome: String(nome).trim(), telefone: telefone || null, email: email || null,
+      status: 'visitante', origem: 'reconhecimento_facial', origemId: req.params.id,
+      extra: { origem: 'reconhecimento_facial' },
+    });
+    const { data: novo, error: eNovo } = await supabase.from('mem_membros')
+      .select('id, nome').eq('id', resultado.membro_id).single();
+    if (eNovo) throw eNovo;
     const { data: shot, error } = await supabase.rpc('face_resolver_vincular', { p_anon_id: req.params.id, p_membro_id: novo.id, p_consent: true });
     if (error) throw error;
     if (shot === null) return res.status(404).json({ error: 'Anônimo não encontrado' });
     await removerBestShot(shot);
-    res.json({ ok: true, membro: novo, criado: true });
+    res.json({ ok: true, membro: novo, criado: resultado.created });
   } catch (e) {
     console.error('[face] cadastrar:', e.message);
     res.status(500).json({ error: 'Erro ao cadastrar pessoa do rosto' });

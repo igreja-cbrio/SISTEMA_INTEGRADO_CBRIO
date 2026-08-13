@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { kpis as kpisApi } from '../../api';
+import { kpis as kpisApi, integracao as integracaoApi } from '../../api';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
+import { DatePicker } from '../../components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
@@ -384,6 +386,23 @@ export default function Batismos() {
     return agendadas[0] || proximoQuartoDomingo();
   }, [list]);
 
+  // Visão do gráfico: por mês (últimos 12) ou por ano (consolidado · todos os anos)
+  const [grafBat, setGrafBat] = useState<'mes' | 'ano'>('mes');
+  const [histAno, setHistAno] = useState<Array<{ ano: number; area_kpi: string; total_batismos: number }>>([]);
+  useEffect(() => {
+    integracaoApi.historicoBatismos()
+      .then((r: any) => setHistAno(Array.isArray(r) ? r : []))
+      .catch(() => { /* silencioso · o gráfico mensal segue funcionando */ });
+  }, []);
+  // Consolida por ano (soma as áreas: sede/online/bridge/etc).
+  const realizadosPorAno = useMemo(() => {
+    const porAno: Record<number, number> = {};
+    histAno.forEach(r => { porAno[r.ano] = (porAno[r.ano] || 0) + (Number(r.total_batismos) || 0); });
+    return Object.entries(porAno)
+      .map(([ano, batizados]) => ({ mes: String(ano), ym: String(ano), batizados }))
+      .sort((a, b) => Number(a.ym) - Number(b.ym));
+  }, [histAno]);
+
   // Realizados por mês nos últimos 12 meses (para o gráfico)
   const realizadosPorMes = useMemo(() => {
     const buckets: Record<string, number> = {};
@@ -480,13 +499,13 @@ export default function Batismos() {
           iconColor={C.info}
         />
         <StatisticsCard
-          title="Realizados (mes)"
+          title="Realizados (mês)"
           value={String(realizadosMes)}
           icon={Droplets}
           iconColor={C.primary}
         />
         <StatisticsCard
-          title="Proximo batismo"
+          title="Próximo batismo"
           value={proximaDataBatismo ? ymdLocal(proximaDataBatismo) : '—'}
           icon={Calendar}
           iconColor={C.purple}
@@ -605,37 +624,57 @@ export default function Batismos() {
         </Card>
       )}
 
-      {/* Gráfico de barras · batismos realizados por mês (últimos 12 meses) */}
-      <Card>
-        <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <BarChart3 className="h-4 w-4 text-muted-foreground" />
-            Batismos realizados por mes
-            <span className="text-xs text-muted-foreground font-normal">(últimos 12 meses)</span>
-          </CardTitle>
-          <span className="text-xs text-muted-foreground">
-            Total: {realizadosPorMes.reduce((s, m) => s + m.batizados, 0)}
-          </span>
-        </CardHeader>
-        <CardContent>
-          <div className="h-[220px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={realizadosPorMes} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
-                <ChartGradients colors={[C.primary]} />
-                <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                <Tooltip
-                  cursor={{ fill: 'rgba(0,179,157,0.08)' }}
-                  contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                  formatter={(v: any) => [`${v} batizado(s)`, '']}
-                />
-                <Bar dataKey="batizados" fill={gradFill(C.primary)} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Gráfico de barras · batismos realizados · por mês (últimos 12) ou por ano (todos) */}
+      {(() => {
+        const dadosGraf = grafBat === 'ano' ? realizadosPorAno : realizadosPorMes;
+        const totalGraf = dadosGraf.reduce((s, m) => s + m.batizados, 0);
+        return (
+          <Card>
+            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0 gap-2 flex-wrap">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-muted-foreground" />
+                Batismos realizados
+                <span className="text-xs text-muted-foreground font-normal">
+                  {grafBat === 'ano' ? '(por ano · consolidado)' : '(por mês · últimos 12 meses)'}
+                </span>
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/30">
+                  {(['mes', 'ano'] as const).map(v => (
+                    <button key={v} onClick={() => setGrafBat(v)}
+                      className={`px-2.5 py-1 text-xs rounded-md transition-colors ${grafBat === v ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+                      {v === 'mes' ? 'Mês' : 'Ano'}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-xs text-muted-foreground">Total: {totalGraf}</span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {grafBat === 'ano' && realizadosPorAno.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-8 text-center">Sem histórico anual de batismos.</p>
+              ) : (
+                <div className="h-[220px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={dadosGraf} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
+                      <ChartGradients colors={[C.primary]} />
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
+                      <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                      <Tooltip
+                        cursor={{ fill: 'rgba(0,179,157,0.08)' }}
+                        contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                        formatter={(v: any) => [`${v} batizado(s)`, '']}
+                      />
+                      <Bar dataKey="batizados" fill={gradFill(C.primary)} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       <BatismoHorarios />
 
@@ -667,7 +706,7 @@ export default function Batismos() {
         </div>
         <Select value={mesFiltro} onValueChange={setMesFiltro}>
           <SelectTrigger className="w-[160px] h-9">
-            <SelectValue placeholder="Filtrar mes" />
+            <SelectValue placeholder="Filtrar mês" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="todos">Todos os meses</SelectItem>
@@ -877,6 +916,7 @@ export default function Batismos() {
           labelHorario={labelHorario}
           onClose={() => setTurmaAberta(null)}
           onSelectPessoa={(b) => { setTurmaAberta(null); setSelected(b); }}
+          onChanged={load}
         />
       )}
 
@@ -941,19 +981,40 @@ function imprimirUmCulto(
 }
 
 function ModalTurmaBatismo({
-  data, pessoas, labelHorario, onClose, onSelectPessoa,
+  data, pessoas, labelHorario, onClose, onSelectPessoa, onChanged,
 }: {
   data: string;
   pessoas: BatismoInscricao[];
   labelHorario: (hc?: string | null) => string;
   onClose: () => void;
   onSelectPessoa: (b: BatismoInscricao) => void;
+  onChanged: () => void;
 }) {
   const titulo = data === 'sem-data' ? 'Sem data definida' : ymdLocal(data);
   // Agrupa por culto (horário) dentro da turma · "Sem horário" no fim.
   const porCulto = new Map<string, BatismoInscricao[]>();
   pessoas.forEach(b => { const k = b.horario_culto || ''; if (!porCulto.has(k)) porCulto.set(k, []); porCulto.get(k)!.push(b); });
   const cultos = [...porCulto.entries()].sort(([a], [b]) => (!a ? 1 : !b ? -1 : labelHorario(a).localeCompare(labelHorario(b))));
+
+  // Seleção múltipla · marcar status em massa (ex.: os que vieram → Realizado).
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [salvando, setSalvando] = useState<Status | null>(null);
+  const toggle = (id: string) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleCulto = (lista: BatismoInscricao[], marcar: boolean) => setSel(s => {
+    const n = new Set(s); lista.forEach(b => (marcar ? n.add(b.id) : n.delete(b.id))); return n;
+  });
+  async function aplicar(status: Status) {
+    if (!sel.size) return;
+    setSalvando(status);
+    try {
+      const r = await kpisApi.batismos.updateEmMassa([...sel], status);
+      toast.success(`${r?.atualizados ?? sel.size} pessoa(s) → ${STATUS_LABEL[status]}`);
+      setSel(new Set());
+      onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao atualizar em massa'); }
+    finally { setSalvando(null); }
+  }
+
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
@@ -982,6 +1043,13 @@ function ModalTurmaBatismo({
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-10">
+                        <Checkbox
+                          checked={lista.length > 0 && lista.every(b => sel.has(b.id))}
+                          onCheckedChange={(v) => toggleCulto(lista, !!v)}
+                          aria-label="Selecionar todos deste culto"
+                        />
+                      </TableHead>
                       <TableHead>Nome</TableHead>
                       <TableHead className="text-center hidden sm:table-cell">Categoria</TableHead>
                       <TableHead className="text-center">Status</TableHead>
@@ -995,9 +1063,12 @@ function ModalTurmaBatismo({
                       return (
                         <TableRow
                           key={b.id}
-                          className="cursor-pointer hover:bg-muted/40 transition-colors"
+                          className={`cursor-pointer hover:bg-muted/40 transition-colors ${sel.has(b.id) ? 'bg-primary/5' : ''}`}
                           onClick={() => onSelectPessoa(b)}
                         >
+                          <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
+                            <Checkbox checked={sel.has(b.id)} onCheckedChange={() => toggle(b.id)} aria-label={`Selecionar ${b.nome}`} />
+                          </TableCell>
                           <TableCell>
                             <p className="font-medium">{b.nome} {b.sobrenome}</p>
                             {b.telefone && <p className="text-xs text-muted-foreground">{b.telefone}</p>}
@@ -1027,6 +1098,19 @@ function ModalTurmaBatismo({
             </div>
           ))}
         </div>
+        {sel.size > 0 && (
+          <div className="border-t border-border pt-3 flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium">{sel.size} selecionada(s) · marcar como:</span>
+            {(['realizado', 'confirmado', 'pendente', 'cancelado'] as Status[]).map(st => (
+              <Button key={st} size="sm" variant={st === 'realizado' ? 'default' : 'outline'} disabled={!!salvando}
+                onClick={() => aplicar(st)} className="gap-1.5">
+                {salvando === st ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                {STATUS_LABEL[st]}
+              </Button>
+            ))}
+            <Button size="sm" variant="ghost" onClick={() => setSel(new Set())} className="ml-auto">Limpar</Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -1208,11 +1292,10 @@ function ModalDetalheBatismo({ batismo, labelHorario, onClose, onSaved }: {
             </div>
             <div>
               <Label htmlFor="data-bat" className="text-xs">Data do batismo</Label>
-              <Input
+              <DatePicker
                 id="data-bat"
-                type="date"
                 value={dataBatismo}
-                onChange={e => setDataBatismo(e.target.value)}
+                onChange={setDataBatismo}
               />
             </div>
           </div>
@@ -1437,7 +1520,7 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
             </div>
             <div>
               <Label htmlFor="bn-nasc" className="text-xs">Data de nascimento</Label>
-              <Input id="bn-nasc" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
+              <BirthDatePicker value={form.data_nascimento} onChange={v => setForm(f => ({ ...f, data_nascimento: v }))} />
             </div>
           </div>
 

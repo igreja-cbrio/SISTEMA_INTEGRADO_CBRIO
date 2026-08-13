@@ -3,6 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { BirthDatePicker } from '@/components/ui/birth-date-picker';
+import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -22,6 +24,7 @@ const STATUS_LABELS: Record<string, string> = {
   kids: 'Kids',
   nao_responde: 'Não responde',
   nao_pode_ou_duplicata: 'Não pode / duplicata',
+  desistente: 'Desistiu de servir',
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -31,12 +34,13 @@ const STATUS_COLORS: Record<string, string> = {
   kids: 'bg-pink-500/10 text-pink-700 border-pink-500/20',
   nao_responde: 'bg-orange-500/10 text-orange-700 border-orange-500/20',
   nao_pode_ou_duplicata: 'bg-red-500/10 text-red-700 border-red-500/20',
+  desistente: 'bg-slate-500/10 text-slate-600 border-slate-500/20',
 };
 
 const ORIGEM_LABELS: Record<string, string> = {
-  formulario_publico: 'Formulario publico',
-  form_google: 'Formulario Google',
-  form_google_backfill: 'Importacao (Google)',
+  formulario_publico: 'Formulário público',
+  form_google: 'Formulário Google',
+  form_google_backfill: 'Importação (Google)',
   membresia: 'Membresia',
   manual: 'Manual',
 };
@@ -171,8 +175,12 @@ export default function VolInscricoes() {
   const [selected, setSelected] = useState<InscricaoRow | null>(null);
   const [obs, setObs] = useState('');
   const [editando, setEditando] = useState(false);
-  const [form, setForm] = useState<{ cpf: string; data_nascimento: string; nome_mae: string; ministerios_interesse: string; area_direcionada: string[] }>({
-    cpf: '', data_nascimento: '', nome_mae: '', ministerios_interesse: '', area_direcionada: [],
+  const [integrarOpen, setIntegrarOpen] = useState(false);
+  const [areasIntegrar, setAreasIntegrar] = useState<string[]>([]);
+  const [desistirOpen, setDesistirOpen] = useState(false);
+  const [motivoDesistir, setMotivoDesistir] = useState('');
+  const [form, setForm] = useState<{ cpf: string; data_nascimento: string; nome_mae: string; ministerios_interesse: string; area_direcionada: string[]; feedback: string }>({
+    cpf: '', data_nascimento: '', nome_mae: '', ministerios_interesse: '', area_direcionada: [], feedback: '',
   });
   const pageSize = 50;
   const queryClient = useQueryClient();
@@ -197,8 +205,6 @@ export default function VolInscricoes() {
   });
   const check = bg?.check || null;
   const integracaoBloqueada = selKidsBridge && (!check || !BG_LIBERADO.has(check.status));
-  // Integrar exige a área direcionada definida (onde a pessoa vai servir).
-  const semDirecionada = !!selected && !(selected.area_direcionada && selected.area_direcionada.length);
 
   const consultarBg = useMutation({
     mutationFn: () => voluntariado.consultarAntecedentes(selected!.id),
@@ -238,6 +244,7 @@ export default function VolInscricoes() {
       nome_mae: selected.nome_mae || '',
       ministerios_interesse: selected.ministerios_interesse || '',
       area_direcionada: Array.isArray(selected.area_direcionada) ? selected.area_direcionada : [],
+      feedback: selected.feedback || '',
     });
     setEditando(true);
   };
@@ -249,6 +256,78 @@ export default function VolInscricoes() {
         : [...f.area_direcionada, m],
     }));
 
+  // Áreas do direcionamento = as MESMAS opções do formulário público de inscrição
+  // (vol_form_opcoes). Fallback pra lista fixa se a consulta falhar/vazia.
+  // ⚠️ Declarado ANTES de interessesPessoa, que o referencia — declarar depois
+  // é TDZ no render ("Cannot access 'X' before initialization" · bug do Ariel).
+  const { data: opcoesForm } = useQuery({
+    queryKey: ['vol', 'form-opcoes'],
+    queryFn: () => voluntariado.formOpcoes.list(),
+  });
+  const areasDirecionamento = useMemo(() => {
+    const raw: any = opcoesForm;
+    const arr: any[] = Array.isArray(raw) ? raw : (raw?.opcoes || []);
+    const labels = arr.filter((o) => o?.ativo !== false).map((o) => o?.label).filter(Boolean);
+    return labels.length ? Array.from(new Set(labels)) : MINISTERIOS_DIRECIONAMENTO;
+  }, [opcoesForm]);
+
+  // Áreas que a PESSOA escolheu na inscrição (ministerios_interesse é a string
+  // "Louvor, Kids, ..."). É a base do seletor ao integrar. Fallback: lista geral.
+  const interessesPessoa = useMemo(() => {
+    const raw = String(selected?.ministerios_interesse || '')
+      .split(/[,;/]+/).map((s) => s.trim()).filter(Boolean);
+    const uniq = Array.from(new Set(raw));
+    return uniq.length ? uniq : areasDirecionamento;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.ministerios_interesse, areasDirecionamento]);
+
+  // Opções do seletor de integração = interesses da pessoa ∪ o que já foi direcionado.
+  const opcoesIntegrar = useMemo(
+    () => Array.from(new Set([...interessesPessoa, ...(selected?.area_direcionada || [])])),
+    [interessesPessoa, selected?.area_direcionada],
+  );
+
+  const abrirIntegrar = () => {
+    if (!selected) return;
+    const pre = (selected.area_direcionada && selected.area_direcionada.length)
+      ? selected.area_direcionada
+      : (interessesPessoa.length === 1 ? [...interessesPessoa] : []);
+    setAreasIntegrar(pre);
+    setIntegrarOpen(true);
+  };
+  const toggleAreaIntegrar = (m: string) =>
+    setAreasIntegrar((a) => (a.includes(m) ? a.filter((x) => x !== m) : [...a, m]));
+
+  // Grava a área direcionada escolhida E integra, num passo só.
+  const integrarComAreas = useMutation({
+    mutationFn: async (areas: string[]) => {
+      await voluntariado.editarInscricao(selected!.id, { area_direcionada: areas });
+      return voluntariado.atualizarInscricao(selected!.id, 'integrado');
+    },
+    onSuccess: () => {
+      setSelected((prev) => (prev ? { ...prev, status: 'integrado', area_direcionada: areasIntegrar } : prev));
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-list'] });
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-summary'] });
+      setIntegrarOpen(false);
+      toast.success('Pessoa integrada.');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro ao integrar.'),
+  });
+
+  // Desistiu de servir (antes de virar voluntário) · status terminal + motivo opcional.
+  const desistir = useMutation({
+    mutationFn: (motivo: string) => voluntariado.desistirInscricao(selected!.id, motivo),
+    onSuccess: (row: any) => {
+      setSelected((prev) => (prev ? { ...prev, ...row } : prev));
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-list'] });
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-summary'] });
+      setDesistirOpen(false);
+      setMotivoDesistir('');
+      toast.success('Marcado como desistente.');
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro ao registrar desistência.'),
+  });
+
   const salvarDados = useMutation({
     mutationFn: () => voluntariado.editarInscricao(selected!.id, {
       cpf: form.cpf,
@@ -256,6 +335,7 @@ export default function VolInscricoes() {
       nome_mae: form.nome_mae,
       ministerios_interesse: form.ministerios_interesse,
       area_direcionada: form.area_direcionada,
+      feedback: form.feedback,
     }),
     onSuccess: (row: any) => {
       setSelected((prev) => (prev ? { ...prev, ...row } : prev));
@@ -290,19 +370,6 @@ export default function VolInscricoes() {
     queryKey: ['vol', 'por-direcionada', ano],
     queryFn: () => voluntariado.distribuicaoDirecionada({ ano }),
   });
-
-  // Áreas do direcionamento = as MESMAS opções do formulário público de inscrição
-  // (vol_form_opcoes). Fallback pra lista fixa se a consulta falhar/vazia.
-  const { data: opcoesForm } = useQuery({
-    queryKey: ['vol', 'form-opcoes'],
-    queryFn: () => voluntariado.formOpcoes.list(),
-  });
-  const areasDirecionamento = useMemo(() => {
-    const raw: any = opcoesForm;
-    const arr: any[] = Array.isArray(raw) ? raw : (raw?.opcoes || []);
-    const labels = arr.filter((o) => o?.ativo !== false).map((o) => o?.label).filter(Boolean);
-    return labels.length ? Array.from(new Set(labels)) : MINISTERIOS_DIRECIONAMENTO;
-  }, [opcoesForm]);
 
   const chartData = useMemo(() => {
     if (!data?.meses) return [];
@@ -372,7 +439,7 @@ export default function VolInscricoes() {
             <Link2 className="h-4 w-4 text-[#00B39D] shrink-0" />
             <div className="min-w-0">
               <p className="text-xs font-semibold uppercase tracking-wide text-[#00B39D]">
-                Link do formulario publico
+                Link do formulário público
               </p>
               <p className="text-sm font-mono truncate text-foreground">{formUrl}</p>
             </div>
@@ -518,7 +585,7 @@ export default function VolInscricoes() {
         <CardContent>
           {chartData.length === 0 ? (
             <div className="py-12 text-center text-sm text-muted-foreground">
-              Sem dados no periodo.
+              Sem dados no período.
             </div>
           ) : (
             <div className="h-[320px]">
@@ -724,12 +791,12 @@ export default function VolInscricoes() {
                       </Button>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3 text-sm">
-                      <Info label="Inscricao" value={new Date(selected.data_inscricao).toLocaleDateString('pt-BR')} />
+                      <Info label="Inscrição" value={new Date(selected.data_inscricao).toLocaleDateString('pt-BR')} />
                       <Info label="Telefone" value={fmtTel(selected.telefone)} />
                       <Info label="E-mail" value={selected.email || '-'} />
                       <Info label="CPF" value={fmtCpf(selected.cpf)} />
                       <Info label="Data de nascimento" value={fmtDataNasc(selected.data_nascimento)} />
-                      <Info label="Nome da mae" value={selected.nome_mae || '-'} />
+                      <Info label="Nome da mãe" value={selected.nome_mae || '-'} />
                       <Info label="Participou do NEXT" value={selected.participou_next || '-'} />
                       <Info label="Dom predominante" value={selected.dom_predominante || '-'} />
                       <Info label="Origem" value={origemLabel(selected.origem)} />
@@ -749,7 +816,7 @@ export default function VolInscricoes() {
                         />
                       </div>
                       <Info
-                        label="Vinculo de membro"
+                        label="Vínculo de membro"
                         value={selected.membro_id
                           ? <span className="text-green-600 font-medium">Vinculado</span>
                           : 'Não vinculado'}
@@ -757,7 +824,7 @@ export default function VolInscricoes() {
                       {selected.integrado_em && <Info label="Integrado em" value={selected.integrado_em} />}
                       {selected.feedback && (
                         <div className="sm:col-span-2">
-                          <Info label="Observacoes" value={selected.feedback} />
+                          <Info label="Observações" value={selected.feedback} />
                         </div>
                       )}
                     </div>
@@ -771,7 +838,7 @@ export default function VolInscricoes() {
                       </div>
                       <div>
                         <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Data de nascimento</label>
-                        <Input type="date" value={form.data_nascimento} onChange={(e) => setForm((f) => ({ ...f, data_nascimento: e.target.value }))} />
+                        <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm((f) => ({ ...f, data_nascimento: v }))} />
                       </div>
                     </div>
                     <div>
@@ -795,6 +862,16 @@ export default function VolInscricoes() {
                           );
                         })}
                       </div>
+                    </div>
+                    <div>
+                      <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Observações / feedback</label>
+                      <Textarea
+                        rows={3}
+                        value={form.feedback}
+                        onChange={(e) => setForm((f) => ({ ...f, feedback: e.target.value }))}
+                        placeholder="Ex.: feedback dia 07/05 · disse que tem se sentido bem servindo..."
+                        className="mt-1 resize-y"
+                      />
                     </div>
                     <div className="flex gap-2 pt-1">
                       <Button size="sm" disabled={salvarDados.isPending} onClick={() => salvarDados.mutate()}>
@@ -882,14 +959,6 @@ export default function VolInscricoes() {
                   </div>
                 )}
 
-                {/* Aviso: integrar exige a área direcionada */}
-                {semDirecionada && (selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
-                  <p className="text-xs text-amber-600 pt-3">
-                    Para integrar, defina a <b>Área direcionada</b> (onde a pessoa vai servir) em{' '}
-                    <button type="button" className="underline font-medium" onClick={abrirEdicao}>Editar dados</button>.
-                  </p>
-                )}
-
                 {/* Ações de triagem · inscrito → enviado ao ministério → integrado */}
                 <div className="flex flex-wrap gap-2 pt-4 mt-2 border-t">
                   {selected.status === 'inscrito' && (
@@ -900,13 +969,11 @@ export default function VolInscricoes() {
                   )}
                   {(selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
                     <Button size="sm" variant="default"
-                      disabled={mudarStatus.isPending || integracaoBloqueada || semDirecionada}
+                      disabled={mudarStatus.isPending || integracaoBloqueada}
                       title={integracaoBloqueada
                         ? 'Triagem de antecedentes pendente — libere a verificação antes de integrar'
-                        : semDirecionada
-                          ? 'Defina a Área direcionada (em "Editar dados") antes de integrar'
-                          : undefined}
-                      onClick={() => mudarStatus.mutate({ id: selected.id, status: 'integrado' })}>
+                        : 'Escolher a(s) área(s) e integrar'}
+                      onClick={abrirIntegrar}>
                       Integrar
                     </Button>
                   )}
@@ -922,9 +989,118 @@ export default function VolInscricoes() {
                       Reverter integração
                     </Button>
                   )}
+                  {/* Desistiu de servir (nunca chegou a servir) · não vira voluntário, não conta como inativo */}
+                  {(selected.status === 'inscrito' || selected.status === 'enviado_ministerio') && (
+                    <Button size="sm" variant="ghost"
+                      className="text-slate-600 hover:text-slate-700"
+                      disabled={mudarStatus.isPending}
+                      onClick={() => { setMotivoDesistir(''); setDesistirOpen(true); }}>
+                      Desistiu de servir
+                    </Button>
+                  )}
+                  {selected.status === 'desistente' && (
+                    <Button size="sm" variant="outline" disabled={mudarStatus.isPending}
+                      onClick={() => mudarStatus.mutate({ id: selected.id, status: 'inscrito' })}>
+                      Reverter (voltar pra triagem)
+                    </Button>
+                  )}
                 </div>
               </div>
             </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Desistiu de servir · motivo opcional */}
+      <Dialog open={desistirOpen} onOpenChange={(v) => { if (!v) setDesistirOpen(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Desistiu de servir</DialogTitle>
+          </DialogHeader>
+          {selected && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Marca <b>{selected.nome_completo || selected.nome}</b> como <b>desistente</b> — a pessoa
+                não chegou a servir. Ela <b>não</b> entra no cadastro de voluntários nem na conta de
+                inativos. Dá pra reverter depois.
+              </p>
+              <div>
+                <label className="text-[11px] uppercase tracking-wide text-muted-foreground">Motivo (opcional)</label>
+                <Textarea rows={3} className="mt-1 resize-y"
+                  value={motivoDesistir}
+                  onChange={(e) => setMotivoDesistir(e.target.value)}
+                  placeholder="Ex.: conversou com o líder e preferiu não seguir agora." />
+              </div>
+              <div className="flex gap-2 pt-1 justify-end">
+                <Button size="sm" variant="ghost" disabled={desistir.isPending}
+                  onClick={() => setDesistirOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button size="sm" disabled={desistir.isPending}
+                  onClick={() => desistir.mutate(motivoDesistir)}>
+                  {desistir.isPending ? 'Salvando...' : 'Confirmar desistência'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Integrar · escolher a(s) área(s) — todas ou só uma */}
+      <Dialog open={integrarOpen} onOpenChange={(v) => { if (!v) setIntegrarOpen(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Integrar — escolher a(s) área(s)</DialogTitle>
+          </DialogHeader>
+          {selected && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                {interessesPessoa.length > 1
+                  ? <>A pessoa se inscreveu em <b>mais de uma área</b>. Escolha onde integrá-la — marque todas ou só uma.</>
+                  : <>Confirme a área onde a pessoa vai servir.</>}
+              </p>
+              {String(selected.ministerios_interesse || '').trim() && (
+                <p className="text-[11px] text-muted-foreground">
+                  Áreas de interesse: <span className="text-foreground">{selected.ministerios_interesse}</span>
+                </p>
+              )}
+
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" className="h-7 text-xs"
+                  onClick={() => setAreasIntegrar([...opcoesIntegrar])}>
+                  Marcar todas
+                </Button>
+                <Button size="sm" variant="ghost" className="h-7 text-xs"
+                  onClick={() => setAreasIntegrar([])}>
+                  Limpar
+                </Button>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {opcoesIntegrar.map((m) => {
+                  const on = areasIntegrar.includes(m);
+                  return (
+                    <button key={m} type="button" onClick={() => toggleAreaIntegrar(m)}
+                      className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${on ? 'bg-[#00B39D] text-white border-[#00B39D]' : 'bg-background text-muted-foreground border-border hover:border-[#00B39D]/50'}`}>
+                      {m}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex gap-2 pt-2 justify-end">
+                <Button size="sm" variant="ghost" disabled={integrarComAreas.isPending}
+                  onClick={() => setIntegrarOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button size="sm" disabled={integrarComAreas.isPending || areasIntegrar.length === 0}
+                  onClick={() => integrarComAreas.mutate(areasIntegrar)}>
+                  {integrarComAreas.isPending
+                    ? 'Integrando...'
+                    : `Integrar${areasIntegrar.length ? ` em ${areasIntegrar.length} área${areasIntegrar.length > 1 ? 's' : ''}` : ''}`}
+                </Button>
+              </div>
+            </div>
           )}
         </DialogContent>
       </Dialog>

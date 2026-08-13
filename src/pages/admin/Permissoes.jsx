@@ -18,7 +18,7 @@ import Usuarios from './Usuarios';
 const NIVEIS = [
   { v: 0, label: '0 · Sem acesso',                color: 'bg-muted text-muted-foreground' },
   { v: 1, label: '1 · Ver (leitura)',             color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400' },
-  { v: 2, label: '2 · Ver + lancar dado',         color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400' },
+  { v: 2, label: '2 · Ver + lançar dado',         color: 'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400' },
   { v: 3, label: '3 · Ver + editar (CRUD)',       color: 'bg-green-500/15 text-green-700 dark:text-green-400' },
   { v: 4, label: '4 · CRUD + deletar',            color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
   { v: 5, label: '5 · Admin (configura regras)',  color: 'bg-purple-500/15 text-purple-700 dark:text-purple-400' },

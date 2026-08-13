@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { rh } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Plus, X, Clock, Settings, Trash2, CalendarDays, Pencil } from 'lucide-react';
 
 const C = {
@@ -267,7 +268,7 @@ export default function TabExtras({ funcionarios, onRefresh }) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 600, color: C.text2, display: 'block', marginBottom: 4 }}>Data *</label>
-                  <input required type="date" value={form.data} onChange={e => setForm(f => ({ ...f, data: e.target.value }))} style={inputStyle} />
+                  <DatePicker value={form.data} onChange={v => setForm(f => ({ ...f, data: v }))} style={inputStyle} />
                 </div>
                 <div>
                   <label style={{ fontSize: 12, fontWeight: 600, color: C.text2, display: 'block', marginBottom: 4 }}>Início *</label>

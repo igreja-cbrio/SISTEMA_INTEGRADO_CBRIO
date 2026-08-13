@@ -1,55 +1,33 @@
-// WhatsApp Cloud API (Meta) — envio de mensagens transacionais.
-//
-// Feature flag · so envia se WHATSAPP_ENABLED === 'true' E todas as credenciais
-// estão presentes. Caso contrario, loga e retorna { sent: false }.
-//
-// Credenciais necessárias (env vars):
-//   WHATSAPP_TOKEN              · access token permanente do app Meta
-//   WHATSAPP_PHONE_NUMBER_ID    · ID do número registrado (não o número em si)
-//   WHATSAPP_BUSINESS_ACCOUNT_ID · WABA ID (opcional · so para listar templates)
-//
-// Templates de utility precisam estar aprovados no Meta Business Manager
-// antes de funcionar. Sugestão de template:
-//
-//   Nome:  pedido_atualizado
-//   Idioma: pt_BR
-//   Categoria: UTILITY
-//   Corpo:
-//     Olá {{1}}, sua solicitação "{{2}}" teve uma atualização:
-//
-//     Status: {{3}}
-//     {{4}}
-//
-//     Acompanhe em: {{5}}
+// whatsappService — WRAPPER de compatibilidade (deprecado · Módulo Comunicação C1).
+// A camada HTTP real agora é services/waSender.js (Graph v21 única · antes este
+// arquivo falava v18 com token legado). O que CONTINUA morando aqui — e é
+// semântica deste wrapper, não da camada HTTP:
+//   · gate WHATSAPP_ENABLED + DRY-RUN (transacionais só saem com a flag ligada;
+//     a fila depende do reason 'disabled' pra não queimar tentativa);
+//   · normalização STRICT de telefone (null quando não reconhece o padrão);
+//   · notificarMembro (opt-in/Marketing + mapa TEMPLATES_APP por env);
+//   · helpers sendPedidoAtualizado/sendDevocionalDiario.
+// Call sites migram pro waSender por arquivo em fases seguintes.
+
+const waSender = require('./waSender');
 
 const ENABLED = process.env.WHATSAPP_ENABLED === 'true';
-// WHATSAPP_ACCESS_TOKEN é a credencial viva do bot em prod (todo o stack usa:
-// whatsappSend/Flows/Grupos/Nota/Auto). WHATSAPP_TOKEN fica de fallback
-// legado — sem o alinhamento, ligar WHATSAPP_ENABLED deixava configurado()
-// false e este serviço caía em dry-run pra sempre.
-const TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
-const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
-const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || 'v18.0';
 const TEMPLATE_PEDIDO = process.env.WHATSAPP_TEMPLATE_PEDIDO || 'pedido_atualizado';
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
 
 function configurado() {
-  return !!(ENABLED && TOKEN && PHONE_NUMBER_ID);
+  return !!(ENABLED && waSender.isConfigured());
 }
 
-// Normaliza telefone para E.164 brasileiro (55 + DDD + número, so digitos).
-// Aceita formatos: (21) 99999-9999, 21999999999, +5521999999999, 5521999999999
+// Normaliza telefone para E.164 brasileiro (55 + DDD + número, só dígitos).
+// STRICT (histórico deste arquivo): null quando não reconhece o padrão.
 function normalizarTelefone(raw) {
-  if (!raw) return null;
-  const d = String(raw).replace(/\D+/g, '');
-  if (d.length === 13 && d.startsWith('55')) return d;        // 55 21 99999 9999
-  if (d.length === 12 && d.startsWith('55')) return d;        // 55 21 9999 9999 (fixo)
-  if (d.length === 11) return '55' + d;                       // 21 99999 9999
-  if (d.length === 10) return '55' + d;                       // 21 9999 9999
-  return null;
+  return waSender.normalizarTelefone(raw, { strict: true });
 }
 
-async function sendTemplate(toRaw, templateName, language, parameters) {
+// opts (multi-número): { phoneNumberId } — responde pelo número da conversa;
+// sem ele, sai pelo número default da env. Repassado cru pro waSender.
+async function sendTemplate(toRaw, templateName, language, parameters, opts = {}) {
   const to = normalizarTelefone(toRaw);
   if (!to) {
     return { sent: false, reason: 'invalid_phone', raw: toRaw };
@@ -59,65 +37,43 @@ async function sendTemplate(toRaw, templateName, language, parameters) {
       templateName, language, to, parameters);
     return { sent: false, reason: 'disabled', to };
   }
-
-  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`;
-  const body = {
-    messaging_product: 'whatsapp',
-    to,
-    type: 'template',
-    template: {
-      name: templateName,
-      language: { code: language },
-      components: parameters?.length
-        ? [{ type: 'body', parameters: parameters.map(t => ({ type: 'text', text: String(t).slice(0, 1024) })) }]
-        : undefined,
-    },
-  };
-
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15000), // Graph lenta não pode prender o handler
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      console.error('[WPP] erro %d: %s', res.status, JSON.stringify(json));
-      return { sent: false, reason: 'api_error', status: res.status, detail: json };
-    }
-    return { sent: true, to, messageId: json.messages?.[0]?.id };
-  } catch (err) {
-    console.error('[WPP] exception:', err.message);
-    return { sent: false, reason: 'exception', detail: err.message };
-  }
+  return waSender.sendTemplate(to, templateName, language, parameters || [], opts);
 }
 
-// Envia texto livre (só funciona dentro da janela de 24h · ex.: resposta a quem
-// acabou de mandar mensagem). Fora da janela, a Meta exige template.
-async function sendText(toRaw, texto) {
+// Texto livre (janela de 24h). Fora da janela, a Meta exige template.
+async function sendText(toRaw, texto, opts = {}) {
   const to = normalizarTelefone(toRaw);
   if (!to) return { sent: false, reason: 'invalid_phone' };
   if (!configurado()) {
     console.log('[WPP][DRY-RUN] text to=%s: %s', to, texto);
     return { sent: false, reason: 'disabled', to };
   }
-  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`;
-  try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messaging_product: 'whatsapp', to, type: 'text', text: { body: String(texto).slice(0, 4096) } }),
-      signal: AbortSignal.timeout(15000),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) { console.error('[WPP] text erro %d: %s', res.status, JSON.stringify(json)); return { sent: false, status: res.status }; }
-    return { sent: true, to, messageId: json.messages?.[0]?.id };
-  } catch (err) { console.error('[WPP] text exception:', err.message); return { sent: false, reason: 'exception' }; }
+  return waSender.sendText(to, texto, opts);
 }
 
-// Envia notificação de atualização de pedido (template `pedido_atualizado`).
-// vars: { primeiroNome, tituloSolicitacao, statusLabel, detalhe, link }
+// Mensagem INTERATIVA com botões (janela de 24h · máx 3 · title <= 20).
+async function sendButtons(toRaw, corpo, botoes, opts = {}) {
+  const to = normalizarTelefone(toRaw);
+  if (!to) return { sent: false, reason: 'invalid_phone' };
+  if (!configurado()) { console.log('[WPP][DRY-RUN] buttons to=%s: %s', to, corpo); return { sent: false, reason: 'disabled', to }; }
+  return waSender.sendButtons(to, corpo, botoes, opts);
+}
+
+// Mídia (imagem/documento) por LINK público. `kind` = 'image'|'document'.
+async function sendMedia(toRaw, kind, link, { filename, caption, ...opts } = {}) {
+  const to = normalizarTelefone(toRaw);
+  if (!to) return { sent: false, reason: 'invalid_phone' };
+  if (!link) return { sent: false, reason: 'sem_link' };
+  if (!configurado()) { console.log('[WPP][DRY-RUN] %s to=%s: %s', kind, to, link); return { sent: false, reason: 'disabled', to }; }
+  return waSender.sendMedia(to, kind, link, { filename, caption, ...opts });
+}
+
+// Baixa a mídia recebida da Meta. Sem gate ENABLED (histórico · webhook usa).
+async function baixarMedia(mediaId) {
+  return waSender.baixarMedia(mediaId);
+}
+
+// Notificação de atualização de pedido (template `pedido_atualizado`).
 async function sendPedidoAtualizado(telefone, vars) {
   const params = [
     vars.primeiroNome || 'Ola',
@@ -129,10 +85,7 @@ async function sendPedidoAtualizado(telefone, vars) {
   return sendTemplate(telefone, TEMPLATE_PEDIDO, TEMPLATE_LANG, params);
 }
 
-// Envia devocional diario (template `devocional_diario`).
-// Body esperado no template (3 params):
-//   "Bom dia, {{1}}! Seu devocional de hoje: {{2}}. Leia em: {{3}}"
-// vars: { primeiroNome, título, link }
+// Devocional diário (template `devocional_diario` · 3 params).
 const TEMPLATE_DEVOCIONAL = process.env.WHATSAPP_TEMPLATE_DEVOCIONAL || 'devocional_diario';
 async function sendDevocionalDiario(telefone, vars) {
   const params = [
@@ -149,7 +102,8 @@ async function sendDevocionalDiario(telefone, vars) {
 // Lê o NOME do template aprovado por env (quando vazio = no-op gracioso),
 // resolve telefone + opt-in do membro, e respeita o consentimento
 // (obrigatório p/ Marketing · opcional p/ Utility via WHATSAPP_OPTIN_OBRIGATORIO).
-// Token: usa WHATSAPP_ACCESS_TOKEN (o mesmo do bot, já em prod) ou WHATSAPP_TOKEN.
+// ⚠️ NÃO passa pelo gate WHATSAPP_ENABLED (histórico): envia com credencial
+// presente — os fluxos do app dependem disso.
 // ============================================================
 const { supabase } = require('../utils/supabase');
 
@@ -160,23 +114,25 @@ const TEMPLATES_APP = {
   kids_precheckin:      process.env.WHATSAPP_TEMPLATE_KIDS_PRECHECKIN,// {{1}} responsável (ou código)
   batismo_lembrete:     process.env.WHATSAPP_TEMPLATE_BATISMO,        // {{1}} data · {{2}} hora
   escala_voluntario:    process.env.WHATSAPP_TEMPLATE_ESCALA,         // {{1}} ministério · {{2}} evento · {{3}} quando
-  // Aniversário do VOLUNTARIADO ({{1}} nome · Marketing). Usa o env ...ANIVERSARIO2
+  // Aniversário do VOLUNTARIADO ({{1}} nome). Usa o env ...ANIVERSARIO2
   // (o ...ANIVERSARIO antigo, genérico do app, foi aposentado — fallback só por segurança).
   aniversario:          process.env.WHATSAPP_TEMPLATE_ANIVERSARIO2 || process.env.WHATSAPP_TEMPLATE_ANIVERSARIO,
   pedido_atualizado:    process.env.WHATSAPP_TEMPLATE_PEDIDO,         // {{1}} nome {{2}} solicitação {{3}} status {{4}} detalhe {{5}} link
+  familia_convite_aceito: process.env.WHATSAPP_TEMPLATE_FAMILIA_ACEITO, // {{1}} nome de quem aceitou
 };
+// Templates de categoria MARKETING (Meta exige opt-in · compliance).
+// O aniversário é MARKETING de forma inescapável (verificado 2026-07-16):
+// envio automático só sai pra quem tem whatsapp_optin=true.
 const TEMPLATES_MARKETING = new Set(['aniversario']);
 const OPTIN_SEMPRE = process.env.WHATSAPP_OPTIN_OBRIGATORIO === '1';
-const ENVIO_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || TOKEN;
 
 // Dispara um template pra um membro. NUNCA quebra o fluxo chamador (fire-and-forget).
-// Retorna {skipped:'...'} quando não há o que fazer (template não configurado,
-// sem telefone, sem opt-in em Marketing, etc.).
+// Retorna {skipped:'...'} quando não há o que fazer.
 async function notificarMembro(membroId, chave, params = [], { idioma = TEMPLATE_LANG } = {}) {
   try {
     const templateName = TEMPLATES_APP[chave];
     if (!templateName) return { skipped: 'template_nao_configurado' }; // no-op até aprovar + setar env
-    if (!ENVIO_TOKEN || !PHONE_NUMBER_ID) return { skipped: 'wpp_nao_configurado' };
+    if (!waSender.isConfigured()) return { skipped: 'wpp_nao_configurado' };
     if (!membroId) return { skipped: 'sem_membro' };
 
     const { data: m } = await supabase
@@ -193,30 +149,23 @@ async function notificarMembro(membroId, chave, params = [], { idioma = TEMPLATE
     const to = normalizarTelefone(m.telefone);
     if (!to) return { skipped: 'telefone_invalido' };
 
-    const url = `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_NUMBER_ID}/messages`;
-    const body = {
-      messaging_product: 'whatsapp',
-      to,
-      type: 'template',
-      template: {
-        name: templateName,
-        language: { code: idioma },
-        components: params.length
-          ? [{ type: 'body', parameters: params.map((tx) => ({ type: 'text', text: String(tx).slice(0, 1024) })) }]
-          : undefined,
-      },
-    };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${ENVIO_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+    // C2: sai pela FILA (registro universal + retry + statuses do C0). O envio
+    // continua imediato (enfileirar tenta na hora); com o kill-switch global
+    // desligado (WHATSAPP_ENABLED) fica pendente e sai quando religar.
+    // Require lazy: a fila importa este arquivo (evita ciclo no load).
+    const { enfileirar } = require('./whatsappFila');
+    const r = await enfileirar({
+      telefone: to,
+      template: templateName,
+      params,
+      idioma,
+      contexto: `app.${chave}`,
+      refId: membroId,
     });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      console.warn('[WPP] notificarMembro %s erro %d: %j', chave, res.status, json);
-      return { sent: false, status: res.status };
+    if (!r.sent) {
+      console.warn('[WPP] notificarMembro %s não saiu na hora: %j', chave, { reason: r.reason, queued: r.queued });
     }
-    return { sent: true, messageId: json.messages?.[0]?.id };
+    return r;
   } catch (e) {
     console.warn('[WPP] notificarMembro %s exception:', chave, e.message);
     return { error: e.message };
@@ -228,6 +177,9 @@ module.exports = {
   normalizarTelefone,
   sendTemplate,
   sendText,
+  sendButtons,
+  sendMedia,
+  baixarMedia,
   sendPedidoAtualizado,
   sendDevocionalDiario,
   notificarMembro,

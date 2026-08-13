@@ -5,6 +5,7 @@ import { Card } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Input } from '../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Avatar, AvatarFallback, AvatarImage } from '../../components/ui/avatar';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import {
@@ -907,10 +908,9 @@ function NovoOverrideForm({ modulos, usuarioId, onCancel, onCreated }) {
         </div>
         <div>
           <label className="text-xs font-medium block mb-1">Expira em (opcional)</label>
-          <Input
-            type="date"
+          <DatePicker
             value={expiraEm}
-            onChange={e => setExpiraEm(e.target.value)}
+            onChange={v => setExpiraEm(v)}
             disabled={salvando}
             className="h-9"
           />

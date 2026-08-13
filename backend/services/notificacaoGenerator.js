@@ -1,5 +1,11 @@
 const { supabase } = require('../utils/supabase');
+const { donosDeVariosGrupos } = require('./gruposDestinatarios');
 const { notificar } = require('./notificar');
+const { calcularDepreciacao } = require('../utils/patrimonioDepreciacao');
+// ⚠️ Aviso periódico é AGREGADO (1 por tipo), nunca 1 por item — a lei, os
+// números medidos e o porquê da chave de dedup estável estão no cabeçalho de
+// `utils/avisoAgregado.js`. A régua vive em utils/ pra entrar no gate de deploy.
+const { amostraNomes, plural } = require('../utils/avisoAgregado');
 
 /**
  * Gera todas as notificações automáticas de todos os módulos.
@@ -61,6 +67,7 @@ async function gerarTodasNotificacoes() {
   total += await safe('Governanca', gerarNotificacoesGovernanca);
   total += await safe('TarefasPessoais', gerarNotificacoesTarefasPessoais);
   total += await safe('Kids', gerarNotificacoesKids);
+  total += await safe('LgpdExclusao', gerarNotificacoesLgpdExclusao);
   console.log(`[Notificações] ${total} notificação(ões) gerada(s).`);
   return total;
 }
@@ -121,21 +128,24 @@ async function gerarNotificacoesGovernanca() {
     return 0;
   }
 
-  for (const r of reunioes || []) {
-    if (r.ata && r.ata.trim().length) continue; // já tem ata
-    const tipo = r.governance_meeting_types || {};
-    const nome = tipo.nome || 'Reunião';
-    const dataBr = String(r.date).split('-').reverse().join('/');
-    await notificar({
+  // Agregado: 1 aviso com a contagem, não 1 por reunião (ver a lei no topo).
+  const semAta = (reunioes || []).filter(r => !(r.ata && r.ata.trim().length));
+  if (semAta.length) {
+    const rotulos = semAta.map(r => {
+      const tipo = r.governance_meeting_types || {};
+      const nome = tipo.nome || 'Reunião';
+      const dataBr = String(r.date).split('-').reverse().join('/');
+      return `${nome}${tipo.sigla ? ` (${tipo.sigla})` : ''} de ${dataBr}`;
+    });
+    count += await notificar({
       modulo: 'governanca',
       tipo: 'ata_pendente',
-      titulo: `Ata pendente · ${nome}`,
-      mensagem: `A reunião ${nome}${tipo.sigla ? ` (${tipo.sigla})` : ''} de ${dataBr} ainda está sem ata registrada.`,
+      titulo: `${semAta.length} ${plural(semAta.length, 'reunião', 'reuniões')} sem ata registrada`,
+      mensagem: `Ainda sem ata: ${amostraNomes(rotulos)}. Registre em Governança.`,
       link: '/governanca',
       severidade: 'info',
-      chaveDedup: `gov_ata_${r.id}_${hoje}`,
+      chaveDedup: 'gov_ata_pendente',
     });
-    count++;
   }
   return count;
 }
@@ -555,25 +565,12 @@ async function gerarNotificacoesLogistica() {
     });
   }
 
-  // 2. Solicitações pendentes há 3+ dias
-  const { data: solic } = await supabase
-    .from('log_solicitacoes_compra')
-    .select('id, descricao, created_at')
-    .eq('status', 'pendente');
-
-  for (const s of solic || []) {
-    const dias = Math.floor((Date.now() - new Date(s.created_at).getTime()) / 86400000);
-    if (dias < 3) continue;
-    count += await notificar({
-      modulo: 'logistica',
-      tipo: 'solic_pendente',
-      titulo: `Solicitação de compra pendente`,
-      mensagem: `"${s.descricao?.slice(0, 50)}" aguarda aprovação há ${dias} dias.`,
-      link: '/admin/logistica',
-      severidade: 'aviso',
-      chaveDedup: `solic_pendente_${s.id}`,
-    });
-  }
+  // (Lembrete de solicitação de compra pendente removido 2026-07-29 — lia
+  // `log_solicitacoes_compra`, tabela morta desde a migração do fluxo de
+  // compras pro módulo /solicitacoes central em 2026-07. O lembrete real de
+  // aprovação parada já é coberto, pra QUALQUER categoria incluindo compras,
+  // por `gerarNotificacoesSolicitacoes` mais abaixo — manter os dois geraria
+  // notificação duplicada/conflitante do mesmo pedido.)
 
   return count;
 }
@@ -585,9 +582,12 @@ async function gerarNotificacoesPatrimonio() {
   let count = 0;
 
   // 1. Bens extraviados
+  // ⚠️ Coluna correta é `codigo_barras` (pat_bens não tem `codigo_patrimonio`) —
+  // o select antigo pedia uma coluna inexistente, o PostgREST recusava a query
+  // INTEIRA (não só a coluna) e este alerta nunca disparava, em silêncio.
   const { data: extraviados } = await supabase
     .from('pat_bens')
-    .select('id, nome, codigo_patrimonio')
+    .select('id, nome, codigo_barras')
     .eq('status', 'extraviado');
 
   for (const b of extraviados || []) {
@@ -595,30 +595,36 @@ async function gerarNotificacoesPatrimonio() {
       modulo: 'patrimonio',
       tipo: 'bem_extraviado',
       titulo: `Bem extraviado`,
-      mensagem: `${b.nome} (${b.codigo_patrimonio || 'sem código'}) está marcado como extraviado.`,
+      mensagem: `${b.nome} (${b.codigo_barras || 'sem código'}) está marcado como extraviado.`,
       link: '/admin/patrimonio',
       severidade: 'urgente',
       chaveDedup: `extraviado_${b.id}`,
     });
   }
 
-  // 2. Inventários abertos há muito tempo
-  const { data: invs } = await supabase
-    .from('pat_inventarios')
-    .select('id, descricao, created_at')
-    .eq('status', 'em_andamento');
+  // 2. Fim de vida útil (depreciação gerencial >= 80%) — vira aviso real de
+  // planejamento de reposição (antes só aparecia no card do dashboard).
+  // Dedup por MÊS (não por dia): a depreciação muda devagar, reavisar todo
+  // dia enquanto o bem continuar ativo enterraria o sino sem necessidade.
+  const anoMes = new Date().toISOString().slice(0, 7);
+  const { data: bensAtivos } = await supabase
+    .from('pat_bens')
+    .select('id, nome, codigo_barras, valor_aquisicao, data_aquisicao, pat_categorias(nome, vida_util_meses)')
+    .eq('status', 'ativo')
+    .not('valor_aquisicao', 'is', null)
+    .not('data_aquisicao', 'is', null);
 
-  for (const inv of invs || []) {
-    const dias = Math.floor((Date.now() - new Date(inv.created_at).getTime()) / 86400000);
-    if (dias < 15) continue;
+  for (const b of bensAtivos || []) {
+    const dep = calcularDepreciacao(b);
+    if (!dep || dep.percentual_depreciado < 80) continue;
     count += await notificar({
       modulo: 'patrimonio',
-      tipo: 'inventario_aberto',
-      titulo: `Inventário aberto há ${dias} dias`,
-      mensagem: `${inv.descricao || 'Inventário'} está em andamento há ${dias} dias.`,
+      tipo: 'bem_fim_vida_util',
+      titulo: `Bem perto do fim da vida útil: ${b.nome}`,
+      mensagem: `${b.nome} (${b.codigo_barras || 'sem código'}) está ${dep.percentual_depreciado}% depreciado (indicador gerencial) — considere planejar a reposição.`,
       link: '/admin/patrimonio',
-      severidade: 'aviso',
-      chaveDedup: `inv_aberto_${inv.id}`,
+      severidade: dep.percentual_depreciado >= 100 ? 'warning' : 'info',
+      chaveDedup: `dep_fim_vida_${b.id}_${anoMes}`,
     });
   }
 
@@ -648,10 +654,101 @@ async function gerarNotificacoesMembresia() {
       mensagem: dias === 1
         ? `${c.nome} enviou cadastro de membresia ontem e aguarda aprovação.`
         : `${c.nome} aguarda aprovação de membresia há ${dias} dias.`,
-      link: '/ministerial/membresia',
+      link: '/ministerial/membresia?tab=cadastros&status=pendente',
       severidade,
       chaveDedup: `cadastro_pendente_${c.id}`,
     });
+  }
+
+  // 2. Fila de identidade (conflitos de CPF · identidade_pendencias) com itens
+  //    abertos → 1 resumo por dia enquanto a fila não zera. Tolera a tabela
+  //    ausente (migration 20260716150000 pode não ter sido aplicada ainda).
+  try {
+    const { count: abertas, error } = await supabase
+      .from('identidade_pendencias')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'pendente');
+    if (!error && (abertas || 0) > 0) {
+      const hoje = new Date().toISOString().slice(0, 10);
+      count += await notificar({
+        modulo: 'membresia',
+        tipo: 'identidade_pendencias',
+        titulo: `Fila de identidade — ${abertas} pendência${abertas > 1 ? 's' : ''} de CPF`,
+        mensagem: `Há ${abertas} conflito${abertas > 1 ? 's' : ''} de identidade aguardando triagem (CPF a confirmar, duplicatas prováveis, vínculos divergentes) em Entradas > Identidade.`,
+        link: '/next-batismo',
+        severidade: abertas >= 50 ? 'aviso' : 'info',
+        chaveDedup: `identidade_pendencias_${hoje}`,
+      });
+    }
+  } catch { /* tabela ausente · silencioso */ }
+
+  // 4. ⚠️ Cadastro cujo NOME é o prefixo do próprio e-mail.
+  //
+  // Vem do gatilho de signup em auth.users (`COALESCE(full_name, name,
+  // split_part(email,'@',1))`): quando o provedor OAuth não manda nome, o prefixo
+  // do e-mail vira o nome da pessoa. Pior caso: Apple Sign-In com "Ocultar meu
+  // e-mail", em que o prefixo é um identificador aleatório ("sy9p84mryx").
+  //
+  // ⚠️ Este aviso NÃO conserta a causa — ele existe pra o problema parar de
+  // crescer em SILÊNCIO enquanto o gatilho não é corrigido. Foram 15 cadastros
+  // assim (medição de 04/08), todos com origem_cadastro='auth', em ritmo de ~1
+  // por dia. Um deles duplicou uma pessoa que havia preenchido o formulário
+  // público CORRETAMENTE 8 minutos antes.
+  //
+  // Aviso AGREGADO (1 por dia), nunca 1 por pessoa: o volume aqui é fila de
+  // trabalho, não evento — e sem regra configurada o notificar cai no fallback
+  // de TODOS os admin/diretor.
+  try {
+    const { ehNomeDerivadoDeEmail, nomeEhEnderecoDeEmail } = require('./membroMatch');
+    const suspeitos = [];
+    const comEmailNoNome = [];
+    const PAGE = 1000;
+    let offset = 0;
+    for (;;) {
+      const { data, error } = await supabase
+        .from('mem_membros')
+        .select('id, nome, email, created_at')
+        .eq('active', true)
+        .is('deleted_at', null)
+        .range(offset, offset + PAGE - 1);
+      if (error) throw error;
+      for (const m of data || []) {
+        if (ehNomeDerivadoDeEmail(m.nome, m.email)) suspeitos.push(m);
+        // Forma diferente: o e-mail está NO CAMPO DO NOME (e em 2 de 3 casos a
+        // coluna `email` está vazia — contato que o sistema tem e não usa).
+        else if (nomeEhEnderecoDeEmail(m.nome)) comEmailNoNome.push(m);
+      }
+      if (!data || data.length < PAGE) break;
+      offset += PAGE;
+    }
+    const hoje = new Date().toISOString().slice(0, 10);
+    if (comEmailNoNome.length) {
+      count += await notificar({
+        modulo: 'membresia',
+        tipo: 'cadastro_email_no_nome',
+        titulo: `${comEmailNoNome.length} cadastro(s) com e-mail no campo do nome`,
+        mensagem: `${comEmailNoNome.length} pessoa(s) têm um endereço de e-mail onde deveria estar o nome (ex.: ${JSON.stringify(comEmailNoNome[0].nome)}). O nome real não é derivável do endereço — precisa de contato. NÃO apagar: são pessoas reais e apagar quebra o matcher.`,
+        link: '/ministerial/membresia',
+        severidade: 'info',
+        chaveDedup: `cadastro_email_no_nome_${hoje}`,
+      });
+    }
+    if (suspeitos.length) {
+      const novos7d = suspeitos.filter(
+        (m) => new Date(m.created_at).getTime() > Date.now() - 7 * 86400000,
+      ).length;
+      count += await notificar({
+        modulo: 'membresia',
+        tipo: 'cadastro_sem_nome_real',
+        titulo: `${suspeitos.length} cadastro(s) com o e-mail no lugar do nome`,
+        mensagem: `${suspeitos.length} pessoa(s) estão cadastradas com o prefixo do e-mail como nome (ex.: ${JSON.stringify(suspeitos[0].nome)})${novos7d ? ` — ${novos7d} nos últimos 7 dias` : ''}. Vem do login quando o provedor não informa o nome. Corrigir o nome na Membresia; NÃO apagar (são pessoas reais e apagar quebra o matcher).`,
+        link: '/ministerial/membresia',
+        severidade: novos7d ? 'aviso' : 'info',
+        chaveDedup: `cadastro_sem_nome_real_${hoje}`,
+      });
+    }
+  } catch (e) {
+    console.error('[Notificações] cadastro sem nome real:', e.message);
   }
 
   return count;
@@ -836,6 +933,7 @@ async function gerarNotificacoesGrupos() {
 
   if (grupos?.length) {
     const grupoIds = grupos.map(g => g.id);
+    const donosPorGrupo = await donosDeVariosGrupos(grupoIds);
     const { data: encontros } = await supabase
       .from('mem_grupo_encontros')
       .select('grupo_id, data')
@@ -848,69 +946,178 @@ async function gerarNotificacoesGrupos() {
       if (!ultimoPorGrupo[e.grupo_id]) ultimoPorGrupo[e.grupo_id] = e.data;
     }
 
+    // Agregado: 1 aviso com a contagem, não 1 por grupo (ver a lei no topo).
+    const atrasados = [];
     for (const g of grupos) {
       const recorrencia = g.recorrencia || 'semanal';
       const limiteDias = limites[recorrencia] || 14;
       const ultimo = ultimoPorGrupo[g.id];
-      let dias;
-      if (ultimo) {
-        dias = Math.floor((now - new Date(ultimo + 'T12:00:00').getTime()) / 86400000);
-      } else {
-        dias = 999; // grupo sem nenhum encontro registrado
-      }
+      // Sem nenhum encontro registrado entra como o pior caso da fila.
+      const dias = ultimo
+        ? Math.floor((now - new Date(ultimo + 'T12:00:00').getTime()) / 86400000)
+        : 999;
       if (dias < limiteDias) continue;
 
-      const lider = g.mem_membros?.nome ? ` (lider: ${g.mem_membros.nome})` : '';
-      const msg = ultimo
-        ? `Grupo ${g.nome}${lider} esta sem encontro registrado ha ${dias} dias.`
-        : `Grupo ${g.nome}${lider} ainda não teve encontro registrado.`;
+      // ⚠️⚠️ "SEU grupo está sem encontro" É COBRANÇA DO LÍDER (10/08/2026).
+      // O agregado abaixo resolveu o VOLUME, mas manteve o destinatário errado:
+      // a lista ia pro fan-out do módulo e o líder — a única pessoa que pode
+      // registrar o encontro — não era avisado do próprio grupo. Quando existe
+      // dono com conta de sistema, ele recebe o aviso DELE, por grupo, com dedup
+      // por janela de prazo. Ver services/gruposDestinatarios.js.
+      const donos = donosPorGrupo.get(g.id) || [];
+      if (donos.length) {
+        const lider = g.mem_membros?.nome ? ` (líder: ${g.mem_membros.nome})` : '';
+        const janela = Math.floor(dias / limiteDias);
+        count += await notificar({
+          modulo: 'grupos',
+          tipo: 'grupo_sem_encontro',
+          titulo: `Grupo sem encontro — ${g.nome}`,
+          mensagem: ultimo
+            ? `${g.nome}${lider} está sem encontro registrado há ${dias} dias.`
+            : `${g.nome}${lider} ainda não teve encontro registrado.`,
+          link: '/grupos',
+          severidade: dias >= limiteDias * 2 ? 'urgente' : 'aviso',
+          chaveDedup: `grupo_sem_encontro_${g.id}_${janela}`,
+          targetIds: donos,
+        });
+        continue;
+      }
 
-      // Dedup em janelas de "limiteDias" para não alertar todo dia o mesmo grupo
-      const janela = Math.floor(dias / limiteDias);
+      // Sem dono com conta: entra no agregado da coordenação, que é a única
+      // pessoa que pode cobrar esse líder por fora.
+      atrasados.push({
+        nome: g.nome,
+        dias,
+        nunca: !ultimo,
+        urgente: dias >= limiteDias * 2,
+      });
+    }
+
+    if (atrasados.length) {
+      atrasados.sort((a, b) => b.dias - a.dias); // pior primeiro na amostra
+      const rotulos = atrasados.map(a => (
+        a.nunca ? `${a.nome} (nunca registrou)` : `${a.nome} (${a.dias} dias)`
+      ));
+      const urgentes = atrasados.filter(a => a.urgente).length;
       count += await notificar({
         modulo: 'grupos',
         tipo: 'grupo_sem_encontro',
-        titulo: `Grupo sem encontro — ${g.nome}`,
-        mensagem: msg,
+        titulo: `${atrasados.length} ${plural(atrasados.length, 'grupo', 'grupos')} sem encontro registrado`,
+        mensagem: `Passaram do prazo de registro: ${amostraNomes(rotulos)}.`
+          + (urgentes ? ` ${urgentes} ${plural(urgentes, 'passou', 'passaram')} do dobro do prazo.` : '')
+          + ' A lista completa está em Grupos.',
         link: '/grupos',
-        severidade: dias >= limiteDias * 2 ? 'urgente' : 'aviso',
-        chaveDedup: `grupo_sem_encontro_${g.id}_${janela}`,
+        severidade: urgentes ? 'urgente' : 'aviso',
+        chaveDedup: 'grupo_sem_encontro',
       });
     }
   }
 
   // 2. Membros (status = membro_ativo) sem grupo ha 90+ dias
+  //    Paginado: já são 1000+ membros ativos (o cap do PostgREST deixava os do
+  //    fim da lista sem avaliação) e o .in() com a lista inteira de UUIDs
+  //    estoura a URL e falha SILENCIOSO — todo mundo parecia "sem grupo".
+  //    O vínculo de grupo agora sai de uma leitura paginada cruzada em JS.
   const noventaDias = new Date(now - 90 * 86400000).toISOString().slice(0, 10);
-  const { data: membros } = await supabase
-    .from('mem_membros')
-    .select('id, nome, created_at, status, active')
-    .eq('active', true)
-    .eq('status', 'membro_ativo')
-    .lte('created_at', noventaDias);
+  const PAGE = 1000;
+  const membros = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const { data: pagina } = await supabase
+      .from('mem_membros')
+      .select('id, nome, created_at, status, active')
+      .eq('active', true)
+      .eq('status', 'membro_ativo')
+      .is('deleted_at', null)
+      .lte('created_at', noventaDias)
+      .order('id')
+      .range(offset, offset + PAGE - 1);
+    membros.push(...(pagina || []));
+    if (!pagina || pagina.length < PAGE) break;
+  }
 
-  if (membros?.length) {
-    const membroIds = membros.map(m => m.id);
-    const { data: participacoes } = await supabase
-      .from('mem_grupo_membros')
-      .select('membro_id')
-      .in('membro_id', membroIds)
-      .is('saiu_em', null);
-
-    const comGrupo = new Set((participacoes || []).map(p => p.membro_id));
+  if (membros.length) {
+    const comGrupo = new Set();
+    for (let offset = 0; ; offset += PAGE) {
+      const { data: pagina } = await supabase
+        .from('mem_grupo_membros')
+        .select('membro_id')
+        .is('saiu_em', null)
+        .is('deleted_at', null)
+        .order('id')
+        .range(offset, offset + PAGE - 1);
+      (pagina || []).forEach(p => { if (p.membro_id) comGrupo.add(p.membro_id); });
+      if (!pagina || pagina.length < PAGE) break;
+    }
     const semGrupo = membros.filter(m => !comGrupo.has(m.id));
 
-    for (const m of semGrupo) {
-      const dias = Math.floor((now - new Date(m.created_at).getTime()) / 86400000);
-      // Dedup mensal pra não spammar
-      const janela = Math.floor(dias / 30);
+    // Agregado: 1 aviso com a contagem, não 1 por membro (ver a lei no topo).
+    if (semGrupo.length) {
+      const comDias = semGrupo
+        .map(m => ({
+          nome: m.nome,
+          dias: Math.floor((now - new Date(m.created_at).getTime()) / 86400000),
+        }))
+        .sort((a, b) => b.dias - a.dias); // há mais tempo esperando primeiro
+      const antigos = comDias.filter(m => m.dias >= 180).length;
       count += await notificar({
         modulo: 'grupos',
         tipo: 'membro_sem_grupo',
-        titulo: `Membro sem grupo — ${m.nome}`,
-        mensagem: `${m.nome} e membro ha ${dias} dias mas ainda não esta em nenhum grupo de conexão.`,
+        titulo: `${comDias.length} ${plural(comDias.length, 'membro', 'membros')} sem grupo de conexão`,
+        mensagem: `Membros ativos há 90+ dias e ainda fora de um grupo: `
+          + `${amostraNomes(comDias.map(m => `${m.nome} (${m.dias} dias)`))}.`
+          + (antigos ? ` ${antigos} ${plural(antigos, 'já passou', 'já passaram')} de 180 dias.` : ''),
         link: '/grupos',
-        severidade: dias >= 180 ? 'aviso' : 'info',
-        chaveDedup: `membro_sem_grupo_${m.id}_${janela}`,
+        severidade: antigos ? 'aviso' : 'info',
+        chaveDedup: 'membro_sem_grupo',
+      });
+    }
+  }
+
+  // ═════════════════════════════════════════════════════════════════════════
+  //  PEDIDOS QUE ESPERAM UM LÍDER SEM CONTA — o resumo diário da coordenação
+  //
+  //  Decisão do Matheus (10/08/2026), ao ver que 86 dos 102 grupos ativos têm
+  //  líder SEM conta de sistema: nesses casos o aviso in-app não tem dono, e em
+  //  vez de um aviso por pedido pra todo mundo com cargo alto, vai **um resumo
+  //  por dia** pra coordenação de grupos.
+  //
+  //  ⚠️ Não é o canal principal e não deve virar um: o líder recebe o pedido por
+  //  WhatsApp com link de aprovação, e foi por lá que saíram 368 das 388
+  //  decisões dos últimos 90 dias. O resumo existe pra uma fila parada não ficar
+  //  invisível — não pra alguém aprovar no lugar do líder.
+  //
+  //  Sem `targetIds` de propósito: quem recebe sai de `notificacao_regras`
+  //  (módulo `grupos`), igual aos outros 13 módulos. A lista é DADO, não código.
+  // ═════════════════════════════════════════════════════════════════════════
+  const { data: pendentes } = await supabase
+    .from('mem_grupo_pedidos')
+    .select('id, grupo_id, created_at')
+    .eq('status', 'pendente')
+    .is('deleted_at', null)
+    .not('grupo_id', 'is', null);
+
+  if (pendentes?.length) {
+    const donosPend = await donosDeVariosGrupos([...new Set(pendentes.map(p => p.grupo_id))]);
+    // Só o que NÃO tem dono avisado: pedido em grupo com líder no sistema já
+    // gerou notificação dirigida na hora, e contar de novo aqui seria cobrar
+    // duas vezes a mesma coisa.
+    const orfaos = pendentes.filter(p => !(donosPend.get(p.grupo_id) || []).length);
+    if (orfaos.length) {
+      const diasDoMaisAntigo = Math.max(...orfaos.map(p => (
+        Math.floor((now - new Date(p.created_at).getTime()) / 86400000)
+      )));
+      const gruposDistintos = new Set(orfaos.map(p => p.grupo_id)).size;
+      count += await notificar({
+        modulo: 'grupos',
+        tipo: 'pedidos_aguardando_lider',
+        titulo: `${orfaos.length} ${plural(orfaos.length, 'pedido', 'pedidos')} de grupo aguardando o líder`,
+        mensagem: `${orfaos.length} ${plural(orfaos.length, 'pedido pendente', 'pedidos pendentes')} em `
+          + `${gruposDistintos} ${plural(gruposDistintos, 'grupo', 'grupos')} cujo líder não tem conta no `
+          + `sistema (ele é avisado pelo WhatsApp). O mais antigo espera há `
+          + `${diasDoMaisAntigo} ${plural(diasDoMaisAntigo, 'dia', 'dias')}.`,
+        link: '/grupos?tab=entrada',
+        severidade: diasDoMaisAntigo >= 7 ? 'aviso' : 'info',
+        chaveDedup: 'pedidos_aguardando_lider',
       });
     }
   }
@@ -1359,23 +1566,82 @@ async function gerarNotificacoesKids() {
     .rpc('fn_kids_ausentes_consecutivos', { p_min: 3 });
   if (error) { console.error('[Notificações] Kids rpc:', error.message); return 0; }
 
-  for (const c of ausentes || []) {
-    const ult = c.ultima_presenca
-      ? new Date(c.ultima_presenca + 'T12:00:00').toLocaleDateString('pt-BR')
-      : '—';
+  // Agregado: 1 aviso com a contagem, não 1 por criança (ver a lei no topo).
+  // Medido em 10/08/2026: eram 211 avisos não lidos de uma vez para a mesma
+  // pessoa — quem cuida do Kids não consegue agir sobre uma fila desse tamanho.
+  const lista = (ausentes || [])
+    .map(c => ({ nome: c.nome, perdidos: Number(c.cultos_perdidos) || 0 }))
+    .sort((a, b) => b.perdidos - a.perdidos); // ausência mais longa primeiro
+  if (lista.length) {
     count += await notificar({
       modulo: 'kids',
       tipo: 'kids_crianca_ausente',
-      titulo: `Criança faltando: ${c.nome}`,
-      mensagem: `${c.nome} está há ${c.cultos_perdidos} cultos seguidos sem check-in no Kids (última presença em ${ult}). Vale um contato com a família.`,
+      titulo: `${lista.length} ${plural(lista.length, 'criança', 'crianças')} faltando no Kids`,
+      mensagem: `Sem check-in há 3 cultos seguidos ou mais: `
+        + `${amostraNomes(lista.map(c => `${c.nome} (${c.perdidos} cultos)`))}.`
+        + ' Vale um contato com as famílias — a lista completa está em Crianças.',
       link: '/ministerial/totem-kids/criancas',
       severidade: 'aviso',
-      // 1 alerta por streak (ancorado na última presença); se voltar e sumir de
-      // novo, a última presença muda → novo alerta.
-      chaveDedup: `kids_ausente_${c.crianca_id}_${c.ultima_presenca}`,
+      chaveDedup: 'kids_crianca_ausente',
     });
   }
   return count;
 }
 
-module.exports = { gerarTodasNotificacoes };
+// gerarNotificacoesOnline também é consumida direto pelo cron de blindagem do
+// Online (routes/online.js /cron/verificar) — sem o export, aquele cron caía
+// com "gerarNotificacoesOnline is not a function" todo dia desde 04/07.
+// ── LGPD · pedidos de exclusao de conta sem tratamento ──────────────────────
+// ⚠️ CORRIGIDO EM 10/08/2026 — o texto anterior deste bloco dizia que
+// `gerarTodasNotificacoes` "NAO TEM CRON NENHUM". **Isso ficou FALSO**: o cron
+// `/api/notificacoes/cron` está no `vercel.json` (`0 9 * * *`) E registrado na
+// Vercel (conferido com `vercel crons ls`), e em 10/08 todos os tipos exclusivos
+// deste arquivo foram produzidos às 09:00–09:03 UTC. O gerador RODA sozinho hoje.
+//
+// A contenção que a nota antiga pedia virou necessária de verdade e foi feita:
+// ligar ~20 geradores de uma vez encheu o sino (16.646 avisos não lidos · 185
+// por pessoa), e os 4 geradores de maior volume passaram a avisar AGREGADO —
+// ver a lei em `utils/avisoAgregado.js`.
+//
+// A fila de exclusão de conta continua sendo PULL (tela + contador em
+// /ministerial/membresia?tab=cadastros): o aviso aqui é complemento, não o
+// caminho principal, porque desativar conta é ato humano e não tem automação.
+//
+// ⚠️ A mensagem leva CONTAGEM, nunca nome de quem pediu: e dado de pessoa saindo,
+// e o sino tem fan-out de push/e-mail.
+async function gerarNotificacoesLgpdExclusao() {
+  const { data, error } = await supabase
+    .from('app_solicitacoes_exclusao')
+    .select('id, criada_em')
+    .eq('status', 'pendente')
+    .order('criada_em', { ascending: true })
+    .limit(200);
+  if (error || !data || !data.length) return 0;
+
+  const maisAntigo = data[0].criada_em ? new Date(data[0].criada_em) : null;
+  const dias = maisAntigo
+    ? Math.floor((Date.now() - maisAntigo.getTime()) / 86400000)
+    : 0;
+  // Prazo do art. 18 da LGPD e de 15 dias: passar disso muda a natureza do aviso.
+  const estourou = dias >= 15;
+
+  await notificar({
+    modulo: 'membresia',
+    tipo: 'lgpd_exclusao_pendente',
+    titulo: estourou
+      ? `⚠️ Pedido de exclusao de conta ha ${dias} dias (prazo LGPD estourado)`
+      : `${data.length} pedido(s) de exclusao de conta aguardando`,
+    mensagem:
+      `${data.length} pessoa(s) pediram exclusao da conta pelo app e ainda estao `
+      + `como pendente. O mais antigo tem ${dias} dia(s) — o prazo da LGPD (art. 18) `
+      + 'e de 15 dias. A desativacao ainda e manual.',
+    link: '/ministerial/membresia?tab=cadastros',
+    severidade: estourou ? 'urgente' : 'aviso',
+    // Dedup por DIA: aviso e pra trabalho pendente, nao 1 por pessoa (licao do
+    // censo e do lote de aprovacao, que enterraram o sino).
+    chaveDedup: `lgpd_exclusao_pendente_${new Date().toISOString().slice(0, 10)}`,
+  });
+  return 1;
+}
+
+module.exports = { gerarTodasNotificacoes, gerarNotificacoesOnline };

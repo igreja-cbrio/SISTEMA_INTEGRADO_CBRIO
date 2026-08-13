@@ -9,7 +9,7 @@
 
 const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
-const { supabase, query } = require('../utils/supabase');
+const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
 
@@ -1040,7 +1040,7 @@ router.get('/kpi/:id', async (req, res) => {
     // Dados do KPI
     const { data: kpi, error: ek } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, indicador, descricao, area, valores, periodicidade, periodo_offset_meses, meta_descricao, unidade, is_okr, lider_funcionario_id, ativo, memoria_calculo, observacoes, objetivo_geral_id')
+      .select('id, indicador, descricao, area, valores, periodicidade, periodo_offset_meses, meta_descricao, unidade, is_okr, lider_funcionario_id, ativo, memoria_calculo, observacoes, objetivo_geral_id, fonte_auto, tipo_calculo')
       .eq('id', id)
       .maybeSingle();
     if (ek) throw ek;
@@ -1754,19 +1754,19 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
       agg.set(p, ativos.size);
     }
   } else if (valor === 'conectar' && dado === 'entradas_grupos') {
-    const { data, error } = await supabase.from('mem_grupo_membros')
+    const data = await fetchAllPaginado('mem_grupo_membros', (q) => q
       .select('entrou_em')
-      .gte('entrou_em', inicio).lte('entrou_em', fim);
-    if (error) throw error;
+      .gte('entrou_em', inicio).lte('entrou_em', fim)
+      .order('id'));
     (data || []).forEach(r => add(r.entrou_em, 1));
   }
   // ----- INVESTIR -----
   else if (valor === 'investir' && dado === 'devocionais') {
-    const { data, error } = await supabase.from('mem_devocionais')
+    const data = await fetchAllPaginado('mem_devocionais', (q) => q
       .select('data_devocional')
       .eq('concluida', true)
-      .gte('data_devocional', inicio).lte('data_devocional', fim);
-    if (error) throw error;
+      .gte('data_devocional', inicio).lte('data_devocional', fim)
+      .order('id'));
     (data || []).forEach(r => add(r.data_devocional, 1));
   } else if (valor === 'investir' && dado === 'jornada180') {
     const { data, error } = await supabase.from('cui_jornada180')
@@ -1798,13 +1798,15 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
     (data || []).forEach(r => add(r.desde, 1));
   }
   // ----- GENEROSIDADE -----
+  // mem_contribuicoes passa (muito) de 1000 linhas num ano — sem paginar, o
+  // cap do PostgREST truncava a série em silêncio (fetchAllPaginado sempre).
   else if (valor === 'generosidade' && (dado === 'dizimistas' || dado === 'ofertantes')) {
     const tipo = dado === 'dizimistas' ? 'dizimo' : 'oferta';
-    const { data, error } = await supabase.from('mem_contribuicoes')
+    const data = await fetchAllPaginado('mem_contribuicoes', (q) => q
       .select('data, membro_id, tipo')
       .eq('tipo', tipo)
-      .gte('data', inicio).lte('data', fim);
-    if (error) throw error;
+      .gte('data', inicio).lte('data', fim)
+      .order('id'));
     const setsPorPeriodo = new Map();
     (data || []).forEach(r => {
       const k = chavePeriodo(r.data, granularidade);
@@ -1814,16 +1816,16 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
     });
     setsPorPeriodo.forEach((set, k) => agg.set(k, set.size));
   } else if (valor === 'generosidade' && dado === 'doacoes_valor') {
-    const { data, error } = await supabase.from('mem_contribuicoes')
+    const data = await fetchAllPaginado('mem_contribuicoes', (q) => q
       .select('data, valor')
-      .gte('data', inicio).lte('data', fim);
-    if (error) throw error;
+      .gte('data', inicio).lte('data', fim)
+      .order('id'));
     (data || []).forEach(r => add(r.data, Number(r.valor) || 0));
   } else if (valor === 'generosidade' && dado === 'doadores_unicos') {
-    const { data, error } = await supabase.from('mem_contribuicoes')
+    const data = await fetchAllPaginado('mem_contribuicoes', (q) => q
       .select('data, membro_id')
-      .gte('data', inicio).lte('data', fim);
-    if (error) throw error;
+      .gte('data', inicio).lte('data', fim)
+      .order('id'));
     const setsPorPeriodo = new Map();
     (data || []).forEach(r => {
       const k = chavePeriodo(r.data, granularidade);

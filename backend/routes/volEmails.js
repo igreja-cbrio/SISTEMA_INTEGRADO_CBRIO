@@ -26,10 +26,15 @@ const EDITAVEIS = ['rascunho', 'agendado'];
 
 function validarSegmento(seg) {
   if (!seg || typeof seg !== 'object') return { tipo: 'todos' };
-  const tipo = ['todos', 'equipe', 'escala', 'manual'].includes(seg.tipo) ? seg.tipo : 'todos';
+  const tipo = ['todos', 'equipe', 'escala', 'manual', 'inscritos'].includes(seg.tipo) ? seg.tipo : 'todos';
   const limpo = { tipo };
   if (tipo === 'equipe') limpo.team_id = seg.team_id || null;
   if (tipo === 'escala') limpo.service_id = seg.service_id || null;
+  if (tipo === 'inscritos') {
+    const STATUS_OK = ['inscrito', 'enviado_ministerio', 'nao_responde', 'integrado'];
+    limpo.status = STATUS_OK.includes(seg.status) ? seg.status : 'inscrito';
+    if (seg.area) limpo.area = String(seg.area).toLowerCase();
+  }
   if (tipo === 'manual') {
     limpo.vol_profile_ids = (Array.isArray(seg.vol_profile_ids) ? seg.vol_profile_ids : [])
       .filter(id => typeof id === 'string' && id)
@@ -277,10 +282,11 @@ router.delete('/:id', async (req, res) => {
 router.post('/resolver-destinatarios', async (req, res) => {
   try {
     const segmento = validarSegmento(req.body?.segmento);
-    const { destinatarios, sem_email } = await resolverSegmento(segmento);
+    const { destinatarios, sem_email, sem_email_lista } = await resolverSegmento(segmento);
     res.json({
       total: destinatarios.length,
       sem_email,
+      sem_email_lista: sem_email_lista || [],
       lista: destinatarios.map((d) => ({ nome: d.nome, email: d.email })),
     });
   } catch (e) {
@@ -480,6 +486,48 @@ router.post('/:id/cancelar', async (req, res) => {
   } catch (e) {
     console.error('[volEmails] cancelar:', e.message);
     res.status(500).json({ error: 'Erro ao cancelar disparo' });
+  }
+});
+
+// POST /:id/reenviar-erros — recoloca os destinatários com status 'erro' na fila
+// (erro→pendente) e re-dispara. Útil pra blips transitórios do Graph.
+router.post('/:id/reenviar-erros', async (req, res) => {
+  try {
+    const { data: disparo } = await supabase
+      .from('vol_email_disparos')
+      .select('id, status')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!disparo) return res.status(404).json({ error: 'Disparo não encontrado' });
+    if (!['enviado', 'erro', 'enviando'].includes(disparo.status)) {
+      return res.status(409).json({ error: `Disparo "${disparo.status}" não tem envio pra reprocessar` });
+    }
+
+    const { data: resetados, error: rErr } = await supabase
+      .from('vol_email_disparo_destinatarios')
+      .update({ status: 'pendente', erro_msg: null, enviado_em: null })
+      .eq('disparo_id', disparo.id)
+      .eq('status', 'erro')
+      .select('id');
+    if (rErr) throw rErr;
+    if (!resetados?.length) return res.status(400).json({ error: 'Nenhum destinatário com erro pra reenviar' });
+
+    await supabase
+      .from('vol_email_disparos')
+      .update({ status: 'enviando' })
+      .eq('id', disparo.id);
+
+    const r = await drenarDisparos({ budgetMs: 240000, apenasDisparoId: disparo.id });
+    const { data: atual } = await supabase
+      .from('vol_email_disparos')
+      .select('*')
+      .eq('id', disparo.id)
+      .single();
+    res.json({ ...atual, reprocessados: resetados.length, drain: r });
+  } catch (e) {
+    console.error('[volEmails] reenviar-erros:', e.message);
+    res.status(500).json({ error: 'Erro ao reenviar os que falharam' });
   }
 });
 

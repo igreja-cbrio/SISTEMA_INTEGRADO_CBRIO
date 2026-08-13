@@ -50,9 +50,10 @@ export type VolEmailDisparo = {
   assunto: string;
   corpo_html: string;
   segmento: {
-    tipo: 'todos' | 'equipe' | 'escala' | 'manual';
+    tipo: 'todos' | 'equipe' | 'escala' | 'manual' | 'inscritos';
     team_id?: string | null;
     service_id?: string | null;
+    status?: string | null;
     vol_profile_ids?: string[];
   };
   incluir_assinatura?: boolean;
@@ -67,10 +68,18 @@ export type VolEmailDisparo = {
 };
 
 type Props = { disparo: VolEmailDisparo | null; onVoltar: () => void };
-type SegTipo = 'todos' | 'equipe' | 'escala' | 'manual';
+type SegTipo = 'todos' | 'equipe' | 'escala' | 'manual' | 'inscritos';
+
+// Status do funil de inscrição (vol_inscricoes.status) que fazem sentido pra e-mail.
+const INSCRICAO_STATUS: { value: string; label: string }[] = [
+  { value: 'inscrito', label: 'Inscritos (aguardando alocação)' },
+  { value: 'enviado_ministerio', label: 'Enviados ao ministério' },
+  { value: 'nao_responde', label: 'Não responderam' },
+  { value: 'integrado', label: 'Integrados' },
+];
 type TeamOpt = { id: string; name: string };
 type ServiceOpt = { id: string; name: string; scheduled_at: string };
-type ResolucaoDest = { total: number; sem_email: number; lista: { nome: string | null; email: string }[] };
+type ResolucaoDest = { total: number; sem_email: number; lista: { nome: string | null; email: string }[]; sem_email_lista?: { nome: string | null; motivo: string }[] };
 type PoolVol = { id: string; full_name: string; email: string | null };
 
 function msgErro(e: unknown, fallback: string): string {
@@ -98,9 +107,12 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
   const [segTeamId, setSegTeamId] = useState<string>(disparo?.segmento?.team_id || '');
   const [segServiceId, setSegServiceId] = useState<string>(disparo?.segmento?.service_id || '');
   const [segIds, setSegIds] = useState<string[]>(disparo?.segmento?.vol_profile_ids || []);
+  const [segStatus, setSegStatus] = useState<string>(disparo?.segmento?.status || 'inscrito');
   const [incluirAssinatura, setIncluirAssinatura] = useState(disparo?.incluir_assinatura !== false);
   const [verListaOpen, setVerListaOpen] = useState(false);
   const [buscaLista, setBuscaLista] = useState('');
+  const [verSemEmailOpen, setVerSemEmailOpen] = useState(false);
+  const [buscaSemEmail, setBuscaSemEmail] = useState('');
   const [selecionarOpen, setSelecionarOpen] = useState(false);
   const [buscaSelecao, setBuscaSelecao] = useState('');
   const [assinaturaOpen, setAssinaturaOpen] = useState(false);
@@ -133,13 +145,15 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
     ...(segTipo === 'equipe' ? { team_id: segTeamId || null } : {}),
     ...(segTipo === 'escala' ? { service_id: segServiceId || null } : {}),
     ...(segTipo === 'manual' ? { vol_profile_ids: segIds } : {}),
+    ...(segTipo === 'inscritos' ? { status: segStatus } : {}),
   });
 
   const segmentoValido =
     segTipo === 'todos' ||
     (segTipo === 'equipe' && segTeamId) ||
     (segTipo === 'escala' && segServiceId) ||
-    (segTipo === 'manual' && segIds.length > 0);
+    (segTipo === 'manual' && segIds.length > 0) ||
+    (segTipo === 'inscritos' && !!segStatus);
 
   // Equipes (com id) e cultos futuros pro seletor de segmento
   const { data: teams = [] } = useQuery<TeamOpt[]>({
@@ -500,10 +514,25 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
                     <SelectItem value="todos">Todos os voluntários</SelectItem>
                     <SelectItem value="equipe">Uma equipe</SelectItem>
                     <SelectItem value="escala">Escalados de um culto</SelectItem>
+                    <SelectItem value="inscritos">Inscritos (por status do funil)</SelectItem>
                     <SelectItem value="manual">Escolher voluntários</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+
+              {segTipo === 'inscritos' && (
+                <div>
+                  <Label>Status da inscrição</Label>
+                  <Select value={segStatus} onValueChange={setSegStatus}>
+                    <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {INSCRICAO_STATUS.map((s) => (
+                        <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               {segTipo === 'manual' && (
                 <Button variant="outline" className="w-full" onClick={() => setSelecionarOpen(true)}>
@@ -562,9 +591,13 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
                       </button>
                     )}
                     {destinatarios.sem_email > 0 && (
-                      <span className="block text-xs text-muted-foreground mt-0.5">
+                      <button
+                        type="button"
+                        className="block text-xs text-muted-foreground underline underline-offset-2 mt-0.5 hover:text-foreground"
+                        onClick={() => { setBuscaSemEmail(''); setVerSemEmailOpen(true); }}
+                      >
                         {destinatarios.sem_email} sem e-mail cadastrado ficam de fora
-                      </span>
+                      </button>
                     )}
                   </>
                 ) : null}
@@ -776,6 +809,46 @@ export default function VolEmailComposer({ disparo, onVoltar }: Props) {
                   <span className="text-xs text-muted-foreground truncate">{d.email}</span>
                 </div>
               ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Dialog · quem ficou de fora (sem e-mail) ── */}
+      <Dialog open={verSemEmailOpen} onOpenChange={setVerSemEmailOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Sem e-mail cadastrado ({destinatarios?.sem_email ?? 0})</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground -mt-1">
+            Estes voluntários não recebem o e-mail porque não têm um e-mail válido no cadastro.
+            Cadastre o e-mail no perfil (ou use "Buscar e-mails no Planning Center") pra incluí-los.
+          </p>
+          <div className="relative">
+            <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={buscaSemEmail}
+              onChange={(e) => setBuscaSemEmail(e.target.value)}
+              placeholder="Buscar por nome…"
+              className="pl-9"
+            />
+          </div>
+          <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-border divide-y divide-border/60">
+            {(destinatarios?.sem_email_lista || [])
+              .filter((d) => {
+                const q = buscaSemEmail.trim().toLowerCase();
+                return !q || (d.nome || '').toLowerCase().includes(q);
+              })
+              .map((d, i) => (
+                <div key={`${d.nome ?? 'sem-nome'}-${i}`} className="px-3 py-2 text-sm flex items-center justify-between gap-3">
+                  <span className="truncate">{d.nome || '(sem nome)'}</span>
+                  <span className="text-xs text-muted-foreground truncate shrink-0">{d.motivo}</span>
+                </div>
+              ))}
+            {!(destinatarios?.sem_email_lista || []).length && (
+              <div className="px-3 py-4 text-sm text-muted-foreground text-center">
+                Nada a mostrar.
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

@@ -4,7 +4,12 @@
 // Uma lista corrida com TUDO que quer entrar em grupo, ordenada por data:
 //  · pedido de inscrição — a pessoa escolheu um grupo no form/QR (sem label);
 //  · pessoa direcionada pelo NEXT — ainda sem grupo definido (label "Next";
-//    precisa de contato + devolutiva; "engajou" matricula direto no grupo).
+//    precisa de contato + devolutiva; "engajou" matricula direto no grupo);
+//  · NOVO LÍDER/ANFITRIÃO — candidatura do form público /inscricao-lideres
+//    (Marcos 17/07). Fluxo assistido, SEM WhatsApp: aceitar/recusar e, no
+//    aceite, vincular a um grupo existente (como MAIS UM líder/anfitrião/
+//    líder em treinamento — nunca substitui o líder principal) ou criar um
+//    grupo novo já com a pessoa de líder (abre o form de grupo pré-preenchido).
 // Sem sub-abas nem botões de status: coluna de Status + filtros discretos
 // (origem · status · período · busca) e ações na própria linha expandida.
 //
@@ -18,6 +23,8 @@ import { Input } from '../../components/ui/input';
 import { toast } from 'sonner';
 import { Check, X, Mail, Phone, Search, ChevronDown, ChevronRight, Inbox } from 'lucide-react';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
+// Janela do período (lista + painel + rótulo leem a MESMA) · ver src/lib/janelaPeriodo.js
+import { FILTRO_PERIODO, resolverJanela } from '../../lib/janelaPeriodo';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -46,6 +53,14 @@ const STATUS_ROW = {
   enc_em_duvida: { label: 'Em dúvida', cor: C.amber, bg: C.amberBg },
   enc_engajou: { label: 'Engajou', cor: C.green, bg: C.greenBg },
   enc_sem_interesse: { label: 'Sem interesse', cor: C.t3, bg: C.bg },
+  // Candidaturas de líder/anfitrião (form /inscricao-lideres)
+  lid_pendente: { label: 'Novo · a conversar', cor: C.amber, bg: C.amberBg },
+  lid_aceito: { label: 'Aceito · a vincular', cor: C.blue, bg: C.blueBg },
+  lid_vinculado: { label: 'Vinculado', cor: C.green, bg: C.greenBg },
+  lid_recusado: { label: 'Recusado', cor: C.red, bg: C.redBg },
+  // Renovação de temporada — líder respondeu que NÃO continua (triagem)
+  ren_nao_continua: { label: 'Líder não continua', cor: C.red, bg: C.redBg },
+  ren_triada: { label: 'Renovação triada', cor: C.green, bg: C.greenBg },
 };
 
 // Filtro de status agrupa os dois ciclos num vocabulário só. Rótulo curto na
@@ -56,18 +71,21 @@ const FILTRO_STATUS = [
   { key: 'devolvido', label: 'Recusados (na triagem)', casa: ['devolvido'] },
   { key: 'encaminhado', label: 'Encaminhados', casa: ['encaminhado'] },
   { key: 'a_contatar', label: 'Next · a contatar', casa: ['enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida'] },
-  { key: 'aprovado', label: 'Aprovados / engajaram', casa: ['aprovado', 'resolvido', 'enc_engajou'] },
-  { key: 'rejeitado', label: 'Rejeitados / sem interesse', casa: ['rejeitado', 'cancelado', 'enc_sem_interesse'] },
+  { key: 'lideres_decidir', label: 'Novos líderes · a decidir', casa: ['lid_pendente', 'lid_aceito'] },
+  { key: 'renovacao_triagem', label: 'Renovação · líder não continua', casa: ['ren_nao_continua'] },
+  { key: 'aprovado', label: 'Aprovados / engajaram', casa: ['aprovado', 'resolvido', 'enc_engajou', 'lid_vinculado'] },
+  { key: 'rejeitado', label: 'Rejeitados / sem interesse', casa: ['rejeitado', 'cancelado', 'enc_sem_interesse', 'lid_recusado'] },
 ];
 
-const FILTRO_PERIODO = [
-  { dias: 30, label: 'Últimos 30 dias' },
-  { dias: 60, label: 'Últimos 60 dias' },
-  { dias: 90, label: 'Últimos 90 dias' },
-  { dias: 180, label: 'Últimos 180 dias' },
-  { dias: 365, label: 'Último ano' },
-  { dias: 1825, label: 'Últimos 5 anos' },
+// Funções possíveis do vínculo do novo líder num grupo EXISTENTE — entra como
+// MAIS UM no roster; o líder principal (quem recebe o WhatsApp de aprovação)
+// só muda se a equipe trocar na tela do grupo (Marcos · 17/07).
+const FUNCOES_VINCULO = [
+  { key: 'lider', label: 'Líder (mais um líder do grupo)' },
+  { key: 'anfitriao', label: 'Anfitrião (cede a casa)' },
+  { key: 'lider_treinamento', label: 'Líder em treinamento' },
 ];
+
 
 // Motivos prontos pra sugestão de outro grupo — é a frase que a PESSOA recebe
 // no WhatsApp (o motivo interno do líder nunca sai do sistema).
@@ -86,6 +104,22 @@ const DEVOLUTIVAS = [
 
 const CANAIS = ['WhatsApp', 'Ligação', 'Pessoalmente'];
 
+// Origem do pedido de inscrição (mem_grupo_pedidos.origem) → rótulo legível.
+// A pessoa se inscreveu por algum canal; a coluna Origem mostra qual. Fallback
+// humaniza qualquer valor novo (capitaliza + troca _ por espaço).
+const ORIGEM_PEDIDO = {
+  formulario_publico: 'Formulário',
+  cadastro_interno: 'Cadastro manual',
+  app: 'App',
+  membresia_totem: 'Totem',
+  totem: 'Totem',
+  mapa: 'Mapa',
+};
+const labelOrigemPedido = (o) => {
+  if (!o) return null;
+  return ORIGEM_PEDIDO[o] || (o.charAt(0).toUpperCase() + o.slice(1).replace(/_/g, ' '));
+};
+
 const selStyle = {
   padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`,
   fontSize: 12.5, background: 'var(--cbrio-input-bg)', color: C.text, minWidth: 150,
@@ -93,15 +127,27 @@ const selStyle = {
 
 const fmtData = (d) => { try { return new Date(d).toLocaleDateString('pt-BR'); } catch { return ''; } };
 
-export default function GruposEntrada({ podeEditar = false, onMudou }) {
+export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrupoParaLider, reloadKey = 0 }) {
   const [pedidos, setPedidos] = useState([]);
   const [encs, setEncs] = useState([]);
+  const [lideresInsc, setLideresInsc] = useState([]);
+  const [renovacoes, setRenovacoes] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const [busca, setBusca] = useState('');
   const [fOrigem, setFOrigem] = useState('todas');   // todas | inscricao | next
   const [fStatus, setFStatus] = useState('todos');
   const [fPeriodo, setFPeriodo] = useState(180);
+  // Temporada ativa — resolve a opção "Temporada atual" do filtro de período.
+  const [temporadaAtiva, setTemporadaAtiva] = useState(null);
+  // Retrato do período (a varredura do lançamento trazida pra dentro do sistema)
+  const [soContatoRuim, setSoContatoRuim] = useState(false);
+  const [painelAberto, setPainelAberto] = useState(false);
+  const [cobertura, setCobertura] = useState(null); // lazy: só quando abre o painel
+  // "Líderes · quem falta responder" (pedido da Naná/Nélio 04/08): conferência
+  // da lista (quem respondeu × quem não) + pedidos parados aguardando o líder.
+  const [lideresAberto, setLideresAberto] = useState(false);
+  const [confPainel, setConfPainel] = useState(null); // lazy: só quando abre o bloco
 
   const [expandedId, setExpandedId] = useState(null);
   // Sub-painéis da linha de PEDIDO (mesma máquina do fluxo aprovar/recusar/sugerir)
@@ -119,6 +165,13 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
   const [devObs, setDevObs] = useState('');
   const [devGrupoId, setDevGrupoId] = useState('');
   const [salvandoDev, setSalvandoDev] = useState(false);
+  // Sub-painéis da linha de NOVO LÍDER/ANFITRIÃO
+  const [lidRecusandoId, setLidRecusandoId] = useState(null);
+  const [lidMotivoRec, setLidMotivoRec] = useState('');
+  const [lidVinculandoId, setLidVinculandoId] = useState(null);
+  const [lidVincGrupoId, setLidVincGrupoId] = useState('');
+  const [lidVincFuncao, setLidVincFuncao] = useState('lider');
+  const [lidAcaoLoading, setLidAcaoLoading] = useState(false);
   // Aprovação em lote (renovações chegam em bloco)
   const [selected, setSelected] = useState(() => new Set());
   const [batchLoading, setBatchLoading] = useState(false);
@@ -140,25 +193,81 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
     }
   };
 
+  // Temporada ativa, uma vez. Falha silenciosa: sem ela a opção "Temporada
+  // atual" cai em 30 dias (ver janela) e o resto da aba segue igual.
+  useEffect(() => {
+    let vivo = true;
+    api.temporadas()
+      .then(rows => {
+        if (!vivo || !Array.isArray(rows)) return;
+        const ativa = rows.find(t => t.ativa) || rows.find(t => t.inscricoes_abertas)
+          || [...rows].sort((a, b) => String(b.data_inicio || '').localeCompare(String(a.data_inicio || '')))[0];
+        setTemporadaAtiva(ativa || null);
+      })
+      .catch(() => {});
+    return () => { vivo = false; };
+  }, []);
+
+  // Janela do período — fonte ÚNICA (lista, painel e rótulo). A lógica e o
+  // porquê estão em src/lib/janelaPeriodo.js, com teste.
+  const janela = useMemo(
+    () => resolverJanela({ fPeriodo, temporada: temporadaAtiva }),
+    [fPeriodo, temporadaAtiva]
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const desde = new Date(Date.now() - fPeriodo * 86400000).toISOString();
-      const [peds, encRows] = await Promise.all([
+      const desde = new Date(janela.desdeMs).toISOString();
+      const [peds, encRows, lidRows, renRows] = await Promise.all([
         api.listarPedidos({ desde }),
         encApi.list({ destino: 'grupos' }).catch(() => []),
+        // Terceira origem: candidaturas de líder/anfitrião (falha silenciosa
+        // enquanto a migration não estiver aplicada — a caixa segue de pé).
+        api.liderInscricoes.list({ desde }).catch(() => []),
+        // Quarta origem: renovação de temporada — líderes que responderam que
+        // NÃO continuam (aguardando triagem). Mesma tolerância a migration.
+        api.renovacao.painel({ status: 'nao_continua' }).then(r => r?.rows || []).catch(() => []),
       ]);
       setPedidos(Array.isArray(peds) ? peds : []);
       setEncs(Array.isArray(encRows) ? encRows : []);
+      setLideresInsc(Array.isArray(lidRows) ? lidRows : []);
+      setRenovacoes(Array.isArray(renRows) ? renRows : []);
       setSelected(new Set());
     } catch {
       toast.error('Erro ao carregar a caixa de entrada');
     } finally {
       setLoading(false);
     }
-  }, [fPeriodo]);
+  }, [janela.desdeMs]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, reloadKey]);
+
+  // Cobertura (quais grupos NÃO receberam pedido) — só quando o painel abre, e
+  // refaz quando o período muda. Falha silenciosa: o painel abre sem esse bloco.
+  useEffect(() => {
+    if (!painelAberto) return;
+    let vivo = true;
+    const desde = new Date(janela.desdeMs).toISOString();
+    api.entradaCobertura({ desde })
+      .then(r => { if (vivo) setCobertura(r || null); })
+      .catch(() => { if (vivo) setCobertura(null); });
+    return () => { vivo = false; };
+  }, [painelAberto, janela.desdeMs]);
+
+  // Painel da conferência (quem respondeu × quem falta) — reusa o MESMO
+  // endpoint do card da aba Envios; lazy, só quando o bloco de líderes abre.
+  useEffect(() => {
+    if (!lideresAberto || confPainel) return;
+    let vivo = true;
+    // ⚠️ `api` AQUI já É o namespace grupos (import { grupos as api }) — chamar
+    // api.grupos.confira quebrou em prod ("reading 'confira'") no 1º clique.
+    api.confira.painel()
+      .then(r => { if (vivo) setConfPainel(r || { disponivel: false }); })
+      .catch(() => { if (vivo) setConfPainel({ disponivel: false }); });
+    return () => { vivo = false; };
+  }, [lideresAberto, confPainel]);
+
 
   const depois = () => { setEventosCache({}); load(); onMudou?.(); };
 
@@ -167,7 +276,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
   // os cards do resumo leem daqui (retrato por status do conjunto filtrado ·
   // Marcos 14/07) — assim, filtrar um status não zera os outros cards.
   const rowsBase = useMemo(() => {
-    const desdeMs = Date.now() - fPeriodo * 86400000;
+    const desdeMs = janela.desdeMs;
     const lista = [];
     for (const p of pedidos) {
       lista.push({
@@ -176,6 +285,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
         // Cancelado porque a pessoa entrou em OUTRO grupo → "Aprovada em outro grupo"
         statusKey: p.status === 'cancelado' && p.resolvido_grupo_id ? 'resolvido' : p.status,
         veioNext: p.veio_next === true,
+        origem: p.origem || null,
         grupoNome: p.mem_grupos?.nome || null, grupoCodigo: p.mem_grupos?.codigo || null,
         raw: p,
       });
@@ -193,12 +303,38 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
         raw: e,
       });
     }
+    for (const l of lideresInsc) {
+      lista.push({
+        tipo: 'lider', key: `l_${l.id}`, data: l.created_at,
+        nome: l.nome, telefone: l.telefone, email: l.email,
+        statusKey: `lid_${l.status || 'pendente'}`,
+        veioNext: false,
+        // Vinculado mostra o grupo em que a pessoa entrou
+        grupoNome: l.mem_grupos?.nome || null, grupoCodigo: l.mem_grupos?.codigo || null,
+        raw: l,
+      });
+    }
+    for (const r of renovacoes) {
+      if (!r.renovacao) continue;
+      const quando = r.renovacao.ultima_resposta_em || r.renovacao.enviado_em;
+      if (quando && new Date(quando).getTime() < desdeMs) continue;
+      lista.push({
+        tipo: 'renov', key: `r_${r.renovacao.id}`, data: quando,
+        nome: r.lider_nome || 'Líder', telefone: r.lider_telefone, email: null,
+        statusKey: `ren_${r.renovacao.status}`,
+        veioNext: false,
+        grupoNome: r.grupo_nome || null, grupoCodigo: r.grupo_codigo || null,
+        raw: r,
+      });
+    }
 
     const s = busca.trim().toLowerCase();
     return lista
       .filter(r => {
         if (fOrigem === 'next' && !r.veioNext) return false;
         if (fOrigem === 'inscricao' && (r.tipo !== 'pedido' || r.veioNext)) return false;
+        if (fOrigem === 'lideres' && r.tipo !== 'lider') return false;
+        if (fOrigem === 'renovacao' && r.tipo !== 'renov') return false;
         if (s) {
           const alvo = [r.nome, r.telefone, r.email, r.grupoNome, r.grupoCodigo].filter(Boolean).join(' ').toLowerCase();
           if (!alvo.includes(s)) return false;
@@ -206,12 +342,43 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
         return true;
       })
       .sort((a, b) => new Date(b.data) - new Date(a.data));
-  }, [pedidos, encs, busca, fOrigem, fPeriodo]);
+  }, [pedidos, encs, lideresInsc, renovacoes, busca, fOrigem, janela.desdeMs]);
+
+  // Pedidos parados aguardando o LÍDER decidir — derivado das mesmas linhas da
+  // tela (segue origem/período/busca · "não existirem duas verdades"). O nome
+  // do líder já vem no pedido (mem_grupos → mem_membros!lider_id). ⚠️ Declarado
+  // DEPOIS de rowsBase (deps de hook avaliam no render — lição TDZ de 28/07).
+  const aprovacoesParadas = useMemo(() => {
+    const porGrupo = new Map();
+    for (const r of rowsBase) {
+      if (r.tipo !== 'pedido' || r.statusKey !== 'pendente') continue;
+      const p = r.raw;
+      const gid = p.grupo_id || p.mem_grupos?.id;
+      if (!gid) continue;
+      const g = porGrupo.get(gid) || {
+        grupoId: gid,
+        grupo: p.mem_grupos?.nome || 'Grupo',
+        codigo: p.mem_grupos?.codigo || null,
+        lider: p.mem_grupos?.mem_membros?.nome || null,
+        n: 0, maisAntigoMs: Infinity,
+      };
+      g.n += 1;
+      const t = new Date(r.data).getTime();
+      if (t < g.maisAntigoMs) g.maisAntigoMs = t;
+      porGrupo.set(gid, g);
+    }
+    // Mais antigo primeiro — é onde a coordenação precisa cutucar.
+    return [...porGrupo.values()].sort((a, b) => a.maisAntigoMs - b.maisAntigoMs);
+  }, [rowsBase]);
 
   const rows = useMemo(() => {
     const bucket = FILTRO_STATUS.find(f => f.key === fStatus)?.casa || null;
-    return bucket ? rowsBase.filter(r => bucket.includes(r.statusKey)) : rowsBase;
-  }, [rowsBase, fStatus]);
+    let out = bucket ? rowsBase.filter(r => bucket.includes(r.statusKey)) : rowsBase;
+    // Filtro do card "Contato impossível" — clicar no número leva à lista de
+    // quem precisa ser procurado por e-mail.
+    if (soContatoRuim) out = out.filter(r => r.tipo === 'pedido' && r.raw?.contato_status?.ok === false);
+    return out;
+  }, [rowsBase, fStatus, soContatoRuim]);
 
   // ── Cards do resumo — derivados das linhas filtradas (substitui o
   // GET /pedidos/resumo global, que ignorava os filtros e contava "Recusados
@@ -239,13 +406,63 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
         nDecididos += 1;
       }
     }
+    // ── Retrato do período (varredura do lançamento 02/08 trazida pra cá) ──
+    // PESSOA ≠ PEDIDO: 176 pedidos do domingo eram 160 pessoas (14 pediram 2+
+    // grupos, e um dos devolvidos foi justamente alguém que se inscreveu duas
+    // vezes sem perceber). Âncora da pessoa: membro > cadastro pendente >
+    // telefone (mesma régua do contrato de porta).
+    const pessoas = new Map();
+    let contatoRuim = 0, semTelefone = 0, antesDaTemporada = 0;
+    let liderAvisado = 0, liderFalhou = 0, pessoaAvisada = 0, pessoaFalhou = 0;
+    const porGrupo = new Map();
+    const porDia = new Map();
+    for (const r of rowsBase) {
+      if (r.tipo !== 'pedido') continue;
+      const p = r.raw;
+      const chave = p.membro_id ? `m:${p.membro_id}`
+        : p.cadastro_pendente_id ? `c:${p.cadastro_pendente_id}`
+        : `t:${String(p.telefone || '').replace(/\D/g, '')}`;
+      const ja = pessoas.get(chave);
+      if (ja) ja.pedidos += 1;
+      else pessoas.set(chave, { pedidos: 1, nova: p.pessoa_nova });
+
+      if (p.contato_status?.motivo === 'sem_telefone') semTelefone += 1;
+      else if (p.contato_status && p.contato_status.ok === false) contatoRuim += 1;
+
+      if (p.avisos?.lider === 'falhou') liderFalhou += 1;
+      else if (p.avisos?.lider) liderAvisado += 1;
+      if (p.avisos?.pessoa === 'falhou') pessoaFalhou += 1;
+      else if (p.avisos?.pessoa) pessoaAvisada += 1;
+
+      const gk = p.mem_grupos?.codigo || p.grupo_id;
+      if (gk) {
+        const g = porGrupo.get(gk) || { codigo: p.mem_grupos?.codigo || '?', nome: p.mem_grupos?.nome || '?', n: 0 };
+        g.n += 1; porGrupo.set(gk, g);
+      }
+      const d = String(r.data || '').slice(0, 10);
+      if (d) porDia.set(d, (porDia.get(d) || 0) + 1);
+      if (janela.temporadaIni && d && d < janela.temporadaIni) antesDaTemporada += 1;
+    }
+    const lista = [...pessoas.values()];
     return {
       hoje, pendentes, pend24, pend72,
       recusados: devolvidos + rejeitados, devolvidos,
       aprovados,
       tempoMedioHoras: nDecididos ? Math.round((somaDecisaoMs / nDecididos / 36e5) * 10) / 10 : null,
+      // retrato
+      pedidos: lista.reduce((a, x) => a + x.pedidos, 0),
+      pessoas: lista.length,
+      novas: lista.filter(x => x.nova === true).length,
+      jaExistiam: lista.filter(x => x.nova === false).length,
+      semSaber: lista.filter(x => x.nova == null).length,
+      multiGrupo: lista.filter(x => x.pedidos > 1).length,
+      contatoRuim, semTelefone, antesDaTemporada,
+      liderAvisado, liderFalhou, pessoaAvisada, pessoaFalhou,
+      topGrupos: [...porGrupo.values()].sort((a, b) => b.n - a.n).slice(0, 8),
+      gruposComPedido: porGrupo.size,
+      porDia: [...porDia.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-14),
     };
-  }, [rowsBase]);
+  }, [rowsBase, janela.temporadaIni]);
 
   const { pageItems, paginacaoProps } = usePaginacaoLocal(rows, 50);
 
@@ -256,7 +473,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
   };
 
   // Envelhecimento das linhas que precisam de ação
-  const PRECISA_ACAO = ['pendente', 'devolvido', 'enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida'];
+  const PRECISA_ACAO = ['pendente', 'devolvido', 'enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida', 'lid_pendente', 'lid_aceito', 'ren_nao_continua'];
   const idadeDe = (r) => {
     if (!PRECISA_ACAO.includes(r.statusKey)) return null;
     const horas = (Date.now() - new Date(r.data)) / 36e5;
@@ -287,6 +504,21 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
       setRejectingId(null); setMotivoRej('');
       depois();
     } catch (e) { toast.error(e.message || 'Erro ao rejeitar'); }
+  };
+
+  // Aprovação "por cima" da triagem (Marcos · 05/08): aceita a pessoa mesmo com
+  // o pedido recusado/devolvido (erro humano de recusa é frequente) e permite
+  // trocar o grupo na mesma ação, sem passar pelo link do líder nem pelo aceite
+  // da pessoa. Devolve true pro painel fechar o formulário embutido.
+  const aprovarDireto = async (p, grupoId) => {
+    try {
+      await api.aprovarPedidoDireto(p.id, grupoId || null);
+      toast.success(grupoId && grupoId !== p.grupo_id
+        ? 'Pessoa aprovada no grupo escolhido'
+        : 'Pedido aprovado');
+      depois();
+      return true;
+    } catch (e) { toast.error(e.message || 'Erro ao aprovar'); return false; }
   };
 
   const carregarGrupos = async () => {
@@ -352,6 +584,48 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
     finally { setSalvandoDev(false); }
   };
 
+  // ── Ações · NOVO LÍDER/ANFITRIÃO (fluxo assistido · sem WhatsApp) ──
+  const aceitarLider = async (insc) => {
+    if (!confirm(`Aceitar a inscrição de ${insc.nome}? (Nada é enviado à pessoa — o contato é seu.)`)) return;
+    setLidAcaoLoading(true);
+    try {
+      await api.liderInscricoes.aceitar(insc.id);
+      toast.success('Inscrição aceita — agora vincule a pessoa a um grupo');
+      depois();
+    } catch (e) { toast.error(e.message || 'Erro ao aceitar'); }
+    finally { setLidAcaoLoading(false); }
+  };
+
+  const recusarLider = async (insc) => {
+    setLidAcaoLoading(true);
+    try {
+      await api.liderInscricoes.recusar(insc.id, lidMotivoRec.trim() || null);
+      toast.success('Inscrição recusada (registro interno — a pessoa não é notificada)');
+      setLidRecusandoId(null); setLidMotivoRec('');
+      depois();
+    } catch (e) { toast.error(e.message || 'Erro ao recusar'); }
+    finally { setLidAcaoLoading(false); }
+  };
+
+  const abrirVinculoLider = (insc) => {
+    setLidVinculandoId(insc.id); setLidRecusandoId(null);
+    setLidVincGrupoId('');
+    setLidVincFuncao(insc.quer_lider ? 'lider' : 'anfitriao');
+    carregarGrupos();
+  };
+
+  const vincularLider = async (insc) => {
+    if (!lidVincGrupoId) return;
+    setLidAcaoLoading(true);
+    try {
+      const r = await api.liderInscricoes.vincular(insc.id, lidVincGrupoId, lidVincFuncao);
+      toast.success(`${insc.nome} vinculado ao grupo ${r?.grupo?.nome || ''}`);
+      setLidVinculandoId(null); setLidVincGrupoId('');
+      depois();
+    } catch (e) { toast.error(e.message || 'Erro ao vincular'); }
+    finally { setLidAcaoLoading(false); }
+  };
+
   // ── Aprovação em lote (só pedidos pendentes) ──
   const pendentesVisiveis = rows.filter(r => r.tipo === 'pedido' && r.statusKey === 'pendente');
   const todosSelecionados = pendentesVisiveis.length > 0 && pendentesVisiveis.every(r => selected.has(r.raw.id));
@@ -390,8 +664,10 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
     const abrir = expandedId !== r.key;
     setExpandedId(abrir ? r.key : null);
     setRejectingId(null); setSugerindoId(null);
+    setLidRecusandoId(null); setLidVinculandoId(null);
     if (abrir && r.tipo === 'enc') abrirDevolutiva(r);
     if (abrir && r.tipo === 'pedido') { carregarGrupos(); carregarEventos(r.raw.id); }
+    if (abrir && r.tipo === 'lider') carregarGrupos();
   };
 
   return (
@@ -422,6 +698,242 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
               : estat.tempoMedioHoras < 48 ? `${estat.tempoMedioHoras}h`
               : `${Math.round(estat.tempoMedioHoras / 24)} dias`}
           />
+          {/* Contato impossível: clicável, porque é o único card que gera AÇÃO
+              (procurar a pessoa por e-mail). Só aparece quando há caso. */}
+          {estat.contatoRuim > 0 && (
+            <ResumoCard
+              titulo="Contato impossível"
+              valor={estat.contatoRuim}
+              destaque={soContatoRuim ? 'filtrando — clique pra limpar' : 'número errado — clique pra ver'}
+              corDestaque={C.red}
+              onClick={() => setSoContatoRuim(v => !v)}
+              ativo={soContatoRuim}
+            />
+          )}
+        </div>
+      )}
+
+      {/* ── Retrato do período ────────────────────────────────────────────────
+          A varredura que eu fazia no banco, agora dentro do sistema. Segue os
+          MESMOS filtros dos cards (origem, período, busca) pra não existirem
+          duas verdades na mesma tela. */}
+      {!loading && estat.pedidos > 0 && (
+        <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 14, marginBottom: 14, overflow: 'hidden' }}>
+          <button
+            onClick={() => setPainelAberto(v => !v)}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+              background: 'transparent', border: 0, cursor: 'pointer', color: C.text,
+              fontSize: 13, fontWeight: 700, textAlign: 'left',
+            }}
+          >
+            {painelAberto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            {/* ⚠️ O período TEM que aparecer no título. Sem isso o Marcos leu os
+                301 pedidos de 180 dias como se fossem os do lançamento (que foram
+                177) — o rótulo genérico "Retrato do período" era a armadilha. */}
+            <span>Retrato · {janela.rotulo} <span style={{ fontWeight: 400, color: C.t3 }}>({fmtData(janela.desdeMs)} a hoje)</span></span>
+            <span style={{ fontWeight: 400, color: C.t3, fontSize: 12 }}>
+              · {estat.pedidos} pedido{estat.pedidos === 1 ? '' : 's'} de {estat.pessoas} pessoa{estat.pessoas === 1 ? '' : 's'}
+              {estat.novas > 0 && ` · ${estat.novas} nova${estat.novas === 1 ? '' : 's'} na plataforma`}
+            </span>
+          </button>
+
+          {/* Quando a janela pega pedido de ANTES da temporada atual, o total
+              mistura a operação de agora com a temporada passada (e com os
+              testes da demo). Diz isso e oferece o atalho. */}
+          {janela.temporadaIni && fPeriodo !== 'temporada' && estat.antesDaTemporada > 0 && (
+            <div style={{ padding: '0 14px 10px', fontSize: 11.5, color: C.amber, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'baseline' }}>
+              <span>
+                Inclui {estat.antesDaTemporada} pedido{estat.antesDaTemporada === 1 ? '' : 's'} de ANTES da temporada atual
+                {/* T12:00 · `new Date('2026-08-01')` é meia-noite UTC = 31/07 no Rio */}
+                (começou em {fmtData(`${janela.temporadaIni}T12:00:00`)}).
+              </span>
+              <button
+                type="button"
+                onClick={() => setFPeriodo('temporada')}
+                style={{ background: 'transparent', border: 0, padding: 0, color: C.primary, fontWeight: 700, cursor: 'pointer', font: 'inherit' }}
+              >
+                Ver só a temporada atual
+              </button>
+            </div>
+          )}
+
+          {painelAberto && (
+            <div style={{ padding: '0 14px 14px', display: 'grid', gap: 14 }}>
+              {/* Pessoas: pedido ≠ pessoa */}
+              <PainelBloco titulo="Pessoas">
+                <PainelLinha rotulo="Pedidos" valor={estat.pedidos} />
+                <PainelLinha rotulo="Pessoas distintas" valor={estat.pessoas} />
+                <PainelLinha rotulo="Novas na plataforma" valor={estat.novas} cor={C.green} />
+                <PainelLinha rotulo="Já estavam cadastradas" valor={estat.jaExistiam} />
+                {estat.semSaber > 0 && <PainelLinha rotulo="Não deu pra saber" valor={estat.semSaber} cor={C.t3} />}
+                {estat.multiGrupo > 0 && (
+                  <PainelLinha
+                    rotulo="Pediram 2+ grupos"
+                    valor={estat.multiGrupo}
+                    cor={C.amber}
+                    nota="pode ser engano — confirme antes de aprovar as duas"
+                  />
+                )}
+              </PainelBloco>
+
+              {/* Entregabilidade: a pergunta "o líder foi avisado?" */}
+              <PainelBloco titulo="As mensagens chegaram?">
+                <PainelLinha rotulo="Líder avisado" valor={estat.liderAvisado} />
+                {estat.liderFalhou > 0 && <PainelLinha rotulo="Aviso ao líder FALHOU" valor={estat.liderFalhou} cor={C.red} nota="o líder não recebeu o link" />}
+                <PainelLinha rotulo="Pessoa avisada" valor={estat.pessoaAvisada} />
+                {estat.pessoaFalhou > 0 && <PainelLinha rotulo="Aviso à pessoa FALHOU" valor={estat.pessoaFalhou} cor={C.red} />}
+                {estat.semTelefone > 0 && <PainelLinha rotulo="Sem telefone" valor={estat.semTelefone} cor={C.t3} />}
+                <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
+                  Casal conta 1 aviso ao líder (com os dois nomes), não 2.
+                </div>
+              </PainelBloco>
+
+              {/* Onde a procura aconteceu — e onde falta divulgar */}
+              <PainelBloco titulo="Por grupo">
+                {estat.topGrupos.map(g => (
+                  <PainelLinha key={g.codigo} rotulo={`${g.codigo} · ${g.nome}`} valor={g.n} />
+                ))}
+                {cobertura && (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--hairline)' }}>
+                    <PainelLinha
+                      rotulo="Grupos que receberam pedido"
+                      valor={`${cobertura.grupos_com_pedido} de ${cobertura.grupos_elegiveis}`}
+                    />
+                    {cobertura.sem_pedido?.length > 0 && (
+                      <>
+                        <PainelLinha
+                          rotulo="Sem nenhum pedido"
+                          valor={cobertura.sem_pedido.length}
+                          cor={C.amber}
+                          nota="onde vale reforçar a divulgação"
+                        />
+                        <div style={{ fontSize: 11, color: C.t2, lineHeight: 1.6, marginTop: 4 }}>
+                          {cobertura.sem_pedido.slice(0, 24).map(g => (
+                            <span key={g.id} style={{ display: 'inline-block', marginRight: 10 }}>
+                              {g.codigo} <span style={{ color: C.t3 }}>{(g.nome || '').slice(0, 34)}</span>
+                            </span>
+                          ))}
+                          {cobertura.sem_pedido.length > 24 && <span style={{ color: C.t3 }}>+{cobertura.sem_pedido.length - 24}…</span>}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </PainelBloco>
+
+              {/* Quando as pessoas se inscrevem — ajuda a escolher hora de divulgar */}
+              {estat.porDia.length > 1 && (
+                <PainelBloco titulo="Por dia">
+                  <PorDiaBarras dados={estat.porDia} />
+                </PainelBloco>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Líderes · quem falta responder (pedido da Naná/Nélio · 04/08) ──
+          Conferência da lista (respondeu × não respondeu · MESMO endpoint do
+          card da aba Envios) + pedidos parados aguardando o líder aprovar. */}
+      {!loading && (
+        <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 14, marginBottom: 14, overflow: 'hidden' }}>
+          <button
+            onClick={() => setLideresAberto(v => !v)}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
+              background: 'transparent', border: 0, cursor: 'pointer', color: C.text,
+              fontSize: 13, fontWeight: 700, textAlign: 'left',
+            }}
+          >
+            {lideresAberto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+            <span>Líderes · quem falta responder</span>
+            <span style={{ fontWeight: 400, color: C.t3, fontSize: 12 }}>
+              · conferência da lista + aprovações paradas
+              {aprovacoesParadas.length > 0 && (
+                <span style={{ color: C.amber, fontWeight: 700 }}>
+                  {' '}· {aprovacoesParadas.length} grupo{aprovacoesParadas.length === 1 ? '' : 's'} com pedido parado
+                </span>
+              )}
+            </span>
+          </button>
+
+          {lideresAberto && (
+            <div style={{ padding: '0 14px 14px', display: 'grid', gap: 14 }}>
+              <PainelBloco titulo="Conferência da lista — atualização cadastral">
+                {confPainel === null ? (
+                  <div style={{ fontSize: 12, color: C.t3 }}>Carregando…</div>
+                ) : confPainel.disponivel === false ? (
+                  <div style={{ fontSize: 12, color: C.amber }}>{confPainel.aviso || 'Painel indisponível.'}</div>
+                ) : (() => {
+                  const rowsC = confPainel.rows || [];
+                  const responderam = rowsC.filter(r => ['respondida', 'triada'].includes(r.conferencia?.status));
+                  const semResposta = rowsC.filter(r => r.conferencia?.status === 'enviada');
+                  const nuncaReceberam = rowsC.filter(r => !r.conferencia);
+                  const dias = (iso) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 864e5));
+                  return (
+                    <>
+                      <PainelLinha rotulo="Responderam (cadastro atualizado)" valor={responderam.length} cor={C.green} />
+                      <PainelLinha rotulo="Receberam e ainda não responderam" valor={semResposta.length} cor={semResposta.length > 0 ? C.amber : undefined} />
+                      <PainelLinha rotulo="Ainda não receberam o link" valor={nuncaReceberam.length} cor={C.t3} nota="disparo no card da aba Envios" />
+                      {semResposta.length > 0 && (
+                        <div style={{ fontSize: 11.5, color: C.t2, lineHeight: 1.7, marginTop: 6, paddingTop: 6, borderTop: '1px dashed var(--hairline)' }}>
+                          <div style={{ fontWeight: 700, color: C.amber, marginBottom: 2 }}>Faltam responder:</div>
+                          {semResposta.slice(0, 30).map(r => (
+                            <div key={r.grupo_id}>
+                              {r.lider_nome || 'Sem líder'} <span style={{ color: C.t3 }}>· {r.grupo_nome}</span>
+                              {r.conferencia?.enviado_em && <span style={{ color: C.t3 }}> · enviado há {dias(r.conferencia.enviado_em)}d</span>}
+                            </div>
+                          ))}
+                          {semResposta.length > 30 && <div style={{ color: C.t3 }}>+{semResposta.length - 30}…</div>}
+                        </div>
+                      )}
+                      {responderam.length > 0 && (
+                        <div style={{ fontSize: 11.5, color: C.t2, lineHeight: 1.7, marginTop: 6, paddingTop: 6, borderTop: '1px dashed var(--hairline)' }}>
+                          <div style={{ fontWeight: 700, color: C.green, marginBottom: 2 }}>Já atualizaram:</div>
+                          {responderam.slice(0, 30).map(r => (
+                            <div key={r.grupo_id}>
+                              {r.lider_nome || 'Líder'} <span style={{ color: C.t3 }}>· {r.grupo_nome}</span>
+                              {' '}<span style={{ color: (r.conferencia?.removidos_count || 0) > 0 ? C.amber : C.t3 }}>
+                                ({r.conferencia?.removidos_count || 0} saíram)
+                              </span>
+                              {r.conferencia?.ultima_resposta_em && <span style={{ color: C.t3 }}> · há {dias(r.conferencia.ultima_resposta_em)}d</span>}
+                            </div>
+                          ))}
+                          {responderam.length > 30 && <div style={{ color: C.t3 }}>+{responderam.length - 30}…</div>}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </PainelBloco>
+
+              <PainelBloco titulo="Aprovações paradas — pedidos aguardando o líder">
+                {aprovacoesParadas.length === 0 ? (
+                  <div style={{ fontSize: 12, color: C.t3 }}>Nenhum pedido parado — tudo decidido. ✓</div>
+                ) : (
+                  <div style={{ fontSize: 11.5, color: C.t2, lineHeight: 1.7 }}>
+                    {aprovacoesParadas.slice(0, 30).map(g => {
+                      const h = (Date.now() - g.maisAntigoMs) / 36e5;
+                      const idade = h >= 48 ? `${Math.floor(h / 24)}d` : `${Math.max(1, Math.floor(h))}h`;
+                      const cor = h >= 72 ? C.red : h >= 24 ? C.amber : C.t3;
+                      return (
+                        <div key={g.grupoId}>
+                          {g.lider || 'Sem líder'} <span style={{ color: C.t3 }}>· {g.grupo}</span>
+                          {' '}· {g.n} pedido{g.n === 1 ? '' : 's'}
+                          {' '}<span style={{ color: cor, fontWeight: 700 }}>· mais antigo há {idade}</span>
+                        </div>
+                      );
+                    })}
+                    {aprovacoesParadas.length > 30 && <div style={{ color: C.t3 }}>+{aprovacoesParadas.length - 30}…</div>}
+                    <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>
+                      Segue os filtros da tela (origem, período e busca).
+                    </div>
+                  </div>
+                )}
+              </PainelBloco>
+            </div>
+          )}
         </div>
       )}
 
@@ -433,13 +945,15 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
         </div>
         <select value={fOrigem} onChange={e => setFOrigem(e.target.value)} style={selStyle}>
           <option value="todas">Origem</option>
-          <option value="inscricao">Inscrição</option>
+          <option value="inscricao">Inscrição de grupos</option>
           <option value="next">Next</option>
+          <option value="lideres">Novos líderes/anfitriões</option>
+          <option value="renovacao">Renovação de temporada</option>
         </select>
         <select value={fStatus} onChange={e => setFStatus(e.target.value)} style={selStyle}>
           {FILTRO_STATUS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
         </select>
-        <select value={fPeriodo} onChange={e => setFPeriodo(Number(e.target.value))} style={selStyle}>
+        <select value={fPeriodo} onChange={e => { const v = e.target.value; setFPeriodo(v === 'temporada' ? 'temporada' : Number(v)); }} style={selStyle}>
           {FILTRO_PERIODO.map(p => <option key={p.dias} value={p.dias}>{p.label}</option>)}
         </select>
       </div>
@@ -525,17 +1039,60 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
                                 Verificar identidade
                               </span>
                             )}
+                            {p?.contato_divergente && (
+                              <span style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 99, background: C.blueBg, color: C.blue, fontWeight: 700 }}>
+                                Contato novo
+                              </span>
+                            )}
+                            {/* Telefone que o WhatsApp não alcança (estrangeiro,
+                                DDD inexistente) ou que a Meta disse não existir.
+                                A inscrição VALE — só o contato tem que ser outro. */}
+                            {p?.contato_status?.ok === false && (
+                              <span
+                                title={p.contato_status.usarEmail
+                                  ? `${p.contato_status.rotulo} — procure por e-mail: ${p.contato_status.email}`
+                                  : `${p.contato_status.rotulo} — confirme o número com a pessoa`}
+                                style={{ fontSize: 9.5, padding: '1px 7px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700 }}
+                              >
+                                {p.contato_status.motivo === 'sem_telefone' ? 'Sem telefone' : 'Número errado'}
+                              </span>
+                            )}
                           </div>
                           <div style={{ fontSize: 11, color: C.t3, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                            {r.telefone && <span><Phone size={10} style={{ display: 'inline', marginRight: 3 }} />{r.telefone}</span>}
-                            {r.email && <span><Mail size={10} style={{ display: 'inline', marginRight: 3 }} />{r.email}</span>}
+                            {r.telefone && (
+                              <span style={p?.contato_status?.ok === false && p?.contato_status?.motivo !== 'sem_telefone'
+                                ? { textDecoration: 'line-through', color: C.red }
+                                : undefined}>
+                                <Phone size={10} style={{ display: 'inline', marginRight: 3 }} />{r.telefone}
+                              </span>
+                            )}
+                            {r.email && (
+                              <span style={p?.contato_status?.usarEmail ? { color: C.blue, fontWeight: 700 } : undefined}>
+                                <Mail size={10} style={{ display: 'inline', marginRight: 3 }} />{r.email}
+                              </span>
+                            )}
                           </div>
+                          {p?.contato_status?.ok === false && (
+                            <div style={{ fontSize: 10.5, color: C.red, marginTop: 2 }}>
+                              {p.contato_status.usarEmail
+                                ? 'Não recebe WhatsApp — fale por e-mail.'
+                                : 'Não recebe WhatsApp e não temos e-mail — confirme o número.'}
+                            </div>
+                          )}
                         </td>
                         <td style={{ padding: '10px 8px' }}>
-                          {r.veioNext ? (
+                          {r.tipo === 'renov' ? (
+                            <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700 }}>Renovação</span>
+                          ) : r.tipo === 'lider' ? (
+                            <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 700 }}>
+                              {[r.raw.quer_lider && 'Líder', r.raw.quer_anfitriao && 'Anfitrião'].filter(Boolean).join(' + ')}
+                            </span>
+                          ) : r.veioNext ? (
                             <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.violetBg, color: C.violet, fontWeight: 700 }}>Next</span>
                           ) : r.tipo === 'enc' ? (
                             <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.bg, color: C.t3, fontWeight: 600 }}>{r.origemLabel}</span>
+                          ) : r.tipo === 'pedido' && labelOrigemPedido(r.origem) ? (
+                            <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.bg, color: C.t3, fontWeight: 600 }}>{labelOrigemPedido(r.origem)}</span>
                           ) : (
                             <span style={{ color: C.t3 }}>—</span>
                           )}
@@ -579,8 +1136,26 @@ export default function GruposEntrada({ podeEditar = false, onMudou }) {
                                   gruposAtivos={gruposAtivos}
                                   enviandoSugestao={enviandoSugestao}
                                   aprovar={aprovar} rejeitar={rejeitar} sugerir={sugerir}
+                                  aprovarDireto={aprovarDireto} carregarGrupos={carregarGrupos}
                                   pausarInscricoes={pausarInscricoes}
                                   fecharSugestao={() => { setSugerindoId(null); setGrupoSugestao(''); setMotivoSel(''); setMotivoLivre(''); }}
+                                />
+                              : r.tipo === 'renov'
+                              ? <PainelRenovacao row={r.raw} podeEditar={podeEditar} onTriado={depois} />
+                              : r.tipo === 'lider'
+                              ? <PainelLider
+                                  insc={r.raw}
+                                  podeEditar={podeEditar}
+                                  gruposAtivos={gruposAtivos}
+                                  acaoLoading={lidAcaoLoading}
+                                  recusandoId={lidRecusandoId} setRecusandoId={setLidRecusandoId}
+                                  motivoRec={lidMotivoRec} setMotivoRec={setLidMotivoRec}
+                                  vinculandoId={lidVinculandoId} abrirVinculo={abrirVinculoLider}
+                                  fecharVinculo={() => { setLidVinculandoId(null); setLidVincGrupoId(''); }}
+                                  vincGrupoId={lidVincGrupoId} setVincGrupoId={setLidVincGrupoId}
+                                  vincFuncao={lidVincFuncao} setVincFuncao={setLidVincFuncao}
+                                  aceitar={aceitarLider} recusar={recusarLider} vincular={vincularLider}
+                                  onCriarGrupo={onCriarGrupoParaLider}
                                 />
                               : <PainelNext
                                   e={r.raw}
@@ -622,12 +1197,75 @@ function Th({ children, w }) {
   );
 }
 
-function ResumoCard({ titulo, valor, destaque, corDestaque }) {
-  return (
-    <div style={{ background: C.card, borderRadius: 12, padding: '10px 14px', border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)' }}>
+// Card do pulso. Com `onClick` vira botão (o de "Contato impossível" filtra a
+// lista) — sem onClick segue sendo leitura pura, como o Marcos definiu em 14/07.
+function ResumoCard({ titulo, valor, destaque, corDestaque, onClick, ativo }) {
+  const conteudo = (
+    <>
       <div style={{ fontSize: 11, color: C.t3 }}>{titulo}</div>
       <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{valor ?? '—'}</div>
       {destaque && <div style={{ fontSize: 10.5, fontWeight: 700, color: corDestaque || C.amber }}>{destaque}</div>}
+    </>
+  );
+  const base = {
+    background: C.card, borderRadius: 12, padding: '10px 14px',
+    border: `1px solid ${ativo ? (corDestaque || C.amber) : 'var(--hairline)'}`,
+    boxShadow: 'var(--shadow)',
+  };
+  if (!onClick) return <div style={base}>{conteudo}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={!!ativo}
+      style={{ ...base, textAlign: 'left', cursor: 'pointer', font: 'inherit' }}
+    >
+      {conteudo}
+    </button>
+  );
+}
+
+// ── Peças do "Retrato do período" ──────────────────────────────────────────
+function PainelBloco({ titulo, children }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>
+        {titulo}
+      </div>
+      <div style={{ display: 'grid', gap: 3 }}>{children}</div>
+    </div>
+  );
+}
+
+function PainelLinha({ rotulo, valor, cor, nota }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12.5 }}>
+      <span style={{ color: C.t2, flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {rotulo}
+      </span>
+      {nota && <span style={{ color: C.t3, fontSize: 11, flex: '0 1 auto' }}>{nota}</span>}
+      <span style={{ fontWeight: 800, color: cor || C.text, flex: '0 0 auto' }}>{valor}</span>
+    </div>
+  );
+}
+
+// Barras por dia · SVG inline (o módulo não carrega recharts nesta aba e o
+// gráfico aqui é acessório — não vale o peso do bundle).
+function PorDiaBarras({ dados }) {
+  const max = Math.max(...dados.map(([, n]) => n), 1);
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 62 }}>
+      {dados.map(([dia, n]) => {
+        const [, m, d] = dia.split('-');
+        return (
+          <div key={dia} style={{ flex: 1, minWidth: 8, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}
+               title={`${d}/${m}: ${n} pedido${n === 1 ? '' : 's'}`}>
+            <div style={{ fontSize: 9.5, color: C.t3, lineHeight: 1 }}>{n}</div>
+            <div style={{ width: '100%', height: `${Math.round((n / max) * 38)}px`, minHeight: 2, background: C.primary, borderRadius: 3 }} />
+            <div style={{ fontSize: 9, color: C.t3, lineHeight: 1 }}>{d}/{m}</div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -638,13 +1276,32 @@ function PainelPedido({
   rejectingId, setRejectingId, motivoRej, setMotivoRej,
   sugerindoId, abrirSugestao, grupoSugestao, setGrupoSugestao,
   motivoSel, setMotivoSel, motivoLivre, setMotivoLivre, motivoSugestaoFinal,
-  gruposAtivos, enviandoSugestao, aprovar, rejeitar, sugerir, pausarInscricoes, fecharSugestao,
+  gruposAtivos, enviandoSugestao, aprovar, rejeitar, sugerir, aprovarDireto, carregarGrupos,
+  pausarInscricoes, fecharSugestao,
 }) {
   const grupo = p.mem_grupos;
   const lider = grupo?.mem_membros;
   const cap = capacidadeInfo(grupo);
   const isRejecting = rejectingId === p.id;
   const isSugerindo = sugerindoId === p.id;
+  // Painel local da aprovação direta da triagem (aceitar mesmo recusado e/ou
+  // trocar o grupo ali mesmo). Estado local: só um card usa por vez na prática
+  // e não disputa com os painéis compartilhados de rejeitar/sugerir.
+  const [aprovandoDireto, setAprovandoDireto] = useState(false);
+  const [grupoAprovacao, setGrupoAprovacao] = useState('');
+  const [salvandoAprovacao, setSalvandoAprovacao] = useState(false);
+  const foiRecusado = ['devolvido', 'rejeitado'].includes(p.status);
+  const abrirAprovacaoDireta = () => {
+    setAprovandoDireto(true); setGrupoAprovacao('');
+    setRejectingId(null);
+    carregarGrupos?.();
+  };
+  const confirmarAprovacaoDireta = async () => {
+    setSalvandoAprovacao(true);
+    const ok = await aprovarDireto(p, grupoAprovacao || null);
+    setSalvandoAprovacao(false);
+    if (ok) { setAprovandoDireto(false); setGrupoAprovacao(''); }
+  };
 
   return (
     <div style={{ background: C.bg, borderRadius: 10, padding: 12 }}>
@@ -663,11 +1320,19 @@ function PainelPedido({
       </div>
       {p.observacao && <div style={{ fontSize: 11.5, color: C.t2, fontStyle: 'italic', marginBottom: 10 }}>"{p.observacao}"</div>}
 
+      {p.contato_divergente && (
+        <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.blueBg, borderRadius: 6, lineHeight: 1.5 }}>
+          O telefone/e-mail desta inscrição é <strong>diferente do cadastro</strong> da pessoa. Ao aprovar,
+          o cadastro é atualizado com o contato novo e o anterior vai pras observações — nada se perde.
+        </div>
+      )}
+
       {p.status === 'devolvido' && (
         <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.violetBg, borderRadius: 6, lineHeight: 1.5 }}>
           Recusado pelo líder{p.decidido_por_nome ? <> <strong>{String(p.decidido_por_nome).replace(' (link WhatsApp)', '')}</strong></> : ''}
           {p.motivo_rejeicao ? <> — motivo interno: <em>{p.motivo_rejeicao}</em></> : ''}. A pessoa
-          ainda não foi comunicada: sugira outro grupo (o motivo que você escolher vai junto no WhatsApp) ou rejeite de vez.
+          ainda não foi comunicada: se a recusa foi engano, use «Aprovar mesmo assim» (dá pra trocar o
+          grupo ali); ou sugira outro grupo (a pessoa decide pelo WhatsApp) ou rejeite de vez.
         </div>
       )}
       {p.status === 'encaminhado' && (
@@ -684,7 +1349,8 @@ function PainelPedido({
       {p.status === 'rejeitado' && (
         <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.redBg, borderRadius: 6, lineHeight: 1.5 }}>
           Rejeitado{p.motivo_rejeicao ? <> — motivo interno: <em>{p.motivo_rejeicao}</em></> : ''}. Se ainda houver
-          caminho pra pessoa, «Sugerir outro grupo» reabre o pedido como encaminhado.
+          caminho pra pessoa: «Aprovar mesmo assim» reabre e aprova na hora (dá pra trocar o grupo),
+          «Sugerir outro grupo» reabre o pedido como encaminhado (a pessoa decide pelo link).
         </div>
       )}
       {p.decidido_por_nome && p.decidido_em && (
@@ -694,8 +1360,10 @@ function PainelPedido({
       )}
 
       {/* 'rejeitado' também mostra ação (Marcos · 14/07): encaminhar pra outro
-          grupo fica sempre disponível, independente de quem recusou. */}
-      {podeEditar && ['pendente', 'devolvido', 'encaminhado', 'rejeitado'].includes(p.status) && !isRejecting && !isSugerindo && (
+          grupo fica sempre disponível, independente de quem recusou. E desde
+          05/08 a triagem pode APROVAR por cima de qualquer status não-final
+          (recusa por engano é frequente), inclusive trocando o grupo. */}
+      {podeEditar && ['pendente', 'devolvido', 'encaminhado', 'rejeitado'].includes(p.status) && !isRejecting && !isSugerindo && !aprovandoDireto && (
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
           {cap?.cheio && grupo?.aceitando_inscricoes !== false && (
             <Button size="sm" variant="ghost" onClick={() => pausarInscricoes(grupo)} style={{ marginRight: 'auto', color: C.amber }}>
@@ -705,6 +1373,11 @@ function PainelPedido({
           <Button size="sm" variant="ghost" onClick={() => abrirSugestao(p)} style={{ color: C.t2 }}>
             Sugerir outro grupo
           </Button>
+          {p.status === 'pendente' && (
+            <Button size="sm" variant="ghost" onClick={abrirAprovacaoDireta} style={{ color: C.t2 }}>
+              Aprovar em outro grupo
+            </Button>
+          )}
           {p.status !== 'rejeitado' && (
             <Button size="sm" variant="outline" onClick={() => { setRejectingId(p.id); setMotivoRej(''); }}>
               <X size={14} style={{ marginRight: 4 }} /> Rejeitar de vez
@@ -715,6 +1388,42 @@ function PainelPedido({
               <Check size={14} style={{ marginRight: 4 }} /> Aprovar
             </Button>
           )}
+          {['devolvido', 'rejeitado', 'encaminhado'].includes(p.status) && (
+            <Button size="sm" onClick={abrirAprovacaoDireta}>
+              <Check size={14} style={{ marginRight: 4 }} /> Aprovar mesmo assim
+            </Button>
+          )}
+        </div>
+      )}
+
+      {aprovandoDireto && (
+        <div style={{ background: C.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 12, color: C.t2, marginBottom: 8, lineHeight: 1.5 }}>
+            Aprovar <strong>{p.nome}</strong> agora — a pessoa entra direto no grupo, sem passar pelo líder
+            nem esperar aceite.
+            {foiRecusado && <> Esta aprovação passa <strong>por cima da recusa</strong> registrada.</>}
+            {' '}Se quiser, escolha outro grupo abaixo.
+          </div>
+          {gruposAtivos === null ? (
+            <div style={{ fontSize: 12, color: C.t3, padding: '6px 0' }}>Carregando grupos...</div>
+          ) : (
+            <select
+              value={grupoAprovacao}
+              onChange={e => setGrupoAprovacao(e.target.value)}
+              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+            >
+              <option value="">Manter: {grupo?.nome || 'grupo do pedido'}</option>
+              {(gruposAtivos || []).filter(g => g.id !== p.grupo_id).map(g => (
+                <option key={g.id} value={g.id}>{g.nome}{g.bairro ? ` · ${g.bairro}` : ''}</option>
+              ))}
+            </select>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+            <Button size="sm" variant="outline" onClick={() => { setAprovandoDireto(false); setGrupoAprovacao(''); }}>Cancelar</Button>
+            <Button size="sm" disabled={salvandoAprovacao} onClick={confirmarAprovacaoDireta}>
+              <Check size={14} style={{ marginRight: 4 }} /> {salvandoAprovacao ? 'Aprovando...' : 'Aprovar agora'}
+            </Button>
+          </div>
         </div>
       )}
 
@@ -806,6 +1515,7 @@ const EVENTO_META = {
   recusado_lider: { label: 'Recusado pelo líder', cor: C.red },
   encaminhado: { label: 'Encaminhado pra outro grupo', cor: C.blue },
   aprovado: { label: 'Aprovado', cor: C.green },
+  aprovado_triagem: { label: 'Aprovado pela triagem (por cima da recusa)', cor: C.green },
   rejeitado_final: { label: 'Rejeitado (final)', cor: C.red },
   resolvido_outro_grupo: { label: 'Aprovada em outro grupo', cor: C.green },
   cancelado: { label: 'Cancelado', cor: C.t3 },
@@ -828,6 +1538,8 @@ function Timeline({ eventos }) {
           const partes = [];
           if (d.grupo) partes.push(`grupo ${d.grupo}`);
           if (d.grupo_sugerido) partes.push(`sugerido: ${d.grupo_sugerido}`);
+          if (d.realocado_para) partes.push(`movido para: ${d.realocado_para}`);
+          if (d.status_anterior) partes.push(`estava ${d.status_anterior}`);
           if (d.motivo) partes.push(`motivo enviado à pessoa: “${d.motivo}”`);
           if (d.motivo_interno) partes.push(`motivo interno: “${d.motivo_interno}”`);
           if (d.origem) partes.push(d.origem === 'formulario_publico' ? 'via QR/formulário' : d.origem === 'cadastro_interno' ? 'via cadastro' : d.origem);
@@ -845,6 +1557,142 @@ function Timeline({ eventos }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ── Painel expandido de um NOVO LÍDER/ANFITRIÃO (aceitar · recusar · vincular) ──
+function PainelLider({
+  insc, podeEditar, gruposAtivos, acaoLoading,
+  recusandoId, setRecusandoId, motivoRec, setMotivoRec,
+  vinculandoId, abrirVinculo, fecharVinculo, vincGrupoId, setVincGrupoId,
+  vincFuncao, setVincFuncao, aceitar, recusar, vincular, onCriarGrupo,
+}) {
+  const isRecusando = recusandoId === insc.id;
+  const isVinculando = vinculandoId === insc.id;
+  const papeis = [insc.quer_lider && 'líder', insc.quer_anfitriao && 'anfitrião'].filter(Boolean).join(' e ');
+  const podeDecidir = ['pendente', 'aceito'].includes(insc.status);
+
+  return (
+    <div style={{ background: C.bg, borderRadius: 10, padding: 12 }}>
+      <p style={{ fontSize: 12, color: C.t2, margin: '0 0 8px', lineHeight: 1.55 }}>
+        Quer servir como <strong>{papeis}</strong> — inscrição do formulário público de líderes.
+        Converse com a pessoa antes de decidir: <strong>nada é enviado automaticamente</strong> (nem no aceite, nem na recusa).
+      </p>
+
+      <div style={{ fontSize: 12, color: C.t2, display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 8 }}>
+        {insc.bairro && <span>Bairro: <strong style={{ color: C.text }}>{insc.bairro}</strong></span>}
+        {insc.endereco && <span>Endereço: {insc.endereco}</span>}
+      </div>
+
+      {insc.motivacao && (
+        <div style={{ fontSize: 12, color: C.t2, marginBottom: 10, padding: '8px 10px', background: C.primaryBg, borderRadius: 6, lineHeight: 1.5 }}>
+          <strong style={{ color: C.text }}>O que motivou a decisão:</strong> "{insc.motivacao}"
+        </div>
+      )}
+
+      {insc.status === 'vinculado' && (
+        <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.greenBg, borderRadius: 6 }}>
+          Vinculado ao grupo <strong>{insc.mem_grupos?.nome || '—'}</strong> como{' '}
+          {FUNCOES_VINCULO.find(f => f.key === insc.vinculo_funcao)?.label || insc.vinculo_funcao}
+          {insc.vinculado_em ? ` em ${fmtData(insc.vinculado_em)}` : ''}.
+        </div>
+      )}
+      {insc.status === 'recusado' && (
+        <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.redBg, borderRadius: 6 }}>
+          Recusado{insc.motivo_recusa ? <> — motivo interno: <em>{insc.motivo_recusa}</em></> : ''}. A pessoa não foi
+          notificada — a devolutiva é da equipe.
+        </div>
+      )}
+      {insc.decidido_por_nome && insc.decidido_em && (
+        <div style={{ fontSize: 10.5, color: C.t3, marginBottom: 10 }}>
+          {insc.status === 'aceito' ? 'Aceito' : 'Decidido'} por {insc.decidido_por_nome} em {fmtData(insc.decidido_em)}
+        </div>
+      )}
+
+      {podeEditar && podeDecidir && !isRecusando && !isVinculando && (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
+          <Button size="sm" variant="outline" onClick={() => { setRecusandoId(insc.id); setMotivoRec(''); }}>
+            <X size={14} style={{ marginRight: 4 }} /> Recusar
+          </Button>
+          {insc.status === 'pendente' && (
+            <Button size="sm" onClick={() => aceitar(insc)} disabled={acaoLoading}>
+              <Check size={14} style={{ marginRight: 4 }} /> Aceitar
+            </Button>
+          )}
+          {insc.status === 'aceito' && (
+            <>
+              <Button size="sm" variant="outline" onClick={() => abrirVinculo(insc)}>
+                Vincular a grupo existente
+              </Button>
+              {onCriarGrupo && (
+                <Button size="sm" onClick={() => onCriarGrupo(insc)} disabled={acaoLoading}>
+                  Criar novo grupo
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {isVinculando && (
+        <div style={{ background: C.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 12, color: C.t2, marginBottom: 8, lineHeight: 1.5 }}>
+            Vincular <strong>{insc.nome}</strong> a um grupo existente — a pessoa entra como <strong>mais um</strong> na
+            equipe do grupo. O líder principal (quem recebe as aprovações no WhatsApp) <strong>não muda</strong>; se
+            precisar trocar, é no cadastro do grupo.
+          </div>
+          {gruposAtivos === null ? (
+            <div style={{ fontSize: 12, color: C.t3, padding: '6px 0' }}>Carregando grupos...</div>
+          ) : (
+            <select
+              value={vincGrupoId}
+              onChange={e => setVincGrupoId(e.target.value)}
+              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+            >
+              <option value="">Escolha o grupo...</option>
+              {gruposAtivos.map(g => (
+                <option key={g.id} value={g.id}>{g.nome}{g.bairro ? ` · ${g.bairro}` : ''}</option>
+              ))}
+            </select>
+          )}
+          <div style={{ marginTop: 8 }}>
+            <label style={{ fontSize: 11, color: C.t3, display: 'block', marginBottom: 4 }}>Entra como</label>
+            <select
+              value={vincFuncao}
+              onChange={e => setVincFuncao(e.target.value)}
+              style={{ width: '100%', padding: '8px 10px', borderRadius: 8, fontSize: 13, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+            >
+              {FUNCOES_VINCULO.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+            </select>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+            <Button size="sm" variant="outline" onClick={fecharVinculo}>Cancelar</Button>
+            <Button size="sm" disabled={!vincGrupoId || acaoLoading} onClick={() => vincular(insc)}>
+              {acaoLoading ? 'Vinculando...' : 'Vincular'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {isRecusando && (
+        <div style={{ background: C.card, borderRadius: 8, padding: 10, marginTop: 8, border: `1px solid ${C.border}` }}>
+          <p style={{ fontSize: 12, color: C.t2, margin: '0 0 8px', lineHeight: 1.5 }}>
+            <strong>Recusa silenciosa</strong> — a pessoa não recebe nada do sistema; a devolutiva é sua, no contato
+            pessoal. O motivo abaixo fica só no registro interno.
+          </p>
+          <Input
+            placeholder="Motivo (registro interno · opcional)..."
+            value={motivoRec}
+            onChange={e => setMotivoRec(e.target.value)}
+            autoFocus
+          />
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+            <Button size="sm" variant="outline" onClick={() => { setRecusandoId(null); setMotivoRec(''); }}>Cancelar</Button>
+            <Button size="sm" variant="destructive" disabled={acaoLoading} onClick={() => recusar(insc)}>Recusar</Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -903,6 +1751,108 @@ function PainelNext({
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
             <Button size="sm" disabled={salvando} onClick={salvar}>
               {salvando ? 'Salvando...' : 'Registrar devolutiva'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Painel da RENOVAÇÃO DE TEMPORADA — o líder respondeu pelo WhatsApp que NÃO
+// continua. O grupo NÃO fecha sozinho: a coordenação decide aqui (fechar de
+// vez, procurar novo líder ou manter), sempre com uma nota curta. Trocar o
+// líder é na ficha do grupo (a triagem só registra a decisão).
+const TRIAGEM_ACOES = [
+  { key: 'buscar_lider', label: 'Vamos procurar novo líder (grupo segue ativo)' },
+  { key: 'manter', label: 'Manter como está (ex.: líder reconsiderou)' },
+  { key: 'fechar_grupo', label: 'Fechar o grupo nesta temporada' },
+];
+
+function PainelRenovacao({ row, podeEditar, onTriado }) {
+  const ren = row.renovacao;
+  const [acao, setAcao] = useState('');
+  const [obs, setObs] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const telDigits = String(row.lider_telefone || '').replace(/\D/g, '');
+
+  const triar = async () => {
+    if (!acao) { toast.error('Escolha o que foi decidido'); return; }
+    if (obs.trim().length < 3) { toast.error('Escreva uma nota curta da decisão'); return; }
+    if (acao === 'fechar_grupo' && !confirm(
+      `Fechar o grupo "${row.grupo_nome}"? Ele sai da listagem ativa (dá pra reativar depois na ficha do grupo). As ${row.membros_ativos} pessoa(s) continuam cadastradas.`
+    )) return;
+    setSalvando(true);
+    try {
+      await api.renovacao.triar(ren.id, { acao, obs: obs.trim() });
+      toast.success(acao === 'fechar_grupo' ? 'Grupo fechado e renovação triada' : 'Triagem registrada');
+      onTriado?.();
+    } catch (e) { toast.error(e.message || 'Erro ao registrar a triagem'); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <div style={{ background: C.bg, borderRadius: 10, padding: 12 }}>
+      <p style={{ fontSize: 12, color: C.t2, margin: '0 0 8px', lineHeight: 1.55 }}>
+        O líder respondeu na <strong>renovação de temporada</strong> que <strong style={{ color: C.red }}>não
+        continua</strong> com o grupo. Nada mudou pras pessoas ainda — decida o destino do grupo abaixo.
+      </p>
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
+        <span style={{
+          fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 99,
+          background: row.membros_ativos >= 10 ? C.redBg : C.amberBg,
+          color: row.membros_ativos >= 10 ? C.red : C.amber,
+        }}>
+          {row.membros_ativos} pessoa(s) ativas no grupo
+        </span>
+        {ren.ultima_resposta_em && (
+          <span style={{ fontSize: 11.5, color: C.t3 }}>Respondido em {fmtData(ren.ultima_resposta_em)}</span>
+        )}
+        {telDigits.length >= 10 && (
+          <a
+            href={`https://wa.me/${telDigits.length <= 11 ? '55' + telDigits : telDigits}`}
+            target="_blank" rel="noreferrer"
+            style={{ fontSize: 12, color: C.primary, fontWeight: 700, textDecoration: 'none' }}
+            onClick={e => e.stopPropagation()}
+          >
+            Falar com {row.lider_nome ? row.lider_nome.split(/\s+/)[0] : 'o líder'} no WhatsApp →
+          </a>
+        )}
+      </div>
+
+      {ren.motivo && (
+        <div style={{
+          fontSize: 12.5, color: C.t2, fontStyle: 'italic', marginBottom: 10,
+          borderLeft: `3px solid ${C.amber}`, paddingLeft: 10, lineHeight: 1.55,
+        }}>
+          "{ren.motivo}"
+        </div>
+      )}
+
+      {!podeEditar ? (
+        <div style={{ fontSize: 12, color: C.t3 }}>Somente leitura.</div>
+      ) : (
+        <div style={{ background: C.card, borderRadius: 8, padding: 10, border: `1px solid ${C.border}` }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+            {TRIAGEM_ACOES.map(a => (
+              <label key={a.key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: C.text, cursor: 'pointer' }}>
+                <input
+                  type="radio" name={`triagem_${ren.id}`} checked={acao === a.key}
+                  onChange={() => setAcao(a.key)} style={{ accentColor: C.primary }}
+                />
+                {a.label}
+              </label>
+            ))}
+          </div>
+          <Input
+            placeholder="Nota curta do que foi decidido (obrigatória)..."
+            value={obs}
+            onChange={ev => setObs(ev.target.value)}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+            <Button size="sm" disabled={salvando} onClick={triar}>
+              {salvando ? 'Salvando...' : 'Registrar decisão'}
             </Button>
           </div>
         </div>

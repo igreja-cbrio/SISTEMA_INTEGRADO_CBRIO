@@ -15,11 +15,14 @@ import {
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
   Copy, Share2, Download, QrCode, Camera, ScanLine,
   TrendingUp, ArrowRightLeft, GitMerge, ShieldCheck, Loader2, BookOpen, Flame,
+  ClipboardList, CreditCard, Ticket,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import { Input } from '../../components/ui/input';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import {
@@ -33,6 +36,7 @@ import {
 } from '../../components/ui/tabs';
 import TabCadastros from './TabCadastros';
 import MembersJornadaPanel from '../../components/MembersJornadaPanel';
+import CensoRespostasDialog from '../../components/membresia/CensoRespostasDialog';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -40,6 +44,18 @@ const C = {
   border: 'var(--cbrio-border)', green: '#10b981', greenBg: '#10b98118',
   red: '#ef4444', redBg: '#ef444418', amber: '#f59e0b', amberBg: '#f59e0b18',
   blue: '#3b82f6', blueBg: '#3b82f618',
+};
+
+// Cores da linha do tempo (log do membro) por tipo de evento.
+const TIMELINE_COR = {
+  trilha: '#8b5cf6', grupo: '#3b82f6', grupo_saida: '#94a3b8',
+  contribuicao: '#ec4899', devocional: '#10b981',
+  next: '#f59e0b', next_checkin: '#f59e0b',
+  batismo: '#06b6d4', batismo_realizado: '#06b6d4',
+  jornada: '#00B39D', conversao: '#8b5cf6', aconselhamento: '#00B39D',
+  encaminhamento: '#00B39D', decisao: '#8b5cf6',
+  voluntariado: '#f59e0b', nota: '#94a3b8',
+  inscricao: '#0ea5e9',   // espinha de inscrições (eventos e retiros)
 };
 
 const STATUS_MAP = {
@@ -144,7 +160,7 @@ async function buscarCep(cep) {
 }
 
 const EMPTY_FORM = {
-  nome: '', sobrenome: '', cpf: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
+  nome: '', sobrenome: '', apelido: '', cpf: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
   endereco: '', bairro: '', cidade: '', cep: '', profissao: '',
   ministerio: '', grupo: '', status: 'membro_ativo',
   familia_id: '', familia_nome_novo: '', parentesco: '', observacoes: '',
@@ -282,6 +298,7 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
       setForm({
         nome: primeiro,
         sobrenome: restante,
+        apelido: editData.apelido || '',
         cpf: editData.cpf || '',
         email: editData.email || '',
         telefone: editData.telefone || '',
@@ -393,6 +410,14 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
         if (payload[k] === '') delete payload[k];
       }
 
+      // Apelido é LIMPÁVEL: o loop acima descarta string vazia, então apagar o
+      // apelido não gravaria nada. Só manda NULL quando havia apelido antes
+      // (aí a coluna existe com certeza) — se não há nada a escrever, o campo
+      // fica fora do payload.
+      const apelidoLimpo = (form.apelido || '').trim();
+      if (apelidoLimpo) payload.apelido = apelidoLimpo;
+      else if (isEdit && editData?.apelido) payload.apelido = null;
+
       let membroId;
       if (isEdit) {
         await membresia.membros.update(editData.id, payload);
@@ -487,13 +512,20 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
                   <Label>Sobrenome *</Label>
                   <Input value={form.sobrenome} onChange={e => set('sobrenome', e.target.value)} placeholder="Sobrenome" />
                 </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label>Apelido (como é conhecido)</Label>
+                  <Input value={form.apelido} onChange={e => set('apelido', e.target.value)} placeholder='Ex: "Tuninho"' maxLength={60} />
+                  <p className="text-xs text-muted-foreground">
+                    Entra na busca pública de grupos por líder — quem só conhece o apelido acha o grupo.
+                  </p>
+                </div>
                 <div className="space-y-1.5">
                   <Label>CPF *</Label>
                   <Input value={form.cpf} onChange={e => set('cpf', e.target.value)} placeholder="000.000.000-00" inputMode="numeric" maxLength={14} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>Data de Nascimento *</Label>
-                  <Input type="date" value={form.data_nascimento} onChange={e => set('data_nascimento', e.target.value)} />
+                  <BirthDatePicker value={form.data_nascimento} onChange={v => set('data_nascimento', v)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label>Email</Label>
@@ -625,7 +657,7 @@ const VINC_TIPOS = {
 };
 
 // Vínculos familiares (grafo de parentesco) · "esta pessoa é filho/irmão de X".
-function VinculosFamiliares({ membroId, onAbrirPessoa }) {
+function VinculosFamiliares({ membroId, onAbrirPessoa, onFamiliaMudou }) {
   const [lista, setLista] = useState([]);
   const [aberto, setAberto] = useState(false);
   const [tipo, setTipo] = useState('filho');
@@ -653,9 +685,13 @@ function VinculosFamiliares({ membroId, onAbrirPessoa }) {
     if (!sel) return;
     setSalvando(true);
     try {
-      await membresia.vinculos.create(membroId, { relacionado_id: sel.id, tipo });
-      toast.success('Vínculo criado');
+      const r = await membresia.vinculos.create(membroId, { relacionado_id: sel.id, tipo });
+      const CLOSE = new Set(['pai_mae', 'filho', 'conjuge', 'irmao']);
+      if (r?.familia_unificada) toast.success('Vínculo criado — as duas pessoas agora estão na mesma família');
+      else if (CLOSE.has(tipo)) toast.success('Vínculo criado');
+      else toast.success('Vínculo criado (parentesco distante não junta a família)');
       setAberto(false); setSel(null); setQ(''); setTipo('filho'); carregar();
+      if (r?.familia_unificada) onFamiliaMudou?.();
     } catch (e) { toast.error(e?.message || 'Erro ao criar vínculo'); } finally { setSalvando(false); }
   }
   async function remover(id) {
@@ -688,6 +724,9 @@ function VinculosFamiliares({ membroId, onAbrirPessoa }) {
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>{Object.entries(VINC_TIPOS).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}</SelectContent>
           </Select>
+          <div style={{ fontSize: 11, color: C.text3, lineHeight: 1.4 }}>
+            Pai/mãe, filho(a), cônjuge ou irmão(ã) também colocam as duas pessoas na <b>mesma família</b> automaticamente.
+          </div>
           {sel ? (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 12px', background: 'var(--cbrio-card)', borderRadius: 8 }}>
               <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{sel.nome}</span>
@@ -821,10 +860,15 @@ export default function Membresia() {
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState('');
-  const [busca, setBusca] = useState('');
+  // `?q=` pré-preenche a busca de membros: é o que faz o link "atualizou o
+  // cadastro de X" da aba Cadastros cair na pessoa, em vez de na lista inteira.
+  const [busca, setBusca] = useState(
+    () => new URLSearchParams(window.location.search).get('q') || '',
+  );
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPapel, setFilterPapel] = useState('');
   const [filterFaixa, setFilterFaixa] = useState('');
+  const [filterSemCpf, setFilterSemCpf] = useState(false);
   const [selectedMembro, setSelectedMembro] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editMembro, setEditMembro] = useState(null);
@@ -835,7 +879,15 @@ export default function Membresia() {
   const [grupos, setGrupos] = useState([]);
   const [grupoSelecionado, setGrupoSelecionado] = useState('');
   const [salvandoGrupo, setSalvandoGrupo] = useState(false);
-  const [pageTab, setPageTab] = useState('membros');
+  // ⚠️ Aba vem da URL (`?tab=`). Sem isso, notificação que aponta pra cá cai
+  // sempre em "Membros": o aviso do censo ("cadastro para revisar") linkava
+  // `/ministerial/membresia` e a pessoa chegava numa lista de 3.973 membros sem
+  // nenhuma pista de onde estava o cadastro a revisar. Link de notificação que
+  // não leva ao destino é pior que não ter link — gasta a confiança no sino.
+  const [pageTab, setPageTab] = useState(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    return ['membros', 'jornada', 'duplicados', 'cadastros'].includes(t) ? t : 'membros';
+  });
   const [showShareLink, setShowShareLink] = useState(false);
   const [showContribForm, setShowContribForm] = useState(false);
   const [contribForm, setContribForm] = useState({ tipo: 'dizimo', valor: '', data: new Date().toISOString().slice(0, 10), forma_pagamento: '', campanha: '', observacoes: '' });
@@ -855,20 +907,27 @@ export default function Membresia() {
   const [indicandoServir, setIndicandoServir] = useState(false);
   const [devocionalHist, setDevocionalHist] = useState(null); // { data: [], resumo: {} }
   const [loadingDevocional, setLoadingDevocional] = useState(false);
+  const [inscHist, setInscHist] = useState(null); // { itens: [], total, por_porta }
+  const [loadingInsc, setLoadingInsc] = useState(false);
   const [wifiHist, setWifiHist] = useState(null); // { tem_wifi, total_logins, conexoes: [] }
   const [loadingWifi, setLoadingWifi] = useState(false);
   const [faceHist, setFaceHist] = useState(null); // { total, ultima, itens: [] }
   const [loadingFace, setLoadingFace] = useState(false);
+  const [censoAberto, setCensoAberto] = useState(null);   // membro_id ou null
+  const [timeline, setTimeline] = useState(null); // { eventos: [], total }
+  const [loadingTimeline, setLoadingTimeline] = useState(false);
   const [possiveisDup, setPossiveisDup] = useState([]);
+  const [possiveisDupErro, setPossiveisDupErro] = useState(false);
   const [fundindo, setFundindo] = useState(false);
 
   // Possíveis duplicados desta pessoa (mesmo nome/telefone/email/cpf)
   useEffect(() => {
-    if (!selectedMembro?.id) { setPossiveisDup([]); return; }
+    if (!selectedMembro?.id) { setPossiveisDup([]); setPossiveisDupErro(false); return; }
     let cancelado = false;
+    setPossiveisDupErro(false);
     membresia.duplicados.doMembro(selectedMembro.id)
       .then(r => { if (!cancelado) setPossiveisDup(Array.isArray(r) ? r : []); })
-      .catch(() => { if (!cancelado) setPossiveisDup([]); });
+      .catch(() => { if (!cancelado) { setPossiveisDup([]); setPossiveisDupErro(true); } });
     return () => { cancelado = true; };
   }, [selectedMembro?.id]);
 
@@ -899,6 +958,18 @@ export default function Membresia() {
     return () => { cancelado = true; };
   }, [selectedMembro?.id, activeTab]);
 
+  // Inscrições da pessoa em TODAS as portas · carrega ao abrir a aba
+  useEffect(() => {
+    if (!selectedMembro?.id || activeTab !== 'inscricoes') return;
+    let cancelado = false;
+    setLoadingInsc(true);
+    membresia.membros.inscricoes(selectedMembro.id)
+      .then(r => { if (!cancelado) setInscHist(r); })
+      .catch(() => { if (!cancelado) setInscHist({ itens: [], total: 0, por_porta: {} }); })
+      .finally(() => { if (!cancelado) setLoadingInsc(false); });
+    return () => { cancelado = true; };
+  }, [selectedMembro?.id, activeTab]);
+
   // Histórico de conexões no wifi · carrega ao abrir a aba
   useEffect(() => {
     if (!selectedMembro?.id || activeTab !== 'wifi') return;
@@ -923,6 +994,18 @@ export default function Membresia() {
     return () => { cancelado = true; };
   }, [selectedMembro?.id, activeTab]);
 
+  // Linha do tempo (log do membro) · carrega ao abrir a aba
+  useEffect(() => {
+    if (!selectedMembro?.id || activeTab !== 'timeline') return;
+    let cancelado = false;
+    setLoadingTimeline(true);
+    membresia.membros.timeline(selectedMembro.id)
+      .then(r => { if (!cancelado) setTimeline(r); })
+      .catch(() => { if (!cancelado) setTimeline({ eventos: [], total: 0 }); })
+      .finally(() => { if (!cancelado) setLoadingTimeline(false); });
+    return () => { cancelado = true; };
+  }, [selectedMembro?.id, activeTab]);
+
   // Só a lista de membros depende da busca/filtros · roda 1 request por busca
   // (não recarrega KPIs/famílias/grupos/ministérios a cada tecla)
   const fetchMembros = useCallback(async () => {
@@ -934,6 +1017,7 @@ export default function Membresia() {
       if (filterStatus) params.status = filterStatus;
       if (filterPapel) params.papel = filterPapel;
       if (filterFaixa) params.faixa = filterFaixa;
+      if (filterSemCpf) params.sem_cpf = '1';
       const m = await membresia.membros.list(Object.keys(params).length ? params : null);
       setMembros(m);
     } catch (e) {
@@ -942,7 +1026,7 @@ export default function Membresia() {
       setLoading(false);
       setSearching(false);
     }
-  }, [busca, filterStatus, filterPapel, filterFaixa]);
+  }, [busca, filterStatus, filterPapel, filterFaixa, filterSemCpf]);
 
   // Card inteligente · título muda conforme o filtro ativo
   const filtroResumo = useMemo(() => {
@@ -950,9 +1034,10 @@ export default function Membresia() {
     if (filterFaixa) partes.push(FAIXA_LABEL[filterFaixa] || filterFaixa);
     if (filterStatus) partes.push(STATUS_MAP[filterStatus]?.label || filterStatus);
     if (filterPapel) partes.push(PAPEL_LABEL[filterPapel] || filterPapel);
+    if (filterSemCpf) partes.push('Sem CPF');
     if (busca) partes.push(`"${busca.trim()}"`);
     return { ativo: partes.length > 0, titulo: partes.join(' · ') };
-  }, [filterFaixa, filterStatus, filterPapel, busca]);
+  }, [filterFaixa, filterStatus, filterPapel, filterSemCpf, busca]);
 
   // Clique nos cards de resumo · aplica o filtro correspondente (limpa os demais)
   // e rola até a lista. cfg=null = "Total de pessoas" (limpa tudo).
@@ -961,6 +1046,7 @@ export default function Membresia() {
     setFilterFaixa('');
     setFilterStatus(cfg?.status || '');
     setFilterPapel(cfg?.papel || '');
+    setFilterSemCpf(!!cfg?.sem_cpf);
     requestAnimationFrame(() => {
       document.querySelector('[data-membros-lista]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
@@ -1086,7 +1172,9 @@ export default function Membresia() {
     setShowContribForm(false);
     setVolStatus(null);
     setDevocionalHist(null);
+    setInscHist(null);
     setWifiHist(null);
+    setTimeline(null);
     setFaceHist(null);
 
     if (typeof mOrId === 'object' && mOrId) {
@@ -1402,11 +1490,13 @@ export default function Membresia() {
         <TabsContent value="membros">
 
       {/* KPIs · clicáveis (filtram a lista abaixo) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-7">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-7">
         <StatisticsCard title="Total de pessoas" value={kpis.total} icon={Users} iconColor="#00B39D"
           onClick={() => filtrarPorCard(null)} />
         <StatisticsCard title="Membros ativos" value={kpis.byStatus?.membro_ativo || 0} icon={Users} iconColor="#10b981"
           onClick={() => filtrarPorCard({ status: 'membro_ativo' })} />
+        <StatisticsCard title="CPF pendente" value={kpis.membros_sem_cpf || 0} icon={CreditCard} iconColor="#f59e0b"
+          onClick={() => filtrarPorCard({ status: 'membro_ativo', sem_cpf: true })} />
         <StatisticsCard title="Famílias" value={kpis.familias} icon={Home} iconColor="#f59e0b"
           onClick={() => filtrarPorCard({ papel: 'com_familia' })} />
         <StatisticsCard title="Contribuintes ativos" value={kpis.contribuintes_ativos || 0} icon={HandCoins} iconColor="#22c55e"
@@ -1424,7 +1514,7 @@ export default function Membresia() {
             </div>
           </div>
           <button
-            onClick={() => { setFilterStatus(''); setFilterPapel(''); setFilterFaixa(''); setBusca(''); }}
+            onClick={() => { setFilterStatus(''); setFilterPapel(''); setFilterFaixa(''); setFilterSemCpf(false); setBusca(''); }}
             style={{ fontSize: 13, fontWeight: 600, color: C.primary, background: 'transparent', border: `1px solid ${C.primary}`, borderRadius: 999, padding: '7px 16px', cursor: 'pointer' }}
           >
             Limpar filtros
@@ -1492,6 +1582,21 @@ export default function Membresia() {
             </SelectContent>
           </Select>
         </div>
+        <button
+          type="button"
+          onClick={() => setFilterSemCpf(v => !v)}
+          title="Mostrar só quem está sem CPF cadastrado"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 16px', borderRadius: 8,
+            fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+            border: `1.5px solid ${filterSemCpf ? C.amber : 'var(--cbrio-border)'}`,
+            background: filterSemCpf ? C.amber : 'transparent',
+            color: filterSemCpf ? '#fff' : C.text2,
+          }}
+        >
+          <CreditCard style={{ width: 15, height: 15 }} />
+          Sem CPF
+        </button>
       </div>
 
       {/* Table */}
@@ -1539,7 +1644,10 @@ export default function Membresia() {
                   )}
                 </td>
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
-                  <Badge status={m.status} />
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Badge status={m.status} />
+                    {!m.cpf && <span title="CPF não cadastrado" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e', fontWeight: 700 }}><AlertCircle style={{ width: 10, height: 10 }} />SEM CPF</span>}
+                  </div>
                 </td>
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 200 }}>
@@ -1582,7 +1690,7 @@ export default function Membresia() {
             </p>
             <button
               type="button"
-              onClick={() => navigate('/next-batismo')}
+              onClick={() => navigate('/entradas')}
               className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition"
             >
               <GitMerge className="size-4" /> Abrir Entradas
@@ -1613,6 +1721,7 @@ export default function Membresia() {
                   <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{selectedMembro.nome}</h2>
                   <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
                     <Badge status={selectedMembro.status} />
+                    {!selectedMembro.cpf && <span title="CPF não cadastrado" style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, padding: '2px 8px', borderRadius: 5, background: '#fef3c7', color: '#92400e', fontWeight: 700 }}><AlertCircle style={{ width: 11, height: 11 }} />CPF pendente</span>}
                     {(() => {
                       const dn = selectedMembro.data_nascimento;
                       if (!dn) return null;
@@ -1654,6 +1763,12 @@ export default function Membresia() {
             </div>
 
             <div style={{ padding: '20px 32px 28px' }}>
+              {possiveisDupErro && (
+                <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: '1px dashed #F09595', background: '#FCEBEB' }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível consultar duplicados</div>
+                  <div style={{ fontSize: 11, color: '#791F1F' }}>Podem existir duplicados desta pessoa — a lista falhou ao carregar. Não é a mesma coisa que "sem duplicados".</div>
+                </div>
+              )}
               {possiveisDup.length > 0 && (
                 <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: '1px solid rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.08)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -1680,6 +1795,8 @@ export default function Membresia() {
                 <TabsList className="flex h-auto w-full flex-wrap justify-start bg-transparent p-0 gap-1 border-b border-border rounded-none mb-4">
                   {[
                     { key: 'info', label: 'Informações', icon: Users },
+                    { key: 'timeline', label: 'Linha do tempo', icon: Clock },
+                    { key: 'inscricoes', label: 'Inscrições', icon: ClipboardList },
                     { key: 'familia', label: 'Família', icon: Home },
                     { key: 'grupo', label: 'Grupo', icon: Users },
                     { key: 'generosidade', label: 'Generosidade', icon: HandCoins },
@@ -1836,33 +1953,54 @@ export default function Membresia() {
                       {selectedMembro.familiares.map(f => {
                         const pOpt = PARENTESCO_OPTIONS[f.parentesco];
                         return (
-                          <button
+                          <div
                             key={f.id}
-                            type="button"
-                            onClick={() => openDetail(f.id)}
-                            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10, border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'background 0.15s' }}
+                            style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 4px 2px 0', background: 'var(--cbrio-input-bg)', borderRadius: 10, transition: 'background 0.15s' }}
                             onMouseEnter={e => e.currentTarget.style.background = C.primaryBg}
                             onMouseLeave={e => e.currentTarget.style.background = 'var(--cbrio-input-bg)'}
                           >
-                            <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0, overflow: 'hidden' }}>
-                              {f.foto_url ? (
-                                <img data-foto-avatar="" src={f.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                              ) : (
-                                f.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
-                              )}
-                            </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{f.nome}</div>
-                              {pOpt && (
-                                <div style={{ marginTop: 2 }}>
-                                  <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, color: pOpt.cor, background: pOpt.bg, fontWeight: 600 }}>
-                                    {pOpt.label}
-                                  </span>
-                                </div>
-                              )}
-                            </div>
-                            {f.status && <Badge status={f.status} />}
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => openDetail(f.id)}
+                              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 4px 10px 14px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', flex: 1, minWidth: 0 }}
+                            >
+                              <div style={{ width: 36, height: 36, borderRadius: '50%', background: C.primaryBg, color: C.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0, overflow: 'hidden' }}>
+                                {f.foto_url ? (
+                                  <img data-foto-avatar="" src={f.foto_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                ) : (
+                                  f.nome?.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase()
+                                )}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 14, fontWeight: 500, color: C.text }}>{f.nome}</div>
+                                {pOpt && (
+                                  <div style={{ marginTop: 2 }}>
+                                    <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 8, color: pOpt.cor, background: pOpt.bg, fontWeight: 600 }}>
+                                      {pOpt.label}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                              {f.status && <Badge status={f.status} />}
+                            </button>
+                            {isDiretor && (
+                              <button
+                                type="button"
+                                title="Remover desta família"
+                                onClick={async () => {
+                                  if (!window.confirm(`Remover ${f.nome} desta família?\n\nA pessoa continua no sistema — só deixa de aparecer como familiar.`)) return;
+                                  try {
+                                    await membresia.familias.vincular(f.id, { familia_id: null });
+                                    toast.success(`${f.nome} removido(a) da família`);
+                                    openDetail(selectedMembro.id);
+                                  } catch (e) { toast.error(e?.message || 'Erro ao remover da família'); }
+                                }}
+                                style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', cursor: 'pointer', color: C.text3 }}
+                              >
+                                <X style={{ width: 15, height: 15 }} />
+                              </button>
+                            )}
+                          </div>
                         );
                       })}
                     </div>
@@ -1883,7 +2021,7 @@ export default function Membresia() {
                     </div>
                   )}
                   {isDiretor && (
-                    <VinculosFamiliares membroId={selectedMembro.id} onAbrirPessoa={openDetail} />
+                    <VinculosFamiliares membroId={selectedMembro.id} onAbrirPessoa={openDetail} onFamiliaMudou={() => openDetail(selectedMembro.id)} />
                   )}
                 </TabsContent>
 
@@ -2085,7 +2223,7 @@ export default function Membresia() {
                                 </div>
                                 <div>
                                   <Label style={{ fontSize: 11 }}>Data *</Label>
-                                  <Input type="date" value={contribForm.data} onChange={e => setContribForm(f => ({ ...f, data: e.target.value }))} />
+                                  <DatePicker value={contribForm.data} onChange={v => setContribForm(f => ({ ...f, data: v }))} />
                                 </div>
                                 <div>
                                   <Label style={{ fontSize: 11 }}>Forma de pagamento</Label>
@@ -2389,7 +2527,7 @@ export default function Membresia() {
                               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                                 <div>
                                   <Label style={{ fontSize: 11 }}>Data *</Label>
-                                  <Input type="date" value={checkinForm.data} onChange={e => setCheckinForm(f => ({ ...f, data: e.target.value }))} />
+                                  <DatePicker value={checkinForm.data} onChange={v => setCheckinForm(f => ({ ...f, data: v }))} />
                                 </div>
                                 <div>
                                   <Label style={{ fontSize: 11 }}>Ministério</Label>
@@ -2530,6 +2668,105 @@ export default function Membresia() {
                 </TabsContent>
 
                 {/* Aba: Devocional · check-ins do app */}
+                {/* Aba: Inscrições — todas as portas num lugar só */}
+                <TabsContent value="inscricoes" className="mt-4">
+                  {loadingInsc ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.text3, fontSize: 13, padding: '24px 0', justifyContent: 'center' }}>
+                      <Loader2 style={{ width: 16, height: 16 }} className="animate-spin" /> Carregando inscrições…
+                    </div>
+                  ) : !inscHist || inscHist.itens?.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '32px 0', color: C.text3 }}>
+                      <ClipboardList style={{ width: 32, height: 32, margin: '0 auto 8px', opacity: 0.4 }} />
+                      <div style={{ fontSize: 14, color: C.text2 }}>Nenhuma inscrição registrada</div>
+                      <div style={{ fontSize: 12, marginTop: 4 }}>
+                        Eventos, retiros, batismo, NEXT, voluntariado e pedidos de grupo aparecem aqui.
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Contagem por porta */}
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+                        {Object.entries(inscHist.por_porta || {}).map(([porta, n]) => (
+                          <span key={porta} style={{
+                            fontSize: 12, padding: '4px 10px', borderRadius: 999,
+                            background: C.primaryBg, border: `1px solid ${C.primary}30`, color: C.text2,
+                          }}>
+                            {porta}: <strong style={{ color: C.text }}>{n}</strong>
+                          </span>
+                        ))}
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {inscHist.itens.map((i, idx) => {
+                          const cancelado = ['cancelada', 'cancelado', 'rejeitado'].includes(String(i.status));
+                          return (
+                            <div key={`${i.fonte}-${idx}`} style={{
+                              padding: 12, borderRadius: 10, border: `1px solid ${C.border}`,
+                              background: 'var(--cbrio-input-bg)', opacity: cancelado ? 0.6 : 1,
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <span style={{
+                                  fontSize: 10.5, textTransform: 'uppercase', letterSpacing: 0.4,
+                                  padding: '2px 7px', borderRadius: 5, background: `${C.primary}18`, color: C.primary, fontWeight: 600,
+                                }}>{i.porta}</span>
+                                <span style={{ fontSize: 14, fontWeight: 600, color: C.text, textDecoration: cancelado ? 'line-through' : 'none' }}>
+                                  {i.titulo}
+                                </span>
+                                {i.status && (
+                                  <span style={{ fontSize: 11.5, color: cancelado ? '#ef4444' : C.text3 }}>{i.status}</span>
+                                )}
+                                {i.numero_sorte != null && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: C.primary, fontWeight: 600 }}>
+                                    <Ticket style={{ width: 11, height: 11 }} /> Nº {i.numero_sorte}
+                                  </span>
+                                )}
+                                {i.link && (
+                                  <a href={i.link} style={{ marginLeft: 'auto', fontSize: 11.5, color: C.primary }}>abrir →</a>
+                                )}
+                              </div>
+                              <div style={{ fontSize: 11.5, color: C.text3, marginTop: 4, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                                <span>inscrição em {new Date(i.data).toLocaleDateString('pt-BR')}</span>
+                                {i.data_evento && (
+                                  <span>
+                                    {/* Data do EVENTO é diferente da data da inscrição — separar
+                                        evita ler "inscrito em março" como "foi em março". */}
+                                    evento em {new Date(String(i.data_evento).length <= 10 ? `${i.data_evento}T00:00:00` : i.data_evento).toLocaleDateString('pt-BR')}
+                                  </span>
+                                )}
+                                {i.local && <span>{i.local}</span>}
+                                {i.detalhe && <span>{i.detalhe}</span>}
+                              </div>
+                              {i.pagamento && (
+                                <div style={{
+                                  marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.border}`,
+                                  fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center',
+                                }}>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: C.text3 }}>
+                                    <CreditCard style={{ width: 12, height: 12 }} />
+                                    {i.pagamento.status_pagamento}
+                                  </span>
+                                  {i.pagamento.metodo && <span style={{ color: C.text2 }}>{i.pagamento.metodo}{i.pagamento.parcelas_total > 1 ? ` · ${i.pagamento.parcelas_total}x` : ''}</span>}
+                                  {i.pagamento.valor_centavos != null && (
+                                    <span style={{ color: C.text, fontWeight: 600 }}>
+                                      R$ {(i.pagamento.valor_centavos / 100).toFixed(2).replace('.', ',')}
+                                    </span>
+                                  )}
+                                  {i.pagamento.pago_em && (
+                                    <span style={{ color: C.text3 }}>pago em {new Date(i.pagamento.pago_em).toLocaleDateString('pt-BR')}</span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.text3, marginTop: 10 }}>
+                        {inscHist.total} inscriç{inscHist.total === 1 ? 'ão' : 'ões'} · Kids fica fora desta lista (dado de menor).
+                      </div>
+                    </>
+                  )}
+                </TabsContent>
+
                 <TabsContent value="devocional" className="mt-4">
                   {loadingDevocional ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.text3, fontSize: 13, padding: '24px 0', justifyContent: 'center' }}>
@@ -2728,7 +2965,7 @@ export default function Membresia() {
                                 || obs.toLowerCase().includes('planilha');
                               const isCulto = obs.toLowerCase().includes('culto');
                               const fonte = isImportado
-                                ? 'historico importado'
+                                ? 'histórico importado'
                                 : isCulto
                                   ? 'decisão em culto'
                                   : 'registrado';
@@ -2791,7 +3028,7 @@ export default function Membresia() {
                             if (m.ministerios_ativos?.length > 0) {
                               const nomes = m.ministerios_ativos.map(v => {
                                 const desde = fmt(v.desde);
-                                return `${v.ministerio?.nome || 'Ministerio'}${desde ? ` (desde ${desde})` : ''}`;
+                                return `${v.ministerio?.nome || 'Ministério'}${desde ? ` (desde ${desde})` : ''}`;
                               });
                               return { detected: true, detail: nomes.join(', ') };
                             }
@@ -2807,7 +3044,7 @@ export default function Membresia() {
                               const parts = [];
                               if (total > 0) parts.push(`R$ ${total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} no ano`);
                               if (ultima) parts.push(`última em ${ultima}`);
-                              return { detected: true, detail: parts.join(' · ') || 'Possui contribuicoes' };
+                              return { detected: true, detail: parts.join(' · ') || 'Possui contribuições' };
                             }
                             return null;
                           }
@@ -2891,7 +3128,7 @@ export default function Membresia() {
                   </div>
                   {isDiretor && (
                     <div style={{ fontSize: 11, color: C.text3, marginTop: 16, fontStyle: 'italic' }}>
-                      Clique em um circulo para marcar/desmarcar manualmente. Etapas com badge "AUTO" foram detectadas automaticamente.
+                      Clique em um círculo para marcar/desmarcar manualmente. Etapas com badge "AUTO" foram detectadas automaticamente.
                     </div>
                   )}
                 </TabsContent>
@@ -2933,10 +3170,64 @@ export default function Membresia() {
                     </div>
                   )}
                 </TabsContent>
+
+                <TabsContent value="timeline" className="mt-4">
+                  {loadingTimeline ? (
+                    <div style={{ padding: '24px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>Carregando…</div>
+                  ) : timeline?.eventos?.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      {timeline.eventos.map((ev, i) => {
+                        const cor = TIMELINE_COR[ev.tipo] || C.text3;
+                        return (
+                          <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'stretch' }}>
+                            {/* trilho + bolinha */}
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 14 }}>
+                              <div style={{ width: 10, height: 10, borderRadius: 5, background: cor, marginTop: 5, flexShrink: 0 }} />
+                              {i < timeline.eventos.length - 1 && <div style={{ width: 2, flex: 1, background: 'var(--cbrio-border)', marginTop: 2 }} />}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0, paddingBottom: 14 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, wordBreak: 'break-word' }}>{ev.titulo}</div>
+                                <div style={{ fontSize: 11, color: C.text3, flexShrink: 0, whiteSpace: 'nowrap' }}>
+                                  {new Date(ev.data).toLocaleDateString('pt-BR')}
+                                </div>
+                              </div>
+                              {ev.detalhe && <div style={{ fontSize: 12, color: C.text3, marginTop: 2, wordBreak: 'break-word' }}>{ev.detalhe}</div>}
+                              {/* O censo é a única atividade cujo CONTEÚDO a
+                                  equipe precisa ler aqui — as outras são fatos
+                                  ("entrou no grupo"), esta é um questionário. */}
+                              {ev.tipo === 'censo' && (
+                                <button
+                                  type="button"
+                                  onClick={() => setCensoAberto(selectedMembro?.id)}
+                                  style={{
+                                    marginTop: 4, fontSize: 12, color: 'var(--teal)',
+                                    background: 'none', border: 'none', padding: 0,
+                                    cursor: 'pointer', fontFamily: 'inherit',
+                                  }}
+                                >
+                                  ver as respostas →
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '24px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>
+                      Nenhuma atividade registrada para esta pessoa ainda.
+                    </div>
+                  )}
+                </TabsContent>
               </Tabs>
             </div>
           </div>
         </div>
+      )}
+
+      {censoAberto && (
+        <CensoRespostasDialog membroId={censoAberto} onClose={() => setCensoAberto(null)} />
       )}
 
       {/* Form Modal */}
@@ -2955,9 +3246,15 @@ export default function Membresia() {
 }
 
 function ShareCadastroLinkDialog({ open, onOpenChange }) {
-  const publicUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/cadastro-membresia`
-    : '/cadastro-membresia';
+  // ⚠️ O QR do CENSO precisa do `?censo=1`. Sem o parâmetro o formulário
+  // funciona igual e o cadastro entra — mas a submissão não é marcada como
+  // censo: não conta na cobertura e o reconciliador não roda (a pessoa que já
+  // existe volta a virar 'duplicado' na fila, um por um). Por isso a escolha é
+  // um botão aqui, e não um parâmetro que alguém precisa lembrar de digitar.
+  const [modo, setModo] = useState('cadastro'); // 'cadastro' | 'censo'
+  const ehCenso = modo === 'censo';
+  const origem = typeof window !== 'undefined' ? window.location.origin : '';
+  const publicUrl = `${origem}/cadastro-membresia${ehCenso ? '?censo=1' : ''}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&margin=8&data=${encodeURIComponent(publicUrl)}`;
 
   const copyLink = async () => {
@@ -2971,8 +3268,10 @@ function ShareCadastroLinkDialog({ open, onOpenChange }) {
 
   const shareLink = async () => {
     const shareData = {
-      title: 'Cadastro de Membresia - CBRio',
-      text: 'Preencha seu cadastro de membresia:',
+      title: ehCenso ? 'Censo da Membresia - CBRio' : 'Cadastro de Membresia - CBRio',
+      text: ehCenso
+        ? 'Participe do censo da CBRio preenchendo seus dados:'
+        : 'Preencha seu cadastro de membresia:',
       url: publicUrl,
     };
     try {
@@ -2993,7 +3292,7 @@ function ShareCadastroLinkDialog({ open, onOpenChange }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'cadastro-membresia-qrcode.png';
+      a.download = ehCenso ? 'censo-membresia-qrcode.png' : 'cadastro-membresia-qrcode.png';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -3009,14 +3308,49 @@ function ShareCadastroLinkDialog({ open, onOpenChange }) {
         <DialogHeader>
           <DialogTitle style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <QrCode style={{ width: 18, height: 18, color: '#00B39D' }} />
-            Link público de cadastro
+            {ehCenso ? 'Link do censo' : 'Link público de cadastro'}
           </DialogTitle>
         </DialogHeader>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 6, width: '100%' }}>
+            {[
+              { id: 'cadastro', label: 'Cadastro' },
+              { id: 'censo', label: 'Censo' },
+            ].map((op) => (
+              <button
+                key={op.id}
+                type="button"
+                onClick={() => setModo(op.id)}
+                style={{
+                  flex: 1, padding: '8px 10px', fontSize: 13, fontWeight: 600,
+                  borderRadius: 10, cursor: 'pointer',
+                  border: `1px solid ${modo === op.id ? '#00B39D' : 'var(--cbrio-border)'}`,
+                  background: modo === op.id ? '#00B39D18' : 'transparent',
+                  color: modo === op.id ? '#00B39D' : 'var(--cbrio-text2)',
+                }}
+              >
+                {op.label}
+              </button>
+            ))}
+          </div>
+
           <p style={{ fontSize: 13, color: 'var(--cbrio-text2)', textAlign: 'center', margin: 0 }}>
-            Compartilhe este link ou QR Code para que novos membros preencham o formulário público.
+            {ehCenso
+              ? 'QR do censo — é este que vai no telão e no material impresso. Quem já está na base tem os dados atualizados automaticamente e entra na contagem de cobertura.'
+              : 'Compartilhe este link ou QR Code para que novos membros preencham o formulário público.'}
           </p>
+
+          {ehCenso && (
+            <p style={{
+              fontSize: 11.5, color: 'var(--cbrio-text3)', textAlign: 'center',
+              margin: 0, padding: '8px 10px', borderRadius: 8,
+              background: '#f59e0b14', border: '1px solid #f59e0b33', lineHeight: 1.5,
+            }}>
+              Use exatamente este link. Sem o <code>?censo=1</code> o formulário
+              funciona, mas a resposta não conta no censo.
+            </p>
+          )}
 
           <div style={{
             padding: 12,

@@ -2,14 +2,14 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
-import { notificacoes as notifApi } from '../../api';
+import { notificacoes as notifApi, waInbox as waInboxApi } from '../../api';
 import { supabase } from '../../supabaseClient';
 import ChatIAFloating from './ChatIAFloating';
 import FeedbackButton from '../FeedbackButton';
 import PrimeiroAcessoSenhaModal from '../auth/PrimeiroAcessoSenhaModal';
 import PrimeiroAcessoFotoModal from '../auth/PrimeiroAcessoFotoModal';
 import FotoLightboxGlobal from '../FotoLightboxGlobal';
-import { playNotificationSound } from '../../lib/sounds';
+import { playNotificationSound, playMessageSound } from '../../lib/sounds';
 import { isPushSupported, getCurrentSubscription, subscribePush, unsubscribePush } from '../../lib/pushNotifications';
 import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
@@ -17,10 +17,12 @@ import { navItemAllowed } from '../../lib/menuAccess';
 import {
   Users, DollarSign, Truck, Tag,
   CalendarDays, FolderKanban, Map, ListChecks,
-  UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube, Wifi,
+  UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube,
   Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal, Images,
   Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, Check, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
   Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass, Camera, UserSearch, Droplets, Landmark,
+  ClipboardList,
+  QrCode,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -33,7 +35,20 @@ import { GlobalChartGradients } from '../charts/ChartGradients';
 
 const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
 const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', projetos: '#ec4899', kpis: '#f97316', cuidados: '#ef476f', processos: '#00B39D', nps: '#06b6d4', sistema: '#6b7280' };
-const MOD_LABELS = { rh: 'RH', financeiro: 'Financeiro', logistica: 'Logística', patrimonio: 'Patrimônio', membresia: 'Membresia', eventos: 'Eventos', projetos: 'Projetos', kpis: 'KPIs', cuidados: 'Cuidados', processos: 'Processos', nps: 'NPS', sistema: 'Sistema' };
+// Rótulo de exibição por módulo — cobre todo valor de `notificacoes.modulo` gravado
+// pelo backend (ver grep de `modulo:` em backend/routes|services). Sem entrada aqui,
+// o filtro cai no fallback do slug cru (minúsculo, sem acento).
+const MOD_LABELS = {
+  rh: 'RH', financeiro: 'Financeiro', logistica: 'Logística', patrimonio: 'Patrimônio',
+  membresia: 'Membresia', eventos: 'Eventos', 'eventos-externos': 'Eventos Externos', inscricoes: 'Inscrições',
+  projetos: 'Projetos', kpis: 'KPIs', cuidados: 'Cuidados', processos: 'Processos',
+  nps: 'NPS', sistema: 'Sistema', integracao: 'Integração', next: 'NEXT',
+  voluntariado: 'Voluntariado', grupos: 'Grupos', kids: 'Kids', batismos: 'Batismos',
+  marketing: 'Marketing', producao: 'Produção', governanca: 'Governança', wifi: 'WiFi',
+  administrativo: 'Administrativo', ti: 'TI', cerebro: 'Cérebro',
+  apresentacoes: 'Apresentações', online: 'Online', conversas: 'Conversas',
+  desconhecido: 'Desconhecido', tarefas: 'Tarefas', dashboard: 'Dashboard',
+};
 
 // Painel de notificações · agrupamento por data (Hoje / Ontem / …).
 const ORDEM_GRUPOS_NOTIF = ['Hoje', 'Ontem', 'Últimos 7 dias', 'Anteriores'];
@@ -83,10 +98,8 @@ const NAV_ITEMS = [
       {
         title: 'Configurações',
         items: [
+          { label: 'Sistema', description: 'Centro de controle técnico, automações, integrações e releases', icon: Settings, path: '/sistema', superAdminOnly: true },
           { label: 'Permissões', description: 'Matriz cargo × módulo + usuários (cargo, áreas, overrides)', icon: Shield, path: '/admin/permissoes', perm: 'isAdmin' },
-          { label: 'Bot WhatsApp', description: 'Líderes vinculados + coletas de dados pelo WhatsApp', icon: MessageSquare, path: '/admin/whatsapp', module: 'integracao', moduleMin: 3 },
-          { label: 'Feedback do piloto', description: 'Reportes dos testadores + erros capturados durante os testes', icon: Activity, path: '/admin/feedback', perm: 'isAdmin' },
-          { label: 'Analytics do App', description: 'Painel ao vivo (online agora, cadastros) + uso e erros do app', icon: MonitorSmartphone, path: '/admin/app-analytics', module: 'dashboard', moduleMin: 1 },
         ],
       },
     ],
@@ -109,10 +122,10 @@ const NAV_ITEMS = [
         title: 'Análise',
         items: [
           { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
+          { label: 'Censo', description: 'Perfil demográfico e engajamento da comunidade · pesquisas próprias', icon: ClipboardList, path: '/censo', module: 'censo' },
+          { label: 'Links e QR', description: 'QR que não precisa ser reimpresso · o código fica, o destino muda', icon: QrCode, path: '/links', module: 'links' },
           { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', perm: 'isAdmin' },
           { label: 'Agentes & Auditoria', description: 'Fila de aprovação e agentes de auditoria · acesso restrito (devs)', icon: BrainCircuit, path: '/assistente-ia', perm: 'isDev' },
-          { label: 'WiFi', description: 'Visitantes do WiFi · frequência por culto e cruzamento com a membresia', icon: Wifi, path: '/wifi', module: 'wifi' },
-          { label: 'Reconhecimento Facial', description: 'Presença na entrada · membros identificados + rostos anônimos a resolver', icon: Camera, path: '/ministerial/reconhecimento-facial', module: 'face' },
         ],
       },
     ],
@@ -125,8 +138,10 @@ const NAV_ITEMS = [
         title: 'Execução',
         items: [
           { label: 'Eventos', description: 'Ciclo criativo · fases · documentos · KPIs', icon: CalendarDays, path: '/eventos', perm: 'canAgenda' },
-          { label: 'Eventos Externos', description: 'Confirmação de presença + sorteio · formulário público e calendário', icon: CalendarDays, path: '/eventos-externos', module: 'eventos-externos' },
+          // "Eventos Externos" saiu do menu na virada pro /inscricoes (SPEC-04 · 2026-07-28); a rota redireciona.
+          { label: 'Inscrições', description: 'Módulo central de inscrições · calendário, eventos, séries e sorteios', icon: CalendarDays, path: '/inscricoes', module: 'inscricoes' },
           { label: 'Projetos', description: 'Acompanhamento de projetos com Kanban/Gantt', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
+          { label: 'Propostas', description: 'Ciclo anual de propostas de projetos, eventos e rotinas', icon: ClipboardCheck, path: '/propostas', module: 'propostas' },
           { label: 'Planejamento Estratégico', description: 'Plano plurianual · etapas e marcos (vigente: Expansão 2026–2029)', icon: Map, path: '/expansao', module: 'expansao' },
           { label: 'Planejamento Anual', description: 'Propostas do ciclo · avaliação pelas diretorias · decisão do Pastor · calendário e orçamento', icon: CalendarDays, path: '/planejamento-anual', module: 'planejamento-anual' },
         ],
@@ -151,9 +166,10 @@ const NAV_ITEMS = [
           { label: 'Batismo', description: 'Inscrições, horários, agendamento e check-in de batismo', icon: Droplets, path: '/batismo', module: 'batismo' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
+          { label: 'Comunicação', description: 'Central de WhatsApp · chat, envios, templates, atendentes e relatórios', icon: MessageSquare, path: '/comunicacao', module: 'comunicacao' },
           { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos', perm: 'canMembresia' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
-          { label: 'Entradas', description: 'Porta de entrada · uma pessoa = um cadastro · liga inscrição ao membro e funde duplicados', icon: UserSearch, path: '/next-batismo', module: 'next-batismo' },
+          { label: 'Entradas', description: 'Porta de entrada · uma pessoa = um cadastro · liga inscrição ao membro e funde duplicados', icon: UserSearch, path: '/entradas', module: 'next-batismo' },
         ],
       },
       {
@@ -205,7 +221,9 @@ export default function AppShell() {
   // Visibilidade de item de menu · navItemAllowed (src/lib/menuAccess) espelha
   // o ModuleGuard das rotas (src/App.tsx) e é compartilhado com a busca ⌘K
   // (CommandSearch), pra que um módulo inacessível nunca apareça em nenhum dos dois.
-  const itemAllowed = (item) => navItemAllowed(item, auth);
+  const itemAllowed = (item) => {
+    return navItemAllowed(item, auth);
+  };
 
   function sectionAllowed(section) {
     if (!section.roles) return true;
@@ -246,6 +264,7 @@ export default function AppShell() {
     .toUpperCase();
 
   const [notifCount, setNotifCount] = useState(0);
+  const [waUnread, setWaUnread] = useState(0);
   const [notifOpen, setNotifOpen] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
@@ -371,6 +390,45 @@ export default function AppShell() {
     } catch { /* backend might not be ready */ }
   }
 
+  // ── Conversas (WhatsApp) · badge dedicado no header ──────────────────
+  // Mensagens do inbox NÃO poluem o sino: têm o próprio ícone. Contador é o
+  // total de não-lidas do ESCOPO do usuário (área/atribuição). Realtime + poll.
+  const podeConversas = itemAllowed({ module: 'conversas' });
+  const prevWaUnread = useRef(-1);
+  async function loadWaUnread() {
+    try {
+      const r = await waInboxApi.naoLidas();
+      const total = r?.total || 0;
+      // toca o plim quando o total sobe (mensagem nova no escopo do usuário) ·
+      // funciona em qualquer tela, não só dentro de /conversas.
+      if (total > 0 && prevWaUnread.current >= 0 && total > prevWaUnread.current) playMessageSound();
+      prevWaUnread.current = total;
+      setWaUnread(total);
+    } catch { /* sem acesso ao módulo · ignora */ }
+  }
+  useEffect(() => {
+    if (!podeConversas) { setWaUnread(0); return; }
+    loadWaUnread();
+    const interval = setInterval(loadWaUnread, 30000);
+    const onVisible = () => { if (document.visibilityState === 'visible') loadWaUnread(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    let ch = null;
+    if (supabase && profile?.id) {
+      ch = supabase.channel(`wa-unread:${profile.id}`)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_mensagens' }, () => loadWaUnread())
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'wa_conversas' }, () => loadWaUnread())
+        .subscribe();
+    }
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      if (ch) supabase.removeChannel(ch);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [podeConversas, profile?.id]);
+
   const loadNotifs = useCallback(async () => {
     setNotifsLoading(true);
     try {
@@ -471,6 +529,22 @@ export default function AppShell() {
               <span className="hidden md:inline">Buscar</span>
               <kbd className="hidden md:inline text-[10px] px-1 py-0.5 rounded bg-muted">⌘K</kbd>
             </button>
+
+            {/* Conversas (WhatsApp) · badge próprio, fora do sino */}
+            {podeConversas && (
+              <button
+                onClick={() => navigate('/conversas')}
+                className="relative p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground"
+                title="Conversas (WhatsApp)"
+              >
+                <MessageSquare className="h-4 w-4" />
+                {waUnread > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 h-4 min-w-[16px] rounded-full bg-primary text-[9px] font-bold text-primary-foreground flex items-center justify-center cbrio-badge-pulse px-1">
+                    {waUnread > 9 ? '9+' : waUnread}
+                  </span>
+                )}
+              </button>
+            )}
 
             {/* Theme toggle */}
             <button onClick={toggleTheme} className="p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground">
@@ -648,7 +722,10 @@ export default function AppShell() {
       </header>
 
       {/* Main content */}
-      <main className="max-w-[1800px] mx-auto">
+      {/* pb-24: respiro no rodapé pra o conteúdo rolar ACIMA dos botões
+          flutuantes (Reportar/IA), que são position:fixed e cobriam a última
+          linha de tabelas/listas. */}
+      <main className="max-w-[1800px] mx-auto pb-24">
         <Outlet />
       </main>
 
@@ -708,7 +785,13 @@ function MobileNavSheet({ items }) {
   }
 
   return (
-    <Sheet open={open} onOpenChange={setOpen}>
+    // modal={false}: por padrão o Radix BLOQUEIA toda interação fora do Sheet
+    // enquanto aberto (é assim que ele impede clique "vazar" pro fundo) — isso
+    // fazia o toque no Reportar/IA realocados (que ficam FORA do Sheet de
+    // propósito) ser descartado mesmo com onPointerDownOutside prevenindo o
+    // fechamento (prevenia o dismiss, mas não devolvia a interatividade).
+    // Sem o modal, a faixa livre à direita fica genuinamente clicável.
+    <Sheet open={open} onOpenChange={setOpen} modal={false}>
       <SheetTrigger asChild>
         <button
           data-tour="megamenu"
@@ -718,7 +801,20 @@ function MobileNavSheet({ items }) {
           <MenuIcon className="h-5 w-5" />
         </button>
       </SheetTrigger>
-      <SheetContent side="left" className="w-80 max-w-[85vw] overflow-y-auto p-0">
+      <SheetContent
+        side="left"
+        className="w-80 max-w-[85vw] overflow-y-auto p-0"
+        // Reportar/IA ficam realocados na faixa livre à direita enquanto o
+        // drawer está aberto (ver useOverlayAberto.js) — sem isso, o Radix
+        // trata o toque neles como "clique fora" e fecha o drawer ANTES do
+        // onClick do botão rodar (o botão "pula" de posição no meio do toque
+        // e o relatório nunca abre — achado do usuário 2026-07-27).
+        onPointerDownOutside={(e) => {
+          if (e.target instanceof Element && e.target.closest('.floating-action-btn')) {
+            e.preventDefault();
+          }
+        }}
+      >
         <div className="px-4 py-4 border-b border-border">
           <img src="/logo-cbrio-text.png" alt="CBRio" className="h-7 object-contain" />
         </div>

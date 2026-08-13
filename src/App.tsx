@@ -1,10 +1,10 @@
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { TutorialProvider } from './contexts/TutorialContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazy, Suspense, Component, useEffect } from 'react';
-import type { ReactNode, ComponentType } from 'react';
+import type { ReactNode, ComponentType, ErrorInfo } from 'react';
 import { Toaster } from 'sonner';
 import AppShell from './components/layout/AppShell';
 import Login from './pages/Login';
@@ -12,6 +12,17 @@ import DemoAutoLogin from './pages/DemoAutoLogin';
 import { DEMO_MODE } from './lib/demo';
 import RedefinirSenha from './pages/RedefinirSenha';
 import { CbrioLoader } from './components/ui/cbrio-loader';
+import {
+  APP_UPDATE_CACHE_BUSTER_PARAM,
+  APP_UPDATE_RETRY_PARAM,
+  APP_UPDATE_RETRY_STARTED_PARAM,
+  APP_UPDATE_RETRY_WINDOW_MS,
+  MAX_APP_UPDATE_RETRIES,
+  getAppUpdateRetryCount,
+  hasNewAppVersion,
+  reloadForAppUpdate,
+} from './lib/appUpdate';
+import { captureAppException } from './lib/sentry';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,60 +48,25 @@ const queryClient = new QueryClient({
 //   Firefox     : "error loading dynamically imported module"
 //   Safari/iOS  : "Importing a module script failed" + "'text/html' is not a valid JavaScript MIME type"
 //   Webpack     : "Loading chunk X failed" / "ChunkLoadError"
-const CHUNK_ERROR_RE = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|valid JavaScript MIME type|Expected a JavaScript(?: \w+)? module script|Unexpected token '?<'?/i;
+const CHUNK_ERROR_RE = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|valid JavaScript MIME type|Expected a JavaScript(?: \w+)? module script/i;
+
+// Atalho do recarregamento forçado, por plataforma. `navigator.platform` está
+// depreciado mas é o único sinal disponível no navegador antigo que justamente
+// tende a cair aqui; qualquer coisa que não seja Mac cai no Ctrl.
+function atalhoRecarregarForcado() {
+  const mac = typeof navigator !== 'undefined'
+    && /Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent || '');
+  return mac ? 'Cmd + Shift + R' : 'Ctrl + Shift + R';
+}
 
 // Conta tentativas via querystring (sobrevive ao reload, diferente de
 // sessionStorage que ficava preso entre deploys consecutivos e impedia
 // re-tentativas legítimas).
-const RETRY_PARAM = '_chunk_retry';
-const MAX_RETRIES = 3;
-
-function getRetryCount(): number {
-  try {
-    const v = new URL(window.location.href).searchParams.get(RETRY_PARAM);
-    return v ? parseInt(v, 10) || 0 : 0;
-  } catch { return 0; }
-}
-
 // Reload com cache-buster + limpeza de caches do browser/SW · usado quando
 // um chunk lazy quebra (deploy novo invalidou o hash que o HTML em cache
 // referência). Limpa tudo que pode estar segurando o HTML antigo.
-let hardReloadFired = false;
 async function hardReload() {
-  if (hardReloadFired) return; // vários chunk errors ao mesmo tempo → 1 reload só
-  hardReloadFired = true;
-  const limpar = (async () => {
-    try {
-      // Limpa Cache Storage (PWA / fetch cache)
-      if ('caches' in window) {
-        const keys = await caches.keys();
-        await Promise.all(keys.map(k => caches.delete(k)));
-      }
-      // Desregistra Service Workers (re-registra no próximo load se necessário)
-      if ('serviceWorker' in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map(r => r.unregister()));
-      }
-      // Limpa flags antigos do retry baseado em sessionStorage (legado)
-      Object.keys(sessionStorage)
-        .filter(k => k.startsWith('chunk-retry-') || k === 'boundary-chunk-retry')
-        .forEach(k => sessionStorage.removeItem(k));
-    } catch { /* ignora — vamos recarregar de qualquer jeito */ }
-  })();
-  // ⚠️ A limpeza NUNCA pode travar o reload: se caches.delete/getRegistrations
-  // pendurar, o location.replace nunca rodava e a tela ficava PRETA pra sempre
-  // (lazyWithRetry já retornou uma promise que nunca resolve). Timeout garante
-  // que recarrega em ≤1.2s de qualquer jeito. 2026-06-30.
-  try { await Promise.race([limpar, new Promise((r) => setTimeout(r, 1200))]); } catch { /* ignora */ }
-  try {
-    const url = new URL(window.location.href);
-    const next = getRetryCount() + 1;
-    url.searchParams.set(RETRY_PARAM, String(next));
-    url.searchParams.set('_cb', String(Date.now()));
-    window.location.replace(url.toString());
-  } catch {
-    window.location.reload();
-  }
+  await reloadForAppUpdate();
 }
 
 // Chunk errors surgem muitas vezes FORA do ciclo de render do React — um import
@@ -101,14 +77,14 @@ async function hardReload() {
 // recarregam com cache-bust, respeitando o teto de retries. 2026-06-30.
 if (typeof window !== 'undefined') {
   const recuperarSeChunk = (msg: string) => {
-    if (CHUNK_ERROR_RE.test(msg || '') && getRetryCount() < MAX_RETRIES) hardReload();
+    if (CHUNK_ERROR_RE.test(msg || '') && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) hardReload();
   };
   // capture:true pega erro de CARREGAMENTO de recurso (<script>/<link>), que não borbulha
   window.addEventListener('error', (e: ErrorEvent) => {
     const alvo = e.target as (HTMLScriptElement & HTMLLinkElement) | null;
     const src = alvo ? (alvo.src || alvo.href || '') : '';
     if (src && /\/assets\/.*\.(js|mjs|css)(\?|$)/.test(src)) {
-      if (getRetryCount() < MAX_RETRIES) hardReload();
+      if (getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) hardReload();
       return;
     }
     recuperarSeChunk(e.message || e.error?.message || '');
@@ -126,7 +102,7 @@ function lazyWithRetry<T extends ComponentType<Record<string, never>>>(factory: 
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err || '');
       const isChunkError = CHUNK_ERROR_RE.test(message);
-      if (isChunkError && getRetryCount() < MAX_RETRIES) {
+      if (isChunkError && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) {
         hardReload();
         return new Promise<{ default: T }>(() => {}); // Nunca resolve — página vai recarregar
       }
@@ -135,18 +111,29 @@ function lazyWithRetry<T extends ComponentType<Record<string, never>>>(factory: 
   });
 }
 
-class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
+class ErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; error: Error | null; updating: boolean }
+> {
   constructor(props: { children: ReactNode }) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false, error: null, updating: false };
   }
   static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
+    const updating = CHUNK_ERROR_RE.test(error?.message || '')
+      && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES;
+    return { hasError: true, error, updating };
   }
-  componentDidCatch(error: Error) {
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    captureAppException(error, {
+      mechanism: 'react-error-boundary',
+      tags: { surface: 'web' },
+      context: { componentStack: errorInfo.componentStack || null },
+    });
+
     // Se for chunk load error, tenta recarregar automaticamente (até MAX_RETRIES)
     const isChunkError = CHUNK_ERROR_RE.test(error?.message || '');
-    if (isChunkError && getRetryCount() < MAX_RETRIES) {
+    if (isChunkError && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) {
       hardReload();
     }
   }
@@ -159,40 +146,48 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
           {isChunkError ? (
             <>
               <p style={{ color: '#888', maxWidth: 480 }}>
-                Houve uma atualizacao do sistema. Vamos limpar o cache e recarregar.
+                {this.state.updating
+                  ? 'Há uma nova versão do sistema. Estamos atualizando automaticamente; seu acesso e esta página serão mantidos.'
+                  : 'Não foi possível concluir a atualização automática. Tente novamente; seu acesso e esta página serão mantidos.'}
               </p>
               <button
-                onClick={async () => {
-                  // Forca limpeza total + remove o param de retry pra zerar o contador
-                  try {
-                    if ('caches' in window) {
-                      const keys = await caches.keys();
-                      await Promise.all(keys.map(k => caches.delete(k)));
-                    }
-                    if ('serviceWorker' in navigator) {
-                      const regs = await navigator.serviceWorker.getRegistrations();
-                      await Promise.all(regs.map(r => r.unregister()));
-                    }
-                  } catch {
-                    // Ignora falhas de limpeza; o reload abaixo ainda recupera o app.
-                  }
-                  sessionStorage.clear();
-                  // Limpa querystring (zera contador) e vai pra raiz
-                  window.location.replace('/?_cb=' + Date.now());
+                disabled={this.state.updating}
+                onClick={() => {
+                  this.setState({ updating: true });
+                  void reloadForAppUpdate({ resetRetries: true });
                 }}
-                style={{ padding: '10px 28px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600 }}
+                style={{ padding: '10px 28px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: this.state.updating ? 'wait' : 'pointer', opacity: this.state.updating ? 0.75 : 1, fontSize: 14, fontWeight: 600 }}
               >
-                Limpar cache e recarregar
+                {this.state.updating ? 'Atualizando…' : 'Tentar atualizar agora'}
               </button>
+              {/* ⚠️ Quando as tentativas automáticas ACABARAM, "tente novamente" não
+                  é instrução suficiente — foi o que prendeu o Matheus em 10/08/2026:
+                  saíram 9 deploys de produção em 21 minutos (várias PRs mergeadas em
+                  sequência), e cada recarga suave caía num alvo em movimento. O
+                  recarregamento forçado ignora o cache do navegador e é o caminho que
+                  sempre sai dessa. Só aparece depois de o automático falhar, pra não
+                  ensinar atalho de teclado a quem não precisa. */}
+              {!this.state.updating && (
+                <p style={{ color: '#888', fontSize: 13, maxWidth: 480 }}>
+                  Se voltar a falhar, force o recarregamento: <b>{atalhoRecarregarForcado()}</b>.
+                </p>
+              )}
               <p style={{ color: '#aaa', fontSize: 12, marginTop: 8 }}>
-                Se o problema persistir: feche o navegador e abra de novo, ou use uma aba anonima.
+                Alterações ainda não salvas nesta página podem ser perdidas.
               </p>
             </>
           ) : (
             <>
               <p style={{ color: '#888' }}>{this.state.error?.message || 'Erro inesperado na aplicação.'}</p>
-              <button onClick={() => { sessionStorage.clear(); hardReload(); }} style={{ padding: '8px 24px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: 'pointer' }}>
-                Recarregar
+              <button
+                disabled={this.state.updating}
+                onClick={() => {
+                  this.setState({ updating: true });
+                  void reloadForAppUpdate({ resetRetries: true });
+                }}
+                style={{ padding: '8px 24px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: this.state.updating ? 'wait' : 'pointer', opacity: this.state.updating ? 0.75 : 1 }}
+              >
+                {this.state.updating ? 'Atualizando…' : 'Tentar novamente'}
               </button>
             </>
           )}
@@ -214,10 +209,11 @@ const Destaques = lazyWithRetry(() => import('./pages/admin/Destaques'));
 const FotosBatismo = lazyWithRetry(() => import('./pages/admin/FotosBatismo'));
 const CruzamentosPessoas = lazyWithRetry(() => import('./pages/admin/CruzamentosPessoas'));
 const SolicitacoesResponsaveis = lazyWithRetry(() => import('./pages/admin/SolicitacoesResponsaveis'));
+const SolicitacoesFluxo = lazyWithRetry(() => import('./pages/admin/SolicitacoesFluxo'));
 const PermissoesAdmin = lazyWithRetry(() => import('./pages/admin/Permissoes'));
-const WhatsappAdmin = lazyWithRetry(() => import('./pages/admin/Whatsapp'));
 const FeedbackAdmin = lazyWithRetry(() => import('./pages/admin/Feedback'));
 const AppAnalytics = lazyWithRetry(() => import('./pages/admin/AppAnalytics'));
+const Sistema = lazyWithRetry(() => import('./pages/sistema/Sistema'));
 const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
 const Painel = lazyWithRetry(() => import('./pages/Painel'));
 // /painel/kpi/:id removido na Fase 2.5F — agora detalhe abre como modal (KpiDetalheModal)
@@ -240,7 +236,7 @@ const PainelBridge = lazyWithRetry(() => import('./pages/ministerial/PainelBridg
 const TotemKidsCheckin = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsCheckin'));
 const GestaoCriancas = lazyWithRetry(() => import('./pages/ministerial/totemKids/GestaoCriancas'));
 const KidsHub = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsHub'));
-const KidsFrequenciaPCO = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsFrequenciaPCO'));
+const KidsFrequencia = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsFrequencia'));
 const VoluntariosKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/VoluntariosKids'));
 const VoluntariadoInscricoesKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/VoluntariadoInscricoesKids'));
 const EstoqueKids = lazyWithRetry(() => import('./pages/ministerial/totemKids/EstoqueKids'));
@@ -257,6 +253,7 @@ const MarketingPlanner = lazyWithRetry(() => import('./pages/marketing/Marketing
 const MarketingAdmin = lazyWithRetry(() => import('./pages/marketing/MarketingAdmin'));
 const MarketingAnalytics = lazyWithRetry(() => import('./pages/marketing/MarketingAnalytics'));
 const MarketingComunicados = lazyWithRetry(() => import('./pages/marketing/MarketingComunicados'));
+const MarketingGenerosidade = lazyWithRetry(() => import('./pages/marketing/MarketingGenerosidade'));
 const TotemKidsAdmin = lazyWithRetry(() => import('./pages/admin/totemKids/TotemKidsAdmin'));
 const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
 const EventDetail = lazyWithRetry(() => import('./pages/eventos/EventDetail'));
@@ -273,6 +270,9 @@ const Eventos = lazyWithRetry(() => import('./pages/eventos/Eventos'));
 const Projetos = lazyWithRetry(() => import('./pages/Projetos'));
 const Processos = lazyWithRetry(() => import('./pages/Processos'));
 const Nps = lazyWithRetry(() => import('./pages/Nps'));
+const Censo = lazyWithRetry(() => import('./pages/censo/Censo'));
+const Links = lazyWithRetry(() => import('./pages/links/Links'));
+const CensoPublica = lazyWithRetry(() => import('./pages/public/CensoPublica'));
 const NpsResponder = lazyWithRetry(() => import('./pages/nps/NpsResponder'));
 const NpsPublica = lazyWithRetry(() => import('./pages/public/NpsPublica'));
 const KidsRetirada = lazyWithRetry(() => import('./pages/public/KidsRetirada'));
@@ -284,9 +284,13 @@ const InscricaoBatismo = lazyWithRetry(() => import('./pages/public/InscricaoBat
 const BatismoAcesso = lazyWithRetry(() => import('./pages/public/BatismoAcesso'));
 const ApresentacaoCriancasPublica = lazyWithRetry(() => import('./pages/public/ApresentacaoCriancas'));
 const InscricaoGrupos = lazyWithRetry(() => import('./pages/public/InscricaoGrupos'));
+const InscricaoLideres = lazyWithRetry(() => import('./pages/public/InscricaoLideres'));
 const GrupoAprovarPedido = lazyWithRetry(() => import('./pages/public/GrupoAprovarPedido'));
 const GrupoSugestaoAceite = lazyWithRetry(() => import('./pages/public/GrupoSugestaoAceite'));
 const GrupoFrequenciaMes = lazyWithRetry(() => import('./pages/public/GrupoFrequenciaMes'));
+const GrupoRenovacao = lazyWithRetry(() => import('./pages/public/GrupoRenovacao'));
+const GrupoConfiraLista = lazyWithRetry(() => import('./pages/public/GrupoConfiraLista'));
+const FamiliaConvite = lazyWithRetry(() => import('./pages/public/FamiliaConvite'));
 const InscricaoGruposQRCode = lazyWithRetry(() => import('./pages/admin/InscricaoGruposQRCode'));
 const GruposGeocode = lazyWithRetry(() => import('./pages/admin/GruposGeocode'));
 const TemporadasGrupos = lazyWithRetry(() => import('./pages/admin/TemporadasGrupos'));
@@ -296,6 +300,7 @@ const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
 // Pública, standalone, fora de qualquer menu. Conteúdo entra depois.
 const NovoSite = lazyWithRetry(() => import('./pages/public/NovoSite'));
 const QuemSomos = lazyWithRetry(() => import('./pages/public/QuemSomos'));
+const Suporte = lazyWithRetry(() => import('./pages/public/Suporte'));
 // /atlas · atlas operacional do sistema (manual + auditoria) · standalone, autenticado, fora do menu.
 const Atlas = lazyWithRetry(() => import('./pages/atlas/Atlas'));
 const Voluntariado = lazyWithRetry(() => import('./pages/ministerial/voluntariado'));
@@ -304,6 +309,19 @@ const TotemMembro = lazyWithRetry(() => import('./pages/TotemMembro'));
 const VolSelfCheckin = lazyWithRetry(() => import('./pages/ministerial/voluntariado/VolSelfCheckin'));
 const PcCallback = lazyWithRetry(() => import('./pages/auth/PcCallback'));
 const Cuidados = lazyWithRetry(() => import('./pages/ministerial/Cuidados'));
+const Comunicacao = lazyWithRetry(() => import('./pages/Comunicacao'));
+// Conversas / ConversasSetores viraram abas dentro de Comunicação (import interno).
+// As rotas antigas abaixo agora redirecionam pra /comunicacao.
+
+// Redirect pra /comunicacao que PRESERVA a query original (?telefone=&texto=&area=)
+// e só acrescenta/força o ?tab=. Navigate com `to` string substituía a URL inteira
+// e descartava os params — matando o deep-link dos botões "Conversas".
+function RedirectComunicacao({ tab }: { tab: string }) {
+  const location = useLocation();
+  const p = new URLSearchParams(location.search);
+  p.set('tab', tab);
+  return <Navigate to={`/comunicacao?${p.toString()}`} replace />;
+}
 const DevocionalMovido = lazyWithRetry(() => import('./pages/devocional/DevocionalMovido'));
 const Integracao = lazyWithRetry(() => import('./pages/ministerial/Integracao'));
 const Batismo = lazyWithRetry(() => import('./pages/ministerial/Batismos'));
@@ -317,8 +335,28 @@ const GovernancaRitual = lazyWithRetry(() => import('./pages/governanca/RitualPa
 // Mantido aqui apenas pra retrocompat de URL — redirect via Navigate.
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
 const EventoExterno = lazyWithRetry(() => import('./pages/public/EventoExterno'));
-const EventosExternos = lazyWithRetry(() => import('./pages/EventosExternos'));
-const EventoExternoDetalhe = lazyWithRetry(() => import('./pages/EventoExternoDetalhe'));
+const PagamentoInscricao = lazyWithRetry(() => import('./pages/public/PagamentoInscricao'));
+// Doação (Generosidade) · página PÚBLICA. ⚠️ É esta página que o app de membros
+// abre no NAVEGADOR EXTERNO — a guideline 3.2.2(iv) da App Store proíbe coletar
+// doação dentro do app de quem não é nonprofit aprovado pela Apple, e permite
+// arrecadar fora dele ("via Safari"). Não replicar o fluxo dentro do app.
+const Doar = lazyWithRetry(() => import('./pages/public/Doar'));
+const InscricaoComprovante = lazyWithRetry(() => import('./pages/public/InscricaoComprovante'));
+const PoliticaReembolso = lazyWithRetry(() => import('./pages/public/PoliticaReembolso'));
+const InscricaoEventoCheckin = lazyWithRetry(() => import('./pages/InscricaoEventoCheckin'));
+// EventosExternos/EventoExternoDetalhe (gestão do ext) saíram das rotas na
+// virada pro /inscricoes (SPEC-04 · 2026-07-28); arquivos ficam no repo até
+// 1 ciclo sem divergência (rollback = restaurar as 2 rotas).
+const Inscricoes = lazyWithRetry(() => import('./pages/Inscricoes'));
+const Propostas = lazyWithRetry(() => import('./pages/Propostas'));
+const InscricaoEventoDetalhe = lazyWithRetry(() => import('./pages/InscricaoEventoDetalhe'));
+const InscricaoTotens = lazyWithRetry(() => import('./pages/InscricaoTotens'));
+// ⚠️ NÃO criar quiosque separado pra inscrições. As inscrições de evento vivem
+// DENTRO do Totem Membro (`/totem` · MENU_OPTIONS de TotemMembro.tsx), ao lado
+// de grupos/batismo/Next/apresentação — decisão do Matheus em 05/08, e o
+// próprio MENU_OPTIONS registra que a vaga de "Retiro" existia ali e foi podada
+// por falta de implementação. Uma rota `/totem/inscricoes` chegou a existir por
+// algumas horas e foi removida no mesmo dia.
 const NextDirecionar = lazyWithRetry(() => import('./pages/public/NextDirecionar'));
 const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
 const InscricaoVoluntariado = lazyWithRetry(() => import('./pages/public/InscricaoVoluntariado'));
@@ -372,6 +410,27 @@ function MemberOnlyRedirect({ children }: { children: ReactNode }) {
  *   - moduleSlug: novo · checa modulePerms[slug].leitura >= nivelMinimo (default 1)
  *     Permite liberar acesso de visualizacao (nível 1) sem cair no fallback canX.
  */
+// Só super-admin ESTRITO (app_super_admins · NÃO tem bypass de admin/diretor).
+// Usado no Analytics do app (dado sensível · só gestão + Marcos Paulo).
+function SuperAdminGuard({ children }: { children: ReactNode }) {
+  const auth = useAuth() as Record<string, unknown>;
+  if (auth.loading) return <Loading />;
+  if (!auth.isSuperAdmin) {
+    const email = (auth.user as { email?: string } | null)?.email;
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-16">
+        <div className="rounded-2xl border border-amber-300/50 bg-amber-50 p-6 text-amber-950 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+          <h1 className="text-xl font-semibold">Acesso restrito ao Sistema</h1>
+          <p className="mt-2 text-sm leading-6 opacity-80">Esta área exige cadastro ativo em app_super_admins. Ser admin ou diretor não libera o command center técnico.</p>
+          {email && <p className="mt-3 rounded-lg border border-current/15 px-3 py-2 font-mono text-xs">Conta atual: {email}</p>}
+          <a href="/dashboard" className="mt-5 inline-flex min-h-10 items-center rounded-md bg-amber-900 px-4 text-sm font-medium text-white dark:bg-amber-200 dark:text-amber-950">Voltar ao painel</a>
+        </div>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
 function ModuleGuard({ permKey, moduleSlug, anyOf, nivelMinimo = 1, children }: { permKey?: string; moduleSlug?: string; anyOf?: string[]; nivelMinimo?: number; children: ReactNode }) {
   const auth = useAuth();
   const a = auth as Record<string, unknown>;
@@ -525,13 +584,30 @@ function AppRoutes() {
       <Route path="/batismo/acesso" element={<Suspense fallback={<Loading />}><BatismoAcesso /></Suspense>} />
       <Route path="/apresentacao-criancas" element={<Suspense fallback={<Loading />}><ApresentacaoCriancasPublica /></Suspense>} />
       <Route path="/evento/:slug" element={<Suspense fallback={<Loading />}><EventoExterno /></Suspense>} />
+      {/* Status do pagamento da inscrição · público, pelo public_token da cobrança */}
+      <Route path="/pagamento/:token" element={<Suspense fallback={<Loading />}><PagamentoInscricao /></Suspense>} />
+      {/* Doação · público. `/doar` é o formulário; `/doar/:token` é a tela do
+          pagamento (a pessoa pode voltar nela pelo link). */}
+      <Route path="/doar" element={<Suspense fallback={<Loading />}><Doar /></Suspense>} />
+      <Route path="/doar/:token" element={<Suspense fallback={<Loading />}><Doar /></Suspense>} />
+      {/* Comprovante da inscrição (SPEC-06) · público, token ASSINADO — é a URL do QR do check-in */}
+      <Route path="/i/c/:token" element={<Suspense fallback={<Loading />}><InscricaoComprovante /></Suspense>} />
+      {/* Política de reembolso · o CDC exige informação PRÉVIA e clara, então
+          precisa ser alcançável antes da compra, sem login. */}
+      <Route path="/politica-reembolso" element={<Suspense fallback={<Loading />}><PoliticaReembolso /></Suspense>} />
       <Route path="/inscricao-grupos" element={<Suspense fallback={<Loading />}><InscricaoGrupos /></Suspense>} />
+      <Route path="/inscricao-lideres" element={<Suspense fallback={<Loading />}><InscricaoLideres /></Suspense>} />
       {/* Líder aprova pedido de grupo pelo link do WhatsApp · token = credencial · sem login */}
       <Route path="/g/a/:token" element={<Suspense fallback={<Loading />}><GrupoAprovarPedido /></Suspense>} />
       {/* Pessoa aceita a sugestão de outro grupo pelo link do WhatsApp · sem login */}
       <Route path="/g/s/:token" element={<Suspense fallback={<Loading />}><GrupoSugestaoAceite /></Suspense>} />
       {/* Líder registra a frequência do mês do grupo pelo link do WhatsApp · sem login */}
       <Route path="/g/f/:token" element={<Suspense fallback={<Loading />}><GrupoFrequenciaMes /></Suspense>} />
+      <Route path="/g/r/:token" element={<Suspense fallback={<Loading />}><GrupoRenovacao /></Suspense>} />
+      {/* Líder confere a lista do grupo e DESMARCA quem não faz mais parte · sem login */}
+      <Route path="/g/c/:token" element={<Suspense fallback={<Loading />}><GrupoConfiraLista /></Suspense>} />
+      {/* Convite de familiar do app · página de bounce (leva a aceitar no app) */}
+      <Route path="/f/a/:codigo" element={<Suspense fallback={<Loading />}><FamiliaConvite /></Suspense>} />
       <Route path="/next" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/inscrever" element={<Suspense fallback={<Loading />}><InscricaoNext /></Suspense>} />
       <Route path="/next/direcionar/:token" element={<Suspense fallback={<Loading />}><NextDirecionar /></Suspense>} />
@@ -542,7 +618,11 @@ function AppRoutes() {
       {/* Prévia interna do novo site (redesign cbrio.com.br) · não-listada */}
       <Route path="/novosite" element={<Suspense fallback={<Loading />}><NovoSite /></Suspense>} />
       <Route path="/novosite/quem-somos" element={<Suspense fallback={<Loading />}><QuemSomos /></Suspense>} />
+      {/* Página pública de suporte dos apps (Apple Guideline 1.5 · Support URL) */}
+      <Route path="/suporte" element={<Suspense fallback={<Loading />}><Suporte /></Suspense>} />
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
+      {/* Censo público · é o endereço que vai no QR impresso do culto. */}
+      <Route path="/censo/p/:slug" element={<Suspense fallback={<Loading />}><CensoPublica /></Suspense>} />
       {/* Retirada do Kids · QR aberto pelo link do WhatsApp · público, sem PII */}
       <Route path="/kids/retirada/:codigo" element={<Suspense fallback={<Loading />}><KidsRetirada /></Suspense>} />
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
@@ -602,6 +682,8 @@ function AppRoutes() {
         <Route path="/processos" element={<Navigate to="/eventos" replace />} />
         <Route path="/processos/*" element={<Navigate to="/eventos" replace />} />
         <Route path="/nps" element={<Suspense fallback={<Loading />}><Nps /></Suspense>} />
+        <Route path="/censo" element={<ModuleGuard moduleSlug="censo" nivelMinimo={1}><Suspense fallback={<Loading />}><Censo /></Suspense></ModuleGuard>} />
+        <Route path="/links" element={<ModuleGuard moduleSlug="links" nivelMinimo={1}><Suspense fallback={<Loading />}><Links /></Suspense></ModuleGuard>} />
         <Route path="/nps/:id/responder" element={<Suspense fallback={<Loading />}><NpsResponder /></Suspense>} />
         <Route path="/admin/rh" element={<ModuleGuard permKey="canRH"><Suspense fallback={<Loading />}><RH /></Suspense></ModuleGuard>} />
         <Route path="/admin/financeiro" element={<ModuleGuard permKey="canFinanceiro"><Suspense fallback={<Loading />}><Financeiro /></Suspense></ModuleGuard>} />
@@ -609,13 +691,14 @@ function AppRoutes() {
         <Route path="/admin/patrimonio" element={<ModuleGuard permKey="canPatrimonio"><Suspense fallback={<Loading />}><Patrimonio /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/membresia" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Membresia /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/membresia/scan" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><MemberScan /></Suspense></ModuleGuard>} />
-        <Route path="/ministerial/reconhecimento-facial" element={<ModuleGuard moduleSlug="face"><Suspense fallback={<Loading />}><ReconhecimentoFacial /></Suspense></ModuleGuard>} />
+        {/* Superfície interna do Sistema; URL legada preservada para os links da aba Governança. */}
+        <Route path="/ministerial/reconhecimento-facial" element={<SuperAdminGuard><Suspense fallback={<Loading />}><ReconhecimentoFacial /></Suspense></SuperAdminGuard>} />
         <Route path="/ministerial/voluntariado/*" element={<VoluntariadoGuard><Suspense fallback={<Loading />}><Voluntariado /></Suspense></VoluntariadoGuard>} />
         {/* Totem Kids · check-in/checkout/painel · 2026-05-21 */}
         <Route path="/ministerial/totem-kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsCheckin /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><KidsHub /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/criancas" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><GestaoCriancas /></Suspense></ModuleGuard>} />
-        <Route path="/ministerial/totem-kids/frequencia" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><KidsFrequenciaPCO /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/totem-kids/frequencia" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><KidsFrequencia /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/voluntarios" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><VoluntariosKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/voluntariado-inscricoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><VoluntariadoInscricoesKids /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/estoque" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><EstoqueKids /></Suspense></ModuleGuard>} />
@@ -637,7 +720,17 @@ function AppRoutes() {
             unificada em /grupos?tab=entrada é o único lugar de triagem. */}
         <Route path="/grupos/pedidos" element={<Navigate to="/grupos?tab=entrada" replace />} />
         <Route path="/ministerial/cuidados" element={<ModuleGuard moduleSlug="cuidados"><Suspense fallback={<Loading />}><Cuidados /></Suspense></ModuleGuard>} />
-        <Route path="/wifi" element={<ModuleGuard moduleSlug="wifi"><Suspense fallback={<Loading />}><WifiModulo /></Suspense></ModuleGuard>} />
+        {/* Módulo central de Comunicação (C4) · absorve Conversas + Bot WhatsApp + Menu das Conversas */}
+        <Route path="/comunicacao" element={<ModuleGuard moduleSlug="comunicacao"><Suspense fallback={<Loading />}><Comunicacao /></Suspense></ModuleGuard>} />
+        {/* Redirects das rotas antigas → não quebrar bookmarks/links */}
+        {/* ⚠️ Redirect PRESERVANDO a query: os botões "Conversas" de ~13 telas
+            (hrefConversa) e o link de transferência chegam com ?telefone=&texto=
+            &area= — o <Navigate to="string"> descartava tudo e a conversa da
+            pessoa não abria (bug da revisão de 05/08). */}
+        <Route path="/conversas" element={<RedirectComunicacao tab="conversas" />} />
+        <Route path="/admin/conversas-setores" element={<RedirectComunicacao tab="bot" />} />
+        {/* Superfície interna do Sistema; não é mais um módulo autônomo. */}
+        <Route path="/wifi" element={<SuperAdminGuard><Suspense fallback={<Loading />}><WifiModulo /></Suspense></SuperAdminGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
         <Route path="/ministerial/integracao" element={<ModuleGuard anyOf={['integracao', 'next']}><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
@@ -647,12 +740,20 @@ function AppRoutes() {
         <Route path="/integracao/coleta" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={2}><Suspense fallback={<Loading />}><ColetaCulto /></Suspense></ModuleGuard>} />
         <Route path="/integracao" element={<Navigate to="/ministerial/integracao" replace />} />
         <Route path="/producao" element={<ModuleGuard moduleSlug="producao" nivelMinimo={1}><Suspense fallback={<Loading />}><Producao /></Suspense></ModuleGuard>} />
-        <Route path="/next-batismo" element={<ModuleGuard moduleSlug="next-batismo" nivelMinimo={1}><Suspense fallback={<Loading />}><NextBatismo /></Suspense></ModuleGuard>} />
-        <Route path="/eventos-externos" element={<ModuleGuard moduleSlug="eventos-externos" nivelMinimo={1}><Suspense fallback={<Loading />}><EventosExternos /></Suspense></ModuleGuard>} />
-        <Route path="/eventos-externos/:id" element={<ModuleGuard moduleSlug="eventos-externos" nivelMinimo={1}><Suspense fallback={<Loading />}><EventoExternoDetalhe /></Suspense></ModuleGuard>} />
+        <Route path="/entradas" element={<ModuleGuard moduleSlug="next-batismo" nivelMinimo={1}><Suspense fallback={<Loading />}><NextBatismo /></Suspense></ModuleGuard>} />
+        {/* Eventos Externos migrou pro /inscricoes (virada do Celebra · SPEC-04) */}
+        <Route path="/eventos-externos" element={<Navigate to="/inscricoes" replace />} />
+        <Route path="/eventos-externos/:id" element={<Navigate to="/inscricoes" replace />} />
+        <Route path="/inscricoes" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><Inscricoes /></Suspense></ModuleGuard>} />
+        <Route path="/propostas" element={<ModuleGuard moduleSlug="propostas" nivelMinimo={1}><Suspense fallback={<Loading />}><Propostas /></Suspense></ModuleGuard>} />
+        <Route path="/inscricoes/evento/:id" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><InscricaoEventoDetalhe /></Suspense></ModuleGuard>} />
+        {/* Check-in do evento (SPEC-06) · nível 2 = operar check-in (SPEC-08) */}
+        <Route path="/inscricoes/evento/:id/checkin" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={2}><Suspense fallback={<Loading />}><InscricaoEventoCheckin /></Suspense></ModuleGuard>} />
+        {/* Totens · ver = 1 · criar/parear/revogar = 4 (gate no backend) */}
+        <Route path="/inscricoes/totens" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><InscricaoTotens /></Suspense></ModuleGuard>} />
         <Route path="/governanca" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><Governanca /></Suspense></ModuleGuard>} />
         <Route path="/governanca/:sigla" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><GovernancaRitual /></Suspense></ModuleGuard>} />
-        <Route path="/entradas" element={<Navigate to="/next-batismo" replace />} />
+        <Route path="/next-batismo" element={<Navigate to="/entradas" replace />} />
         {/* Cultos · rotas na raiz (sem prefixo /ministerial) · 2026-05-21 */}
         <Route path="/online" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Online /></Suspense></ModuleGuard>} />
         <Route path="/kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><PainelKids /></Suspense></ModuleGuard>} />
@@ -665,6 +766,7 @@ function AppRoutes() {
         <Route path="/marketing/admin" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={5}><Suspense fallback={<Loading />}><MarketingAdmin /></Suspense></ModuleGuard>} />
         <Route path="/marketing/analytics" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingAnalytics /></Suspense></ModuleGuard>} />
         <Route path="/marketing/comunicados" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingComunicados /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/generosidade" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingGenerosidade /></Suspense></ModuleGuard>} />
         <Route path="/marketing/fila" element={<Navigate to="/marketing" replace />} />
         <Route path="/marketing/ciclo-criativo" element={<Navigate to="/marketing" replace />} />
         <Route path="/marketing/triagem" element={<Navigate to="/marketing" replace />} />
@@ -691,10 +793,13 @@ function AppRoutes() {
         <Route path="/admin/fotos-batismo" element={<ModuleGuard permKey="isAdmin"><Suspense fallback={<Loading />}><FotosBatismo /></Suspense></ModuleGuard>} />
         <Route path="/admin/cruzamentos" element={<Suspense fallback={<Loading />}><CruzamentosPessoas /></Suspense>} />
         <Route path="/admin/solicitacoes-responsaveis" element={<Suspense fallback={<Loading />}><SolicitacoesResponsaveis /></Suspense>} />
+        <Route path="/admin/solicitacoes-fluxo" element={<Suspense fallback={<Loading />}><SolicitacoesFluxo /></Suspense>} />
         <Route path="/admin/permissoes" element={<Suspense fallback={<Loading />}><PermissoesAdmin /></Suspense>} />
-        <Route path="/admin/feedback" element={<Suspense fallback={<Loading />}><FeedbackAdmin /></Suspense>} />
-        <Route path="/admin/app-analytics" element={<ModuleGuard moduleSlug="dashboard" nivelMinimo={1}><Suspense fallback={<Loading />}><AppAnalytics /></Suspense></ModuleGuard>} />
-        <Route path="/admin/whatsapp" element={<ModuleGuard moduleSlug="integracao" nivelMinimo={3}><Suspense fallback={<Loading />}><WhatsappAdmin /></Suspense></ModuleGuard>} />
+        <Route path="/admin/feedback" element={<SuperAdminGuard><Suspense fallback={<Loading />}><FeedbackAdmin /></Suspense></SuperAdminGuard>} />
+        <Route path="/admin/app-analytics" element={<SuperAdminGuard><Suspense fallback={<Loading />}><AppAnalytics /></Suspense></SuperAdminGuard>} />
+        <Route path="/sistema" element={<SuperAdminGuard><Suspense fallback={<Loading />}><Sistema /></Suspense></SuperAdminGuard>} />
+        {/* Bot WhatsApp virou aba dentro de Comunicação */}
+        <Route path="/admin/whatsapp" element={<RedirectComunicacao tab="bot" />} />
         {/* Apresentações: módulo desativado (2026-07-06 · pedido do Matheus) — rota redireciona */}
         <Route path="/admin/apresentacoes" element={<Navigate to="/dashboard" replace />} />
         <Route path="/admin/apresentacoes/*" element={<Navigate to="/dashboard" replace />} />
@@ -738,28 +843,51 @@ function SitePublicoRoutes() {
       {/* caminhos antigos da prévia continuam funcionando */}
       <Route path="/novosite" element={<Navigate to="/" replace />} />
       <Route path="/novosite/quem-somos" element={<Navigate to="/quem-somos" replace />} />
+      <Route path="/suporte" element={<Suspense fallback={<Loading />}><Suporte /></Suspense>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
 
 export default function App() {
-  // Se o app rodar estável por 5s, a navegação deu certo → tira _chunk_retry/_cb
-  // da URL pra ZERAR o contador de retries (senão um retry grudado come as
-  // tentativas do próximo incidente) e deixa a URL limpa. O atraso de 5s é o que
-  // preserva o teto anti-loop: se um chunk falhar antes disso, o hardReload roda
-  // com o contador intacto. 2026-06-30.
+  // Ao abrir a aplicação, compara o entrypoint carregado com o HTML atual do
+  // deploy. Se a aba veio do cache ou do histórico, atualiza antes de o usuário
+  // navegar para um módulo e encontrar um chunk antigo.
+  useEffect(() => {
+    let cancelled = false;
+    const check = async () => {
+      const hasUpdate = await hasNewAppVersion();
+      if (!cancelled && hasUpdate && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) {
+        void hardReload();
+      }
+    };
+    const timer = window.setTimeout(check, 800);
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) void check();
+    };
+    window.addEventListener('pageshow', handlePageShow);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      window.removeEventListener('pageshow', handlePageShow);
+    };
+  }, []);
+
+  // Limpa o orçamento de recuperação só depois da janela anti-loop. Em rede
+  // lenta, 5s não bastavam: o contador sumia antes de um chunk falhar e a página
+  // podia recarregar indefinidamente.
   useEffect(() => {
     const t = setTimeout(() => {
       try {
         const url = new URL(window.location.href);
-        if (url.searchParams.has(RETRY_PARAM) || url.searchParams.has('_cb')) {
-          url.searchParams.delete(RETRY_PARAM);
-          url.searchParams.delete('_cb');
+        if (url.searchParams.has(APP_UPDATE_RETRY_PARAM) || url.searchParams.has(APP_UPDATE_CACHE_BUSTER_PARAM)) {
+          url.searchParams.delete(APP_UPDATE_RETRY_PARAM);
+          url.searchParams.delete(APP_UPDATE_RETRY_STARTED_PARAM);
+          url.searchParams.delete(APP_UPDATE_CACHE_BUSTER_PARAM);
           window.history.replaceState(null, '', url.pathname + url.search + url.hash);
         }
       } catch { /* ignora */ }
-    }, 5000);
+    }, APP_UPDATE_RETRY_WINDOW_MS);
     return () => clearTimeout(t);
   }, []);
   if (isSitePublicoHost()) {

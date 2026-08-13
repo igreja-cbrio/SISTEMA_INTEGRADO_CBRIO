@@ -1,20 +1,22 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
 import { financeiro, financeiroV2 } from '../../../api';
 import { Button } from '../../../components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
 import { exportPDF } from '../../../lib/export';
 import SantanderTab from './SantanderTab';
 import EstruturaFiscal from './EstruturaFiscal';
 import ImportarExtratos from './ImportarExtratos';
 import FilaClassificacao from './FilaClassificacao';
+import Conciliacao from './Conciliacao';
+import IdentificarDoadores from './IdentificarDoadores';
+import { CartoesConfig, FaturaModal } from './CartoesFaturas';
 import NotasCompras from './NotasCompras';
+import BancoComprovantes from './BancoComprovantes';
 import DashboardOverview from './DashboardOverview';
-import CultoAoVivo from './CultoAoVivo';
 import DreAuto from './DreAuto';
 import Analises from './Analises';
-import PixCobranca from './PixCobranca';
-import PagamentosContas from './PagamentosContas';
-import BoletosEmitidos from './BoletosEmitidos';
 import SolicitacoesFinanceiro from './SolicitacoesFinanceiro';
 import Recorrentes from './Recorrentes';
 import Generosidade from './Generosidade';
@@ -35,8 +37,8 @@ const C = {
   blue: '#3b82f6', blueBg: '#3b82f618',
 };
 
-const TIPO_CONTA = { corrente: 'Corrente', poupanca: 'Poupanca', caixa: 'Caixa', investimento: 'Investimento' };
-const TIPO_TRANSACAO = { receita: 'Receita', despesa: 'Despesa', transferencia: 'Transferencia' };
+const TIPO_CONTA = { corrente: 'Corrente', poupanca: 'Poupança', caixa: 'Caixa', investimento: 'Investimento' };
+const TIPO_TRANSACAO = { receita: 'Receita', despesa: 'Despesa', transferencia: 'Transferência' };
 
 const STATUS_TRANSACAO = {
   pendente: { c: C.amber, bg: C.amberBg, label: 'Pendente' },
@@ -64,10 +66,10 @@ const styles = {
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 },
   title: { fontSize: 20, fontWeight: 700, color: C.text, letterSpacing: -0.5, lineHeight: 1.25 },
   subtitle: { fontSize: 14, color: C.text2, marginTop: 2, lineHeight: 1.5 },
-  tabs: { display: 'flex', gap: 0, borderBottom: `2px solid ${C.border}`, marginBottom: 24 },
+  tabs: { display: 'flex', gap: 0, borderBottom: `2px solid ${C.border}`, marginBottom: 24, overflowX: 'auto', WebkitOverflowScrolling: 'touch' },
   tab: (active) => ({
     padding: '12px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', background: 'none',
-    color: active ? C.primary : C.text2,
+    color: active ? C.primary : C.text2, whiteSpace: 'nowrap', flexShrink: 0,
     borderBottom: active ? `2px solid ${C.primary}` : '2px solid transparent',
     marginBottom: -2, transition: 'all 0.15s',
   }),
@@ -157,6 +159,189 @@ function Badge({ status, map }) {
   return <span style={styles.badge(s.c, s.bg)}>{s.label}</span>;
 }
 
+// ── Detalhe completo da transação (Fase 1) ──────────────────
+// Abre ao clicar na linha da lista. Carrega financeiroV2.transacoes.detalhe(id)
+// (transação + nomes de plano/centro/conta + NF + conta a pagar vinculadas) e
+// gerencia os comprovantes (anexar/remover). Componente de verdade no topo do
+// módulo → hooks sem risco de violação (diferente dos renderModal* antigos).
+function DetalheTransacao({ id, onClose, onEditar, onChanged, podeEditar }) {
+  const [det, setDet] = useState(null);
+  const [erro, setErro] = useState('');
+  const [enviando, setEnviando] = useState(false);
+
+  useEffect(() => {
+    let vivo = true;
+    setDet(null); setErro('');
+    financeiroV2.transacoes.detalhe(id)
+      .then(d => { if (vivo) setDet(d); })
+      .catch(e => { if (vivo) setErro(e.message || 'Erro ao carregar o detalhe'); });
+    return () => { vivo = false; };
+  }, [id]);
+
+  const anexar = async (file) => {
+    if (!file) return;
+    setEnviando(true); setErro('');
+    try {
+      const anexos = await financeiroV2.transacoes.anexar(id, file);
+      setDet(d => (d ? { ...d, anexos_url: anexos } : d));
+      onChanged?.();
+    } catch (e) { setErro(e.message || 'Erro ao anexar'); }
+    finally { setEnviando(false); }
+  };
+
+  const removerAnexo = async (url) => {
+    if (!window.confirm('Remover este comprovante?')) return;
+    setErro('');
+    try {
+      const anexos = await financeiroV2.transacoes.removerAnexo(id, url);
+      setDet(d => (d ? { ...d, anexos_url: anexos } : d));
+      onChanged?.();
+    } catch (e) { setErro(e.message || 'Erro ao remover'); }
+  };
+
+  const Linha = ({ label, children }) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16, padding: '7px 0', borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
+      <span style={{ color: C.text2, whiteSpace: 'nowrap' }}>{label}</span>
+      <span style={{ color: C.text, fontWeight: 600, textAlign: 'right' }}>{children ?? '—'}</span>
+    </div>
+  );
+
+  const Bloco = ({ titulo, children }) => (
+    <div style={{ marginTop: 16 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>{titulo}</div>
+      {children}
+    </div>
+  );
+
+  const isReceita = det?.tipo === 'receita';
+  const anexos = Array.isArray(det?.anexos_url) ? det.anexos_url : [];
+  const formaPgto = det?.forma_pagamento
+    ? det.forma_pagamento + (det.parcelas_total
+      ? ` · ${det.parcela_num ? `parcela ${det.parcela_num}/${det.parcelas_total}` : `${det.parcelas_total}x`}`
+      : (det.forma_pagamento === 'Cartão de Crédito' ? ' · à vista' : ''))
+    : null;
+  const nf = det?.nota_fiscal;
+  const cp = det?.conta_pagar;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Detalhe da transação"
+      footer={
+        <>
+          {podeEditar && det && <Button variant="outline" onClick={() => onEditar(det)}>Editar</Button>}
+          <Button onClick={onClose}>Fechar</Button>
+        </>
+      }
+    >
+      {erro && (
+        <div style={{ background: C.redBg, color: C.red, padding: '8px 12px', borderRadius: 8, marginBottom: 12, fontSize: 13, fontWeight: 600 }}>{erro}</div>
+      )}
+      {!det && !erro && (
+        <div style={styles.empty}>Carregando...</div>
+      )}
+      {det && (
+        <>
+          {/* Cabeçalho: valor + tipo + status */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 10 }}>
+            <div>
+              <div style={{ fontSize: 24, fontWeight: 800, color: isReceita ? C.green : C.red }}>
+                {isReceita ? '+ ' : '- '}{fmtMoney(det.valor)}
+              </div>
+              <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>{det.descricao}</div>
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <span style={styles.badge(isReceita ? C.green : C.red, isReceita ? C.greenBg : C.redBg)}>
+                {isReceita ? 'Entrada' : 'Saída'}
+              </span>
+              <Badge status={det.status} map={STATUS_TRANSACAO} />
+            </div>
+          </div>
+
+          <Linha label="Data de competência">{fmtDate(det.data_competencia)}</Linha>
+          <Linha label="Data de pagamento">{fmtDate(det.data_pagamento)}</Linha>
+          <Linha label="Conta">{det.conta?.nome || '—'}</Linha>
+          <Linha label="Plano de contas">{det.plano ? `${det.plano.codigo} · ${det.plano.nome}` : '—'}</Linha>
+          <Linha label="Centro de custo">{det.centro ? `${det.centro.codigo ? `${det.centro.codigo} · ` : ''}${det.centro.nome}` : '—'}</Linha>
+          <Linha label="Forma de pagamento">{formaPgto || '—'}</Linha>
+          {det.classe_movimento && det.classe_movimento !== 'ordinaria' && (
+            <Linha label="Classe do movimento">{det.classe_movimento}</Linha>
+          )}
+          {det.referencia && <Linha label="Referência">{det.referencia}</Linha>}
+          {det.classificacao_origem && <Linha label="Origem da classificação">{det.classificacao_origem}</Linha>}
+          {det.observacoes && (
+            <div style={{ padding: '8px 0', fontSize: 13, color: C.text, borderBottom: `1px solid ${C.border}` }}>
+              <span style={{ color: C.text2 }}>Observações: </span>{det.observacoes}
+            </div>
+          )}
+
+          {/* Comprovantes */}
+          <Bloco titulo="Comprovantes">
+            {anexos.length === 0 && (
+              <div style={{ fontSize: 13, color: C.text3, marginBottom: 6 }}>Nenhum comprovante anexado.</div>
+            )}
+            {anexos.map((a) => (
+              <div key={a.url} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 13 }}>
+                <span>{'📎'}</span>
+                <a href={a.url} target="_blank" rel="noreferrer" style={{ color: C.primary, fontWeight: 600, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                  {a.nome || 'comprovante'}
+                </a>
+                <span style={{ color: C.text3, fontSize: 12 }}>{a.em ? fmtDate(a.em.slice(0, 10)) : ''}</span>
+                {podeEditar && (
+                  <Button variant="ghost" size="sm" className="text-destructive" onClick={() => removerAnexo(a.url)}>{'✕'}</Button>
+                )}
+              </div>
+            ))}
+            {podeEditar && (
+              <>
+                <input
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,.pdf"
+                  id={`anexo-transacao-${id}`}
+                  style={{ display: 'none' }}
+                  onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; anexar(f); }}
+                />
+                <Button variant="outline" size="sm" disabled={enviando} onClick={() => document.getElementById(`anexo-transacao-${id}`)?.click()}>
+                  {enviando ? 'Enviando...' : 'Anexar comprovante'}
+                </Button>
+              </>
+            )}
+          </Bloco>
+
+          {/* Nota fiscal vinculada */}
+          {nf && (
+            <Bloco titulo="Nota fiscal">
+              <div style={{ fontSize: 13, color: C.text }}>
+                <div style={{ fontWeight: 600 }}>{nf.numero ? `NF ${nf.numero}` : 'Nota fiscal'}{nf.emitente_nome ? ` · ${nf.emitente_nome}` : ''}</div>
+                <div style={{ color: C.text2, marginTop: 2 }}>{fmtMoney(nf.valor)}</div>
+                {nf.storage_path && (
+                  <a href={nf.storage_path} target="_blank" rel="noreferrer" style={{ color: C.primary, fontWeight: 600, textDecoration: 'none' }}>
+                    Ver arquivo da nota
+                  </a>
+                )}
+              </div>
+            </Bloco>
+          )}
+
+          {/* Conta a pagar vinculada */}
+          {cp && (
+            <Bloco titulo="Conta a pagar vinculada">
+              <div style={{ fontSize: 13, color: C.text, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{cp.descricao}</div>
+                  <div style={{ color: C.text2, marginTop: 2 }}>Vencimento {fmtDate(cp.data_vencimento)}</div>
+                </div>
+                <Badge status={cp.status} map={STATUS_PAGAR} />
+              </div>
+            </Bloco>
+          )}
+        </>
+      )}
+    </Modal>
+  );
+}
+
 // ── TABS ────────────────────────────────────────────────────
 // 6 grupos top-level (em vez de 14 abas em sequencia)
 // Cada grupo composto tem sub-abas dentro
@@ -167,10 +352,9 @@ const TABS = [
   'Análises', 'DRE', 'Generosidade', 'Banco',
   'Operacional', 'Gestão', 'Configuração',
 ];
-const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Calendário', 'Notas de compras'];
+const SUBS_OPERACIONAL = ['Contas', 'Recorrentes', 'Reembolsos', 'Importar extratos', 'Fila de classificação', 'Conciliação', 'Calendário', 'Notas de compras', 'Identificar doadores', 'Comprovantes'];
 const SUBS_GESTAO = ['Solicitações', 'Alertas', 'Fechamento', 'Auditoria'];
 const SUBS_DRE = ['DRE Auto', 'Por Centro de Custo', 'Comparativo Temporal'];
-const SUBS_BANCO = ['Banco Santander', 'Culto ao Vivo', 'PIX Cobrança', 'Pagamentos', 'Boletos'];
 
 // ── KPI Cards (estilo unificado) ─────────────────────────────
 const FIN_STAT_SVGS = [
@@ -240,6 +424,7 @@ function StatCard({ label, value, bg, svg }) {
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════
 export default function Financeiro() {
+  const [searchParams] = useSearchParams();
   const { isDiretor, getAccessLevel } = useAuth();
   const nivelFin = getAccessLevel(['financeiro']);
   const podeEditarFin = isDiretor || nivelFin >= 3;   // editar/lançar conta a pagar (write)
@@ -248,7 +433,15 @@ export default function Financeiro() {
   const [subOp, setSubOp] = useState(0);
   const [subGestao, setSubGestao] = useState(0);
   const [subDre, setSubDre] = useState(0);
-  const [subBanco, setSubBanco] = useState(0);
+  const abrirSolicitacoes = searchParams.get('aba') === 'solicitacoes';
+  const solicitacaoId = searchParams.get('solicitacao') || null;
+
+  useEffect(() => {
+    if (abrirSolicitacoes) {
+      setTab(9);
+      setSubGestao(0);
+    }
+  }, [abrirSolicitacoes]);
 
   // Navegacao por string-id usada por DashboardOverview shortcuts
   const goTo = (id) => {
@@ -262,18 +455,15 @@ export default function Financeiro() {
       case 'dre_centro':       setTab(5); setSubDre(1); break;
       case 'dre_comparativo':  setTab(5); setSubDre(2); break;
       case 'generosidade':     setTab(6); break;
-      case 'banco':            setTab(7); setSubBanco(0); break;
-      case 'culto_vivo':       setTab(7); setSubBanco(1); break;
-      case 'pix_cob':          setTab(7); setSubBanco(2); break;
-      case 'pagamentos':       setTab(7); setSubBanco(3); break;
-      case 'boletos':          setTab(7); setSubBanco(4); break;
+      case 'banco':            setTab(7); break;
       case 'contas':           setTab(8); setSubOp(0); break;
       case 'recorrentes':      setTab(8); setSubOp(1); break;
       case 'reembolsos':       setTab(8); setSubOp(2); break;
       case 'importar':         setTab(8); setSubOp(3); break;
       case 'fila':             setTab(8); setSubOp(4); break;
-      case 'calendario':       setTab(8); setSubOp(5); break;
-      case 'notas_compras':    setTab(8); setSubOp(6); break;
+      case 'conciliacao':      setTab(8); setSubOp(5); break;
+      case 'calendario':       setTab(8); setSubOp(6); break;
+      case 'notas_compras':    setTab(8); setSubOp(7); break;
       case 'solicitacoes_fin': setTab(9); setSubGestao(0); break;
       case 'alertas':          setTab(9); setSubGestao(1); break;
       case 'closing':          setTab(9); setSubGestao(2); break;
@@ -303,10 +493,13 @@ export default function Financeiro() {
   const [filtroInicio, setFiltroInicio] = useState('');
   const [filtroFim, setFiltroFim] = useState('');
   const [filtroBusca, setFiltroBusca] = useState('');
+  const [filtroSemDoc, setFiltroSemDoc] = useState(false); // só transações sem comprovante e sem NF
 
   // Filtro contas a pagar
   const [filtroPagarStatus, setFiltroPagarStatus] = useState('');
   const [filtroPagarAno, setFiltroPagarAno] = useState('');
+  const [filtroPagarMes, setFiltroPagarMes] = useState(''); // 1-12 · filtra o vencimento por mês
+  const [filtroPagarOrder, setFiltroPagarOrder] = useState('venc_asc'); // ordenação por vencimento
   const [filtroPagarBusca, setFiltroPagarBusca] = useState('');
   const [cpResumo, setCpResumo] = useState(null);
   const [cpTotal, setCpTotal] = useState(0);
@@ -322,6 +515,28 @@ export default function Financeiro() {
   const [modalConta, setModalConta] = useState(null);
   const [modalTransacao, setModalTransacao] = useState(null);
   const [modalPagar, setModalPagar] = useState(null);
+  const [faturaModal, setFaturaModal] = useState(null); // fatura_id aberto no detalhe
+  // Form do modal de Conta a Pagar · estado NO TOPO (antes ficava num useState
+  // dentro de renderModalPagar(), que é chamado condicionalmente → violava a
+  // regra dos hooks e quebrava com "Rendered more hooks" (React #310) ao editar).
+  const [formPagar, setFormPagar] = useState({});
+  useEffect(() => { setFormPagar(modalPagar || {}); }, [modalPagar]);
+  // Mesmo padrão pros modais de Transação e de Conta bancária (tinham a MESMA
+  // violação de hooks: useState dentro do render condicional).
+  const [formTransacao, setFormTransacao] = useState({});
+  useEffect(() => { setFormTransacao(modalTransacao || {}); }, [modalTransacao]);
+  const [formConta, setFormConta] = useState({});
+  useEffect(() => { setFormConta(modalConta || {}); }, [modalConta]);
+  // Detalhe completo da transação (Fase 1) · guarda o id da linha clicada
+  const [detalheTransacaoId, setDetalheTransacaoId] = useState(null);
+  // Plano de contas (folhas) e centros de custo pro modal novo (v2)
+  const [planosContas, setPlanosContas] = useState([]);
+  const [cartoesCred, setCartoesCred] = useState([]); // cartões ativos (fatura · Fase 4)
+  const [centrosCusto, setCentrosCusto] = useState([]);
+  // F2 · colaboradores do RH pro toggle "É salário" do modal de Conta a Pagar.
+  // null = ainda não tentou carregar · [] = carregou vazio ou sem permissão
+  // (o aux exige nível 4 do financeiro — salário é dado sensível).
+  const [funcionariosRh, setFuncionariosRh] = useState(null);
 
   // ── Loaders ──
   const loadDash = useCallback(async () => {
@@ -344,6 +559,7 @@ export default function Financeiro() {
       if (filtroTipo) params.tipo = filtroTipo;
       if (filtroStatus) params.status = filtroStatus;
       if (filtroBusca) params.busca = filtroBusca;
+      if (filtroSemDoc) params.sem_documento = 'true';
 
       // Período · monta inicio/fim conforme modo
       if (filtroPeriodoModo === 'mes') {
@@ -361,20 +577,24 @@ export default function Financeiro() {
       setTransacoes(await financeiro.transacoes.list(params));
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [filtroContaId, filtroTipo, filtroStatus, filtroBusca, filtroPeriodoModo, filtroAno, filtroMesNum, filtroInicio, filtroFim]);
+  }, [filtroContaId, filtroTipo, filtroStatus, filtroBusca, filtroSemDoc, filtroPeriodoModo, filtroAno, filtroMesNum, filtroInicio, filtroFim]);
 
   const loadContasPagar = useCallback(async () => {
     try {
       setLoading(true);
-      const params = { page: cpPage, pageSize: CP_PAGE_SIZE };
+      const params = { page: cpPage, pageSize: CP_PAGE_SIZE, order: filtroPagarOrder };
       if (filtroPagarStatus === 'vencido') params.vencido = 'true';
       else if (filtroPagarStatus) params.status = filtroPagarStatus;
       if (filtroPagarAno) params.ano = filtroPagarAno;
+      // Filtro por mês exige ano no backend → usa o ano escolhido ou o atual.
+      if (filtroPagarMes) { params.mes = filtroPagarMes; if (!params.ano) params.ano = new Date().getFullYear(); }
       if (filtroPagarBusca) params.q = filtroPagarBusca;
-      // O resumo (KPIs) segue o recorte ano/busca, mas ignora o filtro de status
-      // → os 4 cards sempre mostram total / baixado / aberto / vencido do escopo.
+      // O resumo (KPIs) segue o recorte ano/MÊS/busca, mas ignora o filtro de
+      // status → os 4 cards mostram total / baixado / aberto / vencido do escopo
+      // (aplicar status zeraria os outros cards, que SÃO a quebra por status).
       const resumoParams = {};
       if (filtroPagarAno) resumoParams.ano = filtroPagarAno;
+      if (filtroPagarMes) { resumoParams.mes = filtroPagarMes; if (!resumoParams.ano) resumoParams.ano = new Date().getFullYear(); }
       if (filtroPagarBusca) resumoParams.q = filtroPagarBusca;
       const [lista, resumo] = await Promise.all([
         financeiroV2.contasPagar.list(params),
@@ -385,7 +605,7 @@ export default function Financeiro() {
       setCpResumo(resumo || null);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [filtroPagarStatus, filtroPagarAno, filtroPagarBusca, cpPage]);
+  }, [filtroPagarStatus, filtroPagarAno, filtroPagarMes, filtroPagarOrder, filtroPagarBusca, cpPage]);
 
   const loadReembolsos = useCallback(async () => {
     try {
@@ -401,7 +621,27 @@ export default function Financeiro() {
   // Nova estrutura · tab 1 = Transações, tab 3 = Contas a Pagar,
   // tab 8 + subOp 2 = Reembolsos, tab 8 + subOp 0 = Contas
   useEffect(() => { if (tab === 1) loadTransacoes(); }, [tab, loadTransacoes]);
+  // Plano de contas (folhas que aceitam lançamento) + centros de custo pros
+  // modais de transação (v2) e de conta a pagar (F2) · carrega uma vez ao
+  // entrar na aba
+  useEffect(() => {
+    if ((tab !== 1 && tab !== 3) || planosContas.length) return;
+    financeiroV2.planoContas.list({ aceita_lancamento: 'true', ativo: 'true' })
+      .then(p => setPlanosContas(p || [])).catch(() => {});
+    financeiroV2.centrosCusto.list({ aceita_lancamento: 'true', ativo: 'true' })
+      .then(c => setCentrosCusto(c || [])).catch(() => {});
+    financeiroV2.cartoes.list()
+      .then(cs => setCartoesCred((cs || []).filter(k => k.ativo))).catch(() => {});
+  }, [tab, planosContas.length]);
   useEffect(() => { if (tab === 3) loadContasPagar(); }, [tab, loadContasPagar]);
+  // F2 · colaboradores do RH pro select de salário — tenta UMA vez, quando o
+  // modal de conta a pagar abre (sem permissão → lista vazia, sem erro na tela)
+  useEffect(() => {
+    if (!modalPagar || funcionariosRh !== null) return;
+    financeiroV2.auxFuncionarios()
+      .then(f => setFuncionariosRh(f || []))
+      .catch(() => setFuncionariosRh([]));
+  }, [modalPagar, funcionariosRh]);
   useEffect(() => { if (tab === 8 && subOp === 2) loadReembolsos(); }, [tab, subOp, loadReembolsos]);
 
   // ── Ações ──
@@ -422,10 +662,29 @@ export default function Financeiro() {
     try { await financeiro.contas.remove(id); loadContas(); loadDash(); } catch (e) { handleError(e); }
   };
 
+  // Fase 1 · criação/edição vai pra financeiro-v2 (conciliação com o extrato,
+  // plano de contas, forma de pagamento, parcelas). A v1 segue existindo pra
+  // outros consumidores — só o modal migrou.
   const saveTransacao = async (form) => {
     try {
-      if (form.id) await financeiro.transacoes.update(form.id, form);
-      else await financeiro.transacoes.create(form);
+      const cartao = form.forma_pagamento === 'Cartão de Crédito';
+      const payload = {
+        tipo: form.tipo,
+        descricao: form.descricao,
+        valor: form.valor,
+        data_competencia: form.data_competencia,
+        data_pagamento: form.data_pagamento || null,
+        conta_id: form.conta_id,
+        plano_contas_id: form.plano_contas_id || null,
+        centro_custo_id: form.centro_custo_id || null,
+        forma_pagamento: form.forma_pagamento || null,
+        parcelas_total: cartao && form.parcelas_total ? Number(form.parcelas_total) : null,
+        parcela_num: cartao && form.parcela_num ? Number(form.parcela_num) : null,
+        cartao_id: cartao && form.cartao_id ? form.cartao_id : null,
+        observacoes: form.observacoes || null,
+      };
+      if (form.id) await financeiroV2.transacoes.atualizar(form.id, payload);
+      else await financeiroV2.transacoes.criar({ ...payload, tentar_conciliar: form.tipo === 'despesa' && !!form.tentar_conciliar });
       setModalTransacao(null);
       loadTransacoes();
       loadDash();
@@ -434,14 +693,35 @@ export default function Financeiro() {
   };
 
   const deleteTransacao = async (id) => {
-    if (!window.confirm('Deseja excluir esta transacao?')) return;
+    if (!window.confirm('Deseja excluir esta transação?')) return;
     try { await financeiro.transacoes.remove(id); loadTransacoes(); loadDash(); } catch (e) { handleError(e); }
   };
 
+  // F2 · salvar via financeiro-v2 (plano de contas, salário do RH, recorrência).
+  // Quando é salário, o backend IGNORA o valor e puxa rh_funcionarios.salario.
   const savePagar = async (form) => {
     try {
-      if (form.id) await financeiro.contasPagar.update(form.id, form);
-      else await financeiro.contasPagar.create(form);
+      if (form.eh_salario && !form.funcionario_id) {
+        handleError(new Error('Selecione o colaborador do salário'));
+        return;
+      }
+      const payload = {
+        descricao: form.descricao,
+        fornecedor: form.fornecedor || null,
+        valor: form.valor,
+        data_vencimento: form.data_vencimento,
+        data_pagamento: form.data_pagamento || null,
+        status: form.status || 'pendente',
+        conta_id: form.conta_id || null,
+        plano_contas_id: form.plano_contas_id || null,
+        centro_custo_id: form.centro_custo_id || null,
+        forma_pagamento: form.forma_pagamento || null,
+        eh_salario: !!form.eh_salario,
+        funcionario_id: form.eh_salario ? form.funcionario_id : null,
+        observacao: form.historico || null,
+      };
+      if (form.id) await financeiroV2.contasPagar.atualizar(form.id, payload);
+      else await financeiroV2.contasPagar.criar(payload);
       setModalPagar(null);
       loadContasPagar();
       loadDash();
@@ -450,14 +730,32 @@ export default function Financeiro() {
 
   const deletePagar = async (id) => {
     if (!window.confirm('Deseja excluir esta conta a pagar?')) return;
-    try { await financeiro.contasPagar.remove(id); loadContasPagar(); loadDash(); } catch (e) { handleError(e); }
+    try { await financeiroV2.contasPagar.remover(id); loadContasPagar(); loadDash(); } catch (e) { handleError(e); }
   };
 
   const pagarConta = async (item) => {
     try {
-      await financeiro.contasPagar.update(item.id, { ...item, status: 'pago', data_pagamento: new Date().toISOString().slice(0, 10) });
+      await financeiroV2.contasPagar.atualizar(item.id, { status: 'pago', data_pagamento: new Date().toISOString().slice(0, 10) });
       loadContasPagar();
       loadDash();
+    } catch (e) { handleError(e); }
+  };
+
+  // F2 · recorrência a partir da conta (idempotente no backend)
+  const tornarRecorrente = async () => {
+    try {
+      const r = await financeiroV2.contasPagar.tornarRecorrente(formPagar.id);
+      setFormPagar(f => ({ ...f, recorrente_id: r?.recorrencia?.id || f.recorrente_id }));
+      loadContasPagar();
+    } catch (e) { handleError(e); }
+  };
+
+  const desfazerRecorrente = async () => {
+    if (!window.confirm('Desfazer a recorrência desta conta? A recorrência será desativada.')) return;
+    try {
+      await financeiroV2.contasPagar.desfazerRecorrente(formPagar.id);
+      setFormPagar(f => ({ ...f, recorrente_id: null }));
+      loadContasPagar();
     } catch (e) { handleError(e); }
   };
 
@@ -493,7 +791,7 @@ export default function Financeiro() {
   const renderContas = () => (
     <div style={styles.card}>
       <div style={styles.cardHeader}>
-        <div style={styles.cardTitle}>Contas Bancarias</div>
+        <div style={styles.cardTitle}>Contas Bancárias</div>
         {isDiretor && (
           <Button onClick={() => setModalConta({ nome: '', banco: '', agencia: '', conta: '', tipo: 'corrente', saldo: 0, ativa: true })}>
             + Nova Conta
@@ -577,9 +875,10 @@ export default function Financeiro() {
           </div>
           {isDiretor && (
             <Button onClick={() => setModalTransacao({
-              conta_id: '', categoria_id: '', tipo: 'despesa', descricao: '', valor: '', data_competencia: '', data_pagamento: '', status: 'pendente', referencia: '', observacoes: '',
+              conta_id: '', tipo: 'despesa', descricao: '', valor: '', data_competencia: '', data_pagamento: '',
+              plano_contas_id: '', centro_custo_id: '', forma_pagamento: '', parcelas_total: '', observacoes: '', tentar_conciliar: false,
             })}>
-              + Nova Transação
+              + Nova transação
             </Button>
           )}
         </div>
@@ -618,10 +917,10 @@ export default function Financeiro() {
           )}
           {filtroPeriodoModo === 'custom' && (
             <>
-              <input type="date" value={filtroInicio} onChange={e => setFiltroInicio(e.target.value)}
+              <DatePicker value={filtroInicio} onChange={v => setFiltroInicio(v)}
                 className="h-9 px-3 text-sm rounded-md border border-input bg-background" />
               <span className="text-xs text-muted-foreground">até</span>
-              <input type="date" value={filtroFim} onChange={e => setFiltroFim(e.target.value)}
+              <DatePicker value={filtroFim} onChange={v => setFiltroFim(v)}
                 className="h-9 px-3 text-sm rounded-md border border-input bg-background" />
             </>
           )}
@@ -686,11 +985,21 @@ export default function Financeiro() {
           </div>
         </div>
 
+        {/* Conciliação · só transações sem comprovante E sem nota fiscal */}
+        <div className="flex items-center gap-2 mb-3">
+          <button type="button" onClick={() => setFiltroSemDoc(v => !v)}
+            className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border text-sm ${filtroSemDoc ? 'text-white border-transparent' : 'text-muted-foreground border-input bg-background'}`}
+            style={filtroSemDoc ? { background: '#00B39D' } : {}}>
+            {filtroSemDoc ? '✓ ' : ''}Só sem comprovante / nota fiscal
+          </button>
+          {filtroSemDoc && <span className="text-[11px] text-muted-foreground">Mostra, no período, o que ainda falta documentar (conciliação).</span>}
+        </div>
+
         {/* Limpar */}
-        {(filtroContaId || filtroTipo || filtroStatus || filtroBusca || filtroPeriodoModo !== 'mes' ||
+        {(filtroContaId || filtroTipo || filtroStatus || filtroBusca || filtroSemDoc || filtroPeriodoModo !== 'mes' ||
           filtroAno !== new Date().getFullYear() || filtroMesNum !== new Date().getMonth()) && (
           <button onClick={() => {
-            setFiltroContaId(''); setFiltroTipo(''); setFiltroStatus(''); setFiltroBusca('');
+            setFiltroContaId(''); setFiltroTipo(''); setFiltroStatus(''); setFiltroBusca(''); setFiltroSemDoc(false);
             setFiltroPeriodoModo('mes');
             setFiltroAno(new Date().getFullYear());
             setFiltroMesNum(new Date().getMonth());
@@ -725,10 +1034,21 @@ export default function Financeiro() {
               {transacoes.map(t => {
                 const isReceita = t.tipo === 'receita';
                 const isDespesa = t.tipo === 'despesa';
+                const noCartao = t.forma_pagamento === 'Cartão de Crédito';
                 return (
-                  <tr key={t.id}>
+                  <tr key={t.id} style={{ cursor: 'pointer' }} onClick={() => setDetalheTransacaoId(t.id)}>
                     <td style={styles.td}>{fmtDate(t.data_competencia)}</td>
-                    <td style={{ ...styles.td, fontWeight: 600 }}>{t.descricao}</td>
+                    <td style={{ ...styles.td, fontWeight: 600 }}>
+                      {t.descricao}
+                      {noCartao && (
+                        <span style={{ ...styles.badge(C.blue, C.blueBg), marginLeft: 6, whiteSpace: 'nowrap' }}>
+                          {'💳 Cartão · '}{t.parcelas_total ? `${t.parcelas_total}x` : 'à vista'}
+                        </span>
+                      )}
+                      {(t.anexos_url?.length > 0) && (
+                        <span style={{ marginLeft: 6 }} title={`${t.anexos_url.length} comprovante(s) anexado(s)`}>{'📎'}</span>
+                      )}
+                    </td>
                     <td style={styles.td}>{t.fin_contas?.nome || '\u2014'}</td>
                     <td style={styles.td}>{t.fin_categorias?.nome || '\u2014'}</td>
                     <td style={styles.td}>
@@ -744,7 +1064,7 @@ export default function Financeiro() {
                     </td>
                     <td style={styles.td}><Badge status={t.status} map={STATUS_TRANSACAO} /></td>
                     {isDiretor && (
-                      <td style={styles.td}>
+                      <td style={styles.td} onClick={e => e.stopPropagation()}>
                         <Button variant="ghost" size="sm" onClick={() => setModalTransacao(t)}>Editar</Button>
                         <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteTransacao(t.id)}>Excluir</Button>
                       </td>
@@ -790,14 +1110,22 @@ export default function Financeiro() {
       <div style={{ ...styles.filterRow, flexWrap: 'wrap', alignItems: 'center' }}>
         <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarStatus} onChange={e => { setFiltroPagarStatus(e.target.value); setCpPage(1); }}>
           <option value="">Todos os status</option>
-          <option value="pendente">Em aberto</option>
-          <option value="pago">Baixado (pago)</option>
-          <option value="vencido">Vencido</option>
-          <option value="cancelado">Cancelado</option>
+          <option value="pendente">Não baixadas (em aberto)</option>
+          <option value="pago">Baixadas (pago)</option>
+          <option value="vencido">Vencidas (em aberto)</option>
+          <option value="cancelado">Canceladas</option>
         </select>
         <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarAno} onChange={e => { setFiltroPagarAno(e.target.value); setCpPage(1); }}>
           <option value="">Todos os anos</option>
           {(cpResumo?.anos || []).map((a) => <option key={a} value={a}>{a}</option>)}
+        </select>
+        <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarMes} onChange={e => { setFiltroPagarMes(e.target.value); setCpPage(1); }} title="Filtra o vencimento pelo mês (usa o ano escolhido, ou o ano atual)">
+          <option value="">Vencimento · todos os meses</option>
+          {['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((nome, i) => <option key={i + 1} value={i + 1}>{nome}</option>)}
+        </select>
+        <select className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={filtroPagarOrder} onChange={e => { setFiltroPagarOrder(e.target.value); setCpPage(1); }} title="Ordenar por data de vencimento">
+          <option value="venc_asc">Vencimento ↑ (mais próximo)</option>
+          <option value="venc_desc">Vencimento ↓ (mais distante)</option>
         </select>
         <input
           className="flex h-9 rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -818,7 +1146,9 @@ export default function Financeiro() {
         )}
         {podeEditarFin && (
           <Button onClick={() => setModalPagar({
-            descricao: '', fornecedor: '', categoria_id: '', valor: '', data_vencimento: '', data_pagamento: '', conta_id: '', status: 'pendente',
+            descricao: '', fornecedor: '', valor: '', data_vencimento: '', data_pagamento: '', conta_id: '',
+            plano_contas_id: '', centro_custo_id: '', forma_pagamento: '', status: 'pendente',
+            eh_salario: false, funcionario_id: '', historico: '',
           })}>
             + Nova Conta a Pagar
           </Button>
@@ -856,7 +1186,31 @@ export default function Financeiro() {
                 const stExib = vencido ? 'vencido' : cp.status;
                 return (
                 <tr key={cp.id} style={vencido ? { background: C.redBg } : {}}>
-                  <td style={{ ...styles.td, fontWeight: 600 }}>{cp.descricao}</td>
+                  <td style={{ ...styles.td, fontWeight: 600 }}>
+                    {cp.descricao}
+                    {cp.fatura_id && (
+                      <div style={{ marginTop: 3 }}>
+                        <button onClick={() => setFaturaModal(cp.fatura_id)}
+                          style={{ fontSize: 11, fontWeight: 700, color: '#8b5cf6', background: '#8b5cf618', border: 'none', borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
+                          💳 Fatura · ver rubricas
+                        </button>
+                      </div>
+                    )}
+                    {(cp.recorrente_id || cp.eh_salario) && (
+                      <div style={{ display: 'flex', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
+                        {cp.recorrente_id && (
+                          <span style={{ fontSize: 11, fontWeight: 600, color: C.blue, background: C.blueBg, borderRadius: 6, padding: '1px 6px' }}>
+                            🔁 Recorrente
+                          </span>
+                        )}
+                        {cp.eh_salario && (
+                          <span style={{ fontSize: 11, fontWeight: 600, color: C.primary, background: C.primaryBg, borderRadius: 6, padding: '1px 6px' }}>
+                            💼 Salário{cp.funcionario_nome ? ` · ${cp.funcionario_nome}` : ''}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </td>
                   <td style={styles.td}>{cp.fornecedor || '—'}</td>
                   <td style={styles.td}>{cp.plano?.nome || cp.plano_contas_nome || '—'}</td>
                   <td style={styles.td}>{cp.centro?.nome || cp.centro_custo_nome || '—'}</td>
@@ -959,9 +1313,12 @@ export default function Financeiro() {
   // ═══════════════════════════════════════════════════════════
   // MODAIS
   // ═══════════════════════════════════════════════════════════
+  // Estado do form no TOPO do componente (formConta) — o useState que ficava
+  // aqui dentro era chamado condicionalmente → mesma violação da regra dos
+  // hooks (React #310) já corrigida no renderModalPagar.
   const renderModalConta = () => {
-    const [form, setForm] = useState(modalConta || {});
-    const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    const form = formConta;
+    const upd = (k, v) => setFormConta(f => ({ ...f, [k]: v }));
     return (
       <Modal
         open={!!modalConta}
@@ -977,7 +1334,7 @@ export default function Financeiro() {
         <Input label="Nome" value={form.nome || ''} onChange={e => upd('nome', e.target.value)} />
         <div style={styles.formRow}>
           <Input label="Banco" value={form.banco || ''} onChange={e => upd('banco', e.target.value)} />
-          <Input label="Agencia" value={form.agencia || ''} onChange={e => upd('agencia', e.target.value)} />
+          <Input label="Agência" value={form.agencia || ''} onChange={e => upd('agencia', e.target.value)} />
         </div>
         <div style={styles.formRow}>
           <Input label="Conta" value={form.conta || ''} onChange={e => upd('conta', e.target.value)} />
@@ -994,59 +1351,109 @@ export default function Financeiro() {
     );
   };
 
+  // Modal Nova/Editar transação (Fase 1) · estado no TOPO (formTransacao) —
+  // o useState que ficava aqui dentro violava a regra dos hooks (React #310).
+  // Salva via financeiro-v2 (plano de contas, forma de pagamento, parcelas,
+  // conciliação opcional com o extrato).
   const renderModalTransacao = () => {
-    const [form, setForm] = useState(modalTransacao || {});
-    const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
-    const catsFiltradas = categorias.filter(c => !form.tipo || form.tipo === 'transferencia' || c.tipo === form.tipo);
+    const form = formTransacao;
+    const upd = (k, v) => setFormTransacao(f => ({ ...f, [k]: v }));
+    const tipo = form.tipo === 'receita' ? 'receita' : 'despesa';
+    const planosFiltrados = planosContas.filter(p => p.tipo === tipo);
+    const noCartao = form.forma_pagamento === 'Cartão de Crédito';
     return (
       <Modal
         open={!!modalTransacao}
         onClose={() => setModalTransacao(null)}
-        title={form.id ? 'Editar Transacao' : 'Nova Transacao'}
+        title={form.id ? 'Editar transação' : 'Nova transação'}
         footer={
           <>
             <Button variant="outline" onClick={() => setModalTransacao(null)}>Cancelar</Button>
-            <Button onClick={() => saveTransacao(form)}>Salvar</Button>
+            <Button onClick={() => saveTransacao({ ...form, tipo })}>Salvar</Button>
           </>
         }
       >
-        <Input label="Descricao" value={form.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
         <div style={styles.formRow}>
-          <Select label="Conta" value={form.conta_id || ''} onChange={e => upd('conta_id', e.target.value)}>
+          <Select label="Tipo" value={tipo} onChange={e => upd('tipo', e.target.value)}>
+            <option value="receita">Entrada</option>
+            <option value="despesa">Saída</option>
+          </Select>
+          <Input label="Valor (R$) *" type="number" step="0.01" min="0" value={form.valor ?? ''} onChange={e => upd('valor', e.target.value)} />
+        </div>
+        <Input label="Descrição *" value={form.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
+        <div style={styles.formRow}>
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data competência *</label>
+            <DatePicker value={form.data_competencia || ''} onChange={v => upd('data_competencia', v)} />
+          </div>
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data pagamento</label>
+            <DatePicker value={form.data_pagamento || ''} onChange={v => upd('data_pagamento', v)} />
+          </div>
+        </div>
+        <Select label="Conta *" value={form.conta_id || ''} onChange={e => upd('conta_id', e.target.value)}>
+          <option value="">Selecione...</option>
+          {contas.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+        </Select>
+        <div style={styles.formRow}>
+          <Select label="Plano de contas" value={form.plano_contas_id || ''} onChange={e => upd('plano_contas_id', e.target.value)}>
             <option value="">Selecione...</option>
-            {contas.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            {planosFiltrados.map(p => <option key={p.id} value={p.id}>{p.codigo} · {p.nome}</option>)}
           </Select>
-          <Select label="Tipo" value={form.tipo || 'despesa'} onChange={e => upd('tipo', e.target.value)}>
-            {Object.entries(TIPO_TRANSACAO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </Select>
-        </div>
-        <div style={styles.formRow}>
-          <Select label="Categoria" value={form.categoria_id || ''} onChange={e => upd('categoria_id', e.target.value)}>
+          <Select label="Centro de custo" value={form.centro_custo_id || ''} onChange={e => upd('centro_custo_id', e.target.value)}>
             <option value="">Selecione...</option>
-            {catsFiltradas.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            {centrosCusto.map(c => <option key={c.id} value={c.id}>{c.codigo ? `${c.codigo} · ` : ''}{c.nome}</option>)}
           </Select>
-          <Input label="Valor (R$)" type="number" step="0.01" value={form.valor ?? ''} onChange={e => upd('valor', e.target.value)} />
         </div>
         <div style={styles.formRow}>
-          <Input label="Data Competencia" type="date" value={form.data_competencia || ''} onChange={e => upd('data_competencia', e.target.value)} />
-          <Input label="Data Pagamento" type="date" value={form.data_pagamento || ''} onChange={e => upd('data_pagamento', e.target.value)} />
-        </div>
-        <div style={styles.formRow}>
-          <Select label="Status" value={form.status || 'pendente'} onChange={e => upd('status', e.target.value)}>
-            <option value="pendente">Pendente</option>
-            <option value="conciliado">Conciliado</option>
-            <option value="cancelado">Cancelado</option>
+          <Select label="Forma de pagamento" value={form.forma_pagamento || ''} onChange={e => upd('forma_pagamento', e.target.value)}>
+            <option value="">Selecione...</option>
+            {['Pix', 'Dinheiro', 'Cartão de Crédito', 'Cartão de Débito', 'Transferência', 'Boleto', 'Outro'].map(f => (
+              <option key={f} value={f}>{f}</option>
+            ))}
           </Select>
-          <Input label="Referencia" value={form.referencia || ''} onChange={e => upd('referencia', e.target.value)} />
+          {noCartao && (
+            <>
+              <Select label="Parcelas" value={form.parcelas_total || ''} onChange={e => upd('parcelas_total', e.target.value)}>
+                <option value="">À vista</option>
+                {Array.from({ length: 11 }, (_, i) => i + 2).map(n => <option key={n} value={n}>{n}x</option>)}
+              </Select>
+              <Select label="Cartão (fatura)" value={form.cartao_id || ''} onChange={e => upd('cartao_id', e.target.value)}>
+                <option value="">Sem fatura</option>
+                {cartoesCred.map(k => <option key={k.id} value={k.id}>{k.nome}{k.final ? ` · ${k.final}` : ''}</option>)}
+              </Select>
+            </>
+          )}
         </div>
-        <Input label="Observacoes" value={form.observacoes || ''} onChange={e => upd('observacoes', e.target.value)} />
+        <Input label="Observações" value={form.observacoes || ''} onChange={e => upd('observacoes', e.target.value)} />
+        {tipo === 'despesa' && !form.id && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text2, cursor: 'pointer', marginTop: 4 }}>
+            <input type="checkbox" checked={!!form.tentar_conciliar} onChange={e => upd('tentar_conciliar', e.target.checked)} />
+            Tentar conciliar com o extrato (débito de mesmo valor em até 15 dias)
+          </label>
+        )}
       </Modal>
     );
   };
 
+  // F2 · modal moderno: plano de contas (folhas despesa) + centro de custo +
+  // forma de pagamento no lugar da categoria legada; toggle "É salário" trava
+  // o valor no salário do RH; recorrência liga/desliga direto daqui.
   const renderModalPagar = () => {
-    const [form, setForm] = useState(modalPagar || {});
-    const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    const form = formPagar;
+    const upd = (k, v) => setFormPagar(f => ({ ...f, [k]: v }));
+    const planosDespesa = planosContas.filter(p => p.tipo === 'despesa');
+    const funcs = funcionariosRh || [];
+    const setFuncionario = (id) => {
+      const f = funcs.find(x => x.id === id);
+      setFormPagar(prev => ({ ...prev, funcionario_id: id, valor: f?.salario ?? prev.valor }));
+    };
+    const toggleSalario = (on) => {
+      setFormPagar(prev => {
+        const f = on ? funcs.find(x => x.id === prev.funcionario_id) : null;
+        return { ...prev, eh_salario: on, valor: on && f?.salario != null ? f.salario : prev.valor };
+      });
+    };
     return (
       <Modal
         open={!!modalPagar}
@@ -1054,20 +1461,62 @@ export default function Financeiro() {
         title={form.id ? 'Editar Conta a Pagar' : 'Nova Conta a Pagar'}
         footer={
           <>
+            {form.id && (form.recorrente_id ? (
+              <Button variant="outline" onClick={desfazerRecorrente}>Recorrente ✓ · desfazer</Button>
+            ) : (
+              <Button variant="outline" onClick={tornarRecorrente}>🔁 Tornar recorrente</Button>
+            ))}
             <Button variant="outline" onClick={() => setModalPagar(null)}>Cancelar</Button>
             <Button onClick={() => savePagar(form)}>Salvar</Button>
           </>
         }
       >
-        <Input label="Descricao" value={form.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
+        <Input label="Descrição" value={form.descricao || ''} onChange={e => upd('descricao', e.target.value)} />
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text2, cursor: 'pointer', margin: '4px 0 8px' }}>
+          <input type="checkbox" checked={!!form.eh_salario} onChange={e => toggleSalario(e.target.checked)} />
+          💼 É salário (valor puxado do RH)
+        </label>
+        {form.eh_salario && (
+          funcs.length ? (
+            <Select label="Colaborador" value={form.funcionario_id || ''} onChange={e => setFuncionario(e.target.value)}>
+              <option value="">Selecione...</option>
+              {funcs.map(f => (
+                <option key={f.id} value={f.id}>{f.nome}{f.cargo ? ` · ${f.cargo}` : ''}</option>
+              ))}
+            </Select>
+          ) : (
+            <div style={{ fontSize: 12, color: C.amber, marginBottom: 8 }}>
+              {funcionariosRh === null
+                ? 'Carregando colaboradores do RH...'
+                : 'Sem acesso à lista de colaboradores do RH (exige nível 4 do financeiro).'}
+            </div>
+          )
+        )}
         <div style={styles.formRow}>
           <Input label="Fornecedor" value={form.fornecedor || ''} onChange={e => upd('fornecedor', e.target.value)} />
-          <Input label="Valor (R$)" type="number" step="0.01" value={form.valor ?? ''} onChange={e => upd('valor', e.target.value)} />
+          <div>
+            <Input label="Valor (R$)" type="number" step="0.01" value={form.valor ?? ''} readOnly={!!form.eh_salario} onChange={e => upd('valor', e.target.value)} />
+            {form.eh_salario && (
+              <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Puxado do RH (salário do colaborador)</div>
+            )}
+          </div>
         </div>
         <div style={styles.formRow}>
-          <Select label="Categoria" value={form.categoria_id || ''} onChange={e => upd('categoria_id', e.target.value)}>
+          <Select label="Plano de contas" value={form.plano_contas_id || ''} onChange={e => upd('plano_contas_id', e.target.value)}>
             <option value="">Selecione...</option>
-            {categorias.filter(c => c.tipo === 'despesa').map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+            {planosDespesa.map(p => <option key={p.id} value={p.id}>{p.codigo} · {p.nome}</option>)}
+          </Select>
+          <Select label="Centro de custo" value={form.centro_custo_id || ''} onChange={e => upd('centro_custo_id', e.target.value)}>
+            <option value="">Selecione...</option>
+            {centrosCusto.map(c => <option key={c.id} value={c.id}>{c.codigo ? `${c.codigo} · ` : ''}{c.nome}</option>)}
+          </Select>
+        </div>
+        <div style={styles.formRow}>
+          <Select label="Forma de pagamento" value={form.forma_pagamento || ''} onChange={e => upd('forma_pagamento', e.target.value)}>
+            <option value="">Selecione...</option>
+            {['Pix', 'Dinheiro', 'Cartão de Crédito', 'Cartão de Débito', 'Transferência', 'Boleto', 'Outro'].map(f => (
+              <option key={f} value={f}>{f}</option>
+            ))}
           </Select>
           <Select label="Conta Pagamento" value={form.conta_id || ''} onChange={e => upd('conta_id', e.target.value)}>
             <option value="">Selecione...</option>
@@ -1075,8 +1524,14 @@ export default function Financeiro() {
           </Select>
         </div>
         <div style={styles.formRow}>
-          <Input label="Data Vencimento" type="date" value={form.data_vencimento || ''} onChange={e => upd('data_vencimento', e.target.value)} />
-          <Input label="Data Pagamento" type="date" value={form.data_pagamento || ''} onChange={e => upd('data_pagamento', e.target.value)} />
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Vencimento</label>
+            <DatePicker value={form.data_vencimento || ''} onChange={v => upd('data_vencimento', v)} />
+          </div>
+          <div style={styles.formGroup}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Pagamento</label>
+            <DatePicker value={form.data_pagamento || ''} onChange={v => upd('data_pagamento', v)} />
+          </div>
         </div>
         <Select label="Status" value={form.status || 'pendente'} onChange={e => upd('status', e.target.value)}>
           <option value="pendente">Pendente</option>
@@ -1084,6 +1539,7 @@ export default function Financeiro() {
           <option value="cancelado">Cancelado</option>
           <option value="vencido">Vencido</option>
         </Select>
+        <Input label="Observações" value={form.historico || ''} onChange={e => upd('historico', e.target.value)} />
       </Modal>
     );
   };
@@ -1140,17 +1596,9 @@ export default function Financeiro() {
       {/* 6 · Generosidade */}
       {tab === 6 && <Generosidade />}
 
-      {/* 7 · Banco · sub-abas */}
-      {tab === 7 && (
-        <div>
-          <SubTabBar items={SUBS_BANCO} current={subBanco} onSelect={setSubBanco} />
-          {subBanco === 0 && <SantanderTab />}
-          {subBanco === 1 && <CultoAoVivo />}
-          {subBanco === 2 && <PixCobranca />}
-          {subBanco === 3 && <PagamentosContas />}
-          {subBanco === 4 && <BoletosEmitidos />}
-        </div>
-      )}
+      {/* 7 · Banco · só a visão do Santander (Culto ao Vivo, PIX Cobrança,
+          Pagamentos e Boletos removidos a pedido do Matheus · 2026-07-23) */}
+      {tab === 7 && <SantanderTab />}
 
       {/* 8 · Operacional · sub-abas (contas, recorrentes, reembolsos, importar, fila, calendário) */}
       {tab === 8 && (
@@ -1161,8 +1609,11 @@ export default function Financeiro() {
           {subOp === 2 && renderReembolsos()}
           {subOp === 3 && <ImportarExtratos />}
           {subOp === 4 && <FilaClassificacao />}
-          {subOp === 5 && <CalendarioFinanceiro />}
-          {subOp === 6 && <NotasCompras />}
+          {subOp === 5 && <Conciliacao />}
+          {subOp === 6 && <CalendarioFinanceiro />}
+          {subOp === 7 && <NotasCompras />}
+          {subOp === 8 && <IdentificarDoadores />}
+          {subOp === 9 && <BancoComprovantes />}
         </div>
       )}
 
@@ -1170,7 +1621,7 @@ export default function Financeiro() {
       {tab === 9 && (
         <div>
           <SubTabBar items={SUBS_GESTAO} current={subGestao} onSelect={setSubGestao} />
-          {subGestao === 0 && <SolicitacoesFinanceiro />}
+          {subGestao === 0 && <SolicitacoesFinanceiro solicitacaoId={solicitacaoId} />}
           {subGestao === 1 && <Alertas />}
           {subGestao === 2 && <ClosingMensal />}
           {subGestao === 3 && <AuditLog />}
@@ -1178,11 +1629,21 @@ export default function Financeiro() {
       )}
 
       {/* 10 · Configuração */}
-      {tab === 10 && <EstruturaFiscal />}
+      {tab === 10 && (<div><EstruturaFiscal /><CartoesConfig /></div>)}
 
       {modalConta && renderModalConta()}
       {modalTransacao && renderModalTransacao()}
       {modalPagar && renderModalPagar()}
+      {faturaModal && <FaturaModal faturaId={faturaModal} onClose={() => { setFaturaModal(null); loadContasPagar?.(); }} />}
+      {detalheTransacaoId && (
+        <DetalheTransacao
+          id={detalheTransacaoId}
+          onClose={() => setDetalheTransacaoId(null)}
+          podeEditar={podeEditarFin}
+          onChanged={loadTransacoes}
+          onEditar={(det) => { setDetalheTransacaoId(null); setModalTransacao(det); }}
+        />
+      )}
     </div>
   );
 }

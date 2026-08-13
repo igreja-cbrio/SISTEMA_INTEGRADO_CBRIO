@@ -1,17 +1,20 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { AbrirRotaMenu } from '../../components/grupos/AbrirRotaMenu';
 import { grupos as api, membresia, encaminhamentos } from '../../api';
+// Régua ÚNICA de busca (acento/caixa/espaço) · espelho de backend/services/busca.js
+import { contemNormalizado } from '../../lib/busca';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Users, MapPin, Clock, Plus, Search, ChevronLeft, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Eye, Settings, HeartHandshake, BookOpen } from 'lucide-react';
+import { Users, MapPin, Clock, Plus, Search, ChevronLeft, ChevronDown, UserPlus, X, ArrowRightLeft, FileUp, Trash2, FileText, Image, File as FileIcon, Map as MapIcon, CalendarCheck, CalendarPlus, ClipboardCheck, Calendar, Activity, TrendingUp, TrendingDown, Minus, AlertTriangle, Inbox, QrCode, Send, Compass, Copy, Check, Download, ExternalLink, Lock, BarChart3, GraduationCap, Star, UserCog, Eye, Settings, HeartHandshake, BookOpen } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import GruposEntrada from './GruposEntrada';
 import InscricaoGruposQRCode from '../admin/InscricaoGruposQRCode';
@@ -19,6 +22,7 @@ import TemporadasGrupos from '../admin/TemporadasGrupos';
 import TemporadaInscricoesCard from './TemporadaInscricoesCard';
 import GruposVisitas, { AgendarVisitaModal } from './GruposVisitas';
 import GruposPessoas from './GruposPessoas';
+import GruposEnvios from './GruposEnvios';
 import GruposOrganograma from './GruposOrganograma';
 import GruposDuplicatas from './GruposDuplicatas';
 // Import ESTÁTICO de propósito (13/07): o chunk dinâmico do mapa quebrava em
@@ -27,9 +31,9 @@ import GruposDuplicatas from './GruposDuplicatas';
 // pago onde mais importa; aqui é página de staff. Estático elimina a classe
 // inteira de erro de chunk (não regredir pra lazy sem revalidar em prod).
 import { GruposMapView } from '@/components/grupos/GruposMapView';
-import { StatisticsCard } from '../../components/ui/statistics-card';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
+import { useTheme } from '../../contexts/ThemeContext';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -37,7 +41,22 @@ const C = {
   border: 'var(--cbrio-border)', green: '#10b981', red: '#ef4444', amber: '#f59e0b', blue: '#3b82f6',
 };
 
-const DIAS = ['Domingo', 'Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta', 'Sabado'];
+// Paleta dos gráficos por tema (validada com o script de dataviz · CVD-safe).
+// Claro: teal da marca #00B39D. Escuro: teal-600 #0d9488 (fica na banda de
+// luminosidade do fundo escuro). Violeta #8b5cf6 passa nos dois (separação
+// enorme do teal p/ daltônicos). Cinza recessivo p/ "outros".
+const chartCores = (isDark) => ({
+  teal: isDark ? '#0d9488' : '#00B39D',
+  violet: '#8b5cf6',
+  amber: isDark ? '#d97706' : '#f59e0b',
+  grid: isDark ? '#ffffff22' : '#00000014',
+  eixo: 'var(--cbrio-text3)',
+});
+
+const DIAS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+// Grupo diário acontece TODOS os dias (Marcos · 17/07): sem dia da semana fixo,
+// aparece em qualquer filtro de dia e mostra "Diário" no lugar do dia.
+const ehDiario = (g) => (g?.recorrencia || '').toLowerCase().trim() === 'diario';
 
 const STATUS_TEMPORADA = {
   ativo: { label: 'Ativo', cor: '#10b981', bg: '#10b98120' },
@@ -47,6 +66,7 @@ const STATUS_TEMPORADA = {
   encerrado: { label: 'Encerrado', cor: '#ef4444', bg: '#ef444420' },
 };
 const RECORRENCIAS = [
+  { value: 'diario', label: 'Diário' },
   { value: 'semanal', label: 'Semanal' },
   { value: 'quinzenal', label: 'Quinzenal' },
   { value: 'mensal', label: 'Mensal' },
@@ -58,7 +78,7 @@ const TIPOS_GRUPO = ['Conexao', 'Estudo', 'Jornada 180', 'Discipulado', 'Casais'
 // aba Pessoas (Marcos · 2026-07-13): menos abas, mesma informação.
 // A aba Configurações fundiu com a de QR (Marcos · 13/07): temporada, abrir/
 // fechar inscrições e QR codes são o mesmo assunto — viraram a aba "Inscrições".
-const PAGE_TABS = ['grupos', 'pessoas', 'relatorios', 'entrada', 'materiais', 'visitas', 'qrcode'];
+const PAGE_TABS = ['grupos', 'pessoas', 'relatorios', 'entrada', 'materiais', 'visitas', 'qrcode', 'envios'];
 
 // Tipo/papel do membro no grupo · vem da funcao (mem_grupo_membros). "Membro" é
 // o padrão (frequentador); "Visitante" só quem foi marcado como tal (regra:
@@ -95,7 +115,8 @@ function camposFaltantes(g) {
   const faltas = [];
   if (!g.lider_id) faltas.push('Líder');
   else if (!(g.lider?.telefone ?? g.lider_telefone)) faltas.push('Telefone do líder');
-  if (g.dia_semana == null) faltas.push('Dia da semana');
+  // Grupo diário não tem dia da semana de propósito — não é campo faltante.
+  if (g.dia_semana == null && !ehDiario(g)) faltas.push('Dia da semana');
   if (!g.horario) faltas.push('Horário');
   if (!g.endereco) faltas.push('Endereço');
   if (!g.bairro) faltas.push('Bairro');
@@ -168,6 +189,17 @@ export default function Grupos() {
   const [filterDia, setFilterDia] = useState('all');
   const [filterBairro, setFilterBairro] = useState('all');
   const [filterStatusTemp, setFilterStatusTemp] = useState('all');
+  const [sortBy, setSortBy] = useState('nome'); // nome | mais_pessoas | menos_pessoas
+  // Filtro por rede (Marcos · 15/07: a visualização por redes vive AQUI, na
+  // lista interna — não no formulário público). 'sem' = grupos sem rede.
+  const [filterRede, setFilterRede] = useState('all');
+  const [redesAll, setRedesAll] = useState([]);
+  useEffect(() => { api.redes.list().then(r => setRedesAll(r || [])).catch(() => {}); }, []);
+  const redeById = useMemo(() => {
+    const m = {};
+    redesAll.forEach(r => { m[r.id] = r; });
+    return m;
+  }, [redesAll]);
   const [filterIncompleto, setFilterIncompleto] = useState(false);
   const [filterTemporada, setFilterTemporada] = useState('');
   const [temporadas, setTemporadas] = useState([]);
@@ -208,6 +240,13 @@ export default function Grupos() {
   const tabAtiva = pageTab;
   const [pedidosCount, setPedidosCount] = useState(0);
   const [encPendentes, setEncPendentes] = useState(0);
+  const [lideresPendentes, setLideresPendentes] = useState(0);
+  // Fluxo "criar grupo novo pra um candidato a líder" (caixa de entrada):
+  // guarda a inscrição enquanto o modal de grupo está aberto; salvar o grupo
+  // fecha o ciclo vinculando a pessoa como líder. reloadKey força a caixa a
+  // recarregar depois do vínculo.
+  const [liderVinculoPendente, setLiderVinculoPendente] = useState(null);
+  const [entradaReloadKey, setEntradaReloadKey] = useState(0);
   const [historicoMembros, setHistoricoMembros] = useState([]);
   const [materiais, setMateriais] = useState([]);
   const [materiaisFilter, setMateriaisFilter] = useState('all');
@@ -219,6 +258,8 @@ export default function Grupos() {
   const [chamadaOpen, setChamadaOpen] = useState(false);
   const [encontroEdit, setEncontroEdit] = useState(null);
   const [encontros, setEncontros] = useState([]);
+  const [entradasSaidas, setEntradasSaidas] = useState([]);
+  const [histAberto, setHistAberto] = useState(false);
   const [mostrarArquivados, setMostrarArquivados] = useState(false);
   const [metricas, setMetricas] = useState(null);
   const [saudeAgregada, setSaudeAgregada] = useState(null);
@@ -252,6 +293,9 @@ export default function Grupos() {
     try {
       const r = await api.contarPedidos();
       setPedidosCount(r?.pendentes || 0);
+      // Candidaturas de líder + renovações "não continua" — ambas aguardam a
+      // triagem da coordenação na Caixa de entrada.
+      setLideresPendentes((r?.lideres_pendentes || 0) + (r?.renovacoes_triagem || 0));
     } catch {}
   }, []);
   useEffect(() => { loadPedidosCount(); }, [loadPedidosCount, pageTab]);
@@ -312,6 +356,8 @@ export default function Grupos() {
   const loadEncontros = useCallback(async (id) => {
     try {
       const data = await api.encontros(id, { limit: 10 });
+      // Histórico de entradas/saídas — mesma carga, painel discreto (ver abaixo).
+      api.entradasSaidas(id).then(r => setEntradasSaidas(r.eventos || [])).catch(() => setEntradasSaidas([]));
       setEncontros(data || []);
     } catch { setEncontros([]); }
   }, []);
@@ -397,14 +443,45 @@ export default function Grupos() {
         await api.update(form.id, form);
         toast.success('Grupo atualizado');
       } else {
-        await api.create(form);
-        toast.success('Grupo criado');
+        const novo = await api.create(form);
+        // Grupo criado a partir de uma candidatura de líder (caixa de
+        // entrada): fecha o ciclo marcando a inscrição como vinculada.
+        if (liderVinculoPendente && novo?.id) {
+          try {
+            await api.liderInscricoes.vincular(liderVinculoPendente.id, novo.id, 'lider');
+            toast.success(`Grupo criado com ${liderVinculoPendente.nome} de líder`);
+          } catch (e) {
+            toast.warning(`Grupo criado, mas o vínculo da inscrição falhou: ${e.message || 'erro'} — vincule pela caixa de entrada.`);
+          }
+          setLiderVinculoPendente(null);
+          setEntradaReloadKey(k => k + 1);
+          loadPedidosCount();
+        } else {
+          toast.success('Grupo criado');
+        }
       }
       setModalOpen(false);
       await loadList();
       if (form.id) loadDetail(form.id);
     } catch (e) { toast.error(e.message || 'Erro ao salvar'); }
     finally { setSaving(false); }
+  };
+
+  // "Criar novo grupo" pra um candidato a líder: promove a pessoa a membro
+  // (o form de grupo precisa do lider_id) e abre o modal já preenchido com
+  // líder + endereço/bairro declarados (caso anfitrião, a casa é o endereço).
+  const iniciarGrupoParaLider = async (insc) => {
+    try {
+      const r = await api.liderInscricoes.promover(insc.id);
+      setLiderVinculoPendente({ id: insc.id, nome: r?.nome || insc.nome });
+      setEditData({
+        lider_id: r.membro_id,
+        lider: { nome: r?.nome || insc.nome },
+        endereco: insc.endereco || '',
+        bairro: insc.bairro || '',
+      });
+      setModalOpen(true);
+    } catch (e) { toast.error(e.message || 'Erro ao preparar o novo grupo'); }
   };
 
   const handleDelete = async () => {
@@ -470,13 +547,29 @@ export default function Grupos() {
     } catch { toast.error('Erro ao remover'); }
   };
 
+  // Troca a função do membro no estado local NA HORA (otimista) — o badge
+  // reflete no clique, sem esperar a rede; o loadDetail confirma atrás e,
+  // em erro, restaura o estado real (Marcos · 15/07: promover a líder só
+  // aparecia depois do F5).
+  const aplicarFuncaoLocal = (participacaoId, funcao) => {
+    setDetailData(d => d ? {
+      ...d,
+      membros: (d.membros || []).map(m => m.participacao_id === participacaoId ? { ...m, funcao } : m),
+    } : d);
+  };
+
   // Marca/desmarca um membro como "líder em treinamento" naquele grupo (opcional).
   const handleToggleTreinamento = async (participacaoId, emTreino) => {
+    const novaFuncao = emTreino ? 'frequentador' : 'lider_treinamento';
+    aplicarFuncaoLocal(participacaoId, novaFuncao);
     try {
-      await api.setFuncaoMembro(participacaoId, emTreino ? 'frequentador' : 'lider_treinamento');
+      await api.setFuncaoMembro(participacaoId, novaFuncao);
       toast.success(emTreino ? 'Removido de líder em treinamento' : 'Marcado como líder em treinamento');
       loadDetail(selectedGrupo);
-    } catch (e) { toast.error(e.message || 'Erro ao atualizar função'); }
+    } catch (e) {
+      toast.error(e.message || 'Erro ao atualizar função');
+      loadDetail(selectedGrupo); // desfaz o otimista com o estado real
+    }
   };
 
   // Define/troca/remove o supervisor DESTE grupo (fonte da verdade por grupo;
@@ -491,13 +584,20 @@ export default function Grupos() {
   };
 
   // Marca/desmarca um membro como "líder" do grupo. Um grupo pode ter vários
-  // líderes (o "principal" fica em mem_grupos.lider_id; os demais aqui via funcao).
+  // líderes (o "principal" fica em mem_grupos.lider_id e é quem recebe a
+  // aprovação por WhatsApp; os demais aqui via funcao — e a busca pública
+  // acha o grupo por qualquer um deles).
   const handleToggleLider = async (participacaoId, isLider) => {
+    const novaFuncao = isLider ? 'frequentador' : 'lider';
+    aplicarFuncaoLocal(participacaoId, novaFuncao);
     try {
-      await api.setFuncaoMembro(participacaoId, isLider ? 'frequentador' : 'lider');
+      await api.setFuncaoMembro(participacaoId, novaFuncao);
       toast.success(isLider ? 'Removido de líder' : 'Marcado como líder');
       loadDetail(selectedGrupo);
-    } catch (e) { toast.error(e.message || 'Erro ao atualizar função'); }
+    } catch (e) {
+      toast.error(e.message || 'Erro ao atualizar função');
+      loadDetail(selectedGrupo); // desfaz o otimista com o estado real
+    }
   };
 
   const handleUploadMaterial = async (file) => {
@@ -508,7 +608,7 @@ export default function Grupos() {
       const fd = new FormData();
       fd.append('arquivo', file);
       fd.append('nome', file.name);
-      fd.append('comentario', uploadComment || `Upload por ${profile?.name || 'usuario'}`);
+      fd.append('comentario', uploadComment || `Upload por ${profile?.name || 'usuário'}`);
       fd.append('etiquetas', JSON.stringify(uploadEtiquetas.length > 0 ? uploadEtiquetas : ['Todos']));
       fd.append('grupo_ids', JSON.stringify(uploadGrupoIds));
       await api.uploadMaterial(fd);
@@ -565,20 +665,37 @@ export default function Grupos() {
 
   const filtered = gruposList.filter(g => {
     if (search) {
-      const s = search.toLowerCase();
-      if (!(g.codigo?.toLowerCase().includes(s) || g.nome?.toLowerCase().includes(s) || g.lider_nome?.toLowerCase().includes(s) || g.local?.toLowerCase().includes(s) || g.bairro?.toLowerCase().includes(s))) return false;
+      // Insensível a acento/caixa/espaço (régua única · src/lib/busca.js):
+      // quem digita "Antônio" tem que achar "ANTONIO MARCO PEREIRA".
+      const alvo = [g.codigo, g.nome, g.lider_nome, g.local, g.bairro].filter(Boolean).join(' ');
+      if (!contemNormalizado(alvo, search)) return false;
     }
     if (filterTipo !== 'all' && g.categoria !== filterTipo) return false;
-    if (filterDia !== 'all' && String(g.dia_semana) !== filterDia) return false;
+    // Diário casa com qualquer dia filtrado (acontece todos os dias).
+    if (filterDia !== 'all' && !ehDiario(g) && String(g.dia_semana) !== filterDia) return false;
     if (filterBairro !== 'all' && g.bairro !== filterBairro) return false;
     if (filterStatusTemp !== 'all' && g.status_temporada !== filterStatusTemp) return false;
+    if (filterRede !== 'all') {
+      if (filterRede === 'sem' && g.rede_id) return false;
+      if (filterRede !== 'sem' && g.rede_id !== filterRede) return false;
+    }
     if (filterIncompleto && camposFaltantes(g).length === 0) return false;
     return true;
   });
 
+  // Ordenação (Marcos · 18/07): achar outliers de tamanho (grupo gigante /
+  // grupo vazio). Por pessoas usa membros_count (contagem paginada do backend).
+  if (sortBy === 'nome') {
+    filtered.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+  } else if (sortBy === 'mais_pessoas') {
+    filtered.sort((a, b) => (b.membros_count ?? 0) - (a.membros_count ?? 0));
+  } else if (sortBy === 'menos_pessoas') {
+    filtered.sort((a, b) => (a.membros_count ?? 0) - (b.membros_count ?? 0));
+  }
+
   const incompletosCount = gruposList.filter(g => camposFaltantes(g).length > 0).length;
 
-  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all' || filterIncompleto;
+  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all' || filterRede !== 'all' || filterIncompleto;
 
   // ── DETALHE DO GRUPO ──
   if (selectedGrupo && detailData) {
@@ -590,6 +707,13 @@ export default function Grupos() {
     const visitantes = membrosAtivos.filter(m => m.funcao === 'visitante');
     const regulares = membrosAtivos.filter(m => m.funcao !== 'visitante');
     const totalMembros = isOptimistic ? (g.membros_count ?? null) : membrosAtivos.length;
+
+    // "Novo nesta temporada" (Marcos · 18/07): entrou_em dentro da janela da
+    // temporada do grupo = entrou agora; antes = veio das temporadas anteriores.
+    // A data de início vem da temporada do grupo (temporadas já carregadas).
+    const inicioTemporada = temporadas.find(t => t.id === g.temporada)?.data_inicio || null;
+    const ehNovoNaTemporada = (m) => !!(inicioTemporada && m.entrou_em && String(m.entrou_em) >= String(inicioTemporada));
+    const novosCount = membrosAtivos.filter(ehNovoNaTemporada).length;
 
     return (
       <div key={selectedGrupo} className="cbrio-grupos-page" style={{ padding: '24px 20px', maxWidth: 1240, margin: '0 auto', animation: 'cbrio-stagger-in 0.18s ease-out' }}>
@@ -631,7 +755,9 @@ export default function Grupos() {
                   {g.complemento ? ` — ${g.complemento}` : ''}
                 </AbrirRotaMenu>
               )}
-              {g.dia_semana != null && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}</span>}
+              {ehDiario(g)
+                ? <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> Diário {g.horario?.slice(0, 5)}</span>
+                : g.dia_semana != null && <span style={{ fontSize: 13, color: C.t2, display: 'flex', alignItems: 'center', gap: 4 }}><Clock size={12} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}</span>}
               {g.status_temporada && STATUS_TEMPORADA[g.status_temporada] ? (
                 <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: STATUS_TEMPORADA[g.status_temporada].bg, color: STATUS_TEMPORADA[g.status_temporada].cor, fontWeight: 600 }}>
                   {STATUS_TEMPORADA[g.status_temporada].label}
@@ -640,6 +766,12 @@ export default function Grupos() {
                 <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: g.ativo ? '#10b98120' : '#ef444420', color: g.ativo ? C.green : C.red, fontWeight: 600 }}>{g.ativo ? 'Ativo' : 'Inativo'}</span>
               )}
               {g.temporada && <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600 }}>{g.temporada}</span>}
+              {g.modo_inscricao === 'fechado' && (
+                <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: '#8b5cf620', color: '#8b5cf6', fontWeight: 600 }}>Por convite</span>
+              )}
+              {g.modo_inscricao === 'sempre_aberto' && (
+                <span style={{ fontSize: 12, padding: '2px 8px', borderRadius: 99, background: '#3b82f620', color: '#3b82f6', fontWeight: 600 }}>Sempre aberto</span>
+              )}
             </div>
             {g.tema && <div style={{ fontSize: 13, color: C.t3, marginTop: 6 }}>Tema: {g.tema}</div>}
             {g.descricao && <div style={{ fontSize: 13, color: C.t3, marginTop: 4 }}>{g.descricao}</div>}
@@ -743,7 +875,7 @@ export default function Grupos() {
         )}
         {!isOptimistic && metricas && metricas.total_encontros === 0 && (
           <div style={{ background: C.card, borderRadius: 16, padding: 16, border: '1px dashed var(--hairline)', boxShadow: 'var(--shadow)', marginBottom: 24, fontSize: 12, color: C.t3, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Activity size={14} /> Saude do grupo aparece aqui depois do primeiro encontro registrado.
+            <Activity size={14} /> Saúde do grupo aparece aqui depois do primeiro encontro registrado.
           </div>
         )}
 
@@ -775,8 +907,14 @@ export default function Grupos() {
         {/* Membros */}
         <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
           <div style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: `1px solid ${C.border}`, gap: 8, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: C.text, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               Membros ({isOptimistic ? (g.membros_count ?? '...') : membrosAtivos.length})
+              {!isOptimistic && novosCount > 0 && (
+                <span title="Entraram dentro da temporada atual" style={{ fontSize: 11, fontWeight: 600, padding: '2px 9px', borderRadius: 99, background: `${C.green}1c`, color: C.green, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', border: `2px solid ${C.green}` }} />
+                  {novosCount} {novosCount === 1 ? 'novo nesta temporada' : 'novos nesta temporada'}
+                </span>
+              )}
             </span>
             <div style={{ display: 'flex', gap: 8 }}>
               {podeEditarGrupos && (
@@ -822,7 +960,7 @@ export default function Grupos() {
                 {membrosAtivos.map(m => (
                   <tr key={m.participacao_id} style={{ borderBottom: `1px solid ${C.border}` }}>
                     <td style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <div style={{ width: 32, height: 32, borderRadius: '50%', background: m.foto_url ? `url(${m.foto_url}) center/cover` : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: C.primary }}>
+                      <div title={ehNovoNaTemporada(m) ? 'Entrou nesta temporada' : undefined} style={{ width: 32, height: 32, borderRadius: '50%', background: m.foto_url ? `url(${m.foto_url}) center/cover` : C.primaryBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, fontWeight: 700, color: C.primary, boxShadow: ehNovoNaTemporada(m) ? `0 0 0 2px var(--cbrio-card), 0 0 0 4px ${C.green}` : 'none' }}>
                         {!m.foto_url && (m.nome?.charAt(0) || '?')}
                       </div>
                       {m.id ? (
@@ -840,7 +978,12 @@ export default function Grupos() {
                       )}
                     </td>
                     <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2 }}>{m.telefone || '-'}</td>
-                    <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2 }}>{fmtDate(m.entrou_em)}</td>
+                    <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2, whiteSpace: 'nowrap' }}>
+                      {fmtDate(m.entrou_em)}
+                      {ehNovoNaTemporada(m) && (
+                        <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 99, background: `${C.green}1c`, color: C.green }}>Novo</span>
+                      )}
+                    </td>
                     <td style={{ padding: '10px 16px', fontSize: 13, color: C.t2, textAlign: 'center' }}>{m.presencas}</td>
                     <td style={{ padding: '10px 16px', textAlign: 'center' }}>
                       {(() => { const t = TIPO_PAPEL[m.funcao] || TIPO_PAPEL.frequentador; return (
@@ -919,6 +1062,52 @@ export default function Grupos() {
             </div>
           )}
         </div>
+
+        {/* ⚠️ HISTÓRICO DE ENTRADAS E SAÍDAS · formato pedido pelo Marcos
+            (05/08/2026): "deve ser uma tela pequena, com pouco destaque, como se
+            fosse uma tela de histórico de entradas e saídas sem muita interação".
+            Então: recolhido por padrão, leitura pura, nenhuma ação aqui.
+            A transferência vinda do APP não aparece como ação — ela entra como
+            PEDIDO na Caixa de entrada, que é onde a Natasha aprova. */}
+        {!isOptimistic && (
+          <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', marginTop: 16, overflow: 'hidden' }}>
+            <div
+              onClick={() => setHistAberto(v => !v)}
+              style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+              title="Histórico de entradas e saídas"
+            >
+              <ArrowRightLeft size={13} style={{ color: C.t3 }} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.t2, flex: 1 }}>
+                Entradas e saídas ({entradasSaidas.length})
+              </span>
+              <ChevronDown size={14} style={{ color: C.t3, transform: histAberto ? 'rotate(180deg)' : 'none', transition: 'transform .15s' }} />
+            </div>
+            {histAberto && (
+              entradasSaidas.length === 0 ? (
+                <div style={{ padding: '8px 16px 14px', fontSize: 12, color: C.t3 }}>Sem movimentação registrada.</div>
+              ) : (
+                <div style={{ borderTop: `1px solid ${C.border}` }}>
+                  {entradasSaidas.map((ev, i) => (
+                    <div key={i} style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 10, borderBottom: `1px solid ${C.border}` }}>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 999,
+                        color: ev.tipo === 'entrada' ? C.green : C.red,
+                        background: ev.tipo === 'entrada' ? 'rgba(16,185,129,.12)' : 'rgba(239,68,68,.12)',
+                      }}>
+                        {ev.tipo === 'entrada' ? 'entrou' : 'saiu'}
+                      </span>
+                      <span style={{ fontSize: 12, color: C.text, flex: 1, minWidth: 0 }}>{ev.nome}</span>
+                      {ev.motivo && <span style={{ fontSize: 11, color: C.t3, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={ev.motivo}>{ev.motivo}</span>}
+                      <span style={{ fontSize: 11, color: C.t3 }}>
+                        {ev.data ? new Date(ev.data + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )
+            )}
+          </div>
+        )}
 
         {/* Encontros recentes */}
         {!isOptimistic && (
@@ -1019,6 +1208,12 @@ export default function Grupos() {
           </div>
         )}
 
+        {/* Frequência DESTE grupo · % + quem não está indo (Marcos 2026-07-23) */}
+        {!isOptimistic && <FrequenciaGrupoCard grupoId={g.id} />}
+
+        {/* Log de alterações (app_audit_log · carrega sob demanda) */}
+        {!isOptimistic && <LogAlteracoesCard grupoId={g.id} />}
+
         {/* Modal de chamada / edição */}
         <ChamadaModal
           open={chamadaOpen}
@@ -1099,7 +1294,7 @@ export default function Grupos() {
         </Dialog>
 
         {/* Modal editar grupo */}
-        <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} temporadas={temporadas} bairrosUnicos={bairrosUnicos} />
+        <GrupoFormModal open={modalOpen} onClose={() => { setModalOpen(false); setLiderVinculoPendente(null); }} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} temporadas={temporadas} bairrosUnicos={bairrosUnicos} />
 
         {/* Modal QR code do grupo */}
         <GrupoQRModal
@@ -1145,10 +1340,11 @@ export default function Grupos() {
           { key: 'grupos', label: 'Grupos', icon: Users },
           { key: 'pessoas', label: 'Pessoas', icon: UserCog },
           { key: 'relatorios', label: 'Relatórios', icon: BarChart3 },
-          { key: 'entrada', label: 'Caixa de entrada', icon: Inbox, badge: pedidosCount + encPendentes },
+          { key: 'entrada', label: 'Caixa de entrada', icon: Inbox, badge: pedidosCount + encPendentes + lideresPendentes },
           { key: 'materiais', label: 'Materiais', icon: FileText },
           { key: 'visitas', label: 'Visitas', icon: CalendarCheck },
           { key: 'qrcode', label: 'Inscrições', icon: QrCode },
+          { key: 'envios', label: 'Envios', icon: Send, soEditor: true },
         ].filter(tab => !tab.soEditor || podeEditarGrupos).map(tab => (
           <button key={tab.key} onClick={() => { setPageTab(tab.key); atualizarUrlView(tab.key, null); }} style={{
             // Com menos abas (13/07), cada uma respira mais — padding e fonte maiores.
@@ -1169,11 +1365,13 @@ export default function Grupos() {
         ))}
       </div>
 
-      {/* ═══ TAB CAIXA DE ENTRADA · lista única: pedidos de inscrição + direcionados do Next ═══ */}
+      {/* ═══ TAB CAIXA DE ENTRADA · lista única: pedidos de inscrição + direcionados do Next + novos líderes ═══ */}
       {tabAtiva === 'entrada' && (
         <GruposEntrada
           podeEditar={podeEditarGrupos}
           onMudou={() => { loadPedidosCount(); loadEncPendentes(); }}
+          onCriarGrupoParaLider={podeEditarGrupos ? iniciarGrupoParaLider : undefined}
+          reloadKey={entradaReloadKey}
         />
       )}
 
@@ -1231,7 +1429,7 @@ export default function Grupos() {
               )}
             </div>
             <div style={{ marginBottom: 10 }}>
-              <Label style={{ fontSize: 11 }}>Grupos especificos (opcional)</Label>
+              <Label style={{ fontSize: 11 }}>Grupos específicos (opcional)</Label>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
                 {gruposList.filter(g => g.ativo).map(g => {
                   const active = uploadGrupoIds.includes(g.id);
@@ -1356,6 +1554,7 @@ export default function Grupos() {
             <GruposPessoas
               onOpenGrupo={openGrupoById}
               podeEditar={podeEditarGrupos}
+              podeEditarDados={podeGerenciarSupervisor}
               gruposOptions={gruposList.filter(g => g.ativo)}
               onVerDuplicatas={() => trocarPessoasView('duplicatas')}
             />
@@ -1365,6 +1564,8 @@ export default function Grupos() {
 
       {/* ═══ TAB VISITAS ═══ */}
       {tabAtiva === 'visitas' && <GruposVisitas onOpenGrupo={openGrupoById} />}
+
+      {tabAtiva === 'envios' && <GruposEnvios podeEditar={podeEditarGrupos} />}
 
       {/* ═══ TAB INSCRIÇÕES · card da temporada no topo + botões QR codes | Temporadas ═══ */}
       {tabAtiva === 'qrcode' && (
@@ -1483,6 +1684,17 @@ export default function Grupos() {
           </SelectContent>
         </ShadSelect>
 
+        {redesAll.length > 0 && (
+          <ShadSelect value={filterRede} onValueChange={setFilterRede}>
+            <SelectTrigger className="w-[160px] h-8 text-xs"><SelectValue placeholder="Rede" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas as redes</SelectItem>
+              {redesAll.map(r => <SelectItem key={r.id} value={r.id}>{r.nome}{r.supervisor_nome ? ` — ${r.supervisor_nome}` : ''}</SelectItem>)}
+              <SelectItem value="sem">Sem rede</SelectItem>
+            </SelectContent>
+          </ShadSelect>
+        )}
+
         <ShadSelect value={filterStatusTemp} onValueChange={setFilterStatusTemp}>
           <SelectTrigger className="w-[150px] h-8 text-xs"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
@@ -1507,6 +1719,15 @@ export default function Grupos() {
           </ShadSelect>
         )}
 
+        <ShadSelect value={sortBy} onValueChange={setSortBy}>
+          <SelectTrigger className="w-[170px] h-8 text-xs"><SelectValue placeholder="Ordenar" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="nome">Ordem alfabética</SelectItem>
+            <SelectItem value="mais_pessoas">Mais pessoas primeiro</SelectItem>
+            <SelectItem value="menos_pessoas">Menos pessoas primeiro</SelectItem>
+          </SelectContent>
+        </ShadSelect>
+
         <button onClick={() => setFilterIncompleto(v => !v)} title="Grupos com dados de cadastro faltando" style={{
           fontSize: 11, padding: '4px 10px', borderRadius: 99, cursor: 'pointer', fontWeight: 600,
           border: filterIncompleto ? `1px solid ${C.amber}` : `1px solid ${C.amber}40`,
@@ -1517,7 +1738,7 @@ export default function Grupos() {
         </button>
 
         {hasActiveFilters && (
-          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterBairro('all'); setFilterStatusTemp('all'); setFilterIncompleto(false); }}
+          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterBairro('all'); setFilterStatusTemp('all'); setFilterRede('all'); setFilterIncompleto(false); }}
             style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
             <X size={12} /> Limpar filtros
           </button>
@@ -1549,6 +1770,7 @@ export default function Grupos() {
                 onClick={() => {
                   setFilterTipo('all'); setFilterDia('all');
                   setFilterBairro('all'); setFilterStatusTemp('all');
+                  setFilterRede('all');
                   setFilterIncompleto(false); setFilterTemporada('');
                 }}
                 style={{ marginTop: 8, fontSize: 12, color: C.primary, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
@@ -1588,6 +1810,19 @@ export default function Grupos() {
                       </span>
                     )}
                     {!g.ativo && !g.status_temporada && <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#ef444420', color: C.red, fontWeight: 600, textTransform: 'uppercase' }}>Arquivado</span>}
+                    {g.modo_inscricao === 'fechado' && (
+                      <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#8b5cf620', color: '#8b5cf6', fontWeight: 600, textTransform: 'uppercase' }}>Por convite</span>
+                    )}
+                    {g.modo_inscricao === 'sempre_aberto' && (
+                      <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: '#3b82f620', color: '#3b82f6', fontWeight: 600, textTransform: 'uppercase' }}>Sempre aberto</span>
+                    )}
+                    {g.rede_id && redeById[g.rede_id] && (() => {
+                      const r = redeById[g.rede_id];
+                      const cor = r.cor || '#0ea5e9';
+                      return (
+                        <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: `${cor}20`, color: cor, fontWeight: 600, textTransform: 'uppercase' }}>{r.nome}</span>
+                      );
+                    })()}
                     {(() => {
                       const n = camposFaltantes(g).length;
                       if (!n) return null;
@@ -1598,9 +1833,13 @@ export default function Grupos() {
                       );
                     })()}
                   </div>
-                  {g.lider_nome && <div style={{ fontSize: 12, color: C.t2, marginBottom: 2 }}>Lider: {g.lider_nome}</div>}
+                  {g.lider_nome && <div style={{ fontSize: 12, color: C.t2, marginBottom: 2 }}>Líder: {g.lider_nome}</div>}
                   <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 4 }}>
-                    {g.dia_semana != null && (
+                    {ehDiario(g) ? (
+                      <span style={{ fontSize: 11, color: C.t3, display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <Clock size={11} /> Diário {g.horario?.slice(0, 5)}
+                      </span>
+                    ) : g.dia_semana != null && (
                       <span style={{ fontSize: 11, color: C.t3, display: 'flex', alignItems: 'center', gap: 3 }}>
                         <Clock size={11} /> {DIAS[g.dia_semana]} {g.horario?.slice(0, 5)}
                       </span>
@@ -1634,7 +1873,7 @@ export default function Grupos() {
 
       </>}
 
-      <GrupoFormModal open={modalOpen} onClose={() => setModalOpen(false)} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} temporadas={temporadas} bairrosUnicos={bairrosUnicos} />
+      <GrupoFormModal open={modalOpen} onClose={() => { setModalOpen(false); setLiderVinculoPendente(null); }} data={editData} onSave={handleSave} saving={saving} gruposForSelect={gruposForSelect} allMembros={allMembros} loadMembros={loadMembros} temporadas={temporadas} bairrosUnicos={bairrosUnicos} />
       {importLideresOpen && <ImportLideresModal onClose={() => setImportLideresOpen(false)} onDone={() => { setImportLideresOpen(false); load(); }} />}
     </div>
   );
@@ -1887,13 +2126,15 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
     if (open) {
       api.redes.list().then(setRedesList).catch(() => setRedesList([]));
       const temporadaAtiva = (temporadas || []).find(t => t.ativa)?.id || '';
-      setForm(data ? { ...data } : {
+      const defaults = {
         nome: '', categoria: '', area: 'sede', lider_id: '', local: '', endereco: '', complemento: '',
         dia_semana: '', horario: '', recorrencia: 'semanal', tema: '',
         faixa_etaria: '', idade_min: '', idade_max: '', capacidade: '', aceitando_inscricoes: true, rede_id: '',
+        modo_inscricao: 'temporada',
         foto_url: '', observacoes: '', grupo_origem_id: '', descricao: '',
         bairro: '', status_temporada: 'novo', temporada: temporadaAtiva,
-      });
+      };
+      setForm(data ? { ...defaults, ...data } : defaults);
       setLiderSearch(data?.lider?.nome || '');
       liderEscolhaRef.current = data?.lider?.nome || '';
       setLiderNomeSel(data?.lider?.nome || '');
@@ -1946,9 +2187,12 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
     const iMax = form.idade_max === '' || form.idade_max == null ? null : Number(form.idade_max);
     if (iMin != null && iMax != null && iMin > iMax) { toast.error('Idade mínima maior que a máxima'); return; }
     const { _geocoding, ...rest } = form;
+    // Diário = todos os dias → sem dia da semana fixo (a UI já bloqueia o
+    // campo, mas força null aqui pra um valor antigo não escapar no salvar).
+    const diaSemana = ehDiario(rest) ? null : (rest.dia_semana === '' ? null : Number(rest.dia_semana));
     onSave({
       ...rest,
-      dia_semana: rest.dia_semana === '' ? null : Number(rest.dia_semana),
+      dia_semana: diaSemana,
       lider_id: rest.lider_id || null,
       grupo_origem_id: rest.grupo_origem_id || null,
       lat: rest.lat || null,
@@ -1966,7 +2210,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto min-h-0" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
             <Label>Nome do grupo *</Label>
-            <Input value={form.nome || ''} onChange={e => set('nome', e.target.value)} placeholder="Ex: Conexao Barra" />
+            <Input value={form.nome || ''} onChange={e => set('nome', e.target.value)} placeholder="Ex: Conexão Barra" />
           </div>
 
           <div>
@@ -1993,8 +2237,16 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
               </ShadSelect>
             </div>
             <div>
-              <Label>Recorrencia</Label>
-              <ShadSelect value={form.recorrencia || 'semanal'} onValueChange={v => set('recorrencia', v)}>
+              <Label>Recorrência</Label>
+              <ShadSelect
+                value={form.recorrencia || 'semanal'}
+                onValueChange={v => setForm(f => ({
+                  ...f,
+                  recorrencia: v,
+                  // Diário não tem dia fixo — limpa o dia ao escolher diário.
+                  ...(v === 'diario' ? { dia_semana: '' } : {}),
+                }))}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {RECORRENCIAS.map(r => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
@@ -2047,23 +2299,45 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
             </ShadSelect>
           </div>
 
+          <div>
+            <Label>Inscrições (natureza do grupo)</Label>
+            <ShadSelect value={form.modo_inscricao || 'temporada'} onValueChange={v => set('modo_inscricao', v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="temporada">Aberto na temporada — aparece no formulário enquanto as inscrições estiverem abertas</SelectItem>
+                <SelectItem value="sempre_aberto">Sempre aberto — recebe inscrições o ano todo, mesmo com a temporada fechada</SelectItem>
+                <SelectItem value="fechado">Fechado — por convite do líder, nunca aparece no formulário</SelectItem>
+              </SelectContent>
+            </ShadSelect>
+          </div>
+
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
             <input type="checkbox" checked={form.aceitando_inscricoes !== false} onChange={e => set('aceitando_inscricoes', e.target.checked)} style={{ accentColor: '#00B39D', cursor: 'pointer' }} />
-            Aceitar novas inscrições (desligue para tirar o grupo do formulário público)
+            Aceitar novas inscrições (pausa pontual — ex.: grupo lotado; desligue para tirar do formulário)
           </label>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
               <Label>Dia da semana</Label>
-              <ShadSelect value={form.dia_semana?.toString() ?? ''} onValueChange={v => set('dia_semana', v)}>
-                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>
-                  {DIAS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
-                </SelectContent>
-              </ShadSelect>
+              {ehDiario(form) ? (
+                // Diário acontece todos os dias — sem dia fixo (campo travado).
+                <div style={{
+                  padding: '8px 12px', borderRadius: 8, border: '1px solid var(--cbrio-border)',
+                  background: 'var(--cbrio-input-bg)', color: 'var(--cbrio-text3)', fontSize: 13,
+                }}>
+                  Diário — todos os dias
+                </div>
+              ) : (
+                <ShadSelect value={form.dia_semana?.toString() ?? ''} onValueChange={v => set('dia_semana', v)}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    {DIAS.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}
+                  </SelectContent>
+                </ShadSelect>
+              )}
             </div>
             <div>
-              <Label>Horario</Label>
+              <Label>Horário</Label>
               <Input type="time" value={form.horario || ''} onChange={e => set('horario', e.target.value)} />
             </div>
           </div>
@@ -2075,7 +2349,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
             </div>
             <div>
               <Label>Endereço</Label>
-              <Input value={form.endereco || ''} onChange={e => set('endereco', e.target.value)} placeholder="Rua, numero" />
+              <Input value={form.endereco || ''} onChange={e => set('endereco', e.target.value)} placeholder="Rua, número" />
             </div>
           </div>
 
@@ -2167,7 +2441,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
 
           <div>
             <Label>Tema atual</Label>
-            <Input value={form.tema || ''} onChange={e => set('tema', e.target.value)} placeholder="Ex: Serie Inabalavel" />
+            <Input value={form.tema || ''} onChange={e => set('tema', e.target.value)} placeholder="Ex: Série Inabalável" />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -2211,7 +2485,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
           </div>
 
           <div>
-            <Label>Grupo de origem (multiplicacao)</Label>
+            <Label>Grupo de origem (multiplicação)</Label>
             <ShadSelect value={form.grupo_origem_id || '_none'} onValueChange={v => set('grupo_origem_id', v === '_none' ? '' : v)}>
               <SelectTrigger><SelectValue placeholder="Nenhum" /></SelectTrigger>
               <SelectContent>
@@ -2290,7 +2564,7 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!data) { toast.error('Data obrigatoria'); return; }
+    if (!data) { toast.error('Data obrigatória'); return; }
     setSaving(true);
     await onSubmit({
       data,
@@ -2309,11 +2583,11 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
             <div>
               <Label style={{ fontSize: 11 }}>Data *</Label>
-              <Input type="date" value={data} onChange={e => setData(e.target.value)} max={new Date().toISOString().split('T')[0]} />
+              <DatePicker value={data} onChange={v => setData(v)} max={new Date().toISOString().split('T')[0]} />
             </div>
             <div>
               <Label style={{ fontSize: 11 }}>Tema (opcional)</Label>
-              <Input value={tema} onChange={e => setTema(e.target.value)} placeholder="Ex: Mateus 5 - Bem-aventurancas" />
+              <Input value={tema} onChange={e => setTema(e.target.value)} placeholder="Ex: Mateus 5 - Bem-aventuranças" />
             </div>
           </div>
 
@@ -2371,7 +2645,7 @@ function SaudeDoGrupo({ metricas }) {
   const corScore = m.score_saude >= 70 ? C.green : m.score_saude >= 50 ? C.amber : C.red;
   const TendIcon = m.tendencia === 'subindo' ? TrendingUp : m.tendencia === 'caindo' ? TrendingDown : Minus;
   const corTend = m.tendencia === 'subindo' ? C.green : m.tendencia === 'caindo' ? C.red : C.t3;
-  const labelTend = m.tendencia === 'subindo' ? 'Subindo' : m.tendencia === 'caindo' ? 'Caindo' : 'Estavel';
+  const labelTend = m.tendencia === 'subindo' ? 'Subindo' : m.tendencia === 'caindo' ? 'Caindo' : 'Estável';
   const maxBar = Math.max(...(m.presencas_ultimos.length ? m.presencas_ultimos : [1]), 1);
 
   return (
@@ -2388,7 +2662,7 @@ function SaudeDoGrupo({ metricas }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
         <MetricaCard label="Score" valor={m.score_saude} sufixo="/100" cor={corScore} />
-        <MetricaCard label="Frequencia media" valor={m.freq_media} sufixo=" pres." cor={C.primary} />
+        <MetricaCard label="Frequência média" valor={m.freq_media} sufixo=" pres." cor={C.primary} />
         <MetricaCard label="Taxa de presença" valor={m.taxa_presenca} sufixo="%" cor={C.primary} />
         <MetricaCard label="Regularidade" valor={m.regularidade} sufixo="%" cor={m.regularidade >= 70 ? C.green : m.regularidade >= 50 ? C.amber : C.red} />
       </div>
@@ -2399,7 +2673,7 @@ function SaudeDoGrupo({ metricas }) {
           <span style={{ fontSize: 12, color: corTend, fontWeight: 600 }}>{labelTend}</span>
         </div>
         <span style={{ fontSize: 11, color: C.t3 }}>
-          {m.realizados_90d}/{m.esperados_90d} encontros nos ultimos 90 dias
+          {m.realizados_90d}/{m.esperados_90d} encontros nos últimos 90 dias
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 3, alignItems: 'flex-end', height: 28 }}>
           {m.presencas_ultimos.map((p, i) => (
@@ -2435,12 +2709,6 @@ function MetricaCard({ label, valor, sufixo, cor }) {
 // KPI + gráfico de frequência por mês + lista de líderes em treinamento. Os
 // números vêm da RPC agregada (fn_grupos_kpis_relatorio); a lista nominal de
 // líderes em treinamento, do endpoint /kpis/lideres-treinamento.
-const REL_RANGES = [
-  { value: 3, label: '3 meses' },
-  { value: 6, label: '6 meses' },
-  { value: 12, label: '12 meses' },
-  { value: 24, label: '2 anos' },
-];
 const REL_MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 const relLabelMes = (ym) => {
   if (!ym) return '';
@@ -2449,8 +2717,12 @@ const relLabelMes = (ym) => {
 };
 
 function RelatorioGrupos({ temporada }) {
-  const [meses, setMeses] = useState(12);
+  const { isDark } = useTheme();
+  const cores = chartCores(isDark);
+  const [vista, setVista] = useState('atual'); // 'atual' (detalhe) | 'comparativo' (entre temporadas)
   const [data, setData] = useState(null);
+  const [metricas, setMetricas] = useState(null); // conjunto COMPLETO, ao vivo, da temporada (== consolidação)
+  const [series, setSeries] = useState(null);     // séries mensais + tamanho dos grupos
   const [treino, setTreino] = useState([]);
   const [semRelato, setSemRelato] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2458,101 +2730,111 @@ function RelatorioGrupos({ temporada }) {
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    const params = { meses };
+    // Filtro de meses aposentado (Marcos · 18/07): o escopo agora é a própria
+    // temporada (a aba mostra 1 temporada · o comparativo mostra todas). funcoes
+    // (papéis) e a lista de treino saem do relatório; scalars e séries saem das
+    // funções escopadas pela temporada.
+    const params = {};
     if (temporada) params.temporada = temporada;
     const treinoParams = temporada ? { temporada } : undefined;
     Promise.all([
       api.relatorioKpis(params),
       api.lideresTreinamento(treinoParams).catch(() => []),
       api.semRelato().catch(() => null),
+      temporada ? api.temporadaMetricas(temporada).catch(() => null) : Promise.resolve(null),
+      temporada ? api.temporadaSeries(temporada).catch(() => null) : Promise.resolve(null),
     ])
-      .then(([d, t, sr]) => { if (alive) { setData(d); setTreino(Array.isArray(t) ? t : []); setSemRelato(sr); } })
-      .catch(() => { if (alive) { setData(null); setTreino([]); } })
+      .then(([d, t, sr, m, s]) => { if (alive) { setData(d); setTreino(Array.isArray(t) ? t : []); setSemRelato(sr); setMetricas(m && Object.keys(m).length ? m : null); setSeries(s || null); } })
+      .catch(() => { if (alive) { setData(null); setTreino([]); setMetricas(null); setSeries(null); } })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [meses, temporada]);
+  }, [temporada]);
 
-  const serie = (data?.frequencia?.serie || []).map(s => ({ ...s, mes: relLabelMes(s.ym) }));
-  const nps = data?.satisfacao_lideres;
+  // NPS: prioriza o da temporada (métricas completas); cai no do relatório.
+  const nps = metricas
+    ? (metricas.satisfacao_lideres != null ? { valor: metricas.satisfacao_lideres, data: metricas.satisfacao_lideres_data } : null)
+    : data?.satisfacao_lideres;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Seletor de período */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
-          {REL_RANGES.map(r => (
-            <button key={r.value} onClick={() => setMeses(r.value)} style={{
-              padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: 'none', cursor: 'pointer',
-              background: meses === r.value ? C.primary : 'transparent',
-              color: meses === r.value ? '#fff' : C.t3, transition: 'all 0.15s',
-            }}>{r.label}</button>
-          ))}
-        </div>
-        <span style={{ fontSize: 12, color: C.t3 }}>
-          {data?.frequencia?.total_encontros ?? 0} encontro(s) no período
-        </span>
+      {/* Alterna entre o detalhe da temporada atual e o comparativo histórico */}
+      <div style={{ display: 'inline-flex', gap: 2, padding: 2, borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg, alignSelf: 'flex-start' }}>
+        {[['atual', 'Temporada atual'], ['comparativo', 'Comparativo entre temporadas']].map(([v, label]) => (
+          <button key={v} onClick={() => setVista(v)} style={{
+            padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 10, border: 'none', cursor: 'pointer',
+            background: vista === v ? C.primary : 'transparent',
+            color: vista === v ? '#fff' : C.t3, transition: 'all 0.15s',
+          }}>{label}</button>
+        ))}
       </div>
 
+      {vista === 'comparativo' ? (
+        <ComparativoTemporadas />
+      ) : (
+      <>
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando relatório...</div>
       ) : !data ? (
         <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Não foi possível carregar o relatório.</div>
       ) : (
         <>
-          {/* KPIs principais */}
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-            <StatisticsCard title="Grupos ativos" value={data.total_grupos ?? 0} icon={Users} iconColor={C.primary} />
-            <StatisticsCard title="Líderes" value={data.total_lideres ?? 0} icon={UserCog} iconColor={C.blue} subtitle="líderes de grupo" />
-            <StatisticsCard title="Em treinamento" value={data.lideres_treinamento ?? 0} icon={GraduationCap} iconColor="#8b5cf6" subtitle="líderes em formação" />
-            <StatisticsCard
-              title="Satisfação líderes"
-              value={nps ? Number(nps.valor).toLocaleString('pt-BR') : '—'}
-              icon={Star}
-              iconColor={C.amber}
-              subtitle={nps ? `NPS · ${fmtDate(nps.data)}` : 'Sem NPS registrado'}
-            />
-            <StatisticsCard title="Frequência média" value={data.frequencia?.media_por_encontro ?? 0} icon={Activity} iconColor={C.primary} subtitle="presenças / encontro" />
+          {metricas && (
+            <div style={{ fontSize: 11.5, color: C.t3, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Activity size={12} style={{ color: cores.teal }} />
+              Indicadores ao vivo desta temporada — são exatamente os que ficam congelados ao consolidar.
+            </div>
+          )}
+
+          {/* Faixa enxuta com os totais da temporada (número legível · não é card) */}
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 20, padding: '12px 16px',
+            background: C.card, borderRadius: 14, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)',
+          }}>
+            {[
+              { icon: Users, label: 'Grupos', valor: (metricas ? metricas.num_grupos : data.total_grupos) ?? 0 },
+              { icon: Users, label: 'Pessoas', valor: metricas ? metricas.pessoas_distintas : null },
+              { icon: UserPlus, label: 'Inscritos', valor: metricas ? (metricas.inscritos ?? metricas.num_membros) : null },
+              { icon: UserPlus, label: 'Pedidos', valor: metricas ? metricas.num_inscricoes : null },
+              { icon: CalendarCheck, label: 'Encontros', valor: (metricas ? metricas.total_encontros : data.frequencia?.total_encontros) ?? 0 },
+              { icon: Activity, label: 'Freq. média', valor: (metricas ? metricas.frequencia_media : data.frequencia?.media_por_encontro) ?? 0, dec: true },
+              { icon: Star, label: 'NPS líderes', valor: nps ? Number(nps.valor) : null, dec: true },
+            ].map((s, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 92 }}>
+                <s.icon size={18} style={{ color: cores.teal, flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: C.text, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>
+                    {s.valor == null ? '—' : Number(s.valor).toLocaleString('pt-BR', { maximumFractionDigits: s.dec ? 1 : 0 })}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>{s.label}</div>
+                </div>
+              </div>
+            ))}
           </div>
 
-          {/* Frequência por mês */}
-          <Card>
-            <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-sm font-medium flex items-center gap-2">
-                <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                Frequência por mês
-              </CardTitle>
-              <span className="text-xs text-muted-foreground">
-                {(data.frequencia?.total_presencas ?? 0).toLocaleString('pt-BR')} presenças no período
-              </span>
-            </CardHeader>
-            <CardContent>
-              {serie.length === 0 ? (
-                <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13 }}>
-                  Nenhum encontro registrado no período. A frequência aparece aqui conforme os líderes registram as chamadas dos encontros.
-                </div>
-              ) : (
-                <div className="h-[260px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={serie} margin={{ top: 6, right: 8, left: -16, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
-                      <XAxis dataKey="mes" tick={{ fontSize: 11 }} />
-                      <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                      <Tooltip
-                        cursor={{ fill: 'rgba(0,179,157,0.08)' }}
-                        contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                        formatter={(v) => [Number(v).toLocaleString('pt-BR'), 'Presenças']}
-                        labelFormatter={(l, payload) => {
-                          const p = payload?.[0]?.payload;
-                          return p ? `${l} · ${p.encontros} encontro(s) · média ${p.media}` : l;
-                        }}
-                      />
-                      <Bar dataKey="presencas" name="Presenças" fill={C.primary} radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          {/* Nota de leitura (Marcos 2026-07-23): vocabulário canônico. */}
+          <div style={{ fontSize: 11.5, color: C.t3, display: 'flex', alignItems: 'flex-start', gap: 6, lineHeight: 1.5 }}>
+            <AlertTriangle size={12} style={{ color: cores.teal, flexShrink: 0, marginTop: 2 }} />
+            <span><strong>Pessoas</strong> = pessoas distintas · <strong>Inscritos</strong> = conexões com grupos (uma pessoa em vários grupos conta em cada; líder e supervisor também contam, cada um no seu grupo). <strong>Frequentador</strong> = já foi a ≥1 encontro · <strong>Visitante</strong> = ainda não foi (sai da presença).</span>
+          </div>
+
+          {/* Liderança (pizza) + frequência (frequentador × visitante · derivada da presença) */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+            <LiderancaPizza
+              lideres={(metricas ? metricas.num_lideres : data.total_lideres) ?? 0}
+              treino={(metricas ? metricas.num_lideres_treinamento : data.lideres_treinamento) ?? 0}
+              cores={cores}
+            />
+            <FrequenciaResumo metricas={metricas} cores={cores} />
+          </div>
+
+          {/* Ranking de % de frequência POR grupo (Marcos 2026-07-23) */}
+          <RankingFrequenciaGrupos temporada={temporada} cores={cores} />
+
+          {/* Série mensal: frequência / inscrições / membresia (com filtro) */}
+          <SerieTempo serie={series?.serie} cores={cores} />
+
+          {/* Tamanho dos grupos: média + distribuição */}
+          <TamanhoGrupos tamanho={series?.tamanho} cores={cores} />
 
           {/* Grupos sem relatório de encontro · visão de cobrança (Pr. Nélio) */}
           {semRelato && (() => {
@@ -2588,7 +2870,7 @@ function RelatorioGrupos({ temporada }) {
                               <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{g.nome}</span>
                               <span style={{ fontSize: 11, color: C.t3, marginLeft: 8 }}>
                                 {g.lider_nome ? `Líder: ${g.lider_nome}` : 'Sem líder'}
-                                {g.dia_semana != null ? ` · ${DIAS[g.dia_semana]}` : ''}
+                                {ehDiario(g) ? ' · Diário' : g.dia_semana != null ? ` · ${DIAS[g.dia_semana]}` : ''}
                               </span>
                             </div>
                             <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 99, background: `${cor}20`, color: cor, fontWeight: 700, flexShrink: 0 }}>
@@ -2642,6 +2924,677 @@ function RelatorioGrupos({ temporada }) {
             <strong>Fontes:</strong> grupos ativos e líderes (responsáveis pelos grupos) vêm do cadastro de grupos; líderes em treinamento, dos membros marcados como tal em cada grupo; a frequência, das chamadas dos encontros; a satisfação dos líderes, do último NPS registrado em Dados Brutos (tipo "NPS dos líderes").
           </div>
         </>
+      )}
+      </>
+      )}
+    </div>
+  );
+}
+
+// ── Comparativo entre temporadas (dados congelados no fechamento) ────────────
+// Lê mem_temporada_consolidado + a parcial ao vivo da temporada atual. É a
+// visão "como a igreja evoluiu de uma temporada pra outra" (Marcos · 17/07).
+// Rótulos e ordem canônica dos papéis no roster (para o gráfico de composição).
+
+// Pizza (donut) da liderança: líderes formados × em treinamento. 2 categorias
+// (teal × violeta · validado CVD-safe); identidade também por legenda + rótulo,
+// nunca só cor. Centro mostra o total.
+function LiderancaPizza({ lideres, treino, cores }) {
+  const total = (lideres || 0) + (treino || 0);
+  const dados = [
+    { name: 'Líderes', value: lideres || 0, cor: cores.teal },
+    { name: 'Em treinamento', value: treino || 0, cor: cores.violet },
+  ];
+  return (
+    <Card>
+      <CardHeader className="pb-1">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <UserCog className="h-4 w-4" style={{ color: cores.teal }} /> Liderança
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {total === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>Sem líderes registrados nesta temporada.</div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', width: 168, height: 168, flexShrink: 0 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={dados} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={52} outerRadius={78} paddingAngle={2} startAngle={90} endAngle={-270} isAnimationActive={false} stroke="none">
+                    {dados.map((d, i) => <Cell key={i} fill={d.cor} />)}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+                    formatter={(v, n) => [`${Number(v).toLocaleString('pt-BR')} (${total ? Math.round(v / total * 100) : 0}%)`, n]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                <span style={{ fontSize: 24, fontWeight: 800, color: C.text, lineHeight: 1 }}>{total}</span>
+                <span style={{ fontSize: 10.5, color: C.t3, marginTop: 2 }}>no total</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 130 }}>
+              {dados.map(d => (
+                <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 11, height: 11, borderRadius: 3, background: d.cor, flexShrink: 0 }} />
+                  <span style={{ fontSize: 12.5, color: C.t2, flex: 1 }}>{d.name}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: 'tabular-nums' }}>
+                    {d.value}<span style={{ fontSize: 11, color: C.t3, fontWeight: 500 }}> · {total ? Math.round(d.value / total * 100) : 0}%</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Frequência: Frequentadores (foram a ≥1 encontro) × Visitantes (ainda não
+// foram) — DERIVADO da presença (Marcos 2026-07-23), não do funcao. Enquanto a
+// frequência não é registrada, mostra só "aguardando a 1ª chamada" (não force
+// o split · todos são inscritos até bater presença).
+function FrequenciaResumo({ metricas, cores }) {
+  const temPresenca = metricas?.tem_presenca === true;
+  const freq = Number(metricas?.frequentadores || 0);
+  const visit = Number(metricas?.visitantes || 0);
+  const pessoas = Number(metricas?.pessoas_distintas || 0);
+  return (
+    <Card>
+      <CardHeader className="pb-1">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Activity className="h-4 w-4" style={{ color: cores.teal }} /> Frequência
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {!temPresenca ? (
+          <div style={{ padding: '24px 12px', textAlign: 'center', color: C.t3, fontSize: 13, lineHeight: 1.6 }}>
+            <Clock size={22} style={{ margin: '0 auto 8px', display: 'block', opacity: 0.6 }} />
+            Frequência ainda não registrada.<br />
+            Os <strong style={{ color: C.text }}>{pessoas}</strong> inscritos aguardam a 1ª chamada — quando as presenças entrarem,
+            aparece aqui quantos são <strong>frequentadores</strong> (foram) × <strong>visitantes</strong> (ainda não).
+          </div>
+        ) : (
+          <div style={{ display: 'flex', gap: 16, padding: '8px 0' }}>
+            {[['Frequentadores', freq, '#10b981', 'foram a ≥1 encontro'], ['Visitantes', visit, '#94a3b8', 'ainda não foram']].map(([lab, val, cor, hint]) => (
+              <div key={lab} style={{ flex: 1, textAlign: 'center' }}>
+                <div style={{ fontSize: 28, fontWeight: 800, color: cor, lineHeight: 1 }}>{val}</div>
+                <div style={{ fontSize: 12, color: C.text, fontWeight: 600, marginTop: 4 }}>{lab}</div>
+                <div style={{ fontSize: 10.5, color: C.t3, marginTop: 2 }}>{hint}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Ranking de % de frequência POR grupo (Marcos 2026-07-23: achar quem está
+// caindo). Pior primeiro. Nasce vazio até a 1ª chamada de algum grupo.
+function RankingFrequenciaGrupos({ temporada, cores }) {
+  const [loading, setLoading] = useState(true);
+  const [grupos, setGrupos] = useState([]);
+  const [temEncontro, setTemEncontro] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    setLoading(true);
+    api.frequenciaRanking(temporada)
+      .then(r => { if (vivo) { setGrupos(r?.grupos || []); setTemEncontro(!!r?.tem_encontro); } })
+      .catch(() => { if (vivo) { setGrupos([]); setTemEncontro(false); } })
+      .finally(() => { if (vivo) setLoading(false); });
+    return () => { vivo = false; };
+  }, [temporada]);
+
+  const corPct = (p) => (p >= 70 ? '#10b981' : p >= 40 ? '#f59e0b' : '#ef4444');
+  const comEnc = grupos.filter(g => g.tem_encontro);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Activity className="h-4 w-4" style={{ color: cores.teal }} /> Frequência por grupo
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div style={{ fontSize: 13, color: C.t3, textAlign: 'center', padding: 12 }}>Carregando…</div>
+        ) : !temEncontro ? (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13, color: C.t3, lineHeight: 1.6, padding: '4px 0' }}>
+            <Clock size={16} style={{ color: C.t3, flexShrink: 0, marginTop: 2 }} />
+            <span>Nenhum grupo lançou chamada ainda. Quando as presenças entrarem, cada grupo aparece aqui com sua <strong style={{ color: C.text }}>% de frequência</strong> (das presenças possíveis) — os mais baixos primeiro, pra saber onde agir.</span>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7, maxHeight: 320, overflowY: 'auto' }}>
+            {comEnc.map(g => (
+              <div key={g.grupo_id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.nome}</span>
+                <div style={{ flex: '0 0 120px', height: 8, borderRadius: 99, background: C.border, overflow: 'hidden' }}>
+                  <div style={{ width: `${Math.min(100, g.pct_frequencia)}%`, height: '100%', background: corPct(g.pct_frequencia) }} />
+                </div>
+                <span style={{ flex: '0 0 42px', textAlign: 'right', fontSize: 13, fontWeight: 700, color: corPct(g.pct_frequencia) }}>{g.pct_frequencia}%</span>
+                <span style={{ flex: '0 0 96px', textAlign: 'right', fontSize: 10.5, color: C.t3, whiteSpace: 'nowrap' }}>{g.presenca_media}/enc · {g.total_inscritos} insc</span>
+              </div>
+            ))}
+            {grupos.length > comEnc.length && (
+              <div style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>+{grupos.length - comEnc.length} grupo(s) ainda sem chamada.</div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Gráfico de linhas com as 3 séries do funil (frequência/inscrições/membresia)
+// e um filtro embaixo pra ligar/desligar cada uma (Marcos · 18/07: comparar
+// "quem só se inscreveu × quem entrou no grupo × quem participa"). Multi-série →
+// paleta categórica validada (teal/violeta/âmbar) + legenda; nunca só cor.
+const SERIE_DEFS = [
+  { key: 'inscricoes', label: 'Inscrições', corKey: 'violet', desc: 'pediram pra entrar' },
+  { key: 'membros', label: 'Membresia', corKey: 'amber', desc: 'entraram no grupo' },
+  { key: 'presencas', label: 'Frequência', corKey: 'teal', desc: 'participaram (presenças)' },
+];
+
+function SerieTempo({ serie, cores }) {
+  const [ativos, setAtivos] = useState({ inscricoes: true, membros: true, presencas: true });
+  const dados = (serie || []).map(s => ({ ...s, mes: relLabelMes(s.ym) }));
+  const defs = SERIE_DEFS.map(d => ({ ...d, cor: cores[d.corKey] }));
+  const algumDado = dados.some(d => (d.inscricoes || 0) + (d.membros || 0) + (d.presencas || 0) > 0);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          Funil ao longo dos meses
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {dados.length === 0 || !algumDado ? (
+          <div style={{ padding: 32, textAlign: 'center', color: C.t3, fontSize: 13, lineHeight: 1.6 }}>
+            Ainda sem movimento nesta temporada. Conforme as pessoas se inscrevem, entram nos grupos e os
+            líderes registram as chamadas, as três linhas aparecem aqui.
+          </div>
+        ) : (
+          <>
+            <div className="h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={dados} margin={{ top: 6, right: 12, left: -12, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={cores.grid} vertical={false} />
+                  <XAxis dataKey="mes" tick={{ fontSize: 11, fill: cores.eixo }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: cores.eixo }} allowDecimals={false} axisLine={false} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+                    formatter={(v, n) => [Number(v).toLocaleString('pt-BR'), n]}
+                  />
+                  {defs.filter(d => ativos[d.key]).map(d => (
+                    <Line key={d.key} type="monotone" dataKey={d.key} name={d.label} stroke={d.cor}
+                      strokeWidth={2} dot={{ r: 3, fill: d.cor }} activeDot={{ r: 5 }} isAnimationActive={false} />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            {/* Filtro: liga/desliga cada série */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+              {defs.map(d => {
+                const on = ativos[d.key];
+                return (
+                  <button
+                    key={d.key}
+                    onClick={() => setAtivos(a => ({ ...a, [d.key]: !a[d.key] }))}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 7, padding: '6px 12px', borderRadius: 99, cursor: 'pointer',
+                      fontSize: 12, fontWeight: 600,
+                      border: `1px solid ${on ? d.cor : C.border}`,
+                      background: on ? d.cor + '18' : 'transparent',
+                      color: on ? C.text : C.t3,
+                    }}
+                    title={d.desc}
+                  >
+                    <span style={{ width: 12, height: 12, borderRadius: 3, background: on ? d.cor : C.t3, opacity: on ? 1 : 0.4 }} />
+                    {d.label}
+                    <span style={{ fontSize: 10.5, color: C.t3, fontWeight: 500 }}>· {d.desc}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// Média e distribuição de tamanho dos grupos (Marcos · 18/07). Hero com a média
+// + histograma por faixa de tamanho (revela a assimetria — poucos grupos gigantes
+// puxam a média pra cima; a mediana mostra o grupo "típico").
+function TamanhoGrupos({ tamanho, cores }) {
+  if (!tamanho) return null;
+  const dist = tamanho.distribuicao || [];
+  const vazios = (tamanho.total_grupos || 0) - (tamanho.com_membros || 0);
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <Users className="h-4 w-4 text-muted-foreground" />
+          Tamanho dos grupos
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ minWidth: 150 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+              <span style={{ fontSize: 34, fontWeight: 800, color: cores.teal, lineHeight: 1 }}>
+                {Number(tamanho.media ?? 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}
+              </span>
+              <span style={{ fontSize: 12, color: C.t3 }}>pessoas / grupo</span>
+            </div>
+            <div style={{ fontSize: 11.5, color: C.t3, marginTop: 8, lineHeight: 1.7 }}>
+              Mediana: <strong style={{ color: C.t2 }}>{Number(tamanho.mediana ?? 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</strong> (o grupo típico)<br />
+              {tamanho.com_membros ?? 0} grupos com gente{vazios > 0 ? ` · ${vazios} ainda vazios` : ''}
+            </div>
+          </div>
+          <div style={{ flex: 1, minWidth: 240, height: 200 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dist} margin={{ top: 18, right: 8, left: -16, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={cores.grid} vertical={false} />
+                <XAxis dataKey="faixa" tick={{ fontSize: 11, fill: cores.eixo }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: cores.eixo }} allowDecimals={false} axisLine={false} tickLine={false} />
+                <Tooltip
+                  cursor={{ fill: cores.teal + '14' }}
+                  contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+                  formatter={(v) => [Number(v).toLocaleString('pt-BR'), 'Grupos']}
+                  labelFormatter={(l) => `${l} pessoas`}
+                />
+                <Bar dataKey="n" name="Grupos" fill={cores.teal} radius={[4, 4, 0, 0]} maxBarSize={54} isAnimationActive={false}>
+                  <LabelList dataKey="n" position="top" style={{ fill: C.text, fontSize: 11, fontWeight: 700 }} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div style={{ fontSize: 10.5, color: C.t3, marginTop: 6 }}>
+          Cada barra = quantos grupos têm aquele número de pessoas. A média é puxada pra cima por poucos grupos grandes — a mediana reflete melhor o grupo comum.
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+const COMP_METRICAS = [
+  { key: 'num_grupos', label: 'Grupos', icon: Users },
+  { key: 'num_inscricoes', label: 'Inscrições', icon: UserPlus },
+  { key: 'num_membros', label: 'Membros', icon: Users },
+  { key: 'num_lideres', label: 'Líderes', icon: UserCog },
+  { key: 'num_lideres_treinamento', label: 'Em treino', icon: GraduationCap },
+  { key: 'frequencia_media', label: 'Freq. média', icon: Activity },
+  { key: 'satisfacao_lideres', label: 'NPS líderes', icon: Star },
+];
+
+const fmtComp = (key, v) => {
+  if (v == null) return '—';
+  const dec = (key === 'frequencia_media' || key === 'satisfacao_lideres');
+  return Number(v).toLocaleString('pt-BR', { maximumFractionDigits: dec ? 1 : 0 });
+};
+
+// Mini gráfico de barras de UMA métrica ao longo das temporadas (small-multiple).
+// Série única → hue único (teal); a temporada parcial (em andamento) fica com
+// fill mais claro + borda tracejada (encoding secundário, não só cor). Rótulo
+// direto em cada barra (poucas temporadas) dispensa eixo Y.
+function MiniBarTemporadas({ metrica, linhas, cores }) {
+  const dados = linhas.map(l => ({
+    nome: (l.temporada_label || l.temporada || '').replace(/\s*20\d\d$/, '').trim() || l.temporada,
+    valor: Number(l[metrica.key] ?? 0),
+    parcial: !!l.parcial,
+  }));
+  const temParcial = dados.some(d => d.parcial);
+  return (
+    <Card>
+      <CardHeader className="pb-1">
+        <CardTitle className="text-sm font-medium flex items-center gap-2">
+          <metrica.icon className="h-4 w-4" style={{ color: cores.teal }} /> {metrica.label}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="h-[180px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={dados} margin={{ top: 18, right: 8, left: 8, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={cores.grid} vertical={false} />
+              <XAxis dataKey="nome" tick={{ fontSize: 11, fill: cores.eixo }} axisLine={false} tickLine={false} />
+              <YAxis hide domain={[0, 'dataMax']} />
+              <Tooltip
+                cursor={{ fill: cores.teal + '14' }}
+                contentStyle={{ borderRadius: 8, fontSize: 12, border: `1px solid ${C.border}`, background: C.card, color: C.text }}
+                formatter={(v) => [fmtComp(metrica.key, v), metrica.label]}
+                labelFormatter={(l, p) => p?.[0]?.payload?.parcial ? `${l} · parcial` : l}
+              />
+              <Bar dataKey="valor" name={metrica.label} radius={[4, 4, 0, 0]} maxBarSize={64} isAnimationActive={false}>
+                {dados.map((d, i) => (
+                  <Cell
+                    key={i}
+                    fill={d.parcial ? cores.teal + '55' : cores.teal}
+                    stroke={d.parcial ? cores.teal : undefined}
+                    strokeDasharray={d.parcial ? '4 3' : undefined}
+                    strokeWidth={d.parcial ? 1.5 : 0}
+                  />
+                ))}
+                <LabelList dataKey="valor" position="top" style={{ fill: C.text, fontSize: 11, fontWeight: 700 }} formatter={(v) => fmtComp(metrica.key, v)} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        {temParcial && (
+          <div style={{ fontSize: 10.5, color: C.t3, marginTop: 2, display: 'flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: cores.teal + '55', border: `1.5px dashed ${cores.teal}`, display: 'inline-block' }} />
+            barra tracejada = temporada em andamento (parcial · ainda não consolidada)
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ComparativoTemporadas() {
+  const { isDark } = useTheme();
+  const cores = chartCores(isDark);
+  const [linhas, setLinhas] = useState(null);
+  const [ocultas, setOcultas] = useState(() => new Set()); // temporadas escondidas do comparativo
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    api.temporadasConsolidado()
+      .then(r => {
+        if (!alive) return;
+        const cong = (r?.consolidados || []).map(c => ({ ...c, parcial: false }));
+        const arr = [...cong];
+        // A temporada atual entra como barra "parcial" (ao vivo) se ainda não congelada.
+        if (r?.atual) arr.push({ ...r.atual, parcial: true });
+        setLinhas(arr);
+      })
+      .catch(() => { if (alive) setLinhas([]); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando comparativo...</div>;
+  if (!linhas || linhas.length === 0) {
+    return (
+      <div style={{ padding: 40, textAlign: 'center', background: C.card, borderRadius: 16, border: '1px dashed var(--hairline)', color: C.t3, fontSize: 13, lineHeight: 1.6 }}>
+        Nenhuma temporada consolidada ainda.<br />
+        Ao final de uma temporada, use <strong>Inscrições → Administração → Temporadas → Consolidar</strong> para
+        congelar os números dela. Eles aparecem aqui para comparar a evolução de uma temporada para outra.
+      </div>
+    );
+  }
+
+  // Filtro de temporadas: mostra só as selecionadas (Marcos · 18/07). Guarda-se
+  // pelo menos 1 visível pros gráficos não ficarem vazios.
+  const visiveis = linhas.filter(l => !ocultas.has(l.temporada));
+  const linhasMostradas = visiveis.length ? visiveis : linhas;
+  const toggleTemp = (id) => setOcultas(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else if (linhas.length - next.size > 1) next.add(id); // nunca esconde a última
+    return next;
+  });
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ fontSize: 12.5, color: C.t2, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <BarChart3 size={15} style={{ color: cores.teal }} />
+        Cada gráfico mostra a evolução de um indicador entre as temporadas — quanto a igreja cresceu de uma para a outra.
+      </div>
+
+      {/* Filtro de temporadas (aparece quando há mais de uma) */}
+      {linhas.length > 1 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 11.5, color: C.t3 }}>Temporadas:</span>
+          {linhas.map(l => {
+            const on = !ocultas.has(l.temporada);
+            return (
+              <button key={l.temporada} onClick={() => toggleTemp(l.temporada)} style={{
+                padding: '5px 11px', borderRadius: 99, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                border: `1px solid ${on ? cores.teal : C.border}`,
+                background: on ? cores.teal + '18' : 'transparent',
+                color: on ? C.text : C.t3,
+              }}>
+                {l.temporada_label || l.temporada}{l.parcial ? ' · parcial' : ''}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Small-multiples: um mini-gráfico de barras por indicador */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+        {COMP_METRICAS.map(m => (
+          <MiniBarTemporadas key={m.key} metrica={m} linhas={linhasMostradas} cores={cores} />
+        ))}
+      </div>
+
+      {/* Tabela de números exatos (também é a "table view" de acessibilidade) */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <FileText className="h-4 w-4 text-muted-foreground" /> Números exatos
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', minWidth: 420, borderCollapse: 'collapse', fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <th style={{ textAlign: 'left', padding: '8px 10px', fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.4, color: C.t3 }}>Métrica</th>
+                  {linhasMostradas.map(l => (
+                    <th key={l.temporada} style={{ textAlign: 'right', padding: '8px 10px', color: l.parcial ? C.t3 : C.text, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                      {l.temporada_label || l.temporada}
+                      {l.parcial && <div style={{ fontSize: 9.5, fontWeight: 600, color: C.amber }}>parcial · em andamento</div>}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {COMP_METRICAS.map(m => (
+                  <tr key={m.key} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: '8px 10px', color: C.t2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <m.icon size={13} style={{ color: C.t3 }} /> {m.label}
+                    </td>
+                    {linhasMostradas.map(l => (
+                      <td key={l.temporada} style={{ textAlign: 'right', padding: '8px 10px', color: l.parcial ? C.t3 : C.text, fontVariantNumeric: 'tabular-nums' }}>
+                        {fmtComp(m.key, l[m.key])}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div style={{ fontSize: 11, color: C.t3, lineHeight: 1.6 }}>
+        Os números das temporadas fechadas ficam <strong>congelados</strong> (não mudam mais, mesmo quando os grupos passam pra temporada seguinte). A temporada em andamento aparece como <strong>parcial</strong> até ser consolidada em Inscrições → Administração → Temporadas.
+      </div>
+    </div>
+  );
+}
+
+// Log de alterações do grupo (lê o app_audit_log via backend · triggers da
+// migration 20260720230000). Carrega sob demanda pra não pesar a abertura da
+// ficha; quem não tem grupos>=3 recebe erro do guard e o card mostra o aviso.
+// Frequência DESTE grupo (Marcos 2026-07-23): % de frequência (presenças ÷
+// (encontros × inscritos)) + presença média + a lista de "quem não está indo"
+// (semáforo por-grupo). Nasce vazio até a 1ª chamada do grupo. Carrega no mount.
+const SF_STATUS = {
+  em_dia: { label: 'Em dia', cor: '#10b981' },
+  atencao: { label: 'Atenção', cor: '#f59e0b' },
+  ausente: { label: 'Ausente', cor: '#ef4444' },
+  sem_presenca: { label: 'Não foi ainda', cor: '#94a3b8' },
+};
+function FrequenciaGrupoCard({ grupoId }) {
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(null);
+  const [erro, setErro] = useState(null);
+
+  useEffect(() => {
+    let vivo = true;
+    setLoading(true); setErro(null);
+    api.frequenciaGrupo(grupoId)
+      .then(r => { if (vivo) setData(r); })
+      .catch(() => { if (vivo) setErro('Não foi possível carregar a frequência.'); })
+      .finally(() => { if (vivo) setLoading(false); });
+    return () => { vivo = false; };
+  }, [grupoId]);
+
+  const naoVao = (data?.membros || []).filter(m => m.status === 'ausente' || m.status === 'sem_presenca');
+
+  return (
+    <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginTop: 16, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: `1px solid ${C.border}` }}>
+        <Activity size={14} style={{ color: C.primary }} />
+        <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Frequência do grupo</span>
+      </div>
+      <div style={{ padding: 16 }}>
+        {loading ? (
+          <div style={{ fontSize: 13, color: C.t3, textAlign: 'center', padding: 12 }}>Carregando…</div>
+        ) : erro ? (
+          <div style={{ fontSize: 13, color: C.red }}>{erro}</div>
+        ) : !data?.tem_encontro ? (
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 13, color: C.t3, lineHeight: 1.6 }}>
+            <Clock size={16} style={{ color: C.t3, flexShrink: 0, marginTop: 2 }} />
+            <span>Nenhuma chamada registrada ainda. Os <strong style={{ color: C.text }}>{data?.total_inscritos ?? 0}</strong> inscritos deste grupo aparecem aqui com o status de frequência assim que a 1ª chamada for lançada.</span>
+          </div>
+        ) : (
+          <>
+            {/* Indicadores */}
+            <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 14 }}>
+              {[
+                ['% de frequência', `${data.pct_frequencia}%`, C.primary, 'das presenças possíveis'],
+                ['Presença média', String(data.presenca_media), C.text, 'por encontro'],
+                ['Encontros', String(data.total_encontros), C.text, 'registrados'],
+                ['Inscritos', String(data.total_inscritos), C.text, 'no grupo'],
+              ].map(([lab, val, cor, hint]) => (
+                <div key={lab} style={{ flex: '1 1 100px', minWidth: 90 }}>
+                  <div style={{ fontSize: 24, fontWeight: 800, color: cor, lineHeight: 1 }}>{val}</div>
+                  <div style={{ fontSize: 11.5, color: C.text, fontWeight: 600, marginTop: 4 }}>{lab}</div>
+                  <div style={{ fontSize: 10, color: C.t3 }}>{hint}</div>
+                </div>
+              ))}
+            </div>
+            {/* Quem não está indo */}
+            <div style={{ fontSize: 11, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+              Quem não está indo ({naoVao.length})
+            </div>
+            {naoVao.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: '#10b981' }}>Todos os inscritos vieram a pelo menos um encontro recente.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
+                {naoVao.map(m => {
+                  const st = SF_STATUS[m.status];
+                  return (
+                    <div key={m.membro_id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg }}>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: C.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.nome}</span>
+                      <span style={{ fontSize: 11, color: C.t3, whiteSpace: 'nowrap' }}>
+                        {m.presencas > 0 ? `${m.presencas}/${data.total_encontros}` : 'nunca veio'}
+                        {m.ultima ? ` · ${fmtDate(m.ultima)}` : ''}
+                      </span>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, padding: '2px 8px', borderRadius: 99, background: `${st.cor}18`, color: st.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: st.cor }} /> {st.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function LogAlteracoesCard({ grupoId }) {
+  const [aberto, setAberto] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [itens, setItens] = useState(null);
+  const [erro, setErro] = useState(null);
+
+  const carregar = async () => {
+    setAberto(true); setLoading(true); setErro(null);
+    try {
+      const r = await api.historicoAlteracoes(grupoId);
+      setItens(r?.items || []);
+    } catch (e) {
+      setErro('Não foi possível carregar o log (permissão insuficiente ou erro no servidor).');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const CAMPO = {
+    nome: 'nome', lider_id: 'líder', supervisor_id: 'supervisor', ativo: 'ativo',
+    dia_semana: 'dia da semana', horario: 'horário', endereco: 'endereço',
+    bairro: 'bairro', cep: 'CEP', local: 'local', descricao: 'descrição',
+    tema: 'tema', categoria: 'categoria', recorrencia: 'recorrência',
+    observacoes: 'observações', temporada: 'temporada', codigo: 'código',
+    capacidade: 'capacidade', aceitando_inscricoes: 'aceitando inscrições',
+    modo_inscricao: 'modo de inscrição', faixa_etaria: 'faixa etária',
+    idade_min: 'idade mínima', idade_max: 'idade máxima', rede_id: 'rede',
+    funcao: 'função', entrou_em: 'entrada', saiu_em: 'saída',
+    motivo_saida: 'motivo da saída', presencas: 'presenças',
+    membro_id: 'pessoa', grupo_id: 'grupo', deleted_at: 'exclusão',
+  };
+  const fmtVal = (v) => {
+    if (v === null || v === undefined || v === '') return '—';
+    if (typeof v === 'boolean') return v ? 'sim' : 'não';
+    const s = String(v);
+    return s.length > 70 ? s.slice(0, 70) + '…' : s;
+  };
+  const descreve = (it) => {
+    const alvo = it.tabela === 'mem_grupo_membros'
+      ? `Participação${it.membro_nome ? ` de ${it.membro_nome}` : ''}`
+      : 'Grupo';
+    if (it.acao === 'INSERT') return `${alvo} criada${it.tabela === 'mem_grupos' ? ' (cadastro do grupo)' : ''}`;
+    if (it.acao === 'DELETE') return `${alvo} excluída (linha removida do banco)`;
+    const partes = Object.entries(it.changes || {})
+      .map(([c, d]) => `${CAMPO[c] || c}: ${fmtVal(d?.old)} → ${fmtVal(d?.new)}`);
+    return `${alvo} · ${partes.join(' · ') || 'alteração'}`;
+  };
+
+  return (
+    <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginTop: 16, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <FileText size={14} style={{ color: C.t3 }} />
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Log de alterações</span>
+        </div>
+        {!aberto && (
+          <Button size="sm" variant="outline" onClick={carregar}>Ver log</Button>
+        )}
+      </div>
+      {aberto && (
+        <div style={{ borderTop: `1px solid ${C.border}`, maxHeight: 340, overflowY: 'auto' }}>
+          {loading && <div style={{ padding: 16, fontSize: 13, color: C.t3 }}>Carregando…</div>}
+          {erro && <div style={{ padding: 16, fontSize: 13, color: C.t3 }}>{erro}</div>}
+          {!loading && !erro && itens && itens.length === 0 && (
+            <div style={{ padding: 16, fontSize: 13, color: C.t3 }}>
+              Nenhuma alteração registrada ainda — o log grava a partir da ativação dos gatilhos no banco (mudanças antigas não aparecem retroativamente).
+            </div>
+          )}
+          {!loading && !erro && itens && itens.map((it, i) => (
+            <div key={i} style={{ padding: '10px 16px', borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ fontSize: 11, color: C.t3, marginBottom: 2 }}>
+                {it.quando ? new Date(it.quando).toLocaleString('pt-BR') : '—'} · {it.autor || 'sistema (backend)'}
+              </div>
+              <div style={{ fontSize: 12.5, color: C.text }}>{descreve(it)}</div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

@@ -2,7 +2,8 @@
 // aparecem na Integração) também aparecem aqui pra a equipe Kids contatar a
 // família. Quando chega uma nova, o Kids recebe notificação.
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+import { hrefConversa } from '@/lib/conversas';
 import { totemKids as api } from '../../../api';
 import { Card } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
@@ -82,7 +83,7 @@ export default function BatismosKids() {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 {b.status && <Badge variant="secondary" className={`text-[10px] ${STATUS_COR[b.status] || ''}`}>{b.status}</Badge>}
-                {b.telefone && <a href={`https://wa.me/55${String(b.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary" title="Falar com a família"><Phone className="h-4 w-4" /></a>}
+                {b.telefone && <Link to={hrefConversa(b.telefone)} className="text-primary" title="Falar com a família"><Phone className="h-4 w-4" /></Link>}
               </div>
             </Card>
               ))}

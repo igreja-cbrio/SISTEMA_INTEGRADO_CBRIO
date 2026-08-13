@@ -2,7 +2,11 @@
 // desativar, e ficha completa com aba de Atendimentos (histórico de contatos).
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { totemKids as api } from '../../../api';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+// hrefConversa (inbox interno) segue nos botões da FICHA da criança; hrefWhatsapp
+// (WhatsApp de quem clica) é só na lista de faltantes, que é trabalho de ligar
+// pra família — pedido do Matheus 2026-08-03.
+import { hrefConversa, hrefWhatsapp } from '@/lib/conversas';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
@@ -12,18 +16,33 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
-import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, RefreshCw, Sparkles, Pencil } from 'lucide-react';
+import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, Sparkles, Pencil, MessageSquare } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
 import DataNascimentoPicker from './DataNascimentoPicker';
+import { DatePicker } from '@/components/ui/date-picker';
+import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import useConfirmarSaida from '../../../hooks/useConfirmarSaida';
 
-const FAIXAS = [
-  { key: 'todas', label: 'Todas as idades', min: 0, max: 9999 },
-  { key: '0-2', label: '0–2 anos', min: 0, max: 35 },
-  { key: '3-5', label: '3–5 anos', min: 36, max: 71 },
-  { key: '6-8', label: '6–8 anos', min: 72, max: 107 },
-  { key: '9-12', label: '9–12 anos', min: 108, max: 155 },
-];
+// Filtro por IDADE EXATA em anos (pedido do Marcos · antes eram faixas 0-2/3-5/
+// 6-8/9-12, que não respondem "quantas crianças de 4 anos eu tenho?").
+//
+// ⚠️ Deriva de `idade_meses`, que o backend já calcula e é a MESMA fonte da coluna
+// "Idade" da tabela (`calcIdadeMeses`/`formatIdade` em routes/totemKids.js).
+// Recalcular a partir de `data_nascimento` no cliente faria o filtro discordar da
+// linha exibida — e no dia do aniversário a diferença é de um ano inteiro.
+//
+// ⚠️ Abaixo de 24 meses a coluna mostra MESES ("14 meses"), não anos. Então quem
+// filtrar por "1 ano" vê crianças cuja coluna diz "12 meses"…"23 meses" — está
+// certo (14 meses É 1 ano), mas é a única leitura em que o rótulo do filtro e o
+// texto da linha não são idênticos.
+const IDADE_SEM_DATA = 'sem-data';
+// ⚠️ `sexo` está VAZIO em ~40% das crianças (1.726 de 4.321 medidas em 03/08), então
+// o filtro de gênero PRECISA de opção própria pra "não informado" — sem ela, quase
+// metade da base desaparece de qualquer filtro, em silêncio.
+const SEXO_SEM_INFO = 'sem-info';
+const SEXO_LABEL: Record<string, string> = { M: 'Menino', F: 'Menina' };
+const idadeAnos = (meses: number | null | undefined) =>
+  meses == null ? null : Math.floor(Number(meses) / 12);
 const TIPO_ATEND: Record<string, string> = {
   contato: 'Contato', ausencia: 'Ausência', saude: 'Saúde', observacao: 'Observação', outro: 'Outro',
 };
@@ -33,11 +52,15 @@ export default function GestaoCriancas() {
   const [lista, setLista] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
-  const [faixa, setFaixa] = useState('todas');
+  const [idadeSel, setIdadeSel] = useState('todas'); // 'todas' | '<anos>' | IDADE_SEM_DATA
   const [status, setStatus] = useState('ativos'); // ativos | inativos
   const [jornadaF, setJornadaF] = useState('todas'); // todas | convertidos | batizados
   const [modo, setModo] = useState<'lista' | 'faltantes'>('lista');
   const [ausentes, setAusentes] = useState<any[]>([]);
+  const [ausIdade, setAusIdade] = useState('todas');   // 'todas' | '<anos>' | IDADE_SEM_DATA
+  const [ausSexo, setAusSexo] = useState('todos');     // 'todos' | 'M' | 'F' | SEXO_SEM_INFO
+  const [ausContato, setAusContato] = useState('todos'); // 'todos' | 'contatados' | 'pendentes'
+  const [salvandoContato, setSalvandoContato] = useState<string | null>(null);
   const [loadingAus, setLoadingAus] = useState(false);
   const [sel, setSel] = useState<any>(null);     // criança aberta na ficha
   const [novoOpen, setNovoOpen] = useState(false);
@@ -49,7 +72,6 @@ export default function GestaoCriancas() {
     if (cid) setSel({ id: cid });
   }, [searchParams]);
 
-  const [sincronizando, setSincronizando] = useState(false);
   const carregar = useCallback(() => {
     setLoading(true);
     api.criancas.list({ ativo: status === 'ativos' })
@@ -68,66 +90,89 @@ export default function GestaoCriancas() {
   }, []);
   useEffect(() => { if (modo === 'faltantes') carregarAusentes(); }, [modo, carregarAusentes]);
 
-  const [syncPres, setSyncPres] = useState(false);
-  async function sincronizarPresencas() {
-    setSyncPres(true);
-    try {
-      const r: any = await api.syncPresencasPco(90);
-      toast.success(`Presenças do PCO sincronizadas · ${r?.presencas_upsert ?? 0} registros em ${r?.dias_processados ?? 0} cultos.`);
-      carregarAusentes();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao sincronizar presenças do PCO');
-    } finally { setSyncPres(false); }
-  }
+  // Idades que EXISTEM na lista carregada, com a contagem de cada uma. Montar as
+  // opções a partir do dado (em vez de fixar 0..12) evita oferecer idade vazia e
+  // já responde "quantas de 4 anos?" no próprio seletor.
+  const idadesDisponiveis = useMemo(() => {
+    const porIdade = new Map<number, number>();
+    let semData = 0;
+    for (const c of lista) {
+      const a = idadeAnos(c.idade_meses);
+      if (a == null) { semData += 1; continue; }
+      porIdade.set(a, (porIdade.get(a) || 0) + 1);
+    }
+    return {
+      anos: [...porIdade.entries()].sort((x, y) => x[0] - y[0]).map(([anos, qtd]) => ({ anos, qtd })),
+      semData,
+    };
+  }, [lista]);
 
-  async function sincronizarPco() {
-    setSincronizando(true);
-    try {
-      const r: any = await api.criancas.syncPco();
-      toast.success(`Planning Center sincronizado · ${r?.vinculadas ?? 0} vinculadas · ${r?.criadas ?? 0} novas · ${r?.atualizadas ?? 0} atualizadas.`);
-      carregar();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao sincronizar com o Planning Center.');
-    } finally { setSincronizando(false); }
-  }
+  // Opções e filtragem da aba "Faltando 3+ cultos". Mesmas réguas da lista
+  // principal (idade exata derivada de idade_meses, opção própria pra quem não
+  // tem o dado) — duas réguas diferentes na mesma tela seriam duas verdades.
+  const ausOpcoes = useMemo(() => {
+    const porIdade = new Map<number, number>();
+    let semData = 0, semSexo = 0;
+    const porSexo = new Map<string, number>();
+    for (const a of ausentes) {
+      const anos = idadeAnos(a.idade_meses);
+      if (anos == null) semData += 1; else porIdade.set(anos, (porIdade.get(anos) || 0) + 1);
+      if (!a.sexo) semSexo += 1; else porSexo.set(a.sexo, (porSexo.get(a.sexo) || 0) + 1);
+    }
+    return {
+      anos: [...porIdade.entries()].sort((x, y) => x[0] - y[0]).map(([anos, qtd]) => ({ anos, qtd })),
+      semData,
+      sexos: [...porSexo.entries()].sort().map(([sexo, qtd]) => ({ sexo, qtd })),
+      semSexo,
+    };
+  }, [ausentes]);
 
-  const [corrigindoResp, setCorrigindoResp] = useState(false);
-  async function corrigirRespPco() {
-    setCorrigindoResp(true);
-    try {
-      const prev: any = await api.criancas.corrigirResponsaveisPco(false); // prévia (dry-run)
-      if (!prev?.criancas_afetadas) {
-        toast.info(`Nenhuma correção proposta (varri ${prev?.checkins_varridos ?? 0} check-ins do PCO; nada casou com guardião confirmado).`);
-        return;
-      }
-      if (!window.confirm(`Encontrei ${prev.criancas_afetadas} criança(s) com responsáveis a mais. Vou MANTER só quem faz o check-in delas no Planning Center e REMOVER ${prev.vinculos_removidos} vínculo(s) errado(s). Ninguém fica sem responsável. Aplicar?`)) return;
-      const r: any = await api.criancas.corrigirResponsaveisPco(true);
-      toast.success(`Corrigido · ${r?.criancas_afetadas ?? 0} crianças · ${r?.vinculos_removidos ?? 0} vínculos removidos.`);
-      carregar();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao corrigir responsáveis pelo PCO.');
-    } finally { setCorrigindoResp(false); }
-  }
+  const ausentesFiltrados = useMemo(() => ausentes.filter(a => {
+    const anos = idadeAnos(a.idade_meses);
+    if (ausIdade === IDADE_SEM_DATA) { if (anos != null) return false; }
+    else if (ausIdade !== 'todas') { if (anos == null || anos !== Number(ausIdade)) return false; }
+    if (ausSexo === SEXO_SEM_INFO) { if (a.sexo) return false; }
+    else if (ausSexo !== 'todos') { if (a.sexo !== ausSexo) return false; }
+    if (ausContato === 'contatados' && !a.contatado) return false;
+    if (ausContato === 'pendentes' && a.contatado) return false;
+    return true;
+  }), [ausentes, ausIdade, ausSexo, ausContato]);
 
-  const [depurando, setDepurando] = useState(false);
-  async function depurarInativos() {
-    if (!window.confirm('Desativar (tirar da lista) as crianças sem check-in no Planning Center nos últimos 6 meses? É reversível — elas ficam como inativas, não são apagadas.')) return;
-    setDepurando(true);
+  const ausContatados = useMemo(() => ausentes.filter(a => a.contatado).length, [ausentes]);
+
+  // Marca/desmarca "família contatada". Atualiza a linha na hora (otimista) e
+  // reverte se o servidor recusar — a lista é de ação, travar em spinner a cada
+  // clique atrapalharia quem está ligando pra uma família atrás da outra.
+  const toggleContato = async (a: any) => {
+    const marcar = !a.contatado;
+    setSalvandoContato(a.crianca_id);
+    const antes = ausentes;
+    setAusentes(l => l.map(x => (x.crianca_id === a.crianca_id
+      ? { ...x, contatado: marcar, contatado_em: marcar ? new Date().toISOString().slice(0, 10) : null }
+      : x)));
     try {
-      const r: any = await api.criancas.depurarInativos(6);
-      toast.success(`${r?.desativadas ?? 0} crianças desativadas (sem check-in há 6+ meses).`);
-      carregar();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao depurar inativos.');
-    } finally { setDepurando(false); }
-  }
+      if (marcar) await api.ausenteContatar(a.crianca_id);
+      else await api.ausenteDescontatar(a.crianca_id, a.ultima_presenca || undefined);
+    } catch {
+      setAusentes(antes);
+      toast.error(marcar ? 'Não consegui marcar o contato' : 'Não consegui desmarcar');
+    } finally {
+      setSalvandoContato(null);
+    }
+  };
 
   const filtradas = useMemo(() => {
-    const f = FAIXAS.find(x => x.key === faixa)!;
     const t = busca.trim().toLowerCase();
     return lista.filter(c => {
-      const m = c.idade_meses;
-      if (faixa !== 'todas' && (m == null || m < f.min || m > f.max)) return false;
+      const a = idadeAnos(c.idade_meses);
+      // Criança sem data de nascimento tem opção PRÓPRIA no seletor: antes ela
+      // desaparecia em silêncio de qualquer filtro de idade, e é justamente ela
+      // que a equipe precisa achar pra completar o cadastro.
+      if (idadeSel === IDADE_SEM_DATA) {
+        if (a != null) return false;
+      } else if (idadeSel !== 'todas') {
+        if (a == null || a !== Number(idadeSel)) return false;
+      }
       if (t) {
         const resp = (c.responsaveis || []).map((r: any) => r.membro?.nome || '').join(' ');
         if (!(`${c.nome} ${resp}`.toLowerCase().includes(t))) return false;
@@ -136,7 +181,7 @@ export default function GestaoCriancas() {
       if (jornadaF === 'batizados' && !c.data_batismo) return false;
       return true;
     });
-  }, [lista, faixa, busca, status, jornadaF]);
+  }, [lista, idadeSel, busca, status, jornadaF]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-4">
@@ -147,15 +192,6 @@ export default function GestaoCriancas() {
           <p className="text-sm text-muted-foreground">Gerencie cada criança · ficha, atendimentos, desativar.</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={sincronizarPco} disabled={sincronizando}>
-            {sincronizando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sincronizar Planning Center
-          </Button>
-          <Button variant="outline" onClick={depurarInativos} disabled={depurando}>
-            {depurando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <UserX className="h-4 w-4 mr-1" />} Depurar inativos (6m)
-          </Button>
-          <Button variant="outline" onClick={corrigirRespPco} disabled={corrigindoResp} title="Poda responsáveis errados usando quem faz o check-in no Planning Center">
-            {corrigindoResp ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <UserCheck className="h-4 w-4 mr-1" />} Corrigir responsáveis (PCO)
-          </Button>
           <Button variant="outline" onClick={() => setDupOpen(true)}><Copy className="h-4 w-4 mr-1" /> Duplicados</Button>
           <Button onClick={() => setNovoOpen(true)}><Plus className="h-4 w-4 mr-1" /> Nova criança</Button>
         </div>
@@ -178,35 +214,99 @@ export default function GestaoCriancas() {
           <CardContent className="p-3">
             <div className="flex items-start justify-between gap-2 mb-2">
               <p className="text-xs text-muted-foreground">
-                Crianças ativas que ficaram <b>3+ cultos seguidos sem check-in</b> (última presença nos últimos 90 dias). Vale um contato com a família. A frequência vem dos check-ins do Planning Center.
+                Crianças frequentadoras ativas que ficaram <b>3+ cultos seguidos sem check-in</b> (última presença nos últimos 90 dias). Vale um contato com a família. A frequência vem dos check-ins do totem.
               </p>
-              <Button variant="outline" size="sm" className="shrink-0" onClick={sincronizarPresencas} disabled={syncPres}>
-                {syncPres ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sincronizar presenças (PCO)
-              </Button>
             </div>
+            {/* Filtros da lista de faltantes · idade exata, gênero e contato */}
+            {ausentes.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <Select value={ausIdade} onValueChange={setAusIdade}>
+                  <SelectTrigger className="w-44 h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todas">Todas as idades</SelectItem>
+                    {ausOpcoes.anos.map(({ anos, qtd }) => (
+                      <SelectItem key={anos} value={String(anos)}>
+                        {anos === 0 ? 'Menos de 1 ano' : `${anos} ${anos === 1 ? 'ano' : 'anos'}`} ({qtd})
+                      </SelectItem>
+                    ))}
+                    {ausOpcoes.semData > 0 && (
+                      <SelectItem value={IDADE_SEM_DATA}>Sem data de nascimento ({ausOpcoes.semData})</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <Select value={ausSexo} onValueChange={setAusSexo}>
+                  <SelectTrigger className="w-40 h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Meninos e meninas</SelectItem>
+                    {ausOpcoes.sexos.map(({ sexo, qtd }) => (
+                      <SelectItem key={sexo} value={sexo}>{SEXO_LABEL[sexo] || sexo} ({qtd})</SelectItem>
+                    ))}
+                    {ausOpcoes.semSexo > 0 && (
+                      <SelectItem value={SEXO_SEM_INFO}>Sexo não informado ({ausOpcoes.semSexo})</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <Select value={ausContato} onValueChange={setAusContato}>
+                  <SelectTrigger className="w-44 h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Contatados e não</SelectItem>
+                    <SelectItem value="pendentes">Falta contatar ({ausentes.length - ausContatados})</SelectItem>
+                    <SelectItem value="contatados">Já contatados ({ausContatados})</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {ausentesFiltrados.length} de {ausentes.length} · {ausContatados} contatada{ausContatados === 1 ? '' : 's'}
+                </span>
+              </div>
+            )}
             {loadingAus ? (
               <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
             ) : ausentes.length === 0 ? (
               <p className="text-sm text-muted-foreground py-8 text-center">Nenhuma criança faltando 3+ cultos. 🎉</p>
+            ) : ausentesFiltrados.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-8 text-center">Nenhuma criança nesses filtros.</p>
             ) : (
               <div className="space-y-2">
-                {ausentes.map(a => {
+                {ausentesFiltrados.map(a => {
                   const resp = (a.responsaveis || []).find((r: any) => r.telefone) || (a.responsaveis || [])[0];
-                  const tel = resp?.telefone ? String(resp.telefone).replace(/\D/g, '') : null;
-                  const telFull = tel ? (tel.length <= 11 && !tel.startsWith('55') ? '55' + tel : tel) : null;
+                  const wpp = hrefWhatsapp(resp?.telefone);
                   return (
-                    <div key={a.crianca_id} className="flex items-center gap-3 rounded-lg border border-border p-2.5">
+                    <div key={a.crianca_id} className={`flex items-center gap-3 rounded-lg border p-2.5 transition-colors ${
+                      a.contatado ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-border'
+                    }`}>
+                      {/* Contatado · marca no clique e some da fila de "falta contatar" */}
+                      <label
+                        className="flex items-center shrink-0 cursor-pointer"
+                        title={a.contatado
+                          ? `Contatada${a.contatado_em ? ` em ${new Date(a.contatado_em + 'T12:00:00').toLocaleDateString('pt-BR')}` : ''}${a.contatado_por ? ` por ${a.contatado_por}` : ''} · clique pra desmarcar`
+                          : 'Marcar como contatada'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!a.contatado}
+                          disabled={salvandoContato === a.crianca_id}
+                          onChange={() => toggleContato(a)}
+                          className="h-4 w-4 accent-emerald-600 cursor-pointer"
+                        />
+                      </label>
                       <button onClick={() => setSel({ id: a.crianca_id })} className="flex-1 min-w-0 text-left">
-                        <div className="font-medium text-sm truncate">{a.nome}</div>
+                        <div className="font-medium text-sm truncate flex items-center gap-2">
+                          {a.nome}
+                          {a.idade_label && <span className="text-xs font-normal text-muted-foreground shrink-0">{a.idade_label}</span>}
+                          {a.sexo && <span className="text-xs font-normal text-muted-foreground shrink-0">· {SEXO_LABEL[a.sexo] || a.sexo}</span>}
+                        </div>
                         <div className="text-xs text-muted-foreground">
                           <span className="text-amber-600 font-medium">{a.cultos_perdidos} cultos sem vir</span>
                           {a.ultima_presenca ? ` · última presença ${new Date(a.ultima_presenca + 'T12:00:00').toLocaleDateString('pt-BR')}` : ''}
                           {resp?.nome ? ` · ${resp.nome}` : ''}
+                          {a.contatado && a.contatado_em && (
+                            <span className="text-emerald-600 font-medium"> · contatada {new Date(a.contatado_em + 'T12:00:00').toLocaleDateString('pt-BR')}</span>
+                          )}
                         </div>
                       </button>
-                      {telFull && (
-                        <a href={`https://wa.me/${telFull}`} target="_blank" rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600 shrink-0" title={`WhatsApp de ${resp?.nome || 'responsável'}`}>
+                      {wpp && (
+                        <a href={wpp} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600 shrink-0" title={`Falar com ${resp?.nome || 'responsável'} no seu WhatsApp`}>
                           <Phone className="h-4 w-4" />
                         </a>
                       )}
@@ -225,9 +325,21 @@ export default function GestaoCriancas() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Buscar por nome da criança ou responsável..." value={busca} onChange={e => setBusca(e.target.value)} />
         </div>
-        <Select value={faixa} onValueChange={setFaixa}>
-          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-          <SelectContent>{FAIXAS.map(f => <SelectItem key={f.key} value={f.key}>{f.label}</SelectItem>)}</SelectContent>
+        <Select value={idadeSel} onValueChange={setIdadeSel}>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Todas as idades</SelectItem>
+            {idadesDisponiveis.anos.map(({ anos, qtd }) => (
+              <SelectItem key={anos} value={String(anos)}>
+                {anos === 0 ? 'Menos de 1 ano' : `${anos} ${anos === 1 ? 'ano' : 'anos'}`} ({qtd})
+              </SelectItem>
+            ))}
+            {idadesDisponiveis.semData > 0 && (
+              <SelectItem value={IDADE_SEM_DATA}>
+                Sem data de nascimento ({idadesDisponiveis.semData})
+              </SelectItem>
+            )}
+          </SelectContent>
         </Select>
         <Select value={status} onValueChange={setStatus}>
           <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
@@ -264,8 +376,16 @@ export default function GestaoCriancas() {
                       {c.foto_url ? <img src={c.foto_url} alt="" className="h-full w-full object-cover" /> : <span className="text-sm font-bold text-primary">{c.nome?.charAt(0) || '?'}</span>}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">{c.nome}</div>
-                      <div className="text-xs text-muted-foreground truncate">{c.idade_label || '—'}{resp ? ` · ${resp.nome}` : ''}</div>
+                      {/* Idade AO LADO do nome (pedido do Matheus 2026-08-03) — antes
+                          ficava na 2ª linha, misturada com o nome do responsável, e
+                          era o dado que a equipe mais procura pra saber a sala. */}
+                      <div className="font-medium text-sm truncate flex items-center gap-2">
+                        <span className="truncate">{c.nome}</span>
+                        <span className="text-xs font-normal text-muted-foreground shrink-0">
+                          {c.idade_label || 'idade não informada'}
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">{resp ? resp.nome : '—'}</div>
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       {c.necessidades_especiais && <AlertCircle className="h-4 w-4 text-amber-500" />}
@@ -288,6 +408,9 @@ export default function GestaoCriancas() {
   );
 }
 
+// Relações do visitante temporário (mesmos slugs do banco · exibe com acento)
+const RELACAO_LABEL: Record<string, string> = { amigo: 'Amigo', primo: 'Primo', vizinho: 'Vizinho', irmao: 'Irmão', outros: 'Outros' };
+
 // ── Ficha da criança (Dados + Atendimentos) ──────────────────────────────────
 function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; onClose: () => void; onChanged: () => void }) {
   const navigate = useNavigate();
@@ -300,6 +423,20 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
   const [salvando, setSalvando] = useState(false);
   const [editando, setEditando] = useState(false);
   const [form, setForm] = useState<any>({});
+  const [promovendo, setPromovendo] = useState(false);
+
+  // Visitante → frequentador em 1 clique (limpa prazo/relação · definitivo).
+  async function tornarFrequentador() {
+    setPromovendo(true);
+    try {
+      await api.criancas.tornarFrequentador(criancaId);
+      toast.success('Agora é frequentador — o cadastro não expira mais.');
+      load();
+      onChanged();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao tornar frequentador');
+    } finally { setPromovendo(false); }
+  }
 
   function iniciarEdicao() {
     setForm({
@@ -310,6 +447,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
       data_conversao: c.data_conversao || '',
       data_batismo: c.data_batismo || '',
       visitante: !!c.visitante,
+      visitante_relacao: c.visitante_relacao || '',
       consent_marketing: c.consent_marketing === true,
       tem_alergia: !!c.tem_alergia,
       alergia_qual: c.alergia_qual || '',
@@ -332,6 +470,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
         nome: form.nome.trim(),
         data_nascimento: form.data_nascimento || null,
         sexo: form.sexo || null,
+        visitante_relacao: form.visitante ? (form.visitante_relacao || null) : null,
         serie: form.serie?.trim() || null,
         data_conversao: form.data_conversao || null,
         data_batismo: form.data_batismo || null,
@@ -342,6 +481,9 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
         observacoes_medicas: form.observacoes_medicas?.trim() || null,
       };
       await api.criancas.update(criancaId, payload);
+      // Otimista (Marcos 2026-07-20): reflete a edição na ficha NA HORA, sem
+      // esperar o re-fetch do load() — que segue em segundo plano reconciliando.
+      setC((prev: any) => (prev ? { ...prev, ...payload } : prev));
       toast.success('Ficha atualizada');
       setEditando(false);
       load();
@@ -409,7 +551,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
                 <Input className="mt-0.5 h-9" value={form.nome} onChange={e => setForm((f: any) => ({ ...f, nome: e.target.value }))} />
               </label>
               <label className="text-xs">Nascimento
-                <Input type="date" className="mt-0.5 h-9" value={form.data_nascimento || ''} onChange={e => setForm((f: any) => ({ ...f, data_nascimento: e.target.value }))} />
+                <BirthDatePicker className="mt-0.5 h-9" value={form.data_nascimento || ''} onChange={v => setForm((f: any) => ({ ...f, data_nascimento: v }))} />
               </label>
               <label className="text-xs">Sexo
                 <Select value={form.sexo || ''} onValueChange={v => setForm((f: any) => ({ ...f, sexo: v }))}>
@@ -423,14 +565,24 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
               <label className="text-xs">Tipo
                 <Select value={form.visitante ? 'visitante' : 'membro'} onValueChange={v => setForm((f: any) => ({ ...f, visitante: v === 'visitante' }))}>
                   <SelectTrigger className="mt-0.5 h-9"><SelectValue /></SelectTrigger>
-                  <SelectContent><SelectItem value="visitante">Visitante</SelectItem><SelectItem value="membro">Membro</SelectItem></SelectContent>
+                  <SelectContent><SelectItem value="visitante">Visitante</SelectItem><SelectItem value="membro">Frequentador</SelectItem></SelectContent>
                 </Select>
               </label>
+              {form.visitante && (
+                <label className="text-xs">Visitante de quem?
+                  <Select value={form.visitante_relacao || ''} onValueChange={v => setForm((f: any) => ({ ...f, visitante_relacao: v }))}>
+                    <SelectTrigger className="mt-0.5 h-9"><SelectValue placeholder="—" /></SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(RELACAO_LABEL).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </label>
+              )}
               <label className="text-xs">Conversão
-                <Input type="date" className="mt-0.5 h-9" value={form.data_conversao || ''} onChange={e => setForm((f: any) => ({ ...f, data_conversao: e.target.value }))} />
+                <DatePicker className="mt-0.5 h-9" value={form.data_conversao || ''} onChange={v => setForm((f: any) => ({ ...f, data_conversao: v }))} />
               </label>
               <label className="text-xs">Batismo
-                <Input type="date" className="mt-0.5 h-9" value={form.data_batismo || ''} onChange={e => setForm((f: any) => ({ ...f, data_batismo: e.target.value }))} />
+                <DatePicker className="mt-0.5 h-9" value={form.data_batismo || ''} onChange={v => setForm((f: any) => ({ ...f, data_batismo: v }))} />
               </label>
             </div>
             <label className="flex items-start gap-2 text-xs rounded-md border border-border p-2 cursor-pointer">
@@ -478,9 +630,23 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
               <CampoSempre label="Série" v={c.serie} />
               <CampoSempre label="Conversão" v={c.data_conversao ? fmt(c.data_conversao) : ''} />
               <CampoSempre label="Batismo" v={c.data_batismo ? fmt(c.data_batismo) : ''} />
-              <CampoSempre label="Tipo" v={c.visitante ? 'Visitante' : 'Membro'} />
+              <CampoSempre label="Tipo" v={c.visitante ? `Visitante${c.visitante_relacao ? ` (${RELACAO_LABEL[c.visitante_relacao] || c.visitante_relacao})` : ''}` : 'Frequentador'} />
               <CampoSempre label="Uso de imagem" v={c.consent_marketing == null ? '' : (c.consent_marketing ? 'Autorizado' : 'Não autorizado')} />
             </div>
+            {/* Visitante temporário (Marcos 2026-07-20): prazo visível + promoção
+                em 1 clique, sem depender de sessão aberta no totem. */}
+            {c.visitante && (
+              <div className="rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-2.5 space-y-1.5">
+                <div className="text-xs text-amber-800 dark:text-amber-300">
+                  <b>Visitante</b>{c.visitante_relacao ? ` · ${RELACAO_LABEL[c.visitante_relacao] || c.visitante_relacao}` : ''}
+                  {c.data_limite ? <> · aparece no check-in até <b>{fmt(c.data_limite)}</b> (some da lista se não voltar)</> : null}
+                  {' '}— se voltar em outro dia, vira frequentador sozinha.
+                </div>
+                <Button size="sm" variant="outline" className="h-7 text-xs" disabled={promovendo} onClick={tornarFrequentador}>
+                  {promovendo ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <UserCheck className="h-3.5 w-3.5 mr-1" />} Tornar frequentador
+                </Button>
+              </div>
+            )}
             <div className="rounded-md border border-border p-2 space-y-1">
               <div className="text-xs font-semibold text-muted-foreground">Saúde</div>
               <LinhaSaude label="Alergia" tem={c.tem_alergia} qual={c.alergia_qual} />
@@ -502,6 +668,16 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
           <JornadaTab criancaId={criancaId} c={c} onChanged={() => { load(); onChanged(); }} />
         ) : (
           <div className="space-y-3">
+            {/* Atalho: abrir conversa (WhatsApp) com o responsável no inbox */}
+            {(() => {
+              const resp = (c.responsaveis || []).find((r: any) => r.telefone || r.membro?.telefone);
+              const tel = resp?.telefone || resp?.membro?.telefone;
+              return tel ? (
+                <Link to={hrefConversa(tel)} className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-950/50">
+                  <MessageSquare className="h-3.5 w-3.5" /> Abrir conversa com o responsável
+                </Link>
+              ) : null;
+            })()}
             {/* Novo atendimento */}
             <div className="rounded-lg border border-border p-3 space-y-2">
               <div className="flex gap-2">
@@ -509,7 +685,7 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
                   <SelectTrigger className="w-36 h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>{Object.entries(TIPO_ATEND).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}</SelectContent>
                 </Select>
-                <Input type="date" className="w-40 h-9" value={novoData} onChange={e => setNovoData(e.target.value)} />
+                <DatePicker className="w-40 h-9" value={novoData} onChange={setNovoData} />
               </div>
               <Textarea rows={2} placeholder="Ex.: ligamos para a mãe, criança está doente, volta semana que vem." value={novoDesc} onChange={e => setNovoDesc(e.target.value)} />
               <Button size="sm" onClick={addAtend} disabled={salvando}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Registrar atendimento'}</Button>
@@ -632,14 +808,26 @@ function ResponsaveisManager({ crianca, onChanged }: { crianca: any; onChanged: 
     try { await api.criancas.removeResponsavelVinculo(criancaId, r.membro_id); toast.success('Responsável removido'); onChanged(); }
     catch (e: any) { toast.error(e?.message || 'Erro ao remover'); }
   }
-  async function adicionar() {
+  async function adicionar(permitirSemCpf?: unknown) {
+    const dispensa = permitirSemCpf === true; // onClick passa o evento — só true explícito vale
     if (!novo.nome.trim() || !novo.telefone.trim()) { toast.error('Nome e telefone são obrigatórios'); return; }
     setBusy(true);
+    let retry = false;
     try {
-      await api.criancas.addResponsavelRapido(criancaId, { nome: novo.nome.trim(), telefone: novo.telefone.trim(), cpf: novo.cpf.trim() || null, parentesco: novo.parentesco });
+      await api.criancas.addResponsavelRapido(criancaId, { nome: novo.nome.trim(), telefone: novo.telefone.trim(), cpf: novo.cpf.trim() || null, parentesco: novo.parentesco, ...(dispensa ? { permitir_sem_cpf: true } : {}) });
       toast.success('Responsável adicionado');
       setNovo({ nome: '', telefone: '', cpf: '', parentesco: 'mae' }); setAddOpen(false); onChanged();
-    } catch (e: any) { toast.error(e?.message || 'Erro ao adicionar'); } finally { setBusy(false); }
+    } catch (e: any) {
+      // Válvula da obrigatoriedade de CPF (esta tela não tem o PIN do totem):
+      // confirma a liberação e reenvia com a dispensa — nunca travar o fluxo.
+      if (e?.code === 'cpf_obrigatorio' && !dispensa
+          && window.confirm('O CPF do responsável é obrigatório. Cadastrar sem CPF mesmo assim? A liberação fica registrada no histórico — colete o documento no próximo check-in.')) {
+        retry = true; // busy fica true até o reenvio terminar (senão o botão reabilita com a requisição em voo → duplo submit)
+      } else {
+        toast.error(e?.message || 'Erro ao adicionar');
+      }
+    } finally { if (!retry) setBusy(false); }
+    if (retry) return adicionar(true);
   }
 
   return (
@@ -687,6 +875,7 @@ function RowResp({ r, busy, onChanged, onSave, onRemove }: { r: any; busy: boole
       <div className="flex items-center gap-2">
         {r.membro?.id && <FotoMembroAvatar membro={r.membro} onChanged={onChanged} />}
         <Input className="flex-1 h-8" value={edit.nome} placeholder="Nome" onChange={e => setEdit(x => ({ ...x, nome: e.target.value }))} />
+        {edit.telefone.trim() && <Link to={hrefConversa(edit.telefone)} title="Abrir conversa no WhatsApp" className="text-emerald-600 hover:text-emerald-700 shrink-0"><MessageSquare className="h-4 w-4" /></Link>}
         <button type="button" onClick={() => onRemove(r)} className="text-muted-foreground hover:text-red-500 shrink-0" title="Remover responsável"><X className="h-4 w-4" /></button>
       </div>
       <div className="grid grid-cols-2 gap-2">
@@ -812,15 +1001,18 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
     const r = new FileReader(); r.onload = () => cb(r.result as string); r.readAsDataURL(f);
   };
 
-  async function salvar() {
+  async function salvar(permitirSemCpf?: unknown) {
+    const dispensa = permitirSemCpf === true; // onClick passa o evento — só true explícito vale
     if (!nome.trim()) { toast.error('Informe o nome da criança'); return; }
     const validos = resps.filter(r => r.nome.trim() && r.telefone.trim());
     if (!validos.length) { toast.error('Informe ao menos um responsável (nome e telefone)'); return; }
     setSalvando(true);
+    let retry = false;
     try {
       const r = await api.criancas.create({
         crianca: { nome: nome.trim(), data_nascimento: nascimento || null, sexo: sexo || null, serie: serie.trim() || null, necessidades_especiais: necessidade.trim() || null, consent_marketing: consentMkt },
         responsaveis: validos.map(x => ({ nome: x.nome.trim(), telefone: x.telefone.trim(), cpf: x.cpf?.trim() || null, parentesco: x.parentesco, autorizado_buscar: x.autorizado_buscar })),
+        ...(dispensa ? { permitir_sem_cpf: true } : {}),
       });
       // Fotos (best-effort · não travam o cadastro se falharem). r.responsaveis
       // volta na MESMA ordem dos validos → casa a foto pelo índice.
@@ -832,7 +1024,17 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
       }
       toast.success('Criança cadastrada');
       onCreated();
-    } catch (e: any) { toast.error(e?.message || 'Erro ao cadastrar'); } finally { setSalvando(false); }
+    } catch (e: any) {
+      // Válvula da obrigatoriedade de CPF (esta tela não tem o PIN do totem):
+      // confirma a liberação e reenvia com a dispensa — nunca travar o fluxo.
+      if (e?.code === 'cpf_obrigatorio' && !dispensa
+          && window.confirm('O CPF do responsável é obrigatório. Cadastrar sem CPF mesmo assim? A liberação fica registrada no histórico — colete o documento no próximo check-in.')) {
+        retry = true; // salvando fica true até o reenvio terminar (senão o botão reabilita com a requisição em voo → duplo submit)
+      } else {
+        toast.error(e?.message || 'Erro ao cadastrar');
+      }
+    } finally { if (!retry) setSalvando(false); }
+    if (retry) return salvar(true);
   }
 
   const temAlteracoes = (
@@ -935,8 +1137,13 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
 
   const MESES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const mesAno = (ym: string) => `${MESES_ABREV[Number(ym.slice(5, 7)) - 1] || ''}/${ym.slice(2, 4)}`;
-  const dados = (j?.frequencia?.porMes || []).map((p: any) => ({ mes: mesAno(p.mes), total: p.total }));
   const freq = j?.frequencia;
+  // Gráfico por DATA (cada dia que veio · acumulado) — mostra a frequência completa
+  // mesmo quando tudo cai no mesmo mês (antes virava 1 ponto só). Fallback: por mês.
+  const porDia = (freq?.porDia || []) as Array<{ data: string; acumulado: number }>;
+  const dados = porDia.length
+    ? porDia.map((p) => ({ mes: fmt(String(p.data).slice(0, 10)), total: p.acumulado }))
+    : (freq?.porMes || []).map((p: any) => ({ mes: mesAno(p.mes), total: p.total }));
   const SIT_COR: Record<string, string> = { frequente: 'text-emerald-600', regular: 'text-sky-600', esporadica: 'text-amber-600', afastada: 'text-red-600' };
 
   return (
@@ -944,24 +1151,24 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
       <div className="grid grid-cols-2 gap-3">
         <div>
           <Label className="text-xs">Data de conversão</Label>
-          <Input type="date" value={conv} onChange={e => setConv(e.target.value)} />
+          <DatePicker value={conv} onChange={setConv} />
           {!conv && j?.conversao_sugerida && (
             <button className="text-[11px] text-primary mt-0.5" onClick={() => setConv(j.conversao_sugerida)}>usar 1ª decisão ({fmt(j.conversao_sugerida)})</button>
           )}
         </div>
         <div>
           <Label className="text-xs">Data de batismo</Label>
-          <Input type="date" value={bat} onChange={e => setBat(e.target.value)} />
+          <DatePicker value={bat} onChange={setBat} />
         </div>
       </div>
       <Button size="sm" onClick={salvar} disabled={salvando}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Salvar jornada'}</Button>
 
       <div>
         <div className="text-xs text-muted-foreground mb-1">
-          Frequência (check-ins){freq ? ` · total ${freq.total}${freq.ultima ? ` · último ${fmt(String(freq.ultima).slice(0, 10))}` : ''}` : ''}
+          Frequência (dias com presença){freq ? ` · total ${freq.total}${freq.ultima ? ` · último ${fmt(String(freq.ultima).slice(0, 10))}` : ''}` : ''}
         </div>
         {dados.length === 0 ? (
-          <p className="text-xs text-muted-foreground py-4 text-center">Sem check-ins registrados no Planning Center pra esta criança.</p>
+          <p className="text-xs text-muted-foreground py-4 text-center">Sem check-ins registrados no sistema pra esta criança.</p>
         ) : (
           <div style={{ height: 180 }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -1015,7 +1222,7 @@ function JornadaTab({ criancaId, c, onChanged }: { criancaId: string; c: any; on
             {j.familia_membros.map((m: any) => (
               <div key={m.id} className="flex items-center gap-2 rounded-md border border-border p-1.5 text-xs">
                 <button onClick={() => navigate(`/ministerial/membresia?membro=${m.id}`)} className="flex-1 min-w-0 truncate text-left text-primary hover:underline">{m.nome}</button>
-                {m.telefone && <a href={`https://wa.me/55${String(m.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-primary"><Phone className="h-3.5 w-3.5" /></a>}
+                {m.telefone && <Link to={hrefConversa(m.telefone)} className="text-primary"><Phone className="h-3.5 w-3.5" /></Link>}
               </div>
             ))}
           </div>

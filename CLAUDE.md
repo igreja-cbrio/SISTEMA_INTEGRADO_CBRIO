@@ -21,6 +21,1862 @@ decisões/time-lapse do sistema). Regras de manutenção:
   vivo (lição `cui_atendimentos`: achado de auditoria baseado em arquivo de
   migration que nunca foi aplicado em prod).
 
+## ⚠️ LEI · Contrato de porta — toda entrada de PESSOA no sistema (2026-07-17)
+
+Decisão do Marcos: dados de pessoa entram IGUAIS em todas as portas (Kids,
+batismo, Next, voluntários, decisões, grupos, wifi, censo, formulários novos).
+O formulário de cada porta continua MÍNIMO (pede só o que precisa); quem é
+padronizado é o FUNIL pós-submit. Toda porta nova/alterada DEVE:
+
+1. **Normalizar** antes de gravar: CPF/telefone digits-only, e-mail lower/trim,
+   DV de CPF no servidor (com grandfathering: valor idêntico ao já armazenado
+   passa sem DV — legado não pode travar edição).
+2. **Passar pelo matcher canônico** (`backend/services/membroMatch.js` no JS ·
+   `fn_link_or_create_membro`/`tg_cultos_dec_pessoas_resolve_membro` no SQL):
+   CPF → e-mail+NOME → telefone+NOME → nascimento+NOME. NUNCA ligar por sinal
+   fraco sozinho (família compartilha telefone/e-mail).
+3. **Acumular contato divergente** em `mem_contatos` (migration 20260717120000 ·
+   `fn_registrar_contato`): telefone/e-mail diferente do principal NÃO é
+   conflito nem sobrescreve — vira contato secundário com fonte+data. O
+   principal (`mem_membros.telefone/email`) só muda por ação humana. O matcher
+   busca candidatos também nos secundários (anti-duplicata).
+4. **CPF que chega depois** → `reconciliarCpfTardio` (consolida no membro;
+   `confianca: 'fraca'` quando o vínculo veio de match fraco).
+5. **Conflito de identidade** (CPF divergente/em uso, nascimento divergente) →
+   `identidade_pendencias` (fila humana em Entradas > Identidade). NUNCA
+   auto-fundir nem auto-decidir.
+
+Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
+leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
+membro via `membro_id`.
+
+## ⚠️ Contrato de Inscrição · toda porta pública de inscrição (F3.1 · 2026-07-28)
+
+Decisão do Marcos (specs completas em `docs/modulo-inscricoes/fase1-unificacao.md`
+e `fase2-specs.md` · decisões D1–D9 + ajuste 28/07): as 7 portas de inscrição
+(batismo, apresentação, grupos, líderes, next, voluntariado, eventos externos)
+convergem pro mesmo contrato de campos padrão — **nome completo em campo único
+sem abreviação** (split 1º token→nome, resto→sobrenome onde a tabela exige) ·
+**telefone 10–11 dígitos** digits-only · **CPF com DV** · **e-mail** ·
+**nascimento validado** · **sexo obrigatório (`masculino|feminino`, NUNCA
+"outro")** · **endereço fixo-opcional** · **termos LGPD com snapshot** ·
+**opt-in WhatsApp explícito default false**. Regras valem SÓ para inscrições
+novas — **dado legado nunca é alterado nem re-validado** (inscrições antigas do
+Celebra com só nome+telefone continuam válidas para sempre).
+
+- **Usar SEMPRE** `backend/services/inscricaoContrato.js` (validações,
+  `processarIdentidade` = matcher+observação, `registrarConsentimentos`,
+  textos canônicos) e `src/lib/inscricao.js` (máscaras/validações client).
+  NÃO recriar cópias locais de máscara/CPF — era assim que divergia.
+  ⚠️ `validarNascimento`, `emailValido` e `tirarCodigoPaisTelefone` MORAM em
+  `backend/utils/camposContato.js` (pra entrar no gate de deploy) e são
+  **re-exportadas** pelo contrato — os imports das 7 portas não mudam.
+- **Consentimentos** vão para a tabela `inscricao_consentimentos`
+  (migration `20260728121000` · append-only via backend · tipos: termos_lgpd,
+  imagem, menor_responsavel, whatsapp). O ESTADO do opt-in continua nas
+  colunas `whatsapp_optin/_em` de cada tabela.
+
+**Estado do rollout — CONCLUÍDO (narrativa PR a PR no legado):** as 7 portas
+entraram no contrato em 28/07 (F3.1) e a **espinha `inscricoes` + módulo
+`/inscricoes`** ficou completa no mesmo dia (F3.2 · 6 tabelas · 5 abas ·
+`vw_inscricoes_unificadas` · virada do Eventos Externos pra espinha, com os QRs
+antigos do Celebra intactos no MESMO `/evento/:slug`). A F3.4 acrescentou o
+**check-in por QR** (token HMAC derivado do id da inscrição — vale retroativo,
+sem backfill) e a **confirmação por WhatsApp** (gated por opt-in · kill-switch na
+env do template). O que segue como referência viva está nas seções de Pagamentos,
+Catálogo de portas, Fila de identidade e Totem.
+
+⚠️ **O que NÃO regredir do rollout** (o resto é história):
+- **`novaKeyCampo` NUNCA deriva a chave a partir do label** — ver a LEI própria
+  ("trocar a KEY de um campo de formulário ORFANA resposta").
+- **Porta pública fica FORA do `publicLimiter` global** (mount antes dele +
+  entrada no `skip()`), com limiter próprio generoso. ⚠️ Limiter no `router.use`
+  **e** na rota conta **2×** a mesma requisição.
+- **`autorizado_buscar: false` SEMPRE** no vínculo Kids criado por porta pública
+  — o default `true` da coluna dava direito de RETIRADA de criança a qualquer um
+  com CPF válido + nome/nascimento de criança cadastrada.
+- **Consentimento de menor não vive dentro do `.then()` do matcher**: falha de
+  identidade não pode apagar prova legal.
+- **`ja_inscrito`/`ja_inscritas`/`duplicado` são EXIBIDOS**, nunca engolidos como
+  "Inscrição confirmada!".
+- **O inventário de portas é 100% somente-leitura, nem super-admin escreve** —
+  cada porta tem lógica-satélite no módulo dono, e um 2º caminho de escrita é a
+  classe de bug que o desenho evita.
+- Teste: `node backend/services/inscricaoContrato.test.js`.
+
+## ⚠️ LEI · o gatilho de `auth.users` é a ÚNICA entrada de PESSOA fora do contrato (2026-08-04)
+
+Marcos, ao ver cadastros recentes com nome errado: *"nós resolvemos as inscrições
+padronizando entradas, porque estamos recebendo dados recentes errados?"*
+Investigação a fundo (04/08). O Contrato de porta está **íntegro** — o furo é uma
+entrada que ele nunca cobriu porque **não está no repositório**.
+
+### O que foi medido
+
+Inventário de TODOS os escritores de `mem_membros`: **um** em JS
+(`services/membroMatch.js`, o matcher canônico) + 20 migrations (imports pontuais
+e o matcher SQL). **`grep` exaustivo em `backend/`, `src/` e `supabase/`: nenhum
+lugar do repo escreve `origem_cadastro='auth'`.** E o arquivo que o CLAUDE.md cita
+como fonte (`supabase/handle_new_user_membro.sql`) **nunca foi commitado** — não
+existe em nenhum commit de nenhuma branch (`git log --all --diff-filter=A`).
+
+Origem: commit `04ce6ea2` (16/06, Matheus) — o app passou a mandar
+`frequenta_area` por metadata e o gatilho foi estendido em prod pra criar
+`mem_membros`. A migration daquele PR só criou a COLUNA; a mudança no gatilho
+ficou fora do git.
+
+O `handle_new_user` que ESTÁ no git (`20260410014723`) só escreve `profiles`:
+`COALESCE(full_name, name, split_part(email,'@',1))`. A versão viva herdou esse
+`COALESCE` e passou a aplicá-lo a `mem_membros.nome`.
+
+### Por que isso viola o contrato inteiro
+
+O gatilho **não** normaliza, **não** chama o matcher canônico (logo não deduplica),
+**não** acumula contato em `mem_contatos`, **não** registra observação de
+identidade e **não exige nenhum campo**. Medido nos 22 cadastros `origem='auth'`:
+95% sem CPF, 95% sem telefone, 95% sem nascimento, 100% sem sexo, **15 com o nome
+igual ao prefixo do e-mail**.
+
+⚠️ **E já colidiu com uma porta correta.** Caso real de 02/08:
+
+```
+11:49  Maria Victória Lannes Campos → formulário público COM CPF  (mem_cadastros_pendentes)
+11:57  "Victória Lannes"            → gatilho auth, sem chave     (mem_membros)
+14:03  Maria Victória Lannes Campos → preencheu DE NOVO
+```
+
+O matcher teria ligado os dois por e-mail+nome. Ele não rodou. Ela preencheu duas
+vezes porque nunca foi reconhecida.
+
+⚠️ Sintoma que revela o estrago: `andre.texeira` e `kevyn.ricardo` têm o
+**profile** com nome correto e o **membro** ainda com o prefixo — alguém corrigiu
+na mão o lugar errado, e `mem_membros` é o que todo o sistema lê.
+
+### Pior caso: Apple Sign-In com "Ocultar meu e-mail"
+
+O relay (`sy9p84mryx@privaterelay.appleid.com`) tem prefixo aleatório, e a Apple só
+manda o nome na **primeira** autorização. Resultado: pessoa cadastrada como
+`sy9p84mryx`. Ritmo atual ~1/dia (`catiassgullo` 04/08, `juloora` 03/08,
+`sy9p84mryx` 02/08).
+
+### O que foi corrigido (sem tocar em auth)
+
+1. **`membroMatch.ehNomeDerivadoDeEmail(nome, email)`** — irmã do
+   `ehNomePlaceholder`. ⚠️ Exige o e-mail e compara com ele: **não** é heurística
+   de "nome estranho", então não pega apelido nem nome curto legítimo. Contrato em
+   `nomeDerivadoEmail.test.js` (**no gate de deploy**), com os casos reais de prod
+   e mutation-test do falso positivo — trocar a igualdade por "contém" transforma
+   a função numa máquina de sobrescrever nome de gente.
+   ⚠️ Caso-limite documentado no teste: nome real IGUAL ao prefixo
+   ("Marcelo Soares" × `marcelosoares@`) dá `true`. Aceitável porque o efeito é
+   reescrever com o nome que a própria pessoa digitou + avisar humano — **nunca
+   apagar**. Se um dia isso decidir algo destrutivo, a regra tem que mudar.
+2. **`publicMembresia` manda `full_name` no `createUser`** — sem isso o gatilho
+   gravava o prefixo do e-mail. E o ramo `else` (profile já existe, que é o caminho
+   NORMAL porque o gatilho chega primeiro) passou a corrigir `profiles.name` **e** o
+   `mem_membros.nome` que o gatilho criou, com guarda estreita
+   (`ehNomeDerivadoDeEmail`) e `.eq('nome', valorAtual)` contra corrida.
+3. **`origem_cadastro` no INSERT do matcher** — eram **2.163** cadastros com origem
+   nula (o parâmetro `origem` só ia pra observação de identidade), e "de onde veio
+   esse dado?" não tinha resposta. `'matcher'` genérico não é gravado.
+4. **Aviso diário agregado** (`notificacaoGenerator`, tipo
+   `cadastro_sem_nome_real`): 1 por dia, nunca 1 por pessoa (sem regra configurada
+   o `notificar` cai no fallback de TODOS os admin/diretor). ⚠️ Isto **não conserta
+   a causa** — existe pra o problema parar de crescer em silêncio enquanto o
+   gatilho não é corrigido. A mensagem diz explicitamente **não apagar**.
+
+### ✅ O gatilho ENTROU NO CONTRATO (migration `20260804140000`)
+
+Marcos rodou o `pg_get_functiondef` em 04/08 e a definição viva foi commitada —
+**este é o primeiro registro dele em git**. A migration substitui o corpo e:
+
+- **normaliza** cpf/telefone (digits) e **valida o DV do CPF**: CPF inválido é
+  DESCARTADO em vez de virar identidade errada. ⚠️ Antes entrava CRU do metadata,
+  e CPF mascarado não casa com `uniq_mem_membros_cpf_ativo` (digits-only) nem com
+  o lookup de dedup — fábrica silenciosa de duplicata.
+- **delega o match a `fn_link_or_create_membro`** (canônico · CPF → telefone+NOME
+  → e-mail+NOME): fecha o buraco do `email = new.email` sozinho (família
+  compartilha endereço) e passa a **acumular contato divergente em
+  `mem_contatos`**, que antes era descartado no ramo "membro já existe".
+- ⚠️ Passa **`v_nome_meta` (o nome REAL, que pode ser NULL)** ao matcher, não o
+  efetivo. Sem nome real ele cai no ramo legado de e-mail sozinho — seguro aqui,
+  porque o e-mail É o da conta que autenticou — e então RECUSA criar, e o gatilho
+  cria o stub. Passar o prefixo do e-mail como se fosse nome faria o ramo
+  "e-mail + nome compatível" falhar contra o nome real já cadastrado e criar
+  DUPLICATA: seria pior que o comportamento antigo.
+- **completa só campo VAZIO** (nascimento, `frequenta_area`, `origem_cadastro`) —
+  mesma política do censo e do CPF tardio. Sobrescrever é decisão humana.
+- **liga cadastro pendente órfão**: CPF liga sozinho; por e-mail exige NOME
+  compatível e respeita `nao_vincular_fraco`. É o conserto do caso da Maria
+  Victória — a fila passa a mostrar "atualização cadastral" em vez de criar uma
+  segunda pessoa.
+- **melhora o nome** (no profile E no membro) quando o guardado é o prefixo do
+  e-mail e chegou um real — era isso que deixava `andre.texeira`/`kevyn.ricardo`
+  com profile certo e membro errado.
+
+⚠️⚠️ **E desarma um risco que JÁ EXISTIA: o corpo antigo não tinha tratamento de
+exceção.** Como o gatilho é AFTER INSERT em `auth.users`, qualquer erro ao gravar
+`mem_membros`/`profiles` aborta o INSERT do usuário — **a pessoa não consegue
+criar conta**. Duas pessoas com o mesmo CPF já bastavam (23505). Agora a
+escrituração roda em bloco protegido: falha vira WARNING e o profile mínimo é
+garantido. **Signup nunca deve falhar por causa da nossa escrituração.**
+
+⚠️ **O que NÃO foi resolvido, e não é resolvível no banco:** sem nome do provedor,
+o nome continua sendo o prefixo do e-mail — o banco não inventa nome de pessoa. O
+conserto real é **o app pedir o nome na primeira tela** (repo do app, fora deste).
+Até lá quem cobre é o aviso diário `cadastro_sem_nome_real`.
+
+⚠️ Dependências conferidas AO VIVO antes de escrever (`fn_cpf_dv_valido`,
+`fn_identidade_nomes_compativeis` chamadas por RPC; `fn_link_or_create_membro` e
+`fn_registrar_contato` conferidos no catálogo do PostgREST — o matcher **não** foi
+chamado em teste porque ele ESCREVE).
+
+⚠️ **Teste funcional obrigatório após aplicar**: criar UMA conta nova e conferir
+que (a) a conta é criada, (b) nasce 1 membro só, (c) o profile tem `membro_id`.
+Rollback = colar a definição antiga (está no corpo do PR).
+
+### ⚠️ O gatilho novo NÃO fecha o caso do nome ABREVIADO (05/08)
+
+Aplicado e conferido ao vivo (o espelho SQL `fn_nome_derivado_de_email` bate com
+o JS nos 8 casos, inclusive acento e relay da Apple). Mas sobra um furo que o
+matcher não pode fechar: quando o provedor manda o nome **abreviado**, o ramo
+"e-mail + NOME compatível" recusa e um fantasma nasce de novo.
+
+Caso real medido: **Maria Victória existia DUAS vezes** —
+`"Victória Lannes"` (auth, sem chave) e `"Maria Victória Lannes Campos"`
+(`membresia_aprovacao`, com cpf+tel+nascimento). Os 2 pendentes dela foram
+aprovados, então a aprovação criou um SEGUNDO membro em vez de ligar no fantasma.
+
+⚠️ E a fila de Duplicatas **não enxergava o par**: `duplicidadePolicy` exige o
+mesmo PRIMEIRO nome (`ta[0] !== tb[0]` → recusa), e o nome legal dela é *Maria*
+enquanto ela usa *Victória*. Veredito medido antes do fix:
+`{"incluir":false,"contradicoes":["Nomes incompatíveis"]}`.
+
+**Ramo novo em `duplicidadePolicy`** (não afrouxei `nomesPodemSerMesmaPessoa`, que
+tem casos-regressão documentados): e-mail EXATAMENTE igual + **exatamente um lado
+é stub de login** (`origem_cadastro='auth'` sem cpf e sem telefone) + tokens do
+nome menor **TODOS** contidos no maior → entra com prioridade **alta**.
+⚠️ 100% de containment, não 75%: com 75% cônjuges no mesmo e-mail com sobrenome em
+comum entrariam ("Ana Souza Lima" × "João Souza Lima" = 2 de 3 tokens). Está
+mutation-testado. Aqui o e-mail não é o endereço da família — é a credencial que
+autenticou, e é por isso que ele pesa mais que no caso geral.
+⚠️ Os vetos de identidade (CPF/nascimento/gênero divergentes) rodam ANTES e
+continuam mandando.
+
+**`nomeEhEnderecoDeEmail`** — forma DIFERENTE do derivado-do-prefixo: o e-mail
+está no campo do NOME (3 casos · 2 do `import_next_historico_2025_2026`, 1 do
+wifi). Em 2 dos 3 a coluna `email` está VAZIA, então é também contato perdido. O
+nome real não é derivável do endereço → aviso próprio pra humano, nunca exclusão.
+
+**Cobertura do censo com DOIS recortes.** `/censo/cobertura` devolve `base` (todos
+os ativos · inclui ~2.9 mil `visitante`) e `membros` (`status='membro_ativo'`), e o
+painel virou um botão. ⚠️ Não é indecisão: "cobertura de quem?" é definição da
+liderança, e escolher um faria o painel afirmar algo que não é nosso — além de
+"quem falta" com 3 mil visitantes ser lista de cobrança inútil. `/censo/faltantes`
+aceita `recorte=membros`.
+
+**Testes no gate:** `test:duplicidade` (que existia e **não estava no gate**) e
+`test:nome-email`.
+
+### ✅ Pendências que a medição fechou (05/08)
+
+- **pool-pg em `projects.js`/`patrimonio.js`**: `grep` não acha nenhum consumidor
+  de `query()`/`pool` em `backend/` — `patrimonio.js:70` diz explicitamente que o
+  fallback foi removido. A senha recusada do `DATABASE_URL` afeta **só script
+  local**, nenhum endpoint de produção. Levantei como suspeita; a medição fechou.
+- **Cadastros pendentes órfãos**: `status='pendente'` = **0** (a aprovação em lote
+  de 04/08 drenou a fila). Não há backfill a fazer.
+- **FKs pra `mem_membros`**: `profiles.membro_id`, `vol_profiles.membresia_id`,
+  `next_matriculas.membro_id`, `mem_cadastros_pendentes.duplicado_de_id`,
+  `mem_contribuicoes.membro_id`, `kids_responsaveis.membro_id` — **todas existem**
+  (testadas pelo embed do PostgREST, que só funciona com FK) e **0 profiles
+  apontando pra membro inexistente**. Fundir é seguro: `merge_membros` reaponta.
+  ⚠️ Eu havia suspeitado do contrário pela lei nº 10; verifiquei em vez de assumir.
+
+### ⏳ Em aberto, dependendo de DECISÃO (não de código)
+
+- **`"22 pessoas -"`** — não é pessoa, é uma CONTAGEM: virou membro `membro_ativo`
+  + batismo `realizado` de 26/01/2025 + trilha concluída. Apagar perde a
+  informação de que 22 pessoas foram batizadas; manter infla membresia em 1 e
+  sub-conta batismos em 21. Opções: (a) deixar e documentar; (b) soft-delete do
+  membro + trilha, preservando o registro de batismo com observação.
+- **O par da Maria Victória** — agora VISÍVEL na fila de Duplicatas com prioridade
+  alta. Fundir é 1 clique da Naná (keep = o cadastro completo). Não fundi: hard
+  delete de pessoa é "ok caso a caso".
+- **Nome real da mãe do MURILO Mendes** (`Juliafuncionalfight@gmail.com`) — não
+  vou adivinhar num registro de responsável Kids.
+- **O app pedir o nome na primeira tela** — é o único conserto real do nome
+  derivado do e-mail, e é no repo do app.
+
+### Alarmes meus que NÃO se sustentaram (registrados de propósito)
+
+- **`pco_import_2026` = 292 "nos últimos 30 dias"**: é **um import único de
+  10/07**, dez dias antes da remoção do PCO. Artefato da minha janela, não
+  vazamento.
+- **`(null)` = 2.163 (649 recentes)**: não é porta sem controle — é o matcher
+  canônico não preenchendo `origem_cadastro`. Os picos batem com dias reais de
+  porta (23/06, 20-21/07, 02/08) e o dado é bom (CPF+telefone+nascimento).
+
+Lição repetida 3× neste dia: **conferir o que a sonda devolveu, não a contagem.**
+
+## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
+
+Demanda do **Arthur Serpa**: por um mês, 1 minuto de cada culto pra igreja
+escanear um QR e preencher o cadastro. Decisão do Marcos: **formulário ÚNICO**
+(não dividir em duas etapas), então o censo é o próprio `/cadastro-membresia`,
+com `?censo=1` no QR. Diário completo no legado.
+
+**⚠️ Decisão de arquitetura: NÃO é evento no módulo de Inscrições.** `inscricoes`
+é tronco PARALELO ao de pessoas — `membro_id` é nullable e nada o preenche, então
+um "evento censo" daria milhares de linhas numa tabela que **não é a membresia**,
+e a promoção inscrição→membro teria que ser construída do zero. O formulário de
+membresia já escreve na espinha de identidade (matcher + `duplicado_de_id` +
+observação segura + consentimento LGPD + fila de aprovação).
+
+**⚠️ O censo é UPDATE pra maioria — e era aí que ele morria.** Toda pessoa que já
+existe gerava linha `duplicado` pra resolver **UMA POR UMA**, e com base viva na
+casa dos 3.900 isso é trabalho humano que ninguém vaza em um mês: a campanha
+morreria na fila, não na coleta. **`services/censoReconciliar.js`** generaliza a
+política do `cpfReconciliar` de um campo pra nove:
+
+- campo **VAZIO** → **preenche** · valor **igual** (tolerando caixa/espaço/
+  máscara) → no-op · valor **diferente** num campo que já tinha → **CONFLITO**:
+  não grava, vai pra decisão humana com **os dois lados à vista** · sem conflito
+  → `status='aplicado'` (sai da fila, continua existindo como prova do que a
+  pessoa enviou e consentiu).
+- ⚠️ **Telefone e e-mail divergentes NÃO são conflito** — a lei do Contrato de
+  porta manda **ACUMULAR** em `mem_contatos` via `registrarContatoDaPorta` (a
+  MESMA função do matcher, importada). Tratar contato como conflito jogaria na
+  fila humana o caso mais comum do censo (trocou de número) e o principal
+  continuaria velho.
+- ⚠️⚠️ **Gate de confiança: só `matched_by='cpf'` (e `token_censo`) aplica
+  sozinho.** Telefone+nome / e-mail+nome / nascimento+nome são sinais que a
+  **família compartilha** — mãe e filha com o telefone da casa casam, e o único
+  sinal de que erramos é o nascimento. Com sinal fraco só aplica se o nascimento
+  confere **dos dois lados**. **O "sou eu" do lookup também é FRACO** (validado só
+  contra o telefone: quem clica pode estar reconhecendo o cadastro do cônjuge).
+- ⚠️ **Guarda de corrida tudo-ou-nada**: o UPDATE leva `.is(campo, null)` em cada
+  coluna que escreve — **sobrescrever edição humana com dado de formulário é
+  exatamente o que esta política existe pra não fazer**. 0 linhas → relê, reavalia,
+  e o que foi preenchido vira conflito. UMA retentativa, sem laço.
+- ⚠️ **O censo NÃO promove ninguém a membro**: `vinculo_declarado` é
+  **autodeclarado** e nunca encosta em `mem_membros.status`. Quem é membro segue
+  sendo decisão da igreja — e o QR do culto é escaneado por membro, congregado,
+  visitante e pai de criança.
+
+**⚠️ Lições que valem além do censo:**
+- **Porta pública com autocomplete precisa de DOIS baldes de rate limit**
+  (submissão × probing). A cota compartilhada de 10/15min quebrava o formulário
+  **na 3ª pessoa**: cada pessoa gasta 3-5 requisições e no WiFi da igreja todas
+  saem por 1 IP. ⚠️ Limiter fica **só nas rotas**, nunca em `router.use` **e** na
+  rota (conta 2× a mesma requisição).
+- **Contador sem paginação MENTE em silêncio**: `.select('status')` capa em 1000
+  linhas server-side, então a partir da 1001ª submissão os KPIs **congelavam sem
+  erro**. Virou COUNT no banco (`head: true`).
+- **Submissão que o reconciliador RESOLVEU não notifica** — sem regra configurada
+  o fallback é TODOS os admin/diretor, e 700 respostas × 16 admins ≈ 11 mil linhas
+  por domingo. Aviso é pra trabalho PENDENTE.
+- **⚠️ DUAS colagens, uma tabela cada (deadlock 40P01)**: DDL que trava duas
+  tabelas vivas pode se abraçar com uma consulta de produção que as toca na ordem
+  inversa, e a vítima é a migração. `mem_membros` é a tabela mais quente do
+  sistema, por isso vai sozinha. ⚠️ Conferir no **catálogo**, nunca por
+  `RAISE NOTICE` (o SQL Editor do Supabase não mostra notice).
+- **Tolerância à migration ausente**: o insert tenta com as colunas do censo e,
+  em `42703`, repete **sem elas** — a submissão é o que não pode se perder. O
+  painel responde **aviso**, nunca 500, e cobre aplicação **parcial** (número
+  errado é pior que número ausente).
+
+**Cobertura** (`/censo/cobertura` nível 1 · `/censo/faltantes` nível 2, carrega
+telefone) em bloco recolhível na aba Cadastros — não aba nova (a Caixa de entrada
+dos Grupos já provou que separar em aba faz ninguém achar).
+- ⚠️ **A JANELA vai colada no número**, no payload e no título. Reportar "176
+  pessoas" sem dizer o período fez um número **correto** parecer errado.
+- ⚠️ **Pedidos × PESSOAS**: quem responde 2× conta 1 pessoa. Repetir não é erro.
+- ⚠️ **Nome-placeholder fica FORA do denominador** (espelha `ehNomePlaceholder`):
+  descrição de extrato não é pessoa a censar.
+- ⚠️ Dia da curva em **BRT** (às 21h do Rio o dia UTC já virou).
+- **Coberta é quem RESPONDEU**, não quem teve os campos aplicados. Aprovar linha
+  `aplicado` é **bloqueado** (400) — reaplicaria o formulário inteiro por cima de
+  valor que a equipe corrigiu depois.
+
+Teste: `npm run test:censo` (10 blocos · sem banco/rede/relógio · **no gate**).
+Mutation-testados: tratar contato como conflito, e o gate de nascimento divergente
+— é ele que impede o censo escrever o endereço de uma pessoa no cadastro de outra.
+
+## ⚠️ Censo · convite de atualização cadastral p/ quem está SEM CPF (2026-08-04 · migration `20260804120000`)
+
+Pedido do Matheus: disparar WhatsApp + e-mail pra quem não tem CPF cadastrado mas
+tem celular ou e-mail, pedindo objetivamente pra atualizar os dados. ⚠️ **NÃO é
+campanha nova — é o CANAL do censo que já existe**: o link é o mesmo
+`/cadastro-membresia?censo=1` do QR impresso, então a resposta cai no
+`censoReconciliar` e a cobertura conta sozinha. Criar formulário próprio daria
+duas verdades sobre "quem respondeu o censo". Números e diário no legado.
+
+**⚠️⚠️ A LEI: o teto da Meta manda no tamanho da rodada, e furá-lo DESCARTA
+convite em silêncio.** A conta está em **TIER_250** (250 destinatários únicos/24h)
+e a fila **desiste 36h depois** de criada a mensagem. Enfileirar 2.000 pessoas não
+entrega 2.000 devagar: entrega ~250 e as outras ~1.750 **morrem na fila em dois
+dias**, sem erro, e a pessoa nunca soube do censo. Por isso
+`TETO_RODADA_WHATSAPP = 200` (folga pros avisos operacionais que dividem a cota),
+reenvio é **rodada nova**, e o que ficou de fora é **declarado** (`adiados`) na
+tela. Subir esse número sem o tier ter subido é regressão — o teste trava em 250.
+
+- **`backend/utils/censoConvite.js`** = régua PURA (quem recebe, quantos saem), em
+  `utils/` pra entrar no gate. O serviço lê o banco e envia; **não duplicar régua
+  lá**.
+- **`mem_censo_convites`** (1 linha por membro/canal/rodada, UNIQUE parcial) é o
+  que faz o reenvio pegar **só quem não respondeu** — sem ela o 2º disparo manda
+  de novo pra todo mundo, que é como campanha legítima vira spam e derruba a nota
+  da conta. ⚠️ **Não guarda telefone nem e-mail**: o contato vive em `mem_membros`
+  e muda quando a pessoa corrige; copiar aqui criaria uma segunda verdade que
+  envelhece.
+- **Default é `membro_ativo`, não a base toda.** Visitante entra só marcando o
+  chip: são ~1.800 pessoas ⇒ 9 rodadas/dias no tier atual, e é gente que não pediu
+  contato.
+- **Disparo SEMPRE manual, sem cron**, com prévia + **confirmação digitando o
+  número**. Rota do POST é **nível 4**, não 3: editar cadastro é uma coisa, falar
+  com 200 pessoas no número institucional é outra.
+- **Relay do "Entrar com Apple" (`@privaterelay.appleid.com`) NÃO recebe e-mail**
+  — é caixa técnica que a pessoa não lê, e mandar ali a marcaria como convidada.
+- ⚠️ **Orçamento de TEMPO além do teto de quantidade** (`ORCAMENTO_EMAIL_MS`): o
+  `enviarEmail` faz 3 tentativas com backoff, então uma rodada com muitos
+  endereços ruins passaria dos 300s de `maxDuration` — e **função morta no meio
+  não registra o que já enviou**, fazendo a próxima rodada repetir.
+- ⚠️ **Não editar template aprovado**: se precisar mudar texto, criar `_v2` —
+  edição volta pra revisão da Meta e o envio para.
+
+### ⚠️⚠️ "Aprovar o template" NÃO liga o canal — e a tela dizia que ligou (05/08)
+
+O Matheus aprovou o template, apertou disparar **duas vezes** e veio perguntar
+quem havia respondido. **Nada tinha saído** — a env não existia, então
+`whatsappPronto()` mantinha o canal fechado. A guarda funcionou (zero linhas,
+audiência intacta), mas a TELA mostrava caixa **verde** com "Rodada N disparada" e
+o motivo real como **slug cru** no fim da linha.
+
+- **Régua: envio que não enviou ninguém NÃO pode aparecer como sucesso.** Sem
+  nenhum envio a caixa fica âmbar, diz "Nada foi enviado — nenhuma pessoa foi
+  convidada" e o motivo vem como frase inteira (incluindo o lembrete de que **a
+  Vercel só aplica env nova em deployment novo**).
+- **Diagnóstico com evidência, não suposição**: as tabelas de convite e de envios,
+  `vercel env ls` e os runtime logs. "Ele disse que disparou" não é dado.
+
+### ⚠️⚠️ CANÁRIO · a env existir não prova que o template funciona
+
+`whatsappPronto()` só olha se a env está **setada**. Nome com um caractere errado,
+template não aprovado ou com nº de variáveis diferente **passa pela guarda** — e
+`enfileirarLote` **INSERE sem tentar enviar**. O estrago: as ~200 pessoas viram
+convidadas, a Meta recusa tudo depois (**132001 é falha PERMANENTE, sem retry**) e
+a rodada seguinte as pula. **Convite perdido pra sempre.**
+
+Agora a **primeira mensagem vai sozinha e SÍNCRONA**. Recusa **permanente** ⇒
+rodada abortada, **ninguém registrado**. Falha **passageira** (teto do tier) segue
+enfileirando normal — ali a fila é dona da entrega e o convite conta. Custo do
+canário: 1 mensagem. ⚠️ A distinção usa o `permanente` que a fila já expõe, não
+uma régua nova — duas réguas pra decidir "isso é definitivo?" divergiriam.
+
+## ⚠️ Censo · o link do convite é PESSOAL, e é isso que dispensa o CPF (2026-08-04 · SEM migration)
+
+Furo achado pelo Matheus horas depois do disparo entrar: *"se estou disparando mensagens para a
+pessoa pedindo para ela completar o cadastro dela, como o sistema vai achar ela se ela não tiver
+CPF cadastrado???"*. Não vai — e o link genérico `?censo=1` abria um **formulário em BRANCO de
+cadastro novo**. Pedir "atualize seus dados" e entregar folha vazia não atualiza nada.
+
+**A resposta: o sistema não precisa achar ninguém.** Quem manda a mensagem é ele, e ele já sabe
+para quem está mandando. O link vai **pessoal**: `?censo=1&t=<token assinado com o membro_id>`.
+Cobre as ~2.000 pessoas sem CPF — que são exatamente o público da campanha — com zero busca.
+
+- **`backend/utils/censoToken.js`** — HMAC-SHA256 do `membro_id`, espelho da técnica do
+  `inscricaoComprovante.js`. Segredo `CENSO_TOKEN_SECRET` com fallback no `CRON_SECRET`,
+  **fail-closed**, **nunca literal** (lição do `MEM_QR_SALT`). **Namespace próprio**
+  (`censo-atualizacao:`) — sem ele, um token do comprovante de inscrição (mesmo segredo!) seria
+  aceito aqui e quem tem comprovante leria cadastro de membro. Há teste específico pra isso.
+- **`GET /api/public/membresia/censo/meus-dados?t=`** é o **ÚNICO** endpoint público desta rota
+  que devolve dado de pessoa. ⚠️ **Pode, porque a prova é o token ter chegado no contato DELA.**
+  Os `lookup-cpf`/`lookup-nome-telefone` continuam devolvendo só primeiro nome + iniciais +
+  telefone mascarado, e **é assim que tem que ficar**: CPF vaza e se compra, então CPF não é
+  prova. ⚠️ **NUNCA aceitar `membro_id` cru na query** — seria enumerável (UUID vaza em log, em
+  print, no histórico do navegador) e viraria extrator da base. Resposta de recusa é **neutra**:
+  não distingue token malformado de segredo ausente de pessoa inexistente.
+- **`token_censo` é chave FORTE no `censoReconciliar`** (entrou em `CHAVES_FORTES`, ao lado de
+  `cpf`). Motivo diferente do CPF: não é dado que a pessoa digitou (e que poderia ser de outra
+  pessoa da família) — é o link que o sistema emitiu e entregou. Tratá-lo como fraco jogaria na
+  fila humana justamente o caminho criado pra resolver os cadastros sem CPF, e exigir CPF forte
+  seria **circular** (é o CPF que eles estão vindo buscar).
+- **Modo atualização no formulário**: abre preenchido, com `· falta preencher` **no próprio
+  rótulo** dos campos incompletos (a lista vem do servidor pela MESMA
+  `avaliarProntidao` da fila — a pessoa completa exatamente o que a equipe cobraria depois),
+  tudo editável, foto. ⚠️ O formulário fica **escondido enquanto carrega**: renderizar vazio
+  fazia a pessoa começar a digitar e o prefill sobrescrever o que ela escreveu.
+- ⚠️ **Link ruim NÃO vira tela de erro** — degrada pro cadastro normal. E sem segredo o
+  `montarLinkCenso` devolve o link genérico em vez de falhar: a campanha não para, só perde o
+  preenchimento (a prévia avisa via `link_pessoal: false`).
+- **O atalho "Já fiz meu cadastro e quero meu QR de membro" SAIU do formulário** (decisão dele):
+  a carteirinha vive no app de membros, e numa página cuja tarefa é completar cadastro o atalho
+  competia com a tarefa. `MemberWalletDialog` e as rotas `/wallet/*` **seguem existindo** (o app
+  usa) — não apagar.
+
+### ⚠️ O formulário de membresia não coletava SEXO — e isso travava a fila inteira
+
+Achado ao construir a régua de obrigatórios: os 50 pendentes tinham `genero` preenchido (vêm de
+outra porta), mas **`CadastroMembresia.jsx` nunca perguntou sexo** e o `POST /cadastro` nem
+aceitava o campo. Consequência silenciosa: todo cadastro novo por essa porta nasce sem sexo, logo
+**nunca fica "completo"** pela régua — ficaria na fila humana para sempre, e ninguém saberia por
+quê. Contrato de Inscrição exige sexo em toda porta de pessoa; esta era a que faltava.
+Corrigido nas 3 camadas: campo no form (`masculino|feminino`, **nunca "outro"**), whitelist no
+backend, e `genero` entrou em `CAMPOS_CENSO` do reconciliador — sem isso o dado chegava do censo
+e era **descartado em silêncio**.
+
+## ⚠️⚠️ LEI · em operação LONGA, gravar o efeito DURANTE, não no fim (2026-08-04)
+
+Três incidentes no mesmo dia, todos da mesma família. A lei que sai deles vale
+pra qualquer coisa que faça N ações externas numa requisição:
+
+**1 · Aprovação em massa (49 cadastros).** O servidor concluiu; o cliente abortou
+em 30s (`request()` tem timeout padrão de 30s) e a tela disse *"Tempo esgotado ao
+falar com o servidor. Recarregue a página ou tente de novo."* — para um trabalho
+que **deu certo**. A lista continuou mostrando os 50 pendentes que já não
+existiam. O caminho que a mensagem sugeria (tentar de novo) reprocessaria 49
+cadastros. Correção: **pedaços de 8 com progresso real no botão**
+("Aprovando 16 de 49…").
+
+**2 · Disparo do censo (200 e-mails).** Mesma coisa, com prejuízo real: os 200
+e-mails **saíram** e o registro em `mem_censo_convites` — que era **um único
+insert no FIM** — falhou. Ninguém ficou marcado como convidado, e a rodada
+seguinte teria reenviado pras mesmas 200 pessoas. Diagnóstico veio do
+`get_runtime_logs` da Vercel (POST 200 + a mensagem do erro), **não** de
+suposição: pelo que a tela mostrava, a conclusão natural era "nada saiu".
+
+⇒ **A LEI: o registro do que já aconteceu vai em BLOCOS, durante o laço.** Morte
+no meio (timeout da função, rede, deploy) deixa gravado o que já saiu, e a
+próxima execução continua de onde parou em vez de duplicar. Registro no fim
+transforma qualquer interrupção num bug com prejuízo externo.
+
+⇒ **Corolário na UI: timeout de cliente NÃO é prova de que nada aconteceu.** A
+mensagem nesses fluxos não pode dizer "tente de novo" — a do disparo agora diz
+que o envio provavelmente continuou e manda conferir pela prévia. Em envio pra
+fora, "tente de novo" é a instrução mais cara que a tela pode dar.
+
+**3 · `ON CONFLICT` não usa índice PARCIAL.** A UNIQUE de `mem_censo_convites`
+nasceu com `where membro_id is not null` e o upsert do PostgREST estourava
+*"there is no unique or exclusion constraint matching the ON CONFLICT
+specification"* — o Postgres exige que o statement repita o predicado do índice,
+coisa que o `upsert()` do supabase-js não expressa. Índice recriado **sem
+predicado** (`NULL` não conflita de qualquer forma: `NULLS DISTINCT` é o padrão).
+Régua: **índice usado por `ON CONFLICT` nunca é parcial.**
+
+⚠️ Os 200 convites foram **reconstruídos** com a MESMA ordem do disparo
+(`created_at asc`, primeiros 200 elegíveis), com **deriva zero conferida** antes
+(ninguém respondeu, ganhou CPF ou foi criado no intervalo). Verificação
+independente que fechou: a prévia dizia "451 ficam para a próxima" e o sistema
+recalculou **451** depois do reparo. Coluna `observacao` marca as linhas como
+reconstrução — **não** usar `erro` pra isso (`erro` significa "o canal recusou",
+e sujá-lo faz a contagem de falhas mentir).
+
+## ⚠️ Censo · o CPF era DESCARTADO, e o painel dizia que estava tudo bem (2026-08-04)
+
+O pior bug do dia, e o mais silencioso. `CAMPOS_CENSO` do `censoReconciliar`
+exclui `cpf` **de propósito** (CPF tem serviço próprio, `cpfReconciliar`, que
+trata conflito de identidade e CPF já pertencente a outro membro) — mas esse
+serviço **nunca era chamado** no `publicMembresia.js`. Medido em produção: as
+primeiras 4 pessoas do disparo preencheram o CPF, a submissão foi marcada
+`aplicado` (sem conflito, tudo "certo"), e **o CPF não chegou a nenhum cadastro**.
+A campanha existe pra coletar CPF de ~2.000 pessoas que não têm.
+
+- Corrigido: o caminho do censo chama `reconciliarCpfTardio`, com `confianca`
+  espelhando a força do vínculo — `cpf` e `token_censo` são fortes; sinal fraco
+  exige nascimento conferível e vai pra fila humana se divergir (é o que impede
+  gravar o CPF de uma pessoa no cadastro de outra da mesma família).
+- Reparo: 4 CPFs consolidados. **2 casos NÃO foram gravados** porque o CPF
+  informado já pertencia a outro cadastro — viraram `identidade_pendencias`
+  (`cpf_conflito`). ⚠️ **Isso é GANHO, não erro:** é a pessoa duplicada se
+  identificando: o convite foi pro cadastro sem CPF e ela respondeu com o CPF do
+  outro. A campanha revela duplicata que ninguém achava.
+
+**⚠️ A lição que passa do bug: o painel de cobertura NÃO mede a campanha.** Ele
+tem a base inteira no denominador (200 convites com 8 respostas = "0,1%") e conta
+**RESPOSTA, não CPF** — então as respostas subiam enquanto todos os CPFs eram
+descartados, e **nada na tela denunciava**. Daí a `vw_censo_campanha` e o bloco
+"O que as rodadas já trouxeram" no card: convidados → responderam → **passaram a
+ter CPF** → viraram conflito. Métrica de campanha mede o OBJETIVO, não a
+atividade; quando as duas divergem, é a atividade que engana.
+
+## ⚠️ Censo · o OPT-IN também era descartado — e ele destrava o aniversário (2026-08-05)
+
+Mesma família do bug do CPF, achado ao responder a pergunta do Matheus sobre o
+disparo de aniversário dos voluntários. **Quem propaga consentimento é a
+APROVAÇÃO** (`aprovarCadastroCore` / `promoverInscricaoLider`) — e a linha do
+censo vira **`aplicado` e NUNCA é aprovada**, então o opt-in ficava só na
+submissão. `CAMPOS_CENSO` não inclui `whatsapp_optin` (e não deve: consentimento
+não é campo cadastral que se preenche por igualdade).
+
+Medido em 05/08: **70 das 74 respostas marcaram a caixa (95%)** e só **13**
+tinham chegado ao cadastro — **57 consentimentos válidos invisíveis** pra quem
+decide se pode enviar. Corrigido no caminho do censo (`publicMembresia.js`) e os
+57 reparados com a **data da submissão**, não a de hoje: `whatsapp_optin_em` é a
+data da PROVA, e estampá-la com "agora" apagaria desde quando o consentimento
+vale. Backup em `_bk_20260805_optin_censo`.
+
+- ⚠️ **SÓ LIGA, NUNCA DESLIGA** (mesma política da aprovação): não marcar a caixa
+  é ausência de consentimento NESTA submissão, não revogação do que a pessoa
+  autorizou em outra porta. Revogar é ação dela.
+- ⚠️ O UPDATE leva `.or('whatsapp_optin.is.null,whatsapp_optin.eq.false')` pra
+  **preservar o `whatsapp_optin_em` de quem já havia consentido** — sobrescrever
+  a data da prova é perder a informação, não atualizá-la.
+- ⚠️ **O reparo pegou 58, não 57**: o Amaury respondeu o censo às 14:17 daquele
+  dia, ENTRE o snapshot do backup e o UPDATE. Benigno (ele consentiu de fato) e
+  é prova ao vivo de que o furo estava ativo até o commit. Régua: em reparo sobre
+  porta pública VIVA, conferir quem entrou no alvo depois do backup em vez de
+  tratar divergência de 1 como erro de contagem.
+
+### A resposta sobre o aniversário dos voluntários: já está construído
+
+Pergunta dele: *"agora todos os nossos formulários têm a checkbox — não podemos
+usar isso para que a Meta não bloqueie o envio das mensagens de aniversário dos
+voluntários?"* **Sim, e o raciocínio está certo: o impedimento nunca foi "a Meta
+bloqueia Marketing", é que Marketing EXIGE opt-in.** Nada a construir — o
+mecanismo existe ponta a ponta e está agendado:
+
+- `vercel.json` → cron `/api/whatsapp-cron/aniversarios` (`0 12 * * *` = 9h BRT)
+- `whatsappCron.js` filtra `whatsapp_optin = true` **e** vínculo de voluntário
+  aberto (`mem_voluntarios.ate IS NULL`)
+- `whatsappService.TEMPLATES_MARKETING = new Set(['aniversario'])` → o gate de
+  opt-in do `notificarMembro` já vale exatamente pra este template
+- templates `cbrio_aniversario` e `aniversario_voluntariado` **aprovados**, com
+  `WHATSAPP_TEMPLATE_ANIVERSARIO2` setado em produção
+
+**A única variável é o tamanho da audiência**, e ela cresce sozinha com a
+campanha: de **178 voluntários** com nascimento + telefone, os que podem receber
+foram de **21 → 36** só com o reparo acima. Nada enviado até 05/08 porque o cron
+depende de cair no dia de alguém com opt-in.
+
+## ⚠️ WhatsApp · falha de entrega AVISA GENTE, e o módulo vem do contexto (2026-08-05)
+
+Autorizado pelo Matheus ao ligar o aniversário dos voluntários. Duas coisas
+erradas no mesmo caminho, as duas silenciosas:
+
+**1 · O `failed` do webhook não avisava ninguém.** A falha de entrega tem DOIS
+caminhos e só um deles notificava:
+
+| caminho | quando | antes |
+|---|---|---|
+| `whatsappFila.avisarFalhaTerminal` | a Meta **recusa na hora** (telefone inválido, código permanente) | ✅ notificava |
+| `publicWhatsapp.processarStatuses` | a Meta **aceita** (200 + message_id) e depois reporta `failed` | 🔴 só gravava `failed_at` |
+
+É no segundo que cai **"Message undeliverable" — número brasileiro válido SEM
+WhatsApp**, o caso que o próprio CLAUDE.md registrava como "não avisa ninguém".
+
+⚠️ **O `.select('id')` no UPDATE não é enfeite**: o `.is('failed_at', null)` faz
+o UPDATE ser idempotente, mas sem saber **quantas linhas mudaram** a reentrega
+da Meta (normal, e ela reentrega muitas vezes) avisaria de novo a cada entrega.
+Mesma lição da guarda de idempotência: **o efeito colateral tem que estar
+amarrado à transição real**, não à execução do handler.
+
+⚠️ **Dedup por (MÓDULO, DIA)** neste caminho, diferente do por-envio da fila, e
+de propósito: é aqui que caem os DISPAROS EM MASSA (aceito pra 200, `failed`
+chegando um por um). Um aviso por mensagem × fallback de 16 admin/diretor =
+centenas de linhas enterrando o sino — lição do censo e do lote de aprovação. O
+detalhe fica em `whatsapp_envios.failed_at/erro_status`. E como o dedup do
+`notificar` só vale enquanto **não lida**, falha nova depois de tratada volta a
+avisar (desejado).
+
+**2 · ⚠️ O PREFIXO DO CONTEXTO NÃO É UM MÓDULO.** `avisarFalhaTerminal` fazia
+`contexto.split('.')[0]`, e o contexto do aniversário é **`app.aniversario`** —
+o `app.` diz que o disparo nasceu de um evento do app, **não** que exista módulo
+"app" (conferido no catálogo: não existe). Resultado: `resolverDestinatarios`
+não achava regra e **todo** aviso de falha dos disparos do app caía no fallback
+de TODOS os admin/diretor. Aviso que chega pra 16 pessoas e não é de nenhuma
+não é tratado por ninguém.
+
+- **`backend/utils/whatsappModulo.js`** = régua PURA (em `utils/` pra entrar no
+  gate) mapeando contexto → `{modulo, link}`; `services/whatsappContexto.js` lê
+  o banco e notifica. **Os dois caminhos usam a MESMA régua** — o mapa duplicado
+  era garantia de divergirem.
+- ⚠️ Os 9 slugs do mapa foram conferidos no catálogo `modulos` (todos existem e
+  ativos). `voluntariado` tem 3 regras em `notificacao_regras`, então o aviso do
+  aniversário vai pros responsáveis, não pro fallback.
+- `src/test/whatsappModulo.test.ts` (9 casos · **no gate**) é **mutation-test da
+  causa raiz**: voltar pro `split('.')[0]` fica vermelho, e há uma asserção de
+  que todo módulo do mapa existe entre os slugs reais.
+- O aviso **nomeia a pessoa** quando dá (`ref_id` é o membro nos contextos de
+  `notificarMembro`) — "o telefone 21…" não diz a quem avisar.
+
+## Comunicação · aba "Automáticas" · quem recebe o que o sistema manda sozinho (2026-08-05)
+
+Pedido do Matheus: *"queria conseguir saber quem são as pessoas que recebem as
+mensagens automáticas."* Até aqui a resposta só existia LENDO CÓDIGO — cada
+disparo tem a régua de público dentro do seu cron, e nada no sistema dizia quem
+se encaixa nela hoje.
+
+Aba nova em `/comunicacao?tab=automaticas` (`GET /comunicacao/automaticas` ·
+`services/comunicacaoAutomaticas.js`). Por disparo: a regra em português,
+**quantas pessoas se encaixam agora**, **os nomes**, o que saiu de fato em 30
+dias, e — o que faz a tela não mentir — **as travas**.
+
+- ⚠️ **100% SOMENTE LEITURA.** Descreve o que os crons disparam; não envia, não
+  agenda, não desliga. Mesma decisão do inventário de portas do /inscricoes:
+  cada disparo tem lógica-satélite no módulo dono, e um 2º caminho de escrita é
+  a classe de bug que o desenho evita.
+- ⚠️ **`?pessoas=1` exige nível 2**: a lista carrega nome + telefone. "Quantos
+  recebem" é gestão; "quem recebe, com telefone" é cadastro de gente. Sem nível,
+  a resposta traz `pessoas_ocultas: true` — dizer que não veio, porque "nenhuma
+  pessoa" é a leitura errada de "sem permissão".
+- ⚠️⚠️ **PÚBLICO SEM A TRAVA AO LADO É NÚMERO QUE MENTE.** A chamada do mês
+  mostraria **"95 líderes recebem"** enquanto o **kill-switch central dos envios
+  automáticos de grupos está DESLIGADO** (`whatsapp_config.grupos_auto_envios`,
+  default false desde o susto de 20/07) e o envio real é ZERO. Com trava ativa o
+  card troca o rótulo pra **"se encaixam na regra"**, apaga a cor do número e
+  abre uma faixa âmbar dizendo *por que* nada sai. Travas espelhadas:
+  kill-switch, temporada em curso, e template sem env.
+- ⚠️ **Público × enviados medem coisas diferentes** e a divergência é o
+  diagnóstico: público é quem se ENCAIXA hoje, enviados é o que SAIU. Foi assim
+  que o devocional apareceu como 22 no público, 0 entregues e 187 erros.
+- ⚠️ **A régua daqui é ESPELHO do cron, não a fonte** — se o cron mudar, esta
+  tela passa a mentir. Cada item declara o `fonte` (arquivo/rota que manda de
+  verdade) e o resolver diz de qual função é espelho. Disparo automático NOVO
+  tem que entrar no `CATALOGO`: o que não está no inventário fica invisível, e
+  mensagem automática invisível é a que ninguém descobre que está errada.
+- Público que falha **não derruba o inventário** (o item mostra o erro e os
+  outros aparecem): esconder 3 disparos por causa de 1 seria trocar informação
+  por silêncio.
+
+### ⚠️ Achado ao construir: o "Estudo da semana" NÃO é automático
+
+O CLAUDE.md dizia que o cron diário manda o estudo no `WHATSAPP_ESTUDO_DIA`.
+**Não manda:** `whatsappGrupos.enviarEstudoSemanal` **não tem nenhum chamador**
+(`grep` em todo o backend) e `/whatsapp-grupos/cron/diario` só executa
+`sincronizarLideresGrupos()`. Ele saiu do catálogo — listar ali um automático
+que não existe é o oposto do propósito da aba. O envio do estudo é MANUAL.
+
+### Estado medido em 05/08 (o que a aba mostra)
+
+| Disparo | Público | Situação |
+|---|---|---|
+| Parabéns de aniversário | **36** de 178 voluntários | funcionando |
+| Lembrete de batismo | 0 (sem batismo amanhã) | funcionando |
+| Chamada do mês (grupos) | 95 líderes | **travado** · kill-switch desligado |
+| Devocional do dia | 22 (14 sem opt-in) | **quebrado** · 187 erros, 0 entregas |
+
+## ⚠️ Folha por pessoa · o coordenador estratégico VÊ (decisão de 2026-08-05)
+
+Registrado pra não ser re-sinalizado como problema: **o coordenador estratégico
+pode ver a folha de pagamento por pessoa** (decisão do Matheus). Então
+`SAIDAS_ALLOWLIST` em `backend/routes/financeiroV2.js` e o espelho em
+`src/pages/admin/financeiro/DashboardFinanceiroSemanal.jsx` **ficam como estão** —
+não "corrigir" removendo esse acesso.
+
+⚠️ Pela LEI de não nomear pessoa como dono de fluxo, o que vale aqui é o PAPEL.
+Quem ocupa o papel vive no banco (`usuario_areas` / cargo), não neste arquivo.
+
+## ⚠️ Membresia · aprovação em massa da fila de cadastros (2026-08-04 · SEM migration)
+
+Pedido do Matheus: selecionar alguns ou todos e aprovar de uma vez, *"mas o sistema deve ter uma
+inteligência para ver se a pessoa está com esses dados obrigatórios preenchidos; se caso alguém
+não estiver, não vai aprovar essas pessoas e fica para aprovação manual mesmo"*.
+
+- **`backend/utils/prontidaoCadastro.js`** = régua PURA (testada no gate), espelhando o Contrato
+  de Inscrição: nome completo **sem abreviação**, CPF com DV, telefone alcançável, e-mail,
+  nascimento plausível (`hoje` injetado, parse local), sexo, e `aceita_termos` (a prova legal).
+  Separa **`faltando`** (campo) de **`bloqueios`** (decisão humana). ⚠️ **Não inventar exigência
+  aqui**: se o formulário público aceitou, a fila não pode exigir mais — senão o cadastro entra e
+  nunca sai (foi exatamente o que o sexo ausente causava).
+- **`aprovarCadastroCore()` foi EXTRAÍDO** do handler de 170 linhas, no padrão do
+  `aprovarPedidoCore` dos Grupos; a rota individual virou casca fina. Duas cópias dessa lógica
+  divergiriam, e o que ela faz é **criar pessoa** (matcher canônico, opt-in, histórico).
+- **`POST /cadastros/aprovar-lote`** (teto 200): relê as linhas do banco e **reavalia a prontidão
+  no SERVIDOR** — o payload diz *quais*, nunca *se pode*. ⚠️ **Sequencial de propósito**: cada
+  aprovação passa pelo matcher e pode criar pessoa; em paralelo, dois cadastros da mesma família
+  (telefone compartilhado) correriam no matcher ao mesmo tempo e poderiam gerar a duplicata que
+  a fila de Entradas existe pra limpar.
+- ⚠️ **`duplicado_de_id` preenchido NUNCA entra em lote**, mesmo com todos os dados: ali aprovar
+  é o caminho de ATUALIZAÇÃO, que reaplica o formulário inteiro sobre o cadastro existente —
+  inclusive por cima de valor que a equipe corrigiu depois (mesma razão pela qual o censo bloqueia
+  reaprovar linha `aplicado`). É decisão humana, sempre.
+- ⚠️ **O lote manda UM aviso com o resumo**, não um por pessoa: sem regra configurada o
+  `notificar` cai no fallback de todos os admin/diretor (16), então 50 aprovações gerariam ~800
+  linhas e enterrariam o sino. Lição do censo — aviso é pra trabalho PENDENTE, e lote aprovado é
+  trabalho FEITO.
+- **Não é mais permissivo que o manual**: o que o lote recusa continua aprovável na tela, com a
+  pessoa vendo os dados. Nada fica inalcançável — fica pendente de gente, que era o pedido.
+- Na tela: coluna de checkbox, "Selecionar os N completos", contagem de quantos precisam de
+  aprovação manual, `Falta: CPF válido · sexo` **na linha da pessoa**, e diálogo de resultado com
+  quem ficou de fora e por quê. `GET /cadastros` passou a anexar `prontidao` por linha
+  (informativo — quem decide é o servidor).
+- **Medição de 04/08**: os **50 pendentes estavam 100% completos** (CPF, telefone, e-mail,
+  nascimento, sexo, termos, nome completo, nenhum duplicado) — o lote resolve os 50 num clique.
+
+## Membresia · limpeza dos nomes que não são pessoa (2026-08-04 · SEM migration)
+
+Pedido do Matheus: *"preciso fazer uma limpa nesses nomes, por exemplo ali que
+está escrito nome riscado, claramente não é uma pessoa e veio de importação"*.
+Medido antes de tocar: a base tinha **3.924 vivos** e o lixo era **24 nomes**,
+dos quais **1** era lixo puro. A limpeza é pequena; o valor foi a triagem.
+
+**⚠️ 5 dos 24 eram PESSOAS REAIS que o meu próprio padrão pegou** — o regex
+`pessoa` casa com **sobrenome "Pessoa"**, comum no Brasil: `RENATA ANDRADE
+PESSOA DE MIRANDA` (4 grupos, **69 contribuições**), `Carolina Pessoa`
+(responsável por 4 crianças no Kids), `Maria Rosa De Oliveira pessoa`,
+`Tatiana Pessoa`, e `Vivian … (certo)` (o "(certo)" é anotação da equipe, não
+sujeira). **Régua: antes de apagar por padrão de nome, contar os vínculos
+operacionais** (vol, next, grupos, batismo, contribuição, kids_resp) — foi isso
+que separou pessoa de lixo, não a aparência do nome.
+
+**8 são contas de sistema e NÃO foram apagadas** (decisão: esconder, não apagar):
+`totem1-3` e `totem.kids1-4` têm **profile de login `@cbrio.org` apontando pra
+elas** — apagar o cadastro quebra o vínculo do login do totem; e
+`Apple Review (Demo)` é a conta proposital de revisão da App Store.
+⚠️ **Follow-up em aberto**: elas contam como pessoa na lista de Membresia e nos
+totais da base. O conserto certo é um filtro de exibição, não `deleted_at`.
+
+**11 apagados** com `app_soft_delete` (backup em
+`scratchpad/backup_membresia_sem_nome_20260804.json` · desfaz com
+`app_restore`): `. f` · `Anônimo 1/2/3` · `(nome riscado - Guadelupe)` ·
+`Josm... (ilegível)` · `Dianevieira26@gmail.com` (o nome era o e-mail) ·
+`22 pessoas -` · e os 3 do app sem nome preenchido (`5rr9697fp4`,
+`sy9p84mryx`, `pollyekley7788`).
+- ⚠️ **Os 3 do app têm login e 2 têm push token ativo** (um criado no mesmo dia).
+  O Matheus autorizou apagar sabendo disso; se alguém reclamar de acesso,
+  `select app_restore('mem_membros','<id>')` resolve.
+- ⚠️ **O histórico do Next sobreviveu de propósito**: `next_matriculas.nome` e
+  `next_inscricoes.nome` são **NOT NULL**, então as 6 matrículas do backfill de
+  listas manuscritas continuam existindo com o nome próprio. Apagar o cadastro
+  **não** apagou a presença — conferido depois.
+- ⚠️ **`22 pessoas -` era linha de planilha que o import virou pessoa**: ligada a
+  um `batismo_inscricoes` cujo nome é literalmente "22 pessoas", realizado em
+  26/01/2025. Decisão do Matheus: *"o número de batismo você mantém"* — então
+  **só o cadastro de pessoa foi apagado** e a linha do batismo ficou intacta
+  (`batismo_inscricoes.deleted_at` não foi tocado). Conferido: **226 batismos
+  realizados em 2025**, o mesmo de antes. A contagem de batismo não faz join com
+  `mem_membros`, então soft-delete de pessoa não a afeta.
+
+## Cuidados · Visitas e Atendimentos ganhou visão POR PASTOR (2026-08-04 · SEM migration)
+
+Pedido do Matheus: "clicar no pastor e ver os atendimentos dele" + melhorar o
+filtro de data. Toggle **Por pessoa | Por pastor** no `TrilhaPessoas`; as duas
+visões leem o MESMO `pessoas` já carregado (`GET /cuidados/trilha`), então trocar
+não faz round-trip e as contagens não podem divergir — a condição de filtro virou
+uma função só (`casaFiltros`), usada pelos dois lados.
+
+- Na visão por pastor o filtro **"Quem atendeu" é escondido**: ali o recorte por
+  responsável É a própria lista, e deixá-lo ligado mostraria um card só sem
+  explicar por quê.
+- **Visão por PASTOR é o DEFAULT da aba** (2ª rodada · 04/08): o uso real é a
+  liderança olhando o próprio acompanhamento; achar uma pessoa específica tem o
+  campo de busca, e a trilha dela fica a um clique dentro do card do pastor.
+- **⚠️ Layout do período · foram DUAS causas, e a 1ª correção só pegou uma.**
+  1. `Label` do shadcn é `<label>` (inline) e o `DatePicker` é um `Button`
+     inline-flex — `space-y-1` não empilha dois inline, eles fluem na mesma linha.
+     Daí as labels "De"/"Até" aparecerem COLADAS ao lado do calendário. Resolvido
+     com `block` na label.
+  2. **O que sobrou depois disso**: o Button do DatePicker tem `whitespace-nowrap`
+     e o span do placeholder é `flex-1` **sem `truncate`**, então texto que não cabe
+     **transborda pra fora do botão** e passa por cima do vizinho — o "até" ficava
+     escrito por dentro do "Selecione a data". Com `w-[142px]`, sobravam ~94px de
+     texto pra uma frase de ~110px.
+  **Régua:** ao encaixar `DatePicker` em espaço estreito, encurtar o `placeholder`
+  (aqui virou "Início"/"Fim", já que o grupo tem label própria) **e** medir a
+  largura contra `w − px − (ícone + mr-2) − (X de limpar, quando há data)`. O
+  `overflow-hidden` no botão é só cinto de segurança: ele CLIPA em vez de invadir o
+  vizinho, mas não faz o texto caber.
+
+⚠️ **`responsavel` é TEXTO LIVRE e isso limita a feature.** O form usa `<Input>`,
+não select do catálogo `cui_responsaveis` — que EXISTE, é gerenciável na UI e tem
+"Wesley Ramos" cadastrado. Resultado medido em 04/08: o mesmo pastor em **4
+grafias** ("Pr. Wesley B. Ramos" 6 · "Pr. Wesley Barros" 2 · "Wesley Barros"
+dentro de duplas · "Wesley Ramos" no catálogo), então a visão mostra **6 cards
+para ~4 pessoas** e o total real dele (12) fica partido.
+- **NÃO fundimos grafias** — casar "Wesley B. Ramos" com "Wesley Barros" é
+  adivinhar identidade, o que a lei do Contrato de porta proíbe.
+- O que É mecânico e foi feito: **separar DUPLA** (`X e Y`, `X, Y`, `X / Y`,
+  `X & Y`) em pastores distintos. Visita conjunta conta pros dois, por isso o card
+  diz **"participou de N"**, não "fez N" — e a soma dos cards (19) fica MAIOR que
+  o total de atendimentos (15) de propósito. O dialog mostra "com: <campo
+  original>" na linha do atendimento conjunto.
+- **Correção de raiz FEITA no mesmo dia** (decisões do Matheus em 04/08):
+  - **Campo virou seleção MÚLTIPLA do catálogo** (`RespSelector`, pílulas) — texto
+    livre acabou, grafia nova não nasce mais. Marcar 2+ é suportado: visita em dupla
+    conta pros dois. Guarda o NOME em lista `", "`-separada, **não id**: é o padrão
+    do módulo (essas pessoas não logam, o catálogo é por nome, e renomear propaga).
+    Trocar pra id exigiria satélite polimórfica (visita × acompanhamento) e deixaria
+    os dois lados do módulo com réguas diferentes.
+  - **Nome legado fora do catálogo é PRESERVADO** e aparece como pílula marcada com
+    `*` (caso da "Léia Serpa"). Sumir com o nome de quem já atendeu seria perder
+    histórico pra ganhar arrumação.
+  - **Grafias do Wesley consolidadas** — "Sim, tudo Wesley Ramos", confirmado por
+    ele; eu NÃO decidi isso. Resultado: de 6 cards pra **4 cards / 4 pessoas**, com
+    os 12 atendimentos dele juntos. Backup em
+    `scratchpad/backup_cui_visitas_responsavel_20260804.json`. "Marcelo Soares"
+    entrou no catálogo (pessoa distinta e real — supervisor-jornada, não variação de
+    grafia). **"Léia Serpa" NÃO foi tocada**: pode ou não ser a "Léia" inativa do
+    catálogo, e isso é identidade — fica pendente de confirmação dele.
+  - ⚠️ **Cascata de rename estendida a `cui_visitas`** (antes só `cui_convertidos`).
+    Não dá pra usar `.eq()` como no convertido, porque o campo guarda LISTA: a troca
+    é por **token exato**, read-modify-write. `replace()` de substring renomearia
+    "Léia" dentro de "Léia Serpa", que é outra pessoa. É best-effort e devolve
+    `renomeados_visitas` — o catálogo e os convertidos já foram renomeados com
+    sucesso quando ela roda, então derrubar a resposta ali esconderia o trabalho
+    feito.
+
+## ⚠️ Entradas · ação de fila NÃO refaz a busca (2026-08-04 · SEM migration)
+
+Reclamação do Matheus: "quando faço qualquer ação, demora pra atualizar, quero
+algo fluido". Eram **~10s por clique** em Possíveis duplicidades.
+
+**Causa:** cada ação (fundir / não é a mesma pessoa / adiar / reativar) chamava
+`invalidateQueries` em `['next-batismo','duplicados']`, e o `GET /duplicados`
+**RECALCULA a fila inteira** — pagina a base viva, forma candidatos por CPF,
+telefone, e-mail, nascimento e blocos de nome, e aplica a `duplicidadePolicy`.
+Pior: as ações de resolução invalidam também o **cache de 10 min do backend**,
+então nem o `/resumo` voltava barato (ele recomputa `dup` também).
+
+- **A régua:** a ação já foi confirmada pelo servidor — o par só precisa **SAIR da
+  lista** (`setQueryData`) e o contador descer 1. **Nenhum refetch.** Recálculo de
+  verdade continua no botão "Recarregar", que é explícito. De ~10s pra ~300ms.
+- ⚠️ **Fundir remove MAIS de um par**: fundir A em B faz A deixar de existir, então
+  todo outro par que cite A ficou órfão e sai junto — clicar num deles daria erro
+  no servidor. Por isso `removerPares` filtra por `merge_ids`, não pelo `par_id`.
+- ⚠️ **Fila oposta usa `refetchType: 'none'`**: marcar stale sem buscar. Recalcular
+  a fila que a pessoa não está vendo pagaria exatamente os 10s que estamos
+  evitando; ela recomputa quando a aba abrir.
+- No `IdentidadePendenciasPanel` a mesma régua vale, com uma exceção: quando o
+  `confirmarCpf` devolve conflito o servidor **abre uma pendência nova**, que a
+  lista local não tem — só nesse caminho o refetch é necessário.
+- **Filtro por CPF na fila de identidade** (pedido do mesmo dia): são chips
+  separados de propósito, porque a distinção é de RISCO — `origem_id` começando
+  com `cpf:` significa que a INSCRIÇÃO trouxe CPF (chave mais forte, ligar é
+  seguro · 16 casos em 04/08); "só no cadastro" (~108) casou por telefone+nome, e
+  telefone é compartilhado em família. Juntar os dois num "tem CPF" esconderia
+  justamente a diferença que decide se pode ligar sem conferir.
+
+## ⚠️ Entradas · "tem CPF" ≠ "achou PELO CPF" · e o lote (2026-08-05 · migration `20260805120000`)
+
+Pedido do Matheus na aba **Conflitos de CPF**: *"gostaria que tivesse a
+funcionalidade para eu marcar todos e aprovar, e ajeite esse bug, pois mesmo eu
+marcando o filtro de mostrar só quem tem cpf preenchido, ele mostra pessoas que
+não tem cpf preenchido. Pois quero ligar o cadastro em massa de todos aqueles
+que tem cpf preenchido já."*
+
+**O filtro não estava errado na conta — estava errado na PERGUNTA.** O chip lia
+`origem_id`, que é a **chave da pessoa órfã** (`chavePessoa`: cpf > tel > nome).
+`cpf:...` ali significa que **a INSCRIÇÃO trouxe CPF** — não que o candidato foi
+achado por ele, e muito menos que o cadastro tem CPF. Caso do print (medido):
+**Ana Luisa Dib Silvestre** — inscrição de batismo com CPF `194.117.357-89`,
+candidato achado **por telefone+nome**, cadastro **sem CPF nenhum**. Ela entrava
+em "Só com CPF" e o card mostrava `—`, porque **a tela só exibia o lado do
+CADASTRO**: o CPF que a pessoa digitou não aparecia em lugar algum.
+Das 7 pendências com chave `cpf:`, **4 casaram por telefone+nome/nome** — e a
+tooltip prometia *"chave mais forte que existe, ligar é seguro sem conferir
+nome"*. Era a tooltip a parte perigosa, não a contagem.
+
+- **`avaliarForcaOrfa(insc, cad)`** (`services/inscricaoOrfas.js`) responde a
+  pergunta certa: *este cadastro é essa pessoa?* Régua = os ramos do **matcher
+  canônico**: CPF da inscrição igual ao do cadastro, ou **telefone igual +
+  NOME COMPLETO idêntico**. ⚠️ Nada aqui é mais frouxo que o que já liga sozinho
+  em toda porta; o que é mais frouxo — **primeiro nome igual + telefone**, que o
+  enfileiramento aceita pra SUGERIR — fica fora, porque é exatamente mãe/filha
+  no telefone da casa. Mutation-testado em `inscricaoOrfas.test.js`: afrouxar a
+  comparação de nome deixa o gate vermelho.
+- **2 VETOS, e vêm ANTES das evidências fortes**: nascimento conferível e
+  divergente (contradição — nenhuma outra evidência compra de volta) e **CPF
+  divergente dos dois lados**. Sem essa ordem, CPF diferente + telefone/nome
+  batendo cairia no ramo forte, ou seja, escolheria a evidência que convém.
+- **A tela mostra os DOIS lados** (`InscricaoBox` "O que a pessoa preencheu" ×
+  "Cadastro candidato") + selo da força. É a correção de raiz do "mostra gente
+  sem CPF": o CPF existe, é da inscrição, e agora aparece.
+- **Chips**: rótulos passam a dizer de QUAL lado é o CPF ("CPF em algum lado" /
+  "CPF na inscrição") e ganharam a ressalva na tooltip. Ficam porque servem aos
+  **218 `cpf_para_confirmar`**; quem responde "dá pra ligar?" é o chip novo
+  **"Pode ligar em lote"**.
+- **`POST /identidade-pendencias/ligar-lote`** (nível 3 · teto 100): `ligarInscricaoCore`
+  extraído (padrão `aprovarCadastroCore`) e o lote **REAVALIA a força no
+  servidor** — o payload diz *quais*, nunca *se pode*. **Sequencial** (cada
+  ligação passa pelo matcher e pode consolidar CPF tardio; em paralelo, duas
+  pessoas da mesma família correriam no matcher juntas). `lerLinhasOrfas` roda
+  **uma vez** pro lote. **UM aviso agregado** (lição do censo).
+- ⚠️ **Chave morta é DECLARADA**: pendência cujas inscrições já foram ligadas
+  mostra "Nada a ligar" em vez do botão que só devolveria 409. O Matheus passou
+  **110 pendências na mão em 05/08** — clique que erra é caro.
+
+**Cobertura honesta, medida em 05/08 (67 pendentes de `inscricao_sem_vinculo`):
+20 vão em lote** (23 linhas de inscrição) · **40 seguem manuais** (a maioria
+primeiro-nome-só + telefone) · **7 com chave morta**. Não são os 157 do chip
+antigo — aquele número contava "CPF em algum lado", e CPF que não participou do
+match não prova nada sobre ser a mesma pessoa.
+
+### ⚠️ A trilha do "Ligar ao cadastro" nunca existiu (CHECK engolido)
+
+Achado ao construir o lote: `entradas_resolucoes_acao_check` **não tinha**
+`inscricao_vinculada`, então todo INSERT da trilha violava 23514 e o erro era
+engolido pelo `console.warn` de `registrarResolucaoEntrada` (que só propaga se a
+mensagem casar `/entradas_resolucoes|schema cache|does not exist/`).
+
+Medido: **134 linhas** em `mem_identidade_observacoes` com origem
+`fila_identidade%` (última 05/08 13:36) — as ligações **aconteceram de verdade**
+— contra **ZERO** `acao='inscricao_vinculada'`. Ou seja: 134 vínculos de pessoa
+criados por decisão humana, e a pergunta "quem ligou esta inscrição a este
+cadastro?" sem resposta. Migration `20260805120000` acrescenta
+`inscricao_vinculada` e `inscricao_vinculada_lote` (ação **própria** pro lote: a
+decisão "ligou 20 confiando na régua" é diferente de "olhou os dois lados e
+ligou", e compartilhar rótulo apaga a distinção). **Não reescreve o passado** —
+as 134 seguem sem trilha, porque não há de onde tirar autor/momento.
+⚠️ Régua que fica: **ação nova no backend precisa entrar nesse CHECK**, e
+`registrarResolucaoEntrada` engolir erro significa que a falha aparece só quando
+alguém for auditar.
+
+## ⚠️ Totem · IDENTIDADE DE ESTAÇÃO (2026-08-05 · migrations `20260805130000` + `20260805130100` · PR #2291)
+
+Fase 0 do pagamento presencial em inscrições (plano completo: totem com Pix →
+provider TEF → agente com a DLL → conciliação → dinheiro em espécie). Esta leva
+**não toca em dinheiro**: entrega só a identidade do equipamento, que é
+pré-requisito de tudo o resto — o totem vai **receber dinheiro** e hoje não há
+como saber QUAL totem cobrou.
+
+**A troca:** a autenticação de totem era **conta de e-mail/senha por
+computador** (`20260703160000_totem_membro_kiosk.sql`) — senha compartilhada num
+PC de hall, sem revogação por dispositivo. Agora o totem de inscrições usa
+credencial de EQUIPAMENTO: pareamento por código de uso único (8 caracteres,
+alfabeto sem O/0/I/1, 15 min, queimado no 1º uso) → segredo `tk_<64 hex>`
+guardado **só como sha256**, revogável individualmente.
+
+- **`totem_estacoes`** (genérica: `finalidades text[]` serve inscrições agora e
+  Kids/Membro/Voluntariado por adição) + **`totem_estacao_tokens`**
+  (`tipo IN ('pareamento','dispositivo','agente')` · `linhagem` sobrevive à
+  rotação e detecta clone). Campos de pinpad (`tef_*`) e impressora já na
+  estação — a estação É o lugar físico com PC + pinpad + impressora, e com duas
+  tabelas haveria duas verdades sobre "qual maquininha é essa".
+- **Atribuição**: `pag_cobrancas.estacao_id`, `inscricoes.totem_estacao_id`,
+  `inscricao_consentimentos.totem_estacao_id`. **Coluna, não `metadata` jsonb**
+  — a conciliação do presencial é `GROUP BY estacao_id`, e em JSON isso é scan.
+- Backend: `services/totemEstacao.js` · `middleware/totemEstacao.js` (header
+  **dedicado `x-totem-token`**, NUNCA `Authorization`) · `routes/totem.js`
+  (`/parear`, `/eu`) · gestão em `routes/inscricoes.js` (ver 1 · parear/revogar
+  **4**). Front: `/inscricoes/totens` (link no cabeçalho do módulo) e
+  `/totem/inscricoes` (**rota pública** · quem autentica é o equipamento).
+
+⚠️ **NÃO generalizar `kids_estacoes` — e não "consertar" a inconsistência dela.**
+Ela está amarrada ao Kids (`sala_id`, FKs vivas de check-in de MENOR) e o modelo
+de token dela é o anti-padrão: UM token, em TEXTO PURO, na própria linha, numa
+tabela cujo RLS deixa qualquer `authenticated` fazer SELECT — uma leitura
+entrega a credencial de todos os totens. O pareamento planejado em
+`20260521220000` **nunca foi implementado** (`grep parear` em `backend/` e `src/`
+= zero; o front manda `estacao_id: null` e o backend engole o erro de FK
+regravando null). A coluna ganhou COMMENT de depreciação; a adoção pelos outros
+totens é fase futura (`kids_checkins.totem_estacao_id` nullable).
+⚠️ `src/pages/atlas/atlas.html:418` e `docs/quiosque-lounge-identidade.md` §15.5
+**descrevem como vivo** aquele pareamento inexistente — corrigir quando alguém
+passar por lá.
+
+⚠️ **Segurança, sem maquiagem: o token é bearer e extraível.** Fica no
+`localStorage` de um PC de hall público; 20 segundos de acesso físico e alguém
+sai com ele. O desenho faz o token roubado valer quase nada — autoriza 2
+endpoints, **nunca** passa por `authorizeModule`, não popula `req.user`, não lê
+lista de gente e não faz `cpf-lookup`. **É REDUÇÃO de risco**: a conta de
+quiosque do `/totem` tem `membros-totem` no `ROUTE_MODULE_MAP` (`auth.js:56`),
+ou seja uma sessão roubada de um PC do hall **hoje lê PII de membro**.
+Mitigações: `ip_permitidos` (fail-closed), revogação em ≤60s (TTL do cache
+espelhando `authUserCache`), e **nenhuma PII em storage em momento nenhum**.
+
+⚠️ **NÃO expor `cpf-lookup` ao token de estação** (vai ser pedido, pra
+pré-preencher membro): transforma token roubado num oráculo CPF → nome/telefone
+da igreja inteira, de graça, e o ganho são 4 campos. Se for pedido, o caminho
+seguro é POSSE FÍSICA (QR da carteirinha ou o reconhecimento facial que já
+existe) devolvendo prefill one-shot amarrado à estação — com os consentimentos
+recolhidos SEMPRE (consentimento anterior não é consentimento deste evento).
+
+- **Régua PURA em `backend/utils/totemCerco.js`** (cerco de IP + alfabeto) pra
+  entrar no gate. `src/test/totemCerco.test.ts` (16 casos) é **mutation-testado**:
+  trocar o `return false` do IP incomparável por `return true` deixa 2 testes
+  vermelhos — é essa mudança, de boa-fé, que transformaria o cerco num enfeite
+  (bastaria o cliente chegar por IPv6). O cerco é **IPv4 e fail-closed** por
+  decisão declarada.
+- ⚠️ **Cerco de IP é conferido a CADA request, nunca no cache**: o cache guarda a
+  linha do token, não a permissão daquele chamador.
+- ⚠️ **Falha de INFRA na resolução do token devolve 503, não 401**: 401 fez o
+  front apagar o pareamento, e desparear o totem por instabilidade de banco
+  exigiria voluntário repareando no meio do culto. `ip_nao_permitido` também
+  **não** limpa credencial (a credencial está boa; a rede é que está errada).
+- ⚠️ **Queimar o código de pareamento vem ANTES de emitir**, condicionado
+  (`.is('usado_em', null)`): é o UPDATE que serializa duas tentativas
+  simultâneas. Emitir primeiro deixaria dois dispositivos pareados com um código
+  de uso único. Conferido em transação revertida: 1ª tentativa 1 linha, 2ª **0**.
+- Aplicadas e conferidas **no catálogo** (não no `success: true`): 3 FKs com
+  `convalidated = true` · `totem_estacao_tokens` **sem nenhuma policy para
+  `authenticated`** · 6 recusas de CHECK/UNIQUE validadas.
+
+### ⚠️ O gate de deploy tem 8 passos, e o vitest é UM deles (lição de 05/08)
+
+O deploy do #2291 **falhou** em `test:inscricao-portas` e travou a publicação
+(inclusive de terceiros; produção seguiu no deployment anterior). Eu havia
+rodado `npm test` (vitest · 341 verdes) e concluído que o gate estava coberto —
+os outros **7 passos são scripts node** (`test:inscricao-contrato`,
+`test:inscricao-portas`, `test:inscricao-orfas`, `test:inscricao-qr`,
+`test:censo`, `test:nome-email`, `test:duplicidade`) e não passam pelo vitest.
+**Rodar os 8 antes de mergear** (`.github/workflows/deploy-vercel.yml`).
+
+O guarda que pegou foi o **App.tsx → catálogo** de `inscricaoPortas.test.js`,
+que existe pra impedir porta de inscrição nova entrar sem registro: as rotas
+casam com `inscri|inscrever|apresentacao`. Corrigido em #2293 —
+`/totem/inscricoes` e `/inscricoes/totens` entraram em **`ROTAS_INTERNAS`**, não
+no catálogo, porque `catalogoPublico()` alimenta o inventário **com link/QR pra
+compartilhar** e o quiosque só funciona em dispositivo pareado (um "copiar link"
+ali entregaria URL que não abre em lugar nenhum).
+⚠️ **REVISITAR NA FASE 1**: quando o totem passar a inscrever de verdade, ele
+vira porta (presencial) e precisa aparecer na view unificada e no inventário
+como entrada própria em `PORTAS_INSCRICAO` (`escritores: ['inscricoes']`).
+
+**Pendente da Fase 0** (não é código): pareamento exercitado ponta a ponta no
+navegador — não há credencial de service role local pra subir o backend. Validar
+cadastrando um totem em `/inscricoes/totens`, gerando o código e digitando em
+`/totem/inscricoes`.
+
+## ⚠️ Inscrições · `null` em coluna NOT NULL derruba o UPDATE inteiro (2026-08-04)
+
+A Ariel não conseguia salvar edição de evento. Erro real no runtime da Vercel:
+`null value in column "pagamento_expira_horas" violates not-null constraint`.
+O form mandava `null` nesse campo sempre que o pagamento estava DESLIGADO — logo
+**a edição de qualquer evento sem pagamento falhava com 500**, e levava embora
+todos os outros campos que a pessoa havia editado (UPDATE é atômico).
+
+- **A régua:** em coluna NOT NULL, `null` do cliente significa "não informado",
+  **nunca "apagar"** — apagar é impossível. `CAMPOS_EVENTO_NAO_NULO` (6 colunas:
+  `tem_sorteio`, `premios`, `checkin_ativo`, `pagamento_ativo`,
+  `pagamento_expira_horas`, `juros_repassados`) descarta o null no POST e no PUT.
+  Coluna nullable segue aceitando null, porque limpar é edição legítima.
+- Lista conferida no catálogo (`is_nullable='NO'`), não decorada. Coluna NOT NULL
+  nova entrando na whitelist tem que entrar nesse Set também.
+- ⚠️ Diagnóstico veio do `get_runtime_errors` da Vercel, não de tentativa e erro:
+  o handler devolve 500 genérico ("Erro ao atualizar evento") e o motivo real só
+  existe no log. Para bug de save relatado por usuário, olhar lá primeiro.
+
+## ⚠️ LEI · trocar a KEY de um campo de formulário ORFANA resposta (2026-08-03)
+
+Incidente: o Matheus abriu uma inscrição do Patrocinadores do Celebra e o modal
+mostrou **"—" em todas as 7 respostas**. O dado estava intacto em
+`inscricoes.dados` — o que quebrou foi o VÍNCULO pergunta↔resposta.
+
+**Causa:** `sanitizeCampos` (routes/inscricoes.js) testava
+`/^c_[a-z0-9_]+$/` e, para toda chave que não casasse, chamava `novaKeyCampo()`.
+Os eventos migrados do Celebra guardam a pergunta com chave em **formato slug do
+rótulo** (`nome_da_empresa_negocio`), que não casa com aquele padrão. Então, na
+PRIMEIRA vez que alguém abriu e **salvou** o evento no construtor (30/07 11:58),
+as 7 chaves foram trocadas de uma vez e as 15 respostas ficaram órfãs.
+
+⚠️ **O mesmo estava ARMADO para o "Celebra 2026"** (114 inscrições · evento em
+29/08): a chave dele (`em_qual_ministerio_voce_serve`) também é slug, e as
+respostas só continuavam casando porque **ninguém havia salvado aquele evento
+pelo construtor**. Um clique em Salvar teria orfanado as 113.
+
+- **A lei:** chave existente é **PRESERVADA byte a byte**. Chave nova só quando
+  não existe nenhuma. **NUNCA derivar/normalizar a chave a partir do label** — o
+  comentário do `novaKeyCampo` já dizia isso; a régua é que estava estreita demais
+  e regenerava o que devia preservar.
+- **`backend/utils/campoKey.js`** é a fonte única: `keyCampoPreservada()` aceita
+  qualquer chave em `[a-z0-9_]{1,60}` (charset conferido contra o banco vivo — as
+  **15** chaves de formulário de `insc_eventos`+`ext_eventos` e as **10** chaves
+  presentes em respostas de `inscricoes`+`ext_inscricoes` passam todas).
+  `src/test/campoKey.test.ts` (7 casos) é **mutation-test explícito**: voltar a
+  exigir prefixo `c_` deixa o gate vermelho.
+- **Reparo de dado aplicado** no evento Patrocinadores: as 7 chaves voltaram às
+  ORIGINAIS, lidas de `ext_eventos.campos` (a tabela de origem NÃO foi dropada) e
+  casadas por rótulo — derivado, não adivinhado. Dry-run antes: 7/7 acharam a
+  original e 7/7 tinham resposta gravada. Depois: **15/15 inscrições casam** (era
+  0/15). Backup do estado anterior em
+  `scratchpad/backup_campos_patrocinadores_20260803.json` (não versionado).
+- ⚠️ Se aparecer outro evento com respostas em "—", o diagnóstico é comparar
+  `insc_eventos.campos->>'key'` com `jsonb_object_keys(inscricoes.dados)`; a cura
+  é buscar a chave original em `ext_eventos`, nunca reescrever `dados`.
+
+## ⚠️ Propostas · `/:id` engolia `/avaliar` e `/mural` (2026-08-03 · SEM migration)
+
+As abas **Avaliar** e **Mural da reunião** não abriam: `GET /:id` é declarado na
+linha ~248 de `routes/propostas.js` e as duas rotas LITERAIS vêm depois (~411 e
+~468). No Express o primeiro match vence, então `GET /propostas/avaliar` caía no
+handler de detalhe com `id='avaliar'`, o PostgREST recusava a comparação contra a
+coluna `uuid` (22P02) e a resposta era **400**. Em cascata, nada chegava a
+`APROVADO`/`CONSOLIDADO`, então **deliberação, ressalvas, recurso, pós-evento e a
+consolidação do ciclo ficavam inalcançáveis** — com o backend inteiro pronto.
+Mesma armadilha já registrada aqui para o Grupos ("rota `/kpis` declarada ANTES
+de `/:id`").
+
+- **Correção: guarda de UUID no `/:id`** (`if (!UUID_RE.test(id)) return next()`),
+  não reordenação. Resolve E **previne recaída**: rota literal acrescentada depois
+  passa a ser alcançada sozinha, sem depender de alguém lembrar de declará-la
+  acima. Também evita mover um bloco de 60 linhas, que é onde o erro nasce.
+- Comportamento provado em app Express mínimo (5.2.1): `/avaliar` → handler de
+  avaliar · `/mural` → mural · uuid → detalhe · path desconhecido → 404.
+- ⚠️ Só `GET /:id` tinha o problema. `PUT /:id` e `DELETE /:id` não têm rota
+  literal declarada depois deles (`DELETE /anexos/:anexoId` vem ANTES).
+
+## Kids · lista mensal de aniversariantes impressa (2026-08-03 · SEM migration)
+
+`GET /totem-kids/aniversariantes?mes=1..12` + seletor de mês/agrupamento no
+`KidsHub` + gerador A4 em `src/lib/imprimirAniversariantesKids.ts` (molde do
+`imprimirListaPresencaBatismo`: thead repetido por folha, `page-break-inside`).
+
+- **Agrupamento à escolha: por DIA ou por SALA** (decisão do Matheus). A sala é
+  DERIVADA da idade em meses (`salaDaIdade`, mesma régua do `sugerirSala`), com o
+  catálogo carregado 1× em vez de uma consulta por criança.
+- ⚠️ **As faixas de `kids_salas` têm BURACOS** — Berçário acaba em 21 meses e
+  Maternal começa em 24, e nada cobre 0–5. Medido em agosto/2026: 68
+  aniversariantes, **5 sem sala nenhuma**. Por isso o agrupamento por sala tem o
+  grupo "Sem sala definida pela idade" no fim: criança sem faixa não pode
+  desaparecer da folha.
+- **A lista impressa SAI COM TELEFONE** do responsável (decisão explícita dele —
+  quem imprime vai ligar parabenizando). É a ÚNICA lista do sistema que imprime
+  PII por padrão: a folha leva aviso âmbar pra não circular e descartar depois.
+  Contraste proposital com `imprimirListaInscritos`, onde contato só sai marcando
+  a caixa. Mudar isso é mexer só neste arquivo.
+- **Idade que a criança COMPLETA**, não a idade de hoje: se o dia já passou no ano
+  corrente, o próximo aniversário é no ano que vem. É o número que vai no bolo.
+- ⚠️ **Bug de truncamento consertado junto**: o `/dashboard` lia as crianças com
+  `.range(0, 999)` e a base passou de mil (**1.023 ativas com nascimento** em
+  03/08) — **23 crianças ficavam de fora da lista da semana, em silêncio**. Virou
+  `fetchCriancasPaginado`. É a lição do cap de 1000 do PostgREST outra vez: o
+  código só quebra quando a base cresce, e sem aviso.
+- Idade passou a aparecer **ao lado do nome** na lista de Crianças (antes estava
+  na 2ª linha, misturada com o nome do responsável).
+
+## ⚠️ App · entrada de PESSOA sob o Contrato de porta (2026-08-04 · migration `20260804200000`)
+
+Decisão do Marcos: os LÍDERES de grupo são os primeiros a usar o app e é a
+chance de fechar o cadastro de quem falta — então **entrar no app passa a
+exigir cadastro de gente**, com um **caminho rápido por CPF** pra quem já está
+na base. Fecha (na entrada do app) o furo do
+`## ⚠️ LEI · o gatilho de auth.users`: medido em 04/08 · **21 cadastros**
+`origem_cadastro='auth'` (20 sem CPF/telefone/nascimento · **13 com nome =
+prefixo do e-mail** · **1 duplicata confirmada**: Victória Lannes × Maria
+Victória Lannes Campos) e **26 das 43 contas do app** apontando pra cadastro
+sem CPF.
+
+**⚠️ LEI DESTE FLUXO · CPF IDENTIFICA, NÃO AUTENTICA.** CPF está em nota
+fiscal, cadastro de loja, planilha — não é segredo. Vincular a conta só porque
+alguém digitou um CPF entregaria a essa pessoa o grupo, os **filhos no Kids** e
+o **histórico de contribuição** do dono do CPF. Então: CPF acha o cadastro → o
+código vai pro **telefone QUE JÁ ESTÁ NO CADASTRO** (NUNCA pra número digitado
+na hora) → quem prova posse é vinculado. Mesma régua de "prova de posse" dos
+links do WhatsApp dos líderes.
+
+- **`services/appIdentidade.js`** · `identificarPorCpf` (busca SÓ por CPF —
+  aqui não vale o "achou por telefone/nome" do matcher, senão o CPF deixa de
+  ser a régua) · `confirmarCodigo` · `completarCadastro` (formulário → matcher
+  canônico `acharOuCriarGuardado`, origem `app_onboarding`).
+- **Resposta MASCARADA** (`mascararNome`/`mascararTelefone`): quem digita um
+  CPF vê "Marcos P. D. de A." e "(21) *****-8249" — nunca nome/telefone
+  completo de terceiro. Guarda em `src/test/appIdentidade.test.ts` (8 casos):
+  aumentar o que a máscara revela transforma o endpoint em coletor de dados
+  com uma lista de CPFs.
+- **Tetos**: `limiterStrict` (10/15min por IP) nas rotas de CPF/código +
+  **5 envios por telefone/dia** no serviço (o dono do número não pediu nada) +
+  6 tentativas de código + TTL 10 min + 1 verificação aberta por conta
+  (UNIQUE parcial).
+- **Código nunca em claro**: `app_verificacoes.codigo_hash` = sha256(código +
+  id da linha como sal). Tabela **só service_role** (nenhuma policy pra
+  authenticated — SELECT ali deixaria a anon key ler o alvo de vínculo alheio).
+- **Envio direto, NÃO pela fila `whatsapp_envios`**: a fila guarda params em
+  texto (código legível no banco) e faz retry/backoff — entrega atrasada de
+  código de 10 min é inútil.
+- **Fantasma é FUNDIDO**: se a conta estava pendurada num cadastro do gatilho
+  (sem CPF/telefone/nascimento **e** nome placeholder/derivado do e-mail), o
+  vínculo novo dispara `merge_membros` (⚠️ params com prefixo `p_`) e loga em
+  `mem_merge_log`. Falha do merge não desfaz o vínculo — a duplicata sobra pra
+  fila das Entradas, que é onde humano decide.
+- **`GET /app/identidade/status`** diz o que falta; **`completo` ignora o CPF**
+  (recomendado, não obrigatório — ninguém fica fora do app por não ter o
+  documento em mãos). No app, `CadastroGate` só redireciona quando o servidor
+  RESPONDE que falta algo: falha de rede não prende ninguém na tela.
+- ⚠️⚠️ **O CÓDIGO VAI POR E-MAIL, não por WhatsApp** (migration
+  `20260804210000`): a Meta **RECUSOU a categoria Autenticação** pra nossa
+  conta do WhatsApp Business ("sua conta não pode usar esse tipo de mensagem")
+  — e código de uso único NÃO pode ir em template utility (violação de política
+  + derruba a nota de qualidade do número que fala com os 87 líderes). Canal =
+  `services/email.js` (Graph; Resend só com `RESEND_FALLBACK=1`). Sem canal
+  configurado o endpoint devolve `motivo:'sem_canal'` e a tela cai no
+  formulário — nunca promete um código que não vai chegar.
+  ⚠️ **E-mail COMPARTILHADO em família não serve de prova** (`motivo:
+  'email_compartilhado'`): mãe e filho na mesma caixa significaria o filho
+  digitar o CPF da mãe, ler o código e ver as CONTRIBUIÇÕES dela. Nesse caso o
+  caminho rápido se recusa e a pessoa vai pro formulário, que resolve pelo
+  matcher (nome+e-mail) e cai no cadastro DELA.
+  ⚠️ Se algum dia a Meta liberar autenticação: o botão "Preenchimento
+  automático" exige **nome do pacote + hash de assinatura de 11 chars**
+  derivado do certificado do **Play App Signing** (não do keystore do EAS) —
+  usar "Copiar código" evita isso e funciona no iOS também.
+- ⚠️ Não substitui o gatilho de auth.users (que segue criando cadastro no
+  signup) — este fluxo **reconcilia** depois. Trocar o gatilho continua
+  dependendo da query no SQL Editor + alinhamento com o Matheus.
+
+## Kids · idade exata, WhatsApp pessoal e gerencial dentro da trava (2026-08-03 · SEM migration)
+
+Três pedidos do Matheus no mesmo dia, todos no Kids.
+
+**1 · Filtro de idade EXATA** em `GestaoCriancas.tsx` (`/ministerial/totem-kids/criancas`).
+Eram faixas fixas (`0-2 / 3-5 / 6-8 / 9-12`, em MESES), que não respondem "quantas
+crianças de 4 anos eu tenho?". Agora o seletor lista as **idades que existem na
+base**, com a contagem de cada uma, derivadas do `idade_meses` que o backend já
+manda (`floor(meses/12)`).
+- ⚠️ **Não recalcular a idade no cliente a partir de `data_nascimento`**: o filtro
+  discordaria da coluna "Idade" da linha, e no dia do aniversário a diferença é de
+  um ano inteiro. A fonte é `idade_meses` (`calcIdadeMeses` em routes/totemKids.js).
+- ⚠️ Abaixo de 24 meses o `formatIdade` do backend mostra **meses** ("14 meses"),
+  então filtrar "1 ano" traz linhas cuja coluna diz "12…23 meses". Está correto; é
+  o único ponto em que rótulo do filtro e texto da linha não são idênticos.
+- Criança **sem data de nascimento** ganhou opção PRÓPRIA no seletor. Antes ela
+  desaparecia em silêncio de qualquer faixa — e é justamente a que a equipe precisa
+  achar pra completar o cadastro.
+- Segue 100% client-side (o único param que vai ao servidor é `ativo`).
+
+**2 · O botão de WhatsApp da Apresentação de Crianças agora abre o WhatsApp DE QUEM
+CLICA**, não o inbox institucional. Era `hrefConversa` (→ `/conversas`); virou
+`hrefWhatsapp` (→ `wa.me`), helper NOVO no mesmo `src/lib/conversas.ts`. Decisão do
+Matheus: quem fala com a família é a voluntária, pelo aparelho dela.
+- ⚠️ **Isto é exceção consciente ao padrão da casa**, que é mandar pro inbox
+  interno (`hrefConversa`, usado em Cuidados e afins). Só a Apresentação mudou —
+  não replicar sem pedido, senão a conversa deixa de ficar registrada no
+  /conversas.
+- ⚠️ **`hrefWhatsapp` tem gap conhecido e DOCUMENTADO**: o `55` é condicional (≤11
+  dígitos), então **estrangeiro de 11 dígitos leva 55** — o suíço `41765764538` do
+  lançamento dos grupos vira `5541765764538`. **Nem lista de DDD desambigua**,
+  porque `41` é DDD legítimo de Curitiba; resolver exige guardar o código de país
+  separado na entrada. `src/test/hrefWhatsapp.test.ts` (10 casos) **fixa esse gap
+  num teste** pra que mudá-lo seja consciente, não acidental.
+
+**3 · Voluntário do Kids alcança o gerencial `/kids` dentro da trava de quiosque.**
+`MODULO_TRAVA_PREFIXOS.kids` ganhou `/kids` (antes ficava fora de propósito) + card
+"Indicadores e gestão" no `KidsHub`.
+- ⚠️ **NÃO é mudança de permissão.** O cargo `voluntario-kids` já tinha `kids`
+  nível 3, e `authorizeModule('painel-area', 1)` — o guard dos indicadores — usa
+  `ROUTE_MODULE_MAP['painel-area'] = ['kids','ami','bridge','online','producao']`:
+  **`painel-area` é routeKey, não slug de módulo** (não existe em `modulos`), então
+  quem tem `kids` já passava. O que bloqueava era só a trava de rota.
+- ⚠️ **O card no hub é obrigatório, não enfeite**: a trava esconde o menu inteiro
+  (`AppShell` não renderiza MegaMenu nem MobileNavSheet quando `rotaTravada`), então
+  sem ele o `/kids` fica inalcançável mesmo com permissão. De brinde, conserta o
+  "Voltar ao Kids" do `ApresentacaoCriancas.tsx`, que já apontava pra `/kids` e
+  ricocheteava em conta travada.
+- ⚠️ **NÃO desligar `is_membro_only`** pra resolver isso. Além de derrubar a trava
+  (que exige EXATAMENTE 1 módulo), faria aparecer o menu com **Painel CBRio e
+  Dashboard Semanal**, que `menuAccess.PUBLICO_TODOS` marca como visíveis a
+  qualquer logado. Voluntário do Kids passaria a ver os painéis macro da igreja.
+- ⚠️ Corolário do mesmo mecanismo: **dar um 2º módulo a um cargo de quiosque
+  DESLIGA a trava** (`slugsComAcesso.length === 1`). Quem precisar ampliar acesso
+  de conta travada tem que mexer nos PREFIXOS, não na matriz.
+
+## Dashboard Semanal · acumulado do ano até hoje × anos anteriores (2026-08-03 · SEM migration)
+
+Pedido do Matheus na aba **Mensal**: *"quero ver o acumulado do ano até a data
+atual, e comparar com os outros anos no mesmo período, a escolha dos indicadores
+deve refletir"*. A aba só respondia "como foi **este mês**" e "mês a mês por
+ano"; **nenhuma tela do sistema** respondia "como está o ano até aqui contra o
+ano passado até aqui". Bloco novo (`YtdAcumuladoCard.jsx`) entre os filtros e o
+gráfico mensal, seguindo Indicador / Culto / Anos comparados — o recorte de
+**Meses não se aplica** (o período é sempre 1º de janeiro → hoje).
+
+**⚠️ O corte é por DIA, não por mês fechado nem por ano inteiro.** Os cultos do
+ano corrente nascem **pré-agendados até dezembro com frequência 0** (2026 tem 347
+linhas em `cultos`, só ~199 até agosto). Somar "o ano" sem corte compararia 7
+meses de 2026 com 12 de 2025 **e** inflaria o denominador de cultos — os dois
+erros na mesma direção. Vale pra qualquer agregação "do ano" nova neste banco.
+
+### ⚠️ O período é escolhido nos chips **Meses** · `resolverPeriodo` (2026-08-03)
+
+Pedido do Matheus no mesmo dia: *"gostaria que eu pudesse escolher o filtro, para
+filtrar o período específico que eu quisesse"*. **NÃO criei um segundo seletor de
+período** — os chips **Meses** que já existiam passaram a valer também pro bloco
+(antes ele os ignorava). Dois controles de período na mesma tela seriam duas
+respostas pra "qual período estou vendo".
+
+`resolverPeriodo({ meses, anos, hoje })` (puro, em `backend/utils/periodoYtd.js`)
+traduz a seleção em UM período aplicado igual em todos os anos:
+
+| meses marcados | anos comparados | período resolvido |
+|---|---|---|
+| jan…dez | inclui 2026 | 1º de jan a **3 de agosto** (parcial) |
+| jan…jun | qualquer | 1º de jan a **30 de junho** (fechado) |
+| jan…dez | **só 2024 × 2025** | 1º de jan a **31 de dezembro** (fechado) |
+| mar, mai, jul | inclui 2026 | só esses 3 meses, somados |
+
+⚠️ **A regra que preserva a comparação justa**: o período só é PARCIAL quando o
+ano corrente está entre os comparados **E** os meses alcançam o mês de hoje. Sem
+isso, "ano inteiro comparando 2024 × 2025" seria truncado em agosto e jogaria 5
+meses de dado fora dos DOIS anos — e "ano inteiro incluindo 2026" compararia 12
+meses de 2025 com 7 de 2026. Mês marcado depois do corte é **descartado** (não
+há dado pra ele em ano nenhum do recorte).
+
+⚠️ **Fevereiro fechado devolve `dia = 29` de propósito**: quem clampa 29→28 em ano
+não bissexto é o `corteDoAno()`, que já é testado pra isso. Duplicar a regra no
+`ULTIMO_DIA_DO_MES` daria duas réguas pra decidir a mesma coisa.
+
+⚠️ **Seleção não-contígua (mar, mai, jul) tira o bloco de batismos do ar**, com
+aviso: a contagem dele é por intervalo `gte/lte` de datas e incluiria abril e
+junho. Total "quase certo" é pior que total ausente. O filtro por mês nos cultos
+é conferido **linha a linha** (`mesesNoPeriodo.has(mes)`), porque a janela de datas
+da query pega o intervalo inteiro.
+
+⚠️ **Voluntariado só usa o corte por semana ISO quando o período é PARCIAL.**
+Período fechado já termina no fim de um mês passado — cortar por semana ali
+recortaria o último mês pela metade sem motivo.
+
+**⚠️ Total absoluto e MÉDIA POR CULTO andam sempre juntos.** O nº de cultos no
+mesmo período cresceu ano a ano porque a igreja abriu horários (154 em 2023 → 152
+→ 186 → **199 em 2026**). Frequência até 03/08: 2024 **58.198** (383/culto) ·
+2025 **65.097** (352/culto) · 2026 **63.235** (328/culto) — o total de 2026 quase
+empata com 2025 **e a média por culto cai**, leitura que o total sozinho esconde.
+
+- **`GET /dashboard-semanal/ytd?anos=&indicador=&culto=`** lê **`cultos` direto**:
+  `vw_dashboard_semanal` perde `cultos.data` no `GROUP BY`, então "até hoje" não é
+  filtrável nela (mesmo motivo do `/resumo-mes`). Reusa `colunasCultos()` /
+  `somaColunas()` e a exclusão de `has_kids = false` pros indicadores de kids — a
+  régua de `/yoy` e `/media-mes`, que **falta no `/mensal`**. Paginado pelo cap de
+  1000 do PostgREST. Devolve total, cultos com dado, média por culto, Δ% do total
+  E da média, curva acumulada mês a mês e batismos do mesmo período.
+- **Voluntariado é a exceção do corte**: vem de `vw_dashboard_voluntariado`
+  (check-ins reais), que agrega por semana ISO e **não tem coluna de data** →
+  corte = **última semana ISO completa** (a corrente só fecha no domingo; incluí-la
+  compararia 1 dia de agosto com 7 dias dos outros anos). Igual em todos os anos,
+  então o YoY segue justo. ⚠️ O filtro de **culto não vale** ali: a view agrega por
+  BLOCO (`b10c0000-…`), ids que não são os de `vol_service_types` — declarado em
+  `avisos` em vez de devolver vazio em silêncio.
+- **Ano sem dado é DECLARADO em `avisos`**, não escondido: os check-ins de
+  voluntário só começam na **semana 16 de 2026** (zero histórico) e Online DS só
+  existe a partir de 2024. Sem o aviso a tela pareceria quebrada.
+- **⚠️ "Novos membros" ficou FORA do comparativo, de propósito**: `mem_membros`
+  tem `created_at` mínimo em **2026-04-14** (base importada) e `data_membresia` /
+  `data_batismo` / `data_conversao` estão **nulas nas 8.049 linhas** — não existe
+  histórico pra comparar. O card mensal continua como está. Não "consertar"
+  usando `created_at` como data de entrada: mediria o dia do import.
+- Batismos entram por `batismo_inscricoes.data_batismo` (status `realizado`) e
+  **não passam pelo filtro de culto** (batismo não acontece "num tipo de culto").
+  YTD até 03/08: 2024 **143** · 2025 **134** · 2026 **89**.
+- **`backend/utils/periodoYtd.js`** = helpers PUROS com o "agora" **injetado**
+  (teste que lê o relógio da máquina é o que mordeu no `faixaEtaria.test.ts`).
+  15 casos em `src/test/periodoYtd.test.ts`, guardas: (1) o dia vem do **fuso da
+  igreja** — às 23h BRT o dia UTC já virou e o corte pegaria os cultos de AMANHÃ,
+  que existem com valor 0; (2) **29/02 em ano não bissexto vira 28/02** —
+  `'2025-02-29'` é data inexistente e o Postgres recusa a **query inteira**, não
+  só a linha, então sem a guarda o comparativo quebraria por completo um dia a
+  cada quatro anos; (3) semana corrente só conta quando fecha no domingo.
+
+## Grupos · inscrição de CASAL numa tela só (2026-07-30 · migration 20260730140000)
+
+Decisão do Marcos: em grupo com `mem_grupos.categoria = 'Casais'` (8 hoje,
+inclusive o "CURSO ALIANÇA — CURSO DE CURA PARA CASAIS") o formulário público
+`/inscricao-grupos` inscreve **os dois cônjuges de uma vez**, com **1 aviso de
+WhatsApp pro líder** (os dois nomes) e **a aprovação pelo link decidindo o
+casal junto** (idem recusa). A opção aparece **só** nessa categoria.
+
+**Contrato de porta preservado:** cada cônjuge é UM cadastro próprio
+(`mem_membros` ou `mem_cadastros_pendentes`) e UM pedido próprio em
+`mem_grupo_pedidos` — nunca "dois nomes num campo de texto".
+
+- **Migration `20260730140000_grupos_inscricao_casal.sql`** (aditiva ·
+  idempotente): `mem_grupo_pedidos.casal_pedido_id uuid` auto-referência
+  (`ON DELETE SET NULL`) + índice parcial + COMMENT. Os DOIS pedidos apontam um
+  pro outro (vínculo **cruzado**) → qualquer um dos dois links de aprovação acha
+  o par. Nenhuma tabela nova, nenhuma policy tocada.
+- **Backend `publicGrupos.js` — extraído, NÃO duplicado:** o trecho
+  "pessoa → pedido" do `POST /inscrever` virou a função pura
+  **`processarPessoaPedido({ grupo, pessoa, contexto, principalId,
+  principalMembroId })`**, que nunca escreve em `res` (devolve
+  `{ok:true,pedido_id,…}` · `{ok:true,ja_membro|ja_pedido,…}` ·
+  `{ok:false,status,codigo,campo,error}`). Titular e cônjuge usam a MESMA
+  função. Ficam INLINE no handler as travas do GRUPO (fechado,
+  `aceitando_inscricoes`, temporada, gênero × categoria) — são checadas uma
+  vez, não por pessoa.
+- **Regras do fluxo:** cônjuge validado com a MESMA régua
+  (`services/inscricaoContrato.validarCamposPadrao`), erro volta com
+  `campo:'conjuge.<campo>'`; **CPF igual ao do titular é 400** (é a mesma
+  pessoa, não um casal — e é isso que torna seguro excluir o par do dedup);
+  cônjuge em grupo não-casais é **ignorado em silêncio**; **se o cônjuge falha,
+  o titular VALE** (201 com `conjuge:{ok:false,error}` — nunca desfaz o titular,
+  nunca 500 com ele gravado).
+- **Dedup:** `checarDuplicataInscricao` ganhou `ignorarMembroIds/
+  ignorarPedidoIds` — marido e mulher compartilham telefone e e-mail (2 chaves
+  fracas = dispara), então sem excluir o par o 2º cônjuge seria engolido como
+  "já recebemos um pedido parecido".
+- **Notificações:** UM `notificarLiderNovoPedido` com os dois nomes em `{{3}}` e
+  os dois contatos em `{{4}}` (template `grupos_pedido_novo_lider_v2` já tinha
+  as 5 variáveis · o service ganhou `pessoa.contato` opcional pra sobrescrever
+  o {{4}}); `enviarInscricaoConfirmada` roda **por pessoa** (dois telefones,
+  cada um gated pelo SEU opt-in · D4); notificação in-app diz "(casal)".
+- **Aprovação (`/g/a/<token>`):** `GET /pedido/por-token` devolve `casal` (o
+  pedido do cônjuge, só se no MESMO grupo) e a página mostra "X e Y querem
+  entrar"; `POST /aprovar` aprova os dois pelo mesmo `aprovarPedidoCore`
+  (idempotente: par já aprovado não quebra; par já rejeitado/devolvido/
+  encaminhado NÃO é reaberto — aprova só este e informa) e a **recusa devolve
+  os dois pra triagem**. Nenhuma validação de token afrouxada (segue amarrado
+  ao líder atual + ao pedido).
+- **Front `InscricaoGrupos.jsx`:** bloco "Inscrever meu cônjuge junto" no step
+  1 quando `categoria === 'casais'` (reusa `Field`/`BirthDatePicker`/máscaras
+  já existentes + `lib/inscricao`), erros nas chaves `conjuge.*`,
+  **consentimento explícito** de que o cônjuge está ciente e concorda (LGPD ·
+  vai como `consentimento_texto` dele) + opt-in próprio de WhatsApp, 1 POST só,
+  tela de sucesso citando os dois e destaque honesto quando só a do cônjuge
+  falhou.
+- **Follow-ups conhecidos:** (1) a aprovação **logada** em `/grupos`
+  (`aprovarPedidoCore` direto) decide **um pedido por vez** — o par junto só
+  vale no link do WhatsApp; (2) a caixa de entrada não mostra selo de "casal"
+  ainda.
+
+## Grupos · busca sem acento + apelido do líder (2026-07-30 · migration 20260730170000)
+
+Caso real: a Patrícia tentou se inscrever no grupo do "Antônio" no domingo e
+**nenhum pedido dela existe no banco** — não conseguiu concluir. O líder está
+cadastrado como **"ANTONIO MARCO PEREIRA"** (sem acento) e a busca era
+acento-SENSÍVEL, então quem digitava a grafia correta não achava o grupo. Ele
+também é conhecido como **"Tuninho"**, e não havia busca por apelido.
+
+- **Régua ÚNICA de busca em 2 espelhos** (a filtragem acontece nos dois lados):
+  `src/lib/busca.js` (cliente) e `backend/services/busca.js` (servidor) —
+  `normalizarBusca` (NFD → tira diacrítico → lower → colapsa espaço → trim),
+  `contemNormalizado(alvo, termo)` e `algumContemNormalizado(lista, termo)`.
+  ⚠️ **Compara normalizado contra normalizado nos DOIS lados** (termo E alvo):
+  normalizar só um não resolve nada. Mudou a regra num arquivo? Mudar no outro.
+  Testes: `src/test/busca.test.ts` (acento nos 2 sentidos, cedilha, caixa,
+  espaço, NFD×NFC · determinístico, sem depender de hora/locale).
+  ⚠️ SÓ pra texto exibido — NUNCA em slug/enum/chave/coluna.
+- **Onde já vale:** `publicGrupos.js` `GET /buscar` (filtros `lider_nome` e `q`)
+  e `GET /lideres/buscar`; `GrupoSelector` (busca por grupo e por líder);
+  `GruposMapView` (busca do mapa); lista de grupos do `/grupos` (admin).
+  ⚠️ O filtro de `/lideres/buscar` **saiu do `ilike`** (que é acento-sensível e
+  não alcança o apelido) pra JS — são dezenas de líderes por temporada.
+- **`mem_membros.apelido`** = "como a pessoa é conhecida na igreja". Cadastrado
+  pela equipe no form de edição do membro da **Membresia** (`PUT /membros/:id`
+  grava `req.body` direto · o form manda `null` só quando havia apelido antes,
+  pra permitir limpar). **Entra na BUSCA sem poluir a EXIBIÇÃO do nome real:**
+  `lideres_nomes`/`lider_nome` seguem só com nomes reais; `lideres_busca` =
+  nomes + apelidos (é nele que os filtros procuram, com fallback pros nomes pra
+  bundle antigo/deploy em 2 etapas); `lideres_exibicao`/`lider_apelido` montam
+  "Nome (Apelido)" no cartão do grupo, no balão do mapa e na confirmação do
+  grupo escolhido (`InscricaoGrupos`) — é o "ah, é o Tuninho".
+- ⚠️ **O `apelido` é selecionado em consulta ISOLADA e best-effort**
+  (`buscarApelidos` em publicGrupos.js): se a migration não tiver sido aplicada,
+  pedir a coluna faria o PostgREST recusar a query INTEIRA e derrubaria a busca
+  de grupos pra todo mundo (lição do `parcelas_max`). Falha ali = "sem apelido
+  nesta resposta", nunca busca quebrada.
+- **Migration `20260730170000_membros_apelido.sql`** (aditiva/idempotente · sem
+  FK/constraint/tabela nova) + seed do caso real (`apelido='Tuninho'` achando o
+  id por `upper(btrim(nome))`, só quando `apelido IS NULL`). ⚠️ Numerada 170000
+  porque **160000 já estava ocupado** (`..._next_dia_sessao_real_e_semana`).
+  NÃO cadastrar outros apelidos por migration — é dado que a equipe preenche
+  caso a caso na Membresia.
+- **Limitações conhecidas:** o `/grupos/buscar` **autenticado** não devolve
+  `lideres_busca`/apelido (a busca lá é acento-insensível, mas não acha por
+  apelido); a ficha da pessoa da aba Pessoas do /grupos ainda não edita apelido;
+  a Membresia não exibe o apelido no cabeçalho do membro (só no form).
+
+## ⚠️ Página lida por verificador EXTERNO tem que ser HTML estático (2026-08-04)
+
+A verificação da marca no **Google Auth Platform** (projeto `crm-cbrio` — o que
+autoriza o "Entrar com Google" do app de membros) foi recusada com dois motivos,
+ambos sobre a página inicial declarada no consentimento: *"your home page does
+not explain the purpose of your app"* e *"the app name 'CBRio' does not match
+the app name on your home page"*. **Verificada ✅ na tentativa seguinte**, com o
+conserto abaixo (levou ~3h, não dias).
+
+**A causa não era o texto — era o JavaScript.** O campo apontava para o ERP, que
+é SPA: o verificador busca a página **sem executar JS**, recebe o shell vazio do
+`index.html` e lê o `<title>` global (`CBRio · Comunidade Batista do Rio de
+Janeiro`). Isso é, ao mesmo tempo, "não explica propósito" e "o nome não bate".
+
+- **`public/aplicativo.html`** + rewrite em `vercel.json` (`/aplicativo →
+  /aplicativo.html`, **antes** do catch-all do SPA) é a home page do app. Mesmo
+  padrão do **`public/privacidade.html`**, que já existia e que o Google sempre
+  aceitou — foi justamente essa diferença que revelou o mecanismo.
+- ⚠️ **NÃO converter para rota React.** Já foi tentado (PR #2261) e é a versão
+  que falha: o conteúdo precisa existir na resposta HTTP. Mesma régua vale para
+  qualquer página que um robô de terceiro (Google, Apple, Meta) precise LER.
+- ⚠️ **O `<title>` e o `<h1>` são exatamente `CBRio`** — o mesmo string do campo
+  *App name* do consentimento e do `expo.name` do `app.json`. **Renomear o app no
+  console exige renomear aqui**, senão o motivo 2 volta. O acoplamento está
+  escrito no comentário do topo do arquivo.
+- Rotas públicas servidas por rewrite estático hoje: `/privacidade`,
+  `/aplicativo`. As por rota React: `/suporte`, `/politica-reembolso`.
+- ⚠️ **Lição de método (erro meu, registrado):** procurei `"/privacidade"` no
+  bundle de produção, não achei e concluí que a página não existia — ela existe,
+  como arquivo estático. **Ausência de rota no bundle não prova ausência de
+  página**: rewrite e arquivo em `public/` não passam pelo React Router. Para
+  saber se uma URL pública existe, olhar `public/` e os `rewrites` do
+  `vercel.json` também.
+- Pendência conhecida (não bloqueou esta verificação): `cbrio.org`/`cbrio.com.br`
+  estão verificados no **Search Console por outra conta Google** ("Play Console
+  org"). Se uma verificação futura falhar por propriedade de domínio, é isso — e
+  o conserto é adicionar a conta do console como proprietária, não é código.
+
+## ⚠️ Google Tag Manager · SÓ no domínio público, nunca no ERP (2026-07-29)
+
+Gustavo (tráfego pago, parceiro externo) precisava medir anúncio → o site não
+tinha **nenhum** rastreamento (conferido no HTML e no bundle de prod: zero
+Analytics, zero GTM, zero pixel). Container criado pelo Marcos:
+**`GTM-M59RCB34`**, conta Google **`cblab@cbrio.com.br`** (endereço de função
+do marketing, registrado como conta Google sem Gmail — a igreja é Microsoft
+365). A igreja é dona; Gustavo entra como usuário com permissão *Publicar* no
+container (não Admin).
+
+**A LEI:** o GTM carrega **só** em `cbrio.com.br`/`www.cbrio.com.br`. **Nunca**
+em `cbrio.org`. Motivo: este bundle serve os DOIS domínios (`SITE_PUBLICO_HOSTS`
+em `src/App.tsx:549` → hostname público monta `SitePublicoRoutes`, o resto monta
+o ERP). Um snippet solto no `index.html` carregaria o container em toda tela
+logada — nome, CPF, telefone, contribuição, dado de menor no Kids indo pra
+Google/Meta. Por isso o snippet em `index.html` tem **gate por hostname** antes
+de injetar o `gtm.js`, espelhando a lista do `App.tsx`. **Mudou
+`SITE_PUBLICO_HOSTS`? Muda a lista no `index.html` também.**
+
+- **Sem `<noscript>` no ERP** (de propósito): o iframe do GTM só serve visitante
+  com JS desligado e, sem JS, um SPA nem renderiza — não mediria nada e
+  carregaria em `cbrio.org`, exatamente o vazamento que o gate evita. O site em
+  Astro (HTML estático, renderiza sem JS) leva o noscript normal.
+- **ID hardcoded, não env**: o liga/desliga de qualquer tag vive no painel do
+  GTM (é o propósito da ferramenta) — env só somaria um ponto de falha na
+  Vercel. Não trocar por `VITE_*` sem motivo novo.
+- **SPA**: o GTM não detecta troca de rota sozinho. Contagem de navegação
+  depende do gatilho *History Change* configurado pelo Gustavo no painel.
+- **Site em Astro** (`~/cbrio-site`, repo `igreja-cbrio/site-cbrio`): mesmo
+  container já instalado no `src/layouts/Base.astro` (sem gate — lá o app só é
+  público). No cutover do DNS, o GTM sai daqui junto com o `SitePublicoRoutes`.
+
+**Pendente (decisão do Marcos + Gustavo):** conversão de verdade (inscrição em
+evento) acontece nas **portas públicas do ERP**, em `cbrio.org` — fora do
+domínio público. Medir isso exige GTM nessas rotas específicas, com regra
+explícita de não enviar dado pessoal. Não fazer por conta: cada porta pública é
+um formulário com PII (ver as 2 LEIs de porta/inscrição acima). Também em
+aberto: o domínio já tem **Search Console** verificado por outra conta Google
+("Play Console org" · meta `google-site-verification` no `index.html`) e o canal
+do YouTube usa uma terceira — consolidar identidade antes de ligar Ads↔YouTube.
+
+## Sweep dos formulários de inscrição · achados e correções (2026-07-28)
+
+Auditoria multi-agente das 7 portas pós-módulo de inscrições (pedido do Marcos).
+**P0, P1, P2 e P3 estão TODOS FEITOS** — o diário onda a onda está no legado. O
+que sobrou como regra viva:
+
+- ⚠️ **Array de deps de hook avalia NO RENDER** (fix TDZ do reporte do Ariel ·
+  PR #2113): const usada em `useMemo`/`useQuery` precisa estar declarada ANTES.
+  Verificador determinístico: `npx tsc -p tsconfig.app.json --noEmit` filtrando
+  TS2448/TS2454 — o `npx tsc --noEmit` cru **não checa nada** (o tsconfig raiz é
+  só references). Padrão latente que sobrou: `publicNext.js` usa
+  `turmaAbertaAtual()` antes da declaração, salvo por hoisting de `async
+  function` — **não converter pra arrow const sem mover**.
+- ⚠️ **Cópias de `cpfValido`/`emailValido` que FICARAM**: `publicDevocional.js`
+  (módulo do Matheus — não mexer sem alinhar) e `utils/cpf`, cujo
+  `normalizarCpf` **não valida DV** — armadilha pra código futuro. Consolidar
+  exige sessão própria.
+- ⚠️ **QR impresso vive pra sempre**: `?temporada=` antiga não vence a aberta (o
+  form valida o param contra `inscricoes_abertas` e IGNORA temporada fechada).
+- ⚠️ **Endereço de membro EXISTENTE não é sobrescrito por form de grupo** — muda
+  na Membresia. Só cadastro pendente promovido copia endereço, e só onde vazio.
+- ⚠️ O **e2e do Next** foi atualizado pro contrato mas **não foi EXECUTADO**
+  (exige app rodando + cria inscrição real).
+
+## ⚠️ Comunicação · os 5 críticos da revisão de 05/08 corrigidos (2026-08-12 · migration `20260812150000`)
+
+Revisão profunda do módulo (05/08 · 3 agentes + verificação manual, achados com
+file:line) apontou 5 críticos; Marcos aprovou corrigir. O que mudou:
+
+1. **Leitura do módulo = nível 1** (`routes/comunicacao.js`): o `router.use`
+   usava `authorizeModule('comunicacao')` → default **2** do middleware, e
+   front/menu/RLS assumem leitura 1 — cargo com comunicacao=1 via as 9 abas em
+   403. Escritas seguem com guard próprio (3/4/5).
+2. **Aba Bot só aparece pra quem pode**: ela embute telas cujo backend exige
+   `whatsapp-admin` (= integracao OU grupos ≥3) — usuário com comunicacao=5 sem
+   isso via a aba inteira em 403. Fix é de EXIBIÇÃO (`podeBot` em
+   `Comunicacao.tsx`); ampliar o mapa `whatsapp-admin` no auth.js pra incluir
+   `comunicacao` é decisão pendente do Marcos (lei "parar e perguntar" de auth).
+3. **Deep-link `?telefone=&texto=` ressuscitado**: os redirects de `/conversas`,
+   `/admin/whatsapp` e `/admin/conversas-setores` viraram `RedirectComunicacao`
+   (App.tsx · preserva a query); `Conversas.tsx` remove SÓ telefone/texto (o
+   `setSearchParams({})` apagava o `?tab` e a página voltava pro dashboard);
+   `hrefConversa` (usado em ~13 telas) aponta direto pra
+   `/comunicacao?tab=conversas&…`; o link de transferência do waInbox idem.
+4. **Multi-número (preparo do CBZap)**: o webhook lê
+   `value.metadata.phone_number_id`. Número ≠ institucional → **`inboxDireto`**
+   (nada de opt-out/triagem/coleta/institucional — personas são do número do
+   bot; só pesquisa de satisfação, que é da CONVERSA, + inbox). A conversa
+   grava `wa_conversas.phone_number_id` (migration `20260812150000` ·
+   **best-effort/isolado** — o inbox funciona sem a coluna, lição do
+   parcelas_max) e TODAS as respostas do inbox (`routes/waInbox.js` nova/
+   responder/anexo/pesquisa) saem pelo número da conversa via
+   `opts.phoneNumberId`, que agora atravessa `whatsappService`/`whatsappSend` →
+   `waSender`. A pesquisa 0-5 virou função única `tratarPesquisaSatisfacao`
+   (publicWhatsapp.js), usada pelo bot E pelo multi-número. ⚠️ Payload sem
+   metadata conta como número do bot (comportamento histórico).
+5. **Kill-switch não engole mais mensagem** (`whatsappFila.js`): com CREDENCIAL
+   presente + `WHATSAPP_ENABLED` desligado, `enfileirar`/`enfileirarLote`
+   REGISTRAM como `pendente` (sai quando religar — o contrato documentado do
+   notificarMembro); sem credencial (dev/preview) segue não gravando nada, pra
+   ambiente sem WhatsApp não encher a fila que o cron DE PROD drenaria. E o
+   cron de agendamentos (`/comunicacao/cron/agendamentos`) só marca
+   `ultimo_disparo`/desativa único quando `queued > 0` (antes consumia o
+   disparo no vazio) + erro de consulta virou 500 (não mais `ok:true`).
+
+### Lote 2 · médios do atendimento corrigidos (2026-08-12 · SEM migration)
+
+Os médios que morderiam o atendimento real do CBZap, na mesma leva:
+
+- **Thread mostra as 500 mais RECENTES** (`routes/waInbox.js` /mensagens):
+  era `asc+limit` — conversa >500 mensagens nunca exibia a mensagem de hoje
+  (a conversa é 1 por telefone PRA SEMPRE, então era inevitável). Virou
+  `desc+limit+reverse`.
+- **Nono dígito não duplica mais conversa**: `mesmoNumeroBR` em
+  `services/waInbox.js` (pura · `src/test/waInboxMesmoNumero.test.ts`, 7 casos,
+  mutation-testado) — antes de CRIAR conversa, reconcilia pelos 8 últimos
+  dígitos (o wa_id da Meta pode vir SEM o 9; match exato criava 2 conversas e
+  a janela de 24h abria na errada). ⚠️ Estrangeiro/ambíguo NÃO casa (lição do
+  suíço `41765764538` × DDD 41 de Curitiba).
+- **Pesquisa de satisfação com CLAIM atômico** (PATCH /conversas/:id): o
+  UPDATE `resolvida=true` guardado por `.eq('resolvida', false)` decide QUEM
+  transicionou — duplo-clique/2 atendentes não mandam mais a pesquisa 2×.
+- **Corrida de criação não descarta mais a 1ª mensagem**: 23505 do
+  UNIQUE(telefone) → relê e segue com a linha do vencedor (antes
+  `registrarInbound` recebia null e a mensagem sumia).
+- **`/comunicacao/custo` paginado com `.order()`** (criado_em + id): range sem
+  ORDER BY duplicava/perdia linhas entre páginas.
+- **Programadas: PUT valida como o POST** (estado final linha+patch — teto de
+  500 telefones valia só na criação) e **reagendar única já disparada volta a
+  disparar** (trocar `quando` zera `ultimo_disparo`; recorrente NÃO zera, senão
+  dispararia 2× no mesmo dia).
+
+### Lote 3 · mídia RECEBIDA em bucket privado + retenção (2026-08-12 · migration `20260812190000`)
+
+Decisões do Marcos (12/08): mídia inbound privada = SIM · Realtime por área =
+**NÃO MEXER ainda** · e a pergunta dele "existe política de apagar depois de um
+tempo?" virou a retenção (não existia nenhuma — anexo vivia pra sempre).
+
+- **Bucket `wa-inbox-privado`** (migration `20260812190000` · public=false ·
+  nenhuma policy de propósito — só o backend/service_role toca): foto/documento
+  que o MEMBRO manda deixa de ter URL pública permanente. A linha de
+  `wa_mensagens` guarda o **PATH** (não URL); a thread assina em LOTE por 15
+  min na leitura (`createSignedUrls`). ⚠️ **OUTBOUND continua no bucket público
+  `wa-inbox` DE PROPÓSITO** — a Meta busca o anexo pelo link no envio; privar
+  quebraria o envio de anexo. Histórico antigo (URL http) passa direto.
+  Fallback de deploy em 2 etapas: bucket privado ausente → upload cai no
+  público (comportamento histórico), nada quebra.
+- **Retenção**: `limparMidiasAntigas` (services/waInbox.js) apaga do storage
+  anexos com mais de `WA_INBOX_MEDIA_RETENCAO_DIAS` (default **90** · 0
+  desliga) e zera `media_url` — **o TEXTO da conversa fica pra sempre; o que
+  expira é o ARQUIVO** (o front já mostra o placeholder `[image]`/`[document]`).
+  Vale pros DOIS buckets (privado + público). Ordem deliberada: arquivo
+  primeiro, ponteiro depois (morrer no meio deixa ponteiro pra arquivo morto,
+  que a assinatura trata como null — o inverso deixaria arquivo órfão eterno);
+  efeito em blocos de 100 (lei de 04/08). `pathDoBucketPublico` só extrai path
+  do NOSSO bucket — URL de outro bucket/externa devolve null e nunca é apagada
+  (mutation-testado em `waInboxMesmoNumero.test.ts`).
+- **Roda 1×/dia às ~4h05 BRT de CARONA no cron `/comunicacao/cron/agendamentos`**
+  (horário) — sem slot novo no vercel.json (45 crons · lição dos pagamentos).
+  Cap 400 anexos/dia (backlog drena em dias).
+
+⚠️ Ficam da revisão (médios · ainda abertos): statuses órfãos write-only +
+status de outbound do CHAT descartado · **Realtime sem filtro por área —
+decisão explícita do Marcos (12/08) de NÃO mexer por ora** · `nao_lidas`
+read-modify-write · custo cego aos ~15 call sites fora da fila · 2 `is_default`
+possíveis em wa_numeros (e nada lê a tabela) · aba Conversas exige módulo
+`conversas` (matrizes editáveis separadamente) · badge do header gated por
+`conversas` navegando pra rota gated por `comunicacao` · dashboard sem
+"respostas recebidas". Lista completa com file:line na memória da sessão de
+05/08 ("revisão da comunicação").
+
+## ⚠️ Módulo de Comunicação (WhatsApp central) · handoff pro MATHEUS (2026-07-28)
+
+Decisão do Marcos (bloco C da revisão estrutural): fundir Conversas + Menu das
+Conversas + Bot WhatsApp num módulo central com números, templates, mensagens
+automáticas/programadas, chat ao vivo, erros, atendentes e dashboard de
+custo/envios/respostas. **Contexto COMPLETO (inventário verificado no código +
+fases C0–C5 + decisões em aberto): `docs/modulo-comunicacao/contexto-e-plano.md`.**
+Regra de ouro: começar pelo **C0** (capturar `value.statuses` no webhook — sem
+isso não existe relatório) e NÃO reescrever o chat de /conversas.
+- **Porta 5 · Next (2026-07-28 · migration `20260728230000` = M7):** nome vira
+  campo único (split no server, tolera payload antigo); **nascimento
+  obrigatório+validado SÓ em `POST /inscrever`** — o walk-in do totem
+  (`/checkin/:token/walkin`) segue "nunca travar o atendimento"; sexo
+  obrigatório liga o writer da coluna (canônico `masculino|feminino` + CHECK);
+  endereço opcional (coluna nova); termos+optin na satélite + `GET /textos`;
+  optin agora TAMBÉM persiste na matrícula (`whatsapp_optin/_em`);
+  `ja_voluntario` passou a checar por membro além de CPF; **saiu o seletor de
+  evento do form** (o backend descartava `evento_id` desde a migração pra
+  turmas); trigger `updated_at`.
+- **Porta 4 · Voluntariado (2026-07-28 · migration `20260728210000` = M6a):**
+  nome vira campo único (split no server, tolera payload antigo); + sexo
+  obrigatório e endereço opcional (colunas novas); termos LGPD obrigatório +
+  optin espelhados na satélite; **dedup novo** (CPF/membro × status
+  inscrito|enviado_ministerio — antes reenviar DUPLICAVA); `GET /textos`.
+  Soft-delete em 2 etapas: M6a criou `deleted_at` + TODOS os leitores JS
+  filtrando (`voluntariado.js`, `app.js`, `totemKids.js`, `nextDirecionar.js`,
+  `volEmailSender.js`); **M6b CONCLUÍDA (2026-07-28 · migration
+  `20260729060000`)**: vol_inscricoes na whitelist `app_soft_deletable_tables`
+  + patch DINÂMICO (pg_get_functiondef + regexp_replace, técnica da
+  20260722250000 — imune a drift) nos contadores SQL: ramos
+  `solicitacoes_servir_recebidas/alocadas` de `_kpi_agregar_dado` e dedup de
+  voluntariado do `fn_app_inscricoes_fanout` ignoram soft-deletadas (inscrição
+  excluída não bloqueia re-inscrição pelo app). **Soft-delete de
+  vol_inscricoes LIBERADO — sempre via `app_soft_delete`.**
+- **Porta 3 · Líderes/anfitriões (2026-07-28 · migration `20260728190000`):**
+  e-mail obrigatório; anti-abreviação no nome; teto 11 no telefone; coluna
+  `origem` (linhas antigas = formulario_publico, único writer que existiu);
+  dedup ganhou CPF via cadastro pendente; **opt-in de WhatsApp virou checkbox
+  EXPLÍCITO default false (D4 · substitui o "concluir É o consentimento" de
+  24/07)** — o optin só grava se marcado; termos+optin espelhados em
+  `inscricao_consentimentos` (porta `grupos_lider`, snapshot = texto exibido);
+  trigger `updated_at`. Optins históricos (gravados como true pelo fluxo
+  antigo): reclassificar com jurídico — decisão pendente, NÃO reverter em massa.
+- **Porta 2 · Apresentação de crianças (2026-07-28 · migration `20260728170000`):**
+  por criança agora vai nome completo + nascimento + sexo (obrigatórios só p/
+  inscrições novas; `crianca_idade` legada é derivada do nascimento); e-mail do
+  responsável obrigatório; endereço opcional; **consentimento de MENOR
+  (`menor_responsavel`, art. 14 §1º) obrigatório** + imagem opcional + opt-in;
+  matcher read-only no responsável → `responsavel_membro_id` + vínculo
+  `kids_responsaveis` (parentesco só quando um único nome preenchido);
+  `kids_criancas` reusa por (nome, nascimento) — acabou a criança órfã
+  duplicada; dedup por (cpf, criança, data) → `ja_inscritas[]` na resposta;
+  CHECK de status entrou **NOT VALID** (validar depois de conferir DISTINCTs).
+- **Porta 1 · Eventos externos (2026-07-28 · migration `20260728150000`):**
+  campos padrão obrigatórios só p/ inscrições NOVAS (legadas nome+telefone
+  seguem válidas); dedup por CPF com fallback telefone — re-inscrição faz
+  merge preservador de `dados` (nunca sobrescreve com vazio; anterior em
+  `dados_anterior`) e ENRIQUECE linha legada em vez de duplicar; textos de
+  consentimento via `GET /api/public/evento/textos` (snapshot gravado = sempre
+  o canônico do backend); form-builder com key OPACA estável (`novaKeyCampo` —
+  editar o label NÃO regera a key, senão orfana respostas antigas); rota
+  montada ANTES do `publicLimiter` global (evento em massa = 1 IP) com limiter
+  próprio generoso (`EVENTO_PUBLIC_RATE_LIMIT_MAX`, padrão 1000/15min).
+- Teste: `node backend/services/inscricaoContrato.test.js`.
+
+## Entradas · fluxo operacional de saneamento (2026-07-18)
+
+Marcos definiu Entradas como uma **fila de exceções acionáveis**, não como outra
+tela de busca/cópia da Membresia. Navegação: **Possíveis duplicidades**,
+**Vincular famílias** e **Conflitos de CPF** (as abas de busca genérica saíram).
+Diário da implantação no legado.
+
+- **A política canônica é `backend/services/duplicidadePolicy.js`**: CPF igual
+  entra com prioridade alta; CPF, nascimento ou gênero **conflitante EXCLUI o
+  par**; sem CPF, o nome precisa de similaridade Dice ≥ 0,90 **ou** ser versão
+  abreviada/contida do outro (mesmo primeiro nome + ≥75% dos tokens do menor);
+  telefone/e-mail só contam **junto com nome compatível**.
+  ⚠️⚠️ **Telefone sozinho NUNCA significa duplicata** — o caso que motivou a
+  correção eram duas identidades distintas com o telefone da casa recebendo 90%.
+- **Vincular famílias** exige sobrenome significativo em comum quando o sinal é
+  telefone; endereço+CEP exatos podem sugerir famílias com sobrenomes diferentes.
+  CPF igual ou nome muito parecido fica na lente de **duplicidade**, não na
+  familiar. A ação **mantém os cadastros separados** e só os agrupa.
+- **Guarda de pendência fraca** (migration `20260718120000`): trigger descarta
+  `tipo='cpf_para_confirmar'` — a evidência permanece na tabela de origem até uma
+  identidade forte aparecer. `reconciliarCpfTardio({confianca:'fraca'})` devolve
+  `sinal_fraco_ignorado` quando os dois nascimentos não podem ser conferidos.
+  **Não remover essa guarda nem transformar telefone/e-mail isolado em identidade.**
+- **Vocabulário do produto e do código é sempre "Família"** (o termo legado em
+  inglês saiu de UI, comentários, docs e scripts).
+- ⚠️⚠️ **Erro NUNCA vira "fila vazia".** A rota combinava a view legada (que
+  estourava `statement_timeout`) com a triagem nova num `Promise.all`, e o
+  frontend convertia o erro em `items=[]` — exibindo **falsamente "nenhuma
+  duplicata"**. Hoje a rota pagina a base viva e forma candidatos por CPF,
+  telefone, e-mail, nascimento e blocos de nome; erros têm **estado próprio**.
+- ⚠️ **Origens são enriquecidas em lotes de 100 UUIDs** — `.in()` gigante estoura
+  a URL do PostgREST.
+- **Cache de sessão no frontend** (`staleTime/gcTime = Infinity`, sem refetch em
+  mount/foco/reconexão): trocar de aba não recalcula a fila. Recálculo é o botão
+  explícito. ⚠️ Ver também a seção "ação de fila NÃO refaz a busca" (04/08), que é
+  o que tirou os ~10s por clique.
+- **Contagem da Membresia**: `GET /membresia/membros` não filtrava `deleted_at` —
+  mostrava 4.239 onde o número operacional era **3.665**.
+
 ## ⚠️ Conselho deliberativo (skill `llm-council`) · acionar SEMPRE antes de responder (2026-06-28)
 
 Pedido do usuário (gestao@cbrio.com.br · 2026-06-28): **antes de dar qualquer
@@ -39,6 +1895,49 @@ mostra a posição de cada lente e as divergências.
   personas diferentes (erros correlacionados) — é **brainstorm estruturado**, não
   oráculo. Consenso do conselho **não é evidência**; para fatos, validar contra o
   código/banco/fontes, não contra o "consenso".
+
+## ⚠️ IA fora do ar = `ANTHROPIC_API_KEY` inválida na Vercel (2026-07-22)
+
+Sintoma: telas/crons que usam IA quebram todos ao mesmo tempo com **401
+`authentication_error` "API key is invalid"** — NPS (gerar perguntas), agente
+primeiro-contato, agente batismo-next, Central de Agentes, cérebro, nfScanner,
+parser do WhatsApp (todos compartilham a MESMA `ANTHROPIC_API_KEY`). Não é bug
+de código: a chave foi **rotacionada/revogada** e o valor na Vercel ficou velho
+(nesta ocorrência os 401 começaram ~18/07 nos agentes e apareceram no NPS em
+22/07 quando alguém apertou o botão). Diferenciar: chave **ausente** → o guard
+`clienteAnthropic()` lança "ANTHROPIC_API_KEY não configurada"; chave **inválida**
+→ 401 da Anthropic. Correção (NÃO é deploy de código): gerar nova key no console
+da Anthropic → atualizar `ANTHROPIC_API_KEY` (Production) na Vercel → **redeploy**
+(a Vercel só aplica env nova em deployment novo; não há ignored build step, então
+qualquer commit na main serve). Diagnóstico rápido: `get_runtime_errors` da Vercel
+agrupa por `authentication_error`.
+
+## ⚠️ LEI · NUNCA nomear pessoa como dono de fluxo neste arquivo (2026-08-05)
+
+Reclamação do Matheus: *"que portão financeiro do Yago?? Yago já saiu do
+financeiro faz tempo, agora é Alberto e Sonia Cristina. Nós já tínhamos resolvido
+isso, se você tiver qualquer lixo no contexto, remova, nós já mudamos isso e toda
+vez você traz isso."* Ele estava certo: o **banco já estava correto** (Yago em
+`Gestao`, fora de todas as filas) e era ESTE ARQUIVO que carregava o nome antigo
+em 7 lugares — e como ele é lido a cada sessão, o erro se repetia toda vez.
+
+**A regra:** ao descrever fluxo de aprovação/roteamento, escrever o **PAPEL**
+("o financeiro aprova", "o responsável da área"), nunca a pessoa. Quem é a pessoa
+vive no BANCO e muda sem PR:
+
+| Pergunta | Fonte de verdade |
+|---|---|
+| Quem aprova/atende por área? | `area_solicitacoes_responsaveis` |
+| Quem é o diretor do setor (portão de origem)? | `setor_diretor` (+ `setor_coaprovadores`) |
+| Responsável padrão de tarefa do ciclo criativo? | `area_responsaveis` |
+
+Nome de pessoa só é aceitável aqui em **registro histórico datado** ("decisão do
+Yago em 31/07", "spec do Yago") — que é fato passado e não vira instrução.
+
+⚠️ Estado em 05/08, conferido no banco: **financeiro = Alberto Luiz Stassen da
+Silva**. **Sonia Cristina Barreto Litwinczuk** (`cristina@cbrio.com.br`) é da área
+Financeiro mas **NÃO está** em `area_solicitacoes_responsaveis` — então não vê a
+fila de aprovação financeira. Pendente de decisão do Matheus.
 
 ## Contexto do projeto
 
@@ -60,10 +1959,33 @@ serverless functions via `api/index.js`).
 
 > **Kids · hub × módulo (2026-07-06)**: o hub `/ministerial/kids` (KidsHub)
 > ficou só com a OPERAÇÃO de culto (Check-in Totem, Crianças, Painel ao vivo,
-> Etiqueta, Configurações + aniversariantes). O GERENCIAL (Frequência PCO,
+> Etiqueta, Configurações + aniversariantes). O GERENCIAL (Frequência,
 > Vínculos + solicitações, Equipe, Estoque, Batismos, Apresentação de crianças,
 > Decisões) mudou pro módulo `/kids` da aba Cultos (PainelKids = seção Gestão
 > [kids nível >=2] + PainelArea de indicadores).
+
+> **Kids · Planning Center REMOVIDO do código (2026-07-20)**: decisão do Marcos
+> ("começar a excluir tudo que vem do PCO"). A frequência do Kids é 100% do
+> totem (`kids_checkins`): tela Frequência (`KidsFrequencia.tsx`) nativa, cron
+> `/cron/resumo-kids` (ex `resumo-pco`) conta crianças únicas do totem, radar de
+> ausentes (`fn_kids_ausentes_consecutivos` · migration `20260720210000`) lê
+> `kids_checkins`, jornada/análise-frequência idem. Serviços
+> `planningCenterKids*.js`, rotas `sync-pco`/`responsaveis-pco`/
+> `sync-presencas-pco`/`pco-pessoa`/`depurar-inativos` e a aba Responsáveis do
+> admin foram deletados. Ficaram no BANCO (sem leitor · dropar numa limpeza
+> futura com aval): `kids_pco_presencas` e `kids_criancas.planning_center_id`.
+> ⚠️ O PCO do VOLUNTARIADO (Planning Center Services · vol_*) é outro produto e
+> segue vivo — não confundir.
+
+> **Cuidados · Jornada 180 saiu do módulo (2026-07-22)**: decisão do Marcos — quem
+> gerencia os grupos de Jornada 180 é o módulo **Grupos** (J180 é um tipo de grupo lá,
+> `TIPOS_GRUPO`). Removida a aba "Jornada 180" do `/cuidados` (o `CuidadosJ180` + o
+> `EncaminhamentosInbox destino="jornada180"`). Deep-link `?tab=jornada` redireciona
+> pro dashboard. NÃO apaguei nada no banco: `cui_jornada180`/`j180_*` + rotas
+> `/cuidados/j180/*`/`/jornada180` + `api.cuidados.j180`/`jornada180` ficam DORMENTES
+> (alimentam o dashboard-series e KPIs · dropar só numa limpeza futura com aval). O
+> `DESTINO_META.jornada180` (backend) fica só pra rotular encaminhamentos legados; o
+> desfecho do convertido não oferece mais esse destino (só Next direciona hoje).
 
 ## Mapa do sistema · o que cada módulo faz, quem usa e o que alimenta
 
@@ -144,7 +2066,7 @@ sistema inteiro: **a operação dos módulos ministeriais alimenta a NSM e os
   formulário/texto; institucional responde dúvidas · líderes cadastrados ·
   **vira fila de revisão — nada entra direto no banco**.
 - **Agente Executor Financeiro** (Railway) · propõe categorizações/pagamentos
-  → fila de aprovação humana em `/assistente-ia` · Yago/financeiro aprova.
+  → fila de aprovação humana em `/assistente-ia` · o financeiro aprova.
 - `/cerebro` · SharePoint → notas Obsidian classificadas por Haiku · todos via
   OneDrive · memória institucional de documentos.
 - `/admin/*` · permissões (matriz cargo×módulo), usuários, WhatsApp, regras de
@@ -266,6 +2188,33 @@ Implementado **por tokens** (não reescreve páginas). NÃO regredir:
   seg-dom de `20260601130000` dar número diferente do fechamento). A **frequência dos
   cultos** (Dashboard Semanal de presença · `dashboardSemanal.js` · `isoWeekRange`) usa
   função JS PRÓPRIA **seg→dom** e NÃO chama a RPC. Mexer numa NÃO deve mexer na outra.
+
+### Rodar local · preview no app Claude Code Desktop (2026-07-30)
+
+Dois arquivos existem SÓ pra isso e não têm efeito em produção:
+
+- **`.claude/launch.json`** — os 2 servidores do painel Navegador
+  (Cmd+Shift+B no Mac · Ctrl+Shift+B no Windows): `front-vite` na **8080**
+  (o `vite.config.ts` usa 8080, não a 3000 que o app assume) e `api-express`
+  com `cwd: backend` na **3001**. Sem os dois no ar o sistema loga (Supabase é
+  direto) mas toda tela que chama `/api/...` vem vazia.
+  ⚠️ O front só acha a API com **`VITE_API_URL=http://localhost:3001`** no
+  `.env` local — sem isso `resolveApiBaseUrl` (`src/lib/api-base.js`) cai em
+  `/api` relativo, que bate no próprio Vite. O CORS já libera
+  `http://localhost:8080` (`server.js`). `.env` é gitignored e pessoal, então a
+  variável NÃO vive no repo.
+- **`.worktreeinclude`** — o app desktop abre cada sessão numa **worktree**, que
+  é checkout limpo e só traz o que está no Git; sem este arquivo a worktree
+  nasce sem `.env` e o front sobe com "VITE_SUPABASE_URL: AUSENTE". Sintaxe de
+  `.gitignore`; copia só o que casa E é gitignored. **Não** listar
+  `node_modules` (milhares de arquivos por worktree — resolver com
+  `npm install`, inclusive dentro de `backend/`).
+
+⚠️ **`host: "::"` do `vite.config.ts` não sobe em container sem IPv6**
+(`EAFNOSUPPORT`). No Mac/Windows funciona; em sessão cloud, subir com
+`npx vite --host 127.0.0.1 --port 8080` em vez de mexer na config.
+⚠️ Rodar local com o `.env` de produção significa **dados de produção**: editar
+arquivo é seguro, clicar em botão que salva escreve na base viva.
 
 ### Backend
 
@@ -416,6 +2365,54 @@ Kit de avaliação em `backend/scripts/_stax_export.js` + guia/rubricas em
   filas (follow-up: aba em `/assistente-ia`); Stax é pra iterar prompt/modelo
   offline e conhecer a ferramenta (dataset demo sintético no repo).
 
+## graphify · grafo de conhecimento do código (2026-08-09)
+
+Ferramenta externa (`Graphify-Labs/graphify` · PyPI `graphifyy`) que transforma o
+repositório num grafo consultável por AST determinístico (tree-sitter). Instalar:
+
+```bash
+pip install "graphifyy[sql]" && graphify install
+graphify extract . --code-only && graphify cluster-only . --no-label
+```
+
+**⚠️⚠️ LEI: neste repositório o graphify roda SEMPRE com `--code-only`.** Essa
+flag limita a extração ao AST **local** — nenhuma chamada de LLM, nada sai da
+máquina. Sem ela, a ferramenta manda documentos, PDFs e imagens pra um backend de
+LLM externo, e é exatamente isso que a lei do Stax (seção acima) proíbe: dado de
+igreja identifica convicção religiosa (LGPD art. 11, categoria especial). O
+`--code-only` custou **zero** aqui — o valor do grafo é o código, não os `.md`.
+
+- **`.graphifyignore` é a 2ª camada e está versionado.** O graphify respeita o
+  `.gitignore` por padrão, mas **`scratchpad/` NÃO está no `.gitignore`** — e é
+  onde as sessões despejam backup de dado REAL de pessoa (membresia, visitas
+  pastorais, pedidos de grupo). O `.graphifyignore` fecha `scratchpad/`,
+  `backup_*.json`, `backend/scripts/stax-export/` e os `.env`.
+- ⚠️ **`pip install graphifyy` puro deixa 795 migrations de fora**: sem o extra
+  `[sql]` o `tree_sitter_sql` não existe e todo `.sql` contribui **zero** pro
+  grafo — com um aviso fácil de não ler. Metade da memória deste sistema está nas
+  migrations. Com o extra: **9.864 → 13.385 nós**.
+- **`--no-label`**: nomear as 1.540 comunidades usa LLM. Sem chave no ambiente,
+  elas ficam "Community N" — o grafo funciona igual. Ligar isso é decisão
+  consciente (manda nome de função/arquivo pra fora, não PII).
+- ⚠️ **`graphify-out/` é gitignored** (~26 MB, derivado, reconstrói em ~3 min).
+  O que se versiona é o `.graphifyignore`.
+- ⚠️ **NÃO rodar `graphify claude install`** (diferente de `graphify install`):
+  ele ANEXA uma seção neste CLAUDE.md e instala um **PreToolUse hook** que
+  intercepta toda chamada de ferramenta. Este arquivo tem regra de manutenção
+  própria ("seção nova entra datada") e não recebe escrita automática de
+  terceiro. O `graphify install` (só a skill) é o caminho.
+
+**O que ele responde que nenhuma busca textual responde**, e por que importa
+aqui: `graphify affected "acharOuCriarGuardado"` devolveu, em 1 comando, os **19
+pontos** que chamam o matcher canônico (`aprovarPedidoCore`, `aprovarCadastroCore`,
+`promoverInscricaoLider`, `resolveOrCreateMembro`, as 8 portas públicas…). É
+literalmente a pergunta que o Contrato de porta obriga a fazer antes de mexer em
+identidade — e que hoje se responde no `grep`, correndo o risco de esquecer uma
+porta. Outros: `graphify god-nodes` (hubs · `notificar()` com 101 arestas,
+`authenticate()` com 92), `graphify explain <id>`, `graphify path "A" "B"`.
+⚠️ `explain`/`affected` pedem o **id do nó** (`backend_routes_grupos_aprovarpedidocore`),
+não o caminho do arquivo; nome ambíguo devolve a lista de candidatos.
+
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
 Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21
@@ -471,6 +2468,38 @@ regras. **Quebrar qualquer uma delas é regressão crítica.**
 9. **NUNCA criar policy que faça query recursiva em tabela com RLS
    sem usar SECURITY DEFINER no helper.** Causa stack overflow.
    Padrão: helper SQL `STABLE SECURITY DEFINER SET search_path = public`.
+
+10. **NUNCA criar coluna que aponta pra `mem_membros` (ou `profiles`) sem
+    FOREIGN KEY.** Descoberto em 2026-07-30 investigando 58 ponteiros mortos nas
+    tabelas do Next: **`merge_membros` descobre os filhos a repontar pelo
+    CATÁLOGO** (`pg_constraint` · `confrelid = 'public.mem_membros'`) e faz
+    **HARD delete** do membro fundido. Tabela com `membro_id uuid` *sem* FK é
+    invisível pra ele — a cada fusão ela acumula ponteiro pra cadastro que não
+    existe mais, silenciosamente (`next_inscricoes`/`next_matriculas` ficaram 2
+    meses assim). Padrão: `REFERENCES public.mem_membros(id) ON DELETE SET NULL`
+    (as 21 FKs convertidas em 2026-05-21). Vale pra QUALQUER tabela nova com
+    coluna de pessoa — a FK não é enfeite de integridade, é o que faz a fusão de
+    duplicatas funcionar. ⚠️ Ao ligar FK em tabela existente, resolver os órfãos
+    ANTES (a constraint não é criável com violação).
+    ⚠️⚠️ **`deleted_at` NÃO isenta de FK**: a constraint valida a tabela INTEIRA,
+    inclusive linha soft-deletada. Foi assim que a 1ª tentativa da
+    `20260730120000` morreu com 23503 — o tratamento de conflito soft-deletava a
+    linha redundante e deixava o `membro_id` apontando pro cadastro morto.
+    Corolário: rotina de saneamento que "resolve" ponteiro por soft-delete não
+    resolve nada pra efeito de FK — tem que repontar ou anular a coluna. E
+    **sempre pôr uma rede de segurança (`UPDATE ... SET col = NULL WHERE NOT
+    EXISTS`) imediatamente antes do `ADD CONSTRAINT`**: a criação da FK não pode
+    depender de a lógica de repoint ter sido perfeita.
+    ⚠️⚠️⚠️ **`ADD COLUMN IF NOT EXISTS ... REFERENCES` engole a FK quando a coluna
+    já existe** (descoberto em 2026-07-30 · `vol_profiles.membresia_id`, a ponte
+    do valor SERVIR: 123 de 307 vínculos apontavam pra cadastro inexistente). O
+    `IF NOT EXISTS` pula o comando **inteiro**, `REFERENCES` incluído — a
+    migration de maio "declarava" a FK, a coluna existia de abril, e o banco
+    nunca a teve. **É pior que esquecer**: quem lê o repo conclui que a
+    integridade está garantida. Ao acrescentar `REFERENCES` a coluna que pode
+    preexistir, usar `ALTER TABLE ... ADD CONSTRAINT` em bloco próprio (guardado
+    por `pg_constraint`), nunca dentro do `ADD COLUMN`. **Auditar a FK no
+    catálogo, não no arquivo da migration.**
 
 ## Inventário de helpers SQL (usar SEMPRE em policies novas)
 
@@ -826,6 +2855,49 @@ Pra debug similar futuro · `/api/permissoes/diagnostico/:email` mostra
 `matrix_stats.cargoMatrix_total_rows`. Se for exatamente 1000, sintoma
 do cap presente.
 
+### Varredura Onda 1 aplicada (2026-07-21 · auditoria de performance)
+
+Todos os pontos mapeados pela auditoria de 08/07 que liam base inteira com
+select cru foram corrigidos (números de prod do dia: 3.698 membros ativos ·
+20.196 contribuições · 1.422 vínculos de grupo ativos · 1.196 check-ins de
+voluntário/90d — tudo acima do cap):
+- `membresia /contribuicoes/kpis`: totais do ano truncados em 1000 de 3.018 e
+  `.in()` com a lista inteira de membros (3,6k UUIDs → URL estoura e falha
+  SILENCIOSO · a classificação ativo/irregular/inativo saía do nada). Paginado
+  + cruzamento em JS + filtro `deleted_at` que faltava nos membros.
+- Séries do carrossel do `/painel`: Generosidade (dizimistas/ofertantes,
+  doações R$, doadores únicos), `entradas_grupos` e devocionais →
+  `fetchAllPaginado`.
+- Coletores do cron (`kpiAutoCollector.js`): `cuidados.engajados_valor` (sem
+  `.in()` gigante), `voluntariado.ativos_semanal/trimestral`,
+  `generosidade.recorrencia`, `cuidados.devocional_membros`,
+  `devocionais.familias`. Helper `fetchAll` promovido a módulo-level — TODO
+  coletor novo que ler tabela grande usa ele.
+- `notificacaoGenerator` membro-sem-grupo: lia só os 1000 primeiros
+  `membro_ativo` (são 1.083) e o `.in()` gigante falhava silencioso — TODO
+  MUNDO parecia sem grupo. Paginado + cruzamento por Set.
+Já estavam corrigidos (semana de formulários 14–17/07, validado): diretório
+da Membresia, `membros_count` de Grupos, snapshots Conectar do painel.
+**Regra permanente:** leitura de tabela que passa (ou vai passar) de 1000
+linhas usa `fetchAll`/`fetchAllPaginado`; `.in()` sempre em lotes ≤200.
+
+### Onda 2 (2026-07-21 · migration `20260721150000` · ⚠️ aplicar antes do merge)
+
+Matcher + NSM (idempotente · backwards-compatible · mesmos resultados, só
+mais barato): (1) `fn_link_or_create_membro` filtrava CPF/telefone com
+`coalesce(coluna,'')` — expressão ≠ da do índice único de CPF (20260715120000)
+→ planner ignorava o índice e fazia seq scan a cada decisão/cadastro; os
+predicados agora usam a coluna crua + `IS NOT NULL` explícito (casa o índice
+parcial). ⚠️ Lição permanente: **índice funcional só funciona se a query usar
+a expressão IDÊNTICA**. (2) Índices novos: telefone digits + e-mail
+lower(trim) em `mem_membros` (ramos 2 e 3 do matcher varriam a tabela) +
+`batismo_inscricoes(membro_id)` (EXISTS da NSM). (3) Guarda
+`pg_trigger_depth() > 1` nas funções de recálculo da NSM disparadas por
+`nsm_eventos` e `cui_convertidos` — a cascata de cada decisão recalculava a
+NSM 2x+ na rajada de domingo; escrita em cascata agora conta com o trigger de
+`cultos` (depth 0), o cron horário e o recálculo manual; escrita direta
+(serviço/backfill) segue recalculando na hora.
+
 ## Jornada NSM · engajamento de verdade (2026-06-10)
 
 Contexto: Marcos vai liberar os módulos ministeriais dos 4 primeiros valores
@@ -909,6 +2981,45 @@ mesmo, até que o convertido entre em outro valor"). Auditoria completa em
   estrutura pronta pra unificação financeira. Conectar/Investir seguem "—"
   nas pétalas (grupos/devocionais não têm dimensão de área de culto).
 
+## ⚠️ LEI · guarda de idempotência tem que ser na MESMA chave do índice único (2026-08-04)
+
+Incidente: o Marcelo cadastrava os dados de um convertido na aba Decisões da
+Integração, apertava **Registrar** e recebia erro do servidor
+(`POST /api/kpis/cultos/:id/decisoes-pessoas 500` · 3 tentativas seguidas às
+17:54/17:55/17:56 no culto de 02/08). Nos logs:
+`duplicate key value violates unique constraint "nsm_eventos_pessoa_valor_uq"`.
+
+`tg_cultos_dec_pessoas_jornada` (AFTER INSERT ROW em
+`cultos_decisoes_pessoas`) guardava o insert com
+`NOT EXISTS (origem='culto_decisao' AND origem_id = NEW.id)` — idempotência por
+**DECISÃO**. Mas o índice é por **PESSOA**:
+`nsm_eventos_pessoa_valor_uq ON (COALESCE(membro_id::text, visitante_id::text, cpf), valor_engajado)`.
+Quem já tinha evento `'seguir'` (decidiu num culto anterior) passava pela guarda
+— `NEW.id` é outro —, o INSERT violava o índice, e **exceção em trigger AFTER
+aborta o statement inteiro**: a decisão não era gravada e a pessoa ficava fora
+do sistema. Raio: **386 pessoas** já têm evento `'seguir'`, então toda
+re-decisão de qualquer uma delas era um 500 sem saída pela tela.
+
+Migration `20260804180000`: `ON CONFLICT ... DO NOTHING` com o **mesmo alvo** que
+`nsm_inserir_evento` (o outro escritor da tabela) já usava — a semântica do
+índice é "primeiro engajamento por valor conta". Validado em produção com
+INSERT real dentro de transação revertida: decisão gravada, evento `'seguir'`
+segue **1**, zero resíduo.
+
+- ⚠️ **NÃO afrouxar o índice**: é ele que faz a NSM contar PESSOAS engajadas, e
+  não eventos. Removê-lo duplicaria gente no numerador.
+- ⚠️ **A expressão do `ON CONFLICT` tem que ser IDÊNTICA à do índice** (mesma
+  lição do índice funcional da Onda 2), senão o Postgres recusa a inferência.
+- ⚠️ A migration foi escrita sobre a definição **VIVA** do banco, não sobre o
+  arquivo `20260518150000`: prod tinha um `SET search_path` que o arquivo não
+  tem, e replicar do arquivo teria apagado essa proteção em silêncio.
+- **Nenhum número mudou**: a linha duplicada que agora é ignorada nunca chegou a
+  existir (o INSERT falhava). Resíduo consciente: re-decisão não atualiza
+  `data_decisao` do evento já existente.
+- Régua que fica: **guarda `NOT EXISTS` só protege se checar a mesma chave que o
+  índice**. Guarda numa chave e UNIQUE em outra = 500 que ninguém entende, e no
+  fluxo de pessoa isso significa cadastro perdido.
+
 ## Planejamento Estratégico × Gestão Anual · virada conceitual (2026-06-10)
 
 Reorganização por **horizonte de tempo** (Marcos). Dois módulos distintos — não
@@ -952,163 +3063,1253 @@ vivo. Aparar quando der.
 PRs: #938 (rename PE), #944 (Acompanhamento), #948 (rename Gestão Anual), #951 (hub), #952
 (recorte de ano), #954 (limpeza · DROP). Migrations aplicadas em prod por Marcos.
 
-## Grupos × Bot WhatsApp · estudo semanal + relato do encontro (2026-06-10)
+## Grupos · Log de alterações (2026-07-20)
 
-Marcos: o bot manda o ESTUDO DA SEMANA pros líderes de grupos e, no dia
-seguinte ao encontro, o líder responde por TEXTO ou ÁUDIO quantos foram,
-QUEM foi e um resumo (+ FOTO) — vira histórico por grupo e alimenta a aba
-Relatórios. Áudio: decisão do Marcos = código pronto agora, a chave de
-transcrição ele cria depois.
+Pedido do Marcos (com a Naná saneando a listagem de grupos): rastrear **o que
+mudou e quando** em `mem_grupos`/`mem_grupo_membros` — `created_at` só data o
+INSERT, `updated_at` é sobrescrito em massa e edição/remoção não deixava rastro.
+Migration `20260720230000_grupos_audit_log.sql` (idempotente ·
+backwards-compatible) liga o `audit_log_changes()` genérico (app_audit_log ·
+20260521230000) nas 2 tabelas, todas as colunas. Leitura:
+`GET /grupos/:id/historico-alteracoes` (guard grupos>=3 · service role lê o
+app_audit_log e resolve o nome do participante) + card **"Log de alterações"**
+na ficha do grupo em `Grupos.jsx` (`LogAlteracoesCard` · carrega sob demanda).
+Limitação conhecida: escrita via backend (service role) fica **sem autor**
+(`auth.uid()` nulo → exibe "sistema") — autoria por request é evolução futura.
+O log só grava a partir da aplicação da migration (nada retroativo).
 
-- **Limitação Meta:** a Cloud API NÃO posta em grupo de WhatsApp → estudo é
-  broadcast **1:1** pros líderes com escopo `grupos`. Fora da janela de 24h
-  exige TEMPLATE aprovado: envs opcionais `WHATSAPP_TEMPLATE_ESTUDO_GRUPO` e
-  `WHATSAPP_TEMPLATE_LEMBRETE_GRUPO` (fallback automático; sem elas tenta
-  texto livre e loga a falha na coleta).
-- **Serviço `services/whatsappGrupos.js`** (arquivo novo · não mexe nos do
-  fluxo de culto): `enviarEstudoSemanal()` (material `estudo_semana=true` em
-  `mem_grupo_documentos` · marca-se na aba Materiais · 1 por vez),
-  `enviarLembretesEncontro()` (grupos com `dia_semana` = ontem → pergunta ao
-  líder · líder resolvido por `whatsapp_lideres.grupo_id` OU profile→membro
-  = `mem_grupos.lider_id`), `tratarMensagemGrupos()` (interceptor do webhook),
-  `aplicarColetaGrupoEncontro()` (fila → RPC `registrar_encontro_grupo` =
-  encontro real + presenças nominais; fotos/visitantes/não-reconhecidos vão
-  nas observações), `transcreverAudio()` (OpenAI Whisper · env
-  `OPENAI_API_KEY` opcional + `OPENAI_TRANSCRIBE_MODEL` default whisper-1 ·
-  sem chave o bot pede texto).
-- **Sessão de relato** = `whatsapp_coletas` (SEM migration de estado):
-  `parsed={fonte:'grupo_encontro', grupo_id, data_encontro, presentes,
-  visitantes, resumo, nomes_presentes:[{membro_id,nome}], nao_reconhecidos,
-  fotos[]}`. Dedup por `whatsapp_message_id` sintético:
-  `lembrete:<grupoId>:<data>` e `estudo:<AAAA-Wss>:<liderId>`.
-- **Match nominal**: Haiku recebe a LISTA de membros do grupo e devolve os
-  nomes casados (apelido/typo ok); o JS revalida contra a lista (não confia
-  100% no modelo) e o que não casa vira `nao_reconhecidos` (provável
-  visitante). Revisão-antes-de-aplicar mantida (fila /admin/whatsapp).
-- **Webhook (`publicWhatsapp.js`)**: aceita `audio`/`image` além de texto;
-  interceptor de grupos roda DEPOIS do institucional e ANTES do fast-path do
-  formulário: assume quando (a) há sessão `grupo_encontro` aberta, (b) mídia
-  de líder com escopo grupos, ou (c) texto de líder SÓ-grupos (substitui a
-  orientação templated antiga). Multi-escopo digitando texto sem sessão segue
-  o fluxo de culto. Foto → Storage `eventos-anexos` + `mem_grupo_documentos`
-  (etiqueta "Fotos de grupos", `grupo_ids=[grupo]`) → aparece em Materiais.
-- **Rotas `routes/whatsappGrupos.js`** (`/api/whatsapp-grupos` · server.js):
-  `GET /cron/diario` (CRON_SECRET · vercel.json `0 12 * * *` = 9h BRT ·
-  lembretes diários + estudo no dia `WHATSAPP_ESTUDO_DIA` default 1=segunda),
-  `PATCH /materiais/:docId/estudo-semana` e `POST /enviar-estudo|lembretes`
-  (manual · grupos≥3). Aba Materiais ganhou botão/badge 📖 "Estudo da semana"
-  (`api.grupos.marcarEstudoSemana`).
-- **Migration `20260610220000`**: só `mem_grupo_documentos.estudo_semana
-  boolean default false`. ⚠️ Aplicar antes do merge.
-- **Envs**: `OPENAI_API_KEY` (áudio · Marcos cria depois) ·
-  `WHATSAPP_TEMPLATE_*` (proativo fora da janela 24h · criar na Meta) ·
-  `WHATSAPP_ESTUDO_DIA` (opcional). Sem nenhuma delas o resto funciona
-  (texto/foto dentro da janela de 24h).
+## Grupos · Renovação de temporada pelo líder (2026-07-21)
 
-### Refinamentos (2026-06-10 · 2ª rodada do Marcos)
+Pedido do Marcos: 1×/semestre, com a temporada fechada (antes de abrir as
+inscrições da próxima), TODOS os líderes recebem WhatsApp perguntando se
+continuam com o grupo. **Disparo SEMPRE manual** da coordenação (lei de 20/07 —
+nada automático pro líder), no card "Renovação de temporada" em Config >
+Temporadas (`TemporadasGrupos.jsx` · nível 5 · re-executar reenvia SÓ aos
+sem-resposta). Fluxo do líder no link público `/g/r/<token>`
+(`GrupoRenovacao.jsx` · token `renov` 30d · molde da frequência):
+- **SIM** → checklist do roster DESMARCADO ("quem provavelmente continua" ·
+  estimativa explícita) + selecionar todos + modal de confirmação **com os
+  NOMES** de quem sai. Não-marcado → `saiu_em` + `renovacao_id` (coluna FK
+  dedicada em `mem_grupo_membros` — NUNCA tag em texto) + motivo humano.
+  Pessoa segue no sistema e pode se reinscrever na abertura. **Reedição
+  permitida** (última vence): re-marcar reativa SÓ vínculos com
+  `renovacao_id` da própria renovação e sem outro vínculo ativo.
+- **NÃO** → motivo obrigatório → o grupo NÃO fecha: vira 4ª origem na Caixa
+  de entrada (`ren_nao_continua`) pra triagem da Naná (`PainelRenovacao`:
+  fechar grupo / buscar líder / manter · nota obrigatória) + `notificar()`.
+- **Sem resposta → roster INTOCADO** (lei: nunca remover por omissão).
 
-- **Auto-sync de líderes** (`sincronizarLideresGrupos()`): vínculo no bot é
-  AUTOMÁTICO a partir de `mem_grupos.lider_id` + `mem_membros.telefone`
-  (normalizado pra 55+DDD). Colunas novas em `whatsapp_lideres` (migration
-  `20260610230000`): `origem` manual|auto (o sync SÓ gerencia os 'auto' —
-  cria, troca grupo_id, desativa quando deixa de ser líder; manual é
-  intocável) e `recebe_lembretes` (opt-out). Roda no cron diário + hook
-  fire-and-forget após POST/PUT de grupo (`syncWhatsappLideres` em grupos.js)
-  + `POST /api/whatsapp-grupos/sincronizar-lideres` manual.
-- **Estudo da semana vai pro GRUPO de WhatsApp via coordenador**: a Cloud API
-  não posta em grupo → o bot manda pro(s) vínculo(s) com `papel='coordenador'`
-  (ex.: Pr. Nélio) a mensagem pronta com "👉 Encaminhe no grupo dos líderes".
-  NÃO é mais broadcast por líder (decisão do Marcos: "não há necessidade").
-- **Modo padrão do relato = espontâneo + cobrança 4 semanas**: o líder manda
-  1x/semana por conta própria; `enviarCobrancasSemRelato()` só cobra grupos
-  há 28+ dias SEM encontro registrado E SEM relato no WhatsApp (dedup mensal
-  `cobranca:<grupoId>:<AAAA-MM>` · cap `WHATSAPP_COBRANCA_CAP` default 40/dia
-  · abre a sessão de relato pra resposta cair certa). O lembrete SEMANAL
-  pós-encontro continua implementado mas DESLIGADO atrás de
-  `WHATSAPP_LEMBRETE_SEMANAL=1` (aguardando validação de custo com o gestor).
-- **Opt-out**: o extrator Haiku devolve `opt_out` quando o líder pede pra
-  parar → `recebe_lembretes=false` + confirmação (responder/registrar segue
-  funcionando · coordenador religa via PUT /api/whatsapp/lideres/:id).
-- **Visão do Pr. Nélio**: aba Relatórios do /grupos ganhou o card "Grupos sem
-  relatório de encontro" (`GET /grupos/kpis/sem-relato` · conta encontro
-  registrado por QUALQUER via · destaque vermelho 4+ semanas/nunca, âmbar
-  2-4 · mostra líder, dia e último relato).
+Segurança do submit (conselho 21/07): o POST carrega a lista **exibida** — o
+servidor só age sobre `exibidos ∩ roster ativo atual` (quem entrou depois da
+tela aberta nunca é removido por submit atrasado); token morre com: geração
+antiga (`token_geracao` na linha · reenvio incrementa), liderança trocada,
+linha triada ou **inscrições da temporada abertas**. Schema:
+`mem_grupo_renovacoes` (UNIQUE grupo+temporada · snapshot do líder ·
+contadores/ids jsonb como cache de exibição · triagem_*) + RLS molde
+mem_lider_inscricoes + audit trigger + whitelist (migration `20260721170000`,
+que também DROPa `uniq_mem_grupo_membros_ativo` — formaliza o multi-grupo que
+já valia em prod). Template Meta `grupos_renovacao_temporada` (UTILITY · {{1}}
+nome {{2}} temporada {{3}} grupo {{4}} link como variável de body · env
+override `WHATSAPP_TEMPLATE_GRUPOS_RENOVACAO`) via fila `whatsapp_envios`.
+A pessoa removida NÃO é notificada (decisão pastoral) — o caminho de volta é o
+broadcast de abertura das inscrições.
 
-## Grupos · aba Visitas (agendar + registrar) + guards por módulo (2026-06-10)
+## Grupos · "Confira a lista do seu grupo" (2026-07-31 · migration `20260731120000`)
 
-Marcos: abas do `/grupos` centralizadas (estouravam a largura) e a aba
-**Tarefas** virou **Visitas** — supervisores, coordenadores e os donos do
-módulo (Pr. Nélio + Natasha) **programam** e registram visitas aos grupos de
-conexão. Botão **"Agendar visita"** em toda página de grupo; filtro **"Sem
-visita há 2+ meses"** na aba; `/grupos?tab=visitas` abre direto nela.
+**3º fluxo do líder**, irmão da renovação mas SEM a pergunta "vai continuar?" e
+SEM a trava de temporada aberta. Problema real: o roster está poluído (gente que
+saiu, cadastros de teste da varredura de julho, importados de 10/07 que talvez
+nunca tenham frequentado) e a coordenação (Naná/Pr. Nélio) não tem como saber —
+**o líder é a única fonte confiável**. Os 2 links que existiam não resolvem: a
+**frequência** (`/g/f/`) só MARCA PRESENÇA (não remove ninguém) e a **renovação**
+(`/g/r/`) é BLOQUEADA com as inscrições da temporada abertas e fala de "preparar
+a próxima temporada" (confuso no meio da T2).
 
-- **Reusa a infra da supervisão** (`grupo_supervisao_visitas` +
-  `vw_grupos_supervisao` · 20260513140000) — NÃO criou tabela nova. Migration
-  `20260610130000`: coluna `status` (`agendada|realizada|cancelada` · default
-  `realizada`), `responsavel_id` (FK profiles · quem vai visitar),
-  `supervisor_id` nullable, `updated_at`. A view conta `ultima_visita`/
-  `visitas_mes_atual` **só com status='realizada'** (agendada futura não zera
-  o semáforo) + nova `proxima_visita` (min agendada >= hoje).
-- **Backend** (`routes/grupos.js`): `GET /visitas/painel` (grupos + agenda +
-  histórico + papel), `POST /:id/visitas` aceita `status`/`responsavel_id`
-  (agendar pra outra pessoa → `notificar()` o designado), `PATCH
-  /visitas/:visitaId` (concluir/cancelar/reagendar). Coletor
-  `grupos.lideres_acompanhados` filtra `status='realizada'`. Cron
-  (`notificacaoGenerator.gerarNotificacoesGrupos`) ganhou alerta **agregado
-  semanal** "N grupos sem visita há 60+ dias" → módulo grupos.
-- **`getMeuPerfilGrupo` agora recebe `req.user`** e dá papel `admin` pra quem
-  tem **nível >=3 no módulo grupos** (boost de área) — Nélio/Natasha enxergam
-  tudo na supervisão/visitas sem precisar de funcao na hierarquia.
-- **⚠️ Guards trocados** (achado de auditoria): rotas de escrita usavam
-  `authorize('admin','diretor')` (role/nível global · bloqueava os donos do
-  módulo) e várias estavam SEM guard (aprovar/rejeitar pedido — cria membro!,
-  remover membro, encontros, materiais). Tudo virou
-  `authorizeModule('grupos', N)`: CRUD/aprovações=3 · lançar encontro/
-  material=2 · temporadas/supervisor=5. UI esconde remover membro/encontro de
-  quem não edita (`podeEditarGrupos`).
-- **Frontend**: `GruposVisitas.jsx` (aba + `AgendarVisitaModal` exportado,
-  usado no detalhe do grupo). Aba antiga Tarefas (`ProcessosTarefas`) saiu do
-  Grupos (segue em Cuidados/NEXT). Abas centralizadas (`flexWrap` + center),
-  página 1100→1240px e padding 32→20px, "Validar endereços"→"Endereços",
-  bleeds das abas embutidas corrigidos no mobile (`.cbrio-grupos-bleed`).
-- ⚠️ Aplicar a migration `20260610130000` antes do merge (o painel e o POST
-  com status quebram sem as colunas). APLICADA em prod 2026-06-10.
-- **Abas Endereços e Temporadas só aparecem pra quem edita** (`soEditor` +
-  filtro por `podeEditarGrupos`; deep-link `?tab=` de não-editor cai em
-  Grupos via `tabAtiva`). **QR Inscrição fica visível a todos** — decisão do
-  Marcos: qualquer um pode mandar o QR de um grupo quando precisar.
-- **Consolidação de abas (2026-06-10 · aprovada pelo Marcos):** 8 abas.
-  **"Caixa de entrada"** = Pedidos + Encaminhados em sub-abas (pills), com a
-  distinção EXPLÍCITA que o Marcos pediu: *pedido* = a própria pessoa pediu
-  (viu o QR, escolheu, preencheu → líder aprova) · *encaminhado* = sugestão
-  do cuidado pastoral (a pessoa NÃO pediu; precisa de contato explicando o
-  que é grupo de conexão + devolutiva). Badge da aba = pedidos pendentes +
-  encaminhados sem desfecho (`encaminhamentos.resumo('grupos')`).
-  **"Configurações"** (soEditor) = Temporadas + Endereços em sub-abas.
-  Chaves antigas de URL seguem funcionando (`TAB_LEGADO`: pedidos/
-  encaminhados→entrada · geocode/temporadas→config · tarefas→visitas, com a
-  sub-aba certa pré-selecionada). `PedidosGrupo` ganhou prop `embedded`
-  (esconde o h1 quando dentro da Caixa de entrada). Decisão: NÃO juntar
-  Grupos/Relatórios/Mapa/Materiais/Visitas/QR (públicos e usos distintos).
-- **Aba "Pessoas" (2026-06-10 · pedido do Marcos):** o papel vive em 3
-  lugares (`mem_grupo_membros.funcao` · `mem_grupos.lider_id` ·
-  `mem_grupos.supervisor_id`) — por isso "é difícil ver quem é o quê".
-  `GET /grupos/pessoas/papeis` agrega 1 linha por pessoa com papel efetivo
-  (rank: coordenador>supervisor>líder>co-líder>treinamento>membro>visitante;
-  visitante = frequentador com <3 presenças, mesma régua do detalhe).
-  Participações paginadas (cap 1000 do PostgREST) + `.in()` em chunks.
-  `GruposPessoas.jsx`: cards-filtro clicáveis por papel + busca + card
-  destacado **"Líderes em treinamento"** (Marcos trocou o card "Candidatos a
-  promoção"/sinais de sugestão por esse · 2026-06-10) + modal **Promover**
-  (muda `funcao` via PUT
-  /membros/:id/funcao; promover a supervisor também vincula grupos via PUT
-  /:id/supervisor — exige nível 5). ⚠️ NÃO há histórico de quando a função
-  mudou (sem coluna `funcao_desde`) — "tempo em treinamento" exigiria
-  migration futura.
-- **Ajustes 2026-06-10:** filtro "Local" REMOVIDO da lista de grupos (era o
-  texto livre `local`, cheio de endereço; o filtro de Bairro já cobre).
-  Cards de resumo da aba Visitas viraram BOTÕES-FILTRO (clique em "Sem
-  visita há 2+ meses" filtra a lista · Marcos não tinha achado as pills).
+O líder abre `/g/c/<token>` (`GrupoConfiraLista.jsx`), vê a lista atual **toda
+marcada** e **DESMARCA quem não faz mais parte**.
+
+**Decisões de produto (fechadas · não reabrir):**
+- **Marca quem SAI** — o OPOSTO da renovação (que vem desmarcada). Aqui o padrão
+  esperado é "a lista está certa" e o atrito fica só em quem sai.
+- **Confirmação com os NOMES** de quem vai sair antes de aplicar (o líder tem
+  que ver quem está removendo).
+- **Motivo NÃO é obrigatório por pessoa** (atrito demais): é UM só, do lote, e
+  OPCIONAL (`mem_grupo_conferencias.observacao` · vai também pro `motivo_saida`).
+- **Remoção soft e rastreável**: `mem_grupo_membros.saiu_em` +
+  **`conferencia_id`** (coluna dedicada espelhando o `renovacao_id` — NUNCA tag
+  em texto). Reedição permitida (última vence), reativando SÓ o que ESTA
+  conferência removeu.
+- **NUNCA remover por omissão** (líder que não responde = roster intocado) e a
+  **pessoa removida NÃO é notificada** (decisão pastoral vigente na renovação) —
+  quem é notificada é a COORDENAÇÃO, quando houve remoção.
+- **Repetível na temporada** (diferente da renovação, 1×/semestre): 1 linha por
+  **(grupo, rodada)**. `temporada_id` é só SNAPSHOT informativo — de propósito
+  não trava nada.
+- ⚠️ **LIDERANÇA (`funcao IN ('lider','co_lider')`) NÃO É REMOVÍVEL por aqui.**
+  Cenário real: co-líder Ana no roster; o líder desmarca achando que é
+  participante → `saiu_em` gravado → o `GET /public/grupos/buscar` (que monta
+  `lideres_busca`/`lideres_exibicao` com `funcao IN ('lider','co_lider')` +
+  `saiu_em IS NULL`) para de devolver a Ana e **o grupo deixa de ser encontrável
+  pelo nome dela** na página pública e no mapa, sem ninguém ser avisado. O roster
+  devolve `funcao`/`papel`/`protegido` (papel de MAIOR nível entre os vínculos —
+  multi-vínculo é real), a tela mostra badge de papel + cadeado e o **SERVIDOR
+  força liderança exibida como mantida** (payload é do cliente; a decisão é
+  nossa). Trocar liderança é ato de gestão (aba Pessoas do /grupos ·
+  `PUT /membros/:id/funcao`), nunca efeito colateral de conferir lista.
+- ⚠️ **Contagem é de PESSOAS, não de vínculos** (régua de 23/07): o `{{3}}` do
+  template e o `membros_ativos` do painel contam `Set` de `membro_id`
+  (`comRoster` = Map de Set · `membrosPorGrupo` idem). A UNIQUE de vínculo ativo
+  foi dropada (multi-grupo real), então contar LINHAS diria "são 12 pessoas" no
+  WhatsApp e mostraria 10 na tela.
+
+**Segurança do submit** (lição registrada da renovação): o servidor só age sobre
+`exibidos ∩ roster ativo atual` — quem entrou depois da tela aberta nunca é
+removido por submit atrasado. O UPDATE de remoção leva **`.is('saiu_em', null)`**:
+fechamento concorrente da coordenação não é sobrescrito (senão a saída MANUAL
+dela passaria a apontar pra esta conferência e viraria reversível pela reedição
+do líder). Token `conf` = `{ p: grupoId, c: conferenciaId, g: geração,
+l: liderId }` (30d), mas a validade REAL é decidida a cada uso: geração × linha,
+liderança atual e linha não triada.
+
+⚠️ **RODADA NOVA MATA O LINK DA ANTERIOR em 2 camadas.** `nova_rodada` faz INSERT
+de linha nova, então (1) o disparo **incrementa o `token_geracao` da linha
+antiga** (o mecanismo de revogação que já existe · feito ANTES do insert — se
+falhar, não abrimos rodada nova com dois links vivos) e (2) `contextoConferencia`
+recusa 403 quando existe linha viva do mesmo grupo com `rodada` maior. Sem isso o
+líder podia clicar na mensagem VELHA e remover gente gravando o `conferencia_id`
+da rodada 1 — o painel (que lê só a última rodada) não contaria essas saídas e
+mostraria a rodada 2 como "não respondeu": a coordenação decidiria sobre um
+painel que subestima o que aconteceu.
+⚠️ `ultimasConferencias` é **paginado com `.range()`** (não `.limit(1000)`): o
+`order('rodada')` é CROSS-GROUP e num truncamento quem cai fora é justamente o
+grupo que só tem rodada 1 → seria classificado como 'nova' → INSERT com rodada 1
+bate 23505 contra o UNIQUE parcial → erro engolido em `erros.linha` e **o líder
+nunca recebe**. Por isso o toast do disparo soma `erros.linha + erros.montar` e
+avisa em âmbar quando > 0 — falha silenciosa aqui é líder sem mensagem.
+
+**Disparo SEMPRE manual** (lei de 20/07 · **sem cron**), no card "Confira a lista
+do grupo" da aba **Envios** (`GruposEnvios.jsx`), no padrão dos outros disparos:
+audiência líder/bairro/rede/todos → prévia (contagem + exemplo + quem NÃO recebe
++ quem é pulado) → **confirmação DIGITANDO o número** (freio mais forte que os
+outros cards: é o único disparo que muda o roster). Reenvio manda só pra quem
+**não respondeu**; grupo que já respondeu só volta com `nova_rodada=true`.
+Respeita bloqueio geral, `whatsapp_lideres.recebe_lembretes` (opt-out) e exige
+roster (grupo vazio não tem lista pra conferir). **Painel de triagem no mesmo
+card** (não criei tela nova): quem respondeu, quantos saíram, quem não respondeu,
++ "Marcar tratada" (nota curta obrigatória → status `triada`, que mata o link).
+
+Template Meta **`grupos_confira_lista`** (UTILITY pt_BR · 4 variáveis · {{1}} 1º
+nome do líder · {{2}} grupo · {{3}} quantidade de pessoas na lista · {{4}} o link
+como **variável de body**, não botão — é o que mantém a categoria UTILITY). Env
+de override `WHATSAPP_TEMPLATE_GRUPOS_CONFIRA` (default `grupos_confira_lista`).
+Sai pela fila `whatsapp_envios` (retry/backoff), como todos os outros.
+
+**Arquivos:** migration `20260731120000_grupos_confira_lista.sql` ·
+`services/gruposWhatsapp.js` (`montarEnvioConfira`) · `services/gruposEnvios.js`
+(`previewConfira`/`dispararConfira`/`ultimasConferencias`) · `routes/grupos.js`
+(`/confira/painel`, `/confira/preview`, `/confira/disparar`, `/confira/:id/triar`)
+· `routes/publicGrupos.js` (GET/POST `/grupo/confira`) ·
+`pages/public/GrupoConfiraLista.jsx` + rota `/g/c/:token` · `api.js`
+(`grupos.confira.*` + `gruposPublic.confiraPorToken/responderConfira`).
+
+### Confira v2 · 4 categorias + pedidos pendentes (2026-08-04 · SEM migration)
+
+Decisão do Marcos (a Naná preferiu o link WhatsApp ao app): a tela `/g/c/`
+passou a separar o roster em **4 situações** — **Liderança** 🔒 · **Inscritos
+nesta temporada** 🔒 (vínculo `created_at >= data_inicio` da temporada com
+`inscricoes_abertas`) · **Renovações confirmadas** 🔒 (vínculo com linha em
+`inscricao_consentimentos` porta `grupos` e `ref_id` = id do VÍNCULO — só a
+renovação grava assim; é a derivação-remendo do handoff, o campo "confirmado
+pra temporada X" segue pendência estrutural) · **Sem confirmação** (o ÚNICO
+removível pela tela). Travar inscrito/renovado protege a evidência de quem
+acabou de entrar/renovar — **o POST re-deriva as categorias e blinda no
+SERVIDOR** (payload é do cliente), então bundle antigo aberto não fura.
+
+- **+ Aguardando aprovação**: os `mem_grupo_pedidos` pendentes do grupo entram
+  na tela; desmarcar = **DEVOLVE pra triagem** (`status='devolvido'` · lei de
+  14/07 · motivo fixo · `decidido_por_nome = "<líder> (confira a lista)"` ·
+  `registrarEventoPedido('recusado_lider', {origem:'confira_lista',
+  conferencia_id})` awaited). O ✓ NÃO aprova (aprovação segue no link
+  individual /g/a/ — evita aprovação em massa acidental + gasto de tier).
+  Devolução é **one-way** pela tela (reedição não re-pendentifica — a triagem
+  pode já ter realocado; o GET lista os já-devolvidos read-only via evento
+  `detalhe->>conferencia_id`). Guardas no UPDATE: `.eq(grupo_id)` +
+  `.eq(status,'pendente')` (ids alheios no payload não fazem nada).
+- Notificação à coordenação ganhou a contagem de devolvidos e aponta
+  `?tab=entrada` quando houve devolução. Resposta do POST +=
+  `pedidos_devolvidos`. GET += `temporada` (label), `pedidos_pendentes`,
+  `pedidos_devolvidos`.
+- ⚠️ Sem temporada aberta a categoria 'inscrito' não existe e o fluxo segue
+  funcionando (desenho original). Template Meta continua o MESMO
+  (`grupos_confira_lista` aprovado 03/08 — 1 template pras 2 ocasiões, o
+  contexto vive na tela; o {{3}} segue contando pessoas do roster).
+- **'Inscrito' inclui o PILOTO pré-abertura (Marcos · 05/08 · SEM migration):**
+  vínculo criado até **30 dias ANTES** da `data_inicio` conta como 'inscrito'
+  **se e só se** existe `mem_grupo_pedidos` **aprovado** do mesmo membro no
+  mesmo grupo (`membrosInscritosPreAbertura` em publicGrupos.js · aplicada no
+  GET **e** na re-derivação do POST). Caso real: Nathália Pigatti, pedido
+  aprovado 28/07 no piloto de 26-28/07 com a T2 abrindo 01/08 — caía em "Sem
+  confirmação" removível. Exigir o pedido aprovado é o que separa confirmação
+  real do import de 10/07: medido em 05/08, **8 pessoas em 4 grupos** flipam
+  pra 'inscrito'; os ~380 vínculos restantes da janela (import, sem pedido)
+  seguem removíveis. O `aprovarPedidoCore` sempre grava `membro_id` no claim —
+  é isso que torna a chave (grupo, membro, aprovado) confiável.
+- ⚠️ **Renovação × Confira vão virar UM fluxo** (decisão do Marcos · 05/08):
+  a ideia é um pedido só — "deseja continuar o grupo?" e em seguida "escreva
+  quem fica". **Por enquanto NADA foi disparado nem alterado nos 2 fluxos**
+  ("por enquanto deixa assim, nao dispara nada") — a renovação (`/g/r/`) segue
+  nunca disparada nesta temporada (0 linhas em `mem_grupo_renovacoes`) e o
+  template `grupos_renovacao_temporada` segue aprovado e ocioso.
+
+**Feedback Naná/Nélio (04/08 · teste real — os 2 responderam em minutos):**
+(1) intro da tela virou 2 parágrafos curtos, SEM a explicação "quem sair
+continua cadastrado…" no topo (as instruções curtas vivem no título de cada
+seção; o modal de confirmação mantém a explicação completa). (2) A caixa de
+entrada (`GruposEntrada.jsx`) ganhou o bloco recolhível **"Líderes · quem
+falta responder"**: conferência da lista (responderam × receberam-e-não ×
+nunca receberam · reusa `GET /grupos/confira/painel`, o MESMO endpoint do
+card da aba Envios — lazy ao abrir) + **"Aprovações paradas"** (pedidos
+`pendente` agrupados por grupo/líder com idade do mais antigo, client-side
+sobre as linhas já carregadas — o nome do líder vem no próprio pedido via
+`mem_grupos → mem_membros!lider_id`; segue os filtros da tela). ⚠️
+`aprovacoesParadas` é useMemo declarado DEPOIS de `rowsBase` (lição TDZ).
+
+⚠️ **Aplicar a migration antes do merge.** O fluxo NOVO tolera a ausência dela
+(`schemaAusente()` → **503 com aviso claro** no público, `{disponivel:false, aviso}`
+no painel), e **nenhum fluxo existente lê a tabela/coluna nova** — frequência e
+renovação não piscam sem a migration (lição `parcelas_max`).
+⚠️ `montarDestinatariosFrequencia` passou a devolver `roster_count` por grupo
+(`comRoster` virou Map pra alimentar o {{3}} do template) — `.has()` segue
+idêntico pros chamadores antigos.
+
+## Grupos · triagem aprova POR CIMA da recusa + troca o grupo ali (2026-08-05 · SEM migration)
+
+Caso real: **4 mulheres do ONLINE - MULHER ÚNICA devolvidas por engano** pela
+líder na "Confira a lista" de 04/08 — e a Caixa de entrada só oferecia «Sugerir
+outro grupo» (depende de a pessoa aceitar pelo WhatsApp) ou «Rejeitar de vez»:
+o botão Aprovar só existia pra `status='pendente'`. Decisão do Marcos: recusa
+por engano é frequente; a triagem (Naná) decide por cima, inclusive movendo a
+pessoa de grupo, **sem autorização do líder**.
+
+- **`POST /grupos/pedidos/:pedidoId/aprovar-direto`** (nível 3 · body
+  `{ grupo_id? }`): aceita pendente/devolvido/rejeitado/encaminhado (aprovado é
+  409). Reabre pra `pendente` + realoca o `grupo_id` (validado contra grupo
+  vivo/ativo) **num UPDATE só com guarda de corrida** no status atual, registra
+  o evento `aprovado_triagem` ({status_anterior, realocado_para} · **awaited**,
+  serverless descarta trabalho pós-res.json) e delega ao **`aprovarPedidoCore`
+  canônico** — vínculo, WhatsApp ao líder e à pessoa (gate de opt-in), evento
+  'aprovado', tudo pelo caminho único. NÃO é um 2º fluxo de aprovação.
+- **UI (`GruposEntrada.jsx` · PainelPedido)**: botão primário **«Aprovar mesmo
+  assim»** em devolvido/rejeitado/encaminhado + ghost **«Aprovar em outro
+  grupo»** no pendente — os dois abrem o mesmo painel inline com select de
+  grupo (default «Manter: <grupo do pedido>»). Hints de devolvido/rejeitado
+  citam o caminho novo; `EVENTO_META.aprovado_triagem` na timeline.
+- ⚠️ A realocação NÃO passa pela sugestão (`sugerido_grupo_id` fica intocado;
+  link /g/s/ vivo de um encaminhado morre sozinho porque o pedido vira
+  aprovado). `api.aprovarPedidoDireto(id, grupoId)`.
+- Os 6 casos de 05/08 (4 do MULHER ÚNICA + Eliane Rangel Fonseca + Bruno de
+  Mendonca Paiva) foram aprovados por script ANTES desta feature (reabertura +
+  `aprovarPedidoCore` · backup em `scratchpad/backup_pedidos_aprovacao_20260805.json`;
+  confirmação de aprovado enfileirada na `whatsapp_envios` pra quem tem opt-in —
+  Rafaela ficou de fora por `whatsapp_optin=false`).
+
+## ⚠️ Grupos · link de aprovação 7d → 30d + PRORROGAÇÃO dos já entregues (2026-08-12 · SEM migration)
+
+Pedido da Natasha: *"o link de aprovação de pessoas em grupos fique válido por
+mais de 7 dias, os líderes estão aprendendo e alguns deixaram muito tempo sem
+aprovar; revalide o link novamente e renove ele até o fim do mês."*
+
+**Medido em produção antes de mexer (12/08): dos 90 pedidos pendentes, 51 (57%)
+já tinham passado dos 7 dias** — ou seja, o link mais cobrado era exatamente o
+que não abria mais. 35 líderes, 36 grupos, **0 com opt-out**, 0 líder sem
+telefone (1 pedido em grupo sem `lider_id`: JOVENS - GRUPO DE JIU-JITSU). O TTL
+de 7 dias briga com o próprio fluxo que a casa adotou em 29/07 (o template v2
+manda o líder **LIGAR** pra pessoa antes de aceitar).
+
+### ⚠️⚠️ O `exp` vive DENTRO do token assinado — subir o TTL não revalida nada
+
+Essa é a parte que engana: `APROV_TTL_MS` de 30 dias só vale pra link **NOVO**.
+Os 51 já entregues continuariam mortos, e "revalidar" pareceria exigir
+**reenviar ~90 mensagens** — 8 pra um mesmo líder (Cristiano), 7 pro Pr. Nélio,
+6 pra Camila. É o padrão que a Meta lê como spam, e **a nota de qualidade é o
+que decide a subida de tier** que a igreja quer.
+
+⇒ Quem revalida é o **SERVIDOR**: `verificarToken` aceita token `'aprov'`
+vencido **até uma data-limite**. O líder abre a mensagem que já está no WhatsApp
+dele e funciona. **Zero envio, zero custo, nenhum líder incomodado.**
+
+- ⚠️ **NÃO é afrouxamento geral**, e o teste existe pra que virar um seja
+  decisão consciente: a assinatura HMAC continua obrigatória, vale **SÓ** pro
+  tipo `'aprov'` (que dá acesso a UM pedido) e as duas travas de
+  `publicGrupos.js` seguem mandando — pedido tem que estar **`pendente`** e
+  `payload.l` tem que ser o **líder ATUAL** do grupo (trocou a liderança, o link
+  morre na hora, prorrogado ou não). É a mesma tese já aplicada à renovação e à
+  conferência: *"a validade real é decidida no servidor a cada uso"*.
+- ⚠️ **Tem PRAZO e morre sozinha** (`2026-08-31T23:59:59-03:00` — o "fim do mês"
+  que ela pediu): remendo datado, não porta permanente. Depois disso link
+  vencido volta a ser recusado e o TTL de 30d passa a bastar. Env
+  `GRUPOS_APROV_PRORROGADO_ATE` (ISO) estica sem deploy; **data inválida ou
+  vazia DESLIGA** (fail-closed).
+- ⚠️ **Data com fuso, não ingênua**: `'2026-08-31'` seria meia-noite UTC = 20h51
+  do dia 30 no Rio, e a prorrogação morreria um dia antes do combinado. Tem
+  teste em cima disso.
+- ⚠️ **O default de 7 dias NÃO subiu junto** (`TOKEN_TTL_MS` intocado): sugestão
+  (`/g/s/`) e chamada do mês (`/g/f/`) não foram pedidas, e subir o default
+  esticaria TRÊS fluxos de uma vez sem ninguém pedir.
+- `payload.prorrogado = true` marca quem entrou pela exceção (sem a marca, não
+  há como distinguir depois o que passou pela tolerância).
+
+**A régua saiu de `services/gruposWhatsapp.js` para `backend/utils/gruposToken.js`**
+(pura: só `crypto` + env) — é o que a coloca no **gate de deploy**; o serviço
+**re-exporta** `assinarToken`/`verificarToken`, então nenhum import mudou. NÃO
+reimplementar assinatura/validade no serviço: duas cópias divergiriam.
+`src/test/gruposToken.test.ts` (14 casos, `agora` **injetado**) é
+**mutation-testado** — estender a tolerância a qualquer tipo, tirar a
+data-limite ou deixar token sem `exp` passar deixa o gate vermelho.
+
+### ⚠️ Quem NÃO tem mensagem antiga pra revalidar são 3, não 9 (alarme meu, medido de novo)
+
+9 pendentes estavam sem envio PRÓPRIO e eu ia reportar isso como "9 líderes sem
+aviso". **6 deles são o CÔNJUGE de uma inscrição de casal** — e ali o desenho é
+mandar **UM aviso só**, no pedido do titular, com os dois nomes em `{{3}}`
+(decisão de 30/07). O par foi avisado; o pedido do cônjuge nunca teria envio
+próprio. Régua que fica: **ao auditar entrega de aviso de grupo, conferir
+`casal_pedido_id` antes de contar** — senão todo grupo de casais aparece como
+falha de entrega.
+
+Sobram **3** (follow-up de gente · envio é ação externa, fica com a coordenação):
+- **ROTEIRO DA MENSAGEM DE DOMINGO** (Rodrigo Paula Silva · líder Roberto da
+  Silva Franco Neto) — pedido de 27/07, **nenhum envio**. Data anterior ao fix
+  de 31/07 que passou o aviso ao líder a ser **awaited**; é o sintoma exato
+  daquele bug (serverless congela na resposta e descarta o trabalho pendente).
+- **JOVENS - GRUPO DE JIU-JITSU** (Rodrigo Costa) — o **grupo não tem
+  `lider_id`**, então não há a quem avisar. É cadastro: resolver na aba Pessoas.
+- **SER MULHER** (Mayla Marçal Portela Seoud · líder Márcia Trigo) — envio
+  recusado com **`invalid_phone`**. Telefone da líder precisa ser corrigido na
+  Membresia (a normalização da porta só vale pra dado novo).
+
+## ⚠️ Grupos · membro existente ganha o que digitou no formulário (2026-08-06 · SEM migration)
+
+Pedido do Marcos, depois da auditoria da temporada: *"recupere esses que já
+foram e garanta que os próximos quando preencherem, já vir corretamente os
+dados para os campos"*. O achado: quando o matcher liga a inscrição num
+cadastro JÁ EXISTENTE (import antigo), o enriquecimento só-onde-vazio cobria
+foto/sexo/nascimento — **CPF e e-mail digitados não chegavam ao cadastro**.
+Medido em 06/08: 20 pessoas (aprovadas 26/07+ e pendentes) com cadastro de
+import (13/05–23/06) sem CPF, e **os 20 CPFs digitados guardados em
+`mem_identidade_observacoes`** — coletados e nunca aplicados. Mesma classe do
+bug do CPF do censo (04/08), versão branda (evidência preservada).
+
+- **`processarPessoaPedido` (publicGrupos.js)**, no ramo de membro existente:
+  (1) o só-onde-vazio ganhou **e-mail e telefone** (política do censo: vazio
+  preenche; divergente NUNCA sobrescreve — acumula em `mem_contatos` via
+  `registrarContatoDaPorta`, a MESMA função do matcher); (2) depois do
+  enriquecimento roda **`reconciliarCpfTardio`** com a confiança canônica do
+  `_consolidarCpfNoMatch` ('forte' só em nome+nascimento; e-mail/telefone+nome
+  = 'fraca'). Nascimento divergente ou CPF de outra pessoa segue virando
+  `identidade_pendencias` — fila humana, nunca fusão. Best-effort: falha não
+  derruba a porta.
+- ⚠️ **A ordem (enriquecer ANTES de consolidar) é decisão, não descuido**: o
+  formulário exige nascimento, o cadastro de import geralmente não tem — o
+  gate 'fraca' do reconciliar exige nascimento dos 2 lados, e sem o
+  preenchimento prévio quase nenhum CPF consolidaria (o pedido do Marcos é que
+  os dados CHEGUEM). O caso perigoso (cadastro com nascimento DIFERENTE do
+  digitado) continua barrado: só-onde-vazio não sobrescreve, e o reconciliar
+  detecta a divergência e abre pendência.
+- ⚠️ **`aprovarPedidoCore` NÃO enriquece pedido com `membro_id`** (só o ramo de
+  cadastro pendente/promoção) — quem completa o cadastro agora é a INSCRIÇÃO.
+  Registrado porque uma resposta anterior minha afirmou o contrário.
+- **Reparo dos que já passaram** (script com dry-run + backup em
+  `scratchpad/backup_reparo_cpf_email_grupos_20260806.json`): CPFs das
+  observações consolidados via `reconciliarCpfTardio` + e-mails/telefones dos
+  pedidos aplicados só-onde-vazio nos membros de pedidos aprovados (26/07+) e
+  pendentes. Conflito de CPF virou pendência em Entradas, como manda o contrato.
+
+## Grupos · Caixa de entrada ganhou o "Retrato do período" + contato impossível (2026-08-03 · SEM migration)
+
+Depois da varredura do lançamento (domingo 02/08), o Marcos pediu: *"eu gostaria
+de ter essa visualização dentro do sistema ali na aba de caixa de entrada"*. A
+análise que eu fazia por script agora vive no módulo.
+
+### ⚠️ O rótulo do período É parte do número (correção de 03/08 · mesmo dia)
+
+O Marcos abriu o painel e perguntou: *"você me disse que tinham 176 pessoas
+inscritas, mas agora diz 301 pedidos e 193 pessoas distintas, que números são
+esses?"* **Nenhum estava errado** — o filtro padrão da aba é **180 dias** e somava
+os **120 pedidos de julho** (demo, varredura da Nana, piloto de 26-28/07):
+301 = 120 (julho) + 181 (agosto). O defeito era o título genérico "Retrato do
+período", que não dizia QUAL período.
+
+- O título passou a **nomear a janela**: "Retrato · temporada T2-2026 (01/08 a
+  hoje)". Rótulo de agregado sem a janela ao lado é convite a ler o número errado.
+- Opção **"Temporada atual"** (1ª do filtro): *"como foi a abertura?"* é a
+  pergunta real e **nenhuma janela em DIAS a responde de forma estável** — hoje
+  "7 dias" pega a abertura, em duas semanas não pega mais.
+- Aviso âmbar quando a janela pega pedido de ANTES da temporada, com atalho pra
+  trocar. É o caso que gerou a dúvida.
+- **`src/lib/janelaPeriodo.js`** virou a fonte ÚNICA (lista + painel + rótulo).
+  ⚠️ Antes `Date.now() - fPeriodo * 86400000` estava repetido em **3 lugares** — e
+  com a opção nova (que não é número) cada um daria `NaN`; **NaN em comparação de
+  data não filtra nada: mostraria tudo, em silêncio.**
+  ⚠️ `data_inicio` é parseada com **`T12:00:00` local**: `new Date('2026-08-01')` é
+  meia-noite UTC = 31/07 21h no Rio, e um pedido da véspera (temporada ANTERIOR)
+  entraria como se fosse da nova. Guarda mutation-testada em
+  `src/test/janelaPeriodo.test.ts` (7 casos, com `agora` injetado — teste que
+  depende da hora da execução foi o que mordeu no `faixaEtaria.test.ts`).
+
+**⚠️ NÃO virou sub-aba nem tela nova** — a Caixa de entrada é **lista única sem
+sub-abas** por decisão dele (14/07). O retrato entrou como bloco recolhível
+ACIMA da lista, e **derivado de `rowsBase`**, o mesmo objeto que já alimenta os
+cards: segue origem/período/busca automaticamente. Se fosse um endpoint de
+agregação próprio, a tela teria dois números para a mesma pergunta.
+
+O painel mostra: **pedidos × PESSOAS distintas** (176 pedidos do domingo eram 160
+pessoas — 14 pediram 2+ grupos, e um dos devolvidos foi exatamente alguém que se
+inscreveu duas vezes sem perceber), novas × já cadastradas, "as mensagens
+chegaram?" (líder avisado/falhou · pessoa avisada/falhou), por grupo + **quais
+grupos não receberam nenhum pedido**, e barras por dia.
+
+- `GET /grupos/entrada/cobertura?desde=` é o **único** dado que a lista não
+  responde (grupos ativos sem pedido — 30 de 87 no lançamento). Ignora
+  `modo_inscricao='fechado'`: grupo que não recebe inscrição pelo formulário não
+  pode ser cobrado de divulgação. Carregado **lazy**, só quando o painel abre.
+- `/grupos/pedidos/list` ganhou 3 campos por linha, em blocos **best-effort**
+  (mesmo padrão dos que já existiam — falha loga e a lista segue de pé):
+  `contato_status`, `avisos` (estado da entrega ao líder e à pessoa) e
+  `pessoa_nova`. `pessoa_nova` = cadastro pendente, ou membro criado a menos de
+  **10 min** do pedido (quem já existia tem `created_at` de dias/meses antes).
+
+## ⚠️ Grupos · "dá pra falar com essa pessoa?" · services/contatoPessoa.js (2026-08-03)
+
+Régua ÚNICA de contato, criada a partir de 2 casos reais do lançamento:
+
+1. **Telefone que o nosso envio não alcança.** A Patricia Künzler digitou um
+   número **suíço** (+41 76 576 45 38). O contrato de porta valida **quantidade
+   de dígitos, não o DDD** — então passou: um pedido gravou `0765764538` (DDD
+   "07" não existe) e outro `41765764538`. E `waSender.normalizarTelefone`
+   **prefixa `55` em tudo que tem 10-11 dígitos**, então virou `5541765764538`,
+   um número de Curitiba que não existe.
+2. **Número brasileiro válido sem WhatsApp** — 2 receberam "Message
+   undeliverable" da Meta.
+
+**Decisões do Marcos (03/08):** telefone estrangeiro **deve poder se inscrever**,
+só precisa gerar observação pra o líder procurar por e-mail; e *"número brasileiro
+sem WhatsApp é a mesma coisa que estrangeiro: classifique como **número errado —
+impossível contato**"* — daí o rótulo ser o MESMO nos dois casos.
+
+- `telefoneAlcancavel()` espelha o normalizador do envio e acrescenta o que
+  faltava: **DDD real** (lista da Anatel) e **o 9 do celular**.
+  ⚠️ **DDD 55 é Santa Maria/RS e é legítimo** — mesma armadilha do
+  `tirarCodigoPaisTelefone`; há teste dedicado pra isso.
+- ⚠️ **NÃO bloqueia inscrição em lugar nenhum.** É classificação de LEITURA: pinta
+  o selo na Caixa de entrada (número riscado, e-mail destacado, "Não recebe
+  WhatsApp — fale por e-mail") e troca o `{{4}}` do template do líder, que antes
+  entregava um número inexistente — o líder tentava, não conseguia, e concluía que
+  a pessoa desistiu.
+- ⚠️ **Sem coluna nova, de propósito**: o telefone É a evidência do caso 1 e
+  `whatsapp_envios.failed_at` é a do caso 2. Coluna gravada ficaria velha quando a
+  pessoa corrigisse o telefone.
+- ⚠️ `whatsapp_envios.telefone` guarda **o que o chamador passou**, não uma forma
+  canônica (grupos manda digits-only; `whatsapp_lideres` guarda com 55). O
+  cruzamento usa os **8 últimos dígitos** — comparar cru dependeria de sorte.
+- Testes: `src/test/contatoPessoa.test.ts` (14 casos, com os números reais do
+  lançamento). Validado contra produção: dos 181 pedidos, **177 ok · 2
+  numero_errado · 2 sem_whatsapp**, todos os 4 com e-mail disponível.
+
+⚠️ **Follow-up conhecido (não feito)**: `41765764538` é um número suíço VÁLIDO e o
+WhatsApp funciona internacionalmente — o que impede a entrega é o nosso envio
+assumir Brasil e prefixar 55. Suportar internacional de verdade é mexer no funil
+de envio (waSender) e vale sessão própria; hoje o caminho é o e-mail.
+
+## ⚠️ Grupos · auditoria pré-abertura + 5 correções (2026-07-31 · PR #2209 · SEM migration)
+
+Pedido do Marcos na véspera da abertura das inscrições (domingo 02/08). 5 agentes
+em lentes distintas, cada achado **reconferido contra o banco vivo antes de virar
+código** — dois se dissolveram na verificação. A narrativa completa (as medições
+das 5 correções, os reparos de dado, a geocodificação dos 13 presenciais e o
+espalhamento de pinos) está no legado. As regras que ficam:
+
+1. ⚠️⚠️ **Em porta pública serverless, o que não pode se perder vai AWAITED.** O
+   aviso ao líder rodava em `(async () => {…})()` **sem await**, com o
+   `res.json()` logo abaixo — o container CONGELA ao responder e o trabalho
+   pendente é descartado. Prova medida: um pedido de 30/07 com **0 envios e 0
+   notificações**, e a líder sem receber nada. Fire-and-forget só pro que tem
+   caminho alternativo garantido (a Caixa de entrada, no caso da coordenação).
+2. ⚠️⚠️ **A ORDEM importa na máscara de telefone**: truncar em 11 dígitos ANTES
+   de normalizar o prefixo gravava `55219999988` — **15 cadastros reais** assim.
+   Helper único `tirarCodigoPais` (`src/lib/inscricao.js` + espelho no contrato),
+   aplicado na máscara, na validação **e nos pontos de GRAVAÇÃO** (corrigir só a
+   validação não basta). ⚠️ **DDD 55 é Santa Maria/RS**: só remove o `55` quando
+   o resto AINDA é telefone completo (12–13 dígitos) — `replace(/^55/,'')`
+   destruiria todo número legítimo de lá. Mutation-testado em
+   `src/test/telefoneCodigoPais.test.ts`.
+3. **Toda mensagem ao inscrito passa pelo gate de opt-in.**
+   `notificarPessoaAprovada` era a única sem — e é a mais comum (3 pessoas que
+   marcaram "não quero" receberam). O opt-in efetivo é lido **no ponto do envio**,
+   nunca de variável de escopo anterior, que muda conforme o caminho da aprovação.
+4. **Teto público = 10.000 requisições/15min por IP** (no culto a igreja sai por
+   UM IP, subsolo sem 4G). E ⚠️ **erro nunca se disfarça de vazio**: o 429
+   aparecia como "Nenhum grupo encontrado com esses filtros" — na renderização,
+   **erro vem ANTES do vazio**.
+5. **A fila da coordenação filtra `deleted_at`** (lista e as 2 contagens do
+   badge) — pedido apagado aparecia clicável e a aprovação devolvia 404 seco.
+
+⚠️ **Grupo online NÃO é identificado por coluna `modalidade` — ela não existe.** A
+régua real (`grupos.js:3779`) é `bairro === 'Online'` OU `local` contendo
+"online". Rotina nova de endereço que use outra régua vai "consertar" grupo online
+que está certo do jeito que está.
+
+⚠️ **`espalharPinosSobrepostos` (`src/lib/pinosMapa.ts`) é SÓ EXIBIÇÃO** —
+`mem_grupos.lat/lng` não é tocado (eram 19 grupos empilhados em 5 coordenadas, a
+maior pilha com 7 no mesmo ponto da Barra). Gravar precisão inventada faria o
+levantamento cadastral futuro perder a distinção entre endereço real e chute.
+**Determinístico por id**: pino que muda de lugar a cada refresh é pior que pino
+empilhado. E a coordenada deslocada **nunca vaza do render** — `onGroupSelect`,
+`onPinClick` e o "Como chegar" recebem sempre o grupo ORIGINAL.
+
+⚠️ **Grupo presencial fora do RJ é ponto cego permanente do botão "Endereços"**: o
+guard `inRJ` do endpoint recusa toda coordenada fora do RJ metropolitano (de
+propósito, pra não casar bairro homônimo em outra cidade). O grupo de
+Florianópolis exigiu script separado exigindo 3 evidências convergentes.
+
+### ⚠️ Quem RECEBE a mensagem do grupo = `mem_grupos.lider_id`, e é UM só (2026-07-31)
+
+Pergunta do Marcos na véspera: *"temos muitos líderes em um mesmo grupo, mas
+devemos garantir que só um deles está recebendo mensagens a respeito daquele
+grupo"*. **Isso já é garantido por construção** — conferido nos dois resolvedores:
+`gruposWhatsapp.js` (novo pedido, frequência, renovação, confira, sugestão) e
+`gruposEnvios.js` (`montarDestinatarios*`) leem **`grupo.lider_id`**, um único
+`mem_membros`. Co-líder e `lider_treinamento` do roster **nunca** recebem. E medido:
+**0 grupos com 2+ vínculos ativos em `whatsapp_lideres`** (o outro canal, do bot).
+
+⚠️ **A régua frágil é outra: nada garante que o `lider_id` seja um líder do
+roster** — e era exatamente aí que estava o problema. Medição de 31/07 nos 87
+ativos: **3 grupos** cujo destinatário não estava entre os `funcao IN
+('lider','co_lider')`, sendo 2 casos reais e graves:
+
+- **CURSO ALIANÇA (00000057)**: recebia a **Desiree**, que no roster é
+  **`frequentador`** (nem líder!) e cujo telefone tem 9 dígitos (`996013179` =
+  inalcançável). Os 3 líderes de verdade (Carlos, Ester, **Paulo Pessanha**) não
+  recebiam nada. Sintoma que confirma: o grupo tinha **0 vínculo no bot**, porque
+  o auto-sync não cria vínculo com telefone inválido. → passou pro **Paulo**
+  (`21999648788`), decisão do Marcos.
+- **Cond. Península – JOVENS (T2-2026-005)**: recebia a **Marcella Martins Leta**,
+  que **não tem vínculo nenhum no grupo**; o líder do roster é o **Vitor Leta**. →
+  passou pro **Vitor** (`21994884484`), decisão do Marcos.
+
+**Estado final (87 ativos): 0 destinatário com telefone inválido · 0 destinatário
+que não é líder do roster · 0 grupo com 2+ vínculos no bot · 0 grupo sem
+`lider_id`.** Isso também tirou o telefone da Desiree do caminho crítico do
+lançamento (o grupo dela passou a ter destinatário alcançável) — o número dela
+segue pendente como correção de CADASTRO, não de envio.
+
+⚠️ **Trocar `lider_id` por UPDATE direto NÃO sincroniza o bot.** O
+`syncWhatsappLideres` é hook do backend (POST/PUT de grupo); em script é preciso
+chamar `sincronizarLideresGrupos()` na mão, senão os 2 canais discordam (o de
+grupos manda pro novo líder e o bot continua no antigo). Foi o que aconteceu aqui
+até rodar o sync (desativou o vínculo antigo e criou o novo).
+⚠️ **O checkout principal está na branch `claude/poolpg-projects-patrimonio` e NEM
+TEM `backend/services/whatsappGrupos.js`** — script que precise de serviço do
+backend tem que resolver o require na **worktree de `origin/main`** (com
+`node_modules`/`.env` do principal). É a lição de "ler da worktree, não do main",
+agora com sintoma novo: `MODULE_NOT_FOUND` num arquivo que existe em produção.
+⚠️ **Follow-up combinado (pós-domingo, decisão do Marcos):** criar verificação que
+avise a coordenação quando o destinatário não for líder do roster. Sem ela, a
+incoerência volta silenciosamente na próxima troca de liderança — porque a aba
+Pessoas muda `mem_grupo_membros.funcao` e o `lider_id` do grupo é outro campo.
+
+## ⚠️ Grupos × APP · temporada e lista de inscrição vêm do BACKEND (2026-08-04)
+
+Item 1 da auditoria do app (03/08): o app mobile (`igreja-cbrio/Aplicativo-CBRio`)
+lia DUAS fontes erradas — a tabela paralela **`app_grupos_temporada`** (1 linha ·
+`aberta:false` desde 11/06 · nenhuma tela do web escrevia nela) pra decidir
+"inscrições abertas?", e **`mem_grupos` cru** (só `ativo` + `deleted_at`) pra
+listar grupos — ignorando `modo_inscricao='fechado'`, `aceitando_inscricoes`,
+status e temporada. Resultado: o app dizia "temporada fechada" com a T2 aberta
+e, se a flag paralela fosse virada, listaria grupo fechado/pausado.
+
+- **`GET /api/public/grupos/app-inscricao`** (publicGrupos.js · sem auth, herda
+  o limiter do router) devolve `{ aberta, titulo, grupos[] }`. `aberta` deriva
+  da LISTA (`grupos.length > 0`), não de flag: grupo `sempre_aberto` mantém a
+  inscrição possível mesmo fora de temporada. `titulo` = label da temporada com
+  `inscricoes_abertas` (maior ano/numero).
+- **Régua ÚNICA**: o filtro do `/buscar` virou o helper `buscarGruposInscriveis
+  ({categoria, bairro, temporada})` e os DOIS endpoints o usam. Mudou a regra de
+  "grupo inscritível"? Muda no helper — nunca criar cópia (foi a cópia que
+  gerou a divergência app×web).
+- ⚠️ A rota é declarada **ANTES de `GET /:id`** (Express casa na ordem — depois
+  dela, `/app-inscricao` viraria `req.params.id`).
+- **`app_grupos_temporada` ficou SEM leitor** (o app novo lê o endpoint) — não
+  reintroduzir; dropar a tabela numa limpeza futura com aval do Marcos.
+- No app: `lib/temporadaGrupos.ts` chama o endpoint (falha ⇒ `aberta:false`,
+  fail-closed) e `inscricao-grupos.tsx` lista os grupos vindos dele.
+
+**Item 2 (mesma leva) · recusa do líder pelo APP agora DEVOLVE (não rejeita):**
+`POST /app/grupos/pedidos/:id/rejeitar` (app.js) gravava `rejeitado` (final) e
+**notificava a pessoa** — aviso que o fluxo do líder deliberadamente não manda
+(lei de 14/07: líder recusa → `devolvido`, triagem realoca; `rejeitado` é só da
+equipe). Agora espelha o ramo de recusa do `POST /public/grupos/aprovar`:
+`status='devolvido'` + motivo interno (trim/500) + `registrarEventoPedido
+('recusado_lider', {origem:'app'})` **awaited** (serverless descarta trabalho
+pendente pós-res.json; o serviço nunca lança) + notificação pra TRIAGEM
+(`pedido_devolvido`, fire-and-forget — a Caixa de entrada é o caminho
+garantido). A pessoa não recebe nada e continua na fila de realocação da Naná.
+Medido antes do fix: **0 recusas reais** tinham passado pelo caminho errado
+(os 16 `rejeitado` vivos eram teste de julho). A aprovação pelo app já era
+correta (`aprovarPedidoCore` = regra única, registra evento).
+
+## ⚠️⚠️ APP × ERP · varredura de tabelas e variáveis (2026-08-05)
+
+Pedido do Marcos: *"quero que você avalie todas as variáveis e tabelas dentro do
+nosso sistema mobile, pois algumas coisas acho que não fica alinhado — vi um caso
+do next que diz que não tem turma aberta, mas tem no sistema"*. Tinha. Inventário:
+**22 tabelas lidas DIRETO pelo app** (anon key + RLS) + ~30 pelas rotas
+`/api/app/*`. Os achados medidos e a rodada de correções estão no legado.
+
+**⚠️ LEI que sai daqui: quem decide o que é "válido" é o BACKEND, não o app.** O
+app lê tabela direto pelo que é dado DELE (perfil, devocional, cartão). Régua de
+negócio — o que está aberto, quem pode se inscrever, qual status vale — vem de
+**endpoint**. O padrão de TODA divergência encontrada foi o mesmo: **o app
+reproduz a régua do ERP em vez de consumi-la**, e quando a régua muda de um lado o
+outro não sabe.
+
+**As 5 classes de defeito que essa lei previne** (todas encontradas de verdade):
+
+1. **Ler a camada APOSENTADA.** O NEXT do app lia `next_eventos` (morta no cutover
+   de 17/06) enquanto o ERP já estava em turma→encontro→matrícula — "não há
+   encontros agendados" com 2 turmas abertas e 38 matriculados. De brinde, o
+   check-in pelo celular **não contava no KPI** desde 22/07.
+2. **Comparar string contra enum do banco sem fonte única.** `grupo-detalhe.tsx`
+   decidia com `status !== "recusado"` e **"recusado" nunca existiu** — quem levava
+   recusa ficava em "aguardando aprovação" **pra sempre**. Régua: listar os status
+   que valem e **comentar de onde vêm**.
+3. **Achar que a RLS filtra o que ela não filtra.** `mem_grupos` é
+   `FOR SELECT USING (true)` (catálogo): sem `deleted_at`/`ativo` no app, 137
+   soft-deletados + 38 desativados abriam por deep link **com botão "Quero
+   participar"**. Idem `mem_contribuicoes` e `vol_inscricoes` — hoje 0 apagadas,
+   ou seja **gatilho armado**, e o filtro é o que impede o dia em que houver.
+4. **Dia em UTC.** `toISOString()` sobre o agora dá o dia UTC, e das 21h BRT em
+   diante ele já virou → **o culto de quarta saía de "próximos cultos" durante o
+   próprio culto**. Toda data de operação da igreja é BRT (`lib/dataBRT.ts` no app
+   é espelho do `hojeBRT()` daqui). ⚠️ O check-in do devocional segue em hora do
+   APARELHO de propósito — o "hoje" de quem lê é o do lugar onde a pessoa está.
+5. **Tratar N status como 3.** `vol_inscricoes` tem **7** e o app tratava 3: na
+   MESMA abertura o hub dizia "Pendente" e a tela de Servir mostrava o
+   FORMULÁRIO. Régua única em `lib/volStatus.ts`; status novo entra só ali, e
+   desconhecido vira "nenhum" (deixa a pessoa agir), **nunca "pendente"** (fila que
+   ninguém trata).
+
+⚠️ **O SCHEMA DO APP VIVE NO REPO DO APP** (`Aplicativo-CBRio/supabase/*.sql`),
+não nas migrations do ERP: `app_destaques`, `app_notificacoes`, `app_push_tokens`,
+`app_grupos_temporada`, `app_solicitacoes_exclusao`, `handle_new_user_membro`. **É
+por isso que a lei do gatilho de `auth.users` registrou "nunca foi commitado"** —
+não estava neste repo. Auditoria de tabela `app_*` que só olhe
+`supabase/migrations/` daqui conclui que a tabela não existe.
+
+⚠️ **`resolveMembroApp` ignorava soft-delete no caminho do profile** — cadastro
+que a equipe APAGOU continuava servindo o app inteiro. E `POST /app/inscricoes`
+com `tipo:'next'` dizia "enviado" **sem inscrever ninguém** (ia pro ramo do fanout
+que procura `next_eventos`); agora passa pela mesma régua do `/next/inscrever`.
+
+**Auditoria automática que PASSOU** (registro pra não refazer): as **38 consultas
+literais do app rodadas contra o schema de produção** — **0 erros de coluna**.
+Isso importa porque select nomeando coluna inexistente faz o PostgREST recusar a
+query INTEIRA e o app trata como "vazio".
+
+**Alarmes que NÃO se sustentaram** (registrados de propósito): `app_destaques`
+parece ignorar `ativo`/janela mas **a RLS filtra**; e o `sexo` do cadastro **não**
+é descartado — o backend grava `mem_membros.genero`. Ia "consertar" o que funciona
+nos dois casos.
+
+## ⚠️ EVENTOS no app · a inscrição roda a MESMA função do site (2026-08-05)
+
+Pedido do Marcos: *"ao clicar em inscrições, aparecem todos os eventos da igreja,
+com um seletor de todos os eventos e eventos inscritos; nessa aba, ao clicar deve
+aparecer minha inscrição naquele evento — e eu quero que os outros eventos tenham
+inscrições PELO APP também, sem link externo como é o caso do celebra."*
+
+**O que existia:** o app abria `cbrio.org/evento/<slug>` no navegador (WebBrowser)
+e **não lia a tabela `inscricoes`** — então confirmar, cancelar, dar bolsa ou
+marcar pago no web **não tinha onde aparecer**. Medido em 05/08: `GET /app/eventos`
+devolvia só o CATÁLOGO.
+
+**⚠️⚠️ LEI DESTE FLUXO: o app é um CLIENTE novo da porta, não uma porta nova.**
+`POST /api/app/eventos/:id/inscrever` importa e executa **`inscreverEspinha`** de
+`publicEventoExterno.js` — a mesma função do formulário público. Contrato de
+campos (`validarCamposPadrao`), benefício pré-autorizado por CPF, **RPC atômica de
+vaga** (`fn_insc_inscrever`, com o advisory lock), consentimentos
+(`inscricao_consentimentos`), cobrança e WhatsApp rodam **idênticos**.
+Reimplementar no app seria o "segundo caminho de escrita de pessoa" que o Contrato
+de porta existe pra impedir. A única diferença é `p_origem`, que virou parâmetro:
+`'app'` em vez de `'formulario_publico'` (a coluna é TEXT **sem CHECK**, conferido
+no banco).
+
+- **`GET /app/eventos`** ganhou `campos` (form-builder), `inscrito` (por pessoa) e
+  os `textos` canônicos do consentimento — o app **exibe** o texto que o servidor
+  manda; o snapshot gravado continua sendo o do servidor.
+- **`GET /app/eventos/minhas`** = o que faltava: status, número da sorte, bolsa,
+  respostas, **comprovante** (`/i/c/<token>` HMAC — o MESMO QR que a portaria lê)
+  e o estado do pagamento pela `vw_insc_pagamento_estado`.
+- **PAGAMENTO fica na página hospedada** (`/pagamento/<public_token>` da COBRANÇA,
+  nunca o uuid): é lá que vivem Pix/boleto/cartão e o escopo PCI (lei nº 5 do
+  núcleo de pagamentos). O app só abre o link que a resposta devolve.
+- **Evento com campo `imagem` cai no form público** — o app não sobe arquivo pro
+  pipeline daquele formulário, e é melhor mandar pro caminho que funciona do que
+  mostrar um campo que não envia. Caso real: "Patrocinadores - Celebra 2026" (7
+  campos, 1 deles `imagem`).
+
+**⚠️ Dois erros meus que o probe pegou antes de subir** (e é por isso que a régua
+é rodar a query contra produção, não ler o arquivo):
+1. `vw_insc_pagamento_estado.status` **não existe** — a coluna é
+   **`status_pagamento`** (a view também já entrega `checkout_url`, `pix_payload`
+   e `boleto_linha_digitavel`). Pedir coluna inexistente faz o PostgREST recusar a
+   query INTEIRA: o pagamento sairia **vazio em silêncio**.
+2. `insc_pagamentos` **não tem `deleted_at`** (é razão financeira — "financeiro não
+   se apaga", decisão da espinha) e eu havia filtrado por ele.
+3. A resposta de `inscreverEspinha` tem **`pagamento` BOOLEAN**, não objeto: o link
+   se monta do `public_token`. Eu havia tipado como objeto no app — a tela nunca
+   acharia o link de pagamento.
+
+**Conferido em produção antes do merge:** 3 eventos publicados (Celebra 2026 ·
+Patrocinadores · RETIRO pago), `GET /eventos/minhas` devolvendo
+`confirmada · Celebra 2026 · nº da sorte 1817 · comprovante` para um membro real.
+As 2 inscrições pagas de "Retiro AMI 2027" **não** aparecem na view porque estão
+soft-deletadas (teste de 30/07) — e o endpoint filtra `deleted_at` igual, então
+os dois lados concordam. ⚠️ **Não há hoje nenhuma inscrição paga VIVA em
+produção**, então o caminho "Pagar agora" não pôde ser exercitado com dado real —
+ele usa a mesma view e o mesmo `public_token` do site, mas isso é construção, não
+teste.
+
+### Régua web × app · onde tinha que bater e não batia
+
+- **`useAdminGrupo` do app decidia por `profiles.role`** (esquema APOSENTADO) +
+  comparação com `lider_id` no cliente. Quem tem grupos ≥ 3 **pela matriz** (a
+  coordenação de Grupos, por boost de área, tem role `assistente`) editava no web
+  e **não** no app. Agora o app pergunta ao servidor: `GET /app/grupos/papel`, que
+  já calcula `admin_grupos` pela matriz + `grupos_liderados`. Uma régua, no
+  servidor — e mudança de cargo/área no web passa a valer na próxima abertura.
+- **`resolveMembroApp`**: ver a rodada 2 acima (cadastro apagado servia o app).
+- **6 telas do app passaram a recarregar ao FOCAR** (batismo, grupo-detalhe,
+  buscador de grupos, devocional, culto-detalhe, escala do supervisor): o web e o
+  app leem o MESMO banco, mas o que o web muda só aparecia se a tela fosse
+  remontada. ⚠️ Formulário NÃO recarrega ao focar (perfil, grupo-editar,
+  completar-cadastro) — refetch em cima do que a pessoa está digitando é pior que
+  dado velho.
+
+## ⚠️⚠️ GATE DA FICHA no app · entrar exige cadastro completo (2026-08-05)
+
+Decisão do Marcos, depois de eu apontar o risco e ele reafirmar: *"o gate de CPF
+precisa ter, todas as pessoas que entrarem no sistema devem pedir para
+completarem o cadastro antes, após completar elas acessam normalmente."*
+
+**Ligado.** `GET /app/identidade/status` passou a exigir a ficha FECHADA (nome de
+gente + telefone + nascimento + **CPF** + **sexo**) e `completarCadastro` roda com
+`exigirCpf: true, exigirSexo: true`. Antes o CPF era só informativo, e o efeito
+medido era pior: a pessoa entrava "completa" e levava **400 na primeira
+inscrição** (`POST /app/inscricoes` exige CPF) — 50 das 75 contas.
+
+**Impacto medido em produção antes de subir** (88 contas do app): **12 entram
+direto** · **71 vão ver a tela de cadastro** · 5 sem cadastro vivo (os
+soft-deletados de 04/08 — o matcher cria/religa quando elas completarem). O que
+falta nelas: **sexo em 70** (a coluna `genero` só começou a ser gravada hoje),
+CPF em 49, nascimento em 44, telefone em 43.
+
+### ⚠️ A ÚNICA isenção: contas de REVISÃO DE LOJA
+
+`CONTAS_REVISAO_LOJA` em `services/appIdentidade.js` (3 e-mails declarados à
+Apple/Google). Motivo: **o revisor não tem CPF brasileiro** — com o gate sem
+isenção ele trava na tela de cadastro e o build é recusado com "não conseguimos
+completar o registro", a rejeição mais comum de app com login. Isso não é bug de
+usuário: **bloqueia o release inteiro**.
+
+⚠️ **E por que não é só pôr um CPF nessas contas:** CPF com DV válido PERTENCE A
+ALGUÉM REAL e é a chave mais forte do matcher — na primeira vez que essa pessoa
+preenchesse um formulário, seria ligada à conta de revisão. Uma delas já teve um
+CPF DV-válido, e ele foi anulado por isso.
+⚠️ **Não acrescentar e-mail de gente nessa lista** — seria criar uma porta pra
+entrar no app sem cadastro, exatamente o que o gate existe pra impedir.
+✅ Conferido com a régua real: as 3 contas mostram `falta=[cpf]` e **PASSAM**.
+
+### O app pergunta, não decide
+
+`/identidade/status` devolve **`exige_cpf`** e a tela `completar-cadastro` só
+bloqueia o CPF quando o servidor diz que sim. Falha de rede mantém o default
+**true (fail-closed)**: sem isso, ficar offline viraria porta pra entrar sem
+cadastro. É a mesma lei do resto — quem define o que é válido é o backend.
+
+## 🔴 INCIDENTE · o portão do app trancou TODO MUNDO pra fora (2026-08-06)
+
+O Marcos tentou entrar e não conseguiu: *"coloquei o CPF, recebi o e-mail de
+confirmação, mas o app não entrou e voltou na primeira página"*. **O app ficou
+inutilizável pra todas as contas** entre a aplicação da migration
+`20260805150000` e este conserto. Causa: **duas falhas minhas somadas**, e
+nenhuma delas apareceu antes porque **ninguém tinha concluído o cadastro pelo app
+até hoje** (`mem_identidade_observacoes` com origem `app_onboarding` = **0**).
+
+**Falha 1 · o caminho rápido não carimbava a confirmação.** Ao ligar o gate em
+05/08, só o FORMULÁRIO marcava `app_ficha_confirmada_em`. Quem provava identidade
+por CPF → código no e-mail ficava com a marca nula, `completo` seguia false e o
+portão devolvia pra tela de cadastro. **Beco sem saída por construção.**
+⇒ `confirmarCodigo` passa a carimbar. É legítimo: **ler o código enviado ao
+e-mail DO CADASTRO é prova de POSSE** — mais forte que digitar um formulário, que
+qualquer um digita. Não libera sozinho: `completo` continua exigindo a ficha
+fechada; quem prova identidade com cadastro incompleto vai ao formulário, agora
+**com os campos preenchidos** (a identidade deixou de ser palpite).
+
+**Falha 2 · o portão perguntava ao servidor UMA vez e nunca mais.** `CadastroGate`
+guardava `incompleto` da montagem; ao concluir, a tela navegava pra Home, o efeito
+de rota via o valor velho e **devolvia pra tela de cadastro**. Laço infinito, por
+QUALQUER caminho (formulário inclusive).
+⇒ A tela chama `revalidarCadastro()` antes de navegar; o portão repergunta e só
+então libera. ⚠️ A trava é um **ref** (`liberado`), não estado: `router.replace`
+roda logo após o `setIncompleto(false)` e o commit do React pode não ter
+acontecido — o ref fecha a janela de corrida.
+
+### Lições (as duas valem além deste caso)
+
+1. ⚠️⚠️ **Portão que decide com estado LIDO UMA VEZ vira armadilha quando a
+   condição muda.** Qualquer gate assim precisa de um caminho explícito de
+   revalidação — senão "resolver o problema" não tira a pessoa do bloqueio.
+2. ⚠️⚠️ **Ligar uma exigência exige cobrir TODOS os caminhos que a satisfazem.**
+   Eu liguei o gate cobrindo só um dos dois caminhos de conclusão. Régua: ao criar
+   uma condição de acesso, listar quem pode satisfazê-la e conferir um a um.
+3. **"Ninguém nunca fez isso" é sinal de alerta, não de segurança**: o zero em
+   `app_onboarding` estava na minha frente desde 05/08 e eu o li como "recurso
+   novo", quando era "caminho nunca exercitado".
+
+## ⚠️⚠️ LEI · o LOGIN não liga ninguém a cadastro (2026-08-06 · migration `20260806120000`)
+
+Fecha o desenho que o Marcos pediu em duas etapas. Palavras dele: *"sobre o
+gatilho ligando o login, eu acho que deve ter, mas ele só deve ser acionado PÓS
+PREENCHER TODOS OS DADOS, e todos que baixarem devem ser obrigados a preencher, e
+somente após o preenchimento entrar no app; e com os dados completos, aí sim ir
+para o módulo de duplicatas se houver algum matcher"*.
+
+**O mecanismo de ligar continua existindo — mudou de MOMENTO.** `handle_new_user`
+passa a criar **só a conta** (`profiles`, com `is_membro_only = true` e
+`membro_id NULL`). Quem resolve identidade agora é
+`POST /app/identidade/completar` → `acharOuCriarGuardado`, **com CPF na mão**; o
+par duvidoso segue pra fila humana em /entradas.
+
+- **Por que**: o gatilho ligava por **e-mail + nome** (sinal médio) e, com login
+  do Google, é só isso que existe. A pessoa caía num cadastro que outra porta
+  preencheu e **entrava no app herdando CPF, nascimento e sexo que nunca
+  forneceu** — 9 de 89 contas, medido em 05/08. Caso concreto: o Pedro Paiva
+  logou com o Gmail e foi ligado ao cadastro dele importado do Next.
+- **Ritmo real**: ~2 logins de membro por dia (13 profiles em 7 dias). Desde o
+  conserto de 04/08 o gatilho **não criava** cadastro (`origem='auth_signup'` = 0);
+  ele vinha **ligando** — que é o que sai agora.
+- ⚠️ **`is_membro_only = true` continua obrigatório** no INSERT: sem isso a pessoa
+  cai no `/dashboard` do ERP em vez do app.
+- ⚠️ **Os metadados não se perdem**: `cpf`, `telefone`, `nascimento` e
+  `frequenta_area` ficam em `auth.users.raw_user_meta_data`.
+  `appIdentidade.completarCadastro` aplica o `frequenta_area` (AMI/Bridge) ao
+  concluir — sem isso a escolha da pessoa seria **descartada em silêncio**, que é
+  o bug do CPF do censo se repetindo.
+- ⚠️⚠️ **Consequência conhecida e aceita**: quem loga e ainda não preencheu fica
+  **sem `mem_membros`**. No app é irrelevante (o portão bloqueia tudo até
+  preencher). Fora dele — webapp do devocional — a pessoa vê "você não é membro"
+  até completar. É honesto: ela ainda não é. A versão anterior criava um
+  cadastro-fantasma só pra aquela tela não reclamar, e era esse o anti-padrão.
+- ⚠️ **Não reescreve o passado**: os 24 cadastros `origem='auth'` e os vínculos já
+  feitos ficam; o par duplicado deles vive na fila de /entradas. E
+  `profiles.app_ficha_confirmada_em` (20260805150000) continua sendo o que fecha o
+  furo das contas ANTIGAS, que já têm `membro_id` — as duas migrations são
+  complementares, não alternativas.
+- ⚠️ Staff (`rh_funcionarios` ativo) **nunca** teve cadastro criado pelo gatilho —
+  esse ramo está intocado.
+
+## ⚠️⚠️ LEI · no APP, dado HERDADO de vínculo não libera acesso (2026-08-05 · migration `20260805150000`)
+
+Decisão do Marcos, ao ver que o login do Pedro Paiva não pediu cadastro:
+*"qual CPF de Pedro Paiva que cadastrou no app? Data de nascimento, Sexo? Só tem
+email e nome. Se ele pode preencher o cadastro, pra que fundir automaticamente
+entende? O caso do app, mesmo que o sistema ache que alguém é igual, **NÃO deve
+liberar acesso**; depois de preencher todos os dados aí sim pode se ter 100% de
+certeza"*.
+
+**O furo:** `GET /app/identidade/status` calculava o que "falta" **a partir do
+cadastro que o vínculo encontrou**. Como o gatilho de `auth.users` liga por
+e-mail + nome (sinal médio), quem caía num cadastro já completo **entrava no app
+sem nunca ter provado nada** — herdando CPF, nascimento e sexo que um import
+preencheu. **Medido antes de ligar: das 89 contas com cadastro vinculado, 9
+passavam o gate — TODAS as 9 por herança** (confirmações reais pelo app: **0**).
+Dois casos não-staff eram gente que logou com Gmail e caiu num cadastro do
+`grupos_import_2026`.
+
+- **`profiles.app_ficha_confirmada_em`** é a marca: `completo` exige ficha fechada
+  **E** confirmação por ESTA conta. ⚠️ Fica em `profiles` (a CONTA), **não** em
+  `mem_membros` — duas contas ligadas ao mesmo cadastro herdariam a confirmação
+  uma da outra, que é o mesmo furo por outro caminho.
+- **O app não pré-preenche dado herdado**: o status devolve
+  `pode_preencher_com_vinculo`, e enquanto for false o formulário traz **só o
+  nome** (o que veio do provedor do login). Pré-preencher CPF/nascimento seria
+  fazer a pessoa "confirmar" o que ela não forneceu.
+- ⚠️⚠️ **FAIL OPEN quando a coluna não existe** (deploy em 2 etapas): pedir coluna
+  inexistente faz o PostgREST **recusar a query inteira**, e tratar isso como "não
+  confirmou" prenderia TODO MUNDO na tela — inclusive depois de preencher, porque
+  a gravação da marca falharia igual (**loop sem saída**). Sem a migration vale o
+  comportamento antigo; com ela, o portão liga. Os dois lados degradam juntos, de
+  propósito. O `select` da marca é **ISOLADO** pelo mesmo motivo.
+- ⚠️ **O gatilho de `auth.users` NÃO foi alterado.** Ele continua ligando (CPF
+  forte; e-mail+nome médio) — mudá-lo pra não ligar criaria duplicata em TODO
+  login e inundaria a fila humana. O que mudou é que **o vínculo deixou de ser
+  prova de acesso**; o par duplicado segue indo pra fila de /entradas, agora com
+  CPF de verdade pra decidir. É exatamente o que ele pediu ("preencher tudo e
+  depois vá para essa aba").
+- ⚠️ **Efeito conhecido e correto**: as 9 contas (incluindo as do staff) veem a
+  tela de cadastro **uma vez**. Régua aplicada a todo mundo, não regressão.
+- ⚠️ Comentário desatualizado corrigido em `appIdentidade.completarCadastro`: ele
+  dizia que CPF e sexo **não** eram exigidos (estado anterior a 05/08) enquanto o
+  código exigia os dois — comentário que mente engana a próxima sessão.
+
+## ⚠️⚠️ LEI · resposta de `/api/app` NUNCA é cacheável (2026-08-05 · PR #2313)
+
+Incidente relatado pelo Matheus: *"Mesmo preenchendo tudo certo volto pra essa
+tela e não consigo passar dela. Boto o cpf, recebo o código e volto pra ela."* A
+tela é a de completar cadastro. A Joana Botafogo tentou **3× em dois minutos**.
+Os dois com `profiles.membro_id` preenchido e a ficha COMPLETA no banco — ou
+seja, **o servidor respondia `completo: true` e a pessoa não passava**.
+
+**CAUSA: `res.json` do Express gera ETag e não manda `Cache-Control`.** O
+`fetch` do React Native usa o cache HTTP do sistema (NSURLSession no iOS, OkHttp
+no Android): guarda a resposta, revalida com `If-None-Match`, o Express responde
+**304 sem corpo**, e a camada nativa entrega ao JS **a resposta ANTERIOR** — a
+de antes de vincular, com `completo: false`. Medido nos runtime logs: **124 de
+251** respostas de `/api/app/*` em 6h eram 304, e a sequência do Matheus aparece
+literal (200 → 304 → confirma o código → 304).
+
+- **A correção vale pro ROUTER INTEIRO** (`router.use` no topo de `app.js`):
+  `Cache-Control: no-store` **+** `res.json` respondendo por
+  `res.end(JSON.stringify(body))`. Assim GET novo do app nasce sem cache sem
+  ninguém precisar lembrar.
+- ⚠️ **`no-store` SOZINHO não resolve**: o `req.fresh` do Express compara o
+  `If-None-Match` do REQUEST com o ETag da RESPOSTA e devolve 304 do mesmo
+  jeito. Quem mata o 304 é **não emitir validador** — `res.end` não gera ETag.
+- ⚠️ **Prova com `http.get` CRU, não `fetch`**: o `fetch` do Node (undici)
+  injeta `Cache-Control: no-cache`, o que faz `fresh()` dar false e **mascara o
+  304**. Minha 1ª tentativa de reproduzir falhou por isso. Antes → `304` corpo
+  vazio; depois → `200` com o estado atual, `etag: undefined`.
+- ⚠️ **Não "otimizar" devolvendo ETag em rota do app**: o corpo aqui é **estado
+  da PESSOA** (o que falta no cadastro, meus grupos, meu perfil, minhas
+  inscrições) e muda por ação dela na tela anterior — servir a versão anterior é
+  sempre errado. Cache condicional é pra conteúdo, não pra estado.
+- ⚠️ **Eram DUAS causas independentes** pro mesmo loop: esta (servidor) e a do
+  app (`CadastroGate` nunca limpava o estado local `incompleto`, então rebatia
+  mesmo depois de completar · PR #67 do Aplicativo-CBRio). Sem as duas, o loop
+  volta.
+- ⚠️ Descartado de propósito no cliente: `cache: "no-store"` no `apiGet` do app.
+  O `fetch` do React Native é o polyfill `whatwg-fetch` sobre `XMLHttpRequest` e
+  **ignora a opção `cache`** — seria decoração que se lê como proteção.
+
+## ⚠️ GERENCIAR GRUPO pelo app · tudo do líder num lugar só (2026-08-05)
+
+Pedido do Marcos: *"ao apertar gerenciar grupo, ali devem ter TODAS as opções
+para se fazer em um grupo"* — e a lista dele: membros (com quem é líder ou em
+treinamento), registro de frequência (com comentário do líder e pedido de ajuda),
+aprovação de pedidos, saídas e transferências, estudos e editar o grupo.
+
+**7 endpoints novos em `routes/app.js`**, todos com o MESMO gate do
+`GET /grupos/:grupoId/membros` (helper `gateGrupoApp`: gere o grupo OU admin de
+grupos), e reusando os escritores canônicos:
+
+| endpoint | régua reusada |
+|---|---|
+| `PUT /grupos/:g/membros/:row/funcao` | — (whitelist própria, ver abaixo) |
+| `POST /grupos/:g/membros/:row/sair` | soft (`saiu_em` + `motivo_saida`), como o "confira a lista" |
+| `POST /grupos/:g/membros/:row/transferir` | cria **pedido** no destino (fila do outro líder) |
+| `GET/POST /grupos/:g/encontros` | **RPC `registrar_encontro_grupo`** (o mesmo escritor do web e do WhatsApp) |
+| `POST /grupos/:g/ajuda` | `notificar()` módulo grupos |
+| `GET /grupos/:g/materiais` | `mem_grupo_documentos` (do grupo + os gerais) |
+
+### ⚠️⚠️ O que o app NÃO pode fazer, e por quê
+
+- ⚠️⚠️ **`funcao='lider'` é CADASTRO · `mem_grupos.lider_id` é a LÍDER
+  PRINCIPAL** (corrigido 05/08 por esclarecimento do Marcos — eu tinha
+  confundido as duas e bloqueado o app de marcar os outros líderes). Palavras
+  dele: *"só o líder principal recebe mensagem e ele não pode remover a si
+  mesmo, os outros seria apenas para sabermos no cadastro, mas não receberia
+  mensagem nenhum"*. Então `FUNCOES_APP` é
+  `frequentador · lider_treinamento · co_lider · **lider**`, e o que segue
+  protegido é a **PESSOA** que é `lider_id`: o servidor recusa mudar a função
+  dela e recusa registrar a saída dela (é ela que recebe o WhatsApp do grupo ·
+  lei de 31/07: um destinatário só, e tem que ser líder do roster).
+  ⚠️ `supervisor`/`coordenador` seguem FORA: são papéis da hierarquia de
+  supervisão (`grupo_supervisao_*`), não do roster.
+  ⚠️ O roster do app passou a devolver **`lider_id`** — sem ele a tela não
+  distinguia as duas coisas e escondia o menu de ações de TODOS os líderes.
+  A principal ganha badge "Líder principal" e é a única sem menu.
+  ⚠️ Medido em 05/08: **30 dos 97 grupos ativos têm a principal FORA do roster
+  ativo** — nesses ela não aparece na aba Membros (o bloqueio do servidor
+  continua valendo). É o follow-up de 31/07 (avisar a coordenação quando o
+  destinatário não é líder do roster), ainda aberto.
+- **Transferência NÃO empurra ninguém pra dentro de outro grupo**: cria
+  `mem_grupo_pedidos` no destino, `origem='app'`, pro líder de lá aprovar — o
+  mesmo fluxo de quem se inscreve. E os destinos oferecidos são só os grupos que
+  o próprio líder gerencia. A **saída** do grupo atual é um passo separado.
+- **Presença só de quem está no roster ATIVO** (o servidor filtra a lista que o
+  app manda) e **encontro no futuro é recusado**.
+- **"Pedir ajuda" NÃO abre fila com "resolvido"** — chega como notificação
+  persistida (`app_notificacoes`) + push pra quem cuida de Grupos. Fila com
+  estado pediria tabela nova, e criar fila é decisão da coordenação. A tela diz
+  "a coordenação recebe seu pedido", não "abrimos um ticket".
+
+### ⚠️ Duas colunas que o probe pegou antes de subir
+
+`mem_grupo_pedidos.observacoes` **não existe** — é **`observacao`** (singular). E
+`mem_grupo_documentos` **não tem `url`**: os campos reais são `sharepoint_url` e
+`storage_path` (o link é montado no backend). Nos dois casos, pedir coluna
+inexistente faria o PostgREST recusar a operação INTEIRA — o INSERT da
+transferência falharia e a aba de estudos apareceria vazia, em silêncio.
+
+### Entradas e saídas · histórico discreto no web (2026-08-05 · SEM migration)
+
+Pedido do Marcos sobre a transferência: *"ali eu pensei em ser apenas um
+histórico de pessoas e no máximo um pedido que fica na tela do gerenciador do
+sistema web pra aprovar — deve ser uma tela pequena, com pouco destaque, como se
+fosse uma tela de histórico de entradas e saídas sem muita interação"*.
+
+`GET /api/grupos/:id/entradas-saidas` (leitura pura · nível 1) devolve
+`eventos[]` de entrada/saída derivados de `mem_grupo_membros` (a saída é soft, em
+`saiu_em`, então a MESMA linha rende entrada e — se a pessoa saiu — saída, com
+`motivo_saida`), ordenado desc e capado em 60. No `Grupos.jsx` é um bloco
+**recolhido por padrão** logo acima de "Encontros recentes", sem nenhuma ação.
+
+- ⚠️ **A transferência vinda do app NÃO aparece aqui como ação a aprovar** — ela
+  entra como **PEDIDO na Caixa de entrada**, que é onde a triagem já decide. Duas
+  portas pra aprovar a mesma coisa era o que fazia parecer que existiam dois
+  lugares (a mesma razão pela qual "Inscrições do grupo" saiu do `/meu-grupo`).
+- ⚠️ **Os relatórios de frequência do app JÁ aparecem no web** — o Marcos ofereceu
+  construir a tela e não é preciso: `Grupos.jsx` tem "Encontros recentes" lendo
+  `api.encontros(id, {limit:10})`, que mostra data, nº de presentes, tema e **o
+  comentário do líder** (`observacoes`), porque o app grava pela RPC canônica
+  `registrar_encontro_grupo`. A aba Relatórios agrega o resto.
+
+**No app**: `grupo-membros.tsx` virou **Gerenciar grupo** com 4 abas (Membros ·
+Frequência · Pedidos · Estudos) + **Editar** no cabeçalho (abre
+`/grupo-editar`, que já existia). O botão **"Inscrições do grupo" SAIU do
+`/meu-grupo`** — duas portas pra aprovar pedido era o que fazia parecer que
+existiam dois lugares. A rota `/grupo-inscricoes` **continua viva** (link antigo
+e push apontam pra ela).
+
+## Grupos · contagens (vínculo × pessoa) + nova régua visitante/frequentador (2026-07-23)
+
+Auditoria (4 agentes) das divergências que o Marcos pegou entre as abas. **Régua de
+leitura (não regredir):** **Relatórios conta PARTICIPAÇÕES (vínculos · mem_grupo_membros ·
+uma pessoa em N grupos conta N×)** · **Pessoas conta PESSOAS DISTINTAS (membro_id único,
+papel de maior nível)**. Hoje 86 grupos ativos = 100% T2 → 999 participações = 749 pessoas
+distintas (162 em >1 grupo). Duplicatas: aba Pessoas mostra N **pessoas**, aba Duplicatas
+mostra M **pares** (N ≈ 2M). Nada disso era bug — só rótulo. Correções (PR
+`claude/grupos-contagem-frequentador`): (1) BUG do "1067" — o gráfico "Composição" somava
+Visitante/Frequentador (vínculos) + Líder=`num_lideres` (pessoas, nível grupo) → removida a
+barra Líder (líder vive na rosca de Liderança ao lado), gráfico virou "Participações por
+papel"; (2) rótulo "Membros"→"Participações" + nota explicando vínculo×pessoa; (3) aba
+Pessoas ganhou filtro `deleted_at` que faltava (inflava +1) + legenda de status; (4)
+duplicatas mostram pessoas E pares nas duas abas.
+
+**⚠️ NOVA RÉGUA visitante/frequentador (Marcos 2026-07-23 · migration
+`20260723210000`):** a régua antiga "3 presenças → frequentador" foi **abandonada** (com
+frequência MENSAL e sem histórico das temporadas antigas). Agora: (a) one-time — TODO
+visitante ativo virou **frequentador** (clima limpo); (b) novo entrante nasce **visitante**
+(default da coluna) e vira **frequentador na 1ª presença** (`fn_grupo_auto_membro` ·
+`presencas >= 1`, era `>3`). **Status de frequência** (aba Pessoas · `statusDe` no frontend,
+não no banco): 🟢 em dia (≤30d) · 🟡 atenção (31–90d) · 🔴 ausente (>90d) · ⚪ sem chamada
+ainda (nunca teve presença · NEUTRO — cobre o estado atual, já que a frequência nunca rodou).
+
+## ⚠️ Grupos · Envios (barreiras anti-disparo-indevido) + console (2026-07-23)
+
+Susto do Marcos (envios proativos a líderes). Auditoria do código vivo + barreiras
+(PR da branch `claude/grupos-audit-msgs`). **Estado dos envios de grupos:**
+- **2 mecanismos**: (a) **fila `whatsapp_envios` → só TEMPLATE aprovado** (seguro ·
+  novo pedido→líder, inscrição→pessoa, aprovado→pessoa [eventos], frequência
+  mensal [cron], renovação [manual], sugestão [manual]); (b) **`enviarComFallback`
+  (whatsappGrupos) = texto-livre-primeiro** (o que a Meta bloqueava fora da janela
+  24h) — usado só por webhook-reply (dentro da janela, ok) e pelo lembrete manual.
+- **Incidente das ~40 msgs (20/07)** = cobrança automática de relato →
+  **REMOVIDA** (#1865). **Estudo semanal automático** (cron, texto-livre, template
+  inexistente) → **REMOVIDO 2026-07-23** (só manual pela aba de estudos agora; o
+  `POST /whatsapp-grupos/enviar-estudo` e a chamada no cron/diario saíram).
+- **Kill-switch central** `whatsapp_config.grupos_auto_envios` (migration
+  `20260723180000` · **default false = SEGURO**): gateia o único cron proativo que
+  sobra (frequência mensal em `publicGrupos`). Desligado = nenhum disparo
+  automático sai. Envio MANUAL não depende dele.
+- **Aba Envios** (`GruposEnvios.jsx` · PAGE_TAB `envios` · soEditor/nível 5):
+  liga/desliga os automáticos + **disparo manual da chamada do mês** por
+  líder/bairro/rede/todos (prévia com contagem + exemplo + quem não recebe +
+  confirmação pelo número) + renovação + histórico (`whatsapp_envios`) + painel do
+  que dispara sozinho. Backend `services/gruposEnvios.js` (`enviosAutomaticosAtivos`,
+  resolver de audiência **respeitando `whatsapp_lideres.recebe_lembretes`** —
+  corrige a lacuna do `renovacao/disparar` que lia `lider_id` direto) + rotas
+  `/grupos/envios/*` em grupos.js. Só template (fila) — nada de texto livre proativo.
+- ⚠️ Aplicar `20260723180000` antes do merge (aditiva/idempotente · código tolera
+  ausência tratando como false).
+
+## ⚠️ WhatsApp · link local NUNCA sai em mensagem (guarda · 2026-07-29)
+
+Incidente: um redisparo manual do aviso de pedido, rodado numa máquina de dev,
+montou o link de aprovação com `FRONTEND_URL=http://localhost:5173` do `.env`
+local — a líder recebeu um link de localhost no WhatsApp. Proteção em 2 camadas
+(não regredir):
+- **`waSender.postMessages`** (funil ÚNICO de envio da Cloud API): payload que
+  contenha URL local/privada (`localhost`, `127.0.0.1`, `0.0.0.0`, `[::1]`,
+  `://10.*`, `://192.168.*`, `://172.16-31.*`) é BLOQUEADO com
+  `reason:'link_local'` — nunca chega na Meta. Cobre qualquer template/texto
+  de qualquer serviço, inclusive scripts manuais.
+- **`gruposWhatsapp.baseUrl()`**: `FRONTEND_URL`/`VERCEL_URL` local é ignorada
+  ao montar link de WhatsApp (warn + fallback `https://cbrio.org`) — a URL já
+  nasce certa mesmo em dev.
+- `whatsappFila.falhaPermanente` trata `link_local` como erro PERMANENTE (sem
+  retry · notifica o módulo — reenviar nunca resolveria).
+Regra pra scripts manuais de reenvio: SEMPRE sobrescrever `FRONTEND_URL` pra
+produção antes de disparar (o `.env` de dev aponta pra localhost).
+
+## Grupos · templates v2 do fluxo de aprovação (2026-07-29)
+
+Pedido do Pr. Nélio: o fluxo correto do líder é LIGAR pra pessoa antes de
+aceitar/recusar. Templates novos aprovados na Meta (UTILITY · pt_BR · mesmas
+5 variáveis dos v1) e defaults trocados em `services/gruposWhatsapp.js`:
+- `grupos_pedido_novo_lider_v2` — instrui ligar antes; explica que recusa não
+  manda aviso automático (a recusa do líder devolve pra triagem, que decide a
+  realocação — comportamento já existente, só ficou dito).
+- `grupos_pedido_aprovado_v2` — sem o "o líder vai falar com você" (o contato
+  já aconteceu antes da aprovação).
+Estratégia (lição): NUNCA editar template aprovado em produção — edição volta
+pra revisão da Meta e o envio para; criar `_v2`, aprovar em paralelo e trocar
+o default/env. Os v1 (`grupos_pedido_novo_lider`/`grupos_pedido_aprovado`)
+podem ser excluídos na Meta após confirmar envio real com os v2. Envs
+`WHATSAPP_TEMPLATE_GRUPOS_PEDIDO_LIDER`/`_APROVADO` seguem como override.
+
+## ⚠️ Fila WhatsApp · a fila NÃO PODE desistir antes da janela da Meta virar (2026-07-31)
+
+Marcos, sobre o TIER_250 na véspera da abertura: *"quero que você analise isso
+bem, para não dar problemas de travar inscrições, ou de mandar várias mensagens
+em sequência no dia seguinte."* As duas coisas foram medidas:
+
+**1 · Inscrição NÃO trava** ✅ — o bloco de WhatsApp do `POST /inscrever` está
+dentro de `try/catch` que só loga, e `enfileirar` devolve objeto (nunca lança),
+inclusive no teto. Teto estourado ⇒ a pessoa é inscrita e vê sucesso; só a
+mensagem espera.
+
+**2 · Mas a mensagem MORRIA antes de a cota liberar** 🔴 (corrigido aqui). O
+backoff `[30m, 2h, 6h, 12h, 24h]` com `max_tentativas=5` coloca a 5ª e última
+tentativa em **t+20,5h da 1ª falha** — e o teto do TIER_250 é uma janela **móvel
+de 24h**. Cenário do domingo: teto estoura 11h (1ºs envios às 9h ⇒ cota só começa
+a liberar 9h de segunda) → tentativas às 11:00, 11:30, 13:30, 19:30 e **07:30 de
+segunda**, todas dentro do bloqueio → linha vira `erro` **1h30 antes de a cota
+liberar**. Resultado: pessoa inscrita e **líder nunca recebe o link**. O plano
+"estourou o dia, sai no dia seguinte" não se cumpria.
+→ `decidirRetry` (função PURA, exportada e testada): **acabar as tentativas não é
+motivo pra desistir** enquanto a linha for mais nova que `IDADE_MIN_DESISTIR_H`
+(36h > 24h da Meta, com folga) — segue `pendente` tentando a cada hora. Erro
+PERMANENTE continua desistindo na 1ª falha (não virou "tenta pra sempre").
+
+**3 · Rajada por destinatário** — quando a cota libera, o cron drena tudo numa
+rodada. Cada PESSOA recebe 1 mensagem, mas um LÍDER com N pedidos represados
+receberia N templates idênticos em segundos, que é o padrão que a Meta lê como
+spam e **derruba a nota de qualidade — a nota é o que decide a subida de tier que
+a igreja quer**. `limitarPorTelefone` deixa **máx 2 por telefone por rodada** (8
+pedidos drenam em 4h); quem sobra não perde a vez (segue pendente e vencido, e a
+ordem é `criado_em` ASC). `processarFila` devolve `adiadosPorTelefone`.
+
+⚠️ **Correção de conta sobre o TIER_250**: o limite da Meta é de **destinatários
+ÚNICOS** por janela de 24h — mensagem repetida pro MESMO número dentro da janela
+**não consome cota nova**. Então a capacidade não é "250 ÷ 2 = 125 inscrições"
+(que assume 1 líder novo por inscrição): é ≈ `250 − (líderes distintos
+contatados)` inscrições, e só conta pessoa com **opt-in** (quem recusou não gasta
+cota). Com pedidos espalhados por ~60 grupos, dá ~190 inscrições/dia, não 125.
+Não é motivo pra relaxar: é a ordem de grandeza certa pra decidir no domingo.
+
+⚠️ Cron da fila = `0 * * * *` (horário) · cap 200/rodada · `maxDuration: 300`
+(200 envios sequenciais ≈ 80s, cabe). Testes: `src/test/whatsappFilaRetry.test.ts`
+(13 casos · a guarda das 36h é mutation-testada).
+
+## Fila WhatsApp · política de reenvio + falha avisa gente (2026-07-27)
+
+O teste de lançamento de grupos (26/07 · 34 inscrições ao vivo) expôs: erro
+PERMANENTE (telefone corrompido de 21 dígitos de uma líder → `invalid_phone`)
+era re-tentado 5× em silêncio e ninguém soube que ela ficou sem os links de
+aprovação. Decisão do Marcos (27/07): "enviado 1 vez; reenvia só se deu
+problema no envio — e problema definitivo avisa gente". Em
+`services/whatsappFila.js` (sem migration):
+- **`falhaPermanente()`**: `invalid_phone` (normalização local do
+  whatsappService) e códigos Meta permanentes (100, 131026, 131030, 132000,
+  132001, 132005, 132007, 132012) marcam `status='erro'` na PRIMEIRA falha,
+  sem retry. Falha passageira (teto diário TIER_250, timeout, exception)
+  mantém o retry com backoff — é o motivo de a fila existir. Envio com
+  sucesso nunca foi re-enviado (`enviado` é terminal · sem mudança).
+- **Falha TERMINAL (permanente ou esgotou) dispara `notificar()`** pro módulo
+  do prefixo do `contexto` (`grupos.pedido_novo_lider` → grupos · sem regra
+  configurada cai no fallback admin/diretor) com dedup
+  `wpp_envio_falha_<id>` e link `/grupos` quando for de grupos.
+- **Validação de telefone na porta** (`routes/membresia.js` ·
+  `normalizarTelefonePayload`, espelho do `normalizarCpfPayload`): POST/PUT
+  de membros e o PUT do totem normalizam pra digits-only e exigem 10-11
+  dígitos (DDD+número · 55 na frente é removido), com grandfathering do
+  legado (valor idêntico ao armazenado passa — senão telefone antigo inválido
+  travaria qualquer edição). Contrato de porta aplicado ao canal que deixou o
+  número corrompido entrar.
+
+## Grupos × Bot WhatsApp · relato do encontro por texto/áudio/foto (2026-06-10)
+
+O líder responde ao bot quantos foram, QUEM foi e um resumo (+ FOTO), por TEXTO ou
+ÁUDIO, e isso vira encontro real + presenças nominais. Implementação no legado.
+
+- **⚠️ Limitação da Meta**: a Cloud API **NÃO posta em grupo de WhatsApp** — o
+  estudo vai 1:1 pro(s) vínculo(s) `papel='coordenador'` com "encaminhe no grupo
+  dos líderes". Fora da janela de 24h exige TEMPLATE aprovado.
+- **`aplicarColetaGrupoEncontro`** grava pela **RPC canônica
+  `registrar_encontro_grupo`** (o mesmo escritor do web e do app) — é isso que faz
+  o relato do WhatsApp aparecer em "Encontros recentes" sem tela nova.
+- ⚠️ **Match nominal: o JS REVALIDA contra a lista.** O Haiku recebe os membros do
+  grupo e devolve os nomes casados (apelido/typo ok), mas o que não casa vira
+  `nao_reconhecidos` (provável visitante) — **não se confia 100% no modelo**, e a
+  revisão-antes-de-aplicar continua na fila do `/admin/whatsapp`.
+- **Auto-sync de líderes**: o vínculo no bot é automático a partir de
+  `mem_grupos.lider_id` + telefone. ⚠️ O sync **só gerencia os `origem='auto'`** —
+  vínculo manual é intocável. E **trocar `lider_id` por UPDATE direto não
+  sincroniza**: em script é preciso chamar `sincronizarLideresGrupos()` na mão,
+  senão os 2 canais discordam.
+- **⚠️⚠️ LEI (20/07): líder NUNCA recebe cobrança/lembrete automático de relato —
+  nem com temporada ativa.** A cobrança de 4 semanas foi **REMOVIDA do código**
+  (em 20/07 ela disparou 40 mensagens indevidas). O que o líder recebe: **1×/mês**
+  o pedido de chamada (cron gated por temporada EM CURSO, enfileirado em LOTE) e
+  lembrete avulso **só por disparo manual da coordenação**. Não recriar.
+- **Opt-out** pelo próprio WhatsApp (`recebe_lembretes=false`) — responder e
+  registrar seguem funcionando; religar é ato do coordenador.
+- Envs opcionais: `OPENAI_API_KEY` (transcrição de áudio · sem chave o bot pede
+  texto) e os `WHATSAPP_TEMPLATE_*`.
+
+## Grupos · aba Visitas + guards por módulo (2026-06-10)
+
+Supervisores, coordenadores e os donos do módulo **programam** e registram visitas
+aos grupos de conexão. **Reusa a infra da supervisão** (`grupo_supervisao_visitas`
++ `vw_grupos_supervisao`) — não criou tabela nova; ganhou `status`
+(agendada|realizada|cancelada) e `responsavel_id`. Detalhes no legado.
+
+- ⚠️ **A view conta `ultima_visita`/`visitas_mes_atual` só com
+  `status='realizada'`** — visita agendada no futuro não pode zerar o semáforo.
+- ⚠️⚠️ **Guards por MÓDULO, não por role** (achado de auditoria): rotas de escrita
+  usavam `authorize('admin','diretor')` — que **bloqueava os donos do módulo** — e
+  várias estavam **sem guard nenhum** (aprovar/rejeitar pedido, que CRIA MEMBRO;
+  remover membro; encontros; materiais). Tudo virou `authorizeModule('grupos', N)`:
+  CRUD/aprovações=3 · lançar encontro/material=2 · temporadas/supervisor=5.
+- **`getMeuPerfilGrupo` dá papel `admin` a quem tem nível ≥3 no módulo** (boost de
+  área) — a coordenação enxerga tudo sem precisar de função na hierarquia.
+- **Consolidação de abas** (8 no total): **"Caixa de entrada"** = Pedidos +
+  Encaminhados, com a distinção explícita que o Marcos pediu — *pedido* = a própria
+  pessoa pediu · *encaminhado* = sugestão do cuidado pastoral (a pessoa NÃO pediu;
+  precisa de contato explicando o que é grupo de conexão + devolutiva).
+  **"Configurações"** = Temporadas + Endereços. Chaves antigas de URL seguem
+  funcionando. Decisão: **NÃO juntar** Grupos/Relatórios/Mapa/Materiais/Visitas/QR.
+- **Abas Endereços e Temporadas só aparecem pra quem edita**; **QR Inscrição fica
+  visível a todos** (decisão do Marcos: qualquer um pode mandar o QR de um grupo).
+- **Aba "Pessoas"** existe porque o papel vive em **3 lugares**
+  (`mem_grupo_membros.funcao` · `mem_grupos.lider_id` · `mem_grupos.supervisor_id`)
+  — `GET /grupos/pessoas/papeis` agrega 1 linha por pessoa com papel efetivo
+  (rank coordenador>supervisor>líder>co-líder>treinamento>membro>visitante).
+  ⚠️ **NÃO há histórico de quando a função mudou** (sem coluna `funcao_desde`):
+  "tempo em treinamento" exigiria migration futura.
+- ⚠️ Cards de resumo são **BOTÕES-FILTRO** (o Marcos não achava as pills).
 
 ## Devocionais · KPIs/OKR do app + histórico na Membresia (2026-06-12)
 
@@ -1144,148 +4345,43 @@ por membro/dia). Esta leva liga a medição e dá visibilidade por pessoa:
   `{"fontes":["devocionais."]}` (ou esperar o cron diário) pra popular os
   primeiros registros.
 
-## Compras · escanear nota fiscal → financeiro lançar (2026-06-12)
+## Compras · nota fiscal escaneada + ledger do Pery (2026-06-12/18)
 
-Pedido do Marcos (via gestão): Amaury/Pery escaneiam a nota fiscal da compra
-(foto ou PDF) na aba **Notas Fiscais** do `/admin/logistica`, o sistema extrai
-os dados + sugere a categoria contábil, e a nota vai pra fila do financeiro
-lançar — rastreabilidade de cada compra ponta a ponta.
+Dois fluxos VIZINHOS que **não se confundem** — o diário de implementação dos dois
+está no legado:
 
-- **Fluxo**: scan (`POST /logistica/notas/escanear` · multer 15MB jpg/png/webp/pdf)
-  → arquivo no bucket `log-arquivos/notas-fiscais/` → **Haiku com visão**
-  (`services/nfScanner.js` · `extrairNotaFiscal`) extrai emitente/CNPJ/número/
-  chave/data/valor/itens/resumo → `sugerirCategoria` reusa o
-  `financeiroClassificador.classificarLancamento` (memória do fornecedor +
-  regras por CNPJ) com **fallback Haiku** escolhendo no plano de contas de
-  despesa → nota nasce `status='registrada'` já preenchida → compras revisa no
-  modal (categoria sugerida editável · `GET /logistica/notas/aux/categorias`) →
-  **"Enviar pro financeiro"** (`status='enviada_financeiro'` + `notificar()`
-  módulo financeiro) → Yago vê em **Operacional → Notas de compras**
-  (`NotasCompras.jsx` · `GET /financeiro-v2/notas-compras`) → **Lançar**
-  (`POST /notas-compras/:id/lancar`) cria `fin_transacoes` (despesa) e
-  **concilia com o extrato**: se existe exatamente 1 débito OFX não
-  classificado com o mesmo valor em [emissão, emissão+15d], a transação nasce
-  `conciliado` linkada ao bruto (e o item da fila de classificação vira
-  `ignorado`); senão nasce `pendente` (exige escolher a conta bancária).
-  **Devolver** (`/rejeitar`) → `status='rejeitada'` + notifica logística;
-  compras corrige e reenvia. Lançar também chama `aprenderClassificacao` com o
-  CNPJ do fornecedor → o próximo débito dele já vem sugerido na fila OFX.
-- **Tudo em `log_notas_fiscais`** (sem tabela nova) · migration
-  `20260612120000_nf_scan_compras.sql`: colunas de fluxo (status/descricao/
-  itens/extracao_raw/sugestao_*/enviada_*/lancada_*/transacao_id/
-  rejeitada_motivo) + **catch-up de drift git↔prod** (a tabela viva já tinha
-  storage_path/origem/ml_order_id/xml_content/emitente_* fora do git, e NÃO
-  tinha tipo/observacoes/created_by da migration original — o POST /notas
-  manual estava quebrado em prod por inserir `tipo`; consertado junto).
-- **Decisões**: review-before-apply nas 2 pontas (compras revisa a extração ·
-  financeiro confirma a categoria antes de virar transação — nada entra
-  direto); a sugestão de categoria fica em colunas `sugestao_*` (a transação
-  guarda o final · `classificacao_origem` mapeia memoria/regra/ia/manual);
-  notificações: envio→financeiro, lançada/devolvida→logistica, cron 3+ dias
-  parada→financeiro (`notificacaoGenerator`).
-- ⚠️ **Limitação conhecida (follow-up)**: NF lançada como `pendente` (sem
-  débito no extrato ainda) NÃO é conciliada automaticamente quando o OFX
-  chegar depois — o débito aparece na fila de classificação normal e, se
-  aprovado lá, duplica a despesa. Hábito: ao reconhecer o débito de uma NF já
-  lançada, **ignorar** o item da fila. Conciliação retroativa automática fica
-  pra uma próxima leva.
-- Sem env nova (`ANTHROPIC_API_KEY` já existe). Modelo: Haiku 4.5 (regra da
-  casa pra classificação).
+- **Aba Notas Fiscais** (Amaury → financeiro): scan da NF (foto/PDF) → Haiku com
+  visão extrai emitente/CNPJ/valor/itens → sugere categoria contábil reusando o
+  `financeiroClassificador` → compras revisa → "Enviar pro financeiro" → o
+  financeiro **Lança**, o que **CRIA `fin_transacoes`** e concilia com o extrato
+  (se existe exatamente 1 débito OFX não classificado com mesmo valor na janela).
+- **Aba Compras** (`log_compras` · ledger do Pery, substitui a planilha "CONTROLE
+  DE COMPRAS"): o registro operacional que **VINCULA com a saída que JÁ existe no
+  balanço** — sentido inverso. Importação por xlsx com `import_chave` UNIQUE
+  (reimportar não duplica), scan que nasce **pendente** pra aprovação humana, e
+  sugestão de vínculo por valor+data+similaridade com **confirmação SEMPRE
+  manual**.
 
-## Compras · aba Compras (ledger do Pery) + scan + vínculo fiscal (2026-06-18)
-
-Pedido do Matheus: a aba **Compras** da Logística substitui a planilha manual
-"CONTROLE DE COMPRAS FIXOS E VARIÁVEIS" que o Pery alimentava à mão. NÃO confundir
-com a aba **Notas Fiscais** (fluxo Amaury→Yago que CRIA `fin_transacoes`): aqui a
-compra é o registro operacional do Pery e VINCULA com a saída que JÁ existe no
-balanço (sentido inverso).
-
-- **Tabela `log_compras`** (migration `20260618160000` · aditiva): espelha a
-  planilha (data_compra, n_pedido, comprador, fornecedor, materiais, `centro_custo`
-  = coluna TORRE, valor, forma_pgto, status_entrega, parcelas) + scan
-  (origem_registro planilha|scan|manual, storage_path, emitente_cnpj, numero_nota,
-  extracao_raw/confianca) + aprovação (`status_aprovacao` pendente|aprovada|
-  rejeitada · planilha nasce aprovada, scan nasce pendente) + vínculo fiscal
-  (`fin_transacao_id` FK + `vinculo_status` nao_vinculada|sugerida|confirmada).
-  PII-leve: `deleted_at` + whitelist (anexada lendo a lista viva) + RLS por módulo
-  `logistica` (SELECT≥1, write≥2, delete super-admin) + service_role. `import_chave`
-  UNIQUE (hash conteúdo+linha) = idempotência da importação.
-- **Importação** (`services/comprasImporter.js` · `POST /logistica/compras/importar`
-  multer xlsx): lê as 3 abas (FIXOS/VARIÁVEL/CARTÃO) com header detectado por
-  conteúdo (robusto a offset de range — a aba CARTÃO começa em A2). Upsert por
-  `import_chave` (reimportar o mesmo arquivo não duplica). Carga inicial 2026 = 502
-  compras (R$ 341.598,33). Botão "Importar planilha" na aba.
-- **Scan** (`POST /logistica/compras/escanear` · reusa `nfScanner.extrairNotaFiscal`
-  Haiku): foto/PDF → IA extrai → compra nasce `pendente` → **fila de aprovação do
-  Pery** (ele confere e aprova/rejeita/edita · o sistema NUNCA lança sozinho) →
-  `notificar('logistica')`. Botão "Escanear nota" (input capture=camera no mobile).
-- **Vínculo com a saída do balanço** (`services/comprasMatch.js` · `GET
-  /compras/:id/sugestoes-vinculo` + `POST /vincular|/desvincular`): sugere
-  `fin_transacoes` tipo='despesa' por valor (±2%) + janela de data (−7/+45d) +
-  similaridade de texto (fornecedor/materiais × descrição), ranqueado, marcando as
-  já vinculadas a outra compra. **Confirmação SEMPRE manual** (nunca vincula
-  sozinho) — serve pra quem lança o financeiro cruzar a info fiscal certinha.
-- **Frontend**: `src/pages/admin/logistica/LogisticaCompras.jsx` (aba nova índice 4 ·
-  reindexou ComprasML→5/Rastreio→6/Estoque→7/Solicitações→8) — KPIs, fila de
-  aprovação, tabela com filtros (comprador/centro/pagamento/status/vínculo/mês),
-  modais de conferência e de vínculo. `api.js`: `logistica.compras.*`.
-- **Visual vidro**: o módulo Logística inteiro migrou do estilo sólido pro tema
-  vidro (StatCards translúcidos com tint do acento em vez de fundo sólido, KPI/modais
-  com `var(--panel)`+blur); tabelas seguem nítidas (regra de ouro).
-- Sem env nova (`ANTHROPIC_API_KEY` já existe). ⚠️ Aplicar a migration
-  `20260618160000` antes do merge; depois importar a planilha pela própria aba.
-
-### Consolidação com financeiro/RH + câmera (2026-06-18 · 2ª leva)
-
-Migration `20260618210000` (aplicada): `log_compras.comprador_id` (FK
-`rh_funcionarios`) + `log_fornecedores.endereco`.
-
-- **Centro de custo = do financeiro**: o campo deixou de ser texto livre e passou
-  a referenciar `fin_centros_custo` (`centro_custo_id`). **Vincular a saída do
-  balanço consolida**: a compra herda o `centro_custo_id` da `fin_transacoes`
-  vinculada. Endpoint `GET /logistica/compras/aux/centros-custo` (ativo +
-  aceita_lancamento). O texto `centro_custo` (TORRE) vira fallback histórico.
-- **Comprador = colaborador real** (`rh_funcionarios`): `comprador_id` + select no
-  modal (`GET /compras/aux/compradores` = ativos). Backfill por mapeamento
-  confirmado pelo Matheus (Erivelton/Pery/Amaury de Araújo Junior/Yago Coelho
-  Torres/Juliana/Marcos Paulo/Juninho=Pedro Luis Barreto Litwinczuk Júnior) ·
-  495/502 (os 7 restantes = "Cartão"/vazio).
-- **Fornecedor find-or-create**: ao lançar/escanear/aprovar, `resolverFornecedor`
-  acha por CNPJ/nome ou **cria** em `log_fornecedores`. A aba Fornecedores
-  **sinaliza "Incompleto"** (badge âmbar + filtro) quando falta CNPJ/endereço/
-  telefone. Backfill criou os fornecedores das 502 compras.
-- **Escanear nota = câmera**: o botão abre `CameraModal` (getUserMedia
-  facingMode environment) com captura + fallback "Enviar foto/arquivo".
-- `COMPRA_SELECT` (logistica.js) embute fornecedor + `centro_fin:fin_centros_custo`
-  + `comprador_fn:rh_funcionarios`. ⚠️ Aplicar `20260618210000` + `NOTIFY pgrst`
-  (os embeds precisam do schema recarregado).
-
-### Nota fiscal por foto no WhatsApp (2026-06-18 · 3ª leva)
-
-Qualquer número manda **"nota fiscal"** pro bot → ele pede a(s) foto(s), aceita
-**várias** (uma de cada vez, perguntando "tem mais?"), e ao finalizar extrai
-TODAS com **Opus 4.8** (`claude-opus-4-8` · melhor visão) e cria uma **compra
-pendente por nota** na aba Compras (aguardando aprovação · nada entra direto).
-
-- **`services/whatsappNota.js`** · `tratarNotaFiscal({m,telefone,texto,messageId})`:
-  intercepta no `publicWhatsapp.js` **ANTES da checagem de líder** (logo após o
-  dedup) — qualquer número usa. Só assume quando há **sessão de nota aberta** ou
-  **gatilho** (`ehGatilho`: "nota fiscal"/"nf"/"enviar nota", ou "nota" sozinha
-  curta sem números — não dispara em relato de culto/grupo); senão devolve
-  `false` e o fluxo normal segue. Sessão = `whatsapp_coletas` (status
-  `aguardando_info`, `parsed.fonte='nota_fiscal'`, `fotos[]`, `msg_ids[]` dedup),
-  janela 60 min. Foto → `baixarMedia` (Meta) → bucket `log-arquivos`
-  (`compras/whatsapp/...`). "não/acabou/só essa" finaliza · "sim/mais" pede a
-  próxima · "cancelar" descarta.
-- **`services/comprasShared.js`** (novo · extraído de logistica.js):
-  `resolverFornecedor` (find-or-create), `matchCompradorPorTelefone` (casa o
-  telefone do remetente com `rh_funcionarios` ativo → sugere comprador) e
-  `criarCompraPendenteDeNota` (cria `log_compras` pendente · `origem_registro='whatsapp'`).
-  `nfScanner.extrairNotaFiscal(buffer, mime, model)` ganhou o param de modelo
-  (default Haiku; WhatsApp passa Opus).
-- **Sem migration, sem env nova** (reusa `whatsapp_coletas` + `log_compras` +
-  `WHATSAPP_ACCESS_TOKEN`/`ANTHROPIC_API_KEY`). Notifica `logistica` ao criar.
-  ⚠️ Custo: Opus por nota é mais caro — decisão do Matheus ("melhor modelo").
+**Regras que ficam:**
+- **Review-before-apply nas 2 pontas**: compras revisa a extração, o financeiro
+  confirma a categoria antes de virar transação. **Nada entra direto.**
+- **Centro de custo e comprador vêm do financeiro/RH**, não de texto livre
+  (`fin_centros_custo` · `rh_funcionarios`); vincular a saída do balanço
+  **consolida** o centro de custo da transação na compra.
+- **Fornecedor é find-or-create** (`resolverFornecedor`), e a aba sinaliza
+  "Incompleto" quando falta CNPJ/endereço/telefone.
+- **Nota fiscal por foto no WhatsApp**: qualquer número manda "nota fiscal", o bot
+  aceita várias fotos e cria **uma compra pendente por nota**. Intercepta ANTES da
+  checagem de líder, e só assume com sessão aberta ou gatilho explícito — senão
+  devolve `false` e o fluxo normal segue. Usa **Opus** (melhor visão · decisão do
+  Matheus, ciente do custo) enquanto a aba usa Haiku.
+- ⚠️ **Limitação conhecida**: NF lançada como `pendente` (sem débito no extrato
+  ainda) **não** é conciliada automaticamente quando o OFX chegar depois — o
+  débito aparece na fila normal e, se aprovado lá, **duplica a despesa**. Hábito:
+  ao reconhecer o débito de uma NF já lançada, **ignorar** o item da fila.
+- ⚠️ **Drift git↔prod é real**: a tabela viva tinha colunas fora do git e faltava
+  outras da migration original — o POST manual estava quebrado em prod por
+  inserir `tipo`. Conferir o catálogo antes de assumir o schema do arquivo.
 
 ## Logística · aba Solicitações removida + fix de corte nos modais (2026-06-25)
 
@@ -1343,49 +4439,33 @@ normalizado; renomeá-la pra algo sem relação com "serie" ainda mudaria o
 conjunto (improvável · é categoria estrutural). Renomear séries/eventos é
 seguro: nada no código depende do nome (tudo liga por `events.id`).
 
-## Bot WhatsApp · Flows — REDESENHO + root cause do bloqueio (2026-06-09)
+## Bot WhatsApp · Flows (formulário) · REPRESADO por integridade da Meta (2026-06-09)
 
-**ROOT CAUSE do `Integrity requirements not met`:** a **WABA estava BLOCKED por
-falta de método de pagamento** (`error 141006`) — NÃO era app não-publicado
-(FLOW/APP/BUSINESS = AVAILABLE no `health_status`). Marcos adicionou cartão → WABA
-virou AVAILABLE. Resta a trava de integridade de **publicar/enviar Flow**
-(139000/4233020), provável **propagação pós-pagamento** (cai em horas/~48h após a
-conta ficar 100% conforme). Diagnóstico via scripts (untracked-ish · só ops, não
-runtime): `backend/scripts/_publish_flows_existentes.js` (GET `health_status` +
-publish dos flows existentes), `_diag_whatsapp.js` (coletas · timestamps em **UTC**,
-BRT = −3), `_atualizar_flow_culto.js` (sobe o JSON novo pro flow existente). HMAC,
-webhook, campo `messages` e `ia_ativa` estão OK (a msg chega e grava coleta).
+**Root cause do `Integrity requirements not met`**: a WABA estava **BLOCKED por
+falta de método de pagamento** (`error 141006`) — não era app não-publicado. O
+Marcos adicionou cartão e a WABA virou AVAILABLE; resta a trava de integridade de
+publicar/enviar Flow (139000/4233020), provável propagação pós-pagamento.
+Diagnóstico e histórico das versões no legado. **Enquanto isso o bot já coleta por
+TEXTO** (fallback conversacional), que é o caminho em uso.
 
-**REDESENHO do fluxo (decisões do Marcos · 2026-06-09):**
-- **Cadastro de pessoa SAIU do WhatsApp.** O Flow coleta só os **números**
-  (frequência + nº de decisões). O cadastro nominal das pessoas que decidiram é no
-  **computador** (aba Decisões → Pessoas do `/integracao` · reusa o que já existe).
-  `flow-pessoa.json` e o loop `enviarFormularioPessoa`/token `pessoa:` foram
-  **REMOVIDOS** · a coleta do culto vira `parseado` direto. `parsed.a_cadastrar` =
-  nº de decisões a cadastrar no desktop. `aplicarColetaFlow` (routes/whatsapp.js)
-  só cria as submissões templo/kids (não cria mais `cultos_decisoes_pessoas`).
-- **Formulário do culto reordenado** (`flow-culto.json` · 1 Flow, 3 telas):
-  **Frequência** (presencial + kids) → **Decisões** (presencial + online + kids) →
-  **Qual culto?** (dropdown com as datas, no fim). Cultos vão **pré-carregados no
-  envio** e a navegação entre telas é **local/instantânea** — por isso 1 Flow é
-  melhor que 2 formulários (que pagariam a entrega da Meta 2×; não há latência entre
-  telas pra esconder). **Frequência ONLINE removida** do form (vem da API ·
-  `online_pico`). **Decisões online** ficam no form mas NÃO viram submissão
-  (`cultos_dados_submissoes.ambiente` só aceita templo/kids) → vão na **observação**
-  pro coordenador lançar na aba Online. ⚠️ números encadeados entre telas = `type:number`.
-- **Mensagens padrão (sem IA · corta latência):** saudação + confirmação
-  **personalizadas com o 1º nome** (`whatsappFlowColeta.js`); **FAQ institucional
-  por palavra-chave** (`whatsappParser.js` `faqInstitucional()` · horários/endereço/
-  missão) responde na hora sem Haiku · IA só pra texto livre com números ou pergunta
-  institucional fora do padrão. (Form-trigger `pedeFormulario` já era sem-LLM.)
-- `flowsConfigurados()` deixou de exigir `WHATSAPP_FLOW_PESSOA_ID` (só `FLOW_CULTO_ID`).
-- ⚠️ **Pra ativar quando a Meta liberar (em ordem):** (1) `node
-  backend/scripts/_atualizar_flow_culto.js` (sobe o JSON novo no flow
-  `1163668689265932` · precisa `WHATSAPP_ACCESS_TOKEN` no .env); (2)
-  `_publish_flows_existentes.js` ou publicar pela UI; (3) **remover
-  `WHATSAPP_FLOW_MODE=draft` do Vercel**; (4) redeploy; (5) testar
-  ("quero lançar culto" → deve abrir o formulário). Enquanto isso, o bot **já coleta
-  por TEXTO** (fallback conversacional).
+**Decisões do redesenho (valem quando destravar):**
+- **Cadastro de pessoa SAIU do WhatsApp.** O Flow coleta só os NÚMEROS
+  (frequência + nº de decisões); o cadastro nominal é no **computador**, na aba
+  Decisões→Pessoas do `/integracao`. `parsed.a_cadastrar` guarda quantas faltam.
+- **1 Flow, 3 telas** (frequência → decisões → qual culto, com os cultos
+  pré-carregados no envio): a navegação entre telas é local/instantânea, então 1
+  Flow é melhor que 2 formulários, que pagariam a entrega da Meta 2×.
+  ⚠️ Número encadeado entre telas exige `type:number`.
+- **Frequência ONLINE saiu do form** (vem da API). **Decisões online** ficam no
+  form mas vão pra OBSERVAÇÃO — `cultos_dados_submissoes.ambiente` só aceita
+  templo/kids.
+- **Mensagens padrão sem IA** (corta latência): saudação e confirmação
+  personalizadas com o 1º nome + **FAQ institucional por palavra-chave**. O Haiku
+  só entra em texto livre com números ou pergunta fora do padrão.
+
+⚠️ **Pra ativar quando a Meta liberar, nesta ordem**: (1) subir o JSON novo no
+flow existente; (2) publicar; (3) **remover `WHATSAPP_FLOW_MODE=draft` do
+Vercel**; (4) redeploy; (5) testar com "quero lançar culto".
 
 ## OKR · KR medido pelo KPI (Frente B1 · 2026-06-03)
 
@@ -1554,131 +4634,152 @@ Follow-ups (próximas PRs): "engajou" cruzar com o sinal real do valor (grupo/vo
 fechar-o-loop (aceite na área cria o pedido de grupo / inscrição de voluntário nativos),
 funil de analytics encaminhados→aderiram.
 
+## Cuidados · Caixa de entrada (intake de pedidos) (2026-07-22)
+
+A aba **"Aconselhamento" virou "Caixa de entrada"**: fila única de triagem de
+todo pedido de cuidado (aconselhamento, capelania, oração, SOS, visita), no
+estilo da caixa de entrada do Grupos. Ponte com a trilha: ao **Atender**, o líder
+escolhe o TIPO de atendimento/visita → cria o atendimento na trilha da pessoa
+(aba Visitas e Atendimentos).
+- **Migration `20260722190000`**: tabela **canônica `cui_pedidos`** (canal
+  app|whatsapp|plataforma|manual · tipo aconselhamento|capelania|oracao|sos|visita|
+  outro · status pendente|em_andamento|concluido · membro/nome/telefone/email ·
+  mensagem · atribuido_a · `origem_ref` · `atendimento_ref`) + RLS módulo cuidados.
+  Soft-delete via UPDATE `deleted_at` (padrão do módulo · sem whitelist).
+- **Contrato** = `backend/services/cuidadosPedidos.js` `registrarPedidoCuidado({canal,
+  tipo,membro_id,nome,telefone,email,mensagem,origem_ref})` — **alvo único pro
+  WhatsApp do Matheus e pra plataforma/app** plugarem (normaliza telefone/e-mail +
+  notifica). O canal `app` já entra por `app_inscricoes` (a Caixa lê de lá também
+  via `/pedidos-app`) — não precisa chamar o contrato. ⚠️ Ligar o canal WhatsApp em
+  si é do lado do Matheus (ele chama `registrarPedidoCuidado`) — alinhar a forma
+  com ele; o resto funciona sem depender disso.
+- **Multi-fonte por decisão** (não trigger-espelho): a Caixa lê `cui_pedidos`
+  (whatsapp/plataforma/manual) + `app_inscricoes` (canal app · endpoints
+  `/pedidos-app` já existentes) e mescla numa fila só. `cui_pedidos` é a canônica
+  pros canais novos; o app segue na sua tabela (fluxo/push intactos). Consolidar o
+  app em `cui_pedidos` por trigger fica pra uma futura, se quisermos tabela física
+  única.
+- **Backend** (`routes/cuidados.js`): `GET /cuidados/pedidos` (fila cui_pedidos +
+  nome de quem atribuiu) · `POST /cuidados/pedidos` (manual) · `PATCH
+  /cuidados/pedidos/:id` (status/atribuir) · `DELETE` (soft) · **`POST
+  /cuidados/pedidos/atender`** (`{fonte:'cui'|'app', id, atendimento:{tipo,...}}` →
+  roteia por tipo: aconselhamento/capelania → `cui_acompanhamentos` (mantém os KPIs
+  de capelania/aconselhamento) · demais → `cui_visitas` · marca o pedido
+  em_andamento + guarda `atendimento_ref`). `/pedidos-app` (canal app) intocado.
+- **Frontend** (`Cuidados.tsx`): `CaixaEntrada` (filtros canal/tipo/status + busca ·
+  cards de pedido com telefone + botão **"Conversas"** (link `hrefConversa` → o pastor
+  vê/responde no módulo Conversas, NÃO gerencia aqui) · status inline · "Atender" ·
+  "Registrar pedido" manual) + `AtenderPedidoModal` + `RegistrarPedidoModal`. Badge de
+  pendentes na aba. `api.js`: `cuidados.pedidos.{list,create,update,remove,atender}`.
+  ⚠️ **Insights de oração + config de WhatsApp SAÍRAM da Caixa de entrada (2026-07-22)** —
+  aquele bloco `<details>` (OracaoPanel + WhatsappAutoConfig) foi removido: gerenciamento
+  de WhatsApp é do módulo de WhatsApp/Conversas (do Matheus). Cada pedido tem só o link
+  pro Conversas. Componentes `OracaoPanel`/`WhatsappAutoConfig` seguem no repo (usados
+  em outro lugar), só não são mais montados no Cuidados.
+- **`AcompanhamentoModal` ficou dormente** (sem render) — criar aconselhamento/
+  capelania novo agora é pelo fluxo "Atender" (ou registrar pedido manual + atender).
+  A tabela `cui_acompanhamentos` segue viva (KPIs + trilha).
+- ⚠️ Aplicar a migration `20260722190000` antes do merge.
+
+## Cuidados · trilha por pessoa na aba "Visitas e Atendimentos" (2026-07-22)
+
+Parte do redesenho do Cuidados (aprovado pelo Marcos). A aba deixou de ser uma
+lista solta de atendimentos independentes e virou uma **trilha por PESSOA**: o
+histórico de cada pessoa vira um fio contínuo, com **comentários por atendimento**.
+- **Migration `20260722180000`**: `cui_atendimento_comentarios` (comentário
+  polimórfico · `ref_tipo` visita|acompanhamento + `ref_id`) + RLS módulo cuidados +
+  service_role. Soft-delete via UPDATE `deleted_at` no backend (mesmo padrão do
+  `cui_visitas` · não usa `app_soft_delete`/whitelist).
+- **A trilha JUNTA na leitura `cui_visitas` (visitas/atendimentos) +
+  `cui_acompanhamentos` (aconselhamento/capelania)** — decisão consciente de **NÃO
+  migrar/mexer no `cui_acompanhamentos`**: ele alimenta 6 leitores (KPIs de
+  capelania/aconselhamento em `kpiAutoCollector`, `painel.js`, `notificacaoGenerator`,
+  `agentContext`, `cerebroSync`, `lgpd`). Unificar por leitura preserva os KPIs e evita
+  a armadilha "não é swap de 1 linha".
+- **Âncora da pessoa** (chave): `membro_id` > telefone (só dígitos, ≥10) > nome
+  normalizado (sem acento/caixa). Contrato de porta.
+- **Backend** (`routes/cuidados.js`): `GET /cuidados/trilha` (pessoas agrupadas ·
+  cada uma com `atendimentos[]` já ordenados + `comentarios_count`; helper
+  `carregarAtendimentosTrilha` + `_fetchTudoCui` paginado p/ o cap de 1000) ·
+  `GET/POST /cuidados/atendimentos/:refTipo/:refId/comentarios` ·
+  `DELETE /cuidados/atendimento-comentarios/:id`.
+- **Filtros da aba (2026-07-22 · client-side, sem backend/migration):** `TrilhaPessoas`
+  tem filtros por **tipo**, **status**, **quem atendeu** (`responsavel`) e **período**
+  (De/Até por `data` do atendimento). As opções de tipo/status/responsável são
+  derivadas dos atendimentos JÁ carregados por `trilha()` (distinct no `useMemo`), então
+  não precisou de endpoint novo. Regra de match: a pessoa aparece se tiver **≥1
+  atendimento** que casa TODOS os filtros ativos (busca por nome/telefone continua no
+  nível da pessoa). Botão "Limpar filtros" some quando nada está ativo. O
+  `TrilhaPessoaDialog` segue mostrando o histórico completo da pessoa (filtro serve pra
+  ACHAR, não pra recortar a timeline).
+- **Frontend** (`Cuidados.tsx`): `TrilhaPessoas` (cards de pessoa · busca · filtros · paginação)
+  → `TrilhaPessoaDialog` (timeline) → `ComentariosAtendimento` (lazy). "Registrar
+  atendimento" reusa o `VisitaModal` (cui_visitas); editar/prefill por pessoa idem.
+  Capelania só é EXIBIDA na trilha (vem de `cui_acompanhamentos`) — criar capelania/
+  aconselhamento novo segue na aba Aconselhamento (até a Caixa de entrada ligar a
+  ponte "atender → cria atendimento na trilha", próxima PR). `api.js`:
+  `cuidados.trilha()` + `cuidados.atendimentoComentarios.{list,create,remove}`.
+- ⚠️ Aplicar a migration `20260722180000` antes do merge.
+
+## Cuidados · responsáveis do atendimento gerenciáveis (2026-07-21)
+
+Pedido do Marcos: a lista de responsáveis da aba **Próximos passos** do
+`/ministerial/cuidados` (quem atende os convertidos) deixou de ser constante no
+front (`RESPONSAVEIS_ATENDIMENTO`/`RESPONSAVEIS_ANTIGOS` em `Cuidados.tsx`) e
+virou a tabela **`cui_responsaveis`** (nome + ativo · migration
+`20260721160000` · seed = 4 ativos + 13 antigos inativos · RLS padrão do
+módulo). A própria equipe gerencia pelo botão **"Gerenciar responsáveis"**
+(ao lado de "Novo convertido" · só `podeEditarCuidados`): modal com switch
+disponível/indisponível + adicionar nome (nome repetido inativo é REATIVADO,
+não duplica). **Excluir só quem NUNCA foi usado** (follow-up 2026-07-21 ·
+lixeira no modal): o DELETE conta `cui_convertidos.responsavel_atendimento`
+pelo nome (incluindo soft-deletados) e responde 409 orientando a desativar se
+houver uso — hard delete ok (catálogo de config, não-PII, fora da whitelist).
+**Renomear PROPAGA** (follow-up 2026-07-21 · lápis no modal): o PATCH aceita
+`{nome}` e atualiza `cui_convertidos.responsavel_atendimento` em cascata
+(incluindo soft-deletados · devolve `renomeados`; conflito com nome existente
+→ 409 orientando consolidar; falha na propagação reverte o nome no catálogo).
+O vínculo é por NOME (texto · essas pessoas não logam no sistema), então
+inativar preserva o histórico: inativo aparece desabilitado no dropdown da
+tabela (só exibível no registro que já o tem).
+Backend: `GET/POST/PATCH/DELETE /cuidados/responsaveis` (leitura nível 1 ·
+escrita/exclusão 3). Front: constantes viraram FALLBACK (se a API falhar, vale
+a lista antiga). `api.js`: `cuidados.responsaveis.{list,create,update,remove}`.
+**Dedup dos nomes da planilha antiga** (migration `20260721190000` · pedido do
+Marcos 2026-07-21): `cui_convertidos.responsavel_atendimento` consolidado —
+Kevin/Arthur + Arthur/Kevin → Arthur Cecconi · Naná → Natasha · Mari → Mariane ·
+Carmet/Arthur → Carmet — e os 5 nomes duplicados removidos de
+`cui_responsaveis` (com guarda: só sai quem ficou sem registro). Fallback do
+front espelha o pós-dedup (8 antigos).
+
 ## Auditoria do sistema (2026-06-08) · correção dos 4 CRÍTICOS
 
 Auditoria ampla do ERP (workflow multi-agente · find → verificação adversarial →
-síntese): **29 achados confirmados** (4 críticos · 13 altos · 8 médios · 4 baixos).
-Fio condutor: backend roda com `service_role` (bem guardado), mas o **frontend usa a
-anon key** e várias tabelas **escaparam das ondas de lockdown de RLS** → acesso direto
-ao banco só com a RLS no caminho. Esta entrega corrige **só os 4 críticos**.
+síntese): **29 achados confirmados** (4 críticos · 13 altos · 8 médios · 4
+baixos). Fio condutor: o backend roda com `service_role` (bem guardado), mas o
+**frontend usa a anon key** e várias tabelas escaparam das ondas de lockdown de
+RLS. **Levas 1–5 + o fix da chave da API.Bible estão MERGEADAS** — o diário de
+cada leva está no legado. O que fica:
 
-**Migration `20260608120000_auditoria_criticos_rls_fn.sql`** (restritiva · idempotente):
-- **#1 `usuarios`**: as policies `"Authenticated write/update/delete usuarios"` eram
-  `USING(true)`/`WITH CHECK(true)` → qualquer logado editava o próprio `cargo_id` pela
-  anon key (**escalonamento de privilégio**). Dropadas; write recriado com
-  `is_super_admin()`; SELECT segue aberto (ModuleGuard lê o cargo); `usuarios_service`
-  FOR ALL pro backend. + trigger `trg_audit_usuarios` (`audit_log_changes('cargo_id,deleted_at')`).
-- **#2 `cui_atendimentos`** (timeline pastoral · PII): a auditoria viu `USING(true)` no
-  **arquivo** da migration `20260420151621`, mas a tabela **não existe em prod** (aquela
-  parte nunca foi aplicada · drift git↔prod). Então a trava roda **guardada por
-  `to_regclass`**: no-op se a tabela não existir, lockdown por módulo (`cuidados`/`integracao`:
-  SELECT≥1, INSERT≥2, UPDATE≥3, DELETE só super-admin) se existir. ⚠️ Drift a investigar:
-  `notificacaoGenerator.js:519` lê `cui_atendimentos` (tabela ausente) — query latente morta.
-- **#4 `fin_metas_progresso`**: a 20260529070000 recriou com 3º param (`p_meta_id` DEFAULT)
-  sem dropar a versão `(date,date)` → overload ambíguo (o RPC do Dashboard Financeiro
-  podia resolver errado). `DROP FUNCTION ...(date,date)` deixa só a de 3 args.
-
-**Fix #3 (backend, sem migration) — `routes/integracao.js`:** `DELETE /visitantes/:id`
-fazia **hard-delete sem authorize** (qualquer logado destruía PII — o endpoint usa
-service_role, bypassa a RLS). Agora: `authorizeModule('integracao', 4)` + `app_soft_delete`
-(`int_visitantes` já tem `deleted_at` + está na whitelist) + GET `/visitantes` passou a
-filtrar `deleted_at IS NULL`.
-
-**⚠️ Aplicar a migration `20260608120000` antes do merge.** Após aplicar, **bust de
-cache** de permissões não é necessário (RLS é avaliada no banco), mas o efeito é imediato.
-**Restam 25 achados** (13 altos − 1 crítico-virou-fix + …) p/ próximas levas: família de
-hard-deletes (devocionais/cultos/grupos/projects/rh), injeção PostgREST em `pessoas.js`
-(`.or()` com email cru → `escapePostgrestValue`), cascata de meta sobrescrevendo % (BAT90/
-NEXT90), rotas no pool pg (agents/meetings), `/cerebro/status` e webhook do Cérebro sem auth,
-API.Bible key hardcoded. Relatório completo arquivado.
-
-### Remediação · em andamento (2026-06-08)
-- ✅ **Injeção PostgREST em `pessoas.js`** corrigida (`GET /lookup` + fallbacks
-  `int_visitantes`/`next_inscricoes`): `req.query.email` agora passa por
-  `escapePostgrestValue` antes de entrar no `.or()` (cpf/tel já eram digit-only).
-- ⚠️ **A "família de hard-deletes" NÃO é troca mecânica uniforme** (medido o raio de
-  impacto): `cultos` (82 refs em migrations), `kpi_indicadores_taticos` (74),
-  `cultos_decisoes_pessoas` (23), `mem_grupo_encontros` (14) são **agregados em
-  KPI/NSM** → soft-delete ingênuo deixa a linha "deletada" **continuando a contar**
-  (pior que hard-delete). Esses exigem varredura de filtro `deleted_at IS NULL` em
-  todos os read-sites + funções SQL — tarefa deliberada, NÃO um swap de 1 linha.
-  Seguros pra troca rápida: `rh_documentos` (não agregado) e `projects` (a
-  `projects.js` já faz soft-delete → reads já filtram). Os demais aguardam decisão.
-- Lição reforçada: validar achado contra o **schema/uso vivo**, não só o arquivo
-  (ver o caso `cui_atendimentos`, que nem existe em prod).
-
-### Leva 2 · fixes discretos de auth/secret (2026-06-08 · sem migration)
-- **`cerebro.js` `/status`**: era público (vazava estatísticas + resumos de docs) →
-  agora `authenticate` + `authorizeModule('cerebro', 1)`.
-- **`cerebro.js` webhook**: passa a validar `clientState` (o Graph ecoa o
-  `CRON_SECRET || 'cbrio-cerebro'` setado na subscription) — ignora notificação forjada
-  (evitava disparo de Graph delta + Haiku por quem chutasse a URL).
-- **`online.js` OAuth**: `signState`/`verifyState` falham fechado (sem `CRON_SECRET` não
-  assina/valida) — removido o fallback literal `'dev'`. `CRON_SECRET` é env obrigatória
-  em prod, então sem efeito lá.
-- **`membresia.js` `/totem/next/status`**: `membro_id`/`email` no `.or()` passam por
-  `escapePostgrestValue` (injeção PostgREST · cpf é digit-only).
-- **`bible.js`** (chave API.Bible hardcoded): fix pronto, mas **em PR separado e
-  represado** (módulo devocional é do Matheus). Bloqueado em: setar `BIBLE_API_KEY` no
-  Vercel + **rotacionar** a chave exposta `4CAuTct2…` (está no histórico do git → comprometida).
-  Mergear só depois disso, senão `/bible` → 503 e o devocional para de puxar o texto bíblico.
-
-### Leva 3 · soft-deletes seguros + medição (2026-06-08 · sem migration)
-- **`rh_documentos`** (`rh.js`): hard-delete → `app_soft_delete`; as 2 leituras (docs
-  vencendo + lista por funcionário) passam a filtrar `deleted_at IS NULL`. Documentos
-  não são agregados em KPI → conversão segura.
-- **`projects`** (`revisoes.js` `DELETE /projeto/:id`): a cascata de hard-deletes virou
-  `app_soft_delete('projects')` — alinhado com `projects.js` (que já faz soft-delete +
-  filtra `deleted_at`). Preserva os filhos e é reversível.
-- **`next_90d_pct`** (`kpiAutoCollector.js`): o coletor de coorte agora **seleciona e
-  popula `cpf`** no marco `next` (antes consultava `byCpf` sem popular → subcontagem do
-  KR/KPI de Next 90d). Match por membro_id/cpf/nome, como o marco batismo.
-- ⚠️ **Soft-deletes AGREGADOS pendentes** (NÃO fazer swap ingênuo): `cultos`,
-  `kpi_indicadores_taticos`, `cultos_decisoes_pessoas`, `mem_grupo_encontros`,
-  `mem_devocionais`, `mem_familias` — exigem varredura de filtro `deleted_at` em todos
-  os read-sites + funções SQL antes de converter (senão poluem KPI). Tarefa deliberada.
-
-### Leva 4 · guarda na cascata de meta (OKR/medição · COM migration)
-- **Migration `20260608140000_cascata_meta_guarda_percentual.sql`** (CREATE OR REPLACE
-  de `aplicar_meta_institucional` + re-run): KPI de **percentual** (`unidade='%'` ·
-  BAT90/NEXT90/reunião) **não recebe mais `meta_valor_absoluto` da cascata** — fica NULL
-  (a view cai no `meta_valor` = o alvo %). Antes a cascata gravava uma contagem anual
-  (baseline×1.3) nesses, e a normalização quebrava o semáforo. Só não estourava por
-  acidente (baseline `frequencia_next`=0). A re-run zera o absoluto herrado por engano.
-  ⚠️ **Aplicar a migration.** Protege os coorte KRs do funil conversão→batismo/Next.
-- **Pendente (OKR/medição · médio):** `_kpi_agregar_dado('batismos'/'novos_convertidos_atend')`
-  ignora o parâmetro de área (`20260508170000:91-100`) → baseline igual em todas as áreas.
-  Fica pra uma próxima (precisa investigar por que o ramo ignora a área).
-
-### Leva 5 · pool-pg → cliente supabase REST (2026-06-08 · sem migration · PR #920)
-O pool pg direto (`utils/db`) **não conecta no serverless do Vercel** (mesma lição do
-`fn_monitoramento_okr_raw`). Rotas que liam/gravavam por `db.query()` sem fallback
-estavam **quebradas em prod (500)**. Migradas pro cliente `supabase` (REST · service_role):
-- **`agents.js`**: `GET /sessions`, `GET /sessions/:id/messages`, `DELETE /sessions/:id`,
-  `PATCH /queue/:id/{approve,reject}` e `GET /log` (histórico do chat IA + **reject da fila
-  de aprovação do agente financeiro** · eram 500 em prod). `GET /queue` perdeu a tentativa
-  pg-first (ia sempre pro fallback). Persist de sessão/mensagens + log de uso idem.
-  `dbInsert` virou REST puro; `agent_log.details` é jsonb → passa objeto (sem `JSON.stringify`).
-- **`meetings.js`**: rota inteira (`meetings` + `pendencies`) → REST. `participants` (array pg)
-  passa array JS nativo; UPDATE/PATCH retornam null se o id não existe (paridade com `RETURNING *`).
-- Sem mudança de autorização (guards `authorize`/`authenticate` idênticos · service_role
-  bypassa RLS nos 2 canais).
-- **`bible.js` #913 MERGED** (chave API.Bible hardcoded removida · `BIBLE_API_KEY` setada no
-  Vercel + chave rotacionada · fail-closed 503 se faltar a env).
-
-### Remediação · ainda em aberto (2026-06-08)
-Levas 1-5 + bible #913 cobriram os 4 críticos + altos/médios discretos + o pool-pg do
-agents/meetings + a chave da api.bible. Resta (heavier · vale sessão dedicada):
-- **RLS de `mem_cadastros_pendentes`** (form público com anon insert · alto · exige mover o
-  form pro backend `/api/public/*` + migration de lockdown).
-- **`_kpi_agregar_dado`** ignora o param de área no baseline de `batismos`/`novos_convertidos_atend`
-  (`20260508170000:91-100` · médio · investigar por que o ramo ignora a área).
-- **pool-pg restante (baixo)**: `projects.js` (/views, /workload) e `patrimonio.js` (/dashboard
-  fallback) ainda usam `query()` — mesmo padrão do agents/meetings, menor impacto.
-- **Baixos**: `MEM_QR_SALT` fallback literal (`publicMembresia.js:576` · depende de env, como o
-  bible); cron morto/não-timing-safe em `voluntariado-sync.js`.
-- **Soft-deletes AGREGADOS** (cultos/kpi_taticos/decisões/encontros/devocionais/famílias) ·
-  exigem varredura de filtro `deleted_at` em todos os read-sites + funções SQL (não é swap).
+- ⚠️⚠️ **Lição de método (a mais citada desde então):** validar o achado contra o
+  **schema/uso VIVO**, nunca contra o arquivo da migration. O caso
+  `cui_atendimentos` virou o exemplo da casa — a auditoria leu `USING(true)` num
+  arquivo cuja parte **nunca foi aplicada em prod** (a tabela não existe lá).
+- ⚠️⚠️ **O pool pg direto (`utils/db`) NÃO conecta no serverless do Vercel.** Foi
+  o que deixou `agents.js` e `meetings.js` respondendo **500 em produção** até a
+  leva 5 migrá-los pro cliente REST. Rota nova NUNCA usa `query()`.
+- ⚠️ **A "família de hard-deletes" NÃO é troca mecânica** (e segue PENDENTE):
+  `cultos`, `kpi_indicadores_taticos`, `cultos_decisoes_pessoas`,
+  `mem_grupo_encontros`, `mem_devocionais` e `mem_familias` são **agregados em
+  KPI/NSM** — soft-delete ingênuo deixa a linha "deletada" CONTINUANDO A CONTAR,
+  pior que hard-delete. Converter exige varrer o filtro `deleted_at IS NULL` em
+  todos os read-sites **e** nas funções SQL.
+- **Demais pendentes**: RLS de `mem_cadastros_pendentes` (form público com anon
+  insert · exige mover o form pro backend `/api/public/*`); `_kpi_agregar_dado`
+  ignora o parâmetro de área no baseline de `batismos`/`novos_convertidos_atend`;
+  pool-pg residual em `projects.js` (/views, /workload) e `patrimonio.js`
+  (/dashboard); `MEM_QR_SALT` com fallback literal; cron não-timing-safe em
+  `voluntariado-sync.js`.
 
 # Estado atual dos módulos (condensado · histórico completo em docs/CLAUDE-LEGADO.md)
 
@@ -1773,141 +4874,57 @@ specs e fases no legado. Estado vigente:
 
 ## Solicitações · backbone administrativo (estado consolidado)
 
-### Form de criação reusável · NovaSolicitacaoForm (2026-07-03)
-O form oficial de "Nova Solicitação" vive em
-`src/components/solicitacoes/NovaSolicitacaoForm.jsx` (extraído da página).
-Props: `prefill`, `categoriasPermitidas`, `onCreated(criada)`, `onCancel`,
-`onDirtyChange` (o host liga o `useConfirmarSaida` · fechar com rascunho pede
-confirmação). `Solicitacoes.jsx` é o consumidor nº 1; a Produção abre o mesmo
-form a partir da ocorrência do culto. **Ponto de entrada novo = reusar esse
-componente** (não duplicar intake) — aprovação/SLA/roteamento/KPI ficam 100% no
-backend, iguais pra qualquer host.
-
-### Form · dualidades resolvidas (decisões do Marcos · 2026-07-07)
-Auditoria de perguntas repetidas no intake. Decisões (só frontend · backend
-intocado → bundles antigos abertos seguem enviando normal):
-- **Total de Compras é CALCULADO** (não digitável): "Valor estimado (R$)" saiu
-  de `showValueField` pra compras; o form mostra "Total estimado do pedido"
-  somado dos itens (respeita R$ total/por unid.) e o backend soma server-side
-  (fallback que já existia). Reembolso/Pagamento mantêm o campo.
-- **Justificativa única**: urgente NÃO abre 2ª caixa — o porquê vai na
-  "Justificativa do pedido" (label ganha "(inclua o porquê da urgência) *" e a
-  validação exige ≥5 chars só na urgência MANUAL). No submit o form copia a
-  justificativa pra `justificativa_urgencia` (mapa de urgência frequente
-  continua alimentado).
-- **Urgente automático pela data**: `data_necessaria` mais curta que o
-  `sla_resolucao_horas` padrão (não-urgente) da categoria → `eh_urgente=true`
-  automático + aviso âmbar; checkbox fica marcado/desabilitado. Marketing fora
-  (prazo é da triagem). Urgência automática não exige justificativa (auto-texto
-  "Data necessária abaixo do prazo padrão").
-- **Mantidos de propósito**: Descrição × Itens (necessidade ≠ o que comprar) e
-  Fornecedor sugerido × Link por item (casos diferentes: contato conhecido ×
-  compra online).
-- Resíduo `urgencia: 'normal'` removido do FORM_INITIAL (select saiu da UI em
-  2026-05-30 · coluna segue com default 'normal' no backend).
-
-### ⚠️ Compras · valor do item: seletor total/unitário · grava TOTAL DA LINHA (2026-07-07)
-Caso real (aventais/coletes): Marcos pôs 30 coletes · R$ 1.000 esperando "essa
-linha custa ~R$ 1.000", mas o backend somava `valor × quantidade` → pedido de
-R$ 60.000. Solução em 2 passos (mesmo dia): (1) valor do item passou a ser o
-total da linha; (2) Marcos pediu ESCOLHA explícita → cada item ganhou um
-seletor **"R$ total" | "R$ por unid."** (`valor_tipo`, default 'total' · sem
-migration — campo só do payload). O POST normaliza: 'unitario' → `valor ×
-quantidade`; `solicitacao_itens.valor_estimado` guarda **SEMPRE o total da
-linha** e a soma do pedido NUNCA multiplica de novo. No modo unitário o form
-mostra "= R$ X no total da linha" ao vivo. Bundle antigo (sem valor_tipo) cai
-em 'total'. Dado histórico pode ter mistura de semânticas (era ambíguo) — o
-valor é estimativa editável, sem migração.
-
-### Fotos anexadas no intake · Serviços/Serviço externo (2026-07-07)
-Pedido do Marcos: quem pede **Serviços (manutenção)** ou **Serviço externo
-(cotação)** pode anexar até 3 fotos no form pra quem atende/cota avaliar pela
-imagem (goteira, equipamento, referência). Compras NÃO ganhou o campo — já tem
-foto POR ITEM (`solicitacao_itens.imagem_url`).
-- **Coluna `solicitacoes.imagens_url` (jsonb · array de URLs)** · migration
-  `20260707120000` (aditiva/idempotente). Upload client-side pro bucket
-  `solicitacoes` (path `fotos/` · bucket+policies já existiam da 20260623200000),
-  mesmo padrão do comprovante/foto-de-item.
-- `NovaSolicitacaoForm.jsx`: campo `imagens` (Files) + componente `FotosAnexos`
-  (thumbnails + adicionar/remover · cap `MAX_FOTOS=3`) exibido só pra
-  `infraestrutura`/`servico`; no submit sobe as fotos e manda `imagens_url`.
-- Backend POST: sanitiza (strings · cap 5 · 2000 chars) e **só inclui a coluna
-  no insert quando há foto** — flows antigos não tocam a coluna (tolera a
-  migration ainda não aplicada; só o caminho novo exige ela).
-- Detalhe (`Solicitacoes.jsx` DetailDialog): bloco genérico "Fotos anexadas"
-  (thumbnails clicáveis · abre em tamanho real) pra qualquer categoria com
-  `imagens_url` — o GET usa `select('*')`, a coluna flui sozinha.
-
-### Co-aprovadores de origem + e-mail das aprovações (2026-06-22)
-Pedido (gestão): a vice-diretora **Juliana Leão** (`juliana.leao@cbrio.org` ·
-cargo `diretor-rh` · solicitações nível 2) aprova as solicitações de origem do
-**setor Gestão JUNTO com o Eduardo Gnisci** — qualquer um dos dois (não os dois).
-- **Tabela `setor_coaprovadores`** (migration `20260622140000` · aditiva ·
-  `setor` FK `setor_diretor` + `profile_id` FK `profiles` + `nome` snapshot · RLS
-  catálogo: read autenticado / write super-admin / service). Seed: Gestão→Juliana.
-  Para outro setor, é só inserir uma linha.
-- **`solicitacoes.js`** (helpers `setoresQueCoaprova`/`diretorIdsQuePodeAprovar`/
-  `podeAprovarOrigem`/`coaprovadorIdsParaDiretor` · **best-effort**, degradam pro
-  diretor-só se a tabela faltar): aba `aprovar` e `meu-papel` (`eh_diretor_origem`
-  + contagem) incluem os setores co-aprovados; `aprovar-origem`/`rejeitar-origem`
-  aceitam co-aprovador (motivo registra quem foi · NÃO sobrescreve o diretor_id);
-  o GET lista devolve `aprovacao_origem_aprovadores` (nomes) e a UI mostra
-  "Aguardando aprovação de **Eduardo ou Juliana**". O alerta de origem no POST
-  notifica diretor + co-aprovadores.
-- **Kanban · coluna "Aguardando aprovação" (2026-06-22)**: `aguardando_aprovacao_origem`
-  ganhou coluna PRÓPRIA no board da aba "Atender" (`KANBAN_COLUMNS` · `readOnly:true`,
-  match `aguardando_aprovacao_origem`). Antes sumia do quadro (aparecia só na Lista) —
-  o responsável da área (ex.: Amaury em compras) vê que a solicitação está vindo mas
-  **não pode movê-la** (card não-arrastável + coluna não aceita drop · quem aprova é o
-  diretor/co-aprovador na aba "Aprovar"). Grid do board foi pra 7 colunas.
-- **E-mail das aprovações**: `notificar({..., email:true})` (novo param) manda
-  e-mail pros mesmos destinatários do aviso in-app (herda a dedup). Hoje ligado
-  só no alerta "Aprovar solicitação" (vai pros aprovadores · ex.: Eduardo +
-  Juliana). Canal em `services/email.js`: **primário = Microsoft Graph** (mesma
-  config do SharePoint/Cérebro · `MICROSOFT_TENANT_ID/CLIENT_ID/CLIENT_SECRET` +
-  `getGraphToken`), **fallback = Resend**. Remetente Graph = `GRAPH_MAIL_SENDER ||
-  MERGE_MAIL_SENDER || noreply@cbrio.org` (caixa real do tenant · app Azure
-  precisa de `Mail.Send`). `FRONTEND_URL` vira o link "Abrir no sistema".
-  No-op gracioso se nenhum canal estiver configurado.
-- ⚠️ Aplicar a migration `20260622140000` antes do merge (backend tolera ausência,
-  mas o recurso só funciona com a tabela criada).
-
 Fonte única dos KPIs administrativos (SLA, NPS, throughput, urgência). Schema:
 `sla_definicoes` (prazos por área/subcategoria), `area_alcadas`,
-`solicitacoes_eventos` (audit), views `vw_solicitacoes_sla` (alimenta KPIs ADM
-em `painel.js`) e `vw_reserva_espacos`. Triggers calculam SLA e decidem
-aprovação financeira por alçada.
+`solicitacoes_eventos` (audit), views `vw_solicitacoes_sla` (alimenta os KPIs ADM
+em `painel.js`) e `vw_reserva_espacos`. Triggers calculam SLA e decidem aprovação
+financeira por alçada. O diário das decisões de form (dualidades, fotos,
+co-aprovadores) está no legado.
 
-- **Dois portões em sequência**: (1) **aprovação de origem** (Spec 001 ·
-  transversal): toda solicitação passa pelo diretor do SETOR do solicitante
-  (Gestão=Eduardo Gnisci · Criativo=Pedro Menezes · Ministerial=Arthur Serpa ·
-  tabela `setor_diretor` + `fn_normalizar_setor()`); diretores/diretoria geral/
-  service_role dispensam; rejeitada é IMUTÁVEL (cria nova). (2) **aprovação
-  financeira do Yago**: compras/reembolso/pagamento SEMPRE (sem bypass por
-  valor · decisão de 22/05).
-- **⚠️ Lição (service_role × trigger)**: o backend insere com `auth.uid()=NULL`,
-  então a regra de roteamento NÃO pode viver só em trigger que lê `auth.uid()`
-  — o POST chama `fn_solicitacoes_rotear_origem(uuid)` via RPC e grava o
-  resultado; o trigger fica de rede de segurança. (Bug que marcava tudo
-  `dispensada` e esvaziava a aba Aprovar.)
-- **Categorias vigentes no form**: TI · Compras · Reembolso · Reserva de Espaço
-  · Serviços (=manutenção interna → `infraestrutura`, sem Yago) · Pagamento ·
-  Marketing (por dor) · Férias/Licença. `servico` (contratação externa) e
-  `outro` saíram do form (slugs seguem na CHECK pra linhas históricas).
-  Roteamento: Compras→Amaury+Yago · Serviços→Amaury · Pagamento/Reembolso→Yago ·
-  Reserva→Amaury · TI→TI · Marketing→Pedro · Férias→RH.
-- **`area_cliente` é TEXT derivada de quem preenche** (kpi_areas → usuario_areas
-  → profile.area · ignora o body). Lições de CHECK: a constraint de `categoria`
-  precisa acompanhar `ALLOWED_CATEGORIES` (bug A); `area_cliente` era enum de 6
-  áreas de culto e estourava com as 21 sub-áreas (bug C · virou text).
-- **Kanban agrupa os 10 status reais** em 5 colunas via `match[]`
-  (`aguardando_aprovacao_origem` fica fora — vive na aba Aprovar). NPS
-  pós-conclusão (card destacado + lembrete cron 24h) alimenta os 11 KPIs
-  ADM-*-Q automaticamente.
-- **Follow-ups ainda válidos**: expor subcategorias de RH no form
-  (vaga_nova/treinamento/documentacao/duvida), calendário visual de reservas,
-  dashboard de urgência frequente, painel solicitante × responsável separados.
-  Detalhes/pendências originais no legado.
+- **Dois portões em sequência**: (1) **aprovação de origem** — toda solicitação
+  passa pelo **diretor do SETOR do solicitante** (`setor_diretor` +
+  `setor_coaprovadores` · `fn_normalizar_setor()`); diretores/diretoria geral/
+  service_role dispensam; rejeitada é **IMUTÁVEL** (cria nova). (2) **aprovação
+  financeira**: compras/reembolso/pagamento SEMPRE, sem bypass por valor.
+- ⚠️⚠️ **Lição (service_role × trigger)**: o backend insere com `auth.uid()=NULL`,
+  então **regra de roteamento NÃO pode viver só em trigger que lê `auth.uid()`** —
+  o POST chama `fn_solicitacoes_rotear_origem(uuid)` via RPC e grava o resultado;
+  o trigger fica de rede de segurança. (Foi o bug que marcava tudo `dispensada` e
+  esvaziava a aba Aprovar.)
+- **Form de criação é COMPONENTE reusável**
+  (`src/components/solicitacoes/NovaSolicitacaoForm.jsx`): ponto de entrada novo
+  **reusa** o componente, nunca duplica intake — aprovação/SLA/roteamento/KPI
+  ficam 100% no backend, iguais pra qualquer host. A ocorrência do culto na
+  Produção é o consumidor nº 2.
+- ⚠️⚠️ **Compras: `solicitacao_itens.valor_estimado` guarda SEMPRE o total da
+  LINHA**, e a soma do pedido NUNCA multiplica de novo. Caso real: 30 coletes ×
+  R$ 1.000 viraram um pedido de **R$ 60.000**. O item tem seletor explícito
+  "R$ total | R$ por unid." (`valor_tipo`, default `total`) e o servidor
+  normaliza. **Total de compras é CALCULADO, não digitável.**
+- **`area_cliente` é TEXT derivada de quem preenche** (kpi_areas → usuario_areas →
+  profile.area · **ignora o body**). ⚠️ Lições de CHECK: a constraint de
+  `categoria` precisa acompanhar `ALLOWED_CATEGORIES`, e `area_cliente` era enum
+  de 6 áreas de culto e estourava com as 21 sub-áreas (virou text).
+- **Urgente automático pela data**: `data_necessaria` mais curta que o
+  `sla_resolucao_horas` padrão da categoria marca `eh_urgente` sozinho, com aviso.
+  Marketing fica fora (prazo é da triagem). **Justificativa é única** — urgente
+  não abre 2ª caixa.
+- **Kanban agrupa os 10 status reais em 5 colunas** via `match[]`;
+  `aguardando_aprovacao_origem` tem **coluna própria read-only** (o responsável da
+  área vê que está vindo mas não pode mover — quem aprova é o diretor na aba
+  Aprovar). NPS pós-conclusão alimenta os 11 KPIs `ADM-*-Q` automaticamente.
+- ⚠️ **Fotos anexadas** (`solicitacoes.imagens_url` jsonb) só em Serviços/Serviço
+  externo — Compras já tem foto POR ITEM. O backend **só inclui a coluna no insert
+  quando há foto**, então flow antigo não a toca (tolera migration não aplicada).
+- **E-mail das aprovações**: `notificar({..., email:true})` · canal em
+  `services/email.js` com **Microsoft Graph primário** e Resend de fallback;
+  no-op gracioso se nenhum estiver configurado.
+- ⚠️ **Padrão de modal alto** (vale pra todo o sistema): `DialogContent` vira
+  `flex flex-col` **sem** `overflow`, e o corpo ganha `flex-1 overflow-y-auto
+  min-h-0`. NUNCA `overflow-y-auto` no container grid do shadcn — sem `min-h-0` o
+  filho não encolhe e o conteúdo **corta em vez de rolar**.
+- **Follow-ups válidos**: expor subcategorias de RH no form, calendário visual de
+  reservas, dashboard de urgência frequente, painéis solicitante × responsável.
 
 ## NPS · pesquisas de satisfação (estado consolidado · 2026-07-04)
 
@@ -2111,80 +5128,1503 @@ Pessoas, Caixa de entrada) na seção própria no topo deste arquivo.
 
 ## Totem Kids · check-in infantil (estado consolidado · aguardando hardware)
 
-Substitui o Planning Center: mãe dá o nome no totem, voluntário imprime 2
+Substitui o Planning Center: a mãe dá o nome no totem, o voluntário imprime 2
 etiquetas (criança + recibo) com código de segurança de 4 chars; no checkout o
-código libera a saída; TVs nas salas chamam o pickup (código gigante + TTS).
-Plano completo: `docs/checkin-kids-plano.md` (10 decisões fechadas: 0-12 anos ·
-só manned no MVP · foto opcional nunca na etiqueta · código sem expiração +
-cron 23h `fn_kids_checkout_forcado_pendentes()` · app pra mãe NUNCA · impressão
-via `window.print` na Brother QL-820NWB default do Windows).
+código libera a saída; TVs nas salas chamam o pickup. Plano completo em
+`docs/checkin-kids-plano.md`; o diário de implantação (pagers LRS, pré-check-in
+pelo app, vínculo por documento, modo totem, saneamento de 17/07, ajustes
+pós-culto de 26/07) está no legado. Schema: `kids_criancas`/`responsaveis`/
+`salas`/`sessoes`/`estacoes`/`checkins`/`etiquetas_log` + trigger que consolida
+`cultos.presencial_kids`/`decisoes_kids` ao encerrar a sessão. Permissão: boost
+da área KIDS + "líder Kids do dia" dinâmico via `vol_check_ins`.
 
-- **Schema**: `kids_criancas/responsaveis/salas/sessoes/estacoes/checkins/
-  etiquetas_log` (+ trigger que consolida `cultos.presencial_kids`/
-  `decisoes_kids` ao encerrar sessão e cria decisão kids em
-  `cultos_decisoes_pessoas`). Rotas `/ministerial/totem-kids*` + admin
-  `/admin/totem-kids`. Permissão: boost área KIDS (Mariane) + "líder Kids do
-  dia" dinâmico via `vol_check_ins`.
-- **Pagers físicos** (2026-06-02): transmissor LRS Freedom T7470 (protocolo
-  LRSN = XML/TCP). Agente local `pager-bridge/` (Node · só conexões de saída ·
-  bearer `PAGER_BRIDGE_TOKEN` · `DRY_RUN=1` testa sem hardware) consome a fila
-  `kids_pager_envios`; catálogo `kids_pagers`; `kids_checkins.pager_id`. Aba
-  Pagers no admin.
-- **Pré-check-in pelo app (2026-06-14)**: o responsável prepara o check-in dos
-  filhos no app de membros e gera um código/QR de 6 chars; no totem o voluntário
-  digita/escaneia, confere e imprime. **NÃO substitui a mediação presencial** —
-  entrada/retirada continuam com o voluntário; o app NÃO faz checkout remoto
-  (decisão de segurança). Tabela `kids_pre_checkins` (código único, crianca_ids,
-  status pendente/usado/expirado/cancelado, expira em 12h · RLS: responsável vê/
-  cria só os próprios via `current_user_membro_id()`, equipe kids ≥1 lê) +
-  `fn_kids_pre_checkin_codigo()` (migration `20260614120000` · aplicada em prod).
-  App: `GET/POST /api/app/kids/{meus-filhos,pre-checkin}` (valida que todas as
-  crianças são filhos `autorizado_buscar` do membro · 403 senão · cancela
-  pendente anterior). Totem: `GET /totem-kids/pre-checkin/codigo/:codigo`
-  (responsável + filhos com sala sugerida · 404/410) e `POST /pre-checkin/:id/
-  consumir` (auditoria). `TotemKidsCheckin` ganhou o card "Chegou pelo app?" que
-  enfileira os filhos e reusa o fluxo de check-in 1 a 1 (confere+imprime). PR #1017.
-- **Vínculo criança↔responsável pelo app + aprovação (2026-06-14)**: o vínculo
-  NUNCA é automático (segurança de menor). O responsável pede pelo app e envia
-  **documentos de identidade** (criança obrigatório + pai e/ou mãe, ao menos um);
-  a equipe Kids confere e aprova/rejeita. Tabela `kids_vinculo_solicitacoes`
-  (PII de menor · `deleted_at` + whitelist + RLS contextual + audit trigger ·
-  migration `20260614160000` · aplicada em prod). Documentos num bucket
-  **privado** `kids-documentos`: o app sobe direto pra `{auth.uid}/...` (storage
-  policy só de INSERT no próprio prefixo · sem leitura via client) e manda só os
-  PATHS; a equipe vê via **signed URL** (15 min) gerada pelo backend (service
-  role). App: `POST /app/kids/solicitar-vinculo` (valida prefixo do path = uid) +
-  `GET /app/kids/minhas-solicitacoes`. Totem: `GET/POST
-  /totem-kids/vinculo-solicitacoes[...]` (list · detalhe com signed URLs ·
-  aprovar = cria criança se nova + upsert `kids_responsaveis` autorizado_buscar ·
-  rejeitar com motivo). Tela `TotemKidsVinculos` (rota
-  `/ministerial/totem-kids/vinculos` · botão "Vínculos" no check-in).
-- **Modo totem na tela de check-in (2026-06-14)**: botão "Modo totem" em
-  `TotemKidsCheckin` entra em fullscreen (Fullscreen API) + overlay
-  `fixed inset-0 z-[60]` cobrindo o AppShell; esconde a navegação e deixa só o
-  check-in. Sair exige **PIN** (criado na 1ª vez · localStorage
-  `cbrio-totem-kids-pin`), igual ao totem de membros (`TotemMembro.tsx`).
-- **Foto da criança pelo app + consentimento ECA/LGPD (2026-06-17)**: o
-  responsável autorizado pode adicionar (opcional) a foto da criança na tela do
-  filho no app, com **consentimento explícito** (ECA Lei 8.069/90 arts. 17/18 ·
-  LGPD Lei 13.709/18 art. 14 · texto + checkbox · versão em
-  `kids_criancas.foto_consentimento_versao`). Migration `20260617200000`
-  (aplicada): `foto_storage_path` (bucket **privado** `kids-documentos`,
-  prefixo `foto-crianca/`), `foto_consentimento_por/_versao` (foto_url +
-  foto_consentimento_em já existiam). App: `POST /app/kids/filho/:id/foto`
-  (exige `consentimento:true`) e `/foto/remover` (revoga + apaga). **Exibição
-  só com consentimento, via signed URL** — helper `fotoVisivelCrianca()` em
-  `totemKids.js` resolve a foto do app na busca, detalhe, listagem e
-  pré-check-in por código (foto_url legada do sistema segue inalterada).
-  ⚠️ As views de checkout-por-código e roster de sala ainda leem foto_url
-  legado (não mostram foto do app · não é o ponto de identificação na entrada).
-- **Pendências operacionais**: aplicar migration
-  `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
-  (docs/totem-kids-setup-brother.md); comprar/parear 6 Fire TV Sticks;
-  `PAGER_BRIDGE_TOKEN` no Vercel + .env do agente; confirmar porta TCP/NetPage
-  com a LRS; teste num culto pequeno. Estado/dados: 660 famílias + 894 crianças
-  importadas (56% com responsável · resto via auto-cadastro no 1º check-in).
-  Diário completo no legado.
+**⚠️ LEIS deste módulo (não regredir):**
+
+- ⚠️⚠️ **Check-in só é REAL se o dia (BRT) do check-in for o dia do culto**
+  (v5 · 22/07 · migration `20260722120000`, validada por conselho deliberativo).
+  3 camadas: a TELA mostra sempre o chip "Registrando em: <culto>" e só lista
+  cultos de HOJE do período atual; o SERVIDOR recusa 409 sessão de culto futuro
+  quando há culto de hoje aberto; os DADOS ganham sweep que soft-deleta check-in
+  de ensaio. Sessão de culto FUTURO destrava a tela em **MODO ENSAIO** explícito
+  (banner âmbar + faixa TESTE na etiqueta e no recibo). Residual documentado:
+  ensaio no MESMO dia do culto conta como real até o Encerrar perguntar — ensaie
+  com culto de outro dia.
+- ⚠️⚠️ **Criança nova NUNCA entra em família existente automaticamente** (caso
+  Benjamin/Mariane Gaia · 22/07): o fluxo normal **sempre cria `mem_familias`
+  nova**; juntar núcleos é ato explícito (botão "Cadastrar criança na família" ou
+  Gestão/Entradas). Efeito colateral aceito: irmão cadastrado pela via errada
+  nasce em família separada — o inverso (criança na família alheia) é que é
+  irreversível de detectar.
+- ⚠️⚠️ **Limpeza/soft-delete em massa de `mem_membros` DEVE checar
+  `kids_responsaveis` antes** (incidente 22/07): a rotina "depurar inativos" da
+  era PCO soft-deletou **129 responsáveis ATIVOS**, e o sintoma era 500 genérico
+  em TODA edição — o embed não filtra `deleted_at`, mas o PATCH filtra. Repontar
+  ou poupar quem é responsável ativo.
+- ⚠️ **Pager de INCLUSÃO é OBRIGATÓRIO** (`tem_espectro` ou
+  `tem_limitacao_fisica`): sem a válvula "imprimir mesmo assim" e sem fechar por
+  fora/Esc. Menores de 4 anos sem inclusão mantêm a válvula.
+- ⚠️ **Devolução do pager = CHECK-OUT, e vice-versa** (03/08) — os dois registros
+  andavam desacoplados. A **baixa em massa** (`checkout_forcado`) NÃO carimba
+  devolução DE PROPÓSITO: é o que sustenta o alerta "foi pra casa" da conferência.
+- ⚠️ **`ehNomePlaceholder` protege contra o fantasma do financeiro** (incidente
+  26/07 · "Contribuinte NNN" saindo como mãe na etiqueta): match por CPF em
+  registro-placeholder **renomeia o registro** em vez de roubar a identidade, e
+  no check-in `transferirCpfDePlaceholder` migra o CPF pro cadastro real. Nenhum
+  fluxo de PESSOAS deve exibir nem preferir placeholder.
+- **Foto da criança exige consentimento explícito** (ECA arts. 17/18 + LGPD art.
+  14 · versão em `foto_consentimento_versao`), bucket **privado** e exibição só
+  por signed URL — `fotoVisivelCrianca()` e `anexarFotosEmLote` são os
+  resolvedores. Vínculo criança↔responsável **nunca é automático**: pede
+  documento e passa por aprovação da equipe Kids.
+- **Sem checkout remoto pelo app** (decisão de segurança): o pré-check-in prepara
+  e gera código/QR; entrada e retirada continuam presenciais.
+
+**Pendências operacionais**: aplicar
+`20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
+(`docs/totem-kids-setup-brother.md`); comprar/parear 6 Fire TV Sticks;
+`PAGER_BRIDGE_TOKEN` no Vercel + `.env` do agente; confirmar porta TCP/NetPage
+com a LRS. Dados: 660 famílias + 894 crianças importadas (56% com responsável).
+
+## Next · renomear turma pelo lápis (2026-08-03 · SEM migration)
+
+Pedido do Marcos: lápis pra mudar o nome de uma turma do Next. Edição inline no
+título do modal da turma (`TurmaDetalheModal` em `NextTurmas.tsx`): lápis →
+`Input` + Salvar/Cancelar (Enter salva · Esc cancela). Grava por
+`nextApi.turmas.update(id, { nome })` — **o `PATCH /next/turmas/:id` já aceitava
+`nome`** na whitelist `['nome','status','responsavel_id','observacoes']`; só não
+havia caminho na UI (a tela nascia com o nome sugerido `nomeMesAtual()` e ele
+ficava imutável). Sem backend, sem migration, sem endpoint novo.
+
+- Atualização otimista do nome no `det` + `onChanged()` → o card da grade reflete
+  na hora, sem refetch do detalhe inteiro.
+- ⚠️ **O lápis fica SÓ no modal, não no card da grade**: o card é um `<button>`
+  (abre o detalhe) e botão dentro de botão é HTML inválido — o clique no lápis
+  seria capturado pelo card em parte dos navegadores.
+- ⚠️ **Não mexe em `next_turmas.origem_mes`**, que é a chave real usada pela
+  série derivada da view unificada (`serie_chave`/`edicao_rotulo`) e pelo
+  `origem_mes_key` do espelho de matrícula. Renomear é rótulo de exibição; a
+  identidade da turma segue sendo `origem_mes`. Não "melhorar" isso derivando
+  `origem_mes` do nome novo — o UNIQUE dela quebraria as turmas "/02" do mesmo mês.
+- Sem gate de permissão próprio, igual a Encerrar/Reabrir que já existiam ali (a
+  rota é `authenticate` + `ModuleGuard` do módulo `next` na tela).
+
+## ⚠️ Next · backfill de 13/05, contagem dupla e identidades (2026-07-29)
+
+Investigação a pedido do Marcos ("Kelly Veiga com 24 inscrições, 23 do Next").
+**Nada disso era import repetido** — é o desenho de duas camadas somadas sem
+dedup. As medições, o caso Kelly e o diário das correções estão no legado. Estado
+e regras que ficam:
+
+**As duas camadas carregam fatos DIFERENTES e nenhuma se apaga.**
+`next_matriculas` = inscrição/estado do MÊS · `next_inscricoes` = **presença por
+encontro** — e é dela que o KPI `frequencia_next` lê. ⚠️ **NÃO apagar nem
+desligar `next_inscricoes`.** A porta `next_legado` da view unificada MORREU
+(migration `20260730120000`): as aparições sem matrícula viraram matrícula e o
+ramo saiu — a view tem **9 fontes**, não 10.
+
+⚠️ **Lista impressa é ROSTER, não chamada.** O backfill de 13/05 digitalizou 56
+listas de presença e criou 1 linha por NOME POR LISTA; o nome segue impresso nas
+sessões seguintes, então **762 pessoas viraram 2.423 linhas** (mediana 3, máx 17).
+Quem ler aquela tabela como "inscrições" conta a mesma pessoa várias vezes.
+
+**`fn_next_data_fato(created_at, origem_mes, primeira_sessao, id)`** é a fonte
+única do dia de uma matrícula, em 3 níveis do mais verdadeiro pro menos:
+(1) registrada durante/antes da própria turma → `created_at`; (2) backfill com
+aparição → **dia da 1ª sessão do mês** (`vw_next_primeira_sessao_mes`) — dado
+REAL, estava no PDF e não estava sendo lido; (3) backfill sem aparição → dia
+1/8/15/22 pelo hash do id, **estimativa declarada**.
+- O padrão 1/8/15/22 é **visivelmente sintético de propósito** — escolher "13/04
+  porque teve sessão nesse dia" seria fingir precisão.
+- ⚠️ `(h % 4 + 4) % 4`, nunca `abs(h) % 4`: `hashtext` pode devolver `INT_MIN` e
+  `abs(INT_MIN)` estoura com 22003, derrubando a leitura da linha inteira.
+- ⚠️ A view derivada é **view, não coluna materializada**: dado derivado de
+  presença não pode ficar velho, e corrigir uma presença corrige a data sozinha.
+- ✅ **A comparação YoY por semana é confiável**: 2025 é 100% data real; as
+  estimativas se concentram em 2024, que ninguém compara.
+
+**`criado_em` da view unificada = DATA DO FATO, não data do import** (migration
+`20260730130000`): voluntariado usa `coalesce(data_inscricao, created_at)` ·
+batismo usa **`least(data_batismo, created_at)`** — ⚠️ `least`, não `coalesce`:
+batismo AGENDADO tem `data_batismo` no FUTURO, e `coalesce` colocaria inscrição
+no futuro · next usa o mês da turma **só quando a linha foi registrada DEPOIS do
+mês** (sem essa guarda, matrícula real de 20/07 seria empurrada pro dia 1º,
+estragando justamente o dado NOVO). ⚠️ Converter DATE→timestamptz usa **meio-dia
+em BRT**: meia-noite UTC é 21h do dia ANTERIOR no fuso da igreja.
+⚠️ **`created_at` de toda tabela fica INTACTO** — o que muda é a LEITURA.
+
+⚠️ **PENDENTE**: os coletores `next.batismos`/`voluntarios`/`dizimo` ainda janelam
+por `next_matriculas.created_at`, então maio/2026 continua recebendo o backfill
+nesses 3 KPIs. Consertar muda valores de períodos JÁ FECHADOS e pede recoleta —
+passo separado, combinado com o Marcos.
+
+⚠️ **Identidades do backfill**: `membro_id` determinístico (UUID v5 de
+nome+telefone) sobre lista manuscrita produziu vínculo divergente (21 enfileiradas
+em `identidade_pendencias`), pares de duplicata que a fila já calcula, e órfãos.
+O script `backend/scripts/_next_identidades_pendencias.cjs` (dry-run por padrão)
+**nunca** funde, religa ou apaga — só enfileira pra decisão humana.
+
+### Next · as 4 decisões do Marcos sobre o legado (2026-07-29/30)
+
+Mandato dado por ele: *"o importante não é ter os dados certos de 2 anos atrás,
+é a garantia de que daqui pra frente teremos dados sérios, corretos e
+auditáveis; se um cadastro antigo atrapalhar, prefiro remover e me justificar
+com a liderança — mas não quero um frankenstein, porque daqui a 5 anos isso dá
+um problema que não é simples."* As decisões, caso a caso:
+
+1. **Os 865 `formado` do backfill FICAM como formado** (277 deles sem nenhuma
+   presença registrada). Decisão do Marcos: *"antes eles usavam folhas de papel
+   e o controle era limitado"* — o status reflete o julgamento de quem conduzia
+   o Next no papel; reescrever hoje trocaria um dado impreciso por outro. **NÃO
+   reabrir sem ele.** Ressalva registrada: **maio/2026 não tem NENHUMA matrícula
+   real fora do backfill**, então os KPIs NEXT-01/02/03 daquele mês (janela por
+   `created_at`) são 100% roster de 2025. É um mês fechado e não se repete —
+   decidimos NÃO reescrever `created_at` (destruiria o fato auditável "entrou no
+   import de 13/05") nem criar coluna `matriculado_em` só por isso.
+2. **A porta `next_legado` MORREU** (migration `20260730120000`): as 131
+   aparições sem matrícula viraram matrícula (datadas no mês do ENCONTRO, não no
+   dia do import; `formado` só onde há presença) e o ramo saiu da view. A view
+   tem **9 fontes**, não 10. `next_inscricoes` não é porta de inscrição — é
+   **presença por encontro**. Um modelo de inscrição (turma/matrícula), um de
+   presença. Era essa competição entre as duas tabelas que era o frankenstein.
+3. **Os 93 cadastros "vazios" do import NÃO foram apagados.** Marcos perguntou
+   se valia deixá-los como "não sei" pra reconciliar caso a pessoa preencha um
+   formulário no futuro. Vale — e não precisa de estado novo, porque **o matcher
+   canônico filtra `deleted_at` e NUNCA `active`**: o cadastro fantasma com
+   nome+telefone é reencontrado e ENRIQUECIDO no próximo formulário, em vez de
+   nascer duplicado. ⚠️ **Soft-delete quebraria exatamente isso** (o matcher
+   pula deletado → nasce cadastro novo e o rastro fica órfão). Além disso: dos
+   93, a `duplicidadePolicy` aceita **27 pares** — vários são o fantasma
+   duplicando um membro REAL, ou seja, a fila das Entradas está apontando
+   trabalho útil de consolidação, não ruído. A origem já é auditável
+   (`mem_identidade_observacoes`).
+4. **A FK que faltava** (a causa-raiz, virou lei nº 10 das regras de segurança):
+   os 58 órfãos existiam porque `next_inscricoes`/`next_matriculas` tinham
+   `membro_id` **sem FOREIGN KEY**, e `merge_membros` descobre os filhos pelo
+   catálogo. Os 58 foram reconstruídos pelo `mem_merge_log` (seguindo cadeia de
+   fusão; redundante vira soft-delete) e as duas FKs entraram com
+   `ON DELETE SET NULL`. Daqui pra frente toda fusão reponta sozinha.
+
+⚠️ **Ponto cego consciente que sobrou**: o ramo `next` do
+`fn_app_inscricoes_fanout` (rede de segurança pra builds ANTIGOS do app) insere
+só em `next_inscricoes`, e com a porta retirada essa linha não aparece na view.
+Volume real: 1 linha em 2 meses. Fecha quando o fanout puder ser reescrito sem
+reverter o patch dinâmico de `20260729060000`.
+
+⚠️ **Observação de escala pra investigar depois**: `mem_membros` viva está com
+**7.487 linhas, todas `active=true`** — a auditoria de junho documentava 3.665.
+O crescimento vem de imports (Next 682, "Contribuinte NNN" do financeiro, Kids)
+e merece uma varredura própria: hoje "membro" e "nome que passou por uma porta"
+contam igual no mesmo número.
+
+## Catálogo de portas · escritor tem que ser tabela real (2026-07-30)
+
+Follow-up da auditoria do módulo de inscrições. Três correções em
+`inscricaoPortas.js` — o registro **descreve** as portas, e descrição errada
+manda quem audita procurar no lugar errado:
+
+- **`escritor` (string) virou `escritores` (array)**: a porta de apresentação
+  tem DOIS escritores (`apresentacao_criancas` no formulário público ·
+  `apresentacao_bebes` no totem) e declarava um só — e declarava
+  **`kids_apresentacao_inscricoes`, tabela que nunca existiu**. Ninguém consome
+  o campo em runtime, então a mentira vivia sem quebrar teste nenhum. A de
+  eventos passou a listar `['inscricoes', 'ext_inscricoes']` (o fallback de
+  rollback do Celebra fica explícito na tabela, não numa string sintética).
+- **Teste novo bloqueia a reincidência**: todo nome em `escritores` precisa ter
+  um `CREATE TABLE` em `supabase/migrations`. Checagem **estática** (o CI não
+  tem banco) e mutation-testada — reintroduzir o fantasma falha com
+  `escritor "kids_apresentacao_inscricoes" não é tabela criada por migration
+  nenhuma`.
+- **`escritoresDerivados` no Next**: o direcionamento do fim do encontro
+  (`/next/direcionar/:token`) é o **único** caminho em que uma porta escreve na
+  tabela de OUTRAS (`vol_inscricoes`, `batismo_inscricoes`,
+  `jornada_encaminhamentos`). Quem perguntasse "quem escreve em
+  `vol_inscricoes`?" achava só o formulário de voluntariado e concluía errado.
+- Junto: `publicBatismo` e `publicApresentacao` passaram a importar
+  `emailValido` do contrato (as 2 últimas cópias locais). Regex **idêntica** ao
+  canônico → zero-diff conferido em 20 casos; o `.trim()` do batismo ficou
+  (sem ele, e-mail com espaço nas pontas passaria a ser recusado, mudando
+  comportamento).
+
+⚠️ **O que NÃO foi feito, e por quê** (era premissa minha errada): eu havia
+listado "colocar `/next/direcionar/:token` sob o Contrato de porta". Lendo o
+código, **ele já está**: não coleta dado de pessoa nenhum (lê a matrícula, que
+passou pelo contrato) e resolve identidade pelo matcher canônico
+(`acharOuCriarGuardado`, `origem: 'next_direcionamento'`), que registra a
+observação sozinho. Mesma coisa no walk-in do totem
+(`/checkin/:token/walkin`, `origem: 'next_checkin'`) — normaliza, valida DV
+quando há CPF, e a obrigatoriedade relaxada é decisão registrada do Marcos
+("nunca travar o atendimento na hora"). **Fica UMA pergunta aberta pra ele:** a
+tela de direcionamento cria inscrição REAL no voluntariado sem exibir/registrar
+o consentimento daquela porta em `inscricao_consentimentos`. A pessoa está ali
+tocando o tablet (é self-service, não o líder decidindo), então dá pra registrar
+com honestidade — mas exige mostrar o texto no fim do encontro, com fila. Não
+inventei o registro: gravar consentimento sem ter exibido o texto seria fabricar
+prova legal.
+
+## ⚠️ Pessoa · o import financeiro não cria mais cadastro (2026-07-30)
+
+Decisão do Marcos, na varredura do crescimento de `mem_membros` (7.487 linhas
+vivas contra 3.665 na auditoria de junho): *"essas pessoas não podem virar
+membro, vai confundir a base inteira, deixa só como um nome no lançamento sem
+vínculo com membresia"*. Migration `20260730150000`.
+
+**O que acontecia**: `fin_resolver_ou_criar_contribuinte` resolvia a pessoa por
+**nome exato** e, não achando, CRIAVA um `mem_membros` `contribuinte_avulso`. Em
+29/07 às 16:16 isso gerou **3.441 cadastros** — 46% da base viva — dos quais 1
+tem CPF, 1 telefone, 1 e-mail, e **nenhum** tem contribuição ou transação
+apontando pra ele. Um deles é `RECEBIMENTOS CRECHE E PRE-ESCOLA … LTDA`:
+descrição de extrato bancário virou pessoa. A fila de duplicidades das Entradas
+foi de ~525 para ~9.458 pares, 9.294 deles **sem chave nenhuma** — humanamente
+indecidíveis.
+
+- **A função só resolve por CPF de 11 dígitos; sem CPF devolve `NULL`.** O match
+  por nome exato SAIU — era ele que cruzava identidades, e viola a lei do
+  Contrato de porta ("nome sozinho nunca identifica").
+- **Devolver NULL é seguro** porque `financeiroV2.js:808` (o ÚNICO chamador)
+  grava em `fin_transacoes`, cujo `membro_id` é **nullable** e que já guarda
+  `nome_contraparte`. `mem_contribuicoes` (`membro_id NOT NULL`) **não é escrita
+  por esse caminho** — conferir isso antes de mexer.
+- **Limpeza descobre o rastro pelo CATÁLOGO** (toda tabela com FK pra
+  `mem_membros`), não por lista fixa, **com as tabelas de log/identidade
+  explicitamente FORA** (`mem_identidade_observacoes`, `mem_identidade_pares`,
+  `mem_duplicados_ignorados`, `entradas_*`, `identidade_pendencias`,
+  `mem_merge_log`, `app_audit_log`). Sem essa exclusão a limpeza não apagaria
+  nada: as 3.443 observações de identidade contam como "rastro".
+- ⚠️ **Isto NÃO revoga a decisão nº 3 do Next** (os 93 cadastros vazios do
+  backfill ficam pra reconciliação). São casos diferentes: lá o fantasma tem
+  nome+telefone REAIS de alguém que passou por uma porta e o matcher o
+  reencontra; aqui é descrição de extrato sem contato nenhum, que só polui a
+  fila humana. Régua: **existe chave (CPF/telefone/e-mail) pra reconciliar?**
+  Se não, não é pessoa.
+
+## ⚠️ Fila de identidade · a decisão é por PESSOA (2026-07-31 · migration 20260731120000)
+
+Revisão adversarial das 5 PRs de 30–31/07, com os números reconferidos no banco.
+Os três achados que viraram código:
+
+**1 · A confirmação HUMANA da conciliação ainda fabricava cadastro.**
+`financeiroClassificador.resolverMembroPorDocumento` tinha
+`{ criarSemNome = true }` como padrão, e o único caller que não passava a opção
+era justamente o clique de gente:
+`conciliacaoBalancoOfx.confirmarVinculo` (`financeiroV2.js` POST
+`/conciliacao-ofx/confirmar`). Memo sem nome parseável → `Contribuinte
+070230...`, o MESMO fantasma que a limpeza de 30/07 apagou 93 vezes. O default
+virou **false**: sem nome real o retorno é NULL e a confirmação responde
+"cadastre a pessoa na Membresia com este CPF e volte" — ninguém precisa lembrar
+de passar flag. ⚠️ Junto, a busca do dono do CPF ganhou **`deleted_at IS NULL`**:
+84 dos contribuintes apagados TÊM CPF, e sem o filtro o extrato voltaria a ligar
+lançamento novo num cadastro que a igreja tirou da base (foi assim que 4 linhas
+de `fin_lancamentos_brutos`, R$ 1.107, ficaram penduradas em cadastro
+soft-deletado).
+
+**2 · A fila `inscricao_sem_vinculo` dedupava por CANDIDATO, e isso perdia
+gente + rebaixava prova.** Ela reusou o UNIQUE histórico
+`(tipo, membro_id, membro_conflito_id)`, correto pros 3 tipos antigos (a
+pendência fala de um PAR DE CADASTROS) e errado pra este (fala de uma PESSOA
+ÓRFÃ, que não tem cadastro, e duas pessoas órfãs podem apontar o mesmo
+candidato). Medido: 195 pessoas com candidato → **190 candidatos distintos, 189
+gravados**; as colapsadas **desapareciam da fila sem registro** e, nas 3
+colisões abertas, quem sobrevivia era a evidência **mais fraca** (nome exato),
+porque o critério era ordem de inserção. E o clique ligava **uma linha só**
+(`origem_id` = `ref_id`) e resolvia a pendência: **18 pendências eram de gente
+com 2+ inscrições → 20 linhas ficavam órfãs e SEM pendência nenhuma.**
+- `origem_id` deste tipo passa a guardar a **CHAVE DA PESSOA**
+  (`cpf:` > `tel:` > `nome:` > `ref:`), com UNIQUE parcial próprio
+  `(tipo, origem_id)`; o UNIQUE histórico ganhou `AND tipo <> 'inscricao_sem_vinculo'`.
+- A régua virou **fonte única** em `services/inscricaoOrfas.js` (`chavePessoa` +
+  `PORTA_VINCULO` + `lerLinhasOrfas`), importada pelo script E pela rota — a
+  cópia dentro do script era o que permitia a fila apontar pra linha diferente
+  da que o clique liga. Teste `npm run test:inscricao-orfas` (no gate de deploy)
+  exige que **toda fonte da view tenha ponteiro** e vice-versa: porta nova sem
+  ponteiro = pendência que o humano decide e nada acontece. Mutation-testado.
+- `ligar-inscricao` relê a view AGORA e liga **todas** as linhas da pessoa
+  (`.is(col, null)` por linha, como antes), devolvendo
+  `{ ligadas, portas, ja_ligadas, nao_mapeadas, cpf_tardio }`. Pendência do
+  formato antigo (origem_id = uuid) segue funcionando — deploy em 2 etapas.
+- ⚠️ **A observação de identidade gravava os dados do CANDIDATO**, o que não
+  acrescenta chave nenhuma (era exatamente por não achar a pessoa que a
+  inscrição estava órfã). Agora grava os dados **DA INSCRIÇÃO**, ACUMULA
+  telefone/e-mail em `mem_contatos` (`membroMatch.registrarContatoDaPorta`, a
+  MESMA função do match — exportada, não duplicada) e, quando a inscrição traz
+  CPF e o cadastro não tem, consolida por `reconciliarCpfTardio` com
+  `confianca: 'forte'` (decisão humana auditada em `resolvida_por`; conflito
+  segue virando pendência, nunca fusão). É isso que faz a próxima porta
+  encontrar a pessoa — sem isso, os 26 pares de nome fraco voltariam órfãos.
+- **Pós-migration**: rodar `node backend/scripts/_entradas_inscricao_sem_vinculo.cjs`
+  (dry-run) e depois `--exec`. Esperado ~195 pendências (as 5 pessoas colapsadas
+  voltam). A PARTE 3 da migration **aborta** se alguma pendência deste tipo já
+  tiver sido triada.
+
+**3 · Números que não se sustentaram na reconferência** (registrados pra não
+serem citados errado): a base viva de `mem_membros` é **3.930**, não ~4.018 — o
+dia 30/07 fechou com **3.553** contribuintes soft-deletados, não 3.469, porque
+houve **duas** limpezas (a migration às 13:50 + 93 registros `Contribuinte
+NNNNNN...` COM CPF, do import de 24/07, às 13:37). E o split do Next é
+**963 nível 2 / 641 nível 3**, não 1.109/495: o total de backfill (1.604) bate
+exato, mas **34% da porta Next está em dia sintético**, não 26%. A régua do
+nível 2 exige aparição **no mês da turma**; medir "aparição em qualquer mês" dá
+990 e ainda não chega a 1.109.
+
+**Alarmes reconferidos** (nenhum era falso): Celebra 29/08 tem 97 inscrições
+confirmadas e **9 QRs emitidos** — e `checkin_ativo=false`, que a tela de
+check-in já resolve com o botão "Ativar check-in" (1 clique no dia; o QR é HMAC
+derivado, existe pra todos, e o check-in por busca de nome funciona sem ele).
+`insc_checkins` está **vazia** e o evento Patrocinadores tem 0 QR: o ensaio de
+#2175 não deixou artefato em prod. RLS: módulo `inscricoes` tem **37 dos 41
+cargos no nível 3** (= 89 usuários com INSERT/UPDATE direto em `inscricoes`,
+`insc_eventos`, `insc_pagamentos`, `insc_checkins`, `insc_sorteios`), incluindo
+um cargo chamado **"Acesso negado"** — o seed subiu todo mundo pra 3. A view
+unificada está revogada de `authenticated`; as tabelas-base não.
+
+## ⚠️⚠️ AUDITORIA DO APP · ONDA 0 (2026-08-06 · migration `20260806140000`)
+
+Auditoria de 4 dimensões pedida pelo Marcos ("procure erros de versão,
+integração, código e escalabilidade — o app aguenta 4.000 downloads?"). 21
+agentes, 85 achados brutos, **12 confirmados sob contestação adversarial**.
+Relatório navegável em `~/Downloads/auditoria-app-cbrio.html`. O plano ficou em
+**6 ondas agrupadas por VEÍCULO de entrega** (servidor chega na hora, inclusive
+em bundle velho · OTA depende de 2 aberturas · loja depende da Apple) — esta
+seção é a **Onda 0**, que é inteira servidor + 1 migration.
+
+**A resposta à pergunta dele: não aguentava — e o gargalo não era o Supabase.**
+Cold start do app = ~13 chamadas; 4.000 pessoas em 30 min = ~30 RPS sustentados
+(picos 90-150), que o banco absorve. Quem quebrava primeiro era coisa nossa.
+
+### 1 · ⚠️⚠️ LEI · o limite do `/api/app` é por USUÁRIO, não por IP
+
+`/api/app` era a única superfície de multidão AINDA no teto global por IP
+(500/15min): a lista de `skip()` do `server.js` já isentava NPS, grupos, evento,
+membresia, generosidade, webhook de pagamento e totem — e o app tinha ficado
+fora. Somava `limiterNormal` 100/15min compartilhado por ~45 rotas e
+`limiterStrict` 10/15min nas portas de inscrição, **os dois por IP**. No WiFi da
+igreja todo celular sai por 1 IP e UMA abertura gasta 10-30 requisições ⇒ 5 a 10
+aparelhos esgotavam a cota de TODOS.
+
+⚠️ **E o 429 não parecia limite de rede:** o app traduz a falha em resposta de
+NEGÓCIO — `lib/temporadaGrupos.ts` → `aberta:false` ("inscrições fechadas") e
+`lib/useAdminGrupo.ts` → `isAdmin:false` (líder sem botão de gerenciar). O teto
+estourado se disfarçava de regra da igreja.
+
+- **`backend/utils/appRateLimit.js`** = régua PURA da chave (em `utils/` pra
+  entrar no gate): `u:<id>` do `req.user` → senão `t:<hash do Bearer>` → senão
+  `ip:<...>`. O nível do token existe porque em `/membro/vincular` e
+  `/inscricoes` o limiter vem ANTES do `authApp` na cadeia; sem ele, essas duas
+  continuariam por IP (o furo, só que em 2 rotas). Hash pra não usar JWT como
+  chave em memória, e **mínimo de 40 chars** — senão `Bearer x` de lixo viraria
+  bucket próprio e qualquer cliente escaparia do teto anônimo.
+- Tetos: **600/15min por usuário** (normal) · **30** (strict) · anônimo tem teto
+  PRÓPRIO e mais alto (**10.000** normal · 120 strict), porque ali continua sendo
+  1 IP pra congregação — é a calibragem já validada em multidão real do NPS e da
+  membresia. Envs: `APP_RATE_LIMIT_MAX`, `APP_RATE_LIMIT_IP_MAX`,
+  `APP_STRICT_RATE_LIMIT_MAX`, `APP_STRICT_RATE_LIMIT_IP_MAX`.
+- ⚠️⚠️ **A normalização de IPv6 é NOSSA (`normalizarIpParaChave`, agrupa por /64)
+  e não pode usar o `ipKeyGenerator` do pacote** — ver o incidente abaixo.
+  Sem agrupar, trocar de endereço IPv6 dentro da própria casa daria bucket novo e
+  o teto anônimo não valeria nada.
+
+#### 🔴 INCIDENTE (mesmo dia, 15:38→16:0x) · `ipKeyGenerator is not a function`
+
+A 1ª versão importava `const { ipKeyGenerator } = require('express-rate-limit')`.
+Passou no gate inteiro, no `tsc`, no mutation test e num **smoke com express de
+verdade** — e **quebrou em produção**: 500 em `/api/app/anuncios` e
+`/api/app/grupos`, as duas rotas ANÔNIMAS (as únicas que chegam no ramo de IP).
+As autenticadas seguiram respondendo 401/200, então o estrago quase passou
+invisível.
+
+⚠️⚠️ **A CAUSA (medida, e não a que eu supus primeiro): `backend/` tem árvore de
+dependências PRÓPRIA em produção.** O `vercel.json` faz
+`installCommand: "npm install && cd backend && npm install"`, e
+`backend/package.json` pina **express-rate-limit `^7.4.0`** (lock **7.5.1**)
+enquanto a RAIZ tem **8.3.2** — e `ipKeyGenerator` só existe na 8.x. Como o
+`backend/node_modules` das worktrees costuma estar **vazio**, o Node sobe pra
+raiz e o teste local exercita **uma versão que produção nunca carrega**.
+
+⚠️ **RÉGUA QUE FICA (vale pra qualquer pacote): conferir a versão em
+`backend/package.json`, nunca na raiz, antes de usar API nova de dependência em
+`backend/`.** E, pra mudança de dependência que roda no servidor, o smoke tem que
+rodar **de dentro de `backend/` com `npm install` feito lá** — foi assim que a
+causa apareceu em 20 segundos depois de horas de hipótese errada.
+
+⚠️ O mesmo smoke na 7.5.1 pegou um **segundo** defeito que eu ia enviar:
+`validate: { keyGeneratorIpFallback: false }` só existe na 8.x e a 7.5.1 responde
+`ERR_ERL_UNKNOWN_VALIDATION` a cada construção do limiter — log poluído, efeito
+nenhum. Removido.
+
+⚠️ Guarda no gate (`appRateLimit.test.ts`): nenhum dos 2 arquivos pode
+desestruturar `require('express-rate-limit')` nem chamar `ipKeyGenerator(...)`
+(mutation-testado), e um teste afirma que **o backend declara o pacote por conta
+própria** — se alguém remover essa dependência e passar a depender da raiz, o
+teste falha e a pessoa lê o porquê aqui.
+⚠️ A guarda ignora COMENTÁRIOS antes de casar: a própria explicação do incidente
+cita o import errado como exemplo, e sem isso a documentação derrubava o gate
+(aconteceu).
+
+#### ⚠️⚠️ RÉGUA · checagem por TEXTO em corpo de função/arquivo IGNORA comentário
+
+Aconteceu **2× no mesmo dia (06/08)**, e nas duas o falso positivo foi a própria
+documentação do conserto:
+
+1. a guarda do `appRateLimit.test.ts` casou com o comentário que cita o import
+   errado como exemplo do que NÃO fazer;
+2. a conferência que eu deixei na migration `20260806140000` fazia
+   `pg_get_functiondef(...) ilike '%is_membro_only%'` — e o `pg_get_functiondef`
+   devolve o corpo **com os comentários**. Deu `mexe_no_profile = 1` numa função
+   que **não escreve em `profiles`** (o único `update` do corpo é em
+   `mem_membros`). O Marcos aplicou a migration e veio perguntar por que a
+   conferência acusava falha: **era a conferência**, não a migration.
+
+**Como fazer:** tirar comentário antes de casar
+(`regexp_replace(d, '--[^\n]*', '', 'g')` no SQL · helper `semComentarios` no
+teste) **e** procurar o COMANDO, não o identificador solto (`update
+public.profiles`, não `is_membro_only`) — identificador aparece em explicação,
+comando não. ⚠️ E conferência que dá falso positivo custa CONFIANÇA: manda a
+pessoa investigar um conserto que estava certo.
+
+- ⚠️ **Quem protege as sondas de identidade não é o teto por IP** — é o serviço
+  (`appIdentidade`: 5 envios por telefone/dia, 6 tentativas de código, TTL 10min,
+  resposta MASCARADA). Isso não mudou.
+- ⚠️ **LIMITAÇÃO CONHECIDA**: MemoryStore por instância no Vercel ⇒ teto efetivo
+  = `max × instâncias`, zerando a cada cold start. Store compartilhado (ou WAF) é
+  onda de escala; o desenho por usuário já tira o dano do NAT, que era o real.
+- Testes: `src/test/appRateLimit.test.ts` (10 casos) **mutation-testado** —
+  voltar a contar por IP deixa 2 vermelhos. Smoke funcional rodado: 2 usuários no
+  MESMO IP com cotas separadas, anônimo pagando o teto de IP, Bearer isolado.
+
+### 2 · Fale Conosco do app era invisível no ERP (estrago ATIVO)
+
+O app grava `criarInscricao('contato', …)` em `app_inscricoes` e promete "nossa
+equipe vai te responder em breve". A **única** fila do ERP que lê essa tabela é
+`GET /cuidados/pedidos-app`, cujo `TIPOS_PEDIDO_APP` era
+`['aconselhamento','oracao','sos']` — `contato` ficava fora. Medido: **2
+mensagens reais (02 e 03/08) pendentes até hoje**, sem tela pra ler, responder ou
+marcar como tratada.
+
+- `contato` entrou em `TIPOS_PEDIDO_APP` (a mesma constante gateia o GET e o
+  PATCH, então listar e tratar vieram juntos).
+- A notificação ia pro módulo **`membresia`** com link `/ministerial/membresia`,
+  tela que NÃO lista `app_inscricoes` — a pessoa clicava e não achava a mensagem.
+  Agora vai pro módulo **`cuidados`** com link `?tab=acomp` (a fila exige
+  `cuidados >= 1`, então o destinatário do aviso tem que ser de lá). Se a
+  secretaria precisar receber, o caminho é **regra de notificação** do módulo
+  cuidados em /admin — não um 2º destino no código.
+- ⚠️ `contato` **NÃO é tipo de `cui_pedidos`** (CHECK de lá:
+  aconselhamento|capelania|oracao|sos|visita|outro). Por isso o front ganhou
+  `TIPOS_PEDIDO_MANUAL` pro select de "Registrar pedido" e `PEDIDO_TIPO_META`
+  (exibição + filtro) ficou MAIOR que ele: oferecer "Fale Conosco" no cadastro
+  manual faria o insert violar o CHECK.
+- `TIPO_ATEND_SUGERIDO.contato = 'outro'`, não `aconselhamento`: Fale Conosco
+  pode ser dúvida ou elogio, e a maioria se resolve respondendo pelo Conversas e
+  marcando tratada — sem criar atendimento pastoral que não aconteceu.
+
+### 3 · O broadcast de push parava de entregar em 1.000 instalações
+
+`app_push_tokens` era lido com `select` cru (`inscricoes.js` broadcast de evento
+publicado) e com `.in()` da lista inteira (`services/appPush.js`). Duas
+armadilhas silenciosas: o PostgREST **capa em 1000 linhas sem erro** (a partir de
+~1.000 instalações, 3/4 da igreja deixaria de receber e nenhum log acusaria) e
+`.in()` gigante estoura a URL, derrubando a query INTEIRA. Hoje são 29 tokens ⇒
+**gatilho armado, não estrago consumado**. Corrigido com o `fetchAllRows` que já
+existia (`utils/pagination.js`) + lotes de 200 no `.in()` (`membrosParaUsuarios`
+e `pushExpoParaUsers`). Régua: **leitura de tabela que cresce com o uso vai
+paginada, e `.in()` sempre em lotes ≤ 200.**
+
+### 4 · ⚠️⚠️ A tela de perfil do app parou de VINCULAR pessoa (migration `20260806140000`)
+
+Achado **crítico**, e o único em que alguém via dado de terceiro.
+`app_salvar_membro` (SECURITY DEFINER, EXECUTE pra `authenticated`, chamada por
+`app/(app)/perfil.tsx:184`) procurava `mem_membros` por **CPF ou telefone ou
+`lower(btrim(nome))` EXATO** e vinculava a conta ao primeiro que achasse, **sem
+prova de posse**. Como `profiles.membro_id` alimenta `current_user_membro_id()`,
+quem digitasse o nome de um homônimo passava a ver grupo, comprovante de
+contribuições e **filhos no Kids** daquela pessoa. É o MESMO furo que a
+`20260806120000` fechou na porta da frente — esta lateral ficou aberta.
+
+- **Estreitada, NÃO dropada**, e a ordem importa: `perfil.tsx` ainda a chama, e
+  dropar/revogar antes do OTA do app deixaria a tela de perfil sem salvar. Ela
+  perdeu os ramos de BUSCA e de CRIAÇÃO; segue salvando a ficha de quem já está
+  vinculado. Sem `membro_id`, devolve `null` (o app trata: `if (vId) …`) e os
+  campos de `profiles` seguem salvando, porque isso o cliente faz antes da RPC.
+- **CPF só PREENCHE campo vazio e só com DV válido** (`fn_cpf_dv_valido`) — a
+  versão antiga fazia `cpf = coalesce(v_cpf, cpf)` **sem DV**, e CPF torto em
+  `mem_membros` envenena o matcher de TODAS as portas.
+- ⚠️ **Deixou de tocar `profiles`**: a versão antiga fazia
+  `set is_membro_only = true` pra QUALQUER chamador — inclusive **staff**, que
+  saía marcado como app-only por ter salvo o perfil no celular.
+- ⚠️ A migration tem **guarda de DRIFT**: aborta se houver mais de uma
+  `app_salvar_membro` ou se a assinatura viva for diferente da esperada —
+  `CREATE OR REPLACE` com assinatura diferente **cria overload** e deixaria a
+  versão perigosa alcançável (lição do `feedback_pg_function_overload_default`).
+- ⚠️ O arquivo `supabase/app_salvar_membro.sql` do **repo do app** foi
+  sincronizado e marcado como cópia de leitura: arquivo desatualizado ali é o
+  mecanismo exato que deixou o gatilho de `auth.users` 2 meses fora do git.
+- **Quando o app estiver usando `PUT /app/membro/perfil` (onda seguinte, por
+  OTA), a função pode ser DROPADA.**
+
+⚠️ **Fora do ERP, na mesma onda** (repo `Aplicativo-CBRio`): a Edge Function
+`notify-lembretes` lia `next_eventos`/`next_inscricoes` (camada aposentada no
+cutover de 17/06, data máxima 21/06) ⇒ **nenhum lembrete de véspera do NEXT saiu
+desde 13/06**, com o cron vivo e 46 matriculados em 2 turmas abertas. O conserto
+de #2288 cobriu as ROTAS e não a função, que vive no outro repo. Reescrita pra
+turma → encontro → matrícula (espelho de `nextTurmasAbertas()`), dedup por
+encontro. **Precisa de `supabase functions deploy notify-lembretes` — não sai
+por OTA nem por merge daqui.**
+
+## ⚠️⚠️ AUDITORIA DO APP · ONDA 1a · PARAR DE PERDER DADO (2026-08-06)
+
+Migrations `20260806160000` (fanout) e `20260806170000` (RLS + o achado novo).
+Itens 1, 2 e 3 do plano de 6 ondas. Ondas agrupam por **veículo de entrega**:
+aqui é tudo servidor + 2 migrations, nada de OTA nem loja.
+
+### 1 · O fanout parava de dizer "processado" quando falhou
+
+`fn_app_inscricoes_fanout` engolia a exceção nos 4 ramos (`RAISE WARNING`) e a
+última linha carimbava `'processado'` **incondicionalmente**. Prova medida: a
+linha `tipo='grupos'` de 11/06 está `processado` e `mem_grupo_pedidos` tem **0**
+linhas `origem='app'` (a causa de origem era o CHECK de `origem`, só ampliado em
+28/07 — mas o que fez a perda ser SILENCIOSA foi o carimbo).
+
+- **PATCH DINÂMICO obrigatório** (`pg_get_functiondef` + `regexp_replace`, a
+  técnica de 20260729060000): a definição VIVA não é a do repo — a 29/07
+  reescreveu o corpo em produção (`vi.deleted_at IS NULL` no dedup de
+  voluntariado). **`CREATE OR REPLACE` do arquivo reverteria aquilo em
+  silêncio**, e é por isso que o fanout ficou sem conserto até hoje. A migration
+  verifica cada uma das 3 substituições e ABORTA se alguma não casar.
+- ⚠️ **`'erro'` teve que entrar no CHECK de `status` ANTES** (era
+  `pendente|em_analise|aprovado|recusado|processado|duplicado`). UPDATE pra valor
+  fora do CHECK dentro de AFTER INSERT levanta 23514 e **ABORTA o INSERT** — a
+  pessoa deixaria de conseguir se inscrever. É o estrago literal que a
+  20260609120000 documenta. A lista nova é **derivada da viva** (extraída do
+  `pg_get_constraintdef`), nunca escrita à mão: lista decorada estreitaria o
+  CHECK em silêncio se prod tiver valor que o repo não conhece.
+- ⚠️ **Cinto e suspensório**: o carimbo novo roda dentro do PRÓPRIO
+  `BEGIN/EXCEPTION` e, se falhar, cai no comportamento antigo. O pior caso deste
+  conserto não pode ser "a pessoa não consegue se inscrever".
+- **O motivo vai em COLUNA PRÓPRIA** (`app_inscricoes.fanout_erro` jsonb):
+  `{sqlstate, constraint, em}` via `GET STACKED DIAGNOSTICS`. ⚠️ **Nunca
+  SQLERRM**: ele embute o valor que violou a chave ("Key (cpf)=(…)") e a linha é
+  legível pelo próprio dono via RLS. E não vai em `dados` porque `cuidados.js`
+  reescreve `dados` inteiro em algumas ações — o diagnóstico desapareceria.
+- ⚠️ **O consumidor é o backend, não uma tela**: `POST /app/inscricoes` RELÊ a
+  linha depois do insert (o `RETURNING` reflete o estado ANTES do AFTER trigger),
+  e quando vê `'erro'` **notifica o módulo dono** e responde **502 com mensagem
+  honesta** em vez de "Solicitação recebida!". Sem esse consumidor a onda só
+  trocaria "perda silenciosa com rótulo errado" por "rótulo certo": **nenhuma
+  tela do sistema lê `app_inscricoes.status`** (conferido nos 8 leitores).
+  Dedup do aviso é por PESSOA+TIPO, não por linha — quem toma erro tenta de novo.
+- ⚠️⚠️ **RESÍDUO CONHECIDO, não resolvido nesta onda**: existe um SEGUNDO trigger
+  AFTER INSERT, `app_inscricoes_notify_recebida` (repo do app ·
+  `supabase/webhooks_app.sql`), e a ordem de disparo do Postgres é **alfabética**
+  ⇒ ele roda **antes** do fanout e manda push *"o líder recebeu seu pedido"*
+  olhando só `record.tipo`. **Essa push continua saindo mesmo quando o fanout
+  falha.** Fechar exige mover a notificação pro backend (depois da releitura) ou
+  passar o trigger pra AFTER UPDATE de status — mexe no repo do app + deploy de
+  Edge Function.
+
+### 2 · O cliente parou de poder escrever o que não é dele
+
+`app_inscricoes_own` era `FOR ALL USING (auth.uid() = auth_user_id)` — sem `TO`,
+sem `WITH CHECK`. Dava pra o autor marcar o próprio SOS como concluído (sai da
+fila pastoral), apagar a linha e inserir pedido com `membro_id` de terceiro.
+
+- ⚠️⚠️ **As policies são descobertas no CATÁLOGO, não pelo nome do arquivo**:
+  policy permissiva é **OR'eada**, e há indício de uma SEGUNDA policy `own` que
+  **não está em migration nenhuma** (a 20260701030000 revela duas). Dropar só a
+  que o git conhece deixaria a duplicata `FOR ALL` viva: migration passa, lint
+  verde, **furo aberto**.
+- Sobrou `FOR SELECT TO authenticated` do dono + `FOR ALL TO service_role`, e
+  `REVOKE INSERT/UPDATE/DELETE`. Pode, porque **o cliente não escreve ali**: o
+  app toca `app_inscricoes` em UM lugar e é leitura (`lib/meusPedidos.ts:18`);
+  quem escreve é `POST /api/app/inscricoes` com service_role.
+- ⚠️ `(select auth.uid())` na policy nova — `auth.uid()` cru reavalia por LINHA e
+  desfaz o initplan da 20260701030000.
+- ⚠️ Teste de fumaça **com token de usuário real**: o supabase-js manda a anon
+  key em `apikey` e o JWT em `Authorization`, e o papel efetivo é
+  `authenticated`. Testar com a anon key pura dá "permission denied" (correto) e
+  se lê como "quebrei o app".
+
+### ⚠️⚠️ 2b · ACHADO NOVO (fora dos 12 da auditoria) e MAIS GRAVE
+
+`app_soft_delete(text,text,uuid)` e `app_restore(text,text)` são **SECURITY
+DEFINER** com `GRANT EXECUTE ... TO authenticated` (20260521180000:174 e :207) e
+a **única** validação dentro delas é "a tabela está na whitelist" — **sem
+checagem de dono, de módulo ou de nível**. Qualquer pessoa logada (inclusive
+qualquer membro pelo app, com a chave pública que vai no bundle) podia
+`select app_soft_delete('mem_membros', '<uuid de qualquer pessoa>')` e apagar por
+soft-delete **qualquer linha das ~30 tabelas da whitelist** — pessoas, grupos,
+contribuições, dados de Kids — sabendo só o id. `app_restore` desfaz, o que
+também ressuscita o que a equipe apagou de propósito.
+
+**Revogado de `authenticated` e `anon`, e é mudança de ZERO comportamento**:
+varredura dos dois repos → **17 arquivos de rota** do backend chamam
+`app_soft_delete`, todos com service_role; **ZERO** chamadores no frontend do ERP
+(`src/`), no app mobile e nas Edge Functions. Reverter, se um dia precisar, é um
+`GRANT`. ⚠️ **Follow-up**: outras funções SECURITY DEFINER com grant pra
+`authenticated` merecem a mesma varredura (`app_salvar_membro` já foi estreitada
+em 20260806140000).
+
+### 3 · O payload do app passou a ser SANEADO — e por que NÃO é o contrato
+
+⚠️⚠️ **Ligar `validarCamposPadrao` aqui reprovaria ~tudo, e isso foi MEDIDO**
+(22 linhas de `app_inscricoes` em 06/08): **0 de 22** mandam nascimento ou sexo ·
+oração/SOS/aconselhamento **nunca** mandam e-mail · a régua de telefone **não tem
+flag pra relaxar** e 46 dos 83 cadastros ligados a conta do app não têm telefone
+⇒ o botão de **SOS** (risco de vida) e o Fale Conosco passariam a recusar ~55%
+das contas, em telas sem campo pra corrigir · batismo manda `nome` = **primeiro
+token** ⇒ "Informe o nome completo" em 100% dos envios.
+
+Então o conserto é o dano REAL medido: **o '55' grudado no telefone.** 15 das 22
+linhas têm 13 dígitos começando com 55 (`profiles.telefone` guarda "+55 (21) …"
+do PhoneInput) e o fanout só remove NÃO-DÍGITO — não tira código de país. As 5
+inscrições de voluntariado em `vol_inscricoes` estão com 13 dígitos, e **o
+próprio dedup por telefone do fanout compara contra os 11 da base** ⇒ não casa.
+
+- **`backend/utils/saneamentoInscricaoApp.js`** = régua PURA no gate (17 testes).
+  Telefone → dígitos → tira o 55 (só quando o resto ainda é telefone completo:
+  **DDD 55 é Santa Maria/RS**) → aceita 10-11, senão `null`. E-mail normalizado
+  ou null · nascimento validado ou null · CPF só dígitos (o DV é julgado pelo
+  handler, não aqui) · nome com trim/colapso.
+- ⚠️ **NÃO BLOQUEIA NADA**: campo que não normaliza vira `null`, que é o que o
+  fanout já gravava. Nenhum 400 novo em nenhum tipo.
+- ⚠️ **Só mexe em chave que EXISTE** e preserva todas as outras: o fanout lê
+  `grupo_id`, `areas`, `nome_mae`, `sobrenome`, `tamanho_camisa`,
+  `possui_deficiencia`, `deficiencia_descricao`, `observacoes`, `observacao`,
+  `evento_id`, `membro_id`. Remover ou renomear qualquer uma quebra um ramo.
+- Log de ajuste sai com os **NOMES** dos campos, nunca os valores (é telefone e CPF).
+- **Subir exigência é decisão com número na mão, outra onda**: hoje só **1**
+  profile tem `app_ficha_confirmada_em`, e dos 25 cadastros com CPF completo
+  **17 não têm `genero`**.
+
+⚠️ **Réguas puras mudaram de casa**: `validarNascimento`, `emailValido` e
+`tirarCodigoPaisTelefone` saíram de `services/inscricaoContrato.js` (que carrega
+o Supabase e por isso não entrava no gate) pra **`backend/utils/camposContato.js`**
+— e o `inscricaoContrato` **re-exporta as três**, então nenhuma das 7 portas
+públicas muda de import. `validarNascimento` ganhou 2º parâmetro OPCIONAL
+(`hoje`) pra teste sem o relógio da máquina. Conferido com smoke rodado **de
+dentro de `backend/`** (a lição da Onda 0) + `test:inscricao-contrato` verde.
+
+### ⏳ Onda 1 · o que FALTA (itens 4 e 5, levantamento pronto)
+
+- **Item 4 · pedido de exclusão de conta (LGPD)** ainda sem leitor. ⚠️ Achado do
+  levantamento: **`gerarTodasNotificacoes` não tem agendador nenhum** —
+  `/api/notificacoes/cron` NÃO está no `vercel.json` (só `/cron/alerta-culto-dados`,
+  semanal) e nada mais o chama. Ou seja, TODOS os avisos periódicos do
+  `notificacaoGenerator` (documento vencendo, membro sem grupo, jornada,
+  grupos sem visita, `cadastro_sem_nome_real`) **só rodam quando um admin clica
+  em "gerar"**. Acrescentar gerador ali não faz o aviso sair. Agendar liga ~15
+  geradores de uma vez e é decisão do Marcos (risco de enterrar o sino).
+- **Item 5 · `PUT /app/grupos/:id`** pra o save do supervisor parar de mentir
+  (79 de 100 grupos).
+
+## ⚠️ AUDITORIA DO APP · ONDA 2 · o servidor recebe a tela de perfil (2026-08-07)
+
+`PUT /app/membro/perfil` estava **órfão** desde sempre (quem salvava era a RPC
+`app_salvar_membro`, o crítico da auditoria). Com a Onda 2 a tela passou a
+chamá-lo, então ele ganhou o MESMO saneamento da porta de inscrição
+(`utils/saneamentoInscricaoApp.js`) — telefone com "+55 (21) …" gravado cru em
+`mem_membros` é o que quebra o dedup por telefone do sistema inteiro.
+
+- ⚠️ **Saneia, NÃO recusa**: perfil não é porta de inscrição; bloquear aqui
+  prenderia a pessoa numa tela de edição do próprio cadastro. A única recusa é
+  `nome` vazio — a coluna é NOT NULL e o UPDATE estouraria com 23502, que a
+  pessoa leria como "Erro ao atualizar perfil" sem motivo.
+- Ganhou `limiterNormal` (estava sem limiter nenhum).
+- ⚠️ **CPF não passa por aqui** (nunca esteve no allowlist) — e agora a tela
+  reflete isso: o campo virou somente-leitura. Trocar CPF é ato de IDENTIDADE,
+  em `/completar-cadastro`.
+
+## ⚠️⚠️ LEI · o que não pode se perder vai AWAITED · WhatsApp duplicado (2026-08-07 · SEM migration)
+
+Reportado pelo Marcos com screenshot: ao se inscrever num grupo de conexão pelo
+app, ele recebeu **a MESMA mensagem de confirmação duas vezes** — 16:33 e 17:00
+(BRT), texto idêntico. Investigando, apareceu um segundo defeito, mais grave e
+totalmente silencioso: **a líder nunca soube do pedido dele**.
+
+### 1 · A mensagem dupla · fire-and-forget em container que congela
+
+O bloco de confirmação do `POST /app/inscricoes` era
+`resolveMembroApp(req).then(...)` **sem await**, com o `res.status(201).json(...)`
+imediatamente abaixo. Em serverless o container **CONGELA na resposta**:
+`enfileirar` já havia feito o INSERT (commitado) e `tentarEnvio` já havia
+chamado a Meta — a mensagem foi **entregue às 16:33** — mas o UPDATE que marca
+a linha como `enviado` se perdeu no congelamento. A linha ficou `pendente` e o
+**cron horário da fila reenviou às 17:00**.
+
+⚠️⚠️ **A forense me enganou primeiro, e a lição vale além deste caso:** a linha
+de `whatsapp_envios` mostrava `tentativas=1` e UM `message_id` — o do SEGUNDO
+envio. Eu disse ao Marcos que **não havia duplicação**; o screenshot dele provou
+o contrário. **Envio cuja escrituração se perdeu é INVISÍVEL** em
+`tentativas`/`message_id`: a entrega das 16:33 tem wamid próprio que nunca foi
+gravado. Não concluir "não duplicou" porque a fila mostra um envio só.
+
+Aplicada a **lei de 31/07** (mesma classe do aviso ao líder que não saía): em
+porta pública serverless, **o que não pode se perder vai AWAITED**. `membroId` e
+`dados.nome` já estavam em escopo desde o topo do handler, então o await não
+custa nem uma consulta a mais — some a 2ª chamada a `resolveMembroApp`.
+
+### 2 · Inscrição de grupo pelo APP nunca avisava o líder
+
+Só o formulário público (`publicGrupos`) mandava `grupos_pedido_novo_lider_v2`.
+Pelo app, o pedido nascia pelo fanout e **ninguém era avisado** — ficava pendente
+na Caixa de entrada, e quem deveria ligar pra pessoa antes de aprovar (lei dos
+templates v2, 29/07) não sabia que existia. Medido em 06/08: **1 pedido
+origem-app na história inteira** (o do Marcos, `d1907c7a`, no grupo da Natasha) e
+**zero avisos** citando ele entre os 34 disparados desde então.
+
+- Chama a **MESMA** `gruposWhatsapp.notificarLiderNovoPedido` do formulário
+  público — o app é cliente novo da porta, **não** uma 2ª régua de aviso.
+- **AWAITED**, e só **depois** da releitura do fanout: avisar o líder de um
+  pedido que não existe é pior que não avisar.
+- ⚠️ **Best-effort no erro** (log, não 502): o pedido já está gravado e a pessoa
+  já tem vaga na fila — derrubar a resposta porque o aviso falhou trocaria um
+  problema de comunicação por um de inscrição. A Caixa de entrada segue sendo o
+  caminho garantido da coordenação.
+- ⚠️ **A janela de 2 min na busca do pedido não é enfeite**: o ramo `grupos` do
+  fanout **não tem dedup**, então cada tentativa da pessoa cria um pedido novo.
+  Sem a janela, um pedido ANTIGO dela no mesmo grupo seria re-notificado a cada
+  inscrição. O par usado é (grupo, membro) + `pendente` + `origem='app'`, e o
+  `created_at` do pedido é idêntico ao da linha de `app_inscricoes` porque o
+  fanout roda na MESMA transação.
+
+### ⚠️ Resíduos conhecidos (mesma classe, NÃO corrigidos aqui)
+
+- **`kids_precheckin`** (`app.js`, chamada a `wpp.notificarMembro`) ainda é
+  fire-and-forget — mesmo risco de mensagem dupla, volume baixo.
+- O trigger **`app_inscricoes_notify_recebida`** (repo do app) segue mandando
+  push *"o líder recebeu seu pedido"* **antes** do fanout (ordem alfabética de
+  trigger), inclusive quando o fanout falha. Já registrado na Onda 1a.
+
+## ⚠️ Batismo pelo APP escolhe o HORÁRIO (2026-08-13 · migration `20260813120000`)
+
+Pedido do Marcos: *"no app de membros, na inscrição de batismo, tenha a mesma
+opção de escolher os horários abertos que tem no formulário de inscrição."*
+O app já **chamava** `GET /public/batismo/horarios` — só pra pegar o
+`grupo_url`, **jogando a lista fora**. Estado medido em 13/08: 08:30 e 10:00
+abertos (limite 11 cada), 11:30 e 19:00 fechados; **1** inscrição de batismo com
+origem app na história inteira × **40** públicas com horário.
+
+**Régua ÚNICA em 2 camadas** — o app é cliente da porta, não uma 2ª régua:
+- **`backend/utils/batismoHorario.js`** = decisão PURA (entra no gate) ·
+  `avaliarHorarioBatismo` / `horariosDisponiveis` / `normalizarHorario`.
+- **`backend/services/batismoHorarios.js`** = as consultas, compartilhadas pelo
+  formulário público e pelo `POST /app/inscricoes`. Duas cópias das consultas é
+  como o app e o web passam a discordar sobre o que está aberto.
+
+⚠️⚠️ **O conserto de segurança que veio junto: a validação do público FALHAVA
+ABERTA.** `publicBatismo.js` envolvia a regra inteira num `if (!hErr)` — consulta
+que falhasse **PULAVA a validação** e gravava em `horario_culto` o texto CRU do
+cliente. Esse campo alimenta o **`{{2}}` do template de lembrete**
+(`whatsappCron.js`), ou seja: texto arbitrário saindo numa mensagem pelo número
+oficial da igreja. Agora não conseguir conferir **RECUSA** (`motivo:
+'indisponivel'`), e é isso que o mutante do teste trava — rodado de verdade:
+trocar o `ok:false` por `true` deixa exatamente 1 caso vermelho.
+
+- ⚠️ **Ausência de horário NÃO é erro, e tem que continuar assim**: o binário da
+  loja e todo bundle sem o OTA não sabem que o campo existe. Exigir aqui
+  trancaria essa gente fora do batismo — a mecânica do portão que trancou todo
+  mundo em 06/08.
+- ⚠️ `ocupacaoPorHorario` virou **paginada**: o cap de 1000 do PostgREST trunca
+  em silêncio e um batismo grande faria o limite por horário parar de valer sem
+  erro nenhum aparecer.
+- **Migration = PATCH DINÂMICO** (`pg_get_functiondef` + `replace`), obrigatório:
+  a definição VIVA de `fn_app_inscricoes_fanout` não é a do repo (foi reescrita
+  em prod em 29/07 e 06/08), e `CREATE OR REPLACE` de arquivo reverteria aquilo
+  em silêncio. Âncoras conferidas 1× cada ANTES de substituir — `'sede')` sozinho
+  aparece **2×** no corpo, por isso a âncora do VALUES leva a linha do
+  `observacoes` junto. Conferido no CATÁLOGO depois de aplicar (não no
+  `success:true`): 2 ocorrências de `horario_culto`, e as 3 proteções anteriores
+  intactas (`vi.deleted_at IS NULL` 1 · `fanout_erro` 1 · 4 blocos de
+  `GET STACKED DIAGNOSTICS`).
+- **Teste funcional com INSERT real** em transação revertida (a lição do "fluxo
+  com dinheiro se confere no BANCO"): `horario=[08:30] status=[pendente]
+  app_status=[processado]`, e **0 resíduo** conferido depois.
+
+### ⚠️ De brinde: `'duplicado'` caía no caminho de SUCESSO
+
+O `POST /app/inscricoes` relia a linha pós-fanout e tratava só `'erro'`. Quem já
+tinha inscrição lia **"Solicitação recebida! Nossa equipe entrará em contato."**
+e a equipe recebia aviso de "nova inscrição" que não existe — a versão silenciosa
+do mesmo defeito. Agora responde 200 com `duplicado: true` e texto honesto, sem
+disparar os avisos. É a lei do Contrato de Inscrição: `ja_inscrito`/`duplicado`
+são **EXIBIDOS**, nunca engolidos como confirmação.
+
+## ⚠️⚠️ AUDITORIA DO APP · ONDA 1b · O SAVE PARA DE MENTIR E O LGPD GANHA FILA (2026-08-06)
+
+Itens 4 e 5 do plano. **Sem migration** — é rota + tela + régua pura.
+
+### 5 · `PUT /app/grupos/:grupoId` · o save do supervisor gravava NADA
+
+`grupo-editar.tsx` fazia UPDATE DIRETO em `mem_grupos`, e a RLS de UPDATE só
+aceita `lider_id = current_user_membro_id()` OU nível grupos >= 3 — **supervisor
+não passa**. Como o update não tinha `.select()` nem conferia linhas afetadas, **0
+linhas voltavam SEM erro** e a tela dizia "Grupo atualizado."
+
+Medido em 06/08: dos 13 supervisores, **1 tem conta no app**; ele supervisiona 8
+grupos ativos e **não é líder em 7** → são 7 saves que hoje mentem. E
+`current_user_module_level` resolve `usuarios` pelo **e-mail do LOGIN**: o e-mail
+com que ele entra no app não é o da conta de sistema, então o nível dele na RLS é
+**0**. (Contexto maior: **88 dos 101 grupos ativos não têm líder com conta no
+app**.)
+
+- ⚠️⚠️ **NÃO reusei o `PUT /api/grupos/:id` do web, e não é preguiça**: ele é
+  **update de OBJETO INTEIRO**, escreve ~28 colunas e aplica DEFAULT no que não
+  vem (`lider_id: d.lider_id || null` · `ativo: d.ativo ?? true` ·
+  `temporada: || null` · `aceitando_inscricoes: d.aceitando_inscricoes !== false`).
+  Chamá-lo com os 9 campos da tela do app **apagaria a liderança, a temporada e o
+  estado de inscrição** do grupo. O endpoint do app é **PATCH com allowlist**.
+- Autorização = o MESMO `gateGrupoApp` dos outros 7 endpoints de gerenciar grupo
+  (líder OU supervisor OU admin). Era a divergência entre o que a TELA mostra e o
+  que a RLS aceita que produzia o save silencioso.
+- **`.select()` + conferir a linha** é o conserto: 0 linhas agora é **409**, não
+  sucesso. E `updated_at` passou a ser carimbado — não há trigger de `updated_at`
+  em `mem_grupos` e o PUT do web também não o seta, então editar pelo web deixa a
+  coluna velha até hoje.
+- ⚠️ **`categoria` é REGRA DE NEGÓCIO, não rótulo**: `publicGrupos` usa pra a
+  trava de gênero e pra habilitar a **inscrição de CASAL** (só em 'Casais'), e o
+  filtro público compara valor exato. No app o campo é `Input` de **texto livre** —
+  um "casais" minúsculo ou "Casal" desligaria a inscrição de casal em silêncio.
+  Agora a lista é **FECHADA** (espelho de `TIPOS_GRUPO`) e o valor é normalizado.
+- ⚠️ **`horario` é coluna `time`** e a tela manda texto livre: "1930"/"19h30"/"9:5"
+  passam a virar `HH:MM`, e o que não é hora vira 400 com mensagem — antes era
+  erro de cast cru do Postgres, que a pessoa lê como "não salvou".
+- ⚠️ **`dia_semana` aceita 0 = domingo** (que é falsy) — a armadilha já
+  documentada, agora com teste.
+- ⚠️ **NÃO geocodifica dentro do request**: ViaCEP + Nominatim com 1,1s de espera
+  por política é como uma edição vira timeout, e **nenhum save do sistema
+  re-geocodifica** (nem o do web — quem faz é a ferramenta manual
+  `/admin/grupos/geocode`). Quando `endereco`/`bairro` mudam, o endpoint **avisa a
+  coordenação** com link pra ferramenta: é o que evita o pino do mapa apontando
+  pra casa antiga sem ninguém saber.
+- Régua pura em `backend/utils/grupoEdicaoApp.js` (18 testes no gate).
+- ⚠️ Autoria do audit log: a trigger `trg_audit_mem_grupos` grava autor por
+  `auth.uid()`, que é NULL em escrita por service_role ⇒ a edição pelo app aparece
+  como "sistema" no card "Log de alterações" — **mesma limitação que o web já
+  tem**, não regressão.
+- ⚠️ **A troca na TELA é Onda 2 (por OTA)**: o endpoint está pronto e o app ainda
+  grava direto. Até publicar, o save do supervisor continua não gravando.
+- ⚠️ ~~**A FOTO DE CAPA continua quebrada e fica pra Onda 2**~~ → **RESOLVIDO NO
+  SERVIDOR em 07/08** (ver 3b logo abaixo). Fica valendo o diagnóstico: a policy
+  do bucket `grupos` exige `is_admin_or_diretor()` (`profiles.role`, esquema
+  APOSENTADO) ou ser o líder — supervisor não passa nem no Storage.
+
+### 3b · A CAPA DO GRUPO tinha o MESMO save silencioso — na MESMA tela (07/08)
+
+**Medido antes de mexer**: `mem_grupos.foto_url` preenchido em **0 de 278**
+linhas (nem nas apagadas) e o bucket `grupos` com **0 objetos** desde que nasceu
+(04/06/2026). A capa nunca funcionou pra ninguém, nenhuma vez. E a telemetria
+mostra **0 aberturas de `/grupo-editar`** em 13.233 eventos — ninguém tinha ido
+lá conferir.
+
+⚠️ **Eram DOIS defeitos empilhados, e o segundo é o que engana:**
+1. A policy do bucket barra quem não é admin/diretor/líder (16 de 113 profiles).
+   Esse erro **aparece na tela** ("Falha ao enviar a capa: …") — não é o vilão.
+2. `grupo-editar.tsx:112` gravava `foto_url` com **UPDATE DIRETO sem
+   `.select()`** — exatamente o defeito que a Onda 1b consertou no `salvar()`
+   **desta mesma tela** e que ficou pra trás no `escolherCapa()`. 0 linhas
+   voltavam SEM erro, a tela dizia **"Capa atualizada."** e ainda pintava a
+   imagem. Ao recarregar, sumia.
+
+**A porta agora**: `POST /api/app/grupos/:grupoId/foto` (multipart, campo `foto`)
++ `DELETE` pra tirar a capa. `authApp` + `limiterStrict` + multer (memória, 4MB,
+allowlist jpg/png/webp) + `gateGrupoApp` **depois do multer** (ele precisa
+consumir o corpo antes) → upload com service_role → `.select().maybeSingle()` com
+**409 quando 0 linhas**, igual ao PUT.
+- ⚠️ **4MB e não 5MB** (o número do totem em `publicGrupos.js`): o corpo de
+  request serverless tem teto ~4,5MB e estourar vira 413 opaco, sem JSON. **Não
+  dá pra redimensionar no cliente** — `expo-image-manipulator` é módulo NATIVO e
+  não sai por OTA; quem segura o tamanho é o `quality` do picker.
+- ⚠️ **Caminho ÚNICO por upload** (`<gid>/<ms>.<ext>`), nunca `<gid>.jpg` fixo: o
+  bucket é público e o CDN guarda ~1h ⇒ com caminho fixo, trocar a capa não
+  aparece pra ninguém por uma hora. Era por isso que a tela improvisava
+  `?t=Date.now()`, que só engana o cache do próprio aparelho.
+- ⚠️ **A extensão sai do MIME que o multer validou**, nunca do nome do arquivo:
+  no Android a URI é `content://…` e vem sem extensão nenhuma.
+- Régua pura em `backend/utils/grupoCapaApp.js` (**37 asserções**, teste em
+  `src/test/grupoCapaApp.test.ts`). Ela é testada porque **autoriza um DELETE no
+  Storage** a partir de uma string que nem sempre é nossa: `Grupos.jsx:2500` é um
+  campo de **URL de texto livre** gravando `foto_url`. `caminhoDaCapa()` recusa
+  outro bucket, URL de fora, a marca escondida na query (`?u=…`) e travessia com
+  `..` — inclusive escapada. **Na dúvida devolve `null`**: objeto órfão custa
+  bytes; apagar o objeto errado custa a capa de outro grupo, ou um avatar.
+- ⚠️ **ORDEM DE ENTREGA**: o endpoint chega no merge, a tela só depois de 2
+  aberturas (OTA). **Não revogar as policies do bucket nem dropar
+  `is_admin_or_diretor()` antes do OTA chegar** — tiraria o pouco que hoje passa
+  sem pôr nada no lugar (mesma lição da migration `20260806120000`).
+- ⚠️ **Só 14 dos 102 grupos ativos têm líder com conta no app.** Liberar "o
+  supervisor" na policy do SQL resolveria 7 grupos e deixaria 88 de fora — além
+  de duplicar a régua de autorização num 2º lugar, que é a doença que o
+  `gateGrupoApp` existe pra curar.
+
+### 3c · ⚠️⚠️ O PUSH NUNCA CHEGOU: 1.801 de 1.820 recusados (07/08)
+
+**Medido em `system_mobile_push_tickets` antes de mexer:**
+
+| sonda | resultado |
+|---|---|
+| tickets totais | 1.820 |
+| `ticket_status='accepted'` | **19** (todos iOS, entre 02/08 e 07/08) |
+| `ticket_status='error'` | **1.801 — 98,9%** |
+| `PUSH_TOO_MANY_EXPERIENCE_IDS` | **1.773** |
+| erro mais recente | 07/08 20:02 |
+
+⚠️⚠️ **CAUSA**: `app_push_tokens` recebe token de **DOIS apps Expo** (o de
+membros e o CBRio Staff — mesma org `cbrio`, mesmo Supabase). A Expo responde,
+literalmente: *"All push notification messages in the same request must be for
+the same project."* E ela **recusa o REQUEST INTEIRO**, não as linhas estranhas
+— um token do Staff derrubava a entrega dos 30 tokens iOS perfeitamente
+válidos. Os 19 que passaram são justamente os envios pequenos, pra uma pessoa
+só, em que o lote por acaso não misturou.
+
+⚠️⚠️ **POR QUE NINGUÉM VIU**: havia **TRÊS** remetentes, cegos de jeitos
+diferentes. A Edge Function `_shared/notify.ts` dava `await fetch(...)` **sem
+ler o corpo**; `notify-devocional-semana` tinha uma **cópia própria** do envio,
+igualmente cega (e era o maior broadcast: 275 das 615 notificações in-app); e
+`services/appPush.js` lia e gravava ticket — mas ninguém olhava a tabela.
+
+**O conserto**: coluna `app_push_tokens.projeto_id` (migration
+`20260807220000`) + a régua `backend/utils/pushLotes.js`, que agrupa por app
+Expo antes de montar o request.
+- ⚠️ **Token de projeto DESCONHECIDO vai SOZINHO** (1 por request). Um request
+  com uma mensagem só não tem como ter "experience ids demais" — é o que faz a
+  entrega ficar correta **desde o 1º envio**, sem adivinhar a origem do token
+  antigo e **sem apagar linha de ninguém**. Se cura sozinho: o app reescreve o
+  próprio token a cada volta do background.
+- ⚠️ **NUNCA juntar os desconhecidos num lote**: são justamente os de origem
+  ambígua, ou seja, a mistura mais provável de todas. Tem mutante.
+- ⚠️ `tokenMorreu()` só aceita **`DeviceNotRegistered`**. Apagar por erro de
+  LOTE teria **zerado a tabela** — 1.773 tickets traziam
+  `PUSH_TOO_MANY_EXPERIENCE_IDS`, culpa do request e não do token. Tem mutante.
+- ⚠️ **RÉGUA GÊMEA**: `backend/utils/pushLotes.js` e
+  `Aplicativo-CBRio/lib/pushLotes.ts` têm que decidir IGUAL — escrevem na mesma
+  tabela e falam com o mesmo serviço. Divergir faz o erro voltar **só metade das
+  vezes**, que é pior de achar. Os testes usam o **mesmo vetor de casos** nos
+  dois repos (`src/test/pushLotes.test.ts` aqui, bloco `lotesDePush` lá).
+- De quebra: `appPush.js` mandava `sound: 'cbrio-chime.wav'` com **hífen**; o
+  asset (`app.json:55`) e o canal Android são `cbrio_chime.wav` com
+  **underscore**. Todo push do ERP saía com som inexistente.
+
+⚠️ **AINDA ABERTO, e é decisão de gente, não de código**: os 4 broadcasts
+definem a AUDIÊNCIA por `select from app_push_tokens`
+(`notify-lembretes:64` e `:216`, `notify-comunicado:22`,
+`notify-devocional-semana`). Quem não tem token — hoje **todo Android**, porque
+o binário não tem Firebase — fica de fora até do **sino in-app**, não só do
+push. Trocar por "todo mundo com conta no app" muda o raio de alcance de ~23
+pra ~113 pessoas: é chamada do Marcos.
+
+### 3e · ⚠️⚠️ `POST /api/app/inscricoes` NÃO VALIDAVA NADA (10/08/2026)
+
+Achado pelo **Marcos testando no aparelho**: *"eu sou homem e consigo ver os
+grupos apenas para mulheres e posso tentar me inscrever, e isso não é possível
+no nosso webapp."* Ele estava certo — e o buraco é **maior que a queixa**.
+
+O handler (`backend/routes/app.js`) **não lia NENHUMA das 5 travas do site**:
+
+| trava | site (`publicGrupos.js`) | app (antes) |
+|---|---|---|
+| categoria/gênero | 422 `grupo_incompativel` | — |
+| `ativo = false` | 403 | — |
+| `aceitando_inscricoes = false` | 403 | — |
+| `modo_inscricao = 'fechado'` | 403 "por convite do líder" | — |
+| temporada fechada | 403 | — |
+
+⚠️ **O app não "escapava" da trava do site — ele nunca chegava lá.** O site trava
+no formulário público; o app tem porta própria, que nasceu sem elas.
+
+**A régua agora vive num lugar só**: `backend/utils/entradaGrupoApp.js`,
+**37 asserções** em `src/test/entradaGrupoApp.test.ts`.
+
+⚠️⚠️ **DESENHO CORRIGIDO PELO MARCOS NO MESMO DIA — e ele estava certo.**
+Eu tinha feito um caminho especial (`codigo='sexo_necessario'`) que **DEIXAVA
+PASSAR** quem não tinha `genero`, porque só 16 das 54 contas do app tinham o
+dado. Palavras dele: *"parece que estamos criando algo que é pra resolver 40
+pessoas, mas que vai quebrar quando abrir pra igreja; prefiro que tenham pedidos
+errados e recusados dessas pessoas do que do restante todo da igreja."*
+
+⇒ Agora é **UMA REGRA SÓ**: o sexo tem que BATER; desconhecido não bate. A
+mensagem distingue "não sabemos" de "não bate" (honestidade com a pessoa), mas o
+caminho de decisão é único.
+
+⚠️ **E o que fecha o argumento, que eu não tinha percebido**: o portão de
+identidade **JÁ EXIGE o sexo**. `GET /app/identidade/status` põe `'sexo'` em
+`falta`, e `bloqueiam` só o dispensa nas contas de revisão da Apple
+(`contaDeRevisaoLoja`). Ou seja: quem consegue chegar na tela de grupo já passou
+pelo portão e **tem** o dado. As 38 contas sem `genero` são de ANTES do portão
+ligar e serão cobradas na próxima abertura. **Não havia buraco a acomodar — só
+máquina a mais.**
+
+⚠️ Tem mutante: categoria NÃO restritiva **nunca** pergunta o sexo (se isso
+regredir, 70% das contas param de entrar em QUALQUER grupo).
+
+**BACKFILL (migration `20260810160000`)**: a base inteira tem `genero` em **499
+de 4.056 vivos (12%)** — não é problema do app, é da base. Recuperei o que a
+PRÓPRIA PESSOA já declarou em `mem_cadastros_pendentes` e que o matcher
+descartava ao vincular: **51 pessoas**. Idempotente, só escreve onde é NULO.
+⚠️⚠️ **NUNCA inferir sexo por NOME.** É pouco confiável e errar isso num cadastro
+de igreja constrange uma pessoa real, que depois vê o erro num grupo ou num
+crachá. Sem declaração, o campo fica NULO e o app pede.
+
+⚠️ **A ORDEM das travas importa e tem teste**: grupo fechado responde "fechado",
+não "sexo". Senão a pessoa completa o perfil e continua sem conseguir entrar.
+
+⚠️ **`sempre_aberto` entra MESMO com a temporada fechada** — é o que permite
+grupo de porta aberta fora do ciclo. Tem mutante.
+
+⚠️ **`resolveMembroApp` NÃO traz `genero`** (só id/nome/cpf/email/telefone). A
+leitura do sexo é ISOLADA e, se falhar, cai em `sexo_necessario` — nunca em
+"deixa passar".
+
+⚠️⚠️ **AINDA HÁ DUAS CÓPIAS DA RÉGUA, de propósito**: `publicGrupos.js` continua
+com a dele porque é a porta pública principal (**462 dos 463 pedidos**) e trocar
+no mesmo PR somaria risco. **AS DUAS TÊM QUE CONCORDAR** — há ponteiro no
+arquivo. Trocar pela chamada da função quando houver janela pra testar o
+formulário com calma.
+
+⚠️ **PENDENTE DE GENTE, e é dado**: o grupo **"NEW HEART - RECOMEÇO 40+ -
+Solteiros/Divorciados"** está `categoria='Homens'` com **4 mulheres no roster e
+6 pedidos de mulheres já aprovados** (10 dos 13 casos incompatíveis da base são
+dele, e os 13 vieram de `formulario_publico` — é CADASTRO errado, não bypass).
+Quem já está no grupo **não é afetado** (a trava é só no pedido NOVO), mas
+mulher nova é recusada. Acertar a categoria com a coordenação.
+
+### 3f · Suporte da Apple apontava pro número vazio (10/08)
+
+`src/pages/public/Suporte.tsx:11` publicava `5521999079031`, rotulado "número
+institucional" — mas esse número **não tem caixa nenhuma no sistema** (zero em
+`wa_numeros`, zero conversas). Quem escrevia pro suporte falava com o vazio.
+Trocado pelo **21 99756-7770**, o inbox que a igreja de fato lê (98 conversas em
+21 dias) e o mesmo que o novo site publica.
+⚠️ Esta é a **Support URL exigida pela Apple** (Guideline 1.5) — número errado
+aqui é motivo de rejeição, além de deixar gente sem resposta.
+
+### 4 · Pedido de exclusão de conta (LGPD) ganhou fila — e SÓ leitor
+
+O app insere em `app_solicitacoes_exclusao` e promete "em breve sua conta será
+desativada". O ERP **não lia essa tabela em lugar nenhum** (grep: zero rotas, zero
+telas, zero serviços) e `profiles.status='excluido_solicitado'` **não afeta nada**
+(0 profiles com status preenchido; nenhum filtro do sistema usa a coluna). Hoje a
+tabela está **vazia** — gatilho armado, melhor momento pra construir.
+
+- `GET /api/membresia/exclusoes` (nível 3, o mesmo do export LGPD) + bloco
+  **recolhível** "Pedidos de exclusão de conta (LGPD)" na aba **Cadastros
+  pendentes** da Membresia (formato do "Entradas e saídas" do /grupos, ao lado do
+  `PainelCenso` — precedente de bloco embutido em vez de tela nova).
+- ⚠️ **SÓ LEITURA de propósito**: **não existe nenhum caminho de desativação de
+  conta no sistema** — o único `auth.admin.deleteUser` do repo é script de teste,
+  `ban_duration` tem 0 ocorrências e `profiles.active` é só LIDO (nada nunca
+  escreve false). O que existe é export LGPD (`routes/lgpd.js`) e soft-delete de
+  `mem_membros`. Um botão "processar" que não processa repetiria exatamente o erro
+  que criou este problema; a tela **declara** que a desativação é manual e cita o
+  prazo de 15 dias (art. 18).
+- ⚠️ Decidir o que a igreja **RETÉM** por obrigação legal/fiscal (contribuição,
+  batismo) antes de desativar é decisão do Marcos — e a FK
+  `user_id → auth.users ON DELETE CASCADE` significa que apagar o auth user
+  **apaga a prova de que o pedido existiu**. Resolver isso vem antes de qualquer
+  processamento.
+- ⚠️ Erro de carregamento **não se disfarça de fila vazia** na tela: "nenhum
+  pedido" e "não conseguimos ler" são coisas diferentes.
+
+### ✅ RESOLVIDO · o cron do `gerarTodasNotificacoes` EXISTE e roda (10/08/2026)
+
+⚠️⚠️ **ESTA SEÇÃO DIZIA O CONTRÁRIO até 10/08 e o texto antigo virou FALSO.** Ele
+afirmava que `/api/notificacoes/cron` não estava no `vercel.json` e que ~20
+geradores só rodavam por clique manual. Medido em 10/08: o cron **está** no
+`vercel.json` (`0 9 * * *`), **está registrado** na Vercel (`vercel crons ls`) e
+todos os tipos exclusivos do `notificacaoGenerator` foram produzidos naquele dia
+às **09:00–09:03 UTC** (`membro_sem_grupo` 340 · `grupo_sem_encontro` 1.717 ·
+`ata_pendente` 464 · `kids_crianca_ausente` 422 · `grupos_sem_visita` 17 …).
+Alguma sessão agendou depois de 06/08 e o registro aqui não acompanhou.
+**Lição de método: antes de repetir um achado deste arquivo, medir de novo** — a
+nota de 06/08 estava correta no dia em que foi escrita e envelheceu em 4 dias.
+
+### ⚠️⚠️ E a contenção que a nota antiga pedia virou necessária DE VERDADE
+
+Ligar ~20 geradores de uma vez encheu o sino, exatamente como previsto. Medido em
+10/08: **16.646 avisos NÃO LIDOS · 90 pessoas · média de 185 por pessoa** (543
+criados só naquele dia), com o módulo `grupos` respondendo por **9.782 (59%)**.
+Sino nesse estado não é lido — o efeito prático é o mesmo de não notificar.
+
+Duas causas somadas, e cada uma tem dono diferente:
+
+1. **38 dos 51 módulos ativos não têm regra em `notificacao_regras`** ⇒ cada aviso
+   cai no fallback de TODOS os admin/diretor (16 pessoas). Assinatura no dado:
+   os tipos de maior volume batem sempre em 15–18 pessoas. `kids`, que TEM regra,
+   entrega para 2. ⚠️ Configurar as regras é decisão de QUEM RECEBE (e quem deixa
+   de receber) — o Matheus assumiu isso em 10/08, em sessão própria.
+2. **Os geradores periódicos avisavam 1 POR ITEM.** `grupo_sem_encontro` eram 101
+   grupos atrasados × 16 pessoas POR DIA; `kids_crianca_ausente` chegou a 211
+   avisos não lidos para a MESMA pessoa. **Corrigido: os 4 de maior volume
+   passaram a avisar AGREGADO** (`grupo_sem_encontro`, `membro_sem_grupo`,
+   `ata_pendente`, `kids_crianca_ausente`) — 1 aviso com contagem + amostra de 5
+   + link pra tela. Régua e o porquê da chave de dedup ESTÁVEL:
+   **`backend/utils/avisoAgregado.js`**, com guarda em
+   `src/test/avisoAgregado.test.ts` (no gate, mutation-testado).
+
+⚠️ **NÃO agreguei `pedido_grupo` nem `nova_inscricao`** (os 2 maiores volumes
+depois de grupos): ali cada linha é um item de trabalho de uma PESSOA específica
+(o líder recebe por `extraTargetIds`), e o dedup por pedido é o que impede
+duplicar. O excesso deles é o fallback de 16, ou seja causa nº 1 — não se
+conserta agregando.
+
+`gerarNotificacoesLgpdExclusao()` segue no padrão da casa (contagem, sem PII) e
+**deixou de estar dormente** junto com os outros. O comentário em
+`routes/monitorAutomacoes.js:13-14` que a nota antiga acusava de desatualizado
+está, portanto, **correto** de novo.
+
+## ⚠️ DECISÃO · o APP é o canal oficial do devocional (2026-08-06)
+
+Palavras do Marcos: *"acho que podemos usar agora o canal oficial da devocional
+sendo o aplicativo mobile, mantenha assim por enquanto"*.
+
+Contexto: eu havia levantado que, com o login não ligando mais ninguém a cadastro
+(migration `20260806120000`), quem entrasse na **webapp** `/devocionais/*` sem ter
+preenchido a ficha veria *"você não é membro"*. Ele decidiu **não consertar** —
+a webapp fica como está.
+
+⚠️⚠️ **NÃO "consertar" isso depois.** Especificamente, NÃO criar `mem_membros`
+automaticamente pra a tela parar de reclamar: era exatamente esse cadastro-fantasma
+que o gatilho fazia e que a migration removeu. Se um dia o comportamento
+incomodar, o caminho é a webapp **mandar completar o cadastro**, nunca o banco
+inventar pessoa.
+
+**Estado medido em 06/08 (encanamento OK, adoção é o gargalo):**
+- Lembrete por **push funciona**: 253 notificações `tipo='devocional'`, a última
+  **hoje 07:30 BRT** (o horário do cron). `app_lembretes_enviados` tem 32 chaves
+  `devocional:`.
+- **Conteúdo existe**: plano "Devocional da semana 03/08" ativo, 96 itens, com item
+  pra hoje.
+- 🔴 **Uso real: 12 check-ins em `mem_devocionais`, de 6 pessoas, o último em
+  15/07** (3 semanas atrás). 253 lembretes → ~0 registro. Como `mem_devocionais` é
+  a fonte dos KPIs de **Investir tempo com Deus**, o valor é ~zero por falta de
+  USO, não por falta de canal — não confundir os dois ao ler o painel.
+- Achado menor: temas repetidos em dias seguidos ("A Força que Vem da Fraqueza" em
+  05 e 06/08 · "A Força na Fraqueza" em 04/08) — a geração por IA repetindo
+  assunto. Não bloqueia nada.
+- ⚠️ Correção de registro: a aba "Automáticas" (05/08) marcou o devocional como
+  "quebrado · 187 erros, 0 entregas". Aquilo é do canal **WhatsApp**
+  (`whatsapp_envios` não tem NENHUMA linha de devocional hoje); o **push**, que é o
+  canal que importa agora, está entregando.
+
+## ⚠️⚠️ As 4 portas de criança/inscrição alinhadas (2026-08-11 · migration `20260811120000`)
+
+Pedido do Marcos, depois da auditoria das 7 portas: *"eu só não quero ter crianças
+ou pessoas com dados faltando porque em um lugar pede uma coisa e no outro pede
+outra"* — mais *"em outra sessão o Claude me disse que você não usa os limites de
+pessoas por culto no batismo, pode ver isso? Caso um horário esteja cheio, liberar
+apenas o outro; o limite é 11 pessoas."*
+
+### 1 · ⚠️⚠️ A porta do app escrevia na tabela que a equipe do Kids NÃO lê
+
+Achado ao ligar os campos de saúde. Existem DUAS tabelas de apresentação e elas
+têm leitores diferentes:
+
+| tabela | quem escreve | quem LÊ |
+|---|---|---|
+| `apresentacao_criancas` | formulário público · **app (desde hoje)** | **`totemKids.js GET /apresentacoes` → a aba do `/kids`** |
+| `apresentacao_bebes` | totem de membros | só o próprio totem, pro dedup dele |
+
+A porta que nasceu em 10/08 escrevia em `apresentacao_bebes`: a família veria
+"recebemos" e **o balcão não saberia de nada no domingo**. Trocado — e a troca é
+de custo zero porque `apresentacao_bebes` tem **0 linhas** (medido em 11/08). De
+brinde, `apresentacao_criancas` tem `crianca_id` (o elo com a ficha do Kids) e os
+campos do Contrato, que era o que faltava pro item 2.
+⚠️ `culto_id` **não existe** em `apresentacao_criancas` — mandar coluna
+inexistente faz o PostgREST recusar o INSERT INTEIRO (42703) e a família perderia
+o pedido por causa de um informativo.
+
+### 2 · Saúde/inclusão: régua ÚNICA nas duas portas (`utils/saudeCrianca.js`)
+
+Medição que fecha o argumento dele, no recorte justo (crianças criadas **desde
+28/07**, quando o formulário do Kids ganhou os campos): **34 pela porta do Kids ·
+100% respondidas** contra **2 pela apresentação · 0%**.
+
+⚠️⚠️ **E o dano é operacional, não estético:** `tem_espectro` e
+`tem_limitacao_fisica` são a **régua do PAGER** no totem (`totemKids.js`), e o
+pager de inclusão é OBRIGATÓRIO desde 03/08 (decisão da Mari). Criança com
+autismo que entra pela apresentação chegava no Kids com o campo NULO e **não caía
+na regra**, a menos que o voluntário percebesse e editasse a ficha na hora.
+
+- **São 3 perguntas, não 8.** `kids_criancas` tem 8 campos de saúde; entram as 3
+  que MOVEM o domingo (alergia → lanche; TEA e limitação → pager). As outras duas
+  são texto livre que a equipe preenche no atendimento — pedir 8 campos numa tela
+  de autoatendimento troca dado bom por formulário abandonado.
+- ⚠️⚠️ **`null` e `false` são coisas diferentes, e é disso que o buraco é feito.**
+  `null` = ninguém perguntou (98% da base); `false` = a família respondeu que não.
+  Pergunta em branco **não entra no payload** — gravar `false` faria a régua do
+  pager EXCLUIR ativamente criança sobre a qual não se sabe nada. Mutation-testado.
+- **Nenhuma é obrigatória**: travar o envio empurraria a família a responder
+  qualquer coisa pra passar.
+- **Só-onde-vazio** quando a ficha já existe: a equipe do Kids pode ter corrigido
+  no balcão, e formulário não sobrescreve correção humana.
+- A tela AVISA ("vocês vão receber um pager") na hora do "sim" — quem decide o
+  pager continua sendo o totem, no check-in.
+
+### 3 · ⚠️⚠️ `mem_membros.genero` é `masculino`/`feminino` — NUNCA `M`/`F`
+
+Medido na base inteira em 11/08: **4.045 vivos · 579 com sexo · ZERO com valor
+curto**, nas 14 origens que preenchem. Vários comentários deste arquivo afirmavam
+o contrário, e o código acreditou neles: `if (genero === 'M')` **nunca é verdade
+em produção**.
+
+Consequência real, na porta escrita na véspera: a derivação de pai/mãe da
+apresentação estava morta — `nome_pai`/`nome_mae` saíam sempre nulos e o balcão
+receberia a criança sem o nome de nenhum dos dois. E `pessoaDaCrianca` gravaria
+`genero: 'M'`, criando a única pessoa da base num vocabulário que nenhum filtro
+do sistema procura (a régua de gênero dos grupos, entre outros).
+
+`utils/dadosDoCadastro.sexoPara(destino, valor)` é o tradutor único: aceita as
+duas formas na ENTRADA e emite a do DESTINO. O vocabulário curto existe de
+verdade, mas noutras tabelas — `kids_criancas.sexo` (867 M / 1.058 F) e
+`batismo_inscricoes.sexo`; `vol_inscricoes.sexo` e `next_matriculas.sexo` são
+canônicos. Mutation-testado: "simplificar" aceitando só M/F na entrada ressuscita
+o bug.
+
+### 4 · O app carrega o que o cadastro JÁ TEM (`patchDoCadastro`)
+
+Decisão dele: *"caso alguém tenha baixado e não tenha esses campos, já colocamos a
+tela de preencher; quando elas voltarem terão, e aí vamos passar isso."*
+
+O fanout grava nome/telefone/e-mail e deixa CPF, nascimento e sexo vazios — mas
+**10 das 12 linhas incompletas de origem `app` têm o cadastro completo**. O dado
+existia; o app é que não o carregava. Então **preencher, não exigir**: exigir na
+porta reprovaria as contas que ainda não passaram pelo portão de identidade e
+derrubaria inclusive o SOS.
+
+- Roda **depois** da releitura do fanout, best-effort, só-onde-vazio.
+- ⚠️ `grupos` fica FORA: `mem_grupo_pedidos` **não tem** coluna de CPF, nascimento
+  nem sexo (introspectado, não decorado) — inventar coluna derruba o UPDATE
+  inteiro com 42703. O CPF do pedido de grupo já tem caminho próprio desde 06/08.
+- ⚠️ A janela de 2 min ao localizar a linha não é enfeite: sem ela, uma inscrição
+  ANTIGA da mesma pessoa seria reescrita a cada nova.
+
+### 5 · O direcionamento do Next passa o Contrato adiante
+
+`services/nextDirecionar.js` criava `vol_inscricoes` e `batismo_inscricoes` sem
+**sexo** (o formulário do Next passou a exigi-lo em 28/07 e o dado morria na
+matrícula) e o batismo ainda ia sem **nascimento e e-mail**. Agora a matrícula é a
+fonte preferida e o cadastro entra só onde ela está vazia.
+
+### 6 · ⚠️⚠️ BATISMO · o limite de 11 era só enfeite de tela
+
+Ele estava certo pela metade, e a metade que faltava é a pior:
+
+- o mecanismo EXISTE (`batismo_horarios.limite` + `GET /horarios`, que já esconde
+  do seletor o horário lotado) e 08:30/10:00 tinham limite 11;
+- **11:30 e 19:00 estavam com `limite` NULO** = sem teto nenhum;
+- e **`POST /inscrever` não conferia NADA**. Prova no banco: **28/06 às 10:00
+  fechou com 12 inscritos num limite de 11.**
+
+Agora `vagaNoHorario` trava antes do insert e responde **409 `horario_lotado`**
+com a mensagem mandando pro OUTRO horário — que é o que ele pediu; dizer só
+"lotado" deixa a pessoa sem saída. A migration preenche o teto onde está NULO
+(só onde está: capacidade é decisão da equipe do batismo, não deste script).
+
+⚠️ **RESÍDUO DECLARADO**: a conferência é SELECT-depois-INSERT, sem lock — dois
+envios no mesmo instante passam os dois. Não usei `pg_advisory_xact_lock` (a
+técnica da espinha) porque exige função SQL + migration, e o buraco de hoje **não
+é corrida**: os 12 de 28/06 entraram porque não havia conferência nenhuma. Com
+~6 inscrições por cerimônia a janela é pequena; se um dia estourar por 1, é aqui
+que vira RPC com lock.
+
+## Apresentação de bebês · o culto vem da régua D3 (2026-08-12 · SEM migration)
+
+Lote 1 da EXECUÇÃO da mudança dos cultos de domingo (estratégia completa no §13
+de `docs/cultos-domingo/contexto-e-plano.md`, branch `claude/cultos-domingo-handoff`
+— modo piloto aprovado pelo Marcos em 12/08). A regra "SEMPRE 10:00" (23/07)
+morre junto com o culto em 24/08; a nova é a **D3: 09:30 primário, overflow pro
+11:30 por LIMITE** — e bebês estão **SEM limite por enquanto** (Marcos 12/08),
+então na prática "sempre 09:30".
+
+- **`escolherCultoApresentacao`/`rotuloHora`** em `utils/criancaApresentacao.js`
+  (régua PURA · `src/test/cultoApresentacao.test.ts`, 13 casos **no gate**, 2
+  mutantes): 09:30 → (lotado com limite) 11:30 → (pré-corte) 10:00 → **null**.
+  ⚠️ O fallback antigo "primeiro culto por horário" MORREU — pós-corte ele
+  penduraria a cerimônia no **fantasma de 08:30** (achado B9 da varredura). Sem
+  candidato, a linha nasce com `culto_id` nulo e os textos OMITEM o horário.
+- **Comportamento IDÊNTICO até 24/08**: sem 09:30 na grade, a régua resolve o
+  10:00 — é o que permite este código ir ao ar ANTES do corte, aberto, sem véu.
+- `GET /totem/apresentacao-bebe/status` devolve `horario_previsto` +
+  `horario_rotulo` e o `TotemMembro.tsx` deixou de hardcodar "10h" (2 textos ·
+  omitidos quando o servidor não manda horário); o `{{4}}` do WhatsApp sai do
+  culto escolhido. ⚠️ **Pendência de GENTE**: conferir na Meta se o CORPO do
+  template `apresentacao_bebes_confirmacao` cita "10h" fora do `{{4}}` — se
+  citar, é template `_v2` (editar aprovado volta pra revisão e o envio para).
+- **Limite por env `APRESENTACAO_LIMITE_POR_CULTO`** (vazia = ilimitado, o
+  estado atual): ligar o overflow do 11:30 no futuro é setar a env, sem mudança
+  de regra. Cancelada não ocupa vaga na contagem.
+- ⚠️ Esta régua é SÓ do TOTEM (único escritor de `apresentacao_bebes`): a porta
+  do app e o formulário público escrevem em `apresentacao_criancas`, que **não
+  tem `culto_id`** (alinhamento de 11/08).
+
+## ⚠️ Identidade · o nome MAIS COMPLETO vence (2026-08-11 · SEM migration)
+
+Decisão do Marcos, no caso Thiago (candidatura de líder de 10/08): o matcher
+ligou o formulário "Thiago dos Santos Nogueira" ao cadastro existente "Thiago
+Nogueira" (stub do auth de 10/07 · match por CPF) — comportamento CORRETO, mas
+o nome declarado pela própria pessoa era descartado e o sistema mostrava um
+nome no pedido e outro na membresia. *"Ele não pode mostrar um nome em um lugar
+e outro em outro lugar — os nomes devem ser juntados e o mais completo deve ser
+mantido."*
+
+- **`nomeMaisCompleto(atual, declarado)`** em `services/identidadeProgressiva.js`
+  — regra conservadora: promove SÓ quando o atual é subsequência (mesma ordem)
+  dos tokens do declarado e o declarado acrescenta algo. Nunca troca token
+  ("Maria Silva" × "Maria Souza" → null), nunca encurta, nunca reordena;
+  inicial de 1 letra expande ("Ana P" → "Ana Paula"); placeholder
+  "Contribuinte…" e e-mail no campo de nome nunca viram nome. Contrato em
+  `nomeMaisCompleto.test.js` (**no gate de deploy** · `test:nome-completo`),
+  mutation-testado: containment de conjunto (aceitaria reordenação) e
+  containment parcial (derrubaria token) deixam vermelho.
+- **Roda em `registrarObservacaoIdentidade`** — o ponto que TODAS as portas
+  atravessam quando ligam num membro (o `_observar` do matcher guardado E o
+  `registrarObservacaoSegura` das portas read-only). Best-effort, ANTES da
+  gravação da observação (não depende da tabela existir), com `.eq('nome',
+  atual)` contra corrida (padrão #2257). Sincroniza `profiles.name` ligado ao
+  membro pela MESMA régua (precedente do gatilho do auth: nome só na membresia
+  deixa o app mostrando o antigo).
+- **O passado**: `backend/scripts/_reparo_nomes_mais_completos.cjs` (dry-run /
+  `--exec` · backup em Downloads) varre observações de identidade + pedidos de
+  grupo + candidaturas de líder e aplica a régua em cadeia (a mais completa de
+  todas vence).
+- ⚠️ **A aba de Entrada segue exibindo o nome DIGITADO no pedido**
+  (`insc.nome`), não o cadastro resolvido — Marcos decidiu NÃO mexer na tela;
+  com a promoção do nome os dois convergem no caso comum.
+
+## Grupos · faxina de vínculos abertos em grupo INATIVO + cartão da ficha (2026-08-11 · SEM migration)
+
+Caso Eliandra: 4 vínculos abertos ao mesmo tempo, 3 em grupos `ativo=false` —
+cada tela mostrava um grupo diferente e nenhum era onde ela está. Medido:
+**1.443 vínculos abertos · 375 em grupo inativo · 257 pessoas com 2+ abertos**.
+
+- **`backend/scripts/_faxina_vinculos_grupos_inativos.cjs`** (dry-run/`--exec` ·
+  backup em Downloads): fecha (`saiu_em` + `motivo_saida`) os vínculos abertos
+  de grupos inativos/deletados, com `.is('saiu_em', null)` de guarda. ⚠️ NÃO
+  toca nos vínculos em grupos ATIVOS de temporada encerrada (os ~402 do
+  handoff de 04/08 — decisão ainda aberta) nem em `mem_grupos.lider_id`.
+- **Cartão "grupo de conexão atual" da ficha** (`membresia.js` ×2): o
+  `.maybeSingle()` sem limit ERRAVA ("multiple rows") pra quem tem 2+ vínculos
+  abertos, e sem filtro de grupo mostrava grupo morto. Agora
+  `mem_grupos!inner` + `ativo=true` + `deleted_at null` + mais recente
+  (`order entrou_em desc · limit 1`).
+- ⚠️ Régua de leitura que fica: vínculo aberto NÃO significa grupo vivo —
+  qualquer tela que derive "o grupo da pessoa" precisa filtrar
+  `mem_grupos.ativo` ou aceitar mostrar grupo encerrado.
+
+## ⚠️⚠️ Dashboard Semanal · a presença do NEXT vinha da camada MORTA (2026-08-11 · migration `20260811150000`)
+
+Pedido do Matheus na aba NEXT: *"a presença do next seja inputada de forma
+automática aqui, a partir da presença das pessoas."*
+
+**O automático existia e lia a camada APOSENTADA.** `next-presenca-mensal`
+(`dashboardSemanal.js`) contava `next_inscricoes.check_in_at` com o mês de
+`next_eventos` — o modelo anterior ao cutover de turmas (17/06/2026). Medido:
+
+| camada | última data com presença |
+|---|---|
+| `next_inscricoes.check_in_at` (a que o painel lia) | **2026-04** |
+| `next_presencas` (a chamada real · matrícula × encontro) | **2026-08** |
+
+Daí mai/2026 em diante nascer "sem dado" e jun/jul terem sido **digitados na
+mão**. É a MESMA doença do #2288 (que consertou as rotas `/next/*` do app) e da
+Edge Function `notify-lembretes`: consumidor apontado pra camada morta.
+
+- **`vw_next_presenca_mes`** conta **PESSOAS distintas** por mês do ENCONTRO.
+- ⚠️⚠️ **O histórico DIMINUI e está certo**: o legado contava **LINHAS**
+  (participações — a mesma pessoa nos 2 encontros do mês contava 2) e a pergunta
+  do card é quantas PESSOAS estiveram. set/2025 eram **44 linhas de 31 pessoas**.
+  Quem comparar com print antigo vai achar que sumiu dado; não sumiu.
+- ⚠️ **Medido ANTES de escrever**: a união com a camada legada é **idêntica** à
+  view em todos os meses (o backfill da `20260729190000` já subiu o legado) —
+  ler só da view não perde histórico nenhum. Sem essa medição, o desenho natural
+  seria um `UNION` que traria dupla contagem de volta.
+- ⚠️ **Matrícula soft-deletada fica FORA** (a equipe apaga duplicata/teste) e a
+  identidade é `membro_id` com fallback na matrícula (151 de 1.998 sem membro):
+  sem chave, contar 2 é menos grave que fundir gente diferente.
+- ⚠️ **Falha de consulta NÃO vira zero**: devolve `aviso` e a aba mostra faixa
+  âmbar. "Ninguém foi ao NEXT" é a leitura errada de uma query que falhou.
+- ⚠️ **O ajuste MANUAL continua vencendo o automático** — e agora a tela mostra a
+  chamada AO LADO dele, senão o manual vira número que ninguém revisita.
+  jul/2026: manual 35 × chamada 34. **jun/2026: manual 66 × chamada 24** — lista
+  contada à mão que nunca virou chamada no sistema; o manual dele FICA.
+- ⚠️ `next_presencas` tem `presente boolean` e hoje **0 linhas com false** — o
+  filtro está lá pela semântica, não porque haja ausente gravado.
+## ⚠️⚠️ O SINO DE GRUPO no app do membro (2026-08-11 · migration `20260811150000`)
+
+Autorizado pelo Marcos (item 3 dos 16 apontamentos): *"pode ligar claude"*.
+
+**Medido antes de escrever: 459 pedidos de grupo desde 01/07 e `app_notificacoes`
+(825 linhas, 8 tipos) com ZERO de qualquer tipo de grupo.** O líder nunca soube
+pelo app que alguém pediu pra entrar no grupo dele — e é ele quem deve LIGAR pra
+pessoa antes de aprovar (lei dos templates v2, 29/07).
+
+### ⚠️⚠️ São DUAS tabelas e DOIS vocabulários — INVERTIDOS
+
+| | tabela | tipo emitido | quem lê |
+|---|---|---|---|
+| `notificar()` | `notificacoes` | **`pedido_grupo`** | ERP web + app do STAFF |
+| `notificarApp()` | `app_notificacoes` | **`grupo_pedido`** | app do MEMBRO |
+
+Copiar o tipo de um pro outro faz o aviso chegar e **não abrir tela nenhuma**.
+`utils/avisoGrupoApp.js` é a régua (no gate, mutation-testada) e
+`services/gruposAvisoApp.js` o serviço — **um só**, porque são CINCO origens
+(formulário público, app, tela interna do /grupos, totem, cadastro de membresia)
+e cinco cópias é a doença que este módulo já teve.
+
+⚠️ **`grupo_pedido` é o ÚNICO ligado agora**, e é decisão: é o único tipo que os
+DOIS mapas do app já roteiam (`notifTap.ts` + o `abrir()` de `notificacoes.tsx`,
+mais ícone e categoria) ⇒ **chega por merge, no binário que já está no campo, sem
+esperar OTA**. Os outros eventos de grupo entram depois da unificação dos mapas —
+ligar antes faria o aviso cair em "Outros" e o toque não levar a lugar nenhum.
+
+### ⚠️⚠️ `donosDoGrupo` EXCLUI quem tem o app — por construção
+
+`gruposDestinatarios.donosDoGrupo` filtra `is_membro_only` de propósito (linha em
+`notificacoes` pra conta só-de-membro é linha que ninguém abre). Usá-la pra
+alimentar o app entregaria **zero avisos**. A irmã `donosDoGrupoApp` não tem esse
+filtro — e é **superconjunto, não espelho**: conta de staff também pode ter o app
+instalado, e exigir `is_membro_only = true` excluiria esse líder. Quem separa os
+dois apps no push é o agrupamento por `projeto_id` do `lotesDePush`.
+
+⚠️ **Alcance real, medido: dos 89 líderes de grupos ativos, 15 têm conta no app e
+6 têm push token** (os 42 tokens da base são 100% iOS — Android sem Firebase).
+Lista vazia é o caso COMUM aqui, não erro; o WhatsApp segue alcançando os 89.
+
+### `chave_dedup` em `app_notificacoes` (a tabela não tinha dedup nenhum)
+
+A irmã do ERP tem `chave_dedup` desde sempre; a do app nasceu sem — não havia
+como escrever escritor idempotente. Agora `notificarApp({chaveDedup})` amarra o
+aviso ao FATO (`grupo_pedido:<id do pedido>`).
+⚠️ **Índice ÚNICO e SEM PREDICADO**: `ON CONFLICT` do PostgREST não infere índice
+parcial (lição do `mem_censo_convites`, 04/08). Seguro porque `NULLS DISTINCT` é
+o padrão — as 825 linhas legadas e os avisos sem fato único nunca conflitam.
+⚠️ **O que ela NÃO resolve**: a Edge Function `notify-grupo-pedido` está
+**DEPLOYADA** (sonda de 11/08: 401, não 404) e insere sem `chave_dedup` ⇒ se o
+webhook dela for ligado, duplica mesmo assim. Fechar exige mexer nela ou derrubar
+o trigger — o diagnóstico está no fim da migration, pendente de olho humano.
+
+### Consertos que a revisão adversarial pegou (e valem além disto)
+
+- ⚠️⚠️ **O resgate linha-a-linha do `notificarApp` reusava a query que acabara de
+  falhar** — em erro de coluna ele repetiria o mesmo erro em cada linha e o log
+  culparia `chave_dedup` no lugar da causa real (um `user_id` órfão viola a FK de
+  `auth.users` e derruba o LOTE; é pra salvar os válidos que o resgate existe).
+  Agora o resgate **herda a forma** da última tentativa, tem **teto de 25** (a
+  mesma função serve o broadcast de 500 do evento publicado) e a guarda é por
+  **código** (`42703`/`PGRST204`/`42P10`), não por texto de terceiro — `42P10`
+  não cita `chave_dedup` e passaria batido.
+- ⚠️⚠️ **`fetch` da Expo ganhou timeout de 8s** (`AbortSignal.timeout`). Desde
+  hoje essa cadeia é AWAITED no formulário público de grupos: sem teto, exp.host
+  lento seguraria quem está se inscrevendo até o `maxDuration`, e a pessoa veria
+  ERRO num pedido que FOI gravado — o dano exato que a lei do awaited evita.
+- ⚠️ **`membresia.js` chamava `donosDoGrupo` SEM NUNCA TER IMPORTADO** —
+  ReferenceError latente em `/totem/grupos/:id/entrar`. O insert roda antes do
+  erro, então o primeiro uso real gravaria o pedido e responderia 500. Medido:
+  **0 pedidos com origem `totem`** na base (570 do formulário público, 2 do app),
+  ou seja a rota nunca foi exercitada. Achado ao ligar o sino.
+
+⚠️ **Risco residual declarado**: `donosDoGrupoApp` resolve `mem_grupos.lider_id`
+e **não confere o roster** — e 30 dos 97 grupos ativos têm a principal fora dele
+(follow-up de 31/07, ainda aberto). Não é regressão (o WhatsApp já tinha o risco);
+a diferença é que agora chega numa tela navegável. E o corpo do aviso cita o
+primeiro nome de quem pediu + o nome do grupo, que aparece na tela de bloqueio.
 
 ## Devocionais · módulo do Matheus (no ar)
 
@@ -2573,6 +7013,68 @@ Migration de referência: `20260515520000_normalizar_meta_periodicidade.sql`.
 4. KPIs com checkpoints granulares em `kpi_trajetoria` continuam com a meta
    do checkpoint (não passam pela normalização) · checkpoint já é por período
 
+## ⚠️ Mandala · a média de FREQUÊNCIA divide por DOMINGO, não por semana (2026-08-12)
+
+Pedido do Marcos: *"na mandala do sistema, preciso que na frequência (seguir a
+Jesus) seja dividido pela quantidade de domingos do mês, e não semanas"*. Escopo
+que ele mesmo delimitou quando perguntei: **"Só Média exibida. Mas apenas para
+frequência isso"** e **"Apenas frequência q será dividido pelo número de
+domingos"** — meta, semáforo e periodicidade de KPI **não** foram tocados.
+
+A mandala é a do `/dashboard` (`MandalaCultura` → `GET /kpis/cultura`), não as 6
+do `/painel` (aquelas pintam pétala por status de KPI e não exibem frequência).
+
+**A distorção era real e sempre no mesmo sentido.** O divisor era o nº de semanas
+ISO (seg→dom) com culto, e a semana das BORDAS do mês entra na conta trazendo a
+**quarta** sem trazer o **domingo** dela. Janeiro/2026: a semana de 29/12–04/01
+tem a quarta 01/01, mas o domingo dela (28/12) é de dezembro → 5 semanas contra 4
+domingos. Medido em produção (presencial · online DS):
+
+| mês | semanas | domingos | antes | depois |
+|---|---|---|---|---|
+| jan/26 | 5 | 4 | 1.809 · 3.608 | **2.262 · 4.510** |
+| fev/26 | 5 | 4 | 1.715 · 3.830 | **2.144 · 4.787** |
+| mar/26 | 5 | 5 | 2.416 · 5.107 | *(igual)* |
+| abr/26 | 5 | 4 | 2.128 · 4.503 | **2.660 · 5.629** |
+| jul/26 | 5 | 4 | 1.649 · 3.869 | **2.061 · 4.836** |
+
+⚠️ **Evidência de que a régua nova é a que a equipe já usava**: o único lançamento
+MANUAL de `cultura_mensal` (abril/2026) tem **`freq_presencial_semanal = 2660`** —
+exatamente a média por domingo, não a por semana (2.128). O automático é que
+divergia do número que a própria equipe escrevia à mão.
+
+- **`backend/utils/divisorMandala.js`** = régua PURA no gate (13 casos em
+  `src/test/divisorMandala.test.ts`). Conta **domingos DISTINTOS com culto**
+  (são 4 cultos por domingo — contar linha daria 16) e cai no calendário quando
+  o mês não tem culto nenhum. **Nunca devolve 0** — divisor zero viraria
+  `Infinity` na tela.
+- ⚠️ **Mutation-testado de verdade, não afirmado**: os dois mutantes foram
+  rodados. (1) Voltar a contar semanas ISO → 4 casos vermelhos. (2) Trocar
+  `getUTCDay()` por `getDay()` → vermelho **porque o teste força
+  `process.env.TZ='America/Sao_Paulo'` dentro do caso** (com restauração no
+  `finally`): o gate roda em UTC, onde os dois são idênticos, e sem forçar o
+  fuso a guarda passaria despercebida. `2026-01-04T00:00:00Z` é sábado 21h no
+  Rio — com `getDay()`, nenhum domingo do mês seria contado.
+- ⚠️ **O NUMERADOR não mudou**: segue somando TODOS os cultos do mês (domingo,
+  quarta, AMI, Bridge). Foi o pedido literal — só o divisor virou domingos.
+  Trocar o numerador junto seria outra métrica ("frequência de domingo"), que
+  ninguém pediu.
+- A resposta ganhou **`domingos_no_mes`** (o divisor REAL); `semanas_no_mes`
+  continua sendo publicado como informação do mês. Rótulo e divisor andam
+  juntos no `PetalDetailDialog` ("Média presencial / domingo") — foi a
+  divergência entre os dois que fez a média parecer baixa.
+- **Valor manual de `cultura_mensal` continua vencendo** o cálculo automático,
+  como antes.
+
+⚠️ **PENDENTE de decisão (pré-existente, NÃO introduzido aqui):** os cultos do
+mês corrente nascem **pré-agendados com frequência 0**, e eles entram no divisor
+— em 12/08 agosto conta **5 domingos** com só 2 realizados, então a média do mês
+em curso aparece como **801** em vez de ~2.003. Isso já acontecia com o divisor
+por semana (a contagem de semanas com culto também pegava os pré-agendados).
+Consertar exige definir o que "média do mês corrente" significa: contar só
+domingo com dado lançado **infla** a média quando a Integração atrasa o
+lançamento; contar todos **deprime** até o mês fechar. É chamada do Marcos.
+
 ## Sistema OKR/NSM 2026 (arquitetura consolidada · fases 1-6 mergeadas em maio)
 
 Sistema unificado OKR/KPI/NSM. **Conceito**: 1 NSM ("novos convertidos
@@ -2695,7 +7197,7 @@ preenche `responsavel_nome` automaticamente com o valor dessa tabela.
 | compras | Amaury |
 | producao | Pedro Fernandes |
 | marketing | Pedro Paiva |
-| financeiro | Yago Torres |
+| financeiro | Alberto Luiz Stassen da Silva |
 | adm | Marcos Paulo |
 | integracao | Alda Lorena |
 
@@ -2796,6 +7298,120 @@ cerebro-cbrio/
   processando → concluido/erro/ignorado)
 - `cerebro_config` — configurações (bibliotecas monitoradas,
   extensões permitidas, delta links, limite de tokens)
+- `cerebro_doc_texto` — texto integral do documento + `tsvector` português
+  (migration `20260730220000` · **aplicada em prod 2026-08-03**). ⚠️ Nasce
+  **VAZIA**: só recebe linha quando o cron do Cérebro processa arquivo NOVO. Os
+  documentos já processados antes disso seguem sem corpo indexado — reprocessar o
+  acervo custa Haiku de novo, então é decisão do Marcos, não automática.
+
+## ⚠️ Cérebro · o que pode virar nota no VAULT é uma ALLOWLIST (2026-08-03 · PR #2227)
+
+O sync reverso (`cerebroSync.js`) transforma entidade do ERP em markdown numa
+biblioteca do SharePoint espelhada pelo OneDrive. Isso significa duas coisas que
+mudam a régua: **markdown sincronizado não tem permissão por linha** (quem tem
+acesso à biblioteca lê tudo) e **a cópia local é irrevogável** — tirar o acesso
+depois não apaga o arquivo que o OneDrive já baixou no laptop.
+
+**`ENTIDADES_PERMITIDAS_NO_VAULT` = `membro · evento · projeto · voluntario ·
+funcionario · contribuicao-mes`.** Lista FECHADA, em 3 camadas (`enqueueSync`
+ignora com aviso · `upsertNoteForEntity` lança — `routes/cerebro.js` a importa
+direto pro backfill · `getSupportedEntityTypes` filtra, senão
+`POST /cerebro/backfill/:tipo` enfileirava a fila pastoral inteira de uma vez).
+`action: 'delete'` **nunca** é bloqueado (senão nota já publicada ficaria órfã).
+
+- ⚠️ **`acompanhamento` (fila pastoral) está FORA por decisão do Marcos** —
+  LGPD art. 11 + sigilo pastoral. A proteção anterior era **acidental**: as
+  rotas que chamavam `enqueueSync('acompanhamento', …)` ficaram dormentes no
+  refactor do Cuidados de 22/07, mas `AREA_VAULT_BY_ENTITY` continuava dizendo
+  que ela ia — quem "consertasse a inconsistência" publicaria a fila. Travado em
+  `src/test/cerebroVault.test.ts` (mutation-testado).
+- **`funcionario` é permitido porque o renderer EXCLUI salário**; mexer no
+  renderer sem reler isto vaza remuneração pro OneDrive de quem tem a biblioteca.
+- Acesso hoje: **só o Marcos e o Marcos Paulo** têm a biblioteca "Cerebro CBRio".
+
+**Falha de CONSULTA não é entidade ausente** (o mesmo padrão do `parcelas_max`,
+agora na fila): os loaders faziam `const { data } = await supabase…`,
+descartavam `error`, e o chamador concluía "entidade não encontrada" → a fila
+marcava **`erro` na 1ª tentativa** (com `tentativas` incrementado e nunca lido).
+Foi assim que **os 50 eventos da igreja ficaram fora do vault de 22/04 a 03/08** —
+os 50 ids existem em `events`, as 13 colunas existem, o loader funciona hoje; o
+que falhou em 22/04 é **impossível saber**, porque a mensagem real do PostgREST
+foi sobrescrita pela genérica. Agora `umaLinha()` marca `retentavel` e
+`decidirRetrySync` devolve `pendente` até `MAX_TENTATIVAS_SYNC = 4`; ausência
+real segue terminal na hora (re-tentar não faz a linha existir).
+✅ Os 50 foram devolvidos pra `pendente` em 03/08 (`tentativas=0`, erro limpo) —
+o cron `/api/cerebro/sync-erp` (`30 3 * * *` = 00:30 BRT) leva **8 por rodada**,
+FIFO por `enfileirado_em`, então drenam em ~7 dias. Pra acelerar: chamar o
+endpoint com `?limite=20` 3×.
+
+## ⚠️ Cérebro · a IA passa a ler o CONTEÚDO, e o filtro falha FECHADO (2026-07-30)
+
+Pedido do Marcos ("criar um RAG pro sistema saber todo o contexto da CBRio").
+Passou pelo conselho deliberativo; o desenho mudou por causa do que a
+investigação achou. **Não há embeddings** — e a decisão de não ter é registrada
+abaixo.
+
+**⚠️ LEI · o filtro de origem do Cérebro é FAIL-CLOSED.** `cerebroSearch.js`
+`canReadRouteKey` fazia `if (!routeKey) return true`: biblioteca fora do mapa
+ficava visível pra qualquer autenticado. Medição de 30/07 antes de mexer: as 5
+bibliotecas monitoradas (`Gestão, Criativo, Ministerial, Planejamento, CRM e
+Pessoas`) e as 5 pastas de `cerebro_entidades_indice` estavam **todas mapeadas**
+— não era vazamento ativo, era **gatilho armado**, porque
+`cerebro_config.bibliotecas_monitoradas` é uma STRING editável em runtime (sem
+deploy, sem PR): bastava alguém digitar "Financas" ali. Agora origem não mapeada
+não aparece pra ninguém além de admin/diretor, e `avisarOrigemNaoMapeada`
+**notifica o módulo cerebro** — fechar a porta em silêncio seria trocar um
+vazamento por um sumiço inexplicável. Travado em `src/test/cerebroPermissao.test.ts`
+(mutation-testado: reverter pra fail-open deixa 2 testes vermelhos).
+⚠️ Lição repetida: dois conselheiros afirmaram "isto já vaza"; o banco desmentiu.
+Consenso não é evidência — a régua do CLAUDE.md valeu de novo.
+
+**O texto do documento parou de ser jogado fora.** `cerebroProcessor.js` extraía
+até 15k chars, mandava pro Haiku e **descartava** — só `resumo` (2-5 frases)
+sobrevivia, e por isso `cerebroSearch` (que se autodenomina RAG no cabeçalho) só
+conseguia procurar em TÍTULO e RESUMO. Agora `indexarTexto` grava em
+`cerebro_doc_texto` com `tsvector` português + **`f_unaccent`** (obrigatório: o
+`extractTerms` já manda a pergunta sem acento, e o dicionário `portuguese`
+sozinho não faz unaccent). **Dois tetos separados**: `MAX_CHARS_PROMPT` (15k, o
+que vai pro Haiku — custo) e `MAX_CHARS_INDICE` (100k, o que fica pesquisável) —
+com teto único, todo relatório longo perdia o fim para sempre.
+É **best-effort e depois** do update de sucesso: se propagasse, o arquivo viraria
+`erro` e pagaria o Haiku de novo.
+
+**Documento INTEIRO, não chunks — decisão do conselho.** A fronteira de permissão
+(e de LGPD) é o documento; chunk espalharia pedaços de ata pastoral por várias
+linhas com o rótulo de permissão copiado em cada uma. Duas tools novas em
+`assistantTools.js`: `buscar_documento` (full-text no corpo, devolve trecho) e
+`ler_documento` (texto completo sob demanda). ⚠️ As duas têm `minLevel: 0` porque
+a permissão **não cabe num routeKey único** — é por documento, resolvida no
+handler. E a permissão entra **no SQL** (`bibliotecasPermitidas` → `.in()`), nunca
+num filtro em JS depois do `.limit()`: filtrar depois é o bug que faz quem tem
+poucos módulos receber "nada encontrado" existindo documento permitido abaixo do
+corte.
+
+**`serializeContext` não corta mais com `slice()` cego.** Ele truncava por ordem
+de inserção e `cerebro_vault` é o ÚLTIMO campo — a busca rodava, gastava consulta
+e era a primeira coisa descartada; pior, cortar JSON no meio entrega ao modelo um
+objeto **inválido** junto da instrução "responda SOMENTE com base no contexto".
+Agora preserva os campos pequenos (sistema, conhecimento curado, resultado da
+busca) e remove **módulos inteiros**, de trás pra frente. ⚠️ Guarda de regressão:
+sem `cerebro_vault`/`conhecimento_sistema` no objeto, volta ao caminho antigo
+byte a byte — é o caso dos auditores (`systemAuditor`/`moduleAuditor` chamam
+`buildContext` sem `options.query`). Coberto em `src/test/agentContextSerialize.test.ts`.
+
+**Por que NÃO tem embedding** (decisão, não esquecimento): a Anthropic não tem
+API de embeddings, então gerar vetor significa mandar o conteúdo pra um terceiro
+— e o acervo tem ata de diretoria, Kids e fila pastoral, exatamente o que a lei
+do Stax proíbe. O conselheiro jurídico apontou que a **LGPD não tem equivalente
+ao art. 9(2)(d) do GDPR** (organização religiosa), então a base para dado
+sensível é consentimento específico (art. 11, I), e transferência internacional
+exige cláusulas-padrão da ANPD (Res. 19/2024) — não basta DPA com cláusulas
+europeias. **A lei do Stax fica como está.** `pgvector` já está instalado (usado
+só por reconhecimento facial), então se um dia a decisão jurídica mudar, o
+caminho é acrescentar coluna `vector` na MESMA tabela e somar os rankings —
+nada do que foi feito aqui se perde. Antes disso: **medir** com ~30 perguntas
+reais; se as falhas forem de vocabulário (pergunta "desligamento", documento diz
+"rescisão"), vetor se justifica; se forem outras, não resolveria nada.
 
 ### AGENTE-REGRAS.md — fonte única de verdade
 
@@ -3053,6 +7669,11 @@ migration `20260616160000`): obrigatório pra Marketing; pra Utility só se
 - **Já ligados:** confirmação de inscrição (`app.js` POST /app/inscricoes ·
   grupos/batismo/next/voluntariado/retiro/cursos/eventos · {{1}} nome {{2}} tipo) e
   vínculo Kids aprovado/recusado (`totemKids.js` · {{1}} criança {{2}} aprovado/recusado).
+- **Convite NEXT em massa (2026-07-20):** `nextConvite.js` POST `/next-convite/enviar`
+  dispara o template `WHATSAPP_TEMPLATE_NEXT_CONVITE` (= `next_convite`, aprovado ·
+  **1 variável {{1}}=1º nome**, link fixo/botão · pt_BR). Usado na aba Convertidos do
+  Cuidados ("Convidar para o NEXT"). ⚠️ Esse disparo usa `wpp.sendTemplate` direto —
+  NÃO checa opt-in (diferente do `notificarMembro`).
 - **A ligar quando útil:** doação (vem do webhook Stripe / Edge Function — fora do
   Express), batismo lembrete (cron), escala, aniversário. O helper já está pronto.
 - **Pra ativar um template:** aprovar na Meta → setar o env com o nome exato → começa
@@ -3070,6 +7691,46 @@ eventos/usuários por dia, telas mais vistas, ações, erros recentes, plataform
 App: `lib/telemetria.ts` (`trackTela`/`trackEvento`/`trackErro` + handler global de
 erro + flush por tamanho/timer/background) ligado no `app/_layout.tsx` (init + cada
 tela via `usePathname`). Próximas features chamam `trackEvento` pra medir adoção.
+
+### ⚠️ A telemetria ficou 5 dias MORTA em silêncio · `event_id` (2026-08-05)
+
+Fui usar a telemetria pra diagnosticar um problema do app do Marcos e ela estava
+**zerada desde 31/07** — o dia em que a `20260731143000` (etapa 4 do módulo
+Sistema) criou `app_eventos.event_id uuid NOT NULL DEFAULT gen_random_uuid()` e o
+índice único, pro `upsert(..., { onConflict: 'event_id' })` do endpoint.
+
+**O DEFAULT existe e funciona** (conferido: `POST /rest/v1/app_eventos` cru, SEM a
+chave → 201). Quem quebrava era o **cliente**: o app não manda `event_id`, o
+normalizador devolvia `event_id: undefined`, e — a pegadinha — **`Object.keys()`
+INCLUI chave com valor `undefined`**, então o supabase-js montava
+`?columns=…,event_id`; o PostgREST vê a coluna listada e ausente no JSON e insere
+**NULL** → `23502`, lote inteiro descartado. E o handler responde **HTTP 200
+`{ok:false}`** de propósito ("telemetria não pode quebrar o app") e o app ignorava
+o corpo ⇒ **falha perfeitamente silenciosa**.
+
+- **Régua que fica:** em `upsert` com `onConflict`, **toda linha precisa ter a
+  chave de conflito PREENCHIDA** — nem `undefined` (vira NULL via `?columns=`) nem
+  presente só em algumas linhas (o `?columns=` é a UNIÃO das chaves do lote).
+  `normalizeMobileEvent` agora sempre gera `event_id` (o do app quando vier — aí o
+  reenvio é idempotente de verdade; senão `crypto.randomUUID()`).
+- **Falha de ingestão AVISA GENTE** (`notificar` módulo `dashboard`, dedup por dia,
+  link `/admin/app-analytics`). Sem isso, o próximo silêncio dura outros 5 dias.
+- ⚠️ **A whitelist de `props` estava comendo quase tudo**: das 10 chaves que o app
+  mandava, só `message` passava (`{grupo: id}`, `{tipo}`, `{criado}`,
+  `{encontrado}`, `{id}`, `{url}` iam pro lixo sem erro). O app foi ajustado pras
+  chaves permitidas e a lista ganhou **`entity_id`** (id de COISA — grupo, vídeo,
+  comunicado · **nunca de pessoa**) e **`label`** (rótulo curto de enum NOSSO —
+  tipo de decisão, parentesco · **nunca texto digitado**). Chave nova exige a
+  mesma pergunta: *isso pode identificar alguém?*
+- O app passou a mandar `event_id`, `occurred_at` (quando ACONTECEU · o
+  `created_at` é quando chegou), `session_id` (uma abertura), `installation_id`
+  (aparelho, persistido), `os_version`, `device_model`, `manufacturer` e
+  `build_number` — tudo de `Platform.constants` + `expo-constants`, **sem
+  dependência nativa nova** (o que manteria a mudança fora do alcance de OTA).
+  ⚠️ **`Constants.deviceName` é PROIBIDO** aqui: no iOS vem "iPhone de \<nome da
+  pessoa\>" (PII). No iOS vai o formato (`handset`/`pad`).
+- ⚠️ `GET /sistema/v1/mobile/command-center` (mesma etapa 4) **não tem tela** no
+  frontend ainda — a telemetria do app se vê em `/admin/app-analytics`.
 
 ## Comunicados / Mural (2026-06-16 · Fase 2 do app)
 
@@ -3103,8 +7764,37 @@ revisão** (decisão da liderança: NADA do app entra direto na NSM). Migration
 culto_id + ambiente presencial/online + tipo aceitar/reconciliacao/rededicacao/
 batismo/outro + status pendente/confirmada/descartada + decisao_id · deleted_at +
 whitelist + RLS contextual) e libera `fonte='app'` em `cultos_decisoes_pessoas`.
-- **App**: `GET /app/culto/agora` (culto de hoje + link ao vivo + jaRegistrou),
-  `POST /app/culto/decisao` (insere pendente · dedup 1/dia · notifica Integração).
+- **App**: `GET /app/culto/agora` (culto de agora + `ao_vivo` + link ao vivo +
+  jaRegistrou), `POST /app/culto/decisao` (insere pendente · dedup 1/dia ·
+  notifica Integração).
+
+### ⚠️ Qual culto é "agora" · dia em BRT e o mais recente que COMEÇOU (2026-08-04)
+
+Os dois endpoints acima resolviam o culto com
+`data = new Date().toISOString().slice(0,10)` + `order('hora', desc).limit(1)`.
+**Os dois pedaços estavam errados**, e o efeito era atribuição de culto errada
+na fila da Integração (que alimenta a NSM):
+
+1. **`toISOString()` é UTC.** Das 21h BRT em diante o "hoje" já é o dia
+   SEGUINTE — ou seja, **no culto de domingo 19h** (que passa das 21h) o
+   `culto` vinha nulo, a decisão era gravada sem `culto_id` e o dedup de
+   1-por-dia olhava a janela do dia errado. Mesma classe de bug do dia da
+   curva do censo e do check-in do Kids: **dia de operação da igreja é BRT**.
+2. **"maior hora do dia" ≠ "culto de agora".** Às 08:30 o endpoint dizia que o
+   culto era o das 19:00 → decisão do culto da manhã carimbada no da noite.
+
+Agora existe `cultoDeAgora()` (helper único, usado pelos DOIS endpoints —
+duplicar a régua era o que deixava o GET e o POST discordarem):
+`hojeBRT()` + entre os cultos que **já começaram** e estão dentro de 3h vale o
+**mais recente**; só quando nada começou é que a antecedência de 30 min conta.
+⚠️ A ordem importa porque os cultos de domingo saem de 90 em 90 min e uma
+janela de 3h sobrepõe dois ou três: `find` simples (o primeiro que casa) diria
+"08:30" às 10:30, e "10:00" às 09:40 com o das 08:30 ainda rolando.
+`ao_vivo` é o que o app usa pra mostrar o "No culto" **só durante o culto** —
+fora da janela aquela tela não tem propósito (pedido do Marcos, 04/08).
+Conferido em BRT nos horários reais de domingo (06:00 → fora · 08:05/08:15 →
+08:30 · 09:40 → 08:30 · 10:30 → 10:00 · 12:15 e 13:00 → 11:30 · 15:00 → fora ·
+18:45–21:30 → 19:00 · 22:10 e 23:40 → fora, com o dia BRT correto).
 - **Integração**: `GET /integracao/decisoes-app` + `/:id/confirmar` (cria a
   decisão oficial em `cultos_decisoes_pessoas` com `fonte='app'` → entra na NSM
   via trigger) + `/:id/descartar`. UI: `DecisoesApp.tsx` no topo da aba Decisões
@@ -3121,3 +7811,1232 @@ thumbnail_url, publicado_em, duration_seconds, serie), 20 séries
 default CBRio>/live`). **Somente leitura** (a coleta do YouTube continua no cron
 do `/online`); sem migration, sem env nova. App: tela `videos.tsx` (`/videos` ·
 atalho na Home + "Pregações" no Menu) abre os vídeos no YouTube via Linking.
+
+## App Staff · Kids gerencia batismo de criança (2026-07-21)
+
+`PATCH /totem-kids/batismos/:id` (kids ≥ 3): a equipe Kids atualiza
+status/data_batismo/observações de inscrição de batismo **de criança**
+(eh_crianca ou <13 anos) sem depender do módulo Integração — inscrição de
+adulto responde 403 e segue exclusiva do `PUT /kpis/batismos/:id`
+(authorizeBatismo). Status aceitos: pendente/confirmado/realizado/cancelado.
+Consumidor: app CBRio-Staff (telas Kids · batismos/apresentações). As
+apresentações já tinham PATCH/DELETE próprios (kids ≥ 3/4) — sem mudança.
+
+## Entradas · identidade progressiva e fusão segura (2026-07-18)
+
+Prioridade zero definida pelo Marcos: **todo cadastro novo precisa aumentar a
+confiabilidade futura da identidade**, mesmo quando hoje não há dados suficientes
+para afirmar que dois registros são a mesma pessoa. Migration
+`20260718190000_identidade_progressiva_merge_seguro.sql` (aplicada em produção 2026-07-18):
+- `mem_identidade_observacoes`: histórico acumulativo por porta de nome, CPF,
+  telefone, e-mail e nascimento. A base viva é semeada como `base_legada`; um
+  trigger captura também inserts/updates SQL que contornem o backend.
+- `mem_identidade_pares`: fila materializada e incremental com score, prioridade
+  (`quase_confirmado/alta/media/descoberta`), evidências, contradições, fontes e
+  data da última corroboração.
+- `identidadeProgressiva.js`: ao receber uma observação, procura os membros
+  conectados e recalcula o par imediatamente. Exemplo-alvo: um cadastro A com
+  CPF, B com telefone+nome e um terceiro formulário com CPF+telefone+nome cria
+  uma ponte e promove A×B para **quase confirmada**. Nunca auto-funde.
+- CPF agora só é chave se o dígito verificador for válido. Se chega CPF novo e
+  o único vínculo é telefone/e-mail compartilhável, o matcher exige também
+  nascimento compatível; sem isso cria separado e abre sugestão forte.
+- Todos os criadores diretos encontrados (app visitante, face, Cuidados,
+  membresia manual, importador de grupos e CPF financeiro) passaram pelo matcher
+  canônico. Formulários de Next, batismo, grupos, voluntariado, Kids e membresia
+  registram origem. **Decisões de culto permanecem como primeiro contato fraco**.
+- Batismo público passou a exigir CPF válido; o cadastro interno continua sendo
+  a exceção operacional da equipe.
+- `merge_membros` agora atualiza filhos linha a linha: colisão UNIQUE/CHECK apaga
+  apenas a linha realmente redundante, não a tabela inteira daquele membro.
+  `mem_merge_log.related_snapshot` preserva todos os filhos pré-fusão.
+- Entradas combina a fila progressiva com a descoberta legada, prioriza “quase
+  confirmadas”, mostra fontes, tem busca/filtros e pagina 100 cards por vez. A
+  ficha da pessoa mostra quando e por qual porta os dados foram corroborados.
+
+Validações: `node backend/services/identidadeProgressiva.test.js`, políticas de
+duplicidade/família, `npm test -- --run` e `npm run build` aprovados. Migration + backend **aplicados e no ar** em produção (Marcos aplicou a migration
+manualmente · deploy Vercel automático da main · confirmado no banco 2026-07-18:
+`mem_identidade_observacoes`/`mem_identidade_pares` presentes, seed `base_legada` =
+3667, `merge_membros` seguro é a única versão viva).
+
+**Follow-up (2026-07-18 · auditoria + correções · PR `claude/entradas-followups-email-doc-limpeza`):**
+auditoria multi-agente confirmou a entrega contra o banco vivo (o resumo do ChatGPT
+procedia; o CLAUDE.md é que tinha ficado com "NÃO aplicada" desatualizado). Corrigidos:
+(1) `membroMatch` (acharOuCriarGuardado/acharMembroGuardado) NÃO liga mais por e-mail
+sozinho quando o chamador não passa nome — alinha ao contrato "e-mail sozinho nunca
+identifica"; (2) `publicVoluntariado /inscrever-form` roteia pelo matcher canônico
+(`acharMembroGuardado`) em vez de lookup por e-mail solto e registra observação de
+identidade (Contrato de porta); (3) removido código morto do Entradas
+(`PessoaTab`/`SemVinculoTab`/`LigarDialog`/`buildBuscaParams`). ⚠️ Follow-ups deliberados
+(NÃO nesta PR): `merge_membros` não faz snapshot de netos de linha filha apagada por
+colisão UNIQUE (edge case raro · exige nova migration CREATE OR REPLACE); 2ª impl. de
+`normalizarCpf` em `utils/cpf` não valida DV (armadilha p/ código futuro); colisão de
+número das migrations `20260717170000`/`20260718120000`/`20260718190000` (cada uma tem
+gêmea de grupos/crons no mesmo número — ao aplicar manualmente, rodar as DUAS de cada par).
+
+## Pagamentos · núcleo provider-agnostic + retiro pago pelo sistema (2026-07-28)
+
+Pedido do Marcos: vender a inscrição do **retiro** pelo próprio sistema (PIX,
+cartão parcelado, boleto, e Apple Pay se der), com lista de inscritos por
+idade, vínculo automático ao cadastro da pessoa, forma de pagamento por
+inscrito, rastreabilidade e impressão da lista por faixa de idade/sexo.
+
+⚠️ **O retiro NÃO é módulo novo** — é um evento da espinha de inscrições (F3.2),
+com `pagamento_ativo=true`. Esta seção cobre só a camada de PAGAMENTO. Ver a
+consolidação com `insc_pagamentos` mais abaixo.
+
+### ⚠️ Decisão do gateway · REVISTA em 2026-08-06: o PSP passou a ser o MERCADO PAGO
+
+Decisão do Marcos (retomada de sessão anterior): *"já decidimos que vamos seguir
+com Mercado Pago"*. O bloco abaixo (Asaas) fica como **registro histórico do
+racional de 28/07** — o que o invalidou não foi o raciocínio, foi o
+**operacional**: a conta Asaas de produção ficou "em análise" e o sandbox nasceu
+sem forma nenhuma habilitada, enquanto a igreja já tem conta no Mercado Pago.
+
+**O adapter do Asaas NÃO foi removido e não deve ser.** `pag_cobrancas.provider`
+é por LINHA: cobrança criada por ele precisa seguir sendo consultada, conciliada
+e estornada por ele. Quem decide o PSP das cobranças NOVAS é
+`PAG_PROVIDER_PADRAO`. Trocar de PSP custa 1 env — é exatamente o que o núcleo
+provider-agnostic existe pra permitir, e agora foi exercitado de verdade.
+
+Ver a seção **"Adapter do Mercado Pago"** abaixo para os fatos da API, as três
+decisões de arquitetura que ele forçou e o que ficou pendente de gente.
+
+### Racional histórico da escolha do Asaas (28/07 · superado · íntegra no legado)
+
+O que eliminou as alternativas em 28/07, por fato verificado: **a Stripe não faz
+parcelamento no Brasil** e parcelar era requisito declarado; **o Santander não é
+adquirente** (segue só na LEITURA de extrato pra conciliação — o Pix cobrança e o
+boleto existem em código, desligados, com paths não confirmados e sem webhook); os
+juros do parcelado seriam **repassados ao inscrito**; e o pagamento acontece em
+**página pública, fora do login**, o que tira a Apple do caminho (guideline
+3.2.2(iv), a mesma que travou a Generosidade) e mantém o escopo PCI fora de nós.
+
+### Núcleo entregue (migration `20260728120000` · APLICADA em prod · PR #2082)
+
+`backend/services/pagamentos/` — serve QUALQUER módulo que precise cobrar
+(retiro, cursos, eventos, e o módulo de inscrições genérico do Marcos quando
+existir). Contrato = `pag_cobrancas.origem_tipo` + um handler registrado no JS.
+
+**⚠️ LEIS deste núcleo (não regredir):**
+
+1. **Dinheiro SEMPRE em centavos inteiros.** Nenhum float, em nenhuma coluna.
+2. **`status` é canônico do CBRio, nunca a string do PSP.** Todo mapeamento vive
+   em `providers/<nome>.js`. `if (status === 'RECEIVED')` fora de um adapter
+   está no lugar errado. Nenhum módulo de domínio importa `providers/*` — só a
+   fachada (é o que faz trocar de PSP custar 1 arquivo + 1 env).
+3. **Idempotência do webhook É a UNIQUE** `pag_webhook_eventos(provider,
+   evento_id)` + `ON CONFLICT DO NOTHING`: processa só quem conseguiu inserir.
+   Dedup por SELECT-depois-INSERT **não é dedup** — duas entregas concorrentes
+   do PSP veem ambas "não existe" e ambas inserem. Foi o bug do
+   `generosidade-webhook` do app (que, aliás, **não grava linha nenhuma**:
+   `origem:'app'` viola o CHECK e `membro_id:null` viola o NOT NULL de
+   `mem_contribuicoes` — **não usar como referência**).
+4. **`pago` NUNCA regride** (trigger `fn_pag_cobrancas_transicao` + espelho em
+   `maquinaEstados.js`). Webhook fora de ordem não pode despagar inscrição
+   confirmada. Transição inválida → `RAISE WARNING` e mantém o status antigo,
+   **não aborta**: exception em handler de webhook vira retry infinito no PSP.
+5. **NUNCA armazenar PAN/CVV/validade/nome impresso.** Só `cartao_brand` e
+   `cartao_last4` como o PSP devolveu. Dado de cartão não entra no nosso banco,
+   nos nossos logs, nem no nosso Express — a tokenização é no PSP/cliente.
+6. **`pag_pagamentos` é razão auxiliar e NUNCA é somada em view financeira.** O
+   caixa recebe **1 receita por REPASSE** do PSP em `fin_transacoes` (+ 1
+   despesa de tarifa), conciliada contra o crédito do extrato. Somar as duas
+   camadas é exatamente como nasce a dupla contagem (a de ~R$ 1,5 mi veio desse
+   mecanismo). `liquido`/`taxa` vêm do **payload do PSP**, nunca calculados —
+   a taxa varia por método, parcela e antecipação. `vw_pag_invariantes` é a rede
+   que grita quando divergir; ler no fechamento.
+7. **Nenhuma confirmação sem `status='pago'` lido do servidor** — WhatsApp,
+   push, e-mail, tela de sucesso, confete. Nada.
+
+Estado no banco: 3 tabelas · `pag_cobrancas` na whitelist de soft-delete ·
+2 triggers (transição + audit) · 10 policies de RLS (`pag_webhook_eventos` só
+legível por super-admin — payload cru do PSP) · `vw_pag_invariantes`.
+Testes: `src/test/pagamentosMaquinaEstados.test.ts` (16 casos).
+
+### Buraco negro do `retiro` fechado (PR #2081)
+
+`retiro`/`cursos`/`eventos` eram aceitos em `TIPOS_INSCRICAO` **e** estavam em
+`LABEL_INSCRICAO_WPP`, mas `fn_app_inscricoes_fanout` não tem branch pra
+nenhum: a linha ficava invisível em `app_inscricoes` (`status='processado'`) e a
+pessoa recebia **"Inscrição confirmada"** de inscrição que não existia. Os três
+viraram **lead** (`LABEL_INSCRICAO_LEAD` → `notificar()` dizendo explicitamente
+que não há inscrição confirmada). **Retiro NÃO passa por `app_inscricoes`/
+fan-out** — aquele fan-out envolve cada branch em `EXCEPTION WHEN OTHERS` e
+marca `processado` de qualquer jeito; falha silenciosa marcada como sucesso é
+veneno pra fluxo com dinheiro.
+
+Junto: `santanderCron.js` chamava `contasService.extrato()` — **função
+inexistente** (o export é `consultarExtrato`) → TypeError a cada execução, e a
+"ESTRATÉGIA 2: extrato regular" do `/pix-sync` **nunca rodou**. Virou o helper
+`extratoNormalizado()`, único ponto que conhece o formato cru `_content` do
+banco. É pré-requisito de conciliar o repasse do PSP contra o extrato.
+
+### ⚠️ CONSOLIDAÇÃO com a espinha de inscrições (28/07 · decisão do Marcos)
+
+O núcleo `pag_*` e a espinha de inscrições (`20260729000100` · F3.2 PR 1) foram
+construídos **no mesmo dia, em frentes paralelas**, e as duas criaram tabela de
+pagamento. As duas estavam INERTES (nenhum código lia nenhuma) quando o conflito
+foi detectado. Decisão: **`pag_*` é o MOTOR · `insc_pagamentos` é a linha de
+DOMÍNIO que aponta pra ele** (migration `20260729020000` · aditiva).
+
+- `pag_cobrancas` → cobrança + estado canônico · `pag_pagamentos` → razão
+  auxiliar (liquidação/estorno/tarifa, líquido+taxa) · `insc_pagamentos` →
+  "esta inscrição tem esta cobrança" (`cobranca_id` FK), com os campos que a UI
+  de inscrições já lê. Ler pela **`vw_insc_pagamento_estado`** (o estado vem do
+  motor quando há cobrança; cai no espelho em pagamento manual).
+- Motivo de o motor ser o núcleo: `insc_pagamentos.webhook_log JSONB` guarda
+  histórico mas **não dá idempotência** (anexar em array JSON não impede
+  processar o mesmo evento 2×, e não há UNIQUE por evento do PSP — o furo que
+  quebrou o `generosidade-webhook`), e não tinha trava de transição contra
+  webhook fora de ordem despagar inscrição confirmada. `webhook_log` **continua
+  existindo** como histórico legível; só não é mais o mecanismo de idempotência.
+- ⚠️ **NÃO criar tabelas `ret_*`.** O retiro é uma linha em `insc_eventos` com
+  `pagamento_ativo=true`. A `inscricoes` já exige `cpf`+`data_nascimento`+`sexo`
+  no `chk_inscricoes_contrato` (= idade, faixa via `fn_faixa_etaria` e a
+  impressão por sexo saem de graça), e já tem vagas, `numero_sorte`, check-in e
+  página pública `/evento/:slug`. `publicEventoExterno.js:127` já reservava a
+  vaga do Pix: `const pago = !!esp.pagamento_ativo; // Pix chega na F3.3`.
+
+### ✅ Camada JS + webhook + crons (2026-07-28 · SEM migration)
+
+`backend/services/pagamentos/` completo, menos o adapter do PSP:
+
+| Arquivo | Papel |
+|---|---|
+| `index.js` | **FACHADA — é a única coisa que módulo de domínio importa.** `criarCobranca`, `sincronizar`, `marcarPagoManual`, `cancelar`, `estornar`, `expirarVencidas`, `reconciliar`, `capacidades`, `metodosDisponiveis`, `registrarHandler` |
+| `cobrancas.js` | persistência + transições. `valor_pago_centavos` é **derivado da soma de `pag_pagamentos`**, nunca copiado do payload (`tarifa` fora da soma: é custo nosso) |
+| `webhooks.js` | assinatura → `registrarEvento` (idempotência) → despacho + `reprocessarPendentes` (replay do payload guardado) |
+| `providers/{index,manual}.js` | registro + adapter de dinheiro fora do PSP |
+| `handlers/{index,inscricao}.js` | ganchos de domínio por `origem_tipo` |
+
+**Leis desta camada (além das 7 do núcleo):**
+
+- **Provider desconhecido LANÇA**, nunca cai no padrão em silêncio — silêncio
+  seria cobrança criada num provider que não sabe cobrar. `providers/index.js`
+  tenta `require('./asaas')` e só engole `MODULE_NOT_FOUND` (erro DENTRO do
+  adapter propaga). `pspConfigurado()` é false quando o env aponta pra adapter
+  ausente → não liga fluxo pago automático.
+- **`criarCobranca` grava a linha ANTES de falar com o PSP.** Se a chamada
+  externa morre no meio, a cobrança existe em `criada` com `ultimo_erro` e o
+  cron retoma. O inverso (PSP cria, a gente perde a linha) deixaria cobrança
+  órfã cobrável no PSP sem rastro aqui. Corrida na UNIQUE de `referencia` →
+  devolve a cobrança da outra requisição (o objetivo é UMA cobrança).
+- **`aplicarStatus` reconfere se o BANCO aceitou.** O trigger recusa transição
+  com WARNING e mantém o status antigo, sem abortar — se o JS não relesse, ele
+  chamaria `aoPagar` numa cobrança que continuou não-paga. Só dispara o handler
+  quando `data.status === novoStatus`.
+- **Sinal do valor vem do TIPO**, não do chamador: estorno gravado positivo
+  somaria como pagamento.
+- **`handlers.disparar` engole erro de propósito** (loga). O estado da cobrança
+  já foi persistido e não se desfaz porque o domínio falhou; a reconciliação
+  chama de novo — é pra isso que handler é idempotente.
+- **Handler `inscricao`**: cada UPDATE é condicionado ao status de ORIGEM
+  (`.eq('status','recebida')`), então reentrega é no-op. `pago` → `confirmada`.
+  `expirada`/`cancelada` → `cancelada` (libera vaga). **Inscrição já cancelada
+  NÃO é ressuscitada por pagamento atrasado** — notifica e espera decisão
+  humana (a vaga pode já ter ido pra outra pessoa). **Estorno/chargeback NÃO
+  cancelam a inscrição** — quem já está na logística (ônibus, quarto, comida)
+  não sai da lista por automação.
+- **`marcarPagoManual` exige `confirmado_por`.** Dinheiro entrando por decisão
+  humana sem autoria registrada torna a trilha de auditoria inútil. Taxa fica
+  `null` (não 0): dinheiro fora do PSP não tem tarifa, e null diz "não se
+  aplica".
+- **`cancelar` recusa cobrança com dinheiro dentro** — o caminho é estorno.
+
+**Rota `/api/pagamentos-webhook/:provider`** (`routes/pagamentosWebhook.js`),
+montada fora de `/api/public` **e** no `skip()` do limiter global. **Responde
+200 pra tudo menos assinatura inválida (401)** — 4xx/5xx viram reentrega
+eterna, e vários PSPs DESATIVAM o webhook depois de N falhas, o que transforma
+um problema de 15 min em falha silenciosa e permanente.
+
+**Cron: UM só no `vercel.json`** — `cron/tick` `*/10`, que faz expirar +
+reconciliar (limite 50) + replay numa passada. ⚠️ **É de propósito:** o projeto
+já tem **45 crons** no `vercel.json` e o teto do plano Pro é 40 — cron a mais
+pode simplesmente não registrar, e "cron de expiração que nunca roda" = vaga
+paga que nunca é liberada, falha silenciosa da pior classe. ⚠️ **Conferir na aba
+Cron Jobs da Vercel quais dos 45 estão realmente registrados** — se truncar, os
+últimos da lista (posições 43–45) são três agentes de IA da jornada do
+convertido, que param sem avisar. As três etapas são idempotentes, uma
+não aborta as outras, e as rotas avulsas (`cron/expirar|reconciliar|replay`)
+seguem existindo pra disparo manual/depuração. `CRON_SECRET` **fail-closed**.
+
+⚠️ `listarParaReconciliar` ordena por **`updated_at` ASC, não `created_at`**, e
+`reconciliar` **toca a linha ao fim de cada tentativa** (inclusive sem novidade
+e inclusive em falha). Sem isso, limite menor que a fila re-checaria pra sempre
+as 50 mais antigas e as novas nunca seriam consultadas — e uma cobrança que
+sempre erra prenderia a vez. Round-robin é requisito, não detalhe.
+
+**Envs:** `PAG_ENABLED` (kill switch — recusa cobrança NOVA; consultar/expirar/
+reconciliar seguem, senão dinheiro já cobrado ficaria preso) ·
+`PAG_PROVIDER_PADRAO` (default `manual`) · `PAG_WEBHOOK_SECRET` ou
+`<PROVIDER>_WEBHOOK_SECRET` · `PAG_WEBHOOK_RATE_LIMIT_MAX`.
+Testes: `src/test/pagamentosNucleo.test.ts` (11) + `pagamentosMaquinaEstados`
+(16). **Nada cobra ainda** — falta o adapter e ligar a porta pública.
+
+### ✅ Lista de inscritos + aba "Inscrições" na ficha do membro (2026-07-28 · SEM migration)
+
+O que o Marcos pediu na abertura ("saber os inscritos, idade de cada um, forma de
+pagamento de cada um, imprimir a lista separada por idade ou faixa ou sexo") e
+"abrir um membro e ver as inscrições dele" — detalhes de implementação no legado.
+As regras que ficam:
+
+- ⚠️ **CPF fica FORA da lista de inscritos, de propósito** — é o campo mais
+  sensível e serve pro matcher, não pra tela.
+- ⚠️ **Telefone/e-mail ficam FORA da lista IMPRESSA por padrão**: é PII que vira
+  papel na mão de voluntário; só sai marcando a caixa, com aviso na própria tela.
+  Contraste proposital com a lista de aniversariantes do Kids, onde o telefone
+  sai por decisão explícita.
+- ⚠️ **`src/lib/faixaEtaria.ts` é espelho EXATO de `fn_faixa_etaria`** (<13
+  criança · 13–17 adolescente · 18–30 jovem · 31+ adulto) — existe em JS porque
+  chamar a função SQL por linha seria uma consulta por pessoa. **Se a régua mudar
+  no banco, mudar aqui também**, senão a lista impressa discorda do KPI. Data é
+  parseada como LOCAL (`+T00:00:00`): sem isso, em fuso negativo, quem nasceu dia
+  1º vira um dia mais velho e no limiar muda de faixa. 22 testes.
+- ⚠️ **Leitura paginada**: tinha `.limit(2000)`, que o cap de 1000 do PostgREST
+  truncava **em silêncio** — a lista parecia completa.
+- **A aba do membro cobre TODAS as portas** (espinha + ext + batismo + next +
+  voluntariado + pedidos de grupo), **Kids fica FORA** (dado de menor, mesmo
+  corte da timeline e do export LGPD). No NEXT o status exibido é `compareceu`
+  quando há check-in — é ele que diz se a pessoa FOI. Data da INSCRIÇÃO e data do
+  EVENTO aparecem separadas: juntá-las faz ler "inscrito em março" como "foi em
+  março".
+
+### ✅ Adapter do Asaas (2026-07-28 · SEM migration · íntegra no legado)
+
+`providers/asaas.js` — **o único arquivo do sistema que conhece a linguagem do
+Asaas**. `'PAYMENT_RECEIVED'` em qualquer outro arquivo é bug de arquitetura.
+Segue vivo mesmo com o PSP padrão sendo o Mercado Pago: `pag_cobrancas.provider`
+é por LINHA, e cobrança criada por ele precisa seguir sendo consultada,
+conciliada e estornada por ele. Os fatos da API que **não são óbvios e cujo
+desconhecimento custa caro**:
+
+1. **`PAYMENT_CONFIRMED` ≠ `PAYMENT_RECEIVED`, e no cartão há ~32 dias entre os
+   dois.** **A PESSOA é confirmada no CONFIRMED** (esperar o RECEIVED faria quem
+   paga com cartão passar um mês fora da lista do retiro); **o DINHEIRO é marcado
+   no RECEIVED** (`repassado_em`, que é o que concilia com o extrato). É
+   exatamente por isso que o núcleo separa razão auxiliar de caixa.
+2. **Parcelado no cartão vira N cobranças**, uma por parcela — mas o pagador
+   autorizou tudo na primeira. Daí `quita_cobranca` → `statusFinal`; sem isso a
+   cobrança ficaria `pago_parcial` por 12 meses e a inscrição nunca confirmaria.
+   ⚠️ Só vale com `billingType === 'CREDIT_CARD'`: parcela 1 de Pix não quita nada.
+3. **`PAYMENT_OVERDUE` NÃO expira nada.** Vencido no Asaas ≠ expirado nosso — Pix
+   e boleto seguem pagáveis. Quem libera a vaga é o nosso cron, pelo `expira_em`.
+4. **A verificação do webhook NÃO é HMAC**: o Asaas devolve no header
+   `asaas-access-token` o token que VOCÊ cadastrou no painel → `timingSafeEqual`.
+   **Fail-closed** sem segredo. Token inválido **notifica na 1ª ocorrência**: a
+   fila de webhook do Asaas é INTERROMPIDA após 15 falhas e as pendências só ficam
+   **14 dias** — em silêncio isso vira pagamento aprovado que nunca chega.
+5. **A key carrega o ambiente no prefixo** (`$aact_hmlg_` sandbox · `$aact_prod_`
+   produção) → guarda que lança se cruzarem. ⚠️ A guarda olha **`VERCEL_ENV`
+   ANTES de `NODE_ENV`**: a Vercel define `NODE_ENV=production` em **todo**
+   deploy, inclusive preview — só pelo NODE_ENV o preview recusaria a chave de
+   sandbox, justamente onde ela precisa rodar.
+6. **Taxa = `value` − `netValue`, os dois do payload** — não viola a lei nº 6 (o
+   proibido é derivar de tabela de preço nossa).
+7. Header `access_token` (não Bearer) **+ `User-Agent` EXIGIDO** — sem ele a
+   chamada falha de um jeito difícil de diagnosticar.
+
+⚠️ **Correção de registro**: a afirmação de que "o Pix da Stripe é invite-only"
+está **errada** — a Stripe suporta Pix e boleto no Brasil. O que a eliminou foi
+só o parcelado.
+
+⚠️ **Flake removido do gate**: 4 testes de guarda de ambiente faziam chamada de
+**rede real** ao sandbox. Teste vermelho bloqueia produção; teste que depende de
+rede de terceiro não pode entrar no gate.
+
+### ✅ Porta pública ligada (2026-07-28 · migration `20260729040000`)
+
+O 403 de `pagamento_ativo` saiu. Fluxo pago: validar (contrato inteiro, nada
+muda) → `fn_insc_inscrever` com **`p_status='recebida'`** (vaga reservada sob o
+advisory lock) → `criarCobranca` → o front redireciona pro `checkout_url`. É o
+que finalmente dá **escritor** pro `'recebida'` do CHECK.
+
+**Regras da porta paga (não regredir):**
+
+- **Evento pago mal configurado NÃO abre** e sobretudo não vira inscrição
+  gratuita por acidente: `bloqueioPagamento()` recusa (503, com texto pra
+  pessoa) quando está marcado como pago **sem valor**, quando o **PSP não está
+  configurado**, ou quando o **kill switch** `PAG_ENABLED=0` está ligado. O
+  `GET` do evento devolve o mesmo texto em `aviso`.
+- **Re-inscrição de cancelada reativa como `recebida`, não `confirmada`**, em
+  evento pago — confirmar ali daria a vaga a quem não pagou.
+- **Reenvio do formulário devolve a MESMA cobrança** (`referencia` =
+  `inscricao:<id>`), inclusive no caminho de corrida `duplicada` da RPC. É assim
+  que ninguém paga duas vezes.
+- **A vaga é reservada ANTES de cobrar.** Se a cobrança falhar, responde 502
+  dizendo que a vaga está reservada e que reenviar o formulário não a perde (o
+  cron de expiração devolve depois). O inverso — cobrar sem vaga garantida —
+  seria estornar gente.
+- **`insc_pagamentos` é espelho, não fonte**: gravado no insert com
+  `cobranca_id`; a UNIQUE de `cobranca_id` faz o reenvio não criar segunda linha.
+
+**`GET /api/public/evento/pagamento/:token`** — status pela página pública.
+⚠️ Montado sob `/public/evento` **de propósito**: herda o limiter generoso dali
+E o `skip()` do limiter global; a tela faz polling e sob `/api/public` puro
+tomaria 429 no lançamento. Acessado pelo **`public_token`**, nunca pelo uuid.
+Quando a cobrança está parada há >2 min, consulta o PSP na hora (rede de
+segurança nº 1) — ninguém fica olhando "aguardando" porque uma entrega se
+perdeu. A resposta expõe só o necessário: **nada de PII do pagador, metadata ou
+payload**.
+
+**Página `/pagamento/:token`** (`src/pages/public/PagamentoInscricao.tsx`):
+status em vocabulário de usuário (não o status canônico cru), QR do Pix +
+copiar, botão de pagar, polling de 6s que **para sozinho** ao resolver, e
+consulta imediata no `visibilitychange` (voltar do checkout). ⚠️ **Confete e
+"pagamento confirmado" só com `pago === true` lido do servidor** — voltar do
+checkout não é pagar.
+
+**Migration `20260729040000`** (⚠️ **aplicar ANTES do merge** — o `select` do
+evento pede as colunas novas e o PostgREST erra a consulta inteira se faltarem,
+derrubando `/evento/:slug`): `insc_eventos.parcelas_max` (1–21, NULL = teto da
+conta do PSP) e `juros_repassados` (default true). É **por evento** porque quem
+define o teto de parcelas é **quando a igreja paga o local** — retiro em
+novembro e em março admitem números diferentes.
+
+**Fix no núcleo, junto:** cobrança **meio-criada** (linha existe, chamada ao PSP
+falhou) era um beco sem saída — `porReferencia` devolvia ela pra sempre, sem
+checkout, e o cron de reconciliação também não a pegava (filtra por
+`provider_cobranca_id`). Agora `criarCobranca` **retoma** sobre a mesma linha
+(helper `pedirAoProvider`). E o erro de chamada **não marca mais `falhou`**:
+`falhou` é TERMINAL na máquina e significa "não pode mais ser pago" — timeout na
+nossa chamada não é isso, e marcar ali tornava a cobrança irrecuperável (o
+trigger recusaria a retomada).
+
+### ✅ Vaga atômica (migration `20260729030000` · pré-requisito de venda paga)
+
+A vaga era conferida com `count(*)` (`inscritosEspinha`) e o INSERT vinha ~160
+linhas depois, sem nada serializando — 300 pessoas no minuto do lançamento
+passavam TODAS pela conferência. Em evento gratuito é tolerável; **em evento
+PAGO com vaga finita significa receber dinheiro de quem não vai ter lugar.**
+
+**`fn_insc_inscrever(...)` é o ÚNICO caminho de criação de inscrição** —
+conferir janela/vaga/duplicidade, gerar `numero_sorte` e inserir acontecem no
+MESMO comando, serializados por `pg_advisory_xact_lock(1937, hashtext(evento_id))`.
+Não inserir em `inscricoes` direto (nem no painel, nem em import) sem
+reproduzir a trava.
+
+- **Advisory e não `FOR UPDATE` na linha do evento**: travar `insc_eventos`
+  faria qualquer edição do painel (publicar, mudar horário) disputar lock com a
+  fila de inscrição. Advisory é mutex nomeado, não toca em dado. Lock de
+  **transação** → liberado no fim do statement mesmo com exceção. Serializa por
+  evento (lançamento de um retiro não segura fila de outro).
+- **Regra de negócio NUNCA vira exceção**: devolve `{ok, motivo}` (`sem_vaga`,
+  `encerrado`, `duplicada`, `sorteio_esgotado`, `evento_inexistente`) e quem
+  chama decide o HTTP. ⚠️ `sem_vaga` responde **409**, nunca "inscrito com
+  sucesso" — o `catch (23505) → ja_inscrito: true` anterior mascarava corrida de
+  vaga como sucesso.
+- **`recebida` OCUPA vaga** (só `cancelada` devolve). É o ponto do fluxo pago: a
+  vaga fica reservada até pagar ou o cron expirar. `fn_insc_vagas(evento_id)`
+  devolve `{vagas, ocupadas, restantes}` pela MESMA régua — o `GET
+  /public/evento/:slug` expõe `vagas_restantes` e a página mostra "Restam N
+  vagas" / "Última vaga!" (aviso, pode ficar 1-2 defasado; quem decide é o lock).
+- Junto: `eventoEspinhaPorSlug` passou a selecionar `valor_centavos`,
+  `pagamento_metodos` e `pagamento_expira_horas` (a F3.3 precisa deles na porta
+  pública) e `pagamento_metodos` entrou no CRUD de evento com sanitização
+  própria — fica FORA do loop de `CAMPOS_EVENTO` porque é `TEXT[]` e string crua
+  quebraria o insert (métodos aceitos: pix/cartao/boleto/apple_pay; dinheiro e
+  transferência são lançamento manual, não opção da pessoa).
+
+⚠️ **O MCP do Supabase VOLTOU a funcionar (2026-08-03)** — `apply_migration` e
+`execute_sql` aplicam direto no projeto `hhntwfawfnxvuobhdfkb` (confirmado
+aplicando a `20260730220000`). Antes retornavam `requires approval`, e é por isso
+que várias seções acima dizem "colar o SQL e o Marcos roda no SQL Editor". A
+disponibilidade **oscila por sessão**: tentar o MCP primeiro; se recusar, cair no
+SQL colado. O que NÃO muda: **colar o SQL da migration na conversa continua
+obrigatório** (regra "Migrations do Supabase") — é o registro do que foi aplicado,
+independente de quem executou. E **conferir o resultado no CATÁLOGO**
+(`information_schema`/`pg_policies`/`pg_indexes`), nunca só o `{"success":true}`
+— lição da lei nº 10 (o `ADD COLUMN IF NOT EXISTS … REFERENCES` que "declarava"
+uma FK que o banco nunca teve).
+
+**Caminho crítico que NÃO é código** (bloqueia a venda, não o build): abrir a
+conta no PSP no CNPJ da igreja avisando por escrito o volume do lançamento
+(CNPJ religioso + 150 transações em 72h é o padrão que dispara retenção de
+saldo por 30-90 dias); política de reembolso escrita (venda pela internet tem 7
+dias de arrependimento por CDC art. 49 independente da política, e ela precisa
+dizer quem come a taxa do gateway); classificação contábil da receita por
+escrito; e quando a igreja paga o local — isso decide o teto de parcelas.
+
+### ✅ Fundação: catálogo de portas, QR e check-in auditável (2026-07-28/29)
+
+- `backend/services/inscricaoPortas.js` é o **registro canônico** das portas e
+  fontes da view. Porta/alias novo entra ali e precisa deixar
+  `inscricaoPortas.test.js` verde — o teste fecha nos **2 sentidos**
+  (catálogo→App.tsx protege contra renomear/remover; App.tsx→catálogo quebra o CI
+  se aparecer rota com cara de porta fora do registro).
+- `insc_checkin_eventos` é **ledger append-only**; `insc_checkins` continua sendo
+  o estado atual. Override exige motivo. ⚠️⚠️ **LEI · ledger append-only NÃO tem
+  FK com `ON DELETE SET NULL`** (migration `20260729100000`): SET NULL **é um
+  UPDATE**, e o trigger de imutabilidade abortava — apagar um profile que já
+  operou a portaria falhava para sempre. **Ator em ledger é SNAPSHOT** (UUID sem
+  FK). Vale pra qualquer trilha append-only nova.
+- `insc_qr_tokens` guarda **somente SHA-256** + emissão/canal/revogação. Token
+  legado sem registro continua válido; revogado é recusado. ⚠️ O comprovante é
+  **HMAC determinístico do id da inscrição — o hash nunca muda** e não existe
+  rotação, então revogar sem poder reativar tirava a pessoa do check-in por QR
+  **permanentemente**. Daí o `PATCH /qrs/:id/reativar` (motivo obrigatório;
+  histórico no `app_audit_log`). Revogar = "desligar o QR desta inscrição", nunca
+  "trocar o QR da pessoa".
+- **Ledger sem leitor é ledger inútil**: `GET /eventos/:id/checkin/historico` +
+  painel "Trilha da portaria" (sob demanda — a tela faz polling de 15s). A
+  pergunta "quem liberou a entrada de quem estava com pagamento pendente?" só era
+  respondível no SQL Editor.
+- **Busca e paginação do inventário de QR são SERVER-SIDE**: filtrar só a página
+  carregada torna a maioria das pessoas inencontrável num evento do tamanho do
+  Celebra.
+- ⚠️ **O gate de deploy roda Vitest + os contratos ANTES do Vercel**, e
+  `workflow_dispatch` roda o mesmo job — **não existe bypass**. Teste novo aqui
+  precisa ser **determinístico**: a lição é o `faixaEtaria.test.ts`, que dependia
+  da HORA da execução.
+
+### ✅ A tela de pagamento (2026-07-30 · PR #2168 · SEM migration)
+
+Pedido do Marcos: *"preciso de um modal na hora do pagamento, cartão, pix,
+boleto"*. Antes o formulário mandava a pessoa **direto pro `checkout_url`** do
+PSP — saía do domínio no meio do fluxo e, ao fechar a aba, ela perdia o link.
+Agora vai pra `/pagamento/:token`, que é endereçável e à qual ela pode voltar. A
+narrativa do desenvolvimento e dos 2 testes de sandbox está no legado.
+
+**⚠️ LEI (nº 5 do núcleo, aplicada à UI): cartão fica no checkout do PSP.**
+Número de cartão não entra no nosso domínio, no nosso Express nem nos nossos
+logs — coletar PAN em formulário nosso ampliaria o escopo PCI-DSS da igreja e
+muda a responsabilidade legal num vazamento. **Pix e boleto NÃO são dado
+sensível** (QR e linha digitável), por isso são nativos: é assim que se consegue
+quase toda a sensação de fluxo integrado com zero exposição.
+
+**⚠️ LEI: a forma de pagamento é ESCOLHIDA pela pessoa e CONFIRMADA pelo PSP —
+nunca adivinhada.**
+- Criar a cobrança sem `billingType` **não garante** fatura com as três formas: o
+  PSP monta a página com o que a CONTA tem habilitado (conta sem chave Pix rende
+  boleto puro). Palpite sobre capacidade de conta alheia é sempre assim:
+  silencioso e errado.
+- `definirMetodo` persiste forma + artefatos e **não toca em valor, status nem
+  vaga** — trocar de forma não é pagar nem cancelar. Recusa cobrança que já
+  recebeu dinheiro: ali o método é fato consumado, e reescrevê-lo apagaria como o
+  dinheiro entrou.
+- O adapter **LANÇA quando o PSP devolve `billingType` diferente do pedido** —
+  era a única coluna do núcleo que não passava por mapeamento canônico, violando
+  a lei nº 2. O chamador transforma isso em **502 com o estado atual no corpo**,
+  pra a tela não regredir pra vazio.
+- **A tela não pode mostrar duas verdades**: a aba vem do que o SERVIDOR gravou;
+  em erro ela volta pra forma confirmada, a aba recusada fica riscada com o
+  motivo, e a mensagem **nomeia a forma** (com 3 abas, "não conseguimos preparar
+  esta forma" não diz qual).
+- ⚠️ **A pré-seleção NÃO reescreve a forma da cobrança.** O effect que olhava só
+  o estado local convertia em Pix quem havia escolhido **cartão parcelado** — e o
+  `installmentCount: null` que Pix/boleto mandam **desfazia o parcelamento**. A
+  pré-seleção usa o método JÁ GRAVADO; cai no primeiro da lista só quando a
+  cobrança ainda não tem forma.
+- **Cada aba tem caminho nativo E de reserva**: sem o artefato (QR, linha
+  digitável), a aba manda pro checkout em vez de aparecer vazia ou mentir.
+- `POST /pagamento/:token/metodo` responde **409** quando a alteração não
+  aconteceu (cobrança com dinheiro dentro ou terminal) — era um 200 silencioso: a
+  aba mudava, o servidor não, e a tela não dizia nada.
+
+⚠️ **Armadilha de CSS que vai reaparecer**: `textAlign: 'center'` no container
+**não centraliza `<img>`** neste projeto — o preflight do Tailwind faz
+`img { display: block }`, e sem `margin-inline: auto` a imagem encosta à esquerda
+enquanto o texto ao redor fica centralizado (foi o QR do Pix).
+
+### ✅ Bolsa, desconto e gratuidade POR INSCRITO (2026-07-30 · migration `20260730170000`)
+
+Pergunta do Marcos: *"tem pessoas que, para ajudarmos, cobramos menos, ou até vão
+de graça — como amarrar isso da melhor forma?"*
+
+**Decisão: preço é atributo da INSCRIÇÃO, não do evento.**
+`insc_eventos.valor_centavos` segue sendo o valor de tabela (o que o formulário
+público cobra de todo mundo); quem paga diferente carrega
+`inscricoes.valor_cobrado_centavos` (NULL = tabela · 0 = isenta) + `bolsa_tipo`
+(integral|parcial), `bolsa_motivo` e autoria. As alternativas descartadas e por
+quê: **evento paralelo mais barato** duplica vaga/lista/sorteio e tira a pessoa do
+retiro de verdade; **"lançar como pago" na mão** faz o arrecadado mentir — e o
+arrecadado é justamente o número que ele pediu; **desconto no evento** não é do
+evento, é de quem recebeu a ajuda.
+
+`POST|DELETE /inscricoes/eventos/:id/inscricoes/:insId/bolsa` (nível 3 · ato de
+gestão). O que ele **NÃO** faz, por decisão: **não devolve dinheiro** (bolsa em
+quem já pagou é registrada e avisada; estorno é decisão humana explícita), **não
+cancela a inscrição**, **não confirma quem ainda deve**. Gratuidade → inscrição
+`confirmada` na hora (a vaga já é dela). Desconto → cancela a cobrança antiga
+(com `preservar_dominio`) e emite uma NOVA com referência versionada
+(`inscricao:<id>:bolsa:<ts>` — `inscricao:<id>` é UNIQUE e é o que impede pagar
+duas vezes), devolvendo o link pra equipe enviar; o espelho antigo vai pra
+`expirado` por causa da UNIQUE de inscrição ativa em `insc_pagamentos`.
+Motivo é obrigatório no CHECK do banco — conceder benefício sem dizer por quê é
+registro que ninguém defende seis meses depois. Na lista, isenta ganha selo
+**"isenta"** em vez de "aguardando pagamento" (não está aguardando nada).
+
+### ⚠️ Forma de pagamento por PESSOA · a view lia a coluna errada (2026-07-30 · migration `20260730180000`)
+
+Pergunta do Marcos: *"pelo sistema vou conseguir saber a forma de pagamento de
+cada pessoa?"* Ia responder "sim" — e estava **errado**: a tela mostrava **"Pix"
+pra todo mundo**. `vw_insc_pagamento_estado` resolvia tudo com
+`COALESCE(motor, espelho)` **menos `metodo`**, que lia só o espelho
+`insc_pagamentos` — e o espelho (a) nascia com `cobranca.metodo || 'pix'`
+(**palpite gravado como fato**, já que na criação a pessoa ainda não escolheu),
+(b) nunca era atualizado e (c) **não podia** guardar a verdade (`NOT NULL CHECK
+(metodo IN ('pix','cartao'))` — boleto não cabia, "ainda não escolheu" não cabia).
+O método certo sempre existiu em `pag_cobrancas.metodo`; era só a LEITURA no lugar
+errado.
+
+- `metodo` do espelho virou **nullable** com CHECK no vocabulário ÚNICO de
+  `pagamentos/tipos.js`, e a view passou a `COALESCE(c.metodo, ip.metodo)`.
+  **Sem backfill**: onde há cobrança o motor responde; onde não há (pagamento
+  manual) o espelho É a verdade.
+- Herdaram o conserto: badge da lista, CSV, agrupamento "por pagamento" da lista
+  impressa, e o card **"Como pagaram"** do placar (mesmo laço que soma o
+  arrecadado · **isentas separadas**, porque bolsa integral não tem forma).
+  `metodo` nulo aparece como "Forma não informada" em vez de virar Pix.
+- ⚠️ **Régua que fica**: valor default plausível (`|| 'pix'`) numa coluna de
+  registro é **palpite gravado como fato** — e some da revisão, porque parece
+  dado. Quando a informação ainda não existe, a coluna guarda NULL.
+
+### ✅ Comprovante de Pix/transferência · conferência HUMANA (2026-07-30 · migration `20260730200000`)
+
+Pedido do Marcos: *"preciso que nessa tela apareça o comprovante anexado, para
+quando o pagamento for por pix ou transferencia."*
+
+⚠️ **LEI desta feature: imagem NUNCA marca pagamento.** O anexo entra como
+`em_analise`; quem baixa o pagamento é uma pessoa, via `marcarPagoManual` (que
+exige `confirmado_por`). Aceitar print como prova automática é como se aprova
+comprovante falso — e o dinheiro não aparece na conciliação do extrato depois.
+
+- **Tabela, não coluna** (`insc_comprovantes`): recusar + reenviar é o caso
+  NORMAL, não a exceção; uma coluna sobrescreveria a evidência da tentativa
+  anterior, que é justamente o que responde "por que aceitamos este pagamento?".
+  Arquivo em bucket **privado** `inscricao-comprovantes` (só o path no banco;
+  equipe vê por signed URL de 15 min, assinada em lote). `revisado_por` é
+  **SNAPSHOT sem FK** — a prova de quem liberou o dinheiro não pode sumir com o
+  profile. Motivo de recusa obrigatório no CHECK (a pessoa lê pra corrigir).
+- **Porta pública** `POST /pagamento/:token/comprovante` (imagem ou **PDF** ≤10MB
+  — o app do banco exporta PDF, e recusá-lo empurraria a pessoa a printar o PDF,
+  pior de ler; teto de 8 por inscrição). Já pago → 409 (não há o que conferir).
+  Falha no insert **remove o arquivo órfão**. Notificação diz explicitamente que
+  **NÃO foi baixado**. `respostaPagamento` ganhou `aceita_comprovante` (só
+  não-pago e em forma que pode ter sido paga fora do PSP — cartão/boleto o
+  provedor confirma sozinho) e `comprovantes` **sem `storage_path`**.
+- **Tela do inscrito**: bloco "Comprovante anexado" + "Confirmar pagamento" /
+  "Recusar". O botão diz confirmar **PAGAMENTO** porque é isso que o clique
+  afirma. Badge de clipe na lista + tile "Comprovantes pra conferir" no placar —
+  sem número visível, anexo de sábado só apareceria por acaso.
+- **Página pública**: enquadrada como *"já paguei e a página não atualizou"*,
+  **nunca** como forma de pagar (convidar todos a "pagar e mandar print" criaria
+  fila humana pra pagamento que o PSP confirma em segundos). Depois de enviar diz
+  "em análise" + "não precisa pagar de novo".
+- `carregar()` da tela do evento passou a **devolver a lista** pra ficha aberta
+  refletir o pagamento na hora (senão a badge seguiria "aguardando" logo após
+  confirmar, e isso se lê como bug).
+
+### ✅ Gratuidade/desconto PRÉ-AUTORIZADO por CPF (2026-07-30 · migration `20260730210000`)
+
+Pedido do Marcos: *"eu colocaria o CPF da pessoa que iria receber esse benefício,
+e aí na inscrição dela, quando ela colocasse o CPF, o sistema já iria identificar
+que aquele CPF tem direito ao desconto (que será definido pelo líder) ou
+gratuidade."*
+
+`insc_beneficios` é o **lado de entrada da bolsa** (20260730170000), não uma
+segunda régua de preço: ao ser usado, grava as MESMAS colunas em `inscricoes`
+(`valor_cobrado_centavos` + `bolsa_tipo` + `bolsa_motivo`). Preço continua sendo
+atributo da INSCRIÇÃO — duas fontes de preço concorrendo é como o arrecadado
+passa a mentir.
+
+- `valor_centavos` é **quanto a pessoa PAGA**, não o desconto (mesma semântica de
+  `valor_cobrado_centavos`) — inverter numa ponta e não na outra é como se cobra
+  R$ 700 de quem devia pagar R$ 200. O POST recusa valor ≥ o de tabela (é o valor
+  total digitado no campo errado) e exige **CPF com DV** pelo canônico do
+  contrato: CPF inválido aqui seria autorização que nunca casa, já que a porta
+  pública exige DV.
+- **UNIQUE parcial (evento, cpf)** + `usado_em`: a autorização vale UMA vez,
+  senão o mesmo CPF renderia gratuidade em cada re-inscrição. `usado_em` só é
+  marcado DEPOIS de a inscrição carregar o benefício — o inverso queimaria a
+  autorização sem entregar o desconto.
+- **Na porta pública**: consultado ANTES da RPC porque decide o `p_status` —
+  gratuidade nasce **`confirmada`** (não há pagamento a esperar, e deixá-la
+  `recebida` faria o cron de expiração tirar a vaga de quem a igreja isentou) e
+  dispara a confirmação de WhatsApp na hora; desconto nasce `recebida` com a
+  cobrança **reduzida** (`cobrarInscricao` ganhou override de valor). A tela de
+  sucesso diz "liberada pela liderança — você não precisa pagar nada", senão a
+  pessoa ficaria esperando um link que não vem.
+- ⚠️ **Re-inscrição NÃO aplica benefício**: a cobrança dela já existe com o valor
+  cheio (`referencia` idempotente) e baixar o valor da inscrição sem reemitir a
+  cobrança deixaria as duas discordando. Quem reemite certo é o botão "Dar bolsa"
+  na ficha — então o sistema **notifica** a equipe em vez de aplicar pela metade
+  ou perder a autorização em silêncio.
+- Card "Gratuidade e desconto por CPF" na tela do evento (ver = nível **2**, a
+  linha carrega CPF; conceder/remover = 3). Remover autorização **já usada** não
+  desfaz o preço da inscrição — o aviso diz isso e aponta a ficha.
+- Junto: **card do evento clicável** na aba Eventos (só o texto abria, sem
+  afordância; agora a linha inteira abre `/inscricoes/evento/:id` com "Abrir →",
+  e os botões de ação param a propagação). Vale pro card avulso e pra linha de
+  edição dentro do modal da série.
+
+### 🎨 Personalização da fatura hospedada (pesquisado em 30/07 · não é código)
+
+**Dá pra marcar, não pra redesenhar**: a API do Asaas aceita 4 campos (logo, cor
+de fundo do logo, cor de fundo da info, cor da fonte) e passa por **aprovação
+manual deles**; a estrutura da página é do PSP. Conta de **associação** pode
+trocar "Cobrança" → "Doação" na fatura (Minha conta → Personalização → Fatura).
+⚠️ **Cartão na nossa página segue FORA, com fonte**: o Asaas **não oferece
+tokenização client-side**, então o PAN passaria pelo nosso Express e a aplicação
+precisaria de **SAQ-D** — é a lei nº 5 do núcleo, agora documentada.
+
+### ✅ Sonda da credencial do PSP · a chave do Asaas expira por desuso (2026-08-03 · migration `20260803140000`)
+
+Achado na própria tela de gerar chave do Asaas: *"chaves de API sem uso são
+desabilitadas após **3 meses** e permanentemente expiradas após **6 meses**"*.
+Isso é uma bomba de relógio para o caso da igreja: nosso sistema **só fala com o
+Asaas quando existe cobrança** — o cron de 10 min não chama a API se não há nada
+pra reconciliar. Vender inscrição em fevereiro e ter o próximo evento pago em
+agosto = 6 meses sem uso = chave expirada **em silêncio**, com o sintoma
+aparecendo no lançamento seguinte, quando ninguém consegue pagar. Pedido do
+Matheus: resolver por código, não por lembrete no calendário.
+
+- **A sonda é `GET /customers?limit=1`** (`asaas.verificarChave`) — endpoint que
+  o adapter **já exercita** em `acharOuCriarCliente`. ⚠️ Eu ia usar `/myAccount`
+  e voltei atrás: seria chutar rota nunca testada, e sonda de saúde que falha
+  por si mesma é pior que sonda nenhuma. Read-only, não move dinheiro.
+- **Roda dentro do `/cron/tick` que já existe**, no máximo **1x/dia** (as outras
+  ~143 execuções diárias saem em `pulado: verificado_recentemente` sem tocar o
+  PSP). NÃO criamos cron novo — o projeto tem 45 declarados e cada slot é risco
+  de teto de plano. Avulso forçado: `/cron/saude` (CRON_SECRET).
+- **`pag_provider_saude`** (1 linha por provider): `verificado_em`, `ok`,
+  `status_http`, `erro`, `latencia_ms`, `falhas_consecutivas`, `avisado_em`.
+  Sem PII → fora da whitelist de soft-delete; apagar a linha só faz a próxima
+  sonda rodar. RLS: SELECT só super-admin (a linha carrega mensagem de erro do
+  provedor), escrita só service_role.
+- ⚠️ **LEIS do desenho (não regredir):** (1) **silenciosa quando está tudo
+  bem** — banner/notificação permanente de "tudo ok" treina a equipe a não ler
+  aviso; (2) **não reclama de credencial AUSENTE** (`pulado: sem_credencial`) —
+  é estado intencional, produção viveu semanas em `manual`, e alarmar sobre
+  configuração deliberada é o jeito mais rápido de virar ruído; (3) erro
+  **transitório** (rede/5xx) só avisa na **3ª falha seguida**, enquanto **401/403
+  e chave do ambiente errado** avisam na **primeira**; (4) aviso com dedup por
+  **dia** (`chaveDedup`), e recuperação só é anunciada se alguém foi incomodado
+  pela falha.
+- **Tela:** `AvisoCredencialPagamento` na aba Eventos do `/inscricoes` —
+  renderiza SÓ com falha ou sonda >7 dias; botão "Verificar agora" gated em
+  nível 3 (bate no PSP). Endpoint `GET /inscricoes/pagamento-saude` (nível 1;
+  `?verificar=1` exige 3) devolve **aviso, não 500**, se a tabela faltar —
+  deploy em duas etapas.
+- Testes: `src/test/pagamentosSaude.test.ts` (11 · classificadores de erro,
+  mutation-testado: tratar 500 como credencial recusada deixa vermelho).
+
+### ⚠️ CORREÇÃO · o "teto de 40 crons no plano Pro" NÃO se confirmou (2026-08-03)
+
+Verificado com `vercel crons ls`: **45 cron jobs registrados**, incluindo
+`/api/pagamentos-webhook/cron/tick` (`*/10`). Nada foi truncado. O alarme
+registrado neste arquivo (e repetido várias vezes) de que "vaga reservada nunca
+expira" e "o e-mail de expirada nunca sai" **era infundado**.
+
+⚠️ **Mas fica uma lição que vale mais que o alarme: cron só roda em PRODUÇÃO,
+nunca em preview.** Foi por isso que, em todo o teste de sandbox, o pagamento só
+era reconhecido quando a página de pagamento estava aberta (a rede de segurança
+de 2 min do `GET /pagamento/:token`) — o cron nunca participou. Em produção
+existe uma rede de 10 minutos que o sandbox não tem.
+
+Comandos: `vercel crons ls` lista o que está registrado; `vercel crons run
+<path>` **dispara o cron de produção na hora** (usar só pra depurar).
+⚠️ Rodar qualquer `vercel` a partir de uma **worktree** falha com "codebase isn't
+linked" — o `.vercel/project.json` existe só no checkout principal; sempre
+`cd` pra lá primeiro.
+
+### ✅ Placar do evento + API do app do staff (2026-07-30 · SEM migration)
+
+- **`GET /inscricoes/eventos/:id/resumo`** → contadores por **COUNT no banco**
+  (`head: true`, nenhuma linha transferida) + **arrecadado** das inscrições
+  pagas. Aparece no topo do `/inscricoes/evento/:id`. ⚠️ É acompanhamento do
+  evento, **não caixa** (lei nº 6): o caixa recebe 1 receita por REPASSE do PSP.
+- **`lerInscritosDoEvento`/`contadoresEvento`** são os leitores ÚNICOS — a tela
+  do sistema e o app do staff chamam os mesmos. Se o join de pagamento mudar,
+  muda nos dois de uma vez.
+- **App do staff**: `GET /inscricoes/app/eventos` (compacto, só publicado/
+  encerrado por padrão) e `GET /inscricoes/app/eventos/:id/inscricoes` (paginado
+  de verdade, busca por nome/telefone server-side, placar só na 1ª página).
+  Nível 1 — acompanhar é ver, não operar. ⚠️ A TELA do app vive no repo
+  **`igreja-cbrio/CBRio-Staff`**, que não está anexado nesta sessão.
+
+### ⚠️ `parcelas_max` é TETO, não plano · e polling que não avança (2026-07-30 · SEM migration)
+
+Dois bugs achados por conselho deliberativo **depois** de o PR #2168 já estar em
+produção (a decisão Asaas × Mercado Pago mandou revisar o que estava no ar). Os
+dois eram silenciosos — nenhum teste, nenhum log, nenhum erro na tela.
+
+**1 · Bug de DINHEIRO: `criarCobranca` mandava `installmentCount: parcelas_max`.**
+`insc_eventos.parcelas_max` é o **teto** que a igreja admite (documentado como tal
+desde a `20260729040000`), e ele ia como o **número de parcelas do plano**. Efeito
+em cascata numa inscrição de R$ 900 com teto 12: o Asaas criava **12 cobranças de
+R$ 75**, o QR de Pix era da **primeira parcela** (a tela mostrando R$ 900), e o
+`quita_cobranca` — que existe pro cartão, onde a pessoa autoriza tudo de uma vez —
+marcava `statusFinal` **PAGO na parcela 1** → **inscrição confirmada tendo pago
+1/12**. No placar, R$ 11.250 de R$ 135.000.
+
+- `criarCobranca` **NUNCA** manda `installmentCount`. A cobrança nasce simples,
+  no valor cheio.
+- **Parcelar é escolha da PESSOA**, no momento em que ela escolhe cartão:
+  `definirMetodo(cobranca, metodo, { parcelas })` manda `installmentCount` +
+  **`totalValue`** (valor CHEIO — `value` seria o valor da parcela, e mandar os
+  dois é como se cobra 12× o total). Pix/boleto passam `installmentCount: null`,
+  que **desfaz** plano anterior em vez de criar um.
+- `quita_cobranca` passou a exigir **`billingType === 'CREDIT_CARD'`** nos dois
+  sites (webhook e consulta). Só no cartão a autorização é única; parcela 1 de Pix
+  não quita nada.
+- O teto é validado **no servidor** (`parcelas_max` do evento, ou o do provider
+  quando NULL) — seletor de parcelas na tela é conveniência, não autoridade.
+- `parcelas_total` é persistido a partir do que o **PSP confirmou**, não do que
+  foi pedido (mesma régua da lei nº 2 e do `definirMetodo`).
+- 4 testes novos, **2 mutation-testados**: reintroduzir o `installmentCount` no
+  `criarCobranca` OU tirar o `CREDIT_CARD` do `quita_cobranca` deixa o gate
+  vermelho.
+
+**2 · `sincronizar` não tocava `updated_at` quando não havia mudança.** A tela de
+pagamento faz polling e o endpoint público consulta o PSP quando a cobrança está
+parada há >2 min (rede de segurança nº 1). Sem carimbar a linha, **a janela ficava
+permanentemente aberta**: cada poll de 6s batia no Asaas. Com 100 abas no
+lançamento, ~1.000 req/min no PSP — e o limiter por IP satura antes disso.
+`sincronizar` agora chama `tocarReconciliacao` também no caminho `semMudanca`
+(é o mesmo mecanismo de round-robin do cron, documentado acima). Junto, a tela
+ganhou **backoff**: 6s nos 10 primeiros ciclos, depois 15s → 30s → teto de 60s,
+com o effect dependendo de **`statusAberto`** e não de `pag` — dependência em
+`pag` (que muda a cada poll) reiniciaria o backoff pra sempre.
+
+### ⚠️ Fatura hospedada · aba VELHA mostra estado VELHO (2026-07-30)
+
+O `invoiceUrl` é a MESMA URL a cada troca de método, então uma aba esquecida
+mostra o estado anterior — foi isso que gerou o falso relato de "cliquei em cartão
+e a fatura não oferece cartão". **Régua de diagnóstico: o campo FORMA da nossa
+tela é o que o servidor gravou** — se ele diz `cartao`, o PSP confirmou o
+`billingType` (senão a guarda de 30/07 teria lançado). Conferir a fatura sempre
+reabrindo pelo botão, nunca por aba velha.
+
+⚠️ **Apple Pay / Google Pay NÃO existem na fatura do Asaas** (verificado no
+produto): as formas são Boleto · Pix · Cartão de Crédito · Cartão de Débito, e
+cartão é formulário de PAN/titular/validade/CVV. O que o Asaas divulga como
+Apple/Google/Samsung Pay é o **app maquininha por aproximação (NFC / Tap on
+Phone)** — presencial. Carteira digital no checkout web exigiria outro gateway;
+não é ajuste de tela.
+
+### ⚠️⚠️ Cobrança TERMINAL sem dinheiro é REEMITIDA, não devolvida (2026-08-07 · SEM migration)
+
+`criarCobranca` devolvia a cobrança da `referencia` **fosse qual fosse o estado
+dela** — só reemitia quando estava meio-criada (sem `provider_cobranca_id`).
+Como `expirada`/`cancelada`/`falhou` são **absorventes** (`TRANSICOES` os deixa
+sem saída), quem reenviava o formulário recebia de volta uma cobrança que **não
+pode mais ser paga por caminho nenhum**.
+
+**Efeito medido no log de auditoria da inscrição CBR-2026-000141:** a
+re-inscrição reativa a inscrição pra `recebida` — que **OCUPA VAGA** — e entrega
+a cobrança expirada. Vaga travada, zero caminho de pagamento, e a tela ainda
+dizendo "A vaga voltou para a fila", que naquele instante é falso. No lançamento
+do retiro isso pega **todo mundo que deixa as 24h expirarem e tenta de novo**.
+
+- **Reemissão com referência versionada** (`<referencia>:r<ts>`), a MESMA técnica
+  do botão "Dar bolsa": `inscricao:<id>` é UNIQUE e é ela que impede pagar duas
+  vezes, então a cobrança nova não pode reusá-la. A antiga fica **intacta** (é o
+  registro de que a 1ª tentativa morreu) e a nova carrega
+  `metadata.reemitida_de`.
+- ⚠️ **Só `expirada`/`cancelada`/`falhou` COM `valor_pago_centavos = 0`**
+  (`STATUS_REEMITIVEIS` + `podeReemitir`). `estornado`/`chargeback` ficam de fora
+  **mesmo zerando a soma** (liquidação − estorno = 0): ali o dinheiro entrou e
+  voltou por decisão de alguém, e reemitir sozinho viraria cobrar de novo.
+- ⚠️⚠️ **`porReferencia` sozinho não bastava.** Depois da 1ª reemissão ele só
+  enxerga a base morta — o 2º reenvio do formulário emitiria uma TERCEIRA
+  cobrança com a segunda ainda viva, ou seja **duas cobranças pagáveis pela mesma
+  inscrição**, exatamente o que a UNIQUE existe pra impedir. Daí
+  `familiaReferencia()`: a referência exata + as versionadas (`:r<ts>`,
+  `:bolsa:<ts>`). Ordem de decisão: **dinheiro dentro vence · aberta vence ·
+  senão reemite**. A consulta extra só roda no caminho terminal — o caminho comum
+  segue com uma query só.
+- ⚠️ **A anterior é cancelada NO PROVEDOR antes** (best-effort): terminal aqui
+  não é terminal lá — o nosso cron marca `expirada` pelo `expira_em`, mas o QR do
+  Pix e o boleto podem seguir pagáveis no PSP. Mesmo racional do `cancelar` da
+  fachada: cobrança que o PSP mantém aberta e a gente fechou é conciliável; o
+  inverso não é.
+- ⚠️ **O espelho tem que rodar junto** (`cobrarInscricao`): `uq_insc_pag_inscricao_ativa`
+  admite UMA linha `pendente|aguardando|pago` por inscrição, e o insert do espelho
+  engole 23505 como "já existe". Sem aposentar a linha anterior (`status='expirado'`),
+  o painel e a `vw_insc_pagamento_estado` seguiriam apontando pra cobrança MORTA
+  enquanto a nova é a que a pessoa vai pagar. O update roda **sem filtrar pela
+  cobrança nova** — ela acabou de nascer e não tem espelho, e `neq` deixaria de
+  fora linha legada com `cobranca_id` nulo (NULL não compara).
+
+Testes: `src/test/pagamentosReemissao.test.ts` (13 casos · banco falsificado — o
+que está sob teste é a DECISÃO, não o PostgREST). **Mutation-testados**: voltar a
+devolver a terminal deixa 7 vermelhos; tirar a checagem de família deixa 1.
+⚠️ O `vi.mock` do Vitest **não** alcança `cobrancas.js` (CommonJS que
+DESESTRUTURA `supabase` no topo) — o teste usa `createRequire` e troca o
+`module.exports` antes do require. Vale pra qualquer teste novo sobre o núcleo.
+
+## ⚠️⚠️ LEI · o embed `tabela(count)` do PostgREST NÃO filtra soft-delete (2026-08-10)
+
+Reportado pelo Matheus: *"mesmo eu apagando as inscrições de teste que fiz, tá
+ficando como 14 pessoas inscritas no evento do retiro; sendo que se eu clicar não
+tem ninguém, pois apaguei os testes."* Os dois números estavam na mesma tela do
+sistema: o **card da série** dizia "14 no total" e o **detalhe do mesmo evento**
+dizia 0.
+
+**O detalhe estava CERTO** (`contadoresEvento` faz COUNT com
+`.is('deleted_at', null)`). Quem contava linha apagada era o card, que lia
+`inscritos:inscricoes(count)` — e o `count` de um recurso EMBUTIDO conta a tabela
+inteira, inclusive o que o `app_soft_delete` marcou. Medido antes de tocar:
+**RETIRO = 14 linhas, TODAS soft-deletadas** (11 cancelada + 2 confirmada + 1
+recebida) ⇒ resposta certa é 0; **Celebra 2026 = 201 exibido contra 200 vivas**
+(inflado em 1, e ninguém tinha percebido); Patrocinadores 15 = 15 (correto por
+acaso, não tem linha apagada).
+
+- **`backend/services/inscricaoContagem.js`** é o leitor ÚNICO
+  (`contarInscritosVivos(db, eventoIds)`), usado pelos **3** endpoints que
+  contavam por embed: `GET /inscricoes/eventos` (o card da série),
+  `GET /eventos/:id` e `GET /inscricoes/app/eventos` (**o app do staff tinha o
+  MESMO bug**). O cliente `db` é injetado — é isso que torna a régua testável
+  sem banco.
+- ⚠️ **A RÉGUA É A MESMA do `contadoresEvento.inscritos`**: linha VIVA, com
+  **cancelada INCLUSA**. É o que faz card e detalhe passarem a bater. Excluir
+  cancelada só aqui recriaria, do outro lado, exatamente a divergência que este
+  arquivo fecha. Se a igreja decidir que cancelada não conta, muda **nos DOIS**.
+- ⚠️ **Filtro no recurso embutido foi descartado de propósito**: não deu pra
+  verificar neste ambiente se o `count` do embed respeita filtro do embed, e
+  contagem que a liderança lê pra decidir não pode depender de suposição sobre o
+  PostgREST. A contagem é explícita, seleciona **só `evento_id`** (nenhuma PII),
+  pagina de 1.000 (cap server-side trunca em silêncio) e faz `.in()` em lotes de
+  200 (lista longa estoura a URL).
+- ⚠️ **Erro do banco PROPAGA** em vez de virar 0: contagem errada é pior que erro
+  visível — o zero silencioso é justamente o que ninguém investiga.
+- **Varredura do resto do sistema**: os outros dois `(count)` de embed são
+  `devocional_itens(count)` e `vol_escala_template_itens(count)`, e **nenhuma
+  das duas tabelas tem `deleted_at`** (conferido no `information_schema`) — ali o
+  embed está correto. Nenhum falso alarme aberto.
+- Testes: `src/test/inscricaoContagem.test.ts` (9 casos, banco falsificado com os
+  números reais de produção). **Mutation-testado**: tirar o
+  `.is('deleted_at', null)` deixa **4 vermelhos**.
+
+⚠️ **Régua que fica pra qualquer contagem nova**: em tabela da whitelist de
+soft-delete, **`(count)` de embed é sempre errado**. Contar exige query própria
+com o filtro, ou `head: true` com `.is('deleted_at', null)`.
+
+## ⚠️⚠️ LEI · RPC chamada pelo CLIENTE precisa de grant pra `authenticated` (2026-08-10 · migration `20260810120000`)
+
+Reportado pelo Matheus com screenshot: o cartão de membro do app mostrava
+**"QR indisponível"**. O token DELE **existe** em `mem_qrcodes` — o que falhava
+era a chamada: `app_meu_qrcode()` estava com EXECUTE só pra `service_role`, e o
+app chama com o JWT da pessoa (papel `authenticated`).
+
+**Provado funcionalmente antes de escrever a migration**, não deduzido do
+catálogo: `set local role authenticated; select public.app_meu_qrcode();` →
+`permission denied for function app_meu_qrcode`. Depois do grant, o MESMO bloco
+passa. ⚠️ E o app **descarta o erro** (`const { data: tk } = await
+supabase.rpc(...)`, sem ler `error`), então o token virava null e a tela dizia
+"indisponível" — **falha perfeitamente silenciosa**.
+
+**⚠️ CAUSA:** o sweep de segurança que revogou `anon`/`authenticated` de ~114
+funções SECURITY DEFINER partiu de *"o backend usa service_role, logo é imune"*.
+A premissa vale pro backend e **não vale pro app mobile**, que fala direto com o
+PostgREST usando a chave pública. **4 RPCs do app foram pegas.**
+
+**⚠️⚠️ O RAIO ERA MAIOR QUE O SINTOMA:** além do QR, **o check-in de batismo pelo
+app estava quebrado** (`app_batismo_checkin`) e ninguém havia reportado, junto de
+marcar/desmarcar batismo em outra igreja. Das RPCs que o FRONT do ERP chama com a
+anon key, a única (`app_marcar_senha_trocada`) manteve o grant e segue de pé.
+
+**Por que re-conceder é SEGURO nas 4** (auditado uma a uma, não em bloco): todas
+resolvem o alvo pelo **`auth.uid()`** — o parâmetro nunca escolhe a PESSOA, então
+id de terceiro no argumento não alcança dado de terceiro.
+
+| RPC | como resolve o alvo |
+|---|---|
+| `app_meu_qrcode()` | sem parâmetro · `profiles.id = auth.uid()` |
+| `app_batismo_checkin(uuid)` | filtra `membro_id = v_membro` → id alheio devolve "Inscrição não encontrada" |
+| `app_marcar_batizado_outra(text)` | `update … where id = v_membro` |
+| `app_desmarcar_batizado_outra()` | idem |
+
+⚠️ **`anon` não recebeu nada** — as quatro exigem pessoa autenticada.
+
+- ⚠️⚠️ **A MARCA FICA NO CATÁLOGO** (`COMMENT ON FUNCTION` começando com
+  `[GRANT authenticated OBRIGATÓRIO]`), não só no arquivo da migration: a
+  varredura de segurança é feita **à mão no SQL Editor**, e quem varrer de novo
+  precisa ver o motivo no próprio objeto. Conferido no catálogo: 4 linhas com
+  `authenticated = true`, `anon = false`, marca presente.
+- ⚠️ A migration **só faz GRANT + COMMENT** — nenhum corpo de função é tocado, de
+  propósito: `CREATE OR REPLACE` a partir do arquivo do repo do app reverteria
+  ajuste feito em produção depois (a lição do patch dinâmico do fanout).
+- ⚠️ Os arquivos `supabase/*.sql` do **repo do APP** declaram esses grants, mas
+  são **cópia de leitura** (o cabeçalho deles diz isso desde 08/08): quem cria e
+  altera é a migration do ERP.
+- **Inventário + guarda no gate**: `backend/utils/rpcsCliente.js` lista as RPCs
+  chamadas com a chave pública, e `src/test/rpcsCliente.test.ts` (8 casos) exige
+  que **cada uma tenha `grant execute … to authenticated` declarado em migration**
+  — é a rede contra o erro mais provável (RPC nova no app sem o grant, que produz
+  exatamente a mesma falha silenciosa). **Mutation-testado**: apagar um grant da
+  migration deixa vermelho, e "consertar" com `service_role` **não** satisfaz.
+  O teste também varre `src/` e exige que toda `supabase.rpc()` do front esteja
+  no inventário.
+- ⚠️ **A checagem ignora COMENTÁRIO antes de casar** — nos dois lados (SQL e JS).
+  A 1ª versão do teste ficou vermelha por causa do comentário do PRÓPRIO teste,
+  que cita a chamada como exemplo: a mesma armadilha de 06/08, agora no JS. E o
+  `semComentariosJs` **não pode comer o `//` de uma URL** (`https://…`) — tem caso
+  cobrindo.
+- ⚠️ **NÃO listar no inventário RPC que só o BACKEND chama**: essas devem
+  continuar restritas a `service_role`, e ampliar o grant delas é regressão de
+  segurança. O critério é UM: *alguém chama isso com a chave pública?*
+
+## ⚠️ Adapter do MERCADO PAGO (2026-08-06 · SEM migration)
+
+`providers/mercadopago.js` — o único arquivo que conhece a linguagem do MP.
+`'accredited'` em qualquer outro lugar é bug de arquitetura (lei nº 2). Fatos
+levantados na doc oficial em 06/08 (não de memória), com o que NÃO foi
+confirmado declarado como tal.
+
+### As três coisas que o MP forçou a mudar no desenho
+
+**1 · ⚠️⚠️ A Orders API (a recomendada) NÃO devolve taxa, líquido nem data de
+liberação.** O schema de `transactions.payments[]` tem amount/paid_amount/
+status/payment_method/discounts e mais nada. Quem tem `fee_details`,
+`net_received_amount` e `money_release_date` é a **Payments API, marcada
+"legacy"** ("will not receive new features, only security and stability fixes",
+sem data de sunset).
+Decisão: **escrever pela Orders API, ler pelas duas.** Pagamento que chega pela
+Orders entra com `taxa_centavos: null` / `liquido_centavos: null` — que é a
+resposta HONESTA ("o PSP não disse") e **não fere a lei nº 6**, que proíbe
+CALCULAR taxa, não proíbe não tê-la. Pagamento pelo tópico `payment` (checkout
+hospedado) traz os três e eles são usados.
+⚠️ **Consequência aberta: a conciliação automática da TARIFA não fica de pé só
+com este adapter.** Pix cai sem tarifa conhecida. Fechar isso exige o relatório
+"Released money" do MP (produto separado) ou aceitar a API legada — **decisão de
+arquitetura, não de implementação**, e ainda não tomada.
+
+**2 · ⚠️⚠️ Nenhum prefixo distingue token de teste do de produção.** Citação
+literal: *"The test Access Token starts with the prefix `APP_USR`, just like your
+production Access Token."* Isso **mata a guarda do Asaas** (`$aact_hmlg_` ×
+`$aact_prod_` conferido na chamada). A guarda foi reprojetada em duas partes:
+(a) **`MERCADOPAGO_AMBIENTE`** declara a intenção; (b) **`live_mode`** — que vem
+em toda resposta e em todo webhook — é conferido contra ela e **LANÇA** se
+divergir. Os dois lados são fatais por motivos opostos: produção com token de
+teste = a pessoa "paga" e nada entra; teste com token de produção = o ensaio
+cobra de verdade. ⚠️ `live_mode` ausente **não** vira erro: nem toda resposta o
+traz, e inventar erro onde não há sinal quebraria o fluxo por nada.
+
+**3 · ⚠️ O webhook chega em DOIS tópicos.** `orders` (nosso Pix, via Orders API)
+e `payment` (quem pagou pelo checkout hospedado). **Marcar só um no painel deixa
+metade das entregas muda.** O adapter trata os dois; tópico desconhecido devolve
+`null` e o núcleo registra sem despachar.
+
+### Como o adapter mapeia no núcleo (e por que assim)
+
+| momento | o que o adapter faz | por quê |
+|---|---|---|
+| `criarCobranca` | `POST /checkout/preferences` | a Orders API exige o `payment_method` na criação, e aí a pessoa **ainda não escolheu**. Sem um `provider_cobranca_id` aqui o núcleo trataria a linha como "meio-criada" e a retentaria pra sempre. A preference dá id + `init_point` (checkout que já funciona). |
+| `definirMetodo('pix')` | `POST /v1/orders` | é onde o objeto cobrável de verdade nasce. Devolve o QR (`payment_method.qr_code`). |
+| `definirMetodo('cartao')` | devolve o `init_point` guardado | PAN não entra aqui (lei nº 5). ⚠️ **NÃO devolve `parcelas`** — quem escolhe é o pagador na página do MP; afirmar o que foi PEDIDO violaria "a forma/parcela confirmada é a que o PSP devolveu". O número real chega no webhook. |
+| `consultarStatus` | `GET /v1/orders/{id}` | só a ORDER é consultável; preference não tem estado de pagamento. Antes da escolha devolve `null` — honesto, e o núcleo lê null como "sem novidade". |
+
+⚠️ **O vínculo estável entre preference e as N orders é o `external_reference`**
+(= nossa `referencia`), não o id do provider. É por ele que o webhook reencontra
+a cobrança quando o id é de outro objeto — e é o que torna seguro trocar de
+forma de pagamento (cada troca cria outra order, todas com a mesma referência).
+
+**Mudança no núcleo que isso exigiu:** `cobrancas.definirMetodo` passou a
+persistir `provider_cobranca_id` quando o adapter devolve um. Sem repontar, o
+cron de reconciliação ficaria consultando a preference, que nunca muda de
+estado. O Asaas não devolve o campo e segue idêntico.
+
+**E no contrato do webhook:** `verificarAssinatura` ganhou um 4º argumento
+`{ query, payload }`. O manifesto do MP é montado com o `data.id` do **QUERY
+STRING** (não do corpo) + o header `x-request-id`:
+`id:<data.id minúsculo>;request-id:<x-request-id>;ts:<ts>;` → HMAC-SHA256 hex
+comparado com o `v1` do header `x-signature`. ⚠️ O `;` final faz parte, e
+**minusculizar é o caso NORMAL**: os ids da Orders API são ULIDs MAIÚSCULOS
+(`ORD01J…`) e a doc manda converter. Sem passar a query, toda entrega legítima
+tomaria 401.
+
+### ⚠️ Boleto está FORA das capacidades, de propósito
+
+O boleto do MP exige **endereço completo** do pagador (street_name,
+street_number, zip_code, neighborhood, city, state) e **`pag_cobrancas` não
+guarda endereço**. A fachada consulta `capacidades.metodos` pra decidir o que
+oferecer na tela — declarar boleto abriria uma aba que **sempre** falha. Mesmo
+racional do provider `manual`: declarar só o que se sabe fazer. Ligar boleto
+exige coletar endereço na porta pública primeiro. Mutation-testado.
+
+### ⏳ Pendente de GENTE (não é código)
+
+1. **⚠️ Confirmar com o Mercado Pago se dá pra repassar juros do parcelado ao
+   pagador.** A doc de API **não** documenta isso; o material comercial descreve
+   o modelo "sem juros" em que **o custo é do vendedor** e a taxa cresce com o
+   número de parcelas que o COMPRADOR escolher (à vista ~3%, 2–6x 4–6%, 7–12x
+   7–13%). O sistema pressupõe `juros_repassados = true` desde 28/07. **Se o MP
+   não repassar, esses 4–13% saem da margem da igreja** e mudam a conta do
+   evento. Isso não se resolve no código.
+2. **Gerar as credenciais** e setar `MERCADOPAGO_ACCESS_TOKEN`,
+   `MERCADOPAGO_AMBIENTE`, `MERCADOPAGO_WEBHOOK_SECRET` +
+   `PAG_PROVIDER_PADRAO=mercadopago`. Sandbox vai no escopo **Preview**;
+   produção fica em `manual` até o teste passar.
+3. **No painel do MP, marcar os tópicos `orders` E `payment`** e apontar o
+   webhook pra `/api/pagamentos-webhook/mercadopago`.
+4. **Decidir a fonte da tarifa** (item 1 do bloco de cima).
+
+### ⚠️⚠️ O PRIMEIRO PAGAMENTO REAL (2026-08-08) — sete causas, e o que ficou de guarda
+
+O sintoma inicial era um só: *"o botão de pagar carrega e não acontece nada"*.
+Saíram **sete causas distintas**, cada uma só visível depois que a anterior saiu
+do caminho. Registro aqui porque **nenhuma delas se descobre lendo código** — e
+três já quase voltaram durante a própria sessão.
+
+**1 · O valor ia como STRING pra Payments API.** `paraReais` devolve
+`"900.00"` (formato da Orders API) e `POST /v1/payments` exige **número**:
+`400 transaction_amount attribute must be numeric`. Daí `paraReaisNumero`.
+⚠️ **E o teste que existia travava o comportamento ERRADO** (`toBe('900.00')`,
+com o comentário "convenção deste adapter"): ele conferia o que o nosso código
+fazia, não o que a API exige. Por isso 45 testes verdes conviviam com um cartão
+que **nunca havia cobrado**. Quando o teste espelha a implementação em vez do
+contrato externo, ele deixa de ser rede e vira confirmação.
+
+**2 · ⚠️ As credenciais de TESTE foram aposentadas na Orders API.** Resposta
+literal: *"Test credentials are not supported, use test users with production
+credentials to sandbox environment"*. Isso obriga o sandbox a usar **credencial
+de PRODUÇÃO de uma conta de teste**.
+
+**3 · ⚠️⚠️ E isso NEUTRALIZOU a guarda de ambiente.** Com o ensaio obrigado a se
+declarar `MERCADOPAGO_AMBIENTE=producao`, o `live_mode` deixou de distinguir
+ensaio de produção — a proteção **parou de proteger sem ninguém mexer nela**.
+Foi mudança de terceiro que esvaziou a premissa. No mesmo dia uma chave de
+PRODUÇÃO da conta real da igreja foi parar no Preview; com um cartão real,
+teria cobrado de verdade.
+⇒ **`MERCADOPAGO_CONTA_ID`** ocupa esse lugar: o último segmento do Access Token
+é o **id da conta**, conferido por escopo (Production = igreja · Preview =
+vendedor de teste). ⚠️ Token `TEST-` é ignorado pela guarda — ela existe pra
+impedir cobrança REAL, e credencial de teste não move dinheiro de conta nenhuma.
+Fail-open sem a env (mesma régua do `live_mode` ausente).
+
+**4 · Public Key e Access Token têm que ser do MESMO PAR** — mesma conta **e**
+mesma aplicação **e** mesma versão (teste × produção). O navegador tokeniza com
+uma e o servidor cobra com a outra; par trocado dá
+`401 Unauthorized use of live credentials`, que não diz nada disso. Duas guardas:
+o erro é traduzido, e `chavePublica()` devolve **null** quando as versões
+divergem — aí o cartão na página some e a pessoa segue pelo checkout hospedado
+(que só precisa do Access Token). ⚠️ Aba que sempre falha é pior que aba que não
+existe — mesma régua do boleto sem endereço.
+
+**5 · `external_reference` não aceita `:`.** Doc literal: *"máximo 64
+caracteres, apenas letras, números, `-` e `_`"*, e não pode conter PII. A nossa
+`inscricao:<uuid>` era recusada com `400 does not match pattern`. Conversão
+**reversível** `:` ↔ `_` (nenhuma referência nossa usa `_`), porque é por ela que
+o webhook reencontra a cobrança. ⚠️ `inscricao:<uuid>` já usa **46 dos 64** —
+os sufixos de reemissão e bolsa passaram a base36 (`:r<8>` / `:b<8>`), senão
+estouravam o teto na primeira reemissão.
+
+**6 · Em conta de teste, o e-mail do pagador tem que ser `@testuser.com`.**
+Regra que **só existe no sandbox** — o erro é traduzido dizendo explicitamente
+pra NÃO mexer no código: forçar o domínio no pagador quebraria produção inteira.
+
+**7 · ⚠️⚠️ Pix e cartão exigem credenciais INCOMPATÍVEIS no sandbox.** Doc:
+cartão via Bricks pede *"as credenciais de TESTE da sua conta REAL"*; a Orders
+API (Pix) pede **produção de conta de teste**. Não dá pra testar os dois na mesma
+configuração — o próprio MP manda **trocar** as credenciais entre um teste e
+outro. Era isso que fazia a investigação oscilar: cada ajuste consertava uma
+forma e quebrava a outra, com a mesma mensagem nos dois casos.
+
+| forma | credencial | `AMBIENTE` | e-mail do pagador |
+|---|---|---|---|
+| **Pix** (Orders API) | produção da conta de **teste** | `producao` | **precisa** ser `@testuser.com` |
+| **Cartão** (Bricks) | **teste** da conta real | `teste` | **não** pode ser `@testuser.com` |
+
+⚠️ Isso vale **só pro ensaio**. Em produção as duas usam a mesma credencial real
+e convivem sem problema.
+
+### ⚠️⚠️ E o bug que só apareceu porque o pagamento FUNCIONOU
+
+Cobrança de R$ 5,00 gravou `valor_pago = R$ 5,05`, e o e-mail de confirmação saiu
+com R$ 5,05. Causa: o adapter preferia **`total_paid_amount`** (o que o PAGADOR
+desembolsou, incluindo o custo de financiamento que fica com o MP) a
+**`transaction_amount`** (o valor da NOSSA cobrança que foi liquidado).
+
+Três estragos ao mesmo tempo, e o do e-mail era o menor: `valor_pago >
+valor_centavos` acusa na `vw_pag_invariantes`, e **o arrecadado somaria juros que
+a igreja não recebe** — exatamente a classe de erro que a lei nº 6 existe pra
+impedir. Num retiro parcelado, é a diferença entre o painel e o extrato.
+
+⚠️ **Ele não trava nada e não gera erro.** Teria ido pra produção sem ninguém
+notar até o dia do fechamento não bater. Régua que fica: **fluxo com dinheiro
+precisa ser conferido no BANCO depois do primeiro sucesso**, não só na tela.
+
+O payload cru passou a ser guardado na razão auxiliar (sem ele, conferir isso
+virou arqueologia) — mas **SEM o bloco `card`**: o payment do MP traz
+`expiration_month/year`, `first_six_digits` e `cardholder.name`, e a lei nº 5
+proíbe ARMAZENAR validade e nome impresso. ⚠️ O teste *"NUNCA devolve PAN, CVV,
+validade ou nome impresso"* pegou essa regressão na primeira versão escrita — a
+guarda funcionou exatamente como foi desenhada.
+
+### Confete: o gatilho é a RESPOSTA, nunca o clique
+
+O confete vivia dentro do `carregar()`, e o pagamento na própria página atualiza
+o estado direto da resposta do POST, sem passar pelo GET — então a inscrição era
+confirmada **sem festejar**. Virou `aplicarPagamento()`, por onde passam os três
+caminhos (carga, polling e cartão). ⚠️ A LEI segue intacta: só com
+`pago === true` LIDO DO SERVIDOR.
+
+### ⚠️ O comprovante (QR da portaria) só existe com a inscrição CONFIRMADA (2026-08-11)
+
+Pedido do Matheus: *"o QR code de comprovante que tem na inscrição no app deve
+aparecer apenas quando confirmar o pagamento da pessoa."*
+
+`GET /app/eventos/minhas` montava `comprovante_url` para **qualquer** inscrição
+viva — inclusive `recebida`, que é **vaga reservada e não paga**, e `cancelada`.
+É o MESMO QR que a portaria lê na entrada. O site já era gatilhado
+(`cobranca.status === 'pago'` no `/pagamento/:token`; o token do e-mail só sai no
+caminho gratuito) — **o app era a única porta sem a trava**.
+
+- **Régua ÚNICA: `status === 'confirmada'`.** Ela cobre evento gratuito (nasce
+  assim), bolsa integral/gratuidade por CPF (idem) e evento pago (o handler
+  confirma no `pago`). ⚠️ **NÃO conferir o pagamento em separado**: pagamento
+  manual e gratuidade não têm cobrança, então a 2ª checagem esconderia o QR de
+  quem a igreja já confirmou — duas verdades sobre o mesmo fato.
+- **Esconder sem dizer o motivo é bug**: o endpoint devolve
+  `comprovante_bloqueado` (`aguardando_pagamento` | `cancelada`) e o app troca o
+  QR por uma frase. Card que some sem explicação faz a pessoa procurar o
+  comprovante achando que perdeu.
+- ⚠️ **A ordem de entrega importava**: o servidor foi primeiro, e é ele quem
+  decide — com o app antigo o QR simplesmente deixa de ser emitido. O inverso
+  não existe.
+
+### ⚠️ O ritmo do polling do Pix é "tem alguém olhando?", não tempo decorrido (2026-08-11)
+
+Pedido dele logo depois: *"na hora que o Pix for feito, preciso que a página da
+pessoa atualize o mais rápido possível, sem ficar recarregando."*
+
+O backoff antigo (6s→15s→30s→60s por tempo decorrido) era **lento pra quem
+esperava** (até 60s com o QR na frente) e **caro por causa de quem tinha ido
+embora** (aba esquecida consultando a noite toda). Agora: **aba escondida =
+polling PARADO** · **aba visível = 3s no 1º minuto → 8s → teto de 20s**. Dá menos
+carga que antes e resolve em ~3s.
+
+- ⚠️ No celular o caminho comum nem depende do intervalo: sair pro app do banco
+  **esconde** a aba, e voltar dispara consulta imediata no `visibilitychange`. Os
+  3s existem pra quem paga em **outro aparelho** (QR no computador), em que a aba
+  nunca perde o foco e nada avisaria a página.
+- ⚠️ **`PARADA_MS` (rede de segurança de 2 min que consulta o PSP) NÃO mudou**:
+  ela cobre webhook perdido, e encurtá-la faria cada pessoa esperando bater na API
+  do provedor com mais frequência, sem ganho no caminho normal — quem traz o
+  "pago" em segundos é o webhook; o gargalo era o cliente.
+- Pré-requisito que foi junto (#2392): sem `no-store` a rota respondia **304** e o
+  polling recebia o corpo ANTIGO — mais rápido não adiantaria nada.
+
+### ⏳ Aberto (não é código)
+
+- **Devolver as envs do Preview** pra configuração de Pix depois de testar cartão
+  (as duas se excluem — ver tabela acima).
+- **Produção segue no Asaas.** `PAG_PROVIDER_PADRAO` só muda por decisão do
+  Matheus, e produção não tem credencial do MP.
+- ✅ **O 304 do polling foi resolvido** (#2392 · `no-store` + `res.end` sem ETag).
+
+### O que a doc NÃO confirmou (não preencher por conta própria)
+
+`payment_method_id` do boleto na API legada (`"bolbradesco"` circula mas não
+está em página oficial) · subcampos de `fee_details` · existência de
+`money_release_status` · busca de order por `external_reference` · 3DS na Orders
+API · valor mínimo/máximo por transação · nº máximo de reentregas de webhook.
+
+Testes: `src/test/pagamentosMercadoPago.test.ts` (34 casos · **sem rede**, o
+`fetch` é stubado — a lição é o flake dos testes do Asaas que batiam no sandbox
+de verdade e derrubavam o deploy). Mutation-testados: a guarda de `live_mode`,
+`authorized` não ser "pago", e a ausência de boleto nas capacidades.

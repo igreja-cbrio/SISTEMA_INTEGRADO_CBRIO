@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { fetchAllRows } = require('../utils/pagination');
 
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
@@ -31,9 +32,11 @@ router.get('/dashboard', async (req, res) => {
 
     const [contas, transacoes, pagar, reembolsos] = await Promise.all([
       supabase.from('fin_contas').select('id, nome, tipo, saldo, ativa'),
-      supabase.from('fin_transacoes').select('tipo, valor, status, data_competencia')
+      // fin_transacoes passa de 1000/mês (junho: ~4k) — paginado, senão o cap
+      // do PostgREST subcontava receitas/despesas do mês em silêncio.
+      fetchAllRows(() => supabase.from('fin_transacoes').select('tipo, valor, status, data_competencia')
         .neq('status', 'cancelado')
-        .gte('data_competencia', mesInicio).lt('data_competencia', mesProximo),
+        .gte('data_competencia', mesInicio).lt('data_competencia', mesProximo)),
       supabase.from('fin_contas_pagar').select('id, valor, status, data_vencimento'),
       supabase.from('fin_reembolsos').select('id, valor, status'),
     ]);
@@ -41,7 +44,7 @@ router.get('/dashboard', async (req, res) => {
     const saldoTotal = (contas.data || []).filter(c => c.ativa).reduce((s, c) => s + Number(c.saldo), 0);
     const hoje = new Date().toISOString().slice(0, 10);
 
-    const transMes = transacoes.data || [];
+    const transMes = transacoes || [];
     const receitasMes = transMes.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
     const despesasMes = transMes.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
 
@@ -140,26 +143,71 @@ router.delete('/categorias/:id', async (req, res) => {
 // ── TRANSAÇÕES ─────────────────────────────────────────────
 router.get('/transacoes', async (req, res) => {
   try {
-    const { conta_id, tipo, status, mes, inicio, fim, busca, limit = 1000 } = req.query;
-    let query = supabase.from('fin_transacoes')
-      .select('*, fin_contas(nome), fin_categorias(nome, tipo)')
-      .order('data_competencia', { ascending: false })
-      .limit(Math.min(Number(limit), 50000));
-    if (conta_id) query = query.eq('conta_id', conta_id);
-    if (tipo) query = query.eq('tipo', tipo);
-    if (status) query = query.eq('status', status);
-    if (mes) {
-      const [y, m] = mes.split('-');
-      const lastDay = new Date(Number(y), Number(m), 0).getDate();
-      query = query.gte('data_competencia', `${mes}-01`).lte('data_competencia', `${mes}-${String(lastDay).padStart(2, '0')}`);
+    const { conta_id, tipo, status, mes, inicio, fim, busca, sem_documento, limit = 1000 } = req.query;
+    // Builder reutilizável — fetchAllRows pagina por baixo dos panos até o teto
+    // pedido (o `.limit(>1000)` antigo era cortado em 1000 pelo PostgREST, então
+    // a lista truncava em silêncio sobre 151k transações).
+    const build = () => {
+      let query = supabase.from('fin_transacoes')
+        .select('*, fin_contas(nome), fin_categorias(nome, tipo)')
+        .order('data_competencia', { ascending: false });
+      if (conta_id) query = query.eq('conta_id', conta_id);
+      if (tipo) query = query.eq('tipo', tipo);
+      if (status) query = query.eq('status', status);
+      if (mes) {
+        const [y, m] = mes.split('-');
+        const lastDay = new Date(Number(y), Number(m), 0).getDate();
+        query = query.gte('data_competencia', `${mes}-01`).lte('data_competencia', `${mes}-${String(lastDay).padStart(2, '0')}`);
+      }
+      if (inicio) query = query.gte('data_competencia', inicio);
+      if (fim) query = query.lte('data_competencia', fim);
+      if (busca) query = query.ilike('descricao', `%${busca}%`);
+      return query;
+    };
+    const teto = Math.min(Number(limit) || 1000, 50000);
+    let data = await fetchAllRows(build, { max: teto });
+
+    // Conciliação: só as transações SEM comprovante anexado E SEM nota fiscal
+    // vinculada (o que falta documentar). anexos_url vazio + id fora do conjunto
+    // de transações com NF. Pós-filtro em JS sobre o recorte já paginado.
+    if (sem_documento === 'true') {
+      const ids = data.map(t => t.id);
+      const comNf = new Set();
+      for (let i = 0; i < ids.length; i += 200) {
+        const chunk = ids.slice(i, i + 200);
+        const { data: nfs } = await supabase.from('log_notas_fiscais')
+          .select('transacao_id').in('transacao_id', chunk).not('transacao_id', 'is', null);
+        (nfs || []).forEach(n => comNf.add(n.transacao_id));
+      }
+      data = data.filter(t => {
+        const anexos = Array.isArray(t.anexos_url) ? t.anexos_url : [];
+        return anexos.length === 0 && !comNf.has(t.id);
+      });
     }
-    if (inicio) query = query.gte('data_competencia', inicio);
-    if (fim) query = query.lte('data_competencia', fim);
-    if (busca) query = query.ilike('descricao', `%${busca}%`);
-    const { data, error } = await query;
-    if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar transações' }); }
+});
+
+// Banco de comprovantes · agrega anexos das transações + notas fiscais com
+// arquivo (via RPC fn_banco_comprovantes · migration 20260729140000).
+router.get('/comprovantes', async (req, res) => {
+  try {
+    const { inicio, fim, conta_id, q } = req.query;
+    const base = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
+    const { data, error } = await supabase.rpc('fn_banco_comprovantes', {
+      p_inicio: inicio || null,
+      p_fim: fim || null,
+      p_conta: conta_id || null,
+      p_q: q || null,
+      p_base: base,
+    });
+    if (error) return res.status(400).json({ error: error.message });
+    const itens = Array.isArray(data) ? data : [];
+    res.json({ itens, total: itens.length });
+  } catch (e) {
+    console.error('[FIN] banco de comprovantes:', e);
+    res.status(500).json({ error: 'Erro ao listar comprovantes' });
+  }
 });
 
 router.post('/transacoes', async (req, res) => {
@@ -239,14 +287,48 @@ router.delete('/contas-pagar/:id', async (req, res) => {
 });
 
 // ── REEMBOLSOS ─────────────────────────────────────────────
+// Reembolsos = solicitações da categoria 'reembolso' (a fonte de verdade · a
+// tabela legada fin_reembolsos ficou vazia). Mapeia pro shape que a tela espera
+// (descricao/valor/data_despesa/status/observacoes) e traduz o status da
+// solicitação pro vocabulário de reembolso. A aprovação continua no módulo
+// /solicitacoes (aqui é visão).
+const REEMB_STATUS_MAP = {
+  aprovado: ['aprovado', 'aguardando_aprovacao_financeira', 'em_cotacao', 'aguardando_merito'],
+  rejeitado: ['rejeitado'],
+  pago: ['concluido', 'pago'],
+  pendente: ['aberto', 'pendente', 'aguardando_aprovacao_origem'],
+};
+function traduzStatusReembolso(s) {
+  if (s === 'rejeitado') return 'rejeitado';
+  if (s === 'concluido' || s === 'pago') return 'pago';
+  if (s === 'aprovado' || s === 'aguardando_aprovacao_financeira' || s === 'em_cotacao' || s === 'aguardando_merito') return 'aprovado';
+  return 'pendente';
+}
 router.get('/reembolsos', async (req, res) => {
   try {
     const { status } = req.query;
-    let query = supabase.from('fin_reembolsos').select('*, profiles!solicitante_id(name)').order('created_at', { ascending: false });
-    if (status) query = query.eq('status', status);
+    let query = supabase
+      .from('solicitacoes')
+      .select('id, titulo, descricao, justificativa, valor_estimado, status, created_at, data_necessaria, observacoes, solicitante_id, profiles!solicitante_id(name)')
+      .eq('categoria', 'reembolso')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (status && REEMB_STATUS_MAP[status]) query = query.in('status', REEMB_STATUS_MAP[status]);
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    const mapeado = (data || []).map((s) => ({
+      id: s.id,
+      descricao: s.descricao || s.titulo || 'Reembolso',
+      valor: s.valor_estimado,
+      data_despesa: s.data_necessaria || s.created_at,
+      status: traduzStatusReembolso(s.status),
+      status_original: s.status,
+      observacoes: s.justificativa || s.observacoes || null,
+      solicitante_nome: s.profiles?.name || null,
+      origem: 'solicitacao',
+    }));
+    res.json(mapeado);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar reembolsos' }); }
 });
 

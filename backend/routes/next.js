@@ -23,6 +23,7 @@
 // ============================================================================
 
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
@@ -180,6 +181,8 @@ router.get('/inscricoes/:id', async (req, res) => {
 });
 
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
+const { normalizarCpf, cpfValido } = require('../utils/cpf');
 
 router.post('/inscricoes', async (req, res) => {
   const { evento_id, nome, sobrenome, cpf, telefone, email, data_nascimento, observacoes, origem_lista } = req.body || {};
@@ -197,6 +200,7 @@ router.post('/inscricoes', async (req, res) => {
       nome: [nome, sobrenome].filter(Boolean).join(' '),
       dataNascimento: data_nascimento || null,
       status: 'visitante',
+      origem: 'next_inscricao_interna',
     });
     membro_id = r.membro_id;
   } catch (e) {
@@ -382,9 +386,11 @@ router.post('/inscricoes/:id/indicacoes', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.post('/matriculas/:id/direcionar', async (req, res) => {
   try {
+    const b = req.body || {};
     const r = await direcionarMatricula({
       matriculaId: req.params.id,
-      destinos: (req.body || {}).destinos || [],
+      destinos: b.destinos || [],
+      areas: b.areas || [], // "Servir" abre a escolha de áreas (Totem / self-service)
       userId: req.user?.id || null,
     });
     recalcularKpisNext();
@@ -468,6 +474,10 @@ router.get('/dashboard', async (_req, res) => {
 
 // Recalcula status (formado/matriculado) das matrículas de uma turma a partir
 // das presenças. NÃO seta 'incompleto' (isso só ao encerrar) nem mexe em 'desistiu'.
+// Exceção: quem já está 'incompleto' (turma encerrada) e AGORA aparece presente
+// em todos os encontros — porque a presença foi lançada depois do encerramento —
+// é PROMOVIDO a 'formado'. Nunca rebaixa 'incompleto' de volta pra 'matriculado'
+// (a turma está encerrada; quem não completou permanece incompleto).
 async function recomputarStatusTurma(turmaId) {
   if (!turmaId) return;
   const { data: encontros } = await supabase.from('next_encontros').select('id').eq('turma_id', turmaId);
@@ -482,9 +492,17 @@ async function recomputarStatusTurma(turmaId) {
     (pres || []).forEach(p => { if (p.presente) presByMat[p.matricula_id] = (presByMat[p.matricula_id] || 0) + 1; });
   }
   for (const m of mats) {
-    if (m.status === 'desistiu' || m.status === 'incompleto') continue;
+    if (m.status === 'desistiu') continue;
     const n = presByMat[m.id] || 0;
-    const novo = (totalEnc > 0 && n >= totalEnc) ? 'formado' : 'matriculado';
+    const completo = totalEnc > 0 && n >= totalEnc;
+    if (m.status === 'incompleto') {
+      // turma encerrada: só promove quando de fato completou; senão fica incompleto
+      if (completo) {
+        await supabase.from('next_matriculas').update({ status: 'formado', updated_at: new Date().toISOString() }).eq('id', m.id);
+      }
+      continue;
+    }
+    const novo = completo ? 'formado' : 'matriculado';
     if (novo !== m.status) {
       await supabase.from('next_matriculas').update({ status: novo, updated_at: new Date().toISOString() }).eq('id', m.id);
     }
@@ -537,6 +555,84 @@ router.get('/turmas', async (req, res) => {
     return String(a.nome || '').localeCompare(String(b.nome || ''), 'pt');
   });
   res.json(lista);
+});
+
+// GET /satisfacao — pesquisa NPS canônica do Next (Satisfação do Next).
+// UMA pesquisa única (contexto_kpi='nps_next', area='next') servida por QR por
+// turma (mesmo link + ?turma=<id>). Provisiona a pesquisa na 1ª chamada.
+// Declarada ANTES de /turmas/:id — mas '/satisfacao' não colide com rotas
+// prefixadas, então é seguro aqui.
+router.get('/satisfacao', async (req, res) => {
+  try {
+    // Sempre pega a MAIS ANTIGA (se uma corrida criar duplicata, o GET converge
+    // sempre pra mesma pesquisa canônica).
+    const buscar = () => supabase
+      .from('nps_pesquisas')
+      .select('id, titulo, link_publico_token, status, permite_publico')
+      .eq('contexto_kpi', 'nps_next')
+      .eq('area', 'next')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    let { data: pesquisa, error } = await buscar();
+    if (error) throw error;
+
+    if (!pesquisa) {
+      // Cria a pesquisa canônica (mesma forma do POST /nps em routes/nps.js).
+      const token = crypto.randomBytes(18).toString('base64url');
+      const insert = {
+        titulo: 'Satisfação do Next',
+        valor: null,
+        objetivo: 'Medir a satisfação de quem passou pelo Next, por turma.',
+        contexto_kpi: 'nps_next',
+        area: 'next',
+        perguntas: {
+          descricao_curta: 'Conta pra gente como foi sua experiência no Next.',
+          pergunta_nps: {
+            id: 'nps',
+            tipo: 'nps',
+            texto: 'De 0 a 10, o quanto você recomendaria o Next para um amigo?',
+          },
+          perguntas_extras: [
+            { id: crypto.randomUUID(), tipo: 'escala_5', texto: 'Como você avalia os encontros?' },
+            { id: crypto.randomUUID(), tipo: 'texto_longo', texto: 'O que podemos melhorar?' },
+          ],
+        },
+        link_publico_token: token,
+        permite_publico: true,
+        data_inicio: new Date().toISOString().slice(0, 10),
+        data_fim: null,
+        status: 'ativa',
+        criado_por: req.user?.id || null,
+      };
+      const { data: criada, error: insErr } = await supabase
+        .from('nps_pesquisas')
+        .insert(insert)
+        .select('id, titulo, link_publico_token, status, permite_publico')
+        .single();
+      if (insErr) {
+        // Corrida: outra requisição criou ao mesmo tempo → re-busca a canônica.
+        const { data: reBusca } = await buscar();
+        if (reBusca) pesquisa = reBusca;
+        else throw insErr;
+      } else {
+        pesquisa = criada;
+      }
+    }
+
+    res.json({
+      id: pesquisa.id,
+      titulo: pesquisa.titulo,
+      link_publico_token: pesquisa.link_publico_token,
+      status: pesquisa.status,
+      permite_publico: pesquisa.permite_publico,
+    });
+  } catch (e) {
+    console.error('[next] satisfacao:', e.message);
+    res.status(500).json({ error: 'Erro ao obter a pesquisa de satisfação' });
+  }
 });
 
 // GET /lista-espera — contagem de inscritos SEM turma (aguardando a próxima
@@ -673,6 +769,31 @@ router.put('/encontros/:id/presencas', async (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /encontros/:id/presenca — marca/desmarca UMA pessoa { matricula_id, presente }
+// sem apagar o resto do conjunto (usado pelo Totem, onde cada um toca 1 por vez).
+// Também carimba next_matriculas.check_in_at (compatível com o self-service público).
+router.post('/encontros/:id/presenca', async (req, res) => {
+  const encontroId = req.params.id;
+  const matriculaId = req.body?.matricula_id;
+  const presente = req.body?.presente !== false; // default true
+  if (!matriculaId) return res.status(400).json({ error: 'matricula_id obrigatório' });
+  const { data: enc } = await supabase.from('next_encontros').select('id, turma_id').eq('id', encontroId).maybeSingle();
+  if (!enc) return res.status(404).json({ error: 'Encontro não encontrado' });
+  // idempotente: remove o par e reinsere só quando presente (evita depender de UNIQUE)
+  await supabase.from('next_presencas').delete().eq('encontro_id', encontroId).eq('matricula_id', matriculaId);
+  if (presente) {
+    const { error: insErr } = await supabase.from('next_presencas')
+      .insert({ encontro_id: encontroId, matricula_id: matriculaId, presente: true });
+    if (insErr) return res.status(500).json({ error: insErr.message });
+  }
+  await supabase.from('next_matriculas')
+    .update({ check_in_at: presente ? new Date().toISOString() : null, updated_at: new Date().toISOString() })
+    .eq('id', matriculaId);
+  await recomputarStatusTurma(enc.turma_id);
+  recalcularKpisNext();
+  res.json({ ok: true, presente });
+});
+
 // GET /matriculas?turma_id=&fila=true&search= — lista
 router.get('/matriculas', async (req, res) => {
   const { turma_id, fila, search } = req.query;
@@ -692,6 +813,9 @@ router.get('/matriculas', async (req, res) => {
 router.post('/matriculas', async (req, res) => {
   const b = req.body || {};
   if (!b.nome || !String(b.nome).trim()) return res.status(400).json({ error: 'nome obrigatório' });
+  if (b.cpf && String(b.cpf).replace(/\D/g, '') && !cpfValido(b.cpf)) {
+    return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+  }
   // Porta guardada: sem membro_id explícito, resolve/cria via matcher forte
   // (cpf>email>tel+nome>nome+nasc · cria stub se não achar). Não deixa órfão —
   // toda matrícula fica ligada a um mem_membros e acessível em /membresia.
@@ -702,6 +826,7 @@ router.post('/matriculas', async (req, res) => {
         cpf: b.cpf, email: b.email, telefone: b.telefone,
         nome: [b.nome, b.sobrenome].filter(Boolean).join(' '),
         dataNascimento: b.data_nascimento || null, status: 'visitante',
+        origem: 'next_matricula', origemId: b.id,
       });
       membro_id = r.membro_id;
     } catch (e) { console.error('[next/matriculas] matcher:', e.message); /* segue sem — não perde a matrícula */ }
@@ -709,7 +834,8 @@ router.post('/matriculas', async (req, res) => {
   const row = {
     turma_id: b.turma_id || null,
     nome: String(b.nome).trim(), sobrenome: b.sobrenome || null,
-    cpf: b.cpf || null, telefone: b.telefone || null, email: b.email || null,
+    // digits-only: CPF com máscara fura o UNIQUE(turma_id,cpf) e todo matching
+    cpf: normalizarCpf(b.cpf), telefone: b.telefone || null, email: b.email || null,
     data_nascimento: b.data_nascimento || null, observacoes: b.observacoes || null,
     membro_id,
     ja_batizado: !!b.ja_batizado, ja_voluntario: !!b.ja_voluntario, ja_doador: !!b.ja_doador,
@@ -747,6 +873,7 @@ router.post('/matriculas/backfill-membros', async (req, res) => {
           cpf: m.cpf, email: m.email, telefone: m.telefone,
           nome: [m.nome, m.sobrenome].filter(Boolean).join(' '),
           dataNascimento: m.data_nascimento || null, status: 'visitante',
+          origem: 'next_reconciliacao', origemId: m.id,
         });
         if (!r?.membro_id) { falhas += 1; continue; }
         const { error } = await supabase.from('next_matriculas')
@@ -770,12 +897,110 @@ router.patch('/matriculas/:id', async (req, res) => {
   ['turma_id', 'nome', 'sobrenome', 'cpf', 'telefone', 'email', 'data_nascimento', 'observacoes', 'membro_id',
     'ja_batizado', 'ja_voluntario', 'ja_doador', 'indicou_batismo', 'indicou_servir', 'indicou_grupo', 'indicou_dizimo',
     'status'].forEach(k => { if (k in b) patch[k] = b[k]; });
+  if ('cpf' in patch) {
+    if (patch.cpf && String(patch.cpf).replace(/\D/g, '') && !cpfValido(patch.cpf)) {
+      return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+    }
+    patch.cpf = normalizarCpf(patch.cpf); // digits-only sempre
+  }
   patch.updated_at = new Date().toISOString();
   const { data, error } = await supabase.from('next_matriculas').update(patch).eq('id', req.params.id).is('deleted_at', null).select().maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
+
+  // Reconciliação de CPF tardio (auditoria CPF 2026-07-16): editar a matrícula
+  // preenchendo o CPF não tocava o membro vinculado (podiam divergir pra
+  // sempre). Se a matrícula tem membro, consolida o CPF nele (conflito vira
+  // pendência de identidade); se não tem, resolve/cria pelo matcher canônico.
+  if (patch.cpf && data && !('membro_id' in patch)) {
+    (async () => {
+      try {
+        if (data.membro_id) {
+          await reconciliarCpfTardio({
+            membroId: data.membro_id, cpf: patch.cpf,
+            origem: 'next_matricula_edicao', origemId: data.id,
+            dataNascimento: data.data_nascimento || null,
+          });
+        } else {
+          const r = await acharOuCriarGuardado({
+            cpf: data.cpf, email: data.email, telefone: data.telefone,
+            nome: [data.nome, data.sobrenome].filter(Boolean).join(' '),
+            dataNascimento: data.data_nascimento || null, status: 'visitante',
+            origem: 'next_matricula_edicao', origemId: data.id,
+          });
+          if (r?.membro_id) {
+            await supabase.from('next_matriculas')
+              .update({ membro_id: r.membro_id, updated_at: new Date().toISOString() })
+              .eq('id', data.id).is('membro_id', null);
+          }
+        }
+      } catch (e2) {
+        console.error('[next/matriculas PATCH] reconciliar cpf:', e2.message);
+      }
+    })();
+  }
   // se mudou de turma, recalcula o status na turma de destino
   if ('turma_id' in b && b.turma_id) await recomputarStatusTurma(b.turma_id);
   recalcularKpisNext();
+  res.json(data);
+});
+
+// POST /matriculas/:id/transferir — move a pessoa pra OUTRA turma. body { turma_id }.
+// Diferente do PATCH turma_id cru: LIMPA as presenças da turma antiga (elas eram dos
+// encontros de lá · não seguem a pessoa), zera check-in e status (recomeça na turma
+// destino) e RECALCULA as DUAS turmas. Caso de uso: inscreveu na turma errada (ex.:
+// não tinha turma de agosto → entrou na 2ª de julho) e precisa ir pra turma certa.
+router.post('/matriculas/:id/transferir', async (req, res) => {
+  const destinoId = req.body?.turma_id;
+  if (!destinoId) return res.status(400).json({ error: 'turma_id de destino obrigatório' });
+
+  // Matrícula + turma de origem
+  const { data: mat } = await supabase.from('next_matriculas')
+    .select('id, turma_id, nome').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+  if (!mat) return res.status(404).json({ error: 'Matrícula não encontrada' });
+  if (mat.turma_id === destinoId) return res.status(400).json({ error: 'A pessoa já está nessa turma' });
+
+  // Turma destino existe e não está apagada
+  const { data: destino } = await supabase.from('next_turmas')
+    .select('id, nome, status').eq('id', destinoId).is('deleted_at', null).maybeSingle();
+  if (!destino) return res.status(404).json({ error: 'Turma de destino não encontrada' });
+
+  const origemId = mat.turma_id;
+
+  // Limpa as presenças da pessoa nos encontros da turma ANTIGA (presença é por encontro,
+  // e encontro pertence à turma · sem isso ficam penduradas / contam na turma errada).
+  if (origemId) {
+    const { data: encsOrigem } = await supabase.from('next_encontros').select('id').eq('turma_id', origemId);
+    const encIds = (encsOrigem || []).map(e => e.id);
+    if (encIds.length) {
+      await supabase.from('next_presencas').delete().eq('matricula_id', mat.id).in('encontro_id', encIds);
+    }
+  }
+
+  // Move + recomeça na turma destino (check-in e status zerados)
+  const { data: atualizada, error } = await supabase.from('next_matriculas')
+    .update({ turma_id: destinoId, status: 'matriculado', check_in_at: null, updated_at: new Date().toISOString() })
+    .eq('id', mat.id).is('deleted_at', null).select().maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Recalcula o status das DUAS turmas (origem perdeu alguém, destino ganhou)
+  if (origemId) await recomputarStatusTurma(origemId);
+  await recomputarStatusTurma(destinoId);
+  recalcularKpisNext();
+  res.json({ ...atualizada, turma_destino_nome: destino.nome });
+});
+
+// PATCH /matriculas/:id/contato — marca/desmarca "contato feito" com a pessoa.
+// body { feito: boolean } (default true). Carimba quem/quando pra ficar rastreável.
+router.patch('/matriculas/:id/contato', async (req, res) => {
+  const feito = req.body?.feito !== false;
+  const patch = feito
+    ? { contato_em: new Date().toISOString(), contato_por: req.user?.id ?? null }
+    : { contato_em: null, contato_por: null };
+  const { data, error } = await supabase.from('next_matriculas')
+    .update(patch).eq('id', req.params.id).is('deleted_at', null)
+    .select('id, contato_em, contato_por').maybeSingle();
+  if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Matrícula não encontrada' });
   res.json(data);
 });
 

@@ -13,6 +13,12 @@ const hpp = require('hpp');
 const morgan = require('morgan');
 const compression = require('compression');
 const path = require('path');
+const { requestContext } = require('./middleware/requestContext');
+const { systemJobTracking } = require('./middleware/systemJobTracking');
+const { setSystemJobOutcome } = require('./services/systemJobOutcome');
+const { recordServerError } = require('./services/serverErrorTelemetry');
+const { createCorsOriginValidator } = require('./utils/corsPolicy');
+const { createErrorHandler, requestRoute } = require('./middleware/errorHandler');
 
 const app = express();
 // Atrás do proxy do Vercel (1 hop) · faz req.ip = IP real do cliente (x-forwarded-for)
@@ -24,52 +30,70 @@ const PORT = process.env.PORT || 3001;
 // Request handler do Sentry (precisa vir antes de qualquer middleware
 // e antes das rotas para capturar request data nos eventos).
 app.use(sentryRequestHandler());
+app.use(requestContext);
 
 // ── Security middleware ──
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
-// Domínios extras configuraveis via env (CSV) · ex: EXTRA_ALLOWED_ORIGINS="https://x.com,https://y.com"
-const extraOrigins = (process.env.EXTRA_ALLOWED_ORIGINS || '')
-  .split(',').map(s => s.trim()).filter(Boolean);
 
 app.use(cors({
-  origin: function (origin, callback) {
-    // Allow same-origin (no origin header) and known domains
-    const allowed = [
-      'http://localhost:5173',
-      'http://localhost:8080',
-      process.env.FRONTEND_URL,
-      ...extraOrigins,
-    ].filter(Boolean);
-    if (
-      !origin ||
-      allowed.includes(origin) ||
-      /\.vercel\.app$/.test(origin) ||
-      /\.lovable\.app$/.test(origin) ||
-      /\.lovableproject\.com$/.test(origin) ||
-      // Domínio próprio CBRio · cbrio.org + qualquer subdominio
-      /^https:\/\/(.+\.)?cbrio\.org$/.test(origin)
-    ) {
-      callback(null, true);
-    } else {
-      console.warn('[CORS] Origem bloqueada:', origin);
-      callback(new Error('Origem não permitida pelo CORS'));
-    }
-  },
+  origin: createCorsOriginValidator(),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
+  exposedHeaders: ['X-Request-ID'],
 }));
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
   max: parseInt(process.env.RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 500 : 5000),
   message: { error: 'Muitas requisições. Tente novamente em alguns minutos.' },
-  // Isenta o NPS e a inscrição pública de grupos do teto global · num culto,
-  // dezenas de pessoas no MESMO WiFi (1 IP público) estourariam o limite por-IP.
-  // Ambos têm limiter próprio generoso (routes/publicNps.js · routes/publicGrupos.js
-  // · totem no lounge). Ver mounts abaixo.
+  // Isenta NPS, inscrição de grupos e eventos externos do teto global · num
+  // culto/evento presencial, dezenas de pessoas no MESMO WiFi (1 IP público)
+  // estourariam o limite por-IP. Todos têm limiter próprio generoso
+  // (routes/publicNps.js · routes/publicGrupos.js · routes/publicEventoExterno.js).
+  // Ver mounts abaixo.
+  // ⚠️ O webhook de pagamento também sai daqui: o PSP entrega de poucos IPs
+  // fixos e em rajada, então 500/15min por IP é atingível num lançamento. 429
+  // aqui = pagamento aprovado com inscrição não confirmada, e vários PSPs
+  // DESATIVAM o webhook depois de N falhas (falha silenciosa e permanente).
   skip: (req) => process.env.NODE_ENV !== 'production'
     || req.path.startsWith('/api/public/nps')
-    || req.path.startsWith('/api/public/grupos'),
+    || req.path.startsWith('/api/public/grupos')
+    || req.path.startsWith('/api/public/evento')
+    || req.path.startsWith('/api/public/membresia')
+    // Doação: a tela de pagamento faz POLLING do status, então sob o teto por IP
+    // a pessoa tomaria 429 no meio do próprio pagamento — e a igreja inteira sai
+    // por 1 IP no culto. Limiter próprio em routes/publicGenerosidade.js.
+    || req.path.startsWith('/api/public/generosidade')
+    // ⚠️⚠️ CENSO sai do teto por IP, e este é o caso mais extremo da lista: o
+    // censo é respondido por MILHARES de pessoas dentro do mesmo culto, todas
+    // pelo NAT do prédio, e UMA pessoa gasta ~15 requisições (abrir + salvar
+    // rascunho a cada bloco + enviar). Com 500/15min por IP, a ~34ª pessoa já
+    // levaria 429 — e 429 aqui é resposta perdida de quem preencheu 93 campos.
+    // Limiter próprio (e medido) em routes/publicCenso.js.
+    || req.path.startsWith('/api/public/censo')
+    // ⚠️ O REDIRECIONADOR DE QR sai do teto por IP pelo mesmo motivo, e aqui a
+    // falha é a mais visível de todas: 429 no /r/ é o cartaz não abrindo nada.
+    // A pessoa não vê "muitas requisições", vê um QR quebrado — e conclui que o
+    // sistema não funciona. É uma leitura de banco de 30s de cache; o custo de
+    // isentar é nenhum perto disso.
+    || req.path.startsWith('/r/')
+    || req.path.startsWith('/api/pagamentos-webhook')
+    // ⚠️ Totem também sai do teto por IP: todos os totens da igreja saem pelo
+    // MESMO NAT, então 500/15min por IP seria compartilhado entre eles (e com
+    // o WiFi dos visitantes). O limite certo é por ESTAÇÃO, e vive no router
+    // (routes/totem.js) — que é quem sabe qual estação fez a request.
+    || req.path.startsWith('/api/totem')
+    // ⚠️⚠️ O APP DE MEMBROS sai do teto por IP (auditoria 06/08/2026): é a MESMA
+    // razão do totem e das portas públicas, e é a superfície que mais vai
+    // crescer (meta = 4.000 instalações = a base toda). No WiFi da igreja todo
+    // celular sai por 1 IP público, e UMA abertura do app gasta 10-30
+    // requisições — 5 a 10 aparelhos esgotavam 500/15min e a congregação
+    // inteira levava 429. Pior: o app trata 429 como resposta de NEGÓCIO
+    // (temporadaGrupos → "inscrições fechadas" · useAdminGrupo → líder sem
+    // botão de gerenciar), então o sintoma não parecia limite de rede.
+    // O limite certo aqui é por USUÁRIO AUTENTICADO, e vive no router
+    // (routes/app.js) — que é quem sabe de quem é a requisição.
+    || req.path.startsWith('/api/app'),
 }));
 app.use(hpp());
 app.use(compression());
@@ -80,6 +104,7 @@ app.use('/api/staff', express.json({ limit: '10mb' }));
 // rawBody capturado pra validar HMAC do webhook do WhatsApp (X-Hub-Signature-256)
 app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
 if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
+app.use(systemJobTracking);
 
 // ── Telemetria de 500 (aba "Erros do servidor" do Feedback) ──
 // O error handler global só vê exceções NÃO tratadas; a maioria dos 500 reais
@@ -90,33 +115,40 @@ app.use((req, res, next) => {
   res.on('finish', () => {
     if (res.statusCode < 500 || res.locals._erro500Registrado) return;
     try {
-      const { supabase } = require('./utils/supabase');
-      supabase.from('app_erros_servidor').insert({
+      void recordServerError({
         user_id: req.user?.id || null,
         user_email: req.user?.email || null,
         metodo: req.method,
-        rota: String(req.path || req.originalUrl || '').slice(0, 300),
+        rota: requestRoute(req),
         mensagem: `HTTP ${res.statusCode} respondido pela rota (sem exceção · ver logs da função)`,
         status: res.statusCode,
-      }).then(() => {}, (e) => console.warn('[app_erros_servidor]', e.message));
+        request_id: req.requestId,
+        release: process.env.VERCEL_GIT_COMMIT_SHA || null,
+        environment: process.env.VERCEL_ENV || process.env.NODE_ENV || 'unknown',
+      }).catch((e) => console.warn('[app_erros_servidor]', e.message));
     } catch (_) { /* tabela ausente / supabase off · ignora */ }
   });
   next();
 });
 
 // ── Routes ──
+app.use('/api/telemetry', require('./routes/systemTelemetry')); // Web Vitals anônimos, best-effort
 app.use('/api/app', require('./routes/app'));               // Mobile app (sem auth ERP)
 app.use('/api/auth/planning-center', require('./routes/authPlanningCenter'));
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/staff', require('./routes/staff'));           // App CBRio Staff (self-service do colaborador)
+app.use('/api/comunicacao', require('./routes/comunicacao')); // Módulo Comunicação (WhatsApp central)
 app.use('/api/revisoes', require('./routes/revisoes'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/projects', require('./routes/projects'));
+app.use('/api/propostas', require('./routes/propostas')); // Ciclo anual de propostas (projetos/eventos/rotinas)
+app.use('/api/tasks', require('./routes/tasks'));  // Kanban de tarefas transversal (Projetos/Eventos) · guard por módulo dentro do router
 app.use('/api/expansion', require('./routes/expansion'));
 app.use('/api/strategic', require('./routes/strategic'));
 app.use('/api/meetings', require('./routes/meetings'));
 app.use('/api/agents', require('./routes/agents'));
 app.use('/api/rh', require('./routes/rh'));
+app.use('/api/painel-rh', require('./routes/painelRh'));
 app.use('/api/coberturas', require('./routes/coberturas'));
 app.use('/api/pcs', require('./routes/pcs'));
 app.use('/api/financeiro', require('./routes/financeiro'));
@@ -136,6 +168,8 @@ app.use('/api/dashboard', require('./routes/dashboard'));
 app.use('/api/notificacoes', require('./routes/notificacoes'));
 app.use('/api/permissoes', require('./routes/permissoes'));
 app.use('/api/membresia', require('./routes/membresia'));
+app.use('/api/censo', require('./routes/censo'));   // Plataforma de pesquisas (censo demográfico/perfil/engajamento)
+app.use('/api/links', require('./routes/links'));   // QR dinâmicos: o papel fica, o destino muda
 app.use('/api/destaques', require('./routes/destaques'));
 app.use('/api/batismo-fotos', require('./routes/batismoFotos'));
 // Rate limit dedicado pros forms públicos (anti-spam · sem auth)
@@ -153,22 +187,64 @@ const publicLimiter = rateLimit({
 // primeiro, o NPS não passa pelo teto de 30 · usa o limiter próprio (generoso) do
 // routes/publicNps.js. Os demais forms públicos seguem no publicLimiter.
 app.use('/api/public/nps', require('./routes/publicNps'));
+// Redirecionador dos QR dinâmicos. Fora de /api de propósito: o endereço vai
+// impresso em papel e `cbrio.org/r/censo` cabe num QR pequeno, que lê de longe.
+// Fica ANTES de qualquer limiter — um culto inteiro escaneia o mesmo QR nos
+// mesmos dois minutos, e derrubar isso por limite de taxa seria derrubar o
+// próprio cartaz.
+app.use('/r', require('./routes/redirecionador'));
+// Censo público: MESMO motivo do NPS, elevado ao cubo — o censo é respondido por
+// centenas de pessoas no mesmo culto, todas atrás do NAT do prédio. Limiter
+// próprio (dois baldes: submissão generosa, lookup de CPF apertado).
+app.use('/api/public/censo', require('./routes/publicCenso'));
+// Convite de familiar (página de bounce /f/a/:codigo · só leitura do convite)
+app.use('/api/public/familia', require('./routes/publicFamilia'));
 // Pixel de abertura de e-mail (fora do publicLimiter · proxies carregam por 1 IP)
 app.use('/api/public/vol-email', require('./routes/publicVolEmail'));
 // Inscrição pública de grupos montada ANTES do publicLimiter estrito (30/15min):
 // é o totem do lounge (1 IP, muitas inscrições num domingo cheio). Usa o limiter
 // próprio generoso do routes/publicGrupos.js (mesma lógica do NPS acima).
 app.use('/api/public/grupos', require('./routes/publicGrupos'));
-app.use('/api/public', publicLimiter);
-
-app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));
-app.use('/api/public/membresia', require('./routes/publicMembresia'));
+// Eventos externos (Celebra etc.) montado ANTES do publicLimiter estrito:
+// evento presencial em massa = 1 IP de Wi-Fi; a 31ª pessoa era bloqueada.
+// Sem teto prático de inscrições (D9) · limiter próprio generoso no router.
+app.use('/api/public/evento', require('./routes/publicEventoExterno'));
+// As 4 portas de inscrição abaixo saíram do publicLimiter no sweep 28/07 —
+// mesma razão do NPS/grupos/eventos: domingo no Wi-Fi da igreja é 1 IP só, e
+// o teto de 30/15min derrubava o ~11º visitante (batismo consome 2-3 reqs por
+// carga de form). Cada router tem limiter próprio generoso (600/15min · env
+// PUBLIC_FORM_RATE_LIMIT_MAX); vol mantém 10/15min só no probing
+// (lookup-cpf/request-login/register) e batismo no GET /acesso.
 app.use('/api/public/voluntariado', require('./routes/publicVoluntariado'));
 app.use('/api/public/next', require('./routes/publicNext'));
 app.use('/api/public/batismo', require('./routes/publicBatismo'));
 app.use('/api/public/apresentacao-criancas', require('./routes/publicApresentacao'));
-app.use('/api/public/evento', require('./routes/publicEventoExterno'));
+// Membresia entrou no mesmo padrão no sweep do CENSO (2026-08-03): é a porta de
+// PESSOA e o censo é escaneado pela igreja inteira no MESMO minuto do culto, por
+// 1 IP só (WiFi/NAT). Ficava DEPOIS do publicLimiter (30/15min) somado ao teto
+// próprio de 10/15min — que era compartilhado com os lookups do formulário, ou
+// seja, o form morria por volta da 3ª pessoa. Limiters próprios (generoso na
+// submissão · dedicado no probing) em routes/publicMembresia.js.
+app.use('/api/public/membresia', require('./routes/publicMembresia'));
+// Doação (Generosidade) montada ANTES do publicLimiter estrito: a página de
+// pagamento faz POLLING do status, então sob o teto de 30/15min a pessoa tomaria
+// 429 no meio do próprio pagamento. Limiter próprio generoso no router.
+app.use('/api/public/generosidade', require('./routes/publicGenerosidade'));
+app.use('/api/public', publicLimiter);
+
+app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));
 app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
+// Webhook de pagamento (público · sem auth). Montado FORA de /api/public
+// (escapa o publicLimiter de 30/15min) e isento do limiter global no skip()
+// acima. Perder entrega aqui = pagamento aprovado sem inscrição confirmada.
+app.use('/api/pagamentos-webhook', require('./routes/pagamentosWebhook'));
+// Totem de autoatendimento · quem se autentica é o EQUIPAMENTO (header
+// `x-totem-token`), não uma pessoa. Montado FORA de /api/public (escapa o
+// publicLimiter de 30/15min · um domingo cheio é rajada legítima do mesmo
+// dispositivo) e isento do limiter global no skip() acima; o teto real é por
+// estação, dentro do router. Superfície deliberadamente mínima —
+// ver o cabeçalho de routes/totem.js antes de acrescentar rota aqui.
+app.use('/api/totem', require('./routes/totem'));
 // Webhook WhatsApp (público · sem auth, fora do publicLimiter pra não
 // perder entregas em rajada). Montado ANTES do admin /api/whatsapp.
 app.use('/api/whatsapp/webhook', require('./routes/publicWhatsapp'));
@@ -192,6 +268,7 @@ app.use('/api/online', require('./routes/online'));
 app.use('/api/wifi', require('./routes/wifi'));
 app.use('/api/cuidados', require('./routes/cuidados'));
 app.use('/api/next-convite', require('./routes/nextConvite'));
+app.use('/api/wa-inbox', require('./routes/waInbox'));
 app.use('/api/agente-primeiro-contato', require('./routes/agentePrimeiroContato'));
 app.use('/api/monitor-automacoes', require('./routes/monitorAutomacoes'));
 app.use('/api/agente-voluntariado', require('./routes/agenteVoluntariado'));
@@ -199,8 +276,11 @@ app.use('/api/agente-batismo-next', require('./routes/agenteBatismoNext'));
 app.use('/api/integracao', require('./routes/integracao'));
 app.use('/api/relatorios', require('./routes/relatorios'));
 app.use('/api/eventos-externos', require('./routes/eventosExternos'));
+app.use('/api/inscricoes', require('./routes/inscricoes')); // Módulo central de inscrições (espinha · F3.2)
 app.use('/api/next', require('./routes/next'));
-app.use('/api/next-batismo', require('./routes/nextBatismo'));
+const entradasRouter = require('./routes/nextBatismo');
+app.use('/api/entradas', entradasRouter);
+app.use('/api/next-batismo', entradasRouter); // alias legado (nome antigo · bundles em cache / bookmarks)
 app.use('/api/governanca', require('./routes/governanca'));
 app.use('/api/processos', require('./routes/processos'));
 app.use('/api/tarefas', require('./routes/tarefas'));
@@ -216,6 +296,8 @@ app.use('/api/nsm', require('./routes/nsm'));
 app.use('/api/painel', require('./routes/painel'));
 app.use('/api/painel-area', require('./routes/painelArea'));
 app.use('/api/app-analytics', require('./routes/appAnalytics'));
+app.use('/api/sistema', require('./routes/sistema'));
+app.use('/api/sistema', require('./routes/sistemaV1').router);
 app.use('/api/comunicados', require('./routes/comunicados'));
 app.use('/api/totem-kids', require('./routes/totemKids'));
 app.use('/api/estrategia', require('./routes/estrategia'));
@@ -236,6 +318,10 @@ app.use('/api/feedback', require('./routes/feedback'));
 // Inclui status do Supabase client pra diagnóstico de "Não autorizado" em prod
 app.get('/api/health', (req, res) => {
   const { supabase } = require('./utils/supabase');
+  setSystemJobOutcome(res, {
+    status: 'success', effectStatus: 'confirmed', outputCount: 1,
+    result: 'api_healthy',
+  });
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -253,6 +339,7 @@ app.use('/api', (req, res) => {
     error: 'Endpoint de API não encontrado',
     path: req.originalUrl,
     method: req.method,
+    request_id: req.requestId,
   });
 });
 
@@ -268,26 +355,10 @@ if (process.env.NODE_ENV === 'production') {
 // ── Sentry error handler (precisa vir antes do nosso) ──
 app.use(sentryErrorHandler());
 
-// ── Error handler ──
-app.use((err, req, res, next) => {
-  console.error('[ERROR]', err.message);
-  res.locals._erro500Registrado = true; // o hook de finish não duplica este registro
-  // Sink de telemetria (Onda 0) · fire-and-forget · NUNCA quebra a resposta ·
-  // sem query/body pra não vazar PII (só rota, método, mensagem e stack).
-  try {
-    const { supabase } = require('./utils/supabase');
-    supabase.from('app_erros_servidor').insert({
-      user_id: req.user?.id || null,
-      user_email: req.user?.email || null,
-      metodo: req.method,
-      rota: String(req.path || req.originalUrl || '').slice(0, 300),
-      mensagem: String(err.message || '').slice(0, 1000),
-      stack: String(err.stack || '').slice(0, 4000),
-      status: err.status || 500,
-    }).then(() => {}, (e) => console.warn('[app_erros_servidor]', e.message));
-  } catch (_) { /* tabela ausente / supabase off · ignora */ }
-  res.status(500).json({ error: 'Erro interno do servidor' });
-});
+// ── Error handler canônico ──
+// Preserva causa/stack de falhas inesperadas, responde AppError 4xx sem poluir
+// a telemetria de servidor e nunca expõe a mensagem técnica ao cliente.
+app.use(createErrorHandler());
 
 if (process.env.VERCEL !== '1') {
   app.listen(PORT, () => {

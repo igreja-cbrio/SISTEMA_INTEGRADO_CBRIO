@@ -65,8 +65,31 @@ async function processarEvento(req) {
     console.warn('[whatsapp webhook] assinatura HMAC invalida · ignorando');
     return;
   }
+
+  // C0 · Statuses de entrega da Meta (delivered/read/failed) — SEMPRE processa,
+  // ANTES do gate de IA (recibo de entrega não é IA; precisa registrar mesmo
+  // com a IA desligada). Best-effort: nunca derruba o 200 do webhook.
+  for (const e of (req.body?.entry || [])) {
+    for (const ch of (e.changes || [])) {
+      const st = ch.value?.statuses;
+      if (Array.isArray(st) && st.length) {
+        await processarStatuses(st).catch(err =>
+          console.error('[whatsapp webhook] statuses:', err.message));
+      }
+    }
+  }
+
   // Respeita o toggle global da IA
-  const { data: cfg } = await supabase.from('whatsapp_config').select('ia_ativa, institucional').eq('id', 1).maybeSingle();
+  // ⚠️⚠️ `ia_ativa === false` corta o webhook INTEIRO — inclusive o
+  // `registrarInbound`, ou seja a mensagem da pessoa não aparece na aba
+  // Conversas. É o freio de emergência, não o jeito de "calar o bot": pra isso
+  // existe `respostas_automaticas` (migration 20260812130000), lida em
+  // `processarMensagem`, que desliga só o que o bot RESPONDE e mantém o inbox
+  // recebendo.
+  const { data: cfg } = await supabase
+    .from('whatsapp_config')
+    .select('ia_ativa, institucional, respostas_automaticas')
+    .eq('id', 1).maybeSingle();
   if (cfg && cfg.ia_ativa === false) return;
 
   const entry = req.body?.entry || [];
@@ -77,23 +100,39 @@ async function processarEvento(req) {
   for (const e of entry) {
     for (const ch of (e.changes || [])) {
       const value = ch.value || {};
+      // Multi-número (2026-08-12): a WABA entrega no MESMO webhook os eventos de
+      // TODOS os números dela. O institucional (env WHATSAPP_PHONE_NUMBER_ID) é o
+      // do BOT; qualquer outro (ex.: o CBZap, quando migrar da Multi360) é
+      // atendimento humano puro — mensagem vai direto pro inbox, sem personas, e
+      // a conversa registra o número pra resposta do time sair por ele.
+      const pnid = value.metadata?.phone_number_id ? String(value.metadata.phone_number_id) : null;
+      const institucional = ehNumeroBot(pnid);
       const mensagens = value.messages || [];
       for (const m of mensagens) {
         const ehTexto = m.type === 'text';
         const ehFlowReply = m.type === 'interactive' && m.interactive?.type === 'nfm_reply';
+        // Botão de Aprovar/Recusar da aprovação de solicitação: interativo
+        // (mensagem de sessão) OU quick-reply de TEMPLATE (m.type === 'button').
+        const ehBotao = (m.type === 'interactive' && m.interactive?.type === 'button_reply') || m.type === 'button';
         // Áudio e foto são aceitos pro fluxo de GRUPOS (relato do encontro ·
         // transcrição/foto tratadas em services/whatsappGrupos).
-        const ehMidia = m.type === 'audio' || m.type === 'image';
-        if (!ehTexto && !ehFlowReply && !ehMidia) continue;
+        const ehMidia = m.type === 'audio' || m.type === 'image' || m.type === 'document';
+        if (!ehTexto && !ehFlowReply && !ehMidia && !ehBotao) continue;
         if (++processadas > MAX_MSGS) {
           console.warn('[whatsapp webhook] limite de mensagens por evento atingido · ignorando excedente');
           return;
         }
-        if (ehFlowReply) {
+        if (!institucional) {
+          await inboxDireto(m, pnid).catch(err =>
+            console.error('[whatsapp webhook] inbox direto:', err.message));
+        } else if (ehFlowReply) {
           await processarFlowReply(m).catch(err =>
             console.error('[whatsapp webhook] flow:', err.message));
+        } else if (ehBotao) {
+          await processarBotaoAprovacao(m).catch(err =>
+            console.error('[whatsapp webhook] botao:', err.message));
         } else {
-          await processarMensagem(m, cfg).catch(err =>
+          await processarMensagem(m, cfg, pnid).catch(err =>
             console.error('[whatsapp webhook] mensagem:', err.message));
         }
       }
@@ -101,7 +140,167 @@ async function processarEvento(req) {
   }
 }
 
-async function processarMensagem(m, cfg) {
+// Multi-número: true quando o evento veio do número do BOT (institucional =
+// WHATSAPP_PHONE_NUMBER_ID da env). Payload sem metadata (payload antigo/teste)
+// conta como bot — comportamento idêntico ao histórico.
+function ehNumeroBot(pnid) {
+  const padrao = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  return !pnid || !padrao || String(pnid) === String(padrao);
+}
+
+// Pesquisa de satisfação 0-5 — conversa finalizada aguardando a nota. Vale pra
+// QUALQUER número da WABA (a pesquisa é da CONVERSA, não do bot); por isso vive
+// aqui fora, usada pelo fluxo do bot (processarMensagem) E pelo multi-número
+// (inboxDireto) — a régua é UMA. Devolve true quando assumiu a mensagem.
+async function tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid = null }) {
+  const { data: convP } = await supabase.from('wa_conversas')
+    .select('id, pesquisa_estado, protocolo').eq('telefone', telefone)
+    .eq('pesquisa_estado', 'aguardando').is('deleted_at', null).maybeSingle();
+  if (!convP) return false;
+  const waInbox = require('../services/waInbox');
+  const t = String(texto || '').trim();
+  const nota = /^[0-5]$/.test(t) ? Number(t) : null;
+  const agora = new Date().toISOString();
+  if (nota != null) {
+    await supabase.from('wa_mensagens').insert({
+      conversa_id: convP.id, direcao: 'in', tipo: 'avaliacao', texto: t, wa_message_id: messageId,
+    }).catch(() => {});
+    await supabase.from('wa_conversas').update({
+      satisfacao: nota, satisfacao_em: agora, pesquisa_estado: 'respondida',
+      last_message_at: agora, ultima_previa: `Avaliação: ${nota}/5`,
+    }).eq('id', convP.id);
+    const agr = `Obrigado pela sua avaliação (${nota}/5)! 🙏 Se precisar, é só chamar de novo.`;
+    // Agradece pelo número por onde a conversa aconteceu (default = env).
+    await enviarTexto(telefone, agr, pnid ? { phoneNumberId: pnid } : {}).catch(() => {});
+    await waInbox.registrarOutbound({ telefone, texto: agr, tipo: 'bot', phoneNumberId: pnid }).catch(() => {});
+  } else {
+    // não foi 0-5 → encerra a espera e deixa a mensagem no inbox pro time
+    await supabase.from('wa_conversas').update({ pesquisa_estado: 'ignorada' }).eq('id', convP.id);
+    await waInbox.registrarInbound({ telefone, texto, messageId, tipo: 'text', phoneNumberId: pnid }).catch(() => {});
+  }
+  return true;
+}
+
+// Mensagem chegando por número que NÃO é o do bot: atendimento humano puro —
+// nada de opt-out/triagem/coleta/institucional (personas são do número do bot).
+// Só a pesquisa de satisfação (que é da CONVERSA, não do bot) e o inbox.
+async function inboxDireto(m, pnid) {
+  const messageId = m.id;
+  const telefone = normalizarTelefone(m.from);
+  const texto = (m.text?.body
+    || m.button?.text
+    || m.interactive?.button_reply?.title
+    || m.interactive?.list_reply?.title
+    || '').slice(0, 2000);
+  if (m.type === 'text') {
+    const assumiu = await tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid });
+    if (assumiu) return;
+  }
+  await require('../services/waInbox').registrarInbound({
+    telefone, texto, messageId,
+    tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
+    mediaId: m.image?.id || m.audio?.id || m.document?.id,
+    phoneNumberId: pnid,
+  });
+}
+
+// C0 · Processa os recibos de status da Meta (value.statuses[]).
+// Cada item: { id (message_id/wamid), status: sent|delivered|read|failed,
+// timestamp (unix s), recipient_id, errors[] }. Casa por message_id com
+// whatsapp_envios (a fila grava o message_id no envio); se não achar, tenta o
+// chat (wa_mensagens.wa_message_id) e senão registra em whatsapp_status_orfaos
+// pra nada se perder. Idempotente: os UPDATE são guardados por `.is(col, null)`
+// (não sobrescrevem o 1º timestamp; reprocessar o mesmo status não regride).
+async function processarStatuses(statuses) {
+  for (const s of statuses) {
+    try {
+      const messageId = s?.id;
+      const st = s?.status;
+      if (!messageId || !st || st === 'sent') continue; // 'sent' já é o 'enviado' da fila
+      const ts = s.timestamp
+        ? new Date(Number(s.timestamp) * 1000).toISOString()
+        : new Date().toISOString();
+      const erroTxt = st === 'failed'
+        ? String(s.errors?.[0]?.title || s.errors?.[0]?.message || s.errors?.[0]?.code || 'failed').slice(0, 300)
+        : null;
+
+      // contexto/telefone/ref_id vêm junto porque o `failed` agora AVISA gente
+      // (antes só gravava a coluna e a falha morria em silêncio).
+      const { data: envio } = await supabase.from('whatsapp_envios')
+        .select('id, contexto, telefone, ref_id, template')
+        .eq('message_id', messageId).maybeSingle();
+
+      if (envio) {
+        if (st === 'delivered') {
+          await supabase.from('whatsapp_envios').update({ delivered_at: ts })
+            .eq('message_id', messageId).is('delivered_at', null);
+        } else if (st === 'read') {
+          // read implica delivered — preenche o delivered_at se ainda vazio
+          await supabase.from('whatsapp_envios').update({ read_at: ts })
+            .eq('message_id', messageId).is('read_at', null);
+          await supabase.from('whatsapp_envios').update({ delivered_at: ts })
+            .eq('message_id', messageId).is('delivered_at', null);
+        } else if (st === 'failed') {
+          // ⚠️ O `.select('id')` NÃO é enfeite: é ele que diz se ESTA entrega do
+          // webhook foi a que transicionou a linha. O `.is('failed_at', null)`
+          // torna o UPDATE idempotente, mas sem saber quantas linhas mudaram a
+          // reentrega da Meta (que é normal, e ela reentrega muitas vezes)
+          // avisaria de novo a cada vez. Mesma lição da guarda de idempotência:
+          // o efeito colateral tem que estar amarrado à transição real.
+          const { data: mudou } = await supabase.from('whatsapp_envios')
+            .update({ failed_at: ts, erro_status: erroTxt })
+            .eq('message_id', messageId).is('failed_at', null)
+            .select('id');
+
+          // ⚠️ AQUI cai o "número brasileiro válido SEM WhatsApp": a Meta ACEITA
+          // o envio (200, message_id emitido) e só depois reporta `failed`. Era
+          // o furo registrado no CLAUDE.md — a falha ficava só na tabela e
+          // ninguém sabia que a pessoa não recebeu.
+          if (mudou?.length) {
+            const { avisarNaoEntregue } = require('../services/whatsappContexto');
+            await avisarNaoEntregue(envio, erroTxt);
+          }
+        }
+        continue;
+      }
+
+      // Não é da fila: é do chat (outbound do inbox)? Se sim, deixa pra fase
+      // posterior (wa_mensagens ainda não tem colunas de status). Senão, órfão.
+      const { data: chat } = await supabase.from('wa_mensagens')
+        .select('id').eq('wa_message_id', messageId).maybeSingle();
+      if (!chat) {
+        await supabase.from('whatsapp_status_orfaos').insert({
+          message_id: messageId, status: st, status_timestamp: ts, erro: erroTxt, raw: s,
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.error('[whatsapp webhook] status item:', e.message);
+    }
+  }
+}
+
+// Resposta por BOTÃO (Aprovar/Recusar) da aprovação de solicitação. O id do botão
+// ('aprovar'/'rejeitar') é interpretado pelo tratarRespostaAprovacao igual ao número.
+async function processarBotaoAprovacao(m) {
+  const messageId = m.id;
+  const telefone = normalizarTelefone(m.from);
+  // Botão interativo (session) → interactive.button_reply.id · quick-reply de
+  // TEMPLATE → m.button.text/payload (ex.: "Aprovar"/"Recusar"). interpretar() casa os dois.
+  const botaoId = m.type === 'button'
+    ? (m.button?.text || m.button?.payload || '')
+    : (m.interactive?.button_reply?.id || '');
+  const { data: jaVisto } = await supabase
+    .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', messageId).maybeSingle();
+  if (jaVisto) return;
+  await require('../services/solicitacaoWpp')
+    .tratarRespostaAprovacao({ telefone, texto: botaoId })
+    .catch(err => console.error('[whatsapp webhook] botao aprovacao:', err.message));
+  await supabase.from('whatsapp_coletas').insert({
+    whatsapp_message_id: messageId, telefone, raw_text: botaoId, status: 'ignorado',
+  }).catch(() => {});
+}
+
+async function processarMensagem(m, cfg, pnid = null) {
   const messageId = m.id;
   const telefone = normalizarTelefone(m.from);
   // Cap de tamanho · evita mandar payload gigante pro parser (LLM) e pro banco.
@@ -111,6 +310,31 @@ async function processarMensagem(m, cfg) {
   const { data: jaVisto } = await supabase
     .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', messageId).maybeSingle();
   if (jaVisto) return;
+
+  // ── OPT-OUT / OPT-IN · PRIORIDADE MÁXIMA (Marcos 2026-07-24). Quem pede pra
+  // parar é desligado NA HORA (membro + líder), antes de qualquer fluxo —
+  // respeitar isso protege o número (opt-out é melhor que bloqueio). Pega o
+  // texto digitado OU o payload do botão "Não quero mais receber" dos templates.
+  {
+    const optSvc = require('../services/whatsappOptout');
+    let bruto = texto, deBotao = false;
+    if (m.type === 'button') { bruto = m.button?.text || m.button?.payload || ''; deBotao = true; }
+    else if (m.type === 'interactive') { bruto = m.interactive?.button_reply?.title || m.interactive?.list_reply?.title || m.interactive?.button_reply?.id || ''; deBotao = true; }
+    const intencao = optSvc.intencaoOptOut(bruto, { deBotao });
+    if (intencao) {
+      const ligar = intencao === 'in';
+      const r = await optSvc.aplicarOptOut({ telefone, ligar }).catch(err => { console.error('[whatsapp webhook] optout:', err.message); return null; });
+      await supabase.from('whatsapp_coletas').insert({
+        whatsapp_message_id: messageId, telefone, raw_text: (bruto || texto || '').slice(0, 2000),
+        status: 'ignorado', parsed: { fonte: ligar ? 'opt_in' : 'opt_out', afetados: r?.afetados ?? 0 },
+      }).catch(() => {});
+      await enviarTexto(telefone, ligar
+        ? 'Pronto! Você voltou a receber as mensagens da CBRio. 🙏'
+        : 'Pronto, você não vai mais receber mensagens da CBRio por aqui. Se mudar de ideia, responda VOLTAR.'
+      ).catch(() => {});
+      return;
+    }
+  }
 
   // ── APROVAÇÃO DE SOLICITAÇÃO · se o número tem solicitação aguardando (ex.:
   // Arthur), interpreta 1=aprovar / 2=rejeitar e aplica. Intercepta cedo (só
@@ -134,6 +358,35 @@ async function processarMensagem(m, cfg) {
     .catch(err => { console.error('[whatsapp webhook] nota:', err.message); return false; });
   if (tratadoNota) return;
 
+  // ── PESQUISA DE SATISFAÇÃO ── conversa finalizada aguardando a nota (0-5).
+  // Captura a resposta como avaliação e agradece (não reabre o ticket).
+  if (m.type === 'text') {
+    const assumiu = await tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid });
+    if (assumiu) return;
+  }
+
+  // ── INBOX HUMANO ASSUMIDO ── se a igreja já iniciou/assumiu uma conversa
+  // com este número pelo inbox (Nova conversa ou resposta do time), as
+  // respostas voltam pro inbox — NÃO pro bot — mesmo que o número seja líder.
+  // Exceção: se houver coleta conversacional aberta (líder mid-report), o bot
+  // continua (não interrompe uma coleta em andamento).
+  const { data: convAssumida } = await supabase.from('wa_conversas')
+    .select('id').eq('telefone', telefone).eq('assumida_humano', true).is('deleted_at', null).maybeSingle();
+  if (convAssumida) {
+    const limColeta = new Date(Date.now() - JANELA_CONVERSA_MIN * 60 * 1000).toISOString();
+    const { data: coletaViva } = await supabase.from('whatsapp_coletas')
+      .select('id').eq('telefone', telefone).eq('status', 'aguardando_info').gte('created_at', limColeta).limit(1).maybeSingle();
+    if (!coletaViva) {
+      await require('../services/waInbox').registrarInbound({
+        telefone, texto, messageId,
+        tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
+        mediaId: m.image?.id || m.audio?.id || m.document?.id,
+        phoneNumberId: pnid,
+      }).catch(e => console.error('[whatsapp webhook] inbox assumida:', e.message));
+      return; // não aciona bot nem resposta institucional
+    }
+  }
+
   // Identifica lider/assistente cadastrado
   const { data: lider } = await supabase
     .from('whatsapp_lideres')
@@ -151,13 +404,59 @@ async function processarMensagem(m, cfg) {
 
   // ── Persona 1 · numero desconhecido (ou sem permissão de coleta) ────
   if (!podeColetar) {
-    if (m.type !== 'text') return; // mídia de desconhecido · ignora (não custa LLM)
+    // Inbox humano (Cuidados → Conversas): captura a mensagem de quem NÃO é
+    // fluxo do bot (convertidos, visitantes) pra o time responder. Best-effort.
+    const waInbox = require('../services/waInbox');
+    await waInbox.registrarInbound({
+      telefone, texto, messageId,
+      tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
+      mediaId: m.image?.id || m.audio?.id || m.document?.id,
+      phoneNumberId: pnid,
+    }).catch(e => console.error('[whatsapp webhook] inbox in:', e.message));
+    if (m.type !== 'text') return; // mídia: já no inbox; não custa LLM institucional
+
+    // ⚠️⚠️ SEM RESPOSTA AUTOMÁTICA (Matheus · 12/08/2026): *"não quero bot; o que
+    // a pessoa falar não deve abrir o menu. Será apenas atendimento humanizado
+    // por enquanto."* A mensagem JÁ está no inbox (logo acima) — daqui pra
+    // frente é gente que responde.
+    // ⚠️ O gate é AQUI e não no topo do webhook: `ia_ativa` faz `return` ANTES
+    // do `registrarInbound`, então usá-lo calaria o bot CEGANDO a aba Conversas.
+    // ⚠️ E é depois do `podeColetar`: o formulário de números de culto dos
+    // COORDENADORES é ferramenta de trabalho, não atendimento — não é o "bot"
+    // de que ele está falando.
+    if (cfg && cfg.respostas_automaticas === false) {
+      await supabase.from('whatsapp_coletas').insert({
+        whatsapp_message_id: messageId, telefone, raw_text: texto,
+        status: 'ignorado', erro: 'respostas_automaticas_desligadas',
+        modulo_destino: 'conversas',
+      }).catch(() => {});
+      return;
+    }
+
+    // ── BOT DE TRIAGEM ── número realmente desconhecido (não-líder): o bot
+    // pergunta o setor + nome, tria pra área e notifica a equipe. Substitui a
+    // FAQ institucional. Líder-comum (coleta_restrita) mantém o institucional.
+    if (!lider) {
+      const assumiu = await require('../services/whatsappTriagem')
+        .tratar({ telefone, texto })
+        .catch(e => { console.error('[whatsapp webhook] triagem:', e.message); return false; });
+      if (assumiu) {
+        await supabase.from('whatsapp_coletas').insert({
+          whatsapp_message_id: messageId, telefone, raw_text: texto,
+          status: 'ignorado', erro: 'triagem', modulo_destino: 'conversas',
+        }).catch(() => {});
+        return;
+      }
+    }
+
     const resposta = await responderInstitucional({ texto, institucional: cfg?.institucional });
     await supabase.from('whatsapp_coletas').insert({
       whatsapp_message_id: messageId, telefone, raw_text: texto,
       status: 'ignorado', erro: lider ? 'coleta_restrita' : 'institucional', modulo_destino: 'institucional',
     });
     await enviarTexto(telefone, resposta);
+    await waInbox.registrarOutbound({ telefone, texto: resposta, tipo: 'institucional' })
+      .catch(e => console.error('[whatsapp webhook] inbox out:', e.message));
     return;
   }
 

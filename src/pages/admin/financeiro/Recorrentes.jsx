@@ -8,6 +8,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { financeiro } from '../../../api';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const fmtMoney = (v) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtDate = (iso) => iso ? new Date(iso + 'T00:00:00').toLocaleDateString('pt-BR') : '—';
@@ -313,7 +314,7 @@ function FormDialog({ existing, onClose, onSuccess }) {
               type="text" value={form.descricao}
               onChange={(e) => setForm({ ...form, descricao: e.target.value })}
               className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background"
-              placeholder="Ex: Aluguel · Salário Yago · Google Workspace"
+              placeholder="Ex: Aluguel · Salário · Google Workspace"
               autoFocus
             />
           </div>
@@ -390,10 +391,9 @@ function FormDialog({ existing, onClose, onSuccess }) {
           {form.cadencia_dias != 30 && (
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Próximo vencimento estimado</label>
-              <input
-                type="date"
+              <DatePicker
                 value={form.proxima_estimada}
-                onChange={(e) => setForm({ ...form, proxima_estimada: e.target.value })}
+                onChange={(v) => setForm({ ...form, proxima_estimada: v })}
                 className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background"
               />
             </div>

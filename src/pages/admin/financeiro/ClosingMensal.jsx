@@ -154,7 +154,7 @@ function AcaoDialog({ acao, onClose, onSuccess }) {
             <textarea
               value={texto} onChange={(e) => setTexto(e.target.value)} rows={2}
               className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background"
-              placeholder="Ex: fechado pelo Yago após conferência com contador"
+              placeholder="Ex: fechado pelo financeiro após conferência com o contador"
             />
           </>
         ) : (

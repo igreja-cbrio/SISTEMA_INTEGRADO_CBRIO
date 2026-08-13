@@ -196,7 +196,7 @@ function AlertaItem({ alerta, ordem, onClick }) {
         <div style={{ fontSize: 10, color: C.t3, marginTop: 2 }}>
           {alerta.ultimo_valor != null ? (
             <>
-              Ultimo: <strong style={{ color: C.t2 }}>{alerta.ultimo_valor}{alerta.unidade ? ' ' + alerta.unidade : ''}</strong>
+              Último: <strong style={{ color: C.t2 }}>{alerta.ultimo_valor}{alerta.unidade ? ' ' + alerta.unidade : ''}</strong>
               {alerta.ultimo_periodo && <> ({alerta.ultimo_periodo})</>}
               {alerta.meta_descricao && <> · meta {alerta.meta_descricao}</>}
               {alerta.percentual_meta != null && <> · <strong style={{ color: sv.cor }}>{alerta.percentual_meta}%</strong> da meta</>}

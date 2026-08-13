@@ -1,5 +1,6 @@
 import { supabase } from './supabaseClient';
 import { resolveApiBaseUrl } from './lib/api-base';
+import { captureApiError } from './lib/sentry';
 
 // Configure this to point to your Vercel backend
 const API = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
@@ -100,23 +101,29 @@ async function request(path, opts = {}) {
   // Timeout (default 30s · configurável por opts.timeout) pra um backend/rede
   // lento não deixar a UI "carregando pra sempre". requestFile já usa esse padrão.
   const { timeout = 30000, ...rest } = opts;
+  const method = String(rest.method || 'GET').toUpperCase();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   let res;
   try {
     res = await fetch(`${API}${path}`, { ...rest, headers: { ...h, ...rest.headers }, signal: controller.signal });
-  } catch (e) {
-    if (e?.name === 'AbortError') {
-      throw new Error('Tempo esgotado ao falar com o servidor. Recarregue a página ou tente de novo.');
+  } catch (cause) {
+    if (cause?.name === 'AbortError') {
+      const error = Object.assign(new Error('Tempo esgotado ao falar com o servidor. Recarregue a página ou tente de novo.'), { code: 'API_TIMEOUT' });
+      captureApiError(error, { path, method, kind: 'timeout', code: error.code });
+      throw error;
     }
-    throw e;
+    captureApiError(cause, { path, method, kind: 'network', code: 'API_NETWORK_ERROR' });
+    throw cause;
   } finally {
     clearTimeout(timer);
   }
 
   const contentType = res.headers.get('content-type') || '';
   if (contentType.includes('text/html')) {
-    throw new Error('Backend não disponível. Os módulos funcionam apenas com o servidor rodando.');
+    const error = Object.assign(new Error('Backend não disponível. Os módulos funcionam apenas com o servidor rodando.'), { code: 'API_INVALID_RESPONSE', status: res.status });
+    captureApiError(error, { path, method, kind: 'protocol', status: res.status, code: error.code });
+    throw error;
   }
 
   if (res.status === 401) {
@@ -133,7 +140,9 @@ async function request(path, opts = {}) {
       no_token:       'Sessão expirada. Faça login novamente.',
       invalid_token:  'Sua sessão expirou. Redirecionando para o login...',
     };
-    throw new Error(reasonMsg[body.reason] || body.error || 'Não autorizado. Verifique se o backend está configurado corretamente.');
+    const error = new Error(reasonMsg[body.reason] || body.error || 'Não autorizado. Verifique se o backend está configurado corretamente.');
+    error.requestId = res.headers.get('x-request-id') || body.request_id || null;
+    throw error;
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
@@ -141,9 +150,24 @@ async function request(path, opts = {}) {
     // Preserve all extra fields from error body (alreadyCheckedIn, volunteerName, etc.)
     Object.assign(error, err);
     error.status = res.status;
+    error.requestId = res.headers.get('x-request-id') || err.request_id || null;
+    captureApiError(error, {
+      path,
+      method,
+      kind: 'response',
+      status: res.status,
+      requestId: error.requestId,
+      code: error.code,
+    });
     throw error;
   }
-  return res.json();
+  try {
+    return await res.json();
+  } catch (cause) {
+    const error = Object.assign(new Error('Resposta inválida recebida do servidor.'), { code: 'API_INVALID_JSON', status: res.status, cause });
+    captureApiError(error, { path, method, kind: 'protocol', status: res.status, code: error.code });
+    throw error;
+  }
 }
 
 const get = (path, opts) => request(path, { ...opts });
@@ -152,7 +176,11 @@ const get = (path, opts) => request(path, { ...opts });
 const post = (path, body, opts) => request(path, { method: 'POST', body: JSON.stringify(body), ...opts });
 const put = (path, body) => request(path, { method: 'PUT', body: JSON.stringify(body) });
 const patch = (path, body) => request(path, { method: 'PATCH', body: JSON.stringify(body) });
-const del = (path) => request(path, { method: 'DELETE' });
+// DELETE aceita corpo opcional: rotas que registram MOTIVO da exclusão (ex.:
+// desfazer check-in, que grava no ledger append-only) precisam mandar payload.
+const del = (path, body) => request(path, body === undefined
+  ? { method: 'DELETE' }
+  : { method: 'DELETE', body: JSON.stringify(body) });
 
 export const users = {
   list: () => get('/auth/users'),
@@ -224,6 +252,117 @@ export const events = {
   deleteSimpleTemplate: (id) => del(`/events/simple-templates/${id}`),
   toggleSimpleTemplate: (id) => patch(`/events/simple-templates/${id}/toggle`, {}),
   applySimpleTemplates: (eventId) => post(`/events/${eventId}/apply-simple-templates`, {}),
+  // null = automático por categoria · true = forçar mostrar · false = forçar esconder
+  setVisivelPainelRh: (id, visivel_painel_rh) => patch(`/events/${id}/visivel-painel-rh`, { visivel_painel_rh }),
+};
+
+// Módulo Propostas · ciclo anual (Fase 1A: configuração)
+export const propostas = {
+  config: {
+    ciclos: () => get('/propostas/config/ciclos'),
+    criarCiclo: (data) => post('/propostas/config/ciclos', data),
+    atualizarCiclo: (id, data) => put(`/propostas/config/ciclos/${id}`, data),
+    parametros: (cicloId) => get(`/propostas/config/ciclos/${cicloId}/parametros`),
+    salvarParametros: (cicloId, data) => put(`/propostas/config/ciclos/${cicloId}/parametros`, data),
+    areas: () => get('/propostas/config/areas'),
+    salvarArea: (areaId, data) => put(`/propostas/config/areas/${areaId}`, data),
+    aux: () => get('/propostas/config/aux'),
+    criterios: (cicloId) => get(`/propostas/config/ciclos/${cicloId}/criterios`),
+    criarCriterio: (cicloId, data) => post(`/propostas/config/ciclos/${cicloId}/criterios`, data),
+    atualizarCriterio: (id, data) => put(`/propostas/config/criterios/${id}`, data),
+    removerCriterio: (id) => del(`/propostas/config/criterios/${id}`),
+  },
+  aux: () => get('/propostas/aux'),
+  list: (params) => get('/propostas' + (params ? '?' + new URLSearchParams(params) : '')),
+  get: (id) => get(`/propostas/${id}`),
+  criar: (data) => post('/propostas', data),
+  atualizar: (id, data) => put(`/propostas/${id}`, data),
+  transicao: (id, acao, comentario) => post(`/propostas/${id}/transicao`, { acao, comentario }),
+  historico: (id) => get(`/propostas/${id}/historico`),
+  remover: (id) => del(`/propostas/${id}`),
+  uploadAnexo: (id, file) => { const fd = new FormData(); fd.append('file', file); return requestFile(`/propostas/${id}/anexos`, fd); },
+  removerAnexo: (anexoId) => del(`/propostas/anexos/${anexoId}`),
+  // Fase 2 · avaliação + mural
+  avaliarFila: (cicloId) => get('/propostas/avaliar' + (cicloId ? `?ciclo_id=${cicloId}` : '')),
+  avaliacao: (id) => get(`/propostas/${id}/avaliacao`),
+  salvarAvaliacao: (id, data) => post(`/propostas/${id}/avaliacao`, data),
+  mural: (cicloId) => get(`/propostas/mural?ciclo_id=${cicloId}`),
+  deliberar: (id, data) => post(`/propostas/${id}/deliberar`, data),
+  // Fase 3
+  posEvento: (id) => get(`/propostas/${id}/pos-evento`),
+  salvarPosEvento: (id, data) => post(`/propostas/${id}/pos-evento`, data),
+  consolidarCiclo: (cicloId) => post(`/propostas/config/ciclos/${cicloId}/consolidar`, {}),
+};
+
+// Módulo Censo · plataforma de pesquisas (censo demográfico, pulso, evento).
+// F0: CRUD do questionário. A coleta pública e os dashboards vêm nas fases
+// seguintes (publicCenso / dashboard).
+export const censo = {
+  aux: () => get('/censo/aux'),
+  // Vem da view vw_cen_pesquisa_stats: já traz iniciadas/concluídas/taxa.
+  pesquisas: () => get('/censo/pesquisas'),
+  pesquisa: (id) => get(`/censo/pesquisas/${id}`),
+  criar: (data) => post('/censo/pesquisas', data),
+  atualizar: (id, data) => put(`/censo/pesquisas/${id}`, data),
+  status: (id, status) => post(`/censo/pesquisas/${id}/status`, { status }),
+  duplicar: (id, data) => post(`/censo/pesquisas/${id}/duplicar`, data || {}),
+  remover: (id) => del(`/censo/pesquisas/${id}`),
+  // Respostas nominais (nível 2). O bloco sensível vem filtrado pelo servidor
+  // para quem não está em cen_acesso_sensivel — o front só mostra que existe
+  // algo oculto, nunca o conteúdo.
+  respostas: (pesquisaId, limite) =>
+    get(`/censo/respostas?pesquisa_id=${pesquisaId}${limite ? `&limite=${limite}` : ''}`),
+  resposta: (id) => get(`/censo/respostas/${id}`),
+  // Apaga a resposta de uma pessoa e a LIBERA para responder de novo (nível 4).
+  // Soft-delete no servidor: a régua do "já respondeu?" filtra deleted_at.
+  removerResposta: (id) => del(`/censo/respostas/${id}`),
+  // Fila de cuidado: nominal é restrito à equipe designada; o resumo (contagens,
+  // sem PII) é aberto para quem tem o módulo.
+  cuidadoResumo: (pesquisaId) => get(`/censo/cuidado/resumo?pesquisa_id=${pesquisaId}`),
+  cuidado: (pesquisaId, filtros = {}) => {
+    const qs = new URLSearchParams({ pesquisa_id: pesquisaId });
+    if (filtros.status) qs.set('status', filtros.status);
+    if (filtros.tipo) qs.set('tipo', filtros.tipo);
+    return get(`/censo/cuidado?${qs}`);
+  },
+  cuidadoAtualizar: (id, dados) => patch(`/censo/cuidado/${id}`, dados),
+  // Vínculo com a pessoa e correção do cadastro NÃO acontecem durante o culto
+  // (eram 7 das 8,3 idas ao banco por resposta). Ficam nesta fila, para rodar
+  // depois — quando ninguém está esperando a tela responder.
+  pendentes: (pesquisaId) => get(`/censo/pendentes?pesquisa_id=${pesquisaId}`),
+  posProcessar: (pesquisaId, limite) =>
+    post('/censo/pos-processar', { pesquisa_id: pesquisaId, limite }),
+
+  // Cobertura: quem respondeu vs. quantos membros ativos existem. O denominador
+  // é calculado no servidor a cada chamada — número fixo envelhece sem avisar.
+  cobertura: (pesquisaId) => get(`/censo/cobertura?pesquisa_id=${pesquisaId}`),
+  // Perfil: todo gráfico do censo, na ordem do questionário, com a base já sem
+  // as opções neutras. Pergunta nova no construtor vira gráfico sozinha.
+  perfil: (pesquisaId) => get(`/censo/perfil?pesquisa_id=${pesquisaId}`),
+  ia: {
+    obter: (pesquisaId) => get(`/censo/ia?pesquisa_id=${pesquisaId}`),
+    // ⚠️ 600s (o padrão é 30s): a leitura roda Opus 5 sobre centenas de textos
+    // abertos e leva minutos. Um timeout curto aqui mostraria "falhou" para uma
+    // análise que na verdade terminou — e ela é gravada, então o próximo GET a
+    // acharia. Melhor esperar do que mentir.
+    gerar: (pesquisaId) => post('/censo/ia', { pesquisa_id: pesquisaId }, { timeout: 600000 }),
+  },
+};
+
+// QR dinâmicos: o código impresso é estável, o destino muda no banco.
+export const links = {
+  listar: () => get('/links'),
+  obter: (id) => get(`/links/${id}`),
+  criar: (dados) => post('/links', dados),
+  // ⚠️ NÃO existe troca de slug de propósito: o slug está impresso em papel.
+  atualizar: (id, dados) => put(`/links/${id}`, dados),
+  remover: (id) => del(`/links/${id}`),
+  // Transforma um link existente em QR dinâmico sem sair da tela onde você
+  // está. Reusa se já houver link ativo para o mesmo destino.
+  paraDestino: (dados) => post('/links/para-destino', dados),
+  // Todo formulário público do sistema, com a marca de quem já é dinâmico.
+  // Links PESSOAIS (por token) ficam de fora — ver o comentário na rota.
+  catalogo: () => get('/links/catalogo'),
 };
 
 export const projects = {
@@ -296,20 +435,193 @@ export const eventosExternos = {
   uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/eventos-externos/upload-capa', fd); },
 };
 
+// Módulo de Inscrições · espinha (F3.2 · docs/modulo-inscricoes/fase2-specs.md)
+export const inscricoesApi = {
+  areas: () => get('/inscricoes/areas'),
+  series: () => get('/inscricoes/series'),
+  atualizarSerie: (id, data) => put(`/inscricoes/series/${id}`, data),
+  listarEventos: () => get('/inscricoes/eventos'),
+  evento: (id) => get(`/inscricoes/eventos/${id}`),
+  inscricoesDoEvento: (id) => get(`/inscricoes/eventos/${id}/inscricoes`),
+  // Placar do evento (contadores por COUNT + arrecadado das inscrições pagas).
+  // Separado da lista: abre na hora e é o mesmo que o app do staff consome.
+  eventoResumo: (id) => get(`/inscricoes/eventos/${id}/resumo`),
+  // Bolsa/isenção por inscrito: `tipo` integral (gratuidade) ou parcial
+  // (desconto, com `valor` em reais) + motivo obrigatório.
+  darBolsa: (eventoId, inscricaoId, data) => post(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/bolsa`, data),
+  tirarBolsa: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/bolsa`),
+  // Gratuidade/desconto AUTORIZADO por CPF antes da inscrição — a porta pública
+  // aplica sozinha quando a pessoa digita aquele CPF. `valor` (em reais) é
+  // quanto ela VAI PAGAR, não o desconto.
+  beneficios: (eventoId) => get(`/inscricoes/eventos/${eventoId}/beneficios`),
+  criarBeneficio: (eventoId, data) => post(`/inscricoes/eventos/${eventoId}/beneficios`, data),
+  removerBeneficio: (eventoId, beneficioId) => del(`/inscricoes/eventos/${eventoId}/beneficios/${beneficioId}`),
+  // Comprovantes de Pix/transferência anexados pela pessoa. `url` é signed (15
+  // min) — bucket privado. Aceitar baixa o pagamento MANUALMENTE com autoria;
+  // recusar exige motivo (a pessoa lê pra corrigir e reenviar).
+  comprovantes: (eventoId, inscricaoId) =>
+    get(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/comprovantes`),
+  aceitarComprovante: (eventoId, inscricaoId, comprovanteId, data) =>
+    post(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/comprovantes/${comprovanteId}/aceitar`, data || {}),
+  recusarComprovante: (eventoId, inscricaoId, comprovanteId, motivo) =>
+    post(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/comprovantes/${comprovanteId}/recusar`, { motivo }),
+  criarEvento: (data) => post('/inscricoes/eventos', data),
+  atualizarEvento: (id, data) => put(`/inscricoes/eventos/${id}`, data),
+  excluirEvento: (id) => del(`/inscricoes/eventos/${id}`),
+  novaEdicao: (id, data) => post(`/inscricoes/eventos/${id}/nova-edicao`, data),
+  sortear: (id, premio, permitirRepetir) => post(`/inscricoes/eventos/${id}/sortear`, { premio, permitir_repetir: !!permitirRepetir }),
+  unificadas: (qs) => get(`/inscricoes/unificadas${qs ? `?${qs}` : ''}`),
+  unificadasPessoas: (qs) => get(`/inscricoes/unificadas/pessoas${qs ? `?${qs}` : ''}`),
+  unificadasDashboard: (qs) => get(`/inscricoes/unificadas/dashboard${qs ? `?${qs}` : ''}`),
+  atualizarInscricao: (eventoId, inscricaoId, data) => patch(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`, data),
+  excluirInscricao: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`),
+  uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-capa', fd); },
+  // Check-in do evento (SPEC-06) — tela fullscreen: QR do comprovante + busca
+  // Inventário das portas públicas do sistema (grupos/next/batismo/…) — read-only
+  portas: () => get('/inscricoes/portas'),
+  // Saúde da credencial do provedor de pagamento. `verificar` bate no PSP na
+  // hora (nível 3); sem ele, lê o último resultado da sonda diária.
+  pagamentoSaude: (verificar) => get(`/inscricoes/pagamento-saude${verificar ? '?verificar=1' : ''}`),
+  qrs: (qs) => get(`/inscricoes/qrs${qs ? `?${qs}` : ''}`),
+  revogarQr: (id, motivo) => patch(`/inscricoes/qrs/${id}/revogar`, { motivo }),
+  reativarQr: (id, motivo) => patch(`/inscricoes/qrs/${id}/reativar`, { motivo }),
+  checkinEstado: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin`),
+  checkinBuscar: (eventoId, q) => get(`/inscricoes/eventos/${eventoId}/checkin/buscar?q=${encodeURIComponent(q)}`),
+  checkinMarcar: (eventoId, data) => post(`/inscricoes/eventos/${eventoId}/checkin`, data),
+  checkinDesfazer: (eventoId, inscricaoId, motivo) => del(`/inscricoes/eventos/${eventoId}/checkin/${inscricaoId}`, { motivo }),
+  checkinHistorico: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/historico`),
+
+  // Templates dos e-mails de inscrição (confirmada / pendente / expirada).
+  // Sem template salvo, o e-mail sai no texto padrão do código — a tela mostra
+  // isso como "no padrão", e "Restaurar padrão" é um DELETE.
+  emailTemplates: (eventoId) => get(`/inscricoes/email-templates${eventoId ? `?evento_id=${eventoId}` : ''}`),
+  salvarEmailTemplate: (tipo, data) => put(`/inscricoes/email-templates/${tipo}`, data),
+  restaurarEmailTemplate: (tipo, eventoId) =>
+    del(`/inscricoes/email-templates/${tipo}${eventoId ? `?evento_id=${eventoId}` : ''}`),
+  previewEmailTemplate: (data) => post('/inscricoes/email-templates/preview', data),
+  // Envia o rascunho pro e-mail de quem está logado (destinatário é do servidor).
+  testarEmailTemplate: (data) => post('/inscricoes/email-templates/teste', data),
+
+  // ── Fluxo do TOTEM (dentro do Totem Membro · conta de quiosque) ──
+  // Só eventos publicados E marcados como "aparece no totem". Inscrever roda a
+  // MESMA `inscreverEspinha` da porta pública e do app; a estação sai da conta
+  // logada, no servidor. O status do pagamento depois é lido pelos endpoints
+  // públicos (`eventoPublico.pagamento`/`pagamentoMetodo`), que já têm limiter
+  // generoso e não devolvem PII.
+  totemEventos: () => get('/inscricoes/totem/eventos'),
+  totemInscrever: (eventoId, data) => post(`/inscricoes/totem/eventos/${eventoId}/inscrever`, data),
+
+  // ── Totens (estações de autoatendimento) ──
+  // Ver = nível 1 · criar/parear/revogar = nível 4 (é quem decide qual
+  // equipamento pode receber dinheiro em nome da igreja).
+  // ⚠️ `pareamento` devolve o código UMA vez e ele não é recuperável depois —
+  // a tela tem que mostrar na hora. Gerar outro revoga o anterior.
+  totens: () => get('/inscricoes/totens'),
+  // Contas de quiosque candidatas a SER um totem (o vínculo é o que faz o
+  // servidor resolver a estação pelo usuário logado).
+  totensContas: () => get('/inscricoes/totens/contas'),
+  criarTotem: (data) => post('/inscricoes/totens', data),
+  atualizarTotem: (id, data) => patch(`/inscricoes/totens/${id}`, data),
+  // ⚠️ Código do AGENTE DO PINPAD (Fase 3), não do navegador: o totem de
+  // inscrições vive dentro do Totem Membro e a estação sai da conta logada.
+  parearTotem: (id, rotulo) => post(`/inscricoes/totens/${id}/pareamento`, { rotulo }),
+  revogarTotem: (id, motivo) => post(`/inscricoes/totens/${id}/revogar`, { motivo }),
+  revogarCredencialTotem: (tokenId, motivo) => post(`/inscricoes/totens/tokens/${tokenId}/revogar`, { motivo }),
+};
+
 // Eventos Externos · formulário público de confirmação de presença (sem auth)
 export const eventoPublico = {
   get: (slug) => fetch(`${API}/public/evento/${encodeURIComponent(slug)}`).then(async r => {
     const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
   }),
+  // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
+  textos: () => fetch(`${API}/public/evento/textos`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
   inscrever: (slug, data) => fetch(`${API}/public/evento/${encodeURIComponent(slug)}/inscrever`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
   }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // Status da cobrança da inscrição paga. Acessado pelo `public_token`, nunca
+  // pelo uuid. Montado sob /public/evento de propósito: é lá que o limiter
+  // generoso vale (a tela faz polling e sob /api/public puro tomaria 429).
+  pagamento: (token) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}`)
+    .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // A pessoa escolheu como pagar → o provedor PREPARA aquela forma e devolve o
+  // artefato real (QR do Pix, linha do boleto, checkout do cartão). Em erro do
+  // provedor o corpo traz `pagamento` com o estado atual, pra tela não regredir.
+  // `parcelas` só faz efeito no cartão, e o SERVIDOR valida contra o teto do
+  // evento — o número da tela é pedido, não decisão.
+  // Cobra o cartão SEM sair da nossa página: o corpo é o formData do Brick, e o
+  // que viaja é TOKEN, nunca o número do cartão. O valor é ignorado no servidor
+  // (quem manda é a cobrança) — ver backend/services/pagamentos/index.js.
+  // 402 = emissor recusou; a cobrança segue viva pra tentar outro cartão ou Pix.
+  pagamentoCartao: (token, formData) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}/cartao`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData),
+  }).then(async r => {
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(j.error || 'Erro'); e.recusado = !!j.recusado; e.pagamento = j.pagamento; throw e; }
+    return j;
+  }),
+  pagamentoMetodo: (token, metodo, parcelas = 1) => fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}/metodo`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ metodo, parcelas }),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) { const e = new Error(j.error || 'Erro'); e.pagamento = j.pagamento || null; throw e; }
+    return j;
+  }),
+  // A pessoa anexa o comprovante do Pix/TED que pagou fora do provedor.
+  // ⚠️ NÃO confirma pagamento: entra numa fila que uma pessoa da equipe confere.
+  enviarComprovante: (token, file, { metodo_declarado, observacao } = {}) => {
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    if (metodo_declarado) fd.append('metodo_declarado', metodo_declarado);
+    if (observacao) fd.append('observacao', observacao);
+    return fetch(`${API}/public/evento/pagamento/${encodeURIComponent(token)}/comprovante`, {
+      method: 'POST', body: fd,
+    }).then(async r => {
+      const j = await r.json();
+      if (!r.ok) { const e = new Error(j.error || 'Erro'); e.pagamento = j.pagamento || null; throw e; }
+      return j;
+    });
+  },
+  // Comprovante da inscrição (SPEC-06) — a URL do QR (/i/c/<token>) cai aqui
+  comprovante: (token) => fetch(`${API}/public/evento/comprovante/${encodeURIComponent(token)}`)
+    .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
   // Upload de imagem de um campo do formulário (ex.: logo da empresa) · sem auth.
   uploadImagem: (slug, file) => {
     const fd = new FormData(); fd.append('arquivo', file);
     return fetch(`${API}/public/evento/${encodeURIComponent(slug)}/upload-imagem`, { method: 'POST', body: fd })
       .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; });
   },
+};
+
+// Generosidade · página pública de doação (/doar · sem auth)
+//
+// ⚠️ Esta é a página que o APP abre no NAVEGADOR EXTERNO. A guideline 3.2.2(iv)
+// da App Store proíbe coletar doação dentro do app de quem não é nonprofit
+// aprovado pela Apple, e permite arrecadar fora dele ("via Safari"). Não
+// consumir estes endpoints de dentro de WebView do app.
+export const generosidadePublica = {
+  config: () => fetch(`${API}/public/generosidade/config`)
+    .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  doar: (dados) => fetch(`${API}/public/generosidade/doacao`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) { const e = new Error(j.error || 'Erro'); e.campo = j.campo || null; throw e; }
+    return j;
+  }),
+  status: (token) => fetch(`${API}/public/generosidade/${encodeURIComponent(token)}`)
+    .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+  // Em erro do provedor o corpo traz `pagamento` com o estado ATUAL, pra a tela
+  // não regredir pra vazio e poder voltar a aba pra forma que existe.
+  metodo: (token, metodo, parcelas = 1) => fetch(`${API}/public/generosidade/${encodeURIComponent(token)}/metodo`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ metodo, parcelas }),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) { const e = new Error(j.error || 'Erro'); e.pagamento = j.pagamento || null; throw e; }
+    return j;
+  }),
 };
 
 // Decisão online · formulário público "Eu aceito Jesus" (sem auth)
@@ -329,6 +641,10 @@ export const decisaoOnline = {
 export const next = {
   // Public (sem auth) — para o formulário
   publicEventos: () => fetch(`${API}/public/next/eventos`).then(r => r.json()),
+  // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
+  publicTextos: () => fetch(`${API}/public/next/textos`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
   publicInscrever: (data) => fetch(`${API}/public/next/inscrever`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -357,6 +673,8 @@ export const next = {
   }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
   // QR de direcionamento (token fixo · resolve a turma aberta do momento) · admin
   direcionarQr: () => get('/next/direcionar-qr'),
+  // Pesquisa NPS canônica do Next (Satisfação do Next) · provisiona na 1ª chamada.
+  satisfacao: () => get('/next/satisfacao'),
   // Admin
   dashboard: () => get('/next/dashboard'),
   eventos: {
@@ -390,15 +708,21 @@ export const next = {
   encontros: {
     update: (id, data) => patch(`/next/encontros/${id}`, data),
     setPresencas: (id, matriculaIds) => put(`/next/encontros/${id}/presencas`, { matricula_ids: matriculaIds }),
+    // Marca/desmarca UMA pessoa no encontro (Totem · presente=false desmarca).
+    setPresenca: (id, matriculaId, presente = true) => post(`/next/encontros/${id}/presenca`, { matricula_id: matriculaId, presente }),
   },
   matriculas: {
     list: (params) => get('/next/matriculas' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/next/matriculas', data),
     update: (id, data) => patch(`/next/matriculas/${id}`, data),
+    // Transfere a pessoa pra outra turma (limpa presenças da antiga · recomeça na destino).
+    transferir: (id, turma_id) => post(`/next/matriculas/${id}/transferir`, { turma_id }),
     remove: (id) => del(`/next/matriculas/${id}`),
+    // Marca/desmarca "contato feito" com a pessoa (feito=false desmarca).
+    setContato: (id, feito) => patch(`/next/matriculas/${id}/contato`, { feito }),
     // Direcionar pros valores (grupos/voluntarios/batismo/devocional) · cria encaminhamento
     // origem='next' (grupos/voluntarios), inscrição pendente (batismo), registra (devocional).
-    direcionar: (id, destinos) => post(`/next/matriculas/${id}/direcionar`, { destinos }),
+    direcionar: (id, destinos, areas) => post(`/next/matriculas/${id}/direcionar`, { destinos, areas }),
     // Liga as matrículas órfãs (sem membro_id) via matcher forte (fecha o funil).
     backfillMembros: () => post('/next/matriculas/backfill-membros', {}),
   },
@@ -448,9 +772,12 @@ export const dashboardSemanal = {
   notaCreate: (data) => post('/dashboard-semanal/notas', data),
   notaDelete: (id) => del(`/dashboard-semanal/notas/${id}`),
   resumoMes: (ano, mes) => get(`/dashboard-semanal/resumo-mes?ano=${ano}&mes=${mes}`),
+  nextPresencaMensal: (meses = 12) => get(`/dashboard-semanal/next-presenca-mensal?meses=${meses}`),
+  nextPresencaMensalSet: (data) => put('/dashboard-semanal/next-presenca-mensal', data),
   ranking: (params) => get('/dashboard-semanal/ranking?' + new URLSearchParams(params)),
   yoy: (params) => get('/dashboard-semanal/yoy?' + new URLSearchParams(params)),
   mensal: (params) => get('/dashboard-semanal/mensal?' + new URLSearchParams(params)),
+  ytd: (params) => get('/dashboard-semanal/ytd?' + new URLSearchParams(params)),
   mediaMovel: (params) => get('/dashboard-semanal/media-movel?' + new URLSearchParams(params)),
   metasList: () => get('/dashboard-semanal/metas'),
   metaCreate: (data) => post('/dashboard-semanal/metas', data),
@@ -461,6 +788,8 @@ export const dashboardSemanal = {
   iaSugerirIndicador: (pergunta) => post('/dashboard-semanal/ia/sugerir-indicador', { pergunta }),
   indicadoresCustomList: (status) => get('/dashboard-semanal/indicadores-custom' + (status ? `?status=${status}` : '')),
   indicadorCustomPatch: (id, data) => patch(`/dashboard-semanal/indicadores-custom/${id}`, data),
+  // Edita um indicador já criado usando IA (instrução em linguagem natural)
+  iaRefinarIndicador: (id, instrucao) => post(`/dashboard-semanal/ia/refinar-indicador/${id}`, { instrucao }),
   indicadorCustomRemove: (id) => del(`/dashboard-semanal/indicadores-custom/${id}`),
   // Lista KPIs taticos com status (reuso da view do módulo painel) pra aba
   // "KPIs" do dashboard. Filtros opcionais: área, periodicidade, status, kpi.
@@ -494,15 +823,62 @@ export const grupos = {
   removeMaterial: (docId) => del(`/grupos/materiais/${docId}`),
   encontros: (grupoId, params) => get(`/grupos/${grupoId}/encontros` + (params ? '?' + new URLSearchParams(params) : '')),
   encontro: (encontroId) => get(`/grupos/encontros/${encontroId}`),
+  // Histórico simples de quem entrou e saiu do grupo (leitura pura · o formato
+  // foi pedido pelo Marcos: "tela pequena, com pouco destaque, sem muita
+  // interação"). Aprovar pedido segue na Caixa de entrada.
+  entradasSaidas: (grupoId) => get(`/grupos/${grupoId}/entradas-saidas`),
   registrarEncontro: (grupoId, data) => post(`/grupos/${grupoId}/encontros`, data),
   atualizarEncontro: (encontroId, data) => patch(`/grupos/encontros/${encontroId}`, data),
   removerEncontro: (encontroId) => del(`/grupos/encontros/${encontroId}`),
   metricas: (grupoId) => get(`/grupos/${grupoId}/metricas`),
+  historicoAlteracoes: (grupoId) => get(`/grupos/${grupoId}/historico-alteracoes`),
+  renovacao: {
+    painel: (params) => get('/grupos/renovacao/painel' + (params ? '?' + new URLSearchParams(params) : '')),
+    disparar: (temporadaId) => post('/grupos/renovacao/disparar', { temporada_id: temporadaId }),
+    triar: (renId, body) => post(`/grupos/renovacao/${renId}/triar`, body),
+  },
+  // "Confira a lista do seu grupo" (Marcos 2026-07-31): 3º fluxo do líder —
+  // ele desmarca quem não faz mais parte. Disparo manual pela aba Envios.
+  confira: {
+    painel: (params) => get('/grupos/confira/painel' + (params ? '?' + new URLSearchParams(params) : '')),
+    preview: (audiencia, novaRodada = false) => post('/grupos/confira/preview', { audiencia, nova_rodada: novaRodada }),
+    disparar: (audiencia, novaRodada = false) => post('/grupos/confira/disparar', { audiencia, nova_rodada: novaRodada }),
+    triar: (confId, obs) => post(`/grupos/confira/${confId}/triar`, { obs }),
+  },
+  envios: {
+    getConfig: () => get('/grupos/envios/config'),
+    setConfig: (patch) => put('/grupos/envios/config', patch),
+    aux: () => get('/grupos/envios/aux'),
+    previewFrequencia: (audiencia) => post('/grupos/envios/frequencia/preview', { audiencia }),
+    dispararFrequencia: (audiencia) => post('/grupos/envios/frequencia', { audiencia }),
+    previewMaterial: (audiencia) => post('/grupos/envios/material/preview', { audiencia }),
+    dispararMaterial: (file, audiencia, titulo) => { const fd = new FormData(); fd.append('arquivo', file); fd.append('audiencia', JSON.stringify(audiencia || {})); if (titulo) fd.append('titulo', titulo); return requestFile('/grupos/envios/material', fd, { timeoutMs: 120_000 }); },
+    previewAbertura: (audiencia) => post('/grupos/envios/abertura/preview', { audiencia }),
+    dispararAbertura: (audiencia) => post('/grupos/envios/abertura', { audiencia }),
+    historico: () => get('/grupos/envios/historico'),
+  },
   saudeAgregada: (params) => get('/grupos/saude/agregado' + (params ? '?' + new URLSearchParams(params) : '')),
   relatorioKpis: (params) => get('/grupos/kpis/relatorio' + (params ? '?' + new URLSearchParams(params) : '')),
   lideresTreinamento: (params) => get('/grupos/kpis/lideres-treinamento' + (params ? '?' + new URLSearchParams(params) : '')),
   temporadas: () => get('/grupos/temporadas/list'),
   atualizarTemporada: (id, data) => patch(`/grupos/temporadas/${id}`, data),
+  // Consolidação de temporada (fechamento) + comparativo entre temporadas
+  temporadasConsolidado: () => get('/grupos/temporadas/consolidado'),
+  consolidarTemporada: (id, forcar = false) => post(`/grupos/temporadas/${id}/consolidar${forcar ? '?forcar=1' : ''}`, {}),
+  // Métricas COMPLETAS de uma temporada ao vivo (mesma fonte da consolidação)
+  temporadaMetricas: (temporada) => get('/grupos/kpis/temporada-metricas?temporada=' + encodeURIComponent(temporada)),
+  // Frequência POR grupo (Marcos 2026-07-23): % de frequência + quem não vai
+  frequenciaGrupo: (grupoId) => get(`/grupos/${grupoId}/frequencia`),
+  // Grade de frequência de UMA pessoa em cada grupo que ela é inscrita
+  frequenciaPessoa: (membroId) => get(`/grupos/pessoas/${membroId}/frequencia`),
+  // Ranking de % de frequência por grupo (pior primeiro) · aba Relatórios
+  frequenciaRanking: (temporada) => get('/grupos/kpis/frequencia-grupos' + (temporada ? '?temporada=' + encodeURIComponent(temporada) : '')),
+  // Séries mensais (frequência/inscrições/membresia) + tamanho dos grupos
+  temporadaSeries: (temporada) => get('/grupos/kpis/temporada-series?temporada=' + encodeURIComponent(temporada)),
+  // Revisão de fim de temporada: membros sem presença (por grupo)
+  semPresenca: (temporada) => get('/grupos/kpis/sem-presenca?temporada=' + encodeURIComponent(temporada)),
+  // Checklist de prontidão pra abrir a temporada (sem temporada → usa a ativa)
+  prontidaoTemporada: (temporada) => get('/grupos/kpis/prontidao' + (temporada ? '?temporada=' + encodeURIComponent(temporada) : '')),
   redes: {
     list: () => get('/grupos/redes'),
     create: (data) => post('/grupos/redes', data),
@@ -519,10 +895,13 @@ export const grupos = {
   buscarLideres: (params) => get('/grupos/lideres/buscar' + (params ? '?' + new URLSearchParams(params) : '')),
   // Autocomplete de líder do cadastro de grupo (universo de grupos, server-side)
   buscarPessoas: (q) => get('/grupos/pessoas/buscar?q=' + encodeURIComponent(q)),
+  // Ficha da pessoa (aba Pessoas · editar/limpar dados cadastrais)
+  pessoaFicha: (membroId) => get(`/grupos/pessoas/${membroId}/ficha`),
+  pessoaFichaSalvar: (membroId, data) => patch(`/grupos/pessoas/${membroId}/ficha`, data),
   // Possíveis duplicatas do universo de grupos (triagem da Naná)
   duplicatas: {
     list: (fresh) => get('/grupos/duplicatas' + (fresh ? '?fresh=1' : '')),
-    fundir: (keepId, mergeIds) => post('/grupos/duplicatas/fundir', { keep_id: keepId, merge_ids: mergeIds }),
+    fundir: (keepId, mergeIds, campos) => post('/grupos/duplicatas/fundir', { keep_id: keepId, merge_ids: mergeIds, campos }),
     ignorar: (ids) => post('/grupos/duplicatas/ignorar', { ids }),
   },
   gruposDoLider: (liderId, params) => get(`/grupos/lideres/${liderId}/grupos` + (params ? '?' + new URLSearchParams(params) : '')),
@@ -530,12 +909,26 @@ export const grupos = {
   listarPedidos: (params) => get('/grupos/pedidos/list' + (params ? '?' + new URLSearchParams(params) : '')),
   contarPedidos: () => get('/grupos/pedidos/count'),
   resumoPedidos: () => get('/grupos/pedidos/resumo'),
+  // Retrato do período da Caixa de entrada: quais grupos NÃO receberam pedido
+  // (o resto do painel é derivado da própria lista, no cliente).
+  entradaCobertura: (params) => get('/grupos/entrada/cobertura' + (params ? '?' + new URLSearchParams(params) : '')),
   historicoMembros: (grupoId) => get(`/grupos/${grupoId}/historico-membros`),
   aprovarPedido: (pedidoId) => post(`/grupos/pedidos/${pedidoId}/aprovar`, {}),
+  // Aprovação "por cima" da triagem: reabre pedido recusado/devolvido/encaminhado
+  // e aprova; grupo_id opcional realoca a pessoa pra outro grupo na mesma ação.
+  aprovarPedidoDireto: (pedidoId, grupoId) => post(`/grupos/pedidos/${pedidoId}/aprovar-direto`, { grupo_id: grupoId || null }),
   aprovarPedidosLote: (pedidoIds) => post('/grupos/pedidos/aprovar-lote', { pedido_ids: pedidoIds }),
   rejeitarPedido: (pedidoId, motivo) => post(`/grupos/pedidos/${pedidoId}/rejeitar`, { motivo }),
   sugerirPedido: (pedidoId, grupoSugeridoId, motivo) => post(`/grupos/pedidos/${pedidoId}/sugerir`, { grupo_sugerido_id: grupoSugeridoId, motivo: motivo || null }),
   pedidoEventos: (pedidoId) => get(`/grupos/pedidos/${pedidoId}/eventos`),
+  // Inscrições de novos líderes/anfitriões (form público /inscricao-lideres)
+  liderInscricoes: {
+    list: (params) => get('/grupos/lideres-inscricoes/list' + (params ? '?' + new URLSearchParams(params) : '')),
+    aceitar: (id) => post(`/grupos/lideres-inscricoes/${id}/aceitar`, {}),
+    recusar: (id, motivo) => post(`/grupos/lideres-inscricoes/${id}/recusar`, { motivo: motivo || null }),
+    promover: (id) => post(`/grupos/lideres-inscricoes/${id}/promover`, {}),
+    vincular: (id, grupoId, funcao) => post(`/grupos/lideres-inscricoes/${id}/vincular`, { grupo_id: grupoId, funcao }),
+  },
   setAceitandoInscricoes: (grupoId, aceitando) => patch(`/grupos/${grupoId}/aceitando`, { aceitando }),
   geocodeBatch: (data) => post('/grupos/geocode-batch', data || {}),
   // Supervisao
@@ -750,7 +1143,7 @@ export const governanca = {
     update: (id, conteudo_md) => patch(`/governanca/memoria/${id}`, { conteudo_md }),
   },
   // Reunião de KPI (objetivos gerais × áreas) · deliberações estruturadas (Plaud)
-  kpiObjetivos: (meses) => get('/governanca/kpi-objetivos' + (meses ? `?meses=${meses}` : '')),
+  kpiObjetivos: (meses, ano) => get('/governanca/kpi-objetivos' + (ano ? `?ano=${ano}` : (meses ? `?meses=${meses}` : ''))),
   deliberacoes: (params = {}) => get('/governanca/deliberacoes' + (Object.keys(params).length ? '?' + new URLSearchParams(params) : '')),
   extrairDeliberacoes: (meetingId) => post(`/governanca/meetings/${meetingId}/extrair-deliberacoes`, {}),
 };
@@ -860,6 +1253,8 @@ export const financeiro = {
     update: (id, data) => put(`/financeiro/transacoes/${id}`, data),
     remove: (id) => del(`/financeiro/transacoes/${id}`),
   },
+  // Banco de comprovantes (anexos das transações + NFs com arquivo)
+  comprovantes: (params) => get('/financeiro/comprovantes' + (params ? '?' + new URLSearchParams(params) : '')),
   contasPagar: {
     list: (params) => get('/financeiro/contas-pagar' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro/contas-pagar', data),
@@ -867,7 +1262,7 @@ export const financeiro = {
     remove: (id) => del(`/financeiro/contas-pagar/${id}`),
   },
   solicitacoesPendentesFinanceiro: () => get('/solicitacoes/pendentes-financeiro'),
-  solicitacaoAprovarFinanceiro: (id, observacao) => post(`/solicitacoes/${id}/aprovar-financeiro`, { observacao }),
+  solicitacaoAprovarFinanceiro: (id, observacao, forma_pagamento) => post(`/solicitacoes/${id}/aprovar-financeiro`, { observacao, forma_pagamento }),
   solicitacaoReprovarFinanceiro: (id, motivo) => post(`/solicitacoes/${id}/reprovar-financeiro`, { motivo }),
   solicitacaoSobrestarFinanceiro: (id, motivo, revisao) => post(`/solicitacoes/${id}/sobrestar`, { motivo, revisao }),
   urgenciaFrequente: () => get('/solicitacoes/dashboard/urgencia-frequente'),
@@ -919,6 +1314,15 @@ export const financeiro = {
 // ============================================================
 // FINANCEIRO V2 · estrutura fiscal (plano de contas, centros de custo, OFX, PIX)
 // ============================================================
+// Filtro global "Sem extraordinárias": persistido pelo Dashboard Semanal em
+// localStorage (chave fin_dashboard_filtros_v1) + event bus. Lido aqui pra que
+// TODA aba de receita respeite o toggle sem cada componente threadar o param.
+const _finSemExtra = () => {
+  try { return !!JSON.parse(localStorage.getItem('fin_dashboard_filtros_v1') || '{}')?.sem_extra; }
+  catch { return false; }
+};
+const _finSemExtraQS = () => (_finSemExtra() ? '?sem_extra=1' : '');
+
 export const financeiroV2 = {
   planoContas: {
     list: (params) => get('/financeiro-v2/plano-contas' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -955,18 +1359,30 @@ export const financeiroV2 = {
       const fd = new FormData();
       fd.append('arquivo', file);
       fd.append('conta_id', conta_id);
-      return requestFile('/financeiro-v2/importar/ofx', fd);
+      // 300s (não o default 60s): um OFX de mês inteiro insere centenas de
+      // transações + matching PIX + conciliação — alinha com o maxDuration do Vercel.
+      return requestFile('/financeiro-v2/importar/ofx', fd, { timeoutMs: 300_000 });
     },
     pixExtrato: (file, conta_id) => {
       const fd = new FormData();
       fd.append('arquivo', file);
       if (conta_id) fd.append('conta_id', conta_id);
-      return requestFile('/financeiro-v2/importar/pix-extrato', fd);
+      return requestFile('/financeiro-v2/importar/pix-extrato', fd, { timeoutMs: 300_000 });
     },
     balanco: (file) => {
       const fd = new FormData();
       fd.append('arquivo', file);
       return requestFile('/financeiro-v2/importar/balanco', fd, { timeoutMs: 300_000 });
+    },
+    contribuicoesPrevia: (file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile('/financeiro-v2/importar/contribuicoes/previa', fd, { timeoutMs: 300_000 });
+    },
+    contribuicoes: (file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile('/financeiro-v2/importar/contribuicoes', fd, { timeoutMs: 300_000 });
     },
   },
   uploads: (params) => get('/financeiro-v2/uploads' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -975,6 +1391,39 @@ export const financeiroV2 = {
     list: (params) => get('/financeiro-v2/fila-classificacao' + (params ? '?' + new URLSearchParams(params) : '')),
     aprovar: (filaId, data) => post(`/financeiro-v2/classificar/${filaId}/aprovar`, data),
     ignorar: (filaId) => post(`/financeiro-v2/classificar/${filaId}/ignorar`, {}),
+    // IA em lote pros itens sem sugestão (repetir até restantes=0)
+    sugerirLote: () => post('/financeiro-v2/fila-classificacao/sugerir-lote', {}),
+  },
+  // Conciliação em lote · extrato × contas a pagar (Fase 3)
+  conciliacao: {
+    sugestoes: () => get('/financeiro-v2/conciliacao/sugestoes'),
+    aplicar: (pares) => post('/financeiro-v2/conciliacao/aplicar', { pares }),
+    aplicarSeguros: () => post('/financeiro-v2/conciliacao/aplicar-seguros', {}),
+  },
+  // Conciliação balanço × OFX · identificar o doador por CPF (Fase 3)
+  conciliacaoOfx: {
+    rodar: (inicio, fim, dryRun) => post('/financeiro-v2/conciliar-balanco-ofx', { inicio, fim, dry_run: dryRun }),
+    revisao: (inicio, fim) => get(`/financeiro-v2/conciliar-balanco-ofx/revisao?inicio=${inicio}&fim=${fim}`),
+    confirmar: (transacao_id, bruto_id) => post('/financeiro-v2/conciliar-balanco-ofx/confirmar', { transacao_id, bruto_id }),
+    ignorar: (transacao_id) => post('/financeiro-v2/conciliar-balanco-ofx/ignorar', { transacao_id }),
+  },
+  // Cartões de crédito + faturas (Fase 4)
+  cartoes: {
+    list: () => get('/financeiro-v2/cartoes'),
+    criar: (data) => post('/financeiro-v2/cartoes', data),
+    atualizar: (id, data) => put(`/financeiro-v2/cartoes/${id}`, data),
+  },
+  faturas: {
+    list: (cartaoId) => get('/financeiro-v2/faturas' + (cartaoId ? `?cartao_id=${cartaoId}` : '')),
+    get: (id) => get(`/financeiro-v2/faturas/${id}`),
+    sincronizar: (id) => post(`/financeiro-v2/faturas/${id}/sincronizar`, {}),
+    // Compara o PDF da fatura (com senha opcional) com o que está lançado
+    comparar: (id, file, senha) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      if (senha) fd.append('senha', senha);
+      return requestFile(`/financeiro-v2/faturas/${id}/comparar`, fd, { timeoutMs: 300_000 });
+    },
   },
   notasCompras: {
     list: (params) => get('/financeiro-v2/notas-compras' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -990,8 +1439,29 @@ export const financeiroV2 = {
       if (origem) fd.append('origem', origem);
       return requestFile('/financeiro-v2/contas-pagar/importar', fd, { timeoutMs: 300_000 });
     },
+    // F2 · CRUD moderno (plano de contas, salário do RH, recorrência)
+    criar: (data) => post('/financeiro-v2/contas-pagar', data),
+    atualizar: (id, data) => put(`/financeiro-v2/contas-pagar/${id}`, data),
+    remover: (id) => del(`/financeiro-v2/contas-pagar/${id}`),
+    tornarRecorrente: (id) => post(`/financeiro-v2/contas-pagar/${id}/tornar-recorrente`, {}),
+    desfazerRecorrente: (id) => del(`/financeiro-v2/contas-pagar/${id}/tornar-recorrente`),
   },
-  transacoes: (params) => get('/financeiro-v2/transacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+  // Colaboradores do RH pro toggle "É salário" (o financeiro pode não ter o módulo RH)
+  auxFuncionarios: () => get('/financeiro-v2/aux/funcionarios'),
+  // Fase 1 da reforma: era função direta (só listar) → virou namespace com
+  // criar/atualizar/detalhe/anexos. A criação nova usa a v2 (a v1 segue intacta).
+  transacoes: {
+    list: (params) => get('/financeiro-v2/transacoes' + (params ? '?' + new URLSearchParams(params) : '')),
+    criar: (data) => post('/financeiro-v2/transacoes', data),
+    atualizar: (id, data) => put(`/financeiro-v2/transacoes/${id}`, data),
+    detalhe: (id) => get(`/financeiro-v2/transacoes/${id}/detalhe`),
+    anexar: (id, file) => {
+      const fd = new FormData();
+      fd.append('arquivo', file);
+      return requestFile(`/financeiro-v2/transacoes/${id}/anexos`, fd, { timeoutMs: 120_000 });
+    },
+    removerAnexo: (id, url) => request(`/financeiro-v2/transacoes/${id}/anexos`, { method: 'DELETE', body: JSON.stringify({ url }) }),
+  },
   arrecadacoes: (params) => get('/financeiro-v2/arrecadacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   despesasDetalhe: (params) => get('/financeiro-v2/despesas/detalhe' + (params ? '?' + new URLSearchParams(params) : '')),
   sugerirPlanoHorario: (params) => get('/financeiro-v2/sugerir-plano-horario' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -1015,44 +1485,74 @@ export const financeiroV2 = {
       return get(`/financeiro-v2/dashboard/overview${qs.toString() ? `?${qs}` : ''}`);
     },
     semana: (semana) => get('/financeiro-v2/dashboard/semana' + (semana ? `?semana=${semana}` : '')),
-    semanaCompleta: (semana) => get('/financeiro-v2/dashboard/semana-completa' + (semana ? `?semana=${semana}` : '')),
-    financeiroCompleto: () => get('/financeiro-v2/dashboard/financeiro-completo'),
+    semanaCompleta: (semana, filtros = {}) => {
+      const qs = new URLSearchParams();
+      if (semana) qs.set('semana', semana);
+      if (filtros?.centro_custo_id) qs.set('centro_custo_id', filtros.centro_custo_id);
+      if (filtros?.plano_contas_id) qs.set('plano_contas_id', filtros.plano_contas_id);
+      if (filtros?.sem_extra) qs.set('sem_extra', '1');
+      const s = qs.toString();
+      return get('/financeiro-v2/dashboard/semana-completa' + (s ? `?${s}` : ''));
+    },
+    financeiroCompleto: () => get(`/financeiro-v2/dashboard/financeiro-completo${_finSemExtraQS()}`),
     saidasDetalhadas: (mes) => get('/financeiro-v2/dashboard/saidas-detalhadas' + (mes ? `?mes=${mes}` : '')),
     melhorSemana: () => get('/financeiro-v2/dashboard/melhor-semana'),
     assistente: (aba, semana) => {
       const qs = new URLSearchParams({ aba: aba || 'resumo' });
       if (semana) qs.set('semana', semana);
+      if (_finSemExtra()) qs.set('sem_extra', '1');
       return get(`/financeiro-v2/dashboard/assistente?${qs}`);
     },
     // Análise aprofundada por IA (sob demanda · modelo maior · pode demorar)
-    analiseProfunda: (semana) => request('/financeiro-v2/dashboard/analise-profunda' + (semana ? `?semana=${semana}` : ''), { timeout: 120_000 }),
+    analiseProfunda: (semana) => {
+      const qs = new URLSearchParams();
+      if (semana) qs.set('semana', semana);
+      if (_finSemExtra()) qs.set('sem_extra', '1');
+      const s = qs.toString();
+      return request('/financeiro-v2/dashboard/analise-profunda' + (s ? `?${s}` : ''), { timeout: 120_000 });
+    },
   },
   metas: {
     list: (params) => get('/financeiro-v2/metas' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro-v2/metas', data),
     update: (id, data) => put(`/financeiro-v2/metas/${id}`, data),
     remove: (id) => del(`/financeiro-v2/metas/${id}`),
-    progresso: (params) => get('/financeiro-v2/metas-progresso' + (params ? '?' + new URLSearchParams(params) : '')),
+    progresso: (params) => {
+      const p = new URLSearchParams(params || {});
+      if (_finSemExtra()) p.set('sem_extra', '1');
+      const qs = p.toString();
+      return get('/financeiro-v2/metas-progresso' + (qs ? `?${qs}` : ''));
+    },
   },
-  freqArrecadacaoSemanal: (semanas = 20) => get(`/financeiro-v2/freq-arrecadacao-semanal?semanas=${semanas}`),
+  freqArrecadacaoSemanal: (semanas = 20) => get(`/financeiro-v2/freq-arrecadacao-semanal?semanas=${semanas}${_finSemExtra() ? '&sem_extra=1' : ''}`),
   arrecadacaoAnual: (ano, filtros = {}) => {
     const params = new URLSearchParams();
     if (ano) params.set('ano', ano);
     if (filtros.centro_custo_id) params.set('centro_custo_id', filtros.centro_custo_id);
     if (filtros.plano_contas_id) params.set('plano_contas_id', filtros.plano_contas_id);
+    if (filtros.sem_extra || _finSemExtra()) params.set('sem_extra', '1');
     const qs = params.toString();
     return get(`/financeiro-v2/arrecadacao-anual${qs ? `?${qs}` : ''}`);
   },
   sazonalidadeSemanal: (anos) => {
-    const qs = Array.isArray(anos) && anos.length ? `?anos=${anos.join(',')}` : '';
-    return get(`/financeiro-v2/sazonalidade-semanal${qs}`);
+    const p = new URLSearchParams();
+    if (Array.isArray(anos) && anos.length) p.set('anos', anos.join(','));
+    if (_finSemExtra()) p.set('sem_extra', '1');
+    const qs = p.toString();
+    return get(`/financeiro-v2/sazonalidade-semanal${qs ? `?${qs}` : ''}`);
   },
   categoriaTransacoes: ({ categoria, inicio, fim }) =>
     get(`/financeiro-v2/categoria-transacoes?categoria=${encodeURIComponent(categoria)}&inicio=${inicio}&fim=${fim}`),
   despesaTransacoes: (params) =>
     get('/financeiro-v2/despesa-transacoes?' + new URLSearchParams(params).toString()),
   filtrosDisponiveis: () => get('/financeiro-v2/filtros-disponiveis'),
-  saudeFinanceira: (ano) => get(`/financeiro-v2/saude-financeira${ano ? `?ano=${ano}` : ''}`),
+  saudeFinanceira: (ano) => {
+    const p = new URLSearchParams();
+    if (ano) p.set('ano', ano);
+    if (_finSemExtra()) p.set('sem_extra', '1');
+    const qs = p.toString();
+    return get(`/financeiro-v2/saude-financeira${qs ? `?${qs}` : ''}`);
+  },
   doadores: ({ ano, limit, offset } = {}) => {
     const p = new URLSearchParams();
     if (ano) p.set('ano', ano);
@@ -1068,7 +1568,7 @@ export const financeiroV2 = {
     if (limit) p.set('limit', limit);
     return get(`/financeiro-v2/doador/transacoes?${p.toString()}`);
   },
-  dizimoOferta: (ano) => get(`/financeiro-v2/dizimo-oferta${ano ? `?ano=${ano}` : ''}`),
+  dizimoOferta: (ano, semExtra) => get(`/financeiro-v2/dizimo-oferta?ano=${ano || ''}${semExtra ? '&sem_extra=1' : ''}`),
   syncSaldoBancos: () => post('/financeiro-v2/sync-saldo-bancos', {}),
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),
   recorrencias: {
@@ -1217,14 +1717,19 @@ export const logistica = {
 
 export const patrimonio = {
   dashboard: () => get('/patrimonio/dashboard'),
+  dashboardIndicadores: () => get('/patrimonio/dashboard/indicadores'),
+  dashboardDepreciacao: () => get('/patrimonio/dashboard/depreciacao'),
+  dashboardAtividade: () => get('/patrimonio/dashboard/atividade'),
   categorias: {
     list: () => get('/patrimonio/categorias'),
     create: (data) => post('/patrimonio/categorias', data),
+    update: (id, data) => put(`/patrimonio/categorias/${id}`, data),
     remove: (id) => del(`/patrimonio/categorias/${id}`),
   },
   localizacoes: {
     list: () => get('/patrimonio/localizacoes'),
     create: (data) => post('/patrimonio/localizacoes', data),
+    update: (id, data) => put(`/patrimonio/localizacoes/${id}`, data),
     remove: (id) => del(`/patrimonio/localizacoes/${id}`),
   },
   bens: {
@@ -1232,14 +1737,34 @@ export const patrimonio = {
     get: (id) => get(`/patrimonio/bens/${id}`),
     create: (data) => post('/patrimonio/bens', data),
     update: (id, data) => put(`/patrimonio/bens/${id}`, data),
-    remove: (id) => del(`/patrimonio/bens/${id}`),
+    remove: (id, data) => del(`/patrimonio/bens/${id}`, data),
+    proximoCodigo: (qtd = 1) => get(`/patrimonio/bens/proximo-codigo?qtd=${qtd}`),
+    criarLote: (data) => post('/patrimonio/bens/lote', data),
     movimentar: (id, data) => post(`/patrimonio/bens/${id}/movimentacoes`, data),
+    dispensarAlerta: (id) => post(`/patrimonio/bens/${id}/dispensar-alerta`, {}),
     porCodigo: (codigo) => get(`/patrimonio/bens/barcode/${encodeURIComponent(codigo)}`),
+    bulkEditar: (data) => put('/patrimonio/bens/bulk', data),
+    bulkRenomear: (data) => put('/patrimonio/bens/bulk/renomear', data),
+    bulkMovimentar: (data) => post('/patrimonio/bens/bulk/movimentar', data),
+    bulkBaixa: (data) => post('/patrimonio/bens/bulk/baixa', data),
+  },
+  movimentacoes: {
+    list: (params) => get('/patrimonio/movimentacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   },
   inventarios: {
     list: () => get('/patrimonio/inventarios'),
     create: (data) => post('/patrimonio/inventarios', data),
     atualizar: (id, data) => patch(`/patrimonio/inventarios/${id}`, data),
+  },
+  revisao: {
+    responsaveis: () => get('/patrimonio/revisao/aux/responsaveis'),
+    ciclos: () => get('/patrimonio/revisao/ciclos'),
+    criarCiclo: (data) => post('/patrimonio/revisao/ciclos', data),
+    convocacao: (id) => get(`/patrimonio/revisao/convocacoes/${id}`),
+    iniciar: (id) => post(`/patrimonio/revisao/convocacoes/${id}/iniciar`, {}),
+    atualizarItem: (id, data) => put(`/patrimonio/revisao/itens/${id}`, data),
+    concluir: (id) => post(`/patrimonio/revisao/convocacoes/${id}/concluir`, {}),
+    indicadores: () => get('/patrimonio/revisao/indicadores'),
   },
 };
 
@@ -1254,6 +1779,7 @@ export const rh = {
   funcionarios: {
     list: (params) => get('/rh/funcionarios' + (params ? '?' + new URLSearchParams(params) : '')),
     get: (id) => get(`/rh/funcionarios/${id}`),
+    pagamentos: (id) => get(`/rh/funcionarios/${id}/pagamentos`),
     create: (data) => post('/rh/funcionarios', data),
     update: (id, data) => put(`/rh/funcionarios/${id}`, data),
     remove: (id) => del(`/rh/funcionarios/${id}`),
@@ -1282,6 +1808,11 @@ export const rh = {
     atualizarInscricao: (id, data) => patch(`/rh/treinamentos-funcionarios/${id}`, data),
   },
   // (Materiais de treinamento removido por ora — não havia backend `/rh/materiais`.)
+  folha: {
+    autoVincular: () => post('/rh/folha/auto-vincular', {}),
+    naoVinculados: () => get('/rh/folha/nao-vinculados'),
+    vincular: (txId, body) => patch(`/rh/folha/vinculo/${txId}`, body),
+  },
   ferias: {
     list: (params) => get('/rh/ferias' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (funcId, data) => post(`/rh/funcionarios/${funcId}/ferias`, data),
@@ -1383,6 +1914,40 @@ export const appAnalytics = {
   aoVivo: () => get('/app-analytics/ao-vivo'),
 };
 
+// Command center técnico · somente super-admin.
+export const sistema = {
+  fundacao: () => get('/sistema/fundacao'),
+  observabilityStatus: () => get('/sistema/observabilidade/status'),
+  runBackendObservabilityCanary: () => post('/sistema/observabilidade/canary', { confirm: 'SENTRY_CANARY' }),
+  overview: (hours = 24) => get(`/sistema/overview?hours=${hours}`),
+  runs: (params = {}) => get('/sistema/jobs/runs?' + new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value != null && value !== '')
+  )),
+  incidents: (params = {}) => get('/sistema/incidents?' + new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value != null && value !== '')
+  )),
+  createIncident: (data) => post('/sistema/incidents', data),
+  updateIncident: (id, data) => patch(`/sistema/incidents/${id}`, data),
+  incidentEvents: (id) => get(`/sistema/incidents/${id}/events`),
+  addIncidentNote: (id, message) => post(`/sistema/incidents/${id}/notes`, { message }),
+  webErrors: (limit = 100) => get(`/sistema/web/errors?limit=${limit}`),
+  webCommandCenter: (hours = 24 * 7) => get(`/sistema/web/command-center?hours=${hours}`),
+  runWebSynthetics: () => post('/sistema/web/synthetics/run', {}),
+  mobileCommandCenter: (platform, days = 14) => get(`/sistema/mobile/command-center?platform=${encodeURIComponent(platform)}&days=${days}`),
+  refreshMobilePushReceipts: () => post('/sistema/mobile/push/receipts/refresh', {}),
+  governanceCommandCenter: () => get('/sistema/governance/command-center'),
+  updateGovernanceControl: (controlKey, data) => patch(`/sistema/governance/controls/${encodeURIComponent(controlKey)}`, data),
+  financeCommandCenter: (months = 12) => get(`/sistema/finance/command-center?months=${months}`),
+  createFinanceCost: (data) => post('/sistema/finance/costs', data),
+  updateFinanceProvider: (providerKey, data) => patch(`/sistema/finance/providers/${encodeURIComponent(providerKey)}`, data),
+  createExecutiveReport: (data) => post('/sistema/finance/reports', data),
+  publishExecutiveReport: (id) => post(`/sistema/finance/reports/${id}/publish`, {}),
+  executiveReport: (id) => get(`/sistema/finance/reports/${id}/export`),
+  feedback: (params = {}) => get('/sistema/feedback?' + new URLSearchParams(
+    Object.entries(params).filter(([, value]) => value != null && value !== '')
+  )),
+};
+
 // Comunicados / Mural (criados no Marketing → app)
 export const comunicados = {
   list: () => get('/comunicados'),
@@ -1396,6 +1961,19 @@ export const comunicados = {
     fd.append('arquivo', file);
     return requestFile('/comunicados/upload-foto', fd);
   },
+};
+
+// ── Painel informativo de RH (home/Dashboard) ──
+export const painelRh = {
+  aniversariantes: () => get('/painel-rh/aniversariantes'),
+  eventos: () => get('/painel-rh/eventos'),
+  comunicados: () => get('/painel-rh/comunicados'),
+  comunicadosAdmin: () => get('/painel-rh/comunicados/admin'),
+  criarComunicado: (data) => post('/painel-rh/comunicados', data),
+  atualizarComunicado: (id, data) => put(`/painel-rh/comunicados/${id}`, data),
+  publicarComunicado: (id) => post(`/painel-rh/comunicados/${id}/publicar`, {}),
+  arquivarComunicado: (id) => post(`/painel-rh/comunicados/${id}/arquivar`, {}),
+  removerComunicado: (id) => del(`/painel-rh/comunicados/${id}`),
 };
 
 export const painelArea = {
@@ -1430,9 +2008,8 @@ export const totemKids = {
   apresentacaoUpdate: (id, body) => patch(`/totem-kids/apresentacoes/${id}`, body),
   apresentacaoRemove: (id) => del(`/totem-kids/apresentacoes/${id}`),
   resumoExemplo: () => post('/totem-kids/resumo/exemplo', {}),
-  resumoPcoTestar: (data) => post('/totem-kids/resumo-pco/testar', data ? { data } : {}),
+  comparativoMes: (mes) => get(`/totem-kids/comparativo-mes?mes=${encodeURIComponent(mes)}`),
   frequenciaSistema: (data) => get(`/totem-kids/frequencia-sistema?data=${encodeURIComponent(data)}`),
-  pcoPessoa: (pcoId) => get(`/totem-kids/pco-pessoa/${encodeURIComponent(pcoId)}`),
   kidsEquipe: {
     list: () => get('/totem-kids/kids-equipe'),
     buscar: (q) => get(`/totem-kids/kids-equipe/buscar?q=${encodeURIComponent(q)}`),
@@ -1459,8 +2036,9 @@ export const totemKids = {
     },
     create: (data) => post('/totem-kids/sessoes', data),
     abrir: (id) => post(`/totem-kids/sessoes/${id}/abrir`, {}),
-    encerrar: (id) => post(`/totem-kids/sessoes/${id}/encerrar`, {}),
+    encerrar: (id, body = {}) => post(`/totem-kids/sessoes/${id}/encerrar`, body),
     encerrarVencidas: () => post('/totem-kids/sessoes/encerrar-vencidas', {}),
+    trocarPeriodo: (cultoIds) => post('/totem-kids/sessoes/trocar-periodo', { culto_ids: cultoIds }),
   },
   criancas: {
     buscar: (q) => get(`/totem-kids/criancas/buscar?q=${encodeURIComponent(q)}`),
@@ -1486,6 +2064,13 @@ export const totemKids = {
     addResponsavelRapido: (id, data) => post(`/totem-kids/criancas/${id}/responsavel-rapido`, data),
     removeResponsavel: (responsavelId) => del(`/totem-kids/responsaveis/${responsavelId}`),
     inativar: (id, body) => patch(`/totem-kids/criancas/${id}/inativar`, body),
+    tornarFrequentador: (id) => post(`/totem-kids/criancas/${id}/tornar-frequentador`, {}),
+    // Limite de 2 etiquetas de aniversário por semana (Milena 2026-07-22).
+    aniversarioImpressoes: (id) => get(`/totem-kids/criancas/${id}/aniversario-impressoes`),
+    // "Nova criança": sugerir adicionar à família existente pelo CPF (Marcos 2026-07-22).
+    responsavelFamilia: (cpf) => get(`/totem-kids/responsavel-familia?cpf=${encodeURIComponent(cpf)}`),
+    // Registra rastro pra revisão quando o operador recusa a sugestão de família.
+    familiaRevisar: (data) => post('/totem-kids/familia-revisar', data),
     jornada: (id) => get(`/totem-kids/criancas/${id}/jornada`),
     analiseFrequencia: (id) => get(`/totem-kids/criancas/${id}/analise-frequencia`),
     // Atendimentos (histórico de contatos da equipe Kids com a criança)
@@ -1500,27 +2085,34 @@ export const totemKids = {
     },
     // URL pra abrir e baixar modelo (browser cuida da auth via cookie/header)
     modeloImportacaoUrl: () => `${API}/totem-kids/criancas/modelo-importacao`,
-    // Sync com a API do Planning Center Check-Ins (upsert idempotente)
-    // Sync do Planning Center pagina por TODAS as pessoas do PCO → leva minutos.
-    // Timeout de 5 min (a função serverless tem maxDuration 300s) pra a UI não
-    // abortar em 30s achando que deu erro (a sync continua e conclui no servidor).
-    syncPco: (data = {}) => post('/totem-kids/sync-pco', data, { timeout: 300_000 }),
-    // Corrige responsáveis poluídos (household-dump) podando pelos guardiões
-    // reais (quem fez o check-in da criança no PCO OU no nosso totem).
-    // apply=false = prévia (dry-run · não altera nada). Longo → timeout de 5 min.
-    corrigirResponsaveisPco: (apply = false) => post('/totem-kids/responsaveis-pco', { apply }, { timeout: 300_000 }),
-    depurarInativos: (meses = 6) => post('/totem-kids/criancas/depurar-inativos', { meses }),
   },
   checkin: {
     criar: (data) => post('/totem-kids/checkin', data),
+    // Check-in de vários irmãos numa requisição só (resolve responsável 1×)
+    lote: (data) => post('/totem-kids/checkin/lote', data),
     // Check-in aberto da criança na sessão (pra reimprimir etiqueta perdida)
     aberto: (sessaoId, criancaId) => get(`/totem-kids/checkin/aberto?sessao_id=${encodeURIComponent(sessaoId)}&crianca_id=${encodeURIComponent(criancaId)}`),
     porCodigo: (codigo) => get(`/totem-kids/checkin/codigo/${encodeURIComponent(codigo)}`),
+    // Check-out sem etiqueta: acha check-ins ABERTOS pelo nome da criança ou nº do pager
+    abertosBuscar: ({ nome, pager } = {}) => get(`/totem-kids/checkins-abertos/buscar?${pager ? `pager=${encodeURIComponent(pager)}` : `nome=${encodeURIComponent(nome || '')}`}`),
     atualizar: (id, data) => patch(`/totem-kids/checkin/${id}`, data),
+    // Número do pager entregue (rastreio · propaga por família). Vazio limpa.
+    // Conflito de número → { ok:false, conflito:true, em_uso:[...] } (não bloqueia o check-in).
+    setPager: (id, pager_numero) => patch(`/totem-kids/checkin/${id}/pager`, { pager_numero }),
+    // Marca/desmarca a devolução do pager (propaga por família).
+    pagerDevolvido: (id, devolvido = true) => patch(`/totem-kids/checkin/${id}/pager-devolvido`, { devolvido }),
   },
   cultosDoDia: (data) => get(`/totem-kids/cultos-do-dia?data=${encodeURIComponent(data)}`),
   ausentes: (min = 3) => get(`/totem-kids/ausentes?min=${min}`),
-  syncPresencasPco: (dias = 90) => post(`/totem-kids/sync-presencas-pco?dias=${dias}`, {}, { timeout: 300_000 }),
+  aniversariantesMes: (mes) => get(`/totem-kids/aniversariantes?mes=${mes}`),
+  ausenteContatar: (criancaId) => post(`/totem-kids/ausentes/${criancaId}/contato`, {}),
+  ausenteDescontatar: (criancaId, desde) => del(`/totem-kids/ausentes/${criancaId}/contato` + (desde ? `?desde=${desde}` : '')),
+  // Painel ao vivo dos pagers: { em_uso:[{pager_numero,crianca_nome,sala_nome,responsavel_nome}], pendentes:[...] }
+  pagersEmUso: () => get('/totem-kids/pagers-em-uso'),
+  // Conferência/rastreio de devolução dos pagers (por CULTO · pager→criança→devolvido)
+  pagersConferencia: ({ culto_id, data } = {}) => get(`/totem-kids/pagers/conferencia${culto_id ? `?culto_id=${encodeURIComponent(culto_id)}` : (data ? `?data=${encodeURIComponent(data)}` : '')}`),
+  // Cultos com Kids pra escolher na conferência (mais recentes primeiro)
+  pagersCultos: () => get('/totem-kids/pagers/cultos'),
   // Pré-check-in pelo app do membro · o voluntário digita/escaneia o código
   preCheckin: {
     buscarCodigo: (codigo) => get(`/totem-kids/pre-checkin/codigo/${encodeURIComponent(codigo)}`),
@@ -1574,6 +2166,8 @@ export const totemKids = {
   },
   etiquetas: {
     log: (data) => post('/totem-kids/etiquetas-log', data),
+    // Impressão em lote (família) → 1 requisição com N eventos de log
+    logLote: (eventos) => post('/totem-kids/etiquetas-log', { eventos }),
   },
   auditoria: {
     overrides: () => get('/totem-kids/auditoria/overrides'),
@@ -1614,6 +2208,7 @@ export const marketing = {
   etiquetas:    () => get('/marketing/etiquetas'),
   membros:      () => get('/marketing/membros'),
   recorrentes:  () => get('/marketing/compromissos-recorrentes'),
+  generosidade: (ano) => get(`/marketing/generosidade?ano=${encodeURIComponent(ano)}`),
 
   // CRUD cards
   cards:        (params) => get('/marketing/cards' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -1742,16 +2337,36 @@ export const solicitacoes = {
   retomar:        (id) => post(`/solicitacoes/${id}/retomar`, {}),
   // Cotação (compras/serviço) · logística registra valor+fornecedor antes do financeiro
   registrarCotacao: (id, payload) => post(`/solicitacoes/${id}/registrar-cotacao`, payload),
+  // Aprovação por ALÇADA · quem atende a área aprova a compra dentro do teto,
+  // sem passar pelo financeiro. MESMO endpoint da aprovação financeira (uma
+  // régua só de dinheiro) — quem decide qual caminho vale é o servidor.
+  aprovarNaAlcada: (id, { observacao, forma_pagamento } = {}) =>
+    post(`/solicitacoes/${id}/aprovar-financeiro`, { observacao, forma_pagamento }),
   // Cotações múltiplas · lista de fornecedores + botão de envio ao financeiro
   listarCotacoes:   (id) => get(`/solicitacoes/${id}/cotacoes`),
   adicionarCotacao: (id, payload) => post(`/solicitacoes/${id}/cotacoes`, payload),
   editarCotacao:    (cotacaoId, payload) => patch(`/solicitacoes/cotacoes/${cotacaoId}`, payload),
   removerCotacao:   (cotacaoId) => del(`/solicitacoes/cotacoes/${cotacaoId}`),
   sugerirCotacao:   (id, cotacaoId) => post(`/solicitacoes/${id}/cotacoes/${cotacaoId}/sugerir`, {}),
-  enviarCotacoesFinanceiro: (id) => post(`/solicitacoes/${id}/enviar-cotacoes-financeiro`, {}),
+  enviarCotacoesFinanceiro: (id, payload) => post(`/solicitacoes/${id}/enviar-cotacoes-financeiro`, payload || {}),
+  classificacaoAux: (area) => get(`/solicitacoes/aux/classificacao${area ? `?area=${encodeURIComponent(area)}` : ''}`),
+  converterEmCompra: (id, payload) => post(`/solicitacoes/${id}/converter-em-compra`, payload),
+  lancarFinanceiro: (id, payload) => post(`/solicitacoes/${id}/lancar-financeiro`, payload || {}),
+  escanearNotaFiscal: (id, file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile(`/solicitacoes/${id}/nota-fiscal/escanear`, fd, { timeoutMs: 120_000 }); },
   areaResponsaveis: {
     list:    () => get('/solicitacoes/area-responsaveis'),
     save:    (area, profile_ids) => put('/solicitacoes/area-responsaveis', { area, profile_ids }),
+  },
+  fluxos: {
+    list:      () => get('/solicitacoes/fluxos'),
+    get:       (categoria) => get(`/solicitacoes/fluxos/${categoria}`),
+    andamento: (categoria) => get(`/solicitacoes/fluxos/${categoria}/andamento`),
+    setEtapaResponsaveis: (etapaId, profile_ids) => put(`/solicitacoes/fluxos/etapas/${etapaId}/responsaveis`, { profile_ids }),
+    criarEtapa:     (categoria, payload) => post(`/solicitacoes/fluxos/${categoria}/etapas`, payload),
+    editarEtapa:    (etapaId, body) => patch(`/solicitacoes/fluxos/etapas/${etapaId}`, body),
+    removerEtapa:   (etapaId) => del(`/solicitacoes/fluxos/etapas/${etapaId}`),
+    criarTransicao: (payload) => post('/solicitacoes/fluxos/transicoes', payload),
+    removerTransicao: (id) => del(`/solicitacoes/fluxos/transicoes/${id}`),
   },
   // Vinculo com pedido Mercado Livre (compras)
   vincularML:   (id, mlInput) => post(`/solicitacoes/${id}/vincular-ml`, { ml_input: mlInput }),
@@ -1802,29 +2417,66 @@ export const producao = {
 };
 
 // "Check de pessoas" do funil Next/Batismo/convertido (resolução de identidade)
+// Endpoint renomeado /next-batismo → /entradas (2026-07-19 · nome atual do módulo;
+// o backend mantém /api/next-batismo como alias legado). Slug de permissão segue
+// 'next-batismo'.
 export const nextBatismo = {
-  resumo: () => get('/next-batismo/resumo'),
+  resumo: () => get('/entradas/resumo'),
   duplicados: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
-    return get('/next-batismo/duplicados' + (qs ? '?' + qs : ''));
+    return get('/entradas/duplicados' + (qs ? '?' + qs : ''));
   },
-  semVinculo: () => get('/next-batismo/sem-vinculo'),
+  semVinculo: () => get('/entradas/sem-vinculo'),
+  familiasPendentes: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/entradas/familias-pendentes' + (qs ? '?' + qs : ''));
+  },
+  vincularFamilia: (data) => post('/entradas/vincular-familia', data),
+  ignorarFamilia: (data) => post('/entradas/ignorar-familia', data),
   candidatos: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
-    return get('/next-batismo/candidatos' + (qs ? '?' + qs : ''));
+    return get('/entradas/candidatos' + (qs ? '?' + qs : ''));
   },
-  ligar: (data) => post('/next-batismo/ligar', data),
-  ignorarDuplicata: (data) => post('/next-batismo/ignorar-duplicata', data),
-  fundir: (data) => post('/next-batismo/fundir', data),
-  pessoa: (id) => get('/next-batismo/pessoa/' + encodeURIComponent(id)),
+  ligar: (data) => post('/entradas/ligar', data),
+  ignorarDuplicata: (data) => post('/entradas/ignorar-duplicata', data),
+  adiarDuplicata: (data) => post('/entradas/adiar-duplicata', data),
+  reativarDuplicata: (data) => post('/entradas/reativar-duplicata', data),
+  adiarEmLote: (data = { criterio: 'nome_apenas' }) => post('/entradas/adiar-em-lote', data),
+  duplicadosAdiados: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/entradas/duplicados/adiados' + (qs ? '?' + qs : ''));
+  },
+  fundir: (data) => post('/entradas/fundir', data),
+  resolucoes: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/entradas/resolucoes' + (qs ? '?' + qs : ''));
+  },
+  pessoa: (id) => get('/entradas/pessoa/' + encodeURIComponent(id)),
 };
 
 export const membresia = {
   kpis: () => get('/membresia/kpis'),
   qrLookup: (token) => get(`/membresia/qr-lookup/${encodeURIComponent(token)}`),
-  cpfLookup: (cpf) => get(`/membresia/cpf-lookup/${encodeURIComponent(String(cpf).replace(/\D/g, ''))}`),
+  cpfLookup: (cpf, nascimento) => get(`/membresia/cpf-lookup/${encodeURIComponent(String(cpf).replace(/\D/g, ''))}?nascimento=${encodeURIComponent(nascimento || '')}`),
   orfaosStats: () => get('/membresia/orfaos-stats'),
+  // Pedidos de exclusão de conta (LGPD art. 18) vindos do app · SÓ LEITURA:
+  // não existe caminho de desativação de conta no sistema ainda (06/08/2026).
+  exclusoes: (params = {}) => {
+    const qs = new URLSearchParams(params).toString();
+    return get('/membresia/exclusoes' + (qs ? '?' + qs : ''));
+  },
   promoverOrfaos: () => post('/membresia/promover-orfaos', {}),
+  // Fila de identidade (conflitos de CPF · identidade_pendencias)
+  identidade: {
+    list: (params = {}) => {
+      const qs = new URLSearchParams(params).toString();
+      return get('/membresia/identidade-pendencias' + (qs ? '?' + qs : ''));
+    },
+    confirmarCpf: (id) => post(`/membresia/identidade-pendencias/${id}/confirmar-cpf`, {}),
+    ligarInscricao: (id) => post(`/membresia/identidade-pendencias/${id}/ligar-inscricao`, {}),
+    ligarLote: (ids) => post('/membresia/identidade-pendencias/ligar-lote', { ids }),
+    setStatus: (id, status) => post(`/membresia/identidade-pendencias/${id}/status`, { status }),
+  },
   // Detecção e merge de duplicados
   duplicados: {
     list: (params = {}) => {
@@ -1842,6 +2494,12 @@ export const membresia = {
   membros: {
     list: (params) => get('/membresia/membros' + (params ? '?' + new URLSearchParams(params) : '')),
     get: (id) => get(`/membresia/membros/${id}`),
+    timeline: (id) => get(`/membresia/membros/${id}/timeline`),
+    // Respostas do censo desta pessoa. O bloco sensível vem filtrado pelo
+    // servidor conforme cen_acesso_sensivel — ter membresia não é autorização
+    // para ler saúde emocional de ninguém.
+    censo: (id) => get(`/membresia/membros/${id}/censo`),
+    inscricoes: (id) => get(`/membresia/membros/${id}/inscricoes`),
     create: (data) => post('/membresia/membros', data),
     update: (id, data) => put(`/membresia/membros/${id}`, data),
     remove: (id) => del(`/membresia/membros/${id}`),
@@ -1879,13 +2537,17 @@ export const membresia = {
     sairMembro: (participacaoId, data) => patch(`/membresia/grupo-membros/${participacaoId}/sair`, data),
   },
   totem: {
-    entrarGrupo: (grupoId, membroId) => post(`/membresia/totem/grupos/${grupoId}/entrar`, { membro_id: membroId }),
+    // Cria um PEDIDO de entrada (mem_grupo_pedidos · líder aprova) — aceita
+    // { membro_id } ou { cadastro_pendente_id } + snapshot nome/telefone/email.
+    pedirGrupo: (grupoId, data) => post(`/membresia/totem/grupos/${grupoId}/entrar`, data),
+    batismoHorarios: () => get('/public/batismo/horarios'),
     geocodeCep: (cep) => get(`/membresia/geocode-cep?cep=${encodeURIComponent(cep)}`),
     updateMembro: (id, data) => put(`/membresia/totem/membros/${id}`, data),
     uploadFoto: (id, formData) => requestFile(`/membresia/totem/membros/${id}/foto`, formData),
     next: {
       status: (params = {}) => get('/membresia/totem/next/status?' + new URLSearchParams(params).toString()),
       inscrever: (data) => post('/membresia/totem/next/inscrever', data),
+      informacoes: (data) => post('/membresia/totem/next/informacoes', data),
     },
     apresentacaoBebe: {
       status: (params = {}) => get('/membresia/totem/apresentacao-bebe/status?' + new URLSearchParams(params).toString()),
@@ -1922,10 +2584,39 @@ export const membresia = {
     create: (data) => post('/membresia/checkins', data),
     remove: (id) => del(`/membresia/checkins/${id}`),
   },
+  // Censo / recadastramento (2026-08-03) — cobertura e fila de cobrança.
+  censo: {
+    cobertura: (params) => get('/membresia/censo/cobertura' + (params ? '?' + new URLSearchParams(params) : '')),
+    faltantes: (params) => get('/membresia/censo/faltantes' + (params ? '?' + new URLSearchParams(params) : '')),
+    // Convite de atualização cadastral (WhatsApp + e-mail) pra quem está sem CPF.
+    disparoPreview: (params) => get('/membresia/censo/disparo/preview' + (params ? '?' + new URLSearchParams(params) : '')),
+    // ⚠️ 300s (o padrão é 30s): a rodada manda até 200 e-mails sequenciais pelo
+    // Graph. Em 04/08 o cliente abortou em 30s, a função seguiu e mandou os 200
+    // — a tela disse "tempo esgotado" para um envio que aconteceu. O registro
+    // agora é gravado em blocos DURANTE o envio, então um timeout aqui não
+    // duplica nada; este teto existe pra pessoa ver o resultado.
+    disparar: (body) => post('/membresia/censo/disparo', body, { timeout: 300000 }),
+    // Resultado da CAMPANHA (convidados → responderam → com CPF), por rodada.
+    disparoResultado: () => get('/membresia/censo/disparo/resultado'),
+    // Prévia do e-mail: HTML renderizado pela MESMA função do disparo.
+    disparoPreviewEmail: (nome) => get('/membresia/censo/disparo/preview-email' + (nome ? `?nome=${encodeURIComponent(nome)}` : '')),
+  },
   cadastros: {
     list: (params) => get('/membresia/cadastros' + (params ? '?' + new URLSearchParams(params) : '')),
     kpis: () => get('/membresia/cadastros/kpis'),
+    podeAprovar: () => get('/membresia/cadastros/pode-aprovar'),
+    confirmarWhatsapp: (id) => post(`/membresia/cadastros/${id}/confirmar-whatsapp`, {}),
     aprovar: (id, data) => post(`/membresia/cadastros/${id}/aprovar`, data || {}),
+    // Aprovação em massa: só passa quem tem os dados obrigatórios (o servidor
+    // reavalia cada linha; o resto volta em `ignorados` pra aprovação manual).
+    //
+    // ⚠️ Timeout PRÓPRIO de 90s (o padrão é 30s): cada aprovação passa pelo
+    // matcher canônico e escreve em várias tabelas, então até um lote pequeno
+    // passa dos 30s. Em 04/08 um lote de 49 CONCLUIU no servidor e o cliente
+    // abortou em 30s — a tela disse "tempo esgotado" para um trabalho que tinha
+    // dado certo, e o Matheus achou que nada aconteceu. Quem chunkifica é a
+    // tela (TabCadastros); este teto é a rede de segurança.
+    aprovarLote: (ids) => post('/membresia/cadastros/aprovar-lote', { ids }, { timeout: 90000 }),
     rejeitar: (id, motivo) => post(`/membresia/cadastros/${id}/rejeitar`, { motivo }),
     update: (id, data) => patch(`/membresia/cadastros/${id}`, data),
     remove: (id) => del(`/membresia/cadastros/${id}`),
@@ -1936,16 +2627,37 @@ export const membresia = {
 // Usa fetch direto porque não requer token e deve funcionar em rotas públicas.
 // API pública de grupos — sem auth, read-only. Usada pelo formulário
 // de cadastro público (CadastroMembresia.jsx) e pela inscrição com QR.
+export const familiaPublic = {
+  // Info do convite de familiar (página de bounce /f/a/:codigo · sem login)
+  conviteInfo: async (codigo) => {
+    const r = await fetch(`${API}/public/familia/convite/${encodeURIComponent(codigo)}`);
+    if (!r.ok) return { status: r.status === 404 ? 'inexistente' : 'erro' };
+    return r.json();
+  },
+};
+
+// Erro da busca publica de grupos com mensagem PROPRIA. Antes era `return []`,
+// e ai qualquer falha (inclusive 429 do limite por IP no culto, quando a igreja
+// toda sai por um IP so) aparecia como "Nenhum grupo encontrado com esses
+// filtros" — a pessoa concluia que os grupos acabaram.
+function erroPublicoGrupos(r) {
+  const e = new Error(r.status === 429
+    ? 'Muitos acessos ao mesmo tempo. Aguarde alguns segundos e toque em tentar de novo.'
+    : 'Nao conseguimos carregar os grupos agora. Verifique a conexao e tente de novo.');
+  e.status = r.status;
+  return e;
+}
+
 export const gruposPublic = {
   temporadas: async () => {
     const r = await fetch(`${API}/public/grupos/temporadas`);
-    if (!r.ok) return [];
+    if (!r.ok) throw erroPublicoGrupos(r);
     return r.json();
   },
   buscar: async (params) => {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
     const r = await fetch(`${API}/public/grupos/buscar${qs}`);
-    if (!r.ok) return [];
+    if (!r.ok) throw erroPublicoGrupos(r);
     return r.json();
   },
   getById: async (id) => {
@@ -1964,6 +2676,19 @@ export const gruposPublic = {
     const r = await fetch(`${API}/public/grupos/lideres/${liderId}/grupos${qs}`);
     if (!r.ok) return [];
     return r.json();
+  },
+  inscreverLider: async (data) => {
+    const r = await fetch(`${API}/public/grupos/inscrever-lider`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const error = new Error(j.error || `HTTP ${r.status}`);
+      Object.assign(error, j);
+      throw error;
+    }
+    return j;
   },
   inscrever: async (data) => {
     const r = await fetch(`${API}/public/grupos/inscrever`, {
@@ -2037,12 +2762,61 @@ export const gruposPublic = {
     if (!r.ok) throw new Error(j.error || 'Erro ao salvar a frequência');
     return j; // { ok, marcados, total }
   },
+  adicionarVisitanteFrequencia: async (token, { nome, telefone }) => {
+    const r = await fetch(`${API}/public/grupos/grupo/frequencia/visitante`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, nome, telefone }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(j.error || 'Erro ao adicionar visitante'); Object.assign(e, j); throw e; }
+    return j; // { ok, membro: { id, nome, foto_url } }
+  },
+  // Renovação de temporada · líder responde se continua com o grupo
+  renovacaoPorToken: async (token) => {
+    const r = await fetch(`${API}/public/grupos/grupo/renovacao?token=${encodeURIComponent(token)}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao carregar a renovação');
+    return j; // { grupo, temporada, status, motivo, ja_respondeu, membros }
+  },
+  responderRenovacao: async (token, body) => {
+    const r = await fetch(`${API}/public/grupos/grupo/renovacao`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, ...body }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(j.error || 'Erro ao salvar a resposta'); Object.assign(e, j); throw e; }
+    return j; // { ok, status, confirmados?, removidos?, reativados? }
+  },
+  // Conferência da lista · o líder DESMARCA quem não faz mais parte
+  confiraPorToken: async (token) => {
+    const r = await fetch(`${API}/public/grupos/grupo/confira?token=${encodeURIComponent(token)}`);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Erro ao carregar a lista do grupo');
+    // { grupo, status, ja_respondeu, observacao, membros } · cada membro traz
+    // funcao/papel/protegido (liderança não é desmarcável — o servidor também recusa)
+    return j;
+  },
+  responderConfira: async (token, body) => {
+    const r = await fetch(`${API}/public/grupos/grupo/confira`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, ...body }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(j.error || 'Erro ao salvar a resposta'); Object.assign(e, j); throw e; }
+    return j; // { ok, status, mantidos, removidos, reativados }
+  },
 };
 
 export const apresentacaoCriancasPublico = {
   proximaData: async () => {
     const res = await fetch(`${API}/public/apresentacao-criancas/proxima-data`);
     if (!res.ok) throw new Error('Erro ao buscar próxima data');
+    return res.json();
+  },
+  // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
+  textos: async () => {
+    const res = await fetch(`${API}/public/apresentacao-criancas/textos`);
+    if (!res.ok) throw new Error('Erro ao buscar textos');
     return res.json();
   },
   inscrever: async (data) => {
@@ -2060,6 +2834,11 @@ export const apresentacaoCriancasPublico = {
 };
 
 export const batismoPublico = {
+  // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
+  textos: async () => {
+    const res = await fetch(`${API}/public/batismo/textos`);
+    const j = await res.json(); if (!res.ok) throw new Error(j.error || 'Erro'); return j;
+  },
   proximaData: async () => {
     const res = await fetch(`${API}/public/batismo/proxima-data`);
     if (!res.ok) throw new Error('Erro ao buscar próxima data');
@@ -2132,6 +2911,15 @@ export const cadastroPublico = {
   verificarFamilia: async (sobrenome) => {
     const res = await fetch(`${API}/public/membresia/verificar-familia?sobrenome=${encodeURIComponent(sobrenome)}`);
     if (!res.ok) return { familias: [] };
+    return res.json();
+  },
+  // Atualização cadastral pelo link PESSOAL do convite do censo (?t=<token>).
+  // ⚠️ É o único caminho público que devolve os dados da pessoa — a prova de
+  // identidade é o token ter chegado no contato dela. Falha silenciosa de
+  // propósito: link ruim cai no cadastro normal, nunca numa tela de erro.
+  censoMeusDados: async (token) => {
+    const res = await fetch(`${API}/public/membresia/censo/meus-dados?t=${encodeURIComponent(token)}`);
+    if (!res.ok) return { ok: false };
     return res.json();
   },
   lookupCpf: async (cpf) => {
@@ -2245,15 +3033,37 @@ async function requestFile(path, formData, { timeoutMs = 60_000 } = {}) {
       body: formData,
       signal: controller.signal,
     });
-  } catch (err) {
-    if (err?.name === 'AbortError') throw new Error('Tempo esgotado ao enviar arquivo (60s). Tente novamente.');
-    throw err;
+  } catch (cause) {
+    if (cause?.name === 'AbortError') {
+      const error = Object.assign(new Error('Tempo esgotado ao enviar arquivo (60s). Tente novamente.'), { code: 'API_UPLOAD_TIMEOUT' });
+      captureApiError(error, { path, method: 'POST', kind: 'timeout', code: error.code });
+      throw error;
+    }
+    captureApiError(cause, { path, method: 'POST', kind: 'network', code: 'API_UPLOAD_NETWORK_ERROR' });
+    throw cause;
   } finally {
     clearTimeout(timer);
   }
   if (res.status === 401) { if (supabase) await supabase.auth.signOut(); window.location.href = '/login'; throw new Error('Sessão expirada'); }
-  if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `HTTP ${res.status}`); }
-  return res.json();
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const error = Object.assign(new Error(body.error || `HTTP ${res.status}`), body, {
+      status: res.status,
+      requestId: res.headers.get('x-request-id') || body.request_id || null,
+    });
+    captureApiError(error, {
+      path, method: 'POST', kind: 'response', status: res.status,
+      requestId: error.requestId, code: error.code,
+    });
+    throw error;
+  }
+  try {
+    return await res.json();
+  } catch (cause) {
+    const error = Object.assign(new Error('Resposta inválida recebida após o upload.'), { code: 'API_INVALID_JSON', status: res.status, cause });
+    captureApiError(error, { path, method: 'POST', kind: 'protocol', status: res.status, code: error.code });
+    throw error;
+  }
 }
 
 export const attachments = {
@@ -2312,6 +3122,10 @@ export const publicVoluntariado = {
   lookupCpf: (cpf) => post('/public/voluntariado/lookup-cpf', { cpf }),
   requestLogin: (cpf, serviceId) => post('/public/voluntariado/request-login', { cpf, serviceId }),
   register: (data) => post('/public/voluntariado/register', data),
+  // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
+  textos: () => fetch(`${API}/public/voluntariado/textos`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
   inscreverForm: (data) => fetch(`${API}/public/voluntariado/inscrever-form`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2331,6 +3145,7 @@ export const publicVoluntariado = {
 export const voluntariado = {
   // Aniversariantes da semana (pra parabenizar) · próximos 7 dias
   aniversariantesSemana: () => get('/voluntariado/aniversariantes-semana'),
+  parabenizar: (volProfileId) => post(`/voluntariado/aniversariantes/${volProfileId}/parabenizar`, {}),
   // Controle de acesso de voluntários (quem tem login + cargo + cruzamento com membresia)
   acessos: {
     list: (params) => get('/voluntariado/acessos' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -2347,6 +3162,10 @@ export const voluntariado = {
     sugerirVinculos: () => post('/voluntariado/frequencia/sugerir-vinculos', {}),
     vincularLote: (vinculos) => post('/voluntariado/frequencia/vincular-lote', { vinculos }),
     importar: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/voluntariado/frequencia/importar', fd); },
+    // Motivo de inatividade (motivo vazio limpa). chave = identidade da linha.
+    setInatividade: (chave, motivo, detalhe) => put('/voluntariado/frequencia/inatividade', { chave, motivo, detalhe }),
+    // Saiu da igreja: marca no voluntariado + status 'inativo' na Membresia (se vinculado).
+    saiuIgreja: (chave, membro_id, detalhe) => post('/voluntariado/frequencia/saiu-igreja', { chave, membro_id, detalhe }),
   },
   // Mensagem automática de WhatsApp (boas-vindas ao se inscrever pra servir)
   whatsappAuto: {
@@ -2371,6 +3190,7 @@ export const voluntariado = {
     enviar: (id) => post(`/voluntariado/emails/${id}/enviar`, {}, { timeout: 300_000 }),
     agendar: (id, agendado_para) => post(`/voluntariado/emails/${id}/agendar`, { agendado_para }),
     cancelar: (id) => post(`/voluntariado/emails/${id}/cancelar`, {}),
+    reenviarErros: (id) => post(`/voluntariado/emails/${id}/reenviar-erros`, {}, { timeout: 300_000 }),
     // Assinatura global do módulo (texto + logo)
     config: () => get('/voluntariado/emails/config'),
     saveConfig: (assinatura_html) => put('/voluntariado/emails/config', { assinatura_html }),
@@ -2417,6 +3237,8 @@ export const voluntariado = {
   atualizarInscricao: (id, status) => patch(`/voluntariado/inscricoes/${id}`, { status }),
   // Edita os dados da ficha (CPF, nascimento, nome da mãe, interesse, área direcionada)
   editarInscricao: (id, dados) => patch(`/voluntariado/inscricoes/${id}/dados`, dados),
+  // Marca a inscrição como desistente (desistiu de servir antes de integrar) · motivo opcional
+  desistirInscricao: (id, motivo) => post(`/voluntariado/inscricoes/${id}/desistiu`, { motivo }),
   // Distribuição de voluntários por área direcionada ("onde estão as pessoas")
   distribuicaoDirecionada: (params) => get('/voluntariado/inscricoes/por-direcionada' + (params ? '?' + new URLSearchParams(params) : '')),
   // Triagem de antecedentes criminais (Kids/Bridge)
@@ -2465,6 +3287,8 @@ export const voluntariado = {
     detalhe: (id) => get(`/voluntariado/profiles/${id}/detalhe`),
     create: (data) => post('/voluntariado/profiles', data),
     update: (id, data) => put(`/voluntariado/profiles/${id}`, data),
+    // Edita o cadastro (nome/e-mail/telefone/CPF) refletindo na Membresia
+    editarCadastro: (id, data) => put(`/voluntariado/profiles/${id}/cadastro`, data),
   },
   // Roles
   roles: {
@@ -2508,6 +3332,18 @@ export const voluntariado = {
     copy: (from_service_id, to_service_id) => post('/voluntariado/schedules/copy', { from_service_id, to_service_id }),
     autoFill: (service_id, team_id) => post('/voluntariado/schedules/auto-fill', { service_id, team_id }),
   },
+  // Templates de escala (composição esperada do culto + pré-preenchimento)
+  scheduleTemplates: {
+    list: () => get('/voluntariado/schedule-templates'),
+    get: (id) => get(`/voluntariado/schedule-templates/${id}`),
+    create: (data) => post('/voluntariado/schedule-templates', data),
+    update: (id, data) => put(`/voluntariado/schedule-templates/${id}`, data),
+    remove: (id) => del(`/voluntariado/schedule-templates/${id}`),
+    porTipo: (serviceTypeId) => get(`/voluntariado/schedule-templates/por-tipo/${serviceTypeId}`),
+    apply: (id, service_id) => post(`/voluntariado/schedule-templates/${id}/apply`, { service_id }),
+  },
+  // Cobertura da escala de um culto (alvo × preenchidas)
+  escalaCobertura: (serviceId) => get(`/voluntariado/services/${serviceId}/escala-cobertura`),
   // Check-ins
   checkIns: {
     list: (params) => get('/voluntariado/check-ins' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -2640,6 +3476,8 @@ export const kpis = {
     list: (params) => get('/kpis/batismos' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/kpis/batismos', data),
     update: (id, data) => put(`/kpis/batismos/${id}`, data),
+    // Muda o status de várias inscrições de uma vez (ex.: marcar presentes → realizado).
+    updateEmMassa: (ids, status) => put('/kpis/batismos/em-massa', { ids, status }),
     coberturaConvertidos: () => get('/kpis/batismos/cobertura-convertidos'),
     // Horários do batismo (abrir/fechar + limite de vagas)
     horarios: {
@@ -2665,9 +3503,6 @@ export const kpis = {
   dashboard: (semanas) => get(`/kpis/dashboard?semanas=${semanas || 12}`),
   metas: () => get('/kpis/metas'),
   updateMeta: (id, data) => put(`/kpis/metas/${id}`, data),
-  // YouTube sync
-  youtubeSync: () => post('/kpis/youtube/sync', {}),
-  youtubeStatus: () => get('/kpis/youtube/status'),
   // Auto-criação semanal (idempotente). weeks=N para backfill retroativo
   cultosAutoCreate: (weeks) => post(`/kpis/cultos/auto-create${weeks ? `?weeks=${weeks}` : ''}`, {}),
   // ── Mandala Cultura ──
@@ -2749,6 +3584,104 @@ export const monitorAutomacoes = {
   status: () => get('/monitor-automacoes/status'),
 };
 
+// Inbox de WhatsApp (módulo Conversas)
+export const waInbox = {
+  conversas: (params = {}) => {
+    const p = new URLSearchParams();
+    if (params.status) p.set('status', params.status);
+    if (params.q) p.set('q', params.q);
+    if (params.area) p.set('area', params.area);
+    const qs = p.toString();
+    return get(`/wa-inbox/conversas${qs ? `?${qs}` : ''}`);
+  },
+  mensagens: (id) => get(`/wa-inbox/conversas/${id}/mensagens`),
+  responder: (id, body) => post(`/wa-inbox/conversas/${id}/responder`, body),
+  abrir: (body) => post('/wa-inbox/conversas/abrir', body),
+  nova: (body) => post('/wa-inbox/conversas/nova', body),
+  ler: (id) => post(`/wa-inbox/conversas/${id}/ler`, {}),
+  atualizar: (id, body) => patch(`/wa-inbox/conversas/${id}`, body),
+  transferir: (id, area) => post(`/wa-inbox/conversas/${id}/transferir`, { area }),
+  anexar: (id, file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile(`/wa-inbox/conversas/${id}/anexo`, fd, { timeoutMs: 120_000 }); },
+  areas: () => get('/wa-inbox/areas'),
+  templates: () => get('/wa-inbox/templates'),
+  colaboradores: () => get('/wa-inbox/colaboradores'),
+  // Mensagens prontas (respostas rápidas reutilizáveis)
+  mensagensProntas: () => get('/wa-inbox/mensagens-prontas'),
+  criarMensagemPronta: (body) => post('/wa-inbox/mensagens-prontas', body),
+  atualizarMensagemPronta: (id, body) => patch(`/wa-inbox/mensagens-prontas/${id}`, body),
+  removerMensagemPronta: (id) => del(`/wa-inbox/mensagens-prontas/${id}`),
+  perfil: (id) => get(`/wa-inbox/conversas/${id}/perfil`),
+  naoLidas: () => get('/wa-inbox/nao-lidas'),
+  resumoAreas: () => get('/wa-inbox/resumo-areas'),
+  setores: () => get('/wa-inbox/setores'),
+  criarSetor: (body) => post('/wa-inbox/setores', body),
+  salvarSetor: (id, body) => put(`/wa-inbox/setores/${id}`, body),
+  removerSetor: (id) => del(`/wa-inbox/setores/${id}`),
+};
+
+// Módulo Comunicação (central de WhatsApp · C3 backend · rotas /comunicacao/*)
+export const comunicacao = {
+  // Inventário dos disparos automáticos + o público de cada um. `pessoas=1`
+  // carrega nome/telefone e o servidor só devolve com nível >= 2.
+  // ⚠️ Timeout maior: cada item resolve o próprio público paginando a base
+  // (voluntários, grupos, membros do app) — no timeout padrão de 30s a tela
+  // diria "tempo esgotado" num trabalho que deu certo.
+  automaticas: (params = {}) => {
+    const p = new URLSearchParams();
+    if (params.dias) p.set('dias', String(params.dias));
+    if (params.pessoas) p.set('pessoas', '1');
+    const qs = p.toString();
+    return get(`/comunicacao/automaticas${qs ? `?${qs}` : ''}`, { timeout: 90_000 });
+  },
+  numeros: {
+    list: () => get('/comunicacao/numeros'),
+    criar: (body) => post('/comunicacao/numeros', body),
+    atualizar: (id, body) => put(`/comunicacao/numeros/${id}`, body),
+  },
+  templates: {
+    list: (params = {}) => {
+      const p = new URLSearchParams();
+      if (params.modulo) p.set('modulo', params.modulo);
+      if (params.status) p.set('status', params.status);
+      const qs = p.toString();
+      return get(`/comunicacao/templates${qs ? `?${qs}` : ''}`);
+    },
+    sync: () => post('/comunicacao/templates/sync', {}, { timeout: 120_000 }),
+    atualizar: (id, body) => put(`/comunicacao/templates/${id}`, body),
+  },
+  agendamentos: {
+    list: () => get('/comunicacao/agendamentos'),
+    criar: (body) => post('/comunicacao/agendamentos', body),
+    atualizar: (id, body) => put(`/comunicacao/agendamentos/${id}`, body),
+    remover: (id) => del(`/comunicacao/agendamentos/${id}`),
+  },
+  atendentes: {
+    list: () => get('/comunicacao/atendentes'),
+    criar: (body) => post('/comunicacao/atendentes', body),
+    atualizar: (id, body) => put(`/comunicacao/atendentes/${id}`, body),
+  },
+  tarifas: {
+    list: () => get('/comunicacao/tarifas'),
+    atualizar: (categoria, tarifa) => put(`/comunicacao/tarifas/${encodeURIComponent(categoria)}`, { tarifa }),
+  },
+  envios: {
+    list: (params = {}) => {
+      const p = new URLSearchParams();
+      ['status', 'contexto', 'telefone', 'de', 'ate', 'limit', 'offset'].forEach((k) => {
+        if (params[k] != null && params[k] !== '') p.set(k, params[k]);
+      });
+      const qs = p.toString();
+      return get(`/comunicacao/envios${qs ? `?${qs}` : ''}`);
+    },
+    resumo: (dias = 30) => get(`/comunicacao/envios/resumo?dias=${dias}`),
+  },
+  custo: (meses = 6) => get(`/comunicacao/custo?meses=${meses}`),
+  erros: {
+    list: () => get('/comunicacao/erros'),
+    reenviar: (id, telefone) => post(`/comunicacao/erros/${id}/reenviar`, telefone ? { telefone } : {}),
+  },
+};
+
 export const cuidados = {
   dashboard: () => get('/cuidados/dashboard'),
   dashboardSeries: (params) => get('/cuidados/dashboard-series' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -2762,6 +3695,14 @@ export const cuidados = {
   pedidosApp: {
     list: (params) => get('/cuidados/pedidos-app' + (params ? '?' + new URLSearchParams(params) : '')),
     updateStatus: (id, tratamento_status) => patch(`/cuidados/pedidos-app/${id}`, { tratamento_status }),
+  },
+  // Caixa de entrada · pedidos de cuidado canônicos (cui_pedidos · whatsapp/plataforma/manual)
+  pedidos: {
+    list: (params) => get('/cuidados/pedidos' + (params ? '?' + new URLSearchParams(params) : '')),
+    create: (data) => post('/cuidados/pedidos', data),
+    update: (id, data) => patch(`/cuidados/pedidos/${id}`, data),
+    remove: (id) => del(`/cuidados/pedidos/${id}`),
+    atender: (fonte, id, atendimento) => post('/cuidados/pedidos/atender', { fonte, id, atendimento }),
   },
   oracoes: {
     list: () => get('/cuidados/oracoes'),
@@ -2817,12 +3758,26 @@ export const cuidados = {
     // criam o handoff na caixa da área · NÃO marca engajamento.
     direcionar: (id, direcionamento) => post(`/cuidados/convertidos/${id}/direcionar`, { direcionamento }),
   },
+  // Responsáveis do atendimento (lista gerenciável na aba Próximos passos)
+  responsaveis: {
+    list: () => get('/cuidados/responsaveis'),
+    create: (nome) => post('/cuidados/responsaveis', { nome }),
+    update: (id, data) => patch(`/cuidados/responsaveis/${id}`, data),
+    remove: (id) => del(`/cuidados/responsaveis/${id}`),
+  },
   // Visitas pastorais e atendimentos avulsos (fora do funil de convertidos)
   visitas: {
     list: (params) => get('/cuidados/visitas' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/cuidados/visitas', data),
     update: (id, data) => patch(`/cuidados/visitas/${id}`, data),
     remove: (id) => del(`/cuidados/visitas/${id}`),
+  },
+  // Trilha por pessoa (aba Visitas e Atendimentos) · agrupa visitas + acompanhamentos
+  trilha: () => get('/cuidados/trilha'),
+  atendimentoComentarios: {
+    list: (refTipo, refId) => get(`/cuidados/atendimentos/${refTipo}/${refId}/comentarios`),
+    create: (refTipo, refId, texto) => post(`/cuidados/atendimentos/${refTipo}/${refId}/comentarios`, { texto }),
+    remove: (id) => del(`/cuidados/atendimento-comentarios/${id}`),
   },
   agregado: {
     list: (mes) => get(`/cuidados/agregado${mes ? `?mes=${mes}` : ''}`),
@@ -3117,13 +4072,23 @@ export const nps = {
   responder: (id, data) => post(`/nps/${id}/responder`, data),
   analisar: (id) => post(`/nps/${id}/analisar`, {}),
   notificar: (id) => post(`/nps/${id}/notificar`, {}),
+  // Importar de Google Forms: perguntas por link (preview → cria via create) e
+  // respostas por planilha (preview + commit).
+  importarForm: (url) => post('/nps/importar-form', { url }),
+  importarRespostas: (id, file, { preview = false, notaColuna } = {}) => {
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    if (notaColuna) fd.append('nota_coluna', notaColuna);
+    return requestFile(`/nps/${id}/importar-respostas${preview ? '?preview=1' : ''}`, fd, { timeoutMs: 120_000 });
+  },
   // Públicas (sem auth) · com RETRY: num culto, a borda do Vercel pode dar um
   // soluço/challenge momentâneo sob pico. Em vez de perder a resposta, o celular
   // tenta de novo sozinho (backoff). Status "de borda" (403 challenge / 429 / 503)
   // e erro de rede são retentados; 400/404 (dado inválido / pesquisa off) não.
-  publicGet: (token) =>
+  // turma (opcional) · QR por turma do Next → busca o nome pra confirmar a turma.
+  publicGet: (token, turma) =>
     npsFetchRetry(
-      () => fetch(`${API}/public/nps/${encodeURIComponent(token)}`, { headers: { 'Content-Type': 'application/json' } }),
+      () => fetch(`${API}/public/nps/${encodeURIComponent(token)}` + (turma ? `?turma=${encodeURIComponent(turma)}` : ''), { headers: { 'Content-Type': 'application/json' } }),
       { tentativas: 4, msg: 'Erro ao carregar pesquisa' },
     ),
   publicResponder: (token, payload) =>
@@ -3173,6 +4138,67 @@ async function npsFetchRetry(doFetch, { tentativas = 3, msg = 'Erro' } = {}) {
   }
   throw ultimo || new Error(msg);
 }
+
+// Censo · porta PÚBLICA (QR no culto, link pessoal, app do membro).
+// Reusa o `npsFetchRetry`: mesmo cenário e mesmo motivo — sob pico de culto a
+// borda do Vercel dá challenge/429 momentâneo, e perder a resposta de quem
+// preencheu 90 campos não é opção. 400/404 não são retentados (dado inválido ou
+// pesquisa fechada não melhoram com insistência).
+export const censoPublico = {
+  obter: (slug) =>
+    npsFetchRetry(
+      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}`, { headers: { 'Content-Type': 'application/json' } }),
+      { tentativas: 4, msg: 'Erro ao carregar o censo' },
+    ),
+  // Atalho opcional: quem já está na base não redigita nome/telefone/e-mail.
+  // Resposta NEUTRA por definição — não dá para saber se um CPF existe.
+  prefill: (slug, dados) =>
+    npsFetchRetry(
+      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/prefill`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
+      }),
+      { tentativas: 2, msg: 'Não foi possível verificar' },
+    ),
+  // Listas longas com busca. As opções NÃO vêm no questionário: 1.911 igrejas em
+  // cada abertura seria absurdo.
+  catalogo: (nome, q) =>
+    npsFetchRetry(
+      () => fetch(`${API}/public/censo/catalogo/${encodeURIComponent(nome)}?q=${encodeURIComponent(q)}`,
+        { headers: { 'Content-Type': 'application/json' } }),
+      { tentativas: 2, msg: 'Erro na busca' },
+    ),
+  parcial: (slug, dados) =>
+    npsFetchRetry(
+      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/parcial`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
+      }),
+      { tentativas: 2, msg: 'Não foi possível salvar' },
+    ),
+  retomar: (slug, dados) =>
+    npsFetchRetry(
+      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/retomar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
+      }),
+      { tentativas: 2, msg: 'Não foi possível retomar' },
+    ),
+  responder: (slug, payload) =>
+    npsFetchRetry(
+      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/responder`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      }),
+      { tentativas: 3, msg: 'Erro ao enviar resposta' },
+    ),
+  // Última tentativa enquanto a aba fecha. O `envio_id` no payload garante que
+  // um beacon a mais não crie resposta duplicada.
+  responderBeacon: (slug, payload) => {
+    try {
+      if (typeof navigator === 'undefined' || !navigator.sendBeacon) return false;
+      const url = `${API}/public/censo/${encodeURIComponent(slug)}/responder`;
+      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+      return navigator.sendBeacon(url, blob);
+    } catch { return false; }
+  },
+};
 
 export const online = {
   dashboard: () => get('/online/dashboard'),

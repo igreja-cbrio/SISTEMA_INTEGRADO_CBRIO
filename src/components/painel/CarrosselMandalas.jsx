@@ -61,7 +61,7 @@ export default function CarrosselMandalas() {
 
   // Slides: [geral, seguir, conectar, investir, servir, generosidade]
   const slides = data ? [
-    { tipo: 'geral', titulo: 'Visao Geral', sub: '5 valores · pessoas engajadas neste mês' },
+    { tipo: 'geral', titulo: 'Visão Geral', sub: '5 valores · pessoas engajadas neste mês' },
     ...VALORES_ORDEM.map(v => ({
       tipo: 'por_valor',
       key: v,
@@ -192,7 +192,7 @@ export default function CarrosselMandalas() {
             <button
               onClick={() => setIndice(i => Math.min(slides.length - 1, i + 1))}
               disabled={indice === slides.length - 1}
-              aria-label="Proxima mandala"
+              aria-label="Próxima mandala"
               style={{
                 position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)',
                 width: 32, height: 32, borderRadius: '50%',

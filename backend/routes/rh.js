@@ -13,6 +13,39 @@ const uploadMw = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
 });
 
+// ── Cron (sem login · CRON_SECRET) ──────────────────────────────────────────
+// Dia 10 (vercel.json · 0 12 10 * * = 9h BRT): lista funcionários ativos SEM
+// pagamento atribuído no mês corrente (por vínculo OU match de nome/cpf/cnpj/
+// razão) e notifica os responsáveis de RH (sininho + push do Staff via
+// notificacao_regras/fallback). Dedup mensal pela chave.
+const { requireCron } = require('../utils/cronAuth');
+const MESES_PT = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+router.get('/cron/nao-pagos', requireCron, async (req, res) => {
+  try {
+    const mes = mesCorrenteBRT();
+    const { sem, ativos } = await funcionariosSemPagamentoNoMes(mes);
+    const [ano, mm] = mes.split('-');
+    const mesLabel = `${MESES_PT[parseInt(mm, 10) - 1]}/${ano}`;
+    if (sem.length) {
+      const nomes = sem.map(s => s.nome);
+      const lista = nomes.slice(0, 10).join(', ') + (nomes.length > 10 ? ` e mais ${nomes.length - 10}` : '');
+      await notificar({
+        modulo: 'rh',
+        tipo: 'rh_nao_pago',
+        titulo: `Colaboradores sem pagamento em ${mesLabel}`,
+        mensagem: `${sem.length} colaborador(es) ativos ainda sem pagamento atribuído no financeiro em ${mesLabel}: ${lista}. Confira a conciliação em RH → Folha.`,
+        link: '/admin/rh',
+        severidade: 'aviso',
+        chaveDedup: `rh_nao_pago_${mes}`,
+      }).catch(() => {});
+    }
+    res.json({ ok: true, mes, ativos, sem_pagamento: sem.length, nomes: sem.map(s => s.nome) });
+  } catch (e) {
+    console.error('[RH] cron nao-pagos:', e.message);
+    res.status(500).json({ error: 'Erro no cron de não pagos' });
+  }
+});
+
 // Requer permissão granular no módulo RH (DP ou Pessoas, nível >= 2)
 // Admin e Diretor passam automaticamente
 router.use(authenticate, authorizeModule('rh'));
@@ -301,6 +334,356 @@ router.get('/funcionarios/:id', async (req, res) => {
   }
 });
 
+// Normaliza texto pra casar nome (sem acento, minúsculo, espaço único).
+function _normFolha(s) {
+  return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+// Extrai documentos (CPF = 11 dígitos, CNPJ = 14) presentes num texto — casa
+// "12.345.678/0001-90", "123.456.789-01" ou só dígitos. Comparação por
+// igualdade exata do documento (não substring de dígitos) pra não falso-casar.
+function _docsNoTexto(s) {
+  const docs = new Set();
+  for (const m of String(s || '').match(/\d[\d.\/\- ]*\d/g) || []) {
+    const dig = m.replace(/\D/g, '');
+    if (dig.length === 11 || dig.length === 14) docs.add(dig);
+  }
+  return docs;
+}
+
+// Termos de match de um funcionário: nome completo + CPF + CNPJ/razão social
+// do PJ (admissao_dados). A maioria é PJ e o complemento vem embutido na nota
+// ("caju lider pj+", NF com "CNPJ + razão"), muitas vezes SEM o nome.
+function _termosFuncionario(f) {
+  const ad = f.admissao_dados || {};
+  const cpf = String(f.cpf || '').replace(/\D/g, '');
+  const cnpj = String(ad.pj_cnpj || '').replace(/\D/g, '');
+  const razao = _normFolha(ad.pj_razao_social);
+  const norm = _normFolha(f.nome);
+  return {
+    id: f.id,
+    nome: f.nome,
+    // nome só vale como termo se for "nome completo" (regra segura que já existia)
+    norm: norm.length >= 6 && norm.split(' ').length >= 2 ? norm : null,
+    razao: razao.length >= 6 ? razao : null,
+    cpf: cpf.length === 11 ? cpf : null,
+    cnpj: cnpj.length === 14 ? cnpj : null,
+  };
+}
+
+// O lançamento (texto normalizado + docs extraídos) casa com o funcionário?
+function _casaLancamento(alvo, dNorm, docs) {
+  if (alvo.norm && dNorm.includes(alvo.norm)) return true;
+  if (alvo.razao && dNorm.includes(alvo.razao)) return true;
+  if (alvo.cpf && docs.has(alvo.cpf)) return true;
+  if (alvo.cnpj && docs.has(alvo.cnpj)) return true;
+  return false;
+}
+
+// Mês corrente (YYYY-MM) no fuso da igreja.
+function mesCorrenteBRT() {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date()).slice(0, 7);
+}
+
+// "Pago no mês" = existe ≥1 lançamento de pessoal (4.01%, despesa, não
+// cancelado) na competência, atribuído ao funcionário por funcionario_id OU
+// por match de nome/cpf/cnpj/razão. Reduz falso "não pago" enquanto o vínculo
+// não é feito (100% embutido sem identificador ainda pode falso-positivar —
+// aceitável: o alerta também empurra a conciliar).
+async function funcionariosSemPagamentoNoMes(mes) {
+  const { data: funcs } = await supabase
+    .from('rh_funcionarios')
+    .select('id, nome, cpf, admissao_dados')
+    .eq('status', 'ativo')
+    .is('deleted_at', null);
+  const alvos = (funcs || []).map(_termosFuncionario);
+  const planoIds = await planoPessoalIds();
+  if (!planoIds.length || !alvos.length) return { sem: alvos, ativos: alvos.length };
+
+  const [ano, mm] = mes.split('-').map(Number);
+  const inicio = `${mes}-01`;
+  const fim = mm === 12 ? `${ano + 1}-01-01` : `${ano}-${String(mm + 1).padStart(2, '0')}-01`;
+
+  const pagos = new Set();
+  let offset = 0;
+  for (;;) {
+    const { data, error } = await supabase
+      .from('fin_transacoes')
+      .select('id, descricao, funcionario_id')
+      .in('plano_contas_id', planoIds)
+      .eq('tipo', 'despesa')
+      .neq('status', 'cancelado')
+      .gte('data_competencia', inicio)
+      .lt('data_competencia', fim)
+      .range(offset, offset + 999);
+    if (error) throw new Error(error.message);
+    for (const t of data || []) {
+      if (t.funcionario_id) { pagos.add(t.funcionario_id); continue; }
+      const dNorm = _normFolha(t.descricao);
+      if (!dNorm) continue;
+      const docs = _docsNoTexto(t.descricao);
+      for (const a of alvos) {
+        if (!pagos.has(a.id) && _casaLancamento(a, dNorm, docs)) pagos.add(a.id);
+      }
+    }
+    if (!data || data.length < 1000) break;
+    offset += 1000;
+  }
+  return { sem: alvos.filter(a => !pagos.has(a.id)), ativos: alvos.length };
+}
+
+// IDs dos planos de conta de pessoal (4.01%) — cache simples por processo.
+let _planoPessoalCache = null;
+async function planoPessoalIds() {
+  if (_planoPessoalCache) return _planoPessoalCache;
+  const { data } = await supabase.from('fin_plano_contas').select('id').like('codigo', '4.01%');
+  _planoPessoalCache = (data || []).map(p => p.id);
+  return _planoPessoalCache;
+}
+
+async function idsFolhaIgnorados() {
+  try {
+    const set = new Set();
+    let offset = 0;
+    for (;;) {
+      const { data, error } = await supabase.from('rh_folha_ignorados').select('transacao_id').range(offset, offset + 999);
+      if (error) return set; // tabela pode não existir ainda
+      (data || []).forEach(r => set.add(r.transacao_id));
+      if (!data || data.length < 1000) break;
+      offset += 1000;
+    }
+    return set;
+  } catch { return new Set(); }
+}
+
+// GET /api/rh/funcionarios/:id/pagamentos
+// Histórico de pagamentos do colaborador: (1) confirmados = fin_transacoes com
+// funcionario_id = :id (vínculo persistido); (2) sugeridos = lançamentos de
+// pessoal (4.01%) ainda sem vínculo cujo texto contém o nome. Agrupa por
+// competência e devolve o salário previsto pra conciliação previsto × pago.
+router.get('/funcionarios/:id/pagamentos', async (req, res) => {
+  try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão para ver pagamentos (exige RH nível ≥ 4).' });
+
+    let fq = supabase.from('rh_funcionarios').select('id, nome, salario, tipo_contrato, status, cpf, admissao_dados').eq('id', req.params.id);
+    fq = applyAccessFilter(fq, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
+    const { data: func, error: fErr } = await fq.maybeSingle();
+    if (fErr || !func) return res.status(404).json({ error: 'Funcionário não encontrado' });
+
+    const nome = (func.nome || '').trim();
+    const alvo = _termosFuncionario(func);
+    // Sugestão é menos estrita que o auto-vínculo: nome ≥ 4 chars já sugere
+    // (comportamento que já existia; aqui ninguém grava vínculo sozinho).
+    if (!alvo.norm && nome.length >= 4) alvo.norm = _normFolha(nome);
+    const itensById = new Map();
+
+    // 1) Confirmados (vínculo persistido)
+    const { data: conf } = await supabase
+      .from('fin_transacoes')
+      .select('id, data_competencia, data_pagamento, valor, status, descricao, plano:fin_plano_contas(codigo, nome)')
+      .eq('funcionario_id', req.params.id)
+      .neq('status', 'cancelado')
+      .order('data_competencia', { ascending: false })
+      .limit(3000);
+    for (const t of conf || []) {
+      itensById.set(t.id, {
+        id: t.id, data_competencia: t.data_competencia, data_pagamento: t.data_pagamento,
+        valor: Number(t.valor || 0), status: t.status, descricao: t.descricao,
+        plano_codigo: t.plano?.codigo, plano_nome: t.plano?.nome, confirmado: true,
+      });
+    }
+
+    // 2) Sugeridos (nome/CPF/CNPJ/razão social batem, ainda sem vínculo e não
+    // ignorados). Uma query ilike por termo; o resultado é revalidado com
+    // _casaLancamento (docs por igualdade exata, não substring de dígitos).
+    const fmtCpf = (d) => `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+    const fmtCnpj = (d) => `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
+    const termosBusca = [
+      nome.length >= 4 ? nome : null,
+      alvo.razao,
+      alvo.cpf, alvo.cpf && fmtCpf(alvo.cpf),
+      alvo.cnpj, alvo.cnpj && fmtCnpj(alvo.cnpj),
+    ].filter(Boolean);
+    if (termosBusca.length) {
+      const ignor = await idsFolhaIgnorados();
+      const candidatos = new Map();
+      for (const termoRaw of termosBusca) {
+        const termo = String(termoRaw).replace(/[%_]/g, '\\$&');
+        const { data: sug } = await supabase
+          .from('vw_fin_transacoes_completa')
+          .select('id, data_competencia, data_pagamento, valor, status, plano_contas_codigo, plano_contas_nome, descricao')
+          .like('plano_contas_codigo', '4.01%')
+          .eq('tipo', 'despesa')
+          .neq('status', 'cancelado')
+          .ilike('descricao', `%${termo}%`)
+          .order('data_competencia', { ascending: false })
+          .limit(2000);
+        for (const t of sug || []) candidatos.set(t.id, t);
+      }
+      for (const t of candidatos.values()) {
+        if (itensById.has(t.id) || ignor.has(t.id)) continue;
+        if (!_casaLancamento(alvo, _normFolha(t.descricao), _docsNoTexto(t.descricao))) continue;
+        itensById.set(t.id, {
+          id: t.id, data_competencia: t.data_competencia, data_pagamento: t.data_pagamento,
+          valor: Number(t.valor || 0), status: t.status, descricao: t.descricao,
+          plano_codigo: t.plano_contas_codigo, plano_nome: t.plano_contas_nome, confirmado: false,
+        });
+      }
+    }
+
+    // Agrupa por competência
+    const mapa = new Map();
+    for (const it of itensById.values()) {
+      const d = it.data_competencia ? String(it.data_competencia).slice(0, 7) : 'sem-data';
+      if (!mapa.has(d)) mapa.set(d, { mes: d, total: 0, total_confirmado: 0, qtd: 0, itens: [] });
+      const g = mapa.get(d);
+      g.total += it.valor;
+      if (it.confirmado) g.total_confirmado += it.valor;
+      g.qtd += 1;
+      g.itens.push(it);
+    }
+    const meses = [...mapa.values()].sort((a, b) => (a.mes < b.mes ? 1 : -1));
+    // "Pago no mês" = ≥1 lançamento (confirmado OU sugerido) na competência
+    // corrente. Só alerta funcionário ativo (férias/licença/desligado não).
+    const mesCorrente = mesCorrenteBRT();
+    res.json({
+      nome, salario_previsto: Number(func.salario || 0), tipo_contrato: func.tipo_contrato,
+      meses, total_encontrado: itensById.size,
+      mes_corrente: mesCorrente,
+      nao_pago_mes_corrente: func.status === 'ativo' && !mapa.has(mesCorrente),
+    });
+  } catch (e) {
+    console.error('[RH] Pagamentos do funcionário:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar pagamentos' });
+  }
+});
+
+// ── Conciliação da folha (vínculo lançamento ↔ colaborador) ──────────────
+// POST /api/rh/folha/auto-vincular · casa por nome, CPF, CNPJ e razão social
+// (só matches inequívocos = exatamente 1 funcionário)
+router.post('/folha/auto-vincular', async (req, res) => {
+  try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão (exige RH nível ≥ 4).' });
+    const planoIds = await planoPessoalIds();
+    if (!planoIds.length) return res.json({ vinculados: 0, analisados: 0 });
+
+    const { data: funcs } = await supabase.from('rh_funcionarios').select('id, nome, cpf, admissao_dados').is('deleted_at', null);
+    const alvos = (funcs || [])
+      .map(_termosFuncionario)
+      .filter(a => a.norm || a.razao || a.cpf || a.cnpj);
+
+    const ignor = await idsFolhaIgnorados();
+    // Busca lançamentos de pessoal ainda sem vínculo (paginado)
+    const porFuncionario = new Map();
+    let analisados = 0, offset = 0;
+    for (;;) {
+      const { data, error } = await supabase
+        .from('fin_transacoes')
+        .select('id, descricao')
+        .in('plano_contas_id', planoIds)
+        .eq('tipo', 'despesa')
+        .neq('status', 'cancelado')
+        .is('funcionario_id', null)
+        .range(offset, offset + 999);
+      if (error) return res.status(400).json({ error: error.message });
+      for (const t of data || []) {
+        if (ignor.has(t.id)) continue;
+        analisados++;
+        const d = _normFolha(t.descricao);
+        if (!d) continue;
+        const docs = _docsNoTexto(t.descricao);
+        const matches = alvos.filter(a => _casaLancamento(a, d, docs));
+        if (matches.length === 1) {
+          const fid = matches[0].id;
+          if (!porFuncionario.has(fid)) porFuncionario.set(fid, []);
+          porFuncionario.get(fid).push(t.id);
+        }
+      }
+      if (!data || data.length < 1000) break;
+      offset += 1000;
+    }
+
+    let vinculados = 0;
+    for (const [fid, txIds] of porFuncionario) {
+      for (let i = 0; i < txIds.length; i += 200) {
+        const chunk = txIds.slice(i, i + 200);
+        const { error } = await supabase.from('fin_transacoes').update({ funcionario_id: fid }).in('id', chunk);
+        if (!error) vinculados += chunk.length;
+      }
+    }
+    res.json({ vinculados, analisados });
+  } catch (e) {
+    console.error('[RH] auto-vincular folha:', e.message);
+    res.status(500).json({ error: 'Erro ao vincular pagamentos' });
+  }
+});
+
+// GET /api/rh/folha/nao-vinculados · fila de vínculo manual
+router.get('/folha/nao-vinculados', async (req, res) => {
+  try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão (exige RH nível ≥ 4).' });
+    const planoIds = await planoPessoalIds();
+    if (!planoIds.length) return res.json({ itens: [] });
+    const ignor = await idsFolhaIgnorados();
+    const { data, error } = await supabase
+      .from('vw_fin_transacoes_completa')
+      .select('id, data_competencia, valor, status, plano_contas_codigo, plano_contas_nome, descricao')
+      .like('plano_contas_codigo', '4.01%')
+      .eq('tipo', 'despesa')
+      .neq('status', 'cancelado')
+      .order('data_competencia', { ascending: false })
+      .limit(1000);
+    if (error) return res.status(400).json({ error: error.message });
+    // Filtra os que já têm vínculo: precisa checar funcionario_id (não está na view)
+    const ids = (data || []).map(t => t.id);
+    const vinculadosSet = new Set();
+    for (let i = 0; i < ids.length; i += 300) {
+      const chunk = ids.slice(i, i + 300);
+      const { data: vinc } = await supabase.from('fin_transacoes').select('id').in('id', chunk).not('funcionario_id', 'is', null);
+      (vinc || []).forEach(r => vinculadosSet.add(r.id));
+    }
+    const itens = (data || [])
+      .filter(t => !vinculadosSet.has(t.id) && !ignor.has(t.id))
+      .slice(0, 300)
+      .map(t => ({
+        id: t.id, data_competencia: t.data_competencia, valor: Number(t.valor || 0),
+        status: t.status, plano_codigo: t.plano_contas_codigo, plano_nome: t.plano_contas_nome, descricao: t.descricao,
+      }));
+    res.json({ itens });
+  } catch (e) {
+    console.error('[RH] nao-vinculados folha:', e.message);
+    res.status(500).json({ error: 'Erro ao listar lançamentos' });
+  }
+});
+
+// PATCH /api/rh/folha/vinculo/:transacaoId · vincular / desvincular / ignorar
+router.patch('/folha/vinculo/:transacaoId', async (req, res) => {
+  try {
+    if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão (exige RH nível ≥ 4).' });
+    const { funcionario_id, ignorar, desvincular } = req.body || {};
+    const txId = req.params.transacaoId;
+
+    if (ignorar) {
+      await supabase.from('rh_folha_ignorados').upsert({ transacao_id: txId, ignorado_por: req.user?.id ?? null }, { onConflict: 'transacao_id' });
+      await supabase.from('fin_transacoes').update({ funcionario_id: null }).eq('id', txId);
+      return res.json({ ok: true, ignorado: true });
+    }
+    if (desvincular) {
+      await supabase.from('fin_transacoes').update({ funcionario_id: null }).eq('id', txId);
+      return res.json({ ok: true, desvinculado: true });
+    }
+    if (!funcionario_id) return res.status(400).json({ error: 'funcionario_id é obrigatório' });
+    // Remove de ignorados (caso estivesse) e vincula
+    await supabase.from('rh_folha_ignorados').delete().eq('transacao_id', txId);
+    const { error } = await supabase.from('fin_transacoes').update({ funcionario_id }).eq('id', txId);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[RH] vinculo folha:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar vínculo' });
+  }
+});
+
 // POST /api/rh/funcionarios
 router.post('/funcionarios', async (req, res) => {
   try {
@@ -392,9 +775,14 @@ const RH_FIELD_TYPES = {
   fgts: 'num', ir: 'num', inss: 'num',
   remuneracao_liquida: 'num', custo_total_mensal: 'num',
   bonus_anual_50: 'num', bonus_anual_integral: 'num', ferias_integral: 'num',
-  data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date',
+  data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date', data_nascimento: 'date',
   grau_id: 'uuid',
   admissao_dados: 'json', // jsonb com dados extras do onboarding (RG, PJ, contrato…) · não sensível
+  // Modernização do cadastro (revisão Feedz/HRIS, 2026-08-12): matrícula,
+  // cargo visível e endereço estruturado (padrão do censo · cepAutopreenche.ts).
+  matricula: 'text', cargo_visivel: 'text',
+  endereco: 'text', cep: 'text', numero: 'text', complemento: 'text',
+  bairro: 'text', cidade: 'text', uf: 'text',
 };
 function coerceRh(val, type) {
   if (val === undefined) return undefined;       // nao veio no body → nao mexe na coluna
@@ -1022,22 +1410,38 @@ router.post('/funcionarios/:id/ferias', async (req, res) => {
   }
 });
 
-// PATCH /api/rh/ferias/:id — aprovar/rejeitar
+// PATCH /api/rh/ferias/:id — aprovar/rejeitar e/ou editar o período
+// (data_inicio/data_fim/tipo/observacoes/substituto_id · edição sem status
+// não mexe no fluxo de aprovação nem dispara cobertura/notificação)
 router.patch('/ferias/:id', async (req, res) => {
   try {
-    const { status } = req.body;
-    if (!['aprovado', 'rejeitado'].includes(status)) {
+    const { status, data_inicio, data_fim, tipo, observacoes, substituto_id } = req.body || {};
+    const temStatus = status !== undefined;
+    if (temStatus && !['aprovado', 'rejeitado'].includes(status)) {
       return res.status(400).json({ error: 'Status deve ser aprovado ou rejeitado' });
     }
 
+    const patch = {};
+    if (temStatus) { patch.status = status; patch.aprovado_por = req.user.userId; }
+    if (data_inicio !== undefined) patch.data_inicio = data_inicio;
+    if (data_fim !== undefined) patch.data_fim = data_fim;
+    if (tipo !== undefined) patch.tipo = tipo;
+    if (observacoes !== undefined) patch.observacoes = observacoes || null;
+    if (substituto_id !== undefined) patch.substituto_id = substituto_id || null;
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
+
     const { data, error } = await supabase
       .from('rh_ferias_licencas')
-      .update({ status, aprovado_por: req.user.userId })
+      .update(patch)
       .eq('id', req.params.id)
       .select()
       .single();
 
     if (error) return res.status(400).json({ error: error.message });
+
+    // Edição de período sem mudança de status: responde direto (sem
+    // cobertura nem notificação de aprovação).
+    if (!temStatus) return res.json(data);
 
     // Atualiza status do funcionário se aprovado
     if (status === 'aprovado') {

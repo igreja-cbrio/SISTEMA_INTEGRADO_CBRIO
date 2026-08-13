@@ -7,7 +7,7 @@
 // ============================================================================
 
 import { useEffect, useRef, useState } from 'react';
-import { Baby, Users, Loader2, CheckCircle2, ShieldAlert, RefreshCw, PowerOff, AlertTriangle, Heart, ChevronLeft, Phone, MessageCircle, ArrowRight, LogOut } from 'lucide-react';
+import { Baby, Users, Loader2, CheckCircle2, ShieldAlert, RefreshCw, PowerOff, AlertTriangle, Heart, ChevronLeft, Phone, MessageCircle, ArrowRight, LogOut, BellRing } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -107,6 +107,20 @@ export default function TotemKidsPainel() {
   const [cultosDia, setCultosDia] = useState<CultoDia[]>([]);
   const [dataDia, setDataDia] = useState<string>('');
   const [unicas, setUnicas] = useState<{ presentes: number; total: number } | null>(null);
+  // Pagers em uso + pendentes (Mari 2026-07-22) — recarrega junto do painel (15s).
+  type PagerItem = {
+    pager_numero?: string;
+    checkin_id: string;
+    crianca_id: string | null;
+    checkin_at: string | null;
+    crianca_nome: string;
+    sala_nome: string | null;
+    responsavel_nome: string | null;
+    culto_nome?: string | null; // em qual culto o pager está em uso (Mari 2026-08-03)
+  };
+  // Chip curto do culto ("10:00") a partir do nome longo ("Domingo 10:00 — 02/08/2026")
+  const horaCulto = (nome?: string | null) => nome?.match(/\d{2}:\d{2}/)?.[0] || null;
+  const [pagers, setPagers] = useState<{ em_uso: PagerItem[]; pendentes: PagerItem[] }>({ em_uso: [], pendentes: [] });
   const [cultoSel, setCultoSel] = useState<CultoDia | null>(null);
   const cultoSelRef = useRef<string | null>(null);
   const [dados, setDados] = useState<PainelSala[]>([]);
@@ -211,6 +225,11 @@ export default function TotemKidsPainel() {
       } else {
         setDados([]);
       }
+      // Pagers em uso + pendentes (card do painel) — falha não derruba o painel.
+      try {
+        const p = await totemKids.pagersEmUso();
+        setPagers({ em_uso: p?.em_uso || [], pendentes: p?.pendentes || [] });
+      } catch { /* mantém o último estado */ }
     } finally {
       setCarregando(false);
       setRefreshing(false);
@@ -236,6 +255,25 @@ export default function TotemKidsPainel() {
     } finally {
       setCarregandoSala(false);
     }
+  }
+
+  // Ficha direto do card de pagers (Marcos 2026-07-27): clicar na criança abre
+  // o MESMO modal de ficha das salas (com check-out ali), sem passar pela sala.
+  function abrirFichaPager(p: { checkin_id: string; crianca_id: string | null; checkin_at: string | null; crianca_nome: string; responsavel_nome: string | null }) {
+    if (!p.crianca_id) { toast.error('Check-in sem criança vinculada'); return; }
+    setCriancaSelCheckin({
+      id: p.checkin_id,
+      crianca_id: p.crianca_id,
+      checkin_at: p.checkin_at || '',
+      checkout_at: null,
+      codigo_seguranca: '',
+      responsavel_checkin_nome: p.responsavel_nome || '',
+      fez_decisao_jesus: false,
+      observacoes_no_dia: null,
+      total_decisoes_historico: 0,
+      crianca: { id: p.crianca_id, nome: p.crianca_nome, data_nascimento: null, foto_url: null, observacoes_medicas: null, idade_label: '' },
+    });
+    abrirCrianca(p.crianca_id);
   }
 
   async function abrirCrianca(criancaId: string) {
@@ -321,7 +359,16 @@ export default function TotemKidsPainel() {
     if (!confirm(`Encerrar a sessão de ${cultoSel.culto_nome}? Vai consolidar ${cultoSel.presentes} criança(s) no culto.`)) return;
     setEncerrando(true);
     try {
-      await totemKids.sessoes.encerrar(cultoSel.sessao_id);
+      try {
+        await totemKids.sessoes.encerrar(cultoSel.sessao_id);
+      } catch (e409: unknown) {
+        // Design v5 (2026-07-22): 409 = há check-ins fora do horário do culto
+        // (provável teste de ensaio) — decisão humana antes de consolidar.
+        const err = e409 as { precisa_confirmar_limpeza?: boolean; suspeitos?: number };
+        if (!err?.precisa_confirmar_limpeza) throw e409;
+        const limpar = confirm(`${err.suspeitos} check-in(s) fora do horário do culto parecem teste.\n\nOK = apagar antes de consolidar (não contam no número) · Cancelar = manter tudo`);
+        await totemKids.sessoes.encerrar(cultoSel.sessao_id, { limpar_testes: limpar });
+      }
       toast.success('Sessão encerrada · KPIs consolidados');
       carregar();
     } catch (e: unknown) {
@@ -358,6 +405,11 @@ export default function TotemKidsPainel() {
             </Button>
           </CardContent>
         </Card>
+        {/* Conferência de pagers continua acessível mesmo sem culto hoje — escolha
+            a data pra ver o histórico dos pagers de cultos anteriores. */}
+        <div className="mt-4">
+          <ConferenciaPagers />
+        </div>
       </div>
     );
   }
@@ -441,6 +493,72 @@ export default function TotemKidsPainel() {
         </div>
       </div>
 
+      {/* Pagers em uso (Mari 2026-07-22) — substitui a folha de papel: a equipe vê
+          "pager 12 = criança X (sala)" e aperta 12 no transmissor. "Pendentes" =
+          criança obrigada de pager ainda SEM número (o sinal que faz a válvula de
+          escape ser segura). Só a equipe vê isto — nunca vai pro display público. */}
+      {(pagers.em_uso.length > 0 || pagers.pendentes.length > 0) && (
+        <div className="rounded-xl border bg-card p-3 space-y-2">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+            <BellRing className="h-3.5 w-3.5" /> Pagers em uso
+          </div>
+          {pagers.em_uso.length > 0 ? (
+            <div className="flex flex-col gap-1.5">
+              {pagers.em_uso.map((p, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => abrirFichaPager(p)}
+                  className="flex items-center gap-2 text-sm w-full text-left rounded-md px-1 py-0.5 -mx-1 hover:bg-accent transition-colors"
+                  title="Abrir a ficha da criança (com check-out)"
+                >
+                  <span className="shrink-0 inline-flex items-center justify-center min-w-[2.2rem] h-7 px-2 rounded-md bg-amber-600 text-white font-mono font-bold">{p.pager_numero}</span>
+                  <span className="font-medium truncate">{p.crianca_nome}</span>
+                  {p.sala_nome && <span className="text-muted-foreground truncate">· {p.sala_nome}</span>}
+                  {horaCulto(p.culto_nome) && (
+                    <span className="shrink-0 text-[11px] font-semibold text-pink-600 bg-pink-50 dark:bg-pink-950/40 border border-pink-200 dark:border-pink-900 rounded px-1.5 py-0.5" title={p.culto_nome || undefined}>
+                      {horaCulto(p.culto_nome)}
+                    </span>
+                  )}
+                  {p.responsavel_nome && <span className="text-muted-foreground truncate ml-auto text-right">{p.responsavel_nome}</span>}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-muted-foreground">Nenhum pager em uso agora.</div>
+          )}
+          {pagers.pendentes.length > 0 && (
+            <div className="rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-2 space-y-1">
+              <div className="text-[11px] font-semibold text-red-600 flex items-center gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5" /> Precisam de pager e estão sem número
+              </div>
+              {pagers.pendentes.map((p, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => abrirFichaPager(p)}
+                  className="text-sm flex items-center gap-2 w-full text-left rounded-md px-1 py-0.5 -mx-1 hover:bg-red-100/60 dark:hover:bg-red-900/30 transition-colors"
+                  title="Abrir a ficha da criança (com check-out)"
+                >
+                  <span className="font-medium truncate">{p.crianca_nome}</span>
+                  {p.sala_nome && <span className="text-muted-foreground truncate">· {p.sala_nome}</span>}
+                  {horaCulto(p.culto_nome) && (
+                    <span className="shrink-0 text-[11px] font-semibold text-red-600 bg-red-100/70 dark:bg-red-900/40 border border-red-200 dark:border-red-800 rounded px-1.5 py-0.5" title={p.culto_nome || undefined}>
+                      {horaCulto(p.culto_nome)}
+                    </span>
+                  )}
+                  {p.responsavel_nome && <span className="text-muted-foreground truncate ml-auto">{p.responsavel_nome}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Conferência de pagers do dia (Mari 2026-07-28): rastreio pager→criança→culto
+          + devolução. "Foram pra casa" = já saiu (checkout) e não devolveu. */}
+      <ConferenciaPagers />
+
       {/* Totais do culto selecionado */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
         <Card><CardContent className="p-3 sm:p-4">
@@ -515,7 +633,8 @@ export default function TotemKidsPainel() {
       </div>
 
       {/* Modal · sala → lista de crianças ↔ ficha da criança (drilldown mobile) */}
-      <Dialog open={!!salaDetalhe} onOpenChange={(o) => { if (!o) { setSalaDetalhe(null); setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null); setSelCheckout(new Set()); } }}>
+      {/* Abre pela sala OU direto pela criança (card de pagers · standalone) */}
+      <Dialog open={!!salaDetalhe || !!criancaSelId} onOpenChange={(o) => { if (!o) { setSalaDetalhe(null); setCriancaSelId(null); setCriancaDet(null); setCriancaSelCheckin(null); setSelCheckout(new Set()); } }}>
         <DialogContent className="max-w-lg max-h-[90vh] flex flex-col p-0 gap-0">
           {/* ── Ficha da criança ── */}
           {criancaSelId ? (
@@ -544,6 +663,14 @@ export default function TotemKidsPainel() {
                       <div className="min-w-0">
                         <p className="text-lg font-bold leading-tight">{criancaDet.nome}</p>
                         <p className="text-sm text-muted-foreground">{criancaDet.idade_label}</p>
+                        {/* Horário do check-in (Marcos 2026-07-22): útil pra procurar
+                            a criança nas câmeras. Mostra a saída também quando já saiu. */}
+                        {criancaSelCheckin?.checkin_at && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Check-in às <b>{format(new Date(criancaSelCheckin.checkin_at), 'HH:mm', { locale: ptBR })}</b>
+                            {criancaSelCheckin.checkout_at && <> · saída às <b>{format(new Date(criancaSelCheckin.checkout_at), 'HH:mm', { locale: ptBR })}</b></>}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -586,6 +713,9 @@ export default function TotemKidsPainel() {
                                       <a href={`tel:+${tel}`} className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-muted hover:bg-accent" title="Ligar">
                                         <Phone className="h-4 w-4" />
                                       </a>
+                                      {/* WhatsApp DIRETO (wa.me), de propósito — aqui é a líder do Kids
+                                          acionando o pai/mãe durante o culto; não passa pelo inbox
+                                          interno (Conversas) pra não parecer bot (Marcos 2026-07-22). */}
                                       <a href={`https://wa.me/${tel}`} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600" title="WhatsApp">
                                         <MessageCircle className="h-4 w-4" />
                                       </a>
@@ -742,6 +872,139 @@ export default function TotemKidsPainel() {
           )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// ── Conferência de pagers do dia ────────────────────────────────────────────
+// Rastreio (pager → criança → culto) + controle de DEVOLUÇÃO. Distinto do
+// checkout: o pai pode retirar a criança e levar o pager sem querer — aqui a
+// equipe confere quem devolveu e vê quem "foi pra casa" com o pager.
+type ConfPager = {
+  pager_numero: string;
+  culto: string | null;
+  criancas: string[];
+  responsavel_nome: string | null;
+  todos_sairam: boolean;
+  devolvido_at: string | null;
+  checkin_ids: string[];
+};
+type ConfCulto = { culto_id: string; nome: string; data: string; tem_pager: boolean };
+function ConferenciaPagers() {
+  const [cultos, setCultos] = useState<ConfCulto[]>([]);
+  const [cultoId, setCultoId] = useState<string>('');
+  const [lista, setLista] = useState<ConfPager[]>([]);
+  const [resumo, setResumo] = useState<{ total: number; nao_devolvidos: number; foram_pra_casa: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [salvando, setSalvando] = useState<string | null>(null);
+
+  const fmtData = (d: string) => { const [y, m, dd] = String(d).slice(0, 10).split('-'); return `${dd}/${m}/${y?.slice(2)}`; };
+  const labelCulto = (c: ConfCulto) => `${c.nome || 'Culto'} · ${fmtData(c.data)}`;
+
+  // Carrega os cultos com Kids e seleciona o mais recente.
+  useEffect(() => {
+    (async () => {
+      try {
+        const cs = (await totemKids.pagersCultos()) as ConfCulto[];
+        setCultos(cs || []);
+        if (cs && cs.length) setCultoId((prev) => prev || cs[0].culto_id);
+      } catch (e: any) { toast.error(e?.message || 'Erro ao listar cultos'); }
+    })();
+  }, []);
+
+  async function carregar() {
+    if (!cultoId) { setLista([]); setResumo(null); return; }
+    setLoading(true);
+    try {
+      const r = await totemKids.pagersConferencia({ culto_id: cultoId });
+      setLista(r?.lista || []);
+      setResumo(r?.resumo || null);
+    } catch (e: any) { toast.error(e?.message || 'Erro ao carregar pagers'); }
+    setLoading(false);
+  }
+  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [cultoId]);
+
+  async function marcar(g: ConfPager, devolvido: boolean) {
+    if (!g.checkin_ids.length) return;
+    setSalvando(g.pager_numero);
+    try {
+      // Devolver = check-out (Mari/Marcos 2026-08-03): o backend também dá a
+      // baixa nas linhas abertas da família — pager liberado pro próximo.
+      const r: any = await totemKids.checkin.pagerDevolvido(g.checkin_ids[0], devolvido);
+      if (devolvido && r?.baixados > 0) {
+        toast.success(`Pager ${g.pager_numero} devolvido · check-out de ${r.baixados} criança(s) registrado`);
+      }
+      await carregar();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao registrar devolução'); }
+    setSalvando(null);
+  }
+
+  return (
+    <div className="rounded-xl border bg-card p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-[11px] uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">
+          <BellRing className="h-3.5 w-3.5" /> Conferência de pagers
+        </div>
+        <div className="flex items-center gap-2">
+          <select value={cultoId} onChange={(e) => setCultoId(e.target.value)}
+            className="h-7 rounded-md border bg-background px-2 text-xs max-w-[220px]">
+            {cultos.length === 0 && <option value="">Sem cultos</option>}
+            {cultos.map((c) => (
+              <option key={c.culto_id} value={c.culto_id}>{labelCulto(c)}{c.tem_pager ? '' : ' (sem pager)'}</option>
+            ))}
+          </select>
+          <Button size="sm" variant="ghost" className="h-7 px-2" onClick={carregar} disabled={loading}>
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
+        </div>
+      </div>
+
+      {resumo && resumo.total > 0 && (
+        <div className="flex flex-wrap gap-3 text-xs">
+          <span className="text-muted-foreground">{resumo.total} pager(s) no culto</span>
+          {resumo.nao_devolvidos > 0 && <span className="text-amber-600 font-medium">{resumo.nao_devolvidos} não devolvido(s)</span>}
+          {resumo.foram_pra_casa > 0 && <span className="text-red-600 font-semibold">{resumo.foram_pra_casa} foi(ram) pra casa (saiu sem devolver)</span>}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="py-4 text-center"><Loader2 className="h-4 w-4 animate-spin inline text-muted-foreground" /></div>
+      ) : lista.length === 0 ? (
+        <div className="text-xs text-muted-foreground">Nenhum pager entregue neste culto.</div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          {lista.map((g) => {
+            const foiPraCasa = !g.devolvido_at && g.todos_sairam;
+            return (
+              <div key={g.pager_numero}
+                className={`flex items-center gap-2 text-sm rounded-md px-2 py-1.5 border ${foiPraCasa ? 'border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30' : 'border-transparent'}`}>
+                <span className="shrink-0 inline-flex items-center justify-center min-w-[2.2rem] h-7 px-2 rounded-md bg-amber-600 text-white font-mono font-bold">{g.pager_numero}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium truncate">{g.criancas.join(', ')}</div>
+                  <div className="text-[11px] text-muted-foreground truncate">
+                    {g.culto || 'culto —'}
+                    {g.todos_sairam ? ' · já saiu' : ' · na sala'}
+                    {g.responsavel_nome ? ` · ${g.responsavel_nome}` : ''}
+                  </div>
+                </div>
+                {g.devolvido_at ? (
+                  <button type="button" onClick={() => marcar(g, false)} disabled={salvando === g.pager_numero}
+                    className="shrink-0 inline-flex items-center gap-1 text-xs text-emerald-600 font-medium"
+                    title="Devolvido — clique pra desfazer a marcação (não desfaz o check-out; pra isso use o reabrir da ficha)">
+                    <CheckCircle2 className="h-4 w-4" /> Devolvido
+                  </button>
+                ) : (
+                  <Button size="sm" variant={foiPraCasa ? 'default' : 'outline'} className="h-7 shrink-0"
+                    title="Marca a devolução E dá baixa (check-out) na família — libera o número pro próximo"
+                    onClick={() => marcar(g, true)} disabled={salvando === g.pager_numero}>
+                    {salvando === g.pager_numero ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Devolvido'}
+                  </Button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -11,13 +11,14 @@ import {
 } from 'recharts';
 import { INDICADORES } from '../../pages/DashboardSemanal';
 import { ResumoMesCard } from './ResumoCards';
+import YtdAcumuladoCard from './YtdAcumuladoCard';
 
 const CORES_ANO = ['#1E3A8A', '#E97A3F', '#7C3AED', '#10b981', '#ef4444', '#f59e0b', '#3b82f6'];
 
 const MESES = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
 
 const TIPOS_GRAFICO = ['barra', 'linha', 'area', 'tendencia'];
-const TIPO_LABEL = { barra: 'Barra', linha: 'Linha', area: 'Area', tendencia: 'Tendência' };
+const TIPO_LABEL = { barra: 'Barra', linha: 'Linha', area: 'Área', tendencia: 'Tendência' };
 
 export default function DashMensalAba() {
   const anoAtual = new Date().getFullYear();
@@ -244,6 +245,17 @@ export default function DashMensalAba() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Acumulado no mesmo período × anos anteriores. Segue TODOS os filtros
+          acima, inclusive Meses — que é o seletor de período do bloco. */}
+      <YtdAcumuladoCard
+        indicador={indicador}
+        indLabel={indDef?.label || 'Indicador'}
+        culto={culto}
+        anos={anos}
+        meses={mesesAtivos}
+        cores={CORES_ANO}
+      />
 
       {/* Gráfico principal */}
       <Card>

@@ -1,30 +1,38 @@
 const router = require('express').Router();
-const { authenticate, authorizeModule } = require('../middleware/auth');
+const { authenticate, authorizeModule, requireSuperAdmin } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const { runWifiSync } = require('../services/wifiSync');
+const { AppError, ERROR_CODES } = require('../utils/appError');
 
 // ── Cron · ANTES de authenticate ──
-router.get('/cron/sync', async (req, res) => {
+router.get('/cron/sync', async (req, res, next) => {
   if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'unauthorized' });
   try {
     const r = await runWifiSync();
     res.json(r);
   } catch (e) {
-    console.error('[wifi/cron/sync]', e.message);
-    res.status(500).json({ error: e.message });
+    next(new AppError('Falha na sincronização automática do Wi-Fi', {
+      code: ERROR_CODES.WIFI_SYNC_FAILED,
+      cause: e,
+    }));
   }
 });
 
-router.use(authenticate);
+// Wi-Fi foi consolidado no command center Sistema. O cron mantém CRON_SECRET;
+// toda operação humana abaixo exige superadmin estrito.
+router.use(authenticate, requireSuperAdmin);
 
 // Sincronizar agora (manual)
-router.post('/sync', authorizeModule('wifi', 3), async (_req, res) => {
+router.post('/sync', authorizeModule('wifi', 3), async (_req, res, next) => {
   try {
     const r = await runWifiSync();
     res.json(r);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    next(new AppError('Falha na sincronização manual do Wi-Fi', {
+      code: ERROR_CODES.WIFI_SYNC_FAILED,
+      cause: e,
+    }));
   }
 });
 

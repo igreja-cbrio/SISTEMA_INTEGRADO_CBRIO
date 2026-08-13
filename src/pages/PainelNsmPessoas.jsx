@@ -30,8 +30,9 @@
 // ============================================================================
 
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { painel as painelApi, nsm as nsmApi } from '../api';
+import { hrefConversa } from '@/lib/conversas';
 import { ArrowLeft, Phone, Mail, Calendar, Users, EyeOff, Check, Filter, X, Sparkles, ChevronRight, MessageCircle } from 'lucide-react';
 
 const C = {
@@ -693,9 +694,7 @@ function PessoaCard({ pessoa }) {
     ? (telDigits.startsWith('55') && telDigits.length >= 12 ? telDigits : '55' + telDigits)
     : '';
   const primeiroNome = (pessoa.nome || '').trim().split(/\s+/)[0] || '';
-  const waUrl = waNum
-    ? `https://wa.me/${waNum}?text=${encodeURIComponent(`Olá ${primeiroNome}! Aqui é da CBRio. Que alegria ter você com a gente. 💚`)}`
-    : '';
+  const waTexto = `Olá ${primeiroNome}! Aqui é da CBRio. Que alegria ter você com a gente. 💚`;
 
   return (
     <div style={{
@@ -742,11 +741,11 @@ function PessoaCard({ pessoa }) {
       </div>
 
       <div style={{ minWidth: 180, maxWidth: 360, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
-        {waUrl && (
-          <a href={waUrl} target="_blank" rel="noreferrer" title={`Enviar WhatsApp para ${primeiroNome || 'a pessoa'}`}
+        {waNum && (
+          <Link to={hrefConversa(waNum, waTexto)} title={`Enviar WhatsApp para ${primeiroNome || 'a pessoa'}`}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, color: '#fff', background: '#25D366', padding: '5px 10px', borderRadius: 8, textDecoration: 'none' }}>
             <MessageCircle size={13} /> WhatsApp
-          </a>
+          </Link>
         )}
         {eng ? (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>

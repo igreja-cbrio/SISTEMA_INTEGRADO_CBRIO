@@ -39,6 +39,29 @@ export function playNotificationSound() {
   } catch { /* áudio not available */ }
 }
 
+/** Som de MENSAGEM (Conversas/WhatsApp) — distinto do sino de notificação:
+ *  timbre triangular + dois toques curtos ascendentes (C5 → G5), tipo "plim". */
+export function playMessageSound() {
+  try {
+    const ctx = getCtx();
+    if (ctx.state === 'suspended') ctx.resume();
+    const t = ctx.currentTime;
+    const notas = [[523.25, 0], [783.99, 0.085]]; // C5 → G5
+    for (const [freq, delay] of notas) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.connect(g); g.connect(ctx.destination);
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, t + delay);
+      g.gain.setValueAtTime(0.0001, t + delay);
+      g.gain.exponentialRampToValueAtTime(0.32, t + delay + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + delay + 0.17);
+      osc.start(t + delay);
+      osc.stop(t + delay + 0.2);
+    }
+  } catch { /* áudio not available */ }
+}
+
 /** Single "PLIM" — breve sino de confirmação de check-in */
 export function playCheckinSound() {
   try {

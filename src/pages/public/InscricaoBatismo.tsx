@@ -1,7 +1,18 @@
-import { useEffect, useState } from 'react';
+// PORTA 6 do Contrato de Inscrição (F3.1 · docs/modulo-inscricoes/): nome em
+// campo único (D1), nascimento com rótulo honesto (o server sempre exigiu),
+// sexo obrigatório (28/07), termos LGPD + CONSENTIMENTO DE IMAGEM (fotos da
+// cerimônia — destrava fotos→marketing), opt-in explícito (D4), honeypot
+// enviado de verdade e resposta de duplicata exibida (antes aparecia
+// "Inscrição confirmada!" pra quem já estava inscrito).
+import { useEffect, useRef, useState } from 'react';
+import {
+  nomeCompletoValido, temAbreviacaoNome, validarNascimento, telefoneValido,
+  SEXOS, AVISO_OPTIN,
+} from '../../lib/inscricao';
 import { batismoPublico } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 
 // ── Helpers de mascara ──
 function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -168,9 +179,9 @@ export default function InscricaoBatismo() {
   const [proximaData, setProximaData] = useState<string>('');
   const [horarios, setHorarios] = useState<{ horario: string; label: string; vagas_restantes: number | null }[]>([]);
   const [form, setForm] = useState({
-    nome: '', sobrenome: '',
+    nome_completo: '',
     cpf: '', telefone: '', email: '',
-    data_nascimento: '',
+    data_nascimento: '', sexo: '', // canônico masculino|feminino (server grava M/F)
     endereco: '', cep: '',
     tamanho_camisa: '',
     fez_next: '', // '' não informado | 'sim' | 'nao'
@@ -185,6 +196,15 @@ export default function InscricaoBatismo() {
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
   const [grupoUrl, setGrupoUrl] = useState<string | null>(null);
+  const [aceitaTermos, setAceitaTermos] = useState(false);
+  const [consentImagem, setConsentImagem] = useState(false);
+  const [whatsappOptin, setWhatsappOptin] = useState(false);
+  const [textos, setTextos] = useState<any>({
+    termos_lgpd: 'Autorizo a Igreja CBRio a tratar os dados deste formulário para organizar o batismo e me comunicar sobre ele, conforme a LGPD.',
+    imagem: 'Autorizo o uso de fotos do meu batismo nas mídias da Igreja CBRio.',
+    aviso_optin: AVISO_OPTIN,
+  });
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     batismoPublico.horarios()
@@ -200,6 +220,9 @@ export default function InscricaoBatismo() {
           .then((r: { data_batismo: string }) => setProximaData(r.data_batismo))
           .catch(() => {});
       });
+    batismoPublico.textos()
+      .then((t: any) => { if (t?.termos_lgpd) setTextos(t); })
+      .catch(() => { /* fallback local */ });
   }, []);
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -212,23 +235,32 @@ export default function InscricaoBatismo() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submittingRef.current) return;
     setError('');
-    if (form.website) return; // honeypot
-    if (!form.nome || form.nome.trim().length < 2) return setError('Informe seu nome.');
-    if (!form.sobrenome.trim()) return setError('Informe seu sobrenome.');
+    if (!nomeCompletoValido(form.nome_completo)) {
+      return setError(temAbreviacaoNome(form.nome_completo)
+        ? 'Escreva seu nome completo, sem abreviações.'
+        : 'Informe seu nome completo.');
+    }
     if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError('E-mail inválido.');
-    if (!form.telefone || soDigitos(form.telefone).length < 10) return setError('Telefone inválido.');
-    if (form.cpf && !cpfValido(form.cpf)) return setError('CPF inválido.');
+    if (!telefoneValido(form.telefone)) return setError('Telefone inválido.');
+    if (!form.cpf || !cpfValido(form.cpf)) return setError('Informe um CPF válido.');
+    if (!validarNascimento(form.data_nascimento)) return setError('Informe sua data de nascimento.');
+    if (!SEXOS.includes(form.sexo)) return setError('Selecione o sexo.');
+    if (!form.tamanho_camisa) return setError('Escolha o tamanho da camisa.');
+    if (horarios.length && !form.horario_culto) return setError('Escolha o horário do batismo.');
+    if (!aceitaTermos) return setError('É preciso aceitar os termos para se inscrever.');
 
+    submittingRef.current = true;
     setLoading(true);
     try {
       const resp: any = await batismoPublico.inscrever({
-        nome: form.nome.trim(),
-        sobrenome: form.sobrenome.trim(),
+        nome_completo: form.nome_completo.trim(),
         cpf: form.cpf || null,
         telefone: form.telefone,
         email: form.email,
-        data_nascimento: form.data_nascimento || null,
+        data_nascimento: form.data_nascimento,
+        sexo: form.sexo,
         endereco: form.endereco || null,
         cep: form.cep || null,
         tamanho_camisa: form.tamanho_camisa || null,
@@ -238,13 +270,23 @@ export default function InscricaoBatismo() {
         observacoes: form.observacoes || null,
         horario_culto: form.horario_culto || null,
         area_kpi: form.area_kpi || null,
+        aceita_termos: aceitaTermos,
+        consent_imagem: consentImagem,
+        whatsapp_optin: whatsappOptin,
+        website: form.website, // honeypot agora vai pro server (antes era só client)
       });
-      setGrupoUrl(resp?.grupo_url || null);
-      setSent(true);
+      if (resp?.duplicado) {
+        // Antes isto caía na tela de sucesso e a pessoa nunca via a mensagem real.
+        setError(resp?.mensagem || 'Você já tem uma inscrição de batismo em andamento — a equipe vai falar com você.');
+      } else {
+        setGrupoUrl(resp?.grupo_url || null);
+        setSent(true);
+      }
     } catch (err: any) {
       setError(err?.message || 'Erro ao enviar inscrição.');
     }
     setLoading(false);
+    submittingRef.current = false;
   };
 
   return (
@@ -338,16 +380,40 @@ export default function InscricaoBatismo() {
 
             <form onSubmit={handleSubmit}>
               <SectionTitle>Dados pessoais</SectionTitle>
-              <Row>
-                <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" />
-                <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" />
-              </Row>
+              <Field id="nome_completo" label="Nome completo (sem abreviar)" value={form.nome_completo} onChange={set('nome_completo')} required autoComplete="name" />
               <Field id="email" label="E-mail" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
               <Row>
                 <Field id="telefone" label="Telefone" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
-                <Field id="cpf" label="CPF (opcional)" value={form.cpf} onChange={set('cpf')} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" />
+                <Field id="cpf" label="CPF" value={form.cpf} onChange={set('cpf')} placeholder="000.000.000-00" inputMode="numeric" autoComplete="off" required />
               </Row>
-              <Field id="data_nascimento" label="Data de nascimento (opcional)" type="date" value={form.data_nascimento} onChange={set('data_nascimento')} autoComplete="bday" />
+              <Row>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
+                    Data de nascimento <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm(f => ({ ...f, data_nascimento: v }))} />
+                </div>
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
+                    Sexo <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {SEXOS.map((o) => {
+                      const sel = form.sexo === o;
+                      return (
+                        <button key={o} type="button" onClick={() => setForm(f => ({ ...f, sexo: o }))} aria-pressed={sel}
+                          style={{
+                            flex: 1, minHeight: 42, padding: '9px 10px', borderRadius: 999, fontSize: 13, cursor: 'pointer',
+                            fontWeight: sel ? 700 : 500, textTransform: 'capitalize',
+                            border: `1.5px solid ${sel ? '#00B39D' : C.inputBorder}`,
+                            background: sel ? 'linear-gradient(90deg,#00B39D,#00d9bd)' : 'transparent',
+                            color: sel ? '#fff' : 'var(--cbrio-text)', transition: 'all .15s',
+                          }}>{o}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </Row>
 
               <SectionTitle>Endereço</SectionTitle>
               <Row>
@@ -358,7 +424,7 @@ export default function InscricaoBatismo() {
               <SectionTitle>Sobre o batismo</SectionTitle>
               <Row>
                 <SelectField
-                  id="tamanho_camisa" label="Tamanho da camisa"
+                  id="tamanho_camisa" label="Tamanho da camisa" required
                   value={form.tamanho_camisa}
                   onChange={set('tamanho_camisa') as any}
                   options={[
@@ -370,22 +436,49 @@ export default function InscricaoBatismo() {
                     { value: 'XGG', label: 'XGG' },
                   ]}
                 />
-                <SelectField
-                  id="horario_culto" label="Horário do batismo"
-                  value={form.horario_culto}
-                  onChange={set('horario_culto') as any}
-                  options={
-                    horarios.length
-                      ? horarios.map(h => ({
-                          value: h.horario,
-                          label: h.vagas_restantes != null
-                            ? `${h.label} · ${h.vagas_restantes} vaga${h.vagas_restantes === 1 ? '' : 's'}`
-                            : h.label,
-                        }))
-                      : [{ value: '', label: 'Nenhum horário disponível no momento' }]
-                  }
-                />
               </Row>
+
+              {/* Horário do batismo · opções (só os disponíveis · lotados já
+                  não vêm do backend). Antes era lista suspensa (Matheus · 16/07). */}
+              <div style={{ marginBottom: 20, marginTop: 4 }}>
+                <label style={{ display: 'block', fontSize: 12, color: 'var(--cbrio-text3)', marginBottom: 8 }}>
+                  Horário do batismo {horarios.length ? <span style={{ color: '#ef4444' }}>*</span> : null}
+                </label>
+                {horarios.length ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+                    {horarios.map(h => {
+                      const on = form.horario_culto === h.horario;
+                      return (
+                        <button
+                          key={h.horario}
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, horario_culto: h.horario }))}
+                          style={{
+                            display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
+                            minHeight: 56, padding: '11px 14px', borderRadius: 12, cursor: 'pointer',
+                            textAlign: 'left',
+                            border: `1.5px solid ${on ? '#00B39D' : C.inputBorder}`,
+                            background: on ? 'rgba(0,179,157,0.12)' : (C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'),
+                            color: on ? '#00B39D' : 'var(--cbrio-text)',
+                            fontFamily: 'inherit', transition: 'border-color 0.15s, background 0.15s',
+                          }}
+                        >
+                          <span style={{ fontSize: 15, fontWeight: on ? 700 : 600 }}>{h.label}</span>
+                          {h.vagas_restantes != null && (
+                            <span style={{ fontSize: 11.5, color: on ? '#00B39D' : 'var(--cbrio-text3)', opacity: on ? 0.9 : 1 }}>
+                              {h.vagas_restantes} vaga{h.vagas_restantes === 1 ? '' : 's'} restante{h.vagas_restantes === 1 ? '' : 's'}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p style={{ fontSize: 13, color: 'var(--cbrio-text3)', margin: '4px 0 0' }}>
+                    Nenhum horário disponível no momento.
+                  </p>
+                )}
+              </div>
               <SelectField
                 id="area_kpi" label="Você frequenta qual público? (opcional)"
                 value={form.area_kpi}
@@ -431,6 +524,60 @@ export default function InscricaoBatismo() {
                 value={form.observacoes}
                 onChange={set('observacoes')}
               />
+
+              <label style={{
+                display: 'flex', gap: 10, alignItems: 'flex-start',
+                background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                border: `1px solid ${C.inputBorder}`,
+                borderRadius: 12, padding: '14px 16px', margin: '4px 0 12px', cursor: 'pointer',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={aceitaTermos}
+                  onChange={(e) => setAceitaTermos(e.target.checked)}
+                  style={{ marginTop: 3, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }}
+                />
+                <span style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>
+                  <strong style={{ color: C.text }}>Li e aceito os termos *</strong><br />
+                  {textos.termos_lgpd}
+                </span>
+              </label>
+
+              <label style={{
+                display: 'flex', gap: 10, alignItems: 'flex-start',
+                background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                border: `1px solid ${C.inputBorder}`,
+                borderRadius: 12, padding: '14px 16px', margin: '4px 0 12px', cursor: 'pointer',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={consentImagem}
+                  onChange={(e) => setConsentImagem(e.target.checked)}
+                  style={{ marginTop: 3, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }}
+                />
+                <span style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>
+                  📷 {textos.imagem}
+                </span>
+              </label>
+
+              <label style={{
+                display: 'flex', gap: 10, alignItems: 'flex-start',
+                background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                border: `1px solid ${C.inputBorder}`,
+                borderRadius: 12, padding: '14px 16px', margin: '4px 0 16px', cursor: 'pointer',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={whatsappOptin}
+                  onChange={(e) => setWhatsappOptin(e.target.checked)}
+                  style={{ marginTop: 3, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }}
+                />
+                <span style={{ fontSize: 12.5, color: C.text3, lineHeight: 1.55 }}>
+                  Aceito receber mensagens da CBRio no <strong>WhatsApp</strong> (lembretes do
+                  batismo, avisos e felicitações). {textos.aviso_optin || AVISO_OPTIN} Você pode
+                  cancelar quando quiser. Seus dados são tratados conforme a LGPD.
+                </span>
+              </label>
 
               <button
                 type="submit"

@@ -17,7 +17,10 @@ import { Map, MapMarker, MarkerContent, MarkerPopup, MapControls, useMap } from 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { espalharPinosSobrepostos } from "@/lib/pinosMapa";
 import { AbrirRotaMenu } from "@/components/grupos/AbrirRotaMenu";
+// Régua ÚNICA de busca (acento/caixa/espaço) · espelho de backend/services/busca.js
+import { normalizarBusca, contemNormalizado } from "@/lib/busca";
 
 const DIAS_MAP: Record<number, string> = {
   0: "Domingo",
@@ -29,6 +32,18 @@ const DIAS_MAP: Record<number, string> = {
   6: "Sábado",
 };
 
+// Grupo diário acontece todos os dias — mostra "Diário" no lugar do dia.
+const ehDiario = (g: { recorrencia?: string | null }) =>
+  (g?.recorrencia || "").toLowerCase().trim() === "diario";
+
+// Líder como a pessoa reconhece: "Nome (Apelido)" quando há apelido cadastrado.
+const liderExibicao = (g: any): string | null => {
+  if (g?.lideres_exibicao?.length) return g.lideres_exibicao.join(" · ");
+  const nome = g?.lider?.nome || g?.lider_nome;
+  if (!nome) return null;
+  return g?.lider_apelido ? `${nome} (${g.lider_apelido})` : nome;
+};
+
 export interface MapGroup {
   id: string;
   nome: string;
@@ -37,15 +52,22 @@ export interface MapGroup {
   lng?: number | null;
   local?: string | null;
   dia_semana?: number | null;
+  recorrencia?: string | null;
   horario?: string | null;
   lider?: { nome?: string } | null;
   lider_nome?: string | null;
+  lider_apelido?: string | null;
+  lideres_exibicao?: string[] | null;
+  lideres_busca?: string[] | null;
   dist?: number | null;
   bairro?: string | null;
   codigo?: string | null;
   temporada?: string | null;
   complemento?: string | null;
   descricao?: string | null;
+  /** Só EXIBIÇÃO: pino deslocado porque vários grupos compartilham a mesma
+   *  coordenada (centróide de bairro). Ver espalharPinosSobrepostos. */
+  pinoAproximado?: boolean;
 }
 
 interface Coords {
@@ -194,19 +216,56 @@ export function GruposMapView({
   );
 
   const filtered = useMemo(() => {
-    const s = search.trim().toLowerCase();
+    const s = normalizarBusca(search);
     return grupos.filter((g: any) => {
       if (filterCat && g.categoria !== filterCat) return false;
       if (filterBairro && g.bairro !== filterBairro) return false;
       if (s) {
-        const hay = `${g.nome ?? ""} ${g.lider?.nome ?? g.lider_nome ?? ""} ${g.local ?? ""} ${g.bairro ?? ""}`.toLowerCase();
-        if (!hay.includes(s)) return false;
+        // Insensível a acento/caixa/espaço + casa apelido do líder (lideres_busca).
+        const hay = [
+          g.nome,
+          g.lider?.nome ?? g.lider_nome,
+          ...(g.lideres_busca || []),
+          g.local,
+          g.bairro,
+        ].filter(Boolean).join(" ");
+        if (!contemNormalizado(hay, s)) return false;
       }
       return true;
     });
   }, [grupos, search, filterCat, filterBairro]);
 
-  const withCoords = filtered.filter((g) => g.lat != null && g.lng != null);
+  const withCoords = useMemo(
+    () => espalharPinosSobrepostos(filtered.filter((g) => g.lat != null && g.lng != null)),
+    [filtered]
+  );
+
+  // ⚠️ `Map` neste arquivo é o COMPONENTE do maplibre (import no topo), não o
+  // Map do JS — por isso os índices abaixo são objetos, não `new Map()`.
+  //
+  // Posição EXIBIDA do grupo (pode estar deslocada — ver
+  // espalharPinosSobrepostos). Clicar na lista tem que voar pro pino que a
+  // pessoa VÊ, não pra coordenada crua embaixo da pilha.
+  const posPorId = useMemo(() => {
+    const m: Record<string, MapGroup> = {};
+    withCoords.forEach((g) => { m[g.id] = g; });
+    return m;
+  }, [withCoords]);
+
+  // O grupo ENTREGUE ao chamador é sempre o original (coordenada crua do
+  // banco): a posição deslocada é de desenho e não pode vazar pra quem
+  // seleciona o grupo (inscrição, totem).
+  const origPorId = useMemo(() => {
+    const m: Record<string, MapGroup> = {};
+    filtered.forEach((g) => { m[g.id] = g; });
+    return m;
+  }, [filtered]);
+
+  // Balão/cartão do pino: dado ORIGINAL + o aviso de posição aproximada.
+  const infoDoPino = (g: MapGroup): MapGroup => ({
+    ...(origPorId[g.id] ?? g),
+    pinoAproximado: g.pinoAproximado,
+  });
 
   // Initial center: member coords > first group with coords > Rio default
   const initialCenter: [number, number] = memberCoords
@@ -217,9 +276,10 @@ export function GruposMapView({
 
   const handleSelectFromList = (g: MapGroup) => {
     if (g.lat == null || g.lng == null) return;
+    const alvo = posPorId[g.id] ?? g;
     setActiveId(g.id);
-    flyTargetRef.current = g;
-    setFlyTarget({ ...g });
+    flyTargetRef.current = alvo;
+    setFlyTarget({ ...alvo });
   };
 
   const themeBg = theme === "dark" ? "bg-gray-950 text-white" : "bg-white text-gray-900";
@@ -368,13 +428,19 @@ export function GruposMapView({
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold truncate">{g.nome}</p>
-                        {(g.lider?.nome || g.lider_nome) && (
+                        {liderExibicao(g) && (
                           <p className={cn("text-xs truncate", mutedText)}>
-                            Líder: {g.lider?.nome || g.lider_nome}
+                            Líder: {liderExibicao(g)}
                           </p>
                         )}
                         <div className={cn("flex flex-wrap gap-x-2 gap-y-0.5 mt-1 text-[11px]", subtleText)}>
-                          {g.dia_semana != null && (
+                          {ehDiario(g) ? (
+                            <span className="flex items-center gap-1">
+                              <Clock className="h-3 w-3" />
+                              Diário
+                              {g.horario ? ` • ${String(g.horario).slice(0, 5)}` : ""}
+                            </span>
+                          ) : g.dia_semana != null && (
                             <span className="flex items-center gap-1">
                               <Clock className="h-3 w-3" />
                               {DIAS_MAP[g.dia_semana]}
@@ -461,7 +527,7 @@ export function GruposMapView({
               key={g.id}
               longitude={g.lng!}
               latitude={g.lat!}
-              onClick={() => { setActiveId(g.id); onPinClick?.(g); }}
+              onClick={() => { setActiveId(g.id); onPinClick?.(origPorId[g.id] ?? g); }}
             >
               <MarkerContent>
                 <GroupPin active={activeId === g.id} />
@@ -471,7 +537,7 @@ export function GruposMapView({
               {!isMobile && (
                 <MarkerPopup>
                   <GrupoInfo
-                    g={g}
+                    g={infoDoPino(g)}
                     onGroupSelect={onGroupSelect}
                     onGroupSelectLabel={onGroupSelectLabel}
                     mostrarBotaoInscricao={mostrarBotaoInscricao}
@@ -486,8 +552,9 @@ export function GruposMapView({
               PINADO no rodapé do cartão — sempre visível sem rolar; só o
               texto (descrição etc.) rola quando não cabe. */}
           {isMobile && (() => {
-            const ativo = withCoords.find((g) => g.id === activeId);
-            if (!ativo) return null;
+            const pino = withCoords.find((g) => g.id === activeId);
+            if (!pino) return null;
+            const ativo = infoDoPino(pino);
             return (
               <div
                 className={cn(
@@ -597,13 +664,19 @@ function GrupoInfo({
           </div>
         )}
       </div>
-      {(g.lider?.nome || g.lider_nome) && (
+      {liderExibicao(g) && (
         <p className="text-xs text-muted-foreground">
-          Líder: <span className="text-foreground font-medium">{g.lider?.nome || g.lider_nome}</span>
+          Líder: <span className="text-foreground font-medium">{liderExibicao(g)}</span>
         </p>
       )}
       <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        {g.dia_semana != null && (
+        {ehDiario(g) ? (
+          <span className="flex items-center gap-1">
+            <Clock className="h-3 w-3" />
+            Diário
+            {g.horario ? ` • ${String(g.horario).slice(0, 5)}` : ""}
+          </span>
+        ) : g.dia_semana != null && (
           <span className="flex items-center gap-1">
             <Clock className="h-3 w-3" />
             {DIAS_MAP[g.dia_semana]}
@@ -624,6 +697,13 @@ function GrupoInfo({
       )}
       {g.descricao && (
         <p className="text-xs text-muted-foreground line-clamp-3">{g.descricao}</p>
+      )}
+      {/* Pino deslocado pra não empilhar: dizer que é aproximado é o honesto —
+          a pessoa não pode achar que o pino é a porta da casa. */}
+      {g.pinoAproximado && (
+        <p className="text-[11px] text-amber-600 dark:text-amber-400">
+          Localização aproximada — confirme o endereço com o líder.
+        </p>
       )}
       {g.dist != null && (
         <p className="text-xs text-[#00B39D] font-medium">

@@ -4,7 +4,14 @@ const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { donosDoGrupo } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
+const { acharMembroGuardado, ehNomeDerivadoDeEmail } = require('../services/membroMatch');
+const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
+const { cpfValido, emailValido } = require('../services/inscricaoContrato');
+const { verificarTokenCenso } = require('../utils/censoToken');
+const { avaliarProntidao } = require('../utils/prontidaoCadastro');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -15,15 +22,42 @@ const uploadMw = multer({
   },
 });
 
-// ── Rate limit específico para formulário público ──
-// Bem mais restritivo que o global: 10 submissões por IP a cada 15 min.
-// Sempre ativo (inclusive em dev) porque expõe tabela para anon.
+// ── Rate limit do formulário público de membresia ──
+//
+// ⚠️ DOIS BALDES SEPARADOS de propósito (sweep do CENSO · 2026-08-03). O teto
+// antigo era 10/15min por IP COMPARTILHADO entre submissão e os lookups que o
+// formulário dispara enquanto a pessoa digita (lookup-cpf, lookup-nome-telefone,
+// verificar-familia) — cada pessoa gasta 3-5 requisições, então no WiFi da igreja
+// (1 IP público via NAT) o formulário morria por volta da 3ª pessoa, e o
+// autocomplete queimava a cota ANTES de alguém conseguir enviar.
+//
+// O censo é escaneado pela igreja inteira no mesmo minuto do culto, então o teto
+// da submissão segue a calibragem já validada em multidão real do NPS e da
+// inscrição de grupos (10000/15min · ~700 pessoas × algumas requisições num IP só).
+//
+// ⚠️ Estes limiters ficam SÓ nas rotas (não em `router.use`): limiter no
+// router.use E na rota conta 2× a mesma requisição (lição do sweep de 28/07).
+// ⚠️ A proteção anti-DDoS da BORDA do Vercel é separada e pode desafiar uma
+// rajada concentrada no mesmo IP — mitigar via Firewall do Vercel.
 const cadastroLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: parseInt(process.env.PUBLIC_MEMBRESIA_RATE_LIMIT_MAX) || 10000,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Muitas submissões deste endereço. Tente novamente mais tarde.' },
+  message: { error: 'Muitas submissões deste endereço. Tente novamente em alguns minutos.' },
+});
+
+// Balde do PROBING (lookup por CPF / nome+telefone / família / wallet). Separado
+// da submissão porque estes endpoints respondem "esta pessoa existe na base?" —
+// teto menor limita varredura em lote sem derrubar o formulário no culto
+// (dimensionado pra ~700 pessoas × 4 consultas). NÃO unificar com o de cima:
+// foi a cota compartilhada que quebrava o formulário.
+const lookupLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.PUBLIC_MEMBRESIA_LOOKUP_RATE_LIMIT_MAX) || 3000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas consultas deste endereço. Tente novamente em alguns minutos.' },
 });
 
 // Normaliza telefone mantendo apenas dígitos (para comparação de duplicados)
@@ -31,28 +65,36 @@ function soDigitos(v) {
   return (v || '').toString().replace(/\D+/g, '');
 }
 
-function ehEmailValido(email) {
-  if (!email) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+// Vocabulário do vínculo AUTODECLARADO no censo (espelha o CHECK da migration
+// 20260803160000). Sem acento: é identificador persistido.
+const VINCULOS_DECLARADOS = ['membro', 'congregado', 'visitante'];
+
+// Colunas que só existem depois da PARTE 1 da migration do censo
+// (20260803160000_censo_recadastramento.sql · mem_cadastros_pendentes).
+const COLUNAS_CENSO = ['censo', 'vinculo_declarado', 'censo_conflitos'];
+
+// 42703 = undefined_column. O PostgREST recusa a query INTEIRA quando uma
+// coluna não existe, então pedir coluna nova antes da migration derrubaria o
+// formulário pra TODO MUNDO (lição do `parcelas_max`). Aqui a submissão é o que
+// não pode se perder: tenta com as colunas do censo e, se elas não existirem
+// ainda, repete SEM elas — a pessoa se cadastra, só a marcação do censo espera
+// a migration.
+function semColunasDoCenso(payload) {
+  const copia = { ...payload };
+  for (const c of COLUNAS_CENSO) delete copia[c];
+  return copia;
+}
+function ehColunaAusente(error) {
+  if (!error) return false;
+  return error.code === '42703'
+    || /column .* does not exist/i.test(error.message || '')
+    || /could not find the .* column/i.test(error.message || '');
 }
 
-// Valida CPF (algoritmo oficial). Aceita entrada com ou sem máscara.
-function cpfValido(cpf) {
-  const d = soDigitos(cpf);
-  if (d.length !== 11) return false;
-  if (/^(\d)\1{10}$/.test(d)) return false;
-  const calc = (base, fator) => {
-    let soma = 0;
-    for (let i = 0; i < base.length; i += 1) {
-      soma += parseInt(base[i], 10) * (fator - i);
-    }
-    const resto = (soma * 10) % 11;
-    return resto === 10 ? 0 : resto;
-  };
-  const dv1 = calc(d.slice(0, 9), 10);
-  const dv2 = calc(d.slice(0, 10), 11);
-  return dv1 === parseInt(d[9], 10) && dv2 === parseInt(d[10], 10);
-}
+// emailValido/cpfValido agora vêm de services/inscricaoContrato (fonte única —
+// mesma troca zero-diff do P3 #2134; membresia é porta de PESSOA e segue o
+// mesmo contrato de porta). O grandfathering de CPF legado continua nos call
+// sites (valor idêntico ao armazenado passa sem DV — validação é só do novo).
 
 // POST /api/public/membresia/upload-foto — upload de foto pelo formulário público
 router.post('/upload-foto', cadastroLimiter, uploadMw.single('foto'), async (req, res) => {
@@ -86,7 +128,7 @@ router.post('/upload-foto', cadastroLimiter, uploadMw.single('foto'), async (req
 // GET /api/public/membresia/verificar-familia?sobrenome=...
 // Retorna famílias cujo nome contenha o sobrenome informado.
 // Usado pelo formulário público para sugerir vínculo antes do envio.
-router.get('/verificar-familia', cadastroLimiter, async (req, res) => {
+router.get('/verificar-familia', lookupLimiter, async (req, res) => {
   try {
     const { sobrenome } = req.query;
     if (!sobrenome || typeof sobrenome !== 'string' || sobrenome.trim().length < 2) {
@@ -130,7 +172,7 @@ function mascararTelefone(telefone) {
   return `(${d.slice(0, 2)}) ****-**${d.slice(8, 10)}`;
 }
 
-router.get('/lookup-nome-telefone', cadastroLimiter, async (req, res) => {
+router.get('/lookup-nome-telefone', lookupLimiter, async (req, res) => {
   try {
     const nomeRaw = (req.query.nome || '').toString().trim();
     const telefoneRaw = (req.query.telefone || '').toString();
@@ -189,6 +231,72 @@ router.get('/lookup-nome-telefone', cadastroLimiter, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// GET /api/public/membresia/censo/meus-dados?t=<token>
+//
+// Atualização cadastral pelo link PESSOAL do convite do censo. Devolve os
+// dados da própria pessoa pra o formulário abrir preenchido, marcando o que
+// falta.
+//
+// ⚠️ É o ÚNICO endpoint público desta rota que devolve dado de pessoa. Pode,
+//    porque a prova de identidade é o token ter chegado no WhatsApp/e-mail
+//    DELA — o mesmo nível do comprovante de inscrição. Os lookups por CPF/nome
+//    continuam devolvendo só nome + iniciais + telefone mascarado, e é assim
+//    que tem que ficar: CPF vaza e se compra, então CPF não é prova.
+//
+// ⚠️ NUNCA aceitar identificação por `membro_id` cru na query aqui. Seria
+//    enumerável (UUID vaza em log, em print, no histórico do navegador) e
+//    transformaria este endpoint num extrator da base inteira. Quem decide é
+//    sempre a assinatura.
+// ─────────────────────────────────────────────────────────────────────────
+router.get('/censo/meus-dados', lookupLimiter, async (req, res) => {
+  try {
+    const membroId = verificarTokenCenso(req.query.t);
+    // Resposta NEUTRA: não diz se o token é malformado, se o segredo falta ou
+    // se a pessoa não existe. Distinguir isso é dar ao atacante a régua.
+    if (!membroId) return res.status(404).json({ ok: false, error: 'Link inválido ou expirado.' });
+
+    const { data: m, error } = await supabase
+      .from('mem_membros')
+      .select('id, nome, cpf, email, telefone, data_nascimento, genero, estado_civil, endereco, bairro, cidade, cep, profissao, foto_url, censo_respondido_em')
+      .eq('id', membroId)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (error) throw error;
+    if (!m) return res.status(404).json({ ok: false, error: 'Link inválido ou expirado.' });
+
+    // Reusa a MESMA régua de obrigatórios da aprovação em massa, para a pessoa
+    // completar exatamente o que a fila cobraria dela depois.
+    const prontidao = avaliarProntidao({
+      ...m, status: 'pendente', aceita_termos: true, duplicado_de_id: null,
+    });
+
+    res.json({
+      ok: true,
+      ja_respondeu: !!m.censo_respondido_em,
+      faltando: prontidao.faltando,
+      dados: {
+        nome: m.nome || '',
+        cpf: m.cpf || '',
+        email: m.email || '',
+        telefone: m.telefone || '',
+        data_nascimento: m.data_nascimento || '',
+        genero: m.genero || '',
+        estado_civil: m.estado_civil || '',
+        endereco: m.endereco || '',
+        bairro: m.bairro || '',
+        cidade: m.cidade || '',
+        cep: m.cep || '',
+        profissao: m.profissao || '',
+        foto_url: m.foto_url || '',
+      },
+    });
+  } catch (e) {
+    console.error('[PUBLIC] censo/meus-dados error:', e.message);
+    res.status(500).json({ ok: false, error: 'Erro ao carregar seus dados' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // GET /api/public/membresia/lookup-cpf?cpf=...
 //
 // Lookup proativo enquanto o usuário digita CPF no formulário público.
@@ -197,7 +305,7 @@ router.get('/lookup-nome-telefone', cadastroLimiter, async (req, res) => {
 // confirmação visual. Se confirmar, o backend já faz o de-dup correto
 // na submissao via duplicado_de_id.
 // ─────────────────────────────────────────────────────────────────────────
-router.get('/lookup-cpf', cadastroLimiter, async (req, res) => {
+router.get('/lookup-cpf', lookupLimiter, async (req, res) => {
   try {
     const cpf = req.query.cpf;
     if (!cpf || !cpfValido(cpf)) {
@@ -268,6 +376,9 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       email,
       telefone,
       data_nascimento,
+      // Sexo canônico `masculino|feminino` (o form passou a coletar em 04/08).
+      // Sem ele o cadastro nunca ficava completo pela régua da fila.
+      genero,
       estado_civil,
       endereco,
       bairro,
@@ -278,7 +389,17 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       origem,
       aceita_termos,
       aceita_contato,
+      whatsapp_optin, // consentimento p/ mensagens no WhatsApp (Marketing · LGPD)
       consentimento_texto,
+      converteu_na_cbrio, // autodeclarado (checkbox) · NUNCA vira convertido/NSM
+      // Censo / recadastramento (2026-08-03). `vinculo_declarado` é
+      // AUTODECLARADO (membro|congregado|visitante) e NUNCA vira
+      // mem_membros.status — quem é membro é decisão da igreja.
+      vinculo_declarado,
+      censo,
+      // Token do link PESSOAL do convite (?t=). Identifica a pessoa sem
+      // depender de CPF — ver utils/censoToken.js.
+      censo_token,
       familia_sugerida_id,
       foto_url,
       // grupo de conexão opcional — cria pedido após cadastro
@@ -316,7 +437,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     if (!data_nascimento) {
       return res.status(400).json({ error: 'Data de nascimento é obrigatória.' });
     }
-    if (email && !ehEmailValido(email)) {
+    if (email && !emailValido(email)) {
       return res.status(400).json({ error: 'E-mail inválido.' });
     }
     if (senha !== undefined && senha !== null && senha !== '') {
@@ -331,18 +452,58 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       return res.status(400).json({ error: 'É necessário aceitar os termos para enviar o cadastro.' });
     }
 
+    if (!VINCULOS_DECLARADOS.includes(vinculo_declarado || '') && vinculo_declarado) {
+      return res.status(400).json({ error: 'Vínculo declarado inválido.' });
+    }
+    const ehCenso = !!censo;
+    if (ehCenso && !vinculo_declarado) {
+      return res.status(400).json({ error: 'Informe seu vínculo com a igreja.' });
+    }
+
+    // ⚠️ SEXO OBRIGATÓRIO (Matheus · 05/08: "em todos os formulários"). Era a
+    // ÚNICA porta de pessoa que não exigia — as outras 7 já validam no servidor
+    // (batismo, apresentação, grupos + cônjuge, eventos, voluntariado, next,
+    // totem do bebê). Ontem o campo entrou na tela mas o servidor só
+    // sanitizava para `null`: quem postasse direto, ou abrisse com bundle
+    // antigo, gravava sem sexo — e cadastro sem sexo nunca fica completo pela
+    // régua da fila, então ficaria preso em aprovação manual pra sempre.
+    // Vocabulário canônico, NUNCA "outro" (lei do Contrato de Inscrição).
+    const generoNorm = String(genero || '').trim().toLowerCase();
+    if (!['masculino', 'feminino'].includes(generoNorm)) {
+      return res.status(400).json({ error: 'Selecione o sexo (masculino ou feminino).', campo: 'genero' });
+    }
+
     const origemValida = ['site', 'qr_code', 'evento', 'importacao'];
     const origemFinal = origemValida.includes(origem) ? origem : 'site';
 
     // ── Detecção de duplicado contra mem_membros ──
     let duplicadoDeId = null;
+    // Como o vínculo foi encontrado — decide se o censo pode aplicar dado
+    // sozinho. Só 'cpf' é chave forte (ver services/censoReconciliar.js).
+    let matchedBy = null;
     const emailLimpo = email ? email.trim().toLowerCase() : null;
     const telefoneLimpo = soDigitos(telefone);
     const cpfLimpo = soDigitos(cpf);
 
+    // ⚠️ TOKEN do convite do censo vence tudo: é o link pessoal que o sistema
+    // emitiu e entregou no contato DELA (assinado com o membro_id dentro), então
+    // não há dúvida de identidade — nem depende de a pessoa ter CPF cadastrado,
+    // que é exatamente o público da campanha. Confere-se contra o banco antes de
+    // confiar (token de cadastro apagado não vale).
+    const membroIdToken = verificarTokenCenso(censo_token);
+    if (membroIdToken) {
+      const { data: alvo } = await supabase
+        .from('mem_membros').select('id').eq('id', membroIdToken)
+        .is('deleted_at', null).maybeSingle();
+      if (alvo) {
+        duplicadoDeId = alvo.id;
+        matchedBy = 'token_censo';   // chave FORTE (ver censoReconciliar)
+      }
+    }
+
     // Se o usuário confirmou um match via lookup-nome-telefone, usa direto
     // (e valida que o id existe e o telefone bate — defesa contra forja).
-    if (match_membro_id && typeof match_membro_id === 'string') {
+    if (!duplicadoDeId && match_membro_id && typeof match_membro_id === 'string') {
       const { data: confirmado } = await supabase
         .from('mem_membros')
         .select('id, telefone')
@@ -351,62 +512,21 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         .maybeSingle();
       if (confirmado && soDigitos(confirmado.telefone) === telefoneLimpo) {
         duplicadoDeId = confirmado.id;
+        // ⚠️ Confirmação da pessoa NÃO é chave forte: o "sou eu" é validado só
+        // contra o TELEFONE, que a família compartilha — quem clica pode estar
+        // reconhecendo o cadastro do cônjuge/filho. Segue como sinal fraco (o
+        // censo só aplica se o nascimento conferir dos dois lados).
+        matchedBy = 'confirmado_usuario';
       }
     }
 
-    if (!duplicadoDeId && cpfLimpo) {
-      const { data: porCpf } = await supabase
-        .from('mem_membros')
-        .select('id')
-        .eq('active', true)
-        .eq('cpf', cpfLimpo)
-        .limit(1)
-        .maybeSingle();
-      if (porCpf) duplicadoDeId = porCpf.id;
-    }
-
-    if (!duplicadoDeId && emailLimpo) {
-      const { data: porEmail } = await supabase
-        .from('mem_membros')
-        .select('id')
-        .eq('active', true)
-        .ilike('email', emailLimpo)
-        .limit(1)
-        .maybeSingle();
-      if (porEmail) duplicadoDeId = porEmail.id;
-    }
-
-    if (!duplicadoDeId && telefoneLimpo && telefoneLimpo.length >= 10) {
-      // Busca por nome parcial + telefone (só dígitos)
-      const primeiroNome = nome.trim().split(/\s+/)[0];
-      if (primeiroNome) {
-        const { data: candidatos } = await supabase
-          .from('mem_membros')
-          .select('id, telefone')
-          .eq('active', true)
-          .ilike('nome', `%${primeiroNome}%`)
-          .limit(20);
-        const match = (candidatos || []).find(
-          (c) => soDigitos(c.telefone) === telefoneLimpo,
-        );
-        if (match) duplicadoDeId = match.id;
-      }
-    }
-
-    // Nome + data de nascimento · pega quem já existe sem CPF/e-mail/telefone
-    // batendo (ex.: importados de grupos com nome+nascimento). Conservador:
-    // mesma data de nascimento E nome igual (normalizado).
-    if (!duplicadoDeId && data_nascimento) {
-      const normNome = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
-      const alvo = normNome(nome);
-      const { data: cands } = await supabase
-        .from('mem_membros')
-        .select('id, nome')
-        .eq('active', true)
-        .eq('data_nascimento', data_nascimento)
-        .limit(30);
-      const match = (cands || []).find((c) => normNome(c.nome) === alvo);
-      if (match) duplicadoDeId = match.id;
+    if (!duplicadoDeId) {
+      const match = await acharMembroGuardado({
+        cpf: cpfLimpo, email: emailLimpo, telefone: telefoneLimpo,
+        nome: nome.trim(), dataNascimento: data_nascimento,
+      });
+      duplicadoDeId = match?.membro_id || null;
+      matchedBy = match?.matched_by || null;
     }
 
     // ── Monta payload de inserção ──
@@ -422,6 +542,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       email: emailLimpo,
       telefone: telefone || null,
       data_nascimento: data_nascimento || null,
+      genero: generoNorm,   // já validado acima — só o canônico chega aqui
       estado_civil: estado_civil || null,
       endereco: endereco || null,
       bairro: bairro || null,
@@ -432,36 +553,191 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       origem: origemFinal,
       aceita_termos: !!aceita_termos,
       aceita_contato: !!aceita_contato,
+      whatsapp_optin: !!whatsapp_optin,
+      whatsapp_optin_em: whatsapp_optin ? new Date().toISOString() : null,
       consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
+      // Só inclui a coluna quando a pessoa marcou (tolera a migration ainda não
+      // aplicada · flow antigo sem o checkbox não toca a coluna).
+      ...(converteu_na_cbrio ? { converteu_na_cbrio: true } : {}),
       familia_sugerida_id: familia_sugerida_id || null,
       foto_url: foto_url || null,
       status: duplicadoDeId ? 'duplicado' : 'pendente',
       duplicado_de_id: duplicadoDeId,
       ip_origem: ip,
       user_agent: userAgent,
+      ...(ehCenso ? { censo: true } : {}),
+      ...(vinculo_declarado ? { vinculo_declarado } : {}),
     };
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('mem_cadastros_pendentes')
       .insert(payload)
       .select('id, status')
       .single();
+
+    if (error && ehColunaAusente(error)) {
+      console.warn('[PUBLIC CADASTRO] colunas do censo ausentes (parte 1 da migration, 20260803160000, não aplicada) — gravando sem elas');
+      ({ data, error } = await supabase
+        .from('mem_cadastros_pendentes')
+        .insert(semColunasDoCenso(payload))
+        .select('id, status')
+        .single());
+    }
 
     if (error) {
       console.error('[PUBLIC CADASTRO] insert error:', error.message);
       return res.status(500).json({ error: 'Não foi possível registrar seu cadastro.' });
     }
 
-    // Notifica responsáveis pela integração (assíncrono, não bloqueia resposta)
-    notificar({
-      modulo: 'membresia',
-      tipo: 'novo_cadastro',
-      titulo: `Novo cadastro de membresia`,
-      mensagem: `${nome.trim()} enviou um cadastro pelo formulário público.`,
-      link: '/ministerial/membresia',
-      severidade: 'info',
-      chaveDedup: `novo_cadastro_${data.id}`,
-    }).catch(err => console.error('[PUBLIC CADASTRO] notificação falhou:', err.message));
+    await registrarObservacaoSegura({
+      membroId: duplicadoDeId,
+      origem: 'membresia_formulario', origemId: data.id,
+      nome: nome.trim(), cpf: cpfLimpo, email: emailLimpo,
+      telefone: telefoneLimpo, dataNascimento: data_nascimento,
+      dados: { status: data.status },
+    });
+
+    // ── CENSO · recadastramento de quem JÁ EXISTE ─────────────────────────────
+    // Roda DEPOIS do insert de propósito: a submissão (e o consentimento LGPD
+    // que ela carrega) não pode se perder porque a reconciliação falhou. Se algo
+    // aqui estourar, a linha continua 'duplicado' e vai pra fila humana — que é
+    // o comportamento seguro, e era o comportamento de sempre.
+    let censoResultado = null;
+    if (ehCenso && duplicadoDeId) {
+      try {
+        const { reconciliarCenso } = require('../services/censoReconciliar');
+        censoResultado = await reconciliarCenso({
+          membroId: duplicadoDeId,
+          matchedBy,
+          origemId: data.id,
+          dados: {
+            email: emailLimpo, telefone: telefoneLimpo, data_nascimento,
+            estado_civil, endereco, bairro, cidade, cep, profissao,
+          },
+        });
+
+        // Sem conflito → sai da fila humana ('aplicado'), mas a linha continua
+        // existindo como prova do que a pessoa enviou e do que ela consentiu.
+        // Com conflito → segue 'duplicado' e carrega os dois lados de cada campo.
+        const semConflito = censoResultado.acao === 'aplicado'
+          || censoResultado.acao === 'sem_mudanca';
+        const patch = semConflito
+          ? { status: 'aplicado', censo_conflitos: null }
+          : { censo_conflitos: censoResultado.conflitos?.length ? censoResultado.conflitos : null };
+
+        let { error: ePatch } = await supabase
+          .from('mem_cadastros_pendentes').update(patch).eq('id', data.id);
+        if (ePatch && ehColunaAusente(ePatch)) {
+          // Migration ausente: 'aplicado' não existe no CHECK e censo_conflitos
+          // não existe na tabela. Mantém a linha na fila humana (seguro).
+          ePatch = null;
+        }
+        if (ePatch) console.error('[PUBLIC CADASTRO censo patch]', ePatch.message);
+        else if (semConflito) data.status = 'aplicado';
+
+        // Cobertura: a pessoa RESPONDEU, independente de ter dado conflito ou de
+        // o gate de confiança ter barrado a aplicação. Coberta é quem respondeu.
+        const { error: eCob } = await supabase
+          .from('mem_membros')
+          .update({
+            censo_respondido_em: new Date().toISOString(),
+            censo_vinculo_declarado: vinculo_declarado || null,
+          })
+          .eq('id', duplicadoDeId);
+        if (eCob && !ehColunaAusente(eCob)) {
+          console.error('[PUBLIC CADASTRO censo cobertura]', eCob.message);
+        }
+
+        // ⚠️⚠️ O OPT-IN DE WHATSAPP TAMBÉM ERA DESCARTADO — mesma família do bug
+        // do CPF, e pelo mesmo motivo estrutural: `CAMPOS_CENSO` não inclui
+        // `whatsapp_optin`, e quem propaga consentimento é a APROVAÇÃO
+        // (`aprovarCadastroCore` / `promoverInscricaoLider`). A linha do censo
+        // vira `aplicado` e NUNCA é aprovada ⇒ o consentimento ficava só na
+        // submissão. Medido em 05/08: 70 das 74 respostas marcaram a caixa
+        // (95%) e só 13 tinham chegado ao cadastro — 57 consentimentos válidos
+        // invisíveis pra quem decide se pode enviar.
+        //
+        // ⚠️ SÓ LIGA, NUNCA DESLIGA (mesma política da aprovação): não marcar a
+        // caixa é ausência de consentimento nesta submissão, não revogação do
+        // que a pessoa já autorizou em outra porta. Revogar é ação dela.
+        // ⚠️ `whatsapp_optin_em` é preservado quando já havia consentimento —
+        // é a data da PROVA, e sobrescrevê-la apagaria desde quando ela vale.
+        if (whatsapp_optin) {
+          const { error: eOptin } = await supabase
+            .from('mem_membros')
+            .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+            .eq('id', duplicadoDeId)
+            .or('whatsapp_optin.is.null,whatsapp_optin.eq.false');
+          if (eOptin && !ehColunaAusente(eOptin)) {
+            console.error('[PUBLIC CADASTRO censo optin]', eOptin.message);
+          }
+        }
+      } catch (censoErr) {
+        console.error('[PUBLIC CADASTRO censo]', censoErr.message);
+      }
+
+      // ⚠️⚠️ O CPF É O OBJETIVO DA CAMPANHA E ESTAVA SENDO DESCARTADO.
+      // `CAMPOS_CENSO` exclui `cpf` de propósito (CPF tem serviço próprio, que
+      // trata conflito de identidade e CPF já pertencente a outro membro) — mas
+      // esse serviço NUNCA era chamado aqui. Resultado medido em 04/08: as 4
+      // primeiras pessoas do disparo preencheram o CPF no formulário, a
+      // submissão foi marcada `aplicado`, e o CPF não chegou ao cadastro. A
+      // campanha inteira existe pra coletar CPF de ~2.000 pessoas que não têm.
+      //
+      // `confianca` espelha a força do vínculo: só CPF e o token pessoal do
+      // convite identificam sozinhos. Com sinal fraco (telefone+nome), o
+      // serviço exige nascimento conferível e manda pra fila humana se
+      // divergir — é o que impede gravar o CPF de uma pessoa no cadastro de
+      // outra da mesma família.
+      if (duplicadoDeId && cpfLimpo) {
+        try {
+          const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
+          const rCpf = await reconciliarCpfTardio({
+            membroId: duplicadoDeId,
+            cpf: cpfLimpo,
+            origem: matchedBy === 'token_censo' ? 'censo_link_pessoal' : 'censo_formulario',
+            origemId: data.id,
+            dataNascimento: data_nascimento || null,
+            confianca: (matchedBy === 'cpf' || matchedBy === 'token_censo') ? 'forte' : 'fraca',
+          });
+          if (rCpf?.acao && !['consolidado', 'ja_tinha'].includes(rCpf.acao)) {
+            console.warn('[PUBLIC CADASTRO censo cpf]', rCpf.acao);
+          }
+        } catch (cpfErr) {
+          // Best-effort: a submissão já está gravada e não se desfaz porque a
+          // consolidação do CPF falhou. O dado fica na linha pra reprocessar.
+          console.error('[PUBLIC CADASTRO censo cpf]', cpfErr.message);
+        }
+      }
+    }
+
+    // Notifica responsáveis pela integração (assíncrono, não bloqueia resposta).
+    // ⚠️ Submissão de censo que o reconciliador RESOLVEU não notifica: não há
+    // nada pra ninguém fazer, e no domingo do lançamento seriam centenas de
+    // avisos (sem regra configurada, `notificar` cai no fallback = TODOS os
+    // admin/diretor, então cada submissão viraria dezenas de linhas). Aviso é
+    // pra trabalho pendente — o volume do censo se acompanha pelo painel de
+    // cobertura, não pelo sino.
+    if (data.status !== 'aplicado') {
+      notificar({
+        modulo: 'membresia',
+        tipo: 'novo_cadastro',
+        titulo: ehCenso ? 'Censo · cadastro para revisar' : 'Novo cadastro de membresia',
+        mensagem: ehCenso
+          ? `${nome.trim()} respondeu o censo e o cadastro precisa de revisão${censoResultado?.conflitos?.length ? ` (${censoResultado.conflitos.length} campo(s) em conflito)` : ''}.`
+          : `${nome.trim()} enviou um cadastro pelo formulário público.`,
+        // ⚠️ Deep link até a ABA e o STATUS certos. Antes ia pra
+        // `/ministerial/membresia` e caía na lista de 3.973 membros, sem pista
+        // de onde estava o cadastro a revisar. Conflito do censo mantém o
+        // status `duplicado` (a submissão tem `duplicado_de_id`), então é esse
+        // o filtro — chegar na aba com "pendente" esconderia a própria linha.
+        link: ehCenso
+          ? `/ministerial/membresia?tab=cadastros&status=${data.status === 'duplicado' ? 'duplicado' : 'pendente'}`
+          : '/ministerial/membresia?tab=cadastros&status=pendente',
+        severidade: 'info',
+        chaveDedup: `novo_cadastro_${data.id}`,
+      }).catch(err => console.error('[PUBLIC CADASTRO] notificação falhou:', err.message));
+    }
 
     // Se a pessoa indicou grupo, cria pedido vinculado (cadastro_pendente_id ou
     // membro_id se já existe duplicado).
@@ -483,16 +759,29 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         }
         const { data: pedido } = await supabase.from('mem_grupo_pedidos').insert(pedidoBase).select('id').single();
         if (pedido) {
-          // Notifica o(s) líder(es) do grupo
+          // ⚠️ O comentário aqui dizia "Notifica o(s) líder(es) do grupo" e o
+          // código não mandava target NENHUM — ia 100% pro fan-out de ~16
+          // admins, e o líder nunca era avisado. Bug de intenção, não de
+          // digitação: o comentário descrevia o que se queria, não o que fazia.
           const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', grupo_id).maybeSingle();
-          notificar({
-            modulo: 'grupos',
-            tipo: 'pedido_grupo',
-            titulo: `Novo pedido para ${grupo?.nome || 'grupo'}`,
-            mensagem: `${nome.trim()} pediu para entrar no grupo via cadastro de membresia.`,
-            link: '/grupos/pedidos',
-            severidade: 'aviso',
-            chaveDedup: `pedido_grupo_${pedido.id}`,
+          // Sino do app do líder — a 5ª origem de pedido de grupo (o cadastro de
+          // membresia). Awaited pelo mesmo motivo das outras.
+          await avisarPedidoNovoNoApp({
+            grupoId: grupo_id, pedidoId: pedido.id,
+            grupoNome: grupo?.nome, pessoaNome: nome,
+          });
+          donosDoGrupo(grupo_id).then((donos) => {
+            if (!donos.length) return;
+            return notificar({
+              modulo: 'grupos',
+              tipo: 'pedido_grupo',
+              titulo: `Novo pedido para ${grupo?.nome || 'grupo'}`,
+              mensagem: `${nome.trim()} pediu para entrar no grupo via cadastro de membresia.`,
+              link: '/grupos/pedidos',
+              severidade: 'aviso',
+              chaveDedup: `pedido_grupo_${pedido.id}`,
+              targetIds: donos,
+            });
           }).catch(err => console.error('[PUBLIC CADASTRO pedido grupo notify]', err.message));
         }
       } catch (pedidoErr) {
@@ -527,7 +816,18 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
             email: emailLimpo,
             password: senha,
             email_confirm: true,
-            user_metadata: { source: 'membresia_publica', cadastro_pendente_id: data.id },
+            // ⚠️ `full_name` é OBRIGATÓRIO aqui. O gatilho de signup em auth.users
+            // faz COALESCE(full_name, name, split_part(email,'@',1)) — sem ele, o
+            // PREFIXO DO E-MAIL vira o nome da pessoa no profile E no cadastro que
+            // o gatilho cria (15 casos medidos em 04/08, ~1/dia). A pessoa acabou
+            // de digitar o nome completo neste formulário; não há motivo pra
+            // chutar.
+            user_metadata: {
+              full_name: nome.trim(),
+              name: nome.trim(),
+              source: 'membresia_publica',
+              cadastro_pendente_id: data.id,
+            },
           });
           if (createErr) {
             console.error('[PUBLIC CADASTRO] createUser:', createErr.message);
@@ -540,7 +840,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         if (authUserId) {
           const { data: profileExistente } = await supabase
             .from('profiles')
-            .select('id, membro_id')
+            .select('id, membro_id, name')
             .eq('id', authUserId)
             .maybeSingle();
 
@@ -554,10 +854,31 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
               is_membro_only: true,
               active: true,
             });
-          } else if (duplicadoDeId && !profileExistente.membro_id) {
-            await supabase.from('profiles')
-              .update({ membro_id: duplicadoDeId })
-              .eq('id', authUserId);
+          } else {
+            // O gatilho de auth.users cria o profile ANTES daqui, então este ramo
+            // é o caminho normal — e era onde o nome ruim ficava para sempre.
+            const patch = {};
+            if (duplicadoDeId && !profileExistente.membro_id) patch.membro_id = duplicadoDeId;
+            if (ehNomeDerivadoDeEmail(profileExistente.name, emailLimpo)) patch.name = nome.trim();
+            if (Object.keys(patch).length) {
+              await supabase.from('profiles').update(patch).eq('id', authUserId);
+            }
+
+            // E conserta o CADASTRO que o gatilho criou com o prefixo do e-mail.
+            // É o caso da pessoa que preencheu este formulário corretamente e
+            // ganhou um segundo registro vazio minutos depois. Guarda estreita:
+            // só reescreve quando o nome atual É PROVADAMENTE derivado do e-mail.
+            const membroDoLogin = profileExistente.membro_id || duplicadoDeId;
+            if (membroDoLogin) {
+              const { data: mem } = await supabase.from('mem_membros')
+                .select('id, nome, email').eq('id', membroDoLogin).maybeSingle();
+              if (mem && ehNomeDerivadoDeEmail(mem.nome, mem.email || emailLimpo)) {
+                const { error: eNome } = await supabase.from('mem_membros')
+                  .update({ nome: nome.trim() }).eq('id', mem.id).eq('nome', mem.nome);
+                if (eNome) console.error('[PUBLIC CADASTRO] corrigir nome do membro:', eNome.message);
+                else console.log(`[PUBLIC CADASTRO] nome derivado do e-mail corrigido: ${mem.nome} -> ${nome.trim()}`);
+              }
+            }
           }
           accountCreated = true;
           canLoginDevocional = !!duplicadoDeId; // so quem já e membro entra no devocional na hora
@@ -568,8 +889,17 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       }
     }
 
-    // Resposta neutra — não confirma se foi duplicado, preserva privacidade
-    res.status(201).json({ ok: true, id: data.id, account_created: accountCreated, can_login_devocional: canLoginDevocional });
+    // Resposta neutra — não confirma se foi duplicado, preserva privacidade.
+    // `censo_atualizado` diz apenas se ATUALIZAMOS um cadastro (pra a tela dizer
+    // "seus dados foram atualizados" em vez de "cadastro enviado"); NÃO revela
+    // quais campos, nem se havia conflito, nem quem é a pessoa encontrada.
+    res.status(201).json({
+      ok: true,
+      id: data.id,
+      account_created: accountCreated,
+      can_login_devocional: canLoginDevocional,
+      ...(ehCenso ? { censo_atualizado: !!duplicadoDeId } : {}),
+    });
   } catch (e) {
     console.error('[PUBLIC CADASTRO] exception:', e.message);
     res.status(500).json({ error: 'Erro ao processar cadastro.' });
@@ -648,7 +978,7 @@ async function lookupCadastro(cpfLimpo, dataNascimento) {
 // POST /api/public/membresia/wallet/verify
 // Body: { cpf, data_nascimento } — valida se existe cadastro com esse par.
 // Usado pelo fluxo "Já fiz meu cadastro" antes de oferecer o botao da wallet.
-router.post('/wallet/verify', cadastroLimiter, async (req, res) => {
+router.post('/wallet/verify', lookupLimiter, async (req, res) => {
   try {
     const { cpf, data_nascimento } = req.body || {};
     const cleanCpf = soDigitos(cpf);
@@ -670,7 +1000,7 @@ router.post('/wallet/verify', cadastroLimiter, async (req, res) => {
 // POST /api/public/membresia/wallet/qr-token
 // Body: { cpf, data_nascimento } — retorna o token do QR para renderizar
 // inline (fallback iPhone — salva como imagem da foto).
-router.post('/wallet/qr-token', cadastroLimiter, async (req, res) => {
+router.post('/wallet/qr-token', lookupLimiter, async (req, res) => {
   try {
     const { cpf, data_nascimento } = req.body || {};
     const cleanCpf = soDigitos(cpf);
@@ -696,7 +1026,7 @@ router.post('/wallet/qr-token', cadastroLimiter, async (req, res) => {
 
 // POST /api/public/membresia/wallet/google
 // Body: { cpf, data_nascimento } — retorna URL do Google Wallet (Android)
-router.post('/wallet/google', cadastroLimiter, async (req, res) => {
+router.post('/wallet/google', lookupLimiter, async (req, res) => {
   try {
     const issuerId = process.env.GOOGLE_WALLET_ISSUER_ID;
     const serviceAccountEmail = process.env.GOOGLE_WALLET_SERVICE_ACCOUNT_EMAIL;
@@ -764,7 +1094,7 @@ router.post('/wallet/google', cadastroLimiter, async (req, res) => {
 
 // POST /api/public/membresia/wallet/apple
 // Body: { cpf, data_nascimento } — retorna .pkpass para Apple Wallet (iOS)
-router.post('/wallet/apple', cadastroLimiter, async (req, res) => {
+router.post('/wallet/apple', lookupLimiter, async (req, res) => {
   try {
     const { buildMembroPass } = require('../services/appleWallet');
     const { cpf, data_nascimento } = req.body || {};

@@ -12,6 +12,7 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { verifyDirecionarToken, direcionarMatricula } = require('../services/nextDirecionar');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 
 // Janela do dia de HOJE em BRT (UTC-3, sem horário de verão) → intervalo em UTC.
 // 00:00 BRT = 03:00 UTC do mesmo dia. Usado pra "quem fez check-in hoje".
@@ -22,36 +23,46 @@ function brtHojeRangeUtc() {
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
-// Rate limit dedicado para inscrições (anti-spam)
+// Limiter GENEROSO no router (padrão grupos/NPS/eventos): o form roda em
+// Wi-Fi único (igreja) e o TOTEM de check-in dispara dezenas de POSTs do
+// mesmo IP numa turma — o teto antigo de 10/min no router inteiro dava 429
+// no operador depois da 10ª marcação (achado do sweep 28/07). Anti-spam
+// real = honeypot + validação do contrato.
 const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 min
-  max: 10,
-  message: { error: 'Muitas requisicoes. Aguarde um minuto.' },
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.PUBLIC_FORM_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 600 : 5000),
+  message: { error: 'Muitas requisições. Aguarde alguns minutos.' },
+  skip: () => process.env.NODE_ENV !== 'production',
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 router.use(limiter);
+
+// Resolve a turma ABERTA do momento (a mais recente, se houver mais de uma).
+// ⚠️ Declarada AQUI (antes do primeiro uso, no POST /inscrever) de propósito:
+// era usada 80 linhas antes da declaração, salva só pelo hoisting de `async
+// function` — converter pra arrow const derrubava o form inteiro com TDZ
+// (mesmo padrão do bug do Ariel · sweep 28/07).
+async function turmaAbertaAtual() {
+  const { data } = await supabase.from('next_turmas')
+    .select('id, nome').eq('status', 'aberta').is('deleted_at', null)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+  return data || null;
+}
+
+// Contrato de Inscrição (F3.1 · docs/modulo-inscricoes/) — utils da fonte única
+const {
+  temAbreviacaoNome, splitNomeCompleto, validarNascimento,
+  registrarConsentimentos, SEXOS, TEXTOS, cpfValido, emailValido,
+} = require('../services/inscricaoContrato');
 
 // Motivos válidos da inscrição (slugs · espelham MOTIVO_OPTIONS do form)
 const MOTIVOS_VALIDOS = ['recem_convertido', 'prestes_batizar', 'conhecer_cbrio', 'servir_voluntario'];
 function motivoValido(m) { return MOTIVOS_VALIDOS.includes(String(m || '')) ? String(m) : null; }
 
 function soDigitos(s) { return String(s || '').replace(/\D/g, ''); }
-function ehEmailValido(s) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(s || '')); }
-function ehCpfValido(cpf) {
-  const c = soDigitos(cpf);
-  if (c.length !== 11) return false;
-  if (/^(\d)\1+$/.test(c)) return false;
-  // Algoritmo oficial dos dígitos verificadores
-  let soma = 0;
-  for (let i = 0; i < 9; i++) soma += parseInt(c[i]) * (10 - i);
-  let d1 = (soma * 10) % 11;
-  if (d1 === 10) d1 = 0;
-  if (d1 !== parseInt(c[9])) return false;
-  soma = 0;
-  for (let i = 0; i < 10; i++) soma += parseInt(c[i]) * (11 - i);
-  let d2 = (soma * 10) % 11;
-  if (d2 === 10) d2 = 0;
-  return d2 === parseInt(c[10]);
-}
+// emailValido/cpfValido agora vêm de services/inscricaoContrato (fonte única —
+// P3 do sweep 28/07: as cópias locais eram idênticas, mas cópia diverge um dia).
 
 // ----------------------------------------------------------------------------
 // GET /eventos - lista eventos agendados
@@ -68,13 +79,24 @@ router.get('/eventos', async (_req, res) => {
   res.json(data || []);
 });
 
+// GET /textos — textos canônicos de consentimento (o snapshot gravado é
+// sempre o do backend)
+router.get('/textos', (_req, res) => {
+  res.json({ termos_lgpd: TEXTOS.termos_lgpd, aviso_optin: TEXTOS.aviso_optin });
+});
+
 // ----------------------------------------------------------------------------
-// POST /inscrever
+// POST /inscrever — Contrato de Inscrição pleno (D1–D9 + 28/07). As regras
+// novas valem SÓ AQUI: o walk-in do totem (POST /checkin/:token/walkin)
+// continua com a política "nunca travar o atendimento na hora".
 // ----------------------------------------------------------------------------
 router.post('/inscrever', async (req, res) => {
   try {
     const {
-      nome, sobrenome, cpf, telefone, email, data_nascimento, motivo, observacoes,
+      nome, sobrenome, nome_completo, cpf, telefone, email, data_nascimento,
+      sexo, endereco, motivo, observacoes,
+      aceita_termos, // termos LGPD (Contrato de Inscrição)
+      whatsapp_optin, // consentimento p/ mensagens no WhatsApp (Marketing · LGPD)
       website, // honeypot
     } = req.body || {};
 
@@ -82,20 +104,51 @@ router.post('/inscrever', async (req, res) => {
 
     const cleanMotivo = motivoValido(motivo);
 
-    if (!nome || nome.trim().length < 2) {
+    // D1: campo único "Nome completo"; tolera o payload antigo nome+sobrenome.
+    let cleanNome = String(nome || '').trim();
+    let cleanSobrenome = sobrenome ? String(sobrenome).trim() : '';
+    if (nome_completo && String(nome_completo).trim()) {
+      const s = splitNomeCompleto(nome_completo);
+      cleanNome = s.nome;
+      cleanSobrenome = s.sobrenome;
+    }
+    if (!cleanNome || cleanNome.length < 2) {
       return res.status(400).json({ error: 'Nome obrigatorio' });
     }
-    if (!email || !ehEmailValido(email)) {
+    if (temAbreviacaoNome([cleanNome, cleanSobrenome].filter(Boolean).join(' '))) {
+      return res.status(400).json({ error: 'Escreva seu nome completo, sem abreviações' });
+    }
+    if (!email || !emailValido(email)) {
       return res.status(400).json({ error: 'Email invalido' });
     }
-    if (!telefone || soDigitos(telefone).length < 10) {
+    const telDigitos = soDigitos(telefone);
+    if (telDigitos.length < 10 || telDigitos.length > 11) {
       return res.status(400).json({ error: 'Telefone invalido' });
     }
-    if (cpf && !ehCpfValido(cpf)) {
-      return res.status(400).json({ error: 'CPF invalido' });
+    // D3 (28/07): nascimento obrigatório e validado NESTA rota pública.
+    const cleanNascimento = validarNascimento(data_nascimento);
+    if (!cleanNascimento) {
+      return res.status(400).json({ error: 'Informe uma data de nascimento válida' });
+    }
+    // 28/07: sexo obrigatório (masculino|feminino); endereço fixo-opcional.
+    const cleanSexo = String(sexo || '').toLowerCase();
+    if (!SEXOS.includes(cleanSexo)) {
+      return res.status(400).json({ error: 'Selecione masculino ou feminino' });
+    }
+    const cleanEndereco = endereco ? String(endereco).trim().slice(0, 300) : null;
+    if (!aceita_termos) {
+      return res.status(400).json({ error: 'É preciso aceitar os termos para se inscrever' });
+    }
+    // CPF obrigatório no form público (decisão do Marcos · 2026-07-17): o Next
+    // é a porta do funil com menos CPF (6 de 1.630 matrículas) e o CPF é a
+    // chave da identidade global — sem ele, a matrícula depende de sinal fraco
+    // e vira candidata a duplicata. O walk-in do check-in continua sem exigir
+    // (política "nunca travar o atendimento na hora").
+    if (!cpf || !cpfValido(cpf)) {
+      return res.status(400).json({ error: 'CPF obrigatório — confira os dígitos' });
     }
 
-    const cleanCpf = cpf ? soDigitos(cpf) : null;
+    const cleanCpf = soDigitos(cpf);
     const cleanEmail = String(email).toLowerCase().trim();
 
     // Membresia e fonte única: garante que existe mem_membros (cria se não
@@ -109,25 +162,39 @@ router.post('/inscrever', async (req, res) => {
         cpf: cleanCpf,
         email: cleanEmail,
         telefone,
-        nome: [nome, sobrenome].filter(Boolean).join(' '),
-        dataNascimento: data_nascimento || null,
+        nome: [cleanNome, cleanSobrenome].filter(Boolean).join(' '),
+        dataNascimento: cleanNascimento,
         status: 'visitante',
+        origem: 'next_formulario',
       });
       membroId = r.membro_id;
     } catch (e) {
       console.error('publicNext acharOuCriarGuardado:', e.message);
     }
 
+    // Opt-in de WhatsApp (só liga, nunca desliga um consentimento existente).
+    if (whatsapp_optin && membroId) {
+      try {
+        await supabase.from('mem_membros')
+          .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+          .eq('id', membroId).is('deleted_at', null);
+      } catch (e) {
+        console.warn('publicNext optin membro:', e.message);
+      }
+    }
+
     // Snapshot do status pre-NEXT (pra coletor saber 'estava nao-batizado').
     // As duas leituras são independentes → em paralelo (corta um round-trip).
+    // ja_voluntario: por CPF OU pelo próprio membro (antes só CPF — perdia
+    // quem tinha vol_profile ligado ao membro com CPF divergente/ausente).
+    const orVol = [`cpf.eq.${cleanCpf}`];
+    if (membroId) orVol.push(`membresia_id.eq.${membroId}`);
     const [snapBatizado, snapVol] = await Promise.all([
       membroId
         ? supabase.from('mem_membros').select('batizado').eq('id', membroId).maybeSingle()
         : Promise.resolve({ data: null }),
-      cleanCpf
-        ? supabase.from('vol_profiles').select('id', { count: 'exact', head: true })
-            .eq('cpf', cleanCpf).eq('allocation_status', 'active')
-        : Promise.resolve({ count: 0 }),
+      supabase.from('vol_profiles').select('id', { count: 'exact', head: true })
+        .or(orVol.join(',')).eq('allocation_status', 'active'),
     ]);
     jaBatizado = !!snapBatizado?.data?.batizado;
     if (snapVol?.count && snapVol.count > 0) jaVoluntario = true;
@@ -154,12 +221,15 @@ router.post('/inscrever', async (req, res) => {
       .from('next_matriculas')
       .insert({
         turma_id: turma?.id || null,
-        nome: nome.trim(), sobrenome: sobrenome ? sobrenome.trim() : null,
-        cpf: cleanCpf, telefone: telefone ? soDigitos(telefone) : null, email: cleanEmail,
-        data_nascimento: data_nascimento || null, membro_id: membroId, motivo: cleanMotivo,
+        nome: cleanNome, sobrenome: cleanSobrenome || null,
+        cpf: cleanCpf, telefone: telDigitos || null, email: cleanEmail,
+        data_nascimento: cleanNascimento, sexo: cleanSexo, endereco: cleanEndereco,
+        membro_id: membroId, motivo: cleanMotivo,
         observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
         ja_batizado: jaBatizado, ja_voluntario: jaVoluntario, ja_doador: jaDoador,
         origem: 'formulario',
+        whatsapp_optin: !!whatsapp_optin,
+        whatsapp_optin_em: whatsapp_optin ? new Date().toISOString() : null,
       })
       .select('id')
       .single();
@@ -169,13 +239,28 @@ router.post('/inscrever', async (req, res) => {
       if (matErr.code === '23505') return res.status(200).json({ ok: true, ja_inscrito: true });
       return res.status(500).json({ error: matErr.message });
     }
+    await registrarObservacaoSegura({
+      membroId, origem: 'next_formulario', origemId: mat.id,
+      nome: [cleanNome, cleanSobrenome].filter(Boolean).join(' '), cpf: cleanCpf,
+      telefone, email: cleanEmail, dataNascimento: cleanNascimento,
+    });
+
+    // Atos de consentimento na satélite (Contrato de Inscrição · best-effort).
+    registrarConsentimentos({
+      porta: 'next', refId: mat.id, membroId,
+      ip: req.ip || null, userAgent: (req.headers['user-agent'] || '').slice(0, 300) || null,
+      itens: [
+        { tipo: 'termos_lgpd', aceito: true },
+        { tipo: 'whatsapp', aceito: !!whatsapp_optin },
+      ],
+    }).catch((e) => console.error('[next] consentimentos:', e.message));
 
     // Notificação para responsáveis do NEXT
     try {
       await notificar({
         modulo: 'next',
         titulo: 'Nova inscrição no NEXT',
-        mensagem: `${nome} ${sobrenome || ''} (${cleanEmail}) se inscreveu para o NEXT.`,
+        mensagem: `${cleanNome} ${cleanSobrenome || ''} (${cleanEmail}) se inscreveu para o NEXT.`,
         link: '/ministerial/integracao?tab=next',
       });
     } catch (e) {
@@ -194,14 +279,6 @@ router.post('/inscrever', async (req, res) => {
 // Devocional é Fase 2b). Escreve na matrícula (mesmo motor do líder). Quando há
 // mais de uma turma aberta (2 por mês), o público cai na MAIS RECENTE (ver
 // turmaAbertaAtual) · o operador reorganiza quem vai em cada uma na aba Turmas.
-
-// Resolve a turma ABERTA do momento (a mais recente, se houver mais de uma).
-async function turmaAbertaAtual() {
-  const { data } = await supabase.from('next_turmas')
-    .select('id, nome').eq('status', 'aberta').is('deleted_at', null)
-    .order('created_at', { ascending: false }).limit(1).maybeSingle();
-  return data || null;
-}
 
 // GET /api/public/next/direcionar/:token — turma aberta + suas pessoas pra escolher o nome
 router.get('/direcionar/:token', async (req, res) => {
@@ -299,8 +376,8 @@ router.post('/checkin/:token/walkin', async (req, res) => {
     if (!verifyDirecionarToken(req.params.token)) return res.status(403).json({ error: 'Link inválido' });
     const { nome, sobrenome, cpf, telefone, email, data_nascimento } = req.body || {};
     if (!nome || String(nome).trim().length < 2) return res.status(400).json({ error: 'Informe o nome' });
-    if (cpf && !ehCpfValido(cpf)) return res.status(400).json({ error: 'CPF inválido' });
-    if (email && !ehEmailValido(email)) return res.status(400).json({ error: 'E-mail inválido' });
+    if (cpf && !cpfValido(cpf)) return res.status(400).json({ error: 'CPF inválido' });
+    if (email && !emailValido(email)) return res.status(400).json({ error: 'E-mail inválido' });
     const turma = await turmaAbertaAtual();
     if (!turma) return res.status(409).json({ error: 'Nenhuma turma aberta no momento' });
 
@@ -315,6 +392,7 @@ router.post('/checkin/:token/walkin', async (req, res) => {
       const r = await acharOuCriarGuardado({
         cpf: cleanCpf, email: cleanEmail, telefone: cleanTel,
         nome: nomeCompleto, dataNascimento: data_nascimento || null, status: 'visitante',
+        origem: 'next_checkin',
       });
       membroId = r?.membro_id || null;
     } catch (e) { console.error('[next walkin] acharOuCriarGuardado:', e.message); }
@@ -343,6 +421,11 @@ router.post('/checkin/:token/walkin', async (req, res) => {
       if (matErr.code === '23505') return res.json({ ok: true, ja_inscrito: true });
       return res.status(500).json({ error: matErr.message });
     }
+    await registrarObservacaoSegura({
+      membroId, origem: 'next_checkin', origemId: mat.id,
+      nome: nomeCompleto, cpf: cleanCpf, telefone: cleanTel,
+      email: cleanEmail, dataNascimento: data_nascimento || null,
+    });
     res.json({ ok: true, id: mat.id });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

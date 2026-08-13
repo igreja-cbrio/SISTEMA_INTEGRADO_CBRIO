@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Search, UserMinus, History, Loader2, Stethoscope, ChevronDown, ChevronRight } from 'lucide-react';
 import { useAllVolUsers, useAddVolRole, useRemoveVolRole, useSyncHistorical } from './hooks';
 import { toast } from 'sonner';
@@ -89,7 +90,7 @@ export default function VolAdmin() {
   return (
     <div className="space-y-6">
       <WhatsappAutoConfig api={voluntariado.whatsappAuto} />
-      <h1 className="text-2xl font-bold text-foreground">Administracao</h1>
+      <h1 className="text-2xl font-bold text-foreground">Administração</h1>
 
       {/* Opções do formulário público */}
       <FormOpcoesManager />
@@ -103,12 +104,12 @@ export default function VolAdmin() {
           <p className="text-sm text-muted-foreground">Verifica o que o Planning Center tem configurado (tipos de serviço, equipes e membros).</p>
           <Button variant="outline" onClick={handleDiagnostics} disabled={diagLoading}>
             {diagLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Stethoscope className="h-4 w-4 mr-2" />}
-            Rodar Diagnostico
+            Rodar Diagnóstico
           </Button>
 
           {diagData && (
             <div className="mt-3 space-y-2 text-sm">
-              <p className="font-medium">{diagData.serviceTypeCount} tipo(s) de servico encontrado(s) no Planning Center</p>
+              <p className="font-medium">{diagData.serviceTypeCount} tipo(s) de serviço encontrado(s) no Planning Center</p>
               {diagData.serviceTypeCount === 0 && (
                 <p className="text-destructive">Nenhum tipo de serviço encontrado. Verifique as credenciais ou configure serviços no Planning Center.</p>
               )}
@@ -154,12 +155,12 @@ export default function VolAdmin() {
 
       {/* Historical Sync */}
       <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><History className="h-5 w-5" /> Sincronizacao Histórica</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="flex items-center gap-2"><History className="h-5 w-5" /> Sincronização Histórica</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">Sincronize cultos e escalas de um período especifico do Planning Center.</p>
+          <p className="text-sm text-muted-foreground">Sincronize cultos e escalas de um período específico do Planning Center.</p>
           <div className="flex gap-2 flex-wrap">
-            <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-auto" />
-            <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-auto" />
+            <DatePicker value={startDate} onChange={setStartDate} className="w-auto" />
+            <DatePicker value={endDate} onChange={setEndDate} className="w-auto" />
             <Button onClick={handleHistoricalSync} disabled={syncHistorical.isPending}>
               {syncHistorical.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <History className="h-4 w-4 mr-2" />}
               Sincronizar
@@ -186,7 +187,7 @@ export default function VolAdmin() {
         <CardContent className="space-y-4">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Buscar usuario..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
+            <Input placeholder="Buscar usuário..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
           </div>
 
           <div className="space-y-3 max-h-[500px] overflow-y-auto">

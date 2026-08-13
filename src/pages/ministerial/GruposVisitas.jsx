@@ -20,6 +20,7 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { toast } from 'sonner';
@@ -150,7 +151,7 @@ export function AgendarVisitaModal({ open, onClose, grupo, gruposOptions = [], m
 
           <div>
             <Label style={{ fontSize: 12 }}>Data da visita *</Label>
-            <Input type="date" value={data} onChange={e => setData(e.target.value)} />
+            <DatePicker value={data} onChange={setData} />
           </div>
 
           <div>
@@ -226,7 +227,7 @@ function ConcluirVisitaModal({ visita, onClose, onSaved }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>
             <Label style={{ fontSize: 12 }}>Data em que a visita aconteceu</Label>
-            <Input type="date" value={data} onChange={e => setData(e.target.value)} />
+            <DatePicker value={data} onChange={setData} />
           </div>
           <div>
             <Label style={{ fontSize: 12 }}>Como foi a visita? (opcional)</Label>

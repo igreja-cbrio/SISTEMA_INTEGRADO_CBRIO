@@ -13,6 +13,7 @@ import EmptyState from '../components/EmptyState';
 import CalendarioCultos from '../components/CalendarioCultos';
 import { formatErro } from '../lib/formatErro';
 import useConfirmarSaida from '../hooks/useConfirmarSaida';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -158,7 +159,7 @@ export default function DadosBrutos({ embedded = false }) {
     try {
       if (d.validado_em) {
         await dadosApi.desvalidar(d.id);
-        toast.success('Validacao removida');
+        toast.success('Validação removida');
       } else {
         await dadosApi.validar(d.id);
         toast.success('Validado');
@@ -216,13 +217,13 @@ export default function DadosBrutos({ embedded = false }) {
             Dados Brutos
           </h1>
           <p style={{ fontSize: 12, color: C.t3, marginTop: 6 }}>
-            Numeros absolutos da igreja (frequencia, conversoes, batismos, doacoes...).
+            Números absolutos da igreja (frequência, conversões, batismos, doações...).
             {isAdmin && ' Você edita qualquer dado (admin).'}
             {!isAdmin && areasEditaveis.length > 0 && (
-              <> Você e <strong>líder de área</strong> ({areasEditaveis.map(a => a.nome).join(', ')}) — edita/valida dados da sua area.</>
+              <> Você é <strong>líder de área</strong> ({areasEditaveis.map(a => a.nome).join(', ')}) — edita/valida dados da sua área.</>
             )}
             {!isAdmin && ministerioId && (
-              <> Você e <strong>{ministerioPapel} de {ministerioId}</strong> — preenche dados do seu ministerio em todas as areas.</>
+              <> Você é <strong>{ministerioPapel} de {ministerioId}</strong> — preenche dados do seu ministério em todas as áreas.</>
             )}
             {!isAdmin && !areasEditaveis.length && !ministerioId && ' Modo leitura.'}
           </p>
@@ -314,7 +315,7 @@ export default function DadosBrutos({ embedded = false }) {
           <Filter size={11} /> Filtros
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-          <Field label="Area">
+          <Field label="Área">
             <select value={filtroArea} onChange={e => setFiltroArea(e.target.value)} style={inp}>
               <option value="">Todas</option>
               {areasDisponiveis.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
@@ -327,7 +328,7 @@ export default function DadosBrutos({ embedded = false }) {
             </select>
           </Field>
           <Field label="Desde">
-            <input type="date" value={filtroDesde} onChange={e => setFiltroDesde(e.target.value)} style={inp} />
+            <DatePicker value={filtroDesde} onChange={setFiltroDesde} style={inp} />
           </Field>
         </div>
       </section>
@@ -343,7 +344,7 @@ export default function DadosBrutos({ embedded = false }) {
           mensagem={
             filtroArea || filtroTipo
               ? 'Tente ajustar os filtros acima ou expandir o período.'
-              : 'Comece registrando o primeiro dado bruto · frequência de culto, conversoes, doacoes etc.'
+              : 'Comece registrando o primeiro dado bruto · frequência de culto, conversões, doações etc.'
           }
           cta={podeRegistrar ? { label: '+ Registrar dado', onClick: () => setEditando({}) } : null}
         />
@@ -393,7 +394,7 @@ export default function DadosBrutos({ embedded = false }) {
                       )}
                       {canValidate(d.area) && d.origem !== 'auto' && (
                         <button onClick={() => validar(d)}
-                          title={d.validado_em ? 'Desfazer validacao' : 'Validar (OK final do ciclo)'}
+                          title={d.validado_em ? 'Desfazer validação' : 'Validar (OK final do ciclo)'}
                           style={{ ...btnIcon, color: d.validado_em ? '#10B981' : '#9CA3AF' }}>
                           <CheckCircle2 size={12} />
                         </button>
@@ -529,10 +530,10 @@ function ModalRegistrar({ dado, tipos, ministerioId, isAdmin, areasOficiais, are
   const tipoSelecionado = tipos.find(t => t.id === form.tipo_id);
 
   const submit = async () => {
-    if (!form.tipo_id) return toast.error('Tipo obrigatorio');
-    if (!form.area)    return toast.error('Area obrigatoria');
-    if (!form.data)    return toast.error('Data obrigatoria');
-    if (form.valor === '' || isNaN(Number(form.valor))) return toast.error('Valor invalido');
+    if (!form.tipo_id) return toast.error('Tipo obrigatório');
+    if (!form.area)    return toast.error('Área obrigatória');
+    if (!form.data)    return toast.error('Data obrigatória');
+    if (form.valor === '' || isNaN(Number(form.valor))) return toast.error('Valor inválido');
 
     setSaving(true);
     try {
@@ -591,14 +592,14 @@ function ModalRegistrar({ dado, tipos, ministerioId, isAdmin, areasOficiais, are
           )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <Field label="Area *">
+            <Field label="Área *">
               <select value={form.area} onChange={e => set('area', e.target.value)} style={inp} disabled={!isNovo}>
                 <option value="">— Escolher —</option>
                 {areasDisponiveis.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}
               </select>
             </Field>
             <Field label="Data *">
-              <input type="date" value={form.data} onChange={e => set('data', e.target.value)} style={inp} disabled={!isNovo} />
+              <DatePicker value={form.data} onChange={v => set('data', v)} style={inp} disabled={!isNovo} />
             </Field>
           </div>
 
@@ -612,7 +613,7 @@ function ModalRegistrar({ dado, tipos, ministerioId, isAdmin, areasOficiais, are
 
           {!isNovo && (
             <p style={{ fontSize: 10, color: C.t3, fontStyle: 'italic' }}>
-              Tipo, area e data sao a chave do registro — nao podem ser editados. Pra mudar, remova e crie novo.
+              Tipo, área e data são a chave do registro — não podem ser editados. Pra mudar, remova e crie novo.
             </p>
           )}
         </div>

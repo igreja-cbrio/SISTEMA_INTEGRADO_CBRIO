@@ -155,8 +155,6 @@ export function EtiquetaTesteForm() {
   const [criancaNome, setCriancaNome] = useState('Maria Clara Teste');
   const [salaNome, setSalaNome] = useState('Infantil 1');
   const [salaCor, setSalaCor] = useState('#EC4899');
-  const [salaLogoUrl, setSalaLogoUrl] = useState<string | null>(null);
-  const [salas, setSalas] = useState<any[]>([]);
   const [idadeLabel, setIdadeLabel] = useState('4 anos');
   const [obsMedica, setObsMedica] = useState('Alergia a amendoim');
   const [responsavelNome, setResponsavelNome] = useState('Cláudia Teste');
@@ -164,10 +162,11 @@ export function EtiquetaTesteForm() {
   const [codigoSeguranca, setCodigoSeguranca] = useState('F8K3');
   const [processando, setProcessando] = useState(false);
   const [fotoOk, setFotoOk] = useState(true);
+  const [pagerTeste, setPagerTeste] = useState('');
 
   // Layout da etiqueta (config persistida · snake do backend)
-  const [cfg, setCfg] = useState<{ logo_tamanho: string; logo_posicao: string; nome_tamanho: string; logo_aniversario_url?: string | null }>(
-    { logo_tamanho: 'M', logo_posicao: 'esquerda', nome_tamanho: 'auto', logo_aniversario_url: null }
+  const [cfg, setCfg] = useState<{ nome_tamanho: string; fonte: string; escala_fonte: string; logo_aniversario_url?: string | null }>(
+    { nome_tamanho: 'auto', fonte: 'sans', escala_fonte: 'M', logo_aniversario_url: null }
   );
   const [salvandoLayout, setSalvandoLayout] = useState(false);
   const [enviandoLogoAniv, setEnviandoLogoAniv] = useState(false);
@@ -203,13 +202,11 @@ export function EtiquetaTesteForm() {
   }
 
   const layout: EtiquetaLayout = {
-    logoTamanho: cfg.logo_tamanho as EtiquetaLayout['logoTamanho'],
-    logoPosicao: cfg.logo_posicao as EtiquetaLayout['logoPosicao'],
+    fonte: cfg.fonte as EtiquetaLayout['fonte'],
+    escalaFonte: cfg.escala_fonte as EtiquetaLayout['escalaFonte'],
     nomeTamanho: cfg.nome_tamanho as EtiquetaLayout['nomeTamanho'],
   };
 
-  // Carrega as salas pra prévia por categoria (com a logo configurada) + o layout
-  useEffect(() => { totemKids.salas.list().then(setSalas).catch(() => {}); }, []);
   useEffect(() => { totemKids.etiquetaConfig.get().then((c) => c && setCfg(c)).catch(() => {}); }, []);
 
   async function salvarLayout() {
@@ -228,23 +225,16 @@ export function EtiquetaTesteForm() {
   const dadosPreview = {
     checkinId: 'preview-only',
     crianca: {
-      nome: criancaNome, idadeLabel, idadeAnos: 6, salaNome, salaCor, salaLogoUrl,
+      nome: criancaNome, idadeLabel, idadeAnos: 6, salaNome, salaCor,
       observacoesMedicas: obsMedica || null, alergia: obsMedica || null,
       fotoAutorizada: fotoOk, aniversarioSemana: false,
     },
     responsavel: { nome: responsavelNome },
     codigoSeguranca, codigoBarras: codigoSeguranca,
     dataHora: '', cultoNome, cultoDiaHora: cultoNome, layout,
+    pagerNumero: pagerTeste || undefined,
     logoAniversarioUrl: cfg.logo_aniversario_url || null,
   };
-
-  function escolherSala(salaId: string) {
-    const s = salas.find(x => x.id === salaId);
-    if (!s) { setSalaLogoUrl(null); return; }
-    setSalaNome(s.nome);
-    if (s.cor) setSalaCor(s.cor);
-    setSalaLogoUrl(s.logo_url || null);
-  }
 
   function gerarCodigo() {
     const alfa = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -263,7 +253,6 @@ export function EtiquetaTesteForm() {
           idadeLabel,
           salaNome,
           salaCor,
-          salaLogoUrl,
           observacoesMedicas: obsMedica || null,
           alergia: obsMedica || 'Amendoim',
           fotoAutorizada: fotoOk,
@@ -276,6 +265,7 @@ export function EtiquetaTesteForm() {
         cultoNome,
         cultoDiaHora: cultoNome,
         layout,
+        pagerNumero: pagerTeste || undefined,
       }, preview);
 
       if (preview) {
@@ -310,26 +300,6 @@ export function EtiquetaTesteForm() {
               <Input value={salaNome} onChange={e => setSalaNome(e.target.value)} />
             </div>
             <div className="col-span-2">
-              <label className="text-xs text-muted-foreground block mb-1">Categoria pra prévia (usa a logo configurada da sala)</label>
-              <div className="flex gap-2 items-center">
-                <select
-                  className="flex-1 rounded-md border border-border bg-background px-2 py-2 text-sm"
-                  onChange={e => escolherSala(e.target.value)}
-                  defaultValue=""
-                >
-                  <option value="">— escolher sala pra prévia —</option>
-                  {salas.map(s => (
-                    <option key={s.id} value={s.id}>{s.nome}{s.logo_url ? ' (com logo)' : ' (sem logo)'}</option>
-                  ))}
-                </select>
-                <div className="h-9 w-14 rounded border bg-white flex items-center justify-center overflow-hidden shrink-0">
-                  {salaLogoUrl
-                    ? <img src={salaLogoUrl} alt="" className="max-h-full max-w-full object-contain" />
-                    : <ImageIcon className="h-4 w-4 text-muted-foreground" />}
-                </div>
-              </div>
-            </div>
-            <div>
               <label className="text-xs text-muted-foreground block mb-1">Cor da sala (hex)</label>
               <div className="flex gap-2 items-center">
                 <Input value={salaCor} onChange={e => setSalaCor(e.target.value)} />
@@ -359,6 +329,11 @@ export function EtiquetaTesteForm() {
               <input id="fotoOk" type="checkbox" checked={fotoOk} onChange={e => setFotoOk(e.target.checked)} />
               <label htmlFor="fotoOk" className="text-xs text-muted-foreground">Foto autorizada (desmarque pra ver o ícone de câmera cortada)</label>
             </div>
+            <div className="col-span-2 flex items-center gap-2">
+              <label htmlFor="pagerTeste" className="text-xs text-muted-foreground shrink-0">Nº do pager (só pra ver o "Pager X" na etiqueta)</label>
+              <Input id="pagerTeste" value={pagerTeste} inputMode="numeric" placeholder="ex.: 12"
+                onChange={e => setPagerTeste(e.target.value.replace(/\D/g, '').slice(0, 4))} className="h-8 w-24" />
+            </div>
           </div>
 
           {/* Prévia ao vivo da etiqueta da criança (reflete logo + layout) */}
@@ -373,7 +348,7 @@ export function EtiquetaTesteForm() {
                 />
               </div>
             </div>
-            <p className="text-[11px] text-muted-foreground">Tamanho real 90×29mm (ampliado 1,5× aqui). Escolha uma categoria acima pra ver a logo.</p>
+            <p className="text-[11px] text-muted-foreground">Tamanho real 90×29mm (ampliado 1,5× aqui). Muda ao vivo conforme a fonte/tamanho abaixo.</p>
           </div>
 
           {/* Etiqueta de aniversário · logo do Kids + prévia */}
@@ -416,21 +391,24 @@ export function EtiquetaTesteForm() {
             <div className="text-sm font-semibold text-pink-700 dark:text-pink-300">Layout da etiqueta</div>
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className="text-xs text-muted-foreground block mb-1">Tamanho da logo</label>
+                <label className="text-xs text-muted-foreground block mb-1">Fonte</label>
                 <select className="w-full rounded-md border border-border bg-background px-2 py-2 text-sm"
-                  value={cfg.logo_tamanho} onChange={e => setCfg({ ...cfg, logo_tamanho: e.target.value })}>
-                  <option value="P">Pequena</option>
-                  <option value="M">Média</option>
-                  <option value="G">Grande</option>
+                  value={cfg.fonte} onChange={e => setCfg({ ...cfg, fonte: e.target.value })}>
+                  <option value="sans">Padrão (sem serifa)</option>
+                  <option value="condensada">Condensada (nomes longos)</option>
+                  <option value="arredondada">Arredondada</option>
+                  <option value="serif">Com serifa</option>
+                  <option value="mono">Monoespaçada</option>
                 </select>
               </div>
               <div>
-                <label className="text-xs text-muted-foreground block mb-1">Posição da logo</label>
+                <label className="text-xs text-muted-foreground block mb-1">Tamanho da fonte</label>
                 <select className="w-full rounded-md border border-border bg-background px-2 py-2 text-sm"
-                  value={cfg.logo_posicao} onChange={e => setCfg({ ...cfg, logo_posicao: e.target.value })}>
-                  <option value="esquerda">À esquerda do nome</option>
-                  <option value="direita">À direita do nome</option>
-                  <option value="acima">Acima do nome</option>
+                  value={cfg.escala_fonte} onChange={e => setCfg({ ...cfg, escala_fonte: e.target.value })}>
+                  <option value="P">Pequena</option>
+                  <option value="M">Média</option>
+                  <option value="G">Grande</option>
+                  <option value="GG">Muito grande</option>
                 </select>
               </div>
               <div>

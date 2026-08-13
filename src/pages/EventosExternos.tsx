@@ -6,6 +6,7 @@ import { eventosExternos as api } from '../api';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import {
@@ -63,6 +64,13 @@ export default function EventosExternos() {
           <p className="text-sm text-muted-foreground">Confirmação de presença + sorteio · calendário dos eventos.</p>
         </div>
         <Button onClick={() => setNovoOpen(true)}><Plus className="h-4 w-4 mr-1" /> Novo evento</Button>
+      </div>
+
+      {/* Transição pro módulo central (F3.2 · SPEC-04): eventos novos nascem lá;
+          este módulo segue cuidando dos já criados até a migração dos dados. */}
+      <div className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
+        <span>🧭 <b className="text-foreground">Eventos novos agora nascem no módulo Inscrições</b> — mesmo link público, com séries/edições e área. Este módulo segue cuidando dos eventos já criados até a migração (sem perder nada).</span>
+        <a href="/inscricoes" className="text-primary font-semibold hover:underline">Abrir Inscrições →</a>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -126,14 +134,17 @@ export default function EventosExternos() {
   );
 }
 
-const slugCampo = (s: string) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 30) || `campo_${Date.now() % 1000}`;
+// key OPACA e ESTÁVEL, gerada 1x na criação do campo e NUNCA regerada — antes
+// a key era re-derivada do label a cada edição, o que ORFANAVA as respostas já
+// gravadas em `dados` (bug do Contrato de Inscrição · docs/modulo-inscricoes/).
+const novaKeyCampo = () => `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
 function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any[]) => void }) {
-  function add() { setCampos([...campos, { key: slugCampo(`campo ${campos.length + 1}`), label: '', tipo: 'texto', obrigatorio: true, opcoes: [] }]); }
-  function upd(i: number, patch: any) { const c = [...campos]; c[i] = { ...c[i], ...patch }; if (patch.label) c[i].key = slugCampo(patch.label); setCampos(c); }
+  function add() { setCampos([...campos, { key: novaKeyCampo(), label: '', tipo: 'texto', obrigatorio: true, opcoes: [] }]); }
+  function upd(i: number, patch: any) { const c = [...campos]; c[i] = { ...c[i], ...patch }; setCampos(c); }
   return (
     <div className="space-y-2">
-      <div className="text-xs font-medium text-muted-foreground">Campos do formulário <span className="font-normal">(além de Nome e WhatsApp, que são fixos)</span></div>
+      <div className="text-xs font-medium text-muted-foreground">Campos extras do formulário <span className="font-normal">(além dos padrão, que são fixos: Nome completo, WhatsApp, CPF, E-mail, Nascimento, Sexo e Endereço)</span></div>
       {campos.map((c, i) => (
         <div key={i} className="rounded-lg border border-border p-2 space-y-2">
           <div className="flex gap-2">
@@ -234,7 +245,7 @@ export function EventoFormModal({ evento, onClose, onSaved }: { evento?: any; on
           </div>
           <Input placeholder="Nome do evento (ex.: Celebra)" value={f.nome} onChange={e => setF({ ...f, nome: e.target.value })} />
           <div className="grid grid-cols-2 gap-2">
-            <Input type="date" value={f.data || ''} onChange={e => setF({ ...f, data: e.target.value })} />
+            <DatePicker value={f.data || ''} onChange={v => setF({ ...f, data: v })} />
             <Input placeholder="Horário (ex.: 8h30)" value={f.hora} onChange={e => setF({ ...f, hora: e.target.value })} />
           </div>
           <div>

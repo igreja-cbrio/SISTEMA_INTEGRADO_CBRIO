@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { next as nextApi } from '../../api';
+import { hrefConversa } from '@/lib/conversas';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { Badge } from '../../components/ui/badge';
@@ -9,24 +12,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import {
   Loader2, Plus, Users, GraduationCap, CalendarDays, Search,
   CheckCircle2, AlertTriangle, X, UserPlus, UserCheck, Sparkles, RotateCcw,
-  Share2, Copy, MessageCircle,
+  Share2, Copy, MessageCircle, Monitor, ArrowRightLeft, Trash2, Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
+import TotemNext from './next/TotemNext';
 
 const C = { primary: '#00B39D', warn: '#f59e0b', danger: '#ef4444', info: '#3b82f6', gray: '#737373' };
 
 const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 function nomeMesAtual() { const d = new Date(); return `${MESES_PT[d.getMonth()]} ${d.getFullYear()}`; }
 
-// wa.me da pessoa (normaliza pra 55 + DDD + número). Mensagem pré-preenchida
-// (editável no WhatsApp antes de enviar) com a turma e as datas dos encontros.
-function waHref(telefone?: string | null, msg?: string) {
-  const num = String(telefone || '').replace(/\D/g, '');
-  if (!num) return null;
-  const full = num.length <= 11 ? `55${num}` : num;
-  return `https://wa.me/${full}${msg ? `?text=${encodeURIComponent(msg)}` : ''}`;
-}
+// Mensagem pré-preenchida (editável antes de enviar) com a turma e as datas
+// dos encontros. Abre o inbox interno (/conversas) já com o texto.
 function msgTurma(nome: string, turmaNome: string, encontros?: { data?: string | null }[]) {
   const datas = (encontros || []).map(e => e.data).filter(Boolean)
     .map(d => { const [, m, day] = String(d).split('-'); return `${day}/${m}`; });
@@ -42,6 +40,7 @@ type Matricula = {
   id: string; turma_id?: string | null; nome: string; sobrenome?: string | null;
   cpf?: string | null; telefone?: string | null; email?: string | null; status: Status;
   indicou_grupo?: boolean; indicou_servir?: boolean; indicou_batismo?: boolean; indicou_devocional?: boolean;
+  created_at?: string | null; contato_em?: string | null; contato_por?: string | null;
 };
 type Presenca = { encontro_id: string; matricula_id: string; presente: boolean };
 type Turma = {
@@ -72,10 +71,24 @@ function ymdLocal(d?: string | null): string {
   return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
 }
 
+// Data + hora da inscrição (created_at da matrícula é um timestamptz ISO).
+function dataHora(iso?: string | null): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('pt-BR', {
+    day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
+// "Novo" = entrou nos últimos 3 dias (destaca quem acabou de se inscrever).
+function ehNovo(iso?: string | null): boolean {
+  if (!iso) return false;
+  return Date.now() - new Date(iso).getTime() < 3 * 24 * 60 * 60 * 1000;
+}
+
 export default function NextTurmas() {
   const [view, setView] = useState<'turmas' | 'pessoas'>('turmas');
   const [shareOpen, setShareOpen] = useState(false);
   const [qrDirecOpen, setQrDirecOpen] = useState(false);
+  const [totemOpen, setTotemOpen] = useState(false);
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -91,6 +104,9 @@ export default function NextTurmas() {
           ))}
         </div>
         <div className="flex gap-2 flex-wrap">
+          <Button size="sm" onClick={() => setTotemOpen(true)} className="gap-2" style={{ background: C.primary, color: '#fff' }}>
+            <Monitor className="h-4 w-4" /> Totem
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setQrDirecOpen(true)} className="gap-2">
             <Share2 className="h-4 w-4" /> QR de direcionamento
           </Button>
@@ -102,6 +118,7 @@ export default function NextTurmas() {
       {view === 'turmas' ? <TurmasView /> : <PessoasView />}
       {shareOpen && <ModalCompartilhar onClose={() => setShareOpen(false)} />}
       {qrDirecOpen && <QrDirecionarModal onClose={() => setQrDirecOpen(false)} />}
+      {totemOpen && <TotemNext onClose={() => setTotemOpen(false)} />}
     </div>
   );
 }
@@ -251,8 +268,8 @@ function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated
             <p className="text-[11px] text-muted-foreground mt-1">Pode ter mais de uma turma aberta (ex.: 2 por mês — 1º/2º domingo e 3º/4º domingo). A lista de espera entra automaticamente só quando esta for a única turma aberta; com mais de uma, você organiza quem vai em cada uma.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><Label>1º encontro</Label><Input type="date" value={data1} onChange={e => setData1(e.target.value)} /></div>
-            <div><Label>2º encontro</Label><Input type="date" value={data2} onChange={e => setData2(e.target.value)} /></div>
+            <div><Label>1º encontro</Label><DatePicker value={data1} onChange={setData1} /></div>
+            <div><Label>2º encontro</Label><DatePicker value={data2} onChange={setData2} /></div>
           </div>
         </div>
         <DialogFooter>
@@ -264,10 +281,31 @@ function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated
   );
 }
 
+// Card de resumo amigável (usado na contabilização da turma).
+function StatCard({ label, value, sub, color, icon: Icon }: { label: string; value: number; sub?: string; color: string; icon?: any }) {
+  return (
+    <div className="rounded-xl border border-border p-3 flex flex-col gap-0.5" style={{ background: color + '0f' }}>
+      <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+        {Icon && <Icon className="h-3.5 w-3.5" style={{ color }} />}
+        <span className="truncate">{label}</span>
+      </div>
+      <div className="text-2xl font-bold leading-none" style={{ color }}>{value}</div>
+      {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
+    </div>
+  );
+}
+
 function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; onClose: () => void; onChanged: () => void }) {
   const [det, setDet] = useState<TurmaDetalhe | null>(null);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
+  const [qrSatisfacaoOpen, setQrSatisfacaoOpen] = useState(false);
+  const [transferir, setTransferir] = useState<Matricula | null>(null);
+  const [ordem, setOrdem] = useState<'nome' | 'recentes'>('nome');
+  // Renomear turma (lápis no título) · o backend já aceita `nome` no PATCH /turmas/:id.
+  const [editandoNome, setEditandoNome] = useState(false);
+  const [nomeEdit, setNomeEdit] = useState('');
+  const [salvandoNome, setSalvandoNome] = useState(false);
   const load = useCallback(async () => {
     setLoading(true);
     try { setDet(await nextApi.turmas.get(turmaId)); } catch (e: any) { toast.error(e?.message || 'Erro'); }
@@ -288,6 +326,29 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
     try { await nextApi.encontros.setPresencas(encontro.id, [...set]); await load(); onChanged(); }
     catch (e: any) { toast.error(e?.message || 'Erro ao marcar presença'); }
   };
+  const toggleContato = async (m: Matricula) => {
+    const feito = !m.contato_em;
+    // Atualização otimista (sem recarregar a lista toda · o toggle é frequente).
+    setDet(d => d ? { ...d, matriculas: d.matriculas.map(x => x.id === m.id
+      ? { ...x, contato_em: feito ? new Date().toISOString() : null } : x) } : d);
+    try { await nextApi.matriculas.setContato(m.id, feito); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao marcar contato'); load(); }
+  };
+  const removerMatricula = async (m: Matricula) => {
+    const nome = `${m.nome}${m.sobrenome ? ' ' + m.sobrenome : ''}`;
+    if (!confirm(`Remover ${nome} desta turma? A pessoa sai da lista (dá pra reinscrever depois).`)) return;
+    try {
+      await nextApi.matriculas.remove(m.id);
+      setDet(d => d ? { ...d, matriculas: d.matriculas.filter(x => x.id !== m.id) } : d);
+      toast.success('Pessoa removida da turma.');
+      onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao remover'); }
+  };
+  // Ordenação da lista: por nome (padrão) ou por quem entrou por último (created_at desc).
+  const matriculasOrdenadas = [...(det?.matriculas || [])].sort((a, b) => {
+    if (ordem === 'recentes') return (b.created_at || '').localeCompare(a.created_at || '');
+    return `${a.nome} ${a.sobrenome || ''}`.localeCompare(`${b.nome} ${b.sobrenome || ''}`, 'pt-BR');
+  });
   const encerrar = async () => {
     try { await nextApi.turmas.update(turmaId, { status: 'encerrada' }); toast.success('Turma encerrada'); await load(); onChanged(); }
     catch (e: any) { toast.error(e?.message || 'Erro'); }
@@ -295,6 +356,20 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
   const reabrir = async () => {
     try { await nextApi.turmas.update(turmaId, { status: 'aberta' }); toast.success('Turma reaberta'); await load(); onChanged(); }
     catch (e: any) { toast.error(e?.message || 'Erro'); }
+  };
+  const salvarNome = async () => {
+    const nome = nomeEdit.trim();
+    if (!nome) { toast.error('Informe o nome da turma.'); return; }
+    if (nome === det?.nome) { setEditandoNome(false); return; }
+    setSalvandoNome(true);
+    try {
+      await nextApi.turmas.update(turmaId, { nome });
+      setDet(d => d ? { ...d, nome } : d);
+      setEditandoNome(false);
+      toast.success('Nome da turma atualizado.');
+      onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao renomear a turma'); }
+    setSalvandoNome(false);
   };
   const setData = async (encId: string, data: string) => {
     try { await nextApi.encontros.update(encId, { data: data || null }); await load(); } catch (e: any) { toast.error(e?.message); }
@@ -309,18 +384,90 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
           <>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 flex-wrap">
-                {det.nome}
-                {det.status !== 'aberta' && <Badge variant="outline" className="text-[9px] uppercase">{det.status}</Badge>}
+                {editandoNome ? (
+                  <>
+                    <Input
+                      value={nomeEdit}
+                      onChange={e => setNomeEdit(e.target.value)}
+                      autoFocus
+                      disabled={salvandoNome}
+                      placeholder="Nome da turma"
+                      className="h-8 w-[220px] text-sm"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { e.preventDefault(); salvarNome(); }
+                        if (e.key === 'Escape') { e.preventDefault(); setEditandoNome(false); }
+                      }}
+                    />
+                    <Button size="sm" className="h-8" onClick={salvarNome} disabled={salvandoNome}
+                      style={{ background: C.primary, color: '#fff' }}>
+                      {salvandoNome ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Salvar'}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditandoNome(false)} disabled={salvandoNome}>
+                      Cancelar
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {det.nome}
+                    <button
+                      type="button"
+                      onClick={() => { setNomeEdit(det.nome); setEditandoNome(true); }}
+                      title="Renomear turma"
+                      aria-label="Renomear turma"
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    {det.status !== 'aberta' && <Badge variant="outline" className="text-[9px] uppercase">{det.status}</Badge>}
+                  </>
+                )}
               </DialogTitle>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto min-h-0">
+            {/* Cards de contabilização · inscritos, presença por semana e únicos (veio ≥1x).
+                O % é sempre sobre o total de inscritos (comparecimento). */}
+            {(() => {
+              const insc = det.matriculas.length;
+              const pct = (n: number) => insc > 0 ? Math.round((n / insc) * 100) : 0;
+              const unicos = det.matriculas.filter(m => presCount(m.id) >= 1).length;
+              const formados = det.matriculas.filter(m => m.status === 'formado').length;
+              return (
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+                  <StatCard label="Inscritos" value={insc} color={C.info} icon={Users} />
+                  {[...det.encontros].sort((a, b) => (a.numero || 0) - (b.numero || 0)).map(e => {
+                    const n = present[e.id]?.size || 0;
+                    return (
+                      <StatCard key={e.id} label={`Semana ${e.numero}`}
+                        sub={`${e.data ? ymdLocal(e.data) : 'sem data'} · ${pct(n)}% dos inscritos`}
+                        value={n} color={C.primary} icon={CalendarDays} />
+                    );
+                  })}
+                  <StatCard label="Vieram ao menos 1x" value={unicos} sub={`${pct(unicos)}% dos inscritos`}
+                    color={C.warn} icon={CheckCircle2} />
+                  <StatCard label="Formados" value={formados} sub={`${pct(formados)}% dos inscritos · presentes nos 2 encontros`}
+                    color={C.primary} icon={GraduationCap} />
+                </div>
+              );
+            })()}
             <div className="flex flex-wrap gap-3">
               {det.encontros.map(e => (
                 <div key={e.id} className="rounded-lg border border-border p-2.5 flex items-center gap-2">
                   <span className="text-xs font-medium text-muted-foreground">Encontro {e.numero}</span>
-                  <Input type="date" value={e.data || ''} onChange={ev => setData(e.id, ev.target.value)} className="h-8 w-[150px]" />
+                  <DatePicker value={e.data || ''} onChange={v => setData(e.id, v)} className="h-8 w-[150px]" />
                 </div>
               ))}
+            </div>
+            <div className="flex items-center gap-2 text-xs mt-1">
+              <span className="text-muted-foreground">Ordenar:</span>
+              <button onClick={() => setOrdem('nome')}
+                className={ordem === 'nome' ? 'font-semibold text-foreground' : 'text-muted-foreground hover:text-foreground'}>
+                Nome
+              </button>
+              <span className="text-muted-foreground">·</span>
+              <button onClick={() => setOrdem('recentes')}
+                className={ordem === 'recentes' ? 'font-semibold text-foreground' : 'text-muted-foreground hover:text-foreground'}>
+                Entraram por último
+              </button>
             </div>
             <div className="rounded-xl border border-border overflow-x-auto">
               <table className="w-full text-sm">
@@ -333,30 +480,36 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                       </th>
                     ))}
                     <th className="text-center p-2 font-medium">Status</th>
+                    <th className="text-center p-2 font-medium whitespace-nowrap">Contato</th>
+                    <th className="text-center p-2 font-medium"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {det.matriculas.length === 0 ? (
-                    <tr><td colSpan={2 + totalEnc} className="p-4 text-center text-muted-foreground text-xs">Ninguém matriculado ainda.</td></tr>
-                  ) : det.matriculas.map(m => {
+                  {matriculasOrdenadas.length === 0 ? (
+                    <tr><td colSpan={4 + totalEnc} className="p-4 text-center text-muted-foreground text-xs">Ninguém matriculado ainda.</td></tr>
+                  ) : matriculasOrdenadas.map(m => {
                     const n = presCount(m.id);
                     const incompletoFim = totalEnc > 0 && n < totalEnc && det.status === 'encerrada';
                     return (
                       <tr key={m.id} className="border-b border-border last:border-0">
                         <td className="p-2">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className={incompletoFim ? 'text-amber-600' : ''}>{m.nome} {m.sobrenome || ''}</span>
-                            {(() => {
-                              const wa = waHref(m.telefone, msgTurma(`${m.nome}${m.sobrenome ? ' ' + m.sobrenome : ''}`, det.nome, det.encontros));
-                              return wa ? (
-                                <a href={wa} target="_blank" rel="noreferrer" title="Avisar no WhatsApp (dia dos encontros)"
-                                  className="inline-flex items-center gap-1 text-[11px] text-emerald-600 hover:underline shrink-0">
-                                  <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
-                                </a>
-                              ) : null;
-                            })()}
+                            {ehNovo(m.created_at) && (
+                              <Badge className="text-[9px] px-1.5 py-0 h-4" style={{ background: C.primary, color: '#fff' }}>Novo</Badge>
+                            )}
+                            {m.telefone ? (
+                              <Link to={hrefConversa(m.telefone, msgTurma(`${m.nome}${m.sobrenome ? ' ' + m.sobrenome : ''}`, det.nome, det.encontros))}
+                                title="Avisar no WhatsApp (dia dos encontros)"
+                                className="inline-flex items-center gap-1 text-[11px] text-emerald-600 hover:underline shrink-0">
+                                <MessageCircle className="h-3.5 w-3.5" /> WhatsApp
+                              </Link>
+                            ) : null}
                           </div>
                           {m.telefone && <span className="block text-[11px] text-muted-foreground">{m.telefone}</span>}
+                          {m.created_at && (
+                            <span className="block text-[11px] text-muted-foreground">Inscreveu-se em {dataHora(m.created_at)}</span>
+                          )}
                         </td>
                         {det.encontros.map(e => (
                           <td key={e.id} className="text-center p-2">
@@ -365,6 +518,25 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                         ))}
                         <td className="text-center p-2">
                           <Badge variant="outline" className="text-[10px]" style={{ color: STATUS_COLOR[m.status], borderColor: STATUS_COLOR[m.status] + '60' }}>{STATUS_LABEL[m.status]}</Badge>
+                        </td>
+                        <td className="text-center p-2">
+                          <label className="inline-flex flex-col items-center gap-0.5 cursor-pointer"
+                            title={m.contato_em ? `Contato feito em ${dataHora(m.contato_em)}` : 'Marcar que já fez contato com a pessoa'}>
+                            <input type="checkbox" checked={!!m.contato_em} onChange={() => toggleContato(m)} className="h-4 w-4 cursor-pointer accent-[#00B39D]" />
+                            {m.contato_em && <span className="text-[9px] text-emerald-600 leading-none">feito</span>}
+                          </label>
+                        </td>
+                        <td className="text-center p-2">
+                          <div className="inline-flex items-center gap-1">
+                            <button onClick={() => setTransferir(m)} title="Transferir pra outra turma"
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+                              <ArrowRightLeft className="h-3.5 w-3.5" />
+                            </button>
+                            <button onClick={() => removerMatricula(m)} title="Remover da turma"
+                              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-500/10 transition-colors">
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -379,7 +551,10 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
             </div>
             </div>
             <DialogFooter className="flex-wrap gap-2 sm:justify-between">
-              <Button variant="outline" onClick={() => setAddOpen(true)} className="gap-2"><UserPlus className="h-4 w-4" /> Matricular pessoa</Button>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => setAddOpen(true)} className="gap-2"><UserPlus className="h-4 w-4" /> Matricular pessoa</Button>
+                <Button variant="outline" onClick={() => setQrSatisfacaoOpen(true)} className="gap-2"><Share2 className="h-4 w-4" /> QR de satisfação</Button>
+              </div>
               <div className="flex gap-2">
                 {det.status === 'aberta' && <Button variant="outline" onClick={encerrar}>Encerrar turma</Button>}
                 {det.status === 'encerrada' && <Button variant="outline" onClick={reabrir}>Reabrir turma</Button>}
@@ -387,8 +562,101 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
               </div>
             </DialogFooter>
             {addOpen && <AddMatriculaModal turmaId={turmaId} onClose={() => setAddOpen(false)} onAdded={() => { setAddOpen(false); load(); onChanged(); }} />}
+            {qrSatisfacaoOpen && <QrSatisfacaoModal turmaId={turmaId} turmaNome={det.nome} onClose={() => setQrSatisfacaoOpen(false)} />}
+            {transferir && (
+              <TransferirTurmaModal
+                matricula={transferir}
+                turmaAtualId={turmaId}
+                onClose={() => setTransferir(null)}
+                onDone={() => { setTransferir(null); load(); onChanged(); }}
+              />
+            )}
           </>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Transferir a pessoa pra outra turma. Lista as turmas disponíveis (exceto a
+// atual · abertas primeiro) e chama o endpoint dedicado (limpa presenças da
+// turma antiga e recomeça na destino).
+function TransferirTurmaModal({ matricula, turmaAtualId, onClose, onDone }: {
+  matricula: Matricula; turmaAtualId: string; onClose: () => void; onDone: () => void;
+}) {
+  const [turmas, setTurmas] = useState<Turma[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [destino, setDestino] = useState<string>('');
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const lista: Turma[] = await nextApi.turmas.list();
+        // exclui a turma atual e as apagadas; abertas no topo, depois por nome
+        const opcoes = (lista || [])
+          .filter(t => t.id !== turmaAtualId)
+          .sort((a, b) => {
+            if ((a.status === 'aberta') !== (b.status === 'aberta')) return a.status === 'aberta' ? -1 : 1;
+            return (a.nome || '').localeCompare(b.nome || '', 'pt-BR');
+          });
+        setTurmas(opcoes);
+      } catch (e: any) { toast.error(e?.message || 'Erro ao carregar turmas'); }
+      setCarregando(false);
+    })();
+  }, [turmaAtualId]);
+
+  const confirmar = async () => {
+    if (!destino) return;
+    setSalvando(true);
+    try {
+      const r = await nextApi.matriculas.transferir(matricula.id, destino);
+      toast.success(`${matricula.nome} transferido(a) para ${r?.turma_destino_nome || 'a turma'}`);
+      onDone();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao transferir'); }
+    setSalvando(false);
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ArrowRightLeft className="h-4 w-4" style={{ color: C.primary }} /> Transferir de turma
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Mover <span className="font-medium text-foreground">{matricula.nome} {matricula.sobrenome || ''}</span> para outra turma.
+            As presenças na turma atual são removidas (a pessoa recomeça na turma escolhida).
+          </p>
+          {carregando ? (
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground mx-auto my-4" />
+          ) : turmas.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Não há outra turma para transferir. Crie a turma de destino primeiro.</p>
+          ) : (
+            <div className="space-y-1.5">
+              <Label>Turma de destino</Label>
+              <Select value={destino} onValueChange={setDestino}>
+                <SelectTrigger><SelectValue placeholder="Selecione a turma" /></SelectTrigger>
+                <SelectContent className="z-[1200]">
+                  {turmas.map(t => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.nome}{t.status !== 'aberta' ? ` (${t.status})` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={confirmar} disabled={!destino || salvando} className="gap-2">
+            {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRightLeft className="h-4 w-4" />}
+            Transferir
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
@@ -969,6 +1237,54 @@ function QrDirecionarModal({ onClose }: { onClose: () => void }) {
                 <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(url); toast.success('Link copiado!'); }} className="shrink-0"><Copy className="h-3.5 w-3.5" /></Button>
               </div>
             )}
+          </div>
+        )}
+        <DialogFooter><Button variant="outline" onClick={onClose}>Fechar</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// QR de satisfação por turma · usa a pesquisa NPS canônica do Next (Satisfação
+// do Next) + ?turma=<id>. Mesmo link pra todas as turmas, só muda o parâmetro.
+function QrSatisfacaoModal({ turmaId, turmaNome, onClose }: { turmaId: string; turmaNome: string; onClose: () => void }) {
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [url, setUrl] = useState('');
+  const [erro, setErro] = useState('');
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    nextApi.satisfacao()
+      .then((r: any) => {
+        if (!r?.link_publico_token) { setErro('Pesquisa de satisfação sem link público.'); setLoading(false); return; }
+        const link = `${window.location.origin}/nps/publica/${r.link_publico_token}?turma=${turmaId}`;
+        setUrl(link);
+        QRCode.toDataURL(link, { width: 320, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+          .then(setQrDataUrl).catch(() => {})
+          .finally(() => setLoading(false));
+      })
+      .catch((e: any) => { setErro(e?.message || 'Não foi possível gerar o QR'); setLoading(false); });
+  }, [turmaId]);
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Share2 className="h-5 w-5" /> Satisfação do Next — {turmaNome}</DialogTitle>
+        </DialogHeader>
+        <p className="text-xs text-muted-foreground">Mostre este QR no fim do encontro: cada resposta fica ligada a <strong>esta turma</strong>. A análise por turma aparece no módulo NPS.</p>
+        {loading ? (
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-8" />
+        ) : erro ? (
+          <p className="text-sm text-destructive text-center py-6">{erro}</p>
+        ) : (
+          <div className="space-y-3">
+            {qrDataUrl && <img src={qrDataUrl} alt="QR de satisfação" className="mx-auto rounded-lg border border-border" style={{ width: 240, height: 240 }} />}
+            {url && (
+              <div className="flex gap-2">
+                <Input value={url} readOnly className="font-mono text-xs" />
+                <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(url); toast.success('Link copiado!'); }} className="shrink-0"><Copy className="h-3.5 w-3.5" /></Button>
+              </div>
+            )}
+            <Link to="/nps" className="block text-center text-xs text-primary hover:underline">Ver análise no módulo NPS</Link>
           </div>
         )}
         <DialogFooter><Button variant="outline" onClick={onClose}>Fechar</Button></DialogFooter>

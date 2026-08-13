@@ -4,6 +4,7 @@ import { ptBR } from 'date-fns/locale';
 import { RefreshCw, CalendarOff, Check, Search, X, ChevronDown, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { useMyServices, useToggleServiceUnavailability } from './hooks';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const TYPE_COLORS: Record<string, string> = {
   'Quarta com Deus': '#6366f1',
@@ -38,7 +39,7 @@ function ServiceChip({ service, onToggle, disabled }: {
     <button
       onClick={() => onToggle(service)}
       disabled={disabled}
-      title={unavailable ? 'Toque para marcar como disponível' : 'Toque para marcar ausencia'}
+      title={unavailable ? 'Toque para marcar como disponível' : 'Toque para marcar ausência'}
       className={`flex flex-col items-center w-[58px] py-2 rounded-xl border text-xs font-medium transition-all shrink-0
         ${unavailable
           ? 'bg-red-50 border-red-300 text-red-700 dark:bg-red-950/30 dark:border-red-700 dark:text-red-300'
@@ -75,7 +76,7 @@ export default function VolMinhaDisponibilidade() {
     toggle.mutate(
       { serviceId: service.id, isUnavailable: service.is_unavailable, availabilityId: service.availability_id },
       {
-        onSuccess: () => toast.success(service.is_unavailable ? 'Disponibilidade restaurada' : 'Ausencia registrada'),
+        onSuccess: () => toast.success(service.is_unavailable ? 'Disponibilidade restaurada' : 'Ausência registrada'),
         onError: (err: any) => toast.error(err.message || 'Erro ao atualizar'),
       }
     );
@@ -108,7 +109,7 @@ export default function VolMinhaDisponibilidade() {
         <div>
           <h1 className="text-xl font-bold text-foreground">Minha Disponibilidade</h1>
           <p className="text-sm text-muted-foreground">
-            Toque nos cultos que voce <strong>não pode comparecer</strong>
+            Toque nos cultos que você <strong>não pode comparecer</strong>
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -131,10 +132,9 @@ export default function VolMinhaDisponibilidade() {
       {/* Busca por data */}
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-        <input
-          type="date"
+        <DatePicker
           value={searchDate}
-          onChange={e => setSearchDate(e.target.value)}
+          onChange={setSearchDate}
           className="w-full h-10 rounded-md border border-input bg-background pl-9 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
         />
         {searchDate && (
@@ -156,7 +156,7 @@ export default function VolMinhaDisponibilidade() {
           <CalendarOff className="h-12 w-12 text-muted-foreground/30 mb-4" />
           <p className="font-medium text-muted-foreground">Nenhum culto cadastrado para {year}</p>
           <p className="text-sm text-muted-foreground/60 mt-1">
-            Peca para o lider gerar os cultos em "Tipos de Culto"
+            Peça para o líder gerar os cultos em "Tipos de Culto"
           </p>
         </div>
       ) : searchDate ? (
@@ -187,12 +187,12 @@ export default function VolMinhaDisponibilidade() {
           <div className="flex gap-4 text-sm flex-wrap">
             <div className="flex items-center gap-1.5">
               <div className="h-2.5 w-2.5 rounded-full bg-[#00B39D]" />
-              <span className="text-muted-foreground">{services.length - unavailableCount} disponivel(is)</span>
+              <span className="text-muted-foreground">{services.length - unavailableCount} disponível(is)</span>
             </div>
             <div className="flex items-center gap-1.5">
               <div className="h-2.5 w-2.5 rounded-full bg-red-500" />
               <span className={unavailableCount > 0 ? 'text-red-500 font-medium' : 'text-muted-foreground'}>
-                {unavailableCount} ausencia(s)
+                {unavailableCount} ausência(s)
               </span>
             </div>
           </div>

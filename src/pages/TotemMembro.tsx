@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { membresia, kpis as kpisApi } from '@/api';
+import { membresia, kpis as kpisApi, apresentacaoCriancasPublico, inscricoesApi, eventoPublico } from '@/api';
 import { imprimirEtiquetaBatismo } from '@/lib/imprimirEtiquetaBatismo';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -8,12 +8,13 @@ import {
   Users, UserCheck, Droplets, Mountain, Heart, CalendarDays,
   ArrowRight, HandHeart, Lock, Eye, EyeOff, ChevronLeft,
   QrCode, Loader2, CheckCircle2, Maximize, Minimize,
-  MapPin, Clock, Star, Map, List, Navigation, Sun, Moon,
+  MapPin, Clock, Star, Map, List, Navigation,
   Camera, RotateCcw, Save, X, ChevronRight, Delete, KeyRound,
   Baby, LogOut, Search, Printer,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import { Badge } from '@/components/ui/badge';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { QRCodeSVG } from 'qrcode.react';
@@ -26,8 +27,13 @@ const MENU_OPTIONS = [
   { id: 'batismo',      label: 'Batismo',              icon: Droplets,     color: '#6366F1', desc: 'Inscrição para batismo' },
   { id: 'next',         label: 'Next',                 icon: ArrowRight,   color: '#10B981', desc: 'Jornada de membros' },
   { id: 'apresentacao_bebe', label: 'Apresentar bebê', icon: Baby,         color: '#EC4899', desc: '2º domingo do mês' },
-  // Retiro / Contribuição / Ag. Pastoral / Voluntariado saíram do menu:
-  // eram placeholders sem implementação ("Em breve") — poda do atlas 2026-07.
+  // Retiros e eventos pagos (2026-08-05): a vaga de "Retiro" existia aqui e foi
+  // podada em 07/2026 por não ter implementação. Agora tem — e a lista mostra
+  // só evento com `no_totem` marcado, porque o totem fica no hall, à vista de
+  // qualquer pessoa (retiro de liderança não se anuncia ali).
+  { id: 'eventos',      label: 'Eventos e retiros',   icon: Mountain,     color: '#F59E0B', desc: 'Inscreva-se e pague aqui' },
+  // Contribuição / Ag. Pastoral / Voluntariado seguem fora do menu: eram
+  // placeholders sem implementação ("Em breve") — poda do atlas 2026-07.
   // Voluntariado tem totem próprio em /voluntariado/totem.
 ] as const;
 
@@ -42,11 +48,37 @@ interface MemberData {
   email?: string;
   telefone?: string;
   pending?: boolean;
+  guest?: boolean;
   raw?: any;
 }
 
 const PIN_KEY = 'cbrio-totem-pin';
-const THEME_KEY = 'cbrio-totem-theme';
+// Flags one-shot gravadas pelo /cadastro-membresia?from=totem (consumidas no mount):
+// RESUME = token do QR recém-criado → reabre a sessão da própria pessoa;
+// UNLOCK = só pula a tela de PIN do operador e cai na tela inicial.
+const RESUME_KEY = 'cbrio-totem-resume';
+const UNLOCK_KEY = 'cbrio-totem-unlocked';
+
+// Inatividade: menu/saudação/CPF 120s · dentro dos fluxos (formulários) 180s.
+// 20s antes de expirar aparece o aviso "Você ainda está aí?".
+const IDLE_MENU_MS = 120_000;
+const IDLE_FLOW_MS = 180_000;
+const IDLE_WARN_MS = 20_000;
+
+const GUEST_MEMBER: MemberData = { nome: 'Visitante', guest: true };
+
+// DV de CPF (mesma regra do cadastro público) — o batismo pelo totem exige CPF válido.
+function cpfDvOk(v: string | undefined | null): boolean {
+  const d = String(v || '').replace(/\D/g, '');
+  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
+  const calc = (base: string, fator: number) => {
+    let soma = 0;
+    for (let i = 0; i < base.length; i += 1) soma += parseInt(base[i], 10) * (fator - i);
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+  return calc(d.slice(0, 9), 10) === parseInt(d[9], 10) && calc(d.slice(0, 10), 11) === parseInt(d[10], 10);
+}
 
 // ── Root component ────────────────────────────────────────────────────────────
 
@@ -58,9 +90,12 @@ export default function TotemMembro() {
   const [clock, setClock] = useState(new Date());
   const [scanError, setScanError] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isDark, setIsDark] = useState(() => localStorage.getItem(THEME_KEY) !== 'light');
+  // Totem é sempre no tema ESCURO da marca (decisão Marcos 2026-07-23): quiosque
+  // não tem preferência de tema e o toggle antigo deixava telas inconsistentes
+  // (escolhia claro e virava escuro ao entrar num fluxo). isDark fica fixo → as
+  // condicionais isDark?dark:light dos componentes resolvem todas pro escuro.
+  const isDark = true;
   const [showNovoCadastro, setShowNovoCadastro] = useState(false);
-  const toggleTheme = () => setIsDark(v => { const n = !v; localStorage.setItem(THEME_KEY, n ? 'dark' : 'light'); return n; });
 
   // PIN
   const [storedPin, setStoredPin] = useState('');
@@ -75,13 +110,36 @@ export default function TotemMembro() {
   const scanBuf = useRef('');
   const scanTimer = useRef<ReturnType<typeof setTimeout>>();
   const inactivityTimer = useRef<ReturnType<typeof setTimeout>>();
+  const warnTimer = useRef<ReturnType<typeof setTimeout>>();
+  const countdownTimer = useRef<ReturnType<typeof setInterval>>();
+
+  // Aviso de inatividade ("Você ainda está aí?")
+  const [idleWarning, setIdleWarning] = useState(false);
+  const [idleSeconds, setIdleSeconds] = useState(IDLE_WARN_MS / 1000);
+  const stateRef = useRef(state);
+  useEffect(() => { stateRef.current = state; }, [state]);
 
   // ── Init ────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const p = localStorage.getItem(PIN_KEY) || '';
     setStoredPin(p);
-    setState(p ? 'locked' : 'setup');
+    let resume: string | null = null;
+    let unlocked = false;
+    try {
+      resume = sessionStorage.getItem(RESUME_KEY);
+      unlocked = sessionStorage.getItem(UNLOCK_KEY) === '1';
+      sessionStorage.removeItem(RESUME_KEY);
+      sessionStorage.removeItem(UNLOCK_KEY);
+    } catch { /* sem sessionStorage — segue o fluxo normal */ }
+    if (!p) { setState('setup'); return; }
+    if (resume) {
+      // Volta do cadastro feito no próprio totem: reabre a sessão da pessoa
+      // sem pedir o PIN do operador (o token é one-shot e acabou de ser criado).
+      handleQrTokenRef.current?.(resume);
+      return;
+    }
+    setState(unlocked ? 'idle' : 'locked');
   }, []);
 
   useEffect(() => {
@@ -125,20 +183,39 @@ export default function TotemMembro() {
     }
   }, [applyLookupResult]);
 
-  const handleCpfLookup = useCallback(async (cpf: string) => {
+  // Ref estável pro efeito de mount consumir o resume-token sem problema de
+  // ordem de declaração (handleQrToken é definido depois do efeito de init).
+  const handleQrTokenRef = useRef(handleQrToken);
+  useEffect(() => { handleQrTokenRef.current = handleQrToken; }, [handleQrToken]);
+
+  const handleCpfLookup = useCallback(async (cpf: string, nascimento: string) => {
     const digits = cpf.replace(/\D/g, '');
     if (digits.length !== 11) return { ok: false, error: 'CPF incompleto' };
+    if (!nascimento) return { ok: false, error: 'Informe a data de nascimento' };
     try {
-      const data = await membresia.cpfLookup(digits);
+      const data = await membresia.cpfLookup(digits, nascimento);
       if (data.found) {
         applyLookupResult(data);
         return { ok: true };
       }
-      return { ok: false, error: 'CPF não encontrado' };
+      // Não achou: nunca é erro — leva a "completar cadastro" (regra do Marcos).
+      return { ok: false, notFound: true };
     } catch (e: any) {
+      if (e?.status === 404) return { ok: false, notFound: true };
       return { ok: false, error: e?.message || 'Erro ao consultar CPF' };
     }
   }, [applyLookupResult]);
+
+  // "Completar cadastro": abre o formulário já com CPF + nascimento preenchidos
+  // (o loop de volta ao totem já identificado é o mesmo da Fase 1).
+  const irCompletarCadastro = useCallback((cpf: string, nascimento: string) => {
+    const qs = new URLSearchParams({
+      from: 'totem',
+      cpf: String(cpf).replace(/\D/g, ''),
+      ...(nascimento ? { nasc: nascimento } : {}),
+    });
+    navigate(`/cadastro-membresia?${qs.toString()}`);
+  }, [navigate]);
 
   useEffect(() => {
     if (state !== 'idle') return;
@@ -164,20 +241,63 @@ export default function TotemMembro() {
   }, [state, handleQrToken]);
 
   // ── Inactivity ──────────────────────────────────────────────────────────────
+  // Dois estágios: aviso 20s antes (com contagem) e encerramento no limite.
+  // O reset acontece em QUALQUER interação (listener global cobre toque,
+  // teclado e rolagem — antes só clique contava e rolar a lista expirava).
 
-  const resetInactivity = useCallback(() => {
+  const limparTimersIdle = useCallback(() => {
     clearTimeout(inactivityTimer.current);
-    inactivityTimer.current = setTimeout(() => {
-      setState('idle');
-      setMember(null);
-      setSelectedOption(null);
-    }, 60_000);
+    clearTimeout(warnTimer.current);
+    clearInterval(countdownTimer.current);
   }, []);
 
+  const encerrarSessao = useCallback(() => {
+    limparTimersIdle();
+    setIdleWarning(false);
+    setState('idle');
+    setMember(null);
+    setSelectedOption(null);
+  }, [limparTimersIdle]);
+
+  const resetInactivity = useCallback(() => {
+    limparTimersIdle();
+    setIdleWarning(false);
+    const limite = stateRef.current === 'option' ? IDLE_FLOW_MS : IDLE_MENU_MS;
+    warnTimer.current = setTimeout(() => {
+      setIdleSeconds(IDLE_WARN_MS / 1000);
+      setIdleWarning(true);
+      countdownTimer.current = setInterval(
+        () => setIdleSeconds((s) => Math.max(0, s - 1)),
+        1000,
+      );
+    }, limite - IDLE_WARN_MS);
+    inactivityTimer.current = setTimeout(encerrarSessao, limite);
+  }, [limparTimersIdle, encerrarSessao]);
+
+  const idleAtivo = state === 'greeting' || state === 'option' || state === 'done'
+    || state === 'cpf_input' || showNovoCadastro;
+
   useEffect(() => {
-    if (state === 'greeting' || state === 'option' || state === 'done') resetInactivity();
-    return () => clearTimeout(inactivityTimer.current);
-  }, [state, resetInactivity]);
+    if (idleAtivo) {
+      resetInactivity();
+    } else {
+      limparTimersIdle();
+      setIdleWarning(false);
+    }
+    return limparTimersIdle;
+  }, [idleAtivo, state, resetInactivity, limparTimersIdle]);
+
+  useEffect(() => {
+    if (!idleAtivo) return undefined;
+    const onAtividade = () => resetInactivity();
+    const evs: (keyof DocumentEventMap)[] = ['pointerdown', 'keydown', 'wheel', 'touchmove'];
+    evs.forEach((e) => document.addEventListener(e, onAtividade, { passive: true }));
+    document.addEventListener('scroll', onAtividade, { passive: true, capture: true });
+    return () => {
+      evs.forEach((e) => document.removeEventListener(e, onAtividade));
+      document.removeEventListener('scroll', onAtividade, true);
+    };
+  }, [idleAtivo, resetInactivity]);
 
   // ── Fullscreen ──────────────────────────────────────────────────────────────
 
@@ -223,6 +343,96 @@ export default function TotemMembro() {
     setState('option');
     resetInactivity();
   };
+
+  const entrarSemCadastro = () => {
+    setMember({ ...GUEST_MEMBER });
+    setState('greeting');
+  };
+
+  // Sai da sessão atual e abre a tela de novo cadastro (usado pelo convidado
+  // quando uma ação exige identificação — ex.: pedir entrada em grupo).
+  const irParaNovoCadastro = () => {
+    limparTimersIdle();
+    setIdleWarning(false);
+    setState('idle');
+    setMember(null);
+    setSelectedOption(null);
+    setShowNovoCadastro(true);
+  };
+
+  // ── Gate de identificação do convidado (ponto 8) ──
+  // Ao tentar uma inscrição, o convidado informa CPF + nascimento: achou →
+  // PROMOVE a sessão pra identificada e o fluxo continua de onde estava; não
+  // achou → completar cadastro. Reusa a tela de CPF do "Sou membro".
+  const [identGate, setIdentGate] = useState(false);
+  const solicitarIdentificacao = useCallback(() => setIdentGate(true), []);
+  const handleGateLookup = useCallback(async (cpf: string, nascimento: string) => {
+    const digits = cpf.replace(/\D/g, '');
+    if (digits.length !== 11) return { ok: false, error: 'CPF incompleto' };
+    if (!nascimento) return { ok: false, error: 'Informe a data de nascimento' };
+    try {
+      const data = await membresia.cpfLookup(digits, nascimento);
+      if (data.found) {
+        const src = data.membro || data.cadastro || {};
+        setMember({
+          nome: src.nome || 'Membro', foto_url: src.foto_url, id: src.id,
+          cpf: src.cpf, email: src.email, telefone: src.telefone,
+          pending: !!data.pending, raw: data,
+        });
+        setIdentGate(false);
+        return { ok: true };
+      }
+      return { ok: false, notFound: true };
+    } catch (e: any) {
+      if (e?.status === 404) return { ok: false, notFound: true };
+      return { ok: false, error: e?.message || 'Erro ao consultar CPF' };
+    }
+  }, []);
+  const gateOverlay = identGate ? (
+    <div className="fixed inset-0 z-[90]">
+      <CpfInputScreen
+        onBack={() => setIdentGate(false)}
+        onLookup={handleGateLookup}
+        onCompletarCadastro={(cpf, nascimento) => { setIdentGate(false); irCompletarCadastro(cpf, nascimento); }}
+      />
+    </div>
+  ) : null;
+
+  // Overlay "Você ainda está aí?" — aparece 20s antes do encerramento em
+  // qualquer tela ativa; qualquer toque continua a sessão.
+  const idleOverlay = idleWarning ? (
+    <div
+      className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-center justify-center p-6"
+      onClick={resetInactivity}
+    >
+      <div className="w-full max-w-md rounded-3xl bg-gray-900 border border-white/15 p-8 text-center space-y-5 text-white">
+        <Clock className="h-12 w-12 mx-auto text-[#00B39D]" />
+        <div>
+          <h2 className="text-2xl font-bold">Você ainda está aí?</h2>
+          <p className="text-white/60 mt-2 text-sm">
+            A sessão será encerrada em{' '}
+            <span className="font-mono font-bold text-white text-base">{idleSeconds}s</span>{' '}
+            por inatividade.
+          </p>
+        </div>
+        <div className="flex gap-3">
+          <Button
+            onClick={(e) => { e.stopPropagation(); encerrarSessao(); }}
+            variant="outline"
+            className="flex-1 !bg-white/10 border-white/20 text-white hover:!bg-white/20 py-6 text-base rounded-2xl"
+          >
+            Encerrar
+          </Button>
+          <Button
+            onClick={(e) => { e.stopPropagation(); resetInactivity(); }}
+            className="flex-1 bg-[#00B39D] hover:bg-[#00B39D]/90 py-6 text-base rounded-2xl"
+          >
+            Continuar
+          </Button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   // ══════════════════════════════════════════════════════════════════════════
   // RENDER
@@ -320,7 +530,7 @@ export default function TotemMembro() {
         />
         {pinError && <p className="text-red-400 text-sm text-center">{pinError}</p>}
         <div className="flex gap-3">
-          <Button variant="outline" onClick={() => { setExitInput(''); setPinError(''); setState('idle'); setMember(null); }} className="flex-1 border-white/20 text-white">Cancelar</Button>
+          <Button variant="outline" onClick={() => { setExitInput(''); setPinError(''); setState('idle'); setMember(null); }} className="flex-1 !bg-white/10 border-white/20 text-white hover:!bg-white/20">Cancelar</Button>
           <Button onClick={handleExit} className="flex-1 bg-[#00B39D] hover:bg-[#00B39D]/90">Confirmar</Button>
         </div>
       </div>
@@ -339,14 +549,21 @@ export default function TotemMembro() {
 
   // ── Option flow ───────────────────────────────────────────────────────────
   if (state === 'option' && selectedOption && member) return (
-    <OptionFlow
-      optionId={selectedOption}
-      member={member}
-      isDark={isDark}
-      onBack={() => { setState('greeting'); setSelectedOption(null); resetInactivity(); }}
-      onDone={() => { setState('greeting'); setSelectedOption(null); resetInactivity(); }}
-      onActivity={resetInactivity}
-    />
+    <>
+      <OptionFlow
+        optionId={selectedOption}
+        member={member}
+        isDark={isDark}
+        onBack={() => { setState('greeting'); setSelectedOption(null); resetInactivity(); }}
+        onDone={() => { setState('greeting'); setSelectedOption(null); resetInactivity(); }}
+        onEndSession={encerrarSessao}
+        onNovoCadastro={irParaNovoCadastro}
+        onNeedIdentify={solicitarIdentificacao}
+        onActivity={resetInactivity}
+      />
+      {gateOverlay}
+      {idleOverlay}
+    </>
   );
 
   // ── Done ──────────────────────────────────────────────────────────────────
@@ -362,6 +579,7 @@ export default function TotemMembro() {
           Concluir
         </Button>
       </div>
+      {idleOverlay}
     </div>
   );
 
@@ -383,14 +601,11 @@ export default function TotemMembro() {
             </div>
           )}
           <div>
-            <p className={`${greetMuted} text-sm`}>Que bom te ver!</p>
+            <p className={`${greetMuted} text-sm`}>{member.guest ? 'Fique à vontade!' : 'Que bom te ver!'}</p>
             <h2 className="text-2xl font-bold">{member.nome.split(' ')[0]}</h2>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <button onClick={toggleTheme} className={`p-2 rounded-lg transition-colors ${isDark ? 'text-white/40 hover:text-white/80 hover:bg-white/10' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-200'}`}>
-            {isDark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-          </button>
           <div className="text-right">
             <p className={`${greetMuted} text-xs hidden sm:block`}>{format(clock, "EEEE, dd 'de' MMMM", { locale: ptBR })}</p>
             <p className="text-xl font-mono font-bold tabular-nums">{format(clock, 'HH:mm')}</p>
@@ -402,7 +617,9 @@ export default function TotemMembro() {
         <div className="w-full max-w-2xl">
           <p className={`text-center ${greetMuted} text-base mb-6`}>O que você gostaria de fazer?</p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {MENU_OPTIONS.map(opt => {
+            {/* Meus Dados edita mem_membros — some pra convidado e pra cadastro
+                ainda pendente de aprovação (o PUT do totem não alcança pendentes) */}
+            {MENU_OPTIONS.filter(opt => !((member.guest || member.pending) && opt.id === 'membresia')).map(opt => {
               const Icon = opt.icon;
               return (
                 <button
@@ -419,7 +636,11 @@ export default function TotemMembro() {
               );
             })}
           </div>
-          <p className={`text-center ${isDark ? 'text-white/20' : 'text-gray-400'} text-xs mt-5`}>Toque em uma opção para continuar</p>
+          <p className={`text-center ${isDark ? 'text-white/20' : 'text-gray-400'} text-xs mt-5`}>
+            {member.guest
+              ? 'Explore à vontade — pediremos seus dados só se você se inscrever em algo'
+              : 'Toque em uma opção para continuar'}
+          </p>
         </div>
       </div>
 
@@ -438,15 +659,20 @@ export default function TotemMembro() {
           <LogOut className="h-3.5 w-3.5" /> Sair do totem
         </button>
       </div>
+      {idleOverlay}
     </div>
   );
 
   // ── CPF input ─────────────────────────────────────────────────────────────
   if (state === 'cpf_input') return (
-    <CpfInputScreen
-      onBack={() => setState('idle')}
-      onLookup={handleCpfLookup}
-    />
+    <>
+      <CpfInputScreen
+        onBack={() => setState('idle')}
+        onLookup={handleCpfLookup}
+        onCompletarCadastro={irCompletarCadastro}
+      />
+      {idleOverlay}
+    </>
   );
 
   // ── Check-in de batismo (quiosque · equipe) ─────────────────────────────────
@@ -456,7 +682,10 @@ export default function TotemMembro() {
 
   // ── Idle (default) ────────────────────────────────────────────────────────
   if (showNovoCadastro) return (
-    <NovoCadastroScreen onBack={() => setShowNovoCadastro(false)} />
+    <>
+      <NovoCadastroScreen onBack={() => setShowNovoCadastro(false)} />
+      {idleOverlay}
+    </>
   );
 
   return (
@@ -475,16 +704,9 @@ export default function TotemMembro() {
       </div>
 
       <div className="flex-1 flex flex-col items-center justify-center gap-8 p-6">
-        <div className="relative">
-          <div className="absolute inset-0 rounded-3xl bg-[#00B39D]/10 animate-ping" style={{ animationDuration: '2s' }} />
-          <div className="relative h-36 w-36 rounded-3xl bg-[#00B39D]/10 border-2 border-[#00B39D]/30 flex items-center justify-center">
-            <QrCode className="h-20 w-20 text-[#00B39D]" />
-          </div>
-        </div>
-
-        <div className="text-center space-y-3">
-          <h1 className="text-5xl md:text-6xl font-bold tracking-tight">Bem-vindo!</h1>
-          <p className="text-xl text-white/60">Aproxime o QR Code da sua carteirinha</p>
+        <div className="text-center space-y-2">
+          <h1 className="text-4xl md:text-5xl font-bold tracking-tight">Bem-vindo à CBRio!</h1>
+          <p className="text-lg text-white/50">Como você quer começar?</p>
         </div>
 
         {scanError && (
@@ -493,23 +715,49 @@ export default function TotemMembro() {
           </div>
         )}
 
-        <div className="flex flex-col items-center gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-4xl">
           <button
             onClick={() => setShowNovoCadastro(true)}
-            className="px-6 py-3 rounded-2xl border border-white/15 bg-white/5 hover:bg-white/10 transition-all text-sm text-white/60 hover:text-white/90"
+            className="flex flex-col items-center gap-3 p-7 rounded-3xl border border-[#00B39D]/40 bg-[#00B39D]/10 hover:bg-[#00B39D]/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
           >
-            Novo na CBRio? Faça seu cadastro aqui
+            <div className="h-14 w-14 rounded-2xl bg-[#00B39D]/25 flex items-center justify-center">
+              <UserCheck className="h-7 w-7 text-[#00B39D]" />
+            </div>
+            <p className="font-bold text-lg leading-tight">Novo na CBRio</p>
+            <p className="text-white/50 text-sm leading-snug">Faça seu cadastro aqui</p>
           </button>
+
           <button
             onClick={() => setState('cpf_input')}
-            className="flex items-center gap-2 text-xs text-white/30 hover:text-white/60 transition-colors py-1 px-3"
+            className="flex flex-col items-center gap-3 p-7 rounded-3xl border border-[#3B82F6]/40 bg-[#3B82F6]/10 hover:bg-[#3B82F6]/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
           >
-            <KeyRound className="h-3.5 w-3.5" />
-            Não tem a carteirinha? Entrar com CPF
+            <div className="h-14 w-14 rounded-2xl bg-[#3B82F6]/25 flex items-center justify-center">
+              <KeyRound className="h-7 w-7 text-[#3B82F6]" />
+            </div>
+            <p className="font-bold text-lg leading-tight">Sou membro, tenho cadastro</p>
+            <p className="text-white/50 text-sm leading-snug">Entre com seu CPF</p>
           </button>
+
+          <button
+            onClick={entrarSemCadastro}
+            className="flex flex-col items-center gap-3 p-7 rounded-3xl border border-white/15 bg-white/5 hover:bg-white/10 transition-all hover:scale-[1.02] active:scale-[0.98]"
+          >
+            <div className="h-14 w-14 rounded-2xl bg-white/10 flex items-center justify-center">
+              <Search className="h-7 w-7 text-white/70" />
+            </div>
+            <p className="font-bold text-lg leading-tight">Entrar sem cadastro</p>
+            <p className="text-white/50 text-sm leading-snug">Explorar grupos, batismo e Next</p>
+          </button>
+        </div>
+
+        <div className="flex flex-col items-center gap-2">
+          <p className="flex items-center gap-2 text-white/40 text-sm">
+            <QrCode className="h-4 w-4 text-[#00B39D]" />
+            Tem a carteirinha digital? Aproxime o QR Code a qualquer momento
+          </p>
           <button
             onClick={() => setState('checkin_batismo')}
-            className="flex items-center gap-2 text-xs text-[#6366F1]/70 hover:text-[#6366F1] transition-colors py-1 px-3 mt-1"
+            className="flex items-center gap-2 text-xs text-[#6366F1]/70 hover:text-[#6366F1] transition-colors py-1 px-3"
             title="Fluxo assistido pela equipe no dia do batismo"
           >
             <Droplets className="h-3.5 w-3.5" />
@@ -534,16 +782,20 @@ export default function TotemMembro() {
 
 // ── CPF Input screen ───────────────────────────────────────────────────────
 
-function CpfInputScreen({ onBack, onLookup }: {
+function CpfInputScreen({ onBack, onLookup, onCompletarCadastro }: {
   onBack: () => void;
-  onLookup: (cpf: string) => Promise<{ ok: boolean; error?: string }>;
+  onLookup: (cpf: string, nascimento: string) => Promise<{ ok: boolean; error?: string; notFound?: boolean }>;
+  onCompletarCadastro: (cpf: string, nascimento: string) => void;
 }) {
+  // Dois passos: CPF (numpad) → data de nascimento (2º fator · 2026-07-22).
+  const [step, setStep] = useState<'cpf' | 'nascimento' | 'nao_achou'>('cpf');
   const [cpf, setCpf] = useState('');
+  const [nascimento, setNascimento] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const maskCpf = (digits: string) => {
-    const d = digits.slice(0, 11);
+  const maskCpf = (raw: string) => {
+    const d = raw.replace(/\D/g, '').slice(0, 11);
     if (d.length <= 3) return d;
     if (d.length <= 6) return `${d.slice(0,3)}.${d.slice(3)}`;
     if (d.length <= 9) return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6)}`;
@@ -551,7 +803,7 @@ function CpfInputScreen({ onBack, onLookup }: {
   };
 
   const digits = cpf.replace(/\D/g, '');
-  const canSubmit = digits.length === 11 && !loading;
+  const cpfCompleto = digits.length === 11;
 
   const pressDigit = (d: string) => {
     if (loading) return;
@@ -566,39 +818,112 @@ function CpfInputScreen({ onBack, onLookup }: {
   const pressBackspace = () => {
     if (loading) return;
     setError('');
-    setCpf(prev => {
-      const cur = prev.replace(/\D/g, '');
-      if (cur.length === 0) return '';
-      return maskCpf(cur.slice(0, -1));
-    });
+    setCpf(prev => maskCpf(prev.replace(/\D/g, '').slice(0, -1)));
   };
 
-  const submit = async () => {
-    if (!canSubmit) return;
+  const buscar = async () => {
+    if (!cpfCompleto || !nascimento || loading) return;
     setLoading(true);
     setError('');
-    const r = await onLookup(digits);
-    if (!r.ok) {
-      setError(r.error || 'Não foi possível identificar');
-      setLoading(false);
-    }
-  };
-
-  const handleHwKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') { e.preventDefault(); submit(); }
+    const r = await onLookup(digits, nascimento);
+    setLoading(false);
+    if (r.ok) return;               // applyLookupResult já trocou de tela
+    if (r.notFound) { setStep('nao_achou'); return; }
+    setError(r.error || 'Não foi possível identificar');
   };
 
   const KEYS = ['1','2','3','4','5','6','7','8','9'];
+  const cabecalho = (titulo: string) => (
+    <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
+      <button
+        onClick={step === 'cpf' ? onBack : () => { setStep('cpf'); setError(''); }}
+        className="text-white/40 hover:text-white transition-colors p-1 -ml-1"
+      >
+        <ChevronLeft className="h-6 w-6" />
+      </button>
+      <h2 className="text-xl font-semibold">{titulo}</h2>
+    </div>
+  );
 
+  // ── Não encontrou: sem erro, oferece completar o cadastro (regra do Marcos) ──
+  if (step === 'nao_achou') {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 text-white flex flex-col select-none">
+        {cabecalho('Vamos te cadastrar')}
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="w-full max-w-md text-center space-y-6">
+            <div className="h-16 w-16 rounded-2xl bg-[#00B39D]/15 border border-[#00B39D]/30 flex items-center justify-center mx-auto">
+              <UserCheck className="h-8 w-8 text-[#00B39D]" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">Não achamos seu cadastro</h1>
+              <p className="text-white/60 mt-2 leading-relaxed">
+                Sem problema! Vamos completar seu cadastro agora — seu CPF e a data de
+                nascimento já vão preenchidos.
+              </p>
+            </div>
+            <div className="space-y-3">
+              <Button
+                onClick={() => onCompletarCadastro(digits, nascimento)}
+                className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90 text-white py-6 text-base rounded-2xl"
+              >
+                Completar meu cadastro
+              </Button>
+              <button
+                onClick={() => { setStep('cpf'); setNascimento(''); setError(''); }}
+                className="w-full text-white/40 hover:text-white/70 text-sm py-2"
+              >
+                Digitei algo errado — tentar de novo
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Passo 2: data de nascimento ──
+  if (step === 'nascimento') {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 text-white flex flex-col select-none">
+        {cabecalho('Sua data de nascimento')}
+        <div className="flex-1 flex flex-col items-center justify-center p-6">
+          <div className="w-full max-w-md space-y-6 text-center">
+            <div className="h-16 w-16 rounded-2xl bg-[#00B39D]/15 border border-[#00B39D]/30 flex items-center justify-center mx-auto">
+              <CalendarDays className="h-8 w-8 text-[#00B39D]" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold">Confirme quem é você</h1>
+              <p className="text-white/50 text-sm mt-1">Informe sua data de nascimento para entrar com segurança.</p>
+            </div>
+            <BirthDatePicker
+              value={nascimento}
+              onChange={(v) => { setError(''); setNascimento(v); }}
+              className="w-full px-4 py-5 rounded-2xl border border-white/15 bg-white/5 text-white text-center text-2xl outline-none focus:border-[#00B39D] [color-scheme:dark]"
+            />
+            {error && (
+              <p className="text-center text-red-300 text-sm bg-red-500/10 border border-red-500/20 rounded-xl py-2 px-4">
+                {error}
+              </p>
+            )}
+            <Button
+              onClick={buscar}
+              disabled={!nascimento || loading}
+              className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90 text-white py-6 text-base rounded-2xl gap-2 disabled:opacity-40"
+            >
+              {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : <ArrowRight className="h-5 w-5" />}
+              {loading ? 'Procurando...' : 'Entrar'}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Passo 1: CPF (numpad) ──
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950 text-white flex flex-col select-none">
-      <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
-        <button onClick={onBack} className="text-white/40 hover:text-white transition-colors p-1 -ml-1">
-          <ChevronLeft className="h-6 w-6" />
-        </button>
-        <h2 className="text-xl font-semibold">Entrar com CPF</h2>
-      </div>
-
+      {cabecalho('Entrar com CPF')}
       <div className="flex-1 flex flex-col items-center justify-center p-6">
         <div className="w-full max-w-md space-y-6">
           <div className="text-center space-y-2">
@@ -606,19 +931,18 @@ function CpfInputScreen({ onBack, onLookup }: {
               <KeyRound className="h-8 w-8 text-[#00B39D]" />
             </div>
             <h1 className="text-2xl font-bold">Digite seu CPF</h1>
-            <p className="text-white/50 text-sm">Use o teclado para informar seu CPF</p>
+            <p className="text-white/50 text-sm">Depois vamos pedir sua data de nascimento.</p>
           </div>
 
           <input
             value={cpf}
-            onChange={e => { setError(''); setCpf(maskCpf(e.target.value.replace(/\D/g, ''))); }}
-            onKeyDown={handleHwKey}
+            onChange={e => { setError(''); setCpf(maskCpf(e.target.value)); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && cpfCompleto) { setStep('nascimento'); } }}
             placeholder="000.000.000-00"
             inputMode="numeric"
             autoFocus
             className="w-full px-4 py-4 rounded-2xl border border-white/15 bg-white/5 text-white text-center text-2xl font-mono tracking-widest placeholder:text-white/20 outline-none focus:border-[#00B39D]"
             maxLength={14}
-            disabled={loading}
           />
 
           {/* Numpad */}
@@ -628,8 +952,7 @@ function CpfInputScreen({ onBack, onLookup }: {
                 key={k}
                 type="button"
                 onClick={() => pressDigit(k)}
-                disabled={loading}
-                className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors text-2xl font-semibold disabled:opacity-40"
+                className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors text-2xl font-semibold"
               >
                 {k}
               </button>
@@ -637,8 +960,7 @@ function CpfInputScreen({ onBack, onLookup }: {
             <button
               type="button"
               onClick={pressBackspace}
-              disabled={loading}
-              className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors flex items-center justify-center disabled:opacity-40"
+              className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors flex items-center justify-center"
               aria-label="Apagar"
             >
               <Delete className="h-6 w-6 text-white/60" />
@@ -646,30 +968,23 @@ function CpfInputScreen({ onBack, onLookup }: {
             <button
               type="button"
               onClick={() => pressDigit('0')}
-              disabled={loading}
-              className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors text-2xl font-semibold disabled:opacity-40"
+              className="py-5 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 active:bg-white/20 transition-colors text-2xl font-semibold"
             >
               0
             </button>
             <button
               type="button"
-              onClick={submit}
-              disabled={!canSubmit}
+              onClick={() => cpfCompleto && setStep('nascimento')}
+              disabled={!cpfCompleto}
               className="py-5 rounded-2xl bg-[#00B39D] hover:bg-[#00B39D]/90 active:bg-[#00B39D]/80 transition-colors flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
-              aria-label="Confirmar"
+              aria-label="Avançar"
             >
-              {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : <ArrowRight className="h-6 w-6" />}
+              <ArrowRight className="h-6 w-6" />
             </button>
           </div>
 
-          {error && (
-            <p className="text-center text-red-300 text-sm bg-red-500/10 border border-red-500/20 rounded-xl py-2 px-4">
-              {error}
-            </p>
-          )}
-
           <p className="text-center text-white/30 text-xs">
-            Seus dados são protegidos. Usamos o CPF apenas para identificar seu cadastro.
+            Seus dados são protegidos. Usamos o CPF e a data de nascimento apenas para identificar seu cadastro.
           </p>
         </div>
       </div>
@@ -736,32 +1051,75 @@ function NovoCadastroScreen({ onBack }: { onBack: () => void }) {
   );
 }
 
+// ── Ações pós-inscrição (compartilhado pelos fluxos) ─────────────────────────
+// "Continuar navegando" volta ao menu; "Encerrar sessão" volta à tela inicial.
+// Sem toque, encerra sozinho em 20s (quiosque público não pode segurar sessão).
+
+function SuccessActions({ onDone, onEndSession, accent = '#00B39D' }: {
+  onDone: () => void;
+  onEndSession: () => void;
+  accent?: string;
+}) {
+  const [restante, setRestante] = useState(20);
+  useEffect(() => {
+    const t = setInterval(() => setRestante((s) => s - 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  useEffect(() => {
+    if (restante <= 0) onEndSession();
+  }, [restante, onEndSession]);
+  return (
+    <div className="w-full max-w-sm mx-auto space-y-3 pt-4">
+      <Button
+        onClick={onDone}
+        className="w-full py-6 text-base rounded-2xl text-white hover:opacity-90"
+        style={{ backgroundColor: accent }}
+      >
+        Continuar navegando
+      </Button>
+      <Button
+        onClick={onEndSession}
+        variant="outline"
+        className="w-full py-5 rounded-2xl !bg-white/10 border-white/20 text-white hover:!bg-white/20"
+      >
+        Encerrar sessão <span className="text-white/40 ml-1">({restante}s)</span>
+      </Button>
+    </div>
+  );
+}
+
 // ── Option Flow router ────────────────────────────────────────────────────────
 
-function OptionFlow({ optionId, member, isDark, onBack, onDone, onActivity }: {
+function OptionFlow({ optionId, member, isDark, onBack, onDone, onEndSession, onNovoCadastro, onNeedIdentify, onActivity }: {
   optionId: OptionId;
   member: MemberData;
   isDark: boolean;
   onBack: () => void;
   onDone: () => void;
+  onEndSession: () => void;
+  onNovoCadastro: () => void;
+  onNeedIdentify: () => void;
   onActivity: () => void;
 }) {
   const opt = MENU_OPTIONS.find(o => o.id === optionId)!;
 
   if (optionId === 'grupos') {
-    return <GruposFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+    return <GruposFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onNovoCadastro={onNovoCadastro} onNeedIdentify={onNeedIdentify} onActivity={onActivity} />;
   }
   if (optionId === 'membresia') {
     return <MeusDadosFlow opt={opt} member={member} isDark={isDark} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
   }
   if (optionId === 'batismo') {
-    return <BatismoFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+    return <BatismoFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onActivity={onActivity} />;
   }
   if (optionId === 'next') {
-    return <NextFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+    return <NextFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onActivity={onActivity} />;
   }
   if (optionId === 'apresentacao_bebe') {
-    return <ApresentacaoBebeFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onActivity={onActivity} />;
+    return <ApresentacaoBebeFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onActivity={onActivity} />;
+  }
+  if (optionId === 'eventos') {
+    return <EventosFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onActivity={onActivity} />;
   }
 
   // Demais opções — placeholder até implementação
@@ -778,7 +1136,7 @@ function OptionFlow({ optionId, member, isDark, onBack, onDone, onActivity }: {
             <h3 className="text-2xl font-bold">{opt.label}</h3>
             <p className="text-white/40 mt-2">Em breve disponível neste totem.</p>
           </div>
-          <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+          <Button onClick={onBack} variant="outline" className="!bg-white/10 border-white/20 text-white hover:!bg-white/20">
             Voltar ao menu
           </Button>
         </div>
@@ -1063,7 +1421,7 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={`block text-xs mb-1 ${label}`}>Data de nascimento</label>
-                <input value={form.data_nascimento} onChange={setField('data_nascimento')} type="date"
+                <BirthDatePicker value={form.data_nascimento} onChange={(v) => setField('data_nascimento')({ target: { value: v } } as any)}
                   className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
               </div>
               <div>
@@ -1109,7 +1467,7 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
             <p className={`text-sm ${saveMsg.includes('Erro') ? 'text-red-400' : 'text-[#00B39D]'}`}>{saveMsg}</p>
           )}
           <div className="ml-auto flex gap-3">
-            <Button variant="outline" onClick={onBack} className={isDark ? 'border-white/20 text-white hover:bg-white/10' : ''}>
+            <Button variant="outline" onClick={onBack} className={isDark ? '!bg-white/10 border-white/20 text-white hover:!bg-white/20' : ''}>
               Cancelar
             </Button>
             <Button onClick={handleSave} disabled={saving} className="bg-[#00B39D] hover:bg-[#00B39D]/90 text-white gap-2 min-w-[140px]">
@@ -1142,20 +1500,31 @@ function fmtDist(km: number) {
 
 const DIAS_MAP: Record<number, string> = { 0:'Dom', 1:'Seg', 2:'Ter', 3:'Qua', 4:'Qui', 5:'Sex', 6:'Sáb' };
 
-function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
+function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro, onNeedIdentify, onActivity }: {
   opt: (typeof MENU_OPTIONS)[number];
   member: MemberData;
   onBack: () => void;
   onDone: () => void;
+  onEndSession: () => void;
+  onNovoCadastro: () => void;
+  onNeedIdentify: () => void;
   onActivity: () => void;
 }) {
   const [grupos, setGrupos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [memberCoords, setMemberCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [filterCat, setFilterCat] = useState<string>('');
+  // Filtros em paridade com a inscrição pública (busca grupo|líder, dia,
+  // frequência, bairro) — mantendo a ordenação por distância e o mapa do totem.
+  const [busca, setBusca] = useState('');
+  const [searchMode, setSearchMode] = useState<'grupo' | 'lider'>('grupo');
+  const [fDia, setFDia] = useState<string>('');
+  const [fRecorrencia, setFRecorrencia] = useState<string>('');
+  const [fBairro, setFBairro] = useState<string>('');
   const [showMap, setShowMap] = useState(false);
   const [selected, setSelected] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+  const [pedidoEnviado, setPedidoEnviado] = useState(false);
   const [error, setError] = useState('');
 
   const grupoAtualId: string | undefined =
@@ -1197,25 +1566,70 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
     return (a.nome || '').localeCompare(b.nome || '');
   });
 
+  // Opções data-driven (só aparecem quando há valor → sem filtro-fantasma)
   const categories = [...new Set(grupos.map(g => g.categoria).filter(Boolean))] as string[];
-  const filtered = filterCat ? gruposEnriched.filter(g => g.categoria === filterCat) : gruposEnriched;
+  const bairros = [...new Set(grupos.map(g => g.bairro).filter(Boolean))].sort() as string[];
+  const dias = [...new Set(grupos.map(g => g.dia_semana).filter((v) => v != null))].sort((a, b) => a - b) as number[];
+  const recorrencias = [...new Set(grupos.map(g => (g.recorrencia || '').toLowerCase().trim()).filter(Boolean))] as string[];
+  const RECORRENCIA_LABEL: Record<string, string> = { diario: 'Diário', semanal: 'Semanal', quinzenal: 'Quinzenal', mensal: 'Mensal' };
+
+  const buscaNorm = busca.trim().toLowerCase();
+  const filtered = gruposEnriched.filter((g) => {
+    if (filterCat && g.categoria !== filterCat) return false;
+    if (fBairro && g.bairro !== fBairro) return false;
+    if (fDia !== '' && String(g.dia_semana) !== fDia) return false;
+    if (fRecorrencia && (g.recorrencia || '').toLowerCase().trim() !== fRecorrencia) return false;
+    if (buscaNorm) {
+      const alvo = searchMode === 'lider'
+        ? String(g.lider?.nome || '').toLowerCase()
+        : String(g.nome || '').toLowerCase();
+      if (!alvo.includes(buscaNorm)) return false;
+    }
+    return true;
+  });
+  const filtrosAtivos = [filterCat, fBairro, fDia !== '' ? fDia : '', fRecorrencia, buscaNorm].filter(Boolean).length;
+  const limparFiltros = () => { setFilterCat(''); setFBairro(''); setFDia(''); setFRecorrencia(''); setBusca(''); };
+  // Dropdown escuro (color-scheme:dark deixa a lista aberta legível no totem).
+  const selCls = '!bg-white/10 border border-white/15 text-white text-sm rounded-lg px-3 py-2 outline-none focus:border-[#00B39D] [color-scheme:dark] cursor-pointer';
 
   const handleConfirm = async () => {
     if (!selected || !member.id) return;
     setSaving(true); setError('');
     try {
-      await membresia.totem.entrarGrupo(selected.id, member.id);
-      onDone();
+      await membresia.totem.pedirGrupo(selected.id, {
+        ...(member.pending ? { cadastro_pendente_id: member.id } : { membro_id: member.id }),
+        nome: member.nome,
+        telefone: member.telefone || null,
+        email: member.email || null,
+      });
+      setPedidoEnviado(true);
     } catch {
       setError('Não foi possível registrar. Tente novamente.');
-      setSaving(false);
     }
+    setSaving(false);
   };
+
+  // ── Pedido enviado ────────────────────────────────────────────────────────
+  if (pedidoEnviado && selected) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8" onClick={onActivity}>
+        <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
+        <div className="text-center max-w-md">
+          <h2 className="text-3xl font-bold">Pedido enviado!</h2>
+          <p className="text-white/70 mt-3">
+            Você pediu para entrar no grupo <span className="text-[#00B39D] font-semibold">{selected.nome}</span>.
+          </p>
+          <p className="text-white/50 mt-2 text-sm">
+            O líder vai receber seu pedido e te chamar no WhatsApp para confirmar.
+          </p>
+        </div>
+        <SuccessActions onDone={onDone} onEndSession={onEndSession} />
+      </div>
+    );
+  }
 
   // ── Confirmation screen ──────────────────────────────────────────────────────
   if (selected) {
-    const isChanging = !!grupoAtualId && grupoAtualId !== selected.id;
-    const grupoAtual = grupos.find(g => g.id === grupoAtualId);
     return (
       <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
         <OptionHeader opt={opt} member={member} onBack={() => { setSelected(null); setError(''); }} />
@@ -1225,10 +1639,8 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
               <div className="h-16 w-16 rounded-2xl bg-[#00B39D]/20 flex items-center justify-center mx-auto mb-4">
                 <Users className="h-8 w-8 text-[#00B39D]" />
               </div>
-              <h3 className="text-2xl font-bold">Confirmar inscrição</h3>
-              {isChanging && grupoAtual && (
-                <p className="text-white/50 text-sm mt-1">Você sairá de <span className="text-white/80">{grupoAtual.nome}</span></p>
-              )}
+              <h3 className="text-2xl font-bold">{member.guest ? 'Quero participar' : 'Pedir para entrar'}</h3>
+              <p className="text-white/50 text-sm mt-1">O líder do grupo aprova o pedido e te chama no WhatsApp.</p>
             </div>
             <div className="rounded-2xl border border-white/20 bg-white/5 p-5 space-y-2">
               <p className="text-lg font-semibold">{selected.nome}</p>
@@ -1244,12 +1656,27 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
               </div>
             </div>
             {error && <p className="text-red-400 text-sm text-center">{error}</p>}
-            <div className="flex gap-3">
-              <Button variant="outline" onClick={() => { setSelected(null); setError(''); }} className="flex-1 border-white/20 text-white hover:bg-white/10" disabled={saving}>Cancelar</Button>
-              <Button onClick={handleConfirm} disabled={saving} className="flex-1 bg-[#00B39D] hover:bg-[#00B39D]/90">
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Confirmar'}
-              </Button>
-            </div>
+            {member.guest ? (
+              <div className="space-y-3">
+                <p className="text-white/60 text-sm text-center">
+                  Pra enviar seu pedido, informe seu CPF e data de nascimento — se você já
+                  tem cadastro, é só isso; se não, criamos rapidinho.
+                </p>
+                <Button onClick={onNeedIdentify} className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90 py-6 text-base rounded-2xl">
+                  Continuar
+                </Button>
+                <Button variant="outline" onClick={() => { setSelected(null); setError(''); }} className="w-full !bg-white/10 border-white/20 text-white hover:!bg-white/20 rounded-2xl">
+                  Voltar aos grupos
+                </Button>
+              </div>
+            ) : (
+              <div className="flex gap-3">
+                <Button variant="outline" onClick={() => { setSelected(null); setError(''); }} className="flex-1 !bg-white/10 border-white/20 text-white hover:!bg-white/20" disabled={saving}>Cancelar</Button>
+                <Button onClick={handleConfirm} disabled={saving} className="flex-1 bg-[#00B39D] hover:bg-[#00B39D]/90">
+                  {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Enviar pedido'}
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -1262,38 +1689,77 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
       <OptionHeader opt={opt} member={member} onBack={onBack} />
 
       {/* Filters bar */}
-      <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2 flex-wrap shrink-0">
-        {/* Category chips */}
-        <button
-          onClick={() => setFilterCat('')}
-          className={`px-3 py-1.5 rounded-full text-sm transition-colors ${!filterCat ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
-        >
-          Todos
-        </button>
-        {categories.map(cat => (
-          <button
-            key={cat}
-            onClick={() => setFilterCat(cat === filterCat ? '' : cat)}
-            className={`px-3 py-1.5 rounded-full text-sm transition-colors ${filterCat === cat ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
-          >
-            {cat}
-          </button>
-        ))}
-
-        <div className="ml-auto flex items-center gap-2">
-          {memberCoords && (
-            <span className="text-xs text-white/30 flex items-center gap-1">
-              <Navigation className="h-3 w-3 text-[#00B39D]" /> ordenado por distância
-            </span>
-          )}
-          {/* Map/List toggle */}
+      <div className="px-5 py-3 border-b border-white/10 flex flex-col gap-3 shrink-0">
+        <div className="flex items-center gap-2">
+          {/* Busca por grupo | líder */}
+          <div className="flex items-center gap-1 rounded-full bg-white/5 border border-white/10 p-1 shrink-0">
+            <button
+              onClick={() => setSearchMode('grupo')}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${searchMode === 'grupo' ? 'bg-[#00B39D] text-white' : 'text-white/50 hover:text-white/80'}`}
+            >
+              Grupo
+            </button>
+            <button
+              onClick={() => setSearchMode('lider')}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${searchMode === 'lider' ? 'bg-[#00B39D] text-white' : 'text-white/50 hover:text-white/80'}`}
+            >
+              Líder
+            </button>
+          </div>
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-white/30" />
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder={searchMode === 'lider' ? 'Buscar por líder...' : 'Buscar por grupo...'}
+              className="w-full pl-9 pr-3 py-2 rounded-full bg-white/5 border border-white/10 text-white text-sm placeholder:text-white/30 outline-none focus:border-[#00B39D]"
+            />
+          </div>
           <button
             onClick={() => setShowMap(v => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition-colors ${showMap ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-sm transition-colors shrink-0 ${showMap ? 'bg-[#00B39D] text-white' : 'bg-white/10 text-white/60 hover:bg-white/15'}`}
           >
             {showMap ? <List className="h-3.5 w-3.5" /> : <Map className="h-3.5 w-3.5" />}
             {showMap ? 'Lista' : 'Mapa'}
           </button>
+        </div>
+
+        {/* Dropdowns de filtro (sempre visíveis · igual à inscrição pública) */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {dias.length > 0 && (
+            <select value={fDia} onChange={(e) => setFDia(e.target.value)} className={selCls} aria-label="Filtrar por dia">
+              <option value="">Dia: todos</option>
+              {dias.map((d) => <option key={d} value={String(d)}>{DIAS_MAP[d]}</option>)}
+            </select>
+          )}
+          {recorrencias.length > 0 && (
+            <select value={fRecorrencia} onChange={(e) => setFRecorrencia(e.target.value)} className={selCls} aria-label="Filtrar por frequência">
+              <option value="">Frequência: todas</option>
+              {recorrencias.map((r) => <option key={r} value={r}>{RECORRENCIA_LABEL[r] || r}</option>)}
+            </select>
+          )}
+          {bairros.length > 0 && (
+            <select value={fBairro} onChange={(e) => setFBairro(e.target.value)} className={selCls} aria-label="Filtrar por bairro">
+              <option value="">Bairro: todos</option>
+              {bairros.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
+          )}
+          {categories.length > 0 && (
+            <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className={selCls} aria-label="Filtrar por categoria">
+              <option value="">Categoria: todas</option>
+              {categories.map((cat) => <option key={cat} value={cat}>{cat}</option>)}
+            </select>
+          )}
+          {filtrosAtivos > 0 && (
+            <button onClick={limparFiltros} className="text-xs text-white/50 hover:text-white/80 underline px-1">
+              Limpar
+            </button>
+          )}
+          {memberCoords && (
+            <span className="text-xs text-white/30 flex items-center gap-1 ml-auto">
+              <Navigation className="h-3 w-3 text-[#00B39D]" /> por distância
+            </span>
+          )}
         </div>
       </div>
 
@@ -1366,24 +1832,46 @@ function GruposFlow({ opt, member, onBack, onDone, onActivity }: {
 
 // ── Batismo Flow ──────────────────────────────────────────────────────────────
 
-function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
+function BatismoFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
   opt: (typeof MENU_OPTIONS)[number];
   member: MemberData;
   onBack: () => void;
   onDone: () => void;
+  onEndSession: () => void;
   onActivity: () => void;
 }) {
-  const [step, setStep] = useState<'info' | 'form' | 'success'>('info');
+  const guest = !!member.guest;
+  const memberSrc = member.raw?.membro || member.raw?.cadastro || {};
+  const [step, setStep] = useState<'info' | 'horario' | 'dados' | 'success'>('info');
+  // Próximo batismo + horários com vaga (mesma fonte do formulário público)
+  const [agenda, setAgenda] = useState<{ data_batismo: string | null; horarios: any[]; grupo_url: string | null }>({
+    data_batismo: null, horarios: [], grupo_url: null,
+  });
+  const [agendaLoading, setAgendaLoading] = useState(true);
+  const [horarioSel, setHorarioSel] = useState<any>(null);
   const [form, setForm] = useState({
-    nome: (member.nome || '').split(' ')[0] || '',
-    sobrenome: (member.nome || '').split(' ').slice(1).join(' ') || '',
+    nome: guest ? '' : ((member.nome || '').split(' ')[0] || ''),
+    sobrenome: guest ? '' : ((member.nome || '').split(' ').slice(1).join(' ') || ''),
     cpf: member.cpf || '',
-    data_nascimento: '',
-    telefone: '',
+    data_nascimento: memberSrc.data_nascimento || '',
+    telefone: member.telefone || '',
     email: member.email || '',
+    sexo: memberSrc.sexo || '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [jaInscrito, setJaInscrito] = useState(false);
+
+  useEffect(() => {
+    membresia.totem.batismoHorarios()
+      .then((r: any) => setAgenda({
+        data_batismo: r?.data_batismo || null,
+        horarios: r?.horarios || [],
+        grupo_url: r?.grupo_url || null,
+      }))
+      .catch(() => {})
+      .finally(() => setAgendaLoading(false));
+  }, []);
 
   const maskCpf = (v: string) => {
     const d = v.replace(/\D/g, '').slice(0, 11);
@@ -1393,17 +1881,31 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
     return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}`;
   };
 
-  const setField = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
+  const setField = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(f => ({ ...f, [k]: k === 'cpf' ? maskCpf(e.target.value) : e.target.value }));
 
+  // Sessão com dados completos pula a tela de dados (pedido do redesenho):
+  // o totem exige CPF válido (mesma lei do formulário público de batismo)
+  // e um telefone de contato.
+  const dadosCompletos = !guest
+    && !!form.nome && !!form.sobrenome
+    && cpfDvOk(form.cpf)
+    && form.telefone.replace(/\D/g, '').length >= 10;
+
   const handleSubmit = async () => {
-    if (!form.nome || !form.sobrenome) { setError('Nome e sobrenome são obrigatórios'); return; }
+    if (!form.nome || !form.sobrenome) { setError('Nome e sobrenome são obrigatórios'); setStep('dados'); return; }
+    if (!cpfDvOk(form.cpf)) { setError('CPF é obrigatório e precisa ser válido'); setStep('dados'); return; }
+    if (form.telefone.replace(/\D/g, '').length < 10) { setError('Informe um telefone com DDD'); setStep('dados'); return; }
     setSaving(true); setError('');
     onActivity();
     try {
-      await kpisApi.batismos.create({ ...form, origem: 'totem' });
+      const r = await kpisApi.batismos.create({
+        ...form,
+        origem: 'totem',
+        ...(horarioSel ? { horario_culto: horarioSel.horario } : {}),
+      });
+      if (r?.duplicado) setJaInscrito(true);
       setStep('success');
-      setTimeout(onDone, 4000);
     } catch (e: any) {
       setError(e.message || 'Não foi possível registrar. Tente novamente.');
     }
@@ -1414,12 +1916,31 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
 
   if (step === 'success') {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8">
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8" onClick={onActivity}>
         <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
-        <div className="text-center">
-          <h2 className="text-3xl font-bold">Inscrição realizada!</h2>
-          <p className="text-white/60 mt-2">Nossa equipe entrará em contato, {form.nome}!</p>
+        <div className="text-center max-w-md">
+          <h2 className="text-3xl font-bold">{jaInscrito ? 'Você já está inscrito!' : 'Inscrição confirmada!'}</h2>
+          {jaInscrito ? (
+            <p className="text-white/70 mt-3 text-lg">Você já tem uma inscrição de batismo em andamento — está tudo certo, é só aguardar nossa equipe.</p>
+          ) : agenda.data_batismo ? (
+            <p className="text-white/70 mt-3 text-lg">
+              Seu batismo será em <span className="text-[#6366F1] font-semibold">{fmtDateBR(agenda.data_batismo)}</span>
+              {horarioSel ? <> · culto das <span className="text-[#6366F1] font-semibold">{horarioSel.label || horarioSel.horario}</span></> : null}
+            </p>
+          ) : (
+            <p className="text-white/60 mt-2">Nossa equipe entrará em contato, {form.nome}!</p>
+          )}
+          <p className="text-white/50 mt-2 text-sm">Nossa equipe vai te chamar no WhatsApp com as orientações.</p>
         </div>
+        {agenda.grupo_url && (
+          <div className="text-center">
+            <p className="text-white/60 text-sm mb-2">Entre agora no grupo de WhatsApp do batismo:</p>
+            <div className="inline-block bg-white p-2.5 rounded-xl">
+              <QRCodeSVG value={agenda.grupo_url} size={110} level="M" includeMargin={false} />
+            </div>
+          </div>
+        )}
+        <SuccessActions onDone={onDone} onEndSession={onEndSession} accent="#6366F1" />
       </div>
     );
   }
@@ -1439,9 +1960,15 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
                 O batismo é um passo importante na jornada de fé. Se você aceitou Jesus e quer dar esse próximo passo, registre seu interesse aqui!
               </p>
             </div>
+            {agenda.data_batismo && (
+              <div className="rounded-2xl border border-[#6366F1]/30 bg-[#6366F1]/10 p-4">
+                <p className="text-white/60 text-xs uppercase tracking-wider">Próximo batismo</p>
+                <p className="text-xl font-bold text-[#6366F1] mt-1">{fmtDateBR(agenda.data_batismo)}</p>
+              </div>
+            )}
             <div className="space-y-3">
               <Button
-                onClick={() => setStep('form')}
+                onClick={() => setStep('horario')}
                 className="w-full bg-[#6366F1] hover:bg-[#6366F1]/90 text-white py-3 text-base rounded-2xl gap-2"
               >
                 Quero me batizar <ChevronRight className="h-5 w-5" />
@@ -1456,14 +1983,89 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
     );
   }
 
+  if (step === 'horario') {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        <OptionHeader opt={opt} member={member} onBack={() => setStep('info')} />
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="w-full max-w-md space-y-5">
+            <div className="text-center">
+              <h2 className="text-xl font-bold">Escolha o horário</h2>
+              {agenda.data_batismo && (
+                <p className="text-white/50 text-sm mt-1">
+                  Próximo batismo: <span className="text-[#6366F1] font-semibold">{fmtDateBR(agenda.data_batismo)}</span>
+                </p>
+              )}
+            </div>
+            {agendaLoading ? (
+              <div className="flex justify-center py-10"><Loader2 className="h-8 w-8 animate-spin text-[#6366F1]" /></div>
+            ) : agenda.horarios.length === 0 ? (
+              <div className="text-center space-y-4 py-6">
+                <p className="text-white/60">As vagas deste batismo se esgotaram.</p>
+                <p className="text-white/40 text-sm">Procure nossa equipe no lounge para entrar na lista do próximo.</p>
+                <Button onClick={onBack} variant="outline" className="!bg-white/10 border-white/20 text-white hover:!bg-white/20">
+                  Voltar ao menu
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 gap-3">
+                  {agenda.horarios.map((h: any) => {
+                    const sel = horarioSel?.horario === h.horario;
+                    return (
+                      <button
+                        key={h.horario}
+                        onClick={() => setHorarioSel(h)}
+                        className={`flex items-center justify-between px-5 py-4 rounded-2xl border text-left transition-all ${
+                          sel ? 'border-[#6366F1] bg-[#6366F1]/15' : 'border-white/15 bg-white/5 hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="text-lg font-semibold">{h.label || h.horario}</span>
+                        {h.vagas_restantes != null && (
+                          <span className={`text-xs ${sel ? 'text-[#6366F1]' : 'text-white/40'}`}>
+                            {h.vagas_restantes} vaga{h.vagas_restantes === 1 ? '' : 's'}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+                <Button
+                  onClick={() => { if (!horarioSel) return; if (dadosCompletos) handleSubmit(); else setStep('dados'); }}
+                  disabled={!horarioSel || saving}
+                  className="w-full bg-[#6366F1] hover:bg-[#6366F1]/90 text-white py-3 text-base rounded-2xl gap-2"
+                >
+                  {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <Droplets className="h-5 w-5" />}
+                  {saving ? 'Registrando...' : dadosCompletos ? 'Confirmar inscrição' : 'Continuar'}
+                </Button>
+                {dadosCompletos && (
+                  <p className="text-center text-white/30 text-xs">
+                    Vamos usar os dados do seu cadastro, {form.nome} — nada para digitar.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // step === 'dados' — só aparece quando falta algo (CPF/telefone) ou pra
+  // convidado; quem tem cadastro completo confirma direto na tela de horário.
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
-      <OptionHeader opt={opt} member={member} onBack={() => setStep('info')} />
+      <OptionHeader opt={opt} member={member} onBack={() => setStep('horario')} />
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-md space-y-4">
           <div className="text-center mb-2">
-            <h2 className="text-xl font-bold">Confirme seus dados</h2>
-            <p className="text-white/40 text-sm mt-1">Seus dados serão usados para registrar o batismo</p>
+            <h2 className="text-xl font-bold">Complete seus dados</h2>
+            <p className="text-white/40 text-sm mt-1">
+              {agenda.data_batismo
+                ? <>Batismo em <span className="text-[#6366F1]">{fmtDateBR(agenda.data_batismo)}</span>{horarioSel ? <> · {horarioSel.label || horarioSel.horario}</> : null}</>
+                : 'Seus dados serão usados para registrar o batismo'}
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -1478,24 +2080,34 @@ function BatismoFlow({ opt, member, onBack, onDone, onActivity }: {
           </div>
 
           <div>
-            <label className="block text-xs text-white/40 mb-1">CPF</label>
+            <label className="block text-xs text-white/40 mb-1">CPF *</label>
             <input value={form.cpf} onChange={setField('cpf')} className={inputCls} placeholder="000.000.000-00" inputMode="numeric" />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-white/40 mb-1">Data de nascimento</label>
-              <input type="date" value={form.data_nascimento} onChange={setField('data_nascimento')} className={inputCls} />
+              <BirthDatePicker value={form.data_nascimento} onChange={(v) => setField('data_nascimento')({ target: { value: v } } as any)} className={inputCls} />
             </div>
             <div>
-              <label className="block text-xs text-white/40 mb-1">Telefone</label>
-              <input value={form.telefone} onChange={setField('telefone')} className={inputCls} placeholder="(21) 9..." />
+              <label className="block text-xs text-white/40 mb-1">Sexo</label>
+              <select value={form.sexo} onChange={setField('sexo')} className={`${inputCls} [color-scheme:dark]`}>
+                <option value="">Selecionar</option>
+                <option value="M">Masculino</option>
+                <option value="F">Feminino</option>
+              </select>
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs text-white/40 mb-1">E-mail</label>
-            <input type="email" value={form.email} onChange={setField('email')} className={inputCls} placeholder="email@exemplo.com" />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Telefone *</label>
+              <input value={form.telefone} onChange={setField('telefone')} className={inputCls} placeholder="(21) 9..." inputMode="numeric" />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">E-mail</label>
+              <input type="email" value={form.email} onChange={setField('email')} className={inputCls} placeholder="email@exemplo.com" />
+            </div>
           </div>
 
           {error && (
@@ -1924,25 +2536,33 @@ function maskPhoneInput(v: string): string {
 
 // ── NEXT Flow ─────────────────────────────────────────────────────────────────
 
-function NextFlow({ opt, member, onBack, onDone, onActivity }: {
+function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
   opt: (typeof MENU_OPTIONS)[number];
   member: MemberData;
   onBack: () => void;
   onDone: () => void;
+  onEndSession: () => void;
   onActivity: () => void;
 }) {
+  const guest = !!member.guest;
   const [loading, setLoading] = useState(true);
   const [inscrito, setInscrito] = useState(false);
   const [inscricao, setInscricao] = useState<any>(null);
   const [proximoEvento, setProximoEvento] = useState<any>(null);
+  const [proximasTurmas, setProximasTurmas] = useState<any[]>([]);
+  const [turmaSel, setTurmaSel] = useState<any>(null);
+  const [materialAtivo, setMaterialAtivo] = useState(false);
+  const [infoEnviado, setInfoEnviado] = useState(false);
+  const [enviandoInfo, setEnviandoInfo] = useState(false);
   const [step, setStep] = useState<'check' | 'form' | 'success'>('check');
   const [form, setForm] = useState({
-    nome: (member.nome || '').split(' ')[0] || '',
-    sobrenome: (member.nome || '').split(' ').slice(1).join(' ') || '',
+    nome: guest ? '' : ((member.nome || '').split(' ')[0] || ''),
+    sobrenome: guest ? '' : ((member.nome || '').split(' ').slice(1).join(' ') || ''),
     cpf: member.cpf || '',
     telefone: member.telefone ? maskPhoneInput(member.telefone) : '',
     email: member.email || '',
     data_nascimento: '',
+    sexo: '',
     observacoes: '',
   });
   const [saving, setSaving] = useState(false);
@@ -1958,12 +2578,31 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
         setInscrito(!!r.inscrito);
         setInscricao(r.inscricao);
         setProximoEvento(r.proximo_evento);
+        const turmas = r.proximas_turmas || (r.proximo_evento ? [r.proximo_evento] : []);
+        setProximasTurmas(turmas);
+        setTurmaSel(r.proximo_evento || turmas[0] || null);
+        setMaterialAtivo(!!r.material_ativo);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [member.id, member.email, member.cpf]);
 
-  const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => {
+  const fmtHora = (t: any) => (t?.horario ? String(t.horario).slice(0, 5) : null);
+
+  const enviarInfo = async () => {
+    const tel = (form.telefone || member.telefone || '').replace(/\D/g, '');
+    if (tel.length < 10) { setError('Informe um telefone com DDD para receber o material'); return; }
+    setEnviandoInfo(true); setError(''); onActivity();
+    try {
+      await membresia.totem.next.informacoes({ telefone: tel, nome: form.nome || member.nome });
+      setInfoEnviado(true);
+    } catch (e: any) {
+      setError(e?.message || 'Não foi possível enviar agora');
+    }
+    setEnviandoInfo(false);
+  };
+
+  const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     let v = e.target.value;
     if (k === 'cpf') v = maskCpfInput(v);
     if (k === 'telefone') v = maskPhoneInput(v);
@@ -1971,27 +2610,39 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
     onActivity();
   };
 
+  // Dados completos = membro identificado que já tem nome/sobrenome/telefone no
+  // cadastro → a inscrição vira confirmação de um toque (nada para digitar).
+  // E-mail e CPF NÃO entram aqui: o Next não os exige (o matcher liga pelo
+  // membro_id/telefone) e muitos membros não têm e-mail cadastrado.
+  const dadosCompletos = !guest
+    && !!form.nome.trim()
+    && !!form.sobrenome.trim()
+    && form.telefone.replace(/\D/g, '').length >= 10;
+
   const handleSubmit = async () => {
     if (!form.nome || form.nome.trim().length < 2) { setError('Nome obrigatório'); return; }
-    if (!form.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) { setError('E-mail inválido'); return; }
+    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) { setError('E-mail inválido'); return; }
     if (form.telefone.replace(/\D/g, '').length < 10) { setError('Telefone inválido'); return; }
     setSaving(true); setError('');
     onActivity();
     try {
       const payload: any = {
-        membro_id: member.id || null,
+        // Cadastro pendente ainda não tem linha em mem_membros — o matcher do
+        // backend resolve/cria o vínculo na hora da inscrição.
+        membro_id: member.pending || member.guest ? null : member.id || null,
         nome: form.nome.trim(),
         sobrenome: form.sobrenome.trim() || null,
         telefone: form.telefone.replace(/\D/g, ''),
         email: form.email.trim().toLowerCase(),
         cpf: form.cpf.replace(/\D/g, '') || null,
         data_nascimento: form.data_nascimento || null,
+        sexo: form.sexo || null,
         observacoes: form.observacoes || null,
+        turma_id: turmaSel?.id || null,   // turma escolhida no calendário
       };
       const r = await membresia.totem.next.inscrever(payload);
       if (r.evento) setProximoEvento(r.evento);
       setStep('success');
-      setTimeout(onDone, 5000);
     } catch (e: any) {
       setError(e?.message || 'Erro ao inscrever. Tente novamente.');
     }
@@ -2015,17 +2666,19 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
   // ── Success ──
   if (step === 'success') {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8">
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8" onClick={onActivity}>
         <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
         <div className="text-center max-w-md">
           <h2 className="text-3xl font-bold">Inscrição confirmada!</h2>
-          {proximoEvento?.data && (
+          {(turmaSel?.data || proximoEvento?.data) && (
             <p className="text-white/70 mt-3 text-lg">
-              Te esperamos no NEXT em <span className="text-[#10B981] font-semibold">{fmtDateBR(proximoEvento.data)}</span>
+              Te esperamos no NEXT em <span className="text-[#10B981] font-semibold">{fmtDateBR(turmaSel?.data || proximoEvento.data)}</span>
+              {fmtHora(turmaSel || proximoEvento) ? <> às <span className="text-[#10B981] font-semibold">{fmtHora(turmaSel || proximoEvento)}</span></> : null}
             </p>
           )}
           <p className="text-white/50 mt-2 text-sm">Você receberá detalhes por e-mail e WhatsApp.</p>
         </div>
+        <SuccessActions onDone={onDone} onEndSession={onEndSession} accent="#10B981" />
       </div>
     );
   }
@@ -2050,6 +2703,11 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
               {inscricao.evento.data ? (
                 <>
                   <p className="text-3xl font-bold text-[#10B981]">{fmtDateBR(inscricao.evento.data)}</p>
+                  {fmtHora(inscricao.evento) && (
+                    <p className="text-white/70 text-sm mt-1 flex items-center justify-center gap-1">
+                      <Clock className="h-3.5 w-3.5" /> às {fmtHora(inscricao.evento)}
+                    </p>
+                  )}
                   {inscricao.evento.titulo && (
                     <p className="text-white/70 text-sm mt-1">{inscricao.evento.titulo}</p>
                   )}
@@ -2059,7 +2717,7 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
               )}
             </div>
             <p className="text-white/40 text-xs">Te esperamos lá!</p>
-            <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+            <Button onClick={onBack} variant="outline" className="!bg-white/10 border-white/20 text-white hover:!bg-white/20">
               Voltar ao menu
             </Button>
           </div>
@@ -2084,7 +2742,7 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
                 Nenhum evento NEXT está agendado agora. Volte em breve!
               </p>
             </div>
-            <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+            <Button onClick={onBack} variant="outline" className="!bg-white/10 border-white/20 text-white hover:!bg-white/20">
               Voltar ao menu
             </Button>
           </div>
@@ -2095,11 +2753,12 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
 
   // ── Info ──
   if (step === 'check') {
+    const multiplas = proximasTurmas.length > 1;
     return (
       <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
         <OptionHeader opt={opt} member={member} onBack={onBack} />
-        <div className="flex-1 flex items-center justify-center p-8">
-          <div className="max-w-md text-center space-y-6">
+        <div className="flex-1 overflow-y-auto p-8">
+          <div className="max-w-md mx-auto text-center space-y-6">
             <div className="h-20 w-20 rounded-3xl bg-[#10B981]/20 flex items-center justify-center mx-auto">
               <ArrowRight className="h-10 w-10 text-[#10B981]" />
             </div>
@@ -2109,18 +2768,88 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
                 O NEXT é a porta de entrada da CBRio · conheça nossa visão, valores e como dar os próximos passos.
               </p>
             </div>
-            {proximoEvento?.data && (
+
+            {/* Calendário de turmas: escolha quando várias abertas; senão card único */}
+            {multiplas ? (
+              <div className="space-y-2 text-left">
+                <p className="text-white/60 text-xs uppercase tracking-wider text-center">Escolha a turma</p>
+                {proximasTurmas.map((t) => {
+                  const sel = turmaSel?.id === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => { setTurmaSel(t); onActivity(); }}
+                      className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl border transition-all ${
+                        sel ? 'border-[#10B981] bg-[#10B981]/15' : 'border-white/15 bg-white/5 hover:bg-white/10'
+                      }`}
+                    >
+                      <span className="font-semibold">{t.data ? fmtDateBR(t.data) : (t.titulo || 'Turma')}</span>
+                      {fmtHora(t) && <span className={`text-sm ${sel ? 'text-[#10B981]' : 'text-white/50'}`}>{fmtHora(t)}</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : turmaSel && (turmaSel.data || fmtHora(turmaSel)) ? (
               <div className="rounded-2xl border border-[#10B981]/30 bg-[#10B981]/10 p-4">
                 <p className="text-white/60 text-xs uppercase tracking-wider">Próximo encontro</p>
-                <p className="text-xl font-bold text-[#10B981] mt-1">{fmtDateBR(proximoEvento.data)}</p>
+                {turmaSel.data && <p className="text-xl font-bold text-[#10B981] mt-1">{fmtDateBR(turmaSel.data)}</p>}
+                {fmtHora(turmaSel) && (
+                  <p className="text-white/70 text-sm mt-1 flex items-center justify-center gap-1">
+                    <Clock className="h-3.5 w-3.5" /> às {fmtHora(turmaSel)}
+                  </p>
+                )}
               </div>
+            ) : null}
+
+            {error && <p className="text-sm text-red-400">{error}</p>}
+
+            {dadosCompletos ? (
+              <div className="space-y-2">
+                <Button
+                  onClick={handleSubmit}
+                  disabled={saving}
+                  className="w-full bg-[#10B981] hover:bg-[#10B981]/90 text-white py-3 text-base rounded-2xl gap-2"
+                >
+                  {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <>Confirmar inscrição <ChevronRight className="h-5 w-5" /></>}
+                </Button>
+                <p className="text-white/40 text-xs">Vamos usar os dados do seu cadastro, {form.nome} — nada para digitar.</p>
+              </div>
+            ) : (
+              <Button
+                onClick={() => setStep('form')}
+                className="w-full bg-[#10B981] hover:bg-[#10B981]/90 text-white py-3 text-base rounded-2xl gap-2"
+              >
+                Quero me inscrever <ChevronRight className="h-5 w-5" />
+              </Button>
             )}
-            <Button
-              onClick={() => setStep('form')}
-              className="w-full bg-[#10B981] hover:bg-[#10B981]/90 text-white py-3 text-base rounded-2xl gap-2"
-            >
-              Quero me inscrever <ChevronRight className="h-5 w-5" />
-            </Button>
+
+            {/* Receber material do NEXT no WhatsApp — só aparece quando o
+                material (PDF) está ligado (opt-in do Marcos · validar c/ líderes) */}
+            {materialAtivo && (infoEnviado ? (
+              <p className="text-sm text-[#10B981] flex items-center justify-center gap-2">
+                <CheckCircle2 className="h-4 w-4" /> Enviamos o material no seu WhatsApp!
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {(guest || !member.telefone) && (
+                  <input
+                    value={form.telefone}
+                    onChange={setField('telefone')}
+                    placeholder="Seu WhatsApp com DDD"
+                    inputMode="numeric"
+                    className={inputCls}
+                  />
+                )}
+                <button
+                  onClick={enviarInfo}
+                  disabled={enviandoInfo}
+                  className="w-full text-[#10B981] hover:text-[#10B981]/80 text-sm font-medium py-2 disabled:opacity-50"
+                >
+                  {enviandoInfo ? 'Enviando...' : 'Quero saber mais — receber no WhatsApp'}
+                </button>
+              </div>
+            ))}
+            {error && <p className="text-red-400 text-sm">{error}</p>}
             <button onClick={onBack} className="w-full text-white/30 hover:text-white/60 text-sm transition-colors py-2">
               Voltar ao menu
             </button>
@@ -2155,7 +2884,7 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
           </div>
 
           <div>
-            <label className="block text-xs text-white/40 mb-1">E-mail *</label>
+            <label className="block text-xs text-white/40 mb-1">E-mail</label>
             <input type="email" value={form.email} onChange={setField('email')} className={inputCls} placeholder="email@exemplo.com" />
           </div>
 
@@ -2170,9 +2899,19 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs text-white/40 mb-1">Data de nascimento</label>
-            <input type="date" value={form.data_nascimento} onChange={setField('data_nascimento')} className={inputCls} />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Data de nascimento</label>
+              <BirthDatePicker value={form.data_nascimento} onChange={(v) => setField('data_nascimento')({ target: { value: v } } as any)} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Sexo</label>
+              <select value={form.sexo} onChange={setField('sexo')} className={`${inputCls} [color-scheme:dark]`}>
+                <option value="">Selecionar</option>
+                <option value="M">Masculino</option>
+                <option value="F">Feminino</option>
+              </select>
+            </div>
           </div>
 
           {error && <p className="text-red-400 text-sm text-center">{error}</p>}
@@ -2193,15 +2932,20 @@ function NextFlow({ opt, member, onBack, onDone, onActivity }: {
 
 // ── Apresentação de Bebês Flow ────────────────────────────────────────────────
 
-function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
+function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
   opt: (typeof MENU_OPTIONS)[number];
   member: MemberData;
   onBack: () => void;
   onDone: () => void;
+  onEndSession: () => void;
   onActivity: () => void;
 }) {
+  const guest = !!member.guest;
   const [loading, setLoading] = useState(true);
   const [proximaData, setProximaData] = useState<string | null>(null);
+  // Horário da cerimônia vem do SERVIDOR (régua D3 · 09:30 pós-corte de 24/08).
+  // Era "10h" hardcoded em 2 textos; sem horário do servidor, o texto é omitido.
+  const [horarioRotulo, setHorarioRotulo] = useState<string | null>(null);
   const [existente, setExistente] = useState<any>(null);
   const [step, setStep] = useState<'check' | 'form' | 'success'>('check');
   const [form, setForm] = useState({
@@ -2210,55 +2954,74 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
     bebe_sexo: '',
     nome_pai: '',
     nome_mae: '',
-    responsavel_nome: member.nome || '',
+    responsavel_nome: guest ? '' : member.nome || '',
+    responsavel_cpf: member.cpf ? maskCpfInput(member.cpf) : '',
+    responsavel_relacao: '',
     responsavel_telefone: member.telefone ? maskPhoneInput(member.telefone) : '',
     responsavel_email: member.email || '',
     observacoes: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [aceitaTermosMenor, setAceitaTermosMenor] = useState(false);
+  // Texto canônico do consentimento de menor (art. 14 §1º) — o snapshot que o
+  // backend grava é sempre o canônico, então a tela busca o MESMO texto (rota
+  // pública de textos da apresentação) com fallback idêntico ao atual.
+  const [textoMenor, setTextoMenor] = useState(
+    'Declaro que sou pai, mãe ou responsável legal da criança informada e autorizo o tratamento dos dados pessoais dela (nome, data de nascimento) pela Igreja CBRio, exclusivamente para organização da apresentação e comunicação relacionada, conforme a LGPD (art. 14).'
+  );
 
   useEffect(() => {
     const params: any = {};
-    if (member.id) params.membro_id = member.id;
+    if (member.id && !member.pending && !member.guest) params.membro_id = member.id;
     membresia.totem.apresentacaoBebe.status(params)
       .then((r: any) => {
         setProximaData(r.proxima_data);
+        setHorarioRotulo(r.horario_rotulo ?? null);
         setExistente(r.apresentacao_existente);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [member.id]);
+    apresentacaoCriancasPublico.textos()
+      .then((t: any) => { if (t?.menor_responsavel) setTextoMenor(t.menor_responsavel); })
+      .catch(() => {});
+  }, [member.id, member.pending, member.guest]);
 
   const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     let v = e.target.value;
     if (k === 'responsavel_telefone') v = maskPhoneInput(v);
+    if (k === 'responsavel_cpf') v = maskCpfInput(v);
     setForm(f => ({ ...f, [k]: v }));
     onActivity();
   };
 
   const handleSubmit = async () => {
-    if (!form.bebe_nome.trim()) { setError('Nome do bebê obrigatório'); return; }
+    if (form.bebe_nome.trim().split(/\s+/).length < 2) { setError('Escreva o nome completo do bebê (nome e sobrenome)'); return; }
     if (!form.bebe_data_nascimento) { setError('Data de nascimento do bebê obrigatória'); return; }
+    if (!form.bebe_sexo) { setError('Selecione o sexo do bebê'); return; }
     if (!form.responsavel_nome.trim()) { setError('Nome do responsável obrigatório'); return; }
+    if (!cpfDvOk(form.responsavel_cpf)) { setError('CPF do responsável é obrigatório e precisa ser válido'); return; }
     if (form.responsavel_telefone.replace(/\D/g, '').length < 10) { setError('Telefone inválido'); return; }
+    if (!aceitaTermosMenor) { setError('É preciso aceitar a autorização de responsável para agendar a apresentação'); return; }
     setSaving(true); setError('');
     onActivity();
     try {
       await membresia.totem.apresentacaoBebe.create({
-        responsavel_membro_id: member.id || null,
+        responsavel_membro_id: member.pending || member.guest ? null : member.id || null,
         responsavel_nome: form.responsavel_nome.trim(),
+        responsavel_cpf: form.responsavel_cpf.replace(/\D/g, ''),
+        responsavel_relacao: form.responsavel_relacao || null,
         responsavel_telefone: form.responsavel_telefone.replace(/\D/g, ''),
         responsavel_email: form.responsavel_email.trim() || null,
         bebe_nome: form.bebe_nome.trim(),
         bebe_data_nascimento: form.bebe_data_nascimento,
-        bebe_sexo: form.bebe_sexo || null,
+        bebe_sexo: form.bebe_sexo,
         nome_pai: form.nome_pai.trim() || null,
         nome_mae: form.nome_mae.trim() || null,
         observacoes: form.observacoes.trim() || null,
+        aceita_termos_menor: aceitaTermosMenor,
       });
       setStep('success');
-      setTimeout(onDone, 5000);
     } catch (e: any) {
       setError(e?.message || 'Erro ao agendar. Tente novamente.');
     }
@@ -2280,19 +3043,21 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
 
   if (step === 'success') {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8">
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8" onClick={onActivity}>
         <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
         <div className="text-center max-w-md">
           <h2 className="text-3xl font-bold">Apresentação agendada!</h2>
           {proximaData && (
             <p className="text-white/70 mt-3 text-lg">
               {fmtDateBR(proximaData).replace(/^(\w)/, c => c.toUpperCase())}
+              {horarioRotulo && <>{' · '}<span className="text-[#EC4899] font-semibold">às {horarioRotulo}</span></>}
             </p>
           )}
           <p className="text-white/50 mt-2 text-sm">
             Nossa equipe entrará em contato para confirmar os detalhes da cerimônia.
           </p>
         </div>
+        <SuccessActions onDone={onDone} onEndSession={onEndSession} accent="#EC4899" />
       </div>
     );
   }
@@ -2315,7 +3080,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
               <p className="text-3xl font-bold text-[#EC4899]">{fmtDateBR(existente.data_apresentacao)}</p>
               <p className="text-white/60 text-xs mt-2">Domingo • CBRio Sede</p>
             </div>
-            <Button onClick={onBack} variant="outline" className="border-white/20 text-white hover:bg-white/10">
+            <Button onClick={onBack} variant="outline" className="!bg-white/10 border-white/20 text-white hover:!bg-white/20">
               Voltar ao menu
             </Button>
           </div>
@@ -2343,6 +3108,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
               <div className="rounded-2xl border border-[#EC4899]/30 bg-[#EC4899]/10 p-4">
                 <p className="text-white/60 text-xs uppercase tracking-wider">Próxima cerimônia</p>
                 <p className="text-xl font-bold text-[#EC4899] mt-1">{fmtDateBR(proximaData)}</p>
+                {horarioRotulo && <p className="text-white/70 text-sm mt-1">no culto das {horarioRotulo}</p>}
               </div>
             )}
             <Button
@@ -2372,6 +3138,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
             )}
           </div>
 
+
           <p className="text-xs font-semibold uppercase tracking-wider text-white/40">Bebê</p>
 
           <div>
@@ -2381,15 +3148,15 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-white/40 mb-1">Nascimento *</label>
-              <input type="date" value={form.bebe_data_nascimento} onChange={setField('bebe_data_nascimento')} className={inputCls} />
+              <BirthDatePicker value={form.bebe_data_nascimento} onChange={(v) => setField('bebe_data_nascimento')({ target: { value: v } } as any)} className={inputCls} />
             </div>
             <div>
-              <label className="block text-xs text-white/40 mb-1">Sexo</label>
+              <label className="block text-xs text-white/40 mb-1">Sexo *</label>
+              {/* Contrato de Inscrição (D8): obrigatório, só menino/menina */}
               <select value={form.bebe_sexo} onChange={setField('bebe_sexo')} className={inputCls}>
                 <option value="">Selecionar</option>
                 <option value="M">Menino</option>
                 <option value="F">Menina</option>
-                <option value="outro">Outro</option>
               </select>
             </div>
           </div>
@@ -2407,9 +3174,28 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
           </div>
 
           <p className="text-xs font-semibold uppercase tracking-wider text-white/40 pt-2">Responsável (contato)</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Nome *</label>
+              <input value={form.responsavel_nome} onChange={setField('responsavel_nome')} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-xs text-white/40 mb-1">Parentesco com o bebê</label>
+              <select value={form.responsavel_relacao} onChange={setField('responsavel_relacao')} className={`${inputCls} [color-scheme:dark]`}>
+                <option value="">Selecionar</option>
+                <option value="mae">Mãe</option>
+                <option value="pai">Pai</option>
+                <option value="avo">Avó / Avô</option>
+                <option value="tio">Tio / Tia</option>
+                <option value="responsavel">Responsável</option>
+                <option value="outro">Outro</option>
+              </select>
+            </div>
+          </div>
           <div>
-            <label className="block text-xs text-white/40 mb-1">Nome *</label>
-            <input value={form.responsavel_nome} onChange={setField('responsavel_nome')} className={inputCls} />
+            <label className="block text-xs text-white/40 mb-1">CPF do responsável *</label>
+            <input value={form.responsavel_cpf} onChange={setField('responsavel_cpf')} className={inputCls} placeholder="000.000.000-00" inputMode="numeric" />
+            <p className="text-[11px] text-white/30 mt-1">Ajuda a já vincular sua família quando a criança for pro Kids.</p>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -2427,6 +3213,14 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
             <input value={form.observacoes} onChange={setField('observacoes')} className={inputCls} placeholder="Padrinhos, alergias, etc." />
           </div>
 
+          {/* Consentimento de MENOR (LGPD art. 14 §1º) — Contrato de Inscrição.
+              O texto exibido é o canônico do backend; o snapshot gravado idem. */}
+          <label className="flex items-start gap-3 rounded-2xl border border-[#EC4899]/40 bg-[#EC4899]/10 p-3 cursor-pointer" onClick={onActivity}>
+            <input type="checkbox" checked={aceitaTermosMenor} onChange={(e) => setAceitaTermosMenor(e.target.checked)}
+              className="mt-1 h-5 w-5 accent-[#EC4899] shrink-0" />
+            <span className="text-[12px] leading-relaxed text-white/70">{textoMenor} *</span>
+          </label>
+
           {error && <p className="text-red-400 text-sm text-center">{error}</p>}
 
           <Button
@@ -2438,6 +3232,386 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onActivity }: {
             {saving ? 'Agendando...' : 'Confirmar apresentação'}
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Eventos e retiros ─────────────────────────────────────────────────────────
+//
+// Inscrição em evento pago pelo totem (Fase 1 do pagamento presencial).
+//
+// ⚠️ O POST vai pra `/inscricoes/totem/eventos/:id/inscrever`, que roda a MESMA
+// `inscreverEspinha` da porta pública e do app: vaga sob advisory lock, dedup
+// por CPF, benefício pré-autorizado, cobrança idempotente, consentimentos,
+// e-mail e WhatsApp. Nada disso é reimplementado aqui.
+//
+// ⚠️ A ESTAÇÃO (qual totem cobrou) é resolvida no SERVIDOR pela conta de
+// quiosque logada. Esta tela não manda, e não deve mandar, `estacao_id`.
+//
+// ⚠️ SUCESSO SÓ COM `pago` DO SERVIDOR (lei nº 7 do núcleo de pagamentos):
+// voltar da tela de Pix não é pagar. Quem decide é o polling.
+
+function EventosFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
+  opt: (typeof MENU_OPTIONS)[number];
+  member: MemberData;
+  onBack: () => void;
+  onDone: () => void;
+  onEndSession: () => void;
+  onActivity: () => void;
+}) {
+  const guest = !!member.guest;
+  const memberSrc = member.raw?.membro || member.raw?.cadastro || {};
+  const [step, setStep] = useState<'lista' | 'evento' | 'dados' | 'pagamento' | 'sucesso'>('lista');
+  const [eventos, setEventos] = useState<any[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [ev, setEv] = useState<any>(null);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [textos, setTextos] = useState<{ termos_lgpd?: string; aviso_optin?: string }>({});
+  const [resultado, setResultado] = useState<any>(null);
+
+  // Pagamento
+  const [token, setToken] = useState<string | null>(null);
+  const [pag, setPag] = useState<any>(null);
+  const [pagErro, setPagErro] = useState('');
+
+  // `genero` no cadastro é M/F; o Contrato de Inscrição exige o canônico
+  // ('masculino'/'feminino'), então converte na entrada em vez de mandar M/F e
+  // levar 400 do servidor.
+  const sexoInicial = (() => {
+    const g = String(memberSrc.genero || memberSrc.sexo || '').trim().toLowerCase();
+    if (g === 'm' || g === 'masculino') return 'masculino';
+    if (g === 'f' || g === 'feminino') return 'feminino';
+    return '';
+  })();
+
+  const [form, setForm] = useState<any>({
+    nome_completo: guest ? '' : (member.nome || ''),
+    cpf: guest ? '' : (member.cpf || ''),
+    telefone: guest ? '' : (member.telefone || ''),
+    email: guest ? '' : (member.email || ''),
+    data_nascimento: guest ? '' : (memberSrc.data_nascimento || ''),
+    sexo: guest ? '' : sexoInicial,
+    aceita_termos: false,
+    whatsapp_optin: false,
+    dados: {} as Record<string, any>,
+  });
+
+  useEffect(() => {
+    inscricoesApi.totemEventos()
+      .then((r: any) => setEventos(r.eventos || []))
+      .catch((e: any) => setError(e.message || 'Não foi possível carregar os eventos'))
+      .finally(() => setCarregando(false));
+    // Textos canônicos de consentimento vêm SEMPRE do backend — o snapshot
+    // gravado é o mesmo que a pessoa leu, então tela e prova nunca divergem.
+    eventoPublico.textos().then(setTextos).catch(() => {});
+  }, []);
+
+  // ⚠️ Polling do pagamento: o servidor é quem diz `pago`. Para sozinho ao
+  // resolver e não roda fora da tela de pagamento.
+  useEffect(() => {
+    if (step !== 'pagamento' || !token) return;
+    let vivo = true;
+    let timer: any;
+    const tick = async () => {
+      try {
+        const r: any = await eventoPublico.pagamento(token);
+        if (!vivo) return;
+        setPag(r);
+        if (r?.pago) { setStep('sucesso'); return; }
+      } catch { /* instabilidade não derruba a tela */ }
+      if (vivo) timer = setTimeout(tick, 4000);
+    };
+    timer = setTimeout(tick, 3000);
+    return () => { vivo = false; clearTimeout(timer); };
+  }, [step, token]);
+
+  const inputCls = 'w-full px-4 py-3 rounded-2xl border border-gray-700 bg-gray-800 text-white placeholder:text-gray-500 text-base outline-none focus:border-[#F59E0B] focus:ring-1 focus:ring-[#F59E0B]/30 transition-colors';
+  const setField = (k: string) => (e: any) => {
+    const v = e?.target?.value ?? e;
+    setForm((f: any) => ({
+      ...f,
+      [k]: k === 'cpf' ? maskCpfInput(String(v)) : k === 'telefone' ? maskPhoneInput(String(v)) : v,
+    }));
+  };
+  const setExtra = (key: string, v: any) => setForm((f: any) => ({ ...f, dados: { ...f.dados, [key]: v } }));
+
+  const fmtValor = (c?: number | null) =>
+    typeof c === 'number' ? (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : null;
+  const fmtData = (d?: string | null) => {
+    if (!d) return null;
+    try { return format(new Date(`${d}T12:00:00`), "d 'de' MMMM", { locale: ptBR }); } catch { return d; }
+  };
+
+  async function enviar() {
+    setError('');
+    if (!form.aceita_termos) { setError('É preciso aceitar os termos para se inscrever.'); return; }
+    setSaving(true);
+    onActivity();
+    try {
+      const r: any = await inscricoesApi.totemInscrever(ev.id, {
+        ...form,
+        // `dados` são os campos extras do form-builder daquele evento.
+        dados: form.dados,
+      });
+      setResultado(r);
+      if (r?.pagamento && r?.public_token) {
+        setToken(r.public_token);
+        setStep('pagamento');
+        // Prepara o Pix na hora: é o clique que faz o provedor gerar o QR.
+        try {
+          const m: any = await eventoPublico.pagamentoMetodo(r.public_token, 'pix', 1);
+          setPag(m?.pagamento || m);
+        } catch (e: any) {
+          setPagErro(e.message || 'Não foi possível gerar o Pix agora.');
+        }
+      } else {
+        setStep('sucesso');
+      }
+    } catch (e: any) {
+      setError(e.message || 'Não foi possível concluir. Tente de novo.');
+    }
+    setSaving(false);
+  }
+
+  const Icon = opt.icon;
+  const header = (titulo: string, voltar: () => void) => (
+    <div className="flex items-center gap-3 px-6 pt-6">
+      <button onClick={voltar} className="p-3 rounded-2xl bg-gray-800 active:bg-gray-700" aria-label="Voltar">
+        <ChevronLeft className="h-6 w-6" />
+      </button>
+      <div className="flex items-center gap-2">
+        <Icon className="h-6 w-6" style={{ color: opt.color }} />
+        <h2 className="text-2xl font-bold">{titulo}</h2>
+      </div>
+    </div>
+  );
+
+  // ── Sucesso ──
+  if (step === 'sucesso') {
+    const pago = !!pag?.pago;
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8" onClick={onActivity}>
+        <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
+        <div className="text-center max-w-lg">
+          <h2 className="text-3xl font-bold">
+            {resultado?.ja_inscrito ? 'Você já estava inscrito!' : pago ? 'Pagamento confirmado!' : 'Inscrição registrada!'}
+          </h2>
+          <p className="text-white/70 mt-3 text-lg">
+            {pago
+              ? 'Sua vaga está garantida. Enviamos o comprovante para o seu e-mail.'
+              : resultado?.pagamento
+                ? 'Enviamos o link de pagamento para o seu e-mail — sua vaga fica reservada até lá.'
+                : 'Enviamos a confirmação para o seu e-mail.'}
+          </p>
+          {resultado?.numero_sorte && (
+            <p className="mt-6 text-lg">
+              Seu número da sorte: <span className="text-3xl font-bold" style={{ color: opt.color }}>{resultado.numero_sorte}</span>
+            </p>
+          )}
+        </div>
+        <div className="flex gap-3">
+          <Button onClick={onDone} className="min-h-[56px] px-8 text-base">Concluir</Button>
+          <Button variant="ghost" onClick={onEndSession} className="min-h-[56px] px-8 text-base">Encerrar</Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Pagamento (Pix) ──
+  if (step === 'pagamento') {
+    const qr = pag?.pix_qrcode_base64 || null;
+    const copia = pag?.pix_payload || null;
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        {header('Pagar com Pix', () => setStep('dados'))}
+        <div className="flex-1 flex flex-col items-center justify-center gap-5 p-6 text-center">
+          <p className="text-xl">
+            {ev?.nome} · <span className="font-bold">{fmtValor(resultado?.valor_centavos ?? ev?.valor_centavos)}</span>
+          </p>
+          {pagErro ? (
+            <div className="max-w-md">
+              <p className="text-lg text-amber-300">{pagErro}</p>
+              <p className="mt-2 text-white/60">Enviamos o link de pagamento para o seu e-mail — você pode pagar pelo celular.</p>
+            </div>
+          ) : qr ? (
+            <img src={`data:image/png;base64,${qr}`} alt="QR Code do Pix" className="h-64 w-64 rounded-2xl bg-white p-3 mx-auto" />
+          ) : copia ? (
+            <div className="rounded-2xl bg-white p-4"><QRCodeSVG value={copia} size={256} /></div>
+          ) : (
+            <div className="flex items-center gap-3 text-white/60"><Loader2 className="h-6 w-6 animate-spin" /> Gerando o Pix…</div>
+          )}
+          <p className="text-white/60 max-w-md">
+            Abra o app do seu banco, escolha Pix e aponte a câmera para o código. A tela avisa sozinha quando o pagamento cair.
+          </p>
+          <div className="flex items-center gap-2 text-white/40 text-sm">
+            <Loader2 className="h-4 w-4 animate-spin" /> Aguardando o pagamento…
+          </div>
+          <Button variant="ghost" onClick={onDone} className="mt-2 min-h-[56px] px-8 text-base">
+            Pagar depois pelo e-mail
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Formulário ──
+  if (step === 'dados') {
+    const extras: any[] = Array.isArray(ev?.campos) ? ev.campos : [];
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        {header(ev?.nome || 'Inscrição', () => setStep('evento'))}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="mx-auto max-w-2xl space-y-3">
+            <input value={form.nome_completo} onChange={setField('nome_completo')} className={inputCls} placeholder="Nome completo" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input value={form.cpf} onChange={setField('cpf')} className={inputCls} placeholder="CPF" inputMode="numeric" />
+              <input value={form.telefone} onChange={setField('telefone')} className={inputCls} placeholder="Celular com DDD" inputMode="numeric" />
+            </div>
+            <input value={form.email} onChange={setField('email')} className={inputCls} placeholder="E-mail" inputMode="email" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Nunca <input type="date"> — padrão da casa é o BirthDatePicker */}
+              <BirthDatePicker value={form.data_nascimento} onChange={(v) => setField('data_nascimento')(v)} className={inputCls} />
+              <div className="flex gap-2">
+                {[['masculino', 'Masculino'], ['feminino', 'Feminino']].map(([v, l]) => (
+                  <button
+                    key={v}
+                    onClick={() => setField('sexo')(v)}
+                    className={`flex-1 min-h-[52px] rounded-2xl border text-base ${
+                      form.sexo === v ? 'border-[#F59E0B] bg-[#F59E0B]/10' : 'border-gray-700 bg-gray-800'
+                    }`}
+                  >{l}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Campos extras do evento (form-builder). Tipo desconhecido cai em
+                texto — nunca desaparece: o servidor valida obrigatoriedade e a
+                pessoa ficaria travada num campo que a tela não mostrou. */}
+            {extras.map((c: any) => {
+              const opcoes: string[] = Array.isArray(c.opcoes) ? c.opcoes : [];
+              const val = form.dados[c.key] ?? '';
+              if (opcoes.length) {
+                return (
+                  <div key={c.key}>
+                    <p className="text-sm text-white/60 mb-1">{c.label}{c.obrigatorio ? ' *' : ''}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {opcoes.map((o) => (
+                        <button
+                          key={o}
+                          onClick={() => setExtra(c.key, o)}
+                          className={`min-h-[48px] px-4 rounded-2xl border text-base ${
+                            val === o ? 'border-[#F59E0B] bg-[#F59E0B]/10' : 'border-gray-700 bg-gray-800'
+                          }`}
+                        >{o}</button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div key={c.key}>
+                  <p className="text-sm text-white/60 mb-1">{c.label}{c.obrigatorio ? ' *' : ''}</p>
+                  <input value={val} onChange={(e) => setExtra(c.key, e.target.value)} className={inputCls} placeholder={c.label} />
+                </div>
+              );
+            })}
+
+            <label className="flex items-start gap-3 pt-2 text-sm text-white/80">
+              <input type="checkbox" checked={form.aceita_termos} onChange={(e) => setField('aceita_termos')(e.target.checked)} className="mt-1 h-5 w-5" />
+              <span>{textos.termos_lgpd || 'Concordo com o uso dos meus dados para esta inscrição.'}</span>
+            </label>
+            <label className="flex items-start gap-3 text-sm text-white/80">
+              <input type="checkbox" checked={form.whatsapp_optin} onChange={(e) => setField('whatsapp_optin')(e.target.checked)} className="mt-1 h-5 w-5" />
+              <span>{textos.aviso_optin || 'Quero receber avisos deste evento pelo WhatsApp.'}</span>
+            </label>
+
+            {error && <p className="text-base text-red-400">{error}</p>}
+          </div>
+        </div>
+        <div className="px-6 pb-6">
+          <Button onClick={enviar} disabled={saving} className="w-full min-h-[64px] text-lg" style={{ backgroundColor: opt.color, color: '#000' }}>
+            {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : ev?.pagamento_ativo ? 'Continuar para o pagamento' : 'Confirmar inscrição'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Detalhe do evento ──
+  if (step === 'evento' && ev) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        {header(ev.nome, () => setStep('lista'))}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="mx-auto max-w-2xl space-y-4">
+            {ev.capa_url && <img src={ev.capa_url} alt="" className="w-full rounded-2xl object-cover max-h-64" />}
+            <div className="flex flex-wrap gap-4 text-white/70">
+              {fmtData(ev.data) && <span className="flex items-center gap-2"><CalendarDays className="h-5 w-5" /> {fmtData(ev.data)}{ev.hora ? ` · ${ev.hora}` : ''}</span>}
+              {ev.local && <span className="flex items-center gap-2"><MapPin className="h-5 w-5" /> {ev.local}</span>}
+            </div>
+            {ev.pagamento_ativo && (
+              <p className="text-2xl font-bold" style={{ color: opt.color }}>{fmtValor(ev.valor_centavos)}</p>
+            )}
+            {ev.descricao && <p className="text-lg leading-relaxed text-white/80 whitespace-pre-line">{ev.descricao}</p>}
+            {typeof ev.vagas_restantes === 'number' && ev.vagas_restantes <= 10 && (
+              <p className="text-base text-amber-300">
+                {ev.vagas_restantes === 1 ? 'Última vaga!' : `Restam ${ev.vagas_restantes} vagas`}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="px-6 pb-6">
+          <Button onClick={() => setStep('dados')} className="w-full min-h-[64px] text-lg" style={{ backgroundColor: opt.color, color: '#000' }}>
+            Quero me inscrever
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Lista ──
+  return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+      {header('Eventos e retiros', onBack)}
+      <div className="flex-1 overflow-y-auto px-6 py-4">
+        {carregando ? (
+          <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-white/40" /></div>
+        ) : error ? (
+          <p className="py-10 text-center text-lg text-red-400">{error}</p>
+        ) : eventos.length === 0 ? (
+          <div className="py-16 text-center">
+            <Mountain className="mx-auto mb-4 h-12 w-12 text-white/20" />
+            <p className="text-xl">Nenhum evento com inscrição aberta agora</p>
+            <p className="mt-2 text-white/50">Fique de olho nos avisos do culto e no app.</p>
+          </div>
+        ) : (
+          <div className="mx-auto grid max-w-3xl gap-3">
+            {eventos.map((e) => (
+              <button
+                key={e.id}
+                onClick={() => { setEv(e); setStep('evento'); onActivity(); }}
+                className="w-full rounded-3xl border border-gray-800 bg-gray-900 p-5 text-left active:bg-gray-800"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="truncate text-xl font-semibold">{e.nome}</p>
+                    <p className="mt-1 text-white/60">
+                      {[fmtData(e.data), e.local].filter(Boolean).join(' · ') || 'Inscrições abertas'}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    {e.pagamento_ativo
+                      ? <span className="text-lg font-bold" style={{ color: opt.color }}>{fmtValor(e.valor_centavos)}</span>
+                      : <span className="text-lg font-bold text-[#00B39D]">Gratuito</span>}
+                    <ChevronRight className="ml-auto mt-1 h-5 w-5 text-white/30" />
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

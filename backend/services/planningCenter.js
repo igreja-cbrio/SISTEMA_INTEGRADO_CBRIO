@@ -146,29 +146,38 @@ async function fetchAllPlans(baseUrl, serviceTypeId, credentials) {
 // antiga (apenas service_id + person_id), faz fallback automático para não
 // perder o sync. Mantém um cache de "modo" para não tentar a versão nova
 // múltiplas vezes na mesma execução depois de detectar incompatibilidade.
-let _scheduleUpsertMode = 'auto'; // 'auto' | 'new' | 'legacy'
+let _scheduleUpsertMode = 'auto'; // 'auto' | 'slot' | 'names' | 'legacy'
 async function upsertScheduleResilient(supabase, schedule) {
-  const tryNew = async () => supabase
-    .from('vol_schedules')
-    .upsert(schedule, { onConflict: 'service_id,planning_center_person_id,team_name,position_name' });
-  const tryLegacy = async () => supabase
-    .from('vol_schedules')
-    .upsert(schedule, { onConflict: 'service_id,planning_center_person_id' });
+  // slot_seq faz parte do índice pc_unique (multi-pessoa na mesma função). Linha
+  // do PCO sempre usa 0 → dedup do PCO inalterado. Ver migration vol_escala_templates.
+  // Resiliente à ORDEM do rollout: tenta o índice de 5 colunas (com slot_seq),
+  // cai pro de 4 (antes da migration) e por fim pro legado de 2 — assim aplicar a
+  // migration antes ou depois do deploy não quebra o sync na janela.
+  const withSlot = { slot_seq: 0, ...schedule };
+  const bySlot   = async () => supabase.from('vol_schedules')
+    .upsert(withSlot, { onConflict: 'service_id,planning_center_person_id,team_name,position_name,slot_seq' });
+  const byNames  = async () => supabase.from('vol_schedules')
+    .upsert(withSlot, { onConflict: 'service_id,planning_center_person_id,team_name,position_name' });
+  const byLegacy = async () => supabase.from('vol_schedules')
+    .upsert(withSlot, { onConflict: 'service_id,planning_center_person_id' });
+  const semConstraint = (err) => {
+    const msg = (err?.message || '').toLowerCase();
+    return msg.includes('on conflict') || msg.includes('unique') || msg.includes('exclusion');
+  };
 
-  if (_scheduleUpsertMode === 'legacy') return tryLegacy();
-  if (_scheduleUpsertMode === 'new') return tryNew();
+  if (_scheduleUpsertMode === 'slot')   return bySlot();
+  if (_scheduleUpsertMode === 'names')  return byNames();
+  if (_scheduleUpsertMode === 'legacy') return byLegacy();
 
-  const r = await tryNew();
-  if (!r.error) { _scheduleUpsertMode = 'new'; return r; }
-  // Erros típicos quando a constraint nova não existe:
-  //   "no unique or exclusion constraint matching the ON CONFLICT specification"
-  const msg = (r.error.message || '').toLowerCase();
-  if (msg.includes('on conflict') || msg.includes('unique') || msg.includes('exclusion')) {
-    console.warn('[PC] Constraint nova de vol_schedules ausente — usando fallback legado.');
-    _scheduleUpsertMode = 'legacy';
-    return tryLegacy();
-  }
-  return r;
+  let r = await bySlot();
+  if (!r.error) { _scheduleUpsertMode = 'slot'; return r; }
+  if (!semConstraint(r.error)) return r;
+  r = await byNames();
+  if (!r.error) { _scheduleUpsertMode = 'names'; return r; }
+  if (!semConstraint(r.error)) return r;
+  console.warn('[PC] Nenhuma constraint composta de vol_schedules — fallback legado.');
+  _scheduleUpsertMode = 'legacy';
+  return byLegacy();
 }
 
 // ── Historical plans in a date range ────────────────────────────────────────
@@ -464,7 +473,31 @@ async function upsertVolunteerQrCodes(supabase, volunteersMap) {
 // ── Batch upsert vol_profiles (the volunteer pool) ──────────────────────────
 // Returns { count, dbError } so callers can surface DB errors to the user.
 async function upsertVolunteerProfiles(supabase, volunteersMap) {
-  const entries = Array.from(volunteersMap.values());
+  let entries = Array.from(volunteersMap.values());
+  if (entries.length === 0) return { count: 0, dbError: null };
+
+  // Perfis editados à mão pela equipe (protegido_sync=true) ficam de FORA do
+  // upsert — o nome/e-mail/avatar editado não pode ser revertido pelo PCO.
+  // Tolerante à ausência da coluna (trata como nenhum protegido).
+  try {
+    const protegidos = new Set();
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await supabase
+        .from('vol_profiles')
+        .select('planning_center_id')
+        .eq('protegido_sync', true)
+        .not('planning_center_id', 'is', null)
+        .range(offset, offset + 999);
+      if (error) throw error;
+      for (const r of data || []) protegidos.add(String(r.planning_center_id));
+      if (!data || data.length < 1000) break;
+    }
+    if (protegidos.size) {
+      entries = entries.filter((v) => !protegidos.has(String(v.planning_center_person_id)));
+    }
+  } catch (e) {
+    console.warn('[PC] protegido_sync check:', e.message); // sem coluna → sem proteção
+  }
   if (entries.length === 0) return { count: 0, dbError: null };
 
   // ⚠️ Email só entra no upsert quando o PCO trouxe um valor. A maioria dos

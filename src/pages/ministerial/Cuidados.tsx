@@ -1,27 +1,26 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
+import { hrefConversa } from '@/lib/conversas';
 import { cuidados as cuidadosApi } from '../../api';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
-import EncaminhamentosInbox from '../../components/EncaminhamentosInbox';
-import WhatsappAutoConfig from '../../components/WhatsappAutoConfig';
-import OracaoPanel from '../../components/OracaoPanel';
-import CuidadosJ180 from '../../components/CuidadosJ180';
 import AgentePrimeiroContato from '../../components/AgentePrimeiroContato';
 import AgenteBatismoNext from '../../components/AgenteBatismoNext';
 import NextConvite from '../../components/NextConvite';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table';
+import { Switch } from '../../components/ui/switch';
 import { Badge } from '../../components/ui/badge';
 import { StatisticsCard } from '../../components/ui/statistics-card';
-import { Heart, Users, UserCheck, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, ArrowRight, Phone, MessageSquare, AlertTriangle, HeartHandshake } from 'lucide-react';
+import { Heart, Users, UserCheck, UserRound, CheckCircle2, Plus, Trash2, Loader2, Search, Sparkles, CalendarCheck, CalendarPlus, Phone, MessageSquare, AlertTriangle, HeartHandshake, Pencil, Check, X } from 'lucide-react';
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
@@ -222,7 +221,7 @@ function AcompanhamentoModal({ open, onClose, onSaved, atendentes, initial }: {
             {form.agendar && (
               <div className="space-y-2 mt-2">
                 <div className="grid grid-cols-2 gap-3">
-                  <div><Label>Data *</Label><Input type="date" value={form.agendamento_data} onChange={e => setForm({ ...form, agendamento_data: e.target.value })} /></div>
+                  <div><Label>Data *</Label><DatePicker value={form.agendamento_data} onChange={v => setForm({ ...form, agendamento_data: v })} /></div>
                   <div><Label>Hora</Label><Input type="time" value={form.agendamento_hora} onChange={e => setForm({ ...form, agendamento_hora: e.target.value })} /></div>
                 </div>
                 <div>
@@ -276,13 +275,212 @@ const TAG_COLORS: Record<string, string> = {
   outro: '#94a3b8',
 };
 
-// Lista fixa de quem faz o atendimento do convertido. Essas pessoas NÃO logam no
-// Cuidados — o Marcelo registra quem ficou responsável. Editável aqui se a equipe mudar.
+// Quem faz o atendimento do convertido. Essas pessoas NÃO logam no Cuidados —
+// o Marcelo registra quem ficou responsável. A lista vive no banco
+// (cui_responsaveis) e a própria equipe gerencia pelo modal "Gerenciar
+// responsáveis" da aba Próximos passos (Marcos 2026-07-21). As constantes
+// abaixo são só FALLBACK enquanto a API não responde (espelham o estado do
+// banco pós-dedup da migration 20260721190000: Kevin/Arthur, Arthur/Kevin,
+// Naná, Mari e Carmet/Arthur foram consolidados no responsável canônico).
+// Inativo = histórico: aparece desabilitado no dropdown, não pode ser
+// escolhido em novos lançamentos.
 const RESPONSAVEIS_ATENDIMENTO = ['Arthur Cecconi', 'Renata Martins', 'Nélio Paiva', 'Wesley Ramos'];
-// Responsáveis antigos (estavam na planilha do Marcelo, não são mais acionados p/ atendimento):
-// mantêm o histórico nos registros e aparecem no dropdown, mas DESABILITADOS — não podem ser
-// selecionados em novos lançamentos (Marcos 2026-07-01).
-const RESPONSAVEIS_ANTIGOS = ['Lorena', 'Lilian', 'Sebastião', 'Natasha', 'Mariane', 'Carmet', 'Carmet/Arthur', 'Léia', 'Kevin', 'Kevin/Arthur', 'Arthur/Kevin', 'Mari', 'Naná'];
+const RESPONSAVEIS_ANTIGOS = ['Lorena', 'Lilian', 'Sebastião', 'Natasha', 'Mariane', 'Carmet', 'Léia', 'Kevin'];
+const RESPONSAVEIS_FALLBACK = [
+  ...RESPONSAVEIS_ATENDIMENTO.map(nome => ({ id: nome, nome, ativo: true })),
+  ...RESPONSAVEIS_ANTIGOS.map(nome => ({ id: nome, nome, ativo: false })),
+];
+
+// Modal "Gerenciar responsáveis" · a equipe liga/desliga quem está disponível,
+// adiciona gente nova, EDITA o nome (o backend propaga pros convertidos — o
+// vínculo é por texto) e exclui quem NUNCA foi usado (nome errado etc. · o
+// backend bloqueia com 409 se o nome está em algum convertido).
+function GerenciarResponsaveisModal({ open, onClose, responsaveis, onChanged, onRenomeado }: {
+  open: boolean; onClose: () => void; responsaveis: any[]; onChanged: () => void; onRenomeado?: () => void;
+}) {
+  const [novoNome, setNovoNome] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+
+  async function adicionar() {
+    const nome = novoNome.trim();
+    if (nome.length < 2) { toast.error('Informe o nome do responsável.'); return; }
+    setSalvando(true);
+    try {
+      await cuidadosApi.responsaveis.create(nome);
+      setNovoNome('');
+      toast.success(`${nome} adicionado à lista.`);
+      onChanged();
+    } catch (e: any) {
+      toast.error(`Não foi possível adicionar: ${e.message}`);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  async function toggleAtivo(r: any, ativo: boolean) {
+    setTogglingId(r.id);
+    try {
+      await cuidadosApi.responsaveis.update(r.id, { ativo });
+      onChanged();
+    } catch (e: any) {
+      toast.error(`Não foi possível atualizar: ${e.message}`);
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  // Excluir de verdade: só quem nunca atendeu ninguém (o backend valida e
+  // responde 409 com orientação pra desativar quando o nome está em uso).
+  async function excluir(r: any) {
+    if (!confirm(`Excluir ${r.nome} da lista? Só é possível se nunca foi usado em nenhum convertido.`)) return;
+    setTogglingId(r.id);
+    try {
+      await cuidadosApi.responsaveis.remove(r.id);
+      toast.success(`${r.nome} excluído.`);
+      onChanged();
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  // Editar nome: renomeia no catálogo E em todos os convertidos que apontam
+  // pro nome antigo (o backend propaga · vínculo por texto).
+  const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [editNome, setEditNome] = useState('');
+
+  function iniciarEdicao(r: any) {
+    setEditandoId(r.id);
+    setEditNome(r.nome);
+  }
+
+  async function salvarNome(r: any) {
+    const nome = editNome.trim();
+    if (nome === r.nome || nome.length < 2) { setEditandoId(null); return; }
+    setTogglingId(r.id);
+    try {
+      const resp = await cuidadosApi.responsaveis.update(r.id, { nome });
+      const n = resp?.renomeados || 0;
+      toast.success(n > 0
+        ? `Renomeado pra ${nome} — ${n} convertido(s) atualizados junto.`
+        : `Renomeado pra ${nome}.`);
+      setEditandoId(null);
+      onChanged();
+      if (n > 0) onRenomeado?.(); // recarrega os convertidos (a tabela mostra o nome novo)
+    } catch (e: any) {
+      toast.error(e.message);
+    } finally {
+      setTogglingId(null);
+    }
+  }
+
+  const ativos = responsaveis.filter(r => r.ativo);
+  const inativos = responsaveis.filter(r => !r.ativo);
+
+  // Função comum (não componente · evita remount/perda de foco do input de edição)
+  function linhaResponsavel(r: any) {
+    const editando = editandoId === r.id;
+    return (
+      <div key={r.id} className={`flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 ${r.ativo || editando ? '' : 'opacity-70'}`}>
+        {editando ? (
+          <>
+            <Input
+              autoFocus
+              className="h-7 text-sm flex-1"
+              value={editNome}
+              onChange={e => setEditNome(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { e.preventDefault(); salvarNome(r); }
+                if (e.key === 'Escape') setEditandoId(null);
+              }}
+            />
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-primary" disabled={togglingId === r.id} onClick={() => salvarNome(r)} title="Salvar novo nome">
+              {togglingId === r.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+            </Button>
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" disabled={togglingId === r.id} onClick={() => setEditandoId(null)} title="Cancelar edição">
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className="text-sm flex-1">{r.nome}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground"
+              disabled={togglingId === r.id}
+              onClick={() => iniciarEdicao(r)}
+              title="Editar nome (atualiza também os convertidos já registrados com ele)"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+            <Switch
+              checked={r.ativo}
+              disabled={togglingId === r.id}
+              onCheckedChange={() => toggleAtivo(r, !r.ativo)}
+              title={r.ativo ? 'Disponível · clique pra desativar' : 'Indisponível · clique pra reativar'}
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+              disabled={togglingId === r.id}
+              onClick={() => excluir(r)}
+              title="Excluir (só se nunca foi usado em nenhum convertido)"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-md flex flex-col max-h-[85vh]">
+        <DialogHeader>
+          <DialogTitle>Gerenciar responsáveis</DialogTitle>
+        </DialogHeader>
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
+          <p className="text-xs text-muted-foreground">
+            Quem está <strong>disponível</strong> aparece no seletor de responsável dos convertidos.
+            Desativar não apaga nada — os registros antigos continuam mostrando o nome.
+            Editar o nome (lápis) atualiza também os convertidos já registrados com ele.
+            A lixeira exclui de vez, mas só quem nunca foi usado em nenhum convertido.
+          </p>
+          <div className="flex gap-2">
+            <Input
+              placeholder="Nome do novo responsável"
+              value={novoNome}
+              onChange={e => setNovoNome(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); adicionar(); } }}
+            />
+            <Button onClick={adicionar} disabled={salvando}>
+              {salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+            </Button>
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Disponíveis ({ativos.length})</p>
+            {ativos.length === 0 && <p className="text-xs text-muted-foreground">Ninguém disponível — adicione ou reative alguém abaixo.</p>}
+            {ativos.map(r => linhaResponsavel(r))}
+          </div>
+          {inativos.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Antigos / indisponíveis ({inativos.length})</p>
+              {inativos.map(r => linhaResponsavel(r))}
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Fechar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // Pra NOVO CONVERTIDO o único próximo passo direcionável no Cuidados é o NEXT (decisão
 // Marcos · 2026-06-25 · o direcionamento pros valores — Grupos/Voluntários/Batismo/Devocional —
@@ -438,7 +636,7 @@ function ConvertidoModal({
             <div><Label>CPF</Label><CpfMembroLookup value={form.cpf} onChange={v => setForm({ ...form, cpf: v })} onMembro={setMembro} /></div>
           )}
           <div><Label>Telefone</Label><Input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} /></div>
-          <div><Label>Data do culto</Label><Input type="date" value={form.data_culto} onChange={e => setForm({ ...form, data_culto: e.target.value })} /></div>
+          <div><Label>Data do culto</Label><DatePicker value={form.data_culto} onChange={v => setForm({ ...form, data_culto: v })} /></div>
           <div className="flex items-center gap-4 flex-wrap">
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.cadastrado} onChange={e => setForm({ ...form, cadastrado: e.target.checked })} />Cadastrado</label>
           </div>
@@ -640,6 +838,87 @@ function emptyVisitaForm() {
 }
 
 // Registrar/editar uma visita pastoral ou atendimento avulso (fora dos convertidos).
+// "Quem visitou / atendeu" · seleção MÚLTIPLA do catálogo `cui_responsaveis`
+// (decisão do Matheus 04/08). Era `<Input>` de texto livre, e foi assim que o
+// mesmo pastor virou 4 grafias ("Pr. Wesley B. Ramos", "Pr. Wesley Barros",
+// "Wesley Barros", "Wesley Ramos") — a visão por pastor mostrava 6 cards pra 4
+// pessoas. Com o catálogo, grafia nova não nasce mais.
+//
+// ⚠️ Guarda o NOME (lista separada por ", "), não id. É o padrão do módulo de
+// propósito: essas pessoas não logam no sistema, `cui_responsaveis` é catálogo por
+// nome, e renomear no catálogo PROPAGA pro histórico (ver PATCH /responsaveis/:id).
+// Trocar pra id aqui exigiria satélite polimórfica (visita × acompanhamento) e
+// deixaria os dois lados do módulo com réguas diferentes.
+//
+// ⚠️ Valor legado fora do catálogo (ex.: "Léia Serpa", que pode ou não ser a
+// "Léia" inativa) é PRESERVADO e mostrado como pílula própria — sumir com o nome
+// de quem já atendeu seria perder histórico pra ganhar arrumação.
+function RespSelector({ valor, onChange }: { valor: string; onChange: (v: string) => void }) {
+  const [lista, setLista] = useState<any[]>([]);
+  useEffect(() => {
+    cuidadosApi.responsaveis.list()
+      .then((r: any[]) => setLista(Array.isArray(r) ? r : []))
+      .catch(() => setLista([]));
+  }, []);
+
+  const selecionados = useMemo(
+    () => String(valor || '').split(/\s*,\s*|\s+e\s+/i).map(s => s.trim()).filter(Boolean),
+    [valor],
+  );
+  const doCatalogo = useMemo(
+    () => lista.filter(r => r.ativo || selecionados.includes(r.nome)).map(r => r.nome),
+    [lista, selecionados],
+  );
+  // Nome que está no registro mas não no catálogo (histórico) entra como opção
+  const opcoes = useMemo(
+    () => [...new Set([...doCatalogo, ...selecionados])].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    [doCatalogo, selecionados],
+  );
+
+  const toggle = (nome: string) => {
+    const novo = selecionados.includes(nome)
+      ? selecionados.filter(n => n !== nome)
+      : [...selecionados, nome];
+    onChange(novo.join(', '));
+  };
+
+  return (
+    <div>
+      <Label>Quem visitou / atendeu</Label>
+      <p className="text-[11px] text-muted-foreground mb-1.5">
+        Pode marcar mais de um — visita em dupla conta para os dois.
+      </p>
+      {opcoes.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Nenhum responsável cadastrado. Cadastre em Próximos passos → Gerenciar responsáveis.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {opcoes.map(nome => {
+            const on = selecionados.includes(nome);
+            const foraDoCatalogo = !doCatalogo.includes(nome);
+            return (
+              <button
+                key={nome}
+                type="button"
+                onClick={() => toggle(nome)}
+                title={foraDoCatalogo ? 'Nome do histórico, fora do catálogo atual' : undefined}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  on
+                    ? 'bg-[#00B39D]/10 border-[#00B39D] text-[#00B39D]'
+                    : 'border-border text-muted-foreground hover:border-foreground/30'
+                }`}
+              >
+                {nome}{foraDoCatalogo ? ' *' : ''}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function VisitaModal({ open, onClose, onSaved, initial }: {
   open: boolean; onClose: () => void; onSaved: () => void; initial?: any | null;
 }) {
@@ -693,7 +972,7 @@ function VisitaModal({ open, onClose, onSaved, initial }: {
           <div><Label>Pessoa *</Label><Input value={form.nome} onChange={e => setForm({ ...form, nome: e.target.value })} placeholder="Quem foi visitado / atendido" /></div>
           <div className="grid grid-cols-2 gap-3">
             <div><Label>Telefone</Label><Input value={form.telefone} onChange={e => setForm({ ...form, telefone: e.target.value })} /></div>
-            <div><Label>Data *</Label><Input type="date" value={form.data_visita} onChange={e => setForm({ ...form, data_visita: e.target.value })} /></div>
+            <div><Label>Data *</Label><DatePicker value={form.data_visita} onChange={v => setForm({ ...form, data_visita: v })} /></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -714,7 +993,10 @@ function VisitaModal({ open, onClose, onSaved, initial }: {
           {form.tipo === 'outro' && (
             <div><Label>Qual? *</Label><Input value={form.tipo_outro} onChange={e => setForm({ ...form, tipo_outro: e.target.value })} placeholder="Escreva o tipo de visita / atendimento" /></div>
           )}
-          <div><Label>Quem visitou / atendeu</Label><Input value={form.responsavel} onChange={e => setForm({ ...form, responsavel: e.target.value })} placeholder="Pastor / líder" /></div>
+          <RespSelector
+            valor={form.responsavel}
+            onChange={(v) => setForm({ ...form, responsavel: v })}
+          />
           <div>
             <Label>Observação</Label>
             <textarea className="w-full min-h-[80px] rounded-md border border-border p-2 text-sm" style={{ background: 'var(--cbrio-input-bg)' }}
@@ -730,97 +1012,887 @@ function VisitaModal({ open, onClose, onSaved, initial }: {
   );
 }
 
-// Lista da aba "Visitas e atendimentos" · visitas pastorais e atendimentos avulsos
-// (cui_visitas), fora do funil de novos convertidos. Substituiu o calendário.
-function VisitasList({ itens, loading, canEdit, onNova, onEdit, onRemove }: {
-  itens: any[]; loading: boolean; canEdit: boolean; onNova: () => void; onEdit: (v: any) => void; onRemove: (v: any) => void;
-}) {
-  const [busca, setBusca] = useState('');
-  const [statusF, setStatusF] = useState('todos');
-  const fmtData = (d: string | null) => d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—';
-  const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    return itens.filter((v: any) => {
-      if (statusF !== 'todos' && v.status !== statusF) return false;
-      if (q && !(`${v.nome || ''} ${v.responsavel || ''} ${v.observacao || ''}`.toLowerCase().includes(q))) return false;
-      return true;
-    });
-  }, [itens, busca, statusF]);
+// ── Trilha por pessoa (aba "Visitas e Atendimentos") ──────────────────
+// Agrupa os atendimentos por PESSOA (cui_visitas + cui_acompanhamentos, unidos
+// no backend GET /cuidados/trilha). Cada pessoa abre uma trilha com o histórico
+// de atendimentos + comentários por atendimento. Substituiu a lista solta.
+const ATEND_TIPO_LABEL: Record<string, string> = {
+  visita_domiciliar: 'Visita domiciliar', visita_hospitalar: 'Visita hospitalar',
+  funeral: 'Funeral', casamento: 'Casamento', aconselhamento: 'Aconselhamento',
+  capelania: 'Capelania', outro: 'Outro',
+};
+const ATEND_TIPO_COR: Record<string, string> = {
+  visita_domiciliar: '#00B39D', visita_hospitalar: '#3b82f6', funeral: '#6b7280',
+  casamento: '#ec4899', aconselhamento: '#f59e0b', capelania: '#8b5cf6', outro: '#64748b',
+};
+function tipoAtendLabel(t: any) {
+  if (t?.tipo === 'outro' && t.tipo_outro) return `Outro · ${t.tipo_outro}`;
+  return ATEND_TIPO_LABEL[t?.tipo] || t?.tipo || '—';
+}
+function fmtDataBR(d: string | null) { return d ? new Date(d + 'T12:00:00').toLocaleDateString('pt-BR') : '—'; }
 
-  const { pageItems: filtradosPag, paginacaoProps: visitasPagProps } = usePaginacaoLocal(filtrados, 25);
+// Comentários de um atendimento (lazy · abre ao clicar). refTipo = visita|acompanhamento
+function ComentariosAtendimento({ refTipo, refId, count, canWrite }: { refTipo: string; refId: string; count: number; canWrite: boolean }) {
+  const [aberto, setAberto] = useState(false);
+  const [itens, setItens] = useState<any[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [texto, setTexto] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  async function carregar() {
+    setLoading(true);
+    try { setItens(await cuidadosApi.atendimentoComentarios.list(refTipo, refId)); }
+    catch { setItens([]); }
+    finally { setLoading(false); }
+  }
+  function toggle() { const n = !aberto; setAberto(n); if (n && itens === null) carregar(); }
+  async function adicionar() {
+    const t = texto.trim();
+    if (!t) return;
+    setSalvando(true);
+    try {
+      const novo = await cuidadosApi.atendimentoComentarios.create(refTipo, refId, t);
+      setItens(prev => [...(prev || []), novo]);
+      setTexto('');
+    } catch (e: any) { toast.error(e.message); }
+    finally { setSalvando(false); }
+  }
+  async function remover(id: string) {
+    if (!confirm('Remover comentário?')) return;
+    try { await cuidadosApi.atendimentoComentarios.remove(id); setItens(prev => (prev || []).filter(c => c.id !== id)); }
+    catch (e: any) { toast.error(e.message); }
+  }
+  const total = itens ? itens.length : count;
+  return (
+    <div className="mt-2">
+      <button type="button" onClick={toggle} className="text-xs text-primary hover:underline flex items-center gap-1">
+        <MessageSquare className="h-3 w-3" />{total > 0 ? `${total} comentário${total > 1 ? 's' : ''}` : 'Comentar'}
+      </button>
+      {aberto && (
+        <div className="mt-2 space-y-2 pl-3 border-l-2 border-border">
+          {loading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : (itens || []).map(c => (
+            <div key={c.id} className="text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">{c.autor_nome || 'Equipe'}</span>
+                <span className="text-muted-foreground">
+                  {new Date(c.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  {canWrite && <button type="button" onClick={() => remover(c.id)} className="ml-2 text-muted-foreground hover:text-destructive">×</button>}
+                </span>
+              </div>
+              <p className="whitespace-pre-wrap text-muted-foreground">{c.texto}</p>
+            </div>
+          ))}
+          {itens && itens.length === 0 && !loading && <p className="text-xs text-muted-foreground italic">Sem comentários.</p>}
+          {canWrite && (
+            <div className="flex gap-2">
+              <Input className="h-8 text-xs" placeholder="Adicionar comentário..." value={texto}
+                onChange={e => setTexto(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); adicionar(); } }} />
+              <Button size="sm" className="h-8" disabled={salvando || !texto.trim()} onClick={adicionar}>
+                {salvando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Enviar'}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Painel da trilha de uma pessoa (timeline de atendimentos + comentários)
+function TrilhaPessoaDialog({ pessoa, canEdit, onClose, onEditVisita, onNovoParaPessoa }: {
+  pessoa: any | null; canEdit: boolean; onClose: () => void; onEditVisita: (a: any) => void; onNovoParaPessoa: (p: any) => void;
+}) {
+  if (!pessoa) return null;
+  return (
+    <Dialog open={!!pessoa} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-xl flex flex-col max-h-[85vh]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><HeartHandshake className="h-4 w-4 text-primary" />{pessoa.nome || 'Pessoa'}</DialogTitle>
+          {pessoa.telefone && <p className="text-xs text-muted-foreground">{pessoa.telefone}{pessoa.membro_id ? ' · membro' : ''}</p>}
+        </DialogHeader>
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-3">
+          <p className="text-xs text-muted-foreground">{pessoa.total} atendimento{pessoa.total > 1 ? 's' : ''} · do mais recente ao mais antigo.</p>
+          {(pessoa.atendimentos || []).map((a: any) => {
+            const cor = ATEND_TIPO_COR[a.tipo] || '#64748b';
+            return (
+              <div key={a.fonte + a.id} className="rounded-lg border border-border p-3" style={{ background: 'var(--cbrio-input-bg)' }}>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ background: cor + '22', color: cor, border: `1px solid ${cor}40` }}>{tipoAtendLabel(a)}</span>
+                    <span className="text-sm font-medium">{fmtDataBR(a.data)}{a.hora ? ' · ' + String(a.hora).slice(0, 5) : ''}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {a.status && <span className="text-[11px] text-muted-foreground">{a.status}</span>}
+                    {canEdit && a.fonte === 'visita' && (
+                      <Button variant="ghost" size="icon" className="h-6 w-6" title="Editar atendimento" onClick={() => onEditVisita(a)}><Pencil className="h-3 w-3" /></Button>
+                    )}
+                  </div>
+                </div>
+                {a.responsavel && <p className="text-xs text-muted-foreground mt-1">Quem atendeu: {a.responsavel}</p>}
+                {a.texto && <p className="text-sm mt-1 whitespace-pre-wrap">{a.texto}</p>}
+                <ComentariosAtendimento refTipo={a.fonte} refId={a.id} count={a.comentarios_count || 0} canWrite={canEdit} />
+              </div>
+            );
+          })}
+        </div>
+        <DialogFooter className="flex-row justify-between sm:justify-between">
+          <div>{canEdit && <Button variant="outline" size="sm" onClick={() => onNovoParaPessoa(pessoa)}><Plus className="h-4 w-4 mr-1.5" />Novo atendimento</Button>}</div>
+          <Button variant="outline" onClick={onClose}>Fechar</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Aba "Visitas e Atendimentos" · trilha por pessoa (cui_visitas + cui_acompanhamentos)
+function TrilhaPessoas({ canEdit, reloadKey, onNova, onEditVisita, onNovoParaPessoa }: {
+  canEdit: boolean; reloadKey: number; onNova: () => void; onEditVisita: (a: any) => void; onNovoParaPessoa: (p: any) => void;
+}) {
+  const [pessoas, setPessoas] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busca, setBusca] = useState('');
+  const [sel, setSel] = useState<any | null>(null);
+  // Visão da aba: por PASTOR (quem atendeu · **default**, pedido do Matheus
+  // 2026-08-04) ou por PESSOA (histórico de quem foi atendido · como a aba era
+  // antes). As duas leem o MESMO `pessoas` já carregado, então trocar de visão não
+  // faz round-trip nem pode divergir do outro lado.
+  // ⚠️ O default é por pastor porque o uso real da aba é a liderança olhando o
+  // próprio acompanhamento; a busca por uma pessoa específica tem o campo de busca
+  // e a trilha continua a um clique de distância dentro do card do pastor.
+  const [visao, setVisao] = useState<'pessoa' | 'pastor'>('pastor');
+  const [selPastor, setSelPastor] = useState<any | null>(null);
+  // Filtros da trilha (tipo · status · quem atendeu · período)
+  const [fTipo, setFTipo] = useState('todos');
+  const [fStatus, setFStatus] = useState('todos');
+  const [fResp, setFResp] = useState('todos');
+  const [fDe, setFDe] = useState('');
+  const [fAte, setFAte] = useState('');
+
+  const [erroTrilha, setErroTrilha] = useState(false);
+  const recarregarTrilha = () => {
+    setLoading(true);
+    setErroTrilha(false);
+    cuidadosApi.trilha()
+      .then((p: any[]) => setPessoas(Array.isArray(p) ? p : []))
+      .catch(() => { setPessoas([]); setErroTrilha(true); })
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { recarregarTrilha(); /* eslint-disable-next-line */ }, [reloadKey]);
+
+  // Sincroniza o painel aberto após recarregar (comentários, nome novo, etc.)
+  useEffect(() => {
+    if (sel) { const atual = pessoas.find(p => p.chave === sel.chave); setSel(atual || null); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pessoas]);
+
+  // Opções dos filtros derivadas dos atendimentos carregados
+  const { tiposDisp, statusDisp, respDisp } = useMemo(() => {
+    const t = new Set<string>(), s = new Set<string>(), r = new Set<string>();
+    for (const p of pessoas) for (const a of (p.atendimentos || [])) {
+      if (a.tipo) t.add(a.tipo);
+      if (a.status) s.add(a.status);
+      if (a.responsavel) r.add(a.responsavel);
+    }
+    return { tiposDisp: [...t].sort(), statusDisp: [...s].sort(), respDisp: [...r].sort((a, b) => a.localeCompare(b, 'pt-BR')) };
+  }, [pessoas]);
+
+  const temFiltro = fTipo !== 'todos' || fStatus !== 'todos' || fResp !== 'todos' || !!fDe || !!fAte;
+  const limparFiltros = () => { setFTipo('todos'); setFStatus('todos'); setFResp('todos'); setFDe(''); setFAte(''); };
+
+  // Régua ÚNICA de "este atendimento casa os filtros". As duas visões chamam esta
+  // função — duplicar a condição faria a contagem do pastor discordar da lista de
+  // pessoas com os mesmos filtros na tela.
+  // `ignorarResp` existe porque na visão por pastor o recorte por responsável É a
+  // própria visão: aplicar o filtro ali deixaria um card só, sem explicação.
+  const casaFiltros = useCallback((a: any, ignorarResp = false) => {
+    if (fTipo !== 'todos' && a.tipo !== fTipo) return false;
+    if (fStatus !== 'todos' && a.status !== fStatus) return false;
+    if (!ignorarResp && fResp !== 'todos' && a.responsavel !== fResp) return false;
+    if (fDe && (!a.data || a.data < fDe)) return false;
+    if (fAte && (!a.data || a.data > fAte)) return false;
+    return true;
+  }, [fTipo, fStatus, fResp, fDe, fAte]);
+
+  const filtradas = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return pessoas.filter(p => {
+      if (q && !`${p.nome || ''} ${p.telefone || ''}`.toLowerCase().includes(q)) return false;
+      if (!temFiltro) return true;
+      // pessoa entra se tiver PELO MENOS UM atendimento que casa todos os filtros ativos
+      return (p.atendimentos || []).some((a: any) => casaFiltros(a));
+    });
+  }, [pessoas, busca, temFiltro, casaFiltros]);
+
+  // Agrupamento por QUEM ATENDEU.
+  //
+  // ⚠️ `responsavel` é TEXTO LIVRE (Input no form, não select do catálogo
+  // `cui_responsaveis`), então o mesmo pastor aparece em grafias diferentes — em
+  // 04/08 "Wesley" estava em 5 formas ("Pr. Wesley B. Ramos", "Pr. Wesley
+  // Barros", e mais 3 dentro de duplas). Aqui NÃO tentamos fundir grafias: casar
+  // "Wesley B. Ramos" com "Wesley Barros" é adivinhar identidade, exatamente o
+  // que a lei do Contrato de porta proíbe. O que dá pra fazer sem chutar é
+  // separar DUPLA ("X e Y" / "X, Y"), que é mecânico — visita conjunta conta pros
+  // dois, e é por isso que o card diz "participou de N", não "fez N".
+  const pastores = useMemo(() => {
+    const SEM = '__sem__';
+    const mapa = new Map<string, any>();
+    const nomesDoCampo = (bruto: string): string[] => {
+      const t = String(bruto || '').trim();
+      if (!t) return [];
+      return t.split(/\s+e\s+|\s*,\s*|\s*\/\s*|\s*&\s*/i)
+        .map(s => s.trim()).filter(Boolean);
+    };
+    for (const p of pessoas) {
+      for (const a of (p.atendimentos || [])) {
+        if (!casaFiltros(a, true)) continue;
+        const nomes = nomesDoCampo(a.responsavel);
+        for (const nome of (nomes.length ? nomes : [''])) {
+        const chave = nome || SEM;
+        if (!mapa.has(chave)) {
+          mapa.set(chave, {
+            chave,
+            nome: nome || 'Sem responsável registrado',
+            semNome: !nome,
+            itens: [] as any[],
+            pessoas: new Set<string>(),
+            tipos: new Set<string>(),
+            ultimo: null as string | null,
+            temConjunto: false,
+          });
+        }
+        const g = mapa.get(chave);
+        g.itens.push({ ...a, pessoa: p });
+        g.pessoas.add(p.chave);
+        if (a.tipo) g.tipos.add(a.tipo);
+        if (a.data && (!g.ultimo || a.data > g.ultimo)) g.ultimo = a.data;
+        // Registra se este atendimento foi conjunto — o dialog avisa quem mais estava
+        if (nomes.length > 1) g.temConjunto = true;
+        }
+      }
+    }
+    const q = busca.trim().toLowerCase();
+    return [...mapa.values()]
+      .map(g => ({
+        ...g,
+        total: g.itens.length,
+        pessoasCount: g.pessoas.size,
+        tiposArr: [...g.tipos],
+        // Mais recente primeiro dentro do pastor
+        itens: g.itens.sort((x: any, y: any) => String(y.data || '').localeCompare(String(x.data || ''))),
+      }))
+      .filter(g => !q || g.nome.toLowerCase().includes(q))
+      // Sem-responsável sempre no fim; o resto por volume de atendimento
+      .sort((a, b) => Number(a.semNome) - Number(b.semNome) || b.total - a.total || a.nome.localeCompare(b.nome, 'pt-BR'));
+  }, [pessoas, busca, casaFiltros]);
+
+  const listaAtual = visao === 'pastor' ? pastores : filtradas;
+  const { pageItems, paginacaoProps } = usePaginacaoLocal(listaAtual, 30);
 
   return (
     <div className="space-y-4">
       <div className="rounded-lg border border-border bg-card p-4">
-        <div className="flex items-center gap-2 mb-1">
-          <CalendarCheck className="h-4 w-4 text-primary" />
-          <h3 className="font-semibold text-sm">Visitas e atendimentos</h3>
-        </div>
-        <p className="text-xs text-muted-foreground">Visitas pastorais e atendimentos avulsos — fora do funil de novos convertidos.</p>
+        <div className="flex items-center gap-2 mb-1"><CalendarCheck className="h-4 w-4 text-primary" /><h3 className="font-semibold text-sm">Visitas e Atendimentos</h3></div>
+        <p className="text-xs text-muted-foreground">
+          {visao === 'pastor'
+            ? 'Quem atendeu — clique no pastor/líder para ver os atendimentos dele.'
+            : 'Histórico por pessoa — cada atendimento (visita, aconselhamento, capelania) na trilha da pessoa, com comentários.'}
+        </p>
       </div>
+
+      {/* Visão: por pessoa (quem foi atendido) × por pastor (quem atendeu) */}
+      <div className="inline-flex rounded-lg border border-border p-0.5">
+        {([['pessoa', 'Por pessoa'], ['pastor', 'Por pastor']] as const).map(([v, label]) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => {
+              setVisao(v);
+              // O recorte por responsável é a própria visão por pastor — deixar o
+              // filtro ligado mostraria um card só, sem dizer por quê.
+              if (v === 'pastor') setFResp('todos');
+              setBusca('');
+            }}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+              visao === v ? 'bg-[#00B39D] text-white' : 'text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
-          <Input placeholder="Buscar por pessoa, responsável ou observação..." value={busca} onChange={e => setBusca(e.target.value)} className="pl-8" />
+          <Input
+            placeholder={visao === 'pastor' ? 'Buscar pastor ou líder pelo nome...' : 'Buscar pessoa por nome ou telefone...'}
+            value={busca}
+            onChange={e => setBusca(e.target.value)}
+            className="pl-8"
+          />
         </div>
-        <Select value={statusF} onValueChange={setStatusF}>
-          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+        {canEdit && <Button onClick={onNova}><Plus className="h-4 w-4 mr-2" />Registrar atendimento</Button>}
+      </div>
+      <div className="flex items-end gap-2 flex-wrap">
+        <div className="space-y-1">
+          <Label className="text-[11px] text-muted-foreground">Tipo</Label>
+          <Select value={fTipo} onValueChange={setFTipo}>
+            <SelectTrigger className="h-9 w-[170px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos os tipos</SelectItem>
+              {tiposDisp.map(t => <SelectItem key={t} value={t}>{ATEND_TIPO_LABEL[t] || t}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1">
+          <Label className="text-[11px] text-muted-foreground">Status</Label>
+          <Select value={fStatus} onValueChange={setFStatus}>
+            <SelectTrigger className="h-9 w-[160px]"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos os status</SelectItem>
+              {statusDisp.map(s => <SelectItem key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        {/* "Quem atendeu" só faz sentido na visão por pessoa — na visão por pastor
+            o recorte por responsável é a própria lista. */}
+        {visao === 'pessoa' && (
+          <div className="space-y-1">
+            <Label className="block text-[11px] text-muted-foreground">Quem atendeu</Label>
+            <Select value={fResp} onValueChange={setFResp}>
+              <SelectTrigger className="h-9 w-[180px]"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos</SelectItem>
+                {respDisp.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        {/* ⚠️ Período num grupo só, com `até` no meio. Antes eram dois blocos "De" e
+            "Até" soltos e as labels apareciam COLADAS ao lado do calendário: o
+            `Label` do shadcn é <label> (inline) e o DatePicker é um Button
+            inline-flex, então o `space-y-1` não empilhava nada — os dois fluíam na
+            mesma linha e o "Até" grudava no picker anterior. Daí o `block` nas
+            labels desta barra. */}
+        <div className="space-y-1">
+          <Label className="block text-[11px] text-muted-foreground">Período do atendimento</Label>
+          <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-1.5 py-1">
+            <DatePicker
+              value={fDe}
+              onChange={setFDe}
+              placeholder="Início"
+              className="h-7 w-[140px] border-0 bg-transparent shadow-none px-2 overflow-hidden"
+            />
+            <span className="text-[11px] text-muted-foreground shrink-0 px-0.5">até</span>
+            <DatePicker
+              value={fAte}
+              onChange={setFAte}
+              placeholder="Fim"
+              className="h-7 w-[140px] border-0 bg-transparent shadow-none px-2 overflow-hidden"
+            />
+            {(fDe || fAte) && (
+              <button
+                type="button"
+                onClick={() => { setFDe(''); setFAte(''); }}
+                title="Limpar o período"
+                className="text-muted-foreground hover:text-foreground shrink-0 pl-1 pr-0.5"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+        {temFiltro && <Button variant="ghost" size="sm" className="h-9" onClick={limparFiltros}><X className="h-3.5 w-3.5 mr-1" />Limpar filtros</Button>}
+      </div>
+      {fDe && fAte && fDe > fAte && (
+        <p className="text-[11px] text-amber-600">
+          A data inicial está depois da final — nenhum atendimento cabe nesse período.
+        </p>
+      )}
+      {loading ? (
+        <div className="text-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" /></div>
+      ) : erroTrilha && pessoas.length === 0 ? (
+        <div style={{ padding: 24, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 8, textAlign: 'center' }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível carregar a trilha</div>
+          <div style={{ fontSize: 12, color: '#791F1F', marginBottom: 12 }}>Falha ao consultar os atendimentos. Isso não significa que não há histórico.</div>
+          <button onClick={recarregarTrilha} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Tentar de novo</button>
+        </div>
+      ) : listaAtual.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground text-sm">
+          {pessoas.length === 0
+            ? 'Nenhum atendimento registrado ainda.'
+            : visao === 'pastor'
+              ? (busca.trim() ? 'Nenhum pastor ou líder com esse nome.' : 'Nenhum atendimento nesses filtros.')
+              : (busca.trim() || temFiltro) ? 'Ninguém encontrado com esses filtros.' : 'Ninguém com esse nome/telefone.'}
+        </div>
+      ) : visao === 'pastor' ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {pageItems.map((g: any) => (
+            <button key={g.chave} type="button" onClick={() => setSelPastor(g)}
+              className="text-left rounded-lg border border-border bg-card p-3 hover:border-primary/50 transition-colors">
+              <div className={`font-medium flex items-center gap-1.5 ${g.semNome ? 'text-muted-foreground italic' : ''}`}>
+                <UserRound className="h-4 w-4 text-primary shrink-0" />
+                <span className="truncate">{g.nome}</span>
+              </div>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-xs text-muted-foreground">
+                  participou de {g.total} · {g.pessoasCount} pessoa{g.pessoasCount > 1 ? 's' : ''}
+                </span>
+                <span className="text-[11px] text-muted-foreground">{g.ultimo ? fmtDataBR(g.ultimo) : ''}</span>
+              </div>
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {g.tiposArr.slice(0, 4).map((t: string) => {
+                  const cor = ATEND_TIPO_COR[t] || '#64748b';
+                  return <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: cor + '20', color: cor }}>{ATEND_TIPO_LABEL[t] || t}</span>;
+                })}
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {pageItems.map((p: any) => (
+            <button key={p.chave} type="button" onClick={() => setSel(p)}
+              className="text-left rounded-lg border border-border bg-card p-3 hover:border-primary/50 transition-colors">
+              <div className="font-medium flex items-center gap-1.5">{p.nome || 'Sem nome'}{p.membro_id && <Badge variant="secondary" className="text-[10px]">membro</Badge>}</div>
+              {p.telefone && <div className="text-xs text-muted-foreground">{p.telefone}</div>}
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-xs text-muted-foreground">{p.total} atendimento{p.total > 1 ? 's' : ''}</span>
+                <span className="text-[11px] text-muted-foreground">{p.ultimo_em ? fmtDataBR(p.ultimo_em) : ''}</span>
+              </div>
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {(p.tipos || []).slice(0, 4).map((t: string) => {
+                  const cor = ATEND_TIPO_COR[t] || '#64748b';
+                  return <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: cor + '20', color: cor }}>{ATEND_TIPO_LABEL[t] || t}</span>;
+                })}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      <Paginacao {...paginacaoProps} itemLabel={visao === 'pastor' ? 'pastores' : 'pessoas'} />
+      <TrilhaPessoaDialog
+        pessoa={sel}
+        canEdit={canEdit}
+        onClose={() => setSel(null)}
+        onEditVisita={(a) => { setSel(null); onEditVisita(a); }}
+        onNovoParaPessoa={(p) => { setSel(null); onNovoParaPessoa(p); }}
+      />
+      <TrilhaPastorDialog
+        grupo={selPastor}
+        onClose={() => setSelPastor(null)}
+        onAbrirPessoa={(p) => { setSelPastor(null); setSel(p); }}
+      />
+    </div>
+  );
+}
+
+// Atendimentos de UM pastor/líder. Clicar numa linha abre a trilha da PESSOA —
+// as duas visões se encontram aqui, então ninguém precisa voltar e trocar de aba
+// pra ler o histórico completo de quem foi atendido.
+function TrilhaPastorDialog({ grupo, onClose, onAbrirPessoa }: {
+  grupo: any | null; onClose: () => void; onAbrirPessoa: (p: any) => void;
+}) {
+  return (
+    <Dialog open={!!grupo} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-2xl flex flex-col max-h-[85vh]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <UserRound className="h-4 w-4 text-primary" />
+            {grupo?.nome || 'Atendimentos'}
+          </DialogTitle>
+          {grupo && (
+            <p className="text-xs text-muted-foreground">
+              Participou de {grupo.total} atendimento{grupo.total > 1 ? 's' : ''} · {grupo.pessoasCount} pessoa{grupo.pessoasCount > 1 ? 's' : ''} atendida{grupo.pessoasCount > 1 ? 's' : ''}
+              {grupo.ultimo ? ` · último em ${fmtDataBR(grupo.ultimo)}` : ''}
+              {grupo.temConjunto && ' · inclui atendimento feito em dupla'}
+            </p>
+          )}
+        </DialogHeader>
+        {/* min-h-0 é obrigatório pro corpo encolher e rolar (convenção do repo:
+            DialogContent flex + corpo flex-1 overflow-y-auto min-h-0). */}
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-2">
+          {(grupo?.itens || []).map((a: any) => {
+            const cor = ATEND_TIPO_COR[a.tipo] || '#64748b';
+            return (
+              <button
+                key={`${a.fonte || 'a'}-${a.id}`}
+                type="button"
+                onClick={() => a.pessoa && onAbrirPessoa(a.pessoa)}
+                className="w-full text-left rounded-lg border border-border p-2.5 hover:border-primary/50 transition-colors"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-sm truncate">{a.pessoa?.nome || 'Sem nome'}</span>
+                  <span className="text-[11px] text-muted-foreground shrink-0">{a.data ? fmtDataBR(a.data) : '—'}</span>
+                </div>
+                <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: cor + '20', color: cor }}>
+                    {ATEND_TIPO_LABEL[a.tipo] || a.tipo || 'Atendimento'}
+                  </span>
+                  {a.status && <span className="text-[11px] text-muted-foreground capitalize">{a.status}</span>}
+                  {a.pessoa?.telefone && <span className="text-[11px] text-muted-foreground">{a.pessoa.telefone}</span>}
+                  {/* Atendimento em dupla: mostra o campo original, pra ficar claro
+                      que não foi só esta pessoa. */}
+                  {grupo && String(a.responsavel || '').trim() !== grupo.nome && a.responsavel && (
+                    <span className="text-[11px] text-muted-foreground italic">com: {a.responsavel}</span>
+                  )}
+                </div>
+                {a.texto && <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">{a.texto}</p>}
+              </button>
+            );
+          })}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Caixa de entrada · pedidos de cuidado ─────────────────────────────
+// Fila única de triagem: junta cui_pedidos (whatsapp/plataforma/manual) +
+// app_inscricoes (canal app · /pedidos-app). O líder escolhe o TIPO ao atender
+// → cria o atendimento na trilha da pessoa (aba Visitas e Atendimentos).
+const PEDIDO_TIPO_META: Record<string, { label: string; color: string }> = {
+  aconselhamento: { label: 'Aconselhamento', color: '#f59e0b' },
+  capelania: { label: 'Capelania', color: '#8b5cf6' },
+  oracao: { label: 'Oração', color: '#00B39D' },
+  sos: { label: 'SOS', color: '#ef4444' },
+  visita: { label: 'Visita', color: '#3b82f6' },
+  // Fale Conosco do app (tipo `contato` em app_inscricoes) · entrou 06/08/2026:
+  // as mensagens existiam no banco e não apareciam em tela nenhuma.
+  contato: { label: 'Fale Conosco', color: '#0ea5e9' },
+  outro: { label: 'Outro', color: '#64748b' },
+};
+// ⚠️ Tipos que podem ser CRIADOS à mão aqui = os do CHECK de `cui_pedidos`.
+// `contato` fica de fora: ele só existe em `app_inscricoes` (canal app), e
+// oferecê-lo no "Registrar pedido" faria o insert violar o CHECK do banco.
+// O mapa acima é de EXIBIÇÃO (fila + filtro) e por isso é maior que esta lista.
+const TIPOS_PEDIDO_MANUAL = ['aconselhamento', 'capelania', 'oracao', 'sos', 'visita', 'outro'];
+const CANAL_LABEL: Record<string, string> = { app: 'App', whatsapp: 'WhatsApp', plataforma: 'Plataforma', manual: 'Manual' };
+const PEDIDO_STATUS_UI: { v: string; l: string }[] = [
+  { v: 'pendente', l: 'Pendente' }, { v: 'em_andamento', l: 'Em andamento' }, { v: 'concluido', l: 'Concluído' },
+];
+// pedido.tipo → tipo de atendimento sugerido ao atender
+// ⚠️ `contato` sugere 'outro', não 'aconselhamento': Fale Conosco pode ser
+// dúvida, elogio ou pedido administrativo. Registrar como aconselhamento
+// pastoral por padrão inventaria um atendimento que não aconteceu — e a maioria
+// das mensagens se resolve respondendo pelo Conversas e marcando como tratada,
+// sem criar atendimento nenhum.
+const TIPO_ATEND_SUGERIDO: Record<string, string> = {
+  aconselhamento: 'aconselhamento', capelania: 'capelania', visita: 'visita_domiciliar',
+  oracao: 'aconselhamento', sos: 'aconselhamento', outro: 'aconselhamento',
+  contato: 'outro',
+};
+
+// Modal "Atender" · o líder escolhe o tipo de atendimento/visita → cria a trilha
+function AtenderPedidoModal({ pedido, canEdit, onClose, onSaved }: {
+  pedido: any | null; canEdit: boolean; onClose: () => void; onSaved: () => void;
+}) {
+  const [tipo, setTipo] = useState('aconselhamento');
+  const [responsavel, setResponsavel] = useState('');
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [hora, setHora] = useState('');
+  const [tipoOutro, setTipoOutro] = useState('');
+  const [observacao, setObservacao] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    if (!pedido) return;
+    setTipo(TIPO_ATEND_SUGERIDO[pedido.tipo] || 'aconselhamento');
+    setResponsavel(''); setData(new Date().toISOString().slice(0, 10)); setHora('');
+    setTipoOutro(''); setObservacao(pedido.mensagem || '');
+  }, [pedido]);
+
+  const ehSessao = tipo === 'aconselhamento' || tipo === 'capelania';
+  async function salvar() {
+    if (!pedido) return;
+    if (tipo === 'outro' && !tipoOutro.trim()) { toast.error('Descreva o tipo (Outro)'); return; }
+    setSalvando(true);
+    try {
+      await cuidadosApi.pedidos.atender(pedido.fonte, pedido.id, {
+        tipo, tipo_outro: tipoOutro || null, responsavel: responsavel || null,
+        data: data || null, hora: ehSessao ? (hora || null) : null,
+        observacao: observacao || null,
+        status: ehSessao ? 'ativo' : 'agendada',
+      });
+      toast.success('Atendimento criado na trilha da pessoa.');
+      onSaved(); onClose();
+    } catch (e: any) { toast.error(e.message); }
+    finally { setSalvando(false); }
+  }
+
+  return (
+    <Dialog open={!!pedido} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Atender · {pedido?.nome || 'pessoa'}</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">Escolha o tipo de atendimento/visita. Isso cria o atendimento na trilha da pessoa (aba Visitas e Atendimentos).</p>
+          <div>
+            <Label>Tipo de atendimento *</Label>
+            <Select value={tipo} onValueChange={setTipo}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {['aconselhamento', 'capelania', 'visita_domiciliar', 'visita_hospitalar', 'funeral', 'casamento', 'outro'].map(t => (
+                  <SelectItem key={t} value={t}>{ATEND_TIPO_LABEL[t] || t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {tipo === 'outro' && (
+            <div><Label>Qual? *</Label><Input value={tipoOutro} onChange={e => setTipoOutro(e.target.value)} placeholder="Descreva o tipo" /></div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>Data</Label><DatePicker value={data} onChange={setData} /></div>
+            {ehSessao && <div><Label>Hora</Label><Input type="time" value={hora} onChange={e => setHora(e.target.value)} /></div>}
+          </div>
+          <div><Label>Quem vai atender</Label><Input value={responsavel} onChange={e => setResponsavel(e.target.value)} placeholder="Pastor / líder" /></div>
+          <div>
+            <Label>Observação</Label>
+            <textarea className="w-full min-h-[70px] rounded-md border border-border p-2 text-sm" style={{ background: 'var(--cbrio-input-bg)' }}
+              value={observacao} onChange={e => setObservacao(e.target.value)} placeholder="Contexto, motivo, próximos passos..." />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={salvar} disabled={salvando || !canEdit}>{salvando ? 'Salvando...' : 'Criar atendimento'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Modal "Registrar pedido" · pedido manual na Caixa (canal manual)
+function RegistrarPedidoModal({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
+  const [tipo, setTipo] = useState('aconselhamento');
+  const [nome, setNome] = useState('');
+  const [telefone, setTelefone] = useState('');
+  const [mensagem, setMensagem] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  useEffect(() => { if (open) { setTipo('aconselhamento'); setNome(''); setTelefone(''); setMensagem(''); } }, [open]);
+  async function salvar() {
+    if (!nome.trim() && !telefone.trim()) { toast.error('Informe ao menos nome ou telefone.'); return; }
+    setSalvando(true);
+    try {
+      await cuidadosApi.pedidos.create({ tipo, nome, telefone, mensagem });
+      toast.success('Pedido registrado na Caixa de entrada.');
+      onSaved(); onClose();
+    } catch (e: any) { toast.error(e.message); }
+    finally { setSalvando(false); }
+  }
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Registrar pedido de cuidado</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label>Tipo *</Label>
+            <Select value={tipo} onValueChange={setTipo}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {/* TIPOS_PEDIDO_MANUAL, não PEDIDO_TIPO_META: "Fale Conosco"
+                    é tipo do app e não existe no CHECK de cui_pedidos. */}
+                {TIPOS_PEDIDO_MANUAL.map(t => <SelectItem key={t} value={t}>{PEDIDO_TIPO_META[t].label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>Nome</Label><Input value={nome} onChange={e => setNome(e.target.value)} /></div>
+            <div><Label>Telefone</Label><Input value={telefone} onChange={e => setTelefone(e.target.value)} /></div>
+          </div>
+          <div>
+            <Label>Mensagem / motivo</Label>
+            <textarea className="w-full min-h-[70px] rounded-md border border-border p-2 text-sm" style={{ background: 'var(--cbrio-input-bg)' }}
+              value={mensagem} onChange={e => setMensagem(e.target.value)} placeholder="O que a pessoa precisa?" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={salvar} disabled={salvando}>{salvando ? 'Salvando...' : 'Registrar'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Aba "Caixa de entrada" (ex-Aconselhamento) · fila unificada de pedidos.
+function CaixaEntrada({ canEdit, onAtendido, onPendentes }: {
+  canEdit: boolean; onAtendido: () => void; onPendentes?: (n: number) => void;
+}) {
+  const [itens, setItens] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [erroCarga, setErroCarga] = useState(false);
+  const [fCanal, setFCanal] = useState('todos');
+  const [fTipo, setFTipo] = useState('todos');
+  const [fStatus, setFStatus] = useState('abertos');
+  const [busca, setBusca] = useState('');
+  const [atender, setAtender] = useState<any | null>(null);
+  const [registrar, setRegistrar] = useState(false);
+
+  async function carregar() {
+    setLoading(true);
+    setErroCarga(false);
+    let falhou = false;
+    const safe = async (p: Promise<any>) => { try { return await p; } catch { falhou = true; return []; } };
+    try {
+      const [cui, app] = await Promise.all([
+        safe(cuidadosApi.pedidos.list()),
+        safe(cuidadosApi.pedidosApp.list()),
+      ]);
+      if (falhou) setErroCarga(true);
+      const norm: any[] = [];
+      for (const p of (cui || [])) norm.push({
+        fonte: 'cui', id: p.id, canal: p.canal || 'manual', tipo: p.tipo || 'outro',
+        nome: p.nome, telefone: p.telefone, email: p.email, mensagem: p.mensagem,
+        status: p.status || 'pendente', membro_id: p.membro_id, atribuido_nome: p.atribuido_nome || null,
+        atendido: !!p.atendimento_ref, created_at: p.created_at,
+      });
+      for (const p of (app || [])) norm.push({
+        fonte: 'app', id: p.id, canal: 'app', tipo: p.tipo || 'outro',
+        nome: p.nome, telefone: p.telefone, email: p.email, mensagem: p.mensagem,
+        status: p.tratamento_status || 'pendente', membro_id: p.membro_id, atribuido_nome: null,
+        atendido: false, created_at: p.created_at,
+      });
+      norm.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+      setItens(norm);
+      if (onPendentes) onPendentes(norm.filter(x => x.status === 'pendente').length);
+    } catch { setItens([]); setErroCarga(true); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { carregar(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  async function mudarStatus(it: any, status: string) {
+    // otimista
+    setItens(prev => prev.map(x => (x.fonte === it.fonte && x.id === it.id) ? { ...x, status } : x));
+    try {
+      if (it.fonte === 'cui') await cuidadosApi.pedidos.update(it.id, { status });
+      else await cuidadosApi.pedidosApp.updateStatus(it.id, status);
+      if (onPendentes) setItens(prev => { const n = prev.filter(x => x.status === 'pendente').length; onPendentes(n); return prev; });
+    } catch (e: any) { toast.error(e.message); carregar(); }
+  }
+  async function remover(it: any) {
+    if (it.fonte !== 'cui') return;
+    if (!confirm('Remover este pedido da Caixa de entrada?')) return;
+    try { await cuidadosApi.pedidos.remove(it.id); carregar(); }
+    catch (e: any) { toast.error(e.message); }
+  }
+
+  const filtrados = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return itens.filter(it => {
+      if (fCanal !== 'todos' && it.canal !== fCanal) return false;
+      if (fTipo !== 'todos' && it.tipo !== fTipo) return false;
+      if (fStatus === 'abertos' && it.status === 'concluido') return false;
+      else if (fStatus !== 'abertos' && fStatus !== 'todos' && it.status !== fStatus) return false;
+      if (q && !(`${it.nome || ''} ${it.telefone || ''} ${it.mensagem || ''}`.toLowerCase().includes(q))) return false;
+      return true;
+    });
+  }, [itens, fCanal, fTipo, fStatus, busca]);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="flex items-center gap-2 mb-1"><HeartHandshake className="h-4 w-4 text-primary" /><h3 className="font-semibold text-sm">Caixa de entrada</h3></div>
+        <p className="text-xs text-muted-foreground">Todos os pedidos de cuidado num lugar — app, WhatsApp, plataforma e registro manual. Atenda escolhendo o tipo; vira atendimento na trilha da pessoa.</p>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input placeholder="Buscar por nome, telefone, mensagem..." value={busca} onChange={e => setBusca(e.target.value)} className="pl-8" />
+        </div>
+        <Select value={fCanal} onValueChange={setFCanal}>
+          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="todos">Todos os status</SelectItem>
-            {VISITA_STATUS_UI.map(s => <SelectItem key={s.v} value={s.v}>{s.l}</SelectItem>)}
+            <SelectItem value="todos">Todos os canais</SelectItem>
+            {Object.keys(CANAL_LABEL).map(c => <SelectItem key={c} value={c}>{CANAL_LABEL[c]}</SelectItem>)}
           </SelectContent>
         </Select>
-        {canEdit && <Button onClick={onNova}><Plus className="h-4 w-4 mr-2" />Registrar visita</Button>}
+        <Select value={fTipo} onValueChange={setFTipo}>
+          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos os tipos</SelectItem>
+            {Object.keys(PEDIDO_TIPO_META).map(t => <SelectItem key={t} value={t}>{PEDIDO_TIPO_META[t].label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={fStatus} onValueChange={setFStatus}>
+          <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="abertos">Em aberto</SelectItem>
+            <SelectItem value="pendente">Pendente</SelectItem>
+            <SelectItem value="em_andamento">Em andamento</SelectItem>
+            <SelectItem value="concluido">Concluído</SelectItem>
+            <SelectItem value="todos">Todos</SelectItem>
+          </SelectContent>
+        </Select>
+        {canEdit && <Button onClick={() => setRegistrar(true)}><Plus className="h-4 w-4 mr-2" />Registrar pedido</Button>}
       </div>
-      <div className="rounded-lg border border-border bg-card overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Pessoa</TableHead>
-              <TableHead>Data</TableHead>
-              <TableHead>Tipo</TableHead>
-              <TableHead>Quem atendeu</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Observação</TableHead>
-              <TableHead></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {loading ? (
-              <TableRow><TableCell colSpan={7} className="text-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" /></TableCell></TableRow>
-            ) : filtrados.length === 0 ? (
-              <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">{itens.length === 0 ? 'Nenhuma visita registrada ainda.' : 'Nenhum resultado nos filtros.'}</TableCell></TableRow>
-            ) : filtradosPag.map((v: any) => {
-              const st = VISITA_STATUS_UI.find(s => s.v === v.status);
-              const cor = st?.color || '#94a3b8';
-              return (
-                <TableRow key={v.id}>
-                  <TableCell className="font-medium">
-                    {v.nome}
-                    {v.telefone && <div className="text-xs text-muted-foreground">{v.telefone}</div>}
-                  </TableCell>
-                  <TableCell className="whitespace-nowrap text-sm">{fmtData(v.data_visita)}</TableCell>
-                  <TableCell className="text-sm">{v.tipo === 'outro' && v.tipo_outro ? `Outro · ${v.tipo_outro}` : (VISITA_TIPO_LABEL[v.tipo] || v.tipo)}</TableCell>
-                  <TableCell className="text-sm">{v.responsavel || '—'}</TableCell>
-                  <TableCell>
-                    <span className="text-[11px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap" style={{ background: cor + '22', color: cor, border: `1px solid ${cor}40` }}>{st?.l || v.status}</span>
-                  </TableCell>
-                  <TableCell className="max-w-[260px]"><span className="text-sm text-muted-foreground line-clamp-2">{v.observacao || '—'}</span></TableCell>
-                  <TableCell className="text-right whitespace-nowrap">
-                    {canEdit && (
-                      <>
-                        <Button variant="ghost" size="sm" onClick={() => onEdit(v)}>Editar</Button>
-                        <Button variant="ghost" size="sm" onClick={() => onRemove(v)}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
-                      </>
+
+      {loading ? (
+        <div className="text-center py-10"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" /></div>
+      ) : erroCarga && itens.length === 0 ? (
+        <div style={{ padding: 24, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 8, textAlign: 'center' }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível carregar a caixa de entrada</div>
+          <div style={{ fontSize: 12, color: '#791F1F', marginBottom: 12 }}>Pode haver pedidos pendentes — a lista falhou ao carregar. Não trate como vazio.</div>
+          <button onClick={carregar} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '8px 16px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Tentar de novo</button>
+        </div>
+      ) : filtrados.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card p-8 text-center text-muted-foreground text-sm">{itens.length === 0 ? 'Nenhum pedido na caixa de entrada.' : 'Nenhum pedido nos filtros atuais.'}</div>
+      ) : (
+        <div className="space-y-2">
+          {filtrados.map(it => {
+            const meta = PEDIDO_TIPO_META[it.tipo] || { label: it.tipo, color: '#64748b' };
+            const tel = String(it.telefone || '').replace(/\D/g, '');
+            const urgente = it.tipo === 'sos' && it.status === 'pendente';
+            return (
+              <div key={it.fonte + it.id} className={`rounded-lg border p-3 bg-card ${urgente ? 'border-red-400/60' : 'border-border'}`}>
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <div className="font-medium flex items-center gap-1.5">
+                      {it.tipo === 'sos' && <AlertTriangle className="h-3.5 w-3.5 text-red-500 shrink-0" />}
+                      {it.nome || '—'}
+                      {it.membro_id && <Badge variant="secondary" className="text-[10px]">membro</Badge>}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      <span className="text-[11px] px-2 py-0.5 rounded-full font-medium" style={{ background: meta.color + '22', color: meta.color, border: `1px solid ${meta.color}40` }}>{meta.label}</span>
+                      <span className="text-[11px] text-muted-foreground">{CANAL_LABEL[it.canal] || it.canal}</span>
+                      <span className="text-[11px] text-muted-foreground">{it.created_at ? new Date(it.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                    </div>
+                    {it.telefone && (
+                      <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                        <a href={`tel:${tel}`} className="flex items-center gap-1 hover:text-primary"><Phone className="h-3 w-3" />{it.telefone}</a>
+                      </div>
                     )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </div>
-      <Paginacao {...visitasPagProps} itemLabel="visitas" />
+                    {it.mensagem && <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{it.mensagem}</p>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {canEdit ? (
+                      <Select value={it.status} onValueChange={(v) => mudarStatus(it, v)}>
+                        <SelectTrigger className="h-8 w-[140px]"><SelectValue /></SelectTrigger>
+                        <SelectContent>{PEDIDO_STATUS_UI.map(s => <SelectItem key={s.v} value={s.v}>{s.l}</SelectItem>)}</SelectContent>
+                      </Select>
+                    ) : (
+                      <Badge variant={it.status === 'concluido' ? 'secondary' : 'default'}>{PEDIDO_STATUS_UI.find(s => s.v === it.status)?.l || it.status}</Badge>
+                    )}
+                    {tel && (
+                      <Button asChild variant="outline" size="sm" title="Ver e responder no módulo Conversas">
+                        <Link to={hrefConversa(`55${tel}`)}><MessageSquare className="h-3.5 w-3.5 mr-1" />Conversas</Link>
+                      </Button>
+                    )}
+                    {canEdit && it.status !== 'concluido' && (
+                      <Button size="sm" onClick={() => setAtender(it)}><HeartHandshake className="h-3.5 w-3.5 mr-1" />Atender</Button>
+                    )}
+                    {canEdit && it.fonte === 'cui' && (
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => remover(it)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <AtenderPedidoModal pedido={atender} canEdit={canEdit} onClose={() => setAtender(null)} onSaved={() => { carregar(); onAtendido(); }} />
+      <RegistrarPedidoModal open={registrar} onClose={() => setRegistrar(false)} onSaved={carregar} />
     </div>
   );
 }
@@ -836,6 +1908,7 @@ export default function Cuidados() {
     const t = searchParams.get('tab') || 'dashboard';
     if (t === 'tarefas') return 'visitas'; // legado · aba renomeada pra "Visitas agendadas"
     if (t === 'primeiros-passos') return 'convertidos'; // legado · fundida em "Próximos passos"
+    if (t === 'jornada') return 'dashboard'; // legado · Jornada 180 saiu do Cuidados (é do módulo Grupos)
     return t;
   });
 
@@ -849,49 +1922,42 @@ export default function Cuidados() {
   const [dashDias, setDashDias] = useState(90);
   const [dashLoading, setDashLoading] = useState(true);
 
-  const [acomp, setAcomp] = useState<any[]>([]);
-  const [pedidosApp, setPedidosApp] = useState<any[]>([]);
   const [convertidos, setConvertidos] = useState<any[]>([]);
   const [jornadaData, setJornadaData] = useState<any>(null); // /jornada-convertidos · status contato/batismo/Next por pessoa
   const navigate = useNavigate();
 
-  const [modalAcomp, setModalAcomp] = useState(false);
-  const [editAcomp, setEditAcomp] = useState<any | null>(null);
+  const [caixaPendentes, setCaixaPendentes] = useState(0); // badge da aba Caixa de entrada
   const [modalConvert, setModalConvert] = useState(false);
   const [editConvert, setEditConvert] = useState<any | null>(null);
   const [detailConvert, setDetailConvert] = useState<any | null>(null);
   const [atendentes, setAtendentes] = useState<any[]>([]);
-  const [visitas, setVisitas] = useState<any[]>([]);
-  const [visitasLoading, setVisitasLoading] = useState(true);
+  // Responsáveis do atendimento (cui_responsaveis) · fallback = lista fixa antiga
+  const [responsaveis, setResponsaveis] = useState<any[]>(RESPONSAVEIS_FALLBACK);
+  const [modalResponsaveis, setModalResponsaveis] = useState(false);
   const [modalVisita, setModalVisita] = useState(false);
   const [editVisita, setEditVisita] = useState<any | null>(null);
   const [visitasVersion, setVisitasVersion] = useState(0);
+  const [trilhaVersion, setTrilhaVersion] = useState(0);
   const [convertTags, setConvertTags] = useState<string[]>([]);
   const [convertSearch, setConvertSearch] = useState('');
   const [convertFilter, setConvertFilter] = useState<'todos' | 'sem_responsavel' | 'sem_direcionamento' | 'atrasados'>('todos');
   const [convertFilterStatus, setConvertFilterStatus] = useState<string>(''); // primeiro_contato_status ('' = todos · 'sem' = sem status)
   const [convertPeriodo, setConvertPeriodo] = useState<string>('tudo'); // 30/60/90/180/365/tudo (por data_culto)
-  const [search, setSearch] = useState('');
 
   async function loadAll() {
-    const [a, pa, c, jd] = await Promise.all([
-      cuidadosApi.acompanhamentos.list().catch(() => []),
-      cuidadosApi.pedidosApp.list().catch(() => []),
+    const [c, jd] = await Promise.all([
       cuidadosApi.convertidos.list().catch(() => []),
       cuidadosApi.jornadaConvertidos().catch(() => null),
     ]);
-    setAcomp(a); setPedidosApp(pa); setConvertidos(c); setJornadaData(jd);
+    setConvertidos(c); setJornadaData(jd);
     // Recarrega as séries do dashboard após mudanças nos dados
     setVisitasVersion(v => v + 1);
   }
 
-  // Lista de visitas/atendimentos avulsos (aba "Visitas e atendimentos")
-  function loadVisitas() {
-    setVisitasLoading(true);
-    cuidadosApi.visitas.list().then(setVisitas).catch(() => setVisitas([])).finally(() => setVisitasLoading(false));
-  }
+  // Recarrega a trilha (aba Visitas e Atendimentos) + as séries do dashboard.
+  function recarregarTrilha() { setTrilhaVersion(v => v + 1); setVisitasVersion(v => v + 1); }
 
-  useEffect(() => { loadAll(); loadVisitas(); }, []);
+  useEffect(() => { loadAll(); }, []);
 
   // Catalogo de tags pastorais · fonte de verdade no backend
   useEffect(() => {
@@ -904,6 +1970,18 @@ export default function Cuidados() {
   useEffect(() => {
     cuidadosApi.convertidos.atendentes().then(setAtendentes).catch(() => {});
   }, []);
+
+  // Responsáveis do atendimento (lista gerenciável) · se a API falhar,
+  // fica o fallback fixo (comportamento antigo).
+  function loadResponsaveis() {
+    cuidadosApi.responsaveis.list()
+      .then((r: any[]) => { if (Array.isArray(r) && r.length) setResponsaveis(r); })
+      .catch(() => {});
+  }
+  useEffect(() => { loadResponsaveis(); }, []);
+
+  const responsaveisAtivos = useMemo(() => responsaveis.filter((r: any) => r.ativo), [responsaveis]);
+  const responsaveisInativos = useMemo(() => responsaveis.filter((r: any) => !r.ativo), [responsaveis]);
 
   // Séries do dashboard novo · recarrega ao trocar o período ou quando os dados mudam
   useEffect(() => {
@@ -1059,32 +2137,24 @@ export default function Cuidados() {
     [convertidos]
   );
 
-  const acompFiltrados = useMemo(() => {
-    if (!search) return acomp;
-    return acomp.filter(a => (a.nome || '').toLowerCase().includes(search.toLowerCase()));
-  }, [acomp, search]);
-
-  const pedidosPendentes = useMemo(
-    () => pedidosApp.filter((p: any) => p.tratamento_status === 'pendente').length,
-    [pedidosApp]
-  );
-
   return (
     <div className="p-6 space-y-6">
       <ModuleHeader
         icon={Heart}
         title="Cuidados"
-        subtitle="Acompanhamentos pastorais, Jornada 180, capelania, aconselhamento e convertidos pós-culto."
+        subtitle="Acompanhamentos pastorais, capelania, aconselhamento e convertidos pós-culto."
       />
 
       <Tabs value={tab} onValueChange={handleTabChange}>
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
-          <TabsTrigger value="acomp">Aconselhamento</TabsTrigger>
-          <TabsTrigger value="jornada">Jornada 180</TabsTrigger>
+          <TabsTrigger value="acomp" className="gap-1.5">
+            Caixa de entrada
+            {caixaPendentes > 0 && <Badge variant="destructive" className="h-4 px-1.5 text-[10px]">{caixaPendentes > 99 ? '99+' : caixaPendentes}</Badge>}
+          </TabsTrigger>
           <TabsTrigger value="convertidos">Próximos passos</TabsTrigger>
           <TabsTrigger value="devocional">Devocional</TabsTrigger>
-          <TabsTrigger value="visitas">Visitas e atendimentos</TabsTrigger>
+          <TabsTrigger value="visitas">Visitas e Atendimentos</TabsTrigger>
         </TabsList>
 
         {/* Dashboard */}
@@ -1118,7 +2188,7 @@ export default function Cuidados() {
               <div className="rounded-lg border border-border bg-card p-4">
                 <h3 className="font-semibold text-sm mb-1">Convertidos → 1º contato → engajados em +1 valor</h3>
                 <p className="text-xs text-muted-foreground mb-3">
-                  O gargalo do cuidado: de quem se converteu, com quantos a gente falou e quantos seguiram pra outro valor (grupo, voluntário, Jornada 180).
+                  O gargalo do cuidado: de quem se converteu, com quantos a gente falou e quantos seguiram pra outro valor (grupo, voluntário, Next).
                 </p>
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={dashSeries.funil} margin={{ top: 8, right: 16, left: -10, bottom: 0 }}>
@@ -1225,145 +2295,9 @@ export default function Cuidados() {
           )}
         </TabsContent>
 
-        {/* Acompanhamentos */}
+        {/* Caixa de entrada · fila única de pedidos de cuidado */}
         <TabsContent value="acomp" className="space-y-4">
-          {/* Pedidos pelo app · "Quero conversar com um pastor" / oração / SOS */}
-          <div className="rounded-lg border border-border bg-card p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <HeartHandshake className="h-4 w-4 text-primary" />
-              <h3 className="font-semibold text-sm">Pedidos pelo app</h3>
-              {pedidosPendentes > 0 && (
-                <Badge variant="destructive" className="ml-1">{pedidosPendentes} pendente{pedidosPendentes > 1 ? 's' : ''}</Badge>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground mb-3">"Quero conversar com um pastor", pedidos de oração e SOS enviados pelo aplicativo de membros.</p>
-            <div className="rounded-lg border border-border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Pessoa</TableHead><TableHead>Tipo</TableHead><TableHead>Mensagem</TableHead><TableHead>Quando</TableHead><TableHead>Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pedidosApp.length === 0 ? (
-                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">Nenhum pedido pelo app.</TableCell></TableRow>
-                  ) : pedidosApp.map(p => {
-                    const meta = PEDIDO_META[p.tipo] || { label: p.tipo, color: '#64748b' };
-                    const tel = String(p.telefone || '').replace(/\D/g, '');
-                    const urgentePend = p.tipo === 'sos' && p.tratamento_status === 'pendente';
-                    return (
-                      <TableRow key={p.id} className={urgentePend ? 'bg-red-50/60 dark:bg-red-950/20' : ''}>
-                        <TableCell>
-                          <div className="font-medium flex items-center gap-1.5">
-                            {p.tipo === 'sos' && <AlertTriangle className="h-3.5 w-3.5 text-red-500 shrink-0" />}
-                            {p.membro_id ? (
-                              <Link to={`/ministerial/membresia?q=${encodeURIComponent(p.nome || '')}`} className="text-primary hover:underline">{p.nome || 'Membro'}</Link>
-                            ) : (p.nome || '—')}
-                            {p.membro_id && <Badge variant="secondary" className="text-[10px]">membro</Badge>}
-                          </div>
-                          {p.telefone && (
-                            <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
-                              <a href={`tel:${tel}`} className="flex items-center gap-1 hover:text-primary"><Phone className="h-3 w-3" />{p.telefone}</a>
-                              {tel && <a href={`https://wa.me/55${tel}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 hover:text-primary"><MessageSquare className="h-3 w-3" />WhatsApp</a>}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell><Badge style={{ backgroundColor: meta.color, color: '#fff' }}>{meta.label}</Badge></TableCell>
-                        <TableCell className="max-w-[260px]"><span className="text-sm text-muted-foreground line-clamp-2">{p.mensagem || '—'}</span></TableCell>
-                        <TableCell className="whitespace-nowrap text-sm">{new Date(p.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</TableCell>
-                        <TableCell>
-                          {podeEditarCuidados ? (
-                            <Select value={p.tratamento_status} onValueChange={async (v) => { await cuidadosApi.pedidosApp.updateStatus(p.id, v); loadAll(); }}>
-                              <SelectTrigger className="h-8 w-[150px]"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="pendente">Pendente</SelectItem>
-                                <SelectItem value="em_andamento">Em andamento</SelectItem>
-                                <SelectItem value="concluido">Concluído</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            <Badge variant={p.tratamento_status === 'concluido' ? 'secondary' : 'default'}>{TRAT_LABEL[p.tratamento_status] || p.tratamento_status}</Badge>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between gap-3">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Buscar nome..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9" />
-            </div>
-            {podeEditarCuidados && (
-              <Button onClick={() => { setEditAcomp(null); setModalAcomp(true); }}><Plus className="h-4 w-4 mr-2" />Novo atendimento</Button>
-            )}
-          </div>
-          <div className="rounded-lg border border-border bg-card overflow-hidden">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nome</TableHead><TableHead>Tipo</TableHead><TableHead>Motivo</TableHead><TableHead>Sessão agendada</TableHead><TableHead>Status</TableHead><TableHead></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {acompFiltrados.length === 0 ? (
-                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nenhum atendimento.</TableCell></TableRow>
-                ) : acompFiltrados.map(a => (
-                  <TableRow key={a.id}>
-                    <TableCell className="font-medium">{a.nome}{a.membro_id && <Badge variant="secondary" className="ml-2 text-[10px]">membro</Badge>}</TableCell>
-                    <TableCell>
-                      <Badge style={{ background: (a.tipo === 'capelania' ? C.warn : C.info) + '20', color: a.tipo === 'capelania' ? C.warn : C.info, border: `1px solid ${(a.tipo === 'capelania' ? C.warn : C.info)}40` }}>
-                        {a.tipo === 'capelania' ? 'Capelania' : 'Aconselhamento'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{a.motivo || '—'}</TableCell>
-                    <TableCell className="whitespace-nowrap text-sm">
-                      {a.agendamento_data ? (
-                        <span className="text-primary flex items-center gap-1"><CalendarCheck className="h-3.5 w-3.5" />{new Date(a.agendamento_data + 'T12:00:00').toLocaleDateString('pt-BR')}{a.agendamento_hora ? ' · ' + String(a.agendamento_hora).slice(0, 5) : ''}</span>
-                      ) : <span className="text-xs text-muted-foreground">—</span>}
-                    </TableCell>
-                    <TableCell><Badge variant={a.status === 'ativo' ? 'default' : 'secondary'}>{a.status}</Badge></TableCell>
-                    <TableCell className="text-right whitespace-nowrap">
-                      {podeEditarCuidados && (
-                        <Button variant="ghost" size="sm" onClick={() => { setEditAcomp(a); setModalAcomp(true); }}>Editar</Button>
-                      )}
-                      {podeEditarCuidados && a.status === 'ativo' && (
-                        <Button variant="ghost" size="sm" onClick={async () => { await cuidadosApi.acompanhamentos.update(a.id, { status: 'concluido', data_encerramento: new Date().toISOString().slice(0, 10) }); loadAll(); }}>Concluir</Button>
-                      )}
-                      {podeEditarCuidados && (
-                        <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.acompanhamentos.remove(a.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-
-          {/* Técnico · oração (insights por IA) + configuração de WhatsApp · recolhido embaixo */}
-          <details className="rounded-lg border border-border bg-card">
-            <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-primary" />Oração (insights) e configuração de WhatsApp
-            </summary>
-            <div className="p-4 pt-0 space-y-4">
-              <OracaoPanel canWrite={podeEditarCuidados} />
-              {podeEditarCuidados && <WhatsappAutoConfig api={cuidadosApi.whatsappAuto} />}
-            </div>
-          </details>
-        </TabsContent>
-
-        {/* Jornada 180 */}
-        <TabsContent value="jornada" className="space-y-4">
-          <div className="rounded-lg border border-border bg-card p-4">
-            <h3 className="font-semibold text-sm flex items-center gap-2 mb-1"><ArrowRight className="h-4 w-4 text-primary" />Encaminhados pra firmar</h3>
-            <p className="text-xs text-muted-foreground mb-3">Pessoas que o cuidado pastoral encaminhou pra Jornada 180. Faça o primeiro contato e registre a devolutiva.</p>
-            <EncaminhamentosInbox destino="jornada180" canWrite={podeEditarCuidados} />
-          </div>
-          <CuidadosJ180 canWrite={podeEditarCuidados} />
+          <CaixaEntrada canEdit={podeEditarCuidados} onAtendido={recarregarTrilha} onPendentes={setCaixaPendentes} />
         </TabsContent>
 
         {/* Próximos passos · lista operacional dos convertidos + jornada (contato/batismo/Next) */}
@@ -1427,12 +2361,21 @@ export default function Cuidados() {
                 convertido" leva pra Integração registrar a decisão no culto —
                 Cuidados acompanha/direciona, não origina. */}
             {podeEditarCuidados && (
-              <Button
-                onClick={() => navigate('/ministerial/integracao')}
-                title="Registrar pela Integração (decisão de culto)"
-              >
-                <Plus className="h-4 w-4 mr-2" />Novo convertido
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => setModalResponsaveis(true)}
+                  title="Gerenciar quem está disponível pra atender os convertidos"
+                >
+                  <Users className="h-4 w-4 mr-2" />Gerenciar responsáveis
+                </Button>
+                <Button
+                  onClick={() => navigate('/ministerial/integracao')}
+                  title="Registrar pela Integração (decisão de culto)"
+                >
+                  <Plus className="h-4 w-4 mr-2" />Novo convertido
+                </Button>
+              </div>
             )}
           </div>
           <div className="flex items-center gap-3 flex-wrap">
@@ -1548,15 +2491,21 @@ export default function Cuidados() {
                             title="Responsável do atendimento"
                           >
                             <option value="">A definir</option>
-                            {RESPONSAVEIS_ATENDIMENTO.map(n => (
-                              <option key={n} value={n}>{n}</option>
+                            {responsaveisAtivos.map((r: any) => (
+                              <option key={r.id} value={r.nome}>{r.nome}</option>
                             ))}
-                            {/* Antigos: histórico · desabilitados (o próprio valor do registro fica habilitado pra exibir) */}
-                            <optgroup label="Antigos (histórico · não selecionável)">
-                              {RESPONSAVEIS_ANTIGOS.map(n => (
-                                <option key={n} value={n} disabled={c.responsavel_atendimento !== n}>{n}</option>
-                              ))}
-                            </optgroup>
+                            {/* Inativos: histórico · desabilitados (o próprio valor do registro fica habilitado pra exibir) */}
+                            {responsaveisInativos.length > 0 && (
+                              <optgroup label="Antigos (histórico · não selecionável)">
+                                {responsaveisInativos.map((r: any) => (
+                                  <option key={r.id} value={r.nome} disabled={c.responsavel_atendimento !== r.nome}>{r.nome}</option>
+                                ))}
+                              </optgroup>
+                            )}
+                            {/* Valor do registro que não está em lista nenhuma (removido/legado) · mantém exibível */}
+                            {c.responsavel_atendimento && !responsaveis.some((r: any) => r.nome === c.responsavel_atendimento) && (
+                              <option value={c.responsavel_atendimento}>{c.responsavel_atendimento}</option>
+                            )}
                           </select>
                         ) : (
                           <span className="text-xs">{c.responsavel_atendimento || <span className="text-muted-foreground">—</span>}</span>
@@ -1620,14 +2569,14 @@ export default function Cuidados() {
                           const primeiro = String(c.nome || '').trim().split(/\s+/)[0] || '';
                           const msg = `Olá ${primeiro}! Aqui é da CBRio 🙏 Que alegria te ver no culto e na decisão que você tomou! Queremos te acompanhar nos próximos passos — podemos conversar?`;
                           return (
-                            <a
-                              href={`https://wa.me/55${tel}?text=${encodeURIComponent(msg)}`}
-                              target="_blank" rel="noopener noreferrer" title="Enviar WhatsApp"
+                            <Link
+                              to={hrefConversa(`55${tel}`, msg)}
+                              title="Abrir conversa no WhatsApp"
                               onClick={e => e.stopPropagation()}
                               className="inline-flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent align-middle"
                             >
                               <MessageSquare className="h-3.5 w-3.5 text-emerald-600" />
-                            </a>
+                            </Link>
                           );
                         })()}
                         {podeEditarCuidados && (
@@ -1651,26 +2600,21 @@ export default function Cuidados() {
           <DevocionalAdmin />
         </TabsContent>
 
-        {/* Visitas e atendimentos · lista de visitas pastorais e atendimentos avulsos */}
+        {/* Visitas e Atendimentos · trilha por pessoa (cui_visitas + cui_acompanhamentos) */}
         <TabsContent value="visitas" className="space-y-4">
-          <VisitasList
-            itens={visitas}
-            loading={visitasLoading}
+          <TrilhaPessoas
             canEdit={podeEditarCuidados}
+            reloadKey={trilhaVersion}
             onNova={() => { setEditVisita(null); setModalVisita(true); }}
-            onEdit={(v: any) => { setEditVisita(v); setModalVisita(true); }}
-            onRemove={async (v: any) => { if (confirm(`Remover a visita de ${v.nome}?`)) { await cuidadosApi.visitas.remove(v.id); loadVisitas(); } }}
+            onEditVisita={(a: any) => {
+              setEditVisita({ id: a.id, nome: a.nome, telefone: a.telefone, data_visita: a.data, tipo: a.tipo, tipo_outro: a.tipo_outro, responsavel: a.responsavel, status: a.status, observacao: a.texto });
+              setModalVisita(true);
+            }}
+            onNovoParaPessoa={(p: any) => { setEditVisita({ nome: p.nome, telefone: p.telefone }); setModalVisita(true); }}
           />
         </TabsContent>
       </Tabs>
 
-      <AcompanhamentoModal
-        open={modalAcomp}
-        onClose={() => { setModalAcomp(false); setEditAcomp(null); }}
-        onSaved={loadAll}
-        atendentes={atendentes}
-        initial={editAcomp}
-      />
       <ConvertidoModal
         open={modalConvert}
         onClose={() => { setModalConvert(false); setEditConvert(null); }}
@@ -1698,8 +2642,15 @@ export default function Cuidados() {
       <VisitaModal
         open={modalVisita}
         onClose={() => { setModalVisita(false); setEditVisita(null); }}
-        onSaved={loadVisitas}
+        onSaved={recarregarTrilha}
         initial={editVisita}
+      />
+      <GerenciarResponsaveisModal
+        open={modalResponsaveis}
+        onClose={() => setModalResponsaveis(false)}
+        responsaveis={responsaveis}
+        onChanged={loadResponsaveis}
+        onRenomeado={loadAll}
       />
     </div>
   );

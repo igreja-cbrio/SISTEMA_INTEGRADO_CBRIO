@@ -887,7 +887,7 @@ export default function VolTotem() {
           </div>
           <div className="text-center space-y-2">
             <p className="text-lg md:text-xl font-medium">Aproxime seu QR Code</p>
-            <p className={`text-sm ${c.m40}`}>Posicione o QR code do cracha em frente a camera</p>
+            <p className={`text-sm ${c.m40}`}>Posicione o QR code do crachá em frente à câmera</p>
             {!isOnline && (
               <p className={`text-sm ${c.amber}`}>Offline · resolvendo crachás pelo cache local</p>
             )}
@@ -1030,7 +1030,7 @@ export default function VolTotem() {
                     ? 'Nenhum voluntário escalado para este culto'
                     : manualSearch.trim()
                       ? 'Voluntário não encontrado na lista'
-                      : 'Nenhum voluntario encontrado'}
+                      : 'Nenhum voluntário encontrado'}
                 </p>
                 {manualSearch && (
                   <p className={`text-sm ${c.m30}`}>Confira o nome ou use o botão abaixo para cadastrar e fazer o check-in</p>
@@ -1087,7 +1087,7 @@ export default function VolTotem() {
                 {unscheduledMatches.length > 0 && (
                   <>
                     <p className={`text-xs uppercase tracking-wider ${c.m40} px-1 pt-3 pb-0.5`}>
-                      Nao escalado neste culto
+                      Não escalado neste culto
                     </p>
                     {unscheduledMatches.map((p) => (
                       <div

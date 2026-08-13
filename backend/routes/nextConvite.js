@@ -145,16 +145,28 @@ router.post('/enviar', authorizeModule('cuidados', 2), async (req, res) => {
     const { data: convs } = await supabase
       .from('cui_convertidos').select('id, nome, telefone').in('id', ids).is('deleted_at', null);
 
-    let enviados = 0, sem_telefone = 0, falhas = 0;
+    let enviados = 0, sem_telefone = 0, falhas = 0, na_fila = 0;
     const enviadosIds = [];
+    const { enfileirar } = require('../services/whatsappFila');
     for (const c of convs || []) {
       const tel = soDigitos(c.telefone);
       if (!tel) { sem_telefone++; continue; }
       if (!templateName) continue; // sem template aprovado: não envia (no-op)
       const primeiro = (c.nome || '').trim().split(/\s+/)[0] || '';
       // Ambos os templates têm só {{1}} = nome no corpo (o link do NEXT é botão).
-      const r = await wpp.sendTemplate(c.telefone, templateName, 'pt_BR', [primeiro]);
-      if (r?.sent) { enviados++; enviadosIds.push(c.id); } else falhas++;
+      // C2: sai pela FILA — registro + retry + statuses de entrega (C0). O envio
+      // continua imediato (enfileirar tenta na hora).
+      const r = await enfileirar({
+        telefone: c.telefone,
+        template: templateName,
+        params: [primeiro],
+        idioma: 'pt_BR',
+        contexto: tipo === 'boas_vindas' ? 'next.boas_vindas' : 'next.convite',
+        refId: c.id,
+      });
+      if (r?.sent) { enviados++; enviadosIds.push(c.id); }
+      else if (r?.queued) { na_fila++; } // falha passageira: o cron reenvia com backoff
+      else falhas++;
     }
     // atualiza o status da pessoa só de quem realmente recebeu
     if (enviadosIds.length) await marcarStatusDisparo(enviadosIds, tipo, req.user?.id);
@@ -162,6 +174,7 @@ router.post('/enviar', authorizeModule('cuidados', 2), async (req, res) => {
     res.json({
       total: ids.length,
       enviados,
+      na_fila,
       sem_telefone,
       falhas,
       template_configurado: !!templateName,

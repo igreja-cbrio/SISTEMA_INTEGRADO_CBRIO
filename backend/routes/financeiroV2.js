@@ -17,14 +17,21 @@
 //   /dashboard/culto       · receita por culto na semana
 
 const router = require('express').Router();
+const crypto = require('crypto');
 const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
-const { supabase, query } = require('../utils/supabase');
+const { supabase } = require('../utils/supabase');
 const { parseOfx } = require('../services/ofxParser');
 const { parsePixExtrato } = require('../services/pixExtratoParser');
+const { vincularIdentidadeOfx } = require('../services/ofxIdentidade');
+const conciliacaoOfx = require('../services/conciliacaoBalancoOfx');
 const {
-  matchOfxPix, classificarBatch, aprenderClassificacao, resolverMembroPorDocumento,
+  matchOfxPix, classificarBatch, aprenderClassificacao, resolverMembroPorDocumento, sugerirLoteIA,
 } = require('../services/financeiroClassificador');
+const { sugerirMatches, aplicarMatch, baixaAutomaticaPorTransacao } = require('../services/finConciliador');
+const {
+  vincularTransacaoNaFatura, fecharFaturasVencidas, itensDaFatura, sincronizarFatura,
+} = require('../services/finFaturas');
 const { notificar } = require('../services/notificar');
 
 router.use(authenticate, authorizeModule('financeiro'));
@@ -332,11 +339,25 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
       .select().single();
     if (upErr) return res.status(500).json({ error: upErr.message });
 
+    // Fase 1 · OFX alimenta identidade por CPF: resolve UM membro por CPF/CNPJ
+    // único (observação de identidade + vínculo por CPF exato + cria avulso só
+    // em PIX de crédito). Best-effort — se falhar, o import segue sem membro_id.
+    let identidadeStats = null;
+    let mapaDoc = new Map();
+    try {
+      const r = await vincularIdentidadeOfx(parsed.transactions, { criarAvulso: true });
+      mapaDoc = r.mapaDoc;
+      identidadeStats = r.stats;
+    } catch (e) {
+      console.error('[FIN-V2] identidade OFX:', e.message);
+    }
+
     // Insere lancamentos brutos (ignora duplicados via UNIQUE)
     let inseridos = 0;
     let duplicados = 0;
 
     for (const t of parsed.transactions) {
+      const docLimpo = t.documento_contraparte ? String(t.documento_contraparte).replace(/\D/g, '') : null;
       const payload = {
         fonte: 'ofx',
         conta_id,
@@ -349,6 +370,7 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
         fitid: t.fitid,
         documento_contraparte: t.documento_contraparte,
         nome_contraparte: t.nome_contraparte,
+        membro_id: (docLimpo && mapaDoc.get(docLimpo)) || null,
         raw_data: t.raw_data,
         upload_id: uploadRow.id,
         created_by: req.user.userId,
@@ -378,11 +400,42 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
       })
       .eq('id', uploadRow.id);
 
+    // Baixa automática pós-import: pares PERFEITOS extrato × contas a pagar
+    // (score 100 = valor exato + débito único + contraparte casa) são aplicados
+    // sozinhos — conta baixada + transação conciliada. Best-effort.
+    let conciliadasAuto = 0;
+    try {
+      const { pares } = await sugerirMatches();
+      for (const p of pares.filter((x) => x.score === 100)) {
+        const r = await aplicarMatch({ contaId: p.conta.id, brutoId: p.bruto.id, userId: req.user.userId, score: 100, origem: 'conciliacao_auto' });
+        if (!r.erro) conciliadasAuto++;
+      }
+    } catch (e) { console.error('[FIN-V2] conciliação pós-OFX:', e.message); }
+
+    // Identifica doadores automaticamente: casa cada doação do balanço
+    // (nome+valor+data, sem CPF) com o PIX do OFX (CPF) e vincula ao membro na
+    // LINHA DO BALANÇO (não cria transação → não duplica). Só o inequívoco é
+    // vinculado; ambíguo fica sem atribuição (a fila de revisão é opcional).
+    // Best-effort — não derruba o import.
+    let doadoresIdentificados = null;
+    try {
+      if (parsed.header.dtStart && parsed.header.dtEnd) {
+        const r = await conciliacaoOfx.conciliar({
+          inicio: parsed.header.dtStart, fim: parsed.header.dtEnd,
+          dryRun: false, userId: req.user.userId,
+        });
+        doadoresIdentificados = { vinculados: r.stats.vinculados || 0, avulsos: r.stats.avulsos_criados || 0, pendentes: r.stats.revisao || 0 };
+      }
+    } catch (e) { console.error('[FIN-V2] identificação de doadores pós-OFX:', e.message); }
+
     res.json({
       upload_id: uploadRow.id,
       total, inseridos, duplicados,
       match_pix: matchResult,
       classificacao: classifResult,
+      conciliadas_auto: conciliadasAuto,
+      identidade: identidadeStats,
+      doadores_identificados: doadoresIdentificados,
       periodo: { inicio: parsed.header.dtStart, fim: parsed.header.dtEnd },
     });
   } catch (e) {
@@ -514,7 +567,20 @@ router.post('/importar/balanco', authorizeModule('financeiro', 4), upload.single
       } catch (_) { /* notificação não é crítica */ }
     }
 
-    res.json({ upload_id: uploadRow?.id, ...r });
+    // Identifica doadores automaticamente pro período do balanço recém-importado
+    // (casa com o OFX já existente por CPF · vincula só o inequívoco · best-effort).
+    let doadoresIdentificados = null;
+    if (r.inseridas > 0 && r.periodo?.inicio && r.periodo?.fim) {
+      try {
+        const c = await conciliacaoOfx.conciliar({
+          inicio: r.periodo.inicio, fim: r.periodo.fim,
+          dryRun: false, userId: req.user.userId,
+        });
+        doadoresIdentificados = { vinculados: c.stats.vinculados || 0, avulsos: c.stats.avulsos_criados || 0, pendentes: c.stats.revisao || 0 };
+      } catch (e) { console.error('[FIN-V2] identificação de doadores pós-balanço:', e.message); }
+    }
+
+    res.json({ upload_id: uploadRow?.id, ...r, doadores_identificados: doadoresIdentificados });
   } catch (e) {
     console.error('[FIN-V2] Balanço:', e);
     if (uploadRow) {
@@ -525,6 +591,105 @@ router.post('/importar/balanco', authorizeModule('financeiro', 4), upload.single
       } catch (_) { /* ignore */ }
     }
     res.status(500).json({ error: e.message || 'Erro ao importar balanço' });
+  }
+});
+
+// ====================================================================
+// IMPORTAR CONTRIBUIÇÕES NOMINAIS (por pessoa · .xlsx/.csv)
+// ====================================================================
+// Sobe a planilha nominal de contribuições (uma linha por doação, com o nome/CPF
+// do contribuinte) direto pra mem_contribuicoes. Idempotente (dedup por
+// referencia_externa = sha256(membro|data|valor|tipo) · só entra o que é novo).
+// Casa cada linha a um membro EXISTENTE (nunca cria membro · linhas sem match
+// viram "sem vínculo" no relatório). Mesmo guard/nível do /importar/balanco.
+//
+// Duas rotas: /previa (commit=false · calcula o resumo sem gravar, pra tela
+// mostrar antes de confirmar) e a rota base (commit=true · grava).
+router.post('/importar/contribuicoes/previa', authorizeModule('financeiro', 4), upload.single('arquivo'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Arquivo de contribuições (.xlsx/.csv) obrigatório' });
+  const { parsePlanilha, processar } = require('../services/contribuicoesImporter');
+  try {
+    const { rows, colunas_detectadas, faltando } = parsePlanilha(req.file.buffer);
+    if (faltando.length) {
+      return res.status(400).json({
+        error: `Planilha não reconhecida · faltam colunas obrigatórias: ${faltando.join(', ')}`,
+        colunas_detectadas,
+        faltando,
+      });
+    }
+    const r = await processar(rows, { commit: false });
+    res.json({ ...r, colunas_detectadas });
+  } catch (e) {
+    console.error('[FIN-V2] contribuições prévia:', e);
+    res.status(500).json({ error: e.message || 'Erro ao pré-visualizar contribuições' });
+  }
+});
+
+router.post('/importar/contribuicoes', authorizeModule('financeiro', 4), upload.single('arquivo'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Arquivo de contribuições (.xlsx/.csv) obrigatório' });
+  const { parsePlanilha, processar } = require('../services/contribuicoesImporter');
+  try {
+    const { rows, colunas_detectadas, faltando } = parsePlanilha(req.file.buffer);
+    if (faltando.length) {
+      return res.status(400).json({
+        error: `Planilha não reconhecida · faltam colunas obrigatórias: ${faltando.join(', ')}`,
+        colunas_detectadas,
+        faltando,
+      });
+    }
+
+    // Registra no histórico de importações (fin_uploads · tipo 'contribuicoes'
+    // liberado na migration 20260722240000). A idempotência real vive na
+    // mem_contribuicoes (referencia_externa); o histórico é só rastro/auditoria.
+    let uploadRow = null;
+    try {
+      const { data: up } = await supabase
+        .from('fin_uploads')
+        .insert({
+          tipo: 'contribuicoes',
+          arquivo_nome: req.file.originalname,
+          arquivo_tamanho: req.file.size,
+          status: 'processando',
+          created_by: req.user.userId,
+        })
+        .select().single();
+      uploadRow = up;
+    } catch (_) { /* histórico é best-effort · não bloqueia a importação */ }
+
+    const r = await processar(rows, { userId: req.user.userId, commit: true });
+
+    if (uploadRow) {
+      try {
+        await supabase.from('fin_uploads')
+          .update({
+            total_registros: r.total,
+            total_novos: r.inseridos,
+            total_duplicados: r.duplicados,
+            status: r.erros.length ? 'erro' : 'concluido',
+            erro_msg: r.erros.length ? r.erros.map(e => `L${e.linha}: ${e.motivo}`).join(' | ').slice(0, 500) : null,
+            concluido_em: new Date().toISOString(),
+          })
+          .eq('id', uploadRow.id);
+      } catch (_) { /* ignore */ }
+    }
+
+    if (r.inseridos > 0) {
+      try {
+        await notificar({
+          modulo: 'financeiro',
+          tipo: 'contribuicoes_importadas',
+          titulo: 'Contribuições importadas',
+          mensagem: `${r.inseridos} nova(s) contribuição(ões) nominal(is) importada(s)`
+            + (r.sem_vinculo ? ` · ${r.sem_vinculo} sem vínculo` : ''),
+          link: '/financeiro-v2?tab=importar',
+        });
+      } catch (_) { /* notificação não é crítica */ }
+    }
+
+    res.json({ upload_id: uploadRow?.id, ...r, colunas_detectadas });
+  } catch (e) {
+    console.error('[FIN-V2] contribuições:', e);
+    res.status(500).json({ error: e.message || 'Erro ao importar contribuições' });
   }
 });
 
@@ -730,7 +895,14 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
       centro_custo_id: finalCentroCusto,
     });
 
-    res.json({ transacao });
+    // Baixa automática no Contas a Pagar: se esta despesa bate com exatamente
+    // UMA conta pendente (mesmo valor, vencimento ±10d), dá baixa sozinho.
+    let contaBaixada = null;
+    if (transacao?.tipo === 'despesa') {
+      contaBaixada = await baixaAutomaticaPorTransacao(transacao, req.user.userId);
+    }
+
+    res.json({ transacao, conta_pagar_baixada: contaBaixada });
   } catch (e) {
     console.error('[FIN-V2] aprovar:', e);
     res.status(500).json({ error: e.message || 'Erro ao aprovar' });
@@ -949,7 +1121,9 @@ router.get('/dashboard/semana', async (req, res) => {
       .from('vw_fin_transacoes_completa')
       .select('valor, tipo, plano_contas_codigo, plano_contas_natureza, centro_custo_codigo, culto_nome, culto_service_type_slug')
       .gte('data_competencia', inicio).lte('data_competencia', fim)
-      .neq('status', 'cancelado');
+      .neq('status', 'cancelado')
+      // Guardrail dupla contagem: balanço = verdade; ignora linhas do OFX aprovado.
+      .is('lancamento_bruto_id', null);
 
     const receitas = (trans || []).filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
     const despesas = (trans || []).filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
@@ -1002,6 +1176,431 @@ router.get('/transacoes', async (req, res) => {
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar transacoes' }); }
+});
+
+// ====================================================================
+// TRANSAÇÕES · Fase 1 da reforma (lançamento manual moderno, detalhe,
+// anexos de comprovante). O DELETE fica FORA desta fase de propósito:
+// fin_transacoes não tem soft-delete (sem deleted_at).
+// ====================================================================
+
+// Match com o extrato — mesma lógica de services/finLancamento.js
+// (lancarDespesaConciliando): exatamente 1 débito OFX NÃO classificado, mesmo
+// valor, janela [dataBase, +15d]. Replicado aqui (em vez de chamar o service)
+// porque a assinatura de lá exige plano_contas_id e força data_pagamento mesmo
+// sem match — no lançamento manual o plano é opcional e sem pagamento a
+// transação deve nascer 'pendente' com data_pagamento nula.
+async function matchDebitoExtrato(valor, dataBase) {
+  try {
+    const fimJanela = new Date(new Date(`${dataBase}T12:00:00`).getTime() + 15 * 86400000).toISOString().slice(0, 10);
+    const { data: candidatos } = await supabase.from('fin_lancamentos_brutos')
+      .select('id, conta_id, valor, tipo_trn, data_lancamento, memo')
+      .eq('ja_classificado', false)
+      .in('valor', [-valor, valor])
+      .gte('data_lancamento', dataBase)
+      .lte('data_lancamento', fimJanela);
+    const debitos = (candidatos || []).filter(c => c.tipo_trn === 'DEBIT' || Number(c.valor) < 0);
+    if (debitos.length === 1) return debitos[0]; // >1 → não escolhe sozinho (fica pendente · match manual)
+  } catch (e) { console.error('[FIN-V2] match extrato manual:', e.message); }
+  return null;
+}
+
+// Lançamento manual moderno (substitui o create da v1 no modal novo)
+router.post('/transacoes', async (req, res) => {
+  try {
+    const {
+      tipo, descricao, valor, data_competencia, data_pagamento, conta_id,
+      plano_contas_id, centro_custo_id, forma_pagamento,
+      parcelas_total, parcela_num, observacoes, tentar_conciliar, cartao_id,
+    } = req.body;
+
+    if (!['receita', 'despesa'].includes(tipo)) {
+      return res.status(400).json({ error: "tipo deve ser 'receita' ou 'despesa'" });
+    }
+    if (!descricao || !String(descricao).trim()) return res.status(400).json({ error: 'descrição obrigatória' });
+    const v = Math.abs(Number(valor) || 0);
+    if (!v) return res.status(400).json({ error: 'valor obrigatório (maior que zero)' });
+    if (!data_competencia) return res.status(400).json({ error: 'data_competencia obrigatória' });
+    if (!conta_id) return res.status(400).json({ error: 'conta_id obrigatório' });
+
+    // Conciliação opcional (só despesa): mesma lógica do finLancamento
+    let bruto = null;
+    if (tentar_conciliar && tipo === 'despesa') {
+      bruto = await matchDebitoExtrato(v, data_competencia);
+    }
+
+    const { data: transacao, error } = await supabase.from('fin_transacoes')
+      .insert({
+        conta_id: bruto?.conta_id || conta_id,
+        tipo,
+        descricao: String(descricao).trim(),
+        valor: v,
+        data_competencia,
+        data_pagamento: bruto?.data_lancamento || data_pagamento || null,
+        // Conciliado se casou com o extrato; senão, pago (data_pagamento) =
+        // conciliado, sem pagamento = pendente.
+        status: bruto ? 'conciliado' : (data_pagamento ? 'conciliado' : 'pendente'),
+        plano_contas_id: plano_contas_id || null,
+        centro_custo_id: centro_custo_id || null,
+        forma_pagamento: forma_pagamento || null,
+        parcelas_total: parcelas_total ? Number(parcelas_total) : null,
+        parcela_num: parcela_num ? Number(parcela_num) : null,
+        observacoes: observacoes || null,
+        lancamento_bruto_id: bruto?.id || null,
+        classificacao_origem: 'manual',
+        classificacao_confianca: 1.0,
+        created_by: req.user.userId,
+      })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    // Secundárias best-effort (mesmo pós-match do finLancamento): marca o bruto
+    // como classificado e tira da fila de classificação.
+    if (bruto) {
+      try {
+        await supabase.from('fin_lancamentos_brutos').update({ ja_classificado: true }).eq('id', bruto.id);
+        await supabase.from('fin_fila_classificacao')
+          .update({ status: 'ignorado', decidido_em: new Date().toISOString(), decidido_por: req.user.userId })
+          .eq('lancamento_bruto_id', bruto.id).eq('status', 'pendente');
+      } catch (e) { console.error('[FIN-V2] marcar bruto (transação manual):', e.message); }
+    }
+
+    // Despesa no CARTÃO → entra na fatura aberta do ciclo (Fase 4)
+    let faturaId = null;
+    if (transacao?.tipo === 'despesa' && cartao_id) {
+      faturaId = await vincularTransacaoNaFatura(transacao, cartao_id);
+    }
+
+    // Baixa automática no Contas a Pagar (candidato único · best-effort).
+    // Compra de cartão NÃO baixa conta avulsa (ela compõe a fatura).
+    let contaBaixada = null;
+    if (transacao?.tipo === 'despesa' && !faturaId) {
+      contaBaixada = await baixaAutomaticaPorTransacao(transacao, req.user.userId);
+    }
+
+    res.json({ ...transacao, conciliada: !!bruto, conta_pagar_baixada: contaBaixada, fatura_id: faturaId });
+  } catch (e) {
+    console.error('[FIN-V2] criar transação:', e);
+    res.status(500).json({ error: 'Erro ao criar transação' });
+  }
+});
+
+// Edita os campos do lançamento (NÃO mexe em status/lancamento_bruto_id —
+// conciliação não se desfaz por edição)
+router.put('/transacoes/:id', async (req, res) => {
+  try {
+    const {
+      tipo, descricao, valor, data_competencia, data_pagamento, conta_id,
+      plano_contas_id, centro_custo_id, forma_pagamento,
+      parcelas_total, parcela_num, observacoes,
+    } = req.body;
+
+    const upd = {};
+    if (tipo !== undefined) {
+      if (!['receita', 'despesa'].includes(tipo)) return res.status(400).json({ error: "tipo deve ser 'receita' ou 'despesa'" });
+      upd.tipo = tipo;
+    }
+    if (descricao !== undefined) {
+      if (!String(descricao).trim()) return res.status(400).json({ error: 'descrição não pode ficar vazia' });
+      upd.descricao = String(descricao).trim();
+    }
+    if (valor !== undefined) {
+      const v = Math.abs(Number(valor) || 0);
+      if (!v) return res.status(400).json({ error: 'valor deve ser maior que zero' });
+      upd.valor = v;
+    }
+    if (data_competencia !== undefined) {
+      if (!data_competencia) return res.status(400).json({ error: 'data_competencia não pode ficar vazia' });
+      upd.data_competencia = data_competencia;
+    }
+    if (data_pagamento !== undefined) upd.data_pagamento = data_pagamento || null;
+    if (conta_id !== undefined) {
+      if (!conta_id) return res.status(400).json({ error: 'conta_id não pode ficar vazio' });
+      upd.conta_id = conta_id;
+    }
+    if (plano_contas_id !== undefined) upd.plano_contas_id = plano_contas_id || null;
+    if (centro_custo_id !== undefined) upd.centro_custo_id = centro_custo_id || null;
+    if (forma_pagamento !== undefined) upd.forma_pagamento = forma_pagamento || null;
+    if (parcelas_total !== undefined) upd.parcelas_total = parcelas_total ? Number(parcelas_total) : null;
+    if (parcela_num !== undefined) upd.parcela_num = parcela_num ? Number(parcela_num) : null;
+    if (observacoes !== undefined) upd.observacoes = observacoes || null;
+    if (!Object.keys(upd).length) return res.status(400).json({ error: 'Nada pra atualizar' });
+
+    const { data, error } = await supabase.from('fin_transacoes')
+      .update(upd).eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[FIN-V2] atualizar transação:', e);
+    res.status(500).json({ error: 'Erro ao atualizar transação' });
+  }
+});
+
+// Detalhe completo: transação + nomes (conta/plano/centro) + NF vinculada +
+// conta a pagar vinculada + anexos
+router.get('/transacoes/:id/detalhe', async (req, res) => {
+  try {
+    const { data: t, error } = await supabase.from('fin_transacoes')
+      .select('*, conta:fin_contas(id, nome, banco), plano:fin_plano_contas(id, codigo, nome, tipo), centro:fin_centros_custo(id, codigo, nome)')
+      .eq('id', req.params.id).single();
+    if (error || !t) return res.status(404).json({ error: 'Transação não encontrada' });
+
+    const [nf, cp] = await Promise.all([
+      supabase.from('log_notas_fiscais')
+        .select('id, numero, emitente_nome, emitente_cnpj, valor, storage_path')
+        .eq('transacao_id', t.id).limit(1),
+      supabase.from('fin_contas_pagar')
+        .select('id, descricao, fornecedor, valor, data_vencimento, status')
+        .eq('fin_transacao_id', t.id).is('deleted_at', null).limit(1),
+    ]);
+
+    res.json({
+      ...t,
+      anexos_url: Array.isArray(t.anexos_url) ? t.anexos_url : [],
+      nota_fiscal: nf.data?.[0] || null,
+      conta_pagar: cp.data?.[0] || null,
+    });
+  } catch (e) {
+    console.error('[FIN-V2] detalhe transação:', e);
+    res.status(500).json({ error: 'Erro ao carregar o detalhe da transação' });
+  }
+});
+
+// Anexos (comprovantes/notas) · bucket público log-arquivos, mesmo padrão do
+// upload de /logistica/compras/escanear
+const uploadAnexo = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024, files: 1 },
+});
+
+router.post('/transacoes/:id/anexos', uploadAnexo.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+    const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' }[req.file.mimetype];
+    if (!ext) return res.status(400).json({ error: 'Formato não suportado — envie JPG, PNG, WEBP ou PDF' });
+
+    const { data: t, error: errT } = await supabase.from('fin_transacoes')
+      .select('id, anexos_url').eq('id', req.params.id).single();
+    if (errT || !t) return res.status(404).json({ error: 'Transação não encontrada' });
+
+    const path = `fin-comprovantes/${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('log-arquivos')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
+    if (upErr) return res.status(500).json({ error: `Erro ao salvar arquivo: ${upErr.message}` });
+    const url = supabase.storage.from('log-arquivos').getPublicUrl(path).data.publicUrl;
+
+    const anexos = [
+      ...(Array.isArray(t.anexos_url) ? t.anexos_url : []),
+      { url, nome: req.file.originalname || `comprovante.${ext}`, tipo: req.file.mimetype, em: new Date().toISOString() },
+    ];
+    const { error: errUpd } = await supabase.from('fin_transacoes')
+      .update({ anexos_url: anexos }).eq('id', t.id);
+    if (errUpd) return res.status(400).json({ error: errUpd.message });
+
+    res.json(anexos);
+  } catch (e) {
+    console.error('[FIN-V2] anexar comprovante:', e);
+    res.status(500).json({ error: 'Erro ao anexar comprovante' });
+  }
+});
+
+// Remove um anexo do array (o arquivo permanece no storage — histórico barato)
+router.delete('/transacoes/:id/anexos', async (req, res) => {
+  try {
+    const { url } = req.body || {};
+    if (!url) return res.status(400).json({ error: 'url obrigatória' });
+
+    const { data: t, error: errT } = await supabase.from('fin_transacoes')
+      .select('id, anexos_url').eq('id', req.params.id).single();
+    if (errT || !t) return res.status(404).json({ error: 'Transação não encontrada' });
+
+    const anexos = (Array.isArray(t.anexos_url) ? t.anexos_url : []).filter(a => a?.url !== url);
+    const { error: errUpd } = await supabase.from('fin_transacoes')
+      .update({ anexos_url: anexos }).eq('id', t.id);
+    if (errUpd) return res.status(400).json({ error: errUpd.message });
+
+    res.json(anexos);
+  } catch (e) {
+    console.error('[FIN-V2] remover anexo:', e);
+    res.status(500).json({ error: 'Erro ao remover anexo' });
+  }
+});
+
+// ====================================================================
+// CONCILIAÇÃO EM LOTE · extrato × contas a pagar (Fase 3)
+// ====================================================================
+
+// Sugestões de match (score 100/85 = seguras · 60 = manual)
+router.get('/conciliacao/sugestoes', async (_req, res) => {
+  try {
+    const r = await sugerirMatches();
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] conciliação sugestões:', e);
+    res.status(500).json({ error: 'Erro ao montar as sugestões de conciliação' });
+  }
+});
+
+// Aplica pares escolhidos { pares: [{conta_id, bruto_id}] } · coleta erros por par
+router.post('/conciliacao/aplicar', async (req, res) => {
+  try {
+    const pares = Array.isArray(req.body?.pares) ? req.body.pares : [];
+    if (!pares.length) return res.status(400).json({ error: 'Nenhum par selecionado' });
+    const resultados = [];
+    for (const p of pares) {
+      const r = await aplicarMatch({ contaId: p.conta_id, brutoId: p.bruto_id, userId: req.user.userId });
+      resultados.push({ conta_id: p.conta_id, bruto_id: p.bruto_id, ok: !r.erro, erro: r.erro || null });
+    }
+    res.json({ aplicados: resultados.filter(r => r.ok).length, erros: resultados.filter(r => !r.ok), resultados });
+  } catch (e) {
+    console.error('[FIN-V2] conciliação aplicar:', e);
+    res.status(500).json({ error: 'Erro ao aplicar a conciliação' });
+  }
+});
+
+// Aplica TODAS as seguras (score >= 85) · recalcula na hora (nada de par stale)
+router.post('/conciliacao/aplicar-seguros', async (req, res) => {
+  try {
+    const { pares } = await sugerirMatches();
+    const seguras = pares.filter((p) => p.score >= 85);
+    let aplicados = 0;
+    const erros = [];
+    for (const p of seguras) {
+      const r = await aplicarMatch({ contaId: p.conta.id, brutoId: p.bruto.id, userId: req.user.userId, score: p.score });
+      if (r.erro) erros.push({ conta_id: p.conta.id, erro: r.erro });
+      else aplicados++;
+    }
+    res.json({ aplicados, erros });
+  } catch (e) {
+    console.error('[FIN-V2] conciliação seguras:', e);
+    res.status(500).json({ error: 'Erro ao aplicar as conciliações seguras' });
+  }
+});
+
+// Fila de classificação · sugestão por IA em lote pros itens SEM sugestão
+// (máx ~40 por chamada pra caber no timeout serverless · o front repete até
+// restantes=0)
+router.post('/fila-classificacao/sugerir-lote', async (_req, res) => {
+  try {
+    const r = await sugerirLoteIA({ maxItens: 40 });
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] sugerir lote IA:', e);
+    res.status(500).json({ error: 'Erro ao sugerir com IA' });
+  }
+});
+
+// ====================================================================
+// CARTÕES DE CRÉDITO + FATURAS (Fase 4)
+// ====================================================================
+
+// CRUD de cartões (Configuração)
+router.get('/cartoes', async (_req, res) => {
+  try {
+    const { data, error } = await supabase.from('fin_cartoes')
+      .select('*, conta:conta_id(nome)').order('nome');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar cartões' }); }
+});
+
+router.post('/cartoes', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { nome, bandeira, final, dia_fechamento, dia_vencimento, conta_id } = req.body || {};
+    if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'Nome do cartão obrigatório' });
+    const df = parseInt(dia_fechamento, 10), dv = parseInt(dia_vencimento, 10);
+    if (!(df >= 1 && df <= 31)) return res.status(400).json({ error: 'Dia de fechamento inválido (1-31)' });
+    if (!(dv >= 1 && dv <= 31)) return res.status(400).json({ error: 'Dia de vencimento inválido (1-31)' });
+    const { data, error } = await supabase.from('fin_cartoes')
+      .insert({
+        nome: String(nome).trim(), bandeira: bandeira || null,
+        final: final ? String(final).replace(/\D/g, '').slice(-4) : null,
+        dia_fechamento: df, dia_vencimento: dv, conta_id: conta_id || null,
+      }).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao criar cartão' }); }
+});
+
+router.put('/cartoes/:id', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+    if (b.nome !== undefined) patch.nome = String(b.nome).trim();
+    if (b.bandeira !== undefined) patch.bandeira = b.bandeira || null;
+    if (b.final !== undefined) patch.final = b.final ? String(b.final).replace(/\D/g, '').slice(-4) : null;
+    if (b.dia_fechamento !== undefined) {
+      const df = parseInt(b.dia_fechamento, 10);
+      if (!(df >= 1 && df <= 31)) return res.status(400).json({ error: 'Dia de fechamento inválido (1-31)' });
+      patch.dia_fechamento = df;
+    }
+    if (b.dia_vencimento !== undefined) {
+      const dv = parseInt(b.dia_vencimento, 10);
+      if (!(dv >= 1 && dv <= 31)) return res.status(400).json({ error: 'Dia de vencimento inválido (1-31)' });
+      patch.dia_vencimento = dv;
+    }
+    if (b.conta_id !== undefined) patch.conta_id = b.conta_id || null;
+    if (b.ativo !== undefined) patch.ativo = !!b.ativo;
+    const { data, error } = await supabase.from('fin_cartoes')
+      .update(patch).eq('id', req.params.id).select().maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'Cartão não encontrado' });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao atualizar cartão' }); }
+});
+
+// Faturas (lista · por cartão opcional)
+router.get('/faturas', async (req, res) => {
+  try {
+    await fecharFaturasVencidas(); // best-effort: fecha ciclos passados
+    let q = supabase.from('fin_faturas')
+      .select('*, cartao:cartao_id(nome, final, bandeira)')
+      .order('vencimento', { ascending: false }).limit(60);
+    if (req.query.cartao_id) q = q.eq('cartao_id', req.query.cartao_id);
+    const { data, error } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar faturas' }); }
+});
+
+// Detalhe da fatura: rubricas (por plano de contas) + cada compra
+router.get('/faturas/:id', async (req, res) => {
+  try {
+    const { data: fatura, error } = await supabase.from('fin_faturas')
+      .select('*, cartao:cartao_id(nome, final, bandeira, dia_fechamento, dia_vencimento)')
+      .eq('id', req.params.id).maybeSingle();
+    if (error || !fatura) return res.status(404).json({ error: 'Fatura não encontrada' });
+    const { itens, rubricas } = await itensDaFatura(fatura.id);
+    res.json({ ...fatura, itens, rubricas });
+  } catch (e) { res.status(500).json({ error: 'Erro ao carregar a fatura' }); }
+});
+
+// Recalcula o total (se algum item entrou por fora)
+router.post('/faturas/:id/sincronizar', async (req, res) => {
+  try {
+    const total = await sincronizarFatura(req.params.id);
+    if (total === null) return res.status(404).json({ error: 'Fatura não encontrada' });
+    res.json({ ok: true, total });
+  } catch (e) { res.status(500).json({ error: 'Erro ao sincronizar a fatura' }); }
+});
+
+// IA compara o PDF da fatura com o que está lançado (aceita PDF com senha)
+const uploadFatura = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
+router.post('/faturas/:id/comparar', uploadFatura.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Envie o PDF da fatura' });
+    if (!/pdf/i.test(req.file.mimetype || '')) return res.status(400).json({ error: 'O arquivo precisa ser um PDF' });
+    const { compararFatura } = require('../services/finFaturaComparador');
+    const r = await compararFatura({
+      faturaId: req.params.id,
+      buffer: req.file.buffer,
+      senha: req.body?.senha || null,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] comparar fatura:', e.message);
+    res.status(e.status || 500).json({ error: e.message || 'Erro ao comparar a fatura' });
+  }
 });
 
 // Lista arrecadacoes (plano 3.01.*) via RPC · contorna db-max-rows do PostgREST
@@ -1702,14 +2301,54 @@ router.get('/dashboard/semana-completa', async (req, res) => {
     const range = (rangeRow || [])[0];
     if (!range) return res.json({ erro: 'semana_invalida' });
 
-    // Calcula semana anterior + mesma semana ano anterior pra comparativos
+    // Calcula semana anterior + mesma semana do MÊS anterior + mesma semana ano anterior.
     const anterior = new Date(range.inicio); anterior.setDate(anterior.getDate() - 7);
+    // "Mesma semana do mês anterior" = 4 semanas atrás (−28d) · o início continua
+    // numa quarta, então casa exato com um semana_inicio da view (semana qua→ter).
+    const mesAnt = new Date(range.inicio); mesAnt.setDate(mesAnt.getDate() - 28);
     const yoy = new Date(range.inicio); yoy.setFullYear(yoy.getFullYear() - 1);
+
+    // Filtros globais (centro de custo / plano de contas) · quando presentes,
+    // recomputa os valores MONETÁRIOS a partir das transações (as views
+    // pré-agregadas não têm dimensão de centro/plano). Frequência (presencial/
+    // online) não tem centro de custo → segue da view. Match por código é
+    // HIERÁRQUICO (escolher um pai inclui os filhos · prefixo).
+    const centroId = req.query.centro_custo_id || null;
+    const planoId = req.query.plano_contas_id || null;
+    // Botão "sem extraordinárias": arrecadação só com receita ordinária. Força o
+    // recompute das transações (as views pré-agregadas somam ord+extra).
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const classesAceitas = semExtra ? ['ordinaria'] : ['ordinaria', 'extraordinaria'];
+    const temFiltro = !!(centroId || planoId) || semExtra;
+    let centroCodigo = null, planoCodigo = null;
+    if (temFiltro) {
+      const [cc, pc] = await Promise.all([
+        centroId ? supabase.from('fin_centros_custo').select('codigo').eq('id', centroId).maybeSingle() : Promise.resolve({ data: null }),
+        planoId ? supabase.from('fin_plano_contas').select('codigo').eq('id', planoId).maybeSingle() : Promise.resolve({ data: null }),
+      ]);
+      centroCodigo = cc.data?.codigo || null;
+      planoCodigo = pc.data?.codigo || null;
+    }
+    const fetchTxFiltradas = async (ini, fim, cols) => {
+      let q = supabase.from('vw_fin_transacoes_completa')
+        .select(cols)
+        .gte('data_competencia', ini).lte('data_competencia', fim)
+        .eq('tipo', 'receita').neq('status', 'cancelado')
+        .in('classe_movimento', classesAceitas)
+        // Guardrail dupla contagem: balanço é a fonte de verdade; ignora receita
+        // vinda do OFX aprovado (que teria lancamento_bruto_id). O balanço nunca
+        // tem lancamento_bruto_id, então isso mantém balanço+manual e exclui OFX.
+        .is('lancamento_bruto_id', null);
+      if (centroCodigo) q = q.like('centro_custo_codigo', `${centroCodigo}%`);
+      if (planoCodigo) q = q.like('plano_contas_codigo', `${planoCodigo}%`);
+      return (await q.limit(50000)).data || [];
+    };
 
     const [
       cultosSemana,
       resumo,
       resumoAnterior,
+      resumoMesAnterior,
       resumoYoY,
       historico,
       topContribuintes,
@@ -1725,6 +2364,9 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       // Semana anterior
       supabase.from('vw_fin_semana_resumo').select('*')
         .eq('semana_inicio', anterior.toISOString().slice(0, 10)).maybeSingle(),
+      // Mesma semana do MÊS anterior (4 semanas atrás)
+      supabase.from('vw_fin_semana_resumo').select('*')
+        .eq('semana_inicio', mesAnt.toISOString().slice(0, 10)).maybeSingle(),
       // YoY (mesma semana ano anterior)
       supabase.from('vw_fin_semana_resumo').select('*')
         .gte('semana_inicio', new Date(yoy.getTime() - 4 * 86400000).toISOString().slice(0, 10))
@@ -1743,8 +2385,55 @@ router.get('/dashboard/semana-completa', async (req, res) => {
       supabase.from('vw_fin_transacoes_completa')
         .select('plano_contas_codigo, plano_contas_nome, plano_contas_natureza, valor, culto_nome, culto_service_type_slug, data_competencia, classe_movimento')
         .gte('data_competencia', range.inicio).lte('data_competencia', range.fim)
-        .eq('tipo', 'receita').neq('status', 'cancelado'),
+        .eq('tipo', 'receita').neq('status', 'cancelado')
+        // Guardrail dupla contagem: ignora receita do OFX aprovado (balanço = verdade).
+        .is('lancamento_bruto_id', null),
     ]);
+
+    // Quando há filtro, recomputa receita/buckets/cultos/top/histórico das transações
+    let catRows = categorias.data || [];
+    let recPorCulto = null, topFiltrado = null, recPorSemana = null;
+    let receitaFiltrada = 0, receitaAntFiltrada = 0, receitaMesAntFiltrada = 0, receitaYoyFiltrada = null;
+    if (temFiltro) {
+      const rowsSemana = await fetchTxFiltradas(range.inicio, range.fim,
+        'valor, plano_contas_codigo, plano_contas_nome, plano_contas_natureza, culto_nome, culto_service_type_slug, data_competencia, classe_movimento, membro_nome, membro_cpf');
+      catRows = rowsSemana;
+      receitaFiltrada = rowsSemana.reduce((s, t) => s + Number(t.valor || 0), 0);
+      recPorCulto = {};
+      const topMap = {};
+      rowsSemana.forEach((t) => {
+        const ck = t.culto_nome || '—';
+        recPorCulto[ck] = (recPorCulto[ck] || 0) + Number(t.valor || 0);
+        if (t.membro_nome) {
+          const mk = t.membro_cpf || t.membro_nome;
+          if (!topMap[mk]) topMap[mk] = { membro_nome: t.membro_nome, membro_cpf: t.membro_cpf || null, total_doado: 0, qtd_doacoes: 0 };
+          topMap[mk].total_doado += Number(t.valor || 0);
+          topMap[mk].qtd_doacoes += 1;
+        }
+      });
+      topFiltrado = Object.values(topMap).sort((a, b) => b.total_doado - a.total_doado).slice(0, 10);
+      // receita da semana anterior (janela qua-ter, 7 dias antes)
+      const antFim = new Date(anterior); antFim.setDate(antFim.getDate() + 6);
+      const rowsAnt = await fetchTxFiltradas(anterior.toISOString().slice(0, 10), antFim.toISOString().slice(0, 10), 'valor');
+      receitaAntFiltrada = rowsAnt.reduce((s, t) => s + Number(t.valor || 0), 0);
+      // receita da mesma semana do mês anterior (4 semanas atrás · janela qua-ter)
+      const mesAntFim = new Date(mesAnt); mesAntFim.setDate(mesAntFim.getDate() + 6);
+      const rowsMesAnt = await fetchTxFiltradas(mesAnt.toISOString().slice(0, 10), mesAntFim.toISOString().slice(0, 10), 'valor');
+      receitaMesAntFiltrada = rowsMesAnt.reduce((s, t) => s + Number(t.valor || 0), 0);
+      // receita YoY (semana qua-ter que contém a data de 1 ano atrás)
+      const { data: yoyRangeRow } = await supabase.rpc('fin_semana_qua_ter', { p_data: yoy.toISOString().slice(0, 10) });
+      const yoyRange = (yoyRangeRow || [])[0];
+      if (yoyRange) {
+        const rowsYoy = await fetchTxFiltradas(yoyRange.inicio, yoyRange.fim, 'valor');
+        receitaYoyFiltrada = rowsYoy.reduce((s, t) => s + Number(t.valor || 0), 0);
+      }
+      // receita por semana (12 semanas) pro histórico
+      const ini12 = new Date(range.inicio); ini12.setDate(ini12.getDate() - 11 * 7);
+      const rows12 = await fetchTxFiltradas(ini12.toISOString().slice(0, 10), range.fim, 'valor, data_competencia');
+      const quartaDe = (dstr) => { const d = new Date(dstr + 'T12:00:00Z'); const off = (d.getUTCDay() + 4) % 7; d.setUTCDate(d.getUTCDate() - off); return d.toISOString().slice(0, 10); };
+      recPorSemana = {};
+      rows12.forEach((t) => { if (!t.data_competencia) return; const k = quartaDe(t.data_competencia); recPorSemana[k] = (recPorSemana[k] || 0) + Number(t.valor || 0); });
+    }
 
     // Agrupa categorias em 4 buckets estilo Power BI
     const buckets = {
@@ -1773,7 +2462,7 @@ router.get('/dashboard/semana-completa', async (req, res) => {
     //   w=6/0/1 (Sáb/Dom/Seg) → "Final de Semana" (seg = compensação do fim de semana)
     //   else                  → "Durante a Semana"
     // Empréstimo / transferência / estorno NÃO entram em arrecadação por culto.
-    for (const t of categorias.data || []) {
+    for (const t of catRows) {
       if (['emprestimo','transferencia','estorno'].includes(t.classe_movimento)) continue;
       const cat = labelCategoria(t.plano_contas_codigo, t.plano_contas_nome, t.plano_contas_natureza);
       const v = Number(t.valor);
@@ -1798,41 +2487,61 @@ router.get('/dashboard/semana-completa', async (req, res) => {
 
     const r = resumo.data || { receita_total: 0, total_presencial: 0, total_online: 0, ticket_medio_presencial: 0 };
     const ra = resumoAnterior.data || { receita_total: 0, total_presencial: 0, ticket_medio_presencial: 0 };
+    const rmes = resumoMesAnterior.data || { receita_total: 0 };
     const ry = resumoYoY.data || null;
 
     const delta = (atual, ant) => ant > 0 ? ((atual - ant) / ant) * 100 : null;
 
+    // Receita/ticket · filtrados vêm das transações; sem filtro, da view.
+    const receitaAtual = temFiltro ? receitaFiltrada : Number(r.receita_total);
+    const receitaAnt = temFiltro ? receitaAntFiltrada : Number(ra.receita_total);
+    const receitaMesAnt = temFiltro ? receitaMesAntFiltrada : Number(rmes.receita_total);
+    const receitaYoyV = temFiltro ? receitaYoyFiltrada : (ry ? Number(ry.receita_total) : null);
+    const presAtual = Number(r.total_presencial);
+    const presAnt = Number(ra.total_presencial);
+    const ticketMedio = temFiltro ? (presAtual > 0 ? receitaFiltrada / presAtual : 0) : Number(r.ticket_medio_presencial || 0);
+    const ticketAnt = temFiltro ? (presAnt > 0 ? receitaAntFiltrada / presAnt : 0) : Number(ra.ticket_medio_presencial);
+
     res.json({
       semana: range,
       kpis: {
-        receita: Number(r.receita_total),
-        receita_delta_wow: delta(Number(r.receita_total), Number(ra.receita_total)),
-        receita_yoy: ry ? Number(ry.receita_total) : null,
-        receita_delta_yoy: ry ? delta(Number(r.receita_total), Number(ry.receita_total)) : null,
-        presencial: Number(r.total_presencial),
-        presencial_delta_wow: delta(Number(r.total_presencial), Number(ra.total_presencial)),
+        receita: receitaAtual,
+        receita_delta_wow: delta(receitaAtual, receitaAnt),
+        receita_mes_anterior: receitaMesAnt,
+        receita_delta_mom: delta(receitaAtual, receitaMesAnt),
+        receita_yoy: receitaYoyV,
+        receita_delta_yoy: receitaYoyV != null ? delta(receitaAtual, receitaYoyV) : null,
+        presencial: presAtual,
+        presencial_delta_wow: delta(presAtual, presAnt),
         online: Number(r.total_online || 0),
-        ticket_medio: Number(r.ticket_medio_presencial || 0),
-        ticket_delta_wow: delta(Number(r.ticket_medio_presencial), Number(ra.ticket_medio_presencial)),
+        ticket_medio: ticketMedio,
+        ticket_delta_wow: delta(ticketMedio, ticketAnt),
       },
-      cultos: (cultosSemana.data || []).map(c => ({
-        ...c,
-        ticket: c.total_presencial > 0 ? Number(c.receita_total) / c.total_presencial : 0,
-      })),
+      cultos: (cultosSemana.data || []).map(c => {
+        const rec = temFiltro ? (recPorCulto[c.culto_nome] || 0) : Number(c.receita_total);
+        return {
+          ...c,
+          receita_total: rec,
+          ticket: c.total_presencial > 0 ? rec / c.total_presencial : 0,
+        };
+      }),
       buckets: {
         quarta: formatBucket(buckets.quarta),
         domingo: formatBucket(buckets.domingo),
         outros: formatBucket(buckets.outros),
         acumulada: formatBucket(buckets.acumulada),
       },
-      historico: (historico.data || []).reverse().map(h => ({
-        semana_label: h.semana_label,
-        semana_inicio: h.semana_inicio,
-        receita: Number(h.receita_total),
-        presencial: Number(h.total_presencial),
-        ticket: Number(h.ticket_medio_presencial),
-      })),
-      top_contribuintes: topContribuintes.data || [],
+      historico: (historico.data || []).reverse().map(h => {
+        const rec = temFiltro ? (recPorSemana[h.semana_inicio] || 0) : Number(h.receita_total);
+        return {
+          semana_label: h.semana_label,
+          semana_inicio: h.semana_inicio,
+          receita: rec,
+          presencial: Number(h.total_presencial),
+          ticket: temFiltro ? (Number(h.total_presencial) > 0 ? rec / Number(h.total_presencial) : 0) : Number(h.ticket_medio_presencial),
+        };
+      }),
+      top_contribuintes: temFiltro ? topFiltrado : (topContribuintes.data || []),
     });
   } catch (e) {
     console.error('[FIN-V2] semana-completa:', e);
@@ -1876,15 +2585,31 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
         .gte('mes', inicio12m.slice(0, 7)).order('mes'),
     ]);
 
+    // "Sem extraordinárias": remove a receita extraordinária de TODAS as séries
+    // e RECOMPUTA resultado/YTD delta/elasticidade sobre a receita já filtrada.
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    // Série receita/despesa/resultado (mensal/semanal): subtrai extra, refaz resultado.
+    const ajSerie = (r) => {
+      const receita = Number(r.receita || 0) - (semExtra ? Number(r.receita_extraordinaria || 0) : 0);
+      const despesa = Number(r.despesa || 0);
+      return { ...r, receita, despesa, resultado: semExtra ? receita - despesa : Number(r.resultado || 0) };
+    };
+
     const ytdMap = new Map((ytd.data || []).map(r => [r.ano, r]));
     const ytdAtual = ytdMap.get(anoAtual) || { receita_ytd: 0, despesa_ytd: 0, resultado_ytd: 0 };
     const ytdAnt = ytdMap.get(anoAnterior) || { receita_ytd: 0, despesa_ytd: 0, resultado_ytd: 0 };
-    const ytdDelta = Number(ytdAnt.receita_ytd) > 0
-      ? ((Number(ytdAtual.receita_ytd) - Number(ytdAnt.receita_ytd)) / Number(ytdAnt.receita_ytd)) * 100
-      : null;
+    const recYtd = (y) => Number(y.receita_ytd || 0) - (semExtra ? Number(y.receita_extraordinaria_ytd || 0) : 0);
+    const recYtdAtual = recYtd(ytdAtual);
+    const recYtdAnt = recYtd(ytdAnt);
+    const resYtdAtual = semExtra ? recYtdAtual - Number(ytdAtual.despesa_ytd || 0) : Number(ytdAtual.resultado_ytd || 0);
+    const resYtdAnt = semExtra ? recYtdAnt - Number(ytdAnt.despesa_ytd || 0) : Number(ytdAnt.resultado_ytd || 0);
+    const ytdDelta = recYtdAnt > 0 ? ((recYtdAtual - recYtdAnt) / recYtdAnt) * 100 : null;
 
-    // Frequência vs Arrecadacao · crescimento % mês a mês
-    const fr = (freqReceita.data || []);
+    // Frequência vs Arrecadacao · crescimento % mês a mês (sobre receita ajustada)
+    const fr = (freqReceita.data || []).map(m => ({
+      ...m,
+      receita: Number(m.receita || 0) - (semExtra ? Number(m.receita_extraordinaria || 0) : 0),
+    }));
     const freqVsReceita = fr.map((m, i) => {
       if (i === 0) return { ...m, delta_freq_pct: null, delta_receita_pct: null, elasticidade: null };
       const ant = fr[i - 1];
@@ -1898,35 +2623,26 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
       mes_atual: mesAtual,
       ano_atual: anoAtual,
       ano_anterior: anoAnterior,
-      mensal: (mensal.data || []).map(r => ({
-        ...r,
-        receita: Number(r.receita),
-        despesa: Number(r.despesa),
-        resultado: Number(r.resultado),
-      })),
-      semanal: (semanal.data || []).map(r => ({
-        ...r,
-        receita: Number(r.receita),
-        despesa: Number(r.despesa),
-        resultado: Number(r.resultado),
-      })),
+      sem_extra: semExtra,
+      mensal: (mensal.data || []).map(ajSerie),
+      semanal: (semanal.data || []).map(ajSerie),
       decendio: (decendio.data || []).map(r => ({
         ...r,
-        receita: Number(r.receita),
+        receita: Number(r.receita || 0) - (semExtra ? Number(r.receita_extraordinaria || 0) : 0),
         despesa: Number(r.despesa),
       })),
       ytd: {
         ano_atual: {
           ano: anoAtual,
-          receita: Number(ytdAtual.receita_ytd || 0),
+          receita: recYtdAtual,
           despesa: Number(ytdAtual.despesa_ytd || 0),
-          resultado: Number(ytdAtual.resultado_ytd || 0),
+          resultado: resYtdAtual,
         },
         ano_anterior: {
           ano: anoAnterior,
-          receita: Number(ytdAnt.receita_ytd || 0),
+          receita: recYtdAnt,
           despesa: Number(ytdAnt.despesa_ytd || 0),
-          resultado: Number(ytdAnt.resultado_ytd || 0),
+          resultado: resYtdAnt,
         },
         delta_pct: ytdDelta,
       },
@@ -1980,7 +2696,8 @@ router.get('/dashboard/assistente', async (req, res) => {
     const range = (rangeRow || [])[0];
     if (!range) return res.json({ aba, label: meta.label, texto: 'Sem dados para a semana selecionada.', fonte: 'auto' });
 
-    const cacheKey = `${aba}:${range.inicio}`;
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const cacheKey = `${aba}:${range.inicio}:${semExtra ? 'se' : 'ce'}`;
     const hit = _assistenteCache.get(cacheKey);
     if (hit && Date.now() - hit.ts < ASSISTENTE_TTL_MS) {
       return res.json({ aba, label: meta.label, texto: hit.texto, fatos: hit.fatos, fonte: hit.fonte, cached: true });
@@ -1993,29 +2710,34 @@ router.get('/dashboard/assistente', async (req, res) => {
       supabase.from('vw_fin_semana_resumo').select('*').eq('semana_inicio', range.inicio).maybeSingle(),
       supabase.from('vw_fin_semana_resumo').select('*').eq('semana_inicio', anteriorIni.toISOString().slice(0, 10)).maybeSingle(),
       supabase.from('vw_fin_ano_acumulado').select('*').in('ano', [ano, ano - 1]),
-      supabase.rpc('fin_saude_financeira', { p_ano: ano }),
+      supabase.rpc('fin_saude_financeira', { p_ano: ano, p_sem_extra: semExtra }),
       supabase.from('vw_fin_transacoes_completa')
         .select('plano_contas_codigo, plano_contas_natureza, valor, data_competencia, classe_movimento')
         .gte('data_competencia', range.inicio).lte('data_competencia', range.fim)
         .eq('tipo', 'receita').neq('status', 'cancelado'),
     ]);
 
+    // "Sem extraordinárias": receita sem a extraordinária + ticket recomputado.
+    const recAj = (v, ex) => Number(v || 0) - (semExtra ? Number(ex || 0) : 0);
     const r = resumoAtual.data || {};
     const ra = resumoAnt.data || {};
-    const receita = Number(r.receita_total || 0);
+    const receita = recAj(r.receita_total, r.receita_extraordinaria);
+    const receitaAnt = recAj(ra.receita_total, ra.receita_extraordinaria);
     const presencial = Number(r.total_presencial || 0);
-    const ticket = Number(r.ticket_medio_presencial || 0);
-    const receitaWow = delta(receita, ra.receita_total);
-    const presWow = delta(presencial, ra.total_presencial);
-    const ticketWow = delta(ticket, ra.ticket_medio_presencial);
+    const presAnt = Number(ra.total_presencial || 0);
+    const ticket = presencial > 0 ? receita / presencial : 0;
+    const ticketAnt = presAnt > 0 ? receitaAnt / presAnt : 0;
+    const receitaWow = delta(receita, receitaAnt);
+    const presWow = delta(presencial, presAnt);
+    const ticketWow = delta(ticket, ticketAnt);
 
     const ytdMap = new Map((ytdRes.data || []).map(x => [x.ano, x]));
     const yA = ytdMap.get(ano) || {};
     const yB = ytdMap.get(ano - 1) || {};
-    const receitaYtd = Number(yA.receita_ytd || 0);
+    const receitaYtd = recAj(yA.receita_ytd, yA.receita_extraordinaria_ytd);
     const despesaYtd = Number(yA.despesa_ytd || 0);
-    const resultadoYtd = Number(yA.resultado_ytd || 0);
-    const receitaYtdYoy = delta(receitaYtd, yB.receita_ytd);
+    const resultadoYtd = semExtra ? receitaYtd - despesaYtd : Number(yA.resultado_ytd || 0);
+    const receitaYtdYoy = delta(receitaYtd, recAj(yB.receita_ytd, yB.receita_extraordinaria_ytd));
 
     const saude = saudeRes.data || {};
     const top20 = Number(saude.concentracao_top20pct_pct || 0);
@@ -2032,6 +2754,7 @@ router.get('/dashboard/assistente', async (req, res) => {
     let dizimoTot = 0, ofertaTot = 0;
     for (const t of catRes.data || []) {
       if (['emprestimo', 'transferencia', 'estorno'].includes(t.classe_movimento)) continue;
+      if (semExtra && t.classe_movimento === 'extraordinaria') continue;
       const v = Number(t.valor || 0);
       const dow = t.data_competencia ? new Date(t.data_competencia + 'T12:00:00Z').getUTCDay() : -1;
       const k = dow === 3 ? 'quarta' : (dow === 0 || dow === 6 || dow === 1) ? 'fds' : 'durante'; // seg = compensação do fim de semana
@@ -2164,7 +2887,9 @@ router.get('/dashboard/analise-profunda', async (req, res) => {
     const range = (rangeRow || [])[0];
     if (!range) return res.status(400).json({ error: 'Semana inválida' });
 
-    const hit = _analiseCache.get(range.inicio);
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const cacheKey = `${range.inicio}:${semExtra ? 'se' : 'ce'}`;
+    const hit = _analiseCache.get(cacheKey);
     if (hit && Date.now() - hit.ts < ASSISTENTE_TTL_MS) {
       return res.json({ texto: hit.texto, cached: true });
     }
@@ -2176,9 +2901,9 @@ router.get('/dashboard/analise-profunda', async (req, res) => {
       supabase.from('vw_fin_semana_resumo').select('*').eq('semana_inicio', range.inicio).maybeSingle(),
       supabase.from('vw_fin_semana_resumo').select('*').eq('semana_inicio', anteriorIni.toISOString().slice(0, 10)).maybeSingle(),
       supabase.from('vw_fin_ano_acumulado').select('*').in('ano', [ano, ano - 1]),
-      supabase.rpc('fin_saude_financeira', { p_ano: ano }),
+      supabase.rpc('fin_saude_financeira', { p_ano: ano, p_sem_extra: semExtra }),
       supabase.from('vw_fin_arrecadacao_mensal')
-        .select('ano, mes, receita, despesa, resultado')
+        .select('ano, mes, receita, despesa, resultado, receita_extraordinaria')
         .in('ano', [ano, ano - 1]).order('mes', { ascending: true }),
     ]);
 
@@ -2188,31 +2913,40 @@ router.get('/dashboard/analise-profunda', async (req, res) => {
     const yA = ytdMap.get(ano) || {};
     const yB = ytdMap.get(ano - 1) || {};
     const saude = saudeRes.data || {};
+    // Receita ajustada (sem extraordinária) quando o toggle liga.
+    const rec = (v, ex) => Number(v || 0) - (semExtra ? Number(ex || 0) : 0);
+    const recSemana = rec(r.receita_total, r.receita_extraordinaria);
+    const recSemanaAnt = rec(ra.receita_total, ra.receita_extraordinaria);
+    const recYtdA = rec(yA.receita_ytd, yA.receita_extraordinaria_ytd);
+    const recYtdB = rec(yB.receita_ytd, yB.receita_extraordinaria_ytd);
+    const ticketSemana = Number(r.total_presencial || 0) > 0 ? recSemana / Number(r.total_presencial) : 0;
 
     // Série mensal dos 2 anos com nº de semanas de contribuição (qua→ter)
     const mensal = (mensalRes.data || []).map(m => {
       const [aY, aM] = String(m.mes).split('-').map(Number);
+      const receita = rec(m.receita, m.receita_extraordinaria);
       return {
         mes: m.mes,
-        receita: fmt(m.receita),
+        receita: fmt(receita),
         despesa: fmt(m.despesa),
-        resultado: fmt(m.resultado),
+        resultado: fmt(semExtra ? receita - Number(m.despesa || 0) : m.resultado),
         semanas_de_contribuicao: contarQuartasNoMes(aY, aM),
       };
     });
 
     const dados = {
       semana_analisada: `${range.inicio} a ${range.fim}`,
+      sem_extraordinarias: semExtra,
       semana: {
-        receita: fmt(r.receita_total), presenca: Number(r.total_presencial || 0),
-        ticket_medio: fmt(r.ticket_medio_presencial),
-        variacao_receita_vs_semana_anterior: pct(delta(r.receita_total, ra.receita_total)),
+        receita: fmt(recSemana), presenca: Number(r.total_presencial || 0),
+        ticket_medio: fmt(ticketSemana),
+        variacao_receita_vs_semana_anterior: pct(delta(recSemana, recSemanaAnt)),
         variacao_presenca_vs_semana_anterior: pct(delta(r.total_presencial, ra.total_presencial)),
       },
       acumulado_ano: {
-        [ano]: { receita: fmt(yA.receita_ytd), despesa: fmt(yA.despesa_ytd), resultado: fmt(yA.resultado_ytd) },
-        [ano - 1]: { receita: fmt(yB.receita_ytd), despesa: fmt(yB.despesa_ytd), resultado: fmt(yB.resultado_ytd) },
-        variacao_receita_yoy: pct(delta(yA.receita_ytd, yB.receita_ytd)),
+        [ano]: { receita: fmt(recYtdA), despesa: fmt(yA.despesa_ytd), resultado: fmt(semExtra ? recYtdA - Number(yA.despesa_ytd || 0) : yA.resultado_ytd) },
+        [ano - 1]: { receita: fmt(recYtdB), despesa: fmt(yB.despesa_ytd), resultado: fmt(semExtra ? recYtdB - Number(yB.despesa_ytd || 0) : yB.resultado_ytd) },
+        variacao_receita_yoy: pct(delta(recYtdA, recYtdB)),
       },
       saude: {
         resultado_do_mes: fmt(saude.resultado_mes),
@@ -2265,7 +2999,7 @@ Regras:
     }
     if (!texto) return res.status(502).json({ error: 'A IA não retornou análise' });
 
-    _analiseCache.set(range.inicio, { texto, ts: Date.now() });
+    _analiseCache.set(cacheKey, { texto, ts: Date.now() });
     res.json({ texto, semana: `${range.inicio} a ${range.fim}` });
   } catch (e) {
     console.error('[FIN-V2] analise-profunda:', e);
@@ -2446,6 +3180,7 @@ router.post('/sync-saldo-bancos', async (req, res) => {
 router.get('/freq-arrecadacao-semanal', async (req, res) => {
   try {
     const semanas = Math.min(Number(req.query.semanas || 20), 104);
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
     const hoje = new Date();
     const hojeISO = hoje.toISOString().slice(0, 10);
     // Volta N+2 semanas pra ter cushion
@@ -2461,21 +3196,30 @@ router.get('/freq-arrecadacao-semanal', async (req, res) => {
 
     if (error) return res.status(400).json({ error: error.message });
 
-    const limpas = (data || []).slice(-semanas).map(r => ({
-      semana_inicio: r.semana_inicio,
-      semana_fim: r.semana_fim,
-      semana_label: r.semana_label,
-      ano: r.ano,
-      receita: Number(r.receita || 0),
-      despesa: Number(r.despesa || 0),
-      resultado: Number(r.resultado || 0),
-      presencial: Number(r.presencial || 0),
-      online: Number(r.online || 0),
-      total_freq: Number(r.total_freq || 0),
-      decisoes: Number(r.decisoes || 0),
-      qtd_cultos: Number(r.qtd_cultos || 0),
-      ticket_medio_presencial: Number(r.ticket_medio_presencial || 0),
-    }));
+    const limpas = (data || []).slice(-semanas).map(r => {
+      const presencial = Number(r.presencial || 0);
+      // "Sem extraordinárias": remove receita extraordinária e RECOMPUTA resultado
+      // e ticket médio sobre a receita já filtrada (não reusar o pré-calculado).
+      const receita = Number(r.receita || 0) - (semExtra ? Number(r.receita_extraordinaria || 0) : 0);
+      const despesa = Number(r.despesa || 0);
+      return {
+        semana_inicio: r.semana_inicio,
+        semana_fim: r.semana_fim,
+        semana_label: r.semana_label,
+        ano: r.ano,
+        receita,
+        despesa,
+        resultado: semExtra ? receita - despesa : Number(r.resultado || 0),
+        presencial,
+        online: Number(r.online || 0),
+        total_freq: Number(r.total_freq || 0),
+        decisoes: Number(r.decisoes || 0),
+        qtd_cultos: Number(r.qtd_cultos || 0),
+        ticket_medio_presencial: semExtra
+          ? (presencial > 0 ? receita / presencial : 0)
+          : Number(r.ticket_medio_presencial || 0),
+      };
+    });
 
     res.json({ semanas: limpas });
   } catch (e) {
@@ -2505,6 +3249,8 @@ router.get('/arrecadacao-anual', async (req, res) => {
     const ano = Number(req.query.ano) || new Date().getFullYear();
     const centroId = req.query.centro_custo_id || null;
     const planoId = req.query.plano_contas_id || null;
+    // "Sem extraordinárias": arrecadação só com receita ordinária (despesa intacta).
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
 
     const inicio = `${ano}-01-01`;
     const fim = `${ano}-12-31`;
@@ -2524,14 +3270,15 @@ router.get('/arrecadacao-anual', async (req, res) => {
       if (planoId) q = q.eq('plano_contas_id', planoId);
       const res2 = await q.limit(50000);
       if (res2.error) return res.status(400).json({ error: res2.error.message });
-      // Agrega em JS por mês
+      // Agrega em JS por mês (receita extraordinária removida quando semExtra)
       const aggMap = {};
       (res2.data || []).forEach(r => {
         const k = (r.data_competencia || '').slice(0, 7);
         if (!aggMap[k]) aggMap[k] = { mes: k, receita: 0, despesa: 0, qtd: 0 };
         const v = Number(r.valor || 0);
-        if (r.tipo === 'receita') aggMap[k].receita += v;
-        else if (r.tipo === 'despesa') aggMap[k].despesa += v;
+        if (r.tipo === 'receita') {
+          if (!(semExtra && r.classe_movimento === 'extraordinaria')) aggMap[k].receita += v;
+        } else if (r.tipo === 'despesa') aggMap[k].despesa += v;
         aggMap[k].qtd += 1;
       });
       data = Object.values(aggMap);
@@ -2539,11 +3286,15 @@ router.get('/arrecadacao-anual', async (req, res) => {
     } else {
       const res2 = await supabase
         .from('vw_fin_arrecadacao_mensal')
-        .select('mes, receita, despesa, resultado, qtd')
+        .select('mes, receita, despesa, resultado, qtd, receita_extraordinaria')
         .eq('ano', ano)
         .order('mes', { ascending: true });
       if (res2.error) return res.status(400).json({ error: res2.error.message });
-      data = res2.data;
+      data = (res2.data || []).map(r => {
+        if (!semExtra) return r;
+        const receita = Number(r.receita || 0) - Number(r.receita_extraordinaria || 0);
+        return { ...r, receita, resultado: receita - Number(r.despesa || 0) };
+      });
     }
 
     const porMes = {};
@@ -2590,9 +3341,10 @@ router.get('/sazonalidade-semanal', async (req, res) => {
       ? String(anosParam).split(',').map(n => Number(n)).filter(n => Number.isInteger(n))
       : [anoBase - 2, anoBase - 1, anoBase];
 
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
     const { data, error } = await supabase
       .from('vw_fin_arrecadacao_semanal')
-      .select('ano, semana_inicio, semana_fim, semana_label, receita')
+      .select('ano, semana_inicio, semana_fim, semana_label, receita, receita_extraordinaria')
       .in('ano', anos);
     if (error) return res.status(400).json({ error: error.message });
 
@@ -2621,7 +3373,8 @@ router.get('/sazonalidade-semanal', async (req, res) => {
       const w = isoWeekOf(r.semana_inicio);
       if (w < 1 || w > 52) return;
       const slot = semanas[w - 1];
-      slot[String(r.ano)] = Number(r.receita || 0);
+      const receita = Number(r.receita || 0) - (semExtra ? Number(r.receita_extraordinaria || 0) : 0);
+      slot[String(r.ano)] = receita;
       slot[`${r.ano}_label`] = r.semana_label;
       slot[`${r.ano}_inicio`] = r.semana_inicio;
       slot[`${r.ano}_fim`] = r.semana_fim;
@@ -2760,7 +3513,8 @@ router.get('/filtros-disponiveis', async (req, res) => {
 router.get('/saude-financeira', async (req, res) => {
   try {
     const ano = Number(req.query.ano) || new Date().getFullYear();
-    const { data, error } = await supabase.rpc('fin_saude_financeira', { p_ano: ano });
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const { data, error } = await supabase.rpc('fin_saude_financeira', { p_ano: ano, p_sem_extra: semExtra });
     if (error) return res.status(400).json({ error: error.message });
     res.json(data || {});
   } catch (e) {
@@ -2810,7 +3564,8 @@ router.get('/doador/transacoes', async (req, res) => {
 router.get('/dizimo-oferta', async (req, res) => {
   try {
     const ano = Number(req.query.ano) || new Date().getFullYear();
-    const { data, error } = await supabase.rpc('fin_dizimo_oferta_mensal', { p_ano: ano });
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const { data, error } = await supabase.rpc('fin_dizimo_oferta_mensal', { p_ano: ano, p_sem_extra: semExtra });
     if (error) return res.status(400).json({ error: error.message });
     res.json({ ano, meses: data || [] });
   } catch (e) {
@@ -2847,6 +3602,7 @@ router.get('/metas-progresso', async (req, res) => {
 
     const rpcArgs = { p_inicio, p_fim };
     if (meta_id) rpcArgs.p_meta_id = meta_id;
+    rpcArgs.p_sem_extra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
 
     const { data, error } = await supabase.rpc('fin_metas_progresso', rpcArgs);
     if (error) return res.status(400).json({ error: error.message });
@@ -2874,16 +3630,18 @@ router.get('/metas-progresso', async (req, res) => {
 // Lista paginada com filtros (evita o cap de 1000 do PostgREST)
 router.get('/contas-pagar', async (req, res) => {
   try {
-    const { status, ano, mes, fornecedor, q, plano_contas_id, centro_custo_id, vinculo_status, vencido } = req.query;
+    const { status, ano, mes, fornecedor, q, plano_contas_id, centro_custo_id, vinculo_status, vencido, order } = req.query;
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = Math.min(500, Math.max(1, parseInt(req.query.pageSize, 10) || 100));
     const from = (page - 1) * pageSize;
+    // Ordenação por data de vencimento: asc (padrão · mais próximo primeiro) ou desc.
+    const vencAsc = order !== 'venc_desc';
 
     let query = supabase
       .from('fin_contas_pagar')
       .select('*, plano:fin_plano_contas(codigo,nome), centro:fin_centros_custo(codigo,nome)', { count: 'exact' })
       .is('deleted_at', null)
-      .order('data_vencimento', { ascending: true, nullsFirst: false });
+      .order('data_vencimento', { ascending: vencAsc, nullsFirst: false });
 
     if (status) query = query.eq('status', status);
     if (plano_contas_id) query = query.eq('plano_contas_id', plano_contas_id);
@@ -2912,7 +3670,22 @@ router.get('/contas-pagar', async (req, res) => {
     query = query.range(from, from + pageSize - 1);
     const { data, error, count } = await query;
     if (error) return res.status(400).json({ error: error.message });
-    res.json({ items: data || [], total: count || 0, page, pageSize });
+
+    // F2 · enriquece com o nome do colaborador quando a conta é salário.
+    // Feito em JS (e não via embed no select) pra não quebrar a lista caso a
+    // migration das colunas eh_salario/funcionario_id ainda não tenha rodado.
+    const items = data || [];
+    const funcIds = [...new Set(items.map(i => i.funcionario_id).filter(Boolean))];
+    if (funcIds.length) {
+      const { data: funcs } = await supabase
+        .from('rh_funcionarios').select('id, nome').in('id', funcIds);
+      const nomePorId = new Map((funcs || []).map(f => [f.id, f.nome]));
+      for (const i of items) {
+        if (i.funcionario_id) i.funcionario_nome = nomePorId.get(i.funcionario_id) || null;
+      }
+    }
+
+    res.json({ items, total: count || 0, page, pageSize });
   } catch (e) {
     console.error('[FIN-V2] contas-pagar list:', e);
     res.status(500).json({ error: 'Erro ao listar contas a pagar' });
@@ -2922,9 +3695,10 @@ router.get('/contas-pagar', async (req, res) => {
 // Resumo agregado (KPIs) — via RPC pra não esbarrar no cap de 1000
 router.get('/contas-pagar/resumo', async (req, res) => {
   try {
-    const { status, ano, fornecedor, plano_contas_id, centro_custo_id, q } = req.query;
+    const { status, ano, mes, fornecedor, plano_contas_id, centro_custo_id, q } = req.query;
     const { data, error } = await supabase.rpc('fn_contas_pagar_resumo', {
       p_ano: ano ? parseInt(ano, 10) : null,
+      p_mes: mes ? parseInt(mes, 10) : null,
       p_status: status || null,
       p_fornecedor: fornecedor || null,
       p_plano: plano_contas_id || null,
@@ -2963,6 +3737,309 @@ router.post('/contas-pagar/importar', authorizeModule('financeiro', 4), upload.s
   } catch (e) {
     console.error('[FIN-V2] contas-pagar importar:', e);
     res.status(500).json({ error: e.message || 'Erro ao importar contas a pagar' });
+  }
+});
+
+// ====================================================================
+// CONTAS A PAGAR · F2 da reforma (CRUD moderno + salário do RH + recorrência)
+//
+// Pedidos da gestão: ao clicar numa conta, poder marcar que é RECORRENTE e/ou
+// que é SALÁRIO de um colaborador — nesse caso o valor NÃO é digitado: vem de
+// rh_funcionarios.salario (fonte de verdade é o RH).
+// ====================================================================
+
+// Salário atual do colaborador no RH (fonte de verdade quando eh_salario).
+// Retorna { salario } ou { erro } pronto pro 400.
+async function salarioDoRh(funcionarioId) {
+  const { data: func, error } = await supabase
+    .from('rh_funcionarios')
+    .select('id, nome, salario')
+    .eq('id', funcionarioId)
+    .is('deleted_at', null)
+    .single();
+  if (error || !func) return { erro: 'Colaborador não encontrado no RH' };
+  const salario = Number(func.salario) || 0;
+  if (!salario) return { erro: 'Colaborador sem salário cadastrado no RH' };
+  return { salario, nome: func.nome };
+}
+
+// Lista auxiliar de colaboradores pro select "É salário" do modal.
+// O usuário do financeiro pode NÃO ter o módulo RH — por isso o aux vive aqui.
+// Salário é dado sensível → mesmo nível 4 dos endpoints sensíveis do arquivo
+// (quem paga a folha tem nível 4 no financeiro).
+router.get('/aux/funcionarios', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('rh_funcionarios')
+      .select('id, nome, cargo, salario')
+      .eq('status', 'ativo')
+      .is('deleted_at', null)
+      .order('nome');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    console.error('[FIN-V2] aux/funcionarios:', e);
+    res.status(500).json({ error: 'Erro ao listar colaboradores' });
+  }
+});
+
+// Criar conta a pagar (v2 · substitui o POST v1 no modal do frontend)
+router.post('/contas-pagar', async (req, res) => {
+  try {
+    const {
+      descricao, fornecedor, valor, data_vencimento, data_pagamento, status,
+      conta_id, plano_contas_id, centro_custo_id, forma_pagamento, pago_cartao,
+      eh_salario, funcionario_id, observacao,
+    } = req.body;
+
+    if (!descricao || !String(descricao).trim()) return res.status(400).json({ error: 'Descrição obrigatória' });
+    if (!data_vencimento) return res.status(400).json({ error: 'Data de vencimento obrigatória' });
+
+    // Regra do salário: valor do body é IGNORADO — vale o salário do RH.
+    let v = Math.abs(Number(valor) || 0);
+    const salario = !!eh_salario && !!funcionario_id;
+    if (salario) {
+      const r = await salarioDoRh(funcionario_id);
+      if (r.erro) return res.status(400).json({ error: r.erro });
+      v = r.salario;
+    }
+    if (!v) return res.status(400).json({ error: 'Valor obrigatório (maior que zero)' });
+
+    const { data, error } = await supabase.from('fin_contas_pagar')
+      .insert({
+        descricao: String(descricao).trim(),
+        fornecedor: fornecedor || null,
+        valor: v,
+        data_vencimento,
+        data_pagamento: data_pagamento || null,
+        status: status || 'pendente',
+        conta_id: conta_id || null,
+        plano_contas_id: plano_contas_id || null,
+        centro_custo_id: centro_custo_id || null,
+        forma_pagamento: forma_pagamento || null,
+        pago_cartao: pago_cartao === undefined ? null : !!pago_cartao,
+        eh_salario: salario,
+        funcionario_id: salario ? funcionario_id : null,
+        historico: observacao || null,       // campo livre da tabela é `historico`
+        origem: 'manual',
+        created_by: req.user.userId,
+      })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[FIN-V2] criar conta a pagar:', e);
+    res.status(500).json({ error: 'Erro ao criar conta a pagar' });
+  }
+});
+
+// Atualizar conta a pagar (parcial · só campos presentes no body)
+router.put('/contas-pagar/:id', async (req, res) => {
+  try {
+    const {
+      descricao, fornecedor, valor, data_vencimento, data_pagamento, status,
+      conta_id, plano_contas_id, centro_custo_id, forma_pagamento, pago_cartao,
+      eh_salario, funcionario_id, observacao,
+    } = req.body;
+
+    const upd = {};
+    if (descricao !== undefined) {
+      if (!String(descricao).trim()) return res.status(400).json({ error: 'Descrição não pode ficar vazia' });
+      upd.descricao = String(descricao).trim();
+    }
+    if (fornecedor !== undefined) upd.fornecedor = fornecedor || null;
+    if (data_vencimento !== undefined) {
+      if (!data_vencimento) return res.status(400).json({ error: 'Data de vencimento não pode ficar vazia' });
+      upd.data_vencimento = data_vencimento;
+    }
+    if (data_pagamento !== undefined) upd.data_pagamento = data_pagamento || null;
+    if (status !== undefined) upd.status = status;
+    if (conta_id !== undefined) upd.conta_id = conta_id || null;
+    if (plano_contas_id !== undefined) upd.plano_contas_id = plano_contas_id || null;
+    if (centro_custo_id !== undefined) upd.centro_custo_id = centro_custo_id || null;
+    if (forma_pagamento !== undefined) upd.forma_pagamento = forma_pagamento || null;
+    if (pago_cartao !== undefined) upd.pago_cartao = !!pago_cartao;
+    if (observacao !== undefined) upd.historico = observacao || null;
+
+    // Regra do salário: com eh_salario + funcionario_id, RE-PUXA o salário do
+    // RH e ignora o valor do body. Desligando o toggle, limpa o vínculo.
+    if (eh_salario !== undefined) {
+      if (eh_salario && funcionario_id) {
+        const r = await salarioDoRh(funcionario_id);
+        if (r.erro) return res.status(400).json({ error: r.erro });
+        upd.eh_salario = true;
+        upd.funcionario_id = funcionario_id;
+        upd.valor = r.salario;
+      } else {
+        upd.eh_salario = false;
+        upd.funcionario_id = null;
+      }
+    } else if (funcionario_id !== undefined) {
+      upd.funcionario_id = funcionario_id || null;
+    }
+    if (upd.valor === undefined && valor !== undefined) {
+      const v = Math.abs(Number(valor) || 0);
+      if (!v) return res.status(400).json({ error: 'Valor deve ser maior que zero' });
+      upd.valor = v;
+    }
+    if (!Object.keys(upd).length) return res.status(400).json({ error: 'Nada pra atualizar' });
+
+    const { data, error } = await supabase.from('fin_contas_pagar')
+      .update(upd).eq('id', req.params.id).is('deleted_at', null)
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[FIN-V2] atualizar conta a pagar:', e);
+    res.status(500).json({ error: 'Erro ao atualizar conta a pagar' });
+  }
+});
+
+// Excluir conta a pagar · SOFT-delete (padrão de segurança da casa)
+router.delete('/contas-pagar/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('fin_contas_pagar')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', req.params.id).is('deleted_at', null)
+      .select('id').single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true, id: data.id });
+  } catch (e) {
+    console.error('[FIN-V2] excluir conta a pagar:', e);
+    res.status(500).json({ error: 'Erro ao excluir conta a pagar' });
+  }
+});
+
+// Tornar a conta recorrente: cria fin_despesas_recorrentes a partir dela e
+// grava recorrente_id na conta. Idempotente — se já tem, devolve a existente.
+router.post('/contas-pagar/:id/tornar-recorrente', async (req, res) => {
+  try {
+    const { data: conta, error: errConta } = await supabase
+      .from('fin_contas_pagar').select('*')
+      .eq('id', req.params.id).is('deleted_at', null).single();
+    if (errConta || !conta) return res.status(404).json({ error: 'Conta a pagar não encontrada' });
+
+    if (conta.recorrente_id) {
+      const { data: existente } = await supabase
+        .from('fin_despesas_recorrentes').select('*')
+        .eq('id', conta.recorrente_id).single();
+      if (existente) return res.json({ ja_existia: true, recorrencia: existente });
+      // recorrente_id órfão (recorrência sumiu) → segue e recria
+    }
+
+    const valor = Number(conta.valor) || 0;
+    const diaVenc = conta.data_vencimento
+      ? Number(String(conta.data_vencimento).slice(8, 10))
+      : null;
+
+    // Mesmo preenchimento do POST /financeiro/recorrentes (criação manual)
+    const { data: recorrencia, error } = await supabase
+      .from('fin_despesas_recorrentes')
+      .insert({
+        descricao: conta.descricao,
+        fornecedor: conta.fornecedor || null,
+        chave_match: (conta.fornecedor || conta.descricao).toLowerCase().trim(),
+        tipo_chave: 'manual',
+        valor_medio: valor,
+        valor_minimo: valor,
+        valor_maximo: valor,
+        cadencia_dias: 30,
+        dia_vencimento: diaVenc,
+        plano_contas_id: conta.plano_contas_id || null,
+        centro_custo_id: conta.centro_custo_id || null,
+        conta_id: conta.conta_id || null,
+        classe: 'fixa',
+        gera_n_dias_antes: 7,
+        eh_salario: !!conta.eh_salario,
+        funcionario_id: conta.funcionario_id || null,
+        ativa: true, confirmada: true, confianca: 1.0,
+        observacao: 'Criada a partir de uma conta a pagar (F2)',
+      })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    const { error: errUpd } = await supabase.from('fin_contas_pagar')
+      .update({ recorrente_id: recorrencia.id }).eq('id', conta.id);
+    if (errUpd) return res.status(400).json({ error: errUpd.message });
+
+    res.json({ ja_existia: false, recorrencia });
+  } catch (e) {
+    console.error('[FIN-V2] tornar recorrente:', e);
+    res.status(500).json({ error: 'Erro ao tornar a conta recorrente' });
+  }
+});
+
+// Desfazer a recorrência: desativa a recorrência e desamarra a conta
+router.delete('/contas-pagar/:id/tornar-recorrente', async (req, res) => {
+  try {
+    const { data: conta, error: errConta } = await supabase
+      .from('fin_contas_pagar').select('id, recorrente_id')
+      .eq('id', req.params.id).is('deleted_at', null).single();
+    if (errConta || !conta) return res.status(404).json({ error: 'Conta a pagar não encontrada' });
+    if (!conta.recorrente_id) return res.json({ success: true, ja_desfeita: true });
+
+    await supabase.from('fin_despesas_recorrentes')
+      .update({ ativa: false, updated_at: new Date().toISOString() })
+      .eq('id', conta.recorrente_id);
+    const { error } = await supabase.from('fin_contas_pagar')
+      .update({ recorrente_id: null }).eq('id', conta.id);
+    if (error) return res.status(400).json({ error: error.message });
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[FIN-V2] desfazer recorrente:', e);
+    res.status(500).json({ error: 'Erro ao desfazer a recorrência' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Conciliação balanço × OFX · identificar o doador por CPF (Fase 3)
+// ════════════════════════════════════════════════════════════════════
+router.post('/conciliar-balanco-ofx', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { inicio, fim, dry_run } = req.body || {};
+    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim são obrigatórios (YYYY-MM-DD)' });
+    const r = await conciliacaoOfx.conciliar({ inicio, fim, dryRun: !!dry_run, userId: req.user.userId });
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] conciliar balanco×ofx:', e.message);
+    res.status(500).json({ error: e.message || 'Erro na conciliação' });
+  }
+});
+
+router.get('/conciliar-balanco-ofx/revisao', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { inicio, fim } = req.query;
+    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim são obrigatórios' });
+    const revisao = await conciliacaoOfx.listarRevisao({ inicio, fim });
+    res.json({ revisao });
+  } catch (e) {
+    console.error('[FIN-V2] revisao conciliacao:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao listar revisão' });
+  }
+});
+
+router.post('/conciliar-balanco-ofx/confirmar', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { transacao_id, bruto_id } = req.body || {};
+    if (!transacao_id || !bruto_id) return res.status(400).json({ error: 'transacao_id e bruto_id são obrigatórios' });
+    const r = await conciliacaoOfx.confirmarVinculo({ transacaoId: transacao_id, brutoId: bruto_id, userId: req.user.userId });
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] confirmar vinculo:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao confirmar' });
+  }
+});
+
+router.post('/conciliar-balanco-ofx/ignorar', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { transacao_id } = req.body || {};
+    if (!transacao_id) return res.status(400).json({ error: 'transacao_id é obrigatório' });
+    const r = await conciliacaoOfx.ignorarVinculo({ transacaoId: transacao_id, userId: req.user.userId });
+    res.json(r);
+  } catch (e) {
+    console.error('[FIN-V2] ignorar vinculo:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao ignorar' });
   }
 });
 

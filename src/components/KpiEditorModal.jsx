@@ -358,7 +358,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
             <input value={form.unidade} onChange={e => set('unidade', e.target.value)} placeholder="%, R$, pessoas..." style={inp} />
           </Field>
           <Field label="Pilar">
-            <input value={form.pilar} onChange={e => set('pilar', e.target.value)} placeholder="Crescimento, Servico..." style={inp} />
+            <input value={form.pilar} onChange={e => set('pilar', e.target.value)} placeholder="Crescimento, Serviço..." style={inp} />
           </Field>
 
           {/* Responsável + Apuracao */}
@@ -440,13 +440,13 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
             </Field>
           </div>
           <div style={{ gridColumn: '1/-1' }}>
-            <Field label="Memória de calculo" hint="Como o indicador eh efetivamente calculado. Ex: '% crescimento da frequência em relação a semana anterior'.">
+            <Field label="Memória de cálculo" hint="Como o indicador é efetivamente calculado. Ex: '% crescimento da frequência em relação a semana anterior'.">
               <textarea value={form.memoria_calculo} onChange={e => set('memoria_calculo', e.target.value)} rows={2} style={{ ...inp, resize: 'vertical' }}
-                placeholder="Ex: '8% da frequência media dominical'" />
+                placeholder="Ex: '8% da frequência média dominical'" />
             </Field>
           </div>
           <div style={{ gridColumn: '1/-1' }}>
-            <Field label="Observacoes adicionais">
+            <Field label="Observações adicionais">
               <textarea value={form.observacoes} onChange={e => set('observacoes', e.target.value)} rows={2} style={{ ...inp, resize: 'vertical' }}
                 placeholder="Notas, ressalvas, etc" />
             </Field>
@@ -456,10 +456,10 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
         {/* Calculo do indicador (Fase 6A) */}
         <div style={{ marginTop: 24, paddingTop: 18, borderTop: `1px solid ${C.border}` }}>
           <h3 style={{ fontSize: 13, fontWeight: 700, color: C.t2, margin: 0, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Calculator size={13} /> Como o indicador eh calculado
+            <Calculator size={13} /> Como o indicador é calculado
           </h3>
           <p style={{ fontSize: 11, color: C.t3, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Info size={11} /> O lider preenche o numero absoluto (ex: frequencia = 850); o KPI calcula automaticamente.
+            <Info size={11} /> O líder preenche o número absoluto (ex: frequência = 850); o KPI calcula automaticamente.
           </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -519,8 +519,8 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
                   Resultados-chave (KRs) deste KPI
                 </h3>
                 <p style={{ fontSize: 11, color: C.t3, marginTop: 4 }}>
-                  Analises que triangulam o KPI principal. Ex: alem de "% crescimento da frequência",
-                  KRs como "0 cultos com queda &gt; 15%" ou "% retencao semana-a-semana".
+                  Análises que triangulam o KPI principal. Ex: além de "% crescimento da frequência",
+                  KRs como "0 cultos com queda &gt; 15%" ou "% retenção semana-a-semana".
                 </p>
               </div>
               <button type="button" onClick={() => setEditKr({ kpi_id: form.id })}
@@ -530,7 +530,7 @@ export default function KpiEditorModal({ open, kpi, onClose, onSaved, defaultAre
             </div>
             {krs.length === 0 ? (
               <div style={{ padding: 14, fontSize: 11, color: C.t3, background: C.inputBg, borderRadius: 6, fontStyle: 'italic' }}>
-                Nenhum KR especifico ainda. Sugerido: 2-4 KRs que ajudam a triangular o resultado.
+                Nenhum KR específico ainda. Sugerido: 2-4 KRs que ajudam a triangular o resultado.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -605,7 +605,7 @@ function KrEditorInline({ kr, onClose, onSaved }) {
   const { tentarFechar, backdropProps } = useConfirmarSaida(temAlteracoes, onClose);
 
   const submit = async () => {
-    if (!form.titulo.trim()) return toast.error('Titulo obrigatorio');
+    if (!form.titulo.trim()) return toast.error('Título obrigatório');
     setSaving(true);
     try {
       const payload = {
@@ -635,26 +635,26 @@ function KrEditorInline({ kr, onClose, onSaved }) {
         style={{ background: 'var(--panel)', WebkitBackdropFilter: 'blur(18px) saturate(140%)', backdropFilter: 'blur(18px) saturate(140%)', border: '1px solid var(--hairline)', borderRadius: 16, width: 'min(520px, calc(100vw - 24px))', maxHeight: '85vh', overflow: 'auto', boxShadow: 'var(--shadow-hover), var(--hi)' }}>
         <header style={{ padding: 16, borderBottom: '1px solid var(--cbrio-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>
-            {isNovo ? 'Novo KR especifico' : 'Editar KR'}
+            {isNovo ? 'Novo KR específico' : 'Editar KR'}
           </h3>
           <button onClick={tentarFechar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--cbrio-text3)', padding: 4 }}>
             <X size={18} />
           </button>
         </header>
         <div style={{ padding: 16 }}>
-          <Field label="Titulo *">
+          <Field label="Título *">
             <input value={form.titulo} onChange={e => set('titulo', e.target.value)} style={inp}
               placeholder='Ex: "0 cultos com queda > 15%"' />
           </Field>
-          <Field label="Descricao">
+          <Field label="Descrição">
             <textarea value={form.descricao} onChange={e => set('descricao', e.target.value)} rows={2} style={{ ...inp, resize: 'vertical' }} />
           </Field>
-          <Field label="Formula de calculo">
+          <Field label="Fórmula de cálculo">
             <input value={form.formula_calculo} onChange={e => set('formula_calculo', e.target.value)} style={inp}
               placeholder='Como medir' />
           </Field>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <Field label="Meta (numerica)">
+            <Field label="Meta (numérica)">
               <input type="number" value={form.meta_valor} onChange={e => set('meta_valor', e.target.value)} style={inp} />
             </Field>
             <Field label="Unidade">
@@ -751,7 +751,7 @@ function FormulaConfig({ tipo, config, tiposDado, onChange }) {
             {tiposDado.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
           </select>
         </Field>
-        <Field label="Periodo *">
+        <Field label="Período *">
           <select value={config.periodo || ''} onChange={e => set('periodo', e.target.value)} style={inp}>
             <option value="">— Escolher —</option>
             {PERIODOS_SOMA.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}

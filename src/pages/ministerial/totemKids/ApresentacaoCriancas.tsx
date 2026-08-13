@@ -3,9 +3,11 @@
 // contata a família pra agendar o horário e atualiza o status.
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { hrefWhatsapp } from '@/lib/conversas';
 import { totemKids as api } from '../../../api';
 import { Card } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Badge } from '../../../components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { toast } from 'sonner';
@@ -223,11 +225,9 @@ export default function ApresentacaoCriancas() {
                       {b.observacoes && <div className="text-[11px] text-muted-foreground truncate mt-0.5">{b.observacoes}</div>}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <input
-                        type="date"
+                      <DatePicker
                         value={b.data_apresentacao || ''}
-                        onChange={(e) => mudarData(b.id, e.target.value)}
-                        title="Data da apresentação (turma)"
+                        onChange={(v) => mudarData(b.id, v)}
                         className="h-7 text-[11px] rounded-md border border-border bg-background px-1.5 text-muted-foreground"
                       />
                       <Select value={b.status || 'pendente'} onValueChange={(v) => mudarStatus(b.id, v)}>
@@ -236,7 +236,17 @@ export default function ApresentacaoCriancas() {
                           {STATUS_OPCOES.map(s => <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>)}
                         </SelectContent>
                       </Select>
-                      {b.telefone && <a href={`https://wa.me/55${String(b.telefone).replace(/\D/g, '')}`} target="_blank" rel="noopener noreferrer" className="text-emerald-600" title="Falar com a família no WhatsApp"><Phone className="h-4 w-4" /></a>}
+                      {hrefWhatsapp(b.telefone) && (
+                        <a
+                          href={hrefWhatsapp(b.telefone)!}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-emerald-600"
+                          title="Falar com a família no seu WhatsApp"
+                        >
+                          <Phone className="h-4 w-4" />
+                        </a>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 justify-end border-t border-border/50 pt-2">

@@ -13,9 +13,10 @@ const inp = {
   color: C.text, fontSize: 14, boxSizing: 'border-box', fontFamily: 'inherit',
 };
 
-function corDoScore(n) {
-  if (n <= 6) return C.red;
-  if (n <= 8) return C.amber;
+function corDoScore(n, max = 10) {
+  const p = max ? (n / max) * 10 : n; // normaliza p/ 0-10 (funciona em 0-5 também)
+  if (p <= 6) return C.red;
+  if (p <= 8) return C.amber;
   return C.green;
 }
 
@@ -31,6 +32,7 @@ export default function NpsForm({ pesquisa, onSubmit, enviando, extraHeader }) {
 
   const perguntasExtras = pesquisa?.perguntas?.perguntas_extras || [];
   const perguntaNps = pesquisa?.perguntas?.pergunta_nps || { texto: 'De 0 a 10, como você avalia?' };
+  const maxNota = Number(perguntaNps.max) || 10; // 10 (padrão) ou 5 (pesquisas escala 0-5)
 
   function setRespostaPergunta(pid, valor) {
     setRespostas(prev => ({ ...prev, [pid]: valor }));
@@ -39,7 +41,7 @@ export default function NpsForm({ pesquisa, onSubmit, enviando, extraHeader }) {
   function handleSubmit(e) {
     e.preventDefault();
     if (score === null) {
-      alert('Selecione uma nota de 0 a 10.');
+      alert(`Selecione uma nota de 0 a ${maxNota}.`);
       return;
     }
     // Extrai comentário principal (primeira pergunta texto_longo com algum motivo)
@@ -57,12 +59,12 @@ export default function NpsForm({ pesquisa, onSubmit, enviando, extraHeader }) {
           {perguntaNps.texto}
         </label>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {Array.from({ length: 11 }).map((_, n) => (
+          {Array.from({ length: maxNota + 1 }).map((_, n) => (
             <button key={n} type="button" onClick={() => setScore(n)}
               style={{
                 width: 44, height: 44, borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: 'pointer',
-                border: `2px solid ${score === n ? corDoScore(n) : C.border}`,
-                background: score === n ? corDoScore(n) : 'transparent',
+                border: `2px solid ${score === n ? corDoScore(n, maxNota) : C.border}`,
+                background: score === n ? corDoScore(n, maxNota) : 'transparent',
                 color: score === n ? '#fff' : C.t2,
                 transition: 'all .12s',
               }}>

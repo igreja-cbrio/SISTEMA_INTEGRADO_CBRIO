@@ -2,11 +2,42 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- maximum-scale=1/user-scalable=no: pinch-zoom deixava os botões
+         flutuantes (Reportar/IA) e outros elementos position:fixed instáveis
+         no mobile — em alguns navegadores eles "somem" do canto quando a
+         página é zoomada (achado do usuário 2026-07-27, Financeiro/Patrimônio). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>CBRio · Comunidade Batista do Rio de Janeiro</title>
     <meta name="description" content="A CBRio é uma igreja pra você chamar de casa. Conheça nossa missão, participe de um grupo, seja voluntário e cresça na sua jornada com Jesus." />
     <!-- Verificação de propriedade do domínio no Google Search Console (Play Console org) -->
     <meta name="google-site-verification" content="U0Zey3Z7XVDCmKv6iOqoGUaXXa3UrPxkmbgoV1AOJ70" />
+
+    <!-- Google Tag Manager · SÓ no domínio público (cbrio.com.br).
+         Este bundle serve os DOIS domínios (ver SITE_PUBLICO_HOSTS em
+         src/App.tsx): cbrio.com.br monta o site institucional, cbrio.org
+         monta o ERP. O container NÃO pode carregar no ERP — as telas
+         internas têm dado de membro (nome, CPF, telefone, contribuição,
+         dado de menor no Kids) e rastreamento de anúncio não entra ali
+         (LGPD). Por isso o gate por hostname antes de injetar o gtm.js.
+         ⚠️ Se mudar SITE_PUBLICO_HOSTS no App.tsx, mudar a lista aqui.
+         Sem <noscript>: o de-para do GTM só serve visitante com JS
+         desligado e, sem JS, este SPA nem renderiza — o iframe não
+         mediria nada e carregaria em cbrio.org (o vazamento que o gate
+         evita). O site em Astro, que é HTML estático, leva o noscript. -->
+    <script>
+      (function () {
+        var HOSTS_PUBLICOS = ['cbrio.com.br', 'www.cbrio.com.br'];
+        if (HOSTS_PUBLICOS.indexOf(window.location.hostname) === -1) return;
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
+        var primeiro = document.getElementsByTagName('script')[0];
+        var tag = document.createElement('script');
+        tag.async = true;
+        tag.src = 'https://www.googletagmanager.com/gtm.js?id=GTM-M59RCB34';
+        primeiro.parentNode.insertBefore(tag, primeiro);
+      })();
+    </script>
+    <!-- End Google Tag Manager -->
 
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />

@@ -179,9 +179,17 @@ router.get('/regras', authorize('admin', 'diretor'), async (req, res) => {
 router.post('/regras', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { modulo, profile_id } = req.body;
+    // `tipo` opcional: NULL = vale pra todos os tipos do módulo (comportamento
+    // histórico). Vazio vira NULL de propósito — string '' criaria uma terceira
+    // semântica que ninguém consegue explicar depois.
+    const tipo = String(req.body?.tipo || '').trim() || null;
     const { data, error } = await supabase
       .from('notificacao_regras')
-      .upsert({ modulo, profile_id, ativo: true }, { onConflict: 'modulo,profile_id' })
+      // ⚠️ O alvo tem que casar EXATAMENTE com a UNIQUE viva
+      // (`notificacao_regras_modulo_tipo_profile_key`, migration 20260811150000).
+      // ON CONFLICT que não casa com índice existente falha em runtime, não no
+      // deploy — e aqui o sintoma seria "não consigo salvar a regra".
+      .upsert({ modulo, tipo, profile_id, ativo: true }, { onConflict: 'modulo,tipo,profile_id' })
       .select()
       .single();
     if (error) return res.status(400).json({ error: error.message });

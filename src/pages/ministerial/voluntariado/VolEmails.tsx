@@ -18,7 +18,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Mail, Plus, Pencil, Trash2, XCircle, Loader2, Clock, CheckCircle2, AlertTriangle, Ban, Eye, Search, type LucideIcon } from 'lucide-react';
+import { Mail, Plus, Pencil, Trash2, XCircle, Loader2, Clock, CheckCircle2, AlertTriangle, Ban, Eye, Search, RotateCw, type LucideIcon } from 'lucide-react';
 import VolEmailComposer, { type VolEmailDisparo } from './components/VolEmailComposer';
 
 type DestLog = { nome: string | null; email: string; status: 'pendente' | 'enviado' | 'erro'; erro_msg: string | null; enviado_em: string | null; aberto_em: string | null; aberturas: number };
@@ -36,6 +36,13 @@ function segmentoLabel(seg: VolEmailDisparo['segmento'] | null | undefined): str
   if (seg?.tipo === 'equipe') return 'Equipe';
   if (seg?.tipo === 'escala') return 'Escala (culto)';
   if (seg?.tipo === 'manual') return `Seleção manual (${seg.vol_profile_ids?.length || 0})`;
+  if (seg?.tipo === 'inscritos') {
+    const STATUS_LABEL: Record<string, string> = {
+      inscrito: 'Inscritos (aguardando)', enviado_ministerio: 'Enviados ao ministério',
+      nao_responde: 'Não responderam', integrado: 'Integrados',
+    };
+    return STATUS_LABEL[seg.status || 'inscrito'] || `Inscrições (${seg.status})`;
+  }
   return 'Todos os voluntários';
 }
 
@@ -248,11 +255,21 @@ export default function VolEmails() {
 function DisparoDetalheDialog({ disparo, onClose }: { disparo: VolEmailDisparo; onClose: () => void }) {
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState<'todos' | 'enviado' | 'erro' | 'abriu'>('todos');
+  const qc = useQueryClient();
 
   const { data: log = [], isLoading } = useQuery<DestLog[]>({
     queryKey: ['vol', 'emails', 'destinatarios', disparo.id],
     queryFn: () => voluntariado.emails.destinatarios(disparo.id),
     refetchInterval: disparo.status === 'enviando' ? 5000 : false,
+  });
+
+  const reenviarMut = useMutation({
+    mutationFn: () => voluntariado.emails.reenviarErros(disparo.id),
+    onSuccess: (r: { reprocessados?: number }) => {
+      toast.success(`Reenviando ${r?.reprocessados ?? ''} destinatário(s) que falharam.`);
+      qc.invalidateQueries({ queryKey: ['vol', 'emails'] });
+    },
+    onError: (e: Error) => toast.error(e.message || 'Erro ao reenviar'),
   });
 
   const meta = STATUS_META[disparo.status] || STATUS_META.rascunho;
@@ -298,6 +315,20 @@ function DisparoDetalheDialog({ disparo, onClose }: { disparo: VolEmailDisparo; 
           </span>
           <span>{fmtData(disparo.enviado_em || disparo.agendado_para || disparo.created_at)}</span>
           {disparo.criado_por_nome && <span>por {disparo.criado_por_nome}</span>}
+          {disparo.total_erros > 0 && disparo.status !== 'enviando' && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1.5"
+              onClick={() => reenviarMut.mutate()}
+              disabled={reenviarMut.isPending}
+            >
+              {reenviarMut.isPending
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <RotateCw className="h-3.5 w-3.5" />}
+              Reenviar os que falharam
+            </Button>
+          )}
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">

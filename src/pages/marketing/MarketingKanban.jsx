@@ -10,6 +10,7 @@ import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
@@ -257,7 +258,7 @@ export default function MarketingKanban() {
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <div className="flex gap-4 overflow-x-auto pb-2">
+        <div className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory sm:snap-none">
           {colunas.map(col => (
             col.key === 'triagem' ? (
               <TriagemColumn
@@ -311,7 +312,7 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
 
   return (
     <div
-      className={`flex flex-col rounded-xl shrink-0 w-[280px] bg-muted/50 dark:bg-muted/20 transition-shadow ${dragOver ? 'ring-2 ring-primary/40' : ''}`}
+      className={`flex flex-col rounded-xl shrink-0 w-[85vw] sm:w-[280px] snap-center bg-muted/50 dark:bg-muted/20 transition-shadow ${dragOver ? 'ring-2 ring-primary/40' : ''}`}
       onDragOver={e => { if (!isCoordenador) return; e.preventDefault(); setDragOver(true); }}
       onDragLeave={() => setDragOver(false)}
       onDrop={e => {
@@ -351,7 +352,7 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
 // ═══════════════════════════════════════════════════════════════════════
 function TriagemColumn({ col, campanhas, isCoordenador, onClickCampanha }) {
   return (
-    <div className="flex flex-col rounded-xl shrink-0 w-[280px] bg-muted/50 dark:bg-muted/20">
+    <div className="flex flex-col rounded-xl shrink-0 w-[85vw] sm:w-[280px] snap-center bg-muted/50 dark:bg-muted/20">
       <div className="flex items-center gap-2 px-3 py-2.5">
         <span className={`h-2.5 w-2.5 rounded-full ${col.dot}`} />
         <span className="text-sm font-semibold text-foreground">{col.label}</span>
@@ -524,6 +525,8 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
   const open = !!card;
   const [edit, setEdit] = useState({});
   const [entregaveis, setEntregaveis] = useState([]);
+  const [erroEntreg, setErroEntreg] = useState(false);
+  const [erroChecklist, setErroChecklist] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadingRef, setUploadingRef] = useState(false);
   const [checklist, setChecklist] = useState([]);
@@ -542,8 +545,9 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
       estado: card.estado,
     });
     // Carrega entregaveis + checklist
-    api.entregaveis.list(card.id).then(setEntregaveis).catch(() => setEntregaveis([]));
-    api.checklist.list(card.id).then(setChecklist).catch(() => setChecklist([]));
+    setErroEntreg(false); setErroChecklist(false);
+    api.entregaveis.list(card.id).then(setEntregaveis).catch(() => { setEntregaveis([]); setErroEntreg(true); });
+    api.checklist.list(card.id).then(setChecklist).catch(() => { setChecklist([]); setErroChecklist(true); });
   }, [card]);
 
   async function salvar() {
@@ -747,10 +751,9 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
                 </div>
                 <div className="space-y-2">
                   <Label>Prazo confirmado</Label>
-                  <Input
-                    type="date"
+                  <DatePicker
                     value={edit.prazo_confirmado || ''}
-                    onChange={e => setEdit(s => ({ ...s, prazo_confirmado: e.target.value }))}
+                    onChange={v => setEdit(s => ({ ...s, prazo_confirmado: v }))}
                     disabled={!isCoordenador}
                   />
                 </div>
@@ -795,7 +798,12 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
                   <div className="h-full bg-primary transition-all" style={{ width: `${checklistPct}%` }} />
                 </div>
               )}
-              {checklist.length === 0 ? (
+              {erroChecklist ? (
+                <div style={{ padding: 10, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#501313' }}>Não foi possível carregar a checklist</div>
+                  <div style={{ fontSize: 11, color: '#791F1F' }}>Podem existir itens — a lista falhou ao carregar.</div>
+                </div>
+              ) : checklist.length === 0 ? (
                 <p className="text-xs text-muted-foreground">Sem itens · use frentes (ex: ID e Estratégia, Enxoval) pra agrupar.</p>
               ) : (
                 <div className="space-y-3">
@@ -913,7 +921,12 @@ function CardDrawer({ card, onClose, onUpdated, tipos, destinos, membros, isCoor
                   </label>
                 )}
               </div>
-              {entregaveisFinais.length === 0 ? (
+              {erroEntreg ? (
+                <div style={{ padding: 10, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 6 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#501313' }}>Não foi possível carregar os entregáveis</div>
+                  <div style={{ fontSize: 11, color: '#791F1F' }}>Pode haver arquivos anexados — a lista falhou ao carregar.</div>
+                </div>
+              ) : entregaveisFinais.length === 0 ? (
                 <p className="text-xs text-muted-foreground py-3">Sem arquivos anexados</p>
               ) : (
                 <ul className="space-y-1">
@@ -1030,7 +1043,7 @@ function NovaTaskForm({ tipos, destinos, membros, onSuccess }) {
         </div>
         <div className="space-y-2">
           <Label>Prazo (opcional)</Label>
-          <Input type="date" value={form.prazo_confirmado} onChange={e => setForm(f => ({ ...f, prazo_confirmado: e.target.value }))} />
+          <DatePicker value={form.prazo_confirmado} onChange={v => setForm(f => ({ ...f, prazo_confirmado: v }))} />
         </div>
       </div>
       <label className="flex items-center gap-2 cursor-pointer text-sm">

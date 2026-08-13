@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from '../ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
 import { Loader2, Plus, Trash2, Target, Edit2, Sparkles, BarChart2, Activity, Archive, LineChart, AreaChart, PieChart, Radar, ChevronDown, ChevronUp } from 'lucide-react';
+import { toast } from 'sonner';
 import { INDICADORES } from '../../pages/DashboardSemanal';
 import MetaGauge from './MetaGauge';
 import PreviewChartIA from './PreviewChartIA';
@@ -59,6 +60,11 @@ export default function DashMetasAba() {
 
   const arquivarIndicador = useMutation({
     mutationFn: (id) => api.indicadorCustomPatch(id, { status: 'arquivado' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['dash-sem', 'indic-custom'] }),
+  });
+
+  const refinarIndicador = useMutation({
+    mutationFn: ({ id, instrucao }) => api.iaRefinarIndicador(id, instrucao),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['dash-sem', 'indic-custom'] }),
   });
 
@@ -172,6 +178,7 @@ export default function DashMetasAba() {
                 <IndicadorCustomCard
                   ind={ind}
                   onArchive={() => arquivarIndicador.mutate(ind.id)}
+                  onRefinar={(instrucao) => refinarIndicador.mutateAsync({ id: ind.id, instrucao })}
                 />
               </motion.div>
             ))}
@@ -475,12 +482,27 @@ const ICONES_GRAFICO_IA = {
   radar: Radar,
 };
 
-function IndicadorCustomCard({ ind, onArchive }) {
+function IndicadorCustomCard({ ind, onArchive, onRefinar }) {
   const Icone = ICONES_GRAFICO_IA[ind.sugestao_ia?.tipo_grafico] || BarChart2;
   const sug = ind.sugestao_ia || {};
   const [detalhesAbertos, setDetalhesAbertos] = useState(false);
+  const [editando, setEditando] = useState(false);
+  const [instrucao, setInstrucao] = useState('');
+  const [refinando, setRefinando] = useState(false);
+  async function aplicarEdicao() {
+    const txt = instrucao.trim();
+    if (!txt || !onRefinar) return;
+    setRefinando(true);
+    try { await onRefinar(txt); setInstrucao(''); setEditando(false); toast.success('Indicador atualizado pela IA.'); }
+    catch (e) { toast.error(e?.message || 'Erro ao editar com IA'); }
+    setRefinando(false);
+  }
   // Semente única por indicador pra dados placeholder variarem visualmente
   const semente = (ind.id || '').split('').reduce((s, c) => s + c.charCodeAt(0), 0) % 100;
+  // Indicador percentual? (mostra "N%" no preview do medidor em vez de "N/100")
+  const ehPercentual = /%|percentu|taxa/i.test(
+    [sug.eixo_y, sug.nome, ind.nome, sug.formula, sug.descricao].filter(Boolean).join(' '),
+  );
 
   return (
     <Card className="border-[#00B39D]/30 bg-[#00B39D]/[0.02]">
@@ -500,6 +522,15 @@ function IndicadorCustomCard({ ind, onArchive }) {
           <div className="rounded-lg p-1.5 bg-[#00B39D]/10">
             <Icone className="h-4 w-4 text-[#00B39D]" />
           </div>
+          {onRefinar && (
+            <button
+              onClick={() => setEditando(o => !o)}
+              className="p-1.5 rounded hover:bg-[#00B39D]/10 text-[#00B39D] transition-colors"
+              title="Editar com IA"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button
             onClick={() => { if (confirm('Arquivar este indicador?')) onArchive(); }}
             className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
@@ -509,10 +540,37 @@ function IndicadorCustomCard({ ind, onArchive }) {
           </button>
         </div>
       </CardHeader>
+      {editando && (
+        <div className="px-6 pb-2 -mt-1">
+          <div className="rounded-lg border border-[#00B39D]/30 bg-[#00B39D]/[0.03] p-2 space-y-1.5">
+            <p className="text-[10px] font-medium text-[#00B39D] flex items-center gap-1">
+              <Sparkles className="h-3 w-3" /> Editar com IA
+            </p>
+            <textarea
+              value={instrucao}
+              onChange={(e) => setInstrucao(e.target.value)}
+              rows={2}
+              placeholder="O que quer mudar? Ex.: trocar pra gráfico de linha, comparar com 2024, mudar a fórmula pra só adultos…"
+              className="w-full text-xs rounded-md border border-border bg-background px-2 py-1.5 resize-y"
+            />
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => { setEditando(false); setInstrucao(''); }} disabled={refinando}
+                className="text-[11px] px-2 py-1 rounded text-muted-foreground hover:text-foreground">
+                Cancelar
+              </button>
+              <button onClick={aplicarEdicao} disabled={refinando || !instrucao.trim()}
+                className="text-[11px] px-2.5 py-1 rounded bg-[#00B39D] text-white font-medium disabled:opacity-50 inline-flex items-center gap-1">
+                {refinando ? <Loader2 className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+                {refinando ? 'Aplicando…' : 'Aplicar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <CardContent className="space-y-3">
         {/* Preview do gráfico baseado no tipo sugerido pela IA */}
         <div className="bg-card/60 rounded-lg border border-border/40 p-2">
-          <PreviewChartIA tipoGrafico={sug.tipo_grafico} semente={semente} height={160} />
+          <PreviewChartIA tipoGrafico={sug.tipo_grafico} semente={semente} height={160} percentual={ehPercentual} />
           <p className="text-[9px] text-center text-muted-foreground mt-1">
             Preview · dados de exemplo · implementar fórmula pra ativar com dados reais
           </p>

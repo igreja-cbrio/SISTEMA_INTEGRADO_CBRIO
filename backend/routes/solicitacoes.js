@@ -5,10 +5,18 @@ const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { enviarEmail } = require('../services/email');
 const painelCache = require('../services/painelCache');
 const mlTracker = require('../services/solicitacoesMlTracker');
+const solicFluxo = require('../services/solicFluxo');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const wpp = require('../services/whatsappService');
+const multer = require('multer');
+const crypto = require('crypto');
+const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
+const { lancarDespesaConciliando } = require('../services/finLancamento');
+const { aprenderClassificacao } = require('../services/financeiroClassificador');
+const { elegivelAlcada, LIMITE_ALCADA_PADRAO } = require('../utils/alcadaCompras');
+const uploadNfSolic = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 // Dispara o WhatsApp pro solicitante quando a solicitação muda de status
 // (template pedido_atualizado · 5 params). No-op se sem env / sem membro / sem
@@ -45,6 +53,372 @@ router.post('/cron/atualizar-ml', async (req, res) => {
 
 router.use(authenticate);
 
+// ── MOTOR DE FLUXO · visualização read-only (Fase 1) ──────────────────────
+// Declarado ANTES de qualquer `/:id` pra não ser capturado pela rota genérica.
+// Guard: admin/super-admin (config do sistema · o editor Fase 2 será só super-admin).
+router.get('/fluxos', async (req, res) => {
+  try {
+    if (!(await isAdminFallback(req)) && !['admin', 'diretor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Sem permissão para ver os fluxos.' });
+    }
+    res.json(await solicFluxo.listCategoriasComFluxo());
+  } catch (e) {
+    console.error('[SOLICITACOES] listar fluxos:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/fluxos/:categoria', async (req, res) => {
+  try {
+    if (!(await isAdminFallback(req)) && !['admin', 'diretor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Sem permissão para ver este fluxo.' });
+    }
+    const fluxo = await solicFluxo.getFluxoAtivo(req.params.categoria);
+    if (!fluxo) return res.status(404).json({ error: 'Nenhum fluxo configurado para esta categoria.' });
+    res.json(fluxo);
+  } catch (e) {
+    console.error('[SOLICITACOES] obter fluxo:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Contagem de solicitações EM ANDAMENTO por status (pra "encaixar" no fluxo · a UI
+// casa cada status com a etapa via status_map). Não cacheado (muda com o uso).
+router.get('/fluxos/:categoria/andamento', async (req, res) => {
+  try {
+    if (!(await isAdminFallback(req)) && !['admin', 'diretor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'Sem permissão.' });
+    }
+    const fluxo = await solicFluxo.getFluxoAtivo(req.params.categoria);
+    if (!fluxo) return res.json({ porStatus: {} });
+    const statuses = [...new Set((fluxo.etapas || []).map(e => e.status_map).filter(Boolean))];
+    const porStatus = {};
+    await Promise.all(statuses.map(async st => {
+      const { count } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('categoria', req.params.categoria).eq('status', st).is('deleted_at', null);
+      porStatus[st] = count || 0;
+    }));
+    res.json({ porStatus });
+  } catch (e) {
+    console.error('[SOLICITACOES] andamento fluxo:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Atribuir/remover RESPONSÁVEIS de uma etapa (Fase 2 · super-admin). Grava na
+// tabela que os guards leem e ESPELHA (aditivo) na área pra manter fila/notificação.
+router.put('/fluxos/etapas/:etapaId/responsaveis', async (req, res) => {
+  try {
+    if (!(await isAdminFallback(req))) {
+      return res.status(403).json({ error: 'Apenas administradores podem editar o fluxo.' });
+    }
+    const { profile_ids } = req.body || {};
+    if (!Array.isArray(profile_ids)) return res.status(400).json({ error: 'profile_ids deve ser array' });
+
+    const { data: etapa, error: eErr } = await supabase
+      .from('solic_fluxo_etapas')
+      .select('id, area, solic_fluxos(categoria)')
+      .eq('id', req.params.etapaId).is('deleted_at', null).maybeSingle();
+    if (eErr) throw eErr;
+    if (!etapa) return res.status(404).json({ error: 'Etapa não encontrada.' });
+
+    const ids = [...new Set(profile_ids.filter(Boolean))];
+    // Valida contra profiles (mesma lição do FK · não deixa quebrar por quem não logou).
+    if (ids.length) {
+      const { data: ex } = await supabase.from('profiles').select('id').in('id', ids);
+      const validos = new Set((ex || []).map(p => p.id));
+      const inval = ids.filter(i => !validos.has(i));
+      if (inval.length) {
+        return res.status(400).json({
+          error: 'Uma das pessoas ainda não tem conta no sistema (precisa fazer o primeiro login). Nada foi alterado.',
+          invalidos: inval,
+        });
+      }
+    }
+
+    // Substitui os responsáveis DA ETAPA.
+    const { error: delErr } = await supabase
+      .from('solic_fluxo_etapa_responsaveis').delete().eq('etapa_id', etapa.id);
+    if (delErr) throw delErr;
+    if (ids.length) {
+      const { error: insErr } = await supabase.from('solic_fluxo_etapa_responsaveis')
+        .insert(ids.map(pid => ({ etapa_id: etapa.id, profile_id: pid, criado_por: req.user.userId })));
+      if (insErr) throw insErr;
+    }
+
+    // Espelha na área (ADITIVO · só adiciona quem falta · nunca remove) pra o
+    // responsável já ver a fila e receber notificação. Best-effort (área pode não
+    // ser um valor válido do enum area_adm_resp).
+    if (etapa.area && ids.length) {
+      try {
+        const { data: jaResp } = await supabase
+          .from('area_solicitacoes_responsaveis').select('profile_id').eq('area', etapa.area);
+        const existentes = new Set((jaResp || []).map(r => r.profile_id));
+        const novos = ids.filter(i => !existentes.has(i));
+        if (novos.length) {
+          await supabase.from('area_solicitacoes_responsaveis')
+            .insert(novos.map(pid => ({ area: etapa.area, profile_id: pid, criado_por: req.user.userId })));
+        }
+      } catch (mirrErr) {
+        console.warn('[SOLICITACOES] espelho área falhou (best-effort):', mirrErr.message);
+      }
+    }
+
+    solicFluxo.bustCache(etapa.solic_fluxos?.categoria);
+    res.json({ ok: true, etapa_id: etapa.id, count: ids.length });
+  } catch (e) {
+    console.error('[SOLICITACOES] etapa responsaveis PUT:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── EDIÇÃO DE TOPOLOGIA DO FLUXO (Fase 2 · super-admin) ───────────────────────
+const FLUXO_TIPOS = ['inicio', 'etapa', 'aprovacao', 'execucao', 'entrega', 'fim'];
+const FLUXO_STATUS_VALIDOS = [
+  'aguardando_aprovacao_origem', 'em_cotacao', 'pendente', 'em_analise', 'aprovado',
+  'rejeitado', 'concluido', 'aguardando_aprovacao_financeira', 'em_atendimento',
+  'aguardando_entrega', 'avaliado', 'aguardando_ajuste', 'cancelado', 'aguardando_merito', 'sobrestada',
+];
+async function guardFluxoAdmin(req, res) {
+  if (!(await isAdminFallback(req))) { res.status(403).json({ error: 'Apenas administradores podem editar o fluxo.' }); return false; }
+  return true;
+}
+
+// Criar etapa no fluxo ATIVO da categoria
+router.post('/fluxos/:categoria/etapas', async (req, res) => {
+  try {
+    if (!(await guardFluxoAdmin(req, res))) return;
+    const b = req.body || {};
+    if (!b.label || !String(b.label).trim()) return res.status(400).json({ error: 'Informe o nome da etapa.' });
+    const tipo = FLUXO_TIPOS.includes(b.tipo) ? b.tipo : 'etapa';
+    if (b.status_map && !FLUXO_STATUS_VALIDOS.includes(b.status_map)) return res.status(400).json({ error: 'Status inválido.' });
+    const { data: fluxo } = await supabase.from('solic_fluxos')
+      .select('id').eq('categoria', req.params.categoria).eq('is_ativa', true).is('deleted_at', null).maybeSingle();
+    if (!fluxo) return res.status(404).json({ error: 'Sem fluxo ativo para esta categoria.' });
+    const chave = (String(b.chave || b.label).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'etapa') + '_' + Date.now().toString(36).slice(-4);
+    const { data: maxOrdem } = await supabase.from('solic_fluxo_etapas')
+      .select('ordem').eq('fluxo_id', fluxo.id).is('deleted_at', null).order('ordem', { ascending: false }).limit(1).maybeSingle();
+    const { data, error } = await supabase.from('solic_fluxo_etapas').insert({
+      fluxo_id: fluxo.id, chave, label: String(b.label).trim(), tipo,
+      ordem: (maxOrdem?.ordem ?? -1) + 1,
+      area: b.area || null, modulo: b.modulo || null,
+      status_map: b.status_map || null, sla_horas: b.sla_horas ?? null,
+      descricao: b.descricao || null,
+      pos_x: b.pos_x ?? 0, pos_y: b.pos_y ?? 0,
+    }).select('*').single();
+    if (error) throw error;
+    solicFluxo.bustCache(req.params.categoria);
+    res.status(201).json(data);
+  } catch (e) { console.error('[SOLICITACOES] criar etapa:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Editar etapa (campos + posição)
+router.patch('/fluxos/etapas/:id', async (req, res) => {
+  try {
+    if (!(await guardFluxoAdmin(req, res))) return;
+    const b = req.body || {};
+    if (b.tipo != null && !FLUXO_TIPOS.includes(b.tipo)) return res.status(400).json({ error: 'Tipo inválido.' });
+    if (b.status_map && !FLUXO_STATUS_VALIDOS.includes(b.status_map)) return res.status(400).json({ error: 'Status inválido.' });
+    const patch = { atualizado_em: new Date().toISOString() };
+    for (const k of ['label', 'tipo', 'area', 'modulo', 'status_map', 'sla_horas', 'descricao', 'pos_x', 'pos_y']) {
+      if (b[k] !== undefined) patch[k] = b[k] === '' ? null : b[k];
+    }
+    const { data, error } = await supabase.from('solic_fluxo_etapas')
+      .update(patch).eq('id', req.params.id).is('deleted_at', null)
+      .select('*, solic_fluxos(categoria)').single();
+    if (error) throw error;
+    solicFluxo.bustCache(data?.solic_fluxos?.categoria);
+    res.json(data);
+  } catch (e) { console.error('[SOLICITACOES] editar etapa:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Remover etapa (soft) + suas transições
+router.delete('/fluxos/etapas/:id', async (req, res) => {
+  try {
+    if (!(await guardFluxoAdmin(req, res))) return;
+    const now = new Date().toISOString();
+    const { data: etapa } = await supabase.from('solic_fluxo_etapas')
+      .select('id, solic_fluxos(categoria)').eq('id', req.params.id).maybeSingle();
+    await supabase.from('solic_fluxo_etapas').update({ deleted_at: now }).eq('id', req.params.id);
+    await supabase.from('solic_fluxo_transicoes').update({ deleted_at: now })
+      .or(`de_etapa_id.eq.${req.params.id},para_etapa_id.eq.${req.params.id}`);
+    solicFluxo.bustCache(etapa?.solic_fluxos?.categoria);
+    res.json({ ok: true });
+  } catch (e) { console.error('[SOLICITACOES] remover etapa:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Criar transição (arrastar-pra-conectar)
+router.post('/fluxos/transicoes', async (req, res) => {
+  try {
+    if (!(await guardFluxoAdmin(req, res))) return;
+    const { de_etapa_id, para_etapa_id, verbo, label, condicao_tipo, condicao_valor } = req.body || {};
+    if (!de_etapa_id || !para_etapa_id) return res.status(400).json({ error: 'Origem e destino são obrigatórios.' });
+    if (de_etapa_id === para_etapa_id) return res.status(400).json({ error: 'Uma etapa não liga nela mesma.' });
+    const { data: de } = await supabase.from('solic_fluxo_etapas')
+      .select('fluxo_id, solic_fluxos(categoria)').eq('id', de_etapa_id).is('deleted_at', null).maybeSingle();
+    const { data: para } = await supabase.from('solic_fluxo_etapas').select('fluxo_id').eq('id', para_etapa_id).is('deleted_at', null).maybeSingle();
+    if (!de || !para) return res.status(404).json({ error: 'Etapa não encontrada.' });
+    if (de.fluxo_id !== para.fluxo_id) return res.status(400).json({ error: 'As etapas são de fluxos diferentes.' });
+    const { data, error } = await supabase.from('solic_fluxo_transicoes').insert({
+      fluxo_id: de.fluxo_id, de_etapa_id, para_etapa_id,
+      verbo: verbo || null, label: label || null,
+      condicao_tipo: condicao_tipo || null, condicao_valor: condicao_valor || null,
+    }).select('*').single();
+    if (error) throw error;
+    solicFluxo.bustCache(de.solic_fluxos?.categoria);
+    res.status(201).json(data);
+  } catch (e) { console.error('[SOLICITACOES] criar transicao:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Remover transição (soft)
+router.delete('/fluxos/transicoes/:id', async (req, res) => {
+  try {
+    if (!(await guardFluxoAdmin(req, res))) return;
+    const { data: t } = await supabase.from('solic_fluxo_transicoes')
+      .select('fluxo_id, solic_fluxos(categoria)').eq('id', req.params.id).maybeSingle();
+    await supabase.from('solic_fluxo_transicoes').update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    solicFluxo.bustCache(t?.solic_fluxos?.categoria);
+    res.json({ ok: true });
+  } catch (e) { console.error('[SOLICITACOES] remover transicao:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// ── LOOP FINANCEIRO · classificação + NF (Fase 1 · não escreve no razão) ──────
+// Listas de plano de contas (despesa · folha) + centros de custo pra o Amaury
+// classificar na cotação (opcional ?area= pré-filtra centros por area_slug).
+router.get('/aux/classificacao', async (req, res) => {
+  try {
+    let centrosQ = supabase.from('fin_centros_custo').select('id, codigo, nome, area_slug')
+      .eq('ativo', true).eq('aceita_lancamento', true).order('codigo');
+    if (req.query.area) centrosQ = centrosQ.eq('area_slug', String(req.query.area));
+    const [planos, centros, contas] = await Promise.all([
+      supabase.from('fin_plano_contas').select('id, codigo, nome')
+        .eq('tipo', 'despesa').eq('ativo', true).eq('aceita_lancamento', true).order('codigo'),
+      centrosQ,
+      supabase.from('fin_contas').select('id, nome, banco').eq('ativa', true).order('nome'),
+    ]);
+    if (planos.error) throw planos.error;
+    res.json({ planos: planos.data || [], centros: centros.data || [], contas: contas.data || [] });
+  } catch (e) { console.error('[SOLICITACOES] aux classificacao:', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// LOOP FINANCEIRO Fase 2 · lançar a despesa da compra e conciliar com o extrato.
+// Só compra/serviço já aprovada no financeiro, ainda sem transação. Trava anti-
+// duplicação (fin_transacao_id). Reusa o helper compartilhado com o fluxo de NF.
+router.post('/:id/lancar-financeiro', async (req, res) => {
+  try {
+    const { conta_id, plano_contas_id, centro_custo_id, data_pagamento, observacoes } = req.body || {};
+    const { data: sol } = await supabase.from('solicitacoes')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (!(await podeGerirSolicitacao(req, sol))) return res.status(403).json({ error: 'Você não pode lançar esta compra.' });
+    if (!['compras', 'servico'].includes(sol.categoria)) return res.status(400).json({ error: 'Só compra/serviço gera lançamento.' });
+    if (!sol.aprovado_financeiro_em) return res.status(400).json({ error: 'A compra ainda não foi aprovada no financeiro.' });
+    if (sol.fin_transacao_id) return res.status(409).json({ error: 'Esta compra já foi lançada no financeiro.' });
+
+    const finalPlano = plano_contas_id || sol.plano_contas_id;
+    if (!finalPlano) return res.status(400).json({ error: 'Informe o plano de contas antes de lançar.' });
+    const { data: plano } = await supabase.from('fin_plano_contas')
+      .select('tipo, aceita_lancamento, ativo').eq('id', finalPlano).maybeSingle();
+    if (!plano || plano.tipo !== 'despesa' || !plano.aceita_lancamento || plano.ativo === false) {
+      return res.status(400).json({ error: 'Plano de contas inválido (conta de despesa que aceita lançamento).' });
+    }
+    const finalCentro = centro_custo_id !== undefined ? (centro_custo_id || null) : sol.centro_custo_id;
+    const valor = Number(sol.valor_cotado ?? sol.valor_estimado) || 0;
+    if (!valor) return res.status(400).json({ error: 'Compra sem valor cotado.' });
+
+    const ex = sol.nota_fiscal_extracao || {};
+    const dataBase = ex.data_emissao || new Date().toISOString().slice(0, 10);
+
+    const r = await lancarDespesaConciliando({
+      descricao: sol.titulo || `Compra ${String(sol.id).slice(0, 8)}`,
+      valor, dataBase, dataPagamento: data_pagamento,
+      referencia: ex.numero ? `NF ${ex.numero}` : `Solicitação ${String(sol.id).slice(0, 8)}`,
+      observacoes,
+      plano_contas_id: finalPlano, centro_custo_id: finalCentro, conta_id,
+      classificacao_origem: 'manual', classificacao_confianca: 1.0,
+      createdBy: req.user.userId,
+      extras: { solicitacao_id: sol.id },
+    });
+    if (r.erro) return res.status(400).json({ error: r.erro, precisaConta: !!r.precisaConta });
+
+    // Trava de idempotência: grava o elo só se ainda estava null (anti-corrida).
+    const { data: upd } = await supabase.from('solicitacoes')
+      .update({
+        fin_transacao_id: r.transacao.id,
+        fin_vinculo_status: r.conciliada ? 'conciliado' : 'lancado',
+        plano_contas_id: finalPlano, centro_custo_id: finalCentro,
+      })
+      .eq('id', sol.id).is('fin_transacao_id', null).select('id').maybeSingle();
+    if (!upd) {
+      await supabase.from('fin_transacoes').update({ status: 'cancelado' }).eq('id', r.transacao.id);
+      return res.status(409).json({ error: 'Esta compra já foi lançada por outra pessoa.' });
+    }
+
+    if (ex.emitente_cnpj) {
+      aprenderClassificacao({ documento: ex.emitente_cnpj, nome: ex.emitente_nome, plano_contas_id: finalPlano, centro_custo_id: finalCentro })
+        .catch(e => console.error('[SOLICITACOES] aprender lançar:', e.message));
+    }
+    notificar({
+      modulo: 'financeiro', tipo: 'solicitacao_status',
+      titulo: `Compra lançada no financeiro: ${sol.titulo}`,
+      mensagem: `${r.conciliada ? 'Conciliada com o extrato' : 'Lançada como pendente'} · ${valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}.`,
+      link: '/solicitacoes', severidade: 'info', chaveDedup: `solic_lancada_${sol.id}`,
+      extraTargetIds: [sol.solicitante_id].filter(Boolean),
+    }).catch(() => {});
+
+    res.json({ transacao: r.transacao, conciliada: r.conciliada });
+  } catch (e) {
+    console.error('[SOLICITACOES] lancar-financeiro:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Escanear a nota fiscal do pedido: sobe o arquivo + IA extrai + sugere plano/
+// centro/fornecedor/valor. NÃO cria transação (só anexa a NF e devolve sugestão
+// pra o Amaury confirmar). Guard = quem pode cotar.
+router.post('/:id/nota-fiscal/escanear', uploadNfSolic.single('arquivo'), async (req, res) => {
+  try {
+    const { data: sol } = await supabase.from('solicitacoes')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (!(await podeCotar(req, sol))) return res.status(403).json({ error: 'Apenas a logística (ou admin) pode anexar a nota.' });
+    if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
+
+    const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' }[req.file.mimetype] || 'bin';
+    const path = `notas-fiscais/${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('solicitacoes')
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
+    if (upErr) return res.status(500).json({ error: `Erro ao salvar o arquivo: ${upErr.message}` });
+    const url = supabase.storage.from('solicitacoes').getPublicUrl(path).data.publicUrl;
+
+    let extraido = null, raw = null;
+    try { ({ extraido, raw } = await extrairNotaFiscal(req.file.buffer, req.file.mimetype)); }
+    catch (e) { console.error('[SOLICITACOES] NF extração:', e.message); }
+
+    let sugestao = null;
+    if (extraido?.valor_total) {
+      sugestao = await sugerirCategoria({
+        cnpj: extraido.emitente_cnpj, nome: extraido.emitente_nome,
+        valor: extraido.valor_total, descricao: extraido.descricao_resumo,
+      }).catch(() => null);
+    }
+
+    // Anexa a NF ao pedido já (arquivo + extração saneada). Plano/centro só são
+    // gravados quando o Amaury confirmar (no enviar-cotacoes-financeiro).
+    await supabase.from('solicitacoes')
+      .update({ nota_fiscal_url: url, nota_fiscal_extracao: extraido || null })
+      .eq('id', sol.id);
+
+    res.json({ url, extracao_ok: !!extraido, extracao: extraido, sugestao });
+  } catch (e) {
+    console.error('[SOLICITACOES] escanear NF:', e.message);
+    res.status(500).json({ error: 'Erro ao escanear a nota fiscal.' });
+  }
+});
+
 // Bust do cache do painel após mutacao (afeta matriz adm/criativo)
 router.use((req, res, next) => {
   if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
@@ -69,7 +443,7 @@ const CATEGORIA_MODULO = {
   compras: 'logistica',
   servico: 'logistica',     // contratação de fornecedor · logística negocia (Amaury)
   reembolso: 'financeiro',
-  pagamento: 'financeiro',  // pagar boleto/NF de fornecedor · contas a pagar (Yago)
+  pagamento: 'financeiro',  // pagar boleto/NF de fornecedor · contas a pagar
   reserva_espaco: 'administrativo',
   espaco: 'administrativo', // legado
   infraestrutura: 'administrativo',
@@ -97,6 +471,31 @@ const CATEGORIA_TO_AREA_RESP = {
   marketing:       { area: 'marketing',         subcategoria: 'default' },
   producao:        { area: 'producao',          subcategoria: 'default' },
   outro:           { area: null,                subcategoria: 'default' },
+};
+
+// A fila financeira fica no módulo Financeiro, não na lista operacional geral.
+// O parâmetro da solicitação permite abrir diretamente o item que acabou de sair
+// da cotação, sem expor a fila de logística ao aprovador financeiro.
+function linkFilaFinanceira(solicitacaoId) {
+  return `/admin/financeiro?aba=solicitacoes&solicitacao=${encodeURIComponent(solicitacaoId)}`;
+}
+
+// Categorias do setor CRIATIVO (pedido do Matheus · 2026-07-20): a aprovação de
+// ORIGEM é do diretor do Criativo (Pedro Paulo), por CATEGORIA — não pelo setor
+// de quem pede (pula Arthur Serpa/diretor do setor). Também pula o 2º carimbo de
+// Gestão (Eduardo/Juliana) e o julgamento de mérito. COM custo (valor>0) o pedido
+// vira uma compra cotada pela logística (Amaury) → financeiro; sem custo
+// segue direto pra execução do criativo.
+const CRIATIVO_CATEGORIAS = ['marketing', 'producao'];
+
+// Aprovação de ORIGEM por categoria · override do roteamento por setor.
+// Hospitalidade (recepção, café, hospedagem de convidados) é aprovada E
+// atendida pelo Amaury (operações) — decisão do Matheus (2026-07-21). Sem esse
+// override, pedidos de hospitalidade de quem não tem setor resolvido caíam em
+// `triagem` e apareciam pra diretoria/super-admin aprovar. Também pula o 2º
+// carimbo de Gestão (ver bloco de gestaoStatus): Amaury aprova e atende.
+const CATEGORIA_ORIGEM_APROVADOR = {
+  hospitalidade: '8e4ece03-b306-4019-9ece-55b7ec1088cb', // Amaury Araújo · amaury.araujo@cbrio.org
 };
 
 // Map módulo → categorias (for granular permission filtering)
@@ -246,6 +645,14 @@ async function coaprovadorIdsParaDiretor(diretorId) {
 // Presidente). Planejado (checkbox do solicitante) pula tudo.
 const SETOR_GESTAO = 'Gestao';
 
+// Compra de até R$ 1.000 vai DIRETO pra cotação (decisão do Matheus · 2026-07-15):
+// dispensa aprovação de origem, carimbo de Gestão e mérito, planejada ou não.
+// O controle acontece DEPOIS, sobre o valor REAL: a logística (Amaury) cota e o
+// o financeiro aprova sobre o valor cotado (registrar-cotacao/enviar-cotacoes).
+// Valor nulo/zero NÃO é elegível (fail-closed · segue o fluxo normal).
+const COMPRA_COTACAO_DIRETA_LIMITE = 1000;
+const COMPRA_COTACAO_DIRETA_MOTIVO = 'Compra de até R$ 1.000 · direto para cotação';
+
 // Override do 2º portão POR CATEGORIA (migration 20260708180000). Ex.: TI →
 // Diego + Matheus (substitui a Diretoria de Gestão). Best-effort: tabela
 // ausente/categoria sem linha → null (cai no padrão de Gestão).
@@ -335,11 +742,14 @@ async function aprovadoresMeritoIds() {
 
 // Próximo status quando os portões liberam (carimbos completos e/ou mérito
 // aprovado) · mesma régua histórica do aprovar-origem:
-//   compras/servico → em_cotacao (logística cota antes do Yago)
+//   compras/servico → em_cotacao (logística cota antes do financeiro)
 //   precisa financeira → aguardando_aprovacao_financeira
 //   senão → pendente (fila da área alvo)
 function proximoStatusPosAprovacao(sol) {
   if (['compras', 'servico'].includes(sol.categoria)) return 'em_cotacao';
+  // Criativo COM custo → cotação da logística (Amaury) antes do financeiro,
+  // igual às compras (área já roteada pra logistica_compras na criação).
+  if (CRIATIVO_CATEGORIAS.includes(sol.categoria) && sol.precisa_aprovacao_financeira && !sol.aprovado_financeiro_em) return 'em_cotacao';
   if (sol.precisa_aprovacao_financeira && !sol.aprovado_financeiro_em) return 'aguardando_aprovacao_financeira';
   return 'pendente';
 }
@@ -347,10 +757,16 @@ function proximoStatusPosAprovacao(sol) {
 // Não-planejado com custo → julgamento de mérito. Só no fluxo novo
 // (eh_planejado=false) · linha legada (NULL) segue o fluxo antigo.
 function precisaMerito(sol) {
-  return sol.eh_planejado === false
-    && sol.merito_status == null
-    && !!sol.precisa_aprovacao_financeira
-    && !sol.aprovado_financeiro_em;
+  // Julgamento de mérito (Pastor Presidente) · só em COMPRAS, por valor + planejado
+  // (fluxo definido pelo Matheus · 2026-07-22):
+  //   planejado      → mérito quando o pedido passa de R$ 5.000
+  //   não planejado  → mérito quando o pedido passa de R$ 1.000
+  // Faixa pelo valor ESTIMADO (a aprovação é antes da cotação). Outras categorias
+  // seguem sem mérito por ora.
+  if (sol.categoria !== 'compras') return false;
+  if (sol.merito_status != null) return false; // já decidido
+  const valor = Number(sol.valor_estimado) || 0;
+  return sol.eh_planejado === true ? valor > 5000 : valor > 1000;
 }
 
 // Evento explícito na timeline com o ATOR correto (o trigger genérico registra
@@ -483,6 +899,9 @@ router.get('/', async (req, res) => {
       for (const d of data) {
         const papeis = [];
         if (d.aprovacao_origem_status === 'pendente' && aprovarIds.includes(d.aprovacao_origem_diretor_id)) papeis.push('origem');
+        // Triagem (setor não resolvido) é dever do super-admin · sem isto o badge
+        // contava a triagem mas a lista a escondia (badge-fantasma · 2026-07-20).
+        if (isSuper && d.aprovacao_origem_status === 'triagem') papeis.push('origem');
         if (d.aprovacao_gestao_status === 'pendente' && ['aprovada', 'dispensada'].includes(d.aprovacao_origem_status) && aprovaGestaoDe(d.categoria)) papeis.push('gestao');
         if (d.status === 'aguardando_merito' && ehMerito) papeis.push('merito');
         papeisPorId[d.id] = papeis;
@@ -511,10 +930,16 @@ router.get('/', async (req, res) => {
         // "Minhas" = as que EU criei + as COMPARTILHADAS com a minha área
         // (compartilhar_area=true e area_cliente ∈ minhas áreas). area_cliente é
         // slug minúsculo; usuario_areas.nome vem em CAIXA → normaliza p/ minúsculo.
-        const areasView = [...new Set([
+        let areasView = [...new Set([
           ...((granular?.areas) || []).map(a => String(a).toLowerCase()),
           ...((req.user.kpi_areas) || []).map(a => String(a).toLowerCase()),
         ])].filter(a => /^[a-z0-9_]+$/.test(a));
+        // A área 'financeiro' NÃO entra no compartilhamento da aba "Minhas".
+        // O pessoal do financeiro (Alberto aprova, Cristina paga) recebia aqui
+        // pedidos de OUTRAS pessoas só porque batem a área do cadastro (ex.: um
+        // backdrop com area_cliente=financeiro) — puro ruído. Em "Minhas", cada um
+        // vê só o que ELE criou; o trabalho do financeiro é na fila do financeiro.
+        areasView = areasView.filter(a => a !== 'financeiro');
         if (areasView.length) {
           q = q.or(`solicitante_id.eq.${userId},and(compartilhar_area.eq.true,area_cliente.in.(${areasView.join(',')}))`);
         } else {
@@ -533,9 +958,39 @@ router.get('/', async (req, res) => {
           .eq('profile_id', userId);
         const responsavelAreas = new Set((respRows || []).map(r => r.area));
 
-        const orParts = [`solicitante_id.eq.${encodeURIComponent(userId)}`];
+        // Quem tem escopo financeiro individual decide pela fila financeira. Não
+        // mistura reembolsos/pagamentos da área geral com as Compras autorizadas.
+        const escopoFinanceiro = await obterCategoriasFinanceirasAutorizadas(userId);
+        if (escopoFinanceiro.disponivel && escopoFinanceiro.categorias.size > 0) {
+          responsavelAreas.delete('financeiro');
+        }
+
+        // Vejo o que criei, o que está ATRIBUÍDO a mim (responsavel_id · ex.:
+        // pagamento não-cartão que a aprovação roteou pra Cristina executar) e o
+        // que é da minha área responsável.
+        const orParts = [
+          `solicitante_id.eq.${encodeURIComponent(userId)}`,
+          `responsavel_id.eq.${encodeURIComponent(userId)}`,
+        ];
         if (responsavelAreas.size > 0) {
           orParts.push(`area_responsavel.in.(${[...responsavelAreas].join(',')})`);
+        }
+
+        // Líder de área (diretor / boost ≥4) enxerga TODAS as demandas da área
+        // dele por area_cliente (quem PEDIU), não só o que ele atende. Ex.: Pedro
+        // Paulo (diretor do Criativo · boost marketing) vê tudo de
+        // area_cliente=marketing — inclusive o que virou compra (area_cliente
+        // segue marketing). Escopado: colaborador comum da área NÃO ganha isso.
+        const perms = granular?.modulePerms || {};
+        const ehDiretorCargo = /^diretor/.test(String(granular?.cargoSlug || ''));
+        const minhasAreas = [...new Set([
+          ...((granular?.areas) || []).map(a => String(a).toLowerCase()),
+          ...((req.user.kpi_areas) || []).map(a => String(a).toLowerCase()),
+        ])].filter(a => /^[a-z0-9_]+$/.test(a));
+        const areasLideradas = minhasAreas.filter(a =>
+          ehDiretorCargo || (perms[a] && (perms[a].leitura >= 4 || perms[a].escrita >= 4)));
+        if (areasLideradas.length) {
+          orParts.push(`area_cliente.in.(${areasLideradas.join(',')})`);
         }
         q = q.or(orParts.join(','));
       }
@@ -660,8 +1115,32 @@ router.get('/', async (req, res) => {
       return [];
     };
 
+    // ── Alçada · "esta linha eu mesmo posso aprovar?" ────────────────────────
+    // ⚠️ DUAS consultas pra página inteira (as áreas de quem pede + a tabela de
+    // limites, que tem 6 linhas), nunca uma por linha. Best-effort: falha =
+    // flag false, e a tela só deixa de oferecer o atalho.
+    // ⚠️ É DICA de UI, não autorização — quem decide é o servidor no POST.
+    let alcadaFlag = () => false;
+    try {
+      const [{ data: minhasAreas }, { data: limites }] = await Promise.all([
+        supabase.from('area_solicitacoes_responsaveis').select('area').eq('profile_id', req.user.userId),
+        supabase.from('area_alcadas').select('area_cliente, limite_aprovacao'),
+      ]);
+      const areas = new Set((minhasAreas || []).map(r => r.area));
+      const limitePorArea = Object.fromEntries(
+        (limites || []).map(l => [l.area_cliente, Number(l.limite_aprovacao)]).filter(([, v]) => Number.isFinite(v))
+      );
+      if (areas.size) {
+        alcadaFlag = (d) => areas.has(d.area_responsavel)
+          && elegivelAlcada(d, limitePorArea[d.area_cliente] ?? LIMITE_ALCADA_PADRAO).ok;
+      }
+    } catch (e) {
+      console.warn('[SOLICITACOES] flag de alçada indisponível:', e.message);
+    }
+
     const enriched = (data || []).map(d => ({
       ...d,
+      pode_aprovar_alcada: alcadaFlag(d),
       solicitante: profileMap[d.solicitante_id] || null,
       responsavel: profileMap[d.responsavel_id] || null,
       aprovacao_origem_diretor: profileMap[d.aprovacao_origem_diretor_id] || null,
@@ -777,19 +1256,13 @@ router.get('/meu-papel', async (req, res) => {
     // Super-admin? Define antes do contador · ele ve/aprova a fila inteira.
     const isSuper = await isAdminFallback(req);
 
-    // Contador de pendentes na fila de aprovacao.
-    // · super-admin: TODOS os pendentes (fallback · mesma fila da aba Aprovar).
-    // · diretor/co-aprovador: só os seus setores (diretor + co-aprovados).
+    // Contador de pendentes na fila de aprovacao · DEVE bater com a lista da aba
+    // (bug 2026-07-20: super-admin contava a fila INTEIRA no badge, mas a lista
+    // só mostra o que é DELE → "5 pra aprovar" com a lista vazia). Agora conta só
+    // o que o usuário realmente aprova: origem onde ele é o diretor/co-aprovador.
+    const aprovarIds = await diretorIdsQuePodeAprovar(userId);
     let pendentesOrigem = 0;
-    if (isSuper) {
-      const { count } = await supabase
-        .from('solicitacoes')
-        .select('id', { count: 'exact', head: true })
-        .eq('aprovacao_origem_status', 'pendente')
-        .is('deleted_at', null);
-      pendentesOrigem = count || 0;
-    } else if (ehAprovadorOrigem) {
-      const aprovarIds = await diretorIdsQuePodeAprovar(userId);
+    if (aprovarIds.length) {
       const { count } = await supabase
         .from('solicitacoes')
         .select('id', { count: 'exact', head: true })
@@ -823,8 +1296,10 @@ router.get('/meu-papel', async (req, res) => {
     const meritoIds = await aprovadoresMeritoIds();
     const ehAprovadorMerito = meritoIds.includes(userId);
 
+    // Gestão/mérito: conta só o que o usuário aprova de fato (não a fila inteira
+    // por ser super-admin) — mesma régua da lista (aprovaGestaoDe / ehMerito).
     let pendentesGestao = 0;
-    if (ehAprovadorGestao || isSuper) {
+    if (ehAprovadorGestao) {
       const { data: gp } = await supabase
         .from('solicitacoes')
         .select('categoria')
@@ -832,10 +1307,10 @@ router.get('/meu-papel', async (req, res) => {
         .in('aprovacao_origem_status', ['aprovada', 'dispensada'])
         .is('deleted_at', null)
         .limit(1000);
-      pendentesGestao = (gp || []).filter(r => isSuper || aprovaGestaoDeMP(r.categoria)).length;
+      pendentesGestao = (gp || []).filter(r => aprovaGestaoDeMP(r.categoria)).length;
     }
     let pendentesMerito = 0;
-    if (ehAprovadorMerito || isSuper) {
+    if (ehAprovadorMerito) {
       const { count } = await supabase
         .from('solicitacoes')
         .select('id', { count: 'exact', head: true })
@@ -866,8 +1341,29 @@ router.get('/meu-papel', async (req, res) => {
       .eq('profile_id', userId);
     if (error) throw error;
     const areas = (data || []).map(r => r.area);
+
+    // Executor individual (ex.: Cristina · pagamentos não-cartão que a aprovação
+    // do financeiro roteia pra ela por responsavel_id) NÃO é responsável de área —
+    // senão veria a fila inteira do financeiro (em cotação etc.). Mas precisa da
+    // aba "Para Atender" pra receber o que é dela. Dois gatilhos:
+    // (1) É a executora financeira designada (mesma constante que a aprovação usa
+    //     pra rotear) → aba sempre visível, mesmo com a fila vazia (é o posto dela).
+    // (2) Regra genérica auto-mantida: tem QUALQUER item atribuído via
+    //     responsavel_id → atende=true (cobre outros executores individuais).
+    // A lista da view 'atender' já filtra por responsavel_id, então ela só vê os
+    // pagamentos que de fato passaram pela aprovação.
+    let temAtribuidas = EXECUTOR_FINANCEIRO_ID && userId === EXECUTOR_FINANCEIRO_ID;
+    if (!temAtribuidas && areas.length === 0) {
+      const { count: atribCount } = await supabase
+        .from('solicitacoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('responsavel_id', userId)
+        .is('deleted_at', null);
+      temAtribuidas = (atribCount || 0) > 0;
+    }
+
     res.json({
-      atende: areas.length > 0,
+      atende: areas.length > 0 || temAtribuidas,
       admin: false,
       areas,
       eh_diretor_origem: ehAprovadorOrigem,
@@ -970,10 +1466,18 @@ router.post('/', async (req, res) => {
       .slice(0, 5)
       .map(u => u.trim().slice(0, 2000));
 
+    // Criativo (marketing/producao): origem aprova o diretor do Criativo (Pedro
+    // Paulo) por CATEGORIA. COM custo (valor>0) vira compra cotada pela logística
+    // (Amaury) → financeiro; SEM custo segue pra execução do criativo.
+    const ehCriativo = CRIATIVO_CATEGORIAS.includes(categoria);
+    const criativoComCusto = ehCriativo && Number(valorEstimadoFinal) > 0;
+
     // Auto-mapeia area_responsavel + subcategoria
     const mapa = CATEGORIA_TO_AREA_RESP[categoria] || { area: null, subcategoria: 'default' };
-    const finalAreaResp = area_responsavel || mapa.area;
-    const finalSub = subcategoria || mapa.subcategoria;
+    // Criativo COM custo entra na fila da logística (Amaury cota) — a "Atender"
+    // filtra por area_responsavel, então precisa ser logistica_compras.
+    const finalAreaResp = area_responsavel || (criativoComCusto ? 'logistica_compras' : mapa.area);
+    const finalSub = subcategoria || (criativoComCusto ? 'default' : mapa.subcategoria);
 
     // Área do SOLICITANTE (dimensão de KPI) · NÃO vem mais de seletor no form
     // (2026-06-01). Deriva de quem preenche · ignora qualquer area_cliente do body.
@@ -1008,27 +1512,39 @@ router.post('/', async (req, res) => {
     // caso, o trigger só dispensa. O trigger continua de rede de segurança (só
     // age quando ninguém setou aprovacao_origem_status · ex.: RPC falhou).
     try {
+      // ⚠️ `p_categoria` é o que dispensa serviço/manutenção do diretor de
+      // origem (decisão do Matheus · 05/08: conserto vai direto pro Amaury). A
+      // lista fica em `fn_solicitacoes_categoria_dispensa_origem`, fonte única
+      // compartilhada com o trigger — não repetir a régua aqui em JS, senão o
+      // POST e a rede de segurança podem discordar e a solicitação sai da fila
+      // de alguém sem ninguém notar.
       const { data: r, error: rErr } = await supabase
-        .rpc('fn_solicitacoes_rotear_origem', { p_solicitante_id: userId, p_setor_hint: setorHint });
+        .rpc('fn_solicitacoes_rotear_origem', {
+          p_solicitante_id: userId, p_setor_hint: setorHint, p_categoria: categoria,
+        });
       if (rErr) throw rErr;
       rota = r;
     } catch (rerr) {
       console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
     }
 
-    // Compras NÃO passam pela aprovação de origem do diretor do Criativo (Pedro
-    // Menezes) — decisão do Matheus (2026-07-13). Se a origem cairia nele,
-    // dispensa (compras já têm cotação + aprovação financeira depois). Vale só
-    // pro Criativo; os outros setores seguem aprovando suas compras normalmente.
-    if (categoria === 'compras' && rota?.diretor_id) {
-      try {
-        const { data: criativo } = await supabase.from('setor_diretor')
-          .select('diretor_id').eq('setor', 'Criativo').maybeSingle();
-        if (criativo?.diretor_id && rota.diretor_id === criativo.diretor_id) {
-          rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
-            motivo: 'Compras não passam pelo diretor do Criativo' };
-        }
-      } catch (e) { console.warn('[SOLICITAÇÕES] exceção compras/Criativo:', e.message); }
+    // ── COMPRAS · fluxo por valor + planejado (2026-07-22, Matheus) ───────────
+    //   Planejado ≤ R$ 1.000            → direto pra cotação (sem diretor/presidente)
+    //   Planejado R$ 1.000–5.000        → diretor da área aprova
+    //   Planejado > R$ 5.000            → diretor da área + Pastor Presidente
+    //   Não planejado ≤ R$ 1.000        → diretor da área aprova
+    //   Não planejado > R$ 1.000        → diretor da área + Pastor Presidente
+    // A origem é o DIRETOR DA ÁREA (rota do RPC · já vem 'dispensada' quando o
+    // solicitante é diretor/diretoria/super). O mérito (presidente) é decidido
+    // DEPOIS, por valor (precisaMerito). Gestão (2º carimbo) segue dispensada.
+    // Depois de tudo: cotação (Amaury) → financeiro (Alberto).
+    if (categoria === 'compras') {
+      const valorCompra = Number(valorEstimadoFinal) || 0;
+      if (planejado && valorCompra <= 1000) {
+        rota = { diretor_id: null, aprovacao_status: 'dispensada', status: 'pendente',
+          motivo: 'Compra planejada até R$ 1.000 · direto para cotação' };
+      }
+      // demais casos: mantém a rota do RPC (diretor da área aprova).
     }
 
     // Reserva de espaço vai DIRETO pro Amaury (coordenador de operações) — sem
@@ -1038,7 +1554,51 @@ router.post('/', async (req, res) => {
         motivo: 'Reserva de espaço vai direto para operações (Amaury)' };
     }
 
-    if (!planejado && categoria !== 'reserva_espaco') {
+    // Origem por categoria (ex.: hospitalidade → Amaury aprova E atende): a
+    // aprovação de origem vai pro responsável da categoria, não pro diretor do
+    // setor de quem pede — assim nunca cai em `triagem` (fila da diretoria).
+    if (CATEGORIA_ORIGEM_APROVADOR[categoria]) {
+      rota = { diretor_id: CATEGORIA_ORIGEM_APROVADOR[categoria], aprovacao_status: 'pendente',
+        status: 'aguardando_aprovacao_origem',
+        motivo: 'Origem aprovada pelo responsável da categoria' };
+    }
+
+    // (Compras já roteadas no bloco unificado acima · o status 'pendente'
+    // dispensado vira 'em_cotacao' no trigger de SLA · migration 20260616160000.)
+
+    // Criativo: a aprovação de ORIGEM é do diretor do Criativo (Pedro Paulo), por
+    // CATEGORIA — venha de quem vier (pula o diretor do setor de quem pede, ex.:
+    // Arthur Serpa). Se a origem já veio dispensada (solicitante é diretor/
+    // diretoria/super-admin), mantém. ⚠️ Pedro Paulo NÃO vira aprovador geral:
+    // esta regra vale SÓ pra criativo (marketing/producao).
+    if (ehCriativo && rota?.aprovacao_status === 'pendente') {
+      try {
+        const { data: cri } = await supabase.from('setor_diretor')
+          .select('diretor_id').eq('setor', 'Criativo').maybeSingle();
+        if (cri?.diretor_id) {
+          rota = { diretor_id: cri.diretor_id, aprovacao_status: 'pendente',
+            status: 'aguardando_aprovacao_origem',
+            motivo: 'Criativo · aprovação de origem com o diretor do Criativo (por categoria)' };
+        }
+      } catch (e) { console.warn('[SOLICITAÇÕES] exceção origem Criativo:', e.message); }
+    }
+
+    if (categoria === 'compras' && !planejado) {
+      // Compras NÃO passam pelo 2º carimbo de Gestão (2026-07-22): vão direto pra
+      // cotação; a origem, quando aplicável, é Pedro (Criativo) ou Arthur (>R$1k).
+      gestaoStatus = 'dispensada';
+      gestaoMotivo = 'Compras não passam pela Gestão · origem (quando aplicável) + cotação + financeiro';
+    } else if (ehCriativo && !planejado) {
+      // Criativo NÃO passa pelo 2º carimbo de Gestão (Eduardo/Juliana): o
+      // controle é a aprovação de origem do Criativo + (com custo) financeiro.
+      gestaoStatus = 'dispensada';
+      gestaoMotivo = 'Criativo não passa pela Gestão · origem do Criativo + financeiro';
+    } else if (CATEGORIA_ORIGEM_APROVADOR[categoria] && !planejado) {
+      // Hospitalidade: o responsável da categoria (Amaury) aprova a origem E
+      // atende — sem 2º carimbo de Gestão (decisão do Matheus · 2026-07-21).
+      gestaoStatus = 'dispensada';
+      gestaoMotivo = 'Origem aprovada pelo responsável da categoria (Amaury) · sem carimbo de Gestão';
+    } else if (!planejado && categoria !== 'reserva_espaco') {
       // 2º carimbo · Gestão (ou aprovadores específicos da categoria · ex.: TI →
       // Diego/Matheus). Best-effort · lista vazia degrada.
       const temOverride = !!(await overrideGestaoPorCategoria(categoria));
@@ -1078,6 +1638,11 @@ router.post('/', async (req, res) => {
         // Fluxo BPMN · origem SEMPRE (inclusive planejado); Gestão só no não-planejado.
         eh_planejado: planejado,
         ...(planejado && { planejado_por: userId }),
+        // Criativo COM custo precisa do financeiro depois da cotação do
+        // Amaury. O trigger não marca marketing/producao, então setamos aqui (ele
+        // nunca desmarca). O status vem de 'aguardando_aprovacao_origem' no insert,
+        // então o trigger de SLA não mexe no status.
+        ...(criativoComCusto && { precisa_aprovacao_financeira: true }),
         // Roteamento hierárquico de origem resolvido acima (planejado ou não).
         // O trigger continua de rede de segurança quando a RPC falha (rota=null).
         ...(rota && {
@@ -1167,13 +1732,12 @@ router.post('/', async (req, res) => {
       .single();
     if (error) throw error;
 
-    // ⚠️ Fluxo BPMN · se AMBOS os carimbos nasceram dispensados e o pedido TEM
-    // CUSTO (precisa_aprovacao_financeira calculado pelo trigger no insert),
-    // ele já nasce no julgamento de mérito (não-planejado com custo → Pastor
-    // Presidente). Planejado nunca passa por aqui.
-    if (!planejado
-        && data.aprovacao_origem_status === 'dispensada'
-        && data.aprovacao_gestao_status === 'dispensada'
+    // ⚠️ Fluxo BPMN · se a ORIGEM nasceu dispensada (ex.: o próprio diretor pede)
+    // mas o pedido ainda precisa do Pastor Presidente pela faixa de valor, já nasce
+    // no julgamento de mérito. Vale planejado e não-planejado (a régua de valor
+    // está em precisaMerito). Gestão nula = planejado (2º carimbo não se aplica).
+    if (data.aprovacao_origem_status === 'dispensada'
+        && (data.aprovacao_gestao_status === 'dispensada' || data.aprovacao_gestao_status == null)
         && precisaMerito(data)) {
       const statusAntes = data.status;
       const { data: up, error: upErr } = await supabase
@@ -1191,6 +1755,7 @@ router.post('/', async (req, res) => {
           observacao: 'Carimbos dispensados · pedido com custo enviado ao julgamento de mérito',
         });
         notificarMeritoPendente(data);
+        require('../services/solicitacaoWpp').enviarMeritoWpp(data).catch(() => {});
       } else if (upErr) {
         console.error('[SOLICITACOES] mover pra mérito no create:', upErr.message);
       }
@@ -1237,6 +1802,31 @@ router.post('/', async (req, res) => {
       chaveDedup: `solicitacao_nova_${data.id}`,
       extraTargetIds: responsaveisDaArea,
     }).catch(err => console.error('[SOLICITACOES] notify error:', err.message));
+
+    // Compra que nasceu direto em cotação (sem filtro de origem) → evento
+    // explícito na timeline + call-to-action "Cotar" pros responsáveis de compras
+    // (no fluxo com origem esse aviso sai no aprovar-origem).
+    if (categoria === 'compras' && data.status === 'em_cotacao'
+        && data.aprovacao_origem_status === 'dispensada') {
+      registrarEvento(data.id, {
+        statusAnterior: null,
+        statusNovo: 'em_cotacao',
+        atorId: userId,
+        observacao: 'Compra entrou direto na cotação (Amaury)',
+      });
+      if (responsaveisDaArea.length) {
+        notificar({
+          modulo,
+          tipo: 'solicitacao_status',
+          titulo: `Cotar: ${titulo}`,
+          mensagem: `Compra entrou direto na cotação — registre a cotação (valor + fornecedor) pra seguir pra aprovação financeira.`,
+          link: '/solicitacoes',
+          severidade: 'info',
+          chaveDedup: `solicitacao_cotar_${data.id}`,
+          targetIds: responsaveisDaArea,
+        }).catch(err => console.error('[SOLICITACOES] notify cotar direto:', err.message));
+      }
+    }
 
     // Aprovação hierarquica · se trigger marcou aguardando_aprovacao_origem,
     // notifica o diretor de origem em vez do responsável da área alvo.
@@ -1413,7 +2003,7 @@ async function aprovarOrigemHandler(req, res) {
     // Próximo passo quando completo:
     //   TEM CUSTO (não-planejado do fluxo novo) → julgamento de mérito.
     //   Sem custo → fluxo normal: compras/servico → EM_COTACAO (a logística
-    //   levanta valor+fornecedor ANTES do Yago) · precisa financeira →
+    //   levanta valor+fornecedor ANTES do financeiro) · precisa financeira →
     //   aguardando_aprovacao_financeira · resto → fila da área (pendente).
     const vaiPraMerito = completo && precisaMerito(atual);
     const ehCotacao = ['compras', 'servico'].includes(atual.categoria);
@@ -1494,6 +2084,7 @@ async function aprovarOrigemHandler(req, res) {
         targetIds: [data.solicitante_id].filter(Boolean),
       }).catch(err => console.error('[SOLICITACOES] notify merito solicitante:', err.message));
       notificarMeritoPendente(data);
+      require('../services/solicitacaoWpp').enviarMeritoWpp(data).catch(() => {});
       notificarPedidoWhatsapp(data.id, 'aguardando julgamento de mérito', null);
       return res.json(data);
     }
@@ -1531,6 +2122,10 @@ async function aprovarOrigemHandler(req, res) {
             severidade: 'info',
             chaveDedup: `solicitacao_pos_aprovacao_${data.id}`,
             targetIds: filtered,
+            // Reembolso/pagamento caem direto na fila do financeiro (sem cotação):
+            // o aprovador financeiro (Alberto) recebe por e-mail também. Só o
+            // financeiro — não spammar Amaury/logística nas compras.
+            email: modulo === 'financeiro',
           }).catch(err => console.error('[SOLICITACOES] notify responsaveis:', err.message));
         }
       }).catch(err => console.error('[SOLICITACOES] resolve managers:', err.message));
@@ -1546,7 +2141,7 @@ router.patch('/:id/aprovar-origem', aprovarOrigemHandler);
 
 // ── COTACAO (compras/servico) · a logistica levanta valor+fornecedor ANTES do ──
 // financeiro. Marcos (2026-06-16): "primeiro vem a cotacao, depois a aprovacao do
-// financeiro" · o Yago decide sobre o valor real, nao sobre uma estimativa cega.
+// financeiro" · o financeiro decide sobre o valor real, nao sobre uma estimativa cega.
 async function podeCotar(req, sol) {
   if (['admin', 'diretor'].includes(req.user.role)) return true;
   const mp = req.user.granular?.modulePerms || {};
@@ -1580,7 +2175,7 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode registrar a cotação.' });
     }
 
-    // Grava a cotacao e manda pro financeiro · o Yago aprova sobre o valor cotado.
+    // Grava a cotacao e manda pro financeiro, que aprova sobre o valor cotado.
     // valor_estimado passa a refletir o cotado (alcada/relatorios usam o valor real).
     const updates = {
       valor_cotado: valor,
@@ -1593,22 +2188,51 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
       status: 'aguardando_aprovacao_financeira',
     };
     const { data, error } = await supabase
-      .from('solicitacoes').update(updates).eq('id', req.params.id).select('*').single();
+      .from('solicitacoes')
+      .update(updates)
+      .eq('id', req.params.id)
+      .eq('status', 'em_cotacao')
+      .is('deleted_at', null)
+      .select('*')
+      .maybeSingle();
     if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Esta solicitação saiu da etapa de cotação. Atualize a fila antes de registrar a cotação.' });
 
-    // Notifica o financeiro (Yago) que ha cotacao pra aprovar
-    resolverDestinatarios('financeiro').then(managers => {
-      const alvo = [...new Set((managers || []).filter(Boolean))];
+    // A dispensa ≤ R$ 1.000 foi decidida sobre a ESTIMATIVA — se a cotação real
+    // estourou o limite, o financeiro precisa saber que o pedido pulou os
+    // carimbos (a aprovação segue com o financeiro, sobre o valor cotado).
+    const dispensadaPorBaixoValor = atual.aprovacao_origem_motivo === COMPRA_COTACAO_DIRETA_MOTIVO;
+    const cotacaoAcimaDaDispensa = dispensadaPorBaixoValor && valor > COMPRA_COTACAO_DIRETA_LIMITE;
+    if (cotacaoAcimaDaDispensa) {
+      registrarEvento(data.id, {
+        statusAnterior: 'em_cotacao',
+        statusNovo: 'aguardando_aprovacao_financeira',
+        atorId: req.user.userId,
+        observacao: `Cotação de R$ ${valor.toFixed(2)} acima do limite de R$ ${COMPRA_COTACAO_DIRETA_LIMITE} que dispensou as aprovações no pedido`,
+      });
+    }
+
+    // Notifica o financeiro que há uma cotação para aprovar.
+    resolverDestinatarios('financeiro').then(async managers => {
+      const finProfileIds = new Set((managers || []).filter(Boolean));
+      const { data: responsaveisFinanceiro } = await supabase
+        .from('area_solicitacoes_responsaveis')
+        .select('profile_id')
+        .eq('area', 'financeiro');
+      (responsaveisFinanceiro || []).forEach(item => item.profile_id && finProfileIds.add(item.profile_id));
+      const alvo = await filtrarAprovadoresFinanceirosPorCategoria(finProfileIds, data.categoria);
       if (alvo.length) {
         notificar({
           modulo: 'financeiro',
           tipo: 'solicitacao_status',
           titulo: `Cotação pronta: ${data.titulo}`,
-          mensagem: `A logística cotou R$ ${valor.toFixed(2)}${fornecedor ? ` (${fornecedor})` : ''} · aguarda sua aprovação financeira.`,
-          link: '/solicitacoes',
-          severidade: 'info',
+          mensagem: `A logística cotou R$ ${valor.toFixed(2)}${fornecedor ? ` (${fornecedor})` : ''} · aguarda sua aprovação financeira.${cotacaoAcimaDaDispensa ? ` Atenção: o pedido entrou sem aprovações por ter sido estimado em até R$ ${COMPRA_COTACAO_DIRETA_LIMITE}, mas a cotação veio acima disso.` : ''}`,
+          link: linkFilaFinanceira(data.id),
+          severidade: cotacaoAcimaDaDispensa ? 'alta' : 'info',
           chaveDedup: `solicitacao_cotacao_${data.id}`,
           targetIds: alvo,
+          // Aprovador financeiro (Alberto) recebe a cotação pronta por e-mail também.
+          email: true,
         }).catch(err => console.error('[SOLICITACOES] notify cotacao:', err.message));
       }
     }).catch(err => console.error('[SOLICITACOES] resolve financeiro:', err.message));
@@ -1623,7 +2247,7 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 // COTAÇÕES MÚLTIPLAS (compras/serviço) · o Amaury registra VÁRIAS cotações de
 // fornecedores e, com um botão reenviável, dispara um e-mail rico ao financeiro
-// (Yago) com todas as cotações separadas + a sugerida + total, pra aprovar o
+// com todas as cotações separadas + a sugerida + total, pra aprovar o
 // pagamento. Tabela `solicitacao_cotacoes`. A cotação inline antiga segue
 // preenchida com a de referência (retrocompat com telas/KPIs que a leem).
 // ══════════════════════════════════════════════════════════════════════════
@@ -1638,6 +2262,12 @@ async function carregarSolDaCotacao(cotacaoId) {
   return { cot, sol };
 }
 
+function cotacoesPodemSerGerenciadas(solicitacao) {
+  return ['compras', 'servico'].includes(solicitacao?.categoria)
+    && !solicitacao?.aprovado_financeiro_em
+    && ['em_cotacao', 'aguardando_aprovacao_financeira'].includes(solicitacao?.status);
+}
+
 function fmtBRLServer(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return 'R$ 0,00';
@@ -1649,9 +2279,31 @@ function escapeHtmlCot(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-// Lista as cotações de uma solicitação (qualquer um que já vê a solicitação).
+// Lista as cotações de uma solicitação. Logística e solicitante acompanham o
+// levantamento; o financeiro só acessa depois que a cotação entra na sua fila.
 router.get('/:id/cotacoes', async (req, res) => {
   try {
+    const { data: sol, error: solError } = await supabase
+      .from('solicitacoes')
+      .select('*')
+      .eq('id', req.params.id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (solError) throw solError;
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+
+    let podeVer = sol.solicitante_id === req.user.userId;
+    if (!podeVer) podeVer = await podeCotar(req, sol);
+    if (!podeVer) podeVer = await podeGerirSolicitacao(req, sol);
+    if (!podeVer && aguardandoAprovacaoFinanceira(sol)) {
+      podeVer = await podeAprovarFinanceiro(req, sol.categoria);
+    }
+    // Quem vai decidir pela alçada precisa VER as cotações antes de aprovar.
+    if (!podeVer) podeVer = await podeAprovarNaAlcada(req, sol);
+    if (!podeVer) {
+      return res.status(403).json({ error: 'Sem permissão para ver as cotações desta solicitação.' });
+    }
+
     const { data, error } = await supabase
       .from('solicitacao_cotacoes')
       .select('*')
@@ -1685,6 +2337,9 @@ router.post('/:id/cotacoes', async (req, res) => {
     }
     if (!(await podeCotar(req, sol))) {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode registrar cotações.' });
+    }
+    if (!cotacoesPodemSerGerenciadas(sol)) {
+      return res.status(400).json({ error: 'As cotações só podem ser alteradas antes da aprovação financeira.' });
     }
 
     // ordem = próxima posição
@@ -1723,6 +2378,9 @@ router.patch('/cotacoes/:cotacaoId', async (req, res) => {
     if (!(await podeCotar(req, sol))) {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode editar cotações.' });
     }
+    if (!cotacoesPodemSerGerenciadas(sol)) {
+      return res.status(400).json({ error: 'As cotações só podem ser alteradas antes da aprovação financeira.' });
+    }
     const { fornecedor, valor, prazo, link, observacao, anexo_url } = req.body || {};
     const updates = {};
     if (fornecedor !== undefined) {
@@ -1759,6 +2417,9 @@ router.delete('/cotacoes/:cotacaoId', async (req, res) => {
     if (!(await podeCotar(req, sol))) {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode remover cotações.' });
     }
+    if (!cotacoesPodemSerGerenciadas(sol)) {
+      return res.status(400).json({ error: 'As cotações só podem ser alteradas antes da aprovação financeira.' });
+    }
     const { error } = await supabase
       .from('solicitacao_cotacoes').delete().eq('id', req.params.cotacaoId);
     if (error) throw error;
@@ -1777,6 +2438,9 @@ router.post('/:id/cotacoes/:cotacaoId/sugerir', async (req, res) => {
     if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
     if (!(await podeCotar(req, sol))) {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode marcar a cotação sugerida.' });
+    }
+    if (!cotacoesPodemSerGerenciadas(sol)) {
+      return res.status(400).json({ error: 'As cotações só podem ser alteradas antes da aprovação financeira.' });
     }
     // Desmarca todas antes (respeita o índice único parcial) e marca a escolhida.
     const { error: e1 } = await supabase
@@ -1879,19 +2543,57 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     if (!(await podeCotar(req, sol))) {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode enviar as cotações.' });
     }
+    if (!cotacoesPodemSerGerenciadas(sol)) {
+      return res.status(400).json({ error: 'As cotações só podem ser enviadas antes da aprovação financeira.' });
+    }
 
-    const { data: cotacoes, error: cotErr } = await supabase
+    let { data: cotacoes, error: cotErr } = await supabase
       .from('solicitacao_cotacoes').select('*')
       .eq('solicitacao_id', sol.id)
       .order('ordem', { ascending: true }).order('created_at', { ascending: true });
     if (cotErr) throw cotErr;
+
+    // Fluxo "um botão": o Amaury informa o valor no próprio envio e o sistema
+    // cria a cotação na hora (sem etapa separada de "Adicionar"). Fornecedor é
+    // opcional — a coluna é NOT NULL, então cai em 'Não informado'.
     if (!cotacoes || !cotacoes.length) {
-      return res.status(400).json({ error: 'Adicione ao menos uma cotação antes de enviar ao financeiro.' });
+      const vInline = Number(req.body?.valor);
+      if (req.body?.valor != null && req.body?.valor !== '' && Number.isFinite(vInline) && vInline >= 0) {
+        const { data: nova, error: novaErr } = await supabase
+          .from('solicitacao_cotacoes')
+          .insert({
+            solicitacao_id: sol.id,
+            fornecedor: (req.body.fornecedor || '').trim() || 'Não informado',
+            valor: vInline,
+            prazo: (req.body.prazo || '').trim() || null,
+            link: (req.body.link || '').trim() || null,
+            observacao: (req.body.observacao || '').trim() || null,
+            ordem: 0,
+            created_by: req.user.userId,
+          })
+          .select('*').single();
+        if (novaErr) throw novaErr;
+        cotacoes = [nova];
+      }
+    }
+    if (!cotacoes || !cotacoes.length) {
+      return res.status(400).json({ error: 'Informe o valor da cotação para enviar ao financeiro.' });
     }
 
     // Referência: a sugerida; se nenhuma, a de MENOR valor.
     const refCot = cotacoes.find(c => c.sugerida)
       || [...cotacoes].sort((a, b) => (Number(a.valor) || 0) - (Number(b.valor) || 0))[0];
+
+    // Classificação contábil (loop financeiro · o Amaury preenche na cotação).
+    const planoId = req.body?.plano_contas_id || null;
+    const centroId = req.body?.centro_custo_id || null;
+    if (planoId) {
+      const { data: plano } = await supabase.from('fin_plano_contas')
+        .select('tipo, aceita_lancamento, ativo').eq('id', planoId).maybeSingle();
+      if (!plano || plano.tipo !== 'despesa' || !plano.aceita_lancamento || plano.ativo === false) {
+        return res.status(400).json({ error: 'Plano de contas inválido (precisa ser uma conta de despesa que aceita lançamento).' });
+      }
+    }
 
     // Atualiza a solicitação (retrocompat inline + carimbo do e-mail).
     const updates = {
@@ -1905,12 +2607,24 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
       cotacoes_email_em: new Date().toISOString(),
       cotacoes_email_por: req.user.userId,
     };
+    if (planoId) updates.plano_contas_id = planoId;
+    if (centroId) updates.centro_custo_id = centroId;
     // Só muda o status na 1ª ida (em_cotacao); reenvio mantém o status atual.
     if (sol.status === 'em_cotacao') updates.status = 'aguardando_aprovacao_financeira';
 
     const { data: solAtualizada, error: upErr } = await supabase
-      .from('solicitacoes').update(updates).eq('id', sol.id).select('*').single();
+      .from('solicitacoes')
+      .update(updates)
+      .eq('id', sol.id)
+      .in('status', ['em_cotacao', 'aguardando_aprovacao_financeira'])
+      .is('aprovado_financeiro_em', null)
+      .is('deleted_at', null)
+      .select('*')
+      .maybeSingle();
     if (upErr) throw upErr;
+    if (!solAtualizada) {
+      return res.status(409).json({ error: 'Esta solicitação foi alterada por outra pessoa. Atualize antes de reenviar as cotações.' });
+    }
 
     // Itens do pedido (opcional no e-mail).
     const { data: itens } = await supabase
@@ -1934,7 +2648,7 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     const resolvidos = await resolverDestinatarios('financeiro').catch(() => []);
     (resolvidos || []).forEach(id => id && finProfileIds.add(id));
 
-    const idsArr = [...finProfileIds];
+    const idsArr = await filtrarAprovadoresFinanceirosPorCategoria(finProfileIds, sol.categoria);
     let emails = [];
     if (idsArr.length) {
       const { data: profs } = await supabase.from('profiles').select('email').in('id', idsArr);
@@ -1950,11 +2664,15 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
 
     const catLabel = ({ compras: 'Compras', servico: 'Serviço' })[sol.categoria] || sol.categoria;
     const base = process.env.FRONTEND_URL || '';
-    const link = base ? `${base}/solicitacoes?id=${sol.id}` : '';
+    const link = base ? `${base}${linkFilaFinanceira(sol.id)}` : '';
     const html = montarHtmlCotacoes({ sol, cotacoes, itens, refCot, solicitanteNome, catLabel, link });
 
-    let emailResultado = { ok: false, error: 'sem destinatários' };
-    if (to.length) {
+    // E-mail é OPCIONAL (botão discreto). O caminho principal é PELO SISTEMA:
+    // status aguardando_aprovacao_financeira + notificação (o Alberto aprova na
+    // fila do financeiro). Só manda e-mail quando explicitamente pedido.
+    const querEmail = req.body?.enviar_email === true;
+    let emailResultado = { ok: false, error: 'nao_solicitado' };
+    if (querEmail && to.length) {
       emailResultado = await enviarEmail({
         to,
         subject: `Cotações para aprovação — ${sol.titulo || 'Solicitação'}`,
@@ -1968,28 +2686,32 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
       tipo: 'cotacao_financeiro',
       titulo: 'Cotações prontas para aprovação',
       mensagem: `${cotacoes.length} ${cotacoes.length === 1 ? 'cotação' : 'cotações'} de "${sol.titulo}" · sugerida ${fmtBRLServer(refCot.valor)} (${refCot.fornecedor}).`,
-      link: `/solicitacoes?id=${sol.id}`,
+      link: linkFilaFinanceira(sol.id),
       severidade: 'info',
       chaveDedup: `solicitacao_cotacoes_${sol.id}`,
       targetIds: idsArr,
       email: false,
     }).catch(err => console.error('[SOLICITACOES] notify cotacoes:', err.message));
 
+    // Caminho principal (sistema): sem e-mail solicitado → já está com o financeiro.
+    if (!querEmail) {
+      return res.json({ ok: true, email_solicitado: false, solicitacao: solAtualizada });
+    }
     if (!to.length) {
       return res.json({
-        ok: true, email_ok: false, enviados: 0,
+        ok: true, email_solicitado: true, email_ok: false, enviados: 0,
         motivo: 'Nenhum e-mail de financeiro encontrado.',
         solicitacao: solAtualizada,
       });
     }
     if (!emailResultado?.ok) {
       return res.json({
-        ok: true, email_ok: false, enviados: to.length,
+        ok: true, email_solicitado: true, email_ok: false, enviados: to.length,
         motivo: emailResultado?.error || 'Falha no envio do e-mail.',
         solicitacao: solAtualizada,
       });
     }
-    res.json({ ok: true, email_ok: true, enviados: to.length, solicitacao: solAtualizada });
+    res.json({ ok: true, email_solicitado: true, email_ok: true, enviados: to.length, solicitacao: solAtualizada });
   } catch (e) {
     console.error('[SOLICITACOES] enviar-cotacoes-financeiro:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao enviar cotações ao financeiro' });
@@ -2090,6 +2812,122 @@ async function rejeitarOrigemHandler(req, res) {
 }
 router.patch('/:id/rejeitar-origem', rejeitarOrigemHandler);
 
+// Normaliza itens de compra (mesma semântica do POST create · valor_tipo →
+// TOTAL DA LINHA) → { itensNorm, itensTexto, valorTotal }. Reuso no converter.
+function normalizarItensCompra(itens_lista) {
+  const itensNorm = (Array.isArray(itens_lista) ? itens_lista : [])
+    .filter(it => it && String(it.descricao || '').trim())
+    .map((it, i) => {
+      const qNum = Number(it.quantidade);
+      const quantidade = isFinite(qNum) && qNum > 0 ? qNum : 1;
+      const vNum = Number(it.valor_estimado);
+      const temValor = it.valor_estimado != null && it.valor_estimado !== '' && isFinite(vNum);
+      const valorLinha = temValor ? (it.valor_tipo === 'unitario' ? vNum * quantidade : vNum) : null;
+      return {
+        descricao: String(it.descricao).trim().slice(0, 500),
+        quantidade,
+        unidade: it.unidade ? String(it.unidade).trim().slice(0, 20) : 'un',
+        link_referencia: it.link_referencia ? String(it.link_referencia).trim().slice(0, 1000) : null,
+        valor_estimado: valorLinha,
+        imagem_url: it.imagem_url ? String(it.imagem_url).slice(0, 2000) : null,
+        ordem: i,
+      };
+    });
+  const itensTexto = itensNorm.map(it => `${it.quantidade}x ${it.descricao}`).join('\n');
+  const valorTotal = itensNorm.reduce((acc, it) => acc + (it.valor_estimado != null ? it.valor_estimado : 0), 0);
+  return { itensNorm, itensTexto, valorTotal };
+}
+
+// Converter um pedido de MARKETING (criativo) em COMPRA — sem criar outra
+// solicitação. A origem já foi aprovada no fluxo de marketing (diretor do
+// Criativo), então só entra o portão de MÉRITO (Pastor Presidente) por valor.
+// Fecha a campanha do marketing como concluída (o criativo terminou).
+router.post('/:id/converter-em-compra', async (req, res) => {
+  try {
+    const { data: sol } = await supabase.from('solicitacoes')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    if (!(await podeGerirSolicitacao(req, sol))) {
+      return res.status(403).json({ error: 'Você não pode converter esta solicitação.' });
+    }
+    if (!CRIATIVO_CATEGORIAS.includes(sol.categoria)) {
+      return res.status(400).json({ error: 'Só um pedido de marketing/produção pode virar compra.' });
+    }
+    if (['concluido', 'cancelado', 'rejeitado', 'avaliado'].includes(sol.status)) {
+      return res.status(400).json({ error: 'Este pedido já está encerrado.' });
+    }
+
+    const { itens_lista, favorecido_nome, eh_planejado, data_necessaria, justificativa } = req.body || {};
+    const { itensNorm, itensTexto, valorTotal } = normalizarItensCompra(itens_lista);
+    if (!itensNorm.length) return res.status(400).json({ error: 'Adicione ao menos um item da compra.' });
+
+    const planejado = eh_planejado === true || eh_planejado === 'true';
+    // Régua de valor (mérito · Pastor Presidente): planejado > 5k · não-planejado > 1k.
+    const precisaMeritoConv = planejado ? valorTotal > 5000 : valorTotal > 1000;
+    const now = new Date().toISOString();
+
+    const updates = {
+      categoria: 'compras',
+      area_responsavel: 'logistica_compras',
+      subcategoria: 'default',
+      eh_planejado: planejado,
+      ...(planejado ? { planejado_por: req.user.userId } : {}),
+      itens: itensTexto,
+      valor_estimado: valorTotal,
+      // O trigger de SLA que liga isto é só no INSERT — aqui setamos explícito.
+      precisa_aprovacao_financeira: true,
+      aprovacao_gestao_status: 'dispensada',
+      aprovacao_gestao_em: now,
+      aprovacao_gestao_motivo: 'Compra convertida de um pedido de marketing (origem já aprovada no Criativo).',
+      status: precisaMeritoConv ? 'aguardando_merito' : 'em_cotacao',
+      ...(precisaMeritoConv ? { merito_status: 'pendente', merito_em: now } : {}),
+    };
+    if (favorecido_nome) updates.favorecido_nome = String(favorecido_nome).trim().slice(0, 200);
+    if (data_necessaria) updates.data_necessaria = data_necessaria;
+    if (justificativa) {
+      updates.justificativa = sol.justificativa
+        ? `${sol.justificativa}\n[Virou compra] ${justificativa}`
+        : String(justificativa).slice(0, 2000);
+    }
+
+    const { data, error } = await supabase.from('solicitacoes')
+      .update(updates).eq('id', sol.id).is('deleted_at', null).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Solicitação alterada por outra pessoa. Recarregue.' });
+
+    // Itens estruturados (best-effort · o write primário já decidiu o sucesso).
+    try {
+      await supabase.from('solicitacao_itens')
+        .insert(itensNorm.map(it => ({ ...it, solicitacao_id: sol.id })));
+    } catch (e) { console.error('[SOLICITACOES] converter itens:', e.message); }
+
+    // Fecha a campanha do marketing como concluída (o criativo terminou). NÃO usa
+    // o caminho de conclusão de card (que marcaria o próprio pedido como concluído).
+    try {
+      await supabase.from('marketing_campanhas')
+        .update({ status: 'concluida' })
+        .eq('solicitacao_id', sol.id).neq('status', 'concluida');
+    } catch (e) { console.error('[SOLICITACOES] fechar campanha:', e.message); }
+
+    // Notifica a logística (Amaury) + o solicitante.
+    notificar({
+      modulo: 'logistica',
+      tipo: 'solicitacao_status',
+      titulo: `Compra vinda do marketing: ${sol.titulo}`,
+      mensagem: `Um pedido de marketing virou compra${precisaMeritoConv ? ' (aguardando o Pastor Presidente)' : ' e já está pronto pra cotação'}.`,
+      link: '/solicitacoes',
+      severidade: 'info',
+      chaveDedup: `solicitacao_virou_compra_${sol.id}`,
+      extraTargetIds: [sol.solicitante_id].filter(Boolean),
+    }).catch(err => console.error('[SOLICITACOES] notify converter:', err.message));
+
+    res.json(data);
+  } catch (e) {
+    console.error('[SOLICITACOES] converter-em-compra:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao converter em compra' });
+  }
+});
+
 // ── Chamada interna (fake req/res) · reusa 100% da lógica dos handlers acima
 // pra o webhook do WhatsApp aplicar a decisão do Arthur (1=aprovar, 2=rejeitar).
 function _fakeRes() {
@@ -2123,7 +2961,7 @@ async function podeJulgarMerito(req) {
   return isAdminFallback(req); // fallback super-admin/admin
 }
 
-router.post('/:id/aprovar-merito', async (req, res) => {
+async function aprovarMeritoHandler(req, res) {
   try {
     const userId = req.user.userId;
     const userName = req.user.name;
@@ -2209,11 +3047,12 @@ router.post('/:id/aprovar-merito', async (req, res) => {
     console.error('[SOLICITACOES] aprovar-merito:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao aprovar o mérito' });
   }
-});
+}
+router.post('/:id/aprovar-merito', aprovarMeritoHandler);
 
 // Reprovação de mérito é IMUTÁVEL (como a rejeição de origem · não reabre ·
 // cria-se nova solicitação). Motivo obrigatório (mínimo 5 caracteres).
-router.post('/:id/reprovar-merito', async (req, res) => {
+async function reprovarMeritoHandler(req, res) {
   try {
     const userId = req.user.userId;
     const userName = req.user.name;
@@ -2275,7 +3114,23 @@ router.post('/:id/reprovar-merito', async (req, res) => {
     console.error('[SOLICITACOES] reprovar-merito:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao reprovar o mérito' });
   }
-});
+}
+router.post('/:id/reprovar-merito', reprovarMeritoHandler);
+
+// Wrappers internos (aprovação/reprovação de mérito pelo WhatsApp · mesmo padrão
+// do origem). aprovadorId = profile do aprovador de mérito (passa no podeJulgarMerito).
+async function aprovarMeritoInterno({ solicitacaoId, aprovadorId, aprovadorNome, aprovadorEmail }) {
+  const req = { params: { id: solicitacaoId }, body: {}, user: { userId: aprovadorId, name: aprovadorNome || null, email: aprovadorEmail || '', role: 'assistente' } };
+  const res = _fakeRes();
+  await aprovarMeritoHandler(req, res);
+  return { ok: res.statusCode < 400, status: res.statusCode, data: res.body };
+}
+async function rejeitarMeritoInterno({ solicitacaoId, aprovadorId, aprovadorNome, aprovadorEmail, motivo }) {
+  const req = { params: { id: solicitacaoId }, body: { motivo: motivo || 'Reprovada pelo WhatsApp' }, user: { userId: aprovadorId, name: aprovadorNome || null, email: aprovadorEmail || '', role: 'assistente' } };
+  const res = _fakeRes();
+  await reprovarMeritoHandler(req, res);
+  return { ok: res.statusCode < 400, status: res.statusCode, data: res.body };
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // SOBRESTAR / RETOMAR (fluxo BPMN 2026-07-02) · "em espera" com motivo + data
@@ -2308,7 +3163,7 @@ router.post('/:id/sobrestar', async (req, res) => {
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada.' });
 
     if (atual.status === 'aguardando_aprovacao_financeira') {
-      if (!(await podeAprovarFinanceiro(req))) {
+      if (!(await podeAprovarFinanceiro(req, atual.categoria))) {
         return res.status(403).json({ error: 'Apenas o financeiro pode sobrestar nesta etapa.' });
       }
     } else if (STATUS_SOBRESTAVEL_RESP.includes(atual.status)) {
@@ -2385,7 +3240,7 @@ router.post('/:id/retomar', async (req, res) => {
 
     // Quem pode retomar = quem pode sobrestar naquele contexto.
     if (atual.sobrestada_status_anterior === 'aguardando_aprovacao_financeira') {
-      if (!(await podeAprovarFinanceiro(req))) {
+      if (!(await podeAprovarFinanceiro(req, atual.categoria))) {
         return res.status(403).json({ error: 'Apenas o financeiro pode retomar nesta etapa.' });
       }
     } else if (!(await podeGerirSolicitacao(req, atual))) {
@@ -2477,11 +3332,12 @@ router.patch('/:id', async (req, res) => {
       .maybeSingle();
     if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
 
-    // Solicitação parada num portão (aprovação/mérito/sobrestada) não sai dele
-    // por PATCH · só pelo endpoint do portão.
+    // Solicitação parada num portão não sai dele por PATCH · só pelo endpoint
+    // específico. Inclui cotação e aprovação financeira para ninguém pular o
+    // encaminhamento Amaury → financeiro alterando o status manualmente.
     if (status && status !== sol.status
-        && ['aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(sol.status)) {
-      return res.status(400).json({ error: 'Esta solicitação está num portão do fluxo (aprovação, mérito ou sobrestada) · use o endpoint próprio para movê-la.' });
+        && ['aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada', 'em_cotacao', 'aguardando_aprovacao_financeira'].includes(sol.status)) {
+      return res.status(400).json({ error: 'Esta solicitação está num portão do fluxo (aprovação, cotação, mérito, financeiro ou sobrestamento) · use o endpoint próprio para movê-la.' });
     }
 
     const isAdmin = ['admin', 'diretor'].includes(req.user.role);
@@ -3078,27 +3934,41 @@ router.put('/area-responsaveis', async (req, res) => {
     if (!area) return res.status(400).json({ error: 'area obrigatoria' });
     if (!Array.isArray(profile_ids)) return res.status(400).json({ error: 'profile_ids deve ser array' });
 
-    // Apaga vinculos existentes da área
+    // VALIDA os profile_ids ANTES de apagar — id que não existe em `profiles`
+    // (ex.: colaborador de RH que ainda não fez o 1º login) viola a FK e, no
+    // fluxo antigo, o delete já tinha rodado → a área ficava SEM responsável.
+    // Agora: se algum id for inválido, aborta sem tocar nos vínculos atuais.
+    const idsUnicos = [...new Set((profile_ids || []).filter(Boolean))];
+    if (idsUnicos.length > 0) {
+      const { data: existentes, error: chkErr } = await supabase
+        .from('profiles').select('id').in('id', idsUnicos);
+      if (chkErr) throw chkErr;
+      const validos = new Set((existentes || []).map(p => p.id));
+      const invalidos = idsUnicos.filter(id => !validos.has(id));
+      if (invalidos.length) {
+        return res.status(400).json({
+          error: 'Uma das pessoas selecionadas ainda não tem conta no sistema (precisa fazer o primeiro login). Nenhuma alteração foi feita.',
+          invalidos,
+        });
+      }
+    }
+
+    // Só depois de validar: substitui os vínculos da área.
     const { error: delError } = await supabase
       .from('area_solicitacoes_responsaveis')
       .delete()
       .eq('area', area);
     if (delError) throw delError;
 
-    // Insere novos
-    if (profile_ids.length > 0) {
-      const rows = profile_ids.map(pid => ({
-        area,
-        profile_id: pid,
-        criado_por: req.user.userId,
-      }));
+    if (idsUnicos.length > 0) {
+      const rows = idsUnicos.map(pid => ({ area, profile_id: pid, criado_por: req.user.userId }));
       const { error: insError } = await supabase
         .from('area_solicitacoes_responsaveis')
         .insert(rows);
       if (insError) throw insError;
     }
 
-    res.json({ ok: true, area, count: profile_ids.length });
+    res.json({ ok: true, area, count: idsUnicos.length });
   } catch (e) {
     console.error('[SOLICITACOES] area-responsaveis PUT:', e.message);
     res.status(500).json({ error: e.message });
@@ -3259,24 +4129,151 @@ router.post('/:id/atualizar-ml', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// APROVAÇÃO FINANCEIRA · Yago aprova compras/reembolsos antes de virar pra
+// APROVAÇÃO FINANCEIRA · o financeiro aprova compras/reembolsos antes de virar pra
 // logística comprar / financeiro pagar
 // ══════════════════════════════════════════════════════════════════════════
 
-async function podeAprovarFinanceiro(req) {
+async function obterCategoriasFinanceirasAutorizadas(profileId) {
+  try {
+    const { data, error } = await supabase
+      .from('solicitacoes_financeiro_aprovadores')
+      .select('categoria')
+      .eq('profile_id', profileId);
+    if (error) {
+      console.warn('[SOLICITACOES] escopo financeiro indisponível:', error.message);
+      return { disponivel: false, categorias: new Set() };
+    }
+    return {
+      disponivel: true,
+      categorias: new Set((data || []).map(item => item.categoria).filter(Boolean)),
+    };
+  } catch (error) {
+    console.warn('[SOLICITACOES] falha ao consultar escopo financeiro:', error.message);
+    return { disponivel: false, categorias: new Set() };
+  }
+}
+
+async function filtrarAprovadoresFinanceirosPorCategoria(profileIds, categoria) {
+  const ids = [...new Set([...(profileIds || [])].filter(Boolean))];
+  if (!ids.length) return [];
+
+  try {
+    const { data, error } = await supabase
+      .from('solicitacoes_financeiro_aprovadores')
+      .select('profile_id, categoria')
+      .in('profile_id', ids);
+    if (error) throw error;
+
+    const categoriasPorPerfil = new Map();
+    (data || []).forEach(item => {
+      if (!categoriasPorPerfil.has(item.profile_id)) categoriasPorPerfil.set(item.profile_id, new Set());
+      categoriasPorPerfil.get(item.profile_id).add(item.categoria);
+    });
+
+    // Sem configuração individual, mantém o comportamento já existente. Quando
+    // há configuração, a pessoa recebe somente as categorias explicitamente liberadas.
+    return ids.filter(id => !categoriasPorPerfil.has(id) || categoriasPorPerfil.get(id).has(categoria));
+  } catch (error) {
+    console.warn('[SOLICITACOES] falha ao filtrar destinatários financeiros:', error.message);
+    return [];
+  }
+}
+
+async function podeAprovarFinanceiro(req, categoria = null) {
   const userId = req.user.userId;
   const role = req.user.role;
-  if (['admin', 'diretor'].includes(role)) return true;
-  const modulePerms = req.user.granular?.modulePerms || {};
-  const fin = modulePerms.financeiro || modulePerms.Financeiro;
-  if (fin && (fin.leitura >= 3 || fin.escrita >= 3)) return true;
-  const { data } = await supabase
+  let temPermissaoBase = ['admin', 'diretor'].includes(role);
+  if (!temPermissaoBase) {
+    const modulePerms = req.user.granular?.modulePerms || {};
+    const fin = modulePerms.financeiro || modulePerms.Financeiro;
+    temPermissaoBase = !!(fin && (fin.leitura >= 3 || fin.escrita >= 3));
+  }
+  if (!temPermissaoBase) {
+    const { data } = await supabase
+      .from('area_solicitacoes_responsaveis')
+      .select('profile_id')
+      .eq('area', 'financeiro')
+      .eq('profile_id', userId)
+      .maybeSingle();
+    temPermissaoBase = !!data;
+  }
+  if (!temPermissaoBase || !categoria) return temPermissaoBase;
+
+  const escopoFinanceiro = await obterCategoriasFinanceirasAutorizadas(userId);
+  return escopoFinanceiro.disponivel
+    && (escopoFinanceiro.categorias.size === 0 || escopoFinanceiro.categorias.has(categoria));
+}
+
+function aguardandoAprovacaoFinanceira(solicitacao) {
+  return solicitacao?.status === 'aguardando_aprovacao_financeira'
+    && solicitacao?.precisa_aprovacao_financeira === true
+    && !solicitacao?.aprovado_financeiro_em;
+}
+
+function cotacaoObrigatoriaRegistrada(solicitacao) {
+  if (!['compras', 'servico'].includes(solicitacao?.categoria)) return true;
+  const valor = Number(solicitacao?.valor_cotado);
+  return !!solicitacao?.cotacao_em && Number.isFinite(valor) && valor >= 0;
+}
+
+// ── Alçada de compras · quem atende a área aprova até o teto ────────────────
+// A régua de ELEGIBILIDADE (categoria, estado, valor cotado × teto) é PURA e
+// vive em `utils/alcadaCompras.js`. Aqui só se resolve o que precisa do banco:
+// o teto da área e se quem está pedindo é responsável por atendê-la.
+
+// Teto configurável por área em `area_alcadas.limite_aprovacao`.
+// ⚠️ Best-effort: sem linha (ou com a consulta falhando) cai no padrão de
+// R$ 1.000. Falhar fechado aqui só empurraria a compra pro financeiro, que é
+// o comportamento antigo — nunca aprova a mais.
+async function limiteAlcadaDaArea(areaCliente) {
+  if (!areaCliente) return LIMITE_ALCADA_PADRAO;
+  try {
+    const { data, error } = await supabase
+      .from('area_alcadas')
+      .select('limite_aprovacao')
+      .eq('area_cliente', areaCliente)
+      .maybeSingle();
+    if (error) throw error;
+    const limite = Number(data?.limite_aprovacao);
+    return Number.isFinite(limite) && limite >= 0 ? limite : LIMITE_ALCADA_PADRAO;
+  } catch (e) {
+    console.warn('[SOLICITACOES] falha ao ler alçada da área:', e.message);
+    return LIMITE_ALCADA_PADRAO;
+  }
+}
+
+// ⚠️ Quem pode usar a alçada é quem ATENDE a área da solicitação — lido de
+// `area_solicitacoes_responsaveis` (LEI de 2026-08-05: pessoa nunca fica
+// hardcoded; o papel vive no banco e muda sem PR).
+// ⚠️ De propósito NÃO reusa `podeCotar`, que também aceita quem tem logística
+// nível ≥3: registrar cotação é operar, aprovar dinheiro é decidir.
+async function ehResponsavelDaArea(req, area) {
+  if (!area || !req?.user?.userId) return false;
+  const { data, error } = await supabase
     .from('area_solicitacoes_responsaveis')
     .select('profile_id')
-    .eq('area', 'financeiro')
-    .eq('profile_id', userId)
+    .eq('area', area)
+    .eq('profile_id', req.user.userId)
     .maybeSingle();
+  if (error) {
+    console.warn('[SOLICITACOES] falha ao checar responsável da área:', error.message);
+    return false;
+  }
   return !!data;
+}
+
+// Devolve o veredito completo (serve pro gate E pro flag da lista).
+async function avaliarAlcada(req, sol) {
+  const limite = await limiteAlcadaDaArea(sol?.area_cliente);
+  const eleg = elegivelAlcada(sol, limite);
+  if (!eleg.ok) return { ...eleg, responsavel: false };
+  const responsavel = await ehResponsavelDaArea(req, sol.area_responsavel);
+  return { ...eleg, responsavel, ok: responsavel, motivo: responsavel ? null : 'nao_responsavel' };
+}
+
+async function podeAprovarNaAlcada(req, sol) {
+  const r = await avaliarAlcada(req, sol);
+  return r.ok;
 }
 
 router.get('/pendentes-financeiro', async (req, res) => {
@@ -3284,23 +4281,23 @@ router.get('/pendentes-financeiro', async (req, res) => {
     if (!(await podeAprovarFinanceiro(req))) {
       return res.status(403).json({ error: 'Sem permissão pra ver pendências financeiras' });
     }
-    const { data, error } = await supabase
+    const escopoFinanceiro = await obterCategoriasFinanceirasAutorizadas(req.user.userId);
+    if (!escopoFinanceiro.disponivel) {
+      return res.status(503).json({ error: 'A configuração do escopo financeiro não está disponível.' });
+    }
+    let consulta = supabase
       .from('solicitacoes')
       .select('*')
       .eq('precisa_aprovacao_financeira', true)
       .is('aprovado_financeiro_em', null)
-      .neq('status', 'cancelado')
-      .neq('status', 'rejeitado')
-      // Ainda aguardando o diretor de origem · so cai no financeiro depois (Spec 001)
-      .neq('status', 'aguardando_aprovacao_origem')
-      // Compras/servico em cotacao · o Yago so ve depois que a logistica cotar (valor real)
-      .neq('status', 'em_cotacao')
-      // Fluxo BPMN · sobrestada (em espera) e mérito pendente ficam fora da fila
-      .neq('status', 'sobrestada')
-      .neq('status', 'aguardando_merito')
+      .eq('status', 'aguardando_aprovacao_financeira')
       .is('deleted_at', null)
       .order('eh_urgente', { ascending: false })
       .order('created_at', { ascending: true });
+    if (escopoFinanceiro.categorias.size) {
+      consulta = consulta.in('categoria', [...escopoFinanceiro.categorias]);
+    }
+    const { data, error } = await consulta;
     if (error) throw error;
 
     // Enriquece com nome/email/foto do solicitante (consulta separada em profiles
@@ -3326,28 +4323,66 @@ router.get('/pendentes-financeiro', async (req, res) => {
   }
 });
 
+// Formas de pagamento escolhidas na aprovação · decidem quem EXECUTA:
+// cartão → volta pra quem atende compras (compra no cartão); demais formas →
+// vão pro financeiro efetuar o pagamento.
+const FORMAS_PAGAMENTO_VALIDAS = ['boleto', 'pix', 'transferencia_bancaria', 'dinheiro', 'cartao_credito'];
+// Quem executa os pagamentos não-cartão no financeiro (snapshot de id · trocar
+// a pessoa é mudar esta linha, e o papel real vive em area_solicitacoes_responsaveis).
+const EXECUTOR_FINANCEIRO_ID = '7ab43fe2-cf03-45e1-b193-3c5f4d96f9a5';
+
 router.post('/:id/aprovar-financeiro', async (req, res) => {
   try {
-    if (!(await podeAprovarFinanceiro(req))) {
-      return res.status(403).json({ error: 'Apenas financeiro pode aprovar' });
-    }
     const { observacao } = req.body || {};
+    const formaPagamento = (req.body?.forma_pagamento || '').trim() || null;
     const { data: atual } = await supabase
-      .from('solicitacoes').select('*').eq('id', req.params.id).single();
+      .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada' });
-    if (atual.aprovado_financeiro_em) {
-      return res.status(400).json({ error: 'Já foi aprovada' });
+
+    // Dois caminhos pra aprovar, na MESMA porta (um 2º endpoint criaria uma
+    // segunda régua de dinheiro): o portão financeiro de sempre, ou a ALÇADA
+    // de quem atende a área quando a compra cotada cabe no teto.
+    let viaAlcada = false;
+    let limiteAlcada = LIMITE_ALCADA_PADRAO;
+    if (!(await podeAprovarFinanceiro(req, atual.categoria))) {
+      const alc = await avaliarAlcada(req, atual);
+      limiteAlcada = alc.limite;
+      if (!alc.ok) {
+        return res.status(403).json({
+          error: alc.motivo === 'acima_do_limite'
+            ? `Compras acima de R$ ${alc.limite.toLocaleString('pt-BR')} precisam da aprovação do financeiro.`
+            : 'Você não pode aprovar esta categoria de solicitação.',
+        });
+      }
+      viaAlcada = true;
     }
 
-    // Pra onde vai depois do OK do Yago:
-    //   compras/servico  -> logistica_compras (Amaury compra/contrata) · status pendente
-    //   reembolso/pagto  -> financeiro (paga) · status em_atendimento
-    const mapaCat = {
-      compras: 'logistica_compras', servico: 'logistica_compras',
-      reembolso: 'financeiro',      pagamento: 'financeiro',
-    };
-    const novaAreaResp = mapaCat[atual.categoria] || atual.area_responsavel;
-    const novoStatus = ['reembolso', 'pagamento'].includes(atual.categoria) ? 'em_atendimento' : 'pendente';
+    if (!aguardandoAprovacaoFinanceira(atual)) {
+      return res.status(400).json({ error: 'Esta solicitação não está aguardando aprovação financeira.' });
+    }
+    if (!cotacaoObrigatoriaRegistrada(atual)) {
+      return res.status(400).json({ error: 'A compra precisa ter uma cotação registrada antes da aprovação financeira.' });
+    }
+
+    // Compra/serviço EXIGEM a forma de pagamento — é ela que decide quem executa.
+    const ehCompraServico = ['compras', 'servico'].includes(atual.categoria);
+    if (formaPagamento && !FORMAS_PAGAMENTO_VALIDAS.includes(formaPagamento)) {
+      return res.status(400).json({ error: 'Forma de pagamento inválida.' });
+    }
+    if (ehCompraServico && !formaPagamento) {
+      return res.status(400).json({ error: 'Escolha a forma de pagamento (define se a compra volta pra área comprar no cartão ou vai pro financeiro pagar).' });
+    }
+
+    // Pra onde vai depois do OK:
+    //   compra/serviço + CARTÃO  -> logistica_compras (a área COMPRA no cartão) · pendente
+    //   compra/serviço + demais  -> financeiro (financeiro PAGA) · em_atendimento
+    //   reembolso/pagamento      -> financeiro (financeiro paga) · em_atendimento
+    // ⚠️ A alçada dispensa o financeiro de APROVAR, não de PAGAR: com forma
+    // não-cartão alguém com acesso à conta ainda precisa executar o pagamento.
+    const noCartao = formaPagamento === 'cartao_credito';
+    const vaiProFinanceiro = !ehCompraServico || !noCartao;
+    const novaAreaResp = vaiProFinanceiro ? 'financeiro' : 'logistica_compras';
+    const novoStatus = vaiProFinanceiro ? 'em_atendimento' : 'pendente';
 
     const updates = {
       aprovado_financeiro_em: new Date().toISOString(),
@@ -3355,27 +4390,51 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       area_responsavel: novaAreaResp,
       status: novoStatus,
     };
-    if (observacao) {
+    if (formaPagamento) updates.forma_pagamento = formaPagamento;
+    // Pagamento não-cartão vai pro executor do financeiro — ele vê e marca como pago.
+    if (vaiProFinanceiro && EXECUTOR_FINANCEIRO_ID) updates.responsavel_id = EXECUTOR_FINANCEIRO_ID;
+
+    // ⚠️ Aprovação por alçada fica REGISTRADA na observação. `aprovado_financeiro_por`
+    // sozinho não distingue "o financeiro aprovou" de "a área aprovou dentro do
+    // teto", e essa distinção é o que se audita seis meses depois.
+    const carimbo = viaAlcada
+      ? `[Aprovação por alçada · até R$ ${limiteAlcada.toLocaleString('pt-BR')} · sem passar pelo financeiro]`
+      : '[Aprovação financeira]';
+    const linhaObs = observacao ? `${carimbo} ${observacao}` : (viaAlcada ? carimbo : null);
+    if (linhaObs) {
       updates.observacoes = atual.observacoes
-        ? `${atual.observacoes}\n[Aprovação financeira] ${observacao}`
-        : `[Aprovação financeira] ${observacao}`;
+        ? `${atual.observacoes}\n${linhaObs}`
+        : linhaObs;
     }
 
     const { data, error } = await supabase
-      .from('solicitacoes').update(updates).eq('id', req.params.id).select('*').single();
+      .from('solicitacoes')
+      .update(updates)
+      .eq('id', req.params.id)
+      .eq('status', 'aguardando_aprovacao_financeira')
+      .eq('precisa_aprovacao_financeira', true)
+      .is('aprovado_financeiro_em', null)
+      .is('deleted_at', null)
+      .select('*')
+      .maybeSingle();
     if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Esta solicitação foi alterada por outra pessoa. Atualize a fila antes de decidir.' });
 
-    const acaoMsg = {
-      compras:   'enviado pra logística comprar',
-      servico:   'enviado pra logística contratar o serviço',
-      reembolso: 'pode efetuar o reembolso',
-      pagamento: 'pode efetuar o pagamento',
-    }[atual.categoria] || 'liberado pra atendimento';
+    const acaoMsg = (noCartao && ehCompraServico)
+      ? 'liberado pra compra no cartão'
+      : {
+          compras:   'enviado pro financeiro pagar a compra',
+          servico:   'enviado pro financeiro pagar o serviço',
+          reembolso: 'pode efetuar o reembolso',
+          pagamento: 'pode efetuar o pagamento',
+        }[atual.categoria] || 'liberado pra atendimento';
     notificar({
-      modulo: CATEGORIA_MODULO[atual.categoria] || 'financeiro',
+      modulo: vaiProFinanceiro ? 'financeiro' : (CATEGORIA_MODULO[atual.categoria] || 'logistica'),
       tipo: 'solicitacao_status',
       titulo: `Solicitação aprovada: ${atual.titulo}`,
-      mensagem: `Yago aprovou financeiramente · ${acaoMsg}`,
+      mensagem: viaAlcada
+        ? `${req.user.name || 'A área responsável'} aprovou dentro da alçada (até R$ ${limiteAlcada.toLocaleString('pt-BR')}) · ${acaoMsg}`
+        : `${req.user.name || 'O financeiro'} aprovou financeiramente · ${acaoMsg}`,
       link: '/solicitacoes',
       severidade: 'info',
       chaveDedup: `solicitacao_aprovada_fin_${data.id}`,
@@ -3394,15 +4453,21 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
 
 router.post('/:id/reprovar-financeiro', async (req, res) => {
   try {
-    if (!(await podeAprovarFinanceiro(req))) {
-      return res.status(403).json({ error: 'Apenas financeiro pode reprovar' });
-    }
     const { motivo } = req.body || {};
     if (!motivo) return res.status(400).json({ error: 'Motivo da reprovação é obrigatório' });
 
     const { data: atual } = await supabase
-      .from('solicitacoes').select('*').eq('id', req.params.id).single();
+      .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada' });
+    if (!(await podeAprovarFinanceiro(req, atual.categoria))) {
+      return res.status(403).json({ error: 'Você não pode reprovar esta categoria de solicitação.' });
+    }
+    if (!aguardandoAprovacaoFinanceira(atual)) {
+      return res.status(400).json({ error: 'Esta solicitação não está aguardando aprovação financeira.' });
+    }
+    if (!cotacaoObrigatoriaRegistrada(atual)) {
+      return res.status(400).json({ error: 'A compra precisa ter uma cotação registrada antes da reprovação financeira.' });
+    }
 
     const updates = {
       status: 'rejeitado',
@@ -3414,8 +4479,17 @@ router.post('/:id/reprovar-financeiro', async (req, res) => {
     };
 
     const { data, error } = await supabase
-      .from('solicitacoes').update(updates).eq('id', req.params.id).select('*').single();
+      .from('solicitacoes')
+      .update(updates)
+      .eq('id', req.params.id)
+      .eq('status', 'aguardando_aprovacao_financeira')
+      .eq('precisa_aprovacao_financeira', true)
+      .is('aprovado_financeiro_em', null)
+      .is('deleted_at', null)
+      .select('*')
+      .maybeSingle();
     if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Esta solicitação foi alterada por outra pessoa. Atualize a fila antes de decidir.' });
 
     notificar({
       modulo: 'financeiro',
@@ -3582,10 +4656,27 @@ router.post('/:id/atender-estoque', async (req, res) => {
       return res.status(400).json({ error: 'Solicitação já encerrada.' });
     }
 
+    // Bloqueio de saldo negativo (pedido do usuário 2026-07-27 · antes era só
+    // aviso visual no front, sem trava no servidor). Checa o saldo ATUAL de
+    // cada produto antes de gravar qualquer saída — se algum item pedir mais
+    // do que existe, a atendimento inteira é rejeitada (nada é gravado).
+    const produtoIds = [...new Set(itens.map(it => it.produto_id).filter(Boolean))];
+    const { data: saldos, error: saldoErr } = await supabase.from('vw_log_estoque_saldo')
+      .select('id, nome, saldo').in('id', produtoIds);
+    if (saldoErr) return res.status(400).json({ error: 'Erro ao checar saldo do estoque: ' + saldoErr.message });
+    const saldoPorId = new Map((saldos || []).map(s => [s.id, s]));
+
     const rows = [];
     for (const it of itens) {
       const qtd = Number(it.quantidade);
       if (!it.produto_id || !qtd || qtd <= 0) return res.status(400).json({ error: 'Item inválido (produto + quantidade > 0).' });
+      const prod = saldoPorId.get(it.produto_id);
+      const saldoAtual = Number(prod?.saldo || 0);
+      if (qtd > saldoAtual) {
+        return res.status(400).json({
+          error: `Saldo insuficiente em "${prod?.nome || it.produto_id}": disponível ${saldoAtual}, pedido ${qtd}.`,
+        });
+      }
       rows.push({
         produto_id: it.produto_id, tipo: 'saida', quantidade: qtd,
         data_movimentacao: new Date().toISOString().slice(0, 10),
@@ -3619,3 +4710,6 @@ router.post('/:id/atender-estoque', async (req, res) => {
 module.exports = router;
 module.exports.aprovarOrigemInterno = aprovarOrigemInterno;
 module.exports.rejeitarOrigemInterno = rejeitarOrigemInterno;
+module.exports.aprovarMeritoInterno = aprovarMeritoInterno;
+module.exports.rejeitarMeritoInterno = rejeitarMeritoInterno;
+module.exports.aprovadoresMeritoIds = aprovadoresMeritoIds;

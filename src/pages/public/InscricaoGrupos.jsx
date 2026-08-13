@@ -15,6 +15,12 @@
 // cadastro parecido NESTE grupo, devolve 409 possivel_duplicado → mostramos
 // "é você?" (confirmar, não bloquear).
 //
+// CASAIS (Marcos · 30/07): em grupo com categoria='Casais' aparece o bloco
+// "Inscrever meu cônjuge junto" — os dois entram numa tela só, num POST só.
+// Cada cônjuge continua sendo UM cadastro próprio (contrato de porta): o
+// backend cria dois pedidos vinculados, manda UM aviso pro líder com os dois
+// nomes e a aprovação decide o casal de uma vez.
+//
 // Totem: auto-reset por ociosidade (~90s) devolve ao início entre pessoas.
 // ============================================================================
 
@@ -23,18 +29,52 @@ import { gruposPublic } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 import GrupoSelector from '../../components/grupos/GrupoSelector';
-import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle } from 'lucide-react';
+import DescricaoGrupo from '../../components/grupos/DescricaoGrupo';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
+import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock, Heart, Info } from 'lucide-react';
+// Contrato de Inscrição (F3.1 · porta 7 · docs/modulo-inscricoes/): validadores
+// da fonte única — só os que não colidem com os helpers locais deste form.
+import { nomeCompletoValido, temAbreviacaoNome, validarNascimento, tirarCodigoPais } from '../../lib/inscricao';
 
-const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicacao com a igreja e participação em grupo de conexão, conforme a LGPD.`;
+const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicação com a igreja e participação em grupo de conexão, conforme a LGPD.`;
+// LGPD: o titular não consente sozinho pelo outro — ele DECLARA que o cônjuge
+// está ciente e concorda. Este texto é o snapshot gravado no consentimento do
+// cônjuge (inscricao_consentimentos · porta grupos).
+const TEXTO_CONSENTIMENTO_CONJUGE = `Declaro que meu cônjuge está ciente desta inscrição, concorda com ela e autoriza a CBRio a utilizar os dados pessoais informados aqui para comunicação com a igreja e participação no grupo de conexão, conforme a LGPD.`;
 
 const IDLE_MS = 90_000; // totem: volta ao início após ~90s sem interação
 
 const FORM_VAZIO = {
-  nome: '', cpf: '', email: '', telefone: '',
+  nome: '', cpf: '', email: '', telefone: '', endereco: '',
   data_nascimento: '', genero: '', observacao: '', website: '', foto_url: '',
 };
 
+// Cônjuge (só em grupo de casais) — mesmos campos obrigatórios do titular.
+const CONJUGE_VAZIO = {
+  nome: '', cpf: '', email: '', telefone: '',
+  data_nascimento: '', genero: '',
+  aceita_termos: false,   // declaração de ciência/concordância do cônjuge
+  whatsapp_optin: false,  // D4: opt-in é ato afirmativo de cada pessoa
+};
+
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
+// Mesma regex do backend (services/inscricaoContrato.emailValido) — usada pelo
+// titular E pelo cônjuge (uma só, não uma por campo).
+function emailValido(v) { return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim()); }
+
+// Dia + horário do grupo pra confirmação no formulário (pedido da Nana · 23/07:
+// mostrar líder/dia/horário abaixo do nome pra ter certeza do grupo certo).
+const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+function formatarQuando(g) {
+  if (!g) return '';
+  const hora = g.horario ? String(g.horario).slice(0, 5) : '';
+  const recor = ['quinzenal', 'mensal'].includes((g.recorrencia || '').toLowerCase()) ? ` · ${g.recorrencia}` : '';
+  let dia = '';
+  if ((g.recorrencia || '').toLowerCase() === 'diario') dia = 'Todos os dias';
+  else if (g.dia_semana != null && g.dia_semana >= 0 && g.dia_semana <= 6) dia = DIAS_SEMANA[g.dia_semana];
+  if (!dia && !hora) return recor ? recor.replace(' · ', '') : '';
+  return `${dia}${dia && hora ? ', ' : ''}${hora}${recor}`;
+}
 
 // Data de nascimento plausível (obrigatória desde 2026-07-10): formato ok,
 // não-futura e ano >= 1900. Devolve a idade em anos, ou null se inválida.
@@ -71,33 +111,15 @@ function mascaraCpf(v) {
   return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
 }
 function mascaraTelefone(v) {
-  const d = soDigitos(v).slice(0, 11);
+  // tirarCodigoPais antes de truncar — ver comentário em src/lib/inscricao.js
+  const d = tirarCodigoPais(soDigitos(v)).slice(0, 11);
   if (d.length <= 2) return `(${d}`;
   if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
-// Nascimento digitado como texto DD/MM/AAAA (Marcos · 14/07): o date picker
-// nativo era ruim de usar — escolher o ano exigia rolar décadas.
-function mascaraDataBr(v) {
-  const d = soDigitos(v).slice(0, 8);
-  if (d.length <= 2) return d;
-  if (d.length <= 4) return `${d.slice(0, 2)}/${d.slice(2)}`;
-  return `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}`;
-}
-// 'DD/MM/AAAA' → 'YYYY-MM-DD' · null se incompleta ou impossível (31/02 etc.)
-function brParaIso(v) {
-  const d = soDigitos(v);
-  if (d.length !== 8) return null;
-  const dia = +d.slice(0, 2), mes = +d.slice(2, 4), ano = +d.slice(4);
-  const data = new Date(ano, mes - 1, dia, 12);
-  if (data.getFullYear() !== ano || data.getMonth() !== mes - 1 || data.getDate() !== dia) return null;
-  return `${ano}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
-}
-function isoParaBr(v) {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(v || ''));
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
-}
+// Nascimento agora é escolhido no calendário (BirthDatePicker · Matheus 2026-07-16):
+// o campo armazena ISO (YYYY-MM-DD) direto — sem máscara DD/MM/AAAA.
 
 export default function InscricaoGrupos() {
   const { C } = usePublicTheme();
@@ -107,6 +129,20 @@ export default function InscricaoGrupos() {
       return new URLSearchParams(window.location.search).get('temporada') || '';
     } catch { return ''; }
   }, []);
+  // ?temporada= vem impresso em QRs antigos e QR vive pra sempre (lição da
+  // virada do Celebra): se a temporada do link NÃO está com inscrições
+  // abertas, o parâmetro é IGNORADO e o form cai na temporada aberta — antes
+  // o QR antigo "vencia" a aberta e a pessoa via lista vazia (P3 sweep 28/07).
+  const [temporadaQr, setTemporadaQr] = useState(temporadaParam);
+  useEffect(() => {
+    if (!temporadaParam) return;
+    gruposPublic.temporadas()
+      .then((ts) => {
+        const t = (ts || []).find((x) => x.id === temporadaParam);
+        if (!t || !t.inscricoes_abertas) setTemporadaQr('');
+      })
+      .catch(() => { /* sem catálogo agora → mantém o parâmetro (comportamento antigo) */ });
+  }, [temporadaParam]);
   const grupoParam = useMemo(() => {
     try {
       return new URLSearchParams(window.location.search).get('grupo') || '';
@@ -132,7 +168,11 @@ export default function InscricaoGrupos() {
 
   const [grupoEscolhido, setGrupoEscolhido] = useState(null);
   const [form, setForm] = useState(FORM_VAZIO);
+  const [comConjuge, setComConjuge] = useState(false);
+  const [conjuge, setConjuge] = useState(CONJUGE_VAZIO);
+  const [casalResp, setCasalResp] = useState(null); // { nome, ok, error, mensagem } devolvido pelo backend
   const [aceitaTermos, setAceitaTermos] = useState(false);
+  const [optinWhats, setOptinWhats] = useState(false);
   const [step, setStep] = useState(0); // 0=escolher grupo, 1=dados, 2=success
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -156,8 +196,8 @@ export default function InscricaoGrupos() {
           nome: f.nome || p.nome || '',
           telefone: f.telefone || (p.telefone ? mascaraTelefone(p.telefone) : ''),
           email: f.email || p.email || '',
-          // O backend manda ISO; o campo agora é texto DD/MM/AAAA
-          data_nascimento: f.data_nascimento || isoParaBr(p.data_nascimento),
+          // O backend manda ISO; o campo agora armazena ISO (YYYY-MM-DD) direto.
+          data_nascimento: f.data_nascimento || (p.data_nascimento ? String(p.data_nascimento).slice(0, 10) : ''),
           genero: f.genero || p.genero || '',
         }));
         setPreenchidoViaLink(true);
@@ -180,8 +220,10 @@ export default function InscricaoGrupos() {
       try {
         const g = await gruposPublic.getById(grupoParam);
         if (cancelled || !g || !g.id) return;
-        let fechado = g.aceitando_inscricoes === false;
-        if (!fechado && g.temporada) {
+        // Fechado = por convite do líder (nunca recebe pelo form). Grupo
+        // "sempre aberto" ignora a temporada fechada (Marcos · 15/07).
+        let fechado = g.aceitando_inscricoes === false || g.modo_inscricao === 'fechado';
+        if (!fechado && g.temporada && g.modo_inscricao !== 'sempre_aberto') {
           const ts = await gruposPublic.temporadas().catch(() => []);
           const t = (ts || []).find(x => x.id === g.temporada);
           if (t && !t.inscricoes_abertas) fechado = true;
@@ -200,7 +242,9 @@ export default function InscricaoGrupos() {
 
   const resetForm = useCallback(() => {
     setForm(FORM_VAZIO);
+    setComConjuge(false); setConjuge(CONJUGE_VAZIO); setCasalResp(null);
     setAceitaTermos(false);
+    setOptinWhats(false);
     setError(''); setDup(null); setResultado(null); setFotoErro('');
     setErrosCampos({}); setBloqueio(null);
     // Deep-link com inscrições fechadas NÃO volta pro passo 1 (o grupo do
@@ -236,12 +280,38 @@ export default function InscricaoGrupos() {
     setErrosCampos(p => (p[k] ? { ...p, [k]: '' } : p)); // corrigiu o campo? some o vermelho
   };
 
+  // ── Cônjuge (grupo de casais) ──
+  // Gatilho: categoria do grupo escolhido. Trocar pra um grupo que não é de
+  // casais desliga o bloco (e limpa o que foi digitado nele — senão iria num
+  // payload que o backend ignoraria em silêncio).
+  const ehGrupoCasais = (grupoEscolhido?.categoria || '').toLowerCase() === 'casais';
+  useEffect(() => {
+    if (ehGrupoCasais) return;
+    setComConjuge(false);
+    setConjuge(CONJUGE_VAZIO);
+    setErrosCampos(p => {
+      const chaves = Object.keys(p).filter(k => k.startsWith('conjuge.'));
+      if (!chaves.length) return p;
+      const novo = { ...p };
+      chaves.forEach(k => { delete novo[k]; });
+      return novo;
+    });
+  }, [ehGrupoCasais]);
+  const setConj = (k, masked) => (e) => {
+    const valor = masked ? masked(e.target.value) : e.target.value;
+    setConjuge(c => ({ ...c, [k]: valor }));
+    setErrosCampos(p => (p[`conjuge.${k}`] ? { ...p, [`conjuge.${k}`]: '' } : p));
+  };
+  const enviarConjuge = ehGrupoCasais && comConjuge;
+
   // "Tem certeza?" ao voltar/fechar/recarregar a página COM dados digitados
   // (regra de ouro do repo: sem digitar nada, não pergunta). Depois do envio
   // (step 2) pode sair livre. O navegador mostra o confirm nativo.
   const temDadosDigitados = !!(
     form.nome || soDigitos(form.telefone) || soDigitos(form.cpf)
     || form.email || form.data_nascimento || form.genero || form.observacao || form.foto_url
+    || conjuge.nome || soDigitos(conjuge.telefone) || soDigitos(conjuge.cpf)
+    || conjuge.email || conjuge.data_nascimento || conjuge.genero
   );
   useEffect(() => {
     if (!temDadosDigitados || step === 2) return;
@@ -255,26 +325,47 @@ export default function InscricaoGrupos() {
   // nome, telefone, nascimento, sexo, CPF (Marcos · 2026-07-13) e aceite.
   const validarCampos = () => {
     const erros = {};
-    if (!form.nome || form.nome.trim().length < 3) erros.nome = 'Digite o nome completo.';
+    if (!nomeCompletoValido(form.nome)) {
+      erros.nome = temAbreviacaoNome(form.nome) ? 'Escreva o nome completo, sem abreviações.' : 'Digite o nome completo.';
+    }
     const tel = soDigitos(form.telefone);
     if (tel.length < 10 || tel.length > 11) erros.telefone = 'Digite um celular válido com DDD.';
     if (!form.data_nascimento) {
       erros.data_nascimento = 'Informe a data de nascimento.';
+    } else if (!/^\d{4}-\d{2}-\d{2}$/.test(form.data_nascimento)) {
+      erros.data_nascimento = 'Selecione uma data válida.';
     } else {
-      const iso = brParaIso(form.data_nascimento);
-      if (!iso) erros.data_nascimento = 'Data inválida — digite dia, mês e ano completos.';
-      else {
-        const nasc = new Date(iso + 'T12:00:00');
-        if (nasc > new Date()) erros.data_nascimento = 'A data de nascimento não pode estar no futuro.';
-        else if (nasc.getFullYear() < 1900) erros.data_nascimento = 'Confira o ano de nascimento.';
-      }
+      const nasc = new Date(form.data_nascimento + 'T12:00:00');
+      if (Number.isNaN(nasc.getTime())) erros.data_nascimento = 'Selecione uma data válida.';
+      else if (nasc > new Date()) erros.data_nascimento = 'A data de nascimento não pode estar no futuro.';
+      else if (nasc.getFullYear() < 1900) erros.data_nascimento = 'Confira o ano de nascimento.';
     }
     if (form.genero !== 'masculino' && form.genero !== 'feminino') erros.genero = 'Marque masculino ou feminino.';
     const cpfDig = soDigitos(form.cpf);
     if (cpfDig.length !== 11) erros.cpf = 'Informe o CPF completo.';
     else if (!cpfValido(form.cpf)) erros.cpf = 'Este CPF não é válido — confira os números.';
-    if (form.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) erros.email = 'E-mail inválido.';
+    if (!emailValido(form.email)) erros.email = 'Informe um e-mail válido.';
     if (!aceitaTermos) erros.aceita_termos = 'É necessário aceitar os termos para enviar.';
+
+    // Cônjuge (grupo de casais): MESMA régua do titular. As chaves são
+    // 'conjuge.<campo>' — exatamente o que o backend devolve em `campo`.
+    if (enviarConjuge) {
+      if (!nomeCompletoValido(conjuge.nome)) {
+        erros['conjuge.nome'] = temAbreviacaoNome(conjuge.nome)
+          ? 'Escreva o nome completo, sem abreviações.'
+          : 'Digite o nome completo do seu cônjuge.';
+      }
+      const telC = soDigitos(conjuge.telefone);
+      if (telC.length < 10 || telC.length > 11) erros['conjuge.telefone'] = 'Digite um celular válido com DDD.';
+      if (!validarNascimento(conjuge.data_nascimento)) erros['conjuge.data_nascimento'] = 'Informe uma data de nascimento válida.';
+      if (conjuge.genero !== 'masculino' && conjuge.genero !== 'feminino') erros['conjuge.genero'] = 'Marque masculino ou feminino.';
+      const cpfC = soDigitos(conjuge.cpf);
+      if (cpfC.length !== 11) erros['conjuge.cpf'] = 'Informe o CPF completo.';
+      else if (!cpfValido(conjuge.cpf)) erros['conjuge.cpf'] = 'Este CPF não é válido — confira os números.';
+      else if (cpfC === soDigitos(form.cpf)) erros['conjuge.cpf'] = 'O CPF do cônjuge é o mesmo que você informou — confira os números.';
+      if (!emailValido(conjuge.email)) erros['conjuge.email'] = 'Informe um e-mail válido.';
+      if (!conjuge.aceita_termos) erros['conjuge.aceita_termos'] = 'Confirme que seu cônjuge está ciente e concorda.';
+    }
     return erros;
   };
 
@@ -296,7 +387,7 @@ export default function InscricaoGrupos() {
   // aviso — a pessoa segue se quiser e o líder decide na aprovação.
   const avisoFaixa = useMemo(() => {
     if (!grupoEscolhido) return null;
-    const idade = idadeDe(brParaIso(form.data_nascimento));
+    const idade = idadeDe(form.data_nascimento);
     const min = grupoEscolhido.idade_min;
     const max = grupoEscolhido.idade_max;
     if (idade != null && (min != null || max != null)) {
@@ -349,7 +440,11 @@ export default function InscricaoGrupos() {
     if (Object.keys(erros).length > 0) {
       setErrosCampos(erros);
       setError('');
-      const primeiro = ['nome', 'telefone', 'data_nascimento', 'genero', 'cpf', 'email', 'aceita_termos'].find(k => erros[k]);
+      const primeiro = [
+        'nome', 'telefone', 'data_nascimento', 'genero', 'cpf', 'email', 'aceita_termos',
+        'conjuge.nome', 'conjuge.telefone', 'conjuge.data_nascimento', 'conjuge.genero',
+        'conjuge.cpf', 'conjuge.email', 'conjuge.aceita_termos',
+      ].find(k => erros[k]);
       if (primeiro) scrollAteCampo(primeiro);
       return;
     }
@@ -362,19 +457,37 @@ export default function InscricaoGrupos() {
         grupo_id: grupoEscolhido.id,
         nome: form.nome.trim(),
         cpf: soDigitos(form.cpf), // obrigatório (Marcos · 2026-07-13) — validado acima
-        email: form.email.trim() || null,
+        email: form.email.trim(),
         telefone: form.telefone,
-        data_nascimento: brParaIso(form.data_nascimento), // DD/MM/AAAA → ISO (validado acima)
+        endereco: form.endereco.trim() || null,
+        data_nascimento: form.data_nascimento || null, // já em ISO (validado acima)
         genero: form.genero || null,
         observacao: form.observacao || null,
         foto_url: form.foto_url || null,
         aceita_termos: aceitaTermos,
+        whatsapp_optin: optinWhats,
         consentimento_texto: TEXTO_CONSENTIMENTO,
         website: form.website,
+        // Casal: 1 POST só, com o cônjuge dentro (o backend cria os dois
+        // pedidos e vincula). Fora de grupo de casais o campo nem vai.
+        ...(enviarConjuge ? {
+          conjuge: {
+            nome: conjuge.nome.trim(),
+            cpf: soDigitos(conjuge.cpf),
+            email: conjuge.email.trim(),
+            telefone: conjuge.telefone,
+            data_nascimento: conjuge.data_nascimento || null,
+            genero: conjuge.genero || null,
+            aceita_termos: true, // declaração validada acima
+            whatsapp_optin: conjuge.whatsapp_optin,
+            consentimento_texto: TEXTO_CONSENTIMENTO_CONJUGE,
+          },
+        } : {}),
         ...extra,
       });
       setDup(null);
       setResultado(r && (r.ja_membro || r.ja_pedido) ? { mensagem: r.mensagem, renovado: r.renovado === true } : null);
+      setCasalResp(r && r.conjuge ? { ...r.conjuge, nome: r.conjuge.nome || conjuge.nome.trim() } : null);
       setStep(2);
     } catch (e) {
       if (e.status === 409 && e.codigo === 'possivel_duplicado') {
@@ -442,6 +555,12 @@ export default function InscricaoGrupos() {
               <p style={{ color: C.text3, fontSize: 14, lineHeight: 1.6 }}>
                 {resultado ? (
                   resultado.mensagem
+                ) : casalResp?.ok ? (
+                  <>
+                    O pedido de <strong style={{ color: C.text }}>vocês dois</strong> para entrar no grupo{' '}
+                    <strong style={{ color: C.text }}>{grupoEscolhido?.nome}</strong> foi enviado. O líder recebeu
+                    um aviso com os dois nomes, vai analisar e a confirmação chega no WhatsApp em breve.
+                  </>
                 ) : (
                   <>
                     Seu pedido para entrar no grupo <strong style={{ color: C.text }}>{grupoEscolhido?.nome}</strong> foi
@@ -449,6 +568,47 @@ export default function InscricaoGrupos() {
                   </>
                 )}
               </p>
+              {/* Honestidade: a sua entrou, a do cônjuge não — com o motivo,
+                  sem parecer que tudo falhou. */}
+              {casalResp && casalResp.ok === false && (
+                <div style={{
+                  marginTop: 16, textAlign: 'left',
+                  padding: '12px 14px', borderRadius: 10,
+                  background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.55)',
+                  fontSize: 12.5, color: C.isDark ? '#fbbf24' : '#92400e', lineHeight: 1.55,
+                }}>
+                  <p style={{ margin: 0, fontWeight: 700 }}>
+                    A inscrição de {casalResp.nome || 'seu cônjuge'} não foi registrada.
+                  </p>
+                  <p style={{ margin: '6px 0 0' }}>
+                    {casalResp.error || 'Não conseguimos registrar agora.'} A sua está valendo — fale com a
+                    equipe de Grupos ou envie a dele(a) de novo por este mesmo formulário.
+                  </p>
+                </div>
+              )}
+              {/* Cônjuge OK mas com nuance (renovação/pedido já existente) ou
+                  titular que renovou — em todos esses casos o texto principal
+                  acima não fala dele(a), então o status vem aqui. */}
+              {casalResp?.ok && (casalResp.ja_membro || casalResp.ja_pedido || resultado) && (
+                <div style={{
+                  marginTop: 16, textAlign: 'left',
+                  padding: '12px 14px', borderRadius: 10,
+                  background: 'rgba(0,179,157,0.10)', border: '1px solid rgba(0,179,157,0.45)',
+                  fontSize: 12.5, color: C.isDark ? '#5eead4' : '#0f766e', lineHeight: 1.55,
+                }}>
+                  <p style={{ margin: 0 }}>
+                    <strong>{casalResp.nome || 'Seu cônjuge'}:</strong> {casalResp.mensagem
+                      || (casalResp.ja_membro
+                        ? 'já participa deste grupo — inscrição renovada.'
+                        : casalResp.ja_pedido
+                          ? 'já tinha um pedido registrado neste grupo.'
+                          /* Titular renovou e o cônjuge foi inscrito AGORA: sem este
+                             ramo o fallback dizia "já tinha um pedido" pra quem
+                             acabou de entrar na fila do líder. */
+                          : 'pedido enviado ao líder do grupo.')}
+                  </p>
+                </div>
+              )}
               <button onClick={resetForm} style={{
                 marginTop: 20, padding: '10px 24px', borderRadius: 10, background: '#00B39D', color: '#fff',
                 border: 'none', fontWeight: 700, cursor: 'pointer',
@@ -474,7 +634,7 @@ export default function InscricaoGrupos() {
               <GrupoSelector
                 mode="full"
                 usePublicApi
-                temporadaId={temporadaParam || undefined}
+                temporadaId={temporadaQr || undefined}
                 preferirAberta
                 selectedGrupoId={grupoEscolhido?.id}
                 onSelect={setGrupoEscolhido}
@@ -490,9 +650,53 @@ export default function InscricaoGrupos() {
                 <ArrowLeft size={16} /> Voltar à escolha do grupo
               </button>
               <h2 style={{ color: C.text, fontSize: 16, fontWeight: 700, marginBottom: 4 }}>2. Seus dados</h2>
-              <p style={{ color: C.text3, fontSize: 12, marginBottom: preenchidoViaLink ? 8 : 16 }}>
+              <p style={{ color: C.text3, fontSize: 12, marginBottom: 8 }}>
                 Para o grupo <strong style={{ color: C.text }}>{grupoEscolhido?.nome}</strong>
               </p>
+              {/* Confirma o grupo certo: líder + dia/horário logo abaixo do nome (Nana · 23/07) */}
+              {grupoEscolhido && (grupoEscolhido.lider_nome || formatarQuando(grupoEscolhido)) && (
+                <div style={{
+                  display: 'flex', flexDirection: 'column', gap: 5,
+                  padding: '10px 12px', marginBottom: 16, borderRadius: 10,
+                  background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                  border: `1px solid ${C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)'}`,
+                }}>
+                  {grupoEscolhido.lider_nome && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: C.text3 }}>
+                      <User size={14} style={{ color: '#00B39D', flexShrink: 0 }} />
+                      {/* Com apelido cadastrado mostra "Nome (Apelido)" — é como a
+                          pessoa conhece o líder ("ah, é o Tuninho"). */}
+                      Líder: <strong style={{ color: C.text, fontWeight: 600 }}>
+                        {grupoEscolhido.lider_apelido
+                          ? `${grupoEscolhido.lider_nome} (${grupoEscolhido.lider_apelido})`
+                          : grupoEscolhido.lider_nome}
+                      </strong>
+                    </span>
+                  )}
+                  {formatarQuando(grupoEscolhido) && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: C.text3 }}>
+                      <CalendarClock size={14} style={{ color: '#00B39D', flexShrink: 0 }} />
+                      <strong style={{ color: C.text, fontWeight: 600 }}>{formatarQuando(grupoEscolhido)}</strong>
+                    </span>
+                  )}
+                  {/* Do que o grupo trata — pedido do Marcos (31/07). Vem depois
+                      de líder/quando porque é leitura, não conferência. */}
+                  {(grupoEscolhido.descricao || '').trim() && (
+                    <div style={{
+                      display: 'flex', gap: 7, alignItems: 'flex-start', minWidth: 0,
+                      paddingTop: 4,
+                      borderTop: `1px solid ${C.isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+                    }}>
+                      <Info size={14} style={{ color: '#00B39D', flexShrink: 0, marginTop: 2 }} />
+                      <DescricaoGrupo
+                        texto={grupoEscolhido.descricao}
+                        cor={C.text3}
+                        linhas={3}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
               {preenchidoViaLink && (
                 <div style={{
                   padding: '8px 12px', marginBottom: 14, borderRadius: 10,
@@ -506,7 +710,19 @@ export default function InscricaoGrupos() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: 12, marginBottom: 12 }}>
                 <Field campo="nome" error={errosCampos.nome} label="Nome completo *" value={form.nome} onChange={set('nome')} />
                 <Field campo="telefone" error={errosCampos.telefone} label="Celular / WhatsApp *" value={form.telefone} onChange={set('telefone', mascaraTelefone)} maxLength={16} inputMode="tel" />
-                <Field campo="data_nascimento" error={errosCampos.data_nascimento} label="Data de nascimento *" value={form.data_nascimento} onChange={set('data_nascimento', mascaraDataBr)} placeholder="dia/mês/ano" maxLength={10} inputMode="numeric" />
+                <div data-campo="data_nascimento">
+                  <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Data de nascimento *</label>
+                  <BirthDatePicker
+                    value={form.data_nascimento}
+                    onChange={(v) => {
+                      setForm(f => ({ ...f, data_nascimento: v }));
+                      setErrosCampos(p => (p.data_nascimento ? { ...p, data_nascimento: '' } : p));
+                    }}
+                    placeholder="dia/mês/ano"
+                    aria-invalid={!!errosCampos.data_nascimento}
+                  />
+                  {errosCampos.data_nascimento && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos.data_nascimento}</p>}
+                </div>
                 <div data-campo="genero">
                   <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Sexo *</label>
                   <div style={{ display: 'flex', gap: 8 }}>
@@ -533,7 +749,8 @@ export default function InscricaoGrupos() {
                   {errosCampos.genero && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos.genero}</p>}
                 </div>
                 <Field campo="cpf" error={errosCampos.cpf} label="CPF *" value={form.cpf} onChange={set('cpf', mascaraCpf)} maxLength={14} inputMode="numeric" />
-                <Field campo="email" error={errosCampos.email} label="E-mail (opcional)" type="email" value={form.email} onChange={set('email')} />
+                <Field campo="email" error={errosCampos.email} label="E-mail *" type="email" value={form.email} onChange={set('email')} />
+                <Field campo="endereco" error={errosCampos.endereco} label="Endereço (opcional)" value={form.endereco} onChange={set('endereco')} />
               </div>
 
               {/* Grupo de outro gênero (única trava · 14/07) — BLOQUEIA com
@@ -564,6 +781,119 @@ export default function InscricaoGrupos() {
                   <p style={{ margin: 0 }}>⚠ {avisoFaixa} Siga em frente se for pra você, ou volte e escolha outro grupo.</p>
                 </div>
               ) : null}
+
+              {/* ── Cônjuge (só em grupo de casais) ── */}
+              {ehGrupoCasais && !(bloqueio?.mensagem || bloqueioLocal) && (
+                <div style={{
+                  border: `1.5px solid ${comConjuge ? 'rgba(0,179,157,0.55)' : C.cardBorder}`,
+                  background: comConjuge ? 'rgba(0,179,157,0.07)' : (C.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'),
+                  borderRadius: 12, padding: 14, marginBottom: 12,
+                }}>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={comConjuge}
+                      onChange={(e) => setComConjuge(e.target.checked)}
+                      style={{ marginTop: 2, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }}
+                    />
+                    <span style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>
+                      <Heart size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: -2, color: '#00B39D' }} />
+                      <strong>Inscrever meu cônjuge junto</strong>
+                      <span style={{ display: 'block', fontSize: 12, color: C.text3, marginTop: 3 }}>
+                        Este é um grupo de casais — você pode inscrever os dois de uma vez. O líder recebe um
+                        aviso só, com os dois nomes, e aprova o casal junto.
+                      </span>
+                    </span>
+                  </label>
+
+                  {comConjuge && (
+                    <div style={{ marginTop: 14 }}>
+                      <p style={{ fontSize: 12, fontWeight: 700, color: C.text2 || C.text, margin: '0 0 8px' }}>
+                        Dados do seu cônjuge
+                      </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: 12 }}>
+                        <Field campo="conjuge.nome" error={errosCampos['conjuge.nome']} label="Nome completo *" value={conjuge.nome} onChange={setConj('nome')} />
+                        <Field campo="conjuge.telefone" error={errosCampos['conjuge.telefone']} label="Celular / WhatsApp *" value={conjuge.telefone} onChange={setConj('telefone', mascaraTelefone)} maxLength={16} inputMode="tel" />
+                        <div data-campo="conjuge.data_nascimento">
+                          <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Data de nascimento *</label>
+                          <BirthDatePicker
+                            value={conjuge.data_nascimento}
+                            onChange={(v) => {
+                              setConjuge(c => ({ ...c, data_nascimento: v }));
+                              setErrosCampos(p => (p['conjuge.data_nascimento'] ? { ...p, 'conjuge.data_nascimento': '' } : p));
+                            }}
+                            placeholder="dia/mês/ano"
+                            aria-invalid={!!errosCampos['conjuge.data_nascimento']}
+                          />
+                          {errosCampos['conjuge.data_nascimento'] && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos['conjuge.data_nascimento']}</p>}
+                        </div>
+                        <div data-campo="conjuge.genero">
+                          <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Sexo *</label>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            {[['masculino', 'Masculino'], ['feminino', 'Feminino']].map(([valor, rotulo]) => (
+                              <button
+                                key={valor}
+                                type="button"
+                                onClick={() => {
+                                  setConjuge(c => ({ ...c, genero: valor }));
+                                  setErrosCampos(p => (p['conjuge.genero'] ? { ...p, 'conjuge.genero': '' } : p));
+                                }}
+                                style={{
+                                  flex: 1, minHeight: 44, padding: '9px 10px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
+                                  fontWeight: conjuge.genero === valor ? 700 : 500,
+                                  border: `1px solid ${conjuge.genero === valor ? '#00B39D' : (errosCampos['conjuge.genero'] ? '#ef4444' : C.inputBorder)}`,
+                                  background: conjuge.genero === valor ? 'rgba(0,179,157,0.12)' : (C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'),
+                                  color: conjuge.genero === valor ? '#00B39D' : C.text,
+                                }}
+                              >
+                                {rotulo}
+                              </button>
+                            ))}
+                          </div>
+                          {errosCampos['conjuge.genero'] && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos['conjuge.genero']}</p>}
+                        </div>
+                        <Field campo="conjuge.cpf" error={errosCampos['conjuge.cpf']} label="CPF *" value={conjuge.cpf} onChange={setConj('cpf', mascaraCpf)} maxLength={14} inputMode="numeric" />
+                        <Field campo="conjuge.email" error={errosCampos['conjuge.email']} label="E-mail *" type="email" value={conjuge.email} onChange={setConj('email')} />
+                      </div>
+
+                      {/* LGPD: você não consente pelo outro — declara que ele/ela está ciente */}
+                      <div data-campo="conjuge.aceita_termos" style={{
+                        marginTop: 12, borderRadius: 10, padding: 12,
+                        background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                        border: `1px solid ${errosCampos['conjuge.aceita_termos'] ? '#ef4444' : C.cardBorder}`,
+                      }}>
+                        <p style={{ fontSize: 11, color: C.text3, lineHeight: 1.5, margin: '0 0 8px' }}>{TEXTO_CONSENTIMENTO_CONJUGE}</p>
+                        <label style={{ fontSize: 12, color: C.text, display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={conjuge.aceita_termos}
+                            onChange={(e) => {
+                              const v = e.target.checked;
+                              setConjuge(c => ({ ...c, aceita_termos: v }));
+                              setErrosCampos(p => (p['conjuge.aceita_termos'] ? { ...p, 'conjuge.aceita_termos': '' } : p));
+                            }}
+                            style={{ marginTop: 2, accentColor: '#00B39D', flexShrink: 0 }}
+                          />
+                          Confirmo que meu cônjuge está ciente e concorda com esta inscrição *
+                        </label>
+                        {errosCampos['conjuge.aceita_termos'] && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '6px 0 0' }}>{errosCampos['conjuge.aceita_termos']}</p>}
+                      </div>
+
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginTop: 10 }}>
+                        <input
+                          type="checkbox"
+                          checked={conjuge.whatsapp_optin}
+                          onChange={(e) => setConjuge(c => ({ ...c, whatsapp_optin: e.target.checked }))}
+                          style={{ marginTop: 2, width: 16, height: 16, accentColor: '#00B39D', flexShrink: 0 }}
+                        />
+                        <span style={{ fontSize: 12, color: C.text3, lineHeight: 1.5 }}>
+                          Ele(a) também quer receber os avisos do grupo no WhatsApp, no número informado acima.
+                        </span>
+                      </label>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Foto opcional — reforço de identidade / anti-duplicata */}
               <FotoOpcional
@@ -602,6 +932,23 @@ export default function InscricaoGrupos() {
                 {errosCampos.aceita_termos && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '6px 0 0' }}>{errosCampos.aceita_termos}</p>}
               </div>
 
+              {/* Opt-in destacado (Marcos 2026-07-24): fica DESMARCADO por padrão
+                  (consentimento válido pela LGPD = ação afirmativa), mas com
+                  destaque visual pra aumentar a adesão. */}
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', background: 'rgba(0,179,157,0.10)', border: '1.5px solid rgba(0,179,157,0.55)', borderRadius: 10, padding: 14, marginBottom: 12 }}>
+                <input type="checkbox" checked={optinWhats} onChange={e => setOptinWhats(e.target.checked)} style={{ marginTop: 2, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }} />
+                <span style={{ fontSize: 12.5, color: C.text, lineHeight: 1.5 }}>
+                  📲 <strong>Quero receber avisos do meu grupo no WhatsApp</strong> — lembretes de encontro, materiais e recados da CBRio. Posso cancelar quando quiser.
+                </span>
+              </label>
+              {/* Aviso do D4 — o mesmo das outras portas: sem opt-in, nem a
+                  confirmação da inscrição vai pelo WhatsApp. */}
+              {!optinWhats && (
+                <p style={{ fontSize: 11.5, color: C.text3, margin: '-6px 0 12px 2px' }}>
+                  Se você não marcar, não conseguiremos te enviar confirmações, lembretes e avisos pelo WhatsApp.
+                </p>
+              )}
+
               {error && (
                 <div style={{ padding: 10, marginBottom: 12, background: 'rgba(239,68,68,0.15)', border: '1px solid #ef4444', borderRadius: 8, color: '#fca5a5', fontSize: 12 }}>
                   {error}
@@ -619,7 +966,7 @@ export default function InscricaoGrupos() {
                   color: '#fff', fontWeight: 700, border: 'none',
                   cursor: loading ? 'not-allowed' : 'pointer', fontSize: 14,
                 }}>
-                  {loading ? 'Enviando...' : 'Enviar pedido'}
+                  {loading ? 'Enviando...' : (enviarConjuge ? 'Enviar pedido do casal' : 'Enviar pedido')}
                 </button>
               )}
             </div>

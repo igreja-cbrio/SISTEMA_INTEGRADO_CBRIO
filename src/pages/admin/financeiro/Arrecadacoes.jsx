@@ -6,6 +6,9 @@ import {
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
+import EmptyState from '../../../components/EmptyState';
+import { AlertTriangle } from 'lucide-react';
+import { DatePicker } from '@/components/ui/date-picker';
 import { financeiroV2 } from '../../../api';
 
 const fmtMoney = (v) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -28,6 +31,7 @@ function rangePeriodo(modo, ano, mes, inicioCustom, fimCustom) {
 export default function Arrecadacoes() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState(false);
   const [filtroTipo, setFiltroTipo] = useState('todas');
 
   // Filtros de período
@@ -42,13 +46,14 @@ export default function Arrecadacoes() {
 
   const reload = () => {
     setLoading(true);
+    setErro(false);
     // RPC dedicada · evita limite do PostgREST (db-max-rows=1000) que cortava
     // arrecadacoes em meses com muitos lancamentos (ex: 927 vs 1905 reais).
     financeiroV2.arrecadacoes({ inicio: periodo.inicio, fim: periodo.fim })
       .then(data => {
         setItems(Array.isArray(data) ? data : []);
       })
-      .catch(() => setItems([]))
+      .catch(() => { setItems([]); setErro(true); })
       .finally(() => setLoading(false));
   };
   useEffect(() => { reload(); /* eslint-disable-next-line */ }, [periodo.inicio, periodo.fim]);
@@ -136,10 +141,10 @@ export default function Arrecadacoes() {
 
             {modo === 'custom' && (
               <>
-                <input type="date" value={inicioCustom} onChange={e => setInicioCustom(e.target.value)}
+                <DatePicker value={inicioCustom} onChange={setInicioCustom}
                   className="px-2 py-1 text-xs rounded border bg-background" />
                 <span className="text-xs text-muted-foreground">até</span>
-                <input type="date" value={fimCustom} onChange={e => setFimCustom(e.target.value)}
+                <DatePicker value={fimCustom} onChange={setFimCustom}
                   className="px-2 py-1 text-xs rounded border bg-background" />
               </>
             )}
@@ -231,6 +236,14 @@ export default function Arrecadacoes() {
 
           {loading && items.length === 0 ? (
             <div className="py-12 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" /></div>
+          ) : erro && items.length === 0 ? (
+            <EmptyState
+              tom="erro"
+              icone={AlertTriangle}
+              titulo="Não foi possível carregar as arrecadações"
+              mensagem="Falha ao consultar o período. Isso não significa que o mês está vazio — tente novamente."
+              cta={{ label: 'Tentar de novo', onClick: reload }}
+            />
           ) : filtradasUI.length === 0 ? (
             <div className="py-12 text-center text-sm text-muted-foreground">
               <Heart className="h-10 w-10 mx-auto mb-2 opacity-40" />

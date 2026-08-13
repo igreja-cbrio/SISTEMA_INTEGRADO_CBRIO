@@ -48,8 +48,8 @@ export default function ContactCaptureDialog({ volunteerId, volunteerName, onDon
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
-    if (cpf && !cpfValido(cpf)) return toast.error('CPF invalido');
-    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast.error('Email invalido');
+    if (cpf && !cpfValido(cpf)) return toast.error('CPF inválido');
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast.error('Email inválido');
     if (!cpf && !phone && !email) { onDone(); return; }
 
     setSaving(true);
@@ -74,7 +74,7 @@ export default function ContactCaptureDialog({ volunteerId, volunteerName, onDon
           <DialogTitle>Completar cadastro</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground -mt-1">
-          <span className="font-medium text-foreground">{volunteerName}</span> ainda nao tem CPF cadastrado.
+          <span className="font-medium text-foreground">{volunteerName}</span> ainda não tem CPF cadastrado.
           Aproveite o check-in pra completar (opcional).
         </p>
         <div className="space-y-3 py-2">

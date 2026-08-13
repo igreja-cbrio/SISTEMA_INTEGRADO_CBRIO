@@ -12,6 +12,15 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 *
 
 router.use(authenticate);
 
+// ⚠️ VIRADA (SPEC-04 · 2026-07-28): o ext_* CONGELOU — o Celebra migrou pra
+// espinha e /evento/:slug é servido por ela. Escrever aqui criaria divergência
+// silenciosa (a espinha não veria a mudança). Leitura segue liberada
+// (conferência). Gestão do dia a dia: /inscricoes (routes/inscricoes.js).
+router.use((req, res, next) => {
+  if (req.method === 'GET') return next();
+  return res.status(410).json({ error: 'Eventos Externos migrou pro módulo Inscrições — gerencie em /inscricoes.' });
+});
+
 // POST /upload-capa — foto de capa do formulário (bucket público). Devolve a URL.
 router.post('/upload-capa', authorizeModule('eventos-externos', 3), upload.single('arquivo'), async (req, res) => {
   try {

@@ -6,6 +6,11 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { reconciliarCpfTardio, propagarCpfConvertido } = require('../services/cpfReconciliar');
+const { cpfValido } = require('../utils/cpf');
+// Divisor da média de frequência da mandala = nº de DOMINGOS (régua pura · o
+// cabeçalho de utils/divisorMandala.js tem o porquê e os números medidos).
+const { divisorDomingos } = require('../utils/divisorMandala');
 const painelCache = require('../services/painelCache');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
@@ -19,7 +24,37 @@ const uploadFotoRef = multer({
   },
 });
 
-router.use(authenticate);
+// ⚠️⚠️ O `authenticate` ENGOLIA O CRON ANTES DO HANDLER (conserto de 11/08/2026).
+//
+// O `router.use(authenticate)` roda antes de qualquer rota deste arquivo. O
+// Vercel Cron chama com `Authorization: Bearer <CRON_SECRET>`; o `authenticate`
+// tenta validar isso como JWT do Supabase, falha, e devolve **401**. Resultado:
+// a checagem `isAuthorizedCron(req) || isAdmin` escrita dentro dos handlers era
+// CÓDIGO MORTO para cron — nunca era alcançada.
+//
+// Medido antes do conserto, em `system_job_runs`: HTTP_401 em **11 de 11**
+// execuções de `/api/kpis/youtube/sync` e o mesmo em `/api/kpis/cultos/auto-create`
+// e `/api/governanca/cron/lembrete`. Três rotinas que não faziam nada, todos os
+// dias, em silêncio — quem percebeu foi o alarme de incidente, não uma pessoa.
+//
+// ⚠️ A LISTA É EXPLÍCITA de propósito. Deixar qualquer requisição com
+// CRON_SECRET passar por todo o router transformaria o segredo do cron numa
+// chave-mestra para as dezenas de rotas autenticadas daqui. Só entram caminhos
+// que TÊM cron no `vercel.json`, e o handler continua fazendo a própria
+// verificação (agora alcançável).
+//
+// ⚠️ Sem segredo válido nada muda: cai no `authenticate` normal, então admin e
+// diretor seguem podendo disparar a rotina à mão pela tela.
+// ⚠️ LISTA, e não o prefixo `/cron/` usado em governanca.js e totemKids.js: esta
+// rotina se chama `/cultos/auto-create` (a tela chama o MESMO caminho por POST),
+// então não cai na convenção. Renomear pra `/cron/...` quebraria o botão da tela.
+// Rota de cron NOVA neste arquivo deve nascer sob `/cron/` — aí some a lista.
+const CAMINHOS_DE_CRON = new Set(['/cultos/auto-create']);
+router.use((req, res, next) => (
+  CAMINHOS_DE_CRON.has(req.path) && isAuthorizedCron(req)
+    ? next()
+    : authenticate(req, res, next)
+));
 
 // Helper: permite escrita em cultos/decisoes/batismos pra admin/diretor OU
 // quem tem 'integração' em kpi_areas (Lorena, líder de Integração).
@@ -379,8 +414,8 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     if (respTelLimpo.length !== 11) {
       return res.status(400).json({ error: 'Telefone do responsável deve ter 11 digitos pra decisão Kids' });
     }
-    if (respCpfLimpo && respCpfLimpo.length !== 11) {
-      return res.status(400).json({ error: 'CPF do responsável deve ter 11 digitos (ou deixe vazio)' });
+    if (respCpfLimpo && (respCpfLimpo.length !== 11 || !cpfValido(respCpfLimpo))) {
+      return res.status(400).json({ error: 'CPF do responsável inválido — confira os dígitos (ou deixe vazio)' });
     }
     // Criança não precisa de telefone próprio
     telLimpo = telLimpo || '';
@@ -392,8 +427,10 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     if (telLimpo.length !== 11) {
       return res.status(400).json({ error: 'Telefone deve ter 11 digitos (DDD + 9 + numero)' });
     }
-    if (cpfLimpo && cpfLimpo.length !== 11) {
-      return res.status(400).json({ error: 'CPF deve ter 11 digitos' });
+    if (cpfLimpo && (cpfLimpo.length !== 11 || !cpfValido(cpfLimpo))) {
+      // DV no servidor: com o CPF sob índice UNIQUE, um CPF digitado errado
+      // "ocupa a vaga" e bloqueia o dono verdadeiro em todas as portas.
+      return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
     }
   }
 
@@ -461,9 +498,27 @@ router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
     'responsavel_nome', 'responsavel_telefone', 'responsavel_cpf',
   ];
   const update = {};
+  // CPFs já armazenados na decisão: idênticos ao payload passam SEM validar DV
+  // (grandfathering — o modal reenvia o cpf existente; sem isso um CPF legado
+  // DV-inválido travaria a edição de QUALQUER campo). DV só pra CPF novo/alterado.
+  let cpfsAtuais = null;
+  const precisaCpfAtual = ['cpf', 'responsavel_cpf'].some((k) => req.body?.[k]);
+  if (precisaCpfAtual) {
+    const { data: atual } = await supabase.from('cultos_decisoes_pessoas')
+      .select('cpf, responsavel_cpf').eq('id', req.params.id).maybeSingle();
+    cpfsAtuais = atual || {};
+  }
   for (const [k, v] of Object.entries(req.body || {})) {
     if (!allowed.includes(k)) continue;
-    if ((k === 'cpf' || k === 'responsavel_cpf') && v) update[k] = String(v).replace(/\D/g, '');
+    if ((k === 'cpf' || k === 'responsavel_cpf') && v) {
+      const d = String(v).replace(/\D/g, '');
+      const atualNorm = String(cpfsAtuais?.[k] || '').replace(/\D/g, '');
+      if (d && atualNorm && d === atualNorm) { update[k] = d; continue; }
+      if (d.length !== 11 || !cpfValido(d)) {
+        return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+      }
+      update[k] = d;
+    }
     else if ((k === 'telefone' || k === 'responsavel_telefone') && v) update[k] = String(v).replace(/\D/g, '');
     else if (k === 'email' && v) update[k] = String(v).trim().toLowerCase();
     else if (k === 'idade') update[k] = v ? Number(v) : null;
@@ -474,6 +529,26 @@ router.put('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => {
     .from('cultos_decisoes_pessoas').update(update)
     .eq('id', req.params.id).select().single();
   if (error) return res.status(500).json({ error: error.message });
+
+  // Reconciliação de CPF tardio ("censo posterior" · auditoria CPF 2026-07-16):
+  // o trigger resolve_membro é BEFORE INSERT — editar a decisão preenchendo o
+  // CPF depois NÃO atualizava o membro-stub criado sem CPF. Agora o CPF que
+  // chega pela edição é consolidado no membro vinculado (ou vira pendência de
+  // identidade se conflitar) e espelhado no convertido. Fire-and-forget.
+  if (update.cpf && data?.membro_id && data.tipo_decisao !== 'kids') {
+    (async () => {
+      try {
+        await reconciliarCpfTardio({
+          membroId: data.membro_id, cpf: update.cpf,
+          origem: 'decisao_edicao', origemId: data.id,
+          dataNascimento: data.data_nascimento || null,
+        });
+        await propagarCpfConvertido({ membroId: data.membro_id });
+      } catch (e) {
+        console.error('[kpis/decisoes-pessoas PUT] reconciliar cpf:', e.message);
+      }
+    })();
+  }
   res.json(data);
 });
 
@@ -488,7 +563,12 @@ router.delete('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => 
 // Cria cultos da semana corrente a partir de vol_service_types (recurrence_day, recurrence_time).
 // Idempotente: ON CONFLICT DO NOTHING via índice único (service_type_id, data, hora).
 // weeks=N: backfill das últimas N semanas (default 1 = só semana corrente).
-router.post('/cultos/auto-create', async (req, res) => {
+// ⚠️ GET **E** POST: o Vercel Cron chama sempre por GET, e rota só-POST não dá
+// "não autorizado" — dá NÃO ENCONTRADO, que é ainda mais difícil de diagnosticar
+// (o job registra o erro HTTP e ninguém suspeita do verbo). O
+// `/api/kpis/v2/cron/coletar` já registrava os dois; aqui tinha ficado só POST.
+// A tela continua chamando por POST.
+async function cultosAutoCreate(req, res) {
   const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
   if (!isAuthorizedCron(req) && !isAdmin) {
     return res.status(401).json({ error: 'Não autorizado' });
@@ -562,7 +642,9 @@ router.post('/cultos/auto-create', async (req, res) => {
   }
 
   res.json({ weeks, created: created.length, skipped: skipped.length, items: created, skippedItems: skipped });
-});
+}
+router.get('/cultos/auto-create', cultosAutoCreate);
+router.post('/cultos/auto-create', cultosAutoCreate);
 
 // ── Batismos ──────────────────────────────────────────────────────────────────
 router.get('/batismos', async (req, res) => {
@@ -796,12 +878,54 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
     cpf, nome, sobrenome, data_nascimento, telefone, email,
     origem = 'manual', observacoes, area_kpi,
     tamanho_camisa, eh_crianca, possui_deficiencia, deficiencia_descricao, endereco,
+    horario_culto, sexo,
   } = req.body;
   if (!nome || !sobrenome) return res.status(400).json({ error: 'nome e sobrenome são obrigatórios' });
   const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
   const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
 
   const cpfClean = cpf ? cpf.replace(/\D/g, '') : null;
+  if (cpfClean && (cpfClean.length !== 11 || !cpfValido(cpfClean))) {
+    return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+  }
+  // Totem é porta pública self-service: segue a mesma lei do formulário público
+  // de batismo (CPF com DV obrigatório). O cadastro interno da equipe continua
+  // sendo a exceção operacional (origem manual).
+  if (origem === 'totem' && !cpfClean) {
+    return res.status(400).json({ error: 'CPF é obrigatório para se inscrever pelo totem' });
+  }
+
+  // Data/horário escolhidos no totem: a data é SEMPRE a do próximo batismo
+  // (server-side — não confia na data do cliente) e o horário precisa estar
+  // aberto e com vaga no momento do insert.
+  let dataBatismo = null;
+  let horarioCulto = null;
+  let horarioLabel = null;
+  if (horario_culto) {
+    const { data: h } = await supabase
+      .from('batismo_horarios')
+      .select('horario, label, limite')
+      .eq('horario', String(horario_culto))
+      .eq('aberto', true)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (!h) return res.status(400).json({ error: 'Horário indisponível — escolha outro' });
+    horarioLabel = h.label || h.horario;
+    dataBatismo = _proximo4Domingo();
+    if (h.limite != null) {
+      const { count } = await supabase
+        .from('batismo_inscricoes')
+        .select('id', { count: 'exact', head: true })
+        .eq('data_batismo', dataBatismo)
+        .eq('horario_culto', h.horario)
+        .is('deleted_at', null)
+        .not('status', 'in', '(cancelado,rejeitado)');
+      if ((count || 0) >= h.limite) {
+        return res.status(409).json({ error: 'Esse horário acabou de lotar — escolha outro' });
+      }
+    }
+    horarioCulto = h.horario;
+  }
 
   // Guarda na origem (membroMatch · 2026-06-19): resolve-ou-cria UM membro
   // deduplicado em vez do match-só-por-CPF (que deixava órfão quem inscrevia sem
@@ -814,11 +938,33 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
       nome: `${nome} ${sobrenome}`.trim(),
       dataNascimento: data_nascimento || null,
       status: 'visitante',
+      origem: 'batismo_cadastro_interno',
     });
     membro_id = r.membro_id;
   } catch (e) {
     console.error('[kpis/batismos] acharOuCriarGuardado:', e.message);
     // fail-open: segue sem vínculo (Entradas liga depois)
+  }
+
+  // Dedup de INSCRIÇÃO no totem (self-service · mesma regra da porta pública):
+  // a mesma pessoa não abre 2 inscrições em aberto. Por membro OU CPF. O cadastro
+  // interno da equipe (origem 'manual') mantém liberdade de reinscrever.
+  if (origem === 'totem') {
+    const ors = [];
+    if (membro_id) ors.push(`membro_id.eq.${membro_id}`);
+    if (cpfClean) ors.push(`cpf.eq.${cpfClean}`);
+    if (ors.length) {
+      const { data: dups } = await supabase
+        .from('batismo_inscricoes')
+        .select('id, status')
+        .or(ors.join(','))
+        .in('status', ['pendente', 'confirmado'])
+        .is('deleted_at', null)
+        .limit(1);
+      if (dups && dups[0]) {
+        return res.json({ ok: true, duplicado: true, mensagem: `Você já tem uma inscrição de batismo em andamento (${dups[0].status}).` });
+      }
+    }
   }
 
   const { data: inscricao, error } = await supabase
@@ -839,6 +985,8 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
       deficiencia_descricao: possui_deficiencia && deficiencia_descricao
         ? String(deficiencia_descricao).trim() : null,
       endereco: endereco ? String(endereco).trim() : null,
+      ...(sexo ? { sexo: String(sexo).trim().slice(0, 20) } : {}),
+      ...(dataBatismo ? { data_batismo: dataBatismo, horario_culto: horarioCulto } : {}),
     })
     .select('*, membro:membro_id(id, nome, foto_url)')
     .single();
@@ -854,9 +1002,53 @@ router.post('/batismos', authorizeBatismo, async (req, res) => {
     chaveDedup: `batismo_${inscricao.id}`,
   }).catch(() => {});
 
+  // Confirmação por WhatsApp (via FILA · caminho feliz em tempo real, reenvio
+  // com backoff se o TIER_250 estourar). No-op gracioso até o template
+  // `WHATSAPP_TEMPLATE_BATISMO_CONF` existir/ser aprovado na Meta. Só no totem.
+  const telConf = telefone || inscricao.telefone;
+  if (origem === 'totem' && telConf) {
+    try {
+      const { enfileirar } = require('../services/whatsappFila');
+      enfileirar({
+        telefone: telConf,
+        // Nome do template FIXO (padrão de grupos · gruposWhatsapp.js) · env só
+        // override. A equipe cria o template na Meta com este nome e NÃO precisa
+        // mexer no Vercel. Se ainda não existir na Meta, a fila registra o erro.
+        template: process.env.WHATSAPP_TEMPLATE_BATISMO_CONF || 'batismo_confirmacao',
+        params: [
+          String(nome).split(' ')[0] || 'Olá',
+          dataBatismo ? dataBatismo.split('-').reverse().join('/') : 'a confirmar',
+          horarioLabel || 'a confirmar',
+        ],
+        contexto: 'batismo_totem',
+        refId: inscricao.id,
+      }).catch(() => {});
+    } catch { /* fila indisponível · não bloqueia a inscrição */ }
+  }
+
   // Exposição mínima: o token de acesso só sai pelo fluxo de check-in (impressão).
   const { codigo_acesso: _ca, codigo_conferencia: _cc, ...inscricaoPub } = inscricao;
   res.json(inscricaoPub);
+});
+
+// PUT /batismos/em-massa — muda o status de VÁRIAS inscrições de uma vez (ex.:
+// marcar os presentes como 'realizado'). body { ids: [...], status }. Precisa vir
+// ANTES de '/batismos/:id' (senão o :id captura "em-massa").
+router.put('/batismos/em-massa', authorizeBatismo, async (req, res) => {
+  const { ids, status } = req.body || {};
+  const STATUS_VALIDOS = ['pendente', 'confirmado', 'realizado', 'cancelado'];
+  const lista = Array.isArray(ids) ? [...new Set(ids.filter(Boolean).map(String))] : [];
+  if (!lista.length) return res.status(400).json({ error: 'Selecione ao menos uma pessoa.' });
+  if (!STATUS_VALIDOS.includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+  if (lista.length > 500) return res.status(400).json({ error: 'Máximo de 500 por vez.' });
+  const { data, error } = await supabase
+    .from('batismo_inscricoes')
+    .update({ status, updated_at: new Date().toISOString() })
+    .in('id', lista)
+    .is('deleted_at', null)
+    .select('id');
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, atualizados: (data || []).length });
 });
 
 router.put('/batismos/:id', authorizeBatismo, async (req, res) => {
@@ -928,6 +1120,9 @@ router.get('/batismos/checkin/do-dia', authorizeBatismo, async (req, res) => {
 router.post('/batismos/:id/checkin', authorizeBatismo, async (req, res) => {
   const { cpf, consentiu } = req.body || {};
   const cpfClean = cpf ? String(cpf).replace(/\D/g, '') : null;
+  if (cpfClean && (cpfClean.length !== 11 || !cpfValido(cpfClean))) {
+    return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+  }
 
   const { data: insc, error: e0 } = await supabase
     .from('batismo_inscricoes')
@@ -950,11 +1145,28 @@ router.post('/batismos/:id/checkin', authorizeBatismo, async (req, res) => {
         nome: `${insc.nome} ${insc.sobrenome || ''}`.trim(),
         dataNascimento: insc.data_nascimento || null,
         status: 'visitante',
+        origem: 'batismo_checkin', origemId: insc.id,
       });
       membro_id = r.membro_id || membro_id;
     } catch (e) {
       console.error('[kpis/batismos/checkin] acharOuCriarGuardado:', e.message);
       // fail-open: segue sem vínculo (Entradas liga depois)
+    }
+  } else if (cpfClean && cpfClean.length === 11 && insc.membro_id) {
+    // Reconciliação de CPF tardio: a inscrição JÁ estava ligada a um membro
+    // (tipicamente um stub criado sem CPF na conversão) e o CPF chegou agora,
+    // na presença física. Antes o CPF ficava só na inscrição — o membro seguia
+    // sem CPF e a identidade global nunca consolidava. Conflito não sobrescreve
+    // nada: vira pendência de identidade (fila humana).
+    try {
+      await reconciliarCpfTardio({
+        membroId: insc.membro_id, cpf: cpfClean,
+        origem: 'batismo_checkin', origemId: insc.id,
+        dataNascimento: insc.data_nascimento || null,
+      });
+      await propagarCpfConvertido({ membroId: insc.membro_id });
+    } catch (e) {
+      console.error('[kpis/batismos/checkin] reconciliar cpf:', e.message);
     }
   }
 
@@ -1065,127 +1277,38 @@ router.put('/metas/:id', authorize('admin', 'diretor'), async (req, res) => {
   res.json(data);
 });
 
-// ── YouTube status (verifica se a API key está configurada e quando rodou a última sync) ──
-router.get('/youtube/status', async (req, res) => {
-  const apiKeyConfigured = !!process.env.YOUTUBE_API_KEY;
-  const { data: ultimo } = await supabase
-    .from('cultos')
-    .select('ds_coletado_em, ddus_coletado_em')
-    .or('ds_coletado_em.not.is.null,ddus_coletado_em.not.is.null')
-    .order('ds_coletado_em', { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
-  const lastSync = ultimo
-    ? (ultimo.ds_coletado_em && ultimo.ddus_coletado_em
-        ? (ultimo.ds_coletado_em > ultimo.ddus_coletado_em ? ultimo.ds_coletado_em : ultimo.ddus_coletado_em)
-        : (ultimo.ds_coletado_em || ultimo.ddus_coletado_em))
-    : null;
-  res.json({ apiKeyConfigured, lastSync });
-});
+// ⚠️⚠️ OS DOIS ENDPOINTS DE YOUTUBE FORAM REMOVIDOS AQUI (11/08/2026) — e a
+// razão é o oposto de "limpeza": eles eram a ÚNICA manifestação viva de uma
+// rotina morta, na forma de um alarme diário no celular do Matheus.
+//
+// O que foi medido antes de apagar:
+//  · `POST /kpis/youtube/sync` rodava por cron às 13h e falhava com HTTP 401 em
+//    **11 de 11 execuções** registradas (desde 01/08, quando o system_job_runs
+//    começou a gravar). Nunca teve um sucesso.
+//  · a causa do 401 é o `router.use(authenticate)` do topo deste arquivo: ele
+//    roda ANTES do handler, tenta validar o `Authorization: Bearer <CRON_SECRET>`
+//    do Vercel como JWT do Supabase, falha e devolve 401. A checagem
+//    `isAuthorizedCron(req) || isAdmin` que o handler fazia era CÓDIGO MORTO pra
+//    cron — nunca era alcançada. (Somado a isso, a rota era POST e o Vercel Cron
+//    chama por GET: dois defeitos empilhados.)
+//  · o dado que ela ia buscar JÁ É COLETADO, e por fonte melhor: os coletores do
+//    módulo `online` (`/api/online/cron/ds-collect` e `ddus-collect`, verdes
+//    todos os dias) gravam `cultos.online_ds`, `online_ddus` e `online_pico`
+//    pela YouTube **Analytics** API, contra o `videos?part=statistics` público
+//    daqui. Conferido em produção: os cultos das últimas 3 semanas estão com os
+//    três campos preenchidos.
+//  · e NENHUMA tela chamava: `youtubeSync`/`youtubeStatus` existiam em
+//    `src/api.js` sem um único consumidor.
+//
+// Consertar o 401 para uma rotina redundante seria manter de pé um segundo
+// escritor dos mesmos campos, com fonte pior, só para calar um alarme. O alarme
+// estava certo: a rotina não funcionava. O que estava errado era ela existir.
+//
+// ⚠️ `cultos.ds_coletado_em` / `ddus_coletado_em` continuam existindo e
+// permanentemente NULL: só esta rotina os escrevia, e ela nunca rodou. Não vale
+// migration pra derrubar coluna vazia — mas quem for usá-las precisa saber que
+// não significam "nunca coletado", significam "ninguém nunca estampou".
 
-// ── YouTube sync (chamado pelo cron Vercel) ───────────────────────────────────
-router.post('/youtube/sync', async (req, res) => {
-  const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
-  if (!isAuthorizedCron(req) && !isAdmin) {
-    return res.status(401).json({ error: 'Não autorizado' });
-  }
-
-  const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'YOUTUBE_API_KEY não configurada' });
-
-  const ontem = new Date();
-  ontem.setDate(ontem.getDate() - 1);
-  const ontemStr = ontem.toISOString().split('T')[0];
-
-  const seteDias = new Date();
-  seteDias.setDate(seteDias.getDate() - 7);
-  const seteDiasStr = seteDias.toISOString().split('T')[0];
-
-  // Tipos de culto que têm transmissão online (filtro p/ ignorar Bridge etc.)
-  const { data: onlineTypes } = await supabase
-    .from('vol_service_types')
-    .select('id')
-    .eq('has_online_stream', true);
-  const onlineTypeIds = new Set((onlineTypes || []).map(t => t.id));
-  const isOnline = (c) => !c.service_type_id || onlineTypeIds.has(c.service_type_id);
-
-  // Backfill-friendly: pega TODOS os cultos com vídeo pendente até a data limite,
-  // não so a data exata. Se o cron falhou em algum dia, na próxima execucao ele
-  // ainda recupera o dado (best-effort com viewCount atual). O cron diario
-  // limita o backlog a poucos itens.
-  //
-  // D+1 (online_ds): cultos com data <= ontem, com vídeo, sem online_ds
-  // D+7 (online_ddus): cultos com data <= 7 dias atras, com vídeo, com online_ds, sem online_ddus
-  const [{ data: cultosDSRaw }, { data: cultosDDUSRaw }] = await Promise.all([
-    supabase.from('cultos').select('id, data, youtube_video_id, service_type_id').is('deleted_at', null).lte('data', ontemStr).not('youtube_video_id', 'is', null).is('online_ds', null).order('data', { ascending: false }).limit(50),
-    supabase.from('cultos').select('id, data, youtube_video_id, online_ds, service_type_id').is('deleted_at', null).lte('data', seteDiasStr).not('youtube_video_id', 'is', null).not('online_ds', 'is', null).is('online_ddus', null).order('data', { ascending: false }).limit(50),
-  ]);
-  const cultosDS = (cultosDSRaw || []).filter(isOnline);
-  const cultosDDUS = (cultosDDUSRaw || []).filter(isOnline);
-
-  const fetchStats = async (videoId) => {
-    const url = `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoId}&key=${apiKey}`;
-    const r = await fetch(url);
-    const json = await r.json();
-    return json.items?.[0]?.statistics;
-  };
-
-  const results = [];
-
-  for (const culto of (cultosDS || [])) {
-    try {
-      const stats = await fetchStats(culto.youtube_video_id);
-      if (stats?.viewCount) {
-        await supabase.from('cultos').update({ online_ds: parseInt(stats.viewCount), ds_coletado_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', culto.id);
-        results.push({ id: culto.id, tipo: 'DS', views: stats.viewCount });
-      }
-    } catch (e) {
-      results.push({ id: culto.id, tipo: 'DS', error: e.message });
-    }
-  }
-
-  for (const culto of (cultosDDUS || [])) {
-    try {
-      const stats = await fetchStats(culto.youtube_video_id);
-      if (stats?.viewCount) {
-        const ddus = Math.max(0, parseInt(stats.viewCount) - (culto.online_ds || 0));
-        await supabase.from('cultos').update({ online_ddus: ddus, ddus_coletado_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', culto.id);
-        results.push({ id: culto.id, tipo: 'DDUS', ddus });
-      }
-    } catch (e) {
-      results.push({ id: culto.id, tipo: 'DDUS', error: e.message });
-    }
-  }
-
-  // Cultos do dia anterior SEM youtube_video_id → notifica para vincular
-  // (apenas para tipos que têm transmissão online — ignora Bridge etc.)
-  const { data: cultosSemVideoRaw } = await supabase
-    .from('cultos')
-    .select('id, nome, data, service_type_id')
-    .eq('data', ontemStr)
-    .is('youtube_video_id', null);
-  const cultosSemVideo = (cultosSemVideoRaw || []).filter(isOnline);
-
-  for (const c of cultosSemVideo) {
-    try {
-      const fmt = new Date(c.data + 'T12:00:00').toLocaleDateString('pt-BR');
-      await notificar({
-        modulo: 'kpis',
-        tipo: 'culto_sem_video',
-        titulo: 'Culto sem vídeo do YouTube',
-        mensagem: `"${c.nome}" (${fmt}) não tem ID de vídeo vinculado. Sem isso, D+1 não será coletado.`,
-        link: '/kpis',
-        severidade: 'aviso',
-        chaveDedup: `culto_sem_video_sync_${c.id}`,
-      });
-      results.push({ id: c.id, tipo: 'ALERT', msg: 'sem video_id' });
-    } catch (e) {
-      results.push({ id: c.id, tipo: 'ALERT', error: e.message });
-    }
-  }
-
-  res.json({ synced: results.length, results, semVideo: cultosSemVideo.length });
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MANDALA CULTURA — 5 valores CBRio + Decisões (centro)
@@ -1227,7 +1350,7 @@ function parseMes(input) {
 // GET /kpis/cultura?mes=YYYY-MM
 router.get('/cultura', async (req, res) => {
   try {
-    const { mesISO, inicioStr, fimInclusivoStr, diasNoMes, semanasNoMes } = parseMes(req.query.mes);
+    const { y: anoRef, m: mesRef, mesISO, inicioStr, fimInclusivoStr, diasNoMes, semanasNoMes } = parseMes(req.query.mes);
 
     // Hoje - 90d para Servir
     const noventaDias = new Date();
@@ -1236,7 +1359,7 @@ router.get('/cultura', async (req, res) => {
 
     const settled = await Promise.allSettled([
       supabase.from('cultos')
-        .select('presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, online_ds')
+        .select('data, presencial_adulto, presencial_kids, decisoes_presenciais, decisoes_online, decisoes_kids, online_ds')
         .gte('data', inicioStr).lte('data', fimInclusivoStr),
       // Conectar = PESSOAS distintas em grupos ativos (saiu_em IS NULL), NÃO o nº
       // de vínculos: quem está em 2+ grupos conta 1x. Pagina pra escapar do cap de
@@ -1287,7 +1410,35 @@ router.get('/cultura', async (req, res) => {
     const cultos = cultosRes.data || [];
     const presencialTotal = cultos.reduce((s, c) => s + (c.presencial_adulto || 0) + (c.presencial_kids || 0), 0);
     const onlineDsTotal   = cultos.reduce((s, c) => s + (c.online_ds || 0), 0);
-    const decisoesTotal   = cultos.reduce((s, c) => s + (c.decisoes_presenciais || 0) + (c.decisoes_online || 0), 0);
+
+    // Semanas do mês = nº de semanas ISO (seg→dom) DISTINTAS que de fato tiveram
+    // culto no mês. Consistente com o numerador (que soma TODOS os cultos do
+    // mês): junho/26 → 4 (não 3). Antes o pareamento dom→quarta-seguinte
+    // descartava a última semana e dividia o total de 4 semanas por 3, inflando
+    // a média. Cai no cálculo do parseMes se não houver culto no mês.
+    const chaveSemana = (iso) => {
+      const d = new Date(`${iso}T00:00:00Z`);
+      const dow = (d.getUTCDay() + 6) % 7; // 0 = segunda
+      d.setUTCDate(d.getUTCDate() - dow);
+      return d.toISOString().slice(0, 10);
+    };
+    const semanasComCulto = new Set(cultos.map((c) => c.data && chaveSemana(c.data)).filter(Boolean)).size;
+    const divisorSemanas = semanasComCulto || semanasNoMes;
+
+    // ⚠️ A MÉDIA DE FREQUÊNCIA é por DOMINGO, não por semana (decisão do Marcos ·
+    // 2026-08-12). A semana ISO das bordas do mês entrava na conta trazendo a
+    // quarta sem o domingo dela, e isso derrubava a média em ~25% nos meses de 4
+    // domingos (jan/fev/abr/jul de 2026). Só a média MUDA: meta, semáforo e
+    // periodicidade de KPI seguem intactos, e nenhum outro valor da mandala usa
+    // este divisor. `divisorSemanas` continua sendo o que a resposta publica em
+    // `semanas_no_mes` (informativo).
+    const divisorFrequencia = divisorDomingos(cultos, { ano: anoRef, mes: mesRef });
+    // Decisões: presencial + online + KIDS (kids passou a entrar na conta ·
+    // pedido do Matheus 2026-07-29). Guardamos o detalhe pra exibir no clique.
+    const decisoesPresencial = cultos.reduce((s, c) => s + (c.decisoes_presenciais || 0), 0);
+    const decisoesOnline     = cultos.reduce((s, c) => s + (c.decisoes_online || 0), 0);
+    const decisoesKids       = cultos.reduce((s, c) => s + (c.decisoes_kids || 0), 0);
+    const decisoesTotal      = decisoesPresencial + decisoesOnline + decisoesKids;
 
     const conectarPessoas = grupoMembrosRes.error ? null : (grupoMembrosRes.count || 0);
 
@@ -1325,16 +1476,19 @@ router.get('/cultura', async (req, res) => {
     // cultos · permite lancar mês consolidado sem cultos individuais.
     const presencialSemanal = cm?.freq_presencial_semanal != null
       ? cm.freq_presencial_semanal
-      : Math.round(presencialTotal / semanasNoMes);
+      : Math.round(presencialTotal / divisorFrequencia);
     const onlineSemanal = cm?.freq_online_semanal != null
       ? cm.freq_online_semanal
-      : Math.round(onlineDsTotal / semanasNoMes);
+      : Math.round(onlineDsTotal / divisorFrequencia);
     const decisoesMes = cm?.decisoes_total != null ? cm.decisoes_total : decisoesTotal;
     const conectarMes = cm?.freq_grupos_total != null ? cm.freq_grupos_total : conectarPessoas;
 
     res.json({
       mes: mesISO,
-      semanas_no_mes: semanasNoMes,
+      semanas_no_mes: divisorSemanas,
+      // Divisor REAL da média de frequência. `semanas_no_mes` fica só como
+      // informação do mês — quem divide é este.
+      domingos_no_mes: divisorFrequencia,
       dias_no_mes: diasNoMes,
       seguir_jesus: {
         presencial: presencialSemanal,
@@ -1349,6 +1503,14 @@ router.get('/cultura', async (req, res) => {
       servir_comunidade: servirComunidade,
       generosidade,
       decisoes: decisoesMes,
+      decisoes_detalhe: {
+        presencial: decisoesPresencial,
+        online: decisoesOnline,
+        kids: decisoesKids,
+        // soma dos ambientes (pode diferir de `decisoes` se houver total manual em cultura_mensal)
+        soma_ambientes: decisoesTotal,
+        fonte: cm?.decisoes_total != null ? 'manual' : 'auto',
+      },
     });
   } catch (e) {
     console.error('[kpis/cultura] erro:', e);

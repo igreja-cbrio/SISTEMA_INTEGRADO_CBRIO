@@ -12,14 +12,30 @@ import { Sparkles, X, Plus, Volume2, VolumeX, Send, Loader2, History, Square, Tr
 import { agents } from '../../api';
 import { SiriWave } from '../ui/siri-wave';
 import { pedrinhoFalar, pedrinhoParar } from '../../lib/pedrinhoVoz';
+import { useOverlayAberto } from '../../hooks/useOverlayAberto';
 
 const PRIMARY = '#00B39D';
 const VOZ_KEY = 'cbrio-pedrinho-voz';
+const TEMPO_DESARME_MS = 4000;
 
 type Msg = { role: 'user' | 'assistant' | 'error' | 'system'; text: string };
 
 export default function ChatIAFloating() {
   const [open, setOpen] = useState(false);
+  // Com o drawer de navegação aberto, só o Reportar fica disponível na faixa
+  // livre à direita (pedido do usuário — evita 2 botões competindo no mesmo
+  // espaço apertado) — o Pedrinho some de vez, não só minimiza. Nos demais
+  // overlays (dialogs/modais no meio da tela) ele só minimiza, como antes.
+  const { aberto: overlayAberto, drawerEsquerdo } = useOverlayAberto();
+  const [armado, setArmado] = useState(false);
+  const escondidoNoDrawer = !open && drawerEsquerdo;
+  const minimizado = !open && overlayAberto && !drawerEsquerdo && !armado;
+  useEffect(() => {
+    if (!overlayAberto) { setArmado(false); return; }
+    if (!armado) return;
+    const t = setTimeout(() => setArmado(false), TEMPO_DESARME_MS);
+    return () => clearTimeout(t);
+  }, [armado, overlayAberto]);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -94,7 +110,10 @@ export default function ChatIAFloating() {
 
     let respostaFinal = '';
     try {
-      const res = await agents.chat({ message: texto, module: 'supervisor', sessionId });
+      // Usa /ask (Messages API estável + tools read-only c/ dados ao vivo) em vez
+      // de /chat (Sessions API beta "managed-agents", que a conta não tem acesso →
+      // devolvia "Authentication failed"). Mesmo contrato SSE (session/delta/error).
+      const res = await agents.ask({ message: texto, sessionId });
       const reader = res.body!.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -150,16 +169,21 @@ export default function ChatIAFloating() {
   }
 
   // ── Botão flutuante ──────────────────────────────────────────────────
+  if (escondidoNoDrawer) return null;
   if (!open) {
     return (
       <button
-        onClick={() => setOpen(true)}
+        onClick={() => { if (minimizado) { setArmado(true); return; } setOpen(true); }}
         aria-label="Abrir o Pedrinho"
-        title="Pedrinho · assistente IA da CBRio"
-        className="fixed bottom-6 right-6 z-50 h-14 w-14 rounded-full shadow-lg flex items-center justify-center text-white hover:scale-110 active:scale-95 transition-all duration-150 ring-2 ring-white/20 hover:ring-white/40"
-        style={{ background: `linear-gradient(135deg, ${PRIMARY} 0%, #008e7d 100%)`, boxShadow: `0 8px 24px ${PRIMARY}55, 0 2px 8px rgba(0,0,0,0.12)` }}
+        title={minimizado ? 'Toque de novo pra abrir o Pedrinho' : 'Pedrinho · assistente IA da CBRio'}
+        className="floating-action-btn fixed right-6 z-50 rounded-full shadow-lg flex items-center justify-center text-white hover:scale-110 active:scale-95 transition-all duration-150 ring-2 ring-white/20 hover:ring-white/40"
+        style={{
+          bottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))',
+          height: minimizado ? 36 : 56, width: minimizado ? 36 : 56,
+          background: `linear-gradient(135deg, ${PRIMARY} 0%, #008e7d 100%)`, boxShadow: `0 8px 24px ${PRIMARY}55, 0 2px 8px rgba(0,0,0,0.12)`,
+        }}
       >
-        <Sparkles className="h-6 w-6" strokeWidth={2.2} />
+        <Sparkles className={minimizado ? 'h-4 w-4' : 'h-6 w-6'} strokeWidth={2.2} />
       </button>
     );
   }

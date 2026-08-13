@@ -2,11 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { ModuleHeader } from '../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { nps as api } from '../api';
+import { nps as api, next as nextApi } from '../api';
+import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import {
   Plus, X, MessageSquare, Sparkles, Users, Link2, Copy, Check, Loader2,
-  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit, Pencil, Trash2,
+  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit, Pencil, Trash2, Upload, GripVertical,
 } from 'lucide-react';
 
 const C = {
@@ -110,6 +111,16 @@ function Btn({ children, onClick, variant = 'primary', disabled, size = 'md', st
   return <button type={type || 'button'} onClick={onClick} disabled={disabled} style={{ ...base, ...v[variant], ...sx }}>{children}</button>;
 }
 
+function FieldRow({ label, children, hint }) {
+  return (
+    <div>
+      <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>{label}</label>
+      {children}
+      {hint && <p style={{ fontSize: 11, color: C.t3, margin: '4px 0 0' }}>{hint}</p>}
+    </div>
+  );
+}
+
 function Modal({ open, onClose, title, children, footer, width = 640 }) {
   if (!open) return null;
   return (
@@ -172,6 +183,7 @@ export default function Nps() {
   const [search, setSearch] = useState('');
   const [filtroArea, setFiltroArea] = useState('todas');
   const [showCreate, setShowCreate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [detalheId, setDetalheId] = useState(null);
 
   async function load() {
@@ -205,7 +217,12 @@ export default function Nps() {
         title="NPS — Pesquisas com IA"
         accent={C.cyan}
         subtitle="Crie pesquisas para os 5 valores · IA gera as perguntas a partir do que você quer medir · respostas analisadas automaticamente e ligadas aos KPIs."
-        actions={canCreate ? <Btn onClick={() => setShowCreate(true)} variant="cyan"><Plus size={16} />Nova NPS</Btn> : undefined}
+        actions={canCreate ? (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Btn onClick={() => setShowImport(true)} variant="ghost"><Link2 size={16} />Importar do Forms</Btn>
+            <Btn onClick={() => setShowCreate(true)} variant="cyan"><Plus size={16} />Nova NPS</Btn>
+          </div>
+        ) : undefined}
       />
 
       {/* Tabs + busca */}
@@ -286,6 +303,13 @@ export default function Nps() {
         />
       )}
 
+      {showImport && (
+        <ImportarFormModal
+          onClose={() => setShowImport(false)}
+          onCreated={() => { setShowImport(false); load(); }}
+        />
+      )}
+
       {detalheId && (
         <DetalheModal
           id={detalheId}
@@ -296,6 +320,268 @@ export default function Nps() {
         />
       )}
     </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// Importar do Google Forms · lê as perguntas do link e cria a pesquisa
+const TIPO_LABEL_IMPORT = {
+  texto_curto: 'Texto curto', texto_longo: 'Parágrafo', escala_5: 'Escala',
+  opcao_unica: 'Múltipla escolha', multipla: 'Caixas de seleção', secao: 'Seção',
+};
+
+function ImportarFormModal({ onClose, onCreated }) {
+  const { isAdmin, isDiretor, userAreas } = useAuth();
+  const restringeArea = !isAdmin && !isDiretor;
+  const minhasAreas = (userAreas || []).map(normArea).filter(Boolean);
+  const areaInicial = restringeArea ? (minhasAreas[0] || '') : 'geral';
+  const gruposArea = restringeArea
+    ? AREAS_NPS.map(g => ({ ...g, opcoes: g.opcoes.filter(o => minhasAreas.includes(o.id)) })).filter(g => g.opcoes.length)
+    : AREAS_NPS;
+
+  const [url, setUrl] = useState('');
+  const [lendo, setLendo] = useState(false);
+  const [form, setForm] = useState(null);
+  const [titulo, setTitulo] = useState('');
+  const [valor, setValor] = useState(null);
+  const [area, setArea] = useState(areaInicial);
+  const [contextoKpi, setContextoKpi] = useState('nps_geral');
+  const [permitePublico, setPermitePublico] = useState(true);
+  const [dataFim, setDataFim] = useState('');
+  const [notaId, setNotaId] = useState('');
+  const [escalaSel, setEscalaSel] = useState('10'); // '10' | '5'
+  const [salvando, setSalvando] = useState(false);
+
+  const areaEspecifica = area && area.toLowerCase() !== 'geral';
+  const escopoOk = !!valor || areaEspecifica;
+
+  // Escala default a partir do candidato escolhido (max<=5 → 0 a 5).
+  const escalaDoCandidato = (cands, id) => {
+    const c = (cands || []).find(x => x.id === id);
+    return c && c.max <= 5 ? '5' : '10';
+  };
+
+  async function ler() {
+    if (!url.trim()) return toast.error('Cole o link do Google Forms.');
+    setLendo(true);
+    try {
+      const f = await api.importarForm(url.trim());
+      setForm(f);
+      setTitulo(f.titulo || 'Pesquisa importada');
+      const primeiro = f.candidatos_nota?.[0]?.id || '';
+      setNotaId(primeiro);
+      setEscalaSel(escalaDoCandidato(f.candidatos_nota, primeiro));
+    } catch (e) { toast.error(e.message || 'Erro ao ler o formulário'); }
+    setLendo(false);
+  }
+
+  async function criar() {
+    if (!escopoOk) return toast.error('Escolha um valor ou uma área específica (não "Geral").');
+    if (!titulo.trim()) return toast.error('Defina um título.');
+    setSalvando(true);
+    try {
+      const itens = form.itens || [];
+      const notaItem = notaId ? itens.find(i => i.id === notaId) : null;
+      const pergunta_nps = notaItem
+        ? { id: notaItem.id, tipo: 'nps', texto: notaItem.texto }
+        : { id: 'nps', tipo: 'nps', texto: 'De 0 a 10, o quanto você recomendaria a CBRio para um amigo ou familiar?' };
+      // perguntas_extras = todas menos a nota · remove o campo interno 'escala'
+      const perguntas_extras = itens
+        .filter(i => !notaItem || i.id !== notaItem.id)
+        .map(({ escala, ...rest }) => rest);
+      // Escala escolhida pelo usuário (0 a 10 · 0 a 5). Define como as respostas
+      // importadas são convertidas pra 0-10 (o score do NPS) e como a nota é exibida.
+      const escalaNota = escalaSel === '5' ? { min: 0, max: 5 } : { tipo: '0-10' };
+      pergunta_nps.max = escalaSel === '5' ? 5 : 10;
+      const mapa_textos = {};
+      itens.forEach(i => { mapa_textos[i.id] = i.texto; });
+
+      await api.create({
+        titulo: titulo.trim(),
+        valor,
+        area,
+        contexto_kpi: contextoKpi,
+        objetivo: form.descricao || titulo.trim(),
+        permite_publico: permitePublico,
+        data_fim: dataFim || null,
+        perguntas: { descricao_curta: form.descricao || null, pergunta_nps, perguntas_extras },
+        import_meta: {
+          fonte: 'google_forms', url: form.url,
+          nota: { pergunta_id: pergunta_nps.id, escala: escalaNota },
+          mapa_textos,
+        },
+      });
+      toast.success('Pesquisa importada e criada.');
+      onCreated();
+    } catch (e) { toast.error(e.message || 'Erro ao criar'); }
+    setSalvando(false);
+  }
+
+  return (
+    <Modal open onClose={onClose} title={form ? 'Revisar e criar' : 'Importar do Google Forms'} width={720}
+      footer={form ? (
+        <>
+          <Btn variant="ghost" onClick={() => setForm(null)}>Voltar</Btn>
+          <Btn variant="cyan" onClick={criar} disabled={salvando}>
+            {salvando ? <><Loader2 size={14} className="animate-spin" />Criando...</> : <><Send size={14} />Criar pesquisa</>}
+          </Btn>
+        </>
+      ) : (
+        <>
+          <Btn variant="ghost" onClick={onClose}>Cancelar</Btn>
+          <Btn variant="cyan" onClick={ler} disabled={lendo}>
+            {lendo ? <><Loader2 size={14} className="animate-spin" />Lendo...</> : <><Link2 size={14} />Ler perguntas</>}
+          </Btn>
+        </>
+      )}
+    >
+      {!form ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ fontSize: 13, color: C.t2, margin: 0 }}>Cole o link público do Google Forms. Eu leio as perguntas e monto a pesquisa aqui — você confere e escolhe qual pergunta é a nota (0 a 10).</p>
+          <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://docs.google.com/forms/d/e/.../viewform" style={inp} />
+          <p style={{ fontSize: 11, color: C.t3, margin: 0 }}>O formulário precisa estar público (aceitando respostas, sem exigir login).</p>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <FieldRow label="Título"><input value={titulo} onChange={e => setTitulo(e.target.value)} style={inp} /></FieldRow>
+          <FieldRow label="Valor da CBRio (opcional se escolher área)">
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => setValor(null)} style={{ padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${valor === null ? C.primary : C.border}`, background: valor === null ? C.primaryBg : 'transparent', color: valor === null ? C.primary : C.t3 }}>Sem valor</button>
+              {VALORES.map(v => (
+                <button key={v.id} type="button" onClick={() => setValor(v.id)} style={{ padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${valor === v.id ? v.color : C.border}`, background: valor === v.id ? `${v.color}15` : 'transparent', color: valor === v.id ? v.color : C.t2 }}>{v.label}</button>
+              ))}
+            </div>
+          </FieldRow>
+          <FieldRow label="Área">
+            <select value={area} onChange={e => setArea(e.target.value)} style={inp}>
+              {gruposArea.map(g => <optgroup key={g.grupo} label={g.grupo}>{g.opcoes.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</optgroup>)}
+            </select>
+          </FieldRow>
+          <FieldRow label="Contexto do KPI">
+            <select value={contextoKpi} onChange={e => setContextoKpi(e.target.value)} style={inp}>
+              {CONTEXTOS_KPI.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+          </FieldRow>
+          {!escopoOk && <p style={{ fontSize: 11, color: C.amber, margin: 0 }}>Escolha um valor OU uma área específica (diferente de "Geral").</p>}
+          <FieldRow label="Qual pergunta é a nota?" hint="Escalas 0–10 e 0–5 são aceitas; a nota é normalizada pra 0–10 (métrica do NPS).">
+            <select value={notaId} onChange={e => { setNotaId(e.target.value); setEscalaSel(escalaDoCandidato(form.candidatos_nota, e.target.value)); }} style={inp}>
+              {(form.candidatos_nota || []).map(c => <option key={c.id} value={c.id}>{c.texto} (escala {c.min}–{c.max})</option>)}
+              <option value="">+ Adicionar pergunta 0–10 padrão</option>
+            </select>
+          </FieldRow>
+          <FieldRow label="Escala da nota">
+            <div style={{ display: 'flex', gap: 6 }}>
+              {[['10', '0 a 10'], ['5', '0 a 5']].map(([v, l]) => (
+                <button key={v} type="button" onClick={() => setEscalaSel(v)}
+                  style={{ flex: 1, padding: '8px 12px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: `1.5px solid ${escalaSel === v ? C.cyan : C.border}`, background: escalaSel === v ? C.cyanBg : 'transparent', color: escalaSel === v ? C.cyan : C.t3 }}>
+                  {l}
+                </button>
+              ))}
+            </div>
+          </FieldRow>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: C.t2 }}>Perguntas lidas ({form.itens.length})</label>
+            <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 240, overflowY: 'auto' }}>
+              {form.itens.map(i => (
+                <div key={i.id} style={{ padding: '8px 10px', border: `1px solid ${C.border}`, borderRadius: 8, background: C.card }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: C.cyan, background: C.cyanBg, padding: '1px 7px', borderRadius: 8 }}>{TIPO_LABEL_IMPORT[i.tipo] || i.tipo}</span>
+                    <span style={{ fontSize: 13, color: C.text }}>{i.texto}</span>
+                  </div>
+                  {i.opcoes?.length ? <div style={{ fontSize: 11, color: C.t3, marginTop: 3 }}>{i.opcoes.join(' · ')}</div> : null}
+                </div>
+              ))}
+            </div>
+          </div>
+          {form.avisos?.length ? <p style={{ fontSize: 11, color: C.amber, margin: 0 }}>{form.avisos.length} item(ns) não suportado(s) foram ignorados (ex.: grade, upload de arquivo).</p> : null}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// Importar respostas de uma planilha (export do Forms) para uma pesquisa existente
+function ImportarRespostasModal({ pesquisaId, onClose, onImported }) {
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [notaColuna, setNotaColuna] = useState('');
+  const [carregando, setCarregando] = useState(false);
+  const [importando, setImportando] = useState(false);
+
+  async function onFile(e) {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    setFile(f); setPreview(null); setNotaColuna('');
+    setCarregando(true);
+    try {
+      const p = await api.importarRespostas(pesquisaId, f, { preview: true });
+      setPreview(p);
+      setNotaColuna(p.nota_coluna || '');
+    } catch (err) { toast.error(err.message || 'Erro ao ler a planilha'); }
+    setCarregando(false);
+  }
+
+  async function importar() {
+    if (!file) return;
+    setImportando(true);
+    try {
+      const r = await api.importarRespostas(pesquisaId, file, { notaColuna: notaColuna || undefined });
+      toast.success(`${r.inseridas} resposta(s) importada(s)${r.ignoradas ? ` · ${r.ignoradas} ignorada(s) sem nota` : ''}.`);
+      onImported();
+    } catch (err) { toast.error(err.message || 'Erro ao importar'); }
+    setImportando(false);
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Importar respostas (planilha)" width={640}
+      footer={preview ? (
+        <>
+          <Btn variant="ghost" onClick={() => { setPreview(null); setFile(null); }}>Trocar arquivo</Btn>
+          <Btn variant="cyan" onClick={importar} disabled={importando || !preview.validas || (!preview.nota_ok && !notaColuna)}>
+            {importando ? <><Loader2 size={14} className="animate-spin" />Importando...</> : <><Upload size={14} />Importar {preview.validas} resposta(s)</>}
+          </Btn>
+        </>
+      ) : <Btn variant="ghost" onClick={onClose}>Fechar</Btn>}
+    >
+      {!preview ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <p style={{ fontSize: 13, color: C.t2, margin: 0 }}>Suba a planilha de respostas exportada do Google Forms (.xlsx ou .csv). Eu mapeio as colunas com as perguntas da pesquisa e converto a nota pra 0–10.</p>
+          <label style={{ ...inp, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: C.t2 }}>
+            <Upload size={16} /> {carregando ? 'Lendo planilha...' : 'Escolher planilha (.xlsx/.csv)'}
+            <input type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }} onChange={onFile} disabled={carregando} />
+          </label>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 14, fontSize: 13 }}>
+            <span><b>{preview.validas}</b> com nota</span>
+            <span style={{ color: C.t3 }}><b>{preview.ignoradas}</b> sem nota</span>
+            <span style={{ color: C.t3 }}>de {preview.total_linhas} linhas</span>
+          </div>
+          <FieldRow label="Coluna da nota (0–10)" hint="Se o automático não acertou, escolha a coluna certa.">
+            <select value={notaColuna} onChange={e => setNotaColuna(e.target.value)} style={inp}>
+              <option value="">{preview.nota_ok ? `Automático: ${preview.nota_coluna}` : '— escolher a coluna —'}</option>
+              {preview.mapeamento.filter(m => m.papel === 'pergunta').map((m, i) => <option key={i} value={m.coluna}>{m.coluna}</option>)}
+            </select>
+          </FieldRow>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: C.t2 }}>Mapeamento das colunas</label>
+            <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
+              {preview.mapeamento.map((m, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12, padding: '6px 8px', border: `1px solid ${C.border}`, borderRadius: 6 }}>
+                  <span style={{ color: C.text }}>{m.coluna}</span>
+                  <span style={{ color: m.eh_nota ? C.cyan : m.papel === 'sem_mapa' ? C.amber : C.t3, textAlign: 'right' }}>
+                    {m.eh_nota ? 'NOTA (0–10)' : m.papel === 'carimbo' ? 'data' : m.papel === 'email' ? 'e-mail' : m.papel === 'sem_mapa' ? 'sem correspondência' : m.pergunta}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+          {preview.sem_mapa?.length ? <p style={{ fontSize: 11, color: C.amber, margin: 0 }}>{preview.sem_mapa.length} coluna(s) sem correspondência serão ignoradas.</p> : null}
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -580,7 +866,7 @@ function CreateModal({ onClose, onCreated }) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: C.t2, marginBottom: 6 }}>Encerramento (opcional)</label>
-              <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} style={inp} />
+              <DatePicker value={dataFim} onChange={setDataFim} style={inp} />
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.inputBg, cursor: 'pointer' }}>
               <input type="checkbox" checked={permitePublico} onChange={e => setPermitePublico(e.target.checked)} />
@@ -659,6 +945,17 @@ function EditModal({ pesquisa, onClose, onSaved }) {
   const novoId = () => 'q' + Math.random().toString(36).slice(2, 9);
   const COM_OPCOES = ['opcao_unica', 'multipla'];
   const patchExtra = (i, patch) => setExtras(extras.map((x, j) => j === i ? { ...x, ...patch } : x));
+  // Reordenar por arrastar (a ordem do array = ordem de exibição no formulário).
+  const [dragIdx, setDragIdx] = useState(null);
+  const [overIdx, setOverIdx] = useState(null);
+  const [dragOn, setDragOn] = useState(false); // só arrasta quando pega na alça
+  const moverExtra = (from, to) => setExtras(prev => {
+    if (from == null || to == null || from === to) return prev;
+    const arr = [...prev];
+    const [it] = arr.splice(from, 1);
+    arr.splice(to, 0, it);
+    return arr;
+  });
 
   async function salvar() {
     if (!titulo.trim()) return toast.error('Defina um título.');
@@ -736,7 +1033,7 @@ function EditModal({ pesquisa, onClose, onSaved }) {
           </div>
           <div>
             <label style={lbl}>Encerramento (opcional)</label>
-            <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} style={inp} />
+            <DatePicker value={dataFim} onChange={setDataFim} style={inp} />
           </div>
         </div>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text, cursor: 'pointer' }}>
@@ -757,8 +1054,23 @@ function EditModal({ pesquisa, onClose, onSaved }) {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {extras.map((ex, i) => (
-              <div key={ex.id || i} style={{ border: `1px solid ${C.border}`, borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div key={ex.id || i}
+                draggable={dragOn}
+                onDragStart={() => setDragIdx(i)}
+                onDragOver={e => { e.preventDefault(); if (overIdx !== i) setOverIdx(i); }}
+                onDrop={() => { moverExtra(dragIdx, i); setDragIdx(null); setOverIdx(null); setDragOn(false); }}
+                onDragEnd={() => { setDragIdx(null); setOverIdx(null); setDragOn(false); }}
+                style={{
+                  border: `1px solid ${overIdx === i && dragIdx !== null && dragIdx !== i ? C.cyan : C.border}`,
+                  borderRadius: 8, padding: 10, display: 'flex', flexDirection: 'column', gap: 8,
+                  background: overIdx === i && dragIdx !== null && dragIdx !== i ? C.cyanBg : 'transparent',
+                  opacity: dragIdx === i ? 0.5 : 1,
+                }}>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                  <div onMouseDown={() => setDragOn(true)} onMouseUp={() => setDragOn(false)} title="Arraste para reordenar"
+                    style={{ cursor: 'grab', color: C.t3, padding: '10px 2px', flex: 'none', touchAction: 'none' }}>
+                    <GripVertical size={16} />
+                  </div>
                   <input value={ex.texto} onChange={e => patchExtra(i, { texto: e.target.value })}
                     placeholder={ex.tipo === 'secao' ? 'Título da seção' : `Pergunta ${i + 1}`} style={{ ...inp, flex: 1 }} />
                   <select value={ex.tipo} onChange={e => patchExtra(i, { tipo: e.target.value })}
@@ -809,6 +1121,7 @@ function EditModal({ pesquisa, onClose, onSaved }) {
 // Modal de detalhe
 // ════════════════════════════════════════════════════════════════════
 function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
+  const { user } = useAuth();
   const [pesquisa, setPesquisa] = useState(null);
   const [respostas, setRespostas] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -818,13 +1131,18 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   const [excluindo, setExcluindo] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  // Filtro por turma (NPS do Next por turma). Mapa turma_id → nome resolvido via
+  // next.turmas.list(). 'todas' = consolidado.
+  const [turmaFiltro, setTurmaFiltro] = useState('todas');
+  const [turmaNomes, setTurmaNomes] = useState({});
+  const [importRespOpen, setImportRespOpen] = useState(false);
 
   async function load() {
     setLoading(true);
     try {
       const p = await api.get(id);
       setPesquisa(p);
-      if (canWrite || p.criado_por) {
+      if (canWrite || (p.criado_por && p.criado_por === user?.id)) {
         try {
           const r = await api.respostas(id);
           setRespostas(r || []);
@@ -837,6 +1155,18 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   }
 
   useEffect(() => { load(); }, [id]);
+
+  // Resolve os NOMES das turmas (turma_id → nome) pro seletor. Carrega uma vez
+  // por pesquisa; se a lista falhar, o seletor cai em "Turma (sem nome)".
+  const precisaTurmas = pesquisa?.contexto_kpi === 'nps_next' || respostas.some(r => r.turma_id);
+  useEffect(() => {
+    if (!precisaTurmas) return;
+    let vivo = true;
+    nextApi.turmas.list()
+      .then((lista) => { if (vivo) setTurmaNomes(Object.fromEntries((lista || []).map(t => [t.id, t.nome]))); })
+      .catch(() => { /* mantém fallback "sem nome" */ });
+    return () => { vivo = false; };
+  }, [precisaTurmas]);
 
   const linkPublico = useMemo(() => {
     if (!pesquisa?.link_publico_token) return null;
@@ -916,9 +1246,21 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   }
 
   const v = valorMeta(pesquisa.valor);
+  // O criador gerencia a própria pesquisa mesmo sem nível alto (o backend valida igual).
+  const souCriador = !!(pesquisa.criado_por && user?.id && pesquisa.criado_por === user.id);
+  const podeGerir = canWrite || souCriador;
   const stats = pesquisa.stats || { total_respostas: 0, score_medio: 0, nps_score: 0, promoters: 0, passives: 0, detractors: 0 };
   const perguntasMap = {};
   (pesquisa.perguntas?.perguntas_extras || []).forEach((p) => { if (p.tipo !== 'secao') perguntasMap[p.id] = p.texto; });
+
+  // NPS do Next por turma · o seletor só aparece quando é a pesquisa do Next OU
+  // quando alguma resposta veio de um QR por turma. Filtra o Resumo e a aba
+  // Respostas (consolidado = todas).
+  const turmaIdsPresentes = [...new Set(respostas.map(r => r.turma_id).filter(Boolean))];
+  const temTurmas = pesquisa.contexto_kpi === 'nps_next' || turmaIdsPresentes.length > 0;
+  const respostasFiltradas = turmaFiltro === 'todas'
+    ? respostas
+    : respostas.filter(r => r.turma_id === turmaFiltro);
 
   return (
     <Modal open onClose={onClose} title={pesquisa.titulo} width={820}>
@@ -945,7 +1287,7 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
       </div>
 
       {/* Ações */}
-      {canWrite && (
+      {podeGerir && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
           {linkPublico && pesquisa.permite_publico && (
             <Btn variant="ghost" size="sm" onClick={copiarLink}>
@@ -971,6 +1313,9 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
           <Btn variant="ghost" size="sm" onClick={() => setEditOpen(true)}>
             <Pencil size={12} />Editar
           </Btn>
+          <Btn variant="ghost" size="sm" onClick={() => setImportRespOpen(true)}>
+            <Upload size={12} />Importar respostas
+          </Btn>
           {pesquisa.status === 'ativa' && (
             <Btn variant="danger" size="sm" onClick={encerrar}>Encerrar</Btn>
           )}
@@ -990,6 +1335,34 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
         />
       )}
 
+      {/* Seletor de turma (NPS do Next por turma) · filtra Resumo e Respostas */}
+      {temTurmas && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.t2 }}>Turma:</span>
+          <select
+            value={turmaFiltro}
+            onChange={(e) => setTurmaFiltro(e.target.value)}
+            style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.inputBg, color: C.text, fontSize: 12, fontFamily: 'inherit' }}
+          >
+            <option value="todas">Todas as turmas (consolidado)</option>
+            {turmaIdsPresentes.map((tid) => (
+              <option key={tid} value={tid}>{turmaNomes[tid] || 'Turma (sem nome)'}</option>
+            ))}
+          </select>
+          {turmaFiltro !== 'todas' && (
+            <span style={{ fontSize: 11, color: C.t3 }}>{respostasFiltradas.length} resposta(s) nesta turma</span>
+          )}
+        </div>
+      )}
+
+      {importRespOpen && (
+        <ImportarRespostasModal
+          pesquisaId={id}
+          onClose={() => setImportRespOpen(false)}
+          onImported={() => { setImportRespOpen(false); load(); onChanged?.(); }}
+        />
+      )}
+
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 12, borderBottom: `1px solid ${C.border}` }}>
         {['resumo', 'respostas', 'perguntas', 'analise'].map(t => (
@@ -1000,14 +1373,14 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
         ))}
       </div>
 
-      {tab === 'resumo' && <ResumoTab pesquisa={pesquisa} respostas={respostas} />}
+      {tab === 'resumo' && <ResumoTab pesquisa={pesquisa} respostas={respostasFiltradas} />}
 
       {tab === 'respostas' && (
-        respostas.length === 0 ? (
+        respostasFiltradas.length === 0 ? (
           <div style={{ textAlign: 'center', padding: 30, color: C.t3, fontSize: 13 }}>Nenhuma resposta ainda</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 360, overflowY: 'auto' }}>
-            {respostas.map(r => <RespostaCard key={r.id} r={r} perguntasMap={perguntasMap} />)}
+            {respostasFiltradas.map(r => <RespostaCard key={r.id} r={r} perguntasMap={perguntasMap} />)}
           </div>
         )
       )}

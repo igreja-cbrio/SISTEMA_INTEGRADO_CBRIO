@@ -38,7 +38,7 @@ Mapa do que vamos reproduzir (UI/UX é nossa, funções idênticas):
 | **Salas/locations** com faixa etária e capacidade | sim | MVP |
 | **Observações médicas / alergia** visíveis na etiqueta da criança | sim | MVP |
 | Foto da criança no perfil (não na etiqueta · só pra conferência interna) | opcional · v2 | v2 |
-| Conceito de **household** / **família** pra check-in em lote | sim (já temos `mem_familias`) | MVP |
+| Conceito de **família** para check-in em lote | sim (já temos `mem_familias`) | MVP |
 | **Lista de responsáveis autorizados** a buscar a criança | sim | MVP |
 | Override por supervisor (situações de emergência · vizinha, etc) | sim | MVP |
 | Relatório de **head count** ao vivo por sala | sim | MVP |

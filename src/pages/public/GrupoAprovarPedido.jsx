@@ -6,6 +6,10 @@
 // acesso a UM pedido específico. Fora do prazo ou inválido → orienta a
 // decidir pelo sistema em /grupos (fluxo logado continua valendo sempre).
 // Mobile-first: o líder abre isso no celular.
+//
+// Grupo de CASAIS (Marcos · 30/07): quando a inscrição veio em par, o backend
+// devolve `casal` (o pedido do cônjuge) e a decisão vale pros DOIS — a tela
+// mostra os dois nomes e diz claramente que aprovar/recusar decide o casal.
 // ============================================================================
 
 import { useEffect, useState } from 'react';
@@ -28,6 +32,7 @@ export default function GrupoAprovarPedido() {
   const [decisao, setDecisao] = useState(null); // 'aprovado' | 'rejeitado'
   const [recusando, setRecusando] = useState(false);
   const [motivo, setMotivo] = useState('');
+  const [casalResultado, setCasalResultado] = useState(null); // { nome, ok, status, error } após decidir
 
   useEffect(() => {
     if (!token) { setEstado('erro'); setErroMsg('Link inválido.'); return; }
@@ -56,6 +61,7 @@ export default function GrupoAprovarPedido() {
     try {
       const r = await gruposPublic.aprovarPorToken(token, acao, acao === 'rejeitar' ? motivo.trim() || null : null);
       setDecisao(r.acao);
+      setCasalResultado(r.casal || null);
       setEstado('decidido');
     } catch (e) {
       setEstado('pronto');
@@ -65,6 +71,12 @@ export default function GrupoAprovarPedido() {
 
   const pedido = dados?.pedido;
   const grupo = dados?.grupo;
+  // Inscrição de casal: o cônjuge veio no mesmo formulário e a decisão vale
+  // pros dois. Só tratamos como par quando o pedido do cônjuge ainda está
+  // pendente — se a triagem já decidiu o dele, esta tela decide só este.
+  const casal = dados?.casal || null;
+  const casalPendente = Boolean(casal && casal.status === 'pendente');
+  const nomesJuntos = casalPendente ? `${pedido?.nome} e ${casal.nome}` : pedido?.nome;
   const lotado = grupo?.capacidade != null && grupo?.membros_ativos != null && grupo.membros_ativos >= grupo.capacidade;
 
   return (
@@ -108,14 +120,24 @@ export default function GrupoAprovarPedido() {
             {pedido && (
               <p style={{ fontSize: 14, color: C.text3, margin: 0, lineHeight: 1.5 }}>
                 {decisao === 'aprovado'
-                  ? <><strong>{pedido.nome}</strong> agora faz parte do grupo {grupo?.nome}. A pessoa foi avisada — vale mandar um "bem-vindo(a)" pessoal também.</>
+                  ? <><strong>{casalResultado?.ok ? `${pedido.nome} e ${casalResultado.nome}` : pedido.nome}</strong>{casalResultado?.ok ? ' agora fazem' : ' agora faz'} parte do grupo {grupo?.nome}. {casalResultado?.ok ? 'O casal foi avisado' : 'A pessoa foi avisada'} — vale mandar um "bem-vindo(a)" pessoal também.</>
                   : decisao === 'encaminhado'
                   ? <>A equipe de grupos sugeriu outro grupo para <strong>{pedido.nome}</strong> — não precisa fazer mais nada.</>
                   : decisao === 'cancelado'
                   ? <>O pedido de <strong>{pedido.nome}</strong> foi encerrado.</>
                   // rejeitado (agora) ou devolvido (recusa sua aguardando a triagem)
-                  : <>O pedido de <strong>{pedido.nome}</strong> para o grupo {grupo?.nome} não segue.
-                      A equipe de grupos foi avisada e cuida do próximo passo com a pessoa — não precisa fazer mais nada.</>}
+                  : <>O pedido de <strong>{casalResultado?.ok ? `${pedido.nome} e ${casalResultado.nome}` : pedido.nome}</strong> para o grupo {grupo?.nome} não segue.
+                      A equipe de grupos foi avisada e cuida do próximo passo com {casalResultado?.ok ? 'o casal' : 'a pessoa'} — não precisa fazer mais nada.</>}
+              </p>
+            )}
+            {/* Honestidade: o cônjuge não entrou junto (a triagem já tinha
+                decidido o pedido dele, ou o registro falhou). */}
+            {casalResultado && !casalResultado.ok && (
+              <p style={{ fontSize: 13, color: AMBAR, margin: '12px 0 0', lineHeight: 1.5 }}>
+                A inscrição de <strong>{casalResultado.nome}</strong> não foi decidida junto
+                {casalResultado.status && casalResultado.status !== 'pendente' && casalResultado.status !== 'decidido'
+                  ? ` (ela já estava como "${casalResultado.status}")` : ''}.
+                {casalResultado.error ? ` ${casalResultado.error}` : ' A equipe de grupos resolve pelo sistema.'}
               </p>
             )}
           </div>
@@ -124,19 +146,38 @@ export default function GrupoAprovarPedido() {
         {(estado === 'pronto' || estado === 'enviando') && pedido && (
           <>
             <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: 1.2, textTransform: 'uppercase', color: VERDE, margin: '0 0 6px' }}>
-              Pedido de inscrição · {grupo?.nome}
+              {casalPendente ? 'Inscrição de casal' : 'Pedido de inscrição'} · {grupo?.nome}
             </p>
             <h1 style={{ fontSize: 'clamp(20px, 5vw, 24px)', fontWeight: 800, color: C.text, margin: '0 0 16px' }}>
-              {pedido.nome} quer entrar no seu grupo
+              {casalPendente ? `${nomesJuntos} querem entrar no seu grupo` : `${pedido.nome} quer entrar no seu grupo`}
             </h1>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16, fontSize: 14, color: C.text2 }}>
+              {casalPendente && <span style={{ fontWeight: 700, color: C.text2 }}>{pedido.nome}</span>}
               {pedido.telefone && <span><Phone size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: -2 }} />{pedido.telefone}</span>}
               {pedido.email && <span><Mail size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: -2 }} />{pedido.email}</span>}
+              {casalPendente && (
+                <>
+                  <span style={{ fontWeight: 700, color: C.text2, marginTop: 4 }}>{casal.nome}</span>
+                  {casal.telefone && <span><Phone size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: -2 }} />{casal.telefone}</span>}
+                  {casal.email && <span><Mail size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: -2 }} />{casal.email}</span>}
+                </>
+              )}
               {pedido.observacao && (
                 <span style={{ fontStyle: 'italic', color: C.text3 }}>"{pedido.observacao}"</span>
               )}
             </div>
+
+            {casalPendente && (
+              <p style={{ fontSize: 12.5, color: C.text3, margin: '-6px 0 16px', lineHeight: 1.5 }}>
+                Eles se inscreveram juntos como casal — a sua decisão vale para os dois.
+              </p>
+            )}
+            {casal && !casalPendente && (
+              <p style={{ fontSize: 12.5, color: AMBAR, margin: '-6px 0 16px', lineHeight: 1.5 }}>
+                A inscrição de <strong>{casal.nome}</strong> (cônjuge) já está como "{casal.status}" — aqui você decide só a de {pedido.nome}.
+              </p>
+            )}
 
             <div style={{
               border: `1px solid ${C.cardBorder}`, borderRadius: 12, padding: '12px 14px',
@@ -183,11 +224,16 @@ export default function GrupoAprovarPedido() {
                   }}
                 >
                   <Check size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} />
-                  {estado === 'enviando' ? 'Aprovando...' : 'Aprovar entrada'}
+                  {estado === 'enviando' ? 'Aprovando...' : (casalPendente ? 'Aprovar o casal' : 'Aprovar entrada')}
                 </button>
               </div>
             ) : (
               <div>
+                {casalPendente && (
+                  <p style={{ fontSize: 12.5, color: C.text3, margin: '0 0 10px', lineHeight: 1.5 }}>
+                    A recusa vale para o casal — a equipe de grupos cuida do próximo passo com os dois.
+                  </p>
+                )}
                 <input
                   value={motivo}
                   onChange={(e) => setMotivo(e.target.value)}

@@ -68,10 +68,10 @@ export default function RevisaoEstrategica() {
         {[
           { label: 'Projetos ativos', value: p.total, color: C.blue },
           { label: 'Proj. atrasados', value: projAtrasados.length, color: projAtrasados.length > 0 ? C.red : C.green },
-          { label: 'Marcos expansao', value: e.lista.filter(x => x.status !== 'concluido' && x.status !== 'cancelado').length, color: C.purple },
+          { label: 'Marcos expansão', value: e.lista.filter(x => x.status !== 'concluido' && x.status !== 'cancelado').length, color: C.purple },
           { label: 'Marcos atrasados', value: expAtrasados.length, color: expAtrasados.length > 0 ? C.red : C.green },
           { label: 'Deps. impactadas', value: dep.impactados, color: dep.impactados > 0 ? C.amber : C.green },
-          { label: 'Orcamento em risco', value: fmtMoney(diag.orcamento_risco), color: diag.orcamento_risco > 0 ? C.red : C.green, small: true },
+          { label: 'Orçamento em risco', value: fmtMoney(diag.orcamento_risco), color: diag.orcamento_risco > 0 ? C.red : C.green, small: true },
         ].map(k => (
           <div key={k.label} style={{
             position: 'relative', overflow: 'hidden',
@@ -91,10 +91,10 @@ export default function RevisaoEstrategica() {
       {/* Filtros */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
         {[
-          { label: 'Area', value: filterArea, set: setFilterArea, opts: areas },
-          { label: 'Tipo', value: filterTipo, set: setFilterTipo, opts: [{ v: 'projeto', l: 'Projetos' }, { v: 'expansao', l: 'Expansao' }] },
+          { label: 'Área', value: filterArea, set: setFilterArea, opts: areas },
+          { label: 'Tipo', value: filterTipo, set: setFilterTipo, opts: [{ v: 'projeto', l: 'Projetos' }, { v: 'expansao', l: 'Expansão' }] },
           { label: 'Status', value: filterStatus, set: setFilterStatus, opts: [{ v: 'atrasado', l: 'Atrasados' }, ...['pendente', 'em_andamento', 'bloqueado', 'pausado'].map(s => ({ v: s, l: s }))] },
-          { label: 'Responsavel', value: filterResp, set: setFilterResp, opts: responsaveis },
+          { label: 'Responsável', value: filterResp, set: setFilterResp, opts: responsaveis },
         ].map(f => (
           <span key={f.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: C.t2 }}>{f.label}:</span>

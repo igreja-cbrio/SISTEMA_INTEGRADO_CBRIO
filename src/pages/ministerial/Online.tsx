@@ -28,7 +28,7 @@ const VALOR_META: Record<string, { label: string; cor: string; corClara: string;
 const STATUS_INFO: Record<string, { label: string; cor: string; corBg: string }> = {
   no_alvo:  { label: 'No alvo',   cor: 'text-emerald-700 dark:text-emerald-400',  corBg: 'bg-emerald-500' },
   atras:    { label: 'Atrasado',  cor: 'text-amber-700 dark:text-amber-400',      corBg: 'bg-amber-500'   },
-  critico:  { label: 'Critico',   cor: 'text-red-700 dark:text-red-400',          corBg: 'bg-red-500'     },
+  critico:  { label: 'Crítico',   cor: 'text-red-700 dark:text-red-400',          corBg: 'bg-red-500'     },
   sem_meta: { label: 'Sem meta',  cor: 'text-muted-foreground',                   corBg: 'bg-gray-400'    },
   sem_dado: { label: 'Sem dado',  cor: 'text-muted-foreground',                   corBg: 'bg-gray-400'    },
 };
@@ -126,7 +126,7 @@ function StatCard({ icon: Icon, label, value, delta, accentClass }: {
         <div className="text-3xl font-bold leading-tight">{value}</div>
         <div className="text-sm text-muted-foreground mt-1">{label}</div>
         {delta !== undefined && (
-          <div className="text-[10px] text-muted-foreground/70 mt-2 uppercase tracking-wide">vs 30 dias atras</div>
+          <div className="text-[10px] text-muted-foreground/70 mt-2 uppercase tracking-wide">vs 30 dias atrás</div>
         )}
       </CardContent>
     </Card>
@@ -312,12 +312,12 @@ function ValorGroupCard({ valor, kpis, open, onOpenChange }: {
               )}
               {counts.atras > 0 && (
                 <Badge variant="outline" className="text-[10px] py-0 h-4 bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/30">
-                  {counts.atras} atras
+                  {counts.atras} atrasado{counts.atras > 1 ? 's' : ''}
                 </Badge>
               )}
               {counts.critico > 0 && (
                 <Badge variant="outline" className="text-[10px] py-0 h-4 bg-red-500/10 text-red-700 dark:text-red-400 border-red-500/30">
-                  {counts.critico} critico
+                  {counts.critico} crítico{counts.critico > 1 ? 's' : ''}
                 </Badge>
               )}
             </div>
@@ -465,7 +465,7 @@ function OAuthStatusCardInner() {
               </Badge>
             ) : (
               <Badge variant="outline" className="bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/40">
-                Nao conectado
+                Não conectado
               </Badge>
             )}
           </div>
@@ -481,7 +481,7 @@ function OAuthStatusCardInner() {
             <div className="mt-1.5 text-[11px] leading-snug">
               {status?.last_check_at && (
                 <span className="text-muted-foreground">
-                  Ultima verificacao: {new Date(status.last_check_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  Última verificação: {new Date(status.last_check_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                 </span>
               )}
               {status?.last_error && (
@@ -532,6 +532,15 @@ export default function Online() {
   const { getAccessLevel, isAdmin } = useAuth();
   const podeEditarOnline = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
 
+  // ⚠️ Este `queryClient` faltava, e "Recoletar tudo" estava quebrado por isso.
+  // Existia um `useQueryClient()` neste MESMO arquivo, mas dentro de
+  // `OAuthStatusCardInner` — outro componente. As duas chamadas lá embaixo
+  // (invalidação entre lotes e no onSuccess) liam uma variável fora de escopo:
+  // o botão mostrava "Recoleta completa" e logo depois estourava
+  // "queryClient is not defined", e uma recoleta de vários lotes abortava no
+  // meio deixando métricas pela metade.
+  const queryClient = useQueryClient();
+
   const { data, isLoading, refetch } = useQuery<DashboardData>({
     queryKey: ['online', 'dashboard'],
     queryFn: () => online.dashboard(),
@@ -546,7 +555,7 @@ export default function Online() {
   const syncMutation = useMutation({
     mutationFn: () => online.sync(),
     onSuccess: () => {
-      toast.success('Sincronizacao com YouTube concluída.');
+      toast.success('Sincronização com YouTube concluída.');
       refetch();
     },
     onError: (err: any) => toast.error(err?.message || 'Erro ao sincronizar'),
@@ -585,7 +594,7 @@ export default function Online() {
     onSuccess: (r) => {
       const metricasTotais = r.pico + r.ds + r.ddus + r.subs + r.trafico + r.retencao_curva + r.sub_status;
       toast.success(
-        `Recoleta completa · ${r.linkados} cultos linkados · ${metricasTotais} metricas em ${r.processados} cultos (${r.batches} lotes)`,
+        `Recoleta completa · ${r.linkados} cultos linkados · ${metricasTotais} métricas em ${r.processados} cultos (${r.batches} lotes)`,
         { duration: 6000 }
       );
       refetch();
@@ -639,7 +648,7 @@ export default function Online() {
                 {canal?.channel_title || 'CBRio Online'}
               </h1>
               <p className="text-sm text-white/80 mt-1 max-w-md">
-                Desempenho do canal e analise por series de pregacao
+                Desempenho do canal e análise por séries de pregação
               </p>
             </div>
           </div>
@@ -661,7 +670,7 @@ export default function Online() {
                 variant="secondary"
                 size="lg"
                 className="gap-2 bg-red-700 text-white hover:bg-red-800 shadow-lg border border-white/20"
-                title="Linka cultos do passado por proximidade temporal com vídeos do canal + puxa todas as 7 metricas (pico ao vivo, DS, DDUS, watch time, retencao, subs, tráfego, sub-status) onde estiver faltando dado. Pico recuperado via peakConcurrentViewers do Analytics (delay de 1-2 dias). Pode demorar 1-3min."
+                title="Linka cultos do passado por proximidade temporal com vídeos do canal + puxa todas as 7 métricas (pico ao vivo, DS, DDUS, watch time, retenção, subs, tráfego, sub-status) onde estiver faltando dado. Pico recuperado via peakConcurrentViewers do Analytics (delay de 1-2 dias). Pode demorar 1-3min."
               >
                 {recoletarMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 Recoletar tudo
@@ -697,7 +706,7 @@ export default function Online() {
             <div className="flex-1 min-w-0">
               <h2 className="font-semibold mb-1">Sem dados do YouTube ainda</h2>
               <p className="text-sm text-muted-foreground">
-                O cron sincroniza automaticamente as <strong>6h da manha</strong> todo dia.
+                O cron sincroniza automaticamente as <strong>6h da manhã</strong> todo dia.
                 Para popular agora, clique em <strong>"Sincronizar agora"</strong>.
               </p>
             </div>
@@ -710,7 +719,7 @@ export default function Online() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <StatCard icon={Users}       label="Inscritos"            value={formatNumber(canal.subscriber_count)} delta={data?.delta?.subscriber} accentClass="from-red-500/15 to-rose-500/5" />
           <StatCard icon={Eye}         label="Views totais"         value={formatNumber(canal.view_count)}        delta={data?.delta?.view}        accentClass="from-blue-500/15 to-cyan-500/5" />
-          <StatCard icon={PlayCircle}  label="Videos publicados"    value={formatNumber(canal.video_count)}       delta={data?.delta?.video}       accentClass="from-emerald-500/15 to-teal-500/5" />
+          <StatCard icon={PlayCircle}  label="Vídeos publicados"    value={formatNumber(canal.video_count)}       delta={data?.delta?.video}       accentClass="from-emerald-500/15 to-teal-500/5" />
         </div>
       )}
 
@@ -765,7 +774,7 @@ export default function Online() {
                   ))}
                   {data?.top_views_mes?.length === 0 && (
                     <div className="col-span-full text-center text-muted-foreground py-8 text-sm">
-                      Sem videos publicados neste mes ainda.
+                      Sem vídeos publicados neste mês ainda.
                     </div>
                   )}
                 </div>
@@ -813,9 +822,9 @@ export default function Online() {
                 <PlayCircle className="h-5 w-5 text-purple-600 dark:text-purple-400" />
               </div>
               <div>
-                <h2 className="text-base font-bold leading-tight">Séries de pregacao</h2>
+                <h2 className="text-base font-bold leading-tight">Séries de pregação</h2>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {data?.series?.length || 0} serie(s) ativa(s) · ordenadas por views
+                  {data?.series?.length || 0} série(s) ativa(s) · ordenadas por views
                 </p>
               </div>
             </div>
@@ -836,9 +845,9 @@ export default function Online() {
               <Target className="h-5 w-5 text-primary" />
             </div>
             <div className="flex-1">
-              <h2 className="text-base font-bold leading-tight">Indicadores estrategicos do Online</h2>
+              <h2 className="text-base font-bold leading-tight">Indicadores estratégicos do Online</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                KPIs da matriz Valor × Area = Online (do <code className="px-1 py-0.5 rounded bg-muted text-[10px]">/painel</code>)
+                KPIs da matriz Valor × Área = Online (do <code className="px-1 py-0.5 rounded bg-muted text-[10px]">/painel</code>)
               </p>
             </div>
             <Button
@@ -875,7 +884,7 @@ export default function Online() {
 
       {/* Footer info */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 text-xs text-muted-foreground pt-2 border-t border-border">
-        <div>Dados sincronizados diariamente as 6h via API do YouTube.</div>
+        <div>Dados sincronizados diariamente às 6h via API do YouTube.</div>
         {canal && (
           <a
             href={`https://www.youtube.com/channel/${canal.channel_id}`}

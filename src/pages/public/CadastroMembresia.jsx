@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { cadastroPublico } from '../../api';
 import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
 import AnimatedBackground from './AnimatedBackground';
-import { usePublicTheme, PublicThemeToggle } from './publicTheme';
+import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 import { MultistepFormShell } from '../../components/ui/multistep-form';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import MemberWalletPass from '../../components/membresia/MemberWalletPass';
 import MemberWalletDialog from '../../components/membresia/MemberWalletDialog';
-import GrupoSelectorComponent from '../../components/grupos/GrupoSelector';
 import { QRCodeSVG } from 'qrcode.react';
 
 // ── Helpers de máscara ──
@@ -34,6 +35,7 @@ function mascaraCep(v) {
   return `${d.slice(0, 5)}-${d.slice(5)}`;
 }
 
+// ViaCEP · usado só pra sugerir o bairro a partir do CEP (fail-open · nunca bloqueia).
 async function buscarCep(cep) {
   const d = soDigitos(cep);
   if (d.length !== 8) return null;
@@ -42,12 +44,7 @@ async function buscarCep(cep) {
     if (!res.ok) return null;
     const data = await res.json();
     if (data?.erro) return null;
-    return {
-      logradouro: data.logradouro || '',
-      bairro: data.bairro || '',
-      cidade: data.localidade || '',
-      uf: data.uf || '',
-    };
+    return { bairro: data.bairro || '', cidade: data.localidade || '', uf: data.uf || '' };
   } catch {
     return null;
   }
@@ -119,6 +116,7 @@ function Field({ id, label, type = 'text', value, onChange, required, placeholde
 }
 
 function SelectField({ id, label, value, onChange, options, required }) {
+  const C = usePublicPalette();
   const [focused, setFocused] = useState(false);
   const active = focused || (value !== undefined && value !== null && String(value).length > 0);
 
@@ -171,6 +169,11 @@ function SelectField({ id, label, value, onChange, options, required }) {
 const TEXTO_CONSENTIMENTO =
   'Declaro que li e concordo com o tratamento dos meus dados pessoais pela CBRio para fins de acolhimento e acompanhamento pastoral, conforme a Lei Geral de Proteção de Dados (LGPD - Lei 13.709/2018). Meus dados serão mantidos em ambiente seguro e não serão compartilhados com terceiros sem minha autorização.';
 
+// Consentimento único de comunicação (grava aceita_contato E whatsapp_optin —
+// o texto precisa nomear os canais pro opt-in de WhatsApp ter lastro).
+const TEXTO_COMUNICACAO =
+  'Autorizo a CBRio a entrar em contato comigo por WhatsApp e e-mail sobre minha caminhada na igreja (inscrições, eventos, avisos e felicitações). Posso cancelar quando quiser.';
+
 const ESTADO_CIVIL_OPTS = [
   { value: 'solteiro', label: 'Solteiro(a)' },
   { value: 'casado', label: 'Casado(a)' },
@@ -179,13 +182,42 @@ const ESTADO_CIVIL_OPTS = [
   { value: 'uniao_estavel', label: 'União estável' },
 ];
 
+// ⚠️ Sexo: só `masculino|feminino`, NUNCA "outro" — é a lei do Contrato de
+// Inscrição desta casa (a opção "Outro" foi removida das outras portas de
+// propósito, porque a coluna do banco e os KPIs por sexo não a aceitam).
+const SEXO_OPTS = [
+  { value: 'masculino', label: 'Masculino' },
+  { value: 'feminino', label: 'Feminino' },
+];
+
+// Vínculo AUTODECLARADO do censo. ⚠️ Os `value` espelham o CHECK da migration
+// 20260803160000 e são identificadores persistidos — NÃO acentuar (a regra de
+// acentuação vale pro `label`, que é o texto exibido).
+// ⚠️ Responder "membro" NÃO torna ninguém membro: o status de membresia continua
+// vindo de batismo/curso/carta. Isto é declaração da pessoa, não decisão nossa.
+const VINCULO_OPTS = [
+  { value: 'membro', label: 'Sou membro da CBRio' },
+  { value: 'congregado', label: 'Frequento, mas não sou membro' },
+  { value: 'visitante', label: 'É a minha primeira vez / estou conhecendo' },
+];
+
 const STEPS = [
   { id: 'pessoal', title: 'Dados Pessoais' },
   { id: 'info', title: 'Informações' },
-  { id: 'endereco', title: 'Endereço' },
-  { id: 'grupo', title: 'Grupo de Conexão' },
   { id: 'termos', title: 'Termos' },
 ];
+
+// Bairros da região da igreja (Barra e adjacências): seleção rápida no totem em
+// vez de digitar endereço (2026-07-23). "Outro" abre campo livre — não trava
+// quem mora fora da região. Endereço completo saiu; o bairro basta pra
+// agrupar por região e a distância do mapa vem do GPS do aparelho.
+const BAIRROS = [
+  'Barra', 'Recreio', 'Freguesia', 'Anil', 'Pechincha', 'Taquara',
+  'Barra Olímpica', 'Curicica', 'Camorim', 'Vargem Grande', 'Vargem Pequena',
+];
+const BAIRRO_OUTRO = '__outro__';
+// Normaliza p/ casar o bairro devolvido pelo ViaCEP com a lista fixa (sem acento/caixa).
+const normBairro = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
 function Row({ children }) {
   return (
@@ -232,26 +264,159 @@ function CheckboxField({ id, checked, onChange, label }) {
 
 export default function CadastroMembresia() {
   const { C } = usePublicTheme();
+  const navigate = useNavigate();
   useHomeScreenMeta('membresia');
   const searchParams = new URLSearchParams(window.location.search);
   const fromTotem = searchParams.get('from') === 'totem';
   const fromDevocional = searchParams.get('from') === 'devocional';
+  // ── Censo / recadastramento (2026-08-03) ──
+  // O QR do censo aponta pra `/cadastro-membresia?censo=1`. É o MESMO formulário
+  // (decisão do Marcos: um formulário só, com mais tempo pra preencher — não
+  // dividir em duas etapas), com duas diferenças: marca a submissão como censo
+  // e pede o vínculo declarado.
+  const ehCenso = searchParams.get('censo') === '1';
+  // ── Link PESSOAL do convite do censo (?t=<token>) ──
+  // Resolve a pergunta "como o sistema acha a pessoa se ela não tem CPF?": não
+  // acha — o link foi emitido pra ela, com o membro_id assinado dentro. O
+  // formulário abre PREENCHIDO e marca o que falta. Sem token, segue cadastro
+  // normal (é o caso do QR impresso, que não sabe quem vai escanear).
+  const censoToken = (searchParams.get('t') || '').trim();
+  // "Completar cadastro" vindo do totem já traz CPF + nascimento (a pessoa
+  // digitou no totem e não achamos o cadastro) — pré-preenche pra não redigitar.
+  const prefCpf = fromTotem ? soDigitos(searchParams.get('cpf')) : '';
+  const prefNasc = fromTotem && /^\d{4}-\d{2}-\d{2}$/.test(searchParams.get('nasc') || '')
+    ? searchParams.get('nasc') : '';
   const [currentStep, setCurrentStep] = useState(0);
   const [form, setForm] = useState({
-    nome: '', sobrenome: '', cpf: '', email: '', confirmar_email: '', telefone: '',
+    nome: '', sobrenome: '', cpf: prefCpf ? mascaraCpf(prefCpf) : '', email: '', confirmar_email: '', telefone: '',
     senha: '', confirmar_senha: '',
-    data_nascimento: '', estado_civil: '', endereco: '', bairro: '',
-    cidade: '', cep: '', profissao: '', como_conheceu: '',
+    // ⚠️ `genero` passou a ser coletado aqui em 04/08. Estava faltando: o
+    // Contrato de Inscrição exige sexo em toda porta de pessoa, e sem ele um
+    // cadastro novo por este formulário nunca ficava completo — então nunca
+    // entrava na aprovação em massa e voltava pra fila humana pra sempre.
+    // Canônico `masculino|feminino`, NUNCA "outro" (lei do contrato).
+    genero: '',
+    data_nascimento: prefNasc || '', estado_civil: '', bairro: '',
+    cep: '', profissao: '', como_conheceu: '',
     website: '', // honeypot
   });
   const [aceitaTermos, setAceitaTermos] = useState(false);
-  const [aceitaContato, setAceitaContato] = useState(true);
-  const [estaEmGrupo, setEstaEmGrupo] = useState(null); // null | true | false
-  const [grupoEscolhido, setGrupoEscolhido] = useState(null);
+  const [aceitaComunicacao, setAceitaComunicacao] = useState(false);
+  const [converteuCbrio, setConverteuCbrio] = useState(false);
+  // Vínculo AUTODECLARADO no censo. ⚠️ NÃO define membresia: responder o censo
+  // não faz ninguém membro (isso é batismo/curso/carta, decisão da igreja). Só
+  // separa quem já se considera membro de quem frequenta ou está chegando.
+  const [vinculoDeclarado, setVinculoDeclarado] = useState('');
+  // Bairro: guarda a chave da seleção; se "Outro", o valor real vem de bairroOutro.
+  const [bairroSel, setBairroSel] = useState('');
+  const [bairroOutro, setBairroOutro] = useState('');
+  const [cepBuscando, setCepBuscando] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  // Censo: o servidor diz se ATUALIZOU um cadastro que já existia (sem revelar
+  // qual, nem quais campos) — só pra a tela não prometer "entraremos em contato"
+  // pra quem só confirmou os próprios dados.
+  const [censoAtualizado, setCensoAtualizado] = useState(false);
   const [walletDialogOpen, setWalletDialogOpen] = useState(false);
+
+  // ── Modo ATUALIZAÇÃO (link pessoal do convite) ──
+  // `faltando` vem do servidor pela MESMA régua da fila de aprovação
+  // (utils/prontidaoCadastro.js), então a pessoa completa exatamente o que a
+  // equipe cobraria dela depois — não uma lista inventada aqui.
+  const [modoAtualizacao, setModoAtualizacao] = useState(false);
+  const [faltando, setFaltando] = useState([]);
+  const [carregandoMeusDados, setCarregandoMeusDados] = useState(!!censoToken);
+
+  // Marca no PRÓPRIO rótulo o que está faltando (o pedido era "aparecer marcado
+  // os campos que estão incompletos"). Só no modo atualização: num cadastro novo
+  // tudo está vazio e marcar tudo não informa nada.
+  const rotulo = useCallback((texto, chave) => (
+    modoAtualizacao && faltando.includes(chave) ? `${texto} · falta preencher` : texto
+  ), [modoAtualizacao, faltando]);
+
+  useEffect(() => {
+    if (!censoToken) return;
+    let vivo = true;
+    (async () => {
+      try {
+        const r = await cadastroPublico.censoMeusDados(censoToken);
+        if (!vivo || !r?.ok) return;
+        const d = r.dados || {};
+        // Nome vem inteiro do banco e o formulário tem dois campos: 1º token vai
+        // pra `nome`, o resto pra `sobrenome` (mesma régua do split do servidor).
+        const partes = String(d.nome || '').trim().split(/\s+/);
+        setForm((f) => ({
+          ...f,
+          nome: partes[0] || '',
+          sobrenome: partes.slice(1).join(' '),
+          cpf: d.cpf ? mascaraCpf(d.cpf) : f.cpf,
+          email: d.email || '',
+          confirmar_email: d.email || '',
+          telefone: d.telefone ? mascaraTelefone(d.telefone) : '',
+          data_nascimento: d.data_nascimento || '',
+          genero: d.genero || '',
+          estado_civil: d.estado_civil || '',
+          cep: d.cep || '',
+          profissao: d.profissao || '',
+        }));
+        if (d.bairro) setBairroSel(d.bairro);
+        if (d.foto_url) setFotoPreview(d.foto_url);
+        setFaltando(Array.isArray(r.faltando) ? r.faltando : []);
+        setModoAtualizacao(true);
+      } catch { /* link ruim cai no cadastro normal, sem tela de erro */ }
+      finally { if (vivo) setCarregandoMeusDados(false); }
+    })();
+    return () => { vivo = false; };
+  }, [censoToken]);
+
+  // ── Loop com o totem (from=totem) ──
+  // O QR do membro sai NA HORA (o form já tem CPF + nascimento) e a volta pro
+  // totem nunca cai na tela de PIN do operador: flags one-shot em sessionStorage
+  // que o TotemMembro consome no mount — 'resume' abre a sessão da própria
+  // pessoa (via qr-lookup, que aceita cadastro pendente), 'unlocked' só pula o
+  // PIN e cai na tela inicial.
+  const [totemQr, setTotemQr] = useState(null);
+  const [totemQrErro, setTotemQrErro] = useState('');
+
+  const voltarAoTotem = useCallback((resumeToken) => {
+    try {
+      if (resumeToken) sessionStorage.setItem('cbrio-totem-resume', resumeToken);
+      else sessionStorage.setItem('cbrio-totem-unlocked', '1');
+    } catch { /* modo privado — cai na tela de PIN como antes */ }
+    navigate('/totem');
+  }, [navigate]);
+
+  useEffect(() => {
+    if (!sent || !fromTotem) return undefined;
+    let alive = true;
+    cadastroPublico.walletQrToken(soDigitos(form.cpf), form.data_nascimento)
+      .then((r) => { if (alive && r?.qr) setTotemQr(r.qr); })
+      .catch(() => {
+        if (alive) setTotemQrErro('Não foi possível gerar seu QR agora — você pode pegá-lo depois no seu celular.');
+      });
+    return () => { alive = false; };
+    // form.cpf/data_nascimento não mudam depois do envio
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sent, fromTotem]);
+
+  // Totem abandonado no meio do cadastro não pode ficar preso nesta página:
+  // 120s sem interação → volta pro totem destravado (NUNCA com sessão ativa).
+  useEffect(() => {
+    if (!fromTotem) return undefined;
+    let t;
+    const arm = () => {
+      clearTimeout(t);
+      t = setTimeout(() => {
+        try { sessionStorage.setItem('cbrio-totem-unlocked', '1'); } catch { /* ok */ }
+        navigate('/totem');
+      }, 120_000);
+    };
+    const evs = ['pointerdown', 'keydown', 'touchstart'];
+    evs.forEach((e) => document.addEventListener(e, arm, { passive: true }));
+    arm();
+    return () => { clearTimeout(t); evs.forEach((e) => document.removeEventListener(e, arm)); };
+  }, [fromTotem, navigate]);
 
   // Foto
   const [fotoPreview, setFotoPreview] = useState(null);
@@ -291,7 +456,7 @@ export default function CadastroMembresia() {
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const setMasked = (k, mask) => (e) => setForm((f) => ({ ...f, [k]: mask(e.target.value) }));
 
-  const [cepBuscando, setCepBuscando] = useState(false);
+  // CEP: máscara + ViaCEP sugere o bairro (casa com a lista fixa ou cai em "Outro").
   const handleCepChange = async (e) => {
     const masked = mascaraCep(e.target.value);
     setForm((f) => ({ ...f, cep: masked }));
@@ -299,13 +464,10 @@ export default function CadastroMembresia() {
       setCepBuscando(true);
       const result = await buscarCep(masked);
       setCepBuscando(false);
-      if (result) {
-        setForm((f) => ({
-          ...f,
-          endereco: result.logradouro && !f.endereco ? result.logradouro : f.endereco,
-          bairro: result.bairro || f.bairro,
-          cidade: result.cidade || f.cidade,
-        }));
+      if (result?.bairro) {
+        const match = BAIRROS.find((b) => normBairro(b) === normBairro(result.bairro));
+        if (match) { setBairroSel(match); setBairroOutro(''); }
+        else { setBairroSel(BAIRRO_OUTRO); setBairroOutro(result.bairro); }
       }
     }
   };
@@ -391,23 +553,23 @@ export default function CadastroMembresia() {
       case 0:
         return form.nome.trim() !== '' && form.sobrenome.trim() !== '' && soDigitos(form.telefone).length >= 10 && cpfValido(form.cpf);
       case 1:
+        // Passo Informações (+ bairro). Obrigatórios: nascimento e e-mail
+        // (2026-07-23 · antes o e-mail só era exigido no devocional). Bairro,
+        // estado civil e profissão são opcionais.
         if (!form.data_nascimento) return false;
+        // ⚠️ Sexo OBRIGATÓRIO (Matheus · 05/08: "em todos os formulários").
+        // Ontem o campo entrou na tela mas não travava nada — `required` no
+        // SelectField é decoração, quem bloqueia é esta função.
+        if (!['masculino', 'feminino'].includes(form.genero)) return false;
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return false;
         if (fromDevocional) {
-          if (!form.email.trim()) return false;
           if (form.email.trim().toLowerCase() !== form.confirmar_email.trim().toLowerCase()) return false;
           if (!form.senha || form.senha.length < 6) return false;
           if (form.senha !== form.confirmar_senha) return false;
         }
         return true;
       case 2:
-        return true; // address is optional
-      case 3:
-        // grupo: precisa ter respondido sim/nao. Se sim, precisa escolher grupo.
-        if (estaEmGrupo === null) return false;
-        if (estaEmGrupo === true && !grupoEscolhido) return false;
-        return true;
-      case 4:
-        return aceitaTermos;
+        return aceitaTermos; // termos (o passo Endereço virou o seletor de bairro no passo Informações)
       default:
         return true;
     }
@@ -419,8 +581,9 @@ export default function CadastroMembresia() {
     if (soDigitos(form.telefone).length < 10) return 'Informe um celular válido com DDD.';
     if (!cpfValido(form.cpf)) return 'CPF inválido.';
     if (!form.data_nascimento) return 'Informe sua data de nascimento.';
+    if (!['masculino', 'feminino'].includes(form.genero)) return 'Selecione o sexo.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return 'Informe um e-mail válido.';
     if (fromDevocional) {
-      if (!form.email.trim()) return 'Email obrigatório pra criar conta de acesso.';
       if (form.email.trim().toLowerCase() !== form.confirmar_email.trim().toLowerCase()) {
         return 'Os emails informados não conferem.';
       }
@@ -428,6 +591,7 @@ export default function CadastroMembresia() {
       if (form.senha.length < 6) return 'A senha precisa ter ao menos 6 caracteres.';
       if (form.senha !== form.confirmar_senha) return 'As senhas não conferem.';
     }
+    if (ehCenso && !vinculoDeclarado) return 'Informe seu vínculo com a igreja.';
     if (!aceitaTermos) return 'É necessário aceitar os termos para enviar o cadastro.';
     return null;
   }
@@ -475,17 +639,28 @@ export default function CadastroMembresia() {
       }
 
       const { sobrenome, confirmar_email, confirmar_senha, ...rest } = form;
+      const bairroFinal = (bairroSel === BAIRRO_OUTRO ? bairroOutro.trim() : bairroSel) || null;
       const resp = await cadastroPublico.enviar({
         ...rest,
         nome: `${form.nome.trim()} ${sobrenome.trim()}`.trim(),
         cpf: soDigitos(form.cpf),
+        bairro: bairroFinal,
         origem,
         aceita_termos: aceitaTermos,
-        aceita_contato: aceitaContato,
-        consentimento_texto: TEXTO_CONSENTIMENTO,
+        aceita_contato: aceitaComunicacao,
+        whatsapp_optin: aceitaComunicacao,
+        converteu_na_cbrio: converteuCbrio || undefined,
+        censo: ehCenso || undefined,
+        // Identifica a pessoa no servidor sem depender de CPF (chave FORTE no
+        // censoReconciliar) — é o que faz a submissão ATUALIZAR o cadastro dela
+        // em vez de virar cadastro novo.
+        censo_token: censoToken || undefined,
+        vinculo_declarado: (ehCenso && vinculoDeclarado) || undefined,
+        consentimento_texto: aceitaComunicacao
+          ? `${TEXTO_CONSENTIMENTO}\n\n${TEXTO_COMUNICACAO}`
+          : TEXTO_CONSENTIMENTO,
         familia_sugerida_id: familiaId || null,
         foto_url,
-        grupo_id: grupoEscolhido?.id || null,
         match_membro_id: matchConfirmado || null,
         senha: form.senha || undefined,
       });
@@ -505,6 +680,7 @@ export default function CadastroMembresia() {
           }
         } catch { /* fallback: tela de sucesso normal */ }
       }
+      if (ehCenso) setCensoAtualizado(!!resp?.censo_atualizado);
       setSent(true);
     } catch (err) {
       setError(err.message || 'Não foi possível enviar o cadastro. Tente novamente.');
@@ -534,6 +710,7 @@ export default function CadastroMembresia() {
   };
 
   return (
+    <PublicPaletteCtx.Provider value={C}>
     <div style={{
       minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
       position: 'relative', overflow: 'hidden',
@@ -550,7 +727,7 @@ export default function CadastroMembresia() {
       }}>
         {fromTotem && (
           <button
-            onClick={() => window.location.href = '/totem'}
+            onClick={() => voltarAoTotem(null)}
             style={{
               display: 'flex', alignItems: 'center', gap: 6,
               background: 'transparent', border: 'none',
@@ -567,11 +744,33 @@ export default function CadastroMembresia() {
             alt="CBRio"
             style={{ width: 72, height: 72, marginBottom: 12, display: 'inline-block' }}
           />
-          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>Cadastro de Membresia</h1>
+          <h1 style={{ fontSize: 24, fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
+            {modoAtualizacao ? 'Atualize seu cadastro' : 'Cadastro de Membresia'}
+          </h1>
           <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
-            Preencha seus dados para que nossa equipe de acolhimento entre em contato.
+            {modoAtualizacao
+              ? (faltando.length
+                // Diz QUANTOS campos faltam, não quais: a lista completa está
+                // marcada campo a campo no formulário, e repetir aqui só
+                // assusta ("faltam 5 coisas") antes de a pessoa ver que é rápido.
+                ? 'Confira o que já temos e complete o que está faltando — leva 2 minutos.'
+                : 'Seus dados já estão completos. Confira e corrija o que quiser.')
+              : 'Preencha seus dados para que nossa equipe de acolhimento entre em contato.'}
           </p>
         </div>
+
+        {/* Enquanto o link pessoal carrega, não mostrar o formulário vazio: a
+            pessoa começaria a digitar e o prefill sobrescreveria o que ela
+            escreveu. */}
+        {carregandoMeusDados && (
+          <div style={{
+            padding: '28px 20px', textAlign: 'center', fontSize: 13,
+            color: C.text3, background: '#00B39D0d',
+            border: `1px solid ${C.cardBorder}`, borderRadius: 14, marginBottom: 16,
+          }}>
+            Carregando seus dados…
+          </div>
+        )}
 
         {sent ? (
           <div style={{
@@ -585,38 +784,51 @@ export default function CadastroMembresia() {
               fontSize: 28, marginBottom: 16,
             }}>&#10003;</div>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>
-              Cadastro enviado!
+              {ehCenso
+                ? (censoAtualizado ? 'Dados atualizados!' : 'Cadastro recebido!')
+                : 'Cadastro enviado!'}
             </h2>
             <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
-              Obrigado por se conectar com a CBRio. Em breve nossa equipe entrará em contato com você.
+              {ehCenso
+                ? (censoAtualizado
+                  ? 'Obrigado! Encontramos o seu cadastro e atualizamos suas informações. Não precisa preencher de novo.'
+                  : 'Obrigado por participar do censo. Em breve nossa equipe entrará em contato com você.')
+                : 'Obrigado por se conectar com a CBRio. Em breve nossa equipe entrará em contato com você.'}
             </p>
 
             {fromTotem ? (
-              /* Modo totem: exibe QR para o membro escanear com o celular e pegar a wallet */
+              /* Modo totem: o QR do membro sai na hora (sem repedir CPF/nascimento)
+                 e a volta já ativa a sessão da pessoa no totem. */
               <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                <p style={{ fontSize: 13, color: C.text3, marginBottom: 16 }}>
-                  Escaneie o QR Code com seu celular para adicionar seu QR de membro na carteira digital:
-                </p>
-                <div style={{ display: 'inline-block', background: '#fff', padding: 12, borderRadius: 12, marginBottom: 16 }}>
-                  <QRCodeSVG
-                    value={`${window.location.origin}/wallet`}
-                    size={180}
-                    level="M"
-                    includeMargin={false}
-                  />
-                </div>
-                <p style={{ fontSize: 11, color: '#525252', marginBottom: 20 }}>
-                  {window.location.origin}/wallet
-                </p>
+                {totemQr ? (
+                  <>
+                    <p style={{ fontSize: 14, fontWeight: 600, color: C.text, margin: '0 0 4px' }}>
+                      Seu QR de membro está pronto!
+                    </p>
+                    <p style={{ fontSize: 12, color: C.text3, marginBottom: 16 }}>
+                      Ele é a sua carteirinha digital e identifica você no totem.
+                    </p>
+                    <div style={{ display: 'inline-block', background: '#fff', padding: 12, borderRadius: 12, marginBottom: 12 }}>
+                      <QRCodeSVG value={totemQr} size={180} level="M" includeMargin={false} />
+                    </div>
+                    <p style={{ fontSize: 11, color: C.textDim, marginBottom: 20 }}>
+                      No celular, acesse {window.location.origin}/wallet para guardar na sua carteira digital.
+                    </p>
+                  </>
+                ) : (
+                  <p style={{ fontSize: 12, color: C.text3, marginBottom: 20 }}>
+                    {totemQrErro || 'Gerando seu QR de membro...'}
+                  </p>
+                )}
                 <button
-                  onClick={() => window.location.href = '/totem'}
+                  onClick={() => voltarAoTotem(totemQr)}
                   style={{
-                    padding: '10px 24px', borderRadius: 10, background: 'transparent',
-                    border: '1px solid rgba(255,255,255,0.2)', color: C.text3,
-                    fontSize: 14, cursor: 'pointer',
+                    padding: '14px 28px', borderRadius: 12, border: 'none',
+                    background: '#00B39D', color: '#fff',
+                    fontSize: 15, fontWeight: 700, cursor: 'pointer',
                   }}
                 >
-                  ← Voltar ao Totem
+                  {totemQr ? 'Continuar no totem já identificado' : '← Voltar ao Totem'}
                 </button>
               </div>
             ) : (
@@ -644,7 +856,7 @@ export default function CadastroMembresia() {
               fontSize: 22, marginBottom: 14,
             }}>&#x1F3E0;</div>
             <h2 style={{ fontSize: 17, fontWeight: 700, color: C.text, margin: '0 0 8px' }}>
-              Encontramos uma familia!
+              Encontramos uma família!
             </h2>
             <p style={{ fontSize: 13, color: C.text3, lineHeight: 1.5, marginBottom: 20 }}>
               {familiaOpcoes.length === 1
@@ -667,7 +879,7 @@ export default function CadastroMembresia() {
                     cursor: 'pointer', transition: 'all 0.2s',
                   }}
                 >
-                  Sim, sou da familia {fam.nome}
+                  Sim, sou da família {fam.nome}
                 </button>
               ))}
               <button
@@ -681,11 +893,11 @@ export default function CadastroMembresia() {
                   cursor: 'pointer', transition: 'all 0.2s',
                 }}
               >
-                {loading ? 'Enviando...' : 'Não, não faco parte de nenhuma dessas famílias'}
+                {loading ? 'Enviando...' : 'Não, não faço parte de nenhuma dessas famílias'}
               </button>
             </div>
           </div>
-        ) : (
+        ) : carregandoMeusDados ? null : (
           <>
             {error && (
               <div style={{
@@ -762,16 +974,16 @@ export default function CadastroMembresia() {
                   </div>
 
                   <Row>
-                    <Field id="nome" label="Nome" value={form.nome} onChange={set('nome')} required autoComplete="given-name" maxLength={100} />
-                    <Field id="sobrenome" label="Sobrenome" value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" maxLength={100} />
+                    <Field id="nome" label={rotulo('Nome', 'nome')} value={form.nome} onChange={set('nome')} required autoComplete="given-name" maxLength={100} />
+                    <Field id="sobrenome" label={rotulo('Sobrenome', 'nome')} value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" maxLength={100} />
                   </Row>
                   <Row>
-                    <Field id="cpf" label="CPF" value={form.cpf} onChange={setMasked('cpf', mascaraCpf)} required inputMode="numeric" maxLength={14} />
-                    <Field id="telefone" label="Celular / WhatsApp" value={form.telefone} onChange={setMasked('telefone', mascaraTelefone)} required autoComplete="tel" inputMode="tel" maxLength={16} />
+                    <Field id="cpf" label={rotulo('CPF', 'cpf')} value={form.cpf} onChange={setMasked('cpf', mascaraCpf)} required inputMode="numeric" maxLength={14} />
+                    <Field id="telefone" label={rotulo('Celular / WhatsApp', 'telefone')} value={form.telefone} onChange={setMasked('telefone', mascaraTelefone)} required autoComplete="tel" inputMode="tel" maxLength={16} />
                   </Row>
                   {cpfChecando && (
                     <div style={{ marginTop: -10, marginBottom: 14, fontSize: 12, color: 'var(--cbrio-text3)' }}>
-                      Verificando se voce ja esta cadastrado...
+                      Verificando se você já está cadastrado...
                     </div>
                   )}
                   {!cpfChecando && cpfLookup?.found && (
@@ -789,15 +1001,15 @@ export default function CadastroMembresia() {
                           <>
                             <strong>Bem-vindo(a) de volta, {cpfLookup.primeiroNome} {cpfLookup.iniciaisSobrenome}</strong>
                             <div style={{ color: 'var(--cbrio-text3)', marginTop: 2 }}>
-                              Encontramos seu cadastro. Continue preenchendo abaixo · seus dados serao atualizados ao enviar.
+                              Encontramos seu cadastro. Continue preenchendo abaixo · seus dados serão atualizados ao enviar.
                             </div>
                           </>
                         ) : (
                           <>
                             <strong>Já existe um cadastro com este CPF</strong>
                             <div style={{ color: 'var(--cbrio-text3)', marginTop: 2 }}>
-                              Em nome de {cpfLookup.primeiroNome} {cpfLookup.iniciaisSobrenome} (em analise).
-                              Se for voce, pode continuar — vamos atualizar.
+                              Em nome de {cpfLookup.primeiroNome} {cpfLookup.iniciaisSobrenome} (em análise).
+                              Se for você, pode continuar — vamos atualizar.
                             </div>
                           </>
                         )}
@@ -826,8 +1038,8 @@ export default function CadastroMembresia() {
                         </div>
                         <div style={{ color: 'var(--cbrio-text3)', marginTop: 4, fontSize: 12 }}>
                           {nomeTelLookup.cadastroCompleto
-                            ? 'Esse cadastro já existe no sistema. E você mesmo?'
-                            : 'Provavelmente você e um novo convertido já registrado no nosso sistema. E você?'}
+                            ? 'Esse cadastro já existe no sistema. É você mesmo?'
+                            : 'Provavelmente você é um novo convertido já registrado no nosso sistema. É você?'}
                         </div>
                       </div>
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -851,7 +1063,7 @@ export default function CadastroMembresia() {
                             color: 'var(--cbrio-text)', fontWeight: 600, fontSize: 13, cursor: 'pointer',
                           }}
                         >
-                          Nao sou eu
+                          Não sou eu
                         </button>
                       </div>
                     </div>
@@ -891,18 +1103,51 @@ export default function CadastroMembresia() {
               {currentStep === 1 && (
                 <div>
                   <SectionTitle>Informações</SectionTitle>
+                  {ehCenso && (
+                    <div style={{ marginBottom: 4 }}>
+                      <SelectField
+                        id="vinculo_declarado"
+                        label="Qual é o seu vínculo com a CBRio? *"
+                        value={vinculoDeclarado}
+                        onChange={(e) => setVinculoDeclarado(e.target.value)}
+                        options={VINCULO_OPTS}
+                        required
+                      />
+                      <p style={{ fontSize: 11, color: 'var(--cbrio-text3)', margin: '-12px 0 20px' }}>
+                        Não se preocupe em acertar: isso nos ajuda a organizar o
+                        acompanhamento e você pode mudar depois.
+                      </p>
+                    </div>
+                  )}
                   <Row>
-                    <Field id="data_nascimento" type="date" label="Data de nascimento" value={form.data_nascimento} onChange={set('data_nascimento')} required />
+                    <div style={{ marginBottom: 20, flex: 1 }}>
+                      <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
+                        {rotulo('Data de nascimento', 'nascimento')} <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm((f) => ({ ...f, data_nascimento: v }))} />
+                    </div>
                     <Field
                       id="email"
                       type="email"
-                      label={fromDevocional ? 'E-mail *' : 'E-mail'}
+                      label={`${rotulo('E-mail', 'email')} *`}
                       value={form.email}
                       onChange={set('email')}
                       autoComplete="email"
                       maxLength={200}
-                      required={fromDevocional}
+                      required
                     />
+                  </Row>
+
+                  <Row>
+                    <SelectField
+                      id="genero"
+                      label={`${rotulo('Sexo', 'genero')} *`}
+                      value={form.genero}
+                      onChange={set('genero')}
+                      options={SEXO_OPTS}
+                      required
+                    />
+                    <div style={{ flex: 1 }} />
                   </Row>
 
                   {fromDevocional && (
@@ -959,6 +1204,25 @@ export default function CadastroMembresia() {
                     <Field id="profissao" label="Profissão" value={form.profissao} onChange={set('profissao')} maxLength={120} />
                   </Row>
                   <Field
+                    id="cep"
+                    label={cepBuscando ? 'CEP (buscando bairro...)' : 'CEP (opcional)'}
+                    value={form.cep}
+                    onChange={handleCepChange}
+                    inputMode="numeric"
+                    autoComplete="postal-code"
+                    maxLength={9}
+                  />
+                  <SelectField
+                    id="bairro"
+                    label="Bairro"
+                    value={bairroSel}
+                    onChange={(e) => setBairroSel(e.target.value)}
+                    options={[...BAIRROS.map((b) => ({ value: b, label: b })), { value: BAIRRO_OUTRO, label: 'Outro bairro' }]}
+                  />
+                  {bairroSel === BAIRRO_OUTRO && (
+                    <Field id="bairro_outro" label="Qual bairro?" value={bairroOutro} onChange={(e) => setBairroOutro(e.target.value)} maxLength={80} />
+                  )}
+                  <Field
                     id="como_conheceu"
                     label="Como conheceu a CBRio? (opcional)"
                     value={form.como_conheceu}
@@ -967,85 +1231,20 @@ export default function CadastroMembresia() {
                     rows={3}
                     maxLength={500}
                   />
-                </div>
-              )}
-
-              {/* Step 3: Endereço */}
-              {currentStep === 2 && (
-                <div>
-                  <SectionTitle>Endereço</SectionTitle>
-                  <Field id="cep" label={cepBuscando ? 'CEP (buscando...)' : 'CEP'} value={form.cep} onChange={handleCepChange} autoComplete="postal-code" inputMode="numeric" maxLength={9} />
-                  <Field id="endereco" label="Endereço (rua e número)" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" maxLength={200} />
-                  <Row>
-                    <Field id="bairro" label="Bairro" value={form.bairro} onChange={set('bairro')} maxLength={80} />
-                    <Field id="cidade" label="Cidade" value={form.cidade} onChange={set('cidade')} maxLength={80} />
-                  </Row>
-                </div>
-              )}
-
-              {/* Step 4: Grupo de Conexão */}
-              {currentStep === 3 && (
-                <div>
-                  <SectionTitle>Grupo de conexão</SectionTitle>
-                  <p style={{ fontSize: 13, color: C.text3, marginBottom: 16 }}>
-                    Você participa de algum grupo de conexão da CBRio? Se sim, podemos te
-                    vincular automaticamente — o líder vai aprovar seu pedido.
-                  </p>
-                  <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
-                    <button type="button" onClick={() => { setEstaEmGrupo(true); }}
-                      style={{
-                        flex: 1, padding: '12px 16px', borderRadius: 10,
-                        border: estaEmGrupo === true ? `2px solid #00B39D` : `1px solid var(--cbrio-border)`,
-                        background: estaEmGrupo === true ? 'rgba(0,179,157,0.12)' : 'transparent',
-                        color: estaEmGrupo === true ? '#00B39D' : 'var(--cbrio-text)', fontWeight: 600, cursor: 'pointer',
-                      }}>
-                      Sim, estou em um grupo
-                    </button>
-                    <button type="button" onClick={() => { setEstaEmGrupo(false); setGrupoEscolhido(null); }}
-                      style={{
-                        flex: 1, padding: '12px 16px', borderRadius: 10,
-                        border: estaEmGrupo === false ? `2px solid #00B39D` : `1px solid var(--cbrio-border)`,
-                        background: estaEmGrupo === false ? 'rgba(0,179,157,0.12)' : 'transparent',
-                        color: estaEmGrupo === false ? '#00B39D' : 'var(--cbrio-text)', fontWeight: 600, cursor: 'pointer',
-                      }}>
-                      Não estou em nenhum grupo
-                    </button>
+                  <div style={{ marginTop: 4 }}>
+                    <CheckboxField
+                      id="converteu_na_cbrio"
+                      checked={converteuCbrio}
+                      onChange={setConverteuCbrio}
+                      label="Eu me converti / aceitei Jesus aqui na CBRio."
+                    />
                   </div>
-
-                  {estaEmGrupo === true && (
-                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--cbrio-border)', borderRadius: 12, padding: 14 }}>
-                      <p style={{ fontSize: 12, color: C.text3, margin: 0, marginBottom: 10 }}>
-                        Busque pelo nome do líder do seu grupo e selecione o grupo correto:
-                      </p>
-                      <GrupoSelectorComponent
-                        mode="simple"
-                        usePublicApi
-                        selectedGrupoId={grupoEscolhido?.id}
-                        onSelect={setGrupoEscolhido}
-                      />
-                      {grupoEscolhido && (
-                        <div style={{ marginTop: 10, padding: 10, background: 'rgba(0,179,157,0.10)', border: '1px solid #00B39D', borderRadius: 8, fontSize: 12, color: '#00B39D' }}>
-                          ✓ Grupo selecionado: <strong>{grupoEscolhido.nome}</strong>
-                          {grupoEscolhido.lider_nome && <> (Líder: {grupoEscolhido.lider_nome})</>}
-                          <button type="button" onClick={() => setGrupoEscolhido(null)}
-                            style={{ marginLeft: 8, background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontWeight: 600, fontSize: 11 }}>
-                            trocar
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {estaEmGrupo === false && (
-                    <p style={{ fontSize: 12, color: C.text3, fontStyle: 'italic' }}>
-                      Sem problemas — depois você pode buscar e se inscrever em um grupo direto pelo app.
-                    </p>
-                  )}
                 </div>
               )}
 
-              {/* Step 5: Termos */}
-              {currentStep === 4 && (
+              {/* Termos (o passo Endereço virou o seletor de bairro no passo
+                  Informações · 2026-07-23; o passo Grupo de Conexão saiu antes) */}
+              {currentStep === 2 && (
                 <div>
                   <SectionTitle>Termos e consentimento</SectionTitle>
                   <div style={{
@@ -1063,35 +1262,21 @@ export default function CadastroMembresia() {
                       label="Li e concordo com o tratamento dos meus dados pessoais. *"
                     />
                     <CheckboxField
-                      id="aceita_contato"
-                      checked={aceitaContato}
-                      onChange={setAceitaContato}
-                      label="Autorizo o contato da equipe de acolhimento por e-mail, telefone ou WhatsApp."
+                      id="aceita_comunicacao"
+                      checked={aceitaComunicacao}
+                      onChange={setAceitaComunicacao}
+                      label={TEXTO_COMUNICACAO}
                     />
                   </div>
                 </div>
               )}
             </MultistepFormShell>
 
-            {/* "Já fiz meu cadastro e quero meu QR de membro" */}
-            <div style={{
-              marginTop: 20, padding: '16px 0 0',
-              borderTop: `1px solid ${C.cardBorder}`,
-              textAlign: 'center',
-            }}>
-              <button
-                type="button"
-                onClick={() => setWalletDialogOpen(true)}
-                style={{
-                  background: 'transparent', border: 'none',
-                  color: '#00B39D', fontSize: 13, fontWeight: 600,
-                  cursor: 'pointer', textDecoration: 'underline',
-                  padding: 4,
-                }}
-              >
-                Ja fiz meu cadastro e quero meu QR de membro
-              </button>
-            </div>
+            {/* ⚠️ O atalho "Já fiz meu cadastro e quero meu QR de membro" SAIU
+                daqui (decisão do Matheus · 04/08): a carteirinha/QR de membro
+                vive no APP de membros. Numa página cuja tarefa é completar
+                cadastro, o atalho competia com a tarefa. O `MemberWalletDialog`
+                e as rotas /wallet/* seguem existindo (o app usa) — não apagar. */}
           </>
         )}
       </div>
@@ -1101,5 +1286,6 @@ export default function CadastroMembresia() {
         onOpenChange={setWalletDialogOpen}
       />
     </div>
+    </PublicPaletteCtx.Provider>
   );
 }

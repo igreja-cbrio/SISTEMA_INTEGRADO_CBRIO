@@ -1,39 +1,32 @@
-// Bot WhatsApp · Grupos de conexão — cron diário + admin do estudo da semana.
+// Bot WhatsApp · Grupos de conexão — cron diário (só sincroniza líderes).
 // Cron (Vercel · CRON_SECRET): GET /api/whatsapp-grupos/cron/diario
-//   - lembrete pós-encontro: grupos cujo dia_semana foi ONTEM → pergunta ao líder
-//   - estudo da semana: no dia configurado (default segunda) → broadcast 1:1
+//   - sincroniza os auto-vínculos de líderes (whatsapp_lideres). SEM ENVIO.
+// ⚠️ NENHUMA mensagem automática pro líder por aqui:
+//   - Cobrança de relato: REMOVIDA em 2026-07-20 (decisão do Marcos).
+//   - Estudo da semana automático: REMOVIDO em 2026-07-23 (decisão do Marcos ·
+//     ideia descontinuada; estudo agora só é enviado manualmente pela aba de
+//     estudos, nunca por cron).
+// O único envio proativo automático que sobra é o cron mensal de frequência
+// (publicGrupos · gated por temporada em curso + kill-switch grupos_auto_envios).
+// Lembrete avulso e frequência avulsa: SÓ por disparo manual (aba Envios).
 // Admin (authenticate + módulo grupos):
-//   - PATCH /materiais/:docId/estudo-semana · marca o material da semana
-//   - POST  /enviar-estudo · disparo manual (teste)
-//   - POST  /enviar-lembretes · disparo manual (teste)
+//   - PATCH /materiais/:docId/estudo-semana · marca o material da semana (a aba
+//     de estudos usa esse flag; NÃO dispara envio automático)
+//   - POST  /enviar-lembretes · disparo manual (coordenação)
 const router = require('express').Router();
 const { requireCron } = require('../utils/cronAuth');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const svc = require('../services/whatsappGrupos');
 
-// Dia do envio do estudo (0=Dom..6=Sáb) · default segunda
-const DIA_ESTUDO = Number(process.env.WHATSAPP_ESTUDO_DIA ?? 1);
-
 // ── Cron diário (sem login · CRON_SECRET) ───────────────────────────────────
-// Ordem: sincroniza líderes (auto-vínculos a partir de mem_grupos.lider_id) →
-// lembrete semanal (SÓ se WHATSAPP_LEMBRETE_SEMANAL=1 · decisão de custo
-// pendente com o gestor) → cobrança dos grupos há 4+ semanas sem relato
-// (modo padrão · Marcos) → estudo da semana no dia configurado.
+// SÓ sincroniza os vínculos de líderes (a partir de mem_grupos.lider_id) — não
+// envia mensagem nenhuma. Estudo automático removido em 2026-07-23.
 router.get('/cron/diario', requireCron, async (req, res) => {
   try {
     const sync = await svc.sincronizarLideresGrupos();
-    let lembretes = null;
-    if (process.env.WHATSAPP_LEMBRETE_SEMANAL === '1') {
-      lembretes = await svc.enviarLembretesEncontro();
-    }
-    const cobrancas = await svc.enviarCobrancasSemRelato();
-    let estudo = null;
-    if (new Date().getDay() === DIA_ESTUDO) {
-      estudo = await svc.enviarEstudoSemanal();
-    }
-    console.log('[whatsapp-grupos cron]', JSON.stringify({ sync, lembretes, cobrancas, estudo }));
-    res.json({ ok: true, sync, lembretes, cobrancas, estudo });
+    console.log('[whatsapp-grupos cron]', JSON.stringify({ sync }));
+    res.json({ ok: true, sync });
   } catch (e) {
     console.error('[whatsapp-grupos cron]', e.message);
     res.status(500).json({ error: e.message });
@@ -66,26 +59,15 @@ router.patch('/materiais/:docId/estudo-semana', podeGerir, async (req, res) => {
   }
 });
 
-// POST /api/whatsapp-grupos/enviar-estudo · disparo manual (teste do coordenador)
-router.post('/enviar-estudo', podeGerir, async (req, res) => {
-  try {
-    const r = await svc.enviarEstudoSemanal();
-    res.json({ ok: true, ...r });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+// (Removido 2026-07-23) POST /enviar-estudo — envio de estudo pelo bot foi
+// descontinuado pelo Marcos. O estudo da semana agora vive só na aba de
+// estudos e, se for enviado, é manualmente por lá — não por este bot.
 
-// POST /api/whatsapp-grupos/enviar-lembretes · disparo manual (teste)
+// POST /api/whatsapp-grupos/enviar-lembretes · disparo manual (coordenação ·
+// única via de lembrete de relato — não há envio automático)
 router.post('/enviar-lembretes', podeGerir, async (req, res) => {
   try {
     const r = await svc.enviarLembretesEncontro();
-    res.json({ ok: true, ...r });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// POST /api/whatsapp-grupos/enviar-cobrancas · disparo manual (teste)
-router.post('/enviar-cobrancas', podeGerir, async (req, res) => {
-  try {
-    const r = await svc.enviarCobrancasSemRelato();
     res.json({ ok: true, ...r });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

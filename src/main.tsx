@@ -2,10 +2,16 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 import { initSentry, Sentry } from "./lib/sentry";
+import { useState } from "react";
+import { reloadForAppUpdate } from "./lib/appUpdate";
+import { initWebVitals } from "./lib/webVitals";
 
 initSentry();
+initWebVitals();
 
 function FallbackError() {
+  const [updating, setUpdating] = useState(false);
+
   return (
     <div style={{
       minHeight: "100vh", display: "flex", flexDirection: "column",
@@ -17,16 +23,21 @@ function FallbackError() {
         Algo deu errado
       </h1>
       <p style={{ fontSize: 14, color: "var(--cbrio-text2, #a3a3a3)", marginBottom: 20, maxWidth: 480 }}>
-        O erro foi reportado automaticamente. Tente recarregar a página — se persistir, fale com o time.
+        Não foi possível abrir esta página. Tente novamente; seu acesso e o endereço atual serão mantidos.
       </p>
       <button
-        onClick={() => window.location.reload()}
+        disabled={updating}
+        onClick={() => {
+          setUpdating(true);
+          void reloadForAppUpdate({ resetRetries: true });
+        }}
         style={{
           padding: "10px 24px", borderRadius: 8, background: "#00B39D",
-          color: "#fff", border: "none", fontWeight: 700, cursor: "pointer",
+          color: "#fff", border: "none", fontWeight: 700,
+          cursor: updating ? "wait" : "pointer", opacity: updating ? 0.75 : 1,
         }}
       >
-        Recarregar
+        {updating ? "Atualizando…" : "Tentar novamente"}
       </button>
     </div>
   );

@@ -25,6 +25,11 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const spMarketing = require('../services/sharepointMarketing');
+const {
+  CAMPANHA_INICIO,
+  agruparArrecadacaoMensal,
+  calcularGenerosidade,
+} = require('../services/marketingGenerosidade');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -161,6 +166,90 @@ async function enrichCards(cards) {
     campanha: c.campanha_id ? (campanhaMap[c.campanha_id] || null) : null,
   }));
 }
+
+// ─── Generosidade · snapshot agregado para as telas do culto ────────────────
+
+async function carregarGenerosidadeDoBalanco(inicio, fim) {
+  const { data: planos, error: planosError } = await supabase
+    .from('fin_plano_contas')
+    .select('id, codigo')
+    .or('codigo.eq.3.01,codigo.like.3.01.%');
+  if (planosError) throw planosError;
+
+  const planoIds = (planos || []).map((plano) => plano.id);
+  if (!planoIds.length) return [];
+
+  const linhas = [];
+  const pageSize = 1000;
+
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from('fin_transacoes')
+      .select('id, data_competencia, valor')
+      .not('codigo_legado', 'is', null)
+      .eq('tipo', 'receita')
+      .neq('status', 'cancelado')
+      .in('classe_movimento', ['ordinaria', 'extraordinaria'])
+      .in('plano_contas_id', planoIds)
+      .gte('data_competencia', inicio)
+      .lt('data_competencia', fim)
+      .order('id', { ascending: true })
+      .range(from, from + pageSize - 1);
+
+    if (error) throw error;
+    linhas.push(...(data || []));
+    if (!data || data.length < pageSize) break;
+  }
+
+  return agruparArrecadacaoMensal(linhas);
+}
+
+router.get('/generosidade', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const anoAtual = new Date().getFullYear();
+    const anoInicio = Number(CAMPANHA_INICIO.slice(0, 4));
+    const ano = req.query.ano === undefined ? anoAtual : Number(req.query.ano);
+
+    if (!Number.isInteger(ano) || ano < anoInicio || ano > anoAtual) {
+      return res.status(400).json({
+        error: `O ano deve estar entre ${anoInicio} e ${anoAtual}.`,
+      });
+    }
+
+    const inicio = `${CAMPANHA_INICIO}-01`;
+    const fim = `${ano + 1}-01-01`;
+
+    const [mensalRows, uploadResult] = await Promise.all([
+      carregarGenerosidadeDoBalanco(inicio, fim),
+      supabase
+        .from('fin_uploads')
+        .select('concluido_em, data_inicio, data_fim')
+        .eq('tipo', 'balanco')
+        .eq('status', 'concluido')
+        .order('concluido_em', { ascending: false })
+        .limit(1),
+    ]);
+    if (uploadResult.error) throw uploadResult.error;
+
+    const snapshot = calcularGenerosidade(mensalRows, ano);
+    const ultimoBalanco = uploadResult.data?.[0] || null;
+
+    res.set('Cache-Control', 'private, no-store');
+    return res.json({
+      ...snapshot,
+      atualizado_em: ultimoBalanco?.concluido_em || null,
+      periodo_ultimo_balanco: ultimoBalanco
+        ? { inicio: ultimoBalanco.data_inicio, fim: ultimoBalanco.data_fim }
+        : null,
+      fonte: 'balanco_financeiro',
+    });
+  } catch (e) {
+    console.error('[MARKETING] generosidade:', e.message);
+    return res.status(500).json({
+      error: 'Não foi possível carregar os dados de generosidade.',
+    });
+  }
+});
 
 // ─── Catalogos ──────────────────────────────────────────────────────────────
 

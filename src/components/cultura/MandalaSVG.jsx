@@ -79,7 +79,7 @@ function petalSubLabel(key) {
   }
 }
 
-export default function MandalaSVG({ data, loading, onPetalClick }) {
+export default function MandalaSVG({ data, loading, onPetalClick, onCenterClick }) {
   // Viewbox: meio-círculo virado para cima — 800x440
   const W = 800, H = 440;
   const cx = W / 2, cy = H - 30;
@@ -168,11 +168,13 @@ export default function MandalaSVG({ data, loading, onPetalClick }) {
           </motion.g>
         ))}
 
-        {/* Centro - Decisões */}
+        {/* Centro - Decisões (clicável · abre o detalhe presencial/online/kids) */}
         <motion.g
           initial={{ opacity: 0, scale: 0.6 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.5, duration: 0.5 }}
+          onClick={() => onCenterClick?.()}
+          style={{ cursor: onCenterClick ? 'pointer' : 'default' }}
         >
           <circle cx={cx} cy={cy} r={rInner - 6} fill="hsl(var(--card))" stroke="hsl(var(--border))" strokeWidth="1.5" />
           <motion.circle
@@ -195,7 +197,9 @@ export default function MandalaSVG({ data, loading, onPetalClick }) {
                   <NumberTicker value={decisoes} className="text-4xl font-extrabold" />
                 )}
               </div>
-              <div className="text-[10px] text-muted-foreground mt-1">no mês</div>
+              <div className="text-[10px] text-muted-foreground mt-1">
+                no mês{onCenterClick && <span className="text-primary/80"> · ver detalhe</span>}
+              </div>
             </div>
           </foreignObject>
         </motion.g>

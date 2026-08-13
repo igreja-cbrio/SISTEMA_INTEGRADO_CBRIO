@@ -1,0 +1,16 @@
+# Arquivos gitignored que cada worktree NOVA precisa receber.
+#
+# Por que existe: o app Claude Code Desktop abre cada sessão numa worktree
+# própria, e worktree é um checkout limpo — só vem o que está no Git. Sem este
+# arquivo, a worktree nasce SEM `.env`, o front sobe sem Supabase
+# ("VITE_SUPABASE_URL: AUSENTE") e o backend nem inicia.
+#
+# Sintaxe de .gitignore. O Claude Code copia só o que casa com um padrão E é
+# gitignored — arquivo versionado nunca é duplicado.
+#
+# ⚠️ NÃO acrescentar `node_modules` aqui: são milhares de arquivos por worktree.
+# Dependência se resolve com `npm install` (e `npm install` em `backend/`).
+
+.env
+.env.local
+backend/.env

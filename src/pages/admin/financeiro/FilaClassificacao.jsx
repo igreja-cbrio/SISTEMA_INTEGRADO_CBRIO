@@ -13,7 +13,7 @@ const C = {
 
 const ORIGEM_LABELS = {
   centavo: { label: 'Centavo', cor: C.primary, bg: C.primaryBg },
-  memoria: { label: 'Memoria', cor: C.blue, bg: C.blueBg },
+  memoria: { label: 'Memória', cor: C.blue, bg: C.blueBg },
   regra:   { label: 'Regra', cor: C.amber, bg: C.amberBg },
   ia:      { label: 'IA', cor: '#8b5cf6', bg: '#8b5cf618' },
   manual:  { label: 'Manual', cor: C.text3, bg: '#73737318' },
@@ -28,7 +28,7 @@ function fmtDataBR(yyyymmdd) {
   return `${m[3]}/${m[2]}/${m[1]}`;
 }
 
-const DIAS_SEMANA = ['Domingo','Segunda','Terca','Quarta','Quinta','Sexta','Sabado'];
+const DIAS_SEMANA = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
 function fmtDiaSemanaBR(yyyymmdd) {
   if (!yyyymmdd) return '';
   const m = String(yyyymmdd).match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -129,7 +129,7 @@ export default function FilaClassificacao() {
     setBulkProcessing(true);
     try {
       const r = await financeiro.filaClassificacao.aprovarMassa(confiancaMin);
-      alert(`${r.aprovadas} classificacoes aprovadas em massa.`);
+      alert(`${r.aprovadas} classificações aprovadas em massa.`);
       load();
     } catch (e) {
       alert('Erro: ' + e.message);
@@ -140,10 +140,31 @@ export default function FilaClassificacao() {
     setBulkProcessing(true);
     try {
       const r = await financeiro.filaClassificacao.reclassificar();
-      alert(`${r.reclassificadas} itens re-analisados com regras/memoria atualizadas.`);
+      alert(`${r.reclassificadas} itens re-analisados com regras/memória atualizadas.`);
       load();
     } catch (e) { alert('Erro: ' + e.message); }
     finally { setBulkProcessing(false); }
+  };
+
+  // IA em lote pros itens SEM sugestão · repete a chamada até restantes=0
+  // (o servidor processa ~40 por vez pra caber no timeout serverless)
+  const [iaProgresso, setIaProgresso] = useState(null); // texto de progresso
+  const sugerirComIA = async () => {
+    setBulkProcessing(true);
+    setIaProgresso('Analisando…');
+    try {
+      let total = 0, rodadas = 0;
+      while (rodadas < 20) { // trava de segurança
+        const r = await financeiroV2.fila.sugerirLote();
+        total += r.com_sugestao || 0;
+        rodadas += 1;
+        if (!r.restantes || r.processados === 0) break;
+        setIaProgresso(`${total} sugeridos · ${r.restantes} restantes…`);
+      }
+      toast.success(`IA sugeriu classificação pra ${total} lançamento(s)`);
+      load();
+    } catch (e) { toast.error('Erro na sugestão por IA: ' + e.message); }
+    finally { setBulkProcessing(false); setIaProgresso(null); }
   };
 
   useEffect(() => { load(); }, [load]);
@@ -160,7 +181,7 @@ export default function FilaClassificacao() {
   };
 
   const ignorar = async (item) => {
-    if (!confirm('Ignorar este lancamento? Ele não virara transacao final.')) return;
+    if (!confirm('Ignorar este lançamento? Ele não virará transação final.')) return;
     await financeiroV2.fila.ignorar(item.id);
     load();
   };
@@ -205,7 +226,7 @@ export default function FilaClassificacao() {
         <div>
           <h2 style={{ fontSize: 18, fontWeight: 700, color: C.text, margin: 0 }}>Fila de classificação</h2>
           <div style={{ fontSize: 12, color: C.text2, marginTop: 4 }}>
-            {fila.length} lancamento{fila.length === 1 ? '' : 's'} aguardando revisao
+            {fila.length} lançamento{fila.length === 1 ? '' : 's'} aguardando revisão
           </div>
         </div>
         <Button variant="outline" onClick={load} disabled={loading}>
@@ -305,6 +326,10 @@ export default function FilaClassificacao() {
           <Button variant="outline" size="sm" onClick={reclassificar} disabled={bulkProcessing}>
             🔄 Re-classificar pendentes
           </Button>
+          <Button variant="outline" size="sm" onClick={sugerirComIA} disabled={bulkProcessing}
+            style={{ borderColor: '#8b5cf6', color: '#8b5cf6' }}>
+            {iaProgresso ? `✨ ${iaProgresso}` : '✨ Sugerir com IA (sem sugestão)'}
+          </Button>
         </div>
       )}
 
@@ -369,7 +394,7 @@ export default function FilaClassificacao() {
         )}
         {fila.length === 0 && (
           <div style={{ background: C.card, border: `1px solid ${C.border}`, padding: 32, textAlign: 'center', borderRadius: 8, color: C.text3 }}>
-            Nenhum lancamento pendente · todos foram classificados ✓
+            Nenhum lançamento pendente · todos foram classificados ✓
           </div>
         )}
       </div>
@@ -481,11 +506,11 @@ function CardFila({ item, selecionado, onToggleSelecionar, onAprovar, onEditar, 
           <div style={{ marginTop: 10, padding: 10, background: 'var(--cbrio-bg)', borderRadius: 6, border: `1px dashed ${C.border}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
               <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: origem.bg, color: origem.cor, fontWeight: 600 }}>
-                Sugestao · {origem.label}
+                Sugestão · {origem.label}
               </span>
               {item.sugestao_confianca && (
                 <span style={{ fontSize: 10, color: C.text3 }}>
-                  {Math.round(item.sugestao_confianca * 100)}% confianca
+                  {Math.round(item.sugestao_confianca * 100)}% confiança
                 </span>
               )}
             </div>
@@ -570,7 +595,7 @@ function ModalEditarClassificacao({ item, onClose, planos, centros, onSalvar }) 
     <div style={modalOverlay} onClick={onClose}>
       <div style={modalBox} onClick={e => e.stopPropagation()}>
         <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 16, color: C.text }}>
-          Classificar lancamento
+          Classificar lançamento
         </h3>
 
         <div style={{ background: 'var(--cbrio-bg)', padding: 12, borderRadius: 6, marginBottom: 16 }}>
@@ -726,7 +751,7 @@ function HistoricoPagadorBlock({ nome, documento, valorAtual, planos, onAplicarP
         border: `1px solid ${C.border}`, marginBottom: 12,
         fontSize: 11, color: C.text3,
       }}>
-        Carregando historico do pagador...
+        Carregando histórico do pagador...
       </div>
     );
   }
@@ -756,12 +781,12 @@ function HistoricoPagadorBlock({ nome, documento, valorAtual, planos, onAplicarP
       border: `1px solid ${C.blue}40`, marginBottom: 12,
     }}>
       <div style={{ fontSize: 10, fontWeight: 700, color: C.blue, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-        📊 Padrao deste pagador
+        📊 Padrão deste pagador
       </div>
       <div style={{ fontSize: 11, color: C.text2, marginBottom: 8 }}>
-        {total} classificacoes anteriores · R$ {totalValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+        {total} classificações anteriores · R$ {totalValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
         {hist.ultimo_uso && (
-          <> · ultima em {fmtDataBR(hist.ultimo_uso)}</>
+          <> · última em {fmtDataBR(hist.ultimo_uso)}</>
         )}
       </div>
 
@@ -794,7 +819,7 @@ function HistoricoPagadorBlock({ nome, documento, valorAtual, planos, onAplicarP
                 </span>
                 {ehDominante && (
                   <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 99, background: C.blue, color: 'white', fontWeight: 700 }}>
-                    PADRAO
+                    PADRÃO
                   </span>
                 )}
               </div>
@@ -808,7 +833,7 @@ function HistoricoPagadorBlock({ nome, documento, valorAtual, planos, onAplicarP
 
       {dominante && dominantePct >= 60 && (
         <div style={{ fontSize: 10, color: C.text3, marginTop: 8, fontStyle: 'italic' }}>
-          Sugestao: clique no padrao "{dominante.nome || dominante.codigo}" pra aplicar
+          Sugestão: clique no padrão "{dominante.nome || dominante.codigo}" pra aplicar
         </div>
       )}
     </div>

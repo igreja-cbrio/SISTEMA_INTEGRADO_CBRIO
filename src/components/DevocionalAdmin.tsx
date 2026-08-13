@@ -3,6 +3,7 @@ import { devocionalPlanos as planosApi, devocionais as devocionaisApi } from '..
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Card } from './ui/card';
@@ -254,7 +255,7 @@ function PlanosLista({ onAbrir, podeEditar }: { onAbrir: (id: string) => void; p
       <div className="flex items-center justify-between">
         <div>
           <h3 className="font-semibold">Planos de devocional</h3>
-          <p className="text-sm text-muted-foreground">Crie planos mensais e acompanhe a adesao dos membros</p>
+          <p className="text-sm text-muted-foreground">Crie planos mensais e acompanhe a adesão dos membros</p>
         </div>
         {podeEditar && (
           <div className="flex items-center gap-2">
@@ -320,7 +321,7 @@ function NovoPlanoModal({ onClose, onSaved }: { onClose: () => void; onSaved: (i
   const [saving, setSaving] = useState(false);
 
   async function save() {
-    if (!form.titulo) return toast.error('Titulo obrigatorio');
+    if (!form.titulo) return toast.error('Título obrigatório');
     setSaving(true);
     try {
       const r: any = await planosApi.create(form);
@@ -341,16 +342,16 @@ function NovoPlanoModal({ onClose, onSaved }: { onClose: () => void; onSaved: (i
           </div>
           <div>
             <Label>Descrição / contexto</Label>
-            <Textarea rows={3} value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Tema, serie biblica, foco pastoral..." />
+            <Textarea rows={3} value={form.descricao} onChange={e => setForm({ ...form, descricao: e.target.value })} placeholder="Tema, série bíblica, foco pastoral..." />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Início</Label>
-              <Input type="date" value={form.data_inicio} onChange={e => setForm({ ...form, data_inicio: e.target.value })} />
+              <DatePicker value={form.data_inicio} onChange={v => setForm({ ...form, data_inicio: v })} />
             </div>
             <div>
               <Label>Fim</Label>
-              <Input type="date" value={form.data_fim} onChange={e => setForm({ ...form, data_fim: e.target.value })} />
+              <DatePicker value={form.data_fim} onChange={v => setForm({ ...form, data_fim: v })} />
             </div>
           </div>
         </div>
@@ -438,8 +439,8 @@ function PlanoDetalhe({ planoId, onVoltar, podeEditar }: { planoId: string; onVo
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
-          <TabsTrigger value="itens">Itens diarios</TabsTrigger>
-          <TabsTrigger value="adesao">Adesao</TabsTrigger>
+          <TabsTrigger value="itens">Itens diários</TabsTrigger>
+          <TabsTrigger value="adesao">Adesão</TabsTrigger>
           <TabsTrigger value="envios">Envios</TabsTrigger>
           <TabsTrigger value="estudo">Estudo bíblico</TabsTrigger>
         </TabsList>
@@ -593,7 +594,7 @@ function ImportarDocxModal({ plano, createMode, onClose, onDone }: { plano?: Pla
               {createMode && (
                 <div className="grid grid-cols-2 gap-3">
                   <div><Label className="text-xs">Nome do devocional</Label><Input value={nome} onChange={(e) => setNome(e.target.value)} /></div>
-                  <div><Label className="text-xs">1º dia (início)</Label><Input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
+                  <div><Label className="text-xs">1º dia (início)</Label><DatePicker value={inicio} onChange={setInicio} /></div>
                 </div>
               )}
 
@@ -654,8 +655,8 @@ function EditarPlanoModal({ plano, onClose, onSaved }: { plano: Plano; onClose: 
         <div className="space-y-3">
           <div><Label className="text-xs">Nome</Label><Input value={titulo} onChange={e => setTitulo(e.target.value)} placeholder="Ex.: Devocional da semana — Jó" /></div>
           <div className="grid grid-cols-2 gap-3">
-            <div><Label className="text-xs">Início</Label><Input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} /></div>
-            <div><Label className="text-xs">Fim</Label><Input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} /></div>
+            <div><Label className="text-xs">Início</Label><DatePicker value={dataInicio} onChange={setDataInicio} /></div>
+            <div><Label className="text-xs">Fim</Label><DatePicker value={dataFim} onChange={setDataFim} /></div>
           </div>
         </div>
         <DialogFooter>
@@ -669,7 +670,7 @@ function EditarPlanoModal({ plano, onClose, onSaved }: { plano: Plano; onClose: 
 
 function GerarIAModal({ plano, onClose, onDone }: { plano: Plano; onClose: () => void; onDone: () => void }) {
   const [tema, setTema] = useState('');
-  const [tom, setTom] = useState('pastoral, edificante, com aplicação pratica');
+  const [tom, setTom] = useState('pastoral, edificante, com aplicação prática');
   const [sobrescrever, setSobrescrever] = useState(false);
   const [gerando, setGerando] = useState(false);
   const [progresso, setProgresso] = useState({ feitos: 0, total: 0 });
@@ -730,11 +731,11 @@ function GerarIAModal({ plano, onClose, onDone }: { plano: Plano; onClose: () =>
         <DialogHeader><DialogTitle>Gerar devocionais com IA</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Plano de {diasTotalPlano} dias. Use Claude Haiku pra gerar conteudo automatico.
-            Voce pode gerar parte do plano agora e o restante depois (ou criar manualmente).
+            Plano de {diasTotalPlano} dias. Use Claude Haiku pra gerar conteúdo automático.
+            Você pode gerar parte do plano agora e o restante depois (ou criar manualmente).
           </p>
           <div>
-            <Label>Quantos dias gerar? <span className="text-muted-foreground">(max {maxPermitido})</span></Label>
+            <Label>Quantos dias gerar? <span className="text-muted-foreground">(máx. {maxPermitido})</span></Label>
             <Input
               type="number"
               min={1}
@@ -807,8 +808,8 @@ function NovoItemModal({ plano, itens, onClose, onSaved }: { plano: Plano; itens
   const [saving, setSaving] = useState(false);
 
   async function save() {
-    if (!form.titulo.trim()) return toast.error('Titulo obrigatorio');
-    if (!form.reflexao.trim()) return toast.error('Reflexao obrigatoria');
+    if (!form.titulo.trim()) return toast.error('Título obrigatório');
+    if (!form.reflexao.trim()) return toast.error('Reflexão obrigatória');
     if (form.data < plano.data_inicio || form.data > plano.data_fim) {
       return toast.error('Data fora do período do plano');
     }
@@ -830,17 +831,16 @@ function NovoItemModal({ plano, itens, onClose, onSaved }: { plano: Plano; itens
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label>Data *</Label>
-              <Input
-                type="date"
+              <DatePicker
                 min={plano.data_inicio}
                 max={plano.data_fim}
                 value={form.data}
-                onChange={e => setForm({ ...form, data: e.target.value })}
+                onChange={v => setForm({ ...form, data: v })}
               />
             </div>
             <div>
               <Label>Passagem</Label>
-              <Input value={form.passagem} onChange={e => setForm({ ...form, passagem: e.target.value })} placeholder="Ex: Joao 3:16" />
+              <Input value={form.passagem} onChange={e => setForm({ ...form, passagem: e.target.value })} placeholder="Ex: João 3:16" />
             </div>
           </div>
           <div>
@@ -848,12 +848,12 @@ function NovoItemModal({ plano, itens, onClose, onSaved }: { plano: Plano; itens
             <Input value={form.titulo} onChange={e => setForm({ ...form, titulo: e.target.value })} placeholder="O amor de Deus" />
           </div>
           <div>
-            <Label>Reflexao *</Label>
+            <Label>Reflexão *</Label>
             <Textarea rows={6} value={form.reflexao} onChange={e => setForm({ ...form, reflexao: e.target.value })} placeholder="Corpo principal do devocional..." />
           </div>
           <div>
             <Label>Aplicação</Label>
-            <Textarea rows={3} value={form.aplicacao} onChange={e => setForm({ ...form, aplicacao: e.target.value })} placeholder="Como aplicar hoje · pergunta pratica" />
+            <Textarea rows={3} value={form.aplicacao} onChange={e => setForm({ ...form, aplicacao: e.target.value })} placeholder="Como aplicar hoje · pergunta prática" />
           </div>
           <div>
             <Label>Oração</Label>
@@ -897,8 +897,8 @@ function EditarItemModal({ item, onClose, onSaved }: { item: Item; onClose: () =
         <DialogHeader><DialogTitle>Editar item · {fmt(item.data)}</DialogTitle></DialogHeader>
         <div className="space-y-3 max-h-[60vh] overflow-y-auto">
           <div><Label>Título</Label><Input value={form.titulo} onChange={e => setForm({ ...form, titulo: e.target.value })} /></div>
-          <div><Label>Passagem</Label><Input value={form.passagem} onChange={e => setForm({ ...form, passagem: e.target.value })} placeholder="Joao 3:16" /></div>
-          <div><Label>Reflexao</Label><Textarea rows={8} value={form.reflexao} onChange={e => setForm({ ...form, reflexao: e.target.value })} /></div>
+          <div><Label>Passagem</Label><Input value={form.passagem} onChange={e => setForm({ ...form, passagem: e.target.value })} placeholder="João 3:16" /></div>
+          <div><Label>Reflexão</Label><Textarea rows={8} value={form.reflexao} onChange={e => setForm({ ...form, reflexao: e.target.value })} /></div>
           <div><Label>Aplicação</Label><Textarea rows={3} value={form.aplicacao} onChange={e => setForm({ ...form, aplicacao: e.target.value })} /></div>
           <div><Label>Oração</Label><Textarea rows={3} value={form.oracao} onChange={e => setForm({ ...form, oracao: e.target.value })} /></div>
         </div>
@@ -1020,7 +1020,7 @@ function AdesaoView({ planoId }: { planoId: string }) {
           <div className="text-2xl font-bold mt-1">{totalCheckIns}</div>
         </Card>
         <Card className="p-3">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Sparkles className="h-3 w-3" /> Adesao media</div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground"><Sparkles className="h-3 w-3" /> Adesão média</div>
           <div className="text-2xl font-bold mt-1" style={{ color: mediaAdesao >= 60 ? '#00B39D' : mediaAdesao >= 30 ? '#f59e0b' : undefined }}>
             {mediaAdesao}%
           </div>
@@ -1036,14 +1036,14 @@ function AdesaoView({ planoId }: { planoId: string }) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Card className="p-3 border-l-4 border-l-primary">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <TrendingUp className="h-3 w-3 text-primary" /> Melhor adesao
+              <TrendingUp className="h-3 w-3 text-primary" /> Melhor adesão
             </div>
             <div className="text-sm font-semibold truncate mt-1">{melhor.titulo}</div>
             <div className="text-xs text-muted-foreground">{fmt(melhor.data)} · {melhor.check_ins} check-ins · {melhor.pct_adesao}%</div>
           </Card>
           <Card className="p-3 border-l-4 border-l-rose-500">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <TrendingDown className="h-3 w-3 text-rose-500" /> Menor adesao
+              <TrendingDown className="h-3 w-3 text-rose-500" /> Menor adesão
             </div>
             <div className="text-sm font-semibold truncate mt-1">{pior.titulo}</div>
             <div className="text-xs text-muted-foreground">{fmt(pior.data)} · {pior.check_ins} check-ins · {pior.pct_adesao}%</div>
@@ -1055,7 +1055,7 @@ function AdesaoView({ planoId }: { planoId: string }) {
       {diasFiltrados.length === 0 ? (
         <Card className="p-8 text-center text-sm text-muted-foreground">
           <Calendar className="h-8 w-8 mx-auto mb-2 opacity-50" />
-          Sem itens neste periodo.
+          Sem itens neste período.
         </Card>
       ) : (
         <div className="space-y-3">
@@ -1086,7 +1086,7 @@ function SemanaBloco({ ini, dias, total, media, corPorPct }: { ini: string; dias
           <Calendar className="h-4 w-4 text-muted-foreground" />
           <div className="text-left">
             <div className="font-medium text-sm">Semana de {fmt(ini)} - {fmt(fim)}</div>
-            <div className="text-xs text-muted-foreground">{dias.length} dias · {total} check-ins · {media}% media</div>
+            <div className="text-xs text-muted-foreground">{dias.length} dias · {total} check-ins · {media}% média</div>
           </div>
         </div>
         {aberto ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
@@ -1189,7 +1189,7 @@ function EnviosView({ planoId, podeEnviar, planoItens }: { planoId: string; pode
       if (r.motivo === 'sem_item_hoje') {
         toast.error('Plano não tem item pra hoje');
       } else if (r.motivo === 'sem_destinatarios') {
-        toast.error('Nenhum membro elegivel (precisa ter logado pelo /devocional + telefone)');
+        toast.error('Nenhum membro elegível (precisa ter logado pelo /devocional + telefone)');
       } else if (r.motivo === 'whatsapp_desabilitado') {
         toast.warning('WhatsApp desabilitado · WHATSAPP_ENABLED=true e credenciais precisam estar no Vercel');
       } else {
@@ -1211,7 +1211,7 @@ function EnviosView({ planoId, podeEnviar, planoItens }: { planoId: string; pode
         {itemHoje ? (
           <>
             <div className="text-xs text-muted-foreground">
-              Pre-formatado pra colar no WhatsApp Web, grupo ou status. Membro abre o link e ve o conteudo completo no app.
+              Pré-formatado pra colar no WhatsApp Web, grupo ou status. Membro abre o link e vê o conteúdo completo no app.
             </div>
             <pre className="text-xs bg-card border rounded p-3 whitespace-pre-wrap font-sans">{buildMensagem(itemHoje)}</pre>
             <div className="flex flex-wrap gap-2">
@@ -1224,14 +1224,14 @@ function EnviosView({ planoId, podeEnviar, planoItens }: { planoId: string; pode
             </div>
           </>
         ) : (
-          <p className="text-sm text-muted-foreground">Plano nao tem item pra hoje. Gere/crie um item com data {hoje}.</p>
+          <p className="text-sm text-muted-foreground">Plano não tem item pra hoje. Gere/crie um item com data {hoje}.</p>
         )}
       </Card>
 
       {/* Opção envio automático via WhatsApp API */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Cron diario 06:00 BRT envia via WhatsApp Business API (precisa do template aprovado pelo Meta).
+          Cron diário 06:00 BRT envia via WhatsApp Business API (precisa do template aprovado pelo Meta).
         </p>
         {podeEnviar && (
           <Button onClick={enviarHoje} disabled={enviando} variant="outline">

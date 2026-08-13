@@ -17,9 +17,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { grupos as api } from '../../api';
 import { Input } from '../../components/ui/input';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner';
-import { Search, Users, GraduationCap, Star, Crown, Eye } from 'lucide-react';
+import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus } from 'lucide-react';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 
 const C = {
@@ -40,12 +41,16 @@ const PAPEIS = {
   visitante: { label: 'Visitante', plural: 'Visitantes', cor: '#94a3b8', Icon: Users },
 };
 
-// Status de frequência (derivado da última presença em grupo · bola colorida)
+// Status de frequência (derivado da última presença em grupo · bola colorida).
+// Régua alinhada à frequência MENSAL (Marcos 2026-07-23): 1 mês sem presença =
+// atenção, 3 meses = ausente. "Sem chamada ainda" é NEUTRO (nunca teve presença
+// lançada) — cobre quem acabou de entrar e o período em que a frequência ainda
+// não rodou; NÃO alarma.
 const STATUS = {
-  frequenta: { label: 'Frequenta', cor: '#10b981' },        // 🟢 ≤30d
-  atencao: { label: 'Atenção', cor: '#f59e0b' },            // 🟡 31-60d
-  ausente: { label: 'Ausente', cor: '#ef4444' },            // 🔴 >60d (já frequentou e sumiu)
-  sem_presenca: { label: 'Sem presença', cor: '#94a3b8' },  // ⚪ nunca teve presença lançada (neutro)
+  frequenta: { label: 'Em dia', cor: '#10b981' },              // 🟢 presença no último mês (≤30d)
+  atencao: { label: 'Atenção', cor: '#f59e0b' },               // 🟡 1-3 meses sem presença (31-90d)
+  ausente: { label: 'Ausente', cor: '#ef4444' },               // 🔴 3+ meses sem presença (>90d)
+  sem_presenca: { label: 'Sem chamada ainda', cor: '#94a3b8' },// ⚪ nunca teve presença lançada (neutro)
 };
 
 const fmtData = (d) => { if (!d) return null; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } };
@@ -55,9 +60,35 @@ function statusDe(p) {
   let dias;
   try { dias = Math.floor((Date.now() - new Date(p.ultima_frequencia + 'T12:00:00').getTime()) / 86400000); }
   catch { return 'sem_presenca'; }
-  if (dias <= 30) return 'frequenta';
-  if (dias <= 60) return 'atencao';
-  return 'ausente';
+  if (dias <= 30) return 'frequenta';   // presença no último mês
+  if (dias <= 90) return 'atencao';     // 1 a 3 meses sem presença
+  return 'ausente';                     // 3+ meses sem presença
+}
+
+// Item somente-leitura da ficha cadastral (modal da pessoa)
+function FichaItem({ rotulo, valor }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10.5, color: C.t3, fontWeight: 700 }}>{rotulo}</div>
+      <div style={{ color: valor ? C.t2 : C.t3 }}>{valor || '—'}</div>
+    </div>
+  );
+}
+
+// Campo editável da ficha (input pequeno com rótulo)
+function FichaCampo({ rotulo, valor, onChange, type = 'text', inputMode }) {
+  return (
+    <div>
+      <div style={{ fontSize: 10.5, color: C.t3, fontWeight: 700, marginBottom: 4 }}>{rotulo}</div>
+      <input
+        type={type}
+        inputMode={inputMode}
+        value={valor}
+        onChange={e => onChange(e.target.value)}
+        style={{ width: '100%', boxSizing: 'border-box', padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 12.5 }}
+      />
+    </div>
+  );
 }
 
 // Grupos da pessoa pra exibir/filtrar: participações; se não tiver, cai pros
@@ -75,6 +106,7 @@ function gruposDetalhados(p) {
   (p.grupos || []).forEach(g => map.set(g.grupo_id, {
     id: g.grupo_id, nome: g.grupo_nome || 'Grupo', funcao: g.funcao || 'frequentador',
     presencas: g.presencas || 0, entrou_em: g.entrou_em || null, supervisiona: false,
+    participacao_id: g.participacao_id || null,
   }));
   (p.lidera || []).forEach(g => {
     const e = map.get(g.id);
@@ -92,18 +124,20 @@ function gruposDetalhados(p) {
 // ============================================================================
 // Aba Pessoas
 // ============================================================================
-export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas }) {
+export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas, podeEditarDados = false, podeEditar = false }) {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
   // Etiqueta "possível duplicata" (Marcos · 14/07): ids que caíram em algum
   // cluster da análise de duplicatas. Falha silenciosa (nível <3 recebe 403).
   const [dupIds, setDupIds] = useState(() => new Set());
+  const [dupPares, setDupPares] = useState(0); // nº de casos/pares (a aba Duplicatas mostra isso)
   useEffect(() => {
     api.duplicatas.list()
       .then(r => {
         const s = new Set();
         (r?.clusters || []).forEach(c => c.pessoas.forEach(p => s.add(p.id)));
         setDupIds(s);
+        setDupPares((r?.clusters || []).length);
       })
       .catch(() => {});
   }, []);
@@ -156,15 +190,131 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  // ── Ficha cadastral da pessoa do modal (Marcos · 15/07: editar/limpar
+  // dados direto na área de Pessoas). Campo salvo em branco APAGA o dado.
+  const [ficha, setFicha] = useState(null);        // dados carregados (ou null)
+  const [fichaEditando, setFichaEditando] = useState(false);
+  const [fichaForm, setFichaForm] = useState({});
+  const [fichaSalvando, setFichaSalvando] = useState(false);
+  // CPF já pertence a outro cadastro → mesma pessoa (Marcos · 15/07): em vez
+  // de só recusar, oferece fundir os dois na hora escolhendo qual manter.
+  const [fichaConflito, setFichaConflito] = useState(null); // { outroId, outroNome }
+  useEffect(() => {
+    setFicha(null); setFichaEditando(false); setFichaConflito(null);
+    if (!selected?.membro_id) return;
+    let vivo = true;
+    api.pessoaFicha(selected.membro_id)
+      .then(f => { if (vivo) setFicha(f); })
+      .catch(() => {}); // sem nível/fora do universo → seção não aparece
+    return () => { vivo = false; };
+  }, [selected?.membro_id]);
+
+  // Frequência da pessoa POR grupo (Marcos 2026-07-23: "vai no A, não vai no B").
+  // Mapa grupo_id → { presencas, ultima, status, total_encontros }.
+  const [freqPessoa, setFreqPessoa] = useState(null); // { map, tem_encontro } | null
+  useEffect(() => {
+    setFreqPessoa(null);
+    if (!selected?.membro_id) return;
+    let vivo = true;
+    api.frequenciaPessoa(selected.membro_id)
+      .then(r => {
+        if (!vivo) return;
+        const map = {};
+        (r?.grupos || []).forEach(g => { map[g.grupo_id] = g; });
+        setFreqPessoa({ map, tem_encontro: !!r?.tem_encontro });
+      })
+      .catch(() => { if (vivo) setFreqPessoa({ map: {}, tem_encontro: false }); });
+    return () => { vivo = false; };
+  }, [selected?.membro_id]);
+
+  const abrirEdicaoFicha = () => {
+    setFichaForm({
+      nome: ficha?.nome || '',
+      telefone: ficha?.telefone || '',
+      email: ficha?.email || '',
+      cpf: ficha?.cpf || '',
+      data_nascimento: ficha?.data_nascimento || '',
+      observacoes: ficha?.observacoes || '',
+    });
+    setFichaEditando(true);
+  };
+
+  const salvarFicha = async () => {
+    setFichaSalvando(true);
+    try {
+      const r = await api.pessoaFichaSalvar(selected.membro_id, fichaForm);
+      setFicha(r);
+      setFichaEditando(false);
+      toast.success('Ficha atualizada');
+      if (r.nome !== selected.nome) { setSelected(s => ({ ...s, nome: r.nome })); carregar(); }
+    } catch (e) {
+      if (e.codigo === 'cpf_em_uso' && e.outro?.id) setFichaConflito({ outroId: e.outro.id, outroNome: e.outro.nome });
+      else toast.error(e.message || 'Erro ao salvar a ficha');
+    } finally { setFichaSalvando(false); }
+  };
+
+  // Funde os dois cadastros do conflito de CPF. Mantendo o ATUAL, a fusão
+  // puxa o CPF do outro (é o mesmo) e o modal continua; mantendo o OUTRO,
+  // o cadastro aberto deixa de existir → fecha o modal.
+  const fundirConflito = async (keepId) => {
+    const mergeId = keepId === selected.membro_id ? fichaConflito.outroId : selected.membro_id;
+    setFichaSalvando(true);
+    try {
+      await api.duplicatas.fundir(keepId, [mergeId]);
+      toast.success('Cadastros fundidos em um só — nada se perdeu');
+      setFichaConflito(null); setFichaEditando(false);
+      if (keepId === selected.membro_id) {
+        const f = await api.pessoaFicha(selected.membro_id).catch(() => null);
+        if (f) setFicha(f);
+      } else {
+        setSelected(null);
+      }
+      carregar();
+    } catch (e) { toast.error(e.message || 'Erro ao fundir'); }
+    finally { setFichaSalvando(false); }
+  };
+
+  // Remover a pessoa de UM grupo direto do modal (Marcos · 18/07): resolver os
+  // casos de baixa/nenhuma frequência sem sair da aba Pessoas. Reversível
+  // (saiu_em · não apaga histórico), com confirmação, e SÓ pra membro do roster
+  // (frequentador/visitante) — líderes/supervisores ficam de fora (regra da
+  // "revisão de fim de temporada"). O backend exige grupos nível ≥3 (podeEditar).
+  const [saindo, setSaindo] = useState({});
+  const sairDoGrupo = async (g) => {
+    if (!g.participacao_id || !selected) return;
+    if (!window.confirm(`Retirar ${selected.nome} do grupo "${g.nome}"? A pessoa é retirada do grupo (reversível). Faça só se confirmou que ela realmente não participa mais.`)) return;
+    setSaindo(s => ({ ...s, [g.participacao_id]: true }));
+    try {
+      await api.sairMembro(g.participacao_id, { motivo: 'Sem frequência — revisão na aba Pessoas' });
+      toast.success(`${selected.nome} não está mais em "${g.nome}"`);
+      setSelected(s => s ? { ...s, grupos: (s.grupos || []).filter(x => x.participacao_id !== g.participacao_id) } : s);
+      carregar();
+    } catch (e) {
+      toast.error(e?.message || 'Erro ao remover do grupo');
+    } finally {
+      setSaindo(s => { const n = { ...s }; delete n[g.participacao_id]; return n; });
+    }
+  };
+
   const pessoas = dados?.pessoas || [];
 
   const contagens = useMemo(() => {
     const c = {};
     Object.keys(PAPEIS).forEach(k => { c[k] = 0; });
-    for (const p of pessoas) c[p.papel] = (c[p.papel] || 0) + 1;
+    // Frequentador/Visitante = DERIVADOS da presença (Marcos 2026-07-23):
+    // foi a ≥1 encontro (tem última frequência) = frequentador; nunca foi = visitante.
+    let freq = 0, visit = 0;
+    for (const p of pessoas) {
+      c[p.papel] = (c[p.papel] || 0) + 1;
+      if (p.ultima_frequencia) freq++; else visit++;
+    }
     c.lideres_total = (c.lider || 0) + (c.co_lider || 0);
+    c.frequentadores = freq;
+    c.visitantes = visit;
+    c.com_presenca = freq > 0; // a frequência já começou a ser preenchida?
     return c;
   }, [pessoas]);
+  const inscritos = dados?.inscritos ?? null; // vínculos (participações)
 
   const filtradas = useMemo(() => {
     let lista = pessoas;
@@ -175,6 +325,8 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
         gruposDe(p).some(g => g.nome?.toLowerCase().includes(s)));
     }
     if (filtro === 'lideres') lista = lista.filter(p => p.papel === 'lider' || p.papel === 'co_lider');
+    else if (filtro === 'frequentadores') lista = lista.filter(p => !!p.ultima_frequencia);
+    else if (filtro === 'visitantes') lista = lista.filter(p => !p.ultima_frequencia);
     else if (filtro !== 'todos') lista = lista.filter(p => p.papel === filtro);
     if (filtroGrupo !== 'todos') lista = lista.filter(p => gruposDe(p).some(g => g.id === filtroGrupo));
     if (filtroStatus !== 'todos') lista = lista.filter(p => statusDe(p) === filtroStatus);
@@ -185,15 +337,19 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
 
   if (loading) return <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando pessoas...</div>;
 
-  // Cards-contador por função = também filtram
+  // Cards-contador (clicáveis = filtram). Pessoas = distintas; Frequentador/
+  // Visitante DERIVAM da presença e só aparecem quando a frequência já começou
+  // (Marcos 2026-07-23: até lá, todos são só "inscritos" aguardando a chamada).
   const CARDS = [
-    { key: 'todos', label: 'Todos', value: pessoas.length, cor: C.text },
-    { key: 'coordenador', label: 'Coordenadores', value: contagens.coordenador || 0, cor: PAPEIS.coordenador.cor },
-    { key: 'supervisor', label: 'Supervisores', value: contagens.supervisor || 0, cor: PAPEIS.supervisor.cor },
+    { key: 'todos', label: 'Pessoas', value: pessoas.length, cor: C.text },
+    ...(contagens.com_presenca ? [
+      { key: 'frequentadores', label: 'Frequentadores', value: contagens.frequentadores, cor: '#10b981' },
+      { key: 'visitantes', label: 'Visitantes', value: contagens.visitantes, cor: '#94a3b8' },
+    ] : []),
     { key: 'lideres', label: 'Líderes', value: contagens.lideres_total || 0, cor: PAPEIS.lider.cor },
-    { key: 'lider_treinamento', label: 'Líderes em treinamento', value: contagens.lider_treinamento || 0, cor: PAPEIS.lider_treinamento.cor },
-    { key: 'frequentador', label: 'Membros', value: contagens.frequentador || 0, cor: PAPEIS.frequentador.cor },
-    { key: 'visitante', label: 'Visitantes', value: contagens.visitante || 0, cor: PAPEIS.visitante.cor },
+    { key: 'supervisor', label: 'Supervisores', value: contagens.supervisor || 0, cor: PAPEIS.supervisor.cor },
+    ...(contagens.coordenador ? [{ key: 'coordenador', label: 'Coordenadores', value: contagens.coordenador, cor: PAPEIS.coordenador.cor }] : []),
+    ...(contagens.lider_treinamento ? [{ key: 'lider_treinamento', label: 'Líderes em treinamento', value: contagens.lider_treinamento, cor: PAPEIS.lider_treinamento.cor }] : []),
   ];
 
   const opcoesGrupo = [...gruposOptions].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
@@ -204,10 +360,26 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
       <div style={{ marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, margin: 0 }}>Pessoas dos grupos</h3>
-          <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0', maxWidth: 620 }}>
-            Censo de quem está nos grupos — função, status de frequência, última presença e grupo.
-            O status vem das chamadas registradas (quem ainda não tem presença lançada fica "Sem presença", em cinza).
+          <p style={{ fontSize: 12, color: C.t3, margin: '4px 0 0', maxWidth: 660, lineHeight: 1.5 }}>
+            <strong style={{ color: C.text }}>{pessoas.length} pessoas</strong>
+            {inscritos != null && <> · <strong style={{ color: C.text }}>{inscritos} inscrições</strong> (uma pessoa pode estar em vários grupos)</>}.
+            Cada pessoa aparece <strong>uma vez</strong>, no papel de maior nível.
+            {!contagens.com_presenca && <> <strong style={{ color: '#f59e0b' }}>Frequência ainda não registrada</strong> — todos são inscritos aguardando a 1ª chamada; quando a frequência entrar, aparecem os cards Frequentadores e Visitantes.</>}
           </p>
+          {/* Legenda dos status de frequência (dots coloridos · sem emoji) */}
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 8 }}>
+            {[
+              [STATUS.frequenta.cor, 'Em dia', 'presença no último mês'],
+              [STATUS.atencao.cor, 'Atenção', '1–3 meses sem presença'],
+              [STATUS.ausente.cor, 'Ausente', '3+ meses sem presença'],
+              [STATUS.sem_presenca.cor, 'Sem chamada ainda', 'nunca teve presença lançada'],
+            ].map(([cor, label, hint]) => (
+              <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: C.t3 }} title={hint}>
+                <span style={{ width: 9, height: 9, borderRadius: '50%', background: cor, flexShrink: 0 }} />
+                {label}
+              </span>
+            ))}
+          </div>
         </div>
         <button onClick={() => { setImportOpen(true); setImportPreview(null); setImportResult(null); setImportFile(null); }}
           style={{ background: C.primary, color: '#fff', border: 'none', borderRadius: 10, padding: '8px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
@@ -279,8 +451,10 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
           background: `${C.amber}14`, border: `1px solid ${C.amber}55`, fontSize: 12.5, color: C.text,
         }}>
           <span>
-            <strong>{dupIds.size}</strong> pessoa{dupIds.size === 1 ? '' : 's'} com possível cadastro duplicado
-            — as linhas marcadas abaixo precisam de revisão.
+            <strong>{dupIds.size}</strong> pessoa{dupIds.size === 1 ? '' : 's'}
+            {dupPares > 0 && <> em <strong>{dupPares}</strong> possíve{dupPares === 1 ? 'l duplicata' : 'is duplicatas'}</>}
+            {' '}com cadastro duplicado — as linhas marcadas abaixo precisam de revisão.
+            {dupPares > 0 && <span style={{ color: C.t3 }}> (a aba Duplicatas mostra os {dupPares} casos; aqui contamos as {dupIds.size} pessoas envolvidas).</span>}
           </span>
           {onVerDuplicatas && (
             <button onClick={onVerDuplicatas} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 12.5, fontWeight: 700, padding: 0 }}>
@@ -346,8 +520,8 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}`, background: C.bg }}>
-                  {['Pessoa', 'Função', 'Status', 'Grupo', 'Última frequência', 'Presenças'].map((h, i) => (
-                    <th key={h} style={{ textAlign: i === 5 ? 'right' : 'left', padding: '8px 16px', fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap' }}>{h}</th>
+                  {['Pessoa', 'Função', 'Status', 'Grupo', 'Última frequência', 'Último envio', 'Presenças'].map((h, i, arr) => (
+                    <th key={h} style={{ textAlign: i === arr.length - 1 ? 'right' : 'left', padding: '8px 16px', fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -397,6 +571,10 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                       <td style={{ padding: '10px 16px', fontSize: 12, color: p.ultima_frequencia ? C.t2 : C.t3, whiteSpace: 'nowrap' }}>
                         {p.ultima_frequencia ? fmtData(p.ultima_frequencia) : '—'}
                       </td>
+                      <td style={{ padding: '10px 16px', fontSize: 12, color: p.ultimo_envio ? C.t2 : C.t3, whiteSpace: 'nowrap' }}
+                          title={p.ultimo_envio ? `Último: ${p.ultimo_envio.template || 'mensagem'}` : 'Nenhum envio de grupos registrado'}>
+                        {p.ultimo_envio?.em ? fmtData(String(p.ultimo_envio.em).slice(0, 10)) : '—'}
+                      </td>
                       <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2, textAlign: 'right' }}>
                         {p.presencas_total || 0}
                       </td>
@@ -427,9 +605,107 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: pap.cor, fontWeight: 700 }}>
                     <pap.Icon size={11} /> {pap.label}
                   </div>
+                  {/* Contexto pra decidir a remoção: status de frequência + última presença */}
+                  {(() => { const st = STATUS[statusDe(selected)]; return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 5, flexWrap: 'wrap' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${st.cor}18`, color: st.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: st.cor }} /> {st.label}
+                      </span>
+                      <span style={{ fontSize: 11, color: C.t3 }}>
+                        {selected.ultima_frequencia ? `última presença ${fmtData(selected.ultima_frequencia)}` : 'sem presença registrada'}
+                      </span>
+                    </div>
+                  ); })()}
                 </div>
                 <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', fontSize: 22, lineHeight: 1, color: C.t3, cursor: 'pointer' }}>×</button>
               </div>
+
+              {/* Ficha cadastral · ver + editar (limpar um campo apaga o dado) */}
+              {ficha && (
+                <div style={{ padding: '14px 20px', borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                    <span style={{ fontSize: 11, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>Dados da pessoa</span>
+                    {podeEditarDados && !fichaEditando && (
+                      <button onClick={abrirEdicaoFicha} style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: 0 }}>
+                        Editar dados
+                      </button>
+                    )}
+                  </div>
+
+                  {fichaConflito ? (
+                    <div style={{ background: `${C.amber}12`, border: `1px solid ${C.amber}55`, borderRadius: 10, padding: 12 }}>
+                      <p style={{ fontSize: 12.5, color: C.text, margin: '0 0 10px', lineHeight: 1.6 }}>
+                        Este CPF já pertence ao cadastro de <strong>{fichaConflito.outroNome}</strong>.
+                        Mesmo CPF é a mesma pessoa — em vez de dois cadastros, funda os dois em um.
+                        Nada se perde: o histórico é movido e os dados diferentes são somados nas observações.
+                      </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <button onClick={() => fundirConflito(selected.membro_id)} disabled={fichaSalvando}
+                          style={{ background: C.primary, border: 'none', borderRadius: 8, padding: '9px 14px', fontSize: 12.5, fontWeight: 700, color: '#fff', cursor: fichaSalvando ? 'wait' : 'pointer', textAlign: 'left' }}>
+                          Manter «{selected.nome}» e fundir o outro cadastro neste
+                        </button>
+                        <button onClick={() => fundirConflito(fichaConflito.outroId)} disabled={fichaSalvando}
+                          style={{ background: 'transparent', border: `1px solid ${C.primary}`, borderRadius: 8, padding: '9px 14px', fontSize: 12.5, fontWeight: 700, color: C.primary, cursor: fichaSalvando ? 'wait' : 'pointer', textAlign: 'left' }}>
+                          Manter «{fichaConflito.outroNome}» e fundir este cadastro nele
+                        </button>
+                        <button onClick={() => setFichaConflito(null)} disabled={fichaSalvando}
+                          style={{ background: 'none', border: 'none', color: C.t3, cursor: 'pointer', fontSize: 12, padding: '2px 0', textAlign: 'left' }}>
+                          Cancelar — voltar pra edição
+                        </button>
+                      </div>
+                    </div>
+                  ) : !fichaEditando ? (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px 16px', fontSize: 12.5 }}>
+                      <FichaItem rotulo="Telefone" valor={ficha.telefone} />
+                      <FichaItem rotulo="E-mail" valor={ficha.email} />
+                      <FichaItem rotulo="CPF" valor={ficha.cpf} />
+                      <FichaItem rotulo="Nascimento" valor={ficha.data_nascimento ? fmtData(ficha.data_nascimento) : null} />
+                      {ficha.observacoes && (
+                        <div style={{ gridColumn: '1 / -1' }}>
+                          <div style={{ fontSize: 10.5, color: C.t3, fontWeight: 700 }}>Observações</div>
+                          <div style={{ color: C.t2, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{ficha.observacoes}</div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <p style={{ fontSize: 11.5, color: C.amber, margin: '0 0 10px', lineHeight: 1.5 }}>
+                        Deixar um campo em branco <strong>apaga o dado</strong> da ficha ao salvar. Toda alteração fica registrada na auditoria.
+                      </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
+                        <FichaCampo rotulo="Nome completo" valor={fichaForm.nome} onChange={v => setFichaForm(f => ({ ...f, nome: v }))} />
+                        <FichaCampo rotulo="Telefone" valor={fichaForm.telefone} onChange={v => setFichaForm(f => ({ ...f, telefone: v }))} inputMode="tel" />
+                        <FichaCampo rotulo="E-mail" valor={fichaForm.email} onChange={v => setFichaForm(f => ({ ...f, email: v }))} type="email" />
+                        <FichaCampo rotulo="CPF" valor={fichaForm.cpf} onChange={v => setFichaForm(f => ({ ...f, cpf: v }))} inputMode="numeric" />
+                        <div>
+                          <div style={{ fontSize: 10.5, color: C.t3, fontWeight: 700, marginBottom: 4 }}>Nascimento</div>
+                          <BirthDatePicker value={fichaForm.data_nascimento || ''} onChange={v => setFichaForm(f => ({ ...f, data_nascimento: v }))} />
+                        </div>
+                      </div>
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ fontSize: 10.5, color: C.t3, fontWeight: 700, marginBottom: 4 }}>Observações</div>
+                        <textarea
+                          value={fichaForm.observacoes}
+                          onChange={e => setFichaForm(f => ({ ...f, observacoes: e.target.value }))}
+                          rows={3}
+                          style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 12.5, fontFamily: 'inherit', resize: 'vertical' }}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                        <button onClick={() => setFichaEditando(false)} disabled={fichaSalvando}
+                          style={{ background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 600, color: C.t2, cursor: 'pointer' }}>
+                          Cancelar
+                        </button>
+                        <button onClick={salvarFicha} disabled={fichaSalvando}
+                          style={{ background: C.primary, border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 700, color: '#fff', cursor: fichaSalvando ? 'wait' : 'pointer' }}>
+                          {fichaSalvando ? 'Salvando...' : 'Salvar ficha'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Lista de grupos */}
               <div style={{ padding: 16 }}>
                 <div style={{ fontSize: 11, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 10 }}>
@@ -441,6 +717,9 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                     {gs.map(g => {
                       const fp = PAPEIS[g.funcao] || { label: g.funcao || 'Membro', cor: C.t2, Icon: Users };
+                      // Frequência DESTE grupo (Marcos 2026-07-23: vai no A, não no B)
+                      const fg = freqPessoa?.map?.[g.id];
+                      const stg = fg ? STATUS[fg.status] : null;
                       return (
                         <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
@@ -452,13 +731,34 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                             </button>
                             <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>
                               {g.entrou_em ? `desde ${fmtData(g.entrou_em)}` : 'participante'}
-                              {g.presencas ? ` · ${g.presencas} presença${g.presencas !== 1 ? 's' : ''}` : ''}
+                              {fg && fg.total_encontros > 0
+                                ? ` · ${fg.presencas}/${fg.total_encontros} encontro${fg.total_encontros !== 1 ? 's' : ''}`
+                                : (g.presencas ? ` · ${g.presencas} presença${g.presencas !== 1 ? 's' : ''}` : '')}
                               {g.supervisiona ? ' · supervisiona' : ''}
                             </div>
+                            {/* Status de frequência NESTE grupo · só quando já houve chamada */}
+                            {stg && fg.total_encontros > 0 && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 5, fontSize: 10, padding: '2px 8px', borderRadius: 99, background: `${stg.cor}18`, color: stg.cor, fontWeight: 700 }}>
+                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: stg.cor }} />
+                                {fg.status === 'sem_presenca' ? 'não foi ainda' : stg.label}
+                                {fg.ultima ? ` · ${fmtData(fg.ultima)}` : ''}
+                              </span>
+                            )}
                           </div>
                           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${fp.cor}18`, color: fp.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
                             <fp.Icon size={10} /> {fp.label}
                           </span>
+                          {/* Retirar do grupo · só membro do roster (não líder/supervisor) e com nível ≥3 */}
+                          {podeEditar && g.participacao_id && !g.supervisiona && (g.funcao === 'frequentador' || g.funcao === 'visitante') && (
+                            <button
+                              onClick={() => sairDoGrupo(g)}
+                              disabled={!!saindo[g.participacao_id]}
+                              title="Retirar do grupo (reversível)"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: `1px solid ${C.border}`, borderRadius: 8, padding: '5px 9px', fontSize: 11, fontWeight: 600, color: saindo[g.participacao_id] ? C.t3 : C.red, cursor: saindo[g.participacao_id] ? 'wait' : 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                            >
+                              <UserMinus size={12} /> {saindo[g.participacao_id] ? 'Retirando…' : 'Retirar do grupo'}
+                            </button>
+                          )}
                         </div>
                       );
                     })}

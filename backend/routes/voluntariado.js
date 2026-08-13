@@ -1,7 +1,9 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel, bustPermissionCaches } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
-const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { acharOuCriarGuardado, acharMembroGuardado, normalizarTelefone } = require('../services/membroMatch');
+const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
+const { cpfValido } = require('../utils/cpf');
 const { getPCCredentials, fetchWithRetry, PC_SERVICES_BASE, assignVolunteersToTeams, syncTeamMembersFromSchedules, fetchAllServiceTypes } = require('../services/planningCenter');
 const { enqueueSync } = require('../services/cerebroSync');
 const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
@@ -374,8 +376,11 @@ router.get('/frequencia', async (req, res) => {
   try {
     const build = () => {
       let q = supabase.from('vw_vol_frequencia').select('*');
-      if (req.query.status === 'ativos') q = q.eq('ativo', true);
-      else if (req.query.status === 'inativos') q = q.eq('ativo', false);
+      // Filtro por SITUAÇÃO (ativo/inativo/novo). Inativo = já serviu e parou 3+
+      // meses (exclui novos/sem-serviço, quem saiu da igreja e afastados por saúde).
+      if (req.query.status === 'ativos') q = q.eq('situacao', 'ativo');
+      else if (req.query.status === 'inativos') q = q.eq('situacao', 'inativo');
+      else if (req.query.status === 'novos') q = q.eq('situacao', 'novo');
       // Vínculo = ligado a um MEMBRO (CPF). A lista já é de voluntários reais.
       if (req.query.vinculo === 'nao') q = q.is('membro_id', null);
       else if (req.query.vinculo === 'sim') q = q.not('membro_id', 'is', null);
@@ -395,9 +400,29 @@ router.get('/frequencia', async (req, res) => {
     // Resumo (cards) = SEMPRE o total geral · contagem real no banco, NÃO muda
     // com o filtro da lista (antes recalculava do subconjunto capado → números
     // divergentes entre "Todos" e "Ativos").
+    const contarSituacao = (situ) => supabase.from('vw_vol_frequencia')
+      .select('chave', { count: 'exact', head: true }).eq('situacao', situ);
     const { count: total } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true });
-    const { count: ativos } = await supabase.from('vw_vol_frequencia').select('chave', { count: 'exact', head: true }).eq('ativo', true);
-    res.json({ resumo: { total: total || 0, ativos: ativos || 0, inativos: (total || 0) - (ativos || 0) }, itens: data });
+    const { count: ativos } = await contarSituacao('ativo');
+    const { count: inativos } = await contarSituacao('inativo');
+    const { count: novos } = await contarSituacao('novo');
+
+    // Enriquece com o motivo de inatividade (por chave · tabela vol_inatividade)
+    const chaves = [...new Set(data.map(r => r.chave).filter(Boolean))];
+    const motivoByChave = {};
+    for (let i = 0; i < chaves.length; i += 500) {
+      const lote = chaves.slice(i, i + 500);
+      const { data: ms } = await supabase.from('vol_inatividade')
+        .select('chave, motivo, detalhe, registrado_em').in('chave', lote);
+      (ms || []).forEach(m => { motivoByChave[m.chave] = m; });
+    }
+    const itens = data.map(r => ({
+      ...r,
+      inatividade_motivo: motivoByChave[r.chave]?.motivo || null,
+      inatividade_detalhe: motivoByChave[r.chave]?.detalhe || null,
+      inatividade_em: motivoByChave[r.chave]?.registrado_em || null,
+    }));
+    res.json({ resumo: { total: total || 0, ativos: ativos || 0, inativos: inativos || 0, novos: novos || 0 }, itens });
   } catch (e) {
     console.error('[vol] frequencia', e.message);
     res.status(500).json({ error: 'Erro ao carregar frequência' });
@@ -417,6 +442,63 @@ router.get('/frequencia/detalhe', async (req, res) => {
     res.json(data || []);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao carregar detalhe' });
+  }
+});
+
+// PUT /api/voluntariado/frequencia/inatividade  body { chave, motivo, detalhe }
+// Registra/edita o MOTIVO pelo qual o voluntário está inativo. motivo vazio = limpa.
+// Guardado por `chave` da vw_vol_frequencia (cpf:/membresia:/id:).
+router.put('/frequencia/inatividade', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const chave = String(req.body?.chave || '').trim();
+    if (!chave) return res.status(400).json({ error: 'chave obrigatória' });
+    const motivo = String(req.body?.motivo || '').trim().slice(0, 60);
+    const detalhe = req.body?.detalhe != null ? String(req.body.detalhe).trim().slice(0, 1000) : null;
+    if (!motivo) {
+      await supabase.from('vol_inatividade').delete().eq('chave', chave);
+      return res.json({ ok: true, cleared: true });
+    }
+    const { data, error } = await supabase.from('vol_inatividade')
+      .upsert({ chave, motivo, detalhe: detalhe || null, registrado_por: req.user?.id ?? null, updated_at: new Date().toISOString() },
+        { onConflict: 'chave' })
+      .select('chave, motivo, detalhe, registrado_em').single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, motivo: data });
+  } catch (e) {
+    console.error('[vol] inatividade', e.message);
+    res.status(500).json({ error: 'Erro ao salvar o motivo' });
+  }
+});
+
+// POST /api/voluntariado/frequencia/saiu-igreja  body { chave, membro_id, detalhe }
+// Marca que o voluntário SAIU da igreja: registra motivo 'saiu_igreja' no
+// voluntariado E, se houver membro vinculado, muda o status dele pra 'inativo'
+// na Membresia (reflete no cadastro). Sai da contagem de inativos do voluntariado.
+router.post('/frequencia/saiu-igreja', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const chave = String(req.body?.chave || '').trim();
+    if (!chave) return res.status(400).json({ error: 'chave obrigatória' });
+    const membroId = req.body?.membro_id ? String(req.body.membro_id).trim() : null;
+    const detalhe = req.body?.detalhe != null ? String(req.body.detalhe).trim().slice(0, 1000) : null;
+
+    // 1) marca no voluntariado (motivo saiu_igreja · por chave)
+    const { error: viErr } = await supabase.from('vol_inatividade')
+      .upsert({ chave, motivo: 'saiu_igreja', detalhe: detalhe || null, registrado_por: req.user?.id ?? null, updated_at: new Date().toISOString() },
+        { onConflict: 'chave' });
+    if (viErr) return res.status(500).json({ error: viErr.message });
+
+    // 2) reflete na Membresia (se houver cadastro de membro vinculado)
+    let membroAtualizado = false;
+    if (membroId && /^[0-9a-f-]{36}$/i.test(membroId)) {
+      const { error: mmErr } = await supabase.from('mem_membros')
+        .update({ status: 'inativo' }).eq('id', membroId).is('deleted_at', null);
+      if (mmErr) console.error('[vol] saiu-igreja mem_membros:', mmErr.message);
+      else membroAtualizado = true;
+    }
+    res.json({ ok: true, membro_atualizado: membroAtualizado });
+  } catch (e) {
+    console.error('[vol] saiu-igreja', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a saída' });
   }
 });
 
@@ -629,11 +711,11 @@ router.put('/me', async (req, res) => {
     // MEMBER_NOT_FOUND para que o frontend peca o cadastro obrigatório.
     let membroMatch = null;
     if (cpfChanged) {
-      if (cleanCpf.length !== 11) {
-        return res.status(400).json({ error: 'CPF invalido' });
+      if (cleanCpf.length !== 11 || !cpfValido(cleanCpf)) {
+        return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
       }
       const { data: membro } = await supabase.from('mem_membros')
-        .select('id, nome, telefone, email').eq('cpf', cleanCpf).maybeSingle();
+        .select('id, nome, telefone, email').eq('cpf', cleanCpf).is('deleted_at', null).maybeSingle();
       if (!membro) {
         return res.status(409).json({
           error: 'CPF não encontrado no cadastro de membros. Complete o cadastro para continuar.',
@@ -697,7 +779,7 @@ router.post('/me/register-member', async (req, res) => {
     if (!celular || !celular.trim()) return res.status(400).json({ error: 'Celular obrigatorio' });
 
     const cleanCpf = String(cpf).replace(/\D/g, '');
-    if (cleanCpf.length !== 11) return res.status(400).json({ error: 'CPF invalido' });
+    if (cleanCpf.length !== 11 || !cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
     const cleanPhone = String(celular).replace(/\D/g, '');
     if (cleanPhone.length < 10) return res.status(400).json({ error: 'Celular invalido' });
 
@@ -709,6 +791,7 @@ router.post('/me/register-member', async (req, res) => {
     try {
       const r = await acharOuCriarGuardado({
         cpf: cleanCpf, telefone: cleanPhone, nome: fullName, status: 'visitante',
+        origem: 'voluntariado_ficha',
       });
       const { data } = await supabase.from('mem_membros')
         .select('id, nome, telefone, email').eq('id', r.membro_id).single();
@@ -1142,11 +1225,82 @@ router.get('/aniversariantes-semana', async (req, res) => {
       aniversario: r.aniversario, // a data do aniversário nesta semana
       dow: r.dow,
       hoje: r.aniversario === new Date().toISOString().slice(0, 10),
+      parabenizado: false,
     }));
+    // marca quem já foi parabenizado neste ano (controle do líder)
+    const anoAtual = new Date().getFullYear();
+    const ids = rows.map((r) => r.vol_profile_id).filter(Boolean);
+    if (ids.length) {
+      const { data: pb } = await supabase.from('vol_parabens')
+        .select('vol_profile_id').eq('ano', anoAtual).in('vol_profile_id', ids);
+      const enviados = new Set((pb || []).map((p) => p.vol_profile_id));
+      rows.forEach((r) => { r.parabenizado = enviados.has(r.vol_profile_id); });
+    }
     res.json({ rows });
   } catch (e) {
     console.error('[vol] aniversariantes-semana', e.message);
     res.status(500).json({ error: 'Erro ao carregar aniversariantes' });
+  }
+});
+
+// POST /voluntariado/aniversariantes/:volProfileId/parabenizar — envia o template
+// de aniversário pela API (respeita opt-in · Marketing) e marca como enviado.
+const MSG_RESULTADO = {
+  sem_optin: 'A pessoa não deu consentimento (opt-in) para receber mensagens no WhatsApp. Use o botão de abrir no WhatsApp para falar manualmente.',
+  sem_cadastro: 'Voluntário sem cadastro de membro (sem opt-in registrado). Use o WhatsApp manual.',
+  sem_membro: 'Voluntário sem cadastro de membro vinculado.',
+  sem_telefone: 'Voluntário sem telefone.',
+  telefone_invalido: 'Telefone inválido.',
+  template_nao_configurado: 'Template de aniversário não configurado na Meta/env.',
+  wpp_nao_configurado: 'WhatsApp não configurado.',
+};
+router.post('/aniversariantes/:volProfileId/parabenizar', async (req, res) => {
+  try {
+    const volId = req.params.volProfileId;
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, membresia_id').eq('id', volId).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
+
+    const primeiro = String(vp.full_name || '').trim().split(/\s+/)[0] || '';
+
+    // ⚠️ O cron das 9h já pode ter parabenizado hoje — a tela mostra a SEMANA,
+    // então o clique da coordenação e o automático se cruzam. O `parabenizado`
+    // que a tela exibe vem de `vol_parabens`, e o cron antigo não gravava lá:
+    // quem o automático alcançou aparecia como "não parabenizado". A guarda é no
+    // SERVIDOR porque a decisão de não mandar 2× não pode depender da tela.
+    const { jaParabenizado, registrarParabens } = require('../services/aniversarioVoluntario');
+    if (await jaParabenizado({ membroId: vp.membresia_id, volProfileId: volId })) {
+      return res.status(409).json({
+        ok: false, resultado: 'ja_parabenizado',
+        error: 'Esta pessoa já foi parabenizada este ano (pela equipe ou pelo envio automático do dia). Se quiser falar de novo, use o botão de abrir no WhatsApp.',
+      });
+    }
+
+    let resultado = 'sem_cadastro';
+    let sent = false;
+    if (vp.membresia_id) {
+      const wpp = require('../services/whatsappService');
+      const r = await wpp.notificarMembro(vp.membresia_id, 'aniversario', [primeiro]);
+      if (r?.sent) { sent = true; resultado = 'enviado'; }
+      else resultado = r?.skipped || r?.reason || 'falhou';
+    }
+
+    if (sent) {
+      // Registro pelo helper compartilhado: o ano é calculado em BRT nos dois
+      // caminhos (`getFullYear()` no relógio UTC do servidor já virou o ano
+      // seguinte na noite de 31/12, e aí o dedup do ano novo não encontraria o
+      // parabéns dado horas antes).
+      await registrarParabens({
+        volProfileId: volId,
+        porUserId: req.user.userId || req.user.id,
+        resultado,
+      });
+      return res.json({ ok: true, resultado });
+    }
+    return res.status(400).json({ ok: false, resultado, error: MSG_RESULTADO[resultado] || 'Não foi possível enviar pela API. Use o WhatsApp manual.' });
+  } catch (e) {
+    console.error('[vol] parabenizar', e.message);
+    res.status(500).json({ error: 'Erro ao parabenizar' });
   }
 });
 
@@ -1155,6 +1309,9 @@ router.post('/profiles', async (req, res) => {
     const { full_name, email, phone, cpf } = req.body;
     if (!full_name || !full_name.trim()) return res.status(400).json({ error: 'Nome obrigatorio' });
     const cleanCpf = cpf ? cpf.replace(/\D/g, '') : null;
+    if (cleanCpf && (cleanCpf.length !== 11 || !cpfValido(cleanCpf))) {
+      return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+    }
 
     // Membresia e fonte única: garantir mem_membros antes de criar vol_profile
     let membresiaId = null;
@@ -1162,7 +1319,7 @@ router.post('/profiles', async (req, res) => {
       const { findOrCreateMembro } = require('./pessoas');
       const r = await findOrCreateMembro({
         cpf: cleanCpf, email, telefone: phone, nome: full_name.trim(),
-        status: 'visitante',
+        status: 'visitante', origem: 'voluntariado_perfil',
       });
       membresiaId = r.membro_id;
     } catch (e) {
@@ -1191,6 +1348,104 @@ router.put('/profiles/:id', async (req, res) => {
     enqueueSync('voluntario', req.params.id, 'upsert').catch(() => {});
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar perfil' }); }
+});
+
+// Editar o CADASTRO do voluntário (nome/e-mail/telefone/CPF) refletindo na
+// MEMBRESIA — voluntário é membro, então a fonte única é mem_membros. Vale
+// também pros perfis vindos do Planning Center: marca protegido_sync=true pra
+// o sync horário não reverter o nome/e-mail editado. Guard voluntariado>=3
+// (Ariel entra por boost de área). Backend usa service_role → escreve em
+// mem_membros mesmo sem a pessoa ser admin/diretor.
+router.put('/profiles/:id/cadastro', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { full_name, email, phone, cpf } = req.body || {};
+    if (!full_name || !String(full_name).trim()) {
+      return res.status(400).json({ error: 'Nome obrigatório' });
+    }
+    const nome = String(full_name).trim();
+
+    const { data: perfil, error: pErr } = await supabase.from('vol_profiles')
+      .select('id, full_name, email, phone, cpf, membresia_id, planning_center_id')
+      .eq('id', req.params.id).maybeSingle();
+    if (pErr) throw pErr;
+    if (!perfil) return res.status(404).json({ error: 'Voluntário não encontrado' });
+
+    // Normalização (mesmo espírito da Membresia): CPF com DV (grandfathering do
+    // valor atual), telefone digits-only 10-11, e-mail básico.
+    let cleanCpf = perfil.cpf || null;
+    if (cpf !== undefined) {
+      const dig = String(cpf || '').replace(/\D/g, '');
+      if (!dig) cleanCpf = null;
+      else if (dig === String(perfil.cpf || '')) cleanCpf = dig; // idêntico ao atual passa
+      else if (dig.length !== 11 || !cpfValido(dig)) return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+      else cleanCpf = dig;
+    }
+    let cleanPhone = perfil.phone || null;
+    if (phone !== undefined) {
+      let d = String(phone || '').replace(/\D/g, '');
+      if (!d) cleanPhone = null;
+      else {
+        if (d.startsWith('55') && d.length > 11) d = d.slice(2);
+        if (d.length < 10 || d.length > 11) return res.status(400).json({ error: 'Telefone inválido — DDD + número (10 ou 11 dígitos)' });
+        cleanPhone = d;
+      }
+    }
+    let cleanEmail = perfil.email || null;
+    if (email !== undefined) {
+      const e = String(email || '').trim().toLowerCase();
+      if (!e) cleanEmail = null;
+      else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return res.status(400).json({ error: 'E-mail inválido' });
+      else cleanEmail = e;
+    }
+
+    // 1) Resolve/garante o vínculo com a membresia (fonte única). Se já tem, usa;
+    //    senão, matcher canônico (CPF→e-mail+nome→telefone+nome→nasc+nome).
+    let membresiaId = perfil.membresia_id || null;
+    if (!membresiaId) {
+      try {
+        const r = await acharOuCriarGuardado({
+          cpf: cleanCpf, email: cleanEmail, telefone: cleanPhone, nome,
+          status: 'visitante', origem: 'voluntariado_edicao',
+        });
+        membresiaId = r?.membro_id || null;
+      } catch (e) {
+        console.error('[vol] cadastro matcher:', e.message);
+      }
+    }
+
+    // 2) Propaga o cadastro pra mem_membros (fonte única que o sync do PC não toca).
+    if (membresiaId) {
+      const patchMembro = { nome };
+      if (cleanEmail !== null) patchMembro.email = cleanEmail;
+      if (cleanPhone !== null) patchMembro.telefone = cleanPhone;
+      if (cleanCpf !== null) patchMembro.cpf = cleanCpf;
+      const { error: mErr } = await supabase.from('mem_membros')
+        .update(patchMembro).eq('id', membresiaId);
+      if (mErr) {
+        // colisão de CPF/e-mail único no cadastro de membro → mensagem clara
+        const dup = /duplicate|unique|23505/i.test(mErr.message || '');
+        return res.status(dup ? 409 : 400).json({
+          error: dup ? 'CPF ou e-mail já pertence a outra pessoa na membresia.' : mErr.message,
+        });
+      }
+      enqueueSync('membro', membresiaId, 'upsert').catch(() => {});
+    }
+
+    // 3) Atualiza o vol_profile + protege do sync do PC (nome/e-mail não voltam).
+    const { data, error } = await supabase.from('vol_profiles')
+      .update({
+        full_name: nome, email: cleanEmail, phone: cleanPhone, cpf: cleanCpf,
+        membresia_id: membresiaId, protegido_sync: true, profile_complete: true,
+      })
+      .eq('id', req.params.id).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    enqueueSync('voluntario', req.params.id, 'upsert').catch(() => {});
+
+    res.json({ ...data, membresia_vinculada: !!membresiaId });
+  } catch (e) {
+    console.error('[vol] editar cadastro:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar o cadastro do voluntário' });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════
@@ -2124,7 +2379,7 @@ router.put('/profiles/:id/contact', async (req, res) => {
 
     if (cpf != null && String(cpf).trim() !== '') {
       const cleanCpf = String(cpf).replace(/\D/g, '');
-      if (cleanCpf.length !== 11) return res.status(400).json({ error: 'CPF invalido' });
+      if (cleanCpf.length !== 11 || !cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
       update.cpf = cleanCpf;
     }
     if (phone != null && String(phone).trim() !== '') {
@@ -2896,15 +3151,72 @@ router.get('/services-availability', async (req, res) => {
       .in('service_id', serviceIds)
       .not('service_id', 'is', null);
 
+    // ⚠️⚠️ SÃO DOIS MODELOS DE INDISPONIBILIDADE NA MESMA TABELA, e este painel
+    // enxergava só um (achado em 07/08/2026):
+    //   · por CULTO   → `service_id` preenchido — é o que a coordenação marca aqui
+    //   · por PERÍODO → `unavailable_from/to` com `service_id` NULL — é o que o
+    //     APP grava quando o voluntário diz "viajo de 20 a 31/08"
+    //
+    // Ler só o primeiro fazia este painel mostrar "ninguém indisponível" pra quem
+    // tinha avisado pelo app — enquanto `POST /schedules/auto-fill` (que filtra
+    // por FAIXA DE DATA, linha ~3355) já o excluía. Ou seja: o gerador automático
+    // e a tela que a coordenação usa pra escalar NA MÃO discordavam sobre a mesma
+    // pessoa no mesmo culto, e quem escalasse pela tela não tinha como saber.
+    //
+    // ⚠️ Não é regressão: a tabela só passou a receber bloqueio por período em
+    // 07/08 (a tela do app nunca gravou nada antes — a RLS barrava e a validação
+    // recusava data futura). É porta recém-aberta cujo destino não olhava pra ela.
+    const { data: porPeriodo } = await supabase
+      .from('vol_availability')
+      .select('unavailable_from, unavailable_to, reason, volunteer_profile_id, vol_profiles(full_name, avatar_url)')
+      .is('service_id', null)
+      // Sobreposição com a janela pedida: começa antes do fim E termina depois do
+      // início. Comparar string ISO é seguro (YYYY-MM-DD ordena como data).
+      .lte('unavailable_from', to)
+      .gte('unavailable_to', from);
+
     // Agrupa por service_id
     const unavailByService = new Map();
+    const jaListado = new Map(); // service_id -> Set(profile_id)
+    const push = (serviceId, item) => {
+      if (!unavailByService.has(serviceId)) {
+        unavailByService.set(serviceId, []);
+        jaListado.set(serviceId, new Set());
+      }
+      // Quem tem bloqueio por período E por culto no mesmo dia apareceria 2×.
+      if (item.profile_id) {
+        if (jaListado.get(serviceId).has(item.profile_id)) return;
+        jaListado.get(serviceId).add(item.profile_id);
+      }
+      unavailByService.get(serviceId).push(item);
+    };
+
     for (const u of (unavail || [])) {
-      if (!unavailByService.has(u.service_id)) unavailByService.set(u.service_id, []);
-      unavailByService.get(u.service_id).push({
+      push(u.service_id, {
         profile_id: u.volunteer_profile_id,
         name: u.vol_profiles?.full_name || 'Voluntario',
         avatar_url: u.vol_profiles?.avatar_url || null,
+        origem: 'culto',
       });
+    }
+
+    // O bloqueio por período vale pra TODO culto cuja data cai dentro dele.
+    for (const s of services) {
+      const dia = String(s.scheduled_at).slice(0, 10);
+      for (const u of (porPeriodo || [])) {
+        if (u.unavailable_from <= dia && dia <= u.unavailable_to) {
+          push(s.id, {
+            profile_id: u.volunteer_profile_id,
+            name: u.vol_profiles?.full_name || 'Voluntario',
+            avatar_url: u.vol_profiles?.avatar_url || null,
+            origem: 'periodo',
+            // O motivo ("viagem", "prova") é o que deixa a coordenação decidir se
+            // cabe insistir — sem ele o painel diz "não pode" e mais nada.
+            motivo: u.reason || null,
+            periodo: { de: u.unavailable_from, ate: u.unavailable_to },
+          });
+        }
+      }
     }
 
     res.json(services.map(s => ({
@@ -3223,7 +3535,8 @@ router.get('/inscricoes-summary', async (req, res) => {
 
     let query = supabase
       .from('vol_inscricoes')
-      .select('data_inscricao, status, area');
+      .select('data_inscricao, status, area')
+      .is('deleted_at', null);
     if (ano) {
       query = query
         .gte('data_inscricao', `${ano}-01-01`)
@@ -3303,6 +3616,7 @@ router.get('/inscricoes', async (req, res) => {
         dom_predominante, ministerios_interesse, area_direcionada, participou_next,
         feedback, integrado_em, membro_id, origem
       `, { count: 'exact' })
+      .is('deleted_at', null)
       .order('data_inscricao', { ascending: false })
       .range(offset, offset + limit - 1);
 
@@ -3343,6 +3657,7 @@ router.get('/inscricoes/por-direcionada', async (req, res) => {
     while (true) {
       let q = supabase.from('vol_inscricoes')
         .select('area_direcionada, status')
+        .is('deleted_at', null)
         .not('area_direcionada', 'is', null)
         .order('data_inscricao', { ascending: false })
         .range(offset, offset + page - 1);
@@ -3393,7 +3708,7 @@ router.patch('/inscricoes/:id', async (req, res) => {
     // liberada (nada consta / aprovação manual / dispensa registrada).
     if (status === 'integrado') {
       const { data: insc } = await supabase.from('vol_inscricoes')
-        .select('area, area_direcionada').eq('id', req.params.id).maybeSingle();
+        .select('area, area_direcionada').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
 
       // Exige a área direcionada — não integra sem registrar onde a pessoa vai
       // de fato servir (é o que alimenta a estatística "onde estão os voluntários").
@@ -3475,12 +3790,22 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
       return res.status(403).json({ error: 'Sem permissão para editar a inscrição' });
     }
 
-    const { cpf, data_nascimento, nome_mae, ministerios_interesse, area_direcionada } = req.body || {};
+    const { cpf, data_nascimento, nome_mae, ministerios_interesse, area_direcionada, feedback } = req.body || {};
     const patch = { updated_at: new Date().toISOString() };
 
     if (cpf !== undefined) {
       const d = String(cpf || '').replace(/\D+/g, '');
-      if (d && d.length !== 11) return res.status(400).json({ error: 'CPF deve ter 11 dígitos' });
+      if (d && (d.length !== 11 || !cpfValido(d))) {
+        // Grandfathering do legado: CPF idêntico ao já armazenado passa sem
+        // DV (o modal da ficha sempre reenvia o cpf — sem isso, um CPF legado
+        // DV-inválido travaria a edição de QUALQUER campo). DV só pra novo/alterado.
+        const { data: atual } = await supabase.from('vol_inscricoes')
+          .select('cpf').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+        const atualNorm = String(atual?.cpf || '').replace(/\D+/g, '');
+        if (!atualNorm || d !== atualNorm) {
+          return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+        }
+      }
       patch.cpf = d || null;
     }
     if (data_nascimento !== undefined) {
@@ -3500,6 +3825,9 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
         : [];
       patch.area_direcionada = arr.length ? arr : null;
     }
+    if (feedback !== undefined) {
+      patch.feedback = feedback ? String(feedback).trim() : null;
+    }
 
     if (Object.keys(patch).length === 1) {
       return res.status(400).json({ error: 'Nada para atualizar' });
@@ -3508,10 +3836,93 @@ router.patch('/inscricoes/:id/dados', async (req, res) => {
     const { data, error } = await supabase.from('vol_inscricoes')
       .update(patch).eq('id', req.params.id).select().single();
     if (error) throw error;
+
+    // Reconciliação de CPF tardio (auditoria CPF 2026-07-16): completar o CPF
+    // na ficha não refazia o match de membro — a inscrição ficava com CPF e o
+    // vínculo (ou a falta dele) congelado. Agora: se a inscrição já tem membro,
+    // consolida o CPF nele (conflito vira pendência de identidade); se não tem,
+    // tenta ligar pelo matcher canônico (CPF → email+nome → tel+nome → nasc+nome,
+    // read-only · não cria stub aqui). Fire-and-forget.
+    if (patch.cpf && data) {
+      (async () => {
+        try {
+          if (data.membro_id) {
+            // Confiança FRACA: o vínculo pode ter nascido de match fraco
+            // (telefone/e-mail+nome) numa requisição anterior — sem nascimento
+            // conferível dos 2 lados, o CPF fica somente na ficha e não cria
+            // identidade nem pendência humana.
+            await reconciliarCpfTardio({
+              membroId: data.membro_id, cpf: patch.cpf,
+              origem: 'vol_ficha', origemId: data.id,
+              dataNascimento: data.data_nascimento || null,
+              confianca: 'fraca',
+            });
+          } else {
+            const hit = await acharMembroGuardado({
+              cpf: patch.cpf, email: data.email, telefone: data.telefone,
+              nome: data.nome_completo || [data.nome, data.sobrenome].filter(Boolean).join(' '),
+              dataNascimento: data.data_nascimento || null,
+            });
+            if (hit?.membro_id) {
+              await supabase.from('vol_inscricoes')
+                .update({ membro_id: hit.membro_id, updated_at: new Date().toISOString() })
+                .eq('id', data.id).is('membro_id', null);
+              // Vínculo nasceu de match fraco (não-CPF) → consolida o CPF no
+              // membro achado (senão o CPF fica preso na inscrição e o membro
+              // segue sem CPF. Confiança 'fraca': sem nascimento conferível
+              // dos 2 lados, mantém o CPF só na inscrição.
+              if (hit.matched_by !== 'cpf') {
+                await reconciliarCpfTardio({
+                  membroId: hit.membro_id, cpf: patch.cpf,
+                  origem: 'vol_ficha', origemId: data.id,
+                  dataNascimento: data.data_nascimento || null,
+                  confianca: 'fraca',
+                });
+              }
+            }
+          }
+        } catch (e2) {
+          console.error('[inscricao dados] reconciliar cpf:', e2.message);
+        }
+      })();
+    }
     res.json(data);
   } catch (e) {
     console.error('[inscricao dados]', e.message);
     res.status(500).json({ error: 'Erro ao salvar dados da inscrição' });
+  }
+});
+
+// POST /api/voluntariado/inscricoes/:id/desistiu — a pessoa desistiu de servir
+// ANTES de virar voluntário (ex.: conversou com o líder e não quis seguir).
+// Status terminal 'desistente' + motivo opcional. NÃO cria vol_profile → não
+// entra no cadastro de voluntário nem na conta de inativos (esses vêm de
+// vw_vol_frequencia, que só olha quem realmente é voluntário). Endpoint
+// dedicado (não mexe na lógica de status existente). Reverter = mandar de
+// volta pra 'inscrito' pela ação normal de triagem.
+router.post('/inscricoes/:id/desistiu', async (req, res) => {
+  try {
+    const isAdmin = ['admin', 'diretor'].includes(req.user.role);
+    const lvl = Math.max(getEffectiveLevel(req, 'voluntariado') || 0, getEffectiveLevel(req, 'membresia') || 0);
+    if (!isAdmin && lvl < 3) {
+      return res.status(403).json({ error: 'Sem permissão para alterar a inscrição' });
+    }
+
+    const motivo = req.body?.motivo ? String(req.body.motivo).trim().slice(0, 500) : '';
+    const { data: atual } = await supabase.from('vol_inscricoes')
+      .select('feedback').eq('id', req.params.id).maybeSingle();
+    // Preserva o feedback existente e anexa a nota da desistência.
+    const nota = motivo ? `Desistiu de servir: ${motivo}` : 'Desistiu de servir.';
+    const feedback = atual?.feedback ? `${atual.feedback}\n${nota}` : nota;
+
+    const { data, error } = await supabase.from('vol_inscricoes')
+      .update({ status: 'desistente', feedback, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[inscricao desistiu]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a desistência' });
   }
 });
 
@@ -3557,7 +3968,7 @@ router.post('/inscricoes/:id/antecedentes/consultar', async (req, res) => {
     if (nivelTriagem(req) < 3) return res.status(403).json({ error: 'Sem permissão' });
     const { data: insc } = await supabase.from('vol_inscricoes')
       .select('id, area, membro_id, nome_completo, nome, sobrenome, cpf, nome_mae, data_nascimento')
-      .eq('id', req.params.id).maybeSingle();
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!insc) return res.status(404).json({ error: 'Inscrição não encontrada' });
     const area = String(insc.area || '').toLowerCase();
     if (area !== 'kids' && area !== 'bridge') {
@@ -3810,7 +4221,7 @@ router.get('/acessos/cargos', async (req, res) => {
 router.post('/acessos/criar-login', async (req, res) => {
   if (!soAdmin(req, res)) return;
   try {
-    const { vol_profile_id, nome, email, cpf, data_nascimento, cargo_slug, senha } = req.body || {};
+    const { vol_profile_id, nome, email, cpf, telefone, data_nascimento, cargo_slug, senha } = req.body || {};
     const mail = String(email || '').toLowerCase().trim();
     if (!nome || !mail) return res.status(400).json({ error: 'Nome e e-mail são obrigatórios.' });
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) return res.status(400).json({ error: 'E-mail inválido.' });
@@ -3860,6 +4271,36 @@ router.post('/acessos/criar-login', async (req, res) => {
       await supabase.from('vol_profiles').update({ auth_user_id: uid }).eq('id', vol_profile_id);
     }
 
+    // 5. Pessoa canônica (mem_membros) via matcher — grava CPF/telefone/nascimento.
+    //    Contrato de porta: normaliza, roteia pelo matcher canônico, enriquece só
+    //    campos VAZIOS (nunca sobrescreve o principal) e vincula o login
+    //    (profiles.membro_id + espelha telefone/nascimento). Best-effort.
+    try {
+      const cpfDigits = String(cpf || '').replace(/\D/g, '');
+      const telDigits = normalizarTelefone(telefone) || '';
+      const dob = data_nascimento || null;
+      if (nome && (cpfDigits || telDigits || dob)) {
+        const membro = await acharOuCriarGuardado({
+          nome, email: mail, cpf: cpfDigits || null, telefone: telefone || null,
+          dataNascimento: dob, extra: dob ? { data_nascimento: dob } : {},
+          origem: 'voluntariado_acesso',
+        });
+        if (membro?.id) {
+          const { data: m } = await supabase.from('mem_membros')
+            .select('cpf, telefone, data_nascimento').eq('id', membro.id).maybeSingle();
+          const patch = {};
+          if (cpfDigits && !m?.cpf) patch.cpf = cpfDigits;
+          if (telDigits && !m?.telefone) patch.telefone = telDigits;
+          if (dob && !m?.data_nascimento) patch.data_nascimento = dob;
+          if (Object.keys(patch).length) await supabase.from('mem_membros').update(patch).eq('id', membro.id);
+          const pPatch = { membro_id: membro.id };
+          if (telDigits) pPatch.telefone = telDigits;
+          if (dob) pPatch.data_nascimento = dob;
+          await supabase.from('profiles').update(pPatch).eq('id', uid);
+        }
+      }
+    } catch (e) { console.warn('[criar-login] pessoa canônica:', e.message); }
+
     bustPermissionCaches();
     res.json({
       ok: true, user_id: uid, ja_existia: jaExistia,
@@ -3869,6 +4310,273 @@ router.post('/acessos/criar-login', async (req, res) => {
     console.error('[voluntariado/acessos/criar-login]', e.message);
     res.status(500).json({ error: 'Erro ao criar login.' });
   }
+});
+
+// ══════════════════════════════════════════════════════════════
+// TEMPLATES DE ESCALA (PR1)
+// Reusa vol_teams (=equipe/grupo) e vol_positions (=função). Um template é uma
+// composição esperada (equipe × função × quantidade + fixo) + pessoas-padrão.
+// Aplicar a um culto materializa vol_escala_culto_itens (o alvo/denominador) e
+// pré-preenche vol_schedules com as pessoas-padrão. Cobertura = alvo − preenchidas.
+// ══════════════════════════════════════════════════════════════
+const authEscalaEscrita = authorizeModule('voluntariado', 3);
+
+// Carrega um template completo (itens + pessoas + tipos de culto).
+async function carregarTemplate(id) {
+  const { data: tpl } = await supabase.from('vol_escala_templates')
+    .select('*').eq('id', id).is('deleted_at', null).maybeSingle();
+  if (!tpl) return null;
+  const [{ data: itens }, { data: tipos }] = await Promise.all([
+    supabase.from('vol_escala_template_itens')
+      .select('*, team:vol_teams(id,name), position:vol_positions(id,name)')
+      .eq('template_id', id).order('sort_order'),
+    supabase.from('vol_escala_template_tipos').select('service_type_id').eq('template_id', id),
+  ]);
+  const itemIds = (itens || []).map(i => i.id);
+  let pessoasPorItem = {};
+  if (itemIds.length) {
+    const { data: pessoas } = await supabase.from('vol_escala_template_item_pessoas')
+      .select('item_id, volunteer_id, volunteer:vol_profiles(id,full_name)')
+      .in('item_id', itemIds);
+    for (const p of pessoas || []) (pessoasPorItem[p.item_id] ||= []).push(p);
+  }
+  return {
+    ...tpl,
+    service_type_ids: (tipos || []).map(t => t.service_type_id),
+    itens: (itens || []).map(i => ({ ...i, pessoas: pessoasPorItem[i.id] || [] })),
+  };
+}
+
+// Substitui itens (+pessoas) e tipos de um template (usado no create/update).
+async function gravarItensETipos(templateId, itens, serviceTypeIds) {
+  if (Array.isArray(serviceTypeIds)) {
+    await supabase.from('vol_escala_template_tipos').delete().eq('template_id', templateId);
+    const rows = serviceTypeIds.filter(Boolean).map(st => ({ template_id: templateId, service_type_id: st }));
+    if (rows.length) await supabase.from('vol_escala_template_tipos').insert(rows);
+  }
+  if (Array.isArray(itens)) {
+    await supabase.from('vol_escala_template_itens').delete().eq('template_id', templateId);
+    for (let idx = 0; idx < itens.length; idx++) {
+      const it = itens[idx];
+      if (!it?.team_id) continue;
+      const { data: novo, error } = await supabase.from('vol_escala_template_itens')
+        .insert({
+          template_id: templateId,
+          team_id: it.team_id,
+          position_id: it.position_id || null,
+          quantidade: Math.max(1, parseInt(it.quantidade, 10) || 1),
+          fixo: !!it.fixo,
+          sort_order: it.sort_order ?? idx,
+        }).select('id').single();
+      if (error) throw new Error(error.message);
+      const pessoas = Array.isArray(it.pessoas) ? it.pessoas : [];
+      const pRows = pessoas
+        .map(p => (typeof p === 'string' ? p : p.volunteer_id))
+        .filter(Boolean)
+        .map(vid => ({ item_id: novo.id, volunteer_id: vid }));
+      if (pRows.length) await supabase.from('vol_escala_template_item_pessoas').insert(pRows);
+    }
+  }
+}
+
+// Lista templates (com contagem de itens e tipos ligados).
+router.get('/schedule-templates', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('vol_escala_templates')
+      .select('*, itens:vol_escala_template_itens(count), tipos:vol_escala_template_tipos(service_type_id)')
+      .is('deleted_at', null).order('sort_order').order('nome');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json((data || []).map(t => ({
+      ...t,
+      itens_count: t.itens?.[0]?.count ?? 0,
+      service_type_ids: (t.tipos || []).map(x => x.service_type_id),
+      itens: undefined, tipos: undefined,
+    })));
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar templates de escala' }); }
+});
+
+// Detalhe completo de um template.
+router.get('/schedule-templates/:id', async (req, res) => {
+  try {
+    const tpl = await carregarTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ error: 'Template não encontrado' });
+    res.json(tpl);
+  } catch (e) { res.status(500).json({ error: 'Erro ao carregar template' }); }
+});
+
+// Cria template (cabeçalho + itens + pessoas + tipos de culto).
+router.post('/schedule-templates', authEscalaEscrita, async (req, res) => {
+  try {
+    const { nome, descricao, ativo, sort_order, service_type_ids, itens } = req.body || {};
+    if (!nome || !nome.trim()) return res.status(400).json({ error: 'nome obrigatório' });
+    const { data: tpl, error } = await supabase.from('vol_escala_templates')
+      .insert({ nome: nome.trim(), descricao: descricao || null, ativo: ativo !== false, sort_order: sort_order || 0 })
+      .select('id').single();
+    if (error) return res.status(400).json({ error: error.message });
+    await gravarItensETipos(tpl.id, itens, service_type_ids);
+    res.json(await carregarTemplate(tpl.id));
+  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao criar template' }); }
+});
+
+// Atualiza template (cabeçalho e, se enviados, substitui itens/tipos).
+router.put('/schedule-templates/:id', authEscalaEscrita, async (req, res) => {
+  try {
+    const { nome, descricao, ativo, sort_order, service_type_ids, itens } = req.body || {};
+    const patch = {};
+    if (nome !== undefined) patch.nome = String(nome).trim();
+    if (descricao !== undefined) patch.descricao = descricao || null;
+    if (ativo !== undefined) patch.ativo = !!ativo;
+    if (sort_order !== undefined) patch.sort_order = sort_order || 0;
+    if (Object.keys(patch).length) {
+      const { error } = await supabase.from('vol_escala_templates')
+        .update(patch).eq('id', req.params.id).is('deleted_at', null);
+      if (error) return res.status(400).json({ error: error.message });
+    }
+    await gravarItensETipos(req.params.id, itens, service_type_ids);
+    res.json(await carregarTemplate(req.params.id));
+  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao atualizar template' }); }
+});
+
+// Remove template (soft-delete · reversível).
+router.delete('/schedule-templates/:id', authEscalaEscrita, async (req, res) => {
+  try {
+    const { error } = await supabase.from('vol_escala_templates')
+      .update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Erro ao remover template' }); }
+});
+
+// Templates sugeridos para um tipo de culto (auto-sugestão ao montar a escala).
+router.get('/schedule-templates/por-tipo/:serviceTypeId', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('vol_escala_template_tipos')
+      .select('template:vol_escala_templates(*)')
+      .eq('service_type_id', req.params.serviceTypeId);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json((data || []).map(x => x.template).filter(t => t && !t.deleted_at && t.ativo));
+  } catch (e) { res.status(500).json({ error: 'Erro ao sugerir templates' }); }
+});
+
+// Aplica um template a um culto: materializa a composição esperada
+// (vol_escala_culto_itens) e pré-preenche vol_schedules com as pessoas-padrão.
+// Idempotente: reaplica sem duplicar itens nem re-escalar quem já está.
+router.post('/schedule-templates/:id/apply', authEscalaEscrita, async (req, res) => {
+  try {
+    const { service_id } = req.body || {};
+    if (!service_id) return res.status(400).json({ error: 'service_id obrigatório' });
+    const tpl = await carregarTemplate(req.params.id);
+    if (!tpl) return res.status(404).json({ error: 'Template não encontrado' });
+    const { data: svc } = await supabase.from('vol_services').select('id').eq('id', service_id).maybeSingle();
+    if (!svc) return res.status(404).json({ error: 'Culto não encontrado' });
+
+    // Escalas já existentes no culto: pra não re-escalar a mesma pessoa e pra
+    // achar o próximo slot_seq livre por função (o índice pc_unique inclui slot_seq).
+    const { data: jaEscalados } = await supabase.from('vol_schedules')
+      .select('volunteer_id, team_id, team_name, position_name, slot_seq, planning_center_person_id')
+      .eq('service_id', service_id);
+    const escaladoChave = new Set((jaEscalados || [])
+      .filter(s => s.volunteer_id).map(s => `${s.volunteer_id}:${s.team_id || ''}`));
+    // Só linhas sem pc_person_id compartilham o espaço de slot_seq (as do PCO usam 0
+    // mas têm pc_person_id != NULL, então nunca colidem com as do template).
+    const slotUsados = {};
+    const slotKey = (tn, pn) => `${tn || ''}::${pn || ''}`;
+    for (const s of jaEscalados || []) {
+      if (s.planning_center_person_id) continue;
+      (slotUsados[slotKey(s.team_name, s.position_name)] ||= new Set()).add(s.slot_seq || 0);
+    }
+    const proximoSlot = (tn, pn) => {
+      const set = (slotUsados[slotKey(tn, pn)] ||= new Set());
+      let n = 0; while (set.has(n)) n += 1; set.add(n); return n;
+    };
+
+    let itensCriados = 0, preenchidas = 0, vagasTotais = 0;
+    for (const it of tpl.itens) {
+      // 1) Composição esperada (alvo). Upsert por (service, team, position).
+      const { data: cItem, error: cErr } = await supabase.from('vol_escala_culto_itens')
+        .upsert({
+          service_id,
+          template_id: tpl.id,
+          template_item_id: it.id,
+          team_id: it.team_id,
+          position_id: it.position_id || null,
+          quantidade: it.quantidade,
+          fixo: it.fixo,
+          sort_order: it.sort_order,
+          deleted_at: null,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'service_id,team_id,position_id' })
+        .select('id').single();
+      if (cErr) throw new Error(cErr.message);
+      itensCriados += 1;
+      vagasTotais += it.quantidade;
+
+      // 2) Pré-preencher pessoas-padrão (respeitando a quantidade de vagas).
+      const teamName = it.team?.name || null;
+      const positionName = it.position?.name || null;
+      let usadas = 0;
+      for (const p of it.pessoas) {
+        if (usadas >= it.quantidade) break;
+        const chave = `${p.volunteer_id}:${it.team_id}`;
+        if (escaladoChave.has(chave)) { usadas += 1; continue; }
+        const nome = p.volunteer?.full_name || null;
+        const { error: sErr } = await supabase.from('vol_schedules').insert({
+          service_id,
+          volunteer_id: p.volunteer_id,
+          volunteer_name: nome,
+          team_id: it.team_id,
+          team_name: teamName,
+          position_id: it.position_id || null,
+          position_name: positionName,
+          source: 'template',
+          confirmation_status: 'pending',
+          escala_culto_item_id: cItem.id,
+          slot_seq: proximoSlot(teamName, positionName),
+        });
+        if (!sErr) { escaladoChave.add(chave); usadas += 1; preenchidas += 1; }
+      }
+    }
+    res.json({ ok: true, itens: itensCriados, vagas: vagasTotais, preenchidas });
+  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao aplicar template' }); }
+});
+
+// Cobertura da escala de um culto: alvo (vol_escala_culto_itens) × preenchidas
+// (vol_schedules com voluntário). Agrupado por equipe.
+router.get('/services/:serviceId/escala-cobertura', async (req, res) => {
+  try {
+    const sid = req.params.serviceId;
+    const [{ data: alvo }, { data: sched }] = await Promise.all([
+      supabase.from('vol_escala_culto_itens')
+        .select('*, team:vol_teams(id,name), position:vol_positions(id,name)')
+        .eq('service_id', sid).is('deleted_at', null).order('sort_order'),
+      supabase.from('vol_schedules')
+        .select('id, volunteer_id, volunteer_name, team_id, position_id, confirmation_status, escala_culto_item_id')
+        .eq('service_id', sid),
+    ]);
+    const preenchidasPorItem = {};
+    const chave = (t, p) => `${t || ''}:${p || ''}`;
+    for (const s of sched || []) {
+      if (!s.volunteer_id) continue;
+      const k = s.escala_culto_item_id ? `item:${s.escala_culto_item_id}` : chave(s.team_id, s.position_id);
+      (preenchidasPorItem[k] ||= []).push(s);
+    }
+    const itens = (alvo || []).map(a => {
+      const pessoas = preenchidasPorItem[`item:${a.id}`] || preenchidasPorItem[chave(a.team_id, a.position_id)] || [];
+      return {
+        id: a.id, team_id: a.team_id, team: a.team?.name, position_id: a.position_id,
+        position: a.position?.name, fixo: a.fixo, alvo: a.quantidade,
+        preenchidas: pessoas.length, faltam: Math.max(0, a.quantidade - pessoas.length),
+        pessoas,
+      };
+    });
+    const totalAlvo = itens.reduce((s, i) => s + i.alvo, 0);
+    const totalPreench = itens.reduce((s, i) => s + i.preenchidas, 0);
+    res.json({
+      service_id: sid, itens,
+      resumo: { alvo: totalAlvo, preenchidas: totalPreench, faltam: Math.max(0, totalAlvo - totalPreench),
+        cobertura_pct: totalAlvo ? Math.round((totalPreench / totalAlvo) * 100) : null },
+    });
+  } catch (e) { res.status(500).json({ error: 'Erro ao calcular cobertura da escala' }); }
 });
 
 module.exports = router;

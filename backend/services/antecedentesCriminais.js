@@ -98,12 +98,16 @@ async function consultarInfosimplesPF({ nome, cpf, nome_mae, nome_pai, data_nasc
   }
 
   if (code !== 200) {
+    // Prefere o detalhe específico do provedor (json.errors) ao code_message
+    // genérico — ex.: code 603 traz code_message "token não tem autorização..."
+    // (confuso), mas errors[0] = "A conta está sem saldo. Adicione saldo...".
+    const detalhe = Array.isArray(json?.errors) && json.errors[0] ? String(json.errors[0]) : null;
     return {
       ok: false,
       status: 'erro',
       certidaoUrl: receipt || null,
       raw: json,
-      erro: json?.code_message || `Falha na consulta (code ${code || '??'})`,
+      erro: detalhe || json?.code_message || `Falha na consulta (code ${code || '??'})`,
     };
   }
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { expansion, users } from '../api';
 import { AlertTriangle } from 'lucide-react';
+import { DatePicker } from '@/components/ui/date-picker';
 
 // ── Tema (CSS vars para dark/light mode) ──────────────────
 const C = {
@@ -113,7 +114,7 @@ function DaysCounter({ date, status }) {
   if (!s || status === 'concluido') return null;
   const diff = Math.ceil((new Date(s + 'T12:00:00') - new Date()) / 86400000);
   const color = diff < 0 ? C.red : diff <= 7 ? C.amber : C.green;
-  const text = diff < 0 ? `${Math.abs(diff)}d atras` : diff === 0 ? 'Hoje' : `${diff}d`;
+  const text = diff < 0 ? `${Math.abs(diff)}d atrás` : diff === 0 ? 'Hoje' : `${diff}d`;
   return <span style={{ fontSize: 11, fontWeight: 700, color, marginLeft: 6 }}>{text}</span>;
 }
 
@@ -570,7 +571,7 @@ export default function Expansao() {
   const kpiItems = [
     { label: 'Total', value: counts.total, color: C.primary, action: () => kpiDrillDown('') },
     null,
-    { label: 'Concluidos', value: counts.concluido, color: C.green, action: () => kpiDrillDown('concluido') },
+    { label: 'Concluídos', value: counts.concluido, color: C.green, action: () => kpiDrillDown('concluido') },
     { label: 'Em Andamento', value: counts['em-andamento'], color: C.blue, action: () => kpiDrillDown('em-andamento') },
     { label: 'Atrasados', value: visibleMilestones.filter(m => {
       const d = normDate(m.date_end || m.expected_delivery);
@@ -620,7 +621,7 @@ export default function Expansao() {
             <div style={{ height: '100%', borderRadius: 7, background: `linear-gradient(90deg, ${AXES[2026].color}, ${AXES[2027].color}, ${AXES[2028].color}, ${AXES[2029].color})`, width: `${overallPct}%`, transition: 'width 0.5s' }} />
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: C.t3, marginTop: 6 }}>
-            <span>{counts.concluido} de {counts.total} marcos concluidos</span>
+            <span>{counts.concluido} de {counts.total} marcos concluídos</span>
             <span>Meta: 93 marcos em 4 anos</span>
           </div>
         </div>
@@ -769,7 +770,7 @@ export default function Expansao() {
 
     return (
       <>
-        <div style={{ fontSize: 13, color: C.t3, marginBottom: 12 }}>Clique em um marco para ver detalhes. Passe o mouse para informações rapidas.</div>
+        <div style={{ fontSize: 13, color: C.t3, marginBottom: 12 }}>Clique em um marco para ver detalhes. Passe o mouse para informações rápidas.</div>
 
         {/* Legend */}
         <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -1038,7 +1039,7 @@ export default function Expansao() {
     const COLS = [
       { key: 'pendente', label: 'Pendente', color: '#9ca3af' },
       { key: 'em-andamento', label: 'Em Andamento', color: C.blue },
-      { key: 'concluido', label: 'Concluido', color: C.green },
+      { key: 'concluido', label: 'Concluído', color: C.green },
       { key: 'bloqueado', label: 'Bloqueado', color: C.red },
     ];
 
@@ -1188,7 +1189,7 @@ export default function Expansao() {
 
         {/* Legend */}
         <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap' }}>
-          {[{ l: 'No Prazo (>7d)', c: C.green }, { l: 'Urgente (\u22647d)', c: C.amber }, { l: 'Atrasado', c: C.red }, { l: 'Concluido', c: '#d1d5db' }].map(x => (
+          {[{ l: 'No Prazo (>7d)', c: C.green }, { l: 'Urgente (\u22647d)', c: C.amber }, { l: 'Atrasado', c: C.red }, { l: 'Conclu\u00eddo', c: '#d1d5db' }].map(x => (
             <div key={x.l} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <div style={{ width: 20, height: 10, borderRadius: 4, background: x.c }} />
               <span style={{ fontSize: 12, color: C.t2 }}>{x.l}</span>
@@ -1467,11 +1468,11 @@ export default function Expansao() {
               <div style={styles.infoValue}>{mi.strategic_objective || ax.objective || '\u2014'}</div>
             </div>
             <div>
-              <div style={styles.infoLabel}>Orcamento Planejado</div>
+              <div style={styles.infoLabel}>Orçamento Planejado</div>
               <div style={styles.infoValue}>{fmtMoney(mi.budget_planned)}</div>
             </div>
             <div>
-              <div style={styles.infoLabel}>Orcamento Gasto</div>
+              <div style={styles.infoLabel}>Orçamento Gasto</div>
               <div style={styles.infoValue}>{fmtMoney(mi.budget_spent)}</div>
             </div>
           </div>
@@ -1486,14 +1487,14 @@ export default function Expansao() {
         {(mi.swot_strengths || mi.swot_weaknesses || mi.swot_opportunities || mi.swot_threats) && (
           <div style={{ ...styles.card, marginBottom: 16 }}>
             <div style={styles.cardHeader}>
-              <span style={styles.cardTitle}>Analise SWOT</span>
+              <span style={styles.cardTitle}>Análise SWOT</span>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0 }}>
               {[
-                { key: 'swot_strengths', label: 'Forcas', color: C.green, bg: C.greenBg, icon: 'S' },
+                { key: 'swot_strengths', label: 'Forças', color: C.green, bg: C.greenBg, icon: 'S' },
                 { key: 'swot_weaknesses', label: 'Fraquezas', color: C.red, bg: C.redBg, icon: 'W' },
                 { key: 'swot_opportunities', label: 'Oportunidades', color: C.blue, bg: C.blueBg, icon: 'O' },
-                { key: 'swot_threats', label: 'Ameacas', color: C.amber, bg: C.amberBg, icon: 'T' },
+                { key: 'swot_threats', label: 'Ameaças', color: C.amber, bg: C.amberBg, icon: 'T' },
               ].map(q => (
                 <div key={q.key} style={{ padding: '16px 20px', borderRight: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -1563,7 +1564,7 @@ export default function Expansao() {
       <div style={styles.header}>
         <div>
           <div style={styles.title}>Planejamento Estratégico</div>
-          <div style={styles.subtitle}>Plano vigente: Expans\u00e3o {'\u00b7'} Quadri\u00eanio 2026{'\u2013'}2029 {'\u00b7'} Pr. Pedr\u00e3o</div>
+          <div style={styles.subtitle}>Plano vigente: Expansão {'·'} Quadriênio 2026{'–'}2029 {'·'} Pr. Pedrão</div>
         </div>
         {canEdit && (
           <button style={styles.btn('primary')} onClick={() => setModalMilestone({})}>
@@ -1683,7 +1684,7 @@ function TaskRow({ task, canEdit, onEdit, onDelete, onAddSubtask, onUpdateSubtas
           </div>
           <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 12, color: C.t3, flexWrap: 'wrap' }}>
             {task.responsible && <span>Resp: {task.responsible}</span>}
-            {task.area && <span>Area: {task.area}</span>}
+            {task.area && <span>Área: {task.area}</span>}
             {task.deadline && <span>Prazo: {fmtDate(task.deadline)}</span>}
             {task.subtasks && <span>{task.subtasks.length} subtarefas</span>}
           </div>
@@ -1813,7 +1814,7 @@ function MilestoneFormModal({ open, data, saving, onSave, onClose, usersList }) 
         <Field label="Nome *">
           <input style={styles.input} value={form.name || ''} onChange={e => set('name', e.target.value)} required />
         </Field>
-        <Field label="Descricao">
+        <Field label="Descrição">
           <textarea style={styles.textarea} value={form.description || ''} onChange={e => set('description', e.target.value)} />
         </Field>
         <div style={styles.formRow}>
@@ -1829,10 +1830,10 @@ function MilestoneFormModal({ open, data, saving, onSave, onClose, usersList }) 
           </Field>
         </div>
         <div style={styles.formRow}>
-          <Field label="Area">
+          <Field label="Área">
             <input style={styles.input} value={form.area || ''} onChange={e => set('area', e.target.value)} />
           </Field>
-          <Field label="Responsavel">
+          <Field label="Responsável">
             <select style={{ ...styles.select, width: '100%' }} value={form.responsible_id || ''} onChange={e => set('responsible_id', e.target.value)}>
               <option value="">Selecionar...</option>
               {(usersList || []).map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
@@ -1840,11 +1841,11 @@ function MilestoneFormModal({ open, data, saving, onSave, onClose, usersList }) 
           </Field>
         </div>
         <div style={styles.formRow}>
-          <Field label="Data Inicio">
-            <input type="date" style={styles.input} value={form.date_start || ''} onChange={e => set('date_start', e.target.value)} />
+          <Field label="Data Início">
+            <DatePicker style={styles.input} value={form.date_start || ''} onChange={v => set('date_start', v)} />
           </Field>
           <Field label="Data Fim">
-            <input type="date" style={styles.input} value={form.date_end || ''} onChange={e => set('date_end', e.target.value)} />
+            <DatePicker style={styles.input} value={form.date_end || ''} onChange={v => set('date_end', v)} />
           </Field>
         </div>
         <div style={styles.formRow}>
@@ -1856,18 +1857,18 @@ function MilestoneFormModal({ open, data, saving, onSave, onClose, usersList }) 
           </Field>
         </div>
         <div style={styles.formRow}>
-          <Field label="Eixo Estrategico">
+          <Field label="Eixo Estratégico">
             <input style={styles.input} value={form.strategic_axis || ''} onChange={e => set('strategic_axis', e.target.value)} />
           </Field>
-          <Field label="Objetivo Estrategico">
+          <Field label="Objetivo Estratégico">
             <input style={styles.input} value={form.strategic_objective || ''} onChange={e => set('strategic_objective', e.target.value)} />
           </Field>
         </div>
         <div style={styles.formRow}>
-          <Field label="Orcamento Planejado (R$)">
+          <Field label="Orçamento Planejado (R$)">
             <input type="number" step="0.01" min="0" style={styles.input} value={form.budget_planned ?? ''} onChange={e => set('budget_planned', e.target.value)} />
           </Field>
-          <Field label="Orcamento Gasto (R$)">
+          <Field label="Orçamento Gasto (R$)">
             <input type="number" step="0.01" min="0" style={styles.input} value={form.budget_spent ?? ''} onChange={e => set('budget_spent', e.target.value)} />
           </Field>
         </div>
@@ -1876,9 +1877,9 @@ function MilestoneFormModal({ open, data, saving, onSave, onClose, usersList }) 
         </Field>
 
         {/* SWOT */}
-        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginTop: 16, marginBottom: 8 }}>Analise SWOT (opcional)</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginTop: 16, marginBottom: 8 }}>Análise SWOT (opcional)</div>
         <div style={styles.formRow}>
-          <Field label="Forcas (S)">
+          <Field label="Forças (S)">
             <textarea style={{ ...styles.textarea, minHeight: 40 }} value={form.swot_strengths || ''} onChange={e => set('swot_strengths', e.target.value)} />
           </Field>
           <Field label="Fraquezas (W)">
@@ -1889,7 +1890,7 @@ function MilestoneFormModal({ open, data, saving, onSave, onClose, usersList }) 
           <Field label="Oportunidades (O)">
             <textarea style={{ ...styles.textarea, minHeight: 40 }} value={form.swot_opportunities || ''} onChange={e => set('swot_opportunities', e.target.value)} />
           </Field>
-          <Field label="Ameacas (T)">
+          <Field label="Ameaças (T)">
             <textarea style={{ ...styles.textarea, minHeight: 40 }} value={form.swot_threats || ''} onChange={e => set('swot_threats', e.target.value)} />
           </Field>
         </div>
@@ -1942,22 +1943,22 @@ function TaskFormModal({ open, data, milestoneId, saving, onSave, onClose, users
           <input style={styles.input} value={form.name || ''} onChange={e => set('name', e.target.value)} required />
         </Field>
         <div style={styles.formRow}>
-          <Field label="Responsavel">
+          <Field label="Responsável">
             <select style={{ ...styles.select, width: '100%' }} value={form.responsible_id || ''} onChange={e => set('responsible_id', e.target.value)}>
               <option value="">Selecionar...</option>
               {(usersList || []).map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
             </select>
           </Field>
-          <Field label="Area">
+          <Field label="Área">
             <input style={styles.input} value={form.area || ''} onChange={e => set('area', e.target.value)} />
           </Field>
         </div>
         <div style={styles.formRow}>
-          <Field label="Data Inicio">
-            <input type="date" style={styles.input} value={form.start_date || ''} onChange={e => set('start_date', e.target.value)} />
+          <Field label="Data Início">
+            <DatePicker style={styles.input} value={form.start_date || ''} onChange={v => set('start_date', v)} />
           </Field>
           <Field label="Prazo">
-            <input type="date" style={styles.input} value={form.deadline || ''} onChange={e => set('deadline', e.target.value)} />
+            <DatePicker style={styles.input} value={form.deadline || ''} onChange={v => set('deadline', v)} />
           </Field>
         </div>
         {isEdit && (
@@ -1967,7 +1968,7 @@ function TaskFormModal({ open, data, milestoneId, saving, onSave, onClose, users
             </select>
           </Field>
         )}
-        <Field label="Descricao">
+        <Field label="Descrição">
           <textarea style={styles.textarea} value={form.description || ''} onChange={e => set('description', e.target.value)} />
         </Field>
       </form>
@@ -2069,10 +2070,10 @@ function PlanoFormModal({ open, data, saving, onSave, onClose }) {
       </Field>
       <div style={styles.formRow}>
         <Field label="Início">
-          <input type="date" style={styles.input} value={form.periodo_inicio || ''} onChange={e => set('periodo_inicio', e.target.value)} />
+          <DatePicker style={styles.input} value={form.periodo_inicio || ''} onChange={v => set('periodo_inicio', v)} />
         </Field>
         <Field label="Fim">
-          <input type="date" style={styles.input} value={form.periodo_fim || ''} onChange={e => set('periodo_fim', e.target.value)} />
+          <DatePicker style={styles.input} value={form.periodo_fim || ''} onChange={v => set('periodo_fim', v)} />
         </Field>
       </div>
       <Field label="Líder">

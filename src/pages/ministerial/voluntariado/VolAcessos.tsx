@@ -12,6 +12,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -198,6 +199,8 @@ function CriarLoginDialog({ alvo, onClose, onDone }: { alvo: Acesso | null; onCl
   const [nome, setNome] = useState(alvo?.nome || '');
   const [email, setEmail] = useState(alvo?.email || '');
   const [cpf, setCpf] = useState(alvo?.cpf || '');
+  const [celular, setCelular] = useState(alvo?.telefone || '');
+  const [dataNascimento, setDataNascimento] = useState(alvo?.membresia?.data_nascimento || '');
   const [cargoSlug, setCargoSlug] = useState<string>('');
   const [senha, setSenha] = useState(senhaTemporaria());
 
@@ -208,7 +211,9 @@ function CriarLoginDialog({ alvo, onClose, onDone }: { alvo: Acesso | null; onCl
 
   const mut = useMutation({
     mutationFn: () => voluntariado.acessos.criarLogin({
-      vol_profile_id: alvo?.vol_profile_id, nome, email, cpf, cargo_slug: cargoSlug || undefined, senha,
+      vol_profile_id: alvo?.vol_profile_id, nome, email, cpf,
+      telefone: celular, data_nascimento: dataNascimento || undefined,
+      cargo_slug: cargoSlug || undefined, senha,
     }),
     onSuccess: (r: any) => {
       toast.success(r?.ja_existia ? 'Login atualizado.' : 'Login criado.', {
@@ -226,7 +231,10 @@ function CriarLoginDialog({ alvo, onClose, onDone }: { alvo: Acesso | null; onCl
       (a.slug === 'responsavel-batismo' ? -1 : b.slug === 'responsavel-batismo' ? 1 : a.nome.localeCompare(b.nome)));
   }, [cargos]);
 
-  const podeSalvar = nome.trim() && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()) && senha.length >= 8;
+  const cpfDigits = cpf.replace(/\D/g, '');
+  const telDigits = celular.replace(/\D/g, '');
+  const podeSalvar = nome.trim() && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim()) && senha.length >= 8
+    && cpfDigits.length === 11 && telDigits.length >= 10 && telDigits.length <= 11 && !!dataNascimento;
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -247,9 +255,19 @@ function CriarLoginDialog({ alvo, onClose, onDone }: { alvo: Acesso | null; onCl
             <label className="text-xs font-medium text-muted-foreground">E-mail (login)</label>
             <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@exemplo.com" type="email" />
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">CPF *</label>
+              <Input value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="Só números" inputMode="numeric" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Data de nascimento *</label>
+              <BirthDatePicker value={dataNascimento} onChange={(v) => setDataNascimento(v)} />
+            </div>
+          </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground">CPF (opcional)</label>
-            <Input value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="Só números" />
+            <label className="text-xs font-medium text-muted-foreground">Celular *</label>
+            <Input value={celular} onChange={(e) => setCelular(e.target.value)} placeholder="DDD + número" inputMode="tel" />
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Cargo (responsabilidade / acesso)</label>

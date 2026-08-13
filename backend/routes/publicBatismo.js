@@ -3,15 +3,26 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
+const {
+  temAbreviacaoNome, splitNomeCompleto, validarNascimento, honeypotPreenchido,
+  registrarConsentimentos, TEXTOS, cpfValido, emailValido,
+} = require('../services/inscricaoContrato');
+const { avaliarHorarioBatismo, horariosDisponiveis, normalizarHorario } = require('../utils/batismoHorario');
+const { horariosConfigurados, ocupacaoPorHorario } = require('../services/batismoHorarios');
 
-// Rate limit: 10 inscrições por IP a cada 15 min
+// Limiter GENEROSO do router (padrão grupos/NPS/eventos): o form roda em
+// Wi-Fi único (lounge da igreja num domingo) — 10/15min por IP dava 429 na
+// 11ª pessoa da fila (sweep 28/07). Anti-spam real = honeypot + contrato.
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: parseInt(process.env.PUBLIC_FORM_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 600 : 5000),
+  skip: () => process.env.NODE_ENV !== 'production',
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Muitas inscrições deste endereço. Tente novamente mais tarde.' },
+  message: { error: 'Muitas requisições deste endereço. Tente novamente em alguns minutos.' },
 });
+router.use(limiter);
 
 // Rate limit dedicado pro acesso às fotos (leitura · mais generoso que o de
 // inscrição): uma família reabre/recarrega várias vezes. O token de 32 hex
@@ -44,19 +55,8 @@ function soDigitos(v) {
   return String(v || '').replace(/\D+/g, '');
 }
 
-function cpfValido(v) {
-  const d = soDigitos(v);
-  if (d.length !== 11) return false;
-  if (/^(\d)\1{10}$/.test(d)) return false;
-  const calc = (base, fator) => {
-    let s = 0;
-    for (let i = 0; i < base.length; i += 1) s += parseInt(base[i], 10) * (fator - i);
-    const r = (s * 10) % 11;
-    return r === 10 ? 0 : r;
-  };
-  return calc(d.slice(0, 9), 10) === parseInt(d[9], 10)
-    && calc(d.slice(0, 10), 11) === parseInt(d[10], 10);
-}
+// cpfValido agora vem de services/inscricaoContrato (fonte única — P3 do
+// sweep 28/07: a cópia local era idêntica, mas cópia diverge um dia).
 
 // Calcula o 4o domingo de um mês
 function quartoDomingo(year, month /* 0-11 */) {
@@ -76,7 +76,10 @@ function proximoQuartoDomingoISO() {
     if (month > 11) { year += 1; month = 0; }
     q = quartoDomingo(year, month);
   }
-  return q.toISOString().slice(0, 10);
+  // Formato LOCAL (não toISOString/UTC): perto da meia-noite o UTC vira o dia
+  // seguinte e a data do batismo saía errada — mesmo fix do fmtLocalISO da
+  // apresentação de crianças.
+  return `${q.getFullYear()}-${String(q.getMonth() + 1).padStart(2, '0')}-${String(q.getDate()).padStart(2, '0')}`;
 }
 
 // GET /api/public/batismo/proxima-data
@@ -86,38 +89,57 @@ router.get('/proxima-data', (_req, res) => {
   res.json({ data_batismo: proximoQuartoDomingoISO() });
 });
 
-// Conta inscrições ativas por horário numa data (pra calcular vagas restantes).
-async function ocupacaoPorHorario(dataBatismo) {
-  const { data } = await supabase
-    .from('batismo_inscricoes')
-    .select('horario_culto')
-    .eq('data_batismo', dataBatismo)
-    .is('deleted_at', null)
-    .not('status', 'in', '(cancelado,rejeitado)');
-  const c = {};
-  (data || []).forEach(i => { if (i.horario_culto) c[i.horario_culto] = (c[i.horario_culto] || 0) + 1; });
-  return c;
-}
+// GET /api/public/batismo/textos — textos canônicos de consentimento (o
+// snapshot gravado é sempre o do backend)
+router.get('/textos', (_req, res) => {
+  res.json({
+    termos_lgpd: TEXTOS.termos_lgpd,
+    imagem: TEXTOS.imagem,
+    aviso_optin: TEXTOS.aviso_optin,
+  });
+});
+
+/**
+ * ⚠️ `vagaNoHorario` (11/08) foi ABSORVIDA por `avaliarHorarioBatismo`
+ * (`utils/batismoHorario.js`) — não foi descartada. O que ela trouxe está
+ * preservado, e o que faltava nela entrou junto:
+ *
+ * - **Mantido**: o ponto da chamada (imediatamente antes do insert, pra encurtar
+ *   a janela de corrida), a mensagem que manda a pessoa pro OUTRO horário, e
+ *   `limite` NULO = sem teto.
+ * - **Somado**: confere também `aberto` (ela só olhava o limite — horário
+ *   FECHADO passava), **falha FECHADA** quando o catálogo não pode ser lido (ela
+ *   fazia `if (!h) return {ok:true}`, ou seja, liberava), e ocupação PAGINADA.
+ *
+ * A evidência que justificou aquele conserto continua valendo e não pode se
+ * perder: **28/06 às 10:00 teve 12 inscritos num limite de 11** (medido em
+ * 11/08), porque o `POST /inscrever` não conferia nada — o limite só existia no
+ * `GET /horarios`, que apenas esconde do seletor. Decisão do Marcos (11/08):
+ * *"caso um horário esteja cheio, liberar apenas o outro, o limite é 11
+ * pessoas."*
+ *
+ * ⚠️ RESÍDUO DECLARADO (herdado, segue igual): a conferência é SELECT seguido de
+ * INSERT, sem lock — dois envios no mesmo instante podem passar os dois. Não é
+ * `pg_advisory_xact_lock` porque o buraco de 28/06 não foi corrida: era ausência
+ * total de conferência. Com ~6 inscrições por cerimônia a janela é pequena; se
+ * um dia estourar por 1, é aqui que vira RPC com lock.
+ *
+ * As consultas (`horariosConfigurados`/`ocupacaoPorHorario`) moraram aqui e agora
+ * vivem em `services/batismoHorarios.js` — o app de membros usa AS MESMAS.
+ */
 
 // GET /api/public/batismo/horarios
 // Horários ABERTOS e COM VAGA pro próximo batismo · alimenta o seletor do form.
 router.get('/horarios', async (_req, res) => {
   try {
     const dataBatismo = proximoQuartoDomingoISO();
-    const { data: horarios, error } = await supabase
-      .from('batismo_horarios')
-      .select('horario, label, limite')
-      .is('deleted_at', null)
-      .eq('aberto', true)
-      .order('ordem');
-    if (error) throw error;
+    const configurados = await horariosConfigurados();
+    if (configurados === null) throw new Error('catalogo_indisponivel');
     const ocup = await ocupacaoPorHorario(dataBatismo);
-    const lista = (horarios || [])
-      .map(h => {
-        const vagas = h.limite != null ? Math.max(0, h.limite - (ocup[h.horario] || 0)) : null;
-        return { horario: h.horario, label: h.label, vagas_restantes: vagas };
-      })
-      .filter(h => h.vagas_restantes === null || h.vagas_restantes > 0); // esconde lotados
+    // Régua ÚNICA (utils/batismoHorario) — a MESMA que o app e o formulário
+    // consomem, e a mesma que o POST usa pra validar. Duas cópias é como o
+    // seletor passa a oferecer horário que o servidor recusa.
+    const lista = horariosDisponiveis(configurados, ocup);
     let grupoUrl = null;
     try {
       const { data: cfg } = await supabase.from('batismo_config').select('grupo_url').eq('id', 1).maybeSingle();
@@ -132,38 +154,70 @@ router.get('/horarios', async (_req, res) => {
 
 // POST /api/public/batismo
 // Endpoint público (sem autenticação) que recebe inscrição do formulário.
-router.post('/', limiter, async (req, res) => {
+router.post('/', async (req, res) => { // limiter geral já está no router.use (contar 2x reduziria o teto pela metade)
   try {
     const {
-      nome, sobrenome, email, telefone, cpf, data_nascimento,
+      nome, sobrenome, nome_completo, email, telefone, cpf, data_nascimento, sexo,
       endereco, cep, tamanho_camisa, limitacao_mobilidade, motivo,
       observacoes, horario_culto, area_kpi, fez_next,
       // Novos · LGPD/integracao
       eh_crianca, possui_deficiencia, deficiencia_descricao,
+      aceita_termos, // termos LGPD (Contrato de Inscrição)
+      consent_imagem, // uso de imagem — fotos da cerimônia (opcional)
+      whatsapp_optin, // consentimento p/ mensagens no WhatsApp (Marketing · LGPD)
     } = req.body || {};
 
+    // Honeypot agora tratado no server (antes era só no client — caminho morto)
+    if (honeypotPreenchido(req.body)) return res.status(200).json({ ok: true });
+
+    // D1: campo único "Nome completo" (split determinístico); tolera o payload
+    // antigo nome+sobrenome de abas abertas antes do deploy.
+    let nomeT = String(nome || '').trim();
+    let sobrenomeT = String(sobrenome || '').trim();
+    if (nome_completo && String(nome_completo).trim()) {
+      const s = splitNomeCompleto(nome_completo);
+      nomeT = s.nome;
+      sobrenomeT = s.sobrenome;
+    }
+
     // Validacoes básicas
-    if (!nome || !String(nome).trim() || String(nome).trim().length < 2) {
+    if (!nomeT || nomeT.length < 2) {
       return res.status(400).json({ error: 'Informe o nome.' });
     }
-    if (!sobrenome || !String(sobrenome).trim()) {
-      return res.status(400).json({ error: 'Informe o sobrenome.' });
+    if (!sobrenomeT) {
+      return res.status(400).json({ error: 'Informe o nome completo.' });
     }
-    if (!telefone || soDigitos(telefone).length < 10) {
+    if (temAbreviacaoNome(`${nomeT} ${sobrenomeT}`)) {
+      return res.status(400).json({ error: 'Escreva seu nome completo, sem abreviações.' });
+    }
+    const telNorm = soDigitos(telefone);
+    if (telNorm.length < 10 || telNorm.length > 11) {
       return res.status(400).json({ error: 'Informe um telefone valido (com DDD).' });
     }
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim())) {
+    // emailValido vem do contrato (fonte única). O .trim() fica: o valor cru
+    // com espaço nas pontas era aceito aqui e é o mesmo que vai pro emailNorm.
+    if (!email || !emailValido(String(email).trim())) {
       return res.status(400).json({ error: 'Informe um email valido.' });
     }
-    if (cpf && !cpfValido(cpf)) {
-      return res.status(400).json({ error: 'CPF invalido.' });
+    if (!cpf || !cpfValido(cpf)) {
+      return res.status(400).json({ error: 'CPF é obrigatório e precisa ser válido.' });
+    }
+    // Nascimento sempre foi obrigatório no server — agora com validação real
+    // (formato/data existente/não-futura) e o form perdeu o rótulo "(opcional)".
+    const nascValid = validarNascimento(data_nascimento);
+    if (!nascValid) {
+      return res.status(400).json({ error: 'Informe uma data de nascimento válida.' });
+    }
+    if (!aceita_termos) {
+      return res.status(400).json({ error: 'É preciso aceitar os termos para se inscrever.' });
+    }
+    const camisaNorm = tamanho_camisa ? String(tamanho_camisa).trim().toUpperCase() : null;
+    if (!camisaNorm || !['PP', 'P', 'M', 'G', 'GG', 'XG', 'XGG'].includes(camisaNorm)) {
+      return res.status(400).json({ error: 'Escolha o tamanho da camisa.' });
     }
 
     const cpfNorm = cpf ? soDigitos(cpf) : null;
-    const telNorm = soDigitos(telefone);
     const emailNorm = String(email).trim().toLowerCase();
-    const nomeT = String(nome).trim();
-    const sobrenomeT = String(sobrenome).trim();
 
     // Guarda na origem (membroMatch · 2026-06-19): resolve-ou-cria UM membro
     // deduplicado (CPF → e-mail → telefone+nome → nome+nascimento · NUNCA
@@ -176,13 +230,25 @@ router.post('/', limiter, async (req, res) => {
       const r = await acharOuCriarGuardado({
         cpf: cpfNorm, email: emailNorm, telefone: telNorm,
         nome: `${nomeT} ${sobrenomeT}`.trim(),
-        dataNascimento: data_nascimento || null,
+        dataNascimento: nascValid,
         status: 'visitante',
+        origem: 'batismo_formulario',
       });
       membroId = r.membro_id;
     } catch (e) {
       console.error('[publicBatismo] acharOuCriarGuardado:', e.message);
       // fail-open: segue sem vínculo (o funil/Entradas liga depois)
+    }
+
+    // Opt-in de WhatsApp (só liga, nunca desliga um consentimento existente).
+    if (whatsapp_optin && membroId) {
+      try {
+        await supabase.from('mem_membros')
+          .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+          .eq('id', membroId).is('deleted_at', null);
+      } catch (e) {
+        console.warn('[publicBatismo] optin membro:', e.message);
+      }
     }
 
     // Dedup de INSCRIÇÃO: a mesma pessoa não se inscreve 2x pro batismo em aberto
@@ -213,28 +279,9 @@ router.post('/', limiter, async (req, res) => {
 
     const dataBatismo = proximoQuartoDomingoISO();
 
-    // Valida o horário escolhido contra os horários configurados (aberto + vaga).
-    // Tolerante: se a tabela ainda não existe ou nada foi enviado, segue sem travar.
-    let horarioEscolhido = horario_culto ? String(horario_culto).trim().slice(0, 80) : null;
-    if (horarioEscolhido) {
-      const { data: hConf, error: hErr } = await supabase
-        .from('batismo_horarios')
-        .select('horario, label, aberto, limite')
-        .eq('horario', horarioEscolhido)
-        .is('deleted_at', null)
-        .maybeSingle();
-      if (!hErr) {
-        if (!hConf || !hConf.aberto) {
-          return res.status(409).json({ error: 'Esse horário não está mais disponível. Escolha outro.' });
-        }
-        if (hConf.limite != null) {
-          const ocup = await ocupacaoPorHorario(dataBatismo);
-          if ((ocup[horarioEscolhido] || 0) >= hConf.limite) {
-            return res.status(409).json({ error: 'Esse horário lotou. Por favor, escolha outro.' });
-          }
-        }
-      }
-    }
+    // Só normaliza aqui — quem CONFERE é o bloco logo antes do insert (a janela
+    // de corrida encurta quanto mais perto da gravação).
+    const horarioEscolhido = normalizarHorario(horario_culto);
 
     // Observações agora so guarda o que não tem coluna própria.
     // CEP e horário (Culto) têm colunas dedicadas (cep, horario_culto) → não entram aqui.
@@ -242,6 +289,18 @@ router.post('/', limiter, async (req, res) => {
     if (motivo) obsParts.push(`Motivo: ${String(motivo).trim().slice(0, 500)}`);
     if (observacoes) obsParts.push(`Comentario: ${String(observacoes).trim().slice(0, 1000)}`);
     const cepNorm = cep ? String(cep).trim().slice(0, 20) : null;
+    // Sexo · paridade com o totem (armazenado como 'M'/'F'). Aceita o
+    // vocabulário canônico do contrato (masculino|feminino) e o legado M/F.
+    // Obrigatório desde 28/07 (ajuste do contrato) — só para inscrições novas.
+    const sexoNorm = (() => {
+      const s = sexo ? String(sexo).trim().toUpperCase() : '';
+      if (s === 'M' || s === 'MASCULINO') return 'M';
+      if (s === 'F' || s === 'FEMININO') return 'F';
+      return null;
+    })();
+    if (!sexoNorm) {
+      return res.status(400).json({ error: 'Selecione masculino ou feminino.' });
+    }
 
     const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
     const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
@@ -260,7 +319,7 @@ router.post('/', limiter, async (req, res) => {
     const payload = {
       nome: nomeT,
       sobrenome: sobrenomeT,
-      data_nascimento: data_nascimento || null,
+      data_nascimento: nascValid,
       cpf: cpfNorm,
       telefone: telNorm,
       email: emailNorm,
@@ -284,7 +343,31 @@ router.post('/', limiter, async (req, res) => {
       // "Você já fez o NEXT?" · boolean | null (não informado)
       fez_next: typeof fez_next === 'boolean' ? fez_next : null,
       cep: cepNorm,
+      sexo: sexoNorm,
     };
+
+    // ⚠️ O horário é conferido DEPOIS de toda a validação e IMEDIATAMENTE antes
+    // do insert — quanto menor a distância entre conferir e gravar, menor a
+    // janela de corrida. (Ponto herdado do `vagaNoHorario` de 11/08.)
+    // Régua ÚNICA em `utils/batismoHorario` — a MESMA do `GET /horarios` e do
+    // `POST /app/inscricoes`. As 2 consultas só rodam quando há horário a
+    // conferir: quem não escolheu não paga round-trip nenhum.
+    if (payload.horario_culto) {
+      const [configurados, ocupacao] = await Promise.all([
+        horariosConfigurados(),
+        ocupacaoPorHorario(payload.data_batismo),
+      ]);
+      const av = avaliarHorarioBatismo(payload.horario_culto, { configurados, ocupacao });
+      if (!av.ok) {
+        // 409, não 400: não é erro de preenchimento — é o horário que fechou ou
+        // encheu enquanto a pessoa preenchia.
+        return res.status(409).json({
+          error: av.mensagem,
+          codigo: av.motivo === 'lotado' ? 'horario_lotado' : `horario_${av.motivo}`,
+          campo: 'horario_culto',
+        });
+      }
+    }
 
     const { data, error } = await supabase
       .from('batismo_inscricoes')
@@ -295,6 +378,24 @@ router.post('/', limiter, async (req, res) => {
       console.error('[publicBatismo] insert error:', error.message);
       return res.status(500).json({ error: 'Não foi possível registrar sua inscrição.' });
     }
+    await registrarObservacaoSegura({
+      membroId, origem: 'batismo_formulario', origemId: data.id,
+      nome: `${nomeT} ${sobrenomeT}`.trim(), cpf: cpfNorm,
+      telefone: telNorm, email: emailNorm, dataNascimento: nascValid,
+    });
+
+    // Atos de consentimento na satélite (Contrato de Inscrição). O de IMAGEM
+    // (fotos da cerimônia) é o que destrava fotos→marketing na revisão
+    // estrutural. Best-effort: a inscrição nunca é perdida por falha aqui.
+    registrarConsentimentos({
+      porta: 'batismo', refId: data.id, membroId,
+      ip: req.ip || null, userAgent: (req.headers['user-agent'] || '').slice(0, 300) || null,
+      itens: [
+        { tipo: 'termos_lgpd', aceito: true },
+        { tipo: 'imagem', aceito: Boolean(consent_imagem) },
+        { tipo: 'whatsapp', aceito: !!whatsapp_optin },
+      ],
+    }).catch((e) => console.error('[publicBatismo] consentimentos:', e.message));
 
     // Notifica responsáveis pela integração (assincrono)
     notificar({
@@ -390,3 +491,6 @@ router.get('/acesso', acessoLimiter, async (req, res) => {
 });
 
 module.exports = router;
+// Exposta pra fora do módulo (painelRh.js usa pra mostrar "próximo batismo"
+// no painel de RH da home) — mesma função, sem duplicar a régua do 4º domingo.
+module.exports.proximoQuartoDomingoISO = proximoQuartoDomingoISO;

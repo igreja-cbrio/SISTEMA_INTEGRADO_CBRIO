@@ -23,19 +23,27 @@ const ROUTE_MODULE_MAP = {
   'eventos':      ['eventos'],
   'events':       ['eventos'],
   'eventos-externos': ['eventos-externos'],
+  'inscricoes':   ['inscricoes'],
   'projects':     ['projetos'],
   'expansion':    ['expansao'],
   'solicitacoes': ['solicitacoes'],
+  'propostas':    ['propostas'],
   // ministeriais
   'integracao':   ['integracao'],
   'relatorios':   ['relatorios'],
   'cuidados':     ['cuidados'],
+  'conversas':    ['conversas'],
+  'comunicacao':  ['comunicacao'],
   'online':       ['online'],
   'wifi':         ['wifi'],
   'next':         ['next'],
   'next-batismo': ['next-batismo'],
   'voluntariado': ['voluntariado'],
   'membresia':    ['membresia'],
+  // Censo/pesquisas. Nível 1 = agregado; 2 = resposta nominal (mesma régua da
+  // membresia). Sem esta entrada, moduleNames viria vazio e o guard cairia no
+  // nível padrão do cargo — liberando o módulo pra quem não deveria ver.
+  'censo':        ['censo'],
   // Leitura de dados de PESSOA (nome/CPF/telefone) é legítima em vários módulos
   // ministeriais que trabalham com gente. Quem tem QUALQUER um destes em leitura
   // passa; quem não tem (ex.: conta só de logística/financeiro/produção/marketing,
@@ -49,6 +57,13 @@ const ROUTE_MODULE_MAP = {
   // endpoints do fluxo do totem (ex.: cpf-lookup).
   'membros-totem': ['membresia','grupos','cuidados','integracao','next','next-batismo','voluntariado','kids','ami','bridge','online','face','totem-membro'],
   'totem-membro': ['totem-membro'],
+  // Fluxo de inscrição em evento DENTRO do Totem Membro. A conta de quiosque só
+  // tem `totem-membro` (matriz zerada + override), então `authorizeModule
+  // ('inscricoes')` a bloquearia — e é o próprio totem que precisa inscrever.
+  // Mesmo padrão de `membros-totem`. ⚠️ Usar SÓ nos endpoints `/inscricoes/totem/*`:
+  // o que essas rotas fazem é o equivalente da porta pública (a pessoa se
+  // inscreve), não gestão do módulo.
+  'inscricoes-totem': ['inscricoes','totem-membro'],
   'face':         ['face'],
   'grupos':       ['grupos'],
   'kids':         ['kids'],
@@ -540,6 +555,7 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
 
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+    if (req.user.is_super_admin === true) return next();
 
     // Bloqueio explícito de módulo (deny por usuário) · vence até admin/diretor.
     const bloqueados = req.user.granular?.modulosBloqueados || [];
@@ -600,6 +616,32 @@ function authorizeModule(routeKey, nivelMinimo = 2) {
 }
 
 // ── Endpoint para o frontend buscar suas permissões ──
+// Super-admin ESTRITO (app_super_admins · não é role admin/diretor). Cache 5 min.
+const _superAdminCache = new Map(); // emailLower -> { at, val }
+async function isSuperAdminEmail(email) {
+  if (!email) return false;
+  const key = String(email).toLowerCase();
+  const hit = _superAdminCache.get(key);
+  if (hit && Date.now() - hit.at < 5 * 60 * 1000) return hit.val;
+  let val = false;
+  try {
+    const { data } = await supabase.from('app_super_admins')
+      .select('email').ilike('email', key).eq('ativo', true).maybeSingle();
+    val = !!data;
+  } catch { /* fail-closed */ }
+  _superAdminCache.set(key, { at: Date.now(), val });
+  return val;
+}
+
+// Middleware: só super-admin passa (ex.: Analytics do app · dado sensível).
+async function requireSuperAdmin(req, res, next) {
+  if (await isSuperAdminEmail(req.user?.email)) {
+    req.user.is_super_admin = true;
+    return next();
+  }
+  return res.status(403).json({ error: 'Acesso restrito aos administradores gerais.' });
+}
+
 // Exposto via GET /api/auth/my-permissions
 async function getMyPermissions(req, res) {
   if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
@@ -620,6 +662,7 @@ async function getMyPermissions(req, res) {
     role: req.user.role,
     area: req.user.area,
     name: req.user.name,
+    isSuperAdmin: await isSuperAdminEmail(req.user.email),
     modulos: modulosMeta,
     granular: req.user.granular ? {
       cargoId: req.user.granular.cargoId,
@@ -717,4 +760,5 @@ function applyAccessFilter(query, req, routeKey, opts = {}) {
 module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP,
   // exports aditivos · reuso da resolução de permissão (ex.: cobertura de férias,
   // grade de acesso efetivo por módulo na tela de Permissões > Usuários)
-  resolveEffectivePerms, getCargoMatrix, getModulos, AREA_MODULO_BOOST, _normalizarArea };
+  resolveEffectivePerms, getCargoMatrix, getModulos, AREA_MODULO_BOOST, _normalizarArea,
+  isSuperAdminEmail, requireSuperAdmin };

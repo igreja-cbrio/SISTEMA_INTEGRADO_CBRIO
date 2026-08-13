@@ -15,10 +15,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { ColorPicker } from '@/components/ui/ColorPicker';
-import { Loader2, Plus, Pencil, Trash2, Baby, Calendar, ChevronDown, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, RefreshCw, Users, Eye } from 'lucide-react';
+import { Loader2, Plus, Pencil, Trash2, Baby, Calendar, MapPin, Printer, ShieldAlert, ExternalLink, ArrowLeft, Sparkles, Upload, Download, AlertTriangle, CheckCircle2, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { totemKids, kpis } from '@/api';
-import { EtiquetaTesteForm, LogosEtiquetaManager } from '@/pages/ministerial/totemKids/TotemKidsTesteEtiqueta';
+import { EtiquetaTesteForm } from '@/pages/ministerial/totemKids/TotemKidsTesteEtiqueta';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { formatIdadeShort } from '@/pages/ministerial/totemKids/lib/idade';
 import { format } from 'date-fns';
@@ -27,7 +27,7 @@ import { ptBR } from 'date-fns/locale';
 export default function TotemKidsAdmin() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const ABAS = ['sessoes', 'salas', 'responsaveis', 'auditoria', 'etiqueta'];
+  const ABAS = ['sessoes', 'salas', 'auditoria', 'etiqueta'];
   const abaParam = searchParams.get('aba') || '';
   const aba = ABAS.includes(abaParam) ? abaParam : 'sessoes';
   return (
@@ -77,15 +77,13 @@ export function TotemKidsConfigTabs({ aba: abaProp, onAba, abas }: { aba?: strin
       <TabsList className="flex-wrap">
         {mostra('sessoes') && <TabsTrigger value="sessoes"><Calendar className="h-4 w-4 mr-1" /> Sessões</TabsTrigger>}
         {mostra('salas') && <TabsTrigger value="salas"><MapPin className="h-4 w-4 mr-1" /> Salas</TabsTrigger>}
-        {mostra('responsaveis') && <TabsTrigger value="responsaveis"><Users className="h-4 w-4 mr-1" /> Responsáveis</TabsTrigger>}
         {mostra('auditoria') && <TabsTrigger value="auditoria"><ShieldAlert className="h-4 w-4 mr-1" /> Auditoria</TabsTrigger>}
         {mostra('etiqueta') && <TabsTrigger value="etiqueta"><Printer className="h-4 w-4 mr-1" /> Etiqueta</TabsTrigger>}
       </TabsList>
       {mostra('sessoes') && <TabsContent value="sessoes"><AbaSessoes /></TabsContent>}
       {mostra('salas') && <TabsContent value="salas"><AbaSalas /></TabsContent>}
-      {mostra('responsaveis') && <TabsContent value="responsaveis"><AbaResponsaveis /></TabsContent>}
       {mostra('auditoria') && <TabsContent value="auditoria"><AbaAuditoria /></TabsContent>}
-      {mostra('etiqueta') && <TabsContent value="etiqueta"><div className="space-y-4"><LogosEtiquetaManager /><EtiquetaTesteForm /></div></TabsContent>}
+      {mostra('etiqueta') && <TabsContent value="etiqueta"><div className="space-y-4"><EtiquetaTesteForm /></div></TabsContent>}
     </Tabs>
   );
 }
@@ -109,6 +107,7 @@ function AbaSessoes() {
   const [carregando, setCarregando] = useState(true);
   const [processando, setProcessando] = useState<string | null>(null); // key do grupo em ação
   const [expandido, setExpandido] = useState<string | null>(null);
+  const [cultoSel, setCultoSel] = useState(''); // culto escolhido no "Ativar sessão"
 
   async function carregar() {
     setCarregando(true);
@@ -117,17 +116,17 @@ function AbaSessoes() {
       // config passa a mostrá-las como encerradas e o "Sessão atual" não oferece
       // mais culto de outro dia. Best-effort.
       try { await totemKids.sessoes.encerrarVencidas(); } catch { /* segue */ }
-      // Janela de cultos: últimos 7 + próximos 14 dias.
-      // Filtra so cultos cujo service_type tem has_kids=true · evita
-      // listar AMI/Bridge que não tem programacao infantil (Marcos 2026-05-21).
-      const hoje = new Date();
-      const inicio = new Date(hoje); inicio.setDate(hoje.getDate() - 7);
-      const fim = new Date(hoje); fim.setDate(hoje.getDate() + 14);
+      // Janela de cultos: de HOJE (BRT) até +14 dias. Sessões antigas (dias
+      // passados · já abertas e encerradas) NÃO aparecem mais no menu — só
+      // confundiam (Marcos 2026-07-15). +14 permite pré-abrir o próximo culto.
+      // Só cultos com has_kids (evita AMI/Bridge sem programação infantil).
+      const hojeBRT = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+      const fim = new Date(); fim.setDate(fim.getDate() + 14);
       const [s, c] = await Promise.all([
         totemKids.sessoes.list({ limit: 60 }),
         kpis.cultos.list({
           limit: 100,
-          data_inicio: inicio.toISOString().slice(0, 10),
+          data_inicio: hojeBRT,
           data_fim: fim.toISOString().slice(0, 10),
         }).catch(() => []),
       ]);
@@ -156,12 +155,37 @@ function AbaSessoes() {
     }
     return Array.from(mapa.values())
       .map(g => ({ ...g, cultos: g.cultos.sort((a, b) => String(a.hora || '').localeCompare(String(b.hora || ''))) }))
-      .sort((a, b) => b.data.localeCompare(a.data) || a.periodo.ordem - b.periodo.ordem);
+      .sort((a, b) => a.data.localeCompare(b.data) || a.periodo.ordem - b.periodo.ordem);
   })();
 
   function rotuloGrupo(g: { data: string; periodo: { rotulo: string } }): string {
     const dia = format(new Date(g.data + 'T00:00:00'), 'EEEE', { locale: ptBR });
     return `${dia.charAt(0).toUpperCase()}${dia.slice(1)} ${g.periodo.rotulo}`;
+  }
+
+  // Períodos de HOJE (BRT) · alvo do "Sessão atual" (trocar manhã ↔ noite).
+  const hojeBRT = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const periodosHoje = grupos.filter((g) => g.data === hojeBRT);
+
+  // "Ativar sessão de um culto" (livre · Marcos 2026-07-20): qualquer culto da
+  // janela (hoje→+14d, a lista já não traz passado), em qualquer dia/hora.
+  const cultosAtivaveis = [...cultos].sort((a: any, b: any) =>
+    String(a.data || '').localeCompare(String(b.data || '')) || String(a.hora || '').localeCompare(String(b.hora || '')));
+  function rotuloCulto(c: any): string {
+    const dia = c.data ? format(new Date(String(c.data) + 'T00:00:00'), 'EEE dd/MM', { locale: ptBR }) : '';
+    const diaCap = dia ? `${dia.charAt(0).toUpperCase()}${dia.slice(1)} · ` : '';
+    return `${diaCap}${c.nome}${c.hora ? ` · ${String(c.hora).slice(0, 5)}` : ''}`;
+  }
+  async function ativarCultoEscolhido() {
+    if (!cultoSel) return;
+    setProcessando('ativar-livre');
+    try {
+      await totemKids.sessoes.garantir(cultoSel);
+      toast.success('Sessão ativada — ao vivo no check-in.');
+      await carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao ativar a sessão');
+    } finally { setProcessando(null); }
   }
 
   async function abrirGrupo(g: any) {
@@ -175,13 +199,26 @@ function AbaSessoes() {
     } finally { setProcessando(null); }
   }
 
+  // Encerra com confirmação de limpeza (design v5 · 2026-07-22): o backend
+  // devolve 409 quando há check-ins fora do horário do culto (provável teste de
+  // ensaio) — pergunta e re-chama com a decisão humana. Nunca apaga sozinho.
+  async function encerrarComLimpeza(id: string) {
+    try {
+      await totemKids.sessoes.encerrar(id);
+    } catch (e: any) {
+      if (!e?.precisa_confirmar_limpeza) throw e;
+      const limpar = confirm(`${e.suspeitos} check-in(s) fora do horário do culto parecem teste.\n\nOK = apagar antes de consolidar (não contam no número) · Cancelar = manter tudo`);
+      await totemKids.sessoes.encerrar(id, { limpar_testes: limpar });
+    }
+  }
+
   async function encerrarGrupo(g: any) {
     const abertas = g.cultos.map((c: any) => sessaoPorCulto[c.id]).filter((s: any) => s && s.status === 'aberta');
     if (!abertas.length) return;
     if (!confirm(`Encerrar ${rotuloGrupo(g)}? Os KPIs de Kids serão consolidados.`)) return;
     setProcessando(g.key);
     try {
-      for (const s of abertas) await totemKids.sessoes.encerrar(s.id);
+      for (const s of abertas) await encerrarComLimpeza(s.id);
       toast.success('Encerrado · KPIs consolidados');
       await carregar();
     } catch (e: any) {
@@ -189,9 +226,22 @@ function AbaSessoes() {
     } finally { setProcessando(null); }
   }
 
+  // Troca a sessão do totem pra um período de HOJE: abre o escolhido e ENCERRA
+  // os outros abertos (consolida + baixa). "Trocar de verdade" (Marcos 2026-07-15).
+  async function trocarPeriodo(g: any) {
+    setProcessando(g.key);
+    try {
+      await totemKids.sessoes.trocarPeriodo(g.cultos.map((c: any) => c.id));
+      toast.success(`Sessão do totem: ${rotuloGrupo(g)}`);
+      await carregar();
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao trocar a sessão');
+    } finally { setProcessando(null); }
+  }
+
   async function encerrarUma(id: string) {
     if (!confirm('Encerrar essa sessão? KPIs serão consolidados.')) return;
-    try { await totemKids.sessoes.encerrar(id); toast.success('Encerrada'); await carregar(); }
+    try { await encerrarComLimpeza(id); toast.success('Encerrada'); await carregar(); }
     catch (e: any) { toast.error(e?.message || 'Erro'); }
   }
   async function abrirUma(cultoId: string) {
@@ -210,6 +260,76 @@ function AbaSessoes() {
         <p className="text-xs text-muted-foreground">
           Abra o período (ex.: <b>Domingo de manhã</b>) — os cultos do período ficam disponíveis. No check-in, o voluntário escolhe em qual culto a criança fica.
         </p>
+
+        {/* Ativar sessão de QUALQUER culto (Marcos 2026-07-20 v2 · v5 2026-07-22):
+            escolhe o culto e ativa, independente do dia e da hora — serve pra
+            ENSAIAR o check-in antes do culto. Design v5: ensaio (culto de outro
+            dia) NÃO entra no seletor da criança quando há culto de hoje aberto;
+            sem culto hoje, o check-in entra em MODO ENSAIO explícito (banner +
+            etiqueta TESTE) e os check-ins de teste são limpos sozinhos na virada
+            do dia (sweep). Culto de dia PASSADO fica fora (R1). */}
+        <div className="rounded-lg border border-border p-3 space-y-2">
+          <div className="text-sm font-semibold">Ativar sessão de um culto</div>
+          <p className="text-xs text-muted-foreground">
+            Escolha o culto e ative — vale qualquer dia e hora (ex.: ensaiar o check-in antes do domingo).
+            Ensaio de culto de outro dia aparece no check-in <b>só quando não há culto de hoje aberto</b>,
+            sai com etiqueta <b>TESTE</b> e os check-ins de teste somem sozinhos na virada do dia.
+          </p>
+          {carregando ? (
+            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          ) : cultosAtivaveis.length === 0 ? (
+            <p className="text-xs text-muted-foreground rounded-md border border-dashed border-border p-2">
+              Nenhum culto com Kids de hoje até daqui a 14 dias.
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={cultoSel} onValueChange={setCultoSel}>
+                <SelectTrigger className="h-9 w-full sm:w-[26rem]"><SelectValue placeholder="Escolha o culto…" /></SelectTrigger>
+                <SelectContent>
+                  {cultosAtivaveis.map((c: any) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {rotuloCulto(c)}{sessaoPorCulto[c.id]?.status === 'aberta' ? ' · ativa' : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {cultoSel && sessaoPorCulto[cultoSel]?.status === 'aberta' ? (
+                <span className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-2.5 py-1.5 text-xs text-emerald-700 dark:text-emerald-300">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Sessão ativa — ao vivo no check-in
+                </span>
+              ) : (
+                <Button size="sm" disabled={!cultoSel || processando === 'ativar-livre'} onClick={ativarCultoEscolhido}>
+                  {processando === 'ativar-livre' ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Plus className="h-4 w-4 mr-1" />} Ativar
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Sessão atual do totem · trocar entre os períodos de HOJE (ex.: manhã →
+            noite). Só aparece quando há +de um período hoje. Trocar ENCERRA o
+            período anterior (consolida + baixa) e abre o escolhido. */}
+        {periodosHoje.length > 1 && (
+          <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+            <div className="text-sm font-medium">Sessão atual do totem</div>
+            <p className="text-xs text-muted-foreground">Toque no período de hoje que o totem deve usar. O período anterior é encerrado (consolida os números + baixa quem ficou) e o escolhido abre.</p>
+            <div className="flex flex-wrap gap-2">
+              {periodosHoje.map((g) => {
+                const total = g.cultos.length;
+                const abertas = g.cultos.filter((c: any) => sessaoPorCulto[c.id]?.status === 'aberta').length;
+                const ativa = total > 0 && abertas === total;
+                return (
+                  <Button key={g.key} size="sm" variant={ativa ? 'default' : 'outline'}
+                    className={ativa ? 'bg-pink-600 hover:bg-pink-700' : ''}
+                    disabled={processando === g.key} onClick={() => trocarPeriodo(g)}>
+                    {processando === g.key ? <Loader2 className="h-4 w-4 animate-spin" /> : rotuloGrupo(g)}
+                    {ativa ? <span className="ml-1 text-[10px] uppercase tracking-wide">· atual</span> : null}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {carregando ? (
           <Loader2 className="h-6 w-6 animate-spin text-pink-500 mx-auto my-6" />
@@ -412,7 +532,6 @@ function AbaCriancas() {
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState('');
   const [modalImport, setModalImport] = useState(false);
-  const [sincronizando, setSincronizando] = useState(false);
   const [detalheId, setDetalheId] = useState<string | null>(null);
 
   async function carregar() {
@@ -421,20 +540,6 @@ function AbaCriancas() {
     finally { setCarregando(false); }
   }
   useEffect(() => { carregar(); }, []);
-
-  async function sincronizarPco() {
-    if (sincronizando) return;
-    setSincronizando(true);
-    try {
-      const r: any = await totemKids.criancas.syncPco();
-      toast.success(`Planning Center sincronizado · ${r.criadas} novas, ${r.atualizadas} atualizadas (${r.criancas_no_pco} crianças no PCO)`);
-      await carregar();
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao sincronizar com o Planning Center');
-    } finally {
-      setSincronizando(false);
-    }
-  }
 
   const filtradas = busca.trim().length >= 2
     ? criancas.filter(c => c.nome.toLowerCase().includes(busca.toLowerCase()))
@@ -449,10 +554,6 @@ function AbaCriancas() {
             {filtradas.length} de {criancas.length}
           </span>
           <div className="ml-auto flex gap-2">
-            <Button variant="outline" size="sm" onClick={sincronizarPco} disabled={sincronizando}>
-              {sincronizando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
-              {sincronizando ? 'Sincronizando…' : 'Sincronizar Planning Center'}
-            </Button>
             <Button variant="outline" size="sm" onClick={() => setModalImport(true)}>
               <Upload className="h-4 w-4 mr-1" /> Importar XLSX
             </Button>
@@ -883,179 +984,5 @@ function AbaAuditoria() {
       </CardContent>
     </Card>
     </div>
-  );
-}
-
-// ─── Aba Responsáveis · Faxina de vínculos poluídos ──────────────────────────
-// O import de 22/05 jogou a household inteira como responsável de cada criança
-// (ex.: criança com 18 responsáveis, 13 marcados como "mae"). Esta faxina PODA
-// os vínculos que NÃO casam com nenhum guardião real (quem de fato fez o check-in
-// da criança no PCO ou no nosso totem), sempre preservando contato de emergência
-// e NUNCA removendo o último responsável.
-function AbaResponsaveis() {
-  const [carregando, setCarregando] = useState(false);
-  const [aplicando, setAplicando] = useState(false);
-  const [previa, setPrevia] = useState<any>(null);
-  const [confirmar, setConfirmar] = useState(false);
-
-  async function gerarPrevia() {
-    setCarregando(true);
-    setPrevia(null);
-    try {
-      const r: any = await totemKids.criancas.corrigirResponsaveisPco(false);
-      setPrevia(r);
-      if ((r?.criancas_afetadas || 0) === 0) toast.info('Nada a limpar · nenhum vínculo fora dos guardiões reais.');
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao gerar a prévia');
-    } finally {
-      setCarregando(false);
-    }
-  }
-
-  async function aplicar() {
-    setAplicando(true);
-    try {
-      const r: any = await totemKids.criancas.corrigirResponsaveisPco(true);
-      setPrevia(r);
-      setConfirmar(false);
-      toast.success(`Limpeza aplicada · ${r?.vinculos_removidos || 0} vínculo(s) removido(s) em ${r?.criancas_afetadas || 0} criança(s).`);
-    } catch (e: any) {
-      toast.error(e?.message || 'Erro ao aplicar a limpeza');
-    } finally {
-      setAplicando(false);
-    }
-  }
-
-  const aplicado = previa?.modo === 'aplicado';
-  const nCriancas = previa?.criancas_afetadas || 0;
-  const nVinculos = previa?.vinculos_removidos || 0;
-  const nRevisar = previa?.total_revisar || 0;
-
-  return (
-    <Card>
-      <CardContent className="p-4 space-y-4">
-        <div className="space-y-1">
-          <div className="text-sm font-semibold flex items-center gap-2">
-            <Users className="h-4 w-4 text-pink-500" /> Faxina de responsáveis
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Remove os responsáveis que foram vinculados por engano no import (a família
-            inteira virou responsável de cada criança). Mantém só quem casa com um
-            <b> guardião real</b> — quem de fato fez o check-in da criança no Planning
-            Center ou no nosso totem — além de quem está marcado como <b>contato de
-            emergência</b>.
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 p-3 text-xs space-y-1">
-          <p className="font-medium text-amber-800 dark:text-amber-300 flex items-center gap-1">
-            <AlertTriangle className="h-4 w-4" /> Leia antes de aplicar
-          </p>
-          <ul className="list-disc pl-4 space-y-0.5 text-amber-900/90 dark:text-amber-200/90">
-            <li>Só age em crianças com <b>2 ou mais</b> responsáveis e que têm histórico de check-in.</li>
-            <li><b>Nunca</b> remove o último responsável — se nenhum casar, a criança não é tocada.</li>
-            <li>Contato de emergência é sempre preservado.</li>
-            <li>Casos ambíguos (ex.: vários &quot;mãe&quot; sem check-in que os distinga) vão pra <b>revisão manual</b>, não são removidos.</li>
-            <li>Aplicar é <b>irreversível</b> (a tabela de vínculos não tem lixeira). Sempre gere a prévia antes.</li>
-          </ul>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={gerarPrevia} disabled={carregando || aplicando}>
-            {carregando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Eye className="h-4 w-4 mr-1" />}
-            {carregando ? 'Analisando…' : 'Gerar prévia (não altera nada)'}
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => setConfirmar(true)}
-            disabled={aplicando || carregando || !previa || aplicado || nVinculos === 0}
-          >
-            <Trash2 className="h-4 w-4 mr-1" /> Aplicar limpeza
-          </Button>
-        </div>
-
-        {previa && (
-          <div className="space-y-3">
-            <div className={`rounded-lg border p-3 text-sm ${aplicado ? 'border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30' : 'border-border bg-muted/30'}`}>
-              <p className="font-medium flex items-center gap-1">
-                {aplicado ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Eye className="h-4 w-4" />}
-                {aplicado ? 'Limpeza aplicada' : 'Prévia (nada foi alterado)'}
-              </p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2 text-xs">
-                <div><span className="text-muted-foreground">Crianças afetadas:</span> <b>{nCriancas}</b></div>
-                <div><span className="text-muted-foreground">Vínculos {aplicado ? 'removidos' : 'a remover'}:</span> <b>{nVinculos}</b></div>
-                <div><span className="text-muted-foreground">Revisar manualmente:</span> <b>{nRevisar}</b></div>
-                <div><span className="text-muted-foreground">Check-ins PCO:</span> <b>{previa.checkins_pco_varridos ?? 0}</b>{previa?.fonte?.pco === false && ' (indisponível)'}</div>
-                <div><span className="text-muted-foreground">Crianças c/ checker PCO:</span> <b>{previa.criancas_com_checker_pco ?? 0}</b></div>
-                <div><span className="text-muted-foreground">Crianças c/ check-in totem:</span> <b>{previa.criancas_com_checkin_local ?? 0}</b></div>
-              </div>
-            </div>
-
-            {(previa.amostra || []).length > 0 && (
-              <div>
-                <div className="text-xs font-medium mb-1">Amostra (criança → manter / remover)</div>
-                <div className="space-y-1.5 max-h-72 overflow-y-auto">
-                  {previa.amostra.map((p: any, i: number) => (
-                    <div key={i} className="rounded-lg border p-2.5 text-xs">
-                      <div className="font-medium flex items-center gap-1"><Baby className="h-3.5 w-3.5 text-pink-500" /> {p.crianca}</div>
-                      <div className="mt-1 text-emerald-700 dark:text-emerald-400">
-                        <b>Manter:</b> {(p.manter || []).join(', ') || '—'}
-                      </div>
-                      <div className="text-red-600 dark:text-red-400">
-                        <b>Remover:</b> {(p.remover || []).join(', ') || '—'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {(previa.revisar_manualmente || []).length > 0 && (
-              <div>
-                <div className="text-xs font-medium mb-1 flex items-center gap-1">
-                  <AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> Revisar manualmente ({nRevisar})
-                </div>
-                <div className="space-y-1.5 max-h-52 overflow-y-auto">
-                  {previa.revisar_manualmente.map((r: any, i: number) => (
-                    <div key={i} className="rounded-lg border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/20 p-2.5 text-xs">
-                      <div className="font-medium">{r.crianca}</div>
-                      {(r.grupos || []).map((g: any, j: number) => (
-                        <div key={j} className="text-amber-800 dark:text-amber-300">
-                          {g.quantidade}× &quot;{g.parentesco}&quot; sem check-in que os distinga: {(g.nomes || []).join(', ')}
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        <Dialog open={confirmar} onOpenChange={(o) => !o && setConfirmar(false)}>
-          <DialogContent className="z-[1100]">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-red-600">
-                <AlertTriangle className="h-5 w-5" /> Confirmar limpeza de responsáveis
-              </DialogTitle>
-              <DialogDescription>
-                Esta ação vai remover <b>{nVinculos}</b> vínculo(s) de responsável em
-                <b> {nCriancas}</b> criança(s), conforme a prévia acima. A ação é
-                <b> irreversível</b>. A criança <b>nunca</b> fica sem responsável e o
-                contato de emergência é sempre preservado.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setConfirmar(false)} disabled={aplicando}>Cancelar</Button>
-              <Button variant="destructive" onClick={aplicar} disabled={aplicando}>
-                {aplicando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Trash2 className="h-4 w-4 mr-1" />}
-                Aplicar limpeza ({nVinculos})
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </CardContent>
-    </Card>
   );
 }

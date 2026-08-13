@@ -17,6 +17,10 @@ const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { acharOuCriarGuardado } = require('./membroMatch');
+// ⚠️ Vocabulário de sexo por destino: `vol_inscricoes.sexo` é canônico
+// (masculino/feminino) e `batismo_inscricoes.sexo` é curto (M/F). `sexoPara`
+// traduz; copiar cru grava valor que nenhum filtro encontra depois.
+const { sexoPara } = require('../utils/dadosDoCadastro');
 
 // destino → flag na matrícula + (grupos/voluntarios) caixa da área
 const NEXT_DIRECIONA = {
@@ -87,7 +91,7 @@ async function direcionarMatricula({ matriculaId, destinos = [], areas = [], use
 
   const { data: m, error: em } = await supabase
     .from('next_matriculas')
-    .select('id, turma_id, nome, sobrenome, cpf, telefone, email, data_nascimento, membro_id, indicou_grupo, indicou_servir, indicou_batismo, indicou_devocional')
+    .select('id, turma_id, nome, sobrenome, cpf, telefone, email, data_nascimento, sexo, membro_id, indicou_grupo, indicou_servir, indicou_batismo, indicou_devocional')
     .eq('id', matriculaId).is('deleted_at', null).single();
   if (em) throw em;
 
@@ -103,11 +107,49 @@ async function direcionarMatricula({ matriculaId, destinos = [], areas = [], use
   async function garantirMembro() {
     if (membroId) return membroId;
     try {
-      const r = await acharOuCriarGuardado({ cpf: m.cpf || null, telefone: m.telefone || null, nome: nomeCompleto, dataNascimento: m.data_nascimento || null, status: 'visitante' });
+      const r = await acharOuCriarGuardado({ cpf: m.cpf || null, telefone: m.telefone || null, nome: nomeCompleto, dataNascimento: m.data_nascimento || null, status: 'visitante', origem: 'next_direcionamento', origemId: m.id });
       membroId = r?.membro_id || null;
       if (membroId) await supabase.from('next_matriculas').update({ membro_id: membroId }).eq('id', m.id);
     } catch (e) { console.error('[nextDirecionar] acharOuCriarGuardado:', e.message); }
     return membroId;
+  }
+
+  // ── O que o Contrato pede, vindo da matrícula OU do cadastro ─────────────
+  //
+  // Pedido do Marcos (11/08): o direcionamento tem que carregar CPF, nascimento e
+  // sexo pra frente, como o app passou a fazer. A matrícula do Next é a fonte
+  // preferida (foi ela que a pessoa preencheu); o cadastro entra só onde ela
+  // está VAZIA — mesma política só-onde-vazio do censo e do CPF tardio.
+  //
+  // ⚠️ O `sexo` NÃO existia neste caminho: o formulário do Next passou a exigi-lo
+  // em 28/07, mas nem o `vol_inscricoes` nem o `batismo_inscricoes` criados aqui
+  // recebiam o valor — a pessoa respondia e o dado morria na matrícula.
+  // ⚠️ Best-effort: falhar ao ler o cadastro não pode derrubar o direcionamento,
+  // que é o que a equipe está fazendo com a pessoa na frente.
+  let cadastro = null;
+  async function dadosDaPessoa() {
+    if (cadastro === null && membroId) {
+      try {
+        const { data } = await supabase.from('mem_membros')
+          .select('cpf, data_nascimento, genero, email, telefone')
+          .eq('id', membroId).is('deleted_at', null).maybeSingle();
+        cadastro = data || false;
+      } catch (e) {
+        console.warn('[nextDirecionar] cadastro:', e.message);
+        cadastro = false;
+      }
+    }
+    const c = cadastro || {};
+    const naoVazio = (v) => v !== null && v !== undefined && String(v).trim() !== '';
+    return {
+      cpf: naoVazio(m.cpf) ? m.cpf : (c.cpf || null),
+      email: naoVazio(m.email) ? m.email : (c.email || null),
+      telefone: naoVazio(m.telefone) ? m.telefone : (c.telefone || null),
+      data_nascimento: naoVazio(m.data_nascimento) ? m.data_nascimento : (c.data_nascimento || null),
+      // ⚠️ `m.sexo` é canônico e `mem_membros.genero` também — mas passam pelo
+      // tradutor mesmo assim, pra cada destino receber o vocabulário DELE.
+      sexo: naoVazio(m.sexo) ? m.sexo : (c.genero || null),
+    };
   }
 
   const criados = {};
@@ -117,17 +159,19 @@ async function direcionarMatricula({ matriculaId, destinos = [], areas = [], use
       // "Quero servir" com áreas escolhidas → inscrição REAL no Voluntariado
       // (mesma tabela do formulário público), tag origem='next'. Dedup por matrícula.
       const { data: ja } = await supabase.from('vol_inscricoes').select('id')
-        .eq('next_matricula_id', m.id).limit(1).maybeSingle();
+        .eq('next_matricula_id', m.id).is('deleted_at', null).limit(1).maybeSingle();
       if (!ja) {
         await garantirMembro();
         const { labels, area } = await resolverAreasVol(areas);
+        const p = await dadosDaPessoa();
         const partes = String(m.nome || '').trim().split(/\s+/);
         await supabase.from('vol_inscricoes').insert({
           nome: partes[0] || (m.nome || 'Voluntário'),
           sobrenome: m.sobrenome || partes.slice(1).join(' ') || '',
           nome_completo: nomeCompleto,
-          cpf: m.cpf || null, email: m.email || null, telefone: m.telefone || null,
-          data_nascimento: m.data_nascimento || null, nome_mae: null,
+          cpf: p.cpf, email: p.email, telefone: p.telefone,
+          data_nascimento: p.data_nascimento, nome_mae: null,
+          sexo: sexoPara('canonico', p.sexo),
           data_inscricao: new Date().toISOString(),
           participou_next: 'True',
           ministerios_interesse: labels.join(', '),
@@ -169,11 +213,16 @@ async function direcionarMatricula({ matriculaId, destinos = [], areas = [], use
         ja = data;
       }
       if (!ja) {
+        const p = await dadosDaPessoa();
         const partes = String(m.nome || '').trim().split(/\s+/);
         await supabase.from('batismo_inscricoes').insert({
           nome: partes[0] || (m.nome || 'Convertido'),
           sobrenome: m.sobrenome || partes.slice(1).join(' ') || '',
-          cpf: m.cpf || null, telefone: m.telefone || null, membro_id: membroId || null,
+          cpf: p.cpf, telefone: p.telefone, membro_id: membroId || null,
+          // ⚠️ nascimento e e-mail NÃO eram passados aqui: a inscrição de batismo
+          // nascia sem eles mesmo com a pessoa tendo preenchido no Next.
+          data_nascimento: p.data_nascimento, email: p.email,
+          sexo: sexoPara('curto', p.sexo),   // ⚠️ o batismo guarda M/F, não canônico
           status: 'pendente', origem: 'next', observacoes: 'Direcionado pelo NEXT', inscrito_por: userId,
         });
         notificar({

@@ -21,11 +21,20 @@ const MODULO_ROTA_TRAVA = {
 
 // Prefixos de rota PERMITIDOS dentro da trava, quando o módulo opera em mais de
 // um prefixo (a landing continua sendo MODULO_ROTA_TRAVA). Kids: o quiosque usa
-// o hub (/ministerial/kids) + as telas do totem (/ministerial/totem-kids/...).
-// O painel do culto kids (/kids · aba Cultos) fica FORA de propósito — conta
-// travada não vê o gerencial. Módulo sem entrada aqui → só a rota de landing.
+// o hub (/ministerial/kids) + as telas do totem (/ministerial/totem-kids/...)
+// + o gerencial da área (/kids · PainelKids, aba Cultos).
+//
+// ⚠️ `/kids` entrou em 2026-08-03 (pedido do Matheus: voluntário do Kids também
+// precisa dos indicadores) — antes ficava fora de propósito. A trava continua
+// confinando a conta ao MESMO módulo: o cargo `voluntario-kids` só tem `kids`,
+// então liberar este prefixo não abre nenhum outro domínio. Foi o caminho
+// escolhido em vez de desligar `is_membro_only`, que derrubaria a trava inteira
+// e faria aparecer o menu com Painel CBRio e Dashboard Semanal (marcados como
+// visíveis pra qualquer logado em menuAccess.PUBLICO_TODOS).
+//
+// Módulo sem entrada aqui → só a rota de landing.
 const MODULO_TRAVA_PREFIXOS = {
-  kids: ['/ministerial/kids', '/ministerial/totem-kids'],
+  kids: ['/ministerial/kids', '/ministerial/totem-kids', '/kids'],
 };
 
 // Set to true to bypass login and simulate an admin user
@@ -62,6 +71,7 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(DEV_BYPASS_AUTH ? FAKE_PROFILE : null);
   const [modulePerms, setModulePerms] = useState(null);
   const [permData, setPermData] = useState(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [loading, setLoading] = useState(DEV_BYPASS_AUTH ? false : true);
   // Já temos sessão ativa? Usado pra distinguir login REAL de re-emissão de
   // SIGNED_IN por foco de aba (Alt+Tab) — ver onAuthStateChange abaixo.
@@ -142,6 +152,7 @@ export function AuthProvider({ children }) {
         const data = await res.json();
         setModulePerms(data.granular?.modulePerms ?? null);
         setPermData(data.granular ?? null);
+        setIsSuperAdmin(!!data.isSuperAdmin);
         return { ok: true };
       }
       // Resposta não-ok (ex.: 401 com token renovando no resume) · tenta 1x.
@@ -243,6 +254,7 @@ export function AuthProvider({ children }) {
         setProfile(null);
         setModulePerms(null);
         setPermData(null);
+        setIsSuperAdmin(false);
       }
     });
 
@@ -455,6 +467,7 @@ export function AuthProvider({ children }) {
     cargoNome,
     cargoSlug,
     isDev,
+    isSuperAdmin,
     signInWithMicrosoft,
     signInWithGoogle,
     signInWithEmail,
@@ -485,7 +498,7 @@ export function useAuth() {
       canProcessos: false, canSolicitacoes: false, canNPS: false,
       canDadosBrutos: false, canPainel: false, canKPIs: false,
       userAreas: [], userSetores: [],
-      cargoNome: null, cargoSlug: null, isDev: false,
+      cargoNome: null, cargoSlug: null, isDev: false, isSuperAdmin: false,
       recarregarAuth: async () => {},
       refreshProfile: async () => {},
       signInWithMicrosoft: async () => ({}),

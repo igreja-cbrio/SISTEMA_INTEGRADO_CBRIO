@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Check, X, AlertCircle, RefreshCw, Loader2, ShoppingCart, Wallet,
@@ -8,7 +8,8 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { Avatar, AvatarImage, AvatarFallback } from '../../../components/ui/avatar';
-import { financeiro } from '../../../api';
+import { DatePicker } from '@/components/ui/date-picker';
+import { financeiro, solicitacoes } from '../../../api';
 
 const fmtMoney = (v) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtDate = (iso) => iso ? new Date(iso).toLocaleString('pt-BR') : '—';
@@ -34,7 +35,7 @@ const CAT_INFO = {
   reembolso:  { label: 'Reembolso', icon: Wallet,       cor: '#10b981' },
 };
 
-export default function SolicitacoesFinanceiro() {
+export default function SolicitacoesFinanceiro({ solicitacaoId = null }) {
   const [tab, setTab] = useState('pendentes');
   return (
     <div className="space-y-4">
@@ -59,27 +60,39 @@ export default function SolicitacoesFinanceiro() {
         ))}
       </div>
 
-      {tab === 'pendentes' && <AbaPendentes />}
+      {tab === 'pendentes' && <AbaPendentes solicitacaoId={solicitacaoId} />}
       {tab === 'urgencia-frequente' && <AbaUrgenciaFrequente />}
     </div>
   );
 }
 
-function AbaPendentes() {
+function AbaPendentes({ solicitacaoId }) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [detalhe, setDetalhe] = useState(null);
   const [erro, setErro] = useState(null);
+  const [avisoLink, setAvisoLink] = useState(null);
+  const solicitacaoDoLinkAbertaRef = useRef(null);
 
   const reload = () => {
     setLoading(true);
     setErro(null);
     financeiro.solicitacoesPendentesFinanceiro()
-      .then(r => setItems(Array.isArray(r) ? r : []))
+      .then(r => {
+        const lista = Array.isArray(r) ? r : [];
+        setItems(lista);
+        if (solicitacaoId && solicitacaoDoLinkAbertaRef.current !== solicitacaoId) {
+          solicitacaoDoLinkAbertaRef.current = solicitacaoId;
+          setAvisoLink(null);
+          const item = lista.find(itemDaFila => itemDaFila.id === solicitacaoId);
+          if (item) setDetalhe(item);
+          else setAvisoLink('Esta solicitação não está mais aguardando a sua aprovação financeira.');
+        }
+      })
       .catch(e => setErro(e.message))
       .finally(() => setLoading(false));
   };
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); }, [solicitacaoId]);
 
   return (
     <Card>
@@ -99,6 +112,12 @@ function AbaPendentes() {
         {erro && (
           <div className="text-xs text-rose-500 bg-rose-500/10 border border-rose-500/30 rounded px-3 py-2 mb-3">
             {erro}
+          </div>
+        )}
+
+        {avisoLink && (
+          <div className="text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-3 py-2 mb-3">
+            {avisoLink}
           </div>
         )}
 
@@ -196,12 +215,38 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
   const [motivo, setMotivo] = useState('');
   const [revisao, setRevisao] = useState('');
   const [obs, setObs] = useState('');
+  const [formaPagamento, setFormaPagamento] = useState('');
   const [erro, setErro] = useState(null);
+  const [cotacoes, setCotacoes] = useState([]);
+  const [cotacoesLoading, setCotacoesLoading] = useState(false);
+  const [cotacoesErro, setCotacoesErro] = useState(false);
+  // Compra/serviço exige a forma de pagamento na aprovação: define quem executa
+  // (cartão → Amaury compra; demais → Cristina paga).
+  const ehCompraServico = ['compras', 'servico'].includes(s.categoria);
+
+  useEffect(() => {
+    let ativo = true;
+    if (!['compras', 'servico'].includes(s.categoria) || !s.cotacao_em) {
+      setCotacoes([]);
+      setCotacoesLoading(false);
+      setCotacoesErro(false);
+      return () => { ativo = false; };
+    }
+
+    setCotacoesLoading(true);
+    setCotacoesErro(false);
+    solicitacoes.listarCotacoes(s.id)
+      .then(resultado => { if (ativo) setCotacoes(Array.isArray(resultado) ? resultado : []); })
+      .catch(() => { if (ativo) { setCotacoes([]); setCotacoesErro(true); } })
+      .finally(() => { if (ativo) setCotacoesLoading(false); });
+    return () => { ativo = false; };
+  }, [s.id, s.categoria, s.cotacao_em]);
 
   const aprovar = async () => {
+    if (ehCompraServico && !formaPagamento) { setErro('Escolha a forma de pagamento para aprovar.'); return; }
     setLoading(true); setErro(null);
     try {
-      await financeiro.solicitacaoAprovarFinanceiro(s.id, obs);
+      await financeiro.solicitacaoAprovarFinanceiro(s.id, obs, formaPagamento || undefined);
       onAction();
     } catch (e) { setErro(e.message); } finally { setLoading(false); }
   };
@@ -294,6 +339,45 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
           )}
         </div>
 
+        {['compras', 'servico'].includes(s.categoria) && s.cotacao_em && (
+          <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 p-3 text-sm">
+            <div className="mb-2 text-[10px] font-semibold uppercase text-primary">Cotações enviadas pela logística</div>
+            {cotacoesLoading ? (
+              <div className="text-xs text-muted-foreground">Carregando cotações...</div>
+            ) : cotacoesErro ? (
+              <div style={{ padding: 12, background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 6, textAlign: 'center' }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível carregar as cotações</div>
+                <div style={{ fontSize: 11, color: '#791F1F' }}>Verifique com a logística se as cotações foram registradas antes de aprovar.</div>
+              </div>
+            ) : cotacoes.length ? (
+              <div className="space-y-2">
+                {cotacoes.map(cotacao => (
+                  <div key={cotacao.id} className={`rounded border p-2 text-xs ${cotacao.sugerida ? 'border-primary/40 bg-primary/10' : 'border-border/70 bg-background/50'}`}>
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                      <span className="font-semibold">{cotacao.fornecedor}</span>
+                      <span className="font-semibold tabular-nums">· {fmtMoney(cotacao.valor)}</span>
+                      {cotacao.sugerida && <Badge className="h-4 bg-primary/15 px-1.5 text-[9px] text-primary hover:bg-primary/15">Sugerida</Badge>}
+                      {cotacao.prazo && <span className="text-muted-foreground">· {cotacao.prazo}</span>}
+                    </div>
+                    {cotacao.link && (
+                      <a href={cotacao.link} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-primary hover:underline">
+                        <ExternalLink className="h-3 w-3" /> Abrir cotação
+                      </a>
+                    )}
+                    {cotacao.observacao && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{cotacao.observacao}</p>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <>
+                <div className="font-semibold tabular-nums">{fmtMoney(s.valor_cotado ?? s.valor_estimado)}</div>
+                {s.cotacao_fornecedor && <div className="mt-1 text-xs text-muted-foreground">Fornecedor: {s.cotacao_fornecedor}</div>}
+                {s.cotacao_observacao && <div className="mt-1 text-xs text-muted-foreground">{s.cotacao_observacao}</div>}
+              </>
+            )}
+          </div>
+        )}
+
         {s.eh_urgente && (
           <div className="bg-rose-500/10 border border-rose-500/30 rounded-md p-3 mb-3">
             <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400 text-sm font-semibold mb-1">
@@ -339,11 +423,34 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
                 <ExternalLink className="h-3 w-3" /> Ver comprovante
               </a>
             )}
+            {s.nota_fiscal_url && (
+              <a href={s.nota_fiscal_url} target="_blank" rel="noopener noreferrer"
+                 className="inline-flex items-center gap-1 text-xs text-primary hover:underline ml-3">
+                <ExternalLink className="h-3 w-3" /> Ver nota fiscal
+              </a>
+            )}
           </div>
         )}
 
         {!reprovaModal && !sobrestaModal ? (
           <>
+            {ehCompraServico && (
+              <div className="mb-3">
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Forma de pagamento *</label>
+                <select
+                  value={formaPagamento} onChange={e => setFormaPagamento(e.target.value)}
+                  className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background"
+                >
+                  <option value="">Selecione…</option>
+                  <option value="cartao_credito">Cartão de crédito — Amaury compra</option>
+                  <option value="boleto">Boleto — financeiro paga</option>
+                  <option value="pix">Pix — financeiro paga</option>
+                  <option value="transferencia_bancaria">Transferência — financeiro paga</option>
+                  <option value="dinheiro">Dinheiro — financeiro paga</option>
+                </select>
+                <p className="text-[11px] text-muted-foreground mt-1">Cartão → volta pro Amaury comprar. Demais → o financeiro (Cristina) executa o pagamento.</p>
+              </div>
+            )}
             <div className="mb-3">
               <label className="text-xs font-medium text-muted-foreground block mb-1">Observação (opcional)</label>
               <textarea
@@ -365,7 +472,7 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
                 className="flex-1 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30">
                 <Clock className="h-4 w-4 mr-1.5" /> Sobrestar
               </Button>
-              <Button onClick={aprovar} disabled={loading} className="flex-1">
+              <Button onClick={aprovar} disabled={loading || (ehCompraServico && !formaPagamento)} className="flex-1">
                 {loading ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Check className="h-4 w-4 mr-1.5" />}
                 Aprovar
               </Button>
@@ -387,8 +494,8 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
                 placeholder="Por que este pedido vai esperar? Ex: aguardar caixa do próximo mês"
               />
               <label className="text-xs block mb-1 mt-2">Data de revisão (opcional)</label>
-              <input
-                type="date" value={revisao} onChange={e => setRevisao(e.target.value)}
+              <DatePicker
+                value={revisao} onChange={v => setRevisao(v)}
                 className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background"
               />
             </div>

@@ -3,7 +3,8 @@
 // (Mariane Gaia / Milena) vê, contata (WhatsApp) e encaminha ao ministério.
 // Integrar (com verificação de antecedentes · ECA/LGPD) é no módulo Voluntariado.
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
+import { hrefConversa } from '@/lib/conversas';
 import { totemKids as api } from '../../../api';
 import { Card } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -161,10 +162,10 @@ export default function VoluntariadoInscricoesKids() {
                 ) : (
                   <div className="flex flex-wrap gap-1.5">
                     {wa ? (
-                      <a href={wa} target="_blank" rel="noopener noreferrer"
+                      <Link to={hrefConversa(i.telefone)}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-emerald-500/40 text-emerald-600 dark:text-emerald-400 text-xs hover:bg-emerald-500/10 transition">
                         <Phone className="h-3.5 w-3.5" /> WhatsApp
-                      </a>
+                      </Link>
                     ) : (
                       <span className="text-xs text-muted-foreground px-1 py-1.5">sem telefone</span>
                     )}

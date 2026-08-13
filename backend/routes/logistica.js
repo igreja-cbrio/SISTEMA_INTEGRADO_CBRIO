@@ -56,14 +56,12 @@ router.get('/dashboard', async (req, res) => {
       return res.json({ ...dashboardCache.data, _cached: true });
     }
 
-    const [fornecedores, solicitacoes, pedidos] = await Promise.all([
+    const [fornecedores, pedidos] = await Promise.all([
       supabase.from('log_fornecedores').select('id, ativo'),
-      supabase.from('log_solicitacoes_compra').select('id, status, valor_estimado'),
       supabase.from('log_pedidos').select('id, status, valor_total'),
     ]);
 
     const forn = fornecedores.data || [];
-    const solic = solicitacoes.data || [];
     const ped = pedidos.data || [];
 
     // ── Buscar dados do Mercado Livre (contagem de envios em trânsito + total de compras no mês) ──
@@ -131,10 +129,11 @@ router.get('/dashboard', async (req, res) => {
 
     const result = {
       fornecedoresAtivos: forn.filter(f => f.ativo).length,
-      solicitacoesPendentes: solic.filter(s => s.status === 'pendente').length,
-      solicitacoesAprovadas: solic.filter(s => s.status === 'aprovado').length,
       pedidosAguardando: ped.filter(p => p.status === 'aguardando').length,
       pedidosEmTransito: ped.filter(p => p.status === 'em_transito').length + mlEmTransito,
+      // Parcela do "Em Trânsito" que vem do Mercado Livre (aba Compras ML, não Pedidos) ·
+      // usado no front pra avisar quando o card mistura as 2 fontes.
+      mlPedidosEmTransito: mlEmTransito,
       pedidosRecebidos: ped.filter(p => p.status === 'recebido').length,
       valorTotalPedidos: ped.filter(p => p.status !== 'cancelado').reduce((s, p) => s + Number(p.valor_total), 0),
       mlComprasMes,
@@ -467,7 +466,8 @@ router.put('/notas/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar nota fiscal' }); }
 });
 
-// Enviar pro financeiro lançar (notifica a equipe do Yago)
+// Enviar pro financeiro lançar (notifica a equipe do financeiro ·
+// area_solicitacoes_responsaveis decide QUEM, não este comentário)
 router.post('/notas/:id/enviar-financeiro', async (req, res) => {
   try {
     const { data: nota, error: errNota } = await supabase.from('log_notas_fiscais')
@@ -697,6 +697,8 @@ router.post('/compras/escanear', uploadNf.single('arquivo'), async (req, res) =>
       });
     } catch (e) { console.error('[LOG] notificar compra:', e.message); }
 
+    // Compra escaneada no cartão → fatura aberta (best-effort)
+    try { await require('../services/finFaturas').vincularCompraNaFatura(compra); } catch (e2) { console.error('[LOG] fatura scan:', e2.message); }
     res.json({ compra, extracao_ok: !!extraido });
   } catch (e) { console.error('[LOG] escanear compra:', e); res.status(500).json({ error: 'Erro ao escanear a nota da compra' }); }
 });
@@ -793,6 +795,8 @@ router.post('/compras', async (req, res) => {
     const { data, error } = await supabase.from('log_compras')
       .insert(payload).select(COMPRA_SELECT).single();
     if (error) return res.status(400).json({ error: error.message });
+    // Compra no cartão → entra na fatura aberta do ciclo (Fase 4 · best-effort)
+    try { await require('../services/finFaturas').vincularCompraNaFatura(data); } catch (e2) { console.error('[LOG] fatura:', e2.message); }
     res.json(data);
   } catch (e) { console.error('[LOG] criar compra:', e); res.status(500).json({ error: 'Erro ao criar compra' }); }
 });

@@ -10,12 +10,25 @@ const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const { supabase } = require('../utils/supabase');
+const { fetchAllRows } = require('../utils/pagination');
 const govDocs = require('../services/sharepointGovernanca');
 const govIA = require('../services/governancaIA');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: govDocs.MAX_BYTES } });
 
-router.use(authenticate);
+// ⚠️ PADRÃO POR PREFIXO, copiado do `routes/totemKids.js` (que já resolvia isto
+// desde antes). Prefiro ele a uma lista de caminhos por um motivo prático: lista
+// exige manutenção, e "alguém acrescentou rota de cron e esqueceu de liberar" é
+// EXATAMENTE o bug que este conserto está tirando. `/cron/*` é convenção do
+// repo, então a regra se mantém sozinha.
+//
+// ⚠️ Fail-closed de verdade: só pula com segredo VÁLIDO (`isAuthorizedCron`).
+// Chamada manual de admin (JWT, sem segredo) segue pelo `authenticate` normal.
+router.use((req, res, next) => (
+  req.path.startsWith('/cron/') && isAuthorizedCron(req)
+    ? next()
+    : authenticate(req, res, next)
+));
 
 // ── Helpers ──
 const hoje = () => new Date().toISOString().split('T')[0];
@@ -51,12 +64,12 @@ function addDays(dateStr, days) {
 }
 
 const TIPOS = [
-  { sigla: 'OKR', nome: 'OKR', cor: '#3b82f6', recorrencia: 'Mensal — 1a quarta', descricao: 'Revisar objetivos estrategicos, KRs em risco, desvios e causas' },
-  { sigla: 'DRE', nome: 'DRE', cor: '#10b981', recorrencia: 'Mensal — 2a quarta', descricao: 'Saude economica: receita, custos, despesas, planejado x realizado' },
-  { sigla: 'KPI', nome: 'KPI', cor: '#f59e0b', recorrencia: 'Mensal — 3a quarta', descricao: 'Performance operacional: 5 pilares, meta x realizado, tendencia' },
-  { sigla: 'CC',  nome: 'Conselho Consultivo', cor: '#8b5cf6', recorrencia: 'Mensal — 4a quarta', descricao: 'Sintese OKR+DRE+KPI, riscos, decisoes estruturais' },
-  { sigla: 'DE',  nome: 'Diretoria Estatutaria', cor: '#ef4444', recorrencia: 'Quadrimestral', descricao: 'Relatório de diretoria: RH, patrimônio, financeiro acumulado' },
-  { sigla: 'AG',  nome: 'Assembleia Geral', cor: '#06b6d4', recorrencia: 'Semestral', descricao: 'Prestacao de contas completa a igreja' },
+  { sigla: 'OKR', nome: 'OKR', cor: '#3b82f6', recorrencia: 'Mensal — 1ª quarta', descricao: 'Revisar objetivos estratégicos, KRs em risco, desvios e causas' },
+  { sigla: 'DRE', nome: 'DRE', cor: '#10b981', recorrencia: 'Mensal — 2ª quarta', descricao: 'Saúde econômica: receita, custos, despesas, planejado x realizado' },
+  { sigla: 'KPI', nome: 'KPI', cor: '#f59e0b', recorrencia: 'Mensal — 3ª quarta', descricao: 'Performance operacional: 5 pilares, meta x realizado, tendência' },
+  { sigla: 'CC',  nome: 'Conselho Consultivo', cor: '#8b5cf6', recorrencia: 'Mensal — 4ª quarta', descricao: 'Síntese OKR+DRE+KPI, riscos, decisões estruturais' },
+  { sigla: 'DE',  nome: 'Diretoria Estatutária', cor: '#ef4444', recorrencia: 'Quadrimestral', descricao: 'Relatório de diretoria: RH, patrimônio, financeiro acumulado' },
+  { sigla: 'AG',  nome: 'Assembleia Geral', cor: '#06b6d4', recorrencia: 'Semestral', descricao: 'Prestação de contas completa à igreja' },
 ];
 
 router.get('/tipos', (req, res) => res.json(TIPOS));
@@ -69,14 +82,14 @@ async function buildOKR() {
   const h = hoje();
   const [projRes, tasksRes, risksRes, kpisRes, marcosRes] = await Promise.all([
     supabase.from('projects').select('id, name, status, date_end, responsible, area, budget_planned, budget_spent, priority, description, ourico_passa, gera_unidade, colabora_expansao, macro_eixo, publico_alvo, complexidade, impacto').neq('status', 'concluido').neq('status', 'cancelado').order('name'),
-    supabase.from('project_tasks').select('id, project_id, status'),
+    fetchAllRows(() => supabase.from('project_tasks').select('id, project_id, status')),  // 2.7k linhas → paginado
     supabase.from('project_risks').select('id, project_id, title, probability, impact, score, owner_name, status, mitigation').neq('status', 'mitigado').order('score', { ascending: false }),
     supabase.from('project_kpis').select('id, project_id, name, target_value, current_value, unit'),
     supabase.from('expansion_milestones').select('id, name, status, date_end, responsible, area, phase, budget_planned').neq('status', 'concluido').neq('status', 'cancelado').order('sort_order'),
   ]);
 
   const proj = projRes.data || [];
-  const tasks = tasksRes.data || [];
+  const tasks = tasksRes || [];  // fetchAllRows → array direto
   const risks = risksRes.data || [];
   const allKpis = kpisRes.data || [];
   const marcos = marcosRes.data || [];
@@ -151,7 +164,7 @@ async function buildOKR() {
       { item: 'Projetos no prazo', ok: atrasados.length === 0, valor: `${proj.length - atrasados.length}/${proj.length}` },
       { item: 'Todos com responsável', ok: projEnriched.every(p => p.responsible), valor: projEnriched.filter(p => !p.responsible).length === 0 ? 'OK' : `${projEnriched.filter(p => !p.responsible).length} sem resp.` },
       { item: 'Marcos de expansão atualizados', ok: marcosAtrasados.length === 0, valor: `${marcos.length - marcosAtrasados.length}/${marcos.length} no prazo` },
-      { item: 'Sem KRs criticos', ok: krsOffTrack === 0, valor: krsOffTrack === 0 ? 'OK' : `${krsOffTrack} KRs abaixo de 50%` },
+      { item: 'Sem KRs críticos', ok: krsOffTrack === 0, valor: krsOffTrack === 0 ? 'OK' : `${krsOffTrack} KRs abaixo de 50%` },
     ],
     resumo: {
       total_objetivos: proj.length, no_prazo: proj.length - atrasados.length - emRisco.length,
@@ -176,15 +189,16 @@ async function buildDRE(mes) {
 
   const [contasRes, transAtualRes, transAntRes, pagarRes, reembRes] = await Promise.all([
     supabase.from('fin_contas').select('id, nome, tipo, saldo, ativa').eq('ativa', true).order('nome'),
-    supabase.from('fin_transacoes').select('id, tipo, valor, data_competencia, descricao, fin_categorias(nome, tipo)').gte('data_competencia', inicioStr).lte('data_competencia', fimStr).neq('status', 'cancelado').order('data_competencia', { ascending: false }),
-    supabase.from('fin_transacoes').select('tipo, valor, fin_categorias(nome, tipo)').gte('data_competencia', mesAnteriorInicio).lte('data_competencia', mesAnteriorFim).neq('status', 'cancelado'),
+    // fin_transacoes do mês passa de 1000 (junho ~4k) — paginado nos 2 (mês e mês anterior)
+    fetchAllRows(() => supabase.from('fin_transacoes').select('id, tipo, valor, data_competencia, descricao, fin_categorias(nome, tipo)').gte('data_competencia', inicioStr).lte('data_competencia', fimStr).neq('status', 'cancelado').order('data_competencia', { ascending: false })),
+    fetchAllRows(() => supabase.from('fin_transacoes').select('tipo, valor, fin_categorias(nome, tipo)').gte('data_competencia', mesAnteriorInicio).lte('data_competencia', mesAnteriorFim).neq('status', 'cancelado')),
     supabase.from('fin_contas_pagar').select('id, descricao, fornecedor, valor, data_vencimento, status').eq('status', 'pendente').order('data_vencimento'),
     supabase.from('fin_reembolsos').select('id, descricao, valor, status').eq('status', 'pendente'),
   ]);
 
   const contas = contasRes.data || [];
-  const transAtual = transAtualRes.data || [];
-  const transAnt = transAntRes.data || [];
+  const transAtual = transAtualRes || [];  // fetchAllRows → array direto
+  const transAnt = transAntRes || [];
   const pagar = pagarRes.data || [];
   const reemb = reembRes.data || [];
 
@@ -212,7 +226,7 @@ async function buildDRE(mes) {
 
   return {
     checklist: [
-      { item: 'Transacoes do mês lancadas', ok: transAtual.length > 0, valor: `${transAtual.length} transacoes` },
+      { item: 'Transações do mês lançadas', ok: transAtual.length > 0, valor: `${transAtual.length} transações` },
       { item: 'Contas com saldo atualizado', ok: contas.length > 0, valor: `${contas.length} contas ativas` },
       { item: 'Sem contas a pagar vencidas', ok: pagarVencidas.length === 0, valor: pagarVencidas.length === 0 ? 'OK' : `${pagarVencidas.length} vencidas` },
       { item: 'Reembolsos processados', ok: reemb.length === 0, valor: reemb.length === 0 ? 'OK' : `${reemb.length} pendentes` },
@@ -244,7 +258,10 @@ async function buildKPI(mes) {
     // Investir em Deus = devocional do app (mem_devocionais · decisão Matheus 2026-06-20, era PENSE)
     supabase.from('mem_devocionais').select('membro_id').eq('concluida', true).is('deleted_at', null).gte('data_devocional', inicioStr).lte('data_devocional', fimStr),
     supabase.rpc('kpi_servir_comunidade', { _since: noventaDias.toISOString() }),
-    supabase.from('cultura_mensal').select('*').eq('mes', inicioStr).maybeSingle(),
+    // Generosidade = balanço vivo (fin_transacoes → vw_doacoes_mensal · dízimo+
+    // oferta por código de plano de contas), alimentado toda semana. Substitui o
+    // cultura_mensal (snapshot manual · parou em abr/2026 → falso "não preenchido").
+    supabase.from('vw_doacoes_mensal').select('*').eq('mes', inicioStr).maybeSingle(),
     supabase.from('kpi_metas').select('*').order('area'),
     supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('status', 'membro_ativo').is('deleted_at', null),
   ]);
@@ -258,6 +275,13 @@ async function buildKPI(mes) {
   const devoPessoas = new Set(devoRows.map(d => d.membro_id).filter(Boolean)).size;
   const volAtivos = pick(4).data != null ? (typeof pick(4).data === 'number' ? pick(4).data : 0) : 0;
   const cm = pick(5).data;
+  const genTotal = Number(cm?.total || 0);
+  const genDizimo = Number(cm?.dizimo || 0);
+  const genOferta = Number(cm?.oferta || 0);
+  const genDoacoes = Number(cm?.qtd_doacoes || 0);
+  const genDoadores = Number(cm?.qtd_doadores_unicos || 0);
+  const genPreenchido = genTotal > 0 || genDoacoes > 0;
+  const brl = (n) => 'R$ ' + Math.round(Number(n) || 0).toLocaleString('pt-BR');
   const metas = pick(6).data || [];
   const membrosAtivos = pick(7).count || 0;
 
@@ -276,14 +300,14 @@ async function buildKPI(mes) {
     conectar_pessoas: { label: 'Conectar Pessoas', valor: gruposCount, detalhe: `${gruposCount} membros ativos em grupos`, cor: '#10b981' },
     investir_deus: { label: 'Investir em Deus', valor: devoPessoas, detalhe: `${devoPessoas} pessoas no devocional (${devoCheckins} check-ins no mês)`, cor: '#f59e0b' },
     servir: { label: 'Servir', valor: volAtivos, detalhe: `${volAtivos} voluntarios ativos (90d)`, cor: '#ef4444' },
-    generosidade: { label: 'Generosidade', valor: (cm?.qtd_dizimistas || 0) + (cm?.qtd_ofertantes || 0), detalhe: `${cm?.qtd_dizimistas || 0} dizimistas + ${cm?.qtd_ofertantes || 0} ofertantes`, cor: '#8b5cf6' },
+    generosidade: { label: 'Generosidade', valor: genDoadores > 0 ? genDoadores : genDoacoes, detalhe: genPreenchido ? `${brl(genTotal)} · ${brl(genDizimo)} dízimo + ${brl(genOferta)} oferta (${genDoacoes} doações${genDoadores > 0 ? ` · ${genDoadores} doadores` : ''})` : 'Sem doações no mês', cor: '#8b5cf6' },
   };
 
   return {
     checklist: [
       { item: 'Cultos do mês registrados', ok: cultosAtual.length > 0, valor: `${cultosAtual.length} cultos` },
-      { item: 'Presenca registrada', ok: presMedia > 0, valor: presMedia > 0 ? `Media: ${presMedia}` : 'Sem registros' },
-      { item: 'Dados de generosidade', ok: cm != null, valor: cm ? `${cm.qtd_dizimistas || 0} dizimistas` : 'Não preenchido' },
+      { item: 'Presença registrada', ok: presMedia > 0, valor: presMedia > 0 ? `Média: ${presMedia}` : 'Sem registros' },
+      { item: 'Dados de generosidade', ok: genPreenchido, valor: genPreenchido ? `${brl(genTotal)} · ${genDoacoes} doações` : 'Não preenchido' },
       { item: 'Membresia atualizada', ok: membrosAtivos > 0, valor: `${membrosAtivos} membros ativos` },
     ],
     resumo: {
@@ -332,17 +356,17 @@ async function buildDE() {
   const [funcRes, bensRes, transRes] = await Promise.all([
     supabase.from('rh_funcionarios').select('id, nome, status, cargo, area').eq('status', 'ativo'),
     supabase.from('patrimonio_bens').select('id, nome, status, categoria_id'),
-    supabase.from('fin_transacoes').select('tipo, valor').gte('data_competencia', `${ano}-01-01`).neq('status', 'cancelado'),
+    fetchAllRows(() => supabase.from('fin_transacoes').select('tipo, valor').gte('data_competencia', `${ano}-01-01`).neq('status', 'cancelado')),  // ano ~21k → paginado
   ]);
   const funcs = funcRes.data || [];
   const bens = bensRes.data || [];
-  const trans = transRes.data || [];
+  const trans = transRes || [];  // fetchAllRows → array direto
   const recAno = trans.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
   const despAno = trans.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
   return {
     checklist: [
       { item: 'Quadro de funcionários atualizado', ok: funcs.length > 0, valor: `${funcs.length} ativos` },
-      { item: 'Patrimonio inventariado', ok: bens.length > 0, valor: `${bens.length} bens` },
+      { item: 'Patrimônio inventariado', ok: bens.length > 0, valor: `${bens.length} bens` },
       { item: 'Financeiro acumulado do ano', ok: trans.length > 0, valor: `Resultado: R$ ${(recAno - despAno).toLocaleString('pt-BR')}` },
     ],
     resumo: { funcionarios: funcs.length, bens: bens.length, receita_ano: recAno, despesa_ano: despAno, resultado_ano: recAno - despAno },
@@ -354,18 +378,18 @@ async function buildAG() {
   const ano = new Date().getFullYear();
   const [projRes, transRes, membrosRes, cultosRes] = await Promise.all([
     supabase.from('projects').select('id, name, status'),
-    supabase.from('fin_transacoes').select('tipo, valor').gte('data_competencia', `${ano}-01-01`).neq('status', 'cancelado'),
+    fetchAllRows(() => supabase.from('fin_transacoes').select('tipo, valor').gte('data_competencia', `${ano}-01-01`).neq('status', 'cancelado')),  // ano ~21k → paginado
     supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('status', 'membro_ativo').is('deleted_at', null),
     supabase.from('cultos').select('id', { count: 'exact', head: true }).gte('data', `${ano}-01-01`),
   ]);
   const proj = projRes.data || [];
-  const trans = transRes.data || [];
+  const trans = transRes || [];  // fetchAllRows → array direto
   const concluidos = proj.filter(p => p.status === 'concluido').length;
   const recAno = trans.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
   const despAno = trans.filter(t => t.tipo === 'despesa').reduce((s, t) => s + Number(t.valor), 0);
   return {
     checklist: [
-      { item: 'Projetos com status final', ok: true, valor: `${concluidos}/${proj.length} concluidos` },
+      { item: 'Projetos com status final', ok: true, valor: `${concluidos}/${proj.length} concluídos` },
       { item: 'Financeiro anual fechado', ok: trans.length > 0, valor: `R$ ${recAno.toLocaleString('pt-BR')} rec | R$ ${despAno.toLocaleString('pt-BR')} desp` },
       { item: 'Membresia atualizada', ok: (membrosRes.count || 0) > 0, valor: `${membrosRes.count || 0} membros ativos` },
     ],
@@ -461,17 +485,17 @@ router.get('/cron/lembrete', async (req, res) => {
     const dayOfWeek = new Date().getDay(); // 0=dom, 1=seg
 
     // Só roda na segunda-feira
-    if (dayOfWeek !== 1) return res.json({ skipped: true, reason: 'Não e segunda-feira' });
+    if (dayOfWeek !== 1) return res.json({ skipped: true, reason: 'Não é segunda-feira' });
 
     // Verificar se a próxima quarta é a 1a quarta do mês
     const nextWed = new Date();
     nextWed.setDate(nextWed.getDate() + 2); // segunda + 2 = quarta
-    if (nextWed.getDate() > 7) return res.json({ skipped: true, reason: 'Não e a 1a quarta do mês' });
+    if (nextWed.getDate() > 7) return res.json({ skipped: true, reason: 'Não é a 1ª quarta do mês' });
 
     // Gerar checklist
     const okr = await buildOKR();
     const krsNaoPreenchidos = (okr.checklist.find(c => c.item.includes('valor atual')) || {});
-    const projSemResp = (okr.checklist.find(c => c.item.includes('responsavel')) || {});
+    const projSemResp = (okr.checklist.find(c => c.item.includes('responsável')) || {});
 
     const mensagem = [
       `Reunião OKR em 2 dias (${nextWed.toLocaleDateString('pt-BR')}).`,
@@ -925,6 +949,9 @@ router.get('/kpi-objetivos', rd, async (req, res) => {
   try {
     // Até 60 meses: o comparativo de 5 anos da reunião de KPI agrega por ano.
     const meses = Math.max(3, Math.min(60, Number(req.query.meses) || 12));
+    // Modo ANO: filtra a série (jan–dez) E os valores/gauge para o desempenho
+    // daquele ano (média do % vs meta no ano), em vez do estado atual.
+    const ano = /^\d{4}$/.test(String(req.query.ano || '')) ? String(req.query.ano) : null;
 
     const [objRes, taticos] = await Promise.all([
       supabase.from('kpi_objetivos_gerais')
@@ -949,8 +976,12 @@ router.get('/kpi-objetivos', rd, async (req, res) => {
       if (t.meta_periodo != null && Number(t.meta_periodo) > 0) metaPorKpi[t.kpi_id] = Number(t.meta_periodo);
     }
     const idsComMeta = Object.keys(metaPorKpi);
-    const mesInicio = new Date(); mesInicio.setUTCMonth(mesInicio.getUTCMonth() - (meses - 1));
-    const mesInicioStr = mesInicio.toISOString().slice(0, 7);
+    // Janela: no modo ANO é jan–dez do ano; senão os últimos N meses até hoje.
+    const mesInicioStr = ano ? `${ano}-01` : (() => {
+      const d = new Date(); d.setUTCMonth(d.getUTCMonth() - (meses - 1));
+      return d.toISOString().slice(0, 7);
+    })();
+    const mesFimStr = ano ? `${ano}-12` : null;
 
     // valores por kpi × mês (média quando há várias semanas no mês)
     const buckets = {}; // `${kpi}|${mes}` -> number[]
@@ -958,44 +989,61 @@ router.get('/kpi-objetivos', rd, async (req, res) => {
       if (valor == null || metaPorKpi[kpi] == null) return;
       const mes = periodoParaMes(periodo);
       if (!mes || mes < mesInicioStr) return;
+      if (mesFimStr && mes > mesFimStr) return;
       (buckets[`${kpi}|${mes}`] ||= []).push(Number(valor));
     };
     if (idsComMeta.length) {
       // Corte por ano é seguro pra todos os formatos de período ('YYYY-MM',
       // 'YYYY-Wnn', 'YYYY-Qn'…): comparação lexicográfica com o prefixo do ano.
-      const anoCorte = mesInicioStr.slice(0, 4);
+      // No modo ANO limita [ano, ano+1); senão a partir do ano de início.
+      const gteCorte = ano ? ano : mesInicioStr.slice(0, 4);
+      const ltCorte = ano ? String(Number(ano) + 1) : null;
+      const aplicarCorte = (q) => { let x = q.gte('periodo_referencia', gteCorte); return ltCorte ? x.lt('periodo_referencia', ltCorte) : x; };
       const [calc, regs] = await Promise.all([
         fetchPaged('kpi_valores_calculados', 'kpi_id, periodo_referencia, valor_calculado',
-          (q) => q.in('kpi_id', idsComMeta).gt('valor_calculado', 0).gte('periodo_referencia', anoCorte)),
+          (q) => aplicarCorte(q.in('kpi_id', idsComMeta).gt('valor_calculado', 0))),
         fetchPaged('kpi_registros', 'indicador_id, periodo_referencia, valor_realizado',
-          (q) => q.in('indicador_id', idsComMeta).gt('valor_realizado', 0).gte('periodo_referencia', anoCorte)),
+          (q) => aplicarCorte(q.in('indicador_id', idsComMeta).gt('valor_realizado', 0))),
       ]);
       // Calculados têm precedência (mesma regra da view) · registros cobrem os manuais.
       const temCalc = new Set(calc.map(c => c.kpi_id));
       for (const c of calc) addBucket(c.kpi_id, c.periodo_referencia, c.valor_calculado);
       for (const r of regs) if (!temCalc.has(r.indicador_id)) addBucket(r.indicador_id, r.periodo_referencia, r.valor_realizado);
     }
-    // % do kpi no mês → média por objetivo no mês
+    // % do kpi no mês → média por objetivo no mês. Também guarda o % do kpi no
+    // ANO (média dos meses) pra alimentar gauge/áreas no modo ano.
     const serieObj = {}; // objetivoId -> { mes -> number[] }
+    const kpiPctsAno = {}; // kpi -> number[] (% mensais no ano)
     for (const [chave, vals] of Object.entries(buckets)) {
       const [kpi, mes] = chave.split('|');
       const media = vals.reduce((a, b) => a + b, 0) / vals.length;
       const pct = Math.round((media / metaPorKpi[kpi]) * 1000) / 10;
       const obj = objPorKpi[kpi];
       ((serieObj[obj] ||= {})[mes] ||= []).push(pct);
+      (kpiPctsAno[kpi] ||= []).push(pct);
     }
+    const kpiAnoPct = {}; // kpi -> % médio no ano
+    for (const [kpi, ps] of Object.entries(kpiPctsAno)) kpiAnoPct[kpi] = avg(ps);
 
     const resposta = objetivos.map(o => {
       const ts = porObjetivo[o.id] || [];
-      const medidos = ts.filter(t => t.ultimo_valor != null);
-      const pcts = ts.map(t => t.percentual_meta).filter(v => v != null).map(Number);
+      // No modo ANO, "medido" = tem dado no ano; % = desempenho no ano. Senão, estado atual.
+      const medidos = ano ? ts.filter(t => kpiAnoPct[t.kpi_id] != null) : ts.filter(t => t.ultimo_valor != null);
+      const pcts = ano
+        ? ts.map(t => kpiAnoPct[t.kpi_id]).filter(v => v != null)
+        : ts.map(t => t.percentual_meta).filter(v => v != null).map(Number);
       const porArea = {};
       for (const t of ts) {
         const a = t.area || 'sem_area';
         (porArea[a] ||= { pcts: [], medidos: 0, total: 0 });
         porArea[a].total++;
-        if (t.ultimo_valor != null) porArea[a].medidos++;
-        if (t.percentual_meta != null) porArea[a].pcts.push(Number(t.percentual_meta));
+        const pctAno = kpiAnoPct[t.kpi_id];
+        if (ano) {
+          if (pctAno != null) { porArea[a].medidos++; porArea[a].pcts.push(pctAno); }
+        } else {
+          if (t.ultimo_valor != null) porArea[a].medidos++;
+          if (t.percentual_meta != null) porArea[a].pcts.push(Number(t.percentual_meta));
+        }
       }
       const areas = {};
       for (const [a, v] of Object.entries(porArea)) areas[a] = { pct: avg(v.pcts), medidos: v.medidos, total: v.total };
@@ -1170,7 +1218,7 @@ router.post('/meetings/:id/gerar-pauta', wr, async (req, res) => {
     const dadosVivos = await dadosVivosPorSigla(sigla, mes);
     const row = await govIA.gerarPauta({ meetingId: req.params.id, userId: req.user.userId, dadosVivos });
     res.status(201).json(row);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { console.error('[governanca] gerar-pauta:', e.message); res.status(500).json({ error: e.message }); }
 });
 
 // Edita o texto in-app de um documento gerado (pauta_ia · refinamento humano).

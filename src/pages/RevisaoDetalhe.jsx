@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { revisoes } from '../api';
 import { toast } from 'sonner';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -27,8 +28,8 @@ function DependencyGraph({ item, dependentes, deltaDias, fullscreen, onToggleFul
   if (!dependentes || dependentes.length === 0) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: C.t3, fontSize: 13 }}>
-        Este {item?._tipo === 'projeto' ? 'projeto' : 'marco'} nao possui dependentes.
-        <br />Alteracoes nao impactam outros itens.
+        Este {item?._tipo === 'projeto' ? 'projeto' : 'marco'} não possui dependentes.
+        <br />Alterações não impactam outros itens.
       </div>
     );
   }
@@ -112,7 +113,7 @@ function DependencyGraph({ item, dependentes, deltaDias, fullscreen, onToggleFul
     <div style={wrapperStyle}>
       {fullscreen && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Mapa de dependencias — {item?.name}</span>
+          <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Mapa de dependências — {item?.name}</span>
           <button onClick={onToggleFullscreen} style={{ padding: '6px 18px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Fechar tela cheia</button>
         </div>
       )}
@@ -249,14 +250,14 @@ export default function RevisaoDetalhe() {
       {/* ═══ GRAFO DE DEPENDENCIAS ═══ */}
       <div style={{ background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', marginBottom: 24, overflow: 'hidden' }}>
         <div style={{ padding: '12px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', gap: 10, background: 'var(--cbrio-table-header)' }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Mapa de dependencias</span>
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Mapa de dependências</span>
           {impacto?.total_impactados > 0 && (
             <span style={{ fontSize: 11, padding: '2px 10px', borderRadius: 99, background: dateChanged ? C.red + '20' : C.amber + '20', color: dateChanged ? C.red : C.amber, fontWeight: 700 }}>
               {impacto.total_impactados} marcos impactados
             </span>
           )}
           {impacto?.custo_impactado > 0 && (
-            <span style={{ fontSize: 11, color: C.t3 }}>Orcamento afetado: <strong style={{ color: C.red }}>{fmtMoney(impacto.custo_impactado)}</strong></span>
+            <span style={{ fontSize: 11, color: C.t3 }}>Orçamento afetado: <strong style={{ color: C.red }}>{fmtMoney(impacto.custo_impactado)}</strong></span>
           )}
           {dateChanged && impacto?.delta_dias !== 0 && (
             <span style={{ fontSize: 11, padding: '2px 10px', borderRadius: 99, background: impacto.delta_dias > 0 ? C.red + '20' : C.green + '20', color: impacto.delta_dias > 0 ? C.red : C.green, fontWeight: 700 }}>
@@ -293,17 +294,17 @@ export default function RevisaoDetalhe() {
           </div>
           <div>
             <label style={LABEL}>Data início</label>
-            <input type="date" value={form.date_start || ''} onChange={ev => setForm(f => ({ ...f, date_start: ev.target.value }))} style={INPUT} />
+            <DatePicker value={form.date_start || ''} onChange={v => setForm(f => ({ ...f, date_start: v }))} style={INPUT} />
           </div>
           <div>
             <label style={LABEL}>Data fim</label>
-            <input type="date" value={form.date_end || ''} onChange={ev => {
-              setForm(f => ({ ...f, date_end: ev.target.value }));
-              recalcImpacto(ev.target.value);
+            <DatePicker value={form.date_end || ''} onChange={v => {
+              setForm(f => ({ ...f, date_end: v }));
+              recalcImpacto(v);
             }} style={{ ...INPUT, borderColor: dateChanged ? C.primary : undefined, borderWidth: dateChanged ? 2 : 1 }} />
           </div>
           <div>
-            <label style={LABEL}>Orcamento planejado</label>
+            <label style={LABEL}>Orçamento planejado</label>
             <input type="number" value={form.budget_planned ?? ''} onChange={ev => setForm(f => ({ ...f, budget_planned: Number(ev.target.value) || 0 }))} style={INPUT} />
           </div>
           <div>
@@ -349,16 +350,16 @@ export default function RevisaoDetalhe() {
         </div>
 
         <div style={{ marginTop: 18, display: 'flex', gap: 10, alignItems: 'center' }}>
-          <button onClick={salvar} disabled={saving} style={{ padding: '10px 32px', borderRadius: 8, border: 'none', background: C.primary, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Salvando...' : 'Salvar alteracoes'}</button>
+          <button onClick={salvar} disabled={saving} style={{ padding: '10px 32px', borderRadius: 8, border: 'none', background: C.primary, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', opacity: saving ? 0.6 : 1 }}>{saving ? 'Salvando...' : 'Salvar alterações'}</button>
           <button onClick={() => navigate('/revisao')} style={{ padding: '10px 24px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'transparent', color: C.t2, fontSize: 13, cursor: 'pointer' }}>Cancelar</button>
           <button onClick={async () => {
             const label = tipo === 'projeto' ? 'projeto' : 'marco';
             if (!window.confirm(`Tem certeza que deseja excluir este ${label}?\n\n"${item.name}"\n\nEssa ação não pode ser desfeita.`)) return;
-            const motivoExclusao = window.prompt('Motivo da exclusao (opcional):') || '';
+            const motivoExclusao = window.prompt('Motivo da exclusão (opcional):') || '';
             try {
               const fn = tipo === 'projeto' ? revisoes.deleteProjeto : revisoes.deleteExpansao;
               await fn(id, motivoExclusao);
-              toast.success(`${label.charAt(0).toUpperCase() + label.slice(1)} excluido`);
+              toast.success(`${label.charAt(0).toUpperCase() + label.slice(1)} excluído`);
               navigate('/revisao');
             } catch (err) { toast.error(err.message || 'Erro ao excluir'); }
           }} style={{ marginLeft: 'auto', padding: '10px 24px', borderRadius: 8, border: `1px solid ${C.red}`, background: 'transparent', color: C.red, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Excluir {tipo === 'projeto' ? 'projeto' : 'marco'}</button>
@@ -369,7 +370,7 @@ export default function RevisaoDetalhe() {
       {historico.length > 0 && (
         <div style={{ background: 'var(--cbrio-card)', borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
           <div style={{ padding: '12px 20px', borderBottom: `1px solid ${C.border}`, background: 'var(--cbrio-table-header)' }}>
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Historico de revisoes ({historico.length})</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Histórico de revisões ({historico.length})</span>
           </div>
           <div style={{ maxHeight: 250, overflowY: 'auto' }}>
             {historico.map(h => (

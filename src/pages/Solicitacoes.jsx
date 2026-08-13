@@ -10,11 +10,12 @@ import { Card } from '../components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../components/ui/dialog';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '../components/ui/sheet';
 import { Input } from '../components/ui/input';
+import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil, Lock } from 'lucide-react';
+import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil, Lock, Info } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
@@ -41,13 +42,54 @@ const URGENCIAS = [
 const KANBAN_COLUMNS = [
   { key: 'aguardando_aprovacao', label: 'Aguardando aprovação', icon: Clock, color: 'border-b-violet-500', match: ['aguardando_aprovacao_origem', 'aguardando_merito'], readOnly: true },
   { key: 'em_cotacao',     label: 'Em cotação',   icon: ClipboardList, color: 'border-b-cyan-500',    match: ['em_cotacao'] },
-  { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-b-amber-500',   match: ['pendente', 'aguardando_aprovacao_financeira', 'aguardando_ajuste'] },
+  { key: 'no_financeiro',  label: 'No financeiro', icon: Clock,       color: 'border-b-orange-500',  match: ['aguardando_aprovacao_financeira'], readOnly: true, hint: 'Aguardando aprovação financeira — a decisão é feita na tela do Financeiro. Compra dentro da sua alçada você aprova abrindo o card.' },
+  { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-b-amber-500',   match: ['pendente', 'aguardando_ajuste'] },
   { key: 'em_analise',     label: 'Em Análise',   icon: SearchIcon,   color: 'border-b-blue-500',    match: ['em_analise'] },
   { key: 'em_atendimento', label: 'Em Andamento', icon: CheckCircle2, color: 'border-b-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'] },
   { key: 'sobrestada',     label: 'Em espera',    icon: Clock,        color: 'border-b-slate-400',   match: ['sobrestada'], readOnly: true, hint: 'Aguardando verba ou equipe — volta a andar quando for retomada.' },
   { key: 'concluido',      label: 'Concluído',    icon: CheckCircle2, color: 'border-b-emerald-600', match: ['concluido', 'avaliado'] },
   { key: 'rejeitado',      label: 'Rejeitado',    icon: XCircle,      color: 'border-b-red-500',     match: ['rejeitado', 'cancelado'] },
 ];
+
+// Board macro (redesign 2026-07-24 · pedido do Matheus · referência "Board de
+// Solicitações") · as 8 colunas viraram 4 etapas macro pra tirar a rolagem
+// lateral e as colunas vazias. Rejeitadas/canceladas ficam num bloco DISCRETO
+// recolhível embaixo (não é coluna). O status detalhado vira uma pílula discreta
+// no card; a coluna Aprovação ganha o destaque teal (é onde precisa de você).
+const KANBAN_MACRO = [
+  { key: 'aprovacao', label: 'Aprovação', accent: '#00B39D',
+    match: ['aguardando_aprovacao_origem', 'aguardando_merito', 'pendente', 'em_analise', 'aguardando_ajuste'],
+    sub: 'precisa de decisão',
+    desc: 'Solicitações esperando uma decisão: aprovação do diretor de origem, julgamento de mérito do Pastor Presidente, ou análise/aprovação da área que atende. É aqui que alguém precisa dizer "pode seguir".' },
+  { key: 'cotacao_fin', label: 'Cotação & Financeiro', accent: '#0ea5e9',
+    match: ['em_cotacao', 'aguardando_aprovacao_financeira'],
+    sub: 'cotação e pagamento',
+    desc: 'Compras aprovadas na origem: o Amaury faz a cotação com os fornecedores e envia ao financeiro; o Alberto aprova o pagamento. A decisão de cada portão é feita nos blocos próprios do card (Cotação) e na tela do Financeiro.' },
+  { key: 'andamento', label: 'Em andamento', accent: '#22c55e',
+    match: ['aprovado', 'em_atendimento', 'aguardando_entrega', 'sobrestada'],
+    sub: 'aprovadas & em atendimento',
+    desc: 'Já foi aprovado e está sendo executado: comprando, pagando, a caminho da entrega, ou em atendimento pela área. "Em espera" (sobrestada) também fica aqui até ser retomada.' },
+  { key: 'concluido', label: 'Concluído', accent: '#8a938f',
+    match: ['concluido', 'avaliado'],
+    sub: 'últimos 90 dias',
+    desc: 'Solicitações entregues/finalizadas nos últimos 90 dias. As rejeitadas e canceladas ficam no bloco "Não aprovadas", separado, no rodapé.' },
+];
+const MACRO_REJEITADO_MATCH = ['rejeitado', 'cancelado'];
+// Estados terminais · usado pra tirar item já encerrado da fila "Para Atender"
+// (Foco/Lista) por padrão. Espelha os matches de concluído (KANBAN_MACRO) +
+// não aprovado (MACRO_REJEITADO_MATCH) num Set só, pra checagem O(1).
+const STATUS_ENCERRADO_ATENDER = new Set(['concluido', 'avaliado', ...MACRO_REJEITADO_MATCH]);
+
+// Cor de acento por categoria (borda-esquerda + pontinho do card macro). Poucas
+// cores, semânticas (a paleta que o Matheus curtiu na referência): a categoria é
+// o único código de cor "arbitrário"; verde=ação, vermelho=atraso, âmbar=SLA.
+const CAT_ACCENT = {
+  compras: '#f59e0b', infraestrutura: '#6366f1', servico: '#0ea5e9',
+  pagamento: '#10b981', reembolso: '#22c55e', reserva_espaco: '#a855f7',
+  hospitalidade: '#f43f5e', ti: '#3b82f6', marketing: '#ec4899',
+  producao: '#8b5cf6', ferias: '#06b6d4', licenca: '#14b8a6',
+};
+function catAccent(cat) { return CAT_ACCENT[cat] || '#8a938f'; }
 
 // Kanban do SOLICITANTE (aba Minhas · 2026-07-02) · colunas MACRO próprias, TODAS
 // read-only: o solicitante acompanha o pedido, não move (quem move é a área na aba
@@ -91,6 +133,18 @@ function getUrgMeta(urg) {
 function getStatusMeta(status) {
   return STATUS_LABELS[status] || { label: status, color: 'bg-muted text-muted-foreground' };
 }
+// Normaliza pra comparar texto sem se importar com acento/caixa (ex.: "Produção" ~ "Produção de Culto").
+function normalizarTxt(s) {
+  return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+// A badge de área é redundante quando o nome da área é igual (ou está contido) no nome da
+// categoria — ex.: categoria "Compras" · área "Compras", ou "Produção de Culto" · "Produção".
+// Nesses casos as duas badges mostravam a mesma palavra lado a lado.
+function areaBadgeRedundante(catLabel, areaLabel) {
+  const a = normalizarTxt(catLabel), b = normalizarTxt(areaLabel);
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
 
 
 export default function Solicitacoes() {
@@ -103,7 +157,6 @@ export default function Solicitacoes() {
   const [filterCat, setFilterCat] = useState('todas');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
-  const [dragOverCol, setDragOverCol] = useState(null);
   // Fase 2 · filtros de escala + período + layout da fila
   const [filterArea, setFilterArea] = useState('todas');
   const [filterStatus, setFilterStatus] = useState('todos');
@@ -118,7 +171,13 @@ export default function Solicitacoes() {
   // alguma área (area_solicitacoes_responsaveis). Fonte de verdade no backend
   // via /meu-papel · colaborador comum so ve "Minhas Solicitações".
   // papel.eh_diretor_origem · habilita aba "Aprovar" (diretor de setor da Spec 001).
-  const [papel, setPapel] = useState({ atende: false, admin: false, eh_diretor_origem: false, pendentes_origem: 0, eh_triagem_admin: false, pendentes_triagem: 0 });
+  // Seed do último papel conhecido (localStorage) → a aba "Aprovar" renderiza NA
+  // HORA ao reabrir, sem piscar esperando o /meu-papel (bug 2026-07-20).
+  const PAPEL_PADRAO = { atende: false, admin: false, eh_diretor_origem: false, pendentes_origem: 0, eh_triagem_admin: false, pendentes_triagem: 0 };
+  const [papel, setPapel] = useState(() => {
+    try { const c = localStorage.getItem('cbrio_solic_papel'); return c ? { ...PAPEL_PADRAO, ...JSON.parse(c) } : PAPEL_PADRAO; }
+    catch { return PAPEL_PADRAO; }
+  });
   const [papelCarregado, setPapelCarregado] = useState(false);
   const atendeAreas = papel.atende;
   const ehDiretorOrigem = papel.eh_diretor_origem;
@@ -138,7 +197,7 @@ export default function Solicitacoes() {
   async function refreshPapel() {
     try {
       const r = await api.meuPapel?.();
-      if (r) setPapel(r);
+      if (r) { setPapel(r); try { localStorage.setItem('cbrio_solic_papel', JSON.stringify(r)); } catch (_) {} }
     } catch (_) {}
   }
 
@@ -147,7 +206,7 @@ export default function Solicitacoes() {
     (async () => {
       try {
         const r = await api.meuPapel?.();
-        if (alive && r) setPapel(r);
+        if (alive && r) { setPapel(r); try { localStorage.setItem('cbrio_solic_papel', JSON.stringify(r)); } catch (_) {} }
       } catch (_) {}
       finally { if (alive) setPapelCarregado(true); }
     })();
@@ -328,6 +387,13 @@ export default function Solicitacoes() {
       if (timeout) clearTimeout(timeout);
       timeout = setTimeout(() => { loadRef.current?.(); }, 400);
     }
+    // Garante que o socket de realtime está autenticado com o JWT atual · sem
+    // isso o canal pode conectar como anon e a RLS (policies só de authenticated)
+    // descarta TODOS os eventos → o quadro não atualiza sozinho.
+    supabase.auth.getSession().then(({ data }) => {
+      const tk = data?.session?.access_token;
+      if (tk) { try { supabase.realtime.setAuth(tk); } catch { /* best-effort */ } }
+    }).catch(() => {});
     const channel = supabase
       .channel(`solicitacoes:${profile.id}`)
       .on(
@@ -341,6 +407,27 @@ export default function Solicitacoes() {
       supabase.removeChannel(channel);
     };
   }, [profile?.id, isResponsavel]);
+
+  // Rede de garantia do "tempo real" · além do canal Realtime (que pode perder
+  // eventos por RLS/reconexão do socket), um poll leve mantém o quadro fresco SEM
+  // recarregar a página. Pausa quando a aba está oculta; ao voltar ao foco,
+  // recarrega na hora. 12s é suave pra um ERP interno e imperceptível na UI
+  // (load() tem guarda de sequência · não pisca nem atropela ação em curso).
+  useEffect(() => {
+    function tick() {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      loadRef.current?.();
+    }
+    function onVisible() {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') loadRef.current?.();
+    }
+    const interval = setInterval(tick, 12000);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, []);
 
   // Opções dos filtros derivadas do conjunto carregado (sempre relevantes).
   const areasOpts = useMemo(
@@ -363,12 +450,29 @@ export default function Solicitacoes() {
     return r;
   }, [items, filterCat, filterArea, filterStatus, slaOnly, busca]);
 
-  const columns = useMemo(() => {
-    return KANBAN_COLUMNS.map(col => ({
-      ...col,
-      items: filtered.filter(i => (col.match || [col.key]).includes(i.status)),
-    }));
-  }, [filtered]);
+  // Board macro (4 etapas) · redesign 2026-07-24. Rejeitadas ficam separadas
+  // (bloco discreto), fora das 4 colunas.
+  const columnsMacro = useMemo(() => KANBAN_MACRO.map(col => ({
+    ...col,
+    items: filtered.filter(i => col.match.includes(i.status)),
+  })), [filtered]);
+  const rejeitadosMacro = useMemo(
+    () => filtered.filter(i => MACRO_REJEITADO_MATCH.includes(i.status)),
+    [filtered]);
+  const [showRejeitados, setShowRejeitados] = useState(false);
+  const [infoCol, setInfoCol] = useState(null); // qual etapa está com o "izinho" aberto
+
+  // Fila "Para Atender" (Foco/Lista) · esconde o que já foi ENCERRADO (concluído/
+  // avaliado/rejeitado/cancelado) por padrão — não pende mais de ação de ninguém
+  // (bug reportado 2026-08-03: solicitações concluídas apareciam misturadas na
+  // fila, sem nenhuma indicação de que já tinham terminado). O Kanban mantém a
+  // coluna própria "Concluído" + o bloco "Não aprovadas" (por isso ele segue
+  // usando `filtered` cru, sem este corte). Filtro explícito de Status (ex.:
+  // escolher "Concluído" no dropdown) sempre vence e mostra normalmente.
+  const filaAtender = useMemo(() => {
+    if (filterStatus !== 'todos') return filtered;
+    return filtered.filter(i => !STATUS_ENCERRADO_ATENDER.has(i.status));
+  }, [filtered, filterStatus]);
 
   // Kanban do solicitante (aba Minhas) · colunas macro read-only.
   const colunasSolicitante = useMemo(() => {
@@ -697,58 +801,91 @@ export default function Solicitacoes() {
         <>
         <TermometroRefeitas />
         {atenderLayout === 'foco' ? (
-          <AtenderFoco items={filtered} onOpen={setDetailItem} selectedId={detailItem?.id} />
+          <AtenderFoco items={filaAtender} onOpen={setDetailItem} selectedId={detailItem?.id} />
         ) : atenderLayout === 'lista' ? (
-          <ListaSolicitacoes items={filtered} onOpen={setDetailItem} profileId={profile?.id}
+          <ListaSolicitacoes items={filaAtender} onOpen={setDetailItem} profileId={profile?.id}
             emptyMsg="Nenhuma solicitação na fila para os filtros atuais." />
         ) : atenderLayout === 'solicitante' ? (
-          <PainelPorSolicitante items={filtered} onOpen={setDetailItem} />
+          <PainelPorSolicitante items={filaAtender} onOpen={setDetailItem} />
         ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-8 gap-4">
-          {columns.map(col => (
-            <div
-              key={col.key}
-              className={`flex flex-col rounded-lg transition-colors ${dragOverCol === col.key ? 'bg-accent/50 ring-2 ring-primary/30' : ''}`}
-              onDragOver={e => { if (!isResponsavel || col.readOnly) return; e.preventDefault(); setDragOverCol(col.key); }}
-              onDragLeave={() => setDragOverCol(null)}
-              onDrop={e => {
-                e.preventDefault();
-                setDragOverCol(null);
-                if (!isResponsavel || col.readOnly) return;
-                const itemId = e.dataTransfer.getData('text/plain');
-                if (!itemId) return;
-                // Ignora drop na MESMA coluna · não dispara update nem toast
-                // (evita lançamento redundante que mexeria em SLA/indicadores).
-                const item = items.find(i => i.id === itemId);
-                const colAtual = KANBAN_COLUMNS.find(c => (c.match || [c.key]).includes(item?.status))?.key;
-                if (!item || colAtual === col.key) return;
-                handleStatusChange(itemId, col.key);
-              }}
-            >
-              <div className={`flex items-center gap-2 pb-3 mb-3 border-b-2 ${col.color}`} title={col.hint}>
-                <col.icon className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-semibold text-foreground">{col.label}</span>
-                <Badge variant="secondary" className="ml-auto text-xs">{col.items.length}</Badge>
-              </div>
-              <ScrollArea className="flex-1 max-h-[calc(100vh-280px)]">
-                <div className="space-y-3 pr-1 min-h-[60px]">
-                  {col.items.length === 0 && (
-                    <p className="text-xs text-muted-foreground/60 italic text-center py-8">Nada por aqui</p>
+        /* ── Board macro · 4 etapas (redesign 2026-07-24) ── */
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {columnsMacro.map(col => (
+              <div key={col.key} className="flex flex-col">
+                <div className="relative mb-3">
+                  <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl border border-border/60"
+                    style={{ background: 'var(--panel)' }}>
+                    <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: col.accent }} />
+                    <div className="min-w-0 leading-tight flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[15px] font-semibold text-foreground">{col.label}</span>
+                        <span className="text-xs font-semibold text-muted-foreground">{col.items.length}</span>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">{col.sub}</span>
+                    </div>
+                    <button type="button" title="O que é esta etapa?"
+                      onClick={() => setInfoCol(infoCol === col.key ? null : col.key)}
+                      className="shrink-0 text-muted-foreground/70 hover:text-foreground transition-colors">
+                      <Info className="h-4 w-4" />
+                    </button>
+                  </div>
+                  {infoCol === col.key && (
+                    <>
+                      <div className="fixed inset-0 z-[1190]" onClick={() => setInfoCol(null)} />
+                      <div className="absolute right-0 top-full mt-1 z-[1200] w-72 rounded-xl border border-border shadow-lg p-3"
+                        style={{ background: 'var(--cbrio-card)' }}>
+                        <div className="flex items-center gap-2 mb-1.5">
+                          <span className="h-2 w-2 rounded-full" style={{ background: col.accent }} />
+                          <span className="text-sm font-semibold text-foreground">{col.label}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{col.desc}</p>
+                      </div>
+                    </>
                   )}
-                  {col.items.map(item => (
-                    <SolicitacaoCard
-                      key={item.id}
-                      item={item}
-                      isAdmin={isResponsavel}
-                      onStatusChange={handleStatusChange}
-                      onClick={() => setDetailItem(item)}
-                      draggable={isResponsavel && !col.readOnly}
-                    />
+                </div>
+                <ScrollArea className="flex-1 max-h-[calc(100vh-260px)]">
+                  {/* pb extra em mobile: os últimos cards da coluna não ficam
+                      escondidos atrás do "Reportar"/FAB IA (position:fixed) —
+                      achado na revisão de responsividade 2026-07-27. */}
+                  <div className="space-y-2.5 pr-1 min-h-[60px] pb-24 md:pb-0">
+                    {col.items.length === 0 && (
+                      <p className="text-xs text-muted-foreground/50 italic text-center py-10">Nada por aqui</p>
+                    )}
+                    {col.items.map(item => (
+                      <CardMacro
+                        key={item.id}
+                        item={item}
+                        canAgir={isResponsavel}
+                        concluido={col.key === 'concluido'}
+                        onStatusChange={handleStatusChange}
+                        onClick={() => setDetailItem(item)}
+                      />
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            ))}
+          </div>
+          {/* Não aprovadas · bloco discreto recolhível (pedido do Matheus) */}
+          {rejeitadosMacro.length > 0 && (
+            <div className="pt-1 border-t border-border/40">
+              <button type="button" onClick={() => setShowRejeitados(v => !v)}
+                className="inline-flex items-center gap-1.5 mt-3 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                <XCircle className="h-3.5 w-3.5" />
+                Não aprovadas <span className="font-semibold">{rejeitadosMacro.length}</span>
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showRejeitados ? 'rotate-180' : ''}`} />
+              </button>
+              {showRejeitados && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 mt-3">
+                  {rejeitadosMacro.map(item => (
+                    <CardMacro key={item.id} item={item} canAgir={false} concluido rejeitado
+                      onStatusChange={handleStatusChange} onClick={() => setDetailItem(item)} />
                   ))}
                 </div>
-              </ScrollArea>
+              )}
             </div>
-          ))}
+          )}
         </div>
         )}
         </>
@@ -763,7 +900,7 @@ export default function Solicitacoes() {
                 <Badge variant="secondary" className="ml-auto text-xs">{col.items.length}</Badge>
               </div>
               <ScrollArea className="flex-1 max-h-[calc(100vh-280px)]">
-                <div className="space-y-3 pr-1 min-h-[60px]">
+                <div className="space-y-3 pr-1 min-h-[60px] pb-24 md:pb-0">
                   {col.items.length === 0 && (
                     <p className="text-xs text-muted-foreground/60 italic text-center py-8">Nada por aqui</p>
                   )}
@@ -945,13 +1082,19 @@ function comQuemEsta(item) {
     case 'em_analise':
     case 'aprovado':
     case 'em_atendimento': {
+      // Pós-aprovação financeira de compra/serviço, o "com quem está" depende da
+      // forma de pagamento: cartão → o Amaury compra; demais → o financeiro paga.
+      if (item.aprovado_financeiro_em && ['compras', 'servico'].includes(item.categoria)) {
+        if (item.area_responsavel === 'logistica_compras') return `Aguardando compra · com o Amaury (cartão)${suf}`;
+        if (item.area_responsavel === 'financeiro') return `Aguardando pagamento · com o financeiro${suf}`;
+      }
       const area = item.area_responsavel
         ? (AREA_LABELS[item.area_responsavel] || item.area_responsavel)
         : 'área responsável';
       return `Com a equipe de ${area}${suf}`;
     }
     case 'aguardando_entrega':
-      return 'Compra a caminho';
+      return 'Comprado/pago · a caminho';
     case 'aguardando_ajuste':
       return 'Com você · precisa de ajuste';
     default:
@@ -1241,7 +1384,7 @@ function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg, comTracker = fa
                   {ML_STATUS_META[item.ml_last_status].emoji} {ML_STATUS_META[item.ml_last_status].label}
                 </Badge>
               )}
-              {item.area_responsavel && (
+              {item.area_responsavel && !areaBadgeRedundante(cat.label, AREA_LABELS[item.area_responsavel] || item.area_responsavel) && (
                 <Badge className="text-xs bg-muted text-muted-foreground hidden sm:inline-flex">{AREA_LABELS[item.area_responsavel] || item.area_responsavel}</Badge>
               )}
               {sla && <Badge className={`text-xs ${sla.color}`}>{sla.label}</Badge>}
@@ -1743,6 +1886,12 @@ function tempoAtras(iso) {
 function ehUrgente(item) {
   return item.eh_urgente === true || item.urgencia === 'critica' || item.urgencia === 'alta';
 }
+// Encerrada = status terminal · não conta mais como aberta/ativa (some da visão
+// por solicitante e não aparece nos urgentes). 'aprovado' segue ativo (falta concluir).
+const STATUS_ENCERRADOS = ['concluido', 'cancelado', 'rejeitado', 'avaliado'];
+function ehEncerrada(item) {
+  return STATUS_ENCERRADOS.includes(item.status);
+}
 function dotUrg(item) {
   if (item.urgencia === 'critica' || item.eh_urgente) return 'bg-rose-500';
   if (item.urgencia === 'alta') return 'bg-amber-500';
@@ -1823,10 +1972,23 @@ function SolicitanteCard({ grupo, maxCarga, onOpen }) {
   );
 }
 
+// Pendente (visão por solicitante) = aguardando decisão OU ação de alguém. NÃO
+// inclui as que já foram aprovadas e estão em execução/entrega (aprovado,
+// em_atendimento, aguardando_entrega) nem as encerradas — essas não "pendem"
+// mais de ninguém (pedido do Matheus 2026-07-24).
+const STATUS_PENDENTE_SOLICITANTE = new Set([
+  'aguardando_aprovacao_origem', 'aguardando_merito', 'pendente', 'em_analise',
+  'aguardando_ajuste', 'em_cotacao', 'aguardando_aprovacao_financeira', 'sobrestada',
+]);
 function PainelPorSolicitante({ items, onOpen }) {
+  // Só as PENDENTES (aguardando decisão/ação) · o histórico e o que já está em
+  // execução poluíam a visão por solicitante (pedido do Matheus 2026-07-24).
+  const ativos = useMemo(
+    () => (items || []).filter(i => STATUS_PENDENTE_SOLICITANTE.has(i.status)),
+    [items]);
   const grupos = useMemo(() => {
     const map = new Map();
-    for (const it of items) {
+    for (const it of ativos) {
       const key = it.solicitante_id || it.solicitante?.id || `nome:${(it.solicitante_nome || it.solicitante?.name || 'desconhecido').toLowerCase()}`;
       if (!map.has(key)) {
         map.set(key, { key, nome: it.solicitante?.name || it.solicitante_nome || 'Desconhecido', email: it.solicitante?.email || '', demandas: [] });
@@ -1842,23 +2004,23 @@ function PainelPorSolicitante({ items, onOpen }) {
     });
     arr.sort((a, b) => (b.urgentes - a.urgentes) || (b.demandas.length - a.demandas.length) || a.nome.localeCompare(b.nome));
     return arr;
-  }, [items]);
+  }, [ativos]);
 
   const maxCarga = Math.max(1, ...grupos.map(g => g.demandas.length));
   const urgentesGlobais = useMemo(
-    () => items.filter(ehUrgente).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
-    [items]
+    () => ativos.filter(ehUrgente).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
+    [ativos]
   );
-  const totalSla = items.filter(i => { const s = getSlaBadge(i); return !!s && s.color.includes('rose'); }).length;
+  const totalSla = ativos.filter(i => { const s = getSlaBadge(i); return !!s && s.color.includes('rose'); }).length;
 
-  if (items.length === 0) {
-    return <Card className="p-8 text-center text-muted-foreground">Nenhuma solicitação na fila para os filtros atuais.</Card>;
+  if (ativos.length === 0) {
+    return <Card className="p-8 text-center text-muted-foreground">Nenhuma solicitação pendente para os filtros atuais. 🎉</Card>;
   }
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatMini label="Solicitações ativas" valor={items.length} />
+        <StatMini label="Solicitações pendentes" valor={ativos.length} />
         <StatMini label="Solicitantes" valor={grupos.length} />
         <StatMini label="Urgentes" valor={urgentesGlobais.length} tom="rose" />
         <StatMini label="SLA atrasado" valor={totalSla} tom="amber" />
@@ -1897,6 +2059,90 @@ function PainelPorSolicitante({ items, onOpen }) {
             )}
           </Card>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Card do board macro (redesign 2026-07-24 · referência do Matheus). Borda-esquerda
+// colorida por categoria + rótulo/pontinho, data e SLA no topo, título forte, avatar
+// + solicitante + status discreto embaixo, e um botão de ação teal quando o
+// responsável pode agir. Concluídas/rejeitadas ficam apagadas e sem botão.
+function CardMacro({ item, canAgir, concluido = false, rejeitado = false, onStatusChange, onClick }) {
+  const cat = getCatMeta(item.categoria);
+  const accent = catAccent(item.categoria);
+  const date = new Date(item.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  const sla = getSlaBadge(item);
+  const st = getStatusMeta(item.status);
+  const solic = item.solicitante?.name || 'Desconhecido';
+  const valor = Number(item.valor_estimado);
+  const money = valor > 0 ? valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : null;
+  // Ação primária do card · MESMA régua do DetailDialog (não pode oferecer um
+  // status que caia num portão do fluxo · o backend recusa em_cotacao/financeiro/
+  // origem/mérito/sobrestada). Compra pós-aprovação-financeira: cartão → o Amaury
+  // marca "comprado"; demais → o financeiro marca "pago"; depois confirma entrega.
+  const posAprov = ['compras', 'servico'].includes(item.categoria) && !!item.aprovado_financeiro_em;
+  const ehAguardandoCompra = posAprov && item.status === 'pendente' && item.area_responsavel === 'logistica_compras';
+  const ehAguardandoPagamento = posAprov && item.status === 'em_atendimento' && item.area_responsavel === 'financeiro';
+  const acao = !canAgir ? null
+    : ehAguardandoCompra ? { label: 'Marcar como comprado', to: 'aguardando_entrega' }
+    : ehAguardandoPagamento ? { label: 'Marcar como pago', to: 'aguardando_entrega' }
+    : item.status === 'aguardando_entrega' ? { label: 'Confirmar entrega', to: 'concluido', icon: CheckCircle2 }
+    : item.status === 'pendente' ? { label: 'Analisar', to: 'em_analise', icon: ArrowRight }
+    : item.status === 'em_analise' ? { label: 'Aprovar', to: 'aprovado' }
+    : item.status === 'aprovado' ? { label: 'Concluir', to: 'concluido', icon: CheckCircle2 }
+    : null;
+  const podeRejeitar = canAgir && item.status === 'em_analise';
+
+  return (
+    <div
+      onClick={onClick}
+      className="rounded-xl border border-border/60 cursor-pointer transition-all hover:shadow-md hover:border-border"
+      style={{ background: 'var(--cbrio-card)', borderLeft: `3px solid ${accent}` }}
+    >
+      <div className="p-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground truncate">
+            <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: accent }} />
+            {cat.label}
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-[10px] text-muted-foreground tabular-nums">{date}</span>
+            {sla && <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${sla.color}`}>{sla.label}</span>}
+          </div>
+        </div>
+        <p className={`text-sm font-semibold leading-snug mt-1.5 mb-2 line-clamp-2 ${concluido ? 'text-muted-foreground' : 'text-foreground'}`}>{item.titulo}</p>
+        <div className="flex items-center justify-between gap-2">
+          <span className="inline-flex items-center gap-1.5 min-w-0">
+            <span className="h-5 w-5 rounded-full bg-muted text-[9px] font-semibold text-muted-foreground inline-flex items-center justify-center shrink-0">{iniciais(solic)}</span>
+            <span className="text-[11px] text-muted-foreground truncate max-w-[120px]">{solic}</span>
+            {item.compartilhar_area === false && <Lock className="h-2.5 w-2.5 text-muted-foreground shrink-0" title="Privada" />}
+          </span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            {money && <span className={`text-[11px] font-semibold tabular-nums ${concluido ? 'text-muted-foreground' : 'text-foreground'}`}>{money}</span>}
+            {rejeitado ? (
+              <XCircle className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+            ) : concluido ? (
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+            ) : st ? (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded shrink-0 ${st.color}`}>{st.label}</span>
+            ) : null}
+          </div>
+        </div>
+        {acao && (
+          <div className="mt-2.5 flex gap-1.5">
+            <Button size="sm" className="h-7 text-xs flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
+              onClick={e => { e.stopPropagation(); onStatusChange(item.id, acao.to); }}>
+              {acao.label}{acao.icon && <acao.icon className="h-3 w-3 ml-1" />}
+            </Button>
+            {podeRejeitar && (
+              <Button size="sm" variant="outline" className="h-7 text-xs px-2 text-rose-600 border-rose-300 dark:border-rose-500/40"
+                onClick={e => { e.stopPropagation(); onStatusChange(item.id, 'rejeitado'); }}>
+                Rejeitar
+              </Button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1949,9 +2195,17 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
         </div>
       </div>
       {aguardandoFin && (
-        <div className="mt-2 flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
-          <Clock className="h-3 w-3 shrink-0" /> Aguardando aprovação do financeiro
-        </div>
+        // Dentro da alçada, quem atende a área não precisa esperar o financeiro —
+        // o selo tem que dizer isso no card, senão ele só descobriria abrindo.
+        item.pode_aprovar_alcada ? (
+          <div className="mt-2 flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-2 py-1">
+            <CheckCircle2 className="h-3 w-3 shrink-0" /> Você pode aprovar · dentro da sua alçada
+          </div>
+        ) : (
+          <div className="mt-2 flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
+            <Clock className="h-3 w-3 shrink-0" /> Aguardando aprovação do financeiro
+          </div>
+        )
       )}
       {item.status === 'aguardando_aprovacao_origem' && (() => {
         const pend = (Array.isArray(item.aprovacao_pendente_de) && item.aprovacao_pendente_de.length
@@ -2113,7 +2367,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
           ) : (
             <div className="space-y-2">
               <Label className="text-xs text-muted-foreground">
-                Cole a URL ou o numero do pedido do Mercado Livre
+                Cole a URL ou o número do pedido do Mercado Livre
               </Label>
               <div className="flex gap-2">
                 <Input
@@ -2131,7 +2385,7 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                O solicitante e voce passarao a receber atualizacoes automaticas (in-app + WhatsApp se configurado).
+                O solicitante e você passarão a receber atualizações automáticas (in-app + WhatsApp se configurado).
               </p>
             </div>
           )}
@@ -2237,14 +2491,81 @@ function MLTrackingBlock({ item, canEdit, onChanged }) {
   );
 }
 
+// Combobox com busca (plano de contas / centro de custo têm muitas opções · o
+// <select> nativo obriga rolar tudo). Filtra por código ou nome; mostra o
+// selecionado como "codigo · nome"; permite limpar. Cap de 200 com dica pra
+// digitar. Estilo shadcn/Tailwind pra casar com o resto da tela.
+function ComboboxContabil({ items, value, onChange, placeholder = 'Selecione…', emptyLabel = '— nenhum —', permiteVazio = true, invalido = false }) {
+  const [busca, setBusca] = useState('');
+  const [aberto, setAberto] = useState(false);
+  const sel = items.find(i => i.id === value);
+  const q = busca.trim().toLowerCase();
+  const filtrados = (q
+    ? items.filter(i => (i.codigo || '').toLowerCase().includes(q) || (i.nome || '').toLowerCase().includes(q))
+    : items).slice(0, 200);
+
+  const escolher = (id) => { onChange(id); setBusca(''); setAberto(false); };
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <input
+          type="text"
+          value={aberto ? busca : (sel ? `${sel.codigo} · ${sel.nome}` : '')}
+          onChange={e => { setBusca(e.target.value); setAberto(true); }}
+          onFocus={e => { setAberto(true); setBusca(''); e.target.select(); }}
+          onBlur={() => setTimeout(() => setAberto(false), 150)}
+          placeholder={placeholder}
+          className={`w-full pl-2 pr-14 py-2 text-sm rounded-md bg-background border ${invalido ? 'border-rose-400' : 'border-border'} outline-none focus:ring-1 focus:ring-primary`}
+        />
+        {value && permiteVazio && (
+          <button type="button" title="Limpar"
+            onMouseDown={e => { e.preventDefault(); escolher(''); }}
+            className="absolute right-7 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
+        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+      </div>
+      {aberto && (
+        <div className="absolute top-full left-0 right-0 mt-1 z-[1200] rounded-md border border-border shadow-lg max-h-72 overflow-y-auto"
+          style={{ background: 'var(--cbrio-card)' }}>
+          {permiteVazio && (
+            <button type="button"
+              onMouseDown={e => { e.preventDefault(); escolher(''); }}
+              className={`block w-full text-left px-3 py-2 text-xs italic border-b border-border ${!value ? 'bg-primary/10' : 'hover:bg-muted/50'} text-muted-foreground`}>
+              {emptyLabel}
+            </button>
+          )}
+          {filtrados.length === 0 ? (
+            <div className="px-3 py-3 text-xs text-muted-foreground text-center">Nenhum resultado pra "{busca}"</div>
+          ) : filtrados.map(i => (
+            <button type="button" key={i.id}
+              onMouseDown={e => { e.preventDefault(); escolher(i.id); }}
+              className={`block w-full text-left px-3 py-2 text-sm ${i.id === value ? 'bg-primary/10' : 'hover:bg-muted/50'}`}>
+              <span className="font-mono text-xs text-muted-foreground mr-2">{i.codigo}</span>
+              <span className="text-foreground">{i.nome}</span>
+            </button>
+          ))}
+          {items.length > 200 && !q && (
+            <div className="px-3 py-2 text-[11px] italic text-muted-foreground text-center border-t border-border">
+              Mostrando 200 de {items.length} · digite pra buscar
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Cotação (compras/serviço) · o Amaury (logística) registra VÁRIAS cotações de
 // fornecedores e, com um botão dedicado reenviável, dispara um e-mail rico ao
-// financeiro (Yago) com todas as cotações + a sugerida + total, pra aprovar o
+// financeiro com todas as cotações + a sugerida + total, pra aprovar o
 // pagamento. Marcos (2026-06-16): "primeiro vem a cotação, depois a aprovação
 // do financeiro". Compatível com a cotação inline antiga (valor_cotado) quando
 // ainda não há linhas na tabela nova.
 function CotacaoBlock({ item, canCotar, onChanged }) {
-  // Amaury pode gerenciar/reenviar cotações enquanto o financeiro (Yago) ainda
+  // Amaury pode gerenciar/reenviar cotações enquanto o financeiro ainda
   // não aprovou e a solicitação não é terminal — não só durante em_cotacao.
   const podeEditar = canCotar
     && !item.aprovado_financeiro_em
@@ -2257,6 +2578,13 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
   const [salvando, setSalvando] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({ fornecedor: '', valor: '', prazo: '', link: '', observacao: '' });
+  // Classificação contábil (loop financeiro) — o Amaury preenche na cotação.
+  const [planos, setPlanos] = useState([]);
+  const [centros, setCentros] = useState([]);
+  const [planoId, setPlanoId] = useState(item.plano_contas_id || '');
+  const [centroId, setCentroId] = useState(item.centro_custo_id || '');
+  const [nfUrl, setNfUrl] = useState(item.nota_fiscal_url || '');
+  const [escaneando, setEscaneando] = useState(false);
 
   async function recarregar() {
     try {
@@ -2266,6 +2594,33 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
     finally { setCarregando(false); }
   }
   useEffect(() => { recarregar(); /* eslint-disable-next-line */ }, [item.id]);
+  useEffect(() => {
+    api.classificacaoAux().then(d => {
+      setPlanos(d?.planos || []); setCentros(d?.centros || []);
+    }).catch(() => {});
+  }, []);
+
+  async function escanearNf(file) {
+    if (!file) return;
+    setEscaneando(true);
+    try {
+      const r = await api.escanearNotaFiscal(item.id, file);
+      if (r?.url) setNfUrl(r.url);
+      const ex = r?.extracao, sg = r?.sugestao;
+      if (ex) {
+        setForm(f => ({
+          ...f,
+          fornecedor: f.fornecedor || ex.emitente_nome || '',
+          valor: f.valor || (ex.valor_total != null ? String(ex.valor_total) : ''),
+        }));
+      }
+      if (sg?.plano_contas_id) setPlanoId(sg.plano_contas_id);
+      if (sg?.centro_custo_id) setCentroId(sg.centro_custo_id);
+      toast.success(ex ? 'Nota lida — confira os campos sugeridos.' : 'Nota anexada (não consegui ler automaticamente).');
+      onChanged?.();
+    } catch (e) { toast.error(e.message || 'Erro ao ler a nota fiscal.'); }
+    finally { setEscaneando(false); }
+  }
 
   function resetForm() { setForm({ fornecedor: '', valor: '', prazo: '', link: '', observacao: '' }); setEditId(null); }
 
@@ -2306,15 +2661,38 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
     catch (e) { toast.error(e.message || 'Erro ao marcar sugerida'); }
   }
 
-  async function enviarFinanceiro() {
+  async function enviarFinanceiro(comEmail = false) {
+    // Fluxo "um botão": sem cotação formal na lista, manda o valor digitado
+    // direto (o servidor cria a cotação na hora · fornecedor opcional).
+    // Principal = PELO SISTEMA (chega na fila do financeiro/Alberto). O e-mail
+    // é opcional (botão discreto) via comEmail.
+    const payload = { plano_contas_id: planoId || undefined, centro_custo_id: centroId || undefined, enviar_email: comEmail };
+    if (!cotacoes.length) {
+      const v = Number(form.valor);
+      if (form.valor === '' || Number.isNaN(v) || v < 0) { toast.error('Informe o valor pra enviar ao financeiro.'); return; }
+      Object.assign(payload, {
+        valor: v,
+        fornecedor: form.fornecedor.trim() || undefined,
+        observacao: form.observacao.trim() || undefined,
+        prazo: form.prazo.trim() || undefined,
+        link: form.link.trim() || undefined,
+      });
+    }
+    const enviouInline = !cotacoes.length;
     setEnviando(true);
     try {
-      const r = await api.enviarCotacoesFinanceiro(item.id);
-      if (r?.email_ok) toast.success('Cotações enviadas ao financeiro por e-mail.');
-      else toast.warning(r?.motivo ? `Enviado ao financeiro no sistema, mas o e-mail não saiu — ${r.motivo}` : 'Enviado ao financeiro no sistema, mas o e-mail não saiu — verifique.');
+      const r = await api.enviarCotacoesFinanceiro(item.id, payload);
+      if (!comEmail) {
+        toast.success('Enviado ao financeiro — o Alberto vai aprovar na fila do sistema.');
+      } else if (r?.email_ok) {
+        toast.success('E-mail enviado ao financeiro.');
+      } else {
+        toast.warning(r?.motivo ? `Está no financeiro pelo sistema, mas o e-mail não saiu — ${r.motivo}` : 'Está no financeiro pelo sistema, mas o e-mail não saiu.');
+      }
+      if (enviouInline) resetForm();
       onChanged?.();
       await recarregar();
-    } catch (e) { toast.error(e.message || 'Erro ao enviar cotações'); }
+    } catch (e) { toast.error(e.message || 'Erro ao enviar ao financeiro'); }
     finally { setEnviando(false); }
   }
 
@@ -2405,24 +2783,63 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
         </div>
       )}
 
-      {podeEditar && (
-        <div className="space-y-1.5">
-          <Button
-            onClick={enviarFinanceiro}
-            disabled={enviando || !cotacoes.length}
-            className="w-full bg-teal-600 hover:bg-teal-700 text-white"
-          >
-            <Mail className="h-4 w-4 mr-2" />
-            {enviando ? 'Enviando...' : jaEnviado ? 'Reenviar cotações ao financeiro' : 'Enviar cotações por e-mail ao financeiro'}
-          </Button>
-          {jaEnviado && (
-            <p className="text-[11px] text-muted-foreground text-center">
-              Enviado em {new Date(item.cotacoes_email_em).toLocaleString('pt-BR')}
-            </p>
-          )}
-          {!cotacoes.length && <p className="text-[11px] text-muted-foreground text-center">Adicione ao menos uma cotação para habilitar o envio.</p>}
+      {podeEditar && ['compras', 'servico'].includes(item.categoria) && (
+        <div className="space-y-2 rounded-md border border-dashed border-border p-3">
+          <p className="text-xs font-medium text-foreground">Classificação contábil + nota fiscal</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-xs px-3 py-1.5 rounded-md border border-border cursor-pointer hover:bg-muted/40">
+              {escaneando ? 'Lendo a nota…' : (nfUrl ? 'Trocar nota fiscal' : 'Anexar nota fiscal (a IA lê)')}
+              <input type="file" accept="image/*,application/pdf" className="hidden" disabled={escaneando}
+                onChange={e => { const f = e.target.files?.[0]; if (f) escanearNf(f); e.target.value = ''; }} />
+            </label>
+            {nfUrl && <a href={nfUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline">Ver nota anexada</a>}
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Plano de contas</Label>
+              <ComboboxContabil items={planos} value={planoId} onChange={setPlanoId} placeholder="Buscar plano de contas…" emptyLabel="— sem plano de contas —" />
+            </div>
+            <div>
+              <Label className="text-xs">Centro de custo</Label>
+              <ComboboxContabil items={centros} value={centroId} onChange={setCentroId} placeholder="Buscar centro de custo…" emptyLabel="— sem centro de custo —" />
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">Anexe a nota e a IA sugere o plano de contas, o fornecedor e o valor pra você confirmar. Salvo ao enviar ao financeiro.</p>
         </div>
       )}
+
+      {podeEditar && (() => {
+        const vNum = Number(form.valor);
+        const valorInlineValido = !cotacoes.length && form.valor !== '' && !Number.isNaN(vNum) && vNum >= 0;
+        const podeEnviar = cotacoes.length > 0 || valorInlineValido;
+        return (
+          <div className="space-y-1.5">
+            <Button
+              onClick={() => enviarFinanceiro(false)}
+              disabled={enviando || !podeEnviar}
+              className="w-full bg-teal-600 hover:bg-teal-700 text-white"
+            >
+              <ArrowRight className="h-4 w-4 mr-2" />
+              {enviando ? 'Enviando...' : jaEnviado ? 'Reenviar ao financeiro' : 'Enviar ao financeiro'}
+            </Button>
+            {/* Discreto: além do sistema, avisar por e-mail também */}
+            <button
+              type="button"
+              onClick={() => enviarFinanceiro(true)}
+              disabled={enviando || !podeEnviar}
+              className="w-full text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center justify-center gap-1 py-1 disabled:opacity-50"
+            >
+              <Mail className="h-3 w-3" /> {jaEnviado ? 'Reenviar avisando por e-mail' : 'Enviar avisando por e-mail também'}
+            </button>
+            {jaEnviado && (
+              <p className="text-[11px] text-muted-foreground text-center">
+                Enviado em {new Date(item.cotacoes_email_em).toLocaleString('pt-BR')}
+              </p>
+            )}
+            {!podeEnviar && <p className="text-[11px] text-muted-foreground text-center">Informe o valor acima e clique em enviar ao financeiro.</p>}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -2505,7 +2922,7 @@ function SobrestarBlock({ item, onChanged }) {
       </div>
       <div className="space-y-2">
         <Label className="text-xs">Data de revisão (opcional)</Label>
-        <Input type="date" value={revisao} onChange={e => setRevisao(e.target.value)} />
+        <DatePicker value={revisao} onChange={v => setRevisao(v)} />
       </div>
       <div className="flex gap-2 justify-end">
         <Button size="sm" variant="outline" onClick={() => { setAberto(false); setMotivo(''); setRevisao(''); }}>
@@ -2520,10 +2937,96 @@ function SobrestarBlock({ item, onChanged }) {
   );
 }
 
+// Bloco da ALÇADA · aparece só quando o servidor marcou `pode_aprovar_alcada`.
+// A forma de pagamento é obrigatória porque é ela que decide quem EXECUTA:
+// cartão volta pra área comprar; as demais vão pro financeiro pagar (a alçada
+// dispensa o financeiro de APROVAR, não de PAGAR).
+const FORMAS_PAGAMENTO_ALCADA = [
+  { v: 'cartao_credito',        label: 'Cartão de crédito · eu mesmo compro' },
+  { v: 'pix',                   label: 'PIX · o financeiro paga' },
+  { v: 'boleto',                label: 'Boleto · o financeiro paga' },
+  { v: 'transferencia_bancaria', label: 'Transferência · o financeiro paga' },
+  { v: 'dinheiro',              label: 'Dinheiro · o financeiro paga' },
+];
+
+function AprovarNaAlcadaBloco({ item, onAprovado }) {
+  const [forma, setForma] = useState('');
+  const [obs, setObs] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+
+  const valor = Number(item.valor_cotado);
+  const valorFmt = Number.isFinite(valor)
+    ? valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+    : '—';
+
+  async function aprovar() {
+    if (!forma) { setErro('Escolha a forma de pagamento.'); return; }
+    setSalvando(true); setErro(null);
+    try {
+      await api.aprovarNaAlcada(item.id, { forma_pagamento: forma, observacao: obs.trim() || undefined });
+      playSuccessSound();
+      toast.success('Compra aprovada · seguiu pro atendimento.');
+      onAprovado?.();
+    } catch (e) {
+      setErro(e.message || 'Não foi possível aprovar.');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div className="p-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 space-y-3">
+      <div className="flex items-start gap-2 text-sm text-emerald-800 dark:text-emerald-300">
+        <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+        <div>
+          <span className="font-medium">Você pode aprovar esta compra sem o financeiro.</span>
+          <p className="text-xs mt-0.5 opacity-90">
+            Cotação de <strong>{valorFmt}</strong>, dentro da sua alçada. Ao aprovar, ela segue direto pra
+            execução.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <Label className="block text-xs">Forma de pagamento *</Label>
+        <Select value={forma} onValueChange={setForma}>
+          <SelectTrigger className="h-9"><SelectValue placeholder="Como vai ser pago?" /></SelectTrigger>
+          <SelectContent className="z-[1200]">
+            {FORMAS_PAGAMENTO_ALCADA.map(f => (
+              <SelectItem key={f.v} value={f.v}>{f.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[11px] text-muted-foreground">
+          Só no cartão a compra volta pra você. Nas outras formas, o financeiro ainda executa o pagamento —
+          ele só não precisa mais aprovar.
+        </p>
+      </div>
+
+      <Textarea
+        rows={2}
+        placeholder="Observação (opcional)"
+        value={obs}
+        onChange={e => setObs(e.target.value)}
+        className="text-sm"
+      />
+
+      {erro && <p className="text-xs text-destructive">{erro}</p>}
+
+      <Button size="sm" onClick={aprovar} disabled={salvando}>
+        {salvando ? 'Aprovando…' : 'Aprovar compra'}
+      </Button>
+    </div>
+  );
+}
+
 function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh, asSheet = false }) {
   const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
   const [atenderEstoque, setAtenderEstoque] = useState(false); // ponte estoque (Fase 3a-2)
+  const [converterCompra, setConverterCompra] = useState(false); // marketing → compra
+  const [lancarFin, setLancarFin] = useState(false); // loop financeiro · lançar despesa
 
   if (!item) return null;
   // Mesmo corpo, dois invólucros: Dialog (modal) ou Sheet (painel lateral direito).
@@ -2543,6 +3046,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
     aprovado: 'Aprovar',
     rejeitado: 'Rejeitar',
     concluido: 'Concluir',
+    aguardando_entrega: 'Confirmar',
   };
 
   function confirmAction() {
@@ -2568,6 +3072,14 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
           </TitleW>
         </HeaderW>
         <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
+          {/* Alçada · quem atende a área aprova a compra dentro do teto */}
+          {item.pode_aprovar_alcada && (
+            <AprovarNaAlcadaBloco
+              item={item}
+              onAprovado={() => { onItemRefresh?.(); onClose(); }}
+            />
+          )}
+
           {/* Devolvida pra ajuste · atalho pro solicitante editar e reenviar */}
           {item.status === 'aguardando_ajuste' && item.solicitante_id === currentUserId && (
             <div className="flex flex-wrap items-center gap-2 justify-between p-3 rounded-lg border border-amber-500/40 bg-amber-500/10">
@@ -2840,23 +3352,51 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             // ajuste, nem antes dos portões de aprovação/mérito, nem sobrestada —
             // em espera precisa retomar antes). Aprovar mantém o passo seguinte de
             // Concluir; Rejeitar é terminal (sem Concluir).
-            const podeAprovar = !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aprovado', 'aguardando_ajuste', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status);
-            const podeRejeitar = !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_ajuste', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status);
+            // Portões do fluxo (o backend recusa mudar status por PATCH nesses):
+            // origem, mérito, sobrestada, EM COTAÇÃO e AGUARDANDO APROVAÇÃO FINANCEIRA.
+            // Antes, em_cotacao/aguardando_aprovacao_financeira NÃO estavam aqui → o
+            // botão "Aprovar" aparecia numa compra em cotação e o clique batia no
+            // guard ("está num portão do fluxo"). A cotação se resolve no bloco de
+            // Cotação; a aprovação financeira, na tela do Financeiro.
+            const PORTOES_FLUXO = ['aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada', 'em_cotacao', 'aguardando_aprovacao_financeira'];
+            const podeAprovar = !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aprovado', 'aguardando_ajuste', ...PORTOES_FLUXO].includes(item.status);
+            const podeRejeitar = !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_ajuste', ...PORTOES_FLUXO].includes(item.status);
             // Ponte estoque · só faz sentido em pedidos de material (logística) ativos
             const podeEstoque = ['compras', 'servico', 'infraestrutura', 'outro'].includes(item.categoria)
-              && !['concluido', 'cancelado', 'rejeitado', 'avaliado', 'aguardando_aprovacao_origem', 'aguardando_merito', 'sobrestada'].includes(item.status);
-            const temAcoes = podeAprovar || podeRejeitar || item.status === 'pendente' || item.status === 'aprovado' || podeEstoque;
+              && !['concluido', 'cancelado', 'rejeitado', 'avaliado', ...PORTOES_FLUXO].includes(item.status);
+            // Fluxo de compra EXPLÍCITO pós-aprovação financeira: cartão → Amaury
+            // COMPRA; demais → financeiro (Cristina) PAGA; depois confirma entrega.
+            // Comprado e pago caem no MESMO marco (aguardando_entrega).
+            const ehCompraServico = ['compras', 'servico'].includes(item.categoria);
+            const posAprov = ehCompraServico && !!item.aprovado_financeiro_em;
+            const ehAguardandoCompra = posAprov && item.status === 'pendente' && item.area_responsavel === 'logistica_compras';
+            const ehAguardandoPagamento = posAprov && item.status === 'em_atendimento' && item.area_responsavel === 'financeiro';
+            const ehAguardandoEntrega = item.status === 'aguardando_entrega';
+            const fluxoCompra = ehAguardandoCompra || ehAguardandoPagamento || ehAguardandoEntrega;
+            const temAcoes = podeAprovar || podeRejeitar || item.status === 'pendente' || item.status === 'aprovado' || podeEstoque || fluxoCompra;
             if (!temAcoes) return null;
             return (
               <div className="pt-3 border-t border-border space-y-2">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Ações</p>
                 <div className="flex flex-wrap gap-2">
-                  {podeAprovar && (
+                  {ehAguardandoCompra && <Button size="sm" className="bg-teal-600 hover:bg-teal-700" onClick={() => setActionPending('aguardando_entrega')}>Marcar como comprado</Button>}
+                  {ehAguardandoPagamento && <Button size="sm" className="bg-teal-600 hover:bg-teal-700" onClick={() => setActionPending('aguardando_entrega')}>Marcar como pago</Button>}
+                  {ehAguardandoEntrega && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setActionPending('concluido')}>Confirmar entrega</Button>}
+                  {!fluxoCompra && podeAprovar && (
                     <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('aprovado')}>Aprovar</Button>
                   )}
-                  {item.status === 'aprovado' && <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('concluido')}>Concluir</Button>}
-                  {item.status === 'pendente' && <Button size="sm" variant="outline" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
-                  {podeEstoque && <Button size="sm" variant="outline" onClick={() => setAtenderEstoque(true)}>Atender pelo estoque</Button>}
+                  {!fluxoCompra && item.status === 'aprovado' && <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('concluido')}>Concluir</Button>}
+                  {!fluxoCompra && item.status === 'pendente' && <Button size="sm" variant="outline" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
+                  {!fluxoCompra && podeEstoque && <Button size="sm" variant="outline" onClick={() => setAtenderEstoque(true)}>Atender pelo estoque</Button>}
+                  {['marketing', 'producao'].includes(item.categoria) && (
+                    <Button size="sm" variant="outline" className="text-orange-600 border-orange-300 hover:bg-orange-50 dark:hover:bg-orange-950/30" onClick={() => setConverterCompra(true)}>Isto é uma compra</Button>
+                  )}
+                  {['compras', 'servico'].includes(item.categoria) && item.aprovado_financeiro_em && !item.fin_transacao_id && (
+                    <Button size="sm" variant="outline" className="text-teal-700 border-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/30" onClick={() => setLancarFin(true)}>Lançar no financeiro</Button>
+                  )}
+                  {item.fin_transacao_id && (
+                    <span className="inline-flex items-center gap-1 text-xs text-emerald-600 self-center font-medium">✓ Lançado{item.fin_vinculo_status === 'conciliado' ? ' · conciliado' : ' · pendente'}</span>
+                  )}
                   {podeRejeitar && (
                     <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>Rejeitar</Button>
                   )}
@@ -2874,6 +3414,22 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
               solicitacao={item}
               onClose={() => setAtenderEstoque(false)}
               onDone={() => { setAtenderEstoque(false); onItemRefresh?.(); onClose(); }}
+            />
+          )}
+
+          {converterCompra && (
+            <ConverterEmCompraModal
+              solicitacao={item}
+              onClose={() => setConverterCompra(false)}
+              onDone={() => { setConverterCompra(false); onItemRefresh?.(); onClose(); }}
+            />
+          )}
+
+          {lancarFin && (
+            <LancarFinanceiroModal
+              solicitacao={item}
+              onClose={() => setLancarFin(false)}
+              onDone={() => { setLancarFin(false); onItemRefresh?.(); }}
             />
           )}
 
@@ -3310,21 +3866,17 @@ function TermometroRefeitas() {
   }, []);
   if (!d || !d.total_periodo) return null;
   const pct = d.pct_refeitas;
-  const cor = pct >= 25 ? 'text-red-600 dark:text-red-400'
-    : pct >= 12 ? 'text-amber-600 dark:text-amber-400'
-    : 'text-emerald-600 dark:text-emerald-400';
+  const cor = pct >= 25 ? '#f43f5e' : pct >= 12 ? '#f59e0b' : '#00B39D';
   return (
-    <Card className="p-3 mb-4 flex flex-wrap items-center gap-x-6 gap-y-1">
-      <span className="text-xs font-medium text-muted-foreground">Pedimos bem? · últimos 90 dias</span>
-      <span className="flex items-baseline gap-1.5">
-        <span className={`text-lg font-bold ${cor}`}>{pct}%</span>
-        <span className="text-xs text-muted-foreground">precisaram de ajuste ({d.refeitas} de {d.total_periodo})</span>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-4 text-xs text-muted-foreground">
+      <span className="inline-flex items-center gap-1.5">
+        <span className="h-2 w-2 rounded-full" style={{ background: cor }} />
+        Termômetro · 90 dias · não punitivo
       </span>
-      {d.devolucoes > 0 && (
-        <span className="text-xs text-muted-foreground">{d.devolucoes} devolvida(s) pela área</span>
-      )}
-      <span className="text-[10px] text-muted-foreground/70 ml-auto">termômetro · não punitivo</span>
-    </Card>
+      <span className="text-muted-foreground/40">—</span>
+      <span><span className="font-bold" style={{ color: cor }}>{pct}%</span> precisaram de ajuste ({d.refeitas} de {d.total_periodo})</span>
+      {d.devolucoes > 0 && <span>· {d.devolucoes} devolvida(s) pela área</span>}
+    </div>
   );
 }
 
@@ -3399,6 +3951,162 @@ function AtenderEstoqueModal({ solicitacao, onClose, onDone }) {
             <Button variant="outline" size="sm" onClick={onClose}>Cancelar</Button>
             <Button size="sm" onClick={confirmar} disabled={saving || !fila.length}>{saving ? 'Baixando...' : 'Dar baixa e concluir'}</Button>
           </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Marketing → "Isto é uma compra": preenche os itens/valor/planejado e o MESMO
+// pedido vira uma compra que segue pro Amaury (régua de planejado/valor aplicada
+// no servidor). Não cria outra solicitação.
+function ConverterEmCompraModal({ solicitacao, onClose, onDone }) {
+  const [itens, setItens] = useState([{ descricao: '', quantidade: '1', valor_estimado: '', valor_tipo: 'total', link_referencia: '' }]);
+  const [favorecido, setFavorecido] = useState('');
+  const [planejado, setPlanejado] = useState(false);
+  const [dataNec, setDataNec] = useState('');
+  const [justificativa, setJustificativa] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const total = itens.reduce((acc, it) => {
+    const v = parseFloat(it.valor_estimado); const q = parseFloat(it.quantidade) > 0 ? parseFloat(it.quantidade) : 1;
+    if (!isFinite(v)) return acc;
+    return acc + (it.valor_tipo === 'unitario' ? v * q : v);
+  }, 0);
+  const setItem = (i, patch) => setItens(arr => arr.map((it, idx) => idx === i ? { ...it, ...patch } : it));
+  const addItem = () => setItens(arr => [...arr, { descricao: '', quantidade: '1', valor_estimado: '', valor_tipo: 'total', link_referencia: '' }]);
+  const rmItem = (i) => setItens(arr => arr.length > 1 ? arr.filter((_, idx) => idx !== i) : arr);
+
+  async function converter() {
+    const validos = itens.filter(it => it.descricao.trim());
+    if (!validos.length) { toast.error('Descreva ao menos um item da compra.'); return; }
+    setSaving(true);
+    try {
+      await api.converterEmCompra(solicitacao.id, {
+        itens_lista: validos.map(it => ({
+          descricao: it.descricao.trim(),
+          quantidade: it.quantidade,
+          valor_estimado: it.valor_estimado === '' ? null : it.valor_estimado,
+          valor_tipo: it.valor_tipo,
+          link_referencia: it.link_referencia.trim() || undefined,
+        })),
+        favorecido_nome: favorecido.trim() || undefined,
+        eh_planejado: planejado,
+        data_necessaria: dataNec || undefined,
+        justificativa: justificativa.trim() || undefined,
+      });
+      toast.success('Virou compra — seguiu pro Amaury.');
+      onDone();
+    } catch (e) { toast.error(e.message || 'Erro ao converter em compra'); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col">
+        <DialogHeader><DialogTitle>Isto é uma compra</DialogTitle></DialogHeader>
+        <div className="space-y-3 overflow-y-auto min-h-0 flex-1">
+          <p className="text-sm text-muted-foreground">Especifique o que precisa ser comprado. O pedido <span className="font-medium">{solicitacao.titulo}</span> vira uma compra e segue pro Amaury (cotação → financeiro), sem abrir outra solicitação.</p>
+
+          <div className="space-y-2">
+            {itens.map((it, i) => (
+              <div key={i} className="rounded-md border border-border p-2.5 space-y-2">
+                <div className="flex gap-2">
+                  <Input className="flex-1" placeholder="O que comprar" value={it.descricao} onChange={e => setItem(i, { descricao: e.target.value })} />
+                  {itens.length > 1 && <Button size="icon" variant="ghost" className="h-9 w-9 text-destructive" onClick={() => rmItem(i)}><Trash2 className="h-4 w-4" /></Button>}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div><Label className="text-xs">Qtd</Label><Input type="number" min="1" value={it.quantidade} onChange={e => setItem(i, { quantidade: e.target.value })} /></div>
+                  <div><Label className="text-xs">Valor (R$)</Label><Input type="number" step="0.01" min="0" value={it.valor_estimado} onChange={e => setItem(i, { valor_estimado: e.target.value })} placeholder="0,00" /></div>
+                  <div>
+                    <Label className="text-xs">Tipo</Label>
+                    <select value={it.valor_tipo} onChange={e => setItem(i, { valor_tipo: e.target.value })}
+                      className="w-full h-9 px-2 text-sm rounded-md border border-border bg-background">
+                      <option value="total">R$ total</option>
+                      <option value="unitario">R$ por unid.</option>
+                    </select>
+                  </div>
+                </div>
+                <Input placeholder="Link (opcional)" value={it.link_referencia} onChange={e => setItem(i, { link_referencia: e.target.value })} />
+              </div>
+            ))}
+            <Button size="sm" variant="outline" onClick={addItem} className="w-full">+ Adicionar item</Button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label className="text-xs">Fornecedor sugerido</Label><Input value={favorecido} onChange={e => setFavorecido(e.target.value)} placeholder="opcional" /></div>
+            <div><Label className="text-xs">Data necessária</Label><DatePicker value={dataNec} onChange={v => setDataNec(v)} /></div>
+          </div>
+
+          <label className="flex items-start gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={planejado} onChange={e => setPlanejado(e.target.checked)} className="mt-1" />
+            <span>Compra <b>planejada</b> (já prevista no orçamento da área). <span className="text-muted-foreground">Muda a régua de aprovação por valor.</span></span>
+          </label>
+
+          <div><Label className="text-xs">Observação (opcional)</Label>
+            <Textarea rows={2} value={justificativa} onChange={e => setJustificativa(e.target.value)} placeholder="Detalhes da compra..." /></div>
+
+          <div className="text-sm text-right text-muted-foreground">Total estimado: <b className="text-foreground">R$ {total.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b></div>
+        </div>
+        <div className="flex justify-end gap-2 pt-2 border-t border-border">
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button onClick={converter} disabled={saving} className="bg-orange-600 hover:bg-orange-700 text-white">{saving ? 'Convertendo…' : 'Virar compra'}</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// Loop financeiro Fase 2 · lança a despesa da compra e concilia com o extrato.
+function LancarFinanceiroModal({ solicitacao, onClose, onDone }) {
+  const [planos, setPlanos] = useState([]);
+  const [centros, setCentros] = useState([]);
+  const [contas, setContas] = useState([]);
+  const [planoId, setPlanoId] = useState(solicitacao.plano_contas_id || '');
+  const [centroId, setCentroId] = useState(solicitacao.centro_custo_id || '');
+  const [contaId, setContaId] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [precisaConta, setPrecisaConta] = useState(false);
+  const valor = Number(solicitacao.valor_cotado ?? solicitacao.valor_estimado) || 0;
+
+  useEffect(() => {
+    api.classificacaoAux().then(d => { setPlanos(d?.planos || []); setCentros(d?.centros || []); setContas(d?.contas || []); }).catch(() => {});
+  }, []);
+
+  async function lancar() {
+    if (!planoId) { toast.error('Escolha o plano de contas.'); return; }
+    setSaving(true);
+    try {
+      const r = await api.lancarFinanceiro(solicitacao.id, { plano_contas_id: planoId, centro_custo_id: centroId || undefined, conta_id: contaId || undefined });
+      toast.success(r?.conciliada ? 'Lançado e conciliado com o extrato.' : 'Lançado no financeiro (pendente de conciliação).');
+      onDone();
+    } catch (e) {
+      if (e?.precisaConta || /conta banc/i.test(e?.message || '')) { setPrecisaConta(true); toast.error('Não achei o débito no extrato — escolha a conta bancária e lance de novo.'); }
+      else toast.error(e.message || 'Erro ao lançar no financeiro');
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <Dialog open onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader><DialogTitle>Lançar no financeiro</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">Cria a despesa de <span className="font-medium">{solicitacao.titulo}</span> ({valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}) e concilia com o extrato automaticamente se o débito existir.</p>
+          <div><Label className="text-xs">Plano de contas *</Label>
+            <ComboboxContabil items={planos} value={planoId} onChange={setPlanoId} placeholder="Buscar plano de contas…" permiteVazio={false} invalido={!planoId} />
+          </div>
+          <div><Label className="text-xs">Centro de custo</Label>
+            <ComboboxContabil items={centros} value={centroId} onChange={setCentroId} placeholder="Buscar centro de custo…" emptyLabel="— sem centro de custo —" />
+          </div>
+          <div><Label className="text-xs">Conta bancária {precisaConta ? '(necessária · não achei no extrato)' : '(só se não houver débito no extrato)'}</Label>
+            <select value={contaId} onChange={e => setContaId(e.target.value)} className={`w-full px-2 py-2 text-sm rounded-md bg-background border ${precisaConta && !contaId ? 'border-rose-400' : 'border-border'}`}>
+              <option value="">— conciliar pelo extrato —</option>
+              {contas.map(c => <option key={c.id} value={c.id}>{c.nome}{c.banco ? ` · ${c.banco}` : ''}</option>)}
+            </select></div>
+        </div>
+        <div className="flex justify-end gap-2 pt-3 border-t border-border mt-3">
+          <Button variant="outline" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button onClick={lancar} disabled={saving || !planoId} className="bg-teal-600 hover:bg-teal-700 text-white">{saving ? 'Lançando…' : 'Lançar'}</Button>
         </div>
       </DialogContent>
     </Dialog>
@@ -3559,8 +4267,8 @@ function SolicitacaoHistorico({ item, isAdmin, currentUserId, onChanged }) {
       </div>
       <div className="space-y-2">
         <Label className="text-xs">Data necessária</Label>
-        <Input type="date" value={edit.data_necessaria ? String(edit.data_necessaria).slice(0, 10) : ''}
-          onChange={e => setEdit(s => ({ ...s, data_necessaria: e.target.value }))} />
+        <DatePicker value={edit.data_necessaria ? String(edit.data_necessaria).slice(0, 10) : ''}
+          onChange={v => setEdit(s => ({ ...s, data_necessaria: v }))} />
       </div>
     </>
   );

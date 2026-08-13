@@ -6,11 +6,14 @@
 // testa. Captura a rota atual + contexto e manda pro /api/feedback. Estilo
 // inline com as CSS vars --cbrio-* (igual ao resto do painel) · sem dep nova.
 // ============================================================================
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MessageSquareWarning, X, Bug, HelpCircle, Lightbulb, Send } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { feedback as feedbackApi } from '../api';
 import { toast } from 'sonner';
+import { useOverlayAberto } from '../hooks/useOverlayAberto';
+
+const TEMPO_DESARME_MS = 4000; // some voltando a minimizado se não confirmar
 
 const TIPOS = [
   { id: 'bug', label: 'Algo quebrou', icon: Bug },
@@ -24,8 +27,37 @@ export default function FeedbackButton() {
   const [tipo, setTipo] = useState('bug');
   const [msg, setMsg] = useState('');
   const [enviando, setEnviando] = useState(false);
+  const { aberto: overlayAberto, drawerEsquerdo } = useOverlayAberto();
+  const [armado, setArmado] = useState(false);
+  const desarmeTimer = useRef(null);
+
+  // Desarma sozinho (volta a minimizado) se a pessoa não confirmar o toque,
+  // e sempre que o overlay que motivou a minimização fechar.
+  useEffect(() => {
+    if (!overlayAberto) { setArmado(false); return; }
+    if (!armado) return;
+    desarmeTimer.current = setTimeout(() => setArmado(false), TEMPO_DESARME_MS);
+    return () => clearTimeout(desarmeTimer.current);
+  }, [armado, overlayAberto]);
 
   if (!profile) return null; // só pra quem está logado
+
+  // Drawer lateral: o botão REALOCA pra faixa livre à direita — mas o drawer
+  // usa até 85vw, sobrando só ~56px em telas de 375px, onde o texto
+  // "Reportar" não cabe (ficava invadindo a borda do menu). Nesse caso vira
+  // só o ícone (compacto o bastante pra caber) e continua funcionando com 1
+  // toque normal, já que não sobrepõe mais nada. Nos demais overlays
+  // (modais/dialogs no meio da tela, sem faixa livre garantida) ele MINIMIZA
+  // e exige confirmar com um 2º toque, pra evitar que a pessoa acerte sem
+  // querer algo que apareceu no lugar dele.
+  const minimizado = overlayAberto && !drawerEsquerdo && !armado;
+  const compacto = minimizado || drawerEsquerdo;
+
+  function aoClicarBotao() {
+    if (drawerEsquerdo) { setOpen(true); return; } // realocado: 1 toque já funciona
+    if (minimizado) { setArmado(true); return; } // 1º toque: só reexpande
+    setOpen(true); // já expandido, ou sem overlay: abre de vez
+  }
 
   async function enviar() {
     if (msg.trim().length < 3) {
@@ -58,20 +90,27 @@ export default function FeedbackButton() {
   return (
     <>
       <button
-        onClick={() => setOpen(true)}
-        title="Reportar um problema ou ideia"
+        onClick={aoClicarBotao}
+        title={compacto && !drawerEsquerdo ? 'Toque de novo pra reportar um problema ou ideia' : 'Reportar um problema ou ideia'}
         aria-label="Reportar problema"
+        className="floating-action-btn"
         style={{
-          position: 'fixed', left: 20, bottom: 20, zIndex: 1200,
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '10px 14px', borderRadius: 999,
+          position: 'fixed',
+          // drawer de navegação (lateral esquerda) aberto → sai da frente,
+          // vai pra faixa livre à direita (compacto, cabe nos ~56px que sobram);
+          // nos demais overlays só minimiza no canto de sempre.
+          left: drawerEsquerdo ? 'auto' : 20,
+          right: drawerEsquerdo ? 8 : 'auto',
+          bottom: 'calc(20px + env(safe-area-inset-bottom, 0px))', zIndex: 1200,
+          display: 'flex', alignItems: 'center', gap: compacto ? 0 : 8,
+          padding: compacto ? 10 : '10px 14px', borderRadius: 999,
           background: '#00B39D', color: 'white', border: 'none',
           boxShadow: '0 4px 16px rgba(0,0,0,0.18)', cursor: 'pointer',
           fontSize: 13, fontWeight: 600,
         }}
       >
         <MessageSquareWarning size={18} />
-        Reportar
+        {!compacto && 'Reportar'}
       </button>
 
       {open && (

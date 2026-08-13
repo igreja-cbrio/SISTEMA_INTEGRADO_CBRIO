@@ -505,13 +505,13 @@ ${porCulto}
                       <p className="font-medium">{v.name}</p>
                       <p className="text-xs text-muted-foreground">
                         {v.team ? `${v.team} · ` : ''}
-                        {v.lastDate ? `Ultimo: ${new Date(v.lastDate).toLocaleDateString('pt-BR')}` : inactiveMode === 'checkin' ? 'Nunca fez check-in' : 'Nunca foi escalado'}
+                        {v.lastDate ? `Último: ${new Date(v.lastDate).toLocaleDateString('pt-BR')}` : inactiveMode === 'checkin' ? 'Nunca fez check-in' : 'Nunca foi escalado'}
                       </p>
                     </div>
                     <div className="shrink-0">
                       {v.monthsInactive ? (
                         <Badge className="bg-red-500 text-white hover:bg-red-600">
-                          {v.monthsInactive} {v.monthsInactive === 1 ? 'mes' : 'meses'}
+                          {v.monthsInactive} {v.monthsInactive === 1 ? 'mês' : 'meses'}
                         </Badge>
                       ) : (
                         <Badge variant="outline" className="text-muted-foreground">

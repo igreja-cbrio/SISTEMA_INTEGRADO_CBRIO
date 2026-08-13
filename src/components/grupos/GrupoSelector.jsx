@@ -19,8 +19,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { grupos as authApi, gruposPublic } from '../../api';
+// Régua ÚNICA de busca (acento/caixa/espaço) · espelho de backend/services/busca.js
+import { normalizarBusca, contemNormalizado, algumContemNormalizado } from '../../lib/busca';
 import { Input } from '../ui/input';
 import { Search, MapPin, Clock, User as UserIcon, Users, List as ListIcon, Map as MapIcon } from 'lucide-react';
+import DescricaoGrupo from './DescricaoGrupo';
 import { GruposMapView } from './GruposMapView';
 
 const C = {
@@ -37,6 +40,18 @@ const DIAS_CURTO = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 const RECORRENCIA_LABEL = { diario: 'Diário', semanal: 'Semanal', quinzenal: 'Quinzenal', mensal: 'Mensal' };
 const RECORRENCIA_ORDEM = ['diario', 'semanal', 'quinzenal', 'mensal'];
 const recorrenciaLabel = (r) => RECORRENCIA_LABEL[r] || (r ? r.charAt(0).toUpperCase() + r.slice(1) : '');
+// Grupo diário acontece TODOS os dias — não tem dia da semana fixo (Marcos ·
+// 17/07). Aparece em qualquer filtro de dia e mostra "Diário" no lugar do dia.
+const ehDiario = (g) => (g?.recorrencia || '').toLowerCase().trim() === 'diario';
+
+// As temporadas de grupos abrem em março e agosto (cadência institucional ·
+// Marcos 15/07) — a frase do aviso aponta a PRÓXIMA abertura a partir de hoje.
+function proximaAbertura() {
+  const mes = new Date().getMonth(); // 0 = janeiro
+  if (mes < 2) return 'em março';
+  if (mes < 7) return 'em agosto';
+  return 'em março do ano que vem';
+}
 
 const selStyle = {
   padding: '8px 10px', borderRadius: 8, border: `1px solid ${C.border}`,
@@ -74,6 +89,11 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
   const [temporada, setTemporada] = useState(temporadaId || '');
   const [grupos, setGrupos] = useState([]);
   const [loading, setLoading] = useState(false);
+  // Falha de carga precisa ser VISIVEL: `catch -> setGrupos([])` mostrava
+  // "Nenhum grupo encontrado com esses filtros", e a pessoa concluia que os
+  // grupos acabaram (era o sintoma do 429 por IP no culto). 31/07.
+  const [erroCarga, setErroCarga] = useState(null);
+  const [tentativa, setTentativa] = useState(0);
 
   const [searchMode, setSearchMode] = useState('grupo'); // 'grupo' | 'lider'
   const [busca, setBusca] = useState('');
@@ -86,12 +106,18 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
   // Temporadas selecionáveis no form: a ativa (default) + qualquer outra com
   // inscrições abertas (ex.: "Temporada Teste"). Só vira select quando há ≥2.
   const [temporadaOpcoes, setTemporadaOpcoes] = useState([]);
+  // inscricoes_abertas por temporada — alimenta o aviso de temporada fechada
+  // (quando fechada, o backend devolve só os grupos "sempre abertos").
+  const [temporadaAberta, setTemporadaAberta] = useState({});
 
   // Resolve a temporada ativa (se não veio por prop) + opções do seletor
   useEffect(() => {
     if (temporadaId) setTemporada(temporadaId);
     api.temporadas().then(ts => {
       const lista = ts || [];
+      const mapa = {};
+      lista.forEach(t => { mapa[t.id] = t.inscricoes_abertas === true; });
+      setTemporadaAberta(mapa);
       const ativa = lista.find(t => t.ativa);
       const aberta = lista.find(t => t.inscricoes_abertas);
       if (!temporadaId) {
@@ -118,11 +144,12 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
     // Trocar de temporada zera os filtros (as opções são data-driven da
     // temporada carregada — valor antigo poderia não existir na nova).
     setFCategoria(''); setFFaixa(''); setFBairro(''); setFDia(''); setFRecorrencia('');
+    setErroCarga(null);
     api.buscar({ temporada, status_temporada: 'ativo' })
-      .then(d => setGrupos(d || []))
-      .catch(() => setGrupos([]))
+      .then(d => { setGrupos(d || []); setErroCarga(null); })
+      .catch(e => { setGrupos([]); setErroCarga(e?.message || 'Nao conseguimos carregar os grupos agora.'); })
       .finally(() => setLoading(false));
-  }, [temporada]);
+  }, [temporada, tentativa]);
 
   // Opções de filtro derivadas do dado real (só aparecem quando existem →
   // nunca oferece um valor que não casa nada · sem filtro-fantasma)
@@ -141,19 +168,28 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
   const faixas = useMemo(() => [...new Set(grupos.map(g => g.faixa_etaria).filter(Boolean))].sort(), [grupos]);
 
   const filtrados = useMemo(() => {
-    const s = busca.trim().toLowerCase();
+    const s = normalizarBusca(busca);
     return grupos.filter(g => {
       if (fCategoria && g.categoria !== fCategoria) return false;
       if (fFaixa && g.faixa_etaria !== fFaixa) return false;
       if (fBairro && g.bairro !== fBairro) return false;
-      if (fDia !== '' && String(g.dia_semana) !== fDia) return false;
+      // Diário casa com QUALQUER dia escolhido (acontece todos os dias).
+      if (fDia !== '' && !ehDiario(g) && String(g.dia_semana) !== fDia) return false;
       if (fRecorrencia && (g.recorrencia || '').toLowerCase().trim() !== fRecorrencia) return false;
       if (s) {
         if (searchMode === 'lider') {
-          if (!g.lider_nome?.toLowerCase().includes(s)) return false;
+          // Grupo com dois líderes aparece buscando por QUALQUER um (o principal
+          // + os marcados como líder/co-líder no grupo) e também pelo APELIDO
+          // ("Tuninho" acha o grupo do Antonio Marco Pereira) — `lideres_busca`
+          // já vem com nomes + apelidos. Fallback pros nomes: bundle antigo/
+          // backend em deploy de 2 etapas.
+          const alvos = (g.lideres_busca && g.lideres_busca.length)
+            ? g.lideres_busca
+            : (g.lideres_nomes && g.lideres_nomes.length ? g.lideres_nomes : [g.lider_nome]).filter(Boolean);
+          if (!algumContemNormalizado(alvos, s)) return false;
         } else {
-          const alvo = [g.nome, g.codigo, g.local, g.bairro, g.tema].filter(Boolean).join(' ').toLowerCase();
-          if (!alvo.includes(s)) return false;
+          const alvo = [g.nome, g.codigo, g.local, g.bairro, g.tema].filter(Boolean).join(' ');
+          if (!contemNormalizado(alvo, s)) return false;
         }
       }
       return true;
@@ -162,8 +198,27 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
 
   const temFiltros = full && (categorias.length >= 1 || faixas.length >= 1 || bairros.length >= 1 || dias.length >= 1 || recorrencias.length >= 1);
 
+  // Temporada selecionada com inscrições FECHADAS: o que aparece são só os
+  // grupos "sempre abertos" — o aviso explica e aponta a próxima abertura.
+  const inscricoesFechadas = full && !!temporada && temporadaAberta[temporada] === false;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {inscricoesFechadas && !loading && (
+        <div style={{
+          padding: '10px 14px', borderRadius: 10, fontSize: 13, lineHeight: 1.55,
+          background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.5)', color: C.text,
+        }}>
+          {grupos.length > 0 ? (
+            <>As inscrições da temporada estão <strong>fechadas</strong> no momento — os grupos abaixo
+            aceitam inscrição o ano todo. As inscrições para mais grupos abrem <strong>{proximaAbertura()}</strong>.</>
+          ) : (
+            <>As inscrições da temporada estão <strong>fechadas</strong> no momento e não há grupos
+            recebendo inscrição agora. As inscrições abrem <strong>{proximaAbertura()}</strong> — volte aqui
+            que a lista de grupos vai estar te esperando!</>
+          )}
+        </div>
+      )}
       {/* Busca: por grupo | por líder */}
       <div>
         <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
@@ -261,7 +316,7 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
           />
         </div>
       ) : (
-        <ResultsList grupos={filtrados} loading={loading} selectedGrupoId={selectedGrupoId} onSelect={onSelect} isMobile={isMobile} />
+        <ResultsList grupos={filtrados} loading={loading} selectedGrupoId={selectedGrupoId} onSelect={onSelect} isMobile={isMobile} erro={erroCarga} onTentarDeNovo={() => setTentativa(t => t + 1)} />
       )}
 
       {/* Botão FIXO de Inscrever — SÓ na visão LISTA (no mapa a ação vive no
@@ -297,8 +352,22 @@ export default function GrupoSelector({ onSelect, selectedGrupoId, mode = 'full'
   );
 }
 
-function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = false }) {
+function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = false, erro = null, onTentarDeNovo }) {
   if (loading) return <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Carregando...</div>;
+  // Erro vem ANTES do vazio: falha de rede/limite nao pode se disfarcar de
+  // "nenhum grupo encontrado" (a pessoa desistiria achando que nao ha grupos).
+  if (erro) return (
+    <div style={{ padding: 20, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center' }}>
+      <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5, maxWidth: 340 }}>{erro}</div>
+      {onTentarDeNovo && (
+        <button type="button" onClick={onTentarDeNovo} style={{
+          padding: '10px 18px', borderRadius: 999, minHeight: 44, cursor: 'pointer',
+          border: `1px solid ${C.primary}`, background: C.primaryBg, color: C.primary,
+          fontSize: 13, fontWeight: 700,
+        }}>Tentar de novo</button>
+      )}
+    </div>
+  );
   if (!grupos.length) return <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>Nenhum grupo encontrado com esses filtros.</div>;
 
   return (
@@ -322,10 +391,23 @@ function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = fa
               {g.codigo && <code style={{ fontSize: 10, color: C.t3, fontFamily: 'monospace' }}>{g.codigo}</code>}
             </div>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 11, color: C.t3 }}>
-              {g.lider_nome && <span><UserIcon size={10} style={{ display: 'inline', marginRight: 2 }} /> {g.lider_nome}</span>}
+              {(() => {
+                // Mostra TODOS os líderes (principal + co-líderes) — a pessoa
+                // acha o grupo pelo líder que conhece. Com apelido cadastrado
+                // vem "Nome (Apelido)" pronto do backend (`lideres_exibicao`):
+                // é o "ah, é o Tuninho" que faz a pessoa reconhecer o grupo.
+                const nomes = (g.lideres_exibicao && g.lideres_exibicao.length
+                  ? g.lideres_exibicao
+                  : (g.lideres_nomes && g.lideres_nomes.length ? g.lideres_nomes : [g.lider_nome])).filter(Boolean);
+                return nomes.length ? <span><UserIcon size={10} style={{ display: 'inline', marginRight: 2 }} /> {nomes.join(' · ')}</span> : null;
+              })()}
               {g.bairro && <span><MapPin size={10} style={{ display: 'inline', marginRight: 2 }} /> {g.bairro}</span>}
-              {g.dia_semana != null && <span><Clock size={10} style={{ display: 'inline', marginRight: 2 }} /> {DIAS_CURTO[g.dia_semana]}{g.horario ? ` ${g.horario.slice(0, 5)}` : ''}</span>}
-              {g.recorrencia && g.recorrencia.toLowerCase().trim() !== 'semanal' && <span>· {recorrenciaLabel(g.recorrencia.toLowerCase().trim())}</span>}
+              {ehDiario(g)
+                ? <span><Clock size={10} style={{ display: 'inline', marginRight: 2 }} /> Diário{g.horario ? ` ${g.horario.slice(0, 5)}` : ''}</span>
+                : <>
+                    {g.dia_semana != null && <span><Clock size={10} style={{ display: 'inline', marginRight: 2 }} /> {DIAS_CURTO[g.dia_semana]}{g.horario ? ` ${g.horario.slice(0, 5)}` : ''}</span>}
+                    {g.recorrencia && g.recorrencia.toLowerCase().trim() !== 'semanal' && <span>· {recorrenciaLabel(g.recorrencia.toLowerCase().trim())}</span>}
+                  </>}
               {g.dist_km != null && <span style={{ color: C.primary, fontWeight: 600 }}>{g.dist_km < 1 ? `${Math.round(g.dist_km * 1000)}m` : `${g.dist_km.toFixed(1)}km`}</span>}
               {g.categoria && <span>· {g.categoria}</span>}
               {(() => {
@@ -338,6 +420,18 @@ function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = fa
                 return null;
               })()}
             </div>
+            {/* Prévia do que o grupo trata — ajuda a ESCOLHER. Só 2 linhas e sem
+                botão de expandir: o cartão é um <button> (botão aninhado é HTML
+                inválido e o clique escolheria o grupo) e 87 cartões com o texto
+                inteiro tornariam a lista impossível de percorrer. O texto
+                completo abre na confirmação, depois de escolher. */}
+            <DescricaoGrupo
+              texto={g.descricao}
+              linhas={2}
+              expansivel={false}
+              fontSize={11.5}
+              cor={C.t3}
+            />
           </button>
         );
       })}

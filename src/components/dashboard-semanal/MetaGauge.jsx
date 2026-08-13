@@ -27,6 +27,7 @@ export default function MetaGauge({
   duration = 1.6,
   anim,
   showLabels = true,
+  percentual = false, // mostra "N%" em vez de "N/meta"
 }) {
   const value = Math.max(0, Number(atual) || 0);
   const goal = Math.max(1, Number(meta) || 1);
@@ -143,7 +144,7 @@ export default function MetaGauge({
         >
           <motion.span className="tabular-nums">{valorDisplay}</motion.span>
           <span className="text-muted-foreground" style={{ fontSize: `${unitFontSize}px` }}>
-            /{goal.toLocaleString('pt-BR')}
+            {percentual ? '%' : `/${goal.toLocaleString('pt-BR')}`}
           </span>
         </motion.div>
         <motion.div

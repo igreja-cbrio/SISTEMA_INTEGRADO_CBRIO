@@ -11,7 +11,7 @@
 // tabelas e manda o relatório diário.
 // ============================================================================
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, requireSuperAdmin } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
@@ -19,6 +19,20 @@ router.use(authenticate);
 const TIPOS = ['bug', 'confusao', 'sugestao', 'elogio'];
 const SEVS = ['baixa', 'media', 'alta', 'critica'];
 const STATUSES = ['novo', 'triado', 'em_andamento', 'resolvido', 'descartado'];
+
+function textoSeguro(value, max) {
+  return value == null ? null : String(value).replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, max) || null;
+}
+
+function contextoSeguro(contexto) {
+  if (!contexto || typeof contexto !== 'object' || Array.isArray(contexto)) return null;
+  const result = {};
+  const userAgent = textoSeguro(contexto.user_agent, 300);
+  const viewport = /^\d{2,5}x\d{2,5}$/.test(String(contexto.viewport || '')) ? String(contexto.viewport) : null;
+  if (userAgent) result.user_agent = userAgent;
+  if (viewport) result.viewport = viewport;
+  return Object.keys(result).length ? result : null;
+}
 
 // ── Testador reporta (qualquer autenticado) ─────────────────────────────────
 router.post('/', async (req, res) => {
@@ -33,10 +47,10 @@ router.post('/', async (req, res) => {
       user_nome: req.user?.granular?.cargoNome || null,
       user_role: req.user?.role || null,
       tipo: TIPOS.includes(tipo) ? tipo : 'bug',
-      mensagem: String(mensagem).slice(0, 2000),
-      rota: String(rota || '').slice(0, 300),
-      modulo: (String(modulo || '').slice(0, 60)) || null,
-      contexto: contexto && typeof contexto === 'object' ? contexto : null,
+      mensagem: textoSeguro(mensagem, 2000),
+      rota: textoSeguro(String(rota || '').split('?')[0], 300),
+      modulo: textoSeguro(modulo, 60),
+      contexto: contextoSeguro(contexto),
       severidade: SEVS.includes(severidade) ? severidade : 'media',
       status: 'novo',
     };
@@ -49,8 +63,9 @@ router.post('/', async (req, res) => {
   }
 });
 
-// ── Daqui pra baixo: só admin/diretor ───────────────────────────────────────
-router.use(authorize('admin', 'diretor'));
+// O envio continua disponível a qualquer autenticado. A gestão foi consolidada
+// no Sistema e, daqui pra baixo, exige superadmin estrito.
+router.use(requireSuperAdmin);
 
 router.get('/', async (req, res) => {
   try {

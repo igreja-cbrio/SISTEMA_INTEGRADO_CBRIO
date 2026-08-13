@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { nps as api } from '../../api';
 import { Loader2, CheckCircle2, MessageSquare } from 'lucide-react';
 import NpsForm from '../../components/nps/NpsForm';
@@ -21,6 +21,10 @@ const inp = {
 
 export default function NpsPublica() {
   const { token } = useParams();
+  const [searchParams] = useSearchParams();
+  // Turma do Next (QR por turma · ?turma=<id>). Vai em toda resposta e busca o
+  // nome pra pessoa confirmar que respondeu da turma certa.
+  const turma = searchParams.get('turma') || null;
   const [pesquisa, setPesquisa] = useState(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
@@ -52,7 +56,7 @@ export default function NpsPublica() {
   useEffect(() => {
     (async () => {
       try {
-        const data = await api.publicGet(token);
+        const data = await api.publicGet(token, turma);
         setPesquisa(data);
       } catch (e) {
         setErro(e.message || 'Pesquisa indisponível');
@@ -74,7 +78,7 @@ export default function NpsPublica() {
       if (!nome.trim()) return alert('Informe seu nome (ou marque "responder como anônimo").');
       if (!email.trim()) return alert('Informe seu e-mail (ou marque "responder como anônimo").');
     }
-    const payload = { nome: anonimo ? null : nome.trim(), email: anonimo ? null : email.trim(), anonimo, score, respostas, comentario };
+    const payload = { nome: anonimo ? null : nome.trim(), email: anonimo ? null : email.trim(), anonimo, score, respostas, comentario, turma_id: turma || null };
     // Enfileira no aparelho e mostra "Obrigado" IMEDIATAMENTE · o upload roda em
     // segundo plano (com re-tentativa). Nunca perde a resposta no pico.
     const item = { _id: (globalThis.crypto?.randomUUID?.() || (String(Date.now()) + Math.random())), payload, ts: Date.now() };
@@ -119,6 +123,11 @@ export default function NpsPublica() {
               <MessageSquare size={20} style={{ color: C.cyan }} />
               <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>{pesquisa.titulo}</h1>
             </div>
+            {pesquisa.turma?.nome && (
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: C.cyan, background: 'var(--cbrio-input-bg)', border: `1px solid ${C.border}`, borderRadius: 999, padding: '3px 12px', marginBottom: 14 }}>
+                Turma: {pesquisa.turma.nome}
+              </div>
+            )}
             {pesquisa.perguntas?.descricao_curta && (
               <p style={{ margin: '0 0 20px', fontSize: 13, color: C.t2, lineHeight: 1.5 }}>{pesquisa.perguntas.descricao_curta}</p>
             )}

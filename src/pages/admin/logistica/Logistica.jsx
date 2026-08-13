@@ -3,6 +3,9 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { logistica, ml, arquivei } from '../../../api';
 import { supabase } from '../../../supabaseClient';
 import { Button } from '../../../components/ui/button';
+import { DatePicker } from '@/components/ui/date-picker';
+import { Copy } from 'lucide-react';
+import { toast } from 'sonner';
 import LogisticaEstoque from './LogisticaEstoque';
 import LogisticaCompras from './LogisticaCompras';
 
@@ -352,7 +355,13 @@ export default function Logistica() {
         ))}
       </div>
 
-      {tab === 0 && <DashboardTab dash={dash} onRefresh={() => fetchDash(true)} onNavigate={setTab} />}
+      {tab === 0 && (
+        <DashboardTab
+          dash={dash}
+          onRefresh={() => fetchDash(true)}
+          onNavigate={(t, status) => { if (status !== undefined) setFiltroPedStatus(status); setTab(t); }}
+        />
+      )}
       {tab === 1 && (
         <FornecedoresTab data={fornecedores} loading={loading} isDiretor={isDiretor}
           filtroAtivo={filtroFornAtivo} setFiltroAtivo={setFiltroFornAtivo}
@@ -419,7 +428,7 @@ export default function Logistica() {
           <Textarea label="Descrição *" value={modalPed.descricao || ''} onChange={e => upPed('descricao', e.target.value)} />
           <div style={styles.formRow}>
             <Input label="Valor Total" type="number" step="0.01" value={modalPed.valor_total || ''} onChange={e => upPed('valor_total', e.target.value)} />
-            <Input label="Data Prevista" type="date" value={modalPed.data_prevista || ''} onChange={e => upPed('data_prevista', e.target.value)} />
+            <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Prevista</label><DatePicker value={modalPed.data_prevista || ''} onChange={v => upPed('data_prevista', v)} /></div>
           </div>
           <div style={styles.formRow}>
             <Select label="Fornecedor" value={modalPed.fornecedor_id || ''} onChange={e => upPed('fornecedor_id', e.target.value)}>
@@ -512,15 +521,21 @@ function StatCard({ label, value, bg, svg, hint, onClick }) {
 
 function DashboardTab({ dash, onRefresh, onNavigate }) {
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
-  // Tab índices: 1=Fornecedores, 2=Pedidos, 4=Compras ML
+  // Tab índices: 1=Fornecedores, 2=Pedidos, 5=Compras ML
   // Solicitações de compra agora vivem em /solicitacoes (categoria=compras) ·
   // KPIs de "Solic. Pendentes/Aprovadas" foram removidos daqui · aparecem na
   // tela unificada com SLA e NPS.
+  const mlEmTransito = dash.mlPedidosEmTransito ?? 0;
   const kpis = [
     { label: 'Fornecedores Ativos', value: dash.fornecedoresAtivos ?? 0, bg: '#00B39D', tab: 1 },
-    { label: 'Ped. Aguardando', value: dash.pedidosAguardando ?? 0, bg: '#3b82f6', tab: 2 },
-    { label: 'Ped. Em Trânsito', value: dash.pedidosEmTransito ?? 0, bg: '#8b5cf6', tab: 2 },
-    { label: 'Ped. Recebidos', value: dash.pedidosRecebidos ?? 0, bg: '#10b981', tab: 2 },
+    { label: 'Ped. Aguardando', value: dash.pedidosAguardando ?? 0, bg: '#3b82f6', tab: 2, status: 'aguardando' },
+    {
+      label: 'Ped. Em Trânsito', value: dash.pedidosEmTransito ?? 0, bg: '#8b5cf6', tab: 2, status: 'em_transito',
+      // O número soma pedidos internos + envios do Mercado Livre (que ficam na aba
+      // Compras ML, não em Pedidos) — avisa quando parte do total vive lá.
+      hint: mlEmTransito ? `Inclui ${mlEmTransito} do Mercado Livre · ver aba Compras ML` : undefined,
+    },
+    { label: 'Ped. Recebidos', value: dash.pedidosRecebidos ?? 0, bg: '#10b981', tab: 2, status: 'recebido' },
     { label: 'Compras do Mês', value: fmtMoney(dash.mlComprasMes ?? 0), bg: '#00B39D', hint: 'Apenas compras do Mercado Livre no mês corrente', tab: 5 },
   ];
   return (
@@ -533,7 +548,7 @@ function DashboardTab({ dash, onRefresh, onNavigate }) {
         <Button variant="ghost" size="sm" onClick={onRefresh} title="Atualizar (ignora cache)">🔄 Atualizar</Button>
       </div>
       <div className="cbrio-stagger" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 24 }}>
-        {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={STAT_SVGS[i % STAT_SVGS.length]} hint={k.hint} onClick={() => onNavigate(k.tab)} />)}
+        {kpis.map((k, i) => <StatCard key={k.label} label={k.label} value={k.value} bg={k.bg} svg={STAT_SVGS[i % STAT_SVGS.length]} hint={k.hint} onClick={() => onNavigate(k.tab, k.status)} />)}
       </div>
     </>
   );
@@ -829,9 +844,15 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
           </td>
           <td style={styles.td}><Badge status={n.origem || 'manual'} map={NF_ORIGEM} /></td>
           <td style={styles.td}>
-            {n.storage_path ? <a href={n.storage_path} target="_blank" rel="noopener noreferrer" style={{ color: C.primary }}>📄 Ver</a>
-            : n.origem === 'mercadolivre' && n.ml_order_id ? <a href={`https://www.mercadolivre.com.br/purchases/${n.ml_order_id}`} target="_blank" rel="noopener noreferrer" style={{ color: C.primary, fontSize: 12 }}>🛒 Ver no ML</a>
-            : '—'}
+            {n.storage_path ? (
+              <span style={{ display: 'inline-flex', gap: 10, whiteSpace: 'nowrap' }}>
+                <a href={n.storage_path} target="_blank" rel="noopener noreferrer" style={{ color: C.primary }}>📄 Ver</a>
+                {/* ?download força o Content-Disposition attachment no Storage público do Supabase */}
+                <a href={`${n.storage_path}${n.storage_path.includes('?') ? '&' : '?'}download`} style={{ color: C.primary, fontSize: 12 }}>⬇ Baixar</a>
+              </span>
+            ) : n.origem === 'mercadolivre' && n.ml_order_id ? (
+              <a href={`https://www.mercadolivre.com.br/purchases/${n.ml_order_id}`} target="_blank" rel="noopener noreferrer" style={{ color: C.primary, fontSize: 12 }}>🛒 Ver no ML</a>
+            ) : '—'}
           </td>
           <td style={styles.td}>
             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
@@ -925,7 +946,7 @@ function NfEstoqueModal({ nota, onClose, onDone }) {
                       </select>
                     </td>
                     <td style={styles.td}><input type="number" min="0" step="any" style={{ ...styles.input, width: 70 }} value={l.quantidade} onChange={e => upd(i, 'quantidade', e.target.value)} /></td>
-                    <td style={styles.td}>{p?.controla_validade ? <input type="date" style={styles.input} value={l.validade} onChange={e => upd(i, 'validade', e.target.value)} /> : <span style={{ color: C.text3, fontSize: 12 }}>—</span>}</td>
+                    <td style={styles.td}>{p?.controla_validade ? <DatePicker value={l.validade} onChange={v => upd(i, 'validade', v)} /> : <span style={{ color: C.text3, fontSize: 12 }}>—</span>}</td>
                   </tr>
                 );
               })}
@@ -992,7 +1013,7 @@ function NotaFiscalModal({ open, data, onClose, onSave, saving, fornecedores, pe
         </div>
         <div style={styles.formRow}>
           <Input label="Valor *" type="number" step="0.01" value={data.valor || ''} onChange={e => upNota('valor', e.target.value)} />
-          <Input label="Data Emissão *" type="date" value={data.data_emissao || ''} onChange={e => upNota('data_emissao', e.target.value)} />
+          <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Emissão *</label><DatePicker value={data.data_emissao || ''} onChange={v => upNota('data_emissao', v)} /></div>
         </div>
         <div style={styles.formRow}>
           <Input label="Emitente (quem vendeu)" value={data.emitente_nome || ''} onChange={e => upNota('emitente_nome', e.target.value)} />
@@ -1175,6 +1196,15 @@ const ML_SHIP_STATUS = {
 // ═══════════════════════════════════════════════════════════
 // TAB: Compras Mercado Livre
 // ═══════════════════════════════════════════════════════════
+async function copiarRastreio(codigo) {
+  try {
+    await navigator.clipboard.writeText(codigo);
+    toast.success('Código de rastreio copiado');
+  } catch {
+    toast.error('Não foi possível copiar o código');
+  }
+}
+
 function ComprasMLTab() {
   const [mlStatus, setMlStatus] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -1406,9 +1436,24 @@ function ComprasMLTab() {
                         <Badge status={shipDetail.status} map={ML_SHIP_STATUS} />
                         {shipDetail.substatus && <div style={{ fontSize: 11, color: C.text2, marginTop: 2 }}>{shipDetail.substatus}</div>}
                       </div>
-                      {shipDetail.tracking_number && <div>
+                      {shipDetail.tracking_number && <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: 11, color: C.text3, fontWeight: 600 }}>RASTREIO</div>
-                        <div style={{ fontSize: 14, fontFamily: 'monospace', fontWeight: 600, color: C.text }}>{shipDetail.tracking_number}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                          <div
+                            title={shipDetail.tracking_number}
+                            style={{ fontSize: 14, fontFamily: 'monospace', fontWeight: 600, color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                          >
+                            {shipDetail.tracking_number}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => copiarRastreio(shipDetail.tracking_number)}
+                            title="Copiar código de rastreio"
+                            style={{ flexShrink: 0, padding: 3, background: 'none', border: 'none', cursor: 'pointer', color: C.text3, display: 'flex', alignItems: 'center' }}
+                          >
+                            <Copy size={14} />
+                          </button>
+                        </div>
                       </div>}
                       {shipDetail.tracking_method && <div>
                         <div style={{ fontSize: 11, color: C.text3, fontWeight: 600 }}>TRANSPORTADORA</div>
@@ -1670,8 +1715,25 @@ function ShipmentCard({ ship, expanded, detail, onToggle }) {
             <div style={{ padding: '0 18px 16px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px 16px', padding: '12px 14px', background: 'var(--cbrio-input-bg)', borderRadius: 10 }}>
                 {detail.tracking_number && (
-                  <div><div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', fontWeight: 600 }}>Rastreio</div>
-                    <div style={{ fontSize: 12, fontWeight: 600, fontFamily: 'monospace', color: C.text }}>{detail.tracking_number}</div></div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', fontWeight: 600 }}>Rastreio</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      <div
+                        title={detail.tracking_number}
+                        style={{ fontSize: 12, fontWeight: 600, fontFamily: 'monospace', color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+                      >
+                        {detail.tracking_number}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => copiarRastreio(detail.tracking_number)}
+                        title="Copiar código de rastreio"
+                        style={{ flexShrink: 0, padding: 2, background: 'none', border: 'none', cursor: 'pointer', color: C.text3, display: 'flex', alignItems: 'center' }}
+                      >
+                        <Copy size={12} />
+                      </button>
+                    </div>
+                  </div>
                 )}
                 {detail.tracking_method && (
                   <div><div style={{ fontSize: 10, color: C.text3, textTransform: 'uppercase', fontWeight: 600 }}>Transportadora</div>

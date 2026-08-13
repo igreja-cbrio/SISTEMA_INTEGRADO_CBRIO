@@ -22,6 +22,12 @@ export default function ImportarExtratos() {
   const [resultadoOfx, setResultadoOfx] = useState(null);
   const [resultadoPix, setResultadoPix] = useState(null);
   const [resultadoBal, setResultadoBal] = useState(null);
+  // Contribuições nominais · fluxo em 2 passos (prévia → confirmar)
+  const [contribFile, setContribFile] = useState(null);
+  const [procContribPrev, setProcContribPrev] = useState(false);
+  const [procContribCommit, setProcContribCommit] = useState(false);
+  const [contribPrevia, setContribPrevia] = useState(null);
+  const [contribResultado, setContribResultado] = useState(null);
 
   const loadUploads = useCallback(async () => {
     const u = await financeiroV2.uploads({ limit: 20 });
@@ -76,13 +82,52 @@ export default function ImportarExtratos() {
     }
   };
 
+  // Contribuições nominais · prévia (não grava · só mostra o que entraria)
+  const previewContrib = async (file) => {
+    setContribFile(file);
+    setContribResultado(null);
+    setContribPrevia(null);
+    setProcContribPrev(true);
+    try {
+      const r = await financeiroV2.importar.contribuicoesPrevia(file);
+      setContribPrevia(r);
+    } catch (e) {
+      setContribPrevia({ erro: e.message });
+    } finally {
+      setProcContribPrev(false);
+    }
+  };
+
+  // Contribuições nominais · confirma (grava idempotente)
+  const commitContrib = async () => {
+    if (!contribFile) return;
+    setProcContribCommit(true);
+    try {
+      const r = await financeiroV2.importar.contribuicoes(contribFile);
+      setContribResultado(r);
+      setContribPrevia(null);
+      setContribFile(null);
+      loadUploads();
+    } catch (e) {
+      setContribResultado({ erro: e.message });
+    } finally {
+      setProcContribCommit(false);
+    }
+  };
+
+  const cancelarContrib = () => {
+    setContribFile(null);
+    setContribPrevia(null);
+    setContribResultado(null);
+  };
+
   return (
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: 16, marginBottom: 24 }}>
         {/* OFX */}
         <UploadCard
           title="Extrato bancário (OFX)"
-          subtitle="Importa todas as transacoes do Santander (PIX, TED, boletos, cartao, tarifas...). Sem hora · matching com PIX-Excel preenche hora real."
+          subtitle="Importa todas as transações do Santander (PIX, TED, boletos, cartão, tarifas...). Sem hora · matching com PIX-Excel preenche hora real."
           accept=".ofx,.OFX"
           icon="📑"
           color={C.blue}
@@ -96,7 +141,7 @@ export default function ImportarExtratos() {
               </label>
               <select value={contaOFX} onChange={e => setContaOFX(e.target.value)}
                 style={selectSt}>
-                <option value="">Selecione a conta bancaria...</option>
+                <option value="">Selecione a conta bancária...</option>
                 {contas.map(c => (
                   <option key={c.id} value={c.id}>{c.nome}{c.banco ? ` · ${c.banco}` : ''}</option>
                 ))}
@@ -108,7 +153,7 @@ export default function ImportarExtratos() {
         {/* PIX */}
         <UploadCard
           title="Extrato PIX (Excel/CSV)"
-          subtitle="Importa o relatório detalhado de PIX recebidos com horario exato (extraido do End-to-End ID). Cruzamento automático com lancamentos OFX."
+          subtitle="Importa o relatório detalhado de PIX recebidos com horário exato (extraído do End-to-End ID). Cruzamento automático com lançamentos OFX."
           accept=".xlsx,.xls,.csv"
           icon="🔄"
           color={C.primary}
@@ -121,7 +166,7 @@ export default function ImportarExtratos() {
                 Conta (opcional)
               </label>
               <select value={contaPIX} onChange={e => setContaPIX(e.target.value)} style={selectSt}>
-                <option value="">Auto · sem vinculo direto</option>
+                <option value="">Auto · sem vínculo direto</option>
                 {contas.map(c => (
                   <option key={c.id} value={c.id}>{c.nome}{c.banco ? ` · ${c.banco}` : ''}</option>
                 ))}
@@ -141,7 +186,30 @@ export default function ImportarExtratos() {
           processando={procBal}
           onUpload={importarBalanco}
         />
+
+        {/* CONTRIBUIÇÕES NOMINAIS · planilha por pessoa (prévia → confirmar) */}
+        <UploadCard
+          title="Contribuições (nominais)"
+          subtitle="Sobe a planilha de contribuições por pessoa (nome/CPF · dízimos e ofertas). Alimenta os KPIs de doadores/recorrência. Casa cada linha a um membro existente (nunca cria membro). Idempotente · subir o mesmo arquivo de novo não duplica. Mostra uma prévia antes de gravar."
+          accept=".xlsx,.xls,.csv"
+          icon="🧾"
+          color={C.primary}
+          colorBg={C.primaryBg}
+          processando={procContribPrev}
+          onUpload={previewContrib}
+        />
       </div>
+
+      {(contribPrevia || contribResultado || procContribCommit) && (
+        <ContribuicoesResumoCard
+          previa={contribPrevia}
+          resultado={contribResultado}
+          fileName={contribFile?.name}
+          confirmando={procContribCommit}
+          onConfirmar={commitContrib}
+          onCancelar={cancelarContrib}
+        />
+      )}
 
       {resultadoOfx && <ResultadoCard r={resultadoOfx} />}
       {resultadoPix && <ResultadoCard r={resultadoPix} />}
@@ -149,7 +217,7 @@ export default function ImportarExtratos() {
 
       {/* Histórico de uploads */}
       <div style={{ marginTop: 24 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: C.text }}>Histórico de importacoes</h3>
+        <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12, color: C.text }}>Histórico de importações</h3>
         <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 16, boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead style={{ background: 'var(--cbrio-table-header)' }}>
@@ -295,7 +363,139 @@ function ResultadoCard({ r }) {
         {r.classificacao && (
           <div><strong style={{ color: C.blue }}>{r.classificacao.sugeridos}</strong> classificados automaticamente</div>
         )}
+        {r.conciliadas_auto > 0 && (
+          <div><strong style={{ color: C.green }}>{r.conciliadas_auto}</strong> conta(s) a pagar baixada(s) automaticamente</div>
+        )}
+        {r.identidade && (
+          <div>
+            <strong style={{ color: C.primary }}>{r.identidade.vinculados_existente}</strong> vinculados a membros por CPF
+            {r.identidade.avulsos_criados > 0 && <> · <strong style={{ color: C.blue }}>{r.identidade.avulsos_criados}</strong> novos contribuintes</>}
+          </div>
+        )}
+        {r.doadores_identificados && (r.doadores_identificados.vinculados > 0 || r.doadores_identificados.pendentes > 0) && (
+          <div>
+            <strong style={{ color: C.green }}>{r.doadores_identificados.vinculados}</strong> doador(es) do balanço identificado(s) automaticamente
+            {r.doadores_identificados.pendentes > 0 && <> · <strong style={{ color: C.amber }}>{r.doadores_identificados.pendentes}</strong> ambíguo(s) (opcional revisar em Identificar doadores)</>}
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+// Resumo das contribuições nominais · mostra a PRÉVIA (com botão Confirmar) ou
+// o RESULTADO final. sem_vinculo + amostra de nomes ajudam a decidir antes de
+// gravar. colunas_detectadas expõe o que o auto-detector reconheceu.
+function ContribuicoesResumoCard({ previa, resultado, fileName, confirmando, onConfirmar, onCancelar }) {
+  // Fase final (já gravou)
+  if (resultado) {
+    if (resultado.erro) {
+      return (
+        <div style={{ background: C.redBg, border: `1px solid ${C.red}`, padding: 16, borderRadius: 8, marginBottom: 16 }}>
+          <strong style={{ color: C.red }}>Erro:</strong> <span style={{ color: C.text }}>{resultado.erro}</span>
+        </div>
+      );
+    }
+    return (
+      <div style={{ background: C.greenBg, border: `1px solid ${C.green}`, padding: 16, borderRadius: 8, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: C.text, marginBottom: 8 }}>
+          <strong>✓ Contribuições importadas</strong>
+        </div>
+        <ContribNumeros r={resultado} modoPrevia={false} />
+        <SemVinculoLista r={resultado} />
+        <ErrosLista r={resultado} />
+      </div>
+    );
+  }
+
+  // Fase prévia
+  if (previa?.erro) {
+    return (
+      <div style={{ background: C.redBg, border: `1px solid ${C.red}`, padding: 16, borderRadius: 8, marginBottom: 16 }}>
+        <strong style={{ color: C.red }}>Erro na prévia:</strong> <span style={{ color: C.text }}>{previa.erro}</span>
+        {Array.isArray(previa.faltando) && previa.faltando.length > 0 && (
+          <div style={{ marginTop: 6, fontSize: 12, color: C.text2 }}>
+            Colunas faltando: {previa.faltando.join(', ')}
+          </div>
+        )}
+        <div style={{ marginTop: 10 }}>
+          <Button variant="secondary" size="sm" onClick={onCancelar}>Fechar</Button>
+        </div>
+      </div>
+    );
+  }
+
+  const p = previa || {};
+  return (
+    <div style={{ background: C.blueBg, border: `1px solid ${C.blue}`, padding: 16, borderRadius: 8, marginBottom: 16 }}>
+      <div style={{ fontSize: 13, color: C.text, marginBottom: 8 }}>
+        <strong>Prévia da importação</strong>
+        {fileName && <span style={{ marginLeft: 8, color: C.text2, fontSize: 12 }}>{fileName}</span>}
+        <span style={{ marginLeft: 8, color: C.text3, fontSize: 11 }}>· nada foi gravado ainda</span>
+      </div>
+      <ContribNumeros r={p} modoPrevia />
+      <ColunasDetectadas cols={p.colunas_detectadas} />
+      <SemVinculoLista r={p} />
+      <ErrosLista r={p} />
+      <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+        <Button size="sm" onClick={onConfirmar} disabled={confirmando || !(p.inseridos > 0)}>
+          {confirmando ? 'Gravando...' : `Confirmar importação${p.inseridos ? ` (${p.inseridos})` : ''}`}
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onCancelar} disabled={confirmando}>Cancelar</Button>
+      </div>
+    </div>
+  );
+}
+
+function ContribNumeros({ r, modoPrevia }) {
+  return (
+    <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: C.text2 }}>
+      <div><strong style={{ color: C.text }}>{r.total ?? 0}</strong> linhas</div>
+      <div>
+        <strong style={{ color: C.green }}>{r.inseridos ?? 0}</strong>{' '}
+        {modoPrevia ? 'a inserir' : 'inseridos'}
+      </div>
+      <div><strong style={{ color: C.text3 }}>{r.duplicados ?? 0}</strong> duplicados</div>
+      <div><strong style={{ color: C.amber }}>{r.sem_vinculo ?? 0}</strong> sem vínculo</div>
+      {Array.isArray(r.erros) && r.erros.length > 0 && (
+        <div><strong style={{ color: C.red }}>{r.erros.length}</strong> com erro</div>
+      )}
+    </div>
+  );
+}
+
+function ColunasDetectadas({ cols }) {
+  if (!cols || Object.keys(cols).length === 0) return null;
+  return (
+    <div style={{ marginTop: 8, fontSize: 11, color: C.text3 }}>
+      Colunas detectadas:{' '}
+      {Object.entries(cols).map(([k, v]) => (
+        <span key={k} style={{ marginRight: 8 }}>
+          <span style={{ color: C.text2 }}>{k}</span>=<em>{v}</em>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function SemVinculoLista({ r }) {
+  if (!Array.isArray(r.amostra_sem_vinculo) || r.amostra_sem_vinculo.length === 0) return null;
+  return (
+    <div style={{ marginTop: 8, fontSize: 11, color: C.amber }}>
+      Sem vínculo (amostra): {r.amostra_sem_vinculo.slice(0, 20).join(' · ')}
+      {r.sem_vinculo > r.amostra_sem_vinculo.length && ` … (+${r.sem_vinculo - r.amostra_sem_vinculo.length})`}
+    </div>
+  );
+}
+
+function ErrosLista({ r }) {
+  if (!Array.isArray(r.erros) || r.erros.length === 0) return null;
+  return (
+    <div style={{ marginTop: 8, fontSize: 11, color: C.red }}>
+      {r.erros.slice(0, 5).map((e, i) => (
+        <div key={i}>L{e.linha ?? '-'}: {e.motivo}</div>
+      ))}
+      {r.erros.length > 5 && <div>… (+{r.erros.length - 5} erros)</div>}
     </div>
   );
 }
@@ -320,6 +520,9 @@ function ResultadoBalancoCard({ r }) {
         <div><strong style={{ color: C.green }}>{r.inseridas}</strong> novos lançamentos</div>
         <div><strong style={{ color: C.text3 }}>{r.ja_existentes}</strong> já existentes</div>
         {r.invalidas > 0 && <div><strong style={{ color: C.amber }}>{r.invalidas}</strong> ignoradas (sem data/valor)</div>}
+        {r.doadores_identificados && r.doadores_identificados.vinculados > 0 && (
+          <div><strong style={{ color: C.green }}>{r.doadores_identificados.vinculados}</strong> doador(es) identificado(s) automaticamente pelo OFX</div>
+        )}
       </div>
       {temErro && (
         <div style={{ marginTop: 8, fontSize: 11, color: C.red }}>
@@ -335,8 +538,9 @@ function TipoBadgeUpload({ tipo }) {
     ofx:      { c: C.blue, bg: C.blueBg, label: 'OFX' },
     pix_xlsx: { c: C.primary, bg: C.primaryBg, label: 'PIX (Excel)' },
     pix_csv:  { c: C.primary, bg: C.primaryBg, label: 'PIX (CSV)' },
-    cartao_csv: { c: C.amber, bg: C.amberBg, label: 'Cartao' },
+    cartao_csv: { c: C.amber, bg: C.amberBg, label: 'Cartão' },
     balanco:  { c: C.amber, bg: C.amberBg, label: 'Balanço' },
+    contribuicoes: { c: C.primary, bg: C.primaryBg, label: 'Contribuições' },
   };
   const s = map[tipo] || { c: C.text3, bg: '#73737318', label: tipo };
   return (
@@ -349,7 +553,7 @@ function TipoBadgeUpload({ tipo }) {
 function StatusBadge({ status }) {
   const map = {
     processando: { c: C.amber, bg: C.amberBg, label: 'Processando' },
-    concluido:   { c: C.green, bg: C.greenBg, label: 'Concluido' },
+    concluido:   { c: C.green, bg: C.greenBg, label: 'Concluído' },
     erro:        { c: C.red, bg: C.redBg, label: 'Erro' },
   };
   const s = map[status] || { c: C.text3, bg: '#73737318', label: status };

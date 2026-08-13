@@ -11,7 +11,12 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { supabase } = require('../utils/supabase');
 
 // Mesma régua do cuidados.js: contato feito = status real OU primeiro_contato_em.
-const CONTATO_FEITO_STATUS = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido']);
+// ('numero_errado' conta como contato feito — a mensagem foi enviada, o número é
+// que estava errado · Marcos 2026-07-01.) O helper contatoFoiFeito FALTAVA —
+// o cron /cron/enfileirar quebrava com "contatoFoiFeito is not defined" todo
+// dia desde 04/07: o agente nunca enfileirou nada em produção.
+const CONTATO_FEITO_STATUS = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
+const contatoFoiFeito = (c) => !!c.primeiro_contato_em || CONTATO_FEITO_STATUS.has(c.primeiro_contato_status);
 const AGENTE_VERSAO = 'primeiro-contato-v1';
 const DIA = 86400000;
 
