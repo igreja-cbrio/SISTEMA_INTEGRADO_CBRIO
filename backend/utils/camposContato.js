@@ -31,6 +31,26 @@ function tirarCodigoPaisTelefone(digitos) {
   return d;
 }
 
+/**
+ * Máscara canônica de exibição do telefone brasileiro: `(21) 99999-9999`.
+ * É o formato que o `/perfil` do sistema e o app Staff gravam em
+ * `profiles.telefone` (staff.js · src/pages/Perfil.jsx) — a mesma função,
+ * agora única, pra o app de membros e o ERP nunca divergirem no que é "canônico".
+ * Recebe dígitos (ou texto com máscara — os não-dígitos são descartados).
+ *
+ * ⚠️ **ORDEM importa** (bug documentado em src/test/telefoneCodigoPais.test.ts):
+ * `tirarCodigoPaisTelefone` ANTES de truncar. O slice(0,11) antes da
+ * normalização comia os 2 últimos dígitos de "+55 21 99999-8888" e gravava um
+ * número que não existe.
+ */
+function mascaraTelefone(v) {
+  const d = tirarCodigoPaisTelefone(soDigitos(v)).slice(0, 11);
+  if (d.length <= 2) return d;
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+
 /** Regex única de e-mail do sistema. NÃO normaliza (quem normaliza é o chamador). */
 function emailValido(v) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || ''));
@@ -55,4 +75,4 @@ function validarNascimento(v, hoje) {
   return s;
 }
 
-module.exports = { soDigitos, tirarCodigoPaisTelefone, emailValido, validarNascimento };
+module.exports = { soDigitos, tirarCodigoPaisTelefone, mascaraTelefone, emailValido, validarNascimento };

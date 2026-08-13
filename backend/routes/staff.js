@@ -27,24 +27,14 @@ const router = require('express').Router();
 const { supabase } = require('../utils/supabase');
 const { authenticate } = require('../middleware/auth');
 const { sanitizePath } = require('../services/storageService');
+// Réguas únicas de contato (camposContato.js) — a MESMA que o /perfil do
+// sistema e o app de membros usam. Não duplicar mascaraTelefone aqui: duas
+// cópias é exatamente o que faz o formato canônico divergir.
+const { soDigitos, mascaraTelefone } = require('../utils/camposContato');
 
 router.use(authenticate);
 
 const FOTO_MAX_BYTES = 5 * 1024 * 1024; // 5 MB (mesmo teto do multer do sistema)
-
-function soDigitos(v) {
-  return String(v || '').replace(/\D+/g, '');
-}
-
-// Mesma máscara do /perfil do sistema (src/pages/Perfil.jsx) — mantém o
-// formato canônico de profiles.telefone consistente entre app e sistema.
-function mascaraTelefone(v) {
-  const d = soDigitos(v).slice(0, 11);
-  if (d.length <= 2) return d;
-  if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
-  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-}
 
 // Decodifica um data URL de imagem (png/jpg/webp). Retorna null se inválido.
 function parseDataUrlImagem(dataUrl) {
