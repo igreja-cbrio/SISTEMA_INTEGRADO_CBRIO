@@ -1,0 +1,133 @@
+import { useState, useEffect, useCallback } from 'react';
+import { CalendarRange } from 'lucide-react';
+import { toast } from 'sonner';
+import ModuleHeader from '../../components/layout/ModuleHeader';
+import { useAuth } from '../../contexts/AuthContext';
+import { planejamentoAnual as api } from '../../api';
+import { C, btn, fmtData } from './comum';
+import PropostasTab from './PropostasTab';
+import AvaliacaoTab from './AvaliacaoTab';
+import OrcamentoTab from './OrcamentoTab';
+import PastorTab from './PastorTab';
+
+const tabBtn = (ativo) => ({
+  padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+  border: 'none', background: ativo ? C.primary : 'transparent', color: ativo ? '#fff' : C.t2,
+});
+
+export default function PlanejamentoAnual() {
+  const { profile } = useAuth();
+  const [ciclos, setCiclos] = useState([]);
+  const [ciclo, setCiclo] = useState(null);
+  const [constantes, setConstantes] = useState(null);
+  const [locais, setLocais] = useState([]);
+  const [areas, setAreas] = useState([]);
+  const [aba, setAba] = useState(0);
+  const [carregando, setCarregando] = useState(true);
+
+  const carregarCiclo = useCallback(async (id) => {
+    try { setCiclo(await api.ciclos.get(id)); }
+    catch { toast.error('Erro ao carregar o ciclo'); }
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      setCarregando(true);
+      try {
+        const [lista, consts, locs, ars] = await Promise.all([
+          api.ciclos.list(),
+          api.constantes().catch(() => null),
+          api.locais().catch(() => []),
+          api.areas().catch(() => []),
+        ]);
+        setCiclos(Array.isArray(lista) ? lista : []);
+        setConstantes(consts);
+        setLocais(locs);
+        setAreas(ars);
+        if (lista?.length) await carregarCiclo(lista[0].id);
+      } catch {
+        toast.error('Erro ao carregar o Planejamento Anual');
+      } finally { setCarregando(false); }
+    })();
+  }, [carregarCiclo]);
+
+  const meuPapel = ciclo?.meu_papel || 'observador';
+  const ehPastor = meuPapel === 'pastor';
+  const ehAvaliador = meuPapel === 'avaliador';
+  const minhaDiretoria = ciclo?.avaliadores?.find((a) => a.profile_id === profile?.id)?.diretoria || null;
+  const souFinanceiro = minhaDiretoria === 'financeiro' || ehPastor;
+
+  const abas = [
+    { rotulo: 'Propostas', visivel: true },
+    { rotulo: 'Avaliação', visivel: ehAvaliador || ehPastor },
+    { rotulo: 'Orçamento', visivel: souFinanceiro },
+    { rotulo: 'Pastor presidente', visivel: ehPastor },
+  ];
+
+  return (
+    <div style={{ display: 'grid', gap: 16, padding: '0 0 40px' }}>
+      <ModuleHeader
+        icon={CalendarRange}
+        title="Planejamento Anual"
+        subtitle="Propostas do ciclo · avaliação pelas diretorias · decisão do Pastor · calendário e orçamento"
+      />
+
+      {carregando && <p style={{ fontSize: 13, color: C.t3 }}>Carregando…</p>}
+
+      {!carregando && !ciclos.length && (
+        <p style={{ fontSize: 13, color: C.t3 }}>Nenhum ciclo de planejamento criado ainda.</p>
+      )}
+
+      {ciclo && (
+        <>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+            padding: '10px 14px', borderRadius: 12, background: 'var(--panel, var(--cbrio-card))',
+            border: '1px solid var(--hairline)', fontSize: 12.5, color: C.t2,
+          }}>
+            {ciclos.length > 1 && (
+              <select
+                style={{ padding: '4px 8px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'transparent', color: C.text, fontWeight: 700 }}
+                value={ciclo.id}
+                onChange={(e) => carregarCiclo(e.target.value)}
+              >
+                {ciclos.map((c) => <option key={c.id} value={c.id}>Ciclo {c.ano}</option>)}
+              </select>
+            )}
+            {ciclos.length <= 1 && <strong style={{ color: C.text }}>Ciclo {ciclo.ano}</strong>}
+            <span>submissão <strong style={{ color: ciclo.submissao_aberta ? C.green : C.red }}>{ciclo.submissao_aberta ? 'aberta' : 'fechada'}</strong></span>
+            <span>avaliação <strong style={{ color: ciclo.avaliacao_aberta ? C.green : C.red }}>{ciclo.avaliacao_aberta ? 'aberta' : 'fechada'}</strong></span>
+            <span>
+              {ciclo.publicado_em
+                ? <>calendário <strong style={{ color: C.green }}>publicado em {fmtData(String(ciclo.publicado_em).slice(0, 10))}</strong></>
+                : <>calendário <strong style={{ color: C.t3 }}>não publicado</strong></>}
+            </span>
+            <span style={{ marginLeft: 'auto', color: C.t3 }}>
+              Diretorias: {(ciclo.avaliadores || []).map((a) => `${a.diretoria} (${a.nome || '—'})`).join(' · ')}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {abas.map((a, i) => a.visivel && (
+              <button key={a.rotulo} style={tabBtn(aba === i)} onClick={() => setAba(i)}>{a.rotulo}</button>
+            ))}
+          </div>
+
+          {aba === 0 && (
+            <PropostasTab ciclo={ciclo} constantes={constantes} locais={locais} areas={areas}
+              recarregarCiclo={() => carregarCiclo(ciclo.id)} />
+          )}
+          {aba === 1 && (ehAvaliador || ehPastor) && (
+            <AvaliacaoTab ciclo={ciclo} constantes={constantes} minhaDiretoria={minhaDiretoria} />
+          )}
+          {aba === 2 && souFinanceiro && (
+            <OrcamentoTab ciclo={ciclo} souFinanceiro={minhaDiretoria === 'financeiro'} />
+          )}
+          {aba === 3 && ehPastor && (
+            <PastorTab ciclo={ciclo} constantes={constantes} recarregarCiclo={() => carregarCiclo(ciclo.id)} />
+          )}
+        </>
+      )}
+    </div>
+  );
+}

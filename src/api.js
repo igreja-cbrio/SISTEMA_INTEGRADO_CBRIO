@@ -3220,6 +3220,49 @@ export const planejamento = {
   gerarLiturgia: (year) => post(`/planejamento/liturgia/gerar/${year}`, {}),
 };
 
+// ─── Planejamento Anual · ciclo de propostas (módulo novo · 2026-08) ──────
+export const planejamentoAnual = {
+  constantes: () => get('/planejamento-anual/aux/constantes'),
+  locais: () => get('/planejamento-anual/aux/locais'),
+  areas: () => get('/planejamento-anual/aux/areas'),
+  ciclos: {
+    list: () => get('/planejamento-anual/ciclos'),
+    get: (id) => get(`/planejamento-anual/ciclos/${id}`),
+    create: (ano) => post('/planejamento-anual/ciclos', { ano }),
+    janelas: (id, corpo) => patch(`/planejamento-anual/ciclos/${id}/janelas`, corpo),
+    avaliadores: (id, avaliadores) => put(`/planejamento-anual/ciclos/${id}/avaliadores`, { avaliadores }),
+    propostas: (id, params) => get(`/planejamento-anual/ciclos/${id}/propostas` + (params ? '?' + new URLSearchParams(params) : '')),
+    ranking: (id) => get(`/planejamento-anual/ciclos/${id}/ranking`),
+    conflitos: (id) => get(`/planejamento-anual/ciclos/${id}/conflitos`),
+    aceitarConflito: (id, corpo) => post(`/planejamento-anual/ciclos/${id}/conflitos/aceitar`, corpo),
+    reabrirConflito: (id, aceiteId) => del(`/planejamento-anual/ciclos/${id}/conflitos/aceites/${aceiteId}`),
+    calendario: (id) => get(`/planejamento-anual/ciclos/${id}/calendario`),
+    travas: (id) => get(`/planejamento-anual/ciclos/${id}/travas`),
+    publicar: (id) => post(`/planejamento-anual/ciclos/${id}/publicar`, {}),
+    decisoesLote: (id, corpo) => post(`/planejamento-anual/ciclos/${id}/decisoes-lote`, corpo),
+    orcamento: (id) => get(`/planejamento-anual/ciclos/${id}/orcamento`),
+    salvarOrcamento: (id, corpo) => put(`/planejamento-anual/ciclos/${id}/orcamento`, corpo),
+    enviarOrcamento: (id) => post(`/planejamento-anual/ciclos/${id}/orcamento/enviar`, {}),
+    orcamentoPastor: (id, simular) => get(`/planejamento-anual/ciclos/${id}/orcamento/pastor` + (simular ? `?simular=${simular}` : '')),
+  },
+  propostas: {
+    create: (corpo) => post('/planejamento-anual/propostas', corpo),
+    get: (id) => get(`/planejamento-anual/propostas/${id}`),
+    update: (id, corpo) => put(`/planejamento-anual/propostas/${id}`, corpo),
+    enviar: (id) => post(`/planejamento-anual/propostas/${id}/enviar`, {}),
+    avaliar: (id, corpo) => put(`/planejamento-anual/propostas/${id}/avaliacao`, corpo),
+    decidir: (id, corpo) => post(`/planejamento-anual/propostas/${id}/decisao`, corpo),
+    decidirRetificacao: (id, corpo) => post(`/planejamento-anual/propostas/${id}/decisao-retificacao`, corpo),
+    retificar: (id, corpo) => post(`/planejamento-anual/propostas/${id}/retificar`, corpo),
+    retirar: (id) => post(`/planejamento-anual/propostas/${id}/retirar`, {}),
+    verificarRessalva: (id) => post(`/planejamento-anual/propostas/${id}/ressalva/verificar`, {}),
+    reabrirRessalva: (id) => post(`/planejamento-anual/propostas/${id}/ressalva/reabrir`, {}),
+    remanejar: (id, corpo) => put(`/planejamento-anual/propostas/${id}/remanejar`, corpo),
+    apontar: (id, corpo) => post(`/planejamento-anual/propostas/${id}/apontamentos`, corpo),
+    removerApontamento: (apontamentoId) => del(`/planejamento-anual/apontamentos/${apontamentoId}`),
+  },
+};
+
 export const auth = {
   uploadFoto: (file) => {
     const fd = new FormData();
