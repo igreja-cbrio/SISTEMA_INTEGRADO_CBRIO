@@ -443,8 +443,67 @@ router.get('/conversas/:id/mensagens', authorizeModule('conversas', 1), async (r
         for (const m of msgs) if (m.media_url && !/^https?:\/\//i.test(m.media_url)) m.media_url = null;
       }
     }
+    // ── Mensagens AUTOMÁTICAS do sistema intercaladas na thread (13/08 ·
+    // caso da Júlia: ela agradeceu um template de aprovação de grupo que NÃO
+    // aparecia na conversa — o atendente ficava sem o contexto). Merge SÓ NA
+    // LEITURA: nada é gravado, o inbox não ganha conversa nova por isso.
+    let automaticas = [];
+    try {
+      const suf = String(conv.telefone || '').replace(/\D+/g, '').slice(-8);
+      if (suf.length === 8) {
+        const { data: envs } = await supabase.from('whatsapp_envios')
+          .select('id, template, texto, tipo, params, status, criado_em, enviado_em, message_id, delivered_at, read_at, failed_at, erro_status, contexto')
+          .ilike('telefone', `%${suf}%`)
+          .in('status', ['enviado', 'erro'])
+          .order('criado_em', { ascending: false }).limit(60);
+        // corpo legível: exemplo do catálogo de templates com os {{n}} preenchidos
+        const nomes = [...new Set((envs || []).map(e => e.template).filter(Boolean))];
+        const corpo = new Map();
+        if (nomes.length) {
+          const { data: tpls } = await supabase.from('wa_templates')
+            .select('nome, exemplo').in('nome', nomes.slice(0, 60));
+          (tpls || []).forEach(t => { if (t.exemplo) corpo.set(t.nome, t.exemplo); });
+        }
+        automaticas = (envs || []).map(e => {
+          let texto;
+          if (e.tipo === 'texto' && e.texto) texto = e.texto;
+          else {
+            const ex = corpo.get(e.template);
+            const params = Array.isArray(e.params) ? e.params : [];
+            texto = ex
+              ? ex.replace(/\{\{(\d+)\}\}/g, (_, n) => String(params[Number(n) - 1] ?? `{{${n}}}`))
+              : `[template: ${e.template || '—'}]`;
+          }
+          return {
+            id: `fila-${e.id}`, direcao: 'out', tipo: 'automatica', texto,
+            media_url: null, autor_id: null,
+            criado_em: e.enviado_em || e.criado_em,
+            delivered_at: e.delivered_at, read_at: e.read_at,
+            failed_at: e.failed_at || (e.status === 'erro' ? e.criado_em : null),
+            erro_status: e.erro_status || (e.status === 'erro' ? 'a fila desistiu do envio' : null),
+            contexto_fila: e.contexto || null,
+            wa_message_id: e.message_id || null,
+          };
+        });
+      }
+    } catch (eAuto) { console.warn('[wa-inbox] automaticas na thread:', eAuto.message); }
+    const timeline = [...(msgs || []), ...automaticas]
+      .sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
+
+    // ── Citações (reply): resolve o trecho citado pelo wamid — inclusive
+    // quando o alvo é um template da fila (o caso real do "Esse aqui").
+    const porWaId = new Map(timeline.filter(x => x.wa_message_id).map(x => [x.wa_message_id, x]));
+    for (const x of timeline) {
+      if (x.reply_to_wa_id) {
+        const alvo = porWaId.get(x.reply_to_wa_id);
+        x.reply_para = alvo
+          ? { texto: String(alvo.texto || (alvo.media_url ? '[mídia]' : alvo.tipo)).slice(0, 140), de: alvo.direcao === 'out' ? 'igreja' : 'pessoa' }
+          : { texto: 'mensagem antiga (fora do histórico carregado)', de: null };
+      }
+    }
+
     if (conv.nao_lidas > 0) await supabase.from('wa_conversas').update({ nao_lidas: 0 }).eq('id', conv.id);
-    res.json({ conversa: comJanela({ ...conv, nao_lidas: 0 }), mensagens: msgs || [] });
+    res.json({ conversa: comJanela({ ...conv, nao_lidas: 0 }), mensagens: timeline });
   } catch (e) {
     console.error('[wa-inbox] mensagens:', e.message);
     res.status(500).json({ error: 'Erro ao carregar conversa' });

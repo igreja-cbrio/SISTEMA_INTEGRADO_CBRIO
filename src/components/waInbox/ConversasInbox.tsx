@@ -42,6 +42,10 @@ type Conversa = {
 type Msg = {
   id: string; direcao: 'in' | 'out'; tipo: string; texto: string | null; media_url: string | null; criado_em: string;
   delivered_at?: string | null; read_at?: string | null; failed_at?: string | null; erro_status?: string | null;
+  // citação (a pessoa respondeu CITANDO uma mensagem) — resolvida no backend
+  reply_para?: { texto: string; de: 'igreja' | 'pessoa' | null } | null;
+  // origem de disparo automático da fila (só nas sintéticas tipo 'automatica')
+  contexto_fila?: string | null;
 };
 
 // Recibo VERDADEIRO da Meta (antes o ✓✓ era decorativo — aparecia sempre):
@@ -460,6 +464,17 @@ export default function ConversasInbox({
                   ) : (
                     <div key={m.id} className={`flex ${m.direcao === 'out' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-[72%] rounded-2xl px-3.5 py-2 text-sm shadow-sm whitespace-pre-wrap break-words ${m.direcao === 'out' ? 'rounded-tr-sm bg-primary text-primary-foreground' : 'rounded-tl-sm border border-border bg-background'}`}>
+                        {m.reply_para && (
+                          <div className={`mb-1 rounded-md border-l-2 px-2 py-1 text-[11px] ${m.direcao === 'out' ? 'border-primary-foreground/50 bg-primary-foreground/10' : 'border-primary/60 bg-muted'}`}>
+                            <span className="font-medium">{m.reply_para.de === 'igreja' ? 'Igreja CBRio' : m.reply_para.de === 'pessoa' ? 'Contato' : 'Em resposta a'}</span>
+                            <div className="line-clamp-2 opacity-80">{m.reply_para.texto}</div>
+                          </div>
+                        )}
+                        {m.tipo === 'automatica' && (
+                          <p className="mb-0.5 text-[10px] font-medium opacity-70" title={m.contexto_fila || undefined}>
+                            automática · sistema{m.contexto_fila ? ` (${String(m.contexto_fila).split('.')[0]})` : ''}
+                          </p>
+                        )}
                         {m.tipo === 'template' && <p className="mb-0.5 text-[10px] font-medium opacity-70">template</p>}
                         {m.tipo === 'pesquisa' && <p className="mb-0.5 text-[10px] font-medium opacity-70">pesquisa de satisfação</p>}
                         {m.tipo === 'avaliacao' && <p className="mb-0.5 flex items-center gap-0.5 text-[10px] font-medium opacity-80"><Star className="h-3 w-3 fill-current" />avaliação</p>}
