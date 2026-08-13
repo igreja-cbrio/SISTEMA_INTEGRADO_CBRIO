@@ -66,10 +66,6 @@
       "schedule": "0 5 * * *"
     },
     {
-      "path": "/api/wifi/cron/sync",
-      "schedule": "0 2 * * 0,1,4"
-    },
-    {
       "path": "/api/online/cron/sync",
       "schedule": "0 6 * * *"
     },
