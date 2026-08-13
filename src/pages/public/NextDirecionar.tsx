@@ -19,6 +19,9 @@ import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 type Pessoa = { id: string; nome: string; ja: { grupos: boolean; voluntarios: boolean; batismo: boolean } };
 type PresencaPessoa = { id: string; nome: string; presente: boolean; walk_in: boolean };
 type Opcao = { id?: string; label: string; area_canonica?: string };
+// Horários do batismo · vêm do catálogo que a Integração gerencia (aba Batismos).
+type HorarioBatismo = { horario: string; label: string; vagas_restantes: number | null };
+type BatismoInfo = { data_batismo?: string | null; horarios: HorarioBatismo[]; indisponivel?: boolean };
 
 const DESTINOS = [
   { v: 'grupos',      l: 'Grupos',           Icon: Users,     tint: 'bg-sky-500/12 text-sky-600 dark:text-sky-400',       desc: 'Fazer parte de um grupo' },
@@ -28,6 +31,15 @@ const DESTINOS = [
 
 const MAX_AREAS = 3;
 const PIN_KEY = 'cbrio-next-totem-pin';
+
+// ⚠️ `+ 'T12:00:00'` (meio-dia local) e não `new Date('2026-08-23')`, que é
+// meia-noite UTC = 21h do dia ANTERIOR no Rio e mostraria a data errada.
+function fmtDataBatismo(d?: string | null) {
+  if (!d) return '';
+  try {
+    return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' });
+  } catch { return ''; }
+}
 
 export default function NextDirecionar() {
   usePublicTheme();
@@ -46,6 +58,8 @@ export default function NextDirecionar() {
   const [destinos, setDestinos] = useState<Record<string, boolean>>({});
   const [areas, setAreas] = useState<string[]>([]);
   const [opcoes, setOpcoes] = useState<Opcao[]>([]);
+  const [batismo, setBatismo] = useState<BatismoInfo>({ horarios: [] });
+  const [horarioBatismo, setHorarioBatismo] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [pronto, setPronto] = useState(false);
 
@@ -57,7 +71,13 @@ export default function NextDirecionar() {
     if (!token) { setErro('Link inválido.'); setLoading(false); return; }
     setLoading(true);
     nextApi.publicDirecionarInfo(token)
-      .then((r: any) => { setTurma(r.turma?.nome || 'NEXT'); setPessoas(r.pessoas || []); setErro(''); })
+      .then((r: any) => {
+        setTurma(r.turma?.nome || 'NEXT');
+        setPessoas(r.pessoas || []);
+        // Vem no MESMO payload: recarregar a cada pessoa mantém a ocupação fresca.
+        setBatismo(r.batismo || { horarios: [], indisponivel: true });
+        setErro('');
+      })
       .catch((e: any) => setErro(e?.message || 'Link inválido ou expirado.'))
       .finally(() => setLoading(false));
   }
@@ -88,7 +108,12 @@ export default function NextDirecionar() {
     setAreas(a => a.includes(label) ? a.filter(x => x !== label) : (a.length >= MAX_AREAS ? a : [...a, label]));
   }
 
-  function voltarLista() { setSel(null); setDestinos({}); setAreas([]); setErro(''); }
+  function voltarLista() { setSel(null); setDestinos({}); setAreas([]); setHorarioBatismo(''); setErro(''); }
+
+  // Sem horário aberto (ou catálogo ilegível), o batismo não pode ser escolhido:
+  // o servidor recusaria, e a inscrição sem horário é exatamente o que estamos
+  // eliminando. A tela DIZ o motivo em vez de só desabilitar em silêncio.
+  const batismoIndisponivel = batismo.horarios.length === 0;
 
   async function enviar() {
     if (!sel) return;
@@ -97,9 +122,15 @@ export default function NextDirecionar() {
     if (escolhidos.includes('voluntarios') && areas.length === 0) {
       setErro('Escolha ao menos uma área pra servir.'); return;
     }
+    if (escolhidos.includes('batismo') && !horarioBatismo) {
+      setErro('Escolha o horário do seu batismo.'); return;
+    }
     setSalvando(true); setErro('');
     try {
-      await nextApi.publicDirecionar(token!, { matricula_id: sel.id, destinos: escolhidos, areas });
+      await nextApi.publicDirecionar(token!, {
+        matricula_id: sel.id, destinos: escolhidos, areas,
+        horario_batismo: horarioBatismo || null,
+      });
       setPronto(true);
     } catch (e: any) { setErro(e?.message || 'Não deu pra enviar. Tente de novo.'); }
     finally { setSalvando(false); }
@@ -107,7 +138,8 @@ export default function NextDirecionar() {
 
   // Reinicia o self-service pra próxima pessoa
   function reiniciar() {
-    setPronto(false); setSel(null); setDestinos({}); setAreas([]); setBusca(''); carregarSelf();
+    setPronto(false); setSel(null); setDestinos({}); setAreas([]); setHorarioBatismo('');
+    setBusca(''); carregarSelf();
   }
 
   // ── PIN (entra no check-in / sai da tela cheia) ──
@@ -197,22 +229,51 @@ export default function NextDirecionar() {
                 <div className="space-y-2">
                   {DESTINOS.map(d => {
                     const feito = sel.ja[d.v];
+                    const bloqueado = d.v === 'batismo' && batismoIndisponivel;
                     const on = feito || !!destinos[d.v];
                     const Icon = d.Icon;
                     return (
                       <div key={d.v}>
-                        <button disabled={feito}
+                        <button disabled={feito || bloqueado}
                           onClick={() => setDestinos(s => ({ ...s, [d.v]: !s[d.v] }))}
-                          className={`w-full flex items-center gap-3 rounded-2xl border-2 px-4 py-3.5 text-left transition-colors ${on ? 'border-primary bg-primary/10' : 'border-border bg-background'} ${feito ? 'opacity-60' : ''}`}>
+                          className={`w-full flex items-center gap-3 rounded-2xl border-2 px-4 py-3.5 text-left transition-colors ${on ? 'border-primary bg-primary/10' : 'border-border bg-background'} ${feito || bloqueado ? 'opacity-60' : ''}`}>
                           <span className={`h-11 w-11 rounded-2xl flex items-center justify-center shrink-0 ${d.tint}`}>
                             <Icon className="h-5 w-5" strokeWidth={2} />
                           </span>
                           <span className="flex-1">
                             <span className="block font-semibold">{d.l}</span>
-                            <span className="block text-xs text-muted-foreground">{feito ? 'já escolhido' : d.desc}</span>
+                            <span className="block text-xs text-muted-foreground">
+                              {feito ? 'já escolhido'
+                                : bloqueado ? 'sem horário aberto agora — fale com a equipe'
+                                : d.desc}
+                            </span>
                           </span>
                           {on && <span className="text-primary text-lg">✓</span>}
                         </button>
+
+                        {/* Horário do batismo — obrigatório (a inscrição vai com ele) */}
+                        {d.v === 'batismo' && !feito && !bloqueado && destinos.batismo && (
+                          <div className="mt-2 rounded-2xl border border-border bg-background/60 p-3">
+                            <p className="text-xs text-muted-foreground mb-2">
+                              Em qual culto você quer se batizar
+                              {batismo.data_batismo ? ` (${fmtDataBatismo(batismo.data_batismo)})` : ''}?
+                            </p>
+                            <div className="space-y-1.5">
+                              {batismo.horarios.map(h => (
+                                <button key={h.horario} onClick={() => setHorarioBatismo(h.horario)}
+                                  className={`w-full flex items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-sm transition-colors ${horarioBatismo === h.horario ? 'border-primary bg-primary/10 font-medium' : 'border-border bg-background'}`}>
+                                  <span className="flex-1">{h.label}</span>
+                                  {h.vagas_restantes != null && (
+                                    <span className="text-[11px] text-muted-foreground">
+                                      {h.vagas_restantes} vaga{h.vagas_restantes === 1 ? '' : 's'}
+                                    </span>
+                                  )}
+                                  {horarioBatismo === h.horario && <span className="text-primary">✓</span>}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         {/* Áreas pra servir — aparecem ao escolher "Quero servir" */}
                         {d.v === 'voluntarios' && !feito && destinos.voluntarios && (

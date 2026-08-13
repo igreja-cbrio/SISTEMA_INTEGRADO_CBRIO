@@ -673,6 +673,9 @@ export const next = {
   }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
   // QR de direcionamento (token fixo · resolve a turma aberta do momento) · admin
   direcionarQr: () => get('/next/direcionar-qr'),
+  // Horários ABERTOS e COM VAGA do próximo batismo (catálogo da Integração) —
+  // alimenta o seletor de "Quero me batizar" no direcionamento.
+  batismoHorarios: () => get('/next/batismo-horarios'),
   // Pesquisa NPS canônica do Next (Satisfação do Next) · provisiona na 1ª chamada.
   satisfacao: () => get('/next/satisfacao'),
   // Admin
@@ -722,7 +725,10 @@ export const next = {
     setContato: (id, feito) => patch(`/next/matriculas/${id}/contato`, { feito }),
     // Direcionar pros valores (grupos/voluntarios/batismo/devocional) · cria encaminhamento
     // origem='next' (grupos/voluntarios), inscrição pendente (batismo), registra (devocional).
-    direcionar: (id, destinos, areas) => post(`/next/matriculas/${id}/direcionar`, { destinos, areas }),
+    // ⚠️ `horarioBatismo` é OBRIGATÓRIO quando 'batismo' está nos destinos (o servidor
+    // recusa sem ele) — senão a inscrição nasce sem horário, que era o bug de 13/08.
+    direcionar: (id, destinos, areas, horarioBatismo) =>
+      post(`/next/matriculas/${id}/direcionar`, { destinos, areas, horario_batismo: horarioBatismo || null }),
     // Liga as matrículas órfãs (sem membro_id) via matcher forte (fecha o funil).
     backfillMembros: () => post('/next/matriculas/backfill-membros', {}),
   },

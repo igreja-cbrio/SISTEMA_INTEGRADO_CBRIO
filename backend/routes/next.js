@@ -31,6 +31,14 @@ const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { direcionarMatricula, signDirecionarToken } = require('../services/nextDirecionar');
+// Horários do batismo · o MESMO catálogo que a Integração gerencia na aba
+// Batismos (`batismo_horarios`) e a MESMA régua do formulário público.
+const { horariosDisponiveis } = require('../utils/batismoHorario');
+const {
+  horariosConfigurados: batismoHorariosConfigurados,
+  ocupacaoPorHorario: batismoOcupacaoPorHorario,
+  dataProximoBatismo,
+} = require('../services/batismoHorarios');
 
 // Re-calcula KPIs do NEXT em background (não bloqueia a resposta).
 // Chamado após qualquer mudança em inscrições ou indicacoes.
@@ -391,12 +399,38 @@ router.post('/matriculas/:id/direcionar', async (req, res) => {
       matriculaId: req.params.id,
       destinos: b.destinos || [],
       areas: b.areas || [], // "Servir" abre a escolha de áreas (Totem / self-service)
+      // "Batismo" abre a escolha do HORÁRIO (obrigatório · 13/08) — mesma
+      // mecânica das áreas do "Servir".
+      horarioBatismo: b.horario_batismo || null,
       userId: req.user?.id || null,
     });
     recalcularKpisNext();
     res.json(r);
   } catch (e) {
-    res.status(e.status || 500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message, codigo: e.codigo, campo: e.campo });
+  }
+});
+
+// GET /batismo-horarios — horários ABERTOS e COM VAGA pro próximo batismo.
+// Alimenta o seletor que aparece ao marcar "Quero me batizar" no direcionamento
+// (aba Pessoas e Totem do Next). ⚠️ Lê o MESMO catálogo que a Integração
+// gerencia (`batismo_horarios`) pela MESMA régua do formulário público — uma 2ª
+// lista aqui ofereceria horário que o servidor recusa no envio.
+router.get('/batismo-horarios', async (_req, res) => {
+  try {
+    const dataBatismo = await dataProximoBatismo();
+    const configurados = await batismoHorariosConfigurados();
+    // ⚠️ Falha FECHADA e DECLARADA: sem catálogo/data devolve lista vazia com
+    // `indisponivel`, nunca "não há horário" — a tela precisa distinguir "a
+    // equipe fechou tudo" de "não conseguimos ler agora".
+    if (!dataBatismo || configurados === null) {
+      return res.json({ data_batismo: dataBatismo || null, horarios: [], indisponivel: true });
+    }
+    const ocup = await batismoOcupacaoPorHorario(dataBatismo);
+    res.json({ data_batismo: dataBatismo, horarios: horariosDisponiveis(configurados, ocup) });
+  } catch (e) {
+    console.error('[next] batismo-horarios:', e.message);
+    res.json({ data_batismo: null, horarios: [], indisponivel: true });
   }
 });
 
