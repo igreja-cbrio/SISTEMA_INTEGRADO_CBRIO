@@ -1833,8 +1833,30 @@ a etiqueta. Agora cada opção de `conversas_setores` carrega o CAMINHO:
 - V2 futura (combinada): sub-menus de 2 níveis, mensagem fora-de-horário
   (escala dos atendentes), opção que envia link/formulário.
 
+### Recibos do CHAT · ✓✓ de verdade (2026-08-13 · migration `20260813190000` · caso da Júlia)
+
+O 1º teste real do inbox (Marcos respondeu a Júlia) expôs a cadeia: a resposta
+saiu e o sistema não sabia dizer se entregou/leu. DOIS furos consertados:
+
+- **O chat não gravava o `wa_message_id` do que enviava** (`registrarOutbound`
+  nem aceitava o campo) — o recibo da Meta não tinha onde pousar. Agora TODOS
+  os outbounds registrados passam o id (respostas/nova/anexo/pesquisa do
+  inbox · bot de triagem · agradecimento da pesquisa · institucional).
+- **O webhook descartava recibo de mensagem do chat** — agora grava
+  `delivered_at/read_at/failed_at/erro_status` em `wa_mensagens` (guardas
+  `.is(col, null)` idempotentes · 42703 = migration ausente → vira órfão,
+  comportamento antigo) e **`failed` de mensagem de ATENDENTE notifica** o
+  módulo conversas (o ⚠ na thread só aparece quando alguém reabre).
+- **Thread**: o ✓✓ era DECORATIVO (aparecia sempre). Agora: ✓ aceito ·
+  ✓✓ entregue · ✓✓ azul lido · ⚠ não entregue com o motivo (`ReciboMsg`).
+- ⚠️ Mensagens de ANTES da migration ficam sem recibo pra sempre (não têm
+  wa_message_id gravado) — inclusive a da Júlia.
+- ⚠️ Flake conhecido do gate LOCAL nesta máquina: sob carga, ConstrutorPerguntas/
+  cronAlcancavel/rpcsCliente falham aleatoriamente e passam isolados — o
+  veredito é o CI (runner limpo).
+
 ⚠️ Ficam da revisão (médios · ainda abertos): statuses órfãos write-only +
-status de outbound do CHAT descartado · **Realtime sem filtro por área —
+**Realtime sem filtro por área —
 decisão explícita do Marcos (12/08) de NÃO mexer por ora** · `nao_lidas`
 read-modify-write · custo cego aos ~15 call sites fora da fila · 2 `is_default`
 possíveis em wa_numeros (e nada lê a tabela) · aba Conversas exige módulo

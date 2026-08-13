@@ -81,8 +81,9 @@ async function resolverProfilesDaArea(areaNome) {
 
 // responde pelo bot e registra a saída na thread do inbox (sem marcar assumida_humano)
 async function responder(telefone, texto) {
-  await enviarTexto(telefone, texto).catch(e => console.error('[triagem] enviarTexto:', e.message));
-  await waInbox.registrarOutbound({ telefone, texto, tipo: 'bot' }).catch(() => {});
+  const r = await enviarTexto(telefone, texto).catch(e => { console.error('[triagem] enviarTexto:', e.message); return null; });
+  // waMessageId: é o que deixa o recibo delivered/read da Meta pousar na thread
+  await waInbox.registrarOutbound({ telefone, texto, tipo: 'bot', waMessageId: r?.message_id || null }).catch(() => {});
 }
 
 // Retorna true se o bot assumiu (chamador deve dar return sem cair no institucional).

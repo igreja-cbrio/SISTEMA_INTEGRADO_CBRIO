@@ -417,8 +417,11 @@ router.get('/conversas/:id/mensagens', authorizeModule('conversas', 1), async (r
     // ⚠️ desc + reverse: a conversa é 1 por telefone PRA SEMPRE — com asc+limit,
     // um histórico >500 devolvia as 500 mais ANTIGAS e a mensagem de HOJE nunca
     // aparecia na thread (a prévia da lista subia e o time respondia no escuro).
+    // select('*'): os recibos (delivered_at/read_at/failed_at · migration
+    // 20260813190000) entram quando existirem — pedi-los nominalmente
+    // derrubaria a thread antes dela (lição do parcelas_max).
     const { data: msgs } = await supabase.from('wa_mensagens')
-      .select('id, direcao, tipo, texto, media_url, autor_id, criado_em')
+      .select('*')
       .eq('conversa_id', conv.id).order('criado_em', { ascending: false }).limit(500);
     (msgs || []).reverse();
     // Mídia RECEBIDA vive em bucket PRIVADO e a linha guarda o PATH (não URL):
@@ -493,7 +496,7 @@ router.post('/conversas/nova', authorizeModule('conversas', 2), async (req, res)
     }
     if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o envio.', detail: r?.reason || r?.detail || null });
 
-    await waInbox.registrarOutbound({ telefone: conv.telefone, texto: textoLog, tipo, autorId: uid(req) });
+    await waInbox.registrarOutbound({ telefone: conv.telefone, texto: textoLog, tipo, autorId: uid(req), waMessageId: r.messageId || null });
     if (area && String(area).trim()) await supabase.from('wa_conversas').update({ area: String(area).trim() }).eq('id', conv.id);
 
     const { data: fresh } = await supabase.from('wa_conversas').select('*').eq('id', conv.id).maybeSingle();
@@ -530,7 +533,7 @@ router.post('/conversas/:id/responder', authorizeModule('conversas', 2), async (
       });
     }
     if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o envio.', detail: r?.reason || r?.detail || null });
-    await waInbox.registrarOutbound({ telefone: conv.telefone, texto: textoLog, tipo, autorId: uid(req) });
+    await waInbox.registrarOutbound({ telefone: conv.telefone, texto: textoLog, tipo, autorId: uid(req), waMessageId: r.messageId || null });
     res.json({ ok: true, messageId: r.messageId || null });
   } catch (e) {
     console.error('[wa-inbox] responder:', e.message);
@@ -561,6 +564,7 @@ router.post('/conversas/:id/anexo', authorizeModule('conversas', 2), uploadAnexo
     await waInbox.registrarOutbound({
       telefone: conv.telefone, tipo: kind, autorId: uid(req), mediaUrl: urlPub,
       texto: kind === 'document' ? (req.file.originalname || '[documento]') : null,
+      waMessageId: r.messageId || null,
     });
     res.json({ ok: true, media_url: urlPub, messageId: r.messageId || null });
   } catch (e) {
@@ -613,7 +617,7 @@ router.patch('/conversas/:id', authorizeModule('conversas', 2), async (req, res)
           pesquisaEnviada = true;
           patch.pesquisa_estado = 'aguardando';
           patch.pesquisa_em = new Date().toISOString();
-          await waInbox.registrarOutbound({ telefone: antes.telefone, texto: msg, tipo: 'pesquisa' }).catch(() => {});
+          await waInbox.registrarOutbound({ telefone: antes.telefone, texto: msg, tipo: 'pesquisa', waMessageId: r.messageId || null }).catch(() => {});
         }
       }
     }

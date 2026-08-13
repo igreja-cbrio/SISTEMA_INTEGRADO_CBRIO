@@ -259,11 +259,15 @@ async function registrarInbound({ telefone, texto, tipo = 'text', messageId, med
 // Mensagem que SAIU (bot ou humano). Não mexe em não-lidas nem na janela.
 // Envio humano (autorId) ou template → marca a conversa como "assumida por
 // humano" (as respostas passam a voltar pro inbox, não pro bot).
-async function registrarOutbound({ telefone, texto, tipo = 'text', autorId = null, mediaUrl = null, phoneNumberId = null }) {
+// `waMessageId` (13/08 · caso da Júlia): sem gravar o id que a Meta devolve no
+// envio, o recibo delivered/read/failed da resposta não tem onde POUSAR — o
+// webhook não consegue casar e a thread nunca mostra o ✓✓.
+async function registrarOutbound({ telefone, texto, tipo = 'text', autorId = null, mediaUrl = null, phoneNumberId = null, waMessageId = null }) {
   const c = await acharOuCriarConversa(telefone, phoneNumberId);
   if (!c) return null;
   await supabase.from('wa_mensagens').insert({
     conversa_id: c.id, direcao: 'out', tipo, texto: texto || null, autor_id: autorId, media_url: mediaUrl,
+    wa_message_id: waMessageId || null,
   });
   const patch = { last_message_at: new Date().toISOString(), ultima_previa: (texto || '').slice(0, 140) };
   if (autorId || tipo === 'template') patch.assumida_humano = true;
