@@ -7085,6 +7085,89 @@ Filtros em `isAmiCulto` (AMI ou sábado, exclui Bridge) e `isBridgeCulto`
 (qualquer culto com 'bridge' no nome). Ajustar se nomenclatura de
 cultos mudar.
 
+## ⚠️ EM CURSO · mudança dos cultos de DOMINGO · handoff pro MARCOS PAULO (2026-08-05)
+
+A partir da semana de **24/08/2026** (segunda — para o domingo **30/08** já sair
+no formato novo), o domingo passa de **4 para 3 cultos**: o **08:30 encerra** e
+passa a existir um **09:30**. Quarta, AMI e Bridge **não** mudam.
+
+**Contexto COMPLETO — ler antes de tocar em qualquer coisa de culto de domingo:
+`docs/cultos-domingo/contexto-e-plano.md`** (estado medido, decisões e plano) **+
+`docs/cultos-domingo/varredura-2026-08-11.md`** (inventário de 113 achados, 53
+confirmados em verificação adversarial · **é a fonte para executar**).
+
+⚠️ Os 5 achados que mais matam, da varredura:
+
+1. **O voluntariado DESCARTA culto desconhecido, não zera.** A régua é prefixo de
+   texto do nome, em **5 cópias**, nenhuma com `'Domingo 09%'` → check-in
+   desaparece do dashboard **sem erro, sem log e sem zero visível**. A correção
+   vai ao ar **ANTES** de o tipo existir.
+2. **`POST /service-types` descarta `has_kids`/`has_online`/`presencial_label`** →
+   tipo criado pela UI nasce sem Kids e **nenhuma criança faz check-in**, sem
+   caminho de UI para ligar. O tipo novo **nasce por SQL**.
+3. **Existem 4 fontes de horário sem FK**: o catálogo, o snapshot em
+   `cultos.hora`/`nome`, o `fin_culto_slots` (que roteia dízimo pra conta
+   contábil) e o `batismo_horarios` (porta pública). ⚠️ **09:30 cai EXATAMENTE na
+   fronteira de dois slots financeiros** — o dízimo de um culto parte em duas
+   contas de cultos extintos, por trigger.
+4. **72 cultos futuros já gravados** com hora antiga · `gerar_cultos_recorrentes`
+   é INSERT-ONLY e **nunca corrige** · `cultos.hora` está fora da allowlist do
+   `PUT /cultos/:id` (só por SQL).
+5. 🔴 **`DELETE /service-types/:id` é guardado por `membresia` nível 1 (LEITURA)**,
+   alcançável por 27 cargos: um clique anula `service_type_id` em **209 cultos**
+   (saem dos KPIs) e apaga em CASCADE roteiro de produção, checklist e o vínculo
+   do template de escala. **Nunca usar "Remover" em tipo de culto.**
+
+O essencial para não fazer besteira:
+
+- ⚠️ **NADA foi executado ainda** (nem migration, nem dado, nem código) e há
+  **5 perguntas abertas** com o Matheus que travam a execução.
+- ⚠️ **NÃO renomear `name` nem `recurrence_time` de tipo existente.** A decisão do
+  Matheus é ter **duas lentes** — "o 10:00 virou 09:30" (continuidade) **e** "o
+  09:30 nasceu novo, o 10:00 encerrou" (separada) — como FILTRO, porque a
+  diretoria vai escolher o caminho com o tempo. Renomear queima a lente separada.
+  O caminho é **criar o `Domingo 09:30` como tipo novo + linhagem explícita**
+  ligando 10:00 → 09:30.
+- ⚠️ **NUNCA deletar `vol_service_types`.** `producao_roteiro_etapas.service_type_id`
+  é **ON DELETE CASCADE** — apagar o tipo apaga o roteiro de produção em cascata.
+  O 08:30 é **encerrado**, nunca deletado.
+- **A tabela de slots logo abaixo desta seção descreve o formato ATUAL (4 cultos)
+  e continua válida até 23/08/2026.**
+- **Turno já existe** — reusar os blocos da migration `20260705140000`
+  (Domingo Manhã / Domingo Noite / Quarta / AMI / Bridge), não inventar um segundo
+  vocabulário. É o que o Dashboard Semanal já usa no voluntariado.
+- ⚠️ **A média por culto sobe ~33% por aritmética** (mesmo público, denominador
+  menor: ~440 → ~587 · medido nos últimos 10 domingos). Imunes à mudança: total
+  absoluto, por turno, por domingo. Por isso a data da mudança tem de ficar
+  **marcada nos gráficos**. Nos níveis de turno e de domingo as duas lentes dão o
+  MESMO número — a divergência existe só na visão por culto.
+- **`cultos.hora` existe e está 100% preenchida**, mas quase todo o sistema exibe
+  o `recurrence_time` do TIPO (`totemKids.js` 14×, `voluntariado.js` 12×,
+  `dashboardSemanal.js` 9×, `kpis.js` 6×…). Só o `CalendarioCultos.jsx` mostra a
+  hora da própria linha do culto. É isso que faz rename reescrever o passado na
+  tela mesmo com o dado correto guardado.
+
+**Atualização 11/08 · decisões do MARCOS PAULO (detalhe no §11 do
+`contexto-e-plano.md` — as "perguntas abertas" citadas acima FECHARAM, menos o
+plano de contas):** eventos especiais (batismo/bebês/ativações) →
+**09:30 primário, overflow 11:30 por limite** (no batismo o overflow já é
+automático: GET esconde lotado + POST recusa 409 · **limite medido em prod:
+11**, não 8 · ⚠️ 11:30/19:00 têm `limite=NULL` = nunca lota — definir ao abrir
+· ⚠️ batismo via APP fura a lotação, fan-out sem horário/limite); **bebês SEM
+limite por ora = sempre 09:30** (helper com limite NULL pra ligar o overflow
+depois · 3 portas de escrita divergentes hoje · prazo 13/09); plano de contas
+ABERTO com **deadline 20/08** (fallback interino: slot 09:30 → contas do
+10:00); pedidos do **Pr. Juninho**: **3ª lente "consolidação"** (08:30+10:00
+somados vs 09:30 — exige 2ª chave de agrupamento além da linhagem, e somar POR
+SEMANA antes da média) + % de ocupação sempre ao lado da frequência total de
+domingo; **capacidade oficial = 1050** (térreo; os 1300 da `vw_culto_stats`
+não são a régua) com **fonte única a criar** (hoje hardcoded em ≥6 pontos);
+indicador novo de **ocupação sobre lugares OFERECIDOS** (só adulto ÷
+1050×cultos vigentes — conserta o gauge que divide a semana por 1050);
+**catálogo central de cultos = projeto de setembro**, não entra no corte.
+Divisão de frentes: Matheus segue dono dos 4 arquivos em disputa (lentes);
+Marcos Paulo leva bebês/batismo/apps/ocupação.
+
 ## Cultos recorrentes — slots fixos e identidade única
 
 Os horários de culto vivem em `vol_service_types` com `recurrence_day`

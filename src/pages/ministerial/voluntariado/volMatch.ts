@@ -34,8 +34,12 @@ export const dateOfSP = (iso?: string | null): string | null => {
 export function blocoDoServico(nome?: string | null): string | null {
   const n = (nome || '').toLowerCase().trim();
   const m = (re: RegExp) => re.test(n);
-  // 'domingo 09' cobre o "Domingo 09:30" que nasce no corte de 24/08/2026
-  // (docs/cultos-domingo/) — espelho do patch dinâmico 20260813120000 no SQL.
+  // ⚠️ ESPELHO de public.fn_dash_vol_bloco_nome (migration 20260811120000), que é
+  // a FONTE ÚNICA no lado SQL. Horário de culto novo entra nos DOIS — se só um
+  // mudar, o card do Dashboard Semanal e este drill-down passam a discordar.
+  // `domingo 09` está aqui desde antes de o culto das 09:30 existir, de
+  // propósito: o ramo desconhecido é DESCARTADO (não zerado), então um culto que
+  // a régua não reconhece some do relatório sem erro e sem log.
   if (m(/^domingo - manh/) || m(/^cbkids - manh/) || m(/^domingo 08/) || m(/^domingo 09/) || m(/^domingo 10/) || m(/^domingo 11/)) return 'Domingo Manhã';
   if (m(/^domingo - noite/) || m(/^cbkids - noite/) || m(/^domingo 18/) || m(/^domingo 19/) || m(/^domingo 20/)) return 'Domingo Noite';
   if (m(/^quarta/) || m(/^cbkids - quarta/)) return 'Quarta';
