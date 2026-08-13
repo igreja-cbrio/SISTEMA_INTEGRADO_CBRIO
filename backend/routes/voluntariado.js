@@ -10,6 +10,7 @@ const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
 const { notificar } = require('../services/notificar');
 const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 const { requireCron } = require('../utils/cronAuth');
+const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
 const antecedentes = require('../services/antecedentesCriminais');
 const { executarSyncCompleto } = require('../services/voluntariadoSync');
 const multer = require('multer');
@@ -3284,10 +3285,62 @@ router.delete('/availability/:id', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 
 // Create a schedule entry (assign volunteer to service)
+// ⚠️⚠️ A disponibilidade passou a ser REGRA, não enfeite de tela (13/08/2026).
+//
+// Pedido do Matheus: "quem não estiver disponível não vai aparecer para o
+// supervisor ou líder escalar". Até aqui isso era só um checkbox no front — com
+// default ligado, mas DESMARCÁVEL — e o servidor **nunca conferia nada**: dava
+// pra escalar quem marcou "não posso" por drag-and-drop, pelo botão +, pelo
+// auto-fill e pelo aplicar-template, sem nenhum aviso.
+//
+// Filtro que só existe no cliente não é regra: é sugestão. Agora o servidor
+// recusa (409 `indisponivel`), e a coordenação só passa por cima com
+// `forcar: true` — que é uma decisão consciente ("falei com ela, ela vai"),
+// não um clique acidental.
+async function _bloqueioPorIndisponibilidade({ service_id, volunteer_id, planning_center_person_id }) {
+  if (!service_id || (!volunteer_id && !planning_center_person_id)) return null;
+
+  const { data: svc, error: sErr } = await supabase
+    .from('vol_services').select('id, scheduled_at').eq('id', service_id).maybeSingle();
+  // ⚠️ Falha de CONSULTA não pode virar "está disponível" — seria a checagem
+  // falhando ABERTA justamente no caminho que ela existe pra fechar. Sem
+  // conseguir conferir, não afirmamos nada e deixamos passar com log: travar
+  // toda a montagem de escala por instabilidade de banco é pior. Mas o log
+  // existe pra isso aparecer.
+  if (sErr) { console.error('[voluntariado] disponibilidade não conferida:', sErr.message); return null; }
+  if (!svc) return null;
+
+  let q = supabase.from('vol_availability')
+    .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id');
+  q = volunteer_id
+    ? q.eq('volunteer_profile_id', volunteer_id)
+    : q.eq('planning_center_person_id', planning_center_person_id);
+  const { data: linhas, error: aErr } = await q;
+  if (aErr) { console.error('[voluntariado] disponibilidade não conferida:', aErr.message); return null; }
+
+  const v = avaliarIndisponibilidade(
+    { serviceId: service_id, dia: diaBRT(svc.scheduled_at) },
+    linhas || [],
+  );
+  return v.indisponivel ? v : null;
+}
+
 router.post('/schedules', async (req, res) => {
   try {
-    const { service_id, volunteer_id, volunteer_name, team_id, team_name, position_id, position_name, planning_center_person_id, notes } = req.body;
+    const { service_id, volunteer_id, volunteer_name, team_id, team_name, position_id, position_name, planning_center_person_id, notes, forcar } = req.body;
     if (!service_id || !volunteer_name) return res.status(400).json({ error: 'service_id e volunteer_name obrigatórios' });
+
+    if (!forcar) {
+      const bloqueio = await _bloqueioPorIndisponibilidade({ service_id, volunteer_id, planning_center_person_id });
+      if (bloqueio) {
+        return res.status(409).json({
+          error: `${volunteer_name} ${textoIndisponibilidade(bloqueio)}.`,
+          codigo: 'indisponivel',
+          origem: bloqueio.origem,
+          motivo: bloqueio.motivo,
+        });
+      }
+    }
 
     const { data, error } = await supabase.from('vol_schedules')
       .insert({
@@ -3382,7 +3435,45 @@ router.post('/schedules/copy', async (req, res) => {
       .select('*').eq('service_id', from_service_id);
     if (!source || !source.length) return res.status(404).json({ error: 'Nenhuma escala encontrada no culto de origem' });
 
-    const rows = source.map(s => ({
+    // ⚠️ Copiar não pode furar a regra de disponibilidade. Este endpoint faz
+    // INSERT EM LOTE direto (não passa pelo POST /schedules), então a trava de
+    // lá não o alcança — e "copiar a escala do domingo passado" é justamente o
+    // caminho que traria de volta quem avisou que não pode NESTE domingo.
+    // Quem está indisponível no culto de DESTINO é pulado e DECLARADO.
+    const { data: svcDestino } = await supabase.from('vol_services')
+      .select('id, scheduled_at').eq('id', to_service_id).maybeSingle();
+    const diaDestino = diaBRT(svcDestino?.scheduled_at);
+    const idsOrigem = [...new Set(source.flatMap(s => [s.volunteer_id, s.planning_center_person_id]).filter(Boolean))];
+    let idxIndispon = new Map();
+    if (idsOrigem.length) {
+      const linhas = [];
+      for (let i = 0; i < idsOrigem.length; i += 200) {
+        const bloco = idsOrigem.slice(i, i + 200);
+        const [{ data: a }, { data: b }] = await Promise.all([
+          supabase.from('vol_availability')
+            .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id')
+            .in('volunteer_profile_id', bloco),
+          supabase.from('vol_availability')
+            .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id')
+            .in('planning_center_person_id', bloco),
+        ]);
+        linhas.push(...(a || []), ...(b || []));
+      }
+      idxIndispon = indexarPorPessoa(linhas);
+    }
+    const indispon = (s) => [s.volunteer_id, s.planning_center_person_id].filter(Boolean).some((id) =>
+      avaliarIndisponibilidade({ serviceId: to_service_id, dia: diaDestino }, idxIndispon.get(id) || []).indisponivel);
+
+    const pulados = source.filter(indispon).map(s => s.volunteer_name).filter(Boolean);
+    const copiaveis = source.filter(s => !indispon(s));
+    if (!copiaveis.length) {
+      return res.status(409).json({
+        error: 'Ninguém do culto de origem está disponível neste culto.',
+        codigo: 'todos_indisponiveis', pulados,
+      });
+    }
+
+    const rows = copiaveis.map(s => ({
       service_id: to_service_id,
       volunteer_id: s.volunteer_id,
       volunteer_name: s.volunteer_name,
@@ -3398,7 +3489,7 @@ router.post('/schedules/copy', async (req, res) => {
     const { data, error } = await supabase.from('vol_schedules')
       .insert(rows).select();
     if (error) return res.status(400).json({ error: error.message });
-    res.json({ copied: data.length, schedules: data });
+    res.json({ copied: data.length, schedules: data, pulados });
   } catch (e) { res.status(500).json({ error: 'Erro ao copiar escalas' }); }
 });
 
@@ -3425,15 +3516,19 @@ router.post('/schedules/auto-fill', async (req, res) => {
     const { data: team } = await supabase.from('vol_teams')
       .select('name').eq('id', team_id).single();
 
-    // Check availability — exclude unavailable volunteers
+    // ⚠️ O auto-fill lia SÓ o modelo de faixa de datas — quem marcou "não posso
+    // neste culto" (`service_id` preenchido) era escalado automaticamente. E a
+    // chave era `volunteer_profile_id || planning_center_person_id`, que não
+    // casa com registro que tenha só o OUTRO lado preenchido. Os dois defeitos
+    // saem juntos usando a régua única de `utils/volDisponibilidade`.
     const { data: unavailable } = await supabase.from('vol_availability')
-      .select('volunteer_profile_id, planning_center_person_id')
-      .lte('unavailable_from', serviceDate)
-      .gte('unavailable_to', serviceDate);
+      .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id');
 
-    const unavailableIds = new Set(
-      (unavailable || []).map(u => u.volunteer_profile_id || u.planning_center_person_id)
-    );
+    const indisponIdx = indexarPorPessoa(unavailable || []);
+    const estaIndisponivel = (id) => !!id && avaliarIndisponibilidade(
+      { serviceId: service_id, dia: serviceDate },
+      indisponIdx.get(id) || [],
+    ).indisponivel;
 
     // Check who's already scheduled for this service
     const { data: existing } = await supabase.from('vol_schedules')
@@ -3459,7 +3554,10 @@ router.post('/schedules/auto-fill', async (req, res) => {
     // Filter available members and sort by least recently scheduled (rotation)
     const available = members.filter(m => {
       const id = m.volunteer_profile_id || m.planning_center_person_id;
-      return !unavailableIds.has(id) && !alreadyScheduled.has(id);
+      // ⚠️ Confere os DOIS identificadores: a linha de ausência pode ter só o
+      // profile_id ou só o pc_person_id, e a chave `a || b` errava metade dos casos.
+      if (estaIndisponivel(m.volunteer_profile_id) || estaIndisponivel(m.planning_center_person_id)) return false;
+      return !alreadyScheduled.has(id);
     }).sort((a, b) => {
       const countA = scheduleCount.get(a.volunteer_profile_id || a.planning_center_person_id) || 0;
       const countB = scheduleCount.get(b.volunteer_profile_id || b.planning_center_person_id) || 0;
@@ -4484,8 +4582,25 @@ router.post('/schedule-templates/:id/apply', authEscalaEscrita, async (req, res)
     if (!service_id) return res.status(400).json({ error: 'service_id obrigatório' });
     const tpl = await carregarTemplate(req.params.id);
     if (!tpl) return res.status(404).json({ error: 'Template não encontrado' });
-    const { data: svc } = await supabase.from('vol_services').select('id').eq('id', service_id).maybeSingle();
+    const { data: svc } = await supabase.from('vol_services').select('id, scheduled_at').eq('id', service_id).maybeSingle();
     if (!svc) return res.status(404).json({ error: 'Culto não encontrado' });
+
+    // Ausências das pessoas-padrão deste template, lidas UMA vez (uma consulta
+    // por pessoa dentro do laço faria dezenas de round-trips por clique).
+    const diaServico = diaBRT(svc.scheduled_at);
+    const idsPadrao = [...new Set(tpl.itens.flatMap((i) => (i.pessoas || []).map((p) => p.volunteer_id)).filter(Boolean))];
+    let indisponPorPessoa = new Map();
+    if (idsPadrao.length) {
+      const linhas = [];
+      for (let i = 0; i < idsPadrao.length; i += 200) {
+        const { data } = await supabase.from('vol_availability')
+          .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id')
+          .in('volunteer_profile_id', idsPadrao.slice(i, i + 200));
+        linhas.push(...(data || []));
+      }
+      indisponPorPessoa = indexarPorPessoa(linhas);
+    }
+    const pulados = [];
 
     // Escalas já existentes no culto: pra não re-escalar a mesma pessoa e pra
     // achar o próximo slot_seq livre por função (o índice pc_unique inclui slot_seq).
@@ -4537,6 +4652,20 @@ router.post('/schedule-templates/:id/apply', authEscalaEscrita, async (req, res)
         const chave = `${p.volunteer_id}:${it.team_id}`;
         if (escaladoChave.has(chave)) { usadas += 1; continue; }
         const nome = p.volunteer?.full_name || null;
+        // ⚠️ Pessoa-padrão do template NÃO passa por cima de ausência declarada.
+        // O template diz "normalmente é a Ana nesta função"; a Ana dizendo "não
+        // posso nesse domingo" é mais recente e mais específico. Antes, aplicar
+        // o template escalava a Ana em silêncio, e a coordenação só descobria no
+        // domingo. A vaga fica ABERTA (não consome `usadas`) e o pulo é
+        // DECLARADO na resposta — some da tela seria trocar um erro por outro.
+        const bloqueio = avaliarIndisponibilidade(
+          { serviceId: service_id, dia: diaServico },
+          indisponPorPessoa.get(p.volunteer_id) || [],
+        );
+        if (bloqueio.indisponivel) {
+          pulados.push({ volunteer_id: p.volunteer_id, nome, equipe: it.team?.name || null, motivo: textoIndisponibilidade(bloqueio) });
+          continue;
+        }
         const { error: sErr } = await supabase.from('vol_schedules').insert({
           service_id,
           volunteer_id: p.volunteer_id,
@@ -4553,7 +4682,7 @@ router.post('/schedule-templates/:id/apply', authEscalaEscrita, async (req, res)
         if (!sErr) { escaladoChave.add(chave); usadas += 1; preenchidas += 1; }
       }
     }
-    res.json({ ok: true, itens: itensCriados, vagas: vagasTotais, preenchidas });
+    res.json({ ok: true, itens: itensCriados, vagas: vagasTotais, preenchidas, pulados });
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao aplicar template' }); }
 });
 
@@ -4593,6 +4722,11 @@ router.get('/services/:serviceId/contexto-montagem', async (req, res) => {
             position:vol_positions(id, name)
           )
         `)
+        // ⚠️ `arquivado = false` — o `/volunteers-pool` já filtrava e esta query
+        // (nascida no PR do pool anotado) não, então a tela de montar escala
+        // oferecia voluntário ARQUIVADO pra escalar. Arquivar tem que significar
+        // "sumiu de todos os lugares onde se escolhe gente".
+        .eq('arquivado', false)
         .order('full_name').range(offset, offset + 999);
       const { data, error } = await q;
       if (error) return res.status(400).json({ error: error.message });
@@ -4601,6 +4735,11 @@ router.get('/services/:serviceId/contexto-montagem', async (req, res) => {
       if (data.length < 1000) break;
       offset += 1000;
     }
+    // ⚠️ Conta de SISTEMA e nome-não-pessoa fora da lista de escalar. O print do
+    // Matheus (13/08) mostrava ". f" e "ADM CBRio" entre os 860 candidatos.
+    // Espelha `ehNomePlaceholder` do matcher: nenhum fluxo de PESSOAS deve
+    // exibir isso — muito menos um em que se escolhe quem serve no culto.
+    all = all.filter((v) => ehPessoaEscalavel(v.full_name));
 
     // Indisponibilidade: por culto específico + por período que cobre a data.
     const chave = (pid, pcid) => `${pid || ''}::${pcid || ''}`;

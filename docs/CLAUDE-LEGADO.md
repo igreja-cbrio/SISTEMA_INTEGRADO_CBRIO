@@ -7127,3 +7127,1740 @@ visita há 2+ meses"** na aba; `/grupos?tab=visitas` abre direto nela.
   texto livre `local`, cheio de endereço; o filtro de Bairro já cobre).
   Cards de resumo da aba Visitas viraram BOTÕES-FILTRO (clique em "Sem
   visita há 2+ meses" filtra a lista · Marcos não tinha achado as pills).
+
+---
+
+# Pagamentos · narrativa completa (movida do CLAUDE.md em 2026-08-13)
+
+> Condensada no CLAUDE.md em 13/08/2026. As LEIS do núcleo e as regras
+> operacionais seguem lá; aqui fica o diário de implementação PR a PR.
+
+## Pagamentos · núcleo provider-agnostic + retiro pago pelo sistema (2026-07-28)
+
+Pedido do Marcos: vender a inscrição do **retiro** pelo próprio sistema (PIX,
+cartão parcelado, boleto, e Apple Pay se der), com lista de inscritos por
+idade, vínculo automático ao cadastro da pessoa, forma de pagamento por
+inscrito, rastreabilidade e impressão da lista por faixa de idade/sexo.
+
+⚠️ **O retiro NÃO é módulo novo** — é um evento da espinha de inscrições (F3.2),
+com `pagamento_ativo=true`. Esta seção cobre só a camada de PAGAMENTO. Ver a
+consolidação com `insc_pagamentos` mais abaixo.
+
+### ⚠️ Decisão do gateway · REVISTA em 2026-08-06: o PSP passou a ser o MERCADO PAGO
+
+Decisão do Marcos (retomada de sessão anterior): *"já decidimos que vamos seguir
+com Mercado Pago"*. O bloco abaixo (Asaas) fica como **registro histórico do
+racional de 28/07** — o que o invalidou não foi o raciocínio, foi o
+**operacional**: a conta Asaas de produção ficou "em análise" e o sandbox nasceu
+sem forma nenhuma habilitada, enquanto a igreja já tem conta no Mercado Pago.
+
+**O adapter do Asaas NÃO foi removido e não deve ser.** `pag_cobrancas.provider`
+é por LINHA: cobrança criada por ele precisa seguir sendo consultada, conciliada
+e estornada por ele. Quem decide o PSP das cobranças NOVAS é
+`PAG_PROVIDER_PADRAO`. Trocar de PSP custa 1 env — é exatamente o que o núcleo
+provider-agnostic existe pra permitir, e agora foi exercitado de verdade.
+
+Ver a seção **"Adapter do Mercado Pago"** abaixo para os fatos da API, as três
+decisões de arquitetura que ele forçou e o que ficou pendente de gente.
+
+### Racional histórico da escolha do Asaas (28/07 · superado · íntegra no legado)
+
+O que eliminou as alternativas em 28/07, por fato verificado: **a Stripe não faz
+parcelamento no Brasil** e parcelar era requisito declarado; **o Santander não é
+adquirente** (segue só na LEITURA de extrato pra conciliação — o Pix cobrança e o
+boleto existem em código, desligados, com paths não confirmados e sem webhook); os
+juros do parcelado seriam **repassados ao inscrito**; e o pagamento acontece em
+**página pública, fora do login**, o que tira a Apple do caminho (guideline
+3.2.2(iv), a mesma que travou a Generosidade) e mantém o escopo PCI fora de nós.
+
+### Núcleo entregue (migration `20260728120000` · APLICADA em prod · PR #2082)
+
+`backend/services/pagamentos/` — serve QUALQUER módulo que precise cobrar
+(retiro, cursos, eventos, e o módulo de inscrições genérico do Marcos quando
+existir). Contrato = `pag_cobrancas.origem_tipo` + um handler registrado no JS.
+
+**⚠️ LEIS deste núcleo (não regredir):**
+
+1. **Dinheiro SEMPRE em centavos inteiros.** Nenhum float, em nenhuma coluna.
+2. **`status` é canônico do CBRio, nunca a string do PSP.** Todo mapeamento vive
+   em `providers/<nome>.js`. `if (status === 'RECEIVED')` fora de um adapter
+   está no lugar errado. Nenhum módulo de domínio importa `providers/*` — só a
+   fachada (é o que faz trocar de PSP custar 1 arquivo + 1 env).
+3. **Idempotência do webhook É a UNIQUE** `pag_webhook_eventos(provider,
+   evento_id)` + `ON CONFLICT DO NOTHING`: processa só quem conseguiu inserir.
+   Dedup por SELECT-depois-INSERT **não é dedup** — duas entregas concorrentes
+   do PSP veem ambas "não existe" e ambas inserem. Foi o bug do
+   `generosidade-webhook` do app (que, aliás, **não grava linha nenhuma**:
+   `origem:'app'` viola o CHECK e `membro_id:null` viola o NOT NULL de
+   `mem_contribuicoes` — **não usar como referência**).
+4. **`pago` NUNCA regride** (trigger `fn_pag_cobrancas_transicao` + espelho em
+   `maquinaEstados.js`). Webhook fora de ordem não pode despagar inscrição
+   confirmada. Transição inválida → `RAISE WARNING` e mantém o status antigo,
+   **não aborta**: exception em handler de webhook vira retry infinito no PSP.
+5. **NUNCA armazenar PAN/CVV/validade/nome impresso.** Só `cartao_brand` e
+   `cartao_last4` como o PSP devolveu. Dado de cartão não entra no nosso banco,
+   nos nossos logs, nem no nosso Express — a tokenização é no PSP/cliente.
+6. **`pag_pagamentos` é razão auxiliar e NUNCA é somada em view financeira.** O
+   caixa recebe **1 receita por REPASSE** do PSP em `fin_transacoes` (+ 1
+   despesa de tarifa), conciliada contra o crédito do extrato. Somar as duas
+   camadas é exatamente como nasce a dupla contagem (a de ~R$ 1,5 mi veio desse
+   mecanismo). `liquido`/`taxa` vêm do **payload do PSP**, nunca calculados —
+   a taxa varia por método, parcela e antecipação. `vw_pag_invariantes` é a rede
+   que grita quando divergir; ler no fechamento.
+7. **Nenhuma confirmação sem `status='pago'` lido do servidor** — WhatsApp,
+   push, e-mail, tela de sucesso, confete. Nada.
+
+Estado no banco: 3 tabelas · `pag_cobrancas` na whitelist de soft-delete ·
+2 triggers (transição + audit) · 10 policies de RLS (`pag_webhook_eventos` só
+legível por super-admin — payload cru do PSP) · `vw_pag_invariantes`.
+Testes: `src/test/pagamentosMaquinaEstados.test.ts` (16 casos).
+
+### Buraco negro do `retiro` fechado (PR #2081)
+
+`retiro`/`cursos`/`eventos` eram aceitos em `TIPOS_INSCRICAO` **e** estavam em
+`LABEL_INSCRICAO_WPP`, mas `fn_app_inscricoes_fanout` não tem branch pra
+nenhum: a linha ficava invisível em `app_inscricoes` (`status='processado'`) e a
+pessoa recebia **"Inscrição confirmada"** de inscrição que não existia. Os três
+viraram **lead** (`LABEL_INSCRICAO_LEAD` → `notificar()` dizendo explicitamente
+que não há inscrição confirmada). **Retiro NÃO passa por `app_inscricoes`/
+fan-out** — aquele fan-out envolve cada branch em `EXCEPTION WHEN OTHERS` e
+marca `processado` de qualquer jeito; falha silenciosa marcada como sucesso é
+veneno pra fluxo com dinheiro.
+
+Junto: `santanderCron.js` chamava `contasService.extrato()` — **função
+inexistente** (o export é `consultarExtrato`) → TypeError a cada execução, e a
+"ESTRATÉGIA 2: extrato regular" do `/pix-sync` **nunca rodou**. Virou o helper
+`extratoNormalizado()`, único ponto que conhece o formato cru `_content` do
+banco. É pré-requisito de conciliar o repasse do PSP contra o extrato.
+
+### ⚠️ CONSOLIDAÇÃO com a espinha de inscrições (28/07 · decisão do Marcos)
+
+O núcleo `pag_*` e a espinha de inscrições (`20260729000100` · F3.2 PR 1) foram
+construídos **no mesmo dia, em frentes paralelas**, e as duas criaram tabela de
+pagamento. As duas estavam INERTES (nenhum código lia nenhuma) quando o conflito
+foi detectado. Decisão: **`pag_*` é o MOTOR · `insc_pagamentos` é a linha de
+DOMÍNIO que aponta pra ele** (migration `20260729020000` · aditiva).
+
+- `pag_cobrancas` → cobrança + estado canônico · `pag_pagamentos` → razão
+  auxiliar (liquidação/estorno/tarifa, líquido+taxa) · `insc_pagamentos` →
+  "esta inscrição tem esta cobrança" (`cobranca_id` FK), com os campos que a UI
+  de inscrições já lê. Ler pela **`vw_insc_pagamento_estado`** (o estado vem do
+  motor quando há cobrança; cai no espelho em pagamento manual).
+- Motivo de o motor ser o núcleo: `insc_pagamentos.webhook_log JSONB` guarda
+  histórico mas **não dá idempotência** (anexar em array JSON não impede
+  processar o mesmo evento 2×, e não há UNIQUE por evento do PSP — o furo que
+  quebrou o `generosidade-webhook`), e não tinha trava de transição contra
+  webhook fora de ordem despagar inscrição confirmada. `webhook_log` **continua
+  existindo** como histórico legível; só não é mais o mecanismo de idempotência.
+- ⚠️ **NÃO criar tabelas `ret_*`.** O retiro é uma linha em `insc_eventos` com
+  `pagamento_ativo=true`. A `inscricoes` já exige `cpf`+`data_nascimento`+`sexo`
+  no `chk_inscricoes_contrato` (= idade, faixa via `fn_faixa_etaria` e a
+  impressão por sexo saem de graça), e já tem vagas, `numero_sorte`, check-in e
+  página pública `/evento/:slug`. `publicEventoExterno.js:127` já reservava a
+  vaga do Pix: `const pago = !!esp.pagamento_ativo; // Pix chega na F3.3`.
+
+### ✅ Camada JS + webhook + crons (2026-07-28 · SEM migration)
+
+`backend/services/pagamentos/` completo, menos o adapter do PSP:
+
+| Arquivo | Papel |
+|---|---|
+| `index.js` | **FACHADA — é a única coisa que módulo de domínio importa.** `criarCobranca`, `sincronizar`, `marcarPagoManual`, `cancelar`, `estornar`, `expirarVencidas`, `reconciliar`, `capacidades`, `metodosDisponiveis`, `registrarHandler` |
+| `cobrancas.js` | persistência + transições. `valor_pago_centavos` é **derivado da soma de `pag_pagamentos`**, nunca copiado do payload (`tarifa` fora da soma: é custo nosso) |
+| `webhooks.js` | assinatura → `registrarEvento` (idempotência) → despacho + `reprocessarPendentes` (replay do payload guardado) |
+| `providers/{index,manual}.js` | registro + adapter de dinheiro fora do PSP |
+| `handlers/{index,inscricao}.js` | ganchos de domínio por `origem_tipo` |
+
+**Leis desta camada (além das 7 do núcleo):**
+
+- **Provider desconhecido LANÇA**, nunca cai no padrão em silêncio — silêncio
+  seria cobrança criada num provider que não sabe cobrar. `providers/index.js`
+  tenta `require('./asaas')` e só engole `MODULE_NOT_FOUND` (erro DENTRO do
+  adapter propaga). `pspConfigurado()` é false quando o env aponta pra adapter
+  ausente → não liga fluxo pago automático.
+- **`criarCobranca` grava a linha ANTES de falar com o PSP.** Se a chamada
+  externa morre no meio, a cobrança existe em `criada` com `ultimo_erro` e o
+  cron retoma. O inverso (PSP cria, a gente perde a linha) deixaria cobrança
+  órfã cobrável no PSP sem rastro aqui. Corrida na UNIQUE de `referencia` →
+  devolve a cobrança da outra requisição (o objetivo é UMA cobrança).
+- **`aplicarStatus` reconfere se o BANCO aceitou.** O trigger recusa transição
+  com WARNING e mantém o status antigo, sem abortar — se o JS não relesse, ele
+  chamaria `aoPagar` numa cobrança que continuou não-paga. Só dispara o handler
+  quando `data.status === novoStatus`.
+- **Sinal do valor vem do TIPO**, não do chamador: estorno gravado positivo
+  somaria como pagamento.
+- **`handlers.disparar` engole erro de propósito** (loga). O estado da cobrança
+  já foi persistido e não se desfaz porque o domínio falhou; a reconciliação
+  chama de novo — é pra isso que handler é idempotente.
+- **Handler `inscricao`**: cada UPDATE é condicionado ao status de ORIGEM
+  (`.eq('status','recebida')`), então reentrega é no-op. `pago` → `confirmada`.
+  `expirada`/`cancelada` → `cancelada` (libera vaga). **Inscrição já cancelada
+  NÃO é ressuscitada por pagamento atrasado** — notifica e espera decisão
+  humana (a vaga pode já ter ido pra outra pessoa). **Estorno/chargeback NÃO
+  cancelam a inscrição** — quem já está na logística (ônibus, quarto, comida)
+  não sai da lista por automação.
+- **`marcarPagoManual` exige `confirmado_por`.** Dinheiro entrando por decisão
+  humana sem autoria registrada torna a trilha de auditoria inútil. Taxa fica
+  `null` (não 0): dinheiro fora do PSP não tem tarifa, e null diz "não se
+  aplica".
+- **`cancelar` recusa cobrança com dinheiro dentro** — o caminho é estorno.
+
+**Rota `/api/pagamentos-webhook/:provider`** (`routes/pagamentosWebhook.js`),
+montada fora de `/api/public` **e** no `skip()` do limiter global. **Responde
+200 pra tudo menos assinatura inválida (401)** — 4xx/5xx viram reentrega
+eterna, e vários PSPs DESATIVAM o webhook depois de N falhas, o que transforma
+um problema de 15 min em falha silenciosa e permanente.
+
+**Cron: UM só no `vercel.json`** — `cron/tick` `*/10`, que faz expirar +
+reconciliar (limite 50) + replay numa passada. ⚠️ **É de propósito:** o projeto
+já tem **45 crons** no `vercel.json` e o teto do plano Pro é 40 — cron a mais
+pode simplesmente não registrar, e "cron de expiração que nunca roda" = vaga
+paga que nunca é liberada, falha silenciosa da pior classe. ⚠️ **Conferir na aba
+Cron Jobs da Vercel quais dos 45 estão realmente registrados** — se truncar, os
+últimos da lista (posições 43–45) são três agentes de IA da jornada do
+convertido, que param sem avisar. As três etapas são idempotentes, uma
+não aborta as outras, e as rotas avulsas (`cron/expirar|reconciliar|replay`)
+seguem existindo pra disparo manual/depuração. `CRON_SECRET` **fail-closed**.
+
+⚠️ `listarParaReconciliar` ordena por **`updated_at` ASC, não `created_at`**, e
+`reconciliar` **toca a linha ao fim de cada tentativa** (inclusive sem novidade
+e inclusive em falha). Sem isso, limite menor que a fila re-checaria pra sempre
+as 50 mais antigas e as novas nunca seriam consultadas — e uma cobrança que
+sempre erra prenderia a vez. Round-robin é requisito, não detalhe.
+
+**Envs:** `PAG_ENABLED` (kill switch — recusa cobrança NOVA; consultar/expirar/
+reconciliar seguem, senão dinheiro já cobrado ficaria preso) ·
+`PAG_PROVIDER_PADRAO` (default `manual`) · `PAG_WEBHOOK_SECRET` ou
+`<PROVIDER>_WEBHOOK_SECRET` · `PAG_WEBHOOK_RATE_LIMIT_MAX`.
+Testes: `src/test/pagamentosNucleo.test.ts` (11) + `pagamentosMaquinaEstados`
+(16). **Nada cobra ainda** — falta o adapter e ligar a porta pública.
+
+### ✅ Lista de inscritos + aba "Inscrições" na ficha do membro (2026-07-28 · SEM migration)
+
+O que o Marcos pediu na abertura ("saber os inscritos, idade de cada um, forma de
+pagamento de cada um, imprimir a lista separada por idade ou faixa ou sexo") e
+"abrir um membro e ver as inscrições dele" — detalhes de implementação no legado.
+As regras que ficam:
+
+- ⚠️ **CPF fica FORA da lista de inscritos, de propósito** — é o campo mais
+  sensível e serve pro matcher, não pra tela.
+- ⚠️ **Telefone/e-mail ficam FORA da lista IMPRESSA por padrão**: é PII que vira
+  papel na mão de voluntário; só sai marcando a caixa, com aviso na própria tela.
+  Contraste proposital com a lista de aniversariantes do Kids, onde o telefone
+  sai por decisão explícita.
+- ⚠️ **`src/lib/faixaEtaria.ts` é espelho EXATO de `fn_faixa_etaria`** (<13
+  criança · 13–17 adolescente · 18–30 jovem · 31+ adulto) — existe em JS porque
+  chamar a função SQL por linha seria uma consulta por pessoa. **Se a régua mudar
+  no banco, mudar aqui também**, senão a lista impressa discorda do KPI. Data é
+  parseada como LOCAL (`+T00:00:00`): sem isso, em fuso negativo, quem nasceu dia
+  1º vira um dia mais velho e no limiar muda de faixa. 22 testes.
+- ⚠️ **Leitura paginada**: tinha `.limit(2000)`, que o cap de 1000 do PostgREST
+  truncava **em silêncio** — a lista parecia completa.
+- **A aba do membro cobre TODAS as portas** (espinha + ext + batismo + next +
+  voluntariado + pedidos de grupo), **Kids fica FORA** (dado de menor, mesmo
+  corte da timeline e do export LGPD). No NEXT o status exibido é `compareceu`
+  quando há check-in — é ele que diz se a pessoa FOI. Data da INSCRIÇÃO e data do
+  EVENTO aparecem separadas: juntá-las faz ler "inscrito em março" como "foi em
+  março".
+
+### ✅ Adapter do Asaas (2026-07-28 · SEM migration · íntegra no legado)
+
+`providers/asaas.js` — **o único arquivo do sistema que conhece a linguagem do
+Asaas**. `'PAYMENT_RECEIVED'` em qualquer outro arquivo é bug de arquitetura.
+Segue vivo mesmo com o PSP padrão sendo o Mercado Pago: `pag_cobrancas.provider`
+é por LINHA, e cobrança criada por ele precisa seguir sendo consultada,
+conciliada e estornada por ele. Os fatos da API que **não são óbvios e cujo
+desconhecimento custa caro**:
+
+1. **`PAYMENT_CONFIRMED` ≠ `PAYMENT_RECEIVED`, e no cartão há ~32 dias entre os
+   dois.** **A PESSOA é confirmada no CONFIRMED** (esperar o RECEIVED faria quem
+   paga com cartão passar um mês fora da lista do retiro); **o DINHEIRO é marcado
+   no RECEIVED** (`repassado_em`, que é o que concilia com o extrato). É
+   exatamente por isso que o núcleo separa razão auxiliar de caixa.
+2. **Parcelado no cartão vira N cobranças**, uma por parcela — mas o pagador
+   autorizou tudo na primeira. Daí `quita_cobranca` → `statusFinal`; sem isso a
+   cobrança ficaria `pago_parcial` por 12 meses e a inscrição nunca confirmaria.
+   ⚠️ Só vale com `billingType === 'CREDIT_CARD'`: parcela 1 de Pix não quita nada.
+3. **`PAYMENT_OVERDUE` NÃO expira nada.** Vencido no Asaas ≠ expirado nosso — Pix
+   e boleto seguem pagáveis. Quem libera a vaga é o nosso cron, pelo `expira_em`.
+4. **A verificação do webhook NÃO é HMAC**: o Asaas devolve no header
+   `asaas-access-token` o token que VOCÊ cadastrou no painel → `timingSafeEqual`.
+   **Fail-closed** sem segredo. Token inválido **notifica na 1ª ocorrência**: a
+   fila de webhook do Asaas é INTERROMPIDA após 15 falhas e as pendências só ficam
+   **14 dias** — em silêncio isso vira pagamento aprovado que nunca chega.
+5. **A key carrega o ambiente no prefixo** (`$aact_hmlg_` sandbox · `$aact_prod_`
+   produção) → guarda que lança se cruzarem. ⚠️ A guarda olha **`VERCEL_ENV`
+   ANTES de `NODE_ENV`**: a Vercel define `NODE_ENV=production` em **todo**
+   deploy, inclusive preview — só pelo NODE_ENV o preview recusaria a chave de
+   sandbox, justamente onde ela precisa rodar.
+6. **Taxa = `value` − `netValue`, os dois do payload** — não viola a lei nº 6 (o
+   proibido é derivar de tabela de preço nossa).
+7. Header `access_token` (não Bearer) **+ `User-Agent` EXIGIDO** — sem ele a
+   chamada falha de um jeito difícil de diagnosticar.
+
+⚠️ **Correção de registro**: a afirmação de que "o Pix da Stripe é invite-only"
+está **errada** — a Stripe suporta Pix e boleto no Brasil. O que a eliminou foi
+só o parcelado.
+
+⚠️ **Flake removido do gate**: 4 testes de guarda de ambiente faziam chamada de
+**rede real** ao sandbox. Teste vermelho bloqueia produção; teste que depende de
+rede de terceiro não pode entrar no gate.
+
+### ✅ Porta pública ligada (2026-07-28 · migration `20260729040000`)
+
+O 403 de `pagamento_ativo` saiu. Fluxo pago: validar (contrato inteiro, nada
+muda) → `fn_insc_inscrever` com **`p_status='recebida'`** (vaga reservada sob o
+advisory lock) → `criarCobranca` → o front redireciona pro `checkout_url`. É o
+que finalmente dá **escritor** pro `'recebida'` do CHECK.
+
+**Regras da porta paga (não regredir):**
+
+- **Evento pago mal configurado NÃO abre** e sobretudo não vira inscrição
+  gratuita por acidente: `bloqueioPagamento()` recusa (503, com texto pra
+  pessoa) quando está marcado como pago **sem valor**, quando o **PSP não está
+  configurado**, ou quando o **kill switch** `PAG_ENABLED=0` está ligado. O
+  `GET` do evento devolve o mesmo texto em `aviso`.
+- **Re-inscrição de cancelada reativa como `recebida`, não `confirmada`**, em
+  evento pago — confirmar ali daria a vaga a quem não pagou.
+- **Reenvio do formulário devolve a MESMA cobrança** (`referencia` =
+  `inscricao:<id>`), inclusive no caminho de corrida `duplicada` da RPC. É assim
+  que ninguém paga duas vezes.
+- **A vaga é reservada ANTES de cobrar.** Se a cobrança falhar, responde 502
+  dizendo que a vaga está reservada e que reenviar o formulário não a perde (o
+  cron de expiração devolve depois). O inverso — cobrar sem vaga garantida —
+  seria estornar gente.
+- **`insc_pagamentos` é espelho, não fonte**: gravado no insert com
+  `cobranca_id`; a UNIQUE de `cobranca_id` faz o reenvio não criar segunda linha.
+
+**`GET /api/public/evento/pagamento/:token`** — status pela página pública.
+⚠️ Montado sob `/public/evento` **de propósito**: herda o limiter generoso dali
+E o `skip()` do limiter global; a tela faz polling e sob `/api/public` puro
+tomaria 429 no lançamento. Acessado pelo **`public_token`**, nunca pelo uuid.
+Quando a cobrança está parada há >2 min, consulta o PSP na hora (rede de
+segurança nº 1) — ninguém fica olhando "aguardando" porque uma entrega se
+perdeu. A resposta expõe só o necessário: **nada de PII do pagador, metadata ou
+payload**.
+
+**Página `/pagamento/:token`** (`src/pages/public/PagamentoInscricao.tsx`):
+status em vocabulário de usuário (não o status canônico cru), QR do Pix +
+copiar, botão de pagar, polling de 6s que **para sozinho** ao resolver, e
+consulta imediata no `visibilitychange` (voltar do checkout). ⚠️ **Confete e
+"pagamento confirmado" só com `pago === true` lido do servidor** — voltar do
+checkout não é pagar.
+
+**Migration `20260729040000`** (⚠️ **aplicar ANTES do merge** — o `select` do
+evento pede as colunas novas e o PostgREST erra a consulta inteira se faltarem,
+derrubando `/evento/:slug`): `insc_eventos.parcelas_max` (1–21, NULL = teto da
+conta do PSP) e `juros_repassados` (default true). É **por evento** porque quem
+define o teto de parcelas é **quando a igreja paga o local** — retiro em
+novembro e em março admitem números diferentes.
+
+**Fix no núcleo, junto:** cobrança **meio-criada** (linha existe, chamada ao PSP
+falhou) era um beco sem saída — `porReferencia` devolvia ela pra sempre, sem
+checkout, e o cron de reconciliação também não a pegava (filtra por
+`provider_cobranca_id`). Agora `criarCobranca` **retoma** sobre a mesma linha
+(helper `pedirAoProvider`). E o erro de chamada **não marca mais `falhou`**:
+`falhou` é TERMINAL na máquina e significa "não pode mais ser pago" — timeout na
+nossa chamada não é isso, e marcar ali tornava a cobrança irrecuperável (o
+trigger recusaria a retomada).
+
+### ✅ Vaga atômica (migration `20260729030000` · pré-requisito de venda paga)
+
+A vaga era conferida com `count(*)` (`inscritosEspinha`) e o INSERT vinha ~160
+linhas depois, sem nada serializando — 300 pessoas no minuto do lançamento
+passavam TODAS pela conferência. Em evento gratuito é tolerável; **em evento
+PAGO com vaga finita significa receber dinheiro de quem não vai ter lugar.**
+
+**`fn_insc_inscrever(...)` é o ÚNICO caminho de criação de inscrição** —
+conferir janela/vaga/duplicidade, gerar `numero_sorte` e inserir acontecem no
+MESMO comando, serializados por `pg_advisory_xact_lock(1937, hashtext(evento_id))`.
+Não inserir em `inscricoes` direto (nem no painel, nem em import) sem
+reproduzir a trava.
+
+- **Advisory e não `FOR UPDATE` na linha do evento**: travar `insc_eventos`
+  faria qualquer edição do painel (publicar, mudar horário) disputar lock com a
+  fila de inscrição. Advisory é mutex nomeado, não toca em dado. Lock de
+  **transação** → liberado no fim do statement mesmo com exceção. Serializa por
+  evento (lançamento de um retiro não segura fila de outro).
+- **Regra de negócio NUNCA vira exceção**: devolve `{ok, motivo}` (`sem_vaga`,
+  `encerrado`, `duplicada`, `sorteio_esgotado`, `evento_inexistente`) e quem
+  chama decide o HTTP. ⚠️ `sem_vaga` responde **409**, nunca "inscrito com
+  sucesso" — o `catch (23505) → ja_inscrito: true` anterior mascarava corrida de
+  vaga como sucesso.
+- **`recebida` OCUPA vaga** (só `cancelada` devolve). É o ponto do fluxo pago: a
+  vaga fica reservada até pagar ou o cron expirar. `fn_insc_vagas(evento_id)`
+  devolve `{vagas, ocupadas, restantes}` pela MESMA régua — o `GET
+  /public/evento/:slug` expõe `vagas_restantes` e a página mostra "Restam N
+  vagas" / "Última vaga!" (aviso, pode ficar 1-2 defasado; quem decide é o lock).
+- Junto: `eventoEspinhaPorSlug` passou a selecionar `valor_centavos`,
+  `pagamento_metodos` e `pagamento_expira_horas` (a F3.3 precisa deles na porta
+  pública) e `pagamento_metodos` entrou no CRUD de evento com sanitização
+  própria — fica FORA do loop de `CAMPOS_EVENTO` porque é `TEXT[]` e string crua
+  quebraria o insert (métodos aceitos: pix/cartao/boleto/apple_pay; dinheiro e
+  transferência são lançamento manual, não opção da pessoa).
+
+⚠️ **O MCP do Supabase VOLTOU a funcionar (2026-08-03)** — `apply_migration` e
+`execute_sql` aplicam direto no projeto `hhntwfawfnxvuobhdfkb` (confirmado
+aplicando a `20260730220000`). Antes retornavam `requires approval`, e é por isso
+que várias seções acima dizem "colar o SQL e o Marcos roda no SQL Editor". A
+disponibilidade **oscila por sessão**: tentar o MCP primeiro; se recusar, cair no
+SQL colado. O que NÃO muda: **colar o SQL da migration na conversa continua
+obrigatório** (regra "Migrations do Supabase") — é o registro do que foi aplicado,
+independente de quem executou. E **conferir o resultado no CATÁLOGO**
+(`information_schema`/`pg_policies`/`pg_indexes`), nunca só o `{"success":true}`
+— lição da lei nº 10 (o `ADD COLUMN IF NOT EXISTS … REFERENCES` que "declarava"
+uma FK que o banco nunca teve).
+
+**Caminho crítico que NÃO é código** (bloqueia a venda, não o build): abrir a
+conta no PSP no CNPJ da igreja avisando por escrito o volume do lançamento
+(CNPJ religioso + 150 transações em 72h é o padrão que dispara retenção de
+saldo por 30-90 dias); política de reembolso escrita (venda pela internet tem 7
+dias de arrependimento por CDC art. 49 independente da política, e ela precisa
+dizer quem come a taxa do gateway); classificação contábil da receita por
+escrito; e quando a igreja paga o local — isso decide o teto de parcelas.
+
+### ✅ Fundação: catálogo de portas, QR e check-in auditável (2026-07-28/29)
+
+- `backend/services/inscricaoPortas.js` é o **registro canônico** das portas e
+  fontes da view. Porta/alias novo entra ali e precisa deixar
+  `inscricaoPortas.test.js` verde — o teste fecha nos **2 sentidos**
+  (catálogo→App.tsx protege contra renomear/remover; App.tsx→catálogo quebra o CI
+  se aparecer rota com cara de porta fora do registro).
+- `insc_checkin_eventos` é **ledger append-only**; `insc_checkins` continua sendo
+  o estado atual. Override exige motivo. ⚠️⚠️ **LEI · ledger append-only NÃO tem
+  FK com `ON DELETE SET NULL`** (migration `20260729100000`): SET NULL **é um
+  UPDATE**, e o trigger de imutabilidade abortava — apagar um profile que já
+  operou a portaria falhava para sempre. **Ator em ledger é SNAPSHOT** (UUID sem
+  FK). Vale pra qualquer trilha append-only nova.
+- `insc_qr_tokens` guarda **somente SHA-256** + emissão/canal/revogação. Token
+  legado sem registro continua válido; revogado é recusado. ⚠️ O comprovante é
+  **HMAC determinístico do id da inscrição — o hash nunca muda** e não existe
+  rotação, então revogar sem poder reativar tirava a pessoa do check-in por QR
+  **permanentemente**. Daí o `PATCH /qrs/:id/reativar` (motivo obrigatório;
+  histórico no `app_audit_log`). Revogar = "desligar o QR desta inscrição", nunca
+  "trocar o QR da pessoa".
+- **Ledger sem leitor é ledger inútil**: `GET /eventos/:id/checkin/historico` +
+  painel "Trilha da portaria" (sob demanda — a tela faz polling de 15s). A
+  pergunta "quem liberou a entrada de quem estava com pagamento pendente?" só era
+  respondível no SQL Editor.
+- **Busca e paginação do inventário de QR são SERVER-SIDE**: filtrar só a página
+  carregada torna a maioria das pessoas inencontrável num evento do tamanho do
+  Celebra.
+- ⚠️ **O gate de deploy roda Vitest + os contratos ANTES do Vercel**, e
+  `workflow_dispatch` roda o mesmo job — **não existe bypass**. Teste novo aqui
+  precisa ser **determinístico**: a lição é o `faixaEtaria.test.ts`, que dependia
+  da HORA da execução.
+
+### ✅ A tela de pagamento (2026-07-30 · PR #2168 · SEM migration)
+
+Pedido do Marcos: *"preciso de um modal na hora do pagamento, cartão, pix,
+boleto"*. Antes o formulário mandava a pessoa **direto pro `checkout_url`** do
+PSP — saía do domínio no meio do fluxo e, ao fechar a aba, ela perdia o link.
+Agora vai pra `/pagamento/:token`, que é endereçável e à qual ela pode voltar. A
+narrativa do desenvolvimento e dos 2 testes de sandbox está no legado.
+
+**⚠️ LEI (nº 5 do núcleo, aplicada à UI): cartão fica no checkout do PSP.**
+Número de cartão não entra no nosso domínio, no nosso Express nem nos nossos
+logs — coletar PAN em formulário nosso ampliaria o escopo PCI-DSS da igreja e
+muda a responsabilidade legal num vazamento. **Pix e boleto NÃO são dado
+sensível** (QR e linha digitável), por isso são nativos: é assim que se consegue
+quase toda a sensação de fluxo integrado com zero exposição.
+
+**⚠️ LEI: a forma de pagamento é ESCOLHIDA pela pessoa e CONFIRMADA pelo PSP —
+nunca adivinhada.**
+- Criar a cobrança sem `billingType` **não garante** fatura com as três formas: o
+  PSP monta a página com o que a CONTA tem habilitado (conta sem chave Pix rende
+  boleto puro). Palpite sobre capacidade de conta alheia é sempre assim:
+  silencioso e errado.
+- `definirMetodo` persiste forma + artefatos e **não toca em valor, status nem
+  vaga** — trocar de forma não é pagar nem cancelar. Recusa cobrança que já
+  recebeu dinheiro: ali o método é fato consumado, e reescrevê-lo apagaria como o
+  dinheiro entrou.
+- O adapter **LANÇA quando o PSP devolve `billingType` diferente do pedido** —
+  era a única coluna do núcleo que não passava por mapeamento canônico, violando
+  a lei nº 2. O chamador transforma isso em **502 com o estado atual no corpo**,
+  pra a tela não regredir pra vazio.
+- **A tela não pode mostrar duas verdades**: a aba vem do que o SERVIDOR gravou;
+  em erro ela volta pra forma confirmada, a aba recusada fica riscada com o
+  motivo, e a mensagem **nomeia a forma** (com 3 abas, "não conseguimos preparar
+  esta forma" não diz qual).
+- ⚠️ **A pré-seleção NÃO reescreve a forma da cobrança.** O effect que olhava só
+  o estado local convertia em Pix quem havia escolhido **cartão parcelado** — e o
+  `installmentCount: null` que Pix/boleto mandam **desfazia o parcelamento**. A
+  pré-seleção usa o método JÁ GRAVADO; cai no primeiro da lista só quando a
+  cobrança ainda não tem forma.
+- **Cada aba tem caminho nativo E de reserva**: sem o artefato (QR, linha
+  digitável), a aba manda pro checkout em vez de aparecer vazia ou mentir.
+- `POST /pagamento/:token/metodo` responde **409** quando a alteração não
+  aconteceu (cobrança com dinheiro dentro ou terminal) — era um 200 silencioso: a
+  aba mudava, o servidor não, e a tela não dizia nada.
+
+⚠️ **Armadilha de CSS que vai reaparecer**: `textAlign: 'center'` no container
+**não centraliza `<img>`** neste projeto — o preflight do Tailwind faz
+`img { display: block }`, e sem `margin-inline: auto` a imagem encosta à esquerda
+enquanto o texto ao redor fica centralizado (foi o QR do Pix).
+
+### ✅ Bolsa, desconto e gratuidade POR INSCRITO (2026-07-30 · migration `20260730170000`)
+
+Pergunta do Marcos: *"tem pessoas que, para ajudarmos, cobramos menos, ou até vão
+de graça — como amarrar isso da melhor forma?"*
+
+**Decisão: preço é atributo da INSCRIÇÃO, não do evento.**
+`insc_eventos.valor_centavos` segue sendo o valor de tabela (o que o formulário
+público cobra de todo mundo); quem paga diferente carrega
+`inscricoes.valor_cobrado_centavos` (NULL = tabela · 0 = isenta) + `bolsa_tipo`
+(integral|parcial), `bolsa_motivo` e autoria. As alternativas descartadas e por
+quê: **evento paralelo mais barato** duplica vaga/lista/sorteio e tira a pessoa do
+retiro de verdade; **"lançar como pago" na mão** faz o arrecadado mentir — e o
+arrecadado é justamente o número que ele pediu; **desconto no evento** não é do
+evento, é de quem recebeu a ajuda.
+
+`POST|DELETE /inscricoes/eventos/:id/inscricoes/:insId/bolsa` (nível 3 · ato de
+gestão). O que ele **NÃO** faz, por decisão: **não devolve dinheiro** (bolsa em
+quem já pagou é registrada e avisada; estorno é decisão humana explícita), **não
+cancela a inscrição**, **não confirma quem ainda deve**. Gratuidade → inscrição
+`confirmada` na hora (a vaga já é dela). Desconto → cancela a cobrança antiga
+(com `preservar_dominio`) e emite uma NOVA com referência versionada
+(`inscricao:<id>:bolsa:<ts>` — `inscricao:<id>` é UNIQUE e é o que impede pagar
+duas vezes), devolvendo o link pra equipe enviar; o espelho antigo vai pra
+`expirado` por causa da UNIQUE de inscrição ativa em `insc_pagamentos`.
+Motivo é obrigatório no CHECK do banco — conceder benefício sem dizer por quê é
+registro que ninguém defende seis meses depois. Na lista, isenta ganha selo
+**"isenta"** em vez de "aguardando pagamento" (não está aguardando nada).
+
+### ⚠️ Forma de pagamento por PESSOA · a view lia a coluna errada (2026-07-30 · migration `20260730180000`)
+
+Pergunta do Marcos: *"pelo sistema vou conseguir saber a forma de pagamento de
+cada pessoa?"* Ia responder "sim" — e estava **errado**: a tela mostrava **"Pix"
+pra todo mundo**. `vw_insc_pagamento_estado` resolvia tudo com
+`COALESCE(motor, espelho)` **menos `metodo`**, que lia só o espelho
+`insc_pagamentos` — e o espelho (a) nascia com `cobranca.metodo || 'pix'`
+(**palpite gravado como fato**, já que na criação a pessoa ainda não escolheu),
+(b) nunca era atualizado e (c) **não podia** guardar a verdade (`NOT NULL CHECK
+(metodo IN ('pix','cartao'))` — boleto não cabia, "ainda não escolheu" não cabia).
+O método certo sempre existiu em `pag_cobrancas.metodo`; era só a LEITURA no lugar
+errado.
+
+- `metodo` do espelho virou **nullable** com CHECK no vocabulário ÚNICO de
+  `pagamentos/tipos.js`, e a view passou a `COALESCE(c.metodo, ip.metodo)`.
+  **Sem backfill**: onde há cobrança o motor responde; onde não há (pagamento
+  manual) o espelho É a verdade.
+- Herdaram o conserto: badge da lista, CSV, agrupamento "por pagamento" da lista
+  impressa, e o card **"Como pagaram"** do placar (mesmo laço que soma o
+  arrecadado · **isentas separadas**, porque bolsa integral não tem forma).
+  `metodo` nulo aparece como "Forma não informada" em vez de virar Pix.
+- ⚠️ **Régua que fica**: valor default plausível (`|| 'pix'`) numa coluna de
+  registro é **palpite gravado como fato** — e some da revisão, porque parece
+  dado. Quando a informação ainda não existe, a coluna guarda NULL.
+
+### ✅ Comprovante de Pix/transferência · conferência HUMANA (2026-07-30 · migration `20260730200000`)
+
+Pedido do Marcos: *"preciso que nessa tela apareça o comprovante anexado, para
+quando o pagamento for por pix ou transferencia."*
+
+⚠️ **LEI desta feature: imagem NUNCA marca pagamento.** O anexo entra como
+`em_analise`; quem baixa o pagamento é uma pessoa, via `marcarPagoManual` (que
+exige `confirmado_por`). Aceitar print como prova automática é como se aprova
+comprovante falso — e o dinheiro não aparece na conciliação do extrato depois.
+
+- **Tabela, não coluna** (`insc_comprovantes`): recusar + reenviar é o caso
+  NORMAL, não a exceção; uma coluna sobrescreveria a evidência da tentativa
+  anterior, que é justamente o que responde "por que aceitamos este pagamento?".
+  Arquivo em bucket **privado** `inscricao-comprovantes` (só o path no banco;
+  equipe vê por signed URL de 15 min, assinada em lote). `revisado_por` é
+  **SNAPSHOT sem FK** — a prova de quem liberou o dinheiro não pode sumir com o
+  profile. Motivo de recusa obrigatório no CHECK (a pessoa lê pra corrigir).
+- **Porta pública** `POST /pagamento/:token/comprovante` (imagem ou **PDF** ≤10MB
+  — o app do banco exporta PDF, e recusá-lo empurraria a pessoa a printar o PDF,
+  pior de ler; teto de 8 por inscrição). Já pago → 409 (não há o que conferir).
+  Falha no insert **remove o arquivo órfão**. Notificação diz explicitamente que
+  **NÃO foi baixado**. `respostaPagamento` ganhou `aceita_comprovante` (só
+  não-pago e em forma que pode ter sido paga fora do PSP — cartão/boleto o
+  provedor confirma sozinho) e `comprovantes` **sem `storage_path`**.
+- **Tela do inscrito**: bloco "Comprovante anexado" + "Confirmar pagamento" /
+  "Recusar". O botão diz confirmar **PAGAMENTO** porque é isso que o clique
+  afirma. Badge de clipe na lista + tile "Comprovantes pra conferir" no placar —
+  sem número visível, anexo de sábado só apareceria por acaso.
+- **Página pública**: enquadrada como *"já paguei e a página não atualizou"*,
+  **nunca** como forma de pagar (convidar todos a "pagar e mandar print" criaria
+  fila humana pra pagamento que o PSP confirma em segundos). Depois de enviar diz
+  "em análise" + "não precisa pagar de novo".
+- `carregar()` da tela do evento passou a **devolver a lista** pra ficha aberta
+  refletir o pagamento na hora (senão a badge seguiria "aguardando" logo após
+  confirmar, e isso se lê como bug).
+
+### ✅ Gratuidade/desconto PRÉ-AUTORIZADO por CPF (2026-07-30 · migration `20260730210000`)
+
+Pedido do Marcos: *"eu colocaria o CPF da pessoa que iria receber esse benefício,
+e aí na inscrição dela, quando ela colocasse o CPF, o sistema já iria identificar
+que aquele CPF tem direito ao desconto (que será definido pelo líder) ou
+gratuidade."*
+
+`insc_beneficios` é o **lado de entrada da bolsa** (20260730170000), não uma
+segunda régua de preço: ao ser usado, grava as MESMAS colunas em `inscricoes`
+(`valor_cobrado_centavos` + `bolsa_tipo` + `bolsa_motivo`). Preço continua sendo
+atributo da INSCRIÇÃO — duas fontes de preço concorrendo é como o arrecadado
+passa a mentir.
+
+- `valor_centavos` é **quanto a pessoa PAGA**, não o desconto (mesma semântica de
+  `valor_cobrado_centavos`) — inverter numa ponta e não na outra é como se cobra
+  R$ 700 de quem devia pagar R$ 200. O POST recusa valor ≥ o de tabela (é o valor
+  total digitado no campo errado) e exige **CPF com DV** pelo canônico do
+  contrato: CPF inválido aqui seria autorização que nunca casa, já que a porta
+  pública exige DV.
+- **UNIQUE parcial (evento, cpf)** + `usado_em`: a autorização vale UMA vez,
+  senão o mesmo CPF renderia gratuidade em cada re-inscrição. `usado_em` só é
+  marcado DEPOIS de a inscrição carregar o benefício — o inverso queimaria a
+  autorização sem entregar o desconto.
+- **Na porta pública**: consultado ANTES da RPC porque decide o `p_status` —
+  gratuidade nasce **`confirmada`** (não há pagamento a esperar, e deixá-la
+  `recebida` faria o cron de expiração tirar a vaga de quem a igreja isentou) e
+  dispara a confirmação de WhatsApp na hora; desconto nasce `recebida` com a
+  cobrança **reduzida** (`cobrarInscricao` ganhou override de valor). A tela de
+  sucesso diz "liberada pela liderança — você não precisa pagar nada", senão a
+  pessoa ficaria esperando um link que não vem.
+- ⚠️ **Re-inscrição NÃO aplica benefício**: a cobrança dela já existe com o valor
+  cheio (`referencia` idempotente) e baixar o valor da inscrição sem reemitir a
+  cobrança deixaria as duas discordando. Quem reemite certo é o botão "Dar bolsa"
+  na ficha — então o sistema **notifica** a equipe em vez de aplicar pela metade
+  ou perder a autorização em silêncio.
+- Card "Gratuidade e desconto por CPF" na tela do evento (ver = nível **2**, a
+  linha carrega CPF; conceder/remover = 3). Remover autorização **já usada** não
+  desfaz o preço da inscrição — o aviso diz isso e aponta a ficha.
+- Junto: **card do evento clicável** na aba Eventos (só o texto abria, sem
+  afordância; agora a linha inteira abre `/inscricoes/evento/:id` com "Abrir →",
+  e os botões de ação param a propagação). Vale pro card avulso e pra linha de
+  edição dentro do modal da série.
+
+### 🎨 Personalização da fatura hospedada (pesquisado em 30/07 · não é código)
+
+**Dá pra marcar, não pra redesenhar**: a API do Asaas aceita 4 campos (logo, cor
+de fundo do logo, cor de fundo da info, cor da fonte) e passa por **aprovação
+manual deles**; a estrutura da página é do PSP. Conta de **associação** pode
+trocar "Cobrança" → "Doação" na fatura (Minha conta → Personalização → Fatura).
+⚠️ **Cartão na nossa página segue FORA, com fonte**: o Asaas **não oferece
+tokenização client-side**, então o PAN passaria pelo nosso Express e a aplicação
+precisaria de **SAQ-D** — é a lei nº 5 do núcleo, agora documentada.
+
+### ✅ Sonda da credencial do PSP · a chave do Asaas expira por desuso (2026-08-03 · migration `20260803140000`)
+
+Achado na própria tela de gerar chave do Asaas: *"chaves de API sem uso são
+desabilitadas após **3 meses** e permanentemente expiradas após **6 meses**"*.
+Isso é uma bomba de relógio para o caso da igreja: nosso sistema **só fala com o
+Asaas quando existe cobrança** — o cron de 10 min não chama a API se não há nada
+pra reconciliar. Vender inscrição em fevereiro e ter o próximo evento pago em
+agosto = 6 meses sem uso = chave expirada **em silêncio**, com o sintoma
+aparecendo no lançamento seguinte, quando ninguém consegue pagar. Pedido do
+Matheus: resolver por código, não por lembrete no calendário.
+
+- **A sonda é `GET /customers?limit=1`** (`asaas.verificarChave`) — endpoint que
+  o adapter **já exercita** em `acharOuCriarCliente`. ⚠️ Eu ia usar `/myAccount`
+  e voltei atrás: seria chutar rota nunca testada, e sonda de saúde que falha
+  por si mesma é pior que sonda nenhuma. Read-only, não move dinheiro.
+- **Roda dentro do `/cron/tick` que já existe**, no máximo **1x/dia** (as outras
+  ~143 execuções diárias saem em `pulado: verificado_recentemente` sem tocar o
+  PSP). NÃO criamos cron novo — o projeto tem 45 declarados e cada slot é risco
+  de teto de plano. Avulso forçado: `/cron/saude` (CRON_SECRET).
+- **`pag_provider_saude`** (1 linha por provider): `verificado_em`, `ok`,
+  `status_http`, `erro`, `latencia_ms`, `falhas_consecutivas`, `avisado_em`.
+  Sem PII → fora da whitelist de soft-delete; apagar a linha só faz a próxima
+  sonda rodar. RLS: SELECT só super-admin (a linha carrega mensagem de erro do
+  provedor), escrita só service_role.
+- ⚠️ **LEIS do desenho (não regredir):** (1) **silenciosa quando está tudo
+  bem** — banner/notificação permanente de "tudo ok" treina a equipe a não ler
+  aviso; (2) **não reclama de credencial AUSENTE** (`pulado: sem_credencial`) —
+  é estado intencional, produção viveu semanas em `manual`, e alarmar sobre
+  configuração deliberada é o jeito mais rápido de virar ruído; (3) erro
+  **transitório** (rede/5xx) só avisa na **3ª falha seguida**, enquanto **401/403
+  e chave do ambiente errado** avisam na **primeira**; (4) aviso com dedup por
+  **dia** (`chaveDedup`), e recuperação só é anunciada se alguém foi incomodado
+  pela falha.
+- **Tela:** `AvisoCredencialPagamento` na aba Eventos do `/inscricoes` —
+  renderiza SÓ com falha ou sonda >7 dias; botão "Verificar agora" gated em
+  nível 3 (bate no PSP). Endpoint `GET /inscricoes/pagamento-saude` (nível 1;
+  `?verificar=1` exige 3) devolve **aviso, não 500**, se a tabela faltar —
+  deploy em duas etapas.
+- Testes: `src/test/pagamentosSaude.test.ts` (11 · classificadores de erro,
+  mutation-testado: tratar 500 como credencial recusada deixa vermelho).
+
+### ⚠️ CORREÇÃO · o "teto de 40 crons no plano Pro" NÃO se confirmou (2026-08-03)
+
+Verificado com `vercel crons ls`: **45 cron jobs registrados**, incluindo
+`/api/pagamentos-webhook/cron/tick` (`*/10`). Nada foi truncado. O alarme
+registrado neste arquivo (e repetido várias vezes) de que "vaga reservada nunca
+expira" e "o e-mail de expirada nunca sai" **era infundado**.
+
+⚠️ **Mas fica uma lição que vale mais que o alarme: cron só roda em PRODUÇÃO,
+nunca em preview.** Foi por isso que, em todo o teste de sandbox, o pagamento só
+era reconhecido quando a página de pagamento estava aberta (a rede de segurança
+de 2 min do `GET /pagamento/:token`) — o cron nunca participou. Em produção
+existe uma rede de 10 minutos que o sandbox não tem.
+
+Comandos: `vercel crons ls` lista o que está registrado; `vercel crons run
+<path>` **dispara o cron de produção na hora** (usar só pra depurar).
+⚠️ Rodar qualquer `vercel` a partir de uma **worktree** falha com "codebase isn't
+linked" — o `.vercel/project.json` existe só no checkout principal; sempre
+`cd` pra lá primeiro.
+
+### ✅ Placar do evento + API do app do staff (2026-07-30 · SEM migration)
+
+- **`GET /inscricoes/eventos/:id/resumo`** → contadores por **COUNT no banco**
+  (`head: true`, nenhuma linha transferida) + **arrecadado** das inscrições
+  pagas. Aparece no topo do `/inscricoes/evento/:id`. ⚠️ É acompanhamento do
+  evento, **não caixa** (lei nº 6): o caixa recebe 1 receita por REPASSE do PSP.
+- **`lerInscritosDoEvento`/`contadoresEvento`** são os leitores ÚNICOS — a tela
+  do sistema e o app do staff chamam os mesmos. Se o join de pagamento mudar,
+  muda nos dois de uma vez.
+- **App do staff**: `GET /inscricoes/app/eventos` (compacto, só publicado/
+  encerrado por padrão) e `GET /inscricoes/app/eventos/:id/inscricoes` (paginado
+  de verdade, busca por nome/telefone server-side, placar só na 1ª página).
+  Nível 1 — acompanhar é ver, não operar. ⚠️ A TELA do app vive no repo
+  **`igreja-cbrio/CBRio-Staff`**, que não está anexado nesta sessão.
+
+### ⚠️ `parcelas_max` é TETO, não plano · e polling que não avança (2026-07-30 · SEM migration)
+
+Dois bugs achados por conselho deliberativo **depois** de o PR #2168 já estar em
+produção (a decisão Asaas × Mercado Pago mandou revisar o que estava no ar). Os
+dois eram silenciosos — nenhum teste, nenhum log, nenhum erro na tela.
+
+**1 · Bug de DINHEIRO: `criarCobranca` mandava `installmentCount: parcelas_max`.**
+`insc_eventos.parcelas_max` é o **teto** que a igreja admite (documentado como tal
+desde a `20260729040000`), e ele ia como o **número de parcelas do plano**. Efeito
+em cascata numa inscrição de R$ 900 com teto 12: o Asaas criava **12 cobranças de
+R$ 75**, o QR de Pix era da **primeira parcela** (a tela mostrando R$ 900), e o
+`quita_cobranca` — que existe pro cartão, onde a pessoa autoriza tudo de uma vez —
+marcava `statusFinal` **PAGO na parcela 1** → **inscrição confirmada tendo pago
+1/12**. No placar, R$ 11.250 de R$ 135.000.
+
+- `criarCobranca` **NUNCA** manda `installmentCount`. A cobrança nasce simples,
+  no valor cheio.
+- **Parcelar é escolha da PESSOA**, no momento em que ela escolhe cartão:
+  `definirMetodo(cobranca, metodo, { parcelas })` manda `installmentCount` +
+  **`totalValue`** (valor CHEIO — `value` seria o valor da parcela, e mandar os
+  dois é como se cobra 12× o total). Pix/boleto passam `installmentCount: null`,
+  que **desfaz** plano anterior em vez de criar um.
+- `quita_cobranca` passou a exigir **`billingType === 'CREDIT_CARD'`** nos dois
+  sites (webhook e consulta). Só no cartão a autorização é única; parcela 1 de Pix
+  não quita nada.
+- O teto é validado **no servidor** (`parcelas_max` do evento, ou o do provider
+  quando NULL) — seletor de parcelas na tela é conveniência, não autoridade.
+- `parcelas_total` é persistido a partir do que o **PSP confirmou**, não do que
+  foi pedido (mesma régua da lei nº 2 e do `definirMetodo`).
+- 4 testes novos, **2 mutation-testados**: reintroduzir o `installmentCount` no
+  `criarCobranca` OU tirar o `CREDIT_CARD` do `quita_cobranca` deixa o gate
+  vermelho.
+
+**2 · `sincronizar` não tocava `updated_at` quando não havia mudança.** A tela de
+pagamento faz polling e o endpoint público consulta o PSP quando a cobrança está
+parada há >2 min (rede de segurança nº 1). Sem carimbar a linha, **a janela ficava
+permanentemente aberta**: cada poll de 6s batia no Asaas. Com 100 abas no
+lançamento, ~1.000 req/min no PSP — e o limiter por IP satura antes disso.
+`sincronizar` agora chama `tocarReconciliacao` também no caminho `semMudanca`
+(é o mesmo mecanismo de round-robin do cron, documentado acima). Junto, a tela
+ganhou **backoff**: 6s nos 10 primeiros ciclos, depois 15s → 30s → teto de 60s,
+com o effect dependendo de **`statusAberto`** e não de `pag` — dependência em
+`pag` (que muda a cada poll) reiniciaria o backoff pra sempre.
+
+### ⚠️ Fatura hospedada · aba VELHA mostra estado VELHO (2026-07-30)
+
+O `invoiceUrl` é a MESMA URL a cada troca de método, então uma aba esquecida
+mostra o estado anterior — foi isso que gerou o falso relato de "cliquei em cartão
+e a fatura não oferece cartão". **Régua de diagnóstico: o campo FORMA da nossa
+tela é o que o servidor gravou** — se ele diz `cartao`, o PSP confirmou o
+`billingType` (senão a guarda de 30/07 teria lançado). Conferir a fatura sempre
+reabrindo pelo botão, nunca por aba velha.
+
+⚠️ **Apple Pay / Google Pay NÃO existem na fatura do Asaas** (verificado no
+produto): as formas são Boleto · Pix · Cartão de Crédito · Cartão de Débito, e
+cartão é formulário de PAN/titular/validade/CVV. O que o Asaas divulga como
+Apple/Google/Samsung Pay é o **app maquininha por aproximação (NFC / Tap on
+Phone)** — presencial. Carteira digital no checkout web exigiria outro gateway;
+não é ajuste de tela.
+
+### ⚠️⚠️ Cobrança TERMINAL sem dinheiro é REEMITIDA, não devolvida (2026-08-07 · SEM migration)
+
+`criarCobranca` devolvia a cobrança da `referencia` **fosse qual fosse o estado
+dela** — só reemitia quando estava meio-criada (sem `provider_cobranca_id`).
+Como `expirada`/`cancelada`/`falhou` são **absorventes** (`TRANSICOES` os deixa
+sem saída), quem reenviava o formulário recebia de volta uma cobrança que **não
+pode mais ser paga por caminho nenhum**.
+
+**Efeito medido no log de auditoria da inscrição CBR-2026-000141:** a
+re-inscrição reativa a inscrição pra `recebida` — que **OCUPA VAGA** — e entrega
+a cobrança expirada. Vaga travada, zero caminho de pagamento, e a tela ainda
+dizendo "A vaga voltou para a fila", que naquele instante é falso. No lançamento
+do retiro isso pega **todo mundo que deixa as 24h expirarem e tenta de novo**.
+
+- **Reemissão com referência versionada** (`<referencia>:r<ts>`), a MESMA técnica
+  do botão "Dar bolsa": `inscricao:<id>` é UNIQUE e é ela que impede pagar duas
+  vezes, então a cobrança nova não pode reusá-la. A antiga fica **intacta** (é o
+  registro de que a 1ª tentativa morreu) e a nova carrega
+  `metadata.reemitida_de`.
+- ⚠️ **Só `expirada`/`cancelada`/`falhou` COM `valor_pago_centavos = 0`**
+  (`STATUS_REEMITIVEIS` + `podeReemitir`). `estornado`/`chargeback` ficam de fora
+  **mesmo zerando a soma** (liquidação − estorno = 0): ali o dinheiro entrou e
+  voltou por decisão de alguém, e reemitir sozinho viraria cobrar de novo.
+- ⚠️⚠️ **`porReferencia` sozinho não bastava.** Depois da 1ª reemissão ele só
+  enxerga a base morta — o 2º reenvio do formulário emitiria uma TERCEIRA
+  cobrança com a segunda ainda viva, ou seja **duas cobranças pagáveis pela mesma
+  inscrição**, exatamente o que a UNIQUE existe pra impedir. Daí
+  `familiaReferencia()`: a referência exata + as versionadas (`:r<ts>`,
+  `:bolsa:<ts>`). Ordem de decisão: **dinheiro dentro vence · aberta vence ·
+  senão reemite**. A consulta extra só roda no caminho terminal — o caminho comum
+  segue com uma query só.
+- ⚠️ **A anterior é cancelada NO PROVEDOR antes** (best-effort): terminal aqui
+  não é terminal lá — o nosso cron marca `expirada` pelo `expira_em`, mas o QR do
+  Pix e o boleto podem seguir pagáveis no PSP. Mesmo racional do `cancelar` da
+  fachada: cobrança que o PSP mantém aberta e a gente fechou é conciliável; o
+  inverso não é.
+- ⚠️ **O espelho tem que rodar junto** (`cobrarInscricao`): `uq_insc_pag_inscricao_ativa`
+  admite UMA linha `pendente|aguardando|pago` por inscrição, e o insert do espelho
+  engole 23505 como "já existe". Sem aposentar a linha anterior (`status='expirado'`),
+  o painel e a `vw_insc_pagamento_estado` seguiriam apontando pra cobrança MORTA
+  enquanto a nova é a que a pessoa vai pagar. O update roda **sem filtrar pela
+  cobrança nova** — ela acabou de nascer e não tem espelho, e `neq` deixaria de
+  fora linha legada com `cobranca_id` nulo (NULL não compara).
+
+Testes: `src/test/pagamentosReemissao.test.ts` (13 casos · banco falsificado — o
+que está sob teste é a DECISÃO, não o PostgREST). **Mutation-testados**: voltar a
+devolver a terminal deixa 7 vermelhos; tirar a checagem de família deixa 1.
+⚠️ O `vi.mock` do Vitest **não** alcança `cobrancas.js` (CommonJS que
+DESESTRUTURA `supabase` no topo) — o teste usa `createRequire` e troca o
+`module.exports` antes do require. Vale pra qualquer teste novo sobre o núcleo.
+
+
+---
+
+# Auditoria do app · ONDAS 0 e 1a · narrativa completa (movida em 2026-08-13)
+
+## ⚠️⚠️ AUDITORIA DO APP · ONDA 0 (2026-08-06 · migration `20260806140000`)
+
+Auditoria de 4 dimensões pedida pelo Marcos ("procure erros de versão,
+integração, código e escalabilidade — o app aguenta 4.000 downloads?"). 21
+agentes, 85 achados brutos, **12 confirmados sob contestação adversarial**.
+Relatório navegável em `~/Downloads/auditoria-app-cbrio.html`. O plano ficou em
+**6 ondas agrupadas por VEÍCULO de entrega** (servidor chega na hora, inclusive
+em bundle velho · OTA depende de 2 aberturas · loja depende da Apple) — esta
+seção é a **Onda 0**, que é inteira servidor + 1 migration.
+
+**A resposta à pergunta dele: não aguentava — e o gargalo não era o Supabase.**
+Cold start do app = ~13 chamadas; 4.000 pessoas em 30 min = ~30 RPS sustentados
+(picos 90-150), que o banco absorve. Quem quebrava primeiro era coisa nossa.
+
+### 1 · ⚠️⚠️ LEI · o limite do `/api/app` é por USUÁRIO, não por IP
+
+`/api/app` era a única superfície de multidão AINDA no teto global por IP
+(500/15min): a lista de `skip()` do `server.js` já isentava NPS, grupos, evento,
+membresia, generosidade, webhook de pagamento e totem — e o app tinha ficado
+fora. Somava `limiterNormal` 100/15min compartilhado por ~45 rotas e
+`limiterStrict` 10/15min nas portas de inscrição, **os dois por IP**. No WiFi da
+igreja todo celular sai por 1 IP e UMA abertura gasta 10-30 requisições ⇒ 5 a 10
+aparelhos esgotavam a cota de TODOS.
+
+⚠️ **E o 429 não parecia limite de rede:** o app traduz a falha em resposta de
+NEGÓCIO — `lib/temporadaGrupos.ts` → `aberta:false` ("inscrições fechadas") e
+`lib/useAdminGrupo.ts` → `isAdmin:false` (líder sem botão de gerenciar). O teto
+estourado se disfarçava de regra da igreja.
+
+- **`backend/utils/appRateLimit.js`** = régua PURA da chave (em `utils/` pra
+  entrar no gate): `u:<id>` do `req.user` → senão `t:<hash do Bearer>` → senão
+  `ip:<...>`. O nível do token existe porque em `/membro/vincular` e
+  `/inscricoes` o limiter vem ANTES do `authApp` na cadeia; sem ele, essas duas
+  continuariam por IP (o furo, só que em 2 rotas). Hash pra não usar JWT como
+  chave em memória, e **mínimo de 40 chars** — senão `Bearer x` de lixo viraria
+  bucket próprio e qualquer cliente escaparia do teto anônimo.
+- Tetos: **600/15min por usuário** (normal) · **30** (strict) · anônimo tem teto
+  PRÓPRIO e mais alto (**10.000** normal · 120 strict), porque ali continua sendo
+  1 IP pra congregação — é a calibragem já validada em multidão real do NPS e da
+  membresia. Envs: `APP_RATE_LIMIT_MAX`, `APP_RATE_LIMIT_IP_MAX`,
+  `APP_STRICT_RATE_LIMIT_MAX`, `APP_STRICT_RATE_LIMIT_IP_MAX`.
+- ⚠️⚠️ **A normalização de IPv6 é NOSSA (`normalizarIpParaChave`, agrupa por /64)
+  e não pode usar o `ipKeyGenerator` do pacote** — ver o incidente abaixo.
+  Sem agrupar, trocar de endereço IPv6 dentro da própria casa daria bucket novo e
+  o teto anônimo não valeria nada.
+
+#### 🔴 INCIDENTE (mesmo dia, 15:38→16:0x) · `ipKeyGenerator is not a function`
+
+A 1ª versão importava `const { ipKeyGenerator } = require('express-rate-limit')`.
+Passou no gate inteiro, no `tsc`, no mutation test e num **smoke com express de
+verdade** — e **quebrou em produção**: 500 em `/api/app/anuncios` e
+`/api/app/grupos`, as duas rotas ANÔNIMAS (as únicas que chegam no ramo de IP).
+As autenticadas seguiram respondendo 401/200, então o estrago quase passou
+invisível.
+
+⚠️⚠️ **A CAUSA (medida, e não a que eu supus primeiro): `backend/` tem árvore de
+dependências PRÓPRIA em produção.** O `vercel.json` faz
+`installCommand: "npm install && cd backend && npm install"`, e
+`backend/package.json` pina **express-rate-limit `^7.4.0`** (lock **7.5.1**)
+enquanto a RAIZ tem **8.3.2** — e `ipKeyGenerator` só existe na 8.x. Como o
+`backend/node_modules` das worktrees costuma estar **vazio**, o Node sobe pra
+raiz e o teste local exercita **uma versão que produção nunca carrega**.
+
+⚠️ **RÉGUA QUE FICA (vale pra qualquer pacote): conferir a versão em
+`backend/package.json`, nunca na raiz, antes de usar API nova de dependência em
+`backend/`.** E, pra mudança de dependência que roda no servidor, o smoke tem que
+rodar **de dentro de `backend/` com `npm install` feito lá** — foi assim que a
+causa apareceu em 20 segundos depois de horas de hipótese errada.
+
+⚠️ O mesmo smoke na 7.5.1 pegou um **segundo** defeito que eu ia enviar:
+`validate: { keyGeneratorIpFallback: false }` só existe na 8.x e a 7.5.1 responde
+`ERR_ERL_UNKNOWN_VALIDATION` a cada construção do limiter — log poluído, efeito
+nenhum. Removido.
+
+⚠️ Guarda no gate (`appRateLimit.test.ts`): nenhum dos 2 arquivos pode
+desestruturar `require('express-rate-limit')` nem chamar `ipKeyGenerator(...)`
+(mutation-testado), e um teste afirma que **o backend declara o pacote por conta
+própria** — se alguém remover essa dependência e passar a depender da raiz, o
+teste falha e a pessoa lê o porquê aqui.
+⚠️ A guarda ignora COMENTÁRIOS antes de casar: a própria explicação do incidente
+cita o import errado como exemplo, e sem isso a documentação derrubava o gate
+(aconteceu).
+
+#### ⚠️⚠️ RÉGUA · checagem por TEXTO em corpo de função/arquivo IGNORA comentário
+
+Aconteceu **2× no mesmo dia (06/08)**, e nas duas o falso positivo foi a própria
+documentação do conserto:
+
+1. a guarda do `appRateLimit.test.ts` casou com o comentário que cita o import
+   errado como exemplo do que NÃO fazer;
+2. a conferência que eu deixei na migration `20260806140000` fazia
+   `pg_get_functiondef(...) ilike '%is_membro_only%'` — e o `pg_get_functiondef`
+   devolve o corpo **com os comentários**. Deu `mexe_no_profile = 1` numa função
+   que **não escreve em `profiles`** (o único `update` do corpo é em
+   `mem_membros`). O Marcos aplicou a migration e veio perguntar por que a
+   conferência acusava falha: **era a conferência**, não a migration.
+
+**Como fazer:** tirar comentário antes de casar
+(`regexp_replace(d, '--[^\n]*', '', 'g')` no SQL · helper `semComentarios` no
+teste) **e** procurar o COMANDO, não o identificador solto (`update
+public.profiles`, não `is_membro_only`) — identificador aparece em explicação,
+comando não. ⚠️ E conferência que dá falso positivo custa CONFIANÇA: manda a
+pessoa investigar um conserto que estava certo.
+
+- ⚠️ **Quem protege as sondas de identidade não é o teto por IP** — é o serviço
+  (`appIdentidade`: 5 envios por telefone/dia, 6 tentativas de código, TTL 10min,
+  resposta MASCARADA). Isso não mudou.
+- ⚠️ **LIMITAÇÃO CONHECIDA**: MemoryStore por instância no Vercel ⇒ teto efetivo
+  = `max × instâncias`, zerando a cada cold start. Store compartilhado (ou WAF) é
+  onda de escala; o desenho por usuário já tira o dano do NAT, que era o real.
+- Testes: `src/test/appRateLimit.test.ts` (10 casos) **mutation-testado** —
+  voltar a contar por IP deixa 2 vermelhos. Smoke funcional rodado: 2 usuários no
+  MESMO IP com cotas separadas, anônimo pagando o teto de IP, Bearer isolado.
+
+### 2 · Fale Conosco do app era invisível no ERP (estrago ATIVO)
+
+O app grava `criarInscricao('contato', …)` em `app_inscricoes` e promete "nossa
+equipe vai te responder em breve". A **única** fila do ERP que lê essa tabela é
+`GET /cuidados/pedidos-app`, cujo `TIPOS_PEDIDO_APP` era
+`['aconselhamento','oracao','sos']` — `contato` ficava fora. Medido: **2
+mensagens reais (02 e 03/08) pendentes até hoje**, sem tela pra ler, responder ou
+marcar como tratada.
+
+- `contato` entrou em `TIPOS_PEDIDO_APP` (a mesma constante gateia o GET e o
+  PATCH, então listar e tratar vieram juntos).
+- A notificação ia pro módulo **`membresia`** com link `/ministerial/membresia`,
+  tela que NÃO lista `app_inscricoes` — a pessoa clicava e não achava a mensagem.
+  Agora vai pro módulo **`cuidados`** com link `?tab=acomp` (a fila exige
+  `cuidados >= 1`, então o destinatário do aviso tem que ser de lá). Se a
+  secretaria precisar receber, o caminho é **regra de notificação** do módulo
+  cuidados em /admin — não um 2º destino no código.
+- ⚠️ `contato` **NÃO é tipo de `cui_pedidos`** (CHECK de lá:
+  aconselhamento|capelania|oracao|sos|visita|outro). Por isso o front ganhou
+  `TIPOS_PEDIDO_MANUAL` pro select de "Registrar pedido" e `PEDIDO_TIPO_META`
+  (exibição + filtro) ficou MAIOR que ele: oferecer "Fale Conosco" no cadastro
+  manual faria o insert violar o CHECK.
+- `TIPO_ATEND_SUGERIDO.contato = 'outro'`, não `aconselhamento`: Fale Conosco
+  pode ser dúvida ou elogio, e a maioria se resolve respondendo pelo Conversas e
+  marcando tratada — sem criar atendimento pastoral que não aconteceu.
+
+### 3 · O broadcast de push parava de entregar em 1.000 instalações
+
+`app_push_tokens` era lido com `select` cru (`inscricoes.js` broadcast de evento
+publicado) e com `.in()` da lista inteira (`services/appPush.js`). Duas
+armadilhas silenciosas: o PostgREST **capa em 1000 linhas sem erro** (a partir de
+~1.000 instalações, 3/4 da igreja deixaria de receber e nenhum log acusaria) e
+`.in()` gigante estoura a URL, derrubando a query INTEIRA. Hoje são 29 tokens ⇒
+**gatilho armado, não estrago consumado**. Corrigido com o `fetchAllRows` que já
+existia (`utils/pagination.js`) + lotes de 200 no `.in()` (`membrosParaUsuarios`
+e `pushExpoParaUsers`). Régua: **leitura de tabela que cresce com o uso vai
+paginada, e `.in()` sempre em lotes ≤ 200.**
+
+### 4 · ⚠️⚠️ A tela de perfil do app parou de VINCULAR pessoa (migration `20260806140000`)
+
+Achado **crítico**, e o único em que alguém via dado de terceiro.
+`app_salvar_membro` (SECURITY DEFINER, EXECUTE pra `authenticated`, chamada por
+`app/(app)/perfil.tsx:184`) procurava `mem_membros` por **CPF ou telefone ou
+`lower(btrim(nome))` EXATO** e vinculava a conta ao primeiro que achasse, **sem
+prova de posse**. Como `profiles.membro_id` alimenta `current_user_membro_id()`,
+quem digitasse o nome de um homônimo passava a ver grupo, comprovante de
+contribuições e **filhos no Kids** daquela pessoa. É o MESMO furo que a
+`20260806120000` fechou na porta da frente — esta lateral ficou aberta.
+
+- **Estreitada, NÃO dropada**, e a ordem importa: `perfil.tsx` ainda a chama, e
+  dropar/revogar antes do OTA do app deixaria a tela de perfil sem salvar. Ela
+  perdeu os ramos de BUSCA e de CRIAÇÃO; segue salvando a ficha de quem já está
+  vinculado. Sem `membro_id`, devolve `null` (o app trata: `if (vId) …`) e os
+  campos de `profiles` seguem salvando, porque isso o cliente faz antes da RPC.
+- **CPF só PREENCHE campo vazio e só com DV válido** (`fn_cpf_dv_valido`) — a
+  versão antiga fazia `cpf = coalesce(v_cpf, cpf)` **sem DV**, e CPF torto em
+  `mem_membros` envenena o matcher de TODAS as portas.
+- ⚠️ **Deixou de tocar `profiles`**: a versão antiga fazia
+  `set is_membro_only = true` pra QUALQUER chamador — inclusive **staff**, que
+  saía marcado como app-only por ter salvo o perfil no celular.
+- ⚠️ A migration tem **guarda de DRIFT**: aborta se houver mais de uma
+  `app_salvar_membro` ou se a assinatura viva for diferente da esperada —
+  `CREATE OR REPLACE` com assinatura diferente **cria overload** e deixaria a
+  versão perigosa alcançável (lição do `feedback_pg_function_overload_default`).
+- ⚠️ O arquivo `supabase/app_salvar_membro.sql` do **repo do app** foi
+  sincronizado e marcado como cópia de leitura: arquivo desatualizado ali é o
+  mecanismo exato que deixou o gatilho de `auth.users` 2 meses fora do git.
+- **Quando o app estiver usando `PUT /app/membro/perfil` (onda seguinte, por
+  OTA), a função pode ser DROPADA.**
+
+⚠️ **Fora do ERP, na mesma onda** (repo `Aplicativo-CBRio`): a Edge Function
+`notify-lembretes` lia `next_eventos`/`next_inscricoes` (camada aposentada no
+cutover de 17/06, data máxima 21/06) ⇒ **nenhum lembrete de véspera do NEXT saiu
+desde 13/06**, com o cron vivo e 46 matriculados em 2 turmas abertas. O conserto
+de #2288 cobriu as ROTAS e não a função, que vive no outro repo. Reescrita pra
+turma → encontro → matrícula (espelho de `nextTurmasAbertas()`), dedup por
+encontro. **Precisa de `supabase functions deploy notify-lembretes` — não sai
+por OTA nem por merge daqui.**
+
+## ⚠️⚠️ AUDITORIA DO APP · ONDA 1a · PARAR DE PERDER DADO (2026-08-06)
+
+Migrations `20260806160000` (fanout) e `20260806170000` (RLS + o achado novo).
+Itens 1, 2 e 3 do plano de 6 ondas. Ondas agrupam por **veículo de entrega**:
+aqui é tudo servidor + 2 migrations, nada de OTA nem loja.
+
+### 1 · O fanout parava de dizer "processado" quando falhou
+
+`fn_app_inscricoes_fanout` engolia a exceção nos 4 ramos (`RAISE WARNING`) e a
+última linha carimbava `'processado'` **incondicionalmente**. Prova medida: a
+linha `tipo='grupos'` de 11/06 está `processado` e `mem_grupo_pedidos` tem **0**
+linhas `origem='app'` (a causa de origem era o CHECK de `origem`, só ampliado em
+28/07 — mas o que fez a perda ser SILENCIOSA foi o carimbo).
+
+- **PATCH DINÂMICO obrigatório** (`pg_get_functiondef` + `regexp_replace`, a
+  técnica de 20260729060000): a definição VIVA não é a do repo — a 29/07
+  reescreveu o corpo em produção (`vi.deleted_at IS NULL` no dedup de
+  voluntariado). **`CREATE OR REPLACE` do arquivo reverteria aquilo em
+  silêncio**, e é por isso que o fanout ficou sem conserto até hoje. A migration
+  verifica cada uma das 3 substituições e ABORTA se alguma não casar.
+- ⚠️ **`'erro'` teve que entrar no CHECK de `status` ANTES** (era
+  `pendente|em_analise|aprovado|recusado|processado|duplicado`). UPDATE pra valor
+  fora do CHECK dentro de AFTER INSERT levanta 23514 e **ABORTA o INSERT** — a
+  pessoa deixaria de conseguir se inscrever. É o estrago literal que a
+  20260609120000 documenta. A lista nova é **derivada da viva** (extraída do
+  `pg_get_constraintdef`), nunca escrita à mão: lista decorada estreitaria o
+  CHECK em silêncio se prod tiver valor que o repo não conhece.
+- ⚠️ **Cinto e suspensório**: o carimbo novo roda dentro do PRÓPRIO
+  `BEGIN/EXCEPTION` e, se falhar, cai no comportamento antigo. O pior caso deste
+  conserto não pode ser "a pessoa não consegue se inscrever".
+- **O motivo vai em COLUNA PRÓPRIA** (`app_inscricoes.fanout_erro` jsonb):
+  `{sqlstate, constraint, em}` via `GET STACKED DIAGNOSTICS`. ⚠️ **Nunca
+  SQLERRM**: ele embute o valor que violou a chave ("Key (cpf)=(…)") e a linha é
+  legível pelo próprio dono via RLS. E não vai em `dados` porque `cuidados.js`
+  reescreve `dados` inteiro em algumas ações — o diagnóstico desapareceria.
+- ⚠️ **O consumidor é o backend, não uma tela**: `POST /app/inscricoes` RELÊ a
+  linha depois do insert (o `RETURNING` reflete o estado ANTES do AFTER trigger),
+  e quando vê `'erro'` **notifica o módulo dono** e responde **502 com mensagem
+  honesta** em vez de "Solicitação recebida!". Sem esse consumidor a onda só
+  trocaria "perda silenciosa com rótulo errado" por "rótulo certo": **nenhuma
+  tela do sistema lê `app_inscricoes.status`** (conferido nos 8 leitores).
+  Dedup do aviso é por PESSOA+TIPO, não por linha — quem toma erro tenta de novo.
+- ⚠️⚠️ **RESÍDUO CONHECIDO, não resolvido nesta onda**: existe um SEGUNDO trigger
+  AFTER INSERT, `app_inscricoes_notify_recebida` (repo do app ·
+  `supabase/webhooks_app.sql`), e a ordem de disparo do Postgres é **alfabética**
+  ⇒ ele roda **antes** do fanout e manda push *"o líder recebeu seu pedido"*
+  olhando só `record.tipo`. **Essa push continua saindo mesmo quando o fanout
+  falha.** Fechar exige mover a notificação pro backend (depois da releitura) ou
+  passar o trigger pra AFTER UPDATE de status — mexe no repo do app + deploy de
+  Edge Function.
+
+### 2 · O cliente parou de poder escrever o que não é dele
+
+`app_inscricoes_own` era `FOR ALL USING (auth.uid() = auth_user_id)` — sem `TO`,
+sem `WITH CHECK`. Dava pra o autor marcar o próprio SOS como concluído (sai da
+fila pastoral), apagar a linha e inserir pedido com `membro_id` de terceiro.
+
+- ⚠️⚠️ **As policies são descobertas no CATÁLOGO, não pelo nome do arquivo**:
+  policy permissiva é **OR'eada**, e há indício de uma SEGUNDA policy `own` que
+  **não está em migration nenhuma** (a 20260701030000 revela duas). Dropar só a
+  que o git conhece deixaria a duplicata `FOR ALL` viva: migration passa, lint
+  verde, **furo aberto**.
+- Sobrou `FOR SELECT TO authenticated` do dono + `FOR ALL TO service_role`, e
+  `REVOKE INSERT/UPDATE/DELETE`. Pode, porque **o cliente não escreve ali**: o
+  app toca `app_inscricoes` em UM lugar e é leitura (`lib/meusPedidos.ts:18`);
+  quem escreve é `POST /api/app/inscricoes` com service_role.
+- ⚠️ `(select auth.uid())` na policy nova — `auth.uid()` cru reavalia por LINHA e
+  desfaz o initplan da 20260701030000.
+- ⚠️ Teste de fumaça **com token de usuário real**: o supabase-js manda a anon
+  key em `apikey` e o JWT em `Authorization`, e o papel efetivo é
+  `authenticated`. Testar com a anon key pura dá "permission denied" (correto) e
+  se lê como "quebrei o app".
+
+### ⚠️⚠️ 2b · ACHADO NOVO (fora dos 12 da auditoria) e MAIS GRAVE
+
+`app_soft_delete(text,text,uuid)` e `app_restore(text,text)` são **SECURITY
+DEFINER** com `GRANT EXECUTE ... TO authenticated` (20260521180000:174 e :207) e
+a **única** validação dentro delas é "a tabela está na whitelist" — **sem
+checagem de dono, de módulo ou de nível**. Qualquer pessoa logada (inclusive
+qualquer membro pelo app, com a chave pública que vai no bundle) podia
+`select app_soft_delete('mem_membros', '<uuid de qualquer pessoa>')` e apagar por
+soft-delete **qualquer linha das ~30 tabelas da whitelist** — pessoas, grupos,
+contribuições, dados de Kids — sabendo só o id. `app_restore` desfaz, o que
+também ressuscita o que a equipe apagou de propósito.
+
+**Revogado de `authenticated` e `anon`, e é mudança de ZERO comportamento**:
+varredura dos dois repos → **17 arquivos de rota** do backend chamam
+`app_soft_delete`, todos com service_role; **ZERO** chamadores no frontend do ERP
+(`src/`), no app mobile e nas Edge Functions. Reverter, se um dia precisar, é um
+`GRANT`. ⚠️ **Follow-up**: outras funções SECURITY DEFINER com grant pra
+`authenticated` merecem a mesma varredura (`app_salvar_membro` já foi estreitada
+em 20260806140000).
+
+### 3 · O payload do app passou a ser SANEADO — e por que NÃO é o contrato
+
+⚠️⚠️ **Ligar `validarCamposPadrao` aqui reprovaria ~tudo, e isso foi MEDIDO**
+(22 linhas de `app_inscricoes` em 06/08): **0 de 22** mandam nascimento ou sexo ·
+oração/SOS/aconselhamento **nunca** mandam e-mail · a régua de telefone **não tem
+flag pra relaxar** e 46 dos 83 cadastros ligados a conta do app não têm telefone
+⇒ o botão de **SOS** (risco de vida) e o Fale Conosco passariam a recusar ~55%
+das contas, em telas sem campo pra corrigir · batismo manda `nome` = **primeiro
+token** ⇒ "Informe o nome completo" em 100% dos envios.
+
+Então o conserto é o dano REAL medido: **o '55' grudado no telefone.** 15 das 22
+linhas têm 13 dígitos começando com 55 (`profiles.telefone` guarda "+55 (21) …"
+do PhoneInput) e o fanout só remove NÃO-DÍGITO — não tira código de país. As 5
+inscrições de voluntariado em `vol_inscricoes` estão com 13 dígitos, e **o
+próprio dedup por telefone do fanout compara contra os 11 da base** ⇒ não casa.
+
+- **`backend/utils/saneamentoInscricaoApp.js`** = régua PURA no gate (17 testes).
+  Telefone → dígitos → tira o 55 (só quando o resto ainda é telefone completo:
+  **DDD 55 é Santa Maria/RS**) → aceita 10-11, senão `null`. E-mail normalizado
+  ou null · nascimento validado ou null · CPF só dígitos (o DV é julgado pelo
+  handler, não aqui) · nome com trim/colapso.
+- ⚠️ **NÃO BLOQUEIA NADA**: campo que não normaliza vira `null`, que é o que o
+  fanout já gravava. Nenhum 400 novo em nenhum tipo.
+- ⚠️ **Só mexe em chave que EXISTE** e preserva todas as outras: o fanout lê
+  `grupo_id`, `areas`, `nome_mae`, `sobrenome`, `tamanho_camisa`,
+  `possui_deficiencia`, `deficiencia_descricao`, `observacoes`, `observacao`,
+  `evento_id`, `membro_id`. Remover ou renomear qualquer uma quebra um ramo.
+- Log de ajuste sai com os **NOMES** dos campos, nunca os valores (é telefone e CPF).
+- **Subir exigência é decisão com número na mão, outra onda**: hoje só **1**
+  profile tem `app_ficha_confirmada_em`, e dos 25 cadastros com CPF completo
+  **17 não têm `genero`**.
+
+⚠️ **Réguas puras mudaram de casa**: `validarNascimento`, `emailValido` e
+`tirarCodigoPaisTelefone` saíram de `services/inscricaoContrato.js` (que carrega
+o Supabase e por isso não entrava no gate) pra **`backend/utils/camposContato.js`**
+— e o `inscricaoContrato` **re-exporta as três**, então nenhuma das 7 portas
+públicas muda de import. `validarNascimento` ganhou 2º parâmetro OPCIONAL
+(`hoje`) pra teste sem o relógio da máquina. Conferido com smoke rodado **de
+dentro de `backend/`** (a lição da Onda 0) + `test:inscricao-contrato` verde.
+
+### ⏳ Onda 1 · o que FALTA (itens 4 e 5, levantamento pronto)
+
+- **Item 4 · pedido de exclusão de conta (LGPD)** ainda sem leitor. ⚠️ Achado do
+  levantamento: **`gerarTodasNotificacoes` não tem agendador nenhum** —
+  `/api/notificacoes/cron` NÃO está no `vercel.json` (só `/cron/alerta-culto-dados`,
+  semanal) e nada mais o chama. Ou seja, TODOS os avisos periódicos do
+  `notificacaoGenerator` (documento vencendo, membro sem grupo, jornada,
+  grupos sem visita, `cadastro_sem_nome_real`) **só rodam quando um admin clica
+  em "gerar"**. Acrescentar gerador ali não faz o aviso sair. Agendar liga ~15
+  geradores de uma vez e é decisão do Marcos (risco de enterrar o sino).
+- **Item 5 · `PUT /app/grupos/:id`** pra o save do supervisor parar de mentir
+  (79 de 100 grupos).
+
+
+---
+
+# Auditoria do app · ONDA 1b · narrativa completa (movida em 2026-08-13)
+
+## ⚠️⚠️ AUDITORIA DO APP · ONDA 1b · O SAVE PARA DE MENTIR E O LGPD GANHA FILA (2026-08-06)
+
+Itens 4 e 5 do plano. **Sem migration** — é rota + tela + régua pura.
+
+### 5 · `PUT /app/grupos/:grupoId` · o save do supervisor gravava NADA
+
+`grupo-editar.tsx` fazia UPDATE DIRETO em `mem_grupos`, e a RLS de UPDATE só
+aceita `lider_id = current_user_membro_id()` OU nível grupos >= 3 — **supervisor
+não passa**. Como o update não tinha `.select()` nem conferia linhas afetadas, **0
+linhas voltavam SEM erro** e a tela dizia "Grupo atualizado."
+
+Medido em 06/08: dos 13 supervisores, **1 tem conta no app**; ele supervisiona 8
+grupos ativos e **não é líder em 7** → são 7 saves que hoje mentem. E
+`current_user_module_level` resolve `usuarios` pelo **e-mail do LOGIN**: o e-mail
+com que ele entra no app não é o da conta de sistema, então o nível dele na RLS é
+**0**. (Contexto maior: **88 dos 101 grupos ativos não têm líder com conta no
+app**.)
+
+- ⚠️⚠️ **NÃO reusei o `PUT /api/grupos/:id` do web, e não é preguiça**: ele é
+  **update de OBJETO INTEIRO**, escreve ~28 colunas e aplica DEFAULT no que não
+  vem (`lider_id: d.lider_id || null` · `ativo: d.ativo ?? true` ·
+  `temporada: || null` · `aceitando_inscricoes: d.aceitando_inscricoes !== false`).
+  Chamá-lo com os 9 campos da tela do app **apagaria a liderança, a temporada e o
+  estado de inscrição** do grupo. O endpoint do app é **PATCH com allowlist**.
+- Autorização = o MESMO `gateGrupoApp` dos outros 7 endpoints de gerenciar grupo
+  (líder OU supervisor OU admin). Era a divergência entre o que a TELA mostra e o
+  que a RLS aceita que produzia o save silencioso.
+- **`.select()` + conferir a linha** é o conserto: 0 linhas agora é **409**, não
+  sucesso. E `updated_at` passou a ser carimbado — não há trigger de `updated_at`
+  em `mem_grupos` e o PUT do web também não o seta, então editar pelo web deixa a
+  coluna velha até hoje.
+- ⚠️ **`categoria` é REGRA DE NEGÓCIO, não rótulo**: `publicGrupos` usa pra a
+  trava de gênero e pra habilitar a **inscrição de CASAL** (só em 'Casais'), e o
+  filtro público compara valor exato. No app o campo é `Input` de **texto livre** —
+  um "casais" minúsculo ou "Casal" desligaria a inscrição de casal em silêncio.
+  Agora a lista é **FECHADA** (espelho de `TIPOS_GRUPO`) e o valor é normalizado.
+- ⚠️ **`horario` é coluna `time`** e a tela manda texto livre: "1930"/"19h30"/"9:5"
+  passam a virar `HH:MM`, e o que não é hora vira 400 com mensagem — antes era
+  erro de cast cru do Postgres, que a pessoa lê como "não salvou".
+- ⚠️ **`dia_semana` aceita 0 = domingo** (que é falsy) — a armadilha já
+  documentada, agora com teste.
+- ⚠️ **NÃO geocodifica dentro do request**: ViaCEP + Nominatim com 1,1s de espera
+  por política é como uma edição vira timeout, e **nenhum save do sistema
+  re-geocodifica** (nem o do web — quem faz é a ferramenta manual
+  `/admin/grupos/geocode`). Quando `endereco`/`bairro` mudam, o endpoint **avisa a
+  coordenação** com link pra ferramenta: é o que evita o pino do mapa apontando
+  pra casa antiga sem ninguém saber.
+- Régua pura em `backend/utils/grupoEdicaoApp.js` (18 testes no gate).
+- ⚠️ Autoria do audit log: a trigger `trg_audit_mem_grupos` grava autor por
+  `auth.uid()`, que é NULL em escrita por service_role ⇒ a edição pelo app aparece
+  como "sistema" no card "Log de alterações" — **mesma limitação que o web já
+  tem**, não regressão.
+- ⚠️ **A troca na TELA é Onda 2 (por OTA)**: o endpoint está pronto e o app ainda
+  grava direto. Até publicar, o save do supervisor continua não gravando.
+- ⚠️ ~~**A FOTO DE CAPA continua quebrada e fica pra Onda 2**~~ → **RESOLVIDO NO
+  SERVIDOR em 07/08** (ver 3b logo abaixo). Fica valendo o diagnóstico: a policy
+  do bucket `grupos` exige `is_admin_or_diretor()` (`profiles.role`, esquema
+  APOSENTADO) ou ser o líder — supervisor não passa nem no Storage.
+
+### 3b · A CAPA DO GRUPO tinha o MESMO save silencioso — na MESMA tela (07/08)
+
+**Medido antes de mexer**: `mem_grupos.foto_url` preenchido em **0 de 278**
+linhas (nem nas apagadas) e o bucket `grupos` com **0 objetos** desde que nasceu
+(04/06/2026). A capa nunca funcionou pra ninguém, nenhuma vez. E a telemetria
+mostra **0 aberturas de `/grupo-editar`** em 13.233 eventos — ninguém tinha ido
+lá conferir.
+
+⚠️ **Eram DOIS defeitos empilhados, e o segundo é o que engana:**
+1. A policy do bucket barra quem não é admin/diretor/líder (16 de 113 profiles).
+   Esse erro **aparece na tela** ("Falha ao enviar a capa: …") — não é o vilão.
+2. `grupo-editar.tsx:112` gravava `foto_url` com **UPDATE DIRETO sem
+   `.select()`** — exatamente o defeito que a Onda 1b consertou no `salvar()`
+   **desta mesma tela** e que ficou pra trás no `escolherCapa()`. 0 linhas
+   voltavam SEM erro, a tela dizia **"Capa atualizada."** e ainda pintava a
+   imagem. Ao recarregar, sumia.
+
+**A porta agora**: `POST /api/app/grupos/:grupoId/foto` (multipart, campo `foto`)
++ `DELETE` pra tirar a capa. `authApp` + `limiterStrict` + multer (memória, 4MB,
+allowlist jpg/png/webp) + `gateGrupoApp` **depois do multer** (ele precisa
+consumir o corpo antes) → upload com service_role → `.select().maybeSingle()` com
+**409 quando 0 linhas**, igual ao PUT.
+- ⚠️ **4MB e não 5MB** (o número do totem em `publicGrupos.js`): o corpo de
+  request serverless tem teto ~4,5MB e estourar vira 413 opaco, sem JSON. **Não
+  dá pra redimensionar no cliente** — `expo-image-manipulator` é módulo NATIVO e
+  não sai por OTA; quem segura o tamanho é o `quality` do picker.
+- ⚠️ **Caminho ÚNICO por upload** (`<gid>/<ms>.<ext>`), nunca `<gid>.jpg` fixo: o
+  bucket é público e o CDN guarda ~1h ⇒ com caminho fixo, trocar a capa não
+  aparece pra ninguém por uma hora. Era por isso que a tela improvisava
+  `?t=Date.now()`, que só engana o cache do próprio aparelho.
+- ⚠️ **A extensão sai do MIME que o multer validou**, nunca do nome do arquivo:
+  no Android a URI é `content://…` e vem sem extensão nenhuma.
+- Régua pura em `backend/utils/grupoCapaApp.js` (**37 asserções**, teste em
+  `src/test/grupoCapaApp.test.ts`). Ela é testada porque **autoriza um DELETE no
+  Storage** a partir de uma string que nem sempre é nossa: `Grupos.jsx:2500` é um
+  campo de **URL de texto livre** gravando `foto_url`. `caminhoDaCapa()` recusa
+  outro bucket, URL de fora, a marca escondida na query (`?u=…`) e travessia com
+  `..` — inclusive escapada. **Na dúvida devolve `null`**: objeto órfão custa
+  bytes; apagar o objeto errado custa a capa de outro grupo, ou um avatar.
+- ⚠️ **ORDEM DE ENTREGA**: o endpoint chega no merge, a tela só depois de 2
+  aberturas (OTA). **Não revogar as policies do bucket nem dropar
+  `is_admin_or_diretor()` antes do OTA chegar** — tiraria o pouco que hoje passa
+  sem pôr nada no lugar (mesma lição da migration `20260806120000`).
+- ⚠️ **Só 14 dos 102 grupos ativos têm líder com conta no app.** Liberar "o
+  supervisor" na policy do SQL resolveria 7 grupos e deixaria 88 de fora — além
+  de duplicar a régua de autorização num 2º lugar, que é a doença que o
+  `gateGrupoApp` existe pra curar.
+
+### 3c · ⚠️⚠️ O PUSH NUNCA CHEGOU: 1.801 de 1.820 recusados (07/08)
+
+**Medido em `system_mobile_push_tickets` antes de mexer:**
+
+| sonda | resultado |
+|---|---|
+| tickets totais | 1.820 |
+| `ticket_status='accepted'` | **19** (todos iOS, entre 02/08 e 07/08) |
+| `ticket_status='error'` | **1.801 — 98,9%** |
+| `PUSH_TOO_MANY_EXPERIENCE_IDS` | **1.773** |
+| erro mais recente | 07/08 20:02 |
+
+⚠️⚠️ **CAUSA**: `app_push_tokens` recebe token de **DOIS apps Expo** (o de
+membros e o CBRio Staff — mesma org `cbrio`, mesmo Supabase). A Expo responde,
+literalmente: *"All push notification messages in the same request must be for
+the same project."* E ela **recusa o REQUEST INTEIRO**, não as linhas estranhas
+— um token do Staff derrubava a entrega dos 30 tokens iOS perfeitamente
+válidos. Os 19 que passaram são justamente os envios pequenos, pra uma pessoa
+só, em que o lote por acaso não misturou.
+
+⚠️⚠️ **POR QUE NINGUÉM VIU**: havia **TRÊS** remetentes, cegos de jeitos
+diferentes. A Edge Function `_shared/notify.ts` dava `await fetch(...)` **sem
+ler o corpo**; `notify-devocional-semana` tinha uma **cópia própria** do envio,
+igualmente cega (e era o maior broadcast: 275 das 615 notificações in-app); e
+`services/appPush.js` lia e gravava ticket — mas ninguém olhava a tabela.
+
+**O conserto**: coluna `app_push_tokens.projeto_id` (migration
+`20260807220000`) + a régua `backend/utils/pushLotes.js`, que agrupa por app
+Expo antes de montar o request.
+- ⚠️ **Token de projeto DESCONHECIDO vai SOZINHO** (1 por request). Um request
+  com uma mensagem só não tem como ter "experience ids demais" — é o que faz a
+  entrega ficar correta **desde o 1º envio**, sem adivinhar a origem do token
+  antigo e **sem apagar linha de ninguém**. Se cura sozinho: o app reescreve o
+  próprio token a cada volta do background.
+- ⚠️ **NUNCA juntar os desconhecidos num lote**: são justamente os de origem
+  ambígua, ou seja, a mistura mais provável de todas. Tem mutante.
+- ⚠️ `tokenMorreu()` só aceita **`DeviceNotRegistered`**. Apagar por erro de
+  LOTE teria **zerado a tabela** — 1.773 tickets traziam
+  `PUSH_TOO_MANY_EXPERIENCE_IDS`, culpa do request e não do token. Tem mutante.
+- ⚠️ **RÉGUA GÊMEA**: `backend/utils/pushLotes.js` e
+  `Aplicativo-CBRio/lib/pushLotes.ts` têm que decidir IGUAL — escrevem na mesma
+  tabela e falam com o mesmo serviço. Divergir faz o erro voltar **só metade das
+  vezes**, que é pior de achar. Os testes usam o **mesmo vetor de casos** nos
+  dois repos (`src/test/pushLotes.test.ts` aqui, bloco `lotesDePush` lá).
+- De quebra: `appPush.js` mandava `sound: 'cbrio-chime.wav'` com **hífen**; o
+  asset (`app.json:55`) e o canal Android são `cbrio_chime.wav` com
+  **underscore**. Todo push do ERP saía com som inexistente.
+
+⚠️ **AINDA ABERTO, e é decisão de gente, não de código**: os 4 broadcasts
+definem a AUDIÊNCIA por `select from app_push_tokens`
+(`notify-lembretes:64` e `:216`, `notify-comunicado:22`,
+`notify-devocional-semana`). Quem não tem token — hoje **todo Android**, porque
+o binário não tem Firebase — fica de fora até do **sino in-app**, não só do
+push. Trocar por "todo mundo com conta no app" muda o raio de alcance de ~23
+pra ~113 pessoas: é chamada do Marcos.
+
+### 3e · ⚠️⚠️ `POST /api/app/inscricoes` NÃO VALIDAVA NADA (10/08/2026)
+
+Achado pelo **Marcos testando no aparelho**: *"eu sou homem e consigo ver os
+grupos apenas para mulheres e posso tentar me inscrever, e isso não é possível
+no nosso webapp."* Ele estava certo — e o buraco é **maior que a queixa**.
+
+O handler (`backend/routes/app.js`) **não lia NENHUMA das 5 travas do site**:
+
+| trava | site (`publicGrupos.js`) | app (antes) |
+|---|---|---|
+| categoria/gênero | 422 `grupo_incompativel` | — |
+| `ativo = false` | 403 | — |
+| `aceitando_inscricoes = false` | 403 | — |
+| `modo_inscricao = 'fechado'` | 403 "por convite do líder" | — |
+| temporada fechada | 403 | — |
+
+⚠️ **O app não "escapava" da trava do site — ele nunca chegava lá.** O site trava
+no formulário público; o app tem porta própria, que nasceu sem elas.
+
+**A régua agora vive num lugar só**: `backend/utils/entradaGrupoApp.js`,
+**37 asserções** em `src/test/entradaGrupoApp.test.ts`.
+
+⚠️⚠️ **DESENHO CORRIGIDO PELO MARCOS NO MESMO DIA — e ele estava certo.**
+Eu tinha feito um caminho especial (`codigo='sexo_necessario'`) que **DEIXAVA
+PASSAR** quem não tinha `genero`, porque só 16 das 54 contas do app tinham o
+dado. Palavras dele: *"parece que estamos criando algo que é pra resolver 40
+pessoas, mas que vai quebrar quando abrir pra igreja; prefiro que tenham pedidos
+errados e recusados dessas pessoas do que do restante todo da igreja."*
+
+⇒ Agora é **UMA REGRA SÓ**: o sexo tem que BATER; desconhecido não bate. A
+mensagem distingue "não sabemos" de "não bate" (honestidade com a pessoa), mas o
+caminho de decisão é único.
+
+⚠️ **E o que fecha o argumento, que eu não tinha percebido**: o portão de
+identidade **JÁ EXIGE o sexo**. `GET /app/identidade/status` põe `'sexo'` em
+`falta`, e `bloqueiam` só o dispensa nas contas de revisão da Apple
+(`contaDeRevisaoLoja`). Ou seja: quem consegue chegar na tela de grupo já passou
+pelo portão e **tem** o dado. As 38 contas sem `genero` são de ANTES do portão
+ligar e serão cobradas na próxima abertura. **Não havia buraco a acomodar — só
+máquina a mais.**
+
+⚠️ Tem mutante: categoria NÃO restritiva **nunca** pergunta o sexo (se isso
+regredir, 70% das contas param de entrar em QUALQUER grupo).
+
+**BACKFILL (migration `20260810160000`)**: a base inteira tem `genero` em **499
+de 4.056 vivos (12%)** — não é problema do app, é da base. Recuperei o que a
+PRÓPRIA PESSOA já declarou em `mem_cadastros_pendentes` e que o matcher
+descartava ao vincular: **51 pessoas**. Idempotente, só escreve onde é NULO.
+⚠️⚠️ **NUNCA inferir sexo por NOME.** É pouco confiável e errar isso num cadastro
+de igreja constrange uma pessoa real, que depois vê o erro num grupo ou num
+crachá. Sem declaração, o campo fica NULO e o app pede.
+
+⚠️ **A ORDEM das travas importa e tem teste**: grupo fechado responde "fechado",
+não "sexo". Senão a pessoa completa o perfil e continua sem conseguir entrar.
+
+⚠️ **`sempre_aberto` entra MESMO com a temporada fechada** — é o que permite
+grupo de porta aberta fora do ciclo. Tem mutante.
+
+⚠️ **`resolveMembroApp` NÃO traz `genero`** (só id/nome/cpf/email/telefone). A
+leitura do sexo é ISOLADA e, se falhar, cai em `sexo_necessario` — nunca em
+"deixa passar".
+
+⚠️⚠️ **AINDA HÁ DUAS CÓPIAS DA RÉGUA, de propósito**: `publicGrupos.js` continua
+com a dele porque é a porta pública principal (**462 dos 463 pedidos**) e trocar
+no mesmo PR somaria risco. **AS DUAS TÊM QUE CONCORDAR** — há ponteiro no
+arquivo. Trocar pela chamada da função quando houver janela pra testar o
+formulário com calma.
+
+⚠️ **PENDENTE DE GENTE, e é dado**: o grupo **"NEW HEART - RECOMEÇO 40+ -
+Solteiros/Divorciados"** está `categoria='Homens'` com **4 mulheres no roster e
+6 pedidos de mulheres já aprovados** (10 dos 13 casos incompatíveis da base são
+dele, e os 13 vieram de `formulario_publico` — é CADASTRO errado, não bypass).
+Quem já está no grupo **não é afetado** (a trava é só no pedido NOVO), mas
+mulher nova é recusada. Acertar a categoria com a coordenação.
+
+### 3f · Suporte da Apple apontava pro número vazio (10/08)
+
+`src/pages/public/Suporte.tsx:11` publicava `5521999079031`, rotulado "número
+institucional" — mas esse número **não tem caixa nenhuma no sistema** (zero em
+`wa_numeros`, zero conversas). Quem escrevia pro suporte falava com o vazio.
+Trocado pelo **21 99756-7770**, o inbox que a igreja de fato lê (98 conversas em
+21 dias) e o mesmo que o novo site publica.
+⚠️ Esta é a **Support URL exigida pela Apple** (Guideline 1.5) — número errado
+aqui é motivo de rejeição, além de deixar gente sem resposta.
+
+### 4 · Pedido de exclusão de conta (LGPD) ganhou fila — e SÓ leitor
+
+O app insere em `app_solicitacoes_exclusao` e promete "em breve sua conta será
+desativada". O ERP **não lia essa tabela em lugar nenhum** (grep: zero rotas, zero
+telas, zero serviços) e `profiles.status='excluido_solicitado'` **não afeta nada**
+(0 profiles com status preenchido; nenhum filtro do sistema usa a coluna). Hoje a
+tabela está **vazia** — gatilho armado, melhor momento pra construir.
+
+- `GET /api/membresia/exclusoes` (nível 3, o mesmo do export LGPD) + bloco
+  **recolhível** "Pedidos de exclusão de conta (LGPD)" na aba **Cadastros
+  pendentes** da Membresia (formato do "Entradas e saídas" do /grupos, ao lado do
+  `PainelCenso` — precedente de bloco embutido em vez de tela nova).
+- ⚠️ **SÓ LEITURA de propósito**: **não existe nenhum caminho de desativação de
+  conta no sistema** — o único `auth.admin.deleteUser` do repo é script de teste,
+  `ban_duration` tem 0 ocorrências e `profiles.active` é só LIDO (nada nunca
+  escreve false). O que existe é export LGPD (`routes/lgpd.js`) e soft-delete de
+  `mem_membros`. Um botão "processar" que não processa repetiria exatamente o erro
+  que criou este problema; a tela **declara** que a desativação é manual e cita o
+  prazo de 15 dias (art. 18).
+- ⚠️ Decidir o que a igreja **RETÉM** por obrigação legal/fiscal (contribuição,
+  batismo) antes de desativar é decisão do Marcos — e a FK
+  `user_id → auth.users ON DELETE CASCADE` significa que apagar o auth user
+  **apaga a prova de que o pedido existiu**. Resolver isso vem antes de qualquer
+  processamento.
+- ⚠️ Erro de carregamento **não se disfarça de fila vazia** na tela: "nenhum
+  pedido" e "não conseguimos ler" são coisas diferentes.
+
+### ✅ RESOLVIDO · o cron do `gerarTodasNotificacoes` EXISTE e roda (10/08/2026)
+
+⚠️⚠️ **ESTA SEÇÃO DIZIA O CONTRÁRIO até 10/08 e o texto antigo virou FALSO.** Ele
+afirmava que `/api/notificacoes/cron` não estava no `vercel.json` e que ~20
+geradores só rodavam por clique manual. Medido em 10/08: o cron **está** no
+`vercel.json` (`0 9 * * *`), **está registrado** na Vercel (`vercel crons ls`) e
+todos os tipos exclusivos do `notificacaoGenerator` foram produzidos naquele dia
+às **09:00–09:03 UTC** (`membro_sem_grupo` 340 · `grupo_sem_encontro` 1.717 ·
+`ata_pendente` 464 · `kids_crianca_ausente` 422 · `grupos_sem_visita` 17 …).
+Alguma sessão agendou depois de 06/08 e o registro aqui não acompanhou.
+**Lição de método: antes de repetir um achado deste arquivo, medir de novo** — a
+nota de 06/08 estava correta no dia em que foi escrita e envelheceu em 4 dias.
+
+### ⚠️⚠️ E a contenção que a nota antiga pedia virou necessária DE VERDADE
+
+Ligar ~20 geradores de uma vez encheu o sino, exatamente como previsto. Medido em
+10/08: **16.646 avisos NÃO LIDOS · 90 pessoas · média de 185 por pessoa** (543
+criados só naquele dia), com o módulo `grupos` respondendo por **9.782 (59%)**.
+Sino nesse estado não é lido — o efeito prático é o mesmo de não notificar.
+
+Duas causas somadas, e cada uma tem dono diferente:
+
+1. **38 dos 51 módulos ativos não têm regra em `notificacao_regras`** ⇒ cada aviso
+   cai no fallback de TODOS os admin/diretor (16 pessoas). Assinatura no dado:
+   os tipos de maior volume batem sempre em 15–18 pessoas. `kids`, que TEM regra,
+   entrega para 2. ⚠️ Configurar as regras é decisão de QUEM RECEBE (e quem deixa
+   de receber) — o Matheus assumiu isso em 10/08, em sessão própria.
+2. **Os geradores periódicos avisavam 1 POR ITEM.** `grupo_sem_encontro` eram 101
+   grupos atrasados × 16 pessoas POR DIA; `kids_crianca_ausente` chegou a 211
+   avisos não lidos para a MESMA pessoa. **Corrigido: os 4 de maior volume
+   passaram a avisar AGREGADO** (`grupo_sem_encontro`, `membro_sem_grupo`,
+   `ata_pendente`, `kids_crianca_ausente`) — 1 aviso com contagem + amostra de 5
+   + link pra tela. Régua e o porquê da chave de dedup ESTÁVEL:
+   **`backend/utils/avisoAgregado.js`**, com guarda em
+   `src/test/avisoAgregado.test.ts` (no gate, mutation-testado).
+
+⚠️ **NÃO agreguei `pedido_grupo` nem `nova_inscricao`** (os 2 maiores volumes
+depois de grupos): ali cada linha é um item de trabalho de uma PESSOA específica
+(o líder recebe por `extraTargetIds`), e o dedup por pedido é o que impede
+duplicar. O excesso deles é o fallback de 16, ou seja causa nº 1 — não se
+conserta agregando.
+
+`gerarNotificacoesLgpdExclusao()` segue no padrão da casa (contagem, sem PII) e
+**deixou de estar dormente** junto com os outros. O comentário em
+`routes/monitorAutomacoes.js:13-14` que a nota antiga acusava de desatualizado
+está, portanto, **correto** de novo.
+
+
+---
+
+# Adapter do Mercado Pago · narrativa completa (movida em 2026-08-13)
+
+## ⚠️ Adapter do MERCADO PAGO (2026-08-06 · SEM migration)
+
+`providers/mercadopago.js` — o único arquivo que conhece a linguagem do MP.
+`'accredited'` em qualquer outro lugar é bug de arquitetura (lei nº 2). Fatos
+levantados na doc oficial em 06/08 (não de memória), com o que NÃO foi
+confirmado declarado como tal.
+
+### As três coisas que o MP forçou a mudar no desenho
+
+**1 · ⚠️⚠️ A Orders API (a recomendada) NÃO devolve taxa, líquido nem data de
+liberação.** O schema de `transactions.payments[]` tem amount/paid_amount/
+status/payment_method/discounts e mais nada. Quem tem `fee_details`,
+`net_received_amount` e `money_release_date` é a **Payments API, marcada
+"legacy"** ("will not receive new features, only security and stability fixes",
+sem data de sunset).
+Decisão: **escrever pela Orders API, ler pelas duas.** Pagamento que chega pela
+Orders entra com `taxa_centavos: null` / `liquido_centavos: null` — que é a
+resposta HONESTA ("o PSP não disse") e **não fere a lei nº 6**, que proíbe
+CALCULAR taxa, não proíbe não tê-la. Pagamento pelo tópico `payment` (checkout
+hospedado) traz os três e eles são usados.
+⚠️ **Consequência aberta: a conciliação automática da TARIFA não fica de pé só
+com este adapter.** Pix cai sem tarifa conhecida. Fechar isso exige o relatório
+"Released money" do MP (produto separado) ou aceitar a API legada — **decisão de
+arquitetura, não de implementação**, e ainda não tomada.
+
+**2 · ⚠️⚠️ Nenhum prefixo distingue token de teste do de produção.** Citação
+literal: *"The test Access Token starts with the prefix `APP_USR`, just like your
+production Access Token."* Isso **mata a guarda do Asaas** (`$aact_hmlg_` ×
+`$aact_prod_` conferido na chamada). A guarda foi reprojetada em duas partes:
+(a) **`MERCADOPAGO_AMBIENTE`** declara a intenção; (b) **`live_mode`** — que vem
+em toda resposta e em todo webhook — é conferido contra ela e **LANÇA** se
+divergir. Os dois lados são fatais por motivos opostos: produção com token de
+teste = a pessoa "paga" e nada entra; teste com token de produção = o ensaio
+cobra de verdade. ⚠️ `live_mode` ausente **não** vira erro: nem toda resposta o
+traz, e inventar erro onde não há sinal quebraria o fluxo por nada.
+
+**3 · ⚠️ O webhook chega em DOIS tópicos.** `orders` (nosso Pix, via Orders API)
+e `payment` (quem pagou pelo checkout hospedado). **Marcar só um no painel deixa
+metade das entregas muda.** O adapter trata os dois; tópico desconhecido devolve
+`null` e o núcleo registra sem despachar.
+
+### Como o adapter mapeia no núcleo (e por que assim)
+
+| momento | o que o adapter faz | por quê |
+|---|---|---|
+| `criarCobranca` | `POST /checkout/preferences` | a Orders API exige o `payment_method` na criação, e aí a pessoa **ainda não escolheu**. Sem um `provider_cobranca_id` aqui o núcleo trataria a linha como "meio-criada" e a retentaria pra sempre. A preference dá id + `init_point` (checkout que já funciona). |
+| `definirMetodo('pix')` | `POST /v1/orders` | é onde o objeto cobrável de verdade nasce. Devolve o QR (`payment_method.qr_code`). |
+| `definirMetodo('cartao')` | devolve o `init_point` guardado | PAN não entra aqui (lei nº 5). ⚠️ **NÃO devolve `parcelas`** — quem escolhe é o pagador na página do MP; afirmar o que foi PEDIDO violaria "a forma/parcela confirmada é a que o PSP devolveu". O número real chega no webhook. |
+| `consultarStatus` | `GET /v1/orders/{id}` | só a ORDER é consultável; preference não tem estado de pagamento. Antes da escolha devolve `null` — honesto, e o núcleo lê null como "sem novidade". |
+
+⚠️ **O vínculo estável entre preference e as N orders é o `external_reference`**
+(= nossa `referencia`), não o id do provider. É por ele que o webhook reencontra
+a cobrança quando o id é de outro objeto — e é o que torna seguro trocar de
+forma de pagamento (cada troca cria outra order, todas com a mesma referência).
+
+**Mudança no núcleo que isso exigiu:** `cobrancas.definirMetodo` passou a
+persistir `provider_cobranca_id` quando o adapter devolve um. Sem repontar, o
+cron de reconciliação ficaria consultando a preference, que nunca muda de
+estado. O Asaas não devolve o campo e segue idêntico.
+
+**E no contrato do webhook:** `verificarAssinatura` ganhou um 4º argumento
+`{ query, payload }`. O manifesto do MP é montado com o `data.id` do **QUERY
+STRING** (não do corpo) + o header `x-request-id`:
+`id:<data.id minúsculo>;request-id:<x-request-id>;ts:<ts>;` → HMAC-SHA256 hex
+comparado com o `v1` do header `x-signature`. ⚠️ O `;` final faz parte, e
+**minusculizar é o caso NORMAL**: os ids da Orders API são ULIDs MAIÚSCULOS
+(`ORD01J…`) e a doc manda converter. Sem passar a query, toda entrega legítima
+tomaria 401.
+
+### ⚠️ Boleto está FORA das capacidades, de propósito
+
+O boleto do MP exige **endereço completo** do pagador (street_name,
+street_number, zip_code, neighborhood, city, state) e **`pag_cobrancas` não
+guarda endereço**. A fachada consulta `capacidades.metodos` pra decidir o que
+oferecer na tela — declarar boleto abriria uma aba que **sempre** falha. Mesmo
+racional do provider `manual`: declarar só o que se sabe fazer. Ligar boleto
+exige coletar endereço na porta pública primeiro. Mutation-testado.
+
+### ⏳ Pendente de GENTE (não é código)
+
+1. **⚠️ Confirmar com o Mercado Pago se dá pra repassar juros do parcelado ao
+   pagador.** A doc de API **não** documenta isso; o material comercial descreve
+   o modelo "sem juros" em que **o custo é do vendedor** e a taxa cresce com o
+   número de parcelas que o COMPRADOR escolher (à vista ~3%, 2–6x 4–6%, 7–12x
+   7–13%). O sistema pressupõe `juros_repassados = true` desde 28/07. **Se o MP
+   não repassar, esses 4–13% saem da margem da igreja** e mudam a conta do
+   evento. Isso não se resolve no código.
+2. **Gerar as credenciais** e setar `MERCADOPAGO_ACCESS_TOKEN`,
+   `MERCADOPAGO_AMBIENTE`, `MERCADOPAGO_WEBHOOK_SECRET` +
+   `PAG_PROVIDER_PADRAO=mercadopago`. Sandbox vai no escopo **Preview**;
+   produção fica em `manual` até o teste passar.
+3. **No painel do MP, marcar os tópicos `orders` E `payment`** e apontar o
+   webhook pra `/api/pagamentos-webhook/mercadopago`.
+4. **Decidir a fonte da tarifa** (item 1 do bloco de cima).
+
+### ⚠️⚠️ O PRIMEIRO PAGAMENTO REAL (2026-08-08) — sete causas, e o que ficou de guarda
+
+O sintoma inicial era um só: *"o botão de pagar carrega e não acontece nada"*.
+Saíram **sete causas distintas**, cada uma só visível depois que a anterior saiu
+do caminho. Registro aqui porque **nenhuma delas se descobre lendo código** — e
+três já quase voltaram durante a própria sessão.
+
+**1 · O valor ia como STRING pra Payments API.** `paraReais` devolve
+`"900.00"` (formato da Orders API) e `POST /v1/payments` exige **número**:
+`400 transaction_amount attribute must be numeric`. Daí `paraReaisNumero`.
+⚠️ **E o teste que existia travava o comportamento ERRADO** (`toBe('900.00')`,
+com o comentário "convenção deste adapter"): ele conferia o que o nosso código
+fazia, não o que a API exige. Por isso 45 testes verdes conviviam com um cartão
+que **nunca havia cobrado**. Quando o teste espelha a implementação em vez do
+contrato externo, ele deixa de ser rede e vira confirmação.
+
+**2 · ⚠️ As credenciais de TESTE foram aposentadas na Orders API.** Resposta
+literal: *"Test credentials are not supported, use test users with production
+credentials to sandbox environment"*. Isso obriga o sandbox a usar **credencial
+de PRODUÇÃO de uma conta de teste**.
+
+**3 · ⚠️⚠️ E isso NEUTRALIZOU a guarda de ambiente.** Com o ensaio obrigado a se
+declarar `MERCADOPAGO_AMBIENTE=producao`, o `live_mode` deixou de distinguir
+ensaio de produção — a proteção **parou de proteger sem ninguém mexer nela**.
+Foi mudança de terceiro que esvaziou a premissa. No mesmo dia uma chave de
+PRODUÇÃO da conta real da igreja foi parar no Preview; com um cartão real,
+teria cobrado de verdade.
+⇒ **`MERCADOPAGO_CONTA_ID`** ocupa esse lugar: o último segmento do Access Token
+é o **id da conta**, conferido por escopo (Production = igreja · Preview =
+vendedor de teste). ⚠️ Token `TEST-` é ignorado pela guarda — ela existe pra
+impedir cobrança REAL, e credencial de teste não move dinheiro de conta nenhuma.
+Fail-open sem a env (mesma régua do `live_mode` ausente).
+
+**4 · Public Key e Access Token têm que ser do MESMO PAR** — mesma conta **e**
+mesma aplicação **e** mesma versão (teste × produção). O navegador tokeniza com
+uma e o servidor cobra com a outra; par trocado dá
+`401 Unauthorized use of live credentials`, que não diz nada disso. Duas guardas:
+o erro é traduzido, e `chavePublica()` devolve **null** quando as versões
+divergem — aí o cartão na página some e a pessoa segue pelo checkout hospedado
+(que só precisa do Access Token). ⚠️ Aba que sempre falha é pior que aba que não
+existe — mesma régua do boleto sem endereço.
+
+**5 · `external_reference` não aceita `:`.** Doc literal: *"máximo 64
+caracteres, apenas letras, números, `-` e `_`"*, e não pode conter PII. A nossa
+`inscricao:<uuid>` era recusada com `400 does not match pattern`. Conversão
+**reversível** `:` ↔ `_` (nenhuma referência nossa usa `_`), porque é por ela que
+o webhook reencontra a cobrança. ⚠️ `inscricao:<uuid>` já usa **46 dos 64** —
+os sufixos de reemissão e bolsa passaram a base36 (`:r<8>` / `:b<8>`), senão
+estouravam o teto na primeira reemissão.
+
+**6 · Em conta de teste, o e-mail do pagador tem que ser `@testuser.com`.**
+Regra que **só existe no sandbox** — o erro é traduzido dizendo explicitamente
+pra NÃO mexer no código: forçar o domínio no pagador quebraria produção inteira.
+
+**7 · ⚠️⚠️ Pix e cartão exigem credenciais INCOMPATÍVEIS no sandbox.** Doc:
+cartão via Bricks pede *"as credenciais de TESTE da sua conta REAL"*; a Orders
+API (Pix) pede **produção de conta de teste**. Não dá pra testar os dois na mesma
+configuração — o próprio MP manda **trocar** as credenciais entre um teste e
+outro. Era isso que fazia a investigação oscilar: cada ajuste consertava uma
+forma e quebrava a outra, com a mesma mensagem nos dois casos.
+
+| forma | credencial | `AMBIENTE` | e-mail do pagador |
+|---|---|---|---|
+| **Pix** (Orders API) | produção da conta de **teste** | `producao` | **precisa** ser `@testuser.com` |
+| **Cartão** (Bricks) | **teste** da conta real | `teste` | **não** pode ser `@testuser.com` |
+
+⚠️ Isso vale **só pro ensaio**. Em produção as duas usam a mesma credencial real
+e convivem sem problema.
+
+### ⚠️⚠️ E o bug que só apareceu porque o pagamento FUNCIONOU
+
+Cobrança de R$ 5,00 gravou `valor_pago = R$ 5,05`, e o e-mail de confirmação saiu
+com R$ 5,05. Causa: o adapter preferia **`total_paid_amount`** (o que o PAGADOR
+desembolsou, incluindo o custo de financiamento que fica com o MP) a
+**`transaction_amount`** (o valor da NOSSA cobrança que foi liquidado).
+
+Três estragos ao mesmo tempo, e o do e-mail era o menor: `valor_pago >
+valor_centavos` acusa na `vw_pag_invariantes`, e **o arrecadado somaria juros que
+a igreja não recebe** — exatamente a classe de erro que a lei nº 6 existe pra
+impedir. Num retiro parcelado, é a diferença entre o painel e o extrato.
+
+⚠️ **Ele não trava nada e não gera erro.** Teria ido pra produção sem ninguém
+notar até o dia do fechamento não bater. Régua que fica: **fluxo com dinheiro
+precisa ser conferido no BANCO depois do primeiro sucesso**, não só na tela.
+
+O payload cru passou a ser guardado na razão auxiliar (sem ele, conferir isso
+virou arqueologia) — mas **SEM o bloco `card`**: o payment do MP traz
+`expiration_month/year`, `first_six_digits` e `cardholder.name`, e a lei nº 5
+proíbe ARMAZENAR validade e nome impresso. ⚠️ O teste *"NUNCA devolve PAN, CVV,
+validade ou nome impresso"* pegou essa regressão na primeira versão escrita — a
+guarda funcionou exatamente como foi desenhada.
+
+### Confete: o gatilho é a RESPOSTA, nunca o clique
+
+O confete vivia dentro do `carregar()`, e o pagamento na própria página atualiza
+o estado direto da resposta do POST, sem passar pelo GET — então a inscrição era
+confirmada **sem festejar**. Virou `aplicarPagamento()`, por onde passam os três
+caminhos (carga, polling e cartão). ⚠️ A LEI segue intacta: só com
+`pago === true` LIDO DO SERVIDOR.
+
+### ⚠️ O comprovante (QR da portaria) só existe com a inscrição CONFIRMADA (2026-08-11)
+
+Pedido do Matheus: *"o QR code de comprovante que tem na inscrição no app deve
+aparecer apenas quando confirmar o pagamento da pessoa."*
+
+`GET /app/eventos/minhas` montava `comprovante_url` para **qualquer** inscrição
+viva — inclusive `recebida`, que é **vaga reservada e não paga**, e `cancelada`.
+É o MESMO QR que a portaria lê na entrada. O site já era gatilhado
+(`cobranca.status === 'pago'` no `/pagamento/:token`; o token do e-mail só sai no
+caminho gratuito) — **o app era a única porta sem a trava**.
+
+- **Régua ÚNICA: `status === 'confirmada'`.** Ela cobre evento gratuito (nasce
+  assim), bolsa integral/gratuidade por CPF (idem) e evento pago (o handler
+  confirma no `pago`). ⚠️ **NÃO conferir o pagamento em separado**: pagamento
+  manual e gratuidade não têm cobrança, então a 2ª checagem esconderia o QR de
+  quem a igreja já confirmou — duas verdades sobre o mesmo fato.
+- **Esconder sem dizer o motivo é bug**: o endpoint devolve
+  `comprovante_bloqueado` (`aguardando_pagamento` | `cancelada`) e o app troca o
+  QR por uma frase. Card que some sem explicação faz a pessoa procurar o
+  comprovante achando que perdeu.
+- ⚠️ **A ordem de entrega importava**: o servidor foi primeiro, e é ele quem
+  decide — com o app antigo o QR simplesmente deixa de ser emitido. O inverso
+  não existe.
+
+### ⚠️ O ritmo do polling do Pix é "tem alguém olhando?", não tempo decorrido (2026-08-11)
+
+Pedido dele logo depois: *"na hora que o Pix for feito, preciso que a página da
+pessoa atualize o mais rápido possível, sem ficar recarregando."*
+
+O backoff antigo (6s→15s→30s→60s por tempo decorrido) era **lento pra quem
+esperava** (até 60s com o QR na frente) e **caro por causa de quem tinha ido
+embora** (aba esquecida consultando a noite toda). Agora: **aba escondida =
+polling PARADO** · **aba visível = 3s no 1º minuto → 8s → teto de 20s**. Dá menos
+carga que antes e resolve em ~3s.
+
+- ⚠️ No celular o caminho comum nem depende do intervalo: sair pro app do banco
+  **esconde** a aba, e voltar dispara consulta imediata no `visibilitychange`. Os
+  3s existem pra quem paga em **outro aparelho** (QR no computador), em que a aba
+  nunca perde o foco e nada avisaria a página.
+- ⚠️ **`PARADA_MS` (rede de segurança de 2 min que consulta o PSP) NÃO mudou**:
+  ela cobre webhook perdido, e encurtá-la faria cada pessoa esperando bater na API
+  do provedor com mais frequência, sem ganho no caminho normal — quem traz o
+  "pago" em segundos é o webhook; o gargalo era o cliente.
+- Pré-requisito que foi junto (#2392): sem `no-store` a rota respondia **304** e o
+  polling recebia o corpo ANTIGO — mais rápido não adiantaria nada.
+
+### ⏳ Aberto (não é código)
+
+- **Devolver as envs do Preview** pra configuração de Pix depois de testar cartão
+  (as duas se excluem — ver tabela acima).
+- **Produção segue no Asaas.** `PAG_PROVIDER_PADRAO` só muda por decisão do
+  Matheus, e produção não tem credencial do MP.
+- ✅ **O 304 do polling foi resolvido** (#2392 · `no-store` + `res.end` sem ETag).
+
+### O que a doc NÃO confirmou (não preencher por conta própria)
+
+`payment_method_id` do boleto na API legada (`"bolbradesco"` circula mas não
+está em página oficial) · subcampos de `fee_details` · existência de
+`money_release_status` · busca de order por `external_reference` · 3DS na Orders
+API · valor mínimo/máximo por transação · nº máximo de reentregas de webhook.
+
+Testes: `src/test/pagamentosMercadoPago.test.ts` (34 casos · **sem rede**, o
+`fetch` é stubado — a lição é o flake dos testes do Asaas que batiam no sandbox
+de verdade e derrubavam o deploy). Mutation-testados: a guarda de `live_mode`,
+`authorized` não ser "pago", e a ausência de boleto nas capacidades.

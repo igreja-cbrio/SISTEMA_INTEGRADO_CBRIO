@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useState, useMemo, useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { voluntariado } from '../../../api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -38,6 +38,34 @@ export default function VolScheduleBuilder() {
   const { data: contexto } = useMontagemContexto(selectedServiceId || undefined);
 
   const selectedService = services.find(s => s.id === selectedServiceId);
+
+  // Cultos agrupados por DIA (passo 1 do seletor). O domingo rende um dia com
+  // 4 horários; quarta/AMI/Bridge rendem dias de 1 horário só.
+  const [diaSel, setDiaSel] = useState('');
+  const dias = useMemo(() => {
+    const mapa = new Map<string, { chave: string; rotulo: string; servicos: any[] }>();
+    for (const s of services) {
+      const d = new Date(s.scheduled_at);
+      // Chave pelo dia LOCAL (o navegador do usuário está em BRT). Usar
+      // toISOString aqui jogaria o culto de domingo 19h pra segunda.
+      const chave = format(d, 'yyyy-MM-dd');
+      if (!mapa.has(chave)) {
+        mapa.set(chave, { chave, rotulo: format(d, "EEE, dd/MM", { locale: ptBR }), servicos: [] });
+      }
+      mapa.get(chave)!.servicos.push(s);
+    }
+    const lista = [...mapa.values()];
+    for (const d of lista) d.servicos.sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at));
+    return lista.sort((a, b) => a.chave.localeCompare(b.chave));
+  }, [services]);
+  const diaAtual = dias.find(d => d.chave === diaSel);
+
+  // Dia com UM horário só não tem passo 2 — seleciona o culto direto.
+  useEffect(() => {
+    if (!diaAtual) return;
+    if (diaAtual.servicos.length === 1) setSelectedServiceId(diaAtual.servicos[0].id);
+    else if (!diaAtual.servicos.some((s: any) => s.id === selectedServiceId)) setSelectedServiceId('');
+  }, [diaSel, diaAtual, selectedServiceId]);
 
   // Pool de voluntários do culto: sem os já escalados neste culto.
   const poolDisponiveis = useMemo(() => {
@@ -81,6 +109,45 @@ export default function VolScheduleBuilder() {
 
   const createSchedule = useCreateSchedule();
   const updateSchedule = useUpdateSchedule();
+  const qc = useQueryClient();
+
+  // ⚠️ Aplicar o template A PARTIR DAQUI (13/08/2026).
+  //
+  // O template já sabia tudo — quais áreas, quantas vagas e QUEM costuma servir
+  // em cada uma (`vol_escala_template_item_pessoas`) — e já era ligado ao tipo
+  // de culto (`vol_escala_template_tipos`). Só que aplicá-lo exigia sair da
+  // tela, ir em Templates e achar o culto num diálogo, então na prática a
+  // escala era montada do zero toda semana. A sugestão por tipo de culto
+  // (`schedule-templates/por-tipo/:id`) existia no backend e NENHUM componente
+  // do front a consumia.
+  const { data: sugestoes = [] } = useQuery<any[]>({
+    queryKey: ['vol-template-sugerido', selectedService?.service_type_id],
+    queryFn: () => voluntariado.scheduleTemplates.porTipo(selectedService!.service_type_id),
+    enabled: !!selectedService?.service_type_id,
+  });
+  const [aplicando, setAplicando] = useState(false);
+  const aplicarTemplate = async (templateId: string, nome: string) => {
+    setAplicando(true);
+    try {
+      const r: any = await voluntariado.scheduleTemplates.apply(templateId, selectedServiceId);
+      qc.invalidateQueries({ queryKey: ['vol-escala-cobertura', selectedServiceId] });
+      qc.invalidateQueries({ queryKey: ['vol', 'schedules', selectedServiceId] });
+      qc.invalidateQueries({ queryKey: ['vol', 'montagem-contexto', selectedServiceId] });
+      const pulados = r?.pulados || [];
+      toast.success(`${nome}: ${r?.vagas || 0} vagas · ${r?.preenchidas || 0} já preenchidas`);
+      // ⚠️ Quem o template QUERIA escalar mas não pôde (marcou ausência) é
+      // DECLARADO. Sumir com essa pessoa em silêncio deixaria a vaga aberta
+      // sem ninguém entender por que a "pessoa de sempre" não entrou.
+      if (pulados.length) {
+        toast.warning(
+          `${pulados.length} pessoa(s) do template não entraram: ${pulados.slice(0, 3).map((p: any) => `${p.nome} (${p.motivo})`).join(' · ')}${pulados.length > 3 ? '…' : ''}`,
+          { duration: 12000 },
+        );
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao aplicar o template');
+    } finally { setAplicando(false); }
+  };
 
   // Drop numa equipe: (a) voluntário vindo do pool → cria a escala; (b) voluntário
   // vindo de outra equipe → move (atualiza a equipe).
@@ -121,20 +188,54 @@ export default function VolScheduleBuilder() {
         </Button>
       </div>
 
-      {/* Service selector */}
+      {/* Seleção do culto em DOIS passos: dia → horário.
+          Antes era uma lista plana dos 10 próximos cultos, em que os quatro
+          horários de domingo apareciam como quatro linhas soltas — e o rótulo
+          nem mostrava a hora ("Domingo 08:30 — domingo, 17/08"), então
+          distinguir um do outro dependia do nome do tipo. Escolher o DIA e
+          depois o HORÁRIO é como a pessoa pensa. */}
       <Card>
-        <CardContent className="p-4">
-          <Label className="mb-2 block text-sm">Selecione o culto</Label>
-          <Select value={selectedServiceId} onValueChange={setSelectedServiceId}>
-            <SelectTrigger><SelectValue placeholder="Escolha um culto para montar a escala" /></SelectTrigger>
-            <SelectContent>
-              {services.map(svc => (
-                <SelectItem key={svc.id} value={svc.id}>
-                  {svc.name} — {format(new Date(svc.scheduled_at), "EEEE, dd/MM", { locale: ptBR })}
-                </SelectItem>
+        <CardContent className="p-4 space-y-3">
+          <div>
+            <Label className="mb-2 block text-sm">1 · Dia do culto</Label>
+            <div className="flex flex-wrap gap-2">
+              {dias.map(d => (
+                <button
+                  key={d.chave}
+                  onClick={() => setDiaSel(d.chave)}
+                  className={`rounded-lg border px-3 py-2 text-left transition ${d.chave === diaSel ? 'border-[#00B39D] bg-[#00B39D]/5' : 'border-border hover:bg-muted/50'}`}
+                >
+                  <span className="block text-sm font-medium capitalize">{d.rotulo}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {d.servicos.length === 1 ? d.servicos[0].name : `${d.servicos.length} horários`}
+                  </span>
+                </button>
               ))}
-            </SelectContent>
-          </Select>
+              {dias.length === 0 && !servicesLoading && (
+                <p className="text-sm text-muted-foreground">Nenhum culto próximo. Use "Criar Culto".</p>
+              )}
+            </div>
+          </div>
+
+          {/* O passo 2 só existe quando o dia TEM mais de um horário (domingo).
+              Mostrar um seletor de um item só seria clique sem escolha. */}
+          {diaAtual && diaAtual.servicos.length > 1 && (
+            <div>
+              <Label className="mb-2 block text-sm">2 · Horário</Label>
+              <div className="flex flex-wrap gap-2">
+                {diaAtual.servicos.map(svc => (
+                  <button
+                    key={svc.id}
+                    onClick={() => setSelectedServiceId(svc.id)}
+                    className={`rounded-lg border px-3 py-2 transition ${svc.id === selectedServiceId ? 'border-[#00B39D] bg-[#00B39D]/5' : 'border-border hover:bg-muted/50'}`}
+                  >
+                    <span className="block text-sm font-medium">{format(new Date(svc.scheduled_at), 'HH:mm')}</span>
+                    <span className="block text-xs text-muted-foreground">{svc.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -157,6 +258,30 @@ export default function VolScheduleBuilder() {
               <Copy className="h-4 w-4" /> Copiar de Outro Culto
             </Button>
           </div>
+
+          {/* Template do tipo de culto · atalho pra montar a base da escala.
+              Só aparece quando o culto AINDA não tem composição definida — com
+              a escala já montada, o botão viraria convite a reaplicar. */}
+          {cobertura.alvo === 0 && sugestoes.length > 0 && (
+            <Card className="border-[#00B39D]/40 bg-[#00B39D]/5">
+              <CardContent className="p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">Este culto ainda não tem escala montada</p>
+                  <p className="text-xs text-muted-foreground">
+                    O template traz as áreas, o número de vagas e já escala quem costuma servir em cada uma.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {sugestoes.map((t: any) => (
+                    <Button key={t.id} size="sm" className="gap-1.5" disabled={aplicando}
+                      onClick={() => aplicarTemplate(t.id, t.nome)}>
+                      <Wand2 className="h-4 w-4" /> Aplicar "{t.nome}"
+                    </Button>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Cobertura da escala (só quando um template foi aplicado ao culto) */}
           {cobertura.alvo > 0 && (
@@ -281,22 +406,43 @@ export default function VolScheduleBuilder() {
 function PoolSection({ pool, contexto, teams, onAdd }: {
   pool: PoolVol[]; contexto: any; teams: VolTeam[]; onAdd: (v: any) => void;
 }) {
-  const [open, setOpen] = useState(true);
-  const [hideUnavailable, setHideUnavailable] = useState(true);
+  // ⚠️ NASCE RECOLHIDO e é BUSCA-PRIMEIRO (13/08/2026).
+  //
+  // Reclamação do Matheus, com print: "essa lista de voluntários disponíveis
+  // tá infinita, melhore isso, talvez nem precise aparecer dessa forma". Eram
+  // **860 cards** em ordem alfabética, empurrando a escala real pra fora da
+  // tela — e o topo da lista era ". f" e "ADM CBRio", que nem são pessoas.
+  //
+  // Uma lista de 860 não é uma lista: é um despejo. Ninguém rola até "Vitor".
+  // Agora o painel só RENDERIZA depois de um recorte — busca por nome ou uma
+  // área escolhida — e o caminho normal de escalar passou a ser o botão
+  // "Adicionar" dentro do card da própria área, que já chega filtrado.
+  const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [teamFiltro, setTeamFiltro] = useState('');
+  const TETO = 60;
 
-  const list = useMemo(() => {
-    let l = pool;
-    if (hideUnavailable) l = l.filter((v: PoolVol) => !v.indisponivel);
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      l = l.filter((v: PoolVol) => v.full_name.toLowerCase().includes(q));
-    }
-    return l;
-  }, [pool, hideUnavailable, search]);
+  // ⚠️ Indisponível NÃO aparece, e não há mais caixa pra desmarcar.
+  // Decisão do Matheus: "quem não estiver disponível não vai aparecer para o
+  // supervisor ou líder escalar". Antes era um checkbox marcado por padrão —
+  // ou seja, uma regra que qualquer clique desfazia. Quem precisa escalar
+  // mesmo assim usa o "Adicionar" da área, que pede confirmação explícita.
+  const disponiveis = useMemo(() => pool.filter((v: PoolVol) => !v.indisponivel), [pool]);
+
+  const { list, truncados, temRecorte } = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const recorte = q.length >= 2 || !!teamFiltro;
+    if (!recorte) return { list: [] as PoolVol[], truncados: 0, temRecorte: false };
+    let l = disponiveis;
+    if (teamFiltro) l = l.filter((v: PoolVol) => (v.team_members || []).some((m: any) => m.team_id === teamFiltro));
+    if (q) l = l.filter((v: PoolVol) => (v.full_name || '').toLowerCase().includes(q));
+    // Teto DECLARADO — cortar em silêncio faria a pessoa concluir que o
+    // voluntário não existe e cadastrar de novo.
+    return { list: l.slice(0, TETO), truncados: Math.max(0, l.length - TETO), temRecorte: true };
+  }, [disponiveis, search, teamFiltro]);
 
   if (!contexto) return null;
-  const totalDisponiveis = pool.filter((v: PoolVol) => !v.indisponivel).length;
+  const totalDisponiveis = disponiveis.length;
   const totalIndisponiveis = pool.length - totalDisponiveis;
 
   const handleDragStart = (e: React.DragEvent, v: PoolVol) => {
@@ -309,44 +455,51 @@ function PoolSection({ pool, contexto, teams, onAdd }: {
   };
 
   return (
-    <Card className={hideUnavailable ? '' : 'border-red-200'}>
+    <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm flex flex-wrap items-center justify-between gap-2">
           <span className="flex items-center gap-2 cursor-pointer select-none" onClick={() => setOpen(!open)}>
             {open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
-            Voluntários disponíveis
-            <Badge variant="outline" className="text-xs">{list.length}</Badge>
+            Buscar voluntário para arrastar
+            <Badge variant="outline" className="text-xs">{totalDisponiveis} disponíveis</Badge>
           </span>
-          <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={hideUnavailable}
-              onChange={e => setHideUnavailable(e.target.checked)}
-              className="accent-[#00B39D]"
-            />
-            Ocultar indisponíveis
-            {totalIndisponiveis > 0 && (
-              <span className="text-xs text-red-600">({totalIndisponiveis} indisponível(is))</span>
-            )}
-          </label>
+          {totalIndisponiveis > 0 && (
+            <span className="text-xs text-muted-foreground">
+              {totalIndisponiveis} fora da lista por indisponibilidade
+            </span>
+          )}
         </CardTitle>
       </CardHeader>
       {open && (
         <CardContent className="pt-0 space-y-3">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Buscar por nome..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="pl-8 h-9 text-sm"
-            />
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Buscar por nome (2 letras)..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                className="pl-8 h-9 text-sm"
+              />
+            </div>
+            <select
+              value={teamFiltro}
+              onChange={e => setTeamFiltro(e.target.value)}
+              className="h-9 rounded-md border bg-background px-2 text-sm sm:w-56"
+            >
+              <option value="">Ou escolha uma área…</option>
+              {teams.map((t: VolTeam) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
           </div>
-          {list.length === 0 ? (
+          {!temRecorte ? (
+            <p className="text-xs text-muted-foreground text-center py-3">
+              Digite um nome ou escolha uma área. São {totalDisponiveis} voluntários disponíveis — listar todos de uma vez não ajuda a achar ninguém.
+            </p>
+          ) : list.length === 0 ? (
             <p className="text-xs text-muted-foreground text-center py-3">
               {pool.length === 0
                 ? 'Nenhum voluntário sincronizado. Use "Sincronizar" no modal de adicionar.'
-                : 'Todos os voluntários já estão escalados ou indisponíveis neste dia.'}
+                : 'Ninguém disponível com esse recorte.'}
             </p>
           ) : (
             <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -561,8 +714,12 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId
   const [selectedTeamId, setSelectedTeamId] = useState(initialTeamId || '');
   const [searchQuery, setSearchQuery] = useState('');
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
-  const [hideUnavailable, setHideUnavailable] = useState(true);
-  // Quando o voluntário serve em mais de uma equipe e não há filtro de equipe,
+  // ⚠️ Sem toggle de "ocultar indisponíveis": indisponível NÃO aparece, ponto.
+  // Decisão do Matheus (13/08): "quem não estiver disponível não vai aparecer
+  // para o supervisor ou líder escalar". Um checkbox marcado por padrão é uma
+  // regra que um clique desfaz — e o servidor agora recusa o insert de qualquer
+  // jeito (409 `indisponivel`), então mostrar o nome só produziria erro.
+  // Quando a pessoa serve em mais de uma equipe e não há filtro de equipe,
   // guarda qual vínculo (equipe/função) o coordenador escolheu por pessoa.
   const [choice, setChoice] = useState<Record<string, number>>({});
 
@@ -580,7 +737,7 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId
   const filtered = useMemo(() => {
     let list: any[] = pool.filter((v: any) => !alreadyScheduledIds.has(v.id) &&
       !alreadyScheduledIds.has(v.planning_center_id));
-    if (hideUnavailable) list = list.filter((v: any) => !v.indisponivel);
+    list = list.filter((v: any) => !v.indisponivel);
 
     if (selectedTeamId && selectedTeamId !== 'all') {
       list = list.filter((v: any) =>
@@ -593,7 +750,7 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId
         v.email?.toLowerCase().includes(q));
     }
     return list;
-  }, [pool, selectedTeamId, searchQuery, alreadyScheduledIds, hideUnavailable]);
+  }, [pool, selectedTeamId, searchQuery, alreadyScheduledIds]);
 
   const handleAdd = (vol: any) => {
     // Escolhe o vínculo (equipe/função) a usar: (1) se há filtro de equipe, o
@@ -676,18 +833,11 @@ function AddVolunteerDialog({ serviceId, teams, existingSchedules, initialTeamId
               className="pl-8 h-9 text-sm"
             />
           </div>
-          <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={hideUnavailable}
-              onChange={e => setHideUnavailable(e.target.checked)}
-              className="accent-[#00B39D]"
-            />
-            Ocultar indisponíveis
-            {countIndisponiveis > 0 && (
-              <span className="text-xs text-red-600">({countIndisponiveis})</span>
-            )}
-          </label>
+          {countIndisponiveis > 0 && (
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              {countIndisponiveis} fora da lista (indisponíveis)
+            </span>
+          )}
         </div>
 
         {/* List */}
@@ -793,7 +943,20 @@ function CopyScheduleDialog({ targetServiceId, services, onClose }: {
   const handleCopy = () => {
     if (!sourceId) return toast.error('Selecione o culto de origem');
     copySchedule.mutate({ from_service_id: sourceId, to_service_id: targetServiceId }, {
-      onSuccess: (data: any) => { toast.success(`${data.copied} escala(s) copiada(s)`); onClose(); },
+      onSuccess: (data: any) => {
+        toast.success(`${data.copied} escala(s) copiada(s)`);
+        // Quem ficou de fora por ter avisado que não pode neste culto é
+        // DECLARADO — senão a coordenação copia a escala e não percebe que
+        // faltou gente até o domingo.
+        const pulados = data.pulados || [];
+        if (pulados.length) {
+          toast.warning(
+            `${pulados.length} não copiado(s) por indisponibilidade: ${pulados.slice(0, 4).join(', ')}${pulados.length > 4 ? '…' : ''}`,
+            { duration: 12000 },
+          );
+        }
+        onClose();
+      },
       onError: (err: any) => toast.error(err.message || 'Erro ao copiar'),
     });
   };
