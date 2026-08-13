@@ -5,6 +5,7 @@ import { hrefConversa } from '@/lib/conversas';
 import {
   Loader2, RefreshCw, TrendingUp, TrendingDown, Users, Heart, Wallet,
   UserCheck, UserX, AlertTriangle, Phone, Mail, ExternalLink, ArrowUp, ArrowDown,
+  Trophy, X,
 } from 'lucide-react';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -39,6 +40,7 @@ export default function Generosidade() {
       <div className="flex gap-1 border-b border-border overflow-x-auto">
         {[
           { k: 'overview',  label: 'Visão geral',     icon: TrendingUp },
+          { k: 'topo',      label: 'Topo contribuintes', icon: Trophy },
           { k: 'anonimos',  label: 'Doadores anônimos', icon: UserX },
           { k: 'pararam',   label: 'Pararam de doar',  icon: AlertTriangle },
         ].map(t => (
@@ -55,6 +57,7 @@ export default function Generosidade() {
       </div>
 
       {tab === 'overview' && <AbaOverview />}
+      {tab === 'topo'     && <AbaTopo />}
       {tab === 'anonimos' && <AbaAnonimos />}
       {tab === 'pararam'  && <AbaPararam />}
     </div>
@@ -290,6 +293,190 @@ function AbaAnonimos() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+const TIPO_LABEL = { dizimo: 'Dízimo', oferta: 'Oferta', campanha: 'Campanha', outro: 'Outra', doacao_pix: 'PIX' };
+
+function AbaTopo() {
+  const [periodo, setPeriodo] = useState('12m');
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selecionado, setSelecionado] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    financeiro.generosidade.top(periodo)
+      .then(r => setItems(Array.isArray(r?.top) ? r.top : []))
+      .finally(() => setLoading(false));
+  }, [periodo]);
+
+  return (
+    <>
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
+            <div>
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <Trophy className="h-4 w-4 text-amber-500" />
+                Topo contribuintes
+              </h3>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Membros que mais contribuíram, por valor total no período. Considera as
+                contribuições cadastradas (<code>mem_contribuicoes</code>) — doações via PIX
+                ainda não identificadas ficam na aba "Doadores anônimos".
+              </p>
+            </div>
+            <div className="flex rounded-lg border border-border overflow-hidden">
+              {[['12m', 'Últimos 12 meses'], ['tudo', 'Todo o período']].map(([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => setPeriodo(k)}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    periodo === k ? 'bg-primary text-white' : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="py-8 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" /></div>
+          ) : items.length === 0 ? (
+            <div className="py-10 text-center text-sm text-muted-foreground">
+              Nenhuma contribuição cadastrada no período
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-xs uppercase text-muted-foreground">
+                    <th className="text-left py-2 px-2 font-medium">#</th>
+                    <th className="text-left py-2 px-2 font-medium">Membro</th>
+                    <th className="text-right py-2 px-2 font-medium">Doações</th>
+                    <th className="text-right py-2 px-2 font-medium">Total</th>
+                    <th className="text-left py-2 px-2 font-medium">Última</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((d, i) => (
+                    <tr
+                      key={d.membro_id}
+                      onClick={() => setSelecionado(d)}
+                      title="Ver histórico de contribuições"
+                      className="border-b border-border/50 hover:bg-muted/30 cursor-pointer"
+                    >
+                      <td className="py-2 px-2 text-muted-foreground tabular-nums">{i + 1}</td>
+                      <td className="py-2 px-2 font-medium">{d.nome || '—'}</td>
+                      <td className="py-2 px-2 text-right tabular-nums">{d.qtd_doacoes}</td>
+                      <td className="py-2 px-2 text-right tabular-nums font-semibold">{fmtMoney(d.total)}</td>
+                      <td className="py-2 px-2 text-xs">{fmtDate(d.ultima_doacao)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <AnimatePresence>
+        {selecionado && (
+          <HistoricoDialog contribuinte={selecionado} periodo={periodo} onClose={() => setSelecionado(null)} />
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
+function HistoricoDialog({ contribuinte, periodo, onClose }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    financeiro.generosidade.historico(contribuinte.membro_id, periodo)
+      .then(r => setData(r || null))
+      .finally(() => setLoading(false));
+  }, [contribuinte.membro_id, periodo]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }}
+        className="bg-card rounded-lg shadow-xl w-full max-w-2xl p-5 max-h-[85vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <Badge variant="outline" className="text-[10px] mb-1">{contribuinte.nome || 'Membro'}</Badge>
+            <h3 className="text-base font-bold">Histórico de contribuições</h3>
+            <p className="text-[11px] text-muted-foreground">
+              {periodo === '12m' ? 'Últimos 12 meses' : 'Todo o período'}
+            </p>
+          </div>
+          <button onClick={onClose}><X className="h-5 w-5" /></button>
+        </div>
+
+        {loading ? (
+          <div className="py-8 text-center"><Loader2 className="h-5 w-5 animate-spin mx-auto text-muted-foreground" /></div>
+        ) : !data || (data.contribuicoes || []).length === 0 ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">Sem contribuições no período</div>
+        ) : (
+          <>
+            <div className="grid grid-cols-4 gap-2 mb-4">
+              <div className="text-center bg-emerald-500/10 border border-emerald-500/30 rounded p-2">
+                <div className="text-[9px] uppercase text-emerald-700 dark:text-emerald-400">Total</div>
+                <div className="text-sm font-bold tabular-nums">{fmtMoney(data.total)}</div>
+              </div>
+              <div className="text-center border border-border bg-muted/20 rounded p-2">
+                <div className="text-[9px] uppercase text-muted-foreground">Doações</div>
+                <div className="text-sm font-bold tabular-nums">{data.qtd_doacoes}</div>
+              </div>
+              <div className="text-center border border-border bg-muted/20 rounded p-2">
+                <div className="text-[9px] uppercase text-muted-foreground">Primeira</div>
+                <div className="text-xs font-bold">{fmtDate(data.primeira_doacao)}</div>
+              </div>
+              <div className="text-center border border-border bg-muted/20 rounded p-2">
+                <div className="text-[9px] uppercase text-muted-foreground">Última</div>
+                <div className="text-xs font-bold">{fmtDate(data.ultima_doacao)}</div>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-xs uppercase text-muted-foreground">
+                    <th className="text-left py-2 px-2 font-medium">Data</th>
+                    <th className="text-right py-2 px-2 font-medium">Valor</th>
+                    <th className="text-left py-2 px-2 font-medium">Tipo</th>
+                    <th className="text-left py-2 px-2 font-medium">Forma</th>
+                    <th className="text-left py-2 px-2 font-medium">Campanha</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(data.contribuicoes || []).map(c => (
+                    <tr key={c.id} className="border-b border-border/50">
+                      <td className="py-2 px-2 text-xs">{fmtDate(c.data)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums font-semibold">{fmtMoney(c.valor)}</td>
+                      <td className="py-2 px-2 text-xs">{TIPO_LABEL[c.tipo] || c.tipo || '—'}</td>
+                      <td className="py-2 px-2 text-xs">{c.forma_pagamento || '—'}</td>
+                      <td className="py-2 px-2 text-xs">{c.campanha || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </motion.div>
+    </motion.div>
   );
 }
 

@@ -519,6 +519,88 @@ router.get('/generosidade/pararam', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Topo contribuintes · ranking dos membros que mais contribuíram.
+// Fonte: vw_doacoes_unificada com membro_id não-nulo (na prática mem_contribuicoes —
+// os braços fin_transacoes/fin_pix_detalhe têm membro_id NULL). Empréstimo fica fora
+// por construção: a view só agrega fin_transacoes com plano 3.01% (3.02.06 = empréstimo).
+// Agregação em JS sobre fetchAllRows (cap 1000 do PostgREST subcontaria o total).
+router.get('/generosidade/top', async (req, res) => {
+  try {
+    const periodo = req.query.periodo === 'tudo' ? 'tudo' : '12m';
+    const corte = new Date();
+    if (periodo === '12m') corte.setFullYear(corte.getFullYear() - 1);
+
+    const linhas = await fetchAllRows(() => {
+      let q = supabase
+        .from('vw_doacoes_unificada')
+        .select('membro_id, data, valor, tipo');
+      if (periodo === '12m') q = q.gte('data', corte.toISOString().slice(0, 10));
+      return q.not('membro_id', 'is', null);
+    }, { max: 20000 });
+
+    const porMembro = new Map();
+    for (const l of linhas) {
+      if (!l.membro_id) continue;
+      const acc = porMembro.get(l.membro_id) || {
+        membro_id: l.membro_id, qtd_doacoes: 0, total: 0,
+        primeira_doacao: l.data, ultima_doacao: l.data, nome: null,
+      };
+      acc.qtd_doacoes += 1;
+      acc.total += Number(l.valor || 0);
+      if (l.data < acc.primeira_doacao) acc.primeira_doacao = l.data;
+      if (l.data > acc.ultima_doacao) acc.ultima_doacao = l.data;
+      porMembro.set(l.membro_id, acc);
+    }
+
+    const top = Array.from(porMembro.values()).sort((a, b) => b.total - a.total).slice(0, 20);
+
+    if (top.length > 0) {
+      const { data: membros } = await supabase
+        .from('mem_membros')
+        .select('id, nome')
+        .in('id', top.map(m => m.membro_id))
+        .is('deleted_at', null);
+      const nomes = new Map((membros || []).map(mm => [mm.id, mm.nome]));
+      for (const m of top) m.nome = nomes.get(m.membro_id) || null;
+    }
+
+    res.json({ periodo, top });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Histórico de contribuições de um membro (mesmo período do ranking).
+router.get('/generosidade/top/:membroId/historico', async (req, res) => {
+  try {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.membroId)) {
+      return res.status(400).json({ error: 'membro_id inválido' });
+    }
+    const periodo = req.query.periodo === 'tudo' ? 'tudo' : '12m';
+    const corte = new Date();
+    if (periodo === '12m') corte.setFullYear(corte.getFullYear() - 1);
+
+    const linhas = await fetchAllRows(() => {
+      let q = supabase
+        .from('vw_doacoes_unificada')
+        .select('id, data, valor, tipo, forma_pagamento, campanha, origem, fonte')
+        .eq('membro_id', req.params.membroId)
+        .order('data', { ascending: false });
+      if (periodo === '12m') q = q.gte('data', corte.toISOString().slice(0, 10));
+      return q;
+    }, { max: 10000 });
+
+    const total = linhas.reduce((s, l) => s + Number(l.valor || 0), 0);
+    res.json({
+      periodo,
+      membro_id: req.params.membroId,
+      total,
+      qtd_doacoes: linhas.length,
+      primeira_doacao: linhas.length ? linhas[linhas.length - 1].data : null,
+      ultima_doacao: linhas.length ? linhas[0].data : null,
+      contribuicoes: linhas,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // CONCILIACAO INTELIGENTE · fila + stats + bulk approve + reclassificar
 // ══════════════════════════════════════════════════════════════════════════
