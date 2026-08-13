@@ -2012,6 +2012,25 @@ saiu e o sistema não sabia dizer se entregou/leu. DOIS furos consertados:
   cronAlcancavel/rpcsCliente falham aleatoriamente e passam isolados — o
   veredito é o CI (runner limpo).
 
+### Contexto completo na thread · citações + automáticas (2026-08-13 · migration `20260813210000` · caso da Júlia parte 2)
+
+Ela respondeu "Esse aqui" + "Obrigada 😊" e o Marcos não entendeu — a tela
+escondia o contexto DUAS vezes:
+
+- **Citação (reply)**: ela citou o template com o nome do grupo e o webhook
+  descartava `m.context`. Agora todo inbound grava `reply_to_wa_id` (UPDATE
+  isolado best-effort — coluna nova NUNCA entra no INSERT da mensagem) e a
+  thread resolve o trecho citado pelo wamid — **inclusive quando o alvo é um
+  template da fila**. UI: bloco de citação estilo WhatsApp no balão.
+- **Automáticas do sistema na thread**: template da fila (confirmação de
+  inscrição, aprovação de grupo…) não aparecia na conversa. `GET
+  /wa-inbox/conversas/:id/mensagens` intercala `whatsapp_envios` do telefone
+  (últimos 60 · match pelos 8 últimos dígitos · corpo legível = `exemplo` de
+  `wa_templates` com os `{{n}}` preenchidos pelos params) como mensagens
+  sintéticas `tipo='automatica'` com recibos. ⚠️ **Merge SÓ NA LEITURA** —
+  nada é gravado; registrar fila em wa_mensagens criaria conversa no inbox
+  pra CADA disparo em massa (não fazer).
+
 ⚠️ Ficam da revisão (médios · ainda abertos): statuses órfãos write-only +
 **Realtime sem filtro por área —
 decisão explícita do Marcos (12/08) de NÃO mexer por ora** · `nao_lidas`

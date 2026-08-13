@@ -152,7 +152,7 @@ function ehNumeroBot(pnid) {
 // QUALQUER número da WABA (a pesquisa é da CONVERSA, não do bot); por isso vive
 // aqui fora, usada pelo fluxo do bot (processarMensagem) E pelo multi-número
 // (inboxDireto) — a régua é UMA. Devolve true quando assumiu a mensagem.
-async function tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid = null }) {
+async function tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid = null, replyToWaId = null }) {
   const { data: convP } = await supabase.from('wa_conversas')
     .select('id, pesquisa_estado, protocolo').eq('telefone', telefone)
     .eq('pesquisa_estado', 'aguardando').is('deleted_at', null).maybeSingle();
@@ -176,7 +176,7 @@ async function tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid = nul
   } else {
     // não foi 0-5 → encerra a espera e deixa a mensagem no inbox pro time
     await supabase.from('wa_conversas').update({ pesquisa_estado: 'ignorada' }).eq('id', convP.id);
-    await waInbox.registrarInbound({ telefone, texto, messageId, tipo: 'text', phoneNumberId: pnid }).catch(() => {});
+    await waInbox.registrarInbound({ telefone, texto, messageId, tipo: 'text', phoneNumberId: pnid, replyToWaId }).catch(() => {});
   }
   return true;
 }
@@ -193,7 +193,7 @@ async function inboxDireto(m, pnid) {
     || m.interactive?.list_reply?.title
     || '').slice(0, 2000);
   if (m.type === 'text') {
-    const assumiu = await tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid });
+    const assumiu = await tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid, replyToWaId: m.context?.id || null });
     if (assumiu) return;
   }
   await require('../services/waInbox').registrarInbound({
@@ -201,6 +201,7 @@ async function inboxDireto(m, pnid) {
     tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
     mediaId: m.image?.id || m.audio?.id || m.document?.id,
     phoneNumberId: pnid,
+    replyToWaId: m.context?.id || null,
   });
 }
 
@@ -393,7 +394,7 @@ async function processarMensagem(m, cfg, pnid = null) {
   // ── PESQUISA DE SATISFAÇÃO ── conversa finalizada aguardando a nota (0-5).
   // Captura a resposta como avaliação e agradece (não reabre o ticket).
   if (m.type === 'text') {
-    const assumiu = await tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid });
+    const assumiu = await tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid, replyToWaId: m.context?.id || null });
     if (assumiu) return;
   }
 
@@ -414,6 +415,7 @@ async function processarMensagem(m, cfg, pnid = null) {
         tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
         mediaId: m.image?.id || m.audio?.id || m.document?.id,
         phoneNumberId: pnid,
+        replyToWaId: m.context?.id || null,
       }).catch(e => console.error('[whatsapp webhook] inbox assumida:', e.message));
       return; // não aciona bot nem resposta institucional
     }
@@ -446,6 +448,7 @@ async function processarMensagem(m, cfg, pnid = null) {
       tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
       mediaId: m.image?.id || m.audio?.id || m.document?.id,
       phoneNumberId: pnid,
+      replyToWaId: m.context?.id || null,
     }).catch(e => console.error('[whatsapp webhook] inbox in:', e.message));
     if (m.type !== 'text') return; // mídia: já no inbox; não custa LLM institucional
 

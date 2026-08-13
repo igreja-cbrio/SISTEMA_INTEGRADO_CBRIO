@@ -233,13 +233,23 @@ async function limparMidiasAntigas({ limite = 400 } = {}) {
 
 // Mensagem que CHEGOU (do contato). Marca não-lida, reabre e abre a janela de 24h.
 // Se vier `mediaId` (imagem/documento/áudio), baixa da Meta e guarda a URL.
-async function registrarInbound({ telefone, texto, tipo = 'text', messageId, mediaId, phoneNumberId = null }) {
+async function registrarInbound({ telefone, texto, tipo = 'text', messageId, mediaId, phoneNumberId = null, replyToWaId = null }) {
   const c = await acharOuCriarConversa(telefone, phoneNumberId);
   if (!c) return;
   const ins = await supabase.from('wa_mensagens').insert({
     conversa_id: c.id, direcao: 'in', tipo, texto: texto || null, wa_message_id: messageId || null,
   }).select('id').maybeSingle();
   if (ins.error) return; // provável reentrega (wa_message_id único) → não incrementa
+  // Citação (caso da Júlia: "Esse aqui" respondendo o template com o nome do
+  // grupo). UPDATE isolado best-effort — a coluna pode não existir ainda
+  // (migration 20260813210000); incluí-la no INSERT derrubaria a mensagem.
+  if (replyToWaId && ins.data?.id) {
+    try {
+      const { error: eRep } = await supabase.from('wa_mensagens')
+        .update({ reply_to_wa_id: String(replyToWaId) }).eq('id', ins.data.id);
+      if (eRep && eRep.code !== '42703') console.warn('[waInbox] reply_to:', eRep.message);
+    } catch { /* best-effort */ }
+  }
   if (mediaId && ins.data?.id && ['image', 'document', 'audio'].includes(tipo)) {
     const media = await wpp.baixarMedia(mediaId);
     if (media?.buffer) {
