@@ -600,6 +600,7 @@ async function cultosAutoCreate(req, res) {
 
   const created = [];
   const skipped = [];
+  const erros = [];
 
   for (const ws of weekStarts) {
     for (const t of types || []) {
@@ -610,13 +611,17 @@ async function cultosAutoCreate(req, res) {
       const dFmt = dayDate.toLocaleDateString('pt-BR');
       const nome = `${t.name} — ${dFmt}`;
 
-      // Idempotência: verifica antes de inserir (não dependemos do índice único existir)
+      // Idempotência pela MESMA chave do índice único: (service_type_id, data) —
+      // lei de 2026-08-04 (guarda em chave diferente do índice deixa o INSERT
+      // estourar). Checar também a `hora` escondia culto EXISTENTE com hora
+      // divergente (snapshot cultos.hora ≠ recurrence_time do tipo — o caso real
+      // da virada dos cultos de domingo · docs/cultos-domingo/) → o insert
+      // violava o UNIQUE e a falha sumia no meio dos "skipped".
       const { data: existente } = await supabase
         .from('cultos')
         .select('id')
         .eq('service_type_id', t.id)
         .eq('data', dataStr)
-        .eq('hora', horaStr)
         .maybeSingle();
 
       if (existente) { skipped.push({ tipo: t.name, data: dataStr, hora: horaStr }); continue; }
@@ -636,12 +641,18 @@ async function cultosAutoCreate(req, res) {
         })
         .select('id, nome, data, hora')
         .single();
-      if (insErr) { skipped.push({ tipo: t.name, data: dataStr, hora: horaStr, error: insErr.message }); continue; }
+      // Falha AUDÍVEL: insert que erra não se mistura com skip normal — vai em
+      // lista própria + log (cron sem leitor de resposta ainda deixa rastro).
+      if (insErr) {
+        console.error('[kpis/cultos/auto-create] insert falhou', t.name, dataStr, insErr.message);
+        erros.push({ tipo: t.name, data: dataStr, hora: horaStr, error: insErr.message });
+        continue;
+      }
       created.push(novo);
     }
   }
 
-  res.json({ weeks, created: created.length, skipped: skipped.length, items: created, skippedItems: skipped });
+  res.json({ weeks, created: created.length, skipped: skipped.length, erros: erros.length, items: created, skippedItems: skipped, erroItems: erros });
 }
 router.get('/cultos/auto-create', cultosAutoCreate);
 router.post('/cultos/auto-create', cultosAutoCreate);
