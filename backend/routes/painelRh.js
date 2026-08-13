@@ -147,6 +147,36 @@ router.get('/eventos', async (req, res) => {
         categoria_cor: null,
       });
     }
+
+    // Extensão pro /inscricoes (Marcos, 13/08): a espinha de inscrições é
+    // tabela separada de `events` — sem isso, evento publicado ali (ex.:
+    // Celebra) nunca aparecia aqui. Interino até a unificação futura das
+    // duas tabelas/módulos; só "publicado" com data futura entra (é o mesmo
+    // gate que já expõe o formulário público, sem flag extra por enquanto).
+    try {
+      const { data: eventosInsc } = await supabase
+        .from('insc_eventos')
+        .select('id, nome, data, local')
+        .eq('status', 'publicado')
+        .gte('data', hoje)
+        .is('deleted_at', null)
+        .order('data')
+        .limit(10);
+      (eventosInsc || []).forEach((e) => {
+        if (lista.some((l) => l.data === e.data && l.nome === e.nome)) return;
+        lista.push({
+          id: `insc:${e.id}`,
+          nome: e.nome,
+          data: e.data,
+          local: e.local,
+          categoria: 'Inscrições',
+          categoria_cor: null,
+        });
+      });
+    } catch (err) {
+      console.error('[PainelRH eventos] insc_eventos', err.message);
+    }
+
     lista.sort((a, b) => a.data.localeCompare(b.data));
 
     res.json(lista.slice(0, 10));
