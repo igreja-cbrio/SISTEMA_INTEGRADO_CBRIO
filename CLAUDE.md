@@ -8407,3 +8407,101 @@ Testes: `src/test/pagamentosMercadoPago.test.ts` (34 · **sem rede**, `fetch`
 stubado — a lição é o flake dos testes do Asaas que batiam no sandbox de verdade
 e derrubavam o deploy). Mutation-testados: a guarda de `live_mode`, `authorized`
 não ser "pago", e a ausência de boleto nas capacidades.
+
+## ⚠️⚠️ Voluntariado · disponibilidade virou REGRA, e a montagem de escala foi refeita (2026-08-13 · SEM migration)
+
+Pedidos do Matheus, em sequência, sobre `/ministerial/voluntariado/montar-escala`:
+*"queria que a funcionalidade de montar escala fosse prática e fácil… ele escolhe
+o culto, se for domingo vai selecionar os horários, aí depois vão aparecer as
+áreas, já com as pessoas predefinidas automaticamente por conta do template… e a
+opção de adicionar voluntários nas áreas. **Deve aparecer apenas os que estão
+disponíveis. Quem não estiver disponível não vai aparecer para o supervisor ou
+líder escalar**."* E, com print: *"essa lista de voluntários disponíveis tá
+infinita, melhore isso, talvez nem precise aparecer dessa forma."*
+
+⚠️ **O modelo de dados JÁ TINHA tudo isso** — o que faltava era a tela usar:
+`vol_escala_template_tipos` (template ↔ tipo de culto) · `vol_escala_template_itens`
+(equipe × função × quantidade × `fixo`) · **`vol_escala_template_item_pessoas`**
+(pessoas-padrão, descrita no schema como "pré-preenchimento") ·
+`vol_escala_culto_itens` (snapshot aplicado) · `vol_availability`.
+
+### ⚠️⚠️ LEI · disponibilidade é REGRA DO SERVIDOR, não filtro de tela
+
+Era um **checkbox marcado por padrão e desmarcável**, e o servidor **nunca
+conferia nada**: dava pra escalar quem marcou "não posso" pelo drag-and-drop,
+pelo botão +, pelo auto-fill e pelo **aplicar-template**, sem aviso nenhum.
+Filtro que só existe no cliente não é regra — é sugestão.
+
+- **`POST /voluntariado/schedules` recusa** com **409 `indisponivel`**. A saída é
+  `forcar: true`, que é decisão consciente ("falei com ela, ela vai"), não clique
+  acidental.
+- **`apply` do template PULA quem está indisponível** e **DECLARA** os pulados na
+  resposta. O template diz "normalmente é a Ana nesta função"; a Ana dizendo "não
+  posso nesse domingo" é mais recente e mais específico. A vaga fica ABERTA (não
+  consome `quantidade`) — some da tela seria trocar um erro por outro.
+- ⚠️ **Falha de CONSULTA na checagem NÃO vira "está disponível"** — seria a guarda
+  falhando ABERTA no caminho que ela existe pra fechar. Sem conseguir conferir,
+  passa com log (travar a montagem por instabilidade de banco é pior), mas o log
+  existe pra isso aparecer.
+
+### ⚠️ A régua está em `backend/utils/volDisponibilidade.js` (pura, no gate)
+
+- **São DOIS modelos na MESMA tabela** e ler só um é o bug de 07/08/2026 (o
+  auto-fill lia só a faixa de datas, o painel lia só o por-culto — **o gerador
+  automático e a tela de escalar na mão discordavam sobre a mesma pessoa no mesmo
+  culto**): `service_id` preenchido = "não posso NESTE culto"; `service_id` NULL +
+  `unavailable_from/to` = "viajo de 20 a 31/08".
+- ⚠️ **`diaBRT` — nunca `toISOString().slice(0,10)`**: das 21h BRT o dia UTC já
+  virou, e o culto de **domingo 19:00** cairia na segunda, escapando de uma faixa
+  de férias que termina no domingo.
+- ⚠️ **A chave do índice é CADA identificador, não `profile_id || pc_person_id`** —
+  a linha de ausência admite só um dos dois lados (CHECK da 20260415100000), e a
+  chave `a || b` do auto-fill antigo não casava com metade dos registros.
+- ⚠️ **O modelo é NEGATIVO: "disponível" é o DEFAULT.** Não existe declaração
+  positiva neste sistema; exigir uma esvaziaria toda escala.
+- **`ehPessoaEscalavel`** tira conta de sistema da lista de escalar (o print
+  trazia `". f"` e `"ADM CBRio"` entre os 860). **Conservador de propósito**:
+  esconder voluntário REAL é pior que deixar passar uma conta de sistema — a
+  conta se ignora num relance, a pessoa ausente ninguém percebe.
+- ⚠️ **`contexto-montagem` não filtrava `arquivado = false`** (o `/volunteers-pool`
+  filtra): a tela oferecia voluntário ARQUIVADO pra escalar. Arquivar tem que
+  significar "sumiu de todo lugar onde se escolhe gente".
+
+### A tela
+
+- **Culto em 2 passos: dia → horário.** Era lista plana dos 10 próximos cultos, e
+  o rótulo nem mostrava a hora — os 4 horários de domingo eram 4 linhas soltas.
+  O passo 2 só aparece quando o dia tem mais de um horário.
+- **A lista de 860 morreu.** O pool nasce **recolhido** e é **busca-primeiro**:
+  só renderiza depois de um recorte (nome com 2+ letras ou área), com teto de 60
+  **declarado**. Uma lista de 860 não é lista, é despejo — ninguém rola até
+  "Vitor". O caminho normal de escalar passou a ser o "Adicionar" da própria área.
+- **Aplicar template a partir daqui**: `schedule-templates/por-tipo/:id` existia no
+  backend e **nenhum componente do front consumia**. Aplicar exigia sair da tela,
+  ir em Templates e achar o culto num diálogo — então a escala era montada do zero
+  toda semana. O banner só aparece com `cobertura.alvo === 0` (com escala montada,
+  o botão viraria convite a reaplicar).
+- **Sem toggle de "ocultar indisponíveis"** em lugar nenhum: o servidor recusa de
+  qualquer jeito, então mostrar o nome só produziria erro.
+
+⚠️ **O DnD e o pool anotado do PR #2444 (outra sessão, mesmo dia) foram
+PRESERVADOS** — `MIME_VOL`/`MIME_SCHED`, drop por equipe e as anotações
+`indisponivel`/`jaEscalado`/`escaladoEm` seguem intactos.
+
+⚠️⚠️ **ARMADILHA DE WORKTREE**: o checkout principal estava em
+`claude/bot-respostas-automaticas-off`, que **não contém** o #2444 — lá o
+`VolScheduleBuilder.tsx` tem 635 linhas e nenhum DnD, contra 898 na `main`.
+Editar o checkout principal teria destruído o trabalho da outra sessão sem
+nenhum conflito de merge aparecer. **Conferir a branch da worktree antes de
+editar arquivo que outra sessão tocou hoje.**
+
+Teste: `src/test/volDisponibilidade.test.ts` (34 casos, **no gate**), com 4
+mutantes RODADOS: ler só o por-culto → 2 vermelhos · só a faixa → 1 · chave
+`a || b` → 1 · dia em UTC → 2.
+
+⏳ **Não feito nesta leva** (registrado pra não parecer esquecimento): o builder
+ainda **não reusa `components/schedules/SchedulesByTeam.tsx`** (o card de área da
+escala montada, com iniciais e contadores ✓/✗/⏱) — ele recebe só
+`schedules: VolSchedule[]` e não tem noção de VAGA VAZIA nem callbacks de
+edição, então reusá-lo exige estender a interface. E não existe drop target por
+**vaga/posição** — o DnD move entre equipes e zera `position_id`.
