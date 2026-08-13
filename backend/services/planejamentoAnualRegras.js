@@ -181,27 +181,49 @@ function podeTransicionar(de, para) {
 }
 
 // ── Validações de entrada ────────────────────────────────────────────────
+// Envio da proposta. A seção 2 (informações para avaliação) é OBRIGATÓRIA
+// por inteiro — decisão do Yago (2026-08-13): são os campos que os quatro
+// diretores usam pra pontuar; proposta incompleta trava a avaliação cega.
+// Rascunho continua livre (só o ENVIO valida).
+const textoVazio = (v) => !v || !String(v).trim();
+
 function validarEnvio(proposta, ciclo) {
   const erros = [];
   if (!ciclo || !ciclo.submissao_aberta) {
     erros.push('A janela de submissão está fechada, então o envio está desabilitado.');
   }
-  if (!proposta.nome || !String(proposta.nome).trim()) erros.push('Nome é obrigatório.');
+  // ── Seção 1 · apresentação ──
+  if (textoVazio(proposta.nome)) erros.push('Nome da proposta é obrigatório.');
   if (!proposta.natureza) erros.push('Natureza é obrigatória.');
   if (!proposta.area) erros.push('Área é obrigatória.');
   if (!proposta.lider_id) erros.push('Líder responsável é obrigatório.');
   if (!proposta.data_inicio) erros.push('Mês de início é obrigatório.');
   if (!proposta.local_id) erros.push('Local é obrigatório.');
+
+  // ── Seção 2 · informações para avaliação (todas obrigatórias) ──
   if (proposta.alcance_pct == null) erros.push('Alcance estimado é obrigatório.');
+  if (!proposta.publico_considerado) erros.push('Público considerado é obrigatório.');
+  if (textoVazio(proposta.pertencimento)) erros.push('Pertencimento é obrigatório.');
+  if (textoVazio(proposta.visao_explique)) erros.push('Visão CBRio é obrigatória.');
+  if (textoVazio(proposta.impacto)) erros.push('Impacto é obrigatório.');
+  if (proposta.custo == null) erros.push('Custo total é obrigatório.');
+
   const valores = Array.isArray(proposta.valores) ? proposta.valores : [];
+  if (!valores.length) {
+    erros.push('Marque ao menos um dos cinco valores em Transformação.');
+  }
   valores.forEach((v) => {
-    if (!v || !v.justificativa || !String(v.justificativa).trim()) {
+    if (!v || textoVazio(v.justificativa)) {
       erros.push(`Justificativa é obrigatória para o valor marcado "${v && v.nome ? v.nome : '?'}".`);
     }
     if (v && v.nome && !VALORES_IGREJA.includes(v.nome)) {
       erros.push(`Valor desconhecido: "${v.nome}".`);
     }
   });
+
+  if (proposta.tem_arrecadacao && !(Number(proposta.arrecadacao_prevista) > 0)) {
+    erros.push('Informe o valor previsto de arrecadação.');
+  }
   return erros;
 }
 

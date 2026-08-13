@@ -498,16 +498,50 @@ describe('orçamento derivado (teste 10 do spec)', () => {
 
 // ── Teste 11 · janela de submissão fechada rejeita no backend ────────────
 describe('janela de submissão (teste 11 do spec)', () => {
+  // Proposta com a seção 2 completa (obrigatória no envio · decisão 2026-08-13)
+  const propCompleta = (o: Record<string, unknown> = {}) => prop({
+    pertencimento: 'Cultura de acolhimento da CBRio.',
+    visao_explique: 'Contribui para 5 anos, 5 igrejas, 50 mil vidas.',
+    impacto: 'Cativa quem vem pelo que a CBRio é.',
+    valores: [{ nome: 'Servir em comunidade', justificativa: 'Escala de voluntários da comunidade.' }],
+    ...o,
+  });
+
   it('envio com janela fechada é rejeitado na regra (não só na tela)', () => {
-    const erros = validarEnvio(prop(), { submissao_aberta: false });
+    const erros = validarEnvio(propCompleta(), { submissao_aberta: false });
     expect(erros.join(' ')).toContain('janela de submissão está fechada');
   });
 
   it('janela aberta + proposta completa passa; valor marcado sem justificativa reprova', () => {
-    const ok = prop({ valores: [{ nome: 'Servir em comunidade', justificativa: 'Escala de voluntários da comunidade.' }] });
-    expect(validarEnvio(ok, { submissao_aberta: true })).toEqual([]);
-    const semJust = prop({ valores: [{ nome: 'Servir em comunidade', justificativa: '' }] });
+    expect(validarEnvio(propCompleta(), { submissao_aberta: true })).toEqual([]);
+    const semJust = propCompleta({ valores: [{ nome: 'Servir em comunidade', justificativa: '' }] });
     expect(validarEnvio(semJust, { submissao_aberta: true }).join(' ')).toContain('Justificativa é obrigatória');
+  });
+
+  it('seção 2 é obrigatória por inteiro — cada campo vazio reprova o envio', () => {
+    const casos: Array<[string, Record<string, unknown>, string]> = [
+      ['pertencimento', { pertencimento: '' }, 'Pertencimento é obrigatório'],
+      ['visão', { visao_explique: '   ' }, 'Visão CBRio é obrigatória'],
+      ['impacto', { impacto: null }, 'Impacto é obrigatório'],
+      ['alcance', { alcance_pct: null }, 'Alcance estimado é obrigatório'],
+      ['custo', { custo: null }, 'Custo total é obrigatório'],
+      ['valores', { valores: [] }, 'Marque ao menos um dos cinco valores'],
+      ['arrecadação', { tem_arrecadacao: true, arrecadacao_prevista: 0 }, 'Informe o valor previsto de arrecadação'],
+    ];
+    for (const [campo, patch, esperado] of casos) {
+      const erros = validarEnvio(propCompleta(patch), { submissao_aberta: true });
+      expect(erros.join(' '), `campo ${campo}`).toContain(esperado);
+    }
+  });
+
+  it('custo zero é válido (rotina sem custo) · arrecadação informada passa', () => {
+    expect(validarEnvio(propCompleta({ custo: 0 }), { submissao_aberta: true })).toEqual([]);
+    expect(validarEnvio(propCompleta({ tem_arrecadacao: true, arrecadacao_prevista: 500 }), { submissao_aberta: true })).toEqual([]);
+  });
+
+  it('o label do primeiro campo é "Nome da proposta"', () => {
+    expect(validarEnvio(propCompleta({ nome: '' }), { submissao_aberta: true }).join(' '))
+      .toContain('Nome da proposta é obrigatório');
   });
 
   it('as 7 notas são obrigatórias, inteiras, de 1 a 5', () => {

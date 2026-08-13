@@ -98,6 +98,14 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
   const valores = constantes?.valores || [];
 
   const salvar = async (enviarDepois) => {
+    // O backend é a autoridade das obrigatoriedades (validarEnvio no service
+    // puro). A única checagem que SÓ o formulário consegue fazer é campo em
+    // branco × zero: o custo é persistido como numeric NOT NULL, então "vazio"
+    // vira 0 e o servidor não distingue mais.
+    if (enviarDepois && !form.retificacao && String(form.custo).trim() === '') {
+      toast.error('Informe o custo total (use 0 se não houver custo).');
+      return;
+    }
     setSalvando(true);
     try {
       const corpo = paraCorpo(form, ciclo.id);
@@ -154,7 +162,7 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
         <div style={{ display: 'grid', gap: 12 }}>
           <strong style={{ fontSize: 13, color: C.primary }}>Seção 1 · Apresentação</strong>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-            <div><span style={label}>Nome *</span><input style={input} value={form.nome} onChange={(e) => set('nome', e.target.value)} /></div>
+            <div><span style={label}>Nome da proposta *</span><input style={input} value={form.nome} onChange={(e) => set('nome', e.target.value)} /></div>
             <div>
               <span style={label}>Natureza *</span>
               <select style={input} value={form.natureza} onChange={(e) => set('natureza', e.target.value)}>
@@ -236,7 +244,11 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
         <div style={{ display: 'grid', gap: 12 }}>
           <div>
             <strong style={{ fontSize: 13, color: C.primary }}>Seção 2 · Informações para avaliação</strong>
-            <div style={hint}>Você informa e os quatro diretores pontuam cada critério de 1 a 5.</div>
+            <div style={hint}>
+              Você informa e os quatro diretores pontuam cada critério de 1 a 5.
+              <strong> Todos os campos desta seção são obrigatórios para enviar</strong> — sem eles a proposta
+              não tem como ser pontuada. O rascunho pode ser salvo incompleto.
+            </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
             <div>
@@ -244,17 +256,17 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
               <input style={input} type="number" min="0" max="100" value={form.alcance_pct} onChange={(e) => set('alcance_pct', e.target.value)} />
             </div>
             <div>
-              <span style={label}>Público considerado</span>
+              <span style={label}>Público considerado *</span>
               <select style={input} value={form.publico_considerado} onChange={(e) => set('publico_considerado', e.target.value)}>
                 <option value="igreja_inteira">Igreja inteira</option>
                 <option value="recorte_geracional">Recorte geracional</option>
               </select>
             </div>
           </div>
-          <div><span style={label}>Pertencimento</span><textarea style={{ ...input, minHeight: 60 }} value={form.pertencimento} onChange={(e) => set('pertencimento', e.target.value)} /></div>
+          <div><span style={label}>Pertencimento *</span><textarea style={{ ...input, minHeight: 60 }} value={form.pertencimento} onChange={(e) => set('pertencimento', e.target.value)} /></div>
 
           <div>
-            <span style={label}>Transformação · valores da igreja (justificativa obrigatória por valor marcado)</span>
+            <span style={label}>Transformação · valores da igreja * (marque ao menos um · justificativa obrigatória por valor marcado)</span>
             <div style={{ display: 'grid', gap: 8 }}>
               {valores.map((nome) => (
                 <div key={nome} style={{ display: 'grid', gap: 5 }}>
@@ -275,8 +287,8 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
             </div>
           </div>
 
-          <div><span style={label}>Visão CBRio (5 anos, 5 igrejas, 50 mil vidas)</span><textarea style={{ ...input, minHeight: 60 }} value={form.visao_explique} onChange={(e) => set('visao_explique', e.target.value)} /></div>
-          <div><span style={label}>Impacto</span><textarea style={{ ...input, minHeight: 60 }} value={form.impacto} onChange={(e) => set('impacto', e.target.value)} /></div>
+          <div><span style={label}>Visão CBRio * (5 anos, 5 igrejas, 50 mil vidas)</span><textarea style={{ ...input, minHeight: 60 }} value={form.visao_explique} onChange={(e) => set('visao_explique', e.target.value)} /></div>
+          <div><span style={label}>Impacto *</span><textarea style={{ ...input, minHeight: 60 }} value={form.impacto} onChange={(e) => set('impacto', e.target.value)} /></div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
             <div><span style={label}>Custo total (R$) *</span><input style={input} type="number" min="0" step="0.01" value={form.custo} onChange={(e) => set('custo', e.target.value)} /></div>
