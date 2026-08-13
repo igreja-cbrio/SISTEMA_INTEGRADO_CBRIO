@@ -510,12 +510,67 @@ router.get('/generosidade/anonimos', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Pararam de doar · regulares (>=3 doações no histórico) sem doar há N dias.
+// 'periodo' = 2m | 3m | 6m (default 2m). Espelha a regra da vw_doadores_pararam
+// (>=3 doações · inativo 60–365d · mais recentes primeiro), mas agrega via
+// fetchAllRows: a view tem LIMIT 100 antes de QUALQUER filtro do cliente — o
+// bucket de 6m (>=180d) seria truncado pela janela 60–180d encher o top-100.
+// A view segue intacta (os alertas SQL do notificacaoGenerator dependem dela).
+const PARARAM_DIAS = { '2m': 60, '3m': 90, '6m': 180 };
 router.get('/generosidade/pararam', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('vw_doadores_pararam').select('*');
-    if (error) throw error;
-    res.json(data || []);
+    const dias = PARARAM_DIAS[req.query.periodo] || 60;
+
+    const linhas = await fetchAllRows(() =>
+      supabase
+        .from('vw_doacoes_unificada')
+        .select('membro_id, data, valor')
+        .not('membro_id', 'is', null),
+      { max: 20000 }
+    );
+
+    const porMembro = new Map();
+    for (const l of linhas) {
+      if (!l.membro_id) continue;
+      const acc = porMembro.get(l.membro_id) || { membro_id: l.membro_id, qtd: 0, total: 0, ultima: l.data };
+      acc.qtd += 1;
+      acc.total += Number(l.valor || 0);
+      if (l.data > acc.ultima) acc.ultima = l.data;
+      porMembro.set(l.membro_id, acc);
+    }
+
+    const hoje = new Date();
+    const diasDe = (s) => Math.floor((hoje - new Date(s)) / 86400000);
+    const candidatos = Array.from(porMembro.values())
+      .filter(m => m.qtd >= 3)
+      .map(m => ({ ...m, dias_inativo: diasDe(m.ultima) }))
+      .filter(m => m.dias_inativo >= dias && m.dias_inativo <= 365)
+      .sort((a, b) => a.ultima < b.ultima ? 1 : a.ultima > b.ultima ? -1 : 0)
+      .slice(0, 100);
+
+    if (candidatos.length > 0) {
+      const { data: membros } = await supabase
+        .from('mem_membros')
+        .select('id, nome, telefone, email')
+        .in('id', candidatos.map(m => m.membro_id))
+        .is('deleted_at', null);
+      const map = new Map((membros || []).map(mm => [mm.id, mm]));
+      res.json(candidatos.map(c => {
+        const mm = map.get(c.membro_id) || {};
+        return {
+          membro_id: c.membro_id,
+          nome: mm.nome || null,
+          telefone: mm.telefone || null,
+          email: mm.email || null,
+          doacoes_total: c.qtd,
+          valor_total: c.total,
+          ultima_doacao: c.ultima,
+          dias_inativo: c.dias_inativo,
+        };
+      }));
+    } else {
+      res.json([]);
+    }
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
