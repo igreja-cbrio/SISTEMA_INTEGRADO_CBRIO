@@ -16,9 +16,10 @@
 // ============================================================================
 
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, isSuperAdminEmail } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const Anthropic = require('@anthropic-ai/sdk');
+const { montarLentes, CORTE_DOMINGO_0930 } = require('../utils/lentesDomingo');
 
 router.use(authenticate);
 
@@ -89,6 +90,103 @@ router.get('/cultos', async (req, res) => {
   } catch (e) {
     console.error('[DASH-SEM] cultos', e.message);
     res.status(500).json({ error: 'Erro ao listar cultos' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /lentes-domingo?semanas=16 · prévia do novo formato de domingo ATRÁS DO
+// VÉU (docs/cultos-domingo/ · Lotes 3-4). Devolve as 3 lentes (separada /
+// continuidade / consolidação) + ocupação sobre lugares OFERECIDOS (1050 ×
+// cultos vigentes no domingo) + o marcador do corte (24/08/2026).
+//
+// O VÉU: só responde dado quando cultos_config.lentes_domingo_publicas = true
+// OU o usuário é super-admin (é assim que Marcos/Matheus testam em produção
+// antes do corte; destravar pra todos = 1 UPDATE na config, sem deploy).
+// Falha ao ler a config = véu FECHADO (fail-closed — a prévia não vaza).
+//
+// Deploy em 2 etapas: as colunas novas de vol_service_types (migration
+// 20260813150000) vão em SELECT ISOLADO — sem elas o endpoint segue de pé e
+// avisa (chaves_ok=false · as lentes degradam pra separada). Lição parcelas_max.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/lentes-domingo', async (req, res) => {
+  try {
+    let flagPublica = false;
+    try {
+      const { data: cfg } = await supabase
+        .from('cultos_config')
+        .select('lentes_domingo_publicas')
+        .eq('id', true)
+        .maybeSingle();
+      flagPublica = cfg?.lentes_domingo_publicas === true;
+    } catch { /* config ausente → véu fechado */ }
+    const souSuper = await isSuperAdminEmail(req.user?.email);
+    if (!flagPublica && !souSuper) return res.json({ visivel: false });
+
+    const nSemanas = Math.min(Math.max(parseInt(req.query.semanas, 10) || 16, 4), 60);
+
+    // tipos de DOMINGO — inclui inativos de propósito (pós-corte o 08:30/10:00
+    // encerram mas o histórico deles continua nas lentes)
+    const { data: tiposBase, error: tErr } = await supabase
+      .from('vol_service_types')
+      .select('id, name, recurrence_time, is_active, color')
+      .eq('recurrence_day', 0)
+      .order('recurrence_time', { ascending: true });
+    if (tErr) throw tErr;
+
+    // colunas do Lote 3 em SELECT ISOLADO e best-effort
+    let chavesOk = true;
+    const extras = {};
+    try {
+      const { data: ext, error: eErr } = await supabase
+        .from('vol_service_types')
+        .select('id, vigente_de, vigente_ate, linhagem_key, consolidacao_key')
+        .eq('recurrence_day', 0);
+      if (eErr) throw eErr;
+      for (const e of ext || []) extras[e.id] = e;
+    } catch { chavesOk = false; }
+    const tipos = (tiposBase || []).map((t) => ({ ...t, ...(extras[t.id] || {}) }));
+
+    // linhas semanais da view (2 anos ISO cobrem qualquer janela ≤60 semanas) —
+    // paginado: anos × semanas × tipos passa do cap de 1000 do PostgREST
+    const ids = tipos.map((t) => t.id);
+    const hj = hojeBrt();
+    const linhas = ids.length ? await selectPaginado(() =>
+      supabase
+        .from('vw_dashboard_semanal')
+        .select('ano_iso, semana_iso, service_type_id, frequencia')
+        .in('service_type_id', ids)
+        .in('ano_iso', [hj.ano - 1, hj.ano])) : [];
+
+    const hojeISO = `${hj.ano}-${String(hj.mes).padStart(2, '0')}-${String(hj.dia).padStart(2, '0')}`;
+    const out = montarLentes({
+      tipos,
+      linhas: (linhas || []).map((r) => ({
+        ano_iso: r.ano_iso, semana_iso: r.semana_iso,
+        service_type_id: r.service_type_id, valor: Number(r.frequencia) || 0,
+      })),
+      capacidadeUnitaria: CAPACIDADE_TEMPLO,
+      hoje: hojeISO,
+      nSemanas,
+    });
+
+    res.json({
+      visivel: true,
+      flag_publica: flagPublica,
+      sou_super_admin: souSuper,
+      chaves_ok: chavesOk,
+      capacidade_unitaria: CAPACIDADE_TEMPLO,
+      corte_data: CORTE_DOMINGO_0930,
+      tipos: tipos.map((t) => ({
+        id: t.id, nome: t.name, hora: String(t.recurrence_time || '').slice(0, 5),
+        is_active: t.is_active !== false,
+        vigente_de: t.vigente_de || null, vigente_ate: t.vigente_ate || null,
+        linhagem_key: t.linhagem_key || null, consolidacao_key: t.consolidacao_key || null,
+      })),
+      ...out,
+    });
+  } catch (e) {
+    console.error('[DASH-SEM] lentes-domingo', e.message);
+    res.status(500).json({ error: 'Erro ao montar a prévia dos cultos de domingo' });
   }
 });
 
