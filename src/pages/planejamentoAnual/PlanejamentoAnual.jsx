@@ -125,7 +125,7 @@ export default function PlanejamentoAnual() {
   ];
 
   return (
-    <div style={{ display: 'grid', gap: 16, padding: '0 0 40px' }}>
+    <div style={{ display: 'grid', gap: 16, padding: '24px 28px 40px', maxWidth: 1200, margin: '0 auto' }}>
       <ModuleHeader
         icon={CalendarRange}
         title="Planejamento Anual"
