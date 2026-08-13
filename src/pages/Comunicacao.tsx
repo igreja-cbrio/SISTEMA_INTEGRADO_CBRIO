@@ -20,11 +20,12 @@ import { toast } from 'sonner';
 import {
   Loader2, BarChart3, Inbox, Send, CalendarClock, FileText, Phone, Users,
   Bot, AlertTriangle, RefreshCw, Plus, Trash2, Pencil, Power, Save, X, MessageSquare, Repeat,
-  Settings, Coins,
+  Settings, Coins, BookUser,
 } from 'lucide-react';
 import Conversas from './Conversas';
-import WhatsappAdmin from './admin/Whatsapp';
+import { WhatsappBotConfig } from './admin/Whatsapp';
 import ConversasSetores from './admin/ConversasSetores';
+import ContatosTab from '../components/comunicacao/ContatosTab';
 
 const C = { primary: '#00B39D' };
 
@@ -795,15 +796,20 @@ function Atendentes({ podeEscrever }: { podeEscrever: boolean }) {
 }
 
 // ═══ BOT (absorve as telas admin) ════════════════════════════════════
+// Aba Bot enxuta (13/08 · decisão do Marcos): sobraram o MENU (que na F3 vira
+// fluxos por opção) e a CONFIGURAÇÃO do bot. Coletas foi APOSENTADA (os
+// líderes de integração não compraram a ideia) e Avisos idem (substituído
+// pelas Programadas com audiência — o broadcast antigo nem persistia o
+// resultado). A tela antiga segue no repo (admin/Whatsapp.jsx · dormante).
 function BotAdmin() {
   return (
-    <Tabs defaultValue="whatsapp" className="space-y-4">
+    <Tabs defaultValue="menu" className="space-y-4">
       <TabsList>
-        <TabsTrigger value="whatsapp"><MessageSquare className="mr-1.5 h-3.5 w-3.5" />Coletas / Líderes / Avisos / Config</TabsTrigger>
         <TabsTrigger value="menu"><Bot className="mr-1.5 h-3.5 w-3.5" />Menu do bot</TabsTrigger>
+        <TabsTrigger value="config"><MessageSquare className="mr-1.5 h-3.5 w-3.5" />Configuração</TabsTrigger>
       </TabsList>
-      <TabsContent value="whatsapp"><WhatsappAdmin /></TabsContent>
       <TabsContent value="menu"><ConversasSetores /></TabsContent>
+      <TabsContent value="config"><WhatsappBotConfig /></TabsContent>
     </Tabs>
   );
 }
@@ -985,7 +991,7 @@ function Automaticas() {
 // Disparos = Programadas ∪ Automáticas (um filtro) · Erros entrou em Envios
 // (coluna de status + reenviar na linha) · Templates/Números/Atendentes/
 // Tarifas viraram sub-abas de Configurações.
-const TABS = ['dashboard', 'conversas', 'envios', 'disparos', 'bot', 'config'];
+const TABS = ['dashboard', 'conversas', 'envios', 'disparos', 'contatos', 'bot', 'config'];
 // Deep-links antigos (?tab=programadas etc.) caem na aba nova certa.
 const TAB_LEGADO: Record<string, string> = {
   programadas: 'disparos', automaticas: 'disparos', erros: 'envios',
@@ -1028,6 +1034,7 @@ export default function Comunicacao() {
           <TabsTrigger value="conversas"><Inbox className="mr-1.5 h-3.5 w-3.5" />Conversas</TabsTrigger>
           <TabsTrigger value="envios"><Send className="mr-1.5 h-3.5 w-3.5" />Envios</TabsTrigger>
           <TabsTrigger value="disparos"><CalendarClock className="mr-1.5 h-3.5 w-3.5" />Disparos</TabsTrigger>
+          <TabsTrigger value="contatos"><BookUser className="mr-1.5 h-3.5 w-3.5" />Contatos</TabsTrigger>
           {podeBot && <TabsTrigger value="bot"><Bot className="mr-1.5 h-3.5 w-3.5" />Bot</TabsTrigger>}
           <TabsTrigger value="config"><Settings className="mr-1.5 h-3.5 w-3.5" />Configurações</TabsTrigger>
         </TabsList>
@@ -1037,6 +1044,7 @@ export default function Comunicacao() {
         <TabsContent value="conversas"><Conversas /></TabsContent>
         <TabsContent value="envios"><Envios podeReenviar={podeNvl3} /></TabsContent>
         <TabsContent value="disparos"><Disparos podeEscrever={podeNvl3} podeExcluir={podeNvl4} /></TabsContent>
+        <TabsContent value="contatos"><ContatosTab podeGerirLideres={podeBot} /></TabsContent>
         {podeBot && <TabsContent value="bot"><BotAdmin /></TabsContent>}
         <TabsContent value="config">
           <Configuracoes podeNvl3={podeNvl3} podeNvl5={podeNvl5} />

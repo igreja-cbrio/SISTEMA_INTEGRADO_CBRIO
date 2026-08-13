@@ -299,6 +299,120 @@ router.put('/atendentes/:id', authorizeModule('comunicacao', 3), async (req, res
   res.json(data);
 });
 
+// ── Contatos (decisão do Marcos · 13/08) ─────────────────────────────
+// A audiência REAL de mensagens proativas: membros com OPT-IN explícito +
+// líderes do bot (o papel implica o aceite — quem quer liderar grupo aprova
+// pedidos por WhatsApp). Cada contato carrega DE ONDE veio ("virou uma
+// necessidade"): a porta do consentimento (inscricao_consentimentos tipo
+// 'whatsapp') ou o vínculo de líder (auto-sync do cadastro de grupos).
+router.get('/contatos', async (req, res) => {
+  try {
+    const { contemNormalizado } = require('../services/busca');
+    const busca = String(req.query.busca || '').trim();
+    const dig = (t) => String(t || '').replace(/\D+/g, '');
+
+    // Líderes do bot (dezenas · 1 query)
+    const { data: lids, error: e1 } = await supabase.from('whatsapp_lideres')
+      .select('id, telefone, nome_exibicao, papel, escopo, ativo, recebe_lembretes, origem, grupo_id')
+      .is('deleted_at', null).limit(1000);
+    if (e1) throw e1;
+
+    // Membros com opt-in (paginado · cap DECLARADO — silêncio de truncamento
+    // é a classe de bug do cap de 1000 do PostgREST)
+    const membros = [];
+    const PAGE = 1000; const CAP = 5000;
+    for (let from = 0; from < CAP; from += PAGE) {
+      const { data, error } = await supabase.from('mem_membros')
+        .select('id, nome, telefone, whatsapp_optin_em')
+        .eq('whatsapp_optin', true).is('deleted_at', null)
+        .not('telefone', 'is', null)
+        .order('id', { ascending: true })
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      membros.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+    }
+    const truncado = membros.length >= CAP;
+
+    // Nome do grupo dos líderes sincronizados (lote ≤200 — URL do PostgREST)
+    const grupoIds = [...new Set((lids || []).map(l => l.grupo_id).filter(Boolean))];
+    const grupoNome = new Map();
+    for (let i = 0; i < grupoIds.length; i += 200) {
+      const { data } = await supabase.from('mem_grupos').select('id, nome').in('id', grupoIds.slice(i, i + 200));
+      (data || []).forEach(g => grupoNome.set(g.id, g.nome));
+    }
+
+    // Origem do opt-in: consentimento 'whatsapp' mais recente por membro
+    const consent = new Map();
+    const ids = membros.map(m => m.id);
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data } = await supabase.from('inscricao_consentimentos')
+        .select('membro_id, porta, em')
+        .eq('tipo', 'whatsapp').eq('aceito', true).is('deleted_at', null)
+        .in('membro_id', ids.slice(i, i + 200))
+        .order('em', { ascending: false });
+      (data || []).forEach(c => { if (c.membro_id && !consent.has(c.membro_id)) consent.set(c.membro_id, c); });
+    }
+
+    // Junta por TELEFONE (a mesma pessoa pode ser membro opt-in E líder)
+    const PORTA_LABEL = {
+      batismo: 'inscrição de batismo', apresentacao: 'apresentação de crianças',
+      grupos: 'inscrição em grupo', grupos_lider: 'inscrição de líder',
+      next: 'inscrição no Next', voluntariado: 'ficha de voluntariado',
+      evento_externo: 'inscrição em evento', inscricoes: 'inscrição em evento',
+    };
+    const porTel = new Map();
+    for (const m of membros) {
+      const tel = dig(m.telefone);
+      if (!tel) continue;
+      const c = consent.get(m.id);
+      porTel.set(tel, {
+        telefone: m.telefone, nome: m.nome, membro_id: m.id, papeis: ['optin'],
+        origem: c ? `Opt-in na ${PORTA_LABEL[c.porta] || c.porta}` : 'Opt-in registrado no cadastro',
+        desde: c?.em || m.whatsapp_optin_em || null,
+      });
+    }
+    for (const l of lids || []) {
+      const tel = dig(l.telefone);
+      if (!tel) continue;
+      const gNome = grupoNome.get(l.grupo_id);
+      const origemLider = l.origem === 'auto'
+        ? `Líder de grupo${gNome ? ` · ${gNome}` : ''} (aprova pedidos por WhatsApp)`
+        : 'Vinculado manualmente ao bot';
+      const ex = porTel.get(tel);
+      if (ex) {
+        ex.papeis.push('lider');
+        ex.origem_lider = origemLider;
+        ex.lider_id = l.id;
+        ex.lider_ativo = l.ativo !== false;
+        ex.recebe_lembretes = l.recebe_lembretes !== false;
+      } else {
+        porTel.set(tel, {
+          telefone: l.telefone, nome: l.nome_exibicao || null, membro_id: null, papeis: ['lider'],
+          origem: origemLider, desde: null,
+          lider_id: l.id, lider_ativo: l.ativo !== false, recebe_lembretes: l.recebe_lembretes !== false,
+        });
+      }
+    }
+
+    let contatos = [...porTel.values()];
+    if (busca) {
+      contatos = contatos.filter(c =>
+        contemNormalizado(c.nome || '', busca) || (dig(busca) && dig(c.telefone).includes(dig(busca))));
+    }
+    contatos.sort((a, b) => String(a.nome || '￿').localeCompare(String(b.nome || '￿'), 'pt-BR'));
+    res.json({
+      contatos,
+      total: contatos.length,
+      resumo: { optin: membros.length, lideres: (lids || []).length },
+      truncado,
+    });
+  } catch (e) {
+    console.error('[comunicacao] contatos:', e.message);
+    res.status(500).json({ error: 'Erro ao listar os contatos' });
+  }
+});
+
 // ── Tarifas ──────────────────────────────────────────────────────────
 router.get('/tarifas', async (_req, res) => {
   const { data, error } = await supabase.from('wa_tarifas').select('*').order('categoria');
