@@ -153,6 +153,13 @@ router.get('/eventos', async (req, res) => {
     // Celebra) nunca aparecia aqui. Interino até a unificação futura das
     // duas tabelas/módulos; só "publicado" com data futura entra (é o mesmo
     // gate que já expõe o formulário público, sem flag extra por enquanto).
+    //
+    // ⚠️ Denylist manual (14/08): "Patrocinadores - Celebra 2026" é um
+    // formulário SATÉLITE (empresas se candidatam a patrocinar), não um
+    // evento que a igreja frequenta — não deve aparecer no painel de casa.
+    // `insc_eventos` ainda não tem um `visivel_painel_rh` como `events` tem;
+    // até existir esse controle, o nome exato entra numa lista curta aqui.
+    const NOMES_INSC_OCULTOS = ['Patrocinadores - Celebra 2026'];
     try {
       const { data: eventosInsc } = await supabase
         .from('insc_eventos')
@@ -162,7 +169,9 @@ router.get('/eventos', async (req, res) => {
         .is('deleted_at', null)
         .order('data')
         .limit(10);
-      (eventosInsc || []).forEach((e) => {
+      (eventosInsc || [])
+        .filter((e) => !NOMES_INSC_OCULTOS.includes(e.nome))
+        .forEach((e) => {
         if (lista.some((l) => l.data === e.data && l.nome === e.nome)) return;
         lista.push({
           id: `insc:${e.id}`,
