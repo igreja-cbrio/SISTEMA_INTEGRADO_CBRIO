@@ -1781,10 +1781,33 @@ Pedido dele: otimizar o uso interno do módulo. 10 abas viraram **6**
   backend de tarifas existia desde julho SEM tela — o custo do Dashboard lê
   daqui; edição nível 5).
 
-F2 (a caminho): aposentar Coletas (decisão do Marcos 13/08 — "os líderes de
-integração não compraram a ideia") e Avisos; aba **Contatos** = universo
-opt-in + líderes (com a ORIGEM de cada contato). F3: fluxos por opção do menu
-do bot, visual inspirado no /atlas/fluxograma.
+### Reorganização · F2 (2026-08-13 · SEM migration · decisões do Marcos)
+
+- **COLETA DO BOT APOSENTADA** ("os líderes de integração não compraram a
+  ideia — pode inclusive aposentar isso"): `podeColetar = false` no
+  `publicWhatsapp.js` (todo mundo cai na persona 1 · o código da coleta —
+  Flow do culto, parseConversa, relato de grupos por texto/áudio — fica
+  DORMANTE abaixo do bloco; reativar = restaurar `lider && papel ===
+  'coordenador'`); `processarFlowReply` registra e descarta reply de Flow
+  antigo (`erro: 'coleta_aposentada'`). ⚠️ Os fluxos de grupos por LINK
+  (/g/f, /g/c, /g/a, renovação) NÃO são a persona — seguem intactos.
+- **AVISOS (broadcast) APOSENTADO**: nem persistia resultado; o caminho é
+  Disparos→Agendadas. `admin/Whatsapp.jsx` ficou dormante como tela (header
+  documenta); só a `AbaConfig` segue viva (export `WhatsappBotConfig`,
+  montada na aba Bot).
+- **Aba CONTATOS** (`ContatosTab.tsx` + `GET /comunicacao/contatos`): a
+  audiência REAL — membros com `whatsapp_optin=true` + líderes do bot
+  (papel implica aceite: líder aprova pedidos por WhatsApp), 1 linha por
+  TELEFONE (quem é os dois aparece 1×), cada um com **DE ONDE VEIO** (porta
+  do consentimento `inscricao_consentimentos` tipo whatsapp · ou vínculo de
+  líder auto-sync com o nome do grupo). Busca acento-insensível
+  (`contemNormalizado`), cap DECLARADO de 5k com aviso `truncado`. Gestão:
+  toggle de lembretes do líder (endpoints `whatsapp-admin`, botão gated).
+- Aba Bot enxugou: Menu do bot + Configuração (2 sub-abas).
+
+F3 (a caminho): fluxos por opção do menu do bot, visual inspirado no
+/atlas/fluxograma — cada opção com caminho completo (mensagem própria →
+pede nome? → área OU atendente).
 
 ⚠️ Ficam da revisão (médios · ainda abertos): statuses órfãos write-only +
 status de outbound do CHAT descartado · **Realtime sem filtro por área —

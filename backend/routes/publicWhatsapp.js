@@ -394,13 +394,15 @@ async function processarMensagem(m, cfg, pnid = null) {
     .eq('telefone', telefone).eq('ativo', true).is('deleted_at', null)
     .maybeSingle();
 
-  // ── COLETA RESTRITA (Marcos · 2026-07-10): a persona de coleta (números
-  // de culto/grupos, formulários Flow) só atende papel='coordenador' —
-  // hoje Marcos e Matheus. Líder comum reportando número por conta própria
-  // quebraria a contagem oficial; ele cai na persona institucional (CBZap +
-  // links) como qualquer número. Reabrir por pessoa = mudar `papel` em
-  // /admin/whatsapp, sem deploy.
-  const podeColetar = lider && lider.papel === 'coordenador';
+  // ── COLETA APOSENTADA (Marcos · 2026-08-13): "os líderes de integração não
+  // compraram a ideia — pode inclusive aposentar isso". A persona de coleta
+  // (números de culto por texto/formulário Flow, relato de encontro de grupos
+  // por texto/áudio) está DESLIGADA: todo mundo — inclusive coordenador — cai
+  // na persona 1 (inbox + triagem/institucional). Todo o código abaixo do
+  // bloco da persona 1 fica DORMANTE de propósito (reativar = restaurar a
+  // linha histórica `lider && lider.papel === 'coordenador'`). A fila de
+  // Coletas e a aba antiga saíram da UI na mesma data (admin/Whatsapp.jsx).
+  const podeColetar = false;
 
   // ── Persona 1 · numero desconhecido (ou sem permissão de coleta) ────
   if (!podeColetar) {
@@ -566,8 +568,17 @@ async function processarMensagem(m, cfg, pnid = null) {
 }
 
 // Resposta de FORMULÁRIO (Flow) · identifica o líder e delega pro orquestrador.
+// ⚠️ COLETA APOSENTADA (2026-08-13): nenhum formulário é mais enviado; uma
+// resposta que chegue aqui é de Flow ANTIGO parado num celular — registra e
+// descarta, sem processar (reativar = remover este bloco).
 async function processarFlowReply(m) {
   const telefone = normalizarTelefone(m.from);
+  await supabase.from('whatsapp_coletas').insert({
+    whatsapp_message_id: m.id, telefone, raw_text: '[nfm_reply descartado]',
+    status: 'ignorado', erro: 'coleta_aposentada', modulo_destino: 'desconhecido',
+  }).catch(() => {});
+  return;
+  // eslint-disable-next-line no-unreachable -- código dormante da persona de coleta
   // Idempotência (cobre o Flow do culto, que insere coleta com este message_id).
   const { data: jaVisto } = await supabase
     .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', m.id).maybeSingle();

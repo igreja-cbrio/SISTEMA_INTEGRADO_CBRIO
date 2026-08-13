@@ -3664,6 +3664,8 @@ export const comunicacao = {
     list: () => get('/comunicacao/tarifas'),
     atualizar: (categoria, tarifa) => put(`/comunicacao/tarifas/${encodeURIComponent(categoria)}`, { tarifa }),
   },
+  // Contatos = membros com opt-in + líderes do bot, com a ORIGEM de cada um
+  contatos: (busca) => get('/comunicacao/contatos' + (busca ? `?busca=${encodeURIComponent(busca)}` : '')),
   envios: {
     list: (params = {}) => {
       const p = new URLSearchParams();

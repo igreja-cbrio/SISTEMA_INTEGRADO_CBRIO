@@ -1,3 +1,9 @@
+// ⚠️ APOSENTADA como TELA (13/08/2026 · decisão do Marcos): as abas Coletas
+// ("os líderes de integração não compraram a ideia") e Avisos (broadcast que
+// nem persistia resultado — substituído pelas Programadas do /comunicacao)
+// saíram da UI; a gestão de Líderes virou a aba CONTATOS do /comunicacao.
+// Deste arquivo, só a AbaConfig segue montada (export WhatsappBotConfig, usada
+// na aba Bot do /comunicacao). O default export fica dormante pra reativação.
 import { useState, useEffect, useCallback } from 'react';
 import { whatsapp as api, users as usersApi, grupos as gruposApi } from '../../api';
 import { Card } from '../../components/ui/card';
@@ -716,3 +722,8 @@ function Campo({ label, v, onChange, rows }) {
     </div>
   );
 }
+
+// A Configuração do bot (IA on/off · respostas automáticas · institucional ·
+// teste de disparo) é a única parte VIVA desta tela — montada na aba Bot do
+// módulo Comunicação.
+export const WhatsappBotConfig = AbaConfig;
