@@ -40,7 +40,7 @@ export default function Generosidade() {
       <div className="flex gap-1 border-b border-border overflow-x-auto">
         {[
           { k: 'overview',  label: 'Visão geral',     icon: TrendingUp },
-          { k: 'topo',      label: 'Topo contribuintes', icon: Trophy },
+          { k: 'topo',      label: 'Top contribuintes', icon: Trophy },
           { k: 'anonimos',  label: 'Doadores anônimos', icon: UserX },
           { k: 'pararam',   label: 'Pararam de doar',  icon: AlertTriangle },
         ].map(t => (
@@ -319,7 +319,7 @@ function AbaTopo() {
             <div>
               <h3 className="text-sm font-semibold flex items-center gap-2">
                 <Trophy className="h-4 w-4 text-amber-500" />
-                Topo contribuintes
+                Top contribuintes
               </h3>
               <p className="text-[11px] text-muted-foreground mt-1">
                 Membros que mais contribuíram, por valor total no período. Considera as
