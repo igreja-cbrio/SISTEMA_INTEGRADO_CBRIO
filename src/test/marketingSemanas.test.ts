@@ -8,6 +8,9 @@ const {
   hojeBRT,
   segundaDa,
   montarSemanas,
+  inicioDaSemanaGrade,
+  semanasDoMesGrade,
+  mesVizinho,
   diasSobrepostos,
   faseDaSemana,
   montarCalendario,
@@ -124,6 +127,112 @@ describe('semana SEG→DOM', () => {
   it('data inválida devolve janela vazia (aí sim não há semana a montar)', () => {
     expect(montarSemanas('14/08/2026')).toEqual([]);
     expect(montarSemanas(null)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GRADE MENSAL — o calendário do /eventos (mês + setas), com as fases na linha
+// da semana. A grade começa no DOMINGO, como a do /eventos.
+// ---------------------------------------------------------------------------
+describe('grade mensal', () => {
+  it('acha o início da semana da grade (domingo por padrão)', () => {
+    // 14/08/2026 é SEXTA · o domingo daquela semana é 09/08
+    expect(paraStr(inicioDaSemanaGrade('2026-08-14'))).toBe('2026-08-09');
+    expect(paraStr(inicioDaSemanaGrade('2026-08-09'))).toBe('2026-08-09'); // domingo
+    expect(paraStr(inicioDaSemanaGrade('2026-08-15'))).toBe('2026-08-09'); // sábado
+    expect(paraStr(inicioDaSemanaGrade('2026-08-16'))).toBe('2026-08-16'); // vira
+  });
+
+  it('aceita grade começando na segunda (a semana da igreja)', () => {
+    expect(paraStr(inicioDaSemanaGrade('2026-08-14', 1))).toBe('2026-08-10');
+    expect(paraStr(inicioDaSemanaGrade('2026-08-16', 1))).toBe('2026-08-10'); // domingo fecha a semana
+  });
+
+  it('agosto/2026 tem 6 linhas e invade julho e setembro', () => {
+    const g = semanasDoMesGrade('2026-08', { hoje: '2026-08-14' });
+    expect(g).toHaveLength(6);
+    expect(g[0]).toMatchObject({ ini: '2026-07-26', fim: '2026-08-01' });
+    expect(g[5]).toMatchObject({ ini: '2026-08-30', fim: '2026-09-05' });
+    // toda linha tem exatamente 7 dias
+    for (const s of g) expect(s.dias).toHaveLength(7);
+  });
+
+  // ⚠️ GUARDA: dia da linha que pertence ao mês vizinho tem que vir marcado,
+  // senão a tela pinta 26/07 como se fosse agosto.
+  it('marca no_mes por dia', () => {
+    const g = semanasDoMesGrade('2026-08');
+    expect(g[0].dias.map((d: any) => d.no_mes)).toEqual([false, false, false, false, false, false, true]);
+    expect(g[5].dias.map((d: any) => d.no_mes)).toEqual([true, true, false, false, false, false, false]);
+  });
+
+  it('marca o hoje e a semana atual em UMA linha só', () => {
+    const g = semanasDoMesGrade('2026-08', { hoje: '2026-08-14' });
+    expect(g.filter((s: any) => s.eh_semana_atual)).toHaveLength(1);
+    expect(g[2]).toMatchObject({ ini: '2026-08-09', eh_semana_atual: true });
+    const hojes = g.flatMap((s: any) => s.dias).filter((d: any) => d.eh_hoje);
+    expect(hojes).toHaveLength(1);
+    expect(hojes[0].data).toBe('2026-08-14');
+  });
+
+  it('mês visto de outro mês não marca semana atual', () => {
+    const g = semanasDoMesGrade('2026-10', { hoje: '2026-08-14' });
+    expect(g.some((s: any) => s.eh_semana_atual)).toBe(false);
+  });
+
+  // ⚠️ Fevereiro é o mês que pega erro de aritmética de calendário.
+  it('fevereiro bissexto e não-bissexto fecham no dia certo', () => {
+    const f2028 = semanasDoMesGrade('2028-02'); // bissexto · 29 dias
+    const ultimoDoMes2028 = f2028.flatMap((s: any) => s.dias).filter((d: any) => d.no_mes).pop();
+    expect(ultimoDoMes2028.data).toBe('2028-02-29');
+
+    const f2027 = semanasDoMesGrade('2027-02');
+    const ultimoDoMes2027 = f2027.flatMap((s: any) => s.dias).filter((d: any) => d.no_mes).pop();
+    expect(ultimoDoMes2027.data).toBe('2027-02-28');
+  });
+
+  // ⚠️⚠️ GUARDA que saiu de um MUTANTE SOBREVIVENTE: assumir que todo mês acaba
+  // no dia 31 parecia inofensivo porque `Date.parse('2028-02-31')` **não é
+  // NaN** — o Node rola para 02/03. O estrago não é a data final (que o filtro
+  // `no_mes` corrige) e sim uma **SEMANA FANTASMA** no fim da grade.
+  // Fev/2026 é o caso limpo: começa domingo, acaba sábado, 4 linhas exatas.
+  it('não inventa linha de semana no fim do mês', () => {
+    const f = semanasDoMesGrade('2026-02');
+    expect(f).toHaveLength(4);
+    expect(f[0].ini).toBe('2026-02-01');
+    expect(f[3].fim).toBe('2026-02-28');
+    // e nenhum dia da grade cai fora de fevereiro
+    expect(f.flatMap((s: any) => s.dias).every((d: any) => d.no_mes)).toBe(true);
+  });
+
+  it('dezembro e janeiro atravessam o ano', () => {
+    expect(mesVizinho('2026-12', 1)).toBe('2027-01');
+    expect(mesVizinho('2026-01', -1)).toBe('2025-12');
+    expect(mesVizinho('2026-08', 1)).toBe('2026-09');
+    expect(mesVizinho('2026-08', -1)).toBe('2026-07');
+  });
+
+  it('mês inválido devolve grade vazia em vez de estourar', () => {
+    expect(semanasDoMesGrade('2026-13')).toEqual([]);
+    expect(semanasDoMesGrade('agosto')).toEqual([]);
+    expect(semanasDoMesGrade(null)).toEqual([]);
+    expect(mesVizinho('xx', 1)).toBeNull();
+  });
+
+  // ⚠️⚠️ O CONTRATO DA GRADE: a fase de cada linha é calculada com o intervalo
+  // que a linha EXIBE. Se um dia a grade virar SEG→DOM, a faixa muda com ela.
+  it('a fase da linha corresponde aos dias que a linha mostra', () => {
+    const g = semanasDoMesGrade('2026-08', { hoje: '2026-08-14' });
+    const { linhas } = montarCalendario({
+      eventos: [{ id: 'a', nome: 'O Mundo' }],
+      fasesPorEvento: { a: O_MUNDO },
+      semanas: g,
+    });
+    // linha de 16/08 a 22/08 (dom→sáb) · F8 vai de 15/08 a 22/08 = 7 dias
+    expect(g[3]).toMatchObject({ ini: '2026-08-16', fim: '2026-08-22' });
+    expect(linhas[0].celulas[3]).toMatchObject({ numero_fase: 8, dias_na_semana: 7 });
+    // linha de 09/08 a 15/08 · F7 (08→15) pega 7 dias, F8 encosta 1 (o dia 15)
+    expect(linhas[0].celulas[2]).toMatchObject({ numero_fase: 7, dias_na_semana: 7 });
+    expect(linhas[0].celulas[2].transicao?.numero_fase).toBe(8);
   });
 });
 

@@ -2319,6 +2319,10 @@ export const marketing = {
     posicao:   (cardId) => get(`/marketing/fila/posicao/${cardId}`),
   },
 
+  // Kanban com macro-tarefas + janela de semanas (pedido do Pedro · 14/08).
+  // A decisão de "está na janela" vem do SERVIDOR (campo `na_janela` por card).
+  kanban: (params) => get('/marketing/kanban' + (params ? '?' + new URLSearchParams(params) : '')),
+
   // Dashboard (pedido do Pedro Paiva · 2026-08-14) · 3 blocos numa chamada
   dashboard: {
     get: (params) => get('/marketing/dashboard' + (params ? '?' + new URLSearchParams(params) : '')),

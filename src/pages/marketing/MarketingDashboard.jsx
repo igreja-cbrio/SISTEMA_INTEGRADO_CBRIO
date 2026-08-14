@@ -14,6 +14,7 @@ import {
 import {
   Megaphone, Loader2, AlertTriangle, CalendarDays, ListChecks, Inbox,
   ExternalLink, CalendarClock, Check, X, ChevronRight, Zap,
+  ChevronLeft,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -39,6 +40,11 @@ const COR_FEITAS = '#8b5cf6';
 const COR_RESOLVIDAS = '#00897B';
 
 const MES_CURTO = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+// Mesmos rótulos do BigCalendar do /eventos — o calendário do ciclo é aquele
+// formato (mês + setas), a pedido do Pedro.
+const MES_NOME = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
 // 'YYYY-MM-DD' → '14/08'. Fatiando string, sem `new Date` (que cairia no fuso
 // local e mostraria o dia anterior à noite).
@@ -75,14 +81,15 @@ export default function MarketingDashboard() {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(null);
-  const [semanasAdiante, setSemanasAdiante] = useState(6);
+  const [mes, setMes] = useState('');               // '' = mês de hoje (o servidor decide)
   const [faseAberta, setFaseAberta] = useState(null);
   const [verMembro, setVerMembro] = useState('');   // '' = minhas
 
   const carregar = useCallback(async () => {
     setLoading(true); setErro(null);
     try {
-      const params = { semanas: semanasAdiante };
+      const params = {};
+      if (mes) params.mes = mes;
       if (verMembro) params.membro_id = verMembro;
       setDados(await api.dashboard.get(params));
     } catch (e) {
@@ -90,7 +97,7 @@ export default function MarketingDashboard() {
       // levam a decisões opostas.
       setErro(e.message || 'Não foi possível carregar o dashboard');
     } finally { setLoading(false); }
-  }, [semanasAdiante, verMembro]);
+  }, [mes, verMembro]);
   useEffect(() => { carregar(); }, [carregar]);
 
   return (
@@ -130,8 +137,11 @@ export default function MarketingDashboard() {
             <BoxCiclo
               ciclo={dados.ciclo}
               semanas={dados.semanas}
-              adiante={semanasAdiante}
-              onAdiante={setSemanasAdiante}
+              mes={dados.mes}
+              mesAnterior={dados.mes_anterior}
+              mesSeguinte={dados.mes_seguinte}
+              hoje={dados.hoje}
+              onMes={setMes}
               onAbrirFase={setFaseAberta}
             />
           </div>
@@ -412,7 +422,7 @@ function BoxSolicitacoes({ dados }) {
 }
 
 // ─── Bloco 3 · calendário semanal do ciclo criativo ─────────────────────────
-function BoxCiclo({ ciclo, semanas, adiante, onAdiante, onAbrirFase }) {
+function BoxCiclo({ ciclo, semanas, mes, mesAnterior, mesSeguinte, hoje, onMes, onAbrirFase }) {
   // Pivot: o servidor devolve linha por EVENTO; a tela mostra por SEMANA (é a
   // pergunta do Pedro: "por semana, qual fase do ciclo nós estamos").
   // ⚠️ useMemo ANTES do return condicional (regra de hooks).
@@ -424,103 +434,124 @@ function BoxCiclo({ ciclo, semanas, adiante, onAdiante, onAbrirFase }) {
         .filter(x => x.celula && !x.celula.vazio),
     }));
   }, [semanas, ciclo?.linhas]);
+
+  // ⚠️ Rótulo do mês FATIANDO a string 'YYYY-MM' — `new Date('2026-08')` é
+  // meia-noite UTC, que no Rio é 31/07 e mostraria "Julho" no cabeçalho.
+  const rotuloMesAno = mes
+    ? `${MES_NOME[Number(mes.slice(5, 7)) - 1]} ${mes.slice(0, 4)}`
+    : '—';
+  const mesEhDeHoje = !!mes && !!hoje && mes === hoje.slice(0, 7);
+
   if (!ciclo) return null;
 
   return (
-    <Card className="p-4 h-full flex flex-col">
-      <div className="flex items-start justify-between gap-2 mb-3">
-        <div>
-          <h2 className="font-semibold flex items-center gap-2 text-sm">
+    <Card className="p-0 h-full flex flex-col overflow-hidden">
+      {/* Cabeçalho no formato do BigCalendar do /eventos: ‹ Mês Ano › */}
+      <div className="flex items-center justify-between gap-2 px-3 py-2.5 border-b border-border">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => mesAnterior && onMes(mesAnterior)} title="Mês anterior">
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <div className="text-center">
+          <p className="font-semibold text-sm flex items-center justify-center gap-2">
             <CalendarDays className="h-4 w-4 text-primary" />
-            Ciclo criativo por semana
-          </h2>
-          <p className="text-[11px] text-muted-foreground mt-0.5">
-            Em que fase cada evento/série está em cada semana. Clique para ver o que o Marketing tem a entregar.
+            {rotuloMesAno}
+          </p>
+          <p className="text-[10px] text-muted-foreground">
+            Fases do ciclo vigentes em cada semana · clique para ver o que o Marketing tem a entregar
           </p>
         </div>
-        <div className="flex rounded-lg border border-border overflow-hidden shrink-0">
-          {[4, 6, 10].map(n => (
-            <button
-              key={n}
-              onClick={() => onAdiante(n)}
-              className={`px-2 py-1 text-[11px] font-medium transition-colors ${adiante === n ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-accent'}`}
-            >
-              {n} sem
-            </button>
-          ))}
+        <div className="flex items-center gap-1">
+          {/* "Hoje" só aparece quando você não está no mês de hoje — botão que
+              não faz nada é ruído. */}
+          {!mesEhDeHoje && (
+            <Button variant="ghost" size="sm" className="h-8 text-[11px]" onClick={() => onMes('')}>Hoje</Button>
+          )}
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => mesSeguinte && onMes(mesSeguinte)} title="Mês seguinte">
+            <ChevronRight className="h-4 w-4" />
+          </Button>
         </div>
       </div>
 
-      {ciclo.erro ? <Faixa>{ciclo.erro}</Faixa> : (ciclo.linhas || []).length === 0 ? (
-        <p className="text-xs text-muted-foreground py-8">
-          Nenhum ciclo criativo ativo com fase nesta janela.
-          {ciclo.ciclos_ativos > 0 && ` Há ${ciclo.ciclos_ativos} ciclo(s) ativo(s), mas todos começam depois — aumente a janela acima.`}
-        </p>
-      ) : (
-        <>
-          <div className="flex-1 space-y-2 overflow-y-auto max-h-[calc(100vh-260px)] pr-1">
-            {porSemana.map(s => (
-              <div
-                key={s.idx}
-                className={`rounded-lg border p-2 ${s.eh_atual ? 'border-primary/50 bg-primary/5' : 'border-border'}`}
-              >
-                <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-xs font-semibold tabular-nums">{ddmm(s.ini)} – {ddmm(s.fim)}</span>
-                  {s.eh_atual && <Badge className="h-4 px-1.5 text-[9px] bg-primary/15 text-primary">esta semana</Badge>}
-                  {s.offset === 1 && <Badge className="h-4 px-1.5 text-[9px] bg-muted text-muted-foreground">próxima</Badge>}
-                  {s.itens.length === 0 && <span className="text-[10px] text-muted-foreground">nenhum ciclo em andamento</span>}
-                </div>
+      {/* Cabeçalho dos dias da semana (Dom…Sáb, como no /eventos) */}
+      <div className="grid grid-cols-7 border-b border-border bg-muted/30">
+        {DIAS_SEMANA.map(d => (
+          <div key={d} className="py-1.5 text-center text-[10px] font-bold uppercase text-muted-foreground">{d}</div>
+        ))}
+      </div>
 
-                {/* Um retângulo por evento, cobrindo a semana inteira. */}
-                <div className="space-y-1">
-                  {s.itens.map(({ evento, celula }) => (
-                    <button
-                      key={evento.id}
-                      onClick={() => onAbrirFase({ ...celula, evento_nome: evento.nome, semana: s })}
-                      className="w-full text-left rounded-md border border-border bg-card hover:bg-accent/50 hover:border-primary/40 transition-colors px-2 py-1.5 flex items-center gap-2"
-                    >
-                      <span className="text-xs font-medium truncate flex-1 min-w-0">{evento.nome}</span>
-                      <span className="text-[11px] text-muted-foreground shrink-0 hidden sm:inline">
-                        Fase {celula.numero_fase}
-                      </span>
-                      <Badge className="h-5 px-1.5 text-[10px] bg-purple-500/15 text-purple-700 dark:text-purple-300 shrink-0 max-w-[45%] truncate">
-                        {celula.nome_fase}
-                      </Badge>
-                      {/* A semana em que o ciclo VIRA de fase é a que a equipe
-                          mais precisa ver — por isso a virada é declarada. */}
-                      {celula.transicao && (
-                        <span className="text-[10px] text-muted-foreground shrink-0 hidden md:inline" title={`Entra na fase ${celula.transicao.numero_fase} · ${celula.transicao.nome_fase} nesta semana`}>
-                          → F{celula.transicao.numero_fase}
-                        </span>
-                      )}
-                      {celula.mkt_pendentes > 0 ? (
-                        <Badge className="h-5 px-1.5 text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300 shrink-0 tabular-nums">
-                          {celula.mkt_pendentes} a entregar
-                        </Badge>
-                      ) : celula.mkt_total > 0 ? (
-                        <Badge className="h-5 px-1.5 text-[10px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 shrink-0">
-                          entregue
-                        </Badge>
-                      ) : (
-                        <span className="text-[10px] text-muted-foreground shrink-0 hidden lg:inline">sem tarefa</span>
-                      )}
-                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                    </button>
-                  ))}
-                </div>
+      {ciclo.erro ? <div className="p-4"><Faixa>{ciclo.erro}</Faixa></div> : (
+        <div className="flex-1 overflow-y-auto max-h-[calc(100vh-230px)]">
+          {porSemana.map(s => (
+            <div
+              key={s.idx}
+              className={`border-b border-border last:border-b-0 ${s.eh_semana_atual ? 'bg-primary/5' : ''}`}
+            >
+              {/* Os 7 dias da linha */}
+              <div className="grid grid-cols-7">
+                {(s.dias || []).map(d => (
+                  <div key={d.data} className="px-1.5 pt-1 pb-0.5 border-r border-border/50 last:border-r-0">
+                    <span className={
+                      d.eh_hoje
+                        ? 'inline-flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground'
+                        : `text-[11px] tabular-nums ${d.no_mes ? 'text-foreground' : 'text-muted-foreground/40'}`
+                    }>
+                      {Number(d.data.slice(8, 10))}
+                    </span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
 
-          {/* ⚠️ Ciclo ativo que NÃO aparece porque começa depois da janela é
-              DECLARADO: "só vejo 4 séries" com 7 ciclos ativos parece bug. */}
-          {(ciclo.fora_da_janela > 0 || ciclo.sem_data > 0) && (
-            <p className="text-[10px] text-muted-foreground mt-2 pt-2 border-t border-border">
-              {ciclo.fora_da_janela > 0 && `${ciclo.fora_da_janela} de ${ciclo.ciclos_ativos} ciclos ativos começam depois desta janela. `}
-              {ciclo.sem_data > 0 && `${ciclo.sem_data} fase(s) sem data prevista não puderam ser posicionadas.`}
-            </p>
-          )}
-        </>
+              {/* ⚠️ A FAIXA DA SEMANA: um retângulo por evento cobrindo a linha
+                  inteira — a fase vale a semana toda, não um dia. É a diferença
+                  em relação ao /eventos, que marca só o Dia D. */}
+              <div className="px-1.5 pb-1.5 space-y-1">
+                {s.itens.length === 0 ? (
+                  <p className="text-[10px] text-muted-foreground/60 py-1">Nenhuma fase de ciclo nesta semana</p>
+                ) : s.itens.map(({ evento, celula }) => (
+                  <button
+                    key={evento.id}
+                    onClick={() => onAbrirFase({ ...celula, evento_nome: evento.nome, semana: s })}
+                    className="w-full text-left rounded-md border-l-[3px] border-purple-500 bg-purple-500/10 hover:bg-purple-500/20 transition-colors px-2 py-1 flex items-center gap-2"
+                    title={`${evento.nome} · Fase ${celula.numero_fase} — ${celula.nome_fase}`}
+                  >
+                    <span className="text-[11px] font-medium truncate flex-1 min-w-0">{evento.nome}</span>
+                    <span className="text-[11px] text-purple-700 dark:text-purple-300 shrink-0 truncate max-w-[45%]">
+                      Fase {celula.numero_fase} · {celula.nome_fase}
+                    </span>
+                    {/* A semana em que o ciclo VIRA de fase é a que a equipe
+                        mais precisa ver — por isso a virada é declarada. */}
+                    {celula.transicao && (
+                      <span className="text-[10px] text-muted-foreground shrink-0 hidden md:inline" title={`Entra na fase ${celula.transicao.numero_fase} · ${celula.transicao.nome_fase} nesta semana`}>
+                        → F{celula.transicao.numero_fase}
+                      </span>
+                    )}
+                    {celula.mkt_pendentes > 0 ? (
+                      <Badge className="h-4 px-1.5 text-[9px] bg-amber-500/15 text-amber-700 dark:text-amber-300 shrink-0 tabular-nums">
+                        {celula.mkt_pendentes} a entregar
+                      </Badge>
+                    ) : celula.mkt_total > 0 ? (
+                      <Badge className="h-4 px-1.5 text-[9px] bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 shrink-0">
+                        entregue
+                      </Badge>
+                    ) : (
+                      <span className="text-[9px] text-muted-foreground shrink-0 hidden lg:inline">sem tarefa</span>
+                    )}
+                    <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ⚠️ Ciclo ativo que NÃO aparece neste mês é DECLARADO: "só vejo 4
+          séries" com 7 ciclos ativos parece bug. */}
+      {!ciclo.erro && (ciclo.fora_da_janela > 0 || ciclo.sem_data > 0) && (
+        <p className="text-[10px] text-muted-foreground px-3 py-2 border-t border-border">
+          {ciclo.fora_da_janela > 0 && `${ciclo.fora_da_janela} de ${ciclo.ciclos_ativos} ciclos ativos não têm fase neste mês. `}
+          {ciclo.sem_data > 0 && `${ciclo.sem_data} fase(s) sem data prevista não puderam ser posicionadas.`}
+        </p>
       )}
     </Card>
   );
