@@ -82,13 +82,21 @@ async function enviarDoDia(opts = {}) {
 
   let enviados = 0;
   let erros = 0;
+  let naFila = 0;
   const rows = [];
 
+  // C2 (lote 5 · 14/08): sai pela FILA — histórico central, retry no teto da
+  // Meta (TIER da conta) e recibos delivered/read. O ledger devocional_envios
+  // continua sendo o dedup do ITEM (a fila cuida da ENTREGA).
+  const { enfileirar } = require('./whatsappFila');
+  const TEMPLATE_DEVOCIONAL = process.env.WHATSAPP_TEMPLATE_DEVOCIONAL || 'devocional_diario';
   for (const d of pendentes) {
-    const r = await wpp.sendDevocionalDiario(d.telefone, {
-      primeiroNome: primeiroNome(d.nome),
-      titulo: item.titulo,
-      link,
+    const r = await enfileirar({
+      telefone: d.telefone,
+      template: TEMPLATE_DEVOCIONAL,
+      params: [primeiroNome(d.nome) || 'Ola', item.titulo || 'devocional do dia', link],
+      contexto: 'cuidados.devocional_diario',
+      refId: d.membro_id,
     });
     rows.push({
       item_id: item.id,
@@ -98,10 +106,12 @@ async function enviarDoDia(opts = {}) {
       canal: 'whatsapp',
       enviado: !!r.sent,
       message_id: r.messageId || null,
-      motivo: r.sent ? null : (r.reason || 'erro_desconhecido'),
+      motivo: r.sent ? null : (r.queued ? 'na_fila' : (r.reason || 'erro_desconhecido')),
       enviado_em: r.sent ? new Date().toISOString() : null,
     });
-    if (r.sent) enviados++; else erros++;
+    if (r.sent) enviados++;
+    else if (r.queued) naFila++;
+    else erros++;
   }
 
   if (rows.length > 0) {
@@ -115,6 +125,7 @@ async function enviarDoDia(opts = {}) {
     total: destinatarios.length,
     ja_existentes: jaEnviadosSet.size,
     enviados,
+    na_fila: naFila,
     erros,
     motivo: !wpp.configurado() ? 'whatsapp_desabilitado' : null,
   };

@@ -2054,6 +2054,25 @@ escondia o contexto DUAS vezes:
 - **Dashboard ganhou "Respostas recebidas"** (inbound do chat na janela) —
   era o pedaço que faltava do requisito original "custo, envios e respostas".
 
+### Lote 5 · C2 — os TEMPLATES que sobravam foram pra FILA (2026-08-14 · SEM migration)
+
+Os envios de template (pagos, proativos) que ainda saíam DIRETO — sem registro,
+sem retry no teto da Meta, sem recibo — migraram pra `whatsappFila.enfileirar`:
+
+| Origem | Contexto na fila |
+|---|---|
+| Devocional diário (`devocionalSender`) | `cuidados.devocional_diario` (o ledger `devocional_envios` segue como DEDUP do item; a ENTREGA é da fila · motivo `na_fila` = sai depois) |
+| Fallback de template dos grupos (`enviarComFallback`) | `grupos.fallback_template` (ok = aceito OU na fila) |
+| Automáticas table-driven (`whatsappAuto` modo template) | `auto.<chave>` |
+| Kids: resumo do dia + código de retirada ×2 (`totemKids`) | `kids.resumo_dia` · `kids.retirada_codigo` |
+| Reenvio manual do cadastro (`membresia`) | `membresia.cadastro_confirmado` (na fila ≠ erro → não responde mais 502) |
+| Aprovação fria de solicitação (`solicitacaoWpp` TEMPLATE_COLD) | `solicitacoes.aprovacao_cold` · ⚠️ `queued` TAMBÉM marca 'aguardando' — deixar 'na_fila' faria o próximo despacho enfileirar DE NOVO (2 templates na liberação da cota) |
+
+`whatsappModulo.MAPA` ganhou os donos `cuidados`/`kids`/`solicitacoes` (falha
+terminal/failed avisa o módulo certo). O que segue DIRETO de propósito: textos
+de sessão do bot (grátis na janela · registrados em wa_mensagens com recibo) e
+os envios do chat humano (o atendente vê o erro na hora · 502).
+
 ⚠️ Ficam da revisão (médios · ainda abertos):
 **Realtime sem filtro por área —
 decisão explícita do Marcos (12/08) de NÃO mexer por ora** · `nao_lidas`

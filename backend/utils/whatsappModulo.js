@@ -37,6 +37,10 @@ const MAPA = [
   ['inscricoes', { modulo: 'inscricoes', link: '/inscricoes' }],
   ['next', { modulo: 'next', link: '/next' }],
   ['voluntariado', { modulo: 'voluntariado', link: '/voluntariado' }],
+  // Donos dos envios migrados pra fila no C2 (lote 5 · 2026-08-14).
+  ['cuidados', { modulo: 'cuidados', link: '/ministerial/cuidados' }],
+  ['kids', { modulo: 'kids', link: '/ministerial/totem-kids' }],
+  ['solicitacoes', { modulo: 'solicitacoes', link: '/solicitacoes' }],
 ];
 
 // ⚠️ `integracao` como padrão preserva o comportamento que a fila já tinha —

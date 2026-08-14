@@ -138,9 +138,17 @@ async function despacharProximo(tel, janelaAberta = false) {
       const catLabel = CATEGORIA_LABEL[sol.categoria] || sol.categoria || '—';
       const valor = fmtBRL(sol.valor_estimado);
       const param4 = valor ? `${catLabel} · ${valor}` : catLabel;
-      const r = await wpp.sendTemplate(tel, TEMPLATE_COLD, TEMPLATE_LANG,
-        [primeiroNome, sol.titulo || 'Solicitação', solicitante, param4]);
-      enviouOk = !!r?.sent; // só marca aguardando se a Meta aceitou o envio
+      // C2 (lote 5 · 14/08): pela FILA — registro + retry + recibos. queued
+      // também marca 'aguardando': a fila é quem entrega agora; deixar
+      // 'na_fila' aqui faria o próximo despacho enfileirar DE NOVO (2 templates
+      // pro aprovador quando a cota liberasse).
+      const { enfileirar } = require('./whatsappFila');
+      const r = await enfileirar({
+        telefone: tel, template: TEMPLATE_COLD, idioma: TEMPLATE_LANG,
+        params: [primeiroNome, sol.titulo || 'Solicitação', solicitante, param4],
+        contexto: 'solicitacoes.aprovacao_cold', refId: item.solicitacao_id,
+      });
+      enviouOk = !!(r?.sent || r?.queued);
     }
   } catch (e) {
     console.error('[solicitacaoWpp] despachar:', e.message);
