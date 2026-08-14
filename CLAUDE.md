@@ -8653,3 +8653,93 @@ escala montada, com iniciais e contadores ✓/✗/⏱) — ele recebe só
 `schedules: VolSchedule[]` e não tem noção de VAGA VAZIA nem callbacks de
 edição, então reusá-lo exige estender a interface. E não existe drop target por
 **vaga/posição** — o DnD move entre equipes e zera `position_id`.
+
+## ⚠️ Montar escala no ESTILO DO SERVICES · rodízio, vagas e auto-preencher (2026-08-13 · SEM migration)
+
+Pedido do Matheus, no mesmo dia da leva acima: *"lembra que te pedi para deixar
+as funcionalidades de montar escala no estilo do service e ao mesmo tempo mais
+prático para os supervisores de área usarem para escalarem seus voluntários"* —
+com acesso ao navegador dele pra eu **ver o Planning Center Services por
+dentro**. Foi o que fiz (conta já logada · nada foi escrito lá).
+
+### O que o Services faz e nós não fazíamos
+
+| lá | aqui, antes |
+|---|---|
+| vaga em aberto é uma linha DENTRO da equipe (`2 Needed`, vermelho) | vaga vivia num card "Cobertura" **separado**, no topo |
+| `✓4 ✗0 ?1` no cabeçalho de cada equipe | só o total de escalados |
+| **MY TEAMS** separado de OTHER TEAMS | todas as áreas iguais, em ordem alfabética |
+| painel lateral abre **na vaga**, candidatos ordenados por **há quanto tempo não servem** (`-7w`, `-5w`…) | modal com a igreja inteira em ordem **alfabética** |
+| checkbox + **"Add N"** | um `+` por vez |
+| auto-schedule com a regra escrita na tela + **undo** | `Auto-preencher` sem volta |
+
+### ⚠️⚠️ Os dois defeitos que a comparação escancarou (e que foram corrigidos)
+
+1. **O `POST /schedules/auto-fill` escalava a EQUIPE INTEIRA.** Ele ordenava por
+   rodízio e depois fazia `available.map(...)` — o número de vagas
+   (`vol_escala_culto_itens`) **nunca era consultado**. Numa equipe de 40, as 40.
+2. **"Quando essa pessoa serviu pela última vez" não existia em lugar nenhum.**
+   Sem esse número a lista só podia ser alfabética, o topo era sempre a mesma
+   gente e o rodízio ficava no olho do supervisor.
+
+### O que passou a existir
+
+- **`backend/utils/volRodizio.js`** = régua PURA (**no gate** ·
+  `src/test/volRodizio.test.ts`, 22 casos): `semanasSemServir`,
+  `ordenarCandidatos`, `candidatoElegivel`, `distribuirVagas`. **4 mutantes
+  RODADOS**: voltar ao alfabético → 3 vermelhos · ignorar o nº de vagas → 3 ·
+  aceitar OUTRA posição da mesma equipe (baterista no vocal) → 1 · deixar
+  conflito entrar no automático → 1.
+- **`_ultimaEscalaPorPessoa`** varre os cultos **do mais recente pro mais
+  antigo**, em blocos, com teto (10×12 cultos) e parada antecipada quando todo o
+  pool já foi encontrado. ⚠️ **Não** varre a base inteira: `vol_schedules` de um
+  ano passa de 10 mil linhas e o cap de 1000 do PostgREST viraria dezenas de
+  round-trips numa tela que se abre o tempo todo.
+- ⚠️ **A janela EFETIVA volta na resposta** (`rodizio.desde`, do culto mais
+  antigo realmente varrido) e a tela a mostra. Quem não aparece fica com `null`,
+  que a régua trata como "há mais tempo que todos" e a tela escreve **"sem escala
+  recente" — NUNCA "nunca serviu"**, que seria afirmar sobre uma pessoa real algo
+  que não foi medido. Tem teste em cima do texto.
+- **Auto-preencher** preenche as vagas por rodízio, **declara quem entrou e por
+  quê** ("há 7 semanas"), **declara a vaga que ficou sem candidato** e tem
+  **Desfazer** (o endpoint devolve `schedule_ids`).
+- ⚠️ **Sem composição definida o auto-preencher RECUSA** (409 `sem_composicao`,
+  mandando aplicar um template) em vez de escalar "a equipe toda" — que era
+  justamente o defeito. E quando não existe template pro tipo de culto, a tela
+  diz isso e oferece **"Escalar em uma área"**, senão o culto ficaria sem
+  caminho nenhum pra receber gente.
+- **Minhas áreas primeiro**: `vol_teams.area` × áreas do perfil, **mais** a
+  estrela que fixa a área no topo (localStorage). ⚠️ A estrela não é enfeite —
+  `vol_teams.area` é texto livre e **não pude medir quantas equipes o têm
+  preenchido** (sem credencial de service role local nesta sessão); sem ela a
+  separação simplesmente não apareceria pra quem trabalha numa equipe sem área.
+  Sem nenhuma área marcada, a tela diz como fixar em vez de mostrar seção vazia.
+
+### ⚠️ O terceiro caminho de INSERT sem trava de disponibilidade
+
+`POST /schedules/bulk` faz INSERT em lote e **não passava pelo `POST /schedules`**
+— exatamente o furo que o `/copy` teve em 13/08. Fechado com
+`_separarPorDisponibilidade` (uma consulta só), devolvendo `pulados` NOMEADOS.
+Régua que fica: **todo caminho novo que grave `vol_schedules` em lote tem que
+passar por essa função** — a trava do handler individual não alcança lote.
+
+### Outras decisões
+
+- **`_coberturaDoCulto` foi EXTRAÍDA** e é usada pela tela E pelo auto-preencher:
+  duas cópias dessa conta apareceriam como "a tela diz que falta 1 e o automático
+  não preenche nada".
+- ⚠️ **Conflito (já serve em outro culto do mesmo dia) NÃO entra por automação** —
+  a pessoa pode topar dobrar, mas quem pede isso é gente. No painel manual ele
+  aparece, num grupo separado e no fim.
+- **Indisponível continua fora da lista** (lei da leva anterior), e agora o painel
+  **diz quantos** sumiram por isso — a ausência de um nome conhecido não pode
+  parecer bug.
+- O `PoolSection` busca-primeiro **saiu**: a busca global virou a aba "Qualquer
+  voluntário" dentro do painel. O botão "Sincronizar" que morava no modal antigo
+  **não se perdeu** (segue em VolDashboard e VolLista).
+
+⏳ **Não feito, e é a próxima leva**: a **visão Matrix** (grade equipe × posição ×
+N datas, pra montar o mês inteiro numa tela) — decisão do Matheus de fazer
+primeiro a tela de um culto. O painel lateral já foi escrito pra ser reusado por
+ela. Segue valendo o follow-up anterior: não há drop target por **vaga**, o DnD
+move entre áreas e zera `position_id`.
