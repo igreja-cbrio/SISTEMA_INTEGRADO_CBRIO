@@ -863,6 +863,7 @@ const {
   montarCalendario,
   diasSobrepostos,
 } = require('../utils/marketingSemanas');
+const { corDoEvento, ehExcedente, CORES_EVENTO } = require('../utils/marketingCores');
 
 // Solicitação ENTREGUE (o que o marketing resolveu). `avaliado` = concluída e
 // já com NPS respondido — continua sendo entrega.
@@ -1138,15 +1139,18 @@ router.get('/dashboard', authorizeModule('marketing', 1), async (req, res) => {
       const fasesPorEvento = {};
       for (const f of fases) (fasesPorEvento[f.event_id] || (fasesPorEvento[f.event_id] = [])).push(f);
 
-      // Ordem das linhas: pelo Dia D (o que acontece primeiro em cima).
+      // Ordem das linhas: pelo Dia D (o que acontece primeiro em cima) — e é
+      // essa ordem que fixa a COR de cada evento (ver utils/marketingCores).
       const eventos = ativos
         .slice()
         .sort((a, b) => String(a.data_dia_d || a.events.date || '').localeCompare(String(b.data_dia_d || b.events.date || '')))
-        .map(c => ({
+        .map((c, i) => ({
           id: c.event_id,
           nome: c.events.name,
           categoria: c.events.event_categories?.name || null,
           dia_d: c.data_dia_d || c.events.date || null,
+          cor: corDoEvento(i),
+          cor_excedente: ehExcedente(i),
         }));
 
       const { linhas, sem_data } = montarCalendario({ eventos, fasesPorEvento, semanas });
@@ -1166,6 +1170,9 @@ router.get('/dashboard', authorizeModule('marketing', 1), async (req, res) => {
         linhas,
         sem_data,
         ciclos_ativos: ativos.length,
+        // Declarado pra tela poder avisar quando algum evento caiu no cinza.
+        cores_disponiveis: CORES_EVENTO.length,
+        eventos_sem_cor_propria: linhas.filter(l => l.cor_excedente).length,
         // ⚠️ Ciclo ativo que não aparece no mês exibido (começa depois, ou já
         // acabou). DECLARADO — "só vejo 4 séries" com 7 ciclos ativos parece bug.
         fora_da_janela: ativos.length - linhas.length,
