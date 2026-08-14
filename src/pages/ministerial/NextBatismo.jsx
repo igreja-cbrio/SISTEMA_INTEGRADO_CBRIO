@@ -812,6 +812,8 @@ function FamiliasPendentesTab({ onVerFicha }) {
           Esta fila mantém os cadastros separados e apenas organiza as pessoas na mesma família.
           Telefone compartilhado exige também sobrenome em comum; endereço completo + CEP pode sugerir famílias com sobrenomes diferentes.
           <strong> Nomes abreviados ou muito semelhantes vão para Possíveis duplicidades.</strong>
+          {' '}Cada par mostra o contato compartilhado, a idade dos dois, de qual porta veio o dado e — quando existe — o
+          vínculo com a mesma criança no Kids, que é a evidência de convivência mais forte que o sistema tem.
         </p>
         <Button onClick={() => recarregarMut.mutate()} disabled={isFetching || recarregarMut.isPending} variant="outline" size="sm" className="gap-1.5">
           <RefreshCw className={`size-3.5 ${isFetching || recarregarMut.isPending ? 'animate-spin' : ''}`} /> Recarregar
@@ -849,12 +851,63 @@ function FamiliasPendentesTab({ onVerFicha }) {
                     {item.destino.tipo === 'existente' ? item.destino.nome : 'Nova família'}
                   </span>
                 </div>
+                {/* Alerta ≠ evidência: evidência sustenta a sugestão, alerta a
+                    QUESTIONA. Fica em âmbar, acima de tudo. */}
+                {!!item.alertas?.length && item.alertas.map((al) => (
+                  <div key={al} className="rounded-md border border-amber-400/60 bg-amber-500/5 px-2.5 py-2 text-[11px] text-amber-800 dark:text-amber-200">
+                    {al} — se for a mesma pessoa, o caminho é <strong>Possíveis duplicidades</strong>, não vincular família.
+                  </div>
+                ))}
+
+                {/* O DADO que motivou a sugestão, dito com todas as letras.
+                    No par por endereço ele costumava ficar invisível: o card só
+                    cai no endereço quando a pessoa não tem telefone. */}
+                {item.contato_comum && (
+                  <div className="text-[11px] text-muted-foreground">
+                    {item.contato_comum.tipo === 'telefone' ? 'Telefone compartilhado: ' : 'Endereço compartilhado: '}
+                    <span className="font-mono text-foreground">
+                      {item.contato_comum.tipo === 'telefone'
+                        ? maskTelefone(item.contato_comum.valor)
+                        : item.contato_comum.valor}
+                    </span>
+                  </div>
+                )}
+
+                {/* ⚠️ A evidência de convivência mais forte que o sistema tem:
+                    os dois são responsáveis da MESMA criança (vínculo de menor
+                    passa por documento + aprovação da equipe Kids). Quando
+                    aparece, a decisão está praticamente tomada — e o parentesco
+                    de cada lado é o que separa "casal/irmãos" de "é a mesma
+                    pessoa com o nome trocado". */}
+                {!!item.kids_em_comum?.length && (
+                  <div className="rounded-md border border-emerald-400/50 bg-emerald-500/5 p-2.5 space-y-1">
+                    <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                      Responsáveis pela mesma criança no Kids
+                    </div>
+                    {item.kids_em_comum.map((k) => (
+                      <div key={k.crianca_id} className="text-[11px] text-muted-foreground">
+                        <span className="text-foreground">{k.crianca_nome || 'Criança sem nome no cadastro'}</span>
+                        {k.crianca_nascimento ? ` (${fmtData(k.crianca_nascimento)})` : ''}
+                        {' — '}
+                        {item.pessoa.nome?.split(' ')[0]}: {k.parentesco_pessoa || 'sem parentesco'}
+                        {' · '}
+                        {item.referencia.nome?.split(' ')[0]}: {k.parentesco_referencia || 'sem parentesco'}
+                      </div>
+                    ))}
+                    <div className="text-[10px] text-muted-foreground/80">
+                      Confira se o nome da criança não é o mesmo de um dos cadastros — nesse caso não é família, é o
+                      nome do filho gravado no lugar do responsável, e o caminho é Possíveis duplicidades.
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-                  <PessoaFamilia pessoa={item.pessoa} rotulo="Sem família" onVerFicha={onVerFicha} />
+                  <PessoaFamilia pessoa={item.pessoa} rotulo="Sem família" onVerFicha={onVerFicha}
+                    procedencia={item.procedencia?.pessoa} />
                   <ArrowRight className="size-4 text-muted-foreground mx-auto rotate-90 sm:rotate-0" />
                   <PessoaFamilia pessoa={item.referencia}
                     rotulo={item.destino.tipo === 'existente' ? item.destino.nome : 'Referência para nova família'}
-                    onVerFicha={onVerFicha} />
+                    onVerFicha={onVerFicha} procedencia={item.procedencia?.referencia} />
                 </div>
                 <div className="flex justify-end gap-2 flex-wrap">
                   <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5"
@@ -903,7 +956,22 @@ function FamiliasPendentesTab({ onVerFicha }) {
   );
 }
 
-function PessoaFamilia({ pessoa, rotulo, onVerFicha }) {
+// idadeDe · idade em anos completos, pra decidir parentesco. Data parseada como
+// LOCAL (`+T12:00:00`): `new Date('1981-08-01')` é meia-noite UTC = 31/07 no Rio,
+// e a idade sairia 1 dia deslocada perto do aniversário.
+function idadeDe(nascimento) {
+  if (!nascimento) return null;
+  const d = new Date(String(nascimento).slice(0, 10) + 'T12:00:00');
+  if (Number.isNaN(d.getTime())) return null;
+  const hoje = new Date();
+  let anos = hoje.getFullYear() - d.getFullYear();
+  const m = hoje.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && hoje.getDate() < d.getDate())) anos -= 1;
+  return anos >= 0 && anos < 120 ? anos : null;
+}
+
+function PessoaFamilia({ pessoa, rotulo, onVerFicha, procedencia }) {
+  const idade = idadeDe(pessoa.data_nascimento);
   return (
     <button type="button" onClick={() => onVerFicha?.(pessoa.id)}
       className="rounded-lg border bg-muted/15 p-3 text-left hover:border-primary transition-colors min-w-0">
@@ -917,8 +985,25 @@ function PessoaFamilia({ pessoa, rotulo, onVerFicha }) {
           <div className="text-[10px] text-muted-foreground truncate">
             {pessoa.telefone ? maskTelefone(pessoa.telefone) : pessoa.endereco || pessoa.status}
           </div>
+          {/* A diferença de idade é o que separa cônjuge de pai/filho — era o
+              dado que faltava pra decidir. "Sem nascimento" é dito, não omitido:
+              ausência de dado não pode parecer dado. */}
+          <div className="text-[10px] text-muted-foreground truncate">
+            {idade != null
+              ? `${idade} anos · ${fmtData(pessoa.data_nascimento)}`
+              : 'sem nascimento no cadastro'}
+          </div>
         </div>
       </div>
+      {!!procedencia?.length && (
+        <div className="mt-2 pt-2 border-t text-[10px] text-muted-foreground space-y-0.5">
+          {procedencia.map((p) => (
+            <div key={`${p.origem}-${p.quando}`} className="truncate">
+              {p.origem} · {fmtData(p.quando)}
+            </div>
+          ))}
+        </div>
+      )}
     </button>
   );
 }
