@@ -15,7 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   elegivelParaAviso, agruparParaAviso, selecionarRodada,
-  textoQuando, textoAreas, textoEvento, horaBRT,
+  textoQuando, textoAreas, textoEvento, horaBRT, diaRelativoBRT,
 } from '../../backend/utils/avisoEscala.js';
 
 const AGORA = '2026-08-11T09:00:00-03:00'; // terça
@@ -201,5 +201,41 @@ describe('textos do template', () => {
   });
   it('hora em BRT, não UTC', () => {
     expect(horaBRT(DOM_1900)).toBe('19:00');
+  });
+});
+
+describe('⚠️ véspera · diasAlvo recorta o disparo (14/08)', () => {
+  it('com diasAlvo, só o dia pedido é avisado', () => {
+    // O cron manda só AMANHÃ. Sem este recorte, o disparo de véspera avisaria
+    // a semana inteira de uma vez e a pessoa receberia com 7 dias de folga —
+    // que é justamente o que o Matheus pediu para mudar.
+    const g = agruparParaAviso({
+      escalas: [
+        esc({ id: 'a', scheduled_at: DOM_0830 }),                        // 16/08
+        esc({ id: 'b', volunteer_id: 'p2', scheduled_at: '2026-08-12T20:00:00-03:00' }), // 12/08
+      ],
+      agora: AGORA,
+      diasAlvo: new Set(['2026-08-12']),
+    });
+    expect(g).toHaveLength(1);
+    expect(g[0].escala_ids).toEqual(['b']);
+  });
+
+  it('aceita array além de Set', () => {
+    const g = agruparParaAviso({ escalas: [esc({ scheduled_at: DOM_0830 })], agora: AGORA, diasAlvo: ['2026-08-16'] });
+    expect(g).toHaveLength(1);
+  });
+
+  it('sem diasAlvo, mantém a janela antiga (o botão manual usa)', () => {
+    const g = agruparParaAviso({ escalas: [esc({ scheduled_at: DOM_0830 })], agora: AGORA });
+    expect(g).toHaveLength(1);
+  });
+
+  it('⚠️ diaRelativoBRT("amanhã") é o dia da IGREJA', () => {
+    // Às 22h do Rio (01h UTC do dia seguinte) "amanhã" em UTC já é depois de
+    // amanhã — e o aviso de véspera sairia para o dia errado, ou para nenhum.
+    expect(diaRelativoBRT('2026-08-15T22:00:00-03:00', 1)).toBe('2026-08-16');
+    expect(diaRelativoBRT('2026-08-15T06:00:00-03:00', 1)).toBe('2026-08-16');
+    expect(diaRelativoBRT('2026-08-15T22:00:00-03:00', 0)).toBe('2026-08-15');
   });
 });

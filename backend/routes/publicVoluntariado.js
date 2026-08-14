@@ -16,6 +16,8 @@
  */
 
 const router = require('express').Router();
+const { verificarTokenEscala } = require('../utils/escalaToken');
+const { responderEscala } = require('../services/escalaResposta');
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { acharMembroGuardado } = require('../services/membroMatch');
@@ -639,6 +641,72 @@ router.post('/inscrever-form', async (req, res) => { // teto = limiterGeral do r
   } catch (err) {
     console.error('[PublicVol/inscrever-form] error:', err.message);
     res.status(500).json({ error: 'Erro ao registrar inscrição' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// ESCALA · "vou / não vou poder" pelo link do WhatsApp
+//
+// Pedido do Matheus (14/08/2026). O link é PESSOAL e assinado
+// (`utils/escalaToken`), então não há login no meio — a prova de identidade é o
+// token ter chegado no WhatsApp da pessoa.
+//
+// ⚠️ Devolve o MÍNIMO sobre a escala: área, função, nome do culto e horário.
+// Nada de telefone, nada de lista de quem mais está escalado — um link que
+// vaza (print, celular emprestado) não pode virar janela pra base de gente.
+// O primeiro nome existe pra pessoa saber que o link é dela.
+// ---------------------------------------------------------------------------
+// ⚠️ SEM `publicLimiter` (10/15min): ele é pro probing de CPF/login. Aqui
+// seriam 200 pessoas clicando no link no mesmo dia, muitas atrás do mesmo NAT
+// — o teto estrito quebraria o fluxo na 3ª pessoa (lição do censo). Vale o
+// `limiterGeral` do router; o token tem 80 bits de assinatura, então força
+// bruta não é o risco. ⚠️ E somar um limiter aqui contaria 2× a MESMA
+// requisição, porque o do `router.use` já contou.
+router.get('/escala/:token', async (req, res) => {
+  try {
+    const id = verificarTokenEscala(req.params.token);
+    // ⚠️ Recusa NEUTRA: não distingue token malformado de segredo ausente de
+    // escala inexistente — distinguir entrega um oráculo a quem está sondando.
+    if (!id) return res.status(404).json({ error: 'Link inválido ou expirado.' });
+
+    const { data: e } = await supabase.from('vol_schedules')
+      .select('id, service_id, volunteer_name, team_name, position_name, confirmation_status')
+      .eq('id', id).maybeSingle();
+    if (!e) return res.status(404).json({ error: 'Link inválido ou expirado.' });
+
+    const { data: s } = await supabase.from('vol_services')
+      .select('name, scheduled_at').eq('id', e.service_id).maybeSingle();
+
+    res.json({
+      id: e.id,
+      primeiro_nome: String(e.volunteer_name || '').trim().split(/\s+/)[0] || null,
+      area: e.team_name || null,
+      funcao: e.position_name || null,
+      culto: s?.name || null,
+      quando: s?.scheduled_at || null,
+      status: e.confirmation_status || 'pending',
+      // Culto que já passou não recebe resposta — mas a tela precisa saber
+      // disso pra explicar, em vez de mostrar botões que não fazem nada.
+      passou: s?.scheduled_at ? new Date(s.scheduled_at).getTime() < Date.now() : false,
+    });
+  } catch (err) {
+    console.error('[PublicVol/escala] error:', err.message);
+    res.status(500).json({ error: 'Erro ao abrir a escala' });
+  }
+});
+
+router.post('/escala/:token/responder', async (req, res) => {
+  try {
+    const id = verificarTokenEscala(req.params.token);
+    if (!id) return res.status(404).json({ error: 'Link inválido ou expirado.' });
+
+    const r = await responderEscala(id, req.body?.status, { origem: 'link' });
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.erro });
+
+    res.json({ ok: true, status: r.escala.confirmation_status, mudou: r.mudou });
+  } catch (err) {
+    console.error('[PublicVol/escala responder] error:', err.message);
+    res.status(500).json({ error: 'Erro ao registrar a resposta' });
   }
 });
 

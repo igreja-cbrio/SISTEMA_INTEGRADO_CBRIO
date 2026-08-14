@@ -7,7 +7,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const { analisar, alertar } = require('../services/agenteVoluntariado');
 const fila = require('../services/whatsappFila');
-const { avisarEscalasDaSemana } = require('../services/escalaAviso');
+const { avisarEscalasDaSemana, avisarVespera } = require('../services/escalaAviso');
 
 // Cron (CRON_SECRET) — alerta o coordenador. Também roda no cron diário.
 async function cronChecar(req, res) {
@@ -15,16 +15,16 @@ async function cronChecar(req, res) {
   try {
     const alertas = await alertar();
 
-    // ⚠️ Aviso da semana de CARONA neste cron (14/08/2026), sem slot novo no
-    // `vercel.json` — são 46 crons e a lição dos pagamentos é não gastar slot
-    // quando dá pra pegar carona. Roda todo dia às 8h10 BRT, então quem for
-    // escalado hoje pra um culto dos próximos 7 dias é avisado amanhã cedo.
+    // ⚠️ Aviso de VÉSPERA de carona neste cron, sem slot novo no `vercel.json`
+    // — são 46 crons e a lição dos pagamentos é não gastar slot quando dá pra
+    // pegar carona. Roda às 8h10 BRT e avisa quem serve AMANHÃ (pedido do
+    // Matheus em 14/08: "o disparo deve ser feito 1 dia antes").
     //
     // ⚠️ O aviso NÃO pode derrubar o cron: o alerta do coordenador divide esta
     // execução, e uma falha no envio levaria junto o alerta que já funcionava.
     let aviso = null;
     try {
-      aviso = await avisarEscalasDaSemana();
+      aviso = await avisarVespera();
     } catch (e) {
       console.error('[agente-voluntariado/cron] aviso de escala falhou:', e.message);
       aviso = { erro: e.message };
@@ -97,7 +97,10 @@ const TETO_RODADA = 200;
 // registro é a linha da fila), então apertar duas vezes não duplica nada.
 router.post('/avisar-semana', authenticate, authorizeModule('voluntariado', 2), async (req, res) => {
   try {
-    const dias = Math.min(14, Math.max(1, parseInt(req.body?.dias, 10) || 7));
+    // ⚠️ O manual cobre HOJE e amanhã (não 7 dias): ele existe pro caso de
+    // escalar depois da rodada da manhã, e avisar a semana inteira de uma vez
+    // é justamente o que o disparo de véspera veio substituir.
+    const dias = Math.min(14, Math.max(1, parseInt(req.body?.dias, 10) || 2));
     const r = await avisarEscalasDaSemana({ dias });
     res.json(r);
   } catch (e) {
