@@ -74,6 +74,76 @@ function montarSemanas(hojeStr, { retro = 1, adiante = 6 } = {}) {
   return out;
 }
 
+// ── Grade MENSAL (o calendário do /eventos) ─────────────────────────────────
+//
+// O dashboard mostra o ciclo num calendário de mês com setas, igual ao
+// `BigCalendar` do /eventos (pedido do Pedro · 14/08). Cada LINHA da grade é
+// uma semana, e é nessa linha que as fases vigentes aparecem.
+//
+// ⚠️⚠️ `primeiroDiaSemana` existe porque a grade do /eventos começa no DOMINGO
+// (0), enquanto a semana da igreja para frequência é SEG→DOM. Aqui manda a
+// GRADE: as fases de cada linha são calculadas para o intervalo que a linha
+// realmente exibe. Se a faixa usasse SEG→DOM sobre uma linha DOM→SÁB, ela
+// afirmaria fase para dias que não estão ali em cima — que é pior que a
+// divergência de convenção.
+//
+// ⚠️ A primeira e a última linha invadem o mês vizinho, como em qualquer
+// calendário. Fase ativa nesses dias APARECE (a linha contém aqueles dias) e o
+// dia vem marcado com `no_mes: false` pra tela pintar em cinza.
+function inicioDaSemanaGrade(diaStr, primeiroDiaSemana = 0) {
+  const d = paraDia(diaStr);
+  if (d === null) return null;
+  // 1970-01-01 (dia 0) foi QUINTA → (d + 4) % 7 dá 0 no domingo.
+  const dow = ((d + 4) % 7 + 7) % 7;                  // 0=dom … 6=sáb
+  const desde = ((dow - primeiroDiaSemana) % 7 + 7) % 7;
+  return d - desde;
+}
+
+// `mes` = 'YYYY-MM'. Devolve as linhas da grade, cada uma com os 7 dias.
+function semanasDoMesGrade(mes, { primeiroDiaSemana = 0, hoje = null } = {}) {
+  if (typeof mes !== 'string' || !/^\d{4}-\d{2}$/.test(mes)) return [];
+  const primeiroDoMes = `${mes}-01`;
+  if (paraDia(primeiroDoMes) === null) return [];
+
+  const ano = Number(mes.slice(0, 4));
+  const m = Number(mes.slice(5, 7));
+  if (m < 1 || m > 12) return [];
+  // Último dia: dia 0 do mês seguinte, em UTC (nunca em fuso local).
+  const ultimoDoMes = new Date(Date.UTC(ano, m, 0)).toISOString().slice(0, 10);
+
+  const ini = inicioDaSemanaGrade(primeiroDoMes, primeiroDiaSemana);
+  const fim = inicioDaSemanaGrade(ultimoDoMes, primeiroDiaSemana);
+  const out = [];
+  for (let s = ini; s <= fim; s += 7) {
+    const dias = [];
+    for (let i = 0; i < 7; i++) {
+      const data = paraStr(s + i);
+      dias.push({
+        data,
+        no_mes: data.slice(0, 7) === mes,
+        eh_hoje: !!hoje && data === hoje,
+      });
+    }
+    out.push({
+      idx: out.length,
+      ini: paraStr(s),
+      fim: paraStr(s + 6),
+      dias,
+      eh_semana_atual: dias.some(d => d.eh_hoje),
+    });
+  }
+  return out;
+}
+
+// Mês anterior/seguinte de 'YYYY-MM' (sem `new Date` de string solta).
+function mesVizinho(mes, passo) {
+  if (typeof mes !== 'string' || !/^\d{4}-\d{2}$/.test(mes)) return null;
+  const ano = Number(mes.slice(0, 4));
+  const m = Number(mes.slice(5, 7)) - 1 + passo;
+  const d = new Date(Date.UTC(ano, m, 1));
+  return d.toISOString().slice(0, 7);
+}
+
 // Dias de sobreposição (inclusivo) entre dois intervalos de data.
 // ⚠️ As fases COMPARTILHAM o dia de fronteira no banco (a fase 2 termina no
 // mesmo dia em que a 3 começa), então a soma das sobreposições de uma semana
@@ -177,5 +247,6 @@ function montarCalendario({ eventos = [], fasesPorEvento = {}, semanas = [] } = 
 
 module.exports = {
   paraDia, paraStr, hojeBRT, segundaDa, montarSemanas,
+  inicioDaSemanaGrade, semanasDoMesGrade, mesVizinho,
   diasSobrepostos, faseDaSemana, montarCalendario,
 };

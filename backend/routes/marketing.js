@@ -94,8 +94,11 @@ async function enrichCards(cards) {
     destinoIds.length ? supabase.from('marketing_etiquetas_destino').select('id, slug, nome, cor').in('id', destinoIds) : Promise.resolve({ data: [] }),
     membroIds.length  ? supabase.from('marketing_membros').select('id, profile_id, habilidade, nome_display').in('id', membroIds) : Promise.resolve({ data: [] }),
     solicIds.length   ? supabase.from('solicitacoes').select('id, titulo, solicitante_id, eh_urgente, urgencia_decisao').in('id', solicIds) : Promise.resolve({ data: [] }),
+    // ⚠️ As DATAS da fase entram aqui porque é o que permite o Kanban decidir
+    // "esta tarefa é desta semana?" no SERVIDOR. Sem elas o front teria que
+    // reimplementar a régua de janela (a que já vive em utils/marketingSemanas).
     cycleTaskIds.length ? supabase.from('cycle_phase_tasks')
-      .select('id, event_id, event_phase_id, is_critical, prioridade, events:event_id(id, name), event_cycle_phases:event_phase_id(nome_fase, numero_fase)')
+      .select('id, event_id, event_phase_id, is_critical, prioridade, events:event_id(id, name), event_cycle_phases:event_phase_id(id, nome_fase, numero_fase, data_inicio_prevista, data_fim_prevista)')
       .in('id', cycleTaskIds) : Promise.resolve({ data: [] }),
   ]);
 
@@ -152,11 +155,17 @@ async function enrichCards(cards) {
     cycle_phase_task: c.cycle_phase_task_id ? (() => {
       const t = cycleMap[c.cycle_phase_task_id];
       if (!t) return null;
+      const f = t.event_cycle_phases || null;
       return {
         id: t.id,
         event_id: t.event_id,
         event_name: t.events?.name || null,
-        fase: t.event_cycle_phases ? `${t.event_cycle_phases.numero_fase}. ${t.event_cycle_phases.nome_fase}` : null,
+        fase: f ? `${f.numero_fase}. ${f.nome_fase}` : null,
+        fase_id: f?.id || null,
+        numero_fase: f?.numero_fase ?? null,
+        nome_fase: f?.nome_fase || null,
+        fase_de: f?.data_inicio_prevista || null,
+        fase_ate: f?.data_fim_prevista || null,
         is_critical: t.is_critical,
         prioridade: t.prioridade,
         link: t.event_id ? `/eventos/${t.event_id}` : null,
@@ -849,7 +858,10 @@ router.patch('/ciclo-criativo/batch', authorizeModule('marketing', 5), async (re
 const {
   hojeBRT: hojeBRTMkt,
   montarSemanas,
+  semanasDoMesGrade,
+  mesVizinho,
   montarCalendario,
+  diasSobrepostos,
 } = require('../utils/marketingSemanas');
 
 // Solicitação ENTREGUE (o que o marketing resolveu). `avaliado` = concluída e
@@ -894,20 +906,29 @@ async function lerEmLotes(tabela, cols, coluna, valores) {
 
 router.get('/dashboard', authorizeModule('marketing', 1), async (req, res) => {
   const hoje = hojeBRTMkt();
-  // ⚠️ `parseInt(undefined) ?? 1` devolve NaN — `??` só pega null/undefined, e
-  // NaN não é nenhum dos dois. O NaN atravessava até o laço de semanas e o
-  // calendário voltava VAZIO, sem erro nenhum: exatamente o "erro disfarçado de
-  // tela vazia" que o resto deste arquivo existe pra evitar. Testar com número
-  // é o que fecha; `|| padrão` também serve, mas só porque NaN é falsy.
-  const adiante = limitarInteiro(req.query.semanas, 6, 1, 16);
-  const retro = limitarInteiro(req.query.retro, 1, 0, 4);
-  const semanas = montarSemanas(hoje, { retro, adiante });
+  // O calendário do ciclo é MENSAL, com setas — igual ao `BigCalendar` do
+  // /eventos (pedido do Pedro · 14/08). `?mes=YYYY-MM` navega; sem param, o mês
+  // de hoje. Mês malformado cai no mês de hoje em vez de devolver grade vazia.
+  const mes = /^\d{4}-\d{2}$/.test(String(req.query.mes || ''))
+    ? String(req.query.mes)
+    : hoje.slice(0, 7);
+  // ⚠️ `primeiroDiaSemana: 0` (domingo) porque a grade do /eventos começa no
+  // domingo, e as fases de cada linha são calculadas para o intervalo que a
+  // linha EXIBE — ver o comentário da régua em utils/marketingSemanas.
+  const semanas = semanasDoMesGrade(mes, { primeiroDiaSemana: 0, hoje });
   const coord = isAdminLike(req);
 
   // ⚠️ Cada bloco falha SOZINHO. Um evento sem ciclo não pode apagar a lista de
   // tarefas da pessoa, e erro NUNCA se disfarça de "está vazio" (a tela mostra
   // faixa âmbar com o motivo).
-  const resposta = { hoje, semanas, avisos: [] };
+  const resposta = {
+    hoje,
+    mes,
+    mes_anterior: mesVizinho(mes, -1),
+    mes_seguinte: mesVizinho(mes, 1),
+    semanas,
+    avisos: [],
+  };
 
   // ── Bloco 1 · minhas próximas entregas ────────────────────────────────────
   try {
@@ -1145,8 +1166,8 @@ router.get('/dashboard', authorizeModule('marketing', 1), async (req, res) => {
         linhas,
         sem_data,
         ciclos_ativos: ativos.length,
-        // ⚠️ Ciclo ativo que não aparece na grade porque só começa depois da
-        // janela. DECLARADO — "só vejo 4 séries" com 7 ciclos ativos parece bug.
+        // ⚠️ Ciclo ativo que não aparece no mês exibido (começa depois, ou já
+        // acabou). DECLARADO — "só vejo 4 séries" com 7 ciclos ativos parece bug.
         fora_da_janela: ativos.length - linhas.length,
       };
     }
@@ -1157,6 +1178,75 @@ router.get('/dashboard', authorizeModule('marketing', 1), async (req, res) => {
   }
 
   res.json(resposta);
+});
+
+// ─── Kanban · macro-tarefas + janela de semanas ─────────────────────────────
+//
+// Pedido do Pedro (14/08): *"na aba de kanban e backlog, não coloque as
+// subtarefas como quadrados; coloca as macro tarefas, porque senão fica muita
+// coisa, e coloque apenas dos que estão na semana atual e na próxima"*.
+//
+// ⚠️ A MACRO é o EVENTO, e a subtarefa é o card do ciclo criativo. Medido em
+// 14/08: **105 cards de evento de 15 eventos** (7 com ciclo ativo, 8 já
+// concluídos) contra 7 cards internos — o Kanban era 93% ciclo criativo.
+//
+// ⚠️⚠️ Quem decide "está na janela" é o SERVIDOR, com a MESMA régua do
+// calendário do dashboard (`utils/marketingSemanas`, no gate). Se o front
+// filtrasse, o Kanban e o calendário poderiam discordar sobre a mesma semana.
+//
+// ⚠️ ESCONDER CARD É ESCONDER TRABALHO. Por isso: (1) o que ficou fora é
+// CONTADO e devolvido (`fora_da_janela`), pra tela declarar e oferecer "ver
+// tudo"; (2) card SEM data de fase entra como `na_janela: null` e a tela
+// MOSTRA — "não sei quando é" nunca vira "não aparece"; (3) cards internos e de
+// solicitação ficam SEMPRE visíveis (não têm fase, e o pedido era sobre o ciclo).
+router.get('/kanban', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const hoje = hojeBRTMkt();
+    const semanas = limitarInteiro(req.query.janela_semanas, 2, 1, 12);
+    const janelaSemanas = montarSemanas(hoje, { retro: 0, adiante: semanas - 1 });
+    const janela = {
+      de: janelaSemanas[0]?.ini || hoje,
+      ate: janelaSemanas[janelaSemanas.length - 1]?.fim || hoje,
+      semanas,
+    };
+
+    const { data, error } = await supabase
+      .from('marketing_kanban_cards')
+      .select('*')
+      .is('deleted_at', null)
+      .order('raia_rapida', { ascending: false })
+      .order('ordem_fila', { ascending: true });
+    if (error) throw error;
+
+    const cards = await enrichCards(data || []);
+
+    let foraDaJanela = 0;
+    let semDataDaFase = 0;
+    for (const c of cards) {
+      if (c.origem !== 'evento') { c.na_janela = true; continue; }
+      const f = c.cycle_phase_task;
+      if (!f || !f.fase_de || !f.fase_ate) {
+        c.na_janela = null;          // desconhecido — a tela MOSTRA
+        semDataDaFase++;
+        continue;
+      }
+      c.na_janela = diasSobrepostos(f.fase_de, f.fase_ate, janela.de, janela.ate) > 0;
+      if (!c.na_janela) foraDaJanela++;
+    }
+
+    res.json({
+      hoje,
+      janela,
+      semanas: janelaSemanas,
+      cards,
+      fora_da_janela: foraDaJanela,
+      sem_data_da_fase: semDataDaFase,
+      total: cards.length,
+    });
+  } catch (e) {
+    console.error('[MARKETING] kanban:', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Detalhe de uma FASE · o que o Marketing tem pra entregar ali.

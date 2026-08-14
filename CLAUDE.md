@@ -5263,6 +5263,46 @@ evento/série está, com o pendente de Marketing ao clicar.
 TELA do Kanban não mudou — só o endereço). `/marketing/dashboard`,
 `/marketing/calendario|fila|ciclo-criativo|triagem` redirecionam.
 
+### O calendário virou MENSAL, no formato do /eventos (2026-08-14 · 2ª rodada)
+
+Pedido do Pedro: *"quero o estilo de calendário exatamente igual ao de eventos
+(mostrando por mês, tendo seta para passar), só que lá mostra apenas o Dia D dos
+eventos — aqui eu quero que em todas as semanas mostre quais fases vigentes de
+ciclo tem naquela semana"*. A lista de semanas empilhadas saiu; entrou grade
+mensal `‹ Agosto 2026 ›` espelhando o `BigCalendar` de `pages/eventos/Eventos.jsx`
+(cabeçalho Dom…Sáb, dias do mês vizinho em cinza, hoje em bolinha da marca).
+
+- **A diferença em relação ao /eventos**: lá cada dia recebe os eventos daquele
+  dia; aqui cada **LINHA DE SEMANA** recebe uma faixa por evento, porque a fase
+  vale a semana inteira. É "um retângulo cobrindo toda a semana", como ele pediu
+  na 1ª rodada.
+- **`semanasDoMesGrade(mes, {primeiroDiaSemana, hoje})`** + `mesVizinho` na régua
+  pura. `GET /dashboard?mes=YYYY-MM` navega; mês malformado cai no mês de hoje
+  (nunca grade vazia). A resposta traz `mes`, `mes_anterior`, `mes_seguinte`.
+- ⚠️⚠️ **A grade começa no DOMINGO (0) e as fases de cada linha são calculadas
+  para o intervalo que a linha EXIBE.** A semana da igreja para frequência é
+  SEG→DOM, mas aqui manda a GRADE: uma faixa SEG→DOM sobre uma linha DOM→SÁB
+  afirmaria fase para dias que não estão ali em cima. Medido: o exemplo 4/4 do
+  Pedro **se mantém** na grade dom→sáb (linha 16–22/08 → O Mundo F8 · Divertidamente
+  F5 · Reforma F3 · Parábolas F3), então a troca de convenção não moveu nada
+  visível. Há teste amarrando os dois lados.
+- ⚠️ **`new Date('2026-08')` é meia-noite UTC = 31/07 no Rio** — o rótulo do mês
+  é montado FATIANDO a string, senão o cabeçalho mostraria "Julho" em agosto.
+- ⚠️ O botão **"Hoje" só aparece fora do mês de hoje** (botão que não faz nada é
+  ruído). Mês sem fase nenhuma mostra o calendário com "Nenhuma fase de ciclo
+  nesta semana" e o rodapé declara quantos ciclos ativos não tocam o mês
+  (fev/2026: 7 de 7).
+
+**⚠️⚠️ MUTANTE QUE SOBREVIVEU E O QUE ELE ENSINOU:** trocar o último dia do mês
+calculado por `${mes}-31` fixo passou com 39 testes verdes. Motivo: **`Date.parse
+('2028-02-31')` NÃO é NaN** — o Node rola para 02/03. O estrago não é a data
+final (o filtro `no_mes` a corrige) e sim uma **SEMANA FANTASMA** no fim da
+grade. O teste que o mata é fev/2026, que começa domingo e acaba sábado (4 linhas
+exatas, zero invasão). **Régua: em aritmética de calendário, assertar a CONTAGEM
+de linhas, não só a data limite.** 5 mutantes rodados e mortos na grade
+(normalização de dia negativo · fim-do-mês fixo · `no_mes` sempre true ·
+`eh_semana_atual` sempre true · dia da semana em fuso local).
+
 ### ⚠️ A régua do calendário é PURA e mora em `backend/utils/marketingSemanas.js`
 
 A pergunta "em que fase o ciclo está NESTA semana" não tinha resposta em lugar
@@ -5348,6 +5388,38 @@ o vitest e o build estavam verdes.
 
 ⚠️ **Cada bloco falha SOZINHO** (`avisos[]` → faixa âmbar): um evento sem ciclo
 não pode apagar a lista de tarefas, e **erro nunca se disfarça de tela vazia**.
+
+### ⚠️ Kanban · MACRO-tarefa por evento + janela de 2 semanas (2026-08-14 · 2ª rodada)
+
+Pedido do Pedro: *"na aba de kanban e backlog, não coloque as subtarefas como
+quadrados no kanban, coloca as macro tarefas, porque senão fica muita coisa, e
+coloque apenas dos que estão na semana atual e na próxima"*.
+
+Medido antes: **105 dos 113 cards vivos eram do ciclo criativo**, de **15 eventos**
+(só 7 com ciclo ativo — os outros 8 já concluídos), contra 7 cards internos. O
+Backlog tinha **88 quadrados**. Depois: **17 cards visíveis** (9 de evento + 8
+outros), e os 9 viram **4 macro cards** — o Backlog sai de 88 para 11.
+
+- **`GET /marketing/kanban?janela_semanas=2`** (novo) devolve os cards com
+  **`na_janela` decidido no SERVIDOR**, pela MESMA régua do calendário. Se o front
+  filtrasse, Kanban e calendário poderiam discordar sobre a mesma semana. O
+  `GET /cards` ficou intocado (Épicos e outros chamadores dependem dele).
+- **A MACRO é o EVENTO**; a subtarefa é o card do ciclo. Agrupado por
+  **(evento, COLUNA)** — o mesmo evento tem tarefa em Backlog e em Concluído, e
+  juntar as duas faria a coluna Concluído mentir. Aberto o macro, cada subtarefa
+  segue **arrastável e clicável** (o agrupamento é de EXIBIÇÃO, não tira ação).
+- ⚠️ **O contador da coluna conta TAREFAS, não cards na tela** — senão agrupar
+  faria o número cair e parecer que sumiu serviço.
+- ⚠️⚠️ **ESCONDER CARD É ESCONDER TRABALHO.** Por isso: (1) o que saiu da janela é
+  CONTADO e a tela declara com "ver tudo" a um clique; (2) card **sem data de
+  fase** entra como `na_janela: null` e **APARECE** — "não sei quando é" nunca
+  vira "não aparece"; (3) cards **internos e de solicitação ficam sempre
+  visíveis** (não têm fase, e o pedido era sobre o ciclo criativo).
+- **A janela inclui toda fase que ENCOSTA nas 2 semanas**, não só a dominante:
+  tarefa cuja fase começa no sábado não pode desaparecer do quadro.
+- `enrichCards` passou a trazer `fase_id`/`numero_fase`/`nome_fase`/`fase_de`/
+  `fase_ate` no `cycle_phase_task` (mesma query, mais colunas) — é o que permite
+  a decisão no servidor.
 
 ### Cores do gráfico · `#00897B` + `#8b5cf6`
 
