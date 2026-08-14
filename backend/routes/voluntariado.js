@@ -5124,7 +5124,13 @@ async function _coberturaDoCulto(sid) {
  * Parâmetros: `service_type_id` (opcional), `desde` (YYYY-MM-DD, default hoje
  * em BRT) e `semanas` (1–8, default 4).
  */
-const MATRIZ_MAX_CULTOS = 24;
+// ⚠️ Teto de colunas. Subiu de 24 para 40 em 14/08/2026 ("deixe o que for
+// melhor para o usuário"): 4 semanas SEM filtro de tipo rendem ~28 cultos, e
+// com 24 a visão padrão já vinha truncada — o usuário pedia 4 semanas e recebia
+// 3 e meia, com um aviso. 40 cobre a visão padrão inteira; 8 semanas sem filtro
+// ainda estoura, e aí o aviso diz o caminho (filtrar por tipo de culto), que é
+// o recorte que o supervisor quer de qualquer forma.
+const MATRIZ_MAX_CULTOS = 40;
 
 router.get('/escala-matriz', async (req, res) => {
   try {

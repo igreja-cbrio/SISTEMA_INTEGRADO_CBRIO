@@ -62,6 +62,37 @@ export default function AgenteVoluntariadoPainel() {
       secao('Recusadas — precisam de reposição', d.reposicoes) +
       secao('Faltaram sem avisar no último culto', d.no_shows);
   };
+  // ⚠️ O aviso da semana já roda sozinho no cron diário (8h10 BRT). Este botão
+  // existe pro caso de escalar DEPOIS da rodada do dia — quem for escalado à
+  // tarde para o culto de amanhã seria avisado só na manhã seguinte, às vezes
+  // depois do culto. É idempotente: quem já foi avisado não recebe de novo.
+  const [avisando, setAvisando] = useState(false);
+  const avisarSemana = async () => {
+    setAvisando(true);
+    try {
+      const r: any = await api.avisarSemana();
+      // Relatório HONESTO: "0 enviados" com motivo é diferente de sucesso, e
+      // caixa verde para envio que não aconteceu foi o erro do disparo do censo.
+      const extras = [
+        r.app_avisados ? `${r.app_avisados} pelo app` : null,
+        r.ja_avisados ? `${r.ja_avisados} já avisado(s)` : null,
+        r.sem_telefone ? `${r.sem_telefone} sem telefone` : null,
+        r.adiados ? `${r.adiados} para a próxima rodada` : null,
+      ].filter(Boolean).join(' · ');
+      if (r.enfileirados > 0) {
+        toast.success(`${r.enfileirados} aviso(s) na fila do WhatsApp${extras ? ` · ${extras}` : ''}`);
+      } else if (r.app_avisados > 0) {
+        // Avisou pelo app mas não pelo WhatsApp: é meio caminho, e a tela tem
+        // que dizer qual metade — senão o coordenador acha que todos souberam.
+        toast.warning(`${r.app_avisados} avisado(s) pelo app. ${r.motivo || ''}`.trim(), { duration: 12000 });
+      } else {
+        toast.warning(r.motivo || 'Nada foi enviado.', { duration: 10000 });
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao avisar os escalados da semana');
+    } finally { setAvisando(false); }
+  };
+
   const copiar = async () => {
     try { await navigator.clipboard.writeText(textoListas().trim()); toast.success('Listas copiadas — é só colar.'); }
     catch { toast.error('Não consegui copiar. Tente o "Baixar".'); }
@@ -117,6 +148,10 @@ export default function AgenteVoluntariadoPainel() {
               {enviando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />} Lembrar todos ({comTelefone.length})
             </Button>
           )}
+          <Button size="sm" variant="outline" onClick={avisarSemana} disabled={avisando} className="h-8 gap-1.5"
+            title="Avisa quem serve nos próximos 7 dias. Roda sozinho todo dia de manhã; use aqui quando escalar alguém depois disso.">
+            {avisando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarClock className="h-3.5 w-3.5" />} Avisar a semana
+          </Button>
           <Button size="sm" variant="outline" onClick={copiar} className="h-8 gap-1.5">
             <Copy className="h-3.5 w-3.5" /> Copiar
           </Button>

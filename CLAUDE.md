@@ -8801,3 +8801,86 @@ vaga → 1.
   visão de um culto, onde a pessoa vê o que aconteceu e pode desfazer.
 - ⚠️ Célula sem composição naquele culto mostra **"—"**, não branco: a área
   existe noutra data, mas ali não há vaga definida — e branco é ambíguo.
+
+## ⚠️ Escala · auto-preencher o período + AVISO na semana do serviço (2026-08-14 · SEM migration)
+
+Terceira leva do pedido de 13/08. Decisões do Matheus em 14/08: *"o auto
+preencher pode ser implementado · ele vai acontecer conforme a disponibilidade
+das pessoas · toda vez que a pessoa for escalada, deve ser avisada na semana do
+serviço · [teto de colunas] deixe o que for melhor para o usuário · célula sem
+composição pode deixar um texto escrito 'vazio'"*.
+
+### Auto-preencher o PERÍODO (na matriz)
+
+Botão na barra da grade: roda o auto-preencher em todos os cultos visíveis e
+devolve o resultado NOMEADO (quem entrou, em que culto, e há quanto tempo não
+servia) + **Desfazer tudo**.
+
+- ⚠️⚠️ **UM CULTO POR VEZ, sequencialmente** — e isso não é preguiça: cada
+  chamada relê quem já está escalado nos OUTROS cultos do mesmo dia. Em
+  paralelo, as quatro chamadas de um domingo leriam o mesmo estado inicial e
+  escalariam a MESMA pessoa nos quatro horários, que é o que a régua de conflito
+  existe pra impedir.
+- ⚠️ Os ids voltam **amarrados ao culto que os criou** (`lotes: [{cultoId,
+  ids}]`): o desfazer manda cada lote pro seu culto, e é essa amarração que
+  impede um id perdido no payload de apagar escala de outro dia.
+- ⚠️ **Desfazer PARCIAL não se apresenta como sucesso** — o que sobrou continua
+  escalado, e quem não souber disso escala outra pessoa por cima.
+- Culto sem composição **não é erro**: vira contagem com o caminho ("aplique um
+  template"), não um toast vermelho que faz parecer que o botão quebrou.
+- A disponibilidade que o voluntário marca no app **já era regra do servidor**
+  desde 13/08 — a tela existe (`components/voluntariado/Disponibilidade.tsx`) e
+  grava pelos endpoints `/app/voluntariado/indisponibilidade[s]`.
+
+### ⚠️⚠️ Aviso na SEMANA do serviço · `services/escalaAviso.js`
+
+Automático, de **carona no cron `/api/agente-voluntariado/cron/checar`**
+(`10 11 * * *` = 8h10 BRT · sem slot novo no `vercel.json`, que já tem 46) +
+botão **"Avisar a semana"** no painel do agente, para quem for escalado DEPOIS
+da rodada do dia.
+
+- **Régua PURA em `backend/utils/avisoEscala.js`** (**no gate** ·
+  `src/test/avisoEscala.test.ts`, 24 casos · **4 mutantes RODADOS**: agrupar por
+  escala → 2 vermelhos · avisar culto que já passou → 1 · lembrar quem recusou →
+  1 · data/hora em UTC → 3).
+- ⚠️⚠️ **AGRUPA POR (PESSOA, DIA).** Quem serve nos quatro cultos de domingo
+  receberia QUATRO mensagens quase idênticas — o padrão que a Meta lê como spam,
+  e a nota de qualidade do número é o que decide a subida de tier da conta. Uma
+  mensagem por dia, citando os horários ("domingo, 16/08, às 08:30, 10:00 e
+  19:00").
+- ⚠️ **Culto que já passou nunca é avisado** e **quem RECUSOU não é lembrado**
+  (a pessoa já disse que não vai; insistir é constrangimento). Confirmado É
+  lembrado — o aviso é da semana, não da confirmação.
+- ⚠️⚠️ **O registro de "já avisei" é a UNIÃO dos dois canais** (`whatsapp_envios.
+  ref_id` + `app_notificacoes.chave_dedup`), sem tabela nem coluna nova. Só a
+  fila não bastaria: **enquanto o template não estiver aprovado ela não grava
+  nada**, e quem recebeu pelo app receberia de novo todo dia. A checagem procura
+  QUALQUER escala do grupo — assim a ordem do array não importa.
+- **Dois canais, não um**: push/in-app pra quem tem conta (grátis, imediato, e o
+  tipo `escala` **já é roteado** pelos dois mapas do app pra /voluntariado) +
+  WhatsApp pela fila pra quem tem telefone. Só o app deixaria a maioria sem
+  aviso (a base de tokens é pequena e 100% iOS); só o WhatsApp desperdiça um
+  canal grátis num disparo com teto de 250 destinatários/24h.
+- **Telefone pela cadeia canônica** (`perfisPorId`, exportada do
+  `agenteVoluntariado`) — ler só `vol_profiles.phone` é o bug de 13/08 (8 de 930).
+- Teto de rodada 200 com `adiados` **declarado**; como o cron roda todo dia, o
+  adiado de hoje sai amanhã.
+- ⚠️ O aviso roda em bloco protegido dentro do cron: **falhar não pode derrubar
+  o alerta do coordenador**, que divide a mesma execução.
+
+⏳ **PENDENTE DE GENTE, e sem isso o WhatsApp não sai**: `WHATSAPP_TEMPLATE_ESCALA`
+**não existe na Vercel** (conferido em 14/08 com `vercel env ls`: há 15
+`WHATSAPP_TEMPLATE_*` e essa não está entre elas). É preciso aprovar o template
+`escala_voluntario` na Meta (UTILITY · pt_BR · `{{1}}` área · `{{2}}` evento ·
+`{{3}}` quando), setar a env em produção e **fazer deploy novo**. Até lá o aviso
+sai **só pelo app**, e o relatório diz exatamente isso — nunca "0 enviados" como
+se fosse sucesso.
+⚠️ **Não pus default no código de propósito**: nome de template errado é recusa
+**permanente** da Meta (132001), que queima o aviso sem retry.
+
+### Ajustes da matriz
+
+- **Teto de colunas 24 → 40**: 4 semanas sem filtro rendem ~28 cultos, então a
+  visão padrão vinha truncada — o usuário pedia 4 semanas e recebia 3 e meia.
+- **Célula sem composição escreve "vazio"** (pedido dele) — um traço é ambíguo
+  com "não carregou".

@@ -3,11 +3,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle2, XCircle, HelpCircle, Plus, Star, AlertTriangle, X } from 'lucide-react';
+import { CheckCircle2, XCircle, HelpCircle, Plus, Star, AlertTriangle, X, Wand2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { useEscalaMatriz, useMontagemContexto, useBulkSchedule, useDeleteSchedule, useVolServiceTypes } from '../../hooks';
+import { voluntariado } from '@/api';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import PainelEscalar, { type Vaga } from './PainelEscalar';
 
 /**
@@ -143,6 +145,11 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
             <input type="checkbox" checked={soMinhas} onChange={e => setSoMinhas(e.target.checked)} className="accent-[#00B39D]" />
             Só as minhas áreas
           </label>
+          <AutoPreencherPeriodo
+            cultos={cultos}
+            teamIds={soMinhas ? [...new Set(linhas.map(l => l.team_id).filter(Boolean) as string[])] : []}
+            onPronto={() => qc.invalidateQueries({ queryKey: ['vol', 'escala-matriz'] })}
+          />
           {data?.resumo && (
             <span className="ml-auto text-xs">
               <span className="text-muted-foreground">no período: </span>
@@ -258,9 +265,10 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
                               </button>
                             )}
                             {/* Célula sem composição neste culto: a área existe
-                                noutra data, mas aqui não há vaga definida — dizer
-                                isso é melhor que uma célula em branco ambígua. */}
-                            {!cel && <span className="text-[11px] text-muted-foreground/40">—</span>}
+                                noutra data, mas aqui não há vaga definida.
+                                "vazio" escrito (pedido do Matheus, 14/08) diz
+                                isso; um traço é ambíguo com "não carregou". */}
+                            {!cel && <span className="text-[11px] text-muted-foreground/50">vazio</span>}
                             {cel && cel.alvo === 0 && cel.pessoas.length > 0 && (
                               <Badge variant="outline" className="text-[9px] px-1 py-0 mt-0.5">fora da composição</Badge>
                             )}
@@ -294,5 +302,172 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
         escalando={bulk.isPending}
       />
     </div>
+  );
+}
+
+/**
+ * Auto-preencher o PERÍODO inteiro da grade.
+ *
+ * Autorizado pelo Matheus em 14/08/2026 ("o auto preencher pode ser
+ * implementado · ele vai acontecer conforme a disponibilidade das pessoas") —
+ * a disponibilidade já é regra do servidor desde 13/08, e quem marcou "não
+ * posso" no app não é escalado nem aqui.
+ *
+ * ⚠️⚠️ RODA UM CULTO POR VEZ, sequencialmente, e isso NÃO é economia de código:
+ * cada chamada relê quem já está escalado nos OUTROS cultos do mesmo dia. Em
+ * paralelo, as quatro chamadas de um domingo leriam o mesmo estado inicial e
+ * escalariam a MESMA pessoa nos quatro horários — exatamente o que a régua de
+ * conflito existe pra impedir.
+ *
+ * ⚠️ Culto sem composição não é erro: é um culto que ninguém montou ainda.
+ * Vira contagem no resultado, com o caminho ("aplique um template"), em vez de
+ * um toast vermelho que faz parecer que o botão quebrou.
+ */
+function AutoPreencherPeriodo({ cultos, teamIds, onPronto }: {
+  cultos: any[]; teamIds: string[]; onPronto: () => void;
+}) {
+  const [rodando, setRodando] = useState(false);
+  const [progresso, setProgresso] = useState(0);
+  const [resultado, setResultado] = useState<any>(null);
+
+  const rodar = async () => {
+    if (!cultos.length) return;
+    setRodando(true);
+    setProgresso(0);
+    const detalhe: any[] = [];
+    const semCandidato: any[] = [];
+    // ⚠️ Os ids ficam AMARRADOS ao culto que os criou: o desfazer precisa
+    // mandar cada lote pro seu culto (o endpoint só apaga id que pertence ao
+    // culto informado, e é essa amarração que impede um id perdido no payload
+    // de apagar escala de outro dia).
+    const lotes: Array<{ cultoId: string; ids: string[] }> = [];
+    let semComposicao = 0;
+    let falhas = 0;
+
+    for (let i = 0; i < cultos.length; i++) {
+      const c = cultos[i];
+      try {
+        const r: any = await voluntariado.schedules.autoFill(c.id, teamIds);
+        for (const d of r.detalhe || []) detalhe.push({ ...d, culto: c });
+        for (const v of r.sem_candidato || []) semCandidato.push({ ...v, culto: c });
+        if (r.schedule_ids?.length) lotes.push({ cultoId: c.id, ids: r.schedule_ids });
+      } catch (e: any) {
+        // O 409 de composição ausente é informação, não falha.
+        if (e?.codigo === 'sem_composicao' || /composição/i.test(e?.message || '')) semComposicao++;
+        else falhas++;
+      }
+      setProgresso(i + 1);
+    }
+
+    setRodando(false);
+    setResultado({ detalhe, sem_candidato: semCandidato, lotes, semComposicao, falhas });
+    if (detalhe.length) {
+      toast.success(`${detalhe.length} vaga(s) preenchida(s) no período`);
+      onPronto();
+    }
+  };
+
+  const [desfazendo, setDesfazendo] = useState(false);
+  const desfazer = async () => {
+    setDesfazendo(true);
+    let removidas = 0;
+    let erros = 0;
+    for (const lote of resultado.lotes || []) {
+      try {
+        const r: any = await voluntariado.schedules.desfazerLote(lote.cultoId, lote.ids);
+        removidas += r.removidas || 0;
+      } catch { erros++; }
+    }
+    setDesfazendo(false);
+    // ⚠️ Desfazer PARCIAL não pode se apresentar como sucesso: o que sobrou
+    // continua escalado, e quem não souber disso vai escalar outra pessoa.
+    if (erros) toast.warning(`${removidas} desfeita(s), mas ${erros} culto(s) falharam — confira a grade.`, { duration: 10000 });
+    else toast.success(`${removidas} escala(s) desfeita(s)`);
+    setResultado(null);
+    onPronto();
+  };
+
+  return (
+    <>
+      <Button
+        size="sm" variant="outline" className="h-7 gap-1.5 text-xs"
+        disabled={rodando || !cultos.length} onClick={rodar}
+      >
+        <Wand2 className="h-3.5 w-3.5" />
+        {rodando ? `Preenchendo ${progresso}/${cultos.length}…` : 'Auto-preencher o período'}
+      </Button>
+
+      {resultado && (
+        <Dialog open onOpenChange={() => setResultado(null)}>
+          <DialogContent className="max-w-xl max-h-[85vh] flex flex-col p-0 gap-0">
+            <DialogHeader className="px-5 pt-5 pb-3 border-b shrink-0">
+              <DialogTitle>
+                {resultado.detalhe.length > 0
+                  ? `${resultado.detalhe.length} vaga(s) preenchida(s) no período`
+                  : 'Nada foi preenchido'}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="flex-1 overflow-y-auto min-h-0 px-5 py-3 space-y-4">
+              {resultado.detalhe.length > 0 && (
+                <div className="space-y-1">
+                  {resultado.detalhe.map((d: any, i: number) => (
+                    <div key={i} className="flex items-baseline justify-between gap-3 text-sm">
+                      <span className="min-w-0">
+                        <span className="text-muted-foreground">
+                          {format(new Date(d.culto.scheduled_at), 'dd/MM HH:mm')} · {d.equipe}{d.funcao ? ` · ${d.funcao}` : ''} →{' '}
+                        </span>
+                        <span className="font-medium">{d.nome}</span>
+                      </span>
+                      <span className="text-xs text-muted-foreground whitespace-nowrap">{d.rotulo}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {resultado.sem_candidato.length > 0 && (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-900/10 dark:border-amber-900/60 p-3">
+                  <p className="text-sm font-medium text-amber-800 dark:text-amber-300 mb-1">
+                    Sem candidato disponível ({resultado.sem_candidato.length})
+                  </p>
+                  <ul className="text-xs text-amber-800/90 dark:text-amber-300/90 space-y-0.5 max-h-40 overflow-y-auto">
+                    {resultado.sem_candidato.map((v: any, i: number) => (
+                      <li key={i}>
+                        {format(new Date(v.culto.scheduled_at), 'dd/MM HH:mm')} · {v.equipe}{v.funcao ? ` · ${v.funcao}` : ''} — {v.restantes} vaga(s)
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-[11px] text-amber-700/80 dark:text-amber-400/80 mt-1.5">
+                    Quem marcou indisponibilidade no app, ou já serve em outro culto do mesmo dia,
+                    não entra automaticamente. Clique na vaga para escalar mesmo assim.
+                  </p>
+                </div>
+              )}
+
+              {resultado.semComposicao > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {resultado.semComposicao} culto(s) do período ainda não têm composição — aplique um
+                  template neles (na visão "Um culto") para que tenham vagas a preencher.
+                </p>
+              )}
+              {resultado.falhas > 0 && (
+                <p className="text-xs text-red-600 dark:text-red-400">
+                  {resultado.falhas} culto(s) falharam ao preencher. Tente de novo; o que já entrou não duplica.
+                </p>
+              )}
+            </div>
+            <DialogFooter className="border-t px-5 py-3 shrink-0">
+              {resultado.lotes?.length > 0 && (
+                <Button variant="outline" size="sm" disabled={desfazendo} onClick={desfazer}>
+                  {desfazendo ? 'Desfazendo…' : 'Desfazer tudo'}
+                </Button>
+              )}
+              <Button size="sm" className="bg-[#00B39D] hover:bg-[#00B39D]/90" onClick={() => setResultado(null)}>
+                Fechar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 }

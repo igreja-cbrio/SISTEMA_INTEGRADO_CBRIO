@@ -7,13 +7,30 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const { analisar, alertar } = require('../services/agenteVoluntariado');
 const fila = require('../services/whatsappFila');
+const { avisarEscalasDaSemana } = require('../services/escalaAviso');
 
 // Cron (CRON_SECRET) — alerta o coordenador. Também roda no cron diário.
 async function cronChecar(req, res) {
   if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const alertas = await alertar();
-    res.json({ ok: true, alertas });
+
+    // ⚠️ Aviso da semana de CARONA neste cron (14/08/2026), sem slot novo no
+    // `vercel.json` — são 46 crons e a lição dos pagamentos é não gastar slot
+    // quando dá pra pegar carona. Roda todo dia às 8h10 BRT, então quem for
+    // escalado hoje pra um culto dos próximos 7 dias é avisado amanhã cedo.
+    //
+    // ⚠️ O aviso NÃO pode derrubar o cron: o alerta do coordenador divide esta
+    // execução, e uma falha no envio levaria junto o alerta que já funcionava.
+    let aviso = null;
+    try {
+      aviso = await avisarEscalasDaSemana();
+    } catch (e) {
+      console.error('[agente-voluntariado/cron] aviso de escala falhou:', e.message);
+      aviso = { erro: e.message };
+    }
+
+    res.json({ ok: true, alertas, aviso });
   } catch (e) {
     console.error('[agente-voluntariado/cron]', e.message);
     res.status(500).json({ error: e.message });
@@ -69,6 +86,26 @@ const TETO_RODADA = 200;
 // gate é decisão de POLÍTICA (do Marcos), não efeito colateral de um conserto de
 // leitura, e por isso não foi feito aqui. Se for ligado, o caminho é
 // `notificarMembro` (que já lê o opt-in) e não uma segunda régua neste arquivo.
+// POST /avisar-semana — o MESMO aviso do cron, sob demanda.
+//
+// Existe porque o cron roda uma vez por dia (8h10 BRT): quem for escalado
+// depois disso, para um culto do próprio dia ou do dia seguinte, só seria
+// avisado na rodada seguinte — às vezes depois do culto. A coordenação aperta
+// isto e o aviso sai na hora.
+//
+// ⚠️ É idempotente por construção: quem já foi avisado não recebe de novo (o
+// registro é a linha da fila), então apertar duas vezes não duplica nada.
+router.post('/avisar-semana', authenticate, authorizeModule('voluntariado', 2), async (req, res) => {
+  try {
+    const dias = Math.min(14, Math.max(1, parseInt(req.body?.dias, 10) || 7));
+    const r = await avisarEscalasDaSemana({ dias });
+    res.json(r);
+  } catch (e) {
+    console.error('[agente-voluntariado] avisar-semana:', e.message);
+    res.status(500).json({ error: 'Erro ao avisar os escalados da semana' });
+  }
+});
+
 router.post('/lembrar', authenticate, authorizeModule('voluntariado', 2), async (req, res) => {
   try {
     const ids = Array.isArray(req.body?.schedule_ids) ? req.body.schedule_ids : null;
