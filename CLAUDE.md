@@ -9232,6 +9232,14 @@ Criar `escala_voluntario` na Meta — **UTILITY · pt_BR · 3 variáveis no corp
 >
 > Botão (quick reply): **Não vou poder**
 
+⚠️ **O `{{3}}` NÃO repete o dia da semana quando o `{{2}}` já o diz** (reparo do
+Matheus vendo a prévia na Meta, 14/08): a mensagem monta `{{2}} — {{3}}`, e com
+"Culto de Domingo" saía *"Culto de Domingo — domingo, 16/08…"*. A omissão é
+decidida contra o dia REAL do culto, não contra "tem palavra de dia no nome" —
+um "Culto de Domingo" reagendado pro sábado precisa dizer **sábado**, e é isso
+que evita a pessoa aparecer no dia errado. Com vários cultos no mesmo dia o
+`{{2}}` vira "2 cultos" e o dia volta pro `{{3}}`. Mutation-testado.
+
 ⚠️ **O texto do botão importa**: é ele que chega em `m.button.text` e é o que a
 régua interpreta. "Não vou poder" é reconhecido; se mudarem na Meta, conferir
 contra `utils/respostaEscala.js`.

@@ -15,7 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   elegivelParaAviso, agruparParaAviso, selecionarRodada,
-  textoQuando, textoAreas, textoEvento, horaBRT, diaRelativoBRT,
+  textoQuando, textoAreas, textoEvento, horaBRT, diaRelativoBRT, nomeJaDizODia,
 } from '../../backend/utils/avisoEscala.js';
 
 const AGORA = '2026-08-11T09:00:00-03:00'; // terça
@@ -82,7 +82,9 @@ describe('agruparParaAviso · UMA mensagem por pessoa e dia', () => {
     });
     expect(g).toHaveLength(1);
     expect(g[0].escala_ids.sort()).toEqual(['a', 'b', 'c']);
-    expect(g[0].params[2]).toBe('domingo, 16/08, às 08:30, 10:00 e 19:00');
+    // Sem "domingo," porque o {{2}} é "Culto de Domingo" e o dia não se repete
+    // (ver o bloco "sem repetir o dia da semana").
+    expect(g[0].params[2]).toBe('16/08, às 08:30, 10:00 e 19:00');
   });
 
   it('pessoas diferentes no mesmo dia são grupos diferentes', () => {
@@ -114,7 +116,12 @@ describe('agruparParaAviso · UMA mensagem por pessoa e dia', () => {
   });
 
   it('⚠️ o culto de domingo 19h NÃO cai na segunda', () => {
-    const g = agruparParaAviso({ escalas: [esc({ scheduled_at: DOM_1900 })], agora: AGORA });
+    // ⚠️ Nome que NÃO diz o dia de propósito: com "Culto de Domingo" o texto
+    // omitiria o dia da semana (ver "sem repetir o dia da semana") e o teste
+    // deixaria de vigiar o fuso, que é o que ele existe pra vigiar.
+    const g = agruparParaAviso({
+      escalas: [esc({ service_name: 'Culto AMI', scheduled_at: DOM_1900 })], agora: AGORA,
+    });
     expect(g[0].dia).toBe('2026-08-16');
     expect(g[0].params[2]).toContain('domingo, 16/08');
   });
@@ -237,5 +244,61 @@ describe('⚠️ véspera · diasAlvo recorta o disparo (14/08)', () => {
     expect(diaRelativoBRT('2026-08-15T22:00:00-03:00', 1)).toBe('2026-08-16');
     expect(diaRelativoBRT('2026-08-15T06:00:00-03:00', 1)).toBe('2026-08-16');
     expect(diaRelativoBRT('2026-08-15T22:00:00-03:00', 0)).toBe('2026-08-15');
+  });
+});
+
+describe('⚠️ sem repetir o dia da semana (14/08)', () => {
+  // Reparo do Matheus vendo a prévia do template na Meta: a mensagem monta
+  // "{{2}} — {{3}}", e com "Culto de Domingo" no {{2}} saía
+  // "Culto de Domingo — domingo, 16/08…".
+  const dom = (over: any = {}) => esc({ service_name: 'Culto de Domingo', scheduled_at: DOM_0830, ...over });
+
+  it('nome que já diz o dia → o {{3}} não repete', () => {
+    const g = agruparParaAviso({ escalas: [dom()], agora: AGORA });
+    expect(g[0].params[1]).toBe('Culto de Domingo');
+    expect(g[0].params[2]).toBe('16/08, às 08:30');
+  });
+
+  it('nome que NÃO diz o dia → o dia continua', () => {
+    // "Culto AMI" e "Bridge" não dizem que são sábado; sem o dia, a pessoa
+    // precisa ir conferir no calendário.
+    const g = agruparParaAviso({
+      escalas: [esc({ service_name: 'Culto AMI', scheduled_at: '2026-08-15T20:00:00-03:00' })],
+      agora: AGORA,
+    });
+    expect(g[0].params[2]).toBe('sábado, 15/08, às 20:00');
+  });
+
+  it('⚠️ culto de nome "Domingo" REAGENDADO pro sábado diz sábado', () => {
+    // A comparação é com o dia REAL do culto. Omitir aqui esconderia
+    // justamente o que evita a pessoa aparecer no dia errado.
+    const g = agruparParaAviso({
+      escalas: [esc({ service_name: 'Culto de Domingo', scheduled_at: '2026-08-15T18:00:00-03:00' })],
+      agora: AGORA,
+    });
+    expect(g[0].params[2]).toBe('sábado, 15/08, às 18:00');
+  });
+
+  it('⚠️ com VÁRIOS cultos o {{2}} vira "2 cultos" e o dia volta pro {{3}}', () => {
+    const g = agruparParaAviso({
+      escalas: [
+        esc({ id: 'a', service_name: 'Culto de Domingo', scheduled_at: DOM_0830 }),
+        esc({ id: 'b', service_name: 'CBKIDS Manhã', scheduled_at: DOM_1000 }),
+      ],
+      agora: AGORA,
+    });
+    expect(g[0].params[1]).toBe('2 cultos');
+    expect(g[0].params[2]).toBe('domingo, 16/08, às 08:30 e 10:00');
+  });
+
+  it('"quarta-feira" casa com "Quarta com Deus"', () => {
+    expect(nomeJaDizODia('Quarta com Deus', '2026-08-12T20:00:00-03:00')).toBe(true);
+    expect(nomeJaDizODia('Culto AMI', '2026-08-15T20:00:00-03:00')).toBe(false);
+    expect(nomeJaDizODia(null, DOM_0830)).toBe(false);
+  });
+
+  it('textoQuando sem horários e com omissão', () => {
+    expect(textoQuando(DOM_0830, [], true)).toBe('16/08');
+    expect(textoQuando(DOM_0830, [])).toBe('domingo, 16/08');
   });
 });
