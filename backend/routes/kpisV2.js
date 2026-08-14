@@ -87,6 +87,71 @@ router.post('/cron/coletar', autorizaCron, async (_req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// Relatório semanal de KPI/OKR · ENVIO
+//
+// Quem ANALISA é o agent-worker (Railway · agente kpi_relatorio_semanal, no
+// scheduler de segunda 06:00 SP): ele lê o banco, monta o relatório e chama
+// aqui só pra enviar. O envio mora no backend porque é aqui que vivem as
+// credenciais do Microsoft Graph (services/email.js) — o worker não as tem, e
+// duplicá-las lá seria um 2º lugar pra rotacionar segredo.
+//
+// ⚠️ O corpo é HTML montado pelo worker a partir de dados estruturados (não é
+// texto livre de LLM): o modelo entrega JSON, o worker renderiza. Ver
+// agent-worker/src/agents/kpiRelatorioSemanal.ts.
+// ----------------------------------------------------------------------------
+const { enviarEmail, isConfigured: emailConfigurado } = require('../services/email');
+
+const RELATORIO_DESTINO_PADRAO = process.env.KPI_RELATORIO_EMAIL || 'gestao@cbrio.com.br';
+
+router.post('/cron/relatorio-email', autorizaCron, async (req, res) => {
+  try {
+    const { assunto, html, texto, para } = req.body || {};
+
+    if (!assunto || typeof assunto !== 'string' || !assunto.trim()) {
+      return res.status(400).json({ error: 'assunto obrigatório' });
+    }
+    if (!html || typeof html !== 'string' || !html.trim()) {
+      return res.status(400).json({ error: 'html obrigatório' });
+    }
+    // Teto defensivo: relatório é resumo. Corpo gigante é sinal de que algo
+    // saiu do controle (loop no render), e cliente de e-mail trunca sozinho.
+    if (html.length > 400_000) {
+      return res.status(400).json({ error: 'html excede 400k caracteres' });
+    }
+
+    if (!emailConfigurado()) {
+      // 503 e não 200: sem canal, NADA foi enviado — responder ok faria o
+      // worker marcar a rodada como entregue e ninguém saberia do silêncio.
+      return res.status(503).json({ error: 'nenhum canal de e-mail configurado' });
+    }
+
+    const destinatarios = (Array.isArray(para) ? para : [para || RELATORIO_DESTINO_PADRAO])
+      .filter((e) => typeof e === 'string' && e.includes('@'))
+      .slice(0, 20);
+
+    if (!destinatarios.length) {
+      return res.status(400).json({ error: 'nenhum destinatário válido' });
+    }
+
+    const r = await enviarEmail({
+      to: destinatarios,
+      subject: assunto.trim().slice(0, 200),
+      html,
+      text: typeof texto === 'string' ? texto.slice(0, 100_000) : undefined,
+      fromName: 'Painel KPI/OKR · CBRio',
+    });
+
+    if (!r?.ok) {
+      return res.status(502).json({ error: r?.error || 'falha no envio', destinatarios });
+    }
+
+    res.json({ ok: true, destinatarios, id: r.id || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.use(authenticate);
 
 // Bust automático do painel após mutacoes (edição de KPI, lancamento de registro)
