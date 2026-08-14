@@ -13,6 +13,7 @@ const { requireCron } = require('../utils/cronAuth');
 const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
 const antecedentes = require('../services/antecedentesCriminais');
 const { executarSyncCompleto } = require('../services/voluntariadoSync');
+const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
 const multer = require('multer');
 const uploadCsv = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
@@ -1805,6 +1806,17 @@ router.get('/volunteers-pool', async (req, res) => {
       if (data.length < 1000) break;
       offset += 1000;
     }
+
+    // Marcadores de jornada (pedido do Arthur Serpa / Pr. Nélio · 13/08/2026 —
+    // o e-mail cita Voluntariado por nome). Liga por `membresia_id`: perfil sem
+    // vínculo com o cadastro da pessoa fica SEM marcador, e é honesto — não dá
+    // pra afirmar nada sobre a jornada de quem o sistema não conseguiu ligar
+    // a um `mem_membros` (o import do Planning Center deixou muitos assim).
+    // ⚠️ Generosidade continua gated no servidor (decisão do Matheus).
+    await anexarMarcadores(all, (p) => p.membresia_id || null, {
+      incluirSensiveis: podeVerMarcadorSensivel(req.user),
+    });
+
     res.json(all);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar pool de voluntários' }); }
 });

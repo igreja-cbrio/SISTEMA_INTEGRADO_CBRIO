@@ -18,6 +18,7 @@ import {
   useAllocateVolunteer, useVolTeamsManaged,
 } from './hooks';
 import VolDetalheDialog from './VolDetalheDialog';
+import MarcadoresJornada from '@/components/MarcadoresJornada';
 
 type Tab = 'todos' | 'fila';
 
@@ -342,6 +343,13 @@ function TodosList() {
                       {hasPc ? 'Planning Center' : 'Interno'}
                     </Badge>
                     {vol.qr_code && <QrCode className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />}
+                    {/* Marcadores de jornada (Arthur Serpa / Pr. Nélio · 13/08/2026).
+                        ⚠️ Perfil sem `membresia_id` fica SEM marcador — não dá pra
+                        afirmar nada sobre a jornada de quem o sistema não ligou
+                        ao cadastro da pessoa (o import do Planning Center deixou
+                        muitos assim). Por isso `mostrarVazio={false}`: aqui um
+                        "—" seria lido como "não fez nada". */}
+                    <MarcadoresJornada marcadores={vol.marcadores} mostrarVazio={false} />
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {teamsOf.length > 0

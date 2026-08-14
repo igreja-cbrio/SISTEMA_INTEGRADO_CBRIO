@@ -35,6 +35,7 @@ const { aprovarPedidoCore } = require('./grupos');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const appIdentidade = require('../services/appIdentidade');
 const { acharRespostaDaPessoa } = require('../services/censoJaRespondeu');
+const { anexarMarcadores } = require('../services/jornadaMarcadores');
 // ⚠️⚠️ O vocabulário de sexo DIVERGE por tabela, e a diferença é medida, não
 // suposta: `mem_membros.genero` é **masculino/feminino** (579 pessoas, ZERO com
 // M/F), `kids_criancas.sexo` e `batismo_inscricoes.sexo` são **M/F**, e
@@ -3846,6 +3847,14 @@ router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) 
         nome: m?.nome || '—', telefone: m?.telefone || null,
       };
     });
+
+    // Marcadores de jornada do roster — o pedido original do Pr. Nélio via
+    // Arthur Serpa (13/08/2026): "o líder de grupo vê rapidamente em quais
+    // etapas da jornada cada pessoa da sua turma está".
+    // ⚠️ `incluirSensiveis: false` FIXO aqui, sem consultar permissão: quem
+    // chega por esta rota é líder/supervisor de grupo pelo APP, e o gate de
+    // generosidade é justamente sobre ele. Não é o `req.user` do ERP.
+    await anexarMarcadores(membros, (p) => p.membro_id, { incluirSensiveis: false });
     const pendentes = (pendRes.data || []).map(p => ({
       id: p.id, grupo_id: p.grupo_id, grupo_nome: grupo.nome,
       nome: p.nome, telefone: p.telefone, email: p.email, origem: p.origem, created_at: p.created_at,

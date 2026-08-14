@@ -22,6 +22,7 @@ import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectV
 import { toast } from 'sonner';
 import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus } from 'lucide-react';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
+import MarcadoresJornada from '../../components/MarcadoresJornada';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -520,7 +521,7 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}`, background: C.bg }}>
-                  {['Pessoa', 'Função', 'Status', 'Grupo', 'Última frequência', 'Último envio', 'Presenças'].map((h, i, arr) => (
+                  {['Pessoa', 'Função', 'Status', 'Jornada', 'Grupo', 'Última frequência', 'Último envio', 'Presenças'].map((h, i, arr) => (
                     <th key={h} style={{ textAlign: i === arr.length - 1 ? 'right' : 'left', padding: '8px 16px', fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -559,6 +560,13 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, padding: '2px 9px', borderRadius: 99, background: `${st.cor}18`, color: st.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
                           <span style={{ width: 6, height: 6, borderRadius: '50%', background: st.cor }} /> {st.label}
                         </span>
+                      </td>
+                      {/* Jornada — é ESTA a coluna do pedido do Pr. Nélio via
+                          Arthur Serpa: o líder olha a turma e vê em que etapa
+                          cada um está. Generosidade não vem pra quem só tem o
+                          módulo `grupos` (o servidor decide). */}
+                      <td style={{ padding: '10px 16px', maxWidth: 210 }}>
+                        <MarcadoresJornada marcadores={p.marcadores} />
                       </td>
                       <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2 }}>
                         {gs.length > 0 ? gs.map((g, i) => (
@@ -616,6 +624,10 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                       </span>
                     </div>
                   ); })()}
+                  {/* Jornada por extenso · aqui cabe o rótulo completo */}
+                  <div style={{ marginTop: 7 }}>
+                    <MarcadoresJornada marcadores={selected.marcadores} variante="ficha" />
+                  </div>
                 </div>
                 <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', fontSize: 22, lineHeight: 1, color: C.t3, cursor: 'pointer' }}>×</button>
               </div>

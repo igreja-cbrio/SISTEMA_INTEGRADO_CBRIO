@@ -23,6 +23,9 @@ const { avaliarProntidao } = require('../utils/prontidaoCadastro');
 // exercitada e o erro nunca disparou. Achado ao ligar o sino do app.
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
+const {
+  anexarMarcadores, marcadoresDeMembros, podeVerMarcadorSensivel,
+} = require('../services/jornadaMarcadores');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -542,6 +545,16 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
       });
     }
 
+    // Marcadores de jornada (batismo · Next · grupo · servir · devocional +
+    // generosidade só pra quem pode) — pedido do Arthur Serpa / Pr. Nélio,
+    // 13/08/2026. Anexa DEPOIS do filtro: a lista já está recortada, então o
+    // custo acompanha o que a tela vai mostrar, não a base inteira.
+    // ⚠️ Best-effort dentro do serviço: marcador que falha vira `indisponiveis`
+    // DECLARADO no payload, nunca lista sem gente.
+    await anexarMarcadores(filtered, (m) => m.id, {
+      incluirSensiveis: podeVerMarcadorSensivel(req.user),
+    });
+
     res.json(filtered);
   } catch (e) {
     console.error('membresia/membros:', e.message);
@@ -762,8 +775,21 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
       }));
     }
 
+    // Marcadores de jornada da ficha (mesma régua da lista · serviço único).
+    // Best-effort: a ficha existe pra mostrar a pessoa, não os marcadores.
+    let marcadores = null;
+    try {
+      const { porMembro } = await marcadoresDeMembros([id], {
+        incluirSensiveis: podeVerMarcadorSensivel(req.user),
+      });
+      marcadores = porMembro.get(id) || null;
+    } catch (eMarc) {
+      console.error('[membresia] marcadores da ficha:', eMarc.message);
+    }
+
     res.json({
       ...membro,
+      marcadores,
       familiares,
       trilha: trilha || [],
       historico: historico || [],
