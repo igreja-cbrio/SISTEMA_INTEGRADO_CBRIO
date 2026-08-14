@@ -19,6 +19,7 @@ const { applyNextAction } = require('./nextApply');
 const { applyGruposAction } = require('./gruposApply');
 const { applyNpsAction } = require('./npsApply');
 const { applyProjetosAction } = require('./projetosApply');
+const { applyCyberAction } = require('./cyberApply');
 
 // Mapa prefixo -> handler
 const MODULE_HANDLERS = {
@@ -36,6 +37,7 @@ const MODULE_HANDLERS = {
   'grupos.': applyGruposAction,
   'nps.': applyNpsAction,
   'proj.': applyProjetosAction,
+  'cyber.': applyCyberAction,
 };
 
 async function applyQueueAction({ action_type, payload, reviewedBy }) {

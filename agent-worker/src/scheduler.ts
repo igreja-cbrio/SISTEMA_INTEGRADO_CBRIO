@@ -14,6 +14,7 @@ import { runGruposWatcher } from "./agents/gruposWatcher.js";
 import { runNpsWatcher } from "./agents/npsWatcher.js";
 import { runProjetosWatcher } from "./agents/projetosWatcher.js";
 import { runPilotoTriageWatcher } from "./agents/pilotoTriageWatcher.js";
+import { runCyberAgent } from "./agents/cyberAgent.js";
 
 // Cron expressions assumem TZ=America/Sao_Paulo (definido no env do Railway).
 // Por enquanto: 1x/semana · segunda-feira as 06:00 SP.
@@ -43,6 +44,7 @@ const SCHEDULED_AGENTS: Array<{
   { type: "grupos_watcher", runner: runGruposWatcher },
   { type: "nps_watcher", runner: runNpsWatcher },
   { type: "projetos_watcher", runner: runProjetosWatcher },
+  { type: "cyber_agent", runner: runCyberAgent },
 ];
 
 export function startScheduler() {
