@@ -117,8 +117,64 @@ function avaliarProntidao(cad, hoje = new Date()) {
   };
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  A MESMA régua aplicada à PESSOA (`mem_membros`), não a uma submissão
+//
+//  Régua do Matheus (13/08/2026), sobre visitante de grupo: "só não vai ser
+//  visitante aquele de quem tivermos os dados completos (os mesmos que pedimos
+//  no momento da inscrição)".
+//
+//  ⚠️ É o espelho JS de `fn_membro_cadastro_completo` (migration
+//     20260814150000). Mudou aqui, muda lá — senão o selo da tela discorda do
+//     trigger que promove, e ninguém entende por que a pessoa continua
+//     visitante com a tela dizendo que está tudo preenchido.
+//
+//  ⚠️ DUAS diferenças conscientes em relação a `avaliarProntidao`, as duas
+//     porque lá se avalia uma SUBMISSÃO e aqui uma PESSOA:
+//
+//     · `aceita_termos` fica de fora — termo é prova de consentimento de uma
+//       PORTA, não atributo do cadastro, e o visitante que o líder anotou à mão
+//       nunca terá um. Exigi-lo tornaria impossível o caminho que ele descreveu
+//       (o líder pega os dados e a pessoa vira participante).
+//     · telefone confere 10-11 DÍGITOS (a régua do Contrato de Inscrição), não
+//       `telefoneAlcancavel`, que também exige DDD real + o 9 do celular.
+//       Aquela é régua de ENVIO (a mensagem chega?); a pergunta aqui é de
+//       CADASTRO (temos o dado?).
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Telefone pela régua do Contrato: 10-11 dígitos (DDD + número). */
+function telefoneDigitosOk(tel) {
+  const d = String(tel || '').replace(/\D/g, '');
+  return d.length >= 10 && d.length <= 11;
+}
+
+/**
+ * @param {object} membro linha de mem_membros
+ * @param {Date} [hoje] injetado pro teste
+ * @returns {{completo:boolean, faltando:string[], rotulos:string[]}}
+ */
+function avaliarCadastroPessoa(membro, hoje = new Date()) {
+  const m = membro || {};
+  const faltando = [];
+
+  if (!nomeCompleto(m.nome)) faltando.push('nome');
+  if (!cpfValido(m.cpf)) faltando.push('cpf');
+  if (!telefoneDigitosOk(m.telefone)) faltando.push('telefone');
+  if (!emailOk(m.email)) faltando.push('email');
+  if (!nascimentoOk(m.data_nascimento, hoje)) faltando.push('nascimento');
+  if (!generoOk(m.genero)) faltando.push('genero');
+
+  return {
+    completo: faltando.length === 0,
+    faltando,
+    rotulos: faltando.map(f => FALTA[f] || f),
+  };
+}
+
 module.exports = {
   avaliarProntidao,
+  avaliarCadastroPessoa,
+  telefoneDigitosOk,
   nomeCompleto,
   nascimentoOk,
   generoOk,

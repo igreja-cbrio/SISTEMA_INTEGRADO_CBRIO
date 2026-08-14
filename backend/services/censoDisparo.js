@@ -487,9 +487,135 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
   return resultado;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  CONVITE INDIVIDUAL — "pedir os dados desta pessoa"
+//
+//  Régua do Matheus (13/08/2026): o visitante de grupo vira participante quando
+//  o cadastro dele fica completo, e "o líder deve ter o papel de pegar os dados
+//  dele". Este é o gesto, sem ninguém digitar CPF alheio.
+//
+//  ⚠️⚠️ QUEM PREENCHE É A PESSOA, pelo link PESSOAL do censo. Foi por isso que
+//  descartei o desenho óbvio (dar o link para a coordenação copiar e mandar):
+//  aquele link abre o formulário JÁ PREENCHIDO com nome, CPF, endereço e
+//  nascimento da pessoa, e é EDITÁVEL — entregá-lo a um terceiro é dar a ele
+//  leitura e ESCRITA no cadastro alheio, sem trilha de quem alterou. O link é
+//  prova de posse do CONTATO dela (lei de 04/08); só o canal dela pode recebê-lo.
+//
+//  ⚠️ Reusa `dispararCenso` inteiro por baixo — mesma fila, mesmo template,
+//  mesmo corpo de e-mail, mesmo registro em `mem_censo_convites`. Um segundo
+//  caminho de envio divergiria (texto diferente, sem registro, sem canário).
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Rodada corrente da campanha (ou 1, se nunca houve disparo). */
+async function rodadaCorrente() {
+  const { data, error } = await supabase
+    .from('mem_censo_convites')
+    .select('rodada').order('rodada', { ascending: false }).limit(1);
+  if (error) throw error;
+  return (data && data[0] && Number(data[0].rodada)) || 1;
+}
+
+/**
+ * Convida UMA pessoa a completar o cadastro.
+ *
+ * @returns {{ok:boolean, motivo?:string, canais?:string[], detalhe?:string}}
+ */
+async function convidarPessoa(membroId, { por = null, canais = ['whatsapp', 'email'] } = {}) {
+  if (!membroId) return { ok: false, motivo: 'sem_pessoa' };
+
+  const { data: p, error } = await supabase
+    .from('mem_membros')
+    .select('id, nome, telefone, email, whatsapp_optin')
+    .eq('id', membroId).is('deleted_at', null).maybeSingle();
+  if (error) throw error;
+  if (!p) return { ok: false, motivo: 'pessoa_nao_encontrada' };
+
+  const optinObrigatorio = process.env.WHATSAPP_OPTIN_OBRIGATORIO === '1';
+  const c = canaisDaPessoa(p, { canais, optinObrigatorio });
+  // ⚠️ Sem canal alcançável, dizer o MOTIVO: "não deu" sem porquê faz a pessoa
+  // clicar de novo. `motivos` já vem da régua pura (sem_telefone/numero_errado/
+  // sem_optin/sem_email).
+  if (!c.whatsapp && !c.email) return { ok: false, motivo: 'sem_canal', detalhe: c.motivos.join(', ') };
+
+  const rodada = await rodadaCorrente();
+
+  // ⚠️ Não repete convite da MESMA rodada — em nenhum canal. É a mesma trava do
+  // disparo em massa: quem já foi convidado nesta rodada não recebe de novo,
+  // venha o convite da campanha ou daqui. Sem isso, a pessoa levaria duas
+  // mensagens iguais e a campanha viraria spam pelo caminho lateral.
+  const { data: jaConv } = await supabase
+    .from('mem_censo_convites')
+    .select('canal, created_at').eq('membro_id', p.id).eq('rodada', rodada).limit(5);
+  if (jaConv && jaConv.length) {
+    return {
+      ok: false, motivo: 'ja_convidado', rodada,
+      detalhe: `já convidada nesta rodada (${jaConv.map(x => x.canal).join(', ')})`,
+    };
+  }
+
+  const link = montarLinkCenso(process.env.FRONTEND_URL, p.id);
+  const enviados = [];
+  let erro = null;
+
+  if (c.whatsapp) {
+    if (!whatsappPronto()) {
+      erro = 'template_nao_configurado';
+    } else {
+      // ⚠️ SÍNCRONO (`enfileirar`, não `enfileirarLote`): é uma mensagem só, e
+      // aqui a pessoa que clicou está olhando a tela. Recusa PERMANENTE da Meta
+      // não pode virar "convidada" — seria o convite perdido pra sempre que o
+      // canário do disparo em massa existe pra evitar.
+      const r = await fila.enfileirar({
+        telefone: p.telefone,
+        template: nomeTemplate(),
+        params: [primeiroNome(p.nome), link],
+        contexto: CONTEXTO,
+        refId: p.id,
+      });
+      if (r?.permanente === true) erro = r.reason || 'template_recusado';
+      else {
+        await registrarConvites([{ membro_id: p.id, canal: 'whatsapp', rodada, enviado_por: por, ok: true }]);
+        enviados.push('whatsapp');
+      }
+    }
+  }
+
+  // ⚠️ E-mail só quando o WhatsApp NÃO saiu: a campanha em massa também não
+  // manda pelos dois (`jaConvidadoEmQualquerCanal`) — duas mensagens iguais
+  // pelo mesmo pedido é o que faz a pessoa achar que é golpe.
+  if (!enviados.length && c.email) {
+    if (!emailConfigurado()) {
+      erro = erro || 'canal_nao_configurado';
+    } else {
+      const { subject, text, html } = corpoEmail({ nome: p.nome, link, destinatario: String(p.email).trim() });
+      let ok = false;
+      let motivoErro = null;
+      try {
+        const r = await enviarEmail({ to: String(p.email).trim(), subject, text, html, fromName: 'CBRio' });
+        ok = !!(r && r.ok !== false);
+        if (!ok) motivoErro = (r && (r.error || r.motivo)) || 'falha no envio';
+      } catch (e) {
+        motivoErro = e?.message || String(e);
+      }
+      await registrarConvites([{
+        membro_id: p.id, canal: 'email', rodada, enviado_por: por,
+        ok, erro: motivoErro ? String(motivoErro).slice(0, 400) : null,
+      }]);
+      if (ok) enviados.push('email');
+      else erro = erro || motivoErro || 'falha no envio';
+    }
+  }
+
+  // ⚠️ "Enviei" só quando algo saiu de fato — régua de 05/08: envio que não
+  // enviou ninguém NÃO pode aparecer como sucesso.
+  if (!enviados.length) return { ok: false, motivo: erro || 'nao_enviado', rodada };
+  return { ok: true, canais: enviados, rodada };
+}
+
 module.exports = {
   previewCenso,
   dispararCenso,
+  convidarPessoa,
   // Puras — exportadas pro teste (decidem quem recebe e quantos saem).
   semCpf,
   primeiroNome,

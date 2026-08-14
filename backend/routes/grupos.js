@@ -23,6 +23,10 @@ const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jorna
 const { agruparDuplicados, validarResolucao } = require('../utils/vinculosDuplicados');
 // Régua única de "dá pra falar com essa pessoa?" (varredura do lançamento 02/08)
 const { classificarContato, digitos: contatoDigitos } = require('../services/contatoPessoa');
+// "Temos os dados dessa pessoa?" — espelho JS de fn_membro_cadastro_completo,
+// o trigger que promove visitante → participante quando o cadastro fecha.
+const { avaliarCadastroPessoa } = require('../utils/prontidaoCadastro');
+const censoDisparo = require('../services/censoDisparo');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
 // troca de líder reflete em whatsapp_lideres sem passo manual. Fire-and-forget
@@ -3294,6 +3298,22 @@ router.patch('/pessoas/:membroId/ficha', authorizeModule('grupos', 5), async (re
       }
       upd.data_nascimento = v || null;
     }
+    // ⚠️ `genero` ENTROU em 13/08/2026: o GET já o devolvia e o PATCH o
+    // descartava em silêncio, então era IMPOSSÍVEL completar um cadastro por
+    // esta tela — e sexo é um dos 6 campos que a régua exige pra promover
+    // visitante → participante. A pessoa ficaria visitante pra sempre com a
+    // tela mostrando "falta: sexo" e nenhum lugar pra preencher. Mesmo defeito
+    // que travou a fila de membresia em 04/08.
+    //
+    // ⚠️ `masculino|feminino`, NUNCA "outro" — o canônico do Contrato de
+    // Inscrição em todas as 7 portas. Aceita M/F na entrada (o legado gravou
+    // assim) e normaliza pro canônico na saída.
+    if ('genero' in body) {
+      const v = limpo(body.genero).toLowerCase();
+      const mapa = { m: 'masculino', f: 'feminino', masculino: 'masculino', feminino: 'feminino' };
+      if (v && !mapa[v]) return res.status(400).json({ error: 'Sexo deve ser masculino ou feminino.', campo: 'genero' });
+      upd.genero = v ? mapa[v] : null;
+    }
     if ('observacoes' in body) {
       const v = limpo(body.observacoes);
       upd.observacoes = v ? v.slice(0, 4000) : null;
@@ -4478,9 +4498,13 @@ router.get('/pessoas/papeis', async (req, res) => {
     const ids = [...pessoaIds];
     const membrosMap = {};
     for (let i = 0; i < ids.length; i += 400) {
+      // ⚠️ cpf/email/nascimento/genero entram SÓ pra decidir se o cadastro está
+      // completo (selo "faltam dados" · régua do Matheus 13/08). Os VALORES não
+      // vão pro payload — quem precisa deles abre a ficha na Membresia, que é
+      // gated por módulo próprio. Aqui a resposta carrega só o que FALTA.
       const { data: ms } = await supabase
         .from('mem_membros')
-        .select('id, nome, foto_url, telefone')
+        .select('id, nome, foto_url, telefone, cpf, email, data_nascimento, genero')
         .in('id', ids.slice(i, i + 400))
         .is('deleted_at', null);
       (ms || []).forEach(m => { membrosMap[m.id] = m; });
@@ -4491,11 +4515,18 @@ router.get('/pessoas/papeis', async (req, res) => {
     const garante = (mid) => {
       if (!pessoas[mid]) {
         const m = membrosMap[mid] || {};
+        // Espelho JS de `fn_membro_cadastro_completo` (o trigger que promove
+        // visitante → participante quando os dados chegam). A tela mostra o que
+        // FALTA; os valores ficam no servidor.
+        const cadastro = avaliarCadastroPessoa(m);
         pessoas[mid] = {
           membro_id: mid,
           nome: m.nome || '—',
           foto_url: m.foto_url || null,
           telefone: m.telefone || null,
+          cadastro_completo: cadastro.completo,
+          cadastro_faltando: cadastro.faltando,
+          cadastro_rotulos: cadastro.rotulos,
           papel: null,
           rank: 0,
           grupos: [],
@@ -4602,6 +4633,32 @@ router.get('/pessoas/papeis', async (req, res) => {
   } catch (e) {
     console.error('[grupos] pessoas/papeis:', e.message);
     res.status(500).json({ error: 'Erro ao carregar pessoas' });
+  }
+});
+
+// POST /api/grupos/pessoas/:membroId/pedir-dados
+//
+// "O líder deve ter o papel de pegar os dados dele" (Matheus · 13/08/2026), sem
+// ninguém digitar CPF alheio: manda pra PRÓPRIA PESSOA o link pessoal do censo,
+// pelo canal dela, e ela preenche. Quando o cadastro fecha, o trigger
+// `tg_grupo_visitante_vira_participante` promove sozinho.
+//
+// ⚠️ Nível 3, não 4: o disparo em MASSA do censo é nível 4 porque fala com 200
+// pessoas de uma vez e consome a cota do TIER_250. Aqui é UMA mensagem, para
+// uma pessoa do grupo — mesma ordem de risco de editar um cadastro.
+//
+// ⚠️ Quem envia é o SERVIDOR, e o link nunca passa por quem clicou: aquele link
+// abre o cadastro da pessoa preenchido E editável. Ver o comentário longo em
+// `censoDisparo.convidarPessoa`.
+router.post('/pessoas/:membroId/pedir-dados', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const r = await censoDisparo.convidarPessoa(req.params.membroId, { por: req.user?.id || null });
+    // 409 (não 500) quando a régua recusou: não é erro do servidor, é resposta.
+    if (r.ok === false) return res.status(409).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error('[grupos] pedir-dados:', e.message);
+    res.status(500).json({ error: 'Não foi possível enviar o pedido de dados agora.' });
   }
 });
 
