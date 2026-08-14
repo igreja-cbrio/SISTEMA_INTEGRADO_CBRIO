@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Loader2, HeartHandshake, Droplets, Sparkles, Phone } from 'lucide-react';
 import { toast } from 'sonner';
+import JornadaTimeline from './jornada/JornadaTimeline';
 
 const AREA_LABEL: Record<string, string> = { ami: 'AMI', bridge: 'Bridge', online: 'Online', sede: 'Sede', cba: 'CBA' };
 const AREAS = ['ami', 'bridge', 'online', 'sede'];
@@ -58,6 +59,10 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
   const [loading, setLoading] = useState(true);
   const [areaFiltro, setAreaFiltro] = useState<string>(area || 'todas');
   const [statusFiltro, setStatusFiltro] = useState<'todos' | 'pendentes' | 'atrasados'>(view === 'next' ? 'pendentes' : 'todos');
+  // A linha do tempo é a visão padrão do acompanhamento (pedido do Matheus ·
+  // 14/08): ela responde "quanto tempo levou" e "quem parou". A aba Next segue
+  // na tabela — ali a pergunta é cobertura do Next, não trajetória.
+  const [vista, setVista] = useState<'linha' | 'tabela'>(view === 'next' ? 'tabela' : 'linha');
 
   const efetivaArea = area || (areaFiltro === 'todas' ? undefined : areaFiltro);
 
@@ -92,8 +97,8 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
 
   return (
     <div className="space-y-4">
-      {/* Resumo */}
-      {r && (
+      {/* Resumo · na linha do tempo os tiles próprios já respondem isso */}
+      {r && vista === 'tabela' && (
         <div className={`grid gap-3 ${view === 'next' ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'}`}>
           {view !== 'next' && (
             <ResumoCard icon={Phone} color="#00B39D" titulo="Contato feito"
@@ -123,17 +128,48 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
             </SelectContent>
           </Select>
         )}
-        <Select value={statusFiltro} onValueChange={(v: any) => setStatusFiltro(v)}>
-          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos</SelectItem>
-            <SelectItem value="pendentes">{view === 'next' ? 'Ainda sem Next' : 'Com pendência'}</SelectItem>
-            <SelectItem value="atrasados">Atrasados</SelectItem>
-          </SelectContent>
-        </Select>
+        {vista === 'tabela' && (
+          <Select value={statusFiltro} onValueChange={(v: any) => setStatusFiltro(v)}>
+            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              <SelectItem value="pendentes">{view === 'next' ? 'Ainda sem Next' : 'Com pendência'}</SelectItem>
+              <SelectItem value="atrasados">Atrasados</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
+
+        {view !== 'next' && (
+          <div className="ml-auto inline-flex rounded-lg border border-border p-0.5">
+            {([['linha', 'Linha do tempo'], ['tabela', 'Tabela']] as const).map(([v, rotulo]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setVista(v)}
+                className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                  vista === v ? 'bg-primary text-primary-foreground font-medium' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {rotulo}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Tabela */}
+      {vista === 'linha' ? (
+        loading ? (
+          <div className="rounded-[16px] border border-border bg-card py-12 text-center">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" />
+          </div>
+        ) : !data ? (
+          <div className="rounded-[16px] border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
+            Não foi possível carregar o acompanhamento. Tente recarregar a página.
+          </div>
+        ) : (
+          <JornadaTimeline data={data} />
+        )
+      ) : (
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader>
@@ -189,6 +225,7 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
           </TableBody>
         </Table>
       </div>
+      )}
     </div>
   );
 }

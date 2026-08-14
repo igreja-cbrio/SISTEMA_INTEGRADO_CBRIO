@@ -8853,6 +8853,88 @@ o Matheus disse que não pode ficar aberto.
 havia credencial local, então a densidade real de cada marcador na base **não foi
 conferida no banco vivo**. Conferir ao abrir a tela.
 
+## ⚠️ Jornada do convertido · QUANTO TEMPO levou até cada marco (2026-08-14 · SEM migration)
+
+Pedido do Matheus: *"saber a trajetória e o tempo que o novo convertido leva até
+se engajar — quanto tempo até entrar em algum valor, quanto até fazer o Next"*,
+para **deixar a informação mais clara para os líderes**.
+
+O que existia respondia **se**, nunca **quando**: `GET /cuidados/jornada-convertidos`
+calculava dias só do 1º contato (batismo e Next eram `{feito:true}`) e
+`services/jornadaEngajamento.js` mede **estado atual**. Sem tempo, o líder não
+distingue quem está começando de quem parou há meio ano.
+
+- **`backend/utils/jornadaTempo.js`** = régua PURA no gate
+  (`src/test/jornadaTempo.test.ts` · 33 casos · **4 mutantes RODADOS**: limiar de
+  import 100→50 → 2 vermelhos · alcançado-sem-data virando "não alcançado" → 1 ·
+  dia em UTC → 2 · média no lugar da mediana → 3). O endpoint ganhou `marcos` por
+  pessoa (com data + dias) e `tempo` (mediana/quartis por marco) — **aditivo**, os
+  campos antigos seguem intactos porque 4 telas os consomem.
+- **Tela**: toggle **Linha do tempo | Tabela** no `JornadaConvertidos.tsx`, que já
+  está montado em `/ami`, `/bridge`, `/online` (`PainelArea`) e `Online.tsx`. A
+  linha do tempo é o **default**; a aba Next da Integração (`view="next"`) segue na
+  tabela — ali a pergunta é cobertura, não trajetória.
+
+### ⚠️⚠️ A LEI: são TRÊS estados, e confundi-los faz o painel mentir
+
+`sem registro` (nunca "não fez") · `alcançado com data confiável` (entra na
+mediana) · **`alcançado com data APROXIMADA`** (conta como alcançado, marcador
+**vazado**, FORA da mediana, com a exclusão **declarada** na tela).
+
+O estado 3 existe por medição, não por precaução: **16 dos 23 convertidos com
+vínculo de grupo (70%) têm `entrou_em` numa das 3 cargas em massa** (2026-06-19 =
+342 pessoas · 2026-07-10 = 233 · 2026-06-23 = 115). Usar essas datas produziria
+uma mediana de "tempo até entrar em grupo" **inteiramente fabricada, com cara de
+medição** — é o mesmo fato que a `20260619140000` registra e a razão de nenhuma
+régua do sistema aplicar janela de tempo em grupo.
+
+- ⚠️ **`datasDeImport` detecta pelo DADO, não por lista hardcodada**, com limiar
+  **alto (100)**: o pico ORGÂNICO mais alto (abertura da T2, 2026-08-10) tem 71, e
+  baixar o limiar marcaria como suspeito o dia de maior adesão real da igreja.
+- ⚠️ Marco **ANTES da decisão** também é aproximado (gente que já estava na igreja
+  e decidiu depois) — dias negativos fingiriam agilidade na mediana.
+- ⚠️ **Mediana, nunca média**: a cauda é longa e a média não descreveria ninguém.
+
+### ⚠️ A régua de "fez o Next" AQUI é PRESENÇA em ≥1 encontro (decisão do Matheus)
+
+`next_presencas` (`presente=true`) → `next_encontros.data` + a camada legada
+`next_inscricoes.check_in_at`. **NÃO** é `vw_next_formado_pessoa` (que exige aula
+1 E 2 e é o que NSM/KPI/marcadores usam). Duas consequências:
+
+- **A data melhora**: passa a ser o dia do ENCONTRO. O `formado_em` da view é
+  `min(next_matriculas.created_at)` — data de MATRÍCULA, que num gráfico de
+  "quanto tempo levou" mediria a inscrição, não a participação.
+- ⚠️ **`next_encontros.data` é NULLABLE** e `next_pessoa_aula_manual` só tem
+  `updated_at` ⇒ a pessoa fez, sem data de evento: entra como `aproximada`.
+  Descartar diria "não fez o Next"; inventar sujaria a mediana.
+- ⚠️ Medido em 14/08: nesta coorte as duas réguas dão **20 pessoas** — o que muda
+  é a DATA, não a contagem. Mas a régua é mais frouxa em geral, então a tela
+  **escreve a régua ao lado do marco** para não gerar discussão com o `/painel`.
+
+### Estado medido em 14/08 (o que a tela mostra hoje)
+
+**407 convertidos** (out/2025 → ago/2026) · 282 com 1º contato datado · 114 com
+contato só por status (sem data) · **só 50 (12%) têm algum marco além do contato**.
+
+| marco | alcançaram | mediana | aproximados |
+|---|---|---|---|
+| 1º contato | 282 (69%) | 0 d | 0 |
+| Next | 20 (5%) | 7 d | 7 |
+| Batismo | 16 (4%) | 56 d | 3 |
+| Grupo | 23 (6%) | 41 d | **16** |
+| Voluntariado | 4 (1%) | 116 d | 0 |
+| Generosidade | 20 (5%) | 31 d | 11 |
+
+- ⚠️ **`cui_convertidos.membro_id` é nullable, mas hoje NÃO há nenhum órfão**
+  (medido: 0 de 407) — por isso a tela **não** tem contador de "sem cadastro".
+- **Generosidade é SENSÍVEL**: reusa `podeVerFinanceiroDePessoa`
+  (`membresia` OU `financeiro` ≥ 2) — quem não passa **não recebe nem o booleano**
+  (a consulta nem roda), e a tela DECLARA que a lista está incompleta.
+- ⚠️ Casamento pessoa↔marco pela régua do próprio handler: chave forte
+  (`membro_id`, depois CPF de 11 dígitos) e **nome só sem identificação nenhuma**.
+- `.in()` em lotes de 200 · leituras paginadas · `mem_grupo_membros` é lido
+  INTEIRO de propósito (a detecção de import precisa da distribuição completa).
+
 ## ⚠️⚠️ Voluntariado · disponibilidade virou REGRA, e a montagem de escala foi refeita (2026-08-13 · SEM migration)
 
 Pedidos do Matheus, em sequência, sobre `/ministerial/voluntariado/montar-escala`:
