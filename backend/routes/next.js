@@ -1085,6 +1085,21 @@ router.get('/pessoas', async (req, res) => {
       (q) => q.is('deleted_at', null));
     const turmas = await fetchAllNext('next_turmas', 'id, nome', (q) => q.is('deleted_at', null));
     const turmaNome = new Map(turmas.map(t => [t.id, t.nome]));
+    // ⚠️ "Fez o Next" vem da FONTE ÚNICA `vw_next_formado_pessoa` (régua de
+    // 14/08/2026: UM encontro basta), não de `next_matriculas.status`. O status
+    // é POR TURMA e diz "não formou" para quem esteve num encontro de outra
+    // turma — era isso que fazia a tela discordar da NSM, do /painel e dos KPIs,
+    // que já leem a view.
+    const formadosPessoa = await fetchAllNext('vw_next_formado_pessoa', 'membro_id, cpf');
+    const fMembro = new Set(), fCpf = new Set();
+    for (const f of formadosPessoa) {
+      if (f.membro_id) fMembro.add(f.membro_id);
+      const c = digits(f.cpf); if (c.length === 11) fCpf.add(c);
+    }
+    const fezNext = (p) => {
+      if (p && p.membro_id && fMembro.has(p.membro_id)) return true;
+      const c = digits(p && p.cpf); return c.length === 11 && fCpf.has(c);
+    };
     // Direcionamento (pra onde a pessoa vai ao fim do Next) · vem da matrícula
     const dirFlags = (mm) => ({
       indicou_grupo: !!(mm && mm.indicou_grupo), indicou_servir: !!(mm && mm.indicou_servir),
@@ -1135,7 +1150,7 @@ router.get('/pessoas', async (req, res) => {
       const dias = cv.data_culto ? Math.floor((agora - new Date(cv.data_culto + 'T12:00:00').getTime()) / DIA) : null;
       let next_status; let bucket = null;
       if (cv.next_resolucao) next_status = 'resolvido';
-      else if (m && m.status === 'formado') next_status = 'formado';
+      else if (fezNext(cv) || fezNext(m) || (m && m.status === 'formado')) next_status = 'formado';
       else if (m) next_status = 'matriculado';
       else { next_status = 'nao_inscrito'; bucket = dias == null ? 'no_prazo' : dias > 90 ? 'fora_prazo' : dias > 75 ? 'vencendo' : 'no_prazo'; }
       itens.push({
@@ -1155,7 +1170,7 @@ router.get('/pessoas', async (req, res) => {
         nome: `${m.nome || ''}${m.sobrenome ? ' ' + m.sobrenome : ''}`.trim(), telefone: m.telefone, email: m.email, membro_id: m.membro_id,
         area: null, data_nsm: null, dias_desde_conversao: null,
         turma_id: m.turma_id, turma_nome: m.turma_id ? (turmaNome.get(m.turma_id) || null) : null,
-        next_status: m.status === 'formado' ? 'formado' : 'matriculado', bucket: null, next_resolucao: null, next_resolucao_em: null,
+        next_status: (fezNext(m) || m.status === 'formado') ? 'formado' : 'matriculado', bucket: null, next_resolucao: null, next_resolucao_em: null,
         ...dirFlags(m),
       });
     }
