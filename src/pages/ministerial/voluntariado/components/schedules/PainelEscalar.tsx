@@ -76,12 +76,14 @@ function LinhaCandidato({ v, marcado, onToggle }: { v: any; marcado: boolean; on
 }
 
 export default function PainelEscalar({
-  vaga, pool, rodizio, carregando, onClose, onEscalar, escalando,
+  vaga, pool, rodizio, carregando, subtitulo, onClose, onEscalar, escalando,
 }: {
   vaga: Vaga | null;
   pool: any[];
   rodizio?: { desde?: string | null };
   carregando?: boolean;
+  /** Qual culto. Obrigatório na matriz, onde há várias datas à vista. */
+  subtitulo?: string;
   onClose: () => void;
   onEscalar: (pessoas: any[], vaga: Vaga) => void;
   escalando?: boolean;
@@ -141,6 +143,9 @@ export default function PainelEscalar({
           <SheetTitle className="text-base">
             {vaga.team}{vaga.position ? ` · ${vaga.position}` : ''}
           </SheetTitle>
+          {subtitulo && (
+            <p className="text-sm font-medium capitalize text-[#00B39D]">{subtitulo}</p>
+          )}
           <p className="text-sm text-muted-foreground">
             {faltam > 0
               ? `${faltam} vaga${faltam > 1 ? 's' : ''} em aberto`

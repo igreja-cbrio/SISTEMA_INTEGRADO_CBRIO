@@ -11,6 +11,18 @@ export function useMontagemContexto(serviceId: string | undefined) {
   });
 }
 
+// Matriz da escala: área × função nas linhas, datas nas colunas.
+export function useEscalaMatriz(params: { service_type_id?: string; semanas?: number; desde?: string }) {
+  const limpo: Record<string, string> = {};
+  if (params.service_type_id) limpo.service_type_id = params.service_type_id;
+  if (params.semanas) limpo.semanas = String(params.semanas);
+  if (params.desde) limpo.desde = params.desde;
+  return useQuery({
+    queryKey: ['vol', 'escala-matriz', limpo],
+    queryFn: () => voluntariado.escalaMatriz(limpo),
+  });
+}
+
 export function useCreateSchedule() {
   const qc = useQueryClient();
   return useMutation({
