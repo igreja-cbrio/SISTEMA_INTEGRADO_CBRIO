@@ -3729,6 +3729,8 @@ export const comunicacao = {
   },
   // Contatos = membros com opt-in + líderes do bot, com a ORIGEM de cada um
   contatos: (busca) => get('/comunicacao/contatos' + (busca ? `?busca=${encodeURIComponent(busca)}` : '')),
+  // Interruptor central dos disparos automáticos (liga/desliga por id do catálogo)
+  automaticaToggle: (id, ativo) => patch(`/comunicacao/automaticas/${encodeURIComponent(id)}`, { ativo }),
   envios: {
     list: (params = {}) => {
       const p = new URLSearchParams();

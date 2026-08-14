@@ -30,6 +30,29 @@ function podeRegistrar() {
   return waSender.isConfigured();
 }
 
+// ── Lei do Marcos (14/08): "vamos trabalhar com todas que tem template
+// aprovado". A trava lê o catálogo ESPELHADO (wa_templates · sincronizado de
+// hora em hora na carona do cron da Comunicação) e só bloqueia estado
+// INEQUÍVOCO — REJECTED/PAUSED/DISABLED. PENDING/ausente PASSA de propósito:
+// o espelho pode estar 1h atrás de um template recém-aprovado, e bloquear
+// nisso derrubaria fluxo bom (a medição de 14/08 pegou exatamente isso: os
+// v2 dos grupos constavam PENDING num espelho de 2 semanas atrás).
+const ESTADOS_TEMPLATE_BLOQUEADOS = new Set(['REJECTED', 'PAUSED', 'DISABLED']);
+let cacheTemplates = { em: 0, mapa: new Map() };
+async function templateBloqueado(nome) {
+  if (!nome) return false;
+  if (Date.now() - cacheTemplates.em > 5 * 60 * 1000) {
+    try {
+      const { data } = await supabase.from('wa_templates').select('nome, status_meta').limit(500);
+      cacheTemplates = {
+        em: Date.now(),
+        mapa: new Map((data || []).map(t => [t.nome, String(t.status_meta || '').toUpperCase()])),
+      };
+    } catch { /* espelho indisponível → não bloqueia (fail-open) */ }
+  }
+  return ESTADOS_TEMPLATE_BLOQUEADOS.has(cacheTemplates.mapa.get(nome));
+}
+
 const TEMPLATE_LANG = process.env.WHATSAPP_TEMPLATE_LANG || 'pt_BR';
 
 // Backoff por tentativa (minutos): 30m → 2h → 6h → 12h → 24h.
@@ -143,6 +166,9 @@ async function avisarFalhaTerminal(e, razao) {
 async function enfileirar({ telefone, template, texto, params, contexto, refId, idioma }) {
   if (!podeRegistrar()) return { queued: false, sent: false, reason: 'disabled' };
   if (!telefone || (!template && !texto)) return { queued: false, sent: false, reason: 'dados_incompletos' };
+  if (template && !texto && await templateBloqueado(template)) {
+    return { queued: false, sent: false, reason: 'template_rejeitado_na_meta' };
+  }
   const tipo = texto && !template ? 'texto' : 'template';
 
   const { data: row, error } = await supabase.from('whatsapp_envios').insert({
@@ -179,6 +205,18 @@ async function tentarEnvio(id) {
   const { data: e, error } = await supabase.from('whatsapp_envios').select('*').eq('id', id).maybeSingle();
   if (error || !e) return { sent: false, reason: 'nao_encontrado' };
   if (e.status !== 'pendente') return { sent: false, reason: `status_${e.status}` };
+
+  // Linha antiga com template que foi REJEITADO depois de enfileirada:
+  // erro PERMANENTE (reenviar nunca resolve) + aviso ao módulo dono.
+  if (e.tipo === 'template' && await templateBloqueado(e.template)) {
+    await supabase.from('whatsapp_envios').update({
+      status: 'erro',
+      tentativas: (e.tentativas || 0) + 1,
+      erro: 'template_rejeitado_na_meta',
+    }).eq('id', id);
+    await avisarFalhaTerminal(e, 'template rejeitado na Meta');
+    return { sent: false, reason: 'template_rejeitado_na_meta' };
+  }
 
   const r = e.tipo === 'texto'
     ? await sendText(e.telefone, e.texto)
@@ -244,7 +282,16 @@ async function enfileirarLote(itens) {
       };
     });
   if (!linhas.length) return { queued: 0 };
-  const { data, error } = await supabase.from('whatsapp_envios').insert(linhas).select('id');
+  // Trava de template rejeitado (mesma régua do enfileirar) — em lote, o
+  // bloqueio é DECLARADO no retorno, nunca silencioso.
+  let bloqueadosTemplate = 0;
+  const aceitas = [];
+  for (const l of linhas) {
+    if (l.tipo === 'template' && await templateBloqueado(l.template)) { bloqueadosTemplate += 1; continue; }
+    aceitas.push(l);
+  }
+  if (!aceitas.length) return { queued: 0, bloqueados_template: bloqueadosTemplate, motivo: 'template_rejeitado_na_meta' };
+  const { data, error } = await supabase.from('whatsapp_envios').insert(aceitas).select('id');
   if (error) {
     // Fila indisponível → degrada pro caminho individual (que por sua vez
     // degrada pro envio direto) — melhor entregar do que travar o cron.
@@ -256,7 +303,7 @@ async function enfileirarLote(itens) {
     }
     return { queued: ok, degradado: true };
   }
-  return { queued: (data || []).length };
+  return { queued: (data || []).length, ...(bloqueadosTemplate ? { bloqueados_template: bloqueadosTemplate } : {}) };
 }
 
 // Reprocessa a fila (cron): envia o que está pendente e vencido, mais antigo

@@ -97,6 +97,14 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
         resultados.push({ id: a.id, erro: 'falha_no_agendamento', request_id: req.requestId });
       }
     }
+    // Sincronização HORÁRIA do espelho de templates (14/08): a trava de
+    // template rejeitado da fila e a aba Templates dependem do espelho estar
+    // fresco — em 14/08 ele estava 2 semanas velho (v2 dos grupos como PENDING
+    // e 2 templates nem constavam). Best-effort: sem token de management, a
+    // própria função devolve o erro e nada quebra.
+    const sync_templates = await sincronizarComMeta().catch((e) => ({ sincronizados: 0, erro: e.message }));
+    if (sync_templates?.erro) console.warn('[comunicacao] sync templates (cron):', sync_templates.erro);
+
     // Reconciliação dos recibos ÓRFÃOS (1×/hora, carona neste cron): recibo
     // que chegou antes de a fila gravar o message_id agora CASA em vez de
     // ficar órfão pra sempre; órfão >60d sem dono é descartado (declarado).
@@ -308,6 +316,26 @@ router.put('/atendentes/:id', authorizeModule('comunicacao', 3), async (req, res
   res.json(data);
 });
 
+// Liga/desliga um disparo automático do catálogo (decisão do Marcos · 14/08:
+// "na aba de disparos automáticos eu não consigo cancelar isso"). Desligar NÃO
+// é caminho de envio — é o freio central que faltava; cada cron consulta a
+// lista ANTES de montar o público (comunicacaoDisparosOff).
+router.patch('/automaticas/:id', authorizeModule('comunicacao', 3), async (req, res) => {
+  const { IDS_CATALOGO } = require('../services/comunicacaoAutomaticas');
+  const id = String(req.params.id);
+  if (!IDS_CATALOGO.includes(id)) return res.status(404).json({ error: 'Disparo desconhecido' });
+  const ativo = req.body?.ativo !== false;
+  const r = await require('../services/comunicacaoDisparosOff').setDisparo(id, ativo);
+  if (!r.ok) {
+    return res.status(409).json({
+      error: /disparos_off/.test(r.erro || '')
+        ? 'O interruptor precisa da migration 20260814150000 — aplique e tente de novo.'
+        : r.erro,
+    });
+  }
+  res.json({ ok: true, id, ativo, desligados: r.desligados });
+});
+
 // ── Contatos (decisão do Marcos · 13/08) ─────────────────────────────
 // A audiência REAL de mensagens proativas: membros com OPT-IN explícito +
 // líderes do bot (o papel implica o aceite — quem quer liderar grupo aprova
@@ -483,6 +511,11 @@ router.get('/automaticas', async (req, res, next) => {
     const comPessoas = querPessoas && nivel >= 2;
     const { listar } = require('../services/comunicacaoAutomaticas');
     const r = await listar({ comPessoas, dias });
+    // Interruptor central (14/08): marca o que está DESLIGADO pela aba.
+    try {
+      const desligados = await require('../services/comunicacaoDisparosOff').listarDesligados();
+      r.itens = (r.itens || []).map((i) => ({ ...i, desligado: desligados.has(String(i.id)) }));
+    } catch { /* sem interruptor → tudo ligado */ }
     // Se pediu a lista e não tem nível, DIZ que não veio (silêncio faria a tela
     // parecer vazia — "nenhuma pessoa" é a leitura errada de "sem permissão").
     res.json({ ...r, pessoas_ocultas: querPessoas && !comPessoas });

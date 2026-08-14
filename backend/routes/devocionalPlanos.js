@@ -24,6 +24,10 @@ async function cronEnviarDiario(req, res) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
+    // Interruptor central (aba Comunicação→Disparos · decisão do Marcos 14/08)
+    if (await require('../services/comunicacaoDisparosOff').disparoDesligado('devocional_diario')) {
+      return res.json({ ok: true, pulado: 'desligado_na_comunicacao' });
+    }
     const r = await devSender.enviarDoDia();
     console.log('[devocional-cron] resultado:', r);
     res.json({ ok: true, ...r });
