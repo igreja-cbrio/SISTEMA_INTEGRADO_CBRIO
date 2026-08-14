@@ -6580,6 +6580,116 @@ cada tela mostrava um grupo diferente e nenhum era onde ela está. Medido:
   qualquer tela que derive "o grupo da pessoa" precisa filtrar
   `mem_grupos.ativo` ou aceitar mostrar grupo encerrado.
 
+## ⚠️⚠️ LEI · Grupos · `visitante` é DECLARADO, e quem promove é o CADASTRO (2026-08-13/14 · migrations `20260814120000`, `20260814140000`, `20260814150000`)
+
+Pergunta do Matheus olhando a aba Pessoas: *"por que a maioria das pessoas são
+classificadas como visitantes e não como membros? Se elas estão em grupo de
+conexão, se inscreveram em grupo de conexão, elas são membros."* E, ao ver o
+mecanismo: *"quem o líder realmente identifica como visitante, deve ser
+visitante"* · *"só não vai ser visitante aquele de quem tivermos os dados
+completos (os mesmos que pedimos no momento da inscrição)... se um visitante
+for, ele vai ser visitante, e aí o líder deve pegar os dados dele, e aí ele já
+entra na categoria de membro."*
+
+⚠️⚠️ **ISTO REVERTE `20260620150000`** (pedido do MARCOS em 20/06: "entra como
+visitante, vira membro no 4º check-in"). O Matheus foi avisado e reafirmou.
+**Não tratar como bug e reverter sem falar com os dois.**
+
+### A lei em uma frase
+
+**Passar pela porta faz participante; presença NÃO promove ninguém; quem promove
+o visitante é o cadastro dele ficar COMPLETO.**
+
+| como entra | nasce | vira participante |
+|---|---|---|
+| inscrição aprovada · equipe adiciona · import · "engajou" do cuidado | **frequentador** | — |
+| líder registra visitante do encontro (`POST /public/grupos/grupo/frequencia/visitante`) | **visitante** | quando o cadastro fecha |
+
+- **O DEFAULT da coluna voltou a `frequentador`** e as **5 portas** que caíam
+  nele passaram a setar `funcao` EXPLICITAMENTE (vale mesmo antes da migration):
+  `aprovarPedidoCore` · `POST /grupos/:id/membros` · `gruposImporter` ·
+  **`encaminhamentos` "engajou"** (é o vínculo que conta em Conectar da NSM) ·
+  **`POST /membresia/grupos/:id/membros`**. As duas que setam `visitante` de
+  propósito não foram tocadas.
+- **Números medidos**: 387 promovidos na 1ª leva (pedido aprovado) + 29 na 2ª
+  (lote: 25 da "Jornada Bíblica" todos com `entrou_em` 2026-08-10, 3 do "Grupo de
+  Meninas", 1 adicionada à mão) ⇒ **1.099 participantes · 0 visitantes**.
+
+### ⚠️⚠️ O trigger que apagava a declaração do líder
+
+`tg_grupo_auto_membro` (23/07) promovia `visitante → frequentador` na 1ª
+presença. E o líder registra o visitante **justamente pra ele aparecer na
+chamada** — então `registrar_encontro_grupo` incrementava `presencas` e o
+sistema desfazia a leitura do líder **no primeiro encontro**. Aquele trigger
+existia pra promover o NOVO ENTRANTE (que nascia visitante por default); com o
+default mudado, o único efeito que sobrou era esse. **Trigger dropado** (a
+função fica, com COMMENT de depreciação — religar é 1 comando).
+
+- **`fn_membro_cadastro_completo`** (SQL) e **`avaliarCadastroPessoa`**
+  (`backend/utils/prontidaoCadastro.js`) são ESPELHOS: nome completo sem
+  abreviação · CPF com DV (`fn_cpf_dv_valido`) · telefone · e-mail · nascimento
+  plausível · sexo. **Mudou num, muda no outro** — senão a tela diz "está tudo
+  preenchido" e a pessoa continua visitante. Contrato em
+  `src/test/cadastroPessoaCompleto.test.ts` (19 casos · **no gate** ·
+  mutation-testado: exigir termos mata 6, trocar pela régua de alcance mata 2).
+- ⚠️ **DUAS diferenças conscientes** em relação ao `avaliarProntidao` (que avalia
+  uma SUBMISSÃO, não a PESSOA): **`aceita_termos` fica de fora** (termo é prova
+  de PORTA; o visitante anotado à mão nunca terá um, e exigi-lo tornaria
+  impossível o caminho do líder) e **telefone por DÍGITOS** (régua do Contrato),
+  não `telefoneAlcancavel` (régua de ENVIO).
+- ⚠️ **`tg_grupo_visitante_vira_participante` promove SÓ na transição
+  incompleto → completo.** Se disparasse com o cadastro já completo, o censo
+  corrigindo um telefone promoveria visitante de grupo que a pessoa visitou uma
+  vez. Corolário aceito: quem JÁ era completo antes de ser registrado como
+  visitante **continua visitante** — a declaração do líder vale, e o clique na
+  função resolve.
+- ⚠️ **Não move número nenhum do painel**: Conectar/NSM conta vínculo ativo **sem
+  filtrar função**.
+- ⚠️ **`PATCH /grupos/pessoas/:id/ficha` não aceitava `genero`** (o GET já o
+  devolvia): era **impossível completar um cadastro por aquela tela**, e a pessoa
+  ficaria visitante pra sempre com o selo pedindo um campo sem lugar pra
+  preencher. Mesmo defeito que travou a fila de membresia em 04/08.
+- **Selo "Faltam dados"** + chip de filtro na aba Pessoas (o servidor manda o que
+  FALTA; os VALORES de cpf/e-mail **não** trafegam) e **"Pedir os dados à
+  pessoa"** (`POST /grupos/pessoas/:membroId/pedir-dados` · nível 3), que reusa
+  `censoDisparo.convidarPessoa` — mesma fila, mesmo template, mesmo registro em
+  `mem_censo_convites`, sem repetir convite da mesma rodada.
+  ⚠️⚠️ **O link do censo NUNCA é entregue a terceiro**: ele abre o cadastro da
+  pessoa preenchido **e editável**, então dá leitura e ESCRITA no cadastro alheio
+  sem trilha de quem alterou. Quem envia é o servidor, pro contato DELA.
+
+## ⚠️⚠️ A foto do app NUNCA chegava ao ERP · `avatar_url` × `foto_url` (2026-08-13 · migration `20260814130000`)
+
+Pedido do Matheus: *"gostaria que na lista de pessoas tivesse a foto da pessoa
+(avatar); essas fotos vão vir do app de membros, com o tempo que as pessoas
+forem usando e colocando suas fotos de perfil."*
+
+⚠️ **O avatar JÁ estava desenhado** (aba Pessoas do /grupos, lista da Membresia,
+roster, ficha) — o que faltava era o DADO chegar, e ele nunca chegaria: o app
+grava **`profiles.avatar_url`** (bucket `avatars` · `POST /api/app/membro/foto`)
+e o ERP inteiro lê **`mem_membros.foto_url`**. As duas colunas nunca se
+encontravam. Medido: **17 fotos já subidas e invisíveis** pra igreja.
+
+- O endpoint passou a **propagar** pro cadastro. **SOBRESCREVE** de propósito (não
+  é só-onde-vazio como o censo): é a própria pessoa escolhendo a foto dela,
+  autenticada — a fonte mais forte que existe pra este campo.
+- ⚠️ Liga por **`profiles.membro_id` explícito**, nunca por `resolveMembroApp`: o
+  fallback por e-mail dele existe porque família compartilha caixa, e ali a foto
+  do filho pousaria no cadastro da mãe.
+- ⚠️ **CONSEQUÊNCIA DECLARADA**: `mem_membros.foto_url` de quem é **LÍDER** já
+  aparece no cartão público de inscrição (`publicGrupos` · `lider_foto`) — a foto
+  de perfil de quem lidera grupo passa a estar na página pública. Não é canal
+  novo (o formulário público e o cadastro de membresia já alimentam essa coluna),
+  mas é alcance que a pessoa não escolheu. Separar exige coluna própria pro
+  cartão, não desligar a propagação.
+- Estado depois do backfill: **33 de 3.995 membros com foto** · 2 pessoas com
+  foto no app e sem vínculo `membro_id` (resolvem sozinhas quando completarem o
+  cadastro e trocarem a foto — o backfill é idempotente e pode rodar de novo).
+
+⚠️ **Régua de método que fica**: "o avatar não aparece" parecia pedido de UI e era
+**bug de encanamento**. Antes de construir a tela, conferir se o dado que ela
+mostraria **existe e chega** — a tela estava pronta havia meses.
+
 ## ⚠️⚠️ Dashboard Semanal · a presença do NEXT vinha da camada MORTA (2026-08-11 · migration `20260811150000`)
 
 Pedido do Matheus na aba NEXT: *"a presença do next seja inputada de forma

@@ -957,6 +957,8 @@ export const grupos = {
   removeVisita: (visitaId) => del(`/grupos/visitas/${visitaId}`),
   visitasPainel: () => get('/grupos/visitas/painel'),
   pessoasPapeis: () => get('/grupos/pessoas/papeis'),
+  // Manda pra PRÓPRIA pessoa o link do censo pra ela completar o cadastro.
+  pedirDadosPessoa: (membroId) => post(`/grupos/pessoas/${membroId}/pedir-dados`, {}),
   marcarEstudoSemana: (docId, ativo) => patch(`/whatsapp-grupos/materiais/${docId}/estudo-semana`, { ativo }),
   semRelato: () => get('/grupos/kpis/sem-relato'),
   listObservacoes: (grupoId) => get(`/grupos/${grupoId}/observacoes`),
