@@ -4199,7 +4199,7 @@ router.post('/membro/foto', authApp, limiterStrict, uploadCapaMw, async (req, re
     const path = `${uid}/avatar-${Date.now()}.${ext}`;
 
     const { data: antes } = await supabase
-      .from('profiles').select('avatar_url').eq('id', uid).maybeSingle();
+      .from('profiles').select('avatar_url, membro_id').eq('id', uid).maybeSingle();
 
     const { error: upErr } = await supabase.storage
       .from('avatars')
@@ -4230,6 +4230,41 @@ router.post('/membro/foto', authApp, limiterStrict, uploadCapaMw, async (req, re
       }
       console.error('[APP] membro · foto: 0 linhas afetadas no profile', uid);
       return res.status(409).json({ error: 'Não foi possível salvar a foto agora.' });
+    }
+
+    // ⚠️⚠️ PROPAGA PRA `mem_membros.foto_url` — sem isto a foto NUNCA aparece no
+    // ERP (13/08/2026). O app grava em `profiles.avatar_url`; o sistema inteiro
+    // (lista da Membresia, aba Pessoas do /grupos, roster do grupo, ficha) lê
+    // `mem_membros.foto_url`. As duas colunas nunca se encontravam, então as
+    // fotos que os membros já subiram pelo app ficavam invisíveis pra igreja.
+    // É a LEI do Contrato de porta aplicada à foto: uma pessoa = um cadastro
+    // (`mem_membros`) = a fonte que todos os módulos leem.
+    //
+    // ⚠️ SOBRESCREVE de propósito (não é só-onde-vazio como o censo): aqui é a
+    // PRÓPRIA PESSOA escolhendo a foto dela agora, autenticada — é a fonte mais
+    // forte que existe pra este campo, mais recente que a foto que a secretaria
+    // tenha subido antes.
+    //
+    // ⚠️ Usa `profiles.membro_id` (vínculo EXPLÍCITO), nunca `resolveMembroApp`:
+    // o fallback por e-mail dele existe porque família compartilha caixa, e ali
+    // a foto do filho pousaria no cadastro da mãe. Sem vínculo, não propaga.
+    //
+    // ⚠️ CONSEQUÊNCIA DECLARADA: `mem_membros.foto_url` do LÍDER já é exibido no
+    // cartão público de grupos (`publicGrupos` · lider_foto). Então a foto de
+    // perfil de quem lidera grupo passa a aparecer na página pública de
+    // inscrição. Não é canal novo (o formulário público de inscrição e o
+    // cadastro de membresia já alimentam essa mesma coluna), mas é alcance que a
+    // pessoa não escolheu explicitamente — se a liderança quiser separar as
+    // duas fotos, o caminho é uma coluna própria pro cartão, não desligar isto.
+    if (antes?.membro_id) {
+      const { error: eFoto } = await supabase
+        .from('mem_membros')
+        .update({ foto_url: avatar_url })
+        .eq('id', antes.membro_id)
+        .is('deleted_at', null);
+      // Best-effort: a foto JÁ está salva no profile e o app já pode mostrá-la.
+      // Derrubar a resposta aqui faria a pessoa reenviar uma foto que deu certo.
+      if (eFoto) console.error('[APP] membro · foto · propagar mem_membros:', eFoto.message);
     }
 
     // Limpeza best-effort da foto anterior.
