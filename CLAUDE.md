@@ -5194,6 +5194,69 @@ co-aprovadores) está no legado.
 - **Follow-ups válidos**: expor subcategorias de RH no form, calendário visual de
   reservas, dashboard de urgência frequente, painéis solicitante × responsável.
 
+## ⚠️ Solicitações · compra de até R$ 1.000 · SÃO DUAS RÉGUAS (2026-08-12/14 · migration `20260812210000`)
+
+Decisão do Matheus: quem atende a área compra até R$ 1.000 sem depender do
+financeiro. **Duas implementações nasceram em paralelo no mesmo dia** (sessões
+diferentes) e **as duas ficaram**, porque agem em MOMENTOS diferentes do mesmo
+fluxo — não são cópias. Confundi-las é o erro que este bloco existe pra evitar:
+
+| arquivo | quando age | o que decide |
+|---|---|---|
+| **`utils/alcadaCompra.js`** (singular) | no **envio da cotação** (`POST /:id/enviar-cotacoes-financeiro`) | a compra precisa ir ao financeiro? Dentro do teto, **nem vai** — volta pra `logistica_compras` com `status='pendente'` |
+| **`utils/alcadaCompras.js`** (plural) | com a compra **já no portão** (`POST /:id/aprovar-financeiro`) | quem atende a área pode aprovar **sem esperar** o financeiro? |
+
+A plural é a **rede** pro que chegou ao portão por outro caminho (compra antiga,
+cotação enviada antes da regra). Cada uma tem teste próprio no gate
+(`alcadaCompra.test.ts` 17 · `alcadaCompras.test.ts` 15).
+
+⚠️ **Medição de 14/08 que enquadra o problema**: as **19 compras vivas estavam
+TODAS em `em_cotacao`, zero cotadas**, e o portão financeiro tinha **1** linha —
+de categoria `pagamento`, fora da alçada. Ou seja, a régua PLURAL sozinha é
+**correta e inerte**: ela só age no portão, e não há nada lá. É a SINGULAR que
+alcança a fila real. Régua de leitura: **antes de dizer "a alçada não está
+funcionando", conferir em que ESTÁGIO estão as compras** — a plural é calculada
+na LEITURA, então não existe backfill a fazer, e sim compra que ainda não chegou.
+
+⚠️ **`area_alcadas` NÃO governa esta regra** (medido): ela só tem linha pras 6
+áreas de CULTO, e `area_cliente` das compras é a área ADMINISTRATIVA — o teto
+ficaria calado em ~76% dos casos. A plural a consulta como teto opcional
+(fallback 1.000); a singular usa a cifra fixa, a MESMA que já dispensa o portão
+de origem (dois "mil reais" diferentes é como a operação passa a discordar do
+sistema).
+
+**Guardas que não regridem:**
+- ⚠️ **O valor que decide é o COTADO, nunca o estimado.** O estimado é palpite de
+  quem pediu. `Number(null) === 0` é barrado ANTES da conversão nas duas réguas —
+  sem isso, "sem valor" vira "compra de R$ 0,00 liberada sozinha".
+- **Tudo fail-closed**: categoria fora, valor ilegível, teto inválido → financeiro.
+- **Só a PRIMEIRA ida dispensa** (`status = 'em_cotacao'`). Reenvio do que já está
+  na fila do financeiro **não some de lá** — aprovador que perde pedido da tela
+  para de confiar na fila.
+- ⚠️ **Carimbo PRÓPRIO `financeiro_dispensado_em`, NUNCA reusar
+  `aprovado_financeiro_em`** — seria gravar que o financeiro aprovou algo que ele
+  nunca viu. Invariante: as duas colunas **nunca** preenchidas na mesma linha.
+- **`financeiro_dispensa_limite` congela o teto vigente**: subir o limite depois
+  não pode reescrever a leitura das compras já executadas.
+- **Sem a migration, o UPDATE cai pro comportamento antigo** em vez de derrubar o
+  envio da cotação (lição do `parcelas_max`).
+- ⚠️ **`registrar-cotacao` é DORMENTE** (nenhum chamador na UI). Se alguém o ligar
+  numa tela, tem que trazer `decidirDestinoCotacao` junto — senão a compra pequena
+  volta a cair na fila do financeiro sem ninguém entender por quê.
+
+⚠️ **Duas divergências CONHECIDAS entre as réguas, pendentes de decisão:**
+1. **`servico`**: a singular inclui, a plural exclui de propósito ("contratar
+   terceiro tem contrato/nota no caminho"). No envio da cotação vale a singular.
+2. A válvula **"prefiro enviar ao financeiro mesmo assim"** manda a compra pro
+   portão — e lá a plural deixa a própria área aprovar, esvaziando a válvula que a
+   pessoa acabou de escolher. Não é furo (a autoridade é a mesma nos dois
+   caminhos); o conserto, se incomodar, é **persistir o `forcar_financeiro`**, que
+   hoje só existe no corpo do POST.
+
+**Kanban virou a abertura padrão das 3 abas** de `/solicitacoes` (14/08). Na aba
+Aprovar o Kanban usa o MESMO card do Foco (`AprovacaoOrigemCard`), só agrupado por
+categoria — o aprovar/rejeitar de um clique **não** se perde.
+
 ## NPS · pesquisas de satisfação (estado consolidado · 2026-07-04)
 
 Módulo `/nps` (`src/pages/Nps.jsx` + `src/components/nps/NpsForm.jsx` +
