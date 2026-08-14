@@ -2680,6 +2680,13 @@ async function aprovarPedidoCore(pedidoId, user) {
       if (!jaAtivo || !jaAtivo.length) {
         const { error: eVinc } = await supabase.from('mem_grupo_membros').insert({
           grupo_id: pedido.grupo_id, membro_id: membroId,
+          // ⚠️ EXPLÍCITO (Matheus, 13/08/2026): quem se inscreveu e teve o
+          // pedido APROVADO pelo líder é participante, não visitante. Antes
+          // caía no default da coluna, que era 'visitante' desde 20/06 — e como
+          // a promoção só acontece com chamada lançada (fn_grupo_auto_membro),
+          // a temporada inteira ficava marcada "Visitante". Setar aqui faz
+          // valer mesmo antes da migration 20260814120000 ser aplicada.
+          funcao: 'frequentador',
           entrou_em: new Date().toISOString().slice(0, 10),
         });
         if (eVinc) throw eVinc;
@@ -4238,7 +4245,11 @@ router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
       .eq('membro_id', membro_id).is('saiu_em', null);
 
     const { data, error } = await supabase.from('mem_grupo_membros').insert({
-      grupo_id: req.params.id, membro_id, entrou_em: new Date().toISOString().split('T')[0],
+      grupo_id: req.params.id, membro_id,
+      // ⚠️ A coordenação adicionou esta pessoa ao grupo DE PROPÓSITO — isso é
+      // participação, não visita (mesma régua da aprovação de pedido · 13/08/2026).
+      funcao: 'frequentador',
+      entrou_em: new Date().toISOString().split('T')[0],
     }).select().single();
     if (error) throw error;
 

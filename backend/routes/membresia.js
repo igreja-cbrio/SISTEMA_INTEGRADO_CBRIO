@@ -1793,7 +1793,11 @@ router.post('/grupos/:id/membros', authorize('admin', 'diretor'), async (req, re
     // Cria nova
     const { data, error } = await supabase
       .from('mem_grupo_membros')
-      .insert({ grupo_id: grupoId, membro_id, entrou_em: entrou_em || hoje })
+      // ⚠️ `funcao` EXPLÍCITA (13/08/2026): a equipe adicionou esta pessoa ao
+      // grupo DE PROPÓSITO — participação, não visita. Antes caía no default da
+      // coluna, que era 'visitante' desde 20/06. Mesma régua da aprovação de
+      // pedido; setar aqui vale mesmo antes da migration 20260814120000.
+      .insert({ grupo_id: grupoId, membro_id, funcao: 'frequentador', entrou_em: entrou_em || hoje })
       .select()
       .single();
     if (error) throw error;

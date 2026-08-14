@@ -144,7 +144,14 @@ async function importarParticipantes(buffer, { dryRun = true, reconciliar = fals
       if (vinculoAtivo.has(chave)) { rep.vinculos_existentes++; continue; }
       rep.vinculos_criar++;
       vinculoAtivo.add(chave);
-      novosVinculos.push({ membro_id: r.membroId, grupo_id: gid, entrou_em: new Date().toISOString().slice(0, 10) });
+      // ⚠️ `funcao` EXPLÍCITA (13/08/2026): o consolidado da temporada é a lista
+      // de quem PARTICIPA do grupo — não de visitantes. Antes caía no default
+      // da coluna, que era 'visitante' desde 20/06, e o import inteiro nascia
+      // marcado assim. Mesma régua da aprovação de pedido.
+      novosVinculos.push({
+        membro_id: r.membroId, grupo_id: gid, funcao: 'frequentador',
+        entrou_em: new Date().toISOString().slice(0, 10),
+      });
     }
   }
   if (!dryRun && novosVinculos.length) {

@@ -122,7 +122,11 @@ async function materializarEngajamento(enc, body) {
       throw err;
     }
     const { error } = await supabase.from('mem_grupo_membros')
-      .insert({ grupo_id: body.grupo_id, membro_id: membroId, entrou_em: dataRef });
+      // ⚠️ `funcao` EXPLÍCITA (13/08/2026): a devolutiva "engajou" é o líder da
+      // área AFIRMANDO que a pessoa entrou no grupo — é participação, e é ela
+      // que conta no valor Conectar da NSM. Antes caía no default da coluna,
+      // que era 'visitante' desde 20/06. Mesma régua da aprovação de pedido.
+      .insert({ grupo_id: body.grupo_id, membro_id: membroId, funcao: 'frequentador', entrou_em: dataRef });
     if (error) throw error;
     return { vinculo: { tipo: 'grupo', grupo_id: body.grupo_id } };
   }
