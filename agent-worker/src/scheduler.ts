@@ -15,6 +15,7 @@ import { runNpsWatcher } from "./agents/npsWatcher.js";
 import { runProjetosWatcher } from "./agents/projetosWatcher.js";
 import { runPilotoTriageWatcher } from "./agents/pilotoTriageWatcher.js";
 import { runCyberAgent } from "./agents/cyberAgent.js";
+import { runDevDispatcher } from "./agents/devDispatcher.js";
 
 // Cron expressions assumem TZ=America/Sao_Paulo (definido no env do Railway).
 // Por enquanto: 1x/semana · segunda-feira as 06:00 SP.
@@ -25,6 +26,9 @@ const SCHEDULE_DIARIO = "0 7 * * *"; // todo dia 07:00 SP
 const SCHEDULED_AGENTS_DIARIOS: Array<{ type: string; runner: (opts: any) => Promise<any> }> = [
   { type: "piloto_triage_watcher", runner: runPilotoTriageWatcher },
 ];
+
+// Dispatcher do dev agent · varre o board a cada 10 min por tarefas agendadas.
+const SCHEDULE_DISPATCHER = "*/10 * * * *";
 
 const SCHEDULED_AGENTS: Array<{
   type: string;
@@ -55,7 +59,7 @@ export function startScheduler() {
 
   const tz = process.env.TZ || "America/Sao_Paulo";
   console.log(
-    `[scheduler] semanal ${SCHEDULE}: ${SCHEDULED_AGENTS.map((a) => a.type).join(", ")} · diário ${SCHEDULE_DIARIO}: ${SCHEDULED_AGENTS_DIARIOS.map((a) => a.type).join(", ")} (TZ=${tz})`
+    `[scheduler] semanal ${SCHEDULE}: ${SCHEDULED_AGENTS.map((a) => a.type).join(", ")} · diário ${SCHEDULE_DIARIO}: ${SCHEDULED_AGENTS_DIARIOS.map((a) => a.type).join(", ")} · dispatcher dev ${SCHEDULE_DISPATCHER} (TZ=${tz})`
   );
 
   const dispara = async (lista: typeof SCHEDULED_AGENTS) => {
@@ -73,4 +77,11 @@ export function startScheduler() {
 
   cron.schedule(SCHEDULE, () => dispara(SCHEDULED_AGENTS), { timezone: tz });
   cron.schedule(SCHEDULE_DIARIO, () => dispara(SCHEDULED_AGENTS_DIARIOS), { timezone: tz });
+  cron.schedule(
+    SCHEDULE_DISPATCHER,
+    () => {
+      runDevDispatcher().catch((e) => console.error("[scheduler] devDispatcher excecao:", (e as Error).message));
+    },
+    { timezone: tz }
+  );
 }

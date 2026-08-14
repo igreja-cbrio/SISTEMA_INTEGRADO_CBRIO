@@ -360,6 +360,65 @@ router.post('/tarefas/:id/transicao', async (req, res) => {
   } catch (e) { return err(res, e, 500); }
 });
 
+// POST /api/agent-tasks/tarefas/:id/disparar
+// Dispara o Agente Dev no worker Railway (via /run/dev_agent + HMAC).
+// Só tarefas do developer_agent em nova/agendada; nova → agendada antes.
+// O runner faz o claim atômico (agendada → em_andamento) lá no worker.
+router.post('/tarefas/:id/disparar', async (req, res) => {
+  try {
+    if (!isValidUUID(req.params.id)) return err(res, new Error('id inválido'));
+    const { data: tarefa } = await supabase
+      .from('agent_tarefas')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!tarefa || tarefa.deleted_at) return res.status(404).json({ error: 'Tarefa não encontrada' });
+    if (tarefa.agente_key !== 'developer_agent') {
+      return err(res, new Error('Apenas tarefas do Agente Desenvolvedor podem ser disparadas aqui'));
+    }
+    if (!['nova', 'agendada'].includes(tarefa.status)) {
+      return err(res, new Error(`Status atual (${tarefa.status}) não permite disparo · use nova ou agendada`));
+    }
+
+    const workerUrl = process.env.AGENT_WORKER_URL;
+    const secret = process.env.AGENT_WORKER_HMAC_SECRET;
+    if (!workerUrl || !secret) {
+      return res.status(503).json({ error: 'Worker não configurado · setar AGENT_WORKER_URL e AGENT_WORKER_HMAC_SECRET no Vercel' });
+    }
+
+    if (tarefa.status === 'nova') {
+      await supabase
+        .from('agent_tarefas')
+        .update({ status: 'agendada', updated_at: new Date().toISOString() })
+        .eq('id', tarefa.id);
+      await registrarEvento(tarefa.id, 'status_agendada', { de: 'nova', para: 'agendada' }, req.user.id);
+    }
+
+    const body = JSON.stringify({
+      triggeredBy: req.user.id,
+      config: { taskId: tarefa.id, trigger: 'manual' },
+    });
+    const { sign } = require('../utils/workerHmac');
+    const sig = sign(body);
+
+    const resp = await fetch(`${workerUrl.replace(/\/$/, '')}/run/dev_agent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Agent-Signature': sig,
+      },
+      body,
+    });
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => '');
+      return res.status(502).json({ error: `Worker respondeu ${resp.status}: ${txt.slice(0, 200)}` });
+    }
+    const data = await resp.json().catch(() => ({}));
+    notificarTransicao({ ...tarefa, status: 'agendada' }, 'agendada');
+    res.json({ accepted: true, worker: data, tarefaId: tarefa.id });
+  } catch (e) { return err(res, e, 500); }
+});
+
 // POST /api/agent-tasks/tarefas/:id/gates · aprovar/reprovar G1 ou G2
 router.post('/tarefas/:id/gates', async (req, res) => {
   try {
