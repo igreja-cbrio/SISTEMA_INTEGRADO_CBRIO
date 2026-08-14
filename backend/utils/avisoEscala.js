@@ -50,18 +50,52 @@ function elegivelParaAviso(escala, agoraISO, dias, diasAlvo) {
   return quando <= agora + dias * 86400000;
 }
 
-/** "domingo, 17/08, às 08:30 e 10:00" */
-function textoQuando(iso, horarios) {
+/**
+ * "domingo, 17/08, às 08:30 e 10:00" — ou "17/08, às 08:30 e 10:00" quando o
+ * nome do culto JÁ diz o dia da semana.
+ *
+ * ⚠️ O `omitirDia` existe porque a mensagem monta `{{2}} — {{3}}`, e com
+ * "Culto de Domingo" no {{2}} o resultado era *"Culto de Domingo — domingo,
+ * 17/08…"* (visto pelo Matheus no template, 14/08). O dia da semana continua
+ * quando o nome NÃO o diz: "Culto AMI" e "Bridge" não dizem que são sábado, e
+ * aí a data sozinha faz a pessoa ir conferir no calendário.
+ */
+function textoQuando(iso, horarios, omitirDia = false) {
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return '';
   // Dia/mês/hora no fuso da igreja — em UTC o culto de domingo 19h vira segunda.
   const brt = new Date(d.getTime() - 3 * 3600000);
   const dia = DIAS_SEMANA[brt.getUTCDay()];
   const data = `${String(brt.getUTCDate()).padStart(2, '0')}/${String(brt.getUTCMonth() + 1).padStart(2, '0')}`;
+  const inicio = omitirDia ? data : `${dia}, ${data}`;
   const hs = [...new Set(horarios || [])].sort();
-  if (!hs.length) return `${dia}, ${data}`;
+  if (!hs.length) return inicio;
   const lista = hs.length === 1 ? hs[0] : `${hs.slice(0, -1).join(', ')} e ${hs[hs.length - 1]}`;
-  return `${dia}, ${data}, às ${lista}`;
+  return `${inicio}, às ${lista}`;
+}
+
+/**
+ * O nome do culto já contém o dia da semana da data?
+ *
+ * Compara com o dia REAL do culto, não com "tem alguma palavra de dia solta":
+ * um "Culto de Domingo" reagendado para o sábado precisa dizer *sábado* — e
+ * omitir ali seria esconder justamente a informação que evita a pessoa aparecer
+ * no dia errado.
+ */
+function nomeJaDizODia(nome, iso) {
+  const d = new Date(iso);
+  if (!nome || !Number.isFinite(d.getTime())) return false;
+  const brt = new Date(d.getTime() - 3 * 3600000);
+  const dia = DIAS_SEMANA[brt.getUTCDay()];
+  const n = _norm(nome);
+  // "quarta-feira" no nome cobre "quarta"; por isso o teste é pela raiz.
+  const raiz = _norm(dia).split('-')[0];
+  return n.includes(raiz);
+}
+
+// Acentos fora, minúsculas — mesma normalização do resto da casa.
+function _norm(v) {
+  return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
 /** Hora HH:MM no fuso da igreja. */
@@ -123,7 +157,13 @@ function agruparParaAviso({ escalas, agora, dias = 7, diasAlvo = null }) {
   return [...grupos.values()]
     .map(g => ({
       ...g,
-      params: [textoAreas(g.areas), textoEvento(g.cultos), textoQuando(g.primeiro, g.horarios)],
+      params: (() => {
+        const evento = textoEvento(g.cultos);
+        // Só omite quando o {{2}} realmente carrega o dia — com vários cultos
+        // o {{2}} vira "3 cultos" e o dia precisa aparecer no {{3}}.
+        const omitir = g.cultos.length > 0 && nomeJaDizODia(evento, g.primeiro);
+        return [textoAreas(g.areas), evento, textoQuando(g.primeiro, g.horarios, omitir)];
+      })(),
     }))
     // Quem serve primeiro é avisado primeiro — com teto de rodada, é o que
     // garante que o aviso do domingo não fique para depois do domingo.
@@ -181,5 +221,5 @@ function diaRelativoBRT(agoraISO, deslocamento) {
 
 module.exports = {
   chavePessoa, elegivelParaAviso, agruparParaAviso, selecionarRodada,
-  textoQuando, textoAreas, textoEvento, horaBRT, diaRelativoBRT,
+  textoQuando, textoAreas, textoEvento, horaBRT, diaRelativoBRT, nomeJaDizODia,
 };
