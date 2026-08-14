@@ -24,7 +24,8 @@ const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
 const { traduzErroUmPaiUmaMae } = require('../utils/kidsResponsavel');
-const { enviarTexto: enviarTextoWpp, enviarTemplate: enviarTemplateWpp } = require('../services/whatsappSend');
+// (templates deste arquivo migraram pra FILA no C2 · lote 5 — só o texto livre segue direto)
+const { enviarTexto: enviarTextoWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado, ehNomePlaceholder } = require('../services/membroMatch');
 // O Planning Center Check-Ins saiu do código (Marcos 2026-07-20): a frequência
 // do Kids é 100% do nosso totem (kids_checkins). Sobrou só a coluna legada
@@ -1824,7 +1825,16 @@ async function gerarResumoKids(sessaoId, { exemplo = false } = {}) {
 // janela de 24h). pt_BR por padrão (configurável por WHATSAPP_TEMPLATE_KIDS_RESUMO_LANG).
 async function enviarResumoWpp(telefone, { texto, params }) {
   const tpl = process.env.WHATSAPP_TEMPLATE_KIDS_RESUMO;
-  if (tpl) return enviarTemplateWpp(telefone, tpl, process.env.WHATSAPP_TEMPLATE_KIDS_RESUMO_LANG || 'pt_BR', params);
+  if (tpl) {
+    // C2 (lote 5 · 14/08): template pela FILA — registro + retry + recibos.
+    const { enfileirar } = require('../services/whatsappFila');
+    const r = await enfileirar({
+      telefone, template: tpl, params,
+      idioma: process.env.WHATSAPP_TEMPLATE_KIDS_RESUMO_LANG || 'pt_BR',
+      contexto: 'kids.resumo_dia',
+    });
+    return { ok: !!(r.sent || r.queued), message_id: r.messageId || null, error: r.sent || r.queued ? null : (r.reason || 'erro') };
+  }
   return enviarTextoWpp(telefone, texto);
 }
 
@@ -3520,9 +3530,14 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
         const primeiroNome = String(crianca?.nome || '').trim().split(/\s+/)[0] || 'sua criança';
         const base = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
         const link = `${base}/kids/retirada/${codigoFinal}`;
-        const lang = process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA_LANG || 'pt_BR';
-        enviarTemplateWpp(respTel, template, lang, [primeiroNome, codigoFinal, link])
-          .then((r) => { if (!r?.ok) console.warn('[totemKids/checkin] wpp retirada pulado:', r?.error); })
+        // C2 (lote 5 · 14/08): pela FILA — o código de retirada não pode se
+        // perder no teto da Meta (retry) e ganha recibo de entrega.
+        require('../services/whatsappFila').enfileirar({
+          telefone: respTel, template, params: [primeiroNome, codigoFinal, link],
+          idioma: process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA_LANG || 'pt_BR',
+          contexto: 'kids.retirada_codigo',
+        })
+          .then((r) => { if (!r?.sent && !r?.queued) console.warn('[totemKids/checkin] wpp retirada pulado:', r?.reason); })
           .catch((e) => console.warn('[totemKids/checkin] wpp retirada erro:', e?.message));
       } else {
         console.warn('[totemKids/checkin] WHATSAPP_TEMPLATE_KIDS_RETIRADA não configurado · envio pulado');
@@ -3724,8 +3739,11 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
           const primeiroNome = String(crianca?.nome || '').trim().split(/\s+/)[0] || 'sua criança';
           const base = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
           const link = `${base}/kids/retirada/${codigoFinal}`;
-          const lang = process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA_LANG || 'pt_BR';
-          enviarTemplateWpp(respTel, template, lang, [primeiroNome, codigoFinal, link]).then(() => {}, () => {});
+          require('../services/whatsappFila').enfileirar({
+            telefone: respTel, template, params: [primeiroNome, codigoFinal, link],
+            idioma: process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA_LANG || 'pt_BR',
+            contexto: 'kids.retirada_codigo',
+          }).then(() => {}, () => {});
         }
       }
       return {

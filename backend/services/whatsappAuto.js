@@ -46,14 +46,18 @@ async function enviarPorConfig(cfg, telefone, nome) {
     const r = await enviarTexto(telefone, texto);
     return { sent: !!r.ok, message_id: r.message_id || null, erro: r.ok ? null : (r.error || 'erro') };
   }
-  // modo template · usa as MESMAS credenciais do bot (WHATSAPP_ACCESS_TOKEN)
+  // modo template · C2 (lote 5 · 14/08): sai pela FILA — registro + retry no
+  // teto da Meta + recibos. 'na_fila' não é erro: o cron entrega depois.
   if (!cfg.template_nome) return { sent: false, message_id: null, erro: 'template_nao_configurado' };
-  const { enviarTemplate } = require('./whatsappSend');
+  const { enfileirar } = require('./whatsappFila');
   const params = cfg.usa_nome
     ? [primeiroNome(nome) || 'tudo bem', texto]
     : [texto];
-  const r = await enviarTemplate(telefone, cfg.template_nome, cfg.idioma || 'pt_BR', params);
-  return { sent: !!r.ok, message_id: r.message_id || null, erro: r.ok ? null : (r.error || 'erro') };
+  const r = await enfileirar({
+    telefone, template: cfg.template_nome, params, idioma: cfg.idioma || 'pt_BR',
+    contexto: `auto.${cfg.chave || 'config'}`,
+  });
+  return { sent: !!r.sent, message_id: r.messageId || null, erro: r.sent ? null : (r.queued ? 'na_fila' : (r.reason || 'erro')) };
 }
 
 async function registrar(chave, { refId, telefone, nome, origem, status, message_id, erro }) {

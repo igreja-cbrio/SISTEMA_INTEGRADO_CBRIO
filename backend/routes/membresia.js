@@ -90,9 +90,14 @@ router.post('/cadastros/:id/confirmar-whatsapp', podeAprovarMembresia, async (re
     if (!tel) return res.status(400).json({ error: 'Cadastro sem telefone.' });
 
     const primeiro = String(cad.nome || '').trim().split(/\s+/)[0] || 'tudo bem';
-    const wpp = require('../services/whatsappService');
-    const r = await wpp.sendTemplate(tel, nomeTemplate, 'pt_BR', [primeiro]);
-    if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o envio.', detail: r?.reason || r?.detail || null });
+    // C2 (lote 5 · 14/08): pela FILA — registro + retry + recibos. Na fila
+    // (teto da Meta) não é erro: sai quando a cota liberar.
+    const { enfileirar } = require('../services/whatsappFila');
+    const r = await enfileirar({
+      telefone: tel, template: nomeTemplate, params: [primeiro],
+      contexto: 'membresia.cadastro_confirmado', refId: cad.id,
+    });
+    if (!r?.sent && !r?.queued) return res.status(502).json({ error: 'O WhatsApp não aceitou o envio.', detail: r?.reason || null });
     try {
       await require('../services/waInbox').registrarOutbound({
         telefone: tel, texto: `Confirmação de cadastro (template: ${nomeTemplate})`, tipo: 'template',

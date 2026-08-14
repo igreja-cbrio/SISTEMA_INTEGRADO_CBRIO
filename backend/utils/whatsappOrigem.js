@@ -43,6 +43,17 @@ const ROTULOS = [
   ['next', 'NEXT · convite'],
   ['voluntariado', 'Voluntariado'],
   ['batismo', 'Batismo'],
+  // C2 · lote 5 (14/08): templates que migraram pra fila ganham origem legível.
+  ['grupos.fallback_template', 'Grupos · aviso do bot'],
+  ['membresia.cadastro_confirmado', 'Membresia · confirmação de cadastro'],
+  ['cuidados.devocional_diario', 'Devocional · devocional do dia'],
+  ['cuidados', 'Cuidado pastoral'],
+  ['kids.retirada_codigo', 'Kids · código de retirada'],
+  ['kids.resumo_dia', 'Kids · resumo do dia do totem'],
+  ['kids', 'Kids'],
+  ['solicitacoes.aprovacao_cold', 'Solicitações · aprovação pendente'],
+  ['solicitacoes', 'Solicitações'],
+  ['auto', 'Mensagem automática do sistema'],
 ];
 
 /**

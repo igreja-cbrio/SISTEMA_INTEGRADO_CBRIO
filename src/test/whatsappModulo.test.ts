@@ -8,6 +8,9 @@ import { moduloDoContexto, diaBrt, MAPA, PADRAO } from '../../backend/utils/what
 const SLUGS_REAIS = new Set([
   'voluntariado', 'kids', 'integracao', 'membresia',
   'solicitacoes', 'financeiro', 'inscricoes', 'next', 'grupos',
+  // + 14/08 (C2 lote 5): 'cuidados' — conferido no catálogo (o módulo
+  // /ministerial/cuidados usa authorizeModule('cuidados') há meses).
+  'cuidados',
 ]);
 
 describe('moduloDoContexto · quem é avisado quando o WhatsApp não chega', () => {
