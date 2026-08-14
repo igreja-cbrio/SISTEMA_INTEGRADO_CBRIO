@@ -46,7 +46,7 @@ router.get('/direcionadores', async (req, res) => {
 router.post('/direcionadores', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { nome, descricao, ordem } = req.body;
-    if (!nome) return res.status(400).json({ error: 'nome obrigatorio' });
+    if (!nome) return res.status(400).json({ error: 'Nome obrigatório' });
     const { data, error } = await supabase
       .from('direcionadores')
       .insert({ nome, descricao, ordem: ordem || 99, ativo: true })
@@ -223,7 +223,7 @@ router.post('/objetivos', authorize('admin', 'diretor'), async (req, res) => {
     const allowed = ['nome', 'descricao', 'indicador_geral', 'valores', 'ordem', 'direcionador_id', 'ativo'];
     const payload = {};
     for (const [k, v] of Object.entries(req.body || {})) if (allowed.includes(k)) payload[k] = v;
-    if (!payload.nome) return res.status(400).json({ error: 'nome obrigatorio' });
+    if (!payload.nome) return res.status(400).json({ error: 'Nome obrigatório' });
     payload.ativo = payload.ativo !== false;
 
     const { data, error } = await supabase
@@ -305,7 +305,7 @@ router.post('/krs', authorize('admin', 'diretor'), async (req, res) => {
     const allowed = ['objetivo_geral_id', 'kpi_id', 'titulo', 'descricao', 'formula_calculo', 'meta_valor', 'meta_texto', 'unidade', 'ordem'];
     const payload = {};
     for (const [k, v] of Object.entries(req.body || {})) if (allowed.includes(k)) payload[k] = v;
-    if (!payload.titulo) return res.status(400).json({ error: 'titulo obrigatorio' });
+    if (!payload.titulo) return res.status(400).json({ error: 'Título obrigatório' });
     if (!payload.objetivo_geral_id && !payload.kpi_id) {
       return res.status(400).json({ error: 'KR deve estar ligado a um objetivo geral OU a um KPI' });
     }

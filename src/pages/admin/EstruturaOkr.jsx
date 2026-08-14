@@ -149,7 +149,7 @@ export default function EstruturaOkr({ embedded = false }) {
     Object.values(grupos.porValor).reduce((s, arr) => s + arr.length, 0), [grupos]);
 
   const removerObjetivo = async (obj) => {
-    if (!window.confirm(`Inativar objetivo "${obj.nome}"? KPIs vinculados ficam orfaos.`)) return;
+    if (!window.confirm(`Inativar objetivo "${obj.nome}"? KPIs vinculados ficam órfãos.`)) return;
     try {
       await estrategiaApi.objetivos.remove(obj.id);
       toast.success('Objetivo inativado');
