@@ -26,6 +26,12 @@ const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 const {
   anexarMarcadores, marcadoresDeMembros, podeVerMarcadorSensivel,
 } = require('../services/jornadaMarcadores');
+// ⚠️ Fecha o furo do `ROUTE_MODULE_MAP['membros']` (12 módulos · qualquer um
+// com nível 1 chegava aqui): dinheiro e cuidado pastoral DA PESSOA passam a ser
+// filtrados no payload. Ver o cabeçalho de `utils/dadosSensiveisPessoa.js`.
+const {
+  podeVerFinanceiroDePessoa, podeVerPastoralDePessoa, filtrarTimeline,
+} = require('../utils/dadosSensiveisPessoa');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -526,9 +532,21 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
       },
     }));
 
+    // ⚠️ `is_contribuinte` é dado financeiro da pessoa e sai daqui pra quem não
+    // pode vê-lo (mesma régua da ficha e do `GET /contribuicoes`). O guard desta
+    // rota é `membros` nível 1, que passa com qualquer um dos 12 módulos do
+    // ROUTE_MODULE_MAP — `grupos` nível 1 inclusive.
+    const podeFinanceiro = podeVerFinanceiroDePessoa(req.user);
+
     // Filtro por papel (depois de enriched pra suportar 'sem_papel')
     let filtered = enriched;
     if (papel) {
+      // ⚠️ Filtrar POR contribuinte é a mesma informação que ver a flag — a
+      // lista devolvida É a resposta. Recusa explícita, não filtro ignorado em
+      // silêncio (que devolveria a lista inteira e pareceria "ninguém contribui").
+      if (papel === 'contribuinte' && !podeFinanceiro) {
+        return res.status(403).json({ error: 'Sem permissão para filtrar por contribuinte.' });
+      }
       filtered = enriched.filter(m => {
         const p = m.papeis;
         if (papel === 'voluntario') return p.is_voluntario;
@@ -538,11 +556,22 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
         if (papel === 'com_familia') return !!m.familia_id;
         if (papel === 'inscrito_next') return p.is_inscrito_next;
         if (papel === 'sem_papel') {
+          // ⚠️ Sem permissão financeira, "sem papel" ignora o termo de
+          // contribuinte: senão quem aparece na lista SEM nenhuma flag visível
+          // seria, por eliminação, exatamente quem contribui — a flag escondida
+          // voltaria por inferência.
+          const semContrib = podeFinanceiro ? !p.is_contribuinte : true;
           return !p.is_voluntario && !p.is_visitante && !p.is_inscrito_next
-            && !p.in_grupo_ativo && !p.is_contribuinte;
+            && !p.in_grupo_ativo && semContrib;
         }
         return true;
       });
+    }
+
+    if (!podeFinanceiro) {
+      for (const m of filtered) {
+        if (m.papeis) m.papeis = { ...m.papeis, is_contribuinte: false, financeiro_oculto: true };
+      }
     }
 
     // Marcadores de jornada (batismo · Next · grupo · servir · devocional +
@@ -787,6 +816,14 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
       console.error('[membresia] marcadores da ficha:', eMarc.message);
     }
 
+    // ⚠️ Dízimo/oferta da pessoa só pra quem pode (mesma régua do
+    // `GET /membresia/contribuicoes`). O guard da rota é `membros` nível 1, que
+    // passa com qualquer um dos 12 módulos do ROUTE_MODULE_MAP — era por aqui
+    // que `grupos` nível 1 lia o extrato de qualquer pessoa.
+    // ⚠️ Omissão DECLARADA (`financeiro_oculto`): campo que some sem aviso é
+    // lido como "esta pessoa nunca contribuiu".
+    const podeFinanceiro = podeVerFinanceiroDePessoa(req.user);
+
     res.json({
       ...membro,
       marcadores,
@@ -795,10 +832,11 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
       historico: historico || [],
       grupo_atual,
       grupo_historico,
-      contribuicoes: contribuicoes || [],
-      nivel_generosidade: nivelGenerosidade,
-      ultima_contribuicao: ultimaContribuicao,
-      totais_ano: totaisAno,
+      financeiro_oculto: !podeFinanceiro,
+      contribuicoes: podeFinanceiro ? (contribuicoes || []) : [],
+      nivel_generosidade: podeFinanceiro ? nivelGenerosidade : null,
+      ultima_contribuicao: podeFinanceiro ? ultimaContribuicao : null,
+      totais_ano: podeFinanceiro ? totaisAno : null,
       // Voluntariado (lido de vol_profiles - fonte única)
       vol_profile_id,
       allocation_status,
@@ -984,7 +1022,18 @@ router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, r
     ));
 
     eventos.sort((a, b) => (a.data < b.data ? 1 : -1));
-    res.json({ eventos, total: eventos.length });
+
+    // ⚠️ Contribuição (com VALOR) e cuidado pastoral (com MOTIVO) saem daqui
+    // pra quem não pode vê-los. Até 13/08/2026 a rota inteira era
+    // `authorizeModule('membros', 1)`, que passa com QUALQUER um dos 12 módulos
+    // do ROUTE_MODULE_MAP — inclusive `grupos` nível 1.
+    // ⚠️ O que foi omitido é DECLARADO: sumir em silêncio faria a tela afirmar
+    // que a pessoa não tem histórico.
+    const { eventos: visiveis, ocultos } = filtrarTimeline(eventos, {
+      financeiro: podeVerFinanceiroDePessoa(req.user),
+      pastoral: podeVerPastoralDePessoa(req.user),
+    });
+    res.json({ eventos: visiveis, total: visiveis.length, ocultos });
   } catch (e) {
     console.error('[membresia] timeline:', e.message);
     res.status(500).json({ error: 'Erro ao montar linha do tempo' });
