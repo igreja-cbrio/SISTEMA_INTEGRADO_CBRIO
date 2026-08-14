@@ -484,7 +484,7 @@ function ModuleGuard({ permKey, moduleSlug, anyOf, nivelMinimo = 1, children }: 
   return <>{children}</>;
 }
 
-// Guard só-devs (você + Marcos Paulo) · usado na tela de agentes/auditoria.
+// Guard só-devs (você + Marcos Paulo) · usado em páginas de desenvolvedor.
 // O Pedrinho (assistente) NÃO usa isto — ele é o pop lateral, aberto a todos.
 function DevGuard({ children }: { children: ReactNode }) {
   const auth = useAuth();
@@ -492,6 +492,9 @@ function DevGuard({ children }: { children: ReactNode }) {
   if (!(auth as Record<string, unknown>).isDev) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }
+
+// Guard só-super-admins (app_super_admins) · hub do Time de Agentes.
+// Reusa o SuperAdminGuard acima (mesma tela de "Acesso restrito").
 
 function VoluntariadoGuard({ children }: { children: ReactNode }) {
   const auth = useAuth();
@@ -774,7 +777,7 @@ function AppRoutes() {
         <Route path="/ministerial/bridge" element={<Navigate to="/bridge" replace />} />
         <Route path="/ministerial/next" element={<Navigate to="/ministerial/integracao?tab=next" replace />} />
         <Route path="/ministerial/batismos" element={<Navigate to="/ministerial/integracao?tab=batismos" replace />} />
-        <Route path="/assistente-ia" element={<DevGuard><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></DevGuard>} />
+        <Route path="/assistente-ia" element={<SuperAdminGuard><Suspense fallback={<Loading />}><AssistenteIA /></Suspense></SuperAdminGuard>} />
         <Route path="/solicitacoes" element={<Suspense fallback={<Loading />}><Solicitacoes /></Suspense>} />
         {/* Telas substituidas pelo /painel (Sistema OKR/NSM 2026 — Fase 2) */}
         <Route path="/kpis" element={<Navigate to="/painel" replace />} />

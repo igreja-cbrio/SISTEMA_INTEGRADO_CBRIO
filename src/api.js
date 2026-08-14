@@ -1231,6 +1231,23 @@ export const agents = {
    * Em erro, lança com `.code` (ex.: 'tts_unconfigured') pra UI cair no fallback
    * de voz do navegador.
    */
+  // Time de agentes (Fase 0 · super-admin) — board de tarefas + roster + job description
+  agentTasks: {
+    team: () => get('/agent-tasks/team'),
+    addMembro: (data) => post('/agent-tasks/team', data),
+    updateMembro: (agentKey, data) => patch(`/agent-tasks/team/${agentKey}`, data),
+    instrucoes: (agentKey) => get(`/agent-tasks/team/${agentKey}/instrucoes`),
+    estruturar: (agentKey, raw) => post(`/agent-tasks/team/${agentKey}/instrucoes/estruturar`, { raw }),
+    salvarInstrucoes: (agentKey, data) => put(`/agent-tasks/team/${agentKey}/instrucoes`, data),
+    tarefas: (params) => get('/agent-tasks/tarefas' + (params ? '?' + new URLSearchParams(params) : '')),
+    tarefa: (id) => get(`/agent-tasks/tarefas/${id}`),
+    criarTarefa: (data) => post('/agent-tasks/tarefas', data),
+    atualizarTarefa: (id, data) => patch(`/agent-tasks/tarefas/${id}`, data),
+    comentar: (id, texto) => post(`/agent-tasks/tarefas/${id}/comentario`, { texto }),
+    transicao: (id, status) => post(`/agent-tasks/tarefas/${id}/transicao`, { status }),
+    gates: (id, data) => post(`/agent-tasks/tarefas/${id}/gates`, data),
+    excluirTarefa: (id) => del(`/agent-tasks/tarefas/${id}`),
+  },
   tts: async (text, opts = {}) => {
     const token = await getToken();
     const res = await fetch(`${API}/agents/tts`, {

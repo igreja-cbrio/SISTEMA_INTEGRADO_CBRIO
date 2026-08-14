@@ -125,7 +125,7 @@ const NAV_ITEMS = [
           { label: 'Censo', description: 'Perfil demográfico e engajamento da comunidade · pesquisas próprias', icon: ClipboardList, path: '/censo', module: 'censo' },
           { label: 'Links e QR', description: 'QR que não precisa ser reimpresso · o código fica, o destino muda', icon: QrCode, path: '/links', module: 'links' },
           { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', perm: 'isAdmin' },
-          { label: 'Agentes & Auditoria', description: 'Fila de aprovação e agentes de auditoria · acesso restrito (devs)', icon: BrainCircuit, path: '/assistente-ia', perm: 'isDev' },
+          { label: 'Agentes & Auditoria', description: 'Time de agentes: equipe, fila de aprovação e job descriptions · super-admins', icon: BrainCircuit, path: '/assistente-ia', perm: 'isSuperAdmin' },
         ],
       },
     ],

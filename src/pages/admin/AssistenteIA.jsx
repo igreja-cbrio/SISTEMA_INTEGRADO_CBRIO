@@ -1,10 +1,18 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { agents } from '../../api';
-import { Button } from '../../components/ui/button';
-import { Textarea } from '../../components/ui/textarea';
-import ReactMarkdown from 'react-markdown';
 import FilaAprovacao from './FilaAprovacao';
-import AgentRunDetailDialog from '../../components/AgentRunDetailDialog';
+import { Button } from '../../components/ui/button';
+import { Badge } from '../../components/ui/badge';
+import { Input } from '../../components/ui/input';
+import { Textarea } from '../../components/ui/textarea';
+import { Label } from '../../components/ui/label';
+import { Separator } from '../../components/ui/separator';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '../../components/ui/dialog';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '../../components/ui/select';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -14,475 +22,551 @@ const C = {
   blue: '#3b82f6', blueBg: '#3b82f618', purple: '#8b5cf6', purpleBg: '#8b5cf618',
 };
 
-const STATUS_MAP = {
-  running: { c: C.blue, bg: C.blueBg, label: 'Executando...' },
-  completed: { c: C.green, bg: C.greenBg, label: 'Concluído' },
-  failed: { c: C.red, bg: C.redBg, label: 'Falhou' },
-  cancelled: { c: C.text3, bg: '#73737318', label: 'Cancelado' },
-};
-
-const SEV_MAP = {
-  critico: { c: '#fff', bg: C.red, label: 'CRÍTICO' },
-  aviso: { c: '#000', bg: C.amber, label: 'AVISO' },
-  info: { c: '#fff', bg: C.blue, label: 'INFO' },
-};
-
-const AGENT_TYPES = [
-  // Auditoria cross-módulos
-  { value: 'system_auditor',     label: '🔍 Auditor Geral',       desc: 'Analisa dados reais de todos os módulos e identifica problemas, inconsistências e oportunidades.', icon: '🔍', group: 'cross' },
-  { value: 'design_auditor',     label: '🎨 Agente Design',       desc: 'Analisa layout e UI, traz referências modernas (Linear, Vercel, Notion) e sugere melhorias.', icon: '🎨', group: 'cross' },
-
-  // Administrativo
-  { value: 'module_rh',          label: '👥 Agente RH',           desc: 'Audita colaboradores, admissões, férias, treinamentos. Verifica campos faltantes.', icon: '👥', group: 'admin' },
-  { value: 'module_financeiro',  label: '💰 Agente Financeiro',   desc: 'Audita contas, transações, contas a pagar e reembolsos.', icon: '💰', group: 'admin' },
-  { value: 'module_logistica',   label: '🚚 Agente Logística',    desc: 'Audita fornecedores, pedidos, solicitações e notas fiscais.', icon: '🚚', group: 'admin' },
-  { value: 'module_patrimonio',  label: '🏢 Agente Patrimônio',   desc: 'Audita bens, inventários e movimentações.', icon: '🏢', group: 'admin' },
-
-  // Acompanhamento
-  { value: 'module_eventos',     label: '📅 Agente Eventos',      desc: 'Audita eventos, tarefas, orçamentos e reuniões.', icon: '📅', group: 'acomp' },
-  { value: 'module_projetos',    label: '📊 Agente Projetos',     desc: 'Audita projetos, fases, tarefas e riscos.', icon: '📊', group: 'acomp' },
-
-  // Ministerial
-  { value: 'module_membresia',   label: '⛪ Agente Membresia',     desc: 'Audita membros, integração e engajamento.', icon: '⛪', group: 'min' },
-  { value: 'module_integracao',  label: '🤲 Agente Integração',   desc: 'Audita visitantes, decisões e funil de acompanhamento.', icon: '🤲', group: 'min' },
-  { value: 'module_next',        label: '➡️ Agente NEXT',         desc: 'Audita inscrições do NEXT, check-ins e indicações pendentes.', icon: '➡️', group: 'min' },
-  { value: 'module_grupos',      label: '👥 Agente Grupos',       desc: 'Audita grupos de conexão, líderes e cobertura por bairro.', icon: '👥', group: 'min' },
-  { value: 'module_cuidados',    label: '💜 Agente Cuidados',     desc: 'Audita capelania, aconselhamento e Jornada 180.', icon: '💜', group: 'min' },
-  { value: 'module_voluntariado',label: '🤝 Agente Voluntariado', desc: 'Audita voluntários ativos, escalas e sincronização Planning Center.', icon: '🤝', group: 'min' },
-
-  // Inteligência / Governança
-  { value: 'module_nps',         label: '📢 Agente NPS',          desc: 'Audita pesquisas de satisfação, taxa de resposta e tendências de NPS.', icon: '📢', group: 'intel' },
-  { value: 'module_cerebro',     label: '🧠 Agente Cérebro',      desc: 'Audita fila do Cérebro CBRio, erros de processamento e custo de tokens.', icon: '🧠', group: 'intel' },
-  { value: 'module_kpis',        label: '📈 Agente KPIs/OKR',     desc: 'Audita indicadores táticos, trajetória das metas e cobertura por área.', icon: '📈', group: 'intel' },
-  { value: 'module_processos',   label: '⚙️ Agente Processos',    desc: 'Audita processos operacionais, OKRs e responsáveis.', icon: '⚙️', group: 'intel' },
-  { value: 'module_governanca',  label: '🏛️ Agente Governança',   desc: 'Audita ciclo mensal (OKR/DRE/KPI/Conselho), pautas e deliberações.', icon: '🏛️', group: 'intel' },
-];
-
-const MODULE_OPTIONS = [
-  { value: 'supervisor', label: '🧠 Supervisor', icon: '🧠' },
-  { value: 'rh', label: '👥 RH', icon: '👥' },
-  { value: 'financeiro', label: '💰 Financeiro', icon: '💰' },
-  { value: 'logistica', label: '🚚 Logística', icon: '🚚' },
-  { value: 'patrimonio', label: '🏢 Patrimônio', icon: '🏢' },
-  { value: 'solicitarCompra', label: '🛒 Compras', icon: '🛒' },
-  { value: 'eventos', label: '📅 Eventos', icon: '📅' },
-  { value: 'projetos', label: '📊 Projetos', icon: '📊' },
-  { value: 'expansao', label: '🏗️ Expansão', icon: '🏗️' },
-  { value: 'integracao', label: '🔗 Integração', icon: '🔗' },
-  { value: 'grupos', label: '👥 Grupos', icon: '👥' },
-  { value: 'cuidados', label: '💜 Cuidados', icon: '💜' },
-  { value: 'voluntariado', label: '🤝 Voluntariado', icon: '🤝' },
-  { value: 'membresia', label: '⛪ Membresia', icon: '⛪' },
-  { value: 'marketing', label: '📣 Marketing', icon: '📣' },
-];
-
 const s = {
-  page: { maxWidth: 1600, margin: '0 auto', padding: '0 24px' },
+  page: { maxWidth: 1600, margin: '0 auto', padding: '0 24px 40px' },
   card: { background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' },
   cardHeader: { padding: '16px 20px', borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   cardTitle: { fontSize: 15, fontWeight: 700, color: C.text },
-  btn: (v = 'primary') => ({ padding: '8px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none', transition: 'all 0.15s', ...(v === 'primary' ? { background: C.primary, color: '#fff' } : {}), ...(v === 'ghost' ? { background: 'transparent', color: C.text2 } : {}), ...(v === 'secondary' ? { background: 'transparent', color: C.primary, border: `1px solid ${C.primary}` } : {}) }),
-  badge: (c, bg) => ({ display: 'inline-block', padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, color: c, background: bg }),
   empty: { textAlign: 'center', padding: 40, color: C.text3, fontSize: 14 },
 };
 
-const fmtDate = (d) => d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
-const fmtCost = (v) => `$${(Number(v) || 0).toFixed(4)}`;
-const fmtTokens = (v) => (v || 0).toLocaleString('pt-BR');
+const fmtData = (d) => d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
 
-const AGENT_BY_VALUE = AGENT_TYPES.reduce((acc, a) => { acc[a.value] = a; return acc; }, {});
-const labelOf = (agentType) => AGENT_BY_VALUE[agentType]?.label || agentType;
-
-const GROUP_LABELS = {
-  cross: 'Cross-módulos',
-  admin: 'Administrativo',
-  acomp: 'Acompanhamento',
-  min: 'Ministerial',
-  intel: 'Inteligência & Governança',
-};
-const GROUP_ORDER = ['cross', 'admin', 'acomp', 'min', 'intel'];
-
-// ─── Typing Indicator ──────────────────────────────────────────────────
-
-const dotStyle = {
-  width: 8, height: 8, borderRadius: '50%', background: C.primary, opacity: 0.4,
-  display: 'inline-block',
+const STATUS_META = {
+  nova: { c: C.blue, bg: C.blueBg, label: 'Nova' },
+  agendada: { c: C.purple, bg: C.purpleBg, label: 'Agendada' },
+  em_andamento: { c: C.primary, bg: C.primaryBg, label: 'Em andamento' },
+  aguardando_revisao: { c: C.amber, bg: C.amberBg, label: 'Aguardando revisão' },
+  aguardando_aprovacao: { c: C.amber, bg: C.amberBg, label: 'Aguardando aprovação' },
+  concluida: { c: C.green, bg: C.greenBg, label: 'Concluída' },
+  falhou: { c: C.red, bg: C.redBg, label: 'Falhou' },
+  bloqueada: { c: C.red, bg: C.redBg, label: 'Bloqueada' },
+  cancelada: { c: C.text3, bg: '#73737318', label: 'Cancelada' },
 };
 
-function TypingIndicator() {
+const PRIOR_META = {
+  baixa: { c: C.text3, bg: '#73737318', label: 'Baixa' },
+  media: { c: C.blue, bg: C.blueBg, label: 'Média' },
+  alta: { c: C.amber, bg: C.amberBg, label: 'Alta' },
+  critica: { c: C.red, bg: C.redBg, label: 'Crítica' },
+};
+
+const CLASSE_LABEL = {
+  dev: 'Dev', cyber: 'Cyber', auditoria: 'Auditoria', executor: 'Executor', watcher: 'Watcher',
+};
+
+const COLUMNS = [
+  'nova', 'agendada', 'em_andamento', 'aguardando_revisao',
+  'aguardando_aprovacao', 'concluida', 'falhou', 'bloqueada', 'cancelada',
+];
+
+const TRANSICOES = {
+  nova: ['agendada', 'em_andamento', 'cancelada'],
+  agendada: ['em_andamento', 'cancelada'],
+  em_andamento: ['aguardando_revisao', 'aguardando_aprovacao', 'falhou', 'bloqueada', 'cancelada'],
+  aguardando_revisao: ['em_andamento', 'concluida', 'falhou', 'bloqueada'],
+  aguardando_aprovacao: ['em_andamento', 'concluida', 'falhou', 'bloqueada'],
+  concluida: ['em_andamento', 'cancelada'],
+  falhou: ['em_andamento', 'bloqueada', 'cancelada'],
+  bloqueada: ['em_andamento', 'nova', 'cancelada'],
+  cancelada: [],
+};
+
+const BadgeStatus = ({ status }) => {
+  const m = STATUS_META[status] || STATUS_META.nova;
+  return <Badge style={{ background: m.bg, color: m.c }}>{m.label}</Badge>;
+};
+
+// ─── Equipe · board de tarefas ───────────────────────────────────────────────
+
+function NovaTarefaDialog({ open, onClose, membros, onCreated }) {
+  const [form, setForm] = useState({ titulo: '', descricao: '', agente_key: '', classe: 'auditoria', prioridade: 'media', origem: 'manual', orcamento_usd: '' });
+  const [saving, setSaving] = useState(false);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target ? e.target.value : e }));
+
+  async function salvar() {
+    if (!form.titulo.trim()) return;
+    setSaving(true);
+    try {
+      const payload = { ...form, orcamento_usd: form.orcamento_usd ? Number(form.orcamento_usd) : null };
+      const tarefa = await agents.agentTasks.criarTarefa(payload);
+      onCreated?.(tarefa);
+      onClose();
+    } catch (e) { alert(e.message); }
+    setSaving(false);
+  }
+
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 0' }}>
-      {[0, 1, 2].map(i => (
-        <span key={i} style={{
-          ...dotStyle,
-          animation: 'typingBounce 1.4s infinite ease-in-out both',
-          animationDelay: `${i * 0.16}s`,
-        }} />
-      ))}
-      <style>{`
-        @keyframes typingBounce {
-          0%, 80%, 100% { transform: scale(0.6); opacity: 0.3; }
-          40% { transform: scale(1); opacity: 1; }
-        }
-      `}</style>
-    </span>
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Nova tarefa para o time de agentes</DialogTitle>
+          <DialogDescription>Restrito a super-admins. Não inclua PII na descrição.</DialogDescription>
+        </DialogHeader>
+        <div style={{ display: 'grid', gap: 12 }}>
+          <div>
+            <Label>Título *</Label>
+            <Input value={form.titulo} onChange={set('titulo')} placeholder="Ex.: Auditar cadastros incompletos do módulo X" />
+          </div>
+          <div>
+            <Label>Descrição</Label>
+            <Textarea value={form.descricao} onChange={set('descricao')} rows={4} placeholder="O que o agente deve fazer. Referencie dados por id/slug, nunca CPF/nome/telefone." />
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <Label>Agente</Label>
+              <Select value={form.agente_key} onValueChange={set('agente_key')}>
+                <SelectTrigger><SelectValue placeholder="Sem agente (fila)" /></SelectTrigger>
+                <SelectContent>
+                  {membros.filter((m) => m.ativo).map((m) => (
+                    <SelectItem key={m.agent_key} value={m.agent_key}>{m.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Prioridade</Label>
+              <Select value={form.prioridade} onValueChange={set('prioridade')}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.keys(PRIOR_META).map((p) => (
+                    <SelectItem key={p} value={p}>{PRIOR_META[p].label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div>
+              <Label>Classe</Label>
+              <Select value={form.classe} onValueChange={set('classe')}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(CLASSE_LABEL).map(([k, v]) => (
+                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Orçamento (USD)</Label>
+              <Input value={form.orcamento_usd} onChange={set('orcamento_usd')} type="number" step="0.5" placeholder="Opcional" />
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancelar</Button>
+          <Button onClick={salvar} disabled={saving || !form.titulo.trim()}>{saving ? 'Criando...' : 'Criar tarefa'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-function TypingCursor() {
+function DetalheTarefa({ id, onClose, onChange }) {
+  const [t, setT] = useState(null);
+  const [novoStatus, setNovoStatus] = useState('');
+  const [comentario, setComentario] = useState('');
+  const [obsGate, setObsGate] = useState('');
+
+  const load = useCallback(async () => {
+    try { setT(await agents.agentTasks.tarefa(id)); } catch (e) { alert(e.message); }
+  }, [id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function mudarStatus() {
+    if (!novoStatus) return;
+    try {
+      await agents.agentTasks.transicao(id, novoStatus);
+      setNovoStatus('');
+      load(); onChange?.();
+    } catch (e) { alert(e.message); }
+  }
+
+  async function enviarComentario() {
+    if (!comentario.trim()) return;
+    try { await agents.agentTasks.comentar(id, comentario); setComentario(''); load(); } catch (e) { alert(e.message); }
+  }
+
+  async function gate(g, aprovado) {
+    try { await agents.agentTasks.gates(id, { gate: g, aprovado, observacao: obsGate }); setObsGate(''); load(); onChange?.(); } catch (e) { alert(e.message); }
+  }
+
+  if (!t) return <Dialog open onOpenChange={onClose}><DialogContent><DialogHeader><DialogTitle>Carregando...</DialogTitle></DialogHeader></DialogContent></Dialog>;
+
+  const proximos = TRANSICOES[t.status] || [];
+  const agente = t.agent_team;
+
   return (
-    <span style={{
-      display: 'inline-block', width: 2, height: 16, background: C.primary,
-      marginLeft: 2, verticalAlign: 'text-bottom',
-      animation: 'cursorBlink 1s step-end infinite',
-    }}>
-      <style>{`
-        @keyframes cursorBlink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0; }
-        }
-      `}</style>
-    </span>
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-2xl flex flex-col" style={{ maxHeight: '85vh' }}>
+        <DialogHeader>
+          <DialogTitle style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {t.titulo} <BadgeStatus status={t.status} />
+          </DialogTitle>
+          <DialogDescription>
+            {agente ? `${agente.nome} · ${agente.classe}` : 'Sem agente designado'} · prioridade {PRIOR_META[t.prioridade]?.label} · origem {t.origem} · criada {fmtData(t.created_at)}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto min-h-0" style={{ display: 'grid', gap: 16, paddingRight: 4 }}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 4 }}>Descrição</div>
+            <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, color: C.text }}>{t.descricao || '—'}</div>
+          </div>
+
+          {t.pull_request_url && (
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 4 }}>PR</div>
+              <a href={t.pull_request_url} target="_blank" rel="noreferrer" style={{ color: C.primary }}>{t.pull_request_url}</a>
+            </div>
+          )}
+
+          <Separator />
+
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <Label>Mudar status</Label>
+              <Select value={novoStatus} onValueChange={setNovoStatus}>
+                <SelectTrigger><SelectValue placeholder={proximos.length ? `Próximos: ${proximos.map((x) => STATUS_META[x].label).join(', ')}` : 'Sem transições'} /></SelectTrigger>
+                <SelectContent>
+                  {proximos.map((p) => (
+                    <SelectItem key={p} value={p}>{STATUS_META[p].label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button onClick={mudarStatus} disabled={!novoStatus}>Aplicar</Button>
+          </div>
+
+          <Separator />
+
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 8 }}>Gates (dev agent)</div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              {['G1', 'G2'].map((g) => (
+                <div key={g} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Badge style={{ background: t.gate === g ? C.greenBg : '#73737318', color: t.gate === g ? C.green : C.text3 }}>{g}{t.gate === g ? ' ✓' : ''}</Badge>
+                  <Button size="sm" onClick={() => gate(g, true)}>Aprovar</Button>
+                  <Button size="sm" variant="outline" onClick={() => gate(g, false)}>Reprovar</Button>
+                </div>
+              ))}
+              <Input value={obsGate} onChange={(e) => setObsGate(e.target.value)} placeholder="Observação do gate" style={{ maxWidth: 260 }} />
+            </div>
+          </div>
+
+          <Separator />
+
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 8 }}>Comentários</div>
+            <div style={{ display: 'grid', gap: 8, marginBottom: 8, maxHeight: 180, overflowY: 'auto' }}>
+              {(t.comentarios || []).length === 0 && <div style={s.empty}>Sem comentários</div>}
+              {(t.comentarios || []).map((c) => (
+                <div key={c.id} style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13 }}>
+                  <div style={{ color: C.text3, fontSize: 11, marginBottom: 2 }}>{c.profiles?.nome || 'IA'} · {fmtData(c.created_at)}</div>
+                  <div style={{ color: C.text, whiteSpace: 'pre-wrap' }}>{c.texto}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Textarea value={comentario} onChange={(e) => setComentario(e.target.value)} rows={2} placeholder="Comentário..." />
+              <Button onClick={enviarComentario} disabled={!comentario.trim()}>Comentar</Button>
+            </div>
+          </div>
+
+          <Separator />
+
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 8 }}>Histórico</div>
+            <div style={{ display: 'grid', gap: 4, maxHeight: 160, overflowY: 'auto' }}>
+              {(t.eventos || []).map((ev, i) => (
+                <div key={ev.id || i} style={{ fontSize: 12, color: C.text2, display: 'flex', gap: 8 }}>
+                  <span style={{ color: C.text3, flexShrink: 0 }}>{fmtData(ev.created_at)}</span>
+                  <span>{ev.evento}{ev.detalhe?.observacao ? ` — ${ev.detalhe.observacao}` : ''}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-// ─── Chat Tab Component ────────────────────────────────────────────────
+function TabEquipe() {
+  const [tarefas, setTarefas] = useState([]);
+  const [membros, setMembros] = useState([]);
+  const [novaOpen, setNovaOpen] = useState(false);
+  const [detalheId, setDetalheId] = useState(null);
 
-function ChatTab() {
-  const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState('');
-  const [module, setModule] = useState('supervisor');
-  const [sessionId, setSessionId] = useState(null);
-  const [sessions, setSessions] = useState([]);
-  const [streaming, setStreaming] = useState(false);
-  const [showSessions, setShowSessions] = useState(true);
-  const [availableModules, setAvailableModules] = useState(MODULE_OPTIONS);
-  const messagesEndRef = useRef(null);
-  const textareaRef = useRef(null);
-
-  useEffect(() => {
-    loadSessions();
-    loadAvailableModules();
+  const load = useCallback(async () => {
+    try {
+      const [ts, mm] = await Promise.all([agents.agentTasks.tarefas(), agents.agentTasks.team()]);
+      setTarefas(ts || []);
+      setMembros(mm || []);
+    } catch (e) { console.error(e); }
   }, []);
 
-  async function loadAvailableModules() {
-    try {
-      const data = await agents.modules();
-      if (Array.isArray(data) && data.length > 0) {
-        setAvailableModules(data);
-        setModule((current) => (data.some((m) => m.value === current) ? current : data[0].value));
-      }
-    } catch (e) {
-      console.warn('[CHAT] Falha ao carregar módulos permitidos, usando fallback:', e);
-    }
-  }
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  async function loadSessions() {
-    try {
-      const data = await agents.sessions();
-      setSessions(data);
-    } catch (e) { console.error(e); }
-  }
-
-  function startNewChat() {
-    setMessages([]);
-    setSessionId(null);
-    loadSessions(); // Refresh list so previous session shows up
-  }
-
-  async function resumeSession(sess) {
-    setSessionId(sess.anthropic_session_id);
-    setModule(sess.agent_module);
-    // Don't hide sidebar — keep it visible for easy navigation
-
-    // Load real message history
-    try {
-      const msgs = await agents.sessionMessages(sess.id);
-      if (msgs && msgs.length > 0) {
-        setMessages(msgs.map(m => ({ role: m.role, text: m.content })));
-      } else {
-        setMessages([{ role: 'system', text: `Sessão restaurada: ${sess.title || 'Sem título'}` }]);
-      }
-    } catch (e) {
-      console.error('[CHAT] Failed to load messages:', e);
-      setMessages([{ role: 'system', text: `Sessão restaurada: ${sess.title || 'Sem título'}` }]);
-    }
-  }
-
-  async function deleteSession(id) {
-    try {
-      await agents.deleteSession(id);
-      setSessions(prev => prev.filter(s => s.id !== id));
-      if (sessions.find(s => s.id === id)?.anthropic_session_id === sessionId) {
-        startNewChat();
-      }
-    } catch (e) { console.error(e); }
-  }
-
-  async function sendMessage() {
-    if (!input.trim() || streaming) return;
-
-    const userMsg = input.trim();
-    setInput('');
-    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
-    setStreaming(true);
-
-    // Add an empty assistant message for streaming
-    const assistantIdx = messages.length + 1;
-    setMessages(prev => [...prev, { role: 'assistant', text: '' }]);
-
-    try {
-      // Supervisor usa o caminho Fase 2 (tools read-only + dados ao vivo); os
-      // demais agentes seguem na Sessions API de managed agents. Mesmo SSE.
-      const res = module === 'supervisor'
-        ? await agents.ask({ message: userMsg, sessionId })
-        : await agents.chat({ message: userMsg, module, sessionId });
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          const data = line.slice(6).trim();
-          if (data === '[DONE]') continue;
-
-          try {
-            const event = JSON.parse(data);
-
-            if (event.type === 'session') {
-              setSessionId(event.sessionId);
-              loadSessions();
-            } else if (event.type === 'done') {
-              loadSessions(); // Refresh sessions after response completes
-            } else if (event.type === 'delta') {
-              setMessages(prev => {
-                const updated = [...prev];
-                const lastAssistant = updated.length - 1;
-                if (updated[lastAssistant]?.role === 'assistant') {
-                  updated[lastAssistant] = { ...updated[lastAssistant], text: updated[lastAssistant].text + event.text };
-                }
-                return updated;
-              });
-            } else if (event.type === 'raw') {
-              console.log('[CHAT DEBUG] Raw SSE:', event.payload);
-            } else if (event.type === 'error') {
-              setMessages(prev => {
-                const updated = [...prev];
-                const lastAssistant = updated.length - 1;
-                if (updated[lastAssistant]?.role === 'assistant') {
-                  updated[lastAssistant] = { role: 'error', text: event.text };
-                }
-                return updated;
-              });
-            }
-          } catch (e) { /* skip */ }
-        }
-      }
-    } catch (e) {
-      setMessages(prev => {
-        const updated = [...prev];
-        const last = updated.length - 1;
-        if (updated[last]?.role === 'assistant' && !updated[last].text) {
-          updated[last] = { role: 'error', text: e.message };
-        } else {
-          updated.push({ role: 'error', text: e.message });
-        }
-        return updated;
-      });
-    }
-
-    setStreaming(false);
-  }
-
-  function handleKeyDown(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  }
-
-  const selectedModuleLabel = availableModules.find(m => m.value === module)?.label
-    || MODULE_OPTIONS.find(m => m.value === module)?.label
-    || '🧠 Supervisor';
+  useEffect(() => { load(); }, [load]);
 
   return (
-    <div style={{ display: 'flex', gap: 16, height: 'calc(100vh - 220px)', minHeight: 500 }}>
-      {/* Sessions sidebar */}
-      {showSessions && (
-        <div style={{ ...s.card, width: 280, flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ ...s.cardHeader, flexShrink: 0 }}>
-            <div style={s.cardTitle}>Sessões</div>
-            <button onClick={() => setShowSessions(false)} style={{ ...s.btn('ghost'), padding: '4px 8px', fontSize: 16 }}>✕</button>
-          </div>
-          <div style={{ flex: 1, overflowY: 'auto' }}>
-            {sessions.length === 0 ? (
-              <div style={s.empty}>Nenhuma sessão</div>
-            ) : sessions.map(sess => (
-              <div key={sess.id} style={{
-                padding: '12px 16px', borderBottom: `1px solid ${C.border}`, cursor: 'pointer',
-                background: sess.anthropic_session_id === sessionId ? C.primaryBg : 'transparent',
-              }}>
-                <div onClick={() => resumeSession(sess)} style={{ marginBottom: 4 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.3 }}>
-                    {sess.title || 'Sem título'}
-                  </div>
-                  <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
-                    {availableModules.find(m => m.value === sess.agent_module)?.label || MODULE_OPTIONS.find(m => m.value === sess.agent_module)?.label || sess.agent_module} · {fmtDate(sess.last_message_at)}
-                  </div>
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+        <Button onClick={() => setNovaOpen(true)}>＋ Nova tarefa</Button>
+      </div>
+      <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 12, alignItems: 'flex-start' }}>
+        {COLUMNS.map((col) => {
+          const lista = tarefas.filter((t) => t.status === col);
+          const meta = STATUS_META[col];
+          return (
+            <div key={col} style={{ ...s.card, width: 250, minWidth: 250, flexShrink: 0, display: 'flex', flexDirection: 'column', maxHeight: '72vh' }}>
+              <div style={{ ...s.cardHeader, padding: '12px 14px', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{meta.label}</span>
+                  <Badge style={{ background: meta.bg, color: meta.c }}>{lista.length}</Badge>
                 </div>
-                <button onClick={(e) => { e.stopPropagation(); deleteSession(sess.id); }}
-                  style={{ fontSize: 10, color: C.red, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                  remover
-                </button>
               </div>
-            ))}
-          </div>
+              <div style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'grid', gap: 8, alignContent: 'flex-start' }}>
+                {lista.length === 0 && <div style={{ ...s.empty, padding: 20 }}>Vazio</div>}
+                {lista.map((t) => (
+                  <div key={t.id} onClick={() => setDetalheId(t.id)} style={{
+                    padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.border}`,
+                    background: C.bg, cursor: 'pointer', transition: 'box-shadow .15s',
+                  }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.35, marginBottom: 6 }}>{t.titulo}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <Badge style={{ background: PRIOR_META[t.prioridade].bg, color: PRIOR_META[t.prioridade].c }}>
+                        {PRIOR_META[t.prioridade].label}
+                      </Badge>
+                      {t.agent_team && (
+                        <span style={{ fontSize: 11, color: C.text3 }}>{t.agent_team.nome}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {novaOpen && <NovaTarefaDialog open onClose={() => setNovaOpen(false)} membros={membros} onCreated={() => { load(); setNovaOpen(false); }} />}
+      {detalheId && <DetalheTarefa id={detalheId} onClose={() => setDetalheId(null)} onChange={load} />}
+    </div>
+  );
+}
+
+// ─── Membros · roster + job description ──────────────────────────────────────
+
+function JobDescriptionEditor({ membro, onChange }) {
+  const [historico, setHistorico] = useState([]);
+  const [raw, setRaw] = useState('');
+  const [draft, setDraft] = useState(null);
+  const [estruturando, setEstruturando] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [verVersao, setVerVersao] = useState(null);
+
+  useEffect(() => {
+    setRaw(membro.instrucao_ativa?.raw_instrucoes || '');
+    setDraft(null);
+    setVerVersao(null);
+    agents.agentTasks.instrucoes(membro.agent_key).then((h) => setHistorico(h || [])).catch(() => {});
+  }, [membro.agent_key]);
+
+  async function estruturar() {
+    if (raw.trim().length < 10) { alert('Escreva as instruções primeiro (mínimo 10 caracteres).'); return; }
+    setEstruturando(true);
+    try { setDraft((await agents.agentTasks.estruturar(membro.agent_key, raw)).estruturado); }
+    catch (e) { alert(e.message); }
+    setEstruturando(false);
+  }
+
+  function setDraftList(key, idx, val) {
+    setDraft((d) => ({ ...d, [key]: (d[key] || []).map((x, i) => (i === idx ? val : x)) }));
+  }
+
+  async function salvar() {
+    setSalvando(true);
+    try {
+      await agents.agentTasks.salvarInstrucoes(membro.agent_key, { raw, estruturado: draft || {} });
+      setDraft(null);
+      const h = await agents.agentTasks.instrucoes(membro.agent_key);
+      setHistorico(h || []);
+      onChange?.();
+    } catch (e) { alert(e.message); }
+    setSalvando(false);
+  }
+
+  const campo = (label, val, setVal) => (
+    <div>
+      <Label>{label}</Label>
+      {label === 'Descrição' ? <Textarea rows={3} value={val} onChange={(e) => setVal(e.target.value)} /> : <Input value={val} onChange={(e) => setVal(e.target.value)} />}
+    </div>
+  );
+
+  return (
+    <div style={{ display: 'grid', gap: 14 }}>
+      <div>
+        <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 6 }}>Instruções em texto livre (como se explica a um funcionário)</div>
+        <Textarea rows={6} value={raw} onChange={(e) => setRaw(e.target.value)}
+          placeholder={`Ex.: O ${membro.nome} audita o módulo de forma semanal. Ele deve...`} />
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <Button onClick={estruturar} disabled={estruturando}>{estruturando ? 'Estruturando...' : '✨ Estruturar com IA'}</Button>
+          {draft && <Button variant="outline" onClick={() => setDraft(null)}>Limpar rascunho</Button>}
+        </div>
+      </div>
+
+      {draft && (
+        <div style={{ display: 'grid', gap: 10, padding: 14, borderRadius: 12, border: `1px solid ${C.primary}55`, background: C.primaryBg }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color: C.primary }}>Rascunho estruturado (edite antes de salvar)</div>
+          {campo('Título do cargo', draft.titulo_cargo, (v) => setDraft((d) => ({ ...d, titulo_cargo: v })))}
+          {campo('Descrição', draft.descricao, (v) => setDraft((d) => ({ ...d, descricao: v })))}
+          {['responsabilidades', 'permitido', 'proibido'].map((key) => (
+            <div key={key}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <Label>{key === 'responsabilidades' ? 'Responsabilidades' : key === 'permitido' ? 'Pode fazer' : 'Não pode fazer'}</Label>
+                <Button size="sm" variant="ghost" onClick={() => setDraft((d) => ({ ...d, [key]: [...(d[key] || []), ''] }))}>＋</Button>
+              </div>
+              {(draft[key] || []).map((item, idx) => (
+                <div key={idx} style={{ display: 'flex', gap: 6, marginBottom: 6 }}>
+                  <Input value={item} onChange={(e) => setDraftList(key, idx, e.target.value)} />
+                  <Button size="sm" variant="ghost" onClick={() => setDraft((d) => ({ ...d, [key]: (d[key] || []).filter((_, i) => i !== idx) }))}>✕</Button>
+                </div>
+              ))}
+            </div>
+          ))}
+          <Button onClick={salvar} disabled={salvando}>{salvando ? 'Salvando...' : 'Salvar nova versão'}</Button>
         </div>
       )}
 
-      {/* Main chat */}
-      <div style={{ ...s.card, flex: 1, display: 'flex', flexDirection: 'column' }}>
-        {/* Chat header */}
-        <div style={{ ...s.cardHeader, flexShrink: 0, gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button onClick={() => setShowSessions(!showSessions)} style={{ ...s.btn('ghost'), padding: '4px 8px', fontSize: 16 }} title="Sessões">
-              💬
-            </button>
-            <button onClick={startNewChat} style={{ ...s.btn('ghost'), padding: '4px 8px', fontSize: 14 }} title="Nova conversa">
-              ＋ Nova
-            </button>
-          </div>
+      <Separator />
 
-          {/* Module selector */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11, color: C.text3 }}>Agente:</span>
-            <select value={module} onChange={(e) => setModule(e.target.value)}
-              style={{
-                padding: '4px 8px', borderRadius: 6, fontSize: 12, fontWeight: 600,
-                background: C.primaryBg, color: C.primary, border: `1px solid ${C.primary}40`,
-                cursor: 'pointer',
-              }}>
-              {availableModules.map(m => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-          </div>
-
-          {sessionId && (
-            <span style={{ fontSize: 10, color: C.text3, fontFamily: 'monospace' }}>
-              sessão ativa
-            </span>
-          )}
-        </div>
-
-        {/* Messages */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {messages.length === 0 && (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-              <div style={{ fontSize: 48, opacity: 0.3 }}>🧠</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: C.text, opacity: 0.6 }}>Assistente IA CBRio</div>
-              <div style={{ fontSize: 13, color: C.text3, textAlign: 'center', maxWidth: 400, lineHeight: 1.5 }}>
-                Escolha um agente especialista e faça perguntas sobre o sistema.<br />
-                O agente tem acesso aos dados reais do ERP.
-              </div>
+      <div>
+        <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 8 }}>Histórico de versões ({historico.length})</div>
+        <div style={{ display: 'grid', gap: 6 }}>
+          {historico.map((h) => (
+            <div key={h.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text }}>
+              <Badge variant={h.ativo ? 'default' : 'outline'}>v{h.versao}</Badge>
+              {h.ativo && <Badge style={{ background: C.greenBg, color: C.green }}>ativa</Badge>}
+              <span style={{ color: C.text3, flex: 1 }}>{fmtData(h.created_at)}</span>
+              <Button size="sm" variant="ghost" onClick={() => setVerVersao(h.estruturado)}>ver</Button>
             </div>
-          )}
+          ))}
+          {historico.length === 0 && <div style={s.empty}>Sem versões</div>}
+        </div>
+      </div>
 
-          {messages.map((msg, i) => (
-            <div key={i} style={{
-              display: 'flex',
-              justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
-            }}>
-              <div style={{
-                maxWidth: '80%',
-                padding: '12px 16px',
-                borderRadius: 12,
-                fontSize: 14,
-                lineHeight: 1.6,
-                ...(msg.role === 'user' ? {
-                  background: C.primary, color: '#fff',
-                  borderBottomRightRadius: 4,
-                } : msg.role === 'error' ? {
-                  background: C.redBg, color: C.red, border: `1px solid ${C.red}40`,
-                  borderBottomLeftRadius: 4,
-                } : msg.role === 'system' ? {
-                  background: C.primaryBg, color: C.text2, fontStyle: 'italic', fontSize: 12,
-                  borderRadius: 8,
-                } : {
-                  background: C.card, color: C.text, border: `1px solid ${C.border}`,
-                  borderBottomLeftRadius: 4,
-                }),
-              }}>
-                {msg.role === 'assistant' ? (
-                  <div className="prose prose-sm max-w-none" style={{ color: 'inherit' }}>
-                    {msg.text ? (
-                      <ReactMarkdown>{msg.text}</ReactMarkdown>
-                    ) : streaming && i === messages.length - 1 ? (
-                      <TypingIndicator />
-                    ) : null}
-                    {streaming && i === messages.length - 1 && msg.text && <TypingCursor />}
+      {verVersao && (
+        <Dialog open onOpenChange={() => setVerVersao(null)}>
+          <DialogContent className="max-w-lg" style={{ maxHeight: '80vh' }}>
+            <DialogHeader>
+              <DialogTitle>{verVersao.titulo_cargo || 'Job description'}</DialogTitle>
+            </DialogHeader>
+            <div className="overflow-y-auto" style={{ display: 'grid', gap: 8, fontSize: 14 }}>
+              <div>{verVersao.descricao}</div>
+              {['responsabilidades', 'permitido', 'proibido'].map((key) => (
+                <div key={key}>
+                  <div style={{ fontWeight: 600, fontSize: 12, color: C.text2, marginBottom: 4 }}>
+                    {key === 'responsabilidades' ? 'Responsabilidades' : key === 'permitido' ? 'Pode fazer' : 'Não pode fazer'}
                   </div>
-                ) : (
-                  <span style={{ whiteSpace: 'pre-wrap' }}>{msg.text}</span>
-                )}
+                  <ul style={{ margin: 0, paddingLeft: 18 }}>
+                    {(verVersao[key] || []).map((item, i) => <li key={i}>{item}</li>)}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
+function TabMembros() {
+  const [membros, setMembros] = useState([]);
+  const [selKey, setSelKey] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const mm = await agents.agentTasks.team();
+      setMembros(mm || []);
+      setSelKey((k) => k || (mm?.[0]?.agent_key || null));
+    } catch (e) { console.error(e); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const sel = membros.find((m) => m.agent_key === selKey);
+
+  return (
+    <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+      <div style={{ ...s.card, width: 360, minWidth: 300, flexShrink: 0 }}>
+        <div style={s.cardHeader}>
+          <div style={s.cardTitle}>Time de agentes ({membros.length})</div>
+        </div>
+        <div style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+          {membros.map((m) => (
+            <div key={m.agent_key} onClick={() => setSelKey(m.agent_key)} style={{
+              padding: '10px 14px', borderBottom: `1px solid ${C.border}`, cursor: 'pointer',
+              background: m.agent_key === selKey ? C.primaryBg : 'transparent',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{m.nome}</div>
+                <Badge style={{ background: CLASSE_LABEL[m.classe] === 'Cyber' ? C.purpleBg : C.blueBg, color: CLASSE_LABEL[m.classe] === 'Cyber' ? C.purple : C.blue }}>{CLASSE_LABEL[m.classe]}</Badge>
+              </div>
+              <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
+                <code style={{ fontSize: 11 }}>{m.agent_key}</code> · {m.ativo ? 'ativo' : 'inativo'} · {m.modelo}
               </div>
             </div>
           ))}
-          <div ref={messagesEndRef} />
         </div>
+      </div>
 
-        {/* Input */}
-        <div style={{ padding: '12px 20px', borderTop: `1px solid ${C.border}`, display: 'flex', gap: 8, alignItems: 'flex-end', flexShrink: 0 }}>
-          <Textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={`Pergunte ao agente ${selectedModuleLabel}...`}
-            disabled={streaming}
-            rows={1}
-            style={{ flex: 1, minHeight: 40, maxHeight: 120, resize: 'none', fontSize: 14 }}
-          />
-          <Button onClick={sendMessage} disabled={!input.trim() || streaming} style={{ flexShrink: 0 }}>
-            {streaming ? '...' : 'Enviar'}
-          </Button>
+      <div style={{ ...s.card, flex: 1, minWidth: 420 }}>
+        <div style={s.cardHeader}>
+          <div style={s.cardTitle}>{sel?.nome || 'Selecione um membro'}</div>
+          {sel && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: C.text3 }}>
+              orçamento/tarefa: ${sel.orcamento_tarefa_usd ?? '—'} · estimado/mês: ${sel.custo_estimado_mes_usd ?? 0}
+            </div>
+          )}
+        </div>
+        <div style={{ padding: 20 }}>
+          {sel ? <JobDescriptionEditor membro={sel} onChange={load} /> : <div style={s.empty}>Selecione um membro do time ao lado</div>}
         </div>
       </div>
     </div>
   );
 }
 
-// ─── Stat Box ───────────────────────────────────────────────────────────
+// ─── Página ──────────────────────────────────────────────────────────────────
 
 export default function AssistenteIA() {
+  const [tab, setTab] = useState('equipe');
+
+  const tabStyle = (ativo) => ({
+    padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none',
+    background: ativo ? C.primary : 'transparent', color: ativo ? '#fff' : C.text2,
+  });
+
   return (
     <div style={s.page}>
       <div style={{ marginBottom: 20 }}>
         <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Agentes &amp; Auditoria</div>
         <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>
-          Fila de aprovação e agentes de auditoria do sistema · acesso restrito aos desenvolvedores.
-          O assistente do dia a dia é o <strong>Pedrinho</strong>, no botão flutuante (canto inferior direito).
+          Hub do time de agentes · acesso restrito aos super-admins. O assistente do dia a dia é o <strong>Pedrinho</strong>, no botão flutuante (canto inferior direito).
         </div>
       </div>
 
-      <FilaAprovacao />
+      <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+        <button style={tabStyle(tab === 'equipe')} onClick={() => setTab('equipe')}>Equipe</button>
+        <button style={tabStyle(tab === 'entrada')} onClick={() => setTab('entrada')}>Caixa de Entrada</button>
+        <button style={tabStyle(tab === 'membros')} onClick={() => setTab('membros')}>Membros</button>
+      </div>
+
+      {tab === 'equipe' && <TabEquipe />}
+      {tab === 'entrada' && <FilaAprovacao />}
+      {tab === 'membros' && <TabMembros />}
     </div>
   );
 }
-
-// ChatTab abaixo ficou fora de uso (o chat virou o Pedrinho, pop lateral em
-// components/layout/ChatIAFloating). Mantido só como referência; não é renderizado.
-// eslint-disable-next-line no-unused-vars
-const _ChatTabLegado = ChatTab;

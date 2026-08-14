@@ -147,6 +147,7 @@ app.use('/api/expansion', require('./routes/expansion'));
 app.use('/api/strategic', require('./routes/strategic'));
 app.use('/api/meetings', require('./routes/meetings'));
 app.use('/api/agents', require('./routes/agents'));
+app.use('/api/agent-tasks', require('./routes/agentTasks')); // Time de agentes · super-admin
 app.use('/api/rh', require('./routes/rh'));
 app.use('/api/painel-rh', require('./routes/painelRh'));
 app.use('/api/coberturas', require('./routes/coberturas'));
