@@ -53,6 +53,9 @@ jobs:
       - name: Politica de duplicidade (fila das Entradas)
         run: npm run test:duplicidade
 
+      - name: Politica de familia (fila Vincular familias)
+        run: npm run test:familia
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
