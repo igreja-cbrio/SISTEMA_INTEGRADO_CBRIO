@@ -9,10 +9,14 @@
 //      sem CPF/nascimento · revisão humana · NUNCA auto-funde).
 //   2. Vincular famílias · só mostra pessoas sem família quando existe evidência
 //      de convivência com outro cadastro (telefone ou endereço completo iguais).
-//   3. Conflitos de CPF · fila temporária de identidade para revisão humana.
+//   3. Conflitos de identidade · dado forte dos dois lados e o CPF não bate.
+//   4. CPF a confirmar · CPF que chegou por sinal fraco (wifi / telefone da casa).
+//   5. Inscrição sem cadastro · inscrição órfã com candidato na base.
+//   ⚠️ 3, 4 e 5 saíram da MESMA aba ("Conflitos de CPF") em 14/08 — a régua do
+//   corte e o porquê estão em FILTROS_FILA, no fim deste arquivo.
 // ============================================================================
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link as RouterLink } from 'react-router-dom';
 import { nextBatismo as api, membresia as membresiaApi } from '../../api';
@@ -88,7 +92,26 @@ export default function Entradas() {
     queryFn: () => membresiaApi.identidade.list({ status: 'pendente' }),
     ...FILA_CACHE,
   });
-  const pendenciasIdentidade = Object.values(identidade?.resumo?.pendente || {}).reduce((a, b) => a + b, 0);
+  // ⚠️ `resumo.pendente` vem do SERVIDOR e é keyed por TIPO — as contagens dos 3
+  // chips saem dele, não de `items.filter(...)`: a lista é capada e contar o que
+  // veio na página faria o chip mentir quando a fila crescer.
+  const porTipo = identidade?.resumo?.pendente || {};
+  const somaTipos = (lista) => lista.reduce((a, t) => a + (porTipo[t] || 0), 0);
+  const pendenciasIdentidade = Object.values(porTipo).reduce((a, b) => a + b, 0);
+  // ⚠️ Tipo NOVO em `identidade_pendencias` (o CHECK da tabela pode crescer sem
+  // este arquivo saber) cai na fila de conflitos, que é a que gente lê. Sem esta
+  // sobra ele contaria no total do cabeçalho e não apareceria em seção nenhuma —
+  // trabalho pendente invisível, que é pior que trabalho na aba errada.
+  const tiposDeIdentidade = useMemo(() => {
+    const cobertos = new Set([...TIPOS_IDENTIDADE, ...TIPOS_CPF_CONFIRMAR, ...TIPOS_INSCRICAO_ORFA]);
+    const sobrando = Object.keys(porTipo).filter((t) => !cobertos.has(t));
+    return [...TIPOS_IDENTIDADE, ...sobrando];
+  }, [identidade]);
+  const contagensIdentidade = {
+    identidade: somaTipos(tiposDeIdentidade),
+    cpf_confirmar: somaTipos(TIPOS_CPF_CONFIRMAR),
+    inscricao_orfa: somaTipos(TIPOS_INSCRICAO_ORFA),
+  };
   const totalPendentes = (resumo?.duplicatas || 0) + (resumo?.familias_pendentes || 0) + pendenciasIdentidade;
 
   const escolherFiltro = (valor) => {
@@ -121,9 +144,18 @@ export default function Entradas() {
             <div className="text-xs text-muted-foreground">{resumo.saude.com_cpf} de {resumo.saude.pessoas} pessoas vivas</div>
           </div>
           <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => escolherFiltro('identidade')}>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Fila de identidade</div>
-            <div className="text-2xl font-bold text-foreground">{pendenciasIdentidade}</div>
-            <div className="text-xs text-muted-foreground">conflitos de CPF aguardando triagem</div>
+            {/* ⚠️ O card mostra o número da fila em que ele CAI (conflitos), não o
+                total das 3 — clicar e ver um número menor do que o card prometia
+                é a divergência que fez o Marcos duvidar do retrato dos grupos
+                (03/08). O total da aba continua no chip "Pendentes". */}
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Conflitos de identidade</div>
+            <div className="text-2xl font-bold text-foreground">{contagensIdentidade.identidade}</div>
+            <div className="text-xs text-muted-foreground">
+              CPF divergente ou já em uso
+              {pendenciasIdentidade > contagensIdentidade.identidade
+                ? ` · +${pendenciasIdentidade - contagensIdentidade.identidade} em triagem nas outras filas`
+                : ''}
+            </div>
           </button>
           <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => escolherFiltro('duplicidade')}>
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Duplicatas possíveis</div>
@@ -142,7 +174,7 @@ export default function Entradas() {
       </div>
 
       <FiltrosFila visao={visao} filtro={filtro} onChange={setFiltro}
-        contagens={{ duplicidade: resumo?.duplicatas || 0, sem_vinculo: resumo?.familias_pendentes || 0, identidade: pendenciasIdentidade }} />
+        contagens={{ duplicidade: resumo?.duplicatas || 0, sem_vinculo: resumo?.familias_pendentes || 0, ...contagensIdentidade }} />
 
       {visao === 'pendentes' ? (
         <div className="space-y-7">
@@ -157,8 +189,22 @@ export default function Entradas() {
             </SecaoFila>
           )}
           {filtro === 'identidade' && (
-            <SecaoFila titulo="Conflitos de CPF" descricao="Situações em que o CPF precisa de confirmação humana antes de virar identidade.">
-              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros />
+            <SecaoFila titulo="Conflitos de identidade"
+              descricao="Os casos difíceis: dado forte dos dois lados e o CPF não bate. Alguém tem que dizer qual é o certo — o sistema não decide.">
+              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros tipos={tiposDeIdentidade} />
+            </SecaoFila>
+          )}
+          {filtro === 'cpf_confirmar' && (
+            <SecaoFila titulo="CPF a confirmar"
+              descricao="Triagem de sinal fraco: o CPF chegou por wi‑fi ou telefone da família, sem nascimento conferível. A pergunta é se ele é mesmo dessa pessoa.">
+              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros tipos={TIPOS_CPF_CONFIRMAR} />
+            </SecaoFila>
+          )}
+          {filtro === 'inscricao_orfa' && (
+            <SecaoFila titulo="Inscrição sem cadastro"
+              descricao="A inscrição não aponta pra cadastro nenhum e existe um candidato na base. Não é conflito de CPF — a pergunta é se esse cadastro é essa pessoa."
+            >
+              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros tipos={TIPOS_INSCRICAO_ORFA} />
             </SecaoFila>
           )}
         </div>
@@ -169,11 +215,44 @@ export default function Entradas() {
   );
 }
 
+// ⚠️ A antiga aba "Conflitos de CPF" virou TRÊS filas (14/08 · Marcos: "deveriam
+// ser pessoas que possuem dados fortíssimos mas estão com CPF diferente, só os
+// casos mais difíceis; ela não foi feita para juntar possíveis duplicatas
+// quaisquer"). Ele estava certo: `identidade_pendencias` guarda 5 tipos com
+// TRABALHOS diferentes na mesma lista, e o de maior volume — os
+// `cpf_para_confirmar`, que são triagem de sinal FRACO (wifi / telefone da
+// família) — soterrava justamente os casos difíceis. Medido em 05/08: 218
+// `cpf_para_confirmar` contra 67 `inscricao_sem_vinculo` e um punhado de
+// conflitos reais.
+//
+// O recorte é por PERGUNTA, não por tabela:
+//   · identidade      → "qual CPF é o certo?" · dado forte dos dois lados
+//   · cpf_confirmar   → "esse CPF é mesmo dessa pessoa?" · sinal fraco
+//   · inscricao_orfa  → "esse cadastro é essa pessoa?" · nem é conflito de CPF
+const TIPOS_IDENTIDADE = ['cpf_divergente', 'vinculo_divergente', 'cpf_conflito'];
+const TIPOS_CPF_CONFIRMAR = ['cpf_para_confirmar'];
+const TIPOS_INSCRICAO_ORFA = ['inscricao_sem_vinculo'];
+
 const FILTROS_FILA = [
   ['duplicidade', 'Possíveis duplicidades'],
   ['sem_vinculo', 'Vincular famílias'],
-  ['identidade', 'Conflitos de CPF'],
+  ['identidade', 'Conflitos de identidade'],
+  ['cpf_confirmar', 'CPF a confirmar'],
+  ['inscricao_orfa', 'Inscrição sem cadastro'],
 ];
+
+// ⚠️ `entradas_resolucoes.tipo` só conhece as 3 FILAS originais
+// (duplicidade | sem_vinculo | identidade) — as chaves novas são recorte de
+// EXIBIÇÃO. Sem este mapa, o histórico da aba nova iria pro servidor com
+// `tipo=cpf_confirmar`, o `.eq()` não casaria linha nenhuma e a tela diria
+// "Nenhuma resolução neste filtro" — erro se disfarçando de fila vazia.
+const RESOLUCAO_TIPO = {
+  duplicidade: 'duplicidade',
+  sem_vinculo: 'sem_vinculo',
+  identidade: 'identidade',
+  cpf_confirmar: 'identidade',
+  inscricao_orfa: 'identidade',
+};
 
 function FiltrosFila({ visao, filtro, onChange, contagens }) {
   return (
@@ -214,7 +293,7 @@ const ACAO_RESOLVIDA = {
 };
 
 function ResolvidosTab({ filtro, onVerFicha }) {
-  const tipo = filtro;
+  const tipo = RESOLUCAO_TIPO[filtro] || filtro;
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['next-batismo', 'resolucoes', tipo],
     queryFn: () => api.resolucoes(tipo ? { tipo } : {}),
