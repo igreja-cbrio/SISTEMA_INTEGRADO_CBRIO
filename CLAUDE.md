@@ -5516,6 +5516,58 @@ da área KIDS + "líder Kids do dia" dinâmico via `vol_check_ins`.
 `PAGER_BRIDGE_TOKEN` no Vercel + `.env` do agente; confirmar porta TCP/NetPage
 com a LRS. Dados: 660 famílias + 894 crianças importadas (56% com responsável).
 
+## ⚠️⚠️ Next · "fez o Next" passou a ser UM encontro (2026-08-14 · migration `20260814200000`)
+
+Decisão do **Matheus**, olhando o funil da Integração: *"a pessoa é considerada
+se fez next se ela for em apenas um encontro do next, isso já faz ela entrar na
+categoria de quem já fez o next"*.
+
+⚠️ **ISTO SUBSTITUI a régua de 30/06/2026** (migration `20260630160000`, decidida
+com o Marcos + responsável do Next), que exigia presença na **aula 1 E na aula
+2**. O que aquela migration mudou foi permitir formar **cruzando turmas**, não
+reduzir para uma aula. Ele foi avisado da divergência **antes** de decidir, com o
+número na mão, e confirmou. **Não reverter sem falar com os dois.**
+
+- **Efeito medido**: `vw_next_formado_pessoa` foi de **775 para 950** pessoas
+  (+175). É lida por NSM, `/painel`, KPIs `NEXT-*`, Cuidados e os marcadores de
+  jornada — todos passaram a contar pela régua nova de uma vez.
+- ⚠️ O ramo de presença **deixou de filtrar `numero IN (1,2)`**: se um encontro
+  basta, encontro sem número (47 matrículas medidas) também conta. Manter o
+  filtro continuaria escondendo gente que esteve lá.
+- ⚠️ `next_pessoa_aula_manual` passou a `OR` — hoje não muda nada (0 linhas com
+  só uma aula marcada), mas a marcação manual não pode ser mais exigente que o
+  fato que ela representa.
+- ⚠️ **Limitação preservada, não introduzida**: presença de matrícula **sem
+  `membro_id`** continua fora (não há chave para levá-la à pessoa); o ramo final
+  `UNION ALL` cobre essas por `status='formado'`.
+
+### O funil da Integração discordava do resto do sistema — em DUAS coisas
+
+Pergunta que originou tudo: *"as pessoas dessa lista realmente se converteram e
+não fizeram o next?"* (aba Next → Pessoas → Convertidos, 363 "Sem Next").
+
+**1 · O match convertido→matrícula não usava TELEFONE.** `GET /next/pessoas`
+casava por `membro_id > cpf > nome completo exato`. O convertido do culto chega
+**sem CPF** (a porta exige só nome + telefone) e o nome costuma divergir entre as
+duas portas. Medido em 14/08: **22 convertidos marcados "Sem Next" TÊM
+matrícula**, e **11 deles têm presença registrada em pelo menos um encontro**.
+⚠️ O ramo novo exige **telefone (8 últimos dígitos) + PRIMEIRO NOME igual** —
+telefone sozinho nunca identifica (família compartilha o número). Dos 22, **14
+têm o primeiro nome igual** e passam a casar; os **8 restantes seguem sem casar**,
+que é o correto. ⚠️ Note que a régua antiga já ligava por **nome completo
+sozinho**, que é mais frouxo do que isto.
+
+**2 · A tela lia `next_matriculas.status`, não a fonte única.** O status é **por
+TURMA** e diz "não formou" para quem esteve num encontro de outra turma — era
+isso que fazia a tela discordar da NSM, do `/painel` e dos KPIs, que já leem
+`vw_next_formado_pessoa`. Os dois ramos do endpoint (convertido e matrícula
+externa) passaram a consultar a view.
+
+✅ **As 7 pessoas do print estavam CORRETAS**: converteram em 09 e 12/08 (há 2 e
+5 dias), têm `membro_id`, e **zero matrícula parecida** por membro, telefone ou
+nome. O erro real era de **11 em 363**, não da maioria — e a diferença entre
+"parece muito" e "são 11" só apareceu medindo.
+
 ## Next · renomear turma pelo lápis (2026-08-03 · SEM migration)
 
 Pedido do Marcos: lápis pra mudar o nome de uma turma do Next. Edição inline no
