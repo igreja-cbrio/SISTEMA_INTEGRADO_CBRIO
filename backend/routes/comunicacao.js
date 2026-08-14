@@ -97,6 +97,15 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
         resultados.push({ id: a.id, erro: 'falha_no_agendamento', request_id: req.requestId });
       }
     }
+    // Reconciliação dos recibos ÓRFÃOS (1×/hora, carona neste cron): recibo
+    // que chegou antes de a fila gravar o message_id agora CASA em vez de
+    // ficar órfão pra sempre; órfão >60d sem dono é descartado (declarado).
+    const orfaos_reconciliados = await require('../services/waStatusReconcile')
+      .reconciliarStatusOrfaos().catch((e) => ({ ok: false, erro: e.message }));
+    if (orfaos_reconciliados && orfaos_reconciliados.ok === false) {
+      console.error('[comunicacao] reconciliar órfãos:', orfaos_reconciliados.erro);
+    }
+
     // Faxina diária da mídia do inbox (retenção · decisão do Marcos 12/08:
     // "acaba vindo muito lixo"). Pega carona neste cron HORÁRIO de propósito —
     // o vercel.json já tem 45 crons e slot novo é risco (lição dos pagamentos).
@@ -110,7 +119,7 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
       }
     }
 
-    res.json({ ok: true, disparados, resultados, ...(faxina_midia ? { faxina_midia } : {}) });
+    res.json({ ok: true, disparados, resultados, orfaos_reconciliados, ...(faxina_midia ? { faxina_midia } : {}) });
   } catch (e) {
     console.error('[comunicacao] cron agendamentos:', e.message);
     next(communicationError(e, 'Erro no cron de agendamentos.'));
@@ -512,7 +521,16 @@ router.get('/envios/resumo', async (req, res, next) => {
       if (errOrf) console.warn('[comunicacao] resumo orfaos:', errOrf.message);
       orfaos = count || 0;
     } catch { /* tabela ausente → 0 */ }
-    res.json({ dias, total, enviados, pendentes, erros, entregues, lidos, falhos_meta: falhosMeta, orfaos });
+    // Respostas RECEBIDAS (inbound do chat) — era o requisito original do
+    // Marcos ("dashboard com custo, total de envios e respostas") que faltava.
+    let respostas = 0;
+    try {
+      const { count: cIn } = await supabase.from('wa_mensagens')
+        .select('id', { count: 'exact', head: true })
+        .eq('direcao', 'in').gte('criado_em', desde);
+      respostas = cIn || 0;
+    } catch { /* best-effort */ }
+    res.json({ dias, total, enviados, pendentes, erros, entregues, lidos, falhos_meta: falhosMeta, orfaos, respostas });
   } catch (e) {
     console.error('[comunicacao] resumo:', e.message);
     next(communicationError(e, 'Erro no resumo de envios.'));

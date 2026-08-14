@@ -260,10 +260,20 @@ async function registrarInbound({ telefone, texto, tipo = 'text', messageId, med
   }
   const previa = (texto || (tipo === 'image' ? '[imagem]' : tipo === 'audio' ? '[áudio]' : tipo === 'document' ? '[documento]' : '[mídia]')).slice(0, 140);
   const agora = new Date().toISOString();
-  await supabase.from('wa_conversas').update({
-    last_message_at: agora, last_inbound_at: agora,
-    nao_lidas: (c.nao_lidas || 0) + 1, resolvida: false, ultima_previa: previa,
-  }).eq('id', c.id);
+  // Incremento ATÔMICO no banco (RPC · migration 20260814120000): o
+  // read-modify-write antigo perdia contagem quando 2 mensagens chegavam
+  // juntas (o download da mídia acima leva SEGUNDOS entre o read e o write).
+  // RPC ausente (42883) → cai no caminho antigo, comportamento histórico.
+  const { error: eInc } = await supabase.rpc('wa_conversa_inbound', {
+    p_conversa_id: c.id, p_previa: previa, p_agora: agora,
+  });
+  if (eInc) {
+    if (!/wa_conversa_inbound/.test(eInc.message || '')) console.warn('[waInbox] inbound rpc:', eInc.message);
+    await supabase.from('wa_conversas').update({
+      last_message_at: agora, last_inbound_at: agora,
+      nao_lidas: (c.nao_lidas || 0) + 1, resolvida: false, ultima_previa: previa,
+    }).eq('id', c.id);
+  }
 }
 
 // Mensagem que SAIU (bot ou humano). Não mexe em não-lidas nem na janela.

@@ -7,6 +7,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const wpp = require('../services/whatsappService');
 const waInbox = require('../services/waInbox');
+const { escapePostgrestValue } = require('../utils/sanitize');
 const { notificar } = require('../services/notificar');
 
 // profile_id[] de todos os usuários da área (mesma fn usada pelo bot de triagem)
@@ -18,9 +19,21 @@ async function profilesDaArea(areaNome) {
 }
 
 // Anexos: imagem (jpg/png/webp) ou documento (pdf/doc/xls). Cap 16MB (limite Meta).
+const TIPOS_ANEXO = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'application/pdf',
+  'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
 const uploadAnexo = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 16 * 1024 * 1024 },
+  // O comentário acima sempre prometeu jpg/png/webp/pdf/doc/xls — mas não havia
+  // fileFilter: .exe/.zip subiam pro bucket PÚBLICO antes de a Meta recusar.
+  fileFilter: (req, file, cb) => {
+    if (TIPOS_ANEXO.has(file.mimetype)) return cb(null, true);
+    req.anexoRecusado = file.mimetype || 'desconhecido';
+    cb(null, false);
+  },
 });
 
 router.use(authenticate);
@@ -383,7 +396,13 @@ router.get('/conversas', authorizeModule('conversas', 1), async (req, res) => {
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(200);
     if (status === 'abertas') query = query.eq('resolvida', false);
-    if (q) query = query.or(`nome.ilike.%${q}%,telefone.ilike.%${q}%`);
+    // escapePostgrestValue: vírgula/parêntese cru no .or() quebra a query
+    // inteira do PostgREST e o catch da UI virava "Nenhuma conversa aqui"
+    // (buscar "Silva, Maria" = inbox falsamente vazio).
+    if (q) {
+      const qe = escapePostgrestValue(q);
+      query = query.or(`nome.ilike.%${qe}%,telefone.ilike.%${qe}%`);
+    }
 
     // Visibilidade (não-admin): Entrada (área nula) OU área do usuário OU atribuída a ele.
     if (!ehAdmin(req)) {
@@ -603,7 +622,13 @@ router.post('/conversas/:id/responder', authorizeModule('conversas', 2), async (
 // POST /conversas/:id/anexo — envia imagem/documento (multipart campo 'arquivo')
 router.post('/conversas/:id/anexo', authorizeModule('conversas', 2), uploadAnexo.single('arquivo'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'Arquivo obrigatório.' });
+    if (!req.file) {
+      return res.status(400).json({
+        error: req.anexoRecusado
+          ? `Tipo de arquivo não aceito (${req.anexoRecusado}) — envie imagem (jpg/png/webp), PDF, Word ou Excel.`
+          : 'Arquivo obrigatório.',
+      });
+    }
     const { data: conv } = await supabase.from('wa_conversas')
       .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });

@@ -2031,7 +2031,30 @@ escondia o contexto DUAS vezes:
   nada é gravado; registrar fila em wa_mensagens criaria conversa no inbox
   pra CADA disparo em massa (não fazer).
 
-⚠️ Ficam da revisão (médios · ainda abertos): statuses órfãos write-only +
+### Lote 4 · faxina dos médios restantes (2026-08-14 · migration `20260814120000`)
+
+- **Órfãos deixaram de ser write-only**: `services/waStatusReconcile.js` roda
+  1×/hora (carona no cron de agendamentos) — casa cada órfão com a fila OU o
+  chat com as MESMAS guardas idempotentes do webhook; `failed` que casou
+  tardiamente também avisa (`avisarNaoEntregue`); órfão >60 dias sem dono é
+  descartado (declarado no retorno do cron).
+- **`nao_lidas` atômico**: RPC `wa_conversa_inbound` (migration
+  `20260814120000` · só função, não trava tabela) soma no banco — o
+  read-modify-write perdia contagem quando 2 mensagens chegavam juntas (o
+  download de mídia leva segundos entre o read e o write). RPC ausente →
+  fallback no caminho antigo.
+- **Busca do inbox com `escapePostgrestValue`** ("Silva, Maria" quebrava o
+  `.or()` e virava inbox falsamente vazio).
+- **Anexo com `fileFilter`** (o comentário prometia jpg/png/webp/pdf/doc/xls e
+  nada filtrava — .exe subia pro bucket público antes de a Meta recusar);
+  recusa vira 400 com o tipo no texto.
+- **Sino do header gated pelo DESTINO** (`comunicacao`, pra onde ele navega —
+  antes `conversas` podia ver o sino e ser quicado) e aponta direto pra
+  `/comunicacao?tab=conversas`.
+- **Dashboard ganhou "Respostas recebidas"** (inbound do chat na janela) —
+  era o pedaço que faltava do requisito original "custo, envios e respostas".
+
+⚠️ Ficam da revisão (médios · ainda abertos):
 **Realtime sem filtro por área —
 decisão explícita do Marcos (12/08) de NÃO mexer por ora** · `nao_lidas`
 read-modify-write · custo cego aos ~15 call sites fora da fila · 2 `is_default`

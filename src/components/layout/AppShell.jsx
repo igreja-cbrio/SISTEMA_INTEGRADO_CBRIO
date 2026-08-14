@@ -392,7 +392,11 @@ export default function AppShell() {
   // ── Conversas (WhatsApp) · badge dedicado no header ──────────────────
   // Mensagens do inbox NÃO poluem o sino: têm o próprio ícone. Contador é o
   // total de não-lidas do ESCOPO do usuário (área/atribuição). Realtime + poll.
-  const podeConversas = itemAllowed({ module: 'conversas' });
+  // Gate pelo DESTINO: o sino navega pra /comunicacao — gate por 'conversas'
+  // deixava quem tem conversas sem comunicacao clicando num beco (ModuleGuard
+  // quicava pro dashboard). O polling das não-lidas segue no backend de
+  // 'conversas'; se faltar, degrada pra badge 0 (o catch já zera).
+  const podeConversas = itemAllowed({ module: 'comunicacao' });
   const prevWaUnread = useRef(-1);
   async function loadWaUnread() {
     try {
@@ -532,7 +536,7 @@ export default function AppShell() {
             {/* Conversas (WhatsApp) · badge próprio, fora do sino */}
             {podeConversas && (
               <button
-                onClick={() => navigate('/conversas')}
+                onClick={() => navigate('/comunicacao?tab=conversas')}
                 className="relative p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground"
                 title="Conversas (WhatsApp)"
               >
