@@ -78,6 +78,92 @@ const BadgeStatus = ({ status }) => {
   return <Badge style={{ background: m.bg, color: m.c }}>{m.label}</Badge>;
 };
 
+// ─── Ação humana ─────────────────────────────────────────────────────────────
+// Popup exibido quando a tarefa está aguardando decisão de uma pessoa:
+//   aguardando_aprovacao → gate G1 (aprovar/reprovar antes de executar)
+//   aguardando_revisao   → gate G2 (PR aberto · aprovar/rejeitar)
+
+const STATUS_ACAO_HUMANA = ['aguardando_aprovacao', 'aguardando_revisao'];
+
+function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
+  const [t, setT] = useState(null);
+  const [obs, setObs] = useState('');
+  const [working, setWorking] = useState(false);
+
+  const load = useCallback(async () => {
+    try { setT(await agents.agentTasks.tarefa(id)); } catch (e) { alert(e.message); }
+  }, [id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (!t) return <Dialog open onOpenChange={onClose}><DialogContent><DialogHeader><DialogTitle>Carregando...</DialogTitle></DialogHeader></DialogContent></Dialog>;
+
+  const emRevisao = t.status === 'aguardando_revisao';
+  const gateAtual = emRevisao ? 'G2' : 'G1';
+
+  async function agir(aprovado, proximo) {
+    setWorking(true);
+    try {
+      await agents.agentTasks.gates(id, { gate: gateAtual, aprovado, observacao: obs });
+      if (proximo) await agents.agentTasks.transicao(id, proximo);
+      onChange?.();
+      onClose();
+    } catch (e) { alert(e.message); }
+    setWorking(false);
+  }
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            Ação humana necessária <BadgeStatus status={t.status} />
+          </DialogTitle>
+          <DialogDescription>
+            {emRevisao
+              ? `Gate ${gateAtual} · PR aberto aguardando revisão. Revise e faça o merge do PR no GitHub antes de aprovar. Ao aprovar, o card vai para "Concluída"; em "Pedir ajustes", volta para a fila.`
+              : `Gate ${gateAtual} · o agente pediu aprovação antes de executar. Ao aprovar, o card volta para a fila e o agente continua automaticamente.`}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div style={{ display: 'grid', gap: 12 }}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 4 }}>Tarefa</div>
+            <div style={{ fontSize: 14, color: C.text }}>{t.titulo}</div>
+          </div>
+          {t.pull_request_url && (
+            <div style={{ fontSize: 13 }}>
+              <a href={t.pull_request_url} target="_blank" rel="noreferrer" style={{ color: C.primary }}>
+                {t.pull_request_url}
+              </a>
+            </div>
+          )}
+          <div>
+            <Label>Observação (opcional)</Label>
+            <Textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={2} placeholder={emRevisao ? 'Ex.: merge feito, PR ok' : 'Ex.: pode seguir'} />
+          </div>
+        </div>
+
+        <DialogFooter style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Button variant="ghost" onClick={() => { onClose(); onDetalhe?.(id); }}>Ver detalhes</Button>
+          <div style={{ flex: 1 }} />
+          {emRevisao ? (
+            <>
+              <Button variant="outline" onClick={() => agir(false, 'agendada')} disabled={working}>Pedir ajustes</Button>
+              <Button onClick={() => agir(true, 'concluida')} disabled={working}>Aprovar · concluir</Button>
+            </>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => agir(false, 'falhou')} disabled={working}>Reprovar</Button>
+              <Button onClick={() => agir(true, 'agendada')} disabled={working}>Aprovar · continuar</Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Equipe · board de tarefas ───────────────────────────────────────────────
 
 function NovaTarefaDialog({ open, onClose, membros, onCreated }) {
@@ -107,7 +193,10 @@ function NovaTarefaDialog({ open, onClose, membros, onCreated }) {
         <div style={{ display: 'grid', gap: 12 }}>
           <div>
             <Label>Título *</Label>
-            <Input value={form.titulo} onChange={set('titulo')} placeholder="Ex.: Auditar cadastros incompletos do módulo X" />
+            <Input value={form.titulo} onChange={set('titulo')} maxLength={80} placeholder="Curto e direto · Ex.: Corrigir acentuação em 'Solicitacoes'" />
+            <div style={{ fontSize: 11, color: form.titulo.length >= 70 ? '#E28743' : C.text3, marginTop: 4 }}>
+              {form.titulo.length}/80 · o título vira o nome da branch/PR e das notificações
+            </div>
           </div>
           <div>
             <Label>Descrição</Label>
@@ -300,6 +389,10 @@ function TabEquipe() {
   const [membros, setMembros] = useState([]);
   const [novaOpen, setNovaOpen] = useState(false);
   const [detalheId, setDetalheId] = useState(null);
+  const [acaoId, setAcaoId] = useState(null);
+  const [dragId, setDragId] = useState(null);
+  const [overCol, setOverCol] = useState(null);
+  const [dropErro, setDropErro] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -311,9 +404,30 @@ function TabEquipe() {
 
   useEffect(() => { load(); }, [load]);
 
+  async function onDropTarefa(tarefaId, destino) {
+    setDragId(null); setOverCol(null);
+    const t = tarefas.find((x) => x.id === tarefaId);
+    if (!t || t.status === destino) return;
+    const permitidas = TRANSICOES[t.status] || [];
+    if (!permitidas.includes(destino)) {
+      setDropErro({ tarefa: t, destino });
+      return;
+    }
+    try { await agents.agentTasks.transicao(t.id, destino); load(); }
+    catch (e) { alert(e.message); }
+  }
+
+  function abrirTarefa(t) {
+    if (STATUS_ACAO_HUMANA.includes(t.status)) setAcaoId(t.id);
+    else setDetalheId(t.id);
+  }
+
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <div style={{ fontSize: 13, color: C.text3 }}>
+          Arraste os cards entre as colunas para mudar o status · tarefas em <strong>aguardando aprovação</strong> e <strong>aguardando revisão</strong> abrem com as ações humanas.
+        </div>
         <Button onClick={() => setNovaOpen(true)}>＋ Nova tarefa</Button>
       </div>
       <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 12, alignItems: 'flex-start' }}>
@@ -321,7 +435,13 @@ function TabEquipe() {
           const lista = tarefas.filter((t) => t.status === col);
           const meta = STATUS_META[col];
           return (
-            <div key={col} style={{ ...s.card, width: 250, minWidth: 250, flexShrink: 0, display: 'flex', flexDirection: 'column', maxHeight: '72vh' }}>
+            <div
+              key={col}
+              onDragOver={(e) => { e.preventDefault(); setOverCol(col); }}
+              onDragLeave={() => setOverCol((c) => (c === col ? null : c))}
+              onDrop={(e) => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain') || dragId; if (id) onDropTarefa(id, col); }}
+              style={{ ...s.card, width: 250, minWidth: 250, flexShrink: 0, display: 'flex', flexDirection: 'column', maxHeight: '72vh', outline: overCol === col ? '2px solid var(--cbrio-primary)' : 'none', transition: 'outline-color .15s' }}
+            >
               <div style={{ ...s.cardHeader, padding: '12px 14px', flexShrink: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontWeight: 700, fontSize: 13, color: C.text }}>{meta.label}</span>
@@ -330,22 +450,41 @@ function TabEquipe() {
               </div>
               <div style={{ flex: 1, overflowY: 'auto', padding: 10, display: 'grid', gap: 8, alignContent: 'flex-start' }}>
                 {lista.length === 0 && <div style={{ ...s.empty, padding: 20 }}>Vazio</div>}
-                {lista.map((t) => (
-                  <div key={t.id} onClick={() => setDetalheId(t.id)} style={{
-                    padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.border}`,
-                    background: C.bg, cursor: 'pointer', transition: 'box-shadow .15s',
-                  }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.35, marginBottom: 6 }}>{t.titulo}</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      <Badge style={{ background: PRIOR_META[t.prioridade].bg, color: PRIOR_META[t.prioridade].c }}>
-                        {PRIOR_META[t.prioridade].label}
-                      </Badge>
-                      {t.agent_team && (
-                        <span style={{ fontSize: 11, color: C.text3 }}>{t.agent_team.nome}</span>
-                      )}
+                {lista.map((t) => {
+                  const precisaAcao = STATUS_ACAO_HUMANA.includes(t.status);
+                  return (
+                    <div
+                      key={t.id}
+                      draggable
+                      onClick={() => abrirTarefa(t)}
+                      onDragStart={(e) => { e.dataTransfer.setData('text/plain', t.id); setDragId(t.id); }}
+                      onDragEnd={() => { setDragId(null); setOverCol(null); }}
+                      title={precisaAcao ? 'Clique para agir' : 'Clique para detalhes · arraste para outra coluna'}
+                      style={{
+                        padding: '10px 12px', borderRadius: 10, border: `1px solid ${C.border}`,
+                        background: C.bg, cursor: 'grab', transition: 'box-shadow .15s, opacity .15s',
+                        opacity: dragId === t.id ? 0.45 : 1,
+                        boxShadow: precisaAcao ? `0 0 0 1px ${C.amber}66` : 'none',
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.35, marginBottom: 6 }}>{t.titulo}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <Badge style={{ background: PRIOR_META[t.prioridade].bg, color: PRIOR_META[t.prioridade].c }}>
+                          {PRIOR_META[t.prioridade].label}
+                        </Badge>
+                        {t.agent_team && (
+                          <span style={{ fontSize: 11, color: C.text3 }}>{t.agent_team.nome}</span>
+                        )}
+                        {t.gate && (
+                          <Badge style={{ background: C.amberBg, color: C.amber }}>{t.gate}</Badge>
+                        )}
+                        {precisaAcao && (
+                          <Badge style={{ background: C.redBg, color: C.red }}>ação</Badge>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           );
@@ -353,6 +492,44 @@ function TabEquipe() {
       </div>
       {novaOpen && <NovaTarefaDialog open onClose={() => setNovaOpen(false)} membros={membros} onCreated={() => { load(); setNovaOpen(false); }} />}
       {detalheId && <DetalheTarefa id={detalheId} onClose={() => setDetalheId(null)} onChange={load} />}
+      {acaoId && (
+        <AcaoHumanaDialog
+          id={acaoId}
+          onClose={() => setAcaoId(null)}
+          onChange={load}
+          onDetalhe={(id2) => { setAcaoId(null); setDetalheId(id2); }}
+        />
+      )}
+      {dropErro && (
+        <Dialog open onOpenChange={() => setDropErro(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Transição inválida</DialogTitle>
+              <DialogDescription>
+                {dropErro.tarefa.titulo}: <strong>{STATUS_META[dropErro.tarefa.status].label}</strong> → <strong>{STATUS_META[dropErro.destino].label}</strong> não é permitida. Escolha um dos destinos válidos:
+              </DialogDescription>
+            </DialogHeader>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {(TRANSICOES[dropErro.tarefa.status] || []).map((p) => (
+                <Button
+                  key={p}
+                  variant="outline"
+                  onClick={async () => {
+                    try { await agents.agentTasks.transicao(dropErro.tarefa.id, p); setDropErro(null); load(); }
+                    catch (e) { alert(e.message); }
+                  }}
+                >
+                  {STATUS_META[p].label}
+                </Button>
+              ))}
+              {(TRANSICOES[dropErro.tarefa.status] || []).length === 0 && <div style={s.empty}>Sem transições a partir deste status.</div>}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setDropErro(null)}>Cancelar</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

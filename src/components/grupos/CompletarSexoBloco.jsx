@@ -38,6 +38,7 @@ export default function CompletarSexoBloco({ onAplicado }) {
   const [sugestoes, setSugestoes] = useState(null);
   const [marcados, setMarcados] = useState(() => new Set());
   const [sugerindo, setSugerindo] = useState(false);
+  const [progresso, setProgresso] = useState(null); // {vistas,total} durante a varredura
   const [confirmando, setConfirmando] = useState(false);
 
   const analisar = async () => {
@@ -61,18 +62,38 @@ export default function CompletarSexoBloco({ onAplicado }) {
     finally { setColhendo(false); }
   };
 
+  // ⚠️⚠️ Varre a lista em BLOCOS, com progresso — não numa requisição só.
+  // No 1º uso real (14/08) a tela ficou presa em "Consultando a IA…" e nada
+  // voltou: o `request()` aborta em 30s e 400 pessoas não cabem nisso. É a lei
+  // de 04/08 (operação longa vai em pedaços, com progresso real no botão).
   const pedirSugestoes = async () => {
     setSugerindo(true);
+    setSugestoes(null);
+    setMarcados(new Set()); // nasce TUDO DESMARCADO — ver comentário do confirmar
+    let offset = 0;
+    let acumuladas = [];
+    let semSugestao = 0;
+    let total = 0;
+    let vistas = 0;
     try {
-      const r = await api.sexoSugestoes();
-      setSugestoes(r);
-      // ⚠️ Nasce TUDO DESMARCADO: marcar por padrão faria o clique em "confirmar"
-      // gravar centenas de palpites que ninguém leu — exatamente o que a
-      // confirmação humana existe pra impedir.
-      setMarcados(new Set());
-      if (!r.sugestoes?.length) toast.info('A IA não teve confiança alta em nenhum nome.');
-    } catch (e) { toast.error(e?.message || 'Erro ao pedir sugestões'); }
-    finally { setSugerindo(false); }
+      for (;;) {
+        const r = await api.sexoSugestoes(offset);
+        total = r.total ?? 0;
+        vistas += r.sem_sexo ?? 0;
+        semSugestao += r.sem_sugestao ?? 0;
+        acumuladas = acumuladas.concat(r.sugestoes || []);
+        // Mostra o que já veio — a pessoa começa a revisar antes de terminar.
+        setSugestoes({ sugestoes: acumuladas, sem_sexo: vistas, sem_sugestao: semSugestao, total });
+        setProgresso({ vistas, total });
+        if (r.proximo_offset == null) break;
+        offset = r.proximo_offset;
+      }
+      if (!acumuladas.length) toast.info('A IA não teve confiança alta em nenhum nome.');
+    } catch (e) {
+      // ⚠️ O que JÁ veio fica na tela: derrubar tudo por causa do último bloco
+      // faria a pessoa perder o que já dava pra confirmar.
+      toast.error(`${e?.message || 'Erro ao pedir sugestões'}${acumuladas.length ? ` — as ${acumuladas.length} já carregadas continuam aí.` : ''}`);
+    } finally { setSugerindo(false); setProgresso(null); }
   };
 
   const confirmar = async () => {
@@ -175,7 +196,9 @@ export default function CompletarSexoBloco({ onAplicado }) {
               preencher o cadastro. O sexo decide em qual grupo ela pode entrar, então confira antes.
             </p>
             <button onClick={pedirSugestoes} disabled={sugerindo} style={btn({ cursor: sugerindo ? 'wait' : 'pointer' })}>
-              {sugerindo ? 'Consultando a IA…' : 'Sugerir pelos nomes'}
+              {sugerindo
+                ? (progresso ? `Consultando a IA… ${progresso.vistas} de ${progresso.total}` : 'Consultando a IA…')
+                : 'Sugerir pelos nomes'}
             </button>
 
             {sugestoes && (

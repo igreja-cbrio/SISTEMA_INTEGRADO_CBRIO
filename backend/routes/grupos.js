@@ -4669,8 +4669,13 @@ router.post('/pessoas/sexo/colher', authorizeModule('grupos', 5), async (req, re
 router.get('/pessoas/sexo/sugestoes', authorizeModule('grupos', 5), async (req, res) => {
   try {
     const universo = await universoGrupos();
+    // ⚠️ Em BLOCOS (`offset`): o `request()` do cliente aborta em 30s, e no 1º
+    // uso real (14/08) a tela ficou presa em "Consultando a IA…" sem retorno.
+    // Quem varre a lista inteira é a TELA, um bloco por vez, com progresso — a
+    // lei de 04/08 (operação longa não cabe numa requisição só).
     const r = await sexoCompletar.sugerirPorNome({
       limite: Number(req.query.limite) || undefined,
+      offset: Number(req.query.offset) || 0,
       apenasIds: universo,
     });
     res.json(r);

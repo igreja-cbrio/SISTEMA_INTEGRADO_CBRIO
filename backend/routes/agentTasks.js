@@ -104,8 +104,8 @@ const TRANSICOES = {
   nova: ['agendada', 'em_andamento', 'cancelada'],
   agendada: ['em_andamento', 'cancelada'],
   em_andamento: ['aguardando_revisao', 'aguardando_aprovacao', 'falhou', 'bloqueada', 'cancelada'],
-  aguardando_revisao: ['em_andamento', 'concluida', 'falhou', 'bloqueada'],
-  aguardando_aprovacao: ['em_andamento', 'concluida', 'falhou', 'bloqueada'],
+  aguardando_revisao: ['agendada', 'em_andamento', 'concluida', 'falhou', 'bloqueada'],
+  aguardando_aprovacao: ['agendada', 'em_andamento', 'concluida', 'falhou', 'bloqueada'],
   concluida: ['em_andamento', 'cancelada'],
   falhou: ['em_andamento', 'bloqueada', 'cancelada'],
   bloqueada: ['em_andamento', 'nova', 'cancelada'],
@@ -288,7 +288,7 @@ router.post('/tarefas', async (req, res) => {
     const body = sanitizeObj(req.body, ['titulo', 'descricao', 'classe', 'agente_key', 'status', 'prioridade', 'origem', 'orcamento_usd', 'gate']);
     if (!body.titulo) return err(res, new Error('Título é obrigatório'));
     const insert = {
-      titulo: String(body.titulo).slice(0, 200),
+      titulo: String(body.titulo).slice(0, 80),
       descricao: String(body.descricao || '').slice(0, 5000),
       classe: body.classe || 'watcher',
       agente_key: body.agente_key || null,
