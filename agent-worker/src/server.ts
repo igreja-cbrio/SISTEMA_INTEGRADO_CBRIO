@@ -17,6 +17,7 @@ import { runProjetosWatcher } from "./agents/projetosWatcher.js";
 import { runPilotoTriageWatcher } from "./agents/pilotoTriageWatcher.js";
 import { runCyberAgent } from "./agents/cyberAgent.js";
 import { runDevAgent } from "./agents/devAgent.js";
+import { runDevDispatcher } from "./agents/devDispatcher.js";
 import { startScheduler } from "./scheduler.js";
 
 const AGENT_RUNNERS: Record<string, (opts: any) => Promise<any>> = {
@@ -37,6 +38,7 @@ const AGENT_RUNNERS: Record<string, (opts: any) => Promise<any>> = {
   piloto_triage_watcher: runPilotoTriageWatcher,
   cyber_agent: runCyberAgent,
   dev_agent: runDevAgent,
+  dev_dispatcher: runDevDispatcher,
 };
 
 const app = express();
