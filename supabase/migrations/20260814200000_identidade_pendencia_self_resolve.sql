@@ -86,15 +86,33 @@ FOR EACH ROW EXECUTE FUNCTION public.fn_identidade_pendencia_self_resolve();
 -- O passado. Só as que ficaram ABERTAS apontando pra si mesmas — as 37 já
 -- resolvidas ficam intactas (reescrever histórico resolvido não acrescenta nada
 -- e apagaria a data real da decisão).
--- ⚠️ Este UPDATE dispara o gatilho acima, que é quem faz o trabalho. Mexer numa
--- coluna qualquer bastaria; `status` é explicitado só pra deixar a intenção
--- legível pra quem for ler a migration depois.
+--
+-- ⚠️⚠️ ERRO DA 1ª APLICAÇÃO, CORRIGIDO AQUI. Este UPDATE dizia (no comentário)
+-- que o gatilho acima faria o trabalho — e **não faz**: em `BEFORE UPDATE` o
+-- `NEW` já chega com os valores do próprio UPDATE, então setar
+-- `status = 'resolvida'` aqui torna a guarda `NOT IN ('resolvida','descartada')`
+-- FALSA e o gatilho no-opa. Efeito medido em produção: a linha ficou resolvida
+-- **sem `resolvida_em` e sem explicação no `detalhe`** — resolução sem data nem
+-- motivo, que é o oposto de trilha auditável.
+-- ⇒ O backfill NÃO delega ao gatilho: carimba os três campos ele mesmo. Régua
+--   que fica: backfill que depende de gatilho pra completar o próprio efeito é
+--   frágil por construção — o gatilho existe pro que vier DEPOIS.
+--
+-- O predicado pega os dois casos e é idempotente (a marca no `detalhe` é o
+-- freio): self-pair ainda aberta, **e** self-pair que a 1ª aplicação resolveu
+-- sem data. `resolvida_em IS NULL` distingue com precisão a linha do saneamento
+-- das 37 resolvidas por gente — medido: 1 linha na tabela inteira.
 -- ============================================================================
 UPDATE public.identidade_pendencias
-   SET status = 'resolvida'
+   SET status = 'resolvida',
+       resolvida_em = coalesce(resolvida_em, now()),
+       detalhe = coalesce(nullif(detalhe, ''), 'Conflito de identidade')
+                 || ' [os dois lados são o mesmo cadastro]'
  WHERE membro_id IS NOT NULL
    AND membro_id = membro_conflito_id
-   AND status NOT IN ('resolvida', 'descartada');
+   AND position('[os dois lados são o mesmo cadastro]' in coalesce(detalhe, '')) = 0
+   AND (status NOT IN ('resolvida', 'descartada')
+        OR (status = 'resolvida' AND resolvida_em IS NULL));
 
 COMMENT ON TABLE public.identidade_pendencias IS
   'Fila humana de conflitos de identidade (Entradas). ⚠️ As DUAS colunas de membro têm FK pra mem_membros, então merge_membros as reponta e a linha pode virar "conflito consigo mesmo" — o gatilho tg_identidade_pendencia_self_resolve (2026-08-14) fecha esse caso na entrada. NÃO remover o gatilho sem substituir a proteção.';
