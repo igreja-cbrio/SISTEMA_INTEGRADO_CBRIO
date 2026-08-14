@@ -3,6 +3,7 @@ import { agents } from '../../api';
 import FilaAprovacao from './FilaAprovacao';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
+import { Switch } from '../../components/ui/switch';
 import { Input } from '../../components/ui/input';
 import { Textarea } from '../../components/ui/textarea';
 import { Label } from '../../components/ui/label';
@@ -496,6 +497,13 @@ function TabMembros() {
 
   useEffect(() => { load(); }, [load]);
 
+  const toggleAtivo = async (m) => {
+    try {
+      const atualizado = await agents.agentTasks.updateMembro(m.agent_key, { ativo: !m.ativo });
+      setMembros((arr) => arr.map((x) => (x.agent_key === m.agent_key ? atualizado : x)));
+    } catch (e) { console.error(e); }
+  };
+
   const sel = membros.find((m) => m.agent_key === selKey);
 
   return (
@@ -512,10 +520,14 @@ function TabMembros() {
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{m.nome}</div>
-                <Badge style={{ background: CLASSE_LABEL[m.classe] === 'Cyber' ? C.purpleBg : C.blueBg, color: CLASSE_LABEL[m.classe] === 'Cyber' ? C.purple : C.blue }}>{CLASSE_LABEL[m.classe]}</Badge>
+                <div onClick={(e) => e.stopPropagation()}>
+                  <Switch checked={!!m.ativo} onCheckedChange={() => toggleAtivo(m)} title={m.ativo ? 'Desativar (dispatcher ignora as tarefas)' : 'Ativar'} />
+                </div>
               </div>
-              <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
-                <code style={{ fontSize: 11 }}>{m.agent_key}</code> · {m.ativo ? 'ativo' : 'inativo'} · {m.modelo}
+              <div style={{ fontSize: 11, color: C.text3, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                <code style={{ fontSize: 11 }}>{m.agent_key}</code>
+                <Badge style={{ background: CLASSE_LABEL[m.classe] === 'Cyber' ? C.purpleBg : C.blueBg, color: CLASSE_LABEL[m.classe] === 'Cyber' ? C.purple : C.blue }}>{CLASSE_LABEL[m.classe]}</Badge>
+                <span>{m.ativo ? 'ativo' : 'inativo'} · {m.modelo}</span>
               </div>
             </div>
           ))}
