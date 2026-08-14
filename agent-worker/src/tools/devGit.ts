@@ -164,15 +164,19 @@ export async function abrirPr(opts: {
   return { url: data.html_url, number: data.number };
 }
 
-interface CheckRun {
+interface WorkflowRun {
   name: string;
   status: string;
   conclusion: string | null;
-  details_url?: string | null;
+  head_sha: string;
 }
 
-// Aguarda os checks do PR terminarem. Retorna o veredito:
-// - "ok": checks concluídos sem falha relevante
+// Aguarda o CI do PR (workflows de Actions do head commit) terminar.
+// ⚠️ Usa a Actions API, NÃO a Checks API: tokens fine-grained NÃO têm a
+// permissão "Checks" (limitação documentada do GitHub — só GitHub App). O
+// `qualidade` é um workflow de Actions, então Actions:read cobre o gate G2.
+// Retorna o veredito:
+// - "ok": todos os workflows do commit concluíram sem falha
 // - "falhas": houve falha (com contagem) — a 3ª falha consecutiva do CI
 //   vira `bloqueada` no board (regra do skill dev/AGENTS.md)
 // - "timeout": não terminou a tempo
@@ -183,26 +187,29 @@ export async function aguardarChecks(
   const timeoutMs = opts.timeoutMs ?? 15 * 60 * 1000;
   const intervalMs = opts.intervalMs ?? 15_000;
   const fim = Date.now() + timeoutMs;
-  let falhas = 0;
   let checados: string[] = [];
 
+  // head sha do PR (pra filtrar só os runs deste commit)
+  const pr = await gh<{ head: { sha: string } }>("GET", `/repos/${REPO}/pulls/${prNumber}`);
+  const sha = pr.head.sha;
+
   while (Date.now() < fim) {
-    const data = await gh<{ check_runs: CheckRun[] }>(
+    const data = await gh<{ workflow_runs: WorkflowRun[] }>(
       "GET",
-      `/repos/${REPO}/pulls/${prNumber}/checks?per_page=100`
+      `/repos/${REPO}/actions/runs?head_sha=${sha}&per_page=50`
     );
-    const runs = data.check_runs || [];
+    const runs = (data.workflow_runs || []).filter((r) => r.head_sha === sha);
     checados = runs.map((r) => r.name);
 
+    // sem run ainda — o workflow pode levar alguns segundos pra ser criado
     if (!runs.length) {
-      // ainda sem checks — pode ser Vercel/qualidade subindo
       await sleep(intervalMs);
       continue;
     }
 
     const pendentes = runs.filter((r) => r.status !== "completed");
     if (pendentes.length === 0) {
-      falhas = runs.filter(
+      const falhas = runs.filter(
         (r) => r.conclusion === "failure" || r.conclusion === "cancelled" || r.conclusion === "timed_out"
       ).length;
       return { veredito: falhas > 0 ? "falhas" : "ok", falhas, checados };
@@ -210,7 +217,7 @@ export async function aguardarChecks(
     await sleep(intervalMs);
   }
 
-  return { veredito: "timeout", falhas, checados };
+  return { veredito: "timeout", falhas: 0, checados };
 }
 
 // ─── utilidades ──────────────────────────────────────────────────────────────
