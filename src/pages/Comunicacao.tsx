@@ -47,7 +47,7 @@ function ErroBox({ msg, onRetry }: { msg: string; onRetry: () => void }) {
 }
 
 // ═══ DASHBOARD ═══════════════════════════════════════════════════════
-type Resumo = { dias: number; total: number; enviados: number; pendentes: number; erros: number; entregues: number; lidos: number; falhos_meta: number };
+type Resumo = { dias: number; total: number; enviados: number; pendentes: number; erros: number; entregues: number; lidos: number; falhos_meta: number; orfaos?: number; respostas?: number };
 
 function StatCard({ label, value, cor }: { label: string; value: number | string; cor?: string }) {
   return (
@@ -104,11 +104,12 @@ function Dashboard() {
         : !resumo ? <Spinner />
         : (
           <>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-8">
               <StatCard label="Total" value={resumo.total} />
               <StatCard label="Enviados" value={resumo.enviados} cor={C.primary} />
               <StatCard label="Entregues" value={resumo.entregues} cor="#0ea5e9" />
               <StatCard label="Lidos" value={resumo.lidos} cor="#7c3aed" />
+              <StatCard label="Respostas recebidas" value={resumo.respostas ?? 0} cor="#059669" />
               <StatCard label="Pendentes" value={resumo.pendentes} cor="#d97706" />
               <StatCard label="Erros" value={resumo.erros} cor="#dc2626" />
               <StatCard label="Falhas Meta" value={resumo.falhos_meta} cor="#dc2626" />
