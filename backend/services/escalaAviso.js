@@ -24,7 +24,8 @@ const { supabase } = require('../utils/supabase');
 const fila = require('./whatsappFila');
 const { perfisPorId } = require('./agenteVoluntariado');
 const { notificarApp } = require('./appPush');
-const { agruparParaAviso, selecionarRodada } = require('../utils/avisoEscala');
+const { agruparParaAviso, selecionarRodada, diaRelativoBRT } = require('../utils/avisoEscala');
+const { montarLinkEscala } = require('../utils/escalaToken');
 
 const CONTEXTO = 'voluntariado.escala_aviso';
 // Chave do aviso no app. Mesma raiz do contexto da fila, e por escala — a
@@ -54,7 +55,12 @@ async function _emLotes(valores, build) {
  * o cron por causa do aviso levaria junto o alerta do coordenador, que divide
  * a mesma execução.
  */
-async function avisarEscalasDaSemana({ dias = 7, teto = TETO_RODADA, agora = new Date().toISOString() } = {}) {
+/**
+ * @param {object} opts
+ *  · `diasAlvo` — dias BRT a avisar. O cron manda `[amanhã]` (véspera, pedido
+ *    do Matheus em 14/08). Sem ele, vale a janela em `dias` (o botão manual).
+ */
+async function avisarEscalasDaSemana({ dias = 7, diasAlvo = null, teto = TETO_RODADA, agora = new Date().toISOString() } = {}) {
   const base = {
     janela_dias: dias, grupos: 0, enfileirados: 0, app_avisados: 0, adiados: 0,
     sem_telefone: 0, ja_avisados: 0, template_configurado: false, motivo: null,
@@ -85,7 +91,7 @@ async function avisarEscalasDaSemana({ dias = 7, teto = TETO_RODADA, agora = new
     service_name: nomePorCulto[e.service_id]?.name,
   }));
 
-  const grupos = agruparParaAviso({ escalas, agora, dias });
+  const grupos = agruparParaAviso({ escalas, agora, dias, diasAlvo });
   if (!grupos.length) return { ...base, motivo: 'Ninguém a avisar nesta janela.' };
 
   // 3 · Quem já foi avisado — pelos DOIS canais.
@@ -195,11 +201,31 @@ async function avisarEscalasDaSemana({ dias = 7, teto = TETO_RODADA, agora = new
     };
   }
 
-  const r = await fila.enfileirarLote(sel.rodada.map(g => ({
+  // ⚠️⚠️ O 4º parâmetro é o LINK de "vou / não vou poder" — no CORPO, não em
+  // botão de URL: é o que mantém o template UTILITY (mesma decisão dos fluxos
+  // de grupos).
+  //
+  // ⚠️ E é OBRIGATÓRIO: o template tem 4 variáveis, então mandar 3 é recusa da
+  // Meta por contagem de parâmetros. Sem segredo (`ESCALA_TOKEN_SECRET` ou o
+  // `CRON_SECRET`, que é obrigatório em produção) não há link — e aí o certo é
+  // NÃO mandar, em vez de disparar 200 mensagens que a Meta recusa uma a uma.
+  // O aviso pelo app já saiu de qualquer forma.
+  const comLink = sel.rodada
+    .map(g => ({ g, link: montarLinkEscala(g.escala_ids[0]) }))
+    .filter(x => !!x.link);
+
+  if (!comLink.length) {
+    return {
+      ...relatorio,
+      motivo: `Não foi possível montar o link de resposta (sem ESCALA_TOKEN_SECRET nem CRON_SECRET) — o WhatsApp não saiu.${app_avisados ? ` ${app_avisados} pessoa(s) foram avisadas pelo app.` : ''}`,
+    };
+  }
+
+  const r = await fila.enfileirarLote(comLink.map(({ g, link }) => ({
     telefone: g.telefone,
     template: templateName,
     idioma: 'pt_BR',
-    params: g.params,
+    params: [...g.params, link],
     // O prefixo do contexto é lido por `utils/whatsappModulo` pra decidir quem
     // é avisado quando a entrega falha — `voluntariado` tem regra própria e não
     // cai no fallback de todos os admin/diretor.
@@ -221,4 +247,18 @@ async function avisarEscalasDaSemana({ dias = 7, teto = TETO_RODADA, agora = new
   };
 }
 
-module.exports = { avisarEscalasDaSemana, CONTEXTO, TETO_RODADA };
+/**
+ * O disparo do cron: a VÉSPERA. Avisa quem serve AMANHÃ (dia da igreja).
+ *
+ * ⚠️ `dias: 2` é só o limite externo da régua — quem recorta de verdade é o
+ * `diasAlvo`. Com 1 o corte cairia em cima do culto de amanhã à noite (mais de
+ * 24h à frente) e ele nunca seria avisado.
+ */
+async function avisarVespera(opts = {}) {
+  const agora = opts.agora || new Date().toISOString();
+  return avisarEscalasDaSemana({
+    ...opts, agora, dias: 2, diasAlvo: new Set([diaRelativoBRT(agora, 1)]),
+  });
+}
+
+module.exports = { avisarEscalasDaSemana, avisarVespera, CONTEXTO, TETO_RODADA };

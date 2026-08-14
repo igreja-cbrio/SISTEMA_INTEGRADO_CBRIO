@@ -3159,6 +3159,10 @@ export const arquivei = {
 // ── Rotas PUBLICAS do voluntariado (sem auth — scan QR sem conta) ──
 export const publicVoluntariado = {
   lookupCpf: (cpf) => post('/public/voluntariado/lookup-cpf', { cpf }),
+  // Escala pelo link do WhatsApp ("vou / não vou poder"). O token é a
+  // credencial — não há login neste caminho.
+  escalaPorToken: (token) => get(`/public/voluntariado/escala/${token}`),
+  responderEscala: (token, status) => post(`/public/voluntariado/escala/${token}/responder`, { status }),
   requestLogin: (cpf, serviceId) => post('/public/voluntariado/request-login', { cpf, serviceId }),
   register: (data) => post('/public/voluntariado/register', data),
   // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)

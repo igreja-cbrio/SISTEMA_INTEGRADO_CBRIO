@@ -32,13 +32,21 @@ function chavePessoa(escala) {
  * avisar. E quem RECUSOU não é lembrado: a pessoa já disse que não vai, e
  * insistir num compromisso recusado é constrangimento, não lembrete.
  */
-function elegivelParaAviso(escala, agoraISO, dias) {
+function elegivelParaAviso(escala, agoraISO, dias, diasAlvo) {
   if (!escala || !chavePessoa(escala)) return false;
   if (escala.confirmation_status === 'declined') return false;
   const quando = new Date(escala.scheduled_at).getTime();
   const agora = new Date(agoraISO).getTime();
   if (!Number.isFinite(quando) || !Number.isFinite(agora)) return false;
   if (quando < agora) return false;
+
+  // ⚠️ VÉSPERA (14/08/2026): o Matheus pediu que o disparo seja "1 dia antes",
+  // não uma janela de sete. `diasAlvo` é o conjunto de DIAS BRT que devem ser
+  // avisados agora — o cron manda só amanhã. A janela em `dias` continua como
+  // limite externo, pra que um dia alvo mal calculado não alcance o mês todo.
+  if (diasAlvo && diasAlvo.size) {
+    if (!diasAlvo.has(diaBRT(escala.scheduled_at))) return false;
+  }
   return quando <= agora + dias * 86400000;
 }
 
@@ -86,10 +94,11 @@ function textoEvento(nomes) {
  * Devolve um grupo por pessoa/dia, já com os textos prontos para os três
  * parâmetros do template (`{{1}}` área · `{{2}}` evento · `{{3}}` quando).
  */
-function agruparParaAviso({ escalas, agora, dias = 7 }) {
+function agruparParaAviso({ escalas, agora, dias = 7, diasAlvo = null }) {
+  const alvo = diasAlvo ? (diasAlvo instanceof Set ? diasAlvo : new Set(diasAlvo)) : null;
   const grupos = new Map();
   for (const e of escalas || []) {
-    if (!elegivelParaAviso(e, agora, dias)) continue;
+    if (!elegivelParaAviso(e, agora, dias, alvo)) continue;
     const pessoa = chavePessoa(e);
     const dia = diaBRT(e.scheduled_at);
     const k = `${pessoa}::${dia}`;
@@ -157,7 +166,20 @@ function selecionarRodada({ grupos, jaAvisados, telefonePorPessoa, teto = 200 })
   };
 }
 
+/**
+ * Dia BRT deslocado em N dias a partir de `agora`. `0` = hoje, `1` = amanhã.
+ *
+ * ⚠️ Existe pra o serviço não recalcular fuso na mão: "amanhã" às 22h do Rio
+ * já é depois de amanhã em UTC, e é assim que um aviso de véspera vira aviso
+ * de duas noites antes (ou nenhum).
+ */
+function diaRelativoBRT(agoraISO, deslocamento) {
+  const base = new Date(agoraISO);
+  if (!Number.isFinite(base.getTime())) return null;
+  return diaBRT(new Date(base.getTime() + (deslocamento || 0) * 86400000));
+}
+
 module.exports = {
   chavePessoa, elegivelParaAviso, agruparParaAviso, selecionarRodada,
-  textoQuando, textoAreas, textoEvento, horaBRT,
+  textoQuando, textoAreas, textoEvento, horaBRT, diaRelativoBRT,
 };

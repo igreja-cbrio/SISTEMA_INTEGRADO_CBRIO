@@ -9057,3 +9057,87 @@ se fosse sucesso.
   visão padrão vinha truncada — o usuário pedia 4 semanas e recebia 3 e meia.
 - **Célula sem composição escreve "vazio"** (pedido dele) — um traço é ambíguo
   com "não carregou".
+
+## ⚠️⚠️ Escala · o WhatsApp da VÉSPERA com "não vou poder" (2026-08-14 · SEM migration)
+
+Pedido do Matheus: *"queria que chegasse a mensagem no wpp tbm, com a opção da
+pessoa falar que não vai. O disparo deve ser feito 1 dia antes. Se ela indicar
+que não vai, deve atualizar imediatamente na escala e avisar [a coordenação] no
+app do staff e no sistema. E deve avisar tbm no app do membro, mas aí apenas
+para o membro que é supervisor da área da pessoa que disse que não vai."*
+
+### O que mudou
+
+- **Disparo é na VÉSPERA**, não numa janela de 7 dias: `avisarVespera()` avisa
+  quem serve **amanhã** (dia da IGREJA). ⚠️ `dias: 2` no limite externo não é
+  descuido — com 1, o corte cairia em cima do culto de amanhã à noite (mais de
+  24h à frente) e ele nunca seria avisado. O botão manual cobre hoje+amanhã.
+- **O link vai como 4º parâmetro do template**, no CORPO (não em botão de URL),
+  que é o que mantém a categoria UTILITY — mesma decisão dos fluxos de grupos.
+- ⚠️ **Sem link, o WhatsApp NÃO sai.** O template tem 4 variáveis, então mandar
+  3 é recusa da Meta por contagem de parâmetros; disparar 200 mensagens que
+  serão recusadas uma a uma é pior que não disparar. O relatório declara.
+
+### `/e/<token>` · a página do "vou / não vou poder"
+
+- **`backend/utils/escalaToken.js`** — HMAC do id da escala, namespace
+  **`escala-resposta:`**, fail-closed, segredo `ESCALA_TOKEN_SECRET` com
+  fallback no `CRON_SECRET`. ⚠️ O namespace é o que impede um token do CENSO ou
+  do comprovante de inscrição — **mesmo segredo** — de derrubar a escala de
+  outra pessoa. Tem teste específico pra isso (`src/test/escalaToken.test.ts`,
+  12 casos, **no gate** · 2 mutantes rodados: sem namespace → 1 vermelho ·
+  aceitar sem segredo → 1).
+- **Sem login de propósito**: a credencial é o token que chegou no WhatsApp
+  dela. Exigir login seria o mesmo que não ter o botão — a maioria dos
+  voluntários não tem conta.
+- ⚠️ A página devolve o **mínimo** (primeiro nome, área, função, culto,
+  horário). Link vaza em print e celular emprestado; não pode virar janela pra
+  base de gente. Recusa **neutra**: não distingue token inválido de escala
+  inexistente.
+- ⚠️ **SEM `publicLimiter` (10/15min)** nas duas rotas: ele é pro probing de
+  CPF/login, e aqui são 200 pessoas clicando no mesmo dia, muitas atrás do
+  mesmo NAT — travaria na 3ª (lição do censo). Vale o `limiterGeral` do router,
+  e somar outro contaria **2× a mesma requisição**.
+
+### `services/escalaResposta.js` · o caminho ÚNICO da resposta
+
+Serve o link público E o `POST /my-schedules/:id/respond` do app. Duas
+implementações divergiriam como *"recusou pelo app e ninguém foi avisado"*.
+
+- ⚠️ **O UPDATE é condicionado ao status anterior** (`.neq(...)` + `.select`) e
+  é ele que decide se houve transição: sem isso, abrir o link duas vezes
+  dispararia o aviso à coordenação de novo. Mesmo cuidado dos recibos do
+  WhatsApp — o efeito colateral fica amarrado à mudança real.
+- **Coordenação**: `notificar()` do módulo `voluntariado` — o **sistema e o app
+  do staff leem a mesma tabela**, então uma chamada cobre os dois. ⚠️ Quem
+  recebe vem de `notificacao_regras`, **não de uma lista de nomes no código**
+  (lei do projeto: o dono do fluxo muda sem PR). Sem regra, cai no fallback de
+  admin/diretor.
+- **App do membro**: `notificarApp` só pro **supervisor da área**
+  (`vol_teams.leader_profile_id` → `vol_profiles.membresia_id` → `profiles`).
+  Tipo `escala`, que **já é roteado** pelos dois mapas do app.
+- ⚠️ Supervisor não resolvido (sem líder cadastrado, ou líder sem conta no app)
+  **não derruba a resposta** — a pessoa dizer que não vai é o que importa.
+
+### ⚠️⚠️ `POST /my-schedules/:id/respond` não conferia de quem era a escala
+
+Achado ao ligar o fluxo: o handler fazia `update ... .eq('id', req.params.id)` e
+pronto — **qualquer pessoa autenticada podia recusar a escala de qualquer
+outra** sabendo só o id. Com o aviso automático, uma recusa forjada ainda
+acordaria a coordenação e o supervisor. Agora confere `vol_profiles.auth_user_id`
+(ou `planning_center_id`); coordenação com `voluntariado >= 3` também responde
+por alguém — é o caso real de "a pessoa me avisou por telefone".
+
+### ⏳ PENDENTE DE GENTE · sem isto o WhatsApp não sai
+
+O template **`escala_voluntario` precisa ser criado na Meta com 4 variáveis**
+(UTILITY · pt_BR) e `WHATSAPP_TEMPLATE_ESCALA` setada em produção + **deploy
+novo**. Sugestão de corpo:
+
+> Oi, {{1}} precisa de você amanhã!
+> Você está escalado(a) em *{{2}}* — {{3}}.
+> Se não puder ir, avise por aqui: {{4}}
+
+`{{1}}` área · `{{2}}` evento · `{{3}}` quando · `{{4}}` link.
+⚠️ **Não pôr default no código**: nome de template errado é recusa PERMANENTE
+(132001), que queima o aviso sem retry. Até lá o aviso sai **só pelo app**.

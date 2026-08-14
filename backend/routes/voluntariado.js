@@ -13,6 +13,7 @@ const { requireCron } = require('../utils/cronAuth');
 const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
 const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../utils/volRodizio');
 const { montarCobertura, contarStatus } = require('../utils/volCobertura');
+const { responderEscala } = require('../services/escalaResposta');
 const antecedentes = require('../services/antecedentesCriminais');
 const { executarSyncCompleto } = require('../services/voluntariadoSync');
 const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
@@ -980,20 +981,42 @@ router.get('/my-schedules', async (req, res) => {
 });
 
 // Respond to schedule (accept/decline)
+//
+// ⚠️⚠️ ISTO NÃO CONFERIA DE QUEM ERA A ESCALA (achado em 14/08/2026): o handler
+// dava `update ... .eq('id', req.params.id)` e pronto, então QUALQUER pessoa
+// autenticada podia recusar a escala de QUALQUER outra sabendo só o id — e
+// agora, com o aviso automático, uma recusa forjada ainda acordaria a
+// coordenação e o supervisor. A rota chama `my-schedules`; passou a cumprir o
+// "my".
+//
+// ⚠️ O efeito (atualizar + avisar quem precisa) é do serviço `escalaResposta`,
+// o MESMO que o link público do WhatsApp usa. Duas implementações divergiriam
+// como "recusou pelo app e ninguém foi avisado".
 router.post('/my-schedules/:id/respond', async (req, res) => {
   try {
     const { status } = req.body;
-    if (!['confirmed', 'declined'].includes(status)) {
-      return res.status(400).json({ error: 'Status deve ser confirmed ou declined' });
-    }
 
-    const { data, error } = await supabase.from('vol_schedules')
-      .update({ confirmation_status: status })
-      .eq('id', req.params.id)
-      .select().single();
+    const { data: escala } = await supabase.from('vol_schedules')
+      .select('id, volunteer_id, planning_center_person_id').eq('id', req.params.id).maybeSingle();
+    if (!escala) return res.status(404).json({ error: 'Escala não encontrada' });
 
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    const { data: meuPerfil } = await supabase.from('vol_profiles')
+      .select('id, planning_center_id').eq('auth_user_id', req.user.userId).maybeSingle();
+
+    const minha = !!meuPerfil && (
+      (escala.volunteer_id && escala.volunteer_id === meuPerfil.id) ||
+      (escala.planning_center_person_id && escala.planning_center_person_id === meuPerfil.planning_center_id)
+    );
+    // Coordenação (voluntariado >= 3) também responde por alguém — é o caso
+    // real de "a pessoa me avisou por telefone".
+    const podeGerir = getEffectiveLevel(req, 'voluntariado') >= 3;
+    if (!minha && !podeGerir) return res.status(403).json({ error: 'Esta escala não é sua.' });
+
+    const r = await responderEscala(req.params.id, status, {
+      origem: minha ? 'app' : 'sistema', porUserId: req.user.userId,
+    });
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.erro });
+    res.json(r.escala);
   } catch (e) { res.status(500).json({ error: 'Erro ao responder escala' }); }
 });
 
