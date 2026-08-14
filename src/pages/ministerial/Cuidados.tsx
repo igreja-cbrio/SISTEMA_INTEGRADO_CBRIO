@@ -9,6 +9,7 @@ import DevocionalAdmin from '../../components/DevocionalAdmin';
 import AgentePrimeiroContato from '../../components/AgentePrimeiroContato';
 import AgenteBatismoNext from '../../components/AgenteBatismoNext';
 import NextConvite from '../../components/NextConvite';
+import JornadaTimeline from '../../components/jornada/JornadaTimeline';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -2305,8 +2306,32 @@ export default function Cuidados() {
           <Tabs defaultValue="acompanhamento" className="space-y-4">
             <TabsList>
               <TabsTrigger value="acompanhamento">Acompanhamento</TabsTrigger>
+              <TabsTrigger value="linha-do-tempo">Linha do tempo</TabsTrigger>
               <TabsTrigger value="disparos">Disparos de mensagem</TabsTrigger>
             </TabsList>
+
+            {/* Quanto TEMPO cada convertido levou até cada marco (PR #2497).
+                Lê o MESMO `jornadaData` que a aba Acompanhamento já carregou —
+                nenhuma consulta nova. A régua de "fez o Next" aqui é presença
+                em ≥1 encontro, e a tela escreve isso ao lado do marco. */}
+            <TabsContent value="linha-do-tempo" className="space-y-4">
+              <div>
+                <h3 className="font-semibold text-sm flex items-center gap-2">
+                  <CalendarCheck className="h-4 w-4 text-primary" />Quanto tempo até cada marco
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Uma linha por pessoa, em dias desde a decisão · marcador vazado = data aproximada
+                  (veio de importação, fica fora da mediana).
+                </p>
+              </div>
+              {!jornadaData ? (
+                <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">
+                  Não foi possível carregar a jornada dos convertidos. Recarregue a página.
+                </div>
+              ) : (
+                <JornadaTimeline data={jornadaData} />
+              )}
+            </TabsContent>
 
             <TabsContent value="disparos" className="space-y-4">
               <AgentePrimeiroContato />
