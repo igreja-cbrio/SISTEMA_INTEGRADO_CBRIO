@@ -111,7 +111,7 @@ export default function EquipeEscalaCard({
             )}
           </button>
           <div className="flex items-center gap-2.5 shrink-0">
-            <span className="flex items-center gap-2 text-xs text-muted-foreground" title="confirmados · recusaram · pendentes">
+            <span className="flex items-center gap-2 text-xs text-muted-foreground" title="confirmaram · avisaram que não vão · ainda sem resposta (contam como presentes: ninguém precisa confirmar, só avisar se não puder)">
               <span className="flex items-center gap-0.5 text-green-600"><CheckCircle2 className="h-3.5 w-3.5" />{stats.confirmados}</span>
               <span className="flex items-center gap-0.5 text-red-500"><XCircle className="h-3.5 w-3.5" />{stats.recusados}</span>
               <span className="flex items-center gap-0.5 text-yellow-600"><HelpCircle className="h-3.5 w-3.5" />{stats.pendentes}</span>

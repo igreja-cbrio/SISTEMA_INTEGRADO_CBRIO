@@ -104,3 +104,32 @@ describe('⚠️ wamidRespondido · é o que amarra a resposta à escala certa',
     expect(wamidRespondido(null as any)).toBeNull();
   });
 });
+
+describe('⚠️ modelo OPT-OUT · um botão só, ou um número (14/08)', () => {
+  it('"2" é a recusa e "1" a confirmação', () => {
+    // Decisão do Matheus: "quero que tenha apenas um botão ou então um número
+    // para ela digitar para dizer NÃO vai conseguir comparecer".
+    expect(interpretarRespostaEscala('2')).toBe('declined');
+    expect(interpretarRespostaEscala('2.')).toBe('declined');
+    expect(interpretarRespostaEscala(' 2 ')).toBe('declined');
+    expect(interpretarRespostaEscala('1')).toBe('confirmed');
+  });
+
+  it('⚠️ dígito no MEIO de uma frase não é resposta', () => {
+    // "chego 2 minutos antes" não pode virar recusa — por isso o dígito casa a
+    // mensagem inteira, não um número solto em qualquer lugar do texto.
+    expect(interpretarRespostaEscala('chego 2 minutos antes')).toBeNull();
+    expect(interpretarRespostaEscala('somos 2')).toBeNull();
+  });
+
+  it('outros números não significam nada', () => {
+    for (const t of ['3', '0', '22', '10']) {
+      expect(interpretarRespostaEscala(t), t).toBeNull();
+    }
+  });
+
+  it('o texto do botão único continua sendo entendido', () => {
+    expect(interpretarRespostaEscala('Não vou poder')).toBe('declined');
+    expect(interpretarRespostaEscala('Não vou conseguir')).toBe('declined');
+  });
+});

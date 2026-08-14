@@ -378,8 +378,11 @@ async function processarRespostaEscala(m) {
   // pedir de novo — e ela está com a janela de 24h aberta, então o texto chega.
   if (!status) {
     await registrar(`[escala] não interpretado: ${bruto}`.slice(0, 500));
+    // ⚠️ A instrução espelha o template de UM botão (modelo opt-out): quem não
+    // vai é que precisa agir. Prometer um botão "Vou sim" que não existe na
+    // mensagem faria a pessoa procurar o que não está lá.
     await enviarTexto(telefone,
-      'Não entendi 🙈 Toque em *Vou sim* ou *Não vou poder* na mensagem anterior, ou responda com "vou" ou "não vou".')
+      'Não entendi 🙈 Se você NÃO vai conseguir ir, toque em *Não vou poder* na mensagem anterior ou responda com *2*. Se vai, não precisa fazer nada.')
       .catch(() => {});
     return true;
   }

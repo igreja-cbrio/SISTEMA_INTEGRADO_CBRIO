@@ -9196,20 +9196,45 @@ escala.
   o `{{4}}`. O `/e/<token>` **continua existindo** como caminho alternativo (o
   coordenador pode mandar o link na mão) — não apagar.
 
-### ⏳ PENDENTE DE GENTE · o template com BOTÕES
+### ⚠️⚠️ MODELO OPT-OUT · UM botão só (correção do Matheus, 14/08)
+
+*"Mas ela já tá como sim. Quero que tenha apenas um botão ou então um número
+para ela digitar para dizer NÃO vai conseguir comparecer."*
+
+Quem foi escalado **VAI**. A mensagem não pede confirmação — informa e oferece a
+única ação que a pessoa precisa tomar: avisar que não vai. Isso muda 3 coisas:
+
+- **O template tem UM botão** ("Não vou poder"), não dois.
+- **O dígito `2` também recusa** (`1` confirma), pra quem não enxerga botão —
+  WhatsApp antigo, mensagem encaminhada. ⚠️ O dígito casa a MENSAGEM INTEIRA:
+  *"chego 2 minutos antes"* não pode virar recusa. Mutation-testado.
+- **A página `/e/<token>` segue o mesmo desenho**: o destaque é "Não vou
+  conseguir comparecer", e confirmar virou link discreto. Dois botões iguais
+  fariam a pessoa parar pra decidir algo que já estava resolvido.
+- ⚠️ **Na tela do sistema, "sem resposta" NÃO é dívida** — é gente que vai. Os
+  tooltips dos contadores (card da área e cabeçalho da matriz) dizem isso:
+  *"ainda sem resposta (contam como presentes)"*. Sem essa leitura, o
+  coordenador vê "45 pendentes" e acha que tem 45 pessoas para cobrar.
+
+⚠️ **O status no banco continua `pending`** até a pessoa responder — não foi
+trocado para `confirmed` de propósito: `confirmacoes_pendentes` do agente e os
+contadores das telas leem esse campo, e mudar o default mexeria em tudo o que já
+funciona. O que mudou é a LEITURA, e ela está escrita nos tooltips.
+
+### ⏳ PENDENTE DE GENTE · o template
 
 Criar `escala_voluntario` na Meta — **UTILITY · pt_BR · 3 variáveis no corpo +
-2 botões de quick-reply** — e setar `WHATSAPP_TEMPLATE_ESCALA` + deploy novo.
+1 botão de quick-reply** — e setar `WHATSAPP_TEMPLATE_ESCALA` + deploy novo.
 
-> Corpo: Oi! {{1}} precisa de você amanhã.
-> Você está escalado(a) em *{{2}}* — {{3}}.
-> Consegue confirmar?
+> Corpo: Oi! Você está escalado(a) em *{{1}}* amanhã.
+> {{2}} — {{3}}.
+> Não precisa confirmar. Se NÃO conseguir vir, toque no botão abaixo (ou responda 2).
 >
-> Botões (quick reply): **Vou sim** · **Não vou poder**
+> Botão (quick reply): **Não vou poder**
 
-⚠️ **O texto dos botões importa**: é ele que chega em `m.button.text` e é o que
-a régua interpreta. "Vou sim" e "Não vou poder" são reconhecidos; se mudarem o
-texto na Meta, conferir contra `utils/respostaEscala.js`.
-⚠️ Botões ESTÁTICOS — o envio não muda por causa deles. Só se um dia virarem
-botões com payload dinâmico é que será preciso mandar `components` com
+⚠️ **O texto do botão importa**: é ele que chega em `m.button.text` e é o que a
+régua interpreta. "Não vou poder" é reconhecido; se mudarem na Meta, conferir
+contra `utils/respostaEscala.js`.
+⚠️ Botão ESTÁTICO — o envio não muda por causa dele. Só se um dia virar botão
+com payload dinâmico é que será preciso mandar `components` com
 `sub_type: 'quick_reply'`.
