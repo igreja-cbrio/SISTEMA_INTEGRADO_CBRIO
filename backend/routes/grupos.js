@@ -20,6 +20,7 @@ const gruposEnvios = require('../services/gruposEnvios');
 const gruposEnviosConfig = require('../services/gruposEnviosConfig');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
+const { agruparDuplicados, validarResolucao } = require('../utils/vinculosDuplicados');
 // Régua única de "dá pra falar com essa pessoa?" (varredura do lançamento 02/08)
 const { classificarContato, digitos: contatoDigitos } = require('../services/contatoPessoa');
 
@@ -4280,6 +4281,147 @@ router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
 // mem_grupos.supervisor_id (supervisor). Este endpoint agrega tudo em 1 linha
 // por pessoa com o papel efetivo (o mais alto entre os 3).
 // ============================================================================
+
+// ══════════════════════════════════════════════════════════════════════════
+// VÍNCULOS DUPLICADOS · a mesma pessoa com 2+ linhas ATIVAS no MESMO grupo
+// ══════════════════════════════════════════════════════════════════════════
+// Relatório de saneamento pra coordenação (pedido do Matheus, 13/08/2026, depois
+// que a coluna Grupo apareceu repetindo o mesmo grupo 5× na mesma pessoa).
+// Régua PURA em `utils/vinculosDuplicados.js`. Ver lá o porquê de remover ser
+// `deleted_at` e não `saiu_em`.
+//
+// ⚠️ Caminho de DOIS segmentos de propósito: `router.get('/:id')` (linha ~3722)
+// casa qualquer rota de UM segmento declarada depois dele. É a armadilha que
+// este módulo já pagou (os `/kpis/*` e o `/avaliar` das Propostas) — com dois
+// segmentos a ordem de declaração deixa de importar.
+
+// GET /api/grupos/vinculos/duplicados
+router.get('/vinculos/duplicados', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    // Vínculos ATIVOS · paginado (passa do cap de 1000 do PostgREST: ~1.4 mil)
+    let linhas = [];
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await supabase.from('mem_grupo_membros')
+        .select('id, membro_id, grupo_id, funcao, presencas, entrou_em, created_at')
+        .is('saiu_em', null).is('deleted_at', null)
+        .order('created_at', { ascending: true })
+        .range(offset, offset + 999);
+      if (error) throw error;
+      linhas = linhas.concat(data || []);
+      if (!data || data.length < 1000) break;
+    }
+
+    const resumo = agruparDuplicados(linhas);
+    if (!resumo.casos.length) {
+      return res.json({ ...resumo, total_casos: 0, casos: [], truncado: false });
+    }
+
+    // Nomes de pessoa e de grupo · `.in()` em lotes de 200 (URL do PostgREST)
+    const nomes = async (tabela, ids, campo = 'nome') => {
+      const mapa = {};
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data } = await supabase.from(tabela).select(`id, ${campo}`).in('id', ids.slice(i, i + 200));
+        (data || []).forEach((r) => { mapa[r.id] = r[campo]; });
+      }
+      return mapa;
+    };
+    const [nomePessoa, nomeGrupo] = await Promise.all([
+      nomes('mem_membros', [...new Set(resumo.casos.map((c) => c.membro_id))]),
+      nomes('mem_grupos', [...new Set(resumo.casos.map((c) => c.grupo_id))]),
+    ]);
+
+    // Teto DECLARADO: relatório que corta em silêncio faz a coordenação achar
+    // que terminou o saneamento quando ainda há fila.
+    const TETO = 300;
+    const truncado = resumo.casos.length > TETO;
+    const casos = resumo.casos.slice(0, TETO).map((c) => ({
+      ...c,
+      membro_nome: nomePessoa[c.membro_id] || '—',
+      grupo_nome: nomeGrupo[c.grupo_id] || '—',
+    }));
+
+    res.json({
+      ...resumo,
+      total_casos: resumo.casos.length,
+      casos,
+      truncado,
+      exibidos: casos.length,
+    });
+  } catch (e) {
+    console.error('[grupos] vinculos/duplicados:', e.message);
+    res.status(500).json({ error: 'Erro ao levantar vínculos duplicados' });
+  }
+});
+
+// POST /api/grupos/vinculos/duplicados/resolver  { manter_id, remover_ids[] }
+// ⚠️ Nível 4: isto REMOVE linha (soft delete), não é edição.
+router.post('/vinculos/duplicados/resolver', authorizeModule('grupos', 4), async (req, res) => {
+  try {
+    const manterId = String(req.body?.manter_id || '');
+    const removerIds = Array.isArray(req.body?.remover_ids) ? req.body.remover_ids.map(String) : [];
+    if (!manterId || !removerIds.length) {
+      return res.status(400).json({ error: 'Informe manter_id e remover_ids.' });
+    }
+
+    // Relê a linha mantida pra descobrir o CASO (membro, grupo) — o payload diz
+    // QUAIS linhas, nunca SE pode. Mesma régua do lote de cadastros.
+    const { data: base, error: eBase } = await supabase.from('mem_grupo_membros')
+      .select('id, membro_id, grupo_id')
+      .eq('id', manterId).is('saiu_em', null).is('deleted_at', null).maybeSingle();
+    if (eBase) throw eBase;
+    if (!base) return res.status(409).json({ error: 'A linha escolhida não está mais ativa. Recarregue o relatório.' });
+
+    const { data: vivas, error: eVivas } = await supabase.from('mem_grupo_membros')
+      .select('id, membro_id, grupo_id, funcao, presencas, entrou_em, created_at')
+      .eq('membro_id', base.membro_id).eq('grupo_id', base.grupo_id)
+      .is('saiu_em', null).is('deleted_at', null);
+    if (eVivas) throw eVivas;
+
+    const veredito = validarResolucao(vivas, manterId, removerIds);
+    if (!veredito.ok) {
+      const MSG = {
+        nao_ha_duplicata: 'Este caso já foi resolvido. Recarregue o relatório.',
+        manter_invalido: 'A linha escolhida não pertence a este caso.',
+        nada_a_remover: 'Nenhuma linha para remover.',
+        manter_na_lista_de_remover: 'A linha mantida não pode estar na lista de remoção.',
+        linha_fora_do_caso: 'Há uma linha de outro caso no pedido. Recarregue o relatório.',
+        removeria_todas: 'Isso removeria todos os vínculos da pessoa neste grupo.',
+      };
+      return res.status(409).json({ error: MSG[veredito.erro] || 'Pedido inválido.', codigo: veredito.erro });
+    }
+
+    // Sequencial e um a um: são poucas linhas por caso, e o que importa é saber
+    // exatamente qual falhou. `app_soft_delete` é o caminho canônico (a tabela
+    // está na whitelist · LEI nº 2 do runbook de segurança).
+    const removidos = [];
+    const falhas = [];
+    for (const id of veredito.remover) {
+      const { data, error } = await supabase.rpc('app_soft_delete', {
+        p_table_name: 'mem_grupo_membros',
+        p_row_id: id,
+        p_deleted_by: req.user?.id ?? null,
+      });
+      if (error || data === false) {
+        falhas.push({ id, erro: error?.message || 'app_soft_delete devolveu false' });
+      } else {
+        removidos.push(id);
+      }
+    }
+
+    if (falhas.length) console.error('[grupos] duplicados/resolver falhas:', JSON.stringify(falhas));
+    res.json({
+      ok: falhas.length === 0,
+      membro_id: base.membro_id,
+      grupo_id: base.grupo_id,
+      manter_id: manterId,
+      removidos,
+      falhas,
+    });
+  } catch (e) {
+    console.error('[grupos] duplicados/resolver:', e.message);
+    res.status(500).json({ error: 'Erro ao resolver o vínculo duplicado' });
+  }
+});
 
 // GET /api/grupos/pessoas/papeis
 router.get('/pessoas/papeis', async (req, res) => {

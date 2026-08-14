@@ -23,6 +23,7 @@ import { toast } from 'sonner';
 import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus, ChevronRight } from 'lucide-react';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import MarcadoresJornada from '../../components/MarcadoresJornada';
+import VinculosDuplicadosBloco from '../../components/grupos/VinculosDuplicadosBloco';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -136,7 +137,7 @@ function gruposDetalhados(p) {
 // ============================================================================
 // Aba Pessoas
 // ============================================================================
-export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas, podeEditarDados = false, podeEditar = false }) {
+export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas, podeEditarDados = false, podeEditar = false, podeRemoverVinculo = false }) {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
   // Etiqueta "possível duplicata" (Marcos · 14/07): ids que caíram em algum
@@ -513,6 +514,12 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
           </SelectContent>
         </ShadSelect>
       </div>
+
+      {/* Saneamento: a MESMA pessoa com 2+ linhas ativas no MESMO grupo.
+          Bloco recolhível aqui em cima (não aba nova · a Caixa de entrada dos
+          Grupos já provou que separar em aba faz ninguém achar). O cabeçalho
+          carrega a contagem, então recolhido não esconde que há trabalho. */}
+      <VinculosDuplicadosBloco podeResolver={podeRemoverVinculo} onResolvido={carregar} />
 
       {/* Lista */}
       <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>

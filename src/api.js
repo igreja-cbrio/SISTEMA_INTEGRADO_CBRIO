@@ -907,6 +907,14 @@ export const grupos = {
   pessoaFicha: (membroId) => get(`/grupos/pessoas/${membroId}/ficha`),
   pessoaFichaSalvar: (membroId, data) => patch(`/grupos/pessoas/${membroId}/ficha`, data),
   // Possíveis duplicatas do universo de grupos (triagem da Naná)
+  // Vínculos duplicados: MESMA pessoa com 2+ linhas ativas no MESMO grupo.
+  // ⚠️ NÃO confundir com `duplicatas` (logo abaixo), que é sobre PESSOAS
+  // duplicadas. Aqui a pessoa é uma só — as linhas de vínculo é que sobram.
+  vinculosDuplicados: {
+    list: () => get('/grupos/vinculos/duplicados'),
+    resolver: (manterId, removerIds) =>
+      post('/grupos/vinculos/duplicados/resolver', { manter_id: manterId, remover_ids: removerIds }),
+  },
   duplicatas: {
     list: (fresh) => get('/grupos/duplicatas' + (fresh ? '?fresh=1' : '')),
     fundir: (keepId, mergeIds, campos) => post('/grupos/duplicatas/fundir', { keep_id: keepId, merge_ids: mergeIds, campos }),
