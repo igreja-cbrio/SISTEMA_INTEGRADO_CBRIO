@@ -3348,9 +3348,14 @@ export const voluntariado = {
     create: (data) => post('/voluntariado/schedules', data),
     update: (id, data) => put(`/voluntariado/schedules/${id}`, data),
     remove: (id) => del(`/voluntariado/schedules/${id}`),
-    bulk: (service_id, assignments) => post('/voluntariado/schedules/bulk', { service_id, assignments }),
+    bulk: (service_id, assignments, forcar) => post('/voluntariado/schedules/bulk', { service_id, assignments, forcar }),
     copy: (from_service_id, to_service_id) => post('/voluntariado/schedules/copy', { from_service_id, to_service_id }),
-    autoFill: (service_id, team_id) => post('/voluntariado/schedules/auto-fill', { service_id, team_id }),
+    // ⚠️ `team_ids` (plural) é o caminho vivo — preenche as vagas em aberto das
+    // áreas escolhidas, ou de TODAS quando vem vazio. O `team_id` singular
+    // segue aceito pelo servidor por compatibilidade.
+    autoFill: (service_id, team_ids) => post('/voluntariado/schedules/auto-fill', { service_id, team_ids }),
+    // Desfaz um lote recém-criado (auto-preencher / escalar N marcados).
+    desfazerLote: (service_id, ids) => post('/voluntariado/schedules/desfazer-lote', { service_id, ids }),
     // Contexto de montagem: pool anotado com indisponibilidade do dia + quem já
     // serve em outros cultos do mesmo dia (evita sobreposição na escala).
     contextoMontagem: (service_id) => get(`/voluntariado/services/${service_id}/contexto-montagem`),

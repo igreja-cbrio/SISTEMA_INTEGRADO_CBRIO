@@ -76,12 +76,23 @@ export function useCopySchedule() {
   });
 }
 
+// Auto-preencher: enche as VAGAS em aberto (composição do culto) por rodízio.
+// `team_ids` vazio = todas as áreas. Devolve `schedule_ids` pro Desfazer.
 export function useAutoFillSchedule() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ service_id, team_id }: { service_id: string; team_id: string }) =>
-      voluntariado.schedules.autoFill(service_id, team_id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['vol', 'schedules'] }),
+    mutationFn: ({ service_id, team_ids }: { service_id: string; team_ids?: string[] }) =>
+      voluntariado.schedules.autoFill(service_id, team_ids || []),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vol'] }),
+  });
+}
+
+export function useDesfazerLote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ service_id, ids }: { service_id: string; ids: string[] }) =>
+      voluntariado.schedules.desfazerLote(service_id, ids),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['vol'] }),
   });
 }
 
