@@ -638,6 +638,25 @@ export const decisaoOnline = {
   }),
 };
 
+// Decisão no culto · link ASSINADO do voluntário (sem auth). O culto vai dentro
+// do token, nunca no corpo — é o que impede lançar no culto errado.
+export const decisaoCulto = {
+  abrir: (token) => fetch(`${API}/public/decisao-culto/${token}`).then(async r => {
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.message || j.error || 'Erro');
+    return j;
+  }),
+  registrar: (token, data) => fetch(`${API}/public/decisao-culto/${token}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }).then(async r => {
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.message || j.error || 'Erro');
+    return j;
+  }),
+};
+
 export const next = {
   // Public (sem auth) — para o formulário
   publicEventos: () => fetch(`${API}/public/next/eventos`).then(r => r.json()),
@@ -3513,6 +3532,9 @@ export const kpis = {
     update: (id, data) => put(`/kpis/cultos/${id}`, data),
     remove: (id) => del(`/kpis/cultos/${id}`),
     voluntarios: (id) => get(`/kpis/cultos/${id}/voluntarios`),
+    // Link assinado pro voluntário lançar as decisões do culto pelo celular.
+    // `link: null` = sem segredo configurado (fail-closed).
+    linkDecisoes: (id) => get(`/kpis/cultos/${id}/link-decisoes`),
     // Pessoas que tomaram decisão em culto · 1 row por pessoa
     decisoesPessoas: {
       list:   (cultoId) => get(`/kpis/cultos/${cultoId}/decisoes-pessoas`),

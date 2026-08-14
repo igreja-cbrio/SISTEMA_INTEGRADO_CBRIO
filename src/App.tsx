@@ -361,6 +361,7 @@ const InscricaoTotens = lazyWithRetry(() => import('./pages/InscricaoTotens'));
 // algumas horas e foi removida no mesmo dia.
 const NextDirecionar = lazyWithRetry(() => import('./pages/public/NextDirecionar'));
 const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
+const DecisaoCulto = lazyWithRetry(() => import('./pages/public/DecisaoCulto'));
 const InscricaoVoluntariado = lazyWithRetry(() => import('./pages/public/InscricaoVoluntariado'));
 // /admin/cultura, /kpis, /kpis/guia, /painel-kpis foram substituidos pelo /painel
 // (Fase 2 do sistema OKR/NSM 2026). Redirects abaixo preservam URLs antigas.
@@ -619,6 +620,8 @@ function AppRoutes() {
       <Route path="/next/direcionar/:token" element={<Suspense fallback={<Loading />}><NextDirecionar /></Suspense>} />
       <Route path="/inscricao-voluntariado" element={<Suspense fallback={<Loading />}><InscricaoVoluntariado /></Suspense>} />
       <Route path="/decisao" element={<Suspense fallback={<Loading />}><DecisaoOnline /></Suspense>} />
+      {/* Link ASSINADO do culto · o voluntário lança as decisões na hora, sem login */}
+      <Route path="/c/:token" element={<Suspense fallback={<Loading />}><DecisaoCulto /></Suspense>} />
       <Route path="/wallet" element={<Suspense fallback={<Loading />}><WalletPage /></Suspense>} />
       <Route path="/motion" element={<Suspense fallback={<Loading />}><Motion /></Suspense>} />
       {/* Prévia interna do novo site (redesign cbrio.com.br) · não-listada */}

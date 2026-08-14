@@ -11,11 +11,11 @@ type Culto = { id: string; data: string; nome: string };
 
 export default function DecisaoOnline() {
   const [carregando, setCarregando] = useState(true);
-  const [ativo, setAtivo] = useState(false);
   const [aoVivo, setAoVivo] = useState(false);
   const [culto, setCulto] = useState<Culto | null>(null);
   const [nome, setNome] = useState('');
   const [telefone, setTelefone] = useState('');
+  const [aceite, setAceite] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState('');
   const [pronto, setPronto] = useState(false);
@@ -25,11 +25,12 @@ export default function DecisaoOnline() {
     decisaoOnline
       .ativo()
       .then((r: { ativo: boolean; aoVivo?: boolean; culto: Culto | null }) => {
-        setAtivo(!!r.ativo);
         setAoVivo(!!r.aoVivo);
         setCulto(r.culto || null);
       })
-      .catch(() => setAtivo(false))
+      // Falha ao consultar o culto NÃO trava o formulário: quem decidiu registra
+      // mesmo assim e o servidor resolve a qual culto anexar.
+      .catch(() => setCulto(null))
       .finally(() => setCarregando(false));
   }, []);
 
@@ -40,9 +41,20 @@ export default function DecisaoOnline() {
       setErro('Por favor, informe seu nome.');
       return;
     }
+    // Telefone é obrigatório: é por ele que a equipe fala com você. Sem contato
+    // a decisão vira número no painel e ninguém consegue te alcançar.
+    const tel = telefone.replace(/\D/g, '');
+    if (tel.length < 10 || tel.length > 11) {
+      setErro('Informe seu WhatsApp com DDD (10 ou 11 dígitos).');
+      return;
+    }
+    if (!aceite) {
+      setErro('Para registrar, marque o aceite do tratamento dos seus dados.');
+      return;
+    }
     setEnviando(true);
     try {
-      await decisaoOnline.registrar({ nome: nome.trim(), telefone: telefone.trim() });
+      await decisaoOnline.registrar({ nome: nome.trim(), telefone: tel, aceite_lgpd: true });
       setPronto(true);
     } catch (err: any) {
       setErro(err?.message || 'Não foi possível registrar agora. Tente novamente.');
@@ -134,27 +146,14 @@ export default function DecisaoOnline() {
       </div>
 
       <div style={card}>
-        {!ativo && (
-          <div
-            style={{
-              background: '#FFF7E6',
-              border: '1px solid #FFE0A3',
-              borderRadius: 12,
-              padding: 14,
-              marginBottom: 16,
-              fontSize: 14,
-              color: '#8A6D1F',
-            }}
-          >
-            Não há culto ao vivo neste momento. Assista em{' '}
-            <strong>cbrio.tv</strong> — sua decisão pode ser registrada durante a
-            transmissão.
-          </div>
-        )}
-
-        {culto && ativo && (
+        {/* ⚠️ O formulário NUNCA é desabilitado. Antes, fora da janela do culto
+            os campos ficavam travados e a página virava um beco sem saída pra
+            quem tinha acabado de decidir — o backend ainda devolvia 409 e
+            DESCARTAVA a decisão. Hoje o servidor anexa ao culto ao vivo, ao
+            culto do dia ou ao último culto recente (replay). */}
+        {culto && (
           <p style={{ fontSize: 13, color: '#888', margin: '0 0 4px' }}>
-            {aoVivo ? `Ao vivo agora · ${culto.nome}` : `Culto de hoje · ${culto.nome}`}
+            {aoVivo ? `Ao vivo agora · ${culto.nome}` : `Culto · ${culto.nome}`}
           </p>
         )}
 
@@ -166,7 +165,6 @@ export default function DecisaoOnline() {
             value={nome}
             onChange={(e) => setNome(e.target.value)}
             autoComplete="name"
-            disabled={!ativo}
           />
           <input
             style={input}
@@ -176,12 +174,36 @@ export default function DecisaoOnline() {
             onChange={(e) => setTelefone(e.target.value)}
             autoComplete="tel"
             inputMode="numeric"
-            disabled={!ativo}
           />
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              marginTop: 16,
+              fontSize: 13,
+              lineHeight: 1.45,
+              color: '#555',
+              textAlign: 'left',
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={aceite}
+              onChange={(e) => setAceite(e.target.checked)}
+              style={{ marginTop: 2, width: 18, height: 18, flexShrink: 0, accentColor: PRIMARY }}
+            />
+            <span>
+              Autorizo a CBRio a guardar meu nome e contato para que a equipe
+              pastoral fale comigo sobre esta decisão, conforme a LGPD. Posso
+              pedir acesso, correção ou exclusão a qualquer momento.
+            </span>
+          </label>
           {erro && (
             <p style={{ color: '#C0392B', fontSize: 14, marginTop: 12 }}>{erro}</p>
           )}
-          <button style={btn} type="submit" disabled={enviando || !ativo}>
+          <button style={btn} type="submit" disabled={enviando}>
             {enviando ? 'Enviando…' : 'Aceito Jesus em minha vida'}
           </button>
         </form>
