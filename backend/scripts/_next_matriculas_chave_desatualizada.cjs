@@ -204,7 +204,13 @@ function escolherKeep(linhas) {
   }
 
   // ── Backup ANTES de escrever ──────────────────────────────────────────────
-  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  // ⚠️ O nome leva HORA e MINUTO, não só a data. Com nome só de data, a 2ª
+  // execução no mesmo dia SOBRESCREVE o backup da 1ª — foi o que aconteceu em
+  // 14/08: o arquivo de 216 linhas virou um de 1 linha, e a única via de desfazer
+  // as 73 soft-deletadas passou a ser consultar a própria tabela por `deleted_at`.
+  // Régua: nome de backup precisa ser único por EXECUÇÃO, não por dia.
+  const agora = new Date();
+  const stamp = agora.toISOString().slice(0, 16).replace(/[-:T]/g, '');
   const destino = path.join(os.homedir(), 'Downloads', `_bk_${stamp}_next_matriculas_chave.json`);
   const alvo = [...consolidar.flat(), ...refreshSeguro];
   fs.writeFileSync(destino, JSON.stringify({
