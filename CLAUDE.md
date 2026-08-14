@@ -8476,6 +8476,80 @@ stubado — a lição é o flake dos testes do Asaas que batiam no sandbox de ve
 e derrubavam o deploy). Mutation-testados: a guarda de `live_mode`, `authorized`
 não ser "pago", e a ausência de boleto nas capacidades.
 
+## ⚠️ Marcadores de JORNADA na lista de pessoas (2026-08-13 · SEM migration · PR #2456 + app #115)
+
+Pedido do **Arthur Serpa**, com ideia do **Pr. Nélio**: *"ao acessar o cadastro de
+uma pessoa, ver se já fez o Next, já se batizou, já serve como voluntário — o
+líder de grupo vê rapidamente em quais etapas da jornada cada pessoa da sua turma
+está e dá um direcionamento mais intencional"*. Restrição do Matheus no mesmo dia:
+**aconselhamento / conversas pastorais e histórico de contribuição NÃO ficam
+abertos.**
+
+**5 marcadores ABERTOS** (batismo · Next · grupo · serve · devocional) +
+**1 SENSÍVEL** (generosidade). Aconselhamento **não virou marcador nenhum**.
+4 telas, **um serviço só**: Membresia (lista + ficha) · Grupos > Pessoas ·
+Voluntariado · roster do app do líder.
+
+- **`backend/utils/jornadaMarcadores.js`** = régua PURA (catálogo + dobra + gate),
+  em `utils/` pra entrar no gate · **`services/jornadaMarcadores.js`** lê o banco.
+  `src/lib/jornadaMarcadores.ts` é SÓ apresentação, e um teste do gate exige que
+  as chaves dos dois lados batam (marcador novo no backend sem entrada de UI
+  apareceria como flag sem nome).
+- ⚠️ **Generosidade exige `membresia` OU `financeiro` nível 2** (espelha
+  `membros-financeiro`, a rota que guarda o extrato): quem tem só `grupos` **não
+  recebe nem o booleano** — o dado financeiro nem sai do banco (`incluirSensiveis`
+  false não faz a consulta). ⚠️ **NÃO usar `getEffectiveLevel` pra este gate**: ele
+  tem `cargoNivelLeitura` como PISO, então cargo com nível base alto passaria sem
+  ter nenhum dos dois módulos. Mutation-testado.
+- ⚠️ **`next` lê `vw_next_formado_pessoa`** (a fonte única que NSM/painel/KPI/
+  Cuidados usam), NÃO `next_matriculas.status`: as 2 aulas não são sequenciais e o
+  status por turma diz "não formou" pra quem formou cruzando turmas.
+  ⚠️ **`services/jornadaEngajamento.js` (motor da tela Jornada e do /painel) ainda
+  lê `next_matriculas` + `next_inscricoes.check_in_at` — ou seja ele JÁ diverge da
+  NSM, desde antes disto.** Alinhá-lo MOVE números do /painel ⇒ decisão do Marcos,
+  não efeito colateral. Enquanto não alinhar, a aba Jornada da Membresia e a coluna
+  Jornada podem discordar sobre "fez o Next".
+- ⚠️⚠️ **A LEI: marcador diz o que o sistema tem REGISTRO de, não o que a pessoa
+  fez.** Ausência NÃO é prova. Por isso: **`mem_membros.batizado_outra_igreja`
+  conta como batizado** (com o detalhe à vista) — sem isso o líder cobra batismo de
+  quem se batizou há 20 anos noutra igreja; a tela escreve "Sem marcador
+  registrado", nunca "não fez"; e **NÃO existe marcador de decisão de fé** (a etapa
+  `conversao` só nasce preenchida por quem entrou pela porta de Decisões, seria
+  falsa em quase toda a base importada — marcador errado na maioria das linhas
+  ensina a não confiar no conjunto inteiro).
+- ⚠️ `batizado_outra_igreja` nasceu no **repo do APP** (`supabase/batismo_anterior.sql`),
+  não nas migrations daqui ⇒ lida em **select ISOLADO** (sem ela o PostgREST
+  recusaria a query inteira · 42703).
+- ⚠️ **Sinal que falha vira `indisponiveis` DECLARADO** (chip âmbar "⚠ incompleto"),
+  carimbado DENTRO do payload de cada pessoa porque vários endpoints respondem
+  array cru. Ausência silenciosa aqui viraria afirmação errada sobre gente.
+- ⚠️ Na **Membresia os marcadores SUBSTITUÍRAM** as flags de papel da coluna
+  (VOL/GRP/CTB/NXT) em vez de somar: `NXT` era "inscrito no Next" e `NEXT` é
+  "concluiu o Next" — rótulos quase iguais, fatos diferentes, lado a lado. `VIS`
+  ficou (não é etapa). O **filtro** de papel do topo não mudou (pergunta outra
+  coisa) — então filtro e badge não são a mesma régua ali.
+- No **app** (`lib/marcadoresJornada.ts`) o chip `grupo` é omitido do desenho (todo
+  mundo do roster está em grupo = ruído em 100% das linhas) e a rota manda
+  `incluirSensiveis: false` **fixo** — não é o `req.user` do ERP.
+- ⚠️ Nenhuma permissão foi ampliada: os marcadores entram nas listas que cada
+  público já abre.
+- Teste: `src/test/jornadaMarcadores.test.ts` (21 casos · no gate). Mutantes
+  RODADOS: generosidade no conjunto aberto → 4 vermelhos · piso de cargo → 1.
+
+⚠️ **Achado PREEXISTENTE, não corrigido aqui** (é estreitamento de autorização ⇒
+"parar e perguntar"): `ROUTE_MODULE_MAP['membros']` inclui **grupos, voluntariado,
+cuidados, integracao, next, kids, ami, bridge, online, face**. Logo
+`authorizeModule('membros', 1)` deixa quem tem nível 1 em QUALQUER um deles chamar
+`GET /membresia/membros/:id/timeline` (que traz **contribuições com valores** e
+**aconselhamentos com motivo**) e `GET /membresia/membros/:id` (com
+`contribuicoes`). A TELA é gated por `canMembresia`, então não aparece na
+navegação — o furo é de **API**, alcançável por qualquer logado. É exatamente o que
+o Matheus disse que não pode ficar aberto.
+
+⚠️ **Não medido**: o MCP do Supabase recusou OAuth (`Unrecognized client_id`) e não
+havia credencial local, então a densidade real de cada marcador na base **não foi
+conferida no banco vivo**. Conferir ao abrir a tela.
+
 ## ⚠️⚠️ Voluntariado · disponibilidade virou REGRA, e a montagem de escala foi refeita (2026-08-13 · SEM migration)
 
 Pedidos do Matheus, em sequência, sobre `/ministerial/voluntariado/montar-escala`:
