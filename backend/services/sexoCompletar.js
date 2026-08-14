@@ -36,7 +36,7 @@ const {
 
 const LOTE_IN = 200;       // `.in()` maior estoura a URL do PostgREST
 const PAGINA = 1000;       // cap server-side do PostgREST
-const TETO_PALPITE = 400;  // por chamada da tela — a coordenação revisa em blocos
+const TETO_PALPITE = 150;  // por chamada — o cliente aborta em 30s (14/08)
 
 function clienteAnthropic() {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY não configurada');
@@ -67,10 +67,14 @@ async function lerPaginado(tabela, colunas, aplicarFiltros) {
  * escrevendo na base inteira — inclusive em quem nunca passou por um grupo.
  */
 async function pessoasSemSexo({ apenasIds = null } = {}) {
+  // ⚠️ `.order('id')` NÃO é enfeite: sem ORDER BY, `range()` pode repetir e
+  // perder linhas entre páginas (lição do /comunicacao/custo), e o `offset` que
+  // a tela usa pra varrer em blocos ficaria dependendo de sorte — pessoas
+  // apareceriam duas vezes e outras nunca.
   const linhas = await lerPaginado(
     'mem_membros',
     'id, nome',
-    q => q.is('deleted_at', null).is('genero', null),
+    q => q.is('deleted_at', null).is('genero', null).order('id'),
   );
   const filtradas = apenasIds ? linhas.filter(m => apenasIds.has(m.id)) : linhas;
   return filtradas.filter(m => m.nome);
@@ -175,16 +179,22 @@ async function colherDeclaracoes({ aplicar = false, apenasIds = null } = {}) {
 
 // ── CAMADA 2 ────────────────────────────────────────────────────────────────
 
-const PROMPT = `Você recebe uma lista de PRIMEIROS NOMES brasileiros. Para cada um, diga se é um nome tipicamente masculino ou feminino no Brasil.
+// ⚠️ Formato COMPACTO por decisão de TEMPO: o formato por objeto (um `{nome,
+// sexo, confianca}` por nome) gera ~8x mais tokens de saída, e o cliente aborta
+// a requisição em 30s — foi o que aconteceu no 1º uso real (14/08), com a tela
+// presa em "Consultando a IA…" e nada voltando. Aqui o modelo devolve só os
+// nomes de que tem certeza, em duas listas; o ambíguo nem trafega — que é
+// exatamente a política (ambíguo não vira sugestão).
+const PROMPT = `Você recebe uma lista de PRIMEIROS NOMES brasileiros.
 
-Responda SOMENTE um array JSON, sem texto em volta:
-[{"nome":"<o nome como veio>","sexo":"masculino"|"feminino","confianca":"alta"|"ambiguo"}]
+Responda SOMENTE este JSON, sem texto em volta e sem quebras de linha:
+{"masculino":["..."],"feminino":["..."]}
 
 REGRAS:
-- "alta" só quando o nome é inequivocamente de um sexo no Brasil.
-- "ambiguo" para nomes unissex (Alex, Ariel, Darci, Jean, Yuri, Nicola, Lindomar, Wesley em alguns usos), nomes estrangeiros que você não conhece, apelidos, iniciais ou qualquer caso em que você hesitaria.
-- Na dúvida, use "ambiguo". Um palpite errado aqui é gravado no cadastro de uma pessoa real e decide em qual grupo ela pode entrar — errar é pior do que não responder.
-- Não invente nomes que não estejam na lista. Devolva um item por nome recebido.`;
+- Inclua um nome APENAS se ele for inequivocamente masculino ou feminino no Brasil.
+- OMITA (não coloque em nenhuma das listas) nomes unissex (Alex, Ariel, Darci, Jean, Yuri, Nicola, Lindomar), nomes estrangeiros que você não conhece, apelidos, iniciais e qualquer caso em que você hesitaria.
+- Na dúvida, OMITA. Um palpite errado aqui vai para o cadastro de uma pessoa real e decide em qual grupo ela pode entrar — errar é pior do que não responder.
+- Copie o nome exatamente como veio. Não invente nomes fora da lista.`;
 
 /**
  * Pede palpites ao modelo para os nomes que sobraram.
@@ -197,26 +207,37 @@ REGRAS:
  * palpite é sobre o NOME, não sobre a pessoa. Sem isso a chamada custaria 10x e
  * o modelo poderia responder diferente pro mesmo nome na mesma lista.
  */
-async function sugerirPorNome({ limite = TETO_PALPITE, apenasIds = null } = {}) {
-  const alvo = (await pessoasSemSexo({ apenasIds })).slice(0, Math.max(1, Math.min(limite, TETO_PALPITE)));
+async function sugerirPorNome({ limite = TETO_PALPITE, offset = 0, apenasIds = null } = {}) {
+  const todas = await pessoasSemSexo({ apenasIds });
+  const inicio = Math.max(0, Number(offset) || 0);
+  const tamanho = Math.max(1, Math.min(Number(limite) || TETO_PALPITE, TETO_PALPITE));
+  const alvo = todas.slice(inicio, inicio + tamanho);
 
   const nomes = new Set();
   for (const p of alvo) {
     const pn = primeiroNomeParaPalpite(p.nome);
     if (pn) nomes.add(pn);
   }
-  if (!nomes.size) return { sugestoes: [], nomes_perguntados: 0, sem_sexo: alvo.length };
+  const base = {
+    total: todas.length,
+    offset: inicio,
+    proximo_offset: inicio + alvo.length < todas.length ? inicio + alvo.length : null,
+    sem_sexo: alvo.length,
+  };
+  if (!nomes.size) return { ...base, sugestoes: [], nomes_perguntados: 0, sem_sugestao: alvo.length };
 
   const lista = [...nomes];
   const client = clienteAnthropic();
   let palpites = [];
 
-  // Blocos de 150 nomes: resposta curta, sem risco de truncar no max_tokens.
-  for (let i = 0; i < lista.length; i += 150) {
-    const bloco = lista.slice(i, i + 150);
+  // ⚠️ Blocos de 60 nomes (era 150) e `max_tokens` menor: o cliente aborta a
+  // requisição em 30s, e o que estourava esse teto era o TEMPO DE GERAÇÃO da
+  // resposta. Bloco menor + formato compacto devolve em poucos segundos.
+  for (let i = 0; i < lista.length; i += 60) {
+    const bloco = lista.slice(i, i + 60);
     const r = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 8000,
+      max_tokens: 2000,
       system: PROMPT,
       messages: [{ role: 'user', content: JSON.stringify(bloco) }],
     });
@@ -233,6 +254,7 @@ async function sugerirPorNome({ limite = TETO_PALPITE, apenasIds = null } = {}) 
 
   const sugestoes = casarPalpites(alvo, palpites);
   return {
+    ...base,
     sugestoes,
     nomes_perguntados: lista.length,
     sem_sexo: alvo.length,

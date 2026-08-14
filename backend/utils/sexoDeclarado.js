@@ -105,6 +105,27 @@ function primeiroNomeParaPalpite(nome) {
  */
 function palpitesUsaveis(saidaDoModelo) {
   const out = [];
+
+  // Formato COMPACTO `{masculino:[...], feminino:[...]}` — é o que pedimos hoje.
+  // ⚠️ Ele existe por causa de TEMPO, não de elegância: o formato por objeto
+  // gera ~8x mais tokens de saída, e o `request()` do cliente aborta em 30s.
+  // Aqui o "ambíguo" nem trafega — o modelo simplesmente não o inclui, que é
+  // exatamente a política (ambíguo não vira sugestão).
+  if (saidaDoModelo && !Array.isArray(saidaDoModelo) && typeof saidaDoModelo === 'object') {
+    for (const [chave, lista] of Object.entries(saidaDoModelo)) {
+      const sexo = normalizarSexo(chave);
+      if (!sexo || !Array.isArray(lista)) continue;
+      for (const nome of lista) {
+        const n = String(nome ?? '').trim();
+        if (n) out.push({ nome: n, sexo });
+      }
+    }
+    return out;
+  }
+
+  // Formato por OBJETO (com `confianca`) — mantido porque o modelo às vezes
+  // responde assim mesmo instruído ao contrário, e descartar a resposta inteira
+  // por causa da forma faria a tela mostrar "nenhuma sugestão" sem motivo.
   for (const p of Array.isArray(saidaDoModelo) ? saidaDoModelo : []) {
     const sexo = normalizarSexo(p?.sexo);
     const nome = String(p?.nome ?? '').trim();
