@@ -12,6 +12,7 @@ const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 const { requireCron } = require('../utils/cronAuth');
 const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
 const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../utils/volRodizio');
+const { montarCobertura, contarStatus } = require('../utils/volCobertura');
 const antecedentes = require('../services/antecedentesCriminais');
 const { executarSyncCompleto } = require('../services/voluntariadoSync');
 const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
@@ -5100,33 +5101,173 @@ async function _coberturaDoCulto(sid) {
   ]);
   if (aErr || sErr) throw new Error((aErr || sErr).message);
 
-  const preenchidasPorItem = {};
-  const chave = (t, p) => `${t || ''}:${p || ''}`;
-  for (const s of sched || []) {
-    if (!s.volunteer_id) continue;
-    const k = s.escala_culto_item_id ? `item:${s.escala_culto_item_id}` : chave(s.team_id, s.position_id);
-    (preenchidasPorItem[k] ||= []).push(s);
-  }
-  const itens = (alvo || []).map(a => {
-    const pessoas = preenchidasPorItem[`item:${a.id}`] || preenchidasPorItem[chave(a.team_id, a.position_id)] || [];
-    return {
-      id: a.id, team_id: a.team_id, team: a.team?.name, position_id: a.position_id,
-      position: a.position?.name, fixo: a.fixo, alvo: a.quantidade,
-      preenchidas: pessoas.length, faltam: Math.max(0, a.quantidade - pessoas.length),
-      pessoas,
-    };
-  });
-  const totalAlvo = itens.reduce((s, i) => s + i.alvo, 0);
-  const totalPreench = itens.reduce((s, i) => s + i.preenchidas, 0);
-  return {
-    itens, escalas: sched || [],
-    resumo: {
-      alvo: totalAlvo, preenchidas: totalPreench,
-      faltam: Math.max(0, totalAlvo - totalPreench),
-      cobertura_pct: totalAlvo ? Math.round((totalPreench / totalAlvo) * 100) : null,
-    },
-  };
+  // ⚠️ A conta em si é da régua PURA `utils/volCobertura` (no gate), a MESMA
+  // que a visão matriz usa para N cultos. Reimplementar aqui faria a grade e a
+  // tela do culto discordarem sobre o que ainda falta.
+  const { itens, sobrando, resumo } = montarCobertura(alvo || [], sched || []);
+  return { itens, sobrando, escalas: sched || [], resumo };
 }
+
+/**
+ * MATRIZ da escala — várias semanas de uma vez.
+ *
+ * É a visão "Matrix" do Planning Center Services (vista ao vivo em 13/08/2026,
+ * a pedido do Matheus): linhas = área × função, colunas = datas. O supervisor
+ * abre o mês da área dele e enxerga os buracos em fila, em vez de abrir culto
+ * por culto pra descobrir onde falta gente.
+ *
+ * ⚠️ A conta de cobertura é a MESMA da tela de um culto (`montarCobertura`, em
+ * `utils/volCobertura`, no gate). Se a grade tivesse régua própria, ela e a
+ * tela do culto discordariam sobre o que ainda falta — e quem monta escala
+ * confiaria na que estivesse mais à mão.
+ *
+ * Parâmetros: `service_type_id` (opcional), `desde` (YYYY-MM-DD, default hoje
+ * em BRT) e `semanas` (1–8, default 4).
+ */
+const MATRIZ_MAX_CULTOS = 24;
+
+router.get('/escala-matriz', async (req, res) => {
+  try {
+    const semanas = Math.min(8, Math.max(1, parseInt(req.query.semanas, 10) || 4));
+    // ⚠️ O "hoje" é o dia da IGREJA (BRT). Em UTC, das 21h em diante o dia já
+    // virou e a grade começaria no dia seguinte, escondendo o culto de hoje.
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.desde || ''))
+      ? req.query.desde
+      : diaBRT(new Date());
+    const fim = new Date(new Date(`${desde}T12:00:00-03:00`).getTime() + semanas * 7 * 86400000);
+
+    let q = supabase.from('vol_services')
+      .select('id, name, scheduled_at, service_type_id, service_type_name')
+      .gte('scheduled_at', `${desde}T00:00:00-03:00`)
+      .lte('scheduled_at', fim.toISOString())
+      .order('scheduled_at')
+      .limit(MATRIZ_MAX_CULTOS + 1);
+    if (req.query.service_type_id) q = q.eq('service_type_id', req.query.service_type_id);
+    const { data: cultosBrutos, error: cErr } = await q;
+    if (cErr) return res.status(400).json({ error: cErr.message });
+
+    // ⚠️ Teto DECLARADO: uma grade de 40 colunas não se lê, e cortar em
+    // silêncio faria o supervisor concluir que não há culto marcado depois.
+    const cultos = (cultosBrutos || []).slice(0, MATRIZ_MAX_CULTOS);
+    const truncado = (cultosBrutos || []).length > MATRIZ_MAX_CULTOS;
+    if (!cultos.length) {
+      return res.json({ cultos: [], linhas: [], resumo: { alvo: 0, preenchidas: 0, faltam: 0 }, truncado: false });
+    }
+
+    const ids = cultos.map(c => c.id);
+    const emLotes = async (tabela, select) => {
+      let todos = [];
+      for (let i = 0; i < ids.length; i += 20) {
+        const lote = ids.slice(i, i + 20);
+        let offset = 0;
+        for (;;) {
+          let qq = supabase.from(tabela).select(select).in('service_id', lote).order('id').range(offset, offset + 999);
+          if (tabela === 'vol_escala_culto_itens') qq = qq.is('deleted_at', null);
+          const { data, error } = await qq;
+          if (error) throw new Error(error.message);
+          todos = todos.concat(data || []);
+          if (!data || data.length < 1000) break;
+          offset += 1000;
+        }
+      }
+      return todos;
+    };
+
+    const [itens, escalas] = await Promise.all([
+      emLotes('vol_escala_culto_itens', 'id, service_id, team_id, position_id, quantidade, fixo, sort_order, team:vol_teams(id,name,color), position:vol_positions(id,name)'),
+      emLotes('vol_schedules', 'id, service_id, volunteer_id, volunteer_name, team_id, position_id, confirmation_status, escala_culto_item_id, planning_center_person_id'),
+    ]);
+
+    const porCulto = new Map(ids.map(id => [id, { itens: [], escalas: [] }]));
+    for (const i of itens) porCulto.get(i.service_id)?.itens.push(i);
+    for (const s of escalas) porCulto.get(s.service_id)?.escalas.push(s);
+
+    // Uma LINHA por (área, função) — a identidade atravessa os cultos, mas o
+    // item da composição é de cada culto (cada um tem os seus).
+    const linhas = new Map();
+    const chaveLinha = (t, p) => `${t || ''}::${p || ''}`;
+    const garanteLinha = (team_id, team, cor, position_id, position, ordem) => {
+      const k = chaveLinha(team_id, position_id);
+      if (!linhas.has(k)) {
+        linhas.set(k, {
+          chave: k, team_id, team: team || 'Sem equipe', cor: cor || null,
+          position_id: position_id || null, position: position || null,
+          ordem: ordem ?? 999, celulas: {},
+        });
+      }
+      const l = linhas.get(k);
+      if (ordem != null && ordem < l.ordem) l.ordem = ordem;
+      if (!l.position && position) l.position = position;
+      if (!l.cor && cor) l.cor = cor;
+      return l;
+    };
+
+    let alvoTotal = 0, preenchTotal = 0, faltamTotal = 0;
+    const pessoaDaEscala = s => ({
+      id: s.id, nome: s.volunteer_name, status: s.confirmation_status || 'pending',
+      volunteer_id: s.volunteer_id, planning_center_person_id: s.planning_center_person_id,
+    });
+
+    for (const culto of cultos) {
+      const { itens: it, escalas: es } = porCulto.get(culto.id);
+      const cob = montarCobertura(it, es);
+      alvoTotal += cob.resumo.alvo;
+      preenchTotal += cob.resumo.preenchidas;
+      faltamTotal += cob.resumo.faltam;
+
+      for (const item of cob.itens) {
+        const bruto = it.find(x => x.id === item.id);
+        const l = garanteLinha(item.team_id, item.team, bruto?.team?.color, item.position_id, item.position, bruto?.sort_order);
+        l.celulas[culto.id] = {
+          item_id: item.id, alvo: item.alvo, faltam: item.faltam,
+          pessoas: item.pessoas.map(pessoaDaEscala),
+        };
+      }
+
+      // ⚠️ Quem está escalado fora da composição entra na grade com alvo 0 —
+      // uma pessoa que não aparece na matriz é uma pessoa que a coordenação
+      // escala em duplicidade.
+      for (const s of cob.sobrando) {
+        const l = garanteLinha(s.team_id, null, null, s.position_id, null, 998);
+        const c = (l.celulas[culto.id] ||= { item_id: null, alvo: 0, faltam: 0, pessoas: [] });
+        c.pessoas.push(pessoaDaEscala(s));
+      }
+    }
+
+    // Nomes de equipe/função que só apareceram pelo lado das escalas soltas.
+    const semNome = [...linhas.values()].filter(l => !l.team || l.team === 'Sem equipe');
+    if (semNome.length) {
+      const teamIds = [...new Set(semNome.map(l => l.team_id).filter(Boolean))];
+      if (teamIds.length) {
+        const { data: ts } = await supabase.from('vol_teams').select('id, name, color').in('id', teamIds);
+        const mapa = Object.fromEntries((ts || []).map(t => [t.id, t]));
+        for (const l of semNome) {
+          const t = mapa[l.team_id];
+          if (t) { l.team = t.name; l.cor = l.cor || t.color; }
+        }
+      }
+    }
+
+    const ordenadas = [...linhas.values()].sort((a, b) =>
+      a.team.localeCompare(b.team, 'pt-BR') ||
+      a.ordem - b.ordem ||
+      String(a.position || '').localeCompare(String(b.position || ''), 'pt-BR'));
+
+    res.json({
+      cultos: cultos.map(c => ({
+        ...c,
+        status: contarStatus(porCulto.get(c.id).escalas),
+      })),
+      linhas: ordenadas,
+      resumo: { alvo: alvoTotal, preenchidas: preenchTotal, faltam: faltamTotal },
+      truncado,
+      janela: { desde, semanas },
+    });
+  } catch (e) {
+    console.error('[voluntariado] matriz:', e.message);
+    res.status(500).json({ error: 'Erro ao montar a matriz da escala' });
+  }
+});
 
 router.get('/services/:serviceId/escala-cobertura', async (req, res) => {
   try {

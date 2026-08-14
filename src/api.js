@@ -3372,6 +3372,8 @@ export const voluntariado = {
   },
   // Cobertura da escala de um culto (alvo × preenchidas)
   escalaCobertura: (serviceId) => get(`/voluntariado/services/${serviceId}/escala-cobertura`),
+  // Matriz da escala: área × função nas linhas, datas nas colunas.
+  escalaMatriz: (params) => get('/voluntariado/escala-matriz' + (params ? '?' + new URLSearchParams(params) : '')),
   // Check-ins
   checkIns: {
     list: (params) => get('/voluntariado/check-ins' + (params ? '?' + new URLSearchParams(params) : '')),

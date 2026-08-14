@@ -8743,3 +8743,61 @@ N datas, pra montar o mês inteiro numa tela) — decisão do Matheus de fazer
 primeiro a tela de um culto. O painel lateral já foi escrito pra ser reusado por
 ela. Segue valendo o follow-up anterior: não há drop target por **vaga**, o DnD
 move entre áreas e zera `position_id`.
+
+## Escala · a visão MATRIZ (várias semanas de uma vez) (2026-08-14 · SEM migration)
+
+Segunda leva do pedido de 13/08 ("no estilo do Service"): a grade **área × função
+nas linhas, datas nas colunas**, que é o `Matrix` do Planning Center Services.
+Responde a pergunta que a tela de um culto não responde — *"onde estão os buracos
+do meu mês?"* —, porque antes descobrir isso exigia abrir culto por culto.
+
+Toggle **Um culto | Matriz** no topo de `/ministerial/voluntariado/montar-escala`
+(as duas visões na mesma tela, como lá).
+
+- **`GET /voluntariado/escala-matriz?service_type_id=&semanas=&desde=`** ·
+  filtros de 2/4/8 semanas, por tipo de culto e **"só as minhas áreas"**.
+- ⚠️ **A célula vazia abre o MESMO `PainelEscalar`** da tela de um culto — mesma
+  ordenação por rodízio, mesma trava de disponibilidade, mesma gravação
+  (`/schedules/bulk`). Um segundo caminho de escalar teria régua própria e
+  divergiria do primeiro no dia em que uma das duas mudasse.
+- ⚠️ **O painel mostra a DATA no cabeçalho** quando aberto pela matriz: ali há 4
+  colunas à vista ao mesmo tempo, e escalar no domingo errado é o erro que a
+  grade torna fácil.
+- **Tirar alguém cabe na grade** (× no hover da pessoa). Sem isso a matriz seria
+  uma tela que só sabe acrescentar, e quem visse o erro teria que sair dela.
+
+### ⚠️ A conta de cobertura virou régua ÚNICA · `backend/utils/volCobertura.js`
+
+`montarCobertura(itens, escalas)` (PURA · **no gate** ·
+`src/test/volCobertura.test.ts`, 13 casos) é usada pelo `_coberturaDoCulto` **e**
+pela matriz. Sem isso a grade e a tela do culto teriam contas paralelas e
+diriam números diferentes sobre a mesma vaga — e quem monta escala confiaria na
+que estivesse mais à mão. **3 mutantes RODADOS**: sem a marca de "usada" → 3
+vermelhos · descartar o `sobrando` → 3 · deixar linha sem voluntário preencher
+vaga → 1.
+
+- **Casamento em 2 níveis**: `escala_culto_item_id` (o vínculo explícito, gravado
+  desde 13/08) e depois o par (equipe, função), pro histórico e pra quem foi
+  escalado à mão. ⚠️ **Uma pessoa conta pra UM item só** — sem a marca, uma
+  escala sem vínculo casaria com duas linhas do mesmo par e a tela
+  **subestimaria a falta**.
+- ⚠️ **`sobrando` não pode sumir**: quem está escalado fora de qualquer
+  composição entra na grade com alvo 0 e o selo "fora da composição". Pessoa que
+  não aparece na matriz é pessoa escalada em duplicidade.
+- ⚠️ Linha sem `volunteer_id` **não preenche vaga** — é lugar reservado, não gente.
+
+### Decisões
+
+- **Teto de 24 colunas, DECLARADO** (`truncado: true` + aviso na tela). Grade de
+  40 colunas não se lê, e cortar em silêncio faria o supervisor concluir que não
+  há culto marcado depois.
+- **O "hoje" da janela é BRT** (`diaBRT`): em UTC, das 21h em diante o dia já
+  virou e a grade começaria amanhã, escondendo o culto de hoje.
+- **Erro NÃO vira grade vazia** — "nenhum culto marcado" e "a consulta falhou"
+  levam a decisões opostas.
+- **Auto-preencher ficou FORA da matriz de propósito**: ali ele agiria sobre
+  semanas inteiras de uma vez, e o resultado (quem entrou, por quê, o que ficou
+  sem candidato) precisa ser lido antes de virar escala. Continua por culto, na
+  visão de um culto, onde a pessoa vê o que aconteceu e pode desfazer.
+- ⚠️ Célula sem composição naquele culto mostra **"—"**, não branco: a área
+  existe noutra data, mas ali não há vaga definida — e branco é ambíguo.

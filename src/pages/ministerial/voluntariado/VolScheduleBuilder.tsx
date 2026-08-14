@@ -16,6 +16,7 @@ import {
 } from './hooks';
 import EquipeEscalaCard, { type AreaEscala, type GrupoFuncao } from './components/schedules/EquipeEscalaCard';
 import PainelEscalar, { type Vaga } from './components/schedules/PainelEscalar';
+import MatrizEscala from './components/schedules/MatrizEscala';
 import { Plus, Wand2, Copy, Calendar, Users, ChevronDown } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -53,6 +54,7 @@ export default function VolScheduleBuilder() {
   const { data: teams = [] } = useVolTeamsManaged();
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const { data: schedules = [], isLoading: schedulesLoading } = useServiceSchedules(selectedServiceId || undefined);
+  const [visao, setVisao] = useState<'culto' | 'matriz'>('culto');
   const [showCreateService, setShowCreateService] = useState(false);
   const [showCopyDialog, setShowCopyDialog] = useState(false);
   const { data: contexto, isLoading: contextoLoading } = useMontagemContexto(selectedServiceId || undefined) as any;
@@ -122,6 +124,10 @@ export default function VolScheduleBuilder() {
     const area = (t as any).area;
     return !!area && minhasNormalizadas.has(normalizarBusca(area));
   };
+  // Versão por id — é o que a matriz consome (lá a linha carrega só o team_id).
+  // ⚠️ Declarada DEPOIS de `ehMinha`: const usada antes da declaração é a
+  // armadilha de TDZ que já mordeu neste repo.
+  const ehMinhaArea = (teamId: string | null) => ehMinha(teams.find(t => t.id === teamId));
 
   // ── Monta as áreas: composição + quem já está escalado ────────────────────
   const areas: AreaEscala[] = useMemo(() => {
@@ -319,12 +325,33 @@ export default function VolScheduleBuilder() {
   return (
     <div className="space-y-5">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold text-foreground">Montar Escala</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold text-foreground">Montar Escala</h1>
+          {/* Um culto × matriz — o mesmo par de visões do Services (a tela do
+              plano e o botão "Matrix"). A matriz responde "onde estão os
+              buracos do mês?"; a de um culto, "como está este domingo?". */}
+          <div className="flex rounded-lg border p-0.5">
+            {([['culto', 'Um culto'], ['matriz', 'Matriz']] as const).map(([v, rotulo]) => (
+              <button
+                key={v} onClick={() => setVisao(v)}
+                className={`h-7 px-3 rounded-md text-xs font-medium transition ${visao === v ? 'bg-[#00B39D] text-white' : 'text-muted-foreground hover:bg-muted/50'}`}
+              >
+                {rotulo}
+              </button>
+            ))}
+          </div>
+        </div>
         <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowCreateService(true)}>
           <Plus className="h-4 w-4" /> Criar Culto
         </Button>
       </div>
 
+      {visao === 'matriz' && (
+        <MatrizEscala ehMinhaArea={ehMinhaArea} onFixar={alternarFixada} />
+      )}
+
+      {visao === 'culto' && (
+      <>
       {/* Seleção do culto em DOIS passos: dia → horário. */}
       <Card>
         <CardContent className="p-4 space-y-3">
@@ -515,8 +542,6 @@ export default function VolScheduleBuilder() {
         escalando={bulkSchedule.isPending}
       />
 
-      {showCreateService && <CreateServiceDialog onClose={() => setShowCreateService(false)} />}
-
       {showCopyDialog && selectedServiceId && (
         <CopyScheduleDialog
           targetServiceId={selectedServiceId}
@@ -524,6 +549,12 @@ export default function VolScheduleBuilder() {
           onClose={() => setShowCopyDialog(false)}
         />
       )}
+      </>
+      )}
+
+      {/* Criar culto vale nas DUAS visões — quem está olhando a matriz e vê o
+          domingo faltando precisa criar o culto sem trocar de tela. */}
+      {showCreateService && <CreateServiceDialog onClose={() => setShowCreateService(false)} />}
     </div>
   );
 }
