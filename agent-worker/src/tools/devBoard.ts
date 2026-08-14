@@ -3,8 +3,10 @@ import { z } from "zod";
 import { supabase } from "../supabase.js";
 
 // Tools do Agente Dev sobre o board (agent_tarefas) + helpers usados pelo runner.
-// O board é o contrato da tarefa: claim atômico (agendada → em_andamento), gates,
-// orçamento e relatório de PR. Escrita só via service_role; o agente NUNCA mergeia.
+// O board é o contrato da tarefa: claim atômico (agendada → em_andamento, ou
+// nova → em_diagnostico no fluxo de bug), gates, orçamento e relatório de PR.
+// Escrita só via service_role. ⚠️ O agente NUNCA mergeia no fluxo comum; no
+// fluxo de BUG aprovado (decisão do Marcos 2026-08-14) o merge é automático.
 
 function ok(payload: unknown) {
   return {
@@ -36,6 +38,9 @@ export interface DevTarefa {
   run_ids: string[] | null;
   aprovada_por: string | null;
   aprovada_em: string | null;
+  reportado_por: string | null;
+  diagnostico: string | null;
+  diagnostico_em: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -53,14 +58,20 @@ export async function buscarTarefa(id: string): Promise<DevTarefa | null> {
   return (data as DevTarefa) || null;
 }
 
-// Claim atômico: só transiciona se ainda estiver `agendada` (nenhum outro
+// Claim atômico: só transiciona se ainda estiver no status `de` (nenhum outro
 // runner/worker pega a mesma tarefa). Retorna null se alguém venceu a corrida.
-export async function claimTarefa(id: string): Promise<DevTarefa | null> {
+// Default: agendada → em_andamento (execução). Para o diagnóstico de bug o
+// runner chama com (de='nova', para='em_diagnostico').
+export async function claimTarefa(
+  id: string,
+  de = "agendada",
+  para = "em_andamento"
+): Promise<DevTarefa | null> {
   const { data, error } = await supabase
     .from("agent_tarefas")
-    .update({ status: "em_andamento", updated_at: new Date().toISOString() })
+    .update({ status: para, updated_at: new Date().toISOString() })
     .eq("id", id)
-    .eq("status", "agendada")
+    .eq("status", de)
     .is("deleted_at", null)
     .select()
     .maybeSingle();
@@ -91,6 +102,34 @@ export async function registrarEventoTarefa(
     criado_por: null,
   });
   if (error) throw new Error(error.message);
+}
+
+// Notificação no sino do app para quem reportou o bug (colaborador do Staff).
+// ⚠️ Só o histórico in-app (app_notificacoes) — o push Expo/escrita passam pelo
+// endpoint /decidir e /transicao do backend (notificarApp), que é a régua.
+// Dedup igual à do backend (`agent_task_concluida_<id>`) pra nunca duplicar.
+export async function notificarBugCorrigidoNoApp(tarefa: {
+  id: string;
+  titulo: string;
+  reportado_por: string | null;
+}): Promise<void> {
+  if (!tarefa.reportado_por) return;
+  const { error } = await supabase.from("app_notificacoes").upsert(
+    [
+      {
+        user_id: tarefa.reportado_por,
+        tipo: "bug_corrigido",
+        titulo: "Bug corrigido",
+        body: `O bug que você reportou foi corrigido: ${tarefa.titulo}`,
+        data: { tarefa_id: tarefa.id, link: "/assistente-ia" },
+        chave_dedup: `agent_task_concluida_${tarefa.id}`,
+      },
+    ],
+    { onConflict: "user_id,chave_dedup", ignoreDuplicates: true }
+  );
+  if (error && error.code !== "42P10" && error.code !== "PGRST204") {
+    console.warn("[devBoard] falha ao notificar reporter do bug:", error.message);
+  }
 }
 
 export async function comentarTarefa(id: string, texto: string): Promise<void> {
@@ -148,6 +187,9 @@ export function createDevBoardTools(tarefaId: string) {
           gate: t.gate,
           orcamento_usd: t.orcamento_usd,
           status: t.status,
+          classe: t.classe,
+          diagnostico: t.diagnostico,
+          diagnostico_em: t.diagnostico_em,
         });
       } catch (e) {
         return fail((e as Error).message);

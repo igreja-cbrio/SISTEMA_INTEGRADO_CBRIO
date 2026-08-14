@@ -46,7 +46,7 @@ export function resolverCaminho(workspaceDir: string, rel: string): string {
   return alvo;
 }
 
-export function createDevFileTools(workspaceDir: string) {
+export function createDevFileTools(workspaceDir: string, opts: { readonly?: boolean } = {}) {
   const tocados = new Set<string>();
 
   const lerArquivo = tool(
@@ -134,7 +134,7 @@ export function createDevFileTools(workspaceDir: string) {
     }
   );
 
-  const tools = [lerArquivo, escreverArquivo, editarArquivo, listarDiretorio];
+  const tools = opts.readonly ? [lerArquivo, listarDiretorio] : [lerArquivo, escreverArquivo, editarArquivo, listarDiretorio];
   return {
     tools,
     toolNames: tools.map((t) => `mcp__dev__${t.name}`),

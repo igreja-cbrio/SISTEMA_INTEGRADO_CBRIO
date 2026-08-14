@@ -3,6 +3,7 @@ const { authenticate, requireSuperAdmin } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { sanitizeObj, isValidUUID } = require('../utils/sanitize');
 const { notificar } = require('../services/notificar');
+const { notificarApp } = require('../services/appPush');
 
 // Fase 0 · Time de Agentes.
 // Board de tarefas + roster (agent_team) + job description versionada
@@ -91,6 +92,7 @@ async function estruturarComIA(raw) {
 const STATUS_LABEL = {
   nova: 'Tarefa criada',
   agendada: 'Tarefa agendada',
+  em_diagnostico: 'Tarefa em diagnóstico',
   em_andamento: 'Tarefa em andamento',
   aguardando_revisao: 'Tarefa aguardando revisão',
   aguardando_aprovacao: 'Tarefa aguardando aprovação',
@@ -98,18 +100,21 @@ const STATUS_LABEL = {
   falhou: 'Tarefa falhou',
   bloqueada: 'Tarefa bloqueada',
   cancelada: 'Tarefa cancelada',
+  rejeitada: 'Tarefa rejeitada',
 };
 
 const TRANSICOES = {
-  nova: ['agendada', 'em_andamento', 'cancelada'],
+  nova: ['agendada', 'em_diagnostico', 'em_andamento', 'cancelada'],
   agendada: ['em_andamento', 'cancelada'],
+  em_diagnostico: ['aguardando_aprovacao', 'falhou', 'bloqueada', 'cancelada'],
   em_andamento: ['aguardando_revisao', 'aguardando_aprovacao', 'falhou', 'bloqueada', 'cancelada'],
   aguardando_revisao: ['agendada', 'em_andamento', 'concluida', 'falhou', 'bloqueada'],
-  aguardando_aprovacao: ['agendada', 'em_andamento', 'concluida', 'falhou', 'bloqueada'],
+  aguardando_aprovacao: ['agendada', 'em_andamento', 'concluida', 'falhou', 'bloqueada', 'rejeitada'],
   concluida: ['em_andamento', 'cancelada'],
   falhou: ['em_andamento', 'bloqueada', 'cancelada'],
   bloqueada: ['em_andamento', 'nova', 'cancelada'],
   cancelada: [],
+  rejeitada: [],
 };
 
 async function registrarEvento(tarefaId, evento, detalhe = {}, criadoPor = null) {
@@ -271,7 +276,7 @@ router.get('/tarefas/:id', async (req, res) => {
   try {
     if (!isValidUUID(req.params.id)) return err(res, new Error('id inválido'));
     const { data: tarefa } = await supabase.from('agent_tarefas')
-      .select('*, agent_team(nome, classe, modelo)')
+      .select('*, agent_team(nome, classe, modelo), profiles!agent_tarefas_reportado_por_fkey(nome)')
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!tarefa) return res.status(404).json({ error: 'Tarefa não encontrada' });
     const [{ data: comentarios }, { data: eventos }] = await Promise.all([
@@ -285,8 +290,9 @@ router.get('/tarefas/:id', async (req, res) => {
 // POST /api/agent-tasks/tarefas · criar
 router.post('/tarefas', async (req, res) => {
   try {
-    const body = sanitizeObj(req.body, ['titulo', 'descricao', 'classe', 'agente_key', 'status', 'prioridade', 'origem', 'orcamento_usd', 'gate']);
+    const body = sanitizeObj(req.body, ['titulo', 'descricao', 'classe', 'agente_key', 'status', 'prioridade', 'origem', 'orcamento_usd', 'gate', 'reportado_por']);
     if (!body.titulo) return err(res, new Error('Título é obrigatório'));
+    if (body.reportado_por && !isValidUUID(body.reportado_por)) return err(res, new Error('reportado_por inválido'));
     const insert = {
       titulo: String(body.titulo).slice(0, 80),
       descricao: String(body.descricao || '').slice(0, 5000),
@@ -297,6 +303,7 @@ router.post('/tarefas', async (req, res) => {
       origem: body.origem || 'web',
       orcamento_usd: body.orcamento_usd || null,
       gate: body.gate || null,
+      reportado_por: body.reportado_por || null,
       created_by: req.user.id,
     };
     const { data, error } = await supabase.from('agent_tarefas').insert(insert).select().single();
@@ -356,14 +363,27 @@ router.post('/tarefas/:id/transicao', async (req, res) => {
       .update({ ultima_atividade_em: new Date().toISOString() })
       .eq('agent_key', data.agente_key || '');
     notificarTransicao(data, novo);
+    if (novo === 'concluida' && data.classe === 'bug' && data.reportado_por) {
+      notificarApp([data.reportado_por], {
+        tipo: 'bug_corrigido',
+        titulo: 'Bug corrigido',
+        body: `O bug que você reportou foi corrigido: ${data.titulo}`,
+        data: { tarefa_id: data.id, link: '/assistente-ia' },
+        chaveDedup: `agent_task_concluida_${data.id}`,
+      }).catch((e) => console.warn('[agentTasks] falha ao notificar reporter do bug:', e.message));
+    }
     res.json(data);
   } catch (e) { return err(res, e, 500); }
 });
 
 // POST /api/agent-tasks/tarefas/:id/disparar
 // Dispara o Agente Dev no worker Railway (via /run/dev_agent + HMAC).
-// Só tarefas do developer_agent em nova/agendada; nova → agendada antes.
-// O runner faz o claim atômico (agendada → em_andamento) lá no worker.
+// Só tarefas do developer_agent em nova/agendada. Regra de status:
+//   - bug em 'nova' → NÃO auto-agenda (fica 'nova'): o runner entra na FASE DE
+//     DIAGNÓSTICO (claim nova → em_diagnostico → aguardando_aprovacao).
+//   - demais em 'nova' → 'agendada' antes (implementação direta).
+//   - 'agendada' → como está (execução; claim agendada → em_andamento).
+// O runner faz o claim atômico lá no worker.
 router.post('/tarefas/:id/disparar', async (req, res) => {
   try {
     if (!isValidUUID(req.params.id)) return err(res, new Error('id inválido'));
@@ -386,7 +406,8 @@ router.post('/tarefas/:id/disparar', async (req, res) => {
       return res.status(503).json({ error: 'Worker não configurado · setar AGENT_WORKER_URL e AGENT_WORKER_HMAC_SECRET no Vercel' });
     }
 
-    if (tarefa.status === 'nova') {
+    const ehBugDiagnostico = tarefa.classe === 'bug' && !tarefa.diagnostico;
+    if (tarefa.status === 'nova' && !ehBugDiagnostico) {
       await supabase
         .from('agent_tarefas')
         .update({ status: 'agendada', updated_at: new Date().toISOString() })
@@ -439,6 +460,51 @@ router.post('/tarefas/:id/gates', async (req, res) => {
       link: '/assistente-ia',
       severidade: aprovado ? 'info' : 'aviso',
       chaveDedup: `agent_task_${data.id}_${gate}_${aprovado ? 'ap' : 're'}`,
+    });
+    res.json(data);
+  } catch (e) { return err(res, e, 500); }
+});
+
+// POST /api/agent-tasks/tarefas/:id/decidir · gate ÚNICO do fluxo de bug
+// Válido só para classe='bug' em 'aguardando_aprovacao' (diagnóstico pronto).
+// aprovar → 'agendada' (o agente corrige, mergea e aplica produção sozinho)
+// recusar → 'rejeitada' (terminal · sem transição de saída).
+router.post('/tarefas/:id/decidir', async (req, res) => {
+  try {
+    if (!isValidUUID(req.params.id)) return err(res, new Error('id inválido'));
+    const aprovado = req.body?.aprovado !== false;
+    const observacao = String(req.body?.observacao || '').slice(0, 1000);
+    const { data: tarefa } = await supabase.from('agent_tarefas').select('*').eq('id', req.params.id).maybeSingle();
+    if (!tarefa || tarefa.deleted_at) return res.status(404).json({ error: 'Tarefa não encontrada' });
+    if (tarefa.classe !== 'bug') return err(res, new Error('decidir é exclusivo de tarefas classe=bug'));
+    if (tarefa.status !== 'aguardando_aprovacao') {
+      return err(res, new Error(`Status atual (${tarefa.status}) não permite decidir · só em aguardando_aprovacao`));
+    }
+
+    const novo = aprovado ? 'agendada' : 'rejeitada';
+    const patch = {
+      status: novo,
+      aprovada_por: req.user.id,
+      aprovada_em: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase.from('agent_tarefas').update(patch).eq('id', req.params.id).select().single();
+    if (error) return err(res, error);
+
+    await registrarEvento(data.id, aprovado ? 'decidida_aprovado' : 'decidida_rejeitado', { observacao }, req.user.id);
+    await supabase.from('agent_team')
+      .update({ ultima_atividade_em: new Date().toISOString() })
+      .eq('agent_key', data.agente_key || '');
+
+    notificarTransicao(data, novo);
+    notificar({
+      modulo: 'assistente-ia',
+      tipo: 'agent_task',
+      titulo: `Bug ${aprovado ? 'aprovado' : 'recusado'} para correção · ${data.titulo}`,
+      mensagem: observacao || (aprovado ? 'O agente vai corrigir e publicar a correção.' : 'Correção descartada.'),
+      link: '/assistente-ia',
+      severidade: aprovado ? 'info' : 'aviso',
+      chaveDedup: `agent_task_${data.id}_decidir_${aprovado ? 'ap' : 're'}`,
     });
     res.json(data);
   } catch (e) { return err(res, e, 500); }

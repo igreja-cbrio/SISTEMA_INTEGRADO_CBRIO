@@ -36,6 +36,7 @@ const fmtData = (d) => d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit',
 const STATUS_META = {
   nova: { c: C.blue, bg: C.blueBg, label: 'Nova' },
   agendada: { c: C.purple, bg: C.purpleBg, label: 'Agendada' },
+  em_diagnostico: { c: C.blue, bg: C.blueBg, label: 'Em diagnóstico' },
   em_andamento: { c: C.primary, bg: C.primaryBg, label: 'Em andamento' },
   aguardando_revisao: { c: C.amber, bg: C.amberBg, label: 'Aguardando revisão' },
   aguardando_aprovacao: { c: C.amber, bg: C.amberBg, label: 'Aguardando aprovação' },
@@ -43,6 +44,7 @@ const STATUS_META = {
   falhou: { c: C.red, bg: C.redBg, label: 'Falhou' },
   bloqueada: { c: C.red, bg: C.redBg, label: 'Bloqueada' },
   cancelada: { c: C.text3, bg: '#73737318', label: 'Cancelada' },
+  rejeitada: { c: C.red, bg: C.redBg, label: 'Rejeitada' },
 };
 
 const PRIOR_META = {
@@ -53,23 +55,25 @@ const PRIOR_META = {
 };
 
 const CLASSE_LABEL = {
-  dev: 'Dev', cyber: 'Cyber', auditoria: 'Auditoria', executor: 'Executor', watcher: 'Watcher',
+  dev: 'Dev', cyber: 'Cyber', auditoria: 'Auditoria', executor: 'Executor', watcher: 'Watcher', bug: 'Bug',
 };
 
 const COLUMNS = [
-  'nova', 'agendada', 'em_andamento', 'aguardando_revisao',
-  'aguardando_aprovacao', 'concluida', 'falhou', 'bloqueada', 'cancelada',
+  'nova', 'em_diagnostico', 'agendada', 'em_andamento', 'aguardando_revisao',
+  'aguardando_aprovacao', 'concluida', 'falhou', 'bloqueada', 'rejeitada', 'cancelada',
 ];
 
 const TRANSICOES = {
-  nova: ['agendada', 'em_andamento', 'cancelada'],
+  nova: ['em_diagnostico', 'agendada', 'em_andamento', 'cancelada'],
+  em_diagnostico: ['aguardando_aprovacao', 'falhou', 'bloqueada', 'cancelada'],
   agendada: ['em_andamento', 'cancelada'],
   em_andamento: ['aguardando_revisao', 'aguardando_aprovacao', 'falhou', 'bloqueada', 'cancelada'],
   aguardando_revisao: ['em_andamento', 'concluida', 'falhou', 'bloqueada'],
-  aguardando_aprovacao: ['em_andamento', 'concluida', 'falhou', 'bloqueada'],
+  aguardando_aprovacao: ['em_andamento', 'concluida', 'falhou', 'bloqueada', 'rejeitada'],
   concluida: ['em_andamento', 'cancelada'],
   falhou: ['em_andamento', 'bloqueada', 'cancelada'],
   bloqueada: ['em_andamento', 'nova', 'cancelada'],
+  rejeitada: [],
   cancelada: [],
 };
 
@@ -99,13 +103,18 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
   if (!t) return <Dialog open onOpenChange={onClose}><DialogContent><DialogHeader><DialogTitle>Carregando...</DialogTitle></DialogHeader></DialogContent></Dialog>;
 
   const emRevisao = t.status === 'aguardando_revisao';
+  const ehBugDiagnosticado = t.classe === 'bug' && t.status === 'aguardando_aprovacao';
   const gateAtual = emRevisao ? 'G2' : 'G1';
 
   async function agir(aprovado, proximo) {
     setWorking(true);
     try {
-      await agents.agentTasks.gates(id, { gate: gateAtual, aprovado, observacao: obs });
-      if (proximo) await agents.agentTasks.transicao(id, proximo);
+      if (ehBugDiagnosticado) {
+        await agents.agentTasks.decidir(id, { aprovado, observacao: obs });
+      } else {
+        await agents.agentTasks.gates(id, { gate: gateAtual, aprovado, observacao: obs });
+        if (proximo) await agents.agentTasks.transicao(id, proximo);
+      }
       onChange?.();
       onClose();
     } catch (e) { alert(e.message); }
@@ -120,9 +129,11 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
             Ação humana necessária <BadgeStatus status={t.status} />
           </DialogTitle>
           <DialogDescription>
-            {emRevisao
-              ? `Gate ${gateAtual} · PR aberto aguardando revisão. Revise e faça o merge do PR no GitHub antes de aprovar. Ao aprovar, o card vai para "Concluída"; em "Pedir ajustes", volta para a fila.`
-              : `Gate ${gateAtual} · o agente pediu aprovação antes de executar. Ao aprovar, o card volta para a fila e o agente continua automaticamente.`}
+            {ehBugDiagnosticado
+              ? `O agente diagnosticou o bug sem alterar código. Ao aprovar, a tarefa volta à fila e o agente corrige, aplica as migrations e faz o merge do PR automaticamente. Ao recusar, a tarefa é encerrada como rejeitada.`
+              : emRevisao
+                ? `Gate ${gateAtual} · PR aberto aguardando revisão. Revise e faça o merge do PR no GitHub antes de aprovar. Ao aprovar, o card vai para "Concluída"; em "Pedir ajustes", volta para a fila.`
+                : `Gate ${gateAtual} · o agente pediu aprovação antes de executar. Ao aprovar, o card volta para a fila e o agente continua automaticamente.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -131,6 +142,12 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
             <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 4 }}>Tarefa</div>
             <div style={{ fontSize: 14, color: C.text }}>{t.titulo}</div>
           </div>
+          {ehBugDiagnosticado && (
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 4 }}>Diagnóstico</div>
+              <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, color: C.text, maxHeight: 200, overflowY: 'auto', padding: '8px 12px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg }}>{t.diagnostico || '—'}</div>
+            </div>
+          )}
           {t.pull_request_url && (
             <div style={{ fontSize: 13 }}>
               <a href={t.pull_request_url} target="_blank" rel="noreferrer" style={{ color: C.primary }}>
@@ -140,7 +157,7 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
           )}
           <div>
             <Label>Observação (opcional)</Label>
-            <Textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={2} placeholder={emRevisao ? 'Ex.: merge feito, PR ok' : 'Ex.: pode seguir'} />
+            <Textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={2} placeholder={ehBugDiagnosticado ? 'Ex.: pode corrigir' : emRevisao ? 'Ex.: merge feito, PR ok' : 'Ex.: pode seguir'} />
           </div>
         </div>
 
@@ -151,6 +168,11 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
             <>
               <Button variant="outline" onClick={() => agir(false, 'agendada')} disabled={working}>Pedir ajustes</Button>
               <Button onClick={() => agir(true, 'concluida')} disabled={working}>Aprovar · concluir</Button>
+            </>
+          ) : ehBugDiagnosticado ? (
+            <>
+              <Button variant="outline" onClick={() => agir(false)} disabled={working}>Recusar</Button>
+              <Button onClick={() => agir(true)} disabled={working}>Aprovar · corrigir</Button>
             </>
           ) : (
             <>
@@ -283,6 +305,10 @@ function DetalheTarefa({ id, onClose, onChange }) {
     try { await agents.agentTasks.gates(id, { gate: g, aprovado, observacao: obsGate }); setObsGate(''); load(); onChange?.(); } catch (e) { alert(e.message); }
   }
 
+  async function decidir(aprovado) {
+    try { await agents.agentTasks.decidir(id, { aprovado, observacao: obsGate }); setObsGate(''); load(); onChange?.(); } catch (e) { alert(e.message); }
+  }
+
   if (!t) return <Dialog open onOpenChange={onClose}><DialogContent><DialogHeader><DialogTitle>Carregando...</DialogTitle></DialogHeader></DialogContent></Dialog>;
 
   const proximos = TRANSICOES[t.status] || [];
@@ -313,6 +339,13 @@ function DetalheTarefa({ id, onClose, onChange }) {
             </div>
           )}
 
+          {t.diagnostico && (
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 4 }}>Diagnóstico</div>
+              <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, color: C.text, maxHeight: 200, overflowY: 'auto', padding: '8px 12px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg }}>{t.diagnostico}</div>
+            </div>
+          )}
+
           <Separator />
 
           <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -329,6 +362,19 @@ function DetalheTarefa({ id, onClose, onChange }) {
             </div>
             <Button onClick={mudarStatus} disabled={!novoStatus}>Aplicar</Button>
           </div>
+
+          <Separator />
+
+          {t.classe === 'bug' && t.status === 'aguardando_aprovacao' && (
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 8 }}>Decidir diagnóstico</div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Button size="sm" onClick={() => decidir(true)}>Aprovar · corrigir</Button>
+                <Button size="sm" variant="outline" onClick={() => decidir(false)}>Recusar · rejeitar</Button>
+                <Input value={obsGate} onChange={(e) => setObsGate(e.target.value)} placeholder="Observação da decisão" style={{ maxWidth: 260 }} />
+              </div>
+            </div>
+          )}
 
           <Separator />
 

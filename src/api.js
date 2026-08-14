@@ -1253,6 +1253,7 @@ export const agents = {
     comentar: (id, texto) => post(`/agent-tasks/tarefas/${id}/comentario`, { texto }),
     transicao: (id, status) => post(`/agent-tasks/tarefas/${id}/transicao`, { status }),
     gates: (id, data) => post(`/agent-tasks/tarefas/${id}/gates`, data),
+    decidir: (id, data) => post(`/agent-tasks/tarefas/${id}/decidir`, data),
     excluirTarefa: (id) => del(`/agent-tasks/tarefas/${id}`),
   },
   tts: async (text, opts = {}) => {

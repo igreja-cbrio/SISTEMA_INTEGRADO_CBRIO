@@ -2,12 +2,15 @@ import { supabase } from "../supabase.js";
 import { runDevAgent } from "./devAgent.js";
 
 // Dispatcher do Agente Dev · agenda o runner por tarefa.
-// Roda a cada 10 min (scheduler.ts). Varre o board por tarefas `agendada` do
-// developer_agent (ordem de criação) e dispara o runner para cada uma — o
-// claim atômico dentro do runner evita corrida com um disparo manual.
+// Roda a cada 10 min (scheduler.ts). Varre o board do developer_agent por
+// trabalho a executar (ordem de criação) e dispara o runner para cada uma —
+// o claim atômico dentro do runner evita corrida com um disparo manual:
+//   - status `agendada`  → execução (implementação + PR).
+//   - status `nova` com `classe='bug'` → FASE DE DIAGNÓSTICO automática
+//     (investiga sem alterar nada e vai pra `aguardando_aprovacao`).
 // Re-claim de tarefas órfãs é automático: se o worker reiniciou no meio, a
-// tarefa continua `em_andamento`; se ficou presa, um humano volta pra
-// `agendada` e o dispatcher pega de novo.
+// tarefa continua `em_andamento`/`em_diagnostico`; se ficou presa, um humano
+// volta pra `agendada` e o dispatcher pega de novo.
 
 const MAX_POR_TICK = 3;
 
@@ -31,7 +34,7 @@ export async function runDevDispatcher(): Promise<{
       .from("agent_tarefas")
       .select("id, titulo")
       .eq("agente_key", "developer_agent")
-      .eq("status", "agendada")
+      .or(`and(status.eq.agendada),and(status.eq.nova,classe.eq.bug)`)
       .is("deleted_at", null)
       .order("created_at", { ascending: true })
       .limit(MAX_POR_TICK);
