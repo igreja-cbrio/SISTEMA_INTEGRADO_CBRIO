@@ -164,6 +164,18 @@ export async function abrirPr(opts: {
   return { url: data.html_url, number: data.number };
 }
 
+// Mergea o PR (squash) na main. ⚠️ FLUXO DE BUG (decisão do Marcos 2026-08-14):
+// no fluxo de bug APROVADO o agente mergea o próprio PR após o CI verde — isto
+// sobrescreve a regra geral "nunca mergeia PR (humano)". Fora do fluxo de bug,
+// a regra geral segue valendo. O merge dispara o deploy automático do Vercel.
+export async function mergearPr(prNumber: number): Promise<{ merged: boolean; sha?: string }> {
+  const data = await gh<{ merged: boolean; sha?: string }>("PUT", `/repos/${REPO}/pulls/${prNumber}/merge`, {
+    merge_method: "squash",
+  });
+  if (!data.merged) throw new Error("merge do PR não foi aceito pelo GitHub");
+  return data;
+}
+
 interface WorkflowRun {
   name: string;
   status: string;
