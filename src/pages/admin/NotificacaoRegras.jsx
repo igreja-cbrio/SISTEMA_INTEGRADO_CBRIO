@@ -16,6 +16,7 @@ const MODULOS = [
   { id: 'eventos', label: 'Eventos', desc: 'Novo evento criado, tarefas atrasadas', color: '#6366f1' },
   { id: 'eventos-externos', label: 'Eventos Externos', desc: 'Novas inscrições no formulário público de eventos externos', color: '#6366f1' },
   { id: 'projetos', label: 'Projetos', desc: 'Marcos atrasados, tarefas pendentes', color: '#ec4899' },
+  { id: 'planejamento-anual', label: 'Planejamento Anual', desc: 'Propostas enviadas, quórum completo, decisões do Pastor, devolutivas', color: '#00B39D' },
   { id: 'kpis', label: 'KPIs e Indicadores', desc: 'Metas atingidas, registros de culto e batismo', color: '#f97316' },
   { id: 'cuidados', label: 'Cuidados', desc: 'Novos acompanhamentos, alertas Jornada 180 e capelania', color: '#ef476f' },
   { id: 'next', label: 'NEXT', desc: 'Novas inscrições, indicações de batismo/servir/grupo/dízimo', color: '#06b6d4' },

@@ -78,6 +78,7 @@ const ROUTE_MODULE_MAP = {
   // estrategicos
   'gestao':       ['gestao'],
   'planejamento': ['planejamento'],
+  'planejamento-anual': ['planejamento-anual'],
   'governanca':   ['governanca'],
   'painel':       ['painel-cbrio'],
   'revisoes':    ['revisao-estrategica'],
