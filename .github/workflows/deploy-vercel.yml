@@ -53,6 +53,9 @@ jobs:
       - name: Politica de duplicidade (fila das Entradas)
         run: npm run test:duplicidade
 
+      - name: Pontuacao da fila progressiva (nascimento corrobora, genero veta)
+        run: npm run test:identidade-pares
+
       - name: Politica de familia (fila Vincular familias)
         run: npm run test:familia
 
