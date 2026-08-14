@@ -7509,6 +7509,63 @@ com `funcao='lider_treinamento'` em `mem_grupo_membros` — o valor existe no en
 (0), `mem_grupo_encontros` (2), `grupo_supervisao_visitas` (1): são módulos sem
 uso, não código quebrado. 31 KPIs e 6 OKRs dependem deles.
 
+### KPIs que dependiam de `dados_brutos` passam a ler o ERP (migration `20260814180000`)
+
+Dos 23 KPIs que caíam no fallback manual `dados_brutos` (**3 lançamentos na
+história toda**), estes tinham a fonte pronta no banco e só faltava a fiação:
+
+| KPI | fonte ligada | resultado hoje |
+|---|---|---|
+| FIN-03 % prazos de pagamento | `fin_contas_pagar` (4.116 linhas) | 65,0% mai · 74,8% jun · 71,3% jul (meta 90) |
+| RH-03 Rotatividade | `rh_funcionarios` (67 ativos) | 1,6% · 8,0% · 0% (teto 10) |
+| FIN-02 % reserva de caixa | 10% da arrecadação ordinária × centro de custo FUNDO DE RESERVA | **0%** — o alvo existe (R$ 94.833 em jul), o lançado é zero |
+| RH-02 Engajamento em treinamentos | `rh_treinamentos` | **NULL** (tabela vazia — "não medido", não 0%) |
+| AMI-25/BRG-24/KIDS-23/ONL-25/SED-26 · NPS do Next | `dados_brutos` sem filtro de área | W29 = 10 (era null sempre) |
+
+⚠️⚠️ **Os 4 primeiros eram `soma_periodo`, que IGNORA o período de referência**
+(usa sempre `current_date`) — ligar a fonte sem trocar isso faria o histórico
+deles nascer repetindo o valor corrente em todo período. Passaram a **`razao`**,
+que já chama `_kpi_agregar_dado` com as datas do período certo, já multiplica por
+100 e já devolve NULL quando o denominador é zero. **Nada muda para os outros
+~26 KPIs que usam `soma_periodo`** — aquele conserto continua sendo decisão do
+Marcos/Yago.
+
+⚠️ **O NPS do Next não precisou de KPI nem de coletor novo**: `npsKpiSync` já
+grava em `dados_brutos` usando `nps_pesquisas.contexto_kpi`, e a pesquisa existe.
+O que travava era o **FILTRO DE ÁREA** — o sync grava `area='next'` (é UMA
+pesquisa única da igreja, por desenho · `routes/next.js:561`) e os 5 KPIs são das
+áreas ami/bridge/kids/online/sede, então nunca casava. Mesmo caso das doações:
+**a régua de área estava certa para o dado que não existe e errada para o que
+existe.**
+
+⚠️ **`nps_lideres` e `nps_voluntarios` NÃO foram tocados** — já funcionam pelo
+mesmo caminho. Falta a PESQUISA existir com o `contexto_kpi` e a **área** certos
+(a do AMI existe e alimenta AMI-17; as outras 4 áreas precisam da própria). É
+operação, não código.
+
+⚠️ **`financeiro_prazos_pagamento_pct` conta só o que FOI PAGO** com vencimento
+no período. Conta pendente vencida fica de fora de propósito: ~44% dos títulos de
+qualquer mês seguem `pendente` meses depois (jun/2026 ainda tem 203) — é previsão
+que não se concretiza, não atraso, e incluí-los faria o KPI marcar ~40% para
+sempre por higiene de dado.
+
+⚠️ **`financeiro_reserva_caixa_pct` mostra 0% e isso é a verdade**: o centro de
+custo `0.01.05 FUNDO DE RESERVA` existe e **não tem nenhum lançamento em 2026**.
+Para acender, o financeiro precisa lançar a transferência mensal nele. ⚠️ A conta
+Poupança CEF **não serve como fonte** — ela recebe doação nominal e paga
+transferências/tarifas (entradas de R$ 2,8–4,3 mil/mês contra arrecadação de
+~R$ 950 mil), então usá-la daria ~0,3% contra meta de 10%, um número falso.
+
+⚠️ **`infra_cronogramas_pct` ficou de fora**: não existe tabela de projeto ou
+cronograma de infra em lugar nenhum do banco. `plan_orcamentos` e
+`rh_treinamentos` existem e estão **vazias** — os KPIs ligados a elas acendem
+sozinhos quando alguém cadastrar.
+
+⚠️ O patch de `_kpi_agregar_dado` é **dinâmico e guardado por idempotência**: o
+bloco injetado termina com a própria âncora, então rodar de novo duplicaria os
+ramos. A guarda procura `pagamentos_no_prazo` no corpo vivo e encerra sem tocar
+em nada.
+
 ## Sistema OKR/NSM 2026 (arquitetura consolidada · fases 1-6 mergeadas em maio)
 
 Sistema unificado OKR/KPI/NSM. **Conceito**: 1 NSM ("novos convertidos
