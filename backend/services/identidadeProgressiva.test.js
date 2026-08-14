@@ -57,7 +57,12 @@ const ponteNasc = {
   data_nascimento: '1989-04-07', nome_normalizado: 'janaina de oliveira',
 };
 const comPonte = pontuarPar(perfil('e3', { cpfs: ['52998224725'], nascimentos: ['1989-04-07'], nomes: ['janaina de oliveira'] }), soNascB, ponteNasc);
-assert(comPonte.score < 45, 'cadastro novo que só compartilha o nascimento com o outro lado não promove o par');
+// O cadastro novo confirma o lado A por CPF, mas o único encontro com o lado B é
+// o NASCIMENTO — então não há ponte. ⚠️ Asserção no ZERO e na ausência da
+// evidência, não num limiar: com `score < 45` o mutante que devolve nascimento a
+// "forte" SOBREVIVIA (o par ia de 0 pra 35 e continuava abaixo de 45).
+assert.equal(comPonte.score, 0, 'cadastro novo que só encontra o outro lado pelo nascimento não faz ponte');
+assert(!comPonte.evidencias.some((e) => e.startsWith('Novo cadastro conecta')), 'e não registra evidência de ponte');
 assert.notEqual(comPonte.prioridade, 'alta');
 
 const nascMaisNomeA = perfil('f1', { nascimentos: ['1978-03-10'], nomes: ['fernanda silva de oliveira barcelos'] });
