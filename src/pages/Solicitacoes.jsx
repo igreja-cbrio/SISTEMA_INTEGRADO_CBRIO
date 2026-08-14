@@ -2864,10 +2864,18 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
               || [...cotacoes].sort((a, b) => (Number(a.valor) || 0) - (Number(b.valor) || 0))[0])?.valor)
           : vNum;
         // Só a 1ª ida dispensa — reenvio de algo que já está no financeiro fica lá.
-        const dispensaProvavel = ['compras', 'servico'].includes(item.categoria)
-          && item.status === 'em_cotacao'
+        const etapaQueDispensa = ['compras', 'servico'].includes(item.categoria)
+          && item.status === 'em_cotacao';
+        const dispensaProvavel = etapaQueDispensa
           && podeEnviar
           && Number.isFinite(refValor) && refValor >= 0 && refValor <= LIMITE_COMPRA_DIRETA;
+        // ⚠️ ANTES de digitar o valor, a única frase da tela era "Enviar ao
+        // financeiro" — o oposto do que vai acontecer numa compra pequena, e foi
+        // por isso que a compra de R$ 60 pareceu "parada" (caso do Matheus ·
+        // 14/08). Aqui a REGRA é enunciada; nada é prometido sobre ESTA linha,
+        // porque quem decide é o valor COTADO, que ainda não existe. Enunciar a
+        // partir do valor_estimado seria o pecado que a régua do servidor evita.
+        const explicarRegra = etapaQueDispensa && !podeEnviar;
 
         return (
           <div className="space-y-1.5">
@@ -2912,7 +2920,17 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
                 Enviado em {new Date(item.cotacoes_email_em).toLocaleString('pt-BR')}
               </p>
             )}
-            {!podeEnviar && <p className="text-[11px] text-muted-foreground text-center">Informe o valor acima e clique no botão pra seguir.</p>}
+            {!podeEnviar && (
+              explicarRegra ? (
+                <p className="text-[11px] text-muted-foreground text-center">
+                  Informe o <strong>valor cotado</strong> acima pra seguir. Até{' '}
+                  {LIMITE_COMPRA_DIRETA.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} você
+                  libera a compra direto, sem passar pelo financeiro.
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center">Informe o valor acima e clique no botão pra seguir.</p>
+              )
+            )}
           </div>
         );
       })()}
