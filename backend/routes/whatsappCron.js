@@ -13,6 +13,10 @@ const { jaParabenizado, volProfileDoMembro, registrarParabens } = require('../se
 // (notificarMembro já exige). Roda 1x/dia.
 router.get('/aniversarios', requireCron, async (_req, res) => {
   try {
+    // Interruptor central (aba Comunicação→Disparos · decisão do Marcos 14/08)
+    if (await require('../services/comunicacaoDisparosOff').disparoDesligado('aniversario_voluntario')) {
+      return res.json({ ok: true, pulado: 'desligado_na_comunicacao' });
+    }
     const hoje = new Date(Date.now() - 3 * 3600 * 1000); // BRT
     const mmdd = `${String(hoje.getUTCMonth() + 1).padStart(2, '0')}-${String(hoje.getUTCDate()).padStart(2, '0')}`;
 
@@ -76,6 +80,10 @@ router.get('/aniversarios', requireCron, async (_req, res) => {
 // pessoas responderam corrigindo. Fallback: env WHATSAPP_BATISMO_HORA → 'a confirmar'.
 router.get('/batismos-lembrete', requireCron, async (_req, res) => {
   try {
+    // Interruptor central (aba Comunicação→Disparos · decisão do Marcos 14/08)
+    if (await require('../services/comunicacaoDisparosOff').disparoDesligado('batismo_lembrete')) {
+      return res.json({ ok: true, pulado: 'desligado_na_comunicacao' });
+    }
     const base = new Date(Date.now() - 3 * 3600 * 1000); // BRT
     base.setDate(base.getDate() + 1);
     const amanhaISO = base.toISOString().slice(0, 10);

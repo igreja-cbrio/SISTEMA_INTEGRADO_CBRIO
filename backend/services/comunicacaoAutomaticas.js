@@ -383,4 +383,6 @@ async function listar({ comPessoas = false, dias = 30 } = {}) {
   return { dias, itens };
 }
 
-module.exports = { listar, CATALOGO };
+const IDS_CATALOGO = CATALOGO.map((i) => i.id);
+
+module.exports = { IDS_CATALOGO, listar, CATALOGO };

@@ -2073,6 +2073,36 @@ terminal/failed avisa o módulo certo). O que segue DIRETO de propósito: textos
 de sessão do bot (grátis na janela · registrados em wa_mensagens com recibo) e
 os envios do chat humano (o atendente vê o erro na hora · 502).
 
+### Interruptor central + lei do template aprovado (2026-08-14 · migration `20260814150000`)
+
+Decisões do Marcos ("na aba de disparos automáticos eu não consigo cancelar
+isso" · "vamos trabalhar com todas que tem template aprovado"):
+
+- **Interruptor central**: `whatsapp_config.disparos_off` (jsonb · ids do
+  catálogo `comunicacaoAutomaticas`) + `services/comunicacaoDisparosOff.js`
+  (cache 60s · **fail-open**: coluna ausente = tudo ligado). Os 4 crons
+  consultam ANTES de montar público (aniversário, batismo-lembrete,
+  frequência-mensal de grupos — 2º interruptor, o kill-switch de grupos segue
+  — e devocional). `PATCH /comunicacao/automaticas/:id` (nível 3) + Switch nos
+  cards da aba. ⚠️ Desligar NÃO é caminho de envio — a nota "100% leitura" do
+  serviço vale pro ENVIO; o freio central é decisão do dono (14/08).
+- **Lei do template aprovado (na FILA)**: `templateBloqueado()` em
+  `whatsappFila` — bloqueia template com status **REJECTED/PAUSED/DISABLED**
+  no espelho `wa_templates` (enfileirar recusa · lote conta
+  `bloqueados_template` DECLARADO · pendente antigo vira erro permanente com
+  aviso). ⚠️ **PENDING/ausente PASSA de propósito**: a medição de 14/08 pegou o
+  espelho 2 SEMANAS velho (v2 dos grupos como PENDING, 2 templates nem
+  constavam) — uma trava ingênua teria matado os fluxos dos grupos. Por isso o
+  espelho agora **sincroniza de hora em hora** na carona do cron de
+  agendamentos (best-effort).
+- Executado direto em prod (14/08, registrado): sync do espelho (28 templates,
+  v2 = APPROVED) e `whatsapp_auto_config.cuidados_aconselhamento` → ativo=false
+  (era um TESTE ativo · reversível).
+- Estado dos 3 dormentes que o Marcos pediu pra matar: **relatórios de culto**
+  (persona aposentada 13/08) · **devocional** (guarda de template não-aprovado
+  + interruptor) · **retirada kids** (template REJECTED → a fila bloqueia; pra
+  ligar, criar `_v2` na Meta e trocar a env).
+
 ⚠️ Ficam da revisão (médios · ainda abertos):
 **Realtime sem filtro por área —
 decisão explícita do Marcos (12/08) de NÃO mexer por ora** · `nao_lidas`

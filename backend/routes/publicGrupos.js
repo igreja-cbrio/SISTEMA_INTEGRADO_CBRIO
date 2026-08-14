@@ -2776,6 +2776,10 @@ router.get('/cron/frequencia-mensal', requireCron, async (req, res) => {
       console.log('[grupos frequencia cron] envios automáticos DESLIGADOS — nada enviado');
       return res.json({ ok: true, enviados: 0, motivo: 'envios_automaticos_desligados' });
     }
+    // 2º interruptor: o central da aba Comunicação→Disparos (Marcos 14/08)
+    if (await require('../services/comunicacaoDisparosOff').disparoDesligado('grupos_frequencia')) {
+      return res.json({ ok: true, enviados: 0, motivo: 'desligado_na_comunicacao' });
+    }
     const hoje = new Date().toISOString().slice(0, 10);
     const { data: temporadaEmCurso } = await supabase
       .from('mem_temporadas')

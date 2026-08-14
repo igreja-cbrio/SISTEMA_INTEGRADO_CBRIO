@@ -22,6 +22,7 @@ import {
   Bot, AlertTriangle, RefreshCw, Plus, Trash2, Pencil, Power, Save, X, MessageSquare, Repeat,
   Settings, Coins, BookUser,
 } from 'lucide-react';
+import { Switch } from '../components/ui/switch';
 import Conversas from './Conversas';
 import { WhatsappBotConfig } from './admin/Whatsapp';
 import ConversasSetores from './admin/ConversasSetores';
@@ -829,10 +830,19 @@ type ItemAuto = {
   pessoas?: PessoaAuto[]; pessoas_truncadas?: boolean;
   enviados?: number | null; nao_entregues?: number | null;
   fora_do_historico?: boolean; motivo_falha?: string | null; erro?: string;
+  desligado?: boolean;
 };
 
-function CardAutomatica({ item }: { item: ItemAuto }) {
+function CardAutomatica({ item, podeDesligar, onMudou }: { item: ItemAuto; podeDesligar: boolean; onMudou: () => void }) {
   const [abrir, setAbrir] = useState(false);
+
+  async function alternar() {
+    try {
+      await comunicacao.automaticaToggle(item.id, !!item.desligado);
+      toast.success(item.desligado ? `"${item.nome}" religado.` : `"${item.nome}" desligado — o cron pula este disparo.`);
+      onMudou();
+    } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao alternar'); }
+  }
   // "Encaixa na regra" × "saiu de fato" medem coisas diferentes. Divergir muito
   // é sinal de envio quebrado — foi assim que o devocional ficou 187 dias
   // falhando sem ninguém notar.
@@ -845,8 +855,14 @@ function CardAutomatica({ item }: { item: ItemAuto }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="font-semibold">{item.nome}</span>
-            {travado && <Badge variant="outline" className="border-amber-500 text-amber-600">não está enviando</Badge>}
-            {quebrado && <Badge variant="destructive">não está entregando</Badge>}
+            {item.desligado && <Badge variant="secondary">desligado</Badge>}
+            {!item.desligado && travado && <Badge variant="outline" className="border-amber-500 text-amber-600">não está enviando</Badge>}
+            {!item.desligado && quebrado && <Badge variant="destructive">não está entregando</Badge>}
+            {podeDesligar && (
+              <span title={item.desligado ? 'Religar este disparo' : 'Desligar este disparo (o cron passa a pular)'}>
+                <Switch checked={!item.desligado} onCheckedChange={alternar} />
+              </span>
+            )}
           </div>
           <div className="mt-1 text-xs text-muted-foreground">{item.quando}</div>
           <p className="mt-2 max-w-2xl text-[13px] leading-snug">{item.regra}</p>
@@ -951,7 +967,7 @@ function CardAutomatica({ item }: { item: ItemAuto }) {
   );
 }
 
-function Automaticas() {
+function Automaticas({ podeEscrever = false }: { podeEscrever?: boolean }) {
   const [dados, setDados] = useState<{ itens: ItemAuto[]; pessoas_ocultas?: boolean } | null>(null);
   const [erro, setErro] = useState(false);
 
@@ -981,7 +997,7 @@ function Automaticas() {
         </Card>
       )}
       <div className="space-y-3">
-        {dados.itens.map((i) => <CardAutomatica key={i.id} item={i} />)}
+        {dados.itens.map((i) => <CardAutomatica key={i.id} item={i} podeDesligar={podeEscrever} onMudou={carregar} />)}
       </div>
     </div>
   );
@@ -1077,7 +1093,7 @@ function Disparos({ podeEscrever, podeExcluir }: { podeEscrever: boolean; podeEx
       </div>
       {tipo === 'agendadas'
         ? <Programadas podeEscrever={podeEscrever} podeExcluir={podeExcluir} />
-        : <Automaticas />}
+        : <Automaticas podeEscrever={podeEscrever} />}
     </div>
   );
 }
