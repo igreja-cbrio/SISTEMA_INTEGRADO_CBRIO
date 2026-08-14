@@ -962,7 +962,9 @@ export const grupos = {
   // Completar sexo · `aplicar=false` é dry-run. Colher = DECLARAÇÃO de outra
   // porta (grava direto); sugestões = palpite da IA (só grava no confirmar).
   sexoColher: (aplicar = false) => post('/grupos/pessoas/sexo/colher', { aplicar }),
-  sexoSugestoes: () => get('/grupos/pessoas/sexo/sugestoes'),
+  // ⚠️ Um BLOCO por chamada (a tela varre com progresso): o `request()` aborta
+  // em 30s e a lista inteira não cabe numa requisição só.
+  sexoSugestoes: (offset = 0) => get(`/grupos/pessoas/sexo/sugestoes?offset=${offset}`),
   sexoConfirmar: (itens) => post('/grupos/pessoas/sexo/confirmar', { itens }),
   marcarEstudoSemana: (docId, ativo) => patch(`/whatsapp-grupos/materiais/${docId}/estudo-semana`, { ativo }),
   semRelato: () => get('/grupos/kpis/sem-relato'),

@@ -134,6 +134,38 @@ describe('palpitesUsaveis · ambíguo NÃO vira sugestão', () => {
   });
 });
 
+// ⚠️ O formato compacto existe por causa de TEMPO: o formato por objeto gera
+// ~8x mais tokens de saída e o cliente aborta em 30s — foi o que travou o 1º
+// uso real (14/08). Aqui o ambíguo nem trafega, que é a política.
+describe('palpitesUsaveis · formato COMPACTO {masculino:[], feminino:[]}', () => {
+  it('lê as duas listas', () => {
+    const r = palpitesUsaveis({ masculino: ['João', 'Pedro'], feminino: ['Maria'] });
+    expect(r).toEqual([
+      { nome: 'João', sexo: 'masculino' },
+      { nome: 'Pedro', sexo: 'masculino' },
+      { nome: 'Maria', sexo: 'feminino' },
+    ]);
+  });
+
+  it('chave desconhecida (ex.: "ambiguo") é ignorada', () => {
+    const r = palpitesUsaveis({ masculino: ['João'], ambiguo: ['Alex', 'Ariel'], outro: ['X'] });
+    expect(r).toEqual([{ nome: 'João', sexo: 'masculino' }]);
+  });
+
+  it('lista vazia, valor não-array e nome vazio não estouram', () => {
+    expect(palpitesUsaveis({ masculino: [], feminino: [] })).toEqual([]);
+    expect(palpitesUsaveis({ masculino: 'João' } as never)).toEqual([]);
+    expect(palpitesUsaveis({ feminino: ['', '  '] })).toEqual([]);
+  });
+
+  it('aceita M/F como chave (o modelo às vezes abrevia)', () => {
+    expect(palpitesUsaveis({ m: ['Pedro'], f: ['Ana'] })).toEqual([
+      { nome: 'Pedro', sexo: 'masculino' },
+      { nome: 'Ana', sexo: 'feminino' },
+    ]);
+  });
+});
+
 describe('casarPalpites · o modelo responde com acento, a base nem sempre tem', () => {
   it('casa ignorando acento e caixa', () => {
     const r = casarPalpites(
