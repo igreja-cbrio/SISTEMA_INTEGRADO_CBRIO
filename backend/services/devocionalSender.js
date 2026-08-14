@@ -90,6 +90,30 @@ async function enviarDoDia(opts = {}) {
   // continua sendo o dedup do ITEM (a fila cuida da ENTREGA).
   const { enfileirar } = require('./whatsappFila');
   const TEMPLATE_DEVOCIONAL = process.env.WHATSAPP_TEMPLATE_DEVOCIONAL || 'devocional_diario';
+
+  // ⚠️ Guarda (14/08 · medido em prod): este template NUNCA existiu na Meta —
+  // 264 tentativas api_error no ledger, 0 entregas na história. Enfileirar N
+  // destinatários com template inexistente agora viraria N erros PERMANENTES
+  // + N avisos de falha terminal (spam pro módulo cuidados). Pré-checa o
+  // catálogo espelhado (wa_templates · sync da aba Configurações): se o
+  // catálogo TEM linhas e o nome não está APPROVED, nem enfileira — devolve o
+  // motivo. Catálogo vazio (sync nunca rodou) → segue, best-effort.
+  try {
+    const { count: temCatalogo } = await supabase.from('wa_templates')
+      .select('id', { count: 'exact', head: true });
+    if ((temCatalogo || 0) > 0) {
+      const { data: tpl } = await supabase.from('wa_templates')
+        .select('status_meta').eq('nome', TEMPLATE_DEVOCIONAL).limit(1).maybeSingle();
+      if (!tpl || String(tpl.status_meta || '').toUpperCase() !== 'APPROVED') {
+        return {
+          item_id: item.id, plano_id: item.plano_id,
+          total: destinatarios.length, ja_existentes: jaEnviadosSet.size,
+          enviados: 0, na_fila: 0, erros: 0,
+          motivo: `template_nao_aprovado_na_meta (${TEMPLATE_DEVOCIONAL} · crie/aprove na Meta ou ajuste WHATSAPP_TEMPLATE_DEVOCIONAL)`,
+        };
+      }
+    }
+  } catch { /* pré-checagem é best-effort — nunca bloqueia por falha própria */ }
   for (const d of pendentes) {
     const r = await enfileirar({
       telefone: d.telefone,
