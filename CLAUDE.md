@@ -5251,6 +5251,135 @@ espera o coordenador aplicar (review-before-apply).
 - Estado do bloqueio Meta + passos de ativação: ver a seção "Bot WhatsApp ·
   Flows — REDESENHO" acima. Diários das PRs anteriores: legado.
 
+## Marketing · DASHBOARD é a abertura do módulo (2026-08-14 · SEM migration)
+
+Pedido do Pedro Paiva, trazido pelo Marcos: *"dar uma nova cara à tela do
+marketing"* com 3 blocos — as próximas entregas internas de quem está vendo · o
+pulso das solicitações (feitas × resolvidas) + as próximas por prazo · e um
+**calendário SEMANAL do ciclo criativo**, mostrando por semana em que fase cada
+evento/série está, com o pendente de Marketing ao clicar.
+
+**`/marketing` agora abre o Dashboard; o Kanban virou `/marketing/kanban`** (a
+TELA do Kanban não mudou — só o endereço). `/marketing/dashboard`,
+`/marketing/calendario|fila|ciclo-criativo|triagem` redirecionam.
+
+### ⚠️ A régua do calendário é PURA e mora em `backend/utils/marketingSemanas.js`
+
+A pergunta "em que fase o ciclo está NESTA semana" não tinha resposta em lugar
+nenhum: o `/eventos` mostra o ciclo **por evento** (fases em lista) e o
+`/marketing` mostrava **por fase** (aba Épicos). Nada atravessava os eventos por
+semana, que é como a equipe criativa planeja a semana dela.
+
+- **Semana SEG→DOM** (a mesma da frequência de cultos · **não** a financeira).
+- **A fase da semana é a que OCUPA MAIS DIAS dela.** ⚠️ As fases
+  **compartilham o dia de fronteira** no banco (a fase 2 termina no MESMO dia em
+  que a 3 começa), então a soma das sobreposições de uma semana passa de 7 — é da
+  natureza do dado e não afeta a comparação, que é relativa dentro da semana.
+- **Empate → vence a fase de número MAIOR** (a mais adiantada): calendário serve
+  pra planejar o que vem.
+- **A VIRADA de fase dentro da semana é declarada** (`→ F9`): sem isso a semana em
+  que o ciclo troca de fase pareceria uma semana comum, e é justamente a que
+  importa. ⚠️ A transição olha **só pra frente** — apontar uma fase de número
+  MENOR mandaria a equipe pra trás no ciclo.
+- ⚠️ **Toda conta é em STRING `'YYYY-MM-DD'`** (as colunas de fase são DATE).
+  `new Date('2026-08-14').getDate()` cairia no fuso local — o bug que já mordeu o
+  censo, o totem Kids e o "culto de agora". O `hoje` é **BRT** com o agora
+  INJETADO.
+- **Evento sem NENHUMA fase na janela fica FORA da grade** (hoje há **7 ciclos
+  ativos** e 3 só começam em setembro; ocupar linha com sete traços faria a tela
+  parecer cheia de nada) — e quantos ficaram de fora é **DECLARADO**. Fase sem
+  data entra em `sem_data`, nunca é descartada em silêncio.
+
+**⚠️⚠️ O contrato central: `src/test/marketingSemanas.test.ts` (28 casos · no
+gate) reproduz os 4 casos que o Pedro descreveu DE CABEÇA** para a semana de
+17–23/08 (O Mundo→F8 Finalizações · Divertidamente→F5 Aprovação · Parábolas→F3
+Brainstorming · Reforma→F3 Brainstorming). Bateu **4/4** contra o endpoint real
+em produção. Se esse bloco ficar vermelho, a tela passou a discordar de quem
+opera o ciclo. **5 mutantes RODADOS** (ordem do array decidindo a fase → 2
+vermelhos · hoje em UTC → 1 · linha vazia entrando na grade → 1 · empate pela
+fase menor → 1 · transição incluindo fase anterior → 1, este último só depois de
+eu **reescrever o teste**: a 1ª versão da guarda não a exercitava e o mutante
+sobreviveu).
+
+### ⚠️ `parseInt(x) ?? padrão` devolve NaN — e o calendário voltava VAZIO
+
+`??` só pega `null`/`undefined`, e **NaN não é nenhum dos dois**. O NaN
+atravessava até `for (i = NaN; NaN <= 6)`, o laço não rodava, `semanas: []` e a
+tela dizia *"nenhum ciclo ativo"* com **7 ciclos ativos no banco** — erro
+perfeitamente silencioso, sem 500 e sem log. Corrigido com `limitarInteiro()` no
+handler **e** saneamento na régua pura (defesa em profundidade: com data válida
+`montarSemanas` NUNCA devolve lista vazia), com teste em cima.
+⚠️ Só apareceu porque o endpoint foi **exercitado de verdade** contra produção —
+o vitest e o build estavam verdes.
+
+### Régua dos 3 blocos
+
+1. **Minhas entregas** = cards `origem != 'evento'` atribuídos a mim, não
+   concluídos. Ciclo criativo fica FORA por pedido explícito (ele tem o bloco 3).
+   Prazo = `prazo_producao || prazo_confirmado || data_fim` (a precedência do
+   coletor do MKT-PRAZO); **com prazo primeiro**, sem prazo depois na ordem da
+   fila — e o "sem prazo" é DECLARADO, nunca a ordem da fila fingindo ser data.
+   ⚠️ **`prazo_producao` não estava na whitelist do `PATCH /cards/:id`**, então
+   não havia caminho de UI pra preenchê-lo e as **7 tarefas internas estavam
+   TODAS sem prazo**. Entrou na whitelist e o box grava (nível 5).
+   ⚠️ **O COORDENADOR não pega tarefa interna** — a caixa dele nasceria vazia
+   justamente pra quem pediu o dashboard. Daí o seletor de equipe (só coord ·
+   muda o RECORTE, não a régua). Não ser membro do Marketing é **declarado**, não
+   devolvido como lista vazia (que se lê como "não tenho nada a fazer").
+2. **Solicitações** = `categoria='marketing'`, `deleted_at IS NULL`.
+   ⚠️ **`concluido`+`avaliado` = ENTREGUE; `cancelado`/`rejeitado` saem da fila
+   mas NÃO contam como resolvidas** (senão a linha viraria "encerradas", que é
+   outra pergunta). ⚠️ **Quem ORDENA é a `data_necessaria`** (o combinado com
+   quem pediu); o `sla_resolucao_deadline` é o relógio interno e **já venceu em
+   todas as 6 abertas** — ordenar por ele mostraria tudo igualmente atrasado. Sem
+   data pedida cai no SLA, e a **ORIGEM do prazo vai na tela** (`(pedida)` ×
+   `(SLA)`): o mesmo número significando duas coisas de linha para linha engana.
+   A janela ("últimos 6 meses") vai colada no número.
+3. **Ciclo** = ciclos `ativo` com evento não-concluído. Só tarefas
+   `area='marketing'`. ⚠️ **Quem decide "está feito" é o CARD quando ele existe**
+   (é a verdade do Marketing); sem card, o status da tarefa no /eventos — e o
+   detalhe da fase mostra os **DOIS lados**, então a divergência fica visível em
+   vez de escondida numa média. Espelho ausente é declarado ("sem card no
+   Kanban").
+   **Fase sem tarefa de marketing devolve `vazio:true` com o MOTIVO** (pedido
+   nominal do Pedro): "a fase é de produção" × "a fase é de marketing mas
+   ninguém cadastrou tarefa" mudam o que a pessoa faz a seguir. As `entregas_padrao`
+   do template entram como contexto — o que a fase normalmente entrega.
+
+⚠️ **Cada bloco falha SOZINHO** (`avisos[]` → faixa âmbar): um evento sem ciclo
+não pode apagar a lista de tarefas, e **erro nunca se disfarça de tela vazia**.
+
+### Cores do gráfico · `#00897B` + `#8b5cf6`
+
+**Validadas pelo script de paleta** (`validate_palette.js`): passam as 6
+checagens (banda de luminosidade, croma, separação para daltonismo, piso de visão
+normal, contraste) nos **DOIS temas com as MESMAS duas cores** — o `#00B39D` da
+marca reprova a banda no tema escuro (L 0.687) e tem contraste 2,65:1 no claro.
+As duas já estão em `GRADIENT_PALETTE`, então `gradFill` funciona. **Não trocar
+sem revalidar.**
+
+### Medições de 14/08 (o estado que a tela mostra)
+
+7 ciclos ativos · 77 fases (0 sem data) · 49 tarefas de marketing ↔ 49 cards
+(espelho 1:1, **0 órfãos**) · tarefas de marketing existem só nas fases
+**2,3,4,6,7,8,9** (1, 5, 10 e 11 nunca têm — a mensagem de vazio é frequente e
+correta) · 8 solicitações vivas (2 entregues, 6 abertas, **4 já passaram da data
+pedida** e as 6 furaram o SLA) · **`marketing_campanhas` = 0** (o fluxo
+dor→campanha→entregáveis nunca foi usado em produção, então as 6 aprovadas não
+viraram card — é o bloco 2 que as torna visíveis).
+
+⚠️ **Alarme falso MEU, registrado de propósito:** reportei que os 105 cards de
+evento eram órfãos. Eram 0 — meu `.in()` com 105 ids falhou e eu **não li o
+`error`**, então o `data` vazio se leu como "não existe". Daí `lerEmLotes()` no
+endpoint fazer lotes de ≤200 **e lançar** no erro. Lição repetida: *conferir o
+que a sonda devolveu, não a contagem*.
+
+⏳ **Follow-up de DADO (não de código):** 1 card `origem='solicitacao'` ("fazer
+arte evento") está vivo na fila do Cauã com a solicitação **soft-deletada** — o
+soft-delete da solicitação não propagou pro card. Aparece no Kanban desde antes
+disto; a tela não o esconde de propósito (esconder criaria duas verdades entre
+dashboard e Kanban).
+
 ## Marketing · estado final (specs maio + redesenho 2026-05-30/31 · NO AR)
 
 O módulo nasceu em 24 specs (maio/2026) como "balcão" e foi **redesenhado** pra
