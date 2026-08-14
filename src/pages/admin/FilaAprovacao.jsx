@@ -1,5 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  AlarmClock, AlertTriangle, ArrowRight, Banknote, BarChart3, BellRing, Bot, Boxes, Brain,
+  CalendarClock, CalendarDays, ChevronDown, ChevronRight, Church, ClipboardList, CircleDollarSign,
+  Construction, DoorOpen, FileQuestion, FileWarning, FolderKanban, Frown, Gauge, GraduationCap,
+  Hand, HeartHandshake, HelpCircle, Hourglass, LifeBuoy, Microscope, Moon, Package, PackageOpen,
+  Palmtree, PauseCircle, Play, Puzzle, Receipt, RefreshCw, Settings2, ShieldAlert, Siren, Sprout,
+  Tag, Timer, UserMinus, UserX, Users, Wrench,
+} from 'lucide-react';
 import { agents } from '../../api';
 import { Button } from '../../components/ui/button';
 
@@ -11,62 +19,69 @@ const C = {
   blue: '#3b82f6', blueBg: '#3b82f618', purple: '#8b5cf6', purpleBg: '#8b5cf618',
 };
 
+// Ícones = lucide-react (o padrão do sistema · mesmo pacote do shadcn e das
+// outras telas de /admin). `Icon` é o COMPONENTE, não uma string: renderizado com
+// `<meta.Icon size={} color={} />` ele herda tamanho e cor do contexto, coisa que
+// emoji não faz (emoji ignora `color` e muda de desenho por sistema operacional).
 const ACTION_META = {
   // Financeiro
-  'fin.categorize_transaction': { icon: '🏷️', label: 'Categorizar lançamento', color: C.blue, bg: C.blueBg },
-  'fin.mark_payable_paid':      { icon: '💸', label: 'Marcar conta como paga', color: C.green, bg: C.greenBg },
-  'fin.reimbursement_decision': { icon: '🧾', label: 'Decidir reembolso',       color: C.amber, bg: C.amberBg },
-  'fin.atender_alerta':         { icon: '🔔', label: 'Atender alerta',          color: C.primary, bg: C.primaryBg },
+  'fin.categorize_transaction': { Icon: Tag,      label: 'Categorizar lançamento', color: C.blue, bg: C.blueBg },
+  'fin.mark_payable_paid':      { Icon: Banknote, label: 'Marcar conta como paga', color: C.green, bg: C.greenBg },
+  'fin.reimbursement_decision': { Icon: Receipt,  label: 'Decidir reembolso',       color: C.amber, bg: C.amberBg },
+  'fin.atender_alerta':         { Icon: BellRing, label: 'Atender alerta',          color: C.primary, bg: C.primaryBg },
   // KPIs/OKRs
-  'kpis.alertar_lider':         { icon: '📊', label: 'Alertar líder de KPI',    color: C.purple, bg: C.purpleBg },
+  'kpis.alertar_lider':         { Icon: BarChart3, label: 'Alertar líder de KPI',   color: C.purple, bg: C.purpleBg },
   // RH
-  'rh.alertar_documento_vencendo':   { icon: '📄', label: 'Documento vencendo',  color: C.amber, bg: C.amberBg },
-  'rh.alertar_treinamento_pendente': { icon: '🎓', label: 'Treinamento pendente', color: C.blue, bg: C.blueBg },
-  'rh.alertar_ferias_vencendo':      { icon: '🏖️', label: 'Férias a vencer',     color: C.primary, bg: C.primaryBg },
+  'rh.alertar_documento_vencendo':   { Icon: FileWarning,   label: 'Documento vencendo',   color: C.amber, bg: C.amberBg },
+  'rh.alertar_treinamento_pendente': { Icon: GraduationCap, label: 'Treinamento pendente', color: C.blue, bg: C.blueBg },
+  'rh.alertar_ferias_vencendo':      { Icon: Palmtree,      label: 'Férias a vencer',      color: C.primary, bg: C.primaryBg },
   // Cuidados/Integração
-  'cui.alertar_jornada180':       { icon: '💜', label: 'Jornada 180 parada',     color: C.purple, bg: C.purpleBg },
-  'cui.alertar_visitante':        { icon: '👋', label: 'Visitante sem follow-up', color: C.amber, bg: C.amberBg },
-  'cui.alertar_acompanhamento':   { icon: '🤝', label: 'Acompanhamento estagnado', color: C.red, bg: C.redBg },
+  'cui.alertar_jornada180':       { Icon: HeartHandshake, label: 'Jornada 180 parada',      color: C.purple, bg: C.purpleBg },
+  'cui.alertar_visitante':        { Icon: Hand,           label: 'Visitante sem follow-up', color: C.amber, bg: C.amberBg },
+  'cui.alertar_acompanhamento':   { Icon: HeartHandshake, label: 'Acompanhamento estagnado', color: C.red, bg: C.redBg },
   // Eventos
-  'eventos.alertar_tarefa_atrasada':       { icon: '⏰', label: 'Tarefa atrasada',     color: C.red, bg: C.redBg },
-  'eventos.alertar_tarefa_sem_responsavel':{ icon: '❓', label: 'Tarefa sem responsável', color: C.amber, bg: C.amberBg },
-  'eventos.alertar_evento_atrasado':       { icon: '📅', label: 'Evento com baixa preparação', color: C.red, bg: C.redBg },
+  'eventos.alertar_tarefa_atrasada':       { Icon: AlarmClock,    label: 'Tarefa atrasada',            color: C.red, bg: C.redBg },
+  'eventos.alertar_tarefa_sem_responsavel':{ Icon: UserX,         label: 'Tarefa sem responsável',     color: C.amber, bg: C.amberBg },
+  'eventos.alertar_evento_atrasado':       { Icon: CalendarClock, label: 'Evento com baixa preparação', color: C.red, bg: C.redBg },
   // Voluntariado
-  'vol.alertar_inativo': { icon: '🌿', label: 'Voluntário inativo',  color: C.purple, bg: C.purpleBg },
-  'vol.alertar_pausa':   { icon: '🌤️', label: 'Voluntário em pausa', color: C.blue, bg: C.blueBg },
+  'vol.alertar_inativo': { Icon: UserMinus,   label: 'Voluntário inativo',  color: C.purple, bg: C.purpleBg },
+  'vol.alertar_pausa':   { Icon: PauseCircle, label: 'Voluntário em pausa', color: C.blue, bg: C.blueBg },
   // Logística
-  'log.alertar_sla_resposta': { icon: '⏱️', label: 'SLA estourado',        color: C.red, bg: C.redBg },
-  'log.alertar_urgente':      { icon: '🚨', label: 'Urgente não atendida', color: C.red, bg: C.redBg },
-  'log.alertar_ml_parado':    { icon: '📦', label: 'Rastreio ML parado',   color: C.amber, bg: C.amberBg },
+  'log.alertar_sla_resposta': { Icon: Timer,   label: 'SLA estourado',        color: C.red, bg: C.redBg },
+  'log.alertar_urgente':      { Icon: Siren,   label: 'Urgente não atendida', color: C.red, bg: C.redBg },
+  'log.alertar_ml_parado':    { Icon: Package, label: 'Rastreio ML parado',   color: C.amber, bg: C.amberBg },
   // Membresia
-  'mem.alertar_duplicado':       { icon: '👯', label: 'Duplicado detectado', color: C.purple, bg: C.purpleBg },
-  'mem.alertar_cadastro_parado': { icon: '📝', label: 'Cadastro parado',     color: C.amber, bg: C.amberBg },
+  'mem.alertar_duplicado':       { Icon: Users,         label: 'Duplicado detectado', color: C.purple, bg: C.purpleBg },
+  'mem.alertar_cadastro_parado': { Icon: ClipboardList, label: 'Cadastro parado',     color: C.amber, bg: C.amberBg },
   // Patrimônio
-  'pat.alertar_manutencao_longa':     { icon: '🔧', label: 'Manutenção prolongada',   color: C.amber, bg: C.amberBg },
-  'pat.alertar_bem_emprestado':       { icon: '📤', label: 'Bem emprestado sem retorno', color: C.amber, bg: C.amberBg },
-  'pat.alertar_cadastro_incompleto':  { icon: '📋', label: 'Cadastro de bem incompleto', color: C.blue, bg: C.blueBg },
+  'pat.alertar_manutencao_longa':     { Icon: Wrench,       label: 'Manutenção prolongada',    color: C.amber, bg: C.amberBg },
+  'pat.alertar_bem_emprestado':       { Icon: PackageOpen,  label: 'Bem emprestado sem retorno', color: C.amber, bg: C.amberBg },
+  'pat.alertar_cadastro_incompleto':  { Icon: FileQuestion, label: 'Cadastro de bem incompleto', color: C.blue, bg: C.blueBg },
   // Cérebro
-  'cerebro.alertar_erros':         { icon: '⚠️', label: 'Erros no pipeline',  color: C.red, bg: C.redBg },
-  'cerebro.alertar_fila_travada':  { icon: '🚧', label: 'Fila travada',       color: C.amber, bg: C.amberBg },
-  'cerebro.alertar_custo':         { icon: '💰', label: 'Custo alto de tokens', color: C.amber, bg: C.amberBg },
+  'cerebro.alertar_erros':         { Icon: AlertTriangle,     label: 'Erros no pipeline',    color: C.red, bg: C.redBg },
+  'cerebro.alertar_fila_travada':  { Icon: Construction,      label: 'Fila travada',         color: C.amber, bg: C.amberBg },
+  'cerebro.alertar_custo':         { Icon: CircleDollarSign,  label: 'Custo alto de tokens', color: C.amber, bg: C.amberBg },
   // NEXT
-  'next.alertar_sem_checkin':       { icon: '🚪', label: 'NEXT: sem check-in',     color: C.amber, bg: C.amberBg },
-  'next.alertar_indicacao_pendente': { icon: '➡️', label: 'NEXT: indicação pendente', color: C.blue, bg: C.blueBg },
+  'next.alertar_sem_checkin':        { Icon: DoorOpen,   label: 'NEXT: sem check-in',      color: C.amber, bg: C.amberBg },
+  'next.alertar_indicacao_pendente': { Icon: ArrowRight, label: 'NEXT: indicação pendente', color: C.blue, bg: C.blueBg },
   // Grupos
-  'grupos.alertar_sem_encontro': { icon: '🧩', label: 'Grupo sem encontro', color: C.amber, bg: C.amberBg },
-  'grupos.alertar_sem_lider':    { icon: '🆘', label: 'Grupo sem líder',    color: C.red, bg: C.redBg },
+  'grupos.alertar_sem_encontro': { Icon: Puzzle,   label: 'Grupo sem encontro', color: C.amber, bg: C.amberBg },
+  'grupos.alertar_sem_lider':    { Icon: LifeBuoy, label: 'Grupo sem líder',    color: C.red, bg: C.redBg },
   // NPS
-  'nps.alertar_baixa_resposta':   { icon: '📊', label: 'NPS: baixa resposta', color: C.amber, bg: C.amberBg },
-  'nps.alertar_analise_pendente': { icon: '🔬', label: 'NPS: análise pendente', color: C.blue, bg: C.blueBg },
-  'nps.alertar_detrator':         { icon: '😞', label: 'NPS: detrator',     color: C.red, bg: C.redBg },
+  'nps.alertar_baixa_resposta':   { Icon: Gauge,      label: 'NPS: baixa resposta',  color: C.amber, bg: C.amberBg },
+  'nps.alertar_analise_pendente': { Icon: Microscope, label: 'NPS: análise pendente', color: C.blue, bg: C.blueBg },
+  'nps.alertar_detrator':         { Icon: Frown,      label: 'NPS: detrator',        color: C.red, bg: C.redBg },
   // Projetos
-  'proj.alertar_atrasado':    { icon: '⏳', label: 'Projeto atrasado',    color: C.red, bg: C.redBg },
-  'proj.alertar_sem_lider':   { icon: '❓', label: 'Projeto sem líder',   color: C.amber, bg: C.amberBg },
-  'proj.alertar_sem_update':  { icon: '💤', label: 'Projeto sem update',  color: C.amber, bg: C.amberBg },
+  'proj.alertar_atrasado':    { Icon: Hourglass,  label: 'Projeto atrasado',   color: C.red, bg: C.redBg },
+  'proj.alertar_sem_lider':   { Icon: HelpCircle, label: 'Projeto sem líder',  color: C.amber, bg: C.amberBg },
+  'proj.alertar_sem_update':  { Icon: Moon,       label: 'Projeto sem update', color: C.amber, bg: C.amberBg },
+  // Cyber · achado é INFORMATIVO: aprovar aqui = a pessoa registrou ciência.
+  // ⚠️ Sem esta entrada o chip mostrava o slug cru "cyber.achado_seguranca · 3".
+  'cyber.achado_seguranca': { Icon: ShieldAlert, label: 'Achado de segurança', color: C.red, bg: C.redBg },
 };
 
 const metaDe = (actionType) =>
-  ACTION_META[actionType] || { icon: '⚙️', label: actionType || 'Sem tipo', color: C.text2, bg: C.bg };
+  ACTION_META[actionType] || { Icon: Settings2, label: actionType || 'Sem tipo', color: C.text2, bg: C.bg };
 
 // Agentes disponíveis pra disparo manual + descrição.
 // ⚠️ A lista espelha SCHEDULED_AGENTS de agent-worker/src/scheduler.ts (cron semanal
@@ -74,85 +89,85 @@ const metaDe = (actionType) =>
 const AGENTES_DISPONIVEIS = [
   {
     agentType: 'financeiro_executor',
-    icon: '🤖',
+    Icon: Bot,
     titulo: 'Executor Financeiro',
     descricao: 'Varre fila de classificação, contas a pagar, reembolsos e alertas · gera propostas pra você aprovar.',
   },
   {
     agentType: 'kpis_watcher',
-    icon: '📊',
+    Icon: BarChart3,
     titulo: 'Watcher de KPIs/OKRs',
     descricao: 'Monitora saúde dos 150 KPIs táticos e OKRs · gera relatório e propõe alertas pros líderes responsáveis.',
   },
   {
     agentType: 'rh_executor',
-    icon: '👥',
+    Icon: Users,
     titulo: 'Executor RH',
     descricao: 'Detecta documentos vencendo, treinamentos pendentes e férias a vencer · alerta RH e gestor direto.',
   },
   {
     agentType: 'cuidados_watcher',
-    icon: '💜',
+    Icon: HeartHandshake,
     titulo: 'Watcher Cuidados/Integração',
     descricao: 'Vigia Jornada 180, visitantes sem follow-up e acompanhamentos estagnados · alerta time pastoral.',
   },
   {
     agentType: 'eventos_watcher',
-    icon: '📅',
+    Icon: CalendarDays,
     titulo: 'Watcher Eventos',
     descricao: 'Monitora eventos próximos, tarefas atrasadas e órfãs · alerta líderes de área e responsável do evento.',
   },
   {
     agentType: 'voluntariado_watcher',
-    icon: '🌿',
+    Icon: Sprout,
     titulo: 'Watcher Voluntariado',
     descricao: 'Detecta voluntários inativos (60d+) e em pausa recente (30-60d) · alerta líder do ministério pra contato pastoral.',
   },
   {
     agentType: 'logistica_watcher',
-    icon: '📦',
+    Icon: Package,
     titulo: 'Watcher Logística',
     descricao: 'Vigia SLA das solicitações, urgentes não atendidas e rastreios Mercado Livre parados.',
   },
   {
     agentType: 'membresia_watcher',
-    icon: '⛪',
+    Icon: Church,
     titulo: 'Watcher Membresia',
     descricao: 'Detecta cadastros duplicados (vw_membros_duplicados) e cadastros pendentes parados há 7d+.',
   },
   {
     agentType: 'patrimonio_watcher',
-    icon: '🏷️',
+    Icon: Boxes,
     titulo: 'Watcher Patrimônio',
     descricao: 'Bens em manutenção prolongada, emprestados sem retorno e cadastros incompletos de bens valiosos.',
   },
   {
     agentType: 'cerebro_watcher',
-    icon: '🧠',
+    Icon: Brain,
     titulo: 'Watcher Cérebro CBRio',
     descricao: 'Monitora saúde do pipeline · erros acumulados, fila travada e custo de tokens crescente.',
   },
   {
     agentType: 'next_watcher',
-    icon: '➡️',
+    Icon: ArrowRight,
     titulo: 'Watcher NEXT',
     descricao: 'Detecta inscritos no NEXT que não compareceram e check-ins sem indicações marcadas.',
   },
   {
     agentType: 'grupos_watcher',
-    icon: '🧩',
+    Icon: Puzzle,
     titulo: 'Watcher Grupos',
     descricao: 'Vigia grupos sem encontro registrado nos últimos 30d e grupos sem líder atribuído.',
   },
   {
     agentType: 'nps_watcher',
-    icon: '📊',
+    Icon: Gauge,
     titulo: 'Watcher NPS',
     descricao: 'Pesquisas com taxa de resposta baixa, vencidas sem análise IA e detratores recentes (score ≤ 6).',
   },
   {
     agentType: 'projetos_watcher',
-    icon: '📁',
+    Icon: FolderKanban,
     titulo: 'Watcher Projetos',
     descricao: 'Projetos atrasados (date_end passou), sem líder e sem atualização há 30d+.',
   },
@@ -221,12 +236,12 @@ function PainelAgentes({ aberto, onFechar, triggering, onDisparar, erro }) {
                 color: C.text, fontSize: 13, fontWeight: 600, minWidth: 0,
               }}
             >
-              <span style={{ fontSize: 16, flexShrink: 0 }}>{a.icon}</span>
+              <a.Icon size={17} color={rodando ? C.primary : C.text2} style={{ flexShrink: 0 }} aria-hidden />
               <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {a.titulo}
               </span>
-              <span style={{ fontSize: 11, color: rodando ? C.primary : C.text3, flexShrink: 0 }}>
-                {rodando ? 'disparando…' : '▶'}
+              <span style={{ fontSize: 11, color: rodando ? C.primary : C.text3, flexShrink: 0, display: 'inline-flex', alignItems: 'center' }}>
+                {rodando ? 'disparando…' : <Play size={13} aria-hidden />}
               </span>
             </button>
           );
@@ -268,8 +283,10 @@ function LinhaProposta({ row, selecionada, onSelecionar, aberta, onAlternar, onA
             background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left',
           }}
         >
-          <span style={{ fontSize: 11, color: C.text3, width: 10, flexShrink: 0 }}>{aberta ? '▾' : '▸'}</span>
-          <span style={{ fontSize: 15, flexShrink: 0 }}>{meta.icon}</span>
+          {aberta
+            ? <ChevronDown size={14} color={C.text3} style={{ flexShrink: 0 }} aria-hidden />
+            : <ChevronRight size={14} color={C.text3} style={{ flexShrink: 0 }} aria-hidden />}
+          <meta.Icon size={15} color={meta.color} style={{ flexShrink: 0 }} aria-hidden />
           <span style={{
             fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.35,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: aberta ? 'normal' : 'nowrap',
@@ -337,7 +354,8 @@ function LinhaProposta({ row, selecionada, onSelecionar, aberta, onAlternar, onA
               fontSize: 12, color: C.red, background: C.redBg, padding: 8,
               borderRadius: 6, border: `1px solid ${C.red}40`,
             }}>
-              ⚠ Erro anterior: {row.apply_error}
+              <AlertTriangle size={13} style={{ verticalAlign: -2, marginRight: 4 }} aria-hidden />
+              Erro anterior: {row.apply_error}
             </div>
           )}
         </div>
@@ -397,6 +415,15 @@ export default function FilaAprovacao() {
     }
     return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
   }, [filtradas]);
+
+  // ⚠️ Conta só os grupos VISÍVEIS agora: `recolhidos` guarda tipo que a pessoa
+  // recolheu antes e que pode ter saído da tela pelo filtro — usar o tamanho do
+  // Set faria o botão dizer "expandir todos" com grupo aberto na frente.
+  const recolhidosVisiveis = useMemo(
+    () => grupos.filter(([t]) => recolhidos.has(t)).length,
+    [grupos, recolhidos],
+  );
+  const todosRecolhidos = grupos.length > 0 && recolhidosVisiveis === grupos.length;
 
   const idsVisiveis = useMemo(() => filtradas.map((r) => r.id), [filtradas]);
   const selecionadasVisiveis = useMemo(
@@ -501,10 +528,12 @@ export default function FilaAprovacao() {
         <div style={{ flex: 1 }} />
 
         <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
-          {isFetching ? 'Atualizando…' : '↻ Atualizar'}
+          <RefreshCw size={14} style={{ marginRight: 6 }} aria-hidden />
+          {isFetching ? 'Atualizando…' : 'Atualizar'}
         </Button>
         <Button size="sm" onClick={() => setPainelAgentes((v) => !v)}>
-          {painelAgentes ? 'Ocultar agentes' : '▶ Rodar um agente'}
+          <Play size={14} style={{ marginRight: 6 }} aria-hidden />
+          {painelAgentes ? 'Ocultar agentes' : 'Rodar um agente'}
         </Button>
       </div>
 
@@ -542,7 +571,7 @@ export default function FilaAprovacao() {
                 title={tipo}
                 onClick={() => setTipoFiltro((t) => (t === tipo ? null : tipo))}
               >
-                <span>{meta.icon}</span> {meta.label} · {n}
+                <meta.Icon size={13} aria-hidden /> {meta.label} · {n}
               </Chip>
             );
           })}
@@ -628,6 +657,25 @@ export default function FilaAprovacao() {
         </div>
       )}
 
+      {grupos.length > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: C.text3 }}>
+          <span>
+            {grupos.length} {grupos.length === 1 ? 'tipo' : 'tipos'} de proposta ·{' '}
+            {todosRecolhidos ? 'todos recolhidos' : `${grupos.length - recolhidosVisiveis} abertos`}
+          </span>
+          <div style={{ flex: 1 }} />
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setRecolhidos(todosRecolhidos ? new Set() : new Set(grupos.map(([t]) => t)))}
+          >
+            {todosRecolhidos
+              ? <><ChevronDown size={14} style={{ marginRight: 6 }} aria-hidden />Expandir todos</>
+              : <><ChevronRight size={14} style={{ marginRight: 6 }} aria-hidden />Recolher todos</>}
+          </Button>
+        </div>
+      )}
+
       {grupos.map(([tipo, lista]) => {
         const meta = metaDe(tipo);
         const recolhido = recolhidos.has(tipo);
@@ -647,21 +695,34 @@ export default function FilaAprovacao() {
                 aria-label={`Selecionar todas de ${meta.label}`}
                 style={{ width: 16, height: 16, cursor: 'pointer', accentColor: C.primary }}
               />
+              {/* O chevron ganhou CAIXA com borda: como botão-texto puro ele passava
+                  despercebido e a pessoa não descobria que dava pra recolher. */}
               <button
                 onClick={() => alternarGrupo(tipo)}
+                aria-expanded={!recolhido}
+                title={recolhido ? `Expandir ${meta.label}` : `Recolher ${meta.label}`}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 8, flex: 1,
                   background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left',
                 }}
               >
-                <span style={{ fontSize: 11, color: C.text3 }}>{recolhido ? '▸' : '▾'}</span>
-                <span style={{ fontSize: 15 }}>{meta.icon}</span>
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 22, height: 22, borderRadius: 6, flexShrink: 0,
+                  border: `1px solid ${C.border}`, background: C.bg, color: C.text2,
+                }}>
+                  {recolhido ? <ChevronRight size={14} aria-hidden /> : <ChevronDown size={14} aria-hidden />}
+                </span>
+                <meta.Icon size={15} color={meta.color} style={{ flexShrink: 0 }} aria-hidden />
                 <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{meta.label}</span>
                 <span style={{
                   fontSize: 11, fontWeight: 700, color: meta.color, background: meta.bg,
                   padding: '1px 8px', borderRadius: 999,
                 }}>
                   {lista.length}
+                </span>
+                <span style={{ fontSize: 11, color: C.text3 }}>
+                  {recolhido ? 'recolhido' : ''}
                 </span>
               </button>
             </div>

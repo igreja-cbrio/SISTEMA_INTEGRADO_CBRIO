@@ -34,6 +34,30 @@ const s = {
 
 const fmtData = (d) => d ? new Date(d).toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
 
+// O agente grava título/descrição já escapados (o dev agent monta o texto a
+// partir de HTML), então "Corrigir título da página 'Expansao'" chega como
+// `&#x27;Expansao&#x27;`. Isto decodifica SÓ NA EXIBIÇÃO — o dado no banco fica
+// como está, porque reescrevê-lo seria alterar o registro do que o agente pediu.
+// ⚠️ Regex controlada de propósito: decodificar via innerHTML aceitaria markup
+// vindo do modelo, e este texto é renderizado em tela de admin.
+const ENTIDADES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'", '#34': '"' };
+const textoLimpo = (v) => {
+  if (typeof v !== 'string' || !v.includes('&')) return v ?? '';
+  return v.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (bruto, corpo) => {
+    const chave = corpo.toLowerCase();
+    if (ENTIDADES[chave]) return ENTIDADES[chave];
+    if (chave.startsWith('#x')) {
+      const cod = parseInt(chave.slice(2), 16);
+      return Number.isFinite(cod) && cod > 0 && cod <= 0x10ffff ? String.fromCodePoint(cod) : bruto;
+    }
+    if (chave.startsWith('#')) {
+      const cod = parseInt(chave.slice(1), 10);
+      return Number.isFinite(cod) && cod > 0 && cod <= 0x10ffff ? String.fromCodePoint(cod) : bruto;
+    }
+    return bruto;
+  });
+};
+
 const STATUS_META = {
   nova: { c: C.blue, bg: C.blueBg, label: 'Nova' },
   agendada: { c: C.purple, bg: C.purpleBg, label: 'Agendada' },
@@ -130,7 +154,7 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
         <div style={{ display: 'grid', gap: 12 }}>
           <div>
             <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 4 }}>Tarefa</div>
-            <div style={{ fontSize: 14, color: C.text }}>{t.titulo}</div>
+            <div style={{ fontSize: 14, color: C.text, overflowWrap: 'anywhere' }}>{textoLimpo(t.titulo)}</div>
           </div>
           {t.pull_request_url && (
             <div style={{ fontSize: 13 }}>
@@ -293,57 +317,100 @@ function DetalheTarefa({ id, onClose, onChange }) {
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-2xl flex flex-col" style={{ maxHeight: '85vh' }}>
         <DialogHeader>
-          <DialogTitle style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            {t.titulo} <BadgeStatus status={t.status} />
+          <DialogTitle style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', minWidth: 0 }}>
+            <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{textoLimpo(t.titulo)}</span>
+            <BadgeStatus status={t.status} />
           </DialogTitle>
           <DialogDescription>
             {agente ? `${agente.nome} · ${agente.classe}` : 'Sem agente designado'} · prioridade {PRIOR_META[t.prioridade]?.label} · origem {t.origem} · criada {fmtData(t.created_at)}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto min-h-0" style={{ display: 'grid', gap: 16, paddingRight: 4 }}>
+        <div
+          className="flex-1 overflow-y-auto min-h-0"
+          style={{ display: 'grid', gap: 16, paddingRight: 4, overflowX: 'hidden' }}
+        >
           <div>
             <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 4 }}>Descrição</div>
-            <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, color: C.text }}>{t.descricao || '—'}</div>
+            <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 14, color: C.text }}>
+              {textoLimpo(t.descricao) || '—'}
+            </div>
           </div>
 
           {t.pull_request_url && (
-            <div>
+            <div style={{ minWidth: 0 }}>
               <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 4 }}>PR</div>
-              <a href={t.pull_request_url} target="_blank" rel="noreferrer" style={{ color: C.primary }}>{t.pull_request_url}</a>
+              <a
+                href={t.pull_request_url}
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: C.primary, overflowWrap: 'anywhere', display: 'inline-block', maxWidth: '100%' }}
+              >
+                {t.pull_request_url}
+              </a>
             </div>
           )}
 
           <Separator />
 
-          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-            <div style={{ flex: 1, minWidth: 220 }}>
-              <Label>Mudar status</Label>
-              <Select value={novoStatus} onValueChange={setNovoStatus}>
-                <SelectTrigger><SelectValue placeholder={proximos.length ? `Próximos: ${proximos.map((x) => STATUS_META[x].label).join(', ')}` : 'Sem transições'} /></SelectTrigger>
+          <div>
+            <Label style={{ display: 'block', marginBottom: 6 }}>Mudar status</Label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              {/* ⚠️ min-w-0 + truncate: o SelectTrigger do shadcn é `whitespace-nowrap`
+                  e o SelectValue daqui não tem o data-slot que ativa o line-clamp dele,
+                  então texto longo TRANSBORDA e passa por cima do botão ao lado — foi
+                  isso que colocou "Aplicar" em cima de "Cancelada". */}
+              <Select value={novoStatus} onValueChange={setNovoStatus} disabled={!proximos.length}>
+                <SelectTrigger className="min-w-0 flex-1 overflow-hidden [&>span]:truncate">
+                  <SelectValue placeholder={proximos.length ? 'Escolha o próximo status' : 'Sem transições possíveis'} />
+                </SelectTrigger>
                 <SelectContent>
                   {proximos.map((p) => (
                     <SelectItem key={p} value={p}>{STATUS_META[p].label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              <Button onClick={mudarStatus} disabled={!novoStatus} style={{ flexShrink: 0 }}>Aplicar</Button>
             </div>
-            <Button onClick={mudarStatus} disabled={!novoStatus}>Aplicar</Button>
+            {proximos.length > 0 && (
+              <div style={{ fontSize: 12, color: C.text3, marginTop: 6 }}>
+                A partir de <strong style={{ color: C.text2 }}>{STATUS_META[t.status]?.label}</strong>, os destinos
+                permitidos são: {proximos.map((x) => STATUS_META[x].label).join(' · ')}.
+              </div>
+            )}
           </div>
 
           <Separator />
 
           <div>
             <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 8 }}>Gates (dev agent)</div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* A observação vem ANTES dos botões: ela é do gate que a pessoa está
+                prestes a decidir, e no layout anterior (input no fim da linha) ficava
+                parecendo campo solto — quem clicava em Aprovar antes de digitar
+                registrava a decisão sem motivo nenhum. */}
+            <Input
+              value={obsGate}
+              onChange={(e) => setObsGate(e.target.value)}
+              placeholder="Observação (opcional) — fica registrada no histórico do gate"
+              style={{ marginBottom: 10 }}
+            />
+            <div style={{ display: 'grid', gap: 8 }}>
               {['G1', 'G2'].map((g) => (
-                <div key={g} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Badge style={{ background: t.gate === g ? C.greenBg : '#73737318', color: t.gate === g ? C.green : C.text3 }}>{g}{t.gate === g ? ' ✓' : ''}</Badge>
-                  <Button size="sm" onClick={() => gate(g, true)}>Aprovar</Button>
-                  <Button size="sm" variant="outline" onClick={() => gate(g, false)}>Reprovar</Button>
+                <div key={g} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <Badge style={{
+                    background: t.gate === g ? C.greenBg : '#73737318',
+                    color: t.gate === g ? C.green : C.text3,
+                    flexShrink: 0,
+                  }}>
+                    {g}{t.gate === g ? ' ✓' : ''}
+                  </Badge>
+                  <span style={{ fontSize: 12, color: C.text3, flex: 1, minWidth: 120 }}>
+                    {g === 'G1' ? 'antes de executar' : 'PR aberto · antes de concluir'}
+                  </span>
+                  <Button size="sm" onClick={() => gate(g, true)} style={{ flexShrink: 0 }}>Aprovar</Button>
+                  <Button size="sm" variant="outline" onClick={() => gate(g, false)} style={{ flexShrink: 0 }}>Reprovar</Button>
                 </div>
               ))}
-              <Input value={obsGate} onChange={(e) => setObsGate(e.target.value)} placeholder="Observação do gate" style={{ maxWidth: 260 }} />
             </div>
           </div>
 
@@ -356,12 +423,20 @@ function DetalheTarefa({ id, onClose, onChange }) {
               {(t.comentarios || []).map((c) => (
                 <div key={c.id} style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13 }}>
                   <div style={{ color: C.text3, fontSize: 11, marginBottom: 2 }}>{c.profiles?.nome || 'IA'} · {fmtData(c.created_at)}</div>
-                  <div style={{ color: C.text, whiteSpace: 'pre-wrap' }}>{c.texto}</div>
+                  <div style={{ color: C.text, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{textoLimpo(c.texto)}</div>
                 </div>
               ))}
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Textarea value={comentario} onChange={(e) => setComentario(e.target.value)} rows={2} placeholder="Comentário..." />
+            {/* Textarea em cima, botão embaixo: o `Textarea` do shadcn é w-full e,
+                lado a lado num flex sem min-w-0, empurrava o "Comentar" pra fora
+                da caixa (era ele passando por cima do campo no print). */}
+            <Textarea
+              value={comentario}
+              onChange={(e) => setComentario(e.target.value)}
+              rows={3}
+              placeholder="Escreva um comentário..."
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
               <Button onClick={enviarComentario} disabled={!comentario.trim()}>Comentar</Button>
             </div>
           </div>
@@ -371,10 +446,15 @@ function DetalheTarefa({ id, onClose, onChange }) {
           <div>
             <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 8 }}>Histórico</div>
             <div style={{ display: 'grid', gap: 4, maxHeight: 160, overflowY: 'auto' }}>
+              {(t.eventos || []).length === 0 && (
+                <div style={{ fontSize: 12, color: C.text3 }}>Sem eventos registrados.</div>
+              )}
               {(t.eventos || []).map((ev, i) => (
-                <div key={ev.id || i} style={{ fontSize: 12, color: C.text2, display: 'flex', gap: 8 }}>
+                <div key={ev.id || i} style={{ fontSize: 12, color: C.text2, display: 'flex', gap: 8, minWidth: 0 }}>
                   <span style={{ color: C.text3, flexShrink: 0 }}>{fmtData(ev.created_at)}</span>
-                  <span>{ev.evento}{ev.detalhe?.observacao ? ` — ${ev.detalhe.observacao}` : ''}</span>
+                  <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>
+                    {ev.evento}{ev.detalhe?.observacao ? ` — ${textoLimpo(ev.detalhe.observacao)}` : ''}
+                  </span>
                 </div>
               ))}
             </div>
@@ -468,7 +548,7 @@ function TabEquipe() {
                         boxShadow: precisaAcao ? `0 0 0 1px ${C.amber}66` : 'none',
                       }}
                     >
-                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.35, marginBottom: 6 }}>{t.titulo}</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.35, marginBottom: 6, overflowWrap: 'anywhere' }}>{textoLimpo(t.titulo)}</div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                         <Badge style={{ background: PRIOR_META[t.prioridade].bg, color: PRIOR_META[t.prioridade].c }}>
                           {PRIOR_META[t.prioridade].label}
@@ -507,7 +587,7 @@ function TabEquipe() {
             <DialogHeader>
               <DialogTitle>Transição inválida</DialogTitle>
               <DialogDescription>
-                {dropErro.tarefa.titulo}: <strong>{STATUS_META[dropErro.tarefa.status].label}</strong> → <strong>{STATUS_META[dropErro.destino].label}</strong> não é permitida. Escolha um dos destinos válidos:
+                {textoLimpo(dropErro.tarefa.titulo)}: <strong>{STATUS_META[dropErro.tarefa.status].label}</strong> → <strong>{STATUS_META[dropErro.destino].label}</strong> não é permitida. Escolha um dos destinos válidos:
               </DialogDescription>
             </DialogHeader>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
