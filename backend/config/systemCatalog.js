@@ -111,6 +111,11 @@ const JOBS = [
   ['/api/agente-primeiro-contato/cron/enfileirar', '5 11 * * *', 'agents'],
   ['/api/agente-voluntariado/cron/checar', '10 11 * * *', 'agents'],
   ['/api/agente-batismo-next/cron/enfileirar', '15 11 * * *', 'agents'],
+  // ⚠️ NÃO é cron da Vercel (não está no vercel.json). Quem dispara é o
+  // agent-worker do Railway, segunda 06:00 SP, depois de montar o relatório.
+  // Entra no catálogo pra que falha de ENVIO abra incidente — job fora daqui
+  // falha em silêncio, e "o relatório não chegou" ninguém percebe na segunda.
+  ['/api/kpis/v2/cron/relatorio-email', '0 9 * * 1', 'agents'],
 ].map(([path, schedule, category]) => ({
   id: `vercel:${path}`,
   name: path.split('?')[0].split('/').filter(Boolean).slice(-2).join(' · '),

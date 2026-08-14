@@ -16,6 +16,7 @@ import { runProjetosWatcher } from "./agents/projetosWatcher.js";
 import { runPilotoTriageWatcher } from "./agents/pilotoTriageWatcher.js";
 import { runCyberAgent } from "./agents/cyberAgent.js";
 import { runDevDispatcher } from "./agents/devDispatcher.js";
+import { runKpiRelatorioSemanal } from "./agents/kpiRelatorioSemanal.js";
 
 // Cron expressions assumem TZ=America/Sao_Paulo (definido no env do Railway).
 // Por enquanto: 1x/semana · segunda-feira as 06:00 SP.
@@ -49,6 +50,11 @@ const SCHEDULED_AGENTS: Array<{
   { type: "nps_watcher", runner: runNpsWatcher },
   { type: "projetos_watcher", runner: runProjetosWatcher },
   { type: "cyber_agent", runner: runCyberAgent },
+  // ⚠️ POR ÚLTIMO de propósito: o relatório lê o estado depois de os watchers
+  // da rodada terem passado, e é o único que manda e-mail pra fora — se algum
+  // watcher explodir, o loop segue (cada um tem try/catch) e o relatório ainda
+  // sai, que é o que a liderança espera na segunda de manhã.
+  { type: "kpi_relatorio_semanal", runner: runKpiRelatorioSemanal },
 ];
 
 export function startScheduler() {
