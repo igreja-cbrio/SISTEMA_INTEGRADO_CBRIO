@@ -20,7 +20,7 @@ import { Input } from '../../components/ui/input';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner';
-import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus } from 'lucide-react';
+import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus, ChevronDown, ChevronUp } from 'lucide-react';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import MarcadoresJornada from '../../components/MarcadoresJornada';
 
@@ -147,6 +147,16 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
   const [filtroGrupo, setFiltroGrupo] = useState('todos');
   const [filtroStatus, setFiltroStatus] = useState('todos');
   const [busca, setBusca] = useState('');
+  // Quem está com a lista de grupos ABERTA na coluna (só quem tem 2+ grupos).
+  // Estado local por linha: a expansão é de leitura, não muda nada no servidor.
+  const [gruposAbertos, setGruposAbertos] = useState(() => new Set());
+  const toggleGrupos = useCallback((membroId) => {
+    setGruposAbertos(prev => {
+      const proximo = new Set(prev);
+      if (proximo.has(membroId)) proximo.delete(membroId); else proximo.add(membroId);
+      return proximo;
+    });
+  }, []);
   // Import do consolidado de participantes (pessoas × grupos)
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState(null);
@@ -568,13 +578,42 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                       <td style={{ padding: '10px 16px', maxWidth: 210 }}>
                         <MarcadoresJornada marcadores={p.marcadores} />
                       </td>
-                      <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2 }}>
-                        {gs.length > 0 ? gs.map((g, i) => (
-                          <span key={g.id || i}>
-                            {i > 0 && ', '}
-                            <button onClick={() => onOpenGrupo?.(g.id)} style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>{g.nome}</button>
-                          </span>
-                        )) : <span style={{ color: C.t3 }}>Sem grupo</span>}
+                      {/* Coluna Grupo · CONSOLIDADA (pedido do Matheus, 13/08/2026:
+                          "tem pessoas que estão em mais de um grupo e a lista fica
+                          feia"). Quem está em 1 grupo já aparece de cara; quem está
+                          em vários vira um chip "N grupos" que abre no clique.
+                          ⚠️ Nomes de grupo são longos ("ONLINE - MULHER ÚNICA") e
+                          juntá-los com vírgula fazia a linha da pessoa quebrar em
+                          3-4 alturas — a tabela deixava de ser varrível, que é a
+                          única coisa que esta aba faz. */}
+                      <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2, maxWidth: 260 }}>
+                        {gs.length === 0 ? (
+                          <span style={{ color: C.t3 }}>Sem grupo</span>
+                        ) : gs.length === 1 ? (
+                          <button onClick={() => onOpenGrupo?.(gs[0].id)} title={gs[0].nome}
+                            style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 12, fontWeight: 600, textAlign: 'left' }}>
+                            {gs[0].nome}
+                          </button>
+                        ) : gruposAbertos.has(p.membro_id) ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3 }}>
+                            {gs.map((g, i) => (
+                              <button key={g.id || i} onClick={() => onOpenGrupo?.(g.id)} title={g.nome}
+                                style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 12, fontWeight: 600, textAlign: 'left' }}>
+                                {g.nome}
+                              </button>
+                            ))}
+                            <button onClick={() => toggleGrupos(p.membro_id)}
+                              style={{ background: 'none', border: 'none', padding: 0, color: C.primary, cursor: 'pointer', fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                              <ChevronUp size={12} /> ocultar
+                            </button>
+                          </div>
+                        ) : (
+                          <button onClick={() => toggleGrupos(p.membro_id)}
+                            title={gs.map(g => g.nome).join(' · ')}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: `${C.primary}14`, border: `1px solid ${C.primary}33`, borderRadius: 99, padding: '2px 9px', color: C.primary, cursor: 'pointer', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                            {gs.length} grupos <ChevronDown size={12} />
+                          </button>
+                        )}
                       </td>
                       <td style={{ padding: '10px 16px', fontSize: 12, color: p.ultima_frequencia ? C.t2 : C.t3, whiteSpace: 'nowrap' }}>
                         {p.ultima_frequencia ? fmtData(p.ultima_frequencia) : '—'}
