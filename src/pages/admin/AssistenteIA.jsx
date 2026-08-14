@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { agents } from '../../api';
 import FilaAprovacao from './FilaAprovacao';
 import { Button } from '../../components/ui/button';
@@ -733,7 +734,16 @@ function TabMembros() {
 export default function AssistenteIA() {
   const [tab, setTab] = useState('equipe');
 
+  // Mesma queryKey da FilaAprovacao — o react-query dedupe a requisição, então o
+  // contador da aba não custa uma leitura a mais.
+  const { data: pendentes = [] } = useQuery({
+    queryKey: ['agent-queue', 'pending'],
+    queryFn: () => agents.queue('pending'),
+    refetchInterval: 30000,
+  });
+
   const tabStyle = (ativo) => ({
+    display: 'inline-flex', alignItems: 'center', gap: 8,
     padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', border: 'none',
     background: ativo ? C.primary : 'transparent', color: ativo ? '#fff' : C.text2,
   });
@@ -749,7 +759,18 @@ export default function AssistenteIA() {
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
         <button style={tabStyle(tab === 'equipe')} onClick={() => setTab('equipe')}>Equipe</button>
-        <button style={tabStyle(tab === 'entrada')} onClick={() => setTab('entrada')}>Caixa de Entrada</button>
+        <button style={tabStyle(tab === 'entrada')} onClick={() => setTab('entrada')}>
+          Caixa de Entrada
+          {pendentes.length > 0 && (
+            <span style={{
+              fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 999,
+              background: tab === 'entrada' ? 'rgba(255,255,255,0.25)' : C.amberBg,
+              color: tab === 'entrada' ? '#fff' : C.amber,
+            }}>
+              {pendentes.length}
+            </span>
+          )}
+        </button>
         <button style={tabStyle(tab === 'membros')} onClick={() => setTab('membros')}>Membros</button>
       </div>
 
