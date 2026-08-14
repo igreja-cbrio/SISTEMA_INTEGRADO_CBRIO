@@ -2172,7 +2172,17 @@ export default function Membresia() {
                     <span>Abrir módulo Financeiro</span>
                     <ChevronRight style={{ width: 16, height: 16 }} />
                   </Button>
-                  {(() => {
+                  {/* ⚠️ Sem permissão financeira o servidor NÃO manda os valores.
+                      Sem este bloco a aba cairia no fallback e mostraria "R$ 0 ·
+                      nunca contribuiu" — que se lê como FATO sobre a pessoa. */}
+                  {selectedMembro.financeiro_oculto ? (
+                    <div style={{ padding: 16, borderRadius: 12, background: C.amberBg || '#fef3c7', border: '1px solid #f59e0b40', color: '#92400e', fontSize: 13 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>Você não tem acesso a este dado</div>
+                      O histórico de contribuição da pessoa é restrito a quem tem o
+                      módulo Membresia ou Financeiro no nível 2. Isto <strong>não</strong> quer
+                      dizer que a pessoa não contribui.
+                    </div>
+                  ) : (() => {
                     const nivel = NIVEIS_GENEROSIDADE[selectedMembro.nivel_generosidade] || NIVEIS_GENEROSIDADE.nunca_contribuiu;
                     const totais = selectedMembro.totais_ano || { dizimo: 0, oferta: 0, campanha: 0, total: 0 };
                     return (
@@ -3180,6 +3190,20 @@ export default function Membresia() {
                 </TabsContent>
 
                 <TabsContent value="timeline" className="mt-4">
+                  {/* ⚠️ O servidor corta contribuição (valor) e cuidado pastoral
+                      (motivo) de quem não pode ver — e DECLARA quanto cortou.
+                      Sem esta faixa a linha do tempo apareceria só mais curta, e
+                      "não tem registro" é a leitura errada de "você não pode ver". */}
+                  {(timeline?.ocultos?.financeiro > 0 || timeline?.ocultos?.pastoral > 0) && (
+                    <div style={{ padding: '10px 12px', marginBottom: 10, borderRadius: 10, background: C.amberBg, border: `1px solid ${C.amber}40`, color: C.text2, fontSize: 12 }}>
+                      <strong style={{ color: '#92400e' }}>Linha do tempo parcial.</strong>{' '}
+                      {[
+                        timeline.ocultos.financeiro > 0 && `${timeline.ocultos.financeiro} de contribuição`,
+                        timeline.ocultos.pastoral > 0 && `${timeline.ocultos.pastoral} de cuidado pastoral`,
+                      ].filter(Boolean).join(' e ')}{' '}
+                      {(timeline.ocultos.financeiro + timeline.ocultos.pastoral) === 1 ? 'evento não é exibido' : 'eventos não são exibidos'} com a sua permissão.
+                    </div>
+                  )}
                   {loadingTimeline ? (
                     <div style={{ padding: '24px 0', textAlign: 'center', color: C.text3, fontSize: 13 }}>Carregando…</div>
                   ) : timeline?.eventos?.length > 0 ? (

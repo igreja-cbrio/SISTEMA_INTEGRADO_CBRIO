@@ -90,44 +90,20 @@ const CHAVES_ABERTAS = MARCADORES.filter((m) => !m.sensivel).map((m) => m.chave)
 const CHAVES_SENSIVEIS = MARCADORES.filter((m) => m.sensivel).map((m) => m.chave);
 
 /**
- * Módulos que liberam o marcador sensível. Espelha `ROUTE_MODULE_MAP` da rota
- * `membros-financeiro` (['membresia','financeiro']), que é a que guarda
- * `GET /membresia/contribuicoes` — quem já podia ver o extrato pode ver a flag.
+ * ⚠️ RÉGUA ÚNICA · quem pode ver o marcador de generosidade é EXATAMENTE quem
+ * pode ver dízimo/oferta da pessoa na ficha (`utils/dadosSensiveisPessoa`).
+ * Duas funções pra decidir "esta pessoa pode ver dinheiro daquela pessoa?"
+ * divergiriam — e a que ficasse mais frouxa venceria na prática, porque basta
+ * um caminho aberto.
  */
-const MODULOS_SENSIVEL = ['membresia', 'financeiro'];
-const NIVEL_SENSIVEL = 2;
+const {
+  MODULOS_FINANCEIRO: MODULOS_SENSIVEL,
+  NIVEL_FINANCEIRO: NIVEL_SENSIVEL,
+  podeVerFinanceiroDePessoa,
+} = require('./dadosSensiveisPessoa');
 
-/**
- * "Esta pessoa pode ver o marcador de generosidade?" — ESTRITO.
- *
- * ⚠️ NÃO reusa `getEffectiveLevel(req, 'membros-financeiro')` de propósito:
- * aquele helper usa `cargoNivelLeitura` como PISO, então um cargo com nível base
- * alto passaria sem ter `membresia` nem `financeiro` na matriz. Piso de cargo é
- * razoável pra decidir "quanto detalhe mostro numa tela que a pessoa já abriu";
- * é errado pra decidir se dado financeiro sai pela rede.
- *
- * ⚠️ Fail-closed: sem `user`, sem `granular` ou com o módulo bloqueado, devolve
- * false. Recebe o `req.user` já resolvido (nada de I/O aqui).
- */
-function podeVerMarcadorSensivel(user) {
-  if (!user) return false;
-
-  // Bloqueio explícito por usuário vence tudo (mesma ordem do authorizeModule).
-  const bloqueados = user.granular?.modulosBloqueados || [];
-  if (MODULOS_SENSIVEL.every((m) => bloqueados.includes(m))) return false;
-
-  if (user.is_super_admin === true) return true;
-  if (user.role === 'admin' || user.role === 'diretor') return true;
-
-  const perms = user.granular?.modulePerms;
-  if (!perms) return false;
-
-  return MODULOS_SENSIVEL.some((m) => {
-    if (bloqueados.includes(m)) return false;
-    const nivel = perms[m]?.leitura;
-    return typeof nivel === 'number' && nivel >= NIVEL_SENSIVEL;
-  });
-}
+/** "Esta pessoa pode ver o marcador de generosidade?" — ESTRITO, fail-closed. */
+const podeVerMarcadorSensivel = podeVerFinanceiroDePessoa;
 
 /**
  * Dobra os sinais crus de UMA pessoa nos marcadores exibidos.
