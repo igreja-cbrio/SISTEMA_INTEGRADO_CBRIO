@@ -71,9 +71,29 @@ function tempoAtras(iso) {
   return `${Math.floor(mins / 1440)}d`;
 }
 
-// 6 módulos macro · alinhados com o roadmap apresentado ao gestor
-// (Administração · Inteligência · Planejamento · Ministerial · Cultos · Criativo)
+// 7 módulos macro · alinhados com o roadmap apresentado ao gestor
+// (Staff · Administração · Inteligência · Planejamento · Ministerial · Cultos · Criativo)
+// "Staff" (2026-08-14 · decisão do Marcos): Solicitações + Minhas Tarefas saíram do
+// grupo Administração (que agora só reúne quem de fato usa RH/Financeiro/Logística/
+// Patrimônio/Sistema/Permissões) e viraram grupo próprio, no topo do menu, porque
+// são usados por TODO colaborador — pura reorganização de EXIBIÇÃO, sem mudança
+// de módulo/permissão/rota (Solicitações segue perm 'isColaborador'; Minhas Tarefas
+// segue sem module/perm, aberta a qualquer autenticado).
 const NAV_ITEMS = [
+  {
+    id: 7,
+    label: 'Staff',
+    subMenus: [
+      {
+        title: 'Serviços',
+        items: [
+          { label: 'Solicitações', description: 'TI, compras, reembolso, espaços e férias', icon: ShoppingCart, path: '/solicitacoes', perm: 'isColaborador' },
+          // Sem perm/module: página pessoal · visível pra qualquer autenticado
+          { label: 'Minhas Tarefas', description: 'Suas tarefas pessoais — lista, kanban e calendário', icon: ListChecks, path: '/tarefas' },
+        ],
+      },
+    ],
+  },
   {
     id: 1,
     label: 'Administração',
@@ -85,14 +105,6 @@ const NAV_ITEMS = [
           { label: 'Financeiro', description: 'Contas, transações e reembolsos', icon: DollarSign, path: '/admin/financeiro', perm: 'canFinanceiro' },
           { label: 'Logística', description: 'Fornecedores, compras e pedidos', icon: Truck, path: '/admin/logistica', perm: 'canLogistica' },
           { label: 'Patrimônio', description: 'Bens, localizações e inventário', icon: Tag, path: '/admin/patrimonio', perm: 'canPatrimonio' },
-        ],
-      },
-      {
-        title: 'Serviços',
-        items: [
-          { label: 'Solicitações', description: 'TI, compras, reembolso, espaços e férias', icon: ShoppingCart, path: '/solicitacoes', perm: 'isColaborador' },
-          // Sem perm/module: página pessoal · visível pra qualquer autenticado
-          { label: 'Minhas Tarefas', description: 'Suas tarefas pessoais — lista, kanban e calendário', icon: ListChecks, path: '/tarefas' },
         ],
       },
       {
