@@ -125,8 +125,11 @@ BEGIN
   CREATE TABLE IF NOT EXISTS public._bk_20260824_batismo_horarios AS
     SELECT * FROM public.batismo_horarios;
   BEGIN
+    -- kpi_registros aponta pro KPI por indicador_id (que É o código texto:
+    -- kpi_indicadores_taticos.id = 'SED-18' — conferido no ensaio de 13/08,
+    -- quando o nome errado "kpi_id" caiu neste EXCEPTION e virou aviso)
     CREATE TABLE IF NOT EXISTS public._bk_20260824_kpi_registros_sede AS
-      SELECT * FROM public.kpi_registros WHERE kpi_id IN ('SED-18','SED-21');
+      SELECT * FROM public.kpi_registros WHERE indicador_id IN ('SED-18','SED-21');
   EXCEPTION WHEN others THEN
     v_resumo := v_resumo || ' · AVISO: backup de kpi_registros falhou (' || SQLERRM || ')';
   END;
