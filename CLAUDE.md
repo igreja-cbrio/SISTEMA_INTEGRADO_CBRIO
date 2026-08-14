@@ -6191,8 +6191,12 @@ grupo já passou por ele. Não havia buraco a acomodar, só máquina a mais.
   há ponteiro no arquivo. Unificar quando houver janela pra testar o formulário.
 - **Backfill**: a base tem `genero` em **499 de 4.056 vivos (12%)**. Recuperadas
   51 declarações que a própria pessoa fez em `mem_cadastros_pendentes` e o matcher
-  descartava. ⚠️⚠️ **NUNCA inferir sexo por NOME** — errar isso constrange uma
-  pessoa real. Sem declaração o campo fica NULO e o app pede.
+  descartava. ⚠️⚠️ **NUNCA inferir sexo por NOME *e gravar como se fosse
+  declarado*** — errar isso constrange uma pessoa real e decide em qual grupo ela
+  pode entrar. Sem declaração o campo fica NULO e o app pede.
+  ⚠️ **Precisão de 14/08**: a lei proíbe a GRAVAÇÃO automática, não a sugestão.
+  Palpite por nome pode existir como sugestão que uma PESSOA confirma — ver
+  "Completar o sexo" abaixo. Quem legitima o dado é a confirmação humana.
 - ⚠️ **PENDENTE DE GENTE (é dado)**: "NEW HEART - RECOMEÇO 40+" está
   `categoria='Homens'` com 4 mulheres no roster e 6 pedidos aprovados — CADASTRO
   errado, não bypass. Quem já está no grupo não é afetado; mulher nova é recusada.
@@ -6720,6 +6724,60 @@ função fica, com COMMENT de depreciação — religar é 1 comando).
   ⚠️⚠️ **O link do censo NUNCA é entregue a terceiro**: ele abre o cadastro da
   pessoa preenchido **e editável**, então dá leitura e ESCRITA no cadastro alheio
   sem trilha de quem alterou. Quem envia é o servidor, pro contato DELA.
+
+## ⚠️ Completar o SEXO · declaração GRAVA, palpite SUGERE (2026-08-14 · migration `20260814160000`)
+
+Pergunta do Matheus, ao ver a fila de "faltam dados": *"tem muito que é só o
+sexo. Será que conseguimos usar IA para ver pelo nome se é feminino ou
+masculino?"*
+
+**Sim — como SUGESTÃO.** A lei de 10/08 proíbe a GRAVAÇÃO automática, não a
+sugestão; é a confirmação humana que legitima o dado. Duas camadas, e a
+separação entre elas é a própria lei:
+
+| camada | o quê | grava sozinho? |
+|---|---|---|
+| **1 · declarado** (`colherDeclaracoes`) | sexo que a PESSOA preencheu no voluntariado, Next ou batismo | **sim** — é dado dela, só-onde-vazio, mesma política de telefone/e-mail |
+| **2 · palpite** (`sugerirPorNome` → `confirmarSexos`) | Haiku olhando o primeiro nome | **não** — sugestão efêmera; só o clique de gente grava |
+
+- **`backend/utils/sexoDeclarado.js`** = régua PURA no gate
+  (`src/test/sexoDeclarado.test.ts` · 19 casos · 2 mutantes RODADOS: conflito
+  virando desempate mata 1, aceitar palpite ambíguo mata 2).
+- ⚠️⚠️ **Divergência entre portas é CONFLITO, nunca desempate.** Se o
+  voluntariado diz masculino e o batismo diz feminino, uma das duas está errada
+  — ou são duas pessoas fundidas por engano. Escolher "a primeira" ou "a mais
+  recente" grava um erro com cara de dado. Vai pra decisão humana, DECLARADO na
+  tela.
+- ⚠️ **Nome unissex tem que voltar `ambiguo`** e ambíguo NÃO vira sugestão.
+  Aceitar confiança 'media' transformaria a fila numa fila de erros plausíveis —
+  parecem certos e ninguém confere.
+- ⚠️ **Só o PRIMEIRO NOME vai ao modelo** (LGPD · minimização): sobrenome não
+  ajuda a decidir sexo. E nomes repetidos viram UMA pergunta ("Maria" ×300) —
+  o palpite é sobre o nome, não sobre a pessoa.
+- ⚠️ **A sugestão NÃO é persistida** (sem tabela de fila): fila de sugestão
+  envelhece — a pessoa declara pelo censo e a linha antiga continua propondo o
+  contrário. Recalcular custa centavos; divergir custa um cadastro errado.
+- ⚠️ **Nasce tudo DESMARCADO** na tela: marcar por padrão faria um clique gravar
+  centenas de palpites que ninguém leu, que é o que a confirmação existe pra
+  impedir.
+- ⚠️ **A origem fica registrada** em `mem_identidade_observacoes`
+  (`sexo_colhido_porta` × `sexo_inferido_ia`): sem isso, em um ano ninguém
+  distingue o que a pessoa declarou do que foi palpite confirmado — e é essa
+  distinção que permite rever a decisão se ela se mostrar ruim.
+- ⚠️ Endpoints em `grupos.js` **nível 5** e restritos ao **universo de grupos**
+  (`apenasIds`): um endpoint guardado por `grupos` não pode escrever `genero` —
+  a régua que decide quem entra em grupo de Homens/Mulheres — em quem nunca
+  passou por um grupo.
+- ⚠️ **`mem_cadastros_pendentes` ficou FORA das fontes**: a única ligação dela
+  com o cadastro é `duplicado_de_id`, que existe só quando a linha foi marcada
+  como duplicata — não é vínculo de identidade, e colheria o sexo de uma pessoa
+  pro cadastro de outra sempre que aquela marcação estivesse errada.
+
+**Migration `20260814160000`**: `genero = ''` vira NULL e M/F vira canônico.
+⚠️ Não é cosmético — "sem sexo" tinha DUAS formas, e `.is('genero', null)` (a
+guarda que impede sobrescrever declaração alheia) **não pega string vazia**:
+a pessoa apareceria em "faltam dados" e a gravação seria recusada em silêncio,
+reportada como "já tinha sexo". Ausência tem uma forma só.
 
 ## ⚠️⚠️ A foto do app NUNCA chegava ao ERP · `avatar_url` × `foto_url` (2026-08-13 · migration `20260814130000`)
 
