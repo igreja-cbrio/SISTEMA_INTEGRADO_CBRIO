@@ -5430,6 +5430,52 @@ marca reprova a banda no tema escuro (L 0.687) e tem contraste 2,65:1 no claro.
 As duas já estão em `GRADIENT_PALETTE`, então `gradFill` funciona. **Não trocar
 sem revalidar.**
 
+### ⚠️ Uma COR por evento no calendário · `backend/utils/marketingCores.js` (14/08 · 3ª rodada)
+
+Pedido do Marcos: *"coloque de cores diferentes os eventos lá no calendário para
+facilitar a visualização"* + *"pode estender a parte da esquerda, aumentar o
+tamanho para ficar no mesmo tamanho do calendário"*.
+
+**A cor é decidida no SERVIDOR** (`/dashboard` manda `cor` e `cor_excedente` por
+evento) e vem da POSIÇÃO na lista já ordenada por Dia D — então a cor de um
+evento é **estável de mês para mês**, o que é o requisito de uma paleta
+categórica (o mesmo evento não pode trocar de cor quando você navega). Medido em
+produção: agosto 5 eventos / 5 cores distintas · setembro 6 / 6, com o
+`#ec4899` do "Dia Bíblia" igual nos dois meses.
+
+⚠️⚠️ **SEIS é o máximo, e foi MEDIDO, não escolhido.** Busca gulosa exaustiva
+sobre 75 candidatos com `scripts/validate_palette.js --pairs all` nos **dois
+temas com as MESMAS cores**: `#16a34a #b91c1c #0891b2 #2563eb #a21caf #ec4899`
+(CVD ΔE 8,1 · visão normal 16,3). O gargalo é a **banda de luminosidade do tema
+escuro** (L 0,48–0,67), estreita demais para 7 matizes que um dicromata
+distinga. Do 7º evento em diante a faixa fica **cinza neutro** e o **nome**
+carrega a identidade — a régua da casa manda dobrar em "Outro", nunca gerar
+matiz nova (cor gerada não é validada e pode colidir).
+- ⚠️ `--pairs all`, não "adjacent": as faixas de eventos diferentes se empilham
+  na MESMA linha de semana, então **qualquer** par pode ficar lado a lado.
+- ⚠️ **O teal da marca ficou FORA de propósito** — é o acento do sistema (o
+  "hoje" do calendário, botões primários). Um evento nele pareceria destaque do
+  sistema.
+- ⚠️ **Contraste "relief" em 2 cores no tema escuro é aceito** porque a faixa
+  SEMPRE traz o nome do evento escrito e existe **legenda** — identidade nunca é
+  só cor. Por isso também o texto "Fase N · nome" saiu do roxo e usa **token de
+  texto**: texto não veste cor de série.
+- ⚠️ **`style` inline, não classe Tailwind**: hex dinâmico não gera classe. O
+  hover é `brightness` — `hover:bg-*` perderia do style inline.
+- **Evento que caiu no cinza é DECLARADO** no rodapé (`eventos_sem_cor_propria` +
+  `cores_disponiveis`): duas faixas cinzas não podem parecer o mesmo ciclo.
+
+**⚠️ O mutante que o MEU PRÓPRIO teste pegou:** `corDoEvento(null)` devolvia a
+**primeira cor da paleta**, porque `Number(null) === 0` passa por
+`Number.isInteger`. Dois eventos ficariam com a mesma cor sem ninguém notar — é a
+mesma armadilha do "valor nulo virando R$ 0,00" da alçada de compra. A guarda é
+**`typeof indice !== 'number'` ANTES de converter**, e o mutante que a remove
+deixa o gate vermelho (rodado). `src/test/marketingCores.test.ts` · 6 casos.
+
+**Layout**: a coluna esquerda virou **6/6** (era 5/7) e é `flex-col` — o box de
+tarefas ESTICA (`flex-1` + rolagem interna) para alcançar a altura do calendário,
+e o de solicitações fica na altura natural (esticar o gráfico não tem propósito).
+
 ### Medições de 14/08 (o estado que a tela mostra)
 
 7 ciclos ativos · 77 fases (0 sem data) · 49 tarefas de marketing ↔ 49 cards
@@ -5451,6 +5497,58 @@ arte evento") está vivo na fila do Cauã com a solicitação **soft-deletada** 
 soft-delete da solicitação não propagou pro card. Aparece no Kanban desde antes
 disto; a tela não o esconde de propósito (esconder criaria duas verdades entre
 dashboard e Kanban).
+
+## ⚠️⚠️ EXCLUIR EVENTO travava no card espelho do Marketing (2026-08-14 · migration `20260814190000`)
+
+Marcos, ao tentar apagar o "Dia Reforma Protestante": *"quero apagar o da reforma
+protestante, não terá mais evento"* — e a tela devolveu
+`Erro ao excluir evento: new row for relation "marketing_kanban_cards" violates
+check constraint "marketing_cards_origem_fk_check"`.
+
+**⚠️⚠️ CAUSA-RAIZ: o schema se CONTRADIZ** (`20260528360000`), e não é específico
+daquele evento — bloqueava **qualquer** um dos eventos com card espelho:
+
+| | |
+|---|---|
+| FK | `marketing_kanban_cards.cycle_phase_task_id → cycle_phase_tasks ON DELETE SET NULL` |
+| CHECK | `origem='evento'` EXIGE `evento_task_id IS NOT NULL OR cycle_phase_task_id IS NOT NULL` |
+
+Apagar o evento cascateia **no banco** até `cycle_phase_tasks`; o SET NULL zera o
+ponteiro do card; o card fica `origem='evento'` com os DOIS ponteiros nulos e
+viola o CHECK — abortando o `DELETE` de `events`. **É a lei nº 10 pelo avesso:
+`ON DELETE SET NULL` não pode conviver com CHECK que exige a coluna preenchida.**
+Confirmado ao vivo: um INSERT-sonda de card `origem='evento'` sem ponteiro devolve
+o **mesmo `23514` com o mesmo nome de constraint** da mensagem que ele viu.
+
+**A correção tem 2 partes e as duas são necessárias:** trigger BEFORE DELETE em
+`cycle_phase_tasks` que **SOFT-DELETA** o card espelho (sem isso o card
+sobreviveria vivo e sem ponteiro — órfão eterno no Kanban), e o CHECK passando a
+exigir o ponteiro **só de card VIVO** (é o que deixa o SET NULL concluir).
+⚠️ **NÃO é `ON DELETE CASCADE`**: `marketing_kanban_cards` está na whitelist de
+soft-delete (lei nº 2) e o card carrega estado LOCAL do Marketing (dono,
+etiqueta, estado, checklist) que o /eventos não tem. O CHECK novo é **mais
+permissivo** que o antigo, então nenhuma linha existente passa a violar.
+
+### ⚠️⚠️ O evento ficou MEIO-APAGADO em produção — e o cascade best-effort é o motivo
+
+Medido em 14/08, depois da tentativa dele: `events` **1** (existe) ·
+`event_cycles` **0 (apagado)** · `event_cycle_phases` **11 órfãs** ·
+`cycle_phase_tasks` **46 órfãs** (7 de marketing) · **7 cards espelho VIVOS**.
+
+O `DELETE /events/:id` faz cascade de aplicação com o helper `safe()` — **cada
+passo dependente só LOGA se falhar** (desenho de 09/06, pra não responder erro
+com o dado já apagado). Então: o delete das `cycle_phase_tasks` falhou (o CHECK) e
+só logou · o das fases falhou em seguida (FK das tarefas que sobraram) e só logou
+· **o de `event_cycles` PASSOU** · e o delete primário de `events` morreu no
+cascade do banco. Resultado visível: **o evento desapareceu do calendário do
+Marketing e das lentes** (a régua é `event_cycles.status='ativo'`) enquanto fases,
+tarefas e cards continuam lá.
+
+⚠️ **Régua que fica: cascade best-effort deixa RESÍDUO SILENCIOSO quando um passo
+falha.** Ele protege a resposta, não a integridade — quem investigar "por que
+sumiu do calendário" tem que olhar `event_cycles` antes de concluir que o evento
+foi excluído. Com a migration aplicada, o cascade do banco conclui e limpa o
+resíduo (fases e tarefas apontam pra `event_id`); não precisa script separado.
 
 ## Marketing · estado final (specs maio + redesenho 2026-05-30/31 · NO AR)
 

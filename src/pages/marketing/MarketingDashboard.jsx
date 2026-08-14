@@ -122,7 +122,12 @@ export default function MarketingDashboard() {
         <div className="flex justify-center my-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       ) : dados ? (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          <div className="lg:col-span-5 space-y-4">
+          {/* ⚠️ 6/6, não 5/7 (pedido do Marcos: "extender a parte da esquerda
+              para ficar no mesmo tamanho do calendário"). A coluna é flex-col
+              pra os dois blocos ALCANÇAREM a altura do calendário — o de tarefas
+              estica (`flex-1`, com rolagem interna) e o de solicitações fica na
+              altura natural, senão o gráfico esticaria sem motivo. */}
+          <div className="lg:col-span-6 flex flex-col gap-4 min-h-0">
             <BoxMinhasTarefas
               dados={dados.minhas_tarefas}
               equipe={dados.equipe}
@@ -133,7 +138,7 @@ export default function MarketingDashboard() {
             />
             <BoxSolicitacoes dados={dados.solicitacoes} />
           </div>
-          <div className="lg:col-span-7">
+          <div className="lg:col-span-6 min-h-0">
             <BoxCiclo
               ciclo={dados.ciclo}
               semanas={dados.semanas}
@@ -159,7 +164,9 @@ function BoxMinhasTarefas({ dados, equipe, verMembro, onVerMembro, isCoord, onMu
   const nomeVisto = verMembro ? (equipe || []).find(m => m.id === verMembro)?.nome : null;
 
   return (
-    <Card className="p-4">
+    // `flex-1 min-h-0` = este é o bloco que ESTICA pra casar a altura do
+    // calendário; a lista rola por dentro em vez de empurrar a página.
+    <Card className="p-4 lg:flex-1 lg:min-h-0 flex flex-col">
       <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
         <h2 className="font-semibold flex items-center gap-2 text-sm">
           <ListChecks className="h-4 w-4 text-primary" />
@@ -206,7 +213,7 @@ function BoxMinhasTarefas({ dados, equipe, verMembro, onVerMembro, isCoord, onMu
           {' '}As tarefas do ciclo criativo aparecem no calendário à direita.
         </p>
       ) : (
-        <>
+        <div className="lg:flex-1 lg:min-h-0 lg:overflow-y-auto">
           <ol className="space-y-1.5">
             {dados.itens.map((t, i) => (
               <LinhaTarefa key={t.id} n={i + 1} tarefa={t} isCoord={isCoord} onMudou={onMudou} />
@@ -221,7 +228,7 @@ function BoxMinhasTarefas({ dados, equipe, verMembro, onVerMembro, isCoord, onMu
               {isCoord && ' Clique no calendário ao lado de cada uma para definir.'}
             </p>
           )}
-        </>
+        </div>
       )}
     </Card>
   );
@@ -472,6 +479,20 @@ function BoxCiclo({ ciclo, semanas, mes, mesAnterior, mesSeguinte, hoje, onMes, 
         </div>
       </div>
 
+      {/* ⚠️ LEGENDA obrigatória: são várias séries no mesmo calendário, e a
+          identidade não pode depender só da cor. Também responde "quais ciclos
+          existem neste mês" de uma olhada. */}
+      {!ciclo.erro && (ciclo.linhas || []).length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 border-b border-border">
+          {ciclo.linhas.map(l => (
+            <span key={l.id} className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+              <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: l.cor }} />
+              <span className="truncate max-w-[160px]">{l.nome}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Cabeçalho dos dias da semana (Dom…Sáb, como no /eventos) */}
       <div className="grid grid-cols-7 border-b border-border bg-muted/30">
         {DIAS_SEMANA.map(d => (
@@ -511,11 +532,20 @@ function BoxCiclo({ ciclo, semanas, mes, mesAnterior, mesSeguinte, hoje, onMes, 
                   <button
                     key={evento.id}
                     onClick={() => onAbrirFase({ ...celula, evento_nome: evento.nome, semana: s })}
-                    className="w-full text-left rounded-md border-l-[3px] border-purple-500 bg-purple-500/10 hover:bg-purple-500/20 transition-colors px-2 py-1 flex items-center gap-2"
-                    title={`${evento.nome} · Fase ${celula.numero_fase} — ${celula.nome_fase}`}
+                    // ⚠️ A cor vem do SERVIDOR (utils/marketingCores · paleta
+                    // validada nos 2 temas, todos os pares). Inline porque é dado,
+                    // não classe: Tailwind não gera classe de hex dinâmico. O hover
+                    // é por `brightness` — `hover:bg-*` perderia do style inline.
+                    // ⚠️ O NOME do evento está sempre escrito: a cor é a 2ª pista,
+                    // nunca a única (é o que sustenta o contraste "relief" da
+                    // paleta e o daltonismo).
+                    style={{ borderLeftColor: evento.cor, backgroundColor: `${evento.cor}1A` }}
+                    className="w-full text-left rounded-md border-l-[3px] px-2 py-1 flex items-center gap-2 transition-[filter] hover:brightness-105 dark:hover:brightness-125"
+                    title={`${evento.nome} · Fase ${celula.numero_fase} — ${celula.nome_fase}${evento.cor_excedente ? ' · sem cor própria (paleta esgotada)' : ''}`}
                   >
                     <span className="text-[11px] font-medium truncate flex-1 min-w-0">{evento.nome}</span>
-                    <span className="text-[11px] text-purple-700 dark:text-purple-300 shrink-0 truncate max-w-[45%]">
+                    {/* Texto em token de texto, NUNCA na cor da série. */}
+                    <span className="text-[11px] text-muted-foreground shrink-0 truncate max-w-[45%]">
                       Fase {celula.numero_fase} · {celula.nome_fase}
                     </span>
                     {/* A semana em que o ciclo VIRA de fase é a que a equipe
@@ -547,10 +577,15 @@ function BoxCiclo({ ciclo, semanas, mes, mesAnterior, mesSeguinte, hoje, onMes, 
 
       {/* ⚠️ Ciclo ativo que NÃO aparece neste mês é DECLARADO: "só vejo 4
           séries" com 7 ciclos ativos parece bug. */}
-      {!ciclo.erro && (ciclo.fora_da_janela > 0 || ciclo.sem_data > 0) && (
+      {!ciclo.erro && (ciclo.fora_da_janela > 0 || ciclo.sem_data > 0 || ciclo.eventos_sem_cor_propria > 0) && (
         <p className="text-[10px] text-muted-foreground px-3 py-2 border-t border-border">
           {ciclo.fora_da_janela > 0 && `${ciclo.fora_da_janela} de ${ciclo.ciclos_ativos} ciclos ativos não têm fase neste mês. `}
-          {ciclo.sem_data > 0 && `${ciclo.sem_data} fase(s) sem data prevista não puderam ser posicionadas.`}
+          {ciclo.sem_data > 0 && `${ciclo.sem_data} fase(s) sem data prevista não puderam ser posicionadas. `}
+          {/* ⚠️ Cor repetida NÃO é inventada: do 7º evento em diante a faixa fica
+              cinza e quem identifica é o nome. Declarado pra ninguém achar que
+              duas faixas cinzas são o mesmo ciclo. */}
+          {ciclo.eventos_sem_cor_propria > 0 &&
+            `${ciclo.eventos_sem_cor_propria} evento(s) sem cor própria (a paleta tem ${ciclo.cores_disponiveis} cores distinguíveis) — identifique pelo nome.`}
         </p>
       )}
     </Card>
