@@ -75,13 +75,19 @@ async function computeJornada(janelaIn = JANELA_PADRAO) {
 
   // 6 sinais (espelham fn_nsm_sinais_engajados). Estado atual: batismo, next,
   // grupo, servir. Atividade na janela: investir (devocional), generosidade.
-  const [batismoSet, nextMatSet, nextInscSet, grupoSet, investirSet, servirSet, genSet] = await Promise.all([
+  const [batismoSet, nextSet, grupoSet, investirSet, servirSet, genSet] = await Promise.all([
     // Batismo · inscrição realizada (estado)
     fetchMembroSet('batismo_inscricoes', (q) => q.is('deleted_at', null).eq('status', 'realizado')),
-    // Next · matrícula formada (estado)
-    fetchMembroSet('next_matriculas', (q) => q.is('deleted_at', null).eq('status', 'formado')),
-    // Next · check-in legado (estado · next_inscricoes NÃO tem deleted_at)
-    fetchMembroSet('next_inscricoes', (q) => q.not('check_in_at', 'is', null)),
+    // ⚠️ Next · FONTE ÚNICA `vw_next_formado_pessoa` (régua de 14/08/2026: UM
+    // encontro basta). Antes eram DOIS sets: `next_matriculas.status='formado'`
+    // (que é POR TURMA e diz "não formou" para quem esteve num encontro de
+    // outra turma) e o check-in da camada LEGADA `next_inscricoes`. Medido em
+    // 14/08: a união dos dois reconhecia 689 pessoas contra 898 da view — 209 a
+    // menos, e por isso a aba Jornada da Membresia e o /painel discordavam do
+    // funil da Integração e dos KPIs sobre as MESMAS pessoas.
+    // ⚠️ Conferido antes de trocar: dos 538 membros com check-in legado,
+    // ZERO ficam de fora da view — a troca não perde ninguém.
+    fetchMembroSet('vw_next_formado_pessoa', (q) => q.not('membro_id', 'is', null)),
     // Conectar · em grupo ativo (estado)
     fetchMembroSet('mem_grupo_membros', (q) => q.is('deleted_at', null).is('saiu_em', null)),
     // Investir · devocional concluído (atividade · na janela)
@@ -95,7 +101,7 @@ async function computeJornada(janelaIn = JANELA_PADRAO) {
   const lista = membros.map((m) => {
     // seguir = Batismo OU Next (o "passo de fé" além da conversão · = sinal seguir do NSM)
     const v = {
-      seguir: batismoSet.has(m.id) || nextMatSet.has(m.id) || nextInscSet.has(m.id),
+      seguir: batismoSet.has(m.id) || nextSet.has(m.id),
       conectar: grupoSet.has(m.id),
       investir: investirSet.has(m.id),
       servir: servirSet.has(m.id),

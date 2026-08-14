@@ -8961,11 +8961,17 @@ Voluntariado · roster do app do líder.
 - ⚠️ **`next` lê `vw_next_formado_pessoa`** (a fonte única que NSM/painel/KPI/
   Cuidados usam), NÃO `next_matriculas.status`: as 2 aulas não são sequenciais e o
   status por turma diz "não formou" pra quem formou cruzando turmas.
-  ⚠️ **`services/jornadaEngajamento.js` (motor da tela Jornada e do /painel) ainda
-  lê `next_matriculas` + `next_inscricoes.check_in_at` — ou seja ele JÁ diverge da
-  NSM, desde antes disto.** Alinhá-lo MOVE números do /painel ⇒ decisão do Marcos,
-  não efeito colateral. Enquanto não alinhar, a aba Jornada da Membresia e a coluna
-  Jornada podem discordar sobre "fez o Next".
+  ✅ **`services/jornadaEngajamento.js` foi ALINHADO em 14/08/2026** (autorizado
+  pelo Matheus): lia `next_matriculas.status='formado'` + o check-in da camada
+  LEGADA `next_inscricoes`, reconhecendo **689 pessoas contra 898 da view**. Agora
+  lê a fonte única. ⚠️ Conferido antes de trocar: dos **538** membros com check-in
+  legado, **ZERO** ficam de fora da view — a troca não perde ninguém. Efeito na
+  aba Jornada: membros ativos com o valor "Seguir a Jesus" de **672 → 737**.
+  ⚠️⚠️ **CORREÇÃO de uma afirmação deste arquivo**: a NSM **NÃO** lê a view.
+  `fn_nsm_valores_engajados` usa `next_inscricoes.check_in_at` **na janela de 60
+  dias** — e é por isso que ela não foi alinhada junto: a view não tem a data do
+  encontro (`formado_em` é o `min(created_at)` da matrícula), então trocar ali
+  exigiria uma data confiável de "quando fez o Next". Fica como pendência real.
 - ⚠️⚠️ **A LEI: marcador diz o que o sistema tem REGISTRO de, não o que a pessoa
   fez.** Ausência NÃO é prova. Por isso: **`mem_membros.batizado_outra_igreja`
   conta como batizado** (com o detalhe à vista) — sem isso o líder cobra batismo de
