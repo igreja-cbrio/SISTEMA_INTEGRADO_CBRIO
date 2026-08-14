@@ -24,6 +24,7 @@ import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus, ChevronRight
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import MarcadoresJornada from '../../components/MarcadoresJornada';
 import VinculosDuplicadosBloco from '../../components/grupos/VinculosDuplicadosBloco';
+import CompletarSexoBloco from '../../components/grupos/CompletarSexoBloco';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -579,6 +580,11 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
           Grupos já provou que separar em aba faz ninguém achar). O cabeçalho
           carrega a contagem, então recolhido não esconde que há trabalho. */}
       <VinculosDuplicadosBloco podeResolver={podeRemoverVinculo} onResolvido={carregar} />
+
+      {/* Completar o sexo (Matheus · 14/08): fica ao lado do selo "faltam dados"
+          porque é a mesma fila de trabalho. Nasce RECOLHIDO — quem abre a aba
+          quer ver as pessoas, não uma ferramenta de saneamento. */}
+      {totalIncompletos > 0 && <CompletarSexoBloco onAplicado={carregar} />}
 
       {/* Lista */}
       <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>

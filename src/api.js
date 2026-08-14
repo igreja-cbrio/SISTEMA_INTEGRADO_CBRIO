@@ -959,6 +959,11 @@ export const grupos = {
   pessoasPapeis: () => get('/grupos/pessoas/papeis'),
   // Manda pra PRÓPRIA pessoa o link do censo pra ela completar o cadastro.
   pedirDadosPessoa: (membroId) => post(`/grupos/pessoas/${membroId}/pedir-dados`, {}),
+  // Completar sexo · `aplicar=false` é dry-run. Colher = DECLARAÇÃO de outra
+  // porta (grava direto); sugestões = palpite da IA (só grava no confirmar).
+  sexoColher: (aplicar = false) => post('/grupos/pessoas/sexo/colher', { aplicar }),
+  sexoSugestoes: () => get('/grupos/pessoas/sexo/sugestoes'),
+  sexoConfirmar: (itens) => post('/grupos/pessoas/sexo/confirmar', { itens }),
   marcarEstudoSemana: (docId, ativo) => patch(`/whatsapp-grupos/materiais/${docId}/estudo-semana`, { ativo }),
   semRelato: () => get('/grupos/kpis/sem-relato'),
   listObservacoes: (grupoId) => get(`/grupos/${grupoId}/observacoes`),

@@ -27,6 +27,9 @@ const { classificarContato, digitos: contatoDigitos } = require('../services/con
 // o trigger que promove visitante → participante quando o cadastro fecha.
 const { avaliarCadastroPessoa } = require('../utils/prontidaoCadastro');
 const censoDisparo = require('../services/censoDisparo');
+// Completar o sexo: colher DECLARAÇÃO de outras portas (grava) × palpite por
+// nome (só sugere · quem legitima é a confirmação humana).
+const sexoCompletar = require('../services/sexoCompletar');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
 // troca de líder reflete em whatsapp_lideres sem passo manual. Fire-and-forget
@@ -4633,6 +4636,71 @@ router.get('/pessoas/papeis', async (req, res) => {
   } catch (e) {
     console.error('[grupos] pessoas/papeis:', e.message);
     res.status(500).json({ error: 'Erro ao carregar pessoas' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Completar o SEXO de quem está sem (Matheus · 14/08/2026)
+//
+//  ⚠️⚠️ Nível 5 e restrito ao UNIVERSO DE GRUPOS. Escrever `genero` em massa
+//  mexe na régua que decide quem entra em grupo de Homens/Mulheres; e um
+//  endpoint guardado por `grupos` não pode escrever em quem nunca passou por um
+//  grupo — por isso `apenasIds`, e não a base inteira.
+//
+//  ⚠️ DUAS camadas, e a diferença entre elas é a LEI de 10/08:
+//    · /sexo/colher     → a pessoa JÁ declarou em outra porta. Grava direto.
+//    · /sexo/sugestoes  → palpite por nome. NÃO grava. Só sugere.
+//    · /sexo/confirmar  → grava o que uma PESSOA confirmou.
+// ════════════════════════════════════════════════════════════════════════════
+router.post('/pessoas/sexo/colher', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    const universo = await universoGrupos();
+    const r = await sexoCompletar.colherDeclaracoes({
+      aplicar: req.body?.aplicar === true,   // default = dry-run
+      apenasIds: universo,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('[grupos] sexo/colher:', e.message);
+    res.status(500).json({ error: 'Erro ao colher o sexo declarado nas outras portas.' });
+  }
+});
+
+router.get('/pessoas/sexo/sugestoes', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    const universo = await universoGrupos();
+    const r = await sexoCompletar.sugerirPorNome({
+      limite: Number(req.query.limite) || undefined,
+      apenasIds: universo,
+    });
+    res.json(r);
+  } catch (e) {
+    // Chave de IA ausente/inválida é o caso mais comum aqui (lição de 22/07):
+    // dizer isso em vez de "erro" evita meia hora procurando bug de código.
+    const semChave = /ANTHROPIC_API_KEY|authentication_error|invalid x-api-key/i.test(e.message || '');
+    console.error('[grupos] sexo/sugestoes:', e.message);
+    res.status(semChave ? 503 : 500).json({
+      error: semChave
+        ? 'A IA não está configurada no servidor — sem ela não há sugestão de sexo por nome.'
+        : 'Erro ao pedir as sugestões.',
+    });
+  }
+});
+
+router.post('/pessoas/sexo/confirmar', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    const universo = await universoGrupos();
+    // ⚠️ O payload diz QUAIS, nunca "se pode": o servidor recorta pro universo
+    // antes de escrever. Sem isto, um id colado à mão escreveria em qualquer
+    // cadastro da base.
+    const itens = (Array.isArray(req.body?.itens) ? req.body.itens : [])
+      .filter(i => universo.has(i?.membro_id));
+    if (!itens.length) return res.status(400).json({ error: 'Nada a confirmar.' });
+    const r = await sexoCompletar.confirmarSexos(itens, { por: req.user?.id || null });
+    res.json(r);
+  } catch (e) {
+    console.error('[grupos] sexo/confirmar:', e.message);
+    res.status(500).json({ error: 'Erro ao gravar os sexos confirmados.' });
   }
 });
 
