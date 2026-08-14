@@ -121,8 +121,8 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
           </DialogTitle>
           <DialogDescription>
             {emRevisao
-              ? `Gate ${gateAtual} · PR aberto aguardando revisão. Revise e faça o merge do PR no GitHub antes de aprovar.`
-              : `Gate ${gateAtual} · o agente pediu aprovação antes de executar.`}
+              ? `Gate ${gateAtual} · PR aberto aguardando revisão. Revise e faça o merge do PR no GitHub antes de aprovar. Ao aprovar, o card vai para "Concluída"; em "Pedir ajustes", volta para a fila.`
+              : `Gate ${gateAtual} · o agente pediu aprovação antes de executar. Ao aprovar, o card volta para a fila e o agente continua automaticamente.`}
           </DialogDescription>
         </DialogHeader>
 
@@ -149,13 +149,13 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
           <div style={{ flex: 1 }} />
           {emRevisao ? (
             <>
-              <Button variant="outline" onClick={() => agir(false, 'em_andamento')} disabled={working}>Pedir ajustes</Button>
+              <Button variant="outline" onClick={() => agir(false, 'agendada')} disabled={working}>Pedir ajustes</Button>
               <Button onClick={() => agir(true, 'concluida')} disabled={working}>Aprovar · concluir</Button>
             </>
           ) : (
             <>
               <Button variant="outline" onClick={() => agir(false, 'falhou')} disabled={working}>Reprovar</Button>
-              <Button onClick={() => agir(true, 'em_andamento')} disabled={working}>Aprovar · continuar</Button>
+              <Button onClick={() => agir(true, 'agendada')} disabled={working}>Aprovar · continuar</Button>
             </>
           )}
         </DialogFooter>
@@ -193,7 +193,10 @@ function NovaTarefaDialog({ open, onClose, membros, onCreated }) {
         <div style={{ display: 'grid', gap: 12 }}>
           <div>
             <Label>Título *</Label>
-            <Input value={form.titulo} onChange={set('titulo')} placeholder="Ex.: Auditar cadastros incompletos do módulo X" />
+            <Input value={form.titulo} onChange={set('titulo')} maxLength={80} placeholder="Curto e direto · Ex.: Corrigir acentuação em 'Solicitacoes'" />
+            <div style={{ fontSize: 11, color: form.titulo.length >= 70 ? '#E28743' : C.text3, marginTop: 4 }}>
+              {form.titulo.length}/80 · o título vira o nome da branch/PR e das notificações
+            </div>
           </div>
           <div>
             <Label>Descrição</Label>
