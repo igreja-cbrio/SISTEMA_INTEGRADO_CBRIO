@@ -17,9 +17,12 @@ const PRIMARY = '#00B39D';
 type Culto = {
   id: string;
   data: string;
+  data_br: string;
   nome: string;
+  estado: 'antes' | 'aberto' | 'encerrado';
   aberto: boolean;
   dias_desde: number | null;
+  dias_janela: number;
   ja_lancadas: number;
 };
 
@@ -145,6 +148,47 @@ export default function DecisaoCulto() {
     );
   }
 
+  // ⚠️ ANTES do culto NÃO é erro — é o caso normal. O link é distribuído com
+  // dias de antecedência (a Integração manda a semana inteira no grupo), então
+  // quem abre na quarta pra ver o que é precisa entender que a mensagem serve e
+  // deve ser guardada. Dizer "prazo encerrado" aqui faria a pessoa apagar o
+  // link e o culto chegaria sem porta nenhuma.
+  if (culto.estado === 'antes') {
+    return (
+      <div style={wrap}>
+        <div style={card}>
+          <h1 style={{ fontSize: 22, margin: '0 0 10px' }}>Guarde este link</h1>
+          <p style={{ fontSize: 15, color: '#555', lineHeight: 1.6 }}>
+            É aqui que você vai lançar as decisões de{' '}
+            <strong style={{ color: '#1a1a1a' }}>{culto.nome}</strong>, no dia{' '}
+            <strong style={{ color: '#1a1a1a' }}>{culto.data_br}</strong>.
+          </p>
+          <p style={{ fontSize: 15, color: '#555', lineHeight: 1.6, marginTop: 12 }}>
+            O lançamento abre no dia do culto. Até lá, deixe esta mensagem salva
+            no seu WhatsApp.
+          </p>
+          <div
+            style={{
+              background: '#E8F8F5',
+              border: '1px solid #A8E6DA',
+              borderRadius: 12,
+              padding: 12,
+              marginTop: 16,
+              fontSize: 13,
+              color: '#0B6B5C',
+              textAlign: 'left',
+              lineHeight: 1.5,
+            }}
+          >
+            No culto você vai precisar só do <strong>nome</strong> e do{' '}
+            <strong>WhatsApp</strong> de cada pessoa que tomar a decisão. Dá pra
+            lançar uma atrás da outra, sem recarregar.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!culto.aberto) {
     return (
       <div style={wrap}>
@@ -165,7 +209,7 @@ export default function DecisaoCulto() {
       <div style={{ marginBottom: 18 }}>
         <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0 }}>Lançar decisões</h1>
         <p style={{ fontSize: 15, opacity: 0.92, marginTop: 6 }}>
-          {culto.nome}
+          {culto.nome}{culto.data_br ? ` · ${culto.data_br}` : ''}
         </p>
         <p style={{ fontSize: 13, opacity: 0.8, marginTop: 2 }}>
           {culto.ja_lancadas} já {culto.ja_lancadas === 1 ? 'lançada' : 'lançadas'} neste culto

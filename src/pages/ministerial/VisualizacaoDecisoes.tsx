@@ -820,7 +820,7 @@ function BotaoLinkVoluntario({ cultoId }: { cultoId: string }) {
         return;
       }
       await navigator.clipboard.writeText(r.link);
-      toast.success('Link copiado · mande no grupo dos voluntários. Vale por 2 dias.');
+      toast.success('Link copiado · pode mandar antes. Abre no dia do culto e vale por mais 2 dias.');
     } catch (e: any) {
       toast.error(e?.message || 'Não foi possível gerar o link');
     } finally {
