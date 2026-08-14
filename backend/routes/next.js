@@ -1091,17 +1091,38 @@ router.get('/pessoas', async (req, res) => {
       indicou_batismo: !!(mm && mm.indicou_batismo), indicou_devocional: !!(mm && mm.indicou_devocional),
     });
 
-    // índice de matrículas por identidade (membro_id > cpf > nome completo)
-    const mByMembro = new Map(), mByCpf = new Map(), mByNome = new Map();
+    // índice de matrículas por identidade (membro_id > cpf > nome completo >
+    // telefone + PRIMEIRO NOME)
+    //
+    // ⚠️ O ramo do telefone entrou em 14/08/2026: sem ele, 22 convertidos que
+    // TÊM matrícula apareciam como "Sem Next" na tela — 11 deles com presença
+    // registrada em pelo menos um encontro. A causa é o convertido chegar sem
+    // CPF (o cadastro da decisão do culto exige só nome + telefone) e o nome
+    // estar escrito diferente das duas portas.
+    //
+    // ⚠️⚠️ Telefone SOZINHO nunca identifica (lei do Contrato de porta: família
+    // compartilha o número). Por isso o ramo exige o PRIMEIRO NOME igual. Medido
+    // no dia: 22 casam por telefone, 14 têm o primeiro nome igual e 8 NÃO —
+    // esses 8 seguem sem casar, que é o comportamento correto.
+    const primeiroNome = (s) => nomeKey(String(s || '').trim().split(/\s+/)[0]);
+    const tel8 = (v) => { const d = digits(v); return d.length >= 10 ? d.slice(-8) : null; };
+    const mByMembro = new Map(), mByCpf = new Map(), mByNome = new Map(), mByTel = new Map();
     for (const m of matriculas) {
       if (m.membro_id && !mByMembro.has(m.membro_id)) mByMembro.set(m.membro_id, m);
       const c = digits(m.cpf); if (c.length === 11 && !mByCpf.has(c)) mByCpf.set(c, m);
       const nk = nomeKey(`${m.nome || ''} ${m.sobrenome || ''}`); if (nk && !mByNome.has(nk)) mByNome.set(nk, m);
+      const t = tel8(m.telefone);
+      if (t) { if (!mByTel.has(t)) mByTel.set(t, []); mByTel.get(t).push(m); }
     }
     const matchMatricula = (cv) => {
       if (cv.membro_id && mByMembro.has(cv.membro_id)) return mByMembro.get(cv.membro_id);
       const c = digits(cv.cpf); if (c.length === 11 && mByCpf.has(c)) return mByCpf.get(c);
       const nk = nomeKey(cv.nome); if (nk && mByNome.has(nk)) return mByNome.get(nk);
+      const t = tel8(cv.telefone), pn = primeiroNome(cv.nome);
+      if (t && pn && mByTel.has(t)) {
+        const m = mByTel.get(t).find((x) => primeiroNome(x.nome) === pn);
+        if (m) return m;
+      }
       return null;
     };
 
