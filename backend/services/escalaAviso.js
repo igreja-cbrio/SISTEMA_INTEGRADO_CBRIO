@@ -25,7 +25,6 @@ const fila = require('./whatsappFila');
 const { perfisPorId } = require('./agenteVoluntariado');
 const { notificarApp } = require('./appPush');
 const { agruparParaAviso, selecionarRodada, diaRelativoBRT } = require('../utils/avisoEscala');
-const { montarLinkEscala } = require('../utils/escalaToken');
 
 const CONTEXTO = 'voluntariado.escala_aviso';
 // Chave do aviso no app. Mesma raiz do contexto da fila, e por escala — a
@@ -201,31 +200,24 @@ async function avisarEscalasDaSemana({ dias = 7, diasAlvo = null, teto = TETO_RO
     };
   }
 
-  // ⚠️⚠️ O 4º parâmetro é o LINK de "vou / não vou poder" — no CORPO, não em
-  // botão de URL: é o que mantém o template UTILITY (mesma decisão dos fluxos
-  // de grupos).
+  // ⚠️⚠️ A RESPOSTA É PELO PRÓPRIO WHATSAPP (decisão do Matheus, 14/08: "quero
+  // algo que a pessoa responda pelo wpp mesmo"). O template leva DOIS BOTÕES de
+  // quick-reply — "Vou sim" e "Não vou poder" — e a resposta volta pelo webhook,
+  // amarrada a esta escala pelo `message_id` que a fila grava.
   //
-  // ⚠️ E é OBRIGATÓRIO: o template tem 4 variáveis, então mandar 3 é recusa da
-  // Meta por contagem de parâmetros. Sem segredo (`ESCALA_TOKEN_SECRET` ou o
-  // `CRON_SECRET`, que é obrigatório em produção) não há link — e aí o certo é
-  // NÃO mandar, em vez de disparar 200 mensagens que a Meta recusa uma a uma.
-  // O aviso pelo app já saiu de qualquer forma.
-  const comLink = sel.rodada
-    .map(g => ({ g, link: montarLinkEscala(g.escala_ids[0]) }))
-    .filter(x => !!x.link);
-
-  if (!comLink.length) {
-    return {
-      ...relatorio,
-      motivo: `Não foi possível montar o link de resposta (sem ESCALA_TOKEN_SECRET nem CRON_SECRET) — o WhatsApp não saiu.${app_avisados ? ` ${app_avisados} pessoa(s) foram avisadas pelo app.` : ''}`,
-    };
-  }
-
-  const r = await fila.enfileirarLote(comLink.map(({ g, link }) => ({
+  // Por isso o corpo tem 3 variáveis e NENHUM link: botão é um toque, link é
+  // sair do WhatsApp, abrir navegador e esperar carregar. O `/e/<token>`
+  // continua existindo como caminho alternativo (o coordenador pode mandar na
+  // mão), mas não é o que sai daqui.
+  //
+  // ⚠️ Os botões são ESTÁTICOS no template aprovado — o envio não muda por
+  // causa deles. Se um dia virarem botões com payload dinâmico, aí sim será
+  // preciso mandar `components` com `sub_type: 'quick_reply'`.
+  const r = await fila.enfileirarLote(sel.rodada.map(g => ({
     telefone: g.telefone,
     template: templateName,
     idioma: 'pt_BR',
-    params: [...g.params, link],
+    params: g.params,
     // O prefixo do contexto é lido por `utils/whatsappModulo` pra decidir quem
     // é avisado quando a entrega falha — `voluntariado` tem regra própria e não
     // cai no fallback de todos os admin/diretor.

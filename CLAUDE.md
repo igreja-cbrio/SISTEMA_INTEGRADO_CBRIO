@@ -9141,3 +9141,75 @@ novo**. Sugestão de corpo:
 `{{1}}` área · `{{2}}` evento · `{{3}}` quando · `{{4}}` link.
 ⚠️ **Não pôr default no código**: nome de template errado é recusa PERMANENTE
 (132001), que queima o aviso sem retry. Até lá o aviso sai **só pelo app**.
+
+## ⚠️⚠️ Escala · a resposta vem PELO PRÓPRIO WHATSAPP (2026-08-14 · SEM migration)
+
+Decisão do Matheus, corrigindo a leva anterior: *"quero algo que a pessoa
+responda pelo wpp mesmo"*. O link `/e/<token>` funciona, mas botão é **um
+toque** — link é sair do WhatsApp, abrir navegador e esperar carregar.
+
+O aviso de véspera passou a sair com **dois botões de quick-reply** ("Vou sim" /
+"Não vou poder"). A resposta chega no webhook e cai no MESMO
+`services/escalaResposta` que o link e o app usam — atualiza a escala na hora,
+avisa a coordenação (sistema + app do staff) e o supervisor da área no app do
+membro.
+
+### ⚠️⚠️ O que amarra a resposta à escala é o `context.id`
+
+A resposta do botão traz `context.id` = o **wamid da mensagem que nós
+mandamos**, e `whatsapp_envios.message_id` já guardava esse wamid desde sempre.
+`ref_id` daquela linha é a escala. Sem esse elo não dá pra saber de qual convite
+a pessoa está falando — **quem serve em duas áreas na mesma semana teria a
+recusa aplicada na escala errada**.
+
+⇒ Resposta SEM `context` não é tratada como escala: segue pro fluxo normal do
+bot. É o que impede um "não vou" solto no meio de outra conversa de derrubar uma
+escala.
+
+### As três armadilhas
+
+1. ⚠️⚠️ **"Não vou poder" CONTÉM "vou".** A régua avalia a NEGAÇÃO primeiro —
+   procurar a afirmação antes transforma toda recusa em confirmação, e o efeito
+   é a pessoa avisar que não vai, o sistema responder "presença confirmada" e
+   ninguém repor a vaga no domingo. Mutation-testado
+   (`src/test/respostaEscala.test.ts`, 12 casos, **no gate**: inverter a ordem →
+   3 vermelhos · inventar wamid quando não há `context` → 1).
+2. ⚠️ **OPT-OUT tem prioridade** (decisão do Marcos, 24/07): *"não quero mais
+   receber"* contém negação e seria lido como "não vou poder" — a pessoa pedindo
+   pra sair da lista acabaria recusando a escala **e continuando na lista**. O
+   handler devolve `false` e deixa o fluxo de opt-out tratar.
+3. ⚠️ **Não entendeu? NÃO CHUTA.** Responde pedindo os botões. Marcar presença
+   que a pessoa não deu é pior que perguntar de novo — e a janela de 24h está
+   aberta, então o texto chega.
+
+### Detalhes
+
+- **O handler é testado ANTES dos outros fluxos** (só no número institucional):
+  se caísse no bot, "não vou poder" viraria conversa com a IA. Ele devolve
+  `false` quando a mensagem não é dele, e aí o despacho segue igual.
+- **Confirmação de volta por texto** na mesma conversa (janela aberta, a pessoa
+  acabou de escrever): "Presença confirmada 💚" / "Tudo bem, avisamos a
+  liderança…". Sem isso a pessoa toca o botão e não sabe se funcionou.
+- Idempotência pelo `whatsapp_coletas.whatsapp_message_id`, como os outros
+  handlers — reentrega da Meta é comum.
+- **O corpo do template voltou a 3 variáveis** (sem link): os botões substituem
+  o `{{4}}`. O `/e/<token>` **continua existindo** como caminho alternativo (o
+  coordenador pode mandar o link na mão) — não apagar.
+
+### ⏳ PENDENTE DE GENTE · o template com BOTÕES
+
+Criar `escala_voluntario` na Meta — **UTILITY · pt_BR · 3 variáveis no corpo +
+2 botões de quick-reply** — e setar `WHATSAPP_TEMPLATE_ESCALA` + deploy novo.
+
+> Corpo: Oi! {{1}} precisa de você amanhã.
+> Você está escalado(a) em *{{2}}* — {{3}}.
+> Consegue confirmar?
+>
+> Botões (quick reply): **Vou sim** · **Não vou poder**
+
+⚠️ **O texto dos botões importa**: é ele que chega em `m.button.text` e é o que
+a régua interpreta. "Vou sim" e "Não vou poder" são reconhecidos; se mudarem o
+texto na Meta, conferir contra `utils/respostaEscala.js`.
+⚠️ Botões ESTÁTICOS — o envio não muda por causa deles. Só se um dia virarem
+botões com payload dinâmico é que será preciso mandar `components` com
+`sub_type: 'quick_reply'`.
