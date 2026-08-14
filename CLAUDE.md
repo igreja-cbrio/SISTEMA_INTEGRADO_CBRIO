@@ -319,6 +319,56 @@ aceita `recorte=membros`.
 
 Lição repetida 3× neste dia: **conferir o que a sonda devolveu, não a contagem.**
 
+## ⚠️ Bug do app Staff vira INCIDENTE do módulo Sistema, por trigger (2026-08-14 · migration `20260814200000`)
+
+Pedido do Matheus: *"o Marcos Paulo montou um módulo de incidentes no sistema,
+pra esses bugs aparecerem lá"*. O fluxo de bugs do app (`POST /api/staff/bugs` →
+`agent_tarefas` com `classe='bug'`) passa a espelhar em `system_incidents`.
+
+**Mecanismo = TRIGGER SQL, não código JS.** O worker do Railway
+(`agent-worker/src/tools/devBoard.ts`) grava status **direto no Supabase** com
+`service_role`, sem passar pelo Express. O trigger é o único ponto onde todas as
+escritas convergem (rota `staff.js` + dispatcher + agente + rota decidir);
+espelho em JS precisaria de 3 lugares e um redeploy do worker.
+
+- `source_type` ganhou **`'bug'`** no CHECK (semântica limpa · disfarçar de
+  `feedback` foi rejeitado como mentira semântica). ⚠️ `SOURCES` em
+  `backend/routes/sistemaV1.js` precisa acompanhar — sem isso o filtro do painel
+  recusa o valor novo.
+- Incidente nasce em **`investigando`** (convenção da triage · pula o
+  `promoteUntriagedIncidents`). Mapeamento: `agendada` → **`mitigado`**
+  (aprovação = mitigação em andamento) · `concluida` → `resolvido` ·
+  `rejeitada` → `risco_aceito` · `falhou`/`bloqueada`/`cancelada` → **não
+  espelha** (tarefa falhar não diz nada sobre o bug estar resolvido).
+- **Find-or-create por `source_ref` em QUALQUER status**, não só nos ativos —
+  cobre reabertura (`concluida`→`em_andamento` é válido em `agentTasks`, e
+  `resolvido`→`investigando` em `sistemaV1`) sem duplicar incidente.
+- ⚠️ **O UPDATE espelha só status e carimbos.** `title` e `severity` NÃO são
+  reescritos: `/sistema` é painel operacional onde gente refina o incidente, e
+  sobrescrever a cada mudança de status apagaria o trabalho humano.
+- ⚠️ **`EXCEPTION WHEN OTHERS THEN RAISE WARNING`** é obrigatório: exceção em
+  trigger AFTER **aborta o statement inteiro**, então sem ele uma falha do
+  espelho faria o bug não ser gravado (mesma lição do `nsm_eventos_pessoa_valor_uq`).
+
+### ⚠️ Três armadilhas que só o banco vivo revelou (verificadas antes de escrever)
+
+1. **`uq_system_incidents_source` é índice PARCIAL** (`WHERE source_ref IS NOT
+   NULL AND status IN (ativos)`). O `ON CONFLICT` precisa repetir o predicado
+   **idêntico** ou a inferência falha — e o erro cairia no `EXCEPTION` acima,
+   fazendo o espelho morrer **em silêncio, para sempre**. Conferido com
+   `EXPLAIN` do INSERT: `Conflict Arbiter Indexes: uq_system_incidents_source`.
+   **`EXPLAIN` é a forma de provar inferência de ON CONFLICT sem escrever nada.**
+2. **`system_incidents.environment` é NOT NULL com default `'unknown'`**, e os
+   13 incidentes existentes são **todos `'production'`**. Sem passar o valor, o
+   bug nasceria como o único `'unknown'` da tabela. Gravamos explícito.
+3. `agent_tarefas.titulo` é NOT NULL — por isso a guarda de título curto
+   (`'Bug: ' || titulo`) não corre risco de virar NULL e estourar o CHECK de
+   `title` (3..180).
+
+Backfill incluído e hoje **no-op** (0 tarefas `classe='bug'`), mas o OTA do app
+já está publicado: sem ele, bug que chegasse entre a escrita e a aplicação da
+migration nasceria fora do painel.
+
 ## ⚠️ Decisão · o voluntário lança NO CULTO, por link assinado (2026-08-14 · migration `20260814180000`)
 
 Pergunta do Matheus: *"como vamos medir o track do novo convertido, se quando
