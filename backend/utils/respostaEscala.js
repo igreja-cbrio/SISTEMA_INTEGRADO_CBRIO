@@ -13,6 +13,19 @@
  * contém "vou". Procurar a afirmação antes transformaria toda recusa em
  * confirmação — e o efeito seria a pessoa avisar que não vai, o sistema
  * responder "presença confirmada" e ninguém repor a vaga no domingo.
+ *
+ * ⚠️⚠️ MODELO OPT-OUT (decisão do Matheus, 14/08: *"mas ela já tá como sim.
+ * quero que tenha apenas um botão ou então um número para ela digitar para
+ * dizer NÃO vai conseguir comparecer"*). Quem foi escalado VAI — a mensagem
+ * traz UM botão só, o de recusar, e quem não responde nada continua contando
+ * como presente. A afirmação segue sendo entendida (a pessoa pode responder
+ * "vou sim" por conta própria, e isso vira informação melhor), mas ninguém
+ * precisa confirmar.
+ *
+ * ⚠️ Por isso o DÍGITO existe: "responda 2 se não puder" é o caminho de quem
+ * não enxerga botão (WhatsApp antigo, mensagem encaminhada). `1` e `2`
+ * espelham a ordem "vou / não vou" do texto. Só valem com `context.id` — um
+ * "2" solto numa conversa qualquer nunca chega aqui.
  */
 
 // Acentos fora, minúsculas, espaços colapsados. Espelha o `normalizarBusca` do
@@ -34,6 +47,10 @@ const AFIRMACAO = /\b(vou|confirmo|confirmar|confirmado|sim|ok|okay|blz|beleza|c
 function interpretarRespostaEscala(bruto) {
   const t = _norm(bruto);
   if (!t) return null;
+  // Dígito: o caminho de quem não enxerga botão. Casa a mensagem inteira, não
+  // um "2" no meio de uma frase ("chego 2 minutos antes" não é recusa).
+  if (/^2[.\)]?$/.test(t)) return 'declined';
+  if (/^1[.\)]?$/.test(t)) return 'confirmed';
   // ⚠️ Negação PRIMEIRO — ver o comentário do topo.
   if (NEGACAO.test(t)) return 'declined';
   if (AFIRMACAO.test(t)) return 'confirmed';

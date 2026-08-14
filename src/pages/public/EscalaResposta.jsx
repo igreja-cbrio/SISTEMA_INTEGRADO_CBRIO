@@ -16,6 +16,12 @@ import { ptBR } from 'date-fns/locale';
  *
  * ⚠️ Mostra o MÍNIMO (área, função, culto, horário). Um link vaza em print e em
  * celular emprestado; ele não pode virar janela pra base de gente.
+ *
+ * ⚠️⚠️ MODELO OPT-OUT (decisão do Matheus, 14/08: "mas ela já tá como sim").
+ * Quem foi escalado VAI — não se pede confirmação. A ação em destaque é a
+ * ÚNICA que a pessoa precisa tomar: avisar que não vai. Confirmar continua
+ * possível, mas como link discreto: transformar isso em decisão de dois botões
+ * iguais faz a pessoa parar pra escolher algo que já estava resolvido.
  */
 export default function EscalaResposta() {
   const { token } = useParams();
@@ -91,6 +97,7 @@ export default function EscalaResposta() {
             ) : dados.status === 'confirmed' ? (
               <div className="text-center border-t border-white/10 pt-4 space-y-3">
                 <p className="text-[#00B39D] font-medium">Presença confirmada. Até lá!</p>
+                <p className="text-white/50 text-sm">Se algo mudar, é só avisar por aqui.</p>
                 {/* Mudar de ideia continua possível — a pessoa que confirmou e
                     depois não pode precisa avisar, e sem esta saída ela
                     simplesmente não aparece. */}
@@ -135,21 +142,27 @@ export default function EscalaResposta() {
                 </div>
               </div>
             ) : (
-              <div className="border-t border-white/10 pt-4 space-y-2">
-                <button
-                  onClick={() => responder('confirmed')}
-                  disabled={!!enviando}
-                  className="w-full h-12 rounded-xl bg-[#00B39D] text-white font-semibold disabled:opacity-60"
-                >
-                  {enviando === 'confirmed' ? 'Confirmando…' : 'Confirmar presença'}
-                </button>
+              <div className="border-t border-white/10 pt-4 space-y-3">
+                <p className="text-center text-white/70 text-sm">
+                  Está tudo certo — você <strong className="text-white/90">não precisa confirmar</strong>.
+                  Só avise se não conseguir comparecer.
+                </p>
                 <button
                   onClick={() => setConfirmarRecusa(true)}
                   disabled={!!enviando}
-                  className="w-full h-12 rounded-xl border border-white/15 text-white/80 disabled:opacity-60"
+                  className="w-full h-12 rounded-xl border border-amber-400/40 bg-amber-500/10 text-amber-200 font-medium disabled:opacity-60"
                 >
-                  Não vou poder
+                  Não vou conseguir comparecer
                 </button>
+                <div className="text-center">
+                  <button
+                    onClick={() => responder('confirmed')}
+                    disabled={!!enviando}
+                    className="text-white/45 text-sm underline underline-offset-4 disabled:opacity-60"
+                  >
+                    {enviando === 'confirmed' ? 'Confirmando…' : 'Quero confirmar mesmo assim'}
+                  </button>
+                </div>
               </div>
             )}
           </>

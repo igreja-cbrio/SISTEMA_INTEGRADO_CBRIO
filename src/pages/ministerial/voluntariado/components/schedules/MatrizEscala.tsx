@@ -202,7 +202,8 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
                     <div className="text-[11px] font-normal text-muted-foreground truncate">
                       {format(new Date(c.scheduled_at), 'HH:mm')} · {c.name}
                     </div>
-                    <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                    <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground"
+                         title="confirmaram · avisaram que não vão · ainda sem resposta (contam como presentes)">
                       <span className="flex items-center gap-0.5 text-green-600"><CheckCircle2 className="h-3 w-3" />{c.status?.confirmados ?? 0}</span>
                       <span className="flex items-center gap-0.5 text-red-500"><XCircle className="h-3 w-3" />{c.status?.recusados ?? 0}</span>
                       <span className="flex items-center gap-0.5 text-yellow-600"><HelpCircle className="h-3 w-3" />{c.status?.pendentes ?? 0}</span>
