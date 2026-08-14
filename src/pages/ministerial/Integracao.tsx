@@ -153,7 +153,12 @@ export default function Integracao() {
               10:00 / 11:30 / 19:00 · AMI · Bridge · Quarta com Deus) · relatórios saem por culto
               automaticamente.
             </p>
-            <CalendarioCultos pendenciaSignal={cultosPendSignal} pendenciaFiltro={cultosPendFiltro} />
+            <p className="text-sm text-muted-foreground">
+              Em <strong>Links do voluntário</strong> você pega os links dos cultos da semana
+              escolhida pra mandar no grupo com antecedência — cada um só abre no dia do culto, e
+              já vem com o culto certo dentro dele.
+            </p>
+            <CalendarioCultos pendenciaSignal={cultosPendSignal} pendenciaFiltro={cultosPendFiltro} linksVoluntario />
           </div>
         </TabsContent>
         <TabsContent value="vis_frequencia" className="mt-4">

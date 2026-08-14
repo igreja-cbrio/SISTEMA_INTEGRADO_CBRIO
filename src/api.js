@@ -3545,6 +3545,10 @@ export const kpis = {
     // Link assinado pro voluntário lançar as decisões do culto pelo celular.
     // `link: null` = sem segredo configurado (fail-closed).
     linkDecisoes: (id) => get(`/kpis/cultos/${id}/link-decisoes`),
+    // Links de todos os cultos de um período — a semana escolhida no calendário,
+    // pra mandar aos voluntários ANTES do culto. Cada link só abre no dia dele.
+    linksDecisoesPeriodo: (inicio, fim) =>
+      get(`/kpis/cultos/links-decisoes?inicio=${encodeURIComponent(inicio)}&fim=${encodeURIComponent(fim)}`),
     // Pessoas que tomaram decisão em culto · 1 row por pessoa
     decisoesPessoas: {
       list:   (cultoId) => get(`/kpis/cultos/${cultoId}/decisoes-pessoas`),

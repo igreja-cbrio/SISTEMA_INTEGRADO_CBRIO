@@ -385,6 +385,59 @@ router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
   res.json(out);
 });
 
+// GET /cultos/links-decisoes?inicio=&fim= — os links de TODOS os cultos de um
+// período (na prática: a semana escolhida no calendário), pra a Integração
+// distribuir ANTES do culto.
+//
+// ⚠️ Existe porque a distribuição é ANTECIPADA e o lançamento não é: o link é
+// mandado no grupo dos voluntários na semana, e cada um só consegue lançar no
+// dia do culto (a janela é reconferida no servidor a cada uso, em
+// `publicDecisaoCulto`). Pedir link culto a culto na véspera é o tipo de tarefa
+// que ninguém faz 4 vezes num domingo — e porta sem caminho de distribuição não
+// existe na prática (foi assim que o formulário do online passou 3 meses no ar
+// com zero registros).
+//
+// ⚠️ Rota LITERAL declarada antes de qualquer `/cultos/:id/...` de um segmento
+// só — no Express o primeiro match vence, e é assim que `/cultos/auto-create`
+// já convive com os handlers por id.
+router.get('/cultos/links-decisoes', authorizeIntegracao, async (req, res) => {
+  try {
+    const { montarLinkCulto } = require('../utils/cultoToken');
+    const ISO = /^\d{4}-\d{2}-\d{2}$/;
+    const inicio = String(req.query.inicio || '').slice(0, 10);
+    const fim = String(req.query.fim || '').slice(0, 10);
+    if (!ISO.test(inicio) || !ISO.test(fim)) {
+      return res.status(400).json({ error: 'Informe inicio e fim no formato AAAA-MM-DD.' });
+    }
+    if (fim < inicio) return res.status(400).json({ error: 'O fim não pode ser anterior ao início.' });
+
+    const { data, error } = await supabase
+      .from('vw_culto_stats')
+      .select('id, data, hora, nome, service_type_name')
+      .gte('data', inicio)
+      .lte('data', fim)
+      .order('data', { ascending: true })
+      .order('hora', { ascending: true })
+      .limit(100);
+    if (error) throw error;
+
+    const cultos = (data || []).map(c => ({
+      id: c.id,
+      data: c.data,
+      hora: c.hora,
+      nome: c.service_type_name || c.nome || 'Culto',
+      // `null` quando não há segredo configurado (fail-closed): a tela declara
+      // "indisponível" em vez de o conferente mandar no grupo um link que não
+      // abre pra ninguém.
+      link: montarLinkCulto(c.id),
+    }));
+    res.json({ inicio, fim, cultos });
+  } catch (e) {
+    console.error('[kpis/links-decisoes]', e.message);
+    res.status(500).json({ error: 'Erro ao gerar os links da semana' });
+  }
+});
+
 // GET /cultos/:id/link-decisoes — link assinado pro VOLUNTÁRIO lançar as
 // decisões daquele culto pelo celular, na hora, sem login.
 //

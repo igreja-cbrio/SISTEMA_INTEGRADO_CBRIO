@@ -357,6 +357,43 @@ Contrato de porta no BEFORE INSERT. O problema medido é outro.
 - Card **"Nomes faltando"** em `VisualizacaoDecisoes.tsx`, reusando o `resumo`
   que a tela já buscava e jogava fora.
 
+### ⚠️⚠️ A distribuição é ANTECIPADA; o lançamento não é (2026-08-14 · SEM migration)
+
+Pedido do Matheus no mesmo dia: *"quero que esse link apareça para enviar antes
+do culto — eu entrar nos cultos, escolher a semana e enviar esse link referente a
+essa semana, para eu poder disponibilizar para os voluntários antes do dia do
+culto. Mas eles só podem lançar no dia do culto."* A primeira leva entregou a
+porta e **um** caminho de distribuição (botão por culto na aba Decisões), que só
+serve na véspera, culto a culto.
+
+- **Botão "Links do voluntário" na aba Cultos** (`CalendarioCultos.jsx` · a
+  semana JÁ é escolhida ali): modal com os links dos cultos da semana, copiar um
+  a um, **copiar a mensagem pronta** e **"Enviar no WhatsApp"** (`wa.me/?text=`).
+  `GET /kpis/cultos/links-decisoes?inicio=&fim=` (`authorizeIntegracao`).
+- ⚠️ **O botão é opt-in por prop** (`linksVoluntario`): o mesmo componente é
+  montado em `/dados-brutos`, onde o líder de área lança número e não distribui
+  link — botão que responde 403 é pior que botão ausente.
+- ⚠️⚠️ **A janela virou TRÊS estados** (`backend/utils/cultoJanela.js`, régua
+  PURA no gate): `antes` · `aberto` · `encerrado`. A régua antiga era
+  `dias >= 0 && dias <= 2`, então quem recebia o link na quarta e abria pra ver o
+  que era **lia "Prazo encerrado"** — a tela dizia que o link estava morto
+  justamente quando ele estava novo, e a pessoa apagaria a mensagem. Agora a tela
+  diz *"Guarde este link · o lançamento abre no dia 16/08"* e o POST recusa com
+  `janela_nao_abriu` (409), separado do `janela_encerrada` (410).
+- ⚠️ **Mandar antes não abre nada antes**: a validade é reconferida no SERVIDOR a
+  cada uso, e o dia é o de **BRT** (às 21h do Rio o dia UTC já virou — a faixa do
+  culto de domingo à noite). A tela esconder o formulário não é a trava.
+- ⚠️ **A janela continua terminando 2 dias DEPOIS do culto** (decisão de 14/08 ·
+  atraso medido de 3 dias na média contra SLA de 3): "só no dia" é sobre **não
+  lançar antes**; o rabo de 2 dias é o que substitui o papel lançado 9 dias
+  depois. O texto da mensagem e o modal declaram isso.
+- ⚠️ Mandar os 4 links de um domingo juntos é seguro porque **o culto vai dentro
+  do link assinado** — não existe campo "qual culto" pra errar, que é o bug de
+  12/07 (19 nomes no culto errado).
+- Testes: `src/test/cultoJanela.test.ts` (13 casos, **no gate**). **4 mutantes
+  RODADOS**: colapsar `antes` em `encerrado` → 2 vermelhos · deixar lançar antes
+  → 2 · dia em UTC → 1 · janela de 9 dias → 3.
+
 ### ⚠️ O que NÃO fazer (decidido contra, com motivo)
 
 - **NÃO usar login travado (trava-quiosque) pro voluntário.** O produto não sabe

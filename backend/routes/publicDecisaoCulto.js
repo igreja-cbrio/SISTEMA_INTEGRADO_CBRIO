@@ -27,11 +27,10 @@ const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
 const { verificarTokenCulto } = require('../utils/cultoToken');
 const { registrarConsentimentos } = require('../services/inscricaoContrato');
-
-// Janela de lançamento: o dia do culto e os 2 dias seguintes. Depois disso o
-// caso vai pro conferente — que é onde ele deve estar. Isto mata por desenho o
-// caminho "lanço 9 dias depois", que é a origem da atribuição errada de culto.
-const DIAS_JANELA = 2;
+// Janela de lançamento (dia do culto + 2). ⚠️ A régua mora em `utils/` pra
+// entrar no gate de deploy — NÃO reimplementar aqui: é ela que decide se uma
+// escrita pública de PESSOA é aceita, e duas cópias divergiriam.
+const { DIAS_JANELA, hojeBRT, estadoJanelaCulto, dataBR } = require('../utils/cultoJanela');
 
 // ⚠️ Texto próprio, e ele é DELIBERADAMENTE diferente do `termos_lgpd` padrão:
 // quem preenche aqui é o VOLUNTÁRIO transcrevendo o que a pessoa falou, não a
@@ -60,20 +59,6 @@ function soDigitos(s) {
   return String(s || '').replace(/\D/g, '');
 }
 
-// Data de hoje em BRT. ⚠️ NUNCA usar `new Date()` cru pra comparar com
-// `cultos.data`: o servidor roda em UTC e depois das 21h BRT o dia ja virou —
-// exatamente a faixa do culto de domingo a noite.
-function hojeBRT() {
-  return new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
-
-function diasDesde(dataCulto) {
-  const a = Date.parse(`${dataCulto}T00:00:00Z`);
-  const b = Date.parse(`${hojeBRT()}T00:00:00Z`);
-  if (Number.isNaN(a) || Number.isNaN(b)) return null;
-  return Math.round((b - a) / 86400000);
-}
-
 // Resolve o culto do token e diz se a janela de lançamento ainda está aberta.
 // Recusa NEUTRA em todos os casos de falha: não distingue token malformado de
 // segredo ausente de culto inexistente — distinguir entrega um oráculo a quem
@@ -84,7 +69,7 @@ async function abrirCulto(token) {
 
   const { data: c } = await supabase
     .from('cultos')
-    .select('id, data, service_type_id')
+    .select('id, data, nome, service_type_id')
     .eq('id', id)
     .maybeSingle();
   if (!c) return { erro: 404 };
@@ -95,16 +80,20 @@ async function abrirCulto(token) {
     .eq('id', c.service_type_id)
     .maybeSingle();
 
-  const dias = diasDesde(c.data);
+  const { estado, dias } = estadoJanelaCulto(c.data, hojeBRT());
   return {
     culto: {
       id: c.id,
       data: c.data,
-      nome: st?.name || 'Culto',
+      data_br: dataBR(c.data),
+      nome: st?.name || c.nome || 'Culto',
       // A validade REAL é decidida aqui, no servidor, a cada uso — o token não
-      // carrega expiração porque o culto já é datado.
-      aberto: dias !== null && dias >= 0 && dias <= DIAS_JANELA,
+      // carrega expiração porque o culto já é datado. Guardar link da semana
+      // inteira no celular não abre nada antes da hora.
+      estado,
+      aberto: estado === 'aberto',
       dias_desde: dias,
+      dias_janela: DIAS_JANELA,
     },
   };
 }
@@ -135,6 +124,16 @@ router.post('/:token', async (req, res) => {
   try {
     const r = await abrirCulto(req.params.token);
     if (r.erro) return res.status(404).json({ error: 'Link inválido ou expirado.' });
+    // ⚠️ ANTES do culto tem resposta PRÓPRIA, e vem primeiro. O link circula com
+    // dias de antecedência; recusar com "o prazo encerrou" seria mentir sobre um
+    // link que ainda vai valer. O servidor recusa de qualquer jeito — a tela
+    // esconder o formulário não é a trava, esta é.
+    if (r.culto.estado === 'antes') {
+      return res.status(409).json({
+        error: 'janela_nao_abriu',
+        message: `O lançamento deste culto abre no dia ${r.culto.data_br}. Guarde o link até lá.`,
+      });
+    }
     if (!r.culto.aberto) {
       return res.status(410).json({
         error: 'janela_encerrada',
