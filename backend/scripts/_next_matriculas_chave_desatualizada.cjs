@@ -72,6 +72,25 @@ async function todas(tabela, select) {
 
 const chaveEsperada = (mes, membroId) => (mes && membroId ? `${mes}|${membroId}` : null);
 
+// ⚠️ O mês vem da TURMA — mas **6 das 36 turmas têm `origem_mes` NULO** (as
+// "/02", a segunda turma do mês, e a "Agosto/01 2026"). Sem fallback, a linha
+// dessas turmas fica sem chave esperada e o script a PULA — foi o que deixou a
+// matrícula da Bianca com a chave velha depois da 1ª execução, e pior: pulava
+// **em silêncio**, sem entrar em nenhuma linha do "o que o script NÃO toca".
+//
+// O fallback é o mês que já está escrito na PRÓPRIA chave: ele foi gravado a
+// partir da data do encontro quando a linha nasceu, e continua verdadeiro — o
+// que envelheceu foi o id do membro, não o mês. `origem_mes` nulo é lacuna de
+// CADASTRO da turma, e perder a chave por causa dela seria trocar um problema
+// por outro.
+const MES_RE = /^(\d{4}-\d{2})\|/;
+function mesDaMatricula(r, mesDaTurma) {
+  const daTurma = mesDaTurma.get(r.turma_id);
+  if (daTurma) return daTurma;
+  const m = MES_RE.exec(String(r.origem_mes_key || ''));
+  return m ? m[1] : null;
+}
+
 // Rank do status: o keep herda o MELHOR estado do grupo. Perder um 'formado'
 // porque a outra linha era 'matriculado' seria apagar a conclusão do Next.
 const RANK_STATUS = { formado: 4, matriculado: 3, recebida: 2, incompleto: 1 };
@@ -136,7 +155,7 @@ function escolherKeep(linhas) {
   const soRefresh = vivas.filter((r) => {
     if (idsEmGrupo.has(r.id)) return false;
     if (!r.membro_id || !r.turma_id || !r.origem_mes_key) return false;
-    const esperada = chaveEsperada(mesDaTurma.get(r.turma_id), r.membro_id);
+    const esperada = chaveEsperada(mesDaMatricula(r, mesDaTurma), r.membro_id);
     return !!esperada && r.origem_mes_key !== esperada;
   });
 
@@ -146,7 +165,7 @@ function escolherKeep(linhas) {
   const chavesVivas = new Set(vivas.map((r) => r.origem_mes_key).filter(Boolean));
   const colidiriam = [];
   const refreshSeguro = soRefresh.filter((r) => {
-    const esperada = chaveEsperada(mesDaTurma.get(r.turma_id), r.membro_id);
+    const esperada = chaveEsperada(mesDaMatricula(r, mesDaTurma), r.membro_id);
     if (chavesVivas.has(esperada)) { colidiriam.push({ ...r, chave_alvo: esperada }); return false; }
     return true;
   });
@@ -158,6 +177,11 @@ function escolherKeep(linhas) {
   console.log(`  presenças em DIAS diferentes na mesma turma (humano decide): ${revisarNaMao.length} grupos`);
   console.log(`  refresh que colidiria com chave de outra linha viva:         ${colidiriam.length}`);
   console.log(`  linhas sem membro_id ou sem turma (chave indeterminável):    ${vivas.filter((r) => !r.membro_id || !r.turma_id).length}`);
+  // ⚠️ Declarar o que foi pulado é obrigação, não enfeite: pulo em silêncio se
+  // lê como "estava tudo certo" — foi assim que a linha da Bianca sumiu do
+  // relatório da 1ª execução.
+  const semMes = vivas.filter((r) => r.membro_id && r.turma_id && !mesDaMatricula(r, mesDaTurma));
+  console.log(`  linhas cuja turma não tem origem_mes E a chave não diz o mês:  ${semMes.length}`);
 
   for (const linhas of consolidar.slice(0, 12)) {
     const keep = escolherKeep(linhas);
@@ -222,7 +246,7 @@ function escolherKeep(linhas) {
     if (falhou) continue; // não atualiza o keep sem ter liberado a chave
 
     const { error: e3 } = await sb.from('next_matriculas').update({
-      origem_mes_key: chaveEsperada(mesDaTurma.get(keep.turma_id), keep.membro_id),
+      origem_mes_key: chaveEsperada(mesDaMatricula(keep, mesDaTurma), keep.membro_id),
       check_in_at: checkIn,
       check_in_by: checkBy,
       status,
@@ -234,7 +258,7 @@ function escolherKeep(linhas) {
 
   for (const r of refreshSeguro) {
     const { error } = await sb.from('next_matriculas').update({
-      origem_mes_key: chaveEsperada(mesDaTurma.get(r.turma_id), r.membro_id),
+      origem_mes_key: chaveEsperada(mesDaMatricula(r, mesDaTurma), r.membro_id),
       updated_at: new Date().toISOString(),
     }).eq('id', r.id).is('deleted_at', null);
     if (error) erros.push(`refresh ${r.id}: ${error.message}`);
