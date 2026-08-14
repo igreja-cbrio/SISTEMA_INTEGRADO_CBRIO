@@ -2602,6 +2602,54 @@ Migration de referência: `20260515520000_normalizar_meta_periodicidade.sql`.
 4. KPIs com checkpoints granulares em `kpi_trajetoria` continuam com a meta
    do checkpoint (não passam pela normalização) · checkpoint já é por período
 
+## ⚠️ KPIs de doação · a fonte estava errada e o filtro de área zerava tudo (2026-08-14 · migration `20260814170000`)
+
+Varredura de alimentação dos 168 KPIs táticos ativos de 2026. Nenhum é manual no
+papel (48 têm `fonte_auto`, 120 são calculados em SQL) e os dois crons rodam —
+mas **o último valor calculado era NULL em 62 e zero em 37**. O que foi corrigido:
+
+1. **`doacoes_valor` lia `mem_contribuicoes`**, que parou em 16/06/2026 (aguarda
+   a planilha nominal). O valor arrecadado já vive atualizado em
+   `vw_doacoes_unificada`/`fin_transacoes` — a MESMA fonte do coletor
+   `generosidade.valor_total`. Eram duas fontes para o mesmo número, com
+   resultados diferentes no painel. Agora `doacoes_valor` vem de
+   `fin_transacoes`. **`doadores_count`/`doadores_recorrentes` continuam em
+   `mem_contribuicoes`**: contam PESSOAS distintas e `fin_transacoes` tem
+   `membro_id` NULL em 100% das linhas — voltam a andar sozinhos quando a base
+   nominal for atualizada (hoje param em 06/2026, e o delta de julho marca -100%,
+   que é o sinal correto de fonte parada).
+
+2. **`_kpi_agregar_dado` filtrava doação por `area`**, mas `mem_contribuicoes.area`
+   é NULL nas 20.196 linhas — doação na CBRio não é segmentada por área. Os 15
+   KPIs de doação por área (AMI-07/23/24, BRG-06/22/23, KIDS-06/21/22,
+   ONL-22/23/24, SED-01/24/25) nunca calcularam nada por causa disso. Filtro
+   removido nesses 3 `dado_tipo`: cada área acompanha o total da igreja.
+
+3. **`doadores_recorrentes` exigia 3 meses distintos DENTRO do período**, que é
+   mensal → 0 por construção. Agora usa janela dos 3 meses corridos que terminam
+   no período. Maio/2026: 178 de 352 doadores (50,6% · meta 30%).
+
+4. **Os 5 KPIs "% Crescimento do valor total de entradas vs ano anterior" eram
+   `soma_periodo`/`{periodo:ano}`** — que devolve R$ e **ignora o período de
+   referência** (usa sempre `current_date`). Davam R$ 6,9 mi repetido em todo mês
+   do histórico contra meta de 30%, travando o score do OKR em 100%. Viraram
+   `delta_pct`/`ano_anterior`, que é o que o nome e a meta dizem: +36,6% (abr),
+   +40,8% (mai), +47,1% (jun), +26,6% (jul).
+
+5. **`vw_okr_score_composto` somava `delta_pct` negativo sem piso** (tinha
+   `LEAST(x,1)`, faltava `GREATEST(x,0)`) → objetivos com score de -174%.
+
+⚠️ **Pendente e conhecido**: `soma_periodo` ignorar o período de referência
+afeta os outros ~26 KPIs que usam esse tipo — o histórico deles repete o valor
+corrente em todo período. Consertar muda a semântica de KPIs de várias áreas;
+é chamada do Marcos/Yago, não conserto de bug isolado.
+
+⚠️ **Não era bug**: `lideres_treinados` retorna 0 porque **ninguém está marcado**
+com `funcao='lider_treinamento'` em `mem_grupo_membros` — o valor existe no enum
+`grupo_funcao`. Idem `cui_acompanhamentos` (0 linhas), `cui_j180_turma_membros`
+(0), `mem_grupo_encontros` (2), `grupo_supervisao_visitas` (1): são módulos sem
+uso, não código quebrado. 31 KPIs e 6 OKRs dependem deles.
+
 ## Sistema OKR/NSM 2026 (arquitetura consolidada · fases 1-6 mergeadas em maio)
 
 Sistema unificado OKR/KPI/NSM. **Conceito**: 1 NSM ("novos convertidos
