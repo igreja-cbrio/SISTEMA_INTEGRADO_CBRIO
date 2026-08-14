@@ -1,0 +1,39 @@
+# .graphifyignore — o que o graphify NUNCA deve ler neste repositório.
+#
+# ⚠️ Por que este arquivo existe, e por que ele NÃO é redundante com o .gitignore:
+# o graphify respeita o .gitignore por padrão, mas `scratchpad/` NÃO está no
+# .gitignore e é justamente onde as sessões despejam backup de dado REAL de
+# pessoa (membresia, visitas pastorais, pedidos de grupo, telefones). Vale
+# também a lei do Stax registrada no CLAUDE.md: dado de igreja identifica
+# convicção religiosa (LGPD art. 11, categoria especial) e não sai daqui.
+#
+# Régua: rodar sempre com --code-only mantém tudo local (AST, sem API de LLM
+# nenhuma). Este arquivo é a segunda camada — o que protege caso alguém rode
+# a extração semântica um dia.
+
+# Backups de dado real gerados por scripts de reparo (NÃO estão no .gitignore)
+scratchpad/
+backup_*.json
+
+# Exports com dado real (o .gitignore cobre só os CSV; aqui fecha a pasta)
+backend/scripts/stax-export/
+
+# Credenciais — já no .gitignore, repetido aqui porque --no-gitignore as exporia
+.env
+.env.*
+backend/.env
+
+# Ruído de build / dependência (evita grafo inflado e extração lenta)
+node_modules/
+dist/
+dist-ssr/
+playwright-report/
+test-results/
+e2e/.report/
+e2e/.results/
+graphify-out/
+*.log
+
+# Saída de outras ferramentas
+.vercel/
+.agents/

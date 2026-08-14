@@ -713,12 +713,19 @@ function ModalCulto({ culto, onClose, onSaved }) {
         || (hasOnline && form.decisoes_online !== '')
         || (hasKids && form.decisoes_kids !== '');
 
+      // Campo que o tipo não usa é OMITIDO, não zerado (docs/cultos-domingo/ ·
+      // F1): zerar apagaria o que o totem Kids consolidou se a config do tipo
+      // estiver errada/incompleta (ex.: tipo novo antes de ligar has_kids no
+      // banco — o corte de 24/08 cria o "Domingo 09:30" por SQL). Omitir = o
+      // UPDATE não toca a coluna.
       const payload = {
         presencial_adulto:    Number(form.presencial_adulto) || 0,
-        presencial_kids:      hasKids ? (Number(form.presencial_kids) || 0) : 0,
         decisoes_presenciais: Number(form.decisoes_presenciais) || 0,
-        decisoes_online:      hasOnline ? (Number(form.decisoes_online) || 0) : 0,
-        decisoes_kids:        hasKids ? (Number(form.decisoes_kids) || 0) : 0,
+        ...(hasKids ? {
+          presencial_kids: Number(form.presencial_kids) || 0,
+          decisoes_kids:   Number(form.decisoes_kids) || 0,
+        } : {}),
+        ...(hasOnline ? { decisoes_online: Number(form.decisoes_online) || 0 } : {}),
         observacoes:          (form.observacoes ?? '').trim() || null,
         frequencia_lancada:   freqLancada,
         decisoes_lancadas:    decisoesLancadas,

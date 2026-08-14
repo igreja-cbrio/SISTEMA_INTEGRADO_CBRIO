@@ -73,7 +73,15 @@ const JOBS = [
   ['/api/kpis/cultos/auto-create', '5 3 * * 0', 'ministry'],
   ['/api/processos/cron/coletar', '0 4 * * *', 'data'],
   ['/api/jornada/cron/refresh-papeis', '0 5 * * *', 'data'],
-  ['/api/wifi/cron/sync', '0 2 * * 0,1,4', 'wifi'],
+  // ⚠️ `/api/wifi/cron/sync` SAIU em 13/08/2026 junto com o cron do
+  // vercel.json (o portal cativo foi desativado · última conexão 26/06). Ele
+  // vinha FALHANDO 3×/semana desde 02/08 com 42P10 — `ON CONFLICT (tipo,
+  // membro_id, membro_conflito_id) WHERE status='pendente'` de
+  // `fn_wifi_processar_vinculos` deixou de casar quando a migration
+  // 20260731120000 acrescentou `AND tipo <> 'inscricao_sem_vinculo'` ao índice
+  // `uniq_identidade_pendencia_aberta`. Conferido no catálogo: aquela função é
+  // a ÚNICA viva com esse ON CONFLICT, então o defeito morre com o cron.
+  // ⚠️ Reativar o WiFi exige consertar o predicado ANTES de repor o cron aqui.
   ['/api/online/cron/sync', '0 6 * * *', 'online'],
   ['/api/online/cron/ds-collect', '0 10 * * *', 'online'],
   ['/api/online/cron/ddus-collect', '30 10 * * *', 'online'],
@@ -139,6 +147,10 @@ const INTEGRATIONS = [
   ['github', 'GitHub', 'platform', 'external_pending'],
   ['sentry', 'Sentry', 'observability', 'external_pending'],
   ['railway', 'Railway', 'platform', 'external_pending'],
+  // ⚠️ Credenciais seguem válidas e o sync MANUAL (`POST /api/wifi/sync`,
+  // superadmin) continua sendo a porta de reativação — mas a COLETA AUTOMÁTICA
+  // está desligada desde 13/08/2026 e a integração não alimenta mais nada
+  // sozinha. Ver o comentário do cron removido em JOBS.
   ['wifi-supabase', 'Supabase externo do Wi-Fi', 'wifi', 'connected'],
   ['meta-whatsapp', 'WhatsApp Cloud API / Meta', 'communication', 'connected'],
   ['microsoft-graph', 'Microsoft Graph / SharePoint', 'communication', 'connected'],

@@ -80,29 +80,24 @@ function dispararConfete() {
 }
 
 import { KidsZoneShell, KidsZoneRelogio, KidsZoneToggle } from './KidsZoneShell';
+// Culto de AGORA pelo relógio (BRT) com antecedência + buraco zero na grade
+// nova de domingo (corte 24/08/2026) — régua PURA testada no gate.
+import { escolherCultoPorRelogio, periodoKey as _periodoKey } from '@/lib/cultoRelogioKids';
 
-// Culto de AGORA pelo relógio (BRT) COM ANTECEDÊNCIA (Marcos 2026-07-19): o
-// check-in nos minutos ANTES de um culto já conta pra ele. Abre 30 min antes
-// (60 no ÚLTIMO do dia · filho de voluntário chega cedo) e fecha quando o culto
-// acaba (~60 min) ou quando o próximo abre. Fora de qualquer janela (ex.: tarde
-// de domingo, entre 12:30 e 18:00) NÃO há culto de agora → sem sessão.
-function _horaMin(h: string) { const [hh, mm] = String(h || '').split(':').map(Number); return (hh || 0) * 60 + (mm || 0); }
-function escolherCultoPorRelogio(cultos: any[]): { atual: any | null; visiveis: any[] } {
-  const lista = (cultos || []).filter((c) => c.hora).sort((a, b) => _horaMin(a.hora) - _horaMin(b.hora));
-  if (!lista.length) return { atual: null, visiveis: [] };
-  const ultimoI = lista.length - 1;
-  const comFim = lista.map((c, i) => {
-    const ini = _horaMin(c.hora), ult = i === ultimoI;
-    return { ...c, _abre: ini - (ult ? 60 : 30), _fim: ini + (ult ? 180 : 60) };
-  });
-  // a janela fecha, no máximo, quando o PRÓXIMO culto abre (sem sobreposição)
-  for (let i = 0; i < ultimoI; i++) comFim[i]._fim = Math.min(comFim[i]._fim, comFim[i + 1]._abre);
-  const agoraStr = new Date().toLocaleTimeString('en-GB', { timeZone: 'America/Sao_Paulo', hour12: false, hour: '2-digit', minute: '2-digit' });
-  const agora = _horaMin(agoraStr);
-  const visiveis = comFim.filter((c) => agora < c._fim);                          // esconde os que já acabaram
-  let atual = visiveis.find((c) => agora >= c._abre && agora < c._fim) || null;
-  if (!atual && comFim.length && agora < comFim[0]._abre) atual = comFim[0]; // antes de tudo → 1º culto (early birds)
-  return { atual, visiveis };
+// (docs/cultos-domingo/ · F1) Sessão ÚNICA aberta só é adotada SEM escolha
+// quando ela é o culto de AGORA do relógio. Sessão vencida (manhã ainda aberta
+// à tarde) ou ensaio exigem escolha ativa — antes o check-in adotava a única
+// sessão em silêncio, e com a grade nova isso viraria criança no culto errado.
+function seletorCultosNecessario(sessoesAbertas: any[], cultoAtualId: string | null): boolean {
+  if (sessoesAbertas.length > 1) return true;
+  return sessoesAbertas.length === 1 && sessoesAbertas[0].culto_id !== cultoAtualId;
+}
+// Falta escolher o culto? (trava o confirmar) — destino resolvido = algum culto
+// ABERTO marcado, ou a única sessão aberta é o culto de agora (auto-adota).
+function faltaEscolherCulto(sessoesAbertas: any[], cultosSel: Set<string>, cultoAtualId: string | null): boolean {
+  if (!sessoesAbertas.length) return false; // sem sessão aberta, quem trava é o "check-in fechado"
+  if (sessoesAbertas.some((c: any) => cultosSel.has(c.culto_id))) return false;
+  return seletorCultosNecessario(sessoesAbertas, cultoAtualId);
 }
 // Período do dia (manhã/tarde/noite) a partir do horário (HH:MM).
 function _periodoDia(hora?: string): string {
@@ -120,12 +115,6 @@ function rotuloPeriodo(data?: string, hora?: string): string {
 function hojeBRTStr(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 }
-// Chave de período pra agrupar cultos no seletor (manhã <12h · tarde <18h · noite).
-function _periodoKey(hora?: string): 'manha' | 'tarde' | 'noite' {
-  const h = Number(String(hora || '').slice(0, 2)) || 0;
-  return h < 12 ? 'manha' : h < 18 ? 'tarde' : 'noite';
-}
-
 // Sobrenome = tudo depois do 1º nome.
 function _sobrenome(nome?: string): string {
   const p = String(nome || '').trim().split(/\s+/).filter(Boolean);
@@ -866,9 +855,13 @@ export default function TotemKidsCheckin() {
   // extras. Primário = o culto de agora se marcado, senão o mais cedo marcado.
   function resolverSessaoCultos(): { sessao_id: string | null; cultos_extras: string[] } {
     let marcados = [...cultosSel];
-    // Culto ÚNICO aberto (Quarta/AMI/Bridge/Domingo à noite) → não precisa escolher:
-    // usa o único (o seletor "em qual culto" só aparece quando há +de um horário).
-    if (!marcados.length && sessoesAbertas.length === 1) marcados = [sessoesAbertas[0].culto_id];
+    // Culto ÚNICO aberto (Quarta/AMI/Bridge/Domingo à noite) → não precisa
+    // escolher — MAS só quando ele é o culto de AGORA do relógio: sessão única
+    // VENCIDA (ou de ensaio) nunca é adotada em silêncio; o seletor aparece e
+    // a escolha é da pessoa (docs/cultos-domingo/ · F1).
+    if (!marcados.length && sessoesAbertas.length === 1 && sessoesAbertas[0].culto_id === cultoAtualId) {
+      marcados = [sessoesAbertas[0].culto_id];
+    }
     if (!marcados.length) return { sessao_id: null, cultos_extras: [] };
     // Ordena por DATA+hora (sessões abertas podem incluir culto futuro · ensaio)
     const chaveDe = (id: string) => {
@@ -932,7 +925,8 @@ export default function TotemKidsCheckin() {
     const nomeDe = (c: any) => `${c.nome}${c.hora ? ` · ${c.hora}` : ''}`;
     const marcados = sessoesAbertas.filter((c: any) => cultosSel.has(c.culto_id));
     if (marcados.length) return marcados.map(nomeDe).join('  +  ');
-    if (sessoesAbertas.length === 1) return nomeDe(sessoesAbertas[0]);
+    // única sessão só é o destino implícito quando é o culto de AGORA (F1)
+    if (sessoesAbertas.length === 1 && sessoesAbertas[0].culto_id === cultoAtualId) return nomeDe(sessoesAbertas[0]);
     const agora = sessoesAbertas.find((c: any) => c.culto_id === cultoAtualId);
     if (agora) return `${nomeDe(agora)} (pré-marcado)`;
     return 'escolha o culto no check-in';
@@ -1016,7 +1010,9 @@ export default function TotemKidsCheckin() {
       const { atual } = escolherCultoPorRelogio(cultosDoDia);
       const aberto = atual && sessoesAbertas.some((c: any) => c.culto_id === atual.id) ? atual.id : null;
       setCultosSel(aberto ? new Set([aberto]) : new Set());
-      if (atual?.id) setCultoAtualId(atual.id);
+      // fora de qualquer janela o "agora" é LIMPO (não fica um chip velho
+      // pré-marcando culto que já acabou · F1)
+      setCultoAtualId(atual?.id || null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crianca?.id]);
@@ -1969,7 +1965,7 @@ function PainelFamilia(props: {
   const todosEntraram = membros.length > 0 && membros.every(m => jaEntrou(m.id));
   const semSala = selecionados.filter(m => !salaPor[m.id]);
   const respOk = manual ? (!!manualNome.trim() && !!manualTel.trim()) : !!respId;
-  const semCulto = sessoesAbertas.length > 1 && cultosSel.size === 0;
+  const semCulto = faltaEscolherCulto(sessoesAbertas, cultosSel, cultoAtualId);
   const podeConfirmar = selecionados.length > 0 && semSala.length === 0 && respOk && !semCulto && !imprimindo;
   // Tem telefone pra oferecer o WhatsApp de retirada? (manual ≥10 díg · ou o selecionado tem tel)
   const temTelefoneResp = manual
@@ -2017,7 +2013,7 @@ function PainelFamilia(props: {
         </div>
 
         {/* Em quais cultos a família vai ficar? (mesmo padrão do card individual) */}
-        {sessoesAbertas.length > 1 && (
+        {seletorCultosNecessario(sessoesAbertas, cultoAtualId) && (
           <div>
             <label className="text-sm font-medium block mb-1">Em quais cultos a família vai ficar?</label>
             <p className="text-xs text-muted-foreground mb-2">Escolha o culto — vale pra todos os irmãos marcados. (a etiqueta "agora" é só uma dica do horário atual)</p>
@@ -2867,7 +2863,7 @@ function CheckinSelecao(props: {
             agora (relógio · ou o 1º do período) vem pré-marcado; a pessoa confirma
             ou troca, e pode marcar mais de um (extras). A criança entra na sessão
             de cada culto marcado · 1 etiqueta só. */}
-        {sessoesAbertas.length > 1 && (
+        {seletorCultosNecessario(sessoesAbertas, cultoAtualId) && (
           <div>
             <label className="text-sm font-medium block mb-1">Em quais cultos a criança vai ficar?</label>
             <p className="text-xs text-muted-foreground mb-2">Escolha o culto. Marque mais de um só se a criança realmente ficar em mais de um. (a etiqueta "agora" é só uma dica do horário atual)</p>
@@ -3066,7 +3062,7 @@ function CheckinSelecao(props: {
           {(() => {
             // Trava a impressão: precisa de culto + sala + responsável (da lista OU manual completo).
             const faltaResp = !usarRespManual ? !responsavelSelecionado : (!respManualNome.trim() || !respManualTel.trim());
-            const faltaCulto = sessoesAbertas.length > 1 && cultosSel.size === 0;
+            const faltaCulto = faltaEscolherCulto(sessoesAbertas, cultosSel, cultoAtualId);
             const bloqueado = !checkinAberto && (!salaSelecionada || faltaResp || faltaCulto);
             return (
           <>

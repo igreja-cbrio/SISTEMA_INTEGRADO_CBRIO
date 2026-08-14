@@ -20,10 +20,12 @@ import { toast } from 'sonner';
 import {
   Loader2, BarChart3, Inbox, Send, CalendarClock, FileText, Phone, Users,
   Bot, AlertTriangle, RefreshCw, Plus, Trash2, Pencil, Power, Save, X, MessageSquare, Repeat,
+  Settings, Coins, BookUser,
 } from 'lucide-react';
 import Conversas from './Conversas';
-import WhatsappAdmin from './admin/Whatsapp';
+import { WhatsappBotConfig } from './admin/Whatsapp';
 import ConversasSetores from './admin/ConversasSetores';
+import ContatosTab from '../components/comunicacao/ContatosTab';
 
 const C = { primary: '#00B39D' };
 
@@ -172,11 +174,14 @@ function Dashboard() {
   );
 }
 
-// ═══ ENVIOS ══════════════════════════════════════════════════════════
+// ═══ ENVIOS (absorveu a aba Erros · decisão do Marcos 13/08) ═════════
+// Um histórico só: o status diz se foi ou se deu errado, o filtro recorta,
+// e a falha terminal tem o Reenviar na própria linha.
 type Envio = {
   id: string; telefone: string; tipo?: string; template?: string; texto?: string;
   contexto?: string; status: string; tentativas?: number; delivered_at?: string;
   read_at?: string; failed_at?: string; criado_em?: string;
+  erro?: string | null; erro_status?: string | null;
 };
 const LIMIT = 100;
 function SeloStatus({ e }: { e: Envio }) {
@@ -190,22 +195,34 @@ function SeloStatus({ e }: { e: Envio }) {
   selos.unshift(<Badge key="s" variant={e.status === 'erro' ? 'destructive' : 'secondary'} style={cor}>{e.status}</Badge>);
   return <div className="flex flex-wrap gap-1">{selos}</div>;
 }
-function Envios() {
+function Envios({ podeReenviar }: { podeReenviar: boolean }) {
   const [filtros, setFiltros] = useState({ status: '', contexto: '', telefone: '', de: '', ate: '' });
   const [aplicados, setAplicados] = useState(filtros);
   const [offset, setOffset] = useState(0);
   const [dados, setDados] = useState<{ envios: Envio[]; total: number } | null>(null);
   const [erro, setErro] = useState(false);
+  const [orfaos, setOrfaos] = useState(0);
+  const [reenvId, setReenvId] = useState<string | null>(null);
+  const [telCorrigido, setTelCorrigido] = useState('');
 
   const carregar = useCallback(() => {
     setErro(false); setDados(null);
     const params: Record<string, unknown> = { limit: LIMIT, offset };
     Object.entries(aplicados).forEach(([k, v]) => { if (v) params[k] = k === 'status' && v === '_all' ? '' : v; });
     comunicacao.envios.list(params).then((r) => setDados(r)).catch(() => setErro(true));
+    comunicacao.envios.resumo(30).then((r: Resumo & { orfaos?: number }) => setOrfaos(r?.orfaos || 0)).catch(() => {});
   }, [aplicados, offset]);
   useEffect(() => { carregar(); }, [carregar]);
 
   function aplicar() { setOffset(0); setAplicados(filtros); }
+
+  async function reenviar(id: string) {
+    try {
+      await comunicacao.erros.reenviar(id, telCorrigido.replace(/\D/g, '') || undefined);
+      toast.success('Reenfileirado — o cron reprocessa em breve.');
+      setReenvId(null); setTelCorrigido(''); carregar();
+    } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao reenviar'); }
+  }
   const total = dados?.total || 0;
   const pagina = Math.floor(offset / LIMIT) + 1;
   const totalPaginas = Math.max(1, Math.ceil(total / LIMIT));
@@ -220,7 +237,8 @@ function Envios() {
               <SelectItem value="_all">Todos status</SelectItem>
               <SelectItem value="pendente">Pendente</SelectItem>
               <SelectItem value="enviado">Enviado</SelectItem>
-              <SelectItem value="erro">Erro</SelectItem>
+              <SelectItem value="erro">Erro (fila desistiu)</SelectItem>
+              <SelectItem value="falha_meta">Falha Meta (não entregue)</SelectItem>
             </SelectContent>
           </Select>
           <Input className="h-9" placeholder="Contexto" value={filtros.contexto} onChange={(e) => setFiltros((f) => ({ ...f, contexto: e.target.value }))} />
@@ -230,6 +248,13 @@ function Envios() {
           <Button className="h-9" onClick={aplicar}>Filtrar</Button>
         </div>
       </Card>
+      {orfaos > 0 && (
+        <Card className="flex items-center gap-2 p-3 text-sm">
+          <AlertTriangle className="h-4 w-4 text-amber-500" />
+          <span className="font-medium">{orfaos}</span>
+          <span className="text-muted-foreground">recibos da Meta sem envio correspondente (órfãos · 30 dias)</span>
+        </Card>
+      )}
       {erro ? <ErroBox msg="Falha ao listar os envios." onRetry={carregar} />
         : !dados ? <Spinner />
         : (
@@ -245,11 +270,12 @@ function Envios() {
                     <th className="px-3 py-2.5 text-left font-medium">Contexto</th>
                     <th className="px-3 py-2.5 text-left font-medium">Status</th>
                     <th className="px-3 py-2.5 text-center font-medium">Tent.</th>
+                    <th className="px-3 py-2.5 text-right font-medium"></th>
                   </tr>
                 </thead>
                 <tbody>
                   {dados.envios.length === 0 ? (
-                    <tr><td colSpan={7} className="py-10 text-center text-sm text-muted-foreground">Nenhum envio encontrado.</td></tr>
+                    <tr><td colSpan={8} className="py-10 text-center text-sm text-muted-foreground">Nenhum envio encontrado.</td></tr>
                   ) : dados.envios.map((e) => (
                     <tr key={e.id} className="border-b border-border/60 hover:bg-muted/40">
                       <td className="whitespace-nowrap px-3 py-2 text-xs">{fmtData(e.criado_em)}</td>
@@ -257,8 +283,22 @@ function Envios() {
                       <td className="px-3 py-2 text-xs">{e.tipo || '—'}</td>
                       <td className="max-w-[280px] truncate px-3 py-2" title={e.template || e.texto}>{e.template || e.texto || '—'}</td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">{e.contexto || '—'}</td>
-                      <td className="px-3 py-2"><SeloStatus e={e} /></td>
+                      {/* o hover conta O QUE deu errado (erro da fila ou motivo do failed da Meta) */}
+                      <td className="px-3 py-2" title={e.erro || e.erro_status || undefined}><SeloStatus e={e} /></td>
                       <td className="px-3 py-2 text-center tabular-nums">{e.tentativas ?? 0}</td>
+                      <td className="px-3 py-2 text-right">
+                        {e.status === 'erro' && (reenvId === e.id ? (
+                          <div className="flex items-center justify-end gap-1">
+                            <Input className="h-8 w-36" placeholder="telefone (opcional)" value={telCorrigido} onChange={(ev) => setTelCorrigido(ev.target.value)} />
+                            <Button size="sm" onClick={() => reenviar(e.id)}>Enviar</Button>
+                            <button onClick={() => { setReenvId(null); setTelCorrigido(''); }} className="p-1 text-muted-foreground hover:text-destructive"><X className="h-4 w-4" /></button>
+                          </div>
+                        ) : (
+                          <Button size="sm" variant="outline" disabled={!podeReenviar} onClick={() => { setReenvId(e.id); setTelCorrigido(''); }} className="gap-1">
+                            <Send className="h-3.5 w-3.5" />Reenviar
+                          </Button>
+                        ))}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -756,127 +796,21 @@ function Atendentes({ podeEscrever }: { podeEscrever: boolean }) {
 }
 
 // ═══ BOT (absorve as telas admin) ════════════════════════════════════
+// Aba Bot enxuta (13/08 · decisão do Marcos): sobraram o MENU (que na F3 vira
+// fluxos por opção) e a CONFIGURAÇÃO do bot. Coletas foi APOSENTADA (os
+// líderes de integração não compraram a ideia) e Avisos idem (substituído
+// pelas Programadas com audiência — o broadcast antigo nem persistia o
+// resultado). A tela antiga segue no repo (admin/Whatsapp.jsx · dormante).
 function BotAdmin() {
   return (
-    <Tabs defaultValue="whatsapp" className="space-y-4">
+    <Tabs defaultValue="menu" className="space-y-4">
       <TabsList>
-        <TabsTrigger value="whatsapp"><MessageSquare className="mr-1.5 h-3.5 w-3.5" />Coletas / Líderes / Avisos / Config</TabsTrigger>
         <TabsTrigger value="menu"><Bot className="mr-1.5 h-3.5 w-3.5" />Menu do bot</TabsTrigger>
+        <TabsTrigger value="config"><MessageSquare className="mr-1.5 h-3.5 w-3.5" />Configuração</TabsTrigger>
       </TabsList>
-      <TabsContent value="whatsapp"><WhatsappAdmin /></TabsContent>
       <TabsContent value="menu"><ConversasSetores /></TabsContent>
+      <TabsContent value="config"><WhatsappBotConfig /></TabsContent>
     </Tabs>
-  );
-}
-
-// ═══ ERROS ═══════════════════════════════════════════════════════════
-type FalhaFila = { id: string; telefone: string; tipo?: string; template?: string; contexto?: string; erro?: string; tentativas?: number; criado_em?: string };
-type FalhaMeta = { id: string; telefone: string; tipo?: string; template?: string; contexto?: string; erro_status?: string; failed_at?: string };
-function Erros({ podeReenviar }: { podeReenviar: boolean }) {
-  const [dados, setDados] = useState<{ falhas_fila: FalhaFila[]; falhas_meta: FalhaMeta[]; orfaos: number } | null>(null);
-  const [erro, setErro] = useState(false);
-  const [reenvId, setReenvId] = useState<string | null>(null);
-  const [tel, setTel] = useState('');
-
-  const carregar = useCallback(() => {
-    setErro(false);
-    comunicacao.erros.list().then((r) => setDados(r)).catch(() => setErro(true));
-  }, []);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  async function reenviar(id: string) {
-    try {
-      await comunicacao.erros.reenviar(id, tel.replace(/\D/g, '') || undefined);
-      toast.success('Reenfileirado — o cron reprocessa em breve.');
-      setReenvId(null); setTel(''); carregar();
-    } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao reenviar'); }
-  }
-
-  if (erro) return <ErroBox msg="Falha ao listar erros." onRetry={carregar} />;
-  if (!dados) return <Spinner />;
-
-  return (
-    <div className="space-y-4">
-      <Card className="flex items-center gap-2 p-3 text-sm">
-        <AlertTriangle className="h-4 w-4 text-amber-500" />
-        <span className="font-medium">{dados.orfaos}</span>
-        <span className="text-muted-foreground">status órfãos (callbacks da Meta sem envio correspondente)</span>
-      </Card>
-
-      <Card className="overflow-hidden p-0">
-        <div className="border-b border-border px-4 py-3 text-sm font-semibold">Falhas da fila (erro terminal · reenviáveis)</div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
-                <th className="px-3 py-2.5 text-left font-medium">Data</th>
-                <th className="px-3 py-2.5 text-left font-medium">Telefone</th>
-                <th className="px-3 py-2.5 text-left font-medium">Template</th>
-                <th className="px-3 py-2.5 text-left font-medium">Contexto</th>
-                <th className="px-3 py-2.5 text-left font-medium">Erro</th>
-                <th className="px-3 py-2.5 text-center font-medium">Tent.</th>
-                <th className="px-3 py-2.5 text-right font-medium"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {dados.falhas_fila.length === 0 ? (
-                <tr><td colSpan={7} className="py-8 text-center text-sm text-muted-foreground">Nenhuma falha na fila.</td></tr>
-              ) : dados.falhas_fila.map((f) => (
-                <tr key={f.id} className="border-b border-border/60 align-top hover:bg-muted/40">
-                  <td className="whitespace-nowrap px-3 py-2 text-xs">{fmtData(f.criado_em)}</td>
-                  <td className="px-3 py-2 tabular-nums">{f.telefone}</td>
-                  <td className="px-3 py-2 text-xs">{f.template || f.tipo || '—'}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{f.contexto || '—'}</td>
-                  <td className="max-w-[240px] px-3 py-2 text-xs text-rose-600">{f.erro || '—'}</td>
-                  <td className="px-3 py-2 text-center tabular-nums">{f.tentativas ?? 0}</td>
-                  <td className="px-3 py-2 text-right">
-                    {reenvId === f.id ? (
-                      <div className="flex items-center justify-end gap-1">
-                        <Input className="h-8 w-36" placeholder="telefone (opcional)" value={tel} onChange={(e) => setTel(e.target.value)} />
-                        <Button size="sm" onClick={() => reenviar(f.id)}>Enviar</Button>
-                        <button onClick={() => { setReenvId(null); setTel(''); }} className="p-1 text-muted-foreground hover:text-destructive"><X className="h-4 w-4" /></button>
-                      </div>
-                    ) : (
-                      <Button size="sm" variant="outline" disabled={!podeReenviar} onClick={() => { setReenvId(f.id); setTel(''); }} className="gap-1"><Send className="h-3.5 w-3.5" />Reenviar</Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-
-      <Card className="overflow-hidden p-0">
-        <div className="border-b border-border px-4 py-3 text-sm font-semibold">Falhas da Meta (callback failed)</div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
-                <th className="px-3 py-2.5 text-left font-medium">Falhou em</th>
-                <th className="px-3 py-2.5 text-left font-medium">Telefone</th>
-                <th className="px-3 py-2.5 text-left font-medium">Template</th>
-                <th className="px-3 py-2.5 text-left font-medium">Contexto</th>
-                <th className="px-3 py-2.5 text-left font-medium">Motivo (status)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dados.falhas_meta.length === 0 ? (
-                <tr><td colSpan={5} className="py-8 text-center text-sm text-muted-foreground">Nenhuma falha reportada pela Meta.</td></tr>
-              ) : dados.falhas_meta.map((f) => (
-                <tr key={f.id} className="border-b border-border/60 hover:bg-muted/40">
-                  <td className="whitespace-nowrap px-3 py-2 text-xs">{fmtData(f.failed_at)}</td>
-                  <td className="px-3 py-2 tabular-nums">{f.telefone}</td>
-                  <td className="px-3 py-2 text-xs">{f.template || f.tipo || '—'}</td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{f.contexto || '—'}</td>
-                  <td className="px-3 py-2 text-xs text-rose-600">{f.erro_status || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
-    </div>
   );
 }
 
@@ -1053,12 +987,22 @@ function Automaticas() {
 }
 
 // ═══ PÁGINA ══════════════════════════════════════════════════════════
-const TABS = ['dashboard', 'conversas', 'envios', 'programadas', 'automaticas', 'templates', 'numeros', 'atendentes', 'bot', 'erros'];
+// Reorganização de 13/08 (pedido do Marcos): 10 abas viraram 6.
+// Disparos = Programadas ∪ Automáticas (um filtro) · Erros entrou em Envios
+// (coluna de status + reenviar na linha) · Templates/Números/Atendentes/
+// Tarifas viraram sub-abas de Configurações.
+const TABS = ['dashboard', 'conversas', 'envios', 'disparos', 'contatos', 'bot', 'config'];
+// Deep-links antigos (?tab=programadas etc.) caem na aba nova certa.
+const TAB_LEGADO: Record<string, string> = {
+  programadas: 'disparos', automaticas: 'disparos', erros: 'envios',
+  templates: 'config', numeros: 'config', atendentes: 'config',
+};
 
 export default function Comunicacao() {
   const { getAccessLevel } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const tabUrl = searchParams.get('tab') || 'dashboard';
+  const tabParam = searchParams.get('tab') || 'dashboard';
+  const tabUrl = TAB_LEGADO[tabParam] || tabParam;
 
   const nivel = getAccessLevel(['comunicacao']);
   const podeNvl3 = nivel >= 3;
@@ -1082,34 +1026,146 @@ export default function Comunicacao() {
     <div className="space-y-4 p-4 md:p-6">
       <div>
         <h1 className="text-xl font-bold">Comunicação</h1>
-        <p className="text-sm text-muted-foreground">Central de WhatsApp da igreja — chat, envios, templates, atendentes e relatórios.</p>
+        <p className="text-sm text-muted-foreground">Central de WhatsApp da igreja — chat, envios, disparos e configurações.</p>
       </div>
       <Tabs value={tab} onValueChange={setTab} className="space-y-4">
         <TabsList className="flex-wrap">
           <TabsTrigger value="dashboard"><BarChart3 className="mr-1.5 h-3.5 w-3.5" />Dashboard</TabsTrigger>
           <TabsTrigger value="conversas"><Inbox className="mr-1.5 h-3.5 w-3.5" />Conversas</TabsTrigger>
           <TabsTrigger value="envios"><Send className="mr-1.5 h-3.5 w-3.5" />Envios</TabsTrigger>
-          <TabsTrigger value="programadas"><CalendarClock className="mr-1.5 h-3.5 w-3.5" />Programadas</TabsTrigger>
-          <TabsTrigger value="automaticas"><Repeat className="mr-1.5 h-3.5 w-3.5" />Automáticas</TabsTrigger>
-          <TabsTrigger value="templates"><FileText className="mr-1.5 h-3.5 w-3.5" />Templates</TabsTrigger>
-          <TabsTrigger value="numeros"><Phone className="mr-1.5 h-3.5 w-3.5" />Números</TabsTrigger>
-          <TabsTrigger value="atendentes"><Users className="mr-1.5 h-3.5 w-3.5" />Atendentes</TabsTrigger>
+          <TabsTrigger value="disparos"><CalendarClock className="mr-1.5 h-3.5 w-3.5" />Disparos</TabsTrigger>
+          <TabsTrigger value="contatos"><BookUser className="mr-1.5 h-3.5 w-3.5" />Contatos</TabsTrigger>
           {podeBot && <TabsTrigger value="bot"><Bot className="mr-1.5 h-3.5 w-3.5" />Bot</TabsTrigger>}
-          <TabsTrigger value="erros"><AlertTriangle className="mr-1.5 h-3.5 w-3.5" />Erros</TabsTrigger>
+          <TabsTrigger value="config"><Settings className="mr-1.5 h-3.5 w-3.5" />Configurações</TabsTrigger>
         </TabsList>
 
         <TabsContent value="dashboard"><Dashboard /></TabsContent>
         {/* Chat: renderiza o default de Conversas.tsx (já tem sub-abas Conversas/Painel/Mensagens prontas). */}
         <TabsContent value="conversas"><Conversas /></TabsContent>
-        <TabsContent value="envios"><Envios /></TabsContent>
-        <TabsContent value="programadas"><Programadas podeEscrever={podeNvl3} podeExcluir={podeNvl4} /></TabsContent>
-        <TabsContent value="automaticas"><Automaticas /></TabsContent>
-        <TabsContent value="templates"><Templates podeSync={podeNvl3} podeEditar={podeNvl3} /></TabsContent>
-        <TabsContent value="numeros"><Numeros podeEscrever={podeNvl5} /></TabsContent>
-        <TabsContent value="atendentes"><Atendentes podeEscrever={podeNvl3} /></TabsContent>
+        <TabsContent value="envios"><Envios podeReenviar={podeNvl3} /></TabsContent>
+        <TabsContent value="disparos"><Disparos podeEscrever={podeNvl3} podeExcluir={podeNvl4} /></TabsContent>
+        <TabsContent value="contatos"><ContatosTab podeGerirLideres={podeBot} /></TabsContent>
         {podeBot && <TabsContent value="bot"><BotAdmin /></TabsContent>}
-        <TabsContent value="erros"><Erros podeReenviar={podeNvl3} /></TabsContent>
+        <TabsContent value="config">
+          <Configuracoes podeNvl3={podeNvl3} podeNvl5={podeNvl5} />
+        </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// ═══ DISPAROS (Programadas ∪ Automáticas · decisão do Marcos 13/08) ═══
+// Uma aba só, com um filtro: "Agendadas" (as programadas de sempre, editáveis)
+// × "Automáticas" (o inventário read-only do que o sistema manda por gatilho).
+function Disparos({ podeEscrever, podeExcluir }: { podeEscrever: boolean; podeExcluir: boolean }) {
+  const [tipo, setTipo] = useState<'agendadas' | 'automaticas'>('agendadas');
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" variant={tipo === 'agendadas' ? 'default' : 'outline'} className="gap-1.5" onClick={() => setTipo('agendadas')}>
+          <CalendarClock className="h-3.5 w-3.5" />Agendadas
+        </Button>
+        <Button size="sm" variant={tipo === 'automaticas' ? 'default' : 'outline'} className="gap-1.5" onClick={() => setTipo('automaticas')}>
+          <Repeat className="h-3.5 w-3.5" />Automáticas
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          {tipo === 'agendadas'
+            ? 'Disparos com data/recorrência que VOCÊ cria e edita.'
+            : 'O que o sistema manda sozinho por gatilho — leitura; cada um é operado no módulo dono.'}
+        </span>
+      </div>
+      {tipo === 'agendadas'
+        ? <Programadas podeEscrever={podeEscrever} podeExcluir={podeExcluir} />
+        : <Automaticas />}
+    </div>
+  );
+}
+
+// ═══ CONFIGURAÇÕES (Templates · Números · Atendentes · Tarifas) ═══
+function Configuracoes({ podeNvl3, podeNvl5 }: { podeNvl3: boolean; podeNvl5: boolean }) {
+  return (
+    <Tabs defaultValue="templates" className="space-y-4">
+      <TabsList>
+        <TabsTrigger value="templates"><FileText className="mr-1.5 h-3.5 w-3.5" />Templates</TabsTrigger>
+        <TabsTrigger value="numeros"><Phone className="mr-1.5 h-3.5 w-3.5" />Números</TabsTrigger>
+        <TabsTrigger value="atendentes"><Users className="mr-1.5 h-3.5 w-3.5" />Atendentes</TabsTrigger>
+        <TabsTrigger value="tarifas"><Coins className="mr-1.5 h-3.5 w-3.5" />Tarifas</TabsTrigger>
+      </TabsList>
+      <TabsContent value="templates"><Templates podeSync={podeNvl3} podeEditar={podeNvl3} /></TabsContent>
+      <TabsContent value="numeros"><Numeros podeEscrever={podeNvl5} /></TabsContent>
+      <TabsContent value="atendentes"><Atendentes podeEscrever={podeNvl3} /></TabsContent>
+      <TabsContent value="tarifas"><Tarifas podeEditar={podeNvl5} /></TabsContent>
+    </Tabs>
+  );
+}
+
+// ═══ TARIFAS (o backend existia desde julho SEM tela — o custo do Dashboard
+// lê daqui; era editável só por SQL) ═══
+type Tarifa = { categoria: string; tarifa: number; atualizado_em?: string };
+function Tarifas({ podeEditar }: { podeEditar: boolean }) {
+  const [lista, setLista] = useState<Tarifa[] | null>(null);
+  const [erro, setErro] = useState(false);
+  const [editCat, setEditCat] = useState<string | null>(null);
+  const [valor, setValor] = useState('');
+
+  const carregar = useCallback(() => {
+    setErro(false);
+    comunicacao.tarifas.list().then((r: Tarifa[]) => setLista(r || [])).catch(() => { setLista([]); setErro(true); });
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  async function salvar(categoria: string) {
+    const t = Number(String(valor).replace(',', '.'));
+    if (!Number.isFinite(t) || t < 0) { toast.error('Valor inválido.'); return; }
+    try {
+      await comunicacao.tarifas.atualizar(categoria, t);
+      toast.success('Tarifa atualizada — o custo do Dashboard usa este valor.');
+      setEditCat(null); carregar();
+    } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao salvar'); }
+  }
+
+  if (erro) return <ErroBox msg="Falha ao listar as tarifas." onRetry={carregar} />;
+  if (!lista) return <Spinner />;
+  return (
+    <div className="max-w-xl space-y-3">
+      <p className="text-sm text-muted-foreground">
+        Tarifa por conversa iniciada, por categoria de template (é a base do custo <b>estimado</b> do
+        Dashboard — não é a fatura da Meta). Conferir contra a tarifa vigente de vez em quando.
+      </p>
+      <Card className="overflow-hidden p-0">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
+              <th className="px-3 py-2.5 text-left font-medium">Categoria</th>
+              <th className="px-3 py-2.5 text-left font-medium">R$ por conversa</th>
+              <th className="px-3 py-2.5 text-right font-medium"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {lista.map((t) => (
+              <tr key={t.categoria} className="border-b border-border/60">
+                <td className="px-3 py-2 font-medium">{t.categoria}</td>
+                <td className="px-3 py-2 tabular-nums">
+                  {editCat === t.categoria
+                    ? <Input className="h-8 w-28" value={valor} onChange={(e) => setValor(e.target.value)} autoFocus />
+                    : brl(t.tarifa)}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {editCat === t.categoria ? (
+                    <div className="flex justify-end gap-1">
+                      <button onClick={() => salvar(t.categoria)} className="rounded p-1.5 text-muted-foreground hover:text-primary" title="Salvar"><Save className="h-4 w-4" /></button>
+                      <button onClick={() => setEditCat(null)} className="rounded p-1.5 text-muted-foreground hover:text-destructive" title="Cancelar"><X className="h-4 w-4" /></button>
+                    </div>
+                  ) : (
+                    <button disabled={!podeEditar} onClick={() => { setEditCat(t.categoria); setValor(String(t.tarifa)); }}
+                      className="rounded p-1.5 text-muted-foreground hover:text-primary disabled:opacity-40" title="Editar"><Pencil className="h-4 w-4" /></button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
     </div>
   );
 }

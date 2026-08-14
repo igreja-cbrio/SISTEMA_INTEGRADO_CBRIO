@@ -10,8 +10,36 @@
 
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { fetchAllRows } = require('../utils/pagination');
+const { resolverTelefoneVoluntario } = require('../utils/telefoneVoluntario');
 
 const DIA = 86400000;
+// `.in()` com lista grande estoura a URL do PostgREST — lotes, sempre.
+const LOTE_IN = 200;
+
+function digitosCpf(v) {
+  const d = String(v || '').replace(/\D+/g, '');
+  return d.length === 11 ? d : null;
+}
+
+function nomeDaInscricao(vi) {
+  const completo = String(vi?.nome_completo || '').trim();
+  if (completo) return completo;
+  return [vi?.nome, vi?.sobrenome].filter(Boolean).join(' ').trim();
+}
+
+// Lê em lotes de LOTE_IN e pagina cada lote (o cap de 1000 do PostgREST trunca
+// EM SILÊNCIO — a lição que já mordeu o dashboard do Kids e a Membresia).
+async function _emLotes(valores, build) {
+  const out = [];
+  const uniq = [...new Set((valores || []).filter(Boolean))];
+  for (let i = 0; i < uniq.length; i += LOTE_IN) {
+    const chunk = uniq.slice(i, i + LOTE_IN);
+    if (!chunk.length) break;
+    out.push(...await fetchAllRows(() => build(chunk)));
+  }
+  return out;
+}
 
 function waLink(phone, msg) {
   const tel = String(phone || '').replace(/\D/g, '');
@@ -25,15 +53,112 @@ function fmtData(iso) {
   catch { return iso; }
 }
 
-// Junta perfis (telefone/nome) por volunteer_id.
+// ⚠️ Resolve NOME + TELEFONE por volunteer_id percorrendo a FONTE ÚNICA de
+// pessoas, não só a cópia local do módulo.
+//
+// Antes isto lia `vol_profiles.phone` e nada mais. Medido em 13/08/2026: só 8
+// dos 930 perfis têm telefone ali (o import do Planning Center nunca trouxe),
+// então as 87 escalas pendentes apareciam TODAS como "sem telefone" — e 59
+// delas tinham telefone em `mem_membros` ou no formulário público que a própria
+// pessoa preencheu. A régua da cadeia e o porquê de cada canal estão em
+// `utils/telefoneVoluntario.js`; aqui só se lê o banco.
 async function perfisPorId(ids) {
   const out = {};
-  const uniq = [...new Set(ids.filter(Boolean))];
+  const uniq = [...new Set((ids || []).filter(Boolean))];
   if (uniq.length === 0) return out;
-  for (let i = 0; i < uniq.length; i += 200) {
-    const chunk = uniq.slice(i, i + 200);
-    const { data } = await supabase.from('vol_profiles').select('id, full_name, phone').in('id', chunk);
-    for (const p of data || []) out[p.id] = p;
+
+  const perfis = await _emLotes(uniq, (chunk) => supabase
+    .from('vol_profiles')
+    .select('id, full_name, phone, cpf, email, membresia_id')
+    .in('id', chunk));
+  if (!perfis.length) return out;
+
+  // 1 · cadastro da pessoa pelo vínculo que o módulo declara (membresia_id)
+  const membroIds = perfis.map((p) => p.membresia_id).filter(Boolean);
+  const membros = {};
+  for (const m of await _emLotes(membroIds, (chunk) => supabase
+    .from('mem_membros').select('id, nome, telefone').in('id', chunk).is('deleted_at', null))) {
+    membros[m.id] = m;
+  }
+
+  // 2 · cadastro da pessoa pelo CPF do perfil (chave forte do matcher)
+  const cpfs = perfis.map((p) => digitosCpf(p.cpf)).filter(Boolean);
+  const porCpf = {};
+  for (const m of await _emLotes(cpfs, (chunk) => supabase
+    .from('mem_membros').select('id, nome, telefone, cpf').in('cpf', chunk).is('deleted_at', null))) {
+    const k = digitosCpf(m.cpf);
+    if (k && !porCpf[k]) porCpf[k] = m;
+  }
+
+  // 3 · o formulário público de voluntariado que a pessoa preencheu.
+  //     Casado por e-mail; quem exige NOME compatível é a régua pura.
+  const emails = perfis.map((p) => String(p.email || '').trim().toLowerCase()).filter(Boolean);
+  const inscPorEmail = {};
+  for (const vi of await _emLotes(emails, (chunk) => supabase
+    .from('vol_inscricoes')
+    .select('email, telefone, nome, sobrenome, nome_completo, created_at')
+    .in('email', chunk).is('deleted_at', null).not('telefone', 'is', null)
+    .order('created_at', { ascending: false }))) {
+    const k = String(vi.email || '').trim().toLowerCase();
+    if (!k) continue;
+    (inscPorEmail[k] = inscPorEmail[k] || []).push(vi);
+  }
+
+  // 4 · contato secundário acumulado (mem_contatos) do membro já vinculado.
+  //     Best-effort: a tabela pode não existir num deploy em 2 etapas, e ficar
+  //     sem o ÚLTIMO canal da cadeia não pode derrubar o painel inteiro.
+  const contatos = {};
+  try {
+    for (const c of await _emLotes(Object.keys(membros), (chunk) => supabase
+      .from('mem_contatos').select('membro_id, valor, ultimo_visto')
+      .in('membro_id', chunk).eq('tipo', 'telefone').is('deleted_at', null)
+      .order('ultimo_visto', { ascending: false }))) {
+      (contatos[c.membro_id] = contatos[c.membro_id] || []).push({ telefone: c.valor });
+    }
+  } catch (e) {
+    console.error('[agenteVoluntariado] contatos secundários indisponíveis:', e.message);
+  }
+
+  // ⚠️ Veto de nome no canal do VÍNCULO (`membresia_id`) não é só "não achei
+  // telefone": é sinal de que o perfil de voluntário está ligado ao cadastro de
+  // OUTRA PESSOA — e vínculo errado ali conta a pessoa errada no valor Servir,
+  // não só perde um telefone. Fica no log agregado (nunca uma linha por pessoa,
+  // e nunca o nome no log) pra que apareça sem virar ruído.
+  let vinculosSuspeitos = 0;
+  let numerosInalcancaveis = 0;
+
+  for (const p of perfis) {
+    const membro = p.membresia_id ? membros[p.membresia_id] : null;
+    const cpf = digitosCpf(p.cpf);
+    const r = resolverTelefoneVoluntario({
+      nome: p.full_name,
+      perfilTelefone: p.phone,
+      membro,
+      membroPorCpf: cpf ? porCpf[cpf] : null,
+      inscricoes: (inscPorEmail[String(p.email || '').trim().toLowerCase()] || [])
+        .map((vi) => ({ nome: nomeDaInscricao(vi), telefone: vi.telefone })),
+      contatos: membro ? contatos[membro.id] || [] : [],
+    });
+    for (const d of r.descartados || []) {
+      if (d.motivo === 'nome_divergente' && (d.origem === 'membro' || d.origem === 'cpf')) vinculosSuspeitos++;
+      if (d.motivo === 'numero_errado') numerosInalcancaveis++;
+    }
+
+    out[p.id] = {
+      id: p.id,
+      full_name: p.full_name,
+      phone: r.telefone,
+      telefone_origem: r.origem,
+      telefone_fonte: r.rotulo,
+      membro_id: r.membro_id || p.membresia_id || null,
+    };
+  }
+
+  if (vinculosSuspeitos > 0) {
+    console.error(`[agenteVoluntariado] ${vinculosSuspeitos} perfil(is) de voluntário com nome incompatível com o cadastro de pessoa vinculado — vínculo suspeito, conferir em /entradas`);
+  }
+  if (numerosInalcancaveis > 0) {
+    console.error(`[agenteVoluntariado] ${numerosInalcancaveis} telefone(s) descartado(s) por não serem alcançáveis pelo nosso envio (DDD inexistente, faltando o 9, ou número estrangeiro)`);
   }
   return out;
 }
@@ -41,16 +166,16 @@ async function perfisPorId(ids) {
 // Analisa as escalas: pendentes (a confirmar), recusadas (repor) e no-shows.
 async function analisar() {
   const agora = Date.now();
-  const nowIso = new Date(agora).toISOString();
   const in7dIso = new Date(agora + 7 * DIA).toISOString();
   const desde2dIso = new Date(agora - 2 * DIA).toISOString();
 
   // 1) cultos próximos (e os recém-passados, p/ no-show)
-  const { data: servicos } = await supabase
+  const servicos = await fetchAllRows(() => supabase
     .from('vol_services')
     .select('id, name, service_type_name, scheduled_at')
     .gte('scheduled_at', desde2dIso)
-    .lte('scheduled_at', in7dIso);
+    .lte('scheduled_at', in7dIso)
+    .order('scheduled_at', { ascending: true }));
   const futuros = (servicos || []).filter((s) => new Date(s.scheduled_at).getTime() >= agora);
   const passados = (servicos || []).filter((s) => new Date(s.scheduled_at).getTime() < agora);
   const svcById = Object.fromEntries((servicos || []).map((s) => [s.id, s]));
@@ -61,10 +186,11 @@ async function analisar() {
 
   // 2) escalas dos cultos FUTUROS → pendentes / recusadas
   if (futuros.length > 0) {
-    const { data: escalas } = await supabase
+    const escalas = await _emLotes(futuros.map((s) => s.id), (chunk) => supabase
       .from('vol_schedules')
       .select('id, service_id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status')
-      .in('service_id', futuros.map((s) => s.id));
+      .in('service_id', chunk)
+      .order('id', { ascending: true }));
     const perfis = await perfisPorId((escalas || []).map((e) => e.volunteer_id));
     for (const e of escalas || []) {
       const svc = svcById[e.service_id];
@@ -78,6 +204,13 @@ async function analisar() {
         confirmacoes_pendentes.push({
           schedule_id: e.id, nome, funcao, servico: svc?.name || null, quando,
           telefone: perfil?.phone || null, whatsapp: waLink(perfil?.phone, msg), mensagem: msg,
+          // ⚠️ De ONDE veio o telefone vai pra tela. Telefone recuperado por
+          // caminho indireto (cadastro da pessoa, formulário antigo) é
+          // indistinguível de um digitado aqui se a origem não for declarada —
+          // e é a origem que diz à equipe se pode confiar sem conferir.
+          telefone_fonte: perfil?.telefone_fonte || null,
+          telefone_origem: perfil?.telefone_origem || null,
+          membro_id: perfil?.membro_id || null,
         });
       } else if (e.confirmation_status === 'declined') {
         reposicoes.push({
@@ -90,11 +223,12 @@ async function analisar() {
 
   // 3) cultos passados (≤2d) → no-show (confirmou e não fez check-in)
   if (passados.length > 0) {
-    const { data: escalasP } = await supabase
+    const escalasP = await _emLotes(passados.map((s) => s.id), (chunk) => supabase
       .from('vol_schedules')
       .select('id, service_id, volunteer_id, volunteer_name, team_name, position_name')
       .eq('confirmation_status', 'confirmed')
-      .in('service_id', passados.map((s) => s.id));
+      .in('service_id', chunk)
+      .order('id', { ascending: true }));
     const schedIds = (escalasP || []).map((e) => e.id);
     const comCheckin = new Set();
     for (let i = 0; i < schedIds.length; i += 200) {

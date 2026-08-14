@@ -12,9 +12,49 @@ const { ehSoAgradecimento } = require('../utils/agradecimento');
 function primeiroNome(nome) { return String(nome || '').trim().split(/\s+/)[0] || ''; }
 
 async function setoresAtivos() {
+  // select('*') DE PROPÓSITO: as colunas de FLUXO (mensagem_resposta,
+  // pedir_nome, destino_tipo, atendente_id · migration 20260813150000) podem
+  // ainda não existir — pedi-las nominalmente derrubaria a triagem inteira
+  // (lição do parcelas_max). Sem elas, cada opção cai no fluxo padrão.
   const { data } = await supabase.from('conversas_setores')
-    .select('ordem, rotulo, area').eq('ativo', true).order('ordem', { ascending: true });
+    .select('*').eq('ativo', true).order('ordem', { ascending: true });
   return data || [];
+}
+
+// Conclui a triagem de acordo com o FLUXO da opção (F3 · 13/08): mensagem de
+// confirmação PRÓPRIA (ou a padrão), destino = ÁREA ou ATENDENTE específico
+// (a conversa já nasce atribuída), e o aviso vai pra quem atende. Usada pelos
+// dois caminhos — com nome (pedir_nome=true, o histórico) e sem.
+async function concluirTriagem({ conv, telefone, setor, nomeInformado }) {
+  const area = setor?.area || null;
+  const rotulo = setor?.rotulo || area || 'atendimento';
+  const paraAtendente = !!(setor?.destino_tipo === 'atendente' && setor?.atendente_id);
+  const patch = { bot_estado: 'concluido', bot_area_pendente: null, area };
+  // só sobrescreve o nome se não veio do cadastro de membro
+  if (!conv.membro_id && nomeInformado) patch.nome = nomeInformado;
+  if (paraAtendente) patch.atribuido_a = setor.atendente_id;
+  await supabase.from('wa_conversas').update(patch).eq('id', conv.id);
+
+  const nome = primeiroNome(patch.nome || conv.nome || nomeInformado || '');
+  const proto = conv.protocolo ? `\n\nSeu protocolo de atendimento é *${conv.protocolo}* (guarde pra acompanhar).` : '';
+  const propria = String(setor?.mensagem_resposta || '').trim();
+  await responder(telefone, propria
+    ? `${propria}${proto}`
+    : `Obrigado${nome ? `, ${nome}` : ''}! 🙏 Já encaminhei sua mensagem pro time de *${rotulo}*. Em breve alguém fala com você por aqui.${proto}`);
+
+  try {
+    const alvos = paraAtendente ? [setor.atendente_id] : await resolverProfilesDaArea(area);
+    const nomePessoa = patch.nome || conv.nome || nomeInformado || 'Contato';
+    await notificar({
+      modulo: 'conversas',
+      tipo: 'conversa_triada',
+      titulo: `Nova conversa · ${rotulo}`,
+      mensagem: `${nomePessoa}${conv.membro_id ? '' : ' (⚠️ não cadastrado na membresia)'} quer falar com ${rotulo}${paraAtendente ? ' — atribuída a você' : ''}.`,
+      link: `/comunicacao?tab=conversas${area ? `&area=${encodeURIComponent(area)}` : ''}`,
+      chaveDedup: `conversa_triada_${conv.id}`,
+      targetIds: alvos.length ? alvos : undefined, // sem alvos → fallback admin/diretor do notificar
+    });
+  } catch (e) { console.error('[triagem] notificar:', e.message); }
 }
 
 function montarMenu(setores, nome) {
@@ -41,8 +81,9 @@ async function resolverProfilesDaArea(areaNome) {
 
 // responde pelo bot e registra a saída na thread do inbox (sem marcar assumida_humano)
 async function responder(telefone, texto) {
-  await enviarTexto(telefone, texto).catch(e => console.error('[triagem] enviarTexto:', e.message));
-  await waInbox.registrarOutbound({ telefone, texto, tipo: 'bot' }).catch(() => {});
+  const r = await enviarTexto(telefone, texto).catch(e => { console.error('[triagem] enviarTexto:', e.message); return null; });
+  // waMessageId: é o que deixa o recibo delivered/read da Meta pousar na thread
+  await waInbox.registrarOutbound({ telefone, texto, tipo: 'bot', waMessageId: r?.message_id || null }).catch(() => {});
 }
 
 // Retorna true se o bot assumiu (chamador deve dar return sem cair no institucional).
@@ -107,39 +148,28 @@ async function tratar({ telefone, texto }) {
       await responder(telefone, `Não entendi 🙈. Responda só o número do setor:\n\n${setores.map((s, i) => `${i + 1} - ${s.rotulo}`).join('\n')}`);
       return true;
     }
+    // Fluxo da opção (F3): pula a pergunta do nome quando o fluxo diz que não
+    // precisa (ex.: oração — a pessoa já vai escrever o pedido em seguida).
+    if (setor.pedir_nome === false) {
+      await concluirTriagem({ conv, telefone, setor, nomeInformado: null });
+      return true;
+    }
     await responder(telefone, 'Para atendermos você da melhor forma, me diga seu *NOME*');
-    await supabase.from('wa_conversas').update({ bot_estado: 'aguardando_nome', bot_area_pendente: setor.area }).eq('id', conv.id);
+    // Guarda o ID da opção (não a área): duas opções podem apontar pra MESMA
+    // área com fluxos diferentes. Conversa em andamento com a ÁREA antiga
+    // gravada continua resolvendo (fallback por área na conclusão).
+    await supabase.from('wa_conversas').update({ bot_estado: 'aguardando_nome', bot_area_pendente: String(setor.id) }).eq('id', conv.id);
     return true;
   }
 
-  // 3) nome → tria + notifica
+  // 3) nome → conclui pelo FLUXO da opção (id novo · área = conversa antiga)
   if (estado === 'aguardando_nome') {
     const nomeInformado = String(texto || '').trim().slice(0, 120);
-    const area = conv.bot_area_pendente;
-    const setor = setores.find(s => s.area === area);
-    const rotulo = setor?.rotulo || area;
-    const patch = { bot_estado: 'concluido', bot_area_pendente: null, area };
-    // só sobrescreve o nome se não veio do cadastro de membro
-    if (!conv.membro_id && nomeInformado) patch.nome = nomeInformado;
-    await supabase.from('wa_conversas').update(patch).eq('id', conv.id);
-
-    const proto = conv.protocolo ? `\n\nSeu protocolo de atendimento é *${conv.protocolo}* (guarde pra acompanhar).` : '';
-    await responder(telefone, `Obrigado, ${primeiroNome(patch.nome || conv.nome || nomeInformado)}! 🙏 Já encaminhei sua mensagem pro time de *${rotulo}*. Em breve alguém fala com você por aqui.${proto}`);
-
-    // notifica a equipe da área (todos de usuario_areas)
-    try {
-      const alvos = await resolverProfilesDaArea(area);
-      const nomePessoa = patch.nome || conv.nome || nomeInformado || 'Contato';
-      await notificar({
-        modulo: 'conversas',
-        tipo: 'conversa_triada',
-        titulo: `Nova conversa · ${rotulo}`,
-        mensagem: `${nomePessoa}${conv.membro_id ? '' : ' (⚠️ não cadastrado na membresia)'} quer falar com ${rotulo}.`,
-        link: `/conversas?area=${encodeURIComponent(area)}`,
-        chaveDedup: `conversa_triada_${conv.id}`,
-        targetIds: alvos.length ? alvos : undefined, // sem alvos → fallback admin/diretor do notificar
-      });
-    } catch (e) { console.error('[triagem] notificar:', e.message); }
+    const pend = conv.bot_area_pendente;
+    const setor = setores.find(s => String(s.id) === String(pend))
+      || setores.find(s => s.area === pend)
+      || { area: pend, rotulo: pend };
+    await concluirTriagem({ conv, telefone, setor, nomeInformado });
     return true;
   }
 

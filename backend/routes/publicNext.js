@@ -11,6 +11,12 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { verifyDirecionarToken, direcionarMatricula } = require('../services/nextDirecionar');
+const { horariosDisponiveis } = require('../utils/batismoHorario');
+const {
+  horariosConfigurados: batismoHorariosConfigurados,
+  ocupacaoPorHorario: batismoOcupacaoPorHorario,
+  dataProximoBatismo,
+} = require('../services/batismoHorarios');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 
@@ -301,15 +307,40 @@ router.get('/direcionar/:token', async (req, res) => {
         nome: `${p.nome || ''}${p.sobrenome ? ' ' + p.sobrenome : ''}`.trim(),
         ja: { grupos: !!p.indicou_grupo, voluntarios: !!p.indicou_servir, batismo: !!p.indicou_batismo },
       })),
+      // Horários do batismo pro seletor de "Quero me batizar" — vai no MESMO
+      // payload (o totem já recarrega a cada pessoa, então a ocupação chega
+      // fresca sem round-trip novo).
+      batismo: await horariosDoBatismo(),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// Horários ABERTOS e COM VAGA pro próximo batismo (catálogo da Integração ·
+// régua única `utils/batismoHorario`).
+// ⚠️ BEST-EFFORT: falha aqui NÃO pode derrubar o totem inteiro — o check-in e os
+// outros destinos seguem funcionando. Devolve `indisponivel` pra tela distinguir
+// "a equipe fechou tudo" de "não conseguimos ler agora"; nos dois casos o botão
+// de batismo fica desligado, que é a mesma falha fechada do servidor.
+async function horariosDoBatismo() {
+  try {
+    const dataBatismo = await dataProximoBatismo();
+    const configurados = await batismoHorariosConfigurados();
+    if (!dataBatismo || configurados === null) {
+      return { data_batismo: dataBatismo || null, horarios: [], indisponivel: true };
+    }
+    const ocup = await batismoOcupacaoPorHorario(dataBatismo);
+    return { data_batismo: dataBatismo, horarios: horariosDisponiveis(configurados, ocup) };
+  } catch (e) {
+    console.error('[publicNext] horariosDoBatismo:', e.message);
+    return { data_batismo: null, horarios: [], indisponivel: true };
+  }
+}
 
 // POST /api/public/next/direcionar/:token — { matricula_id, destinos: ['grupos','voluntarios','batismo'] }
 router.post('/direcionar/:token', async (req, res) => {
   try {
     if (!verifyDirecionarToken(req.params.token)) return res.status(403).json({ error: 'Link inválido' });
-    const { matricula_id, destinos, areas } = req.body || {};
+    const { matricula_id, destinos, areas, horario_batismo } = req.body || {};
     if (!matricula_id) return res.status(400).json({ error: 'Selecione a pessoa' });
     const turma = await turmaAbertaAtual();
     if (!turma) return res.status(409).json({ error: 'Nenhuma turma aberta no momento' });
@@ -318,11 +349,15 @@ router.post('/direcionar/:token', async (req, res) => {
       .select('id, turma_id').eq('id', matricula_id).is('deleted_at', null).maybeSingle();
     if (!m || m.turma_id !== turma.id) return res.status(403).json({ error: 'Pessoa não pertence à turma aberta' });
     const r = await direcionarMatricula({
-      matriculaId: matricula_id, destinos, areas, userId: null,
+      matriculaId: matricula_id, destinos, areas,
+      horarioBatismo: horario_batismo || null,
+      userId: null,
       permitir: ['grupos', 'voluntarios', 'batismo'], // Devocional = Fase 2b (com o app do Matheus)
     });
     res.json(r);
-  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message, codigo: e.codigo, campo: e.campo });
+  }
 });
 
 // ── Check-in / lista de presença do NEXT (totem · token assinado) ────────────

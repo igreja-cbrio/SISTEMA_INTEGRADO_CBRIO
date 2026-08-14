@@ -21,6 +21,16 @@ const { acharOuCriarGuardado } = require('./membroMatch');
 // (masculino/feminino) e `batismo_inscricoes.sexo` é curto (M/F). `sexoPara`
 // traduz; copiar cru grava valor que nenhum filtro encontra depois.
 const { sexoPara } = require('../utils/dadosDoCadastro');
+// ⚠️ Horário do batismo · MESMA régua e MESMAS consultas do formulário público e
+// do app (`utils/batismoHorario` + `services/batismoHorarios`). O Next é mais um
+// cliente da porta, não uma 2ª régua — reproduzir a decisão aqui é como o Next
+// passa a aceitar horário que o resto do sistema recusa.
+const { avaliarHorarioBatismo } = require('../utils/batismoHorario');
+const {
+  horariosConfigurados,
+  ocupacaoPorHorario,
+  dataProximoBatismo,
+} = require('./batismoHorarios');
 
 // destino → flag na matrícula + (grupos/voluntarios) caixa da área
 const NEXT_DIRECIONA = {
@@ -84,7 +94,7 @@ function verifyDirecionarToken(token) {
 // Direciona UMA matrícula pros destinos pedidos. permitir = lista de destinos aceitos
 // (o público passa só grupos/voluntarios/batismo · o Devocional é Fase 2b).
 // Retorna { ok, destinos, criados } · NÃO recalcula KPIs (chamador faz).
-async function direcionarMatricula({ matriculaId, destinos = [], areas = [], userId = null, permitir = null }) {
+async function direcionarMatricula({ matriculaId, destinos = [], areas = [], horarioBatismo = null, userId = null, permitir = null }) {
   const validos = (Array.isArray(destinos) ? destinos : [])
     .filter(d => NEXT_DIRECIONA[d] && (!permitir || permitir.includes(d)));
   if (validos.length === 0) { const e = new Error('Informe ao menos um destino válido'); e.status = 400; throw e; }
@@ -96,6 +106,42 @@ async function direcionarMatricula({ matriculaId, destinos = [], areas = [], use
   if (em) throw em;
 
   const nomeCompleto = `${m.nome || ''} ${m.sobrenome || ''}`.trim() || m.nome || 'Sem nome';
+
+  // ── Horário do batismo · conferido ANTES de qualquer escrita ───────────────
+  //
+  // ⚠️⚠️ A ORDEM é o que importa aqui. As flags da matrícula são gravadas logo
+  // abaixo e a UI TRAVA o destino já marcado ("já direcionado"). Se o horário
+  // fosse conferido dentro do laço, uma recusa deixaria `indicou_batismo=true`
+  // sem inscrição nenhuma — e a pessoa ficaria sem poder tentar de novo.
+  // Conferindo aqui, recusa = ZERO escrita, e ela corrige o horário na hora.
+  //
+  // ⚠️ `data_batismo` sai da MESMA `fn_proximo_quarto_domingo` que o formulário
+  // público e o app usam. Sem ela, a inscrição fica invisível pra
+  // `ocupacaoPorHorario` (que filtra por data) e o limite de 11 por horário
+  // deixaria de valer EM SILÊNCIO — era exatamente o estado das inscrições que
+  // o Next vinha criando (3 de 3 sem horário e sem data, medido em 13/08).
+  let batismo = null;
+  if (validos.includes('batismo')) {
+    const dataBat = await dataProximoBatismo();
+    const [configurados, ocupacao] = await Promise.all([
+      horariosConfigurados(),
+      dataBat ? ocupacaoPorHorario(dataBat) : Promise.resolve({}),
+    ]);
+    const av = avaliarHorarioBatismo(horarioBatismo, {
+      configurados: dataBat ? configurados : null, // falha na data = falha fechada
+      ocupacao,
+      exigir: true,
+    });
+    if (!av.ok) {
+      const e = new Error(av.mensagem);
+      // 400 = faltou preencher · 409 = o horário fechou, encheu, ou não há nenhum
+      e.status = av.motivo === 'obrigatorio' ? 400 : 409;
+      e.codigo = `horario_${av.motivo}`;
+      e.campo = 'horario_batismo';
+      throw e;
+    }
+    batismo = { horario: av.horario, data: dataBat };
+  }
 
   // 1) Flags na matrícula (estatística "pra onde cada um foi")
   const flags = { updated_at: new Date().toISOString() };
@@ -208,7 +254,8 @@ async function direcionarMatricula({ matriculaId, destinos = [], areas = [], use
       await garantirMembro();
       let ja = null;
       if (membroId) {
-        const { data } = await supabase.from('batismo_inscricoes').select('id')
+        const { data } = await supabase.from('batismo_inscricoes')
+          .select('id, data_batismo, horario_culto')
           .eq('membro_id', membroId).in('status', ['pendente', 'confirmado']).limit(1).maybeSingle();
         ja = data;
       }
@@ -223,6 +270,10 @@ async function direcionarMatricula({ matriculaId, destinos = [], areas = [], use
           // nascia sem eles mesmo com a pessoa tendo preenchido no Next.
           data_nascimento: p.data_nascimento, email: p.email,
           sexo: sexoPara('curto', p.sexo),   // ⚠️ o batismo guarda M/F, não canônico
+          // Horário + data conferidos no topo da função (falha fechada). Sem os
+          // dois a inscrição some da contagem por horário e do lembrete de
+          // véspera do WhatsApp, que lê `horario_culto` no {{2}}.
+          data_batismo: batismo.data, horario_culto: batismo.horario,
           status: 'pendente', origem: 'next', observacoes: 'Direcionado pelo NEXT', inscrito_por: userId,
         });
         notificar({
@@ -231,6 +282,29 @@ async function direcionarMatricula({ matriculaId, destinos = [], areas = [], use
           link: '/ministerial/integracao?tab=batismos',
         }).catch(() => {});
         criados.batismo = true;
+      } else if (batismo && !ja.horario_culto
+                 && (!ja.data_batismo || ja.data_batismo === batismo.data)) {
+        // A pessoa JÁ tem inscrição em aberto (veio pelo formulário público, pelo
+        // app ou por um Next anterior) e ela está sem horário. Preenche —
+        // política SÓ-ONDE-VAZIO da casa: descartar o horário que ela acabou de
+        // escolher seria o bug do CPF do censo outra vez (a pessoa responde e o
+        // dado morre no caminho).
+        //
+        // ⚠️ Não encosta em inscrição que já tem horário (a equipe pode ter
+        // definido) nem em uma marcada pra OUTRA data: o horário foi validado
+        // contra a ocupação de `batismo.data`, e jogá-lo numa data diferente
+        // furaria o limite daquela data.
+        // ⚠️ `.is('horario_culto', null)` é a guarda de corrida — dois toques no
+        // totem não podem sobrescrever a escolha um do outro.
+        const { data: atualizadas } = await supabase.from('batismo_inscricoes')
+          .update({
+            horario_culto: batismo.horario,
+            data_batismo: ja.data_batismo || batismo.data,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', ja.id).is('horario_culto', null)
+          .select('id');
+        if (atualizadas && atualizadas.length) criados.batismo_horario_atualizado = true;
       }
     } else if (d === 'devocional') {
       // Só registra a escolha (flag acima). O 1º acesso/leitura no app é Fase 2b.

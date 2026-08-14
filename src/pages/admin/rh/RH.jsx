@@ -22,6 +22,7 @@ import TabFeriasCalendar from './TabFeriasCalendar';
 import TabPCS from './TabPCS';
 import TabPainelRH from './TabPainelRH';
 import { DatePicker } from '@/components/ui/date-picker';
+import { mascaraCep, cepCompleto, buscarCep } from '../../../lib/cepAutopreenche';
 
 // ── Toast de feedback ───────────────────────────────────────
 function Toast({ message, type = 'error', onClose }) {
@@ -2888,7 +2889,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
               </>
             ) : (
               <Button variant="outline" size="sm" className="gap-1.5" onClick={() => {
-                setEditForm({ nome: data.nome, cargo: data.cargo, area: data.area || '', email: data.email || '', telefone: data.telefone || '', cpf: data.cpf || '', tipo_contrato: data.tipo_contrato, status: data.status, data_admissao: data.data_admissao || '', data_nascimento: data.data_nascimento || '', salario: data.salario || '', gestor_id: data.gestor_id || '' });
+                setEditForm({ nome: data.nome, cargo: data.cargo, cargo_visivel: data.cargo_visivel || '', matricula: data.matricula || '', area: data.area || '', email: data.email || '', telefone: data.telefone || '', cpf: data.cpf || '', tipo_contrato: data.tipo_contrato, status: data.status, data_admissao: data.data_admissao || '', data_nascimento: data.data_nascimento || '', salario: data.salario || '', gestor_id: data.gestor_id || '', cep: data.cep || '', endereco: data.endereco || '', numero: data.numero || '', complemento: data.complemento || '', bairro: data.bairro || '', cidade: data.cidade || '', uf: data.uf || '' });
                 setAba('geral');
                 setEditMode(true);
               }}><Pencil className="h-3.5 w-3.5" />Editar</Button>
@@ -2940,7 +2941,8 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 20, fontWeight: 800, color: C.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.nome}</div>
-          <div style={{ fontSize: 14, color: C.text2, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.cargo}{data.area ? ` · ${data.area}` : ''}</div>
+          <div style={{ fontSize: 14, color: C.text2, marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{data.cargo_visivel || data.cargo}{data.area ? ` · ${data.area}` : ''}</div>
+          {data.matricula ? <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Matrícula: {data.matricula}</div> : null}
           <div style={{ marginTop: 8 }}><Badge status={data.status} map={STATUS_COLORS} /></div>
           {uploadingFoto ? <div style={{ fontSize: 11, color: C.text2, marginTop: 4 }}>Enviando foto...</div> : null}
         </div>
@@ -2970,6 +2972,8 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           {[
             { key: 'nome', label: 'Nome *', full: true },
             { key: 'cargo', label: 'Cargo *' },
+            { key: 'cargo_visivel', label: 'Cargo visível (como é chamado no dia a dia)' },
+            { key: 'matricula', label: 'Matrícula' },
             { key: 'area', label: 'Área' },
             { key: 'email', label: 'Email', type: 'email' },
             { key: 'telefone', label: 'Telefone' },
@@ -3005,6 +3009,57 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
               </SelectContent>
             </ShadSelect>
           </div>
+          <div style={{ gridColumn: '1 / -1', marginTop: 8 }}>
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Endereço</span>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">CEP</label>
+            <input
+              className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={editForm.cep || ''}
+              onChange={async (e) => {
+                const masked = mascaraCep(e.target.value);
+                setEditForm(p => ({ ...p, cep: masked }));
+                if (cepCompleto(masked)) {
+                  const dados = await buscarCep(masked);
+                  if (dados) {
+                    setEditForm(p => ({
+                      ...p,
+                      endereco: dados.endereco || p.endereco,
+                      bairro: dados.bairro || p.bairro,
+                      cidade: dados.cidade || p.cidade,
+                      uf: dados.uf || p.uf,
+                    }));
+                  }
+                }
+              }}
+              placeholder="00000-000"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Número</label>
+            <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={editForm.numero || ''} onChange={e => setEditForm(p => ({ ...p, numero: e.target.value }))} />
+          </div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Logradouro</label>
+            <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={editForm.endereco || ''} onChange={e => setEditForm(p => ({ ...p, endereco: e.target.value }))} />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Complemento</label>
+            <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={editForm.complemento || ''} onChange={e => setEditForm(p => ({ ...p, complemento: e.target.value }))} />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Bairro</label>
+            <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={editForm.bairro || ''} onChange={e => setEditForm(p => ({ ...p, bairro: e.target.value }))} />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Cidade</label>
+            <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={editForm.cidade || ''} onChange={e => setEditForm(p => ({ ...p, cidade: e.target.value }))} />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">UF</label>
+            <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" maxLength={2} value={editForm.uf || ''} onChange={e => setEditForm(p => ({ ...p, uf: e.target.value.toUpperCase() }))} />
+          </div>
         </div>
       ) : (
         <div style={{ background: 'var(--cbrio-input-bg)', borderRadius: 12, padding: 16, marginBottom: 20 }}>
@@ -3023,7 +3078,14 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
         <span style={{ fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase', letterSpacing: 0.5 }}>Dados pessoais</span>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginTop: 10 }}>
           <div><span style={{ fontSize: 11, color: C.text2 }}>Nascimento:</span><div style={{ fontSize: 14 }}>{data.data_nascimento ? fmtDate(data.data_nascimento) : '—'}</div></div>
-          <div style={{ gridColumn: '1 / -1' }}><span style={{ fontSize: 11, color: C.text2 }}>Endereço:</span><div style={{ fontSize: 14, whiteSpace: 'pre-wrap' }}>{data.endereco || '—'}</div></div>
+          <div style={{ gridColumn: '1 / -1' }}>
+            <span style={{ fontSize: 11, color: C.text2 }}>Endereço:</span>
+            <div style={{ fontSize: 14, whiteSpace: 'pre-wrap' }}>
+              {data.endereco
+                ? `${data.endereco}${data.numero ? `, ${data.numero}` : ''}${data.complemento ? ` - ${data.complemento}` : ''}${data.bairro ? ` · ${data.bairro}` : ''}${data.cidade ? ` · ${data.cidade}${data.uf ? `/${data.uf}` : ''}` : ''}${data.cep ? ` · CEP ${data.cep}` : ''}`
+                : '—'}
+            </div>
+          </div>
           <div style={{ gridColumn: '1 / -1' }}>
             <span style={{ fontSize: 11, color: C.text2 }}>Filhos:</span>
             {Array.isArray(data.filhos) && data.filhos.length > 0 ? (

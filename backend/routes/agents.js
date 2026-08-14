@@ -40,7 +40,7 @@ const ttsLimiter = rateLimit({
 
 // Devs (auditoria só pra eles · você + Marcos Paulo). Allowlist por e-mail,
 // sobrescritível via env DEV_EMAILS (CSV). Matheus/outros: adicionar aqui ou no env.
-const DEV_EMAILS = (process.env.DEV_EMAILS || 'gestao@cbrio.com.br,infra@cbrio.com.br,matheus.toscano@cbrio.org')
+const DEV_EMAILS = (process.env.DEV_EMAILS || 'gestao@cbrio.com.br,infra@cbrio.com.br,matheus.toscano@cbrio.org,diego.assis@cbrio.org')
   .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
 function requireDev(req, res, next) {
   const email = (req.user?.email || '').toLowerCase();

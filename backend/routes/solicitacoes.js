@@ -15,12 +15,20 @@ const crypto = require('crypto');
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
 const { lancarDespesaConciliando } = require('../services/finLancamento');
 const { aprenderClassificacao } = require('../services/financeiroClassificador');
+// ⚠️ SÃO DUAS RÉGUAS, em MOMENTOS diferentes do mesmo fluxo — não são cópias:
+//   `alcadaCompra`  (singular) decide no ENVIO DA COTAÇÃO se a compra precisa ir
+//                   ao financeiro. Dentro do teto, ela nem vai.
+//   `alcadaCompras` (plural)  decide, pra compra que JÁ ESTÁ no portão financeiro,
+//                   se quem atende a área pode aprovar sem esperar o financeiro.
+// A segunda é a rede pro que chegou ao portão por outro caminho (compra antiga,
+// cotação enviada antes desta regra existir).
 const {
   COMPRA_DIRETA_LIMITE,
   DESTINO_COMPRA_DIRETA,
   decidirDestinoCotacao,
   motivoDispensaTexto,
 } = require('../utils/alcadaCompra');
+const { elegivelAlcada, LIMITE_ALCADA_PADRAO } = require('../utils/alcadaCompras');
 const uploadNfSolic = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 // Dispara o WhatsApp pro solicitante quando a solicitação muda de status
@@ -1122,8 +1130,32 @@ router.get('/', async (req, res) => {
       return [];
     };
 
+    // ── Alçada · "esta linha eu mesmo posso aprovar?" ────────────────────────
+    // ⚠️ DUAS consultas pra página inteira (as áreas de quem pede + a tabela de
+    // limites, que tem 6 linhas), nunca uma por linha. Best-effort: falha =
+    // flag false, e a tela só deixa de oferecer o atalho.
+    // ⚠️ É DICA de UI, não autorização — quem decide é o servidor no POST.
+    let alcadaFlag = () => false;
+    try {
+      const [{ data: minhasAreas }, { data: limites }] = await Promise.all([
+        supabase.from('area_solicitacoes_responsaveis').select('area').eq('profile_id', req.user.userId),
+        supabase.from('area_alcadas').select('area_cliente, limite_aprovacao'),
+      ]);
+      const areas = new Set((minhasAreas || []).map(r => r.area));
+      const limitePorArea = Object.fromEntries(
+        (limites || []).map(l => [l.area_cliente, Number(l.limite_aprovacao)]).filter(([, v]) => Number.isFinite(v))
+      );
+      if (areas.size) {
+        alcadaFlag = (d) => areas.has(d.area_responsavel)
+          && elegivelAlcada(d, limitePorArea[d.area_cliente] ?? LIMITE_ALCADA_PADRAO).ok;
+      }
+    } catch (e) {
+      console.warn('[SOLICITACOES] flag de alçada indisponível:', e.message);
+    }
+
     const enriched = (data || []).map(d => ({
       ...d,
+      pode_aprovar_alcada: alcadaFlag(d),
       solicitante: profileMap[d.solicitante_id] || null,
       responsavel: profileMap[d.responsavel_id] || null,
       aprovacao_origem_diretor: profileMap[d.aprovacao_origem_diretor_id] || null,
@@ -2290,6 +2322,8 @@ router.get('/:id/cotacoes', async (req, res) => {
     if (!podeVer && aguardandoAprovacaoFinanceira(sol)) {
       podeVer = await podeAprovarFinanceiro(req, sol.categoria);
     }
+    // Quem vai decidir pela alçada precisa VER as cotações antes de aprovar.
+    if (!podeVer) podeVer = await podeAprovarNaAlcada(req, sol);
     if (!podeVer) {
       return res.status(403).json({ error: 'Sem permissão para ver as cotações desta solicitação.' });
     }
@@ -4306,6 +4340,66 @@ function cotacaoObrigatoriaRegistrada(solicitacao) {
   return !!solicitacao?.cotacao_em && Number.isFinite(valor) && valor >= 0;
 }
 
+// ── Alçada de compras · quem atende a área aprova até o teto ────────────────
+// A régua de ELEGIBILIDADE (categoria, estado, valor cotado × teto) é PURA e
+// vive em `utils/alcadaCompras.js`. Aqui só se resolve o que precisa do banco:
+// o teto da área e se quem está pedindo é responsável por atendê-la.
+
+// Teto configurável por área em `area_alcadas.limite_aprovacao`.
+// ⚠️ Best-effort: sem linha (ou com a consulta falhando) cai no padrão de
+// R$ 1.000. Falhar fechado aqui só empurraria a compra pro financeiro, que é
+// o comportamento antigo — nunca aprova a mais.
+async function limiteAlcadaDaArea(areaCliente) {
+  if (!areaCliente) return LIMITE_ALCADA_PADRAO;
+  try {
+    const { data, error } = await supabase
+      .from('area_alcadas')
+      .select('limite_aprovacao')
+      .eq('area_cliente', areaCliente)
+      .maybeSingle();
+    if (error) throw error;
+    const limite = Number(data?.limite_aprovacao);
+    return Number.isFinite(limite) && limite >= 0 ? limite : LIMITE_ALCADA_PADRAO;
+  } catch (e) {
+    console.warn('[SOLICITACOES] falha ao ler alçada da área:', e.message);
+    return LIMITE_ALCADA_PADRAO;
+  }
+}
+
+// ⚠️ Quem pode usar a alçada é quem ATENDE a área da solicitação — lido de
+// `area_solicitacoes_responsaveis` (LEI de 2026-08-05: pessoa nunca fica
+// hardcoded; o papel vive no banco e muda sem PR).
+// ⚠️ De propósito NÃO reusa `podeCotar`, que também aceita quem tem logística
+// nível ≥3: registrar cotação é operar, aprovar dinheiro é decidir.
+async function ehResponsavelDaArea(req, area) {
+  if (!area || !req?.user?.userId) return false;
+  const { data, error } = await supabase
+    .from('area_solicitacoes_responsaveis')
+    .select('profile_id')
+    .eq('area', area)
+    .eq('profile_id', req.user.userId)
+    .maybeSingle();
+  if (error) {
+    console.warn('[SOLICITACOES] falha ao checar responsável da área:', error.message);
+    return false;
+  }
+  return !!data;
+}
+
+// Devolve o veredito completo (serve pro gate E pro flag da lista).
+async function avaliarAlcada(req, sol) {
+  const limite = await limiteAlcadaDaArea(sol?.area_cliente);
+  const eleg = elegivelAlcada(sol, limite);
+  if (!eleg.ok) return { ...eleg, responsavel: false };
+  const responsavel = await ehResponsavelDaArea(req, sol.area_responsavel);
+  return { ...eleg, responsavel, ok: responsavel, motivo: responsavel ? null : 'nao_responsavel' };
+}
+
+async function podeAprovarNaAlcada(req, sol) {
+  const r = await avaliarAlcada(req, sol);
+  return r.ok;
+}
+
 router.get('/pendentes-financeiro', async (req, res) => {
   try {
     if (!(await podeAprovarFinanceiro(req))) {
@@ -4353,10 +4447,12 @@ router.get('/pendentes-financeiro', async (req, res) => {
   }
 });
 
-// Formas de pagamento que o Alberto escolhe ao aprovar compra/serviço · decide
-// quem executa: cartão → Amaury COMPRA; demais → Cristina PAGA.
+// Formas de pagamento escolhidas na aprovação · decidem quem EXECUTA:
+// cartão → volta pra quem atende compras (compra no cartão); demais formas →
+// vão pro financeiro efetuar o pagamento.
 const FORMAS_PAGAMENTO_VALIDAS = ['boleto', 'pix', 'transferencia_bancaria', 'dinheiro', 'cartao_credito'];
-// Cristina (subordinada ao Alberto) executa os pagamentos não-cartão.
+// Quem executa os pagamentos não-cartão no financeiro (snapshot de id · trocar
+// a pessoa é mudar esta linha, e o papel real vive em area_solicitacoes_responsaveis).
 const EXECUTOR_FINANCEIRO_ID = '7ab43fe2-cf03-45e1-b193-3c5f4d96f9a5';
 
 router.post('/:id/aprovar-financeiro', async (req, res) => {
@@ -4366,9 +4462,25 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
     const { data: atual } = await supabase
       .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada' });
+
+    // Dois caminhos pra aprovar, na MESMA porta (um 2º endpoint criaria uma
+    // segunda régua de dinheiro): o portão financeiro de sempre, ou a ALÇADA
+    // de quem atende a área quando a compra cotada cabe no teto.
+    let viaAlcada = false;
+    let limiteAlcada = LIMITE_ALCADA_PADRAO;
     if (!(await podeAprovarFinanceiro(req, atual.categoria))) {
-      return res.status(403).json({ error: 'Você não pode aprovar esta categoria de solicitação.' });
+      const alc = await avaliarAlcada(req, atual);
+      limiteAlcada = alc.limite;
+      if (!alc.ok) {
+        return res.status(403).json({
+          error: alc.motivo === 'acima_do_limite'
+            ? `Compras acima de R$ ${alc.limite.toLocaleString('pt-BR')} precisam da aprovação do financeiro.`
+            : 'Você não pode aprovar esta categoria de solicitação.',
+        });
+      }
+      viaAlcada = true;
     }
+
     if (!aguardandoAprovacaoFinanceira(atual)) {
       return res.status(400).json({ error: 'Esta solicitação não está aguardando aprovação financeira.' });
     }
@@ -4382,13 +4494,15 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       return res.status(400).json({ error: 'Forma de pagamento inválida.' });
     }
     if (ehCompraServico && !formaPagamento) {
-      return res.status(400).json({ error: 'Escolha a forma de pagamento (define se volta pro Amaury comprar ou vai pro financeiro pagar).' });
+      return res.status(400).json({ error: 'Escolha a forma de pagamento (define se a compra volta pra área comprar no cartão ou vai pro financeiro pagar).' });
     }
 
-    // Pra onde vai depois do OK do Alberto:
-    //   compra/serviço + CARTÃO  -> logistica_compras (Amaury COMPRA no cartão) · pendente
-    //   compra/serviço + demais  -> financeiro (Cristina PAGA) · em_atendimento
-    //   reembolso/pagamento      -> financeiro (Cristina paga) · em_atendimento
+    // Pra onde vai depois do OK:
+    //   compra/serviço + CARTÃO  -> logistica_compras (a área COMPRA no cartão) · pendente
+    //   compra/serviço + demais  -> financeiro (financeiro PAGA) · em_atendimento
+    //   reembolso/pagamento      -> financeiro (financeiro paga) · em_atendimento
+    // ⚠️ A alçada dispensa o financeiro de APROVAR, não de PAGAR: com forma
+    // não-cartão alguém com acesso à conta ainda precisa executar o pagamento.
     const noCartao = formaPagamento === 'cartao_credito';
     const vaiProFinanceiro = !ehCompraServico || !noCartao;
     const novaAreaResp = vaiProFinanceiro ? 'financeiro' : 'logistica_compras';
@@ -4401,12 +4515,20 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       status: novoStatus,
     };
     if (formaPagamento) updates.forma_pagamento = formaPagamento;
-    // Pagamento não-cartão vai pro executor (Cristina) — ela vê e marca como pago.
+    // Pagamento não-cartão vai pro executor do financeiro — ele vê e marca como pago.
     if (vaiProFinanceiro && EXECUTOR_FINANCEIRO_ID) updates.responsavel_id = EXECUTOR_FINANCEIRO_ID;
-    if (observacao) {
+
+    // ⚠️ Aprovação por alçada fica REGISTRADA na observação. `aprovado_financeiro_por`
+    // sozinho não distingue "o financeiro aprovou" de "a área aprovou dentro do
+    // teto", e essa distinção é o que se audita seis meses depois.
+    const carimbo = viaAlcada
+      ? `[Aprovação por alçada · até R$ ${limiteAlcada.toLocaleString('pt-BR')} · sem passar pelo financeiro]`
+      : '[Aprovação financeira]';
+    const linhaObs = observacao ? `${carimbo} ${observacao}` : (viaAlcada ? carimbo : null);
+    if (linhaObs) {
       updates.observacoes = atual.observacoes
-        ? `${atual.observacoes}\n[Aprovação financeira] ${observacao}`
-        : `[Aprovação financeira] ${observacao}`;
+        ? `${atual.observacoes}\n${linhaObs}`
+        : linhaObs;
     }
 
     const { data, error } = await supabase
@@ -4423,7 +4545,7 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
     if (!data) return res.status(409).json({ error: 'Esta solicitação foi alterada por outra pessoa. Atualize a fila antes de decidir.' });
 
     const acaoMsg = (noCartao && ehCompraServico)
-      ? 'liberado pro Amaury comprar no cartão'
+      ? 'liberado pra compra no cartão'
       : {
           compras:   'enviado pro financeiro pagar a compra',
           servico:   'enviado pro financeiro pagar o serviço',
@@ -4434,7 +4556,9 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       modulo: vaiProFinanceiro ? 'financeiro' : (CATEGORIA_MODULO[atual.categoria] || 'logistica'),
       tipo: 'solicitacao_status',
       titulo: `Solicitação aprovada: ${atual.titulo}`,
-      mensagem: `${req.user.name || 'O financeiro'} aprovou financeiramente · ${acaoMsg}`,
+      mensagem: viaAlcada
+        ? `${req.user.name || 'A área responsável'} aprovou dentro da alçada (até R$ ${limiteAlcada.toLocaleString('pt-BR')}) · ${acaoMsg}`
+        : `${req.user.name || 'O financeiro'} aprovou financeiramente · ${acaoMsg}`,
       link: '/solicitacoes',
       severidade: 'info',
       chaveDedup: `solicitacao_aprovada_fin_${data.id}`,

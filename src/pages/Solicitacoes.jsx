@@ -42,7 +42,7 @@ const URGENCIAS = [
 const KANBAN_COLUMNS = [
   { key: 'aguardando_aprovacao', label: 'Aguardando aprovação', icon: Clock, color: 'border-b-violet-500', match: ['aguardando_aprovacao_origem', 'aguardando_merito'], readOnly: true },
   { key: 'em_cotacao',     label: 'Em cotação',   icon: ClipboardList, color: 'border-b-cyan-500',    match: ['em_cotacao'] },
-  { key: 'no_financeiro',  label: 'No financeiro', icon: Clock,       color: 'border-b-orange-500',  match: ['aguardando_aprovacao_financeira'], readOnly: true, hint: 'Aguardando aprovação do financeiro (Alberto) — a decisão é feita na tela do Financeiro.' },
+  { key: 'no_financeiro',  label: 'No financeiro', icon: Clock,       color: 'border-b-orange-500',  match: ['aguardando_aprovacao_financeira'], readOnly: true, hint: 'Aguardando aprovação financeira — a decisão é feita na tela do Financeiro. Compra dentro da sua alçada você aprova abrindo o card.' },
   { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-b-amber-500',   match: ['pendente', 'aguardando_ajuste'] },
   { key: 'em_analise',     label: 'Em Análise',   icon: SearchIcon,   color: 'border-b-blue-500',    match: ['em_analise'] },
   { key: 'em_atendimento', label: 'Em Andamento', icon: CheckCircle2, color: 'border-b-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'] },
@@ -2216,9 +2216,17 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
         </div>
       </div>
       {aguardandoFin && (
-        <div className="mt-2 flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
-          <Clock className="h-3 w-3 shrink-0" /> Aguardando aprovação do financeiro
-        </div>
+        // Dentro da alçada, quem atende a área não precisa esperar o financeiro —
+        // o selo tem que dizer isso no card, senão ele só descobriria abrindo.
+        item.pode_aprovar_alcada ? (
+          <div className="mt-2 flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-2 py-1">
+            <CheckCircle2 className="h-3 w-3 shrink-0" /> Você pode aprovar · dentro da sua alçada
+          </div>
+        ) : (
+          <div className="mt-2 flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
+            <Clock className="h-3 w-3 shrink-0" /> Aguardando aprovação do financeiro
+          </div>
+        )
       )}
       {item.status === 'aguardando_aprovacao_origem' && (() => {
         const pend = (Array.isArray(item.aprovacao_pendente_de) && item.aprovacao_pendente_de.length
@@ -3000,6 +3008,90 @@ function SobrestarBlock({ item, onChanged }) {
   );
 }
 
+// Bloco da ALÇADA · aparece só quando o servidor marcou `pode_aprovar_alcada`.
+// A forma de pagamento é obrigatória porque é ela que decide quem EXECUTA:
+// cartão volta pra área comprar; as demais vão pro financeiro pagar (a alçada
+// dispensa o financeiro de APROVAR, não de PAGAR).
+const FORMAS_PAGAMENTO_ALCADA = [
+  { v: 'cartao_credito',        label: 'Cartão de crédito · eu mesmo compro' },
+  { v: 'pix',                   label: 'PIX · o financeiro paga' },
+  { v: 'boleto',                label: 'Boleto · o financeiro paga' },
+  { v: 'transferencia_bancaria', label: 'Transferência · o financeiro paga' },
+  { v: 'dinheiro',              label: 'Dinheiro · o financeiro paga' },
+];
+
+function AprovarNaAlcadaBloco({ item, onAprovado }) {
+  const [forma, setForma] = useState('');
+  const [obs, setObs] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+
+  const valor = Number(item.valor_cotado);
+  const valorFmt = Number.isFinite(valor)
+    ? valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+    : '—';
+
+  async function aprovar() {
+    if (!forma) { setErro('Escolha a forma de pagamento.'); return; }
+    setSalvando(true); setErro(null);
+    try {
+      await api.aprovarNaAlcada(item.id, { forma_pagamento: forma, observacao: obs.trim() || undefined });
+      playSuccessSound();
+      toast.success('Compra aprovada · seguiu pro atendimento.');
+      onAprovado?.();
+    } catch (e) {
+      setErro(e.message || 'Não foi possível aprovar.');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div className="p-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 space-y-3">
+      <div className="flex items-start gap-2 text-sm text-emerald-800 dark:text-emerald-300">
+        <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+        <div>
+          <span className="font-medium">Você pode aprovar esta compra sem o financeiro.</span>
+          <p className="text-xs mt-0.5 opacity-90">
+            Cotação de <strong>{valorFmt}</strong>, dentro da sua alçada. Ao aprovar, ela segue direto pra
+            execução.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <Label className="block text-xs">Forma de pagamento *</Label>
+        <Select value={forma} onValueChange={setForma}>
+          <SelectTrigger className="h-9"><SelectValue placeholder="Como vai ser pago?" /></SelectTrigger>
+          <SelectContent className="z-[1200]">
+            {FORMAS_PAGAMENTO_ALCADA.map(f => (
+              <SelectItem key={f.v} value={f.v}>{f.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[11px] text-muted-foreground">
+          Só no cartão a compra volta pra você. Nas outras formas, o financeiro ainda executa o pagamento —
+          ele só não precisa mais aprovar.
+        </p>
+      </div>
+
+      <Textarea
+        rows={2}
+        placeholder="Observação (opcional)"
+        value={obs}
+        onChange={e => setObs(e.target.value)}
+        className="text-sm"
+      />
+
+      {erro && <p className="text-xs text-destructive">{erro}</p>}
+
+      <Button size="sm" onClick={aprovar} disabled={salvando}>
+        {salvando ? 'Aprovando…' : 'Aprovar compra'}
+      </Button>
+    </div>
+  );
+}
+
 function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh, asSheet = false }) {
   const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
@@ -3051,6 +3143,14 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
           </TitleW>
         </HeaderW>
         <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
+          {/* Alçada · quem atende a área aprova a compra dentro do teto */}
+          {item.pode_aprovar_alcada && (
+            <AprovarNaAlcadaBloco
+              item={item}
+              onAprovado={() => { onItemRefresh?.(); onClose(); }}
+            />
+          )}
+
           {/* Devolvida pra ajuste · atalho pro solicitante editar e reenviar */}
           {item.status === 'aguardando_ajuste' && item.solicitante_id === currentUserId && (
             <div className="flex flex-wrap items-center gap-2 justify-between p-3 rounded-lg border border-amber-500/40 bg-amber-500/10">

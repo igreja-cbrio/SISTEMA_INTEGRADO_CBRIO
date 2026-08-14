@@ -126,40 +126,78 @@ router.get('/resumo-areas', authorizeModule('conversas', 1), async (req, res) =>
 // GET /setores — lista (todos, p/ admin) · usado pelo painel e pela config
 router.get('/setores', authorizeModule('conversas', 1), async (req, res) => {
   try {
+    // select('*'): os campos de FLUXO entram quando a migration existir —
+    // pedi-los nominalmente derrubaria a rota antes dela.
     const { data } = await supabase.from('conversas_setores')
-      .select('id, ordem, rotulo, area, ativo').order('ordem', { ascending: true });
+      .select('*').order('ordem', { ascending: true });
     res.json({ setores: data || [] });
   } catch (e) {
     console.error('[wa-inbox] setores get:', e.message);
     res.status(500).json({ error: 'Erro ao listar setores' });
   }
 });
+// Campos do FLUXO da opção (F3 · migration 20260813150000). Devolve
+// { fluxo, erro } — o erro cobre a única combinação inválida.
+function camposFluxoSetor(body) {
+  const b = body || {};
+  const fluxo = {};
+  if ('mensagem_resposta' in b) fluxo.mensagem_resposta = b.mensagem_resposta ? String(b.mensagem_resposta).slice(0, 1000) : null;
+  if ('pedir_nome' in b) fluxo.pedir_nome = b.pedir_nome !== false;
+  if ('destino_tipo' in b) fluxo.destino_tipo = b.destino_tipo === 'atendente' ? 'atendente' : 'area';
+  if ('atendente_id' in b) fluxo.atendente_id = b.atendente_id || null;
+  if (fluxo.destino_tipo === 'atendente' && !fluxo.atendente_id) {
+    return { fluxo, erro: 'Destino "atendente" exige escolher o atendente.' };
+  }
+  return { fluxo };
+}
+
 // POST /setores — cria (admin do módulo)
 router.post('/setores', authorizeModule('conversas', 3), async (req, res) => {
   try {
     const { rotulo, area, ordem, ativo } = req.body || {};
     if (!rotulo || !area) return res.status(400).json({ error: 'Rótulo e área são obrigatórios.' });
-    const { data, error } = await supabase.from('conversas_setores')
-      .insert({ rotulo: String(rotulo).trim(), area: String(area).trim(), ordem: Number(ordem) || 0, ativo: ativo !== false })
-      .select().single();
+    const { fluxo, erro: erroFluxo } = camposFluxoSetor(req.body);
+    if (erroFluxo) return res.status(400).json({ error: erroFluxo });
+    const base = { rotulo: String(rotulo).trim(), area: String(area).trim(), ordem: Number(ordem) || 0, ativo: ativo !== false };
+    let aviso;
+    let { data, error } = await supabase.from('conversas_setores')
+      .insert({ ...base, ...fluxo }).select().single();
+    if (error && error.code === '42703' && Object.keys(fluxo).length) {
+      // Migration do fluxo ainda não aplicada → salva o básico e AVISA
+      // (silêncio aqui viraria "salvei o fluxo" que não existe).
+      aviso = 'Campos de fluxo ignorados — a migration 20260813150000 ainda não foi aplicada.';
+      ({ data, error } = await supabase.from('conversas_setores').insert(base).select().single());
+    }
     if (error) throw error;
-    res.json(data);
+    res.json(aviso ? { ...data, aviso } : data);
   } catch (e) {
     console.error('[wa-inbox] setores post:', e.message);
     res.status(500).json({ error: 'Erro ao criar setor' });
   }
 });
-// PUT /setores/:id — edita
+// PUT /setores/:id — edita (inclui os campos de FLUXO da opção)
 router.put('/setores/:id', authorizeModule('conversas', 3), async (req, res) => {
   try {
     const patch = {};
     for (const k of ['rotulo', 'area']) if (k in (req.body || {})) patch[k] = String(req.body[k] || '').trim();
     if ('ordem' in (req.body || {})) patch.ordem = Number(req.body.ordem) || 0;
     if ('ativo' in (req.body || {})) patch.ativo = !!req.body.ativo;
-    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
-    const { data, error } = await supabase.from('conversas_setores').update(patch).eq('id', req.params.id).select().single();
+    const { fluxo, erro: erroFluxo } = camposFluxoSetor(req.body);
+    if (erroFluxo) return res.status(400).json({ error: erroFluxo });
+    if (!Object.keys(patch).length && !Object.keys(fluxo).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    let aviso;
+    let { data, error } = await supabase.from('conversas_setores')
+      .update({ ...patch, ...fluxo }).eq('id', req.params.id).select().single();
+    if (error && error.code === '42703' && Object.keys(fluxo).length) {
+      aviso = 'Campos de fluxo ignorados — a migration 20260813150000 ainda não foi aplicada.';
+      if (Object.keys(patch).length) {
+        ({ data, error } = await supabase.from('conversas_setores').update(patch).eq('id', req.params.id).select().single());
+      } else {
+        return res.status(409).json({ error: aviso });
+      }
+    }
     if (error) throw error;
-    res.json(data);
+    res.json(aviso ? { ...data, aviso } : data);
   } catch (e) {
     console.error('[wa-inbox] setores put:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar setor' });
@@ -379,8 +417,11 @@ router.get('/conversas/:id/mensagens', authorizeModule('conversas', 1), async (r
     // ⚠️ desc + reverse: a conversa é 1 por telefone PRA SEMPRE — com asc+limit,
     // um histórico >500 devolvia as 500 mais ANTIGAS e a mensagem de HOJE nunca
     // aparecia na thread (a prévia da lista subia e o time respondia no escuro).
+    // select('*'): os recibos (delivered_at/read_at/failed_at · migration
+    // 20260813190000) entram quando existirem — pedi-los nominalmente
+    // derrubaria a thread antes dela (lição do parcelas_max).
     const { data: msgs } = await supabase.from('wa_mensagens')
-      .select('id, direcao, tipo, texto, media_url, autor_id, criado_em')
+      .select('*')
       .eq('conversa_id', conv.id).order('criado_em', { ascending: false }).limit(500);
     (msgs || []).reverse();
     // Mídia RECEBIDA vive em bucket PRIVADO e a linha guarda o PATH (não URL):
@@ -402,8 +443,67 @@ router.get('/conversas/:id/mensagens', authorizeModule('conversas', 1), async (r
         for (const m of msgs) if (m.media_url && !/^https?:\/\//i.test(m.media_url)) m.media_url = null;
       }
     }
+    // ── Mensagens AUTOMÁTICAS do sistema intercaladas na thread (13/08 ·
+    // caso da Júlia: ela agradeceu um template de aprovação de grupo que NÃO
+    // aparecia na conversa — o atendente ficava sem o contexto). Merge SÓ NA
+    // LEITURA: nada é gravado, o inbox não ganha conversa nova por isso.
+    let automaticas = [];
+    try {
+      const suf = String(conv.telefone || '').replace(/\D+/g, '').slice(-8);
+      if (suf.length === 8) {
+        const { data: envs } = await supabase.from('whatsapp_envios')
+          .select('id, template, texto, tipo, params, status, criado_em, enviado_em, message_id, delivered_at, read_at, failed_at, erro_status, contexto')
+          .ilike('telefone', `%${suf}%`)
+          .in('status', ['enviado', 'erro'])
+          .order('criado_em', { ascending: false }).limit(60);
+        // corpo legível: exemplo do catálogo de templates com os {{n}} preenchidos
+        const nomes = [...new Set((envs || []).map(e => e.template).filter(Boolean))];
+        const corpo = new Map();
+        if (nomes.length) {
+          const { data: tpls } = await supabase.from('wa_templates')
+            .select('nome, exemplo').in('nome', nomes.slice(0, 60));
+          (tpls || []).forEach(t => { if (t.exemplo) corpo.set(t.nome, t.exemplo); });
+        }
+        automaticas = (envs || []).map(e => {
+          let texto;
+          if (e.tipo === 'texto' && e.texto) texto = e.texto;
+          else {
+            const ex = corpo.get(e.template);
+            const params = Array.isArray(e.params) ? e.params : [];
+            texto = ex
+              ? ex.replace(/\{\{(\d+)\}\}/g, (_, n) => String(params[Number(n) - 1] ?? `{{${n}}}`))
+              : `[template: ${e.template || '—'}]`;
+          }
+          return {
+            id: `fila-${e.id}`, direcao: 'out', tipo: 'automatica', texto,
+            media_url: null, autor_id: null,
+            criado_em: e.enviado_em || e.criado_em,
+            delivered_at: e.delivered_at, read_at: e.read_at,
+            failed_at: e.failed_at || (e.status === 'erro' ? e.criado_em : null),
+            erro_status: e.erro_status || (e.status === 'erro' ? 'a fila desistiu do envio' : null),
+            contexto_fila: e.contexto || null,
+            wa_message_id: e.message_id || null,
+          };
+        });
+      }
+    } catch (eAuto) { console.warn('[wa-inbox] automaticas na thread:', eAuto.message); }
+    const timeline = [...(msgs || []), ...automaticas]
+      .sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
+
+    // ── Citações (reply): resolve o trecho citado pelo wamid — inclusive
+    // quando o alvo é um template da fila (o caso real do "Esse aqui").
+    const porWaId = new Map(timeline.filter(x => x.wa_message_id).map(x => [x.wa_message_id, x]));
+    for (const x of timeline) {
+      if (x.reply_to_wa_id) {
+        const alvo = porWaId.get(x.reply_to_wa_id);
+        x.reply_para = alvo
+          ? { texto: String(alvo.texto || (alvo.media_url ? '[mídia]' : alvo.tipo)).slice(0, 140), de: alvo.direcao === 'out' ? 'igreja' : 'pessoa' }
+          : { texto: 'mensagem antiga (fora do histórico carregado)', de: null };
+      }
+    }
+
     if (conv.nao_lidas > 0) await supabase.from('wa_conversas').update({ nao_lidas: 0 }).eq('id', conv.id);
-    res.json({ conversa: comJanela({ ...conv, nao_lidas: 0 }), mensagens: msgs || [] });
+    res.json({ conversa: comJanela({ ...conv, nao_lidas: 0 }), mensagens: timeline });
   } catch (e) {
     console.error('[wa-inbox] mensagens:', e.message);
     res.status(500).json({ error: 'Erro ao carregar conversa' });
@@ -455,7 +555,7 @@ router.post('/conversas/nova', authorizeModule('conversas', 2), async (req, res)
     }
     if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o envio.', detail: r?.reason || r?.detail || null });
 
-    await waInbox.registrarOutbound({ telefone: conv.telefone, texto: textoLog, tipo, autorId: uid(req) });
+    await waInbox.registrarOutbound({ telefone: conv.telefone, texto: textoLog, tipo, autorId: uid(req), waMessageId: r.messageId || null });
     if (area && String(area).trim()) await supabase.from('wa_conversas').update({ area: String(area).trim() }).eq('id', conv.id);
 
     const { data: fresh } = await supabase.from('wa_conversas').select('*').eq('id', conv.id).maybeSingle();
@@ -492,7 +592,7 @@ router.post('/conversas/:id/responder', authorizeModule('conversas', 2), async (
       });
     }
     if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o envio.', detail: r?.reason || r?.detail || null });
-    await waInbox.registrarOutbound({ telefone: conv.telefone, texto: textoLog, tipo, autorId: uid(req) });
+    await waInbox.registrarOutbound({ telefone: conv.telefone, texto: textoLog, tipo, autorId: uid(req), waMessageId: r.messageId || null });
     res.json({ ok: true, messageId: r.messageId || null });
   } catch (e) {
     console.error('[wa-inbox] responder:', e.message);
@@ -523,6 +623,7 @@ router.post('/conversas/:id/anexo', authorizeModule('conversas', 2), uploadAnexo
     await waInbox.registrarOutbound({
       telefone: conv.telefone, tipo: kind, autorId: uid(req), mediaUrl: urlPub,
       texto: kind === 'document' ? (req.file.originalname || '[documento]') : null,
+      waMessageId: r.messageId || null,
     });
     res.json({ ok: true, media_url: urlPub, messageId: r.messageId || null });
   } catch (e) {
@@ -575,7 +676,7 @@ router.patch('/conversas/:id', authorizeModule('conversas', 2), async (req, res)
           pesquisaEnviada = true;
           patch.pesquisa_estado = 'aguardando';
           patch.pesquisa_em = new Date().toISOString();
-          await waInbox.registrarOutbound({ telefone: antes.telefone, texto: msg, tipo: 'pesquisa' }).catch(() => {});
+          await waInbox.registrarOutbound({ telefone: antes.telefone, texto: msg, tipo: 'pesquisa', waMessageId: r.messageId || null }).catch(() => {});
         }
       }
     }

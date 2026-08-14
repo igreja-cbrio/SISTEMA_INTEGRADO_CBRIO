@@ -1473,7 +1473,10 @@ router.post('/inscrever-lider', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // F3 · aprovação pelo líder via link do WhatsApp (sem login).
 // Token HMAC assinado (services/gruposWhatsapp) dá acesso a UM pedido e
-// expira em 7 dias. Fail-closed: sem CRON_SECRET nenhum token valida.
+// expira em 30 dias (era 7 · Natasha 12/08/2026). Fail-closed: sem CRON_SECRET
+// nenhum token valida. ⚠️ O TTL é a 2ª camada: quem manda são as travas daqui —
+// pedido ainda 'pendente' e `payload.l` = líder ATUAL do grupo. É por isso que
+// o link vencido pode ser prorrogado no serviço sem abrir buraco de segurança.
 // Rota com 2 segmentos de propósito — o GET /:id (acima) captura qualquer
 // caminho de 1 segmento.
 // ─────────────────────────────────────────────────────────────

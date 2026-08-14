@@ -287,6 +287,28 @@ router.post('/sessoes/garantir', authorizeModule('kids', 2), async (req, res) =>
   try {
     const { culto_id } = req.body;
     if (!culto_id) return res.status(400).json({ error: 'culto_id obrigatorio' });
+    // (docs/cultos-domingo/ · F1) não abre/reabre sessão de culto que não deve
+    // ter check-in: culto apagado, tipo ENCERRADO (is_active=false — 08:30 e
+    // 10:00 pós-corte) ou tipo sem Kids. Front antigo/aba velha não ressuscita
+    // fantasma. Falha de LEITURA não bloqueia (a recusa exige o banco DIZER que
+    // o culto não vale — instabilidade não pode travar o culto · lição do 503
+    // do totem de estação).
+    {
+      const { data: cultoAlvo, error: cultoErr } = await supabase.from('cultos')
+        .select('id, deleted_at, service_type:vol_service_types(is_active, has_kids)')
+        .eq('id', culto_id).maybeSingle();
+      if (!cultoErr) {
+        if (!cultoAlvo || cultoAlvo.deleted_at) {
+          return res.status(404).json({ error: 'Culto não encontrado (apagado ou inexistente).' });
+        }
+        if (cultoAlvo.service_type && cultoAlvo.service_type.is_active === false) {
+          return res.status(409).json({ error: 'Este tipo de culto foi encerrado — o check-in não abre sessão pra ele.' });
+        }
+        if (cultoAlvo.service_type && cultoAlvo.service_type.has_kids === false) {
+          return res.status(409).json({ error: 'Este culto não tem Kids — sem sessão de check-in.' });
+        }
+      }
+    }
     const sel = `id, culto_id, status, abrir_em, fechar_em, encerrada_at,
         culto:cultos(id, data, nome, service_type_id, presencial_kids, decisoes_kids,
                      service_type:vol_service_types(id, name, color, has_kids, recurrence_time))`;
@@ -2826,11 +2848,16 @@ router.get('/cultos-do-dia', authorizeModule('kids', 2), async (req, res) => {
   try {
     const data = req.query.data;
     if (!data) return res.json([]);
+    // (docs/cultos-domingo/ · F1) deleted_at: culto apagado (o corte de 24/08
+    // mexe nos 72 futuros) não pode reaparecer no seletor do totem. is_active:
+    // tipo ENCERRADO (08:30/10:00 pós-corte) sai da grade — `!== false` tolera
+    // NULL de tipo antigo sem a flag.
     const { data: cultos } = await supabase.from('cultos')
-      .select('id, nome, vol_service_types(has_kids, recurrence_time)')
-      .eq('data', data);
+      .select('id, nome, vol_service_types(has_kids, is_active, recurrence_time)')
+      .eq('data', data)
+      .is('deleted_at', null);
     const lista = (cultos || [])
-      .filter(c => c.vol_service_types?.has_kids)
+      .filter(c => c.vol_service_types?.has_kids && c.vol_service_types?.is_active !== false)
       .map(c => ({ id: c.id, nome: c.nome, hora: (c.vol_service_types?.recurrence_time || '').slice(0, 5) }))
       .sort((a, b) => (a.hora || '').localeCompare(b.hora || ''));
     res.json(lista);

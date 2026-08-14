@@ -20,8 +20,10 @@ import { Input } from '../../components/ui/input';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner';
-import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus } from 'lucide-react';
+import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus, ChevronRight } from 'lucide-react';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
+import MarcadoresJornada from '../../components/MarcadoresJornada';
+import VinculosDuplicadosBloco from '../../components/grupos/VinculosDuplicadosBloco';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -93,10 +95,21 @@ function FichaCampo({ rotulo, valor, onChange, type = 'text', inputMode }) {
 
 // Grupos da pessoa pra exibir/filtrar: participações; se não tiver, cai pros
 // grupos que lidera/supervisiona (pra líder/supervisor não ficar sem grupo).
+// ⚠️ DEDUPLICA por `grupo_id`. `p.grupos` é uma linha por PARTICIPAÇÃO, e desde
+// que a UNIQUE de vínculo ativo foi dropada (20260721170000, pra formalizar o
+// multi-grupo) a mesma pessoa pode ter VÁRIAS linhas ativas no MESMO grupo — aí
+// a coluna repetia "JOVENS - ESTUDO DA MENSAGEM DO CULTO AMI" 5 vezes na mesma
+// pessoa (caso real, 13/08/2026). `gruposDetalhados` já deduplicava com um Map;
+// era só esta função que não, então a lista e o modal discordavam da contagem.
 function gruposDe(p) {
-  if (p.grupos?.length) return p.grupos.map(g => ({ id: g.grupo_id, nome: g.grupo_nome || 'Grupo' }));
-  const fallback = [...(p.lidera || []), ...(p.supervisiona || [])];
-  return fallback.map(g => ({ id: g.id, nome: g.nome || 'Grupo' }));
+  const map = new Map();
+  (p.grupos || []).forEach(g => {
+    if (g.grupo_id && !map.has(g.grupo_id)) map.set(g.grupo_id, { id: g.grupo_id, nome: g.grupo_nome || 'Grupo' });
+  });
+  [...(p.lidera || []), ...(p.supervisiona || [])].forEach(g => {
+    if (g.id && !map.has(g.id)) map.set(g.id, { id: g.id, nome: g.nome || 'Grupo' });
+  });
+  return [...map.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
 }
 
 // Detalhe de CADA grupo da pessoa (participações + grupos que lidera/supervisiona),
@@ -124,7 +137,7 @@ function gruposDetalhados(p) {
 // ============================================================================
 // Aba Pessoas
 // ============================================================================
-export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas, podeEditarDados = false, podeEditar = false }) {
+export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas, podeEditarDados = false, podeEditar = false, podeRemoverVinculo = false }) {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
   // Etiqueta "possível duplicata" (Marcos · 14/07): ids que caíram em algum
@@ -502,6 +515,12 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
         </ShadSelect>
       </div>
 
+      {/* Saneamento: a MESMA pessoa com 2+ linhas ativas no MESMO grupo.
+          Bloco recolhível aqui em cima (não aba nova · a Caixa de entrada dos
+          Grupos já provou que separar em aba faz ninguém achar). O cabeçalho
+          carrega a contagem, então recolhido não esconde que há trabalho. */}
+      <VinculosDuplicadosBloco podeResolver={podeRemoverVinculo} onResolvido={carregar} />
+
       {/* Lista */}
       <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
         <div style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 11, color: C.t3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -520,7 +539,7 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}`, background: C.bg }}>
-                  {['Pessoa', 'Função', 'Status', 'Grupo', 'Última frequência', 'Último envio', 'Presenças'].map((h, i, arr) => (
+                  {['Pessoa', 'Função', 'Status', 'Jornada', 'Grupo', 'Última frequência', 'Último envio', 'Presenças'].map((h, i, arr) => (
                     <th key={h} style={{ textAlign: i === arr.length - 1 ? 'right' : 'left', padding: '8px 16px', fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -560,13 +579,43 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                           <span style={{ width: 6, height: 6, borderRadius: '50%', background: st.cor }} /> {st.label}
                         </span>
                       </td>
-                      <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2 }}>
-                        {gs.length > 0 ? gs.map((g, i) => (
-                          <span key={g.id || i}>
-                            {i > 0 && ', '}
-                            <button onClick={() => onOpenGrupo?.(g.id)} style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>{g.nome}</button>
-                          </span>
-                        )) : <span style={{ color: C.t3 }}>Sem grupo</span>}
+                      {/* Jornada — é ESTA a coluna do pedido do Pr. Nélio via
+                          Arthur Serpa: o líder olha a turma e vê em que etapa
+                          cada um está. Generosidade não vem pra quem só tem o
+                          módulo `grupos` (o servidor decide). */}
+                      <td style={{ padding: '10px 16px', maxWidth: 210 }}>
+                        <MarcadoresJornada marcadores={p.marcadores} />
+                      </td>
+                      {/* Coluna Grupo · CONSOLIDADA (pedido do Matheus, 13/08/2026:
+                          "tem pessoas que estão em mais de um grupo e a lista fica
+                          feia"). Quem está em 1 grupo já aparece de cara; quem está
+                          em vários vira um chip "N grupos" que abre no clique.
+                          ⚠️ Nomes de grupo são longos ("ONLINE - MULHER ÚNICA") e
+                          juntá-los com vírgula fazia a linha da pessoa quebrar em
+                          3-4 alturas — a tabela deixava de ser varrível, que é a
+                          única coisa que esta aba faz. */}
+                      <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2, maxWidth: 260 }}>
+                        {gs.length === 0 ? (
+                          <span style={{ color: C.t3 }}>Sem grupo</span>
+                        ) : gs.length === 1 ? (
+                          <button onClick={() => onOpenGrupo?.(gs[0].id)} title={gs[0].nome}
+                            style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 12, fontWeight: 600, textAlign: 'left' }}>
+                            {gs[0].nome}
+                          </button>
+                        ) : (
+                          // ⚠️ ABRE O MODAL DA PESSOA, não expande na linha
+                          // (Matheus, 13/08/2026: "queria que abrisse um pop up,
+                          // acho mais amigável"). A 1ª versão expandia inline e a
+                          // linha virava uma coluna de nomes quebrados de 700px
+                          // de altura. O modal já existe, já deduplica e ainda
+                          // mostra função, desde quando e frequência POR GRUPO —
+                          // não valia construir um segundo popup ao lado dele.
+                          <button onClick={() => setSelected(p)}
+                            title={gs.map(g => g.nome).join(' · ')}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: `${C.primary}14`, border: `1px solid ${C.primary}33`, borderRadius: 99, padding: '2px 9px', color: C.primary, cursor: 'pointer', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                            {gs.length} grupos <ChevronRight size={12} />
+                          </button>
+                        )}
                       </td>
                       <td style={{ padding: '10px 16px', fontSize: 12, color: p.ultima_frequencia ? C.t2 : C.t3, whiteSpace: 'nowrap' }}>
                         {p.ultima_frequencia ? fmtData(p.ultima_frequencia) : '—'}
@@ -616,6 +665,10 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                       </span>
                     </div>
                   ); })()}
+                  {/* Jornada por extenso · aqui cabe o rótulo completo */}
+                  <div style={{ marginTop: 7 }}>
+                    <MarcadoresJornada marcadores={selected.marcadores} variante="ficha" />
+                  </div>
                 </div>
                 <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', fontSize: 22, lineHeight: 1, color: C.t3, cursor: 'pointer' }}>×</button>
               </div>

@@ -152,7 +152,7 @@ function ehNumeroBot(pnid) {
 // QUALQUER número da WABA (a pesquisa é da CONVERSA, não do bot); por isso vive
 // aqui fora, usada pelo fluxo do bot (processarMensagem) E pelo multi-número
 // (inboxDireto) — a régua é UMA. Devolve true quando assumiu a mensagem.
-async function tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid = null }) {
+async function tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid = null, replyToWaId = null }) {
   const { data: convP } = await supabase.from('wa_conversas')
     .select('id, pesquisa_estado, protocolo').eq('telefone', telefone)
     .eq('pesquisa_estado', 'aguardando').is('deleted_at', null).maybeSingle();
@@ -171,12 +171,12 @@ async function tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid = nul
     }).eq('id', convP.id);
     const agr = `Obrigado pela sua avaliação (${nota}/5)! 🙏 Se precisar, é só chamar de novo.`;
     // Agradece pelo número por onde a conversa aconteceu (default = env).
-    await enviarTexto(telefone, agr, pnid ? { phoneNumberId: pnid } : {}).catch(() => {});
-    await waInbox.registrarOutbound({ telefone, texto: agr, tipo: 'bot', phoneNumberId: pnid }).catch(() => {});
+    const rAgr = await enviarTexto(telefone, agr, pnid ? { phoneNumberId: pnid } : {}).catch(() => null);
+    await waInbox.registrarOutbound({ telefone, texto: agr, tipo: 'bot', phoneNumberId: pnid, waMessageId: rAgr?.message_id || null }).catch(() => {});
   } else {
     // não foi 0-5 → encerra a espera e deixa a mensagem no inbox pro time
     await supabase.from('wa_conversas').update({ pesquisa_estado: 'ignorada' }).eq('id', convP.id);
-    await waInbox.registrarInbound({ telefone, texto, messageId, tipo: 'text', phoneNumberId: pnid }).catch(() => {});
+    await waInbox.registrarInbound({ telefone, texto, messageId, tipo: 'text', phoneNumberId: pnid, replyToWaId }).catch(() => {});
   }
   return true;
 }
@@ -193,7 +193,7 @@ async function inboxDireto(m, pnid) {
     || m.interactive?.list_reply?.title
     || '').slice(0, 2000);
   if (m.type === 'text') {
-    const assumiu = await tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid });
+    const assumiu = await tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid, replyToWaId: m.context?.id || null });
     if (assumiu) return;
   }
   await require('../services/waInbox').registrarInbound({
@@ -201,6 +201,7 @@ async function inboxDireto(m, pnid) {
     tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
     mediaId: m.image?.id || m.audio?.id || m.document?.id,
     phoneNumberId: pnid,
+    replyToWaId: m.context?.id || null,
   });
 }
 
@@ -264,15 +265,47 @@ async function processarStatuses(statuses) {
         continue;
       }
 
-      // Não é da fila: é do chat (outbound do inbox)? Se sim, deixa pra fase
-      // posterior (wa_mensagens ainda não tem colunas de status). Senão, órfão.
+      // Não é da fila: é do chat (outbound do inbox/bot)? Grava o recibo NA
+      // MENSAGEM (13/08 · caso da Júlia: a resposta do atendente não tinha
+      // ✓✓ porque isto aqui descartava). Guardas .is(col, null) = idempotente
+      // (reentrega da Meta não regride o 1º timestamp). 42703 = migration
+      // 20260813190000 ausente → ignora (vira órfão, comportamento antigo).
       const { data: chat } = await supabase.from('wa_mensagens')
         .select('id').eq('wa_message_id', messageId).maybeSingle();
-      if (!chat) {
-        await supabase.from('whatsapp_status_orfaos').insert({
-          message_id: messageId, status: st, status_timestamp: ts, erro: erroTxt, raw: s,
-        }).catch(() => {});
+      if (chat) {
+        const marca = async (patch, col) => {
+          const { error: eUp } = await supabase.from('wa_mensagens')
+            .update(patch).eq('id', chat.id).is(col, null);
+          if (eUp && eUp.code !== '42703') console.warn('[whatsapp webhook] status chat:', eUp.message);
+          return eUp;
+        };
+        if (st === 'delivered') {
+          await marca({ delivered_at: ts }, 'delivered_at');
+        } else if (st === 'read') {
+          await marca({ read_at: ts }, 'read_at');
+          await marca({ delivered_at: ts }, 'delivered_at'); // read implica delivered
+        } else if (st === 'failed') {
+          const eUp = await marca({ failed_at: ts, erro_status: erroTxt }, 'failed_at');
+          // Mensagem de ATENDENTE que não chegou merece aviso ativo — o ⚠ na
+          // thread só aparece quando alguém reabre a conversa.
+          if (!eUp) {
+            const { notificar } = require('../services/notificar');
+            await notificar({
+              modulo: 'conversas',
+              tipo: 'whatsapp_chat_falhou',
+              titulo: 'Mensagem do chat não entregue',
+              mensagem: `Uma mensagem enviada pelo chat pro número ${s.recipient_id || '?'} falhou (${String(erroTxt || 'failed').slice(0, 120)}). Confira a conversa.`,
+              link: '/comunicacao?tab=conversas',
+              severidade: 'aviso',
+              chaveDedup: `wa_chat_falha_${messageId}`,
+            }).catch(() => {});
+          }
+        }
+        continue;
       }
+      await supabase.from('whatsapp_status_orfaos').insert({
+        message_id: messageId, status: st, status_timestamp: ts, erro: erroTxt, raw: s,
+      }).catch(() => {});
     } catch (e) {
       console.error('[whatsapp webhook] status item:', e.message);
     }
@@ -361,7 +394,7 @@ async function processarMensagem(m, cfg, pnid = null) {
   // ── PESQUISA DE SATISFAÇÃO ── conversa finalizada aguardando a nota (0-5).
   // Captura a resposta como avaliação e agradece (não reabre o ticket).
   if (m.type === 'text') {
-    const assumiu = await tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid });
+    const assumiu = await tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid, replyToWaId: m.context?.id || null });
     if (assumiu) return;
   }
 
@@ -382,6 +415,7 @@ async function processarMensagem(m, cfg, pnid = null) {
         tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
         mediaId: m.image?.id || m.audio?.id || m.document?.id,
         phoneNumberId: pnid,
+        replyToWaId: m.context?.id || null,
       }).catch(e => console.error('[whatsapp webhook] inbox assumida:', e.message));
       return; // não aciona bot nem resposta institucional
     }
@@ -394,13 +428,15 @@ async function processarMensagem(m, cfg, pnid = null) {
     .eq('telefone', telefone).eq('ativo', true).is('deleted_at', null)
     .maybeSingle();
 
-  // ── COLETA RESTRITA (Marcos · 2026-07-10): a persona de coleta (números
-  // de culto/grupos, formulários Flow) só atende papel='coordenador' —
-  // hoje Marcos e Matheus. Líder comum reportando número por conta própria
-  // quebraria a contagem oficial; ele cai na persona institucional (CBZap +
-  // links) como qualquer número. Reabrir por pessoa = mudar `papel` em
-  // /admin/whatsapp, sem deploy.
-  const podeColetar = lider && lider.papel === 'coordenador';
+  // ── COLETA APOSENTADA (Marcos · 2026-08-13): "os líderes de integração não
+  // compraram a ideia — pode inclusive aposentar isso". A persona de coleta
+  // (números de culto por texto/formulário Flow, relato de encontro de grupos
+  // por texto/áudio) está DESLIGADA: todo mundo — inclusive coordenador — cai
+  // na persona 1 (inbox + triagem/institucional). Todo o código abaixo do
+  // bloco da persona 1 fica DORMANTE de propósito (reativar = restaurar a
+  // linha histórica `lider && lider.papel === 'coordenador'`). A fila de
+  // Coletas e a aba antiga saíram da UI na mesma data (admin/Whatsapp.jsx).
+  const podeColetar = false;
 
   // ── Persona 1 · numero desconhecido (ou sem permissão de coleta) ────
   if (!podeColetar) {
@@ -412,6 +448,7 @@ async function processarMensagem(m, cfg, pnid = null) {
       tipo: m.type === 'image' ? 'image' : m.type === 'audio' ? 'audio' : m.type === 'document' ? 'document' : 'text',
       mediaId: m.image?.id || m.audio?.id || m.document?.id,
       phoneNumberId: pnid,
+      replyToWaId: m.context?.id || null,
     }).catch(e => console.error('[whatsapp webhook] inbox in:', e.message));
     if (m.type !== 'text') return; // mídia: já no inbox; não custa LLM institucional
 
@@ -454,8 +491,8 @@ async function processarMensagem(m, cfg, pnid = null) {
       whatsapp_message_id: messageId, telefone, raw_text: texto,
       status: 'ignorado', erro: lider ? 'coleta_restrita' : 'institucional', modulo_destino: 'institucional',
     });
-    await enviarTexto(telefone, resposta);
-    await waInbox.registrarOutbound({ telefone, texto: resposta, tipo: 'institucional' })
+    const rInst = await enviarTexto(telefone, resposta);
+    await waInbox.registrarOutbound({ telefone, texto: resposta, tipo: 'institucional', phoneNumberId: pnid, waMessageId: rInst?.message_id || null })
       .catch(e => console.error('[whatsapp webhook] inbox out:', e.message));
     return;
   }
@@ -566,8 +603,17 @@ async function processarMensagem(m, cfg, pnid = null) {
 }
 
 // Resposta de FORMULÁRIO (Flow) · identifica o líder e delega pro orquestrador.
+// ⚠️ COLETA APOSENTADA (2026-08-13): nenhum formulário é mais enviado; uma
+// resposta que chegue aqui é de Flow ANTIGO parado num celular — registra e
+// descarta, sem processar (reativar = remover este bloco).
 async function processarFlowReply(m) {
   const telefone = normalizarTelefone(m.from);
+  await supabase.from('whatsapp_coletas').insert({
+    whatsapp_message_id: m.id, telefone, raw_text: '[nfm_reply descartado]',
+    status: 'ignorado', erro: 'coleta_aposentada', modulo_destino: 'desconhecido',
+  }).catch(() => {});
+  return;
+  // eslint-disable-next-line no-unreachable -- código dormante da persona de coleta
   // Idempotência (cobre o Flow do culto, que insere coleta com este message_id).
   const { data: jaVisto } = await supabase
     .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', m.id).maybeSingle();

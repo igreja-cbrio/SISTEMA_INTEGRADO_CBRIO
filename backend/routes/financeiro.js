@@ -519,6 +519,103 @@ router.get('/generosidade/pararam', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Topo contribuintes · ranking dos membros que mais contribuíram.
+// Fonte: vw_doacoes_unificada com membro_id não-nulo (na prática mem_contribuicoes —
+// os braços fin_transacoes/fin_pix_detalhe têm membro_id NULL). Empréstimo fica fora
+// por construção: a view só agrega fin_transacoes com plano 3.01% (3.02.06 = empréstimo).
+// Agregação em JS sobre fetchAllRows (cap 1000 do PostgREST subcontaria o total).
+// Período aceito: '12m' (últimos 12 meses) · 'tudo' · '<AAAA-MM>' (mês específico).
+function parsePeriodo(periodo) {
+  if (typeof periodo === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(periodo)) {
+    const [ano, mes] = periodo.split('-').map(Number);
+    const desde = `${periodo}-01`;
+    const ate = new Date(Date.UTC(ano, mes, 1)).toISOString().slice(0, 10); // 1º dia do mês seguinte
+    return { periodo, desde, ate };
+  }
+  if (periodo === 'tudo') return { periodo: 'tudo', desde: null, ate: null };
+  const corte = new Date();
+  corte.setFullYear(corte.getFullYear() - 1);
+  return { periodo: '12m', desde: corte.toISOString().slice(0, 10), ate: null };
+}
+
+router.get('/generosidade/top', async (req, res) => {
+  try {
+    const { periodo, desde, ate } = parsePeriodo(req.query.periodo);
+    const ordem = req.query.ordem === 'asc' ? 'asc' : 'desc';
+
+    const linhas = await fetchAllRows(() => {
+      let q = supabase
+        .from('vw_doacoes_unificada')
+        .select('membro_id, data, valor, tipo');
+      if (desde) q = q.gte('data', desde);
+      if (ate) q = q.lt('data', ate);
+      return q.not('membro_id', 'is', null);
+    }, { max: 20000 });
+
+    const porMembro = new Map();
+    for (const l of linhas) {
+      if (!l.membro_id) continue;
+      const acc = porMembro.get(l.membro_id) || {
+        membro_id: l.membro_id, qtd_doacoes: 0, total: 0,
+        primeira_doacao: l.data, ultima_doacao: l.data, nome: null,
+      };
+      acc.qtd_doacoes += 1;
+      acc.total += Number(l.valor || 0);
+      if (l.data < acc.primeira_doacao) acc.primeira_doacao = l.data;
+      if (l.data > acc.ultima_doacao) acc.ultima_doacao = l.data;
+      porMembro.set(l.membro_id, acc);
+    }
+
+    const ordenado = Array.from(porMembro.values())
+      .sort((a, b) => ordem === 'asc' ? a.total - b.total : b.total - a.total);
+    const top = ordenado.slice(0, 20);
+
+    if (top.length > 0) {
+      const { data: membros } = await supabase
+        .from('mem_membros')
+        .select('id, nome')
+        .in('id', top.map(m => m.membro_id))
+        .is('deleted_at', null);
+      const nomes = new Map((membros || []).map(mm => [mm.id, mm.nome]));
+      for (const m of top) m.nome = nomes.get(m.membro_id) || null;
+    }
+
+    res.json({ periodo, ordem, top });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Histórico de contribuições de um membro (mesmo período do ranking).
+router.get('/generosidade/top/:membroId/historico', async (req, res) => {
+  try {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.membroId)) {
+      return res.status(400).json({ error: 'membro_id inválido' });
+    }
+    const { periodo, desde, ate } = parsePeriodo(req.query.periodo);
+
+    const linhas = await fetchAllRows(() => {
+      let q = supabase
+        .from('vw_doacoes_unificada')
+        .select('id, data, valor, tipo, forma_pagamento, campanha, origem, fonte')
+        .eq('membro_id', req.params.membroId)
+        .order('data', { ascending: false });
+      if (desde) q = q.gte('data', desde);
+      if (ate) q = q.lt('data', ate);
+      return q;
+    }, { max: 10000 });
+
+    const total = linhas.reduce((s, l) => s + Number(l.valor || 0), 0);
+    res.json({
+      periodo,
+      membro_id: req.params.membroId,
+      total,
+      qtd_doacoes: linhas.length,
+      primeira_doacao: linhas.length ? linhas[linhas.length - 1].data : null,
+      ultima_doacao: linhas.length ? linhas[0].data : null,
+      contribuicoes: linhas,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // CONCILIACAO INTELIGENTE · fila + stats + bulk approve + reclassificar
 // ══════════════════════════════════════════════════════════════════════════

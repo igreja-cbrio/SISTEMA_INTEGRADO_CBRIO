@@ -35,6 +35,7 @@ const { aprovarPedidoCore } = require('./grupos');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const appIdentidade = require('../services/appIdentidade');
 const { acharRespostaDaPessoa } = require('../services/censoJaRespondeu');
+const { anexarMarcadores } = require('../services/jornadaMarcadores');
 // ⚠️⚠️ O vocabulário de sexo DIVERGE por tabela, e a diferença é medida, não
 // suposta: `mem_membros.genero` é **masculino/feminino** (579 pessoas, ZERO com
 // M/F), `kids_criancas.sexo` e `batismo_inscricoes.sexo` são **M/F**, e
@@ -96,6 +97,13 @@ async function tryAuth(req, _res, next) {
 const { chaveLimiteApp, ehChaveAnonima } = require('../utils/appRateLimit');
 // Saneamento do payload de inscrição do app (régua PURA · no gate de deploy).
 const { sanearDadosApp } = require('../utils/saneamentoInscricaoApp');
+const { mascaraTelefone } = require('../utils/camposContato');
+const { avaliarHorarioBatismo, horariosDisponiveis } = require('../utils/batismoHorario');
+const {
+  horariosConfigurados: batismoHorariosConfigurados,
+  ocupacaoPorHorario: batismoOcupacaoPorHorario,
+  dataProximoBatismo,
+} = require('../services/batismoHorarios');
 // Régua PURA da edição de grupo pelo app (allowlist + categoria fechada + horário).
 const { validarEdicaoGrupoApp } = require('../utils/grupoEdicaoApp');
 
@@ -559,11 +567,37 @@ router.put('/membro/perfil', authApp, limiterNormal, async (req, res) => {
     // Vínculo via profiles.membro_id (fallback e-mail) — mem_membros não tem
     // auth_user_id. Sem isto o save 404 sempre ("Não foi possível salvar").
     const membro = await resolveMembroApp(req);
-    if (!membro) return res.status(404).json({ error: 'Membro não encontrado' });
+    if (!membro) {
+      // Conta criada sem cadastro vinculado (/completar-cadastro ainda não
+      // rodou): não há mem_membros pra atualizar, mas o telefone que a pessoa
+      // digitou NÃO pode se perder — a tela de perfil é onde ela o preenche.
+      // Grava só em profiles, já no formato canônico. (O 404 continua: a tela
+      // mostra que o cadastro ainda não existe.)
+      if ('telefone' in update) {
+        const telefonePerfil = update.telefone ? mascaraTelefone(update.telefone) : null;
+        supabase.from('profiles').update({ telefone: telefonePerfil }).eq('id', req.user.id)
+          .then(() => {}).catch((err) => console.log(`[APP] perfil · sync profiles.telefone (sem membro): ${err.message}`));
+      }
+      return res.status(404).json({ error: 'Membro não encontrado' });
+    }
 
     const { data, error } = await supabase
       .from('mem_membros').update(update).eq('id', membro.id).select().single();
     if (error) throw error;
+
+    // ⚠️⚠️ `profiles.telefone` também é fonte canônica de telefone (fanout,
+    // dedup, waInbox, totem Kids) e a tela de perfil do app gravava o valor
+    // CRU ("+55 (21) …" · 13 dígitos com código de país) direto na linha do
+    // profile — o dedup compara 11 dígitos e não casa (mesmo bug do update de
+    // mem_membros acima, já saneado). O `/perfil` do sistema grava MASCARADO
+    // `(21) 99999-9999`; espelhar aqui mantém o app no MESMO formato canônico.
+    // Best-effort de propósito: o update de mem_membros é o primário.
+    if ('telefone' in update) {
+      const telefonePerfil = update.telefone ? mascaraTelefone(update.telefone) : null;
+      supabase.from('profiles').update({ telefone: telefonePerfil }).eq('id', req.user.id)
+        .then(() => {}).catch((err) => console.log(`[APP] perfil · sync profiles.telefone: ${err.message}`));
+    }
+
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao atualizar perfil' });
@@ -873,6 +907,31 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       // fan-out é no-op hoje (não há evento agendado), então não duplica.
     }
 
+    // ⚠️ Horário do batismo · MESMA régua do formulário público
+    // (`utils/batismoHorario` + `services/batismoHorarios`). O app é um cliente
+    // novo da porta, não uma 2ª régua — reproduzir a decisão aqui é como o app
+    // passa a oferecer horário que o servidor recusa.
+    //
+    // ⚠️ O campo é OPCIONAL, e tem que continuar sendo: o binário da loja e todo
+    // bundle que ainda não aplicou o OTA não sabem que horário existe. Exigir
+    // aqui trancaria essa gente fora do batismo — a mecânica do portão que
+    // trancou todo mundo em 06/08.
+    if (tipo === 'batismo' && dados.horario_culto && String(dados.horario_culto).trim()) {
+      const dataBat = await dataProximoBatismo();
+      const [configurados, ocupacao] = await Promise.all([
+        batismoHorariosConfigurados(),
+        // Sem a data não dá pra contar ocupação; `configurados: null` já força a
+        // recusa, mas passamos {} pra não fingir que o horário está vazio.
+        dataBat ? batismoOcupacaoPorHorario(dataBat) : Promise.resolve({}),
+      ]);
+      const av = avaliarHorarioBatismo(dados.horario_culto, {
+        configurados: dataBat ? configurados : null, // falha na data = falha fechada
+        ocupacao,
+      });
+      if (!av.ok) return res.status(409).json({ error: av.mensagem });
+      dados.horario_culto = av.horario;
+    }
+
     // Pedido de oração: a IA classifica o tema (pra insights) já no insert.
     if (tipo === 'oracao') {
       const msgOra = extrairMensagem(extras);
@@ -1044,6 +1103,23 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
           'Não conseguimos concluir sua solicitação agora. Nossa equipe já foi avisada '
           + 'e vai resolver — se preferir, tente novamente em alguns minutos.',
         codigo: 'fanout_falhou',
+      });
+    }
+
+    // ⚠️ `duplicado` caía no caminho de SUCESSO — a pessoa lia "Solicitação
+    // recebida! Nossa equipe entrará em contato." tendo o fan-out reconhecido
+    // que ela JÁ está inscrita, e a equipe recebia um aviso de "nova inscrição"
+    // que não existe. É o mesmo defeito do `erro`, na versão silenciosa: a lei
+    // do Contrato de Inscrição diz que `ja_inscrito`/`duplicado` são EXIBIDOS,
+    // nunca engolidos como confirmação.
+    if (posFanout?.status === 'duplicado') {
+      return res.status(200).json({
+        ok: true,
+        id: inserted.id,
+        duplicado: true,
+        message:
+          `Você já tem uma inscrição de ${LABEL_INSCRICAO_WPP[tipo] || tipo} em andamento — `
+          + 'não precisa se inscrever de novo. Nossa equipe já está com o seu pedido.',
       });
     }
 
@@ -3771,6 +3847,14 @@ router.get('/grupos/:grupoId/membros', authApp, limiterNormal, async (req, res) 
         nome: m?.nome || '—', telefone: m?.telefone || null,
       };
     });
+
+    // Marcadores de jornada do roster — o pedido original do Pr. Nélio via
+    // Arthur Serpa (13/08/2026): "o líder de grupo vê rapidamente em quais
+    // etapas da jornada cada pessoa da sua turma está".
+    // ⚠️ `incluirSensiveis: false` FIXO aqui, sem consultar permissão: quem
+    // chega por esta rota é líder/supervisor de grupo pelo APP, e o gate de
+    // generosidade é justamente sobre ele. Não é o `req.user` do ERP.
+    await anexarMarcadores(membros, (p) => p.membro_id, { incluirSensiveis: false });
     const pendentes = (pendRes.data || []).map(p => ({
       id: p.id, grupo_id: p.grupo_id, grupo_nome: grupo.nome,
       nome: p.nome, telefone: p.telefone, email: p.email, origem: p.origem, created_at: p.created_at,
@@ -4115,7 +4199,7 @@ router.post('/membro/foto', authApp, limiterStrict, uploadCapaMw, async (req, re
     const path = `${uid}/avatar-${Date.now()}.${ext}`;
 
     const { data: antes } = await supabase
-      .from('profiles').select('avatar_url').eq('id', uid).maybeSingle();
+      .from('profiles').select('avatar_url, membro_id').eq('id', uid).maybeSingle();
 
     const { error: upErr } = await supabase.storage
       .from('avatars')
@@ -4146,6 +4230,41 @@ router.post('/membro/foto', authApp, limiterStrict, uploadCapaMw, async (req, re
       }
       console.error('[APP] membro · foto: 0 linhas afetadas no profile', uid);
       return res.status(409).json({ error: 'Não foi possível salvar a foto agora.' });
+    }
+
+    // ⚠️⚠️ PROPAGA PRA `mem_membros.foto_url` — sem isto a foto NUNCA aparece no
+    // ERP (13/08/2026). O app grava em `profiles.avatar_url`; o sistema inteiro
+    // (lista da Membresia, aba Pessoas do /grupos, roster do grupo, ficha) lê
+    // `mem_membros.foto_url`. As duas colunas nunca se encontravam, então as
+    // fotos que os membros já subiram pelo app ficavam invisíveis pra igreja.
+    // É a LEI do Contrato de porta aplicada à foto: uma pessoa = um cadastro
+    // (`mem_membros`) = a fonte que todos os módulos leem.
+    //
+    // ⚠️ SOBRESCREVE de propósito (não é só-onde-vazio como o censo): aqui é a
+    // PRÓPRIA PESSOA escolhendo a foto dela agora, autenticada — é a fonte mais
+    // forte que existe pra este campo, mais recente que a foto que a secretaria
+    // tenha subido antes.
+    //
+    // ⚠️ Usa `profiles.membro_id` (vínculo EXPLÍCITO), nunca `resolveMembroApp`:
+    // o fallback por e-mail dele existe porque família compartilha caixa, e ali
+    // a foto do filho pousaria no cadastro da mãe. Sem vínculo, não propaga.
+    //
+    // ⚠️ CONSEQUÊNCIA DECLARADA: `mem_membros.foto_url` do LÍDER já é exibido no
+    // cartão público de grupos (`publicGrupos` · lider_foto). Então a foto de
+    // perfil de quem lidera grupo passa a aparecer na página pública de
+    // inscrição. Não é canal novo (o formulário público de inscrição e o
+    // cadastro de membresia já alimentam essa mesma coluna), mas é alcance que a
+    // pessoa não escolheu explicitamente — se a liderança quiser separar as
+    // duas fotos, o caminho é uma coluna própria pro cartão, não desligar isto.
+    if (antes?.membro_id) {
+      const { error: eFoto } = await supabase
+        .from('mem_membros')
+        .update({ foto_url: avatar_url })
+        .eq('id', antes.membro_id)
+        .is('deleted_at', null);
+      // Best-effort: a foto JÁ está salva no profile e o app já pode mostrá-la.
+      // Derrubar a resposta aqui faria a pessoa reenviar uma foto que deu certo.
+      if (eFoto) console.error('[APP] membro · foto · propagar mem_membros:', eFoto.message);
     }
 
     // Limpeza best-effort da foto anterior.

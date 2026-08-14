@@ -55,7 +55,11 @@ function filtrarCultosPorArea(cultos, area) {
   if (area === 'sede') {
     return cultos.filter(c => {
       const st = n(c.service_type_name);
-      return st.startsWith('domingo') || st.includes('quarta');
+      if (st) return st.startsWith('domingo') || st.includes('quarta');
+      // fallback por nome (o filtro de kids acima já faz): culto sem
+      // service_type não some da Sede em silêncio (docs/cultos-domingo/ · F1)
+      const nm = n(c.nome);
+      return nm.startsWith('domingo') || nm.includes('quarta');
     });
   }
   return cultos;

@@ -673,6 +673,9 @@ export const next = {
   }).then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
   // QR de direcionamento (token fixo · resolve a turma aberta do momento) · admin
   direcionarQr: () => get('/next/direcionar-qr'),
+  // Horários ABERTOS e COM VAGA do próximo batismo (catálogo da Integração) —
+  // alimenta o seletor de "Quero me batizar" no direcionamento.
+  batismoHorarios: () => get('/next/batismo-horarios'),
   // Pesquisa NPS canônica do Next (Satisfação do Next) · provisiona na 1ª chamada.
   satisfacao: () => get('/next/satisfacao'),
   // Admin
@@ -722,7 +725,10 @@ export const next = {
     setContato: (id, feito) => patch(`/next/matriculas/${id}/contato`, { feito }),
     // Direcionar pros valores (grupos/voluntarios/batismo/devocional) · cria encaminhamento
     // origem='next' (grupos/voluntarios), inscrição pendente (batismo), registra (devocional).
-    direcionar: (id, destinos, areas) => post(`/next/matriculas/${id}/direcionar`, { destinos, areas }),
+    // ⚠️ `horarioBatismo` é OBRIGATÓRIO quando 'batismo' está nos destinos (o servidor
+    // recusa sem ele) — senão a inscrição nasce sem horário, que era o bug de 13/08.
+    direcionar: (id, destinos, areas, horarioBatismo) =>
+      post(`/next/matriculas/${id}/direcionar`, { destinos, areas, horario_batismo: horarioBatismo || null }),
     // Liga as matrículas órfãs (sem membro_id) via matcher forte (fecha o funil).
     backfillMembros: () => post('/next/matriculas/backfill-membros', {}),
   },
@@ -762,6 +768,8 @@ export const integracao = {
 
 export const dashboardSemanal = {
   cultos: () => get('/dashboard-semanal/cultos'),
+  // Prévia do novo formato de domingo (atrás do véu · docs/cultos-domingo/)
+  lentesDomingo: (params = {}) => get('/dashboard-semanal/lentes-domingo?' + new URLSearchParams(params)),
   semanasDisponiveis: (ano) => get(`/dashboard-semanal/semanas-disponiveis?ano=${ano}`),
   semanal: (params) => get('/dashboard-semanal/semanal?' + new URLSearchParams(params)),
   resumoSemana: (ano, semana) => get(`/dashboard-semanal/resumo-semana?ano=${ano}&semana=${semana}`),
@@ -899,6 +907,14 @@ export const grupos = {
   pessoaFicha: (membroId) => get(`/grupos/pessoas/${membroId}/ficha`),
   pessoaFichaSalvar: (membroId, data) => patch(`/grupos/pessoas/${membroId}/ficha`, data),
   // Possíveis duplicatas do universo de grupos (triagem da Naná)
+  // Vínculos duplicados: MESMA pessoa com 2+ linhas ativas no MESMO grupo.
+  // ⚠️ NÃO confundir com `duplicatas` (logo abaixo), que é sobre PESSOAS
+  // duplicadas. Aqui a pessoa é uma só — as linhas de vínculo é que sobram.
+  vinculosDuplicados: {
+    list: () => get('/grupos/vinculos/duplicados'),
+    resolver: (manterId, removerIds) =>
+      post('/grupos/vinculos/duplicados/resolver', { manter_id: manterId, remover_ids: removerIds }),
+  },
   duplicatas: {
     list: (fresh) => get('/grupos/duplicatas' + (fresh ? '?fresh=1' : '')),
     fundir: (keepId, mergeIds, campos) => post('/grupos/duplicatas/fundir', { keep_id: keepId, merge_ids: mergeIds, campos }),
@@ -1278,6 +1294,10 @@ export const financeiro = {
     overview: () => get('/financeiro/generosidade/overview'),
     anonimos: () => get('/financeiro/generosidade/anonimos'),
     pararam: () => get('/financeiro/generosidade/pararam'),
+    top: (periodo = '12m', ordem = 'desc') =>
+      get(`/financeiro/generosidade/top?periodo=${encodeURIComponent(periodo)}&ordem=${encodeURIComponent(ordem)}`),
+    historico: (membroId, periodo = '12m') =>
+      get(`/financeiro/generosidade/top/${encodeURIComponent(membroId)}/historico?periodo=${encodeURIComponent(periodo)}`),
   },
   filaClassificacao: {
     stats: () => get('/financeiro/fila-classificacao/stats'),
@@ -2337,6 +2357,11 @@ export const solicitacoes = {
   retomar:        (id) => post(`/solicitacoes/${id}/retomar`, {}),
   // Cotação (compras/serviço) · logística registra valor+fornecedor antes do financeiro
   registrarCotacao: (id, payload) => post(`/solicitacoes/${id}/registrar-cotacao`, payload),
+  // Aprovação por ALÇADA · quem atende a área aprova a compra dentro do teto,
+  // sem passar pelo financeiro. MESMO endpoint da aprovação financeira (uma
+  // régua só de dinheiro) — quem decide qual caminho vale é o servidor.
+  aprovarNaAlcada: (id, { observacao, forma_pagamento } = {}) =>
+    post(`/solicitacoes/${id}/aprovar-financeiro`, { observacao, forma_pagamento }),
   // Cotações múltiplas · lista de fornecedores + botão de envio ao financeiro
   listarCotacoes:   (id) => get(`/solicitacoes/${id}/cotacoes`),
   adicionarCotacao: (id, payload) => post(`/solicitacoes/${id}/cotacoes`, payload),
@@ -3323,9 +3348,17 @@ export const voluntariado = {
     create: (data) => post('/voluntariado/schedules', data),
     update: (id, data) => put(`/voluntariado/schedules/${id}`, data),
     remove: (id) => del(`/voluntariado/schedules/${id}`),
-    bulk: (service_id, assignments) => post('/voluntariado/schedules/bulk', { service_id, assignments }),
+    bulk: (service_id, assignments, forcar) => post('/voluntariado/schedules/bulk', { service_id, assignments, forcar }),
     copy: (from_service_id, to_service_id) => post('/voluntariado/schedules/copy', { from_service_id, to_service_id }),
-    autoFill: (service_id, team_id) => post('/voluntariado/schedules/auto-fill', { service_id, team_id }),
+    // ⚠️ `team_ids` (plural) é o caminho vivo — preenche as vagas em aberto das
+    // áreas escolhidas, ou de TODAS quando vem vazio. O `team_id` singular
+    // segue aceito pelo servidor por compatibilidade.
+    autoFill: (service_id, team_ids) => post('/voluntariado/schedules/auto-fill', { service_id, team_ids }),
+    // Desfaz um lote recém-criado (auto-preencher / escalar N marcados).
+    desfazerLote: (service_id, ids) => post('/voluntariado/schedules/desfazer-lote', { service_id, ids }),
+    // Contexto de montagem: pool anotado com indisponibilidade do dia + quem já
+    // serve em outros cultos do mesmo dia (evita sobreposição na escala).
+    contextoMontagem: (service_id) => get(`/voluntariado/services/${service_id}/contexto-montagem`),
   },
   // Templates de escala (composição esperada do culto + pré-preenchimento)
   scheduleTemplates: {
@@ -3339,6 +3372,8 @@ export const voluntariado = {
   },
   // Cobertura da escala de um culto (alvo × preenchidas)
   escalaCobertura: (serviceId) => get(`/voluntariado/services/${serviceId}/escala-cobertura`),
+  // Matriz da escala: área × função nas linhas, datas nas colunas.
+  escalaMatriz: (params) => get('/voluntariado/escala-matriz' + (params ? '?' + new URLSearchParams(params) : '')),
   // Check-ins
   checkIns: {
     list: (params) => get('/voluntariado/check-ins' + (params ? '?' + new URLSearchParams(params) : '')),
@@ -3659,6 +3694,8 @@ export const comunicacao = {
     list: () => get('/comunicacao/tarifas'),
     atualizar: (categoria, tarifa) => put(`/comunicacao/tarifas/${encodeURIComponent(categoria)}`, { tarifa }),
   },
+  // Contatos = membros com opt-in + líderes do bot, com a ORIGEM de cada um
+  contatos: (busca) => get('/comunicacao/contatos' + (busca ? `?busca=${encodeURIComponent(busca)}` : '')),
   envios: {
     list: (params = {}) => {
       const p = new URLSearchParams();
