@@ -96,18 +96,41 @@ export default function CompletarSexoBloco({ onAplicado }) {
     } finally { setSugerindo(false); setProgresso(null); }
   };
 
+  // ⚠️⚠️ Grava em BLOCOS de 100, com progresso — e cada bloco que volta SAI da
+  // lista na hora. É a lei de 04/08 aplicada ao caminho que ESCREVE: com 695 de
+  // uma vez o cliente abortava em 30s enquanto o servidor seguia gravando, e a
+  // mensagem mandava "tente de novo" — reprocessando o que já tinha entrado.
+  //
+  // ⚠️ Reconfirmar é seguro (o UPDATE tem `.is('genero', null)`, então quem já
+  // foi gravado é pulado), mas a pessoa não tem como saber disso: por isso o
+  // erro aqui DIZ o que já foi gravado, em vez de sugerir repetir tudo.
   const confirmar = async () => {
     const itens = (sugestoes?.sugestoes || []).filter(s => marcados.has(s.membro_id));
     if (!itens.length) return;
     setConfirmando(true);
+    let gravados = 0;
+    const feitos = new Set();
     try {
-      const r = await api.sexoConfirmar(itens.map(i => ({ membro_id: i.membro_id, sexo: i.sexo })));
-      toast.success(`${r.gravados} confirmado${r.gravados !== 1 ? 's' : ''}.`);
-      setSugestoes(s => ({ ...s, sugestoes: (s.sugestoes || []).filter(x => !marcados.has(x.membro_id)) }));
-      setMarcados(new Set());
+      for (let i = 0; i < itens.length; i += 100) {
+        const bloco = itens.slice(i, i + 100);
+        const r = await api.sexoConfirmar(bloco.map(x => ({ membro_id: x.membro_id, sexo: x.sexo })));
+        gravados += r.gravados || 0;
+        bloco.forEach(x => feitos.add(x.membro_id));
+        setProgresso({ vistas: feitos.size, total: itens.length });
+        // Some da lista já — se algo falhar adiante, o que entrou não volta.
+        setSugestoes(s => ({ ...s, sugestoes: (s.sugestoes || []).filter(x => !feitos.has(x.membro_id)) }));
+        setMarcados(m => { const n = new Set(m); bloco.forEach(x => n.delete(x.membro_id)); return n; });
+      }
+      toast.success(`${gravados} sexo${gravados !== 1 ? 's' : ''} gravado${gravados !== 1 ? 's' : ''}.`);
       onAplicado?.();
-    } catch (e) { toast.error(e?.message || 'Erro ao confirmar'); }
-    finally { setConfirmando(false); }
+    } catch (e) {
+      toast.error(
+        gravados
+          ? `${gravados} já foram gravados; o restante não. Pode clicar de novo — quem já entrou é pulado.`
+          : (e?.message || 'Erro ao confirmar'),
+      );
+      if (gravados) onAplicado?.();
+    } finally { setConfirmando(false); setProgresso(null); }
   };
 
   const alternar = (id) => setMarcados(s => {
@@ -238,7 +261,9 @@ export default function CompletarSexoBloco({ onAplicado }) {
                         color: marcados.size ? '#fff' : C.t3, border: marcados.size ? 'none' : `1px solid ${C.border}`,
                         cursor: confirmando ? 'wait' : (marcados.size ? 'pointer' : 'not-allowed'),
                       })}>
-                      {confirmando ? 'Gravando…' : `Confirmar ${marcados.size} sexo${marcados.size !== 1 ? 's' : ''}`}
+                      {confirmando
+                        ? (progresso ? `Gravando… ${progresso.vistas} de ${progresso.total}` : 'Gravando…')
+                        : `Confirmar ${marcados.size} sexo${marcados.size !== 1 ? 's' : ''}`}
                     </button>
                   </>
                 )}

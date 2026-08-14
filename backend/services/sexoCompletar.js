@@ -25,7 +25,11 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { supabase } = require('../utils/supabase');
-const { registrarObservacaoSegura } = require('./identidadeProgressiva');
+// ⚠️ `registrarObservacaoSegura` só na CAMADA 1, que processa poucos registros
+// (2 no primeiro uso real). Ela custa ~6 idas ao banco por pessoa — inclusive o
+// recálculo dos pares de duplicidade — e é isso que a confirmação em massa NÃO
+// pode pagar: 695 × 6 estoura qualquer requisição.
+const { registrarObservacaoSegura, nomeNormalizado } = require('./identidadeProgressiva');
 const {
   normalizarSexo,
   consolidarDeclaracoes,
@@ -272,39 +276,79 @@ async function sugerirPorNome({ limite = TETO_PALPITE, offset = 0, apenasIds = n
  * seria o palpite vencendo o dado real.
  */
 async function confirmarSexos(itens, { por = null } = {}) {
-  const lista = (Array.isArray(itens) ? itens : []).slice(0, TETO_PALPITE);
-  let gravados = 0;
+  const lista = Array.isArray(itens) ? itens : [];
   const recusados = [];
 
+  // ⚠️⚠️ EM LOTE, não uma pessoa por vez. A versão anterior fazia 1 UPDATE +
+  // `registrarObservacaoSegura` (que sozinha são ~6 idas ao banco: promove
+  // nome, insere, relê observações conectadas e RECALCULA OS PARES de
+  // duplicidade) para CADA pessoa — com 695 confirmações isso é milhares de
+  // round-trips, e o cliente aborta em 30s. Foi o 2º timeout do dia, agora no
+  // caminho que ESCREVE.
+  //
+  // ⚠️ E o motor de pares nem se aplica aqui: preencher o sexo não muda quem é
+  // quem — nome, CPF, telefone e e-mail continuam iguais. Rodar deduplicação
+  // por causa disso é pagar caro por trabalho que não muda nada.
+
+  // 1) Agrupa por sexo: 2 UPDATEs por bloco em vez de N.
+  const porSexo = { masculino: [], feminino: [] };
   for (const item of lista) {
     const sexo = normalizarSexo(item?.sexo);
     const id = item?.membro_id;
     if (!id || !sexo) { recusados.push({ membro_id: id || null, motivo: 'sexo_invalido' }); continue; }
-
-    const { data, error } = await supabase
-      .from('mem_membros')
-      .update({ genero: sexo })
-      .eq('id', id)
-      .is('deleted_at', null)
-      .is('genero', null)
-      .select('id, nome');
-    if (error) { recusados.push({ membro_id: id, motivo: error.message }); continue; }
-    if (!data || !data.length) { recusados.push({ membro_id: id, motivo: 'ja_tinha_sexo' }); continue; }
-
-    gravados += 1;
-    // ⚠️ A ORIGEM fica registrada pra sempre. Sem isso, daqui a um ano ninguém
-    // distingue o que a pessoa declarou do que foi palpite confirmado — e essa
-    // distinção é o que permite rever a decisão se ela se mostrar ruim.
-    await registrarObservacaoSegura({
-      membroId: id,
-      origem: 'sexo_inferido_ia',
-      origemId: por ? String(por) : null,
-      nome: data[0].nome,
-      dados: { genero: sexo, confirmado_por: por || null },
-    });
+    porSexo[sexo].push(id);
   }
 
-  return { gravados, recusados };
+  const gravadosPorId = new Map();
+  for (const [sexo, ids] of Object.entries(porSexo)) {
+    for (let i = 0; i < ids.length; i += LOTE_IN) {
+      const bloco = ids.slice(i, i + LOTE_IN);
+      // A guarda `.is('genero', null)` continua valendo LINHA A LINHA dentro do
+      // lote: quem declarou o sexo nesse meio-tempo simplesmente não é tocado, e
+      // volta em `recusados` porque não aparece no retorno.
+      const { data, error } = await supabase
+        .from('mem_membros')
+        .update({ genero: sexo })
+        .in('id', bloco)
+        .is('deleted_at', null)
+        .is('genero', null)
+        .select('id, nome');
+      if (error) {
+        bloco.forEach(id => recusados.push({ membro_id: id, motivo: error.message }));
+        continue;
+      }
+      (data || []).forEach(m => gravadosPorId.set(m.id, { nome: m.nome, sexo }));
+    }
+  }
+
+  // Quem foi pedido e não voltou do UPDATE já tinha sexo (ou sumiu).
+  for (const ids of Object.values(porSexo)) {
+    for (const id of ids) if (!gravadosPorId.has(id)) recusados.push({ membro_id: id, motivo: 'ja_tinha_sexo' });
+  }
+
+  // 2) A ORIGEM fica registrada pra sempre — sem isso, daqui a um ano ninguém
+  // distingue o que a pessoa declarou do que foi palpite confirmado, e é essa
+  // distinção que permite rever a decisão se ela se mostrar ruim.
+  //
+  // ⚠️ INSERT DIRETO em lote, sem passar pelo motor de identidade (ver acima).
+  // Best-effort: a tabela pode não existir num ambiente, e perder o registro de
+  // procedência é ruim mas não pode desfazer o que já foi gravado.
+  const observacoes = [...gravadosPorId.entries()].map(([id, m]) => ({
+    membro_id: id,
+    origem: 'sexo_inferido_ia',
+    nome: m.nome ? String(m.nome).trim().slice(0, 250) : null,
+    nome_normalizado: nomeNormalizado(m.nome) || null,
+    dados: { genero: m.sexo, confirmado_por: por || null },
+  })).filter(o => o.nome); // a tabela exige ao menos um sinal; sem nome, não grava
+
+  for (let i = 0; i < observacoes.length; i += LOTE_IN) {
+    const { error } = await supabase
+      .from('mem_identidade_observacoes')
+      .insert(observacoes.slice(i, i + LOTE_IN));
+    if (error) console.error('[sexoCompletar] observações não registradas:', error.message);
+  }
+
+  return { gravados: gravadosPorId.size, recusados };
 }
 
 module.exports = { colherDeclaracoes, sugerirPorNome, confirmarSexos, pessoasSemSexo };
