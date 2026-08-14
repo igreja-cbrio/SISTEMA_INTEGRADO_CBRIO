@@ -5482,9 +5482,15 @@ e o de solicitações fica na altura natural (esticar o gráfico não tem propó
 (espelho 1:1, **0 órfãos**) · tarefas de marketing existem só nas fases
 **2,3,4,6,7,8,9** (1, 5, 10 e 11 nunca têm — a mensagem de vazio é frequente e
 correta) · 8 solicitações vivas (2 entregues, 6 abertas, **4 já passaram da data
-pedida** e as 6 furaram o SLA) · **`marketing_campanhas` = 0** (o fluxo
-dor→campanha→entregáveis nunca foi usado em produção, então as 6 aprovadas não
-viraram card — é o bloco 2 que as torna visíveis).
+pedida** e as 6 furaram o SLA).
+
+⚠️ **CORREÇÃO DE REGISTRO (14/08, medido de novo)**: este arquivo dizia
+**`marketing_campanhas` = 0** ("o fluxo dor→campanha→entregáveis nunca foi usado
+em produção"). **São 9** — 3 `ativa` (com `prazo_entrega`) e 6 em `triagem`,
+**todas com `solicitacao_id`**. O Pedro passou a usar o fluxo. E é justamente
+isso que expõe os furos da seção seguinte: **8 dos 9 cards não-evento têm
+`campanha_id` e `solicitacao_id` NULO**. Régua repetida: antes de repetir um
+número deste arquivo, medir de novo.
 
 ⚠️ **Alarme falso MEU, registrado de propósito:** reportei que os 105 cards de
 evento eram órfãos. Eram 0 — meu `.in()` com 105 ids falhou e eu **não li o
