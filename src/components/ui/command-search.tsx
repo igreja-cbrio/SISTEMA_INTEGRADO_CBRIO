@@ -33,7 +33,7 @@ const PAGES: SearchItem[] = [
   { label: 'Financeiro', description: 'Contas, transações e reembolsos', path: '/admin/financeiro', icon: DollarSign, category: 'Administrativo', perm: 'canFinanceiro' },
   { label: 'Logística', description: 'Fornecedores, compras e pedidos', path: '/admin/logistica', icon: Truck, category: 'Administrativo', perm: 'canLogistica' },
   { label: 'Patrimônio', description: 'Bens, localizações e inventário', path: '/admin/patrimonio', icon: Tag, category: 'Administrativo', perm: 'canPatrimonio' },
-  { label: 'Assistente IA', description: 'Agentes de auditoria e análise', path: '/assistente-ia', icon: Bot, category: 'Administrativo', perm: 'canIA' },
+  { label: 'Assistente IA', description: 'Time de agentes: equipe, fila de aprovação e job descriptions', path: '/assistente-ia', icon: Bot, category: 'Administrativo', superAdminOnly: true },
   { label: 'Sistema', description: 'Command center técnico e governança', path: '/sistema', icon: Settings, category: 'Administrativo', superAdminOnly: true },
   { label: 'Eventos', description: 'Gestão de eventos da igreja', path: '/eventos', icon: CalendarDays, category: 'Projetos e Eventos', perm: 'canAgenda' },
   { label: 'Projetos', description: 'Acompanhamento de projetos', path: '/projetos', icon: FolderKanban, category: 'Projetos e Eventos', perm: 'canProjetos' },
