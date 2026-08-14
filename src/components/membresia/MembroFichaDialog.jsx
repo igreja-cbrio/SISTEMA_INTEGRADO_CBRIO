@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/tabs';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { membresia, financeiroV2 } from '../../api';
+import MarcadoresJornada from '../MarcadoresJornada';
 
 const fmtMoney = (v) =>
   Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -125,10 +126,11 @@ function HeaderMembro({ membro }) {
           <Badge variant="outline" className="text-[10px]">
             {STATUS_LABEL[membro.status] || membro.status || '—'}
           </Badge>
-          {membro.papeis?.is_voluntario && <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-300 font-bold">VOL</span>}
-          {membro.papeis?.in_grupo_ativo && <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 font-bold">GRP</span>}
-          {membro.papeis?.is_contribuinte && <span className="text-[9px] px-1.5 py-0.5 rounded bg-pink-100 dark:bg-pink-500/20 text-pink-700 dark:text-pink-300 font-bold">CTB</span>}
-          {membro.papeis?.is_inscrito_next && <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold">NXT</span>}
+          {/* Marcadores de jornada · mesma régua da Membresia e do /grupos.
+              Quem abre esta ficha vem do Financeiro (DoadoresListDialog), então
+              o servidor manda também o marcador de generosidade — o gate é
+              decidido lá, não aqui. */}
+          <MarcadoresJornada marcadores={membro.marcadores} mostrarVazio={false} />
         </div>
       </div>
       <Link to={`/ministerial/membresia?id=${membro.id}`} target="_blank">

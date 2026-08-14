@@ -37,6 +37,7 @@ import {
 import TabCadastros from './TabCadastros';
 import MembersJornadaPanel from '../../components/MembersJornadaPanel';
 import CensoRespostasDialog from '../../components/membresia/CensoRespostasDialog';
+import MarcadoresJornada from '../../components/MarcadoresJornada';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -1604,7 +1605,7 @@ export default function Membresia() {
         <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
           <thead>
             <tr>
-              {['Nome', 'Família', 'Status', 'Papéis', 'Telefone', 'Ministério', ''].map((h, i) => (
+              {['Nome', 'Família', 'Status', 'Jornada', 'Telefone', 'Ministério', ''].map((h, i) => (
                 <th key={i} style={{ textAlign: 'left', padding: '14px 18px', fontSize: 11, fontWeight: 600, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.5, background: 'var(--cbrio-table-header)', borderBottom: `1px solid ${C.border}` }}>
                   {h}
                 </th>
@@ -1650,13 +1651,19 @@ export default function Membresia() {
                   </div>
                 </td>
                 <td style={{ padding: '14px 18px', borderBottom: `1px solid ${C.border}` }}>
-                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 200 }}>
-                    {m.papeis?.is_voluntario && <span title="Voluntário ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#ede9fe', color: '#6b21a8', fontWeight: 700 }}>VOL</span>}
+                  {/* Marcadores de jornada (Arthur Serpa / Pr. Nélio · 13/08/2026).
+                      ⚠️ SUBSTITUÍRAM as flags de papel que ficavam aqui, em vez de
+                      somar a elas: VOL/GRP/NXT e SERVE/GRUPO/NEXT respondem
+                      perguntas DIFERENTES com rótulos quase iguais lado a lado
+                      (o NXT antigo era "inscrito no Next"; NEXT é "concluiu o
+                      Next"), e duas colunas de flag que podem se contradizer
+                      ensinam a equipe a não confiar em nenhuma das duas.
+                      VIS fica porque "tem visita registrada" não é etapa de
+                      jornada e nenhum marcador cobre. O filtro de papel do topo
+                      continua lendo `papeis` — ele pergunta outra coisa. */}
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', maxWidth: 220 }}>
+                    <MarcadoresJornada marcadores={m.marcadores} />
                     {m.papeis?.is_visitante && <span title="Tem visita registrada" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e', fontWeight: 700 }}>VIS</span>}
-                    {m.papeis?.in_grupo_ativo && <span title="Em grupo ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#dbeafe', color: '#1e3a8a', fontWeight: 700 }}>GRP</span>}
-                    {m.papeis?.is_contribuinte && <span title="Contribuiu nos últimos 90 dias" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fce7f3', color: '#831843', fontWeight: 700 }}>CTB</span>}
-                    {m.papeis?.is_inscrito_next && <span title={`${m.papeis?.total_inscricoes_next || 0}× NEXT`} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#d1fae5', color: '#065f46', fontWeight: 700 }}>NXT{m.papeis?.total_inscricoes_next > 1 ? `×${m.papeis.total_inscricoes_next}` : ''}</span>}
-                    {!m.papeis?.is_voluntario && !m.papeis?.is_visitante && !m.papeis?.in_grupo_ativo && !m.papeis?.is_contribuinte && !m.papeis?.is_inscrito_next && <span style={{ fontSize: 11, color: C.text3 }}>—</span>}
                   </div>
                 </td>
                 <td style={{ padding: '14px 18px', fontSize: 13, color: C.text2, borderBottom: `1px solid ${C.border}` }}>
@@ -1732,11 +1739,12 @@ export default function Membresia() {
                       return <span title={`${i} anos`} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: fa[1], color: fa[2], fontWeight: 700 }}>{fa[0].toUpperCase()}</span>;
                     })()}
                     {selectedMembro.frequenta_area && <span title="Ministério que declarou frequentar (cadastro do app)" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#cffafe', color: '#155e75', fontWeight: 700 }}>{String(selectedMembro.frequenta_area).toUpperCase()}</span>}
-                    {selectedMembro.papeis?.is_voluntario && <span title="Voluntário ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#ede9fe', color: '#6b21a8', fontWeight: 700 }}>VOL</span>}
                     {selectedMembro.papeis?.is_visitante && <span title="Tem visita registrada" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fef3c7', color: '#92400e', fontWeight: 700 }}>VIS</span>}
-                    {selectedMembro.papeis?.in_grupo_ativo && <span title="Em grupo ativo" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#dbeafe', color: '#1e3a8a', fontWeight: 700 }}>GRP</span>}
-                    {selectedMembro.papeis?.is_contribuinte && <span title="Contribuinte recente" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#fce7f3', color: '#831843', fontWeight: 700 }}>CTB</span>}
-                    {selectedMembro.papeis?.is_inscrito_next && <span title={`${selectedMembro.papeis.total_inscricoes_next}× NEXT`} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#d1fae5', color: '#065f46', fontWeight: 700 }}>NXT{selectedMembro.papeis.total_inscricoes_next > 1 ? `×${selectedMembro.papeis.total_inscricoes_next}` : ''}</span>}
+                    {/* Jornada da pessoa — mesma régua da lista. O render
+                        otimista do `openDetail` espalha a linha da lista (que
+                        já traz `marcadores`), então o cabeçalho não pisca
+                        enquanto o detalhe carrega. */}
+                    <MarcadoresJornada marcadores={selectedMembro.marcadores} mostrarVazio={false} />
                   </div>
                 </div>
               </div>

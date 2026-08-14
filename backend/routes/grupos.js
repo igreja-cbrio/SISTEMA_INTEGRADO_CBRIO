@@ -19,6 +19,7 @@ const { configurado: whatsappConfigurado } = require('../services/whatsappServic
 const gruposEnvios = require('../services/gruposEnvios');
 const gruposEnviosConfig = require('../services/gruposEnviosConfig');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
+const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
 // Régua única de "dá pra falar com essa pessoa?" (varredura do lançamento 02/08)
 const { classificarContato, digitos: contatoDigitos } = require('../services/contatoPessoa');
 
@@ -4422,6 +4423,15 @@ router.get('/pessoas/papeis', async (req, res) => {
 
     const lista = Object.values(pessoas)
       .sort((a, b) => b.rank - a.rank || (a.nome || '').localeCompare(b.nome || ''));
+
+    // Marcadores de jornada (pedido do Arthur Serpa / Pr. Nélio · 13/08/2026):
+    // o líder vê em que etapa cada pessoa da turma está e direciona.
+    // ⚠️ `incluirSensiveis` decide no SERVIDOR: quem só tem o módulo `grupos`
+    // NÃO recebe o marcador de generosidade — nem o booleano (decisão do
+    // Matheus). Filtrar isso no cliente seria maquiagem.
+    const { indisponiveis: marcIndisp } = await anexarMarcadores(lista, (p) => p.membro_id, {
+      incluirSensiveis: podeVerMarcadorSensivel(req.user),
+    });
     // total = PESSOAS distintas · inscritos = TODA conexão pessoa×grupo (roster +
     // liderar + supervisionar · líder/supervisor também é inscrição naquele grupo,
     // Marcos 2026-07-23). Distinct (membro|grupo) pra não duplicar quem lidera e é
@@ -4432,7 +4442,10 @@ router.get('/pessoas/papeis', async (req, res) => {
       if (g.lider_id) conex.add(g.lider_id + '|' + g.id);
       if (g.supervisor_id) conex.add(g.supervisor_id + '|' + g.id);
     });
-    res.json({ total: lista.length, inscritos: conex.size, pessoas: lista });
+    res.json({
+      total: lista.length, inscritos: conex.size, pessoas: lista,
+      marcadores_indisponiveis: marcIndisp,
+    });
   } catch (e) {
     console.error('[grupos] pessoas/papeis:', e.message);
     res.status(500).json({ error: 'Erro ao carregar pessoas' });
