@@ -60,6 +60,13 @@ app.use(rateLimit({
     || req.path.startsWith('/api/public/grupos')
     || req.path.startsWith('/api/public/evento')
     || req.path.startsWith('/api/public/membresia')
+    // ⚠️ DECISÃO: as duas portas (link do voluntário no culto e formulário do
+    // online) acontecem DENTRO do culto, com dezenas de pessoas atrás do mesmo
+    // NAT. Sob o teto por IP o voluntário lança 3 nomes e toma 429 no 4º — e
+    // decisão que não é registrada na hora vira papel, que é o problema que
+    // estas portas existem pra resolver. Limiters próprios nos dois routers.
+    || req.path.startsWith('/api/public/decisao-culto')
+    || req.path.startsWith('/api/public/decisao-online')
     // Doação: a tela de pagamento faz POLLING do status, então sob o teto por IP
     // a pessoa tomaria 429 no meio do próprio pagamento — e a igreja inteira sai
     // por 1 IP no culto. Limiter próprio em routes/publicGenerosidade.js.
@@ -231,10 +238,18 @@ app.use('/api/public/membresia', require('./routes/publicMembresia'));
 // pagamento faz POLLING do status, então sob o teto de 30/15min a pessoa tomaria
 // 429 no meio do próprio pagamento. Limiter próprio generoso no router.
 app.use('/api/public/generosidade', require('./routes/publicGenerosidade'));
+// ⚠️ DECISÃO (as duas portas) montada ANTES do publicLimiter estrito, e no
+// skip() do limiter global. Medido em 14/08/2026: o `decisao-online` estava
+// DEPOIS desta linha e por isso pagava 30/15min por IP somado ao teto próprio
+// de 8/min — a igreja inteira sai pelo NAT do prédio, então o formulário
+// quebrava por volta da 11ª pessoa. É a mesma armadilha que já derrubou o
+// censo, a doação e o formulário de membresia. Limiters próprios generosos
+// vivem nos dois routers.
+app.use('/api/public/decisao-culto', require('./routes/publicDecisaoCulto'));
+app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
 app.use('/api/public', publicLimiter);
 
 app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));
-app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
 // Webhook de pagamento (público · sem auth). Montado FORA de /api/public
 // (escapa o publicLimiter de 30/15min) e isento do limiter global no skip()
 // acima. Perder entrega aqui = pagamento aprovado sem inscrição confirmada.

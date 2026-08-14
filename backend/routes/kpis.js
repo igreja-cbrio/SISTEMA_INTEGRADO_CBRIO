@@ -385,6 +385,30 @@ router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
   res.json(out);
 });
 
+// GET /cultos/:id/link-decisoes — link assinado pro VOLUNTÁRIO lançar as
+// decisões daquele culto pelo celular, na hora, sem login.
+//
+// ⚠️ O link é o único caminho de distribuição que existe: sem um botão aqui, a
+// porta nova não chega em ninguém. Foi exatamente isso que matou o formulário
+// do online — ele existe desde junho, nunca teve QR nem link divulgado, e por
+// isso registrou ZERO decisões em 3 meses.
+//
+// Devolve `null` quando não há segredo configurado (fail-closed): a tela mostra
+// "indisponível" em vez de entregar um link quebrado que o voluntário
+// distribui e ninguém consegue usar.
+router.get('/cultos/:id/link-decisoes', authorizeIntegracao, async (req, res) => {
+  try {
+    const { montarLinkCulto } = require('../utils/cultoToken');
+    const { data: c } = await supabase
+      .from('cultos').select('id, data').eq('id', req.params.id).maybeSingle();
+    if (!c) return res.status(404).json({ error: 'Culto não encontrado' });
+    res.json({ link: montarLinkCulto(c.id), data: c.data });
+  } catch (e) {
+    console.error('[kpis/link-decisoes]', e.message);
+    res.status(500).json({ error: 'Erro ao gerar o link' });
+  }
+});
+
 router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res) => {
   const {
     nome, telefone, email, idade, data_nascimento, cpf,

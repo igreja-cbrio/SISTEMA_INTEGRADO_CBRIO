@@ -319,6 +319,91 @@ aceita `recorte=membros`.
 
 Lição repetida 3× neste dia: **conferir o que a sonda devolveu, não a contagem.**
 
+## ⚠️ Decisão · o voluntário lança NO CULTO, por link assinado (2026-08-14 · migration `20260814180000`)
+
+Pergunta do Matheus: *"como vamos medir o track do novo convertido, se quando
+coletamos os dados deles não pedimos o CPF?"*. A investigação mostrou que **o CPF
+não é o problema** — o vínculo é por `membro_id` e já existe: `cui_convertidos`
+tem 407/407 com membro, porque `tg_cultos_dec_pessoas_resolve_membro` roda o
+Contrato de porta no BEFORE INSERT. O problema medido é outro.
+
+### O que foi medido (14/08/2026)
+
+- Cobertura nominal presencial na janela em que o registro nominal existe
+  (20/05→13/08): **125 de 137 = 91,2%**. A coleta no papel FUNCIONA.
+- Atraso papel→sistema: **média 3 dias, máximo 9**; 23 de 104 acima de 7 dias.
+- SLA de 1º contato do módulo é **≤3 dias** → só **41,5%** cumprem (média real
+  4,8 dias). **O convertido entra no sistema no dia em que o prazo dele venceu.**
+- 12/07: culto das 19h com 9 declaradas e **0** nomes; o das 11h30 com 9
+  declaradas e **19** nomes — lançado 9 dias depois, no culto errado.
+- Online: 55 declaradas, **1** nome. `fonte='form_publico'` = **0** em 3 meses.
+
+### O que entrou
+
+- **`backend/utils/cultoToken.js`** — molde do `escalaToken` (namespace
+  `culto-decisoes:`, `CULTO_TOKEN_SECRET || CRON_SECRET`, fail-closed,
+  timing-safe). Link `/c/:token` → `src/pages/public/DecisaoCulto.tsx`, tela de
+  LOTE (lança várias pessoas seguidas sem recarregar).
+- ⚠️ **O `culto_id` vem do TOKEN, nunca do body** — é o que torna o bug de 12/07
+  impossível por construção. Teste-mutante fixa isso (`src/test/cultoToken.test.ts`).
+- Janela de lançamento de **2 dias**, reconferida no servidor a cada uso. Depois
+  disso vai pro conferente — mata por desenho o caminho "lanço 9 dias depois".
+- **Nenhum GET devolve lista de pessoas**, só contador agregado: link vaza
+  (print, grupo de WhatsApp) e não pode virar janela pra base de gente.
+- Formulário online: telefone virou **obrigatório**, checkbox de LGPD, e o
+  backend **parou de descartar** — anexa ao culto ao vivo, ao do dia, ou ao
+  último culto online em 7 dias (replay). Medido: em 120 dias houve culto online
+  em 111, intervalo máximo de 3 dias, nenhum acima de 7.
+- Card **"Nomes faltando"** em `VisualizacaoDecisoes.tsx`, reusando o `resumo`
+  que a tela já buscava e jogava fora.
+
+### ⚠️ O que NÃO fazer (decidido contra, com motivo)
+
+- **NÃO usar login travado (trava-quiosque) pro voluntário.** O produto não sabe
+  criar conta travada: `routes/voluntariado.js` grava `is_membro_only: false` e a
+  trava exige `true` (as contas `voluntario-kids` foram feitas por SQL à mão).
+  E `integracao` não está no `MODULO_ROTA_TRAVA`. Voluntário rotaciona semanalmente.
+- **NÃO relaxar o `RETURN NEW` de `tg_cultos_dec_pessoas_to_cuidados`** quando
+  `culto_id` é nulo. Tentador, mas: `v_area` cairia no `ELSE 'sede'` (chute
+  gravado como fato, e a área decide roteamento pastoral e KPI), e usar
+  `CURRENT_DATE` como `data_culto` faria o relógio do SLA contar do dia da
+  DIGITAÇÃO — os 41,5% subiriam sem nada melhorar. A porta nova resolve na
+  origem: o culto vem no token. ⚠️ `CURRENT_DATE` no Postgres é **UTC** e o banco
+  roda em UTC — depois das 21h BRT o dia já virou (faixa do culto de domingo).
+- **NÃO publicar percentual de cobertura.** N > D acontece de verdade: o culto de
+  12/07 tem `sem_dados = -8` na `vw_nsm_sem_dados` e `gap_status = 'completo'`, e
+  esse negativo CANCELA a falta de outro culto na soma. O card mostra **gap
+  absoluto** + contagem de divergências, com a janela declarada no subtítulo
+  (`nsmSemDados` é fixo em 365 dias; os 4 cards ao lado seguem o seletor).
+- **NÃO criar colunas de consentimento** em `cultos_decisoes_pessoas` —
+  `inscricao_consentimentos` (porta `decisao`) é o ledger único.
+  ⚠️ As duas portas gravam textos DIFERENTES de propósito: no formulário público
+  a própria pessoa marca a caixa; no link do voluntário quem preenche é um
+  terceiro, e o texto diz `DECLARADO PELO VOLUNTARIO`. Gravar declaração de
+  terceiro como consentimento do titular seria fabricar prova legal.
+  Consentimento é gravado **ANTES** da decisão (id pré-gerado): órfão no ledger é
+  inofensivo, dado de pessoa sem prova legal não é.
+- **Criança não entra por esta porta** (LGPD art. 14, §1º) — fica no fluxo do
+  Kids, com responsável.
+
+### ⚠️ O que ficou medido e NÃO foi atacado (o gargalo real)
+
+Captura não é a restrição do funil. Coortes com 60d fechados (n=307):
+contato ≤3d → **13,8%** engajam · sem contato → 4,0%. **O teto de quem fez tudo
+certo é 13,8%, contra meta de 50%.** Mais: **270 de 271** pessoas que atenderam e
+responderam **nunca foram convidadas pro NEXT** (a máquina existe inteira em
+`nextConvite.js`, com template aprovado, usada 1 vez); `cui_primeiro_contato_fila`
+tem 39 itens, **todos `pendente`**; alargar a janela de 60→365 dias acrescenta só
+10 pessoas (35→45), ou seja **~89% não engajam em janela nenhuma**; e
+`mem_checkins` = **0**, então é impossível saber se o convertido voltou no
+domingo seguinte.
+
+⚠️ **Armadilha do denominador**: consertar a captura do online faz o NSM CAIR
+(entra coorte com engajamento historicamente zero). Publicar sempre o
+denominador junto, separar qualidade-de-dado de painel pastoral, e comparar por
+coorte fechada. O número imune à mudança de captura — e portanto o que prova
+discipulado — é o **13,9% da coorte "atendido e respondido"**.
+
 ## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
 
 Demanda do **Arthur Serpa**: por um mês, 1 minuto de cada culto pra igreja
