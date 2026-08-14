@@ -5556,6 +5556,103 @@ sumiu do calendário" tem que olhar `event_cycles` antes de concluir que o event
 foi excluído. Com a migration aplicada, o cascade do banco conclui e limpa o
 resíduo (fases e tarefas apontam pra `event_id`); não precisa script separado.
 
+## ⚠️⚠️ LEI · o solicitante do card vem da CAMPANHA, não de `card.solicitacao_id` (2026-08-14 · SEM migration)
+
+Pergunta do Marcos: *"veja se tudo conversa — quando ele atribui a
+responsabilidade de uma subtarefa para alguém, essa pessoa já recebe, já vai para
+o dashboard? Quando ele coloca a data de entrega, já aparece na solicitação?
+Quando ele arrasta para concluído, já vai a entrega para a pessoa? Quando ele sobe
+um arquivo de entregável, a pessoa pode baixar lá no módulo de solicitações?"*
+
+**A resposta era NÃO em quase tudo — e a causa é UMA SÓ:** o código perguntava
+`card.solicitacao_id`, mas no fluxo em uso o vínculo é
+`card.campanha_id → marketing_campanhas.solicitacao_id`. **Medido em 14/08: dos 9
+cards não-evento, 8 têm `campanha_id` e `solicitacao_id` NULO**, e as 9 campanhas
+têm `solicitacao_id`. A pergunta errada acertava em **1 de 9**.
+
+| o que o Pedro faz | antes | agora |
+|---|---|---|
+| atribui subtarefa | ✅ já funcionava (`notificar` + dashboard da pessoa) | igual |
+| define a data de entrega | 🔴 aviso nunca saía (`prazo_confirmado` = **0** em 114 cards) | avisa |
+| move para Concluído | 🔴 aviso não saía · e a **solicitação ficava ABERTA pra sempre** (logo o NPS nunca era pedido) | avisa + conclui |
+| manda pra revisão do solicitante | 🔴 aviso não saía | avisa |
+| o solicitante pede revisão | 🔴 **403** no próprio pedido | pode |
+| sobe o arquivo final | 🔴 aviso não saía **e a tela dele não tinha download nenhum** | vê e baixa |
+| o solicitante baixa | 🔴 **403 "Sem permissão"** | baixa |
+
+- **A régua é PURA e única**: `backend/utils/marketingSolicitante.js`
+  (`escolherVinculoSolicitante`) + `services/marketingSolicitante.js` (lê o banco).
+  **NÃO voltar a perguntar `card.solicitacao_id` direto** em lugar nenhum —
+  eram **6 pontos** fazendo a mesma pergunta errada.
+- ⚠️ **NÃO "consertei" gravando `solicitacao_id` também no card**: seriam DUAS
+  verdades sobre o mesmo vínculo, e divergiriam no dia em que a campanha fosse
+  reapontada. O card pertence à CAMPANHA; a campanha pertence à SOLICITAÇÃO. A
+  LEITURA atravessa os dois; a escrita não duplica nada.
+- ⚠️⚠️ **`solicitante_id` sai SEMPRE da tabela `solicitacoes`**, nunca do atalho
+  `marketing_campanhas.solicitante_id` — este valor AUTORIZA download de arquivo,
+  então vem da fonte, não de uma cópia que envelhece.
+- ⚠️ **Fail-closed**: `ehSolicitanteDoCard` nega quando a consulta falha, e o
+  resolvedor devolve `{erro:true}` (nunca `null`) nesse caso — `null` significa
+  "este card não tem dono", que é resposta legítima do ciclo criativo. Confundir
+  os dois faria o download liberar ou negar pelo motivo errado, em silêncio.
+- ⚠️ **Campanha de OUTRO card nunca vale** (o resolvedor confere o id) e **campanha
+  soft-deletada não vale**. Sem a 1ª guarda, um índice errado entregaria o arquivo
+  de uma pessoa para outra — é o pior erro possível aqui.
+- ⚠️ **Solicitante NUNCA vê `tipo='referencia'`** (briefing/inspiração INTERNA, no
+  bucket `Marketing/Referencias`): filtrado na listagem E no download. Ele vê só o
+  arquivo final.
+- **O teste pegou um defeito meu antes de subir**: desestruturar com default
+  (`= {}`) **não cobre `null`** — só `undefined` — e `null` é exatamente o que um
+  `.maybeSingle()` sem linha devolve, então a versão original **estourava
+  TypeError e derrubaria a rota**. Mesma família do `Number(null)`.
+  `src/test/marketingSolicitante.test.ts` (10 casos · no gate) · **4 mutantes
+  RODADOS e mortos**: campanha de outro card → 1 · campanha apagada → 1 · campanha
+  vencendo o vínculo direto → 2 · o default de parâmetro → 1.
+
+⚠️ **Exercitado contra produção (só leitura)**: dos 9 cards, **2 resolvem** e
+**7 devolvem "sem solicitante" — e isso está CORRETO**: a solicitação deles foi
+**APAGADA** (6 são da campanha "vaquinha meriva", 1 é o card "fazer arte evento"
+já registrado como follow-up). Régua confirmada, não defeito.
+⏳ **Follow-up de DADO (não de código):** 7 cards vivos no Kanban pertencem a
+pedidos apagados — a equipe pode estar trabalhando no que ninguém mais pediu, ou
+o pedido foi apagado por engano. **Não apaguei nada**; é decisão de gente.
+
+### ⚠️ O arrasto do Kanban · TRÊS causas, e nenhuma se conserta no handler de drop
+
+Reclamação do Pedro: *"está com dificuldade de arrastar tarefas de um bucket para
+o outro, esse drag and drop individual"*.
+
+1. ⚠️⚠️ **HTML5 drag-and-drop NÃO dispara em TOQUE.** `onDragStart`/`onDrop` são
+   eventos de mouse — em tablet/celular **não existe arrasto nenhum**, e a tela é
+   declaradamente responsiva (colunas `w-[85vw]` no mobile).
+2. **Não há auto-scroll horizontal**: as 6 colunas vivem num container com scroll +
+   `snap`, então levar um card de Backlog até Concluído exige que a coluna de
+   destino **já esteja visível** — arrastar até a borda não rola a tela.
+3. **O card é `draggable` E clicável**: arrasto que não "pega" vira clique e abre o
+   painel, o que se lê como "não deixou arrastar".
+
+⇒ **Menu "Mover para" em cada card** (`MenuMover`), que funciona em qualquer
+aparelho e sem precisar ver a coluna de destino. **O arrasto continua** — nada foi
+removido. ⚠️ `stopPropagation` no trigger e nos itens é obrigatório: o card abre
+painel no clique e o macro é um `<button>` que abre/fecha.
+
+- **O MACRO não é arrastável, e isso é decisão**: arrastá-lo moveria N tarefas de
+  uma vez sem confirmação. Ele ganhou **"Mover N"** (lote explícito) e o texto
+  *"toque para abrir e mover as tarefas"* — antes, quem tentava arrastar o
+  quadrado do evento concluía que o Kanban estava travado, porque o `draggable`
+  era só repassado aos filhos.
+- ⚠️ O lote é **SEQUENCIAL** (cada PATCH notifica e pode concluir a solicitação do
+  dono) e **conta o que já foi movido**: falhar no 3º de 7 mostra "3 de 7 já foram
+  movidas", não "erro" — quem lê "erro" move tudo de novo.
+- ⚠️ **Não reproduzi no navegador** (sem sessão de navegador nesta máquina): as 3
+  causas vêm de leitura de código e do comportamento documentado da plataforma. O
+  menu resolve independentemente de qual delas é a do Pedro.
+
+⚠️ **`.catch(() => [])` que engolia 403 morreu**: a tela do solicitante mostrava
+"nenhum arquivo" quando a chamada FALHAVA — erro nunca se disfarça de vazio. E
+entregável concluído sem arquivo é estado LEGÍTIMO (arte aprovada em reunião), o
+que a tela agora diz em vez de deixar a pessoa achando que o download quebrou.
+
 ## Marketing · estado final (specs maio + redesenho 2026-05-30/31 · NO AR)
 
 O módulo nasceu em 24 specs (maio/2026) como "balcão" e foi **redesenhado** pra

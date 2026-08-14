@@ -546,13 +546,28 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
       }
     }
 
+    // ⚠️⚠️ Os 3 avisos ao solicitante abaixo dependiam de `data.solicitacao_id` e
+    // por isso NUNCA saíam no fluxo em uso (8 dos 9 cards têm só `campanha_id`).
+    // `solicitanteDoCard` atravessa card → campanha → solicitação (régua única em
+    // utils/marketingSolicitante). Resolvido UMA vez e reusado nos três.
+    // ⚠️ Erro de consulta devolve `{erro:true}` — não avisa, e não finge que o
+    // card não tem dono. Um `console.error` deixa isso auditável.
+    let solDoCard = null;
+    const precisaAvisarSolicitante =
+      (update.estado === 'concluido' && atual.estado !== 'concluido')
+      || (update.prazo_confirmado !== undefined && update.prazo_confirmado !== atual.prazo_confirmado)
+      || (update.estado === 'aguardando_solicitante' && atual.estado !== 'aguardando_solicitante');
+    if (precisaAvisarSolicitante) {
+      try {
+        const r = await solicitanteDoCard(data);
+        if (r?.erro) console.error('[MARKETING] solicitante do card (não avisou):', r.motivo);
+        else solDoCard = r;
+      } catch (e) { console.error('[MARKETING] solicitante do card:', e.message); }
+    }
+
     // Notificação · entregue (estado=concluido) · solicitante avisado
-    if (update.estado === 'concluido' && atual.estado !== 'concluido' && data.solicitacao_id) {
-      const { data: sol } = await supabase
-        .from('solicitacoes')
-        .select('solicitante_id, titulo')
-        .eq('id', data.solicitacao_id)
-        .maybeSingle();
+    if (update.estado === 'concluido' && atual.estado !== 'concluido' && solDoCard) {
+      const sol = { solicitante_id: solDoCard.solicitante_id, titulo: solDoCard.titulo_solicitacao };
       if (sol?.solicitante_id) {
         notificar({
           modulo: 'marketing',
@@ -570,12 +585,8 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
     // Notificação · prazo confirmado (Pedro definiu prazo) · solicitante avisado
     if (update.prazo_confirmado !== undefined
         && update.prazo_confirmado !== atual.prazo_confirmado
-        && data.solicitacao_id) {
-      const { data: sol } = await supabase
-        .from('solicitacoes')
-        .select('solicitante_id, titulo')
-        .eq('id', data.solicitacao_id)
-        .maybeSingle();
+        && solDoCard) {
+      const sol = { solicitante_id: solDoCard.solicitante_id, titulo: solDoCard.titulo_solicitacao };
       if (sol?.solicitante_id && data.prazo_confirmado) {
         const prazoStr = new Date(data.prazo_confirmado).toLocaleDateString('pt-BR');
         notificar({
@@ -593,12 +604,8 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
 
     // Notificação · aguardando solicitante (preview pro solicitante revisar)
     if (update.estado === 'aguardando_solicitante' && atual.estado !== 'aguardando_solicitante'
-        && data.solicitacao_id) {
-      const { data: sol } = await supabase
-        .from('solicitacoes')
-        .select('solicitante_id, titulo')
-        .eq('id', data.solicitacao_id)
-        .maybeSingle();
+        && solDoCard) {
+      const sol = { solicitante_id: solDoCard.solicitante_id, titulo: solDoCard.titulo_solicitacao };
       if (sol?.solicitante_id) {
         notificar({
           modulo: 'marketing',
@@ -674,11 +681,14 @@ router.patch('/cards/:id/aprovar-entrega', async (req, res) => {
 
     // Marca solicitação como concluída pra acionar NPS (status=concluido dispara
     // o fluxo padrão + notificação de avaliação em routes/solicitacoes patch)
-    if (card.solicitacao_id) {
+    // ⚠️ Pela régua única: sem isso, aprovar a entrega de card vindo de campanha
+    // deixava a solicitação ABERTA pra sempre e o NPS nunca era pedido.
+    const solAprovada = await solicitanteDoCard(card).catch(() => null);
+    if (solAprovada?.solicitacao_id) {
       await supabase
         .from('solicitacoes')
         .update({ status: 'concluido', concluido_em: new Date().toISOString() })
-        .eq('id', card.solicitacao_id)
+        .eq('id', solAprovada.solicitacao_id)
         .neq('status', 'concluido');
     }
 
@@ -713,13 +723,11 @@ router.patch('/cards/:id/sugerir-revisao', async (req, res) => {
     // Permissões: solicitante do card OR admin marketing OR produtor atribuído
     const admin = isAdminLike(req);
     let podeSugerir = admin;
-    if (!podeSugerir && atual.solicitacao_id) {
-      const { data: sol } = await supabase
-        .from('solicitacoes')
-        .select('solicitante_id')
-        .eq('id', atual.solicitacao_id)
-        .maybeSingle();
-      if (sol?.solicitante_id === req.user.userId) podeSugerir = true;
+    // ⚠️ Régua única: antes só o solicitante de card com vínculo DIRETO podia
+    // pedir revisão — quem veio por campanha tomava 403 no próprio pedido.
+    // `ehSolicitanteDoCard` é fail-closed (erro de consulta nega).
+    if (!podeSugerir) {
+      podeSugerir = await ehSolicitanteDoCard(atual, req.user.userId);
     }
     if (!podeSugerir) {
       const meusMembroIds = await meuMembroId(req);
@@ -864,6 +872,10 @@ const {
   diasSobrepostos,
 } = require('../utils/marketingSemanas');
 const { corDoEvento, ehExcedente, CORES_EVENTO } = require('../utils/marketingCores');
+// Quem é o solicitante deste card · atravessa card → campanha → solicitação.
+// ⚠️ NÃO voltar a perguntar `card.solicitacao_id` direto: 8 dos 9 cards em uso
+// têm só `campanha_id`, e era isso que matava os avisos e o download.
+const { solicitanteDoCard, ehSolicitanteDoCard } = require('../services/marketingSolicitante');
 
 // Solicitação ENTREGUE (o que o marketing resolveu). `avaliado` = concluída e
 // já com NPS respondido — continua sendo entrega.
@@ -1409,32 +1421,28 @@ router.get('/fila/posicao/:cardId', async (req, res) => {
 router.get('/cards/:id/entregaveis', authorizeModule('marketing', 1), async (req, res) => {
   try {
     // RLS bloqueia solicitante de ver entregaveis de cards alheios.
-    // Pra solicitante: backend confere ownership via card.solicitacao_id.
+    // ⚠️ Ownership pela régua ÚNICA (card → campanha → solicitação): antes só o
+    // vínculo DIRETO passava, então o dono de pedido do fluxo em uso tomava 403
+    // no próprio arquivo. Fail-closed: erro de consulta nega.
     const lvl = levelOf(req);
-    if (lvl < 3 && !['admin', 'diretor'].includes(req.user.role)) {
+    const ehEquipe = lvl >= 3 || ['admin', 'diretor'].includes(req.user.role);
+    if (!ehEquipe) {
       const { data: card } = await supabase
         .from('marketing_kanban_cards')
-        .select('id, solicitacao_id')
+        .select('id')
         .eq('id', req.params.id)
         .is('deleted_at', null)
         .maybeSingle();
       if (!card) return res.status(404).json({ error: 'Card não encontrado' });
-      if (card.solicitacao_id) {
-        const { data: sol } = await supabase
-          .from('solicitacoes')
-          .select('solicitante_id')
-          .eq('id', card.solicitacao_id)
-          .maybeSingle();
-        if (sol?.solicitante_id !== req.user.userId) {
-          return res.status(403).json({ error: 'Sem permissão' });
-        }
-      } else {
+      if (!(await ehSolicitanteDoCard(req.params.id, req.user.userId))) {
         return res.status(403).json({ error: 'Sem permissão' });
       }
     }
 
     const entregaveis = await spMarketing.listarEntregaveis(req.params.id);
-    res.json(entregaveis);
+    // ⚠️ Solicitante NUNCA vê `tipo='referencia'` — referência é briefing/inspiração
+    // INTERNA da equipe (bucket Marketing/Referencias). Ele vê só o arquivo FINAL.
+    res.json(ehEquipe ? entregaveis : (entregaveis || []).filter(e => e.tipo !== 'referencia'));
   } catch (e) {
     console.error('[MARKETING] entregaveis list:', e.message);
     res.status(500).json({ error: e.message });
@@ -1460,15 +1468,15 @@ router.post('/cards/:id/entregaveis',
       try {
         const { data: card } = await supabase
           .from('marketing_kanban_cards')
-          .select('estado, solicitacao_id, titulo')
+          .select('id, estado, solicitacao_id, campanha_id, titulo')
           .eq('id', req.params.id)
           .maybeSingle();
-        if (tipo !== 'referencia' && card?.solicitacao_id && card.estado === 'concluido') {
-          const { data: sol } = await supabase
-            .from('solicitacoes')
-            .select('solicitante_id, titulo')
-            .eq('id', card.solicitacao_id)
-            .maybeSingle();
+        // ⚠️ Régua única (era `card.solicitacao_id`, que não existe no fluxo em uso).
+        const solUp = (tipo !== 'referencia' && card?.estado === 'concluido')
+          ? await solicitanteDoCard(card)
+          : null;
+        if (solUp && !solUp.erro) {
+          const sol = { solicitante_id: solUp.solicitante_id, titulo: solUp.titulo_solicitacao };
           if (sol?.solicitante_id) {
             notificar({
               modulo: 'marketing',
@@ -1497,28 +1505,22 @@ router.post('/cards/:id/entregaveis',
 
 router.get('/entregaveis/:id/download', authorizeModule('marketing', 1), async (req, res) => {
   try {
-    // Pra solicitante: confere ownership via card.solicitacao_id
+    // ⚠️⚠️ ERA AQUI O 403 que impedia a pessoa de baixar o próprio arquivo:
+    // `if (!card?.solicitacao_id) return 403` negava todo card vindo de campanha
+    // — o fluxo em uso. Agora a régua única atravessa card → campanha →
+    // solicitação, e segue fail-closed (erro de consulta nega).
     const lvl = levelOf(req);
     if (lvl < 3 && !['admin', 'diretor'].includes(req.user.role)) {
       const { data: ent } = await supabase
         .from('marketing_entregaveis')
-        .select('card_id')
+        .select('card_id, tipo')
         .eq('id', req.params.id)
         .is('deleted_at', null)
         .maybeSingle();
       if (!ent) return res.status(404).json({ error: 'Entregavel não encontrado' });
-      const { data: card } = await supabase
-        .from('marketing_kanban_cards')
-        .select('solicitacao_id')
-        .eq('id', ent.card_id)
-        .maybeSingle();
-      if (!card?.solicitacao_id) return res.status(403).json({ error: 'Sem permissão' });
-      const { data: sol } = await supabase
-        .from('solicitacoes')
-        .select('solicitante_id')
-        .eq('id', card.solicitacao_id)
-        .maybeSingle();
-      if (sol?.solicitante_id !== req.user.userId) {
+      // Referência é material INTERNO da equipe — nunca sai pro solicitante.
+      if (ent.tipo === 'referencia') return res.status(403).json({ error: 'Sem permissão' });
+      if (!(await ehSolicitanteDoCard(ent.card_id, req.user.userId))) {
         return res.status(403).json({ error: 'Sem permissão' });
       }
     }

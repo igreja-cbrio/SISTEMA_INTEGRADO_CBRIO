@@ -1079,9 +1079,41 @@ router.get('/', async (req, res) => {
           }
           donoMap = Object.fromEntries((ms || []).map(m => [m.id, pmap[m.profile_id] || m.nome_display || null]));
         }
+        // ⚠️⚠️ OS ARQUIVOS · sem isto o solicitante nunca via o entregável: a tela
+        // dele listava os cards e o progresso, e o link de download só existia no
+        // bloco LEGADO (card com solicitacao_id direto). Pergunta do Marcos
+        // (14/08): "quando ele sobe um arquivo de entregável, a pessoa pode baixar
+        // lá no módulo de solicitações?" — passou a poder.
+        // ⚠️ SÓ `tipo='entregavel'`: referência é briefing/inspiração INTERNA da
+        // equipe e não pode aparecer pra quem pediu.
+        const arquivoMap = {};
+        const cardIds = (ents || []).map(e => e.id);
+        if (cardIds.length) {
+          for (let i = 0; i < cardIds.length; i += 200) {
+            const { data: arqs, error: eArq } = await supabase
+              .from('marketing_entregaveis')
+              .select('id, card_id, nome_arquivo, tipo_mime, tamanho_bytes, enviado_em, tipo')
+              .in('card_id', cardIds.slice(i, i + 200))
+              .eq('tipo', 'entregavel')
+              .is('deleted_at', null)
+              .order('enviado_em', { ascending: false });
+            // Falha aqui não derruba a solicitação — mas fica auditável em vez de
+            // virar "não tem arquivo" em silêncio.
+            if (eArq) { console.error('[SOLICITACOES] entregaveis (não-bloqueante):', eArq.message); break; }
+            for (const a of arqs || []) {
+              if (!arquivoMap[a.card_id]) arquivoMap[a.card_id] = [];
+              arquivoMap[a.card_id].push(a);
+            }
+          }
+        }
         for (const e of (ents || [])) {
           if (!entregMap[e.campanha_id]) entregMap[e.campanha_id] = [];
-          entregMap[e.campanha_id].push({ id: e.id, titulo: e.titulo, estado: e.estado, dono_nome: donoMap[e.atribuido_a] || null, data_fim: e.data_fim, tem_revisao: e.tem_revisao });
+          entregMap[e.campanha_id].push({
+            id: e.id, titulo: e.titulo, estado: e.estado,
+            dono_nome: donoMap[e.atribuido_a] || null, data_fim: e.data_fim,
+            tem_revisao: e.tem_revisao,
+            arquivos: arquivoMap[e.id] || [],
+          });
         }
       }
       campanhaMap = Object.fromEntries((camps || []).map(c => [c.solicitacao_id, { ...c, entregaveis: entregMap[c.id] || [] }]));

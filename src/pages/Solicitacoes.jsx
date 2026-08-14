@@ -15,7 +15,7 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil, Lock, Info } from 'lucide-react';
+import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil, Lock, Info, Download } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
@@ -3657,12 +3657,46 @@ function MarketingCampanhaBlock({ campanha, onChanged }) {
             <span className="text-[11px] text-muted-foreground shrink-0">{feitos}/{ents.length} prontos</span>
           </div>
           {ents.map(e => (
-            <div key={e.id} className="flex items-center justify-between gap-2 text-xs bg-muted/30 rounded px-2 py-1.5">
-              <span className="truncate flex-1 flex items-center gap-1.5">
-                {e.estado === 'concluido' && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />}
-                {e.titulo}
-              </span>
-              <span className="text-muted-foreground shrink-0">{EST_ENTREGAVEL_LABEL[e.estado] || e.estado}</span>
+            <div key={e.id} className="bg-muted/30 rounded px-2 py-1.5 space-y-1">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="truncate flex-1 flex items-center gap-1.5">
+                  {e.estado === 'concluido' && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />}
+                  {e.titulo}
+                </span>
+                <span className="text-muted-foreground shrink-0">{EST_ENTREGAVEL_LABEL[e.estado] || e.estado}</span>
+              </div>
+
+              {/* ⚠️ O ARQUIVO FINAL, que antes NÃO existia nesta tela: o download só
+                  vivia no bloco legado, então quem pediu pelo fluxo em uso nunca
+                  conseguia baixar. Só chega aqui `tipo='entregavel'` — referência é
+                  material interno da equipe (filtrado no servidor). */}
+              {(e.arquivos || []).map(a => (
+                <a
+                  key={a.id}
+                  href={marketingApi.entregaveis.download(a.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-2 text-xs bg-card border border-border/60 rounded px-2 py-1.5 hover:bg-accent/50 transition-colors"
+                >
+                  <FileText className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span className="truncate flex-1">{a.nome_arquivo}</span>
+                  {a.tamanho_bytes > 0 && (
+                    <span className="text-muted-foreground text-[10px] shrink-0 tabular-nums">
+                      {Math.round(a.tamanho_bytes / 1024)} KB
+                    </span>
+                  )}
+                  <Download className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                </a>
+              ))}
+
+              {/* Entregável pronto e sem arquivo é estado LEGÍTIMO (arte aprovada
+                  em reunião, peça publicada direto) — dizer isso evita a pessoa
+                  achar que o download quebrou. */}
+              {e.estado === 'concluido' && (e.arquivos || []).length === 0 && (
+                <p className="text-[10px] text-muted-foreground italic">
+                  Concluído sem arquivo anexado · fale com a equipe se precisar do material.
+                </p>
+              )}
             </div>
           ))}
         </div>
@@ -3704,6 +3738,9 @@ function MarketingCardBlock({ card, onChanged }) {
   const [entregaveis, setEntregaveis] = useState([]);
   const [posicao, setPosicao] = useState(null);
   const [loading, setLoading] = useState(true);
+  // ⚠️ Erro NUNCA se disfarça de "nenhum arquivo": o `.catch(() => [])` fazia um
+  // 403 parecer entrega vazia, e a pessoa concluía que a equipe não anexou nada.
+  const [erroArquivos, setErroArquivos] = useState(null);
   const [revisaoOpen, setRevisaoOpen] = useState(false);
   const [motivo, setMotivo] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -3711,11 +3748,13 @@ function MarketingCardBlock({ card, onChanged }) {
   useEffect(() => {
     if (!card?.id) return;
     setLoading(true);
+    setErroArquivos(null);
     Promise.all([
-      marketingApi.entregaveis.list(card.id).catch(() => []),
+      marketingApi.entregaveis.list(card.id).catch(e => ({ __erro: e?.message || 'falhou' })),
       marketingApi.fila.posicao(card.id).catch(() => null),
     ]).then(([ent, pos]) => {
-      setEntregaveis(ent || []);
+      if (ent && ent.__erro) { setEntregaveis([]); setErroArquivos(ent.__erro); }
+      else setEntregaveis(ent || []);
       setPosicao(pos);
     }).finally(() => setLoading(false));
   }, [card?.id]);
@@ -3793,6 +3832,11 @@ function MarketingCardBlock({ card, onChanged }) {
       {/* Entregáveis · preview/download */}
       {loading ? (
         <p className="text-xs text-muted-foreground">Carregando arquivos...</p>
+      ) : erroArquivos ? (
+        <p className="text-xs text-amber-700 dark:text-amber-400">
+          Não foi possível carregar os arquivos desta entrega ({erroArquivos}). Recarregue a página
+          ou avise a equipe — isto não significa que não há arquivo.
+        </p>
       ) : entregaveis.length > 0 ? (
         <div className="space-y-1">
           <p className="text-xs font-medium text-foreground">Arquivos ({entregaveis.length})</p>

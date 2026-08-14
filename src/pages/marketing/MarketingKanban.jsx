@@ -20,8 +20,12 @@ import { ScrollArea } from '../../components/ui/scroll-area';
 import {
   Megaphone, Plus, Filter, Clock, Loader2, CheckCircle2, AlertCircle,
   Zap, RefreshCw, ArrowRight, Calendar, CalendarDays, Settings, BarChart3, User2, FileText, Upload, Trash2, X, ListChecks, Paperclip,
-  Inbox, Search, Eye, ChevronDown, ChevronRight,
+  Inbox, Search, Eye, ChevronDown, ChevronRight, MoveRight, GripVertical,
 } from 'lucide-react';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '../../components/ui/dropdown-menu';
 import { toast } from 'sonner';
 
 // Régua de 6 colunas (redesenho · igual ao Trello deles + Triagem/Revisão).
@@ -207,14 +211,30 @@ export default function MarketingKanban() {
     [cards, soJanela],
   );
 
-  async function mudarEstado(id, novoEstado) {
+  // Aceita 1 id (arrasto e menu do card) ou uma LISTA (menu em lote do macro).
+  async function mudarEstado(idOuIds, novoEstado) {
+    const ids = Array.isArray(idOuIds) ? idOuIds : [idOuIds];
+    const rotulo = ESTADOS.find(e => e.key === novoEstado)?.label || novoEstado;
+    // ⚠️ SEQUENCIAL de propósito: cada PATCH dispara notificação e pode concluir a
+    // solicitação do dono. Em paralelo, N cards do mesmo pedido correriam nesse
+    // caminho ao mesmo tempo.
+    // ⚠️ E o que já foi movido é CONTADO: se o 3º de 7 falha, a tela diz quantos
+    // foram — não "erro ao mover" pra um trabalho que aconteceu pela metade (é a
+    // lei de gravar o efeito DURANTE, aplicada à mensagem).
+    let ok = 0;
     try {
-      await api.atualizarCard(id, { estado: novoEstado });
-      toast.success(`Movido para ${ESTADOS.find(e => e.key === novoEstado)?.label || novoEstado}`);
-      carregar();
+      for (const id of ids) {
+        await api.atualizarCard(id, { estado: novoEstado });
+        ok++;
+      }
+      toast.success(ids.length > 1 ? `${ok} tarefas movidas para ${rotulo}` : `Movido para ${rotulo}`);
     } catch (err) {
-      toast.error(err.message || 'Erro ao mover card');
+      // Parcial NÃO se apresenta como falha total: quem move 7 e vê "erro" acha
+      // que nada saiu, e move tudo de novo.
+      const base = err.message || 'Erro ao mover';
+      toast.error(ok > 0 ? `${base} · ${ok} de ${ids.length} já foram movidas` : base);
     }
+    carregar();
   }
 
   return (
@@ -427,6 +447,7 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
               macro={m}
               draggable={isCoordenador}
               onClickCard={onClickCard}
+              onMudarEstado={isCoordenador ? onMudarEstado : null}
             />
           ))}
           {col.soltos.map(item => (
@@ -435,6 +456,7 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
               item={item}
               draggable={isCoordenador}
               onClick={() => onClickCard(item)}
+              onMover={isCoordenador ? (novo => onMudarEstado(item.id, novo)) : null}
             />
           ))}
         </div>
@@ -449,7 +471,7 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
 // ⚠️ As subtarefas continuam ARRASTÁVEIS e clicáveis individualmente quando o
 // macro está aberto — o agrupamento é de EXIBIÇÃO, não tira ação de ninguém.
 // ═══════════════════════════════════════════════════════════════════════
-function MacroCard({ macro, draggable, onClickCard }) {
+function MacroCard({ macro, draggable, onClickCard, onMudarEstado }) {
   const [aberto, setAberto] = useState(false);
   const total = macro.cards.length;
   const feitos = macro.cards.filter(c => c.estado === 'concluido').length;
@@ -493,9 +515,26 @@ function MacroCard({ macro, draggable, onClickCard }) {
           {macro.sem_dono > 0 && (
             <span className="text-amber-600 dark:text-amber-400">{macro.sem_dono} sem dono</span>
           )}
-          {!aberto && <span className="text-muted-foreground/70">toque para abrir</span>}
+          {/* ⚠️ Diz que o arrasto é da tarefa de DENTRO. O macro não é arrastável
+              de propósito (arrastá-lo moveria N tarefas de uma vez, sem
+              confirmação) — e sem esta frase quem tentava arrastar o quadrado do
+              evento concluía que o Kanban estava travado. */}
+          {!aberto && <span className="text-muted-foreground/70">toque para abrir e mover as tarefas</span>}
         </div>
       </button>
+
+      {/* Mover TODAS as tarefas deste evento nesta coluna · o macro em si não
+          arrasta, então o lote fica num menu explícito. */}
+      {onMudarEstado && total > 0 && (
+        <div className="flex items-center justify-end gap-1 px-2 pb-1.5 -mt-1">
+          <MenuMover
+            estadoAtual={macro.cards[0]?.estado}
+            emLote={total}
+            rotulo={`Mover ${total}`}
+            onMover={novo => onMudarEstado(macro.cards.map(c => c.id), novo)}
+          />
+        </div>
+      )}
 
       {aberto && (
         <div className="border-t border-border/60 bg-muted/20 p-1.5 space-y-1.5">
@@ -505,6 +544,7 @@ function MacroCard({ macro, draggable, onClickCard }) {
               item={c}
               draggable={draggable}
               onClick={() => onClickCard(c)}
+              onMover={onMudarEstado ? (novo => onMudarEstado(c.id, novo)) : null}
             />
           ))}
         </div>
@@ -594,7 +634,64 @@ function Etiqueta({ cor, nome }) {
 // ═══════════════════════════════════════════════════════════════════════
 // Card · estilo Trello (etiquetas em barras coloridas no topo + avatar)
 // ═══════════════════════════════════════════════════════════════════════
-function KanbanCard({ item, draggable, onClick }) {
+// ═══════════════════════════════════════════════════════════════════════
+// MENU "Mover para" · o caminho que NÃO depende de arrastar
+// ═══════════════════════════════════════════════════════════════════════
+// Reclamação do Pedro (14/08): *"está com dificuldade de arrastar tarefas de um
+// bucket para o outro, esse drag and drop individual"*.
+//
+// ⚠️⚠️ Três motivos independentes por que arrastar falha, e nenhum se conserta
+// mexendo no handler de drop:
+//   1. **HTML5 drag-and-drop NÃO dispara em TOQUE.** `onDragStart`/`onDrop` são
+//      eventos de mouse; em tablet/celular não existe arrasto nenhum. E esta tela
+//      é declaradamente responsiva (as colunas são `w-[85vw]` no mobile).
+//   2. **Não há auto-scroll horizontal.** As 6 colunas vivem num container com
+//      scroll e `snap`; levar um card de Backlog até Concluído exige que a coluna
+//      de destino já esteja VISÍVEL — arrastar até a borda não rola a tela.
+//   3. O card é `draggable` E tem `onClick`: um arrasto que não "pega" acaba
+//      virando clique e abre o painel, que parece "não deixou arrastar".
+//
+// O menu resolve os três de uma vez, em qualquer aparelho, e o arrasto continua
+// funcionando pra quem usa mouse — não removi nada.
+function MenuMover({ estadoAtual, onMover, rotulo = 'Mover para', emLote = 0 }) {
+  const alvos = ESTADOS.filter(e => !e.aceita.includes(estadoAtual));
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          // ⚠️ `stopPropagation` obrigatório: o card inteiro é clicável (abre o
+          // painel) e o macro é um <button> que abre/fecha. Sem isto, tocar no
+          // menu dispararia as duas coisas.
+          onClick={e => { e.stopPropagation(); e.preventDefault(); }}
+          className="shrink-0 inline-flex items-center gap-1 rounded px-1.5 py-1 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          title={emLote ? `Mover as ${emLote} tarefas deste evento` : 'Mover este card de coluna'}
+        >
+          <MoveRight className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">{rotulo}</span>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="z-[1200]" onClick={e => e.stopPropagation()}>
+        <DropdownMenuLabel className="text-xs">
+          {emLote ? `Mover ${emLote} tarefa${emLote > 1 ? 's' : ''} para` : 'Mover para'}
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {alvos.map(e => (
+          <DropdownMenuItem
+            key={e.key}
+            className="text-xs gap-2"
+            onClick={ev => { ev.stopPropagation(); onMover(e.key); }}
+          >
+            <span className={`h-2 w-2 rounded-full ${e.dot}`} />
+            {e.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function KanbanCard({ item, draggable, onClick, onMover }) {
   // prazo de produção do entregável (data_fim/prazo_producao) ou o prazo legado
   const prazoCard = item.prazo_producao || item.prazo_confirmado;
   const atraso = useMemo(() => {
@@ -668,9 +765,12 @@ function KanbanCard({ item, draggable, onClick }) {
           )}
         </div>
 
-        {/* Footer: origem + avatar */}
-        <div className="flex items-center justify-between gap-2 pt-0.5">
+        {/* Footer: origem + mover + avatar */}
+        <div className="flex items-center justify-between gap-1 pt-0.5">
           <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${ORIGEM_COR[item.origem]}`}>{ORIGEM_LABEL[item.origem]}</span>
+          {/* Caminho de mover que funciona em TOQUE e sem precisar ver a coluna
+              de destino — ver o comentário do MenuMover. */}
+          {onMover && <MenuMover estadoAtual={item.estado} onMover={onMover} />}
           {item.atribuido?.profile?.name ? (
             <span className="h-6 w-6 shrink-0 rounded-full bg-primary/15 text-primary text-[10px] font-semibold flex items-center justify-center" title={item.atribuido.profile.name}>
               {item.atribuido.profile.name.trim().charAt(0).toUpperCase()}
