@@ -41,7 +41,7 @@ const STATUSES = new Set([
   'novo', 'reconhecido', 'investigando', 'mitigado', 'resolvido',
   'monitorado', 'duplicado', 'nao_reproduzido', 'risco_aceito',
 ]);
-const SOURCES = new Set(['manual', 'feedback', 'server_error', 'job', 'sentry', 'security']);
+const SOURCES = new Set(['manual', 'feedback', 'server_error', 'job', 'sentry', 'security', 'bug']);
 const TRANSITIONS = {
   novo: new Set(['reconhecido', 'investigando', 'duplicado', 'nao_reproduzido', 'risco_aceito']),
   reconhecido: new Set(['investigando', 'mitigado', 'duplicado', 'nao_reproduzido', 'risco_aceito']),
