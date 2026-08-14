@@ -58,6 +58,20 @@ async function coletarERecalcular() {
   } catch (e) {
     recalculo = { error: e.message };
   }
+  // ⚠️ Os 22 KPIs ADM-* (SLA e NPS interno das solicitações) têm régua PRÓPRIA
+  // (`recalcular_todos_kpis_adm` · formula_config com fonte/metrica, não
+  // numerador/denominador) e `kpi_recalcular_todos` NÃO os alcança: o ramo
+  // `razao` do `calcular_kpi` devolve 'formula_config incompleto' e sai sem
+  // gravar, em silêncio. Até aqui quem os atualizava era só o trigger de
+  // `solicitacoes` — ou seja, período novo sem movimento na área ficava sem
+  // linha nenhuma, e o painel mostrava o valor do período anterior.
+  let adm = null;
+  try {
+    const { data, error } = await supabase.rpc('recalcular_todos_kpis_adm');
+    adm = error ? { error: error.message } : data;
+  } catch (e) {
+    adm = { error: e.message };
+  }
   // Backstop diário do NSM: o gatilho em cui_convertidos cobre mudanças de
   // convertido, mas sinais novos (grupo/voluntário/dízimo/devocional) não
   // disparam recalc · o cron garante que o card reflita esses até 24h.
@@ -68,7 +82,7 @@ async function coletarERecalcular() {
   } catch (e) {
     nsm = { error: e.message };
   }
-  return { ok, total: resultados.length, nps, recalculo, nsm, resultados };
+  return { ok, total: resultados.length, nps, recalculo, adm, nsm, resultados };
 }
 
 router.get('/cron/coletar', autorizaCron, async (_req, res) => {

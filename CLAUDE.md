@@ -7566,6 +7566,75 @@ bloco injetado termina com a própria âncora, então rodar de novo duplicaria o
 ramos. A guarda procura `pagamentos_no_prazo` no corpo vivo e encerra sem tocar
 em nada.
 
+### ⚠️⚠️ O score do OKR não enxergava os KPIs alimentados por COLETOR (migration `20260814190000`)
+
+`vw_okr_score_composto` lia **só** `kpi_valores_calculados`. Os KPIs com
+`tipo_calculo='manual'` + `fonte_auto` são alimentados pelos coletores todo dia e
+gravam em **`kpi_registros`**, nunca em `kpi_valores_calculados`.
+
+**Medido: 30 KPIs alimentados diariamente eram invisíveis para o score, 18 deles
+ligados a um objetivo.** O OKR aparecia com "0 KPIs com dado" enquanto o coletor
+rodava sem falha — o pior tipo de número errado, porque parece falta de operação
+e é falta de leitura.
+
+⚠️ Além da fonte, isso corrigiu a **meta**: a view fazia `valor / k.meta_valor`,
+ignorando `meta_valor_absoluto` e a normalização por periodicidade (a LEI "Meta
+absoluta × periodicidade") — comparava valor de UMA semana contra meta ANUAL.
+
+⚠️⚠️ **ZERO CONTA COMO DADO, e é por isso que a view NÃO lê
+`vw_kpi_trajetoria_atual` direto** (foi a 1ª tentativa desta sessão e está
+registrada como erro): aquela view descarta valor `<= 0` de propósito, para o
+SEMÁFORO do painel. No score, "o número de grupos não cresceu" é desempenho
+medido, não ausência de medição — e tratá-lo como "sem dado" esconde justamente o
+objetivo que precisa de atenção. Na tentativa intermediária, "Aumentar numero de
+grupos" caiu de 4 KPIs com dado para 0.
+
+**Efeito medido**: OKRs com nenhum KPI alimentado **10 → 7**; batismos de 4 para
+**9 de 10** KPIs medidos; devocionais de 4 para **7 de 7**; "voluntários em
+treinamento" de 0 para **5 de 5**.
+
+### ⚠️ Os 22 KPIs ADM-* têm régua PRÓPRIA e ficavam fora do cron
+
+`recalcular_todos_kpis_adm()` (SLA e NPS interno das solicitações · migration
+`20260519140000`) usa `formula_config` com `fonte`/`metrica`, **não**
+`numerador`/`denominador`. Por isso `kpi_recalcular_todos` não os alcança: o ramo
+`razao` do `calcular_kpi` devolve `{'erro': 'formula_config incompleto'}` e sai
+**sem gravar, em silêncio** — e ainda assim conta como "recalculado" no total.
+
+Até 14/08 quem os atualizava era **só o trigger de `solicitacoes`**: período novo
+sem movimento na área ficava sem linha, e o painel mostrava o valor do período
+anterior. `coletarERecalcular` (o cron das 07:00) passou a chamar a RPC.
+
+### Estado final medido (14/08/2026)
+
+**119 dos 168 KPIs ativos alimentados** (89 por cálculo + 30 por coletor). Os 41
+restantes **não têm fiação faltando** — têm fonte ligada e o dado é que não
+existe:
+
+| grupo | KPIs | por quê |
+|---|---|---|
+| ADM-* (SLA + NPS interno) | 14 | não houve solicitação naquela área no período · **só 6 respostas de NPS em toda a base** |
+| capelania + aconselhamento | 10 | `cui_acompanhamentos` **vazia** |
+| Recuperar voluntários inativos | 5 | ver abaixo |
+| líderes treinados / acompanhados | 8 | ninguém marcado · 1 visita registrada |
+| frequência de grupos | 3 | `mem_grupo_encontros` = 2 linhas |
+| INFRA-01/02 · FIN-01 · RH-02 | 4 | `plan_orcamentos` e `rh_treinamentos` vazias; infra não tem tabela |
+| CBA-02 · BRG-19 · BRG-BAT90/NEXT90 · ONL-19 | 5 | área sem o fato no período |
+
+⚠️ **"Recuperar voluntários inativos" (5 KPIs · 1 OKR inteiro) é o único
+tecnicamente automatizável, e eu NÃO automatizei.** A régua lê
+`mem_voluntarios.ate`, e **`ate` está preenchido em 0 de 311 linhas** — ninguém
+nunca deu baixa. A definição da casa é "inativo = sem servir há 90+ dias", que se
+derivaria de `vol_schedules` (5.545 linhas reais). O que impede: **`vol_teams.area`
+está vazia em 129 de 129** e só **313 dos 930 `vol_profiles` têm `membresia_id`**
+— os KPIs são POR ÁREA, então a derivação cobriria ~1/3 dos voluntários e nasceria
+**subestimada sem ninguém perceber**. É o mesmo vínculo perfil↔membro do
+follow-up de 13/08. Fazer isso exige antes preencher a área das equipes.
+
+⚠️ **CBA-02**: `_kpi_agregar_dado` não reconhece a área `cba` no ramo `conversoes`
+(só kids/ami/bridge/sede/online) — cai no fallback e devolve NULL sempre. Medir
+conversão do CBA exige definir de onde ela sai; não há tipo de culto CBA.
+
 ## Sistema OKR/NSM 2026 (arquitetura consolidada · fases 1-6 mergeadas em maio)
 
 Sistema unificado OKR/KPI/NSM. **Conceito**: 1 NSM ("novos convertidos
