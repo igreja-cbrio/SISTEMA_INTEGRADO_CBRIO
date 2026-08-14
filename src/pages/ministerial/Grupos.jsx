@@ -162,6 +162,9 @@ export default function Grupos() {
   const podeEditarGrupos = isAdmin || (getAccessLevel?.(['grupos']) ?? 0) >= 3;
   // Definir/trocar o supervisor do grupo exige nível 5 (igual ao endpoint PUT /:id/supervisor).
   const podeGerenciarSupervisor = isAdmin || (getAccessLevel?.(['grupos']) ?? 0) >= 5;
+  // Remover vínculo duplicado é REMOÇÃO de linha (soft delete), não edição —
+  // por isso nível 4, alinhado ao guard do POST /grupos/vinculos/duplicados/resolver.
+  const podeRemoverVinculo = isAdmin || (getAccessLevel?.(['grupos']) ?? 0) >= 4;
   const [gruposList, setGruposList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -1554,6 +1557,7 @@ export default function Grupos() {
             <GruposPessoas
               onOpenGrupo={openGrupoById}
               podeEditar={podeEditarGrupos}
+              podeRemoverVinculo={podeRemoverVinculo}
               podeEditarDados={podeGerenciarSupervisor}
               gruposOptions={gruposList.filter(g => g.ativo)}
               onVerDuplicatas={() => trocarPessoasView('duplicatas')}
