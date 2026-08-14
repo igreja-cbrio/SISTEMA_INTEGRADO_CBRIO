@@ -142,7 +142,7 @@ function SeloForca({ ev }) {
   );
 }
 
-export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFiltros = false }) {
+export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFiltros = false, tipos = null }) {
   const qc = useQueryClient();
   const [statusLocal, setStatus] = useState('pendente');
   const status = statusFixo || statusLocal;
@@ -161,7 +161,17 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
     refetchOnReconnect: false,
   });
 
-  const todosItens = data?.items || [];
+  // ⚠️ O recorte por TIPO é client-side de propósito: a MESMA `queryKey`
+  // (`['identidade-pendencias','pendente','']`) serve as 3 seções da aba de
+  // /entradas E o contador do cabeçalho. Filtrar no servidor daria 3 fetches
+  // sobre o mesmo dado e abriria a porta pra as contagens divergirem entre si
+  // (é a régua do toggle do Cuidados: uma leitura, N lentes).
+  const brutos = data?.items || [];
+  const todosItens = useMemo(() => (
+    Array.isArray(tipos) && tipos.length > 0
+      ? brutos.filter((p) => tipos.includes(p?.tipo))
+      : brutos
+  ), [brutos, tipos]);
 
   // Filtro por CPF (pedido do Matheus 2026-08-04: "se tiver cpf, eu vou ligar o
   // cadastro dela"). São DUAS coisas diferentes, e a distinção é de risco:
