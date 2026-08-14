@@ -163,9 +163,14 @@ export default function Solicitacoes() {
   const [busca, setBusca] = useState('');
   const [slaOnly, setSlaOnly] = useState(false);
   const [periodo, setPeriodo] = useState('365'); // dias · 'tudo' remove o bound
-  const [atenderLayout, setAtenderLayout] = useState('foco'); // 'foco' | 'kanban' | 'lista' | 'solicitante'
-  const [aprovarLayout, setAprovarLayout] = useState('foco'); // aba Aprovar · 'foco' | 'kanban' | 'historico'
-  const [minhasLayout, setMinhasLayout] = useState('lista'); // aba Minhas · 'lista' | 'kanban' (read-only)
+  // ⚠️ Kanban é a abertura PADRÃO das três abas (pedido do Matheus · 2026-08-14):
+  // o quadro mostra o pedido na ETAPA em que ele está, que é a pergunta que se
+  // faz ao abrir o módulo. Foco/Lista/Histórico continuam a um clique.
+  // Na aba Aprovar o Kanban usa o MESMO card do Foco (AprovacaoOrigemCard), só
+  // agrupado por categoria — o aprovar/rejeitar de um clique não se perde.
+  const [atenderLayout, setAtenderLayout] = useState('kanban'); // 'foco' | 'kanban' | 'lista' | 'solicitante'
+  const [aprovarLayout, setAprovarLayout] = useState('kanban'); // aba Aprovar · 'foco' | 'kanban' | 'historico'
+  const [minhasLayout, setMinhasLayout] = useState('kanban'); // aba Minhas · 'lista' | 'kanban' (read-only)
 
   // Quem ve a fila "Para Atender": admin/diretor OU responsável cadastrado de
   // alguma área (area_solicitacoes_responsaveis). Fonte de verdade no backend
