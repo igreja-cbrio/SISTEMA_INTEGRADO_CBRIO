@@ -20,7 +20,7 @@ import { Input } from '../../components/ui/input';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner';
-import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus, ChevronDown, ChevronUp } from 'lucide-react';
+import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus, ChevronRight } from 'lucide-react';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import MarcadoresJornada from '../../components/MarcadoresJornada';
 
@@ -94,10 +94,21 @@ function FichaCampo({ rotulo, valor, onChange, type = 'text', inputMode }) {
 
 // Grupos da pessoa pra exibir/filtrar: participações; se não tiver, cai pros
 // grupos que lidera/supervisiona (pra líder/supervisor não ficar sem grupo).
+// ⚠️ DEDUPLICA por `grupo_id`. `p.grupos` é uma linha por PARTICIPAÇÃO, e desde
+// que a UNIQUE de vínculo ativo foi dropada (20260721170000, pra formalizar o
+// multi-grupo) a mesma pessoa pode ter VÁRIAS linhas ativas no MESMO grupo — aí
+// a coluna repetia "JOVENS - ESTUDO DA MENSAGEM DO CULTO AMI" 5 vezes na mesma
+// pessoa (caso real, 13/08/2026). `gruposDetalhados` já deduplicava com um Map;
+// era só esta função que não, então a lista e o modal discordavam da contagem.
 function gruposDe(p) {
-  if (p.grupos?.length) return p.grupos.map(g => ({ id: g.grupo_id, nome: g.grupo_nome || 'Grupo' }));
-  const fallback = [...(p.lidera || []), ...(p.supervisiona || [])];
-  return fallback.map(g => ({ id: g.id, nome: g.nome || 'Grupo' }));
+  const map = new Map();
+  (p.grupos || []).forEach(g => {
+    if (g.grupo_id && !map.has(g.grupo_id)) map.set(g.grupo_id, { id: g.grupo_id, nome: g.grupo_nome || 'Grupo' });
+  });
+  [...(p.lidera || []), ...(p.supervisiona || [])].forEach(g => {
+    if (g.id && !map.has(g.id)) map.set(g.id, { id: g.id, nome: g.nome || 'Grupo' });
+  });
+  return [...map.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
 }
 
 // Detalhe de CADA grupo da pessoa (participações + grupos que lidera/supervisiona),
@@ -147,16 +158,6 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
   const [filtroGrupo, setFiltroGrupo] = useState('todos');
   const [filtroStatus, setFiltroStatus] = useState('todos');
   const [busca, setBusca] = useState('');
-  // Quem está com a lista de grupos ABERTA na coluna (só quem tem 2+ grupos).
-  // Estado local por linha: a expansão é de leitura, não muda nada no servidor.
-  const [gruposAbertos, setGruposAbertos] = useState(() => new Set());
-  const toggleGrupos = useCallback((membroId) => {
-    setGruposAbertos(prev => {
-      const proximo = new Set(prev);
-      if (proximo.has(membroId)) proximo.delete(membroId); else proximo.add(membroId);
-      return proximo;
-    });
-  }, []);
   // Import do consolidado de participantes (pessoas × grupos)
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState(null);
@@ -594,24 +595,18 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                             style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 12, fontWeight: 600, textAlign: 'left' }}>
                             {gs[0].nome}
                           </button>
-                        ) : gruposAbertos.has(p.membro_id) ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 3 }}>
-                            {gs.map((g, i) => (
-                              <button key={g.id || i} onClick={() => onOpenGrupo?.(g.id)} title={g.nome}
-                                style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 12, fontWeight: 600, textAlign: 'left' }}>
-                                {g.nome}
-                              </button>
-                            ))}
-                            <button onClick={() => toggleGrupos(p.membro_id)}
-                              style={{ background: 'none', border: 'none', padding: 0, color: C.primary, cursor: 'pointer', fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                              <ChevronUp size={12} /> ocultar
-                            </button>
-                          </div>
                         ) : (
-                          <button onClick={() => toggleGrupos(p.membro_id)}
+                          // ⚠️ ABRE O MODAL DA PESSOA, não expande na linha
+                          // (Matheus, 13/08/2026: "queria que abrisse um pop up,
+                          // acho mais amigável"). A 1ª versão expandia inline e a
+                          // linha virava uma coluna de nomes quebrados de 700px
+                          // de altura. O modal já existe, já deduplica e ainda
+                          // mostra função, desde quando e frequência POR GRUPO —
+                          // não valia construir um segundo popup ao lado dele.
+                          <button onClick={() => setSelected(p)}
                             title={gs.map(g => g.nome).join(' · ')}
                             style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: `${C.primary}14`, border: `1px solid ${C.primary}33`, borderRadius: 99, padding: '2px 9px', color: C.primary, cursor: 'pointer', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>
-                            {gs.length} grupos <ChevronDown size={12} />
+                            {gs.length} grupos <ChevronRight size={12} />
                           </button>
                         )}
                       </td>
