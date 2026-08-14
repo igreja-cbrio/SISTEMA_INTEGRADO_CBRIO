@@ -58,6 +58,8 @@ export function useBulkSchedule() {
         team_name?: string;
         position_id?: string;
         position_name?: string;
+        // Amarra a escala à vaga da composição que a originou.
+        escala_culto_item_id?: string;
         planning_center_person_id?: string;
         source?: string;
         notes?: string;

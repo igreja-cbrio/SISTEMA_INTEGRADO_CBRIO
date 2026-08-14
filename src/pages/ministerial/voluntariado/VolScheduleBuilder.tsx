@@ -229,6 +229,7 @@ export default function VolScheduleBuilder() {
         team_name: vaga.team,
         position_id: vaga.position_id || undefined,
         position_name: vaga.position || undefined,
+        escala_culto_item_id: vaga.item_id || undefined,
         planning_center_person_id: p.planning_center_id || undefined,
       })),
     } as any, {

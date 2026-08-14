@@ -3486,6 +3486,11 @@ router.post('/schedules/bulk', async (req, res) => {
       team_name: a.team_name || null,
       position_id: a.position_id || null,
       position_name: a.position_name || null,
+      // ⚠️ Amarra a escala à VAGA que a originou. Sem isso o casamento
+      // vaga↔pessoa cai no par (equipe, função), que é ambíguo quando a
+      // composição tem duas linhas para o mesmo par — as duas passariam a
+      // exibir as mesmas pessoas e a tela subestimaria o que ainda falta.
+      escala_culto_item_id: a.escala_culto_item_id || null,
       planning_center_person_id: a.planning_center_person_id || null,
       confirmation_status: 'pending',
       source: a.source || 'manual',
