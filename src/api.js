@@ -3610,6 +3610,9 @@ export const agenteBatismoNext = {
 export const agenteVoluntariado = {
   analisar: () => get('/agente-voluntariado'),
   lembrar: (schedule_ids) => post('/agente-voluntariado/lembrar', schedule_ids ? { schedule_ids } : {}),
+  // Aviso de escala da semana — o MESMO que o cron dispara todo dia, sob
+  // demanda. Idempotente: quem já foi avisado não recebe de novo.
+  avisarSemana: (dias) => post('/agente-voluntariado/avisar-semana', dias ? { dias } : {}),
 };
 
 export const monitorAutomacoes = {

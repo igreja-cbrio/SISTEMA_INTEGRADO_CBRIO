@@ -287,4 +287,8 @@ async function alertar() {
   return count;
 }
 
-module.exports = { analisar, alertar };
+// ⚠️ `perfisPorId` é exportada porque o aviso de escala da semana
+// (`services/escalaAviso.js`) precisa da MESMA cadeia de resolução de
+// telefone. Reimplementá-la lá faria o aviso automático e o painel do agente
+// discordarem sobre quem tem telefone — que é o bug de 13/08 de volta.
+module.exports = { analisar, alertar, perfisPorId };
