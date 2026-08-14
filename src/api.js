@@ -2300,6 +2300,12 @@ export const marketing = {
     posicao:   (cardId) => get(`/marketing/fila/posicao/${cardId}`),
   },
 
+  // Dashboard (pedido do Pedro Paiva · 2026-08-14) · 3 blocos numa chamada
+  dashboard: {
+    get: (params) => get('/marketing/dashboard' + (params ? '?' + new URLSearchParams(params) : '')),
+    fase: (faseId) => get(`/marketing/dashboard/fase/${faseId}`),
+  },
+
   // Ciclo criativo (Spec 024) · planejamento agrupado por evento+fase
   ciclo: {
     list:  () => get('/marketing/ciclo-criativo'),
