@@ -56,6 +56,9 @@ jobs:
       - name: Pontuacao da fila progressiva (nascimento corrobora, genero veta)
         run: npm run test:identidade-pares
 
+      - name: Politica de familia (fila Vincular familias)
+        run: npm run test:familia
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 

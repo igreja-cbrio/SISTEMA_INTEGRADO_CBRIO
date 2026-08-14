@@ -94,8 +94,11 @@ async function enrichCards(cards) {
     destinoIds.length ? supabase.from('marketing_etiquetas_destino').select('id, slug, nome, cor').in('id', destinoIds) : Promise.resolve({ data: [] }),
     membroIds.length  ? supabase.from('marketing_membros').select('id, profile_id, habilidade, nome_display').in('id', membroIds) : Promise.resolve({ data: [] }),
     solicIds.length   ? supabase.from('solicitacoes').select('id, titulo, solicitante_id, eh_urgente, urgencia_decisao').in('id', solicIds) : Promise.resolve({ data: [] }),
+    // ⚠️ As DATAS da fase entram aqui porque é o que permite o Kanban decidir
+    // "esta tarefa é desta semana?" no SERVIDOR. Sem elas o front teria que
+    // reimplementar a régua de janela (a que já vive em utils/marketingSemanas).
     cycleTaskIds.length ? supabase.from('cycle_phase_tasks')
-      .select('id, event_id, event_phase_id, is_critical, prioridade, events:event_id(id, name), event_cycle_phases:event_phase_id(nome_fase, numero_fase)')
+      .select('id, event_id, event_phase_id, is_critical, prioridade, events:event_id(id, name), event_cycle_phases:event_phase_id(id, nome_fase, numero_fase, data_inicio_prevista, data_fim_prevista)')
       .in('id', cycleTaskIds) : Promise.resolve({ data: [] }),
   ]);
 
@@ -152,11 +155,17 @@ async function enrichCards(cards) {
     cycle_phase_task: c.cycle_phase_task_id ? (() => {
       const t = cycleMap[c.cycle_phase_task_id];
       if (!t) return null;
+      const f = t.event_cycle_phases || null;
       return {
         id: t.id,
         event_id: t.event_id,
         event_name: t.events?.name || null,
-        fase: t.event_cycle_phases ? `${t.event_cycle_phases.numero_fase}. ${t.event_cycle_phases.nome_fase}` : null,
+        fase: f ? `${f.numero_fase}. ${f.nome_fase}` : null,
+        fase_id: f?.id || null,
+        numero_fase: f?.numero_fase ?? null,
+        nome_fase: f?.nome_fase || null,
+        fase_de: f?.data_inicio_prevista || null,
+        fase_ate: f?.data_fim_prevista || null,
         is_critical: t.is_critical,
         prioridade: t.prioridade,
         link: t.event_id ? `/eventos/${t.event_id}` : null,
@@ -472,7 +481,7 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
     const update = {};
     if (admin) {
       const { titulo, descricao, etiqueta_tipo_id, etiqueta_destino_id,
-              atribuido_a, prazo_preliminar, prazo_confirmado, estado,
+              atribuido_a, prazo_preliminar, prazo_confirmado, prazo_producao, estado,
               raia_rapida, motivo_revisao, data_inicio, data_fim, pode_paralelo } = req.body || {};
       if (titulo !== undefined) update.titulo = titulo;
       if (descricao !== undefined) update.descricao = descricao;
@@ -481,6 +490,11 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
       if (atribuido_a !== undefined) update.atribuido_a = atribuido_a;
       if (prazo_preliminar !== undefined) update.prazo_preliminar = prazo_preliminar;
       if (prazo_confirmado !== undefined) update.prazo_confirmado = prazo_confirmado;
+      // ⚠️ `prazo_producao` é o prazo INTERNO do redesenho (o que o coletor do
+      // MKT-PRAZO prefere) e não estava na whitelist — então não havia caminho
+      // de UI pra preenchê-lo, e as 7 tarefas internas de produção estavam
+      // TODAS sem prazo. É o campo que o box do dashboard grava.
+      if (prazo_producao !== undefined) update.prazo_producao = prazo_producao;
       if (estado !== undefined) update.estado = estado;
       if (raia_rapida !== undefined) update.raia_rapida = !!raia_rapida;
       if (motivo_revisao !== undefined) update.motivo_revisao = motivo_revisao;
@@ -821,6 +835,512 @@ router.patch('/ciclo-criativo/batch', authorizeModule('marketing', 5), async (re
     res.json({ ok: true, atualizados: count || card_ids.length });
   } catch (e) {
     console.error('[MARKETING] ciclo-criativo batch:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================================
+// ─── DASHBOARD do Marketing (pedido do Pedro Paiva · 2026-08-14) ────────────
+// ============================================================================
+// 3 blocos numa tela: (1) minhas próximas entregas internas · (2) pulso das
+// solicitações (feitas × resolvidas) + as próximas por prazo · (3) calendário
+// SEMANAL do ciclo criativo (em que fase cada evento/série está em cada semana).
+//
+// ⚠️ O bloco 3 responde uma pergunta que o /eventos NÃO responde: lá o ciclo é
+// visto POR EVENTO (fases em lista). Aqui é por SEMANA, atravessando os eventos
+// — é assim que a equipe criativa planeja a semana dela.
+//
+// ⚠️ A régua de "que fase é essa semana?" mora em utils/marketingSemanas.js
+// (pura · no gate de deploy · contrato em src/test/marketingSemanas.test.ts).
+// NÃO reimplementar aqui: o contrato reproduz os 4 casos que o Pedro descreveu
+// à mão, e duas cópias divergiriam.
+
+const {
+  hojeBRT: hojeBRTMkt,
+  montarSemanas,
+  semanasDoMesGrade,
+  mesVizinho,
+  montarCalendario,
+  diasSobrepostos,
+} = require('../utils/marketingSemanas');
+
+// Solicitação ENTREGUE (o que o marketing resolveu). `avaliado` = concluída e
+// já com NPS respondido — continua sendo entrega.
+const SOLIC_ENTREGUE = new Set(['concluido', 'avaliado']);
+// Fechada SEM entrega · sai da fila mas NÃO conta como resolvida (senão a
+// linha de "resolvidas" viraria "linha de encerradas", que é outra pergunta).
+const SOLIC_ABORTADA = new Set(['cancelado', 'rejeitado']);
+
+// Tarefa/card em estado terminal.
+const TAREFA_FEITA = new Set(['concluida', 'concluido']);
+
+// Prazo efetivo de um card interno. `prazo_producao` é o do redesenho,
+// `prazo_confirmado` o legado e `data_fim` o do Planner — a mesma precedência
+// que o coletor do MKT-PRAZO usa. Sem nenhum dos três, o card NÃO tem prazo (e
+// isso é DECLARADO, nunca chutado por ordem de fila).
+function prazoDoCard(c) {
+  return c.prazo_producao || c.prazo_confirmado || c.data_fim || null;
+}
+
+// Query param inteiro com padrão e limites. Entrada ausente, vazia ou não
+// numérica cai no PADRÃO — nunca em NaN.
+function limitarInteiro(valor, padrao, min, max) {
+  const n = Number.parseInt(valor, 10);
+  if (!Number.isFinite(n)) return padrao;
+  return Math.min(Math.max(n, min), max);
+}
+
+// Lotes de <=200 COM checagem de erro. `.in()` gigante estoura a URL do
+// PostgREST e — se o `error` não for lido — devolve vazio em SILÊNCIO, que se
+// lê como "não existe nada".
+async function lerEmLotes(tabela, cols, coluna, valores) {
+  const unicos = [...new Set((valores || []).filter(Boolean))];
+  const out = [];
+  for (let i = 0; i < unicos.length; i += 200) {
+    const { data, error } = await supabase.from(tabela).select(cols).in(coluna, unicos.slice(i, i + 200));
+    if (error) throw new Error(`${tabela}: ${error.message}`);
+    out.push(...(data || []));
+  }
+  return out;
+}
+
+router.get('/dashboard', authorizeModule('marketing', 1), async (req, res) => {
+  const hoje = hojeBRTMkt();
+  // O calendário do ciclo é MENSAL, com setas — igual ao `BigCalendar` do
+  // /eventos (pedido do Pedro · 14/08). `?mes=YYYY-MM` navega; sem param, o mês
+  // de hoje. Mês malformado cai no mês de hoje em vez de devolver grade vazia.
+  const mes = /^\d{4}-\d{2}$/.test(String(req.query.mes || ''))
+    ? String(req.query.mes)
+    : hoje.slice(0, 7);
+  // ⚠️ `primeiroDiaSemana: 0` (domingo) porque a grade do /eventos começa no
+  // domingo, e as fases de cada linha são calculadas para o intervalo que a
+  // linha EXIBE — ver o comentário da régua em utils/marketingSemanas.
+  const semanas = semanasDoMesGrade(mes, { primeiroDiaSemana: 0, hoje });
+  const coord = isAdminLike(req);
+
+  // ⚠️ Cada bloco falha SOZINHO. Um evento sem ciclo não pode apagar a lista de
+  // tarefas da pessoa, e erro NUNCA se disfarça de "está vazio" (a tela mostra
+  // faixa âmbar com o motivo).
+  const resposta = {
+    hoje,
+    mes,
+    mes_anterior: mesVizinho(mes, -1),
+    mes_seguinte: mesVizinho(mes, 1),
+    semanas,
+    avisos: [],
+  };
+
+  // ── Bloco 1 · minhas próximas entregas ────────────────────────────────────
+  try {
+    const meus = await meuMembroId(req);
+    // Coordenador pode olhar a fila de outra pessoa (é ele que distribui).
+    let alvo = meus;
+    let membroAlvo = null;
+    if (req.query.membro_id && coord) {
+      alvo = [req.query.membro_id];
+      membroAlvo = req.query.membro_id;
+    }
+
+    if (!alvo.length) {
+      // Não é membro do Marketing (ex.: diretoria com leitura, dev). Declarar é
+      // melhor que devolver lista vazia, que se lê como "não tenho nada a fazer".
+      resposta.minhas_tarefas = { itens: [], total: 0, sem_prazo: 0, sou_membro: false, membro_id: null };
+    } else {
+      const { data, error } = await supabase
+        .from('marketing_kanban_cards')
+        .select('id, titulo, estado, origem, atribuido_a, prazo_producao, prazo_confirmado, data_fim, ordem_fila, raia_rapida, campanha_id, solicitacao_id')
+        .in('atribuido_a', alvo)
+        .neq('origem', 'evento')       // ⚠️ pedido explícito: ciclo criativo fica FORA (ele tem o bloco 3)
+        .not('estado', 'in', '("concluido")')
+        .is('deleted_at', null);
+      if (error) throw error;
+
+      const comPrazo = [];
+      const semPrazo = [];
+      for (const c of data || []) {
+        const item = {
+          id: c.id, titulo: c.titulo, estado: c.estado, origem: c.origem,
+          prazo: prazoDoCard(c), raia_rapida: !!c.raia_rapida, ordem_fila: c.ordem_fila,
+          atrasado: false,
+        };
+        if (item.prazo) { item.atrasado = item.prazo < hoje; comPrazo.push(item); }
+        else semPrazo.push(item);
+      }
+      // Com prazo primeiro (mais cedo à frente); sem prazo depois, na ordem da
+      // fila do Kanban. Sem isso o "próximas a entregar" seria ordem aleatória.
+      comPrazo.sort((a, b) => (a.prazo < b.prazo ? -1 : a.prazo > b.prazo ? 1 : 0));
+      semPrazo.sort((a, b) => (Number(b.raia_rapida) - Number(a.raia_rapida)) || ((a.ordem_fila ?? 1e9) - (b.ordem_fila ?? 1e9)));
+      const todas = [...comPrazo, ...semPrazo];
+
+      resposta.minhas_tarefas = {
+        itens: todas.slice(0, 10),
+        total: todas.length,
+        sem_prazo: semPrazo.length,
+        atrasadas: comPrazo.filter(i => i.atrasado).length,
+        sou_membro: !membroAlvo,
+        membro_id: membroAlvo,
+      };
+    }
+
+    // ⚠️ O COORDENADOR não pega tarefa interna (ele distribui), então a caixa
+    // "minhas entregas" nasceria vazia justamente pra quem pediu o dashboard.
+    // A equipe vai no payload pra ele poder olhar a fila de cada pessoa — o que
+    // continua honrando "filtrado por quem foi vinculado": muda o RECORTE, não
+    // a régua. Só pra coordenador; produtor vê a fila dele e ponto.
+    if (coord) {
+      const { data: eq } = await supabase
+        .from('marketing_membros')
+        .select('id, profile_id, nome_display, habilidade')
+        .eq('ativo', true)
+        .is('deleted_at', null);
+      const profIds = (eq || []).map(m => m.profile_id).filter(Boolean);
+      let nomes = {};
+      if (profIds.length) {
+        const { data: profs } = await supabase.from('profiles').select('id, name').in('id', profIds);
+        nomes = Object.fromEntries((profs || []).map(p => [p.id, p.name]));
+      }
+      resposta.equipe = (eq || [])
+        .map(m => ({
+          id: m.id,
+          nome: nomes[m.profile_id] || m.nome_display || m.habilidade || '—',
+          habilidade: m.habilidade,
+        }))
+        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    }
+  } catch (e) {
+    console.error('[MARKETING] dashboard/minhas-tarefas:', e.message);
+    resposta.minhas_tarefas = { itens: [], total: 0, erro: 'Não foi possível carregar suas tarefas' };
+    resposta.avisos.push('As suas tarefas não carregaram (o resto da tela está atualizado).');
+  }
+
+  // ── Bloco 2 · pulso das solicitações ──────────────────────────────────────
+  try {
+    // Janela de 6 meses pra série mensal · a base é pequena (dezenas), então
+    // não há cap de 1000 em risco aqui; mesmo assim ordenamos pra paginar se
+    // um dia crescer.
+    const inicioSerie = (() => {
+      const d = new Date(hoje + 'T00:00:00Z');
+      d.setUTCMonth(d.getUTCMonth() - 5, 1);
+      return d.toISOString().slice(0, 10);
+    })();
+
+    const { data: sols, error } = await supabase
+      .from('solicitacoes')
+      .select('id, titulo, status, eh_urgente, created_at, concluido_em, data_necessaria, sla_resolucao_deadline, solicitante_id, area_cliente')
+      .eq('categoria', 'marketing')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+
+    const meses = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(hoje + 'T00:00:00Z');
+      d.setUTCMonth(d.getUTCMonth() - i, 1);
+      meses.push(d.toISOString().slice(0, 7));
+    }
+    const serie = Object.fromEntries(meses.map(m => [m, { mes: m, criadas: 0, resolvidas: 0 }]));
+    for (const s of sols || []) {
+      const mc = (s.created_at || '').slice(0, 7);
+      if (serie[mc]) serie[mc].criadas++;
+      if (SOLIC_ENTREGUE.has(s.status) && s.concluido_em) {
+        const mf = s.concluido_em.slice(0, 7);
+        if (serie[mf]) serie[mf].resolvidas++;
+      }
+    }
+
+    const abertas = (sols || []).filter(s => !SOLIC_ENTREGUE.has(s.status) && !SOLIC_ABORTADA.has(s.status));
+
+    // ⚠️ O prazo que ORDENA é o que foi combinado com QUEM PEDIU
+    // (`data_necessaria`). O `sla_resolucao_deadline` é o relógio interno e já
+    // venceu em todas as abertas de hoje — ordenar por ele mostraria tudo como
+    // igualmente atrasado e perderia a informação útil. Quando não há data
+    // pedida, cai no SLA e a ORIGEM do prazo vai no payload pra tela dizer qual
+    // é qual (número sem a régua ao lado é número que engana).
+    const proximas = abertas.map(s => {
+      const pedida = s.data_necessaria ? String(s.data_necessaria).slice(0, 10) : null;
+      const sla = s.sla_resolucao_deadline ? String(s.sla_resolucao_deadline).slice(0, 10) : null;
+      const prazo = pedida || sla;
+      return {
+        id: s.id, titulo: s.titulo, status: s.status, eh_urgente: !!s.eh_urgente,
+        criada_em: (s.created_at || '').slice(0, 10),
+        prazo, prazo_origem: pedida ? 'pedida' : (sla ? 'sla' : null),
+        sla_vencido: !!(sla && sla < hoje),
+        atrasada: !!(prazo && prazo < hoje),
+        area_cliente: s.area_cliente || null,
+      };
+    }).sort((a, b) => {
+      if (a.eh_urgente !== b.eh_urgente) return a.eh_urgente ? -1 : 1;
+      if (!a.prazo) return 1;
+      if (!b.prazo) return -1;
+      return a.prazo < b.prazo ? -1 : a.prazo > b.prazo ? 1 : 0;
+    });
+
+    resposta.solicitacoes = {
+      serie: meses.map(m => serie[m]),
+      proximas: proximas.slice(0, 8),
+      abertas: abertas.length,
+      atrasadas: proximas.filter(p => p.atrasada).length,
+      total_historico: (sols || []).length,
+      resolvidas_historico: (sols || []).filter(s => SOLIC_ENTREGUE.has(s.status)).length,
+      janela: { de: inicioSerie, ate: hoje, meses: 6 },
+    };
+  } catch (e) {
+    console.error('[MARKETING] dashboard/solicitacoes:', e.message);
+    resposta.solicitacoes = { serie: [], proximas: [], erro: 'Não foi possível carregar as solicitações' };
+    resposta.avisos.push('O pulso das solicitações não carregou (o resto da tela está atualizado).');
+  }
+
+  // ── Bloco 3 · calendário semanal do ciclo criativo ────────────────────────
+  try {
+    const { data: ciclos, error: eCiclos } = await supabase
+      .from('event_cycles')
+      .select('event_id, data_dia_d, events(id, name, status, date, event_categories(name))')
+      .eq('status', 'ativo');
+    if (eCiclos) throw eCiclos;
+
+    const ativos = (ciclos || []).filter(c => c.events && c.events.status !== 'concluido');
+    const eventIds = ativos.map(c => c.event_id);
+
+    if (!eventIds.length) {
+      resposta.ciclo = { linhas: [], sem_data: 0, ciclos_ativos: 0 };
+    } else {
+      const fases = await lerEmLotes('event_cycle_phases',
+        'id, event_id, template_id, numero_fase, nome_fase, area, status, data_inicio_prevista, data_fim_prevista',
+        'event_id', eventIds);
+
+      // Tarefas do ciclo · SÓ marketing (o pedido é explícito: "coloque apenas
+      // as coisas do Marketing"). As de produção/compras/etc ficam no /eventos.
+      const tarefas = (await lerEmLotes('cycle_phase_tasks',
+        'id, event_id, event_phase_id, area, status', 'event_id', eventIds))
+        .filter(t => t.area === 'marketing');
+
+      // Card espelho no Kanban (é ele que carrega dono e estado do Marketing).
+      const cards = (await lerEmLotes('marketing_kanban_cards',
+        'id, estado, atribuido_a, cycle_phase_task_id, deleted_at',
+        'cycle_phase_task_id', tarefas.map(t => t.id)))
+        .filter(c => !c.deleted_at);
+      const cardDaTarefa = Object.fromEntries(cards.map(c => [c.cycle_phase_task_id, c]));
+
+      // Contagem por fase. ⚠️ Quem decide "está feito" é o CARD quando ele
+      // existe (é a verdade do Marketing); sem card, o status da tarefa no
+      // /eventos. O detalhe da fase mostra os DOIS lados, então a divergência
+      // fica visível em vez de escondida numa média.
+      const porFase = {};
+      for (const t of tarefas) {
+        const b = porFase[t.event_phase_id] || (porFase[t.event_phase_id] = { total: 0, pendentes: 0, sem_dono: 0 });
+        b.total++;
+        const c = cardDaTarefa[t.id];
+        const feito = c ? c.estado === 'concluido' : TAREFA_FEITA.has(t.status);
+        if (!feito) b.pendentes++;
+        if (c && !c.atribuido_a) b.sem_dono++;
+      }
+
+      const fasesPorEvento = {};
+      for (const f of fases) (fasesPorEvento[f.event_id] || (fasesPorEvento[f.event_id] = [])).push(f);
+
+      // Ordem das linhas: pelo Dia D (o que acontece primeiro em cima).
+      const eventos = ativos
+        .slice()
+        .sort((a, b) => String(a.data_dia_d || a.events.date || '').localeCompare(String(b.data_dia_d || b.events.date || '')))
+        .map(c => ({
+          id: c.event_id,
+          nome: c.events.name,
+          categoria: c.events.event_categories?.name || null,
+          dia_d: c.data_dia_d || c.events.date || null,
+        }));
+
+      const { linhas, sem_data } = montarCalendario({ eventos, fasesPorEvento, semanas });
+
+      // Anexa as contagens de marketing em cada célula.
+      for (const l of linhas) {
+        for (const cel of l.celulas) {
+          if (cel.vazio) continue;
+          const b = porFase[cel.fase_id] || { total: 0, pendentes: 0, sem_dono: 0 };
+          cel.mkt_total = b.total;
+          cel.mkt_pendentes = b.pendentes;
+          cel.mkt_sem_dono = b.sem_dono;
+        }
+      }
+
+      resposta.ciclo = {
+        linhas,
+        sem_data,
+        ciclos_ativos: ativos.length,
+        // ⚠️ Ciclo ativo que não aparece no mês exibido (começa depois, ou já
+        // acabou). DECLARADO — "só vejo 4 séries" com 7 ciclos ativos parece bug.
+        fora_da_janela: ativos.length - linhas.length,
+      };
+    }
+  } catch (e) {
+    console.error('[MARKETING] dashboard/ciclo:', e.message);
+    resposta.ciclo = { linhas: [], sem_data: 0, erro: 'Não foi possível carregar o ciclo criativo' };
+    resposta.avisos.push('O calendário do ciclo criativo não carregou (o resto da tela está atualizado).');
+  }
+
+  res.json(resposta);
+});
+
+// ─── Kanban · macro-tarefas + janela de semanas ─────────────────────────────
+//
+// Pedido do Pedro (14/08): *"na aba de kanban e backlog, não coloque as
+// subtarefas como quadrados; coloca as macro tarefas, porque senão fica muita
+// coisa, e coloque apenas dos que estão na semana atual e na próxima"*.
+//
+// ⚠️ A MACRO é o EVENTO, e a subtarefa é o card do ciclo criativo. Medido em
+// 14/08: **105 cards de evento de 15 eventos** (7 com ciclo ativo, 8 já
+// concluídos) contra 7 cards internos — o Kanban era 93% ciclo criativo.
+//
+// ⚠️⚠️ Quem decide "está na janela" é o SERVIDOR, com a MESMA régua do
+// calendário do dashboard (`utils/marketingSemanas`, no gate). Se o front
+// filtrasse, o Kanban e o calendário poderiam discordar sobre a mesma semana.
+//
+// ⚠️ ESCONDER CARD É ESCONDER TRABALHO. Por isso: (1) o que ficou fora é
+// CONTADO e devolvido (`fora_da_janela`), pra tela declarar e oferecer "ver
+// tudo"; (2) card SEM data de fase entra como `na_janela: null` e a tela
+// MOSTRA — "não sei quando é" nunca vira "não aparece"; (3) cards internos e de
+// solicitação ficam SEMPRE visíveis (não têm fase, e o pedido era sobre o ciclo).
+router.get('/kanban', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const hoje = hojeBRTMkt();
+    const semanas = limitarInteiro(req.query.janela_semanas, 2, 1, 12);
+    const janelaSemanas = montarSemanas(hoje, { retro: 0, adiante: semanas - 1 });
+    const janela = {
+      de: janelaSemanas[0]?.ini || hoje,
+      ate: janelaSemanas[janelaSemanas.length - 1]?.fim || hoje,
+      semanas,
+    };
+
+    const { data, error } = await supabase
+      .from('marketing_kanban_cards')
+      .select('*')
+      .is('deleted_at', null)
+      .order('raia_rapida', { ascending: false })
+      .order('ordem_fila', { ascending: true });
+    if (error) throw error;
+
+    const cards = await enrichCards(data || []);
+
+    let foraDaJanela = 0;
+    let semDataDaFase = 0;
+    for (const c of cards) {
+      if (c.origem !== 'evento') { c.na_janela = true; continue; }
+      const f = c.cycle_phase_task;
+      if (!f || !f.fase_de || !f.fase_ate) {
+        c.na_janela = null;          // desconhecido — a tela MOSTRA
+        semDataDaFase++;
+        continue;
+      }
+      c.na_janela = diasSobrepostos(f.fase_de, f.fase_ate, janela.de, janela.ate) > 0;
+      if (!c.na_janela) foraDaJanela++;
+    }
+
+    res.json({
+      hoje,
+      janela,
+      semanas: janelaSemanas,
+      cards,
+      fora_da_janela: foraDaJanela,
+      sem_data_da_fase: semDataDaFase,
+      total: cards.length,
+    });
+  } catch (e) {
+    console.error('[MARKETING] kanban:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Detalhe de uma FASE · o que o Marketing tem pra entregar ali.
+// ⚠️ Fase sem tarefa de marketing devolve `vazio: true` com o motivo, nunca
+// lista vazia sem explicação (foi pedido nominalmente pelo Pedro).
+router.get('/dashboard/fase/:faseId', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    const { data: fase, error } = await supabase
+      .from('event_cycle_phases')
+      .select('id, event_id, template_id, numero_fase, nome_fase, area, status, momento_chave, data_inicio_prevista, data_fim_prevista, data_conclusao, observacoes, events(id, name)')
+      .eq('id', req.params.faseId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!fase) return res.status(404).json({ error: 'Fase não encontrada' });
+
+    // O que a fase espera entregar (padrão do template) · contexto útil mesmo
+    // quando não há tarefa cadastrada. Leitura ISOLADA: se falhar, a tela segue
+    // de pé sem o padrão (nunca derruba o detalhe inteiro).
+    let entregas_padrao = null;
+    let descricao_fase = null;
+    if (fase.template_id) {
+      const { data: tpl } = await supabase
+        .from('cycle_phase_templates')
+        .select('entregas_padrao, descricao')
+        .eq('id', fase.template_id)
+        .maybeSingle();
+      entregas_padrao = tpl?.entregas_padrao || null;
+      descricao_fase = tpl?.descricao || null;
+    }
+
+    const { data: tarefas, error: eT } = await supabase
+      .from('cycle_phase_tasks')
+      .select('id, titulo, descricao, area, status, prazo, prioridade, is_critical, responsavel_nome, entrega, observacoes')
+      .eq('event_phase_id', fase.id)
+      .eq('area', 'marketing')                 // ⚠️ só Marketing, por pedido
+      .order('prazo', { ascending: true, nullsFirst: false });
+    if (eT) throw eT;
+
+    const cards = (await lerEmLotes('marketing_kanban_cards',
+      'id, titulo, estado, atribuido_a, etiqueta_tipo_id, prazo_producao, prazo_confirmado, data_fim, cycle_phase_task_id, deleted_at',
+      'cycle_phase_task_id', (tarefas || []).map(t => t.id)))
+      .filter(c => !c.deleted_at);
+    const enriquecidos = await enrichCards(cards);
+    const cardDaTarefa = Object.fromEntries(enriquecidos.map(c => [c.cycle_phase_task_id, c]));
+
+    const itens = (tarefas || []).map(t => {
+      const c = cardDaTarefa[t.id];
+      return {
+        tarefa_id: t.id,
+        titulo: t.titulo,
+        descricao: t.descricao || null,
+        entrega: t.entrega || null,
+        prazo: t.prazo ? String(t.prazo).slice(0, 10) : null,
+        prioridade: t.prioridade || null,
+        is_critical: !!t.is_critical,
+        responsavel_eventos: t.responsavel_nome || null,   // o dono no /eventos
+        status_eventos: t.status,
+        // O lado do Marketing (o card espelho). Pode não existir se o trigger
+        // não rodou — e nesse caso a tela DIZ que não há card, em vez de sumir.
+        card: c ? {
+          id: c.id, titulo: c.titulo, estado: c.estado,
+          dono: c.atribuido?.profile?.name || c.atribuido?.nome_display || null,
+          etiqueta: c.etiqueta_tipo?.nome || null,
+          prazo: prazoDoCard(c),
+        } : null,
+        feito: c ? c.estado === 'concluido' : TAREFA_FEITA.has(t.status),
+      };
+    });
+
+    const pendentes = itens.filter(i => !i.feito);
+
+    res.json({
+      fase: {
+        id: fase.id, numero_fase: fase.numero_fase, nome_fase: fase.nome_fase,
+        area: fase.area, status: fase.status, momento_chave: fase.momento_chave || null,
+        de: fase.data_inicio_prevista, ate: fase.data_fim_prevista,
+        concluida_em: fase.data_conclusao || null,
+        observacoes: fase.observacoes || null,
+      },
+      evento: { id: fase.event_id, nome: fase.events?.name || null, link: `/eventos/${fase.event_id}` },
+      entregas_padrao,
+      descricao_fase,
+      itens,
+      total: itens.length,
+      pendentes: pendentes.length,
+      vazio: itens.length === 0,
+      motivo_vazio: itens.length === 0
+        ? (fase.area === 'marketing'
+          ? 'Esta fase é do Marketing, mas não há nenhuma tarefa de marketing cadastrada nela.'
+          : `Esta fase é de "${fase.area || 'outra área'}" — não há atividade do Marketing programada para essa etapa.`)
+        : null,
+    });
+  } catch (e) {
+    console.error('[MARKETING] dashboard/fase:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

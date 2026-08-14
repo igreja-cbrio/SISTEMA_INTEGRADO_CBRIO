@@ -319,6 +319,91 @@ aceita `recorte=membros`.
 
 Lição repetida 3× neste dia: **conferir o que a sonda devolveu, não a contagem.**
 
+## ⚠️ Decisão · o voluntário lança NO CULTO, por link assinado (2026-08-14 · migration `20260814180000`)
+
+Pergunta do Matheus: *"como vamos medir o track do novo convertido, se quando
+coletamos os dados deles não pedimos o CPF?"*. A investigação mostrou que **o CPF
+não é o problema** — o vínculo é por `membro_id` e já existe: `cui_convertidos`
+tem 407/407 com membro, porque `tg_cultos_dec_pessoas_resolve_membro` roda o
+Contrato de porta no BEFORE INSERT. O problema medido é outro.
+
+### O que foi medido (14/08/2026)
+
+- Cobertura nominal presencial na janela em que o registro nominal existe
+  (20/05→13/08): **125 de 137 = 91,2%**. A coleta no papel FUNCIONA.
+- Atraso papel→sistema: **média 3 dias, máximo 9**; 23 de 104 acima de 7 dias.
+- SLA de 1º contato do módulo é **≤3 dias** → só **41,5%** cumprem (média real
+  4,8 dias). **O convertido entra no sistema no dia em que o prazo dele venceu.**
+- 12/07: culto das 19h com 9 declaradas e **0** nomes; o das 11h30 com 9
+  declaradas e **19** nomes — lançado 9 dias depois, no culto errado.
+- Online: 55 declaradas, **1** nome. `fonte='form_publico'` = **0** em 3 meses.
+
+### O que entrou
+
+- **`backend/utils/cultoToken.js`** — molde do `escalaToken` (namespace
+  `culto-decisoes:`, `CULTO_TOKEN_SECRET || CRON_SECRET`, fail-closed,
+  timing-safe). Link `/c/:token` → `src/pages/public/DecisaoCulto.tsx`, tela de
+  LOTE (lança várias pessoas seguidas sem recarregar).
+- ⚠️ **O `culto_id` vem do TOKEN, nunca do body** — é o que torna o bug de 12/07
+  impossível por construção. Teste-mutante fixa isso (`src/test/cultoToken.test.ts`).
+- Janela de lançamento de **2 dias**, reconferida no servidor a cada uso. Depois
+  disso vai pro conferente — mata por desenho o caminho "lanço 9 dias depois".
+- **Nenhum GET devolve lista de pessoas**, só contador agregado: link vaza
+  (print, grupo de WhatsApp) e não pode virar janela pra base de gente.
+- Formulário online: telefone virou **obrigatório**, checkbox de LGPD, e o
+  backend **parou de descartar** — anexa ao culto ao vivo, ao do dia, ou ao
+  último culto online em 7 dias (replay). Medido: em 120 dias houve culto online
+  em 111, intervalo máximo de 3 dias, nenhum acima de 7.
+- Card **"Nomes faltando"** em `VisualizacaoDecisoes.tsx`, reusando o `resumo`
+  que a tela já buscava e jogava fora.
+
+### ⚠️ O que NÃO fazer (decidido contra, com motivo)
+
+- **NÃO usar login travado (trava-quiosque) pro voluntário.** O produto não sabe
+  criar conta travada: `routes/voluntariado.js` grava `is_membro_only: false` e a
+  trava exige `true` (as contas `voluntario-kids` foram feitas por SQL à mão).
+  E `integracao` não está no `MODULO_ROTA_TRAVA`. Voluntário rotaciona semanalmente.
+- **NÃO relaxar o `RETURN NEW` de `tg_cultos_dec_pessoas_to_cuidados`** quando
+  `culto_id` é nulo. Tentador, mas: `v_area` cairia no `ELSE 'sede'` (chute
+  gravado como fato, e a área decide roteamento pastoral e KPI), e usar
+  `CURRENT_DATE` como `data_culto` faria o relógio do SLA contar do dia da
+  DIGITAÇÃO — os 41,5% subiriam sem nada melhorar. A porta nova resolve na
+  origem: o culto vem no token. ⚠️ `CURRENT_DATE` no Postgres é **UTC** e o banco
+  roda em UTC — depois das 21h BRT o dia já virou (faixa do culto de domingo).
+- **NÃO publicar percentual de cobertura.** N > D acontece de verdade: o culto de
+  12/07 tem `sem_dados = -8` na `vw_nsm_sem_dados` e `gap_status = 'completo'`, e
+  esse negativo CANCELA a falta de outro culto na soma. O card mostra **gap
+  absoluto** + contagem de divergências, com a janela declarada no subtítulo
+  (`nsmSemDados` é fixo em 365 dias; os 4 cards ao lado seguem o seletor).
+- **NÃO criar colunas de consentimento** em `cultos_decisoes_pessoas` —
+  `inscricao_consentimentos` (porta `decisao`) é o ledger único.
+  ⚠️ As duas portas gravam textos DIFERENTES de propósito: no formulário público
+  a própria pessoa marca a caixa; no link do voluntário quem preenche é um
+  terceiro, e o texto diz `DECLARADO PELO VOLUNTARIO`. Gravar declaração de
+  terceiro como consentimento do titular seria fabricar prova legal.
+  Consentimento é gravado **ANTES** da decisão (id pré-gerado): órfão no ledger é
+  inofensivo, dado de pessoa sem prova legal não é.
+- **Criança não entra por esta porta** (LGPD art. 14, §1º) — fica no fluxo do
+  Kids, com responsável.
+
+### ⚠️ O que ficou medido e NÃO foi atacado (o gargalo real)
+
+Captura não é a restrição do funil. Coortes com 60d fechados (n=307):
+contato ≤3d → **13,8%** engajam · sem contato → 4,0%. **O teto de quem fez tudo
+certo é 13,8%, contra meta de 50%.** Mais: **270 de 271** pessoas que atenderam e
+responderam **nunca foram convidadas pro NEXT** (a máquina existe inteira em
+`nextConvite.js`, com template aprovado, usada 1 vez); `cui_primeiro_contato_fila`
+tem 39 itens, **todos `pendente`**; alargar a janela de 60→365 dias acrescenta só
+10 pessoas (35→45), ou seja **~89% não engajam em janela nenhuma**; e
+`mem_checkins` = **0**, então é impossível saber se o convertido voltou no
+domingo seguinte.
+
+⚠️ **Armadilha do denominador**: consertar a captura do online faz o NSM CAIR
+(entra coorte com engajamento historicamente zero). Publicar sempre o
+denominador junto, separar qualidade-de-dado de painel pastoral, e comparar por
+coorte fechada. O número imune à mudança de captura — e portanto o que prova
+discipulado — é o **13,9% da coorte "atendido e respondido"**.
+
 ## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
 
 Demanda do **Arthur Serpa**: por um mês, 1 minuto de cada culto pra igreja
@@ -5165,6 +5250,207 @@ espera o coordenador aplicar (review-before-apply).
   (templates transacionais) · não é o webhook.
 - Estado do bloqueio Meta + passos de ativação: ver a seção "Bot WhatsApp ·
   Flows — REDESENHO" acima. Diários das PRs anteriores: legado.
+
+## Marketing · DASHBOARD é a abertura do módulo (2026-08-14 · SEM migration)
+
+Pedido do Pedro Paiva, trazido pelo Marcos: *"dar uma nova cara à tela do
+marketing"* com 3 blocos — as próximas entregas internas de quem está vendo · o
+pulso das solicitações (feitas × resolvidas) + as próximas por prazo · e um
+**calendário SEMANAL do ciclo criativo**, mostrando por semana em que fase cada
+evento/série está, com o pendente de Marketing ao clicar.
+
+**`/marketing` agora abre o Dashboard; o Kanban virou `/marketing/kanban`** (a
+TELA do Kanban não mudou — só o endereço). `/marketing/dashboard`,
+`/marketing/calendario|fila|ciclo-criativo|triagem` redirecionam.
+
+### O calendário virou MENSAL, no formato do /eventos (2026-08-14 · 2ª rodada)
+
+Pedido do Pedro: *"quero o estilo de calendário exatamente igual ao de eventos
+(mostrando por mês, tendo seta para passar), só que lá mostra apenas o Dia D dos
+eventos — aqui eu quero que em todas as semanas mostre quais fases vigentes de
+ciclo tem naquela semana"*. A lista de semanas empilhadas saiu; entrou grade
+mensal `‹ Agosto 2026 ›` espelhando o `BigCalendar` de `pages/eventos/Eventos.jsx`
+(cabeçalho Dom…Sáb, dias do mês vizinho em cinza, hoje em bolinha da marca).
+
+- **A diferença em relação ao /eventos**: lá cada dia recebe os eventos daquele
+  dia; aqui cada **LINHA DE SEMANA** recebe uma faixa por evento, porque a fase
+  vale a semana inteira. É "um retângulo cobrindo toda a semana", como ele pediu
+  na 1ª rodada.
+- **`semanasDoMesGrade(mes, {primeiroDiaSemana, hoje})`** + `mesVizinho` na régua
+  pura. `GET /dashboard?mes=YYYY-MM` navega; mês malformado cai no mês de hoje
+  (nunca grade vazia). A resposta traz `mes`, `mes_anterior`, `mes_seguinte`.
+- ⚠️⚠️ **A grade começa no DOMINGO (0) e as fases de cada linha são calculadas
+  para o intervalo que a linha EXIBE.** A semana da igreja para frequência é
+  SEG→DOM, mas aqui manda a GRADE: uma faixa SEG→DOM sobre uma linha DOM→SÁB
+  afirmaria fase para dias que não estão ali em cima. Medido: o exemplo 4/4 do
+  Pedro **se mantém** na grade dom→sáb (linha 16–22/08 → O Mundo F8 · Divertidamente
+  F5 · Reforma F3 · Parábolas F3), então a troca de convenção não moveu nada
+  visível. Há teste amarrando os dois lados.
+- ⚠️ **`new Date('2026-08')` é meia-noite UTC = 31/07 no Rio** — o rótulo do mês
+  é montado FATIANDO a string, senão o cabeçalho mostraria "Julho" em agosto.
+- ⚠️ O botão **"Hoje" só aparece fora do mês de hoje** (botão que não faz nada é
+  ruído). Mês sem fase nenhuma mostra o calendário com "Nenhuma fase de ciclo
+  nesta semana" e o rodapé declara quantos ciclos ativos não tocam o mês
+  (fev/2026: 7 de 7).
+
+**⚠️⚠️ MUTANTE QUE SOBREVIVEU E O QUE ELE ENSINOU:** trocar o último dia do mês
+calculado por `${mes}-31` fixo passou com 39 testes verdes. Motivo: **`Date.parse
+('2028-02-31')` NÃO é NaN** — o Node rola para 02/03. O estrago não é a data
+final (o filtro `no_mes` a corrige) e sim uma **SEMANA FANTASMA** no fim da
+grade. O teste que o mata é fev/2026, que começa domingo e acaba sábado (4 linhas
+exatas, zero invasão). **Régua: em aritmética de calendário, assertar a CONTAGEM
+de linhas, não só a data limite.** 5 mutantes rodados e mortos na grade
+(normalização de dia negativo · fim-do-mês fixo · `no_mes` sempre true ·
+`eh_semana_atual` sempre true · dia da semana em fuso local).
+
+### ⚠️ A régua do calendário é PURA e mora em `backend/utils/marketingSemanas.js`
+
+A pergunta "em que fase o ciclo está NESTA semana" não tinha resposta em lugar
+nenhum: o `/eventos` mostra o ciclo **por evento** (fases em lista) e o
+`/marketing` mostrava **por fase** (aba Épicos). Nada atravessava os eventos por
+semana, que é como a equipe criativa planeja a semana dela.
+
+- **Semana SEG→DOM** (a mesma da frequência de cultos · **não** a financeira).
+- **A fase da semana é a que OCUPA MAIS DIAS dela.** ⚠️ As fases
+  **compartilham o dia de fronteira** no banco (a fase 2 termina no MESMO dia em
+  que a 3 começa), então a soma das sobreposições de uma semana passa de 7 — é da
+  natureza do dado e não afeta a comparação, que é relativa dentro da semana.
+- **Empate → vence a fase de número MAIOR** (a mais adiantada): calendário serve
+  pra planejar o que vem.
+- **A VIRADA de fase dentro da semana é declarada** (`→ F9`): sem isso a semana em
+  que o ciclo troca de fase pareceria uma semana comum, e é justamente a que
+  importa. ⚠️ A transição olha **só pra frente** — apontar uma fase de número
+  MENOR mandaria a equipe pra trás no ciclo.
+- ⚠️ **Toda conta é em STRING `'YYYY-MM-DD'`** (as colunas de fase são DATE).
+  `new Date('2026-08-14').getDate()` cairia no fuso local — o bug que já mordeu o
+  censo, o totem Kids e o "culto de agora". O `hoje` é **BRT** com o agora
+  INJETADO.
+- **Evento sem NENHUMA fase na janela fica FORA da grade** (hoje há **7 ciclos
+  ativos** e 3 só começam em setembro; ocupar linha com sete traços faria a tela
+  parecer cheia de nada) — e quantos ficaram de fora é **DECLARADO**. Fase sem
+  data entra em `sem_data`, nunca é descartada em silêncio.
+
+**⚠️⚠️ O contrato central: `src/test/marketingSemanas.test.ts` (28 casos · no
+gate) reproduz os 4 casos que o Pedro descreveu DE CABEÇA** para a semana de
+17–23/08 (O Mundo→F8 Finalizações · Divertidamente→F5 Aprovação · Parábolas→F3
+Brainstorming · Reforma→F3 Brainstorming). Bateu **4/4** contra o endpoint real
+em produção. Se esse bloco ficar vermelho, a tela passou a discordar de quem
+opera o ciclo. **5 mutantes RODADOS** (ordem do array decidindo a fase → 2
+vermelhos · hoje em UTC → 1 · linha vazia entrando na grade → 1 · empate pela
+fase menor → 1 · transição incluindo fase anterior → 1, este último só depois de
+eu **reescrever o teste**: a 1ª versão da guarda não a exercitava e o mutante
+sobreviveu).
+
+### ⚠️ `parseInt(x) ?? padrão` devolve NaN — e o calendário voltava VAZIO
+
+`??` só pega `null`/`undefined`, e **NaN não é nenhum dos dois**. O NaN
+atravessava até `for (i = NaN; NaN <= 6)`, o laço não rodava, `semanas: []` e a
+tela dizia *"nenhum ciclo ativo"* com **7 ciclos ativos no banco** — erro
+perfeitamente silencioso, sem 500 e sem log. Corrigido com `limitarInteiro()` no
+handler **e** saneamento na régua pura (defesa em profundidade: com data válida
+`montarSemanas` NUNCA devolve lista vazia), com teste em cima.
+⚠️ Só apareceu porque o endpoint foi **exercitado de verdade** contra produção —
+o vitest e o build estavam verdes.
+
+### Régua dos 3 blocos
+
+1. **Minhas entregas** = cards `origem != 'evento'` atribuídos a mim, não
+   concluídos. Ciclo criativo fica FORA por pedido explícito (ele tem o bloco 3).
+   Prazo = `prazo_producao || prazo_confirmado || data_fim` (a precedência do
+   coletor do MKT-PRAZO); **com prazo primeiro**, sem prazo depois na ordem da
+   fila — e o "sem prazo" é DECLARADO, nunca a ordem da fila fingindo ser data.
+   ⚠️ **`prazo_producao` não estava na whitelist do `PATCH /cards/:id`**, então
+   não havia caminho de UI pra preenchê-lo e as **7 tarefas internas estavam
+   TODAS sem prazo**. Entrou na whitelist e o box grava (nível 5).
+   ⚠️ **O COORDENADOR não pega tarefa interna** — a caixa dele nasceria vazia
+   justamente pra quem pediu o dashboard. Daí o seletor de equipe (só coord ·
+   muda o RECORTE, não a régua). Não ser membro do Marketing é **declarado**, não
+   devolvido como lista vazia (que se lê como "não tenho nada a fazer").
+2. **Solicitações** = `categoria='marketing'`, `deleted_at IS NULL`.
+   ⚠️ **`concluido`+`avaliado` = ENTREGUE; `cancelado`/`rejeitado` saem da fila
+   mas NÃO contam como resolvidas** (senão a linha viraria "encerradas", que é
+   outra pergunta). ⚠️ **Quem ORDENA é a `data_necessaria`** (o combinado com
+   quem pediu); o `sla_resolucao_deadline` é o relógio interno e **já venceu em
+   todas as 6 abertas** — ordenar por ele mostraria tudo igualmente atrasado. Sem
+   data pedida cai no SLA, e a **ORIGEM do prazo vai na tela** (`(pedida)` ×
+   `(SLA)`): o mesmo número significando duas coisas de linha para linha engana.
+   A janela ("últimos 6 meses") vai colada no número.
+3. **Ciclo** = ciclos `ativo` com evento não-concluído. Só tarefas
+   `area='marketing'`. ⚠️ **Quem decide "está feito" é o CARD quando ele existe**
+   (é a verdade do Marketing); sem card, o status da tarefa no /eventos — e o
+   detalhe da fase mostra os **DOIS lados**, então a divergência fica visível em
+   vez de escondida numa média. Espelho ausente é declarado ("sem card no
+   Kanban").
+   **Fase sem tarefa de marketing devolve `vazio:true` com o MOTIVO** (pedido
+   nominal do Pedro): "a fase é de produção" × "a fase é de marketing mas
+   ninguém cadastrou tarefa" mudam o que a pessoa faz a seguir. As `entregas_padrao`
+   do template entram como contexto — o que a fase normalmente entrega.
+
+⚠️ **Cada bloco falha SOZINHO** (`avisos[]` → faixa âmbar): um evento sem ciclo
+não pode apagar a lista de tarefas, e **erro nunca se disfarça de tela vazia**.
+
+### ⚠️ Kanban · MACRO-tarefa por evento + janela de 2 semanas (2026-08-14 · 2ª rodada)
+
+Pedido do Pedro: *"na aba de kanban e backlog, não coloque as subtarefas como
+quadrados no kanban, coloca as macro tarefas, porque senão fica muita coisa, e
+coloque apenas dos que estão na semana atual e na próxima"*.
+
+Medido antes: **105 dos 113 cards vivos eram do ciclo criativo**, de **15 eventos**
+(só 7 com ciclo ativo — os outros 8 já concluídos), contra 7 cards internos. O
+Backlog tinha **88 quadrados**. Depois: **17 cards visíveis** (9 de evento + 8
+outros), e os 9 viram **4 macro cards** — o Backlog sai de 88 para 11.
+
+- **`GET /marketing/kanban?janela_semanas=2`** (novo) devolve os cards com
+  **`na_janela` decidido no SERVIDOR**, pela MESMA régua do calendário. Se o front
+  filtrasse, Kanban e calendário poderiam discordar sobre a mesma semana. O
+  `GET /cards` ficou intocado (Épicos e outros chamadores dependem dele).
+- **A MACRO é o EVENTO**; a subtarefa é o card do ciclo. Agrupado por
+  **(evento, COLUNA)** — o mesmo evento tem tarefa em Backlog e em Concluído, e
+  juntar as duas faria a coluna Concluído mentir. Aberto o macro, cada subtarefa
+  segue **arrastável e clicável** (o agrupamento é de EXIBIÇÃO, não tira ação).
+- ⚠️ **O contador da coluna conta TAREFAS, não cards na tela** — senão agrupar
+  faria o número cair e parecer que sumiu serviço.
+- ⚠️⚠️ **ESCONDER CARD É ESCONDER TRABALHO.** Por isso: (1) o que saiu da janela é
+  CONTADO e a tela declara com "ver tudo" a um clique; (2) card **sem data de
+  fase** entra como `na_janela: null` e **APARECE** — "não sei quando é" nunca
+  vira "não aparece"; (3) cards **internos e de solicitação ficam sempre
+  visíveis** (não têm fase, e o pedido era sobre o ciclo criativo).
+- **A janela inclui toda fase que ENCOSTA nas 2 semanas**, não só a dominante:
+  tarefa cuja fase começa no sábado não pode desaparecer do quadro.
+- `enrichCards` passou a trazer `fase_id`/`numero_fase`/`nome_fase`/`fase_de`/
+  `fase_ate` no `cycle_phase_task` (mesma query, mais colunas) — é o que permite
+  a decisão no servidor.
+
+### Cores do gráfico · `#00897B` + `#8b5cf6`
+
+**Validadas pelo script de paleta** (`validate_palette.js`): passam as 6
+checagens (banda de luminosidade, croma, separação para daltonismo, piso de visão
+normal, contraste) nos **DOIS temas com as MESMAS duas cores** — o `#00B39D` da
+marca reprova a banda no tema escuro (L 0.687) e tem contraste 2,65:1 no claro.
+As duas já estão em `GRADIENT_PALETTE`, então `gradFill` funciona. **Não trocar
+sem revalidar.**
+
+### Medições de 14/08 (o estado que a tela mostra)
+
+7 ciclos ativos · 77 fases (0 sem data) · 49 tarefas de marketing ↔ 49 cards
+(espelho 1:1, **0 órfãos**) · tarefas de marketing existem só nas fases
+**2,3,4,6,7,8,9** (1, 5, 10 e 11 nunca têm — a mensagem de vazio é frequente e
+correta) · 8 solicitações vivas (2 entregues, 6 abertas, **4 já passaram da data
+pedida** e as 6 furaram o SLA) · **`marketing_campanhas` = 0** (o fluxo
+dor→campanha→entregáveis nunca foi usado em produção, então as 6 aprovadas não
+viraram card — é o bloco 2 que as torna visíveis).
+
+⚠️ **Alarme falso MEU, registrado de propósito:** reportei que os 105 cards de
+evento eram órfãos. Eram 0 — meu `.in()` com 105 ids falhou e eu **não li o
+`error`**, então o `data` vazio se leu como "não existe". Daí `lerEmLotes()` no
+endpoint fazer lotes de ≤200 **e lançar** no erro. Lição repetida: *conferir o
+que a sonda devolveu, não a contagem*.
+
+⏳ **Follow-up de DADO (não de código):** 1 card `origem='solicitacao'` ("fazer
+arte evento") está vivo na fila do Cauã com a solicitação **soft-deletada** — o
+soft-delete da solicitação não propagou pro card. Aparece no Kanban desde antes
+disto; a tela não o esconde de propósito (esconder criaria duas verdades entre
+dashboard e Kanban).
 
 ## Marketing · estado final (specs maio + redesenho 2026-05-30/31 · NO AR)
 

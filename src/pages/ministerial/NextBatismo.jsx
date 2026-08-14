@@ -9,10 +9,14 @@
 //      sem CPF/nascimento · revisão humana · NUNCA auto-funde).
 //   2. Vincular famílias · só mostra pessoas sem família quando existe evidência
 //      de convivência com outro cadastro (telefone ou endereço completo iguais).
-//   3. Conflitos de CPF · fila temporária de identidade para revisão humana.
+//   3. Conflitos de identidade · dado forte dos dois lados e o CPF não bate.
+//   4. CPF a confirmar · CPF que chegou por sinal fraco (wifi / telefone da casa).
+//   5. Inscrição sem cadastro · inscrição órfã com candidato na base.
+//   ⚠️ 3, 4 e 5 saíram da MESMA aba ("Conflitos de CPF") em 14/08 — a régua do
+//   corte e o porquê estão em FILTROS_FILA, no fim deste arquivo.
 // ============================================================================
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link as RouterLink } from 'react-router-dom';
 import { nextBatismo as api, membresia as membresiaApi } from '../../api';
@@ -88,7 +92,26 @@ export default function Entradas() {
     queryFn: () => membresiaApi.identidade.list({ status: 'pendente' }),
     ...FILA_CACHE,
   });
-  const pendenciasIdentidade = Object.values(identidade?.resumo?.pendente || {}).reduce((a, b) => a + b, 0);
+  // ⚠️ `resumo.pendente` vem do SERVIDOR e é keyed por TIPO — as contagens dos 3
+  // chips saem dele, não de `items.filter(...)`: a lista é capada e contar o que
+  // veio na página faria o chip mentir quando a fila crescer.
+  const porTipo = identidade?.resumo?.pendente || {};
+  const somaTipos = (lista) => lista.reduce((a, t) => a + (porTipo[t] || 0), 0);
+  const pendenciasIdentidade = Object.values(porTipo).reduce((a, b) => a + b, 0);
+  // ⚠️ Tipo NOVO em `identidade_pendencias` (o CHECK da tabela pode crescer sem
+  // este arquivo saber) cai na fila de conflitos, que é a que gente lê. Sem esta
+  // sobra ele contaria no total do cabeçalho e não apareceria em seção nenhuma —
+  // trabalho pendente invisível, que é pior que trabalho na aba errada.
+  const tiposDeIdentidade = useMemo(() => {
+    const cobertos = new Set([...TIPOS_IDENTIDADE, ...TIPOS_CPF_CONFIRMAR, ...TIPOS_INSCRICAO_ORFA]);
+    const sobrando = Object.keys(porTipo).filter((t) => !cobertos.has(t));
+    return [...TIPOS_IDENTIDADE, ...sobrando];
+  }, [identidade]);
+  const contagensIdentidade = {
+    identidade: somaTipos(tiposDeIdentidade),
+    cpf_confirmar: somaTipos(TIPOS_CPF_CONFIRMAR),
+    inscricao_orfa: somaTipos(TIPOS_INSCRICAO_ORFA),
+  };
   const totalPendentes = (resumo?.duplicatas || 0) + (resumo?.familias_pendentes || 0) + pendenciasIdentidade;
 
   const escolherFiltro = (valor) => {
@@ -121,9 +144,18 @@ export default function Entradas() {
             <div className="text-xs text-muted-foreground">{resumo.saude.com_cpf} de {resumo.saude.pessoas} pessoas vivas</div>
           </div>
           <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => escolherFiltro('identidade')}>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Fila de identidade</div>
-            <div className="text-2xl font-bold text-foreground">{pendenciasIdentidade}</div>
-            <div className="text-xs text-muted-foreground">conflitos de CPF aguardando triagem</div>
+            {/* ⚠️ O card mostra o número da fila em que ele CAI (conflitos), não o
+                total das 3 — clicar e ver um número menor do que o card prometia
+                é a divergência que fez o Marcos duvidar do retrato dos grupos
+                (03/08). O total da aba continua no chip "Pendentes". */}
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Conflitos de identidade</div>
+            <div className="text-2xl font-bold text-foreground">{contagensIdentidade.identidade}</div>
+            <div className="text-xs text-muted-foreground">
+              CPF divergente ou já em uso
+              {pendenciasIdentidade > contagensIdentidade.identidade
+                ? ` · +${pendenciasIdentidade - contagensIdentidade.identidade} em triagem nas outras filas`
+                : ''}
+            </div>
           </button>
           <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => escolherFiltro('duplicidade')}>
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Duplicatas possíveis</div>
@@ -142,7 +174,7 @@ export default function Entradas() {
       </div>
 
       <FiltrosFila visao={visao} filtro={filtro} onChange={setFiltro}
-        contagens={{ duplicidade: resumo?.duplicatas || 0, sem_vinculo: resumo?.familias_pendentes || 0, identidade: pendenciasIdentidade }} />
+        contagens={{ duplicidade: resumo?.duplicatas || 0, sem_vinculo: resumo?.familias_pendentes || 0, ...contagensIdentidade }} />
 
       {visao === 'pendentes' ? (
         <div className="space-y-7">
@@ -157,8 +189,22 @@ export default function Entradas() {
             </SecaoFila>
           )}
           {filtro === 'identidade' && (
-            <SecaoFila titulo="Conflitos de CPF" descricao="Situações em que o CPF precisa de confirmação humana antes de virar identidade.">
-              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros />
+            <SecaoFila titulo="Conflitos de identidade"
+              descricao="Os casos difíceis: dado forte dos dois lados e o CPF não bate. Alguém tem que dizer qual é o certo — o sistema não decide.">
+              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros tipos={tiposDeIdentidade} />
+            </SecaoFila>
+          )}
+          {filtro === 'cpf_confirmar' && (
+            <SecaoFila titulo="CPF a confirmar"
+              descricao="Triagem de sinal fraco: o CPF chegou por wi‑fi ou telefone da família, sem nascimento conferível. A pergunta é se ele é mesmo dessa pessoa.">
+              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros tipos={TIPOS_CPF_CONFIRMAR} />
+            </SecaoFila>
+          )}
+          {filtro === 'inscricao_orfa' && (
+            <SecaoFila titulo="Inscrição sem cadastro"
+              descricao="A inscrição não aponta pra cadastro nenhum e existe um candidato na base. Não é conflito de CPF — a pergunta é se esse cadastro é essa pessoa."
+            >
+              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros tipos={TIPOS_INSCRICAO_ORFA} />
             </SecaoFila>
           )}
         </div>
@@ -169,11 +215,44 @@ export default function Entradas() {
   );
 }
 
+// ⚠️ A antiga aba "Conflitos de CPF" virou TRÊS filas (14/08 · Marcos: "deveriam
+// ser pessoas que possuem dados fortíssimos mas estão com CPF diferente, só os
+// casos mais difíceis; ela não foi feita para juntar possíveis duplicatas
+// quaisquer"). Ele estava certo: `identidade_pendencias` guarda 5 tipos com
+// TRABALHOS diferentes na mesma lista, e o de maior volume — os
+// `cpf_para_confirmar`, que são triagem de sinal FRACO (wifi / telefone da
+// família) — soterrava justamente os casos difíceis. Medido em 05/08: 218
+// `cpf_para_confirmar` contra 67 `inscricao_sem_vinculo` e um punhado de
+// conflitos reais.
+//
+// O recorte é por PERGUNTA, não por tabela:
+//   · identidade      → "qual CPF é o certo?" · dado forte dos dois lados
+//   · cpf_confirmar   → "esse CPF é mesmo dessa pessoa?" · sinal fraco
+//   · inscricao_orfa  → "esse cadastro é essa pessoa?" · nem é conflito de CPF
+const TIPOS_IDENTIDADE = ['cpf_divergente', 'vinculo_divergente', 'cpf_conflito'];
+const TIPOS_CPF_CONFIRMAR = ['cpf_para_confirmar'];
+const TIPOS_INSCRICAO_ORFA = ['inscricao_sem_vinculo'];
+
 const FILTROS_FILA = [
   ['duplicidade', 'Possíveis duplicidades'],
   ['sem_vinculo', 'Vincular famílias'],
-  ['identidade', 'Conflitos de CPF'],
+  ['identidade', 'Conflitos de identidade'],
+  ['cpf_confirmar', 'CPF a confirmar'],
+  ['inscricao_orfa', 'Inscrição sem cadastro'],
 ];
+
+// ⚠️ `entradas_resolucoes.tipo` só conhece as 3 FILAS originais
+// (duplicidade | sem_vinculo | identidade) — as chaves novas são recorte de
+// EXIBIÇÃO. Sem este mapa, o histórico da aba nova iria pro servidor com
+// `tipo=cpf_confirmar`, o `.eq()` não casaria linha nenhuma e a tela diria
+// "Nenhuma resolução neste filtro" — erro se disfarçando de fila vazia.
+const RESOLUCAO_TIPO = {
+  duplicidade: 'duplicidade',
+  sem_vinculo: 'sem_vinculo',
+  identidade: 'identidade',
+  cpf_confirmar: 'identidade',
+  inscricao_orfa: 'identidade',
+};
 
 function FiltrosFila({ visao, filtro, onChange, contagens }) {
   return (
@@ -214,7 +293,7 @@ const ACAO_RESOLVIDA = {
 };
 
 function ResolvidosTab({ filtro, onVerFicha }) {
-  const tipo = filtro;
+  const tipo = RESOLUCAO_TIPO[filtro] || filtro;
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['next-batismo', 'resolucoes', tipo],
     queryFn: () => api.resolucoes(tipo ? { tipo } : {}),
@@ -812,6 +891,8 @@ function FamiliasPendentesTab({ onVerFicha }) {
           Esta fila mantém os cadastros separados e apenas organiza as pessoas na mesma família.
           Telefone compartilhado exige também sobrenome em comum; endereço completo + CEP pode sugerir famílias com sobrenomes diferentes.
           <strong> Nomes abreviados ou muito semelhantes vão para Possíveis duplicidades.</strong>
+          {' '}Cada par mostra o contato compartilhado, a idade dos dois, de qual porta veio o dado e — quando existe — o
+          vínculo com a mesma criança no Kids, que é a evidência de convivência mais forte que o sistema tem.
         </p>
         <Button onClick={() => recarregarMut.mutate()} disabled={isFetching || recarregarMut.isPending} variant="outline" size="sm" className="gap-1.5">
           <RefreshCw className={`size-3.5 ${isFetching || recarregarMut.isPending ? 'animate-spin' : ''}`} /> Recarregar
@@ -849,12 +930,63 @@ function FamiliasPendentesTab({ onVerFicha }) {
                     {item.destino.tipo === 'existente' ? item.destino.nome : 'Nova família'}
                   </span>
                 </div>
+                {/* Alerta ≠ evidência: evidência sustenta a sugestão, alerta a
+                    QUESTIONA. Fica em âmbar, acima de tudo. */}
+                {!!item.alertas?.length && item.alertas.map((al) => (
+                  <div key={al} className="rounded-md border border-amber-400/60 bg-amber-500/5 px-2.5 py-2 text-[11px] text-amber-800 dark:text-amber-200">
+                    {al} — se for a mesma pessoa, o caminho é <strong>Possíveis duplicidades</strong>, não vincular família.
+                  </div>
+                ))}
+
+                {/* O DADO que motivou a sugestão, dito com todas as letras.
+                    No par por endereço ele costumava ficar invisível: o card só
+                    cai no endereço quando a pessoa não tem telefone. */}
+                {item.contato_comum && (
+                  <div className="text-[11px] text-muted-foreground">
+                    {item.contato_comum.tipo === 'telefone' ? 'Telefone compartilhado: ' : 'Endereço compartilhado: '}
+                    <span className="font-mono text-foreground">
+                      {item.contato_comum.tipo === 'telefone'
+                        ? maskTelefone(item.contato_comum.valor)
+                        : item.contato_comum.valor}
+                    </span>
+                  </div>
+                )}
+
+                {/* ⚠️ A evidência de convivência mais forte que o sistema tem:
+                    os dois são responsáveis da MESMA criança (vínculo de menor
+                    passa por documento + aprovação da equipe Kids). Quando
+                    aparece, a decisão está praticamente tomada — e o parentesco
+                    de cada lado é o que separa "casal/irmãos" de "é a mesma
+                    pessoa com o nome trocado". */}
+                {!!item.kids_em_comum?.length && (
+                  <div className="rounded-md border border-emerald-400/50 bg-emerald-500/5 p-2.5 space-y-1">
+                    <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                      Responsáveis pela mesma criança no Kids
+                    </div>
+                    {item.kids_em_comum.map((k) => (
+                      <div key={k.crianca_id} className="text-[11px] text-muted-foreground">
+                        <span className="text-foreground">{k.crianca_nome || 'Criança sem nome no cadastro'}</span>
+                        {k.crianca_nascimento ? ` (${fmtData(k.crianca_nascimento)})` : ''}
+                        {' — '}
+                        {item.pessoa.nome?.split(' ')[0]}: {k.parentesco_pessoa || 'sem parentesco'}
+                        {' · '}
+                        {item.referencia.nome?.split(' ')[0]}: {k.parentesco_referencia || 'sem parentesco'}
+                      </div>
+                    ))}
+                    <div className="text-[10px] text-muted-foreground/80">
+                      Confira se o nome da criança não é o mesmo de um dos cadastros — nesse caso não é família, é o
+                      nome do filho gravado no lugar do responsável, e o caminho é Possíveis duplicidades.
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-                  <PessoaFamilia pessoa={item.pessoa} rotulo="Sem família" onVerFicha={onVerFicha} />
+                  <PessoaFamilia pessoa={item.pessoa} rotulo="Sem família" onVerFicha={onVerFicha}
+                    procedencia={item.procedencia?.pessoa} />
                   <ArrowRight className="size-4 text-muted-foreground mx-auto rotate-90 sm:rotate-0" />
                   <PessoaFamilia pessoa={item.referencia}
                     rotulo={item.destino.tipo === 'existente' ? item.destino.nome : 'Referência para nova família'}
-                    onVerFicha={onVerFicha} />
+                    onVerFicha={onVerFicha} procedencia={item.procedencia?.referencia} />
                 </div>
                 <div className="flex justify-end gap-2 flex-wrap">
                   <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5"
@@ -903,7 +1035,22 @@ function FamiliasPendentesTab({ onVerFicha }) {
   );
 }
 
-function PessoaFamilia({ pessoa, rotulo, onVerFicha }) {
+// idadeDe · idade em anos completos, pra decidir parentesco. Data parseada como
+// LOCAL (`+T12:00:00`): `new Date('1981-08-01')` é meia-noite UTC = 31/07 no Rio,
+// e a idade sairia 1 dia deslocada perto do aniversário.
+function idadeDe(nascimento) {
+  if (!nascimento) return null;
+  const d = new Date(String(nascimento).slice(0, 10) + 'T12:00:00');
+  if (Number.isNaN(d.getTime())) return null;
+  const hoje = new Date();
+  let anos = hoje.getFullYear() - d.getFullYear();
+  const m = hoje.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && hoje.getDate() < d.getDate())) anos -= 1;
+  return anos >= 0 && anos < 120 ? anos : null;
+}
+
+function PessoaFamilia({ pessoa, rotulo, onVerFicha, procedencia }) {
+  const idade = idadeDe(pessoa.data_nascimento);
   return (
     <button type="button" onClick={() => onVerFicha?.(pessoa.id)}
       className="rounded-lg border bg-muted/15 p-3 text-left hover:border-primary transition-colors min-w-0">
@@ -917,8 +1064,25 @@ function PessoaFamilia({ pessoa, rotulo, onVerFicha }) {
           <div className="text-[10px] text-muted-foreground truncate">
             {pessoa.telefone ? maskTelefone(pessoa.telefone) : pessoa.endereco || pessoa.status}
           </div>
+          {/* A diferença de idade é o que separa cônjuge de pai/filho — era o
+              dado que faltava pra decidir. "Sem nascimento" é dito, não omitido:
+              ausência de dado não pode parecer dado. */}
+          <div className="text-[10px] text-muted-foreground truncate">
+            {idade != null
+              ? `${idade} anos · ${fmtData(pessoa.data_nascimento)}`
+              : 'sem nascimento no cadastro'}
+          </div>
         </div>
       </div>
+      {!!procedencia?.length && (
+        <div className="mt-2 pt-2 border-t text-[10px] text-muted-foreground space-y-0.5">
+          {procedencia.map((p) => (
+            <div key={`${p.origem}-${p.quando}`} className="truncate">
+              {p.origem} · {fmtData(p.quando)}
+            </div>
+          ))}
+        </div>
+      )}
     </button>
   );
 }

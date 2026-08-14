@@ -180,6 +180,59 @@ function chaveEndereco(membro) {
   return `${cep}|${endereco}`;
 }
 
+// contatoComumDoPar · devolve O DADO que motivou a sugestão de família, dito de
+// forma explícita ("Mesmo telefone: (21) 96412-4838"). É evidência, não contato
+// de exibição — um valor só, o compartilhado, e nada além dele.
+// kidsEmComum · crianças de que os DOIS lados são responsáveis, com o
+// parentesco declarado de cada um. Vazio é o caso comum; quando não é, decide.
+function kidsEmComum(vinculosA, vinculosB) {
+  if (!vinculosA?.length || !vinculosB?.length) return [];
+  const porCrianca = new Map(vinculosB.map((v) => [v.crianca_id, v]));
+  return vinculosA
+    .filter((v) => porCrianca.has(v.crianca_id))
+    .map((v) => ({
+      crianca_id: v.crianca_id,
+      crianca_nome: v.crianca_nome,
+      crianca_nascimento: v.crianca_nascimento,
+      parentesco_pessoa: v.parentesco,
+      parentesco_referencia: porCrianca.get(v.crianca_id).parentesco,
+    }));
+}
+
+// procedenciaDoContato · as portas que trouxeram O CONTATO COMPARTILHADO pra
+// este cadastro (não o histórico inteiro, que seria ruído). Sem telefone em
+// comum — caso do par por endereço — devolve as 3 portas mais recentes, que
+// ainda respondem "de onde vem este cadastro?".
+function procedenciaDoContato(observacoes, evidencias = [], a, b) {
+  const lista = observacoes || [];
+  if (!lista.length) return [];
+  const tel = evidencias.includes('Mesmo telefone') ? digitos(a?.telefone) : null;
+  const relevantes = tel ? lista.filter((o) => digitos(o.telefone) === tel) : lista;
+  const base = relevantes.length ? relevantes : lista;
+  // Uma linha por PORTA (a mesma porta repetida N vezes não informa nada novo),
+  // guardando a 1ª vez que ela trouxe o dado.
+  const porPorta = new Map();
+  for (const o of base) {
+    if (!porPorta.has(o.origem)) porPorta.set(o.origem, o.quando);
+  }
+  return [...porPorta.entries()].slice(-4).map(([origem, quando]) => ({ origem, quando }));
+}
+
+function contatoComumDoPar(a, b, evidencias = []) {
+  if (evidencias.includes('Mesmo telefone')) {
+    const tel = digitos(a?.telefone);
+    if (tel && tel === digitos(b?.telefone)) return { tipo: 'telefone', valor: tel };
+  }
+  if (evidencias.includes('Mesmo endereço e CEP')) {
+    // Vale o endereço do lado que o tem escrito por extenso — a chave de
+    // agrupamento é normalizada e ilegível.
+    const end = a?.endereco || b?.endereco;
+    const cep = digitos(a?.cep) || digitos(b?.cep);
+    if (end) return { tipo: 'endereco', valor: [end, cep].filter(Boolean).join(' · CEP ') };
+  }
+  return null;
+}
+
 const MOTIVO_POR_EVIDENCIA = {
   'CPF igual': 'cpf_igual',
   'Nome e nascimento compatíveis': 'nome_e_nascimento',
@@ -318,11 +371,16 @@ async function carregarTriagemFamilias() {
         }
         if (a.familia_id && b.familia_id) continue;
         if (relacao.destino !== 'familia') continue;
-        const atual = paresFamilia.get(chave) || { a, b, evidencias: [] };
+        const atual = paresFamilia.get(chave) || { a, b, evidencias: [], alertas: [] };
+        if (!atual.alertas) atual.alertas = [];
         if (!atual.evidencias.includes(evidencia)) atual.evidencias.push(evidencia);
         if (relacao.sobrenomes.length && !atual.evidencias.some((e) => e.startsWith('Sobrenome em comum:'))) {
           atual.evidencias.push(`Sobrenome em comum: ${relacao.sobrenomes.join(', ')}`);
         }
+        // Alerta ≠ evidência: evidência sustenta a sugestão, alerta a QUESTIONA.
+        // Misturar os dois faria "pode ser a mesma pessoa" parecer motivo pra
+        // vincular família.
+        if (relacao.alerta && !atual.alertas.includes(relacao.alerta)) atual.alertas.push(relacao.alerta);
         paresFamilia.set(chave, atual);
       }
     }
@@ -346,6 +404,67 @@ async function carregarTriagemFamilias() {
   // Família: somente cadastros ativos entram na fila operacional.
   for (const grupo of porTelefone.values()) considerarGrupo(grupo.filter((m) => m.active !== false), 'Mesmo telefone');
   for (const grupo of porEndereco.values()) considerarGrupo(grupo, 'Mesmo endereço e CEP');
+
+  // ── Evidência POR EXTENSO + os sinais que decidem o parentesco ──────────────
+  // Reclamação do Marcos (14/08): "a aba de vincular famílias está confuso, não
+  // dá pra saber COMO essa pessoa está sendo vinculada na família — tem Angela
+  // Alvarenga e José Benício de Alvarenga com o mesmo telefone e sobrenomes
+  // parecidos, eu não sei o que faria nesses casos, pois não sei POR QUE tem o
+  // mesmo telefone." O caso dele se resolvia com dado que o banco já tinha e a
+  // tela não mostrava: os dois são responsáveis da MESMA criança no Kids (um
+  // como "mae"), e a criança se chama igual a um dos cadastros — ou seja não é
+  // família, é a mesma pessoa com o nome do filho.
+  //
+  // ⚠️ `kids_responsaveis` em comum é a evidência de convivência mais FORTE que
+  // este sistema tem (vínculo de MENOR passa por documento + aprovação da equipe
+  // Kids) e a fila não a usava nem a exibia.
+  const idsFamilia = [...new Set([...paresFamilia.values()].flatMap((p) => [p.a.id, p.b.id]))];
+  const kidsPorMembro = new Map();
+  const procedenciaPorMembro = new Map();
+  if (idsFamilia.length) {
+    // Best-effort: falha aqui NÃO derruba a fila (o par continua exibido, só sem
+    // o enriquecimento). Fila que desaparece por causa de um enfeite é pior.
+    try {
+      const vinculos = [];
+      for (let i = 0; i < idsFamilia.length; i += 200) {
+        const { data, error } = await supabase.from('kids_responsaveis')
+          .select('membro_id, crianca_id, parentesco, kids_criancas(nome, data_nascimento)')
+          .in('membro_id', idsFamilia.slice(i, i + 200));
+        if (error) throw error;
+        vinculos.push(...(data || []));
+      }
+      for (const v of vinculos) {
+        if (!kidsPorMembro.has(v.membro_id)) kidsPorMembro.set(v.membro_id, []);
+        kidsPorMembro.get(v.membro_id).push({
+          crianca_id: v.crianca_id,
+          crianca_nome: v.kids_criancas?.nome || null,
+          crianca_nascimento: v.kids_criancas?.data_nascimento || null,
+          parentesco: v.parentesco || null,
+        });
+      }
+    } catch (e) {
+      console.warn('[entradas/familias] vínculo Kids não carregado:', e.message);
+    }
+    try {
+      const obs = [];
+      for (let i = 0; i < idsFamilia.length; i += 100) {
+        const { data, error } = await supabase.from('mem_identidade_observacoes')
+          .select('membro_id, origem, telefone, observado_em')
+          .in('membro_id', idsFamilia.slice(i, i + 100))
+          .order('observado_em', { ascending: true }).limit(3000);
+        if (error) throw error;
+        obs.push(...(data || []));
+      }
+      for (const o of obs) {
+        if (!procedenciaPorMembro.has(o.membro_id)) procedenciaPorMembro.set(o.membro_id, []);
+        procedenciaPorMembro.get(o.membro_id).push({
+          origem: o.origem, telefone: o.telefone, quando: o.observado_em,
+        });
+      }
+    } catch (e) {
+      console.warn('[entradas/familias] procedência não carregada:', e.message);
+    }
+  }
 
   let decisoes;
   try {
@@ -378,8 +497,27 @@ async function carregarTriagemFamilias() {
     return {
       par_id: parId,
       evidencias: par.evidencias,
+      alertas: par.alertas || [],
       pessoa,
       referencia,
+      // QUAL sinal disparou e com QUE valor, explícito. O card já mostrava o
+      // telefone de cada lado (`maskTelefone` FORMATA, não mascara), mas exigia
+      // que quem tria comparasse dois rodapés — e no par por ENDEREÇO o valor
+      // compartilhado costuma ficar invisível, porque o card só cai no endereço
+      // quando não há telefone.
+      contato_comum: contatoComumDoPar(par.a, par.b, par.evidencias),
+      // A evidência de convivência mais forte que o sistema tem: os dois
+      // responsáveis pela MESMA criança. Se aparecer aqui, a decisão está
+      // praticamente tomada — e o `parentesco` de cada lado é o que separa
+      // "casal/irmãos" de "é a mesma pessoa com o nome trocado".
+      kids_em_comum: kidsEmComum(kidsPorMembro.get(pessoa.id), kidsPorMembro.get(referencia.id)),
+      // De QUAL porta e QUANDO veio o contato compartilhado — a resposta pra
+      // "por que essas duas pessoas têm o mesmo telefone?". A aba de duplicatas
+      // já mostra fontes; a de famílias não mostrava.
+      procedencia: {
+        pessoa: procedenciaDoContato(procedenciaPorMembro.get(pessoa.id), par.evidencias, par.a, par.b),
+        referencia: procedenciaDoContato(procedenciaPorMembro.get(referencia.id), par.evidencias, par.a, par.b),
+      },
       destino: referencia.familia_id
         ? { tipo: 'existente', id: referencia.familia_id, nome: referencia.familia?.nome || 'Família existente' }
         : { tipo: 'nova', id: null, nome: null },

@@ -248,6 +248,7 @@ const TotemKidsTesteEtiqueta = lazyWithRetry(() => import('./pages/ministerial/t
 const TotemKidsDecisoes = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDecisoes'));
 const TotemKidsVinculos = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsVinculos'));
 const TotemKidsPortao = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPortao'));
+const MarketingDashboard = lazyWithRetry(() => import('./pages/marketing/MarketingDashboard'));
 const MarketingKanban = lazyWithRetry(() => import('./pages/marketing/MarketingKanban'));
 const MarketingPlanner = lazyWithRetry(() => import('./pages/marketing/MarketingPlanner'));
 const MarketingAdmin = lazyWithRetry(() => import('./pages/marketing/MarketingAdmin'));
@@ -361,6 +362,7 @@ const InscricaoTotens = lazyWithRetry(() => import('./pages/InscricaoTotens'));
 // algumas horas e foi removida no mesmo dia.
 const NextDirecionar = lazyWithRetry(() => import('./pages/public/NextDirecionar'));
 const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
+const DecisaoCulto = lazyWithRetry(() => import('./pages/public/DecisaoCulto'));
 const InscricaoVoluntariado = lazyWithRetry(() => import('./pages/public/InscricaoVoluntariado'));
 // /admin/cultura, /kpis, /kpis/guia, /painel-kpis foram substituidos pelo /painel
 // (Fase 2 do sistema OKR/NSM 2026). Redirects abaixo preservam URLs antigas.
@@ -619,6 +621,8 @@ function AppRoutes() {
       <Route path="/next/direcionar/:token" element={<Suspense fallback={<Loading />}><NextDirecionar /></Suspense>} />
       <Route path="/inscricao-voluntariado" element={<Suspense fallback={<Loading />}><InscricaoVoluntariado /></Suspense>} />
       <Route path="/decisao" element={<Suspense fallback={<Loading />}><DecisaoOnline /></Suspense>} />
+      {/* Link ASSINADO do culto · o voluntário lança as decisões na hora, sem login */}
+      <Route path="/c/:token" element={<Suspense fallback={<Loading />}><DecisaoCulto /></Suspense>} />
       <Route path="/wallet" element={<Suspense fallback={<Loading />}><WalletPage /></Suspense>} />
       <Route path="/motion" element={<Suspense fallback={<Loading />}><Motion /></Suspense>} />
       {/* Prévia interna do novo site (redesign cbrio.com.br) · não-listada */}
@@ -766,16 +770,22 @@ function AppRoutes() {
         <Route path="/ami" element={<ModuleGuard moduleSlug="ami"><Suspense fallback={<Loading />}><PainelAmi /></Suspense></ModuleGuard>} />
         <Route path="/bridge" element={<ModuleGuard moduleSlug="bridge"><Suspense fallback={<Loading />}><PainelBridge /></Suspense></ModuleGuard>} />
         {/* Marketing · Kanban (Spec 007) + Calendário (Spec 008) */}
-        <Route path="/marketing" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingKanban /></Suspense></ModuleGuard>} />
-        <Route path="/marketing/calendario" element={<Navigate to="/marketing" replace />} />
+        {/* Dashboard virou a abertura do módulo (pedido do Pedro Paiva · 2026-08-14).
+            O Kanban NÃO mudou de tela — só de endereço, e /marketing/kanban é o
+            canônico. Nenhum link antigo apontava pra ele: apontavam pra /marketing,
+            que agora abre o dashboard, com o Kanban a um clique no cabeçalho. */}
+        <Route path="/marketing" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingDashboard /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/kanban" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingKanban /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/dashboard" element={<Navigate to="/marketing" replace />} />
+        <Route path="/marketing/calendario" element={<Navigate to="/marketing/kanban" replace />} />
         <Route path="/marketing/planner" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingPlanner /></Suspense></ModuleGuard>} />
         <Route path="/marketing/admin" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={5}><Suspense fallback={<Loading />}><MarketingAdmin /></Suspense></ModuleGuard>} />
         <Route path="/marketing/analytics" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingAnalytics /></Suspense></ModuleGuard>} />
         <Route path="/marketing/comunicados" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingComunicados /></Suspense></ModuleGuard>} />
         <Route path="/marketing/generosidade" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingGenerosidade /></Suspense></ModuleGuard>} />
-        <Route path="/marketing/fila" element={<Navigate to="/marketing" replace />} />
-        <Route path="/marketing/ciclo-criativo" element={<Navigate to="/marketing" replace />} />
-        <Route path="/marketing/triagem" element={<Navigate to="/marketing" replace />} />
+        <Route path="/marketing/fila" element={<Navigate to="/marketing/kanban" replace />} />
+        <Route path="/marketing/ciclo-criativo" element={<Navigate to="/marketing/kanban" replace />} />
+        <Route path="/marketing/triagem" element={<Navigate to="/marketing/kanban" replace />} />
         {/* Redirects das rotas antigas pra não quebrar bookmarks */}
         <Route path="/ministerial/online" element={<Navigate to="/online" replace />} />
         <Route path="/ministerial/ami" element={<Navigate to="/ami" replace />} />
