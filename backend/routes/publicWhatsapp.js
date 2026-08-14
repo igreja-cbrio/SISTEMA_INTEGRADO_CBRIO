@@ -13,6 +13,10 @@ const router = require('express').Router();
 const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
 const { enviarTexto, normalizarTelefone } = require('../services/whatsappSend');
+// Resposta do voluntário ao aviso de escala (botão de quick-reply ou texto).
+const { interpretarRespostaEscala, textoDaResposta, wamidRespondido } = require('../utils/respostaEscala');
+const { responderEscala } = require('../services/escalaResposta');
+const { CONTEXTO: CONTEXTO_ESCALA } = require('../services/escalaAviso');
 const { parseConversa, responderInstitucional } = require('../services/whatsappParser');
 const { safeEqual } = require('../utils/cronAuth');
 const flowColeta = require('../services/whatsappFlowColeta');
@@ -121,6 +125,17 @@ async function processarEvento(req) {
         if (++processadas > MAX_MSGS) {
           console.warn('[whatsapp webhook] limite de mensagens por evento atingido · ignorando excedente');
           return;
+        }
+        // ⚠️ A resposta de ESCALA é testada ANTES dos outros fluxos porque ela
+        // se identifica pelo `context.id` — se caísse no bot institucional,
+        // "não vou poder" viraria conversa com a IA em vez de recusa.
+        // `processarRespostaEscala` devolve false quando a mensagem não é dela.
+        if (institucional) {
+          const assumida = await processarRespostaEscala(m).catch(err => {
+            console.error('[whatsapp webhook] resposta de escala:', err.message);
+            return false;
+          });
+          if (assumida) continue;
         }
         if (!institucional) {
           await inboxDireto(m, pnid).catch(err =>
@@ -310,6 +325,78 @@ async function processarStatuses(statuses) {
       console.error('[whatsapp webhook] status item:', e.message);
     }
   }
+}
+
+// ── Resposta ao aviso de ESCALA ("vou / não vou poder") ────────────────────
+//
+// Pedido do Matheus (14/08/2026): "quero algo que a pessoa responda pelo wpp
+// mesmo". O aviso de véspera sai com dois botões de quick-reply; a resposta
+// chega aqui como `m.type === 'button'` — ou como texto, quando a pessoa
+// prefere escrever.
+//
+// ⚠️⚠️ O QUE AMARRA A RESPOSTA À ESCALA É O `context.id` (o wamid da mensagem
+// que NÓS mandamos), buscado em `whatsapp_envios.message_id`. Sem ele não dá
+// pra saber de qual convite a pessoa está falando: quem serve em duas áreas na
+// mesma semana teria a recusa aplicada na escala errada. Por isso, resposta sem
+// contexto NÃO é tratada aqui — segue pro fluxo normal do bot.
+//
+// @returns {boolean} true se assumiu a mensagem.
+async function processarRespostaEscala(m) {
+  const wamid = wamidRespondido(m);
+  if (!wamid) return false;
+
+  const bruto = textoDaResposta(m);
+  if (!bruto) return false;
+
+  // ⚠️ OPT-OUT TEM PRIORIDADE (decisão do Marcos, 24/07). "Não quero mais
+  // receber" contém uma negação e seria lido como "não vou poder" — a pessoa
+  // pedindo pra sair da lista acabaria recusando a escala, e continuaria
+  // recebendo. Quem pede pra parar é tratado pelo fluxo normal.
+  try {
+    const optSvc = require('../services/whatsappOptout');
+    if (optSvc.intencaoOptOut(bruto, { deBotao: m.type !== 'text' })) return false;
+  } catch (e) { /* sem o serviço, segue a régua da escala */ }
+
+  const { data: envio } = await supabase
+    .from('whatsapp_envios').select('id, ref_id, contexto')
+    .eq('message_id', wamid).eq('contexto', CONTEXTO_ESCALA).maybeSingle();
+  if (!envio?.ref_id) return false;
+
+  const messageId = m.id;
+  const telefone = normalizarTelefone(m.from);
+  // Mesma idempotência dos outros handlers: reentrega da Meta é comum.
+  const { data: jaVisto } = await supabase
+    .from('whatsapp_coletas').select('id').eq('whatsapp_message_id', messageId).maybeSingle();
+  if (jaVisto) return true;
+
+  const status = interpretarRespostaEscala(bruto);
+  const registrar = (raw) => supabase.from('whatsapp_coletas').insert({
+    whatsapp_message_id: messageId, telefone, raw_text: raw, status: 'ignorado',
+  }).catch(() => {});
+
+  // ⚠️ Não entendeu? NÃO CHUTA. Marcar presença que a pessoa não deu é pior que
+  // pedir de novo — e ela está com a janela de 24h aberta, então o texto chega.
+  if (!status) {
+    await registrar(`[escala] não interpretado: ${bruto}`.slice(0, 500));
+    await enviarTexto(telefone,
+      'Não entendi 🙈 Toque em *Vou sim* ou *Não vou poder* na mensagem anterior, ou responda com "vou" ou "não vou".')
+      .catch(() => {});
+    return true;
+  }
+
+  const r = await responderEscala(envio.ref_id, status, { origem: 'whatsapp' });
+  await registrar(`[escala] ${status}: ${bruto}`.slice(0, 500));
+
+  if (!r.ok) {
+    await enviarTexto(telefone, 'Não consegui registrar sua resposta agora. Avise a liderança da sua área, por favor.').catch(() => {});
+    return true;
+  }
+
+  await enviarTexto(telefone, status === 'confirmed'
+    ? 'Presença confirmada 💚 Obrigado! Até lá.'
+    : 'Tudo bem, avisamos a liderança que você não vai poder. Obrigado por avisar — assim dá tempo de encontrar alguém 🙏')
+    .catch(() => {});
+  return true;
 }
 
 // Resposta por BOTÃO (Aprovar/Recusar) da aprovação de solicitação. O id do botão
