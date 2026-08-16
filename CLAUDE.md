@@ -3013,6 +3013,47 @@ regras. **Quebrar qualquer uma delas é regressão crítica.**
     por `pg_constraint`), nunca dentro do `ADD COLUMN`. **Auditar a FK no
     catálogo, não no arquivo da migration.**
 
+11. ⚠️⚠️ **NUNCA dar `GRANT` de nível de TABELA em `public.profiles` para `anon`
+    ou `authenticated`** (migration `20260816194649` · incidente de 16/08/2026).
+    **RLS não é por coluna** — a policy diz qual LINHA pode ser escrita, nunca
+    qual COLUNA. `profiles` tinha `GRANT UPDATE` nas 23 colunas para os dois
+    roles, e a anon key está embutida no bundle do app de membros: **qualquer
+    pessoa que baixasse o app e criasse conta virava `diretor` do ERP** com
+
+    ```sql
+    update profiles set role='diretor' where id = auth.uid();
+    ```
+
+    Confirmado ao vivo em transação revertida (também `is_diretoria_geral`,
+    `membro_id` apontando pro cadastro de outra pessoa, `is_membro_only`,
+    `kpi_areas`). Raio: 57 policies RLS decidem por `profiles.role`;
+    `/api/permissoes/*` é `authorize('admin','diretor')`; `membro_id` alimenta
+    `current_user_membro_id()` (contribuições, Kids). Havia um **segundo
+    degrau**: a policy `profiles_update_diretor` (sem `WITH CHECK`) liberava
+    UPDATE em QUALQUER linha — auto-promoção no passo 1, tabela inteira no
+    passo 2. Ela foi dropada.
+
+    **Hoje `authenticated` só tem UPDATE em `(name, telefone)`** — as duas
+    únicas colunas que algum cliente escreve nos 3 repos (`Perfil.jsx:93` no ERP
+    e `perfil.tsx:187` no app). `anon` não tem UPDATE/INSERT nenhum.
+    - ⚠️ **O furo nº 1 é reabrir por engano**: um `GRANT UPDATE ON profiles` de
+      TABELA cobre todas as colunas, e **revogar coluna a coluna depois NÃO tem
+      efeito** — só `REVOKE` de tabela seguido de `GRANT` por coluna conserta.
+    - ⚠️ **Coluna nova nasce SEM grant** (fail-closed, desejado). Se um cliente
+      novo precisar escrever, o `GRANT` explícito entra em migration própria,
+      justificada — e a pergunta antes é sempre *"isso pode virar poder?"*.
+    - ⚠️ **Statement misto falha INTEIRO**: `.update({ name, avatar_url })` num
+      objeto só dá 403, inclusive a parte do `name`. **Um update por coluna**,
+      ou rota no backend. Não existe aplicação parcial.
+    - `profiles.status` **não** recebeu grant de propósito (está NULL nas 145
+      linhas; a fonte real do pedido de exclusão é `app_solicitacoes_exclusao`,
+      e o app já tolera o erro).
+    - `profiles` entrou no **audit log** na mesma migration — antes disso o
+      único vestígio de escrita era `updated_at`, sobrescrito a cada vez.
+    - ⚠️ **Generalizar**: `GRANT UPDATE` amplo em tabela cuja RLS só filtra
+      linha é a mesma armadilha em qualquer tabela onde uma COLUNA decide
+      permissão. Ao criar tabela assim, conceder por coluna desde o início.
+
 ## Inventário de helpers SQL (usar SEMPRE em policies novas)
 
 | Função | Retorna | Uso típico |
@@ -3049,10 +3090,11 @@ Trigger AFTER INSERT/UPDATE/DELETE com argumento opcional `TG_ARGV[0]`
 = CSV de colunas a auditar. Se vazio, audita todas exceto
 `updated_at`/`created_at`. Salva diff `{col: {old, new}}` em JSONB.
 
-### Triggers ativos (8 tabelas críticas)
+### Triggers ativos (9 tabelas críticas)
 
 | Tabela | Colunas auditadas |
 |---|---|
+| `profiles` | role, membro_id, is_diretoria_geral, funcao_diretoria, kpi_areas, kpi_valores, is_membro_only, is_servico, active, area, ministerio_id, ministerio_papel, email, status |
 | `rh_funcionarios` | salario, remuneracao_bruta, grau_id, status, data_demissao, cpf, email, deleted_at |
 | `mem_membros` | cpf, status, deleted_at, nome, email, telefone |
 | `mem_contribuicoes` | valor, tipo, membro_id, deleted_at |
