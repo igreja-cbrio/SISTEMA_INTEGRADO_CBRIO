@@ -1,14 +1,10 @@
 import { describe, it, expect } from 'vitest';
-// @ts-expect-error — utilitário CommonJS do backend, sem tipos
-import * as storagePath from '../../backend/utils/storagePath.js';
-
-const { caminhoNoBucket, caminhoSeguro, caminhosDosCampos, aplicarAssinaturas } =
-  storagePath as {
-    caminhoNoBucket: (v: unknown, b: string) => string | null;
-    caminhoSeguro: (p: unknown) => string | null;
-    caminhosDosCampos: (o: unknown, c: string[], b: string) => string[];
-    aplicarAssinaturas: (o: any, c: string[], b: string, m: Record<string, string>) => any;
-  };
+import {
+  caminhoNoBucket,
+  caminhoSeguro,
+  caminhosDosCampos,
+  aplicarAssinaturas,
+} from '../../backend/utils/storagePath.js';
 
 const BASE = 'https://hhntwfawfnxvuobhdfkb.supabase.co/storage/v1/object/public';
 
