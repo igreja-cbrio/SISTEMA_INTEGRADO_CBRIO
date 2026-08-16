@@ -311,16 +311,19 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       }).catch((err) => console.error('[publicApresentacao] identidade:', err.message));
 
       const nomes = lista.map(c => c.nome).join(', ');
-      // Notifica diretamente a líder do Kids (Mariane Gaia) e a Milena. Se não
-      // achar (e-mail mudou), cai no módulo 'kids'.
-      let alvosKids;
-      try {
-        const { data: alvos } = await supabase
-          .from('profiles').select('id')
-          .in('email', ['mariane.gaia@cbrio.org', 'milena.rochet@cbrio.org']);
-        alvosKids = (alvos || []).map(a => a.id);
-      } catch { /* fallback no módulo kids */ }
-
+      // ⚠️ Quem recebe vem de `notificacao_regras` (modulo kids, tipo
+      // nova_apresentacao_crianca), NÃO de e-mail cravado aqui.
+      //
+      // Até 16/08/2026 este bloco resolvia dois e-mails fixos e os passava em
+      // `targetIds` — e targetIds SOBREPÕE resolverDestinatarios(). Efeito: as
+      // duas recebiam, mas acrescentar alguém pela tela /admin de regras não
+      // fazia efeito nenhum, e não havia como descobrir por quê olhando a tela.
+      // É a LEI "nunca nomear pessoa como dono de fluxo": quem recebe muda sem
+      // PR, e o lugar disso é o banco.
+      //
+      // Sem `targetIds`, o notificar() resolve a regra específica do tipo; não
+      // havendo, cai nas genéricas do módulo kids; não havendo nenhuma, no
+      // fallback de admin/diretor. Nenhum caminho fica sem destinatário.
       notificar({
         modulo: 'kids',
         tipo: 'nova_apresentacao_crianca',
@@ -329,7 +332,6 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         link: '/ministerial/totem-kids/apresentacao',
         severidade: 'info',
         chaveDedup: `apresentacao_crianca_${criados[0]}`,
-        targetIds: alvosKids && alvosKids.length ? alvosKids : undefined,
       }).catch(err => console.error('[publicApresentacao] notificacao falhou:', err.message));
     }
 
