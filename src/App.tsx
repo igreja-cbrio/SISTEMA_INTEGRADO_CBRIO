@@ -3,7 +3,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { TutorialProvider } from './contexts/TutorialContext';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { lazy, Suspense, Component, useEffect } from 'react';
+import { lazy, Suspense, Component, useEffect, useRef, useState } from 'react';
 import type { ReactNode, ComponentType, ErrorInfo } from 'react';
 import { Toaster } from 'sonner';
 import AppShell from './components/layout/AppShell';
@@ -22,6 +22,8 @@ import {
   hasNewAppVersion,
   reloadForAppUpdate,
 } from './lib/appUpdate';
+import { CHUNK_ERROR_RE, classificarErroDeTela } from './lib/erroRecuperavel';
+import type { MotivoRecuperacao } from './lib/erroRecuperavel';
 import { captureAppException } from './lib/sentry';
 
 const queryClient = new QueryClient({
@@ -43,12 +45,9 @@ const queryClient = new QueryClient({
 // que não existe mais, causando tela branca. Esta função tenta recarregar
 // a página automaticamente na primeira falha para pegar os novos chunks.
 //
-// Mensagens cobertas por navegador:
-//   Chrome/Edge : "Failed to fetch dynamically imported module"
-//   Firefox     : "error loading dynamically imported module"
-//   Safari/iOS  : "Importing a module script failed" + "'text/html' is not a valid JavaScript MIME type"
-//   Webpack     : "Loading chunk X failed" / "ChunkLoadError"
-const CHUNK_ERROR_RE = /Loading chunk|ChunkLoadError|Failed to fetch dynamically imported module|error loading dynamically imported module|Importing a module script failed|valid JavaScript MIME type|Expected a JavaScript(?: \w+)? module script/i;
+// CHUNK_ERROR_RE e a decisão de "isto é recuperável?" moraram aqui até
+// 16/08/2026 e foram para src/lib/erroRecuperavel.ts, onde dá para testar sem
+// importar o App inteiro (que puxa todas as rotas lazy).
 
 // Atalho do recarregamento forçado, por plataforma. `navigator.platform` está
 // depreciado mas é o único sinal disponível no navegador antigo que justamente
@@ -113,33 +112,42 @@ function lazyWithRetry<T extends ComponentType<Record<string, never>>>(factory: 
 
 class ErrorBoundary extends Component<
   { children: ReactNode },
-  { hasError: boolean; error: Error | null; updating: boolean }
+  { hasError: boolean; error: Error | null; updating: boolean; motivo: MotivoRecuperacao | null }
 > {
   constructor(props: { children: ReactNode }) {
     super(props);
-    this.state = { hasError: false, error: null, updating: false };
+    this.state = { hasError: false, error: null, updating: false, motivo: null };
   }
   static getDerivedStateFromError(error: Error) {
-    const updating = CHUNK_ERROR_RE.test(error?.message || '')
-      && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES;
-    return { hasError: true, error, updating };
+    const { recuperavel, motivo } = classificarErroDeTela(
+      error?.message,
+      getAppUpdateRetryCount(),
+      MAX_APP_UPDATE_RETRIES,
+    );
+    // `updating` = vamos recarregar sozinhos. `motivo` = é um erro de
+    // atualização, mesmo que as tentativas já tenham acabado. São diferentes:
+    // com o orçamento esgotado a tela precisa continuar oferecendo o
+    // recarregamento forçado em vez de despejar a mensagem crua do erro.
+    return { hasError: true, error, updating: recuperavel, motivo };
   }
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    const { recuperavel, motivo } = classificarErroDeTela(
+      error?.message,
+      getAppUpdateRetryCount(),
+      MAX_APP_UPDATE_RETRIES,
+    );
+
     captureAppException(error, {
       mechanism: 'react-error-boundary',
-      tags: { surface: 'web' },
+      tags: { surface: 'web', recuperavel: String(recuperavel), motivo: motivo || 'nenhum' },
       context: { componentStack: errorInfo.componentStack || null },
     });
 
-    // Se for chunk load error, tenta recarregar automaticamente (até MAX_RETRIES)
-    const isChunkError = CHUNK_ERROR_RE.test(error?.message || '');
-    if (isChunkError && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) {
-      hardReload();
-    }
+    if (recuperavel) hardReload();
   }
   render() {
     if (this.state.hasError) {
-      const isChunkError = CHUNK_ERROR_RE.test(this.state.error?.message || '');
+      const isChunkError = this.state.motivo !== null;
       return (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '60vh', gap: 16, padding: 32, textAlign: 'center' }}>
           <h1 style={{ fontSize: 24, fontWeight: 'bold' }}>Algo deu errado</h1>
@@ -865,27 +873,121 @@ function SitePublicoRoutes() {
   );
 }
 
+// Enquanto a aba fica aberta, um deploy novo troca os arquivos no servidor. A
+// aba continua funcionando até o usuário abrir um módulo que ainda não tinha
+// carregado — aí o chunk antigo some, a tela quebra e a saída é recarregar no
+// susto, perdendo o que estava em andamento.
+//
+// Este aviso inverte a ordem: percebe a versão nova ANTES da quebra e deixa a
+// escolha do momento com o usuário. De propósito NÃO recarrega sozinho — quem
+// está no meio de um lançamento financeiro ou de uma escala não pode ter a tela
+// puxada debaixo dos pés. O recarregamento automático continua existindo só
+// onde não há nada a perder: nos 800ms iniciais e quando um chunk já falhou.
+const INTERVALO_CHECAGEM_VERSAO_MS = 5 * 60_000;
+const SILENCIO_APOS_ADIAR_MS = 30 * 60_000;
+
+function AvisoNovaVersao() {
+  const [disponivel, setDisponivel] = useState(false);
+  const [atualizando, setAtualizando] = useState(false);
+  const silenciadoAte = useRef(0);
+  const jaAvisou = useRef(false);
+
+  useEffect(() => {
+    let cancelado = false;
+
+    const checar = async () => {
+      if (cancelado || jaAvisou.current) return;
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() < silenciadoAte.current) return;
+      // Enquanto o contador de tentativas está de pé, a aba acabou de se
+      // atualizar sozinha. Avisar aqui mostraria "nova versão" para quem já
+      // está nela.
+      if (getAppUpdateRetryCount() > 0) return;
+
+      const temNova = await hasNewAppVersion();
+      if (cancelado || !temNova) return;
+      jaAvisou.current = true;
+      setDisponivel(true);
+    };
+
+    const intervalo = window.setInterval(() => { void checar(); }, INTERVALO_CHECAGEM_VERSAO_MS);
+    const aoReaparecer = () => { void checar(); };
+    document.addEventListener('visibilitychange', aoReaparecer);
+    window.addEventListener('pageshow', aoReaparecer);
+
+    return () => {
+      cancelado = true;
+      window.clearInterval(intervalo);
+      document.removeEventListener('visibilitychange', aoReaparecer);
+      window.removeEventListener('pageshow', aoReaparecer);
+    };
+  }, []);
+
+  if (!disponivel) return null;
+
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      style={{
+        position: 'fixed', right: 16, bottom: 16, zIndex: 9999,
+        maxWidth: 'calc(100vw - 32px)', width: 340,
+        background: '#1f2937', color: '#fff', borderRadius: 12,
+        padding: '14px 16px', boxShadow: '0 10px 30px rgba(0,0,0,.28)',
+        display: 'flex', flexDirection: 'column', gap: 10,
+      }}
+    >
+      <div style={{ fontSize: 14, fontWeight: 600 }}>Nova versão do sistema disponível</div>
+      <div style={{ fontSize: 13, color: '#d1d5db', lineHeight: 1.45 }}>
+        Atualize quando puder. Se ficar na versão antiga, alguma tela pode falhar ao abrir.
+      </div>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button
+          onClick={() => {
+            silenciadoAte.current = Date.now() + SILENCIO_APOS_ADIAR_MS;
+            jaAvisou.current = false;
+            setDisponivel(false);
+          }}
+          style={{ padding: '7px 14px', borderRadius: 8, background: 'transparent', color: '#d1d5db', border: '1px solid #4b5563', cursor: 'pointer', fontSize: 13 }}
+        >
+          Agora não
+        </button>
+        <button
+          disabled={atualizando}
+          onClick={() => {
+            setAtualizando(true);
+            void reloadForAppUpdate({ resetRetries: true });
+          }}
+          style={{ padding: '7px 16px', borderRadius: 8, background: '#00B39D', color: '#fff', border: 'none', cursor: atualizando ? 'wait' : 'pointer', opacity: atualizando ? 0.75 : 1, fontSize: 13, fontWeight: 600 }}
+        >
+          {atualizando ? 'Atualizando…' : 'Atualizar agora'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   // Ao abrir a aplicação, compara o entrypoint carregado com o HTML atual do
   // deploy. Se a aba veio do cache ou do histórico, atualiza antes de o usuário
   // navegar para um módulo e encontrar um chunk antigo.
+  // ⚠️ Só na ABERTURA. O `pageshow` (volta pelo histórico, com a página restaurada
+  // da bfcache) recarregava aqui também, e era o pior momento possível: a aba
+  // volta com formulário meio preenchido e a atualização apagava tudo sem
+  // perguntar. Voltar pelo histórico passou a cair no AvisoNovaVersao, que
+  // pergunta. Aos 800ms de uma carga nova não há nada a perder — este continua
+  // automático.
   useEffect(() => {
     let cancelled = false;
-    const check = async () => {
+    const timer = window.setTimeout(async () => {
       const hasUpdate = await hasNewAppVersion();
       if (!cancelled && hasUpdate && getAppUpdateRetryCount() < MAX_APP_UPDATE_RETRIES) {
         void hardReload();
       }
-    };
-    const timer = window.setTimeout(check, 800);
-    const handlePageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) void check();
-    };
-    window.addEventListener('pageshow', handlePageShow);
+    }, 800);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
-      window.removeEventListener('pageshow', handlePageShow);
     };
   }, []);
 
@@ -923,6 +1025,7 @@ export default function App() {
             <BrowserRouter>
               <TutorialProvider>
                 <AppRoutes />
+                <AvisoNovaVersao />
                 <Toaster position="top-right" richColors />
               </TutorialProvider>
             </BrowserRouter>
