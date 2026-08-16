@@ -338,12 +338,23 @@ where m.team_id = t.id and m.origem_pco_team is null;
 -- linhas de origem que viram A MESMA (Produção, Câmeras) pra mesma pessoa. Sem
 -- colapsar aqui, o `not exists` (que enxerga só o estado ANTES do comando)
 -- deixaria as duas entrarem e a pessoa apareceria em duplicidade no painel.
+-- ⚠️⚠️ DOIS inserts, e a separação NÃO é estilo — é a forma das duas chaves
+-- únicas. Elas são diferentes:
+--   com perfil : (team_id, volunteer_profile_id, position_id)
+--   pc-only    : (team_id, planning_center_person_id, position_id)
+-- Um insert só, agrupado pelas QUATRO colunas, foi o que estourou 23505 na
+-- primeira tentativa: a mesma pessoa (mesmo `volunteer_profile_id`) aparecia
+-- com `planning_center_person_id` diferente em duas equipes-espelho, virava
+-- DOIS grupos e portanto duas linhas — que a chave de 3 colunas recusa.
+-- Agrupar por exatamente a chave que vai receber o INSERT é o que garante
+-- uma linha por chave.
+
+-- (a) Vínculos com perfil: uma linha por (equipe, função, pessoa).
 insert into vol_team_members
   (team_id, position_id, volunteer_profile_id, planning_center_person_id,
    volunteer_name, is_active, origem_pco_team)
-select destino.team_id, destino.position_id,
-       destino.volunteer_profile_id, destino.planning_center_person_id,
-       min(destino.volunteer_name), true, min(destino.origem_pco_team)
+select d.team_id, d.position_id, d.volunteer_profile_id,
+       min(d.planning_center_person_id), min(d.volunteer_name), true, min(d.origem_pco_team)
 from (
   select mp.team_id, mp.position_id,
          m.volunteer_profile_id, m.planning_center_person_id,
@@ -353,16 +364,41 @@ from (
   join vol_pco_mapa mp on mp.pco_chave = fn_vol_pco_chave(origem.name)
   where mp.ignorar = false
     and mp.team_id <> m.team_id            -- só o que precisa mudar de equipe
+    and m.volunteer_profile_id is not null
     and not exists (
-      select 1 from vol_team_members d
-      where d.team_id = mp.team_id
-        and d.position_id is not distinct from mp.position_id
-        and d.volunteer_profile_id is not distinct from m.volunteer_profile_id
-        and d.planning_center_person_id is not distinct from m.planning_center_person_id
+      select 1 from vol_team_members x
+      where x.team_id = mp.team_id
+        and x.position_id is not distinct from mp.position_id
+        and x.volunteer_profile_id = m.volunteer_profile_id
     )
-) destino
-group by destino.team_id, destino.position_id,
-         destino.volunteer_profile_id, destino.planning_center_person_id;
+) d
+group by d.team_id, d.position_id, d.volunteer_profile_id;
+
+-- (b) Vínculos pc-only (pessoa sem perfil no sistema): a chave é o id do PCO.
+insert into vol_team_members
+  (team_id, position_id, volunteer_profile_id, planning_center_person_id,
+   volunteer_name, is_active, origem_pco_team)
+select d.team_id, d.position_id, null,
+       d.planning_center_person_id, min(d.volunteer_name), true, min(d.origem_pco_team)
+from (
+  select mp.team_id, mp.position_id,
+         m.planning_center_person_id, m.volunteer_name, m.origem_pco_team
+  from vol_team_members m
+  join vol_teams origem on origem.id = m.team_id
+  join vol_pco_mapa mp on mp.pco_chave = fn_vol_pco_chave(origem.name)
+  where mp.ignorar = false
+    and mp.team_id <> m.team_id
+    and m.volunteer_profile_id is null
+    and m.planning_center_person_id is not null
+    and not exists (
+      select 1 from vol_team_members x
+      where x.team_id = mp.team_id
+        and x.position_id is not distinct from mp.position_id
+        and x.volunteer_profile_id is null
+        and x.planning_center_person_id = m.planning_center_person_id
+    )
+) d
+group by d.team_id, d.position_id, d.planning_center_person_id;
 
 -- Remove os vínculos antigos que já foram reposicionados.
 delete from vol_team_members m
