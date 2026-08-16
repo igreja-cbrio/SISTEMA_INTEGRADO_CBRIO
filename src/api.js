@@ -3497,6 +3497,10 @@ export const voluntariado = {
     remove: (id) => del(`/voluntariado/teams-manage/${id}`),
     importFromSchedules: () => post('/voluntariado/teams-manage/import-from-schedules'),
     syncMembersFromSchedules: () => post('/voluntariado/teams-manage/sync-members-from-schedules'),
+    // De-para "team" do Planning Center -> (equipe, função) daqui.
+    pendenciasPco: () => get('/voluntariado/teams-manage/pendencias-pco'),
+    mapaPco: () => get('/voluntariado/teams-manage/mapa-pco'),
+    mapearPco: (data) => post('/voluntariado/teams-manage/mapa-pco', data),
   },
   // Positions (within teams)
   positions: {

@@ -266,7 +266,12 @@ function AddItem({ teams, posByTeam, onAdd }: any) {
         <Label className="text-xs">Equipe</Label>
         <Select value={teamId} onValueChange={v => { setTeamId(v); setPosId('__all__'); }}>
           <SelectTrigger className="h-9 w-48"><SelectValue placeholder="Escolher equipe" /></SelectTrigger>
-          <SelectContent>{teams.map((t: any) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
+          {/* ⚠️ Só equipes ATIVAS. Depois do remapeamento de 16/08 as 113
+              equipes-espelho do Planning Center ficaram inativas (não foram
+              apagadas, pra não cascatear em item de template) — oferecê-las
+              aqui montaria composição em cima de equipe que não recebe mais
+              ninguém, e a vaga nunca teria candidato. */}
+          <SelectContent>{teams.filter((t) => t.is_active).map((t: any) => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}</SelectContent>
         </Select>
       </div>
       <div>
