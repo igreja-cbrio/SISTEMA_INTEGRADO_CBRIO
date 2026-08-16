@@ -56,6 +56,15 @@ jobs:
       - name: Pontuacao da fila progressiva (nascimento corrobora, genero veta)
         run: npm run test:identidade-pares
 
+      # Gate estreito: SO a regra de ordem dos hooks do React. O lint completo
+      # tem ~1.714 problemas de codigo legado (quase todos no-explicit-any) e
+      # ficaria vermelho pra sempre — gate que ninguem mantem verde e removido
+      # na primeira urgencia. Esta regra tem ZERO violacoes e pega a classe de
+      # bug que derrubou a tela do voluntariado em producao (16/08/2026):
+      # useState depois de um early return -> React #310.
+      - name: Ordem dos hooks do React (react-hooks/rules-of-hooks)
+        run: npm run lint:hooks
+
       - name: Politica de familia (fila Vincular familias)
         run: npm run test:familia
 

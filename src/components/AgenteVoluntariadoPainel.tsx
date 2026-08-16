@@ -28,6 +28,22 @@ export default function AgenteVoluntariadoPainel() {
   // informação de que existe trabalho pendente não se perde ao recolher.
   const [aberto, setAberto] = useState(false);
   const [enviando, setEnviando] = useState(false);
+  // ⚠️ TEM QUE FICAR AQUI, junto dos outros hooks e ANTES dos `return null`
+  // abaixo. Este useState vivia no meio do corpo, depois dos três early
+  // returns — e como o componente sai cedo enquanto carrega (e quando não há
+  // pendência), a primeira renderização contava 6 hooks e a seguinte 7,
+  // estourando "Minified React error #310: Rendered more hooks than during the
+  // previous render" e derrubando a tela inteira do voluntariado.
+  //
+  // Só quebrava quando havia trabalho pendente de verdade (o `total === 0`
+  // segurava antes), por isso apareceu junto com o opt-out da escala, que
+  // começou a gerar recusas e confirmações pendentes.
+  //
+  // O aviso da semana já roda sozinho no cron diário (8h10 BRT). Este botão
+  // existe pro caso de escalar DEPOIS da rodada do dia — quem for escalado à
+  // tarde para o culto de amanhã seria avisado só na manhã seguinte, às vezes
+  // depois do culto. É idempotente: quem já foi avisado não recebe de novo.
+  const [avisando, setAvisando] = useState(false);
 
   const carregar = useCallback(() => {
     setLoading(true);
@@ -62,11 +78,6 @@ export default function AgenteVoluntariadoPainel() {
       secao('Recusadas — precisam de reposição', d.reposicoes) +
       secao('Faltaram sem avisar no último culto', d.no_shows);
   };
-  // ⚠️ O aviso da semana já roda sozinho no cron diário (8h10 BRT). Este botão
-  // existe pro caso de escalar DEPOIS da rodada do dia — quem for escalado à
-  // tarde para o culto de amanhã seria avisado só na manhã seguinte, às vezes
-  // depois do culto. É idempotente: quem já foi avisado não recebe de novo.
-  const [avisando, setAvisando] = useState(false);
   const avisarSemana = async () => {
     setAvisando(true);
     try {
