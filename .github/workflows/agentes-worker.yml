@@ -1,0 +1,212 @@
+# Dispara os agentes do worker (Railway) de FORA.
+#
+# ── Por que isto existe ──────────────────────────────────────────────────────
+# O worker tem agendador próprio (`node-cron` em agent-worker/src/scheduler.ts).
+# Ele funcionou perfeitamente todas as segundas de 01/06 a 06/07/2026 — e parou.
+# Seis segundas seguidas sem nenhuma execução.
+#
+# A causa: o serviço no Railway está com `Serverless` ligado, que escala o
+# container para ZERO quando não há tráfego. Processo inexistente não dispara
+# cron. Diagnóstico confirmado em 16/08/2026 batendo no /health: a primeira
+# chamada respondeu com `uptime_s: 0.61` — a requisição tinha acabado de ligar o
+# serviço. Desligar o Serverless exige plano pago; a conta é free tier.
+#
+# Então o gatilho vem de fora: o GitHub Actions bate no worker, e a batida faz as
+# duas coisas de uma vez — ACORDA o container e RODA o agente. O próprio Railway
+# documenta que requisições feitas com o container dormindo são enfileiradas e
+# atendidas quando ele sobe.
+#
+# ⚠️ USA /run-sync, NÃO /run. O `/run` responde 202 e roda em background: num
+# container serverless isso é uma armadilha, porque a resposta encerra a
+# requisição, o tráfego cessa e o Railway pode derrubar o container com o agente
+# no meio da execução. O `/run-sync` mantém a conexão aberta até o agente
+# terminar, o que segura o container de pé exatamente pelo tempo necessário.
+#
+# ⚠️ O dispatcher do dev agent (`*/10 * * * *` no scheduler) NÃO foi replicado
+# aqui de propósito: seriam 144 execuções por dia no Actions para um agente que
+# está atrás do kill-switch DEV_AGENT_ENABLED. Se um dia precisar, é workflow
+# separado — não pendure numa agenda semanal.
+#
+# Quando o Railway voltar a um plano pago e o Serverless for desligado, este
+# workflow vira duplicata do agendador interno: DESLIGUE um dos dois, senão cada
+# agente roda duas vezes por semana (e cada execução custa tokens).
+
+name: Agentes do worker (Railway)
+
+on:
+  schedule:
+    # GitHub Actions usa UTC. America/Sao_Paulo é UTC-3 o ano todo (o Brasil
+    # acabou com o horário de verão), então o offset é fixo e não há data em que
+    # estes horários escorreguem.
+    - cron: '0 9 * * 1'    # segunda 06:00 SP · lote semanal (espelha SCHEDULE)
+    - cron: '0 10 * * *'   # todo dia 07:00 SP · espelha SCHEDULE_DIARIO
+  workflow_dispatch:
+    inputs:
+      agentes:
+        description: 'Agentes separados por espaço (vazio = o lote da agenda)'
+        required: false
+        default: ''
+
+# Duas execuções simultâneas acordariam o mesmo container e brigariam por 1 vCPU
+# / 0,512 GB. Enfileira em vez de cancelar: o lote da agenda não pode ser
+# descartado porque alguém clicou em "Run workflow".
+concurrency:
+  group: agentes-worker
+  cancel-in-progress: false
+
+jobs:
+  disparar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    env:
+      WORKER_URL: ${{ secrets.AGENT_WORKER_URL || 'https://sistemaintegradocbrio-production.up.railway.app' }}
+      HMAC: ${{ secrets.AGENT_WORKER_HMAC_SECRET }}
+
+    steps:
+      - name: Conferir o segredo do worker
+        run: |
+          if [ -z "${HMAC:-}" ]; then
+            echo "::error::secret AGENT_WORKER_HMAC_SECRET nao configurado no repositorio."
+            echo "Copie o valor de AGENT_WORKER_HMAC_SECRET (existe no Vercel e no Railway)"
+            echo "e cadastre em Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "segredo presente."
+
+      - name: Acordar o container
+        id: acordar
+        run: |
+          set -u
+          # Cold start do Railway leva alguns segundos. Insistimos por até 5 min
+          # antes de desistir: falhar aqui e nao tentar seria trocar um problema
+          # de sono por um de impaciencia.
+          for i in $(seq 1 30); do
+            resp=$(curl -sS --max-time 20 "$WORKER_URL/health" 2>/dev/null || true)
+            if printf '%s' "$resp" | grep -q '"ok":true'; then
+              echo "tentativa $i · $resp"
+              # uptime baixo = o container estava dormindo e acabamos de liga-lo.
+              # Registrado no log porque e a evidencia de que o Serverless ainda
+              # esta ativo — no dia em que ele for desligado, este numero vira
+              # grande e o workflow pode ser aposentado.
+              exit 0
+            fi
+            echo "tentativa $i · sem resposta ainda, aguardando..."
+            sleep 10
+          done
+          echo "::error::worker nao respondeu ao /health em 5 minutos."
+          exit 1
+
+      - name: Disparar os agentes
+        id: disparar
+        # ⚠️ A entrada do workflow_dispatch chega por env, NUNCA interpolada
+        # direto no script com ${{ }}: interpolação vira injeção de shell, porque
+        # o valor é colado no corpo do bash antes de ele rodar.
+        env:
+          ENTRADA: ${{ github.event.inputs.agentes }}
+          AGENDA: ${{ github.event.schedule }}
+        run: |
+          set -u
+
+          ENTRADA="${ENTRADA:-}"
+          AGENDA="${AGENDA:-}"
+
+          SEMANAL="financeiro_executor kpis_watcher rh_executor cuidados_watcher \
+                   eventos_watcher voluntariado_watcher logistica_watcher \
+                   membresia_watcher patrimonio_watcher cerebro_watcher \
+                   next_watcher grupos_watcher nps_watcher projetos_watcher \
+                   cyber_agent kpi_relatorio_semanal"
+          DIARIO="piloto_triage_watcher"
+
+          if [ -n "$ENTRADA" ]; then
+            LISTA="$ENTRADA"
+            echo "lote: manual"
+          elif [ "$AGENDA" = "0 10 * * *" ]; then
+            LISTA="$DIARIO"
+            echo "lote: diario"
+          else
+            LISTA="$SEMANAL"
+            echo "lote: semanal"
+          fi
+
+          # A ordem do lote semanal é a mesma do scheduler, e kpi_relatorio_semanal
+          # fica por último de propósito: ele lê o estado depois de os watchers da
+          # rodada passarem, e é o único que manda e-mail para fora.
+          BODY='{"triggeredBy":"github-actions","config":{"trigger":"cron"}}'
+
+          # Assinatura em python3 (e não `openssl dgst -hmac "$CHAVE"`) porque o
+          # openssl receberia o segredo como argumento, visível na tabela de
+          # processos. Aqui ele viaja por env. Numa linha só de propósito: código
+          # Python indentado dentro de um bloco YAML `|` é erro de sintaxe dos
+          # dois lados ao mesmo tempo.
+          SIG=$(printf '%s' "$BODY" | python3 -c 'import hashlib,hmac,os,sys;print(hmac.new(os.environb[b"HMAC"], sys.stdin.buffer.read(), hashlib.sha256).hexdigest())')
+
+          falhas=""
+          relatorio_ok=0
+
+          for agente in $LISTA; do
+            echo "::group::$agente"
+            inicio=$(date +%s)
+
+            # 20 min por agente. Se a borda do Railway cortar a conexão antes do
+            # fim, o curl falha aqui MAS o agente pode ter concluído do lado de
+            # lá — por isso o passo seguinte confere no banco em vez de confiar
+            # só neste código de saída.
+            http=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
+                   --max-time 1200 \
+                   -X POST "$WORKER_URL/run-sync/$agente" \
+                   -H 'content-type: application/json' \
+                   -H "x-agent-signature: $SIG" \
+                   -d "$BODY" 2>/tmp/err.txt || echo "000")
+
+            dur=$(( $(date +%s) - inicio ))
+            echo "http=$http · ${dur}s"
+            head -c 800 /tmp/resp.json 2>/dev/null || true
+            echo
+
+            if [ "$http" = "200" ]; then
+              [ "$agente" = "kpi_relatorio_semanal" ] && relatorio_ok=1
+            else
+              echo "erro: $(head -c 300 /tmp/err.txt 2>/dev/null)"
+              falhas="$falhas $agente"
+            fi
+            echo "::endgroup::"
+          done
+
+          echo "relatorio_ok=$relatorio_ok" >> "$GITHUB_OUTPUT"
+          echo "falhas=$falhas" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$falhas" ]; then
+            echo "::warning::agentes com falha na chamada:$falhas (o passo seguinte confere no banco)"
+          fi
+
+      - name: Conferir no banco o que realmente rodou
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -u
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+            echo "sem credenciais do Supabase · pulando a conferencia"
+            exit 0
+          fi
+
+          # A verdade não é o código HTTP, é a linha em agent_runs. Um curl que
+          # estourou o tempo pode ter deixado o agente terminando do outro lado.
+          desde=$(date -u -d '3 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          echo "execucoes registradas desde $desde:"
+          curl -sS --max-time 60 \
+            "$SUPABASE_URL/rest/v1/agent_runs?created_at=gte.$desde&select=agent_type,status,created_at&order=created_at.asc" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            | python3 -m json.tool 2>/dev/null || echo "(nao foi possivel ler agent_runs)"
+
+      - name: Falhar se o relatório não saiu
+        if: github.event.schedule == '0 9 * * 1'
+        run: |
+          if [ "${{ steps.disparar.outputs.relatorio_ok }}" != "1" ]; then
+            echo "::error::kpi_relatorio_semanal nao concluiu — o e-mail de segunda nao saiu."
+            exit 1
+          fi
+          echo "relatorio semanal concluido."
