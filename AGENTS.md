@@ -501,6 +501,24 @@ regras. **Quebrar qualquer uma delas é regressão crítica.**
    sem usar SECURITY DEFINER no helper.** Causa stack overflow.
    Padrão: helper SQL `STABLE SECURITY DEFINER SET search_path = public`.
 
+10. ⚠️⚠️ **NUNCA dar `GRANT` de nível de TABELA em `public.profiles` para
+    `anon` ou `authenticated`** (migration `20260816194649` · incidente de
+    16/08/2026). **RLS não é por coluna**: a policy diz qual LINHA pode ser
+    escrita, nunca qual COLUNA. Com `GRANT UPDATE` nas 23 colunas + a anon key
+    embutida no bundle do app de membros, **qualquer pessoa que baixasse o app
+    e criasse conta virava `diretor` do ERP** com
+    `update profiles set role='diretor' where id = auth.uid()` — confirmado ao
+    vivo. Hoje `authenticated` só escreve em `(name, telefone)` e `anon` não
+    escreve nada.
+    - ⚠️ **O furo nº 1 é reabrir por engano**: `GRANT UPDATE ON profiles` de
+      TABELA cobre todas as colunas, e revogar coluna a coluna depois **não tem
+      efeito** — só `REVOKE` de tabela + `GRANT` por coluna conserta.
+    - ⚠️ **Coluna nova nasce sem grant** (fail-closed, desejado).
+    - ⚠️ **Statement misto falha inteiro**: `.update({ name, avatar_url })` dá
+      403 inclusive na parte do `name`. Um update por coluna, ou rota no backend.
+    - Vale para qualquer tabela onde uma COLUNA decide permissão: conceder por
+      coluna desde o início.
+
 ## Inventário de helpers SQL (usar SEMPRE em policies novas)
 
 | Função | Retorna | Uso típico |

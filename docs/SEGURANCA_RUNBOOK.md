@@ -307,10 +307,11 @@ progressoes, pontuacao_colaborador
 
 ## Tabelas com audit log
 
-8 tabelas têm trigger `trg_audit_*` que grava em `app_audit_log`:
+11 tabelas têm trigger `trg_audit_*` que grava em `app_audit_log`:
 
 | Tabela | Colunas auditadas |
 |---|---|
+| `profiles` ⚠️ | role, membro_id, is_diretoria_geral, funcao_diretoria, kpi_areas, kpi_valores, is_membro_only, is_servico, active, area, ministerio_id, ministerio_papel, email, status |
 | `rh_funcionarios` | salario, remuneracao_bruta, grau_id, status, data_demissao, data_admissao, cpf, email, deleted_at |
 | `mem_membros` | cpf, status, nome, email, telefone, deleted_at |
 | `mem_contribuicoes` | valor, tipo, membro_id, deleted_at |
