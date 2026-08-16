@@ -12,6 +12,10 @@ const { isAuthorizedCron } = require('../utils/cronAuth');
 const wpp = require('../services/whatsappService');
 const multer = require('multer');
 const crypto = require('crypto');
+// ⚠️ Bucket `solicitacoes` é PRIVADO desde 16/08/2026 — os anexos são assinados
+// na LEITURA (o dado guarda URL pública antiga e o app do Staff ainda grava
+// assim). Ver o cabeçalho do serviço para o porquê.
+const { assinarAnexosSolicitacoes } = require('../services/anexosSolicitacao');
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
 const { lancarDespesaConciliando } = require('../services/finLancamento');
 const { aprenderClassificacao } = require('../services/financeiroClassificador');
@@ -1201,7 +1205,19 @@ router.get('/', async (req, res) => {
       marketing_campanha: campanhaMap[d.id] || null,
     }));
 
-    res.json(enriched);
+    // ⚠️ O bucket `solicitacoes` é PRIVADO (16/08/2026). As linhas antigas guardam
+    // a URL pública (que deixou de abrir) e o app do Staff CONTINUA gravando URL
+    // pública no upload — por isso a assinatura acontece na LEITURA, derivando o
+    // caminho da URL, em vez de migrar o dado e exigir release do app.
+    // Best-effort: falhar aqui não pode derrubar a lista de solicitações.
+    let saida = enriched;
+    try {
+      saida = await assinarAnexosSolicitacoes(enriched);
+    } catch (err) {
+      console.warn('[SOLICITACOES] assinatura de anexos falhou:', err.message);
+    }
+
+    res.json(saida);
   } catch (e) {
     console.error('[SOLICITACOES] list error:', e.message);
     res.status(500).json({ error: 'Erro ao listar solicitações' });
