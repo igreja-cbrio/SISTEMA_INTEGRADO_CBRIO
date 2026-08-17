@@ -171,6 +171,11 @@ export default function VolInscricoes() {
   // Período por data de inscrição (de/até · inclusivo). Quando ativo, a LISTA
   // ignora o seletor de ano (um período pode cruzar anos) — o resumo/gráficos
   // lá de cima continuam no recorte do ano.
+  // ⚠️ O que a pessoa DIGITA e o que vira FILTRO são coisas diferentes: ao
+  // digitar o ano pelo teclado o navegador emite valores intermediários
+  // válidos no formato ('0002-08-10', '0202-08-10'), e cada um dispararia um
+  // fetch com filtro absurdo. O input mostra o valor cru; a query só usa data
+  // plausível.
   const [de, setDe] = useState<string>('');
   const [ate, setAte] = useState<string>('');
   const [relatorioOpen, setRelatorioOpen] = useState(false);
@@ -365,16 +370,25 @@ export default function VolInscricoes() {
     }),
   });
 
-  const temPeriodo = !!(de || ate);
+  // Data plausível = digitada por completo (o ano parcial "0202" passa em
+  // qualquer regex de formato, mas não é uma data que alguém quis filtrar).
+  const dataPlausivel = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && Number(s.slice(0, 4)) >= 2000;
+  const deAplicado = dataPlausivel(de) ? de : '';
+  const ateAplicado = dataPlausivel(ate) ? ate : '';
+  const temPeriodo = !!(deAplicado || ateAplicado);
+  // O servidor recusa (400) quando a inicial vem depois da final — a tela diz
+  // isso antes de gastar a requisição.
+  const periodoInvertido = !!(deAplicado && ateAplicado && deAplicado > ateAplicado);
 
-  const { data: lista, isLoading: loadingList } = useQuery<InscricoesListResponse>({
-    queryKey: ['vol', 'inscricoes-list', ano, area, statusFilter, search, de, ate, page],
+  const { data: lista, isLoading: loadingList, error: listaErro } = useQuery<InscricoesListResponse>({
+    queryKey: ['vol', 'inscricoes-list', ano, area, statusFilter, search, deAplicado, ateAplicado, page],
+    enabled: !periodoInvertido,
     queryFn: () => voluntariado.inscricoesList({
       ano: temPeriodo ? undefined : ano,
       area: area === 'todas' ? undefined : area,
       status: statusFilter === 'todos' ? undefined : statusFilter,
-      de: de || undefined,
-      ate: ate || undefined,
+      de: deAplicado || undefined,
+      ate: ateAplicado || undefined,
       search: search || undefined,
       limit: pageSize,
       offset: page * pageSize,
@@ -385,44 +399,55 @@ export default function VolInscricoes() {
   // cabeçalho do relatório (número sem a janela ao lado é número que mente).
   const periodoLabel = useMemo(() => {
     const f = (s: string) => { const [y, m, d] = s.split('-'); return `${d}/${m}/${y}`; };
-    if (de && ate) return `${f(de)} a ${f(ate)}`;
-    if (de) return `a partir de ${f(de)}`;
-    if (ate) return `até ${f(ate)}`;
+    if (deAplicado && ateAplicado) return `${f(deAplicado)} a ${f(ateAplicado)}`;
+    if (deAplicado) return `a partir de ${f(deAplicado)}`;
+    if (ateAplicado) return `até ${f(ateAplicado)}`;
     return `Ano ${ano}`;
-  }, [de, ate, ano]);
+  }, [deAplicado, ateAplicado, ano]);
 
   // Gera o relatório impresso com o MESMO filtro da lista, paginando até o
   // total do servidor (o endpoint capa em 500 por página). A janela do popup
   // abre no CLIQUE (gesto do usuário) e é passada adiante — abrir depois do
   // fetch cai no bloqueador de popup.
   const gerarRelatorio = useMutation({
-    mutationFn: async (win: Window | null) => {
+    mutationFn: async (win: Window) => {
       const base = {
         ano: temPeriodo ? undefined : ano,
         area: area === 'todas' ? undefined : area,
         status: statusFilter === 'todos' ? undefined : statusFilter,
-        de: de || undefined,
-        ate: ate || undefined,
+        de: deAplicado || undefined,
+        ate: ateAplicado || undefined,
         search: search || undefined,
         limit: 500,
       };
-      const todas: InscricaoRow[] = [];
+      const porId = new Map<string, InscricaoRow>();
+      let total = 0;
       // Teto duro de 20 páginas (10 mil linhas) só como freio — a base viva
-      // tem ~830 inscrições.
-      for (let i = 0; i < 20; i++) {
+      // tem ~830 inscrições. Quando o teto morde, o relatório DECLARA.
+      let i = 0;
+      for (; i < 20; i++) {
         const r: InscricoesListResponse = await voluntariado.inscricoesList({ ...base, offset: i * 500 });
-        todas.push(...(r.rows || []));
-        if (!r.rows?.length || todas.length >= (r.total || 0)) break;
+        total = r.total || 0;
+        // Dedup por id: defesa em profundidade sobre o desempate de ordenação
+        // do servidor — linha repetida na fronteira da página inflaria o total
+        // impresso e os contadores por status.
+        for (const row of r.rows || []) porId.set(row.id, row);
+        if (!r.rows?.length || porId.size >= total) break;
       }
-      return { rows: todas, win };
+      return { rows: [...porId.values()], total, win };
     },
-    onSuccess: ({ rows, win }) => {
-      imprimirRelatorioInscricoesVol(rows, {
+    onSuccess: ({ rows, total, win }) => {
+      const ok = imprimirRelatorioInscricoesVol(rows, {
         periodoLabel,
         areaLabel: area === 'todas' ? null : (area === 'kids' ? 'Kids' : 'Sede'),
         statusLabel: statusFilter === 'todos' ? null : (STATUS_LABELS[statusFilter] || statusFilter),
         busca: search || null,
+        totalNoFiltro: total,
       }, { incluirContato, win });
+      if (!ok) {
+        toast.error('Não foi possível abrir a janela de impressão — libere os popups deste site e tente de novo.');
+        return;
+      }
       setRelatorioOpen(false);
     },
     onError: (e: any, win) => {
@@ -435,9 +460,13 @@ export default function VolInscricoes() {
     // Abre a janela DENTRO do gesto do clique e mostra um aguarde enquanto o
     // fetch pagina — window.open pós-await é bloqueado pelo navegador.
     const win = window.open('', '_blank', 'width=900,height=1100,scrollbars=yes');
-    if (win) {
-      win.document.write('<p style="font-family:system-ui,sans-serif;color:#555;padding:24px">Gerando relatório…</p>');
+    // ⚠️ Popup bloqueado avisa AQUI, antes de paginar 830 linhas à toa: sem
+    // isso o diálogo fechava como se tivesse dado certo e nada abria.
+    if (!win) {
+      toast.error('O navegador bloqueou a janela do relatório — libere os popups deste site e tente de novo.');
+      return;
     }
+    win.document.write('<p style="font-family:system-ui,sans-serif;color:#555;padding:24px">Gerando relatório…</p>');
     gerarRelatorio.mutate(win);
   };
 
@@ -490,13 +519,16 @@ export default function VolInscricoes() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Select value={ano} onValueChange={setAno}>
+          {/* Trocar o recorte volta pra página 1: sem isso o offset antigo
+              sobrevive e um recorte menor devolve lista vazia — a tela diria
+              "nenhuma inscrição" com dados existindo. */}
+          <Select value={ano} onValueChange={(v) => { setAno(v); setPage(0); }}>
             <SelectTrigger className="w-[110px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               {ANOS.map(a => <SelectItem key={a} value={String(a)}>{a}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Select value={area} onValueChange={setArea}>
+          <Select value={area} onValueChange={(v) => { setArea(v); setPage(0); }}>
             <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="todas">Todas áreas</SelectItem>
@@ -802,7 +834,9 @@ export default function VolInscricoes() {
                 </div>
                 <Button type="submit" size="sm" variant="outline">Buscar</Button>
               </form>
-              <Button size="sm" variant="outline" onClick={() => { setIncluirContato(false); setRelatorioOpen(true); }}>
+              <Button size="sm" variant="outline" disabled={periodoInvertido}
+                title={periodoInvertido ? 'Ajuste o período antes de gerar' : 'Gera a folha com o filtro atual'}
+                onClick={() => { setIncluirContato(false); setRelatorioOpen(true); }}>
                 <Printer className="h-3.5 w-3.5 mr-1" /> Gerar relatório
               </Button>
             </div>
@@ -824,10 +858,22 @@ export default function VolInscricoes() {
                 </tr>
               </thead>
               <tbody>
-                {loadingList && (
+                {periodoInvertido && (
+                  <tr><td colSpan={8} className="text-center text-amber-600 py-6">
+                    A data inicial vem depois da final — ajuste o período.
+                  </td></tr>
+                )}
+                {!periodoInvertido && loadingList && (
                   <tr><td colSpan={8} className="text-center text-muted-foreground py-6">Carregando...</td></tr>
                 )}
-                {!loadingList && lista?.rows?.length === 0 && (
+                {/* Erro vem ANTES do vazio — erro disfarçado de "nenhuma inscrição"
+                    leva a decisão errada (lei do projeto). */}
+                {!periodoInvertido && !loadingList && !!listaErro && (
+                  <tr><td colSpan={8} className="text-center text-red-600 py-6">
+                    {(listaErro as any)?.message || 'Erro ao carregar as inscrições — tente ajustar o filtro.'}
+                  </td></tr>
+                )}
+                {!periodoInvertido && !loadingList && !listaErro && lista?.rows?.length === 0 && (
                   <tr><td colSpan={8} className="text-center text-muted-foreground py-6">Nenhuma inscrição com esses filtros</td></tr>
                 )}
                 {lista?.rows?.map(p => (

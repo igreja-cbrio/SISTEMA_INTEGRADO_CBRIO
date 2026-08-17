@@ -30,6 +30,12 @@ export interface FiltrosRelatorio {
   areaLabel?: string | null;
   statusLabel?: string | null;
   busca?: string | null;
+  /**
+   * Quantas linhas o filtro tem NO SERVIDOR. Quando é maior que as linhas
+   * recebidas, a folha declara "mostrando X de Y" — contagem truncada em
+   * silêncio é a que ninguém percebe que está faltando gente.
+   */
+  totalNoFiltro?: number | null;
 }
 
 export const STATUS_LABELS_INSCRICAO: Record<string, string> = {
@@ -86,6 +92,8 @@ const CSS = `
     font-size: 11pt; font-weight: 700; display: flex; justify-content: space-between; }
   .totalgeral .ass { font-weight: 400; color: #999; }
   .vazio { text-align: center; color: #999; font-style: italic; padding: 18px 0; }
+  .aviso { border: 1px solid #e0b000; background: #FFF8E1; color: #7a5a00;
+    border-radius: 6px; padding: 6px 10px; font-size: 9.5pt; margin-bottom: 12px; }
 `;
 
 function escapeHtml(s: unknown): string {
@@ -109,12 +117,14 @@ export function imprimirRelatorioInscricoesVol(
    * navegador; abrir antes e escrever depois é o que mantém o popup vivo.
    */
   opcoes: { incluirContato?: boolean; win?: Window | null } = {},
-): void {
+): boolean {
   const incluirContato = !!opcoes.incluirContato;
 
   // Ordem cronológica: o relatório conta a história do período.
   const base = rows.slice().sort((a, b) =>
     String(a.data_inscricao || '').localeCompare(String(b.data_inscricao || '')));
+
+  const truncou = typeof filtros.totalNoFiltro === 'number' && filtros.totalNoFiltro > base.length;
 
   // Resumo por status — chave fora do catálogo aparece com o slug cru em vez
   // de desaparecer (status novo no banco não pode sumir da folha).
@@ -171,6 +181,7 @@ export function imprimirRelatorioInscricoesVol(
       <span class="chip">Total: <b>${base.length}</b></span>
       ${chips}
     </div>
+    ${truncou ? `<div class="aviso">⚠️ Esta folha mostra ${base.length} de ${filtros.totalNoFiltro} inscrições do filtro — o restante não coube nesta geração.</div>` : ''}
     <table><thead><tr>${cols.join('')}</tr></thead><tbody>${linhas}</tbody></table>
     <div class="totalgeral">
       <span>Total de inscrições: ${base.length}</span>
@@ -179,13 +190,17 @@ export function imprimirRelatorioInscricoesVol(
   </body></html>`;
 
   const win = opcoes.win ?? window.open('', '_blank', 'width=900,height=1100,scrollbars=yes');
+  // Devolve false em vez de só logar: o chamador precisa avisar na tela —
+  // console.warn é onde a equipe da igreja nunca olha, e o diálogo fechando
+  // sem nada acontecer se lê como botão quebrado.
   if (!win) {
     console.warn('[relatorioInscricoesVol] popup bloqueado · libere popups do site');
-    return;
+    return false;
   }
   win.document.open();
   win.document.write(html);
   win.document.close();
   win.focus();
   setTimeout(() => { try { win.print(); } catch (e) { console.error('[relatorioInscricoesVol] print:', e); } }, 350);
+  return true;
 }
