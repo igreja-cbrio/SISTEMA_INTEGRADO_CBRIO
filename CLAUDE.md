@@ -794,6 +794,43 @@ Celebra (13/07) não veio por ali.
   uma sessão pra achar. Para "deu erro" em ação que passa por RPC de whitelist,
   esta é a primeira pergunta.
 
+### ⚠️⚠️ A CAUSA MAIOR: uma migration reescreveu a whitelist com lista ESTÁTICA (migration `20260817180000`)
+
+Puxando o fio, o estrago era maior que o módulo de inscrições:
+**`20260814160000_time_agentes_fase0` fez `CREATE OR REPLACE` da
+`app_soft_deletable_tables()` com a lista escrita à mão** — e apagou em silêncio
+tudo que tinha entrado por patch dinâmico antes dela. `vol_inscricoes` entrou
+pela M6b (`20260729060000`, cujo próprio texto diz "soft-delete de
+vol_inscricoes LIBERADO") e **não estava mais lá**.
+
+Varredura das **25 tabelas que `backend/` apaga por essa RPC**: 3 estavam fora —
+`vol_inscricoes` (829 vivas · **0 apagadas**, o caminho nunca funcionou),
+`prop_proposta` e `whatsapp_lideres`. Todas restauradas; depois: **0 fora**.
+
+⇒ **REGRA: mexer na whitelist é SEMPRE patch dinâmico sobre a definição VIVA**
+(`unnest(app_soft_deletable_tables()) UNION SELECT 'nova'`). Lista estática num
+`CREATE OR REPLACE` é uma remoção silenciosa disfarçada de acréscimo — e o
+sintoma aparece meses depois, em OUTRO módulo, como "erro ao excluir".
+
+## Voluntariado · excluir inscrição de servir (2026-08-17 · SEM migration própria)
+
+Pedido do Matheus: *"na aba de inscrições para o voluntariado, onde as pessoas
+se inscrevem querendo servir, ali tem que ter opção de excluir uma inscrição"*.
+
+- `DELETE /voluntariado/inscricoes/:id` e `POST /voluntariado/inscricoes/excluir-lote`,
+  com a **mesma régua de permissão do PATCH e do "desistiu"** (admin OU nível 3
+  em voluntariado/membresia) — duas réguas na mesma tela divergiriam no primeiro
+  ajuste de cargo. Reusa a régua pura `utils/exclusaoInscricaoLote`.
+- ⚠️ **Excluir ≠ "desistiu"**, e a confirmação diz isso: desistente é FATO da
+  pessoa e continua no funil; excluída some do funil, dos KPIs de solicitações de
+  servir e do relatório — é pra linha que não deveria existir (teste, duplicata).
+- ⚠️ **Nada é bloqueado aqui** (diferente do lote de eventos, onde pagamento
+  barra): inscrição de servir não move dinheiro. Mas a confirmação **avisa
+  quantas já foram integradas/enviadas ao ministério**, porque essas saem do KPI
+  de solicitações alocadas — quem decide é quem está olhando.
+- ⚠️ **"Selecionar todos" marca a PÁGINA visível** (50 linhas), não as 829 do
+  filtro.
+
 ## Inscrições · excluir EM LOTE (web + app do staff) (2026-08-17 · SEM migration)
 
 Pedido do Matheus, no mesmo dia: *"nas inscrições do Celebra, preciso da
