@@ -58,7 +58,7 @@ async function fetchWithRetry(url, headers, maxRetries = 3) {
 }
 
 // ── Paginated service types ─────────────────────────────────────────────────
-async function fetchAllServiceTypes(credentials) {
+async function fetchAllServiceTypes(credentials, { requireComplete = false } = {}) {
   const headers = { Authorization: `Basic ${credentials}` };
   const all = [];
   let offset = 0;
@@ -66,13 +66,19 @@ async function fetchAllServiceTypes(credentials) {
   while (true) {
     const url = `${PC_SERVICES_BASE}/service_types?per_page=${perPage}&offset=${offset}`;
     const response = await fetchWithRetry(url, headers);
-    if (!response || !response.ok) break;
+    if (!response || !response.ok) {
+      if (requireComplete) throw new Error(`Planning Center não retornou todos os tipos de serviço (offset ${offset})`);
+      break;
+    }
     const data = await response.json();
     const batch = data.data || [];
     all.push(...batch);
     if (batch.length < perPage) break;
     offset += perPage;
-    if (offset > 5000) break; // safety
+    if (offset > 5000) {
+      if (requireComplete) throw new Error('Planning Center excedeu o limite de paginação dos tipos de serviço');
+      break; // safety
+    }
   }
   console.log(`[PC] Found ${all.length} service types (after pagination)`);
   return all;
@@ -103,7 +109,7 @@ async function fetchAllTeamMembers(baseUrl, serviceTypeId, planId, credentials) 
 // Janela ampla por padrão: próximos 60 dias + últimos 7 dias. Página por
 // `offset` até esgotar — assim service types movimentados (Kids, Domingo etc.)
 // não ficam limitados a 5 cultos futuros.
-async function fetchAllPlans(baseUrl, serviceTypeId, credentials) {
+async function fetchAllPlans(baseUrl, serviceTypeId, credentials, { requireComplete = false } = {}) {
   const headers = { Authorization: `Basic ${credentials}` };
   const planMap = new Map();
 
@@ -118,12 +124,19 @@ async function fetchAllPlans(baseUrl, serviceTypeId, credentials) {
   while (true) {
     const url = `${baseUrl}/service_types/${serviceTypeId}/plans?filter=after,before&after=${fmt(past)}&before=${fmt(future)}&per_page=${perPage}&offset=${offset}&order=sort_date`;
     const res = await fetchWithRetry(url, headers);
-    if (!res || !res.ok) break;
+    if (!res || !res.ok) {
+      if (requireComplete) throw new Error(`Planning Center não retornou todos os planos do tipo ${serviceTypeId} (offset ${offset})`);
+      break;
+    }
     const d = await res.json();
     pageCount++;
     const batch = d.data || [];
     for (const p of batch) planMap.set(p.id, p);
-    if (batch.length < perPage || pageCount >= 20) break;
+    if (batch.length < perPage) break;
+    if (pageCount >= 20) {
+      if (requireComplete) throw new Error(`Planning Center excedeu o limite de paginação dos planos do tipo ${serviceTypeId}`);
+      break;
+    }
     offset += perPage;
   }
 
@@ -211,13 +224,16 @@ function getVolunteerName(member, personData) {
 }
 
 // ── Fetch all persons from all teams of a service type (independent of plans) ─
-async function fetchAllTeamPersons(serviceTypeId, credentials) {
+async function fetchAllTeamPersons(serviceTypeId, credentials, { requireComplete = false } = {}) {
   const headers = { Authorization: `Basic ${credentials}` };
   const volunteers = new Map();
 
   // 1. Get all teams for this service type
   const teamsRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types/${serviceTypeId}/teams?per_page=100`, headers);
-  if (!teamsRes.ok) return volunteers;
+  if (!teamsRes || !teamsRes.ok) {
+    if (requireComplete) throw new Error(`Planning Center não retornou as equipes do tipo ${serviceTypeId}`);
+    return volunteers;
+  }
 
   const teamsData = await teamsRes.json();
   const teams = teamsData.data || [];
@@ -230,7 +246,10 @@ async function fetchAllTeamPersons(serviceTypeId, credentials) {
     while (true) {
       const url = `${PC_SERVICES_BASE}/service_types/${serviceTypeId}/teams/${team.id}/team_members?per_page=${perPage}&offset=${offset}&include=person`;
       const res = await fetchWithRetry(url, headers);
-      if (!res.ok) break;
+      if (!res || !res.ok) {
+        if (requireComplete) throw new Error(`Planning Center não retornou todos os membros da equipe ${team.id}`);
+        break;
+      }
 
       const data = await res.json();
       pageCount++;
@@ -259,7 +278,11 @@ async function fetchAllTeamPersons(serviceTypeId, credentials) {
         }
       }
 
-      if (!data.data || data.data.length < perPage || pageCount >= 50) break;
+      if (!data.data || data.data.length < perPage) break;
+      if (pageCount >= 50) {
+        if (requireComplete) throw new Error(`Planning Center excedeu o limite de paginação da equipe ${team.id}`);
+        break;
+      }
       offset += perPage;
     }
   }
@@ -270,7 +293,7 @@ async function fetchAllTeamPersons(serviceTypeId, credentials) {
 // Lista COMPLETA de people do Planning Center Services — inclui quem nunca foi
 // escalado e não está em nenhuma equipe. É o total do "Services" (ex.: 875).
 // Usada pra a galeria de voluntários espelhar o Planning Center inteiro.
-async function fetchAllServicesPeople(credentials) {
+async function fetchAllServicesPeople(credentials, { requireComplete = false } = {}) {
   const headers = { Authorization: `Basic ${credentials}` };
   const people = new Map();
   const perPage = 100;
@@ -278,7 +301,10 @@ async function fetchAllServicesPeople(credentials) {
   while (true) {
     const url = `${PC_SERVICES_BASE}/people?per_page=${perPage}&offset=${offset}`;
     const res = await fetchWithRetry(url, headers);
-    if (!res.ok) break;
+    if (!res || !res.ok) {
+      if (requireComplete) throw new Error(`Planning Center não retornou todas as pessoas do Services (offset ${offset})`);
+      break;
+    }
     const data = await res.json();
     for (const p of (data.data || [])) {
       const a = p.attributes || {};
@@ -297,7 +323,10 @@ async function fetchAllServicesPeople(credentials) {
     if (!data.data || data.data.length < perPage) break;
     offset += perPage;
     if (total && offset >= total) break;
-    if (offset > 20000) break; // safety
+    if (offset > 20000) {
+      if (requireComplete) throw new Error('Planning Center excedeu o limite de paginação das pessoas do Services');
+      break; // safety
+    }
   }
   return people;
 }

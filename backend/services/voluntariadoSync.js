@@ -9,11 +9,12 @@ const {
   fetchAllServicesPeople, processServiceType, PC_SERVICES_BASE,
   upsertVolunteerQrCodes, upsertVolunteerProfiles, reconcilePlanningCenterProfiles,
 } = require('./planningCenter');
+const { decidirReconciliacao } = require('../utils/volSyncIntegrity');
 
 async function executarSyncCompleto() {
   const { basic: credentials } = getPCCredentials();
 
-  const serviceTypes = await fetchAllServiceTypes(credentials);
+  const serviceTypes = await fetchAllServiceTypes(credentials, { requireComplete: true });
   if (!serviceTypes.length) {
     const err = new Error('Falha ao conectar ao Planning Center ou nenhum tipo encontrado');
     err.code = 'NO_SERVICE_TYPES';
@@ -26,15 +27,17 @@ async function executarSyncCompleto() {
   // Todos os tipos de serviço em paralelo
   const settled = await Promise.allSettled(serviceTypes.map(async (st) => {
     const [plans, teamPersons] = await Promise.all([
-      fetchAllPlans(PC_SERVICES_BASE, st.id, credentials),
-      fetchAllTeamPersons(st.id, credentials),
+      fetchAllPlans(PC_SERVICES_BASE, st.id, credentials, { requireComplete: true }),
+      fetchAllTeamPersons(st.id, credentials, { requireComplete: true }),
     ]);
     const result = await processServiceType(supabase, st, plans, credentials);
     return { result, teamPersons };
   }));
 
+  let tiposComFalha = 0;
   for (const item of settled) {
     if (item.status === 'rejected') {
+      tiposComFalha += 1;
       console.error('[VOL SYNC] Service type error:', item.reason?.message || item.reason);
       continue;
     }
@@ -53,9 +56,11 @@ async function executarSyncCompleto() {
   // Complementa com TODAS as people do Services (inclui quem nunca foi escalado
   // e não está em nenhuma equipe) — pra o sistema espelhar o total do PCO.
   let servicesPeople = 0;
+  let pessoasCompletas = false;
   try {
-    const allPeople = await fetchAllServicesPeople(credentials);
+    const allPeople = await fetchAllServicesPeople(credentials, { requireComplete: true });
     servicesPeople = allPeople.size;
+    pessoasCompletas = true;
     for (const [k, v] of allPeople) if (!allVolunteers.has(k)) allVolunteers.set(k, v);
   } catch (e) {
     console.error('[VOL SYNC] fetchAllServicesPeople:', e.message);
@@ -66,12 +71,21 @@ async function executarSyncCompleto() {
   const avatarsImported = Array.from(allVolunteers.values()).filter(v => v.avatar_url).length;
 
   // Reconciliacao: arquiva quem saiu do PCO (allVolunteers = roster COMPLETO do
-  // Planning Center · inclui fetchAllServicesPeople). So roda aqui, no sync completo.
-  let reconciliacao = { arquivados: 0, desarquivados: 0, skipped: true };
-  try {
-    reconciliacao = await reconcilePlanningCenterProfiles(supabase, allVolunteers);
-  } catch (e) {
-    console.error('[VOL SYNC] reconcilePlanningCenterProfiles:', e.message);
+  // Planning Center · inclui fetchAllServicesPeople). Só roda quando TODAS as
+  // fontes terminaram — uma leitura parcial jamais pode arquivar alguém.
+  const decisaoReconciliacao = decidirReconciliacao({
+    tiposComFalha,
+    pessoasCompletas,
+  });
+  let reconciliacao = { arquivados: 0, desarquivados: 0, skipped: true, motivo: decisaoReconciliacao.motivo };
+  if (decisaoReconciliacao.podeReconciliar) {
+    try {
+      reconciliacao = await reconcilePlanningCenterProfiles(supabase, allVolunteers);
+    } catch (e) {
+      console.error('[VOL SYNC] reconcilePlanningCenterProfiles:', e.message);
+    }
+  } else {
+    console.warn(`[VOL SYNC] reconciliação ignorada: ${decisaoReconciliacao.motivo}`);
   }
 
   // Materializa as escalas recentes do PCO na Frequência (quem serviu nos
