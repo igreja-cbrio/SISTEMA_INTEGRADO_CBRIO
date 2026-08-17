@@ -28,6 +28,7 @@ const { traduzErroUmPaiUmaMae } = require('../utils/kidsResponsavel');
 const { enviarTexto: enviarTextoWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado, ehNomePlaceholder } = require('../services/membroMatch');
 const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
+const { frequentaNaJanela, avaliarFrequencia } = require('../utils/kidsFrequencia');
 // O Planning Center Check-Ins saiu do código (Marcos 2026-07-20): a frequência
 // do Kids é 100% do nosso totem (kids_checkins). Sobrou só a coluna legada
 // kids_criancas.planning_center_id e a tabela kids_pco_presencas (histórico
@@ -1447,11 +1448,64 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
       if (page.length < pageSize) break;
       from += pageSize;
     }
-    res.json((await anexarFotosEmLote(data)).map(c => ({
-      ...c,
-      idade_meses: calcIdadeMeses(c.data_nascimento),
-      idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
-    })));
+    // Frequência por criança (quantos check-ins e quando foi o último). É o que
+    // sustenta a régua "ativa = veio pelo menos 1× em 12 meses" e o filtro por
+    // quantidade de check-in. Best-effort: se falhar, a lista abre sem os
+    // números em vez de não abrir — mas o aviso vai no payload, porque 0
+    // check-in silencioso se lê como "essa criança nunca veio".
+    let checkinsPorCrianca = new Map();
+    let coletaDesde = null;
+    let avisoFrequencia = null;
+    try {
+      // Paginado: kids_checkins cresce ~600/mês e o PostgREST capa em 1000.
+      const linhas = [];
+      for (let off = 0; off < 200000; off += 1000) {
+        const { data: pag, error } = await supabase
+          .from('kids_checkins')
+          .select('crianca_id, created_at')
+          .order('created_at', { ascending: true })
+          .range(off, off + 999);
+        if (error) throw error;
+        linhas.push(...(pag || []));
+        if (!pag || pag.length < 1000) break;
+      }
+      for (const l of linhas) {
+        const atual = checkinsPorCrianca.get(l.crianca_id) || { total: 0, ultimo: null };
+        atual.total += 1;
+        if (!atual.ultimo || l.created_at > atual.ultimo) atual.ultimo = l.created_at;
+        checkinsPorCrianca.set(l.crianca_id, atual);
+      }
+      coletaDesde = linhas.length ? linhas[0].created_at : null;
+    } catch (e) {
+      console.error('[totemKids/criancas] frequência:', e.message);
+      avisoFrequencia = 'Não consegui carregar os check-ins — os números de frequência estão indisponíveis nesta lista.';
+      checkinsPorCrianca = new Map();
+    }
+
+    const itens = (await anexarFotosEmLote(data)).map(c => {
+      const f = checkinsPorCrianca.get(c.id) || { total: 0, ultimo: null };
+      return {
+        ...c,
+        idade_meses: calcIdadeMeses(c.data_nascimento),
+        idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
+        checkins_total: avisoFrequencia ? null : f.total,
+        ultimo_checkin: avisoFrequencia ? null : f.ultimo,
+        frequenta: avisoFrequencia ? null : frequentaNaJanela(f.ultimo),
+      };
+    });
+
+    // ⚠️ Formato de resposta preservado (array) — o app do Staff e a ficha
+    // consomem esta rota. Os metadados vão em `?meta=1`, que só a gestão pede.
+    if (req.query.meta === '1') {
+      return res.json({
+        itens,
+        frequencia: {
+          ...avaliarFrequencia(itens, { coletaDesde }),
+          aviso: avisoFrequencia,
+        },
+      });
+    }
+    res.json(itens);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao listar crianças' });
   }
