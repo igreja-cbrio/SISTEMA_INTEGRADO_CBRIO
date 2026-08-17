@@ -876,6 +876,11 @@ const { corDoEvento, ehExcedente, CORES_EVENTO } = require('../utils/marketingCo
 // ⚠️ NÃO voltar a perguntar `card.solicitacao_id` direto: 8 dos 9 cards em uso
 // têm só `campanha_id`, e era isso que matava os avisos e o download.
 const { solicitanteDoCard, ehSolicitanteDoCard } = require('../services/marketingSolicitante');
+// Ocupação da equipe · dias úteis e carga por dia. ⚠️ Régua ÚNICA: o cliente
+// NÃO recalcula fim de tarefa nem carga — pede ao servidor.
+const {
+  OCUPACOES_DIAS, calcularDataFim, proximoDiaUtil, diasUteisNoIntervalo,
+} = require('../utils/marketingOcupacao');
 
 // Solicitação ENTREGUE (o que o marketing resolveu). `avaliado` = concluída e
 // já com NPS respondido — continua sendo entrega.
@@ -1328,6 +1333,9 @@ router.get('/dashboard/fase/:faseId', authorizeModule('marketing', 1), async (re
         card: c ? {
           id: c.id, titulo: c.titulo, estado: c.estado,
           dono: c.atribuido?.profile?.name || c.atribuido?.nome_display || null,
+          // ⚠️ O ID do dono (não só o nome) porque o dashboard passou a ATRIBUIR
+          // daqui — o ciclo criativo saiu do Kanban e é gerenciado nesta tela.
+          atribuido_a: c.atribuido_a || null,
           etiqueta: c.etiqueta_tipo?.nome || null,
           prazo: prazoDoCard(c),
         } : null,
@@ -2397,11 +2405,28 @@ router.delete('/campanhas/:id', authorizeModule('marketing', 5), async (req, res
 // Card nasce origem='interna' + campanha_id · estado 'fila' (Fase 3 remapeia p/ backlog).
 router.post('/campanhas/:id/cards', authorizeModule('marketing', 5), async (req, res) => {
   try {
-    const { titulo, descricao, etiqueta_tipo_id, atribuido_a, pode_paralelo, data_inicio, data_fim } = req.body || {};
+    const { titulo, descricao, etiqueta_tipo_id, atribuido_a, pode_paralelo, ocupa_dias } = req.body || {};
+    let { data_inicio, data_fim } = req.body || {};
     if (!titulo || !titulo.trim()) return res.status(400).json({ error: 'título do entregavel obrigatório' });
     const { data: camp } = await supabase
       .from('marketing_campanhas').select('id, status').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!camp) return res.status(404).json({ error: 'Campanha não encontrada' });
+
+    // ⚠️ A TRIAGEM manda "começa dia X e ocupa N dias úteis"; o FIM é derivado
+    // aqui pela régua única. Antes a tela mandava duas datas OPCIONAIS e o
+    // resultado medido foi 0 de 83 cards com plano — o Planner ficava vazio e
+    // "atribuir" não ocupava ninguém.
+    if (ocupa_dias != null && ocupa_dias !== '') {
+      const n = Number(ocupa_dias);
+      if (!Number.isFinite(n) || n <= 0) {
+        return res.status(400).json({ error: 'ocupa_dias deve ser um número de dias úteis maior que zero' });
+      }
+      const ini = proximoDiaUtil(data_inicio) || data_inicio;
+      const fim = calcularDataFim(ini, n);
+      if (!fim) return res.status(400).json({ error: 'não foi possível calcular o fim (confira a data de início)' });
+      data_inicio = ini;
+      data_fim = fim;
+    }
     // duração em DIAS ÚTEIS derivada de inicio/fim (inclusivo · pula sab/dom)
     const dur = diasUteisInclusive(data_inicio, data_fim);
     const { data, error } = await supabase
@@ -2539,10 +2564,19 @@ router.post('/campanhas/:id/revisar', async (req, res) => {
 // Ocupacao de slots de um membro por dia, a partir dos intervalos data_inicio→
 // data_fim dos cards ativos. Usado na triagem pra avisar sobrecarga (>slots_dia).
 // Paralela conta 1 slot/dia · foco (não paralela) enche o dia.
+// ⚠️ Aceita `ocupa_dias` em vez de `fim`: o FIM é calculado aqui, pela régua
+// única (`utils/marketingOcupacao`), porque duplicá-la no cliente daria duas
+// respostas para "quando isso termina". O front manda "começa dia X e ocupa N
+// dias úteis" e recebe de volta o intervalo efetivo + o efeito na agenda.
 router.get('/capacidade-dia', authorizeModule('marketing', 1), async (req, res) => {
   try {
-    const { membro_id, inicio, fim } = req.query;
-    if (!membro_id || !inicio || !fim) return res.status(400).json({ error: 'membro_id, início e fim obrigatórios' });
+    const { membro_id, inicio, ocupa_dias } = req.query;
+    let { fim } = req.query;
+    if (membro_id && inicio && !fim && ocupa_dias) {
+      fim = calcularDataFim(inicio, Number(ocupa_dias));
+      if (!fim) return res.status(400).json({ error: 'ocupa_dias inválido' });
+    }
+    if (!membro_id || !inicio || !fim) return res.status(400).json({ error: 'membro_id, início e (fim OU ocupa_dias) obrigatórios' });
     const { data: membro } = await supabase
       .from('marketing_membros').select('id, slots_dia').eq('id', membro_id).maybeSingle();
     const slots_dia = membro?.slots_dia || 3;
@@ -2573,7 +2607,16 @@ router.get('/capacidade-dia', authorizeModule('marketing', 1), async (req, res) 
         d = new Date(d.getTime() + 86400000);
       }
     }
-    res.json({ slots_dia, dias });
+    // ⚠️ Devolve o intervalo EFETIVO (o início pode andar se cair em fim de
+    // semana): sem isso a tela mostraria um período que o servidor não usou.
+    const diasCheios = Object.values(dias).filter(d => d.ocupados >= slots_dia).length;
+    res.json({
+      slots_dia, dias,
+      data_inicio: proximoDiaUtil(inicio) || inicio,
+      data_fim: fim,
+      dias_uteis: diasUteisNoIntervalo(proximoDiaUtil(inicio) || inicio, fim),
+      dias_cheios: diasCheios,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2598,26 +2641,102 @@ router.get('/planner', authorizeModule('marketing', 1), async (req, res) => {
       id: m.id, slots_dia: m.slots_dia || 3, habilidade: m.habilidade,
       nome: profMap[m.profile_id] || m.nome_display || '(sem nome)',
     }));
+    // ⚠️⚠️ ANTES este SELECT exigia `data_inicio`+`data_fim`, e elas estavam
+    // preenchidas em **0 de 83 cards vivos** — o Planner nunca teve uma barra. Era
+    // um CÍRCULO: só o arrasto no Planner gravava as datas, e o card não aparecia
+    // lá sem elas. Agora o card vem SEM o filtro de data e o plano é resolvido
+    // abaixo: data própria → datas da FASE do ciclo → sem plano (declarado).
     const { data: cardsRaw, error } = await supabase
       .from('marketing_kanban_cards')
-      .select('id, titulo, atribuido_a, data_inicio, data_fim, pode_paralelo, estado, campanha_id, etiqueta_tipo_id')
+      .select('id, titulo, atribuido_a, data_inicio, data_fim, pode_paralelo, duracao_dias, estado, origem, campanha_id, etiqueta_tipo_id, cycle_phase_task_id')
       .is('deleted_at', null).neq('estado', 'concluido')
-      .not('data_inicio', 'is', null).not('data_fim', 'is', null).not('atribuido_a', 'is', null)
-      .lte('data_inicio', fim).gte('data_fim', inicio);
+      .not('atribuido_a', 'is', null);
     if (error) throw error;
+
+    // ⚠️ O ciclo criativo saiu do Kanban (o Pedro passou a gerenciá-lo no
+    // dashboard), mas ele CONSOME a agenda da equipe — 74 das 83 tarefas vivas.
+    // Sem trazer essa carga, o Planner mostraria a equipe quase livre e passaria
+    // a MENTIR sobre capacidade. As fases já têm data prevista no banco; é ela
+    // que dá o intervalo dessas tarefas (decisão do Marcos, 14/08).
+    const idsTarefaCiclo = [...new Set((cardsRaw || [])
+      .filter(c => !c.data_inicio || !c.data_fim)
+      .map(c => c.cycle_phase_task_id).filter(Boolean))];
+    // ⚠️ A coluna é `event_phase_id` (não `phase_id`) — e o embed já é o mesmo
+    // que o `enrichCards` usa. A sonda contra produção pegou o nome errado antes
+    // de subir: coluna inexistente faz o PostgREST recusar a query INTEIRA, e o
+    // Planner voltaria 500 (ou vazio, se o erro fosse engolido).
+    const faseDaTarefa = {};
+    if (idsTarefaCiclo.length) {
+      const tarefas = await lerEmLotes(
+        'cycle_phase_tasks',
+        'id, event_phase_id, event_cycle_phases:event_phase_id(id, numero_fase, nome_fase, data_inicio_prevista, data_fim_prevista)',
+        'id', idsTarefaCiclo,
+      );
+      for (const t of tarefas || []) {
+        const f = t.event_cycle_phases;
+        if (f?.data_inicio_prevista && f?.data_fim_prevista) faseDaTarefa[t.id] = f;
+      }
+    }
+
+    const dentroDaJanela = (de, ate) => !!de && !!ate && de <= fim && ate >= inicio;
     const tipoIds = [...new Set((cardsRaw || []).map(c => c.etiqueta_tipo_id).filter(Boolean))];
     let corMap = {};
     if (tipoIds.length) {
       const { data: tipos } = await supabase.from('marketing_etiquetas_tipo').select('id, cor').in('id', tipoIds);
       corMap = Object.fromEntries((tipos || []).map(t => [t.id, t.cor]));
     }
-    const cards = (cardsRaw || []).map(c => ({
-      id: c.id, titulo: c.titulo, atribuido_a: c.atribuido_a,
-      data_inicio: c.data_inicio, data_fim: c.data_fim,
-      pode_paralelo: c.pode_paralelo, estado: c.estado, campanha_id: c.campanha_id,
-      cor: corMap[c.etiqueta_tipo_id] || null,
-    }));
-    res.json({ membros, cards });
+    const idsComRaia = new Set(membros.map(m => m.id));
+    const cards = [];
+    const semPlano = [];   // atribuídos que não ocupam dia nenhum — DECLARADOS
+    // ⚠️⚠️ Dono SEM raia = barra que existe no dado e não tem onde aparecer. É o
+    // caso do COORDENADOR, que fica fora das raias por decisão (ele distribui, não
+    // executa) — e medido em 17/08: **as 10 barras do ciclo estavam TODAS no
+    // coordenador**, então o Planner continuaria visualmente vazio mesmo com o
+    // ciclo ligado. Sem declarar, isso é trabalho invisível outra vez.
+    const semRaia = [];
+    for (const c of cardsRaw || []) {
+      let de = c.data_inicio;
+      let ate = c.data_fim;
+      let plano = 'proprio';
+
+      // Ciclo criativo sem data própria: herda o intervalo da FASE.
+      if ((!de || !ate) && c.cycle_phase_task_id) {
+        const f = faseDaTarefa[c.cycle_phase_task_id];
+        if (f?.data_inicio_prevista && f?.data_fim_prevista) {
+          de = f.data_inicio_prevista;
+          ate = f.data_fim_prevista;
+          plano = 'fase';
+        }
+      }
+
+      if (!de || !ate) {
+        // ⚠️ NÃO é descartado em silêncio: sem isso, "atribuí e não ocupou" volta
+        // a ser invisível — que é exatamente a reclamação que originou esta leva.
+        semPlano.push({ id: c.id, titulo: c.titulo, atribuido_a: c.atribuido_a, origem: c.origem });
+        continue;
+      }
+      if (!dentroDaJanela(de, ate)) continue;
+
+      if (!idsComRaia.has(c.atribuido_a)) {
+        semRaia.push({ id: c.id, titulo: c.titulo, origem: c.origem, data_inicio: de, data_fim: ate });
+        continue;
+      }
+
+      cards.push({
+        id: c.id, titulo: c.titulo, atribuido_a: c.atribuido_a,
+        data_inicio: de, data_fim: ate,
+        pode_paralelo: c.pode_paralelo,
+        // Quantos dias úteis a tarefa ocupa (coluna `duracao_dias`, integer).
+        ocupa_dias: c.duracao_dias ?? null,
+        estado: c.estado, origem: c.origem, campanha_id: c.campanha_id,
+        // A tela precisa distinguir: barra do ciclo é PREVISÃO da fase, não um
+        // plano que alguém desenhou pra pessoa — e não deve ser arrastável.
+        plano,
+        cor: corMap[c.etiqueta_tipo_id] || null,
+      });
+    }
+
+    res.json({ membros, cards, sem_plano: semPlano, sem_raia: semRaia });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

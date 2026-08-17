@@ -5943,6 +5943,80 @@ painel no clique e o macro é um `<button>` que abre/fecha.
 entregável concluído sem arquivo é estado LEGÍTIMO (arte aprovada em reunião), o
 que a tela agora diz em vez de deixar a pessoa achando que o download quebrou.
 
+## ⚠️⚠️ Marketing · o ciclo saiu do Kanban e o PLANNER passou a ter dado (2026-08-17 · SEM migration)
+
+Três pedidos do Marcos: *"tirar os cards do ciclo de backlog, Pedro Paiva vai
+gerenciar ciclo criativo no dashboard, tire os eventos de lá"* · *"temos que
+melhorar a aba de planner, pois hoje quando Pedro coloca uma tarefa para alguém,
+não ocupa o trabalho da pessoa no planner"* · *"vale a pena quando sair da
+triagem, Pedro já colocar nos campos quanto tempo deve ocupar na semana de cada
+um"*.
+
+### ⚠️⚠️ Por que "atribuir" não ocupava: era um CÍRCULO, não erro de conta
+
+O Planner só desenha card com `data_inicio` **e** `data_fim`. O **único** lugar
+que gravava essas datas era **arrastar a barra no próprio Planner** — onde o card
+não aparece justamente por não ter datas. O CardDrawer não tem campo de data, e na
+triagem os dois campos eram **OPCIONAIS**.
+**Medido em 17/08: `data_inicio`/`data_fim` preenchidos em 0 (ZERO) dos 83 cards
+vivos — o Planner nunca teve uma barra.**
+
+- **A triagem passou a perguntar "quanto OCUPA"**, em dias úteis (1/2/3/5 · botões),
+  com início sugerido; o **FIM é calculado no servidor**. Ocupação é
+  **obrigatória** — e é escolha explícita, não default que o sistema chuta.
+- **Régua PURA em `backend/utils/marketingOcupacao.js`** (dia útil, próximo dia
+  útil, fim por dias úteis, carga/dia, ocupação por dia) ·
+  `src/test/marketingOcupacao.test.ts` 26 casos · **7 mutantes rodados, 6 mortos**.
+- ⚠️ **O cliente NÃO recalcula fim nem carga**: `GET /capacidade-dia` passou a
+  aceitar `ocupa_dias` e devolve o **intervalo efetivo** + o efeito na agenda.
+  Duplicar a régua no front daria duas respostas para "cabe na agenda dele?".
+- ⚠️ **O dia de início CONTA como o 1º dia ocupado** (mutante trava): somar
+  `ocupa` ao início daria um dia a mais **por tarefa** — com 83 tarefas, uma
+  semana inteira de capacidade fantasma.
+- ⚠️ Usa a coluna **`duracao_dias` (integer)** que já existe ⇒ **sem migration**.
+  A régua sabe lidar com meio dia (0,5), mas a UI não oferece porque a coluna é
+  inteira.
+- ⚠️ **Um mutante SOBREVIVEU e está declarado no código**: a guarda de "tarefa sem
+  datas" é defensiva e **não observável** (o laço também não produz nada com data
+  nula). Fica pela intenção — mas não afirmo cobertura que não existe.
+
+### O ciclo criativo saiu do Kanban — e ganhou DOIS lugares
+
+Eram **74 dos 83 cards vivos** (o quadro era 89% ciclo). Tirar sem dar destino
+seria esconder trabalho, então:
+
+1. **Dashboard** (`DialogFase`) deixou de ser 100% leitura: agora **atribui dono e
+   conclui/reabre** a tarefa da fase, e o texto não diz mais "no Kanban". Sem isso,
+   tirar do Kanban deixaria 74 tarefas **sem nenhum caminho de gestão**.
+   ⚠️ Só aparece pra `marketing ≥ 3` (o PATCH exige) — botão que devolve 403 é
+   pior que botão ausente.
+2. **Planner**: as tarefas do ciclo entram como barras usando a **data prevista da
+   FASE** (decisão do Marcos). ⚠️ Sem isso o Planner mostraria a equipe quase
+   livre (9 cards) tendo 83 tarefas — passaria a **mentir sobre capacidade**.
+   ⚠️ Barra do ciclo é **tracejada e NÃO se arrasta**: o período é da fase; gravar
+   data própria faria o card discordar do próprio ciclo.
+   ⚠️ A coluna de vínculo é **`event_phase_id`**, não `phase_id` — a sonda contra
+   produção pegou o nome errado antes de subir (coluna inexistente faz o PostgREST
+   recusar a query inteira e o Planner devolveria 500).
+
+### ⚠️⚠️ E o Planner continua visualmente vazio — porque o ciclo está TODO no coordenador
+
+Medido em 17/08 depois de ligar tudo: agosto **10 barras**, setembro **15** — e
+**todas atribuídas ao coordenador**, que fica **fora das raias** por decisão ("ele
+distribui, não executa"). Barra sem raia não tem onde aparecer.
+
+⇒ O Planner passou a **declarar os dois casos** em vez de mostrar tela vazia:
+- **`sem_plano`** — atribuído mas sem período (não ocupa dia nenhum): 9 hoje.
+- **`sem_raia`** — tem período, mas o dono não tem raia: 10 em agosto.
+⚠️ O texto **não** manda distribuir tudo: parte é de coordenação mesmo
+("Coordenar reunião de definição da campanha", "Participar da reunião de
+alinhamento") e pode ficar no Pedro. Afirmar o contrário seria a tela cobrando
+trabalho que não existe.
+
+⏳ **Pendente de GENTE, não de código**: distribuir as tarefas de EXECUÇÃO do ciclo
+(hoje 100% no coordenador) pelo dashboard, e informar a ocupação dos 9 cards
+antigos que estão sem período. O caminho existe nas duas telas.
+
 ## Marketing · estado final (specs maio + redesenho 2026-05-30/31 · NO AR)
 
 O módulo nasceu em 24 specs (maio/2026) como "balcão" e foi **redesenhado** pra

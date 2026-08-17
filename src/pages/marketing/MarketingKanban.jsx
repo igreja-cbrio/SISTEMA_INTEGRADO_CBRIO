@@ -143,6 +143,14 @@ export default function MarketingKanban() {
 
   const filtrados = useMemo(() => {
     return cards.filter(c => {
+      // ⚠️⚠️ O CICLO CRIATIVO SAIU DO KANBAN (decisão do Marcos · 14/08: "tirar os
+      // cards do ciclo de backlog, Pedro Paiva vai gerenciar ciclo criativo no
+      // dashboard"). Eram **74 dos 83 cards vivos** — o quadro era 89% ciclo.
+      // ⚠️ NÃO é "esconder trabalho": ele ganhou dois lugares próprios, e é isso
+      // que torna a remoção honesta — o calendário do ciclo no /marketing (com o
+      // pendente de cada fase e a ação de concluir) e as barras no Planner, que
+      // seguem ocupando a agenda da equipe.
+      if (c.origem === 'evento') return false;
       // ⚠️ Janela de semanas: quem decide é o SERVIDOR (`na_janela`). `null` =
       // "não sei quando é" e SEMPRE aparece — esconder trabalho por falta de
       // data seria pior que a lista longa.
@@ -310,7 +318,8 @@ export default function MarketingKanban() {
           <SelectContent>
             <SelectItem value="todas">Todas origens</SelectItem>
             <SelectItem value="solicitacao">Solicitação</SelectItem>
-            <SelectItem value="evento">Evento</SelectItem>
+            {/* ⚠️ "Evento" saiu: o ciclo criativo não vive mais no Kanban, e
+                oferecer o filtro devolveria uma coluna vazia sem explicar nada. */}
             <SelectItem value="interna">Interna</SelectItem>
           </SelectContent>
         </Select>

@@ -153,7 +153,16 @@ export default function MarketingDashboard() {
         </div>
       ) : null}
 
-      <DialogFase celula={faseAberta} onClose={() => setFaseAberta(null)} />
+      {/* ⚠️ O ciclo criativo saiu do Kanban (14/08), então é AQUI que ele passa a
+          ser gerenciado: sem dono e sem concluir, tirar do Kanban teria deixado
+          74 tarefas sem nenhum caminho de gestão. */}
+      <DialogFase
+        celula={faseAberta}
+        onClose={() => setFaseAberta(null)}
+        equipe={dados?.equipe || []}
+        podeEditar={isCoord}
+        onMudou={carregar}
+      />
     </div>
   );
 }
@@ -593,10 +602,30 @@ function BoxCiclo({ ciclo, semanas, mes, mesAnterior, mesSeguinte, hoje, onMes, 
 }
 
 // ─── Detalhe da fase (clique no retângulo) ──────────────────────────────────
-function DialogFase({ celula, onClose }) {
+function DialogFase({ celula, onClose, equipe = [], podeEditar = false, onMudou }) {
   const [det, setDet] = useState(null);
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState(null);
+  const [salvando, setSalvando] = useState(null);   // id do card em gravação
+
+  // Atribuir dono / concluir a tarefa do ciclo SEM sair do dashboard.
+  // ⚠️ Recarrega o detalhe da fase E o dashboard: o contador de pendentes da
+  // faixa no calendário vem do mesmo dado, e deixar os dois fora de sincronia
+  // faria a tela mostrar duas verdades sobre a mesma fase.
+  async function mudarCard(cardId, patch, ok) {
+    setSalvando(cardId);
+    try {
+      await api.atualizarCard(cardId, patch);
+      toast.success(ok);
+      const d = await api.dashboard.fase(celula.fase_id);
+      setDet(d);
+      onMudou?.();
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível salvar');
+    } finally {
+      setSalvando(null);
+    }
+  }
 
   useEffect(() => {
     if (!celula?.fase_id) { setDet(null); setErro(null); return; }
@@ -677,9 +706,9 @@ function DialogFase({ celula, onClose }) {
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-muted-foreground">
                           {it.card ? (
                             <>
-                              <span>
-                                <span className="font-medium text-foreground">{ESTADO_ROTULO[it.card.estado] || it.card.estado}</span> no Kanban
-                              </span>
+                              {/* ⚠️ "no Kanban" saiu do texto: o ciclo criativo
+                                  não vive mais lá — é gerenciado aqui. */}
+                              <span className="font-medium text-foreground">{ESTADO_ROTULO[it.card.estado] || it.card.estado}</span>
                               <span>{it.card.dono ? `Dono: ${it.card.dono}` : 'Sem dono'}</span>
                               {it.card.etiqueta && <span>{it.card.etiqueta}</span>}
                             </>
@@ -691,6 +720,45 @@ function DialogFase({ celula, onClose }) {
                           {(it.prazo || it.card?.prazo) && <span className="tabular-nums">Prazo {ddmm(it.prazo || it.card.prazo)}</span>}
                           {it.responsavel_eventos && <span>Responsável no Eventos: {it.responsavel_eventos}</span>}
                         </div>
+
+                        {/* ── Gestão da tarefa do ciclo, aqui mesmo ──────────
+                            Sem isto, tirar o ciclo do Kanban deixaria estas
+                            tarefas sem caminho: é aqui que o Pedro dá dono e
+                            fecha. ⚠️ Só aparece pra quem pode gravar (o PATCH
+                            exige marketing ≥ 3) — botão que devolve 403 é pior
+                            que botão ausente. */}
+                        {podeEditar && it.card && (
+                          <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-border/60">
+                            <select
+                              value={it.card.atribuido_a || ''}
+                              disabled={salvando === it.card.id}
+                              onChange={e => mudarCard(
+                                it.card.id,
+                                { atribuido_a: e.target.value || null },
+                                e.target.value ? 'Dono definido · a pessoa foi avisada' : 'Dono removido',
+                              )}
+                              className="h-7 rounded border border-border bg-background px-1.5 text-[11px] max-w-[170px]"
+                            >
+                              <option value="">Sem dono</option>
+                              {equipe.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
+                            </select>
+                            <Button
+                              size="sm"
+                              variant={it.feito ? 'outline' : 'default'}
+                              className="h-7 text-[11px]"
+                              disabled={salvando === it.card.id}
+                              onClick={() => mudarCard(
+                                it.card.id,
+                                { estado: it.feito ? 'producao' : 'concluido' },
+                                it.feito ? 'Reaberta' : 'Concluída',
+                              )}
+                            >
+                              {salvando === it.card.id
+                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                : it.feito ? 'Reabrir' : 'Concluir'}
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
