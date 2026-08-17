@@ -43,6 +43,9 @@ const C = {
 const STATUS_ROW = {
   pendente: { label: 'Pendente · líder', cor: C.amber, bg: C.amberBg },
   devolvido: { label: 'Recusado · na triagem', cor: C.violet, bg: C.violetBg },
+  // Naná · 17/08: o líder TENTOU e não conseguiu falar. Não é recusa — cor
+  // âmbar (pendência), não vermelha/violeta (decisão contra a pessoa).
+  sem_contato: { label: 'Sem contato · líder tentou', cor: C.amber, bg: C.amberBg },
   encaminhado: { label: 'Encaminhado', cor: C.blue, bg: C.blueBg },
   aprovado: { label: 'Aprovado', cor: C.green, bg: C.greenBg },
   rejeitado: { label: 'Rejeitado', cor: C.red, bg: C.redBg },
@@ -69,6 +72,7 @@ const FILTRO_STATUS = [
   { key: 'todos', label: 'Status', casa: null },
   { key: 'pendente', label: 'Pendentes (líder)', casa: ['pendente'] },
   { key: 'devolvido', label: 'Recusados (na triagem)', casa: ['devolvido'] },
+  { key: 'sem_contato', label: 'Sem contato (líder não falou)', casa: ['sem_contato'] },
   { key: 'encaminhado', label: 'Encaminhados', casa: ['encaminhado'] },
   { key: 'a_contatar', label: 'Next · a contatar', casa: ['enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida'] },
   { key: 'lideres_decidir', label: 'Novos líderes · a decidir', casa: ['lid_pendente', 'lid_aceito'] },
@@ -388,7 +392,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     const hoje0 = new Date(); hoje0.setHours(0, 0, 0, 0);
     const agora = Date.now();
     let hoje = 0, pendentes = 0, pend24 = 0, pend72 = 0;
-    let devolvidos = 0, rejeitados = 0, aprovados = 0;
+    let devolvidos = 0, rejeitados = 0, aprovados = 0, semContato = 0;
     let somaDecisaoMs = 0, nDecididos = 0;
     for (const r of rowsBase) {
       if (new Date(r.data) >= hoje0) hoje += 1;
@@ -399,6 +403,10 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         if (h >= 24) pend24 += 1;
         if (h >= 72) pend72 += 1;
       } else if (r.statusKey === 'devolvido') devolvidos += 1;
+      // ⚠️ FORA de `recusados` de propósito (Naná · 17/08): a pergunta dela é
+      // "quantos aceitaram, quantos recusaram e com quantos não conseguimos
+      // falar". Somar aqui apagaria justamente a terceira.
+      else if (r.statusKey === 'sem_contato') semContato += 1;
       else if (r.statusKey === 'rejeitado') rejeitados += 1;
       else if (r.statusKey === 'aprovado' || r.statusKey === 'resolvido') aprovados += 1;
       if (['aprovado', 'rejeitado'].includes(r.raw?.status) && r.raw?.decidido_em) {
@@ -447,6 +455,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     return {
       hoje, pendentes, pend24, pend72,
       recusados: devolvidos + rejeitados, devolvidos,
+      semContato,
       aprovados,
       tempoMedioHoras: nDecididos ? Math.round((somaDecisaoMs / nDecididos / 36e5) * 10) / 10 : null,
       // retrato
@@ -473,7 +482,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   };
 
   // Envelhecimento das linhas que precisam de ação
-  const PRECISA_ACAO = ['pendente', 'devolvido', 'enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida', 'lid_pendente', 'lid_aceito', 'ren_nao_continua'];
+  const PRECISA_ACAO = ['pendente', 'devolvido', 'sem_contato', 'enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida', 'lid_pendente', 'lid_aceito', 'ren_nao_continua'];
   const idadeDe = (r) => {
     if (!PRECISA_ACAO.includes(r.statusKey)) return null;
     const horas = (Date.now() - new Date(r.data)) / 36e5;
@@ -690,6 +699,15 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
             valor={estat.recusados}
             destaque={estat.devolvidos > 0 ? `${estat.devolvidos} na triagem — aguardando você` : null}
             corDestaque={C.violet}
+          />
+          {/* Naná · 17/08: a terceira categoria que ela pediu ("aceitaram,
+              recusaram e não conseguiram contato"). Card PRÓPRIO — somado em
+              "Recusados" seria exatamente a informação que ela quer separar. */}
+          <ResumoCard
+            titulo="Sem contato"
+            valor={estat.semContato}
+            destaque={estat.semContato > 0 ? 'o líder tentou — assuma o contato' : null}
+            corDestaque={C.amber}
           />
           <ResumoCard titulo="Aprovados" valor={estat.aprovados} />
           <ResumoCard
@@ -1290,6 +1308,8 @@ function PainelPedido({
   const [aprovandoDireto, setAprovandoDireto] = useState(false);
   const [grupoAprovacao, setGrupoAprovacao] = useState('');
   const [salvandoAprovacao, setSalvandoAprovacao] = useState(false);
+  // 'sem_contato' NÃO entra aqui: não é recusa, e o texto de recusa diria
+  // ao operador algo que não aconteceu.
   const foiRecusado = ['devolvido', 'rejeitado'].includes(p.status);
   const abrirAprovacaoDireta = () => {
     setAprovandoDireto(true); setGrupoAprovacao('');
@@ -1363,7 +1383,7 @@ function PainelPedido({
           grupo fica sempre disponível, independente de quem recusou. E desde
           05/08 a triagem pode APROVAR por cima de qualquer status não-final
           (recusa por engano é frequente), inclusive trocando o grupo. */}
-      {podeEditar && ['pendente', 'devolvido', 'encaminhado', 'rejeitado'].includes(p.status) && !isRejecting && !isSugerindo && !aprovandoDireto && (
+      {podeEditar && ['pendente', 'devolvido', 'sem_contato', 'encaminhado', 'rejeitado'].includes(p.status) && !isRejecting && !isSugerindo && !aprovandoDireto && (
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center', flexWrap: 'wrap' }}>
           {cap?.cheio && grupo?.aceitando_inscricoes !== false && (
             <Button size="sm" variant="ghost" onClick={() => pausarInscricoes(grupo)} style={{ marginRight: 'auto', color: C.amber }}>
@@ -1388,7 +1408,7 @@ function PainelPedido({
               <Check size={14} style={{ marginRight: 4 }} /> Aprovar
             </Button>
           )}
-          {['devolvido', 'rejeitado', 'encaminhado'].includes(p.status) && (
+          {['devolvido', 'sem_contato', 'rejeitado', 'encaminhado'].includes(p.status) && (
             <Button size="sm" onClick={abrirAprovacaoDireta}>
               <Check size={14} style={{ marginRight: 4 }} /> Aprovar mesmo assim
             </Button>
@@ -1513,6 +1533,7 @@ function PainelPedido({
 const EVENTO_META = {
   criado: { label: 'Pedido criado', cor: C.t3 },
   recusado_lider: { label: 'Recusado pelo líder', cor: C.red },
+  sem_contato_lider: { label: 'Líder tentou e não conseguiu contato', cor: C.amber },
   encaminhado: { label: 'Encaminhado pra outro grupo', cor: C.blue },
   aprovado: { label: 'Aprovado', cor: C.green },
   aprovado_triagem: { label: 'Aprovado pela triagem (por cima da recusa)', cor: C.green },

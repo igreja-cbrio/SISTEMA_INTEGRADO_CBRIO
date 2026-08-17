@@ -4291,6 +4291,61 @@ credenciais REAIS existem. ⚠️ `WHATSAPP_ACCESS_TOKEN` vem **`[SENSITIVE]`** 
 está numa branch antiga que **não tem** `services/gruposWhatsapp.js`
 (MODULE_NOT_FOUND num arquivo que existe em produção · lição de 31/07).
 
+### ⚠️ 17/08 · TERCEIRO desfecho do líder: "não consegui contato" (migration `20260817140000`)
+
+Pedido da Naná: *"nos próximos links que mandarem ter também a opção de 'não
+respondeu', pois aí temos as pessoas que aceitaram, que recusaram e que não
+conseguiram contato"*.
+
+O link `/g/a/` só tinha DUAS saídas, e isso brigava com o próprio fluxo adotado
+em 29/07 — o template v2 manda o líder **LIGAR** antes de decidir. Quando a
+pessoa não atende, nenhuma serve: **recusar diz "não quero essa pessoa no meu
+grupo", que não é verdade**, e deixar pendente não conta pra ninguém que houve
+tentativa (era o que vinha acontecendo — a fila só crescia).
+
+- **Status novo `sem_contato`**, não coluna nem só evento: ela quer **VER** a
+  categoria, e status dá chip de filtro, badge, card e as estatísticas de graça.
+  Evento serviria pra auditar, não pra filtrar; coluna paralela criaria duas
+  verdades sobre o desfecho do mesmo pedido. O evento
+  (`sem_contato_lider`) entrou TAMBÉM, na timeline.
+- ⚠️ **Anda pelo mesmo caminho da recusa** (vai pra triagem, pessoa NÃO é
+  avisada) e muda só o desfecho. **Mas NÃO é sinônimo**: a notificação à
+  coordenação tem texto próprio ("tentou falar e não conseguiu · não é recusa"),
+  porque as duas pedem ações diferentes — tentar por outro canal × realocar.
+- ⚠️ **Fora de `recusados` na contagem** do Retrato do período, e com **card
+  próprio**. Somar apagaria exatamente a informação que ela pediu pra separar.
+  Cor **âmbar** (pendência), nunca vermelha/violeta (decisão contra a pessoa).
+- ⚠️ **Não pode virar beco sem saída**: `sem_contato` entrou nos status que a
+  triagem consegue mover — `aprovar-direto` (o caso MAIS provável: a Naná fala
+  com a pessoa por outro canal e destrava), sugerir outro grupo e rejeitar de
+  vez. Sem isso o desfecho novo prenderia o pedido.
+- ⚠️ **O motivo NÃO é oferecido nem gravado** aqui: o motivo é o próprio
+  desfecho, e um texto de recusa no campo confundiria os dois na leitura.
+- Na tela do líder o botão fica em **terceiro plano** (largura cheia, tracejado,
+  abaixo dos dois): é o desfecho menos desejado — não pode competir com
+  "Aprovar". O texto diz explicitamente que **não é recusa**.
+- **CASAL**: os dois vão juntos, como já era na recusa.
+- ⚠️ A migration **DERIVA a lista de valores do CHECK VIVO** em vez de
+  reescrevê-la decorada — prod pode ter valor que o repo não conhece, e
+  reescrever à mão estreitaria em silêncio (lição do CHECK de `app_inscricoes`,
+  06/08). Aborta se não achar o CHECK.
+
+⚠️ **FORA desta entrega (declarado)**: o app mobile do líder segue com só duas
+opções (`POST /app/grupos/pedidos/:id/rejeitar`). O pedido da Naná foi sobre os
+**links**; ampliar o app é outra leva.
+
+### 🧹 17/08 · cadastros de teste da Natasha removidos
+
+Os 2 pedidos **"Natasha teste"** (tel 21984555026 · um com e-mail
+`natasha.lit.faria@gnail.dom`, typo proposital) saíram por `app_soft_delete`
+(backup em `~/Downloads/backup_pedidos_teste_natasha_20260817.json`). Pendentes:
+84 → **82**.
+
+⚠️ O alvo exigiu **nome com "teste" E o telefone dela** — cada critério sozinho
+pega gente real ("Teste" existe como sobrenome; o telefone é o dela de verdade).
+Ficou de fora e está DECLARADO: **"Alice teste"** (tel 21992752602), que é de
+outra pessoa e não foi tocada.
+
 ### ⚠️ 17/08 · a APROVAÇÃO EM MASSA foi cogitada e DESCARTADA (decisão do Pr. Nélio)
 
 Chegou a ser pedida ("aprovar todos os pedidos de 06/08 pra trás, sem reenviar
