@@ -162,8 +162,17 @@ export function imprimirRelatorioInscricoesVol(
     </tr>`;
   }).join('') : `<tr><td class="vazio" colspan="${cols.length}">Nenhuma inscrição no filtro aplicado</td></tr>`;
 
+  // ⚠️ A faixa REAL coberta pelas linhas, ao lado do filtro pedido. É o que
+  // permite ver num relance que a folha começa depois do que se esperava —
+  // sem isso, "o relatório só pega a partir do dia 10" só se descobre contando
+  // linha por linha.
+  const coberturaReal = base.length
+    ? `Cobre de ${fmtData(base[0].data_inscricao)} a ${fmtData(base[base.length - 1].data_inscricao)}`
+    : '';
+
   const metaPartes = [
     `Período: ${filtros.periodoLabel}`,
+    coberturaReal,
     filtros.areaLabel ? `Área: ${filtros.areaLabel}` : '',
     filtros.statusLabel ? `Status: ${filtros.statusLabel}` : '',
     filtros.busca ? `Busca: "${filtros.busca}"` : '',

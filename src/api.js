@@ -3334,7 +3334,15 @@ export const voluntariado = {
   // Marca a inscrição como desistente (desistiu de servir antes de integrar) · motivo opcional
   desistirInscricao: (id, motivo) => post(`/voluntariado/inscricoes/${id}/desistiu`, { motivo }),
   // Distribuição de voluntários por área direcionada ("onde estão as pessoas")
-  distribuicaoDirecionada: (params) => get('/voluntariado/inscricoes/por-direcionada' + (params ? '?' + new URLSearchParams(params) : '')),
+  // ⚠️ Chave com valor undefined/null vira a STRING "undefined" no
+  // URLSearchParams e o backend a usaria como se fosse o ano — filtra antes.
+  distribuicaoDirecionada: (params) => {
+    const limpos = Object.fromEntries(
+      Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+    );
+    const qs = new URLSearchParams(limpos).toString();
+    return get(`/voluntariado/inscricoes/por-direcionada${qs ? `?${qs}` : ''}`);
+  },
   // Triagem de antecedentes criminais (Kids/Bridge)
   antecedentes: (inscricaoId) => get(`/voluntariado/inscricoes/${inscricaoId}/antecedentes`),
   consultarAntecedentes: (inscricaoId) => post(`/voluntariado/inscricoes/${inscricaoId}/antecedentes/consultar`, {}),

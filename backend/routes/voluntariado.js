@@ -3867,18 +3867,31 @@ router.get('/inscricoes-summary', async (req, res) => {
     const ano = req.query.ano ? String(req.query.ano) : null;
     const area = req.query.area ? String(req.query.area).toLowerCase() : null;
 
-    let query = supabase
-      .from('vol_inscricoes')
-      .select('data_inscricao, status, area')
-      .is('deleted_at', null);
-    if (ano) {
-      query = query
-        .gte('data_inscricao', `${ano}-01-01`)
-        .lt('data_inscricao', `${Number(ano) + 1}-01-01`);
+    // ⚠️ PAGINADO: o PostgREST capa em 1000 linhas server-side e sem `ano` esta
+    // consulta varre a base inteira (829 vivas em 17/08/2026, subindo). Sem o
+    // laço, a partir da milésima inscrição os cards e o gráfico congelariam
+    // SEM erro — contador truncado mente em silêncio.
+    const data = [];
+    const PAGINA = 1000;
+    for (let inicio = 0; ; inicio += PAGINA) {
+      let query = supabase
+        .from('vol_inscricoes')
+        .select('data_inscricao, status, area')
+        .is('deleted_at', null)
+        .order('data_inscricao', { ascending: false })
+        .order('id', { ascending: false })
+        .range(inicio, inicio + PAGINA - 1);
+      if (ano) {
+        query = query
+          .gte('data_inscricao', `${ano}-01-01`)
+          .lt('data_inscricao', `${Number(ano) + 1}-01-01`);
+      }
+      if (area) query = query.eq('area', area);
+      const { data: pagina, error } = await query;
+      if (error) throw error;
+      data.push(...(pagina || []));
+      if (!pagina || pagina.length < PAGINA) break;
     }
-    if (area) query = query.eq('area', area);
-    const { data, error } = await query;
-    if (error) throw error;
 
     // Considera "alocada" status integrado ou enviado_ministerio (em processo final)
     const isAlocada = (s) => s === 'integrado';

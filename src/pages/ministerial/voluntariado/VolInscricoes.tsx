@@ -73,6 +73,12 @@ const origemLabel = (o?: string | null) => (o ? (ORIGEM_LABELS[o] || o) : '-');
 
 const ANO_ATUAL = new Date().getFullYear();
 const ANOS = [ANO_ATUAL, ANO_ATUAL - 1, ANO_ATUAL - 2];
+// ⚠️ "Todos os anos" existe porque a maior parte da base é ANTERIOR ao uso do
+// sistema: das 829 inscrições vivas (medido em 17/08/2026), 604 são de
+// 2024/2025 e vieram da planilha do Google. Sem esta opção o seletor cobria só
+// 3 anos fixos — dado mais antigo que isso ficava inalcançável, e o relatório,
+// que herda o filtro da tela, nunca conseguia sair completo.
+const ANO_TODOS = 'todos';
 
 const MES_LABEL = (ym: string) => {
   const [y, m] = ym.split('-');
@@ -362,10 +368,14 @@ export default function VolInscricoes() {
     onError: (e: any) => toast.error(e?.message || 'Erro ao salvar dados.'),
   });
 
+  // `undefined` = sem recorte de ano no servidor (o endpoint trata como "tudo").
+  const anoParam = ano === ANO_TODOS ? undefined : ano;
+  const todosOsAnos = ano === ANO_TODOS;
+
   const { data, isLoading } = useQuery<InscricoesSummary>({
     queryKey: ['vol', 'inscricoes-summary', ano, area],
     queryFn: () => voluntariado.inscricoesSummary({
-      ano,
+      ano: anoParam,
       area: area === 'todas' ? undefined : area,
     }),
   });
@@ -384,7 +394,7 @@ export default function VolInscricoes() {
     queryKey: ['vol', 'inscricoes-list', ano, area, statusFilter, search, deAplicado, ateAplicado, page],
     enabled: !periodoInvertido,
     queryFn: () => voluntariado.inscricoesList({
-      ano: temPeriodo ? undefined : ano,
+      ano: temPeriodo ? undefined : anoParam,
       area: area === 'todas' ? undefined : area,
       status: statusFilter === 'todos' ? undefined : statusFilter,
       de: deAplicado || undefined,
@@ -402,8 +412,9 @@ export default function VolInscricoes() {
     if (deAplicado && ateAplicado) return `${f(deAplicado)} a ${f(ateAplicado)}`;
     if (deAplicado) return `a partir de ${f(deAplicado)}`;
     if (ateAplicado) return `até ${f(ateAplicado)}`;
+    if (todosOsAnos) return 'todas as inscrições do sistema';
     return `Ano ${ano}`;
-  }, [deAplicado, ateAplicado, ano]);
+  }, [deAplicado, ateAplicado, ano, todosOsAnos]);
 
   // Gera o relatório impresso com o MESMO filtro da lista, paginando até o
   // total do servidor (o endpoint capa em 500 por página). A janela do popup
@@ -412,7 +423,7 @@ export default function VolInscricoes() {
   const gerarRelatorio = useMutation({
     mutationFn: async (win: Window) => {
       const base = {
-        ano: temPeriodo ? undefined : ano,
+        ano: temPeriodo ? undefined : anoParam,
         area: area === 'todas' ? undefined : area,
         status: statusFilter === 'todos' ? undefined : statusFilter,
         de: deAplicado || undefined,
@@ -472,7 +483,9 @@ export default function VolInscricoes() {
 
   const { data: distDir } = useQuery<{ rows: Array<{ ministerio: string; total: number }>; pessoas: number }>({
     queryKey: ['vol', 'por-direcionada', ano],
-    queryFn: () => voluntariado.distribuicaoDirecionada({ ano }),
+    // ⚠️ Sem a chave quando é "todos os anos": `URLSearchParams({ano: undefined})`
+    // serializa a string "undefined", que o backend usaria como ano.
+    queryFn: () => voluntariado.distribuicaoDirecionada(todosOsAnos ? {} : { ano }),
   });
 
   const chartData = useMemo(() => {
@@ -523,8 +536,9 @@ export default function VolInscricoes() {
               sobrevive e um recorte menor devolve lista vazia — a tela diria
               "nenhuma inscrição" com dados existindo. */}
           <Select value={ano} onValueChange={(v) => { setAno(v); setPage(0); }}>
-            <SelectTrigger className="w-[110px]"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-[150px]"><SelectValue /></SelectTrigger>
             <SelectContent>
+              <SelectItem value={ANO_TODOS}>Todos os anos</SelectItem>
               {ANOS.map(a => <SelectItem key={a} value={String(a)}>{a}</SelectItem>)}
             </SelectContent>
           </Select>
@@ -579,7 +593,9 @@ export default function VolInscricoes() {
             </div>
             <div>
               <div className="text-2xl md:text-3xl font-bold">{total.recebidas}</div>
-              <div className="text-xs text-muted-foreground">Inscritos no ano</div>
+              <div className="text-xs text-muted-foreground">
+                {todosOsAnos ? 'Inscritos (todos os anos)' : 'Inscritos no ano'}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -1290,6 +1306,24 @@ export default function VolInscricoes() {
               {search && <div><span className="text-muted-foreground">Busca:</span> “{search}”</div>}
               <div><span className="text-muted-foreground">Inscrições no filtro:</span> {lista?.total ?? '—'}</div>
             </div>
+
+            {/* ⚠️ A maior parte da base é anterior ao uso do sistema (veio da
+                planilha). Com um recorte temporal ativo, dizer isso aqui evita
+                a folha sair parcial sem quem gerou perceber. */}
+            {(!todosOsAnos || temPeriodo) && (
+              <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-xs space-y-2">
+                <p>
+                  Este relatório cobre <b>apenas o recorte acima</b>. As inscrições anteriores
+                  (inclusive as que vieram da planilha) ficam de fora.
+                </p>
+                <Button
+                  size="sm" variant="outline" className="h-7 text-xs"
+                  onClick={() => { setAno(ANO_TODOS); setDe(''); setAte(''); setPage(0); }}
+                >
+                  Usar todas as inscrições do sistema
+                </Button>
+              </div>
+            )}
             <label className="flex items-start gap-2 text-sm cursor-pointer">
               <Checkbox
                 checked={incluirContato}
