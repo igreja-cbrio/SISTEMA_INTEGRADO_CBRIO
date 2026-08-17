@@ -35,8 +35,25 @@ COMMENT ON COLUMN public.insc_eventos.termos_extra IS
   'Aceites PRÓPRIOS deste evento, além do termo de LGPD fixo. Lista de {chave, titulo, texto, url?}. Cada um vira linha em inscricao_consentimentos (tipo=''evento_termo'') com o texto EXIBIDO como snapshot. ⚠️ NÃO é campo do construtor: consentimento é prova legal, não resposta de pergunta.';
 
 -- ⚠️ A forma da lista é conferida NO BANCO, não só na rota: script, SQL Editor e
--- import escrevem aqui também, e `termos_extra` decide o que a pessoa aceita.
--- Item sem `chave` ou sem `texto` seria um checkbox que grava consentimento vazio.
+-- import escrevem aqui também, e um valor que não é ARRAY faz todo leitor
+-- (`Array.isArray`) tratar a lista como vazia — os aceites desapareceriam da tela
+-- **em silêncio**, que é exatamente o tipo de falha que este projeto persegue.
+--
+-- ⚠️⚠️ `CASE`, não `AND`: a ordem de avaliação de `AND` **não é garantida** no
+-- Postgres, e `jsonb_array_length` de um objeto LEVANTA erro
+-- (`cannot get array length of a non-array`) em vez de devolver false. Com `CASE`
+-- o `jsonb_array_length` só é alcançado quando já se sabe que é array, e o
+-- resultado é um 23514 limpo, com o nome da constraint na mensagem.
+--
+-- ⚠️ A forma de CADA ITEM (`chave` e `texto` não vazios) fica de fora daqui, e é
+-- decisão: exigi-la no banco pediria `jsonb_array_elements`, que é função de
+-- CONJUNTO — e **CHECK não aceita subquery** (0A000, o erro que derrubou a 1ª
+-- versão desta migration). O caminho seria uma função IMMUTABLE, que eu
+-- descartei: `pg_dump` escreve o CHECK junto da tabela e pode restaurar ANTES da
+-- função existir. E o que se ganharia é pequeno — item malformado é FILTRADO
+-- pelos leitores (`.filter(t => t.chave && t.texto)` na rota pública e no POST),
+-- então ele degrada pra "não aparece", nunca pra consentimento vazio gravado.
+-- Quem garante a forma do item é `sanitizeTermosExtra` em routes/inscricoes.js.
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -46,14 +63,10 @@ BEGIN
   ) THEN
     ALTER TABLE public.insc_eventos
       ADD CONSTRAINT chk_insc_eventos_termos_extra CHECK (
-        jsonb_typeof(termos_extra) = 'array'
-        AND jsonb_array_length(termos_extra) <= 6
-        AND NOT EXISTS (
-          SELECT 1 FROM jsonb_array_elements(termos_extra) t
-           WHERE jsonb_typeof(t) <> 'object'
-              OR coalesce(btrim(t->>'chave'), '') = ''
-              OR coalesce(btrim(t->>'texto'), '') = ''
-        )
+        CASE jsonb_typeof(termos_extra)
+          WHEN 'array' THEN jsonb_array_length(termos_extra) <= 6
+          ELSE false
+        END
       );
   END IF;
 END $$;
@@ -152,5 +165,9 @@ COMMENT ON COLUMN public.inscricao_consentimentos.tipo IS
 --    and conname = 'inscricao_consentimentos_tipo_check';   -- deve citar evento_termo
 --
 -- Deve RECUSAR (23514):
+--   update insc_eventos set termos_extra = '{"chave":"x"}'::jsonb where id = '<id>';  -- não é array
+--   update inscricoes set responsavel_cpf = '123.456.789-00' where id = '<id>';       -- com máscara
+--
+-- Deve PASSAR (item malformado é filtrado na LEITURA, não no banco — ver o ⚠️ do
+-- CHECK de termos_extra):
 --   update insc_eventos set termos_extra = '[{"chave":"x"}]'::jsonb where id = '<id>';
---   update inscricoes set responsavel_cpf = '123.456.789-00' where id = '<id>';

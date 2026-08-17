@@ -6104,6 +6104,33 @@ linha em `inscricao_consentimentos` com o texto EXIBIDO como snapshot.
   consentimento parando de ser gravado — em silêncio, porque
   `registrarConsentimentos` é best-effort.
 
+### ⚠️⚠️ LEI · CHECK constraint NÃO aceita subquery (nem função de conjunto)
+
+A 1ª versão desta migration foi recusada em produção com **`0A000: cannot use
+subquery in check constraint`**: eu havia validado a forma de cada item de
+`termos_extra` com `NOT EXISTS (SELECT 1 FROM jsonb_array_elements(...))`.
+`jsonb_array_elements` é função de CONJUNTO, e CHECK só aceita expressão ESCALAR
+sobre as colunas da própria linha. **O `pglast` passou** — ele confere sintaxe, e
+este erro é semântico, levantado só na execução. Régua: parser verde não prova
+CHECK válido.
+
+- ⚠️ **`CASE`, não `AND`, quando um lado só é seguro depois do outro**: a ordem de
+  avaliação de `AND` não é garantida, e `jsonb_array_length` de um objeto
+  **levanta erro** em vez de devolver false. `CASE jsonb_typeof(x) WHEN 'array'
+  THEN … ELSE false END` garante a ordem e devolve um 23514 limpo.
+- ⚠️ **Descartei a saída óbvia (função IMMUTABLE no CHECK)**: `pg_dump` escreve o
+  CHECK junto da definição da tabela e pode restaurar ANTES de a função existir.
+- **O que sobrou de fora é declarado**: a forma de cada ITEM fica com
+  `sanitizeTermosExtra` na rota. Item malformado é FILTRADO pelos leitores
+  (`.filter(t => t.chave && t.texto)` na rota pública e no POST), então degrada
+  pra "não aparece" — nunca pra consentimento vazio gravado. O que o banco
+  protege é o que causaria falha SILENCIOSA: valor que não é array faz todo
+  `Array.isArray` dar false e os aceites desaparecerem da tela sem erro nenhum.
+- ⚠️ **Não pude EXECUTAR o CHECK novo**: a senha do `DATABASE_URL` está velha
+  (já registrado neste arquivo) e não há credencial de SQL cru nesta máquina. A
+  validade se apoia em não haver subquery nem função de conjunto, e no precedente
+  do `chk_insc_eventos_checkout_externo_https` (`~*`), vivo na mesma tabela.
+
 ### ⚠️⚠️ BUG ATIVO DE PERDA DE DADO consertado de carona: editar evento pelo CARD apagava o formulário
 
 `GET /inscricoes/eventos` devolve o evento **PARCIAL** (a lista não traz `campos`,
