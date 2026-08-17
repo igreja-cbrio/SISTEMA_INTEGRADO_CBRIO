@@ -55,6 +55,10 @@ export default function GestaoCriancas() {
   const [idadeSel, setIdadeSel] = useState('todas'); // 'todas' | '<anos>' | IDADE_SEM_DATA
   const [status, setStatus] = useState('ativos'); // ativos | inativos
   const [jornadaF, setJornadaF] = useState('todas'); // todas | convertidos | batizados
+  // Visitante é a criança que veio com alguém (prazo em `data_limite`) e ainda
+  // não é frequentadora. São poucas no meio de mil — sem filtro próprio, achar
+  // quem está com o prazo correndo exige rolar a lista inteira.
+  const [visitanteF, setVisitanteF] = useState('todas'); // todas | visitantes | frequentadores
   const [modo, setModo] = useState<'lista' | 'faltantes'>('lista');
   const [ausentes, setAusentes] = useState<any[]>([]);
   const [ausIdade, setAusIdade] = useState('todas');   // 'todas' | '<anos>' | IDADE_SEM_DATA
@@ -179,9 +183,19 @@ export default function GestaoCriancas() {
       }
       if (jornadaF === 'convertidos' && !c.data_conversao) return false;
       if (jornadaF === 'batizados' && !c.data_batismo) return false;
+      if (visitanteF === 'visitantes' && c.visitante !== true) return false;
+      if (visitanteF === 'frequentadores' && c.visitante === true) return false;
       return true;
     });
-  }, [lista, idadeSel, busca, status, jornadaF]);
+  }, [lista, idadeSel, busca, status, jornadaF, visitanteF]);
+
+  // Contagem por situação, sobre a lista CARREGADA (não sobre o recorte atual):
+  // número que muda a cada letra digitada não serve pra decidir por qual opção
+  // filtrar — mesma régua dos filtros de campo das inscrições.
+  const totaisVisitante = useMemo(() => ({
+    visitantes: lista.filter(c => c.visitante === true).length,
+    frequentadores: lista.filter(c => c.visitante !== true).length,
+  }), [lista]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-4">
@@ -354,6 +368,14 @@ export default function GestaoCriancas() {
             <SelectItem value="todas">Toda a jornada</SelectItem>
             <SelectItem value="convertidos">Convertidos</SelectItem>
             <SelectItem value="batizados">Batizados</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={visitanteF} onValueChange={setVisitanteF}>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Visitantes e frequentadores</SelectItem>
+            <SelectItem value="visitantes">Só visitantes ({totaisVisitante.visitantes})</SelectItem>
+            <SelectItem value="frequentadores">Só frequentadores ({totaisVisitante.frequentadores})</SelectItem>
           </SelectContent>
         </Select>
       </div>

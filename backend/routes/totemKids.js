@@ -1434,6 +1434,11 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
           responsaveis:kids_responsaveis(membro:mem_membros(id, nome, telefone))
         `)
         .eq('ativo', ativo)
+        // ⚠️ Criança soft-deletada NÃO aparece na gestão: sem este filtro a
+        // lista mostrava 1.142 onde existem 1.087 (medido em 17/08/2026 — 55
+        // apagadas contando como ativas), e `app_soft_delete` deixava de ter
+        // efeito visível justamente na tela onde a equipe confere a base.
+        .is('deleted_at', null)
         .order('nome')
         .range(from, from + pageSize - 1);
       if (error) throw error;

@@ -759,6 +759,51 @@ encanamento do módulo voluntariado estava íntegro o tempo todo.
 permissão** (build nativo · não sai por OTA · não funciona em simulador). É ação
 de gente, não tem conserto por código.
 
+## Inscrições · excluir EM LOTE (web + app do staff) (2026-08-17 · SEM migration)
+
+Pedido do Matheus, no mesmo dia: *"nas inscrições do Celebra, preciso da
+possibilidade de excluir inscrição, pois eu mesmo fiz algumas vezes para teste, e
+isso tá inflando os números"* — e, ao ver que o botão existia: *"preciso disso no
+app tbm e não tá aparecendo o botão da lixeira e preciso fazer isso selecionando
+as pessoas."*
+
+⚠️ **A exclusão individual JÁ EXISTIA** (`DELETE /eventos/:id/inscricoes/:id`,
+soft delete, ícone de lixeira por linha) — a prova viva é uma inscrição do
+Celebra apagada por ali em 13/07. O que faltava era **seleção múltipla** (com 241
+inscritos, uma a uma não é caminho) e **qualquer tela de inscrição no app do
+staff**: os endpoints de leitura do app existiam desde sempre e **nunca tiveram
+consumidor**.
+
+- **`POST /eventos/:id/inscricoes/excluir-lote`** (nível 3 · teto 200). O payload
+  diz **quais**, nunca **se pode**: o servidor relê as linhas vivas DESTE evento e
+  reavalia (mesma lei da aprovação em lote da Membresia e do `ligar-lote` das
+  Entradas). Régua pura em **`backend/utils/exclusaoInscricaoLote.js`** (**no
+  gate** · 12 casos · **3 mutantes RODADOS**: ignorar o bloqueio de pagamento → 2
+  vermelhos · apagar id que não está vivo → 2 · truncar sem declarar → 1).
+- ⚠️⚠️ **Inscrição COM PAGAMENTO não sai em lote, e é DECLARADA com nome.**
+  Apagar quem pagou some com a pessoa do placar enquanto o dinheiro segue na
+  conta da igreja — é esconder receita recebida, e ninguém revisa o que sumiu. A
+  exclusão individual continua existindo pra caso a caso.
+- ⚠️ **Falha ao CONSULTAR os pagamentos devolve 503**, nunca "ninguém tem
+  pagamento": seria a guarda falhando aberta justamente no caminho que ela existe
+  pra fechar.
+- ⚠️ **A tela some só com o que voltou em `excluidas`** — quem foi barrado
+  continua na lista, que é o estado real. E o resumo distingue os quatro
+  destinos: excluída · tem pagamento · já não estava na lista · falhou (esta
+  última dizendo que a linha **continua** lá). "12 excluídas" não distingue
+  sucesso de exclusão parcial.
+- ⚠️ **"Selecionar todos" marca o RECORTE VISÍVEL** (filtro + busca), não a base
+  inteira: o botão fica embaixo dos filtros, e marcar 241 quando a tela mostra 3
+  é o caminho mais curto pra um estrago em massa. A confirmação lista os NOMES
+  (até 8 no web, 6 no app), como na renovação de grupos.
+- **App do staff**: `app/(app)/inscricoes.tsx` (eventos + contagem) e
+  `app/(app)/evento-inscritos/[id].tsx` (busca + seleção + excluir), com item no
+  menu — tela fora do menu é tela invisível. Ler é nível 1, excluir é 3, e a
+  régua do botão é a MESMA do backend.
+- ⚠️ Sobrou de fora, de propósito: a aba **"Todas as inscrições"** continua
+  somente-leitura (é o inventário das 9 portas; a exclusão vive no módulo dono do
+  evento).
+
 ## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
 
 Demanda do **Arthur Serpa**: por um mês, 1 minuto de cada culto pra igreja
@@ -4291,6 +4336,61 @@ credenciais REAIS existem. ⚠️ `WHATSAPP_ACCESS_TOKEN` vem **`[SENSITIVE]`** 
 está numa branch antiga que **não tem** `services/gruposWhatsapp.js`
 (MODULE_NOT_FOUND num arquivo que existe em produção · lição de 31/07).
 
+### ⚠️ 17/08 · TERCEIRO desfecho do líder: "não consegui contato" (migration `20260817140000`)
+
+Pedido da Naná: *"nos próximos links que mandarem ter também a opção de 'não
+respondeu', pois aí temos as pessoas que aceitaram, que recusaram e que não
+conseguiram contato"*.
+
+O link `/g/a/` só tinha DUAS saídas, e isso brigava com o próprio fluxo adotado
+em 29/07 — o template v2 manda o líder **LIGAR** antes de decidir. Quando a
+pessoa não atende, nenhuma serve: **recusar diz "não quero essa pessoa no meu
+grupo", que não é verdade**, e deixar pendente não conta pra ninguém que houve
+tentativa (era o que vinha acontecendo — a fila só crescia).
+
+- **Status novo `sem_contato`**, não coluna nem só evento: ela quer **VER** a
+  categoria, e status dá chip de filtro, badge, card e as estatísticas de graça.
+  Evento serviria pra auditar, não pra filtrar; coluna paralela criaria duas
+  verdades sobre o desfecho do mesmo pedido. O evento
+  (`sem_contato_lider`) entrou TAMBÉM, na timeline.
+- ⚠️ **Anda pelo mesmo caminho da recusa** (vai pra triagem, pessoa NÃO é
+  avisada) e muda só o desfecho. **Mas NÃO é sinônimo**: a notificação à
+  coordenação tem texto próprio ("tentou falar e não conseguiu · não é recusa"),
+  porque as duas pedem ações diferentes — tentar por outro canal × realocar.
+- ⚠️ **Fora de `recusados` na contagem** do Retrato do período, e com **card
+  próprio**. Somar apagaria exatamente a informação que ela pediu pra separar.
+  Cor **âmbar** (pendência), nunca vermelha/violeta (decisão contra a pessoa).
+- ⚠️ **Não pode virar beco sem saída**: `sem_contato` entrou nos status que a
+  triagem consegue mover — `aprovar-direto` (o caso MAIS provável: a Naná fala
+  com a pessoa por outro canal e destrava), sugerir outro grupo e rejeitar de
+  vez. Sem isso o desfecho novo prenderia o pedido.
+- ⚠️ **O motivo NÃO é oferecido nem gravado** aqui: o motivo é o próprio
+  desfecho, e um texto de recusa no campo confundiria os dois na leitura.
+- Na tela do líder o botão fica em **terceiro plano** (largura cheia, tracejado,
+  abaixo dos dois): é o desfecho menos desejado — não pode competir com
+  "Aprovar". O texto diz explicitamente que **não é recusa**.
+- **CASAL**: os dois vão juntos, como já era na recusa.
+- ⚠️ A migration **DERIVA a lista de valores do CHECK VIVO** em vez de
+  reescrevê-la decorada — prod pode ter valor que o repo não conhece, e
+  reescrever à mão estreitaria em silêncio (lição do CHECK de `app_inscricoes`,
+  06/08). Aborta se não achar o CHECK.
+
+⚠️ **FORA desta entrega (declarado)**: o app mobile do líder segue com só duas
+opções (`POST /app/grupos/pedidos/:id/rejeitar`). O pedido da Naná foi sobre os
+**links**; ampliar o app é outra leva.
+
+### 🧹 17/08 · cadastros de teste da Natasha removidos
+
+Os 2 pedidos **"Natasha teste"** (tel 21984555026 · um com e-mail
+`natasha.lit.faria@gnail.dom`, typo proposital) saíram por `app_soft_delete`
+(backup em `~/Downloads/backup_pedidos_teste_natasha_20260817.json`). Pendentes:
+84 → **82**.
+
+⚠️ O alvo exigiu **nome com "teste" E o telefone dela** — cada critério sozinho
+pega gente real ("Teste" existe como sobrenome; o telefone é o dela de verdade).
+Ficou de fora e está DECLARADO: **"Alice teste"** (tel 21992752602), que é de
+outra pessoa e não foi tocada.
+
 ### ⚠️ 17/08 · a APROVAÇÃO EM MASSA foi cogitada e DESCARTADA (decisão do Pr. Nélio)
 
 Chegou a ser pedida ("aprovar todos os pedidos de 06/08 pra trás, sem reenviar
@@ -6278,6 +6378,79 @@ trabalho que não existe.
 ⏳ **Pendente de GENTE, não de código**: distribuir as tarefas de EXECUÇÃO do ciclo
 (hoje 100% no coordenador) pelo dashboard, e informar a ocupação dos 9 cards
 antigos que estão sem período. O caminho existe nas duas telas.
+
+## ⚠️ Marketing · CABEÇALHO ÚNICO + aba "App" (2026-08-17 · SEM migration)
+
+Três pedidos do Marcos: tirar a faixa **Quadro | Épicos** do Kanban ("não precisa
+mais ter essa visualização") · a aba **Comunicados virar "App"**, com Comunicados
++ os módulos **Destaques** e **Fotos Batismo** trazidos pra dentro · e *"cada
+opção que eu clico o menu fica de um tamanho e centralizado de uma forma, então
+parece que você está entrando em módulos diferentes"*.
+
+### ⚠️⚠️ A sensação de "outro módulo" era ESTRUTURAL, não estética
+
+**Cada uma das 7 telas montava o seu próprio cabeçalho**, e nenhuma combinava:
+
+| tela | container |
+|---|---|
+| Dashboard · Kanban · Analytics · Admin | `p-4 md:p-6 space-y-4 md:space-y-6` |
+| Planner | `space-y-4` (espaçamento menor) |
+| Generosidade | só `p-4 md:p-6` (sem `space-y`) + `mx-auto max-w-7xl` |
+| Comunicados | **`max-w-5xl mx-auto p-4`** → estreito e centralizado |
+| Destaques (veio do /admin) | `maxWidth: 1100; margin: 0 auto` **inline** |
+
+Somado a isso o `<h1>` mudava ("Marketing" × "Comunicados") e o `MarketingNav`
+às vezes ficava ao lado do título, às vezes embaixo. Trocar de aba deslocava
+título, menu e largura ao mesmo tempo — é exatamente o que o olho lê como "saí
+do módulo".
+
+⚠️ **A correção NÃO foi acertar os 7 arquivos pra combinarem** — isso volta a
+divergir na próxima tela que alguém criar. **`MarketingPagina.jsx`** passou a ser
+o cabeçalho, em UM lugar: título fixo do módulo + `subtitulo` + `acoes` +
+`MarketingNav`. As telas entregam só o conteúdo. Diff da leva: **−157/+106**, e a
+diferença é duplicação que deixou de existir.
+
+- ⚠️ **O `MarketingNav` é montado EXCLUSIVAMENTE aqui**: tela que se esquecer dele
+  não existe mais. Nenhum outro arquivo o importa (checado).
+- ⚠️ **Largura TOTAL, sem `mx-auto`**: o Kanban tem 6 colunas com rolagem
+  horizontal e o Planner é grade de dias úteis — centralizar com largura máxima
+  (o que o Comunicados fazia) aperta as duas.
+- ⚠️ **`embutido` é PROP, não CSS de fora**: `Destaques` e `FotosBatismo` abrem
+  mão da largura/centralização inline e do título próprio quando montadas na aba.
+  Neutralizar por fora quebraria na próxima mudança interna delas — e as duas
+  seguem funcionando soltas.
+
+### A aba "App"
+
+`MarketingApp.jsx` com 3 sub-abas (Comunicados · Destaques · Fotos Batismo),
+sub-aba no endereço (`?t=`) pra recarregar/compartilhar não jogar a pessoa pra
+outra aba. No `AppShell` os **dois itens do menu Criativo viraram um**
+("App de membros") — eram três lugares pra publicar coisa no mesmo app.
+
+- **Os 3 endereços antigos redirecionam** (`/marketing/comunicados`,
+  `/admin/destaques → ?t=destaques`, `/admin/fotos-batismo → ?t=batismo`): link
+  salvo, item de menu antigo e push já entregue continuam funcionando.
+- ⚠️⚠️ **PERMISSÃO NÃO FOI AMPLIADA, e isso limita o alcance HOJE**: os backends
+  `routes/destaques.js` e `routes/batismoFotos.js` exigem
+  `authorize('admin','diretor')`. A equipe de Marketing tem **nível 5 no MÓDULO**
+  mas role `assistente` — então veria as abas e tomaria **403 em tudo**. Botão que
+  devolve 403 é pior que botão ausente, então as 2 sub-abas só aparecem para
+  admin/diretor e quem não é **lê o motivo** em vez de bater na parede.
+  ⏳ **Liberar para o coordenador de Marketing é decisão do Marcos** — mexe em
+  autorização de dois backends (lei do "parar e perguntar"), não fiz por conta.
+
+### `MarketingEpicos.jsx` ficou DORMANTE, não foi apagado
+
+A faixa era o único caminho até ele. O arquivo **fica** (com header explicando) e
+o motivo é concreto: ele é o consumidor de **`GET /marketing/cards`**, que o
+Kanban deixou de usar em favor de `GET /marketing/kanban` — apagar a tela faria a
+próxima sessão concluir que a rota está órfã. Reativar é montá-lo de novo; ele não
+depende de nada que saiu.
+
+⚠️ **O typecheck NÃO pega JSX desbalanceado em `.jsx`** — `tsc -b` passou limpo
+com um `</div>` fechando um `<MarketingPagina>` no `MarketingAdmin`. Quem pegou
+foi o **`npm run build`** (esbuild), com arquivo e linha. Régua: em conversão de
+container, **o build é o verificador**, não o typecheck.
 
 ## Marketing · estado final (specs maio + redesenho 2026-05-30/31 · NO AR)
 

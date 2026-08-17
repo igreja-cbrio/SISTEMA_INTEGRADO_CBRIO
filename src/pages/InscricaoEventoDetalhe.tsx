@@ -95,6 +95,10 @@ export default function InscricaoEventoDetalhe() {
   // Cards recolhidos (só a linha principal) — melhora a visualização com
   // muitas inscrições. Set com os ids recolhidos + botão recolher/expandir todos.
   const [recolhidos, setRecolhidos] = useState<Set<string>>(new Set());
+  // Inscrições marcadas pra excluir em lote (pedido do Matheus · 17/08: as de
+  // teste inflam o placar e apagar uma a uma não é caminho com 241 inscritos).
+  const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
+  const [excluindoLote, setExcluindoLote] = useState(false);
   const toggleRecolhido = (rid: string) => setRecolhidos(prev => {
     const s = new Set(prev);
     if (s.has(rid)) s.delete(rid); else s.add(rid);
@@ -221,7 +225,64 @@ export default function InscricaoEventoDetalhe() {
       await api.excluirInscricao(id, i.id);
       toast.success('Inscrição excluída');
       setEv((prev: any) => (prev ? { ...prev, inscritos: (prev.inscritos || []).filter((x: any) => x.id !== i.id) } : prev));
+      setSelecionadas(prev => { const s = new Set(prev); s.delete(i.id); return s; });
     } catch (e: any) { toast.error(e?.message || 'Erro ao excluir a inscrição'); }
+  }
+
+  function alternarSelecao(inscricaoId: string) {
+    setSelecionadas(prev => {
+      const s = new Set(prev);
+      if (s.has(inscricaoId)) s.delete(inscricaoId); else s.add(inscricaoId);
+      return s;
+    });
+  }
+
+  // "Selecionar todos" marca o RECORTE VISÍVEL (filtro + busca), não a base
+  // inteira — o botão fica embaixo dos filtros, e marcar 241 pessoas quando a
+  // tela mostra 3 é o caminho mais curto pra um estrago em massa.
+  function selecionarVisiveis() {
+    setSelecionadas(prev => {
+      const s = new Set(prev);
+      inscritos.forEach((i: any) => s.add(i.id));
+      return s;
+    });
+  }
+
+  async function excluirSelecionadas() {
+    if (!id || !selecionadas.size || excluindoLote) return;
+    const ids = [...selecionadas];
+    const nomes = (ev?.inscritos || [])
+      .filter((i: any) => selecionadas.has(i.id))
+      .map((i: any) => i.nome_completo)
+      .slice(0, 8);
+    // ⚠️ Confirmação COM OS NOMES (até 8): exclusão em massa é o clique em que
+    // "12 selecionadas" não diz quem vai sumir — mesma régua da renovação de
+    // grupos e da "confira a lista".
+    const lista = nomes.join('\n· ');
+    const resto = ids.length > nomes.length ? `\n… e mais ${ids.length - nomes.length}` : '';
+    const ok = window.confirm(
+      `Excluir ${ids.length === 1 ? 'esta inscrição' : `estas ${ids.length} inscrições`}?\n\n· ${lista}${resto}\n\n`
+      + 'Elas somem da lista, do placar e dos sorteios (reversível por super-admin).',
+    );
+    if (!ok) return;
+    setExcluindoLote(true);
+    try {
+      const r: any = await api.excluirInscricoesLote(id, ids);
+      const excluidas = new Set<string>(r?.excluidas || []);
+      // Some da tela SÓ o que o servidor confirmou ter excluído — quem foi
+      // barrado por pagamento continua na lista, que é o estado real.
+      setEv((prev: any) => (prev
+        ? { ...prev, inscritos: (prev.inscritos || []).filter((x: any) => !excluidas.has(x.id)) }
+        : prev));
+      setSelecionadas(new Set());
+      if (r?.com_pagamento?.length || r?.falhas?.length) toast.warning(r?.resumo || 'Exclusão parcial');
+      else toast.success(r?.resumo || 'Inscrições excluídas');
+      if (r?.contadores) setEv((prev: any) => (prev ? { ...prev, contadores: r.contadores } : prev));
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao excluir as inscrições');
+    } finally {
+      setExcluindoLote(false);
+    }
   }
 
   // CSV com os campos padrão + uma coluna por campo extra do form-builder
@@ -560,6 +621,31 @@ export default function InscricaoEventoDetalhe() {
             </p>
           )}
         </div>
+        {/* Barra de seleção — só pra quem pode excluir (nível 3, a mesma régua
+            do backend). Fica ACIMA da lista pra a ação existir na tela mesmo
+            sem nada marcado: o botão de lixeira por linha é discreto demais e
+            não resolvia "excluir várias". */}
+        {podeEditar && inscritos.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap text-xs mb-2">
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+              onClick={selecionadas.size ? () => setSelecionadas(new Set()) : selecionarVisiveis}>
+              {selecionadas.size ? 'Limpar seleção' : `Selecionar ${inscritos.length === (ev.inscritos || []).length ? 'todos' : `os ${inscritos.length} do filtro`}`}
+            </Button>
+            {selecionadas.size > 0 && (
+              <>
+                <span className="text-muted-foreground">
+                  {selecionadas.size} selecionada{selecionadas.size > 1 ? 's' : ''}
+                </span>
+                <Button size="sm" variant="ghost" disabled={excluindoLote} onClick={excluirSelecionadas}
+                  className="h-7 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10">
+                  {excluindoLote
+                    ? <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Excluindo…</>
+                    : <><Trash2 className="h-3.5 w-3.5 mr-1" /> Excluir selecionadas</>}
+                </Button>
+              </>
+            )}
+          </div>
+        )}
         {(ev.inscritos || []).length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">Ninguém se inscreveu ainda.</p>
         ) : inscritos.length === 0 ? (
@@ -583,10 +669,23 @@ export default function InscricaoEventoDetalhe() {
               const cancelada = i.status === 'cancelada';
               return (
                 <div key={i.id} onClick={() => setInscSel(i)}
-                  className={`rounded-lg border border-border p-3 cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-colors ${cancelada ? 'opacity-60' : ''}`}>
+                  className={`rounded-lg border p-3 cursor-pointer transition-colors ${cancelada ? 'opacity-60' : ''} ${
+                    selecionadas.has(i.id)
+                      ? 'border-primary/60 bg-primary/10'
+                      : 'border-border hover:border-primary/40 hover:bg-primary/5'}`}>
                   {/* Linha principal: nº + nome + contato + quando + recolher */}
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-2 min-w-0">
+                      {/* Seleção pra excluir em lote. ⚠️ `stopPropagation` no
+                          clique: sem ele, marcar a caixa abriria a ficha por
+                          cima da própria seleção. */}
+                      {podeEditar && (
+                        <input type="checkbox" checked={selecionadas.has(i.id)}
+                          onClick={e => e.stopPropagation()}
+                          onChange={() => alternarSelecao(i.id)}
+                          title="Selecionar para excluir"
+                          className="h-4 w-4 shrink-0 accent-[#00B39D] cursor-pointer" />
+                      )}
                       {i.numero_sorte != null && (
                         <span className="inline-flex items-center rounded-full bg-primary/15 text-primary text-xs font-bold px-2 py-0.5 tabular-nums shrink-0">
                           Nº {i.numero_sorte}
@@ -719,26 +818,52 @@ export default function InscricaoEventoDetalhe() {
 }
 
 // Escolha do agrupamento + colunas antes de mandar pra impressora.
+// ⚠️ A ordem alfabética vem PRIMEIRO e é o padrão. Antes o padrão era "faixa
+// de idade", que parte a folha em até 5 blocos (Criança · Adolescente · Jovem ·
+// Adulto · Sem data de nascimento) com o total só no rodapé da última página —
+// e foi assim que uma lista de 64 pessoas do Kids foi lida como "40 e poucas"
+// (37 no bloco Adulto, 17 num bloco separado no fim). Agrupar continua a um
+// clique, para quem precisa da folha dividida.
 const AGRUPAMENTOS: { key: Agrupamento; label: string; dica: string }[] = [
-  { key: 'faixa', label: 'Faixa de idade', dica: 'Criança · Adolescente · Jovem · Adulto' },
-  { key: 'sexo', label: 'Sexo', dica: 'Feminino · Masculino' },
+  { key: 'nenhum', label: 'Ordem alfabética (A–Z)', dica: 'Uma lista só, do A ao Z — todo mundo na mesma tabela' },
+  { key: 'faixa', label: 'Faixa de idade', dica: 'Criança · Adolescente · Jovem · Adulto (folha dividida em blocos)' },
+  { key: 'sexo', label: 'Sexo', dica: 'Feminino · Masculino (folha dividida em blocos)' },
   { key: 'status', label: 'Status', dica: 'Confirmadas · Aguardando pagamento' },
   { key: 'pagamento', label: 'Pagamento', dica: 'Pago · Aguardando · Sem cobrança' },
-  { key: 'nenhum', label: 'Sem agrupar', dica: 'Uma lista só, em ordem alfabética' },
 ];
 
 function ImprimirListaDialog({ evento, inscritos, recorte, totalEvento, onClose }: {
   evento: any; inscritos: any[]; recorte?: boolean; totalEvento?: number; onClose: () => void;
 }) {
-  const [ag, setAg] = useState<Agrupamento>('faixa');
+  const [ag, setAg] = useState<Agrupamento>('nenhum');
   const [contato, setContato] = useState(false);
   const [pagamento, setPagamento] = useState<boolean>(!!evento?.pagamento_ativo);
   const [presenca, setPresenca] = useState(true);
   const [incluirCanceladas, setIncluirCanceladas] = useState(false);
 
-  const total = inscritos.filter((i: any) => incluirCanceladas || i.status !== 'cancelada').length;
-  const semNascimento = inscritos.filter((i: any) => !i.data_nascimento
-    && (incluirCanceladas || i.status !== 'cancelada')).length;
+  const naFolha = inscritos.filter((i: any) => incluirCanceladas || i.status !== 'cancelada');
+  const total = naFolha.length;
+  const semNascimento = naFolha.filter((i: any) => !i.data_nascimento).length;
+
+  // Prévia dos BLOCOS que a folha vai ter. Sem isso, quem agrupa não sabe que a
+  // lista sai partida — e conta um bloco achando que é o total.
+  const blocos = useMemo(() => {
+    if (ag === 'nenhum') return [];
+    const contagem = new Map<string, number>();
+    for (const i of naFolha) {
+      const k = ag === 'faixa'
+        ? (i.data_nascimento ? faixaLabel(i.data_nascimento, true) : 'Sem data de nascimento')
+        : ag === 'sexo'
+          ? (i.sexo ? sexoLabel(i.sexo) : 'Sexo não informado')
+          : ag === 'status'
+            ? (i.status || 'sem status')
+            : (i.pagamento?.status_pagamento
+              ? (PAG_LABEL[i.pagamento.status_pagamento] || i.pagamento.status_pagamento)
+              : 'Sem cobrança');
+      contagem.set(k, (contagem.get(k) || 0) + 1);
+    }
+    return [...contagem.entries()].sort((a, b) => b[1] - a[1]);
+  }, [ag, naFolha]);
 
   function imprimir() {
     imprimirListaInscritos(
@@ -807,6 +932,23 @@ function ImprimirListaDialog({ evento, inscritos, recorte, totalEvento, onClose 
               // achar que a folha veio incompleta.
               <div className="text-amber-600">
                 {semNascimento} sem data de nascimento — {semNascimento === 1 ? 'vai' : 'vão'} para um grupo "Sem data de nascimento" no fim.
+              </div>
+            )}
+            {/* ⚠️ A folha agrupada sai PARTIDA em blocos, e o total geral fica
+                só no rodapé da última página — quem confere conta um bloco e
+                acha que sumiu gente. A prévia mostra a divisão antes de imprimir. */}
+            {blocos.length > 1 && (
+              <div className="pt-1 border-t border-border/60">
+                <div className="text-muted-foreground">
+                  A folha sai dividida em <strong className="text-foreground">{blocos.length} blocos</strong>, somando {total}:
+                </div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {blocos.map(([nome, n]) => (
+                    <span key={nome} className="rounded-full border border-border px-2 py-0.5 text-[11px]">
+                      {nome}: <strong>{n}</strong>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
           </div>

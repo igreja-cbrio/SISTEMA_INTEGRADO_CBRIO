@@ -475,6 +475,9 @@ export const inscricoesApi = {
   unificadasDashboard: (qs) => get(`/inscricoes/unificadas/dashboard${qs ? `?${qs}` : ''}`),
   atualizarInscricao: (eventoId, inscricaoId, data) => patch(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`, data),
   excluirInscricao: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`),
+  // Exclusão em lote: o servidor relê as linhas vivas e devolve o que excluiu,
+  // o que ficou de fora por ter pagamento e o que já não estava na lista.
+  excluirInscricoesLote: (eventoId, ids) => post(`/inscricoes/eventos/${eventoId}/inscricoes/excluir-lote`, { ids }),
   uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-capa', fd); },
   // Check-in do evento (SPEC-06) — tela fullscreen: QR do comprovante + busca
   // Inventário das portas públicas do sistema (grupos/next/batismo/…) — read-only
