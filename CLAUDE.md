@@ -8155,6 +8155,134 @@ Migration de referência: `20260515520000_normalizar_meta_periodicidade.sql`.
 4. KPIs com checkpoints granulares em `kpi_trajetoria` continuam com a meta
    do checkpoint (não passam pela normalização) · checkpoint já é por período
 
+## ⚠️ ROTINA DE GESTÃO DE PROJETOS · agente `rotina_gestor` (2026-08-17 · migration `20260817140000`)
+
+Pedido do Marcos: ele estava gastando o tempo todo testando o sistema e perdendo
+a função de **gestor de projetos**. O plano dele eram 5 manhãs (seg a sex);
+cortamos pra **3 dias** e trocamos os pilares.
+
+**Pilares: Eventos · Reuniões · Compromissos.** Qualidade **deixou de ser pilar**
+(decisão dele, 17/08) e virou **checagem que roda dentro dos três** — qualidade
+de dado é sintoma de dado sem dono e sem prazo, e tratá-la como pilar cria caça a
+sintoma sem fim.
+
+| dia | bloco | o que entra |
+|---|---|---|
+| **SEXTA** | `abastecer` | tudo que depende de outra pessoa sai hoje · pedido de dado da quarta que vem · reuniões do ciclo criativo · dados de eventos |
+| **SEGUNDA** | `decidir` | as 2 pautas da manhã (Pedro 15 min · reunião de sistema) + o documento das 17:00 |
+| **QUARTA** | `fechar` | last call · conferência do que chegou · subir · reunião · ata em 24h |
+
+⚠️ **A folga de 5 dias É o desenho.** O plano original pedia dado na terça pra
+uma reunião na quarta — ~24h pra voluntário responder. Sai na sexta: fim de
+semana + segunda + terça.
+
+**Escada de escalonamento, sem ritual novo:** **N1** sexta (pedido neutro, prazo
+terça 18:00) · **N2** segunda (entra no documento das 17:00 **com nome** — o
+dente é de graça porque o documento já existe) · **N3** quarta (pendência formal
+na ata, e o dono passa a ser o **líder da área**).
+
+### O agente
+
+`agent-worker/src/agents/rotinaGestor.ts` + `tools/rotinaGestorRead.ts` (5
+leituras) + `tools/rotinaGestorEntrega.ts` (saída estruturada) +
+`agents/rotinaGestorHtml.ts` (render) + `skills/rotina-gestor/SKILL.md`.
+Scheduler novo **`0 7 * * 1,3,5`** (seg/qua/sex 07:00 SP — antes da reunião das
+9h da segunda), ao lado do semanal e do diário que já existiam. Entra em
+`agent_team` como classe **`watcher`**.
+
+- ⚠️⚠️ **SOMENTE LEITURA, e é decisão**: ele **não dispara cobrança pra
+  ninguém**. Entrega o TEXTO das mensagens pro Marcos copiar e enviar do WhatsApp
+  dele. Mandar do número da igreja é outra decisão, com outro custo (teto de 250
+  destinatários/24h e a nota de qualidade que decide a subida de tier).
+- ⚠️⚠️ **NÃO chama `notificar()`**, de propósito: 38 dos 51 módulos não têm regra
+  em `notificacao_regras`, então o aviso cairia no fallback de **todos** os
+  admin/diretor — 16 pessoas recebendo a rotina de UMA, 3× por semana. O sino já
+  tem ~16 mil não lidas exatamente por isso. **E-mail, só pro gestor.**
+- ⚠️ **O envio é do BACKEND** (`POST /api/governanca/cron/rotina-email`), onde
+  vivem as credenciais do Graph — duplicá-las no Railway criaria um 2º lugar pra
+  rotacionar segredo. **503 quando não há canal** (nunca 200 fingindo entrega), e
+  **falha de envio marca a rodada como `failed`**: se ficasse `completed`, o bloco
+  não teria chegado e ninguém saberia do silêncio.
+- ⚠️ **Sem `entregar_rotina`, a rodada FALHA** — não se improvisa e-mail do texto
+  do modelo. Formato varia, e e-mail malformado se lê como sistema quebrado.
+- ⚠️ O destino é o GESTOR, não a liderança: o bloco tem **rascunho de cobrança**,
+  e rascunho de cobrança circulando é conflito criado por engano. Teto de 5
+  destinatários.
+- Envs opcionais: `ROTINA_GESTOR_EMAIL` (destino) · `ROTINA_GESTOR_MODEL` ·
+  `ROTINA_GESTOR_MAX_TURNS`. Já usa `APP_BASE_URL` + `CRON_SECRET` do worker.
+- `POST /run/rotina_gestor` com `config.forcar = true` roda fora dos 3 dias
+  (ensaio). Sem `forcar`, dia que não é de rotina devolve `skipped` — o disparo
+  manual **não finge que é segunda**.
+
+### ⚠️ A régua de calendário é PURA e mora em `agent-worker/src/utils/rotinaDia.ts`
+
+Ela decide **qual bloco dispara**, e errar faz o pedido da sexta chegar na
+segunda, perdendo os 5 dias de folga que são a razão dele.
+
+- ⚠️ **Dia é BRT, nunca `toISOString()`**: 23h de sexta no Rio é sábado em UTC —
+  o bloco "abastecer" simplesmente não existiria naquela noite. Mesma armadilha
+  do censo, do totem Kids e do "culto de agora".
+- ⚠️ **Na quarta, "a próxima quarta" é HOJE**: apontar pra semana seguinte faria
+  o last call da manhã cobrar dado da reunião errada.
+- ⚠️ **Terça e quinta são `fora` DE PROPÓSITO** — há teste em cima disso: se
+  algum dos dois deixar de ser `fora`, a rotina voltou a 5 dias sem ninguém
+  decidir.
+- Teste: `cd agent-worker && npm test` (17 casos). **4 mutantes RODADOS e
+  mortos**: dia em UTC → mata tudo · terça virando dia de rotina → 1 · próxima
+  quarta nunca sendo hoje → 1 · fechamento mensal sem a guarda de dia → 1.
+  ⚠️ **Não está no gate da Vercel** porque o worker deploya no **Railway** e o
+  vitest da raiz só varre `src/**` do ERP.
+
+### ⚠️⚠️ Ele NÃO recria o que já existe — e quase foi construído em paralelo
+
+Levantado antes de escrever uma linha:
+
+1. **O módulo Governança JÁ É a "aba de atas"** que o Marcos ia pedir:
+   `governance_cycles` · `governance_meeting_types` (**4 rituais mensais
+   ROTATIVOS** nas quartas — OKR → DRE → KPI → Conselho, + DE/AG) ·
+   `governance_meetings` (com `ata`, `deliberacoes`, `temas` jsonb, snapshot) ·
+   **`governance_meeting_docs` com `tipo='transcricao'` (Plaud já integrado)** ·
+   `governance_memoria` · `governance_task_templates`.
+2. ⚠️⚠️ **Deliberação JÁ É uma LINHA**: `governance_tasks` com
+   **`origem='deliberacao'`** (titulo · responsavel · prazo · status, inclusive
+   `nao_executada`), lida por `GET /governanca/deliberacoes`. O resto da tabela é
+   **demanda de PREPARO**, semeada por template — **misturar as duas infla a
+   cobrança**, e a skill trava isso.
+3. **`governancaIA.extrairDeliberacoes` já extrai por IA da transcrição** — e
+   **NÃO grava nada**: devolve propostas pra alguém confirmar (quem confirma cria
+   via `POST /meetings/:id/tasks` com `origem='deliberacao'`). Reunião **com
+   transcrição e sem ata** é o caso mais barato de resolver, e o agente diz isso
+   explicitamente.
+4. **O time de agentes já roda em produção** (`time_agentes_fase0`, 14/08): 18
+   agentes, scheduler `node-cron` no Railway. "Montar um agente" era **uma linha
+   no roster**, não projeto novo.
+
+⚠️ **`governance_tasks.responsavel` é TEXTO LIVRE** — o agente não tenta casar
+com pessoa do sistema nem corrigir grafia (o mesmo pastor já apareceu em 4
+grafias). E **KPI sem dono não tem a quem cobrar**: vai pra `sem_a_quem_cobrar`
+com a **ÁREA**, porque são ~9 áreas 100% sem dono, ou seja **9 conversas, não 77
+cobranças**.
+
+⚠️ **`listar_saude_indicadores` é ESPELHO da régua de `GET /gestao/saude`** (as
+duas fontes de valor · ver a seção abaixo). O worker **não pode** chamar o
+endpoint (ele exige sessão admin/diretor), daí o espelho. **Mudou lá, muda aqui.**
+
+⚠️ **Leitura incompleta vira `ressalva`, nunca cobrança**: com `incompleto: true`
+o agente não gera mensagem de indicador naquele dia. Cobrança errada só se gasta
+uma vez.
+
+### ⚠️⚠️ `systemFoundation.test.js` estava VERMELHO na main e ninguém viu
+
+Ao registrar o job novo no catálogo, o teste acusou **47 ≠ 46** — e a conferência
+mostrou que na main ele já estava **46 ≠ 45**: o **#2496** (relatório semanal de
+KPI) acrescentou `/api/kpis/v2/cron/relatorio-email` ao catálogo **sem atualizar
+a contagem**. Passou porque **este arquivo NÃO está no gate de deploy** (o
+workflow roda 10 scripts, e ele não é um deles) — ou seja, **o guarda que existe
+pra impedir "cron entrou no catálogo sem registro" é justamente o que falha em
+silêncio.** Ajustado pra **47**.
+⏳ **Follow-up**: ligar `systemFoundation.test.js` ao gate. Não fiz aqui porque
+mexer no pipeline de deploy afeta os dois devs e pede alinhamento.
+
 ## ⚠️⚠️ `/gestao/saude` media "sem registro" numa fonte só (2026-08-17 · SEM migration)
 
 Levantamento de 14/08 a pedido do Marcos, corrigido agora que ele vai apoiar a

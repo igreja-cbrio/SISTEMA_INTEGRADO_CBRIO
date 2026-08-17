@@ -13,6 +13,7 @@ const { supabase } = require('../utils/supabase');
 const { fetchAllRows } = require('../utils/pagination');
 const govDocs = require('../services/sharepointGovernanca');
 const govIA = require('../services/governancaIA');
+const { enviarEmail, isConfigured: emailConfigurado } = require('../services/email');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: govDocs.MAX_BYTES } });
 
@@ -517,6 +518,72 @@ router.get('/cron/lembrete', async (req, res) => {
 
     res.json({ success: true, checklist: okr.checklist });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ════════════════════════════════════════════════════════════════════
+// Envio do bloco do dia da ROTINA DE GESTÃO (agente `rotina_gestor`)
+//
+// ⚠️ Por que o envio mora aqui e não no worker: as credenciais do Microsoft
+// Graph vivem em `backend/services/email.js`. Duplicá-las no Railway criaria um
+// 2º lugar pra rotacionar segredo. O worker monta o HTML e chama esta rota com
+// o CRON_SECRET (o skip de `/cron/*` do topo do arquivo cobre a autenticação).
+//
+// ⚠️ O destino é o GESTOR, não a liderança: o bloco tem mensagens de cobrança
+// em rascunho, e rascunho de cobrança circulando é conflito criado por engano.
+// ════════════════════════════════════════════════════════════════════
+
+const ROTINA_DESTINO_PADRAO = process.env.ROTINA_GESTOR_EMAIL || 'gestao@cbrio.com.br';
+
+router.post('/cron/rotina-email', async (req, res) => {
+  // Fail-closed: só segredo VÁLIDO ou admin/diretor logado.
+  const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
+  if (!isAuthorizedCron(req) && !isAdmin) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    const { assunto, html, texto, para } = req.body || {};
+
+    if (!assunto || typeof assunto !== 'string' || !assunto.trim()) {
+      return res.status(400).json({ error: 'assunto obrigatório' });
+    }
+    if (!html || typeof html !== 'string' || !html.trim()) {
+      return res.status(400).json({ error: 'html obrigatório' });
+    }
+    // Teto defensivo: o bloco do dia é resumo. Corpo gigante é sinal de loop no
+    // render, e cliente de e-mail trunca sozinho.
+    if (html.length > 400_000) {
+      return res.status(400).json({ error: 'html excede 400k caracteres' });
+    }
+
+    if (!emailConfigurado()) {
+      // ⚠️ 503 e não 200: sem canal, NADA foi enviado — responder ok faria o
+      // worker marcar a rodada como entregue e ninguém saberia do silêncio.
+      return res.status(503).json({ error: 'nenhum canal de e-mail configurado' });
+    }
+
+    const destinatarios = (Array.isArray(para) ? para : [para || ROTINA_DESTINO_PADRAO])
+      .filter((e) => typeof e === 'string' && e.includes('@'))
+      .slice(0, 5);
+
+    if (!destinatarios.length) {
+      return res.status(400).json({ error: 'nenhum destinatário válido' });
+    }
+
+    const r = await enviarEmail({
+      to: destinatarios,
+      subject: assunto.trim().slice(0, 200),
+      html,
+      text: typeof texto === 'string' ? texto.slice(0, 100_000) : undefined,
+      fromName: 'Rotina de gestão · CBRio',
+    });
+
+    if (!r?.ok) {
+      return res.status(502).json({ error: r?.error || 'falha no envio', destinatarios });
+    }
+
+    res.json({ ok: true, destinatarios, id: r.id || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ════════════════════════════════════════════════════════════════════
