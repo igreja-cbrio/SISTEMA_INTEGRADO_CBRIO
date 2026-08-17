@@ -584,6 +584,125 @@ pergunta-mãe antes de tratar barra baixa como cansaço.
   colagem): as 12 respostas são a equipe testando em 4 minutos, e o formulário não
   avisa quando o CEP está incompleto. Avisar é melhoria de UX ainda não feita.
 
+## ⚠️⚠️ LEI · routeKey de `authorizeModule` SEM entrada no mapa desliga a matriz (2026-08-17 · SEM migration)
+
+Pergunta do Marcos Paulo: *"o módulo de links e QR code e o módulo do censo
+devem ser parte de inscrições?"* — a resposta foi **não** para os dois (registro
+da decisão no fim desta seção), e a auditoria feita para respondê-la achou isto.
+
+**`'links'` NÃO estava no `ROUTE_MODULE_MAP`** desde que o módulo nasceu (08/08).
+`authorizeModule` busca a chave no mapa, recebe `undefined`, e cai neste ramo:
+
+```js
+if (moduleNames.length === 0) {
+  const nivel = isWrite ? granular.cargoNivelEscrita : granular.cargoNivelLeitura;
+  hasAccess = nivel >= nivelMinimo;   // ← o nível padrão do CARGO, não a matriz
+}
+```
+
+⇒ **a matriz cargo × módulo — o que a tela de Permissões mostra e o que se edita
+em `/admin/permissoes` — deixa de valer para aquele módulo.** Medido em produção
+antes do conserto:
+
+| | a matriz dizia | a API aplicava |
+|---|---|---|
+| cargos podendo **escrever** link (nível 4) | 2 | **10** (todo cargo com `nivel_padrao_escrita ≥ 4`) |
+| cargos podendo **ler** | 33 (1 marcado "sem acesso") | **45**, todos |
+
+E o **deny explícito por usuário** (`modulosBloqueados`) também era pulado,
+porque aquele `if` é guardado por `moduleNames.length`.
+
+⚠️ **A falha é silenciosa nos DOIS sentidos**: ninguém toma 403 indevido (então
+ninguém reclama) e a tela de Permissões segue desenhando uma régua que o servidor
+não aplica. O comentário da entrada `'censo'` (06/08) já descrevia exatamente
+esta armadilha — o módulo seguinte a nascer caiu nela mesmo assim.
+
+⚠️ **Não era brecha de segurança**: os 10 são diretores/pastores/dev, e a rota
+`/links` já é `ModuleGuard moduleSlug="links"` no `App.tsx` (o menu idem), então
+os outros 34 **nunca viam a tela** — só alcançariam a API montando a requisição
+na mão. O conserto faz a API concordar com o que a tela já fazia.
+
+⚠️ **Efeito medido do conserto** (considerando o bypass de `role` admin/diretor):
+**4 pessoas** perdem escrita — Pedro Paulo Menezes, Pr. Juninho e Juliana
+Carneiro (cargos de diretoria com `role='assistente'`) —, e nenhuma delas via o
+botão "Novo link" hoje, porque o front já lê a matriz. **Decisão pendente do
+Marcos, em `/admin/permissoes`, não em código:** a matriz de `links` foi semeada
+a partir de `censo` (que veio de `nps`) e deixa escrita só em **Líder Mini** e
+**Dev**. Se diretoria deve poder repontar QR, é ali que se resolve.
+
+**Guarda: `src/test/routeModuleMap.test.ts`** (no gate) varre
+`backend/routes|services|utils` procurando `authorizeModule('<key>'` e exige que
+toda chave esteja declarada no mapa. Checagem por TEXTO (importar `auth.js`
+puxaria `utils/supabase`, e o gate roda sem as dependências de `backend/`), com
+**comentário removido dos dois lados** — sem isso o próprio teste, que cita a
+chamada na explicação, seria a evidência (armadilha de 06/08).
+**Mutation-testado**: apagar a entrada `'links'` deixa 2 casos vermelhos.
+Varredura completa em 17/08: **`links` era o ÚNICO órfão** entre os 34 routeKeys.
+
+### Inscrições · aba Portas ganhou o selo do QR (mesma leva)
+
+Um registro, duas lentes: o estado dinâmico/fixo vem de `links.catalogo()` e o
+botão **"Tornar dinâmico"** chama `links.paraDestino()` — a MESMA API do módulo
+Links. **NÃO reimplementar aqui o casamento destino ↔ link curto**; a lista de
+portas já é única (`inscricaoPortas.js`) e duplicar o resto faria as duas telas
+divergirem no primeiro formulário novo.
+
+- ⚠️ **O botão é gated por `links` nível 4, não pelo nível de Inscrições** — é a
+  expressão da régua: repontar o destino de um cartaz impresso é decisão de quem
+  cuida dos QRs. `inscricoes` tem **37 dos 41 cargos no nível 3 e ZERO em ≥4**.
+- ⚠️ **São TRÊS estados de selo**, e confundi-los faz a tela afirmar o que não
+  sabe: `{slug}` = dinâmico · `null` = endereço fixo · **`undefined` = não deu
+  pra saber** (sem permissão em `links`, ou a consulta falhou) → **nenhum selo**.
+  O contador do topo só conta porta que o catálogo conhece.
+- ⚠️ O catálogo é **best-effort**: 403 de quem não tem `links` não pode derrubar
+  nem esvaziar o inventário de inscrições.
+- O QR gerado por esta tela passa a codificar o **código curto** quando ele
+  existe (e aí `semDinamico` esconde a oferta de gerar outro — dois códigos para
+  o mesmo destino é como a lista de links vira lixo).
+
+### A decisão de arquitetura (registro · 17/08)
+
+**Links e QR NÃO vira aba de Inscrições.** O catálogo dele é **superconjunto**
+das portas de inscrição: inclui `/doar`, `/decisao`, `/wallet`, `/suporte`,
+`/voluntariado/self-checkin`, `/cadastro-membresia`, as pesquisas do censo e os
+eventos. Pôr o superconjunto dentro de um dos seus subconjuntos faria quem cuida
+do QR da página de doação abrir "Inscrições". E módulo aqui é **unidade de
+permissão**: fundir sob `inscricoes` ou tranca todo mundo fora (0 cargos em ≥4)
+ou entrega a 37 cargos o poder de repontar qualquer QR impresso da igreja.
+⚠️ Inscrições **já tem** uma aba "QRs ativos", que é outra coisa
+(`insc_qr_tokens`, comprovante HMAC por inscrição) — duas abas "QR" no mesmo
+módulo seria confusão garantida.
+
+**Censo NÃO vira inscrição com mais campos** (reafirma a decisão de 04/08, com
+motivos novos): dado sensível com leitura restrita (`pode_ver_sensivel` +
+auditoria em `cen_acesso_sensivel`) contra a matriz mais permissiva do sistema ·
+a forma do relatório é por PERGUNTA (12 respostas = **507 linhas** em
+`cen_resposta_item`, para o dashboard agregar em SQL) e não por pessoa · fila de
+cuidado (`cen_cuidado`) não é ciclo de vida de inscrição · a plataforma suporta
+resposta anônima, que o CPF obrigatório da inscrição impede.
+⚠️ **A consolidação que paga é NPS → Censo**, não Censo → Inscrições: `cen_pesquisa`
+copiou o formato de `nps_pesquisas` de propósito (para reusar o `NpsForm`) e o
+`tipo` já aceita `'nps'`. São 9 pesquisas vivas + sync de KPI a preservar —
+conversa própria, nada foi tocado.
+
+### ⚠️ Achado de carona · o gate `test:matcher-insert` é FALSO-VERMELHO no Windows
+
+`backend/services/membroMatchInsert.test.js` (de 17/08) limpa comentário com
+`.split('\n').map(l => l.replace(/(^|[^:])\/\/.*$/, '$1'))`. **Em checkout
+Windows (`core.autocrlf=true`) cada linha termina em `\r`, e `.` do regex do JS
+NÃO casa `\r` (é terminador de linha)** — então `.*` para antes dele e o `$` sem
+flag `m` não casa ali. Resultado: **a limpeza não remove NADA**, e o assert que
+exige o `{` logo depois de `acharOuCriarGuardado(` falha por causa do comentário
+que está no meio. Medido: blob do git com **0 bytes CR**, working tree com
+**214**.
+
+⚠️ **NÃO está vermelho no CI** (Linux, LF) — o #2530 mergeou verde e o deploy não
+está bloqueado. O estrago é outro e é o oposto do que parece: **no Windows a
+proteção anti-falso-positivo do próprio teste fica desligada**, ou seja os demais
+asserts rodam sobre o código COM comentário — exatamente a armadilha de 06/08 que
+o cabeçalho dele diz estar evitando. Conserto de 1 caractere: trocar `.*$` por
+`[^\n]*`. **Não apliquei** (teste de outra frente, mergeado há uma hora).
+
 ## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
 
 Demanda do **Arthur Serpa**: por um mês, 1 minuto de cada culto pra igreja
