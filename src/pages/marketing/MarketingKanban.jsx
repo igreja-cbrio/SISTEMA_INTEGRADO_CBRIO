@@ -2,9 +2,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { marketing as api } from '../../api';
-import MarketingNav from './MarketingNav';
+import MarketingPagina from './MarketingPagina';
 import MarketingTriagemSheet from './MarketingTriagemSheet';
-import MarketingEpicos from './MarketingEpicos';
 import { useArrastoKanban } from './useArrastoKanban';
 import { supabase } from '../../supabaseClient';
 import { Badge } from '../../components/ui/badge';
@@ -19,9 +18,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../../components/ui/dialog';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import {
-  Megaphone, Plus, Filter, Clock, Loader2, CheckCircle2, AlertCircle,
-  Zap, RefreshCw, ArrowRight, Calendar, CalendarDays, Settings, BarChart3, User2, FileText, Upload, Trash2, X, ListChecks, Paperclip,
-  Inbox, Search, Eye, ChevronDown, ChevronRight, MoveRight, GripVertical,
+  Megaphone, Plus, Filter, Clock, Loader2, CheckCircle2, Zap, RefreshCw,
+  ArrowRight, Calendar, User2, FileText, Upload, Trash2, ListChecks,
+  Paperclip, Inbox, Search, Eye, ChevronDown, ChevronRight, MoveRight
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
@@ -90,7 +89,6 @@ export default function MarketingKanban() {
   // Triagem embutida (consolidação F-B): campanhas-dor caem na 1ª coluna
   const [campanhasTriagem, setCampanhasTriagem] = useState([]);
   const [triagemSel, setTriagemSel] = useState(null);
-  const [visao, setVisao] = useState('quadro'); // 'quadro' (colunas) | 'epicos' (por campanha/evento)
 
   // Janela de semanas (pedido do Pedro · 14/08): o quadro abre mostrando só o
   // ciclo criativo da semana atual + a próxima. Quem decide o que está na
@@ -266,24 +264,12 @@ export default function MarketingKanban() {
   }
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Megaphone className="h-6 w-6 text-primary" />
-            Marketing
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Kanban de demandas criativas · 3 origens (solicitação · evento · interna)
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap">
-          <div className="flex rounded-lg border border-border overflow-hidden">
-            <button onClick={() => setVisao('quadro')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${visao === 'quadro' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-accent'}`}>Quadro</button>
-            <button onClick={() => setVisao('epicos')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${visao === 'epicos' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-accent'}`}>Épicos</button>
-          </div>
-          <MarketingNav />
+    // ⚠️ A faixa "Quadro | Épicos" SAIU (pedido do Marcos · 17/08): sobrou uma
+    // visualização só, então o toggle era ruído — e a visão de Épicos foi
+    // aposentada junto (o ciclo criativo agora se acompanha no dashboard).
+    <MarketingPagina
+      subtitulo="Demandas criativas: pedidos e tarefas internas"
+      acoes={<>
           {isCoordenador && (
             <Dialog open={novaOpen} onOpenChange={setNovaOpen}>
               <DialogTrigger asChild>
@@ -304,12 +290,8 @@ export default function MarketingKanban() {
               </DialogContent>
             </Dialog>
           )}
-        </div>
-      </div>
-
-      {visao === 'epicos' && <MarketingEpicos isCoord={isCoordenador} />}
-
-      {visao === 'quadro' && (<>
+      </>}
+    >
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-2 p-3 bg-muted/30 rounded-lg border border-border">
         <Filter className="h-4 w-4 text-muted-foreground" />
@@ -436,7 +418,6 @@ export default function MarketingKanban() {
           Movendo…
         </div>
       )}
-      </>)}
 
       <CardDrawer
         card={detail}
@@ -455,7 +436,7 @@ export default function MarketingKanban() {
         onClose={() => setTriagemSel(null)}
         onChanged={() => { carregar(); }}
       />
-    </div>
+    </MarketingPagina>
   );
 }
 

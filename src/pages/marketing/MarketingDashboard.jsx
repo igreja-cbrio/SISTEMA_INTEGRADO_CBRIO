@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { marketing as api } from '../../api';
 import { useAuth } from '../../contexts/AuthContext';
-import MarketingNav from './MarketingNav';
+import MarketingPagina from './MarketingPagina';
 import { Card } from '../../components/ui/card';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -12,9 +12,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import {
-  Megaphone, Loader2, AlertTriangle, CalendarDays, ListChecks, Inbox,
-  ExternalLink, CalendarClock, Check, X, ChevronRight, Zap,
-  ChevronLeft,
+  Loader2, AlertTriangle, CalendarDays, ListChecks, Inbox, ExternalLink,
+  CalendarClock, Check, X, ChevronRight, Zap, ChevronLeft
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -101,19 +100,7 @@ export default function MarketingDashboard() {
   useEffect(() => { carregar(); }, [carregar]);
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Megaphone className="h-6 w-6 text-primary" />
-            Marketing
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Suas entregas, o pulso das solicitações e em que fase cada ciclo criativo está por semana
-          </p>
-        </div>
-        <div className="shrink-0"><MarketingNav /></div>
-      </div>
+    <MarketingPagina subtitulo="Suas entregas, o pulso das solicitações e em que fase cada ciclo criativo está por semana">
 
       {erro && <Faixa>{erro} <button onClick={carregar} className="underline font-medium">Tentar de novo</button></Faixa>}
       {(dados?.avisos || []).map((a, i) => <Faixa key={i}>{a}</Faixa>)}
@@ -163,7 +150,7 @@ export default function MarketingDashboard() {
         podeEditar={isCoord}
         onMudou={carregar}
       />
-    </div>
+    </MarketingPagina>
   );
 }
 

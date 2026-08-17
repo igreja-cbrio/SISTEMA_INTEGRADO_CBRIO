@@ -2,11 +2,11 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { marketing as api } from '../../api';
-import MarketingNav from './MarketingNav';
+import MarketingPagina from './MarketingPagina';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import {
-  Megaphone, ChevronLeft, ChevronRight, Loader2, Users, AlertCircle, GripHorizontal,
+  ChevronLeft, ChevronRight, Loader2, Users, AlertCircle, GripHorizontal
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -124,20 +124,10 @@ export default function MarketingPlanner() {
   const irHoje = () => { const n = new Date(); setRef(new Date(n.getFullYear(), n.getMonth(), 1)); };
 
   return (
-    <div className="p-4 md:p-6 space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Megaphone className="h-6 w-6 text-primary" /> Marketing
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Planner de capacidade · {podeEditar ? 'arraste os entregáveis' : 'somente leitura'}
-            {salvando && <span className="ml-2 inline-flex items-center gap-1 text-primary"><Loader2 className="h-3 w-3 animate-spin" /> salvando…</span>}
-          </p>
-        </div>
-        <MarketingNav />
-      </div>
-
+    <MarketingPagina subtitulo={`Planner de capacidade · ${podeEditar ? 'arraste os entregáveis' : 'somente leitura'}${salvando ? ' · salvando…' : ''}`}>
+      {/* Navegação de mês + filtro de equipe. ⚠️ Isto NÃO é cabeçalho: ficou
+          dentro do conteúdo de propósito — só o título e o menu do módulo vivem
+          no MarketingPagina. */}
       <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-muted/30 rounded-lg border border-border">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => navega(-1)}><ChevronLeft className="h-4 w-4" /></Button>
@@ -239,7 +229,7 @@ export default function MarketingPlanner() {
         <GripHorizontal className="h-3.5 w-3.5 shrink-0" />
         Arraste uma barra pra outro dia ou outra pessoa (mantém a duração em dias úteis). Dias em excesso ({'>'} slots) ficam em vermelho · 🎯 = foco (sem paralela) · barra tracejada = tarefa do ciclo criativo (período vem da fase, não se arrasta). Fim de semana não aparece.
       </p>
-    </div>
+    </MarketingPagina>
   );
 }
 

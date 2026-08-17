@@ -213,8 +213,6 @@ const MinhasTarefas = lazyWithRetry(() => import('./pages/MinhasTarefas'));
 const NotFound = lazyWithRetry(() => import('./pages/NotFound'));
 const Solicitacoes = lazyWithRetry(() => import('./pages/Solicitacoes'));
 const NotificacaoRegras = lazyWithRetry(() => import('./pages/admin/NotificacaoRegras'));
-const Destaques = lazyWithRetry(() => import('./pages/admin/Destaques'));
-const FotosBatismo = lazyWithRetry(() => import('./pages/admin/FotosBatismo'));
 const CruzamentosPessoas = lazyWithRetry(() => import('./pages/admin/CruzamentosPessoas'));
 const SolicitacoesResponsaveis = lazyWithRetry(() => import('./pages/admin/SolicitacoesResponsaveis'));
 const SolicitacoesFluxo = lazyWithRetry(() => import('./pages/admin/SolicitacoesFluxo'));
@@ -261,7 +259,7 @@ const MarketingKanban = lazyWithRetry(() => import('./pages/marketing/MarketingK
 const MarketingPlanner = lazyWithRetry(() => import('./pages/marketing/MarketingPlanner'));
 const MarketingAdmin = lazyWithRetry(() => import('./pages/marketing/MarketingAdmin'));
 const MarketingAnalytics = lazyWithRetry(() => import('./pages/marketing/MarketingAnalytics'));
-const MarketingComunicados = lazyWithRetry(() => import('./pages/marketing/MarketingComunicados'));
+const MarketingApp = lazyWithRetry(() => import('./pages/marketing/MarketingApp'));
 const MarketingGenerosidade = lazyWithRetry(() => import('./pages/marketing/MarketingGenerosidade'));
 const TotemKidsAdmin = lazyWithRetry(() => import('./pages/admin/totemKids/TotemKidsAdmin'));
 const AssistenteIA = lazyWithRetry(() => import('./pages/admin/AssistenteIA'));
@@ -789,7 +787,11 @@ function AppRoutes() {
         <Route path="/marketing/planner" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingPlanner /></Suspense></ModuleGuard>} />
         <Route path="/marketing/admin" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={5}><Suspense fallback={<Loading />}><MarketingAdmin /></Suspense></ModuleGuard>} />
         <Route path="/marketing/analytics" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingAnalytics /></Suspense></ModuleGuard>} />
-        <Route path="/marketing/comunicados" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingComunicados /></Suspense></ModuleGuard>} />
+        {/* Aba "App" · Comunicados + Destaques + Fotos de Batismo (17/08).
+            Os 3 endereços antigos redirecionam pra sub-aba certa: link salvo,
+            item de menu antigo e push já entregue continuam funcionando. */}
+        <Route path="/marketing/app" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingApp /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/comunicados" element={<Navigate to="/marketing/app" replace />} />
         <Route path="/marketing/generosidade" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingGenerosidade /></Suspense></ModuleGuard>} />
         <Route path="/marketing/fila" element={<Navigate to="/marketing/kanban" replace />} />
         <Route path="/marketing/ciclo-criativo" element={<Navigate to="/marketing/kanban" replace />} />
@@ -813,8 +815,8 @@ function AppRoutes() {
         <Route path="/painel/nsm/pessoas" element={<Suspense fallback={<Loading />}><PainelNsmPessoas /></Suspense>} />
         <Route path="/jornada" element={<Suspense fallback={<Loading />}><PainelJornada /></Suspense>} />
         <Route path="/admin/notificacao-regras" element={<Suspense fallback={<Loading />}><NotificacaoRegras /></Suspense>} />
-        <Route path="/admin/destaques" element={<ModuleGuard permKey="isAdmin"><Suspense fallback={<Loading />}><Destaques /></Suspense></ModuleGuard>} />
-        <Route path="/admin/fotos-batismo" element={<ModuleGuard permKey="isAdmin"><Suspense fallback={<Loading />}><FotosBatismo /></Suspense></ModuleGuard>} />
+        <Route path="/admin/destaques" element={<Navigate to="/marketing/app?t=destaques" replace />} />
+        <Route path="/admin/fotos-batismo" element={<Navigate to="/marketing/app?t=batismo" replace />} />
         <Route path="/admin/cruzamentos" element={<Suspense fallback={<Loading />}><CruzamentosPessoas /></Suspense>} />
         <Route path="/admin/solicitacoes-responsaveis" element={<Suspense fallback={<Loading />}><SolicitacoesResponsaveis /></Suspense>} />
         <Route path="/admin/solicitacoes-fluxo" element={<Suspense fallback={<Loading />}><SolicitacoesFluxo /></Suspense>} />

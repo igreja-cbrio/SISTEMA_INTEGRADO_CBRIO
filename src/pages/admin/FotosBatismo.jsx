@@ -16,7 +16,8 @@ function fmtData(iso) {
   return new Date(a, m - 1, d).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-export default function FotosBatismo() {
+// `embutido` = montado na aba "App" do Marketing · ver o comentário em Destaques.
+export default function FotosBatismo({ embutido = false }) {
   const [datas, setDatas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selecionada, setSelecionada] = useState(null);
@@ -96,13 +97,15 @@ export default function FotosBatismo() {
   }
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px' }}>
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Fotos de Batismo</div>
-        <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>
-          Álbum de cada dia de batismo. Quem se batizou naquele dia vê as fotos na aba Batismo do app — e pode salvar no celular.
+    <div style={embutido ? undefined : { maxWidth: 1100, margin: '0 auto', padding: '0 24px' }}>
+      {!embutido && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Fotos de Batismo</div>
+          <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>
+            Álbum de cada dia de batismo. Quem se batizou naquele dia vê as fotos na aba Batismo do app — e pode salvar no celular.
+          </div>
         </div>
-      </div>
+      )}
 
       {!selecionada ? (
         loading ? (
