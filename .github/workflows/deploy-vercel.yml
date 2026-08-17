@@ -68,6 +68,9 @@ jobs:
       - name: Politica de familia (fila Vincular familias)
         run: npm run test:familia
 
+      - name: Matcher grava nascimento e sexo na criacao
+        run: npm run test:matcher-insert
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
