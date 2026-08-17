@@ -1321,7 +1321,7 @@ router.get('/pedidos/list', async (req, res) => {
 
     // Ocupação atual dos grupos com pedido em aberto — alimenta o aviso de
     // capacidade no frontend (capacidade é conselho, não trava).
-    const abertos = rows.filter(p => ['pendente', 'devolvido'].includes(p.status));
+    const abertos = rows.filter(p => ['pendente', 'devolvido', 'sem_contato'].includes(p.status));
     const grupoIds = [...new Set(abertos.map(p => p.grupo_id).filter(Boolean))].slice(0, 50);
     const ocupacao = {};
     await Promise.all(grupoIds.map(async (gid) => {
@@ -1341,7 +1341,7 @@ router.get('/pedidos/list', async (req, res) => {
     // vazio é só preenchido, não ganha selo). Lotes de 200 no .in().
     try {
       const abertosComMembro = rows.filter(p =>
-        ['pendente', 'devolvido', 'encaminhado'].includes(p.status) && p.membro_id && (p.telefone || p.email));
+        ['pendente', 'devolvido', 'sem_contato', 'encaminhado'].includes(p.status) && p.membro_id && (p.telefone || p.email));
       const memIds = [...new Set(abertosComMembro.map(p => p.membro_id))];
       const memMap = {};
       for (let i = 0; i < memIds.length; i += 200) {
@@ -2932,7 +2932,7 @@ router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (r
       sugerido_grupo_id: grupoSugerido.id,
       sugerido_em: new Date().toISOString(),
       sugerido_por_nome: req.user.name || null,
-    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'encaminhado', 'rejeitado']).select('id');
+    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'sem_contato', 'encaminhado', 'rejeitado']).select('id');
     if (marcado && marcado.length) {
       registrarEventoPedido(pedido.id, 'encaminhado', {
         grupo_sugerido: grupoSugerido.nome,
@@ -3034,7 +3034,11 @@ router.post('/pedidos/:pedidoId/aprovar-direto', authorizeModule('grupos', 3), a
       .select('id, status, grupo_id, nome').eq('id', req.params.pedidoId).is('deleted_at', null).maybeSingle();
     if (ePed) throw ePed;
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    if (!['pendente', 'devolvido', 'rejeitado', 'encaminhado'].includes(pedido.status)) {
+    // 'sem_contato' entra aqui (Naná · 17/08): é o caso MAIS provável de a
+    // triagem aprovar por cima — ela consegue falar com a pessoa por outro
+    // canal e destrava na hora. Deixá-lo de fora tornaria o desfecho novo um
+    // beco sem saída, que é o oposto do que ele existe pra resolver.
+    if (!['pendente', 'devolvido', 'rejeitado', 'encaminhado', 'sem_contato'].includes(pedido.status)) {
       return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
 
@@ -3088,7 +3092,7 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, membro_id, nome, motivo_rejeicao').eq('id', req.params.pedidoId).single();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    if (!['pendente', 'devolvido', 'encaminhado'].includes(pedido.status)) {
+    if (!['pendente', 'devolvido', 'sem_contato', 'encaminhado'].includes(pedido.status)) {
       return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
 
@@ -3101,7 +3105,7 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
       decidido_por: req.user.userId,
       decidido_por_nome: req.user.name,
       decidido_em: new Date().toISOString(),
-    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'encaminhado']).select('id');
+    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'sem_contato', 'encaminhado']).select('id');
     if (!claimed || !claimed.length) {
       return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
     }
