@@ -1469,6 +1469,37 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
         linhas.push(...(pag || []));
         if (!pag || pag.length < 1000) break;
       }
+
+      // ⚠️ `kids_pco_presencas` também é PRESENÇA e ficou sem leitor quando o
+      // Planning Center saiu do código (20/07/2026). São 178 registros de
+      // 05–12/07/2026 cobrindo 161 crianças — 26 delas NÃO têm nenhum check-in
+      // no totem, e sem esta fonte apareceriam como "nunca veio". Ignorar dado
+      // real de presença por ele estar na tabela antiga subestima quem
+      // frequenta, que é justamente o número em discussão.
+      // Best-effort dentro do best-effort: se a tabela sumir numa limpeza
+      // futura, a frequência segue com o totem em vez de derrubar a lista.
+      try {
+        for (let off = 0; off < 200000; off += 1000) {
+          const { data: pag, error } = await supabase
+            .from('kids_pco_presencas')
+            .select('crianca_id, data')
+            .order('data', { ascending: true })
+            .range(off, off + 999);
+          if (error) throw error;
+          // `data` é DATE — vira meio-dia UTC pra não cair no dia anterior em
+          // BRT quando comparado com os timestamps do totem.
+          for (const p of pag || []) {
+            if (p?.crianca_id && p?.data) {
+              linhas.push({ crianca_id: p.crianca_id, created_at: `${p.data}T12:00:00.000Z` });
+            }
+          }
+          if (!pag || pag.length < 1000) break;
+        }
+        linhas.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      } catch (e2) {
+        console.warn('[totemKids/criancas] presenças do PCO:', e2.message);
+      }
+
       for (const l of linhas) {
         const atual = checkinsPorCrianca.get(l.crianca_id) || { total: 0, ultimo: null };
         atual.total += 1;
