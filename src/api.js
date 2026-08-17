@@ -1892,6 +1892,11 @@ export const rh = {
   },
   // Admissão agora é um status do colaborador (em_admissao) — ver rh.funcionarios
   // (create com status 'em_admissao', update de admissao_dados, concluirAdmissao).
+  onboarding: {
+    pendentes: () => get('/rh/onboarding/pendentes'),
+    preview: () => post('/rh/onboarding/preview', {}),
+    disparar: () => post('/rh/onboarding/disparar', {}),
+  },
 };
 
 export const pcs = {

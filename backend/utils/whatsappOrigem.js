@@ -53,6 +53,8 @@ const ROTULOS = [
   ['kids', 'Kids'],
   ['solicitacoes.aprovacao_cold', 'Solicitações · aprovação pendente'],
   ['solicitacoes', 'Solicitações'],
+  ['rh.onboarding_lote', 'RH · formulário de dados pessoais'],
+  ['rh', 'RH'],
   ['auto', 'Mensagem automática do sistema'],
 ];
 
