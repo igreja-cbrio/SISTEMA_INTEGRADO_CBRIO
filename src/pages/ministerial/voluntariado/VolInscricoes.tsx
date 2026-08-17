@@ -11,21 +11,19 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
 import Paginacao from '@/components/Paginacao';
-import { Inbox, CheckCircle2, Percent, Search, Link2, Pencil, Save } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  imprimirRelatorioInscricoesVol, integradoEmTexto, STATUS_LABELS_INSCRICAO,
+} from '@/lib/imprimirInscricoesVoluntariado';
+import { Inbox, CheckCircle2, Percent, Search, Link2, Pencil, Save, Printer } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
   LineChart, Line,
 } from 'recharts';
 
-const STATUS_LABELS: Record<string, string> = {
-  integrado: 'Integrado',
-  enviado_ministerio: 'Enviado ao ministério',
-  inscrito: 'Inscrito (triagem)',
-  kids: 'Kids',
-  nao_responde: 'Não responde',
-  nao_pode_ou_duplicata: 'Não pode / duplicata',
-  desistente: 'Desistiu de servir',
-};
+// Fonte única dos rótulos de status (compartilhada com o relatório impresso —
+// duas cópias divergiriam na primeira mudança).
+const STATUS_LABELS = STATUS_LABELS_INSCRICAO;
 
 const STATUS_COLORS: Record<string, string> = {
   integrado: 'bg-green-500/10 text-green-700 border-green-500/20',
@@ -170,6 +168,18 @@ export default function VolInscricoes() {
   const [statusFilter, setStatusFilter] = useState<string>('todos');
   const [search, setSearch] = useState<string>('');
   const [searchInput, setSearchInput] = useState<string>('');
+  // Período por data de inscrição (de/até · inclusivo). Quando ativo, a LISTA
+  // ignora o seletor de ano (um período pode cruzar anos) — o resumo/gráficos
+  // lá de cima continuam no recorte do ano.
+  // ⚠️ O que a pessoa DIGITA e o que vira FILTRO são coisas diferentes: ao
+  // digitar o ano pelo teclado o navegador emite valores intermediários
+  // válidos no formato ('0002-08-10', '0202-08-10'), e cada um dispararia um
+  // fetch com filtro absurdo. O input mostra o valor cru; a query só usa data
+  // plausível.
+  const [de, setDe] = useState<string>('');
+  const [ate, setAte] = useState<string>('');
+  const [relatorioOpen, setRelatorioOpen] = useState(false);
+  const [incluirContato, setIncluirContato] = useState(false);
   const [page, setPage] = useState(0);
   const [copied, setCopied] = useState(false);
   const [selected, setSelected] = useState<InscricaoRow | null>(null);
@@ -187,8 +197,12 @@ export default function VolInscricoes() {
 
   const mudarStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) => voluntariado.atualizarInscricao(id, status),
-    onSuccess: (_data, vars) => {
-      setSelected((prev) => (prev ? { ...prev, status: vars.status } : prev));
+    onSuccess: (data: any, vars) => {
+      // Merge da linha devolvida pelo servidor: é ela que traz o carimbo de
+      // integrado_em (gravado ao integrar, limpo ao reverter) sem refetch.
+      setSelected((prev) => (prev
+        ? { ...prev, ...(data && typeof data === 'object' ? data : {}), status: vars.status }
+        : prev));
       queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-list'] });
       queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-summary'] });
       toast.success('Status atualizado.');
@@ -304,8 +318,10 @@ export default function VolInscricoes() {
       await voluntariado.editarInscricao(selected!.id, { area_direcionada: areas });
       return voluntariado.atualizarInscricao(selected!.id, 'integrado');
     },
-    onSuccess: () => {
-      setSelected((prev) => (prev ? { ...prev, status: 'integrado', area_direcionada: areasIntegrar } : prev));
+    onSuccess: (row: any) => {
+      setSelected((prev) => (prev
+        ? { ...prev, ...(row && typeof row === 'object' ? row : {}), status: 'integrado', area_direcionada: areasIntegrar }
+        : prev));
       queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-list'] });
       queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-summary'] });
       setIntegrarOpen(false);
@@ -354,17 +370,105 @@ export default function VolInscricoes() {
     }),
   });
 
-  const { data: lista, isLoading: loadingList } = useQuery<InscricoesListResponse>({
-    queryKey: ['vol', 'inscricoes-list', ano, area, statusFilter, search, page],
+  // Data plausível = digitada por completo (o ano parcial "0202" passa em
+  // qualquer regex de formato, mas não é uma data que alguém quis filtrar).
+  const dataPlausivel = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s) && Number(s.slice(0, 4)) >= 2000;
+  const deAplicado = dataPlausivel(de) ? de : '';
+  const ateAplicado = dataPlausivel(ate) ? ate : '';
+  const temPeriodo = !!(deAplicado || ateAplicado);
+  // O servidor recusa (400) quando a inicial vem depois da final — a tela diz
+  // isso antes de gastar a requisição.
+  const periodoInvertido = !!(deAplicado && ateAplicado && deAplicado > ateAplicado);
+
+  const { data: lista, isLoading: loadingList, error: listaErro } = useQuery<InscricoesListResponse>({
+    queryKey: ['vol', 'inscricoes-list', ano, area, statusFilter, search, deAplicado, ateAplicado, page],
+    enabled: !periodoInvertido,
     queryFn: () => voluntariado.inscricoesList({
-      ano,
+      ano: temPeriodo ? undefined : ano,
       area: area === 'todas' ? undefined : area,
       status: statusFilter === 'todos' ? undefined : statusFilter,
+      de: deAplicado || undefined,
+      ate: ateAplicado || undefined,
       search: search || undefined,
       limit: pageSize,
       offset: page * pageSize,
     }),
   });
+
+  // Rótulo humano da janela do filtro — vai colado no número da lista e no
+  // cabeçalho do relatório (número sem a janela ao lado é número que mente).
+  const periodoLabel = useMemo(() => {
+    const f = (s: string) => { const [y, m, d] = s.split('-'); return `${d}/${m}/${y}`; };
+    if (deAplicado && ateAplicado) return `${f(deAplicado)} a ${f(ateAplicado)}`;
+    if (deAplicado) return `a partir de ${f(deAplicado)}`;
+    if (ateAplicado) return `até ${f(ateAplicado)}`;
+    return `Ano ${ano}`;
+  }, [deAplicado, ateAplicado, ano]);
+
+  // Gera o relatório impresso com o MESMO filtro da lista, paginando até o
+  // total do servidor (o endpoint capa em 500 por página). A janela do popup
+  // abre no CLIQUE (gesto do usuário) e é passada adiante — abrir depois do
+  // fetch cai no bloqueador de popup.
+  const gerarRelatorio = useMutation({
+    mutationFn: async (win: Window) => {
+      const base = {
+        ano: temPeriodo ? undefined : ano,
+        area: area === 'todas' ? undefined : area,
+        status: statusFilter === 'todos' ? undefined : statusFilter,
+        de: deAplicado || undefined,
+        ate: ateAplicado || undefined,
+        search: search || undefined,
+        limit: 500,
+      };
+      const porId = new Map<string, InscricaoRow>();
+      let total = 0;
+      // Teto duro de 20 páginas (10 mil linhas) só como freio — a base viva
+      // tem ~830 inscrições. Quando o teto morde, o relatório DECLARA.
+      let i = 0;
+      for (; i < 20; i++) {
+        const r: InscricoesListResponse = await voluntariado.inscricoesList({ ...base, offset: i * 500 });
+        total = r.total || 0;
+        // Dedup por id: defesa em profundidade sobre o desempate de ordenação
+        // do servidor — linha repetida na fronteira da página inflaria o total
+        // impresso e os contadores por status.
+        for (const row of r.rows || []) porId.set(row.id, row);
+        if (!r.rows?.length || porId.size >= total) break;
+      }
+      return { rows: [...porId.values()], total, win };
+    },
+    onSuccess: ({ rows, total, win }) => {
+      const ok = imprimirRelatorioInscricoesVol(rows, {
+        periodoLabel,
+        areaLabel: area === 'todas' ? null : (area === 'kids' ? 'Kids' : 'Sede'),
+        statusLabel: statusFilter === 'todos' ? null : (STATUS_LABELS[statusFilter] || statusFilter),
+        busca: search || null,
+        totalNoFiltro: total,
+      }, { incluirContato, win });
+      if (!ok) {
+        toast.error('Não foi possível abrir a janela de impressão — libere os popups deste site e tente de novo.');
+        return;
+      }
+      setRelatorioOpen(false);
+    },
+    onError: (e: any, win) => {
+      try { win?.close(); } catch { /* janela já fechada */ }
+      toast.error(e?.message || 'Erro ao gerar o relatório.');
+    },
+  });
+
+  const abrirRelatorio = () => {
+    // Abre a janela DENTRO do gesto do clique e mostra um aguarde enquanto o
+    // fetch pagina — window.open pós-await é bloqueado pelo navegador.
+    const win = window.open('', '_blank', 'width=900,height=1100,scrollbars=yes');
+    // ⚠️ Popup bloqueado avisa AQUI, antes de paginar 830 linhas à toa: sem
+    // isso o diálogo fechava como se tivesse dado certo e nada abria.
+    if (!win) {
+      toast.error('O navegador bloqueou a janela do relatório — libere os popups deste site e tente de novo.');
+      return;
+    }
+    win.document.write('<p style="font-family:system-ui,sans-serif;color:#555;padding:24px">Gerando relatório…</p>');
+    gerarRelatorio.mutate(win);
+  };
 
   const { data: distDir } = useQuery<{ rows: Array<{ ministerio: string; total: number }>; pessoas: number }>({
     queryKey: ['vol', 'por-direcionada', ano],
@@ -415,13 +519,16 @@ export default function VolInscricoes() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Select value={ano} onValueChange={setAno}>
+          {/* Trocar o recorte volta pra página 1: sem isso o offset antigo
+              sobrevive e um recorte menor devolve lista vazia — a tela diria
+              "nenhuma inscrição" com dados existindo. */}
+          <Select value={ano} onValueChange={(v) => { setAno(v); setPage(0); }}>
             <SelectTrigger className="w-[110px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               {ANOS.map(a => <SelectItem key={a} value={String(a)}>{a}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Select value={area} onValueChange={setArea}>
+          <Select value={area} onValueChange={(v) => { setArea(v); setPage(0); }}>
             <SelectTrigger className="w-[130px]"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="todas">Todas áreas</SelectItem>
@@ -666,13 +773,46 @@ export default function VolInscricoes() {
       {/* Lista de pessoas (drill-down) */}
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
             <CardTitle className="text-base">
               Pessoas inscritas {lista?.total != null && (
                 <span className="text-muted-foreground text-sm font-normal">({lista.total})</span>
               )}
+              {temPeriodo && (
+                <span className="block text-xs font-normal text-muted-foreground mt-0.5">
+                  Período: {periodoLabel} · neste recorte o seletor de ano lá de cima não se aplica
+                </span>
+              )}
             </CardTitle>
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex gap-2 flex-wrap items-center">
+              {/* Filtro por data da inscrição (de/até · inclusivo) */}
+              <div className="flex items-center gap-1.5">
+                <Input
+                  type="date"
+                  value={de}
+                  max={ate || undefined}
+                  onChange={(e) => { setDe(e.target.value); setPage(0); }}
+                  aria-label="Inscrições a partir de"
+                  title="Inscrições a partir de"
+                  className="h-9 w-[140px]"
+                />
+                <span className="text-xs text-muted-foreground">a</span>
+                <Input
+                  type="date"
+                  value={ate}
+                  min={de || undefined}
+                  onChange={(e) => { setAte(e.target.value); setPage(0); }}
+                  aria-label="Inscrições até"
+                  title="Inscrições até"
+                  className="h-9 w-[140px]"
+                />
+                {temPeriodo && (
+                  <Button size="sm" variant="ghost" className="h-9 px-2 text-xs"
+                    onClick={() => { setDe(''); setAte(''); setPage(0); }}>
+                    Limpar
+                  </Button>
+                )}
+              </div>
               <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(0); }}>
                 <SelectTrigger className="w-[170px]"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -694,6 +834,11 @@ export default function VolInscricoes() {
                 </div>
                 <Button type="submit" size="sm" variant="outline">Buscar</Button>
               </form>
+              <Button size="sm" variant="outline" disabled={periodoInvertido}
+                title={periodoInvertido ? 'Ajuste o período antes de gerar' : 'Gera a folha com o filtro atual'}
+                onClick={() => { setIncluirContato(false); setRelatorioOpen(true); }}>
+                <Printer className="h-3.5 w-3.5 mr-1" /> Gerar relatório
+              </Button>
             </div>
           </div>
         </CardHeader>
@@ -706,17 +851,30 @@ export default function VolInscricoes() {
                   <th className="text-left px-4 py-2 font-medium">Inscrição</th>
                   <th className="text-left px-4 py-2 font-medium">Área</th>
                   <th className="text-left px-4 py-2 font-medium">Status</th>
+                  <th className="text-left px-4 py-2 font-medium">Integrado em</th>
                   <th className="text-left px-4 py-2 font-medium">Ministério</th>
                   <th className="text-left px-4 py-2 font-medium">Contato</th>
                   <th className="text-center px-4 py-2 font-medium">Membro</th>
                 </tr>
               </thead>
               <tbody>
-                {loadingList && (
-                  <tr><td colSpan={7} className="text-center text-muted-foreground py-6">Carregando...</td></tr>
+                {periodoInvertido && (
+                  <tr><td colSpan={8} className="text-center text-amber-600 py-6">
+                    A data inicial vem depois da final — ajuste o período.
+                  </td></tr>
                 )}
-                {!loadingList && lista?.rows?.length === 0 && (
-                  <tr><td colSpan={7} className="text-center text-muted-foreground py-6">Nenhuma inscrição com esses filtros</td></tr>
+                {!periodoInvertido && loadingList && (
+                  <tr><td colSpan={8} className="text-center text-muted-foreground py-6">Carregando...</td></tr>
+                )}
+                {/* Erro vem ANTES do vazio — erro disfarçado de "nenhuma inscrição"
+                    leva a decisão errada (lei do projeto). */}
+                {!periodoInvertido && !loadingList && !!listaErro && (
+                  <tr><td colSpan={8} className="text-center text-red-600 py-6">
+                    {(listaErro as any)?.message || 'Erro ao carregar as inscrições — tente ajustar o filtro.'}
+                  </td></tr>
+                )}
+                {!periodoInvertido && !loadingList && !listaErro && lista?.rows?.length === 0 && (
+                  <tr><td colSpan={8} className="text-center text-muted-foreground py-6">Nenhuma inscrição com esses filtros</td></tr>
                 )}
                 {lista?.rows?.map(p => (
                   <tr
@@ -737,8 +895,11 @@ export default function VolInscricoes() {
                         {STATUS_LABELS[p.status] || p.status}
                       </Badge>
                     </td>
+                    <td className="px-4 py-2 text-xs whitespace-nowrap text-muted-foreground">
+                      {integradoEmTexto(p.integrado_em) || '-'}
+                    </td>
                     <td className="px-4 py-2 text-xs max-w-[200px] truncate" title={p.ministerios_interesse || ''}>
-                      {p.ministerios_interesse || p.integrado_em || '-'}
+                      {p.ministerios_interesse || '-'}
                     </td>
                     <td className="px-4 py-2 text-xs whitespace-nowrap">
                       {p.telefone || '-'}
@@ -821,7 +982,13 @@ export default function VolInscricoes() {
                           ? <span className="text-green-600 font-medium">Vinculado</span>
                           : 'Não vinculado'}
                       />
-                      {selected.integrado_em && <Info label="Integrado em" value={selected.integrado_em} />}
+                      {/* integrado_em é TEXT com 3 gerações de dado (data ISO ·
+                          boolean da planilha · texto livre) — o helper filtra o
+                          boolean e formata a data; sem ele a ficha mostrava
+                          "True"/"False" cru. */}
+                      {integradoEmTexto(selected.integrado_em) && (
+                        <Info label="Integrado em" value={integradoEmTexto(selected.integrado_em)} />
+                      )}
                       {selected.feedback && (
                         <div className="sm:col-span-2">
                           <Info label="Observações" value={selected.feedback} />
@@ -1102,6 +1269,51 @@ export default function VolInscricoes() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Gerar relatório · sai em A4 com o MESMO filtro aplicado na lista */}
+      <Dialog open={relatorioOpen} onOpenChange={(v) => { if (!v) setRelatorioOpen(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Gerar relatório</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              O relatório sai em folha A4 com o <b>mesmo filtro aplicado na lista</b> — período,
+              área, status e busca ficam declarados no cabeçalho da folha.
+            </p>
+            <div className="rounded-md border p-3 text-sm space-y-1">
+              <div><span className="text-muted-foreground">Período:</span> {periodoLabel}</div>
+              <div><span className="text-muted-foreground">Área:</span> {area === 'todas' ? 'Todas' : (area === 'kids' ? 'Kids' : 'Sede')}</div>
+              <div><span className="text-muted-foreground">Status:</span> {statusFilter === 'todos' ? 'Todos' : (STATUS_LABELS[statusFilter] || statusFilter)}</div>
+              {search && <div><span className="text-muted-foreground">Busca:</span> “{search}”</div>}
+              <div><span className="text-muted-foreground">Inscrições no filtro:</span> {lista?.total ?? '—'}</div>
+            </div>
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <Checkbox
+                checked={incluirContato}
+                onCheckedChange={(v) => setIncluirContato(!!v)}
+                className="mt-0.5"
+              />
+              <span>
+                Incluir contato (telefone/e-mail)
+                <span className="block text-xs text-muted-foreground">
+                  É dado pessoal em papel — marque só se a folha for pra quem vai falar com as pessoas.
+                </span>
+              </span>
+            </label>
+            <div className="flex gap-2 pt-1 justify-end">
+              <Button size="sm" variant="ghost" disabled={gerarRelatorio.isPending}
+                onClick={() => setRelatorioOpen(false)}>
+                Cancelar
+              </Button>
+              <Button size="sm" disabled={gerarRelatorio.isPending} onClick={abrirRelatorio}>
+                <Printer className="h-3.5 w-3.5 mr-1" />
+                {gerarRelatorio.isPending ? 'Gerando...' : 'Gerar e imprimir'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

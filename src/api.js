@@ -3319,6 +3319,8 @@ export const voluntariado = {
     if (params.area) qs.set('area', params.area);
     if (params.status) qs.set('status', params.status);
     if (params.mes) qs.set('mes', params.mes);
+    if (params.de) qs.set('de', params.de);
+    if (params.ate) qs.set('ate', params.ate);
     if (params.search) qs.set('search', params.search);
     if (params.limit != null) qs.set('limit', params.limit);
     if (params.offset != null) qs.set('offset', params.offset);

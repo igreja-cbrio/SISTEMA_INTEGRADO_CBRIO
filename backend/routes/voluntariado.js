@@ -13,6 +13,8 @@ const { requireCron } = require('../utils/cronAuth');
 const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
 const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../utils/volRodizio');
 const { montarCobertura, contarStatus } = require('../utils/volCobertura');
+const { diaIntegracaoBRT } = require('../utils/volIntegradoEm');
+const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
 const { responderEscala } = require('../services/escalaResposta');
 const antecedentes = require('../services/antecedentesCriminais');
 const { executarSyncCompleto } = require('../services/voluntariadoSync');
@@ -3936,9 +3938,30 @@ router.get('/inscricoes', async (req, res) => {
     const area = req.query.area ? String(req.query.area).toLowerCase() : null;
     const status = req.query.status ? String(req.query.status) : null;
     const mes = req.query.mes ? String(req.query.mes) : null; // YYYY-MM
+    const de = req.query.de ? String(req.query.de) : null;    // YYYY-MM-DD (inclusivo)
+    const ate = req.query.ate ? String(req.query.ate) : null; // YYYY-MM-DD (inclusivo)
     const search = req.query.search ? String(req.query.search).trim() : null;
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const offset = Number(req.query.offset) || 0;
+
+    // ⚠️ Formato NÃO basta: `2026-02-31` casa a regex, e `new Date` do Node faz
+    // ROLLOVER (vira 03/03) — o limite exclusivo do `ate` se abriria em silêncio
+    // e o relatório sairia com linhas de março sob o rótulo "até 31/fev". Do
+    // lado do `de` a string ia crua ao Postgres, que recusa com 22008 e o
+    // handler respondia 500 genérico. Aqui a data é conferida de verdade.
+    const diaValido = (s) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+      const [y, m, d] = s.split('-').map(Number);
+      if (y < 1900 || y > 2200 || m < 1 || m > 12 || d < 1 || d > 31) return false;
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+    };
+    if ((de && !diaValido(de)) || (ate && !diaValido(ate))) {
+      return res.status(400).json({ error: 'Período inválido — use datas reais no formato AAAA-MM-DD' });
+    }
+    if (de && ate && de > ate) {
+      return res.status(400).json({ error: 'Período inválido — a data inicial vem depois da final' });
+    }
 
     let q = supabase
       .from('vol_inscricoes')
@@ -3950,6 +3973,12 @@ router.get('/inscricoes', async (req, res) => {
       `, { count: 'exact' })
       .is('deleted_at', null)
       .order('data_inscricao', { ascending: false })
+      // ⚠️ Desempate obrigatório: `data_inscricao` NÃO é única (o import da
+      // planilha gravou centenas de linhas com o mesmo timestamp) e o
+      // relatório pagina em requisições SEPARADAS — sem tiebreaker, a
+      // ordenação dos empates pode mudar entre páginas e a mesma pessoa sai
+      // duas vezes na folha enquanto outra desaparece.
+      .order('id', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (ano) {
@@ -3959,6 +3988,16 @@ router.get('/inscricoes', async (req, res) => {
       const [y, m] = mes.split('-');
       const nextMonth = new Date(Number(y), Number(m), 1);
       q = q.gte('data_inscricao', `${mes}-01`).lt('data_inscricao', nextMonth.toISOString().slice(0, 10));
+    }
+    // Período por DIA com fronteira em BRT: `data_inscricao` é timestamptz e o
+    // dia de operação da igreja é America/Sao_Paulo — comparar contra a
+    // meia-noite UTC deslocaria a borda em 3h (inscrição de domingo 22h
+    // cairia na segunda). `ate` é inclusivo → limite = dia seguinte, exclusivo.
+    if (de) q = q.gte('data_inscricao', `${de}T00:00:00-03:00`);
+    if (ate) {
+      const fim = new Date(`${ate}T12:00:00Z`);
+      fim.setUTCDate(fim.getUTCDate() + 1);
+      q = q.lt('data_inscricao', `${fim.toISOString().slice(0, 10)}T00:00:00-03:00`);
     }
     if (area) q = q.eq('area', area);
     if (status) q = q.eq('status', status);
@@ -4068,12 +4107,15 @@ router.patch('/inscricoes/:id', async (req, res) => {
 
     const patch = { status, updated_at: new Date().toISOString() };
     if (status === 'enviado_ministerio') patch.enviado_lider_em = new Date().toISOString();
-    if (status === 'integrado') patch.integrado_em = new Date().toISOString().slice(0, 10);
+    // Dia no fuso da igreja: às 22h BRT o `toISOString()` já virou o dia
+    // seguinte, e o carimbo (agora exibido na lista e impresso no relatório)
+    // diria uma data em que a pessoa não foi integrada.
+    if (status === 'integrado') patch.integrado_em = diaIntegracaoBRT();
     if (feedback !== undefined) patch.feedback = feedback || null;
 
-    const { data, error } = await supabase.from('vol_inscricoes')
-      .update(patch).eq('id', req.params.id).select().single();
-    if (error) throw error;
+    // Sair de 'integrado' limpa o carimbo — invariante garantido pelo escritor
+    // único (UPDATE condicionado ao estado de origem, sem corrida).
+    const data = await atualizarStatusInscricao(req.params.id, patch);
 
     // Notifica a pessoa (se tiver login vinculado)
     (async () => {
@@ -4247,10 +4289,11 @@ router.post('/inscricoes/:id/desistiu', async (req, res) => {
     const nota = motivo ? `Desistiu de servir: ${motivo}` : 'Desistiu de servir.';
     const feedback = atual?.feedback ? `${atual.feedback}\n${nota}` : nota;
 
-    const { data, error } = await supabase.from('vol_inscricoes')
-      .update({ status: 'desistente', feedback, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id).select().single();
-    if (error) throw error;
+    // Mesmo escritor único do PATCH: "desistente" ao lado de "Integrado em
+    // 15/08" é contradição na ficha e no relatório impresso.
+    const data = await atualizarStatusInscricao(req.params.id, {
+      status: 'desistente', feedback, updated_at: new Date().toISOString(),
+    });
     res.json(data);
   } catch (e) {
     console.error('[inscricao desistiu]', e.message);

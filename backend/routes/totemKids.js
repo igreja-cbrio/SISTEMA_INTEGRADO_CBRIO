@@ -27,6 +27,7 @@ const { traduzErroUmPaiUmaMae } = require('../utils/kidsResponsavel');
 // (templates deste arquivo migraram pra FILA no C2 · lote 5 — só o texto livre segue direto)
 const { enviarTexto: enviarTextoWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado, ehNomePlaceholder } = require('../services/membroMatch');
+const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
 // O Planning Center Check-Ins saiu do código (Marcos 2026-07-20): a frequência
 // do Kids é 100% do nosso totem (kids_checkins). Sobrou só a coluna legada
 // kids_criancas.planning_center_id e a tabela kids_pco_presencas (histórico
@@ -5313,9 +5314,10 @@ router.patch('/voluntariado-inscricoes/:id', authorizeModule('kids', 2), async (
       if (status === 'enviado_ministerio') patch.enviado_lider_em = new Date().toISOString();
     }
     if (feedback !== undefined) patch.feedback = feedback ? String(feedback).slice(0, 2000) : null;
-    const { data, error } = await supabase.from('vol_inscricoes')
-      .update(patch).eq('id', req.params.id).select('*').single();
-    if (error) throw error;
+    // Escritor único: devolver a linha pra triagem por aqui também limpa o
+    // carimbo `integrado_em` (a lista do Voluntariado e o relatório impresso
+    // mostrariam "Inscrito (triagem)" ao lado de "Integrado em 15/08").
+    const data = await atualizarStatusInscricao(req.params.id, patch);
     res.json(data);
   } catch (e) {
     console.error('[TOTEM-KIDS] patch voluntariado-inscricoes:', e.message);
