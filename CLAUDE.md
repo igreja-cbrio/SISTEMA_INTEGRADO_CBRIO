@@ -4116,8 +4116,14 @@ Os 51 já entregues continuariam mortos, e "revalidar" pareceria exigir
 que decide a subida de tier** que a igreja quer.
 
 ⇒ Quem revalida é o **SERVIDOR**: `verificarToken` aceita token `'aprov'`
-vencido **até uma data-limite**. O líder abre a mensagem que já está no WhatsApp
-dele e funciona. **Zero envio, zero custo, nenhum líder incomodado.**
+vencido. O líder abre a mensagem que já está no WhatsApp dele e funciona.
+
+⚠️⚠️ **A CONDIÇÃO MUDOU EM 17/08 — leia o bloco da temporada abaixo.** Por 5
+dias a tolerância foi até uma **data fixa (31/08)**, que era o "renove até o fim
+do mês" da Natasha. Depois da conversa dela com o **Pr. Nélio**, a régua virou
+**"enquanto aquela temporada estiver aberta"**. A data fixa **não existe mais**
+(env `GRUPOS_APROV_PRORROGADO_ATE` removida) — se algum lugar ainda a citar,
+está desatualizado.
 
 - ⚠️ **NÃO é afrouxamento geral**, e o teste existe pra que virar um seja
   decisão consciente: a assinatura HMAC continua obrigatória, vale **SÓ** pro
@@ -4126,14 +4132,6 @@ dele e funciona. **Zero envio, zero custo, nenhum líder incomodado.**
   `payload.l` tem que ser o **líder ATUAL** do grupo (trocou a liderança, o link
   morre na hora, prorrogado ou não). É a mesma tese já aplicada à renovação e à
   conferência: *"a validade real é decidida no servidor a cada uso"*.
-- ⚠️ **Tem PRAZO e morre sozinha** (`2026-08-31T23:59:59-03:00` — o "fim do mês"
-  que ela pediu): remendo datado, não porta permanente. Depois disso link
-  vencido volta a ser recusado e o TTL de 30d passa a bastar. Env
-  `GRUPOS_APROV_PRORROGADO_ATE` (ISO) estica sem deploy; **data inválida ou
-  vazia DESLIGA** (fail-closed).
-- ⚠️ **Data com fuso, não ingênua**: `'2026-08-31'` seria meia-noite UTC = 20h51
-  do dia 30 no Rio, e a prorrogação morreria um dia antes do combinado. Tem
-  teste em cima disso.
 - ⚠️ **O default de 7 dias NÃO subiu junto** (`TOKEN_TTL_MS` intocado): sugestão
   (`/g/s/`) e chamada do mês (`/g/f/`) não foram pedidas, e subir o default
   esticaria TRÊS fluxos de uma vez sem ninguém pedir.
@@ -4144,9 +4142,39 @@ dele e funciona. **Zero envio, zero custo, nenhum líder incomodado.**
 (pura: só `crypto` + env) — é o que a coloca no **gate de deploy**; o serviço
 **re-exporta** `assinarToken`/`verificarToken`, então nenhum import mudou. NÃO
 reimplementar assinatura/validade no serviço: duas cópias divergiriam.
-`src/test/gruposToken.test.ts` (14 casos, `agora` **injetado**) é
-**mutation-testado** — estender a tolerância a qualquer tipo, tirar a
-data-limite ou deixar token sem `exp` passar deixa o gate vermelho.
+
+### ⚠️⚠️ 17/08 · a validade virou A TEMPORADA (Pr. Nélio + Natasha)
+
+Ela levou o caso ao Pr. Nélio e voltou com outra régua, melhor: **"deixe o link
+ativo enquanto aquela temporada estiver aberta"**. Faz mais sentido que
+calendário — o que dá sentido a um pedido de entrada é a temporada em que ele
+foi feito; e trocar de data fixa em data fixa seria um remendo por mês. A data
+de 31/08 e a env `GRUPOS_APROV_PRORROGADO_ATE` **foram REMOVIDAS**.
+
+Medido em 17/08: **1 temporada aberta (T2-2026, 01/08→31/12)** e **todos os 112
+pendentes** são de grupos dela. Ou seja a cobertura *aumentou* (de 31/08 para
+enquanto a temporada durar).
+
+- **Onde a régua mora:** `gruposToken` é PURO (não sabe o que é temporada), então
+  `verificarToken(token, tipo, agora, { aceitarExpirado })` **recebe a decisão**;
+  quem a toma é `publicGrupos.js` (`haTemporadaAberta`, consultando
+  `mem_temporadas.inscricoes_abertas` com cache de 60s). Régua de negócio no
+  lugar que tem o dado; função pura segue no gate.
+- ⚠️⚠️ **FAIL-CLOSED em três camadas**: o default de `aceitarExpirado` é
+  **false** (quem esquecer de consultar não prorroga) · só o booleano **`true`**
+  abre (string/objeto/`1` não contam — resposta estranha de consulta não pode
+  virar "pode") · e **erro de consulta também não prorroga**. Link vencido tem
+  que PROVAR que ainda vale, não o contrário.
+- ⚠️ **O erro não derruba o endpoint**: link dentro dos 30 dias do TTL segue
+  abrindo (é 100% do tráfego recente). O TTL virou o **piso** que segura o link
+  de pé se a consulta da temporada falhar.
+- ⚠️ **A régua é a MESMA no GET e no POST.** Se o GET abrisse a página e o POST
+  recusasse, o líder decidiria e levaria erro na cara — pior que não abrir.
+
+`src/test/gruposToken.test.ts` (15 casos, `agora` **injetado**) é
+**mutation-testado**: inverter o default para "aceita", aceitar valor truthy em
+vez de `=== true`, estender a tolerância a qualquer tipo, ou deixar token sem
+`exp` passar deixa o gate vermelho.
 
 ### ⚠️ Quem NÃO tem mensagem antiga pra revalidar são 3, não 9 (alarme meu, medido de novo)
 
@@ -4158,7 +4186,7 @@ próprio. Régua que fica: **ao auditar entrega de aviso de grupo, conferir
 `casal_pedido_id` antes de contar** — senão todo grupo de casais aparece como
 falha de entrega.
 
-Sobram **3** (follow-up de gente · envio é ação externa, fica com a coordenação):
+Sobravam **3** sem mensagem nenhuma a revalidar:
 - **ROTEIRO DA MENSAGEM DE DOMINGO** (Rodrigo Paula Silva · líder Roberto da
   Silva Franco Neto) — pedido de 27/07, **nenhum envio**. Data anterior ao fix
   de 31/07 que passou o aviso ao líder a ser **awaited**; é o sintoma exato
@@ -4168,6 +4196,27 @@ Sobram **3** (follow-up de gente · envio é ação externa, fica com a coordena
 - **SER MULHER** (Mayla Marçal Portela Seoud · líder Márcia Trigo) — envio
   recusado com **`invalid_phone`**. Telefone da líder precisa ser corrigido na
   Membresia (a normalização da porta só vale pra dado novo).
+
+### ⚠️ 17/08 · a APROVAÇÃO EM MASSA foi cogitada e DESCARTADA (decisão do Pr. Nélio)
+
+Chegou a ser pedida ("aprovar todos os pedidos de 06/08 pra trás, sem reenviar
+mensagem · ciente dos riscos") e eu já tinha o lote medido: **45 pedidos reais,
+45 pessoas, 19 grupos** (a estimativa era 30–40), com **0 caso problemático** —
+nenhum grupo apagado/inativo, nenhum pedido sem solicitante, ninguém já dentro
+do grupo. **Não foi executada**: conversando com o Pr. Nélio, a decisão virou
+**reenviar o aviso aos líderes pra que eles mesmos aprovem e recebam os
+contatos** — a Naná comunicou os líderes que a mensagem viria.
+
+Fica registrado por que aprovar em massa não é inócuo, se voltar à mesa:
+- `aprovarPedidoCore` **cria vínculo de pessoa** e dispara **WhatsApp de
+  boas-vindas à PESSOA** (`notificarPessoaAprovada`, gated por opt-in dela) —
+  que é OUTRA mensagem, diferente do link ao líder. Aprovar "em silêncio" põe
+  gente em grupo sem que ela saiba; aprovar "com aviso" manda dezenas de
+  mensagens. Não existe opção neutra, e por isso a pergunta foi feita.
+- ⚠️ **"Natasha teste"** (tel 21984555026 · e-mail `natasha.lit.faria@gnail.dom`,
+  com typo proposital) estava **dentro** do recorte de 06/08 — havia 2 desses
+  pedidos de teste na fila. Régua: **lote de aprovação varre teste junto**;
+  filtrar antes, não depois.
 
 ## ⚠️ Grupos · membro existente ganha o que digitou no formulário (2026-08-06 · SEM migration)
 
