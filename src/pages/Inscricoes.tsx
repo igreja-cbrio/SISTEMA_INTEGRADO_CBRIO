@@ -251,6 +251,12 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
                 <option value="">Selecione…</option>
                 {areas.map((a: any) => <option key={a.id} value={a.nome}>{a.nome}</option>)}
               </select>
+              {/* A área não é só rótulo: quem cuida dela também recebe o aviso de
+                  cada nova inscrição (backend/utils/moduloDaAreaEvento). Sem
+                  isto, trocar a área muda quem é notificado sem ninguém saber. */}
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Quem cuida desta área também recebe o aviso de cada nova inscrição.
+              </p>
             </div>
             {!ed && (
               <div>
