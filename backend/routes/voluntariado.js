@@ -3522,7 +3522,10 @@ router.post('/schedules/bulk', async (req, res) => {
     }));
 
     const { data, error } = await supabase.from('vol_schedules')
-      .upsert(rows, { onConflict: 'service_id,planning_center_person_id', ignoreDuplicates: true })
+      // A constraint atual inclui equipe, função e slot. Usar a chave antiga
+      // (só culto + pessoa) faz o Postgres recusar o ON CONFLICT antes mesmo
+      // de tentar escalar alguém.
+      .upsert(rows, { onConflict: 'service_id,planning_center_person_id,team_name,position_name,slot_seq', ignoreDuplicates: true })
       .select();
     if (error) return res.status(400).json({ error: error.message });
     res.json({ created: data.length, schedules: data, pulados });
