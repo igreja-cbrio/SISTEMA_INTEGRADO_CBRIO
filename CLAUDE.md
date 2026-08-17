@@ -1431,15 +1431,30 @@ recolhidos SEMPRE (consentimento anterior não é consentimento deste evento).
   `convalidated = true` · `totem_estacao_tokens` **sem nenhuma policy para
   `authenticated`** · 6 recusas de CHECK/UNIQUE validadas.
 
-### ⚠️ O gate de deploy tem 8 passos, e o vitest é UM deles (lição de 05/08)
+### ⚠️⚠️ O gate de deploy · são 10 SCRIPTS + vitest + o BUILD (corrigido 14/08)
 
 O deploy do #2291 **falhou** em `test:inscricao-portas` e travou a publicação
 (inclusive de terceiros; produção seguiu no deployment anterior). Eu havia
-rodado `npm test` (vitest · 341 verdes) e concluído que o gate estava coberto —
-os outros **7 passos são scripts node** (`test:inscricao-contrato`,
-`test:inscricao-portas`, `test:inscricao-orfas`, `test:inscricao-qr`,
-`test:censo`, `test:nome-email`, `test:duplicidade`) e não passam pelo vitest.
-**Rodar os 8 antes de mergear** (`.github/workflows/deploy-vercel.yml`).
+rodado `npm test` (vitest) e concluído que o gate estava coberto — os scripts
+node **não passam pelo vitest**.
+
+⚠️ **CORREÇÃO DE REGISTRO (14/08)**: este arquivo dizia "8 passos" e a lista
+estava incompleta — **são 10 scripts** (`.github/workflows/deploy-vercel.yml`):
+`inscricao-contrato` · `inscricao-portas` · `inscricao-orfas` · `inscricao-qr` ·
+`censo` · `nome-email` · **`nome-completo`** · `duplicidade` ·
+**`identidade-pares`** · **`familia`**. Os três em negrito não estavam citados
+aqui, então "rodei os 8" deixava 2 sem verificação.
+
+⚠️⚠️ **E o TYPECHECK do gate é `npm run typecheck` (`tsc -b`), não
+`tsc -p tsconfig.app.json`.** Este erro custou um deploy vermelho em 14/08:
+`error TS2578: Unused '@ts-expect-error' directive` num **arquivo de teste** —
+que o `tsconfig.app.json` **não inclui**, e por isso passava limpo localmente. O
+`tsc -b` roda dentro do `vercel build`, ou seja o build É passo do gate.
+⚠️ `tsc -b` é **incremental com cache** (`.tsbuildinfo`): pra conferir de
+verdade, apagar o cache antes (`find . -name "*.tsbuildinfo" -not -path
+"./node_modules/*" -delete`).
+
+**Antes de mergear: `npm run typecheck` (sem cache) + `npm test` + os 10 scripts.**
 
 O guarda que pegou foi o **App.tsx → catálogo** de `inscricaoPortas.test.js`,
 que existe pra impedir porta de inscrição nova entrar sem registro: as rotas
@@ -5746,7 +5761,60 @@ já registrado como follow-up). Régua confirmada, não defeito.
 pedidos apagados — a equipe pode estar trabalhando no que ninguém mais pediu, ou
 o pedido foi apagado por engano. **Não apaguei nada**; é decisão de gente.
 
-### ⚠️ O arrasto do Kanban · TRÊS causas, e nenhuma se conserta no handler de drop
+### ⚠️⚠️ O arrasto foi REESCRITO com pointer events (2026-08-14 · 2ª rodada)
+
+Correção do Marcos depois da 1ª tentativa: *"quando você clica e tenta arrastar
+não vai; ele até aceita apertar em Triar e aí vai pra próxima etapa, mas o drag
+and drop não funciona — veja principalmente os de triagem, pois eles são a
+rotina"*. Ou seja: **não ia nem com mouse**, e a hipótese "é só toque" da 1ª leva
+estava incompleta.
+
+**A Triagem nunca participou do arrasto**: `TriagemColumn` não tinha `onDragOver`
+nem `onDrop`, e `CampanhaCard` não era `draggable`. Nada entrava, nada saía — e
+como a coluna simplesmente não reagia, o quadro inteiro parecia quebrado.
+
+⇒ **HTML5 drag-and-drop SAIU** (`draggable`/`onDragStart`/`onDrop`) e entrou
+arrasto por **pointer events**, que chega igual de mouse, caneta e dedo:
+- **`src/lib/arrastoKanban.ts`** = régua PURA (limiar clique×arrasto, decisão de
+  soltura, velocidade do auto-scroll) · `src/test/arrastoKanban.test.ts` 17 casos
+  · **5 mutantes RODADOS e mortos**.
+- **`src/pages/marketing/useArrastoKanban.js`** liga ao DOM ·
+  `src/test/useArrastoKanban.test.tsx` exercita o GESTO inteiro (pointerdown →
+  move → up) · **4 mutantes RODADOS e mortos**.
+
+- ⚠️ **`touch-action: none` no card é o que faz o arrasto existir no toque** —
+  sem isso o navegador trata o gesto como rolagem e nunca entrega `pointermove`.
+- ⚠️ **Limiar de 6px separa clique de arrasto** (o card é as duas coisas). E uma
+  vez arrasto, **nunca volta a ser clique**: o ponteiro pode passar de novo perto
+  da origem, e desativar ali faria o painel abrir ao soltar.
+- ⚠️ **`pointermove`/`up` ficam na JANELA**, não no card: o ponteiro sai do card
+  no primeiro pixel, e handlers presos a ele perderiam o resto do gesto.
+- ⚠️ **O fantasma é escondido antes do `elementFromPoint`** — senão ele é o
+  elemento sob o ponteiro e nenhuma coluna é encontrada (mutante trava isso).
+- ⚠️ **Auto-scroll horizontal proporcional**: com 6 colunas e `snap`, mover do
+  Backlog até Concluído exigia que o destino já estivesse visível.
+- ⚠️ A coluna é achada por **`data-coluna`** no container. **Não remover esse
+  atributo** — sem ele a coluna deixa de ser alvo.
+- **A Triagem segue sem `data-coluna`, DE PROPÓSITO**: entrar nela é a campanha
+  nascer do pedido, e sair é **triar** (que cria os entregáveis) — nenhum dos
+  dois é "mudar o estado de um card". A diferença é que agora ela **DIZ isso**
+  durante o arrasto, e o "Triar" virou **botão de verdade** (era texto decorativo
+  dentro de um card clicável, sendo a rotina do Pedro).
+
+**⚠️ O teste de gesto pegou um bug MEU antes de chegar no Pedro:** o hook fazia
+`removeChild` do fantasma — um nó que o **React** possui (é JSX condicionado a
+`arrastando`). Isso estoura `NotFoundError: The node to be removed is not a child
+of this node` quando o React tenta desmontá-lo, e **derrubava o arrasto inteiro**.
+Régua: **nunca remover do DOM um nó renderizado pelo React** — o hook só guarda a
+ref; quem monta e desmonta é o componente.
+
+### ⚠️ 1ª tentativa (menu "Mover para") · o que ficou
+
+O menu **continua** — é o caminho sem arrasto (útil no toque, e para quem prefere
+clicar) e o lote do macro depende dele. O diagnóstico das 3 causas abaixo segue
+válido; o que mudou é que a correção deixou de ser só o menu.
+
+### As 3 causas do arrasto antigo (diagnóstico da 1ª leva)
 
 Reclamação do Pedro: *"está com dificuldade de arrastar tarefas de um bucket para
 o outro, esse drag and drop individual"*.
