@@ -17,6 +17,7 @@ import {
 import EquipeEscalaCard, { type AreaEscala, type GrupoFuncao } from './components/schedules/EquipeEscalaCard';
 import PainelEscalar, { type Vaga } from './components/schedules/PainelEscalar';
 import MatrizEscala from './components/schedules/MatrizEscala';
+import VolunteerDetailDialog from './components/schedules/VolunteerDetailDialog';
 import { Plus, Wand2, Copy, Calendar, Users, ChevronDown } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -250,6 +251,10 @@ export default function VolScheduleBuilder() {
   const deleteSchedule = useDeleteSchedule();
   const bulkSchedule = useBulkSchedule();
   const [vagaAberta, setVagaAberta] = useState<Vaga | null>(null);
+  // Detalhe da pessoa. ⚠️ Guarda o nome junto do id: quem veio do Planning
+  // Center sem cadastro tem `volunteer_id` nulo, e o diálogo precisa do nome
+  // pra dizer de quem se trata antes de explicar que não há perfil vinculado.
+  const [detalhe, setDetalhe] = useState<{ id: string | null; nome: string } | null>(null);
 
   const abrirVaga = (area: AreaEscala, g: GrupoFuncao) => setVagaAberta({
     team_id: area.team_id, team: area.team,
@@ -542,6 +547,7 @@ export default function VolScheduleBuilder() {
                       key={a.team_id || a.team} area={a} conflitoDe={conflitoDe}
                       onPreencher={g => abrirVaga(a, g)} onRemover={removerEscala}
                       onDropTeam={handleDropOnTeam} onFixar={alternarFixada}
+                      onVerDetalhe={sch => setDetalhe({ id: sch.volunteer_id || null, nome: sch.volunteer_name })}
                     />
                   ))}
                 </section>
@@ -557,6 +563,7 @@ export default function VolScheduleBuilder() {
                     key={a.team_id || a.team} area={a} conflitoDe={conflitoDe}
                     onPreencher={g => abrirVaga(a, g)} onRemover={removerEscala}
                     onDropTeam={handleDropOnTeam} onFixar={alternarFixada}
+                      onVerDetalhe={sch => setDetalhe({ id: sch.volunteer_id || null, nome: sch.volunteer_name })}
                   />
                 ))}
               </section>
@@ -603,6 +610,15 @@ export default function VolScheduleBuilder() {
       {/* Criar culto vale nas DUAS visões — quem está olhando a matriz e vê o
           domingo faltando precisa criar o culto sem trocar de tela. */}
       {showCreateService && <CreateServiceDialog onClose={() => setShowCreateService(false)} />}
+
+      {/* Fora do bloco da visão "um culto" de propósito: fechar o diálogo não
+          pode depender de qual visão está aberta. */}
+      <VolunteerDetailDialog
+        volunteerId={detalhe?.id ?? null}
+        volunteerName={detalhe?.nome || ''}
+        open={!!detalhe}
+        onOpenChange={(v) => { if (!v) setDetalhe(null); }}
+      />
     </div>
   );
 }

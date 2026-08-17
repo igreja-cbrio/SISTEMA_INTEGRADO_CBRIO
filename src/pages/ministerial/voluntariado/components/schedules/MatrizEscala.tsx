@@ -11,6 +11,7 @@ import { useEscalaMatriz, useMontagemContexto, useBulkSchedule, useDeleteSchedul
 import { voluntariado } from '@/api';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import PainelEscalar, { type Vaga } from './PainelEscalar';
+import VolunteerDetailDialog from './VolunteerDetailDialog';
 
 /**
  * MATRIZ da escala — o "Matrix" do Planning Center Services.
@@ -47,6 +48,10 @@ export default function MatrizEscala({ ehMinhaArea, onFixar, serviceIds, context
   const [tipoId, setTipoId] = useState('');
   const [soMinhas, setSoMinhas] = useState(false);
   const [celula, setCelula] = useState<{ servico: any; linha: Linha; cel: Celula } | null>(null);
+  // ⚠️ Guarda o NOME junto do id: quem veio do Planning Center sem cadastro tem
+  // `volunteer_id` nulo, e o diálogo precisa do nome pra dizer de quem está
+  // falando antes de explicar que não há perfil vinculado.
+  const [detalhe, setDetalhe] = useState<{ id: string | null; nome: string } | null>(null);
 
   const { data: tipos = [] } = useVolServiceTypes();
   const temSelecaoDeCultos = !!serviceIds?.length;
@@ -264,9 +269,19 @@ export default function MatrizEscala({ ehMinhaArea, onFixar, serviceIds, context
                             {cel?.pessoas?.map((p: any) => (
                               <div key={p.id} className="group/p flex items-center gap-1 min-w-0" title={p.nome}>
                                 <IconeStatus status={p.status} />
-                                <span className={`text-xs truncate ${p.status === 'declined' ? 'line-through text-muted-foreground' : ''}`}>
+                                {/* O nome abre o detalhe da PESSOA (perfil, contato,
+                                    histórico de escalas e presenças). Antes a grade
+                                    só sabia acrescentar e remover: pra saber quem é
+                                    alguém era preciso sair dela e procurar na lista
+                                    de voluntários. */}
+                                <button
+                                  type="button"
+                                  onClick={() => setDetalhe({ id: p.volunteer_id || null, nome: p.nome })}
+                                  title={`Ver detalhes de ${p.nome}`}
+                                  className={`text-xs truncate text-left hover:underline focus:underline focus:outline-none ${p.status === 'declined' ? 'line-through text-muted-foreground' : ''}`}
+                                >
                                   {p.nome}
-                                </span>
+                                </button>
                                 <button
                                   onClick={() => tirarDaEscala(p, c)}
                                   title="Tirar da escala"
@@ -321,6 +336,13 @@ export default function MatrizEscala({ ehMinhaArea, onFixar, serviceIds, context
         onClose={() => setCelula(null)}
         onEscalar={escalar}
         escalando={bulk.isPending}
+      />
+
+      <VolunteerDetailDialog
+        volunteerId={detalhe?.id ?? null}
+        volunteerName={detalhe?.nome || ''}
+        open={!!detalhe}
+        onOpenChange={(v) => { if (!v) setDetalhe(null); }}
       />
     </div>
   );

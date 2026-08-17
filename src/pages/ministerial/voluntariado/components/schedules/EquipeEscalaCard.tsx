@@ -40,8 +40,9 @@ export type AreaEscala = {
   stats: { total: number; confirmados: number; recusados: number; pendentes: number };
 };
 
-function LinhaEscalado({ sch, conflito, onRemover, onDragStart }: {
+function LinhaEscalado({ sch, conflito, onRemover, onDragStart, onVerDetalhe }: {
   sch: any; conflito: any[]; onRemover: () => void; onDragStart: (e: React.DragEvent) => void;
+  onVerDetalhe: () => void;
 }) {
   const status = sch.confirmation_status;
   return (
@@ -54,9 +55,16 @@ function LinhaEscalado({ sch, conflito, onRemover, onDragStart }: {
         {status === 'confirmed' ? <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
           : status === 'declined' ? <XCircle className="h-4 w-4 text-red-500 shrink-0" />
           : <HelpCircle className="h-4 w-4 text-yellow-500 shrink-0" />}
-        <span className={`text-sm truncate ${status === 'declined' ? 'line-through text-muted-foreground' : ''}`}>
+        {/* ⚠️ `type="button"` e `stopPropagation`: a linha inteira é arrastável
+            (DnD entre áreas), e sem isso o clique no nome disputa com o arrasto. */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onVerDetalhe(); }}
+          title={`Ver detalhes de ${sch.volunteer_name}`}
+          className={`text-sm truncate text-left hover:underline focus:underline focus:outline-none ${status === 'declined' ? 'line-through text-muted-foreground' : ''}`}
+        >
           {sch.volunteer_name}
-        </span>
+        </button>
         {conflito.length > 0 && (
           <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 shrink-0">
             também às {format(new Date(conflito[0].scheduled_at), 'HH:mm')}
@@ -78,7 +86,7 @@ function LinhaEscalado({ sch, conflito, onRemover, onDragStart }: {
 }
 
 export default function EquipeEscalaCard({
-  area, conflitoDe, onPreencher, onRemover, onDropTeam, onFixar,
+  area, conflitoDe, onPreencher, onRemover, onDropTeam, onFixar, onVerDetalhe,
 }: {
   area: AreaEscala;
   conflitoDe: (sch: any) => any[];
@@ -86,6 +94,7 @@ export default function EquipeEscalaCard({
   onRemover: (sch: any) => void;
   onDropTeam: (e: React.DragEvent, teamId: string | null, teamName: string) => void;
   onFixar: (teamId: string | null) => void;
+  onVerDetalhe: (sch: { volunteer_id?: string | null; volunteer_name: string }) => void;
 }) {
   const [aberto, setAberto] = useState(true);
   const [over, setOver] = useState(false);
@@ -144,6 +153,7 @@ export default function EquipeEscalaCard({
                 <LinhaEscalado
                   key={sch.id} sch={sch} conflito={conflitoDe(sch)}
                   onRemover={() => onRemover(sch)}
+                  onVerDetalhe={() => onVerDetalhe(sch)}
                   onDragStart={e => {
                     e.dataTransfer.setData('application/x-cbrio-sched', JSON.stringify({ id: sch.id, volunteer_name: sch.volunteer_name }));
                     e.dataTransfer.effectAllowed = 'move';
