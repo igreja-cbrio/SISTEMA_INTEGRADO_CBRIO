@@ -4197,6 +4197,44 @@ Sobravam **3** sem mensagem nenhuma a revalidar:
   recusado com **`invalid_phone`**. Telefone da líder precisa ser corrigido na
   Membresia (a normalização da porta só vale pra dado novo).
 
+### ✅ 17/08 · reenvio do aviso aos líderes (82 mensagens · 36 líderes · 0 erro)
+
+Decisão do Pr. Nélio: em vez de aprovar em massa, **reenviar o aviso pra que os
+líderes aprovem e recebam os contatos de novo** (a Naná comunicou os líderes que
+a mensagem viria). Resultado: **82 enfileiradas · 55 entregues na 1ª rodada · 29
+adiadas pela trava de 2 por telefone · ZERO erro · 36 líderes** (teto Meta
+TIER_250 usado em 14%).
+
+Filtros aplicados (de 101 pendentes vivos): **2 cadastros de TESTE** · **1 grupo
+sem `lider_id`** · **9 cônjuges** (vão no aviso do par, um aviso por casal) ·
+**7 já avisados nas últimas 12h** (dedup do próprio script).
+
+⚠️⚠️ **`montarEnvioNovoPedido` NASCEU PRA ISSO, e a razão é anti-spam.** O aviso
+de pedido era o único fluxo sem a irmã "monta sem enviar" (os outros 4 já tinham:
+frequência, renovação, conferência, abertura). `enfileirar` **tenta entregar na
+hora** — em lote isso manda tudo em rajada, e o líder mais carregado tinha **8
+pedidos**: 8 templates idênticos em segundos é o padrão que a Meta lê como spam,
+e a nota de qualidade é o que decide a subida de tier. Com `montarEnvio*` +
+`enfileirarLote` (que só GRAVA), quem entrega é o cron da fila, com a trava de 2
+por telefone por rodada. `notificarLiderNovoPedido` passou a usar o montador —
+**uma régua só**, o caminho de evento (1 inscrição por vez) inalterado.
+
+⚠️ **Disparo em lote a partir da máquina exige as envs de WhatsApp**: o `.env`
+local não tem `WHATSAPP_ENABLED`/`PHONE_NUMBER_ID`, então o gate fecha e
+`montarEnvioNovoPedido` devolve `disabled` pra tudo — **0 gravados, parecendo
+sucesso** (a lição do `dispararConfira`, 04/08). O caminho que funcionou:
+`WHATSAPP_ENABLED=true` + `WHATSAPP_PHONE_NUMBER_ID` (do `vercel env pull`) só
+no ambiente do processo → **grava** sem enviar → e a entrega sai acionando
+`GET /api/public/grupos/cron/whatsapp-fila` com `Bearer CRON_SECRET`, onde as
+credenciais REAIS existem. ⚠️ `WHATSAPP_ACCESS_TOKEN` vem **`[SENSITIVE]`** no
+`env pull` — não dá pra enviar da máquina, e não precisa.
+⚠️ `vercel env pull` numa **worktree** falha com "not_linked" (o
+`.vercel/project.json` só existe no checkout principal) — rodar de lá, com
+`--project crmcbrio`.
+⚠️ E o script tem que rodar na **worktree de origin/main**: o checkout principal
+está numa branch antiga que **não tem** `services/gruposWhatsapp.js`
+(MODULE_NOT_FOUND num arquivo que existe em produção · lição de 31/07).
+
 ### ⚠️ 17/08 · a APROVAÇÃO EM MASSA foi cogitada e DESCARTADA (decisão do Pr. Nélio)
 
 Chegou a ser pedida ("aprovar todos os pedidos de 06/08 pra trás, sem reenviar
