@@ -5172,6 +5172,14 @@ router.get('/escala-matriz', async (req, res) => {
       .order('scheduled_at')
       .limit(MATRIZ_MAX_CULTOS + 1);
     if (req.query.service_type_id) q = q.eq('service_type_id', req.query.service_type_id);
+    // A tela de montagem pode pedir a matriz de uma seleção explícita (por
+    // exemplo, "Quarta, 19/08 · Templo"). Filtrar no servidor evita que a
+    // grade carregue outros cultos e depois esconda colunas só no navegador.
+    const serviceIds = String(req.query.service_ids || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id));
+    if (serviceIds.length) q = q.in('id', serviceIds.slice(0, MATRIZ_MAX_CULTOS));
     const { data: cultosBrutos, error: cErr } = await q;
     if (cErr) return res.status(400).json({ error: cErr.message });
 

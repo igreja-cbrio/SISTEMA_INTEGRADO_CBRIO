@@ -30,6 +30,20 @@ const MIME_SCHED = 'application/x-cbrio-sched';
 
 const CHAVE_FIXADAS = 'cbrio_vol_areas_fixadas';
 
+// A categoria é deliberadamente operacional, não um novo dado persistido: o
+// culto segue sendo a fonte de verdade. Enquanto a tipificação definitiva não
+// existe no catálogo, CBKIDS/Kids formam a categoria Kids e todo o restante é
+// Templo.
+function categoriaDoCulto(servico: Pick<VolService, 'name' | 'service_type_name'>) {
+  const texto = `${servico.name || ''} ${servico.service_type_name || ''}`;
+  return /\b(cb\s*kids|kids)\b/i.test(texto) ? 'kids' : 'templo';
+}
+
+const CATEGORIAS_CULTO = {
+  templo: { rotulo: 'Templo', descricao: 'Escala do templo' },
+  kids: { rotulo: 'CBKIDS', descricao: 'Escala do CBKIDS' },
+} as const;
+
 /**
  * Montar escala — reescrita em 13/08/2026 no formato do Planning Center
  * Services, a pedido do Matheus ("deixar no estilo do Service e mais prático
@@ -54,7 +68,7 @@ export default function VolScheduleBuilder() {
   const { data: teams = [] } = useVolTeamsManaged();
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const { data: schedules = [], isLoading: schedulesLoading } = useServiceSchedules(selectedServiceId || undefined);
-  const [visao, setVisao] = useState<'culto' | 'matriz'>('culto');
+  const [visao, setVisao] = useState<'culto' | 'matriz'>('matriz');
   const [showCreateService, setShowCreateService] = useState(false);
   const [showCopyDialog, setShowCopyDialog] = useState(false);
   const { data: contexto, isLoading: contextoLoading } = useMontagemContexto(selectedServiceId || undefined) as any;
@@ -82,13 +96,31 @@ export default function VolScheduleBuilder() {
     return lista.sort((a, b) => a.chave.localeCompare(b.chave));
   }, [services]);
   const diaAtual = dias.find(d => d.chave === diaSel);
+  const [categoriaSel, setCategoriaSel] = useState<keyof typeof CATEGORIAS_CULTO | ''>('');
+  const categoriasDoDia = useMemo(() => {
+    if (!diaAtual) return [];
+    return (Object.keys(CATEGORIAS_CULTO) as Array<keyof typeof CATEGORIAS_CULTO>)
+      .map(categoria => ({
+        categoria,
+        ...CATEGORIAS_CULTO[categoria],
+        servicos: diaAtual.servicos.filter((servico: any) => categoriaDoCulto(servico) === categoria),
+      }))
+      .filter(categoria => categoria.servicos.length > 0);
+  }, [diaAtual]);
+  const categoriaAtual = categoriasDoDia.find(categoria => categoria.categoria === categoriaSel);
+  const serviceIdsDaCategoria = categoriaAtual?.servicos.map((servico: any) => servico.id) || [];
+  const primeiroServicoDaCategoriaId = categoriaAtual?.servicos[0]?.id || '';
 
-  // Dia com UM horário só não tem passo 2 — seleciona o culto direto.
+  // A categoria é sempre uma escolha explícita. Ela evita apresentar dois
+  // cartões de "20:00" quando um é Templo e o outro é CBKIDS.
   useEffect(() => {
-    if (!diaAtual) return;
-    if (diaAtual.servicos.length === 1) setSelectedServiceId(diaAtual.servicos[0].id);
-    else if (!diaAtual.servicos.some((s: any) => s.id === selectedServiceId)) setSelectedServiceId('');
-  }, [diaSel, diaAtual, selectedServiceId]);
+    setCategoriaSel('');
+    setSelectedServiceId('');
+  }, [diaSel]);
+
+  useEffect(() => {
+    if (primeiroServicoDaCategoriaId) setSelectedServiceId(primeiroServicoDaCategoriaId);
+  }, [primeiroServicoDaCategoriaId]);
 
   // ── Composição esperada do culto (template aplicado) ──────────────────────
   const { data: coberturaRaw } = useQuery<any>({
@@ -346,15 +378,11 @@ export default function VolScheduleBuilder() {
         </Button>
       </div>
 
-      {visao === 'matriz' && (
-        <MatrizEscala ehMinhaArea={ehMinhaArea} onFixar={alternarFixada} />
-      )}
-
-      {visao === 'culto' && (
-      <>
-      {/* Seleção do culto em DOIS passos: dia → horário. */}
+      {/* Caminho de entrada da montagem: dia → categoria → matriz. A categoria
+          substitui o horário porque Templo e CBKIDS podem acontecer no mesmo
+          horário, mas têm áreas e composição completamente diferentes. */}
       <Card>
-        <CardContent className="p-4 space-y-3">
+        <CardContent className="p-4 space-y-4">
           <div>
             <Label className="mb-2 block text-sm">1 · Dia do culto</Label>
             <div className="flex flex-wrap gap-2">
@@ -366,28 +394,30 @@ export default function VolScheduleBuilder() {
                 >
                   <span className="block text-sm font-medium capitalize">{d.rotulo}</span>
                   <span className="block text-xs text-muted-foreground">
-                    {d.servicos.length === 1 ? d.servicos[0].name : `${d.servicos.length} horários`}
+                    {d.servicos.length === 1 ? d.servicos[0].name : `${d.servicos.length} cultos`}
                   </span>
                 </button>
               ))}
               {dias.length === 0 && !servicesLoading && (
-                <p className="text-sm text-muted-foreground">Nenhum culto próximo. Use "Criar Culto".</p>
+                <p className="text-sm text-muted-foreground">Nenhum culto próximo. Use “Criar Culto”.</p>
               )}
             </div>
           </div>
 
-          {diaAtual && diaAtual.servicos.length > 1 && (
+          {diaAtual && (
             <div>
-              <Label className="mb-2 block text-sm">2 · Horário</Label>
+              <Label className="mb-2 block text-sm">2 · Categoria</Label>
               <div className="flex flex-wrap gap-2">
-                {diaAtual.servicos.map(svc => (
+                {categoriasDoDia.map(categoria => (
                   <button
-                    key={svc.id}
-                    onClick={() => setSelectedServiceId(svc.id)}
-                    className={`rounded-lg border px-3 py-2 transition ${svc.id === selectedServiceId ? 'border-[#00B39D] bg-[#00B39D]/5' : 'border-border hover:bg-muted/50'}`}
+                    key={categoria.categoria}
+                    onClick={() => setCategoriaSel(categoria.categoria)}
+                    className={`rounded-lg border px-3 py-2 text-left transition ${categoria.categoria === categoriaSel ? 'border-[#00B39D] bg-[#00B39D]/5' : 'border-border hover:bg-muted/50'}`}
                   >
-                    <span className="block text-sm font-medium">{format(new Date(svc.scheduled_at), 'HH:mm')}</span>
-                    <span className="block text-xs text-muted-foreground">{svc.name}</span>
+                    <span className="block text-sm font-medium">{categoria.rotulo}</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {categoria.servicos.length === 1 ? categoria.descricao : `${categoria.servicos.length} cultos nesta categoria`}
+                    </span>
                   </button>
                 ))}
               </div>
@@ -396,6 +426,24 @@ export default function VolScheduleBuilder() {
         </CardContent>
       </Card>
 
+      {visao === 'matriz' && (
+        diaAtual && categoriaAtual ? (
+          <MatrizEscala
+            ehMinhaArea={ehMinhaArea}
+            onFixar={alternarFixada}
+            serviceIds={serviceIdsDaCategoria}
+            contextoLabel={`${diaAtual.rotulo} · ${categoriaAtual.rotulo}`}
+          />
+        ) : (
+          <Card><CardContent className="p-8 text-center">
+            <p className="text-sm font-medium">Escolha o dia e a categoria para montar a escala.</p>
+            <p className="mt-1 text-xs text-muted-foreground">A matriz mostrará somente as áreas de Templo ou CBKIDS daquele dia.</p>
+          </CardContent></Card>
+        )
+      )}
+
+      {visao === 'culto' && (
+      <>
       {selectedServiceId && selectedService && (
         <>
           {/* Resumo enxuto: o que importa é quanto FALTA. */}

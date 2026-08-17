@@ -37,9 +37,11 @@ function IconeStatus({ status }: { status: string }) {
   return <HelpCircle className="h-3 w-3 text-yellow-500 shrink-0" />;
 }
 
-export default function MatrizEscala({ ehMinhaArea, onFixar }: {
+export default function MatrizEscala({ ehMinhaArea, onFixar, serviceIds, contextoLabel }: {
   ehMinhaArea: (teamId: string | null) => boolean;
   onFixar: (teamId: string | null) => void;
+  serviceIds?: string[];
+  contextoLabel?: string;
 }) {
   const [semanas, setSemanas] = useState(4);
   const [tipoId, setTipoId] = useState('');
@@ -47,7 +49,12 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
   const [celula, setCelula] = useState<{ servico: any; linha: Linha; cel: Celula } | null>(null);
 
   const { data: tipos = [] } = useVolServiceTypes();
-  const { data, isLoading, error } = useEscalaMatriz({ semanas, service_type_id: tipoId || undefined }) as any;
+  const temSelecaoDeCultos = !!serviceIds?.length;
+  const { data, isLoading, error } = useEscalaMatriz({
+    semanas,
+    service_type_id: temSelecaoDeCultos ? undefined : tipoId || undefined,
+    service_ids: serviceIds,
+  }) as any;
   const { data: contexto, isLoading: contextoLoading } = useMontagemContexto(celula?.servico?.id) as any;
   const bulk = useBulkSchedule();
   const remover = useDeleteSchedule();
@@ -121,26 +128,32 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
       {/* Filtros */}
       <Card>
         <CardContent className="p-3 flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">Período:</span>
-            {[2, 4, 8].map(n => (
-              <button
-                key={n} onClick={() => setSemanas(n)}
-                className={`h-7 px-2.5 rounded-md border text-xs font-medium transition ${semanas === n ? 'border-[#00B39D] bg-[#00B39D]/10 text-[#00B39D]' : 'border-border hover:bg-muted/50'}`}
+          {temSelecaoDeCultos ? (
+            <div className="text-sm font-medium text-foreground">{contextoLabel}</div>
+          ) : (
+            <>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">Período:</span>
+                {[2, 4, 8].map(n => (
+                  <button
+                    key={n} onClick={() => setSemanas(n)}
+                    className={`h-7 px-2.5 rounded-md border text-xs font-medium transition ${semanas === n ? 'border-[#00B39D] bg-[#00B39D]/10 text-[#00B39D]' : 'border-border hover:bg-muted/50'}`}
+                  >
+                    {n} sem
+                  </button>
+                ))}
+              </div>
+              <select
+                value={tipoId} onChange={e => setTipoId(e.target.value)}
+                className="h-7 rounded-md border bg-background px-2 text-xs"
               >
-                {n} sem
-              </button>
-            ))}
-          </div>
-          <select
-            value={tipoId} onChange={e => setTipoId(e.target.value)}
-            className="h-7 rounded-md border bg-background px-2 text-xs"
-          >
-            <option value="">Todos os cultos</option>
-            {tipos.filter((t: any) => t.is_active).map((t: any) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
+                <option value="">Todos os cultos</option>
+                {tipos.filter((t: any) => t.is_active).map((t: any) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </>
+          )}
           <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
             <input type="checkbox" checked={soMinhas} onChange={e => setSoMinhas(e.target.checked)} className="accent-[#00B39D]" />
             Só as minhas áreas
