@@ -41,6 +41,7 @@ const MAPA = [
   ['cuidados', { modulo: 'cuidados', link: '/ministerial/cuidados' }],
   ['kids', { modulo: 'kids', link: '/ministerial/totem-kids' }],
   ['solicitacoes', { modulo: 'solicitacoes', link: '/solicitacoes' }],
+  ['rh', { modulo: 'rh', link: '/rh' }],
 ];
 
 // ⚠️ `integracao` como padrão preserva o comportamento que a fila já tinha —

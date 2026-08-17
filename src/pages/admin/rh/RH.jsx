@@ -8,6 +8,7 @@ import Paginacao, { usePaginacaoLocal } from '../../../components/Paginacao';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { ScrollArea, ScrollBar } from '../../../components/ui/scroll-area';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription } from '../../../components/ui/dialog';
 import { useAuth } from '../../../contexts/AuthContext';
 import { rh, permissoes } from '../../../api';
 import { exportCSV, exportPDF } from '../../../lib/export';
@@ -307,6 +308,10 @@ export default function RH() {
   // backend (podeEditarRemuneracao): admin/diretor ou RH nível ≥4. Padrão conservador,
   // ajustável quando a política de confidencialidade for definida com o RH.
   const podeRemun = isAdmin || getAccessLevel(['rh']) >= 4;
+  // Disparo em massa do formulário de onboarding é ação sensível (fala com todos
+  // os colaboradores pendentes de uma vez) — nível 5, igual aos outros disparos
+  // em massa do sistema (grupos/censo).
+  const podeDispararOnboarding = isAdmin || getAccessLevel(['rh']) >= 5;
   const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get('tab') || 'dashboard');
   const [dash, setDash] = useState(null);
   const [funcs, setFuncs] = useState([]);
@@ -581,6 +586,7 @@ export default function RH() {
             onEdit={(f) => setModalFunc(f)} onDetail={openDetail} onDelete={abrirDesligamento} onReativar={reativarFuncionario} onImport={() => { loadFuncs(); loadDash(); loadAcessos(); }}
             onNovaAdmissao={() => setModalAdmissao({})}
             onVerOrganograma={() => setTab('organograma')}
+            podeDispararOnboarding={podeDispararOnboarding}
             showToast={showToast}
           />
         </TabsContent>
@@ -927,11 +933,12 @@ function DashboardTab({ dash, onNavigate, setFiltroStatus, podeRemun = false }) 
 // ═══════════════════════════════════════════════════════════
 // TAB: FUNCIONÁRIOS
 // ═══════════════════════════════════════════════════════════
-function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onDetail, onDelete, onReativar, onImport, onNovaAdmissao, onVerOrganograma, showToast }) {
+function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroArea, setFiltroArea, onDetail, onDelete, onReativar, onImport, onNovaAdmissao, onVerOrganograma, podeDispararOnboarding, showToast }) {
   const areas = [...new Set(funcs.map(f => f.area).filter(Boolean))];
   const csvRef = useRef(null);
   const [localError, setLocalError] = useState('');
   const [filtroAcesso, setFiltroAcesso] = useState('todos'); // todos | com_acesso | sem_acesso | divergente
+  const [modalOnboardingLote, setModalOnboardingLote] = useState(false);
   const setError = (msg) => { setLocalError(msg); if (showToast) showToast(msg, msg.includes('concluída') ? 'success' : 'warning'); };
 
   // Índice de acesso (situação por colaborador ativo) + filtro client-side.
@@ -1040,6 +1047,11 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
                 <Network className="h-3.5 w-3.5" /> Organograma
               </Button>
             )}
+            {podeDispararOnboarding && (
+              <Button variant="outline" size="sm" onClick={() => setModalOnboardingLote(true)}>
+                <Mail className="h-3.5 w-3.5" /> Pedir dados faltando
+              </Button>
+            )}
             <input ref={csvRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCSVImport} />
             <Button variant="outline" size="sm" onClick={() => csvRef.current?.click()}>Importar CSV</Button>
             <Button variant="outline" size="sm" onClick={() => {
@@ -1117,7 +1129,150 @@ function FuncionariosTab({ funcs, acessos, loading, busca, setBusca, filtroStatu
         </div>
         <Paginacao {...rhPagProps} itemLabel="colaboradores" />
       </CardContent>
+      {modalOnboardingLote && (
+        <OnboardingLoteDialog onClose={() => setModalOnboardingLote(false)} showToast={showToast} />
+      )}
     </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// Disparo em massa do formulário de onboarding (dados faltando)
+// ═══════════════════════════════════════════════════════════
+function OnboardingLoteDialog({ onClose, showToast }) {
+  const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [confirmTexto, setConfirmTexto] = useState('');
+  const [disparando, setDisparando] = useState(false);
+  const [resultado, setResultado] = useState(null);
+
+  useEffect(() => {
+    let ativo = true;
+    (async () => {
+      try {
+        const r = await rh.onboarding.preview();
+        if (ativo) setPreview(r);
+      } catch (e) {
+        if (ativo) setErro(e.message || 'Erro ao montar a prévia');
+      } finally {
+        if (ativo) setLoading(false);
+      }
+    })();
+    return () => { ativo = false; };
+  }, []);
+
+  async function disparar() {
+    setDisparando(true);
+    setErro('');
+    try {
+      const r = await rh.onboarding.disparar();
+      setResultado(r);
+      showToast?.(`Enfileirados ${r.enfileirados} de ${r.total_pendentes} colaboradores pendentes.`, 'success');
+    } catch (e) {
+      setErro(e.message || 'Erro ao disparar o formulário em lote');
+    } finally {
+      setDisparando(false);
+    }
+  }
+
+  const numeroConfirmacao = String(preview?.enviaveis ?? 0);
+  const podeDisparar = !loading && preview && !preview.erro && preview.enviaveis > 0
+    && preview.canal_configurado && preview.template_configurado
+    && confirmTexto.trim() === numeroConfirmacao;
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="sm:max-w-[520px] flex flex-col max-h-[85vh]">
+        <DialogHeader>
+          <DialogTitle>Pedir dados faltando — todos os colaboradores</DialogTitle>
+          <DialogDescription>
+            Envia o link do formulário de onboarding, pelo WhatsApp, para todos os
+            colaboradores cujo cadastro está incompleto (telefone, CPF, data de
+            nascimento ou endereço).
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-4 py-2">
+          {loading && <div className="text-sm text-muted-foreground">Carregando prévia…</div>}
+          {erro && (
+            <div className="text-sm rounded-md p-3" style={{ background: 'var(--cbrio-card)', border: '1px solid #f59e0b', color: '#b45309' }}>
+              {erro}
+            </div>
+          )}
+
+          {!loading && preview && !preview.erro && !resultado && (
+            <>
+              {!preview.canal_configurado && (
+                <div className="text-sm rounded-md p-3" style={{ border: '1px solid #f59e0b', color: '#b45309' }}>
+                  O envio de WhatsApp não está configurado no servidor — nada será enviado.
+                </div>
+              )}
+              {preview.canal_configurado && !preview.template_configurado && (
+                <div className="text-sm rounded-md p-3" style={{ border: '1px solid #f59e0b', color: '#b45309' }}>
+                  O template de onboarding ainda não foi aprovado na Meta (variável
+                  WHATSAPP_TEMPLATE_RH_ONBOARDING vazia) — nada será enviado até isso
+                  ser configurado.
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div><span className="text-muted-foreground">Colaboradores no total:</span> {preview.total_colaboradores}</div>
+                <div><span className="text-muted-foreground">Com dados faltando:</span> {preview.total_pendentes}</div>
+                <div><span className="text-muted-foreground">Vão receber o WhatsApp:</span> {preview.enviaveis}</div>
+                <div><span className="text-muted-foreground">Sem telefone cadastrado:</span> {preview.sem_telefone}</div>
+              </div>
+              {preview.exemplo?.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground mb-1">Exemplo de quem vai receber:</div>
+                  <ul className="text-sm space-y-1">
+                    {preview.exemplo.map((f) => (
+                      <li key={f.id}>{f.nome} <span className="text-xs text-muted-foreground">— falta: {f.faltando.join(', ')}</span></li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {preview.enviaveis > 0 && preview.canal_configurado && preview.template_configurado && (
+                <div>
+                  <label className="text-sm font-medium">
+                    Pra confirmar, digite o número de colaboradores que vão receber ({numeroConfirmacao}):
+                  </label>
+                  <input
+                    className="mt-1 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs"
+                    value={confirmTexto} onChange={(e) => setConfirmTexto(e.target.value)}
+                    placeholder={numeroConfirmacao}
+                  />
+                </div>
+              )}
+              {preview.enviaveis === 0 && (
+                <div className="text-sm text-muted-foreground">Nenhum colaborador com dados faltando e telefone cadastrado no momento.</div>
+              )}
+            </>
+          )}
+
+          {resultado && (
+            <div className="text-sm space-y-1">
+              <div>Enfileirados: <strong>{resultado.enfileirados}</strong> de {resultado.total_pendentes} pendentes.</div>
+              {resultado.erros?.sem_telefone > 0 && <div className="text-muted-foreground">Sem telefone: {resultado.erros.sem_telefone}</div>}
+              {resultado.erros?.sem_template > 0 && <div className="text-muted-foreground">Sem template configurado: {resultado.erros.sem_template}</div>}
+              {resultado.erros?.link > 0 && <div className="text-muted-foreground">Falha ao gerar link: {resultado.erros.link}</div>}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          {!resultado ? (
+            <>
+              <Button variant="outline" onClick={onClose}>Cancelar</Button>
+              <Button onClick={disparar} disabled={!podeDisparar || disparando}>
+                {disparando ? 'Enviando…' : 'Enviar para todos'}
+              </Button>
+            </>
+          ) : (
+            <Button onClick={onClose}>Fechar</Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
