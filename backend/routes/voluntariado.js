@@ -3933,9 +3933,19 @@ router.get('/inscricoes', async (req, res) => {
     const area = req.query.area ? String(req.query.area).toLowerCase() : null;
     const status = req.query.status ? String(req.query.status) : null;
     const mes = req.query.mes ? String(req.query.mes) : null; // YYYY-MM
+    const de = req.query.de ? String(req.query.de) : null;    // YYYY-MM-DD (inclusivo)
+    const ate = req.query.ate ? String(req.query.ate) : null; // YYYY-MM-DD (inclusivo)
     const search = req.query.search ? String(req.query.search).trim() : null;
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const offset = Number(req.query.offset) || 0;
+
+    const DIA_RE = /^\d{4}-\d{2}-\d{2}$/;
+    if ((de && !DIA_RE.test(de)) || (ate && !DIA_RE.test(ate))) {
+      return res.status(400).json({ error: 'Período inválido — datas no formato AAAA-MM-DD' });
+    }
+    if (de && ate && de > ate) {
+      return res.status(400).json({ error: 'Período inválido — a data inicial vem depois da final' });
+    }
 
     let q = supabase
       .from('vol_inscricoes')
@@ -3956,6 +3966,16 @@ router.get('/inscricoes', async (req, res) => {
       const [y, m] = mes.split('-');
       const nextMonth = new Date(Number(y), Number(m), 1);
       q = q.gte('data_inscricao', `${mes}-01`).lt('data_inscricao', nextMonth.toISOString().slice(0, 10));
+    }
+    // Período por DIA com fronteira em BRT: `data_inscricao` é timestamptz e o
+    // dia de operação da igreja é America/Sao_Paulo — comparar contra a
+    // meia-noite UTC deslocaria a borda em 3h (inscrição de domingo 22h
+    // cairia na segunda). `ate` é inclusivo → limite = dia seguinte, exclusivo.
+    if (de) q = q.gte('data_inscricao', `${de}T00:00:00-03:00`);
+    if (ate) {
+      const fim = new Date(`${ate}T12:00:00Z`);
+      fim.setUTCDate(fim.getUTCDate() + 1);
+      q = q.lt('data_inscricao', `${fim.toISOString().slice(0, 10)}T00:00:00-03:00`);
     }
     if (area) q = q.eq('area', area);
     if (status) q = q.eq('status', status);
@@ -4067,6 +4087,16 @@ router.patch('/inscricoes/:id', async (req, res) => {
     if (status === 'enviado_ministerio') patch.enviado_lider_em = new Date().toISOString();
     if (status === 'integrado') patch.integrado_em = new Date().toISOString().slice(0, 10);
     if (feedback !== undefined) patch.feedback = feedback || null;
+
+    // Reverter integração limpa o carimbo: "Integrado em X" numa ficha que
+    // voltou pra triagem seria afirmação errada sobre a pessoa. Só limpa
+    // quando o status ATUAL é 'integrado' — texto legado da planilha em linha
+    // não-integrada não é apagado por um "voltar pra triagem" qualquer.
+    if (status !== 'integrado') {
+      const { data: atual } = await supabase.from('vol_inscricoes')
+        .select('status').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+      if (atual?.status === 'integrado') patch.integrado_em = null;
+    }
 
     const { data, error } = await supabase.from('vol_inscricoes')
       .update(patch).eq('id', req.params.id).select().single();
