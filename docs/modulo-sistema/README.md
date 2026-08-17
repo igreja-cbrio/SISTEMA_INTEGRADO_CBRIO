@@ -14,6 +14,16 @@ Documentação de arquitetura e execução do command center técnico do CBRio.
 | 5 · Dados, facial e Wi-Fi | concluída | governança, integridade, consentimento, retenção e espelhos sanitizados |
 | 6 · Custos e prestação de contas | concluída em código · publicação pendente | FinOps e relatórios executivos auditáveis |
 
+## Automação de incidentes
+
+| Etapa | Estado | Entrega |
+|---|---|---|
+| 1 · Triagem | publicada | agrupa erros e feedbacks, abre incidentes e inicia investigação sem ação corretiva |
+| 2 · Diagnóstico consultivo | concluída em código · publicação pendente | especialistas por fonte, evidências sanitizadas, hipótese estruturada e trilha auditável |
+| 3 · Correção assistida | não iniciada | qualquer alteração de código, dados ou produção continua bloqueada e exigirá contrato próprio |
+
+Detalhes e limites da etapa atual: [Agente de incidentes · Etapa 2](./agente-incidentes-etapa-2.md).
+
 ## Artefatos da Etapa 0
 
 - [Contrato e arquitetura](./etapa-0-contrato-e-arquitetura.md)
