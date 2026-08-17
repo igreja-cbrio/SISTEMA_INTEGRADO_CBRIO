@@ -200,6 +200,10 @@ export default function VolInscricoes() {
   });
   const pageSize = 50;
   const queryClient = useQueryClient();
+  // Inscrições marcadas pra excluir (pedido do Matheus · 17/08: as de teste
+  // inflam o funil de quem quer servir).
+  const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
+  const [excluindo, setExcluindo] = useState(false);
 
   const mudarStatus = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) => voluntariado.atualizarInscricao(id, status),
@@ -215,6 +219,49 @@ export default function VolInscricoes() {
     },
     onError: (e: any) => toast.error(e?.message || 'Erro ao atualizar status.'),
   });
+
+  function alternarSelecao(id: string) {
+    setSelecionadas(prev => {
+      const s = new Set(prev);
+      if (s.has(id)) s.delete(id); else s.add(id);
+      return s;
+    });
+  }
+
+  async function excluirSelecionadas(linhas: any[]) {
+    if (!selecionadas.size || excluindo) return;
+    const ids = [...selecionadas];
+    const marcadas = linhas.filter((p: any) => selecionadas.has(p.id));
+    const nomes = marcadas.map((p: any) => p.nome_completo).slice(0, 8);
+    const resto = ids.length > nomes.length ? `\n… e mais ${ids.length - nomes.length}` : '';
+    // ⚠️ Integrada/enviada ao ministério sai do KPI de solicitações alocadas —
+    // quem decide é quem está olhando, então o aviso vai na confirmação em vez
+    // de virar bloqueio.
+    const integradas = marcadas.filter((p: any) => ['integrado', 'enviado_ministerio'].includes(p.status)).length;
+    const aviso = integradas
+      ? `\n\n⚠️ ${integradas} ${integradas === 1 ? 'já foi integrada/enviada ao ministério e sairá' : 'já foram integradas/enviadas ao ministério e sairão'} do funil e dos indicadores.`
+      : '';
+    const ok = window.confirm(
+      `Excluir ${ids.length === 1 ? 'esta inscrição' : `estas ${ids.length} inscrições`}?\n\n· ${nomes.join('\n· ')}${resto}${aviso}\n\n`
+      + 'Some da lista, do funil e do relatório (reversível por super-admin). '
+      + 'Para quem desistiu de verdade, use "Registrar desistência" — o histórico fica.',
+    );
+    if (!ok) return;
+    setExcluindo(true);
+    try {
+      const r: any = await voluntariado.excluirInscricoesVolLote(ids);
+      setSelecionadas(new Set());
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-list'] });
+      queryClient.invalidateQueries({ queryKey: ['vol', 'inscricoes-summary'] });
+      const motivo = (r?.falhas_motivo || []).join(' · ');
+      if (r?.falhas?.length) toast.warning([r?.resumo || 'Exclusão parcial', motivo].filter(Boolean).join(' — '));
+      else toast.success(r?.resumo || 'Inscrições excluídas.');
+    } catch (e: any) {
+      toast.error([e?.message, e?.detalhe].filter(Boolean).join(' · ') || 'Erro ao excluir as inscrições.');
+    } finally {
+      setExcluindo(false);
+    }
+  }
 
   // Triagem de antecedentes (só Kids/Bridge)
   const selKidsBridge = selected ? ehKidsBridge(selected.area) : false;
@@ -859,10 +906,44 @@ export default function VolInscricoes() {
           </div>
         </CardHeader>
         <CardContent className="px-0">
+          {/* Barra da seleção: a ação pertence à seleção e fica à vista sem
+              rolar. Só aparece com algo marcado — a coluna de caixas já diz que
+              dá pra selecionar. */}
+          {selecionadas.size > 0 && (
+            <div className="flex items-center gap-3 flex-wrap px-4 pb-2 text-xs">
+              <span className="text-muted-foreground">
+                {selecionadas.size} selecionada{selecionadas.size > 1 ? 's' : ''}
+              </span>
+              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                onClick={() => setSelecionadas(new Set())}>
+                Limpar seleção
+              </Button>
+              <Button size="sm" variant="ghost" disabled={excluindo}
+                onClick={() => excluirSelecionadas(lista?.rows || [])}
+                className="h-7 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10">
+                {excluindo ? 'Excluindo…' : 'Excluir selecionadas'}
+              </Button>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-xs text-muted-foreground border-b">
                 <tr>
+                  {/* SELEÇÃO PRA EXCLUIR (17/08/2026). Marca/desmarca a PÁGINA
+                      visível — não a base inteira: o cabeçalho fica sobre as 50
+                      linhas à vista, e "todos" ali significaria as 829 do
+                      filtro, que é o caminho curto pra um estrago em massa. */}
+                  <th className="px-3 py-2 w-8">
+                    <Checkbox
+                      checked={!!lista?.rows?.length && lista.rows.every((p: any) => selecionadas.has(p.id))}
+                      onCheckedChange={(v) => setSelecionadas(prev => {
+                        const s = new Set(prev);
+                        (lista?.rows || []).forEach((p: any) => { if (v) s.add(p.id); else s.delete(p.id); });
+                        return s;
+                      })}
+                      aria-label="Selecionar as inscrições desta página"
+                    />
+                  </th>
                   <th className="text-left px-4 py-2 font-medium">Nome</th>
                   <th className="text-left px-4 py-2 font-medium">Inscrição</th>
                   <th className="text-left px-4 py-2 font-medium">Área</th>
@@ -875,29 +956,39 @@ export default function VolInscricoes() {
               </thead>
               <tbody>
                 {periodoInvertido && (
-                  <tr><td colSpan={8} className="text-center text-amber-600 py-6">
+                  <tr><td colSpan={9} className="text-center text-amber-600 py-6">
                     A data inicial vem depois da final — ajuste o período.
                   </td></tr>
                 )}
                 {!periodoInvertido && loadingList && (
-                  <tr><td colSpan={8} className="text-center text-muted-foreground py-6">Carregando...</td></tr>
+                  <tr><td colSpan={9} className="text-center text-muted-foreground py-6">Carregando...</td></tr>
                 )}
                 {/* Erro vem ANTES do vazio — erro disfarçado de "nenhuma inscrição"
                     leva a decisão errada (lei do projeto). */}
                 {!periodoInvertido && !loadingList && !!listaErro && (
-                  <tr><td colSpan={8} className="text-center text-red-600 py-6">
+                  <tr><td colSpan={9} className="text-center text-red-600 py-6">
                     {(listaErro as any)?.message || 'Erro ao carregar as inscrições — tente ajustar o filtro.'}
                   </td></tr>
                 )}
                 {!periodoInvertido && !loadingList && !listaErro && lista?.rows?.length === 0 && (
-                  <tr><td colSpan={8} className="text-center text-muted-foreground py-6">Nenhuma inscrição com esses filtros</td></tr>
+                  <tr><td colSpan={9} className="text-center text-muted-foreground py-6">Nenhuma inscrição com esses filtros</td></tr>
                 )}
                 {lista?.rows?.map(p => (
                   <tr
                     key={p.id}
                     onClick={() => { setSelected(p); setObs(''); }}
-                    className="border-b last:border-b-0 hover:bg-accent/30 cursor-pointer"
+                    className={`border-b last:border-b-0 cursor-pointer ${
+                      selecionadas.has(p.id) ? 'bg-primary/10' : 'hover:bg-accent/30'}`}
                   >
+                    {/* stopPropagation: sem ele, marcar a caixa abriria a ficha
+                        por cima da própria seleção. */}
+                    <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selecionadas.has(p.id)}
+                        onCheckedChange={() => alternarSelecao(p.id)}
+                        aria-label={`Selecionar ${p.nome_completo}`}
+                      />
+                    </td>
                     <td className="px-4 py-2 font-medium">
                       {p.nome_completo}
                       {p.email && <div className="text-xs text-muted-foreground">{p.email}</div>}

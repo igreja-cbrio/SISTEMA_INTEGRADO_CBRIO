@@ -10,6 +10,14 @@ const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
 const { notificar } = require('../services/notificar');
 const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 const { requireCron } = require('../utils/cronAuth');
+// Régua pura da exclusão em lote — a MESMA do módulo de Inscrições (normaliza
+// ids, relê o que está vivo, monta o resumo). Uma cópia local divergiria no
+// primeiro ajuste, e é ela que garante que o payload não decide nada.
+const {
+  normalizarIds: normalizarIdsExclusao,
+  separarExclusaoLote: separarExclusaoLoteInsc,
+  resumoDoLote: resumoDoLoteInsc,
+} = require('../utils/exclusaoInscricaoLote');
 const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
 const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../utils/volRodizio');
 const { montarCobertura, contarStatus } = require('../utils/volCobertura');
@@ -4311,6 +4319,114 @@ router.post('/inscricoes/:id/desistiu', async (req, res) => {
   } catch (e) {
     console.error('[inscricao desistiu]', e.message);
     res.status(500).json({ error: 'Erro ao registrar a desistência' });
+  }
+});
+
+// ── Excluir inscrição de servir (soft delete) ────────────────────────────────
+//
+// Pedido do Matheus (17/08/2026): "na aba de inscrições para o voluntariado,
+// onde as pessoas se inscrevem querendo servir, ali tem que ter opção de
+// excluir uma inscrição" — as de teste inflam o funil.
+//
+// ⚠️ Excluir ≠ "desistiu". Desistente é FATO da pessoa e continua no funil
+// (status). Excluída some do funil, dos KPIs de solicitações de servir e do
+// relatório — é pra linha que não deveria existir (teste, duplicata).
+//
+// ⚠️ Mesma régua de permissão do PATCH e do desistiu (admin OU nível 3 em
+// voluntariado/membresia): quem já pode mudar o status é quem opera essa fila.
+// Duas réguas na mesma tela divergiriam no primeiro ajuste de cargo.
+function podeOperarInscricaoVol(req) {
+  if (['admin', 'diretor'].includes(req.user.role)) return true;
+  const lvl = Math.max(getEffectiveLevel(req, 'voluntariado') || 0, getEffectiveLevel(req, 'membresia') || 0);
+  return lvl >= 3;
+}
+
+// DELETE /inscricoes/:id — exclui uma.
+router.delete('/inscricoes/:id', async (req, res) => {
+  try {
+    if (!podeOperarInscricaoVol(req)) {
+      return res.status(403).json({ error: 'Sem permissão para excluir a inscrição' });
+    }
+    const { data: atual } = await supabase.from('vol_inscricoes')
+      .select('id').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada' });
+
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'vol_inscricoes', p_row_id: req.params.id, p_deleted_by: req.user?.id ?? null,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[inscricao excluir]', e.message);
+    // ⚠️ O motivo vai junto: foi um 500 genérico que escondeu por meses que a
+    // tabela tinha caído da whitelist do soft-delete.
+    res.status(500).json({ error: 'Erro ao excluir a inscrição', detalhe: e.message });
+  }
+});
+
+// POST /inscricoes/excluir-lote — exclui as marcadas na lista.
+// ⚠️ O payload diz QUAIS, nunca SE PODE: o servidor relê as linhas vivas e
+// reavalia (régua pura compartilhada com o módulo de Inscrições).
+router.post('/inscricoes/excluir-lote', async (req, res) => {
+  try {
+    if (!podeOperarInscricaoVol(req)) {
+      return res.status(403).json({ error: 'Sem permissão para excluir inscrições' });
+    }
+    const { ids, ignorados, acimaDoTeto } = normalizarIdsExclusao(req.body?.ids);
+    if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos uma inscrição' });
+
+    const { data: vivas, error: eVivas } = await supabase.from('vol_inscricoes')
+      .select('id, nome_completo, status').is('deleted_at', null).in('id', ids);
+    if (eVivas) throw eVivas;
+
+    // ⚠️ Nada é BLOQUEADO aqui (diferente do lote de eventos, onde pagamento
+    // barra): inscrição de servir não move dinheiro. A integrada é DECLARADA na
+    // resposta porque apagá-la mexe no KPI de solicitações alocadas — quem
+    // decide é quem está olhando, não o servidor.
+    const plano = separarExclusaoLoteInsc(ids, vivas || [], []);
+    const integradas = (vivas || [])
+      .filter((v) => plano.excluir.includes(v.id) && ['integrado', 'enviado_ministerio'].includes(v.status))
+      .map((v) => ({ id: v.id, nome: v.nome_completo || null, status: v.status }));
+
+    // Grava o efeito DURANTE (lei de 04/08) — morte no meio deixa apagado o que
+    // já saiu, e a resposta diz exatamente o que aconteceu.
+    const excluidas = [];
+    const falhas = [];
+    const motivos = new Set();
+    const BLOCO = 8;
+    for (let i = 0; i < plano.excluir.length; i += BLOCO) {
+      const fatia = plano.excluir.slice(i, i + BLOCO);
+      const r = await Promise.all(fatia.map(async (id) => {
+        const { error } = await supabase.rpc('app_soft_delete', {
+          p_table_name: 'vol_inscricoes', p_row_id: id, p_deleted_by: req.user?.id ?? null,
+        });
+        return { id, erro: error?.message || null };
+      }));
+      for (const item of r) {
+        (item.erro ? falhas : excluidas).push(item.id);
+        if (item.erro) motivos.add(item.erro);
+      }
+      if (r.some((x) => x.erro)) console.error('[inscricao excluir-lote falhas]', r.filter((x) => x.erro));
+    }
+
+    res.json({
+      ok: true,
+      excluidas,
+      integradas,
+      nao_encontradas: plano.naoEncontradas,
+      falhas,
+      falhas_motivo: [...motivos],
+      ignorados,
+      acima_do_teto: acimaDoTeto,
+      resumo: resumoDoLoteInsc({
+        excluidas: excluidas.length,
+        naoEncontradas: plano.naoEncontradas.length,
+        falhas: falhas.length,
+      }),
+    });
+  } catch (e) {
+    console.error('[inscricao excluir-lote]', e.message);
+    res.status(500).json({ error: 'Erro ao excluir as inscrições', detalhe: e.message });
   }
 });
 

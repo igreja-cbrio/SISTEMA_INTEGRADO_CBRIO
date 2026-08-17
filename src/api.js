@@ -3336,6 +3336,10 @@ export const voluntariado = {
   editarInscricao: (id, dados) => patch(`/voluntariado/inscricoes/${id}/dados`, dados),
   // Marca a inscrição como desistente (desistiu de servir antes de integrar) · motivo opcional
   desistirInscricao: (id, motivo) => post(`/voluntariado/inscricoes/${id}/desistiu`, { motivo }),
+  // ⚠️ Excluir ≠ desistir: desistente continua no funil (é fato da pessoa);
+  // excluída some do funil, dos KPIs e do relatório — é pra linha de teste.
+  excluirInscricaoVol: (id) => del(`/voluntariado/inscricoes/${id}`),
+  excluirInscricoesVolLote: (ids) => post('/voluntariado/inscricoes/excluir-lote', { ids }),
   // Distribuição de voluntários por área direcionada ("onde estão as pessoas")
   // ⚠️ Chave com valor undefined/null vira a STRING "undefined" no
   // URLSearchParams e o backend a usaria como se fosse o ano — filtra antes.
