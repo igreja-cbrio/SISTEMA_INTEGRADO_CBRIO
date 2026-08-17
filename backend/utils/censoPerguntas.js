@@ -19,6 +19,11 @@
 //    censo é um array plano de 78 perguntas. O NPS está em produção e fica
 //    intocado; o censo tem renderer próprio (src/components/censo/).
 
+// Catálogo de destinos de `preenche_de` (o que o censo pode guardar no
+// cadastro). Fica em arquivo próprio porque o tradutor rótulo→coluna é a mesma
+// régua usada pelo reconciliador.
+const { ehCampoDeCadastro } = require('./censoCampoCadastro');
+
 // ── Vocabulário ────────────────────────────────────────────────────────────
 
 const TIPOS = Object.freeze([
@@ -228,7 +233,21 @@ function validarPerguntas(entrada) {
     }
 
     if (p?.sensivel === true) out.sensivel = true;
-    if (ehTexto(p?.preenche_de)) out.preenche_de = String(p.preenche_de).trim();
+
+    // ── destino no cadastro (`preenche_de`) ──
+    // ⚠️ Validado contra o CATÁLOGO desde 17/08. Antes aceitava qualquer texto,
+    // e destino inventado significava coluna inexistente no UPDATE do
+    // reconciliador (42703 derruba o passe inteiro) — ou, pior, destino
+    // plausível que ninguém implementou e que some em silêncio, que é o que
+    // aconteceu com `escolaridade` e `cep`.
+    if (ehTexto(p?.preenche_de)) {
+      const destino = String(p.preenche_de).trim();
+      if (!ehCampoDeCadastro(destino)) {
+        erros.push(`Pergunta ${pos}: "${destino}" não é um campo do cadastro`);
+      } else {
+        out.preenche_de = destino;
+      }
+    }
     if (!TIPOS_SEM_RESPOSTA.includes(tipo)) out.obrigatoria = p?.obrigatoria === true;
 
     return out;

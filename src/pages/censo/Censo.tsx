@@ -833,17 +833,43 @@ function CardVinculoPendente({ pesquisaId, podeRodar }: { pesquisaId: string; po
     try {
       // Em lotes: um clique não deve tentar processar 2.500 de uma vez.
       let total = 0; let vinculadas = 0; let conflitos = 0; let restantes = 0;
+      // ⚠️ "processadas" não diz se o cadastro mudou. Em 17/08 as 12 respostas
+      // teriam sido "processadas" com ZERO campos aplicados (o rótulo
+      // "Solteiro(a)" batia no CHECK e derrubava o UPDATE inteiro), e a tela
+      // diria sucesso. Agora o resultado declara campo por campo — e o que NÃO
+      // foi guardado aparece em âmbar.
+      const aplicado: Record<string, number> = {};
+      const naoGuardado: Record<string, number> = {};
       for (let volta = 0; volta < 20; volta += 1) {
         const r = await censo.posProcessar(pesquisaId);
         total += r.processadas; vinculadas += r.vinculadas;
         conflitos += r.conflitos; restantes = r.restantes;
+        for (const [k, n] of Object.entries(r.cadastro_aplicado || {})) {
+          aplicado[k] = (aplicado[k] || 0) + Number(n);
+        }
+        for (const [k, n] of Object.entries(r.cadastro_nao_guardado || {})) {
+          naoGuardado[k] = (naoGuardado[k] || 0) + Number(n);
+        }
         if (!r.processadas || !r.restantes) break;
       }
+      const campos = Object.entries(aplicado).sort((a, b) => b[1] - a[1]);
       toast.success(
         `${total} processada(s) · ${vinculadas} vinculada(s) a pessoas`
+        + (campos.length
+          ? ` · cadastro preenchido: ${campos.map(([c, n]) => `${c} (${n})`).join(', ')}`
+          : ' · nenhum campo do cadastro foi preenchido')
         + (conflitos ? ` · ${conflitos} conflito(s) de cadastro para revisar` : '')
         + (restantes ? ` · ${restantes} ainda na fila` : ''),
       );
+      const perdas = Object.entries(naoGuardado);
+      if (perdas.length) {
+        // Resposta que a pessoa deu e o sistema não guardou é trabalho perdido:
+        // tem que aparecer, não ficar só no log.
+        toast.warning(
+          `Não guardado no cadastro: ${perdas.map(([k, n]) => `${k} (${n})`).join(', ')}`,
+          { duration: 12000 },
+        );
+      }
       carregar();
     } catch (e: unknown) { toast.error(msg(e, 'Erro ao processar')); }
     finally { setRodando(false); }

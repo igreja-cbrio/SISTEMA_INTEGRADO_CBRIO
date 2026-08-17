@@ -336,7 +336,7 @@
       },
       "catalogo": "grupos_ativos",
       "permite_outro": true,
-      "descricao": "Procure pelo nome do grupo ou pelo nome do líder."
+      "descricao": "Procure pelo nome do grupo ou pelo nome do líder. Se não encontrar, escreva do jeito que vocês chamam."
     },
     {
       "id": "maturidade",
