@@ -317,6 +317,21 @@ function CampoBusca({ pergunta: p, valor, onChange, faltando, buscar }: {
         onChange={(e) => { setTermo(e.target.value); setAberto(true); }}
       />
 
+      {/* ⚠️ A saída tem que estar VISÍVEL antes de digitar. O escape "usar
+          <termo>" só existe a partir de 2 caracteres, então quem não lembra o
+          nome exato do grupo via um campo de busca sem alternativa nenhuma e
+          simplesmente pulava — medido no Censo 2026: das 10 pessoas que disseram
+          participar de um Grupo, 3 não disseram qual, e o mesmo em "Qual era a
+          igreja?" (3 de 8). É o único atrito real do questionário, e são
+          justamente as 2 perguntas opcionais. */}
+      {p.permite_outro !== false && termo.trim().length < 2 && (
+        <div style={{ marginTop: 6, fontSize: 12, color: c.textDim }}>
+          {p.catalogo === 'grupos_ativos'
+            ? 'Não achou na lista? Escreva do jeito que vocês chamam o grupo.'
+            : 'Não achou na lista? Escreva do jeito que você chama a igreja.'}
+        </div>
+      )}
+
       {aberto && termo.trim().length >= 2 && (
         <div style={{
           marginTop: 6, borderRadius: 10, overflow: 'hidden',

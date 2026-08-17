@@ -552,6 +552,10 @@ router.post('/pos-processar', authorizeModule('censo', 4), async (req, res) => {
     }
 
     let vinculadas = 0; let conflitos = 0; let falhas = 0;
+    // O que o censo REALMENTE escreveu no cadastro, por campo, e o que ficou de
+    // fora. Sem isso "12 processadas" não distingue "aplicou tudo" de "aplicou
+    // nada" — foi o que fez o estado civil ser descartado sem ninguém notar.
+    const aplicadosPorCampo = {}; const descartadosPorMotivo = {};
     for (const r of fila) {
       try {
         const porCampo = {};
@@ -602,6 +606,13 @@ router.post('/pos-processar', authorizeModule('censo', 4), async (req, res) => {
           delete dados.nome;   // chave de match; o serviço já o ignora
           const out = await reconciliarCenso({ membroId, matchedBy, dados, origemId: r.id });
           conflitos += out?.conflitos?.length || 0;
+          for (const c of out?.aplicados || []) {
+            aplicadosPorCampo[c] = (aplicadosPorCampo[c] || 0) + 1;
+          }
+          for (const d of out?.descartados || []) {
+            const k = `${d.campo}:${d.motivo}`;
+            descartadosPorMotivo[k] = (descartadosPorMotivo[k] || 0) + 1;
+          }
         }
 
         await supabase.from('cen_resposta')
@@ -622,7 +633,11 @@ router.post('/pos-processar', authorizeModule('censo', 4), async (req, res) => {
       .eq('pesquisa_id', pesquisaId)
       .is('pos_processado_em', null).not('concluida_em', 'is', null).is('deleted_at', null);
 
-    res.json({ processadas: fila.length, vinculadas, conflitos, falhas, restantes: restantes || 0 });
+    res.json({
+      processadas: fila.length, vinculadas, conflitos, falhas, restantes: restantes || 0,
+      cadastro_aplicado: aplicadosPorCampo,
+      cadastro_nao_guardado: descartadosPorMotivo,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -27,6 +27,7 @@ import {
   removerPerguntas, selecionadasComResposta, moverOpcao,
 } from '@/lib/censoConstrutor';
 import { velocidadeAutoScroll, containerDeScroll, podeRolar } from '@/lib/autoScrollArrasto';
+import { DESTINO_CADASTRO_LABEL, DESTINO_NENHUM } from '@/lib/censoDestinos';
 
 export type { Pergunta };
 
@@ -445,6 +446,31 @@ export default function ConstrutorPerguntas({ perguntas, respostas, podeEditar, 
                     {p.tipo !== 'secao' && (
                       <Condicional pergunta={p} anteriores={anteriores} podeEditar={podeEditar}
                         onMudar={(patch) => mudar(i, patch)} />
+                    )}
+
+                    {/* ⚠️ Destino no cadastro. Sem isto configurado a resposta
+                        vive SÓ no censo: aparece no gráfico e não chega na ficha
+                        da pessoa. Foi assim que Escolaridade e CEP ficaram
+                        semanas sendo coletados e descartados em silêncio. */}
+                    {p.tipo !== 'secao' && (
+                      <Campo
+                        label="Guardar no cadastro da pessoa"
+                        ajuda="Preenche o campo na ficha da Membresia quando ele estiver VAZIO. Valor diferente do que já existe nunca é sobrescrito — vira conflito para a equipe decidir."
+                      >
+                        <Select
+                          value={p.preenche_de || DESTINO_NENHUM}
+                          disabled={!podeEditar}
+                          onValueChange={(v) => mudar(i, { preenche_de: v === DESTINO_NENHUM ? undefined : v })}
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={DESTINO_NENHUM}>Não guardar (só no censo)</SelectItem>
+                            {Object.entries(DESTINO_CADASTRO_LABEL).map(([v, l]) => (
+                              <SelectItem key={v} value={v}>{l}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </Campo>
                     )}
 
                     {/* marcas especiais */}
