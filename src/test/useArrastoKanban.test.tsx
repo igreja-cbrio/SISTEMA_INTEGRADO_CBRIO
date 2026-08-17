@@ -50,11 +50,15 @@ describe('gesto de arrastar card no Kanban', () => {
 
   beforeEach(() => {
     onMover = vi.fn();
-    // @ts-expect-error jsdom não implementa
-    document.elementFromPoint = (x: number) => {
-      const key = Object.keys(COLUNA_EM).map(Number).find(k => Math.abs(k - x) < 40);
-      return key === undefined ? null : document.querySelector(`[data-coluna="${COLUNA_EM[key]}"]`);
-    };
+    // jsdom não faz layout, então `elementFromPoint` devolveria null sempre.
+    // ⚠️ Cast explícito em vez de `@ts-expect-error`: a diretiva ficava "unused"
+    // no `tsc -b` do build (TS2578) e derrubou o gate — o erro não aparece no
+    // `tsc -p tsconfig.app.json`, que não inclui os testes.
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null })
+      .elementFromPoint = (x: number) => {
+        const key = Object.keys(COLUNA_EM).map(Number).find(k => Math.abs(k - x) < 40);
+        return key === undefined ? null : document.querySelector(`[data-coluna="${COLUNA_EM[key]}"]`);
+      };
   });
   afterEach(() => vi.restoreAllMocks());
 

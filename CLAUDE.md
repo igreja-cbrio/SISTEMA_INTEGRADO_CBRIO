@@ -1431,15 +1431,30 @@ recolhidos SEMPRE (consentimento anterior não é consentimento deste evento).
   `convalidated = true` · `totem_estacao_tokens` **sem nenhuma policy para
   `authenticated`** · 6 recusas de CHECK/UNIQUE validadas.
 
-### ⚠️ O gate de deploy tem 8 passos, e o vitest é UM deles (lição de 05/08)
+### ⚠️⚠️ O gate de deploy · são 10 SCRIPTS + vitest + o BUILD (corrigido 14/08)
 
 O deploy do #2291 **falhou** em `test:inscricao-portas` e travou a publicação
 (inclusive de terceiros; produção seguiu no deployment anterior). Eu havia
-rodado `npm test` (vitest · 341 verdes) e concluído que o gate estava coberto —
-os outros **7 passos são scripts node** (`test:inscricao-contrato`,
-`test:inscricao-portas`, `test:inscricao-orfas`, `test:inscricao-qr`,
-`test:censo`, `test:nome-email`, `test:duplicidade`) e não passam pelo vitest.
-**Rodar os 8 antes de mergear** (`.github/workflows/deploy-vercel.yml`).
+rodado `npm test` (vitest) e concluído que o gate estava coberto — os scripts
+node **não passam pelo vitest**.
+
+⚠️ **CORREÇÃO DE REGISTRO (14/08)**: este arquivo dizia "8 passos" e a lista
+estava incompleta — **são 10 scripts** (`.github/workflows/deploy-vercel.yml`):
+`inscricao-contrato` · `inscricao-portas` · `inscricao-orfas` · `inscricao-qr` ·
+`censo` · `nome-email` · **`nome-completo`** · `duplicidade` ·
+**`identidade-pares`** · **`familia`**. Os três em negrito não estavam citados
+aqui, então "rodei os 8" deixava 2 sem verificação.
+
+⚠️⚠️ **E o TYPECHECK do gate é `npm run typecheck` (`tsc -b`), não
+`tsc -p tsconfig.app.json`.** Este erro custou um deploy vermelho em 14/08:
+`error TS2578: Unused '@ts-expect-error' directive` num **arquivo de teste** —
+que o `tsconfig.app.json` **não inclui**, e por isso passava limpo localmente. O
+`tsc -b` roda dentro do `vercel build`, ou seja o build É passo do gate.
+⚠️ `tsc -b` é **incremental com cache** (`.tsbuildinfo`): pra conferir de
+verdade, apagar o cache antes (`find . -name "*.tsbuildinfo" -not -path
+"./node_modules/*" -delete`).
+
+**Antes de mergear: `npm run typecheck` (sem cache) + `npm test` + os 10 scripts.**
 
 O guarda que pegou foi o **App.tsx → catálogo** de `inscricaoPortas.test.js`,
 que existe pra impedir porta de inscrição nova entrar sem registro: as rotas
