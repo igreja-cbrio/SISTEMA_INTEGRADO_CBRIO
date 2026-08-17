@@ -23,6 +23,7 @@ const {
 const { requireCron } = require('../utils/cronAuth');
 const { setSystemJobOutcome } = require('../services/systemJobOutcome');
 const { runIncidentTriage } = require('../services/systemIncidentTriage');
+const { runIncidentDiagnosisBatch } = require('../services/systemIncidentDiagnosis');
 const {
   getGovernanceCommandCenter,
   updateGovernanceControl,
@@ -87,21 +88,34 @@ router.get('/cron/push-receipts', requireCron, async (_req, res) => {
   res.json({ ok: true, ...saida });
 });
 
-// Agente de incidentes - etapa 1: somente triagem e atualizacao de estado.
-// Nao altera codigo, nao executa migrations e nao realiza acoes de producao.
+// Agente de incidentes - etapa 2: triagem + diagnostico consultivo com os
+// agentes Claude auditaveis do sistema. Continua sem executar correcoes.
 router.get('/cron/incident-triage', requireCron, async (_req, res) => {
   try {
-    const result = await runIncidentTriage();
-    const outputCount = result.errors.opened + result.feedback.opened + result.incidents.promoted;
+    const triage = await runIncidentTriage();
+    let diagnosis;
+    try {
+      diagnosis = await runIncidentDiagnosisBatch();
+    } catch (diagnosisError) {
+      console.error('[cron incident-triage / diagnosis]', diagnosisError.message);
+      diagnosis = { enabled: true, scanned: 0, diagnosed: 0, failed: 1, skipped: 0, error: 'Falha isolada no diagnostico.' };
+    }
+    const triagedCount = triage.errors.opened + triage.feedback.opened + triage.incidents.promoted;
+    const outputCount = triagedCount + (diagnosis.diagnosed || 0);
+    const diagnosisFailed = Number(diagnosis.failed || 0) > 0;
     setSystemJobOutcome(res, {
-      status: 'success',
-      effectStatus: 'confirmed',
-      inputCount: result.errors.scanned + result.feedback.scanned + result.incidents.scanned,
+      status: diagnosisFailed ? 'warning' : 'success',
+      effectStatus: diagnosisFailed ? 'failed' : 'confirmed',
+      inputCount: triage.errors.scanned + triage.feedback.scanned + triage.incidents.scanned + (diagnosis.scanned || 0),
       outputCount,
-      discardedCount: 0,
-      result: String(outputCount) + ' incidente(s) triado(s)',
+      discardedCount: diagnosis.failed || 0,
+      ...(diagnosisFailed ? {
+        errorCode: 'INCIDENT_DIAGNOSIS_PARTIAL_FAILURE',
+        errorMessage: `${diagnosis.failed} diagnóstico(s) falharam; a triagem continuou normalmente.`,
+      } : {}),
+      result: `${triagedCount} incidente(s) triado(s); ${diagnosis.diagnosed || 0} diagnosticado(s)`,
     });
-    res.json(result);
+    res.json({ ...triage, mode: 'triage_and_diagnosis', diagnosis });
   } catch (error) {
     console.error('[cron incident-triage]', error.message);
     setSystemJobOutcome(res, {
