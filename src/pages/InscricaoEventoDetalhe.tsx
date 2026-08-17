@@ -226,7 +226,10 @@ export default function InscricaoEventoDetalhe() {
       toast.success('Inscrição excluída');
       setEv((prev: any) => (prev ? { ...prev, inscritos: (prev.inscritos || []).filter((x: any) => x.id !== i.id) } : prev));
       setSelecionadas(prev => { const s = new Set(prev); s.delete(i.id); return s; });
-    } catch (e: any) { toast.error(e?.message || 'Erro ao excluir a inscrição'); }
+      // ⚠️ O motivo técnico do servidor vai junto: "Erro ao excluir" sozinho foi
+      // o que escondeu por meses que a tabela não estava na whitelist do
+      // soft-delete (o log tinha a resposta, a tela não).
+    } catch (e: any) { toast.error([e?.message, e?.detalhe].filter(Boolean).join(' · ') || 'Erro ao excluir a inscrição'); }
   }
 
   function alternarSelecao(inscricaoId: string) {
@@ -275,11 +278,16 @@ export default function InscricaoEventoDetalhe() {
         ? { ...prev, inscritos: (prev.inscritos || []).filter((x: any) => !excluidas.has(x.id)) }
         : prev));
       setSelecionadas(new Set());
-      if (r?.com_pagamento?.length || r?.falhas?.length) toast.warning(r?.resumo || 'Exclusão parcial');
+      if (r?.com_pagamento?.length || r?.falhas?.length) {
+        // Falha traz o motivo do banco junto — "3 falharam" sozinho manda a
+        // pessoa tentar de novo pra sempre.
+        const motivo = (r?.falhas_motivo || []).join(' · ');
+        toast.warning([r?.resumo || 'Exclusão parcial', motivo].filter(Boolean).join(' — '));
+      }
       else toast.success(r?.resumo || 'Inscrições excluídas');
       if (r?.contadores) setEv((prev: any) => (prev ? { ...prev, contadores: r.contadores } : prev));
     } catch (e: any) {
-      toast.error(e?.message || 'Erro ao excluir as inscrições');
+      toast.error([e?.message, e?.detalhe].filter(Boolean).join(' · ') || 'Erro ao excluir as inscrições');
     } finally {
       setExcluindoLote(false);
     }
