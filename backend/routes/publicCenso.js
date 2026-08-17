@@ -24,6 +24,7 @@ const {
 } = require('../utils/censoRespostaToken');
 const { cpfValido, normalizarCpf } = require('../utils/cpf');
 const { casarComOpcao, loteParaBanco } = require('../utils/censoVocabulario');
+const { podeIdentificarPorCpf, camposDoCadastro } = require('../utils/censoPrefill');
 const { acharRespostaDaPessoa } = require('../services/censoJaRespondeu');
 const { acharMembroGuardado, acharOuCriarGuardado } = require('../services/membroMatch');
 
@@ -71,33 +72,6 @@ const lookupLimiter = rateLimit({
 });
 
 const CANAIS = ['qr', 'app', 'link', 'email', 'whatsapp', 'totem'];
-
-/**
- * "Matheus Ribeiro Toscano" → "Matheus R. T."
- *
- * É o MÁXIMO que um endereço público pode devolver a partir de um CPF sozinho.
- * O nome inteiro transformaria isto num consultor de CPF → nome, e CPF vaza e se
- * compra. Mesmo padrão dos lookups de `publicMembresia` (primeiro nome +
- * iniciais + telefone mascarado), que existe exatamente por isso.
- * O dado de verdade só sai depois de a pessoa confirmar o NASCIMENTO — que é uma
- * pergunta do censo, então ela não digita nada duas vezes.
- */
-function nomeMascarado(nome) {
-  const partes = String(nome || '').trim().split(/\s+/).filter(Boolean);
-  if (!partes.length) return null;
-  const primeiro = partes[0];
-  const iniciais = partes.slice(1)
-    .filter((x) => x.length > 2 || /^[A-ZÀ-Ú]/.test(x))   // pula "de", "da", "dos"
-    .map((x) => `${x[0].toUpperCase()}.`)
-    .join(' ');
-  return iniciais ? `${primeiro} ${iniciais}` : primeiro;
-}
-
-function mascararTelefone(tel) {
-  const d = String(tel || '').replace(/\D/g, '');
-  if (d.length < 8) return null;
-  return `(${d.slice(0, 2)}) ****-${d.slice(-4)}`;
-}
 
 // ── Cache do questionário em memória ──────────────────────────────────────
 // Num culto de 2.500 pessoas, CADA requisição relia a mesma linha de
@@ -306,13 +280,10 @@ router.get('/:slug', submitLimiter, async (req, res) => {
  * deixava a pergunta sem nada marcado, e a pessoa achava que o "buscar meu
  * cadastro" não tinha funcionado.
  */
-function valoresPreenchidos(pesquisa, membro) {
-  const doCadastro = {
-    cpf: membro.cpf ? String(membro.cpf).replace(/\D/g, '') : null,
-    nome: membro.nome, data_nascimento: membro.data_nascimento,
-    telefone: membro.telefone, email: membro.email, estado_civil: membro.estado_civil,
-    cidade: membro.cidade, bairro: membro.bairro, profissao: membro.profissao,
-  };
+function valoresPreenchidos(pesquisa, membro, { viaToken } = {}) {
+  // ⚠️ A allowlist do que pode sair vive em `utils/censoPrefill.js`, com o
+  // motivo escrito. Sem token, CONTATO não sai — ver a lei lá.
+  const doCadastro = camposDoCadastro(membro, { viaToken });
   const valores = {};
   for (const q of pesquisa.perguntas || []) {
     if (!q.preenche_de) continue;
@@ -360,14 +331,23 @@ router.post('/:slug/prefill', lookupLimiter, async (req, res) => {
         // Devolve o MESMO token que recebeu: quem já provou identidade não
         // precisa de um novo, e emitir outro só aumentaria a superfície.
         identidade: req.body.identidade,
-        valores: valoresPreenchidos(r.pesquisa, m),
+        valores: valoresPreenchidos(r.pesquisa, m, { viaToken: true }),
       });
     }
 
+    // ── Caminho PÚBLICO: CPF + nascimento digitados ────────────────────────
+    // ⚠️⚠️ EXIGE OS DOIS, SEMPRE. O estágio "só o CPF" (que devolvia nome
+    // mascarado para a tela perguntar "é você?") MORREU em 17/08/2026: ele
+    // respondia "esta pessoa está na base da CBRio?" a qualquer um com um CPF
+    // na mão, e isso é convicção religiosa — dado sensível do art. 5º, II.
+    // Sem nascimento a resposta é a MESMA de CPF inexistente, então o endpoint
+    // parou de discriminar quem está na base. Régua em `utils/censoPrefill.js`.
     const cpf = normalizarCpf(req.body?.cpf);
-    if (!cpfValido(cpf)) return res.json(neutra);
     const nascimento = String(req.body?.data_nascimento || '').trim();
     const temNascimento = /^\d{4}-\d{2}-\d{2}$/.test(nascimento);
+    if (!podeIdentificarPorCpf({ cpfValido: cpfValido(cpf), temNascimento })) {
+      return res.json(neutra);
+    }
 
     const { data, error } = await supabase
       .from('mem_membros')
@@ -376,19 +356,6 @@ router.post('/:slug/prefill', lookupLimiter, async (req, res) => {
       .maybeSingle();
     if (error || !data) return res.json(neutra);
 
-    // ESTÁGIO 1 — só o CPF: devolve identificação MASCARADA, para a tela poder
-    // perguntar "você é Matheus R. T.?". Nada de dado real ainda.
-    if (!temNascimento) {
-      return res.json({
-        encontrado: true,
-        confirmar: {
-          nome_mascarado: nomeMascarado(data.nome),
-          telefone_mascarado: mascararTelefone(data.telefone),
-        },
-      });
-    }
-
-    // ESTÁGIO 2 — CPF + nascimento conferem: agora sim o dado sai.
     // Nascimento errado devolve a MESMA resposta neutra de "não existe".
     if (data.data_nascimento !== nascimento) return res.json(neutra);
 
@@ -414,7 +381,7 @@ router.post('/:slug/prefill', lookupLimiter, async (req, res) => {
       ja_respondeu: !!jaTem,
       respondida_em: jaTem?.concluida_em || null,
       identidade: token,
-      valores: valoresPreenchidos(r.pesquisa, { ...data, cpf }),
+      valores: valoresPreenchidos(r.pesquisa, { ...data, cpf }, { viaToken: false }),
     });
   } catch (e) { res.json(neutra); }
 });
