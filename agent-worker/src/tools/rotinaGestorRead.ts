@@ -77,9 +77,14 @@ export const listarEventosPendentes = tool(
     const limite = somarDias(hoje, dias_a_frente);
 
     const [evRes, tarefaRes] = await Promise.all([
+      // ⚠️⚠️ `events` NÃO tem `area`, `leader_id`, `leader` nem `deleted_at` —
+      // conferido no catálogo em 17/08. O dono é a coluna TEXT `responsible`
+      // (a transição pra UUID pegou `projects` e `event_tasks`, não `events`).
+      // Pedir coluna inexistente faz o PostgREST recusar a query INTEIRA (42703)
+      // e o pilar Eventos vinha vazio, com o erro escondido no `fail()`.
       supabase
         .from("events")
-        .select("id, name, date, status, area, leader_id, responsible_id, leader, responsible")
+        .select("id, name, date, status, responsible, category_id")
         .gte("date", hoje)
         .lte("date", limite)
         .not("status", "in", '("concluido","cancelado")')
@@ -99,10 +104,13 @@ export const listarEventosPendentes = tool(
 
     const eventos = (evRes.data || []).map((e) => ({
       ...e,
-      // ⚠️ Sem dono é `leader_id` E `responsible_id` vazios — a transição
-      // pra UUID não terminou, então as colunas TEXT antigas ainda valem
-      // como sinal e ignorá-las inventaria "sem dono" onde há dono.
-      sem_dono: !e.leader_id && !e.responsible_id && !e.leader && !e.responsible,
+      // ⚠️ `responsible` é TEXTO LIVRE e hoje guarda coisas como "PMO" — que é
+      // um papel, não uma pessoa. Então "tem dono" aqui significa "tem alguém
+      // escrito", e o agente NÃO deve tratar isso como nome de pessoa nem
+      // endereçar mensagem a ele (mesma régua do `responsavel` de
+      // governance_tasks).
+      sem_dono: !e.responsible,
+      responsavel_texto: e.responsible || null,
       sem_data: !e.date,
       dias_ate: e.date ? Math.round((new Date(`${e.date}T12:00:00`).getTime() - new Date(`${hoje}T12:00:00`).getTime()) / 86400000) : null,
     }));
@@ -266,7 +274,10 @@ export const listarSaudeIndicadores = tool(
     const { data: kpis, error } = await supabase
       .from("kpi_indicadores_taticos")
       .select("id, indicador, area, lider_funcionario_id, periodicidade, tipo_calculo")
-      .eq("ativo", true);
+      .eq("ativo", true)
+      // `kpi_indicadores_taticos` TEM `deleted_at` — sem o filtro, KPI apagado
+      // entraria na contagem e na fila de cobrança.
+      .is("deleted_at", null);
     if (error) return fail(`kpi_indicadores_taticos: ${error.message}`);
 
     // ⚠️⚠️ ESPELHO da régua de `GET /gestao/saude` (backend/routes/gestao.js).
