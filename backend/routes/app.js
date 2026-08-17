@@ -1873,19 +1873,34 @@ router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, 
   }
 });
 
-// GET /app/voluntariado/escala/:serviceId — escalados do culto (agrupa no app)
+// GET /app/voluntariado/escala/:serviceId — escala + áreas previstas do culto.
+// A área precisa voltar mesmo vazia: sem isso o app só enxerga equipes que já
+// têm alguém escalado e, por exemplo, Online some justamente quando o
+// supervisor precisa abrir a primeira vaga.
 router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req, res) => {
   try {
     const { areas } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
-    const { data, error } = await supabase
+    const [{ data, error }, { data: composicao, error: composicaoErr }] = await Promise.all([
+      supabase
       .from('vol_schedules')
       .select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status, recusa_motivo')
       .eq('service_id', req.params.serviceId)
       .order('team_name', { ascending: true })
-      .order('volunteer_name', { ascending: true });
+      .order('volunteer_name', { ascending: true }),
+      supabase
+        .from('vol_escala_culto_itens')
+        .select('team:vol_teams(name)')
+        .eq('service_id', req.params.serviceId)
+        .is('deleted_at', null)
+        .order('sort_order', { ascending: true }),
+    ]);
     if (error) throw error;
-    res.json(data || []);
+    if (composicaoErr) throw composicaoErr;
+    const equipes = [...new Set((composicao || [])
+      .map(item => Array.isArray(item.team) ? item.team[0]?.name : item.team?.name)
+      .filter(Boolean))];
+    res.json({ escalas: data || [], equipes });
   } catch (e) {
     console.error('[APP vol/escala get]', e.message);
     res.status(500).json({ error: 'Erro ao carregar a escala' });
