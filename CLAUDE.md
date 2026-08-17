@@ -8155,6 +8155,60 @@ Migration de referência: `20260515520000_normalizar_meta_periodicidade.sql`.
 4. KPIs com checkpoints granulares em `kpi_trajetoria` continuam com a meta
    do checkpoint (não passam pela normalização) · checkpoint já é por período
 
+## ⚠️⚠️ `/gestao/saude` media "sem registro" numa fonte só (2026-08-17 · SEM migration)
+
+Levantamento de 14/08 a pedido do Marcos, corrigido agora que ele vai apoiar a
+rotina semanal de cobrança de indicadores nesta tela. `GET /gestao/saude`
+(`backend/routes/gestao.js`) calculava `sem_registro_60d` lendo **só
+`kpi_registros`** — mas KPI com fórmula (`razao`, `delta_pct`, `soma_periodo`,
+`delta_abs`) grava em **`kpi_valores_calculados`**, outra tabela. A tela acusava
+**~127 "sem registro"** quando o número real de KPIs sem dado em lugar nenhum era
+**~23**.
+
+⚠️ **É o MESMO bug do #2486, espelhado.** Lá a `vw_okr_score_composto` lia só
+`kpi_valores_calculados` e perdia os de `kpi_registros`; o #2486 e as migrations
+`kpi_farol_le_as_duas_fontes` / `okr_score_duas_fontes` (14/08) consertaram o
+**farol e o score** — e **não** este endpoint, que ficou como a última tela
+lendo uma fonte só.
+
+⚠️⚠️ **O estrago não é estético: é cobrança indevida.** A rotina de gestão do
+Marcos dispara mensagem pedindo dado a partir desta lista — com o número errado,
+~104 pessoas receberiam cobrança de KPI que **está preenchido**. Credibilidade
+de cobrança se gasta uma vez.
+
+**São TRÊS estados, e a tela conflatava os três num só:**
+
+| estado | o que significa | o que fazer |
+|---|---|---|
+| **sem dado nenhum** (~23) | nem registro manual, nem valor calculado | cobrar quem preenche |
+| **calcula nulo** (~66) | a fórmula roda e devolve NULL | **não é cobrança** — falta a FONTE (processo que ninguém registra) ou o KPI se aposenta |
+| tem valor | valor real ou zero medido | nada |
+
+⇒ `sem_registro_60d` passou a ser só o 1º, e **`calculam_nulo` é campo novo** com
+o 2º. Separar é o que torna a lista acionável: os ~42 dos grupos A/B do
+levantamento de 14/08 **não são bug de código** — são acompanhamento de líder,
+capelania, aconselhamento e saída de voluntário que ninguém registra, e nenhuma
+mensagem de cobrança resolve isso.
+
+- ⚠️ **`valor_calculado IS NULL` NÃO conta como dado.** Contar a existência da
+  LINHA (ou usar `calculado_em`) diria "tem dado" pros 66 — e o cron
+  `kpi_recalcular_todos` roda todo dia, então `calculado_em` está fresco pra
+  quase tudo. A janela é por **`periodo_referencia`**, que é o período medido.
+- ⚠️ **Falha de consulta NÃO vira "esse KPI não tem dado"** — seria transformar
+  instabilidade de banco em fila de cobrança. O bloco devolve
+  `incompleto: true` + `aviso`, e a tela troca a cor pra âmbar e escreve o
+  motivo no subtítulo. Número sem a ressalva ao lado é o que faz alguém cobrar
+  errado.
+- O card do topo virou **"Sem dado 60d"** (era "Sem registro 60d"): "registro"
+  descrevia a fonte que a tela lia, não a pergunta que ela responde.
+- Bloco novo no front é guardado por `saude.calculam_nulo?.total > 0` — bundle
+  novo com backend antigo não quebra.
+
+⚠️ **Os 77 KPIs sem dono seguem intocados** (`sem_dono` = `!lider_funcionario_id`):
+são **9 áreas 100% sem dono** (sede 51/51, marketing, produção, financeiro, rh,
+cba, infra, next, generosidade). É preenchimento/governança, não código — e sem
+dono não existe a quem mandar a cobrança. Ver [[project-kpi-saude-estrutura]].
+
 ## ⚠️ Mandala · a média de FREQUÊNCIA divide por DOMINGO, não por semana (2026-08-12)
 
 Pedido do Marcos: *"na mandala do sistema, preciso que na frequência (seguir a
