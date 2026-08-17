@@ -719,26 +719,52 @@ export default function InscricaoEventoDetalhe() {
 }
 
 // Escolha do agrupamento + colunas antes de mandar pra impressora.
+// ⚠️ A ordem alfabética vem PRIMEIRO e é o padrão. Antes o padrão era "faixa
+// de idade", que parte a folha em até 5 blocos (Criança · Adolescente · Jovem ·
+// Adulto · Sem data de nascimento) com o total só no rodapé da última página —
+// e foi assim que uma lista de 64 pessoas do Kids foi lida como "40 e poucas"
+// (37 no bloco Adulto, 17 num bloco separado no fim). Agrupar continua a um
+// clique, para quem precisa da folha dividida.
 const AGRUPAMENTOS: { key: Agrupamento; label: string; dica: string }[] = [
-  { key: 'faixa', label: 'Faixa de idade', dica: 'Criança · Adolescente · Jovem · Adulto' },
-  { key: 'sexo', label: 'Sexo', dica: 'Feminino · Masculino' },
+  { key: 'nenhum', label: 'Ordem alfabética (A–Z)', dica: 'Uma lista só, do A ao Z — todo mundo na mesma tabela' },
+  { key: 'faixa', label: 'Faixa de idade', dica: 'Criança · Adolescente · Jovem · Adulto (folha dividida em blocos)' },
+  { key: 'sexo', label: 'Sexo', dica: 'Feminino · Masculino (folha dividida em blocos)' },
   { key: 'status', label: 'Status', dica: 'Confirmadas · Aguardando pagamento' },
   { key: 'pagamento', label: 'Pagamento', dica: 'Pago · Aguardando · Sem cobrança' },
-  { key: 'nenhum', label: 'Sem agrupar', dica: 'Uma lista só, em ordem alfabética' },
 ];
 
 function ImprimirListaDialog({ evento, inscritos, recorte, totalEvento, onClose }: {
   evento: any; inscritos: any[]; recorte?: boolean; totalEvento?: number; onClose: () => void;
 }) {
-  const [ag, setAg] = useState<Agrupamento>('faixa');
+  const [ag, setAg] = useState<Agrupamento>('nenhum');
   const [contato, setContato] = useState(false);
   const [pagamento, setPagamento] = useState<boolean>(!!evento?.pagamento_ativo);
   const [presenca, setPresenca] = useState(true);
   const [incluirCanceladas, setIncluirCanceladas] = useState(false);
 
-  const total = inscritos.filter((i: any) => incluirCanceladas || i.status !== 'cancelada').length;
-  const semNascimento = inscritos.filter((i: any) => !i.data_nascimento
-    && (incluirCanceladas || i.status !== 'cancelada')).length;
+  const naFolha = inscritos.filter((i: any) => incluirCanceladas || i.status !== 'cancelada');
+  const total = naFolha.length;
+  const semNascimento = naFolha.filter((i: any) => !i.data_nascimento).length;
+
+  // Prévia dos BLOCOS que a folha vai ter. Sem isso, quem agrupa não sabe que a
+  // lista sai partida — e conta um bloco achando que é o total.
+  const blocos = useMemo(() => {
+    if (ag === 'nenhum') return [];
+    const contagem = new Map<string, number>();
+    for (const i of naFolha) {
+      const k = ag === 'faixa'
+        ? (i.data_nascimento ? faixaLabel(i.data_nascimento, true) : 'Sem data de nascimento')
+        : ag === 'sexo'
+          ? (i.sexo ? sexoLabel(i.sexo) : 'Sexo não informado')
+          : ag === 'status'
+            ? (i.status || 'sem status')
+            : (i.pagamento?.status_pagamento
+              ? (PAG_LABEL[i.pagamento.status_pagamento] || i.pagamento.status_pagamento)
+              : 'Sem cobrança');
+      contagem.set(k, (contagem.get(k) || 0) + 1);
+    }
+    return [...contagem.entries()].sort((a, b) => b[1] - a[1]);
+  }, [ag, naFolha]);
 
   function imprimir() {
     imprimirListaInscritos(
@@ -807,6 +833,23 @@ function ImprimirListaDialog({ evento, inscritos, recorte, totalEvento, onClose 
               // achar que a folha veio incompleta.
               <div className="text-amber-600">
                 {semNascimento} sem data de nascimento — {semNascimento === 1 ? 'vai' : 'vão'} para um grupo "Sem data de nascimento" no fim.
+              </div>
+            )}
+            {/* ⚠️ A folha agrupada sai PARTIDA em blocos, e o total geral fica
+                só no rodapé da última página — quem confere conta um bloco e
+                acha que sumiu gente. A prévia mostra a divisão antes de imprimir. */}
+            {blocos.length > 1 && (
+              <div className="pt-1 border-t border-border/60">
+                <div className="text-muted-foreground">
+                  A folha sai dividida em <strong className="text-foreground">{blocos.length} blocos</strong>, somando {total}:
+                </div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {blocos.map(([nome, n]) => (
+                    <span key={nome} className="rounded-full border border-border px-2 py-0.5 text-[11px]">
+                      {nome}: <strong>{n}</strong>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
           </div>
