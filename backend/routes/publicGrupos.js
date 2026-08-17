@@ -1472,11 +1472,13 @@ router.post('/inscrever-lider', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // F3 · aprovação pelo líder via link do WhatsApp (sem login).
-// Token HMAC assinado (services/gruposWhatsapp) dá acesso a UM pedido e
-// expira em 30 dias (era 7 · Natasha 12/08/2026). Fail-closed: sem CRON_SECRET
-// nenhum token valida. ⚠️ O TTL é a 2ª camada: quem manda são as travas daqui —
-// pedido ainda 'pendente' e `payload.l` = líder ATUAL do grupo. É por isso que
-// o link vencido pode ser prorrogado no serviço sem abrir buraco de segurança.
+// Token HMAC assinado (services/gruposWhatsapp) dá acesso a UM pedido, com TTL
+// de 30 dias (era 7 · Natasha 12/08/2026) e, passado o TTL, validade enquanto
+// a TEMPORADA estiver aberta (Pr. Nélio + Natasha · 17/08/2026 · ver
+// `haTemporadaAberta` abaixo). Fail-closed: sem CRON_SECRET nenhum token
+// valida. ⚠️ O TTL é a 2ª camada: quem manda são as travas daqui — pedido ainda
+// 'pendente' e `payload.l` = líder ATUAL do grupo. É por isso que o link
+// vencido pode ser aceito sem abrir buraco de segurança.
 // Rota com 2 segmentos de propósito — o GET /:id (acima) captura qualquer
 // caminho de 1 segmento.
 // ─────────────────────────────────────────────────────────────
@@ -1509,11 +1511,41 @@ async function carregarParCasal(pedido) {
   return par;
 }
 
+// ⚠️ O link de aprovação fica ativo ENQUANTO A TEMPORADA ESTIVER ABERTA
+// (Pr. Nélio + Natasha · 17/08/2026 — substituiu a data fixa de 31/08 que
+// vigorou por 5 dias). O TTL de 30 dias do token é o piso; passado ele, quem
+// diz se o link ainda vale é esta consulta.
+//
+// ⚠️ FAIL-CLOSED nos dois sentidos que importam: sem temporada aberta não
+// prorroga (é o "enquanto estiver aberta"), e ERRO de consulta também não
+// prorroga — link vencido tem que provar que ainda vale, não o contrário.
+// Erro NÃO derruba o endpoint: o link dentro dos 30 dias segue abrindo normal,
+// que é o caminho de 100% do tráfego recente.
+//
+// Cache curto porque isto roda a cada abertura de link e a resposta muda no
+// máximo quando a coordenação fecha a temporada — 60s de defasagem ali é
+// irrelevante e evita uma consulta por clique.
+let _tempAbertaCache = { em: 0, valor: false };
+async function haTemporadaAberta() {
+  if (Date.now() - _tempAbertaCache.em < 60_000) return _tempAbertaCache.valor;
+  try {
+    const { data, error } = await supabase.from('mem_temporadas')
+      .select('id').eq('inscricoes_abertas', true).limit(1);
+    if (error) throw error;
+    _tempAbertaCache = { em: Date.now(), valor: !!(data && data.length) };
+  } catch (e) {
+    console.error('[public grupos temporada-aberta]', e.message);
+    return false; // fail-closed: na dúvida, não prorroga
+  }
+  return _tempAbertaCache.valor;
+}
+
 // GET /api/public/grupos/pedido/por-token?token=...
 // Dados que o líder vê na página de aprovação (o token É a credencial).
 router.get('/pedido/por-token', async (req, res) => {
   try {
-    const payload = verificarToken(req.query.token, 'aprov');
+    const payload = verificarToken(req.query.token, 'aprov', Date.now(),
+      { aceitarExpirado: await haTemporadaAberta() });
     if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado. Você ainda pode aprovar pelo sistema em /grupos.' });
 
     const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos')
@@ -1566,7 +1598,11 @@ router.get('/pedido/por-token', async (req, res) => {
 router.post('/aprovar', async (req, res) => {
   try {
     const { token, acao, motivo } = req.body || {};
-    const payload = verificarToken(token, 'aprov');
+    // Mesma régua do GET: vencido só passa com a temporada aberta (ver
+    // `haTemporadaAberta`). Tem que ser a MESMA nos dois — se o GET abrisse a
+    // página e o POST recusasse, o líder decidiria e levaria erro na cara.
+    const payload = verificarToken(token, 'aprov', Date.now(),
+      { aceitarExpirado: await haTemporadaAberta() });
     if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado. Você ainda pode decidir pelo sistema em /grupos.' });
     if (!['aprovar', 'rejeitar'].includes(acao)) return res.status(400).json({ error: 'Ação inválida.' });
 
