@@ -75,4 +75,54 @@ assert(chamadaBat, 'não achei a chamada de acharOuCriarGuardado em publicBatism
 assert(/genero:/.test(chamadaBat[1]),
   'a porta do batismo tem que passar o sexo ao matcher (era o caso do Pedro Moreira Gonçalez)');
 
-console.log('membroMatch: o INSERT grava nascimento e sexo · repasse do contrato e do batismo no lugar');
+// ── Telefone comparável (2026-08-17) ────────────────────────────────────────
+// `mem_membros.telefone` guarda formatos MISTOS (23% mascarados em 17/08) e
+// `21996137099` NÃO é substring de `(21)99613-7099` — o `ilike %digitos%` que a
+// busca usava era cego a 84 grupos de cadastros no mesmo telefone canônico.
+// Quem compara agora é a coluna GERADA `telefone_digits`.
+assert(/telefone_digits\.eq\./.test(fonte),
+  'a busca de candidatos tem que filtrar por telefone_digits — ilike sobre a coluna crua é cego a número mascarado');
+
+// ⚠️ O fallback é CRÍTICO: pedir coluna inexistente faz o PostgREST recusar a
+// query INTEIRA, e buscarCandidatos é o caminho de TODA porta de pessoa. Sem
+// ele, o intervalo entre o deploy e a migration derrubaria batismo, censo,
+// grupos, Next e voluntariado de uma vez.
+assert(/telefone\.ilike\./.test(fonte),
+  'o fallback pro ilike tem que continuar existindo para o intervalo entre deploy e migration');
+assert(/telefone_digits/.test(fonte.slice(fonte.indexOf('resultado.error'))),
+  'o fallback tem que ser disparado pelo erro que cita telefone_digits, não por qualquer erro (erro de rede não deve virar busca cega)');
+
+const canon = /function telefoneComparavel\(v\) \{([\s\S]*?)^\}/m.exec(fonte);
+assert(canon, 'não achei telefoneComparavel');
+const comparavel = new Function('v', canon[1]);
+assert.equal(comparavel('(21) 97965-1112'), comparavel('21979651112'),
+  'as duas formas do MESMO telefone têm que virar o mesmo valor (é o caso Fabio Moura, que gerou cadastro duplicado)');
+assert.equal(comparavel('5521970079969'), '21970079969', 'código de país 55 sai quando o resto é telefone completo');
+// ⚠️⚠️ DDD 55 é Santa Maria/RS: `replace(^55)` cru destruiria todo número de lá.
+// O caso que DISCRIMINA é o de Santa Maria SEM código de país: com 11 dígitos a
+// régua certa não mexe, e a ingênua devolveria 9 dígitos sem DDD.
+// (Mutation-test: a asserção com o número de 13 dígitos abaixo passa nas DUAS
+// réguas — `5555991234567`.slice(2) dá o mesmo resultado. Ela sozinha não
+// provava nada, e o mutante sobreviveu até esta linha existir.)
+assert.equal(comparavel('55991234567'), '55991234567',
+  'número de Santa Maria SEM código de país mantém os 11 dígitos — replace(^55) cru viraria 991234567 e perderia o DDD');
+assert.equal(comparavel('5555991234567'), '55991234567', 'número de Santa Maria com código de país mantém o DDD 55');
+assert.equal(comparavel('996013179'), null, 'telefone curto demais não vira chave de busca');
+
+// ── Match perfeito · a exceção estreita ao soChaveForte ─────────────────────
+// Decisão do Marcos (17/08): duplicata pode existir se cair na fila, mas match
+// perfeito deve ligar na hora. ⚠️ O veto de CPF é o que impede a régua de errar
+// em metade dos casos que ela alcança: dos 2 grupos com nome+nascimento
+// idênticos na base viva, 1 tem CPFs diferentes (Fabio Moura).
+const ramo = /if \(soChaveForte && permitirMatchPerfeito[\s\S]*?^  \}/m.exec(fonte);
+assert(ramo, 'não achei o ramo do match perfeito');
+assert(/normalizarNome\(c\.nome\) !== alvo/.test(ramo[0]),
+  'o match perfeito exige nome normalizado IDÊNTICO — Dice/abreviação é o ramo normal, não este');
+assert(/cpf11 && cCpf && cpf11 !== cCpf/.test(ramo[0]),
+  'CPF conflitante tem que VETAR o match perfeito (caso Fabio Moura: mesmo nome e nascimento, CPFs diferentes)');
+assert(/perfeitos\.length === 1/.test(ramo[0]),
+  'só liga com EXATAMENTE um candidato: 2+ significa que a base já tem duplicata e escolher seria cara-ou-coroa');
+assert(/permitirMatchPerfeito = false/.test(fonte),
+  'a opção tem que ser OPT-IN: quem passa soChaveForte por um "não sou eu" do dedup não pode ser religado por nome+nascimento');
+
+console.log('membroMatch: INSERT grava nascimento/sexo · telefone comparável com fallback · match perfeito com veto de CPF');
