@@ -319,6 +319,100 @@ aceita `recorte=membros`.
 
 Lição repetida 3× neste dia: **conferir o que a sonda devolveu, não a contagem.**
 
+## ⚠️⚠️ LEI · rótulo de opção NÃO é vocabulário de coluna (2026-08-17 · migration `20260817120000`)
+
+Pergunta do Matheus: *"a partir desse censo, tá atualizando os dados de membresia
+no módulo de membros? veja o Kevyn por exemplo, não atualizou o estado civil dele,
+grupo e etc."* **Não estava atualizando nada** — e eram TRÊS causas somadas.
+
+### O que foi medido em produção
+
+As **12 respostas** do Censo CBRio 2026 estavam vinculadas à pessoa (as 12 por
+CPF, `identificado_por='cpf_nascimento'`) e **`pos_processado_em` NULL nas 12**.
+
+1. **O pós-processamento é MANUAL e nunca foi rodado.** O botão existe ("Processar
+   agora", card *Vínculo com as pessoas*, nível 4) e é manual **de propósito** — o
+   matcher + reconciliação eram 7 das 8,3 idas ao banco por resposta, e no culto
+   isso é a tela travando pra todo mundo. Efeito colateral: ninguém sabia que
+   precisava clicar.
+2. ⚠️⚠️ **Mesmo clicando, morreria.** A pergunta manda o **RÓTULO** que a pessoa
+   viu (`"Solteiro(a)"`) e `mem_membros.estado_civil` tem CHECK vivo
+   (`solteiro|casado|divorciado|viuvo|uniao_estavel`). Provado com UPDATE real em
+   transação revertida: **23514**. E como `reconciliarCenso` grava **tudo num
+   UPDATE só**, o rótulo inválido levava embora **bairro, cidade, telefone e
+   nascimento do mesmo passe**. As 12 responderam estado civil ⇒ nenhuma aplicaria
+   campo nenhum, e a tela diria "12 processadas".
+3. **`escolaridade` e `cep` não tinham destino.** A pergunta Escolaridade existe no
+   questionário desde o começo e não havia coluna nem `preenche_de`; o CEP tinha
+   coluna e não tinha destino. Dado coletado e **descartado em silêncio** — a
+   mesma classe do sexo (04/08) e do CPF do censo (04/08).
+
+### A LEI
+
+**Rótulo de opção é texto para humano ler; coluna com CHECK guarda VOCABULÁRIO.**
+Quem traduz um no outro é **`backend/utils/censoCampoCadastro.js`** (puro, no
+gate) — não o construtor (o Matheus renomeia opção quando quiser) e **nunca a
+coluna** (afrouxar o CHECK pra aceitar "Casado(a)" criaria DOIS valores para
+"casado" e quebraria todo filtro e agregação sobre os 147 cadastros já
+preenchidos).
+
+- ⚠️ **Valor que não traduz NÃO é gravado cru**: volta em `descartados`, aparece
+  na tela em âmbar e no histórico do membro. Descarte silencioso é como o CPF do
+  censo sumiu por 4 dias.
+- ⚠️ **O UPDATE deixou de ser tudo-ou-nada em caso de erro de DADO** (23514,
+  22P02, 22001, 42703…): tenta em bloco e, se o banco recusar, **refaz campo a
+  campo**. Um valor ruim não pode levar os bons — é a lei de 04/08 (gravar o
+  efeito DURANTE) aplicada a um UPDATE. Erro de INFRA continua propagando.
+- ⚠️ **`escolaridade` ficou SEM CHECK de propósito**: opção nova no construtor não
+  pode derrubar o UPDATE de ninguém, que é exatamente o que o CHECK de
+  `estado_civil` fez. O vocabulário é mantido pelo tradutor (mapa + slug de
+  fallback, então "Mestrado" entra como `mestrado` em vez de se perder).
+- ⚠️ **`preenche_de` é validado contra o CATÁLOGO** (`censoPerguntas`): antes
+  aceitava qualquer texto, e destino inventado = coluna inexistente no UPDATE
+  (42703 derruba o passe inteiro).
+- ⚠️ **Campo NOVO no catálogo só entra depois de conferir no CATÁLOGO do banco se
+  a coluna tem CHECK.** Sem isso o 23514 volta.
+- O construtor ganhou o seletor **"Guardar no cadastro da pessoa"** — era campo
+  só-JSON, e é por isso que CEP e Escolaridade ficaram sem destino por semanas.
+- A tela do pós-processamento **declara campo por campo** o que foi preenchido e
+  avisa o que NÃO foi guardado. `"12 processadas"` não distinguia aplicou-tudo de
+  aplicou-nada.
+- Teste: `src/test/censoCampoCadastro.test.ts` (24 casos · **no gate**), com as
+  opções REAIS do questionário e os valores REAIS da coluna. **3 mutantes
+  rodados**: devolver rótulo cru → 2 vermelhos · aceitar array de múltipla → 1 ·
+  CEP frouxo → 1. Em `censoReconciliar.test.js`, o mutante "tirar a tradução" →
+  vermelho.
+
+### O atrito real do questionário: as 2 perguntas OPCIONAIS
+
+Das **43 perguntas, só 2 são opcionais** — e são exatamente as 2 que tiveram
+gente pulando: **"Qual Grupo?"** (3 de 10 que participam de grupo não disseram
+qual) e **"Qual era a igreja?"** (3 de 8). As outras 41 foram respondidas por
+**100% de quem as viu**. As duas são `tipo: busca` com `permite_outro: true`, e o
+escape ("usar *o que você digitou*") **só aparecia depois de 2 caracteres** —
+quem não lembrava o nome exato via um campo de busca sem saída nenhuma. A dica
+agora aparece **antes** de digitar.
+
+⚠️ **O gráfico "Onde as pessoas param de responder" NÃO mede abandono aqui**: a
+taxa de conclusão é **100%** (12 iniciadas / 12 concluídas). Ele divide por
+`iniciadas` e **não sabe que a pergunta é condicional** (`mostrar_se`), então 4
+das 6 barras eram falso alarme (100% de quem VIU respondeu). Conferir a
+pergunta-mãe antes de tratar barra baixa como cansaço.
+
+### Pendências de GENTE (não são código)
+
+- **Grupo NÃO é preenchido pelo censo, e não deve ser por automação**: vínculo de
+  grupo é `mem_grupo_membros` (ato de gestão/liderança), e a coluna
+  `mem_membros.grupo` que o card da ficha exibe é texto legado. Medido: **8 das 12
+  declararam grupo e 5 delas NÃO têm vínculo ativo** (Arthur Cecconi, Kevyn,
+  Marcelo Soares, Mariane, Wesley) — é trabalho pra coordenação de Grupos, e o
+  censo acabou de revelá-lo. 3 escreveram o **nome do líder** em vez do grupo, o
+  que o campo permite de propósito.
+- **7 dos 12 CEPs vieram com 7 dígitos** e o tradutor os recusa. **Não é bug de
+  máscara** (`mascaraCep` conferida em digitação caractere-a-caractere e em
+  colagem): as 12 respostas são a equipe testando em 4 minutos, e o formulário não
+  avisa quando o CEP está incompleto. Avisar é melhoria de UX ainda não feita.
+
 ## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
 
 Demanda do **Arthur Serpa**: por um mês, 1 minuto de cada culto pra igreja
