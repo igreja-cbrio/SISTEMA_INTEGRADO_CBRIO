@@ -1873,10 +1873,10 @@ router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, 
   }
 });
 
-// GET /app/voluntariado/escala/:serviceId — escala + áreas previstas do culto.
-// A área precisa voltar mesmo vazia: sem isso o app só enxerga equipes que já
-// têm alguém escalado e, por exemplo, Online some justamente quando o
-// supervisor precisa abrir a primeira vaga.
+// GET /app/voluntariado/escala/:serviceId — escala + composição canônica.
+// A árvore é área → subárea/equipe → posição, vinda do catálogo do culto e
+// não de quem já está escalado. Assim Online e posições vazias continuam
+// visíveis no app, exatamente como no sistema web.
 router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req, res) => {
   try {
     const { areas } = await supervisorAreasApp(req);
@@ -1890,17 +1890,26 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
       .order('volunteer_name', { ascending: true }),
       supabase
         .from('vol_escala_culto_itens')
-        .select('team:vol_teams(name)')
+        .select('team_id, position_id, quantidade, team:vol_teams(id,name,area), position:vol_positions(id,name)')
         .eq('service_id', req.params.serviceId)
         .is('deleted_at', null)
         .order('sort_order', { ascending: true }),
     ]);
     if (error) throw error;
     if (composicaoErr) throw composicaoErr;
-    const equipes = [...new Set((composicao || [])
-      .map(item => Array.isArray(item.team) ? item.team[0]?.name : item.team?.name)
-      .filter(Boolean))];
-    res.json({ escalas: data || [], equipes });
+    const itens = (composicao || []).map(item => {
+      const team = Array.isArray(item.team) ? item.team[0] : item.team;
+      const position = Array.isArray(item.position) ? item.position[0] : item.position;
+      return {
+        team_id: item.team_id,
+        team_name: team?.name || 'Sem equipe',
+        area: team?.area || 'Sem área',
+        position_id: item.position_id || null,
+        position_name: position?.name || null,
+        quantidade: item.quantidade || 1,
+      };
+    });
+    res.json({ escalas: data || [], composicao: itens });
   } catch (e) {
     console.error('[APP vol/escala get]', e.message);
     res.status(500).json({ error: 'Erro ao carregar a escala' });

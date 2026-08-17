@@ -4658,11 +4658,14 @@ async function carregarTemplate(id) {
   const { data: tpl } = await supabase.from('vol_escala_templates')
     .select('*').eq('id', id).is('deleted_at', null).maybeSingle();
   if (!tpl) return null;
-  const [{ data: itens }, { data: tipos }] = await Promise.all([
+  const [{ data: itens }, { data: tipos }, { data: liderancas }] = await Promise.all([
     supabase.from('vol_escala_template_itens')
-      .select('*, team:vol_teams(id,name), position:vol_positions(id,name)')
+      .select('*, team:vol_teams(id,name,area), position:vol_positions(id,name)')
       .eq('template_id', id).order('sort_order'),
     supabase.from('vol_escala_template_tipos').select('service_type_id').eq('template_id', id),
+    supabase.from('vol_escala_template_liderancas')
+      .select('team_id, responsavel_profile_id, responsavel:profiles(id,name,email)')
+      .eq('template_id', id),
   ]);
   const itemIds = (itens || []).map(i => i.id);
   let pessoasPorItem = {};
@@ -4676,11 +4679,12 @@ async function carregarTemplate(id) {
     ...tpl,
     service_type_ids: (tipos || []).map(t => t.service_type_id),
     itens: (itens || []).map(i => ({ ...i, pessoas: pessoasPorItem[i.id] || [] })),
+    liderancas: liderancas || [],
   };
 }
 
 // Substitui itens (+pessoas) e tipos de um template (usado no create/update).
-async function gravarItensETipos(templateId, itens, serviceTypeIds) {
+async function gravarItensETipos(templateId, itens, serviceTypeIds, liderancas) {
   if (Array.isArray(serviceTypeIds)) {
     await supabase.from('vol_escala_template_tipos').delete().eq('template_id', templateId);
     const rows = serviceTypeIds.filter(Boolean).map(st => ({ template_id: templateId, service_type_id: st }));
@@ -4707,6 +4711,18 @@ async function gravarItensETipos(templateId, itens, serviceTypeIds) {
         .filter(Boolean)
         .map(vid => ({ item_id: novo.id, volunteer_id: vid }));
       if (pRows.length) await supabase.from('vol_escala_template_item_pessoas').insert(pRows);
+    }
+  }
+  // Liderança pertence à subárea (equipe) dentro deste template. Nunca à
+  // função: repetir o líder em cada posição permitiria divergências.
+  if (Array.isArray(liderancas)) {
+    await supabase.from('vol_escala_template_liderancas').delete().eq('template_id', templateId);
+    const rows = liderancas
+      .filter(l => l?.team_id && l?.responsavel_profile_id)
+      .map(l => ({ template_id: templateId, team_id: l.team_id, responsavel_profile_id: l.responsavel_profile_id }));
+    if (rows.length) {
+      const { error } = await supabase.from('vol_escala_template_liderancas').insert(rows);
+      if (error) throw new Error(error.message);
     }
   }
 }
@@ -4739,13 +4755,13 @@ router.get('/schedule-templates/:id', async (req, res) => {
 // Cria template (cabeçalho + itens + pessoas + tipos de culto).
 router.post('/schedule-templates', authEscalaEscrita, async (req, res) => {
   try {
-    const { nome, descricao, ativo, sort_order, service_type_ids, itens } = req.body || {};
+    const { nome, descricao, ativo, sort_order, service_type_ids, itens, liderancas } = req.body || {};
     if (!nome || !nome.trim()) return res.status(400).json({ error: 'nome obrigatório' });
     const { data: tpl, error } = await supabase.from('vol_escala_templates')
       .insert({ nome: nome.trim(), descricao: descricao || null, ativo: ativo !== false, sort_order: sort_order || 0 })
       .select('id').single();
     if (error) return res.status(400).json({ error: error.message });
-    await gravarItensETipos(tpl.id, itens, service_type_ids);
+    await gravarItensETipos(tpl.id, itens, service_type_ids, liderancas);
     res.json(await carregarTemplate(tpl.id));
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao criar template' }); }
 });
@@ -4753,7 +4769,7 @@ router.post('/schedule-templates', authEscalaEscrita, async (req, res) => {
 // Atualiza template (cabeçalho e, se enviados, substitui itens/tipos).
 router.put('/schedule-templates/:id', authEscalaEscrita, async (req, res) => {
   try {
-    const { nome, descricao, ativo, sort_order, service_type_ids, itens } = req.body || {};
+    const { nome, descricao, ativo, sort_order, service_type_ids, itens, liderancas } = req.body || {};
     const patch = {};
     if (nome !== undefined) patch.nome = String(nome).trim();
     if (descricao !== undefined) patch.descricao = descricao || null;
@@ -4764,7 +4780,7 @@ router.put('/schedule-templates/:id', authEscalaEscrita, async (req, res) => {
         .update(patch).eq('id', req.params.id).is('deleted_at', null);
       if (error) return res.status(400).json({ error: error.message });
     }
-    await gravarItensETipos(req.params.id, itens, service_type_ids);
+    await gravarItensETipos(req.params.id, itens, service_type_ids, liderancas);
     res.json(await carregarTemplate(req.params.id));
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao atualizar template' }); }
 });
@@ -5214,7 +5230,7 @@ router.get('/escala-matriz', async (req, res) => {
     };
 
     const [itens, escalas] = await Promise.all([
-      emLotes('vol_escala_culto_itens', 'id, service_id, team_id, position_id, quantidade, fixo, sort_order, team:vol_teams(id,name,color), position:vol_positions(id,name)'),
+      emLotes('vol_escala_culto_itens', 'id, service_id, team_id, position_id, quantidade, fixo, sort_order, team:vol_teams(id,name,area,color), position:vol_positions(id,name)'),
       emLotes('vol_schedules', 'id, service_id, volunteer_id, volunteer_name, team_id, position_id, confirmation_status, escala_culto_item_id, planning_center_person_id'),
     ]);
 
@@ -5226,11 +5242,11 @@ router.get('/escala-matriz', async (req, res) => {
     // item da composição é de cada culto (cada um tem os seus).
     const linhas = new Map();
     const chaveLinha = (t, p) => `${t || ''}::${p || ''}`;
-    const garanteLinha = (team_id, team, cor, position_id, position, ordem) => {
+    const garanteLinha = (team_id, team, area, cor, position_id, position, ordem) => {
       const k = chaveLinha(team_id, position_id);
       if (!linhas.has(k)) {
         linhas.set(k, {
-          chave: k, team_id, team: team || 'Sem equipe', cor: cor || null,
+          chave: k, team_id, team: team || 'Sem equipe', area: area || 'Sem área', cor: cor || null,
           position_id: position_id || null, position: position || null,
           ordem: ordem ?? 999, celulas: {},
         });
@@ -5257,7 +5273,7 @@ router.get('/escala-matriz', async (req, res) => {
 
       for (const item of cob.itens) {
         const bruto = it.find(x => x.id === item.id);
-        const l = garanteLinha(item.team_id, item.team, bruto?.team?.color, item.position_id, item.position, bruto?.sort_order);
+        const l = garanteLinha(item.team_id, item.team, bruto?.team?.area, bruto?.team?.color, item.position_id, item.position, bruto?.sort_order);
         l.celulas[culto.id] = {
           item_id: item.id, alvo: item.alvo, faltam: item.faltam,
           pessoas: item.pessoas.map(pessoaDaEscala),
@@ -5268,7 +5284,7 @@ router.get('/escala-matriz', async (req, res) => {
       // uma pessoa que não aparece na matriz é uma pessoa que a coordenação
       // escala em duplicidade.
       for (const s of cob.sobrando) {
-        const l = garanteLinha(s.team_id, null, null, s.position_id, null, 998);
+        const l = garanteLinha(s.team_id, null, null, null, s.position_id, null, 998);
         const c = (l.celulas[culto.id] ||= { item_id: null, alvo: 0, faltam: 0, pessoas: [] });
         c.pessoas.push(pessoaDaEscala(s));
       }
@@ -5279,16 +5295,17 @@ router.get('/escala-matriz', async (req, res) => {
     if (semNome.length) {
       const teamIds = [...new Set(semNome.map(l => l.team_id).filter(Boolean))];
       if (teamIds.length) {
-        const { data: ts } = await supabase.from('vol_teams').select('id, name, color').in('id', teamIds);
+        const { data: ts } = await supabase.from('vol_teams').select('id, name, area, color').in('id', teamIds);
         const mapa = Object.fromEntries((ts || []).map(t => [t.id, t]));
         for (const l of semNome) {
           const t = mapa[l.team_id];
-          if (t) { l.team = t.name; l.cor = l.cor || t.color; }
+          if (t) { l.team = t.name; l.area = l.area === 'Sem área' ? (t.area || 'Sem área') : l.area; l.cor = l.cor || t.color; }
         }
       }
     }
 
     const ordenadas = [...linhas.values()].sort((a, b) =>
+      a.area.localeCompare(b.area, 'pt-BR') ||
       a.team.localeCompare(b.team, 'pt-BR') ||
       a.ordem - b.ordem ||
       String(a.position || '').localeCompare(String(b.position || ''), 'pt-BR'));

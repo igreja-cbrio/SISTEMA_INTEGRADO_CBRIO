@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, Trash2, Pin, X, LayoutTemplate, CalendarPlus, Users, ChevronRight } from 'lucide-react';
 import { toast } from 'sonner';
-import { voluntariado } from '../../../api';
+import { users, voluntariado } from '../../../api';
 
 const TEAL = '#00B39D';
 
@@ -22,7 +22,8 @@ type Item = {
   fixo: boolean;
   pessoas: Pessoa[];
 };
-type Draft = { id?: string; nome: string; service_type_ids: string[]; itens: Item[] };
+type Lideranca = { team_id: string; responsavel_profile_id: string };
+type Draft = { id?: string; nome: string; service_type_ids: string[]; itens: Item[]; liderancas: Lideranca[] };
 
 let _k = 0;
 const novaKey = () => `it-${Date.now()}-${_k++}`;
@@ -38,6 +39,7 @@ export default function VolTemplatesEscala() {
   const { data: positions = [] } = useQuery<any[]>({ queryKey: ['vol-positions-all'], queryFn: () => voluntariado.positions.list() });
   const { data: serviceTypes = [] } = useQuery<any[]>({ queryKey: ['vol-service-types'], queryFn: () => voluntariado.serviceTypes.list() });
   const { data: profiles = [] } = useQuery<any[]>({ queryKey: ['vol-profiles'], queryFn: () => voluntariado.profiles.list() });
+  const { data: usuarios = [] } = useQuery<any[]>({ queryKey: ['usuarios-ativos'], queryFn: () => users.list() });
 
   const teamsById = useMemo(() => Object.fromEntries(teams.map(t => [t.id, t])), [teams]);
   const posById = useMemo(() => Object.fromEntries(positions.map(p => [p.id, p])), [positions]);
@@ -50,7 +52,7 @@ export default function VolTemplatesEscala() {
 
   async function abrir(id: string | 'new') {
     setSelId(id);
-    if (id === 'new') { setDraft({ nome: '', service_type_ids: [], itens: [] }); return; }
+    if (id === 'new') { setDraft({ nome: '', service_type_ids: [], itens: [], liderancas: [] }); return; }
     const full: any = await voluntariado.scheduleTemplates.get(id);
     setDraft({
       id: full.id, nome: full.nome || '', service_type_ids: full.service_type_ids || [],
@@ -59,6 +61,7 @@ export default function VolTemplatesEscala() {
         quantidade: i.quantidade || 1, fixo: !!i.fixo,
         pessoas: (i.pessoas || []).map((p: any) => ({ volunteer_id: p.volunteer_id, full_name: p.volunteer?.full_name })),
       })),
+      liderancas: (full.liderancas || []).map((l: any) => ({ team_id: l.team_id, responsavel_profile_id: l.responsavel_profile_id })),
     });
   }
 
@@ -72,6 +75,7 @@ export default function VolTemplatesEscala() {
           team_id: i.team_id, position_id: i.position_id, quantidade: i.quantidade,
           fixo: i.fixo, sort_order: idx, pessoas: i.pessoas.map(p => p.volunteer_id),
         })),
+        liderancas: draft.liderancas,
       };
       if (draft.id) return voluntariado.scheduleTemplates.update(draft.id, body);
       return voluntariado.scheduleTemplates.create(body);
@@ -90,6 +94,12 @@ export default function VolTemplatesEscala() {
   if (draft) {
     const itensPorEquipe = draft.itens.reduce((acc: Record<string, Item[]>, it) => {
       (acc[it.team_id] ||= []).push(it); return acc;
+    }, {});
+    const equipesPorArea = Object.entries(itensPorEquipe).reduce((acc: Record<string, Array<[string, Item[]]>>, entrada) => {
+      const [teamId] = entrada;
+      const area = teamsById[teamId]?.area?.trim() || 'Sem área';
+      (acc[area] ||= []).push(entrada as [string, Item[]]);
+      return acc;
     }, {});
     const upd = (key: string, patch: Partial<Item>) =>
       setDraft(d => d && ({ ...d, itens: d.itens.map(i => i.key === key ? { ...i, ...patch } : i) }));
@@ -125,17 +135,26 @@ export default function VolTemplatesEscala() {
           </div>
         </div>
 
-        {/* Itens agrupados por equipe */}
+        {/* Área → subárea/equipe → posições. O catálogo, e não os escalados,
+            define a árvore; por isso uma posição vazia continua configurável. */}
         <div className="space-y-3">
-          {Object.entries(itensPorEquipe).map(([teamId, itens]) => (
-            <Card key={teamId}>
+          {Object.entries(equipesPorArea).map(([area, subareas]) => (
+            <Card key={area}>
               <CardContent className="p-4 space-y-2.5">
-                <div className="font-semibold text-sm">{teamsById[teamId]?.name || 'Equipe'}</div>
-                {itens.map(it => (
-                  <ItemRow key={it.key} it={it} posById={posById} profById={profById} profiles={profiles}
-                    onUpd={patch => upd(it.key, patch)}
-                    onDel={() => setDraft(d => d && ({ ...d, itens: d.itens.filter(i => i.key !== it.key) }))} />
-                ))}
+                <div className="font-semibold text-sm">{area}</div>
+                {subareas.map(([teamId, itens]) => {
+                  const lider = draft.liderancas.find(l => l.team_id === teamId)?.responsavel_profile_id || '';
+                  return <div key={teamId} className="space-y-2 border-t pt-3 first:border-t-0 first:pt-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium flex-1">{teamsById[teamId]?.name || 'Subárea'}</span>
+                      <Select value={lider || '__none__'} onValueChange={value => setDraft(d => d && ({ ...d, liderancas: value === '__none__' ? d.liderancas.filter(l => l.team_id !== teamId) : [...d.liderancas.filter(l => l.team_id !== teamId), { team_id: teamId, responsavel_profile_id: value }] }))}>
+                        <SelectTrigger className="h-8 w-[220px] text-xs"><SelectValue placeholder="Responsável da subárea" /></SelectTrigger>
+                        <SelectContent><SelectItem value="__none__">Sem responsável</SelectItem>{usuarios.map((u: any) => <SelectItem key={u.id} value={u.id}>{u.name || u.email}</SelectItem>)}</SelectContent>
+                      </Select>
+                    </div>
+                    {itens.map(it => <ItemRow key={it.key} it={it} posById={posById} profById={profById} profiles={profiles} onUpd={patch => upd(it.key, patch)} onDel={() => setDraft(d => d && ({ ...d, itens: d.itens.filter(i => i.key !== it.key) }))} />)}
+                  </div>;
+                })}
               </CardContent>
             </Card>
           ))}
@@ -192,7 +211,7 @@ export default function VolTemplatesEscala() {
                 <div className="flex gap-2 pt-1" onClick={e => e.stopPropagation()}>
                   <Button size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={() => abrir(t.id)}>Editar</Button>
                   <Button size="sm" className="gap-1 h-7 text-xs" style={{ background: TEAL }}
-                    onClick={async () => { const full: any = await voluntariado.scheduleTemplates.get(t.id); setAplicarPara({ id: full.id, nome: full.nome, service_type_ids: full.service_type_ids || [], itens: [] }); }}>
+                    onClick={async () => { const full: any = await voluntariado.scheduleTemplates.get(t.id); setAplicarPara({ id: full.id, nome: full.nome, service_type_ids: full.service_type_ids || [], itens: [], liderancas: [] }); }}>
                     <CalendarPlus className="h-3.5 w-3.5" /> Aplicar
                   </Button>
                 </div>
