@@ -759,6 +759,51 @@ encanamento do módulo voluntariado estava íntegro o tempo todo.
 permissão** (build nativo · não sai por OTA · não funciona em simulador). É ação
 de gente, não tem conserto por código.
 
+## Inscrições · excluir EM LOTE (web + app do staff) (2026-08-17 · SEM migration)
+
+Pedido do Matheus, no mesmo dia: *"nas inscrições do Celebra, preciso da
+possibilidade de excluir inscrição, pois eu mesmo fiz algumas vezes para teste, e
+isso tá inflando os números"* — e, ao ver que o botão existia: *"preciso disso no
+app tbm e não tá aparecendo o botão da lixeira e preciso fazer isso selecionando
+as pessoas."*
+
+⚠️ **A exclusão individual JÁ EXISTIA** (`DELETE /eventos/:id/inscricoes/:id`,
+soft delete, ícone de lixeira por linha) — a prova viva é uma inscrição do
+Celebra apagada por ali em 13/07. O que faltava era **seleção múltipla** (com 241
+inscritos, uma a uma não é caminho) e **qualquer tela de inscrição no app do
+staff**: os endpoints de leitura do app existiam desde sempre e **nunca tiveram
+consumidor**.
+
+- **`POST /eventos/:id/inscricoes/excluir-lote`** (nível 3 · teto 200). O payload
+  diz **quais**, nunca **se pode**: o servidor relê as linhas vivas DESTE evento e
+  reavalia (mesma lei da aprovação em lote da Membresia e do `ligar-lote` das
+  Entradas). Régua pura em **`backend/utils/exclusaoInscricaoLote.js`** (**no
+  gate** · 12 casos · **3 mutantes RODADOS**: ignorar o bloqueio de pagamento → 2
+  vermelhos · apagar id que não está vivo → 2 · truncar sem declarar → 1).
+- ⚠️⚠️ **Inscrição COM PAGAMENTO não sai em lote, e é DECLARADA com nome.**
+  Apagar quem pagou some com a pessoa do placar enquanto o dinheiro segue na
+  conta da igreja — é esconder receita recebida, e ninguém revisa o que sumiu. A
+  exclusão individual continua existindo pra caso a caso.
+- ⚠️ **Falha ao CONSULTAR os pagamentos devolve 503**, nunca "ninguém tem
+  pagamento": seria a guarda falhando aberta justamente no caminho que ela existe
+  pra fechar.
+- ⚠️ **A tela some só com o que voltou em `excluidas`** — quem foi barrado
+  continua na lista, que é o estado real. E o resumo distingue os quatro
+  destinos: excluída · tem pagamento · já não estava na lista · falhou (esta
+  última dizendo que a linha **continua** lá). "12 excluídas" não distingue
+  sucesso de exclusão parcial.
+- ⚠️ **"Selecionar todos" marca o RECORTE VISÍVEL** (filtro + busca), não a base
+  inteira: o botão fica embaixo dos filtros, e marcar 241 quando a tela mostra 3
+  é o caminho mais curto pra um estrago em massa. A confirmação lista os NOMES
+  (até 8 no web, 6 no app), como na renovação de grupos.
+- **App do staff**: `app/(app)/inscricoes.tsx` (eventos + contagem) e
+  `app/(app)/evento-inscritos/[id].tsx` (busca + seleção + excluir), com item no
+  menu — tela fora do menu é tela invisível. Ler é nível 1, excluir é 3, e a
+  régua do botão é a MESMA do backend.
+- ⚠️ Sobrou de fora, de propósito: a aba **"Todas as inscrições"** continua
+  somente-leitura (é o inventário das 9 portas; a exclusão vive no módulo dono do
+  evento).
+
 ## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
 
 Demanda do **Arthur Serpa**: por um mês, 1 minuto de cada culto pra igreja
