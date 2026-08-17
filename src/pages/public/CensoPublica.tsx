@@ -335,51 +335,46 @@ export default function CensoPublica() {
   );
 
   /**
-   * Confirmação de identidade, disparada pelo CPF que a pessoa JÁ respondeu na
-   * pergunta 1 — sem pedir CPF numa caixa separada (era redundante).
+   * Reconhecimento do cadastro, a partir do CPF e do nascimento que a pessoa JÁ
+   * responde nas perguntas 1 e 3 — sem caixa separada e sem pergunta extra.
    *
-   * Duas etapas, e a divisão é de propósito:
-   *   1. só com o CPF, o servidor devolve o nome MASCARADO ("Matheus R. T.") e a
-   *      tela pergunta "é você?". Nome inteiro a partir de CPF sozinho faria
-   *      deste endereço um consultor de CPF → nome, e CPF vaza e se compra.
-   *   2. ao confirmar, pede o NASCIMENTO — que é a pergunta 3 do censo. A pessoa
-   *      responde uma vez e serve para as duas coisas: confirmar quem é e
-   *      responder a pergunta.
+   * ⚠️⚠️ UMA CHAMADA SÓ, E SÓ COM OS DOIS JUNTOS (17/08/2026).
    *
-   * Quem não é encontrado segue normalmente: o cadastro é criado no envio.
+   * Antes eram duas etapas: com o CPF sozinho o servidor devolvia o nome
+   * mascarado e a tela perguntava "você é Matheus R. T.?". Aquilo respondia,
+   * a qualquer um com um CPF na mão, se a pessoa está na base da CBRio — e
+   * estar na base de uma igreja revela CONVICÇÃO RELIGIOSA, que é dado
+   * sensível (LGPD art. 5º, II). Esta página é pública, o QR é projetado no
+   * telão e o link curto é adivinhável: não havia nada entre um estranho e
+   * essa resposta.
+   *
+   * A etapa de confirmação não se perdeu de verdade — ela pedia que a pessoa
+   * confirmasse para si mesma um nome que ela já sabe. O que valia era o
+   * nascimento, e ele continua sendo pedido, agora como única prova.
+   *
+   * ⚠️ Quem não é encontrado segue normalmente: o cadastro nasce no envio.
    */
   function ConfirmarIdentidade() {
     const pCpf = perguntas.find((q) => q.formato === 'cpf');
     const pNasc = perguntas.find((q) => q.preenche_de === 'data_nascimento');
     const cpfDigitado = String(pCpf ? respostas[pCpf.id] ?? '' : '').replace(/\D/g, '');
     const nascDigitado = String(pNasc ? respostas[pNasc.id] ?? '' : '');
+    const temNasc = /^\d{4}-\d{2}-\d{2}$/.test(nascDigitado);
 
-    const [etapa, setEtapa] = useState<'buscando' | 'confirmar' | 'nascimento' | 'nao_achou' | 'recusou'>('buscando');
-    const [confirmacao, setConfirmacao] = useState<{ nome_mascarado?: string; telefone_mascarado?: string } | null>(null);
-    const cpfConsultado = useRef('');
+    const [etapa, setEtapa] = useState<'nascimento' | 'buscando' | 'nao_achou'>('nascimento');
+    const parConsultado = useRef('');
 
-    // Etapa 1 — assim que o CPF fica completo e válido no formato.
     useEffect(() => {
-      if (cpfDigitado.length !== 11 || cpfConsultado.current === cpfDigitado) return;
-      cpfConsultado.current = cpfDigitado;
+      if (cpfDigitado.length !== 11 || !temNasc) return;
+      const par = `${cpfDigitado}|${nascDigitado}`;
+      if (parConsultado.current === par) return;
+      parConsultado.current = par;
       setEtapa('buscando');
-      censoPublico.prefill(slug, { cpf: cpfDigitado })
-        .then((r) => {
-          if (r?.encontrado && r.confirmar?.nome_mascarado) {
-            setConfirmacao(r.confirmar);
-            setEtapa('confirmar');
-          } else {
-            setEtapa('nao_achou');
-          }
-        })
-        .catch(() => setEtapa('nao_achou'));
-    }, [cpfDigitado]);
-
-    // Etapa 2 — com o nascimento respondido, tenta trazer os dados.
-    useEffect(() => {
-      if (etapa !== 'nascimento' || !/^\d{4}-\d{2}-\d{2}$/.test(nascDigitado)) return;
       censoPublico.prefill(slug, { cpf: cpfDigitado, data_nascimento: nascDigitado })
         .then((r) => {
+          // ⚠️ Resposta neutra cobre "não existe" E "nascimento não confere" —
+          // a tela não distingue os dois de propósito. Distinguir devolveria,
+          // por outro caminho, o oráculo que acabou de ser fechado.
           if (!r?.encontrado) { setEtapa('nao_achou'); return; }
           if (r.ja_respondeu) { setJaRespondeu(true); return; }
           setIdentidade(r.identidade);
@@ -389,22 +384,14 @@ export default function CensoPublica() {
           setPreenchido(true);
         })
         .catch(() => setEtapa('nao_achou'));
-    }, [etapa, nascDigitado, cpfDigitado]);
+    }, [cpfDigitado, nascDigitado, temNasc]);
 
-    if (cpfDigitado.length !== 11 || etapa === 'recusou') return null;
+    if (cpfDigitado.length !== 11) return null;
 
     const caixa: React.CSSProperties = {
       marginBottom: 20, padding: 14, borderRadius: 11,
       border: `1px solid ${palette.cardBorder}`, background: palette.optionBg,
     };
-    const botao = (primario: boolean): React.CSSProperties => ({
-      padding: '10px 16px', borderRadius: 9, fontSize: 14, cursor: 'pointer',
-      fontFamily: 'inherit', fontWeight: primario ? 600 : 400,
-      border: primario ? 'none' : `1px solid ${palette.inputBorder}`,
-      background: primario ? TEAL : 'transparent',
-      color: primario ? '#062b26' : palette.text3,
-    });
-
     if (etapa === 'buscando') {
       return <div style={caixa}><p style={{ fontSize: 13, color: palette.text3, margin: 0 }}>Procurando seu cadastro…</p></div>;
     }
@@ -413,42 +400,21 @@ export default function CensoPublica() {
       return (
         <div style={caixa}>
           <p style={{ fontSize: 13, color: palette.text3, margin: 0, lineHeight: 1.5 }}>
-            Não encontramos um cadastro com esse CPF — sem problema. Preencha as
-            perguntas abaixo que a gente cria o seu cadastro ao receber o censo.
+            Não achamos um cadastro com esse CPF e essa data de nascimento — sem
+            problema, e pode ser só a data. Confira o nascimento acima; se
+            estiver certo, é só seguir: a gente cria o seu cadastro ao receber o
+            censo.
           </p>
         </div>
       );
     }
 
-    if (etapa === 'confirmar') {
-      return (
-        <div style={caixa}>
-          <p style={{ fontSize: 15, color: palette.text, margin: '0 0 4px', fontWeight: 600 }}>
-            Você é {confirmacao?.nome_mascarado}?
-          </p>
-          {confirmacao?.telefone_mascarado && (
-            <p style={{ fontSize: 12, color: palette.textDim, margin: '0 0 12px' }}>
-              telefone terminando em {confirmacao.telefone_mascarado}
-            </p>
-          )}
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <button type="button" style={botao(true)} onClick={() => setEtapa('nascimento')}>
-              Sim, sou eu
-            </button>
-            <button type="button" style={botao(false)} onClick={() => setEtapa('recusou')}>
-              Não sou
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    // etapa === 'nascimento'
+    // etapa === 'nascimento' — CPF completo, nascimento ainda não respondido
     return (
       <div style={caixa}>
         <p style={{ fontSize: 13, color: palette.text2, margin: '0 0 10px', lineHeight: 1.5 }}>
-          Para confirmar que é você e já trazer seus dados, responda a
-          <strong> data de nascimento</strong> logo abaixo — é a terceira pergunta.
+          Responda a <strong>data de nascimento</strong> logo abaixo — é a
+          terceira pergunta — e a gente traz o que já temos do seu cadastro.
         </p>
         <p style={{ fontSize: 12, color: palette.textDim, margin: 0 }}>
           Assim você não digita nada duas vezes.
