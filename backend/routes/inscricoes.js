@@ -1630,7 +1630,13 @@ router.delete('/eventos/:id/inscricoes/:inscricaoId', authorizeModule('inscricoe
     res.json({ ok: true });
   } catch (e) {
     console.error('[inscricoes] excluir inscrição:', e.message);
-    res.status(500).json({ error: 'Erro ao excluir a inscrição' });
+    // ⚠️ O MOTIVO vai junto (17/08/2026). Este endpoint respondia 500 com "Erro
+    // ao excluir a inscrição" e nada mais desde a migração pra espinha, porque
+    // `inscricoes` não estava na whitelist do soft-delete — a mensagem real
+    // ("Tabela inscricoes nao esta na whitelist") existia no log da Vercel e
+    // nunca chegava a quem estava na tela. Erro genérico em ação de operador
+    // esconde defeito de configuração por meses.
+    res.status(500).json({ error: 'Erro ao excluir a inscrição', detalhe: e.message });
   }
 });
 
@@ -1683,6 +1689,11 @@ router.post('/eventos/:id/inscricoes/excluir-lote', authorizeModule('inscricoes'
     // "tente de novo" sobre uma exclusão parcial é a instrução mais cara aqui.
     const excluidas = [];
     const falhas = [];
+    // ⚠️ O MOTIVO das falhas volta pra tela (distinct). Sem ele, "3 falharam"
+    // manda a pessoa tentar de novo pra sempre — foi assim que a ausência de
+    // `inscricoes` na whitelist do soft-delete passou meses como "Erro ao
+    // excluir" e só apareceu quando alguém foi ler o log da Vercel.
+    const motivos = new Set();
     const BLOCO = 8;
     for (let i = 0; i < plano.excluir.length; i += BLOCO) {
       const fatia = plano.excluir.slice(i, i + BLOCO);
@@ -1692,7 +1703,10 @@ router.post('/eventos/:id/inscricoes/excluir-lote', authorizeModule('inscricoes'
         });
         return { id, erro: error?.message || null };
       }));
-      for (const item of r) (item.erro ? falhas : excluidas).push(item.id);
+      for (const item of r) {
+        (item.erro ? falhas : excluidas).push(item.id);
+        if (item.erro) motivos.add(item.erro);
+      }
       if (r.some((x) => x.erro)) console.error('[inscricoes] excluir-lote falhas:', r.filter((x) => x.erro));
     }
 
@@ -1702,6 +1716,7 @@ router.post('/eventos/:id/inscricoes/excluir-lote', authorizeModule('inscricoes'
       com_pagamento: plano.comPagamento,
       nao_encontradas: plano.naoEncontradas,
       falhas,
+      falhas_motivo: [...motivos],
       ignorados,
       acima_do_teto: acimaDoTeto,
       resumo: resumoDoLote({
@@ -1714,7 +1729,8 @@ router.post('/eventos/:id/inscricoes/excluir-lote', authorizeModule('inscricoes'
     });
   } catch (e) {
     console.error('[inscricoes] excluir inscrições em lote:', e.message);
-    res.status(500).json({ error: 'Erro ao excluir as inscrições' });
+    // Motivo junto, pelo mesmo raciocínio do DELETE individual acima.
+    res.status(500).json({ error: 'Erro ao excluir as inscrições', detalhe: e.message });
   }
 });
 

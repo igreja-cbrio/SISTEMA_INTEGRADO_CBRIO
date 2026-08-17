@@ -759,6 +759,41 @@ encanamento do módulo voluntariado estava íntegro o tempo todo.
 permissão** (build nativo · não sai por OTA · não funciona em simulador). É ação
 de gente, não tem conserto por código.
 
+## ⚠️⚠️ LEI · tabela fora da WHITELIST faz o soft-delete estourar em silêncio (2026-08-17 · migration `20260817170000`)
+
+O Matheus tentou excluir e viu **"deu erro ao excluir"**. Não era o lote recém-
+feito: **`inscricoes` NUNCA esteve em `app_soft_deletable_tables()`** — só a
+porta legada (`ext_inscricoes`/`ext_eventos`). `app_soft_delete` levanta
+`RAISE EXCEPTION 'Tabela % nao esta na whitelist'` antes de qualquer UPDATE, e o
+handler devolvia **500 "Erro ao excluir a inscrição"**.
+
+⇒ **O botão individual de lixeira estava quebrado desde a migração pra espinha**,
+e o `DELETE /eventos/:id` (excluir EVENTO) junto — os dois únicos usos da RPC no
+módulo. Medido: 0 exclusões pelo caminho do código; a única linha apagada do
+Celebra (13/07) não veio por ali.
+
+- **Régua**: tabela com `deleted_at` que o CÓDIGO apaga por RPC **tem que entrar
+  na whitelist** — ela é AUTORIZAÇÃO, não inventário. O padrão "adicionar à
+  whitelist" já está documentado na seção de segurança; a espinha de inscrições
+  passou batido porque nasceu depois.
+- ⚠️⚠️ **Alterar a whitelist é PATCH DINÂMICO sobre a definição VIVA.** A lista em
+  produção tinha **65** tabelas e o arquivo do repo pode estar atrás; um
+  `CREATE OR REPLACE` com lista estática apagaria em silêncio o que entrou fora
+  do git, e o sintoma seria soft-delete quebrado em OUTRO módulo, sem ninguém
+  ligar uma coisa à outra. Ficou 67 e foi conferido no CATÁLOGO, não no
+  `success: true`.
+- ⚠️ **`inscricao_consentimentos` fica FORA** (prova legal, append-only), e
+  `insc_comprovantes`/`insc_beneficios`/`insc_series` também — nenhum caminho do
+  código as apaga por essa RPC.
+- ⚠️ **O motivo agora chega na TELA** (`detalhe` no 500 · `falhas_motivo` no
+  lote). A mensagem real existia no log da Vercel desde sempre e nunca chegava a
+  quem estava clicando — erro genérico em ação de operador esconde defeito de
+  configuração por meses. Foi o que aconteceu aqui.
+- ⚠️ **Diagnóstico veio do CATÁLOGO, não do log**: `select 'inscricoes' =
+  any(app_soft_deletable_tables())` respondeu em 1 consulta o que o log levaria
+  uma sessão pra achar. Para "deu erro" em ação que passa por RPC de whitelist,
+  esta é a primeira pergunta.
+
 ## Inscrições · excluir EM LOTE (web + app do staff) (2026-08-17 · SEM migration)
 
 Pedido do Matheus, no mesmo dia: *"nas inscrições do Celebra, preciso da
