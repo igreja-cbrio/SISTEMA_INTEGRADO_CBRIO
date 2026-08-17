@@ -2347,8 +2347,15 @@ export const marketing = {
   },
 
   // Capacidade por dia (Fase 4 · fundacao) · ocupacao de slots do membro no período
-  capacidadeDia: (membroId, inicio, fim) =>
-    get(`/marketing/capacidade-dia?membro_id=${encodeURIComponent(membroId)}&inicio=${inicio}&fim=${fim}`),
+  // 3º argumento aceita a data de fim (string · uso legado) OU
+  // `{ ocupa_dias }` — nesse caso o SERVIDOR calcula o fim pela régua única
+  // (backend/utils/marketingOcupacao) e devolve o intervalo efetivo.
+  capacidadeDia: (membroId, inicio, fimOuOpts) => {
+    const q = new URLSearchParams({ membro_id: membroId, inicio });
+    if (typeof fimOuOpts === 'string') q.set('fim', fimOuOpts);
+    else if (fimOuOpts?.ocupa_dias != null) q.set('ocupa_dias', String(fimOuOpts.ocupa_dias));
+    return get(`/marketing/capacidade-dia?${q}`);
+  },
 
   // Planner (Fase 4b) · membros (raias) + entregaveis (barras) no período
   planner: (inicio, fim) => get(`/marketing/planner?inicio=${inicio}&fim=${fim}`),
