@@ -6017,6 +6017,79 @@ trabalho que não existe.
 (hoje 100% no coordenador) pelo dashboard, e informar a ocupação dos 9 cards
 antigos que estão sem período. O caminho existe nas duas telas.
 
+## ⚠️ Marketing · CABEÇALHO ÚNICO + aba "App" (2026-08-17 · SEM migration)
+
+Três pedidos do Marcos: tirar a faixa **Quadro | Épicos** do Kanban ("não precisa
+mais ter essa visualização") · a aba **Comunicados virar "App"**, com Comunicados
++ os módulos **Destaques** e **Fotos Batismo** trazidos pra dentro · e *"cada
+opção que eu clico o menu fica de um tamanho e centralizado de uma forma, então
+parece que você está entrando em módulos diferentes"*.
+
+### ⚠️⚠️ A sensação de "outro módulo" era ESTRUTURAL, não estética
+
+**Cada uma das 7 telas montava o seu próprio cabeçalho**, e nenhuma combinava:
+
+| tela | container |
+|---|---|
+| Dashboard · Kanban · Analytics · Admin | `p-4 md:p-6 space-y-4 md:space-y-6` |
+| Planner | `space-y-4` (espaçamento menor) |
+| Generosidade | só `p-4 md:p-6` (sem `space-y`) + `mx-auto max-w-7xl` |
+| Comunicados | **`max-w-5xl mx-auto p-4`** → estreito e centralizado |
+| Destaques (veio do /admin) | `maxWidth: 1100; margin: 0 auto` **inline** |
+
+Somado a isso o `<h1>` mudava ("Marketing" × "Comunicados") e o `MarketingNav`
+às vezes ficava ao lado do título, às vezes embaixo. Trocar de aba deslocava
+título, menu e largura ao mesmo tempo — é exatamente o que o olho lê como "saí
+do módulo".
+
+⚠️ **A correção NÃO foi acertar os 7 arquivos pra combinarem** — isso volta a
+divergir na próxima tela que alguém criar. **`MarketingPagina.jsx`** passou a ser
+o cabeçalho, em UM lugar: título fixo do módulo + `subtitulo` + `acoes` +
+`MarketingNav`. As telas entregam só o conteúdo. Diff da leva: **−157/+106**, e a
+diferença é duplicação que deixou de existir.
+
+- ⚠️ **O `MarketingNav` é montado EXCLUSIVAMENTE aqui**: tela que se esquecer dele
+  não existe mais. Nenhum outro arquivo o importa (checado).
+- ⚠️ **Largura TOTAL, sem `mx-auto`**: o Kanban tem 6 colunas com rolagem
+  horizontal e o Planner é grade de dias úteis — centralizar com largura máxima
+  (o que o Comunicados fazia) aperta as duas.
+- ⚠️ **`embutido` é PROP, não CSS de fora**: `Destaques` e `FotosBatismo` abrem
+  mão da largura/centralização inline e do título próprio quando montadas na aba.
+  Neutralizar por fora quebraria na próxima mudança interna delas — e as duas
+  seguem funcionando soltas.
+
+### A aba "App"
+
+`MarketingApp.jsx` com 3 sub-abas (Comunicados · Destaques · Fotos Batismo),
+sub-aba no endereço (`?t=`) pra recarregar/compartilhar não jogar a pessoa pra
+outra aba. No `AppShell` os **dois itens do menu Criativo viraram um**
+("App de membros") — eram três lugares pra publicar coisa no mesmo app.
+
+- **Os 3 endereços antigos redirecionam** (`/marketing/comunicados`,
+  `/admin/destaques → ?t=destaques`, `/admin/fotos-batismo → ?t=batismo`): link
+  salvo, item de menu antigo e push já entregue continuam funcionando.
+- ⚠️⚠️ **PERMISSÃO NÃO FOI AMPLIADA, e isso limita o alcance HOJE**: os backends
+  `routes/destaques.js` e `routes/batismoFotos.js` exigem
+  `authorize('admin','diretor')`. A equipe de Marketing tem **nível 5 no MÓDULO**
+  mas role `assistente` — então veria as abas e tomaria **403 em tudo**. Botão que
+  devolve 403 é pior que botão ausente, então as 2 sub-abas só aparecem para
+  admin/diretor e quem não é **lê o motivo** em vez de bater na parede.
+  ⏳ **Liberar para o coordenador de Marketing é decisão do Marcos** — mexe em
+  autorização de dois backends (lei do "parar e perguntar"), não fiz por conta.
+
+### `MarketingEpicos.jsx` ficou DORMANTE, não foi apagado
+
+A faixa era o único caminho até ele. O arquivo **fica** (com header explicando) e
+o motivo é concreto: ele é o consumidor de **`GET /marketing/cards`**, que o
+Kanban deixou de usar em favor de `GET /marketing/kanban` — apagar a tela faria a
+próxima sessão concluir que a rota está órfã. Reativar é montá-lo de novo; ele não
+depende de nada que saiu.
+
+⚠️ **O typecheck NÃO pega JSX desbalanceado em `.jsx`** — `tsc -b` passou limpo
+com um `</div>` fechando um `<MarketingPagina>` no `MarketingAdmin`. Quem pegou
+foi o **`npm run build`** (esbuild), com arquivo e linha. Régua: em conversão de
+container, **o build é o verificador**, não o typecheck.
+
 ## Marketing · estado final (specs maio + redesenho 2026-05-30/31 · NO AR)
 
 O módulo nasceu em 24 specs (maio/2026) como "balcão" e foi **redesenhado** pra

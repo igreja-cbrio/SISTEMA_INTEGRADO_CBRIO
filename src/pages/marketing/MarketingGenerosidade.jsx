@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { marketing as api } from '../../api';
-import MarketingNav from './MarketingNav';
+import MarketingPagina from './MarketingPagina';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
@@ -15,16 +15,8 @@ import {
   TableRow,
 } from '../../components/ui/table';
 import {
-  Building2,
-  CalendarDays,
-  Check,
-  Clipboard,
-  HeartHandshake,
-  Info,
-  RefreshCw,
-  Target,
-  TrendingUp,
-  WalletCards,
+  Building2, CalendarDays, Check, Clipboard, Info, RefreshCw, Target,
+  TrendingUp, WalletCards
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -209,20 +201,7 @@ export default function MarketingGenerosidade() {
     : '01/2026';
 
   return (
-    <div className="p-4 md:p-6">
-      <div className="mx-auto max-w-7xl space-y-5">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <h1 className="flex items-center gap-2 text-2xl font-bold text-foreground">
-              <HeartHandshake className="h-6 w-6 text-primary" aria-hidden="true" />
-              Marketing · Generosidade
-            </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Percentuais oficiais para as telas do culto, atualizados pelo balanço financeiro.
-            </p>
-          </div>
-          <MarketingNav />
-        </div>
+    <MarketingPagina subtitulo="Percentuais oficiais para as telas do culto, atualizados pelo balanço financeiro.">
 
         <Card className="glass-solid">
           <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-end lg:justify-between">
@@ -429,7 +408,6 @@ export default function MarketingGenerosidade() {
             </div>
           </>
         ) : null}
-      </div>
-    </div>
+    </MarketingPagina>
   );
 }

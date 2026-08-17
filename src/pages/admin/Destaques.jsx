@@ -141,7 +141,11 @@ function FormDestaque({ inicial, onSalvar, onCancelar, salvando, exigirImagem })
   );
 }
 
-export default function Destaques() {
+// `embutido` = montado dentro da aba "App" do Marketing (17/08). Nesse caso a
+// tela NÃO impõe largura/centralização próprias nem repete o título — quem faz o
+// cabeçalho é o MarketingPagina. Sem isso ela ficava estreita e centralizada
+// enquanto o resto do módulo usa a largura toda.
+export default function Destaques({ embutido = false }) {
   const [itens, setItens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [criando, setCriando] = useState(false);
@@ -261,13 +265,17 @@ export default function Destaques() {
   }
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 24 }}>
+    <div style={embutido ? undefined : { maxWidth: 1100, margin: '0 auto', padding: '0 24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: embutido ? 12 : 24 }}>
         <div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Destaques do App</div>
-          <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>
-            Carrossel de fotos da Home do app de membros. O app atualiza sozinho em até 10 minutos — sem precisar de nova versão na loja.
-          </div>
+          {!embutido && (
+            <>
+              <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Destaques do App</div>
+              <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>
+                Carrossel de fotos da Home do app de membros. O app atualiza sozinho em até 10 minutos — sem precisar de nova versão na loja.
+              </div>
+            </>
+          )}
         </div>
         {!criando && <Button onClick={() => setCriando(true)}>+ Novo destaque</Button>}
       </div>

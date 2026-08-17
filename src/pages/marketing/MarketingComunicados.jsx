@@ -3,7 +3,6 @@
 // ============================================================================
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { comunicados as api } from '../../api';
-import MarketingNav from './MarketingNav';
 import { Card, CardContent } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -11,7 +10,9 @@ import { Textarea } from '../../components/ui/textarea';
 import { Badge } from '../../components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '../../components/ui/select';
-import { Megaphone, Plus, Send, Image as ImageIcon, Trash2, Archive, Pencil, Loader2 } from 'lucide-react';
+import {
+  Plus, Send, Image as ImageIcon, Trash2, Archive, Pencil, Loader2
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -33,7 +34,7 @@ const STATUS = {
 
 const vazio = { titulo: '', corpo: '', segmento: 'todos', foto_url: null };
 
-export default function MarketingComunicados() {
+export function ComunicadosConteudo() {
   const [lista, setLista] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [modal, setModal] = useState(false);
@@ -86,13 +87,15 @@ export default function MarketingComunicados() {
   async function excluir(c) { if (!confirm('Excluir este comunicado?')) return; try { await api.remove(c.id); carregar(); } catch (e) { toast.error(e?.message); } }
 
   return (
-    <div className="max-w-5xl mx-auto p-4 space-y-4">
+    // ⚠️ Deixou de ser PÁGINA e virou o conteúdo da sub-aba Comunicados da aba
+    // "App" (17/08). O `max-w-5xl mx-auto p-4` e o cabeçalho próprio saíram: era
+    // essa tela que ficava estreita e centralizada enquanto as outras usavam a
+    // largura toda — a sensação de "outro módulo" que o Marcos apontou.
+    <div className="space-y-4">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Megaphone className="h-6 w-6 text-[#00B39D]" /> Comunicados</h1>
-        <Button onClick={novo} className="bg-[#00B39D] hover:bg-[#009684] gap-1.5"><Plus className="h-4 w-4" /> Novo comunicado</Button>
+        <p className="text-sm text-muted-foreground">Avisos que aparecem no <b>mural do app</b>. Ao publicar, manda <b>push</b> pro público escolhido.</p>
+        <Button onClick={novo} className="gap-1.5 shrink-0"><Plus className="h-4 w-4" /> Novo comunicado</Button>
       </div>
-      <MarketingNav />
-      <p className="text-sm text-muted-foreground">Avisos que aparecem no <b>mural do app</b>. Ao publicar, manda <b>push</b> pro público escolhido.</p>
 
       {carregando ? (
         <div className="flex justify-center py-12"><Loader2 className="h-8 w-8 animate-spin text-[#00B39D]" /></div>

@@ -217,8 +217,10 @@ const NAV_ITEMS = [
         items: [
           { label: 'Marketing', description: 'Kanban de demandas criativas · capacidade · analytics', icon: Megaphone, path: '/marketing', module: 'marketing' },
           { label: 'Produção de Culto', description: 'Indicadores técnicos por culto · solicitações · desempenho', icon: SlidersHorizontal, path: '/producao', module: 'producao' },
-          { label: 'Destaques do App', description: 'Carrossel de fotos da Home do app de membros', icon: Images, path: '/admin/destaques', perm: 'isAdmin' },
-          { label: 'Fotos de Batismo', description: 'Álbum do dia — aparece na aba Batismo do app pros batizados', icon: Camera, path: '/admin/fotos-batismo', perm: 'isAdmin' },
+          // ⚠️ Destaques da Home e Fotos de Batismo SAÍRAM daqui (17/08): viraram
+          // sub-abas da aba "App" do Marketing, junto dos Comunicados — eram 3
+          // itens de menu para publicar coisa no MESMO app de membros.
+          { label: 'App de membros', description: 'Comunicados do mural · destaques da Home · fotos de batismo', icon: Images, path: '/marketing/app', module: 'marketing' },
         ],
       },
     ],

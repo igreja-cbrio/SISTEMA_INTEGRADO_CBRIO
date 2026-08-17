@@ -1,3 +1,17 @@
+// ============================================================================
+// DORMANTE desde 17/08/2026 — nenhuma tela monta este componente
+// ============================================================================
+// Pedido do Marcos: *"pode tirar aquela faixa escrito quadro/épico de kanban,
+// deixe apenas essa visualização, não precisa mais ter essa visualização"*.
+// A faixa de alternância saiu do `MarketingKanban.jsx` e com ela o único
+// caminho até aqui — o arquivo FICA porque a visão por campanha/evento pode
+// voltar, e porque ele é o motivo pelo qual `GET /marketing/cards` (que o
+// Kanban deixou de usar em favor de `GET /marketing/kanban`) segue existindo:
+// apagar a tela faria a próxima sessão concluir que a rota está órfã.
+//
+// Pra reativar: montar de novo em MarketingKanban (ou em rota própria) — o
+// componente não depende de nada que tenha sido removido.
+
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { marketing as api } from '../../api';
 import { Badge } from '../../components/ui/badge';
