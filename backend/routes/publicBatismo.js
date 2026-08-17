@@ -231,6 +231,11 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         cpf: cpfNorm, email: emailNorm, telefone: telNorm,
         nome: `${nomeT} ${sobrenomeT}`.trim(),
         dataNascimento: nascValid,
+        // ⚠️ Vai o valor CRU do formulário, não o `sexoNorm`: este bloco roda
+        // ANTES da normalização/validação do sexo (mais abaixo no handler), e o
+        // matcher aceita 'M'/'F'/'masculino'/'feminino' e traduz pro vocabulário
+        // de `mem_membros`. Valor irreconhecível vira null lá, nunca um chute.
+        genero: sexo,
         status: 'visitante',
         origem: 'batismo_formulario',
       });

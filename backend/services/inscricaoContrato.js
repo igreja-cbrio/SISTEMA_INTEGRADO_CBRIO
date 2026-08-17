@@ -141,13 +141,16 @@ function validarCamposPadrao(body = {}, opts = {}) {
 //   politica 'criar' → acharOuCriarGuardado (batismo/next: o evento VAI acontecer)
 //   politica 'ligar' → acharMembroGuardado (portas com triagem humana) + observação
 async function processarIdentidade({
-  nomeCompleto, cpf, email, telefone, dataNascimento,
+  nomeCompleto, cpf, email, telefone, dataNascimento, genero,
   politica = 'ligar', status = 'visitante', origem, origemId = null,
   soChaveForte = false, extra = {},
 }) {
   if (politica === 'criar') {
     const r = await acharOuCriarGuardado(
-      { cpf, email, telefone, nome: nomeCompleto, dataNascimento, status, extra, origem, origemId },
+      // `genero` repassado: quem cria pessoa aqui é o matcher, e ele traduz o
+      // vocabulário (M/F × masculino/feminino). Sem o repasse, o sexo que a
+      // porta exige da pessoa nunca chegaria ao cadastro na criação.
+      { cpf, email, telefone, nome: nomeCompleto, dataNascimento, genero, status, extra, origem, origemId },
       { soChaveForte },
     );
     return { membroId: (r && r.membro_id) || null, matchedBy: (r && r.matched_by) || null, created: Boolean(r && r.created) };

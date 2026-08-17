@@ -20,6 +20,7 @@
 
 const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
+const { sexoPara } = require('../utils/dadosDoCadastro');
 const {
   normalizarCpf, normalizarTelefone, normalizarEmail, nomeNormalizado: normalizarNome,
   registrarObservacaoIdentidade,
@@ -262,12 +263,18 @@ async function _consolidarCpfNoMatch(membroId, cpf11, matchedBy, dataNascimento)
 // `extra` = campos extras pro insert (ex.: data_nascimento, familia_id).
 // `soChaveForte`: liga SÓ por CPF (a pessoa afirmou "não sou eu" no dedup —
 //   nenhum sinal deniável pode religá-la a outro cadastro).
-async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento, status = 'visitante', extra = {}, origem = 'matcher', origemId = null } = {}, { soChaveForte = false } = {}) {
-  const entrada = { cpf, email, telefone, nome, dataNascimento, status, extra, origem, origemId };
+async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento, genero, status = 'visitante', extra = {}, origem = 'matcher', origemId = null } = {}, { soChaveForte = false } = {}) {
+  const entrada = { cpf, email, telefone, nome, dataNascimento, genero, status, extra, origem, origemId };
   const cpf11 = normalizarCpf(cpf);
   const emailLc = normalizarEmail(email);
   const tel = normalizarTelefone(telefone);
   const nasc = dataNascimento || extra.data_nascimento || null;
+  // ⚠️ Aceita 'M'/'F' e 'masculino'/'feminino' na entrada porque as portas
+  // guardam o sexo em vocabulários diferentes (`batismo_inscricoes.sexo` é
+  // curto, `mem_membros.genero` é longo) — copiar cru grava valor que nenhum
+  // filtro do sistema encontra depois. Valor irreconhecível vira null, nunca
+  // um chute.
+  const generoCanon = sexoPara('membro', genero) || sexoPara('membro', extra.genero) || null;
   // Se chegou um CPF novo, contato compartilhável não pode absorvê-lo em um
   // cadastro antigo sem confirmar também o nascimento. Nesse caso criamos um
   // novo registro e a observação-ponte eleva o par para revisão humana.
@@ -343,6 +350,28 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
   const origemCadastro = extra.origem_cadastro
     || (origemSlug && origemSlug !== 'matcher' ? origemSlug.slice(0, 60) : null);
 
+  // ⚠️⚠️ `data_nascimento` e `genero` PRECISAM entrar aqui. Até 17/08 eles só
+  // chegavam ao banco se o chamador os pusesse em `extra` — o `nasc` era
+  // calculado logo acima, usado para DECIDIR identidade (ramo nome+nascimento,
+  // gate do candidatoCompativel) e depois DESCARTADO na criação. O efeito é a
+  // mesma família do CPF do censo (04/08), do opt-in (05/08) e do sexo do Next
+  // (11/08): a pessoa preenche, a porta salva na tabela dela, e o CADASTRO —
+  // que é o que todo o sistema lê — nasce vazio.
+  //
+  // Medido em 17/08, o que motivou: 62 cadastros VIVOS com o nascimento gravado
+  // em `mem_identidade_observacoes` e a coluna do cadastro em branco, vindos de
+  // 8 portas diferentes (54 deles nos 17 dias anteriores). Casos que o Marcos
+  // viu: Wesley Barros Ramos (censo, nasc 1955-09-29) e Pedro Moreira Gonçalez
+  // (batismo, nasc 2006-10-08 + sexo M).
+  //
+  // ⚠️ Isto vale SÓ na CRIAÇÃO — a linha não existe ainda, então não há dado
+  // humano a sobrescrever. Preencher cadastro que já existe continua sendo
+  // só-onde-vazio, na régua de cada porta.
+  //
+  // ⚠️ Perder o nascimento também DEGRADAVA a fila de duplicidades: é ele que
+  // faz o par "mesmo nome + mesmo nascimento" virar quase_confirmado. O par do
+  // Wesley chegou a 100 pela ponte de observações, mas o cadastro novo não
+  // exibia o dado que sustenta a decisão.
   const { data, error } = await supabase.from('mem_membros').insert({
     ...extra,
     nome: nome || 'Sem nome',
@@ -351,6 +380,8 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     cpf: cpf11,
     status,
     active: true,
+    ...(nasc ? { data_nascimento: nasc } : {}),
+    ...(generoCanon ? { genero: generoCanon } : {}),
     ...(origemCadastro ? { origem_cadastro: origemCadastro } : {}),
   }).select('id').single();
   if (error) {
