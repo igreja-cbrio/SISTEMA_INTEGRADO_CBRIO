@@ -18,6 +18,7 @@ const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../servi
 // ⚠️ Contagem de inscritos NÃO usa o embed `inscricoes(count)` (não filtra
 // soft-delete — ver o cabeçalho do serviço).
 const { contarInscritosVivos } = require('../services/inscricaoContagem');
+const { normalizarIds, separarExclusaoLote, resumoDoLote } = require('../utils/exclusaoInscricaoLote');
 const checkoutExterno = require('../utils/checkoutExterno');
 const {
   previewTemplate,
@@ -1630,6 +1631,90 @@ router.delete('/eventos/:id/inscricoes/:inscricaoId', authorizeModule('inscricoe
   } catch (e) {
     console.error('[inscricoes] excluir inscrição:', e.message);
     res.status(500).json({ error: 'Erro ao excluir a inscrição' });
+  }
+});
+
+// POST /eventos/:id/inscricoes/excluir-lote — exclui as inscrições marcadas na
+// lista (soft delete). Nasceu do pedido do Matheus (17/08): as inscrições de
+// teste inflam o placar do evento e, com 241 inscritos, apagar uma a uma não é
+// caminho.
+//
+// ⚠️ O payload diz QUAIS, nunca SE PODE: o servidor relê as linhas vivas DESTE
+// evento e reavalia tudo (mesma lei da aprovação em lote da Membresia e do
+// `ligar-lote` das Entradas). A régua está em `utils/exclusaoInscricaoLote`,
+// que é pura e entra no gate.
+//
+// ⚠️⚠️ Quem tem PAGAMENTO fica de fora e é DECLARADO: apagar quem pagou some
+// com a pessoa do placar enquanto o dinheiro segue na conta da igreja. Caso a
+// caso o DELETE individual acima continua existindo.
+router.post('/eventos/:id/inscricoes/excluir-lote', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const { ids, ignorados, acimaDoTeto } = normalizarIds(req.body?.ids);
+    if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos uma inscrição' });
+
+    const { data: evento } = await supabase.from('insc_eventos')
+      .select('id').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!evento) return res.status(404).json({ error: 'Evento não encontrado' });
+
+    const { data: vivas, error: eVivas } = await supabase.from('inscricoes')
+      .select('id, nome_completo')
+      .eq('evento_id', req.params.id).is('deleted_at', null).in('id', ids);
+    if (eVivas) throw eVivas;
+
+    // Pagamento: a razão auxiliar do evento. ⚠️ Falha de CONSULTA aqui NÃO pode
+    // virar "ninguém tem pagamento" — seria a guarda falhando aberta justamente
+    // no caminho que ela existe pra fechar. Sem conseguir conferir, o lote para.
+    let comPagamento = [];
+    const { data: pagos, error: ePag } = await supabase.from('vw_insc_pagamento_estado')
+      .select('inscricao_id, status_pagamento')
+      .eq('evento_id', req.params.id).in('inscricao_id', ids);
+    if (ePag) {
+      console.error('[inscricoes] excluir-lote · pagamentos:', ePag.message);
+      return res.status(503).json({ error: 'Não deu pra conferir os pagamentos agora — tente de novo em instantes.' });
+    }
+    comPagamento = (pagos || [])
+      .filter((p) => p.status_pagamento && p.status_pagamento !== 'expirada' && p.status_pagamento !== 'cancelada')
+      .map((p) => p.inscricao_id);
+
+    const plano = separarExclusaoLote(ids, vivas || [], comPagamento);
+
+    // ⚠️ Grava o efeito DURANTE (lei de 04/08): morte no meio do laço deixa
+    // apagado o que já saiu, e a resposta declara exatamente o que aconteceu —
+    // "tente de novo" sobre uma exclusão parcial é a instrução mais cara aqui.
+    const excluidas = [];
+    const falhas = [];
+    const BLOCO = 8;
+    for (let i = 0; i < plano.excluir.length; i += BLOCO) {
+      const fatia = plano.excluir.slice(i, i + BLOCO);
+      const r = await Promise.all(fatia.map(async (id) => {
+        const { error } = await supabase.rpc('app_soft_delete', {
+          p_table_name: 'inscricoes', p_row_id: id, p_deleted_by: req.user?.id ?? null,
+        });
+        return { id, erro: error?.message || null };
+      }));
+      for (const item of r) (item.erro ? falhas : excluidas).push(item.id);
+      if (r.some((x) => x.erro)) console.error('[inscricoes] excluir-lote falhas:', r.filter((x) => x.erro));
+    }
+
+    res.json({
+      ok: true,
+      excluidas,
+      com_pagamento: plano.comPagamento,
+      nao_encontradas: plano.naoEncontradas,
+      falhas,
+      ignorados,
+      acima_do_teto: acimaDoTeto,
+      resumo: resumoDoLote({
+        excluidas: excluidas.length,
+        comPagamento: plano.comPagamento.length,
+        naoEncontradas: plano.naoEncontradas.length,
+        falhas: falhas.length,
+      }),
+      contadores: await contadoresEvento(req.params.id),
+    });
+  } catch (e) {
+    console.error('[inscricoes] excluir inscrições em lote:', e.message);
+    res.status(500).json({ error: 'Erro ao excluir as inscrições' });
   }
 });
 
