@@ -19,7 +19,8 @@ const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
-const { notificar } = require('../services/notificar');
+const { notificar, resolverDestinatarios } = require('../services/notificar');
+const { moduloDaAreaEvento } = require('../utils/moduloDaAreaEvento');
 const {
   validarCamposPadrao, processarIdentidade, registrarConsentimentos,
   honeypotPreenchido, TEXTOS,
@@ -1078,6 +1079,21 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
     return consentimentos(ins.id, null);
   }).catch((err) => console.error('[publicEvento espinha] identidade/consentimentos:', err.message));
 
+  // ⚠️ Quem cuida da ÁREA do evento também é avisado (17/08/2026). O aviso sai
+  // pelo módulo `inscricoes`, que não tem regra pra `nova_inscricao` e cai no
+  // fallback de admin/diretor — então o Celebra, que é o formulário dos
+  // VOLUNTÁRIOS, nunca chegava a quem cuida do voluntariado. A régua é a ÁREA
+  // do evento (`utils/moduloDaAreaEvento`); as PESSOAS continuam vindo de
+  // `notificacao_regras` (/admin), nunca de lista no código.
+  // ⚠️ Best-effort: falhar aqui não pode tirar o aviso de quem já recebe.
+  let avisarTambem = [];
+  try {
+    const moduloArea = moduloDaAreaEvento(ev.area);
+    if (moduloArea) avisarTambem = await resolverDestinatarios(moduloArea, 'nova_inscricao');
+  } catch (err) {
+    console.error('[publicEvento espinha] destinatarios da area:', err.message);
+  }
+
   notificar({
     modulo: 'inscricoes', tipo: 'nova_inscricao',
     titulo: `Nova inscrição · ${ev.nome}`,
@@ -1087,6 +1103,7 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
       ? `${val.nomeCompleto} reservou vaga em "${ev.nome}" (${ev.area}) e está aguardando o pagamento.`
       : `${val.nomeCompleto} se inscreveu em "${ev.nome}" (${ev.area}).`,
     link: '/inscricoes',
+    extraTargetIds: avisarTambem,
   }).catch((err) => console.error('[publicEvento espinha] notificar:', err.message));
 
   // Confirmação por WhatsApp (SPEC-07) — SÓ evento gratuito: nasce

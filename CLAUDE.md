@@ -703,6 +703,62 @@ asserts rodam sobre o código COM comentário — exatamente a armadilha de 06/0
 o cabeçalho dele diz estar evitando. Conserto de 1 caractere: trocar `.*$` por
 `[^\n]*`. **Não apliquei** (teste de outra frente, mergeado há uma hora).
 
+## ⚠️ Inscrições · a ÁREA do evento decide quem mais é avisado (2026-08-17 · SEM migration)
+
+Reclamação do Matheus: *"a Ariel e a Jessica não estão recebendo notificações do
+voluntariado no app do staff — por exemplo inscrições do Celebra."*
+
+**Eram DUAS causas independentes, e o módulo voluntariado não era nenhuma delas.**
+
+### 1 · O Celebra é do voluntariado, mas o aviso é do módulo `inscricoes`
+
+O Celebra 2026 é o formulário dos VOLUNTÁRIOS (a única pergunta é "Em qual
+ministério você serve?"), e vive na espinha de inscrições — então o aviso sai
+como `modulo='inscricoes' · tipo='nova_inscricao'`. Medido em 17/08: o módulo
+`inscricoes` só tem regra pro tipo `webhook_pagamento_recusado`, logo
+`nova_inscricao` cai no **fallback de admin/diretor** (8 pessoas, nenhuma delas a
+coordenação de voluntariado). Ariel e Jessica são `assistente` ⇒ não recebiam
+**nem no sino**. Volume real: 4 a 10 inscrições/dia.
+
+⚠️ **A régua nova: evento da ÁREA X avisa também quem cuida do MÓDULO X**
+(`backend/utils/moduloDaAreaEvento.js`, puro, **no gate** · 9 casos · 2 mutantes
+RODADOS: comparar sem normalizar → 5 vermelhos · dar módulo à área Sede → 3). O
+`notificar` do `publicEventoExterno` soma esses destinatários em
+`extraTargetIds` — **ninguém deixa de receber o que já recebia**, e as PESSOAS
+continuam vindo de `notificacao_regras` em /admin (lei: nome de gente não entra
+no código). Celebra 2026 passou de área `Sede` → **`Voluntariado`** (dado, não
+código · a área do evento só alimenta `area_display`, nenhum KPI).
+
+- ⚠️ **Área sem módulo devolve `null` de propósito** (Sede, Louvor, TI,
+  Infraestrutura): inventar slug faria o resolver procurar regra de um módulo
+  inexistente — sem erro, sem destinatário e sem ninguém descobrir. O teste
+  exige que TODA área do catálogo esteja decidida (mapeada ou declarada sem
+  módulo) e que todo slug do mapa exista mesmo em `modulos`.
+- ⚠️ A tela do evento **declara** que a área decide isso ("Quem cuida desta área
+  também recebe o aviso de cada nova inscrição") — sem isso, trocar a área muda
+  quem é notificado e ninguém liga uma coisa à outra.
+- ⚠️ Ficaram de FORA, e é decisão: `inscricao_paga` (o Celebra é gratuito; mexer
+  ali é caminho com dinheiro) e a porta legada `eventos-externos`
+  (`ext_eventos` **não tem coluna `area`** — conferido no catálogo).
+
+### 2 · ⚠️⚠️ Elas não têm push token NENHUM — e isso não é do Celebra
+
+`app_push_tokens` não tem uma linha sequer para as 3 contas envolvidas (Ariel
+Jardim, Jessica Salviano e `jessicasilva0307@gmail.com`, que também está nas
+regras). Ou seja: **nenhuma notificação do sistema vira push no celular delas**,
+inclusive as do voluntariado, que estão sendo criadas normalmente (179 · 175 ·
+174 linhas, a última no mesmo dia). Elas só aparecem se abrirem o sininho.
+
+⚠️ **Régua de leitura que fica: "não recebe notificação" tem DOIS significados
+que se investigam em lugares diferentes** — a linha existe em `notificacoes`
+(regra de destinatário) e o push existe em `app_push_tokens` (a pessoa autorizou
+no aparelho). Confirmar os dois antes de concluir qualquer coisa: aqui o
+encanamento do módulo voluntariado estava íntegro o tempo todo.
+
+⚠️ Registrar o token depende de a pessoa abrir o app do staff e **aceitar a
+permissão** (build nativo · não sai por OTA · não funciona em simulador). É ação
+de gente, não tem conserto por código.
+
 ## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
 
 Demanda do **Arthur Serpa**: por um mês, 1 minuto de cada culto pra igreja
