@@ -618,7 +618,14 @@ router.post('/:slug/responder', submitLimiter, async (req, res) => {
           status: 'visitante',
           origem: 'censo',
           origemId: envioId || null,
-        }, { soChaveForte: true });   // só CPF liga; nada de heurística de nome
+          // ⚠️ `soChaveForte` FICA: sinal compartilhável (telefone da casa, e-mail
+          // da família) não pode escrever a resposta de uma pessoa no cadastro de
+          // outra. O que abre é só o MATCH PERFEITO — nome normalizado idêntico +
+          // nascimento idêntico + nenhum CPF conflitante + candidato único
+          // (decisão do Marcos, 17/08). Foi o caso do Wesley Barros Ramos: nome e
+          // nascimento idênticos ao cadastro que já existia, que não tem CPF, e o
+          // censo criou um segundo em vez de ligar.
+        }, { soChaveForte: true, permitirMatchPerfeito: true });
         if (criado?.membro_id) {
           membroId = criado.membro_id;
           matchedBy = 'cpf';
