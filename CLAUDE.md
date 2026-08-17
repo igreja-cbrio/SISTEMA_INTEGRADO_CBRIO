@@ -4379,6 +4379,22 @@ tentativa (era o que vinha acontecendo — a fila só crescia).
 opções (`POST /app/grupos/pedidos/:id/rejeitar`). O pedido da Naná foi sobre os
 **links**; ampliar o app é outra leva.
 
+**✅ Validado em produção (17/08), ponta a ponta e COM REVERSÃO** (status, campos
+de decisão, evento e notificação restaurados — o pedido usado voltou intacto ao
+estado original): ação inválida → **400** · `sem_contato` → **200** · status no
+banco → `sem_contato` · `motivo_rejeicao` → **null** · evento
+`sem_contato_lider` gravado com o autor certo · aviso à coordenação com o título
+próprio ("Sem contato — o líder não conseguiu falar: …").
+
+⚠️ **Armadilha de schema que me deu falso negativo**:
+`mem_grupo_pedido_eventos` tem **`created_at`**, NÃO `criado_em` (diferente de
+`whatsapp_envios`, que usa `criado_em`). Filtrar pelo nome errado faz o PostgREST
+recusar a query e o cliente entregar `data: null` — que o código lê como "não há
+evento". Minha sonda concluiu "evento faltou" quando ele estava lá, e por isso
+**não o apagou** na reversão (limpei depois). É a lei de sempre: **conferir o
+`error` da consulta, não só a contagem** — vazio por erro e vazio de verdade são
+indistinguíveis quando se olha só o `length`.
+
 ### 🧹 17/08 · cadastros de teste da Natasha removidos
 
 Os 2 pedidos **"Natasha teste"** (tel 21984555026 · um com e-mail
@@ -8935,7 +8951,8 @@ Junto: `kpi_indicadores_taticos` ganhou o filtro `deleted_at IS NULL` que faltav
 
 ⚠️ **Alarme falso meu, registrado:** a 1ª rodada dessa apuração disse "18 de 19
 não existem no catálogo". Era a **sonda**: escrevi a lista de tipos num arquivo
-pelo Python no Windows, cada linha ficou com um `` no fim, e o `.in()` não casou
+pelo Python no Windows, cada linha ficou com um `
+` no fim, e o `.in()` não casou
 nada. Lição de novo: **conferir o que a sonda devolveu, não a contagem.**
 
 ### ⚠️⚠️ `systemFoundation.test.js` estava VERMELHO na main e ninguém viu
