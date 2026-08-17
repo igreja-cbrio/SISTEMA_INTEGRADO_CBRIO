@@ -8700,6 +8700,71 @@ endpoint (ele exige sessão admin/diretor), daí o espelho. **Mudou lá, muda aq
 o agente não gera mensagem de indicador naquele dia. Cobrança errada só se gasta
 uma vez.
 
+### ⚠️⚠️ `events` não tem `area` nem `leader_id` — e o pilar Eventos vinha VAZIO
+
+Medido no banco vivo em 17/08, ao mandar o primeiro bloco à mão. A ferramenta
+`listar_eventos_pendentes` pedia `area, leader_id, responsible_id, leader` de
+`events`, e **nenhuma das quatro existe**: as colunas reais são `responsible`
+(TEXT), `category_id` e `status`, e a tabela **não tem `deleted_at`**. A
+transição pra UUID pegou `projects` e `event_tasks`, **não `events`**.
+
+⚠️ Pedir coluna inexistente faz o PostgREST **recusar a query INTEIRA** (42703),
+então o pilar Eventos respondia erro sempre — e o erro ficava escondido dentro do
+`fail()` da tool. **O typecheck e os 1.644 testes passaram**: nada em CI conhece o
+schema do banco. Régua repetida: **conferir o catálogo, nunca decorar o schema**,
+e para tool de agente isso significa **rodar a query contra produção antes de
+mergear**.
+
+⚠️ E `events.responsible` guarda **"PMO"** nos 2 eventos que "têm dono" — papel,
+não pessoa. Então "tem dono" ali significa "tem algo escrito"; o agente não
+endereça mensagem a esse texto (mesma régua do `responsavel` de
+`governance_tasks`).
+
+Junto: `kpi_indicadores_taticos` ganhou o filtro `deleted_at IS NULL` que faltava
+— sem ele, KPI apagado entraria na contagem e na fila de cobrança.
+
+### ⚠️ Estado MEDIDO dos 3 pilares em 17/08/2026 (o ponto de partida)
+
+- **Reuniões: 14 de 14 realizadas SEM ATA** · **0 transcrições anexadas** · e
+  todas ainda com status `agendada` (nem marcadas como realizadas). 4 futuras
+  cadastradas (CC 26/08 · OKR 02/09 · DRE 09/09 · KPI 16/09), nenhuma com pauta.
+- ⚠️⚠️ **Compromissos: ZERO deliberações.** As **72** linhas de
+  `governance_tasks` são **todas `origem='template'`** (preparo de reunião) e
+  todas `pendente`, 14 vencidas. Ou seja **não existe hoje uma única decisão de
+  diretoria rastreável no sistema** — o `extrairDeliberacoes` nunca foi usado pra
+  criar tarefa. O pilar Compromissos só começa a existir na primeira ata.
+- **Eventos: 4 nos próximos 60 dias**, 2 sem dono (Dia do Voluntário 30/08 · Dia
+  das Crianças 12/10) e os outros 2 com `responsible='PMO'`. **245 tarefas de
+  ciclo criativo com prazo vencido** em 8 áreas (marketing 41 · produção 40 ·
+  financeiro 31 · limpeza 31 · cozinha 31 · compras 30 · manutenção 30 · adm 11).
+- **KPI (168 ativos): 8 sem dado nenhum · 51 calculam nulo · 77 sem dono.**
+  ⚠️ **Melhorou desde 14/08** (eram ~23 e ~66) — os KPIs de fonte nativa que o
+  Matheus ligou funcionaram. **Medir de novo antes de repetir número deste
+  arquivo.**
+- **Dono de KPI hoje: 4 pessoas** (Renata 27 · Lillian 23 · Arthur Cecconi 23 ·
+  Mariane 18). **Kids é a única área 100% coberta** (18/18).
+
+⚠️⚠️ **Os 51 que calculam nulo: a hipótese "módulo não implementado" vale pra
+6 de 19 `dado_tipo`, não pra todos.** Cruzado com `tipos_dado_bruto` e
+`dados_brutos`:
+- **6 têm `origem_tabela` preenchida** (`grupo_supervisao_visitas`,
+  `mem_grupo_membros`, `mem_voluntarios`, `mem_contribuicoes`, `int_visitantes`)
+  ⇒ o módulo EXISTE e a operação não é registrada. É processo, não código.
+- **6 são `entrada_manual`** e ninguém lança — e **`solicitacoes_servir_recebidas`
+  / `_alocadas` TÊM 84 linhas, mas o último dado é abr/mai 2026**: não é falta de
+  fonte, é **abandono**.
+- **4 têm `entrada_manual=false` E `origem_tabela=null`** ⇒ **não existe caminho
+  nenhum** pro dado entrar (`doadores_recorrentes`,
+  `financeiro_despesas_orcamento_pct`, `solicitacoes_aconselh`,
+  `solicitacoes_capelania`). Estes são os de verdade "não implementados".
+- **2 apontam pra `dado_tipo` que NEM EXISTE** no catálogo
+  (`treinamentos_concluidos`, `treinamentos_inscritos`, RH) ⇒ nunca vão calcular.
+
+⚠️ **Alarme falso meu, registrado:** a 1ª rodada dessa apuração disse "18 de 19
+não existem no catálogo". Era a **sonda**: escrevi a lista de tipos num arquivo
+pelo Python no Windows, cada linha ficou com um `` no fim, e o `.in()` não casou
+nada. Lição de novo: **conferir o que a sonda devolveu, não a contagem.**
+
 ### ⚠️⚠️ `systemFoundation.test.js` estava VERMELHO na main e ninguém viu
 
 Ao registrar o job novo no catálogo, o teste acusou **47 ≠ 46** — e a conferência
