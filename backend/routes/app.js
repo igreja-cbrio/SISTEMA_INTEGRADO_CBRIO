@@ -25,7 +25,7 @@ const { baseUrl } = gruposWpp;
 const { chaveMesMembro } = require('../services/nextMatricula');
 // ⚠️ Reuso da porta pública de eventos (espinha): a inscrição pelo app roda a
 // MESMA função do site. Ver o cabeçalho do bloco de eventos mais abaixo.
-const { inscreverEspinha, eventoEspinhaPorId } = require('./publicEventoExterno');
+const { inscreverEspinha, eventoEspinhaPorId, anexarConfigMenor } = require('./publicEventoExterno');
 const { TEXTOS: TEXTOS_INSCRICAO } = require('../services/inscricaoContrato');
 const { gerarTokenComprovante } = require('../services/inscricaoComprovante');
 const checkoutExterno = require('../utils/checkoutExterno');
@@ -5592,6 +5592,11 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
       if (e.inscricoes_encerram_em && e.inscricoes_encerram_em < nowIso) return false;
       return true;
     });
+    // Configuração de retiro/viagem (migration 20260817160000) — em consulta
+    // ISOLADA, best-effort, pela MESMA função da porta pública. ⚠️ Junto ao
+    // SELECT acima, coluna ausente faria o PostgREST recusar a lista INTEIRA
+    // (42703) e o app abriria sem nenhum evento (lição do `parcelas_max`).
+    await Promise.all(abertos.map((e) => anexarConfigMenor(e).catch(() => e)));
 
     // Quais desses a pessoa já tem inscrição viva? É o que o seletor
     // "Todos | Meus eventos" usa, e o que decide form × minha inscrição.
@@ -5668,7 +5673,15 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
       checkout_externo: checkoutExterno.temCheckoutExterno(e) ? {
         nome: checkoutExterno.nomeExterno(e.checkout_externo_nome),
       } : null,
-      so_web: checkoutExterno.temCheckoutExterno(e),
+      // ⚠️⚠️ `so_web` também cobre o bloco do RESPONSÁVEL e os aceites próprios do
+      // evento (17/08). O app não tem essas telas, e o servidor RECUSA a inscrição
+      // sem eles — sem isto a pessoa levaria 400 citando `responsavel_nome` numa
+      // tela que não tem o campo, sem caminho nenhum pra concluir. Mandar pro
+      // formulário público resolve **sem OTA**: o binário que já está no campo lê
+      // esta flag. Ver `so_web` em app/(app)/evento.tsx do repo do app.
+      so_web: checkoutExterno.temCheckoutExterno(e)
+        || !!e.exige_dados_menor
+        || (Array.isArray(e.termos_extra) && e.termos_extra.length > 0),
     }));
     res.json({
       eventos,
@@ -5786,6 +5799,18 @@ router.post('/eventos/:id/inscrever', authApp, limiterStrict, async (req, res) =
     if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
     if (ev.status !== 'publicado') {
       return res.status(403).json({ error: 'As inscrições deste evento não estão abertas.' });
+    }
+    // ⚠️ Evento que exige bloco de menor ou aceite próprio: a inscrição é no
+    // formulário público, com o LINK na resposta. Quem chega aqui é bundle antigo
+    // (que ignora `so_web`) — e o `inscreverEspinha` recusaria com 400 citando um
+    // campo que a tela do app não tem, deixando a pessoa sem saída. Mesmo
+    // tratamento do checkout externo exclusivo.
+    if (ev.exige_dados_menor || (Array.isArray(ev.termos_extra) && ev.termos_extra.length)) {
+      return res.status(409).json({
+        error: 'A inscrição deste evento é feita pelo formulário completo, no navegador.',
+        so_web: true,
+        url: `https://www.cbrio.org/evento/${ev.slug}`,
+      });
     }
     // Vincula ao cadastro do app quando o matcher não achar por CPF/telefone.
     const membro = await resolveMembroApp(req).catch(() => null);

@@ -11,7 +11,7 @@
 // Layout no MODELO DO GRUPOS (pedido do Marcos 28/07): campos em caixa com
 // label em cima, grid lado a lado (auto-fit 220px), cartão 720px, fonte 16
 // nos inputs (anti-zoom iOS) e container 100dvh + margin auto (fix do iPhone).
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import confetti from 'canvas-confetti';
 import QRCode from 'qrcode';
@@ -24,6 +24,11 @@ import {
   soDigitos, mascaraTelefone, mascaraCpf, cpfValido, telefoneValido,
   nomeCompletoValido, temAbreviacaoNome, validarNascimento, SEXOS, AVISO_OPTIN,
 } from '../../lib/inscricao';
+// Perguntas condicionais e bloco do responsável (17/08). ⚠️ Espelhos de
+// backend/utils/* — a MESMA régua decide aqui e no servidor, e há teste no gate
+// amarrando os dois. Não reimplementar nada disto na tela.
+import { keysVisiveis } from '../../lib/camposCondicionais';
+import { exigeResponsavel, PARENTESCOS } from '../../lib/inscricaoMenor';
 
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 function dataLonga(iso?: string | null) {
@@ -272,6 +277,10 @@ function ComprovanteQr({ token }: { token: string }) {
 const TEXTOS_FALLBACK = {
   termos_lgpd: 'Autorizo a Igreja CBRio a tratar os dados deste formulário para organizar esta atividade e me comunicar sobre ela, conforme a LGPD.',
   imagem: 'Autorizo o uso de fotos do evento em que eu apareça nas mídias da Igreja CBRio.',
+  // ⚠️ Fallback local; o canônico vem de `GET /textos` (services/inscricaoContrato)
+  // e é o snapshot que fica gravado no consentimento. Este texto só cobre a rede
+  // caindo antes de a tela carregar.
+  menor_responsavel: 'Declaro que sou responsável legal pela pessoa inscrita, que ela é menor de 18 anos e que autorizo a inscrição e o tratamento dos dados dela pela Igreja CBRio para este evento, conforme a LGPD (art. 14).',
   aviso_optin: AVISO_OPTIN,
 };
 
@@ -364,6 +373,11 @@ export default function EventoExterno() {
   const [aceitaTermos, setAceitaTermos] = useState(false);
   const [optin, setOptin] = useState(false);
   const [consentImagem, setConsentImagem] = useState(false);
+  // Bloco do responsável (só aparece pra menor de 18 em evento que pede) +
+  // aceites próprios do evento. ⚠️ Quem decide se são obrigatórios é o SERVIDOR.
+  const [resp, setResp] = useState<Record<string, string>>({});
+  const [consentMenor, setConsentMenor] = useState(false);
+  const [aceites, setAceites] = useState<Record<string, boolean>>({});
   const [textos, setTextos] = useState<any>(TEXTOS_FALLBACK);
   const [dados, setDados] = useState<Record<string, string>>({});
   const [website, setWebsite] = useState('');
@@ -383,7 +397,20 @@ export default function EventoExterno() {
     eventoPublico.textos().then((t: any) => { if (t?.termos_lgpd) setTextos(t); }).catch(() => { /* fallback local */ });
   }, [slug]);
 
-  const temCampoImagem = (evento?.campos || []).some((c: any) => c.tipo === 'imagem');
+  // ⚠️ Visibilidade das perguntas condicionais — MESMA régua do servidor. Campo
+  // escondido não é exigido e a resposta dele é DESCARTADA lá; aqui ele só não
+  // aparece. Recalcula a cada resposta (é o que faz "Qual medicamento?" surgir
+  // no instante em que a pessoa marca "Sim").
+  const visiveis = useMemo(() => keysVisiveis(evento?.campos || [], dados), [evento?.campos, dados]);
+  const camposVisiveis = (evento?.campos || []).filter((c: any) => c.key && visiveis.has(String(c.key)));
+  const temCampoImagem = camposVisiveis.some((c: any) => c.tipo === 'imagem');
+  // Bloco do responsável: evento marcado + nascimento de menor de 18 HOJE.
+  const precisaResponsavel = exigeResponsavel(evento, nascimento);
+  // ⚠️ Aceite `so_menor` aparece só junto do bloco do responsável — a MESMA
+  // condição que o servidor usa. Exigir de adulto seria pedir que ele aceite um
+  // termo sobre si mesmo como menor de idade.
+  const termosEvento: any[] = (Array.isArray(evento?.termos_extra) ? evento.termos_extra : [])
+    .filter((t: any) => !t.so_menor || precisaResponsavel);
 
   function confete() {
     const cores = ['#00B39D', '#00d9bd', '#ffd166', '#ef476f', '#118ab2'];
@@ -404,10 +431,25 @@ export default function EventoExterno() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErro('Informe um e-mail válido.'); return; }
     if (!validarNascimento(nascimento)) { setErro('Informe sua data de nascimento.'); return; }
     if (!SEXOS.includes(sexo)) { setErro('Selecione o sexo.'); return; }
+    // Endereço é opcional por padrão; retiro/viagem ligam a exigência.
+    if (evento?.exigir_endereco && !endereco.trim()) { setErro('Informe o endereço completo.'); return; }
     if (!aceitaTermos) { setErro('É preciso aceitar os termos para se inscrever.'); return; }
     if (subindoImg > 0) { setErro('Aguarde o envio da imagem terminar.'); return; }
-    for (const c of (evento?.campos || [])) {
+    // ⚠️ Só os campos VISÍVEIS são exigidos — a MESMA régua do servidor. Exigir
+    // pergunta escondida deixaria o formulário insubmissível.
+    for (const c of camposVisiveis) {
       if (c.obrigatorio && !String(dados[c.key] || '').trim()) { setErro(`Preencha: ${c.label}`); return; }
+    }
+    if (precisaResponsavel) {
+      if (!nomeCompletoValido(resp.nome || '')) { setErro('Informe o nome completo do responsável, sem abreviações.'); return; }
+      if (!cpfValido(resp.cpf || '')) { setErro('Informe um CPF válido do responsável.'); return; }
+      if (!String(resp.parentesco || '').trim()) { setErro('Informe o grau de parentesco com o menor.'); return; }
+      if (!telefoneValido(resp.telefone || '')) { setErro('Informe o celular do responsável, com DDD.'); return; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(resp.email || '').trim())) { setErro('Informe um e-mail válido do responsável.'); return; }
+      if (!consentMenor) { setErro('É preciso a autorização do responsável para inscrever menor de idade.'); return; }
+    }
+    for (const t of termosEvento) {
+      if (!aceites[t.chave]) { setErro(`É preciso aceitar: ${t.titulo || 'termo do evento'}.`); return; }
     }
     setEnviando(true);
     try {
@@ -419,6 +461,23 @@ export default function EventoExterno() {
         aceita_termos: aceitaTermos,
         whatsapp_optin: optin,
         consent_imagem: temCampoImagem ? consentImagem : undefined,
+        // ⚠️ Só manda o bloco do responsável quando ele foi EXIBIDO: enviar
+        // campos que a pessoa não viu (de um estado antigo, se ela corrigiu o
+        // nascimento pra maior) gravaria contato de responsável em inscrição de
+        // adulto. Quem decide se é obrigatório continua sendo o servidor.
+        ...(precisaResponsavel ? {
+          responsavel_nome: (resp.nome || '').trim(),
+          responsavel_cpf: soDigitos(resp.cpf || ''),
+          responsavel_parentesco: (resp.parentesco || '').trim(),
+          responsavel_telefone: resp.telefone || '',
+          responsavel_email: (resp.email || '').trim(),
+          responsavel_autoriza_batismo: resp.autoriza_batismo || undefined,
+          consent_menor: consentMenor,
+        } : {}),
+        // Aceites próprios do evento, na chave estável de cada termo.
+        ...(termosEvento.length ? {
+          aceites: Object.fromEntries(termosEvento.map((t) => [t.chave, !!aceites[t.chave]])),
+        } : {}),
         dados, website,
       });
       // Evento PAGO: a vaga ficou reservada e a pessoa escolhe como pagar na
@@ -603,10 +662,14 @@ export default function EventoExterno() {
                 <SexoBox value={sexo} onPick={setSexo} />
                 <Field id="cpf" label="CPF" value={cpf} onChange={e => setCpf(mascaraCpf(e.target.value))} required inputMode="numeric" maxLength={14} />
                 <Field id="email" label="E-mail" value={email} onChange={e => setEmail(e.target.value)} required inputMode="email" />
-                <Field id="endereco" label="Endereço (opcional)" value={endereco} onChange={e => setEndereco(e.target.value)} />
+                <Field id="endereco"
+                  label={evento.exigir_endereco ? 'Endereço completo' : 'Endereço (opcional)'}
+                  value={endereco} onChange={e => setEndereco(e.target.value)}
+                  required={!!evento.exigir_endereco} span={!!evento.exigir_endereco} />
 
-                {/* Campos específicos deste evento (form-builder) */}
-                {(evento.campos || []).map((c: any) => (
+                {/* Campos específicos deste evento (form-builder) ·
+                    ⚠️ só os VISÍVEIS pela régua condicional — a mesma do servidor. */}
+                {camposVisiveis.map((c: any) => (
                   c.tipo === 'select' ? (
                     <SelectBox key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)} required={c.obrigatorio} opcoes={c.opcoes || []} />
                   ) : (c.tipo === 'escolha' || c.tipo === 'multi') ? (
@@ -634,6 +697,49 @@ export default function EventoExterno() {
                 ))}
               </div>
 
+              {/* Bloco do RESPONSÁVEL — aparece só quando o nascimento informado
+                  é de menor de 18 e o evento pede (LGPD art. 14 §1º).
+                  ⚠️ A tela DIZ por que apareceu: um bloco de 6 campos surgindo do
+                  nada depois de digitar a data se lê como bug. */}
+              {precisaResponsavel && (
+                <div style={{
+                  marginTop: 18, padding: '14px 16px', borderRadius: 14,
+                  background: '#f59e0b12', border: '1px solid #f59e0b40',
+                }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Dados do responsável</div>
+                  <p style={{ fontSize: 12.5, color: C.text3, marginTop: 4, lineHeight: 1.5 }}>
+                    A data de nascimento informada é de menor de 18 anos, então precisamos dos dados de
+                    quem é responsável legal — é ele quem autoriza a inscrição e quem procuramos em caso
+                    de emergência.
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: 12, marginTop: 12 }}>
+                    <Field id="resp_nome" label="Nome completo do responsável" required span
+                      value={resp.nome || ''} onChange={e => setResp(r => ({ ...r, nome: e.target.value }))} />
+                    <Field id="resp_cpf" label="CPF do responsável" required inputMode="numeric" maxLength={14}
+                      value={resp.cpf || ''} onChange={e => setResp(r => ({ ...r, cpf: mascaraCpf(e.target.value) }))} />
+                    <SelectBox id="resp_parentesco" label="Grau de parentesco com o menor" required
+                      opcoes={Array.isArray(evento.parentescos) && evento.parentescos.length ? evento.parentescos : PARENTESCOS}
+                      value={resp.parentesco || ''} onChange={e => setResp(r => ({ ...r, parentesco: e.target.value }))} />
+                    <Field id="resp_telefone" label="Celular do responsável" required inputMode="tel" maxLength={16}
+                      value={resp.telefone || ''} onChange={e => setResp(r => ({ ...r, telefone: mascaraTelefone(e.target.value) }))} />
+                    <Field id="resp_email" label="E-mail do responsável" required inputMode="email"
+                      value={resp.email || ''} onChange={e => setResp(r => ({ ...r, email: e.target.value }))} />
+                    {/* Autorização de batismo · NÃO é obrigatória: a pergunta é
+                        sobre INTERESSE em batizar, e quem não pretende não
+                        precisa responder. Sem resposta ≠ autorizado. */}
+                    <PillSelect label="Se o menor quiser se batizar no evento, você autoriza?"
+                      opcoes={['Sim', 'Não']} value={resp.autoriza_batismo || ''}
+                      onPick={(v) => setResp(r => ({ ...r, autoriza_batismo: v }))} />
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <ConsentBox checked={consentMenor} onChange={setConsentMenor}>
+                      <b style={{ color: C.text }}>Autorização do responsável *</b><br />
+                      {textos.menor_responsavel || TEXTOS_FALLBACK.menor_responsavel}
+                    </ConsentBox>
+                  </div>
+                </div>
+              )}
+
               {/* Consentimentos (Contrato de Inscrição) */}
               <div style={{ marginTop: 18 }}>
                 <ConsentBox checked={aceitaTermos} onChange={setAceitaTermos}>
@@ -642,6 +748,27 @@ export default function EventoExterno() {
                 {temCampoImagem && (
                   <ConsentBox checked={consentImagem} onChange={setConsentImagem}>{textos.imagem}</ConsentBox>
                 )}
+                {/* Aceites PRÓPRIOS do evento (regulamento, termo de
+                    responsabilidade). Todos obrigatórios — a lista existe pra o
+                    que a igreja precisa que a pessoa leia; aceite opcional não
+                    prova nada. O link abre em nova aba pra não perder o
+                    formulário preenchido. */}
+                {termosEvento.map((t: any) => (
+                  <ConsentBox key={t.chave} checked={!!aceites[t.chave]}
+                    onChange={(v) => setAceites(a => ({ ...a, [t.chave]: v }))}>
+                    <b style={{ color: C.text }}>Confirmo que li e aceito: {t.titulo} *</b><br />
+                    {t.texto}
+                    {t.url ? (
+                      <>
+                        {' '}
+                        <a href={t.url} target="_blank" rel="noreferrer" style={{ color: '#00B39D', textDecoration: 'underline' }}>
+                          Ler o documento completo
+                        </a>
+                      </>
+                    ) : null}
+                  </ConsentBox>
+                ))}
+
                 <ConsentBox checked={optin} onChange={setOptin}>
                   📲 <b style={{ color: C.text }}>Quero receber avisos deste evento no WhatsApp</b><br />
                   {textos.aviso_optin || AVISO_OPTIN}

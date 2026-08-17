@@ -19,6 +19,7 @@ const { acharOuCriarGuardado, acharMembroGuardado } = require('./membroMatch');
 // mude no util.
 const {
   tirarCodigoPaisTelefone, emailValido, validarNascimento,
+  CONECTIVOS_NOME, temAbreviacaoNome,
 } = require('../utils/camposContato');
 
 const SEXOS = ['masculino', 'feminino']; // D8 — nunca "outro"
@@ -37,6 +38,19 @@ const TEXTOS = {
     'pela Igreja CBRio, exclusivamente para organização da apresentação de crianças ' +
     'e comunicação relacionada, conforme a LGPD (art. 14). Sei que posso solicitar ' +
     'acesso, correção ou exclusão desses dados a qualquer momento.',
+  // ⚠️ Texto PRÓPRIO da inscrição em evento (17/08 · retiro 2027), e não uma
+  // edição do de cima: aquele fala explicitamente de "apresentação de crianças",
+  // e é o snapshot já gravado nos consentimentos daquela porta. Reescrevê-lo pra
+  // servir aos dois faria a prova legal de uma porta descrever a outra.
+  // O `tipo` gravado continua sendo `menor_responsavel` (é o vocabulário do
+  // CHECK); o que muda é o TEXTO que a pessoa lê e que fica registrado.
+  menor_responsavel_inscricao:
+    'Declaro que sou o responsável legal pela pessoa inscrita, que ela é menor de ' +
+    '18 anos, e autorizo a inscrição dela nesta atividade e o tratamento dos dados ' +
+    'informados (dela e meus, como contato de emergência) pela Igreja CBRio, ' +
+    'exclusivamente para organizar a atividade e me comunicar sobre ela, conforme a ' +
+    'LGPD (art. 14). Sei que posso solicitar acesso, correção ou exclusão desses ' +
+    'dados a qualquer momento pelos canais da igreja.',
   imagem:
     'Autorizo o uso de fotos do evento em que eu (ou a criança sob minha ' +
     'responsabilidade) apareça nas mídias da Igreja CBRio.',
@@ -49,18 +63,10 @@ const TEXTOS = {
     'Se você não marcar, não conseguiremos te enviar confirmações, lembretes e avisos pelo WhatsApp.',
 };
 
-const CONECTIVOS_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
-
-// Migrada de publicVoluntariado (era duplicada front+back) — parte com "." ou
-// de 1 letra é abreviação; conectivos são permitidos.
-function temAbreviacaoNome(nome) {
-  const partes = String(nome || '').trim().split(/\s+/).filter(Boolean);
-  return partes.some((p) => {
-    const limpa = p.replace(/\./g, '');
-    if (CONECTIVOS_NOME.has(limpa.toLowerCase())) return false;
-    return p.includes('.') || limpa.length <= 1;
-  });
-}
+// `CONECTIVOS_NOME` e `temAbreviacaoNome` MUDARAM DE CASA em 17/08/2026 (pra
+// `utils/camposContato.js`, pelo mesmo motivo das três réguas citadas abaixo:
+// entrar no gate de deploy). Seguem re-exportadas daqui — nenhuma das 7 portas
+// muda de import, e o comportamento é idêntico.
 
 // ⚠️ `validarNascimento`, `emailValido` e `tirarCodigoPaisTelefone` MUDARAM DE
 // CASA em 06/08/2026 (auditoria do app, Onda 1): moraram aqui, mas este arquivo

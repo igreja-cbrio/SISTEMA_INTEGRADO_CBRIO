@@ -53,18 +53,84 @@ function slugify(s) {
 const { keyCampoPreservada } = require('../utils/campoKey');
 
 const TIPOS_CAMPO = ['texto', 'textarea', 'email', 'select', 'escolha', 'multi', 'rede_social', 'imagem', 'numero', 'data'];
+
+/**
+ * Condição de exibição (`mostrar_se`) — a pergunta só aparece quando a
+ * pergunta-mãe foi respondida com um dos valores listados (17/08 · perguntas do
+ * retiro 2027). Régua de exibição em `utils/camposCondicionais.js`, usada pela
+ * tela E pelo servidor.
+ *
+ * ⚠️ Sanear é NORMALIZAR, não julgar: a `key` da mãe pode não existir ainda
+ * (a pessoa está montando o formulário e vai criar a pergunta depois), e recusar
+ * aqui travaria o salvamento no meio da montagem. Condição órfã é tratada como
+ * FAIL-OPEN na exibição — a pergunta aparece, que é o comportamento de antes.
+ */
+function sanitizeMostrarSe(bruto) {
+  if (!bruto || typeof bruto !== 'object') return null;
+  const key = String(bruto.key ?? '').trim().slice(0, 60);
+  if (!key) return null;
+  const brutos = Array.isArray(bruto.valores) ? bruto.valores : (bruto.valor !== undefined ? [bruto.valor] : []);
+  const valores = [...new Set(brutos.map(v => String(v ?? '').trim()).filter(Boolean))].slice(0, 20);
+  if (!valores.length) return null;
+  return { key, valores };
+}
+
 function sanitizeCampos(campos) {
   if (!Array.isArray(campos)) return [];
   return campos
     .filter(c => c && String(c.label || '').trim())
     .slice(0, 40)
-    .map(c => ({
-      key: keyCampoPreservada(c.key),
-      label: String(c.label).trim().slice(0, 200),
-      tipo: TIPOS_CAMPO.includes(c.tipo) ? c.tipo : 'texto',
-      obrigatorio: c.obrigatorio !== false,
-      opcoes: Array.isArray(c.opcoes) ? c.opcoes.map(o => String(o).trim()).filter(Boolean).slice(0, 60) : [],
-    }));
+    .map(c => {
+      const campo = {
+        key: keyCampoPreservada(c.key),
+        label: String(c.label).trim().slice(0, 200),
+        tipo: TIPOS_CAMPO.includes(c.tipo) ? c.tipo : 'texto',
+        obrigatorio: c.obrigatorio !== false,
+        opcoes: Array.isArray(c.opcoes) ? c.opcoes.map(o => String(o).trim()).filter(Boolean).slice(0, 60) : [],
+      };
+      // ⚠️ Só grava a chave quando existe condição: `mostrar_se: null` em todo
+      // campo poluiria o jsonb dos 3 eventos que já estão no ar sem ganho nenhum.
+      const cond = sanitizeMostrarSe(c.mostrar_se);
+      if (cond) campo.mostrar_se = cond;
+      return campo;
+    });
+}
+
+/**
+ * Aceites próprios do evento (`termos_extra`).
+ *
+ * ⚠️ `chave` é o identificador ESTÁVEL do termo, e é ele que distingue um aceite
+ * do outro no ledger de consentimentos. Derivá-la do título faria renomear
+ * "Informações Sobre o Retiro" orfanar a prova de quem já aceitou — a MESMA lei
+ * do `novaKeyCampo` (ver utils/campoKey.js). Então: chave que já veio é
+ * PRESERVADA; só nasce nova quando não existe nenhuma.
+ *
+ * ⚠️ Item sem texto é DESCARTADO, nunca gravado vazio: checkbox que diz "li e
+ * aceito" sem nada pra ler é consentimento sem objeto.
+ */
+function sanitizeTermosExtra(lista) {
+  if (!Array.isArray(lista)) return null;
+  const usadas = new Set();
+  return lista
+    .map((t) => {
+      if (!t || typeof t !== 'object') return null;
+      const texto = String(t.texto ?? '').trim().slice(0, 4000);
+      if (!texto) return null;
+      let chave = String(t.chave ?? '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 40);
+      if (!chave || usadas.has(chave)) chave = `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      usadas.add(chave);
+      const item = { chave, titulo: String(t.titulo ?? '').trim().slice(0, 160) || 'Termo do evento', texto };
+      const url = String(t.url ?? '').trim();
+      if (/^https:\/\/[^\s/@]+\.[^\s/@]+/.test(url)) item.url = url.slice(0, 500);
+      // ⚠️ Aceite que vale SÓ pra menor de idade (ex.: "Termos de
+      // Responsabilidade — Menor de idade", do PDF do retiro). Sem esta chave,
+      // todo aceite é obrigatório pra TODO MUNDO, e um adulto de 40 anos teria
+      // que aceitar um termo de responsabilidade sobre si mesmo como menor.
+      if (t.so_menor === true) item.so_menor = true;
+      return item;
+    })
+    .filter(Boolean)
+    .slice(0, 6);
 }
 
 // Rótulo da edição a partir da data (mensal/semanal → 'YYYY-MM' · anual → 'YYYY')
@@ -110,6 +176,11 @@ const CAMPOS_EVENTO = [
   // Cartão cobrado FORA (e-Inscrição) · migration 20260811180000. Preenchido,
   // remove 'cartao' do nosso checkout — ver backend/utils/checkoutExterno.js.
   'checkout_externo_url', 'checkout_externo_nome',
+  // Retiro/viagem (migration 20260817160000): endereço obrigatório neste evento
+  // e bloco do responsável quando a pessoa é menor de 18 na inscrição.
+  // ⚠️ `termos_extra` NÃO entra nesta lista — é jsonb e passa pelo saneador
+  // próprio (`sanitizeTermosExtra`), igual a `pagamento_metodos`.
+  'exigir_endereco', 'exige_dados_menor',
 ];
 
 // ⚠️ INCIDENTE 2026-08-04 · colunas NOT NULL da whitelist acima.
@@ -130,6 +201,8 @@ const CAMPOS_EVENTO_NAO_NULO = new Set([
   'tem_sorteio', 'premios', 'checkin_ativo',
   'pagamento_ativo', 'pagamento_expira_horas', 'juros_repassados',
   'no_totem',
+  // migration 20260817160000 · boolean NOT NULL DEFAULT false
+  'exigir_endereco', 'exige_dados_menor',
 ]);
 
 // Copia a whitelist pro patch, descartando null onde o banco não aceita.
@@ -881,6 +954,45 @@ async function lerInscritosDoEvento(eventoId, { busca = '', status = '', limit =
       if (!data || data.length < 1000) break;
     }
     total = inscritos.length;
+  }
+
+  // ── Contato do RESPONSÁVEL (menor de idade · migration 20260817160000) ────
+  // ⚠️ Consulta ISOLADA e best-effort, pelo mesmo motivo do bloco de pagamento
+  // abaixo: coluna ausente faz o PostgREST recusar a query INTEIRA (42703), e
+  // esta é a lista de inscritos de TODO evento — inclusive a tela de check-in.
+  // Sem a migration, a lista abre exatamente como antes.
+  //
+  // ⚠️ **Não é enfeite de tela**: é o número que a equipe liga se um adolescente
+  // passar mal no retiro. Sem trazê-lo aqui, o dado ficaria gravado e invisível.
+  try {
+    const idsResp = inscritos.map((i) => i.id);
+    const resps = [];
+    for (let i = 0; i < idsResp.length; i += 200) {
+      const { data, error } = await supabase.from('inscricoes')
+        .select('id, responsavel_nome, responsavel_cpf, responsavel_parentesco, responsavel_telefone, responsavel_email, responsavel_autoriza_batismo')
+        .in('id', idsResp.slice(i, i + 200));
+      if (error) throw error;
+      resps.push(...(data || []));
+    }
+    const porId = new Map(resps.map((r) => [r.id, r]));
+    for (const ins of inscritos) {
+      const r = porId.get(ins.id);
+      // ⚠️ Só anexa quando existe responsável: chave sempre presente com valores
+      // nulos faria a tela desenhar um bloco "Responsável: —" em toda inscrição
+      // de adulto.
+      if (r && r.responsavel_nome) {
+        ins.responsavel = {
+          nome: r.responsavel_nome,
+          cpf: r.responsavel_cpf || null,
+          parentesco: r.responsavel_parentesco || null,
+          telefone: r.responsavel_telefone || null,
+          email: r.responsavel_email || null,
+          autoriza_batismo: r.responsavel_autoriza_batismo,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[inscricoes] responsável do menor indisponível:', e.message);
   }
 
   // Best-effort: a view é recente e a lista não pode deixar de abrir se ela
@@ -1992,6 +2104,8 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
     }
     const metodos = sanitizeMetodos(b.pagamento_metodos);
     if (metodos) payload.pagamento_metodos = metodos;
+    const termos = sanitizeTermosExtra(b.termos_extra);
+    if (termos) payload.termos_extra = termos;
     const erroCheckout = conferirCheckoutExterno(payload);
     if (erroCheckout) return res.status(400).json({ error: erroCheckout });
 
@@ -2046,6 +2160,12 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
     if (b.pagamento_metodos !== undefined) {
       const metodos = sanitizeMetodos(b.pagamento_metodos);
       if (metodos) patch.pagamento_metodos = metodos;
+    }
+    // ⚠️ `[]` é edição legítima (tirar todos os aceites), então só `undefined`
+    // significa "não mexeu" — a mesma distinção do checkout externo.
+    if (b.termos_extra !== undefined) {
+      const termos = sanitizeTermosExtra(b.termos_extra);
+      if (termos) patch.termos_extra = termos;
     }
     const erroCheckout = conferirCheckoutExterno(patch);
     if (erroCheckout) return res.status(400).json({ error: erroCheckout });
