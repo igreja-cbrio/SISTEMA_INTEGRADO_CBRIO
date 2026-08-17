@@ -9,10 +9,17 @@ const {
   getFoundationPayload,
 } = require('../config/systemCatalog');
 
+// ⚠️ 17/08/2026: o número estava em 45 e o catálogo já tinha 46 — este teste
+// estava VERMELHO na main e ninguém viu, porque ele NÃO está no gate de deploy
+// (`.github/workflows/deploy-vercel.yml` roda 10 scripts, e este não é um
+// deles). Ou seja: o guarda que existe pra impedir "cron entrou no catálogo sem
+// registro" é justamente o que falha em silêncio. Ajustado pra 47 (o 46 que já
+// existia + `/api/governanca/cron/rotina-email`). Ligar este arquivo ao gate é
+// follow-up que mexe no pipeline de deploy e precisa de alinhamento.
 // 46 → 45 em 13/08/2026: o cron do WiFi saiu do vercel.json junto com o portal
 // cativo desativado. O número é conferência de COBERTURA — mexer nele sem mexer
 // no vercel.json na mesma leva é o que faz o catálogo declarar cron que não roda.
-assert.equal(JOBS.length, 45, 'o catálogo deve cobrir todos os crons do vercel.json');
+assert.equal(JOBS.length, 47, 'o catálogo deve cobrir todos os crons do vercel.json');
 assert.equal(WORKFLOWS.length, 10, 'o catálogo deve cobrir os workflows inventariados');
 assert.equal(new Set(JOBS.map((job) => job.id)).size, JOBS.length, 'IDs de jobs devem ser únicos');
 assert.equal(new Set(INTEGRATIONS.map((item) => item.id)).size, INTEGRATIONS.length, 'IDs de integrações devem ser únicos');
@@ -34,7 +41,7 @@ assert.equal(release.environment, 'production');
 
 const payload = getFoundationPayload({ NODE_ENV: 'test' });
 assert.equal(payload.contractVersion, 1);
-assert.equal(payload.counts.jobs, 45);
+assert.equal(payload.counts.jobs, 47);
 assert.equal(payload.boundaries.executionRegistry, 'migration_required');
 
 console.log('systemFoundation: ok');
