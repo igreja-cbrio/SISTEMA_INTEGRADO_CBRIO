@@ -5,9 +5,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { nps as api, next as nextApi } from '../api';
 import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
+import QrLinkDialog from '../components/QrLinkDialog';
 import {
-  Plus, X, MessageSquare, Sparkles, Users, Link2, Copy, Check, Loader2,
-  TrendingUp, TrendingDown, Minus, BarChart3, Search, Send, BrainCircuit, Pencil, Trash2, Upload, GripVertical,
+  BarChart3, BrainCircuit, Check, Copy, GripVertical, Link2, Loader2, MessageSquare, Minus, Pencil, Plus, QrCode, Search, Send, Sparkles, Trash2, TrendingDown, TrendingUp, Upload, Users, X
 } from 'lucide-react';
 
 const C = {
@@ -1174,6 +1174,8 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
     return `${window.location.origin}/nps/publica/${pesquisa.link_publico_token}`;
   }, [pesquisa]);
 
+  const [qrOpen, setQrOpen] = useState(false);
+
   async function copiarLink() {
     if (!linkPublico) return;
     try {
@@ -1207,6 +1209,22 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
       toast.error(e.message);
     }
     setNotificando(false);
+  }
+
+  // ⚠️ "Fechar temporariamente" ESCONDE a pesquisa (decisão do Matheus,
+  // 18/08/2026): status 'rascunho'. Não precisa de mudança no backend público —
+  // `routes/publicNps.js` já recusa tudo que não está 'ativa', então quem tiver
+  // o link antigo para de conseguir responder no mesmo instante.
+  // Diferente de `encerrar`: rascunho é reversível, encerrada é ponto final.
+  async function alternarPublicacao() {
+    const publicando = pesquisa.status !== 'ativa';
+    try {
+      await api.update(id, { status: publicando ? 'ativa' : 'rascunho' });
+      toast.success(publicando ? 'Pesquisa publicada' : 'Pesquisa despublicada — ninguém consegue responder agora');
+      onChanged?.();
+    } catch (e) {
+      toast.error(e.message);
+    }
   }
 
   async function encerrar() {
@@ -1290,11 +1308,22 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
       {podeGerir && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
           {linkPublico && pesquisa.permite_publico && (
-            <Btn variant="ghost" size="sm" onClick={copiarLink}>
-              {copied ? <Check size={12} /> : <Copy size={12} />}
-              {copied ? 'Copiado!' : 'Copiar link público'}
-            </Btn>
+            <>
+              <Btn variant="ghost" size="sm" onClick={copiarLink}>
+                {copied ? <Check size={12} /> : <Copy size={12} />}
+                {copied ? 'Copiado!' : 'Copiar link público'}
+              </Btn>
+              {/* Mesmo componente usado por Censo, Links, Eventos e Inscrições —
+                  gera o QR no navegador e oferece transformá-lo em link curto
+                  dinâmico, que pode ter o destino trocado sem reimprimir. */}
+              <Btn variant="ghost" size="sm" onClick={() => setQrOpen(true)}>
+                <QrCode size={12} />QR code
+              </Btn>
+            </>
           )}
+          <Btn variant="ghost" size="sm" onClick={alternarPublicacao}>
+            {pesquisa.status === 'ativa' ? 'Despublicar' : 'Publicar'}
+          </Btn>
           {pesquisa.status === 'ativa' && (
             <>
               <Btn variant="ghost" size="sm" onClick={reNotificar} disabled={notificando}>
@@ -1325,6 +1354,16 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
             Excluir
           </Btn>
         </div>
+      )}
+
+      {qrOpen && linkPublico && (
+        <QrLinkDialog
+          link={linkPublico}
+          titulo={pesquisa.titulo}
+          descricao="Aponte a câmera para responder a pesquisa."
+          nomeArquivo={`qr-nps-${id}`}
+          onClose={() => setQrOpen(false)}
+        />
       )}
 
       {editOpen && (
