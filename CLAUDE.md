@@ -4619,6 +4619,35 @@ encontro, e esse caminho existe ao lado. A mensagem de recusa diz exatamente iss
 - ⚠️ O limite é **DITO na tela**, não só imposto no calendário: dia cinza sem
   explicação lê-se como app quebrado. `CalendarioBR` ganhou `maximoISO`.
 
+### ⚠️⚠️ 3ª rodada · o HERÓI cobrava chamada de encontro já remarcado
+
+Relato do Marcos: *"alterei o meu do dia 18 para o dia 20 mas a frequência ainda
+está em cima marcando próximo encontro hoje dia 18"*.
+
+O box do topo (`estadoDoEncontro`, em `lib/proximoEncontro.ts`) derivava a
+ocorrência de **`dia_semana` + hoje**: assumia SEMANAL e **não sabia das
+exceções**. Ou seja, a tela tinha **duas contas** para "quando é o encontro" — a
+do herói e a da agenda — e elas divergiam no instante em que o líder remarcava.
+
+- **`ocorrenciaAnterior`** (régua pura, no gate) devolve o encontro mais recente
+  até hoje **com a exceção aplicada**, e o GET `/agenda` passou a mandá-lo. O
+  herói só calcula sozinho **enquanto a agenda não chegou** — `undefined` = "não
+  sei" · **`null` = não há pendência** (o encontro foi cancelado). Confundir os
+  dois faria o cancelamento virar cobrança eterna de chamada.
+- ⚠️ **A geração de datas virou `gerarOriginais`, compartilhada.** Quando a
+  guarda de `dia_semana` ficou só em `proximasOcorrencias`, o `ocorrenciaAnterior`
+  **nasceu sem ela** e o teste pegou na hora — `Number(null) === 0` é DOMINGO. A
+  guarda agora mora no gerador: um lugar, dois chamadores.
+- **4 mutantes rodados**: cancelado voltando a cobrar chamada · anterior
+  ignorando o que já passou · anterior ignorando a remarcação · guarda de
+  `dia_semana`.
+
+⚠️ **No app, "Salvar nova data" e "Cancelar encontro" viraram uma LINHA DE
+BOTÕES no rodapé** (*"fica ruim a visualização"*): salvar era um botão perdido
+no meio do formulário e cancelar um link solto embaixo. Cancelar segue **em
+contorno, nunca preenchido** — a hierarquia tem que dizer qual é a ação
+esperada — e continua abrindo a confirmação em vez de cancelar no toque.
+
 ### ⚠️ A agenda saiu do "Meu grupo" e foi pro "Gerenciar grupo" (18/08)
 
 Pedido do Marcos: *"pra pessoa gerenciar tudo na mesma tela"*. No `/meu-grupo` o

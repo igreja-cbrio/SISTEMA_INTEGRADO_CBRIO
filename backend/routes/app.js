@@ -7,7 +7,7 @@ const { semCache } = require('../middleware/semCache');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
-const { proximasOcorrencias, proximoEncontro } = require('../utils/agendaGrupo');
+const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior } = require('../utils/agendaGrupo');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
@@ -4906,6 +4906,15 @@ router.get('/grupos/:grupoId/agenda', authApp, limiterNormal, async (req, res) =
         diaSemana: g?.dia_semana, horario: g?.horario,
         recorrencia: g?.recorrencia, ancoraISO: ancoras[gid] || null,
         excecoes, quantas: 40, janelaDias,
+      }),
+      // ⚠️ O herói da tela ("faltou registrar") precisa saber qual foi o
+      // ENCONTRO ANTERIOR com as exceções aplicadas. Ele calculava sozinho por
+      // dia_semana e cobrava um encontro que o líder já tinha remarcado.
+      // `null` = não há anterior, ou ela foi cancelada (sem pendência).
+      anterior: ocorrenciaAnterior({
+        diaSemana: g?.dia_semana, horario: g?.horario,
+        recorrencia: g?.recorrencia, ancoraISO: ancoras[gid] || null,
+        excecoes,
       }),
     });
   } catch (e) {
