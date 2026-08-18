@@ -174,4 +174,94 @@ router.patch('/tarefas/:id', async (req, res) => {
   }
 });
 
+// ── Pendência → tarefa pessoal ("Minhas Tarefas") ──────────────────────────
+//
+// ⚠️ POR QUE NÃO REUSAR POST /api/tarefas:
+// aquele endpoint força `responsavel_id: req.user.userId` — a tarefa nasce
+// sempre para QUEM CLICA. Numa ata isso inverteria o sentido: clicar na
+// pendência da Milena criaria tarefa para o Matheus, e atribuir responsável
+// viraria enfeite. Aqui a tarefa vai para o responsável da pendência.
+router.post('/tarefas/:id/enviar', async (req, res) => {
+  try {
+    const tipo = await tipoMinisterialId();
+    const { data: pend } = await supabase
+      .from('governance_tasks')
+      .select('id, titulo, responsavel, prazo, tarefa_pessoal_id, meeting_id, governance_meetings!inner(date, type_id, deleted_at)')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    if (!pend || pend.governance_meetings?.type_id !== tipo
+        || pend.governance_meetings?.deleted_at) {
+      return res.status(404).json({ error: 'Pendência não encontrada' });
+    }
+
+    // Idempotente: o vínculo é a memória de que já foi enviada. Sem isto, cada
+    // clique (ou cada duplo-clique) criaria uma tarefa nova.
+    if (pend.tarefa_pessoal_id) {
+      return res.json({ criada: false, tarefa_id: pend.tarefa_pessoal_id, motivo: 'ja_enviada' });
+    }
+
+    // O responsável é TEXTO na ata (pode ser "Milena / Mari", ou alguém sem
+    // login). Casamos por nome; sem correspondência, a tarefa fica com quem
+    // clicou — melhor do que recusar e deixar a pendência sem dono em lugar
+    // nenhum. O corpo diz de quem era, para não perder a informação.
+    let destinoId = req.user.userId;
+    let destinoNome = req.user.name || null;
+    const nomeNaAta = String(pend.responsavel || '').trim();
+
+    if (nomeNaAta) {
+      const { data: perfil } = await supabase
+        .from('profiles')
+        .select('id, name')
+        .eq('active', true)
+        .not('is_membro_only', 'is', true)
+        .ilike('name', nomeNaAta)
+        .maybeSingle();
+      if (perfil) { destinoId = perfil.id; destinoNome = perfil.name; }
+    }
+
+    const dataReuniao = pend.governance_meetings?.date || null;
+    const dataBr = dataReuniao
+      ? String(dataReuniao).slice(0, 10).split('-').reverse().join('/')
+      : null;
+
+    const descricao = [
+      dataBr ? `Pendência da reunião ministerial de ${dataBr}.` : 'Pendência da reunião ministerial.',
+      nomeNaAta && destinoNome !== nomeNaAta ? `Na ata, o responsável está como "${nomeNaAta}".` : null,
+    ].filter(Boolean).join(' ');
+
+    const { data: tarefa, error: errTarefa } = await supabase
+      .from('tarefas_pessoais')
+      .insert({
+        titulo: String(pend.titulo || '').slice(0, 200),
+        descricao,
+        data: pend.prazo || null,
+        responsavel_id: destinoId,
+        responsavel_nome: destinoNome,
+        created_by: req.user.userId,
+        tipo: 'pessoal',
+        status: 'a_fazer',
+        prioridade: 'media',
+        recorrencia: 'unica',
+      })
+      .select('id')
+      .maybeSingle();
+    if (errTarefa) throw errTarefa;
+
+    const { error: errVinculo } = await supabase
+      .from('governance_tasks')
+      .update({ tarefa_pessoal_id: tarefa.id })
+      .eq('id', pend.id);
+    // Se o vínculo falhar, a tarefa já existe: apagar seria pior (a pessoa
+    // perde o item). Devolvemos sucesso avisando que pode reaparecer o botão.
+    if (errVinculo) {
+      return res.json({ criada: true, tarefa_id: tarefa.id, vinculo: false, responsavel_nome: destinoNome });
+    }
+
+    res.json({ criada: true, tarefa_id: tarefa.id, vinculo: true, responsavel_nome: destinoNome });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;
