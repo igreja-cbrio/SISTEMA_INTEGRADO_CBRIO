@@ -58,6 +58,16 @@ export async function buscarTarefa(id: string): Promise<DevTarefa | null> {
   return (data as DevTarefa) || null;
 }
 
+export async function isSystemIncidentCorrection(id: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("system_incidents")
+    .select("id")
+    .eq("id", id)
+    .maybeSingle();
+  if (error && error.code !== "PGRST116") throw new Error(error.message);
+  return Boolean(data?.id);
+}
+
 // Claim atômico: só transiciona se ainda estiver no status `de` (nenhum outro
 // runner/worker pega a mesma tarefa). Retorna null se alguém venceu a corrida.
 // Default: agendada → em_andamento (execução). Para o diagnóstico de bug o

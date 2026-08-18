@@ -989,7 +989,44 @@ const COLLECTORS = {
 // Isso garante que editar um culto do mês passado recalcula o registro do
 // mês passado, não o período atual. Sem o param, comporta como cron diario
 // (recalcula sempre o período corrente).
-async function coletarTodos({ dryRun = false, fontes = null, areas = null, referenceDate = null } = {}) {
+// Desloca a data de referência para DENTRO do período anterior.
+//
+// ⚠️ `setUTCDate(1)` ANTES de mexer no mês, sempre: em 31/03, um
+// `setUTCMonth(mes-1)` direto cai em 31/02, que o JS normaliza para 03/03 — o
+// mês anterior escaparia justamente nos dias 29, 30 e 31.
+function inicioDoPeriodoAnterior(periodicidade, date) {
+  const d = new Date(date);
+  switch (periodicidade) {
+    case 'semanal':    d.setUTCDate(d.getUTCDate() - 7); break;
+    case 'trimestral': d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 3); break;
+    case 'semestral':  d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 6); break;
+    case 'anual':      d.setUTCFullYear(d.getUTCFullYear() - 1); break;
+    default:           d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1); break; // mensal
+  }
+  return d;
+}
+
+// Períodos que uma rodada de coleta deve escrever.
+//
+// ⚠️ POR QUE O PERÍODO ANTERIOR TAMBÉM ENTRA:
+// o coletor só olhava o período CORRENTE, então um mês era congelado no estado
+// em que estivesse no dia 1º e nunca mais revisitado. Como o financeiro importa
+// o balanço semanalmente, tudo que chegava depois da virada ficava fora do KPI
+// para sempre. Medido em 18/08/2026: julho fechou com R$ 905.781 em 2.619
+// doações, mas tinha R$ 948.337 em 2.688 — 69 lançamentos entraram depois do
+// dia 31 e nunca foram contados. O mesmo vale para qualquer fonte que receba
+// dado com atraso (frequência lançada na terça, classificação financeira, etc).
+//
+// Um período fechado leva algumas semanas para assentar; reprocessá-lo a cada
+// rodada faz ele se corrigir sozinho, sem ninguém precisar lembrar.
+function periodosAlvo(periodicidade, dataRef, incluirAnterior) {
+  const atual = periodoAtual(periodicidade, dataRef);
+  if (!incluirAnterior) return [atual];
+  const anterior = periodoAtual(periodicidade, inicioDoPeriodoAnterior(periodicidade, dataRef));
+  return anterior === atual ? [atual] : [atual, anterior];
+}
+
+async function coletarTodos({ dryRun = false, fontes = null, areas = null, referenceDate = null, fecharAnterior = false } = {}) {
   let query = supabase
     .from('kpi_indicadores_taticos')
     .select('id, periodicidade, fonte_auto, indicador, area')
@@ -1020,7 +1057,10 @@ async function coletarTodos({ dryRun = false, fontes = null, areas = null, refer
       continue;
     }
 
-    const periodo = periodoAtual(ind.periodicidade, dataRef);
+    // Laço por período (corrente e, com `fecharAnterior`, também o anterior).
+    // A indentação do corpo abaixo foi mantida de propósito: reindentar 100
+    // linhas esconderia a mudança real num diff de formatação.
+    for (const periodo of periodosAlvo(ind.periodicidade, dataRef, fecharAnterior)) {
     const range = periodoRange(periodo, ind.periodicidade);
 
     try {
@@ -1117,9 +1157,10 @@ async function coletarTodos({ dryRun = false, fontes = null, areas = null, refer
     } catch (e) {
       resultados.push({ id: ind.id, status: 'erro', erro: e.message });
     }
+    } // fim do laço de períodos
   }
 
   return resultados;
 }
 
-module.exports = { coletarTodos, COLLECTORS, periodoAtual, periodoRange };
+module.exports = { coletarTodos, COLLECTORS, periodoAtual, periodoRange, periodosAlvo, inicioDoPeriodoAnterior };

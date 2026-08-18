@@ -4570,6 +4570,101 @@ de hoje, intacto.
   quem fala com o grupo é o líder, no WhatsApp dele, e é ele que tem o contexto
   ("adiamos por causa do feriado"). Prometer aviso que não sai é pior que não ter.
 
+### ⚠️⚠️ 2ª rodada (18/08) · a CADÊNCIA não era lida — 37 grupos viam data errada
+
+`mem_grupos.recorrencia` existe desde sempre e a régua **somava 7 dias em todo
+grupo**. Medido em produção: dos 104 ativos, **67 semanal · 29 quinzenal · 5
+mensal · 3 diário** — ou seja **um terço via a data errada** no box "Próximo
+encontro" (e já via antes desta feature; ela só passou a listar 6 delas).
+
+- `mensal` = **28 dias**, não "mesmo dia do mês": o grupo é identificado por
+  `dia_semana`, então "toda terça" tem que continuar caindo numa terça. Somar 30
+  andaria pelo calendário e o grupo de terça cairia numa quinta.
+- ⚠️⚠️ **Quinzenal e mensal precisam de ÂNCORA e quase ninguém tem.** Saber "de
+  14 em 14 às terças" **não diz EM QUAL terça**. A única evidência no banco é o
+  último encontro REALIZADO (`mem_grupo_encontros`) — e **36 dos 37 grupos
+  não-semanais nunca registraram um**. Sem âncora a régua devolve **UMA**
+  ocorrência marcada `ancora_incerta`, e a tela pede pra registrar uma presença.
+  Listar a agenda inteira seria chute com cara de fato.
+- ⚠️ **Regressão que os meus próprios testes pegaram**: ao reescrever eu perdi a
+  guarda de `dia_semana` ausente — e **`Number(null) === 0`, que é DOMINGO**.
+  Grupo sem dia marcado (são 4 ativos) viraria grupo de domingo com agenda
+  inventada. É a armadilha já registrada em "grupos · dados incompletos".
+
+### ⚠️ O LIMITE de remarcação: `min(7 dias, véspera do próximo encontro)`
+
+Pergunta do Marcos: *"se temos um encontro semanal e eu tentar agendar para daqui
+a 15 dias, não tem sentido… de repente podemos colocar no máximo uma semana, o
+que acha?"*. As duas metades existem por motivos diferentes e **nenhuma sozinha
+resolve**:
+
+- **"não alcançar o próximo"** sai da cadência do grupo, sem número mágico:
+  semanal ⇒ 6 dias · quinzenal ⇒ 13 · mensal ⇒ 27. Uma semana fixa **quebraria o
+  semanal** (7 dias cai em cima do encontro seguinte).
+- **o teto de 7 dias** impede que um grupo MENSAL empurre a reunião para a
+  véspera da seguinte — **duas reuniões em dias seguidos**, que foi a objeção
+  dele.
+
+Quem precisa mover mais que isso **não está remarcando: está CANCELANDO** aquele
+encontro, e esse caminho existe ao lado. A mensagem de recusa diz exatamente isso.
+
+- ⚠️⚠️ **A janela é decidida no SERVIDOR** e devolvida por ocorrência
+  (`pode_remarcar` · `remarcar_de` · `remarcar_ate`). O app **não recalcula** —
+  duas cópias divergiriam e a divergência apareceria como *"o calendário deixou
+  escolher e o servidor recusou"*. Falha ao montar a agenda **recusa (409)**,
+  nunca libera.
+- ⚠️ Janela espremida até a **própria data** devolve `pode: true` de propósito:
+  sobra mudar só o HORÁRIO, que é uso legítimo. (Escrevi o teste esperando
+  `false` e o código me corrigiu.)
+- ⚠️ O limite é **DITO na tela**, não só imposto no calendário: dia cinza sem
+  explicação lê-se como app quebrado. `CalendarioBR` ganhou `maximoISO`.
+
+### ⚠️⚠️ 3ª rodada · o HERÓI cobrava chamada de encontro já remarcado
+
+Relato do Marcos: *"alterei o meu do dia 18 para o dia 20 mas a frequência ainda
+está em cima marcando próximo encontro hoje dia 18"*.
+
+O box do topo (`estadoDoEncontro`, em `lib/proximoEncontro.ts`) derivava a
+ocorrência de **`dia_semana` + hoje**: assumia SEMANAL e **não sabia das
+exceções**. Ou seja, a tela tinha **duas contas** para "quando é o encontro" — a
+do herói e a da agenda — e elas divergiam no instante em que o líder remarcava.
+
+- **`ocorrenciaAnterior`** (régua pura, no gate) devolve o encontro mais recente
+  até hoje **com a exceção aplicada**, e o GET `/agenda` passou a mandá-lo. O
+  herói só calcula sozinho **enquanto a agenda não chegou** — `undefined` = "não
+  sei" · **`null` = não há pendência** (o encontro foi cancelado). Confundir os
+  dois faria o cancelamento virar cobrança eterna de chamada.
+- ⚠️ **A geração de datas virou `gerarOriginais`, compartilhada.** Quando a
+  guarda de `dia_semana` ficou só em `proximasOcorrencias`, o `ocorrenciaAnterior`
+  **nasceu sem ela** e o teste pegou na hora — `Number(null) === 0` é DOMINGO. A
+  guarda agora mora no gerador: um lugar, dois chamadores.
+- **4 mutantes rodados**: cancelado voltando a cobrar chamada · anterior
+  ignorando o que já passou · anterior ignorando a remarcação · guarda de
+  `dia_semana`.
+
+⚠️ **No app, "Salvar nova data" e "Cancelar encontro" viraram uma LINHA DE
+BOTÕES no rodapé** (*"fica ruim a visualização"*): salvar era um botão perdido
+no meio do formulário e cancelar um link solto embaixo. Cancelar segue **em
+contorno, nunca preenchido** — a hierarquia tem que dizer qual é a ação
+esperada — e continua abrindo a confirmação em vez de cancelar no toque.
+
+### ⚠️ A agenda saiu do "Meu grupo" e foi pro "Gerenciar grupo" (18/08)
+
+Pedido do Marcos: *"pra pessoa gerenciar tudo na mesma tela"*. No `/meu-grupo` o
+box voltou a ser **informativo** (o participante precisa saber QUANDO é, não
+decidir); em **Gerenciar grupo** ele fica logo abaixo do herói, com **"Ver a
+agenda da temporada"** recolhido — até 19 datas até 31/12, e despejá-las no topo
+enterraria o protagonista da tela, que é registrar presença.
+
+⚠️ O **modal virou CENTRADO** (era bottom sheet): subindo de baixo, o botão de
+cancelar encontro ficava **por cima da barra de navegação do Android** e não dava
+pra tocar; e o teclado, ao abrir no campo de motivo, cobria o próprio campo.
+Agora tem `KeyboardAvoidingView` + `automaticallyAdjustKeyboardInsets`.
+
+⚠️ **Afordância**: a 1ª versão marcava o box tocável com um `create-outline`
+**cinza de 18px sozinho**. Nem quem pediu a funcionalidade achou o caminho — o
+rótulo **"Alterar data"** é escrito.
+
 ### ⚠️⚠️ A régua é PURA e consertou um bug de UTC que já existia
 
 **`backend/utils/agendaGrupo.js`** (`proximasOcorrencias` / `proximoEncontro` ·
@@ -9213,6 +9308,83 @@ mexer no React.
   Indicadores · aba Cultos lê `vw_culto_stats` filtrada por área — decisão:
   dado de culto vive em `cultos.*`, não em dados_brutos). Líderes:
   Kids=Mariane · AMI=Arthur Cecconi · Bridge=Lillian Xavier · Online=Renata.
+
+## ⚠️⚠️ KPI · ZERO É DADO (2026-08-18 · migrations `20260818180000`, `190000`, `200000`)
+
+Pergunta do Matheus sobre o relatório semanal: *"diz que temos 45 KPIs manuais sem
+lançamento. Esses KPIs não podem ser alimentados de forma automática?"*
+
+**A premissa da pergunta não se sustentou, e é o achado principal:** dos 168 KPIs
+ativos, 86 estavam sem valor e **todos os 86 já passavam pelo cálculo automático
+todo dia**. Não existia KPI esperando alguém digitar — o `dados_brutos` inteiro
+tem 6 tipos e 89 linhas. O que existia eram três defeitos de LEITURA:
+
+1. ⚠️⚠️ **`vw_kpi_trajetoria_atual` descartava valor ZERO** (`ELSE valor > 0`).
+   Um KPI que calculou 0 — nenhum voluntário em treinamento, nenhum encontro no
+   mês — sumia da view e aparecia como "sem dado / pendente". Zero deixava de ser
+   resposta e virava omissão. ⚠️ A view irmã (`vw_kpi_taticos_status`) **sempre
+   aceitou zero**, então as duas já divergiam: o `> 0` era o desvio.
+   ⇒ Agora zero conta **em período FECHADO**. No período CORRENTE segue exigindo
+   `> 0`, de propósito: aceitar zero no mês em curso faria todo KPI mensal nascer
+   0 e vermelho no dia 1º — trocaria buraco por alarme falso.
+2. **Os 22 KPIs de SLA/NPS interno (`formula_config.fonte = 'solicitacoes'`)
+   nunca eram recalculados pelo cron.** `calcular_kpi` não sabe ler essa fonte
+   (exige numerador/denominador e devolve "formula_config incompleto"); quem sabe
+   é **`recalcular_kpi_adm`**, e o único chamador dela era o TRIGGER da tabela
+   `solicitacoes` — ou seja, o KPI só era recalculado quando alguém mexia numa
+   solicitação daquela área. `kpi_recalcular_todos()` passou a rotear a fonte
+   para `recalcular_kpi_adm` (período fechado **e** corrente).
+3. ⚠️⚠️ **`delta_abs` fabricava zero**: `COALESCE(atual,0) - COALESCE(anterior,0)`
+   devolve 0 quando **não há dado de lado nenhum**. Enquanto a view descartava
+   zero isso ficava escondido; com o item 1, 13 KPIs passariam a exibir "0,
+   medido" — eu teria trocado um buraco honesto por um número inventado, que é
+   pior (buraco a equipe investiga, número ela acredita). Agora os dois lados
+   nulos ⇒ NULL. O zero legítimo continua (tinha 5, agora 0 → −5).
+
+**Efeito medido: 82 → 105 KPIs com valor · 0 zeros falsos.**
+
+### `vw_kpi_sem_valor_motivo` — por que cada um dos 63 restantes está vazio
+
+View NOVA ao lado (não coluna dentro da trajetória: aquela é lida pelo painel,
+matriz, agentes e relatório — régua escondida ali obrigaria todo consumidor a
+entendê-la). Os motivos existem porque **o encaminhamento de cada um é diferente**:
+
+| motivo | qtd | o que é | quem resolve |
+|---|---|---|---|
+| `sem_demanda` | 30 | a conta foi feita e o denominador é **zero** — não chegou solicitação, não houve inscrição | ninguém · é o fato |
+| `sem_registro` | 23 | a operação existe e não é registrada no sistema | rotina da equipe |
+| `base_zero` | 2 | ⚠️ **TEM dado no período** (`dado_atual`), a fórmula é variação sobre zero | fórmula · dono do KPI |
+| `coletor_sem_resultado` | 4 | tem `fonte_auto` e o coletor não achou base — ⚠️ conferido: `cui_convertidos` tem 424 na sede, 1 no online e **zero** em AMI/Bridge | ninguém · é o fato |
+| `nunca_calculado` | 0 | sem fonte automática e sem linha nenhuma | configuração |
+| `indefinido` | 4 | NPS Culto: `tipo_calculo='manual'` com linha calculada antiga | — |
+
+⚠️ **Família INTEIRA de `fonte_auto` em `coletor_sem_resultado` é cron quebrado**;
+um KPI isolado é ausência de coorte. É assim que o `kpi-auditor` já agrupa — não
+trocar essa leitura por "o coletor está com problema" no caso isolado.
+
+⚠️ **`sem_demanda` NÃO entra em "cobertura de preenchimento"** — cobrar
+preenchimento ali é caçar fantasma. Os agentes `kpi-coletor` e `kpi-auditor`
+(`~/.claude/agents/`) foram atualizados para transportar o motivo e separar os
+achados por ele.
+
+### O que a medição desmentiu (registrado de propósito)
+
+- **"Ligar as fontes de voluntários"** — eu havia proposto isso ao Matheus. Não
+  havia o que ligar: `_kpi_agregar_dado` **já cobre** `voluntarios_ativos`,
+  `voluntarios_recuperados`, `voluntarios_inativos_3m`, `lideres_treinados`,
+  `lideres_acompanhados`, `frequencia_grupos`, `treinamentos_*`, capelania e
+  aconselhamento. O que falta é o FATO: `cui_pedidos` tem **0 linhas na história**,
+  ninguém tem `funcao='lider_treinamento'`, houve 3 encontros de grupo em 90 dias.
+- **"A função de cálculo não conhece a fonte `solicitacoes`"** — verdade sobre
+  `calcular_kpi` e **falso sobre o sistema**: `agg_solicitacoes_kpi` +
+  `recalcular_kpi_adm` existem e funcionam. Régua de método: antes de concluir que
+  algo não existe, procurar no CATÁLOGO por quem escreve o dado
+  (`pg_get_functiondef ilike '%…%'`), não só na função que eu abri primeiro.
+
+⚠️ **Resíduo declarado, NÃO consertado:** `calcular_kpi` no ramo `soma_periodo`
+**ignora o `p_periodo_referencia`** e sempre usa `current_date` — recalcular um
+mês fechado devolve o número de HOJE. Não entrou aqui porque mexer nisso muda
+valores de períodos já publicados; é decisão do Marcos/Matheus.
 
 ### ⚠️ Meta absoluta × periodicidade do KPI · regra importante
 

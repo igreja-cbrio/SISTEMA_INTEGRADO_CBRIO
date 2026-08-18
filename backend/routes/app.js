@@ -7,7 +7,7 @@ const { semCache } = require('../middleware/semCache');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
-const { proximasOcorrencias, proximoEncontro } = require('../utils/agendaGrupo');
+const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior } = require('../utils/agendaGrupo');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
@@ -3148,8 +3148,11 @@ router.get('/kids/minhas-solicitacoes', authApp, async (req, res) => {
 // as exceções de agenda. A versão anterior fazia `new Date().getDay()` — UTC no
 // Vercel —, então das 21h de domingo em diante o servidor achava que já era
 // segunda e pulava uma semana. Assinatura mantida; `excecoes` é opcional.
-function proximoEncontroISO(diaSemana, horario, excecoes) {
-  const p = proximoEncontro({ diaSemana, horario, excecoes: excecoes || [] });
+function proximoEncontroISO(diaSemana, horario, excecoes, recorrencia, ancoraISO) {
+  const p = proximoEncontro({
+    diaSemana, horario, recorrencia, ancoraISO: ancoraISO || null,
+    excecoes: excecoes || [],
+  });
   return p ? p.inicio : null;
 }
 
@@ -3160,7 +3163,7 @@ router.get('/meu-grupo', authApp, async (req, res) => {
   try {
     const membro = await resolveMembroApp(req);
     if (!membro) return res.json({ grupos: [] });
-    const GSEL = 'id, nome, dia_semana, horario, local, endereco, bairro, complemento, lat, lng, foto_url, lider_id';
+    const GSEL = 'id, nome, dia_semana, horario, recorrencia, local, endereco, bairro, complemento, lat, lng, foto_url, lider_id';
     // ⚠️ Consulta ISOLADA e best-effort: sem a migration aplicada, pedir a
     // tabela nova faria o PostgREST recusar a query INTEIRA e o líder ficaria
     // sem "meu grupo" (lição do parcelas_max). Falhou = agenda normal.
@@ -3200,6 +3203,9 @@ router.get('/meu-grupo', authApp, async (req, res) => {
     }
 
     await carregarExcecoes([...porId.keys()]);
+    // ⚠️ Quinzenal/mensal precisam da âncora (último encontro realizado) — sem
+    // ela a régua devolve 1 ocorrência marcada como incerta em vez de chutar.
+    const ancorasMeuGrupo = await ancorasDeGrupos([...porId.keys()]);
 
     const grupos = [];
     for (const { g, funcao } of porId.values()) {
@@ -3226,9 +3232,10 @@ router.get('/meu-grupo', authApp, async (req, res) => {
         local: g.local, endereco: g.endereco, bairro: g.bairro, complemento: g.complemento,
         lat: g.lat, lng: g.lng,
         foto_url: g.foto_url, funcao, lider,
-        proximo_encontro: proximoEncontroISO(g.dia_semana, g.horario, excecoesPorGrupo[g.id] || []),
+        proximo_encontro: proximoEncontroISO(g.dia_semana, g.horario, excecoesPorGrupo[g.id] || [], g.recorrencia, ancorasMeuGrupo[g.id]),
         proximas_ocorrencias: proximasOcorrencias({
           diaSemana: g.dia_semana, horario: g.horario,
+          recorrencia: g.recorrencia, ancoraISO: ancorasMeuGrupo[g.id] || null,
           excecoes: excecoesPorGrupo[g.id] || [], quantas: 6,
         }),
         materiais,
@@ -4835,6 +4842,41 @@ router.get('/grupos/:grupoId/visitas', authApp, limiterNormal, async (req, res) 
 // EXCEÇÃO. Mesmo gate dos outros endpoints de gerenciar grupo.
 // ⚠️ NÃO escreve em `mem_grupo_encontros`: aquela é o registro do que
 // ACONTECEU (com presenças) e alimenta os KPIs de frequência.
+// ⚠️ ÂNCORA da cadência: quinzenal/mensal não se derivam de `dia_semana`
+// sozinho ("de 14 em 14 às terças" não diz EM QUAL terça). A única evidência no
+// banco é o último encontro REALIZADO. Sem ela a régua devolve UMA ocorrência
+// marcada como incerta, em vez de listar uma agenda inteira que é palpite.
+// Best-effort: falhar aqui não pode derrubar a tela do grupo.
+async function ancorasDeGrupos(ids) {
+  const out = {};
+  if (!ids || !ids.length) return out;
+  try {
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await supabase.from('mem_grupo_encontros')
+        .select('grupo_id, data').in('grupo_id', ids.slice(i, i + 200))
+        .order('data', { ascending: false });
+      if (error) throw error;
+      for (const e of data || []) if (e.data && !out[e.grupo_id]) out[e.grupo_id] = String(e.data).slice(0, 10);
+    }
+  } catch (e) { console.warn('[APP] ancora de agenda indisponivel:', e.message); }
+  return out;
+}
+
+// Quantos dias à frente vale listar: até o fim da temporada aberta (o líder
+// pediu "todos os encontros da temporada"), com teto. Sem temporada aberta cai
+// em 120 dias — a tela não pode ficar vazia por falta de cadastro.
+async function janelaDaTemporada() {
+  try {
+    const { data, error } = await supabase.from('mem_temporadas')
+      .select('data_fim').eq('inscricoes_abertas', true).order('data_inicio', { ascending: false }).limit(1);
+    if (error) throw error;
+    const fim = data && data[0] && data[0].data_fim;
+    if (!fim) return 120;
+    const dias = Math.ceil((new Date(String(fim).slice(0, 10) + 'T12:00:00Z') - Date.now()) / 86400000);
+    return Math.max(30, Math.min(dias, 200));
+  } catch (e) { console.warn('[APP] temporada indisponivel:', e.message); return 120; }
+}
+
 router.get('/grupos/:grupoId/agenda', authApp, limiterNormal, async (req, res) => {
   try {
     const gid = req.params.grupoId;
@@ -4853,9 +4895,27 @@ router.get('/grupos/:grupoId/agenda', authApp, limiterNormal, async (req, res) =
       console.warn('[APP] agenda indisponivel:', e.message);
       return res.json({ ocorrencias: [], aviso: 'A agenda ainda não está disponível. Tente mais tarde.' });
     }
+    const ancoras = await ancorasDeGrupos([gid]);
+    const janelaDias = await janelaDaTemporada();
     res.json({
-      grupo: { id: g?.id, nome: g?.nome, dia_semana: g?.dia_semana, horario: g?.horario },
-      ocorrencias: proximasOcorrencias({ diaSemana: g?.dia_semana, horario: g?.horario, excecoes, quantas: 8 }),
+      grupo: {
+        id: g?.id, nome: g?.nome, dia_semana: g?.dia_semana,
+        horario: g?.horario, recorrencia: g?.recorrencia || 'semanal',
+      },
+      ocorrencias: proximasOcorrencias({
+        diaSemana: g?.dia_semana, horario: g?.horario,
+        recorrencia: g?.recorrencia, ancoraISO: ancoras[gid] || null,
+        excecoes, quantas: 40, janelaDias,
+      }),
+      // ⚠️ O herói da tela ("faltou registrar") precisa saber qual foi o
+      // ENCONTRO ANTERIOR com as exceções aplicadas. Ele calculava sozinho por
+      // dia_semana e cobrava um encontro que o líder já tinha remarcado.
+      // `null` = não há anterior, ou ela foi cancelada (sem pendência).
+      anterior: ocorrenciaAnterior({
+        diaSemana: g?.dia_semana, horario: g?.horario,
+        recorrencia: g?.recorrencia, ancoraISO: ancoras[gid] || null,
+        excecoes,
+      }),
     });
   } catch (e) {
     console.error('[APP] agenda:', e.message);
@@ -4899,6 +4959,47 @@ router.post('/grupos/:grupoId/agenda', authApp, limiterStrict, async (req, res) 
       if (!D.test(String(nova_data || ''))) return res.status(400).json({ error: 'Informe a nova data.' });
       if (nova_data < hojeBRT) return res.status(400).json({ error: 'A nova data não pode ser no passado.' });
       if (novo_horario && !/^\d{2}:\d{2}$/.test(String(novo_horario))) return res.status(400).json({ error: 'Horário inválido (use HH:MM).' });
+
+      // ⚠️⚠️ A JANELA É DECIDIDA AQUI, nunca no app: o payload diz QUAL
+      // encontro, jamais SE pode (mesma lei da aprovação em lote e do
+      // `ligar-lote`). O calendário do app já limita, mas bundle antigo,
+      // requisição na mão ou tela aberta por horas passariam direto.
+      // ⚠️ Falha ao MONTAR a agenda recusa (409), nunca libera: guarda que
+      // falha aberta é enfeite.
+      let janela = null;
+      try {
+        const { data: gAg } = await supabase.from('mem_grupos')
+          .select('dia_semana, horario, recorrencia').eq('id', gid).maybeSingle();
+        const anc = await ancorasDeGrupos([gid]);
+        const lista = proximasOcorrencias({
+          diaSemana: gAg?.dia_semana, horario: gAg?.horario,
+          recorrencia: gAg?.recorrencia, ancoraISO: anc[gid] || null,
+          excecoes: [], quantas: 40, janelaDias: 200,
+        });
+        janela = lista.find(o => o.data_original === data_original) || null;
+      } catch (e) {
+        console.warn('[APP] agenda janela:', e.message);
+      }
+      if (!janela) {
+        return res.status(409).json({
+          error: 'Não consegui conferir a agenda deste grupo agora. Tente de novo em instantes.',
+          codigo: 'janela_indisponivel',
+        });
+      }
+      if (!janela.pode_remarcar) {
+        return res.status(409).json({
+          error: 'Este encontro está colado no seguinte — não dá para remarcar. Se ele não vai acontecer, cancele.',
+          codigo: 'sem_janela',
+        });
+      }
+      if (nova_data < janela.remarcar_de || nova_data > janela.remarcar_ate) {
+        return res.status(409).json({
+          error: `A nova data precisa ficar entre ${janela.remarcar_de} e ${janela.remarcar_ate}. Para mover mais que isso, cancele este encontro.`,
+          codigo: 'fora_da_janela',
+          remarcar_de: janela.remarcar_de,
+          remarcar_ate: janela.remarcar_ate,
+        });
+      }
       linha.nova_data = nova_data;
       linha.novo_horario = novo_horario || null;
     } else {

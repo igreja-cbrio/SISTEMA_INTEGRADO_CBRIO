@@ -23,7 +23,7 @@ const { isAuthorizedCron } = require('../utils/cronAuth');
 const { AppError, ERROR_CODES } = require('../utils/appError');
 const { captureHandledException } = require('../utils/sentry');
 const { setSystemJobOutcome } = require('../services/systemJobOutcome');
-const { reconcileTransactions } = require('../services/santander/reconciliation');
+const { reconcileTransactions, summarizeInsertErrors } = require('../services/santander/reconciliation');
 
 function bankSyncError(error, publicMessage) {
   return new AppError(error?.message || publicMessage, {
@@ -204,6 +204,7 @@ async function handlerSync(req, res, next) {
     let inseridos = 0;
     let duplicados = reconciliation.existingRaw.size + reconciliation.existingFinal.size + reconciliation.duplicateInOrigin;
     let erros = 0;
+    const insertErrors = [];
 
     for (const t of extrato.transacoes) {
       const tipoTrn = Number(t.valor) >= 0 ? 'CREDIT' : 'DEBIT';
@@ -235,7 +236,10 @@ async function handlerSync(req, res, next) {
       const { error } = await supabase.from('fin_lancamentos_brutos').insert(payload);
       if (error) {
         if (error.code === '23505') duplicados++;
-        else erros++;
+        else {
+          erros++;
+          insertErrors.push(error);
+        }
       } else {
         inseridos++;
       }
@@ -261,7 +265,8 @@ async function handlerSync(req, res, next) {
     setSystemJobOutcome(res, erros > 0 ? {
       status: 'warning', effectStatus: 'failed', inputCount: extrato.transacoes.length,
       outputCount: inseridos, discardedCount: erros, errorCode: 'BANK_SYNC_PARTIAL',
-      errorMessage: `${erros} lancamentos nao foram inseridos.`, result: 'sincronizacao_parcial',
+      errorMessage: `${erros} lancamentos nao foram inseridos. ${summarizeInsertErrors(insertErrors)}`.trim(),
+      result: 'sincronizacao_parcial',
     } : {
       status: 'success', effectStatus: 'confirmed', inputCount: extrato.transacoes.length,
       outputCount: inseridos, discardedCount: 0, result: 'sincronizacao_concluida',

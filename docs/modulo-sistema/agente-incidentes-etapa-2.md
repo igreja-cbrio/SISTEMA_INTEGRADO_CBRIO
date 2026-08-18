@@ -2,8 +2,7 @@
 
 ## Estado
 
-Concluída em código em 2026-08-17. A publicação depende do fluxo normal de
-branch, CI e deploy. Não há migration nem variável obrigatória nova.
+Publicada em 2026-08-17. Não há migration nem variável obrigatória nova.
 
 ## Fluxo
 
@@ -44,10 +43,9 @@ continua funcionando e o diagnóstico informa que está desabilitado.
 
 ## Fora do escopo
 
-A etapa 2 não corrige bugs automaticamente. Correção assistida/autônoma é uma
-etapa futura e precisa definir, antes de qualquer implementação, sandbox,
-aprovação humana, testes obrigatórios, rollback, limites de arquivos e ações
-sempre proibidas (migrations destrutivas, autenticação, financeiro e produção).
+A etapa 2 não corrige bugs. A continuação assistida, com aprovação humana e
+limites explícitos, está documentada na
+[Etapa 3](./agente-incidentes-etapa-3.md).
 
 ## Validação
 

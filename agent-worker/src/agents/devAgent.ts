@@ -6,9 +6,9 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { supabase } from "../supabase.js";
 import { montarSystemPrompt } from "../instrucoes.js";
-import { createDevBoardTools, buscarTarefa, claimTarefa, atualizarTarefa, registrarEventoTarefa, comentarTarefa, orcamentoDisponivel, notificarBugCorrigidoNoApp } from "../tools/devBoard.js";
-import { createDevFileTools } from "../tools/devFiles.js";
-import { prepararWorkspace, commitar, push, abrirPr, aguardarChecks, diffNomeArquivos, diffConteudo, slugDaTarefa, mergearPr } from "../tools/devGit.js";
+import { createDevBoardTools, buscarTarefa, claimTarefa, atualizarTarefa, registrarEventoTarefa, comentarTarefa, orcamentoDisponivel, notificarBugCorrigidoNoApp, isSystemIncidentCorrection } from "../tools/devBoard.js";
+import { createDevFileTools, validarCaminhoCorrecao } from "../tools/devFiles.js";
+import { prepararWorkspace, prepararDiff, commitar, push, abrirPr, aguardarChecks, diffNomeArquivos, diffConteudo, slugDaTarefa, mergearPr } from "../tools/devGit.js";
 import { aplicarMigrations } from "../tools/devDb.js";
 
 // Agente Dev · FASE 2 · runner completo (Bloco 1) + FLUXO PRÁTICO DE BUGS.
@@ -204,6 +204,14 @@ export async function runDevAgent(opts: { triggeredBy?: string | null; config?: 
   //  - qualquer outra (incl. bug aprovado) → FASE B (execução, claim agendada)
   const ehBug = tarefa.classe === "bug";
   const faseDiagnostico = ehBug && !tarefa.diagnostico;
+  let ehCorrecaoIncidente = false;
+  if (!faseDiagnostico && tarefa.classe === "dev" && tarefa.diagnostico) {
+    try {
+      ehCorrecaoIncidente = await isSystemIncidentCorrection(taskId);
+    } catch (e) {
+      return { runId: null, status: "failed", summary: `Falha validando origem da correção: ${(e as Error).message}`, tokens_input: 0, tokens_output: 0, cost_usd: 0, error: (e as Error).message };
+    }
+  }
   if (faseDiagnostico) {
     if (tarefa.status !== "nova") {
       return { runId: null, status: "cancelled", summary: `Tarefa ${taskId} em status '${tarefa.status}' (diagnóstico espera nova)`, tokens_input: 0, tokens_output: 0, cost_usd: 0 };
@@ -298,14 +306,20 @@ export async function runDevAgent(opts: { triggeredBy?: string | null; config?: 
     // 8 · tools + system prompt
     const { tools: boardTools, toolNames: boardToolNames } = createDevBoardTools(taskId);
     // Fase de diagnóstico: SOMENTE leitura (nenhuma tool de escrita é exposta).
-    const { tools: fileTools, toolNames: fileToolNames, getTocados } = createDevFileTools(workspaceDir, { readonly: faseDiagnostico });
+    const { tools: fileTools, toolNames: fileToolNames, getTocados } = createDevFileTools(workspaceDir, {
+      readonly: faseDiagnostico,
+      writePolicy: ehCorrecaoIncidente ? "incident_correction" : "default",
+    });
     const devServer = createSdkMcpServer({ name: "dev", version: "0.1.0", tools: [...fileTools, ...boardTools] });
 
     const skill = loadSkill();
     const systemPrompt = await montarSystemPrompt(AGENT_TYPE, skill);
+    const tarefaComContexto = ehCorrecaoIncidente
+      ? { ...tarefa, descricao: `${tarefa.descricao}\n\nDIAGNOSTICO APROVADO:\n${tarefa.diagnostico}\n\nCONTRATO DA ETAPA 3: altere no maximo 6 arquivos; somente backend/routes, backend/services, backend/utils, backend/config ou src; autenticacao, financeiro, pagamentos, Santander, automacao do Sistema, migrations e infraestrutura sao proibidos. Termine em PR sem merge/deploy.` }
+      : tarefa;
     const userPrompt = faseDiagnostico
       ? montarPromptDiagnostico(tarefa, workspaceDir)
-      : montarPrompt(tarefa, workspaceDir, ehBug);
+      : montarPrompt(tarefaComContexto, workspaceDir, ehBug);
     const allowedTools = [...fileToolNames, ...boardToolNames];
 
     const stream = query({
@@ -380,6 +394,8 @@ export async function runDevAgent(opts: { triggeredBy?: string | null; config?: 
       const erro = await nodeCheck(path.join(workspaceDir, f));
       if (erro) throw new Error(`G1: sintaxe inválida em ${f}: ${erro.split("\n")[0]}`);
     }
+    // O diff de segurança precisa estar staged antes das leituras --cached.
+    await prepararDiff(workspaceDir);
     const diff = await diffConteudo(workspaceDir);
     const segredos = detectarSegredos(diff);
     if (segredos.length) throw new Error(`G1: segredo detectado no diff (${segredos.join(", ")}) — abortado`);
@@ -388,6 +404,11 @@ export async function runDevAgent(opts: { triggeredBy?: string | null; config?: 
     if (proibidos.length) throw new Error(`G1: arquivos proibidos no diff: ${proibidos.join(", ")}`);
     const temMigration = nomes.some((f) => f.startsWith("supabase/migrations/"));
     if (!tocados.length) throw new Error("Nenhum arquivo foi alterado — nada para commitar");
+    if (ehCorrecaoIncidente) {
+      if (nomes.length > 6) throw new Error(`Etapa 3: limite de 6 arquivos excedido (${nomes.length})`);
+      for (const nome of nomes) validarCaminhoCorrecao(nome);
+      if (temMigration) throw new Error("Etapa 3: migrations sao proibidas em correcoes assistidas");
+    }
 
     // 10 · commit + push + PR
     const { commit, testPlan } = parseFinal(summary);

@@ -298,6 +298,10 @@ const entradasRouter = require('./routes/nextBatismo');
 app.use('/api/entradas', entradasRouter);
 app.use('/api/next-batismo', entradasRouter); // alias legado (nome antigo · bundles em cache / bookmarks)
 app.use('/api/governanca', require('./routes/governanca'));
+// Porta própria da ATA Semanal: aberta a todo colaborador, escopada ao tipo
+// Ministerial. Não reusa /api/governanca porque aquele exige o módulo
+// 'governanca' (Conselho, Diretoria, DRE, Assembleia) — ver routes/ataSemanal.js.
+app.use('/api/ata-semanal', require('./routes/ataSemanal'));
 app.use('/api/processos', require('./routes/processos'));
 app.use('/api/tarefas', require('./routes/tarefas'));
 app.use('/api/jornada', require('./routes/jornada'));

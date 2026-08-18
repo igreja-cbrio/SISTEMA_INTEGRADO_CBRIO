@@ -2260,6 +2260,17 @@ export const totemKids = {
   },
 };
 
+// ATA Semanal · porta própria (aberta a todo colaborador).
+// NÃO usar `governanca.*` aqui: aquele backend exige o módulo 'governanca',
+// que dá acesso junto a Conselho, Diretoria, DRE e Assembleia.
+export const ataSemanal = {
+  colaboradores: () => get('/ata-semanal/colaboradores'),
+  reunioes:      () => get('/ata-semanal/reunioes'),
+  reuniao:       (id) => get(`/ata-semanal/reunioes/${id}`),
+  salvarTarefa:  (id, data) => patch(`/ata-semanal/tarefas/${id}`, data),
+  enviarParaMinhasTarefas: (id) => post(`/ata-semanal/tarefas/${id}/enviar`, {}),
+};
+
 export const permissoes = {
   bustCache: () => post('/permissoes/cache/bust', {}),
   estrutura: () => get('/permissoes/estrutura'),
@@ -3477,6 +3488,9 @@ export const voluntariado = {
     manha: (data) => post('/voluntariado/check-ins/manha', data),
   },
   cultosManha: () => get('/voluntariado/cultos-manha'),
+  // Fase 1 da saída do Planning Center: liga voluntário a mem_membros pelo
+  // matcher canônico. `aplicar: false` (default) só simula.
+  vincularMembros: (body) => post('/voluntariado/vincular-membros', body || {}),
   updateProfileContact: (id, data) => put(`/voluntariado/profiles/${id}/contact`, data),
   // QR code lookup
   qrLookup: (qr_code) => post('/voluntariado/qr-lookup', { qr_code }),
@@ -3535,6 +3549,7 @@ export const voluntariado = {
     syncMembersFromSchedules: () => post('/voluntariado/teams-manage/sync-members-from-schedules'),
     // De-para "team" do Planning Center -> (equipe, função) daqui.
     pendenciasPco: () => get('/voluntariado/teams-manage/pendencias-pco'),
+
     mapaPco: () => get('/voluntariado/teams-manage/mapa-pco'),
     mapearPco: (data) => post('/voluntariado/teams-manage/mapa-pco', data),
   },

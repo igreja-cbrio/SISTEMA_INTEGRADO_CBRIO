@@ -79,7 +79,7 @@ async function serverErrorEvidence(incident, db) {
 
 async function jobEvidence(incident, db) {
   const runs = await rows(db.from('system_job_runs')
-    .select('job_id,status,effect_status,error_code,error_message,result_summary,request_id,started_at,finished_at,duration_ms')
+    .select('job_id,status,effect_status,input_count,output_count,discarded_count,error_code,error_message,metadata,request_id,started_at,finished_at,duration_ms')
     .eq('job_id', incident.source_ref)
     .order('started_at', { ascending: false })
     .limit(8));

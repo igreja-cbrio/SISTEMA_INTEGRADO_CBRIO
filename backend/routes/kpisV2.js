@@ -40,7 +40,14 @@ async function autorizaCron(req, res, next) {
 // calculados (dado_tipo · kpi_valores_calculados) — rede de segurança pros
 // gatilhos por tabela (cobre cascatas em trigger depth>1 e fontes sem gatilho).
 async function coletarERecalcular() {
-  const resultados = await coletarTodos();
+  // `fecharAnterior`: cada rodada reprocessa o período CORRENTE e o ANTERIOR.
+  //
+  // Sem isso, um mês era congelado no estado em que estivesse no dia 1º e nunca
+  // mais revisitado — e como o financeiro importa o balanço semanalmente, tudo
+  // que chegava depois da virada ficava fora do KPI para sempre. Medido em
+  // 18/08/2026: julho fechou com R$ 905.781 em 2.619 doações quando o real era
+  // R$ 948.337 em 2.688. O mesmo vale para qualquer fonte com dado atrasado.
+  const resultados = await coletarTodos({ fecharAnterior: true });
   const ok = resultados.filter(r => r.status === 'ok').length;
   // NPS → dados_brutos: re-sincroniza o agregado das pesquisas recentes ANTES
   // do recálculo geral (rede de segurança pro colapso do canal público — o
