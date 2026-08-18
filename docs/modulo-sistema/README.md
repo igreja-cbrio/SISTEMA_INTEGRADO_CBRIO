@@ -19,10 +19,10 @@ Documentação de arquitetura e execução do command center técnico do CBRio.
 | Etapa | Estado | Entrega |
 |---|---|---|
 | 1 · Triagem | publicada | agrupa erros e feedbacks, abre incidentes e inicia investigação sem ação corretiva |
-| 2 · Diagnóstico consultivo | concluída em código · publicação pendente | especialistas por fonte, evidências sanitizadas, hipótese estruturada e trilha auditável |
-| 3 · Correção assistida | não iniciada | qualquer alteração de código, dados ou produção continua bloqueada e exigirá contrato próprio |
+| 2 · Diagnóstico consultivo | publicada | especialistas por fonte, evidências sanitizadas, hipótese estruturada e trilha auditável |
+| 3 · Correção assistida | concluída em código · publicação pendente | elegibilidade restrita, aprovação humana, sandbox de escrita, PR e CI sem merge/deploy automático |
 
-Detalhes e limites da etapa atual: [Agente de incidentes · Etapa 2](./agente-incidentes-etapa-2.md).
+Detalhes e limites da etapa atual: [Agente de incidentes · Etapa 3](./agente-incidentes-etapa-3.md).
 
 ## Artefatos da Etapa 0
 
@@ -40,6 +40,7 @@ Detalhes e limites da etapa atual: [Agente de incidentes · Etapa 2](./agente-in
 ## Artefatos da Etapa 3
 
 - [Web completa e ordem segura de ativação](./etapa-3-web-completa.md)
+- [Agente de incidentes · correção assistida](./agente-incidentes-etapa-3.md)
 
 ## Artefatos da Etapa 4
 

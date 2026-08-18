@@ -17,6 +17,25 @@ const MAX_WRITE_BYTES = 500_000;
 
 const DENY_NAME = /^\.env($|\.)/;
 const DENY_PART = /(^|\/)(\.git)(\/|$)/;
+export type DevWritePolicy = 'default' | 'incident_correction';
+
+const INCIDENT_ALLOWED_ROOTS = [
+  'backend/routes/',
+  'backend/services/',
+  'backend/utils/',
+  'backend/config/',
+  'src/',
+];
+const INCIDENT_PROTECTED = [
+  /(^|\/)[^/]*auth[^/]*(\/|$)/i,
+  /(^|\/)[^/]*(financ|pagament|payment|billing|checkout|pix|stripe|pagarme|santander)[^/]*(\/|$)/i,
+  /^backend\/middleware\//i,
+  /^backend\/agents\//i,
+  /^backend\/(routes|services)\/sistema/i,
+  /^backend\/services\/systemIncident/i,
+  /^src\/pages\/admin\/AssistenteIA\.jsx$/i,
+  /^src\/pages\/sistema\//i,
+];
 
 function ok(payload: unknown) {
   return {
@@ -43,11 +62,38 @@ export function resolverCaminho(workspaceDir: string, rel: string): string {
   if (DENY_NAME.test(path.basename(alvo))) {
     throw new Error(`arquivo de segredo não pode ser lido/escrito: ${rel}`);
   }
+  const baseReal = fs.realpathSync(base);
+  let existente = alvo;
+  while (!fs.existsSync(existente) && path.dirname(existente) !== existente) {
+    existente = path.dirname(existente);
+  }
+  const existenteReal = fs.realpathSync(existente);
+  if (existenteReal !== baseReal && !existenteReal.startsWith(baseReal + path.sep)) {
+    throw new Error(`link simbolico aponta para fora do workspace: ${rel}`);
+  }
   return alvo;
 }
 
-export function createDevFileTools(workspaceDir: string, opts: { readonly?: boolean } = {}) {
+export function validarCaminhoCorrecao(rel: string): string {
+  const normalizado = path.posix.normalize(rel.replace(/\\/g, '/').replace(/^\.\//, ''));
+  if (!INCIDENT_ALLOWED_ROOTS.some((root) => normalizado.startsWith(root))) {
+    throw new Error(`Etapa 3: escrita fora do escopo permitido: ${rel}`);
+  }
+  if (INCIDENT_PROTECTED.some((pattern) => pattern.test(normalizado))) {
+    throw new Error(`Etapa 3: arquivo protegido: ${rel}`);
+  }
+  return normalizado;
+}
+
+export function createDevFileTools(
+  workspaceDir: string,
+  opts: { readonly?: boolean; writePolicy?: DevWritePolicy } = {}
+) {
   const tocados = new Set<string>();
+
+  const validarEscrita = (caminho: string) => {
+    if (opts.writePolicy === 'incident_correction') validarCaminhoCorrecao(caminho);
+  };
 
   const lerArquivo = tool(
     "dev_ler_arquivo",
@@ -75,6 +121,7 @@ export function createDevFileTools(workspaceDir: string, opts: { readonly?: bool
     { caminho: z.string().min(1).max(500), conteudo: z.string().max(MAX_WRITE_BYTES) },
     async ({ caminho, conteudo }) => {
       try {
+        validarEscrita(caminho);
         const alvo = resolverCaminho(workspaceDir, caminho);
         if (Buffer.byteLength(conteudo, "utf8") > MAX_WRITE_BYTES) {
           return fail(`conteúdo grande demais (limite ${MAX_WRITE_BYTES} bytes)`);
@@ -99,6 +146,7 @@ export function createDevFileTools(workspaceDir: string, opts: { readonly?: bool
     },
     async ({ caminho, antigo, novo }) => {
       try {
+        validarEscrita(caminho);
         const alvo = resolverCaminho(workspaceDir, caminho);
         const original = fs.readFileSync(alvo, "utf8");
         const ocorrencias = original.split(antigo).length - 1;
