@@ -17,7 +17,7 @@
 const { supabase } = require('../utils/supabase');
 const { donosDoGrupoApp } = require('./gruposDestinatarios');
 const { notificarApp } = require('./appPush');
-const { avisoPedidoNovo } = require('../utils/avisoGrupoApp');
+const { avisoPedidoNovo, avisoSaida } = require('../utils/avisoGrupoApp');
 
 /**
  * Avisa no app do MEMBRO que existe pedido novo no grupo dele.
@@ -61,4 +61,30 @@ async function avisarPedidoNovoNoApp({ grupoId, pedidoId, grupoNome, pessoaNome 
   }
 }
 
-module.exports = { avisarPedidoNovoNoApp };
+
+/**
+ * Avisa no app do LÍDER que alguém saiu do grupo.
+ * ⚠️ NUNCA LANÇA — a saída já está registrada; aviso que falha não pode desfazê-la.
+ */
+async function avisarSaidaNoApp({ grupoId, grupoNome, pessoaNome, dia }) {
+  try {
+    if (!grupoId) return { ok: false, motivo: 'sem_referencia' };
+    let nome = grupoNome;
+    if (!nome) {
+      const { data: g } = await supabase
+        .from('mem_grupos').select('nome').eq('id', grupoId).maybeSingle();
+      nome = g?.nome || null;
+    }
+    const aviso = avisoSaida({ grupoId, grupoNome: nome, pessoaNome, dia });
+    if (!aviso) return { ok: false, motivo: 'sem_referencia' };
+    const alvos = await donosDoGrupoApp(grupoId);
+    if (!alvos.length) return { ok: true, motivo: 'sem_dono_com_app', alvos: 0 };
+    const r = await notificarApp(alvos, aviso);
+    return { ok: true, alvos: alvos.length, enviados: r?.enviados ?? 0 };
+  } catch (e) {
+    console.warn(`[gruposAvisoApp] saida grupo ${grupoId}:`, e.message);
+    return { ok: false, motivo: 'erro' };
+  }
+}
+
+module.exports = { avisarPedidoNovoNoApp, avisarSaidaNoApp };

@@ -76,4 +76,32 @@ function avisoPedidoNovo({ pedidoId, grupoId, grupoNome, pessoaNome }) {
   };
 }
 
-module.exports = { avisoPedidoNovo, primeiroNome, TIPOS_ROTEADOS_HOJE };
+/**
+ * O aviso de que ALGUÉM SAIU do grupo (pedido da Naná · 18/08).
+ *
+ * ⚠️ Vai para o LÍDER, nunca para o roster: expor a saída de uma pessoa a todo
+ * o grupo seria constrangê-la por automação. Quem decide se procura é quem
+ * conduz.
+ *
+ * ⚠️ O tipo `grupo_saida` entra JUNTO com o OTA que o ensina aos DOIS mapas do
+ * app (`notifTap.ts` e o `abrir()` de `notificacoes.tsx`, mais ícone e
+ * categoria). Foi por isso que ele não entrou na leva de 11/08 — tipo que só um
+ * mapa conhece cai em "Outros" e o toque não leva a lugar nenhum.
+ *
+ * ⚠️ `chaveDedup` amarra ao PAR (grupo, pessoa) + DIA: sair e voltar no mesmo
+ * dia não vira dois avisos, mas sair de novo semanas depois vira.
+ */
+function avisoSaida({ grupoId, grupoNome, pessoaNome, dia }) {
+  if (!grupoId || !dia) return null;
+  const nome = primeiroNome(pessoaNome);
+  const grupo = String(grupoNome ?? '').trim() || 'seu grupo';
+  return {
+    tipo: 'grupo_saida',
+    titulo: `${nome} saiu do grupo`,
+    body: `${nome} saiu de ${grupo}.`,
+    data: { grupo_id: grupoId },
+    chaveDedup: `grupo_saida:${grupoId}:${String(pessoaNome ?? '').trim() || 'sem-nome'}:${dia}`,
+  };
+}
+
+module.exports = { avisoPedidoNovo, avisoSaida, primeiroNome, TIPOS_ROTEADOS_HOJE };
