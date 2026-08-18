@@ -1212,6 +1212,63 @@ const TOQUE_META = {
   cadastro: { icon: UserPlus,   cor: '#6B7280', label: 'Cadastro' },
 };
 
+// ⚠️ O que FALTA pro cadastro da pessoa fechar, e o caminho de resolver.
+//
+// Decisão do Marcos (18/08): "todas as pessoas que entram em algum lugar do
+// sistema exceto conversões a partir de agora devem ter todos os dados
+// completos." Onde há formulário, a porta passou a exigir. Onde o atendimento
+// não pode parar — o totem do Kids no domingo — a pessoa entra e a fila cobra:
+// é este bloco.
+//
+// ⚠️ A régua vem do SERVIDOR (`avaliarCadastroPessoa`, o espelho de
+// `fn_membro_cadastro_completo`). A tela não recalcula nada: uma segunda régua de
+// "completo" divergiria e a equipe deixaria de confiar nas duas.
+//
+// ⚠️ Mostra o que falta, NUNCA o valor de CPF/e-mail — o payload nem os traz.
+function CadastroIncompleto({ id, cadastro }) {
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+  if (!cadastro || cadastro.completo) return null;
+  const faltam = cadastro.rotulos || cadastro.faltando || [];
+
+  const pedir = async () => {
+    setEnviando(true);
+    try {
+      const r = await api.pedirDados(id);
+      setEnviado(true);
+      toast.success(r?.canal ? `Pedido enviado por ${r.canal}` : 'Pedido de dados enviado');
+    } catch (e) {
+      // 409 = a régua recusou (sem contato alcançável, ou convite já enviado na
+      // rodada). Não é erro do servidor, então o texto tem que dizer o motivo.
+      toast.error(e?.message || 'Não foi possível enviar agora');
+    } finally { setEnviando(false); }
+  };
+
+  return (
+    <div className="rounded-lg border border-amber-300/60 bg-amber-500/5 p-3 mb-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase font-bold tracking-wide text-amber-700 dark:text-amber-400">
+            Cadastro incompleto
+          </div>
+          <div className="text-sm text-foreground mt-0.5">
+            Falta: <strong>{faltam.join(' · ')}</strong>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-1">
+            O pedido vai <strong>pra própria pessoa</strong>, pelo contato dela, com o cadastro já
+            preenchido pra ela completar. Ninguém digita dado de terceiro.
+          </p>
+        </div>
+        <Button size="sm" variant="outline" className="h-8 text-xs shrink-0 gap-1.5"
+          onClick={pedir} disabled={enviando || enviado}>
+          {enviando ? <Loader2 className="size-3.5 animate-spin" /> : <Mail className="size-3.5" />}
+          {enviado ? 'Enviado' : 'Pedir os dados'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function FichaEntrada({ id, onClose, onVerFicha }) {
   const open = !!id;
   const { data, isLoading } = useQuery({
@@ -1263,6 +1320,7 @@ function FichaEntrada({ id, onClose, onVerFicha }) {
             </DialogHeader>
 
             <div className="flex-1 overflow-y-auto min-h-0">
+            <CadastroIncompleto id={id} cadastro={data?.cadastro} />
             {pm && (
               <div className="rounded-lg border p-3 flex items-center gap-3" style={{ borderLeft: `3px solid ${pm.cor}` }}>
                 <div className="size-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: pm.cor + '1A' }}>

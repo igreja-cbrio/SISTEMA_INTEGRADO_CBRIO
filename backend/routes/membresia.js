@@ -3527,8 +3527,15 @@ async function aprovarCadastroCore({
 
     // Campos que PODEM existir em mem_membros (depende de quais migrations rodaram).
     // Se PostgREST reclamar de coluna ausente, retiramos e tentamos de novo.
+    // ⚠️ `genero` entrou em 18/08. Ele FALTAVA aqui, e a aprovação perdia o sexo
+    // que o cadastro pendente já tinha: casos reais Janice Pinto e Aline Adão da
+    // Fonseca, aprovadas em lote em 12/08 02:36 com `genero: feminino` no pendente
+    // (censo por QR de 11/08) e o membro criado sem sexo. Vale nos DOIS caminhos:
+    // na criação é ganho puro; na ATUALIZAÇÃO ele sobrescreve, que é a semântica
+    // já documentada daquele ramo (reaplica o formulário inteiro, decisão humana
+    // com o dado na tela) — não estou inventando política nova pra este campo.
     const cadFields = [
-      'nome', 'cpf', 'email', 'telefone', 'data_nascimento', 'estado_civil',
+      'nome', 'cpf', 'email', 'telefone', 'data_nascimento', 'genero', 'estado_civil',
       'endereco', 'bairro', 'cidade', 'cep', 'profissao',
     ];
 

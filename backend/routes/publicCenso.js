@@ -552,6 +552,12 @@ router.post('/:slug/responder', submitLimiter, async (req, res) => {
           telefone: porCampo.telefone,
           nome: porCampo.nome,
           dataNascimento: porCampo.data_nascimento,
+          // ⚠️ `genero` repassado desde 18/08. O censo é construtor de pesquisa:
+          // a pergunta que tiver `preenche_de = 'genero'` cai aqui sozinha, então
+          // isto NÃO exige mudança de código quando o sexo virar pergunta — só
+          // faltava o funil aceitar o campo. Sem pergunta de sexo na pesquisa,
+          // `porCampo.genero` é undefined e o matcher trata como ausente.
+          genero: porCampo.genero,
         });
         if (hit?.membro_id) {
           membroId = hit.membro_id;
@@ -582,6 +588,12 @@ router.post('/:slug/responder', submitLimiter, async (req, res) => {
           email: porCampo.email,
           telefone: porCampo.telefone,
           dataNascimento: porCampo.data_nascimento,
+          // ⚠️ `genero` repassado desde 18/08. O censo é construtor de pesquisa:
+          // a pergunta que tiver `preenche_de = 'genero'` cai aqui sozinha, então
+          // isto NÃO exige mudança de código quando o sexo virar pergunta — só
+          // faltava o funil aceitar o campo. Sem pergunta de sexo na pesquisa,
+          // `porCampo.genero` é undefined e o matcher trata como ausente.
+          genero: porCampo.genero,
           status: 'visitante',
           origem: 'censo',
           origemId: envioId || null,
