@@ -2268,6 +2268,7 @@ export const ataSemanal = {
   reunioes:      () => get('/ata-semanal/reunioes'),
   reuniao:       (id) => get(`/ata-semanal/reunioes/${id}`),
   salvarTarefa:  (id, data) => patch(`/ata-semanal/tarefas/${id}`, data),
+  enviarParaMinhasTarefas: (id) => post(`/ata-semanal/tarefas/${id}/enviar`, {}),
 };
 
 export const permissoes = {
