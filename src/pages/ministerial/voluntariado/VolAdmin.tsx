@@ -299,7 +299,6 @@ function PlanningCenterSwitch() {
 type RelatorioVinculo = {
   aplicado: boolean;
   analisados: number;
-  sem_membro_total: number;
   ligados: number;
   por_chave: Record<string, number>;
   conflitos: number;
@@ -307,6 +306,14 @@ type RelatorioVinculo = {
   exemplos_ligados: { nome: string; por: string }[];
   exemplos_conflitos: { nome: string; disputa_com: string }[];
   exemplos_sem_match: { nome: string }[];
+};
+
+/** Um lote do cursor do servidor. */
+type LoteVinculo = Omit<RelatorioVinculo, 'aplicado'> & {
+  offset: number;
+  proximo_offset: number | null;
+  total: number | null;
+  membros_ligados: string[];
 };
 
 /**
@@ -319,16 +326,58 @@ type RelatorioVinculo = {
  */
 function VincularMembrosCard() {
   const [rel, setRel] = useState<RelatorioVinculo | null>(null);
+  const [rodando, setRodando] = useState(false);
+  const [progresso, setProgresso] = useState<{ feitos: number; total: number } | null>(null);
 
-  const rodar = useMutation({
-    mutationFn: (aplicar: boolean) => voluntariado.vincularMembros({ aplicar }) as Promise<RelatorioVinculo>,
-    onSuccess: (r) => {
-      setRel(r);
-      if (r.aplicado) toast.success(`${r.ligados} voluntário(s) ligados ao cadastro de pessoa`);
-      else toast.info(`Simulação: ${r.ligados} de ${r.analisados} teriam vínculo`);
-    },
-    onError: (e: Error) => toast.error(e?.message || 'Erro ao vincular'),
-  });
+  /**
+   * ⚠️ Percorre o CURSOR do servidor, um lote por vez.
+   *
+   * O matcher faz de 4 a 8 idas ao banco por pessoa; os ~490 perfis numa
+   * requisição só estouravam os 300s da função e morriam sem devolver nada —
+   * nem o que já tinha casado. Aqui cada lote volta pequeno e o total vai sendo
+   * somado na tela, então uma queda no meio custa um lote, não a rodada.
+   */
+  async function percorrer(aplicar: boolean) {
+    setRodando(true);
+    setProgresso({ feitos: 0, total: 0 });
+    const soma: RelatorioVinculo = {
+      aplicado: aplicar, analisados: 0, ligados: 0, conflitos: 0, sem_match: 0,
+      por_chave: {}, exemplos_ligados: [], exemplos_conflitos: [], exemplos_sem_match: [],
+    };
+    const tomados: string[] = [];
+    let offset: number | null = 0;
+    try {
+      while (offset !== null) {
+        const r: LoteVinculo = await voluntariado.vincularMembros({
+          aplicar, offset, ja_tomados: tomados,
+        });
+        soma.analisados += r.analisados;
+        soma.ligados += r.ligados;
+        soma.conflitos += r.conflitos;
+        soma.sem_match += r.sem_match;
+        for (const [k, n] of Object.entries(r.por_chave || {})) soma.por_chave[k] = (soma.por_chave[k] || 0) + n;
+        // Amostra: os primeiros que aparecerem, não os do último lote.
+        if (soma.exemplos_ligados.length < 15) soma.exemplos_ligados.push(...r.exemplos_ligados);
+        if (soma.exemplos_conflitos.length < 15) soma.exemplos_conflitos.push(...r.exemplos_conflitos);
+        if (soma.exemplos_sem_match.length < 15) soma.exemplos_sem_match.push(...r.exemplos_sem_match);
+        tomados.push(...(r.membros_ligados || []));
+        setProgresso({ feitos: (r.offset ?? 0) + r.analisados, total: r.total ?? 0 });
+        setRel({ ...soma });
+        offset = r.proximo_offset;
+      }
+      toast[aplicar ? 'success' : 'info'](
+        aplicar
+          ? `${soma.ligados} voluntário(s) ligados ao cadastro de pessoa`
+          : `Simulação: ${soma.ligados} de ${soma.analisados} teriam vínculo`,
+      );
+    } catch (e) {
+      // ⚠️ O que já foi processado FICA na tela. Numa rodada de aplicar, os
+      // lotes anteriores já gravaram — dizer só "deu erro" esconderia isso.
+      toast.error(`${(e as Error)?.message || 'Erro'} — ${soma.ligados} já processado(s) antes da falha`);
+    } finally {
+      setRodando(false);
+    }
+  }
 
   return (
     <Card>
@@ -344,27 +393,30 @@ function VincularMembrosCard() {
           Quem não casa com ninguém fica como está, para decisão humana.
         </p>
 
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" disabled={rodar.isPending}
-            onClick={() => rodar.mutate(false)}>
-            {rodar.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" disabled={rodando} onClick={() => percorrer(false)}>
+            {rodando && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
             Simular
           </Button>
-          {rel && !rel.aplicado && rel.ligados > 0 && (
-            <Button size="sm" className="bg-[#00B39D] hover:bg-[#00B39D]/90" disabled={rodar.isPending}
+          {rel && !rel.aplicado && rel.ligados > 0 && !rodando && (
+            <Button size="sm" className="bg-[#00B39D] hover:bg-[#00B39D]/90"
               onClick={() => {
                 if (!confirm(`Ligar ${rel.ligados} voluntário(s) ao cadastro de pessoa?\n\nOs ${rel.conflitos} conflito(s) e os ${rel.sem_match} sem correspondência NÃO são tocados.`)) return;
-                rodar.mutate(true);
+                percorrer(true);
               }}>
               Aplicar nos {rel.ligados}
             </Button>
+          )}
+          {rodando && progresso && progresso.total > 0 && (
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {progresso.feitos} de {progresso.total}
+            </span>
           )}
         </div>
 
         {rel && (
           <div className="space-y-3 pt-1">
             <div className="flex flex-wrap gap-2">
-              <Badge variant="outline">{rel.sem_membro_total} sem cadastro</Badge>
               <Badge variant="default">{rel.ligados} com correspondência</Badge>
               <Badge variant="outline">{rel.conflitos} em conflito</Badge>
               <Badge variant="outline">{rel.sem_match} sem pista</Badge>
@@ -377,7 +429,7 @@ function VincularMembrosCard() {
               <div>
                 <p className="text-xs font-medium mb-1">Casaram (amostra)</p>
                 <ul className="text-xs text-muted-foreground space-y-0.5">
-                  {rel.exemplos_ligados.map((e, i) => (
+                  {rel.exemplos_ligados.slice(0, 15).map((e, i) => (
                     <li key={i}>{e.nome} <span className="opacity-60">· por {e.por}</span></li>
                   ))}
                 </ul>
@@ -386,12 +438,12 @@ function VincularMembrosCard() {
 
             {rel.exemplos_conflitos.length > 0 && (
               <div>
-                {/* Conflito = dois voluntários apontando pro MESMO cadastro. Não é
-                    erro do matcher: normalmente é a mesma pessoa duplicada no
-                    Planning Center, e fundir isso é decisão de gente. */}
+                {/* Conflito = dois voluntários apontando pro MESMO cadastro.
+                    Normalmente é a mesma pessoa duplicada no Planning Center, e
+                    fundir isso é decisão de gente. */}
                 <p className="text-xs font-medium mb-1">Disputando o mesmo cadastro (não foram tocados)</p>
                 <ul className="text-xs text-muted-foreground space-y-0.5">
-                  {rel.exemplos_conflitos.map((e, i) => (
+                  {rel.exemplos_conflitos.slice(0, 15).map((e, i) => (
                     <li key={i}>{e.nome} <span className="opacity-60">× {e.disputa_com}</span></li>
                   ))}
                 </ul>
