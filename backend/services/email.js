@@ -11,6 +11,7 @@
 // Resend (fallback): RESEND_FROM (default 'CBRio <onboarding@resend.dev>').
 
 const { getGraphToken } = require('./storageService');
+const { nomeDeExibicao, remetenteResend } = require('../utils/remetenteEmail');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -44,9 +45,11 @@ async function enviarViaGraph({ to, subject, html, text, from, fromName }) {
       subject: String(subject || '(sem assunto)'),
       body: { contentType: html ? 'HTML' : 'Text', content: html || text || '' },
       toRecipients: recipients,
-      // fromName sobrescreve o display name da caixa (ex.: "Voluntariado CBRio"
-      // em vez de "Email Automático - CBRio") mantendo o mesmo endereço.
-      ...(fromName ? { from: { emailAddress: { address: sender, name: fromName } } } : {}),
+      // ⚠️ O nome de exibição é SEMPRE nosso, nunca o da caixa. Sem esta linha
+      // o Graph usa o display name de `GRAPH_MAIL_SENDER` — que é "Email
+      // Automático - CBRio" — e só os poucos fluxos que passavam `fromName`
+      // chegavam como "CBRio". O endereço não muda: só o nome.
+      from: { emailAddress: { address: sender, name: nomeDeExibicao(fromName) } },
     },
     saveToSentItems: true,
   });
@@ -80,9 +83,13 @@ async function enviarViaGraph({ to, subject, html, text, from, fromName }) {
   return { ok: false, error: ultimoErro };
 }
 
-async function enviarViaResend({ to, subject, html, text, from }) {
+async function enviarViaResend({ to, subject, html, text, from, fromName }) {
   const key = process.env.RESEND_API_KEY;
-  const remetente = from || process.env.RESEND_FROM || 'CBRio <onboarding@resend.dev>';
+  // `from` explícito manda (o chamador escolheu endereço e nome). Sem ele, o
+  // endereço vem da env e o NOME é o nosso — senão o fallback chegaria com
+  // remetente diferente do canal primário.
+  const remetente = from
+    || remetenteResend(process.env.RESEND_FROM || 'onboarding@resend.dev', fromName);
   try {
     const resp = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -121,11 +128,11 @@ async function enviarEmail({ to, subject, html, text, from, fromName } = {}) {
   if (graphConfigurado()) {
     const r = await enviarViaGraph({ to, subject, html, text, from, fromName }); // já tem retry + try/catch internos
     if (r.ok) return r;
-    if (resendFallbackAtivo) return enviarViaResend({ to, subject, html, text, from });
+    if (resendFallbackAtivo) return enviarViaResend({ to, subject, html, text, from, fromName });
     return r; // erro real do Graph (não mascara com a mensagem do Resend em teste)
   }
 
-  if (resendConfigurado()) return enviarViaResend({ to, subject, html, text, from });
+  if (resendConfigurado()) return enviarViaResend({ to, subject, html, text, from, fromName });
   return { ok: false, error: 'nenhum canal de e-mail configurado (MICROSOFT_* ou RESEND_API_KEY)' };
 }
 

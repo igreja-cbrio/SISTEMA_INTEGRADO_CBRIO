@@ -159,4 +159,63 @@ const {
   assert.equal(r.conflitos[0].campo, 'bairro');
 }
 
+// ── 11. ⚠️ O rótulo do formulário é TRADUZIDO pro vocabulário da coluna ─────
+// Bug medido em 17/08: a pergunta "Estado civil" manda "Solteiro(a)" e o CHECK
+// de mem_membros.estado_civil só aceita 'solteiro'. Como o UPDATE é um só, o
+// 23514 levava embora bairro, cidade e telefone do mesmo passe — as 12 respostas
+// do Censo 2026 ficaram dias sem aplicar NADA.
+// Mutation-test: tirar a tradução do decidirCampos faz `aplicar.estado_civil`
+// virar 'Solteiro(a)', que é exatamente o valor que o banco recusa.
+{
+  const r = decidirCampos(
+    { estado_civil: null, bairro: null },
+    { estado_civil: 'Solteiro(a)', bairro: 'Barra Olímpica' },
+  );
+  assert.equal(r.aplicar.estado_civil, 'solteiro',
+    'o valor gravado é o do CHECK, não o rótulo que a pessoa viu na tela');
+  assert.equal(r.aplicar.bairro, 'Barra Olímpica', 'campo livre segue como digitado');
+  assert.equal(r.conflitos.length, 0);
+}
+
+// O mesmo rótulo contra o valor que JÁ está no cadastro é no-op, não conflito.
+// Sem a tradução, "casado" × "Casado(a)" viraria conflito falso — e foi o que
+// aconteceria com 2 das 12 respostas (Ariel e Victor, que já tinham o campo).
+{
+  const r = decidirCampos({ estado_civil: 'casado' }, { estado_civil: 'Casado(a)' });
+  assert.deepEqual(r.aplicar, {}, 'não reescreve o que já está certo');
+  assert.equal(r.conflitos.length, 0, 'variação de rótulo NÃO é divergência');
+  assert.ok(r.iguais.includes('estado_civil'));
+}
+
+// ── 12. Valor que não traduz é DECLARADO, nunca gravado cru ─────────────────
+{
+  const r = decidirCampos(
+    { estado_civil: null, cep: null, escolaridade: null },
+    { estado_civil: 'Noivo(a)', cep: '2264', escolaridade: 'Mestrado' },
+  );
+  assert.equal(r.aplicar.estado_civil, undefined,
+    'rótulo fora do vocabulário não entra na coluna com CHECK');
+  assert.equal(r.aplicar.cep, undefined, 'CEP incompleto não é gravado');
+  assert.equal(r.aplicar.escolaridade, 'mestrado',
+    'escolaridade não tem CHECK: opção nova vira slug em vez de se perder');
+  const motivos = r.descartados.map((d) => `${d.campo}:${d.motivo}`).sort();
+  assert.deepEqual(motivos, ['cep:cep_invalido', 'estado_civil:nao_reconhecido'],
+    'o que não foi guardado tem que aparecer no resultado — descarte silencioso '
+    + 'é como o CPF do censo sumiu por 4 dias em 04/08');
+}
+
+// Não informar nada NÃO é descarte (senão a tela reportaria trabalho que não existe).
+{
+  const r = decidirCampos({ bairro: null }, { bairro: '   ' });
+  assert.deepEqual(r.aplicar, {});
+  assert.deepEqual(r.descartados, [], 'campo em branco é "não respondeu", não perda');
+}
+
+// ── 13. `escolaridade` está no contrato (era descartada em silêncio) ────────
+{
+  assert.ok(CAMPOS_CENSO.includes('escolaridade'),
+    'a pergunta Escolaridade existia no censo desde o começo e o dado não tinha destino');
+  assert.ok(CAMPOS_CENSO.includes('cep'));
+}
+
 console.log('censoReconciliar: OK');

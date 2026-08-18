@@ -10,10 +10,20 @@ const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
 const { notificar } = require('../services/notificar');
 const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 const { requireCron } = require('../utils/cronAuth');
+// Régua pura da exclusão em lote — a MESMA do módulo de Inscrições (normaliza
+// ids, relê o que está vivo, monta o resumo). Uma cópia local divergiria no
+// primeiro ajuste, e é ela que garante que o payload não decide nada.
+const {
+  normalizarIds: normalizarIdsExclusao,
+  separarExclusaoLote: separarExclusaoLoteInsc,
+  resumoDoLote: resumoDoLoteInsc,
+} = require('../utils/exclusaoInscricaoLote');
 const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
 const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../utils/volRodizio');
 const { montarCobertura, contarStatus } = require('../utils/volCobertura');
 const { chavePco } = require('../utils/pcoChave');
+const { diaIntegracaoBRT } = require('../utils/volIntegradoEm');
+const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
 const { responderEscala } = require('../services/escalaResposta');
 const antecedentes = require('../services/antecedentesCriminais');
 const { executarSyncCompleto } = require('../services/voluntariadoSync');
@@ -84,6 +94,50 @@ router.get('/config', async (req, res) => {
   } catch (e) {
     console.error('[vol/config get]', e.message);
     res.json(VOL_CONFIG_DEFAULT); // degrada pros defaults · o termômetro nunca quebra
+  }
+});
+
+// GET /api/voluntariado/kpis/taticos — KPI TÁTICO OFICIAL da área 'voluntariado'
+// (kpi_indicadores_taticos + vw_kpi_trajetoria_atual), mesmo padrão de
+// backend/routes/painelArea.js e do piloto em grupos.js. Antes deste bloco,
+// "Minha Área" era a ÚNICA tela que mostrava este valor pra Voluntariado.
+router.get('/kpis/taticos', async (req, res) => {
+  try {
+    const { data: kpisRaw, error: kpisErr } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, descricao, meta_descricao, meta_valor, unidade, periodicidade, lider_funcionario_id')
+      .eq('ativo', true)
+      .ilike('area', 'voluntariado')
+      .order('indicador', { ascending: true });
+    if (kpisErr) throw kpisErr;
+    const kpis = kpisRaw || [];
+    const kpiIds = kpis.map(k => k.id);
+
+    let trajByKpi = {};
+    if (kpiIds.length > 0) {
+      const { data: traj, error: trajErr } = await supabase
+        .from('vw_kpi_trajetoria_atual')
+        .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, checkpoint_meta, percentual_meta')
+        .in('kpi_id', kpiIds);
+      if (trajErr) console.error('[voluntariado kpis/taticos] trajetoria falhou:', trajErr.message);
+      (traj || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
+    }
+
+    const enriched = kpis.map(k => ({
+      id: k.id,
+      indicador: k.indicador,
+      descricao: k.descricao,
+      meta_descricao: k.meta_descricao,
+      meta_valor: k.meta_valor,
+      unidade: k.unidade,
+      periodicidade: k.periodicidade,
+      trajetoria: trajByKpi[k.id] || null,
+    }));
+
+    res.json({ area: 'voluntariado', total: enriched.length, kpis: enriched });
+  } catch (e) {
+    console.error('[voluntariado kpis/taticos]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar KPIs táticos de voluntariado' });
   }
 });
 
@@ -3537,7 +3591,10 @@ router.post('/schedules/bulk', async (req, res) => {
     }));
 
     const { data, error } = await supabase.from('vol_schedules')
-      .upsert(rows, { onConflict: 'service_id,planning_center_person_id', ignoreDuplicates: true })
+      // A constraint atual inclui equipe, função e slot. Usar a chave antiga
+      // (só culto + pessoa) faz o Postgres recusar o ON CONFLICT antes mesmo
+      // de tentar escalar alguém.
+      .upsert(rows, { onConflict: 'service_id,planning_center_person_id,team_name,position_name,slot_seq', ignoreDuplicates: true })
       .select();
     if (error) return res.status(400).json({ error: error.message });
     res.json({ created: data.length, schedules: data, pulados });
@@ -3981,18 +4038,31 @@ router.get('/inscricoes-summary', async (req, res) => {
     const ano = req.query.ano ? String(req.query.ano) : null;
     const area = req.query.area ? String(req.query.area).toLowerCase() : null;
 
-    let query = supabase
-      .from('vol_inscricoes')
-      .select('data_inscricao, status, area')
-      .is('deleted_at', null);
-    if (ano) {
-      query = query
-        .gte('data_inscricao', `${ano}-01-01`)
-        .lt('data_inscricao', `${Number(ano) + 1}-01-01`);
+    // ⚠️ PAGINADO: o PostgREST capa em 1000 linhas server-side e sem `ano` esta
+    // consulta varre a base inteira (829 vivas em 17/08/2026, subindo). Sem o
+    // laço, a partir da milésima inscrição os cards e o gráfico congelariam
+    // SEM erro — contador truncado mente em silêncio.
+    const data = [];
+    const PAGINA = 1000;
+    for (let inicio = 0; ; inicio += PAGINA) {
+      let query = supabase
+        .from('vol_inscricoes')
+        .select('data_inscricao, status, area')
+        .is('deleted_at', null)
+        .order('data_inscricao', { ascending: false })
+        .order('id', { ascending: false })
+        .range(inicio, inicio + PAGINA - 1);
+      if (ano) {
+        query = query
+          .gte('data_inscricao', `${ano}-01-01`)
+          .lt('data_inscricao', `${Number(ano) + 1}-01-01`);
+      }
+      if (area) query = query.eq('area', area);
+      const { data: pagina, error } = await query;
+      if (error) throw error;
+      data.push(...(pagina || []));
+      if (!pagina || pagina.length < PAGINA) break;
     }
-    if (area) query = query.eq('area', area);
-    const { data, error } = await query;
-    if (error) throw error;
 
     // Considera "alocada" status integrado ou enviado_ministerio (em processo final)
     const isAlocada = (s) => s === 'integrado';
@@ -4052,9 +4122,30 @@ router.get('/inscricoes', async (req, res) => {
     const area = req.query.area ? String(req.query.area).toLowerCase() : null;
     const status = req.query.status ? String(req.query.status) : null;
     const mes = req.query.mes ? String(req.query.mes) : null; // YYYY-MM
+    const de = req.query.de ? String(req.query.de) : null;    // YYYY-MM-DD (inclusivo)
+    const ate = req.query.ate ? String(req.query.ate) : null; // YYYY-MM-DD (inclusivo)
     const search = req.query.search ? String(req.query.search).trim() : null;
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const offset = Number(req.query.offset) || 0;
+
+    // ⚠️ Formato NÃO basta: `2026-02-31` casa a regex, e `new Date` do Node faz
+    // ROLLOVER (vira 03/03) — o limite exclusivo do `ate` se abriria em silêncio
+    // e o relatório sairia com linhas de março sob o rótulo "até 31/fev". Do
+    // lado do `de` a string ia crua ao Postgres, que recusa com 22008 e o
+    // handler respondia 500 genérico. Aqui a data é conferida de verdade.
+    const diaValido = (s) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+      const [y, m, d] = s.split('-').map(Number);
+      if (y < 1900 || y > 2200 || m < 1 || m > 12 || d < 1 || d > 31) return false;
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+    };
+    if ((de && !diaValido(de)) || (ate && !diaValido(ate))) {
+      return res.status(400).json({ error: 'Período inválido — use datas reais no formato AAAA-MM-DD' });
+    }
+    if (de && ate && de > ate) {
+      return res.status(400).json({ error: 'Período inválido — a data inicial vem depois da final' });
+    }
 
     let q = supabase
       .from('vol_inscricoes')
@@ -4066,6 +4157,12 @@ router.get('/inscricoes', async (req, res) => {
       `, { count: 'exact' })
       .is('deleted_at', null)
       .order('data_inscricao', { ascending: false })
+      // ⚠️ Desempate obrigatório: `data_inscricao` NÃO é única (o import da
+      // planilha gravou centenas de linhas com o mesmo timestamp) e o
+      // relatório pagina em requisições SEPARADAS — sem tiebreaker, a
+      // ordenação dos empates pode mudar entre páginas e a mesma pessoa sai
+      // duas vezes na folha enquanto outra desaparece.
+      .order('id', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (ano) {
@@ -4075,6 +4172,16 @@ router.get('/inscricoes', async (req, res) => {
       const [y, m] = mes.split('-');
       const nextMonth = new Date(Number(y), Number(m), 1);
       q = q.gte('data_inscricao', `${mes}-01`).lt('data_inscricao', nextMonth.toISOString().slice(0, 10));
+    }
+    // Período por DIA com fronteira em BRT: `data_inscricao` é timestamptz e o
+    // dia de operação da igreja é America/Sao_Paulo — comparar contra a
+    // meia-noite UTC deslocaria a borda em 3h (inscrição de domingo 22h
+    // cairia na segunda). `ate` é inclusivo → limite = dia seguinte, exclusivo.
+    if (de) q = q.gte('data_inscricao', `${de}T00:00:00-03:00`);
+    if (ate) {
+      const fim = new Date(`${ate}T12:00:00Z`);
+      fim.setUTCDate(fim.getUTCDate() + 1);
+      q = q.lt('data_inscricao', `${fim.toISOString().slice(0, 10)}T00:00:00-03:00`);
     }
     if (area) q = q.eq('area', area);
     if (status) q = q.eq('status', status);
@@ -4184,12 +4291,15 @@ router.patch('/inscricoes/:id', async (req, res) => {
 
     const patch = { status, updated_at: new Date().toISOString() };
     if (status === 'enviado_ministerio') patch.enviado_lider_em = new Date().toISOString();
-    if (status === 'integrado') patch.integrado_em = new Date().toISOString().slice(0, 10);
+    // Dia no fuso da igreja: às 22h BRT o `toISOString()` já virou o dia
+    // seguinte, e o carimbo (agora exibido na lista e impresso no relatório)
+    // diria uma data em que a pessoa não foi integrada.
+    if (status === 'integrado') patch.integrado_em = diaIntegracaoBRT();
     if (feedback !== undefined) patch.feedback = feedback || null;
 
-    const { data, error } = await supabase.from('vol_inscricoes')
-      .update(patch).eq('id', req.params.id).select().single();
-    if (error) throw error;
+    // Sair de 'integrado' limpa o carimbo — invariante garantido pelo escritor
+    // único (UPDATE condicionado ao estado de origem, sem corrida).
+    const data = await atualizarStatusInscricao(req.params.id, patch);
 
     // Notifica a pessoa (se tiver login vinculado)
     (async () => {
@@ -4363,14 +4473,123 @@ router.post('/inscricoes/:id/desistiu', async (req, res) => {
     const nota = motivo ? `Desistiu de servir: ${motivo}` : 'Desistiu de servir.';
     const feedback = atual?.feedback ? `${atual.feedback}\n${nota}` : nota;
 
-    const { data, error } = await supabase.from('vol_inscricoes')
-      .update({ status: 'desistente', feedback, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id).select().single();
-    if (error) throw error;
+    // Mesmo escritor único do PATCH: "desistente" ao lado de "Integrado em
+    // 15/08" é contradição na ficha e no relatório impresso.
+    const data = await atualizarStatusInscricao(req.params.id, {
+      status: 'desistente', feedback, updated_at: new Date().toISOString(),
+    });
     res.json(data);
   } catch (e) {
     console.error('[inscricao desistiu]', e.message);
     res.status(500).json({ error: 'Erro ao registrar a desistência' });
+  }
+});
+
+// ── Excluir inscrição de servir (soft delete) ────────────────────────────────
+//
+// Pedido do Matheus (17/08/2026): "na aba de inscrições para o voluntariado,
+// onde as pessoas se inscrevem querendo servir, ali tem que ter opção de
+// excluir uma inscrição" — as de teste inflam o funil.
+//
+// ⚠️ Excluir ≠ "desistiu". Desistente é FATO da pessoa e continua no funil
+// (status). Excluída some do funil, dos KPIs de solicitações de servir e do
+// relatório — é pra linha que não deveria existir (teste, duplicata).
+//
+// ⚠️ Mesma régua de permissão do PATCH e do desistiu (admin OU nível 3 em
+// voluntariado/membresia): quem já pode mudar o status é quem opera essa fila.
+// Duas réguas na mesma tela divergiriam no primeiro ajuste de cargo.
+function podeOperarInscricaoVol(req) {
+  if (['admin', 'diretor'].includes(req.user.role)) return true;
+  const lvl = Math.max(getEffectiveLevel(req, 'voluntariado') || 0, getEffectiveLevel(req, 'membresia') || 0);
+  return lvl >= 3;
+}
+
+// DELETE /inscricoes/:id — exclui uma.
+router.delete('/inscricoes/:id', async (req, res) => {
+  try {
+    if (!podeOperarInscricaoVol(req)) {
+      return res.status(403).json({ error: 'Sem permissão para excluir a inscrição' });
+    }
+    const { data: atual } = await supabase.from('vol_inscricoes')
+      .select('id').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada' });
+
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'vol_inscricoes', p_row_id: req.params.id, p_deleted_by: req.user?.id ?? null,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[inscricao excluir]', e.message);
+    // ⚠️ O motivo vai junto: foi um 500 genérico que escondeu por meses que a
+    // tabela tinha caído da whitelist do soft-delete.
+    res.status(500).json({ error: 'Erro ao excluir a inscrição', detalhe: e.message });
+  }
+});
+
+// POST /inscricoes/excluir-lote — exclui as marcadas na lista.
+// ⚠️ O payload diz QUAIS, nunca SE PODE: o servidor relê as linhas vivas e
+// reavalia (régua pura compartilhada com o módulo de Inscrições).
+router.post('/inscricoes/excluir-lote', async (req, res) => {
+  try {
+    if (!podeOperarInscricaoVol(req)) {
+      return res.status(403).json({ error: 'Sem permissão para excluir inscrições' });
+    }
+    const { ids, ignorados, acimaDoTeto } = normalizarIdsExclusao(req.body?.ids);
+    if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos uma inscrição' });
+
+    const { data: vivas, error: eVivas } = await supabase.from('vol_inscricoes')
+      .select('id, nome_completo, status').is('deleted_at', null).in('id', ids);
+    if (eVivas) throw eVivas;
+
+    // ⚠️ Nada é BLOQUEADO aqui (diferente do lote de eventos, onde pagamento
+    // barra): inscrição de servir não move dinheiro. A integrada é DECLARADA na
+    // resposta porque apagá-la mexe no KPI de solicitações alocadas — quem
+    // decide é quem está olhando, não o servidor.
+    const plano = separarExclusaoLoteInsc(ids, vivas || [], []);
+    const integradas = (vivas || [])
+      .filter((v) => plano.excluir.includes(v.id) && ['integrado', 'enviado_ministerio'].includes(v.status))
+      .map((v) => ({ id: v.id, nome: v.nome_completo || null, status: v.status }));
+
+    // Grava o efeito DURANTE (lei de 04/08) — morte no meio deixa apagado o que
+    // já saiu, e a resposta diz exatamente o que aconteceu.
+    const excluidas = [];
+    const falhas = [];
+    const motivos = new Set();
+    const BLOCO = 8;
+    for (let i = 0; i < plano.excluir.length; i += BLOCO) {
+      const fatia = plano.excluir.slice(i, i + BLOCO);
+      const r = await Promise.all(fatia.map(async (id) => {
+        const { error } = await supabase.rpc('app_soft_delete', {
+          p_table_name: 'vol_inscricoes', p_row_id: id, p_deleted_by: req.user?.id ?? null,
+        });
+        return { id, erro: error?.message || null };
+      }));
+      for (const item of r) {
+        (item.erro ? falhas : excluidas).push(item.id);
+        if (item.erro) motivos.add(item.erro);
+      }
+      if (r.some((x) => x.erro)) console.error('[inscricao excluir-lote falhas]', r.filter((x) => x.erro));
+    }
+
+    res.json({
+      ok: true,
+      excluidas,
+      integradas,
+      nao_encontradas: plano.naoEncontradas,
+      falhas,
+      falhas_motivo: [...motivos],
+      ignorados,
+      acima_do_teto: acimaDoTeto,
+      resumo: resumoDoLoteInsc({
+        excluidas: excluidas.length,
+        naoEncontradas: plano.naoEncontradas.length,
+        falhas: falhas.length,
+      }),
+    });
+  } catch (e) {
+    console.error('[inscricao excluir-lote]', e.message);
+    res.status(500).json({ error: 'Erro ao excluir as inscrições', detalhe: e.message });
   }
 });
 
@@ -4774,11 +4993,14 @@ async function carregarTemplate(id) {
   const { data: tpl } = await supabase.from('vol_escala_templates')
     .select('*').eq('id', id).is('deleted_at', null).maybeSingle();
   if (!tpl) return null;
-  const [{ data: itens }, { data: tipos }] = await Promise.all([
+  const [{ data: itens }, { data: tipos }, { data: liderancas }] = await Promise.all([
     supabase.from('vol_escala_template_itens')
-      .select('*, team:vol_teams(id,name), position:vol_positions(id,name)')
+      .select('*, team:vol_teams(id,name,area), position:vol_positions(id,name)')
       .eq('template_id', id).order('sort_order'),
     supabase.from('vol_escala_template_tipos').select('service_type_id').eq('template_id', id),
+    supabase.from('vol_escala_template_liderancas')
+      .select('team_id, responsavel_profile_id, responsavel:profiles(id,name,email)')
+      .eq('template_id', id),
   ]);
   const itemIds = (itens || []).map(i => i.id);
   let pessoasPorItem = {};
@@ -4792,11 +5014,12 @@ async function carregarTemplate(id) {
     ...tpl,
     service_type_ids: (tipos || []).map(t => t.service_type_id),
     itens: (itens || []).map(i => ({ ...i, pessoas: pessoasPorItem[i.id] || [] })),
+    liderancas: liderancas || [],
   };
 }
 
 // Substitui itens (+pessoas) e tipos de um template (usado no create/update).
-async function gravarItensETipos(templateId, itens, serviceTypeIds) {
+async function gravarItensETipos(templateId, itens, serviceTypeIds, liderancas) {
   if (Array.isArray(serviceTypeIds)) {
     await supabase.from('vol_escala_template_tipos').delete().eq('template_id', templateId);
     const rows = serviceTypeIds.filter(Boolean).map(st => ({ template_id: templateId, service_type_id: st }));
@@ -4823,6 +5046,18 @@ async function gravarItensETipos(templateId, itens, serviceTypeIds) {
         .filter(Boolean)
         .map(vid => ({ item_id: novo.id, volunteer_id: vid }));
       if (pRows.length) await supabase.from('vol_escala_template_item_pessoas').insert(pRows);
+    }
+  }
+  // Liderança pertence à subárea (equipe) dentro deste template. Nunca à
+  // função: repetir o líder em cada posição permitiria divergências.
+  if (Array.isArray(liderancas)) {
+    await supabase.from('vol_escala_template_liderancas').delete().eq('template_id', templateId);
+    const rows = liderancas
+      .filter(l => l?.team_id && l?.responsavel_profile_id)
+      .map(l => ({ template_id: templateId, team_id: l.team_id, responsavel_profile_id: l.responsavel_profile_id }));
+    if (rows.length) {
+      const { error } = await supabase.from('vol_escala_template_liderancas').insert(rows);
+      if (error) throw new Error(error.message);
     }
   }
 }
@@ -4855,13 +5090,13 @@ router.get('/schedule-templates/:id', async (req, res) => {
 // Cria template (cabeçalho + itens + pessoas + tipos de culto).
 router.post('/schedule-templates', authEscalaEscrita, async (req, res) => {
   try {
-    const { nome, descricao, ativo, sort_order, service_type_ids, itens } = req.body || {};
+    const { nome, descricao, ativo, sort_order, service_type_ids, itens, liderancas } = req.body || {};
     if (!nome || !nome.trim()) return res.status(400).json({ error: 'nome obrigatório' });
     const { data: tpl, error } = await supabase.from('vol_escala_templates')
       .insert({ nome: nome.trim(), descricao: descricao || null, ativo: ativo !== false, sort_order: sort_order || 0 })
       .select('id').single();
     if (error) return res.status(400).json({ error: error.message });
-    await gravarItensETipos(tpl.id, itens, service_type_ids);
+    await gravarItensETipos(tpl.id, itens, service_type_ids, liderancas);
     res.json(await carregarTemplate(tpl.id));
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao criar template' }); }
 });
@@ -4869,7 +5104,7 @@ router.post('/schedule-templates', authEscalaEscrita, async (req, res) => {
 // Atualiza template (cabeçalho e, se enviados, substitui itens/tipos).
 router.put('/schedule-templates/:id', authEscalaEscrita, async (req, res) => {
   try {
-    const { nome, descricao, ativo, sort_order, service_type_ids, itens } = req.body || {};
+    const { nome, descricao, ativo, sort_order, service_type_ids, itens, liderancas } = req.body || {};
     const patch = {};
     if (nome !== undefined) patch.nome = String(nome).trim();
     if (descricao !== undefined) patch.descricao = descricao || null;
@@ -4880,7 +5115,7 @@ router.put('/schedule-templates/:id', authEscalaEscrita, async (req, res) => {
         .update(patch).eq('id', req.params.id).is('deleted_at', null);
       if (error) return res.status(400).json({ error: error.message });
     }
-    await gravarItensETipos(req.params.id, itens, service_type_ids);
+    await gravarItensETipos(req.params.id, itens, service_type_ids, liderancas);
     res.json(await carregarTemplate(req.params.id));
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao atualizar template' }); }
 });
@@ -5291,6 +5526,14 @@ router.get('/escala-matriz', async (req, res) => {
       .order('scheduled_at')
       .limit(MATRIZ_MAX_CULTOS + 1);
     if (req.query.service_type_id) q = q.eq('service_type_id', req.query.service_type_id);
+    // A tela de montagem pode pedir a matriz de uma seleção explícita (por
+    // exemplo, "Quarta, 19/08 · Templo"). Filtrar no servidor evita que a
+    // grade carregue outros cultos e depois esconda colunas só no navegador.
+    const serviceIds = String(req.query.service_ids || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id));
+    if (serviceIds.length) q = q.in('id', serviceIds.slice(0, MATRIZ_MAX_CULTOS));
     const { data: cultosBrutos, error: cErr } = await q;
     if (cErr) return res.status(400).json({ error: cErr.message });
 
@@ -5322,7 +5565,7 @@ router.get('/escala-matriz', async (req, res) => {
     };
 
     const [itens, escalas] = await Promise.all([
-      emLotes('vol_escala_culto_itens', 'id, service_id, team_id, position_id, quantidade, fixo, sort_order, team:vol_teams(id,name,color), position:vol_positions(id,name)'),
+      emLotes('vol_escala_culto_itens', 'id, service_id, team_id, position_id, quantidade, fixo, sort_order, team:vol_teams(id,name,area,color), position:vol_positions(id,name)'),
       emLotes('vol_schedules', 'id, service_id, volunteer_id, volunteer_name, team_id, position_id, confirmation_status, escala_culto_item_id, planning_center_person_id'),
     ]);
 
@@ -5334,11 +5577,11 @@ router.get('/escala-matriz', async (req, res) => {
     // item da composição é de cada culto (cada um tem os seus).
     const linhas = new Map();
     const chaveLinha = (t, p) => `${t || ''}::${p || ''}`;
-    const garanteLinha = (team_id, team, cor, position_id, position, ordem) => {
+    const garanteLinha = (team_id, team, area, cor, position_id, position, ordem) => {
       const k = chaveLinha(team_id, position_id);
       if (!linhas.has(k)) {
         linhas.set(k, {
-          chave: k, team_id, team: team || 'Sem equipe', cor: cor || null,
+          chave: k, team_id, team: team || 'Sem equipe', area: area || 'Sem área', cor: cor || null,
           position_id: position_id || null, position: position || null,
           ordem: ordem ?? 999, celulas: {},
         });
@@ -5365,7 +5608,7 @@ router.get('/escala-matriz', async (req, res) => {
 
       for (const item of cob.itens) {
         const bruto = it.find(x => x.id === item.id);
-        const l = garanteLinha(item.team_id, item.team, bruto?.team?.color, item.position_id, item.position, bruto?.sort_order);
+        const l = garanteLinha(item.team_id, item.team, bruto?.team?.area, bruto?.team?.color, item.position_id, item.position, bruto?.sort_order);
         l.celulas[culto.id] = {
           item_id: item.id, alvo: item.alvo, faltam: item.faltam,
           pessoas: item.pessoas.map(pessoaDaEscala),
@@ -5376,7 +5619,7 @@ router.get('/escala-matriz', async (req, res) => {
       // uma pessoa que não aparece na matriz é uma pessoa que a coordenação
       // escala em duplicidade.
       for (const s of cob.sobrando) {
-        const l = garanteLinha(s.team_id, null, null, s.position_id, null, 998);
+        const l = garanteLinha(s.team_id, null, null, null, s.position_id, null, 998);
         const c = (l.celulas[culto.id] ||= { item_id: null, alvo: 0, faltam: 0, pessoas: [] });
         c.pessoas.push(pessoaDaEscala(s));
       }
@@ -5387,16 +5630,17 @@ router.get('/escala-matriz', async (req, res) => {
     if (semNome.length) {
       const teamIds = [...new Set(semNome.map(l => l.team_id).filter(Boolean))];
       if (teamIds.length) {
-        const { data: ts } = await supabase.from('vol_teams').select('id, name, color').in('id', teamIds);
+        const { data: ts } = await supabase.from('vol_teams').select('id, name, area, color').in('id', teamIds);
         const mapa = Object.fromEntries((ts || []).map(t => [t.id, t]));
         for (const l of semNome) {
           const t = mapa[l.team_id];
-          if (t) { l.team = t.name; l.cor = l.cor || t.color; }
+          if (t) { l.team = t.name; l.area = l.area === 'Sem área' ? (t.area || 'Sem área') : l.area; l.cor = l.cor || t.color; }
         }
       }
     }
 
     const ordenadas = [...linhas.values()].sort((a, b) =>
+      a.area.localeCompare(b.area, 'pt-BR') ||
       a.team.localeCompare(b.team, 'pt-BR') ||
       a.ordem - b.ordem ||
       String(a.position || '').localeCompare(String(b.position || ''), 'pt-BR'));

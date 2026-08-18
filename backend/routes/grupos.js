@@ -724,6 +724,52 @@ router.get('/kpis/relatorio', async (req, res) => {
   }
 });
 
+// GET /api/grupos/kpis/taticos — KPI TÁTICO OFICIAL da área 'grupos'
+// (kpi_indicadores_taticos + vw_kpi_trajetoria_atual), mesmo padrão de
+// backend/routes/painelArea.js. Isto é DIFERENTE do /kpis/relatorio acima
+// (fn_grupos_kpis_relatorio, métrica OPERACIONAL calculada direto das tabelas
+// de origem) — os dois números podem legitimamente divergir por definição.
+// Piloto: fechar a lacuna de que só "Minha Área" mostrava este dado hoje.
+router.get('/kpis/taticos', async (req, res) => {
+  try {
+    const { data: kpisRaw, error: kpisErr } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, descricao, meta_descricao, meta_valor, unidade, periodicidade, lider_funcionario_id')
+      .eq('ativo', true)
+      .ilike('area', 'grupos')
+      .order('indicador', { ascending: true });
+    if (kpisErr) throw kpisErr;
+    const kpis = kpisRaw || [];
+    const kpiIds = kpis.map(k => k.id);
+
+    let trajByKpi = {};
+    if (kpiIds.length > 0) {
+      const { data: traj, error: trajErr } = await supabase
+        .from('vw_kpi_trajetoria_atual')
+        .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, checkpoint_meta, percentual_meta')
+        .in('kpi_id', kpiIds);
+      if (trajErr) console.error('[grupos kpis/taticos] trajetoria falhou:', trajErr.message);
+      (traj || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
+    }
+
+    const enriched = kpis.map(k => ({
+      id: k.id,
+      indicador: k.indicador,
+      descricao: k.descricao,
+      meta_descricao: k.meta_descricao,
+      meta_valor: k.meta_valor,
+      unidade: k.unidade,
+      periodicidade: k.periodicidade,
+      trajetoria: trajByKpi[k.id] || null,
+    }));
+
+    res.json({ area: 'grupos', total: enriched.length, kpis: enriched });
+  } catch (e) {
+    console.error('[Grupos kpis/taticos]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar KPIs táticos de grupos' });
+  }
+});
+
 // GET /api/grupos/kpis/frequencia-grupos?temporada=X — ranking de % de frequência
 // POR grupo (Marcos 2026-07-23: indicador por grupo pra achar quem está caindo).
 // Mesma definição do /:id/frequencia (% = presenças ÷ (encontros × inscritos),
@@ -1321,7 +1367,7 @@ router.get('/pedidos/list', async (req, res) => {
 
     // Ocupação atual dos grupos com pedido em aberto — alimenta o aviso de
     // capacidade no frontend (capacidade é conselho, não trava).
-    const abertos = rows.filter(p => ['pendente', 'devolvido'].includes(p.status));
+    const abertos = rows.filter(p => ['pendente', 'devolvido', 'sem_contato'].includes(p.status));
     const grupoIds = [...new Set(abertos.map(p => p.grupo_id).filter(Boolean))].slice(0, 50);
     const ocupacao = {};
     await Promise.all(grupoIds.map(async (gid) => {
@@ -1341,7 +1387,7 @@ router.get('/pedidos/list', async (req, res) => {
     // vazio é só preenchido, não ganha selo). Lotes de 200 no .in().
     try {
       const abertosComMembro = rows.filter(p =>
-        ['pendente', 'devolvido', 'encaminhado'].includes(p.status) && p.membro_id && (p.telefone || p.email));
+        ['pendente', 'devolvido', 'sem_contato', 'encaminhado'].includes(p.status) && p.membro_id && (p.telefone || p.email));
       const memIds = [...new Set(abertosComMembro.map(p => p.membro_id))];
       const memMap = {};
       for (let i = 0; i < memIds.length; i += 200) {
@@ -2932,7 +2978,7 @@ router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (r
       sugerido_grupo_id: grupoSugerido.id,
       sugerido_em: new Date().toISOString(),
       sugerido_por_nome: req.user.name || null,
-    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'encaminhado', 'rejeitado']).select('id');
+    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'sem_contato', 'encaminhado', 'rejeitado']).select('id');
     if (marcado && marcado.length) {
       registrarEventoPedido(pedido.id, 'encaminhado', {
         grupo_sugerido: grupoSugerido.nome,
@@ -3034,7 +3080,11 @@ router.post('/pedidos/:pedidoId/aprovar-direto', authorizeModule('grupos', 3), a
       .select('id, status, grupo_id, nome').eq('id', req.params.pedidoId).is('deleted_at', null).maybeSingle();
     if (ePed) throw ePed;
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    if (!['pendente', 'devolvido', 'rejeitado', 'encaminhado'].includes(pedido.status)) {
+    // 'sem_contato' entra aqui (Naná · 17/08): é o caso MAIS provável de a
+    // triagem aprovar por cima — ela consegue falar com a pessoa por outro
+    // canal e destrava na hora. Deixá-lo de fora tornaria o desfecho novo um
+    // beco sem saída, que é o oposto do que ele existe pra resolver.
+    if (!['pendente', 'devolvido', 'rejeitado', 'encaminhado', 'sem_contato'].includes(pedido.status)) {
       return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
 
@@ -3088,7 +3138,7 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, membro_id, nome, motivo_rejeicao').eq('id', req.params.pedidoId).single();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    if (!['pendente', 'devolvido', 'encaminhado'].includes(pedido.status)) {
+    if (!['pendente', 'devolvido', 'sem_contato', 'encaminhado'].includes(pedido.status)) {
       return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
 
@@ -3101,7 +3151,7 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
       decidido_por: req.user.userId,
       decidido_por_nome: req.user.name,
       decidido_em: new Date().toISOString(),
-    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'encaminhado']).select('id');
+    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'sem_contato', 'encaminhado']).select('id');
     if (!claimed || !claimed.length) {
       return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
     }

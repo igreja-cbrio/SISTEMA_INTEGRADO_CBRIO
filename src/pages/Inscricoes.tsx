@@ -58,6 +58,123 @@ function mascaraHora(v: string): string {
 // key opaca estável (mesma regra do backend — o server regenera se inválida)
 const novaKeyCampo = () => `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
 
+// chave estável do aceite — a MESMA lei da key de campo: derivar do título
+// orfanaria a prova de quem já aceitou.
+const novaChaveTermo = () => `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+
+/**
+ * Aceites PRÓPRIOS do evento (`termos_extra`) — "li e aceito o regulamento".
+ *
+ * ⚠️ NÃO é pergunta do construtor, e a diferença não é estética: consentimento é
+ * PROVA LEGAL e vai pra `inscricao_consentimentos` com o texto EXIBIDO como
+ * snapshot, junto de IP e navegador. Uma pergunta "Você aceita? (Sim/Não)"
+ * gravaria a palavra "Sim" num jsonb, sem registro do que a pessoa leu — e se
+ * alguém editasse o texto depois, ninguém saberia qual versão foi aceita.
+ */
+function TermosExtraEditor({ termos, setTermos }: { termos: any[]; setTermos: (v: any[]) => void }) {
+  function add() { setTermos([...termos, { chave: novaChaveTermo(), titulo: '', texto: '', url: '' }]); }
+  function upd(i: number, patch: any) { const t = [...termos]; t[i] = { ...t[i], ...patch }; setTermos(t); }
+  return (
+    <div className="rounded-lg border border-border p-3 space-y-2">
+      <div className="text-xs font-medium text-muted-foreground">Aceites deste evento (além do termo de dados)</div>
+      <p className="text-[11px] text-muted-foreground">
+        Cada aceite vira uma caixa de marcar OBRIGATÓRIA no formulário, e o texto que a pessoa lê fica
+        guardado como prova. Ex.: “Informações Sobre o Retiro”, “Termos de Responsabilidade — Menor de idade”.
+      </p>
+      {termos.map((t, i) => (
+        <div key={t.chave || i} className="rounded-lg border border-border p-2 space-y-2">
+          <div className="flex gap-2">
+            <Input placeholder="Título (ex.: Informações Sobre o Retiro)" value={t.titulo || ''}
+              onChange={e => upd(i, { titulo: e.target.value })} className="h-8 text-sm" />
+            <button onClick={() => setTermos(termos.filter((_, j) => j !== i))} className="text-red-500 px-1" title="Remover aceite">
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+          <textarea placeholder="Texto que a pessoa lê e aceita" value={t.texto || ''}
+            onChange={e => upd(i, { texto: e.target.value })}
+            className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1.5 text-xs min-h-[80px]" />
+          <Input placeholder="Link do documento completo (opcional · https://…)" value={t.url || ''}
+            onChange={e => upd(i, { url: e.target.value })} className="h-8 text-xs" />
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <input type="checkbox" checked={t.so_menor === true} onChange={e => upd(i, { so_menor: e.target.checked })} />
+            Só para menor de idade
+            <span className="text-[11px]">(aparece junto do bloco do responsável)</span>
+          </label>
+        </div>
+      ))}
+      <Button size="sm" variant="outline" onClick={add}><Plus className="h-3.5 w-3.5 mr-1" /> Adicionar aceite</Button>
+    </div>
+  );
+}
+
+/**
+ * "Mostrar só quando…" de UM campo.
+ *
+ * ⚠️ Só oferece como pergunta-mãe os campos ANTERIORES a este e que têm opções
+ * (`select`/`escolha`/`multi`). Duas razões: condicionar a uma pergunta que vem
+ * DEPOIS na tela é pedir pra pessoa responder o futuro; e condicionar a texto
+ * livre exigiria a resposta digitada bater exata, o que na prática nunca casa.
+ */
+function CondicaoCampo({ campos, indice, campo, upd }: {
+  campos: any[]; indice: number; campo: any; upd: (i: number, patch: any) => void;
+}) {
+  const candidatos = campos
+    .slice(0, indice)
+    .filter((c: any) => c && c.key && (c.tipo === 'select' || c.tipo === 'escolha' || c.tipo === 'multi') && (c.opcoes || []).length);
+  const cond = campo.mostrar_se || null;
+  const mae = cond ? campos.find((c: any) => c.key === cond.key) : null;
+  if (!candidatos.length && !cond) return null;
+  return (
+    <div className="rounded-md border border-dashed border-border p-2 space-y-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+        <span>Mostrar só quando</span>
+        <select
+          value={cond?.key || ''}
+          onChange={(e) => upd(indice, { mostrar_se: e.target.value ? { key: e.target.value, valores: [] } : undefined })}
+          className="h-7 rounded-md border border-border bg-[var(--cbrio-input-bg)] text-xs px-1 max-w-[220px]">
+          <option value="">— sempre aparece —</option>
+          {candidatos.map((c: any) => (
+            <option key={c.key} value={c.key}>{(c.label || '(sem pergunta)').slice(0, 60)}</option>
+          ))}
+          {/* Condição apontando pra pergunta que não está mais na lista: mantém
+              visível pra dar pra desfazer, em vez de sumir com a configuração. */}
+          {cond && !candidatos.some((c: any) => c.key === cond.key) && (
+            <option value={cond.key}>{mae ? `${(mae.label || '').slice(0, 60)} (fora de ordem)` : 'pergunta apagada'}</option>
+          )}
+        </select>
+        <span>for</span>
+      </div>
+      {cond && (
+        <div className="flex flex-wrap gap-1.5">
+          {(mae?.opcoes || []).map((o: string) => {
+            const marcada = (cond.valores || []).includes(o);
+            return (
+              <button key={o} type="button"
+                onClick={() => upd(indice, {
+                  mostrar_se: {
+                    key: cond.key,
+                    valores: marcada ? (cond.valores || []).filter((v: string) => v !== o) : [...(cond.valores || []), o],
+                  },
+                })}
+                className={`rounded-full border px-2 py-0.5 text-[11px] ${marcada ? 'border-primary bg-primary/15 text-primary font-semibold' : 'border-border text-muted-foreground'}`}>
+                {o}
+              </button>
+            );
+          })}
+          {!(mae?.opcoes || []).length && (
+            <span className="text-[11px] text-amber-600">
+              A pergunta escolhida não tem opções — sem opção marcada, esta pergunta continua aparecendo sempre.
+            </span>
+          )}
+        </div>
+      )}
+      {cond && !(cond.valores || []).length && (mae?.opcoes || []).length ? (
+        <p className="text-[11px] text-amber-600">Marque ao menos uma resposta, senão a condição é ignorada e a pergunta aparece sempre.</p>
+      ) : null}
+    </div>
+  );
+}
+
 function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any[]) => void }) {
   function add() { setCampos([...campos, { key: novaKeyCampo(), label: '', tipo: 'texto', obrigatorio: true, opcoes: [] }]); }
   function upd(i: number, patch: any) { const c = [...campos]; c[i] = { ...c[i], ...patch }; setCampos(c); }
@@ -93,8 +210,16 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
           {c.tipo === 'imagem' && (
             <p className="text-[11px] text-muted-foreground flex items-center gap-1"><ImageIcon className="h-3 w-3" /> Upload público — o formulário exigirá o consentimento de uso de imagem.</p>
           )}
+
+          {/* Mostrar só quando… (17/08) — as perguntas do retiro são condicionais
+              na própria redação ("Caso não seja membro, qual a sua igreja?").
+              ⚠️ Pergunta escondida NÃO é exigida e a resposta dela é DESCARTADA
+              no servidor — a MESMA régua (utils/camposCondicionais.js). */}
+          <CondicaoCampo campos={campos} indice={i} campo={c} upd={upd} />
+
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <input type="checkbox" checked={c.obrigatorio !== false} onChange={e => upd(i, { obrigatorio: e.target.checked })} /> Obrigatório
+            {c.mostrar_se ? <span className="text-[11px]">(só quando a pergunta acima aparecer)</span> : null}
           </label>
         </div>
       ))}
@@ -122,6 +247,9 @@ const EVENTO_VAZIO = {
   pagamento_expira_horas: '',
   // Cartão numa plataforma externa (e-Inscrição). Vazio = cobrado aqui.
   checkout_externo_url: '', checkout_externo_nome: '',
+  // Retiro/viagem (17/08): endereço obrigatório e bloco do responsável quando a
+  // pessoa é menor de 18 na inscrição. Default false = o Contrato de sempre.
+  exigir_endereco: false, exige_dados_menor: false,
   status: 'rascunho',
 };
 
@@ -141,7 +269,70 @@ function isoParaInputLocal(iso?: string | null): string {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
+/**
+ * ⚠️⚠️ CARREGADOR — não juntar com o formulário (2026-08-17).
+ *
+ * `GET /inscricoes/eventos` devolve o evento PARCIAL (a lista não traz `campos`,
+ * `descricao`, `msg_*`, `pagamento_metodos`, `parcelas_max`,
+ * `pagamento_expira_horas`, `checkout_externo_*` nem `inscricoes_encerram_em`),
+ * e o "Editar" do card e do calendário abriam o modal com esse objeto. Como o
+ * `salvar()` monta o payload INTEIRO, salvar por ali **apagava** o que não tinha
+ * vindo: `campos: []` limpava TODAS as perguntas do formulário, `descricao`
+ * virava null, `pagamento_metodos` voltava pro default pix+cartão e o link do
+ * e-Inscrição era zerado. Nenhum erro aparecia — a tela dizia "Evento
+ * atualizado".
+ *
+ * Por isso o formulário só monta com o evento COMPLETO, buscado em
+ * `GET /inscricoes/eventos/:id` (que faz `select('*')`). Enquanto carrega, o
+ * formulário fica ESCONDIDO — renderizar campo vazio faria a pessoa começar a
+ * digitar e o prefill sobrescrever o que ela escreveu (lição do censo, 04/08).
+ *
+ * ⚠️ Falha de carga NÃO abre o formulário: abrir com dado pela metade é
+ * exatamente o bug que esta camada existe pra fechar.
+ */
 export function EventoModal({ evento, areas, onClose, onSaved }: {
+  evento?: any; areas: any[]; onClose: () => void; onSaved: () => void;
+}) {
+  // `campos` presente é a marca do objeto completo (a lista nunca o traz).
+  const jaCompleto = !evento || evento.campos !== undefined;
+  const [completo, setCompleto] = useState<any>(jaCompleto ? evento : null);
+  const [erroCarga, setErroCarga] = useState('');
+
+  useEffect(() => {
+    if (jaCompleto || !evento?.id) return;
+    let vivo = true;
+    api.evento(evento.id)
+      .then((e: any) => { if (vivo) setCompleto(e); })
+      .catch((e: any) => { if (vivo) setErroCarga(e?.message || 'Não foi possível carregar o evento.'); });
+    return () => { vivo = false; };
+  }, [evento?.id, jaCompleto]);
+
+  if (evento && !completo) {
+    return (
+      <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>{erroCarga ? 'Erro ao abrir o evento' : 'Carregando evento…'}</DialogTitle></DialogHeader>
+          {erroCarga ? (
+            <div className="space-y-3">
+              <p className="text-sm text-red-500">{erroCarga}</p>
+              <p className="text-xs text-muted-foreground">
+                Não abrimos o formulário com dados incompletos — salvar assim apagaria as perguntas do evento.
+              </p>
+              <div className="flex justify-end"><Button variant="outline" onClick={onClose}>Fechar</Button></div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Buscando o formulário e as configurações…
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    );
+  }
+  return <EventoForm evento={completo} areas={areas} onClose={onClose} onSaved={onSaved} />;
+}
+
+function EventoForm({ evento, areas, onClose, onSaved }: {
   evento?: any; areas: any[]; onClose: () => void; onSaved: () => void;
 }) {
   const ed = !!evento;
@@ -161,6 +352,7 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
   } : { ...EVENTO_VAZIO });
   const [campos, setCampos] = useState<any[]>(evento?.campos || []);
   const [premios, setPremios] = useState<string[]>(evento?.premios || []);
+  const [termos, setTermos] = useState<any[]>(Array.isArray(evento?.termos_extra) ? evento.termos_extra : []);
   const [salvando, setSalvando] = useState(false);
   const [enviandoCapa, setEnviandoCapa] = useState(false);
   const set = (k: string) => (e: any) => setF((s: any) => ({ ...s, [k]: e?.target ? e.target.value : e }));
@@ -209,6 +401,17 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
         // não pode manter gente sendo mandada pra um checkout.
         checkout_externo_url: f.pagamento_ativo ? String(f.checkout_externo_url || '').trim() : '',
         checkout_externo_nome: f.pagamento_ativo ? String(f.checkout_externo_nome || '').trim() : '',
+        exigir_endereco: !!f.exigir_endereco,
+        exige_dados_menor: !!f.exige_dados_menor,
+        termos_extra: termos
+          .map((t: any) => ({
+            chave: t.chave,
+            titulo: String(t.titulo || '').trim(),
+            texto: String(t.texto || '').trim(),
+            ...(t.url ? { url: String(t.url).trim() } : {}),
+            ...(t.so_menor ? { so_menor: true } : {}),
+          }))
+          .filter((t: any) => t.texto),
       };
       // ⚠️ `pagamento_expira_horas` é NOT NULL no banco (default 48), então mandar
       // `null` — o que acontecia com o pagamento desligado ou o campo vazio —
@@ -251,6 +454,12 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
                 <option value="">Selecione…</option>
                 {areas.map((a: any) => <option key={a.id} value={a.nome}>{a.nome}</option>)}
               </select>
+              {/* A área não é só rótulo: quem cuida dela também recebe o aviso de
+                  cada nova inscrição (backend/utils/moduloDaAreaEvento). Sem
+                  isto, trocar a área muda quem é notificado sem ninguém saber. */}
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Quem cuida desta área também recebe o aviso de cada nova inscrição.
+              </p>
             </div>
             {!ed && (
               <div>
@@ -306,6 +515,31 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
           </div>
 
           <CamposEditor campos={campos} setCampos={setCampos} />
+
+          {/* Retiro/viagem (17/08) — só aparece aqui porque muda o CONTRATO de
+              campos deste evento, e o construtor acima é só das perguntas extras. */}
+          <div className="rounded-lg border border-border p-3 space-y-2">
+            <div className="text-xs font-medium text-muted-foreground">Retiro, viagem e evento com menor de idade</div>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-1" checked={!!f.exigir_endereco}
+                onChange={e => setF((s: any) => ({ ...s, exigir_endereco: e.target.checked }))} />
+              <span>Endereço completo obrigatório
+                <span className="block text-[11px] text-muted-foreground">Em todos os outros formulários o endereço é opcional. Ligue em retiro e viagem.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-1" checked={!!f.exige_dados_menor}
+                onChange={e => setF((s: any) => ({ ...s, exige_dados_menor: e.target.checked }))} />
+              <span>Pedir os dados do responsável quando a pessoa for menor de 18
+                <span className="block text-[11px] text-muted-foreground">
+                  Nome, CPF, parentesco, celular e e-mail do responsável + a autorização dele pra batismo,
+                  com o consentimento registrado (LGPD art. 14 §1º). Só aparece pra quem é menor na data da inscrição.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <TermosExtraEditor termos={termos} setTermos={setTermos} />
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f.tem_sorteio} onChange={e => setF((s: any) => ({ ...s, tem_sorteio: e.target.checked }))} /> Sorteio (número da sorte)</label>

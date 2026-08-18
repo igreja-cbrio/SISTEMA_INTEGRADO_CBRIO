@@ -1472,11 +1472,13 @@ router.post('/inscrever-lider', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // F3 · aprovação pelo líder via link do WhatsApp (sem login).
-// Token HMAC assinado (services/gruposWhatsapp) dá acesso a UM pedido e
-// expira em 30 dias (era 7 · Natasha 12/08/2026). Fail-closed: sem CRON_SECRET
-// nenhum token valida. ⚠️ O TTL é a 2ª camada: quem manda são as travas daqui —
-// pedido ainda 'pendente' e `payload.l` = líder ATUAL do grupo. É por isso que
-// o link vencido pode ser prorrogado no serviço sem abrir buraco de segurança.
+// Token HMAC assinado (services/gruposWhatsapp) dá acesso a UM pedido, com TTL
+// de 30 dias (era 7 · Natasha 12/08/2026) e, passado o TTL, validade enquanto
+// a TEMPORADA estiver aberta (Pr. Nélio + Natasha · 17/08/2026 · ver
+// `haTemporadaAberta` abaixo). Fail-closed: sem CRON_SECRET nenhum token
+// valida. ⚠️ O TTL é a 2ª camada: quem manda são as travas daqui — pedido ainda
+// 'pendente' e `payload.l` = líder ATUAL do grupo. É por isso que o link
+// vencido pode ser aceito sem abrir buraco de segurança.
 // Rota com 2 segmentos de propósito — o GET /:id (acima) captura qualquer
 // caminho de 1 segmento.
 // ─────────────────────────────────────────────────────────────
@@ -1509,11 +1511,41 @@ async function carregarParCasal(pedido) {
   return par;
 }
 
+// ⚠️ O link de aprovação fica ativo ENQUANTO A TEMPORADA ESTIVER ABERTA
+// (Pr. Nélio + Natasha · 17/08/2026 — substituiu a data fixa de 31/08 que
+// vigorou por 5 dias). O TTL de 30 dias do token é o piso; passado ele, quem
+// diz se o link ainda vale é esta consulta.
+//
+// ⚠️ FAIL-CLOSED nos dois sentidos que importam: sem temporada aberta não
+// prorroga (é o "enquanto estiver aberta"), e ERRO de consulta também não
+// prorroga — link vencido tem que provar que ainda vale, não o contrário.
+// Erro NÃO derruba o endpoint: o link dentro dos 30 dias segue abrindo normal,
+// que é o caminho de 100% do tráfego recente.
+//
+// Cache curto porque isto roda a cada abertura de link e a resposta muda no
+// máximo quando a coordenação fecha a temporada — 60s de defasagem ali é
+// irrelevante e evita uma consulta por clique.
+let _tempAbertaCache = { em: 0, valor: false };
+async function haTemporadaAberta() {
+  if (Date.now() - _tempAbertaCache.em < 60_000) return _tempAbertaCache.valor;
+  try {
+    const { data, error } = await supabase.from('mem_temporadas')
+      .select('id').eq('inscricoes_abertas', true).limit(1);
+    if (error) throw error;
+    _tempAbertaCache = { em: Date.now(), valor: !!(data && data.length) };
+  } catch (e) {
+    console.error('[public grupos temporada-aberta]', e.message);
+    return false; // fail-closed: na dúvida, não prorroga
+  }
+  return _tempAbertaCache.valor;
+}
+
 // GET /api/public/grupos/pedido/por-token?token=...
 // Dados que o líder vê na página de aprovação (o token É a credencial).
 router.get('/pedido/por-token', async (req, res) => {
   try {
-    const payload = verificarToken(req.query.token, 'aprov');
+    const payload = verificarToken(req.query.token, 'aprov', Date.now(),
+      { aceitarExpirado: await haTemporadaAberta() });
     if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado. Você ainda pode aprovar pelo sistema em /grupos.' });
 
     const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos')
@@ -1566,9 +1598,16 @@ router.get('/pedido/por-token', async (req, res) => {
 router.post('/aprovar', async (req, res) => {
   try {
     const { token, acao, motivo } = req.body || {};
-    const payload = verificarToken(token, 'aprov');
+    // Mesma régua do GET: vencido só passa com a temporada aberta (ver
+    // `haTemporadaAberta`). Tem que ser a MESMA nos dois — se o GET abrisse a
+    // página e o POST recusasse, o líder decidiria e levaria erro na cara.
+    const payload = verificarToken(token, 'aprov', Date.now(),
+      { aceitarExpirado: await haTemporadaAberta() });
     if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado. Você ainda pode decidir pelo sistema em /grupos.' });
-    if (!['aprovar', 'rejeitar'].includes(acao)) return res.status(400).json({ error: 'Ação inválida.' });
+    // 'sem_contato' (Naná · 17/08): o líder LIGOU e não conseguiu falar. Não é
+    // recusa — vai pra triagem como os devolvidos, mas com desfecho próprio,
+    // que é o que a coordenação precisa distinguir.
+    if (!['aprovar', 'rejeitar', 'sem_contato'].includes(acao)) return res.status(400).json({ error: 'Ação inválida.' });
 
     const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, membro_id, nome').eq('id', payload.p).is('deleted_at', null).maybeSingle();
@@ -1640,10 +1679,20 @@ router.post('/aprovar', async (req, res) => {
     // TRIAGEM (Naná/Nélio · status 'devolvido') — a equipe, que está acima do
     // líder, sugere outro grupo pra pessoa ou rejeita de vez. A pessoa NÃO é
     // comunicada aqui e o motivo do líder fica interno.
-    // Guarda de corrida: só devolve se AINDA está pendente.
-    const motivoInterno = motivo ? String(motivo).trim().slice(0, 500) : null;
+    //
+    // 'sem_contato' anda pelo MESMO caminho (vai pra triagem, pessoa não é
+    // avisada) e muda só o DESFECHO registrado — o líder tentou e não
+    // conseguiu falar. ⚠️ Não é sinônimo de recusa: tratar como recusa faria a
+    // coordenação ler "o líder não quis a pessoa" onde houve só telefone que
+    // não atendeu, e é justamente essa distinção que a Naná pediu.
+    const semContato = acao === 'sem_contato';
+    const novoStatus = semContato ? 'sem_contato' : 'devolvido';
+    const tipoEvento = semContato ? 'sem_contato_lider' : 'recusado_lider';
+    // No 'sem_contato' o campo de motivo nem é oferecido na tela — o motivo é
+    // o próprio desfecho. Gravar ali um texto de recusa confundiria as duas.
+    const motivoInterno = (!semContato && motivo) ? String(motivo).trim().slice(0, 500) : null;
     const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
-      status: 'devolvido',
+      status: novoStatus,
       motivo_rejeicao: motivoInterno,
       decidido_por: null,
       decidido_por_nome: decididoPorNome,
@@ -1653,7 +1702,7 @@ router.post('/aprovar', async (req, res) => {
       return res.status(409).json({ error: 'Este pedido já foi decidido.', status: 'decidido' });
     }
 
-    registrarEventoPedido(pedido.id, 'recusado_lider', { motivo_interno: motivoInterno }, decididoPorNome);
+    registrarEventoPedido(pedido.id, tipoEvento, { motivo_interno: motivoInterno }, decididoPorNome);
 
     // Casal: a recusa devolve os DOIS pra triagem (a equipe cuida do casal
     // junto — separar o casal na triagem seria o oposto do pedido). Guarda de
@@ -1662,15 +1711,15 @@ router.post('/aprovar', async (req, res) => {
     if (par) {
       if (par.status === 'pendente') {
         const { data: parClaimed } = await supabase.from('mem_grupo_pedidos').update({
-          status: 'devolvido',
+          status: novoStatus,
           motivo_rejeicao: motivoInterno,
           decidido_por: null,
           decidido_por_nome: decididoPorNome,
           decidido_em: new Date().toISOString(),
         }).eq('id', par.id).eq('status', 'pendente').select('id');
         if (parClaimed && parClaimed.length) {
-          registrarEventoPedido(par.id, 'recusado_lider', { motivo_interno: motivoInterno, casal: true }, decididoPorNome);
-          casal = { nome: par.nome, ok: true, status: 'devolvido' };
+          registrarEventoPedido(par.id, tipoEvento, { motivo_interno: motivoInterno, casal: true }, decididoPorNome);
+          casal = { nome: par.nome, ok: true, status: novoStatus };
         } else {
           casal = { nome: par.nome, ok: false, status: 'decidido' };
         }
@@ -1680,22 +1729,31 @@ router.post('/aprovar', async (req, res) => {
     }
 
     // Avisa a TRIAGEM (módulo grupos) — mesma notificação da recusa autenticada.
+    // ⚠️ O texto diz o que REALMENTE aconteceu: "não conseguiu contato" e
+    // "recusou" pedem ações diferentes da coordenação (tentar por outro canal
+    // × realocar), e um aviso genérico apagaria a distinção logo no lugar onde
+    // ela decide.
     (async () => {
       try {
         const nomesTriagem = casal && casal.ok ? `${pedido.nome} e ${casal.nome} (casal)` : pedido.nome;
+        const alvo = casal && casal.ok ? 'eles' : 'a pessoa';
         await notificar({
           modulo: 'grupos',
-          tipo: 'pedido_devolvido',
-          titulo: `Pedido devolvido pra triagem: ${nomesTriagem}`,
-          mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido${casal && casal.ok ? ' do casal' : ''}${motivoInterno ? ` (motivo interno: ${motivoInterno.slice(0, 200)})` : ''}. Sugira outro grupo pra ${casal && casal.ok ? 'eles' : 'pessoa'} ou rejeite de vez.`,
+          tipo: semContato ? 'pedido_sem_contato' : 'pedido_devolvido',
+          titulo: semContato
+            ? `Sem contato — o líder não conseguiu falar: ${nomesTriagem}`
+            : `Pedido devolvido pra triagem: ${nomesTriagem}`,
+          mensagem: semContato
+            ? `O líder de ${grupo?.nome || 'um grupo'} tentou falar com ${alvo} e não conseguiu. Não é recusa — tente por outro canal ou encerre o pedido.`
+            : `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido${casal && casal.ok ? ' do casal' : ''}${motivoInterno ? ` (motivo interno: ${motivoInterno.slice(0, 200)})` : ''}. Sugira outro grupo pra ${casal && casal.ok ? 'eles' : 'pessoa'} ou rejeite de vez.`,
           link: '/grupos?tab=entrada',
           severidade: 'aviso',
-          chaveDedup: `pedido_devolvido_${pedido.id}`,
+          chaveDedup: `pedido_${semContato ? 'sem_contato' : 'devolvido'}_${pedido.id}`,
         });
       } catch (err) { console.error('[public grupos recusar notify]', err.message); }
     })();
 
-    res.json({ ok: true, acao: 'rejeitado', casal });
+    res.json({ ok: true, acao: semContato ? 'sem_contato' : 'rejeitado', casal });
   } catch (e) {
     console.error('[public grupos aprovar]', e.message);
     res.status(500).json({ error: 'Erro ao processar decisão.' });

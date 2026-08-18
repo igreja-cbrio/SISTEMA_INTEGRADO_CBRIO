@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { integracao as intApi } from '../../api';
+import KpiTaticoOficial from '../../components/kpi/KpiTaticoOficial';
 import { useAuth } from '../../contexts/AuthContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
 
@@ -123,6 +124,8 @@ export default function Integracao() {
         </button>
       </div>
       )}
+
+      {!soNext && <KpiTaticoOficial fetchFn={intApi.kpisTaticos} />}
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap h-auto" data-tour="integracao-tabs">

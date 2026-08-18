@@ -11,6 +11,7 @@ import { useEscalaMatriz, useMontagemContexto, useBulkSchedule, useDeleteSchedul
 import { voluntariado } from '@/api';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import PainelEscalar, { type Vaga } from './PainelEscalar';
+import VolunteerDetailDialog from './VolunteerDetailDialog';
 
 /**
  * MATRIZ da escala — o "Matrix" do Planning Center Services.
@@ -27,7 +28,7 @@ import PainelEscalar, { type Vaga } from './PainelEscalar';
 
 type Celula = { item_id: string | null; alvo: number; faltam: number; pessoas: any[] };
 type Linha = {
-  chave: string; team_id: string | null; team: string; cor: string | null;
+  chave: string; team_id: string | null; team: string; area: string; cor: string | null;
   position_id: string | null; position: string | null; celulas: Record<string, Celula>;
 };
 
@@ -37,17 +38,28 @@ function IconeStatus({ status }: { status: string }) {
   return <HelpCircle className="h-3 w-3 text-yellow-500 shrink-0" />;
 }
 
-export default function MatrizEscala({ ehMinhaArea, onFixar }: {
+export default function MatrizEscala({ ehMinhaArea, onFixar, serviceIds, contextoLabel }: {
   ehMinhaArea: (teamId: string | null) => boolean;
   onFixar: (teamId: string | null) => void;
+  serviceIds?: string[];
+  contextoLabel?: string;
 }) {
   const [semanas, setSemanas] = useState(4);
   const [tipoId, setTipoId] = useState('');
   const [soMinhas, setSoMinhas] = useState(false);
   const [celula, setCelula] = useState<{ servico: any; linha: Linha; cel: Celula } | null>(null);
+  // ⚠️ Guarda o NOME junto do id: quem veio do Planning Center sem cadastro tem
+  // `volunteer_id` nulo, e o diálogo precisa do nome pra dizer de quem está
+  // falando antes de explicar que não há perfil vinculado.
+  const [detalhe, setDetalhe] = useState<{ id: string | null; nome: string } | null>(null);
 
   const { data: tipos = [] } = useVolServiceTypes();
-  const { data, isLoading, error } = useEscalaMatriz({ semanas, service_type_id: tipoId || undefined }) as any;
+  const temSelecaoDeCultos = !!serviceIds?.length;
+  const { data, isLoading, error } = useEscalaMatriz({
+    semanas,
+    service_type_id: temSelecaoDeCultos ? undefined : tipoId || undefined,
+    service_ids: serviceIds,
+  }) as any;
   const { data: contexto, isLoading: contextoLoading } = useMontagemContexto(celula?.servico?.id) as any;
   const bulk = useBulkSchedule();
   const remover = useDeleteSchedule();
@@ -61,16 +73,19 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
     [linhasTodas, soMinhas, ehMinhaArea],
   );
 
-  // Agrupa por área para o cabeçalho de seção (como as colunas de equipe do
-  // Services, só que deitadas).
+  // Área → subárea (equipe) → posição. A árvore vem da composição do culto,
+  // então também mostra as posições que ainda não têm voluntário.
   const grupos = useMemo(() => {
-    const m = new Map<string, { team_id: string | null; team: string; cor: string | null; linhas: Linha[] }>();
+    const m = new Map<string, { area: string; subareas: Map<string, { team_id: string | null; team: string; cor: string | null; linhas: Linha[] }> }>();
     for (const l of linhas) {
-      const k = l.team_id || l.team;
-      if (!m.has(k)) m.set(k, { team_id: l.team_id, team: l.team, cor: l.cor, linhas: [] });
-      m.get(k)!.linhas.push(l);
+      const area = l.area || 'Sem área';
+      if (!m.has(area)) m.set(area, { area, subareas: new Map() });
+      const subareas = m.get(area)!.subareas;
+      const key = l.team_id || l.team;
+      if (!subareas.has(key)) subareas.set(key, { team_id: l.team_id, team: l.team, cor: l.cor, linhas: [] });
+      subareas.get(key)!.linhas.push(l);
     }
-    return [...m.values()];
+    return [...m.values()].map(g => ({ ...g, subareas: [...g.subareas.values()] }));
   }, [linhas]);
 
   const escalar = (pessoas: any[], vaga: Vaga) => {
@@ -121,26 +136,32 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
       {/* Filtros */}
       <Card>
         <CardContent className="p-3 flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">Período:</span>
-            {[2, 4, 8].map(n => (
-              <button
-                key={n} onClick={() => setSemanas(n)}
-                className={`h-7 px-2.5 rounded-md border text-xs font-medium transition ${semanas === n ? 'border-[#00B39D] bg-[#00B39D]/10 text-[#00B39D]' : 'border-border hover:bg-muted/50'}`}
+          {temSelecaoDeCultos ? (
+            <div className="text-sm font-medium text-foreground">{contextoLabel}</div>
+          ) : (
+            <>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">Período:</span>
+                {[2, 4, 8].map(n => (
+                  <button
+                    key={n} onClick={() => setSemanas(n)}
+                    className={`h-7 px-2.5 rounded-md border text-xs font-medium transition ${semanas === n ? 'border-[#00B39D] bg-[#00B39D]/10 text-[#00B39D]' : 'border-border hover:bg-muted/50'}`}
+                  >
+                    {n} sem
+                  </button>
+                ))}
+              </div>
+              <select
+                value={tipoId} onChange={e => setTipoId(e.target.value)}
+                className="h-7 rounded-md border bg-background px-2 text-xs"
               >
-                {n} sem
-              </button>
-            ))}
-          </div>
-          <select
-            value={tipoId} onChange={e => setTipoId(e.target.value)}
-            className="h-7 rounded-md border bg-background px-2 text-xs"
-          >
-            <option value="">Todos os cultos</option>
-            {tipos.filter((t: any) => t.is_active).map((t: any) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
+                <option value="">Todos os cultos</option>
+                {tipos.filter((t: any) => t.is_active).map((t: any) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </>
+          )}
           <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
             <input type="checkbox" checked={soMinhas} onChange={e => setSoMinhas(e.target.checked)} className="accent-[#00B39D]" />
             Só as minhas áreas
@@ -192,7 +213,7 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
             <thead>
               <tr>
                 <th className="sticky left-0 z-10 bg-card border-b border-r px-3 py-2 text-left text-xs font-semibold text-muted-foreground min-w-[180px]">
-                  Área · Função
+                  Área · Subárea · Posição
                 </th>
                 {cultos.map(c => (
                   <th key={c.id} className="border-b px-3 py-2 text-left min-w-[150px] bg-card">
@@ -213,29 +234,32 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
               </tr>
             </thead>
             <tbody>
-              {grupos.map(g => (
+              {grupos.flatMap(g => [
                 // ⚠️ Fragment COM key: sem ela o React perde a identidade das
                 // linhas ao reordenar (trocar o filtro) e a grade embaralha.
-                <Fragment key={g.team_id || g.team}>
+                <Fragment key={g.area}>
                   <tr className="bg-muted/40">
                     <td className="sticky left-0 z-10 bg-muted/60 border-b border-r px-3 py-1.5" colSpan={1}>
-                      <div className="flex items-center gap-1.5">
-                        {g.cor && <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: g.cor }} />}
-                        <span className="font-semibold text-xs truncate">{g.team}</span>
-                        <button
-                          onClick={() => onFixar(g.team_id)}
-                          title={ehMinhaArea(g.team_id) ? 'Tirar das minhas áreas' : 'Fixar em "Minhas áreas"'}
-                          className="text-muted-foreground/40 hover:text-[#00B39D] transition-colors"
-                        >
-                          <Star className={`h-3 w-3 ${ehMinhaArea(g.team_id) ? 'fill-[#00B39D] text-[#00B39D]' : ''}`} />
-                        </button>
-                      </div>
+                      <span className="font-semibold text-xs truncate">{g.area}</span>
                     </td>
                     <td className="border-b" colSpan={cultos.length} />
                   </tr>
-                  {g.linhas.map(l => (
+                  {g.subareas.flatMap(subarea => [
+                    <tr key={`subarea-${subarea.team_id || subarea.team}`} className="bg-muted/20">
+                      <td className="sticky left-0 z-10 bg-card border-b border-r px-3 py-1.5">
+                        <div className="flex items-center gap-1.5 pl-3">
+                          {subarea.cor && <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: subarea.cor }} />}
+                          <span className="font-medium text-xs truncate">{subarea.team}</span>
+                          <button onClick={() => onFixar(subarea.team_id)} title={ehMinhaArea(subarea.team_id) ? 'Tirar das minhas áreas' : 'Fixar em "Minhas áreas"'} className="text-muted-foreground/40 hover:text-[#00B39D] transition-colors">
+                            <Star className={`h-3 w-3 ${ehMinhaArea(subarea.team_id) ? 'fill-[#00B39D] text-[#00B39D]' : ''}`} />
+                          </button>
+                        </div>
+                      </td>
+                      <td className="border-b" colSpan={cultos.length} />
+                    </tr>,
+                    ...subarea.linhas.map(l => (
                     <tr key={l.chave} className="hover:bg-accent/20">
-                      <td className="sticky left-0 z-10 bg-card border-b border-r px-3 py-1.5 text-xs text-muted-foreground align-top">
+                      <td className="sticky left-0 z-10 bg-card border-b border-r px-3 py-1.5 pl-9 text-xs text-muted-foreground align-top">
                         {l.position || 'Equipe toda'}
                       </td>
                       {cultos.map(c => {
@@ -245,9 +269,19 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
                             {cel?.pessoas?.map((p: any) => (
                               <div key={p.id} className="group/p flex items-center gap-1 min-w-0" title={p.nome}>
                                 <IconeStatus status={p.status} />
-                                <span className={`text-xs truncate ${p.status === 'declined' ? 'line-through text-muted-foreground' : ''}`}>
+                                {/* O nome abre o detalhe da PESSOA (perfil, contato,
+                                    histórico de escalas e presenças). Antes a grade
+                                    só sabia acrescentar e remover: pra saber quem é
+                                    alguém era preciso sair dela e procurar na lista
+                                    de voluntários. */}
+                                <button
+                                  type="button"
+                                  onClick={() => setDetalhe({ id: p.volunteer_id || null, nome: p.nome })}
+                                  title={`Ver detalhes de ${p.nome}`}
+                                  className={`text-xs truncate text-left hover:underline focus:underline focus:outline-none ${p.status === 'declined' ? 'line-through text-muted-foreground' : ''}`}
+                                >
                                   {p.nome}
-                                </span>
+                                </button>
                                 <button
                                   onClick={() => tirarDaEscala(p, c)}
                                   title="Tirar da escala"
@@ -277,9 +311,10 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
                         );
                       })}
                     </tr>
-                  ))}
+                    )),
+                  ])}
                 </Fragment>
-              ))}
+              ])}
             </tbody>
           </table>
         </div>
@@ -301,6 +336,13 @@ export default function MatrizEscala({ ehMinhaArea, onFixar }: {
         onClose={() => setCelula(null)}
         onEscalar={escalar}
         escalando={bulk.isPending}
+      />
+
+      <VolunteerDetailDialog
+        volunteerId={detalhe?.id ?? null}
+        volunteerName={detalhe?.nome || ''}
+        open={!!detalhe}
+        onOpenChange={(v) => { if (!v) setDetalhe(null); }}
       />
     </div>
   );

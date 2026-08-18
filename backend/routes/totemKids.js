@@ -27,6 +27,8 @@ const { traduzErroUmPaiUmaMae } = require('../utils/kidsResponsavel');
 // (templates deste arquivo migraram pra FILA no C2 · lote 5 — só o texto livre segue direto)
 const { enviarTexto: enviarTextoWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado, ehNomePlaceholder } = require('../services/membroMatch');
+const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
+const { frequentaNaJanela, avaliarFrequencia } = require('../utils/kidsFrequencia');
 // O Planning Center Check-Ins saiu do código (Marcos 2026-07-20): a frequência
 // do Kids é 100% do nosso totem (kids_checkins). Sobrou só a coluna legada
 // kids_criancas.planning_center_id e a tabela kids_pco_presencas (histórico
@@ -1433,6 +1435,11 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
           responsaveis:kids_responsaveis(membro:mem_membros(id, nome, telefone))
         `)
         .eq('ativo', ativo)
+        // ⚠️ Criança soft-deletada NÃO aparece na gestão: sem este filtro a
+        // lista mostrava 1.142 onde existem 1.087 (medido em 17/08/2026 — 55
+        // apagadas contando como ativas), e `app_soft_delete` deixava de ter
+        // efeito visível justamente na tela onde a equipe confere a base.
+        .is('deleted_at', null)
         .order('nome')
         .range(from, from + pageSize - 1);
       if (error) throw error;
@@ -1441,11 +1448,95 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
       if (page.length < pageSize) break;
       from += pageSize;
     }
-    res.json((await anexarFotosEmLote(data)).map(c => ({
-      ...c,
-      idade_meses: calcIdadeMeses(c.data_nascimento),
-      idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
-    })));
+    // Frequência por criança (quantos check-ins e quando foi o último). É o que
+    // sustenta a régua "ativa = veio pelo menos 1× em 12 meses" e o filtro por
+    // quantidade de check-in. Best-effort: se falhar, a lista abre sem os
+    // números em vez de não abrir — mas o aviso vai no payload, porque 0
+    // check-in silencioso se lê como "essa criança nunca veio".
+    let checkinsPorCrianca = new Map();
+    let coletaDesde = null;
+    let avisoFrequencia = null;
+    try {
+      // Paginado: kids_checkins cresce ~600/mês e o PostgREST capa em 1000.
+      const linhas = [];
+      for (let off = 0; off < 200000; off += 1000) {
+        const { data: pag, error } = await supabase
+          .from('kids_checkins')
+          .select('crianca_id, created_at')
+          .order('created_at', { ascending: true })
+          .range(off, off + 999);
+        if (error) throw error;
+        linhas.push(...(pag || []));
+        if (!pag || pag.length < 1000) break;
+      }
+
+      // ⚠️ `kids_pco_presencas` também é PRESENÇA e ficou sem leitor quando o
+      // Planning Center saiu do código (20/07/2026). São 178 registros de
+      // 05–12/07/2026 cobrindo 161 crianças — 26 delas NÃO têm nenhum check-in
+      // no totem, e sem esta fonte apareceriam como "nunca veio". Ignorar dado
+      // real de presença por ele estar na tabela antiga subestima quem
+      // frequenta, que é justamente o número em discussão.
+      // Best-effort dentro do best-effort: se a tabela sumir numa limpeza
+      // futura, a frequência segue com o totem em vez de derrubar a lista.
+      try {
+        for (let off = 0; off < 200000; off += 1000) {
+          const { data: pag, error } = await supabase
+            .from('kids_pco_presencas')
+            .select('crianca_id, data')
+            .order('data', { ascending: true })
+            .range(off, off + 999);
+          if (error) throw error;
+          // `data` é DATE — vira meio-dia UTC pra não cair no dia anterior em
+          // BRT quando comparado com os timestamps do totem.
+          for (const p of pag || []) {
+            if (p?.crianca_id && p?.data) {
+              linhas.push({ crianca_id: p.crianca_id, created_at: `${p.data}T12:00:00.000Z` });
+            }
+          }
+          if (!pag || pag.length < 1000) break;
+        }
+        linhas.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      } catch (e2) {
+        console.warn('[totemKids/criancas] presenças do PCO:', e2.message);
+      }
+
+      for (const l of linhas) {
+        const atual = checkinsPorCrianca.get(l.crianca_id) || { total: 0, ultimo: null };
+        atual.total += 1;
+        if (!atual.ultimo || l.created_at > atual.ultimo) atual.ultimo = l.created_at;
+        checkinsPorCrianca.set(l.crianca_id, atual);
+      }
+      coletaDesde = linhas.length ? linhas[0].created_at : null;
+    } catch (e) {
+      console.error('[totemKids/criancas] frequência:', e.message);
+      avisoFrequencia = 'Não consegui carregar os check-ins — os números de frequência estão indisponíveis nesta lista.';
+      checkinsPorCrianca = new Map();
+    }
+
+    const itens = (await anexarFotosEmLote(data)).map(c => {
+      const f = checkinsPorCrianca.get(c.id) || { total: 0, ultimo: null };
+      return {
+        ...c,
+        idade_meses: calcIdadeMeses(c.data_nascimento),
+        idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
+        checkins_total: avisoFrequencia ? null : f.total,
+        ultimo_checkin: avisoFrequencia ? null : f.ultimo,
+        frequenta: avisoFrequencia ? null : frequentaNaJanela(f.ultimo),
+      };
+    });
+
+    // ⚠️ Formato de resposta preservado (array) — o app do Staff e a ficha
+    // consomem esta rota. Os metadados vão em `?meta=1`, que só a gestão pede.
+    if (req.query.meta === '1') {
+      return res.json({
+        itens,
+        frequencia: {
+          ...avaliarFrequencia(itens, { coletaDesde }),
+          aviso: avisoFrequencia,
+        },
+      });
+    }
+    res.json(itens);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao listar crianças' });
   }
@@ -5313,9 +5404,10 @@ router.patch('/voluntariado-inscricoes/:id', authorizeModule('kids', 2), async (
       if (status === 'enviado_ministerio') patch.enviado_lider_em = new Date().toISOString();
     }
     if (feedback !== undefined) patch.feedback = feedback ? String(feedback).slice(0, 2000) : null;
-    const { data, error } = await supabase.from('vol_inscricoes')
-      .update(patch).eq('id', req.params.id).select('*').single();
-    if (error) throw error;
+    // Escritor único: devolver a linha pra triagem por aqui também limpa o
+    // carimbo `integrado_em` (a lista do Voluntariado e o relatório impresso
+    // mostrariam "Inscrito (triagem)" ao lado de "Integrado em 15/08").
+    const data = await atualizarStatusInscricao(req.params.id, patch);
     res.json(data);
   } catch (e) {
     console.error('[TOTEM-KIDS] patch voluntariado-inscricoes:', e.message);

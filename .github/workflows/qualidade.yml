@@ -44,12 +44,23 @@ jobs:
       - name: Testes
         run: npm test
 
-      # ⚠️ LINT NÃO ENTRA NA TRAVA (ainda), e a ausência é decisão, não
-      # esquecimento: `npm run lint` acusa ~1.500 erros no repositório hoje (a
+      # ⚠️ O LINT COMPLETO CONTINUA FORA DA TRAVA, e a ausência é decisão, não
+      # esquecimento: `npm run lint` acusa ~1.700 erros no repositório hoje (a
       # esmagadora maioria `no-explicit-any` acumulado). Uma trava que nasce
       # vermelha bloqueia o primeiro push de todo mundo e é desligada na semana
       # seguinte — aí não sobra trava nenhuma, nem a de tipos, que hoje está em
       # ZERO e vale a pena proteger.
       #
-      # Para ligar o lint depois: zerar (ou reduzir a uma lista de exceções) os
-      # erros existentes e mover esta linha para dentro dos steps.
+      # O que entra é UMA regra, com config próprio (eslint.hooks.config.js) e
+      # hoje com ZERO violações: a ordem dos hooks do React. Em 16/08/2026 um
+      # `useState` colocado depois de um `return null` no
+      # AgenteVoluntariadoPainel derrubou a tela inteira do voluntariado em
+      # produção — "Minified React error #310: Rendered more hooks than during
+      # the previous render". Nem `tsc` nem os testes pegam isso: só quebra
+      # quando o componente PASSA do early return, então atravessou review,
+      # preview e vários dias de produção.
+      #
+      # Fica DEPOIS dos testes de propósito: é o passo mais barato dos três, mas
+      # o mais raro de falhar. Falhar cedo só ajuda quando a falha é provável.
+      - name: Ordem dos hooks do React (react-hooks/rules-of-hooks)
+        run: npm run lint:hooks

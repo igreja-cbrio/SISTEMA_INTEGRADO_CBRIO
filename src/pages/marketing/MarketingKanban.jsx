@@ -2,9 +2,9 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { marketing as api } from '../../api';
-import MarketingNav from './MarketingNav';
+import MarketingPagina from './MarketingPagina';
 import MarketingTriagemSheet from './MarketingTriagemSheet';
-import MarketingEpicos from './MarketingEpicos';
+import { useArrastoKanban } from './useArrastoKanban';
 import { supabase } from '../../supabaseClient';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -18,9 +18,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../../components/ui/dialog';
 import { ScrollArea } from '../../components/ui/scroll-area';
 import {
-  Megaphone, Plus, Filter, Clock, Loader2, CheckCircle2, AlertCircle,
-  Zap, RefreshCw, ArrowRight, Calendar, CalendarDays, Settings, BarChart3, User2, FileText, Upload, Trash2, X, ListChecks, Paperclip,
-  Inbox, Search, Eye, ChevronDown, ChevronRight, MoveRight, GripVertical,
+  Megaphone, Plus, Filter, Clock, Loader2, CheckCircle2, Zap, RefreshCw,
+  ArrowRight, Calendar, User2, FileText, Upload, Trash2, ListChecks,
+  Paperclip, Inbox, Search, Eye, ChevronDown, ChevronRight, MoveRight
 } from 'lucide-react';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
@@ -89,7 +89,6 @@ export default function MarketingKanban() {
   // Triagem embutida (consolidação F-B): campanhas-dor caem na 1ª coluna
   const [campanhasTriagem, setCampanhasTriagem] = useState([]);
   const [triagemSel, setTriagemSel] = useState(null);
-  const [visao, setVisao] = useState('quadro'); // 'quadro' (colunas) | 'epicos' (por campanha/evento)
 
   // Janela de semanas (pedido do Pedro · 14/08): o quadro abre mostrando só o
   // ciclo criativo da semana atual + a próxima. Quem decide o que está na
@@ -142,6 +141,14 @@ export default function MarketingKanban() {
 
   const filtrados = useMemo(() => {
     return cards.filter(c => {
+      // ⚠️⚠️ O CICLO CRIATIVO SAIU DO KANBAN (decisão do Marcos · 14/08: "tirar os
+      // cards do ciclo de backlog, Pedro Paiva vai gerenciar ciclo criativo no
+      // dashboard"). Eram **74 dos 83 cards vivos** — o quadro era 89% ciclo.
+      // ⚠️ NÃO é "esconder trabalho": ele ganhou dois lugares próprios, e é isso
+      // que torna a remoção honesta — o calendário do ciclo no /marketing (com o
+      // pendente de cada fase e a ação de concluir) e as barras no Planner, que
+      // seguem ocupando a agenda da equipe.
+      if (c.origem === 'evento') return false;
       // ⚠️ Janela de semanas: quem decide é o SERVIDOR (`na_janela`). `null` =
       // "não sei quando é" e SEMPRE aparece — esconder trabalho por falta de
       // data seria pior que a lista longa.
@@ -206,6 +213,25 @@ export default function MarketingKanban() {
     });
   }, [filtrados]);
 
+  // ⚠️ O MESMO gesto resolve clique e arrasto (ver src/lib/arrastoKanban.ts):
+  // `para === null` significa "foi só um toque" → abre o painel. Dois caminhos
+  // disputando o gesto era parte do motivo de o arrasto "não pegar".
+  const aoSoltarCard = useCallback((cardId, para) => {
+    const card = cards.find(c => c.id === cardId);
+    if (!card) return;
+    if (para === null) { setDetail(card); return; }
+    mudarEstado(cardId, para);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards]);
+
+  const arrastoK = useArrastoKanban({
+    onMover: aoSoltarCard,
+    habilitado: isCoordenador,
+    // ⚠️ Triagem NÃO recebe card: entrar em triagem é decisão da campanha
+    // (o botão Triar cria os entregáveis), não um estado pra onde se arrasta.
+    aceitaColuna: useCallback((c) => c !== 'triagem', []),
+  });
+
   const escondidos = useMemo(
     () => (soJanela ? cards.filter(c => c.na_janela === false).length : 0),
     [cards, soJanela],
@@ -238,24 +264,12 @@ export default function MarketingKanban() {
   }
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Megaphone className="h-6 w-6 text-primary" />
-            Marketing
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Kanban de demandas criativas · 3 origens (solicitação · evento · interna)
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap">
-          <div className="flex rounded-lg border border-border overflow-hidden">
-            <button onClick={() => setVisao('quadro')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${visao === 'quadro' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-accent'}`}>Quadro</button>
-            <button onClick={() => setVisao('epicos')} className={`px-3 py-1.5 text-xs font-medium transition-colors ${visao === 'epicos' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-accent'}`}>Épicos</button>
-          </div>
-          <MarketingNav />
+    // ⚠️ A faixa "Quadro | Épicos" SAIU (pedido do Marcos · 17/08): sobrou uma
+    // visualização só, então o toggle era ruído — e a visão de Épicos foi
+    // aposentada junto (o ciclo criativo agora se acompanha no dashboard).
+    <MarketingPagina
+      subtitulo="Demandas criativas: pedidos e tarefas internas"
+      acoes={<>
           {isCoordenador && (
             <Dialog open={novaOpen} onOpenChange={setNovaOpen}>
               <DialogTrigger asChild>
@@ -276,12 +290,8 @@ export default function MarketingKanban() {
               </DialogContent>
             </Dialog>
           )}
-        </div>
-      </div>
-
-      {visao === 'epicos' && <MarketingEpicos isCoord={isCoordenador} />}
-
-      {visao === 'quadro' && (<>
+      </>}
+    >
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-2 p-3 bg-muted/30 rounded-lg border border-border">
         <Filter className="h-4 w-4 text-muted-foreground" />
@@ -290,7 +300,8 @@ export default function MarketingKanban() {
           <SelectContent>
             <SelectItem value="todas">Todas origens</SelectItem>
             <SelectItem value="solicitacao">Solicitação</SelectItem>
-            <SelectItem value="evento">Evento</SelectItem>
+            {/* ⚠️ "Evento" saiu: o ciclo criativo não vive mais no Kanban, e
+                oferecer o filtro devolveria uma coluna vazia sem explicar nada. */}
             <SelectItem value="interna">Interna</SelectItem>
           </SelectContent>
         </Select>
@@ -364,7 +375,10 @@ export default function MarketingKanban() {
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <div className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory sm:snap-none">
+        <div
+          ref={arrastoK.containerRef}
+          className={`flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory sm:snap-none ${arrastoK.arrastando ? 'select-none' : ''}`}
+        >
           {colunas.map(col => (
             col.key === 'triagem' ? (
               <TriagemColumn
@@ -373,6 +387,7 @@ export default function MarketingKanban() {
                 campanhas={campanhasTriagem}
                 isCoordenador={isCoordenador}
                 onClickCampanha={(c) => setTriagemSel(c)}
+                arrastando={arrastoK.arrastando}
               />
             ) : (
               <KanbanColumn
@@ -382,12 +397,27 @@ export default function MarketingKanban() {
                 currentProfileId={profile?.id}
                 onClickCard={(c) => setDetail(c)}
                 onMudarEstado={mudarEstado}
+                aoPressionarCard={arrastoK.aoPressionar}
+                cardArrastado={arrastoK.cardArrastado}
+                destacada={arrastoK.colunaSobre === col.key}
               />
             )
           ))}
         </div>
       )}
-      </>)}
+
+      {/* Fantasma que segue o dedo/cursor · fora do fluxo, sem capturar ponteiro.
+          ⚠️ `pointer-events-none` é obrigatório: senão ele seria o elemento sob o
+          ponteiro e nenhuma coluna seria encontrada no `elementFromPoint`. */}
+      {arrastoK.arrastando && (
+        <div
+          ref={arrastoK.fantasmaRef}
+          className="fixed top-0 left-0 z-[1300] pointer-events-none rounded-lg border border-primary bg-card px-3 py-2 text-xs font-medium shadow-lg"
+          style={{ transform: `translate(${arrastoK.arrasto.x + 8}px, ${arrastoK.arrasto.y + 8}px)` }}
+        >
+          Movendo…
+        </div>
+      )}
 
       <CardDrawer
         card={detail}
@@ -406,28 +436,24 @@ export default function MarketingKanban() {
         onClose={() => setTriagemSel(null)}
         onChanged={() => { carregar(); }}
       />
-    </div>
+    </MarketingPagina>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // Coluna do Kanban
 // ═══════════════════════════════════════════════════════════════════════
-function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMudarEstado }) {
-  const [dragOver, setDragOver] = useState(false);
-
+function KanbanColumn({
+  col, isCoordenador, currentProfileId, onClickCard, onMudarEstado,
+  aoPressionarCard, cardArrastado, destacada,
+}) {
   return (
+    // ⚠️ `data-coluna` é como o arrasto por ponteiro descobre onde o dedo/cursor
+    // está (via elementFromPoint + closest). Sem este atributo a coluna deixa de
+    // ser alvo — não remover.
     <div
-      className={`flex flex-col rounded-xl shrink-0 w-[85vw] sm:w-[280px] snap-center bg-muted/50 dark:bg-muted/20 transition-shadow ${dragOver ? 'ring-2 ring-primary/40' : ''}`}
-      onDragOver={e => { if (!isCoordenador) return; e.preventDefault(); setDragOver(true); }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={e => {
-        e.preventDefault();
-        setDragOver(false);
-        if (!isCoordenador) return;
-        const id = e.dataTransfer.getData('text/plain');
-        if (id) onMudarEstado(id, col.key);
-      }}
+      data-coluna={col.key}
+      className={`flex flex-col rounded-xl shrink-0 w-[85vw] sm:w-[280px] snap-center bg-muted/50 dark:bg-muted/20 transition-shadow ${destacada ? 'ring-2 ring-primary' : ''}`}
     >
       <div className="flex items-center gap-2 px-3 py-2.5">
         <span className={`h-2.5 w-2.5 rounded-full ${col.dot}`} />
@@ -445,18 +471,20 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
             <MacroCard
               key={m.id}
               macro={m}
-              draggable={isCoordenador}
               onClickCard={onClickCard}
               onMudarEstado={isCoordenador ? onMudarEstado : null}
+              aoPressionarCard={isCoordenador ? aoPressionarCard : null}
+              cardArrastado={cardArrastado}
             />
           ))}
           {col.soltos.map(item => (
             <KanbanCard
               key={item.id}
               item={item}
-              draggable={isCoordenador}
               onClick={() => onClickCard(item)}
               onMover={isCoordenador ? (novo => onMudarEstado(item.id, novo)) : null}
+              aoPressionar={isCoordenador ? aoPressionarCard : null}
+              arrastando={cardArrastado === item.id}
             />
           ))}
         </div>
@@ -471,7 +499,7 @@ function KanbanColumn({ col, isCoordenador, currentProfileId, onClickCard, onMud
 // ⚠️ As subtarefas continuam ARRASTÁVEIS e clicáveis individualmente quando o
 // macro está aberto — o agrupamento é de EXIBIÇÃO, não tira ação de ninguém.
 // ═══════════════════════════════════════════════════════════════════════
-function MacroCard({ macro, draggable, onClickCard, onMudarEstado }) {
+function MacroCard({ macro, onClickCard, onMudarEstado, aoPressionarCard, cardArrastado }) {
   const [aberto, setAberto] = useState(false);
   const total = macro.cards.length;
   const feitos = macro.cards.filter(c => c.estado === 'concluido').length;
@@ -542,9 +570,10 @@ function MacroCard({ macro, draggable, onClickCard, onMudarEstado }) {
             <KanbanCard
               key={c.id}
               item={c}
-              draggable={draggable}
               onClick={() => onClickCard(c)}
               onMover={onMudarEstado ? (novo => onMudarEstado(c.id, novo)) : null}
+              aoPressionar={aoPressionarCard}
+              arrastando={cardArrastado === c.id}
             />
           ))}
         </div>
@@ -556,14 +585,24 @@ function MacroCard({ macro, draggable, onClickCard, onMudarEstado }) {
 // ═══════════════════════════════════════════════════════════════════════
 // Coluna Triagem · campanhas-dor aguardando o Pedro definir a solução
 // ═══════════════════════════════════════════════════════════════════════
-function TriagemColumn({ col, campanhas, isCoordenador, onClickCampanha }) {
+function TriagemColumn({ col, campanhas, isCoordenador, onClickCampanha, arrastando }) {
   return (
+    // ⚠️ SEM `data-coluna`: a Triagem não é destino de arrasto DE PROPÓSITO —
+    // entrar em triagem é a campanha nascer do pedido, e SAIR dela é triar (que
+    // cria os entregáveis). Nenhum dos dois é "mudar o estado de um card".
+    // Antes isso era invisível: a coluna simplesmente não reagia, e quem tentava
+    // arrastar concluía que o Kanban estava quebrado. Agora ela DIZ.
     <div className="flex flex-col rounded-xl shrink-0 w-[85vw] sm:w-[280px] snap-center bg-muted/50 dark:bg-muted/20">
       <div className="flex items-center gap-2 px-3 py-2.5">
         <span className={`h-2.5 w-2.5 rounded-full ${col.dot}`} />
         <span className="text-sm font-semibold text-foreground">{col.label}</span>
         <Badge variant="secondary" className="ml-auto text-xs rounded-full px-2">{campanhas.length}</Badge>
       </div>
+      {arrastando && (
+        <p className="mx-2 mb-2 rounded bg-muted px-2 py-1.5 text-[10px] text-muted-foreground">
+          A Triagem não recebe card: use <strong>Triar</strong> para transformar o pedido em entregáveis.
+        </p>
+      )}
       <ScrollArea className="flex-1 max-h-[calc(100vh-330px)] md:max-h-[calc(100vh-290px)]">
         <div className="px-2 pb-2 space-y-2 min-h-[40px]">
           {campanhas.length === 0 && (
@@ -607,10 +646,17 @@ function CampanhaCard({ campanha: c, onClick, clicavel }) {
           </span>
           {c.data_pedida && <span className="flex items-center gap-0.5 shrink-0"><Calendar className="h-3 w-3" />{fmtData(c.data_pedida)}</span>}
         </div>
+        {/* ⚠️ Botão DE VERDADE, não texto decorativo dentro de um card clicável:
+            "Triar" é a rotina do Pedro, e o alvo de toque precisa ser óbvio e
+            grande — era o único caminho que funcionava e parecia enfeite. */}
         {clicavel && (
-          <div className="text-[11px] text-primary flex items-center gap-1 font-medium pt-0.5">
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); onClick?.(); }}
+            className="w-full mt-0.5 inline-flex items-center justify-center gap-1 rounded-md bg-primary/10 px-2 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/20 transition-colors"
+          >
             Triar <ArrowRight className="h-3 w-3" />
-          </div>
+          </button>
         )}
       </div>
     </div>
@@ -691,7 +737,7 @@ function MenuMover({ estadoAtual, onMover, rotulo = 'Mover para', emLote = 0 }) 
   );
 }
 
-function KanbanCard({ item, draggable, onClick, onMover }) {
+function KanbanCard({ item, onClick, onMover, aoPressionar, arrastando }) {
   // prazo de produção do entregável (data_fim/prazo_producao) ou o prazo legado
   const prazoCard = item.prazo_producao || item.prazo_confirmado;
   const atraso = useMemo(() => {
@@ -721,11 +767,13 @@ function KanbanCard({ item, draggable, onClick, onMover }) {
   }, [item.estado, item.estado_atualizado_em, item.etiqueta_tipo?.esforco_max_h]);
 
   return (
+    // ⚠️ `touch-none` (touch-action: none) é o que faz o arrasto existir no
+    // TOQUE: sem isso o navegador trata o gesto como rolagem e nunca entrega os
+    // pointermove. E quando NÃO é arrastável, o clique segue no onClick.
     <div
-      className={`bg-card rounded-lg border border-border/60 shadow-sm hover:shadow-md hover:border-border transition-all overflow-hidden cursor-pointer ${draggable ? 'active:opacity-70' : ''}`}
-      onClick={onClick}
-      draggable={draggable}
-      onDragStart={e => { e.dataTransfer.setData('text/plain', item.id); e.dataTransfer.effectAllowed = 'move'; }}
+      className={`bg-card rounded-lg border border-border/60 shadow-sm hover:shadow-md hover:border-border transition-all overflow-hidden cursor-pointer ${aoPressionar ? 'touch-none active:opacity-70' : ''} ${arrastando ? 'opacity-40 ring-2 ring-primary' : ''}`}
+      onClick={aoPressionar ? undefined : onClick}
+      onPointerDown={aoPressionar ? (e => aoPressionar(e, item)) : undefined}
     >
       {/* faixa de prioridade no topo (urgente / revisão) — estilo Trello */}
       {item.raia_rapida ? <div className="h-1.5 bg-rose-500" /> : item.tem_revisao ? <div className="h-1.5 bg-amber-500" /> : null}

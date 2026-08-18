@@ -21,10 +21,12 @@
     "test:duplicidade": "node backend/services/duplicidadePolicy.test.js",
     "test:identidade-pares": "node backend/services/identidadeProgressiva.test.js",
     "test:familia": "node backend/services/familiaPolicy.test.js",
+    "test:matcher-insert": "node backend/services/membroMatchInsert.test.js",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:e2e:report": "playwright show-report e2e/.report"
+    "test:e2e:report": "playwright show-report e2e/.report",
+    "lint:hooks": "eslint --config eslint.hooks.config.js --quiet src"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

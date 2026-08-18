@@ -20,6 +20,8 @@
 
 const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
+const { sexoPara } = require('../utils/dadosDoCadastro');
+const { nomeEhVersaoAbreviada } = require('./duplicidadePolicy');
 const {
   normalizarCpf, normalizarTelefone, normalizarEmail, nomeNormalizado: normalizarNome,
   registrarObservacaoIdentidade,
@@ -97,6 +99,26 @@ async function _candidatosPorContatoSecundario({ email, telefone } = {}) {
   return hits;
 }
 
+
+// ⚠️⚠️ A forma COMPARÁVEL do telefone. `mem_membros.telefone` guarda o que cada
+// porta/import gravou, em formatos MISTOS — medido em 17/08: 840 de 3.597 vivos
+// (23%) COM máscara e 29 com código de país. E `21996137099` **não é substring**
+// de `(21)99613-7099`, então o `ilike %digitos%` que este arquivo usava desde
+// sempre era CEGO nesses casos: 84 grupos de cadastros no mesmo telefone
+// canônico com formas diferentes, 35 deles com o nome normalizado IDÊNTICO.
+// (Caso Fabio Moura: 2 cadastros, mesmo nome/nascimento/e-mail/telefone e CPFs
+// diferentes — o 2º nasceu porque o 1º era invisível pelo telefone.)
+//
+// Quem compara agora é a coluna GERADA `telefone_digits` (migration
+// 20260817160000), e o lado da BUSCA precisa da mesma canonicalização.
+// ⚠️ Tira o 55 SÓ quando o resto ainda é telefone completo — **DDD 55 é Santa
+// Maria/RS**, e um `replace(^55)` cru destruiria todo número legítimo de lá.
+function telefoneComparavel(v) {
+  const d = String(v || '').replace(/\D/g, '');
+  if (d.length >= 12 && d.length <= 13 && d.startsWith('55')) return d.slice(2);
+  return d.length >= 10 ? d : null;
+}
+
 // buscarCandidatos · membros que batem por chave forte, ranqueados por
 // confiança. Cada candidato sai com { ...membro, motivos: [...], score }.
 // Usado pelo GET /lookup e (fase 1) pela fila de reconciliação.
@@ -106,21 +128,39 @@ async function buscarCandidatos({ cpf, email, telefone } = {}, { limit = 5 } = {
   const em = normalizarEmail(email);
   const tel = normalizarTelefone(telefone);
 
-  const ors = [];
-  if (c) ors.push(`cpf.eq.${c}`);
-  if (em) ors.push(`email.ilike.${escapePostgrestValue(em)}`);
-  if (tel) ors.push(`telefone.ilike.%${tel}%`);
-  if (ors.length === 0) return [];
+  const telCmp = telefoneComparavel(telefone);
 
-  const [{ data, error }, secundarios] = await Promise.all([
-    supabase
-      .from('mem_membros')
-      .select(COLS)
-      .or(ors.join(','))
-      .is('deleted_at', null)
-      .limit(Math.max(limit, 5) * 2),
+  const base = [];
+  if (c) base.push(`cpf.eq.${c}`);
+  if (em) base.push(`email.ilike.${escapePostgrestValue(em)}`);
+  if (base.length === 0 && !telCmp && !tel) return [];
+
+  const consulta = (ors) => supabase
+    .from('mem_membros')
+    .select(COLS)
+    .or(ors.join(','))
+    .is('deleted_at', null)
+    .limit(Math.max(limit, 5) * 2);
+
+  // ⚠️⚠️ FALLBACK OBRIGATÓRIO, e aqui ele é crítico: pedir coluna inexistente faz
+  // o PostgREST recusar a query INTEIRA, e esta função é o caminho de TODA porta
+  // de pessoa. Sem o fallback, o intervalo entre este deploy e a migration
+  // derrubaria batismo, censo, grupos, Next e voluntariado de uma vez.
+  const orsNovo = [...base, ...(telCmp ? [`telefone_digits.eq.${telCmp}`] : [])];
+  const orsAntigo = [...base, ...(tel ? [`telefone.ilike.%${tel}%`] : [])];
+
+  // A busca nos contatos secundários roda EM PARALELO (como antes): serializar
+  // somaria uma ida ao banco em toda porta de pessoa.
+  const [primeira, secundarios] = await Promise.all([
+    orsNovo.length ? consulta(orsNovo) : Promise.resolve({ data: [], error: null }),
     _candidatosPorContatoSecundario({ email, telefone }),
   ]);
+  let resultado = primeira;
+  if (resultado.error && /telefone_digits/.test(String(resultado.error.message || ''))) {
+    console.warn('[membroMatch] telefone_digits ausente (migration 20260817160000 não aplicada) — a busca por telefone caiu no ilike, que é cego a número mascarado');
+    resultado = orsAntigo.length ? await consulta(orsAntigo) : { data: [], error: null };
+  }
+  const { data, error } = resultado;
   if (error) throw error;
 
   let rows = data || [];
@@ -181,6 +221,28 @@ function nomesMesmaPessoa(a, b) {
   if (!x || !y) return false;
   if (x === y) return true;
   return _dice(x, y) >= 0.90;
+}
+
+// ⚠️⚠️ O NOME QUE AUTORIZA LIGAR (2026-08-18 · decisão do Marcos).
+//
+// `nomesMesmaPessoa` é Dice ≥0,90 e RECUSA nome abreviado — e era isso que
+// transformava cadastro antigo em FANTASMA: o registro do Next legado tem nome
+// e telefone; a pessoa entra em grupos hoje com o nome civil completo e o MESMO
+// telefone, o matcher não reconhece, nasce uma segunda pessoa. Medido em 18/08:
+// `nomesMesmaPessoa` recusa TODOS os casos de nome contido da base
+// ("Kelly Veiga da Silva Oliveira" × "Kelly Veiga", "Eliane Santana" ×
+// "Eliane dos Santos Santana Sobrinho").
+//
+// ⚠️ Entra o CONTAINMENT e SÓ ele. Medido sobre telefone em comum na base viva:
+// containment = 100 pares, todos a mesma pessoa · Dice ≥0,90 = 4 pares, e 2 são
+// IRMÃS ("Layane" × "Dayane A. M. Bello Joseph", "Mayla" × "Nayla Duarte
+// Victor Minari"). Uma letra no PRIMEIRO nome é indistinguível de parente, então
+// typo continua fora de LIGAR — ele SUGERE, na fila.
+//
+// ⚠️ `nomesMesmaPessoa` fica na OU porque cobre o caso `x === y` e a tolerância a
+// acento/caixa que o containment por token não cobre sozinho.
+function nomeAutorizaLigar(a, b) {
+  return nomesMesmaPessoa(a, b) || nomeEhVersaoAbreviada(a, b);
 }
 
 // Nome-placeholder do import financeiro ("Contribuinte 059412...") — o extrato
@@ -262,16 +324,22 @@ async function _consolidarCpfNoMatch(membroId, cpf11, matchedBy, dataNascimento)
 // `extra` = campos extras pro insert (ex.: data_nascimento, familia_id).
 // `soChaveForte`: liga SÓ por CPF (a pessoa afirmou "não sou eu" no dedup —
 //   nenhum sinal deniável pode religá-la a outro cadastro).
-async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento, status = 'visitante', extra = {}, origem = 'matcher', origemId = null } = {}, { soChaveForte = false } = {}) {
-  const entrada = { cpf, email, telefone, nome, dataNascimento, status, extra, origem, origemId };
+async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento, genero, status = 'visitante', extra = {}, origem = 'matcher', origemId = null } = {}, { soChaveForte = false, permitirMatchPerfeito = false } = {}) {
+  const entrada = { cpf, email, telefone, nome, dataNascimento, genero, status, extra, origem, origemId };
   const cpf11 = normalizarCpf(cpf);
   const emailLc = normalizarEmail(email);
   const tel = normalizarTelefone(telefone);
   const nasc = dataNascimento || extra.data_nascimento || null;
+  // ⚠️ Aceita 'M'/'F' e 'masculino'/'feminino' na entrada porque as portas
+  // guardam o sexo em vocabulários diferentes (`batismo_inscricoes.sexo` é
+  // curto, `mem_membros.genero` é longo) — copiar cru grava valor que nenhum
+  // filtro do sistema encontra depois. Valor irreconhecível vira null, nunca
+  // um chute.
+  const generoCanon = sexoPara('membro', genero) || sexoPara('membro', extra.genero) || null;
   // Se chegou um CPF novo, contato compartilhável não pode absorvê-lo em um
   // cadastro antigo sem confirmar também o nascimento. Nesse caso criamos um
   // novo registro e a observação-ponte eleva o par para revisão humana.
-  const candidatoCompativel = (c) => nomesMesmaPessoa(c.nome, nome)
+  const candidatoCompativel = (c) => nomeAutorizaLigar(c.nome, nome)
     && (!cpf11 || (!!nasc && !!c.data_nascimento && nasc === c.data_nascimento));
 
   if (cpf11) {
@@ -334,6 +402,56 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     }
   }
 
+  // ── MATCH PERFEITO · a exceção estreita ao `soChaveForte` ──────────────────
+  // Decisão do Marcos (17/08): "não vejo problema de criar duplicatas, desde que
+  // entrem na trilha de duplicatas e sejam resolvidas; evidente que se tiver uma
+  // pessoa que tenha match perfeito acho que é bom conectar já."
+  //
+  // `soChaveForte` existe pra impedir que sinal COMPARTILHÁVEL (telefone da casa,
+  // e-mail da família) escreva o dado de uma pessoa no cadastro de outra — por
+  // isso ele continua valendo. O que entra aqui é mais estreito do que o ramo
+  // nome+nascimento normal, de propósito:
+  //   · nome NORMALIZADO IDÊNTICO (não Dice ≥0,90, não abreviação contida)
+  //   · nascimento IDÊNTICO
+  //   · nenhum CPF CONFLITANTE
+  //   · e EXATAMENTE UM candidato
+  //
+  // ⚠️⚠️ O veto de CPF não é preciosismo — a medição de 17/08 achou 2 grupos com
+  // nome e nascimento idênticos na base viva, e **1 deles tem CPFs diferentes**
+  // (Fabio Moura: 19002762755 × 01212666720). Sem o veto, este ramo ligaria
+  // aquele par, e ali um dos CPFs está errado: decidir qual é ato humano. Ou
+  // seja: sem o veto, a régua erraria em metade dos casos que ela alcança.
+  //
+  // ⚠️ "Exatamente um" também é regra: 2+ candidatos com nome e nascimento
+  // idênticos significa que a base JÁ tem duplicata ali, e escolher um seria
+  // cara-ou-coroa. Vai pra fila, que é onde gente decide.
+  //
+  // ⚠️ NUNCA ligar por opção implícita: quem passa `soChaveForte` por causa de um
+  // "não sou eu" do dedup (`nao_vincular_fraco` nos Grupos) NÃO manda
+  // `permitirMatchPerfeito` — ali a pessoa negou o vínculo explicitamente, e
+  // nome+nascimento não pode desfazer isso.
+  if (soChaveForte && permitirMatchPerfeito && nasc && nome) {
+    const alvo = normalizarNome(nome);
+    const { data: cands } = await supabase.from('mem_membros')
+      .select('id, nome, cpf').eq('data_nascimento', nasc).is('deleted_at', null).limit(30);
+    const perfeitos = (cands || []).filter((c) => {
+      if (normalizarNome(c.nome) !== alvo) return false;
+      const cCpf = normalizarCpf(c.cpf);
+      if (cpf11 && cCpf && cpf11 !== cCpf) return false;   // CPF conflitante VETA
+      return true;
+    });
+    if (perfeitos.length === 1) {
+      const hit = perfeitos[0];
+      await _consolidarCpfNoMatch(hit.id, cpf11, 'nome+nascimento', nasc);
+      _registrarContatoNoMatch(hit.id, { telefone: tel, email: emailLc }, 'porta');
+      await _observar(hit.id, entrada, 'nome+nascimento_exato', false);
+      return { membro_id: hit.id, created: false, matched_by: 'nome+nascimento_exato' };
+    }
+    if (perfeitos.length > 1) {
+      console.log(`[membroMatch] match perfeito AMBÍGUO em ${origem}: ${perfeitos.length} cadastros com "${nome}" e ${nasc} — criando e deixando pra fila`);
+    }
+  }
+
   // origem_cadastro = a PORTA que criou a pessoa. Sem isso, 2.163 cadastros
   // ficaram com origem nula (medido 04/08) e "de onde veio esse dado?" não tinha
   // resposta — exatamente a pergunta que uma auditoria de entrada precisa fazer.
@@ -343,6 +461,28 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
   const origemCadastro = extra.origem_cadastro
     || (origemSlug && origemSlug !== 'matcher' ? origemSlug.slice(0, 60) : null);
 
+  // ⚠️⚠️ `data_nascimento` e `genero` PRECISAM entrar aqui. Até 17/08 eles só
+  // chegavam ao banco se o chamador os pusesse em `extra` — o `nasc` era
+  // calculado logo acima, usado para DECIDIR identidade (ramo nome+nascimento,
+  // gate do candidatoCompativel) e depois DESCARTADO na criação. O efeito é a
+  // mesma família do CPF do censo (04/08), do opt-in (05/08) e do sexo do Next
+  // (11/08): a pessoa preenche, a porta salva na tabela dela, e o CADASTRO —
+  // que é o que todo o sistema lê — nasce vazio.
+  //
+  // Medido em 17/08, o que motivou: 62 cadastros VIVOS com o nascimento gravado
+  // em `mem_identidade_observacoes` e a coluna do cadastro em branco, vindos de
+  // 8 portas diferentes (54 deles nos 17 dias anteriores). Casos que o Marcos
+  // viu: Wesley Barros Ramos (censo, nasc 1955-09-29) e Pedro Moreira Gonçalez
+  // (batismo, nasc 2006-10-08 + sexo M).
+  //
+  // ⚠️ Isto vale SÓ na CRIAÇÃO — a linha não existe ainda, então não há dado
+  // humano a sobrescrever. Preencher cadastro que já existe continua sendo
+  // só-onde-vazio, na régua de cada porta.
+  //
+  // ⚠️ Perder o nascimento também DEGRADAVA a fila de duplicidades: é ele que
+  // faz o par "mesmo nome + mesmo nascimento" virar quase_confirmado. O par do
+  // Wesley chegou a 100 pela ponte de observações, mas o cadastro novo não
+  // exibia o dado que sustenta a decisão.
   const { data, error } = await supabase.from('mem_membros').insert({
     ...extra,
     nome: nome || 'Sem nome',
@@ -351,6 +491,8 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
     cpf: cpf11,
     status,
     active: true,
+    ...(nasc ? { data_nascimento: nasc } : {}),
+    ...(generoCanon ? { genero: generoCanon } : {}),
     ...(origemCadastro ? { origem_cadastro: origemCadastro } : {}),
   }).select('id').single();
   if (error) {
@@ -385,7 +527,7 @@ async function acharMembroGuardado({ cpf, email, telefone, nome, dataNascimento 
   const emailLc = normalizarEmail(email);
   const tel = normalizarTelefone(telefone);
   const nasc = dataNascimento || null;
-  const candidatoCompativel = (c) => nomesMesmaPessoa(c.nome, nome)
+  const candidatoCompativel = (c) => nomeAutorizaLigar(c.nome, nome)
     && (!cpf11 || (!!nasc && !!c.data_nascimento && nasc === c.data_nascimento));
 
   if (cpf11) {

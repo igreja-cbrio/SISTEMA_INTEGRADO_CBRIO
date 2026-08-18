@@ -524,6 +524,33 @@ function PatStatCard({ label, value, bg, svg, onClick }) {
 }
 
 function DashboardTab({ dash, indicadores, depreciacaoIndic, atividadeRecente, localizacoes, onNavigate, onNavigateFiltro, onAbrirBem }) {
+  // Agrupa pelo mesmo pai_id que o usuário já organizou em Categorias/
+  // Localizações (ex.: "CBKids" pai de "Sala 9/10/11") — em vez de 1 barra por
+  // sala final, soma tudo no nome do ancestral raiz. Localização sem
+  // correspondência na árvore (ou "Sem localização") mantém o próprio nome.
+  //
+  // ⚠️ TEM QUE FICAR ANTES do `if (!dash) return` abaixo. Este useMemo vivia
+  // depois do early return: enquanto o dashboard carregava o componente saía
+  // com ZERO hooks e, quando o dado chegava, passava a chamar UM — que é o
+  // "Minified React error #310: Rendered more hooks than during the previous
+  // render". Mesmo defeito que derrubou a tela do voluntariado em 16/08/2026.
+  // Ele só depende de `localizacoes`, nunca de `dash`, então subir é seguro.
+  const raizPorNomeLocalizacao = useMemo(() => {
+    const lista = localizacoes || [];
+    const byId = new Map(lista.map(l => [l.id, l]));
+    const raizes = new Map();
+    for (const l of lista) {
+      let cur = l;
+      const visitados = new Set([cur.id]);
+      while (cur.pai_id && byId.has(cur.pai_id) && !visitados.has(cur.pai_id)) {
+        cur = byId.get(cur.pai_id);
+        visitados.add(cur.id);
+      }
+      raizes.set(l.nome, cur.nome);
+    }
+    return raizes;
+  }, [localizacoes]);
+
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
   // Tab 1 = Bens; filtra por status quando aplicável
   const kpis = [
@@ -556,25 +583,6 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, atividadeRecente, l
   const barrasCategoria = Object.entries(dash.porCategoria || {})
     .map(([name, value]) => ({ name, value, sem: SEM_LABELS.has(name) }))
     .sort((a, b) => b.value - a.value);
-  // Agrupa pelo mesmo pai_id que o usuário já organizou em Categorias/
-  // Localizações (ex.: "CBKids" pai de "Sala 9/10/11") — em vez de 1 barra por
-  // sala final, soma tudo no nome do ancestral raiz. Localização sem
-  // correspondência na árvore (ou "Sem localização") mantém o próprio nome.
-  const raizPorNomeLocalizacao = useMemo(() => {
-    const lista = localizacoes || [];
-    const byId = new Map(lista.map(l => [l.id, l]));
-    const raizes = new Map();
-    for (const l of lista) {
-      let cur = l;
-      const visitados = new Set([cur.id]);
-      while (cur.pai_id && byId.has(cur.pai_id) && !visitados.has(cur.pai_id)) {
-        cur = byId.get(cur.pai_id);
-        visitados.add(cur.id);
-      }
-      raizes.set(l.nome, cur.nome);
-    }
-    return raizes;
-  }, [localizacoes]);
   const barrasLocalizacao = Object.entries(
     Object.entries(dash.porLocalizacao || {}).reduce((acc, [name, value]) => {
       const raiz = raizPorNomeLocalizacao.get(name) || name;

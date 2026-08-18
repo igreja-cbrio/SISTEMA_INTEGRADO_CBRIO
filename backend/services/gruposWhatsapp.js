@@ -112,42 +112,48 @@ function formatarOnde(grupo) {
 
 // ── Templates ────────────────────────────────────────────────────────────
 // Template 1 · grupos_pedido_novo_lider — avisa o LÍDER que chegou pedido,
-// com link de aprovar sem login. Fire-and-forget (quem chama não espera).
+// com link de aprovar sem login.
 // {{1}} líder · {{2}} grupo · {{3}} nome da pessoa · {{4}} contato · {{5}} link
-async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
+//
+// MONTA sem enviar — irmã de montarEnvioFrequencia/Renovacao/Confira. Existe
+// porque disparo em LOTE não pode usar `enfileirar` (que tenta enviar na hora):
+// um líder com 8 pedidos represados receberia 8 templates em segundos, que é o
+// padrão que a Meta lê como spam — e a nota de qualidade é o que decide a
+// subida de tier. Com o lote, quem entrega é o cron da fila, que aplica a
+// trava de 2 por telefone por rodada.
+// ⚠️ Gate ANTES de assinar o token: com o envio desligado, o sendTemplate cai
+// em DRY-RUN e loga os params — incluindo o link-capability de aprovar.
+async function montarEnvioNovoPedido({ grupo, pedidoId, pessoa }) {
+  if (await bloqueioTotalAtivo()) return { erro: 'bloqueio_total' };
+  if (!WHATSAPP_LIGADO()) return { erro: 'disabled' };
+  if (!grupo?.lider_id) return { erro: 'sem_lider' };
+  const { data: lider } = await supabase.from('mem_membros')
+    .select('nome, telefone').eq('id', grupo.lider_id).maybeSingle();
+  if (!lider?.telefone) return { erro: 'lider_sem_telefone' };
+
+  let link;
   try {
-    if (await bloqueioTotalAtivo()) return { sent: false, reason: 'bloqueio_total' };
-    // Gate ANTES de assinar o token: com o envio desligado, o sendTemplate
-    // cairia no DRY-RUN e logaria os params — incluindo o link-capability de
-    // aprovar. Token não pode parar em log de produção.
-    if (!WHATSAPP_LIGADO()) return { sent: false, reason: 'disabled' };
-    if (!grupo?.lider_id) return { sent: false, reason: 'sem_lider' };
-    const { data: lider } = await supabase.from('mem_membros')
-      .select('nome, telefone').eq('id', grupo.lider_id).maybeSingle();
-    if (!lider?.telefone) return { sent: false, reason: 'lider_sem_telefone' };
+    // `l` amarra o token ao líder que o recebeu: se a liderança do grupo
+    // trocar dentro da validade, o link antigo deixa de valer (verificado
+    // nos endpoints públicos).
+    link = `${baseUrl()}/g/a/${assinarToken('aprov', pedidoId, { l: grupo.lider_id }, APROV_TTL_MS)}`;
+  } catch (e) {
+    console.error('[GruposWPP] token não assinado:', e.message);
+    return { erro: 'sem_secret' };
+  }
 
-    let link;
-    try {
-      // `l` amarra o token ao líder que o recebeu: se a liderança do grupo
-      // trocar dentro da validade, o link antigo deixa de valer (verificado
-      // nos endpoints públicos).
-      link = `${baseUrl()}/g/a/${assinarToken('aprov', pedidoId, { l: grupo.lider_id }, APROV_TTL_MS)}`;
-    } catch (e) {
-      console.error('[GruposWPP] token não assinado:', e.message);
-      return { sent: false, reason: 'sem_secret' };
-    }
-
-    // `pessoa.contato` (opcional) sobrescreve o {{4}}: é o que a inscrição de
-    // CASAL usa pra mandar os DOIS contatos num aviso só. Sem ele, o padrão de
-    // sempre (telefone · e-mail da pessoa).
-    const contato = String(pessoa.contato || '').trim()
-      || [pessoa.telefone, pessoa.email].filter(Boolean).join(' · ')
-      || 'sem contato';
-    // trim + fallback DEPOIS do split: nome importado com espaço à esquerda
-    // viraria param '' e a Meta rejeita o template inteiro
-    const r = await enfileirar({
+  // `pessoa.contato` (opcional) sobrescreve o {{4}}: é o que a inscrição de
+  // CASAL usa pra mandar os DOIS contatos num aviso só. Sem ele, o padrão de
+  // sempre (telefone · e-mail da pessoa).
+  const contato = String(pessoa.contato || '').trim()
+    || [pessoa.telefone, pessoa.email].filter(Boolean).join(' · ')
+    || 'sem contato';
+  return {
+    envio: {
       telefone: lider.telefone,
       template: TPL_NOVO_PEDIDO_LIDER,
+      // trim + fallback DEPOIS do split: nome importado com espaço à esquerda
+      // viraria param '' e a Meta rejeita o template inteiro
       params: [
         (lider.nome || '').trim().split(/\s+/)[0] || 'Líder',
         (grupo.nome || '').trim() || 'seu grupo',
@@ -157,7 +163,17 @@ async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
       ],
       contexto: 'grupos.pedido_novo_lider',
       refId: pedidoId,
-    });
+    },
+  };
+}
+
+// Caminho de EVENTO (1 pedido chegando): monta pela função acima e enfileira
+// tentando na hora — aqui a rajada não existe, é uma inscrição por vez.
+async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
+  try {
+    const m = await montarEnvioNovoPedido({ grupo, pedidoId, pessoa });
+    if (m.erro) return { sent: false, reason: m.erro };
+    const r = await enfileirar(m.envio);
     if (!r.sent) console.log('[GruposWPP] template líder não enviado:', r.reason || r.status);
     return r;
   } catch (e) {
@@ -464,6 +480,7 @@ module.exports = {
   formatarQuando,
   formatarOnde,
   rotuloMes,
+  montarEnvioNovoPedido,
   notificarLiderNovoPedido,
   notificarPessoaAprovada,
   notificarPessoaSugestao,

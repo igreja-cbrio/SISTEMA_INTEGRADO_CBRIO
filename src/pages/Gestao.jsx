@@ -170,7 +170,7 @@ function AbaDiagnostico() {
         { label: 'KPIs ativos', value: pulso?.total_kpis_ativos ?? saude?.total_kpis_ativos ?? 0, cor: C.text },
         { label: 'KPIs críticos', value: pulso?.cronicamente_vermelhos?.length || 0, cor: '#EF4444' },
         { label: 'Líderes com pendência', value: (pulso?.lideres || []).filter(l => l.criticos > 0 || l.atrasados > 0).length, cor: '#EF4444' },
-        { label: 'Sem registro 60d', value: saude?.sem_registro_60d?.total || 0, cor: '#F59E0B' },
+        { label: 'Sem dado 60d', value: saude?.sem_registro_60d?.total || 0, cor: '#F59E0B' },
         { label: 'Sem meta', value: saude?.sem_meta?.total || 0, cor: '#9CA3AF' },
         { label: 'Sem dono', value: saude?.sem_dono?.total || 0, cor: '#9CA3AF' },
       ]} />
@@ -289,8 +289,21 @@ function AbaDiagnostico() {
             subtitulo="Não alimentam cascata automática" items={saude.sem_objetivo.items} cor="#3B82F6" onAbrirKpi={setDetalheKpiId} />
           <ListaSaude titulo="Sem valores da Jornada"
             subtitulo="Não aparecem na matriz nem nas mandalas" items={saude.sem_valores.items} cor="#8B5CF6" onAbrirKpi={setDetalheKpiId} />
-          <ListaSaude titulo="Sem registro nos últimos 60 dias"
-            subtitulo="KPIs vivos mas que ninguém preenche" items={saude.sem_registro_60d.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
+          <ListaSaude titulo="Sem dado nenhum nos últimos 60 dias"
+            subtitulo={saude.sem_registro_60d.aviso
+              || 'Nem preenchimento manual, nem valor calculado — ninguém alimenta'}
+            items={saude.sem_registro_60d.items}
+            cor={saude.sem_registro_60d.incompleto ? '#F59E0B' : '#EF4444'}
+            onAbrirKpi={setDetalheKpiId} />
+          {/* Problema DIFERENTE do de cima: aqui a fórmula roda e não devolve
+              nada, quase sempre porque o processo de origem não gera evento.
+              Cobrar preenchimento não resolve — é decidir quem passa a
+              registrar, ou aposentar o KPI. */}
+          {saude.calculam_nulo?.total > 0 && (
+            <ListaSaude titulo="Calculam, mas não devolvem valor"
+              subtitulo="A fórmula roda e o resultado é nulo — falta a fonte do dado, não a cobrança"
+              items={saude.calculam_nulo.items} cor="#F59E0B" onAbrirKpi={setDetalheKpiId} />
+          )}
           <Card title="Cobertura da matriz Valor × Área" subtitle="Quais valores cada área já tem KPI">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {saude.matriz_cobertura.map(c => (

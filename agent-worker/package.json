@@ -9,7 +9,8 @@
     "build": "tsc && cp -r src/skills dist/",
     "start": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx src/utils/rotinaDia.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.0",

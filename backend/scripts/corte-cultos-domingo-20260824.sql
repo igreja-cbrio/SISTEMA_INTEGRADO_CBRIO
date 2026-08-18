@@ -19,14 +19,34 @@
 --   · Cerimônia de batismo de 23/08 JÁ realizada (o script mexe nos horários)
 --
 -- CHECKLIST DO DIA 24 (o que NÃO é este script):
---   [ ] PCO: hora dos planos 'Domingo - Manhã' (90926558 · 30/08) e 'CBKIDS -
---       Manhã Domingo' (90756297 30/08 · 90756298 06/09) → 09:30. As 84
---       escalas NÃO se movem (vínculo por service_id).
+--   [ ] PCO (⚠️ RE-MEDIDO em 18/08 · a igreja esta MIGRANDO do Planning Center,
+--       e a verdade passa a ser o nosso sistema — mas o sync AINDA e o dono das
+--       linhas futuras do voluntariado): corrigir a hora de 3 planos para 09:30 —
+--       'Domingo - Manhã' (90926558 · 30/08) e 'CBKIDS - Manhã Domingo'
+--       (90756297 30/08 · 90756298 06/09). As escalas NAO se movem (vinculo por
+--       service_id). ⚠️⚠️ NAO tentar consertar no BANCO: os 4 vol_services de
+--       manha >= 30/08 sao PCO-only (service_type_id IS NULL), e nesse ramo o
+--       executarSyncCompleto (planningCenter.js:375) faz upsert de scheduled_at
+--       pelo planning_center_id — ou seja o cron horario REVERTE o update em
+--       ate 60 min. Quando o service e INTERNO (service_type_id preenchido) o
+--       sync so liga o plan_id e nao encosta na hora; nao e o caso destes.
+--       ⚠️ O que NAO depende disto: a regua do turno classifica por NOME
+--       ('Domingo - Manhã'), nao por hora, entao Dashboard Semanal, bloco e
+--       contagem de check-in ficam CERTOS sem nenhuma acao. O que fica errado
+--       sem corrigir e a HORA que o voluntario ve — 106 escalas de manha
+--       (16+16+26 em 30/08 · 48 em 06/09) diriam 08:30, e o lembrete de escala
+--       no WhatsApp sai com ela.
 --   [ ] /admin/whatsapp → Configuração → "Horários de culto": grade nova +
 --       texto ponte explicando a mudança (única superfície pública que explica).
---   [ ] Financeiro: se o ok da conta NOVA (D2c) saiu, preencher os 2 uuids em
---       v_conta_dizimo_0930/v_conta_oferta_0930 ANTES de rodar; sem eles o
---       slot novo usa as contas do 10:00 (interim aprovado como fallback).
+--   [x] Financeiro (D2): FEITO — contas novas criadas e os 2 uuids ja estao
+--       preenchidos no DECLARE. O slot 'Domingo 9:30' nasce apontando pra elas.
+--   [ ] ⚠️ `aceita_lancamento = false` nas contas VELHAS (3.01.01.08/.09 e
+--       3.01.02.08/.09) — parte da D2, mas **DE PROPOSITO NAO no dia 24**: a
+--       oferta do culto de 23/08 costuma ser conciliada DIAS depois, e travar a
+--       conta antes disso recusaria a classificacao do ultimo domingo do formato
+--       antigo. Quem ja impede lancamento NOVO no horario extinto e o slot
+--       (ativo=false, passo 5). Fazer isto quando a conciliacao de 23/08 estiver
+--       fechada — decisao de data do Matheus, nao do script.
 --   [ ] 25–29/08: OTA do CBRio-Staff (grade hardcoded index.tsx:276) + conferir
 --       Home do app de membros (card do culto mostra 09:30).
 --   [ ] 30/08 (campo): totem Kids às 08:50/09:35/10:45/11:15 (chip do culto);
@@ -37,17 +57,44 @@
 --
 -- ROLLBACK (se algo der errado DEPOIS do commit): as tabelas _bk_20260824_*
 -- criadas aqui guardam o estado anterior de tudo que o script muda.
+--
+-- ⚠️⚠️ O `SET statement_timeout` ABAIXO NÃO É ENFEITE — sem ele o corte estoura.
+-- Medido no ensaio de 18/08 (em bloco revertido, contra a base de produção):
+-- `cultos` tem DOIS gatilhos ROW-level — `cultos_recalc_kpis`
+-- (trg_kpi_recalcular_culto) e `cultos_recalcular_nsm`
+-- (tg_nsm_recalcular_pos_culto) — e cada linha custa **1,26 s no INSERT e
+-- 2,44 s no DELETE**. O corte faz 18 inserts + 36 deletes ⇒ **~110 s só nesse
+-- trecho**, antes dos backups, do patch da view e das 10 invariantes. O
+-- `statement_timeout` da sessão é **2 min**: o corte inteiro ficaria no fio e,
+-- muito provavelmente, POR CIMA — abortando (com rollback, seguro) no dia, sob
+-- pressão de tempo. O bloco `DO` é UMA instrução, então `SET LOCAL` dentro dele
+-- não valeria para ele mesmo: o SET tem de vir ANTES, como statement separado.
+-- ⚠️ Por isso também: **NÃO rodar este script por cliente com timeout curto**
+-- (o MCP do Supabase aborta antes) — é SQL Editor, com as duas instruções
+-- colando juntas na mesma sessão.
+-- ⚠️ NÃO "otimizar" desligando os gatilhos (`ALTER TABLE cultos DISABLE
+-- TRIGGER`): as linhas futuras são todas zero e nenhum KPI/NSM mudaria de
+-- valor, mas suprimir gatilho na tabela mais quente do sistema é decisão de
+-- gente, não efeito colateral de acelerar um script.
 -- ============================================================================
+
+SET statement_timeout = '10min';
 
 DO $corte$
 DECLARE
   -- ⚠️⚠️ ÚNICA LINHA A MUDAR NO DIA 24/08 ⚠️⚠️
   v_executar constant boolean := false;   -- false = ENSAIO (rollback total)
 
-  -- D2 (financeiro): uuids da conta NOVA de dízimo/oferta do 09:30, SE o ok
-  -- saiu até o dia. NULL = fallback interim: as contas do slot do 10:00.
-  v_conta_dizimo_0930 uuid := NULL;
-  v_conta_oferta_0930 uuid := NULL;
+  -- ✅ D2 RESPONDIDA (ok do financeiro em 18/08): conta NOVA, nao reuso.
+  -- Criadas em 18/08 seguindo a convencao das irmas (nivel 4 · natureza
+  -- 'ordinaria' · aceita_lancamento=true · ordem = a do irmao, porque a sequencia
+  -- global 301..321 e densa e nao havia inteiro livre entre o dizimo 10:00 (311)
+  -- e o cabecalho OFERTAS (312) — nao ha unique em `ordem`, so em `codigo`, e
+  -- empatar deixa cada conta ao lado do seu grupo sem reescrever linha nenhuma):
+  --   3.01.01.10  Dizimos Domingo 9:30
+  --   3.01.02.10  Ofertas Domingo 9:30
+  v_conta_dizimo_0930 uuid := '08019a7a-b59d-4cd5-97d9-c0d8d7c8a37d';
+  v_conta_oferta_0930 uuid := 'fffb0e2a-65cd-42cc-baf5-30288ae03b30';
 
   v_id0830   uuid; v_id1000 uuid; v_novo_id uuid;
   v_t1000    public.vol_service_types%ROWTYPE;
@@ -155,7 +202,27 @@ BEGIN
     RETURNING id INTO v_novo_id;
     v_resumo := v_resumo || ' · tipo "Domingo 09:30" criado';
   ELSE
-    v_resumo := v_resumo || ' · tipo "Domingo 09:30" já existia (idempotente)';
+    -- ⚠️⚠️ NORMALIZA em vez de só relatar. O tipo pode ter sido PRÉ-CRIADO antes
+    -- do dia (foi o que aconteceu em 19/08: criado com `is_active=false` para o
+    -- Dashboard já mostrar o 09:30 sem que o cron de auto-create materializasse
+    -- um culto fantasma no domingo 23/08, que ainda é do formato antigo — o
+    -- auto-create filtra `is_active=true` e NÃO conhece vigência). Sem esta
+    -- normalização o ELSE deixava o tipo inativo e a invariante "grade ativa da
+    -- manhã = {09:30, 11:30}" ABORTAVA o corte inteiro, no dia.
+    UPDATE public.vol_service_types
+       SET is_active        = true,
+           recurrence_day   = 0,
+           recurrence_time  = time '09:30',
+           vigente_de       = COALESCE(vigente_de, DATE '2026-08-24'),
+           linhagem_key     = COALESCE(linhagem_key, 'domingo-0930'),
+           consolidacao_key = COALESCE(consolidacao_key, 'domingo-0930'),
+           presencial_label = COALESCE(presencial_label, v_t1000.presencial_label),
+           has_kids         = true,
+           has_online       = true,
+           has_online_stream = COALESCE(has_online_stream, v_t1000.has_online_stream, true),
+           meta_duracao_min = COALESCE(meta_duracao_min, v_t1000.meta_duracao_min, 60)
+     WHERE id = v_novo_id;
+    v_resumo := v_resumo || ' · tipo "Domingo 09:30" já existia — ATIVADO e normalizado';
   END IF;
 
   -- invariante: as flags do tipo novo têm que espelhar o 10:00 (has_kids é o

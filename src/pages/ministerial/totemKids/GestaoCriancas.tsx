@@ -14,6 +14,7 @@ import { Textarea } from '../../../components/ui/textarea';
 import { Badge } from '../../../components/ui/badge';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { FAIXAS_CHECKIN, faixaCheckin, casaFaixaCheckin } from '../../../lib/kidsFrequencia';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
 import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, Sparkles, Pencil, MessageSquare } from 'lucide-react';
@@ -55,6 +56,15 @@ export default function GestaoCriancas() {
   const [idadeSel, setIdadeSel] = useState('todas'); // 'todas' | '<anos>' | IDADE_SEM_DATA
   const [status, setStatus] = useState('ativos'); // ativos | inativos
   const [jornadaF, setJornadaF] = useState('todas'); // todas | convertidos | batizados
+  // Visitante é a criança que veio com alguém (prazo em `data_limite`) e ainda
+  // não é frequentadora. São poucas no meio de mil — sem filtro próprio, achar
+  // quem está com o prazo correndo exige rolar a lista inteira.
+  const [visitanteF, setVisitanteF] = useState('todas'); // todas | visitantes | frequentadores
+  // Frequência: "ativa" passou a significar QUEM VEIO (check-in na janela de
+  // 12 meses), não quem está cadastrada — a base herdou o import do Planning
+  // Center e contava mil crianças onde metade nunca apareceu no totem.
+  const [checkinF, setCheckinF] = useState('todas'); // todas | zero | 1 | 2-5 | 6-10 | 11+
+  const [freq, setFreq] = useState<any>(null);       // resumo do servidor
   const [modo, setModo] = useState<'lista' | 'faltantes'>('lista');
   const [ausentes, setAusentes] = useState<any[]>([]);
   const [ausIdade, setAusIdade] = useState('todas');   // 'todas' | '<anos>' | IDADE_SEM_DATA
@@ -74,8 +84,14 @@ export default function GestaoCriancas() {
 
   const carregar = useCallback(() => {
     setLoading(true);
-    api.criancas.list({ ativo: status === 'ativos' })
-      .then((d: any) => setLista(Array.isArray(d) ? d : []))
+    // `meta: 1` traz o resumo de frequência junto (quantas vieram na janela e
+    // desde quando existe check-in). A rota segue devolvendo array puro sem
+    // isso — o app do Staff e a ficha consomem a mesma URL.
+    api.criancas.list({ ativo: status === 'ativos', meta: 1 })
+      .then((d: any) => {
+        setLista(Array.isArray(d) ? d : (d?.itens || []));
+        setFreq(Array.isArray(d) ? null : (d?.frequencia || null));
+      })
       .catch(() => toast.error('Erro ao carregar crianças'))
       .finally(() => setLoading(false));
   }, [status]);
@@ -179,9 +195,32 @@ export default function GestaoCriancas() {
       }
       if (jornadaF === 'convertidos' && !c.data_conversao) return false;
       if (jornadaF === 'batizados' && !c.data_batismo) return false;
+      if (visitanteF === 'visitantes' && c.visitante !== true) return false;
+      if (visitanteF === 'frequentadores' && c.visitante === true) return false;
+      if (!casaFaixaCheckin(c.checkins_total, checkinF)) return false;
       return true;
     });
-  }, [lista, idadeSel, busca, status, jornadaF]);
+  }, [lista, idadeSel, busca, status, jornadaF, visitanteF, checkinF]);
+
+  // Quantas crianças em cada faixa de check-in (sobre a lista carregada, não
+  // sobre o recorte — contagem que muda a cada letra digitada não ajuda a
+  // decidir por qual faixa filtrar).
+  const totaisCheckin = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of lista) {
+      const k = faixaCheckin(c.checkins_total);
+      m.set(k, (m.get(k) || 0) + 1);
+    }
+    return m;
+  }, [lista]);
+
+  // Contagem por situação, sobre a lista CARREGADA (não sobre o recorte atual):
+  // número que muda a cada letra digitada não serve pra decidir por qual opção
+  // filtrar — mesma régua dos filtros de campo das inscrições.
+  const totaisVisitante = useMemo(() => ({
+    visitantes: lista.filter(c => c.visitante === true).length,
+    frequentadores: lista.filter(c => c.visitante !== true).length,
+  }), [lista]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-4">
@@ -356,7 +395,52 @@ export default function GestaoCriancas() {
             <SelectItem value="batizados">Batizados</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={visitanteF} onValueChange={setVisitanteF}>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Visitantes e frequentadores</SelectItem>
+            <SelectItem value="visitantes">Só visitantes ({totaisVisitante.visitantes})</SelectItem>
+            <SelectItem value="frequentadores">Só frequentadores ({totaisVisitante.frequentadores})</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={checkinF} onValueChange={setCheckinF}>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Qualquer nº de check-in</SelectItem>
+            {FAIXAS_CHECKIN.map(f => (
+              <SelectItem key={f.key} value={f.key}>
+                {f.rotulo} ({totaisCheckin.get(f.key) || 0})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
+
+      {/* ⚠️ "Ativa" agora é quem VEIO, e o número vem com a janela colada.
+          Enquanto a coleta for mais curta que a janela, a tela DIZ isso — sem
+          essa linha, "sem check-in em 12 meses" seria lido como "não frequenta"
+          quando na verdade o totem ainda não existia. */}
+      {modo === 'lista' && freq && (
+        <div className="rounded-lg border border-border bg-foreground/[0.03] px-3 py-2 text-xs space-y-1">
+          {freq.aviso ? (
+            <div className="text-amber-600">{freq.aviso}</div>
+          ) : (
+            <>
+              <div>
+                <strong className="text-foreground">{freq.frequentam}</strong> vieram pelo menos 1× nos
+                últimos {freq.janela_meses} meses · <strong className="text-foreground">{freq.sem_checkin}</strong> sem
+                nenhum check-in na janela · {freq.total} cadastradas.
+              </div>
+              {freq.cobertura_parcial && freq.coleta_desde && (
+                <div className="text-amber-600">
+                  ⚠️ O totem só registra check-in desde {new Date(freq.coleta_desde).toLocaleDateString('pt-BR')} —
+                  quem está sem check-in pode simplesmente não ter passado pelo totem ainda.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Lista */}
       <Card>
@@ -390,6 +474,15 @@ export default function GestaoCriancas() {
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       {c.necessidades_especiais && <AlertCircle className="h-4 w-4 text-amber-500" />}
                       {c.visitante && <Badge variant="secondary" className="text-[10px]">visitante</Badge>}
+                      {/* `null` = não deu pra ler os check-ins (o aviso está no
+                          topo) — diferente de 0, que é "nunca veio". */}
+                      {c.checkins_total != null && (
+                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                          {c.checkins_total === 0
+                            ? 'sem check-in'
+                            : `${c.checkins_total} check-in${c.checkins_total === 1 ? '' : 's'}`}
+                        </span>
+                      )}
                     </div>
                   </button>
                 );

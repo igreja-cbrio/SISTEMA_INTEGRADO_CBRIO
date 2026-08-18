@@ -15,14 +15,7 @@ import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
 import { navItemAllowed } from '../../lib/menuAccess';
 import {
-  Users, DollarSign, Truck, Tag,
-  CalendarDays, FolderKanban, Map, ListChecks,
-  UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube,
-  Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal, Images,
-  Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, Check, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
-  Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass, Camera, UserSearch, Droplets, Landmark,
-  ClipboardList,
-  QrCode,
+  Activity, ArrowRight, ArrowRightLeft, Baby, BarChart2, Bell, BellOff, BellRing, BookOpen, BrainCircuit, CalendarDays, Camera, Check, CheckCheck, ClipboardCheck, ClipboardList, Compass, DollarSign, Droplets, FileText, FolderKanban, GraduationCap, HandHelping, Heart, Images, Landmark, LayoutDashboard, ListChecks, LogOut, Map, Megaphone, Menu as MenuIcon, MessageSquare, MonitorSmartphone, Moon, QrCode, Search, Settings, Shield, ShoppingCart, SlidersHorizontal, Sparkles, Sun, Tag, TrendingUp, Truck, UserCheck, UserSearch, Users, UsersRound, Youtube
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -127,6 +120,7 @@ const NAV_ITEMS = [
           { label: 'Monitoramento OKR', description: 'Planejamento estratégico 2026 · NSM, 9 OKRs e indicadores táticos', icon: Compass, path: '/monitoramento-okr' },
           { label: 'Jornada da Igreja', description: 'Profundidade da igreja · 5 valores · Membro Modelo (≥2 valores)', icon: Sparkles, path: '/jornada' },
           { label: 'Dashboard Semanal', description: 'Painel da reunião de quarta · semanal · mensal · metas · gerador IA', icon: LayoutDashboard, path: '/dashboard-semanal' },
+          { label: 'ATA Semanal', description: 'Ata da reunião ministerial de segunda · redigida a partir da gravação', icon: FileText, path: '/ata-semanal' },
           { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area', module: 'minha-area' },
         ],
       },
@@ -217,8 +211,10 @@ const NAV_ITEMS = [
         items: [
           { label: 'Marketing', description: 'Kanban de demandas criativas · capacidade · analytics', icon: Megaphone, path: '/marketing', module: 'marketing' },
           { label: 'Produção de Culto', description: 'Indicadores técnicos por culto · solicitações · desempenho', icon: SlidersHorizontal, path: '/producao', module: 'producao' },
-          { label: 'Destaques do App', description: 'Carrossel de fotos da Home do app de membros', icon: Images, path: '/admin/destaques', perm: 'isAdmin' },
-          { label: 'Fotos de Batismo', description: 'Álbum do dia — aparece na aba Batismo do app pros batizados', icon: Camera, path: '/admin/fotos-batismo', perm: 'isAdmin' },
+          // ⚠️ Destaques da Home e Fotos de Batismo SAÍRAM daqui (17/08): viraram
+          // sub-abas da aba "App" do Marketing, junto dos Comunicados — eram 3
+          // itens de menu para publicar coisa no MESMO app de membros.
+          { label: 'App de membros', description: 'Comunicados do mural · destaques da Home · fotos de batismo', icon: Images, path: '/marketing/app', module: 'marketing' },
         ],
       },
     ],

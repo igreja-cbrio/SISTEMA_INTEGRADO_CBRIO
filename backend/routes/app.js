@@ -7,6 +7,7 @@ const { semCache } = require('../middleware/semCache');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
+const { proximasOcorrencias, proximoEncontro } = require('../utils/agendaGrupo');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
@@ -25,7 +26,7 @@ const { baseUrl } = gruposWpp;
 const { chaveMesMembro } = require('../services/nextMatricula');
 // ⚠️ Reuso da porta pública de eventos (espinha): a inscrição pelo app roda a
 // MESMA função do site. Ver o cabeçalho do bloco de eventos mais abaixo.
-const { inscreverEspinha, eventoEspinhaPorId } = require('./publicEventoExterno');
+const { inscreverEspinha, eventoEspinhaPorId, anexarConfigMenor } = require('./publicEventoExterno');
 const { TEXTOS: TEXTOS_INSCRICAO } = require('../services/inscricaoContrato');
 const { gerarTokenComprovante } = require('../services/inscricaoComprovante');
 const checkoutExterno = require('../utils/checkoutExterno');
@@ -1873,19 +1874,43 @@ router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, 
   }
 });
 
-// GET /app/voluntariado/escala/:serviceId — escalados do culto (agrupa no app)
+// GET /app/voluntariado/escala/:serviceId — escala + composição canônica.
+// A árvore é área → subárea/equipe → posição, vinda do catálogo do culto e
+// não de quem já está escalado. Assim Online e posições vazias continuam
+// visíveis no app, exatamente como no sistema web.
 router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req, res) => {
   try {
     const { areas } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
-    const { data, error } = await supabase
+    const [{ data, error }, { data: composicao, error: composicaoErr }] = await Promise.all([
+      supabase
       .from('vol_schedules')
       .select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status, recusa_motivo')
       .eq('service_id', req.params.serviceId)
       .order('team_name', { ascending: true })
-      .order('volunteer_name', { ascending: true });
+      .order('volunteer_name', { ascending: true }),
+      supabase
+        .from('vol_escala_culto_itens')
+        .select('team_id, position_id, quantidade, team:vol_teams(id,name,area), position:vol_positions(id,name)')
+        .eq('service_id', req.params.serviceId)
+        .is('deleted_at', null)
+        .order('sort_order', { ascending: true }),
+    ]);
     if (error) throw error;
-    res.json(data || []);
+    if (composicaoErr) throw composicaoErr;
+    const itens = (composicao || []).map(item => {
+      const team = Array.isArray(item.team) ? item.team[0] : item.team;
+      const position = Array.isArray(item.position) ? item.position[0] : item.position;
+      return {
+        team_id: item.team_id,
+        team_name: team?.name || 'Sem equipe',
+        area: team?.area || 'Sem área',
+        position_id: item.position_id || null,
+        position_name: position?.name || null,
+        quantidade: item.quantidade || 1,
+      };
+    });
+    res.json({ escalas: data || [], composicao: itens });
   } catch (e) {
     console.error('[APP vol/escala get]', e.message);
     res.status(500).json({ error: 'Erro ao carregar a escala' });
@@ -3119,17 +3144,15 @@ router.get('/kids/minhas-solicitacoes', authApp, async (req, res) => {
 });
 
 // Próximo encontro a partir do dia da semana (0=Dom..6=Sáb) + horário.
-function proximoEncontroISO(diaSemana, horario) {
-  if (diaSemana === null || diaSemana === undefined) return null;
-  const now = new Date();
-  const delta = ((Number(diaSemana) - now.getDay()) + 7) % 7;
-  const [hh, mm] = String(horario || '19:00').split(':').map((x) => parseInt(x, 10) || 0);
-  const d = new Date(now);
-  d.setDate(now.getDate() + delta);
-  d.setHours(hh, mm, 0, 0);
-  if (delta === 0 && d.getTime() < now.getTime()) d.setDate(d.getDate() + 7);
-  return d.toISOString();
+// ⚠️ Delega pra régua ÚNICA (utils/agendaGrupo), que trabalha em BRT e aplica
+// as exceções de agenda. A versão anterior fazia `new Date().getDay()` — UTC no
+// Vercel —, então das 21h de domingo em diante o servidor achava que já era
+// segunda e pulava uma semana. Assinatura mantida; `excecoes` é opcional.
+function proximoEncontroISO(diaSemana, horario, excecoes) {
+  const p = proximoEncontro({ diaSemana, horario, excecoes: excecoes || [] });
+  return p ? p.inicio : null;
 }
+
 
 // GET /api/app/meu-grupo — grupo(s) de conexão ativos do membro: info, líder,
 // próximo encontro e materiais. Pra experiência "já estou no grupo".
@@ -3138,6 +3161,20 @@ router.get('/meu-grupo', authApp, async (req, res) => {
     const membro = await resolveMembroApp(req);
     if (!membro) return res.json({ grupos: [] });
     const GSEL = 'id, nome, dia_semana, horario, local, endereco, bairro, complemento, lat, lng, foto_url, lider_id';
+    // ⚠️ Consulta ISOLADA e best-effort: sem a migration aplicada, pedir a
+    // tabela nova faria o PostgREST recusar a query INTEIRA e o líder ficaria
+    // sem "meu grupo" (lição do parcelas_max). Falhou = agenda normal.
+    const excecoesPorGrupo = {};
+    async function carregarExcecoes(ids) {
+      if (!ids.length) return;
+      try {
+        const { data, error } = await supabase.from('mem_grupo_agenda_excecoes')
+          .select('grupo_id, data_original, status, nova_data, novo_horario, motivo')
+          .in('grupo_id', ids).gte('data_original', new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10));
+        if (error) throw error;
+        for (const e of data || []) (excecoesPorGrupo[e.grupo_id] ||= []).push(e);
+      } catch (e) { console.warn('[APP] agenda excecoes indisponivel:', e.message); }
+    }
     const { data: vinculos } = await supabase
       .from('mem_grupo_membros')
       .select(`grupo_id, funcao, mem_grupos(${GSEL})`)
@@ -3161,6 +3198,8 @@ router.get('/meu-grupo', authApp, async (req, res) => {
       if (atual) atual.funcao = 'lider';
       else porId.set(g.id, { g, funcao: 'lider' });
     }
+
+    await carregarExcecoes([...porId.keys()]);
 
     const grupos = [];
     for (const { g, funcao } of porId.values()) {
@@ -3187,7 +3226,11 @@ router.get('/meu-grupo', authApp, async (req, res) => {
         local: g.local, endereco: g.endereco, bairro: g.bairro, complemento: g.complemento,
         lat: g.lat, lng: g.lng,
         foto_url: g.foto_url, funcao, lider,
-        proximo_encontro: proximoEncontroISO(g.dia_semana, g.horario),
+        proximo_encontro: proximoEncontroISO(g.dia_semana, g.horario, excecoesPorGrupo[g.id] || []),
+        proximas_ocorrencias: proximasOcorrencias({
+          diaSemana: g.dia_semana, horario: g.horario,
+          excecoes: excecoesPorGrupo[g.id] || [], quantas: 6,
+        }),
         materiais,
       });
     }
@@ -4787,6 +4830,121 @@ router.get('/grupos/:grupoId/visitas', authApp, limiterNormal, async (req, res) 
 // destinatários do módulo grupos) + push. NÃO existe fila com "resolvido" — isso
 // pediria tabela nova, e a decisão de criar fila é da coordenação. Está dito na
 // tela: "a coordenação recebe seu pedido", não "abrimos um ticket".
+// ── Agenda do grupo · remarcar/cancelar UMA ocorrência (Naná · 18/08/2026) ──
+// O encontro recorrente é DERIVADO (dia_semana + horario); aqui grava-se só a
+// EXCEÇÃO. Mesmo gate dos outros endpoints de gerenciar grupo.
+// ⚠️ NÃO escreve em `mem_grupo_encontros`: aquela é o registro do que
+// ACONTECEU (com presenças) e alimenta os KPIs de frequência.
+router.get('/grupos/:grupoId/agenda', authApp, limiterNormal, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const gate = await gateGrupoApp(req, res, gid);
+    if (!gate.ok) return;
+    const { data: g } = await supabase.from('mem_grupos')
+      .select('id, nome, dia_semana, horario, recorrencia').eq('id', gid).maybeSingle();
+    let excecoes = [];
+    try {
+      const { data, error } = await supabase.from('mem_grupo_agenda_excecoes')
+        .select('data_original, status, nova_data, novo_horario, motivo, decidido_por_nome')
+        .eq('grupo_id', gid).gte('data_original', new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10));
+      if (error) throw error;
+      excecoes = data || [];
+    } catch (e) {
+      console.warn('[APP] agenda indisponivel:', e.message);
+      return res.json({ ocorrencias: [], aviso: 'A agenda ainda não está disponível. Tente mais tarde.' });
+    }
+    res.json({
+      grupo: { id: g?.id, nome: g?.nome, dia_semana: g?.dia_semana, horario: g?.horario },
+      ocorrencias: proximasOcorrencias({ diaSemana: g?.dia_semana, horario: g?.horario, excecoes, quantas: 8 }),
+    });
+  } catch (e) {
+    console.error('[APP] agenda:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a agenda' });
+  }
+});
+
+// body: { data_original, acao: 'remarcar'|'cancelar'|'desfazer', nova_data?, novo_horario?, motivo? }
+router.post('/grupos/:grupoId/agenda', authApp, limiterStrict, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const gate = await gateGrupoApp(req, res, gid);
+    if (!gate.ok) return;
+    const { data_original, acao, nova_data, novo_horario, motivo } = req.body || {};
+
+    const D = /^\d{4}-\d{2}-\d{2}$/;
+    if (!D.test(String(data_original || ''))) return res.status(400).json({ error: 'Informe a data do encontro que você quer alterar.' });
+    if (!['remarcar', 'cancelar', 'desfazer'].includes(acao)) return res.status(400).json({ error: 'Ação inválida.' });
+
+    const hojeBRT = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+    // ⚠️ Só ocorrência FUTURA: mexer no passado não muda o que aconteceu e
+    // confundiria com o registro de presença, que é outra coisa.
+    if (data_original < hojeBRT) return res.status(400).json({ error: 'Só dá para alterar encontros que ainda vão acontecer.' });
+
+    if (acao === 'desfazer') {
+      const { error } = await supabase.from('mem_grupo_agenda_excecoes')
+        .delete().eq('grupo_id', gid).eq('data_original', data_original);
+      if (error) throw error;
+      return res.json({ ok: true, acao: 'desfeito' });
+    }
+
+    let linha = {
+      grupo_id: gid, data_original, status: acao === 'cancelar' ? 'cancelado' : 'remarcado',
+      motivo: motivo ? String(motivo).trim().slice(0, 300) : null,
+      decidido_por: gate.membro?.id || null,
+      decidido_por_nome: gate.membro?.nome || null,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (acao === 'remarcar') {
+      if (!D.test(String(nova_data || ''))) return res.status(400).json({ error: 'Informe a nova data.' });
+      if (nova_data < hojeBRT) return res.status(400).json({ error: 'A nova data não pode ser no passado.' });
+      if (novo_horario && !/^\d{2}:\d{2}$/.test(String(novo_horario))) return res.status(400).json({ error: 'Horário inválido (use HH:MM).' });
+      linha.nova_data = nova_data;
+      linha.novo_horario = novo_horario || null;
+    } else {
+      linha.nova_data = null;
+      linha.novo_horario = null;
+    }
+
+    // Uma exceção por ocorrência: remarcar de novo ATUALIZA (o UNIQUE garante).
+    const { error } = await supabase.from('mem_grupo_agenda_excecoes')
+      .upsert(linha, { onConflict: 'grupo_id,data_original' });
+    if (error) {
+      if (/does not exist|schema cache/i.test(error.message)) {
+        return res.status(503).json({ error: 'A agenda ainda não está disponível. Avise a equipe de grupos.' });
+      }
+      throw error;
+    }
+
+    // ⚠️ Avisa a COORDENAÇÃO, não o grupo: quem fala com os participantes é o
+    // líder, no WhatsApp dele. Disparar pra todo o roster daqui seria mensagem
+    // que ninguém pediu — e o app não tem o contexto ("adiamos por causa do
+    // feriado") que só ele sabe dar.
+    (async () => {
+      try {
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'agenda_grupo_alterada',
+          titulo: acao === 'cancelar'
+            ? `Encontro cancelado: ${gate.grupo.nome}`
+            : `Encontro remarcado: ${gate.grupo.nome}`,
+          mensagem: acao === 'cancelar'
+            ? `${gate.membro?.nome || 'O líder'} cancelou o encontro de ${data_original}.${linha.motivo ? ` Motivo: ${linha.motivo}` : ''}`
+            : `${gate.membro?.nome || 'O líder'} remarcou o encontro de ${data_original} para ${nova_data}${novo_horario ? ` às ${novo_horario}` : ''}.${linha.motivo ? ` Motivo: ${linha.motivo}` : ''}`,
+          link: '/grupos',
+          severidade: 'info',
+          chaveDedup: `agenda_${gid}_${data_original}_${linha.status}`,
+        });
+      } catch (err) { console.error('[APP] agenda notify:', err.message); }
+    })();
+
+    res.json({ ok: true, acao: linha.status });
+  } catch (e) {
+    console.error('[APP] agenda escrita:', e.message);
+    res.status(500).json({ error: 'Erro ao alterar o encontro' });
+  }
+});
+
 router.post('/grupos/:grupoId/ajuda', authApp, limiterStrict, async (req, res) => {
   try {
     const gid = req.params.grupoId;
@@ -5568,6 +5726,11 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
       if (e.inscricoes_encerram_em && e.inscricoes_encerram_em < nowIso) return false;
       return true;
     });
+    // Configuração de retiro/viagem (migration 20260817160000) — em consulta
+    // ISOLADA, best-effort, pela MESMA função da porta pública. ⚠️ Junto ao
+    // SELECT acima, coluna ausente faria o PostgREST recusar a lista INTEIRA
+    // (42703) e o app abriria sem nenhum evento (lição do `parcelas_max`).
+    await Promise.all(abertos.map((e) => anexarConfigMenor(e).catch(() => e)));
 
     // Quais desses a pessoa já tem inscrição viva? É o que o seletor
     // "Todos | Meus eventos" usa, e o que decide form × minha inscrição.
@@ -5644,7 +5807,15 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
       checkout_externo: checkoutExterno.temCheckoutExterno(e) ? {
         nome: checkoutExterno.nomeExterno(e.checkout_externo_nome),
       } : null,
-      so_web: checkoutExterno.temCheckoutExterno(e),
+      // ⚠️⚠️ `so_web` também cobre o bloco do RESPONSÁVEL e os aceites próprios do
+      // evento (17/08). O app não tem essas telas, e o servidor RECUSA a inscrição
+      // sem eles — sem isto a pessoa levaria 400 citando `responsavel_nome` numa
+      // tela que não tem o campo, sem caminho nenhum pra concluir. Mandar pro
+      // formulário público resolve **sem OTA**: o binário que já está no campo lê
+      // esta flag. Ver `so_web` em app/(app)/evento.tsx do repo do app.
+      so_web: checkoutExterno.temCheckoutExterno(e)
+        || !!e.exige_dados_menor
+        || (Array.isArray(e.termos_extra) && e.termos_extra.length > 0),
     }));
     res.json({
       eventos,
@@ -5762,6 +5933,18 @@ router.post('/eventos/:id/inscrever', authApp, limiterStrict, async (req, res) =
     if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
     if (ev.status !== 'publicado') {
       return res.status(403).json({ error: 'As inscrições deste evento não estão abertas.' });
+    }
+    // ⚠️ Evento que exige bloco de menor ou aceite próprio: a inscrição é no
+    // formulário público, com o LINK na resposta. Quem chega aqui é bundle antigo
+    // (que ignora `so_web`) — e o `inscreverEspinha` recusaria com 400 citando um
+    // campo que a tela do app não tem, deixando a pessoa sem saída. Mesmo
+    // tratamento do checkout externo exclusivo.
+    if (ev.exige_dados_menor || (Array.isArray(ev.termos_extra) && ev.termos_extra.length)) {
+      return res.status(409).json({
+        error: 'A inscrição deste evento é feita pelo formulário completo, no navegador.',
+        so_web: true,
+        url: `https://www.cbrio.org/evento/${ev.slug}`,
+      });
     }
     // Vincula ao cadastro do app quando o matcher não achar por CPF/telefone.
     const membro = await resolveMembroApp(req).catch(() => null);

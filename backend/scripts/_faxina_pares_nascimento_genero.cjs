@@ -31,6 +31,13 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+// ⚠️ dotenv por caminho ABSOLUTO derivado do próprio arquivo, e ANTES de
+// `../utils/supabase` — aquele módulo lê `process.env` no require, então
+// carregar depois não adianta. Sem isto o script só funcionava com o cwd em
+// `backend/` (o dotenv padrão procura o .env no diretório de execução), e era
+// esse `cd` obrigatório que quebrou a execução de 14/08: o comando falhou no
+// caminho e o script tentou subir com SUPABASE_URL vazia.
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 const { supabase } = require('../utils/supabase');
 const { perfil, similaridadeNome, sexoCanonico } = require('../services/identidadeProgressiva');
 
@@ -137,7 +144,11 @@ const COLS_MEMBRO = 'id,nome,cpf,telefone,email,data_nascimento,genero';
 
   if (!paraApagar.length) { console.log('\nnada a fazer.'); return; }
 
-  const arquivo = path.join(os.homedir(), 'Downloads', `_bk_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_pares_nascimento_genero.json`);
+  // ⚠️ Nome único por EXECUÇÃO (hora e minuto), não por dia: com nome só de
+  // data, a 2ª rodada do mesmo dia sobrescreve o backup da 1ª — aconteceu de
+  // verdade no script irmão do Next em 14/08, e lá o arquivo perdido era a via
+  // de desfazer 73 soft-deletes.
+  const arquivo = path.join(os.homedir(), 'Downloads', `_bk_${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}_pares_nascimento_genero.json`);
   fs.writeFileSync(arquivo, JSON.stringify({ apagados: paraApagar, mantidos_total: mantidos.length }, null, 1));
   console.log(`\nbackup: ${arquivo}`);
 

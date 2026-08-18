@@ -91,4 +91,55 @@ assert(mesmoCpfSexoDif.score >= 90, 'CPF em comum vence o veto de gênero (erro 
 const semSet = { id: 'i1', cpfs: new Set(), telefones: new Set(['21955554444']), emails: new Set(), nascimentos: new Set(), nomes: new Set(['pedro alves']), fontes: new Set() };
 assert.doesNotThrow(() => pontuarPar(semSet, semSet), 'perfil sem `generos` é tolerado');
 
+// ── Nome ABREVIADO/CONTIDO é sinal FORTE (2026-08-17 · caso Andrea Palladino) ──
+// `similaridadeNome` é Dice de bigramas e AFUNDA no padrão nº 1 de duplicata:
+// nome contido. Medido nos casos reais da base, todos abaixo do degrau de 0,82 e
+// portanto valendo ZERO ponto de nome antes deste ramo existir:
+//   "Andrea Melchiades Palladino" × "Andrea Palladino"      = 0,73
+//   "Tatiane Youssef Fares Dib"   × "Tatiane Dib"           = 0,59
+//   "Leandro Pereira e Silva"     × "Leandro Pereira"       = 0,78
+//   "João Paulo Bezerra Honorio"  × "joao paulo honorio"    = 0,81 (fora por 0,01)
+// Efeito: o par ficava com só o telefone (30) em `descoberta`, no fim da fila —
+// era por isso que 3 cadastros da MESMA pessoa não apareciam como sugestão forte.
+const abreviados = [
+  ['andrea melchiades palladino', 'andrea palladino'],
+  ['tatiane youssef fares dib', 'tatiane dib'],
+  ['leandro pereira e silva', 'leandro pereira'],
+  ['joao paulo bezerra honorio', 'joao paulo honorio'],
+];
+for (const [longo, curto] of abreviados) {
+  const r = pontuarPar(
+    perfil('ab1', { telefones: ['21996053193'], nomes: [longo] }),
+    perfil('ab2', { telefones: ['21996053193'], nomes: [curto] }),
+  );
+  assert(r.score >= 55, `"${longo}" x "${curto}" tem que passar de 30 (telefone sozinho) — nome contido é sinal forte, não ausência de sinal`);
+  assert(r.prioridade !== 'descoberta', `"${longo}" x "${curto}" não pode ficar em descoberta, que é o fim da fila`);
+  assert(r.evidencias.some((e) => /vers[ãa]o abreviada/.test(e)), 'a evidência tem que DIZER que um nome é a versão abreviada do outro');
+}
+
+// ⚠️⚠️ O falso positivo que importa: FAMÍLIA compartilha telefone. A régua exige
+// o mesmo PRIMEIRO nome + containment de tokens, e é isso que separa "versão
+// abreviada da mesma pessoa" de "parente com o sobrenome igual". Se este par
+// subir, a fila enche de irmão e cônjuge no topo — o defeito que a régua de
+// nascimento causou em 14/08, por outro caminho.
+for (const [x, y] of [['ana souza lima', 'joao souza lima'], ['carlos eduardo vieira', 'mariana lopes vieira']]) {
+  const r = pontuarPar(
+    perfil('fam1', { telefones: ['21966666666'], nomes: [x] }),
+    perfil('fam2', { telefones: ['21966666666'], nomes: [y] }),
+  );
+  assert.equal(r.score, 30, `"${x}" x "${y}" é família no mesmo telefone: fica em 30, sem ponto de nome`);
+  assert.equal(r.prioridade, 'descoberta', 'família com telefone em comum continua em descoberta');
+}
+
+// Nome abreviado NÃO pode valer mais que nome idêntico.
+const identico = pontuarPar(
+  perfil('id1', { telefones: ['21900000000'], nomes: ['wesley barros ramos'] }),
+  perfil('id2', { telefones: ['21900000000'], nomes: ['wesley barros ramos'] }),
+);
+const contido = pontuarPar(
+  perfil('ct1', { telefones: ['21900000000'], nomes: ['wesley barros ramos'] }),
+  perfil('ct2', { telefones: ['21900000000'], nomes: ['wesley ramos'] }),
+);
+assert(identico.score > contido.score, 'nome idêntico tem que pontuar mais que nome abreviado');
+
 console.log('identidadeProgressiva: cenários cumulativos aprovados');

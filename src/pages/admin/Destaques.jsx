@@ -141,7 +141,15 @@ function FormDestaque({ inicial, onSalvar, onCancelar, salvando, exigirImagem })
   );
 }
 
-export default function Destaques() {
+// `embutido` = montado dentro da aba "App" do Marketing (17/08). Nesse caso a
+// tela NÃO impõe largura/centralização próprias nem repete o título — quem faz o
+// cabeçalho é o MarketingPagina. Sem isso ela ficava estreita e centralizada
+// enquanto o resto do módulo usa a largura toda.
+// `podeEditar` (18/08) espelha o guard do servidor (`marketing` escrita >= 3).
+// Quem só LÊ vê o carrossel como ele está publicado, sem as ações — botão que
+// devolve 403 é pior que botão ausente. Default `true` porque quem monta a tela
+// é a aba App, que já resolveu a permissão; a decisão real é do backend.
+export default function Destaques({ embutido = false, podeEditar = true }) {
   const [itens, setItens] = useState([]);
   const [loading, setLoading] = useState(true);
   const [criando, setCriando] = useState(false);
@@ -261,15 +269,19 @@ export default function Destaques() {
   }
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 24 }}>
+    <div style={embutido ? undefined : { maxWidth: 1100, margin: '0 auto', padding: '0 24px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: embutido ? 12 : 24 }}>
         <div>
-          <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Destaques do App</div>
-          <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>
-            Carrossel de fotos da Home do app de membros. O app atualiza sozinho em até 10 minutos — sem precisar de nova versão na loja.
-          </div>
+          {!embutido && (
+            <>
+              <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Destaques do App</div>
+              <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>
+                Carrossel de fotos da Home do app de membros. O app atualiza sozinho em até 10 minutos — sem precisar de nova versão na loja.
+              </div>
+            </>
+          )}
         </div>
-        {!criando && <Button onClick={() => setCriando(true)}>+ Novo destaque</Button>}
+        {podeEditar && !criando && <Button onClick={() => setCriando(true)}>+ Novo destaque</Button>}
       </div>
 
       {criando && (
@@ -310,14 +322,16 @@ export default function Destaques() {
                     {d.publica_em && d.expira_em && ' · '}
                     {d.expira_em && `Expira: ${new Date(d.expira_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`}
                   </div>
-                  <div style={{ display: 'flex', gap: 4, marginTop: 10, alignItems: 'center' }}>
-                    <Button variant="ghost" size="xs" onClick={() => mover(d, -1)} disabled={idx === 0} title="Mover para frente">↑</Button>
-                    <Button variant="ghost" size="xs" onClick={() => mover(d, 1)} disabled={idx === itens.length - 1} title="Mover para trás">↓</Button>
-                    <div style={{ flex: 1 }} />
-                    <Button variant="ghost" size="xs" onClick={() => alternarAtivo(d)}>{d.ativo ? 'Desativar' : 'Ativar'}</Button>
-                    <Button variant="ghost" size="xs" onClick={() => setEditando(d)}>Editar</Button>
-                    <Button variant="ghost" size="xs" className="text-red-500" onClick={() => excluir(d)}>Excluir</Button>
-                  </div>
+                  {podeEditar && (
+                    <div style={{ display: 'flex', gap: 4, marginTop: 10, alignItems: 'center' }}>
+                      <Button variant="ghost" size="xs" onClick={() => mover(d, -1)} disabled={idx === 0} title="Mover para frente">↑</Button>
+                      <Button variant="ghost" size="xs" onClick={() => mover(d, 1)} disabled={idx === itens.length - 1} title="Mover para trás">↓</Button>
+                      <div style={{ flex: 1 }} />
+                      <Button variant="ghost" size="xs" onClick={() => alternarAtivo(d)}>{d.ativo ? 'Desativar' : 'Ativar'}</Button>
+                      <Button variant="ghost" size="xs" onClick={() => setEditando(d)}>Editar</Button>
+                      <Button variant="ghost" size="xs" className="text-red-500" onClick={() => excluir(d)}>Excluir</Button>
+                    </div>
+                  )}
                 </div>
               </div>
             );

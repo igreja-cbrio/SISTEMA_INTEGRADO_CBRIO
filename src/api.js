@@ -475,6 +475,9 @@ export const inscricoesApi = {
   unificadasDashboard: (qs) => get(`/inscricoes/unificadas/dashboard${qs ? `?${qs}` : ''}`),
   atualizarInscricao: (eventoId, inscricaoId, data) => patch(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`, data),
   excluirInscricao: (eventoId, inscricaoId) => del(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}`),
+  // Exclusão em lote: o servidor relê as linhas vivas e devolve o que excluiu,
+  // o que ficou de fora por ter pagamento e o que já não estava na lista.
+  excluirInscricoesLote: (eventoId, ids) => post(`/inscricoes/eventos/${eventoId}/inscricoes/excluir-lote`, { ids }),
   uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-capa', fd); },
   // Check-in do evento (SPEC-06) — tela fullscreen: QR do comprovante + busca
   // Inventário das portas públicas do sistema (grupos/next/batismo/…) — read-only
@@ -768,6 +771,7 @@ export const integracao = {
   // redesenho de mai/26 (PR #399) · nenhuma tela consumia. Dados de visitante
   // hoje vivem em Cuidados/Membresia.
   dashboard: () => get('/integracao/dashboard'),
+  kpisTaticos: () => get('/integracao/kpis/taticos'),
   historicoAnual: () => get('/integracao/historico-anual'),
   historicoBatismos: () => get('/integracao/historico-batismos'),
   coleta: {
@@ -886,6 +890,7 @@ export const grupos = {
   },
   saudeAgregada: (params) => get('/grupos/saude/agregado' + (params ? '?' + new URLSearchParams(params) : '')),
   relatorioKpis: (params) => get('/grupos/kpis/relatorio' + (params ? '?' + new URLSearchParams(params) : '')),
+  kpisTaticos: () => get('/grupos/kpis/taticos'),
   lideresTreinamento: (params) => get('/grupos/kpis/lideres-treinamento' + (params ? '?' + new URLSearchParams(params) : '')),
   temporadas: () => get('/grupos/temporadas/list'),
   atualizarTemporada: (id, data) => patch(`/grupos/temporadas/${id}`, data),
@@ -1390,6 +1395,7 @@ const _finSemExtra = () => {
 const _finSemExtraQS = () => (_finSemExtra() ? '?sem_extra=1' : '');
 
 export const financeiroV2 = {
+  kpisTaticos: () => get('/financeiro-v2/kpis/taticos'),
   planoContas: {
     list: (params) => get('/financeiro-v2/plano-contas' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro-v2/plano-contas', data),
@@ -1912,6 +1918,11 @@ export const rh = {
   },
   // Admissão agora é um status do colaborador (em_admissao) — ver rh.funcionarios
   // (create com status 'em_admissao', update de admissao_dados, concluirAdmissao).
+  onboarding: {
+    pendentes: () => get('/rh/onboarding/pendentes'),
+    preview: () => post('/rh/onboarding/preview', {}),
+    disparar: () => post('/rh/onboarding/disparar', {}),
+  },
 };
 
 export const pcs = {
@@ -2347,8 +2358,15 @@ export const marketing = {
   },
 
   // Capacidade por dia (Fase 4 · fundacao) · ocupacao de slots do membro no período
-  capacidadeDia: (membroId, inicio, fim) =>
-    get(`/marketing/capacidade-dia?membro_id=${encodeURIComponent(membroId)}&inicio=${inicio}&fim=${fim}`),
+  // 3º argumento aceita a data de fim (string · uso legado) OU
+  // `{ ocupa_dias }` — nesse caso o SERVIDOR calcula o fim pela régua única
+  // (backend/utils/marketingOcupacao) e devolve o intervalo efetivo.
+  capacidadeDia: (membroId, inicio, fimOuOpts) => {
+    const q = new URLSearchParams({ membro_id: membroId, inicio });
+    if (typeof fimOuOpts === 'string') q.set('fim', fimOuOpts);
+    else if (fimOuOpts?.ocupa_dias != null) q.set('ocupa_dias', String(fimOuOpts.ocupa_dias));
+    return get(`/marketing/capacidade-dia?${q}`);
+  },
 
   // Planner (Fase 4b) · membros (raias) + entregaveis (barras) no período
   planner: (inicio, fim) => get(`/marketing/planner?inicio=${inicio}&fim=${fim}`),
@@ -2523,6 +2541,9 @@ export const nextBatismo = {
     return get('/entradas/duplicados/adiados' + (qs ? '?' + qs : ''));
   },
   fundir: (data) => post('/entradas/fundir', data),
+  // Outros cadastros parecidos com os do par — pra resolver triplicata/quadruplicata
+  // de uma vez. É SUGESTÃO: nada vem marcado e as contradições vêm escritas.
+  vizinhosDoPar: (ids) => get('/entradas/duplicados/vizinhos?ids=' + encodeURIComponent(ids.join(','))),
   resolucoes: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return get('/entradas/resolucoes' + (qs ? '?' + qs : ''));
@@ -3223,6 +3244,7 @@ export const publicVoluntariado = {
 
 // ── Voluntariado ──
 export const voluntariado = {
+  kpisTaticos: () => get('/voluntariado/kpis/taticos'),
   // Aniversariantes da semana (pra parabenizar) · próximos 7 dias
   aniversariantesSemana: () => get('/voluntariado/aniversariantes-semana'),
   parabenizar: (volProfileId) => post(`/voluntariado/aniversariantes/${volProfileId}/parabenizar`, {}),
@@ -3307,6 +3329,8 @@ export const voluntariado = {
     if (params.area) qs.set('area', params.area);
     if (params.status) qs.set('status', params.status);
     if (params.mes) qs.set('mes', params.mes);
+    if (params.de) qs.set('de', params.de);
+    if (params.ate) qs.set('ate', params.ate);
     if (params.search) qs.set('search', params.search);
     if (params.limit != null) qs.set('limit', params.limit);
     if (params.offset != null) qs.set('offset', params.offset);
@@ -3319,8 +3343,20 @@ export const voluntariado = {
   editarInscricao: (id, dados) => patch(`/voluntariado/inscricoes/${id}/dados`, dados),
   // Marca a inscrição como desistente (desistiu de servir antes de integrar) · motivo opcional
   desistirInscricao: (id, motivo) => post(`/voluntariado/inscricoes/${id}/desistiu`, { motivo }),
+  // ⚠️ Excluir ≠ desistir: desistente continua no funil (é fato da pessoa);
+  // excluída some do funil, dos KPIs e do relatório — é pra linha de teste.
+  excluirInscricaoVol: (id) => del(`/voluntariado/inscricoes/${id}`),
+  excluirInscricoesVolLote: (ids) => post('/voluntariado/inscricoes/excluir-lote', { ids }),
   // Distribuição de voluntários por área direcionada ("onde estão as pessoas")
-  distribuicaoDirecionada: (params) => get('/voluntariado/inscricoes/por-direcionada' + (params ? '?' + new URLSearchParams(params) : '')),
+  // ⚠️ Chave com valor undefined/null vira a STRING "undefined" no
+  // URLSearchParams e o backend a usaria como se fosse o ano — filtra antes.
+  distribuicaoDirecionada: (params) => {
+    const limpos = Object.fromEntries(
+      Object.entries(params || {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+    );
+    const qs = new URLSearchParams(limpos).toString();
+    return get(`/voluntariado/inscricoes/por-direcionada${qs ? `?${qs}` : ''}`);
+  },
   // Triagem de antecedentes criminais (Kids/Bridge)
   antecedentes: (inscricaoId) => get(`/voluntariado/inscricoes/${inscricaoId}/antecedentes`),
   consultarAntecedentes: (inscricaoId) => post(`/voluntariado/inscricoes/${inscricaoId}/antecedentes/consultar`, {}),
@@ -3792,6 +3828,7 @@ export const comunicacao = {
 
 export const cuidados = {
   dashboard: () => get('/cuidados/dashboard'),
+  kpisTaticos: () => get('/cuidados/kpis/taticos'),
   dashboardSeries: (params) => get('/cuidados/dashboard-series' + (params ? '?' + new URLSearchParams(params) : '')),
   jornadaConvertidos: (params) => get('/cuidados/jornada-convertidos' + (params ? '?' + new URLSearchParams(params) : '')),
   acompanhamentos: {

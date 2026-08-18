@@ -34,6 +34,7 @@ const { supabase } = require('../utils/supabase');
 const {
   normalizarTelefone, normalizarEmail, registrarContatoDaPorta,
 } = require('./membroMatch');
+const { traduzirParaCadastro } = require('../utils/censoCampoCadastro');
 
 // Campos do censo que podem ser preenchidos no cadastro existente.
 // É a MESMA lista de "campos seguros" do self-update do totem
@@ -46,9 +47,12 @@ const {
 // ⚠️ `genero` entrou em 04/08, quando o formulário passou a coletar sexo: sem
 //    ele o campo chegava do censo e era DESCARTADO em silêncio, então a pessoa
 //    respondia e o cadastro continuava incompleto pela régua da fila.
+// ⚠️ `escolaridade` entrou em 17/08: a pergunta existia no censo desde o começo
+//    e o dado era DESCARTADO em silêncio por não ter coluna nem destino. Mesma
+//    classe do sexo em 04/08.
 const CAMPOS_CENSO = [
   'email', 'telefone', 'data_nascimento', 'estado_civil', 'genero',
-  'endereco', 'bairro', 'cidade', 'cep', 'profissao',
+  'endereco', 'bairro', 'cidade', 'cep', 'profissao', 'escolaridade',
 ];
 
 // Campos cuja divergência ACUMULA (mem_contatos) em vez de virar conflito.
@@ -80,12 +84,29 @@ function decidirCampos(atual = {}, informado = {}) {
   const acumular = {};
   const conflitos = [];
   const iguais = [];
+  const descartados = [];
 
   for (const campo of CAMPOS_CENSO) {
     const bruto = informado[campo];
-    if (vazio(bruto)) continue;                 // não informou: nada a fazer
+    if (vazio(bruto) && !Array.isArray(bruto)) continue;   // não informou: nada a fazer
 
-    const novo = String(bruto).trim();
+    // ⚠️⚠️ TRADUÇÃO ANTES DE QUALQUER COISA (17/08). O que chega aqui é o
+    // RÓTULO que a pessoa viu na tela ("Casado(a)"); o que a coluna aceita é o
+    // vocabulário do CHECK ('casado'). Sem esta linha o UPDATE inteiro morria
+    // com 23514 e levava embora TODOS os outros campos do mesmo passe — foi o
+    // que deixou as 12 respostas do Censo 2026 sem aplicar nada.
+    const t = traduzirParaCadastro(campo, bruto);
+    if (!t.ok) {
+      // 'vazio' não é problema — é só não ter informado. O resto é DECLARADO:
+      // campo silenciosamente descartado é como o CPF do censo ficou 4 dias
+      // sumindo em 04/08 sem nada na tela denunciar.
+      if (t.motivo !== 'vazio') {
+        descartados.push({ campo, informado: Array.isArray(bruto) ? bruto.join(', ') : String(bruto), motivo: t.motivo });
+      }
+      continue;
+    }
+
+    const novo = t.valor;
     const cmpNovo = paraComparar(campo, novo);
     if (!cmpNovo) continue;                     // informou algo que normaliza pra vazio
 
@@ -102,7 +123,7 @@ function decidirCampos(atual = {}, informado = {}) {
     }
   }
 
-  return { aplicar, acumular, conflitos, iguais };
+  return { aplicar, acumular, conflitos, iguais, descartados };
 }
 
 // ── Confiança do vínculo (espelha cpfReconciliar) ────────────────────────────
@@ -145,88 +166,148 @@ async function logHistorico(membroId, resumo) {
   if (error) console.warn('[censoReconciliar] histórico não gravado:', error.message);
 }
 
+// Colunas de `mem_membros` que podem não existir ainda (deploy em 2 etapas).
+// ⚠️ Pedir coluna inexistente faz o PostgREST recusar a query INTEIRA (42703),
+// o que derrubaria a reconciliação de TODO MUNDO por causa de um campo novo —
+// a lição do `parcelas_max`. Aqui a ausência degrada pra "esse campo não entra
+// nesta rodada", nunca pra erro.
+const COLUNAS_OPCIONAIS = ['escolaridade'];
+
+function semColunasOpcionais(lista) {
+  return lista.filter((c) => !COLUNAS_OPCIONAIS.includes(c));
+}
+
+// Códigos de erro de DADO (o valor não serve pra coluna). Diferente de erro de
+// INFRA, que precisa propagar: aqui insistir não resolve, e derrubar o passe
+// inteiro por um campo ruim é o bug que estamos consertando.
+const ERRO_DE_DADO = new Set(['23514', '22P02', '22001', '22007', '22008', '42703']);
+
+// Aplica os campos com a guarda de corrida `.is(campo, null)`.
+// Se o bloco for recusado por DADO, tenta campo a campo — assim um valor ruim
+// deixa de levar os bons embora (política de 04/08: gravar o efeito DURANTE).
+async function aplicarCampos(membroId, aplicar) {
+  const campos = Object.keys(aplicar);
+  if (!campos.length) return { gravados: [], recusados: [], perdeuCorrida: false };
+
+  const tentar = async (subset) => {
+    let q = supabase.from('mem_membros')
+      .update({ ...subset, updated_at: new Date().toISOString() })
+      .eq('id', membroId);
+    for (const campo of Object.keys(subset)) q = q.is(campo, null);
+    return q.select('id');
+  };
+
+  const { data, error } = await tentar(aplicar);
+  if (!error) {
+    return { gravados: data && data.length ? campos : [], recusados: [], perdeuCorrida: !data || !data.length };
+  }
+  if (!ERRO_DE_DADO.has(error.code)) throw error;
+
+  const gravados = []; const recusados = []; let perdeuCorrida = false;
+  for (const campo of campos) {
+    const { data: d1, error: e1 } = await tentar({ [campo]: aplicar[campo] });
+    if (e1) {
+      if (!ERRO_DE_DADO.has(e1.code)) throw e1;
+      recusados.push({ campo, informado: aplicar[campo], motivo: `banco_recusou_${e1.code}` });
+    } else if (d1 && d1.length) gravados.push(campo);
+    else perdeuCorrida = true;
+  }
+  return { gravados, recusados, perdeuCorrida };
+}
+
 // ── reconciliarCenso · aplica o censo num membro que JÁ EXISTE ───────────────
-// Retorna { acao, aplicados[], conflitos[], acumulados[], iguais[] }
+// Retorna { acao, aplicados[], conflitos[], acumulados[], iguais[], descartados[] }
 //   acao ∈ aplicado | sem_mudanca | conflito | sinal_fraco_ignorado |
 //          membro_nao_encontrado
 // `acao === 'conflito'` significa "tem campo pra humano decidir" — pode ter
 // aplicado outros campos vazios no mesmo passe (e isso é desejado: reduz a fila
 // ao que realmente precisa de gente).
+// `descartados` = o que o censo trouxe e NÃO foi gravado (rótulo fora do
+// vocabulário, CEP inválido, coluna ausente). Nunca é silencioso.
 async function reconciliarCenso({ membroId, matchedBy, dados = {}, origemId } = {}) {
-  if (!membroId) return { acao: 'membro_nao_encontrado', aplicados: [], conflitos: [], acumulados: [], iguais: [] };
+  const vazioResp = (acao, extra = {}) => ({
+    acao, aplicados: [], conflitos: [], acumulados: [], iguais: [], descartados: [], ...extra,
+  });
+  if (!membroId) return vazioResp('membro_nao_encontrado');
 
-  const colunas = ['id', 'data_nascimento', 'deleted_at', ...CAMPOS_CENSO];
-  const { data: membro, error } = await supabase
-    .from('mem_membros')
-    .select([...new Set(colunas)].join(', '))
-    .eq('id', membroId)
-    .maybeSingle();
+  const colunasTodas = [...new Set(['id', 'data_nascimento', 'deleted_at', ...CAMPOS_CENSO])];
+  let colunas = colunasTodas;
+  let indisponiveis = [];
+
+  let { data: membro, error } = await supabase
+    .from('mem_membros').select(colunas.join(', ')).eq('id', membroId).maybeSingle();
+
+  if (error && error.code === '42703') {
+    // Migration ainda não aplicada: segue sem os campos novos.
+    colunas = semColunasOpcionais(colunasTodas);
+    indisponiveis = COLUNAS_OPCIONAIS.slice();
+    ({ data: membro, error } = await supabase
+      .from('mem_membros').select(colunas.join(', ')).eq('id', membroId).maybeSingle());
+  }
   if (error) throw error;
-  if (!membro || membro.deleted_at) {
-    return { acao: 'membro_nao_encontrado', aplicados: [], conflitos: [], acumulados: [], iguais: [] };
+  if (!membro || membro.deleted_at) return vazioResp('membro_nao_encontrado');
+
+  // Cópia local: o chamador não pode ter o payload dele alterado por nós.
+  const informado = { ...dados };
+  const descartadosBase = [];
+  for (const campo of indisponiveis) {
+    if (!vazio(informado[campo])) {
+      descartadosBase.push({ campo, informado: String(informado[campo]), motivo: 'coluna_ausente' });
+    }
+    delete informado[campo];
   }
 
   const gate = podeAplicar({
     matchedBy,
     nascimentoMembro: membro.data_nascimento,
-    nascimentoInformado: dados.data_nascimento,
+    nascimentoInformado: informado.data_nascimento,
   });
   if (!gate.ok) {
     // Não grava NADA e não abre trabalho humano falso: a linha do censo segue
     // como 'duplicado' e quem decide é a tela de Duplicatas, que já existe.
-    return {
-      acao: 'sinal_fraco_ignorado', motivo: gate.motivo,
-      aplicados: [], conflitos: [], acumulados: [], iguais: [],
-    };
+    return vazioResp('sinal_fraco_ignorado', { motivo: gate.motivo, descartados: descartadosBase });
   }
 
-  let { aplicar, acumular, conflitos, iguais } = decidirCampos(membro, dados);
+  let { aplicar, acumular, conflitos, iguais, descartados } = decidirCampos(membro, informado);
+  descartados = [...descartadosBase, ...descartados];
   let campos = Object.keys(aplicar);
 
   if (campos.length) {
     // Guarda de corrida: só aplica se os campos AINDA estiverem vazios. Entre o
     // read e o write alguém da equipe pode ter preenchido na tela de Membresia —
     // e sobrescrever edição humana com dado de formulário é exatamente o que
-    // esta política existe pra não fazer. É tudo-ou-nada de propósito: 0 linhas
-    // = o cadastro mudou, então recalculamos e o que foi preenchido vira conflito.
-    let q = supabase.from('mem_membros')
-      .update({ ...aplicar, updated_at: new Date().toISOString() })
-      .eq('id', membroId);
-    for (const campo of campos) q = q.is(campo, null);
+    // esta política existe pra não fazer. 0 linhas = o cadastro mudou, então
+    // recalculamos e o que foi preenchido vira conflito.
+    const r1 = await aplicarCampos(membroId, aplicar);
+    descartados.push(...r1.recusados);
+    campos = r1.gravados;
 
-    const { data: upd, error: e2 } = await q.select('id');
-    if (e2) throw e2;
-
-    if (!upd || upd.length === 0) {
+    if (r1.perdeuCorrida) {
       // Relê UMA vez e reavalia. Sem retry em laço: se mudou de novo, a linha
       // vai pra fila humana, que é o destino correto de disputa.
       const { data: m2, error: e3 } = await supabase
-        .from('mem_membros')
-        .select([...new Set(colunas)].join(', '))
-        .eq('id', membroId)
-        .maybeSingle();
+        .from('mem_membros').select(colunas.join(', ')).eq('id', membroId).maybeSingle();
       if (e3) throw e3;
-      if (!m2 || m2.deleted_at) {
-        return { acao: 'membro_nao_encontrado', aplicados: [], conflitos: [], acumulados: [], iguais: [] };
-      }
+      if (!m2 || m2.deleted_at) return vazioResp('membro_nao_encontrado');
 
-      const r2 = decidirCampos(m2, dados);
-      aplicar = r2.aplicar; acumular = r2.acumular; conflitos = r2.conflitos; iguais = r2.iguais;
-      campos = Object.keys(aplicar);
+      const r2 = decidirCampos(m2, informado);
+      acumular = r2.acumular; conflitos = r2.conflitos; iguais = r2.iguais;
+      // Campos já gravados na 1ª passada não voltam a ser propostos.
+      const restantes = Object.fromEntries(
+        Object.entries(r2.aplicar).filter(([c]) => !campos.includes(c)),
+      );
 
-      if (campos.length) {
-        let q2 = supabase.from('mem_membros')
-          .update({ ...aplicar, updated_at: new Date().toISOString() })
-          .eq('id', membroId);
-        for (const campo of campos) q2 = q2.is(campo, null);
-        const { data: upd2, error: e4 } = await q2.select('id');
-        if (e4) throw e4;
-        if (!upd2 || upd2.length === 0) {
+      if (Object.keys(restantes).length) {
+        const r3 = await aplicarCampos(membroId, restantes);
+        descartados.push(...r3.recusados);
+        campos = [...campos, ...r3.gravados];
+        if (r3.perdeuCorrida) {
           // Perdeu a corrida 2×: não insiste. Vira conflito (humano decide).
-          for (const campo of campos) {
-            conflitos.push({ campo, atual: null, informado: aplicar[campo] });
+          for (const campo of Object.keys(restantes)) {
+            if (!r3.gravados.includes(campo) && !r3.recusados.some((x) => x.campo === campo)) {
+              conflitos.push({ campo, atual: null, informado: restantes[campo] });
+            }
           }
-          aplicar = {}; campos = [];
         }
       }
     }
@@ -243,11 +324,16 @@ async function reconciliarCenso({ membroId, matchedBy, dados = {}, origemId } = 
     );
   }
 
-  if (campos.length || acumulados.length) {
+  if (campos.length || acumulados.length || descartados.length) {
     const partes = [];
     if (campos.length) partes.push(`preenchido: ${campos.join(', ')}`);
     if (acumulados.length) partes.push(`contato acumulado: ${acumulados.join(', ')}`);
     if (conflitos.length) partes.push(`conflito p/ revisão: ${conflitos.map((c) => c.campo).join(', ')}`);
+    // Descarte VAI PRO HISTÓRICO: é o rastro de "a pessoa respondeu e o sistema
+    // não guardou", que é justamente o que ninguém descobria antes.
+    if (descartados.length) {
+      partes.push(`não guardado: ${descartados.map((d) => `${d.campo} (${d.motivo})`).join(', ')}`);
+    }
     await logHistorico(
       membroId,
       `${partes.join(' · ')}${origemId ? ` (cadastro ${origemId})` : ''}`,
@@ -258,7 +344,7 @@ async function reconciliarCenso({ membroId, matchedBy, dados = {}, origemId } = 
     : (campos.length || acumulados.length) ? 'aplicado'
       : 'sem_mudanca';
 
-  return { acao, aplicados: campos, conflitos, acumulados, iguais };
+  return { acao, aplicados: campos, conflitos, acumulados, iguais, descartados };
 }
 
 module.exports = {

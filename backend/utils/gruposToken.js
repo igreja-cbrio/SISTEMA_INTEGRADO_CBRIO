@@ -36,39 +36,34 @@ const RENOV_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
 // Conferência da lista: mesma razão do TTL longo da renovação.
 const CONFIRA_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
 
-// ⚠️ PRORROGAÇÃO dos links de APROVAÇÃO já entregues (Natasha · 12/08/2026).
-// O `exp` vive DENTRO do token assinado, então subir o TTL só vale pra link
-// NOVO — os 51 links já expirados continuariam mortos, e "revalidar" só seria
-// possível reenviando ~90 mensagens (spam pro líder, e a nota de qualidade do
-// número é o que decide a subida de tier na Meta). Em vez disso o SERVIDOR
-// aceita token 'aprov' vencido até a data abaixo: o líder abre a mensagem que
-// já está no WhatsApp dele e funciona. Zero envio, zero custo.
+// ⚠️ A VALIDADE DO LINK DE APROVAÇÃO É A TEMPORADA (Pr. Nélio + Natasha ·
+// 17/08/2026) — não o relógio.
+//
+// Histórico curto: em 12/08 a prorrogação nasceu com DATA FIXA (31/08), porque
+// o pedido da Natasha era "renove até o fim do mês". Conversando com o Pr.
+// Nélio, a régua virou outra: **o link fica ativo enquanto aquela temporada
+// estiver aberta**. Faz mais sentido — o que dá sentido a um pedido de entrada
+// é a temporada em que ele foi feito, não uma data de calendário; e trocar de
+// data fixa em data fixa seria um remendo por mês.
+//
+// Como isto funciona sem banco aqui: `verificarToken` é PURA (só crypto+env) e
+// não sabe o que é temporada. Quem sabe é `publicGrupos.js`, que consulta
+// `mem_temporadas.inscricoes_abertas` e passa `aceitarExpirado`. Assim a régua
+// de negócio vive no lugar que tem o dado, e esta função continua testável no
+// gate. ⚠️ O default é **false**: quem não souber responder não prorroga.
 //
 // Segurança — NÃO é afrouxamento geral:
 //   · a assinatura HMAC continua obrigatória (token forjado nunca passa);
 //   · vale SÓ pro tipo 'aprov', que dá acesso a UM pedido;
-//   · as duas travas server-side seguem mandando (publicGrupos.js): o pedido
-//     tem que estar 'pendente' e `payload.l` tem que ser o líder ATUAL do
-//     grupo — trocou a liderança, o link morre na hora, prorrogado ou não.
+//   · as travas server-side seguem mandando (publicGrupos.js): pedido tem que
+//     estar 'pendente' e `payload.l` tem que ser o líder ATUAL do grupo —
+//     trocou a liderança, o link morre na hora, prorrogado ou não.
 // É a mesma tese já aplicada à renovação e à conferência: "a validade real é
 // decidida no servidor a cada uso".
 //
-// ⚠️ Tem PRAZO e morre sozinha — é remendo datado, não porta permanente. Depois
-// da data, link vencido volta a ser recusado e o TTL de 30d passa a bastar.
-// Env `GRUPOS_APROV_PRORROGADO_ATE` (ISO) estica sem deploy; data inválida ou
-// vazia DESLIGA a prorrogação (fail-closed).
-const APROV_PRORROGADO_ATE_PADRAO = '2026-08-31T23:59:59-03:00';
-
-function aprovProrrogadoAte() {
-  const bruto = String(process.env.GRUPOS_APROV_PRORROGADO_ATE ?? APROV_PRORROGADO_ATE_PADRAO).trim();
-  if (!bruto) return 0;
-  const ts = Date.parse(bruto);
-  if (!Number.isFinite(ts)) {
-    console.warn('[GruposToken] GRUPOS_APROV_PRORROGADO_ATE inválida (%s) — prorrogação desligada', bruto);
-    return 0;
-  }
-  return ts;
-}
+// ⚠️ E ela MORRE SOZINHA do mesmo jeito: fechou as inscrições da temporada,
+// link vencido volta a ser recusado. O TTL de 30 dias continua valendo como
+// piso — é ele que segura o link de pé se a consulta da temporada falhar.
 
 // ttlMs opcional (default 7d) — aprovação usa 30d, renovação/conferência 30d.
 // `agora` injetável só pra teste (nunca passado em produção).
@@ -81,7 +76,9 @@ function assinarToken(tipo, pedidoId, extra, ttlMs, agora = Date.now()) {
   return `${json}.${sig}`;
 }
 
-function verificarToken(token, tipoEsperado, agora = Date.now()) {
+// `opts.aceitarExpirado` só é honrado no tipo 'aprov' e só quem tem o dado da
+// temporada deve passá-lo (ver bloco acima). Default false = fail-closed.
+function verificarToken(token, tipoEsperado, agora = Date.now(), opts = {}) {
   try {
     const s = segredo();
     if (!s) return null;
@@ -95,9 +92,8 @@ function verificarToken(token, tipoEsperado, agora = Date.now()) {
     if (payload.t !== tipoEsperado) return null;
     if (!payload.exp) return null;
     if (agora > payload.exp) {
-      // Só a aprovação é prorrogável, e só até a data-limite (ver bloco acima).
-      const ate = tipoEsperado === 'aprov' ? aprovProrrogadoAte() : 0;
-      if (!ate || agora > ate) return null;
+      // Só a aprovação é prorrogável, e só com a temporada aberta.
+      if (tipoEsperado !== 'aprov' || opts.aceitarExpirado !== true) return null;
       return { ...payload, prorrogado: true };
     }
     return payload;
@@ -109,8 +105,6 @@ module.exports = {
   APROV_TTL_MS,
   RENOV_TTL_MS,
   CONFIRA_TTL_MS,
-  APROV_PRORROGADO_ATE_PADRAO,
-  aprovProrrogadoAte,
   assinarToken,
   verificarToken,
 };

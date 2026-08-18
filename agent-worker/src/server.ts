@@ -19,6 +19,7 @@ import { runCyberAgent } from "./agents/cyberAgent.js";
 import { runDevAgent } from "./agents/devAgent.js";
 import { runDevDispatcher } from "./agents/devDispatcher.js";
 import { runKpiRelatorioSemanal } from "./agents/kpiRelatorioSemanal.js";
+import { runRotinaGestor } from "./agents/rotinaGestor.js";
 import { startScheduler } from "./scheduler.js";
 
 const AGENT_RUNNERS: Record<string, (opts: any) => Promise<any>> = {
@@ -41,6 +42,7 @@ const AGENT_RUNNERS: Record<string, (opts: any) => Promise<any>> = {
   dev_agent: runDevAgent,
   dev_dispatcher: runDevDispatcher,
   kpi_relatorio_semanal: runKpiRelatorioSemanal,
+  rotina_gestor: runRotinaGestor,
 };
 
 const app = express();

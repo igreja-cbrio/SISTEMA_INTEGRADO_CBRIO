@@ -12,6 +12,10 @@ const { isAuthorizedCron } = require('../utils/cronAuth');
 const wpp = require('../services/whatsappService');
 const multer = require('multer');
 const crypto = require('crypto');
+// ⚠️ Bucket `solicitacoes` é PRIVADO desde 16/08/2026 — os anexos são assinados
+// na LEITURA (o dado guarda URL pública antiga e o app do Staff ainda grava
+// assim). Ver o cabeçalho do serviço para o porquê.
+const { assinarAnexosSolicitacoes } = require('../services/anexosSolicitacao');
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
 const { lancarDespesaConciliando } = require('../services/finLancamento');
 const { aprenderClassificacao } = require('../services/financeiroClassificador');
@@ -1201,7 +1205,19 @@ router.get('/', async (req, res) => {
       marketing_campanha: campanhaMap[d.id] || null,
     }));
 
-    res.json(enriched);
+    // ⚠️ O bucket `solicitacoes` é PRIVADO (16/08/2026). As linhas antigas guardam
+    // a URL pública (que deixou de abrir) e o app do Staff CONTINUA gravando URL
+    // pública no upload — por isso a assinatura acontece na LEITURA, derivando o
+    // caminho da URL, em vez de migrar o dado e exigir release do app.
+    // Best-effort: falhar aqui não pode derrubar a lista de solicitações.
+    let saida = enriched;
+    try {
+      saida = await assinarAnexosSolicitacoes(enriched);
+    } catch (err) {
+      console.warn('[SOLICITACOES] assinatura de anexos falhou:', err.message);
+    }
+
+    res.json(saida);
   } catch (e) {
     console.error('[SOLICITACOES] list error:', e.message);
     res.status(500).json({ error: 'Erro ao listar solicitações' });
@@ -1575,6 +1591,24 @@ router.post('/', async (req, res) => {
       console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
     }
 
+    // ⚠️ Serviço/manutenção não depende de diretor NENHUM — nem do de origem
+    // (05/08) nem do 2º carimbo de Gestão (decisão do Matheus · 17/08, vendo o
+    // pedido "Lava-Pés" parado: "não precisa passar pela Juliana ou Eduardo,
+    // eles podem até ficar cientes, mas pode ir direto pro Amaury"). A régua
+    // vem da MESMA função do banco que decide a origem — uma lista só, senão
+    // as duas metades da mesma decisão divergem quando alguém editar uma.
+    // Falha da consulta mantém o carimbo antigo (fail-closed): o pedido espera
+    // um humano em vez de pular um portão por causa de instabilidade.
+    let categoriaVaiDiretoPraOperacao = false;
+    try {
+      const { data: disp, error: dErr } = await supabase
+        .rpc('fn_solicitacoes_categoria_dispensa_origem', { p_categoria: categoria });
+      if (dErr) throw dErr;
+      categoriaVaiDiretoPraOperacao = disp === true;
+    } catch (derr) {
+      console.error('[SOLICITAÇÕES] dispensa por categoria falhou (mantém carimbo de Gestão):', derr.message);
+    }
+
     // ── COMPRAS · fluxo por valor + planejado (2026-07-22, Matheus) ───────────
     //   Planejado ≤ R$ 1.000            → direto pra cotação (sem diretor/presidente)
     //   Planejado R$ 1.000–5.000        → diretor da área aprova
@@ -1645,6 +1679,13 @@ router.post('/', async (req, res) => {
       // atende — sem 2º carimbo de Gestão (decisão do Matheus · 2026-07-21).
       gestaoStatus = 'dispensada';
       gestaoMotivo = 'Origem aprovada pelo responsável da categoria (Amaury) · sem carimbo de Gestão';
+    } else if (categoriaVaiDiretoPraOperacao && !planejado) {
+      // Serviço/manutenção: vai direto pra operação (Amaury). Dispensar só a
+      // origem, como estava desde 05/08, deixava o pedido preso no 2º carimbo
+      // com a tela dizendo "aguardando aprovação de Eduardo ou Juliana" — a
+      // metade do portão que sobrou segurava o pedido inteiro.
+      gestaoStatus = 'dispensada';
+      gestaoMotivo = 'Servico/manutencao vai direto para operacao (decisao 17/08) · Gestao fica ciente, nao aprova';
     } else if (!planejado && categoria !== 'reserva_espaco') {
       // 2º carimbo · Gestão (ou aprovadores específicos da categoria · ex.: TI →
       // Diego/Matheus). Best-effort · lista vazia degrada.
@@ -1932,6 +1973,29 @@ router.post('/', async (req, res) => {
         severidade: 'alta',
         chaveDedup: `solicitacao_triagem_${data.id}`,
       }).catch(err => console.error('[SOLICITACOES] notify triagem:', err.message));
+    }
+
+    // Serviço/manutenção · a Gestão fica CIENTE, não aprova (decisão 17/08).
+    // Aviso informativo, sem link pra fila de aprovação: se apontasse pra
+    // "?aba=aprovar" a pessoa abriria uma fila onde este pedido não está, e o
+    // aviso viraria trabalho fantasma. Sem e-mail — ciência não é cobrança.
+    // Volume medido em 17/08: ~5 pedidos/mês nessas categorias.
+    if (categoriaVaiDiretoPraOperacao && gestaoStatus === 'dispensada') {
+      aprovadoresGestaoIds(categoria)
+        .then(ids => {
+          if (!ids.length) return;
+          return notificar({
+            modulo: 'administrativo',
+            tipo: 'solicitacao_servico_ciencia',
+            titulo: `Serviço pedido à manutenção: ${titulo}`,
+            mensagem: `${userName || 'Um funcionário'} pediu um serviço/manutenção. Foi direto para a operação (Amaury) — você não precisa aprovar, é só para ciência.`,
+            link: '/solicitacoes',
+            severidade: 'info',
+            chaveDedup: `solicitacao_servico_ciencia_${data.id}`,
+            targetIds: ids,
+          });
+        })
+        .catch(err => console.error('[SOLICITACOES] notify ciência serviço:', err.message));
     }
 
     res.status(201).json(data);

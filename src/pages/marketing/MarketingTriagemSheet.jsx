@@ -15,6 +15,18 @@ import { toast } from 'sonner';
 // entrega ao solicitante e criar os entregáveis (cards) com dono/datas + aviso
 // de capacidade. Extraído de MarketingTriagem p/ ser reusado dentro do Kanban
 // (coluna Triagem) na consolidação do módulo (F-B).
+// Ocupações oferecidas, em DIAS ÚTEIS. ⚠️ Espelha `OCUPACOES_DIAS` de
+// `backend/utils/marketingOcupacao.js` — que é quem MANDA (o servidor calcula o
+// fim e recusa valor inválido). Aqui é só o atalho da tela; mudou lá, muda aqui.
+// Inteiros porque a coluna `duracao_dias` é integer.
+const OCUPACOES = [1, 2, 3, 5];
+
+// "Hoje" em data local (só pra sugerir o início · o servidor ajusta pro próximo
+// dia útil e devolve o intervalo efetivo).
+function hojeLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 export const COMPLEXIDADE = [
   { value: 'simples',  label: 'Simples · 3–4 semanas' },
   { value: 'media',    label: 'Média · ~1 mês' },
@@ -33,7 +45,18 @@ export default function MarketingTriagemSheet({ campanha, tipos, membros, onClos
   const [detalhe, setDetalhe] = useState(null);
   const [loading, setLoading] = useState(false);
   const [meta, setMeta] = useState({ complexidade: '', prazo_entrega: '' });
-  const [novo, setNovo] = useState({ titulo: '', etiqueta_tipo_id: '', atribuido_a: '', data_inicio: '', data_fim: '', pode_paralelo: true });
+  // ⚠️⚠️ ANTES eram dois DatePickers (Início e Fim) OPCIONAIS — e o resultado
+  // medido em 14/08 foi **0 de 83 cards com datas**, ou seja o Planner nunca teve
+  // uma barra e "atribuir" não ocupava ninguém. Agora o Pedro informa QUANTO
+  // OCUPA (em dias úteis) e o fim é calculado; a ocupação é OBRIGATÓRIA pra
+  // adicionar o entregável (pedido do Marcos: "Pedro já colocar nos campos
+  // quanto tempo deve ocupar na semana de cada um").
+  const [novo, setNovo] = useState({
+    titulo: '', etiqueta_tipo_id: '', atribuido_a: '',
+    // Início sugerido = hoje. ⚠️ Se cair em fim de semana, quem anda pro dia
+    // útil é o SERVIDOR (régua única) — e a prévia mostra a data efetiva.
+    data_inicio: hojeLocal(), ocupa_dias: '', pode_paralelo: true,
+  });
   const [salvando, setSalvando] = useState(false);
   const [capInfo, setCapInfo] = useState(null);
 
@@ -58,52 +81,66 @@ export default function MarketingTriagemSheet({ campanha, tipos, membros, onClos
 
   async function addEntregavel() {
     if (!novo.titulo.trim()) { toast.error('Informe o título do entregável'); return; }
-    if (novo.data_inicio && novo.data_fim && novo.data_fim < novo.data_inicio) {
-      toast.error('A data de fim não pode ser antes do início'); return;
-    }
+    // ⚠️ Ocupação é OBRIGATÓRIA — e é uma escolha EXPLÍCITA, não um default que o
+    // sistema chuta: entregável sem ocupação não aparece no Planner, e era assim
+    // que "atribuí pra alguém e não ocupou nada" acontecia (0 de 83 cards).
+    if (!novo.ocupa_dias) { toast.error('Informe quantos dias úteis isso vai ocupar a pessoa'); return; }
+    if (!novo.data_inicio) { toast.error('Informe quando começa'); return; }
     setSalvando(true);
     try {
       await api.campanhas.criarCard(campanha.id, {
         titulo: novo.titulo.trim(),
         etiqueta_tipo_id: novo.etiqueta_tipo_id || null,
         atribuido_a: novo.atribuido_a || null,
-        data_inicio: novo.data_inicio || null,
-        data_fim: novo.data_fim || null,
+        data_inicio: novo.data_inicio,
+        // O FIM é calculado no servidor (régua única) — o cliente não recalcula.
+        ocupa_dias: Number(novo.ocupa_dias),
         pode_paralelo: novo.pode_paralelo,
       });
-      toast.success('Entregável criado');
-      setNovo({ titulo: '', etiqueta_tipo_id: '', atribuido_a: '', data_inicio: '', data_fim: '', pode_paralelo: true });
+      toast.success('Entregável criado · já ocupa a agenda no Planner');
+      setNovo({
+        titulo: '', etiqueta_tipo_id: '', atribuido_a: '',
+        data_inicio: novo.data_inicio, ocupa_dias: '', pode_paralelo: true,
+      });
       setDetalhe(await api.campanhas.get(campanha.id));
       onChanged();
     } catch (e) { toast.error(e.message); }
     finally { setSalvando(false); }
   }
 
-  // Aviso de capacidade: simula o novo entregável na agenda do dono (máx slots/dia · só dias úteis)
+  // Aviso de capacidade + PRÉVIA do período. O servidor devolve o intervalo
+  // efetivo (início pode andar se cair em fim de semana) e a ocupação já
+  // existente do dono, pela régua única (utils/marketingOcupacao).
+  // ⚠️ O cliente NÃO recalcula o fim nem a carga — duas réguas dariam duas
+  // respostas para "cabe na agenda dele?".
   useEffect(() => {
-    const { atribuido_a, data_inicio, data_fim, pode_paralelo } = novo;
-    if (!atribuido_a || !data_inicio || !data_fim || data_fim < data_inicio) { setCapInfo(null); return; }
+    const { atribuido_a, data_inicio, ocupa_dias, pode_paralelo } = novo;
+    if (!atribuido_a || !data_inicio || !ocupa_dias) { setCapInfo(null); return; }
     let cancel = false;
     const h = setTimeout(() => {
-      api.capacidadeDia(atribuido_a, data_inicio, data_fim).then(r => {
+      api.capacidadeDia(atribuido_a, data_inicio, { ocupa_dias: Number(ocupa_dias) }).then(r => {
         if (cancel) return;
         const slots = r?.slots_dia || 3;
         const dias = r?.dias || {};
+        const de = r?.data_inicio || data_inicio;
+        const ate = r?.data_fim;
         let cheios = 0, total = 0;
-        let d = new Date(data_inicio + 'T00:00:00');
-        const end = new Date(data_fim + 'T00:00:00');
-        while (d <= end) {
-          const dow = d.getDay();
-          if (dow !== 0 && dow !== 6) {
-            const atual = dias[d.toISOString().slice(0, 10)]?.ocupados || 0;
-            if (atual + (pode_paralelo ? 1 : slots) > slots) cheios++;
-            total++;
-          }
-          d = new Date(d.getTime() + 86400000);
+        for (const [d, info] of Object.entries(dias)) {
+          if (ate && (d < de || d > ate)) continue;
+          total++;
+          if ((info?.ocupados || 0) + (pode_paralelo ? 1 : slots) > slots) cheios++;
         }
-        setCapInfo(cheios > 0
-          ? { cheio: true, msg: `Sobrecarrega o dono em ${cheios}/${total} dia(s) (máx ${slots}/dia). Veja outra data, outro dono, ou marque foco.` }
-          : { cheio: false, msg: `Cabe na agenda do dono (≤ ${slots}/dia).` });
+        // ⚠️ `total` aqui conta os dias que JÁ tinham algo. O nº de dias do
+        // período vem do servidor (`dias_uteis`) — contar no cliente era o que
+        // reintroduzia a régua duplicada.
+        const periodo = r?.dias_uteis || Number(ocupa_dias);
+        setCapInfo({
+          cheio: cheios > 0,
+          periodo: de && ate ? `${fmtData(de)} → ${fmtData(ate)}` : null,
+          msg: cheios > 0
+            ? `Ocupa ${periodo} dia(s) útil(eis), mas sobrecarrega o dono em ${cheios} dia(s) (máx ${slots}/dia). Veja outra data, outro dono, ou menos dias.`
+            : `Ocupa ${periodo} dia(s) útil(eis) e cabe na agenda do dono (≤ ${slots}/dia).`,
+        });
       }).catch(() => { if (!cancel) setCapInfo(null); });
     }, 350);
     return () => { cancel = true; clearTimeout(h); };
@@ -211,14 +248,34 @@ export default function MarketingTriagemSheet({ campanha, tipos, membros, onClos
                     </SelectContent>
                   </Select>
                   <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">Início</Label>
+                    <Label className="text-[10px] text-muted-foreground">Começa em</Label>
                     <DatePicker value={novo.data_inicio}
                       onChange={v => setNovo(n => ({ ...n, data_inicio: v }))} className="h-8 text-xs" />
                   </div>
+                  {/* ⚠️ "Fim" SAIU: o Pedro informa QUANTO OCUPA e o servidor
+                      calcula o fim (pulando fim de semana). Era pedir duas datas
+                      opcionais que deixava 100% dos cards sem plano — e sem plano
+                      o Planner não mostra a pessoa ocupada. */}
                   <div className="space-y-1">
-                    <Label className="text-[10px] text-muted-foreground">Fim</Label>
-                    <DatePicker value={novo.data_fim} min={novo.data_inicio || undefined}
-                      onChange={v => setNovo(n => ({ ...n, data_fim: v }))} className="h-8 text-xs" />
+                    <Label className="text-[10px] text-muted-foreground">
+                      Ocupa quantos dias? <span className="text-rose-600">*</span>
+                    </Label>
+                    <div className="flex gap-1">
+                      {OCUPACOES.map(d => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setNovo(n => ({ ...n, ocupa_dias: n.ocupa_dias === d ? '' : d }))}
+                          className={`h-8 flex-1 rounded border text-xs font-medium transition-colors ${
+                            novo.ocupa_dias === d
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-border bg-background hover:bg-accent'
+                          }`}
+                        >
+                          {d}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
                 <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -226,9 +283,15 @@ export default function MarketingTriagemSheet({ campanha, tipos, membros, onClos
                   Pode trabalhar em paralelo (1 slot/dia · não-urgente)
                 </label>
                 {capInfo && (
-                  <p className={`text-xs ${capInfo.cheio ? 'text-amber-600' : 'text-emerald-600'}`}>
-                    {capInfo.cheio ? '⚠️ ' : '✓ '}{capInfo.msg}
-                  </p>
+                  <div className={`text-xs ${capInfo.cheio ? 'text-amber-600' : 'text-emerald-600'}`}>
+                    <p>{capInfo.cheio ? '⚠️ ' : '✓ '}{capInfo.msg}</p>
+                    {/* O período EFETIVO vem do servidor — mostrar o que ele
+                        calculou evita a tela prometer um intervalo diferente do
+                        que vai ser gravado. */}
+                    {capInfo.periodo && (
+                      <p className="text-muted-foreground mt-0.5 tabular-nums">{capInfo.periodo}</p>
+                    )}
+                  </div>
                 )}
                 <Button size="sm" onClick={addEntregavel} disabled={salvando || !novo.titulo.trim()} className="w-full gap-1.5">
                   <Plus className="h-4 w-4" /> Adicionar entregável

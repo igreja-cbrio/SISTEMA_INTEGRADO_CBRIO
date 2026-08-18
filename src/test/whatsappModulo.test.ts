@@ -11,6 +11,9 @@ const SLUGS_REAIS = new Set([
   // + 14/08 (C2 lote 5): 'cuidados' — conferido no catálogo (o módulo
   // /ministerial/cuidados usa authorizeModule('cuidados') há meses).
   'cuidados',
+  // + disparo em massa de onboarding do RH: 'rh' já existe no catálogo
+  // (authorizeModule('rh', N) em uso em dezenas de rotas de backend/routes/rh.js).
+  'rh',
 ]);
 
 describe('moduloDoContexto · quem é avisado quando o WhatsApp não chega', () => {
