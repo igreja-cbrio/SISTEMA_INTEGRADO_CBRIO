@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { fitidForTransaction, reconcileTransactions } = require('./reconciliation');
+const { fitidForTransaction, reconcileTransactions, summarizeInsertErrors } = require('./reconciliation');
 
 function fakeSupabase(existing) {
   return {
@@ -21,6 +21,14 @@ assert.equal(fitidForTransaction({ id: 'bank-1' }), 'bank-1');
 assert.equal(
   fitidForTransaction({ data: '2026-08-06', valor: 10, raw: { a: 1 } }),
   fitidForTransaction({ data: '2026-08-06', valor: 10, raw: { a: 1 } }),
+);
+assert.equal(
+  summarizeInsertErrors([
+    { code: '23502', constraint: 'fin_lancamentos_fitid' },
+    { code: '23502', constraint: 'fin_lancamentos_fitid' },
+    { code: '22007', constraint: 'data_lancamento' },
+  ]),
+  '22007:data_lancamento=1, 23502:fin_lancamentos_fitid=2',
 );
 
 (async () => {

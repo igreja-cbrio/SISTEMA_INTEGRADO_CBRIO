@@ -885,7 +885,12 @@ router.post('/criancas/merge', authorizeModule('kids', 3), async (req, res) => {
     const { error } = await supabase.rpc('merge_kids_criancas', { p_keep: keep_id, p_merge: merge_ids });
     if (error) throw error;
     res.json({ ok: true, fundidas: merge_ids.length });
-  } catch (e) { console.error('[totemKids] merge criancas:', e.message); res.status(500).json({ error: e.message || 'Erro ao fundir' }); }
+  } catch (e) {
+    const t = traduzErroUmPaiUmaMae(e);
+    if (t) return res.status(t.status).json({ error: t.error });
+    console.error('[totemKids] merge criancas:', e.message);
+    res.status(500).json({ error: 'Erro ao fundir crianças' });
+  }
 });
 
 // GET /api/totem-kids/criancas/:id · detalhe completo

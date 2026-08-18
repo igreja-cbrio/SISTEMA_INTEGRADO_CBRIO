@@ -66,6 +66,10 @@ router.get('/', authorizeModule('links', 1), async (req, res) => {
 });
 
 // ── Um link, com histórico de destino ──────────────────────────────────────
+// Rotas estáticas precisam vir antes de `/:id`: do contrário o Express trata
+// "catalogo" como UUID de link e o PostgREST devolve 500.
+router.get('/catalogo', authorizeModule('links', 1), catalogoHandler);
+
 router.get('/:id', authorizeModule('links', 1), async (req, res) => {
   try {
     const [link, hist, porDia] = await Promise.all([
@@ -275,7 +279,7 @@ const OUTROS_FORMULARIOS = [
 
 const BASE_PUBLICA = process.env.PUBLIC_BASE_URL || 'https://www.cbrio.org';
 
-router.get('/catalogo', authorizeModule('links', 1), async (req, res) => {
+async function catalogoHandler(req, res) {
   try {
     const url = (caminho) => `${BASE_PUBLICA}${caminho}`;
     const itens = [];
@@ -357,7 +361,7 @@ router.get('/catalogo', authorizeModule('links', 1), async (req, res) => {
       ],
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+}
 
 module.exports = router;
 module.exports.normalizarDestino = normalizarDestino;
