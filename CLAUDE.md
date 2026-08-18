@@ -4534,6 +4534,73 @@ Fica registrado por que aprovar em massa não é inócuo, se voltar à mesa:
   pedidos de teste na fila. Régua: **lote de aprovação varre teste junto**;
   filtrar antes, não depois.
 
+## ⚠️ Grupos · o líder REMARCA ou CANCELA um encontro pelo app (2026-08-18 · migration `20260818140000`)
+
+Pedido do Marcos: *"no box de 'próximo encontro' gostaria que tivesse uma opção
+de alterar data; quando clicar, aparece um modal para alteração da data e hora
+daquele encontro específico, aí o líder pode cancelar a reunião, ou alterar a
+data."*
+
+**⚠️⚠️ O encontro recorrente NÃO É UMA LINHA** — ele é DERIVADO de
+`mem_grupos.dia_semana` + `horario`. Então não havia o que editar: o que passou a
+existir é a **EXCEÇÃO à regra** (`mem_grupo_agenda_excecoes`, chaveada pela data
+que a recorrência produziria). Sem exceção, vale a recorrência — o comportamento
+de hoje, intacto.
+
+- ⚠️⚠️ **NÃO usei `mem_grupo_encontros`**: aquela é o registro do que ACONTECEU
+  (com presenças) e alimenta os KPIs de frequência. Gravar ali ocorrência FUTURA
+  ou CANCELADA faria a frequência contar encontro que não houve — a mesma
+  armadilha do "soft-delete ingênuo deixa a linha contando". Agenda e presença
+  são coisas diferentes.
+- ⚠️ **Altera SÓ UMA ocorrência.** Mudar o horário de todas as semanas é outra
+  coisa e vive em "Editar grupo"; misturar as duas faria um adiamento pontual
+  ("feriado") virar mudança permanente sem ninguém perceber.
+- ⚠️ **A exceção cancelada CONTINUA NA LISTA** de próximas ocorrências, marcada —
+  é o que permite desfazer. Sumir da lista deixaria o líder sem caminho de volta.
+  `proximoEncontro` devolve a primeira NÃO cancelada, ou **null** (o box passa a
+  dizer "sem encontro marcado", nunca uma data que não vai acontecer).
+- ⚠️ **UNIQUE(grupo_id, data_original)**: remarcar de novo ATUALIZA, não empilha
+  — senão "qual das três vale?" vira pergunta sem resposta.
+- ⚠️ **SEM `deleted_at` e fora da whitelist de soft-delete, de propósito**: não é
+  PII, e "desfazer" aqui significa VOLTAR À RECORRÊNCIA, que é literalmente
+  apagar a exceção. Soft-delete deixaria a linha viva e o leitor teria que
+  lembrar de filtrá-la — jeito silencioso de o encontro seguir cancelado depois
+  de "desfazer".
+- ⚠️ **O app NÃO avisa os participantes**, e a tela DIZ isso ("avise o grupo") —
+  quem fala com o grupo é o líder, no WhatsApp dele, e é ele que tem o contexto
+  ("adiamos por causa do feriado"). Prometer aviso que não sai é pior que não ter.
+
+### ⚠️⚠️ A régua é PURA e consertou um bug de UTC que já existia
+
+**`backend/utils/agendaGrupo.js`** (`proximasOcorrencias` / `proximoEncontro` ·
+`src/test/agendaGrupo.test.ts`, 14 casos, **no gate**). O `proximoEncontroISO` de
+`routes/app.js` calculava o próximo encontro em **UTC**: das 21h BRT o dia já
+virou, então **na noite de sábado o box do grupo de domingo pulava para o domingo
+seguinte**. Mesma classe do dia da curva do censo, do "culto de agora" e do totem
+Kids: **dia de operação da igreja é BRT**.
+
+**2 mutantes RODADOS**: voltar o dia pra UTC → 6 vermelhos · fazer a ocorrência
+cancelada sumir da lista → 1.
+
+⚠️ `dia_semana = 0` é **domingo e é falsy** — a régua trata com `== null`, nunca
+com `||` (armadilha já registrada em "dados incompletos" dos Grupos).
+
+### Endpoints e tela
+
+`GET|POST /api/app/grupos/:grupoId/agenda`, atrás do **`gateGrupoApp`** (líder OU
+supervisor OU admin de grupos) — a MESMA autorização dos outros endpoints de
+gerenciar grupo, não uma régua nova. Ações: `remarcar` · `cancelar` · `desfazer`.
+`GET /app/meu-grupo` passou a devolver `proximas_ocorrencias` (leitura das
+exceções é **best-effort e ISOLADA**: sem a migration aplicada, o box volta ao
+comportamento antigo em vez de derrubar a tela inteira — lição do `parcelas_max`).
+
+No app: `components/grupos/ModalAgendaEncontro.tsx` (bottom sheet no box de
+"Próximo encontro", que virou tocável). ⚠️ O calendário entra com **`embutido`**:
+`<Modal>` dentro de `<Modal>` nasce ATRÁS no iOS e a pessoa toca em "Escolher" e
+não vê nada — é exatamente por isso que o `CalendarioBR` ganhou esse modo.
+⚠️ Ação destrutiva usa `Pressable` com `c.danger`: o `Button` da casa só tem
+`primary|ghost`.
+
 ## ⚠️ Grupos · membro existente ganha o que digitou no formulário (2026-08-06 · SEM migration)
 
 Pedido do Marcos, depois da auditoria da temporada: *"recupere esses que já
