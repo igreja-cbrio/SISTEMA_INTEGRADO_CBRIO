@@ -68,6 +68,11 @@ jobs:
       - name: Politica de familia (fila Vincular familias)
         run: npm run test:familia
 
+      # Trava o conserto de 18/08: a coleta precisa reprocessar o periodo
+      # anterior, senao o mes fecha subcontado (julho perdeu R$ 42 mil).
+      - name: Periodos da coleta de KPI (fecha o periodo anterior)
+        run: npm run test:kpi-periodos
+
       - name: Matcher grava nascimento e sexo na criacao
         run: npm run test:matcher-insert
 
