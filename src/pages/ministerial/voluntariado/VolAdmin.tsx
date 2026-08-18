@@ -1,11 +1,12 @@
 import { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Search, UserMinus, History, Loader2, Stethoscope, ChevronDown, ChevronRight } from 'lucide-react';
+import { Search, UserMinus, History, Loader2, Stethoscope, ChevronDown, ChevronRight, UserCheck } from 'lucide-react';
 import { useAllVolUsers, useAddVolRole, useRemoveVolRole, useSyncHistorical } from './hooks';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
@@ -91,6 +92,8 @@ export default function VolAdmin() {
     <div className="space-y-6">
       <WhatsappAutoConfig api={voluntariado.whatsappAuto} />
       <h1 className="text-2xl font-bold text-foreground">Administração</h1>
+
+      <VincularMembrosCard />
 
       {/* Opções do formulário público */}
       <FormOpcoesManager />
@@ -220,5 +223,114 @@ export default function VolAdmin() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+
+type RelatorioVinculo = {
+  aplicado: boolean;
+  analisados: number;
+  sem_membro_total: number;
+  ligados: number;
+  por_chave: Record<string, number>;
+  conflitos: number;
+  sem_match: number;
+  exemplos_ligados: { nome: string; por: string }[];
+  exemplos_conflitos: { nome: string; disputa_com: string }[];
+  exemplos_sem_match: { nome: string }[];
+};
+
+/**
+ * Fase 1 da saída do Planning Center: cada voluntário vira uma pessoa do sistema.
+ *
+ * ⚠️ Simular vem ANTES de aplicar, e a tela não tem botão de aplicar enquanto
+ * não houver uma simulação na frente. Ligar pessoa a cadastro é irreversível na
+ * prática — o histórico passa a apontar pro membro —, então o número tem que ser
+ * lido por alguém antes de virar escrita.
+ */
+function VincularMembrosCard() {
+  const [rel, setRel] = useState<RelatorioVinculo | null>(null);
+
+  const rodar = useMutation({
+    mutationFn: (aplicar: boolean) => voluntariado.vincularMembros({ aplicar }) as Promise<RelatorioVinculo>,
+    onSuccess: (r) => {
+      setRel(r);
+      if (r.aplicado) toast.success(`${r.ligados} voluntário(s) ligados ao cadastro de pessoa`);
+      else toast.info(`Simulação: ${r.ligados} de ${r.analisados} teriam vínculo`);
+    },
+    onError: (e: Error) => toast.error(e?.message || 'Erro ao vincular'),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <UserCheck className="h-4 w-4" /> Voluntários sem cadastro de pessoa
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Liga cada voluntário ao cadastro dele na membresia usando o mesmo matcher
+          das outras portas — CPF, depois e-mail + nome, telefone + nome, nascimento + nome.
+          Quem não casa com ninguém fica como está, para decisão humana.
+        </p>
+
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" disabled={rodar.isPending}
+            onClick={() => rodar.mutate(false)}>
+            {rodar.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+            Simular
+          </Button>
+          {rel && !rel.aplicado && rel.ligados > 0 && (
+            <Button size="sm" className="bg-[#00B39D] hover:bg-[#00B39D]/90" disabled={rodar.isPending}
+              onClick={() => {
+                if (!confirm(`Ligar ${rel.ligados} voluntário(s) ao cadastro de pessoa?\n\nOs ${rel.conflitos} conflito(s) e os ${rel.sem_match} sem correspondência NÃO são tocados.`)) return;
+                rodar.mutate(true);
+              }}>
+              Aplicar nos {rel.ligados}
+            </Button>
+          )}
+        </div>
+
+        {rel && (
+          <div className="space-y-3 pt-1">
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="outline">{rel.sem_membro_total} sem cadastro</Badge>
+              <Badge variant="default">{rel.ligados} com correspondência</Badge>
+              <Badge variant="outline">{rel.conflitos} em conflito</Badge>
+              <Badge variant="outline">{rel.sem_match} sem pista</Badge>
+              {Object.entries(rel.por_chave).map(([k, n]) => (
+                <Badge key={k} variant="secondary">{k}: {n}</Badge>
+              ))}
+            </div>
+
+            {rel.exemplos_ligados.length > 0 && (
+              <div>
+                <p className="text-xs font-medium mb-1">Casaram (amostra)</p>
+                <ul className="text-xs text-muted-foreground space-y-0.5">
+                  {rel.exemplos_ligados.map((e, i) => (
+                    <li key={i}>{e.nome} <span className="opacity-60">· por {e.por}</span></li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {rel.exemplos_conflitos.length > 0 && (
+              <div>
+                {/* Conflito = dois voluntários apontando pro MESMO cadastro. Não é
+                    erro do matcher: normalmente é a mesma pessoa duplicada no
+                    Planning Center, e fundir isso é decisão de gente. */}
+                <p className="text-xs font-medium mb-1">Disputando o mesmo cadastro (não foram tocados)</p>
+                <ul className="text-xs text-muted-foreground space-y-0.5">
+                  {rel.exemplos_conflitos.map((e, i) => (
+                    <li key={i}>{e.nome} <span className="opacity-60">× {e.disputa_com}</span></li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

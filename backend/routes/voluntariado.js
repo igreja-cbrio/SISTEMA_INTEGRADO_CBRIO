@@ -1820,6 +1820,113 @@ router.get('/waiting-allocation', async (req, res) => {
 });
 
 // POST /allocate/:id — admin assigns volunteer to a team
+// ════════════════════════════════════════════════════════════════════════════
+// FASE 1 DA SAÍDA DO PLANNING CENTER · o voluntário vira uma PESSOA do sistema
+//
+// A lei do projeto é "uma pessoa = um cadastro em `mem_membros`". O voluntariado
+// não cumpre: `vol_profiles` nasceu como espelho do Planning Center e, medido em
+// 18/08/2026, 488 dos 796 perfis ativos não apontam pra ninguém. Enquanto o PCO
+// existe isso se disfarça — o nome vem de lá. Quando ele sair, sobra um registro
+// órfão com nome e e-mail, fora da membresia, do aniversário, do WhatsApp e de
+// qualquer KPI que cruze pessoa.
+//
+// ⚠️ NÃO existe régua nova aqui. Quem decide é `acharMembroGuardado`, o matcher
+// canônico — CPF → e-mail+NOME → telefone+NOME → nascimento+NOME, com
+// `nomeAutorizaLigar`. Uma segunda régua de identidade divergiria da primeira no
+// dia em que uma das duas mudasse, e identidade é o lugar onde isso não pode
+// acontecer.
+// ════════════════════════════════════════════════════════════════════════════
+router.post('/vincular-membros', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    // ⚠️ Simulação é o DEFAULT. Ligar pessoa a cadastro é irreversível na
+    // prática (o histórico passa a apontar pro membro), então aplicar tem que
+    // ser um ato explícito: `{ aplicar: true }`.
+    const aplicar = req.body?.aplicar === true;
+    const teto = Math.min(Number(req.body?.teto) || 500, 500);
+
+    // Pool: perfis vivos SEM membro. Paginado — `vol_profiles` passa de 900 e o
+    // cap de 1000 do PostgREST cortaria em silêncio.
+    let perfis = [];
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('vol_profiles')
+        .select('id, full_name, email, cpf, phone, planning_center_id')
+        .is('membresia_id', null).eq('arquivado', false)
+        .order('full_name').range(off, off + 999);
+      if (error) return res.status(400).json({ error: error.message });
+      if (!data?.length) break;
+      perfis = perfis.concat(data);
+      if (data.length < 1000) break;
+    }
+
+    // ⚠️ Conta de sistema fora: `ehPessoaEscalavel` já tira ". f" e "ADM CBRio"
+    // da lista de escalar; ligá-las a um cadastro de PESSOA seria pior ainda.
+    perfis = perfis.filter(v => ehPessoaEscalavel(v.full_name));
+
+    const ligados = [];
+    const semMatch = [];
+    const conflitos = [];
+    // Um membro só pode receber UM perfil nesta rodada: dois voluntários
+    // apontando pro mesmo cadastro é duplicata de pessoa, e o segundo vira
+    // conflito pra decisão humana em vez de sobrescrever o primeiro.
+    const membrosTomados = new Map();
+
+    for (const v of perfis.slice(0, teto)) {
+      let hit = null;
+      try {
+        hit = await acharMembroGuardado({
+          cpf: v.cpf, email: v.email, telefone: v.phone, nome: v.full_name,
+        });
+      } catch (e) {
+        console.error('[vincular-membros] matcher:', v.id, e.message);
+      }
+      if (!hit?.membro_id) { semMatch.push({ id: v.id, nome: v.full_name }); continue; }
+
+      const jaTomado = membrosTomados.get(hit.membro_id);
+      if (jaTomado) {
+        conflitos.push({ id: v.id, nome: v.full_name, membro_id: hit.membro_id, disputa_com: jaTomado });
+        continue;
+      }
+      // O membro já pode estar ligado a OUTRO perfil de fora desta rodada.
+      const { data: outro } = await supabase.from('vol_profiles')
+        .select('id, full_name').eq('membresia_id', hit.membro_id).limit(1).maybeSingle();
+      if (outro) {
+        conflitos.push({ id: v.id, nome: v.full_name, membro_id: hit.membro_id, disputa_com: outro.full_name });
+        continue;
+      }
+
+      membrosTomados.set(hit.membro_id, v.full_name);
+      ligados.push({ id: v.id, nome: v.full_name, membro_id: hit.membro_id, por: hit.matched_by });
+    }
+
+    if (aplicar) {
+      for (let i = 0; i < ligados.length; i += 50) {
+        const lote = ligados.slice(i, i + 50);
+        await Promise.all(lote.map(l => supabase.from('vol_profiles')
+          .update({ membresia_id: l.membro_id }).eq('id', l.id).is('membresia_id', null)));
+      }
+    }
+
+    const porChave = ligados.reduce((acc, l) => { acc[l.por] = (acc[l.por] || 0) + 1; return acc; }, {});
+    res.json({
+      aplicado: aplicar,
+      analisados: Math.min(perfis.length, teto),
+      sem_membro_total: perfis.length,
+      ligados: ligados.length,
+      por_chave: porChave,
+      conflitos: conflitos.length,
+      sem_match: semMatch.length,
+      // Amostras nomeadas: um relatório que só diz "412 ligados" não deixa
+      // ninguém conferir se o critério fez sentido.
+      exemplos_ligados: ligados.slice(0, 15),
+      exemplos_conflitos: conflitos.slice(0, 15),
+      exemplos_sem_match: semMatch.slice(0, 15),
+    });
+  } catch (e) {
+    console.error('[vincular-membros]', e.message);
+    res.status(500).json({ error: 'Erro ao vincular voluntários a membros' });
+  }
+});
+
 router.post('/allocate/:id', async (req, res) => {
   try {
     const { id } = req.params;
