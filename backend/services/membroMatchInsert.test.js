@@ -28,7 +28,18 @@ const path = require('node:path');
 function semComentarios(js) {
   // Remove /* … */ e // … (sem comer o '//' de uma URL: só corta quando o '//'
   // não vem precedido de ':').
+  //
+  // ⚠️⚠️ NORMALIZA A TERMINAÇÃO DE LINHA PRIMEIRO. A 1ª versão cortava o comentário
+  // com `/(^|[^:])\/\/.*$/` linha a linha — e em arquivo com CRLF a linha acaba em
+  // CR, que o `.` não casa, enquanto o `$` (sem flag `m`) só ancora no fim da
+  // string, DEPOIS do CR. Resultado: nenhum comentário era removido e a proteção
+  // contra falso positivo por comentário ficava INERTE. Passou despercebido porque
+  // os arquivos que eu tinha acabado de escrever estavam em LF; quebrou no primeiro
+  // checkout novo, onde o git converte pra CRLF — e o sintoma foi o teste acusar
+  // "não achei a chamada" num arquivo correto.
+  // Régua: helper que processa fonte por LINHA normaliza a terminação antes.
   return String(js)
+    .split('\r\n').join('\n')
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
     .map((l) => l.replace(/(^|[^:])\/\/.*$/, '$1'))

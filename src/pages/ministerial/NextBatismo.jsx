@@ -385,6 +385,11 @@ function DuplicadosTab({ onVerFicha }) {
     ...FILA_CACHE,
   });
   const [mergeDialog, setMergeDialog] = useState(null); // { par, keep_id }
+  // Vizinhos marcados pra entrar na MESMA fusão (triplicata/quadruplicata).
+  // ⚠️ Zerado sempre que o diálogo abre ou fecha: marcação de um par não pode
+  // vazar pro próximo, senão a pessoa funde alguém que nem viu.
+  const [vizinhosSel, setVizinhosSel] = useState([]);
+  const abrirFusao = (dados) => { setVizinhosSel([]); setMergeCampos({}); setMergeDialog(dados); };
   const [mergeCampos, setMergeCampos] = useState({}); // overrides "melhor de cada"
   const [busca, setBusca] = useState('');
   const [prioridade, setPrioridade] = useState('todas');
@@ -620,7 +625,7 @@ function DuplicadosTab({ onVerFicha }) {
           <div className="text-xs text-muted-foreground">{filtrados.length} de {items.length} par(es) · exibindo {visiveis.length}</div>
           {visiveis.map((par) => (
             <ParCard key={par.par_id} par={par} onVerFicha={onVerFicha} emAdiados={emAdiados}
-              onMerge={(keep_id) => setMergeDialog({ par, keep_id })}
+              onMerge={(keep_id) => abrirFusao({ par, keep_id })}
               onIgnorar={() => ignorarMut.mutate(par)} ignorando={ignorarMut.isPending}
               onAdiar={() => adiarMut.mutate(par)} adiando={adiarMut.isPending}
               onReativar={() => reativarMut.mutate(par)} reativando={reativarMut.isPending} />
@@ -635,7 +640,7 @@ function DuplicadosTab({ onVerFicha }) {
         </div>
       )}
 
-      <Dialog open={!!mergeDialog} onOpenChange={(o) => { if (!o) { setMergeDialog(null); setMergeCampos({}); } }}>
+      <Dialog open={!!mergeDialog} onOpenChange={(o) => { if (!o) { setMergeDialog(null); setMergeCampos({}); setVizinhosSel([]); } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Confirmar fusão</DialogTitle>
@@ -662,6 +667,16 @@ function DuplicadosTab({ onVerFicha }) {
                   Todos os vínculos do cadastro absorvido (inscrições, decisões, grupos, contribuições, NSM) passam pro mantido. Snapshot vai pro log.
                 </p>
                 <MergeFieldPicker key={`${keep.id}_${drop.id}`} keep={keep} drop={drop} onCampos={setMergeCampos} />
+                <VizinhosDoPar
+                  ids={[keep.id, drop.id]}
+                  selecionados={vizinhosSel}
+                  onToggle={(id) => setVizinhosSel((atual) => (atual.includes(id) ? atual.filter((x) => x !== id) : [...atual, id]))}
+                />
+                {vizinhosSel.length > 0 && (
+                  <p className="text-xs text-violet-700 dark:text-violet-400">
+                    <strong>{vizinhosSel.length + 1} cadastros</strong> serão absorvidos em <strong>{keep.nome}</strong> nesta fusão.
+                  </p>
+                )}
               </div>
             );
           })()}
@@ -671,15 +686,111 @@ function DuplicadosTab({ onVerFicha }) {
               onClick={() => {
                 if (!mergeDialog) return;
                 const drop_id = mergeDialog.par.membro_a_id === mergeDialog.keep_id ? mergeDialog.par.membro_b_id : mergeDialog.par.membro_a_id;
-                mergeMut.mutate({ keep_id: mergeDialog.keep_id, merge_ids: [drop_id], campos: mergeCampos });
+                // ⚠️ `merge_membros` já aceita N ids num só comando (p_merge_ids
+                // uuid[]), então os vizinhos marcados entram na MESMA transação —
+                // fundir em duas chamadas deixaria estado intermediário se a
+                // segunda falhasse. O `keep_id` nunca entra na lista.
+                const ids = [drop_id, ...vizinhosSel.filter((id) => id !== mergeDialog.keep_id && id !== drop_id)];
+                mergeMut.mutate({ keep_id: mergeDialog.keep_id, merge_ids: ids, campos: mergeCampos });
               }}
               disabled={mergeMut.isPending} className="gap-1.5"
             >
-              {mergeMut.isPending ? <><Loader2 className="size-3.5 animate-spin" /> Fundindo...</> : <><GitMerge className="size-3.5" /> Confirmar fusão</>}
+              {mergeMut.isPending
+                ? <><Loader2 className="size-3.5 animate-spin" /> Fundindo...</>
+                : <><GitMerge className="size-3.5" /> Confirmar fusão{vizinhosSel.length ? ` de ${vizinhosSel.length + 2} cadastros` : ''}</>}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// ⚠️ Bloco de VIZINHOS: os outros cadastros que parecem ser a mesma pessoa.
+// Vive DENTRO do diálogo de fusão, não no card, porque é aqui que o `merge_ids`
+// é montado e onde a pessoa já escolheu qual cadastro fica.
+//
+// ⚠️⚠️ NADA VEM MARCADO, e é decisão: a régua daqui é mais frouxa que a de ligar
+// automaticamente (Dice ≥0,80 ou nome contido) justamente porque um humano está
+// olhando. Medido em 17/08: traz triplicata real ("Tatiane Dib" × "Tatiane
+// Youssef Fares Dib" + a "Tatiane Dib" do login) e traz ruído junto ("Patrícia
+// Machado" ao lado de "Patrick Machado"). Marcar sozinha transformaria a
+// sugestão em fusão de gente diferente.
+function VizinhosDoPar({ ids, selecionados, onToggle }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['next-batismo', 'vizinhos', ...ids],
+    queryFn: () => api.vizinhosDoPar(ids),
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  // ⚠️ Erro NÃO vira "nenhum parecido": as duas leituras levam a decisões
+  // opostas (fundir só o par × fundir os três).
+  if (isError) {
+    return (
+      <div className="rounded-lg border border-amber-300/60 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400">
+        Não foi possível verificar se existem outros cadastros parecidos. Funda só este par ou tente de novo.
+      </div>
+    );
+  }
+  if (isLoading) {
+    return <div className="text-xs text-muted-foreground flex items-center gap-1.5"><Loader2 className="size-3 animate-spin" /> procurando outros cadastros parecidos...</div>;
+  }
+  const lista = data?.vizinhos || [];
+  if (!lista.length) return null;
+
+  return (
+    <div className="rounded-lg border border-violet-300/60 bg-violet-500/5 p-3 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-400">
+            Outros cadastros parecidos ({data?.total ?? lista.length})
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Se alguma dessas linhas for a mesma pessoa, marque para absorver na mesma fusão.
+            {' '}<strong>Confira o que cada uma tem antes</strong> — nomes parecidos também são de parentes.
+          </p>
+        </div>
+      </div>
+      {data?.aviso && <p className="text-[11px] text-amber-700 dark:text-amber-400">{data.aviso}</p>}
+      <div className="space-y-1.5">
+        {lista.map((v) => {
+          const marcado = selecionados.includes(v.id);
+          const temContra = (v.contradicoes || []).length > 0;
+          return (
+            <label
+              key={v.id}
+              className={`flex items-start gap-2 rounded-md border p-2 cursor-pointer transition-colors ${
+                marcado ? 'border-violet-400 bg-violet-500/10' : temContra ? 'border-red-300/60' : 'border-border hover:border-violet-300'
+              }`}
+            >
+              <input type="checkbox" className="mt-0.5" checked={marcado} onChange={() => onToggle(v.id)} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-foreground">{v.nome}</span>
+                  {v.status && <Badge variant="outline" className="text-[10px]">{v.status}</Badge>}
+                  
+                  <span className="text-[10px] text-muted-foreground">semelhança de texto {Math.round(v.similaridade * 100)}%</span>
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-0.5 flex flex-wrap gap-x-2">
+                  <span>{v.cpf ? `CPF ${maskCpf(v.cpf)}` : 'sem CPF'}</span>
+                  <span>·</span>
+                  <span>{v.telefone ? maskTelefone(v.telefone) : 'sem telefone'}</span>
+                  <span>·</span>
+                  <span>{v.data_nascimento ? fmtData(v.data_nascimento) : 'sem nascimento'}</span>
+                  {v.origem_cadastro && <><span>·</span><span>veio de {v.origem_cadastro}</span></>}
+                  {v.criado_em && <><span>·</span><span>criado {fmtData(v.criado_em)}</span></>}
+                </div>
+                {temContra && (
+                  <div className="text-[11px] text-red-600 dark:text-red-400 mt-1">
+                    ⚠️ {v.contradicoes.join(' · ')} — provavelmente <strong>outra pessoa</strong>. Só marque se souber que o dado divergente está errado.
+                  </div>
+                )}
+              </div>
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }

@@ -2538,6 +2538,9 @@ export const nextBatismo = {
     return get('/entradas/duplicados/adiados' + (qs ? '?' + qs : ''));
   },
   fundir: (data) => post('/entradas/fundir', data),
+  // Outros cadastros parecidos com os do par — pra resolver triplicata/quadruplicata
+  // de uma vez. É SUGESTÃO: nada vem marcado e as contradições vêm escritas.
+  vizinhosDoPar: (ids) => get('/entradas/duplicados/vizinhos?ids=' + encodeURIComponent(ids.join(','))),
   resolucoes: (params = {}) => {
     const qs = new URLSearchParams(params).toString();
     return get('/entradas/resolucoes' + (qs ? '?' + qs : ''));
