@@ -811,6 +811,55 @@ export default function InscricaoEventoDetalhe() {
                       })}
                     </div>
                   )}
+                  {/* RESPONSÁVEL do menor (17/08) — bloco PRÓPRIO, fora das
+                      respostas do formulário, e SEMPRE visível (não recolhe com
+                      elas): é o telefone que a equipe liga se um adolescente
+                      passar mal no retiro, não uma resposta a mais.
+                      ⚠️ CPF fica FORA da lista pela mesma régua do CPF da pessoa
+                      (`INSCRITOS_COLS` no backend): identificação sensível se vê
+                      no cadastro, não numa lista aberta na portaria. */}
+                  {i.responsavel && (
+                    <div className="mt-2.5 pt-2.5 border-t border-amber-500/40 rounded-md">
+                      <div className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide">
+                        Menor de idade · responsável
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-1 mt-1">
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-muted-foreground">Nome</div>
+                          <div className="text-sm break-words">{i.responsavel.nome}</div>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-muted-foreground">Parentesco</div>
+                          <div className="text-sm">{i.responsavel.parentesco || '—'}</div>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-muted-foreground">Celular</div>
+                          {i.responsavel.telefone ? (
+                            <a href={`tel:+55${i.responsavel.telefone}`} onClick={e => e.stopPropagation()}
+                              className="text-sm text-primary hover:underline">{i.responsavel.telefone}</a>
+                          ) : <div className="text-sm">—</div>}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-muted-foreground">E-mail</div>
+                          <div className="text-sm break-all line-clamp-1" title={i.responsavel.email || ''}>
+                            {i.responsavel.email || '—'}
+                          </div>
+                        </div>
+                      </div>
+                      {/* ⚠️ Três estados, e confundi-los é grave: autorizado ·
+                          NÃO autorizado · não respondeu. NULL nunca é "pode". */}
+                      <div className="text-[11px] mt-1">
+                        <span className="text-muted-foreground">Batismo no evento: </span>
+                        {i.responsavel.autoriza_batismo === true ? (
+                          <span className="text-primary font-semibold">autorizado pelo responsável</span>
+                        ) : i.responsavel.autoriza_batismo === false ? (
+                          <span className="text-red-600 font-semibold">NÃO autorizado</span>
+                        ) : (
+                          <span className="text-muted-foreground">não respondido — perguntar antes de incluir</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}

@@ -75,4 +75,24 @@ function validarNascimento(v, hoje) {
   return s;
 }
 
-module.exports = { soDigitos, tirarCodigoPaisTelefone, mascaraTelefone, emailValido, validarNascimento };
+// ⚠️ MUDOU DE CASA em 17/08/2026, pelo MESMO motivo das três acima: morava em
+// `services/inscricaoContrato.js`, que carrega o cliente do Supabase, então não
+// entrava no gate. O contrato segue **re-exportando** — nenhuma porta muda de
+// import, e o comportamento é byte a byte o mesmo.
+//
+// Parte com "." ou de 1 letra é abreviação; conectivo é permitido.
+const CONECTIVOS_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+
+function temAbreviacaoNome(nome) {
+  const partes = String(nome || '').trim().split(/\s+/).filter(Boolean);
+  return partes.some((p) => {
+    const limpa = p.replace(/\./g, '');
+    if (CONECTIVOS_NOME.has(limpa.toLowerCase())) return false;
+    return p.includes('.') || limpa.length <= 1;
+  });
+}
+
+module.exports = {
+  soDigitos, tirarCodigoPaisTelefone, mascaraTelefone, emailValido, validarNascimento,
+  CONECTIVOS_NOME, temAbreviacaoNome,
+};

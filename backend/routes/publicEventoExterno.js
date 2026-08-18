@@ -39,6 +39,11 @@ const {
 // que faz trocar de PSP custar 1 arquivo + 1 env (ver services/pagamentos/tipos.js).
 const pagamentos = require('../services/pagamentos');
 const checkoutExterno = require('../utils/checkoutExterno');
+// Perguntas condicionais e bloco do responsável (menor de idade) · 17/08.
+// ⚠️ Réguas PURAS e ÚNICAS: a tela pública usa os espelhos de `src/lib/`, e há
+// teste no gate amarrando os dois lados. Não reimplementar aqui.
+const camposCondicionais = require('../utils/camposCondicionais');
+const inscricaoMenor = require('../utils/inscricaoMenor');
 // Régua ÚNICA da tela pública de pagamento (compartilhada com a doação). É onde
 // vivem as leis do parcelado e da forma que o provedor CONFIRMOU — uma segunda
 // cópia dessa lógica seria a garantia de que uma das duas telas ia divergir.
@@ -89,7 +94,38 @@ async function eventoEspinhaPorSlug(slug) {
     .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, checkout_externo_url, checkout_externo_nome')
     .eq('slug', slug).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
+  await anexarConfigMenor(data);
   return data;
+}
+
+/**
+ * ⚠️⚠️ SELECT ISOLADO e BEST-EFFORT das colunas da migration 20260817160000.
+ *
+ * Pedir coluna inexistente faz o PostgREST recusar a query INTEIRA (42703) — e
+ * a query acima é a que abre a página pública de TODO evento ao vivo. Num deploy
+ * em duas etapas (código antes da migration), juntá-las derrubaria o Celebra e o
+ * Patrocinadores por causa de um campo do retiro. Lição do `parcelas_max`.
+ *
+ * Ausente ⇒ os defaults reproduzem o comportamento de antes: endereço opcional,
+ * sem bloco de menor, sem aceite extra.
+ */
+async function anexarConfigMenor(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('exigir_endereco, exige_dados_menor, termos_extra')
+      .eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    ev.exigir_endereco = !!data?.exigir_endereco;
+    ev.exige_dados_menor = !!data?.exige_dados_menor;
+    ev.termos_extra = Array.isArray(data?.termos_extra) ? data.termos_extra : [];
+  } catch (e) {
+    console.warn('[publicEvento espinha] config de menor/endereço indisponível:', e.message);
+    ev.exigir_endereco = false;
+    ev.exige_dados_menor = false;
+    ev.termos_extra = [];
+  }
+  return ev;
 }
 
 // Mesmo SELECT/régua do por-slug, mas por ID: o app de membros já tem o id do
@@ -101,6 +137,7 @@ async function eventoEspinhaPorId(id) {
     .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, no_totem, checkout_externo_url, checkout_externo_nome')
     .eq('id', id).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
+  await anexarConfigMenor(data);
   return data;
 }
 
@@ -160,14 +197,30 @@ function mesclarDados(atuais, novas) {
 
 function validarExtras(evCampos, dadosBody) {
   const campos = Array.isArray(evCampos) ? evCampos : [];
+  // ⚠️⚠️ A visibilidade é decidida com a MESMA régua da tela
+  // (`utils/camposCondicionais.js`). Critério divergente dá um de dois estragos,
+  // e os dois já morderam este sistema (o `exige_dados_menor` do voluntariado,
+  // 28/07): formulário INSUBMISSÍVEL (400 citando campo que a tela não mostrou)
+  // ou resposta gravada de pergunta que a pessoa nunca viu.
+  //
+  // ⚠️ Avaliada sobre o que o CLIENTE mandou, porque é disso que a condição
+  // depende (a resposta da pergunta-mãe). Campo escondido não é exigido **e a
+  // resposta dele é DESCARTADA**: quem marcou "tenho alergia", escreveu o
+  // medicamento e depois voltou pra "não tenho" não pode deixar o remédio
+  // gravado — a equipe leria como fato clínico.
+  const visiveis = camposCondicionais.keysVisiveis(campos, dadosBody || {});
   const respostas = {};
   for (const c of campos) {
-    const v = dadosBody && c.key ? dadosBody[c.key] : undefined;
+    if (!c.key || !visiveis.has(String(c.key))) continue;
+    const v = dadosBody ? dadosBody[c.key] : undefined;
     const preenchido = v !== undefined && v !== null && String(v).trim() !== '';
     if (c.obrigatorio && !preenchido) return { erro: `Preencha: ${c.label}` };
     if (preenchido) respostas[c.key] = String(v).slice(0, 500);
   }
-  return { respostas, temCampoImagem: campos.some((c) => c.tipo === 'imagem') };
+  // ⚠️ O consentimento de imagem segue a MESMA visibilidade: um campo de foto
+  // escondido não pode exigir autorização de uso de imagem.
+  const temCampoImagem = campos.some((c) => c.tipo === 'imagem' && c.key && visiveis.has(String(c.key)));
+  return { respostas, temCampoImagem };
 }
 
 function gerarSorteio() { return Math.floor(Math.random() * 9000) + 1000; } // 1000-9999
@@ -443,6 +496,12 @@ router.get('/textos', (_req, res) => {
   res.json({
     termos_lgpd: TEXTOS.termos_lgpd,
     imagem: TEXTOS.imagem,
+    // Autorização do responsável de menor (LGPD art. 14 §1º). ⚠️ O texto é o
+    // `_inscricao`, NÃO o da apresentação de crianças (que fala explicitamente
+    // de "apresentação de crianças"). Sem esta chave a tela cairia no fallback
+    // local e o snapshot gravado — que vem do servidor — diria uma coisa
+    // diferente do que a pessoa leu.
+    menor_responsavel: TEXTOS.menor_responsavel_inscricao,
     aviso_optin: TEXTOS.aviso_optin,
   });
 });
@@ -808,6 +867,23 @@ router.get('/:slug', async (req, res) => {
       aviso: avisoPagamento(esp),
       msg_sucesso_titulo: esp.msg_sucesso_titulo || null,
       msg_sucesso_texto: esp.msg_sucesso_texto || null,
+      // Retiro/viagem (17/08). ⚠️ Os textos dos aceites vão SEM o `url` cru se
+      // ele não for https — a coluna já filtra, mas a tela transforma isto em
+      // `href` e não pode confiar no que está gravado.
+      exigir_endereco: !!esp.exigir_endereco,
+      exige_dados_menor: !!esp.exige_dados_menor,
+      maioridade: inscricaoMenor.MAIORIDADE,
+      parentescos: esp.exige_dados_menor ? inscricaoMenor.PARENTESCOS : [],
+      termos_extra: (Array.isArray(esp.termos_extra) ? esp.termos_extra : [])
+        .filter((t) => t && t.chave && t.texto)
+        .map((t) => ({
+          chave: String(t.chave),
+          titulo: String(t.titulo || 'Termo do evento'),
+          texto: String(t.texto),
+          // A tela mostra este aceite só quando o bloco de menor aparece.
+          ...(t.so_menor ? { so_menor: true } : {}),
+          ...(/^https:\/\//.test(String(t.url || '')) ? { url: String(t.url) } : {}),
+        })),
     });
   }
 
@@ -872,10 +948,58 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
   const campoErro = Object.keys(erros)[0];
   if (campoErro) return res.status(400).json({ error: erros[campoErro], campo: campoErro });
   if (!body.aceita_termos) return res.status(400).json({ error: 'É preciso aceitar os termos para se inscrever.', campo: 'aceita_termos' });
+  // Endereço é fixo-OPCIONAL no Contrato (28/07); retiro e viagem ligam a
+  // exigência POR EVENTO. ⚠️ Conferido aqui, depois do contrato, pra a mensagem
+  // sair no mesmo formato dos outros campos (`campo` aponta o input na tela).
+  if (ev.exigir_endereco && !val.endereco) {
+    return res.status(400).json({ error: 'Informe o endereço completo.', campo: 'endereco' });
+  }
 
   const ex = validarExtras(ev.campos, body.dados);
   if (ex.erro) return res.status(400).json({ error: ex.erro });
   const optin = Boolean(body.whatsapp_optin);
+
+  // ── Bloco do responsável (menor de idade · LGPD art. 14 §1º) ─────────────
+  // ⚠️ Quem decide é o SERVIDOR, com o nascimento que ele acabou de validar —
+  // nunca uma flag do cliente. `exige_dados_menor` do evento + menor de 18 na
+  // data da inscrição (régua e o porquê da data em utils/inscricaoMenor.js).
+  const precisaResponsavel = inscricaoMenor.exigeResponsavel(ev, val.dataNascimento);
+  let resp = null;
+  if (precisaResponsavel) {
+    const r = inscricaoMenor.validarResponsavel(body);
+    const respErro = Object.keys(r.erros)[0];
+    if (respErro) return res.status(400).json({ error: r.erros[respErro], campo: respErro });
+    // ⚠️ O consentimento do responsável é EXIGÊNCIA LEGAL, não caixinha
+    // opcional: sem ele não há base para tratar dado de menor de 18.
+    if (!body.consent_menor) {
+      return res.status(400).json({
+        error: 'É preciso a autorização do responsável para inscrever menor de idade.',
+        campo: 'consent_menor',
+      });
+    }
+    resp = r.valores;
+  }
+
+  // ── Aceites próprios do evento (`termos_extra`) ──────────────────────────
+  // Todos são OBRIGATÓRIOS: a lista existe justamente pra o que a igreja precisa
+  // que a pessoa leia (regulamento, termo de responsabilidade). Aceite opcional
+  // seria um texto que ninguém marca e que não prova nada.
+  // ⚠️ `so_menor` filtra o aceite que só vale pra menor (o "Termos de
+  // Responsabilidade — Menor de idade" do retiro): exigir de adulto seria pedir
+  // que ele aceite um termo sobre si mesmo como menor de idade. A decisão usa o
+  // MESMO `precisaResponsavel` que o servidor acabou de calcular.
+  const termosEvento = (Array.isArray(ev.termos_extra) ? ev.termos_extra : [])
+    .filter((t) => t && t.chave && t.texto)
+    .filter((t) => !t.so_menor || precisaResponsavel);
+  const aceitesBody = (body.aceites && typeof body.aceites === 'object') ? body.aceites : {};
+  for (const t of termosEvento) {
+    if (aceitesBody[t.chave] !== true) {
+      return res.status(400).json({
+        error: `É preciso aceitar: ${t.titulo || 'termo do evento'}.`,
+        campo: `aceite_${t.chave}`,
+      });
+    }
+  }
 
   // Benefício PRÉ-AUTORIZADO pra este CPF (gratuidade ou desconto que o líder
   // cadastrou antes). Consultado ANTES da RPC porque decide o `p_status`:
@@ -898,6 +1022,24 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
       { tipo: 'termos_lgpd', aceito: true },
       { tipo: 'whatsapp', aceito: optin },
       ...(ex.temCampoImagem ? [{ tipo: 'imagem', aceito: Boolean(body.consent_imagem) }] : []),
+      // Autorização do responsável (LGPD art. 14 §1º) — só quando o SERVIDOR
+      // decidiu que a pessoa é menor. Chega aqui sempre `aceito: true`, porque a
+      // inscrição foi RECUSADA acima sem ele.
+      // ⚠️ `texto` explícito: o default de `registrarConsentimentos` é
+      // `TEXTOS[tipo]`, que fala de "apresentação de crianças" — gravaria uma
+      // prova legal descrevendo outra porta.
+      ...(precisaResponsavel
+        ? [{ tipo: 'menor_responsavel', aceito: true, texto: TEXTOS.menor_responsavel_inscricao }]
+        : []),
+      // ⚠️ Cada aceite do evento é linha PRÓPRIA, com o texto EXIBIDO como
+      // snapshot: é o que permite responder "qual versão do regulamento esta
+      // pessoa aceitou?" depois que a equipe editar o texto. O título vai junto
+      // porque o `tipo` é o mesmo pros N termos.
+      ...termosEvento.map((t) => ({
+        tipo: 'evento_termo',
+        aceito: true,
+        texto: `[${t.chave}] ${t.titulo || 'Termo do evento'}\n\n${t.texto}`,
+      })),
     ],
   });
 
@@ -909,14 +1051,24 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
   //      um SEGUNDO número da sorte pro palco. A guarda de nome
   //      (nomesMesmaPessoa) evita colar na inscrição de um parente que usa o
   //      mesmo telefone — nome divergente segue criando inscrição própria.
+  // ⚠️⚠️ As colunas do responsável entram no SELECT **só quando o evento pede o
+  // bloco de menor** — e `exige_dados_menor` só pode ser true depois da migration
+  // 20260817160000 (sem ela, `anexarConfigMenor` devolve false). Pôr as 6 colunas
+  // fixas aqui faria o PostgREST recusar a query INTEIRA (42703) num deploy em
+  // duas etapas, e esta é a consulta de dedup de TODA re-inscrição: o Celebra
+  // passaria a dar 500 por causa de um campo do retiro. Lição do `parcelas_max`.
+  const COLS_DEDUP = 'id, numero_sorte, dados, membro_id, whatsapp_optin, status, nome_completo, cpf, email, data_nascimento, sexo, endereco, telefone';
+  const colsDedup = ev.exige_dados_menor
+    ? `${COLS_DEDUP}, responsavel_nome, responsavel_cpf, responsavel_parentesco, responsavel_telefone, responsavel_email, responsavel_autoriza_batismo`
+    : COLS_DEDUP;
   const { data: dups, error: eDup } = await supabase.from('inscricoes')
-    .select('id, numero_sorte, dados, membro_id, whatsapp_optin, status, nome_completo, cpf, email, data_nascimento, sexo, endereco, telefone')
+    .select(colsDedup)
     .eq('evento_id', ev.id).eq('cpf', val.cpf).is('deleted_at', null).limit(2);
   if (eDup) throw eDup;
   let existente = (dups || []).find(d => d.status !== 'cancelada') || (dups || [])[0] || null;
   if (!existente && val.telefone) {
     const { data: legadas, error: eLeg } = await supabase.from('inscricoes')
-      .select('id, numero_sorte, dados, membro_id, whatsapp_optin, status, nome_completo, cpf, email, data_nascimento, sexo, endereco, telefone')
+      .select(colsDedup)
       .eq('evento_id', ev.id).eq('telefone', val.telefone).is('cpf', null).is('deleted_at', null).limit(5);
     if (eLeg) throw eLeg;
     existente = (legadas || []).find(d => nomesMesmaPessoa(d.nome_completo, val.nomeCompleto) && d.status !== 'cancelada')
@@ -939,6 +1091,21 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
     if (!existente.sexo && val.sexo) patch.sexo = val.sexo;
     if (!existente.endereco && val.endereco) patch.endereco = val.endereco;
     if (!existente.telefone && val.telefone) patch.telefone = val.telefone;
+    // Responsável do menor na re-inscrição: preenche só o que está VAZIO, a
+    // MESMA política das linhas acima. ⚠️ Corrigir um contato JÁ gravado é ato de
+    // gente na ficha da inscrição — reescrever aqui deixaria um reenvio
+    // acidental (ou um bundle antigo sem os campos) apagar o telefone de
+    // emergência que a equipe já conferiu.
+    if (resp) {
+      if (!existente.responsavel_nome && resp.responsavelNome) patch.responsavel_nome = resp.responsavelNome;
+      if (!existente.responsavel_cpf && resp.responsavelCpf) patch.responsavel_cpf = resp.responsavelCpf;
+      if (!existente.responsavel_parentesco && resp.responsavelParentesco) patch.responsavel_parentesco = resp.responsavelParentesco;
+      if (!existente.responsavel_telefone && resp.responsavelTelefone) patch.responsavel_telefone = resp.responsavelTelefone;
+      if (!existente.responsavel_email && resp.responsavelEmail) patch.responsavel_email = resp.responsavelEmail;
+      if (existente.responsavel_autoriza_batismo == null && resp.responsavelAutorizaBatismo != null) {
+        patch.responsavel_autoriza_batismo = resp.responsavelAutorizaBatismo;
+      }
+    }
     if (existente.status === 'cancelada') {
       // Voltou atrás → reativa. ⚠️ Em evento PAGO reativa como `recebida`, não
       // `confirmada`: confirmar aqui daria a vaga a quem não pagou.
@@ -1045,6 +1212,49 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
     return res.status(409).json({ error: 'Não foi possível concluir a inscrição. Tente de novo.' });
   }
   const ins = { id: rpc.id, numero_sorte: rpc.numero_sorte };
+
+  // ── Dados do responsável, gravados DEPOIS do insert atômico ──────────────
+  // ⚠️ A `fn_insc_inscrever` não tem parâmetro pra eles, e NÃO os acrescentei:
+  // ela é o ÚNICO caminho de criação de inscrição do sistema, `CREATE OR REPLACE`
+  // com assinatura nova cria OVERLOAD (a antiga continua viva e o PostgREST
+  // escolhe qualquer uma), e reescrevê-la a partir do arquivo do repo reverteria
+  // em silêncio qualquer ajuste que exista só em produção. Trocar o risco de
+  // quebrar a inscrição de TODO evento pelo de um UPDATE a mais não se paga.
+  //
+  // ⚠️⚠️ Mas aqui, DIFERENTE da estação do totem logo abaixo, o UPDATE é AWAITED
+  // e com uma retentativa: aquilo é atribuição (perder é inofensivo), isto é o
+  // CONTATO DE EMERGÊNCIA de um adolescente que vai passar dias fora. Se mesmo
+  // assim falhar, a inscrição VALE (o consentimento do responsável está
+  // registrado) e a equipe é avisada pra pedir o contato — nunca se devolve erro
+  // pra quem já tem vaga reservada, e nunca se finge que gravou.
+  if (resp) {
+    const patchResp = {
+      responsavel_nome: resp.responsavelNome,
+      responsavel_cpf: resp.responsavelCpf,
+      responsavel_parentesco: resp.responsavelParentesco,
+      responsavel_telefone: resp.responsavelTelefone,
+      responsavel_email: resp.responsavelEmail,
+      responsavel_autoriza_batismo: resp.responsavelAutorizaBatismo,
+    };
+    let erroResp = null;
+    for (let tentativa = 0; tentativa < 2; tentativa++) {
+      const { error: eResp } = await supabase.from('inscricoes').update(patchResp).eq('id', ins.id);
+      if (!eResp) { erroResp = null; break; }
+      erroResp = eResp;
+    }
+    if (erroResp) {
+      console.error('[publicEvento espinha] responsavel do menor:', erroResp.message);
+      // ⚠️ O aviso NÃO leva o contato do responsável: notificação é lida por
+      // quem a regra do módulo alcançar, e este é dado de menor de idade.
+      notificar({
+        modulo: 'inscricoes', tipo: 'nova_inscricao',
+        titulo: `Contato do responsável não gravou · ${ev.nome}`,
+        mensagem: `A inscrição de ${val.nomeCompleto} é de menor de idade e os dados do responsável NÃO foram gravados. Abra a inscrição e peça o contato antes do evento.`,
+        link: `/inscricoes/evento/${ev.id}`,
+        chaveDedup: `insc_resp_falhou_${ins.id}`,
+      }).catch((err) => console.error('[publicEvento espinha] avisar responsavel:', err.message));
+    }
+  }
 
   // Estação do totem na própria inscrição. Separado da cobrança de propósito:
   // evento GRATUITO não tem cobrança e a gente ainda quer saber onde a pessoa
@@ -1329,3 +1539,9 @@ module.exports = router;
 module.exports.inscreverEspinha = inscreverEspinha;
 module.exports.eventoEspinhaPorId = eventoEspinhaPorId;
 module.exports.ocupacaoEspinha = ocupacaoEspinha;
+// ⚠️ Leitura BEST-EFFORT das colunas da migration 20260817160000, exportada pra
+// o app usar a MESMA (routes/app.js decide `so_web` com ela). Duas cópias
+// divergiriam no dia em que uma coluna nova entrasse — e o efeito seria o app
+// inscrevendo por dentro num evento que exige o bloco de menor, levando 400 numa
+// tela sem os campos pra corrigir.
+module.exports.anexarConfigMenor = anexarConfigMenor;

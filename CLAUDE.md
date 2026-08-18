@@ -6191,6 +6191,193 @@ soft-delete da solicitação não propagou pro card. Aparece no Kanban desde ant
 disto; a tela não o esconde de propósito (esconder criaria duas verdades entre
 dashboard e Kanban).
 
+## ⚠️⚠️ RETIRO 2027 · perguntas do PDF, bloco de MENOR e o aceite do evento (2026-08-17 · migration `20260817160000`)
+
+Pedido do Marcos: *"por conta das taxas, decidimos fazer a inscrição do retiro
+pelo E-Inscrição quando for cartão e no sistema quando for no pix, por conta
+disso, antes de preencher os dados deve ter uma tela com essas opções para serem
+selecionadas, o arthur pediu para alterar as perguntas do retiro para ficar
+assim: [PDF]"*.
+
+⚠️ **A tela de escolha JÁ EXISTIA e está em produção desde 11/08** (`EscolhaPagamento`
+em `src/pages/public/EventoExterno.tsx` + `utils/checkoutExterno.js` — pedido do
+Matheus). Faltava só CONFIGURAR o link no evento. O que não existia eram as
+perguntas: o evento **"Retiro AMI 2027" estava soft-deletado desde 31/07 e com
+`campos = []`** — "alterar as perguntas" era montar o formulário do zero.
+
+### As três coisas que o construtor não sabia fazer
+
+| o PDF pede | virou |
+|---|---|
+| *"Caso não seja membro Ami/CBRio, qual a sua igreja?"* · *"Qual medicamento? (caso sim)"* | `campos[].mostrar_se` (`utils/camposCondicionais.js`) |
+| *"Caso for menor de idade…"* (nome/CPF/parentesco/celular/e-mail do responsável + autoriza batismo) | `insc_eventos.exige_dados_menor` + 6 colunas em `inscricoes` (`utils/inscricaoMenor.js`) |
+| *"Confirmo que li e aceito: …"* ×2 | `insc_eventos.termos_extra` → `inscricao_consentimentos` tipo **`evento_termo`** |
+
+E **`exigir_endereco` por evento** (endereço é fixo-OPCIONAL no Contrato desde
+28/07; retiro/viagem ligam a exigência sem mexer em nenhuma outra porta).
+
+### ⚠️⚠️ A LEI das perguntas condicionais: a MESMA régua nos dois lados
+
+Divergir entre tela e servidor dá um de dois estragos, e os dois já morderam este
+sistema (o `exige_dados_menor` do voluntariado, 28/07): formulário
+**INSUBMISSÍVEL** (400 exigindo campo que a tela não mostrou) ou **resposta
+gravada de pergunta que a pessoa nunca viu**. Por isso a régua é PURA, mora em
+`utils/` (entra no gate) e tem espelho em `src/lib/` amarrado por
+`src/test/camposCondicionais.test.ts`, que roda a MESMA tabela de casos nos dois
+módulos — incluindo uma varredura exaustiva das combinações.
+
+- ⚠️ **Campo escondido não é exigido E a resposta dele é DESCARTADA no servidor.**
+  Quem marcou "tenho alergia", escreveu o medicamento e voltou pra "não tenho" não
+  pode deixar o remédio gravado — a equipe leria como fato clínico.
+- ⚠️ **FAIL-OPEN em condição quebrada** (`mostrar_se` apontando pra key que não
+  existe): o campo APARECE. Fechar sumiria com uma pergunta em silêncio — a equipe
+  montaria o formulário, publicaria, e ela nunca apareceria pra ninguém.
+- ⚠️ **Cascata**: filho de pergunta escondida fica escondido, mesmo com a resposta
+  antiga da mãe casando.
+- ⚠️ **Múltipla escolha casa por ITEM** (`"A, B"` é uma string só) e a comparação
+  ignora acento/caixa (o rótulo da opção é editável).
+- ⚠️ O consentimento de IMAGEM segue a mesma visibilidade: campo de foto escondido
+  não exige autorização de uso de imagem.
+
+### ⚠️ Menor de idade: a referência é a data da INSCRIÇÃO, não a do evento
+
+`utils/inscricaoMenor.js`, com o "hoje" INJETÁVEL e em **BRT** (em UTC, das 21h do
+Rio o dia já virou, e quem completa 18 amanhã apareceria como maior hoje à noite).
+
+- É a **coleta** que a LGPD art. 14 §1º governa, e ela acontece hoje; além disso
+  "menor hoje" ⊇ "menor no evento" (quem tem 17 na viagem tem no máximo 17 hoje),
+  então nenhum adolescente escapa do bloco. O caso oposto (17 hoje, 18 na viagem)
+  preenche o bloco à toa, **com** o consentimento do responsável registrado.
+- ⚠️ **Quem decide é o SERVIDOR**, com o nascimento que ele acabou de validar —
+  nunca uma flag do cliente.
+- ⚠️ **COLUNAS, não `dados` jsonb**: são dados validados (CPF com DV, telefone com
+  DDD), o contato é OPERACIONAL (a equipe liga no dia) e não pode depender de uma
+  `key` de pergunta que alguém renomeia, e `dados` é o armazém do form-builder.
+- ⚠️ **`responsavel_autoriza_batismo` é TRI-ESTADO**: `true` · `false` · **NULL =
+  não respondeu** (a pergunta é sobre INTERESSE em batizar). **NULL nunca é
+  "autorizado"** — a tela escreve "não respondido — perguntar antes de incluir".
+- ⚠️ **O texto do consentimento é `menor_responsavel_inscricao`, NOVO**, não uma
+  edição do `menor_responsavel`: aquele fala explicitamente de "apresentação de
+  crianças" e é o snapshot já gravado nos consentimentos daquela porta. O `tipo`
+  gravado continua `menor_responsavel` (vocabulário do CHECK); o que muda é o
+  texto que a pessoa lê e que fica registrado.
+- ⚠️ **`fn_insc_inscrever` NÃO foi alterada.** É o ÚNICO caminho de criação de
+  inscrição; `CREATE OR REPLACE` com assinatura nova cria OVERLOAD (a antiga fica
+  viva e o PostgREST escolhe qualquer uma) e reescrevê-la do arquivo do repo
+  reverteria em silêncio o que só existe em prod. Os dados do responsável entram
+  num UPDATE logo depois — mas **AWAITED e com uma retentativa**, diferente do
+  `totem_estacao_id` ao lado: aquilo é atribuição (perder é inofensivo), isto é
+  contato de emergência de adolescente. Se ainda falhar, a inscrição VALE (o
+  consentimento está registrado) e a equipe é **avisada** — o aviso NÃO leva o
+  contato, porque notificação é lida por quem a regra do módulo alcançar.
+
+### ⚠️ Aceite de evento ≠ pergunta do construtor
+
+`termos_extra` = `[{chave, titulo, texto, url?, so_menor?}]`, cada item virando
+linha em `inscricao_consentimentos` com o texto EXIBIDO como snapshot.
+
+- Consentimento é **PROVA LEGAL**: uma pergunta "Você aceita? (Sim/Não)" gravaria
+  a palavra "Sim" num jsonb, sem registro do que a pessoa leu — e editar o texto
+  depois deixaria ninguém sabendo qual versão foi aceita.
+- ⚠️ **`chave` é PRESERVADA, nunca derivada do título** — a MESMA lei do
+  `novaKeyCampo`: renomear "Informações Sobre o Retiro" orfanaria a prova de quem
+  já aceitou.
+- ⚠️ **`so_menor`** existe porque o PDF tem um "Termos de Responsabilidade — Menor
+  de idade": exigir de um adulto que ele aceite um termo sobre si mesmo como menor
+  seria pedir que ele declare algo falso. Os demais são obrigatórios pra todos —
+  aceite opcional é texto que ninguém marca e que não prova nada.
+- **`evento_termo` entrou no CHECK de `tipo` com GUARDA DE DRIFT**: a migration
+  ABORTA se a lista viva divergir dos 4 originais, em vez de reescrever. `DROP +
+  ADD` cego apagaria um tipo que outra frente acrescentou, e o efeito seria
+  consentimento parando de ser gravado — em silêncio, porque
+  `registrarConsentimentos` é best-effort.
+
+### ⚠️⚠️ LEI · CHECK constraint NÃO aceita subquery (nem função de conjunto)
+
+A 1ª versão desta migration foi recusada em produção com **`0A000: cannot use
+subquery in check constraint`**: eu havia validado a forma de cada item de
+`termos_extra` com `NOT EXISTS (SELECT 1 FROM jsonb_array_elements(...))`.
+`jsonb_array_elements` é função de CONJUNTO, e CHECK só aceita expressão ESCALAR
+sobre as colunas da própria linha. **O `pglast` passou** — ele confere sintaxe, e
+este erro é semântico, levantado só na execução. Régua: parser verde não prova
+CHECK válido.
+
+- ⚠️ **`CASE`, não `AND`, quando um lado só é seguro depois do outro**: a ordem de
+  avaliação de `AND` não é garantida, e `jsonb_array_length` de um objeto
+  **levanta erro** em vez de devolver false. `CASE jsonb_typeof(x) WHEN 'array'
+  THEN … ELSE false END` garante a ordem e devolve um 23514 limpo.
+- ⚠️ **Descartei a saída óbvia (função IMMUTABLE no CHECK)**: `pg_dump` escreve o
+  CHECK junto da definição da tabela e pode restaurar ANTES de a função existir.
+- **O que sobrou de fora é declarado**: a forma de cada ITEM fica com
+  `sanitizeTermosExtra` na rota. Item malformado é FILTRADO pelos leitores
+  (`.filter(t => t.chave && t.texto)` na rota pública e no POST), então degrada
+  pra "não aparece" — nunca pra consentimento vazio gravado. O que o banco
+  protege é o que causaria falha SILENCIOSA: valor que não é array faz todo
+  `Array.isArray` dar false e os aceites desaparecerem da tela sem erro nenhum.
+- ⚠️ **Não pude EXECUTAR o CHECK novo**: a senha do `DATABASE_URL` está velha
+  (já registrado neste arquivo) e não há credencial de SQL cru nesta máquina. A
+  validade se apoia em não haver subquery nem função de conjunto, e no precedente
+  do `chk_insc_eventos_checkout_externo_https` (`~*`), vivo na mesma tabela.
+
+### ⚠️⚠️ BUG ATIVO DE PERDA DE DADO consertado de carona: editar evento pelo CARD apagava o formulário
+
+`GET /inscricoes/eventos` devolve o evento **PARCIAL** (a lista não traz `campos`,
+`descricao`, `msg_*`, `pagamento_metodos`, `parcelas_max`,
+`pagamento_expira_horas`, `checkout_externo_*` nem `inscricoes_encerram_em`), e o
+"Editar" do card e do calendário abriam o `EventoModal` com esse objeto. Como o
+`salvar()` monta o payload INTEIRO, salvar por ali **apagava o que não tinha
+vindo**: `campos: []` limpava TODAS as perguntas, `descricao` virava null,
+`pagamento_metodos` voltava pro default pix+cartão e o link do e-Inscrição era
+zerado. **Nenhum erro aparecia — a tela dizia "Evento atualizado".**
+
+Estava armado justamente contra esta entrega: as 11 perguntas do retiro morreriam
+no primeiro clique em "Editar". `EventoModal` virou **carregador fino** que busca
+`GET /inscricoes/eventos/:id` (`select('*')`) e só então monta o `EventoForm`; o
+formulário fica ESCONDIDO enquanto carrega (renderizar vazio faria a pessoa
+digitar e o prefill sobrescrever — lição do censo) e **falha de carga NÃO abre o
+formulário**.
+
+### ⚠️ Deploy em DUAS ETAPAS · toda leitura das colunas novas é ISOLADA
+
+Pedir coluna inexistente faz o PostgREST recusar a query **INTEIRA** (42703), e as
+consultas afetadas abrem a página pública de TODO evento, a lista de inscritos de
+TODO evento e a lista de eventos do app. Então: `anexarConfigMenor()` é select
+próprio best-effort (exportado e usado pela porta pública **e** pelo app — duas
+cópias divergiriam), o contato do responsável na lista de inscritos é outro select
+isolado, e o SELECT de dedup só pede as colunas do responsável **quando
+`exige_dados_menor` é true** — o que só pode acontecer depois da migration.
+
+### O app do STAFF/MEMBROS resolve SEM OTA
+
+`so_web` (que já existia pro checkout externo) passou a cobrir `exige_dados_menor`
+e `termos_extra`: o app não tem essas telas e o servidor recusa sem elas, então a
+pessoa levaria 400 citando `responsavel_nome` num formulário sem o campo. O
+binário que já está no campo lê essa flag — e o `POST /app/eventos/:id/inscrever`
+responde **409 com o link** pra bundle antigo que a ignore.
+
+### Estado e pendências de GENTE
+
+`backend/scripts/_retiro_2027_formulario.cjs` (dry-run por padrão · backup em
+Downloads) restaura o "Retiro AMI 2027", grava as **11 perguntas (3
+condicionais)**, liga endereço+menor, cria os 2 aceites, deixa
+`pagamento_metodos = ['pix']` e encerra o "RETIRO TESTE".
+
+⚠️⚠️ **Restaura como RASCUNHO, não `publicado`.** Ele estava `publicado` quando foi
+apagado; restaurar assim colocaria `/evento/retiro-ami-2027` no ar cobrando R$ 900
+com dois aceites cujo TEXTO REAL não existe e sem o link do E-Inscrição. Publicar é
+um clique depois de conferir; abrir a porta por efeito colateral de script não é.
+
+⏳ **Antes de publicar** (é gente, não código): colar o texto REAL dos 2 aceites
+(hoje marcados `PENDENTE:` — **não inventei termo jurídico**, porque quem aceita
+tem esse texto gravado como prova) · colar o link do E-Inscrição em Pagamento →
+"Cartão em plataforma externa" · conferir data, valor e prazo.
+
+Testes: `src/test/camposCondicionais.test.ts` (14) e `src/test/inscricaoMenor.test.ts`
+(19), **no gate**. **6 mutantes RODADOS e mortos**: `hojeBRT` em UTC · condição
+quebrada fail-closed · `multi` comparado como string inteira · cascata desligada ·
+`autoriza_batismo` aceitando texto solto como "sim" · espelho do front divergindo
+(`<=` em vez de `<`).
+
 ## ⚠️⚠️ EXCLUIR EVENTO travava no card espelho do Marketing (2026-08-14 · migration `20260814190000`)
 
 Marcos, ao tentar apagar o "Dia Reforma Protestante": *"quero apagar o da reforma
