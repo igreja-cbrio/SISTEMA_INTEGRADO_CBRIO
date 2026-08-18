@@ -902,9 +902,44 @@ inscrição de grupos. O snippet oficial vai no `<head>` — e aqui isso é erra
   mediria visita nenhuma e, por morar no HTML compartilhado, carregaria em todas
   as telas do ERP — exatamente o vazamento que a trava evita. Noscript é coisa
   do site em Astro, que é HTML estático de verdade.
-- Medição de SPA só enxerga o pageview inicial: **conversão de inscrição vai
-  precisar de um `dataLayer.push` no submit bem-sucedido** — não foi feito
-  (fora do pedido).
+
+### O funil de conversão (mesma data · 2ª leva)
+
+Medição de SPA só enxerga o pageview inicial — o envio do formulário não navega.
+O funil vive em `src/lib/gtm.ts` (`useFunilInscricao` + `medirInscricaoConcluida`)
+e tem 3 eventos de `dataLayer`, todos com `porta: 'grupos'`:
+
+| evento | quando |
+|---|---|
+| `inscricao_pagina` | montou a página (junto com o carregamento do container) |
+| `inscricao_formulario` | escolheu o grupo e chegou no formulário · 1× por grupo |
+| `inscricao_concluida` | o **servidor** confirmou que criou |
+
+- ⚠️⚠️ **"Chegou na tela de sucesso" NÃO é conversão.** O passo 2 desta porta
+  também recebe quem já é membro ou já tinha pedido (`ja_membro` / `ja_pedido`:
+  reenvio não cria nada) e o honeypot de bot responde `{ ok: true }` **sem id**
+  — padrão de TODAS as portas públicas (`publicGrupos`, `publicBatismo`,
+  `publicNext`, `publicVoluntariado`, `publicApresentacao`,
+  `publicEventoExterno`). O gatilho é `r.pedido_id`, que o backend só devolve
+  quando criou (`if (rt.criado) corpo.pedido_id = ...`), mais
+  `r.conjuge.pedido_id` (casal = 2 inscrições num POST) e `r.renovado`, que sai
+  com `resultado: 'renovado'` pra não virar inscrição nova na conta.
+- ⚠️ **LGPD · a lista de campos do `dataLayer` é FECHADA** (`CAMPOS_PERMITIDOS`):
+  `grupo_id`, `categoria`, `origem`, `totem`, `resultado`, `pessoas`. Qualquer
+  outra chave é descartada com aviso em dev — nome, CPF, e-mail, telefone,
+  nascimento, endereço e foto **não** entram, nem os do cônjuge. Tem teste
+  (`src/lib/gtm.test.ts`): o que vaza pro GTM não tem como despublicar.
+- ⚠️ **Totem manda `totem: true`.** A MESMA aba do quiosque atende dezenas de
+  pessoas: lá o `inscricao_pagina` sai 1× e as conversões saem N. Sem separar,
+  a taxa do lounge passa de 100% e contamina a média. O reset por ociosidade
+  também limpa a marcação de etapa (`esquecerEtapas`), senão a 2ª pessoa que
+  escolhe o mesmo grupo não contaria.
+- `origem` separa quem veio de **QR direto no grupo** (`link_grupo`) de quem
+  **escolheu** na lista/mapa (`escolha`) — são funis com desistência diferente.
+- ⏳ **As outras 6 portas seguem SEM medição** (decisão do Gustavo · 18/08). O
+  `src/lib/gtm.ts` já recebe `porta` com as chaves canônicas de
+  `inscricaoPortas.js`, mas nenhuma outra está ligada — não ler a existência do
+  módulo como cobertura.
 
 ## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
 
