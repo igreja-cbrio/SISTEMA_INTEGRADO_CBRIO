@@ -2,6 +2,8 @@
 // pares conectados. Nunca funde automaticamente e nunca sobrescreve sinais.
 
 const { supabase } = require('../utils/supabase');
+// ⚠️ `duplicidadePolicy` não tem require nenhum — sem risco de ciclo.
+const { nomesPodemSerMesmaPessoa } = require('./duplicidadePolicy');
 const { escapePostgrestValue } = require('../utils/sanitize');
 
 function digitos(v) { return String(v || '').replace(/\D/g, ''); }
@@ -77,7 +79,11 @@ function observacaoCombina(obs, p) {
   if (obs.telefone && p.telefones.has(obs.telefone)) sinais.push('telefone');
   if (obs.email && p.emails.has(obs.email)) sinais.push('e-mail');
   if (obs.data_nascimento && p.nascimentos.has(obs.data_nascimento)) sinais.push('nascimento');
-  if (obs.nome_normalizado && [...p.nomes].some((n) => similaridadeNome(n, obs.nome_normalizado) >= 0.90)) sinais.push('nome');
+  // ⚠️ Dice ≥0,90 OU versão abreviada: "Andrea Palladino" × "Andrea Melchiades
+  // Palladino" dá Dice 0,73 e é a MESMA pessoa. Sem o segundo ramo, a ponte de
+  // uma observação nova não reconhecia o nome no padrão mais comum de duplicata.
+  if (obs.nome_normalizado && [...p.nomes].some((n) => similaridadeNome(n, obs.nome_normalizado) >= 0.90
+    || nomesPodemSerMesmaPessoa(n, obs.nome_normalizado))) sinais.push('nome');
   return sinais;
 }
 
@@ -110,7 +116,25 @@ function pontuarPar(a, b, observacaoPonte = null) {
   // fraco contado duas vezes, e a fila mostrava gente claramente distinta no topo.
   // A política canônica (duplicidadePolicy) sempre exigiu nome + nascimento; era a
   // fila progressiva que divergia.
-  const outroSinal = cpfComum || telefoneComum || emailComum || melhorNome >= 0.82;
+  // ⚠️⚠️ O PADRÃO Nº 1 DE DUPLICATA PONTUAVA ZERO (medido em 17/08, caso Andrea
+  // Palladino). `similaridadeNome` é Dice de bigramas, e nome ABREVIADO/CONTIDO
+  // afunda nela: "Andrea Melchiades Palladino" × "Andrea Palladino" = 0,73;
+  // "Tatiane Youssef Fares Dib" × "Tatiane Dib" = 0,59; "Leandro Pereira e Silva"
+  // × "Leandro Pereira" = 0,78; "João Paulo Bezerra Honorio" × "joao paulo
+  // honorio" = 0,81 (fora por 0,01). Todos abaixo do degrau de 0,82 ⇒ nenhum
+  // ponto de nome, e o par ficava com só o telefone (30) em `descoberta`, no fim
+  // da fila. Foi por isso que 3 cadastros da mesma pessoa não apareceram como
+  // sugestão forte.
+  //
+  // A régua canônica do projeto já resolve isso e é mutation-testada com casos de
+  // regressão: `duplicidadePolicy.nomesPodemSerMesmaPessoa` = mesmo PRIMEIRO nome
+  // + ≥75% dos tokens do menor contidos no maior. Ela recusa irmão/cônjuge
+  // ("Ana Souza Lima" × "João Souza Lima" → false), que é o falso positivo que
+  // importa. Era a fila progressiva que divergia da política — de novo.
+  const nomeAbreviado = a.nomes.size > 0 && b.nomes.size > 0
+    && [...a.nomes].some((na) => [...b.nomes].some((nb) => nomesPodemSerMesmaPessoa(na, nb)));
+
+  const outroSinal = cpfComum || telefoneComum || emailComum || melhorNome >= 0.82 || nomeAbreviado;
 
   if (cpfComum) { score += 100; evidencias.push('CPF confirmado em comum'); }
   if (telefoneComum) { score += 30; evidencias.push('Telefone observado em comum'); }
@@ -118,6 +142,10 @@ function pontuarPar(a, b, observacaoPonte = null) {
   if (nascimentoComum && outroSinal) { score += 35; evidencias.push('Nascimento observado em comum'); }
   if (melhorNome >= 0.98) { score += 30; evidencias.push('Nome confirmado em comum'); }
   else if (melhorNome >= 0.90) { score += 25; evidencias.push('Nomes muito compatíveis'); }
+  // ⚠️ ANTES do degrau de 0,82: nome abreviado é sinal FORTE (a régua exige o
+  // mesmo primeiro nome e containment de tokens), não o "parcialmente compatível"
+  // de 12 pontos que a semelhança de texto sozinha rende.
+  else if (nomeAbreviado) { score += 25; evidencias.push('Um nome é a versão abreviada do outro'); }
   else if (melhorNome >= 0.82) { score += 12; evidencias.push('Nomes parcialmente compatíveis'); }
 
   if (observacaoPonte) {
