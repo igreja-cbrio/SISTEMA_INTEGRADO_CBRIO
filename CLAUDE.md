@@ -876,6 +876,36 @@ consumidor**.
   somente-leitura (é o inventário das 9 portas; a exclusão vive no módulo dono do
   evento).
 
+## ⚠️ GTM · container de página entra pelo COMPONENTE, nunca no index.html (2026-08-18 · SEM migration)
+
+Pedido do Gustavo (GTM): instalar o container `GTM-PQHGF574` na página de
+inscrição de grupos. O snippet oficial vai no `<head>` — e aqui isso é errado.
+
+- `index.html` é **um só** pro site institucional e pro ERP inteiro. Snippet no
+  `<head>` sobe o container em **toda** tela, inclusive as internas com nome,
+  CPF, telefone, contribuição e dado de menor no Kids. Marca de anúncio não
+  entra ali (LGPD). O container do site (`GTM-M59RCB34`, no `index.html`)
+  resolve com trava por hostname (`SITE_PUBLICO_HOSTS`) — mas
+  **`/inscricao-grupos` é rota do `AppRoutes`, servida em `cbrio.org`**, então a
+  trava por hostname não serve: ela bloquearia justamente a página a medir.
+- A trava certa pra medir UMA página pública servida no domínio do ERP é
+  **injetar o container no mount do componente**: `src/lib/gtm.ts`
+  (`carregarGtm(id)`, idempotente) + um `useEffect` em
+  `src/pages/public/InscricaoGrupos.jsx`.
+- ⚠️ **O GTM não descarrega.** Injetado, ele vive até a aba recarregar; um
+  gatilho de *History Change* no container continuaria disparando se a pessoa
+  navegasse daqui pro resto do sistema. O código garante o CARREGAMENTO, não o
+  disparo — os gatilhos do container têm que estar fixados em
+  `Page Path = /inscricao-grupos`. Isso é configuração do GTM, com o Gustavo.
+- **O `<noscript>` do snippet foi deliberadamente omitido** (mesma decisão já
+  registrada no `index.html`): sem JS este SPA não renderiza nada, o iframe não
+  mediria visita nenhuma e, por morar no HTML compartilhado, carregaria em todas
+  as telas do ERP — exatamente o vazamento que a trava evita. Noscript é coisa
+  do site em Astro, que é HTML estático de verdade.
+- Medição de SPA só enxerga o pageview inicial: **conversão de inscrição vai
+  precisar de um `dataLayer.push` no submit bem-sucedido** — não foi feito
+  (fora do pedido).
+
 ## ⚠️ CENSO / recadastramento da membresia (2026-08-03 · migrations `20260803160000` + `20260803160100`)
 
 Demanda do **Arthur Serpa**: por um mês, 1 minuto de cada culto pra igreja
