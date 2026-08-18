@@ -21,6 +21,7 @@ const {
 const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
 const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../utils/volRodizio');
 const { montarCobertura, contarStatus } = require('../utils/volCobertura');
+const { filtrarVigentes } = require('../utils/vigenciaTipoCulto');
 const { chavePco } = require('../utils/pcoChave');
 const { diaIntegracaoBRT } = require('../utils/volIntegradoEm');
 const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
@@ -2403,11 +2404,21 @@ async function ensureServiceDoTipo(typeId, dateStr) {
 // pro check-in oferecer como checkbox. (recurrence_day=0 · antes das 14h)
 router.get('/cultos-manha', async (req, res) => {
   try {
+    // ⚠️ A vigência decide QUAIS horários existem neste domingo. Sem ela, a
+    // virada da grade em 24/08/2026 (08:30 e 10:00 encerram, 09:30 começa)
+    // deixaria o totem oferecendo quatro horários num domingo que tem dois —
+    // e um check-in no horário errado separa a presença da escala.
+    // O dia de referência é o `?dia=` do totem, ou HOJE em BRT: em UTC o dia
+    // vira às 21h e o culto de domingo à noite já cairia na segunda.
+    const dia = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.dia || ''))
+      ? String(req.query.dia)
+      : diaBRT(new Date().toISOString());
     const { data } = await supabase.from('vol_service_types')
-      .select('id, name, recurrence_time')
+      .select('id, name, recurrence_time, is_active, vigente_de, vigente_ate')
       .eq('recurrence_day', 0).eq('is_active', true).lt('recurrence_time', '14:00:00')
       .order('recurrence_time');
-    res.json((data || []).map(t => ({ id: t.id, name: t.name, recurrence_time: t.recurrence_time })));
+    res.json(filtrarVigentes(data || [], dia)
+      .map(t => ({ id: t.id, name: t.name, recurrence_time: t.recurrence_time })));
   } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos da manhã' }); }
 });
 
