@@ -18,18 +18,21 @@ import { Megaphone, Images, Camera, Lock } from 'lucide-react';
 // listadas como itens separados no menu Criativo — três lugares para publicar
 // coisa no mesmo app. Agora é uma aba com três sub-abas.
 //
-// ⚠️⚠️ PERMISSÃO NÃO FOI AMPLIADA, e isso limita o alcance HOJE: os backends de
-// Destaques (`routes/destaques.js`) e Fotos de Batismo (`routes/batismoFotos.js`)
-// exigem `authorize('admin','diretor')`. A equipe de Marketing tem nível 5 no
-// MÓDULO, mas role `assistente` — então veria a aba e tomaria 403 em tudo.
-// Botão que devolve 403 é pior que botão ausente, então as duas sub-abas só
-// aparecem para admin/diretor, e quem não é lê o motivo em vez de bater na
-// parede. Liberar para o coordenador de Marketing é decisão do Marcos (mexe em
-// autorização de dois backends) — não fiz por conta própria.
+// ⚠️ PERMISSÃO AMPLIADA em 18/08/2026, a pedido do Marcos: *"Pedro deve poder
+// publicar, alterar fotos, alterar destaques... mexer no app por esse módulo."*
+// Os dois backends saíram de `authorize('admin','diretor')` para o módulo
+// `marketing` (leitura 1 · escrita 3), então as 3 sub-abas aparecem para quem
+// abre a aba — não há mais sub-aba escondida.
+// ⚠️ O que continua valendo: quem tem `marketing` só em LEITURA (1 ou 2 — a
+// matriz dá 1 a pastor-senior, diretor-administrativo, coordenador-estratégia,
+// diretor-ministerial e diretor-criativo) vê o conteúdo publicado **sem os
+// botões de escrita**, porque botão que devolve 403 é pior que botão ausente.
+// `canAccessModule` é o espelho do `authorizeModule` do servidor (mesmo bypass
+// de admin/diretor, mesmo deny explícito) — quem decide de verdade é o backend.
 const ABAS = [
-  { key: 'comunicados', label: 'Comunicados', icon: Megaphone, soAdmin: false },
-  { key: 'destaques',   label: 'Destaques',   icon: Images,    soAdmin: true },
-  { key: 'batismo',     label: 'Fotos Batismo', icon: Camera,  soAdmin: true },
+  { key: 'comunicados', label: 'Comunicados', icon: Megaphone },
+  { key: 'destaques',   label: 'Destaques',   icon: Images },
+  { key: 'batismo',     label: 'Fotos Batismo', icon: Camera },
 ];
 
 const SUBTITULO = {
@@ -39,9 +42,10 @@ const SUBTITULO = {
 };
 
 export default function MarketingApp() {
-  const { isAdmin, profile } = useAuth();
-  // `isAdmin` do contexto cobre admin; diretor entra pelo role.
-  const podeAppAdmin = isAdmin || profile?.role === 'diretor';
+  const { canAccessModule } = useAuth();
+  // Espelha o guard do servidor: escrita exige `marketing` >= 3 (admin/diretor
+  // passam por bypass, dentro do próprio canAccessModule).
+  const podeEditar = canAccessModule(['marketing'], 'escrita', 3);
 
   const [params, setParams] = useSearchParams();
   const daUrl = params.get('t');
@@ -57,14 +61,13 @@ export default function MarketingApp() {
     setParams(p, { replace: true });
   }
 
-  const visiveis = ABAS.filter(a => !a.soAdmin || podeAppAdmin);
-  const abaAtual = visiveis.some(a => a.key === aba) ? aba : 'comunicados';
+  const abaAtual = ABAS.some(a => a.key === aba) ? aba : 'comunicados';
 
   return (
     <MarketingPagina subtitulo={SUBTITULO[abaAtual]}>
       {/* Sub-abas · mesmo padrão visual dos seletores do módulo */}
       <div className="flex flex-wrap gap-1 border-b border-border">
-        {visiveis.map(a => {
+        {ABAS.map(a => {
           const Icon = a.icon;
           const ativo = abaAtual === a.key;
           return (
@@ -90,14 +93,14 @@ export default function MarketingApp() {
           e centralização próprias (`maxWidth: 1100; margin: 0 auto` inline) e do
           título repetido — em vez de eu neutralizar por CSS de fora, que quebraria
           na próxima mudança interna delas. Elas seguem funcionando soltas. */}
-      {abaAtual === 'destaques' && <Destaques embutido />}
-      {abaAtual === 'batismo' && <FotosBatismo embutido />}
+      {abaAtual === 'destaques' && <Destaques embutido podeEditar={podeEditar} />}
+      {abaAtual === 'batismo' && <FotosBatismo embutido podeEditar={podeEditar} />}
 
-      {!podeAppAdmin && (
+      {!podeEditar && (
         <p className="flex items-start gap-1.5 text-[11px] text-muted-foreground border-t border-border pt-3">
           <Lock className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-          Destaques da Home e Fotos de Batismo exigem perfil de administração —
-          por isso não aparecem aqui. Fale com o Marcos se precisar publicar.
+          Você está vendo em modo leitura: publicar, editar e excluir exigem nível 3
+          no módulo Marketing. Fale com o Marcos se precisar publicar.
         </p>
       )}
     </MarketingPagina>
