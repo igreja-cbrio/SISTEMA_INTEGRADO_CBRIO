@@ -46,8 +46,22 @@ function tokensNome(v) {
 // nome civil completo, então reconhecemos também a versão curta contida na
 // longa. Primeiro nome igual + pelo menos 75% dos tokens do nome menor evita
 // confundir parentes que apenas compartilham um sobrenome.
-function nomesPodemSerMesmaPessoa(a, b) {
-  if (similaridadeNome(a, b) >= 0.90) return true;
+// ⚠️⚠️ O ramo do CONTAINMENT, isolado de propósito (2026-08-18).
+//
+// `nomesPodemSerMesmaPessoa` é a OU de dois ramos, e eles têm risco MUITO
+// diferente quando o assunto é LIGAR automaticamente:
+//   · containment (mesmo primeiro nome + ≥75% dos tokens do menor) → medido na
+//     base viva sobre telefone em comum: 100 pares, todos a mesma pessoa
+//     ("Kelly Veiga da Silva Oliveira" × "Kelly Veiga");
+//   · Dice ≥ 0,90 (tolera typo) → 4 pares, e **2 deles são IRMÃS**:
+//     "Layane" × "Dayane A. M. Bello Joseph" e "Mayla" × "Nayla Duarte Victor
+//     Minari". Uma letra de diferença no PRIMEIRO nome é indistinguível de
+//     parente.
+//
+// Então quem LIGA usa só este; quem SUGERE (fila, vizinhos) pode usar a OU.
+// Exigir `ta[0] === tb[0]` é o que separa "versão abreviada da mesma pessoa" de
+// "parente que compartilha sobrenome" — não relaxar.
+function nomeEhVersaoAbreviada(a, b) {
   const ta = tokensNome(a);
   const tb = tokensNome(b);
   if (ta.length < 2 || tb.length < 2 || ta[0] !== tb[0]) return false;
@@ -55,6 +69,11 @@ function nomesPodemSerMesmaPessoa(a, b) {
   const maior = new Set(ta.length <= tb.length ? tb : ta);
   const comuns = menor.filter((t) => maior.has(t)).length;
   return comuns >= 2 && comuns / menor.length >= 0.75;
+}
+
+function nomesPodemSerMesmaPessoa(a, b) {
+  if (similaridadeNome(a, b) >= 0.90) return true;
+  return nomeEhVersaoAbreviada(a, b);
 }
 
 // ⚠️ Stub de LOGIN não é "duas pessoas com o mesmo e-mail".
@@ -130,6 +149,6 @@ function avaliarPossivelDuplicidade(a = {}, b = {}) {
 
 module.exports = {
   avaliarPossivelDuplicidade, similaridadeNome, nomesPodemSerMesmaPessoa, tokensNome,
-  ehStubDeLogin, nomeMenorTodoContidoNoMaior,
+  ehStubDeLogin, nomeMenorTodoContidoNoMaior, nomeEhVersaoAbreviada,
 };
 
