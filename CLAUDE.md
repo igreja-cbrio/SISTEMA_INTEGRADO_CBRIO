@@ -8023,6 +8023,46 @@ antes do dia). É UM DO block com `v_executar constant boolean := false`:
   como asserts (fantasmas=0 · órfãos não cresceram · grade da manhã =
   {09:30, 11:30} · `fin_identifica_culto` 09:29/10:59→'Domingo 9:30' e
   11:00→'Domingo 11:30' · batismo aberto = {09:30, 11:30}).
+### ⚠️⚠️ ENSAIADO em 17/08 · o corte estouraria o `statement_timeout` (PR #2559)
+
+O ensaio rodou de verdade (bloco revertido, contra produção) e achou o que teria
+impedido o corte no dia: **`cultos` tem DOIS gatilhos ROW-level** —
+`cultos_recalc_kpis` (`trg_kpi_recalcular_culto`) e `cultos_recalcular_nsm`
+(`tg_nsm_recalcular_pos_culto`) — e cada linha custa, cronometrado com
+`clock_timestamp()`, **1,258 s no INSERT e 2,440 s no DELETE**. O corte faz 18
+inserts + 36 deletes ⇒ **~110 s só nesse trecho**, antes dos 5 backups, do patch
+da view e das 10 invariantes. E `statement_timeout` da sessão é **2 min**: ia
+ficar no fio e provavelmente por cima, abortando (com rollback, seguro) no
+domingo, sob pressão de tempo.
+
+⇒ **`SET statement_timeout = '10min'` como statement SEPARADO antes do bloco.**
+Tem de ser antes: o `DO` é **UMA** instrução, então `SET LOCAL` dentro dele não
+vale para ele mesmo. ⚠️ E **não rodar o script por cliente com timeout curto** —
+o MCP do Supabase aborta antes (2 tentativas, as duas revertidas); é SQL Editor.
+⚠️ **NÃO "otimizar" desligando os gatilhos** (`ALTER TABLE cultos DISABLE
+TRIGGER`): as 54 linhas são futuras e todas zero, nenhum KPI/NSM mudaria de
+valor, mas suprimir gatilho na tabela mais quente do sistema é decisão de gente.
+
+⚠️⚠️ **A régua que passa disto: operação em LOTE sobre `cultos` custa ~1-2,5 s
+POR LINHA.** Qualquer script/backfill futuro que mexa em dezenas de cultos tem de
+orçar isso e subir o `statement_timeout` — o custo não está na tabela (é
+pequena), está nos dois recálculos que cada linha dispara.
+
+O ensaio também validou por leitura: pré-condições verdes · **bloqueadores = 0**
+(nenhum dos 36 cultos futuros de 08:30/10:00 tem dado ou satélite) · 1 vínculo de
+template de escala herdado do 10:00 · 0 apresentações de bebê a repontar · e a
+**fronteira financeira medida ao vivo** (hoje PIX às 09:29 → slot 'Domingo 8:30'
+e 09:30/10:59 → 'Domingo 10:00', ou seja a oferta de um culto das 09:30 se
+partiria entre DOIS slots de cultos extintos — que é exatamente o que as
+invariantes do passo 5 cobrem). Rollback conferido nas 2 execuções em 11
+indicadores.
+
+⚠️ Consertado junto: o fallback do `.env` no `_corte_cultos_domingo_ensaio.cjs`
+apontava para `~/SISTEMA_INTEGRADO_CBRIO/backend` e o checkout principal é
+`~/Documents/…` — rodando de uma worktree (que nasce sem `.env`, gitignored) ele
+morria em "não encontrados" com o arquivo existindo no principal. Os outros 2
+scripts `.cjs` de `backend/scripts/` **têm o mesmo erro** e não foram tocados.
+
 - **D2 (financeiro)**: `v_conta_dizimo_0930`/`v_conta_oferta_0930` no topo do
   DO block — NULL = fallback interim nas contas do 10:00 (3.01.01.09/.09);
   se o ok da conta nova sair até 20/08, preencher os 2 uuids antes de rodar.
