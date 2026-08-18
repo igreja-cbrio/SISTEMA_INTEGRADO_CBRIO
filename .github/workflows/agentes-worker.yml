@@ -105,6 +105,10 @@ jobs:
         env:
           ENTRADA: ${{ github.event.inputs.agentes }}
           AGENDA: ${{ github.event.schedule }}
+          # O acompanhamento pergunta ao banco se a execução terminou — o worker
+          # não tem endpoint de status, e o 202 do /run não diz nada sobre o fim.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -u
 
@@ -152,27 +156,63 @@ jobs:
           for agente in $LISTA; do
             echo "::group::$agente"
             inicio=$(date +%s)
+            desde=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-            # 20 min por agente. Se a borda do Railway cortar a conexão antes do
-            # fim, o curl falha aqui MAS o agente pode ter concluído do lado de
-            # lá — por isso o passo seguinte confere no banco em vez de confiar
-            # só neste código de saída.
+            # ── DISPARA E ACOMPANHA, em vez de segurar a conexão ─────────────
+            #
+            # ⚠️ NÃO USAR /run-sync AQUI. Ele mantém a conexão aberta até o
+            # agente terminar, e a borda do Railway CORTA QUALQUER CONEXÃO EM
+            # 300s. Medido em 18/08/2026: o kpi_relatorio_semanal levou 641s
+            # (10min41). Pelo /run-sync o curl morria com 502 aos 300s exatos,
+            # a Action seguia adiante, o tráfego cessava, o container serverless
+            # escalava para zero e MATAVA o agente no meio — deixando a linha
+            # presa em `running` para sempre. Aconteceu de verdade antes deste
+            # conserto.
+            #
+            # O /run responde 202 na hora. O laço abaixo faz as duas coisas que
+            # faltavam: bate no /health a cada 20s, o que mantém o container de
+            # pé (é tráfego, que é o único sinal que o Railway entende), e
+            # pergunta ao banco se a execução terminou. Foi exatamente isto que
+            # eu fiz na mão para o agente conseguir concluir; aqui vira desenho.
             http=$(curl -sS -o /tmp/resp.json -w '%{http_code}' \
-                   --max-time 1200 \
-                   -X POST "$WORKER_URL/run-sync/$agente" \
+                   --max-time 60 \
+                   -X POST "$WORKER_URL/run/$agente" \
                    -H 'content-type: application/json' \
                    -H "x-agent-signature: $SIG" \
                    -d "$BODY" 2>/tmp/err.txt || echo "000")
 
-            dur=$(( $(date +%s) - inicio ))
-            echo "http=$http · ${dur}s"
-            head -c 800 /tmp/resp.json 2>/dev/null || true
-            echo
+            if [ "$http" != "202" ] && [ "$http" != "200" ]; then
+              echo "nao aceitou · http=$http · $(head -c 300 /tmp/resp.json 2>/dev/null)"
+              falhas="$falhas $agente"
+              echo "::endgroup::"
+              continue
+            fi
+            echo "aceito (http=$http) · acompanhando…"
 
-            if [ "$http" = "200" ]; then
+            # Teto de 30 min por agente. Sem teto, um agente travado prenderia o
+            # lote inteiro; com teto, ele vira falha visível e os outros seguem.
+            estado="desconhecido"
+            for _ in $(seq 1 90); do
+              sleep 20
+              # 1) mantém o container acordado
+              curl -s --max-time 15 -o /dev/null "$WORKER_URL/health" || true
+              # 2) pergunta ao banco como foi
+              if [ -n "${SUPABASE_URL:-}" ] && [ -n "${SUPABASE_SERVICE_ROLE_KEY:-}" ]; then
+                estado=$(curl -s --max-time 20 \
+                  "$SUPABASE_URL/rest/v1/agent_runs?agent_type=eq.$agente&created_at=gte.$desde&select=status&order=created_at.desc&limit=1" \
+                  -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+                  -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+                  | python3 -c 'import json,sys;d=json.loads(sys.stdin.read() or "[]");print(d[0]["status"] if d else "sem_linha")' 2>/dev/null || echo "indisponivel")
+              fi
+              [ "$estado" = "running" ] || [ "$estado" = "sem_linha" ] || break
+            done
+
+            dur=$(( $(date +%s) - inicio ))
+            echo "estado=$estado · ${dur}s"
+
+            if [ "$estado" = "completed" ]; then
               [ "$agente" = "kpi_relatorio_semanal" ] && relatorio_ok=1
             else
-              echo "erro: $(head -c 300 /tmp/err.txt 2>/dev/null)"
               falhas="$falhas $agente"
             fi
             echo "::endgroup::"
