@@ -202,7 +202,27 @@ BEGIN
     RETURNING id INTO v_novo_id;
     v_resumo := v_resumo || ' · tipo "Domingo 09:30" criado';
   ELSE
-    v_resumo := v_resumo || ' · tipo "Domingo 09:30" já existia (idempotente)';
+    -- ⚠️⚠️ NORMALIZA em vez de só relatar. O tipo pode ter sido PRÉ-CRIADO antes
+    -- do dia (foi o que aconteceu em 19/08: criado com `is_active=false` para o
+    -- Dashboard já mostrar o 09:30 sem que o cron de auto-create materializasse
+    -- um culto fantasma no domingo 23/08, que ainda é do formato antigo — o
+    -- auto-create filtra `is_active=true` e NÃO conhece vigência). Sem esta
+    -- normalização o ELSE deixava o tipo inativo e a invariante "grade ativa da
+    -- manhã = {09:30, 11:30}" ABORTAVA o corte inteiro, no dia.
+    UPDATE public.vol_service_types
+       SET is_active        = true,
+           recurrence_day   = 0,
+           recurrence_time  = time '09:30',
+           vigente_de       = COALESCE(vigente_de, DATE '2026-08-24'),
+           linhagem_key     = COALESCE(linhagem_key, 'domingo-0930'),
+           consolidacao_key = COALESCE(consolidacao_key, 'domingo-0930'),
+           presencial_label = COALESCE(presencial_label, v_t1000.presencial_label),
+           has_kids         = true,
+           has_online       = true,
+           has_online_stream = COALESCE(has_online_stream, v_t1000.has_online_stream, true),
+           meta_duracao_min = COALESCE(meta_duracao_min, v_t1000.meta_duracao_min, 60)
+     WHERE id = v_novo_id;
+    v_resumo := v_resumo || ' · tipo "Domingo 09:30" já existia — ATIVADO e normalizado';
   END IF;
 
   -- invariante: as flags do tipo novo têm que espelhar o 10:00 (has_kids é o
