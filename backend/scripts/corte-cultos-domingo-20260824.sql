@@ -36,6 +36,16 @@
 --       sem corrigir e a HORA que o voluntario ve — 106 escalas de manha
 --       (16+16+26 em 30/08 · 48 em 06/09) diriam 08:30, e o lembrete de escala
 --       no WhatsApp sai com ela.
+--       ⚠️ PRAZO REAL: **antes de 29/08**, não do dia 24 — o lembrete de escala
+--       sai na véspera (`avisoEscala.js:153` monta a hora de
+--       `vol_services.scheduled_at`), então para o domingo 30/08 ele dispara em
+--       29/08. ⚠️⚠️ E não há como consertar daqui: `planningCenter.js` é 100% GET
+--       (nenhum método de escrita) e a credencial vive só na env da Vercel. As
+--       alternativas dentro do sistema foram medidas e DESCARTADAS: marcar os 4
+--       serviços como internos (`service_type_id` preenchido) faria o sync parar
+--       de sobrescrever a hora, mas `service_type_id` é usado semanticamente
+--       (`voluntariado.js:2346` e `:2376` filtram serviços POR TIPO), e serviços
+--       de TURNO passariam a contar como serviços de um culto específico.
 --   [ ] /admin/whatsapp → Configuração → "Horários de culto": grade nova +
 --       texto ponte explicando a mudança (única superfície pública que explica).
 --   [x] Financeiro (D2): FEITO — contas novas criadas e os 2 uuids ja estao
@@ -47,8 +57,16 @@
 --       antigo. Quem ja impede lancamento NOVO no horario extinto e o slot
 --       (ativo=false, passo 5). Fazer isto quando a conciliacao de 23/08 estiver
 --       fechada — decisao de data do Matheus, nao do script.
---   [ ] 25–29/08: OTA do CBRio-Staff (grade hardcoded index.tsx:276) + conferir
---       Home do app de membros (card do culto mostra 09:30).
+--   [x] CBRio-Staff: RESOLVIDO em 18/08 (PR #17 do app) — a grade do card "Culto
+--       de hoje" virou régua DATADA (`lib/gradeCulto.ts`), correta antes e depois
+--       do corte, então **não há mais item de OTA no dia 24**. Falta apenas
+--       publicar uma vez (`npm run ota -- "..."`) para o bundle levar a régua.
+--       ⚠️ O caminho antes anotado aqui estava ERRADO: é
+--       `app/(app)/(tabs)/index.tsx:277`, não `app/(app)/index.tsx:276` — e o
+--       formato é `8h30` (com `h`), o que fez um grep por `08:30` não achar a
+--       linha em 18/08.
+--   [ ] Conferir a Home do app de MEMBROS (card do culto mostra 09:30) — repo
+--       separado, não auditado nesta frente.
 --   [ ] 30/08 (campo): totem Kids às 08:50/09:35/10:45/11:15 (chip do culto);
 --       voluntariado × view; online_pico do 09:30; PIX da manhã → slot 9:30.
 --   [ ] Pós: dashboard_metas SÓ anota o corte no rótulo (recalibrar em OUTUBRO);

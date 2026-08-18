@@ -1110,3 +1110,59 @@ string `YYYY-MM-DD` (`new Date('2026-08-24')` é meia-noite UTC = dia 23 no Rio)
 propósito**: ele alimenta a criação de culto na Integração, onde oferecer um
 horário extinto é que seria o erro. Se algum dia essa lista também virar filtro
 histórico, aplica-se a mesma régua do 16.3.
+
+---
+
+## 17 · OTA e PCO — o que mudou de fato em 18/08
+
+### 17.1 O app do Staff saiu do checklist do dia 24
+
+Matheus rodou o OTA em 18/08, antes do corte. **Foi inofensivo, e a medição mostra
+por quê:** o repo estava em `main`, working tree limpo, em sincronia com o remoto
+(último commit 17/08) — publicou exatamente o que já estava lá, incluindo o texto
+ANTIGO da grade. Nada mudou para o usuário.
+
+⚠️ **Duas correções de fato ao que este arquivo dizia:**
+
+| dizia | é |
+|---|---|
+| `index.tsx:276` | **`app/(app)/(tabs)/index.tsx:277`** |
+| grade como `08:30` | grade como **`8h30`** (com `h`) |
+
+O formato é o motivo pelo qual um `grep 08:30` no repo do app **não achou nada** em
+18/08 e eu quase concluí que não havia grade hardcoded. Régua: **procurar pelo
+formato que o app ESCREVE, não pelo formato canônico do banco.**
+
+⇒ Resolvido no PR **#17 do CBRio-Staff**: a grade virou régua **datada**
+(`lib/gradeCulto.ts` · `CORTE_DOMINGO_0930 = '2026-08-24'`), correta antes e depois
+do corte. **Não há mais item de OTA no dia 24** — falta publicar **uma vez** para o
+bundle levar a régua, e isso pode ser a qualquer momento.
+
+⚠️ De carona, o vitest do app passou a fixar **`TZ=America/Sao_Paulo`**: o CI roda
+em UTC, e ali o teste que existe para pegar `toISOString()` no lugar do dia local
+**passa**, porque em UTC os dois coincidem. O mutante sobrevivia com `TZ=UTC` e
+morre com o fuso do Rio.
+
+### 17.2 PCO · o prazo é 29/08, e não há caminho pelo código
+
+Autorização do Matheus: *"em relação ao PCO pode fazer o que tem que fazer"*.
+**Não há o que fazer daqui**, e isto é medido, não presumido:
+
+- **`planningCenter.js` é 100% GET** — nenhum método de escrita. O sync lê planos
+  do PCO; não os altera.
+- A credencial vive só na env da Vercel; não há `.env` na máquina.
+- ⚠️⚠️ **A alternativa dentro do sistema foi medida e DESCARTADA:** marcar os 4
+  serviços de manhã como internos (`service_type_id` preenchido) faria o sync
+  tomar o ramo que só liga o `plan_id` e **parar de sobrescrever `scheduled_at`**.
+  Mecanicamente funciona — mas `service_type_id` é usado **semanticamente**
+  (`voluntariado.js:2346` e `:2376` filtram serviços POR TIPO), e serviços de
+  TURNO (`Domingo - Manhã`) passariam a contar como serviços de um culto
+  específico. Trocaria um problema visível por um invisível.
+
+⇒ São **3 edições na interface do PCO**, e são do Matheus.
+
+**O prazo REAL é antes de 29/08, não do dia 24:** o lembrete de escala sai na
+véspera e monta a hora de `vol_services.scheduled_at`
+(`avisoEscala.js:153` → `horaBRT`), então para o domingo 30/08 ele dispara em
+**29/08**. Antes disso, o que fica errado é a hora nas telas de escala; a partir
+dele, 106 pessoas recebem "domingo, 30/08, às 08:30" no WhatsApp.
