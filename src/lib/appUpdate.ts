@@ -54,6 +54,31 @@ export function buildAppUpdateUrl(
   return url.toString();
 }
 
+/**
+ * URL sem NENHUM parâmetro de recuperação.
+ *
+ * ⚠️ POR QUE ISTO PRECISA EXISTIR:
+ * com `_chunk_retry=3` na querystring, `getAppUpdateRetryCount()` devolve 3 —
+ * o teto — e o ErrorBoundary se recusa a tentar de novo. Recarregar a MESMA
+ * URL (inclusive com Cmd+Shift+R) reencontra o mesmo 3 e cai na mesma parede,
+ * até os 60s da janela expirarem. Foi exatamente o que prendeu o Matheus três
+ * vezes em 18/08/2026, sempre com um deploy em andamento por trás.
+ *
+ * Voltar para a URL limpa devolve o orçamento de tentativas e mantém rota,
+ * filtros e hash — que é o que a pessoa estava olhando.
+ */
+export function buildCleanUrl(href = window.location.href): string {
+  try {
+    const url = new URL(href);
+    url.searchParams.delete(APP_UPDATE_RETRY_PARAM);
+    url.searchParams.delete(APP_UPDATE_RETRY_STARTED_PARAM);
+    url.searchParams.delete(APP_UPDATE_CACHE_BUSTER_PARAM);
+    return url.toString();
+  } catch {
+    return href;
+  }
+}
+
 function clearLegacyRetryFlags() {
   try {
     Object.keys(sessionStorage)
