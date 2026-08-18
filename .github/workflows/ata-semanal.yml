@@ -1,0 +1,70 @@
+# Gera a ATA da reunião ministerial, toda segunda.
+#
+# Por que GitHub Actions e não cron da Vercel: o vercel.json já tem 46 crons e
+# existe teto de plano. Um deploy recusado por excesso de cron derrubaria TODAS
+# as publicações, não só esta função — não vale o risco por um agendamento.
+#
+# Horário: segunda 15h em São Paulo (18:00 UTC). A reunião é 10h30–12h30 e a
+# gravação do Plaud só fica pronta cerca de 1h30 depois do fim — medido em três
+# reuniões (1h29, 1h30 e 1h50 após o término). Às 15h há folga de sobra, e a
+# ata fica pronta na mesma tarde, com a reunião ainda fresca.
+#
+# O trabalho pesado (ler o Plaud, redigir com o Claude, gravar) acontece no
+# backend do ERP. Aqui é só o gatilho.
+
+name: ATA Semanal (gerar)
+
+on:
+  schedule:
+    - cron: '0 18 * * 1'   # segunda 15h America/Sao_Paulo (UTC-3 o ano todo)
+  workflow_dispatch:
+    inputs:
+      limite:
+        description: 'Quantas atas gerar nesta rodada (1 a 5)'
+        required: false
+        default: '2'
+
+concurrency:
+  group: ata-semanal
+  cancel-in-progress: false
+
+jobs:
+  gerar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Gerar atas pendentes
+        env:
+          BASE: ${{ secrets.APP_BASE_URL }}
+          SEGREDO: ${{ secrets.CRON_SECRET }}
+          LIMITE: ${{ github.event.inputs.limite }}
+        run: |
+          set -u
+          if [ -z "${SEGREDO:-}" ] || [ -z "${BASE:-}" ]; then
+            echo "::error::faltam os secrets APP_BASE_URL e/ou CRON_SECRET"
+            exit 1
+          fi
+
+          # 25 min: redigir uma ata de 1h de reunião com Opus leva alguns
+          # minutos, e o limite padrão é 2 por rodada.
+          http=$(curl -sS -o /tmp/r.json -w '%{http_code}' --max-time 1500 \
+            -X POST "${BASE%/}/api/ata-semanal/cron/gerar?limite=${LIMITE:-2}" \
+            -H "x-cron-secret: $SEGREDO" \
+            -H 'content-type: application/json' -d '{}' || echo "000")
+
+          echo "http=$http"
+          cat /tmp/r.json 2>/dev/null | head -c 2000
+          echo
+
+          if [ "$http" != "200" ]; then
+            echo "::error::geração da ata falhou (http=$http)"
+            exit 1
+          fi
+
+          # Sucesso HTTP não é sucesso de negócio: o corpo diz o que aconteceu
+          # com cada reunião, e 'erro'/'sem_gravacao' precisam aparecer em
+          # vermelho, senão a segunda passa e ninguém percebe que não saiu ata.
+          #
+          # ⚠️ Numa linha só, e não heredoc: código Python indentado dentro de um
+          # bloco YAML `|` herda a indentação do bloco e vira IndentationError.
+          python3 -c 'import json,sys;d=json.load(open("/tmp/r.json"));g=d.get("geradas",[]);[print("  ",x.get("date"),x.get("status"),x.get("erro","")) for x in g];r=[x for x in g if x.get("status")!="ok"];print(("::error::%d de %d reunioes nao geraram ata" % (len(r),len(g))) if r else ("::notice::%d ata(s) gerada(s)" % len(g)) if g else ("::notice::"+str(d.get("mensagem","nada a gerar"))));sys.exit(1 if r else 0)'

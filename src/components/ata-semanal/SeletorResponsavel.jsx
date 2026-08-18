@@ -46,78 +46,111 @@ function Foto({ nome, url, tamanho = 24 }) {
 }
 
 /**
- * @param {string|null} valor        nome do responsável já salvo (texto livre no banco)
- * @param {Array}       colaboradores  [{ id, name, avatar_url, area }]
- * @param {Function}    onChange     recebe o nome escolhido, ou null ao limpar
+ * Seletor de MÚLTIPLOS responsáveis.
+ *
+ * ⚠️ A lista pode conter nomes que não são de nenhum colaborador — a ata gera
+ * coisas como "Milena / Mari", e gente sem login também é responsável por
+ * pendência. Eles continuam na lista, com iniciais no lugar da foto, em vez de
+ * serem descartados por não casarem com um cadastro.
+ *
+ * @param {string[]} valores        nomes já salvos
+ * @param {Array}    colaboradores  [{ id, name, avatar_url, area }]
+ * @param {Function} onChange       recebe a nova lista de nomes
  */
-export default function SeletorResponsavel({ valor, colaboradores, onChange, cores }) {
+export default function SeletorResponsavel({ valores, colaboradores, onChange, cores }) {
   const [aberto, setAberto] = useState(false);
   const C = cores;
+  const lista = Array.isArray(valores) ? valores.filter(Boolean) : [];
 
   // O banco guarda TEXTO (`governance_tasks.responsavel`), não id. Isso é
   // proposital: responsáveis vindos da ata podem ser "Milena / Mari" ou alguém
   // que não tem login. Então casamos por nome para mostrar a foto, e seguimos
   // exibindo o texto quando não há correspondência — em vez de descartá-lo.
-  const escolhido = useMemo(() => {
-    const v = String(valor || '').trim().toLowerCase();
-    if (!v) return null;
-    return colaboradores.find((c) => String(c.name || '').trim().toLowerCase() === v) || null;
-  }, [valor, colaboradores]);
+  const porNome = useMemo(() => {
+    const m = new Map();
+    for (const c of colaboradores) m.set(String(c.name || '').trim().toLowerCase(), c);
+    return m;
+  }, [colaboradores]);
 
-  const temValor = Boolean(String(valor || '').trim());
+  const perfilDe = (nome) => porNome.get(String(nome || '').trim().toLowerCase()) || null;
+  const selecionado = (nome) => lista.some((v) => v.toLowerCase() === String(nome || '').toLowerCase());
+
+  const alternar = (nome) => {
+    onChange(selecionado(nome) ? lista.filter((v) => v.toLowerCase() !== nome.toLowerCase()) : [...lista, nome]);
+  };
 
   return (
     <Popover open={aberto} onOpenChange={setAberto}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="text-xs rounded-md px-2 py-1 border flex items-center gap-1.5 w-52 text-left"
-          style={{ background: C.inputBg, borderColor: C.border, color: temValor ? C.text : C.t3 }}
+          className="text-xs rounded-md px-2 py-1 border flex items-center gap-1.5 min-w-52 max-w-72 text-left"
+          style={{ background: C.inputBg, borderColor: C.border, color: lista.length ? C.text : C.t3 }}
         >
-          {temValor
-            ? <><Foto nome={escolhido?.name || valor} url={escolhido?.avatar_url} tamanho={20} />
-                <span className="truncate flex-1">{valor}</span></>
-            : <span className="flex-1">responsável…</span>}
-          {temValor ? (
-            // Limpar sem abrir a lista: <span> e não <button>, porque um botão
-            // dentro do PopoverTrigger (que também é botão) é HTML inválido e o
-            // clique se perde para o gatilho.
-            <span
-              role="button"
-              tabIndex={0}
-              aria-label="remover responsável"
-              onClick={(e) => { e.preventDefault(); e.stopPropagation(); onChange(null); }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault(); e.stopPropagation(); onChange(null);
-                }
-              }}
-              style={{ display: 'flex', color: C.t3 }}
-            >
-              <X size={13} />
-            </span>
+          {lista.length === 0 ? (
+            <><span className="flex-1">responsável…</span><ChevronsUpDown size={13} style={{ color: C.t3 }} /></>
           ) : (
-            <ChevronsUpDown size={13} style={{ color: C.t3 }} />
+            <>
+              {/* Fotos empilhadas: com 3 ou 4 pessoas, escrever todos os nomes
+                  estoura a largura da linha. As fotos identificam de relance e
+                  o nome completo fica no title. */}
+              <span className="flex -space-x-1.5 flex-none">
+                {lista.slice(0, 4).map((nome) => (
+                  <span key={nome} title={nome} style={{ borderRadius: 999, outline: `2px solid ${C.inputBg}` }}>
+                    <Foto nome={nome} url={perfilDe(nome)?.avatar_url} tamanho={20} />
+                  </span>
+                ))}
+              </span>
+              <span className="truncate flex-1" title={lista.join(', ')}>
+                {lista.length === 1 ? lista[0] : `${lista.length} responsáveis`}
+              </span>
+              <span
+                role="button"
+                tabIndex={0}
+                aria-label="remover todos os responsáveis"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onChange([]); }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onChange([]); }
+                }}
+                style={{ display: 'flex', color: C.t3 }}
+              >
+                <X size={13} />
+              </span>
+            </>
           )}
         </button>
       </PopoverTrigger>
 
-      <PopoverContent className="p-0 w-64" align="start">
+      <PopoverContent className="p-0 w-72" align="start">
         <Command>
           <CommandInput placeholder="Buscar colaborador…" />
           <CommandList>
             <CommandEmpty>Ninguém encontrado.</CommandEmpty>
+
+            {/* Nomes que vieram da ata e não são colaboradores cadastrados
+                aparecem primeiro, para poderem ser removidos — se ficassem de
+                fora da lista, não haveria como tirá-los sem limpar tudo. */}
+            {lista.filter((n) => !perfilDe(n)).map((nome) => (
+              <CommandItem key={`livre-${nome}`} value={nome} onSelect={() => alternar(nome)}
+                           className="flex items-center gap-2">
+                <Foto nome={nome} url={null} />
+                <span className="flex-1 truncate text-sm">{nome}</span>
+                <span className="text-[10px] uppercase" style={{ color: C.t3 }}>da ata</span>
+                <Check size={14} style={{ color: C.primary }} />
+              </CommandItem>
+            ))}
+
             {colaboradores.map((c) => (
               <CommandItem
                 key={c.id}
                 value={c.name || ''}
-                onSelect={() => { onChange(c.name); setAberto(false); }}
+                onSelect={() => alternar(c.name)}
                 className="flex items-center gap-2"
               >
                 <Foto nome={c.name} url={c.avatar_url} />
                 <span className="flex-1 truncate text-sm">{c.name}</span>
                 {c.area && <span className="text-[10px] uppercase" style={{ color: C.t3 }}>{c.area}</span>}
-                {escolhido?.id === c.id && <Check size={14} style={{ color: C.primary }} />}
+                {selecionado(c.name) && <Check size={14} style={{ color: C.primary }} />}
               </CommandItem>
             ))}
           </CommandList>

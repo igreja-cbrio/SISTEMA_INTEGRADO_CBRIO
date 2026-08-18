@@ -190,11 +190,14 @@ export default function AtaSemanal() {
 
   // Sem dono primeiro: é a fila de trabalho de quem abre a tela.
   const { semDono, comDono, encerradas } = useMemo(() => {
+    const temDono = (t) => (t.responsaveis?.length ? true : Boolean(String(t.responsavel || '').trim()));
     const fim = (t) => ['concluida', 'cancelada', 'nao_executada'].includes(t.status);
     const abertas = tarefas.filter((t) => !fim(t));
     return {
-      semDono:    abertas.filter((t) => !String(t.responsavel || '').trim()),
-      comDono:    abertas.filter((t) => String(t.responsavel || '').trim()),
+      // Um array vazio conta como SEM dono: `responsaveis: []` chega assim
+      // depois de alguém limpar a lista.
+      semDono:    abertas.filter((t) => !temDono(t)),
+      comDono:    abertas.filter((t) => temDono(t)),
       encerradas: tarefas.filter(fim),
     };
   }, [tarefas]);
@@ -226,10 +229,11 @@ export default function AtaSemanal() {
     setEnviandoId(tarefa.id);
     try {
       const r = await api.enviarParaMinhasTarefas(tarefa.id);
-      patchLocal(tarefa.id, { tarefa_pessoal_id: r.tarefa_id });
+      patchLocal(tarefa.id, { tarefas_pessoais_ids: r.tarefas_ids, tarefa_pessoal_id: r.tarefas_ids?.[0] });
       if (r.criada) {
-        toast.success(r.responsavel_nome
-          ? `Enviada para as tarefas de ${r.responsavel_nome}`
+        const nomes = r.responsaveis || [];
+        toast.success(nomes.length
+          ? `Enviada para ${nomes.length > 1 ? 'as tarefas de ' + nomes.join(', ') : 'as tarefas de ' + nomes[0]}`
           : 'Enviada para Minhas Tarefas');
       } else {
         toast.info('Esta pendência já havia sido enviada');
@@ -244,18 +248,21 @@ export default function AtaSemanal() {
   const geradaPorIa = String(detalhe?.observacoes || '').includes('Gerada por IA');
 
   const LinhaTarefa = (t) => {
-    const jaEnviada = Boolean(t.tarefa_pessoal_id);
+    const jaEnviada = Boolean(t.tarefas_pessoais_ids?.length || t.tarefa_pessoal_id);
     return (
       <li key={t.id} className="px-4 py-3 border-b last:border-b-0" style={{ borderColor: C.border }}>
         <div className="text-sm mb-2">{t.titulo}</div>
         <div className="flex flex-wrap gap-2 items-center">
           <SeletorResponsavel
-            valor={t.responsavel}
+            valores={t.responsaveis || (t.responsavel ? [t.responsavel] : [])}
             colaboradores={colaboradores}
             cores={C}
-            onChange={(nome) => {
-              if ((nome || null) !== (t.responsavel || null)) salvarTarefa(t, { responsavel: nome });
-            }}
+            onChange={(nomes) => salvarTarefa(t, {
+              responsaveis: nomes,
+              // Espelho local para a UI não piscar: o backend faz o mesmo na
+              // coluna antiga, que o módulo de governança continua lendo.
+              responsavel: nomes.length ? nomes.join(', ') : null,
+            })}
           />
           <input
             type="date"
