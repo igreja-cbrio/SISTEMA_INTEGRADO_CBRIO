@@ -21,6 +21,7 @@ const {
 const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
 const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../utils/volRodizio');
 const { montarCobertura, contarStatus } = require('../utils/volCobertura');
+const { podeGerarCulto } = require('../utils/volSyncIntegrity');
 const { chavePco } = require('../utils/pcoChave');
 const { diaIntegracaoBRT } = require('../utils/volIntegradoEm');
 const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
@@ -85,7 +86,7 @@ router.use('/emails', require('./volEmails'));
 // CONFIG · régua do Termômetro (limiares de check-ins por categoria)
 // GET aberto (herda membresia>=1) · PUT exige voluntariado>=3.
 // ══════════════════════════════════════════════════════════════
-const VOL_CONFIG_DEFAULT = { muito_ativo_min: 8, regular_min: 4, pouco_ativo_min: 1, sobrecarga_limite: 8 };
+const VOL_CONFIG_DEFAULT = { muito_ativo_min: 8, regular_min: 4, pouco_ativo_min: 1, sobrecarga_limite: 8, pco_ativo: true };
 
 router.get('/config', async (req, res) => {
   try {
@@ -153,6 +154,11 @@ router.put('/config', authorizeModule('voluntariado', 3), async (req, res) => {
       pouco_ativo_min: toInt(req.body?.pouco_ativo_min, VOL_CONFIG_DEFAULT.pouco_ativo_min),
       sobrecarga_limite: toInt(req.body?.sobrecarga_limite, VOL_CONFIG_DEFAULT.sobrecarga_limite),
     };
+    // ⚠️ `pco_ativo` só entra no update quando vem EXPLÍCITO no corpo. O
+    // formulário do Termômetro manda os quatro limiares e mais nada; se a chave
+    // fosse montada com default como os outros campos, salvar o Termômetro
+    // religaria o Planning Center sem ninguém pedir.
+    if (typeof req.body?.pco_ativo === 'boolean') cfg.pco_ativo = req.body.pco_ativo;
     // Ordem coerente: muito_ativo_min >= regular_min >= pouco_ativo_min >= 1.
     if (!(cfg.muito_ativo_min >= cfg.regular_min && cfg.regular_min >= cfg.pouco_ativo_min && cfg.pouco_ativo_min >= 1)) {
       return res.status(400).json({ error: 'Os limites devem ser decrescentes: Muito Ativo ≥ Regular ≥ Pouco Ativo ≥ 1.' });
@@ -3001,18 +3007,28 @@ router.post('/service-types/:id/generate', async (req, res) => {
     const dayStartBRT = (y, m0, d) => `${y}-${pad(m0 + 1)}-${pad(d)}T00:00:00-03:00`;
     const dayEndBRT = (y, m0, d) => new Date(Date.UTC(y, m0, d + 1)).toISOString().slice(0, 10) + 'T00:00:00-03:00';
 
+    // Uma leitura só por chamada — o gerador roda o ano inteiro em loop.
+    let pcoAtivo = true;
+    try {
+      const { data: cfg } = await supabase.from('vol_config').select('pco_ativo').eq('id', 1).maybeSingle();
+      if (cfg && cfg.pco_ativo === false) pcoAtivo = false;
+    } catch (e) {
+      console.error('[vol generate] leitura de pco_ativo:', e.message);
+    }
+
     const generated = [];
 
     const makeIfAbsent = async (y, m0, d) => {
       const scheduledAt = toBRTISO(y, m0, d);
       const { data: existing } = await supabase.from('vol_services')
-        .select('id, service_type_id')
+        .select('id, service_type_id, planning_center_id')
         .gte('scheduled_at', dayStartBRT(y, m0, d))
         .lt('scheduled_at', dayEndBRT(y, m0, d));
-      // Não duplica: pula se já existe esse tipo no dia OU se já há serviço do
-      // Planning Center (service_type_id NULL) no dia — o PCO é a fonte das
-      // escalas; gerar a partir do vol_service_type criaria duplicado vazio.
-      if (existing && existing.some(s => s.service_type_id === sType.id || s.service_type_id === null)) return;
+      // Régua em `utils/volSyncIntegrity.podeGerarCulto` (pura, no gate): com o
+      // PCO ativo, qualquer culto dele no dia bloqueia (incidente 05/07); com o
+      // PCO desligado, só o MESMO tipo bloqueia — senão o culto da manhã
+      // herdado do Planning Center impediria pra sempre o da noite.
+      if (!podeGerarCulto({ servicosDoDia: existing || [], serviceTypeId: sType.id, pcoAtivo }).pode) return;
       const { data: svc, error: svcErr } = await supabase.from('vol_services')
         .insert({ name: sType.name, service_type_name: sType.name, service_type_id: sType.id, scheduled_at: scheduledAt })
         .select().single();
