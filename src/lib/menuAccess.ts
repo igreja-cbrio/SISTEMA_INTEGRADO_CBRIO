@@ -78,6 +78,14 @@ const DOMINIO_POR_PATH: Record<string, { dom: Dominio; slug?: string }> = {
   // 2 · Criativo (time criativo + admin)
   '/marketing': { dom: 'criativo' },
   '/producao': { dom: 'criativo' },
+  // ⚠️ O lookup é por path EXATO. Quando Destaques e Fotos de Batismo viraram a
+  // aba "App" do Marketing (17/08), o item de menu passou a apontar pra
+  // `/marketing/app` — sem esta linha o declutter de domínio deixa de valer e o
+  // item volta a aparecer pra quem tem `marketing` >= 1 fora do Criativo
+  // (pastor-senior, diretor-administrativo, diretor-ministerial têm nível 1).
+  '/marketing/app': { dom: 'criativo' },
+  // Os dois endereços antigos ficam mapeados de propósito: são `Navigate` hoje,
+  // mas link salvo e atalho antigo ainda passam por aqui.
   '/admin/destaques': { dom: 'criativo' },
   '/admin/fotos-batismo': { dom: 'criativo' },
   // 3 · Administração-Gestão (não-ministerial e não-criativo)

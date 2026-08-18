@@ -1,13 +1,18 @@
 const router = require('express').Router();
 const multer = require('multer');
 const crypto = require('crypto');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
 // Destaques do carrossel da Home do app de membros (tabela app_destaques).
 // O app lê a tabela direto via RLS (policy destaques_publicos: ativo +
-// janela publica_em/expira_em). Aqui é só a gestão — restrita a
-// admin/diretor, espelhando a policy destaques_admin do banco.
+// janela publica_em/expira_em). Aqui é só a GESTÃO, e ela passa pelo módulo
+// `marketing` (ver o guard abaixo).
+// ⚠️ A policy de ESCRITA do banco (`destaques_admin`) segue admin-only DE
+// PROPÓSITO e este guard NÃO a espelha mais: nenhum cliente escreve nesta tabela
+// direto (conferido no ERP e no app — `lib/destaques.ts` só faz SELECT), a
+// escrita chega por aqui com service_role. Ampliar a policy só aumentaria o que a
+// anon key do bundle alcança, sem ninguém precisar.
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -21,7 +26,25 @@ const uploadMw = multer({
 const BUCKET = 'app-destaques';
 const EXTS = { 'image/png': 'png', 'image/webp': 'webp', 'image/jpeg': 'jpg' };
 
-router.use(authenticate, authorize('admin', 'diretor'));
+// ⚠️ AUTORIZAÇÃO (18/08/2026 · decisão do Marcos): *"Pedro deve poder publicar,
+// alterar fotos, alterar destaques... mexer no app por esse módulo."*
+// O guard era `authorize('admin','diretor')` e o Pedro Paiva tem role
+// **`assistente`** (medido) — ele coordena o Marketing e não passava. Agora quem
+// manda é o MÓDULO: leitura 1 (quem abre a aba App já tem isso) e escrita 3, o
+// nível que a matriz JÁ dá a `coordenador-marketing` e `assistente-marketing`.
+// ⚠️ `admin`/`diretor` continuam passando (bypass dentro do authorizeModule), então
+// ninguém que publicava ontem perdeu acesso.
+// ⚠️ O nível 3 vale também pro DELETE, e é decisão: aqui apagar é curadoria
+// rotineira (trocar destaque, tirar foto ruim), não destruição de registro — e com
+// 4 o acesso passaria a depender de a pessoa estar em `usuario_areas` (o boost de
+// área dá 5), o que separaria a equipe por acidente de cadastro, não por decisão.
+// ⚠️ O guard fica no `router.use` de propósito: rota nova neste arquivo nasce
+// protegida sem ninguém precisar lembrar.
+const podeVer = authorizeModule('marketing', 1);
+const podeEditar = authorizeModule('marketing', 3);
+router.use(authenticate, (req, res, next) => (
+  ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? podeEditar : podeVer
+)(req, res, next));
 
 async function uploadImagem(id, file) {
   const ext = EXTS[file.mimetype] || 'jpg';

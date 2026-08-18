@@ -832,3 +832,205 @@ chave só significa refazer a migration.
 Matheus, o alinhamento da Fase 0 entre as duas frentes (as duas sessões acabaram
 de escrever no MESMO arquivo em paralelo — a prova de que a Fase 0 não é
 formalidade), e a correção das 84 escalas no **Planning Center**, que não é código.
+
+---
+
+## 13 · ESTRATÉGIA DE EXECUÇÃO — aprovada pelo Marcos Paulo em 12/08 ("modo piloto")
+
+> Registrado pela sessão do Marcos Paulo. Ele decidiu **antecipar a implementação
+> inteira** para não "mudar tudo e testar no mesmo dia": tudo vai ao ar esta
+> semana, a parte VISÍVEL fica atrás de um véu que só ele e o Matheus enxergam,
+> os dois testam com dados reais, e no dia 24 o destrave é um flip — não um
+> deploy. **Divisão revista por decisão dele (12/08): a sessão do Claude
+> implementa TODOS os lotes, inclusive os 4 arquivos do dash, em PRs pequenos e
+> sequenciais** — Matheus acompanha por aqui e pelos PRs; qualquer objeção dele
+> tem prioridade (este arquivo continua sendo o canal).
+
+### 13.1 As três camadas (o que fica onde)
+
+| Camada | Tratamento | Por quê |
+|---|---|---|
+| **Fixes da Fase 1** (régua voluntariado + 'Domingo 09%', totem Kids, guards, isSedeCulto) | **Abertos, sem véu** | São invisíveis por natureza — não mudam nada enquanto o tipo 09:30 não existe. Véu aqui só criaria o risco de esquecer de destravar (e régua em view SQL nem tem como ser gateada por usuário). |
+| **UI nova** (seletores de lente, agrupamento, ocupação ofertada, marca de 24/08) | **Atrás do véu**: flag no banco (default OFF); com OFF, só super-admin (`is_super_admin()`) vê | Testável com dado real de domingo (17/08) sem ninguém mais ver. No dia 24: **1 UPDATE** liga pra todos — zero deploy de domingo. Rollback = desligar. |
+| **Dado do corte** (tipo 09:30, is_active=false nos 2, 72 cultos, fin_culto_slots, batismo_horarios, whatsapp_config) | **Script ÚNICO ensaiado** (dry-run + backups + invariantes §4.2), executado em 24/08 | Dado não tem permissão: o tipo novo aparece pra todo mundo assim que existe (a régua `< 14:00` o absorve sozinha). O dia 24 continua sendo o interruptor — mas vira "rodar 1 script revisado", não "escrever coisas". |
+
+### 13.2 Cronograma revisto
+
+| Quando | O quê |
+|---|---|
+| 12–15/08 | Lotes no ar: (1) bebês 09:30 · (2) Fase 1 fixes abertos · (3) migration aditiva (vigência + **2 chaves**: `linhagem_key` E `consolidacao_key` — ver §12.4) + flag do véu · (4) lentes + ocupação atrás do véu |
+| Dom 17/08 | **Ensaio geral**: Marcos + Matheus testam lentes/ocupação com os dados reais do domingo, atrás do véu. Limite honesto: consolidação e ocupação testam por completo (usam histórico); a lente continuidade só diverge da separada com dado pós-corte |
+| 18–20/08 | Correções do ensaio · ok do financeiro (D2 · fallback = contas do 10:00) · script do corte escrito, revisado, dry-run |
+| 23/08 (pós-cerimônia) | `batismo_horarios` (fechar 08:30/10:00 · abrir 09:30 e 11:30, limite 11, rótulo sem ordinais) + hora dos planos no PCO |
+| 24/08 | Rodar o script + **ligar a flag** + invariantes §4.2 |
+| 25–29/08 | OTA do CBRio-Staff · PR cosmético (§5 F4.2) |
+| 30/08 | Verificação de campo §4.3 (o que nenhum ensaio cobre: totem no buraco 10:30–11:00, continuidade com dado novo) |
+
+### 13.3 O que o ensaio de 17/08 NÃO cobre (fica pro dia 30)
+
+Lente continuidade divergindo (precisa de dado do 09:30) · totem Kids em sessão
+real de 09:30 · sync do PCO pós-mudança de hora · fluxo financeiro do slot novo.
+A verificação de campo do §4.3 permanece obrigatória.
+
+---
+
+## 14 · ENSAIO DO CORTE — rodado em 18/08 (resultado)
+
+> Registrado pela sessão do Matheus. O ensaio do `corte-cultos-domingo-20260824.sql`
+> foi executado de verdade (`v_executar = false`, bloco revertido, contra a base de
+> produção). **Rollback conferido nas 2 execuções**, em 11 indicadores.
+
+⚠️ **Correção de data no §13.2:** ele diz "Dom 17/08", mas **17/08/2026 foi
+SEGUNDA**. O domingo era **16/08**. As outras datas do cronograma estão certas e
+conferidas: 23/08 domingo (cerimônia de batismo) · **24/08 segunda (o corte)** ·
+**30/08 domingo (o primeiro no formato novo)**.
+
+### 14.1 ⚠️⚠️ O achado: o corte estouraria o `statement_timeout` (PR #2559)
+
+`cultos` tem **DOIS gatilhos ROW-level** — `cultos_recalc_kpis`
+(`trg_kpi_recalcular_culto`) e `cultos_recalcular_nsm`
+(`tg_nsm_recalcular_pos_culto`). Cronometrado com `clock_timestamp()` dentro do
+bloco revertido: **INSERT 1,258 s · DELETE 2,440 s, por linha.**
+
+18 inserts + 36 deletes ⇒ **~110 s só nesse trecho**, antes dos 5 backups, do
+patch da view e das 10 invariantes. E `statement_timeout` da sessão é **2 min** ⇒
+o corte ia ficar no fio e provavelmente por cima, **abortando no dia 24** (com
+rollback, seguro — mas sem fazer o trabalho, sob pressão de tempo).
+
+**Conserto:** `SET statement_timeout = '10min'` como statement **SEPARADO antes**
+do bloco (o `DO` é UMA instrução, então `SET LOCAL` dentro dele não vale para ele
+mesmo). ⚠️ **Não rodar o script por cliente com timeout curto** — o MCP do
+Supabase aborta antes (2 tentativas, as duas revertidas): é **SQL Editor**.
+⚠️ **NÃO desligar os gatilhos** para acelerar: as 54 linhas são futuras e todas
+zero, nenhum KPI/NSM mudaria de valor, mas suprimir gatilho na tabela mais quente
+do sistema é decisão de gente.
+
+**Régua que passa disto:** operação em LOTE sobre `cultos` custa **~1–2,5 s POR
+LINHA**. Todo script/backfill futuro que mexa em dezenas de cultos tem de orçar
+isso — o custo não está na tabela (é pequena), está nos dois recálculos.
+
+### 14.2 O que o ensaio validou
+
+| Item | Resultado |
+|---|---|
+| Lote 2 (régua aceita `Domingo 09:30`) | ✅ |
+| Lote 3 (colunas + `cultos_config`) | ✅ |
+| Tipos `08:30`/`10:00` acháveis pelo nome exato | ✅ |
+| Slot `domingo-10h` presente | ✅ |
+| **Bloqueadores** (culto futuro com dado/satélite) | **0** de 36 |
+| Cultos 09:30 a criar · a remover | **18** · **36** |
+| Vínculos de template de escala herdados do 10:00 | **1** (não cai no AVISO) |
+| Apresentações de bebê a repontar | **0** (rede de segurança inerte) |
+| Backup `kpi_registros` (SED-18/SED-21) | 382 linhas |
+| Órfãos (`service_type_id IS NULL`) | **0**, e a invariante exige que não cresça |
+
+**A fronteira financeira, medida ao vivo** — o motivo do passo 5 existir:
+
+| PIX às | cai HOJE no slot |
+|---|---|
+| 09:29 | Domingo 8:30 |
+| 09:30 · 10:59 | Domingo 10:00 |
+| 11:00 | Domingo 11:30 |
+
+Ou seja: sem o recorte, a oferta de um culto das 09:30 se parte entre **DOIS
+slots de cultos extintos**. As invariantes do script cobrem exatamente isso.
+
+### 14.3 Descartados como causa (medidos, não supostos)
+
+- **Lock do `CREATE OR REPLACE VIEW`**: sondado com `LOCK … NOWAIT` → **livre**.
+  Não era contenção de leitura do dashboard.
+- **`DELETE` cascateando para filhas sem índice**: 3 filhas de `cultos` não têm
+  índice em `culto_id` (`cui_convertidos` 397 · `kids_pco_presencas` 147 ·
+  `app_decisoes` ~0) — pequenas, não são o gargalo. Ficam anotadas.
+
+### 14.4 Consertado junto
+
+O fallback do `.env` no `_corte_cultos_domingo_ensaio.cjs` apontava para
+`~/SISTEMA_INTEGRADO_CBRIO/backend`, e o checkout principal é `~/Documents/…` —
+rodando de uma worktree (que nasce sem `.env`, gitignored) ele morria em "não
+encontrados" com o arquivo existindo no principal. Passou a tentar os dois e a
+dizer ONDE procurou + que é opcional. ⚠️ Os outros 2 `.cjs` de `backend/scripts/`
+têm o **mesmo** erro e não foram tocados.
+
+### 14.5 Pendente, e de quem é
+
+| O quê | Quem | Quando |
+|---|---|---|
+| Ler o resumo `ENSAIO OK — …` colando o script no SQL Editor | Matheus/MP | antes de 24/08 |
+| ⏳ **ok do financeiro na conta nova (D2)** — sem ele o slot 9:30 nasce com as contas do 10:00 | Matheus | **deadline 20/08** |
+| Batismo + hora dos planos no PCO (84 escalas não se movem) | Matheus | 23/08, pós-cerimônia |
+| `v_executar := true` + rodar no SQL Editor + invariantes | os dois | 24/08 |
+| OTA do CBRio-Staff (grade hardcoded) | Matheus | 25–29/08 |
+| Verificação de campo §4.3 | os dois | 30/08 |
+
+⚠️ **O véu não é "só o Marcos e o Matheus": são 4 contas** — `infra@`,
+`marcospaulo.almeida@`, `matheus.toscano@` e **`yago.torres@`** (o gate é
+`isSuperAdminEmail` contra `app_super_admins`). E **`gestao@cbrio.com.br` NÃO
+está na lista** — quem abrir o Dashboard Semanal com esse login não vê o card.
+
+---
+
+## 15 · D2 RESPONDIDA e o PCO RE-MEDIDO (18/08)
+
+### 15.1 D2 · conta nova, criada (o ok do financeiro saiu em 18/08)
+
+Decisão do Matheus: **conta NOVA, não reuso** — a receita do 09:30 fica separada
+da do 10:00 na DRE, e as contas do 8:30/10:00 ficam com o histórico.
+
+| código | nome | uuid |
+|---|---|---|
+| `3.01.01.10` | Dizimos Domingo 9:30 | `08019a7a-b59d-4cd5-97d9-c0d8d7c8a37d` |
+| `3.01.02.10` | Ofertas Domingo 9:30 | `fffb0e2a-65cd-42cc-baf5-30288ae03b30` |
+
+Já preenchidas em `v_conta_dizimo_0930`/`v_conta_oferta_0930` — **o fallback
+interim não é mais usado**. Criadas na convenção das irmãs (nível 4 · natureza
+`ordinaria` · `aceita_lancamento=true`).
+
+⚠️ **`ordem` empata de propósito** (311 e 321, as dos irmãos do 10:00): a sequência
+global é **densa** (301…321) e não havia inteiro livre entre o dízimo 10:00 (311) e
+o cabeçalho OFERTAS (312). Não há unique em `ordem` — só em `codigo` — e empatar
+deixa cada conta ao lado do próprio grupo **sem reescrever nenhuma linha
+existente**. O consumidor (`financeiroV2.js:50`) ordena só por `ordem`; renumerar
+teria tocado ~10 contas contábeis para ganhar nada.
+
+⚠️⚠️ **`aceita_lancamento=false` nas contas VELHAS ficou FORA do dia 24, de
+propósito.** Faz parte da D2, mas a oferta do culto de **23/08** costuma ser
+conciliada dias depois — travar a conta em 24/08 recusaria a classificação do
+último domingo do formato antigo. Quem já impede lançamento novo no horário
+extinto é o **slot** (`ativo=false`, passo 5). Fazer quando a conciliação de 23/08
+fechar: **decisão de data do Matheus, não do script.**
+
+### 15.2 PCO · a migração não dispensa corrigir os 3 planos
+
+Matheus (18/08): *"estamos migrando de lá, então vamos começar a levar em conta
+apenas o que tá registrado no nosso sistema"*. **O destino está certo, mas hoje o
+sync ainda é o dono das linhas futuras do voluntariado** — medido:
+
+| | |
+|---|---|
+| `vol_services` com data ≥ 24/08 | **9**, e **todos os 9** vieram do PCO |
+| escalas penduradas neles | **189** |
+| serviços de MANHÃ ≥ 30/08 | 4, **todos** `service_type_id IS NULL` (PCO-only) |
+| hora deles | **08:30** |
+| escalas de manhã afetadas | **106** (16+16+26 em 30/08 · 48 em 06/09) |
+
+⚠️⚠️ **Consertar no banco NÃO resolve:** no ramo PCO-only o
+`executarSyncCompleto` (`planningCenter.js:375`) faz upsert de `scheduled_at` pelo
+`planning_center_id`, então o cron horário **reverte o update em até 60 min**.
+Quando o serviço é INTERNO (`service_type_id` preenchido) o sync só liga o
+`plan_id` e não encosta na hora — não é o caso destes 4.
+
+⚠️ **O que NÃO depende disso** (e é o que o Lote 2 garantiu): a régua do turno
+classifica por **NOME** (`Domingo - Manhã`), não por hora ⇒ Dashboard Semanal,
+bloco e contagem de check-in ficam **certos sem nenhuma ação**. O que fica errado
+é a **hora que o voluntário vê** nas 106 escalas — e o lembrete de escala no
+WhatsApp sai com ela.
+
+⇒ Decisão do Matheus: **corrigir os 3 planos no PCO** (`Domingo - Manhã` 90926558
+30/08 · `CBKIDS - Manhã Domingo` 90756297 30/08 e 90756298 06/09) → 09:30. As
+escalas não se movem (vínculo por `service_id`).
+
+⚠️ **Enquanto o sync existir, o PCO continua sendo dono de `vol_services`
+futuros.** "Levar em conta só o nosso sistema" no voluntariado exige, além de
+desligar o cron, um caminho para os serviços nascerem AQUI — que hoje não existe.
+Isso é a migração, não o corte de 24/08.

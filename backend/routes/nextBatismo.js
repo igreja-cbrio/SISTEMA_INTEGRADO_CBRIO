@@ -18,6 +18,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { buscarCandidatos, acharOuCriar, acharOuCriarGuardado } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade, nomesPodemSerMesmaPessoa, tokensNome } = require('../services/duplicidadePolicy');
+const { similaridadeNome } = require('../services/identidadeProgressiva');
 const { avaliarRelacaoFamiliar } = require('../services/familiaPolicy');
 const { montarPatchFusao } = require('../services/fusaoCampos');
 
@@ -255,10 +256,10 @@ function linhaDuplicidade(a, b, avaliacao) {
   };
 }
 
-let triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null, promessa: null };
+let triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null, membros: null, promessa: null };
 
 function invalidarTriagemPessoas() {
-  triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null, promessa: null };
+  triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null, membros: null, promessa: null };
 }
 
 async function carregarTriagemFamilias() {
@@ -529,7 +530,11 @@ async function carregarTriagemFamilias() {
   const duplicatas = [...paresDuplicidade.entries()]
     .filter(([parId]) => !paresDuplicidadeIgnorados.has(parId))
     .map(([, linha]) => linha);
-  triagemFamiliasCache = { ate: Date.now() + 10 * 60_000, familias, duplicatas, promessa: null };
+  // ⚠️ `membros` fica no cache porque o endpoint de VIZINHOS precisa da base
+  // inteira pra comparar nome, e recarregar 4 mil linhas a cada abertura de card
+  // seria pagar de novo o que a triagem acabou de pagar. Mesma janela de 10 min e
+  // a MESMA invalidação — assim vizinho não sobrevive a uma fusão.
+  triagemFamiliasCache = { ate: Date.now() + 10 * 60_000, familias, duplicatas, membros, promessa: null };
   return triagemFamiliasCache;
   };
 
@@ -748,6 +753,112 @@ router.get('/familias-pendentes', authorizeModule('next-batismo', 1), async (req
 });
 
 // ── GET /duplicados · pares suspeitos do funil novo ──────────────────────────
+// ── GET /duplicados/vizinhos · os OUTROS cadastros parecidos com um par ───────
+// Pedido do Marcos (17/08): "a questão de junção e limpeza de pares triplicados
+// ou quadruplicados precisa seguir".
+//
+// ⚠️⚠️ POR QUE NÃO É UM AGRUPAMENTO AUTOMÁTICO DA FILA. Medi antes de escrever, e
+// a fila não tem grupos pra mostrar: dos 89 pares com evidência de NOME, **todos
+// os 89 são pares isolados** — zero grupos de 3+. Os 10 grupos de 3+ que existem
+// pelo componente conexo estão contaminados por transitividade (telefone
+// compartilhado): "Kevyn de Oliveira | Kevyn Teste | Nêlio Paiva", "Elisa | Elisa
+// Marques | Erick". E exigir clique não salva — três pessoas da mesma casa
+// compartilham o telefone e formam clique perfeito com score 30, o piso.
+//
+// O caso real (Andrea Palladino, 4 perfis) é outro: 2 cadastros COM par, 1 SEM
+// par nenhum (sem telefone, e-mail, CPF ou nascimento — a fila é incremental e
+// nunca vai alcançá-lo) e 1 soft-deletado. Agrupar a fila não mostraria a 3ª.
+//
+// ⇒ Então isto NÃO decide nada: dado um par que a pessoa está resolvendo, mostra
+// os outros cadastros que PARECEM ser a mesma pessoa, para a resolução ser feita
+// de uma vez. A régua aqui é DELIBERADAMENTE mais frouxa que a de ligar
+// automaticamente, porque quem decide é gente olhando — e por isso nada vem
+// pré-selecionado e as contradições vêm escritas.
+//
+// ⚠️⚠️ A RÉGUA É `nomesPodemSerMesmaPessoa`, e NÃO "Dice ≥ 0,80". Medi as duas:
+//   frouxa (Dice ≥0,80 ou contido): 29 pares com vizinho · 36 vizinhos
+//   estreita (só a régua canônica): 21 pares com vizinho · 24 vizinhos
+// A frouxa traz 12 sugestões a mais e traz **ruído perigoso**: "Patrícia Machado"
+// ao lado de "Patrick Machado" (Dice 0,83) e "Lara Melchiades Palladino" ao lado
+// da Andrea (0,84) — pessoas diferentes, e nenhuma das duas tem contradição de
+// CPF/nascimento pra a tela sinalizar. A estreita recusa as duas e **mantém todos
+// os casos reais**: Andrea (0,73), Tatiane Dib (0,59), Calebe (0,76), Marcus (1,00).
+// Perder 12 sugestões é aceitável; oferecer parente pra fundir não é — fusão é
+// hard delete do absorvido, e o terceiro cadastro que escapa continua na fila
+// como par próprio.
+const VIZINHOS_MAX = 8;
+
+function contradicoesEntre(a, b) {
+  const fora = [];
+  const ca = String(a.cpf || '').replace(/\D/g, '');
+  const cb = String(b.cpf || '').replace(/\D/g, '');
+  if (ca.length === 11 && cb.length === 11 && ca !== cb) fora.push('CPFs diferentes');
+  if (a.data_nascimento && b.data_nascimento && a.data_nascimento !== b.data_nascimento) fora.push('Nascimentos diferentes');
+  if (a.genero && b.genero && a.genero !== b.genero) fora.push('Gêneros diferentes');
+  return fora;
+}
+
+router.get('/duplicados/vizinhos', authorizeModule('next-batismo', 1), async (req, res) => {
+  try {
+    const ids = String(req.query.ids || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 0) return res.status(400).json({ error: 'ids obrigatório (uuids separados por vírgula)' });
+    if (ids.length > 6) return res.status(400).json({ error: 'no máximo 6 ids' });
+
+    const cache = await carregarTriagemFamilias();
+    const membros = cache.membros || [];
+    if (!membros.length) return res.json({ vizinhos: [], aviso: 'base de pessoas não carregada' });
+
+    const base = ids.map((id) => membros.find((m) => m.id === id)).filter(Boolean);
+    if (!base.length) return res.status(404).json({ error: 'nenhum dos ids foi encontrado na base viva' });
+
+    const doPar = new Set(ids);
+    const achados = [];
+    for (const m of membros) {
+      if (doPar.has(m.id) || m.deleted_at) continue;
+      let melhor = 0; let mesmaPessoa = false;
+      for (const b of base) {
+        const sim = similaridadeNome(m.nome, b.nome);
+        if (sim > melhor) melhor = sim;
+        if (nomesPodemSerMesmaPessoa(m.nome, b.nome)) mesmaPessoa = true;
+      }
+      if (!mesmaPessoa) continue;   // a similaridade só INFORMA; quem filtra é a régua
+      // Contradição contra QUALQUER um do par: se o CPF dele conflita com um dos
+      // dois, fundir junto é decisão que precisa da contradição à vista.
+      const contradicoes = [...new Set(base.flatMap((b) => contradicoesEntre(m, b)))];
+      achados.push({
+        id: m.id,
+        nome: m.nome,
+        cpf: m.cpf || null,
+        telefone: m.telefone || null,
+        email: m.email || null,
+        data_nascimento: m.data_nascimento || null,
+        genero: m.genero || null,
+        status: m.status || null,
+        origem_cadastro: m.origem_cadastro || null,
+        criado_em: m.created_at || null,
+        similaridade: Number(melhor.toFixed(2)),
+        nome_contido: true,
+        contradicoes,
+      });
+    }
+
+    // Mais parecido primeiro; quem tem contradição vai pro fim (é o mais provável
+    // de ser outra pessoa, e não deve ocupar o topo da lista).
+    achados.sort((x, y) => (x.contradicoes.length - y.contradicoes.length) || (y.similaridade - x.similaridade));
+    const truncado = achados.length > VIZINHOS_MAX;
+    res.json({
+      vizinhos: achados.slice(0, VIZINHOS_MAX),
+      total: achados.length,
+      truncado,
+      // ⚠️ Truncamento DECLARADO: lista cortada em silêncio se lê como "não há mais".
+      ...(truncado ? { aviso: `${achados.length} cadastros parecidos; mostrando os ${VIZINHOS_MAX} mais próximos` } : {}),
+    });
+  } catch (error) {
+    console.error('[next-batismo/duplicados/vizinhos]', error.message);
+    res.status(500).json({ error: 'Erro ao buscar cadastros parecidos' });
+  }
+});
+
 router.get('/duplicados', authorizeModule('next-batismo', 1), async (req, res) => {
   try {
     if (req.query.refresh === '1') invalidarTriagemPessoas();

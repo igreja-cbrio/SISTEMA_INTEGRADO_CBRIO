@@ -4570,6 +4570,72 @@ de hoje, intacto.
   quem fala com o grupo é o líder, no WhatsApp dele, e é ele que tem o contexto
   ("adiamos por causa do feriado"). Prometer aviso que não sai é pior que não ter.
 
+### ⚠️⚠️ 2ª rodada (18/08) · a CADÊNCIA não era lida — 37 grupos viam data errada
+
+`mem_grupos.recorrencia` existe desde sempre e a régua **somava 7 dias em todo
+grupo**. Medido em produção: dos 104 ativos, **67 semanal · 29 quinzenal · 5
+mensal · 3 diário** — ou seja **um terço via a data errada** no box "Próximo
+encontro" (e já via antes desta feature; ela só passou a listar 6 delas).
+
+- `mensal` = **28 dias**, não "mesmo dia do mês": o grupo é identificado por
+  `dia_semana`, então "toda terça" tem que continuar caindo numa terça. Somar 30
+  andaria pelo calendário e o grupo de terça cairia numa quinta.
+- ⚠️⚠️ **Quinzenal e mensal precisam de ÂNCORA e quase ninguém tem.** Saber "de
+  14 em 14 às terças" **não diz EM QUAL terça**. A única evidência no banco é o
+  último encontro REALIZADO (`mem_grupo_encontros`) — e **36 dos 37 grupos
+  não-semanais nunca registraram um**. Sem âncora a régua devolve **UMA**
+  ocorrência marcada `ancora_incerta`, e a tela pede pra registrar uma presença.
+  Listar a agenda inteira seria chute com cara de fato.
+- ⚠️ **Regressão que os meus próprios testes pegaram**: ao reescrever eu perdi a
+  guarda de `dia_semana` ausente — e **`Number(null) === 0`, que é DOMINGO**.
+  Grupo sem dia marcado (são 4 ativos) viraria grupo de domingo com agenda
+  inventada. É a armadilha já registrada em "grupos · dados incompletos".
+
+### ⚠️ O LIMITE de remarcação: `min(7 dias, véspera do próximo encontro)`
+
+Pergunta do Marcos: *"se temos um encontro semanal e eu tentar agendar para daqui
+a 15 dias, não tem sentido… de repente podemos colocar no máximo uma semana, o
+que acha?"*. As duas metades existem por motivos diferentes e **nenhuma sozinha
+resolve**:
+
+- **"não alcançar o próximo"** sai da cadência do grupo, sem número mágico:
+  semanal ⇒ 6 dias · quinzenal ⇒ 13 · mensal ⇒ 27. Uma semana fixa **quebraria o
+  semanal** (7 dias cai em cima do encontro seguinte).
+- **o teto de 7 dias** impede que um grupo MENSAL empurre a reunião para a
+  véspera da seguinte — **duas reuniões em dias seguidos**, que foi a objeção
+  dele.
+
+Quem precisa mover mais que isso **não está remarcando: está CANCELANDO** aquele
+encontro, e esse caminho existe ao lado. A mensagem de recusa diz exatamente isso.
+
+- ⚠️⚠️ **A janela é decidida no SERVIDOR** e devolvida por ocorrência
+  (`pode_remarcar` · `remarcar_de` · `remarcar_ate`). O app **não recalcula** —
+  duas cópias divergiriam e a divergência apareceria como *"o calendário deixou
+  escolher e o servidor recusou"*. Falha ao montar a agenda **recusa (409)**,
+  nunca libera.
+- ⚠️ Janela espremida até a **própria data** devolve `pode: true` de propósito:
+  sobra mudar só o HORÁRIO, que é uso legítimo. (Escrevi o teste esperando
+  `false` e o código me corrigiu.)
+- ⚠️ O limite é **DITO na tela**, não só imposto no calendário: dia cinza sem
+  explicação lê-se como app quebrado. `CalendarioBR` ganhou `maximoISO`.
+
+### ⚠️ A agenda saiu do "Meu grupo" e foi pro "Gerenciar grupo" (18/08)
+
+Pedido do Marcos: *"pra pessoa gerenciar tudo na mesma tela"*. No `/meu-grupo` o
+box voltou a ser **informativo** (o participante precisa saber QUANDO é, não
+decidir); em **Gerenciar grupo** ele fica logo abaixo do herói, com **"Ver a
+agenda da temporada"** recolhido — até 19 datas até 31/12, e despejá-las no topo
+enterraria o protagonista da tela, que é registrar presença.
+
+⚠️ O **modal virou CENTRADO** (era bottom sheet): subindo de baixo, o botão de
+cancelar encontro ficava **por cima da barra de navegação do Android** e não dava
+pra tocar; e o teclado, ao abrir no campo de motivo, cobria o próprio campo.
+Agora tem `KeyboardAvoidingView` + `automaticallyAdjustKeyboardInsets`.
+
+⚠️ **Afordância**: a 1ª versão marcava o box tocável com um `create-outline`
+**cinza de 18px sozinho**. Nem quem pediu a funcionalidade achou o caminho — o
+rótulo **"Alterar data"** é escrito.
+
 ### ⚠️⚠️ A régua é PURA e consertou um bug de UTC que já existia
 
 **`backend/utils/agendaGrupo.js`** (`proximasOcorrencias` / `proximoEncontro` ·
@@ -6806,14 +6872,11 @@ outra aba. No `AppShell` os **dois itens do menu Criativo viraram um**
 - **Os 3 endereços antigos redirecionam** (`/marketing/comunicados`,
   `/admin/destaques → ?t=destaques`, `/admin/fotos-batismo → ?t=batismo`): link
   salvo, item de menu antigo e push já entregue continuam funcionando.
-- ⚠️⚠️ **PERMISSÃO NÃO FOI AMPLIADA, e isso limita o alcance HOJE**: os backends
-  `routes/destaques.js` e `routes/batismoFotos.js` exigem
-  `authorize('admin','diretor')`. A equipe de Marketing tem **nível 5 no MÓDULO**
-  mas role `assistente` — então veria as abas e tomaria **403 em tudo**. Botão que
-  devolve 403 é pior que botão ausente, então as 2 sub-abas só aparecem para
-  admin/diretor e quem não é **lê o motivo** em vez de bater na parede.
-  ⏳ **Liberar para o coordenador de Marketing é decisão do Marcos** — mexe em
-  autorização de dois backends (lei do "parar e perguntar"), não fiz por conta.
+- ⚠️ **A permissão nasceu restrita e foi AMPLIADA no dia seguinte** (18/08 · ver a
+  seção própria abaixo): em 17/08 os backends exigiam `authorize('admin','diretor')`,
+  a equipe de Marketing tem role `assistente`, e as 2 sub-abas só apareciam para
+  admin/diretor (botão que devolve 403 é pior que botão ausente). O Marcos
+  autorizou e o guard passou a ser o MÓDULO `marketing`.
 
 ### `MarketingEpicos.jsx` ficou DORMANTE, não foi apagado
 
@@ -6827,6 +6890,86 @@ depende de nada que saiu.
 com um `</div>` fechando um `<MarketingPagina>` no `MarketingAdmin`. Quem pegou
 foi o **`npm run build`** (esbuild), com arquivo e linha. Régua: em conversão de
 container, **o build é o verificador**, não o typecheck.
+
+## ⚠️⚠️ Marketing PUBLICA no app · o guard virou o MÓDULO (2026-08-18 · SEM migration)
+
+Decisão do Marcos, no dia seguinte à aba "App": *"Sim, pedro deve poder publicar,
+alterar fotos, alterar destaques... mexer no app por esse módulo."*
+
+`routes/destaques.js` e `routes/batismoFotos.js` saíram de
+`authorize('admin','diretor')` para **`authorizeModule('marketing', …)`**:
+**leitura 1** (o mesmo nível que abre a aba) e **escrita 3**.
+
+### ⚠️ Por que o guard antigo trancava justamente quem faz o trabalho
+
+Medido no banco antes de mexer (não deduzido):
+
+| quem | cargo | `profiles.role` | passava no guard antigo? |
+|---|---|---|---|
+| **Pedro Paiva** | `coordenador-marketing` | **`assistente`** | **não** |
+| Allan · Letícia · Lorena · Cauã | `assistente-marketing` | `assistente` | não |
+| Pedro Paulo Menezes | `diretor-criativo` | `assistente` | não |
+| Arthur Serpa · Pr. Juninho · Eduardo | diretor-* | `diretor`/`admin` | sim |
+
+**Role não é cargo** — o Pedro coordena o Marketing com role `assistente`, e é o
+`profiles.role` que o `authorize()` lê. Quem publicava no app era só a diretoria.
+
+**A matriz já dizia o que fazer**: `marketing` = **3** para `coordenador-marketing`
+e `assistente-marketing`; **1** para pastor-senior, diretor-administrativo,
+coordenador-estratégia, diretor-ministerial e diretor-criativo; 5 para `dev`. Além
+disso, **6 pessoas têm a área Marketing** em `usuario_areas`, e o boost eleva
+**leitura E escrita** a 5 (`auth.js:214-215`). Então escrita 3 alcança a equipe por
+**duas** vias independentes.
+
+- ⚠️ **`admin`/`diretor` continuam passando** — o bypass está dentro do
+  `authorizeModule`, então ninguém que publicava perdeu acesso. Ampliação, não troca.
+- ⚠️ **O nível 3 vale também pro DELETE**, e é decisão declarada: aqui apagar é
+  curadoria rotineira (trocar destaque, tirar foto ruim), não destruição de
+  registro. Com 4, o acesso passaria a depender de a pessoa estar em
+  `usuario_areas` (o boost dá 5) e a equipe ficaria separada por **acidente de
+  cadastro**, não por decisão — assistente novo sem área criaria e não apagaria.
+- ⚠️ **O guard fica no `router.use`**, escolhendo pelo método HTTP: rota nova
+  nesses arquivos nasce protegida sem ninguém precisar lembrar.
+- ⚠️⚠️ **A RLS NÃO foi ampliada, de propósito.** O comentário do `destaques.js`
+  dizia que o guard "espelha a policy `destaques_admin`" — e agora não espelha
+  mais. Conferido que **nenhum cliente escreve nessas tabelas**: no app,
+  `lib/destaques.ts` só faz `SELECT`, e no ERP não há escrita direta; a escrita
+  chega pelo backend com service_role. Ampliar a policy só aumentaria o que a
+  **anon key do bundle** alcança, sem ninguém precisar (lei nº 11). O comentário
+  foi corrigido para dizer isso — comentário que mente engana a próxima sessão.
+
+### O front espelha o servidor, e quem só lê não vê botão
+
+`canAccessModule(['marketing'], 'escrita', 3)` (mesmo bypass e mesmo deny do
+`authorizeModule`) decide `podeEditar`, que desce como **prop** para `Destaques` e
+`FotosBatismo`: sem ele, some o "+ Novo destaque", a barra de mover/ativar/editar/
+excluir, o upload de fotos e o ✕ de excluir. As **3 sub-abas agora aparecem para
+todo mundo que abre a aba** — não há mais sub-aba escondida, e a nota do pé passou
+a dizer "modo leitura" em vez de "não aparecem".
+
+⚠️ **Quem decide é o backend** — o front só evita oferecer o que vai dar 403.
+
+### ⚠️⚠️ Achado: o declutter do menu havia parado de valer (regressão de 17/08)
+
+`DOMINIO_POR_PATH` do `menuAccess.ts` é lookup por **path EXATO**. Ao consolidar
+os dois itens do menu Criativo em um só apontando para **`/marketing/app`**, o path
+novo ficou fora do mapa — então a camada de perfil ("Criativo → só o time
+Criativo + admin") deixou de se aplicar e o item voltaria a aparecer para quem tem
+`marketing >= 1` fora do Criativo (os 3 cargos de nível 1 medidos acima).
+Corrigido com `'/marketing/app': { dom: 'criativo' }`; os 2 paths antigos ficam
+mapeados porque link salvo ainda passa por eles.
+⚠️ **Régua: item de menu que muda de `path` precisa reentrar no `DOMINIO_POR_PATH`** —
+o gate por módulo continua funcionando e o silêncio é só no declutter, que é
+exatamente o tipo de regressão que ninguém percebe.
+
+### Como foi verificado
+
+Harness local exercitando o **guard real** (`authorizeModule` de verdade, `req.user`
+sintéticos espelhando os perfis medidos): 13 casos, todos como esperado — Pedro
+escreve, assistente-marketing sem boost escreve (matriz 3), diretor escreve por
+bypass, **cargo nível 1 que não é diretor lê e não escreve**, quem não tem
+`marketing` toma 403 nos dois métodos, e o **deny explícito vence até admin**.
+Gate: typecheck sem cache + build + vitest (1702/1702) + os 10 scripts.
 
 ## Marketing · estado final (specs maio + redesenho 2026-05-30/31 · NO AR)
 
@@ -8311,6 +8454,46 @@ antes do dia). É UM DO block com `v_executar constant boolean := false`:
   como asserts (fantasmas=0 · órfãos não cresceram · grade da manhã =
   {09:30, 11:30} · `fin_identifica_culto` 09:29/10:59→'Domingo 9:30' e
   11:00→'Domingo 11:30' · batismo aberto = {09:30, 11:30}).
+### ⚠️⚠️ ENSAIADO em 17/08 · o corte estouraria o `statement_timeout` (PR #2559)
+
+O ensaio rodou de verdade (bloco revertido, contra produção) e achou o que teria
+impedido o corte no dia: **`cultos` tem DOIS gatilhos ROW-level** —
+`cultos_recalc_kpis` (`trg_kpi_recalcular_culto`) e `cultos_recalcular_nsm`
+(`tg_nsm_recalcular_pos_culto`) — e cada linha custa, cronometrado com
+`clock_timestamp()`, **1,258 s no INSERT e 2,440 s no DELETE**. O corte faz 18
+inserts + 36 deletes ⇒ **~110 s só nesse trecho**, antes dos 5 backups, do patch
+da view e das 10 invariantes. E `statement_timeout` da sessão é **2 min**: ia
+ficar no fio e provavelmente por cima, abortando (com rollback, seguro) no
+domingo, sob pressão de tempo.
+
+⇒ **`SET statement_timeout = '10min'` como statement SEPARADO antes do bloco.**
+Tem de ser antes: o `DO` é **UMA** instrução, então `SET LOCAL` dentro dele não
+vale para ele mesmo. ⚠️ E **não rodar o script por cliente com timeout curto** —
+o MCP do Supabase aborta antes (2 tentativas, as duas revertidas); é SQL Editor.
+⚠️ **NÃO "otimizar" desligando os gatilhos** (`ALTER TABLE cultos DISABLE
+TRIGGER`): as 54 linhas são futuras e todas zero, nenhum KPI/NSM mudaria de
+valor, mas suprimir gatilho na tabela mais quente do sistema é decisão de gente.
+
+⚠️⚠️ **A régua que passa disto: operação em LOTE sobre `cultos` custa ~1-2,5 s
+POR LINHA.** Qualquer script/backfill futuro que mexa em dezenas de cultos tem de
+orçar isso e subir o `statement_timeout` — o custo não está na tabela (é
+pequena), está nos dois recálculos que cada linha dispara.
+
+O ensaio também validou por leitura: pré-condições verdes · **bloqueadores = 0**
+(nenhum dos 36 cultos futuros de 08:30/10:00 tem dado ou satélite) · 1 vínculo de
+template de escala herdado do 10:00 · 0 apresentações de bebê a repontar · e a
+**fronteira financeira medida ao vivo** (hoje PIX às 09:29 → slot 'Domingo 8:30'
+e 09:30/10:59 → 'Domingo 10:00', ou seja a oferta de um culto das 09:30 se
+partiria entre DOIS slots de cultos extintos — que é exatamente o que as
+invariantes do passo 5 cobrem). Rollback conferido nas 2 execuções em 11
+indicadores.
+
+⚠️ Consertado junto: o fallback do `.env` no `_corte_cultos_domingo_ensaio.cjs`
+apontava para `~/SISTEMA_INTEGRADO_CBRIO/backend` e o checkout principal é
+`~/Documents/…` — rodando de uma worktree (que nasce sem `.env`, gitignored) ele
+morria em "não encontrados" com o arquivo existindo no principal. Os outros 2
+scripts `.cjs` de `backend/scripts/` **têm o mesmo erro** e não foram tocados.
+
 - **D2 (financeiro)**: `v_conta_dizimo_0930`/`v_conta_oferta_0930` no topo do
   DO block — NULL = fallback interim nas contas do 10:00 (3.01.01.09/.09);
   se o ok da conta nova sair até 20/08, preencher os 2 uuids antes de rodar.

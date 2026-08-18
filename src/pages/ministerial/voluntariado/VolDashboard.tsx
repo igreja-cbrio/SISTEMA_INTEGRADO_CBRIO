@@ -9,6 +9,8 @@ import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import AgenteVoluntariadoPainel from '@/components/AgenteVoluntariadoPainel';
+import KpiTaticoOficial from '@/components/kpi/KpiTaticoOficial';
+import { voluntariado as volApi } from '@/api';
 
 export default function VolDashboard() {
   const navigate = useNavigate();
@@ -60,6 +62,8 @@ export default function VolDashboard() {
           </Card>
         ))}
       </div>
+
+      <KpiTaticoOficial fetchFn={volApi.kpisTaticos} />
 
       {/* Today's services */}
       <Card>

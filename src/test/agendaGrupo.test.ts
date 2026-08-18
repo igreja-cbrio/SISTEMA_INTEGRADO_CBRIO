@@ -102,3 +102,124 @@ describe('⚠️ o que não pode quebrar', () => {
     expect(l.every(o => o.status === 'normal')).toBe(true);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2ª rodada (18/08/2026) · CADÊNCIA e LIMITE de remarcação.
+//
+// ⚠️⚠️ `mem_grupos.recorrencia` existe desde sempre e a régua NÃO a lia:
+// somava 7 dias em todo grupo. Medido em produção: dos 104 ativos, **37 não
+// são semanais** (29 quinzenal · 5 mensal · 3 diário) — um terço via data
+// errada no box "Próximo encontro".
+//
+// ⚠️ O limite de remarcação é `min(7 dias, véspera do próximo encontro)`.
+// A metade "véspera do próximo" sai da cadência do grupo (semanal ⇒ 6 dias);
+// o teto de 7 impede que um grupo MENSAL empurre a reunião para o dia anterior
+// à seguinte, criando duas em dias seguidos.
+// ─────────────────────────────────────────────────────────────────────────────
+import { cadenciaDias, janelaRemarcacao, LIMITE_REMARCA_DIAS } from '../../backend/utils/agendaGrupo.js';
+
+// Quarta-feira 19/08/2026, 09:00 BRT.
+const QUA_09H = new Date('2026-08-19T12:00:00Z');
+const terca = (extra: Record<string, unknown> = {}) =>
+  proximasOcorrencias({ diaSemana: 2, horario: '20:00', agora: QUA_09H, quantas: 4, ...extra });
+
+describe('cadência · a recorrência do grupo manda', () => {
+  it('semanal anda de 7 em 7', () => {
+    expect(terca({ recorrencia: 'semanal' }).map(o => o.data))
+      .toEqual(['2026-08-25', '2026-09-01', '2026-09-08', '2026-09-15']);
+  });
+
+  it('⚠️ quinzenal COM âncora anda de 14 em 14 a partir dela', () => {
+    // Âncora = encontro realizado em 11/08 (terça). Próximos: 25/08, 08/09…
+    expect(terca({ recorrencia: 'quinzenal', ancoraISO: '2026-08-11' }).map(o => o.data))
+      .toEqual(['2026-08-25', '2026-09-08', '2026-09-22', '2026-10-06']);
+  });
+
+  it('⚠️ mensal = 28 dias, pra continuar caindo na MESMA terça', () => {
+    const ds = terca({ recorrencia: 'mensal', ancoraISO: '2026-08-04' });
+    expect(ds.map(o => o.data)).toEqual(['2026-09-01', '2026-09-29', '2026-10-27', '2026-11-24']);
+    for (const o of ds) expect(o.dia_semana).toBe(2); // sempre terça
+  });
+
+  it('diário ignora dia_semana e anda de 1 em 1', () => {
+    const ds = proximasOcorrencias({ diaSemana: 2, horario: '20:00', recorrencia: 'diario', agora: QUA_09H, quantas: 3 });
+    expect(ds.map(o => o.data)).toEqual(['2026-08-19', '2026-08-20', '2026-08-21']);
+  });
+
+  it('recorrência nula/desconhecida cai no semanal (a maioria)', () => {
+    expect(cadenciaDias(null)).toBe(7);
+    expect(cadenciaDias('esporadico')).toBe(7);
+    expect(cadenciaDias('QUINZENAL')).toBe(14);
+  });
+
+  it('⚠️⚠️ quinzenal SEM âncora devolve UMA ocorrência, declarada incerta', () => {
+    // Saber "de 14 em 14 às terças" não diz EM QUAL terça. Listar a agenda
+    // inteira seria chute com cara de fato — 36 dos 37 grupos não-semanais
+    // nunca registraram um encontro.
+    const ds = terca({ recorrencia: 'quinzenal' });
+    expect(ds).toHaveLength(1);
+    expect(ds[0].ancora_incerta).toBe(true);
+  });
+
+  it('semanal NUNCA é incerto — não depende de âncora', () => {
+    expect(terca({ recorrencia: 'semanal' }).every(o => o.ancora_incerta === false)).toBe(true);
+  });
+});
+
+describe('janela de remarcação · min(7 dias, véspera do próximo)', () => {
+  it('semanal: 6 dias, porque o próximo encontro é em 7', () => {
+    const [primeiro] = terca({ recorrencia: 'semanal' });
+    expect(primeiro.data_original).toBe('2026-08-25');
+    expect(primeiro.remarcar_ate).toBe('2026-08-31'); // 25 + 6
+    expect(primeiro.pode_remarcar).toBe(true);
+  });
+
+  it('⚠️ quinzenal: o teto de 7 dias manda (não os 13 da cadência)', () => {
+    const [primeiro] = terca({ recorrencia: 'quinzenal', ancoraISO: '2026-08-11' });
+    expect(primeiro.remarcar_ate).toBe('2026-09-01'); // 25 + 7, não 25 + 13
+  });
+
+  it('⚠️⚠️ mensal: o teto de 7 impede duas reuniões em dias seguidos', () => {
+    const [primeiro] = terca({ recorrencia: 'mensal', ancoraISO: '2026-08-04' });
+    // Sem o teto seria 28/09 — véspera do encontro de 29/09.
+    expect(primeiro.remarcar_ate).toBe('2026-09-08');
+  });
+
+  it('nunca no passado: o piso é HOJE', () => {
+    const [primeiro] = terca({ recorrencia: 'semanal' });
+    expect(primeiro.remarcar_de).toBe('2026-08-19'); // hoje, não 18/08
+  });
+
+  it('não invade o encontro ANTERIOR', () => {
+    const j = janelaRemarcacao({
+      dataOriginal: '2026-09-01', anteriorISO: '2026-08-25',
+      proximaISO: '2026-09-08', hojeISO: '2026-08-19',
+    });
+    expect(j).toMatchObject({ de: '2026-08-26', ate: '2026-09-07', pode: true });
+  });
+
+  it('⚠️ espremida entre a véspera e o dia seguinte, a janela vira O PRÓPRIO DIA', () => {
+    // Escrevi este caso esperando `pode: false` e o código me corrigiu: sobra
+    // a data original, e mexer só no HORÁRIO ("hoje vai ser 21h") é uso
+    // legítimo. Recusar aqui tiraria uma ação válida sem ganhar nada.
+    const j = janelaRemarcacao({
+      dataOriginal: '2026-09-01', anteriorISO: '2026-08-31',
+      proximaISO: '2026-09-02', hojeISO: '2026-09-01',
+    });
+    expect(j).toMatchObject({ de: '2026-09-01', ate: '2026-09-01', pode: true });
+  });
+
+  it('⚠️ janela REALMENTE vazia devolve pode=false', () => {
+    // Só resta cancelar quando nem o próprio dia sobra (o encontro seguinte
+    // caiu em cima dele).
+    const j = janelaRemarcacao({
+      dataOriginal: '2026-09-01', anteriorISO: '2026-09-01',
+      proximaISO: '2026-09-01', hojeISO: '2026-08-19',
+    });
+    expect(j.pode).toBe(false);
+  });
+
+  it('o limite é 7 e mudá-lo é decisão, não acidente', () => {
+    expect(LIMITE_REMARCA_DIAS).toBe(7);
+  });
+});
