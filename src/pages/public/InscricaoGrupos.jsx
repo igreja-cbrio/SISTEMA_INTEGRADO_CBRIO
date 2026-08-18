@@ -35,6 +35,7 @@ import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarCl
 // Contrato de Inscrição (F3.1 · porta 7 · docs/modulo-inscricoes/): validadores
 // da fonte única — só os que não colidem com os helpers locais deste form.
 import { nomeCompletoValido, temAbreviacaoNome, validarNascimento, tirarCodigoPais } from '../../lib/inscricao';
+import { carregarGtm } from '../../lib/gtm';
 
 const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicação com a igreja e participação em grupo de conexão, conforme a LGPD.`;
 // LGPD: o titular não consente sozinho pelo outro — ele DECLARA que o cônjuge
@@ -123,6 +124,13 @@ function mascaraTelefone(v) {
 
 export default function InscricaoGrupos() {
   const { C } = usePublicTheme();
+
+  // Medição do Marketing (pedido do Gustavo · GTM) — container GTM-PQHGF574.
+  // Carrega SÓ nesta página, não no index.html: o bundle é compartilhado com o
+  // ERP e o container não pode subir nas telas com dado de membro (ver
+  // src/lib/gtm.ts). O container vive até a aba recarregar, então os gatilhos
+  // dele têm que estar fixados no caminho /inscricao-grupos.
+  useEffect(() => { carregarGtm('GTM-PQHGF574'); }, []);
 
   const temporadaParam = useMemo(() => {
     try {
