@@ -2560,6 +2560,9 @@ export const nextBatismo = {
     return get('/entradas/resolucoes' + (qs ? '?' + qs : ''));
   },
   pessoa: (id) => get('/entradas/pessoa/' + encodeURIComponent(id)),
+  // Manda pra PRÓPRIA pessoa o link pessoal do censo pra ela completar o cadastro.
+  // Mesmo caminho da aba Pessoas dos Grupos (censoDisparo.convidarPessoa).
+  pedirDados: (id) => post('/entradas/pessoa/' + encodeURIComponent(id) + '/pedir-dados', {}),
 };
 
 export const membresia = {

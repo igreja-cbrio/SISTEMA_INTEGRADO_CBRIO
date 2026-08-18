@@ -19,6 +19,8 @@ const { supabase } = require('../utils/supabase');
 const { buscarCandidatos, acharOuCriar, acharOuCriarGuardado } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade, nomesPodemSerMesmaPessoa, tokensNome } = require('../services/duplicidadePolicy');
 const { similaridadeNome } = require('../services/identidadeProgressiva');
+const { avaliarCadastroPessoa } = require('../utils/prontidaoCadastro');
+const censoDisparo = require('../services/censoDisparo');
 const { avaliarRelacaoFamiliar } = require('../services/familiaPolicy');
 const { montarPatchFusao } = require('../services/fusaoCampos');
 
@@ -1313,10 +1315,19 @@ router.get('/pessoa/:id', authorizeModule('next-batismo', 1), async (req, res) =
     const id = req.params.id;
     const { data: pessoa, error: pErr } = await supabase
       .from('mem_membros')
-      .select('id, nome, cpf, telefone, email, status, foto_url, data_nascimento, familia_id, created_at')
+      // ⚠️ `genero` entra SÓ pra decidir se o cadastro está completo (o VALOR não
+      // é devolvido abaixo). Régua: `avaliarCadastroPessoa`, o espelho JS de
+      // `fn_membro_cadastro_completo` — a MESMA que a aba Pessoas dos Grupos usa,
+      // porque duas réguas de "cadastro completo" divergiriam e a equipe deixaria
+      // de confiar nas duas.
+      .select('id, nome, cpf, telefone, email, status, foto_url, data_nascimento, genero, familia_id, created_at')
       .eq('id', id).is('deleted_at', null).maybeSingle();
     if (pErr) throw pErr;
     if (!pessoa) return res.status(404).json({ error: 'Pessoa não encontrada' });
+
+    // O que FALTA pro cadastro fechar. Vai como lista de campos e rótulos —
+    // nunca os valores de CPF/e-mail, que têm gate próprio na Membresia.
+    const cadastro = avaliarCadastroPessoa(pessoa);
 
     const toques = [];
     const quemPerguntar = [];
@@ -1467,12 +1478,48 @@ router.get('/pessoa/:id', authorizeModule('next-batismo', 1), async (req, res) =
     });
 
     res.json({
-      pessoa: { ...pessoa, criado_em: pessoa.created_at },
+      // ⚠️ `genero` sai do payload: ele entrou na leitura só pra decidir a
+      // completude, e a ficha de Entradas não é tela de dado sensível.
+      pessoa: { ...pessoa, genero: undefined, criado_em: pessoa.created_at },
+      cadastro,
       primeiro_toque, toques, conexoes, quem_perguntar: quemPerguntar, contatos,
     });
   } catch (e) {
     console.error('[next-batismo/pessoa]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao montar ficha' });
+  }
+});
+
+// ── POST /pessoa/:id/pedir-dados · a PRÓPRIA pessoa completa o cadastro ───────
+//
+// Decisão do Marcos (18/08): "todas as pessoas que entram em algum lugar do
+// sistema exceto conversões a partir de agora devem ter todos os dados
+// completos." Onde há formulário, a porta passou a exigir. Onde o atendimento
+// NÃO pode parar — o totem do Kids no domingo, com fila e criança no colo — a
+// pessoa entra e a fila cobra depois. Este é o "depois".
+//
+// ⚠️ NÃO é endpoint novo de disparo: delega ao MESMO `censoDisparo.convidarPessoa`
+// que a aba Pessoas dos Grupos usa desde 13/08 — mesma fila, mesmo template,
+// mesmo registro em `mem_censo_convites` (que é o que impede repetir convite da
+// mesma rodada). Um segundo caminho de convite gastaria a cota do TIER_250 duas
+// vezes sem ninguém perceber.
+//
+// ⚠️⚠️ Quem envia é o SERVIDOR, e o link NUNCA passa por quem clicou: ele abre o
+// cadastro da pessoa preenchido E editável, então entregá-lo a um terceiro daria
+// leitura e escrita no cadastro alheio sem trilha de quem alterou.
+//
+// ⚠️ Nível 3 (não 4): é UMA mensagem para UMA pessoa — mesma ordem de risco de
+// editar um cadastro. O disparo em massa do censo é que é nível 4.
+router.post('/pessoa/:id/pedir-dados', authorizeModule('next-batismo', 3), async (req, res) => {
+  try {
+    const r = await censoDisparo.convidarPessoa(req.params.id, { por: req.user?.id || null });
+    // 409 (não 500) quando a régua recusou: não é erro do servidor, é resposta —
+    // sem telefone/e-mail alcançável, ou convite já enviado nesta rodada.
+    if (r.ok === false) return res.status(409).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error('[next-batismo/pedir-dados]', e.message);
+    res.status(500).json({ error: 'Não foi possível enviar o pedido de dados agora.' });
   }
 });
 
