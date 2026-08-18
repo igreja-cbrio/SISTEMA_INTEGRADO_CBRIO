@@ -102,6 +102,50 @@ function janelaRemarcacao({ dataOriginal, anteriorISO = null, proximaISO = null,
   return { de, ate, pode: de <= ate };
 }
 
+// Gera as DATAS ORIGINAIS da recorrência (sem exceções), do passado imediato
+// até o fim da janela. Extraído porque o "encontro anterior" precisa da MESMA
+// geração — duas cópias divergiriam no dia em que a cadência mudasse.
+function gerarOriginais({ diaSemana, recorrencia, ancoraISO, hojeISO, diaSemanaHoje, janelaDias }) {
+  const passo = cadenciaDias(recorrencia);
+  const originais = [];
+  let ancoraIncerta = false;
+
+  // ⚠️⚠️ `Number(null) === 0` e 0 é DOMINGO — grupo sem dia marcado (4 ativos)
+  // viraria grupo de domingo com agenda inventada. A guarda mora AQUI, no
+  // gerador, e não em cada chamador: quando ela ficou fora, o `ocorrenciaAnterior`
+  // nasceu sem ela e o teste pegou na hora.
+  const semDia = diaSemana === null || diaSemana === undefined || diaSemana === '';
+  if (semDia && passo !== 1) return { originais, ancoraIncerta }; // diário não usa dia da semana
+
+  if (passo === 1) {
+    for (let i = -1; i <= janelaDias; i++) originais.push(somarDias(hojeISO, i));
+    return { originais, ancoraIncerta };
+  }
+
+  const alvo = Number(diaSemana);
+  if (!Number.isInteger(alvo) || alvo < 0 || alvo > 6) return { originais: [], ancoraIncerta };
+
+  if (passo === 7) {
+    const delta = (alvo - diaSemanaHoje + 7) % 7;
+    for (let i = -1; delta + i * 7 <= janelaDias; i++) originais.push(somarDias(hojeISO, delta + i * 7));
+  } else if (ancoraISO) {
+    // ⚠️ A âncora é um encontro REAL; a partir dela a cadência é determinística.
+    let d = String(ancoraISO).slice(0, 10);
+    while (somarDias(d, passo) <= hojeISO) d = somarDias(d, passo);
+    originais.push(d); // a anterior (piso)
+    for (let k = 1; ; k++) {
+      const prox = somarDias(d, k * passo);
+      originais.push(prox);
+      if (prox > somarDias(hojeISO, janelaDias)) break;
+    }
+  } else {
+    // ⚠️ Sem âncora: só a PRÓXIMA ocorrência do dia da semana, declarada incerta.
+    ancoraIncerta = true;
+    originais.push(somarDias(hojeISO, (alvo - diaSemanaHoje + 7) % 7));
+  }
+  return { originais, ancoraIncerta };
+}
+
 // Próximas `quantas` ocorrências, já com as exceções aplicadas.
 // `excecoes`: [{ data_original, status, nova_data, novo_horario, motivo }]
 //
@@ -112,53 +156,17 @@ function proximasOcorrencias({
   diaSemana, horario, recorrencia = 'semanal', ancoraISO = null,
   excecoes = [], agora = new Date(), quantas = 8, janelaDias = 180,
 }) {
-  // ⚠️⚠️ `Number(null) === 0` e 0 é DOMINGO (falsy que passa em Number.isInteger).
-  // Sem esta guarda, grupo sem dia marcado vira grupo de domingo — são 4 ativos
-  // hoje, e a agenda deles seria inventada. Armadilha já registrada em "grupos ·
-  // dados incompletos": dia_semana=0 é domingo, não "vazio".
-  const semDia = diaSemana === null || diaSemana === undefined || diaSemana === '';
-
-  const passo = cadenciaDias(recorrencia);
-  if (semDia && passo !== 1) return []; // diário não usa dia da semana
   const n = agoraBRT(agora);
   const hojeISO = iso(n.ano, n.mes, n.dia);
 
   const porData = new Map();
   for (const e of excecoes || []) if (e && e.data_original) porData.set(String(e.data_original).slice(0, 10), e);
 
-  // ── 1. As DATAS ORIGINAIS que a recorrência produz, do passado imediato até
-  //       o fim da janela. A anterior entra porque é o PISO da remarcação.
-  const originais = [];
-  let ancoraIncerta = false;
-
-  if (passo === 1) {
-    // Diário: `dia_semana` não governa nada.
-    for (let i = -1; i * 1 <= janelaDias; i++) originais.push(somarDias(hojeISO, i));
-  } else {
-    const alvo = Number(diaSemana);
-    if (!Number.isInteger(alvo) || alvo < 0 || alvo > 6) return [];
-
-    if (passo === 7) {
-      const delta = (alvo - n.diaSemana + 7) % 7;
-      for (let i = -1; delta + i * 7 <= janelaDias; i++) originais.push(somarDias(hojeISO, delta + i * 7));
-    } else if (ancoraISO) {
-      // ⚠️ A âncora é um encontro REAL (data de `mem_grupo_encontros`); a partir
-      // dela a cadência é determinística. Anda até alcançar hoje e segue.
-      let d = String(ancoraISO).slice(0, 10);
-      while (somarDias(d, passo) <= hojeISO) d = somarDias(d, passo);
-      originais.push(d); // a anterior (piso)
-      for (let k = 1; ; k++) {
-        const prox = somarDias(d, k * passo);
-        originais.push(prox);
-        if (prox > somarDias(hojeISO, janelaDias)) break;
-      }
-    } else {
-      // ⚠️ Sem âncora: só a PRÓXIMA ocorrência do dia da semana, e declarada
-      // como incerta. Listar a agenda inteira seria chute com cara de fato.
-      ancoraIncerta = true;
-      originais.push(somarDias(hojeISO, (alvo - n.diaSemana + 7) % 7));
-    }
-  }
+  // ── 1. As datas originais (a anterior entra: é o PISO da remarcação).
+  const { originais, ancoraIncerta } = gerarOriginais({
+    diaSemana, recorrencia, ancoraISO, hojeISO,
+    diaSemanaHoje: n.diaSemana, janelaDias,
+  });
 
   // ── 2. Aplica exceções, descarta o que já passou, anexa a janela de edição.
   const out = [];
@@ -198,6 +206,43 @@ function proximasOcorrencias({
   return out;
 }
 
+// O ENCONTRO ANTERIOR (o mais recente até hoje), já com a exceção aplicada.
+//
+// ⚠️⚠️ É disto que o herói da tela de gerenciar precisa pra dizer "faltou
+// registrar". Ele calculava sozinho por `dia_semana` e NÃO sabia das exceções:
+// o líder remarcava o encontro de 18 para 20 e o topo continuava cobrando o do
+// dia 18 (relato do Marcos · 18/08). Duas contas para "quando é o encontro"
+// sempre divergem — esta é a mesma que monta a agenda.
+//
+// Devolve `null` quando não há anterior OU quando ela foi CANCELADA: encontro
+// cancelado não gera pendência de chamada.
+function ocorrenciaAnterior({ diaSemana, horario, recorrencia = 'semanal', ancoraISO = null, excecoes = [], agora = new Date() }) {
+  const n = agoraBRT(agora);
+  const hojeISO = iso(n.ano, n.mes, n.dia);
+  const { originais } = gerarOriginais({
+    diaSemana, recorrencia, ancoraISO, hojeISO,
+    diaSemanaHoje: n.diaSemana, janelaDias: 0,
+  });
+  const porData = new Map();
+  for (const e of excecoes || []) if (e && e.data_original) porData.set(String(e.data_original).slice(0, 10), e);
+
+  let achada = null;
+  for (const dataOrig of originais) {
+    const ex = porData.get(dataOrig);
+    const dataFinal = ex?.status === 'remarcado' ? String(ex.nova_data).slice(0, 10) : dataOrig;
+    if (dataFinal > hojeISO) continue;
+    if (!achada || dataFinal > achada.data) {
+      achada = {
+        data_original: dataOrig,
+        data: dataFinal,
+        status: ex?.status === 'cancelado' ? 'cancelado' : (ex?.status === 'remarcado' ? 'remarcado' : 'normal'),
+      };
+    }
+  }
+  if (!achada || achada.status === 'cancelado') return null;
+  return achada;
+}
+
 // O que o box "Próximo encontro" mostra: a 1ª ocorrência NÃO cancelada.
 // ⚠️ Devolve null quando as próximas estão todas canceladas — e o app diz isso,
 // em vez de mostrar uma data que não vai acontecer.
@@ -207,6 +252,6 @@ function proximoEncontro(args) {
 }
 
 module.exports = {
-  agoraBRT, proximasOcorrencias, proximoEncontro, instanteISO, somarDias,
+  agoraBRT, proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, instanteISO, somarDias,
   cadenciaDias, janelaRemarcacao, FUSO_BRT_MIN, LIMITE_REMARCA_DIAS, CADENCIA_DIAS,
 };

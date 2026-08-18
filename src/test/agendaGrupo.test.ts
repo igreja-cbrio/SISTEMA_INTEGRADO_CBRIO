@@ -223,3 +223,44 @@ describe('janela de remarcação · min(7 dias, véspera do próximo)', () => {
     expect(LIMITE_REMARCA_DIAS).toBe(7);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3ª rodada (18/08) · o ENCONTRO ANTERIOR, com exceção aplicada.
+//
+// Relato do Marcos: *"alterei o meu do dia 18 para o dia 20 mas a frequência
+// ainda está em cima marcando próximo encontro hoje dia 18"*. O herói da tela
+// de gerenciar calculava sozinho por `dia_semana` e não sabia das exceções —
+// duas contas para "quando é o encontro" sempre divergem.
+// ─────────────────────────────────────────────────────────────────────────────
+import { ocorrenciaAnterior } from '../../backend/utils/agendaGrupo.js';
+
+// Terça 18/08/2026, 14:00 BRT (o encontro é às 20h — ainda vai acontecer).
+const TER_14H = new Date('2026-08-18T17:00:00Z');
+const anterior = (excecoes: any[] = []) =>
+  ocorrenciaAnterior({ diaSemana: 2, horario: '20:00', excecoes, agora: TER_14H });
+
+describe('encontro anterior · é o que decide "faltou registrar"', () => {
+  it('sem exceção, a anterior é a ocorrência de hoje', () => {
+    expect(anterior()).toMatchObject({ data: '2026-08-18', status: 'normal' });
+  });
+
+  it('⚠️⚠️ remarcado 18 → 20: a anterior volta a ser 11, não 18', () => {
+    // Era este o bug: o topo continuava cobrando a chamada do dia 18, que o
+    // líder acabara de mover para o dia 20.
+    expect(anterior([{ data_original: '2026-08-18', status: 'remarcado', nova_data: '2026-08-20' }]))
+      .toMatchObject({ data: '2026-08-11' });
+  });
+
+  it('⚠️ encontro CANCELADO não gera pendência de chamada', () => {
+    expect(anterior([{ data_original: '2026-08-18', status: 'cancelado' }])).toBeNull();
+  });
+
+  it('remarcado para TRÁS (antecipado) passa a ser a anterior', () => {
+    expect(anterior([{ data_original: '2026-08-18', status: 'remarcado', nova_data: '2026-08-17' }]))
+      .toMatchObject({ data: '2026-08-17', data_original: '2026-08-18' });
+  });
+
+  it('grupo sem dia_semana devolve null, não erro', () => {
+    expect(ocorrenciaAnterior({ diaSemana: null, horario: '20:00', agora: TER_14H })).toBeNull();
+  });
+});
