@@ -202,11 +202,27 @@ jobs:
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
             | python3 -m json.tool 2>/dev/null || echo "(nao foi possivel ler agent_runs)"
 
-      - name: Falhar se o relatório não saiu
-        if: github.event.schedule == '0 9 * * 1'
+      # ⚠️ FALHA EM QUALQUER GATILHO, e isso é correção de um defeito real:
+      # na primeira execução manual (18/08/2026) o worker devolveu
+      # `404 agentType desconhecido: kpi_relatorio_semanal` — estava rodando
+      # código anterior ao merge do agente — e mesmo assim o job terminou VERDE,
+      # porque este passo só rodava no gatilho semanal. Um teste que falha e se
+      # reporta como sucesso é pior do que não ter teste: ensina a confiar no
+      # verde. Agora qualquer agente que não volte 200 derruba a execução.
+      - name: Falhar se algum agente não concluiu
+        if: always() && steps.disparar.outcome == 'success'
+        env:
+          FALHAS: ${{ steps.disparar.outputs.falhas }}
+          RELATORIO_OK: ${{ steps.disparar.outputs.relatorio_ok }}
+          AGENDA: ${{ github.event.schedule }}
         run: |
-          if [ "${{ steps.disparar.outputs.relatorio_ok }}" != "1" ]; then
-            echo "::error::kpi_relatorio_semanal nao concluiu — o e-mail de segunda nao saiu."
+          set -u
+          if [ -n "${FALHAS// /}" ]; then
+            echo "::error::agentes que nao concluiram:$FALHAS"
+            # No lote semanal, dizer explicitamente o que a liderança perdeu.
+            if [ "$AGENDA" = "0 9 * * 1" ] && [ "$RELATORIO_OK" != "1" ]; then
+              echo "::error::kpi_relatorio_semanal nao concluiu — o e-mail de segunda NAO saiu."
+            fi
             exit 1
           fi
-          echo "relatorio semanal concluido."
+          echo "todos os agentes do lote concluiram."
