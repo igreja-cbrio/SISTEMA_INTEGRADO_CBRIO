@@ -4366,9 +4366,8 @@ Sobravam **3** sem mensagem nenhuma a revalidar:
   daquele bug (serverless congela na resposta e descarta o trabalho pendente).
 - **JOVENS - GRUPO DE JIU-JITSU** (Rodrigo Costa) — o **grupo não tem
   `lider_id`**, então não há a quem avisar. É cadastro: resolver na aba Pessoas.
-- **SER MULHER** (Mayla Marçal Portela Seoud · líder Márcia Trigo) — envio
-  recusado com **`invalid_phone`**. Telefone da líder precisa ser corrigido na
-  Membresia (a normalização da porta só vale pra dado novo).
+- ~~**SER MULHER** (líder Márcia Trigo) — telefone da líder precisa ser
+  corrigido~~ → **ERRADO, e o erro era MEU** (corrigido 18/08 · ver abaixo).
 
 ### ✅ 17/08 · reenvio do aviso aos líderes (82 mensagens · 36 líderes · 0 erro)
 
@@ -4407,6 +4406,38 @@ credenciais REAIS existem. ⚠️ `WHATSAPP_ACCESS_TOKEN` vem **`[SENSITIVE]`** 
 ⚠️ E o script tem que rodar na **worktree de origin/main**: o checkout principal
 está numa branch antiga que **não tem** `services/gruposWhatsapp.js`
 (MODULE_NOT_FOUND num arquivo que existe em produção · lição de 31/07).
+
+### ⚠️⚠️ 18/08 · o "telefone inválido da líder" era ALARME MEU (5ª vez)
+
+Márcia Trigo disse que **recebe as mensagens normalmente** e a Natasha conferiu
+que **o número no sistema está certo**. As duas estavam certas; eu é que li o
+dado errado. Medido:
+
+| | |
+|---|---|
+| Líder do SER MULHER | `18e1325c` · "Márcia de Matos Trigo Pereira" · **`21981899151`** · cadastro VIVO, no roster, vínculo ativo no bot |
+| Envios do reenvio de 17/08 | **`enviado` + `delivered_at` preenchido** (entregues) |
+| Prova definitiva | a Mayla foi **aprovada em 18/08 09:50 pela própria Márcia**, com `decidido_por_nome = "Márcia de Matos Trigo Pereira (link WhatsApp)"` — ela recebeu, abriu o link e decidiu |
+
+**De onde veio o `invalid_phone`:** UM envio de **11/08**, para o telefone
+**`991899151`** (9 dígitos, **sem DDD**) — que é de OUTRO cadastro, uma
+**duplicata órfã** (`c84b3fe2` "Márcia Trigo", origem `pco_import_2026`, sem CPF,
+sem nascimento, **zero vínculos**, mesmo e-mail do cadastro bom). Eu li "erro no
+envio ao líder do SER MULHER" e concluí "o telefone da líder está errado", sem
+conferir **para qual telefone** o envio tinha ido nem **qual cadastro** é o líder
+hoje.
+
+⚠️ **A régua que eu não segui**: erro de envio aponta para um TELEFONE, não para
+uma pessoa — e com duplicata na base os dois não são a mesma coisa. Conferir
+`whatsapp_envios.telefone` contra `mem_grupos.lider_id → mem_membros.telefone`
+**antes** de dizer que o cadastro de alguém está errado. Custa uma consulta e
+evita mandar a coordenação caçar um problema que não existe.
+
+⏳ **Fica um achado REAL, esse sim**: a duplicata `c84b3fe2` continua VIVA, com
+telefone quebrado de 9 dígitos (o padrão dos "sem DDD" da auditoria de 31/07).
+É órfã e tem **e-mail idêntico** ao do cadastro bom, então a fila de Possíveis
+duplicidades das Entradas deve pegá-la. **NÃO fundi** — fundir/apagar pessoa é
+decisão caso a caso.
 
 ### ⚠️ 17/08 · TERCEIRO desfecho do líder: "não consegui contato" (migration `20260817140000`)
 
@@ -4476,8 +4507,11 @@ Os 2 pedidos **"Natasha teste"** (tel 21984555026 · um com e-mail
 
 ⚠️ O alvo exigiu **nome com "teste" E o telefone dela** — cada critério sozinho
 pega gente real ("Teste" existe como sobrenome; o telefone é o dela de verdade).
-Ficou de fora e está DECLARADO: **"Alice teste"** (tel 21992752602), que é de
-outra pessoa e não foi tocada.
+
+**"Alice teste"** (tel 21992752602) ficou de fora naquele dia porque é de OUTRA
+pessoa; em 18/08 a Naná confirmou que é **filha dela** e autorizou — removida
+também (backup `backup_pedidos_teste_alice_20260818.json`). O pedido estava
+`rejeitado`, não pendente. **A fila não tem mais nenhum "teste".**
 
 ### ⚠️ 17/08 · a APROVAÇÃO EM MASSA foi cogitada e DESCARTADA (decisão do Pr. Nélio)
 
