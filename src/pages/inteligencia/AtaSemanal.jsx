@@ -26,17 +26,20 @@ import {
   FileText, Calendar, Clock, Users, CircleAlert, Check,
   ChevronRight, ChevronDown, ListTodo,
 } from 'lucide-react';
-import { governanca as gov } from '../../api';
+import { ataSemanal as api } from '../../api';
 import { formatErro } from '../../lib/formatErro';
 import { C } from '../governanca/compartilhado';
+import SeletorResponsavel from '../../components/ata-semanal/SeletorResponsavel';
 
-const SIGLA = 'MIN';
-
+// ⚠️ Os valores vêm do CHECK de governance_tasks.status. A primeira versão
+// mandava 'andamento' e o banco recusa — só aceita 'em_andamento'. Errar aqui
+// não dá erro de compilação, só falha no clique do usuário.
 const STATUS_TAREFA = [
-  { valor: 'pendente',  rotulo: 'Pendente' },
-  { valor: 'andamento', rotulo: 'Em andamento' },
-  { valor: 'concluida', rotulo: 'Concluída' },
-  { valor: 'cancelada', rotulo: 'Cancelada' },
+  { valor: 'pendente',      rotulo: 'Pendente' },
+  { valor: 'em_andamento',  rotulo: 'Em andamento' },
+  { valor: 'concluida',     rotulo: 'Concluída' },
+  { valor: 'nao_executada', rotulo: 'Não executada' },
+  { valor: 'cancelada',     rotulo: 'Cancelada' },
 ];
 
 function fmtDataLonga(iso) {
@@ -141,11 +144,12 @@ export default function AtaSemanal() {
   const [abertas, setAbertas] = useState({});          // tópicos da ata
   const [pendAberta, setPendAberta] = useState(true);  // bloco de pendências
   const [verConcluidas, setVerConcluidas] = useState(false);
+  const [colaboradores, setColaboradores] = useState([]);
 
   const carregarLista = useCallback(async () => {
     setCarregandoLista(true);
     try {
-      const dados = await gov.meetings.list({ sigla: SIGLA });
+      const dados = await api.reunioes();
       const ordenadas = [...(dados || [])].sort((x, y) => String(y.date).localeCompare(String(x.date)));
       setReunioes(ordenadas);
       setSelecionadaId((atual) => atual ?? ordenadas[0]?.id ?? null);
@@ -158,12 +162,23 @@ export default function AtaSemanal() {
 
   useEffect(() => { carregarLista(); }, [carregarLista]);
 
+  // Lista de colaboradores para o seletor de responsável. Carrega uma vez e
+  // falha em silêncio de propósito: sem ela o seletor fica vazio, mas a ata
+  // continua legível — e ler a ata é o uso principal da tela.
+  useEffect(() => {
+    let cancelado = false;
+    api.colaboradores()
+      .then((d) => { if (!cancelado) setColaboradores(d || []); })
+      .catch(() => {});
+    return () => { cancelado = true; };
+  }, []);
+
   useEffect(() => {
     if (!selecionadaId) { setDetalhe(null); return; }
     let cancelado = false;
     setCarregandoDetalhe(true);
     setAbertas({}); // trocar de reunião fecha tudo — a nova abre como índice
-    gov.meetings.get(selecionadaId)
+    api.reuniao(selecionadaId)
       .then((d) => { if (!cancelado) setDetalhe(d); })
       .catch((e) => { if (!cancelado) toast.error(formatErro(e, 'Não foi possível abrir a ata')); })
       .finally(() => { if (!cancelado) setCarregandoDetalhe(false); });
@@ -179,7 +194,7 @@ export default function AtaSemanal() {
 
   // Sem dono primeiro: é a fila de trabalho de quem abre a tela.
   const { semDono, comDono, concluidas } = useMemo(() => {
-    const encerrada = (t) => ['concluida', 'cancelada'].includes(t.status);
+    const encerrada = (t) => ['concluida', 'cancelada', 'nao_executada'].includes(t.status);
     const abertas_ = tarefas.filter((t) => !encerrada(t));
     return {
       semDono:    abertas_.filter((t) => !String(t.responsavel || '').trim()),
@@ -203,7 +218,7 @@ export default function AtaSemanal() {
     }));
     setSalvandoId(tarefa.id);
     try {
-      await gov.tasks.update(tarefa.id, campos);
+      await api.salvarTarefa(tarefa.id, campos);
     } catch (e) {
       setDetalhe((d) => ({
         ...d,
@@ -221,15 +236,13 @@ export default function AtaSemanal() {
     <li key={t.id} className="px-4 py-3 border-b last:border-b-0" style={{ borderColor: C.border }}>
       <div className="text-sm mb-2">{t.titulo}</div>
       <div className="flex flex-wrap gap-2 items-center">
-        <input
-          defaultValue={t.responsavel || ''}
-          placeholder="responsável…"
-          onBlur={(e) => {
-            const v = e.target.value.trim();
-            if (v !== (t.responsavel || '')) salvarTarefa(t, { responsavel: v || null });
+        <SeletorResponsavel
+          valor={t.responsavel}
+          colaboradores={colaboradores}
+          cores={C}
+          onChange={(nome) => {
+            if ((nome || null) !== (t.responsavel || null)) salvarTarefa(t, { responsavel: nome });
           }}
-          className="text-xs rounded-md px-2 py-1 border w-44"
-          style={{ background: C.inputBg, borderColor: C.border, color: C.text }}
         />
         <input
           type="date"

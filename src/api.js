@@ -2260,6 +2260,16 @@ export const totemKids = {
   },
 };
 
+// ATA Semanal · porta própria (aberta a todo colaborador).
+// NÃO usar `governanca.*` aqui: aquele backend exige o módulo 'governanca',
+// que dá acesso junto a Conselho, Diretoria, DRE e Assembleia.
+export const ataSemanal = {
+  colaboradores: () => get('/ata-semanal/colaboradores'),
+  reunioes:      () => get('/ata-semanal/reunioes'),
+  reuniao:       (id) => get(`/ata-semanal/reunioes/${id}`),
+  salvarTarefa:  (id, data) => patch(`/ata-semanal/tarefas/${id}`, data),
+};
+
 export const permissoes = {
   bustCache: () => post('/permissoes/cache/bust', {}),
   estrutura: () => get('/permissoes/estrutura'),

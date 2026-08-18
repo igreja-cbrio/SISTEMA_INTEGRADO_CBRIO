@@ -112,11 +112,54 @@ function lazyWithRetry<T extends ComponentType<Record<string, never>>>(factory: 
 
 class ErrorBoundary extends Component<
   { children: ReactNode },
-  { hasError: boolean; error: Error | null; updating: boolean; motivo: MotivoRecuperacao | null }
+  { hasError: boolean; error: Error | null; updating: boolean; motivo: MotivoRecuperacao | null; segundos: number | null }
 > {
+  private timer: number | null = null;
+
   constructor(props: { children: ReactNode }) {
     super(props);
-    this.state = { hasError: false, error: null, updating: false, motivo: null };
+    this.state = { hasError: false, error: null, updating: false, motivo: null, segundos: null };
+  }
+
+  componentWillUnmount() {
+    if (this.timer !== null) window.clearInterval(this.timer);
+  }
+
+  // ⚠️ ESPERAR E TENTAR DE NOVO, em vez de mandar apertar Cmd+Shift+R.
+  //
+  // Quando o orçamento de tentativas acaba, a causa quase sempre é um deploy
+  // AINDA EM ANDAMENTO: não existe versão estável para baixar, então recarregar
+  // na hora — inclusive forçado — cai na mesma parede. Aconteceu três vezes com
+  // o Matheus em 18/08/2026, todas com um deploy de produção no ar.
+  //
+  // O que resolve é tempo. Um deploy leva ~1 a 2 minutos, então a tela conta
+  // 20 segundos e tenta sozinha, quantas vezes forem necessárias — até o teto
+  // abaixo, para que um app genuinamente quebrado não fique recarregando para
+  // sempre e esconda o erro de quem precisa consertar.
+  private static readonly MAX_ESPERAS = 5;
+  private static readonly ESPERA_S = 20;
+  private static readonly CHAVE_ESPERAS = 'cbrio-esperas-atualizacao';
+
+  private esperasFeitas(): number {
+    try { return Number(sessionStorage.getItem(ErrorBoundary.CHAVE_ESPERAS) || '0') || 0; }
+    catch { return 0; }
+  }
+
+  private iniciarEspera() {
+    if (this.timer !== null) return;
+    if (this.esperasFeitas() >= ErrorBoundary.MAX_ESPERAS) return;
+
+    this.setState({ segundos: ErrorBoundary.ESPERA_S });
+    this.timer = window.setInterval(() => {
+      this.setState((s) => {
+        const restante = (s.segundos ?? 0) - 1;
+        if (restante > 0) return { ...s, segundos: restante };
+        if (this.timer !== null) { window.clearInterval(this.timer); this.timer = null; }
+        try { sessionStorage.setItem(ErrorBoundary.CHAVE_ESPERAS, String(this.esperasFeitas() + 1)); } catch { /* modo privado */ }
+        void reloadForAppUpdate({ resetRetries: true });
+        return { ...s, segundos: 0, updating: true };
+      });
+    }, 1000);
   }
   static getDerivedStateFromError(error: Error) {
     const { recuperavel, motivo } = classificarErroDeTela(
@@ -143,7 +186,10 @@ class ErrorBoundary extends Component<
       context: { componentStack: errorInfo.componentStack || null },
     });
 
-    if (recuperavel) hardReload();
+    if (recuperavel) { hardReload(); return; }
+    // Orçamento esgotado num erro de atualização: o caminho não é insistir na
+    // hora, é esperar o deploy terminar.
+    if (motivo === 'chunk') this.iniciarEspera();
   }
   render() {
     if (this.state.hasError) {
@@ -156,8 +202,16 @@ class ErrorBoundary extends Component<
               <p style={{ color: '#888', maxWidth: 480 }}>
                 {this.state.updating
                   ? 'Há uma nova versão do sistema. Estamos atualizando automaticamente; seu acesso e esta página serão mantidos.'
-                  : 'Não foi possível concluir a atualização automática. Tente novamente; seu acesso e esta página serão mantidos.'}
+                  : this.state.segundos !== null
+                    ? 'Uma atualização está sendo publicada agora. Recarregar neste instante cai no mesmo lugar, porque os arquivos ainda estão sendo trocados — vamos tentar de novo em instantes. Seu acesso e esta página serão mantidos.'
+                    : 'Não foi possível concluir a atualização automática. Tente novamente; seu acesso e esta página serão mantidos.'}
               </p>
+
+              {this.state.segundos !== null && this.state.segundos > 0 && (
+                <p style={{ color: '#00B39D', fontSize: 15, fontWeight: 600 }}>
+                  Nova tentativa em {this.state.segundos}s
+                </p>
+              )}
               <button
                 disabled={this.state.updating}
                 onClick={() => {
@@ -175,7 +229,12 @@ class ErrorBoundary extends Component<
                   recarregamento forçado ignora o cache do navegador e é o caminho que
                   sempre sai dessa. Só aparece depois de o automático falhar, pra não
                   ensinar atalho de teclado a quem não precisa. */}
-              {!this.state.updating && (
+              {/* O atalho só aparece quando a espera automática JÁ SE ESGOTOU.
+                  Antes disso ele é conselho ruim: durante um deploy, o
+                  recarregamento forçado cai na mesma parede, e ensinar a
+                  martelar Cmd+Shift+R faz a pessoa achar que o sistema quebrou
+                  quando ele só está sendo publicado. */}
+              {!this.state.updating && this.state.segundos === null && (
                 <p style={{ color: '#888', fontSize: 13, maxWidth: 480 }}>
                   Se voltar a falhar, force o recarregamento: <b>{atalhoRecarregarForcado()}</b>.
                 </p>
