@@ -75,18 +75,52 @@ async function selectPaginado(montarQuery, ordenarPor) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /cultos · lista service_types ativos
+// GET /cultos · lista os tipos de culto para o SELETOR do Dashboard Semanal
+//
+// ⚠️⚠️ NÃO filtra `is_active` — e é essa a correção. Este endpoint alimenta um
+// FILTRO DE ANÁLISE HISTÓRICA (DashSemanalAba.jsx:343), não uma lista de slots
+// agendáveis. Com `.eq('is_active', true)`, no instante em que o corte de 24/08
+// encerrasse o 08:30 e o 10:00 (docs/cultos-domingo/) os dois SUMIRIAM do
+// seletor e ficaria impossível isolar o histórico deles — o oposto do requisito
+// nº 1 da mudança ("o histórico do 08:30 deve continuar"). O §9.1 da varredura
+// diagnosticou exatamente isto: `is_active` responde DUAS perguntas ("este culto
+// ainda acontece?" e "deve aparecer em análise histórica?") e esta mudança é a
+// primeira vez que elas divergem.
+//
+// A régua: quem LISTA o que existiu não filtra vigência; quem OFERECE slot para
+// agendar filtra. Este é o primeiro caso. Os dados das séries nunca dependeram
+// disto (`/mensal`, `/ytd` e `/lentes-domingo` leem `cultos`/a view sem tocar
+// `is_active`) — o que se perdia era só o acesso pelo nome.
+//
+// Devolve `is_active` + vigência para a tela poder rotular "encerrado" e "a
+// partir de dd/mm" em vez de misturar tudo. Colunas do Lote 3 em SELECT
+// ISOLADO e best-effort (lição do parcelas_max: pedir coluna que a migration
+// ainda não criou faz o PostgREST recusar a query INTEIRA).
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/cultos', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('vol_service_types')
-      .select('id, name, recurrence_day, recurrence_time, color')
-      .eq('is_active', true)
+      .select('id, name, recurrence_day, recurrence_time, color, is_active')
       .order('recurrence_day', { ascending: true })
       .order('recurrence_time', { ascending: true });
     if (error) throw error;
-    res.json(data || []);
+
+    const linhas = (data || []).map((t) => ({ ...t, is_active: t.is_active !== false }));
+    try {
+      const { data: vig, error: vErr } = await supabase
+        .from('vol_service_types')
+        .select('id, vigente_de, vigente_ate');
+      if (!vErr && Array.isArray(vig)) {
+        const porId = new Map(vig.map((v) => [v.id, v]));
+        for (const l of linhas) {
+          const v = porId.get(l.id);
+          if (v) { l.vigente_de = v.vigente_de || null; l.vigente_ate = v.vigente_ate || null; }
+        }
+      }
+    } catch { /* sem as colunas do Lote 3 o seletor segue funcionando */ }
+
+    res.json(linhas);
   } catch (e) {
     console.error('[DASH-SEM] cultos', e.message);
     res.status(500).json({ error: 'Erro ao listar cultos' });

@@ -10,6 +10,8 @@
  *  - STATUS_MAP / STATUS_PRIORITY
  */
 
+const { chavePco } = require('../utils/pcoChave');
+
 const STATUS_PRIORITY = { confirmed: 4, scheduled: 3, pending: 2, unknown: 1, declined: 0 };
 const STATUS_MAP = { C: 'confirmed', U: 'pending', D: 'declined', S: 'scheduled', P: 'pending', N: 'pending' };
 
@@ -672,47 +674,65 @@ async function syncTeamMembersFromSchedules(supabase, restrictPersonIds = null) 
   }
   if (!assignments.size) return { assigned: 0, volunteers: 0, teams: 0 };
 
-  // Ensure teams
+  // ⚠️⚠️ O "team" do Planning Center é a nossa FUNÇÃO, não a nossa EQUIPE.
+  // Lá a granularidade é Vocal, Câmeras, Recepção, Bateria; aqui isso são
+  // POSIÇÕES dentro de Banda / Produção / Integração. Esta função criava um
+  // `vol_teams` por nome recebido — e foi assim que o banco chegou a 129
+  // equipes (113 espelho bruto do PCO, com "Cameras"/"Câmeras" e "Bazar 8:30"/
+  // "Bazar 10h" como equipes distintas), enquanto as equipes que a montagem de
+  // escala usa ficavam com 0 a 7 membros.
+  //
+  // Agora a tradução passa por `vol_pco_mapa` (de-para semeado na migration
+  // 20260816120000). Nome que NÃO está no mapa não vira equipe: fica pendente,
+  // visível na tela de Equipes, pra alguém dizer onde ele entra. Criar equipe
+  // por nome desconhecido é exatamente o que produziu a bagunça.
   const allTeamNames = [...new Set([...assignments.values()].map(a => a.team_name))];
-  await supabase.from('vol_teams')
-    .upsert(allTeamNames.map(name => ({ name })), { onConflict: 'name', ignoreDuplicates: true });
-  const { data: teamRows } = await supabase.from('vol_teams')
-    .select('id, name').in('name', allTeamNames);
-  const teamByName = new Map((teamRows || []).map(t => [t.name, t.id]));
 
-  // Ensure positions
-  const positionsSeen = new Set();
-  const positionsToInsert = [];
-  for (const a of assignments.values()) {
-    if (!a.position_name) continue;
-    const teamId = teamByName.get(a.team_name);
-    if (!teamId) continue;
-    const k = `${teamId}:${a.position_name}`;
-    if (positionsSeen.has(k)) continue;
-    positionsSeen.add(k);
-    positionsToInsert.push({ team_id: teamId, name: a.position_name });
+  const mapa = new Map();
+  for (let i = 0; i < allTeamNames.length; i += 200) {
+    const lote = allTeamNames.slice(i, i + 200).map(chavePco);
+    const { data, error } = await supabase.from('vol_pco_mapa')
+      .select('pco_chave, team_id, position_id, ignorar').in('pco_chave', lote);
+    if (error) {
+      // ⚠️ Falhar a CONSULTA do mapa não pode virar "não conheço nenhum nome" —
+      // isso zeraria o sync de membros em silêncio. Aborta declarando.
+      console.error('[sync-members] mapa PCO indisponivel:', error.message);
+      return { assigned: 0, volunteers: 0, teams: 0, erro: 'mapa_indisponivel' };
+    }
+    (data || []).forEach(r => mapa.set(r.pco_chave, r));
   }
-  if (positionsToInsert.length) {
-    await supabase.from('vol_positions')
-      .upsert(positionsToInsert, { onConflict: 'team_id,name', ignoreDuplicates: true });
-  }
-  const teamIds = [...teamByName.values()];
-  const { data: posRows } = teamIds.length
-    ? await supabase.from('vol_positions').select('id, team_id, name').in('team_id', teamIds)
-    : { data: [] };
-  const posByKey = new Map((posRows || []).map(p => [`${p.team_id}:${p.name}`, p.id]));
 
-  // Build memberships — one per (team, person); if multiple positions collide,
-  // keep the first that has a position_id (vol_team_members doesn't support multi-position per team).
+  const naoMapeados = allTeamNames.filter(n => !mapa.has(chavePco(n)));
+  if (naoMapeados.length) {
+    console.warn('[sync-members] times do PCO fora do mapa (viram pendencia, nao equipe):', naoMapeados.join(' · '));
+  }
+
+  const posByKey = new Map();
+  const teamIds = [...new Set([...mapa.values()].map(r => r.team_id).filter(Boolean))];
+  if (teamIds.length) {
+    const { data: posRows } = await supabase.from('vol_positions')
+      .select('id, team_id, name').in('team_id', teamIds);
+    (posRows || []).forEach(p => posByKey.set(`${p.team_id}:${chavePco(p.name)}`, p.id));
+  }
+
+  // Build memberships — uma por (equipe, FUNÇÃO, pessoa).
+  // ⚠️ Não é mais uma por (equipe, pessoa): depois do colapso, quem faz Câmeras
+  // E Projeção é a mesma pessoa na MESMA equipe em duas funções, e o índice
+  // único passou a admitir isso (migration 20260816120000). Guardar só a
+  // primeira apagaria a segunda função de 129 pessoas.
   const membershipByKey = new Map();
   for (const a of assignments.values()) {
-    const teamId = teamByName.get(a.team_name);
-    if (!teamId) continue;
+    const alvo = mapa.get(chavePco(a.team_name));
+    if (!alvo || alvo.ignorar || !alvo.team_id) continue;
+    const teamId = alvo.team_id;
+    // A função vem do MAPA (o "team" do PCO). O `position_name` do PCO é um
+    // detalhe abaixo disso ("Câmera 3") e só é usado se casar com uma função
+    // real da equipe — senão criaria função nova a cada nome novo do PCO.
+    const positionId = alvo.position_id
+      || (a.position_name ? posByKey.get(`${teamId}:${chavePco(a.position_name)}`) || null : null);
     const personKey = a.volunteer_profile_id || `pc:${a.planning_center_person_id}`;
-    const key = `${teamId}:${personKey}`;
-    const positionId = a.position_name ? posByKey.get(`${teamId}:${a.position_name}`) || null : null;
-    const existing = membershipByKey.get(key);
-    if (!existing) {
+    const key = `${teamId}:${positionId || ''}:${personKey}`;
+    if (!membershipByKey.has(key)) {
       membershipByKey.set(key, {
         team_id: teamId,
         volunteer_profile_id: a.volunteer_profile_id,
@@ -721,8 +741,6 @@ async function syncTeamMembersFromSchedules(supabase, restrictPersonIds = null) 
         position_id: positionId,
         is_active: true,
       });
-    } else if (positionId && !existing.position_id) {
-      existing.position_id = positionId;
     }
   }
 
@@ -746,49 +764,64 @@ async function syncTeamMembersFromSchedules(supabase, restrictPersonIds = null) 
   }
 
   // Re-dedup pós-resolução: uma membership que era "pc-only" pode ter ganhado o
-  // MESMO volunteer_profile_id de outra já existente pra mesma equipe — duas
-  // linhas com o mesmo (team_id, volunteer_profile_id) num batch estouram
-  // "ON CONFLICT DO UPDATE command cannot affect row a second time".
+  // MESMO volunteer_profile_id de outra já existente pra mesma equipe E função —
+  // duas linhas com a mesma chave num batch estouram "ON CONFLICT DO UPDATE
+  // command cannot affect row a second time".
+  // ⚠️ A chave inclui `position_id`: depois do colapso das equipes-espelho, a
+  // mesma pessoa na MESMA equipe em duas funções é dado legítimo (129 pessoas),
+  // e reduzir por (equipe, pessoa) apagaria a segunda função.
   const vistosProfile = new Map();
   for (const m of memberships.filter(x => x.volunteer_profile_id)) {
-    const k = `${m.team_id}:${m.volunteer_profile_id}`;
-    const ja = vistosProfile.get(k);
-    if (!ja) vistosProfile.set(k, m);
-    else if (m.position_id && !ja.position_id) ja.position_id = m.position_id;
+    const k = `${m.team_id}:${m.position_id || ''}:${m.volunteer_profile_id}`;
+    if (!vistosProfile.has(k)) vistosProfile.set(k, m);
   }
   const withProfile = [...vistosProfile.values()];
   const pcOnly = memberships.filter(m => !m.volunteer_profile_id && m.planning_center_person_id);
 
   let assigned = 0;
 
-  // Upsert profile-linked (unique: team_id, volunteer_profile_id)
-  for (let i = 0; i < withProfile.length; i += 100) {
-    const batch = withProfile.slice(i, i + 100);
-    const { error: e } = await supabase.from('vol_team_members')
-      .upsert(batch, { onConflict: 'team_id,volunteer_profile_id', ignoreDuplicates: false });
-    if (e) console.error('[sync-members] profile batch:', e.message);
-    else assigned += batch.length;
-  }
-
-  // PC-only: check existing first to avoid duplicates (partial unique index covers the case
-  // but PostgREST can't always target it, so we dedup manually).
-  if (pcOnly.length) {
-    const pcTeamIds = [...new Set(pcOnly.map(m => m.team_id))];
-    const pcIds = [...new Set(pcOnly.map(m => m.planning_center_person_id))];
-    const { data: existing } = await supabase.from('vol_team_members')
-      .select('team_id, planning_center_person_id')
-      .is('volunteer_profile_id', null)
-      .in('team_id', pcTeamIds)
-      .in('planning_center_person_id', pcIds);
-    const existingKeys = new Set((existing || []).map(e => `${e.team_id}:${e.planning_center_person_id}`));
-    const toInsert = pcOnly.filter(m => !existingKeys.has(`${m.team_id}:${m.planning_center_person_id}`));
-    for (let i = 0; i < toInsert.length; i += 100) {
-      const batch = toInsert.slice(i, i + 100);
-      const { error: e } = await supabase.from('vol_team_members').insert(batch);
-      if (e) console.error('[sync-members] pc-only batch:', e.message);
-      else assigned += batch.length;
+  // ⚠️ SEM `upsert`/`onConflict` aqui. Os dois índices únicos passaram a ser
+  // PARCIAIS (migration 20260816120000) e o PostgREST não consegue mirar índice
+  // parcial — um `onConflict` apontando pro nome antigo falharia a cada sync,
+  // em silêncio, no `console.error`. Dedup manual, como o ramo pc-only já fazia.
+  const gravarSemDuplicar = async (linhas, comPerfil) => {
+    if (!linhas.length) return 0;
+    const teamIds = [...new Set(linhas.map(m => m.team_id))];
+    const pessoaIds = [...new Set(linhas.map(m => (comPerfil ? m.volunteer_profile_id : m.planning_center_person_id)))];
+    const existentes = new Set();
+    for (let i = 0; i < pessoaIds.length; i += 200) {
+      let q = supabase.from('vol_team_members')
+        .select('team_id, position_id, volunteer_profile_id, planning_center_person_id')
+        .in('team_id', teamIds);
+      q = comPerfil
+        ? q.in('volunteer_profile_id', pessoaIds.slice(i, i + 200))
+        : q.is('volunteer_profile_id', null).in('planning_center_person_id', pessoaIds.slice(i, i + 200));
+      const { data, error } = await q;
+      if (error) {
+        // Não conseguir LER o que já existe não pode virar "não existe nada" —
+        // isso duplicaria o vínculo de todo mundo a cada sync.
+        console.error('[sync-members] leitura de existentes:', error.message);
+        return 0;
+      }
+      (data || []).forEach(e => existentes.add(
+        `${e.team_id}:${e.position_id || ''}:${comPerfil ? e.volunteer_profile_id : e.planning_center_person_id}`,
+      ));
     }
-  }
+    const novos = linhas.filter(m => !existentes.has(
+      `${m.team_id}:${m.position_id || ''}:${comPerfil ? m.volunteer_profile_id : m.planning_center_person_id}`,
+    ));
+    let n = 0;
+    for (let i = 0; i < novos.length; i += 100) {
+      const batch = novos.slice(i, i + 100);
+      const { error: e } = await supabase.from('vol_team_members').insert(batch);
+      if (e) console.error(`[sync-members] batch ${comPerfil ? 'perfil' : 'pc-only'}:`, e.message);
+      else n += batch.length;
+    }
+    return n;
+  };
+
+  assigned += await gravarSemDuplicar(withProfile, true);
+  assigned += await gravarSemDuplicar(pcOnly, false);
 
   // Mark profile-linked volunteers as active
   const profileIds = [...new Set(withProfile.map(m => m.volunteer_profile_id))];

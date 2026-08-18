@@ -21,6 +21,7 @@ const {
 const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
 const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../utils/volRodizio');
 const { montarCobertura, contarStatus } = require('../utils/volCobertura');
+const { chavePco } = require('../utils/pcoChave');
 const { diaIntegracaoBRT } = require('../utils/volIntegradoEm');
 const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
 const { responderEscala } = require('../services/escalaResposta');
@@ -1833,16 +1834,30 @@ router.post('/allocate/:id', async (req, res) => {
       .maybeSingle();
     if (!vol) return res.status(404).json({ error: 'Voluntário não encontrado' });
 
-    // Add to team (upsert to avoid duplicate)
-    const { error: tmErr } = await supabase.from('vol_team_members')
-      .upsert({
+    // ⚠️ Sem `upsert`: o único `(team_id, volunteer_profile_id)` deixou de
+    // existir na migration 20260816120000 (a mesma pessoa pode ter duas funções
+    // na mesma equipe), e o que ficou no lugar é um índice PARCIAL, que o
+    // PostgREST não consegue mirar por `onConflict`. Confere e insere.
+    let qJa = supabase.from('vol_team_members')
+      .select('id')
+      .eq('team_id', team_id)
+      .eq('volunteer_profile_id', id);
+    // ⚠️ `position_id` NULO precisa de `.is`, não `.eq` — `eq('position_id',
+    // null)` no PostgREST vira `position_id=eq.null` e não casa com nada, então
+    // alocar "na equipe, sem função" inseriria uma linha nova a cada clique.
+    qJa = position_id ? qJa.eq('position_id', position_id) : qJa.is('position_id', null);
+    const { data: jaTem, error: jaErr } = await qJa.maybeSingle();
+    if (jaErr) return res.status(400).json({ error: jaErr.message });
+    if (!jaTem) {
+      const { error: tmErr } = await supabase.from('vol_team_members').insert({
         volunteer_profile_id: id,
         team_id,
         position_id: position_id || null,
         volunteer_name: vol.full_name || 'Sem nome',
         planning_center_person_id: vol.planning_center_id || null,
-      }, { onConflict: 'volunteer_profile_id,team_id', ignoreDuplicates: false });
-    if (tmErr) return res.status(400).json({ error: tmErr.message });
+      });
+      if (tmErr) return res.status(400).json({ error: tmErr.message });
+    }
 
     // Mark as active
     await supabase.from('vol_profiles').update({ allocation_status: 'active' }).eq('id', id);
@@ -3888,14 +3903,25 @@ router.post('/teams-manage/import-from-schedules', async (req, res) => {
       if (s.team_name) s.team_name.split(',').forEach(t => { const trimmed = t.trim(); if (trimmed) teamNames.add(trimmed); });
     });
 
-    // 3. Upsert em vol_teams
-    const created = [];
-    for (const name of teamNames) {
-      const { data, error } = await supabase.from('vol_teams')
-        .upsert({ name }, { onConflict: 'name', ignoreDuplicates: true }).select().single();
-      if (data && !error) created.push(data);
-    }
-    res.json({ imported: created.length, teams: created });
+    // 3. ⚠️⚠️ NÃO cria mais equipe por nome do PCO.
+    // Era ISTO que produzia as 129 equipes: cada "team" do Planning Center
+    // (Vocal, Câmeras, Recepção — que aqui são FUNÇÕES) virava um `vol_teams`.
+    // Rodar este endpoint depois da migration 20260816120000 desfaria o
+    // remapeamento inteiro em um clique. Agora ele CONFERE e devolve o que
+    // ainda não tem destino no `vol_pco_mapa`, sem escrever nada.
+    const { data: mapa, error: mapaErr } = await supabase.from('vol_pco_mapa').select('pco_chave');
+    if (mapaErr) return res.status(400).json({ error: mapaErr.message });
+    const conhecidas = new Set((mapa || []).map(m => m.pco_chave));
+    const pendentes = [...teamNames].filter(n => !conhecidas.has(chavePco(n))).sort();
+
+    res.json({
+      conferidos: teamNames.size,
+      pendentes,
+      // Mantém a chave antiga pra não quebrar quem lê a resposta; agora ela
+      // significa "nada foi criado", que é a verdade.
+      imported: 0,
+      teams: [],
+    });
   } catch (e) { res.status(500).json({ error: 'Erro ao importar equipes' }); }
 });
 
@@ -3907,6 +3933,99 @@ router.post('/teams-manage/sync-members-from-schedules', async (req, res) => {
   } catch (e) {
     console.error('[sync-members]', e.message);
     res.status(500).json({ error: 'Erro ao sincronizar membros de equipe' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// De-para PCO → (equipe, função) · `vol_pco_mapa`
+//
+// ⚠️ O "team" do Planning Center é a nossa FUNÇÃO. Enquanto o sync criava uma
+// equipe por nome recebido, o banco chegou a 129 equipes (113 espelho bruto,
+// com "Cameras"/"Câmeras" e "Bazar 8:30"/"Bazar 10h" separadas) e as equipes
+// que a montagem de escala usa ficaram com 0 a 7 membros. Agora nome novo do
+// PCO NÃO vira equipe: vira PENDÊNCIA aqui, pra alguém dizer onde ele entra.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Nomes de time que chegam nas escalas e ainda não têm destino no mapa.
+router.get('/teams-manage/pendencias-pco', async (req, res) => {
+  try {
+    // Os nomes vivem em vol_schedules.team_name (texto, separado por vírgula).
+    // ⚠️ Paginado: vol_schedules passa de 5 mil linhas e o cap de 1000 do
+    // PostgREST esconderia justamente os nomes mais recentes — que são os que
+    // interessam numa lista de pendências.
+    const contagem = new Map();
+    let offset = 0;
+    for (;;) {
+      const { data, error } = await supabase.from('vol_schedules')
+        .select('team_name').not('team_name', 'is', null)
+        .order('id').range(offset, offset + 999);
+      if (error) return res.status(400).json({ error: error.message });
+      if (!data || !data.length) break;
+      for (const s of data) {
+        for (const parte of String(s.team_name).split(',')) {
+          const nome = parte.trim();
+          if (nome) contagem.set(nome, (contagem.get(nome) || 0) + 1);
+        }
+      }
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+
+    const { data: mapa, error: mapaErr } = await supabase.from('vol_pco_mapa').select('pco_chave');
+    if (mapaErr) return res.status(400).json({ error: mapaErr.message });
+    const conhecidas = new Set((mapa || []).map(m => m.pco_chave));
+
+    const pendentes = [...contagem.entries()]
+      .filter(([nome]) => !conhecidas.has(chavePco(nome)))
+      .map(([nome, escalas]) => ({ nome, escalas }))
+      .sort((a, b) => b.escalas - a.escalas);
+
+    res.json({ pendentes, total: pendentes.length });
+  } catch (e) {
+    console.error('[pendencias-pco]', e.message);
+    res.status(500).json({ error: 'Erro ao listar pendências do Planning Center' });
+  }
+});
+
+router.get('/teams-manage/mapa-pco', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('vol_pco_mapa')
+      .select('id, pco_nome, pco_chave, ignorar, observacao, team:vol_teams(id, name), position:vol_positions(id, name)')
+      .order('pco_nome');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar o de-para do Planning Center' }); }
+});
+
+// Dá destino a um nome do PCO (ou marca pra ignorar).
+// ⚠️ `authorizeModule(...)` inline, NÃO a const `authEscalaEscrita`: ela é
+// declarada ~800 linhas abaixo e o argumento do `router.post` é avaliado no
+// carregamento do módulo — seria a armadilha de TDZ que já mordeu neste repo.
+router.post('/teams-manage/mapa-pco', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { pco_nome, team_id, position_id, ignorar, observacao } = req.body || {};
+    if (!pco_nome) return res.status(400).json({ error: 'pco_nome obrigatorio' });
+    // ⚠️ Ou tem destino, ou é explicitamente ignorado. Um mapeamento sem
+    // team_id e sem `ignorar` seria uma linha que promete resolver a pendência
+    // e não resolve: ela sairia da lista e o voluntário continuaria sem equipe.
+    if (!team_id && !ignorar) {
+      return res.status(400).json({ error: 'Escolha a equipe de destino ou marque para ignorar' });
+    }
+    const { data, error } = await supabase.from('vol_pco_mapa')
+      .upsert({
+        pco_nome,
+        pco_chave: chavePco(pco_nome),
+        team_id: ignorar ? null : team_id,
+        position_id: ignorar ? null : (position_id || null),
+        ignorar: !!ignorar,
+        observacao: observacao || null,
+      }, { onConflict: 'pco_chave' })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[mapa-pco]', e.message);
+    res.status(500).json({ error: 'Erro ao gravar o de-para' });
   }
 });
 

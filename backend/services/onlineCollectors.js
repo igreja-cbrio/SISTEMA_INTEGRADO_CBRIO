@@ -8,6 +8,7 @@
 // ============================================================================
 
 const { supabase } = require('../utils/supabase');
+const { patchDiagOnline } = require('../utils/onlineDiag');
 const yt = require('./youtubeAnalytics');
 
 const JANELA_LIVE_MIN_ANTES = 30;  // monitora 30 min antes do horario marcado
@@ -141,8 +142,15 @@ async function findCultoAtual({ fallbackUltimoDoDia = false } = {}) {
 
 // ---------------------------------------------------------------------------
 // registrarDiagToken · grava observabilidade no token ativo (revoked_at NULL).
-// last_check_at = quando o monitor rodou de fato · last_error = motivo do skip
-// /erro (ou null em sucesso). Nunca quebra o coletor se a escrita falhar.
+// last_check_at = quando o monitor rodou de fato · last_error = SÓ o que
+// IMPEDE a coleta e exige gente.
+//
+// ⚠️⚠️ NÃO gravar estado normal aqui (18/08/2026). 'live_encerrada_ou_sem_dado'
+// é o resultado da maioria das execuções — a janela do monitor cobre horas e a
+// live dura ~1h30 — e ia parar em `last_error`, que `verificarColetaOnline` lê
+// como 'coleta degradada'. Resultado: aviso diário de erro com a coleta 100%
+// sã (medido: 17 de 17 cultos de agosto com pico e DS). Quem classifica é
+// `utils/onlineDiag.js`.
 // ---------------------------------------------------------------------------
 async function registrarDiagToken(patch) {
   try {
@@ -232,7 +240,7 @@ async function liveMonitor() {
     if (!videoId) {
       const escolha = await escolherVideoDoCulto(culto);
       if (escolha.error) {
-        await registrarDiagToken({ last_check_at: agora, last_error: escolha.error });
+        await registrarDiagToken(patchDiagOnline(escolha.error, agora));
         return { skipped: true, reason: escolha.error, culto_id: culto.id };
       }
       videoId = escolha.video_id;
@@ -244,7 +252,7 @@ async function liveMonitor() {
     // Pega concurrent viewers
     const viewers = await yt.fetchLiveConcurrentViewers(null, videoId);
     if (viewers === null) {
-      await registrarDiagToken({ last_check_at: agora, last_error: 'live_encerrada_ou_sem_dado' });
+      await registrarDiagToken(patchDiagOnline('live_encerrada_ou_sem_dado', agora));
       return { skipped: true, reason: 'live_encerrada_ou_sem_dado', culto_id: culto.id, video_id: videoId };
     }
 
@@ -266,7 +274,7 @@ async function liveMonitor() {
     // Antes esse erro era engolido (.catch(() => null)) e o pico se perdia em
     // silêncio. Agora persiste o motivo real pra debug em /online (status OAuth).
     const msg = (e?.message || String(e)).slice(0, 250);
-    await registrarDiagToken({ last_check_at: agora, last_error: `live_monitor: ${msg}` });
+    await registrarDiagToken(patchDiagOnline(`live_monitor: ${msg}`, agora));
     return { skipped: true, reason: 'erro', culto_id: culto.id, error: msg };
   }
 }
