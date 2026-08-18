@@ -310,8 +310,7 @@ type RelatorioVinculo = {
 
 /** Um lote do cursor do servidor. */
 type LoteVinculo = Omit<RelatorioVinculo, 'aplicado'> & {
-  offset: number;
-  proximo_offset: number | null;
+  proximo_cursor: string | null;
   total: number | null;
   membros_ligados: string[];
 };
@@ -345,12 +344,21 @@ function VincularMembrosCard() {
       por_chave: {}, exemplos_ligados: [], exemplos_conflitos: [], exemplos_sem_match: [],
     };
     const tomados: string[] = [];
-    let offset: number | null = 0;
+    // ⚠️ Cursor por CHAVE. Em modo aplicar o conjunto encolhe a cada lote (quem
+    // ganha membro sai do filtro), e um deslocamento numérico marcharia além do
+    // fim — foi o "Requested range not satisfiable" que parou a primeira
+    // aplicação com 188 de 279.
+    let cursor: string | null = null;
+    let primeiro = true;
+    let denominador = 0;
+    let processados = 0;
     try {
-      while (offset !== null) {
+      for (;;) {
         const r: LoteVinculo = await voluntariado.vincularMembros({
-          aplicar, offset, ja_tomados: tomados,
+          aplicar, depois_de: cursor, ja_tomados: tomados,
         });
+        // O total do PRIMEIRO lote é o denominador: nos seguintes ele encolhe.
+        if (primeiro) { denominador = r.total ?? 0; primeiro = false; }
         soma.analisados += r.analisados;
         soma.ligados += r.ligados;
         soma.conflitos += r.conflitos;
@@ -361,9 +369,11 @@ function VincularMembrosCard() {
         if (soma.exemplos_conflitos.length < 15) soma.exemplos_conflitos.push(...r.exemplos_conflitos);
         if (soma.exemplos_sem_match.length < 15) soma.exemplos_sem_match.push(...r.exemplos_sem_match);
         tomados.push(...(r.membros_ligados || []));
-        setProgresso({ feitos: (r.offset ?? 0) + r.analisados, total: r.total ?? 0 });
+        processados += r.analisados;
+        setProgresso({ feitos: processados, total: denominador });
         setRel({ ...soma });
-        offset = r.proximo_offset;
+        if (!r.proximo_cursor) break;
+        cursor = r.proximo_cursor;
       }
       toast[aplicar ? 'success' : 'info'](
         aplicar

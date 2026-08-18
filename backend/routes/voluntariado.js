@@ -23,6 +23,7 @@ const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../
 const { montarCobertura, contarStatus } = require('../utils/volCobertura');
 const { podeGerarCulto } = require('../utils/volSyncIntegrity');
 const { filtrarVigentes } = require('../utils/vigenciaTipoCulto');
+const { proximoCursor } = require('../utils/cursorLote');
 const { chavePco } = require('../utils/pcoChave');
 const { diaIntegracaoBRT } = require('../utils/volIntegradoEm');
 const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
@@ -1850,8 +1851,17 @@ router.post('/vincular-membros', authorizeModule('voluntariado', 3), async (req,
     // telefone, nascimento, mais os contatos secundários). Rodar os ~490 perfis
     // numa requisição só passou dos 300s de `maxDuration` e morreu sem devolver
     // NADA — nem o que já tinha casado. Quem chama percorre o cursor.
+    //
+    // ⚠️⚠️ O cursor é por CHAVE (`depois_de`), não por deslocamento, e isso é
+    // correção de um bug real (18/08, na primeira aplicação de verdade): em modo
+    // APLICAR o próprio comando ENCOLHE o conjunto — quem ganha `membresia_id`
+    // sai do filtro `is null`. Com `offset` fixo avançando de 40 em 40, a lista
+    // some por baixo do cursor, o offset passa do fim e o PostgREST responde
+    // "Requested range not satisfiable". Parou com 188 de 279 ligados.
+    // Voltar pro offset 0 também não serve: conflito e sem-pista FICAM no
+    // conjunto, e a rodada nunca terminaria. A chave é imune às duas coisas.
     const aplicar = req.body?.aplicar === true;
-    const offset = Math.max(0, Number(req.body?.offset) || 0);
+    const depoisDe = typeof req.body?.depois_de === 'string' ? req.body.depois_de : null;
     const tamanho = Math.min(Math.max(Number(req.body?.tamanho) || 40, 1), 60);
     // Ids de membro já reivindicados nos lotes ANTERIORES desta mesma rodada.
     // Sem isso a simulação não enxergaria conflito entre lotes (em modo
@@ -1859,10 +1869,12 @@ router.post('/vincular-membros', authorizeModule('voluntariado', 3), async (req,
     // número que o "aplicar" depois não entregaria.
     const jaTomados = new Set(Array.isArray(req.body?.ja_tomados) ? req.body.ja_tomados : []);
 
-    const { data: pagina, error, count } = await supabase.from('vol_profiles')
+    let q = supabase.from('vol_profiles')
       .select('id, full_name, email, cpf, phone', { count: 'exact' })
       .is('membresia_id', null).eq('arquivado', false)
-      .order('id').range(offset, offset + tamanho - 1);
+      .order('id').limit(tamanho);
+    if (depoisDe) q = q.gt('id', depoisDe);
+    const { data: pagina, error, count } = await q;
     if (error) return res.status(400).json({ error: error.message });
 
     const perfis = (pagina || []).filter(v => ehPessoaEscalavel(v.full_name));
@@ -1927,13 +1939,15 @@ router.post('/vincular-membros', authorizeModule('voluntariado', 3), async (req,
       }
     }
 
-    const total = count ?? null;
-    const proximo = (pagina || []).length === tamanho ? offset + tamanho : null;
+    // ⚠️ O último id vem da PÁGINA CRUA, não dos perfis filtrados: se o último
+    // da página for uma conta de sistema descartada por `ehPessoaEscalavel`, o
+    // cursor pararia nela e a rodada repetiria a mesma página pra sempre.
     res.json({
       aplicado: aplicar,
-      offset,
-      proximo_offset: proximo,
-      total,
+      proximo_cursor: proximoCursor(pagina, tamanho),
+      // Em modo aplicar o total ENCOLHE a cada lote (quem foi ligado sai do
+      // filtro). Quem chama usa o total do PRIMEIRO lote como denominador.
+      total: count ?? null,
       analisados: perfis.length,
       ligados: ligados.length,
       conflitos: conflitos.length,
