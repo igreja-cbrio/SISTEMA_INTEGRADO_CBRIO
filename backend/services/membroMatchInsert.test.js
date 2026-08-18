@@ -136,4 +136,56 @@ assert(/perfeitos\.length === 1/.test(ramo[0]),
 assert(/permitirMatchPerfeito = false/.test(fonte),
   'a opção tem que ser OPT-IN: quem passa soChaveForte por um "não sou eu" do dedup não pode ser religado por nome+nascimento');
 
+// ── O nome que autoriza LIGAR (2026-08-18) ──────────────────────────────────
+// `nomesMesmaPessoa` (Dice ≥0,90) recusava nome abreviado, e era isso que
+// transformava cadastro antigo em fantasma: o registro do Next legado tem nome +
+// telefone, a pessoa volta com o nome civil completo e o MESMO telefone, o
+// matcher não reconhece e nasce uma segunda pessoa.
+const { nomeEhVersaoAbreviada } = require('./duplicidadePolicy');
+
+assert(/nomeAutorizaLigar\(c\.nome, nome\)/.test(fonte),
+  'os gates de candidato (e-mail+nome e telefone+nome) têm que usar nomeAutorizaLigar — com Dice puro o cadastro antigo vira fantasma');
+
+// ⚠️⚠️ MUTATION-TEST: as duas asserções abaixo existem porque 2 mutantes
+// SOBREVIVERAM à primeira versão deste bloco. Ele checava QUEM é chamado nos
+// gates e não O QUE a função faz atrás — então (1) esvaziar
+// `nomeAutorizaLigar` pra só `nomesMesmaPessoa` e (2) importar
+// `nomesPodemSerMesmaPessoa` com o APELIDO `nomeEhVersaoAbreviada` passavam
+// os dois. O segundo é o pior: reintroduz o atalho de Dice e volta a aceitar
+// irmãs, com o teste verde.
+const corpoLigar = /function nomeAutorizaLigar\(a, b\) \{([\s\S]*?)^\}/m.exec(fonte);
+assert(corpoLigar, 'não achei nomeAutorizaLigar');
+assert(/nomeEhVersaoAbreviada\(a, b\)/.test(corpoLigar[1]),
+  'nomeAutorizaLigar tem que somar o containment — sem ele o cadastro antigo volta a virar fantasma');
+assert(/require\('\.\/duplicidadePolicy'\)/.test(fonte)
+  && /const \{ nomeEhVersaoAbreviada \} = require\('\.\/duplicidadePolicy'\)/.test(fonte),
+  'o import tem que ser exatamente nomeEhVersaoAbreviada: apelidar nomesPodemSerMesmaPessoa reintroduz o Dice e liga irmãs');
+assert(!/nomesPodemSerMesmaPessoa/.test(fonte),
+  'o matcher NÃO pode usar nomesPodemSerMesmaPessoa: aquela é a régua de SUGERIR (tem o atalho de Dice), não a de LIGAR');
+assert((fonte.match(/nomeAutorizaLigar\(c\.nome, nome\)/g) || []).length === 2,
+  'são DOIS gates (acharOuCriarGuardado e acharMembroGuardado) e os dois precisam da régua');
+
+// ⚠️⚠️ O ramo nome+nascimento continua no Dice ESTREITO, de propósito: GÊMEOS
+// compartilham a data de nascimento, e ali um nome contido ("Ana Souza Lima" ×
+// "Ana Lima") somado ao mesmo nascimento ligaria irmãs. Afrouxar exigiria veto de
+// CPF, que aquele ramo não tem.
+assert(/find\(\(c\) => nomesMesmaPessoa\(c\.nome, nome\)\)/.test(fonte),
+  'o ramo nome+nascimento tem que continuar com nomesMesmaPessoa: nascimento igual + nome contido ligaria gêmeos');
+
+// ⚠️ A régua de LIGAR é o containment, NUNCA o atalho de Dice da política.
+// Medido sobre telefone em comum: containment = 100 pares, todos a mesma pessoa;
+// Dice ≥0,90 = 4 pares, 2 deles IRMÃS.
+assert.equal(nomeEhVersaoAbreviada('Kelly Veiga da Silva Oliveira', 'Kelly Veiga'), true,
+  'nome contido é a mesma pessoa (caso real do Next legado)');
+assert.equal(nomeEhVersaoAbreviada('Andrea Melchiades Palladino', 'Andrea Palladino'), true,
+  'o caso Andrea Palladino tem que ligar');
+assert.equal(nomeEhVersaoAbreviada('Layane A. M. Bello Joseph', 'Dayane A. M. Bello Joseph'), false,
+  'IRMÃS: uma letra de diferença no PRIMEIRO nome não autoriza ligar');
+assert.equal(nomeEhVersaoAbreviada('Mayla Duarte Victor Minari', 'Nayla Duarte Victor Minari'), false,
+  'IRMÃS: idem — este é o par que o atalho de Dice aceitaria');
+assert.equal(nomeEhVersaoAbreviada('Ana Souza Lima', 'Joao Souza Lima'), false,
+  'irmãos que só compartilham sobrenome nunca ligam');
+assert.equal(nomeEhVersaoAbreviada('Ana Souza', 'Ana Lima'), false,
+  'mesmo primeiro nome com sobrenome diferente não é versão abreviada');
+
 console.log('membroMatch: INSERT grava nascimento/sexo · telefone comparável com fallback · match perfeito com veto de CPF');
