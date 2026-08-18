@@ -7207,6 +7207,74 @@ pergunta + `comentario`. Stats de score na view `vw_nps_pesquisa_stats`.
   (#1522 · upsert com contexto estável `{pesquisa_id}` · pesquisa arquivada
   remove a linha) → alimenta os tipos `nps_*` e os KPIs ligados.
 
+## ⚠⚠ O ritual de KPI apresenta a FATIA da presidência, não o sistema (2026-08-18)
+
+Pedido do Marcos: *"o Juninho considera OKR os topos de todas as listas — existem
+na visão dele 3 OKRs de cada área, o restante ele considera KPI. Ele não reconhece
+nossa estrutura de KPIs/OKR/KRs, mesmo que ela esteja mais robusta. Nessas reuniões
+não apresentemos indicadores completos do sistema e sim essa fatia."*
+
+A fatia é **1 NSM · 3 áreas · 3 OKRs por área (9) · 25 táticos**, e vive em
+**`src/lib/monitoramentoOkrEstrutura.js`** — fonte ÚNICA já compartilhada por
+`/monitoramento-okr` e pelo `/governanca` (`RitualPage.jsx`), com `avaliar`,
+`valorTopoOkr`, `valorTatico` e **`retratoIndicadores(metricas)`** (achata a fatia
+em linhas valor/alvo/ok). Export de PDF e de slides em `lib/exportMonitoramentoOkr`.
+
+### O que mudou agora
+
+O ritual **OKR** já lia a fatia. O ritual **KPI** lia `gov.kpiObjetivos()` — os
+objetivos gerais do NOSSO sistema, com `pct_medio`/`medidos` — ou seja, exatamente
+a estrutura que ele não reconhece. Agora o KPI renderiza o **mesmo `OkrPainel`**, com
+os mesmos chips de escopo e o mesmo comparativo mensal.
+
+- ⚠️ **O retrato do KPI passou a ter a FORMA da fatia** (`indicadores`), mantendo
+  `sigla: 'KPI'` pra a linha do tempo saber de qual ritual é. E **`ResumoRetrato`
+  decide pela FORMA do snapshot, não pela sigla** — assim um retrato antigo no
+  formato de objetivos gerais continua abrindo.
+  ✅ Conferido no banco em 18/08: **ZERO reuniões tinham snapshot**, então não havia
+  histórico a preservar. A guarda por forma fica de graça.
+- `KpiPainel` e `KpiComparativoMensal` seguem **definidos e desmontados** (padrão
+  da casa pra código dormente). O fetch de `kpiObjetivos` continua, também dormente,
+  como caminho pro modo "os dois" (fatia + objetivos recolhidos), que foi
+  considerado e **não** escolhido — sinalizado por `RETRATO_OBJETIVOS_DORMENTE`.
+  Faxina possível se ninguém pedir esse modo.
+
+### ⚠⚠ Os números da fatia são `fixo`, com a BASE DELE — não são os nossos
+
+Os táticos foram convertidos pra `fixo:` com o comentário *"módulo-fim, não sai
+dado daqui"*, usando **base 3.000 membros definida pelo Juninho**. O sistema mede
+outra coisa: `baseMembros` = **1.728**, com numeradores próprios.
+
+| indicador | fatia dele (`fixo`) | sistema (lente viva) |
+|---|---|---|
+| % frequência em Grupos | **48%** (1.431 ÷ 3.000) | 55% (950 ÷ 1.728) |
+| % Voluntários ativos | **29,8%** (893 ÷ 3.000) | 18,2% (314 ÷ 1.728) |
+| % dizimistas regulares | **28,5%** (856 ÷ 3.000) | 15,2% (263 ÷ 1.728) |
+
+⚠️ **Não é bug e não é pra "consertar"**: são duas réguas convivendo, e a dele é a
+que vale na reunião dele. **NUNCA misturar as duas num mesmo documento** — é assim
+que uma reunião inteira vira discussão sobre qual número está certo.
+
+⚠️ **8 dos 9 topos não têm número.** Só "Batismos Realizados" tem `live`. Como o
+topo é exatamente o que ele chama de OKR, é esse o retrato honesto a abrir a
+reunião — e não um painel cheio de "—" que parece defeito.
+
+### ⏳ Pendente: a fatia ainda não é legível pelo BACKEND
+
+Ela é módulo de frontend, então (a) mudar alvo ou número `fixo` exige PR e (b) o
+relatório automático do ritual (`GET /governanca/relatorio/:sigla` → `buildKPI`) e
+o e-mail do agente `rotina_gestor` **não conseguem apresentá-la** — apresentam o
+sistema completo. Decisão do Marcos (18/08): **vale levar a fatia pro banco**, e o
+motivo é o backend. Fica pra depois da reunião.
+
+⚠⚠ **LIÇÃO CARA DESTA SESSÃO:** eu escrevi 383 linhas de migration semeando essa
+estrutura **a partir do checkout principal**, que está na branch
+`claude/poolpg-projects-patrimonio` — desatualizada. A versão de lá ainda tinha
+`live:` e nomes superados ("Engajamento nos Valores ≥75%" em vez de "Engajamento
+médio nos valores ≥50%"). Mergeada, teria criado uma **TERCEIRA cópia da estrutura
+com números já substituídos**. Descartei tudo sem commitar. Quando a fatia for pro
+banco, **o seed sai de `src/lib/monitoramentoOkrEstrutura.js` no `origin/main`**.
+
 ## Monitoramento OKR · aba /monitoramento-okr (2026-06-02/03)
 
 Reproduz a planilha "CBRio_cabeca_Juninho" (1 NSM → 9 OKRs em 3 blocos:
