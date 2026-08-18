@@ -15,6 +15,29 @@ const router = require('express').Router();
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
+// ── Geração automática da ata (cron) ───────────────────────────────────────
+//
+// Declarado ANTES do `authenticate` global: quem chama é o GitHub Actions com
+// x-cron-secret, não um usuário logado. Se ficasse depois, o guard responderia
+// 401 antes do handler e o cron falharia em silêncio toda segunda.
+//
+// Horário: segunda 15h SP. A reunião termina ~12h20 e a gravação do Plaud só
+// fica pronta ~1h30 depois (medido: 3 reuniões, 1h29 a 1h50). Às 15h há folga.
+const { isAuthorizedCron } = require('../utils/cronAuth');
+const { gerarAtasPendentes } = require('../services/ataGenerator');
+
+async function gerarPendentes(req, res) {
+  if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'unauthorized' });
+  try {
+    const limite = Math.min(5, Math.max(1, Number(req.query.limite) || 2));
+    res.json(await gerarAtasPendentes({ limite }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}
+router.get('/cron/gerar', gerarPendentes);
+router.post('/cron/gerar', gerarPendentes);
+
 router.use(authenticate);
 
 // ⚠️ COLABORADOR, não "qualquer autenticado".
@@ -53,17 +76,17 @@ async function tipoMinisterialId() {
 // ele que precisa atribuir responsável.
 router.get('/colaboradores', async (_req, res) => {
   try {
+    // ⚠️ Lê a VIEW, não a tabela `profiles`.
+    // Um filtro ingênuo em profiles (`is_membro_only is not true`) deixava
+    // passar quem preencheu o formulário público de membresia no passado — elas
+    // têm login, porque o app de membros e o ERP compartilham o Supabase Auth.
+    // Quem separa é o CARGO ('membro', 'voluntario*', quiosque, acesso negado),
+    // com resgate por ÁREA. A regra inteira, e o porquê de cada exceção, mora
+    // na migration de `vw_colaboradores` — um lugar só, para toda lista de
+    // responsável do sistema dizer a mesma coisa.
     const { data, error } = await supabase
-      .from('profiles')
+      .from('vw_colaboradores')
       .select('id, name, email, avatar_url, area')
-      .eq('active', true)
-      // ⚠️ `.not(col,'is',true)` = `col IS NOT TRUE`, que deixa passar false E
-      // null. Evita de propósito dois `.or()` encadeados: em PostgREST cada um
-      // vira um parâmetro separado, e se um sobrescrevesse o outro as ~91 contas
-      // que só usam o app de membros entrariam na lista sem ninguém notar.
-      // Filtro de privacidade não pode depender de comportamento ambíguo.
-      .not('is_membro_only', 'is', true)
-      .not('is_servico', 'is', true)
       .order('name');
     if (error) throw error;
     res.json(data || []);
@@ -140,9 +163,21 @@ router.patch('/tarefas/:id', async (req, res) => {
     // deixaria alguém reescrever título e vínculo da pendência.
     const b = req.body || {};
     const campos = {};
-    if ('responsavel' in b) {
+    // ⚠️ Aceita as DUAS formas de propósito. `responsaveis` (array) é a nova
+    // fonte da verdade; `responsavel` (texto) continua sendo aceito porque,
+    // durante a janela de deploy, o frontend antigo ainda está no navegador de
+    // quem estava com a tela aberta e é ele quem manda esse campo.
+    if ('responsaveis' in b) {
+      const lista = Array.isArray(b.responsaveis)
+        ? [...new Set(b.responsaveis.map((x) => String(x ?? '').trim()).filter(Boolean))]
+        : [];
+      campos.responsaveis = lista.length ? lista : null;
+      // Espelho para o módulo de governança, que lê a coluna antiga.
+      campos.responsavel = lista.length ? lista.join(', ') : null;
+    } else if ('responsavel' in b) {
       const v = String(b.responsavel ?? '').trim();
       campos.responsavel = v || null;
+      campos.responsaveis = v ? [v] : null;
     }
     if ('prazo' in b) {
       const v = String(b.prazo ?? '').trim();
@@ -186,7 +221,7 @@ router.post('/tarefas/:id/enviar', async (req, res) => {
     const tipo = await tipoMinisterialId();
     const { data: pend } = await supabase
       .from('governance_tasks')
-      .select('id, titulo, responsavel, prazo, tarefa_pessoal_id, meeting_id, governance_meetings!inner(date, type_id, deleted_at)')
+      .select('id, titulo, responsavel, responsaveis, prazo, tarefa_pessoal_id, tarefas_pessoais_ids, meeting_id, governance_meetings!inner(date, type_id, deleted_at)')
       .eq('id', req.params.id)
       .maybeSingle();
 
@@ -195,29 +230,38 @@ router.post('/tarefas/:id/enviar', async (req, res) => {
       return res.status(404).json({ error: 'Pendência não encontrada' });
     }
 
-    // Idempotente: o vínculo é a memória de que já foi enviada. Sem isto, cada
-    // clique (ou cada duplo-clique) criaria uma tarefa nova.
-    if (pend.tarefa_pessoal_id) {
-      return res.json({ criada: false, tarefa_id: pend.tarefa_pessoal_id, motivo: 'ja_enviada' });
+    // Idempotente pelo vínculo: sem ele, cada clique (ou duplo-clique) criaria
+    // tarefas novas e a tela não saberia mostrar "já enviada".
+    const jaEnviadas = pend.tarefas_pessoais_ids?.length
+      ? pend.tarefas_pessoais_ids
+      : (pend.tarefa_pessoal_id ? [pend.tarefa_pessoal_id] : []);
+    if (jaEnviadas.length) {
+      return res.json({ criada: false, tarefas_ids: jaEnviadas, motivo: 'ja_enviada' });
     }
 
-    // O responsável é TEXTO na ata (pode ser "Milena / Mari", ou alguém sem
-    // login). Casamos por nome; sem correspondência, a tarefa fica com quem
-    // clicou — melhor do que recusar e deixar a pendência sem dono em lugar
-    // nenhum. O corpo diz de quem era, para não perder a informação.
-    let destinoId = req.user.userId;
-    let destinoNome = req.user.name || null;
-    const nomeNaAta = String(pend.responsavel || '').trim();
+    // Nomes na ata são TEXTO (podem ser "Milena / Mari", ou gente sem login).
+    const nomes = pend.responsaveis?.length
+      ? pend.responsaveis
+      : (String(pend.responsavel || '').trim() ? [String(pend.responsavel).trim()] : []);
 
-    if (nomeNaAta) {
+    // Uma tarefa POR responsável: se três pessoas tocam a pendência, cada uma
+    // precisa dela no próprio Minhas Tarefas — uma tarefa compartilhada que
+    // aparece só para um vira tarefa de ninguém.
+    const destinos = [];
+    for (const nome of nomes) {
       const { data: perfil } = await supabase
-        .from('profiles')
-        .select('id, name')
-        .eq('active', true)
-        .not('is_membro_only', 'is', true)
-        .ilike('name', nomeNaAta)
-        .maybeSingle();
-      if (perfil) { destinoId = perfil.id; destinoNome = perfil.name; }
+        .from('profiles').select('id, name')
+        .eq('active', true).not('is_membro_only', 'is', true)
+        .ilike('name', nome).maybeSingle();
+      if (perfil) destinos.push({ id: perfil.id, nome: perfil.name, daAta: nome });
+    }
+
+    // Nenhum nome casou com um login (ou não havia nome): fica com quem clicou,
+    // e a descrição registra de quem era na ata — melhor do que recusar e
+    // deixar a pendência sem dono em lugar nenhum.
+    const semCorrespondencia = !destinos.length;
+    if (semCorrespondencia) {
+      destinos.push({ id: req.user.userId, nome: req.user.name || null, daAta: nomes.join(', ') || null });
     }
 
     const dataReuniao = pend.governance_meetings?.date || null;
@@ -225,40 +269,66 @@ router.post('/tarefas/:id/enviar', async (req, res) => {
       ? String(dataReuniao).slice(0, 10).split('-').reverse().join('/')
       : null;
 
-    const descricao = [
-      dataBr ? `Pendência da reunião ministerial de ${dataBr}.` : 'Pendência da reunião ministerial.',
-      nomeNaAta && destinoNome !== nomeNaAta ? `Na ata, o responsável está como "${nomeNaAta}".` : null,
-    ].filter(Boolean).join(' ');
+    const linhas = destinos.map((d) => ({
+      titulo: String(pend.titulo || '').slice(0, 200),
+      descricao: [
+        dataBr ? `Pendência da reunião ministerial de ${dataBr}.` : 'Pendência da reunião ministerial.',
+        d.daAta && d.nome !== d.daAta ? `Na ata, o responsável está como "${d.daAta}".` : null,
+        nomes.length > 1 ? `Compartilhada com: ${nomes.join(', ')}.` : null,
+        d.id !== req.user.userId && req.user.name ? `Enviada por ${req.user.name}.` : null,
+      ].filter(Boolean).join(' '),
+      data: pend.prazo || null,
+      responsavel_id: d.id,
+      responsavel_nome: d.nome,
+      // ⚠️ created_by = O DESTINATÁRIO, não quem clicou.
+      // O módulo Minhas Tarefas declara "privacidade estrita: TODA operação é
+      // escopada em created_by" — GET, PUT e DELETE, os três. Ali essa coluna é
+      // usada como DONO DA LISTA, não como autor. Gravando quem clicou, a
+      // tarefa não aparecia para ninguém: nem para o destinatário (não é o
+      // created_by) nem de forma útil para o remetente. Aconteceu de verdade
+      // com 9 tarefas em 18/08/2026.
+      // Quem enviou fica registrado na descrição, para a informação não sumir.
+      created_by: d.id,
+      tipo: 'pessoal',
+      status: 'a_fazer',
+      prioridade: 'media',
+      recorrencia: 'unica',
+    }));
 
-    const { data: tarefa, error: errTarefa } = await supabase
-      .from('tarefas_pessoais')
-      .insert({
-        titulo: String(pend.titulo || '').slice(0, 200),
-        descricao,
-        data: pend.prazo || null,
-        responsavel_id: destinoId,
-        responsavel_nome: destinoNome,
-        created_by: req.user.userId,
-        tipo: 'pessoal',
-        status: 'a_fazer',
-        prioridade: 'media',
-        recorrencia: 'unica',
-      })
-      .select('id')
-      .maybeSingle();
+    const { data: criadas, error: errTarefa } = await supabase
+      .from('tarefas_pessoais').insert(linhas).select('id');
     if (errTarefa) throw errTarefa;
 
+    const ids = (criadas || []).map((t) => t.id);
     const { error: errVinculo } = await supabase
       .from('governance_tasks')
-      .update({ tarefa_pessoal_id: tarefa.id })
+      .update({
+        tarefas_pessoais_ids: ids,
+        // Espelho da coluna antiga: o frontend no ar durante a janela de deploy
+        // ainda lê ela para decidir se mostra o botão.
+        tarefa_pessoal_id: ids[0] || null,
+      })
       .eq('id', pend.id);
-    // Se o vínculo falhar, a tarefa já existe: apagar seria pior (a pessoa
-    // perde o item). Devolvemos sucesso avisando que pode reaparecer o botão.
-    if (errVinculo) {
-      return res.json({ criada: true, tarefa_id: tarefa.id, vinculo: false, responsavel_nome: destinoNome });
-    }
 
-    res.json({ criada: true, tarefa_id: tarefa.id, vinculo: true, responsavel_nome: destinoNome });
+    // Se o vínculo falhar, as tarefas já existem: apagá-las seria pior (a
+    // pessoa perde o item). Devolvemos sucesso avisando que o botão pode voltar.
+    res.json({
+      criada: true,
+      tarefas_ids: ids,
+      vinculo: !errVinculo,
+      responsaveis: destinos.map((d) => d.nome).filter(Boolean),
+      sem_correspondencia: semCorrespondencia,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Disparo manual da geração (botão na tela). Mesma função do cron.
+router.post('/gerar', async (req, res) => {
+  try {
+    const limite = Math.min(5, Math.max(1, Number(req.body?.limite) || 1));
+    res.json(await gerarAtasPendentes({ limite }));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
