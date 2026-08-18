@@ -17,11 +17,19 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const PRINCIPAL = path.join(os.homedir(), 'SISTEMA_INTEGRADO_CBRIO', 'backend');
-const LOCAL = path.join(__dirname, '..');
+// ⚠️ O checkout principal fica em ~/Documents/SISTEMA_INTEGRADO_CBRIO, NÃO em
+// ~/SISTEMA_INTEGRADO_CBRIO (era o caminho único aqui até 17/08, e por isso o
+// fallback nunca resolvia: rodando de uma worktree — que nasce sem .env, porque
+// ele é gitignored — o script morria em "não encontrados em .env" mesmo com o
+// arquivo existindo no principal). Tentar os dois, e dizer ONDE procurou.
+const CANDIDATOS = [
+  path.join(__dirname, '..'),                                              // a própria worktree
+  path.join(os.homedir(), 'Documents', 'SISTEMA_INTEGRADO_CBRIO', 'backend'),
+  path.join(os.homedir(), 'SISTEMA_INTEGRADO_CBRIO', 'backend'),
+];
 
 function carregarEnv() {
-  for (const dir of [LOCAL, PRINCIPAL]) {
+  for (const dir of CANDIDATOS) {
     const f = path.join(dir, '.env');
     if (!fs.existsSync(f)) continue;
     const env = {};
@@ -31,7 +39,12 @@ function carregarEnv() {
     }
     if (env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY) return env;
   }
-  throw new Error('SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY não encontrados em .env');
+  throw new Error(
+    'SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY não encontrados. Procurei em:\n  ' +
+    CANDIDATOS.map((d) => path.join(d, '.env')).join('\n  ') +
+    '\nEste script é OPCIONAL (o backup em JSON fora do banco). O corte em si é o ' +
+    'SQL colado no editor do Supabase, que não depende de .env.'
+  );
 }
 function resolverModulo(nome) {
   for (const dir of [LOCAL, PRINCIPAL]) {

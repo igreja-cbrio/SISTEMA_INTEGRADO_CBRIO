@@ -37,7 +37,28 @@
 --
 -- ROLLBACK (se algo der errado DEPOIS do commit): as tabelas _bk_20260824_*
 -- criadas aqui guardam o estado anterior de tudo que o script muda.
+--
+-- ⚠️⚠️ O `SET statement_timeout` ABAIXO NÃO É ENFEITE — sem ele o corte estoura.
+-- Medido no ensaio de 17/08 (em bloco revertido, contra a base de produção):
+-- `cultos` tem DOIS gatilhos ROW-level — `cultos_recalc_kpis`
+-- (trg_kpi_recalcular_culto) e `cultos_recalcular_nsm`
+-- (tg_nsm_recalcular_pos_culto) — e cada linha custa **1,26 s no INSERT e
+-- 2,44 s no DELETE**. O corte faz 18 inserts + 36 deletes ⇒ **~110 s só nesse
+-- trecho**, antes dos backups, do patch da view e das 10 invariantes. O
+-- `statement_timeout` da sessão é **2 min**: o corte inteiro ficaria no fio e,
+-- muito provavelmente, POR CIMA — abortando (com rollback, seguro) no dia, sob
+-- pressão de tempo. O bloco `DO` é UMA instrução, então `SET LOCAL` dentro dele
+-- não valeria para ele mesmo: o SET tem de vir ANTES, como statement separado.
+-- ⚠️ Por isso também: **NÃO rodar este script por cliente com timeout curto**
+-- (o MCP do Supabase aborta antes) — é SQL Editor, com as duas instruções
+-- colando juntas na mesma sessão.
+-- ⚠️ NÃO "otimizar" desligando os gatilhos (`ALTER TABLE cultos DISABLE
+-- TRIGGER`): as linhas futuras são todas zero e nenhum KPI/NSM mudaria de
+-- valor, mas suprimir gatilho na tabela mais quente do sistema é decisão de
+-- gente, não efeito colateral de acelerar um script.
 -- ============================================================================
+
+SET statement_timeout = '10min';
 
 DO $corte$
 DECLARE
