@@ -967,3 +967,70 @@ têm o **mesmo** erro e não foram tocados.
 `marcospaulo.almeida@`, `matheus.toscano@` e **`yago.torres@`** (o gate é
 `isSuperAdminEmail` contra `app_super_admins`). E **`gestao@cbrio.com.br` NÃO
 está na lista** — quem abrir o Dashboard Semanal com esse login não vê o card.
+
+---
+
+## 15 · D2 RESPONDIDA e o PCO RE-MEDIDO (18/08)
+
+### 15.1 D2 · conta nova, criada (o ok do financeiro saiu em 18/08)
+
+Decisão do Matheus: **conta NOVA, não reuso** — a receita do 09:30 fica separada
+da do 10:00 na DRE, e as contas do 8:30/10:00 ficam com o histórico.
+
+| código | nome | uuid |
+|---|---|---|
+| `3.01.01.10` | Dizimos Domingo 9:30 | `08019a7a-b59d-4cd5-97d9-c0d8d7c8a37d` |
+| `3.01.02.10` | Ofertas Domingo 9:30 | `fffb0e2a-65cd-42cc-baf5-30288ae03b30` |
+
+Já preenchidas em `v_conta_dizimo_0930`/`v_conta_oferta_0930` — **o fallback
+interim não é mais usado**. Criadas na convenção das irmãs (nível 4 · natureza
+`ordinaria` · `aceita_lancamento=true`).
+
+⚠️ **`ordem` empata de propósito** (311 e 321, as dos irmãos do 10:00): a sequência
+global é **densa** (301…321) e não havia inteiro livre entre o dízimo 10:00 (311) e
+o cabeçalho OFERTAS (312). Não há unique em `ordem` — só em `codigo` — e empatar
+deixa cada conta ao lado do próprio grupo **sem reescrever nenhuma linha
+existente**. O consumidor (`financeiroV2.js:50`) ordena só por `ordem`; renumerar
+teria tocado ~10 contas contábeis para ganhar nada.
+
+⚠️⚠️ **`aceita_lancamento=false` nas contas VELHAS ficou FORA do dia 24, de
+propósito.** Faz parte da D2, mas a oferta do culto de **23/08** costuma ser
+conciliada dias depois — travar a conta em 24/08 recusaria a classificação do
+último domingo do formato antigo. Quem já impede lançamento novo no horário
+extinto é o **slot** (`ativo=false`, passo 5). Fazer quando a conciliação de 23/08
+fechar: **decisão de data do Matheus, não do script.**
+
+### 15.2 PCO · a migração não dispensa corrigir os 3 planos
+
+Matheus (18/08): *"estamos migrando de lá, então vamos começar a levar em conta
+apenas o que tá registrado no nosso sistema"*. **O destino está certo, mas hoje o
+sync ainda é o dono das linhas futuras do voluntariado** — medido:
+
+| | |
+|---|---|
+| `vol_services` com data ≥ 24/08 | **9**, e **todos os 9** vieram do PCO |
+| escalas penduradas neles | **189** |
+| serviços de MANHÃ ≥ 30/08 | 4, **todos** `service_type_id IS NULL` (PCO-only) |
+| hora deles | **08:30** |
+| escalas de manhã afetadas | **106** (16+16+26 em 30/08 · 48 em 06/09) |
+
+⚠️⚠️ **Consertar no banco NÃO resolve:** no ramo PCO-only o
+`executarSyncCompleto` (`planningCenter.js:375`) faz upsert de `scheduled_at` pelo
+`planning_center_id`, então o cron horário **reverte o update em até 60 min**.
+Quando o serviço é INTERNO (`service_type_id` preenchido) o sync só liga o
+`plan_id` e não encosta na hora — não é o caso destes 4.
+
+⚠️ **O que NÃO depende disso** (e é o que o Lote 2 garantiu): a régua do turno
+classifica por **NOME** (`Domingo - Manhã`), não por hora ⇒ Dashboard Semanal,
+bloco e contagem de check-in ficam **certos sem nenhuma ação**. O que fica errado
+é a **hora que o voluntário vê** nas 106 escalas — e o lembrete de escala no
+WhatsApp sai com ela.
+
+⇒ Decisão do Matheus: **corrigir os 3 planos no PCO** (`Domingo - Manhã` 90926558
+30/08 · `CBKIDS - Manhã Domingo` 90756297 30/08 e 90756298 06/09) → 09:30. As
+escalas não se movem (vínculo por `service_id`).
+
+⚠️ **Enquanto o sync existir, o PCO continua sendo dono de `vol_services`
+futuros.** "Levar em conta só o nosso sistema" no voluntariado exige, além de
+desligar o cron, um caminho para os serviços nascerem AQUI — que hoje não existe.
+Isso é a migração, não o corte de 24/08.
