@@ -4419,6 +4419,104 @@ router.post('/grupos/:grupoId/membros/:rowId/sair', authApp, limiterNormal, asyn
   }
 });
 
+// POST /api/app/meu-grupo/:grupoId/sair — a PRÓPRIA pessoa sai do grupo.
+//
+// Pedido da Naná (18/08): nos grupos que ela frequenta, ao lado de "falar com o
+// líder" e "como chegar", poder SAIR, com confirmação.
+//
+// ⚠️ NÃO é o endpoint acima. Aquele é o LÍDER registrando a saída de um
+// participante e passa pelo `gateGrupoApp`; este é a pessoa saindo de si mesma
+// e não exige gestão nenhuma. Reusar aquele exigiria dar ao participante um
+// gate de líder — trocaria uma porta por um buraco.
+//
+// Saída é SOFT (`saiu_em` + `motivo_saida`), como manda a lei de 31/07: a
+// pessoa continua no sistema e pode voltar a se inscrever.
+router.post('/meu-grupo/:grupoId/sair', authApp, limiterStrict, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const membro = await resolveMembroApp(req);
+    if (!membro) return res.status(404).json({ error: 'Não encontrei seu cadastro.' });
+
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('id, nome, lider_id').eq('id', gid).is('deleted_at', null).maybeSingle();
+    if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado.' });
+
+    // ⚠️ A LÍDER PRINCIPAL não sai sozinha: sem ela o grupo fica sem
+    // destinatário dos avisos de WhatsApp (lei de 31/07 — um destinatário só,
+    // e tem que ser líder do roster).
+    if (grupo.lider_id && grupo.lider_id === membro.id) {
+      return res.status(409).json({
+        error: 'Você lidera este grupo — a saída precisa passar pela coordenação, para o grupo não ficar sem líder.',
+        codigo: 'e_lider',
+      });
+    }
+
+    const { data: vinculos, error: eV } = await supabase.from('mem_grupo_membros')
+      .select('id, funcao').eq('grupo_id', gid).eq('membro_id', membro.id)
+      .is('saiu_em', null).is('deleted_at', null);
+    if (eV) throw eV;
+    if (!vinculos || !vinculos.length) {
+      return res.status(409).json({ error: 'Você já não faz parte deste grupo.', codigo: 'nao_participa' });
+    }
+
+    // ⚠️ CO-LÍDER também não sai por aqui. `lideres_busca` (a busca pública dos
+    // grupos) monta a lista com `funcao IN ('lider','co_lider')` — tirar um
+    // co-líder faz o grupo deixar de ser encontrável pelo nome dele, sem
+    // ninguém perceber. Trocar liderança é ato de gestão (mesma régua do
+    // "confira a lista", 31/07).
+    if (vinculos.some(v => ['lider', 'co_lider'].includes(String(v.funcao)))) {
+      return res.status(409).json({
+        error: 'Você é da liderança deste grupo — fale com a coordenação para registrar a saída.',
+        codigo: 'e_lideranca',
+      });
+    }
+
+    const motivo = String(req.body?.motivo || '').trim().slice(0, 300) || 'Saiu pelo app';
+    const { data: saiu, error } = await supabase.from('mem_grupo_membros')
+      .update({ saiu_em: new Date().toISOString().slice(0, 10), motivo_saida: motivo })
+      .in('id', vinculos.map(v => v.id))
+      .is('saiu_em', null) // guarda de corrida: dois toques não contam duas vezes
+      .select('id');
+    if (error) throw error;
+    if (!saiu || !saiu.length) {
+      return res.status(409).json({ error: 'Você já não faz parte deste grupo.', codigo: 'nao_participa' });
+    }
+
+    // ⚠️ AVISA O LÍDER, não o grupo. Quem precisa saber que alguém saiu é quem
+    // conduz — e é ele que decide se procura a pessoa. Disparar pro roster
+    // seria expor a saída de alguém para todo mundo.
+    // ⚠️ Best-effort: a saída já está registrada; falha de aviso não pode
+    // desfazê-la nem virar erro na tela de quem saiu.
+    (async () => {
+      // ⚠️ Serviço ÚNICO, não notificação montada aqui: são cinco origens de
+      // aviso de grupo e cinco cópias foi a doença que este módulo já teve.
+      try {
+        const { avisarSaidaNoApp } = require('../services/gruposAvisoApp');
+        await avisarSaidaNoApp({
+          grupoId: gid, grupoNome: grupo.nome, pessoaNome: membro.nome,
+          dia: new Date().toISOString().slice(0, 10),
+        });
+      } catch (err) { console.warn('[APP] aviso de saida (app):', err.message); }
+      try {
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'grupo_saida',
+          titulo: `Saída de grupo: ${grupo.nome}`,
+          mensagem: `${membro.nome || 'Uma pessoa'} saiu de ${grupo.nome} pelo app.`,
+          link: '/grupos',
+          severidade: 'info',
+          chaveDedup: `grupo_saida_${gid}_${membro.id}`,
+        });
+      } catch (err) { console.warn('[APP] aviso de saida:', err.message); }
+    })();
+
+    res.json({ ok: true, saiu: saiu.length });
+  } catch (e) {
+    console.error('[APP] meu-grupo/sair:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a saída' });
+  }
+});
+
 // POST /api/app/grupos/:grupoId/membros/:rowId/transferir — body { destino_grupo_id }
 // ⚠️ Transferência NÃO empurra ninguém pra dentro de outro grupo: cria um PEDIDO
 // no grupo de destino, pra o líder de lá aprovar (é o mesmo fluxo de quem se

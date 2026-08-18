@@ -4696,6 +4696,46 @@ não vê nada — é exatamente por isso que o `CalendarioBR` ganhou esse modo.
 ⚠️ Ação destrutiva usa `Pressable` com `c.danger`: o `Button` da casa só tem
 `primary|ghost`.
 
+## Grupos · a própria pessoa SAI do grupo pelo app (2026-08-18 · SEM migration)
+
+Pedido da Naná: nos grupos que ela frequenta, ao lado de "falar com o líder" e
+"como chegar", poder **sair**, com confirmação.
+
+**`POST /api/app/meu-grupo/:grupoId/sair`** — endpoint PRÓPRIO, não o
+`/grupos/:g/membros/:row/sair` que já existia: **aquele é o LÍDER registrando a
+saída de um participante** e passa pelo `gateGrupoApp`. Reusá-lo exigiria dar
+gate de líder a quem só quer sair — trocaria uma porta por um buraco.
+
+- Saída é **soft** (`saiu_em` + `motivo_saida`), como a lei de 31/07: a pessoa
+  continua no sistema e pode se inscrever de novo.
+- ⚠️ **Líder principal não sai por aqui** (409): sem ela o grupo fica sem
+  destinatário dos avisos de WhatsApp (lei de 31/07 — um só, e tem que ser líder
+  do roster).
+- ⚠️ **CO-LÍDER também não** (409): `lideres_busca` monta a busca pública com
+  `funcao IN ('lider','co_lider')`, então tirar um co-líder faz o grupo **deixar
+  de ser encontrável pelo nome dele**, sem ninguém perceber. Trocar liderança é
+  ato de gestão — mesma régua do "confira a lista".
+- ⚠️ O botão **não aparece** para quem gerencia: oferecer ação que sempre
+  responde 409 é pior que não oferecer.
+- `.is('saiu_em', null)` no UPDATE (dois toques não contam duas vezes) e
+  vínculo múltiplo no mesmo grupo sai inteiro.
+
+⚠️ **Avisa o LÍDER, nunca o roster**: expor a saída de alguém para o grupo todo
+seria constranger por automação. Vai por `notificar()` (módulo grupos → ERP web
++ app do staff) **e** por `app_notificacoes` com o tipo novo **`grupo_saida`**.
+
+⚠️⚠️ **O tipo novo entrou nos DOIS mapas do app na MESMA leva** (`notifTap.ts` e
+o `abrir()` de `notificacoes.tsx`, mais ícone e categoria). A leva de 11/08
+tinha registrado que ligar um tipo que só um mapa conhece faz o aviso cair em
+"Outros" e o toque não levar a lugar nenhum — por isso aquela leva ligou só
+`grupo_pedido`. Como esta sai com OTA, dá pra ensinar os dois de uma vez.
+
+Régua pura em `utils/avisoGrupoApp.avisoSaida` (no gate ·
+`src/test/avisoSaidaGrupo.test.ts`, 6 casos): dedup por **(grupo, pessoa, DIA)**
+— sair e voltar no mesmo dia não vira dois avisos; sair de novo semanas depois
+vira. O serviço `gruposAvisoApp.avisarSaidaNoApp` **nunca lança**: a saída já
+está gravada, e aviso que falha não pode desfazê-la.
+
 ## ⚠️⚠️ Fusão de cadastros · o mantido herda TODO campo vazio (2026-08-18 · migration `20260818180000`)
 
 Pergunta do Marcos ao decidir fundir uma duplicata: *"o que eu mantenho ganha os
