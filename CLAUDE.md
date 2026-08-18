@@ -4726,6 +4726,68 @@ não vê nada — é exatamente por isso que o `CalendarioBR` ganhou esse modo.
 ⚠️ Ação destrutiva usa `Pressable` com `c.danger`: o `Button` da casa só tem
 `primary|ghost`.
 
+## ⚠️⚠️ Fusão de cadastros · o mantido herda TODO campo vazio (2026-08-18 · migration `20260818180000`)
+
+Pergunta do Marcos ao decidir fundir uma duplicata: *"o que eu mantenho ganha os
+dados e o que eu não mantenho perde e é excluído, temos 1 perfil com todos os
+dados, é isso?"*. **Os vínculos sim; os campos não** — e a diferença era grande.
+
+- **Vínculos: completos.** `merge_membros` descobre as filhas pelo CATÁLOGO de
+  FKs. Conferido em 18/08 pelo **embed do PostgREST** (que só funciona quando há
+  FK): as **26 tabelas** que apontam pra pessoa têm FK — grupos, Next, batismo,
+  Kids, contribuições, voluntariado, decisões, `profiles` (o login). **Nenhuma
+  órfã**, ou seja nenhum vínculo some em silêncio (o que já aconteceu com o Next
+  até 30/07, quando faltava a FK).
+- **Campos: só 5** (`cpf`, `telefone`, `email`, `data_nascimento`, `foto_url`),
+  e só onde o mantido está vazio. **Todo o resto morria com o excluído.**
+
+**Medido nos 41 pares candidatos vivos** (mesmo e-mail + mesmo primeiro nome):
+**38 têm campo que um lado tem e o outro não · 111 campos em risco**. O mais
+perdido é **`genero` (22 pares)** — justamente o campo que decide se a pessoa
+entra em grupo de Homens ou de Mulheres. Depois: `telefone_digits` (19),
+`planning_center_id` (18), `whatsapp_optin_em` (16), endereço/bairro/CEP (15).
+
+### ⚠️⚠️ O conserto é um TRIGGER NO LOG, não um patch na função
+
+`merge_membros` tem ~200 linhas, foi reescrita 4× e a definição VIVA pode não
+ser a do repo (drift já mordeu no `handle_new_user` e no fanout). Patch textual
+exigiria acertar uma âncora que não dá pra ler sem SQL Editor — e errar
+significa abortar a migration ou, pior, **recolar versão antiga por cima do que
+só existe em produção**.
+
+**`mem_merge_log.snapshot` já guarda `to_jsonb(m.*)` do apagado** — as 53
+colunas, conferidas em 18/08. Então dá pra enriquecer DEPOIS, a partir do log,
+sem tocar na função, e valendo pra qualquer chamador.
+
+- **A lista de colunas sai do CATÁLOGO a cada execução** — coluna nova nasce
+  sendo herdada, sem ninguém lembrar de voltar aqui. Geradas e de identidade
+  ficam fora (UPDATE nelas é erro).
+- **`jsonb_populate_record(NULL::mem_membros, snapshot)`** resolve o cast de
+  cada coluna sem precisar saber o tipo, e ignora chave que não existe mais.
+- ⚠️ **String VAZIA conta como vazia** em coluna de texto (`NULLIF(k.col,'')`):
+  a base tem as duas formas — foi a lição do `genero = ''` da `20260814160000`,
+  onde `.is('genero', null)` não pegava a string vazia.
+- ⚠️⚠️ **`EXCEPTION WHEN OTHERS THEN RAISE WARNING` é obrigatório**: exceção em
+  trigger AFTER aborta o statement, ou seja uma falha do enriquecimento
+  **desfaria a fusão que já deu certo**. Enriquecer é ganho; perdê-lo não pode
+  custar o merge.
+
+### ⚠️ O que NÃO é herdado, e por quê
+
+- **`status` / `active`** — promover de `visitante` a `membro_ativo` porque o
+  duplicado era membro seria **o sistema decidindo membresia**. É decisão da
+  igreja, e quem decide é quem escolhe qual cadastro manter.
+- **`whatsapp_optin`** — consentimento, com régua própria: **só liga, nunca
+  desliga** (05/08), e traz o **`whatsapp_optin_em` junto**, porque a data é a
+  PROVA — carimbar "agora" apagaria desde quando o consentimento vale.
+- **Campos de face** — biometria mais o consentimento dela. Copiar o descritor
+  é decisão humana, e copiá-lo **sem** a prova de consentimento seria pior que
+  perdê-lo.
+
+⚠️ **Limite declarado**: herda só onde o mantido está VAZIO — valor divergente
+nos dois lados **não** é reconciliado (seria sobrescrever decisão humana), e
+`observacoes` não é concatenado.
+
 ## ⚠️ Grupos · membro existente ganha o que digitou no formulário (2026-08-06 · SEM migration)
 
 Pedido do Marcos, depois da auditoria da temporada: *"recupere esses que já
