@@ -1853,12 +1853,21 @@ router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, 
     const { areas } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const hoje = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
+    // ⚠️ JANELA, não contagem. O teto de 60 registros era invisível e virou
+    // corte real em 18/08, quando o calendário passou a ser gerado aqui em vez
+    // de vir do Planning Center: adulto + Kids somam ~6 cultos por semana, e
+    // 62 já existiam no mesmo instante em que o limite era 60 — os dois mais
+    // distantes sumiam da lista do supervisor sem nenhum aviso.
+    // Uma janela de 90 dias é o que o supervisor consegue planejar, e o teto de
+    // 400 vira uma rede de segurança, não o corte do dia a dia.
+    const ate = new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString();
     const { data, error } = await supabase
       .from('vol_services')
       .select('id, service_type_name, scheduled_at')
       .gte('scheduled_at', hoje)
+      .lte('scheduled_at', ate)
       .order('scheduled_at', { ascending: true })
-      .limit(60);
+      .limit(400);
     if (error) throw error;
     // Contagem de escalados por culto (pro chip mostrar "N escalados").
     const ids = (data || []).map(s => s.id);
