@@ -21,6 +21,7 @@
 const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { sexoPara } = require('../utils/dadosDoCadastro');
+const { nomeEhVersaoAbreviada } = require('./duplicidadePolicy');
 const {
   normalizarCpf, normalizarTelefone, normalizarEmail, nomeNormalizado: normalizarNome,
   registrarObservacaoIdentidade,
@@ -222,6 +223,28 @@ function nomesMesmaPessoa(a, b) {
   return _dice(x, y) >= 0.90;
 }
 
+// ⚠️⚠️ O NOME QUE AUTORIZA LIGAR (2026-08-18 · decisão do Marcos).
+//
+// `nomesMesmaPessoa` é Dice ≥0,90 e RECUSA nome abreviado — e era isso que
+// transformava cadastro antigo em FANTASMA: o registro do Next legado tem nome
+// e telefone; a pessoa entra em grupos hoje com o nome civil completo e o MESMO
+// telefone, o matcher não reconhece, nasce uma segunda pessoa. Medido em 18/08:
+// `nomesMesmaPessoa` recusa TODOS os casos de nome contido da base
+// ("Kelly Veiga da Silva Oliveira" × "Kelly Veiga", "Eliane Santana" ×
+// "Eliane dos Santos Santana Sobrinho").
+//
+// ⚠️ Entra o CONTAINMENT e SÓ ele. Medido sobre telefone em comum na base viva:
+// containment = 100 pares, todos a mesma pessoa · Dice ≥0,90 = 4 pares, e 2 são
+// IRMÃS ("Layane" × "Dayane A. M. Bello Joseph", "Mayla" × "Nayla Duarte
+// Victor Minari"). Uma letra no PRIMEIRO nome é indistinguível de parente, então
+// typo continua fora de LIGAR — ele SUGERE, na fila.
+//
+// ⚠️ `nomesMesmaPessoa` fica na OU porque cobre o caso `x === y` e a tolerância a
+// acento/caixa que o containment por token não cobre sozinho.
+function nomeAutorizaLigar(a, b) {
+  return nomesMesmaPessoa(a, b) || nomeEhVersaoAbreviada(a, b);
+}
+
 // Nome-placeholder do import financeiro ("Contribuinte 059412...") — o extrato
 // chega com o nome mascarado e a fin_resolver_ou_criar_contribuinte cria o
 // membro assim. NÃO é um nome de pessoa: nenhum fluxo de pessoas deve exibi-lo
@@ -316,7 +339,7 @@ async function acharOuCriarGuardado({ cpf, email, telefone, nome, dataNascimento
   // Se chegou um CPF novo, contato compartilhável não pode absorvê-lo em um
   // cadastro antigo sem confirmar também o nascimento. Nesse caso criamos um
   // novo registro e a observação-ponte eleva o par para revisão humana.
-  const candidatoCompativel = (c) => nomesMesmaPessoa(c.nome, nome)
+  const candidatoCompativel = (c) => nomeAutorizaLigar(c.nome, nome)
     && (!cpf11 || (!!nasc && !!c.data_nascimento && nasc === c.data_nascimento));
 
   if (cpf11) {
@@ -504,7 +527,7 @@ async function acharMembroGuardado({ cpf, email, telefone, nome, dataNascimento 
   const emailLc = normalizarEmail(email);
   const tel = normalizarTelefone(telefone);
   const nasc = dataNascimento || null;
-  const candidatoCompativel = (c) => nomesMesmaPessoa(c.nome, nome)
+  const candidatoCompativel = (c) => nomeAutorizaLigar(c.nome, nome)
     && (!cpf11 || (!!nasc && !!c.data_nascimento && nasc === c.data_nascimento));
 
   if (cpf11) {

@@ -1034,3 +1034,79 @@ escalas não se movem (vínculo por `service_id`).
 futuros.** "Levar em conta só o nosso sistema" no voluntariado exige, além de
 desligar o cron, um caminho para os serviços nascerem AQUI — que hoje não existe.
 Isso é a migração, não o corte de 24/08.
+
+---
+
+## 16 · O DASHBOARD PASSA A REFLETIR O 09:30 EM 19/08 — sem antecipar o corte
+
+Pedido do Matheus (18/08): *"a partir de quarta agora (amanhã) o dashboard já deve
+refletir o novo culto."* Medi o custo de antecipar o corte INTEIRO e ele é real,
+então a grade nova aparece no Dashboard **sem** mover o que tem preço.
+
+### 16.1 ⚠️⚠️ Por que o corte inteiro NÃO pode rodar antes de 24/08
+
+| Se rodasse em 19/08 | Consequência medida |
+|---|---|
+| `fin_culto_slots` recortado | **`fin_identifica_culto` não conhece DATA** — casa só por dia-da-semana + faixa de hora, filtrando `ativo`. Com o slot 9:30 em 06:00–11:00, a oferta do domingo **23/08** (culto às 08:30 e 10:00) cairia em **"Domingo 9:30"**, ou seja nas contas NOVAS. Misclassificaria o último domingo do formato antigo — **erro de dinheiro** |
+| `is_active=false` nos velhos | o 08:30/10:00 saem de `kpis.js /service-types` **antes** de o culto de 23/08 ser lançado |
+| `batismo_horarios` trocado | a cerimônia é **23/08** — fecharia os horários dela antes de acontecer |
+
+⇒ O corte financeiro/batismo **tem de ficar depois de domingo 23/08**. O dia 24
+segue sendo o dia.
+
+### 16.2 O que foi feito em 19/08 (e por que é seguro)
+
+**O tipo `Domingo 09:30` foi PRÉ-CRIADO com `is_active = false`** e
+`vigente_de = 2026-08-24`, herdando do 10:00 cor, `presencial_label`, `has_kids`,
+`has_online`, `has_online_stream` e `meta_duracao_min`.
+
+⚠️⚠️ **`is_active=false` é o que impede um culto FANTASMA de 09:30 no domingo
+23/08.** O cron `POST /api/kpis/cultos/auto-create` (`vercel.json:57`) varre tipos
+com `.eq('is_active', true)` e materializa a **semana corrente** — e **não conhece
+vigência** (`vigente_de` é lido SÓ por `lentesDomingo.js`). Com o tipo ativo, a
+próxima execução criaria um 09:30 em 23/08.
+
+O inativo é exatamente a linha divisória certa:
+
+| Superfície | Filtra `is_active`? | Efeito |
+|---|---|---|
+| `/lentes-domingo` | **não** (inclui inativos de propósito) | ✅ o 09:30 aparece nas lentes, e `tipoVigenteEm` só o conta vigente **de 24/08 em diante** |
+| `/dashboard-semanal/cultos` (seletor) | **não mais** — ver 16.3 | ✅ aparece rotulado "· a partir de 24/08" |
+| `kpis.js /service-types` (criar culto) | sim | ✅ ninguém cria um 09:30 manual em 23/08 |
+| `voluntariado.js:2393` (escalar) | sim | ✅ escala do 09:30 só depois do corte |
+| cron `auto-create` | sim | ✅ **nenhum fantasma em 23/08** |
+
+**E o véu foi ABERTO** (`lentes_domingo_publicas = true`): as 3 lentes + a ocupação
+ofertada + a marca do corte passam a valer para todos, não só para os 4
+super-admins. Reversível com um UPDATE.
+
+⚠️ **O script do corte foi consertado junto, e sem isso o dia 24 abortaria:** o
+ramo `ELSE` do passo 2 (tipo já existe) só escrevia no resumo — não ativava nada.
+Com o tipo pré-criado inativo, a invariante *"grade ativa da manhã = exatamente
+{09:30, 11:30}"* falharia e **desfaria o corte inteiro**. O `ELSE` agora
+**normaliza**: ativa, confirma dia/hora, e completa vigência, chaves e flags com
+`COALESCE`.
+
+### 16.3 ⚠️⚠️ `/dashboard-semanal/cultos` filtrava `is_active` — o §9.1 estava VIVO
+
+O §9.1 diagnosticou que `is_active` responde duas perguntas diferentes, e os
+Lotes 1–5 **não** consertaram os leitores. Medido em 18/08: `dashboardSemanal.js:85`
+tinha `.eq('is_active', true)` e alimenta o **seletor de culto** do Dashboard
+(`DashSemanalAba.jsx:343`) — logo, no instante do corte, **o 08:30 e o 10:00
+sumiriam do seletor** e o histórico deles ficaria inalcançável pelo nome. É o
+oposto do requisito nº 1.
+
+⚠️ **Calibrando: as SÉRIES nunca dependeram disso.** `/mensal`, `/ytd` e
+`/lentes-domingo` leem `cultos`/a view sem tocar `is_active` — o que se perdia era
+o acesso pelo nome, não o dado. (Na varredura eu havia registrado o risco como se
+os gráficos sumissem; a medição de 18/08 mostrou que é o seletor.)
+
+⇒ O endpoint **parou de filtrar** e passou a devolver `is_active` + vigência; o
+seletor rotula **"· encerrado em dd/mm"** e **"· a partir de dd/mm"**, para
+ninguém achar que um culto encerrado ainda acontece. As datas são fatiadas da
+string `YYYY-MM-DD` (`new Date('2026-08-24')` é meia-noite UTC = dia 23 no Rio).
+
+⚠️ **`kpis.js /service-types` (linha 114) segue filtrando `is_active`, de
+propósito**: ele alimenta a criação de culto na Integração, onde oferecer um
+horário extinto é que seria o erro. Se algum dia essa lista também virar filtro
+histórico, aplica-se a mesma régua do 16.3.
