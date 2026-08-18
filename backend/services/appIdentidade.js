@@ -410,6 +410,11 @@ async function completarCadastro({ payload, authUserId, email, ip, userAgent }) 
   const r = await acharOuCriarGuardado({
     cpf: d.cpf || null, email: d.email, telefone: d.telefone, nome: d.nomeCompleto,
     dataNascimento: d.dataNascimento || null,
+    // ⚠️ `genero` vai desde 18/08. O matcher passou a gravá-lo na CRIAÇÃO
+    // (17/08), e sem o repasse o sexo que esta tela EXIGE dependia só do
+    // `preencherOQuePortaoExige` logo abaixo — que cobre, mas é o resgate,
+    // não o caminho. Cadastro novo pelo app agora nasce com o sexo.
+    genero: d.sexo || null,
     status: 'visitante',
     origem: 'app_onboarding',
     origemId: authUserId,

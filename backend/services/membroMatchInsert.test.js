@@ -188,4 +188,20 @@ assert.equal(nomeEhVersaoAbreviada('Ana Souza Lima', 'Joao Souza Lima'), false,
 assert.equal(nomeEhVersaoAbreviada('Ana Souza', 'Ana Lima'), false,
   'mesmo primeiro nome com sobrenome diferente não é versão abreviada');
 
+// ── O onboarding do APP também repassa o sexo (2026-08-18) ──────────────────
+// A tela EXIGE sexo (gate de 05/08) e `validarCamposPadrao` devolve `sexo` em
+// `valores` — mas a chamada do matcher não o repassava, então cadastro NOVO pelo
+// app dependia só do `preencherOQuePortaoExige`, que roda depois. Aquele é o
+// RESGATE, não o caminho: com o matcher gravando na criação (17/08), o repasse
+// fecha a redundância.
+const app = semComentarios(fs.readFileSync(path.join(__dirname, 'appIdentidade.js'), 'utf8'));
+const chamadaApp = /acharOuCriarGuardado\(\{([\s\S]*?)\}\)/.exec(app);
+assert(chamadaApp, 'não achei a chamada de acharOuCriarGuardado em appIdentidade');
+assert(/genero:/.test(chamadaApp[1]),
+  'o onboarding do app tem que passar o sexo ao matcher — a tela o exige e ele não pode morrer no funil');
+// ⚠️ E o resgate CONTINUA existindo: ele cobre quem já tinha cadastro (match por
+// CPF), caminho em que o INSERT do matcher nem roda.
+assert(/patch\.genero = d\.sexo/.test(app),
+  'preencherOQuePortaoExige tem que seguir gravando o sexo: no match por CPF o INSERT não roda e ele é o único caminho');
+
 console.log('membroMatch: INSERT grava nascimento/sexo · telefone comparável com fallback · match perfeito com veto de CPF');
