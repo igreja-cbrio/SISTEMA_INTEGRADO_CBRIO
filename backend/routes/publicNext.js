@@ -170,6 +170,11 @@ router.post('/inscrever', async (req, res) => {
         telefone,
         nome: [cleanNome, cleanSobrenome].filter(Boolean).join(' '),
         dataNascimento: cleanNascimento,
+        // ⚠️ O sexo é OBRIGATÓRIO neste formulário desde 28/07 (`cleanSexo`,
+        // 400 se faltar) e era gravado só em `next_matriculas` — o cadastro
+        // nascia sem ele. Medido em 18/08: 3 dos 4 cadastros criados por esta
+        // porta desde 05/08 estão sem sexo, com o valor guardado na matrícula.
+        genero: cleanSexo || null,
         status: 'visitante',
         origem: 'next_formulario',
       });
