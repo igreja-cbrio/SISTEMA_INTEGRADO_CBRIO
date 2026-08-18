@@ -47,6 +47,11 @@ import {
 const COR_RITUAL = { OKR: '#3b82f6', DRE: '#10b981', KPI: '#f59e0b', CC: '#8b5cf6', DE: '#ef4444', AG: '#06b6d4' };
 const AMARELO = '#F59E0B';
 
+// Modo 'os dois' (fatia + objetivos gerais recolhidos): considerado em 18/08 e
+// NÃO escolhido. Virar true reabre só o RETRATO no formato antigo — o painel
+// dos objetivos (KpiPainel) segue desmontado no render.
+const RETRATO_OBJETIVOS_DORMENTE = false;
+
 // Rótulos das chaves vivas (pro seletor do gráfico de evolução do OKR).
 const LIVE_LABELS = (() => {
   const m = { nsm: 'NSM · % de convertidos engajados em 60d' };
@@ -140,11 +145,23 @@ export default function RitualPage() {
         .catch(e => toast.error(formatErro(e, 'Monitoramento OKR')))
         .finally(() => { if (ativo) setPainelLoading(false); });
     } else if (sigla === 'KPI') {
+      // ⚠️⚠️ O ritual de KPI passou a apresentar a MESMA FATIA do ritual de OKR
+      // (18/08 · decisão do Marcos). Motivo: o Pr. Juninho considera OKR os
+      // TOPOS das listas — 3 áreas × 3 OKRs — e o resto ele considera KPI; ele
+      // NÃO reconhece a nossa estrutura de 25 OKRs / 168 KPIs / ~316 KRs, e
+      // pediu que nestas reuniões não se apresente o sistema completo.
       setPainelLoading(true);
+      painelApi.monitoramentoOkr()
+        .then(r => { if (ativo) setOkrData(r); })
+        .catch(e => toast.error(formatErro(e, 'Monitoramento OKR')))
+        .finally(() => { if (ativo) setPainelLoading(false); });
+      // ⚠️ Os objetivos gerais seguem sendo CARREGADOS e NÃO exibidos: é o
+      // caminho dormente para o modo 'os dois' (fatia em cima, objetivos
+      // recolhidos), que foi considerado e não escolhido. Se ninguém pedir esse
+      // modo, esta chamada e o KpiPainel podem sair numa faxina.
       gov.kpiObjetivos(mesesFetchKpi)
         .then(r => { if (ativo) setKpiData(r); })
-        .catch(e => toast.error(formatErro(e, 'Objetivos gerais')))
-        .finally(() => { if (ativo) setPainelLoading(false); });
+        .catch(() => {});
     }
     return () => { ativo = false; };
   }, [sigla, mesesFetchKpi]);
@@ -231,7 +248,29 @@ export default function RitualPage() {
         indicadores: retratoIndicadores(metricas),
       };
     }
-    if (sigla === 'KPI' && kpiData) {
+    // ⚠️ O retrato do KPI passou a ter a MESMA FORMA do de OKR (a fatia), com
+    // `sigla: 'KPI'` preservado pra a linha do tempo saber de qual ritual é.
+    // Conferido em 18/08: ZERO reuniões tinham snapshot, então não há retrato
+    // histórico no formato antigo pra preservar — mas o ResumoRetrato passou a
+    // decidir pela FORMA do snapshot, não pela sigla, justamente pra um
+    // retrato antigo (se aparecer) continuar abrindo.
+    if (sigla === 'KPI' && okrData) {
+      const metricas = okrData.metricas || {};
+      return {
+        sigla: 'KPI',
+        capturado_em: new Date().toISOString(),
+        nsm: okrData.nsm ? {
+          percentual: okrData.nsm.percentual, meta: okrData.nsm.meta,
+          engajados: okrData.nsm.engajados, totalConvertidos: okrData.nsm.totalConvertidos,
+        } : null,
+        metricas: Object.fromEntries(Object.entries(metricas).map(([k, v]) => [k, { valor: v.valor, unidade: v.unidade }])),
+        indicadores: retratoIndicadores(metricas),
+      };
+    }
+    // Caminho DORMENTE: retrato dos objetivos gerais (formato anterior a 18/08).
+    // `false` explícito e nomeado em vez de código apagado: a forma do retrato
+    // de objetivos gerais fica legível pra quem for reabrir o modo 'os dois'.
+    if (RETRATO_OBJETIVOS_DORMENTE && kpiData) {
       const objetivos = kpiData.objetivos || [];
       const pcts = objetivos.map(o => o.pct_medio).filter(v => v != null);
       return {
@@ -359,7 +398,7 @@ export default function RitualPage() {
               {p.label}
             </button>
           ))}
-          {sigla === 'OKR' && (
+          {(sigla === 'OKR' || sigla === 'KPI') && (
             <>
               <span className="text-xs font-semibold uppercase tracking-wide ml-3" style={{ color: C.t3 }}>OKRs avaliados</span>
               {ESCOPOS_OKR.map(e => (
@@ -378,7 +417,7 @@ export default function RitualPage() {
         </div>
 
         {/* 3 · Painel do ritual */}
-        {sigla === 'OKR' ? (
+        {(sigla === 'OKR' || sigla === 'KPI') ? (
           <OkrPainel
             escopo={escopo}
             data={okrData}
@@ -388,16 +427,6 @@ export default function RitualPage() {
             salvando={salvandoRetrato}
             onSalvarRetrato={salvarRetrato}
             onAbrirOkr={(okr, bloco) => setOkrAberto({ okr, bloco })}
-          />
-        ) : sigla === 'KPI' ? (
-          <KpiPainel
-            data={kpiData}
-            loading={painelLoading}
-            canEdit={canEdit}
-            alvoRetrato={alvoRetrato}
-            salvando={salvandoRetrato}
-            onSalvarRetrato={salvarRetrato}
-            cor={cor}
           />
         ) : sigla === 'CC' ? (
           <CcPainel
@@ -414,11 +443,8 @@ export default function RitualPage() {
 
         {/* Comparativo por mês fechado (períodos ≥ 60 dias · pedido do Marcos:
             colunas por mês, não acumulado — ex.: 90d = Maio | Junho | Julho atual) */}
-        {sigla === 'OKR' && periodo >= 60 && (
+        {(sigla === 'OKR' || sigla === 'KPI') && periodo >= 60 && (
           <OkrComparativoMensal periodo={periodo} escopo={escopo} data={okrData} reunioes={naoCanceladas} cor={cor} />
-        )}
-        {sigla === 'KPI' && periodo >= 60 && (
-          <KpiComparativoMensal periodo={periodo} objetivos={kpiData?.objetivos || []} cor={cor} />
         )}
 
         {/* Retrospecto cruzado: as outras reuniões do ciclo */}
@@ -1014,7 +1040,10 @@ function TemaComposto({ sigla, reuniao, onAbrir }) {
 
 // Resumo compacto de um retrato (por sigla · usado na composição do Conselho).
 function ResumoRetrato({ snap }) {
-  if (snap.sigla === 'OKR') {
+  // ⚠️ Decide pela FORMA do snapshot, não pela sigla: desde 18/08 o retrato do
+  // ritual de KPI também é a fatia (tem `indicadores`), e um retrato antigo no
+  // formato de objetivos gerais precisa continuar abrindo.
+  if (Array.isArray(snap.indicadores)) {
     const inds = snap.indicadores || [];
     const ok = inds.filter(i => i.ok === true).length;
     const fora = inds.filter(i => i.ok === false).length;
@@ -1035,7 +1064,7 @@ function ResumoRetrato({ snap }) {
       </div>
     );
   }
-  if (snap.sigla === 'KPI') {
+  if (Array.isArray(snap.objetivos)) {
     const r = snap.resumo || {};
     const piores = (snap.objetivos || []).filter(o => o.pct_medio != null).sort((a, b) => a.pct_medio - b.pct_medio).slice(0, 3);
     return (
