@@ -132,7 +132,12 @@ jobs:
           # A ordem do lote semanal é a mesma do scheduler, e kpi_relatorio_semanal
           # fica por último de propósito: ele lê o estado depois de os watchers da
           # rodada passarem, e é o único que manda e-mail para fora.
-          BODY='{"triggeredBy":"github-actions","config":{"trigger":"cron"}}'
+          # ⚠️ SEM `triggeredBy`. Ele é uuid de usuário (FK), não texto livre:
+          # mandar "github-actions" devolveu
+          # `500 Falha criando agent_run: invalid input syntax for type uuid`.
+          # O agendador interno do worker também chama só com `config` — este
+          # corpo agora é idêntico ao dele, que é o disparo que já funcionava.
+          BODY='{"config":{"trigger":"cron"}}'
 
           # Assinatura em python3 (e não `openssl dgst -hmac "$CHAVE"`) porque o
           # openssl receberia o segredo como argumento, visível na tabela de
