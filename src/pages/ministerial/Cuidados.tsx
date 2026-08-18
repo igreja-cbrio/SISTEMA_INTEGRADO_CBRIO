@@ -3,6 +3,7 @@ import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { hrefConversa } from '@/lib/conversas';
 import { cuidados as cuidadosApi } from '../../api';
+import KpiTaticoOficial from '../../components/kpi/KpiTaticoOficial';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
 import DevocionalAdmin from '../../components/DevocionalAdmin';
@@ -2184,6 +2185,8 @@ export default function Cuidados() {
                 <StatisticsCard title="Com dados · online" value={dashSeries.cards.conv_online_com_dados} icon={Phone} iconColor={C.pink} subtitle="dá pra contatar" />
                 <StatisticsCard title="% com dados" value={`${dashSeries.cards.pct_com_dados}%`} icon={CheckCircle2} iconColor={C.warn} subtitle="do total de convertidos" />
               </div>
+
+              <KpiTaticoOficial fetchFn={cuidadosApi.kpisTaticos} />
 
               {/* Gráfico 1 · funil do cuidado (a ponte pros outros valores) */}
               <div className="rounded-lg border border-border bg-card p-4">

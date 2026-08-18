@@ -724,6 +724,52 @@ router.get('/kpis/relatorio', async (req, res) => {
   }
 });
 
+// GET /api/grupos/kpis/taticos — KPI TÁTICO OFICIAL da área 'grupos'
+// (kpi_indicadores_taticos + vw_kpi_trajetoria_atual), mesmo padrão de
+// backend/routes/painelArea.js. Isto é DIFERENTE do /kpis/relatorio acima
+// (fn_grupos_kpis_relatorio, métrica OPERACIONAL calculada direto das tabelas
+// de origem) — os dois números podem legitimamente divergir por definição.
+// Piloto: fechar a lacuna de que só "Minha Área" mostrava este dado hoje.
+router.get('/kpis/taticos', async (req, res) => {
+  try {
+    const { data: kpisRaw, error: kpisErr } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, descricao, meta_descricao, meta_valor, unidade, periodicidade, lider_funcionario_id')
+      .eq('ativo', true)
+      .ilike('area', 'grupos')
+      .order('indicador', { ascending: true });
+    if (kpisErr) throw kpisErr;
+    const kpis = kpisRaw || [];
+    const kpiIds = kpis.map(k => k.id);
+
+    let trajByKpi = {};
+    if (kpiIds.length > 0) {
+      const { data: traj, error: trajErr } = await supabase
+        .from('vw_kpi_trajetoria_atual')
+        .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, checkpoint_meta, percentual_meta')
+        .in('kpi_id', kpiIds);
+      if (trajErr) console.error('[grupos kpis/taticos] trajetoria falhou:', trajErr.message);
+      (traj || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
+    }
+
+    const enriched = kpis.map(k => ({
+      id: k.id,
+      indicador: k.indicador,
+      descricao: k.descricao,
+      meta_descricao: k.meta_descricao,
+      meta_valor: k.meta_valor,
+      unidade: k.unidade,
+      periodicidade: k.periodicidade,
+      trajetoria: trajByKpi[k.id] || null,
+    }));
+
+    res.json({ area: 'grupos', total: enriched.length, kpis: enriched });
+  } catch (e) {
+    console.error('[Grupos kpis/taticos]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar KPIs táticos de grupos' });
+  }
+});
+
 // GET /api/grupos/kpis/frequencia-grupos?temporada=X — ranking de % de frequência
 // POR grupo (Marcos 2026-07-23: indicador por grupo pra achar quem está caindo).
 // Mesma definição do /:id/frequencia (% = presenças ÷ (encontros × inscritos),

@@ -771,6 +771,7 @@ export const integracao = {
   // redesenho de mai/26 (PR #399) · nenhuma tela consumia. Dados de visitante
   // hoje vivem em Cuidados/Membresia.
   dashboard: () => get('/integracao/dashboard'),
+  kpisTaticos: () => get('/integracao/kpis/taticos'),
   historicoAnual: () => get('/integracao/historico-anual'),
   historicoBatismos: () => get('/integracao/historico-batismos'),
   coleta: {
@@ -889,6 +890,7 @@ export const grupos = {
   },
   saudeAgregada: (params) => get('/grupos/saude/agregado' + (params ? '?' + new URLSearchParams(params) : '')),
   relatorioKpis: (params) => get('/grupos/kpis/relatorio' + (params ? '?' + new URLSearchParams(params) : '')),
+  kpisTaticos: () => get('/grupos/kpis/taticos'),
   lideresTreinamento: (params) => get('/grupos/kpis/lideres-treinamento' + (params ? '?' + new URLSearchParams(params) : '')),
   temporadas: () => get('/grupos/temporadas/list'),
   atualizarTemporada: (id, data) => patch(`/grupos/temporadas/${id}`, data),
@@ -1393,6 +1395,7 @@ const _finSemExtra = () => {
 const _finSemExtraQS = () => (_finSemExtra() ? '?sem_extra=1' : '');
 
 export const financeiroV2 = {
+  kpisTaticos: () => get('/financeiro-v2/kpis/taticos'),
   planoContas: {
     list: (params) => get('/financeiro-v2/plano-contas' + (params ? '?' + new URLSearchParams(params) : '')),
     create: (data) => post('/financeiro-v2/plano-contas', data),
@@ -3238,6 +3241,7 @@ export const publicVoluntariado = {
 
 // ── Voluntariado ──
 export const voluntariado = {
+  kpisTaticos: () => get('/voluntariado/kpis/taticos'),
   // Aniversariantes da semana (pra parabenizar) · próximos 7 dias
   aniversariantesSemana: () => get('/voluntariado/aniversariantes-semana'),
   parabenizar: (volProfileId) => post(`/voluntariado/aniversariantes/${volProfileId}/parabenizar`, {}),
@@ -3817,6 +3821,7 @@ export const comunicacao = {
 
 export const cuidados = {
   dashboard: () => get('/cuidados/dashboard'),
+  kpisTaticos: () => get('/cuidados/kpis/taticos'),
   dashboardSeries: (params) => get('/cuidados/dashboard-series' + (params ? '?' + new URLSearchParams(params) : '')),
   jornadaConvertidos: (params) => get('/cuidados/jornada-convertidos' + (params ? '?' + new URLSearchParams(params) : '')),
   acompanhamentos: {

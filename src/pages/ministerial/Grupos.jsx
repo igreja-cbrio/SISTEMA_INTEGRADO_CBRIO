@@ -25,6 +25,7 @@ import GruposPessoas from './GruposPessoas';
 import GruposEnvios from './GruposEnvios';
 import GruposOrganograma from './GruposOrganograma';
 import GruposDuplicatas from './GruposDuplicatas';
+import KpiTaticoOficial from '../../components/kpi/KpiTaticoOficial';
 // Import ESTÁTICO de propósito (13/07): o chunk dinâmico do mapa quebrava em
 // produção e derrubava a página em loop de reload. O GrupoSelector do form
 // público já embute o GruposMapView estaticamente — o peso do maplibre já é
@@ -2788,6 +2789,8 @@ function RelatorioGrupos({ temporada }) {
               Indicadores ao vivo desta temporada — são exatamente os que ficam congelados ao consolidar.
             </div>
           )}
+
+          <KpiTaticoOficial fetchFn={api.kpisTaticos} />
 
           {/* Faixa enxuta com os totais da temporada (número legível · não é card) */}
           <div style={{
