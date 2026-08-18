@@ -6068,14 +6068,11 @@ outra aba. No `AppShell` os **dois itens do menu Criativo viraram um**
 - **Os 3 endereços antigos redirecionam** (`/marketing/comunicados`,
   `/admin/destaques → ?t=destaques`, `/admin/fotos-batismo → ?t=batismo`): link
   salvo, item de menu antigo e push já entregue continuam funcionando.
-- ⚠️⚠️ **PERMISSÃO NÃO FOI AMPLIADA, e isso limita o alcance HOJE**: os backends
-  `routes/destaques.js` e `routes/batismoFotos.js` exigem
-  `authorize('admin','diretor')`. A equipe de Marketing tem **nível 5 no MÓDULO**
-  mas role `assistente` — então veria as abas e tomaria **403 em tudo**. Botão que
-  devolve 403 é pior que botão ausente, então as 2 sub-abas só aparecem para
-  admin/diretor e quem não é **lê o motivo** em vez de bater na parede.
-  ⏳ **Liberar para o coordenador de Marketing é decisão do Marcos** — mexe em
-  autorização de dois backends (lei do "parar e perguntar"), não fiz por conta.
+- ⚠️ **A permissão nasceu restrita e foi AMPLIADA no dia seguinte** (18/08 · ver a
+  seção própria abaixo): em 17/08 os backends exigiam `authorize('admin','diretor')`,
+  a equipe de Marketing tem role `assistente`, e as 2 sub-abas só apareciam para
+  admin/diretor (botão que devolve 403 é pior que botão ausente). O Marcos
+  autorizou e o guard passou a ser o MÓDULO `marketing`.
 
 ### `MarketingEpicos.jsx` ficou DORMANTE, não foi apagado
 
@@ -6089,6 +6086,86 @@ depende de nada que saiu.
 com um `</div>` fechando um `<MarketingPagina>` no `MarketingAdmin`. Quem pegou
 foi o **`npm run build`** (esbuild), com arquivo e linha. Régua: em conversão de
 container, **o build é o verificador**, não o typecheck.
+
+## ⚠️⚠️ Marketing PUBLICA no app · o guard virou o MÓDULO (2026-08-18 · SEM migration)
+
+Decisão do Marcos, no dia seguinte à aba "App": *"Sim, pedro deve poder publicar,
+alterar fotos, alterar destaques... mexer no app por esse módulo."*
+
+`routes/destaques.js` e `routes/batismoFotos.js` saíram de
+`authorize('admin','diretor')` para **`authorizeModule('marketing', …)`**:
+**leitura 1** (o mesmo nível que abre a aba) e **escrita 3**.
+
+### ⚠️ Por que o guard antigo trancava justamente quem faz o trabalho
+
+Medido no banco antes de mexer (não deduzido):
+
+| quem | cargo | `profiles.role` | passava no guard antigo? |
+|---|---|---|---|
+| **Pedro Paiva** | `coordenador-marketing` | **`assistente`** | **não** |
+| Allan · Letícia · Lorena · Cauã | `assistente-marketing` | `assistente` | não |
+| Pedro Paulo Menezes | `diretor-criativo` | `assistente` | não |
+| Arthur Serpa · Pr. Juninho · Eduardo | diretor-* | `diretor`/`admin` | sim |
+
+**Role não é cargo** — o Pedro coordena o Marketing com role `assistente`, e é o
+`profiles.role` que o `authorize()` lê. Quem publicava no app era só a diretoria.
+
+**A matriz já dizia o que fazer**: `marketing` = **3** para `coordenador-marketing`
+e `assistente-marketing`; **1** para pastor-senior, diretor-administrativo,
+coordenador-estratégia, diretor-ministerial e diretor-criativo; 5 para `dev`. Além
+disso, **6 pessoas têm a área Marketing** em `usuario_areas`, e o boost eleva
+**leitura E escrita** a 5 (`auth.js:214-215`). Então escrita 3 alcança a equipe por
+**duas** vias independentes.
+
+- ⚠️ **`admin`/`diretor` continuam passando** — o bypass está dentro do
+  `authorizeModule`, então ninguém que publicava perdeu acesso. Ampliação, não troca.
+- ⚠️ **O nível 3 vale também pro DELETE**, e é decisão declarada: aqui apagar é
+  curadoria rotineira (trocar destaque, tirar foto ruim), não destruição de
+  registro. Com 4, o acesso passaria a depender de a pessoa estar em
+  `usuario_areas` (o boost dá 5) e a equipe ficaria separada por **acidente de
+  cadastro**, não por decisão — assistente novo sem área criaria e não apagaria.
+- ⚠️ **O guard fica no `router.use`**, escolhendo pelo método HTTP: rota nova
+  nesses arquivos nasce protegida sem ninguém precisar lembrar.
+- ⚠️⚠️ **A RLS NÃO foi ampliada, de propósito.** O comentário do `destaques.js`
+  dizia que o guard "espelha a policy `destaques_admin`" — e agora não espelha
+  mais. Conferido que **nenhum cliente escreve nessas tabelas**: no app,
+  `lib/destaques.ts` só faz `SELECT`, e no ERP não há escrita direta; a escrita
+  chega pelo backend com service_role. Ampliar a policy só aumentaria o que a
+  **anon key do bundle** alcança, sem ninguém precisar (lei nº 11). O comentário
+  foi corrigido para dizer isso — comentário que mente engana a próxima sessão.
+
+### O front espelha o servidor, e quem só lê não vê botão
+
+`canAccessModule(['marketing'], 'escrita', 3)` (mesmo bypass e mesmo deny do
+`authorizeModule`) decide `podeEditar`, que desce como **prop** para `Destaques` e
+`FotosBatismo`: sem ele, some o "+ Novo destaque", a barra de mover/ativar/editar/
+excluir, o upload de fotos e o ✕ de excluir. As **3 sub-abas agora aparecem para
+todo mundo que abre a aba** — não há mais sub-aba escondida, e a nota do pé passou
+a dizer "modo leitura" em vez de "não aparecem".
+
+⚠️ **Quem decide é o backend** — o front só evita oferecer o que vai dar 403.
+
+### ⚠️⚠️ Achado: o declutter do menu havia parado de valer (regressão de 17/08)
+
+`DOMINIO_POR_PATH` do `menuAccess.ts` é lookup por **path EXATO**. Ao consolidar
+os dois itens do menu Criativo em um só apontando para **`/marketing/app`**, o path
+novo ficou fora do mapa — então a camada de perfil ("Criativo → só o time
+Criativo + admin") deixou de se aplicar e o item voltaria a aparecer para quem tem
+`marketing >= 1` fora do Criativo (os 3 cargos de nível 1 medidos acima).
+Corrigido com `'/marketing/app': { dom: 'criativo' }`; os 2 paths antigos ficam
+mapeados porque link salvo ainda passa por eles.
+⚠️ **Régua: item de menu que muda de `path` precisa reentrar no `DOMINIO_POR_PATH`** —
+o gate por módulo continua funcionando e o silêncio é só no declutter, que é
+exatamente o tipo de regressão que ninguém percebe.
+
+### Como foi verificado
+
+Harness local exercitando o **guard real** (`authorizeModule` de verdade, `req.user`
+sintéticos espelhando os perfis medidos): 13 casos, todos como esperado — Pedro
+escreve, assistente-marketing sem boost escreve (matriz 3), diretor escreve por
+bypass, **cargo nível 1 que não é diretor lê e não escreve**, quem não tem
+`marketing` toma 403 nos dois métodos, e o **deny explícito vence até admin**.
+Gate: typecheck sem cache + build + vitest (1702/1702) + os 10 scripts.
 
 ## Marketing · estado final (specs maio + redesenho 2026-05-30/31 · NO AR)
 
