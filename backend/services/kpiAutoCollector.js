@@ -630,6 +630,46 @@ const COLLECTORS = {
     };
   },
 
+  // NEXT-04: NPS do NEXT · lê as respostas da pesquisa canônica de satisfação.
+  // A pesquisa do Next é PERPÉTUA (uma só, `contexto_kpi='nps_next'`, provisionada
+  // por GET /api/next/satisfacao) e o QR é mostrado por TURMA (`?turma=<id>`).
+  // ⚠️ Por isso NÃO dá pra ler de `dados_brutos` como os outros KPIs de NPS:
+  // `npsKpiSync` carimba o agregado da pesquisa com a `data_inicio` DELA, então
+  // numa pesquisa perpétua toda resposta — de qualquer mês, de qualquer turma —
+  // colapsa num único ponto do mês em que a pesquisa nasceu (medido em prod
+  // 18/08/2026: a resposta de 09/08 estava gravada em 2026-07-22). Lendo
+  // `nps_respostas` direto com a janela do período, cada mês fica com o seu.
+  // Difere do `nps.culto_area` de propósito em duas coisas:
+  //   · janela do MÊS, não média acumulada — cada turma é mensal e a meta do
+  //     NEXT-04 é mensal; acumular esconderia uma turma ruim atrás do histórico;
+  //   · devolve o NPS SCORE (-100 a 100), que é o que a meta ≥70 mede — não a
+  //     média 0-10 (essa vai junto na observação).
+  // Amostra pequena entra assim mesmo (esconder dado é pior), mas o `n` vem na
+  // frente da observação e ganha aviso abaixo de 5 — com 1 resposta o score dá
+  // 100 e um card verde mentiria pra quem lê de longe.
+  'next.nps': async ({ inicio, fim }) => {
+    const { data: pesquisas } = await supabase
+      .from('nps_pesquisas')
+      .select('id')
+      .eq('contexto_kpi', 'nps_next')
+      .is('deleted_at', null);
+    const ids = (pesquisas || []).map(p => p.id);
+    if (!ids.length) return null;
+    const rows = await fetchAll('nps_respostas', 'score',
+      q => q.in('pesquisa_id', ids).gte('created_at', inicio).lt('created_at', fim));
+    if (!rows.length) return null;
+    const total = rows.length;
+    const promotores = rows.filter(r => Number(r.score) >= 9).length;
+    const detratores = rows.filter(r => Number(r.score) <= 6).length;
+    const nps = Math.round(((promotores - detratores) / total) * 1000) / 10;
+    const media = rows.reduce((s, r) => s + Number(r.score || 0), 0) / total;
+    const alerta = total < 5 ? ` · ATENCAO amostra pequena (n=${total})` : '';
+    return {
+      valor: nps,
+      observacao: `${total} resposta(s) · NPS ${nps} · media ${media.toFixed(1)} (0-10) · ${promotores} promotor(es)/${detratores} detrator(es)${alerta}`,
+    };
+  },
+
   // ── Batismos por área (alimentados pela coluna area_kpi adicionada em
   //    20260514180000_batismo_area_kpi.sql). Filtra status='realizado' e
   //    usa COALESCE(data_batismo, created_at) pra contar a data real.

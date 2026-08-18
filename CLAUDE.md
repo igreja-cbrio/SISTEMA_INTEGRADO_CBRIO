@@ -7373,6 +7373,30 @@ pergunta + `comentario`. Stats de score na view `vw_nps_pesquisa_stats`.
 - **KPI**: resposta sincroniza `dados_brutos` via `services/npsKpiSync.js`
   (#1522 · upsert com contexto estável `{pesquisa_id}` · pesquisa arquivada
   remove a linha) → alimenta os tipos `nps_*` e os KPIs ligados.
+- ⚠️ **`dados_brutos` NÃO serve pra pesquisa PERPÉTUA** (2026-08-18):
+  `npsKpiSync` carimba o agregado com a **`data_inicio` da PESQUISA**, não com a
+  data da resposta, e é **uma linha só por pesquisa**. Numa pesquisa que nunca
+  encerra — como a "Satisfação do Next", canônica e servida por QR por turma —
+  toda resposta de todo mês colapsa num único ponto do mês em que ela nasceu.
+  Medido em prod: a resposta de **09/08** estava gravada com data **2026-07-22**,
+  e `tipos_dado_bruto.nps_next` é **mensal** → agosto vazio pra sempre.
+  **Regra:** KPI mensal em cima de pesquisa perpétua lê `nps_respostas` DIRETO,
+  com a janela do período — é o que `nps.culto_area` e `next.nps` fazem. Não
+  ligar KPI mensal em `dados_brutos` de pesquisa sem `data_fim`.
+- **NPS do Next → NEXT-04** (2026-08-18): coletor **`next.nps`** em
+  `services/kpiAutoCollector.js` lê a(s) pesquisa(s) `contexto_kpi='nps_next'`
+  na janela do mês e devolve o **NPS score (-100 a 100)** — que é o que a meta
+  ≥70 do NEXT-04 mede, diferente do `nps.culto_area`, que devolve média 0-10.
+  Prefixo `next.` de propósito: entra no `recalcularKpisNext()`
+  (`routes/next.js:48`, filtro `fontes: ['next.']`) além do cron diário.
+  Antes disso o NEXT-04 estava `ativo=false` + `fonte_auto=NULL` + zero linhas
+  em `kpi_registros` — a resposta chegava e não virava KPI nenhum.
+  ⚠️ Amostra pequena entra assim mesmo (esconder dado é pior), mas o `n` vem na
+  frente da `observacoes` e ganha aviso abaixo de 5: **o card mostra só o valor**,
+  e NPS 100 com n=1 vira card verde contra meta 70. Ler o "Último cálculo" no
+  `KpiDetalheModal` antes de levar o número pra reunião.
+  ⏳ NEXT-01/02/03 seguem `ativo=false` **apesar de já terem coletor escrito**
+  (`next.batismos`/`next.voluntarios`/`next.dizimo`) — ligar é decisão de gestão.
 
 ## ⚠⚠ O ritual de KPI apresenta a FATIA da presidência, não o sistema (2026-08-18)
 
