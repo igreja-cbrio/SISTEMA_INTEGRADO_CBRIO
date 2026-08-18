@@ -9280,6 +9280,78 @@ mexer no React.
   dado de culto vive em `cultos.*`, não em dados_brutos). Líderes:
   Kids=Mariane · AMI=Arthur Cecconi · Bridge=Lillian Xavier · Online=Renata.
 
+## ⚠️⚠️ KPI · ZERO É DADO (2026-08-18 · migrations `20260818180000`, `190000`, `200000`)
+
+Pergunta do Matheus sobre o relatório semanal: *"diz que temos 45 KPIs manuais sem
+lançamento. Esses KPIs não podem ser alimentados de forma automática?"*
+
+**A premissa da pergunta não se sustentou, e é o achado principal:** dos 168 KPIs
+ativos, 86 estavam sem valor e **todos os 86 já passavam pelo cálculo automático
+todo dia**. Não existia KPI esperando alguém digitar — o `dados_brutos` inteiro
+tem 6 tipos e 89 linhas. O que existia eram três defeitos de LEITURA:
+
+1. ⚠️⚠️ **`vw_kpi_trajetoria_atual` descartava valor ZERO** (`ELSE valor > 0`).
+   Um KPI que calculou 0 — nenhum voluntário em treinamento, nenhum encontro no
+   mês — sumia da view e aparecia como "sem dado / pendente". Zero deixava de ser
+   resposta e virava omissão. ⚠️ A view irmã (`vw_kpi_taticos_status`) **sempre
+   aceitou zero**, então as duas já divergiam: o `> 0` era o desvio.
+   ⇒ Agora zero conta **em período FECHADO**. No período CORRENTE segue exigindo
+   `> 0`, de propósito: aceitar zero no mês em curso faria todo KPI mensal nascer
+   0 e vermelho no dia 1º — trocaria buraco por alarme falso.
+2. **Os 22 KPIs de SLA/NPS interno (`formula_config.fonte = 'solicitacoes'`)
+   nunca eram recalculados pelo cron.** `calcular_kpi` não sabe ler essa fonte
+   (exige numerador/denominador e devolve "formula_config incompleto"); quem sabe
+   é **`recalcular_kpi_adm`**, e o único chamador dela era o TRIGGER da tabela
+   `solicitacoes` — ou seja, o KPI só era recalculado quando alguém mexia numa
+   solicitação daquela área. `kpi_recalcular_todos()` passou a rotear a fonte
+   para `recalcular_kpi_adm` (período fechado **e** corrente).
+3. ⚠️⚠️ **`delta_abs` fabricava zero**: `COALESCE(atual,0) - COALESCE(anterior,0)`
+   devolve 0 quando **não há dado de lado nenhum**. Enquanto a view descartava
+   zero isso ficava escondido; com o item 1, 13 KPIs passariam a exibir "0,
+   medido" — eu teria trocado um buraco honesto por um número inventado, que é
+   pior (buraco a equipe investiga, número ela acredita). Agora os dois lados
+   nulos ⇒ NULL. O zero legítimo continua (tinha 5, agora 0 → −5).
+
+**Efeito medido: 82 → 105 KPIs com valor · 0 zeros falsos.**
+
+### `vw_kpi_sem_valor_motivo` — por que cada um dos 63 restantes está vazio
+
+View NOVA ao lado (não coluna dentro da trajetória: aquela é lida pelo painel,
+matriz, agentes e relatório — régua escondida ali obrigaria todo consumidor a
+entendê-la). Os motivos existem porque **o encaminhamento de cada um é diferente**:
+
+| motivo | qtd | o que é | quem resolve |
+|---|---|---|---|
+| `sem_demanda` | 30 | a conta foi feita e o denominador é **zero** — não chegou solicitação, não houve inscrição | ninguém · é o fato |
+| `sem_registro` | 23 | a operação existe e não é registrada no sistema | rotina da equipe |
+| `base_zero` | 2 | ⚠️ **TEM dado no período** (`dado_atual`), a fórmula é variação sobre zero | fórmula · dono do KPI |
+| `nunca_calculado` | 4 | nenhuma linha calculada | técnico |
+| `indefinido` | 4 | NPS Culto: `tipo_calculo='manual'` com linha calculada antiga | — |
+
+⚠️ **`sem_demanda` NÃO entra em "cobertura de preenchimento"** — cobrar
+preenchimento ali é caçar fantasma. Os agentes `kpi-coletor` e `kpi-auditor`
+(`~/.claude/agents/`) foram atualizados para transportar o motivo e separar os
+achados por ele.
+
+### O que a medição desmentiu (registrado de propósito)
+
+- **"Ligar as fontes de voluntários"** — eu havia proposto isso ao Matheus. Não
+  havia o que ligar: `_kpi_agregar_dado` **já cobre** `voluntarios_ativos`,
+  `voluntarios_recuperados`, `voluntarios_inativos_3m`, `lideres_treinados`,
+  `lideres_acompanhados`, `frequencia_grupos`, `treinamentos_*`, capelania e
+  aconselhamento. O que falta é o FATO: `cui_pedidos` tem **0 linhas na história**,
+  ninguém tem `funcao='lider_treinamento'`, houve 3 encontros de grupo em 90 dias.
+- **"A função de cálculo não conhece a fonte `solicitacoes`"** — verdade sobre
+  `calcular_kpi` e **falso sobre o sistema**: `agg_solicitacoes_kpi` +
+  `recalcular_kpi_adm` existem e funcionam. Régua de método: antes de concluir que
+  algo não existe, procurar no CATÁLOGO por quem escreve o dado
+  (`pg_get_functiondef ilike '%…%'`), não só na função que eu abri primeiro.
+
+⚠️ **Resíduo declarado, NÃO consertado:** `calcular_kpi` no ramo `soma_periodo`
+**ignora o `p_periodo_referencia`** e sempre usa `current_date` — recalcular um
+mês fechado devolve o número de HOJE. Não entrou aqui porque mexer nisso muda
+valores de períodos já publicados; é decisão do Marcos/Matheus.
+
 ### ⚠️ Meta absoluta × periodicidade do KPI · regra importante
 
 **Sempre** que adicionar novo KPI tático com `tipo_calculo != 'manual'` E meta
