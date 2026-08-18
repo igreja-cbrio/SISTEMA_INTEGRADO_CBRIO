@@ -86,6 +86,50 @@ router.get('/config', async (req, res) => {
   }
 });
 
+// GET /api/voluntariado/kpis/taticos — KPI TÁTICO OFICIAL da área 'voluntariado'
+// (kpi_indicadores_taticos + vw_kpi_trajetoria_atual), mesmo padrão de
+// backend/routes/painelArea.js e do piloto em grupos.js. Antes deste bloco,
+// "Minha Área" era a ÚNICA tela que mostrava este valor pra Voluntariado.
+router.get('/kpis/taticos', async (req, res) => {
+  try {
+    const { data: kpisRaw, error: kpisErr } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, descricao, meta_descricao, meta_valor, unidade, periodicidade, lider_funcionario_id')
+      .eq('ativo', true)
+      .ilike('area', 'voluntariado')
+      .order('indicador', { ascending: true });
+    if (kpisErr) throw kpisErr;
+    const kpis = kpisRaw || [];
+    const kpiIds = kpis.map(k => k.id);
+
+    let trajByKpi = {};
+    if (kpiIds.length > 0) {
+      const { data: traj, error: trajErr } = await supabase
+        .from('vw_kpi_trajetoria_atual')
+        .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, checkpoint_meta, percentual_meta')
+        .in('kpi_id', kpiIds);
+      if (trajErr) console.error('[voluntariado kpis/taticos] trajetoria falhou:', trajErr.message);
+      (traj || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
+    }
+
+    const enriched = kpis.map(k => ({
+      id: k.id,
+      indicador: k.indicador,
+      descricao: k.descricao,
+      meta_descricao: k.meta_descricao,
+      meta_valor: k.meta_valor,
+      unidade: k.unidade,
+      periodicidade: k.periodicidade,
+      trajetoria: trajByKpi[k.id] || null,
+    }));
+
+    res.json({ area: 'voluntariado', total: enriched.length, kpis: enriched });
+  } catch (e) {
+    console.error('[voluntariado kpis/taticos]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar KPIs táticos de voluntariado' });
+  }
+});
+
 router.put('/config', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const toInt = (v, def) => {

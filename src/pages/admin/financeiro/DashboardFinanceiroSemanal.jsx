@@ -10,6 +10,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { financeiroV2 } from '../../../api';
+import KpiTaticoOficial from '../../../components/kpi/KpiTaticoOficial';
 import { useAuth } from '../../../contexts/AuthContext';
 import MetaGauge from '../../../components/dashboard-semanal/MetaGauge';
 import DoadoresListDialog from '../../../components/financeiro/DoadoresListDialog';
@@ -324,6 +325,10 @@ export default function DashboardSemanal() {
         onVerDetalhe={() => setSlide(Math.max(0, slides.findIndex(s => s.key === 'resumo')))}
         onComparar={() => setSlide(Math.max(0, slides.findIndex(s => s.key === 'performance')))}
       />
+
+      {/* KPI tático oficial (generosidade) · distinto do número operacional acima,
+          que é calculado direto de fin_transacoes/vw_fin_semana_*. */}
+      <KpiTaticoOficial fetchFn={financeiroV2.kpisTaticos} />
 
       {/* CONTENT · slides animados com AnimatePresence */}
       <AnimatePresence mode="wait">
