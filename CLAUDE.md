@@ -4570,6 +4570,72 @@ de hoje, intacto.
   quem fala com o grupo é o líder, no WhatsApp dele, e é ele que tem o contexto
   ("adiamos por causa do feriado"). Prometer aviso que não sai é pior que não ter.
 
+### ⚠️⚠️ 2ª rodada (18/08) · a CADÊNCIA não era lida — 37 grupos viam data errada
+
+`mem_grupos.recorrencia` existe desde sempre e a régua **somava 7 dias em todo
+grupo**. Medido em produção: dos 104 ativos, **67 semanal · 29 quinzenal · 5
+mensal · 3 diário** — ou seja **um terço via a data errada** no box "Próximo
+encontro" (e já via antes desta feature; ela só passou a listar 6 delas).
+
+- `mensal` = **28 dias**, não "mesmo dia do mês": o grupo é identificado por
+  `dia_semana`, então "toda terça" tem que continuar caindo numa terça. Somar 30
+  andaria pelo calendário e o grupo de terça cairia numa quinta.
+- ⚠️⚠️ **Quinzenal e mensal precisam de ÂNCORA e quase ninguém tem.** Saber "de
+  14 em 14 às terças" **não diz EM QUAL terça**. A única evidência no banco é o
+  último encontro REALIZADO (`mem_grupo_encontros`) — e **36 dos 37 grupos
+  não-semanais nunca registraram um**. Sem âncora a régua devolve **UMA**
+  ocorrência marcada `ancora_incerta`, e a tela pede pra registrar uma presença.
+  Listar a agenda inteira seria chute com cara de fato.
+- ⚠️ **Regressão que os meus próprios testes pegaram**: ao reescrever eu perdi a
+  guarda de `dia_semana` ausente — e **`Number(null) === 0`, que é DOMINGO**.
+  Grupo sem dia marcado (são 4 ativos) viraria grupo de domingo com agenda
+  inventada. É a armadilha já registrada em "grupos · dados incompletos".
+
+### ⚠️ O LIMITE de remarcação: `min(7 dias, véspera do próximo encontro)`
+
+Pergunta do Marcos: *"se temos um encontro semanal e eu tentar agendar para daqui
+a 15 dias, não tem sentido… de repente podemos colocar no máximo uma semana, o
+que acha?"*. As duas metades existem por motivos diferentes e **nenhuma sozinha
+resolve**:
+
+- **"não alcançar o próximo"** sai da cadência do grupo, sem número mágico:
+  semanal ⇒ 6 dias · quinzenal ⇒ 13 · mensal ⇒ 27. Uma semana fixa **quebraria o
+  semanal** (7 dias cai em cima do encontro seguinte).
+- **o teto de 7 dias** impede que um grupo MENSAL empurre a reunião para a
+  véspera da seguinte — **duas reuniões em dias seguidos**, que foi a objeção
+  dele.
+
+Quem precisa mover mais que isso **não está remarcando: está CANCELANDO** aquele
+encontro, e esse caminho existe ao lado. A mensagem de recusa diz exatamente isso.
+
+- ⚠️⚠️ **A janela é decidida no SERVIDOR** e devolvida por ocorrência
+  (`pode_remarcar` · `remarcar_de` · `remarcar_ate`). O app **não recalcula** —
+  duas cópias divergiriam e a divergência apareceria como *"o calendário deixou
+  escolher e o servidor recusou"*. Falha ao montar a agenda **recusa (409)**,
+  nunca libera.
+- ⚠️ Janela espremida até a **própria data** devolve `pode: true` de propósito:
+  sobra mudar só o HORÁRIO, que é uso legítimo. (Escrevi o teste esperando
+  `false` e o código me corrigiu.)
+- ⚠️ O limite é **DITO na tela**, não só imposto no calendário: dia cinza sem
+  explicação lê-se como app quebrado. `CalendarioBR` ganhou `maximoISO`.
+
+### ⚠️ A agenda saiu do "Meu grupo" e foi pro "Gerenciar grupo" (18/08)
+
+Pedido do Marcos: *"pra pessoa gerenciar tudo na mesma tela"*. No `/meu-grupo` o
+box voltou a ser **informativo** (o participante precisa saber QUANDO é, não
+decidir); em **Gerenciar grupo** ele fica logo abaixo do herói, com **"Ver a
+agenda da temporada"** recolhido — até 19 datas até 31/12, e despejá-las no topo
+enterraria o protagonista da tela, que é registrar presença.
+
+⚠️ O **modal virou CENTRADO** (era bottom sheet): subindo de baixo, o botão de
+cancelar encontro ficava **por cima da barra de navegação do Android** e não dava
+pra tocar; e o teclado, ao abrir no campo de motivo, cobria o próprio campo.
+Agora tem `KeyboardAvoidingView` + `automaticallyAdjustKeyboardInsets`.
+
+⚠️ **Afordância**: a 1ª versão marcava o box tocável com um `create-outline`
+**cinza de 18px sozinho**. Nem quem pediu a funcionalidade achou o caminho — o
+rótulo **"Alterar data"** é escrito.
+
 ### ⚠️⚠️ A régua é PURA e consertou um bug de UTC que já existia
 
 **`backend/utils/agendaGrupo.js`** (`proximasOcorrencias` / `proximoEncontro` ·
