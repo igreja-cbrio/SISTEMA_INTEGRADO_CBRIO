@@ -129,6 +129,7 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
 
   const emRevisao = t.status === 'aguardando_revisao';
   const ehBugDiagnosticado = t.classe === 'bug' && t.status === 'aguardando_aprovacao';
+  const ehCorrecaoIncidente = t.classe === 'dev' && t.status === 'aguardando_aprovacao' && Boolean(t.diagnostico);
   const gateAtual = emRevisao ? 'G2' : 'G1';
 
   async function agir(aprovado, proximo) {
@@ -156,6 +157,8 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
           <DialogDescription>
             {ehBugDiagnosticado
               ? `O agente diagnosticou o bug sem alterar código. Ao aprovar, a tarefa volta à fila e o agente corrige, aplica as migrations e faz o merge do PR automaticamente. Ao recusar, a tarefa é encerrada como rejeitada.`
+              : ehCorrecaoIncidente
+                ? `A Etapa 3 propôs uma correção de baixo ou médio risco. Ao aprovar, o agente edita somente o escopo permitido e abre um PR para revisão humana. Migrations, merge e deploy automáticos permanecem bloqueados.`
               : emRevisao
                 ? `Gate ${gateAtual} · PR aberto aguardando revisão. Revise e faça o merge do PR no GitHub antes de aprovar. Ao aprovar, o card vai para "Concluída"; em "Pedir ajustes", volta para a fila.`
                 : `Gate ${gateAtual} · o agente pediu aprovação antes de executar. Ao aprovar, o card volta para a fila e o agente continua automaticamente.`}
@@ -167,7 +170,7 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
             <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 4 }}>Tarefa</div>
             <div style={{ fontSize: 14, color: C.text, overflowWrap: 'anywhere' }}>{textoLimpo(t.titulo)}</div>
           </div>
-          {ehBugDiagnosticado && (
+          {(ehBugDiagnosticado || ehCorrecaoIncidente) && (
             <div>
               <div style={{ fontWeight: 600, fontSize: 13, color: C.text2, marginBottom: 4 }}>Diagnóstico</div>
               <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, color: C.text, maxHeight: 200, overflowY: 'auto', padding: '8px 12px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.bg }}>{t.diagnostico || '—'}</div>
@@ -182,7 +185,7 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
           )}
           <div>
             <Label>Observação (opcional)</Label>
-            <Textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={2} placeholder={ehBugDiagnosticado ? 'Ex.: pode corrigir' : emRevisao ? 'Ex.: merge feito, PR ok' : 'Ex.: pode seguir'} />
+            <Textarea value={obs} onChange={(e) => setObs(e.target.value)} rows={2} placeholder={(ehBugDiagnosticado || ehCorrecaoIncidente) ? 'Ex.: pode corrigir' : emRevisao ? 'Ex.: merge feito, PR ok' : 'Ex.: pode seguir'} />
           </div>
         </div>
 
@@ -198,6 +201,11 @@ function AcaoHumanaDialog({ id, onClose, onChange, onDetalhe }) {
             <>
               <Button variant="outline" onClick={() => agir(false)} disabled={working}>Recusar</Button>
               <Button onClick={() => agir(true)} disabled={working}>Aprovar · corrigir</Button>
+            </>
+          ) : ehCorrecaoIncidente ? (
+            <>
+              <Button variant="outline" onClick={() => agir(false, 'rejeitada')} disabled={working}>Recusar</Button>
+              <Button onClick={() => agir(true, 'agendada')} disabled={working}>Aprovar · abrir PR</Button>
             </>
           ) : (
             <>

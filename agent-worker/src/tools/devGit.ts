@@ -115,6 +115,11 @@ export async function diffNomeArquivos(ws: string): Promise<string[]> {
   return r.stdout.split("\0").filter(Boolean);
 }
 
+export async function prepararDiff(ws: string): Promise<void> {
+  const add = await git(["add", "-A"], { cwd: ws });
+  if (add.code !== 0) throw new Error(`git add falhou: ${add.stderr.slice(0, 300)}`);
+}
+
 export async function diffConteudo(ws: string): Promise<string> {
   const r = await git(["diff", "--cached"], { cwd: ws, maxOutputBytes: 20 * 1024 * 1024 });
   return r.stdout || "";

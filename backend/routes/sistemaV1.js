@@ -24,6 +24,7 @@ const { requireCron } = require('../utils/cronAuth');
 const { setSystemJobOutcome } = require('../services/systemJobOutcome');
 const { runIncidentTriage } = require('../services/systemIncidentTriage');
 const { runIncidentDiagnosisBatch } = require('../services/systemIncidentDiagnosis');
+const { runIncidentCorrectionPlanningBatch } = require('../services/systemIncidentCorrection');
 const {
   getGovernanceCommandCenter,
   updateGovernanceControl,
@@ -88,8 +89,8 @@ router.get('/cron/push-receipts', requireCron, async (_req, res) => {
   res.json({ ok: true, ...saida });
 });
 
-// Agente de incidentes - etapa 2: triagem + diagnostico consultivo com os
-// agentes Claude auditaveis do sistema. Continua sem executar correcoes.
+// Agente de incidentes - etapa 3: triagem, diagnostico e proposta de correcao.
+// A proposta exige aprovacao humana e termina em PR; nao faz merge/deploy.
 router.get('/cron/incident-triage', requireCron, async (_req, res) => {
   try {
     const triage = await runIncidentTriage();
@@ -100,22 +101,32 @@ router.get('/cron/incident-triage', requireCron, async (_req, res) => {
       console.error('[cron incident-triage / diagnosis]', diagnosisError.message);
       diagnosis = { enabled: true, scanned: 0, diagnosed: 0, failed: 1, skipped: 0, error: 'Falha isolada no diagnostico.' };
     }
+    let correction;
+    try {
+      correction = await runIncidentCorrectionPlanningBatch();
+    } catch (correctionError) {
+      console.error('[cron incident-triage / correction-planning]', correctionError.message);
+      correction = { enabled: true, scanned: 0, proposed: 0, linked: 0, skipped: 0, failed: 1, error: 'Falha isolada no planejamento da correcao.' };
+    }
     const triagedCount = triage.errors.opened + triage.feedback.opened + triage.incidents.promoted;
-    const outputCount = triagedCount + (diagnosis.diagnosed || 0);
+    const proposedCount = (correction.proposed || 0) + (correction.linked || 0);
+    const outputCount = triagedCount + (diagnosis.diagnosed || 0) + proposedCount;
     const diagnosisFailed = Number(diagnosis.failed || 0) > 0;
+    const correctionFailed = Number(correction.failed || 0) > 0;
+    const partialFailure = diagnosisFailed || correctionFailed;
     setSystemJobOutcome(res, {
-      status: diagnosisFailed ? 'warning' : 'success',
-      effectStatus: diagnosisFailed ? 'failed' : 'confirmed',
-      inputCount: triage.errors.scanned + triage.feedback.scanned + triage.incidents.scanned + (diagnosis.scanned || 0),
+      status: partialFailure ? 'warning' : 'success',
+      effectStatus: partialFailure ? 'failed' : 'confirmed',
+      inputCount: triage.errors.scanned + triage.feedback.scanned + triage.incidents.scanned + (diagnosis.scanned || 0) + (correction.scanned || 0),
       outputCount,
-      discardedCount: diagnosis.failed || 0,
-      ...(diagnosisFailed ? {
-        errorCode: 'INCIDENT_DIAGNOSIS_PARTIAL_FAILURE',
-        errorMessage: `${diagnosis.failed} diagnóstico(s) falharam; a triagem continuou normalmente.`,
+      discardedCount: (diagnosis.failed || 0) + (correction.failed || 0),
+      ...(partialFailure ? {
+        errorCode: 'INCIDENT_AUTOMATION_PARTIAL_FAILURE',
+        errorMessage: `${diagnosis.failed || 0} diagnostico(s) e ${correction.failed || 0} planejamento(s) falharam; as demais etapas continuaram.`,
       } : {}),
-      result: `${triagedCount} incidente(s) triado(s); ${diagnosis.diagnosed || 0} diagnosticado(s)`,
+      result: `${triagedCount} incidente(s) triado(s); ${diagnosis.diagnosed || 0} diagnosticado(s); ${proposedCount} proposta(s) de correcao`,
     });
-    res.json({ ...triage, mode: 'triage_and_diagnosis', diagnosis });
+    res.json({ ...triage, mode: 'triage_diagnosis_and_correction_planning', diagnosis, correction });
   } catch (error) {
     console.error('[cron incident-triage]', error.message);
     setSystemJobOutcome(res, {
