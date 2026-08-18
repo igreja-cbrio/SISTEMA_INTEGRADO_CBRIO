@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Search, UserMinus, History, Loader2, Stethoscope, ChevronDown, ChevronRight, UserCheck } from 'lucide-react';
+import { Search, UserMinus, History, Loader2, Stethoscope, ChevronDown, ChevronRight, PlugZap, UserCheck } from 'lucide-react';
 import { useAllVolUsers, useAddVolRole, useRemoveVolRole, useSyncHistorical } from './hooks';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
@@ -93,6 +93,7 @@ export default function VolAdmin() {
       <WhatsappAutoConfig api={voluntariado.whatsappAuto} />
       <h1 className="text-2xl font-bold text-foreground">Administração</h1>
 
+      <PlanningCenterSwitch />
       <VincularMembrosCard />
 
       {/* Opções do formulário público */}
@@ -226,6 +227,74 @@ export default function VolAdmin() {
   );
 }
 
+
+/**
+ * A chave que decide se o Planning Center Services ainda é fonte.
+ *
+ * ⚠️ Ela não é um detalhe de configuração: com o PCO marcado como fonte, o sync
+ * ARQUIVA todo perfil que sumiu do roster de lá — e 923 dos 931 perfis vieram
+ * do Planning Center. Se a igreja parar de alimentar o Services sem desligar
+ * isto aqui, uma rodada do sync contra um roster vazio arquiva a base inteira e
+ * a tela de escalar fica vazia, sem erro nenhum aparecer.
+ */
+function PlanningCenterSwitch() {
+  const qc = useQueryClient();
+  const { data: cfg } = useQuery<{ pco_ativo?: boolean }>({
+    queryKey: ['vol-config'],
+    queryFn: () => voluntariado.config.get(),
+  });
+  const ativo = cfg?.pco_ativo !== false;
+
+  const salvar = useMutation({
+    mutationFn: (pco_ativo: boolean) => voluntariado.config.update({ ...cfg, pco_ativo }),
+    onSuccess: (_d, pco_ativo) => {
+      qc.invalidateQueries({ queryKey: ['vol-config'] });
+      toast.success(pco_ativo
+        ? 'Planning Center voltou a ser fonte do voluntariado'
+        : 'Planning Center desligado como fonte — a reconciliação de perfis não roda mais');
+    },
+    onError: (e: Error) => toast.error(e?.message || 'Erro ao salvar'),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <PlugZap className="h-4 w-4" /> Planning Center Services
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Badge variant={ativo ? 'default' : 'outline'}>
+            {ativo ? 'É a fonte' : 'Desligado'}
+          </Badge>
+          <Button
+            variant={ativo ? 'destructive' : 'default'}
+            size="sm"
+            disabled={salvar.isPending}
+            onClick={() => {
+              if (ativo && !confirm(
+                'Desligar o Planning Center como fonte?\n\n' +
+                'O sync para de arquivar voluntários que sumiram do roster de lá, e o ' +
+                'gerador de cultos passa a criar cultos em dias que já têm culto do PCO.\n\n' +
+                'É reversível a qualquer momento por este mesmo botão.',
+              )) return;
+              salvar.mutate(!ativo);
+            }}
+          >
+            {salvar.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+            {ativo ? 'Desligar como fonte' : 'Voltar a usar como fonte'}
+          </Button>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {ativo
+            ? 'Enquanto estiver ligado, quem sai do roster do Planning Center é arquivado aqui automaticamente — são 923 dos 931 perfis. Desligue ANTES de a equipe parar de alimentar o Services.'
+            : 'O roster daqui é independente: ninguém é arquivado por sumir do Planning Center, e o gerador de cultos por recorrência não é mais bloqueado pelos cultos herdados de lá.'}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
 
 type RelatorioVinculo = {
   aplicado: boolean;

@@ -73,9 +73,24 @@ async function executarSyncCompleto() {
   // Reconciliacao: arquiva quem saiu do PCO (allVolunteers = roster COMPLETO do
   // Planning Center · inclui fetchAllServicesPeople). Só roda quando TODAS as
   // fontes terminaram — uma leitura parcial jamais pode arquivar alguém.
+  // ⚠️ A chave vem do banco, não de env: desligar o Planning Center é decisão
+  // operacional (tomada na tela de Voluntariado), não de deploy. Falha de
+  // leitura mantém `true` — o comportamento de hoje — porque o efeito de
+  // assumir `false` por engano seria parar de arquivar quem realmente saiu,
+  // e o de assumir `true` por engano é o arquivamento em massa que esta chave
+  // existe pra impedir. Na dúvida, a guarda fecha.
+  let pcoAtivo = true;
+  try {
+    const { data: cfg } = await supabase.from('vol_config').select('pco_ativo').eq('id', 1).maybeSingle();
+    if (cfg && cfg.pco_ativo === false) pcoAtivo = false;
+  } catch (e) {
+    console.error('[VOL SYNC] leitura de vol_config.pco_ativo:', e.message);
+  }
+
   const decisaoReconciliacao = decidirReconciliacao({
     tiposComFalha,
     pessoasCompletas,
+    pcoAtivo,
   });
   let reconciliacao = { arquivados: 0, desarquivados: 0, skipped: true, motivo: decisaoReconciliacao.motivo };
   if (decisaoReconciliacao.podeReconciliar) {
