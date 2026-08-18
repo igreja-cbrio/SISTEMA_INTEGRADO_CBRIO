@@ -5,6 +5,7 @@ const { authenticate, authorize, getEffectiveLevel } = require('../middleware/au
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
+const { tipoVigenteEm } = require('../utils/lentesDomingo');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { reconciliarCpfTardio, propagarCpfConvertido } = require('../services/cpfReconciliar');
 const { cpfValido } = require('../utils/cpf');
@@ -662,6 +663,44 @@ async function cultosAutoCreate(req, res) {
     .not('recurrence_time', 'is', null);
   if (typesErr) return res.status(500).json({ error: typesErr.message });
 
+  // ⚠️⚠️ VIGÊNCIA. Sem isto o cron materializa culto em data em que o culto NÃO
+  // EXISTE — e não é hipótese: em 18/08 o tipo "Domingo 09:30" (que só passa a
+  // valer em 24/08) foi ativado por alguém, e a próxima execução, domingo 23/08
+  // às 00:05, teria criado um culto de 09:30 no ÚLTIMO domingo do formato antigo.
+  // Pior: o script do corte remove futuros a partir de 30/08, então o fantasma de
+  // 23/08 ficaria lá para sempre, com os gatilhos de KPI e NSM já disparados.
+  //
+  // É a régua do §9.1 da varredura (docs/cultos-domingo/) aplicada ao lado da
+  // ESCRITA: quem LISTA o que existiu não filtra vigência; quem GERA culto novo
+  // filtra "vigente NAQUELA data". `is_active` não substitui isto — é um flag que
+  // qualquer um vira na tela de Tipos de Culto, e foi exatamente o que aconteceu.
+  //
+  // SELECT isolado e best-effort: pedir coluna que a migration ainda não criou faz
+  // o PostgREST recusar a query INTEIRA (lição do parcelas_max), e aqui isso
+  // pararia a criação de TODOS os cultos.
+  const vigencia = new Map();
+  try {
+    const { data: vig, error: vErr } = await supabase
+      .from('vol_service_types')
+      .select('id, vigente_de, vigente_ate');
+    if (!vErr && Array.isArray(vig)) {
+      for (const v of vig) vigencia.set(v.id, v);
+    }
+  } catch { /* sem as colunas, o comportamento é o de antes */ }
+
+  // ⚠️ A comparação é DELEGADA a `tipoVigenteEm` (utils/lentesDomingo), que já
+  // existe e já é coberta por teste — uma SEGUNDA cópia de "este culto vale nesta
+  // data?" é a duplicação que produziu o bug da régua do voluntariado.
+  // ⚠️⚠️ O que NÃO se delega é o fallback: `tipoVigenteEm` é fail-CLOSED
+  // (`!tipo → false`), e se as colunas de vigência não existirem o mapa vem vazio
+  // — delegar direto pararia a criação de TODOS os cultos. Sem informação, o
+  // comportamento é o de antes.
+  const vigenteEm = (tipoId, dataStr) => {
+    const v = vigencia.get(tipoId);
+    if (!v) return true;
+    return tipoVigenteEm(v, dataStr);
+  };
+
   // Calcula a data do "weekStart" (domingo) para cada semana no range [hoje - (weeks-1) semanas, hoje]
   const today = new Date();
   today.setHours(12, 0, 0, 0);
@@ -679,6 +718,8 @@ async function cultosAutoCreate(req, res) {
   const skipped = [];
   const erros = [];
 
+  const foraDeVigencia = [];
+
   for (const ws of weekStarts) {
     for (const t of types || []) {
       const dayDate = new Date(ws);
@@ -687,6 +728,13 @@ async function cultosAutoCreate(req, res) {
       const horaStr = String(t.recurrence_time).slice(0, 8);
       const dFmt = dayDate.toLocaleDateString('pt-BR');
       const nome = `${t.name} — ${dFmt}`;
+
+      // fora de vigência naquela data: não é erro nem "já existe" — é culto que
+      // não acontece nesse dia. Vai DECLARADO, para não sumir em silêncio.
+      if (!vigenteEm(t.id, dataStr)) {
+        foraDeVigencia.push({ tipo: t.name, data: dataStr });
+        continue;
+      }
 
       // Idempotência pela MESMA chave do índice único: (service_type_id, data) —
       // lei de 2026-08-04 (guarda em chave diferente do índice deixa o INSERT
@@ -729,7 +777,9 @@ async function cultosAutoCreate(req, res) {
     }
   }
 
-  res.json({ weeks, created: created.length, skipped: skipped.length, erros: erros.length, items: created, skippedItems: skipped, erroItems: erros });
+  res.json({ weeks, created: created.length, skipped: skipped.length, erros: erros.length,
+    fora_de_vigencia: foraDeVigencia.length, items: created, skippedItems: skipped, erroItems: erros,
+    foraDeVigenciaItems: foraDeVigencia });
 }
 router.get('/cultos/auto-create', cultosAutoCreate);
 router.post('/cultos/auto-create', cultosAutoCreate);
