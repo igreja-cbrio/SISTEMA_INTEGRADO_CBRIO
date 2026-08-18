@@ -1845,88 +1845,104 @@ router.get('/waiting-allocation', async (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 router.post('/vincular-membros', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
-    // ⚠️ Simulação é o DEFAULT. Ligar pessoa a cadastro é irreversível na
-    // prática (o histórico passa a apontar pro membro), então aplicar tem que
-    // ser um ato explícito: `{ aplicar: true }`.
+    // ⚠️⚠️ EM LOTES, e isso não é otimização — é o que faz a rota existir.
+    // `acharMembroGuardado` faz de 4 a 8 idas ao banco por pessoa (CPF, e-mail,
+    // telefone, nascimento, mais os contatos secundários). Rodar os ~490 perfis
+    // numa requisição só passou dos 300s de `maxDuration` e morreu sem devolver
+    // NADA — nem o que já tinha casado. Quem chama percorre o cursor.
     const aplicar = req.body?.aplicar === true;
-    const teto = Math.min(Number(req.body?.teto) || 500, 500);
+    const offset = Math.max(0, Number(req.body?.offset) || 0);
+    const tamanho = Math.min(Math.max(Number(req.body?.tamanho) || 40, 1), 60);
+    // Ids de membro já reivindicados nos lotes ANTERIORES desta mesma rodada.
+    // Sem isso a simulação não enxergaria conflito entre lotes (em modo
+    // simulação nada é gravado, então o banco não conta a história) e diria um
+    // número que o "aplicar" depois não entregaria.
+    const jaTomados = new Set(Array.isArray(req.body?.ja_tomados) ? req.body.ja_tomados : []);
 
-    // Pool: perfis vivos SEM membro. Paginado — `vol_profiles` passa de 900 e o
-    // cap de 1000 do PostgREST cortaria em silêncio.
-    let perfis = [];
+    const { data: pagina, error, count } = await supabase.from('vol_profiles')
+      .select('id, full_name, email, cpf, phone', { count: 'exact' })
+      .is('membresia_id', null).eq('arquivado', false)
+      .order('id').range(offset, offset + tamanho - 1);
+    if (error) return res.status(400).json({ error: error.message });
+
+    const perfis = (pagina || []).filter(v => ehPessoaEscalavel(v.full_name));
+
+    // Uma consulta só pro lote inteiro: quais membros já têm perfil. Fazer isso
+    // por pessoa somava mais uma ida ao banco em cada uma das 490.
+    // ⚠️ Paginado: hoje são ~308 perfis com membro, mas o objetivo desta própria
+    // rota é levar isso perto de 800. No dia em que passasse de 1000 o cap do
+    // PostgREST cortaria a lista em silêncio e o conflito deixaria de ser
+    // detectado — dois voluntários no mesmo cadastro, sem aviso.
+    const donoDoMembro = new Map();
     for (let off = 0; ; off += 1000) {
-      const { data, error } = await supabase.from('vol_profiles')
-        .select('id, full_name, email, cpf, phone, planning_center_id')
-        .is('membresia_id', null).eq('arquivado', false)
-        .order('full_name').range(off, off + 999);
-      if (error) return res.status(400).json({ error: error.message });
-      if (!data?.length) break;
-      perfis = perfis.concat(data);
-      if (data.length < 1000) break;
+      const { data: ocupados, error: eOcup } = await supabase.from('vol_profiles')
+        .select('membresia_id, full_name').not('membresia_id', 'is', null)
+        .order('id').range(off, off + 999);
+      if (eOcup) return res.status(400).json({ error: eOcup.message });
+      (ocupados || []).forEach(o => donoDoMembro.set(o.membresia_id, o.full_name));
+      if (!ocupados || ocupados.length < 1000) break;
     }
 
-    // ⚠️ Conta de sistema fora: `ehPessoaEscalavel` já tira ". f" e "ADM CBRio"
-    // da lista de escalar; ligá-las a um cadastro de PESSOA seria pior ainda.
-    perfis = perfis.filter(v => ehPessoaEscalavel(v.full_name));
+    // Concorrência modesta: 5 perfis por vez. Serializar levava ~1s por pessoa;
+    // abrir tudo de uma vez estrangularia o pool do PostgREST, que é o mesmo de
+    // todas as outras telas do sistema.
+    const achados = [];
+    for (let i = 0; i < perfis.length; i += 5) {
+      const grupo = perfis.slice(i, i + 5);
+      const hits = await Promise.all(grupo.map(async (v) => {
+        try {
+          return await acharMembroGuardado({
+            cpf: v.cpf, email: v.email, telefone: v.phone, nome: v.full_name,
+          });
+        } catch (e) {
+          console.error('[vincular-membros] matcher:', v.id, e.message);
+          return null;
+        }
+      }));
+      grupo.forEach((v, k) => achados.push({ v, hit: hits[k] }));
+    }
 
-    const ligados = [];
-    const semMatch = [];
-    const conflitos = [];
-    // Um membro só pode receber UM perfil nesta rodada: dois voluntários
-    // apontando pro mesmo cadastro é duplicata de pessoa, e o segundo vira
-    // conflito pra decisão humana em vez de sobrescrever o primeiro.
-    const membrosTomados = new Map();
-
-    for (const v of perfis.slice(0, teto)) {
-      let hit = null;
-      try {
-        hit = await acharMembroGuardado({
-          cpf: v.cpf, email: v.email, telefone: v.phone, nome: v.full_name,
-        });
-      } catch (e) {
-        console.error('[vincular-membros] matcher:', v.id, e.message);
-      }
+    // ⚠️ A decisão de conflito é feita DEPOIS, percorrendo em ordem: dentro do
+    // grupo paralelo não há ordem estável, e "quem chegou primeiro" precisa ser
+    // sempre o mesmo em duas rodadas iguais.
+    const ligados = [], semMatch = [], conflitos = [];
+    for (const { v, hit } of achados) {
       if (!hit?.membro_id) { semMatch.push({ id: v.id, nome: v.full_name }); continue; }
-
-      const jaTomado = membrosTomados.get(hit.membro_id);
-      if (jaTomado) {
-        conflitos.push({ id: v.id, nome: v.full_name, membro_id: hit.membro_id, disputa_com: jaTomado });
+      const dono = donoDoMembro.get(hit.membro_id);
+      if (dono || jaTomados.has(hit.membro_id)) {
+        conflitos.push({ id: v.id, nome: v.full_name, membro_id: hit.membro_id, disputa_com: dono || '(outro nesta rodada)' });
         continue;
       }
-      // O membro já pode estar ligado a OUTRO perfil de fora desta rodada.
-      const { data: outro } = await supabase.from('vol_profiles')
-        .select('id, full_name').eq('membresia_id', hit.membro_id).limit(1).maybeSingle();
-      if (outro) {
-        conflitos.push({ id: v.id, nome: v.full_name, membro_id: hit.membro_id, disputa_com: outro.full_name });
-        continue;
-      }
-
-      membrosTomados.set(hit.membro_id, v.full_name);
+      donoDoMembro.set(hit.membro_id, v.full_name);
       ligados.push({ id: v.id, nome: v.full_name, membro_id: hit.membro_id, por: hit.matched_by });
     }
 
-    if (aplicar) {
-      for (let i = 0; i < ligados.length; i += 50) {
-        const lote = ligados.slice(i, i + 50);
+    if (aplicar && ligados.length) {
+      for (let i = 0; i < ligados.length; i += 25) {
+        const lote = ligados.slice(i, i + 25);
+        // `is('membresia_id', null)` de novo: entre simular e aplicar, outra
+        // sessão pode ter ligado o mesmo perfil.
         await Promise.all(lote.map(l => supabase.from('vol_profiles')
           .update({ membresia_id: l.membro_id }).eq('id', l.id).is('membresia_id', null)));
       }
     }
 
-    const porChave = ligados.reduce((acc, l) => { acc[l.por] = (acc[l.por] || 0) + 1; return acc; }, {});
+    const total = count ?? null;
+    const proximo = (pagina || []).length === tamanho ? offset + tamanho : null;
     res.json({
       aplicado: aplicar,
-      analisados: Math.min(perfis.length, teto),
-      sem_membro_total: perfis.length,
+      offset,
+      proximo_offset: proximo,
+      total,
+      analisados: perfis.length,
       ligados: ligados.length,
-      por_chave: porChave,
       conflitos: conflitos.length,
       sem_match: semMatch.length,
-      // Amostras nomeadas: um relatório que só diz "412 ligados" não deixa
-      // ninguém conferir se o critério fez sentido.
-      exemplos_ligados: ligados.slice(0, 15),
-      exemplos_conflitos: conflitos.slice(0, 15),
-      exemplos_sem_match: semMatch.slice(0, 15),
+      por_chave: ligados.reduce((a, l) => { a[l.por] = (a[l.por] || 0) + 1; return a; }, {}),
+      membros_ligados: ligados.map(l => l.membro_id),
+      exemplos_ligados: ligados.slice(0, 8),
+      exemplos_conflitos: conflitos.slice(0, 8),
+      exemplos_sem_match: semMatch.slice(0, 8),
     });
   } catch (e) {
     console.error('[vincular-membros]', e.message);
