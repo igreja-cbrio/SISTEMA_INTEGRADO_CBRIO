@@ -9354,8 +9354,13 @@ entendê-la). Os motivos existem porque **o encaminhamento de cada um é diferen
 | `sem_demanda` | 30 | a conta foi feita e o denominador é **zero** — não chegou solicitação, não houve inscrição | ninguém · é o fato |
 | `sem_registro` | 23 | a operação existe e não é registrada no sistema | rotina da equipe |
 | `base_zero` | 2 | ⚠️ **TEM dado no período** (`dado_atual`), a fórmula é variação sobre zero | fórmula · dono do KPI |
-| `nunca_calculado` | 4 | nenhuma linha calculada | técnico |
+| `coletor_sem_resultado` | 4 | tem `fonte_auto` e o coletor não achou base — ⚠️ conferido: `cui_convertidos` tem 424 na sede, 1 no online e **zero** em AMI/Bridge | ninguém · é o fato |
+| `nunca_calculado` | 0 | sem fonte automática e sem linha nenhuma | configuração |
 | `indefinido` | 4 | NPS Culto: `tipo_calculo='manual'` com linha calculada antiga | — |
+
+⚠️ **Família INTEIRA de `fonte_auto` em `coletor_sem_resultado` é cron quebrado**;
+um KPI isolado é ausência de coorte. É assim que o `kpi-auditor` já agrupa — não
+trocar essa leitura por "o coletor está com problema" no caso isolado.
 
 ⚠️ **`sem_demanda` NÃO entra em "cobertura de preenchimento"** — cobrar
 preenchimento ali é caçar fantasma. Os agentes `kpi-coletor` e `kpi-auditor`
