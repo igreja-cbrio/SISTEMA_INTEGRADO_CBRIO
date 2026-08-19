@@ -770,7 +770,7 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
     // entrou está gravado e a tela diz quanto foi (lei de 04/08 — registrar o
     // efeito DURANTE, não no fim).
     const LOTE = 25;
-    let importadas = 0, repetidas = 0, vinculadas = 0, semPedidoNoNome = 0;
+    let importadas = 0, repetidas = 0, vinculadas = 0;
     const recusadas = [], falhas = [];
     setImpNf({ rodando: true, feitos: 0, total: arquivos.length + pdfs.length });
     try {
@@ -779,7 +779,6 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
         importadas += r.importadas || 0;
         repetidas += r.repetidas || 0;
         vinculadas += r.vinculadas || 0;
-        semPedidoNoNome += r.semPedidoNoNome || 0;
         recusadas.push(...(r.recusadas || []));
         falhas.push(...(r.falhas || []));
         setImpNf({ rodando: true, feitos: Math.min(i + LOTE, arquivos.length), total: arquivos.length });
@@ -846,10 +845,7 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
     }
     if (semPedido) {
       const exemplo = semNota.find(s => s.motivo === 'nome_sem_pedido')?.nome;
-      avisos.push(`${semPedido} PDF com nome fora do padrão \`invoice-<pedido>.pdf\`${exemplo ? ` (ex.: ${exemplo})` : ''} — renomear resolve.`);
-    }
-    if (semPedidoNoNome && !vinculadas) {
-      avisos.push(`${semPedidoNoNome} XML repetido não trouxe o nº do pedido no nome do arquivo, então o vínculo não foi preenchido.`);
+      avisos.push(`${semPedido} PDF sem a chave de acesso nem o nº do pedido no nome${exemplo ? ` (ex.: ${exemplo})` : ''} — baixe o ZIP pelo "Baixar NF-e disponíveis" do Mercado Livre, que já nomeia certo.`);
     }
     if (falhas.length) avisos.push(`${falhas.length} erro(s) ao gravar`);
     if (avisos.length) setLocalError(avisos.join(' · '));

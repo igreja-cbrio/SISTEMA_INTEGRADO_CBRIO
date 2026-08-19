@@ -5,7 +5,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { getMLConfig, mlFetch, ensureUserId, searchOrders } = require('../services/mercadoLivreService');
 const { lerNfe } = require('../utils/nfeXml');
-const { pedidoDoNome } = require('../utils/nfeArquivo');
+const { pedidoDoNome, lerNomeArquivo } = require('../utils/nfeArquivo');
 const { caminhoNoBucket } = require('../utils/storagePath');
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
 const { importar: importarComprasPlanilha } = require('../services/comprasImporter');
@@ -548,12 +548,20 @@ router.post('/notas/importar-xml', async (req, res) => {
   }
 });
 
-// ── IMPORTAR o DANFE (PDF) e casar com a nota pelo número do pedido ─────────
+// ── IMPORTAR o DANFE (PDF) e casar com a nota que o XML já criou ───────────
 // ⚠️ O DANFE OFICIAL é este PDF, gerado pela SEFAZ/emissor — não o espelho que
-// o sistema desenha a partir do XML. O ML entrega os dois no "Baixar NF-e
-// disponíveis" (você escolhe xml OU pdf na hora), com o MESMO nome:
-//   invoice-<pedido>.xml   ·   invoice-<pedido>.pdf
-// É por esse número que o PDF encontra a nota que o XML já criou.
+// o sistema desenha a partir do XML.
+//
+// ⚠️⚠️ SÃO DOIS FORMATOS DE NOME, e o do LOTE é o que vale no uso real:
+//   · unitário (tela do ML):  invoice-<pedido>.xml   ·  invoice-<pedido>.pdf
+//   · LOTE ("Baixar NF-e disponíveis" · ZIP do período):
+//       xml/<id>_<chave 44 dígitos>-procNFe.xml
+//       pdf/<id>_<chave 44 dígitos>-DANFE.pdf
+//
+// O casamento é pela CHAVE DE ACESSO quando ela está no nome, e pelo pedido só
+// no unitário. A chave é melhor por construção: identificador canônico da NF-e,
+// UNIQUE na tabela, preenchida pelo próprio XML — não depende de nome de
+// arquivo para existir. Ver `utils/nfeArquivo`.
 const MAX_PDF_POR_LOTE = 6; // PDF em base64 infla ~33% · corpo do Express é 1 MB
 
 router.post('/notas/importar-danfe', async (req, res) => {
@@ -569,15 +577,21 @@ router.post('/notas/importar-danfe', async (req, res) => {
 
     for (const arq of arquivos) {
       const nome = String(arq?.nome || 'sem-nome.pdf');
-      const pedido = pedidoDoNome(nome);
-      if (!pedido) { semNota.push({ nome, motivo: 'nome_sem_pedido' }); continue; }
+      const { orderId: pedido, chaveAcesso: chave } = lerNomeArquivo(nome) || {};
+      if (!chave && !pedido) { semNota.push({ nome, motivo: 'nome_sem_pedido' }); continue; }
 
-      const { data: nota, error: eBusca } = await supabase.from('log_notas_fiscais')
-        .select('id, storage_path').eq('ml_order_id', pedido).limit(1).maybeSingle();
+      // ⚠️⚠️ A CHAVE DE ACESSO MANDA. Ela é o identificador canônico da NF-e
+      // (44 dígitos da SEFAZ), vem preenchida pelo próprio XML e é UNIQUE na
+      // tabela — casa exato e não depende de `ml_order_id`, que só existe
+      // quando o arquivo veio do download unitário do ML. Foi tentar casar só
+      // pelo pedido que deixou 45 de 45 DANFEs órfãos no primeiro uso real.
+      let busca = supabase.from('log_notas_fiscais').select('id, storage_path');
+      busca = chave ? busca.eq('chave_acesso', chave) : busca.eq('ml_order_id', pedido);
+      const { data: nota, error: eBusca } = await busca.limit(1).maybeSingle();
       // ⚠️ Falha de LEITURA não vira "nota não existe": diria pra pessoa que o
       // XML não foi importado quando o problema é o banco.
-      if (eBusca) throw new Error(`Não foi possível procurar a nota do pedido ${pedido}: ${eBusca.message}`);
-      if (!nota) { semNota.push({ nome, motivo: 'sem_xml_importado', pedido }); continue; }
+      if (eBusca) throw new Error(`Não foi possível procurar a nota de ${chave || pedido}: ${eBusca.message}`);
+      if (!nota) { semNota.push({ nome, motivo: 'sem_xml_importado', pedido: pedido || chave }); continue; }
       if (nota.storage_path) { jaTinham += 1; continue; }
 
       let buffer;
@@ -586,7 +600,10 @@ router.post('/notas/importar-danfe', async (req, res) => {
       } catch { falhas.push({ nome, erro: 'base64 inválido' }); continue; }
       if (!buffer.length) { falhas.push({ nome, erro: 'arquivo vazio' }); continue; }
 
-      const caminho = `notas-fiscais/${pedido}/danfe.pdf`;
+      // ⚠️ A pasta é a CHAVE quando ela existe: é única por nota (o pedido do ML
+      // pode ter mais de uma NF-e, e duas notas do mesmo pedido se
+      // sobrescreveriam no mesmo caminho, com `upsert: true`).
+      const caminho = `notas-fiscais/${chave || pedido}/danfe.pdf`;
       const { error: eUp } = await supabase.storage.from('log-arquivos')
         .upload(caminho, buffer, { contentType: 'application/pdf', upsert: true });
       if (eUp) { falhas.push({ nome, erro: eUp.message }); continue; }
