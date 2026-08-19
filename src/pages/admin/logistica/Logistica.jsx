@@ -9,6 +9,19 @@ import { toast } from 'sonner';
 import LogisticaEstoque from './LogisticaEstoque';
 import LogisticaCompras from './LogisticaCompras';
 
+
+// Motivos de recusa do importador de NF-e, em português. ⚠️ Slug cru na tela se
+// lê como erro do sistema, não como "esta nota não devia entrar".
+const MOTIVO_NF = {
+  nao_e_nfe: 'arquivo não é NF-e',
+  arquivo_vazio: 'arquivo vazio',
+  sem_chave_de_acesso: 'sem chave de acesso',
+  nao_autorizada: 'cancelada ou denegada (não vira despesa)',
+  destinatario_diferente: 'endereçada a outro CNPJ',
+  sem_valor_total: 'sem valor total legível',
+  sem_data_emissao: 'sem data de emissão',
+};
+
 // ── Tema ────────────────────────────────────────────────────
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -710,6 +723,77 @@ const NF_STATUS = {
 
 function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, scanning, onEdit, onEnviar }) {
   const scanRef = useRef(null);
+  const xmlRef = useRef(null);
+  const [impNf, setImpNf] = useState({ rodando: false, feitos: 0, total: 0 });
+
+  // ⚠️ O ZIP é aberto AQUI, no navegador (jszip já é dependência do front): o
+  // backend roda em função serverless com teto de 250 MB e a lei do repo é não
+  // somar dependência lá sem necessidade. E o corpo JSON do Express é 1 MB, daí
+  // o envio em lotes de 25.
+  async function importarXmls(fileList) {
+    const files = [...(fileList || [])];
+    if (!files.length) return;
+    setLocalError(''); setSuccessMsg('');
+
+    let arquivos = [];
+    try {
+      for (const f of files) {
+        if (/\.zip$/i.test(f.name)) {
+          const JSZip = (await import('jszip')).default;
+          const zip = await JSZip.loadAsync(f);
+          const entradas = Object.values(zip.files).filter(z => !z.dir && /\.xml$/i.test(z.name));
+          for (const z of entradas) arquivos.push({ nome: z.name, xml: await z.async('string') });
+        } else {
+          arquivos.push({ nome: f.name, xml: await f.text() });
+        }
+      }
+    } catch (e) {
+      setLocalError('Não foi possível abrir o arquivo: ' + e.message);
+      return;
+    }
+    if (!arquivos.length) { setLocalError('Nenhum XML encontrado no que você enviou.'); return; }
+
+    // ⚠️ Acumula o resultado LOTE A LOTE: se a conexão cair no meio, o que já
+    // entrou está gravado e a tela diz quanto foi (lei de 04/08 — registrar o
+    // efeito DURANTE, não no fim).
+    const LOTE = 25;
+    let importadas = 0, repetidas = 0;
+    const recusadas = [], falhas = [];
+    setImpNf({ rodando: true, feitos: 0, total: arquivos.length });
+    try {
+      for (let i = 0; i < arquivos.length; i += LOTE) {
+        const r = await logistica.notas.importarXml(arquivos.slice(i, i + LOTE));
+        importadas += r.importadas || 0;
+        repetidas += r.repetidas || 0;
+        recusadas.push(...(r.recusadas || []));
+        falhas.push(...(r.falhas || []));
+        setImpNf({ rodando: true, feitos: Math.min(i + LOTE, arquivos.length), total: arquivos.length });
+      }
+    } catch (e) {
+      setLocalError(`Importação interrompida: ${e.message}. ${importadas} nota(s) já foram gravadas.`);
+      setImpNf({ rodando: false, feitos: 0, total: 0 });
+      onReload();
+      return;
+    }
+    setImpNf({ rodando: false, feitos: 0, total: 0 });
+
+    // Declara os quatro destinos — "12 importadas" não distingue sucesso de
+    // importação parcial.
+    const partes = [`${importadas} importada(s)`];
+    if (repetidas) partes.push(`${repetidas} já estavam`);
+    if (recusadas.length) partes.push(`${recusadas.length} recusada(s)`);
+    if (falhas.length) partes.push(`${falhas.length} falhou/falharam`);
+    setSuccessMsg(partes.join(' · '));
+    if (recusadas.length || falhas.length) {
+      const porMotivo = {};
+      for (const r of recusadas) porMotivo[r.erro] = (porMotivo[r.erro] || 0) + 1;
+      const resumo = Object.entries(porMotivo).map(([k, v]) => `${v}× ${MOTIVO_NF[k] || k}`).join(' · ');
+      setLocalError([resumo, falhas.length ? `${falhas.length} erro(s) ao gravar` : '']
+        .filter(Boolean).join(' · '));
+    }
+    onReload();
+  }
+
   const [syncing, setSyncing] = useState(false);
   const [arquiveiStatus, setArquiveiStatus] = useState(null);
   const [arquiveiForm, setArquiveiForm] = useState({ api_id: '', api_key: '', cnpj: '07023068000135' });
@@ -776,18 +860,17 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
         {scanning ? '⏳ Lendo a nota...' : '📷 Escanear nota fiscal'}
       </Button>
       <Button variant="outline" onClick={onNew}>+ Nova Nota Fiscal</Button>
-      {/* ⚠️ DESABILITADO ATÉ O IMPORTADOR DE NF-e EXISTIR (19/08/2026).
-          Este botão chamava `POST /ml/sync-notas`, uma rota que NUNCA foi escrita
-          no backend (conferido com `git log -S` no histórico inteiro): ele sempre
-          devolveu 404 "Endpoint de API não encontrado".
-          Desabilitar em vez de implementar às pressas é decisão: a API do ML
-          expõe a NF-e de verdade da COMPRA (XML + DANFE, por período ou por
-          order_id), então importar o PEDIDO como se fosse nota criaria linhas
-          que parecem documento fiscal e não são — e competiriam com as reais.
-          Botão volta quando o importador ler a nota de verdade. */}
-      <Button variant="outline" disabled
-        title="Em construção: vai importar a NF-e (XML e DANFE) das compras. O botão antigo apontava para uma rota que não existia.">
-        🛒 Importar do Mercado Livre (em breve)
+      {/* Importa a NF-e de verdade, a partir do XML. Substitui o botão antigo
+          "Importar do Mercado Livre", que chamava uma rota inexistente e sempre
+          deu 404 — e que, mesmo funcionando, traria PEDIDO e não nota fiscal.
+          O XML sai do "Baixar NF-e disponíveis" do próprio Mercado Livre. */}
+      <input ref={xmlRef} type="file" accept=".xml,.zip" multiple style={{ display: 'none' }}
+        onChange={e => { importarXmls(e.target.files); e.target.value = ''; }} />
+      <Button variant="outline" onClick={() => xmlRef.current?.click()} disabled={impNf.rodando}
+        title="Aceita .xml e .zip (o ZIP é aberto aqui no navegador)">
+        {impNf.rodando
+          ? `⏳ Importando ${impNf.feitos}/${impNf.total}...`
+          : '📄 Importar NF-e (XML ou ZIP)'}
       </Button>
       {arquiveiStatus?.connected ? (
         <Button variant="outline" onClick={syncArquiveiNFs} disabled={syncing}>

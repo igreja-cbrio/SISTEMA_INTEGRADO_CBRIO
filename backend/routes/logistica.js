@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { getMLConfig, mlFetch, ensureUserId, searchOrders } = require('../services/mercadoLivreService');
+const { lerNfe } = require('../utils/nfeXml');
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
 const { importar: importarComprasPlanilha } = require('../services/comprasImporter');
 const { sugerirSaidas } = require('../services/comprasMatch');
@@ -428,6 +429,93 @@ router.post('/notas/escanear', uploadNf.single('arquivo'), async (req, res) => {
   } catch (e) {
     console.error('[LOG] escanear nota:', e);
     res.status(500).json({ error: 'Erro ao escanear nota fiscal' });
+  }
+});
+
+// ── IMPORTAR NF-e por XML ────────────────────────────────────────────────────
+// Lê o XML REAL da nota (chave de acesso, CNPJ do emitente, valor, itens) — ao
+// contrário do pedido do Mercado Livre, que não é documento fiscal.
+//
+// ⚠️ O ZIP é descompactado NO NAVEGADOR (jszip já é dependência do front) e o
+// cliente manda os XMLs em lotes. Motivo: `backend/package.json` entra no bundle
+// da função serverless, com teto de 250 MB na Vercel — a lei do repo é não somar
+// dependência lá sem necessidade comprovada. E o corpo JSON é limitado a 1 MB,
+// daí o teto por requisição.
+const MAX_XML_POR_LOTE = 25;
+
+router.post('/notas/importar-xml', async (req, res) => {
+  try {
+    const arquivos = Array.isArray(req.body?.arquivos) ? req.body.arquivos : [];
+    if (!arquivos.length) return res.status(400).json({ error: 'Nenhum XML enviado.' });
+    if (arquivos.length > MAX_XML_POR_LOTE) {
+      return res.status(400).json({ error: `Máximo de ${MAX_XML_POR_LOTE} XMLs por envio.` });
+    }
+
+    // Mesmo padrão do SANTANDER_CNPJ_TITULAR, que já existe no repo.
+    const cnpjIgreja = process.env.CNPJ_IGREJA
+      || process.env.SANTANDER_CNPJ_TITULAR || '07023068000135';
+
+    const lidas = [];
+    const recusadas = [];
+    for (const arq of arquivos) {
+      const nome = String(arq?.nome || 'sem-nome.xml');
+      const r = lerNfe(arq?.xml, { cnpjDestinatario: cnpjIgreja });
+      // ⚠️ Recusa é CONTADA, não lançada: num lote de 1.500 vai haver XML de
+      // outro CNPJ, nota cancelada e arquivo corrompido, e o importador precisa
+      // seguir e DIZER o que ficou de fora — não morrer no primeiro.
+      if (!r.ok) { recusadas.push({ nome, erro: r.erro, detalhe: r.detalhe || null }); continue; }
+      lidas.push({ nome, nota: r.nota, xml: arq.xml });
+    }
+
+    // Idempotência pela chave de acesso (a coluna tem UNIQUE) — reenviar o mesmo
+    // arquivo não duplica. Confere no banco E dentro do próprio lote.
+    const chaves = [...new Set(lidas.map((l) => l.nota.chave_acesso))];
+    const jaExistem = new Set();
+    for (let i = 0; i < chaves.length; i += 200) {
+      const { data, error } = await supabase.from('log_notas_fiscais')
+        .select('chave_acesso').in('chave_acesso', chaves.slice(i, i + 200));
+      // ⚠️ Falha de LEITURA não pode virar "não existe" — reimportaria tudo e a
+      // UNIQUE derrubaria o lote inteiro.
+      if (error) throw new Error(`Não foi possível conferir o que já está importado: ${error.message}`);
+      for (const r of data || []) if (r.chave_acesso) jaExistem.add(r.chave_acesso);
+    }
+
+    let importadas = 0;
+    let repetidas = 0;
+    const noLote = new Set();
+    const falhas = [];
+    for (const l of lidas) {
+      const ch = l.nota.chave_acesso;
+      if (jaExistem.has(ch) || noLote.has(ch)) { repetidas += 1; continue; }
+      noLote.add(ch);
+      const { error } = await supabase.from('log_notas_fiscais').insert({
+        numero: l.nota.numero,
+        serie: l.nota.serie,
+        chave_acesso: ch,
+        valor: l.nota.valor,
+        data_emissao: l.nota.data_emissao,
+        emitente_nome: l.nota.emitente_fantasia || l.nota.emitente_nome,
+        emitente_cnpj: l.nota.emitente_cnpj,
+        descricao: l.nota.descricao,
+        itens: l.nota.itens?.length ? l.nota.itens : null,
+        xml_content: l.xml,
+        origem: l.nota.via_mercadolivre ? 'mercadolivre' : 'xml',
+        status: 'registrada',
+        created_by: req.user.userId,
+      });
+      if (error) {
+        // 23505 = alguém importou a mesma nota entre a leitura e agora.
+        if (/duplicate key|23505/i.test(error.message)) { repetidas += 1; continue; }
+        falhas.push({ nome: l.nome, erro: error.message });
+        continue;
+      }
+      importadas += 1; // grava o efeito DURANTE (lei de 04/08)
+    }
+
+    res.json({ importadas, repetidas, recusadas, falhas, lidas: arquivos.length });
+  } catch (e) {
+    console.error('[LOG] importar-xml:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao importar XML' });
   }
 });
 
