@@ -57,7 +57,26 @@ router.get('/cron/sync', requireCron, async (req, res) => {
       sync_type: 'automatic', services_synced: r.services, schedules_synced: r.schedules,
       qrcodes_generated: r.qrCodesGenerated, status: 'success',
     });
-    res.json({ ok: true, ...r });
+
+    // ── CARONA · rastreio dos pedidos do Mercado Livre ──────────────────────
+    // ⚠️ SEM SLOT NOVO no vercel.json: são 46 crons e o teto já é problema
+    // conhecido neste projeto (mesma decisão da retenção de mídia do inbox,
+    // 12/08). A rota /solicitacoes/cron/atualizar-ml existe desde sempre e
+    // NUNCA foi agendada — o tracker, o notificarSolicitante e os textos por
+    // status estavam prontos e ninguém puxava o gatilho: quem vinculava um
+    // pedido recebia o 1º aviso e depois silêncio até a entrega.
+    // ⚠️ Bloco protegido: falhar aqui NÃO pode derrubar o sync do voluntariado,
+    // que é o dono desta execução.
+    let ml = null;
+    try {
+      const mlTracker = require('../services/solicitacoesMlTracker');
+      ml = await mlTracker.processarUpdates({ batchSize: 30, throttleMs: 200 });
+    } catch (e) {
+      console.error('[vol/cron/sync] carona ml-tracker:', e.message);
+      ml = { ok: false, erro: e.message };
+    }
+
+    res.json({ ok: true, ...r, ml });
   } catch (e) {
     console.error('[vol/cron/sync]', e.message);
     res.status(500).json({ error: 'Erro no cron de sync do voluntariado' });
