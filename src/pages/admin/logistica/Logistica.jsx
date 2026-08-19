@@ -776,8 +776,18 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
         {scanning ? '⏳ Lendo a nota...' : '📷 Escanear nota fiscal'}
       </Button>
       <Button variant="outline" onClick={onNew}>+ Nova Nota Fiscal</Button>
-      <Button variant="outline" onClick={syncML} disabled={syncing}>
-        {syncing ? '⏳ Sincronizando...' : '🛒 Importar do Mercado Livre'}
+      {/* ⚠️ DESABILITADO ATÉ O IMPORTADOR DE NF-e EXISTIR (19/08/2026).
+          Este botão chamava `POST /ml/sync-notas`, uma rota que NUNCA foi escrita
+          no backend (conferido com `git log -S` no histórico inteiro): ele sempre
+          devolveu 404 "Endpoint de API não encontrado".
+          Desabilitar em vez de implementar às pressas é decisão: a API do ML
+          expõe a NF-e de verdade da COMPRA (XML + DANFE, por período ou por
+          order_id), então importar o PEDIDO como se fosse nota criaria linhas
+          que parecem documento fiscal e não são — e competiriam com as reais.
+          Botão volta quando o importador ler a nota de verdade. */}
+      <Button variant="outline" disabled
+        title="Em construção: vai importar a NF-e (XML e DANFE) das compras. O botão antigo apontava para uma rota que não existia.">
+        🛒 Importar do Mercado Livre (em breve)
       </Button>
       {arquiveiStatus?.connected ? (
         <Button variant="outline" onClick={syncArquiveiNFs} disabled={syncing}>
