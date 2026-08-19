@@ -1537,6 +1537,23 @@ function ComprasMLTab() {
                   <div style={{ fontSize: 14, color: C.text3, marginTop: 4, transition: 'transform 0.2s', transform: isExpanded ? 'rotate(180deg)' : '' }}>▼</div>
                 </div>
               </div>
+
+              {/* ⚠️ FICA FORA do bloco `isExpanded` (pedido do Matheus, 19/08):
+                  vincular é a ação mais frequente desta tela e exigir um clique
+                  para expandir antes escondia justamente o que se veio fazer.
+                  ⚠️ O `stopPropagation` é obrigatório: o card inteiro tem
+                  onClick de expandir, então sem ele escolher uma solicitação na
+                  lista também abriria/fecharia o pedido embaixo. */}
+              <div onClick={e => e.stopPropagation()}>
+                <VincularSolicitacao
+                  order={o}
+                  solicitacoes={solVinc}
+                  carregando={solLoading}
+                  erro={solErro}
+                  onRecarregar={carregarVinculaveis}
+                  onVinculado={carregarVinculaveis}
+                />
+              </div>
             </div>
 
             {/* Detalhes expandidos */}
@@ -1565,14 +1582,6 @@ function ComprasMLTab() {
                   </div>
                 </div>
 
-                <VincularSolicitacao
-                  order={o}
-                  solicitacoes={solVinc}
-                  carregando={solLoading}
-                  erro={solErro}
-                  onRecarregar={carregarVinculaveis}
-                  onVinculado={carregarVinculaveis}
-                />
 
                 {/* Info de envio/rastreio */}
                 {shipDetail && (
