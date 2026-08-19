@@ -486,6 +486,8 @@ router.post('/notas/importar-xml', async (req, res) => {
 
     let importadas = 0;
     let repetidas = 0;
+    let vinculadas = 0;   // repetidas que GANHARAM o número do pedido agora
+    let semPedidoNoNome = 0; // repetidas cujo nome de arquivo não traz o pedido
     const noLote = new Set();
     const falhas = [];
     for (const l of lidas) {
@@ -495,11 +497,22 @@ router.post('/notas/importar-xml', async (req, res) => {
         // ⚠️ BACKFILL: as notas importadas ANTES desta versão entraram sem
         // ml_order_id (o importador não lia o nome). Reimportar o mesmo ZIP
         // preenche o vínculo — só onde está nulo, nunca sobrescreve.
-        if (l.mlOrderId) {
-          await supabase.from('log_notas_fiscais')
-            .update({ ml_order_id: l.mlOrderId })
-            .eq('chave_acesso', ch).is('ml_order_id', null);
-        }
+        //
+        // ⚠️⚠️ O RESULTADO É CONTADO, e isso não é enfeite: sem contar, um
+        // reenvio que não vinculou NADA (nome fora do padrão, ou o pedido já
+        // preenchido) é indistinguível de um que vinculou tudo — os dois
+        // aparecem como "N nota(s) já estavam". Foi exatamente esse silêncio
+        // que deixou 110 notas sem pedido e 45 DANFEs órfãos sem ninguém saber
+        // por quê.
+        if (!l.mlOrderId) { semPedidoNoNome += 1; continue; }
+        const { data: vinc, error: eVinc } = await supabase.from('log_notas_fiscais')
+          .update({ ml_order_id: l.mlOrderId })
+          .eq('chave_acesso', ch).is('ml_order_id', null)
+          .select('id');
+        // ⚠️ Falha aqui não derruba a importação (a nota já existe e está boa),
+        // mas VAI para `falhas` — vínculo que não gravou precisa aparecer.
+        if (eVinc) falhas.push({ nome: l.nome, erro: `vínculo com o pedido: ${eVinc.message}` });
+        else vinculadas += (vinc?.length || 0);
         continue;
       }
       noLote.add(ch);
@@ -528,7 +541,7 @@ router.post('/notas/importar-xml', async (req, res) => {
       importadas += 1; // grava o efeito DURANTE (lei de 04/08)
     }
 
-    res.json({ importadas, repetidas, recusadas, falhas, lidas: arquivos.length });
+    res.json({ importadas, repetidas, vinculadas, semPedidoNoNome, recusadas, falhas, lidas: arquivos.length });
   } catch (e) {
     console.error('[LOG] importar-xml:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao importar XML' });

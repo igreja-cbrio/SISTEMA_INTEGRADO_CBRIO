@@ -770,7 +770,7 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
     // entrou está gravado e a tela diz quanto foi (lei de 04/08 — registrar o
     // efeito DURANTE, não no fim).
     const LOTE = 25;
-    let importadas = 0, repetidas = 0;
+    let importadas = 0, repetidas = 0, vinculadas = 0, semPedidoNoNome = 0;
     const recusadas = [], falhas = [];
     setImpNf({ rodando: true, feitos: 0, total: arquivos.length + pdfs.length });
     try {
@@ -778,6 +778,8 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
         const r = await logistica.notas.importarXml(arquivos.slice(i, i + LOTE));
         importadas += r.importadas || 0;
         repetidas += r.repetidas || 0;
+        vinculadas += r.vinculadas || 0;
+        semPedidoNoNome += r.semPedidoNoNome || 0;
         recusadas.push(...(r.recusadas || []));
         falhas.push(...(r.falhas || []));
         setImpNf({ rodando: true, feitos: Math.min(i + LOTE, arquivos.length), total: arquivos.length });
@@ -811,22 +813,46 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
 
     // Declara os quatro destinos — "12 importadas" não distingue sucesso de
     // importação parcial.
+    // ⚠️ "45 PDF sem a nota correspondente" não dizia O QUE FAZER, e os dois
+    // motivos pedem ações OPOSTAS: `sem_xml_importado` = falta importar o ZIP
+    // de XML (ou ele entrou antes desta versão, sem o número do pedido);
+    // `nome_sem_pedido` = o arquivo não se chama `invoice-<pedido>.pdf` e
+    // nenhuma reimportação resolve. Somar os dois num número só foi o que me
+    // deixou sem saber qual dos dois estava acontecendo.
+    const semXml = semNota.filter(s => s.motivo === 'sem_xml_importado').length;
+    const semPedido = semNota.filter(s => s.motivo === 'nome_sem_pedido').length;
+
     const partes = [];
     if (arquivos.length) partes.push(`${importadas} nota(s) importada(s)`);
+    if (vinculadas) partes.push(`${vinculadas} nota(s) ganharam o nº do pedido`);
     if (anexados) partes.push(`${anexados} DANFE anexado(s)`);
     if (jaTinham) partes.push(`${jaTinham} DANFE já estavam`);
-    if (semNota.length) partes.push(`${semNota.length} PDF sem a nota correspondente`);
+    if (semXml) partes.push(`${semXml} PDF sem o XML da nota`);
+    if (semPedido) partes.push(`${semPedido} PDF com nome fora do padrão`);
     if (repetidas) partes.push(`${repetidas} nota(s) já estavam`);
     if (recusadas.length) partes.push(`${recusadas.length} recusada(s)`);
     if (falhas.length) partes.push(`${falhas.length} falhou/falharam`);
     setSuccessMsg(partes.join(' · '));
-    if (recusadas.length || falhas.length) {
+
+    // Diagnóstico acionável em vez de contagem seca.
+    const avisos = [];
+    if (recusadas.length) {
       const porMotivo = {};
       for (const r of recusadas) porMotivo[r.erro] = (porMotivo[r.erro] || 0) + 1;
-      const resumo = Object.entries(porMotivo).map(([k, v]) => `${v}× ${MOTIVO_NF[k] || k}`).join(' · ');
-      setLocalError([resumo, falhas.length ? `${falhas.length} erro(s) ao gravar` : '']
-        .filter(Boolean).join(' · '));
+      avisos.push(Object.entries(porMotivo).map(([k, v]) => `${v}× ${MOTIVO_NF[k] || k}`).join(' · '));
     }
+    if (semXml) {
+      avisos.push(`${semXml} DANFE não achou a nota: importe o ZIP de XML do mesmo período — é ele que traz o número do pedido que casa os dois.`);
+    }
+    if (semPedido) {
+      const exemplo = semNota.find(s => s.motivo === 'nome_sem_pedido')?.nome;
+      avisos.push(`${semPedido} PDF com nome fora do padrão \`invoice-<pedido>.pdf\`${exemplo ? ` (ex.: ${exemplo})` : ''} — renomear resolve.`);
+    }
+    if (semPedidoNoNome && !vinculadas) {
+      avisos.push(`${semPedidoNoNome} XML repetido não trouxe o nº do pedido no nome do arquivo, então o vínculo não foi preenchido.`);
+    }
+    if (falhas.length) avisos.push(`${falhas.length} erro(s) ao gravar`);
+    if (avisos.length) setLocalError(avisos.join(' · '));
     onReload();
   }
 
@@ -860,8 +886,14 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
   async function abrirEspelho(n) {
     setEspelhoId(n.id); setLocalError('');
     try {
-      const { nfe: buscarNfe } = await import('../../../api').then(m => ({ nfe: m.logistica.notas.nfe }));
-      const r = await buscarNfe(n.id);
+      // ⚠️ Usa o `logistica` do import ESTÁTICO do topo. A versão anterior fazia
+      // `await import('../../../api')` para pegar o mesmo objeto — e no bundle de
+      // produção aquilo resolvia para um namespace SEM os exports nomeados, então
+      // `m.logistica` vinha `undefined` e a tela morria com "Cannot read
+      // properties of undefined (reading 'notas')". Em dev funcionava, que é o
+      // que fez isso passar. Régua: não re-importar por `import()` o que já está
+      // no escopo — o lazy-load só se justifica para módulo que ainda não entrou.
+      const r = await logistica.notas.nfe(n.id);
       const { imprimirNfe } = await import('../../../lib/imprimirNfe');
       // ⚠️ Bloqueador de pop-up derruba isso em silêncio — sem avisar, a pessoa
       // clica e nada acontece, e conclui que o botão quebrou.
