@@ -9651,13 +9651,43 @@ declarado que frequenta. A régua nova mudou o RÓTULO da pessoa, não a quem o
 ministério quer alcançar; estreitar tiraria as ~154 pessoas de 26 a 30 da lista
 **sem ninguém ter decidido isso**. ⏳ Encolher é decisão do ministério.
 
+### ⚠️⚠️ Data ABSURDA classificava 3 adultas como CRIANÇA (migration `20260819200000`)
+
+Achado ao propagar o nascimento da Renata: os dois espelhos discordavam
+**exatamente no caso lixo**. O JS (`idadeEmAnos`) já devolvia `null` para idade
+negativa ou acima de 130; `fn_faixa_etaria` **não tinha guarda nenhuma**, e
+`age()` de data FUTURA devolve **0 anos** — que é `< 13` ⇒ **`'crianca'`**.
+
+Medido em 19/08: **3 mulheres adultas apareciam como criança** na Membresia e
+caíam no filtro "Crianças" — HELIANE CAVALCANTE (`2026-08-29`), MONICA CIANELLA
+G.C (`2026-11-08`) e ROSANE RODRIGUES (`2026-11-21`), todas do
+`grupos_import_2026` de 19/06 (o import carimba o ano corrente em aniversário
+que veio só com dia e mês). Uma quarta, POLYANA CALABRIA (`1886-03-15`, 140
+anos), contava como `'adulto'` — inofensivo no rótulo, igualmente inventado.
+
+⚠️ **A migration NÃO conserta o dado** — as 4 datas seguem erradas. O que muda é
+que a régua para de AFIRMAR faixa em cima delas: `NULL` é lido por toda tela
+como "Sem data de nascimento", que é a verdade. **Corrigir cada data é decisão
+de cadastro** (o ano certo não é derivável, e chutar "1886 → 1986" é adivinhar
+sobre uma pessoa real).
+
+⚠️ Régua que fica: **espelho de régua tem que concordar TAMBÉM no caso
+impossível.** Os dois lados acertavam toda idade válida e discordavam só no
+lixo — que é onde ninguém olha, e por isso ficou anos invisível.
+`src/test/faixaEtaria.test.ts` trava a simetria (mutante rodado: tirar a guarda
+do JS → 3 vermelhos), e a própria migration **aborta** se a guarda não pegar.
+
 ### Renata Rabello · nascimento corrigido
 
 `batismo_inscricoes` id `6786bef3` tinha `1085-04-20` (941 anos · o "achado de
 dado" da seção acima). Corrigido para **`1985-04-20`** — dia e mês preservados,
 só o século — com o motivo registrado em `observacoes`. Hoje: 41 anos, adulto.
-⚠️ **O `mem_membros` dela continua com nascimento NULO**: a correção foi na
-inscrição, não propagada — propagar é decisão de cadastro.
+**Propagado para `mem_membros` em 19/08** (autorizado pelo Matheus): o cadastro
+`35b2d3b6` estava com nascimento NULO e recebeu `1985-04-20` — hoje 41 anos,
+adulto. UPDATE **só-onde-vazio** e guardado por `cpf` igual dos dois lados
+(nunca sobrescrever nascimento que alguém preencheu, nunca escrever no cadastro
+de outra pessoa), com a origem registrada em `mem_identidade_observacoes`
+(`origem='correcao_manual'`).
 
 - Testes no gate: `src/test/faixaEtaria.test.ts` (15) e
   `src/test/categoriaBatismo.test.ts` (12). **5 mutantes RODADOS e mortos**:
