@@ -1743,6 +1743,9 @@ export const logistica = {
       fd.append('arquivo', file);
       return requestFile('/logistica/notas/escanear', fd, { timeoutMs: 120_000 });
     },
+    // Importa NF-e a partir do XML. ⚠️ Lotes de no máximo 25 — o corpo JSON do
+    // Express é limitado a 1 MB e uma NF-e com muitos itens passa de 50 KB.
+    importarXml: (arquivos) => post('/logistica/notas/importar-xml', { arquivos }),
     enviarFinanceiro: (id) => post(`/logistica/notas/${id}/enviar-financeiro`, {}),
     categorias: () => get('/logistica/notas/aux/categorias'),
   },
@@ -2473,6 +2476,7 @@ export const solicitacoes = {
     criarTransicao: (payload) => post('/solicitacoes/fluxos/transicoes', payload),
     removerTransicao: (id) => del(`/solicitacoes/fluxos/transicoes/${id}`),
   },
+  // (importar XML de NF-e vive no namespace `logistica.notas`)
   // Vinculo com pedido Mercado Livre (compras)
   // Solicitações que ESTE usuário pode vincular — alimenta o seletor da aba
   // Compras ML. Mesma régua do POST abaixo (backend/utils/vinculoMlSolicitacao).
