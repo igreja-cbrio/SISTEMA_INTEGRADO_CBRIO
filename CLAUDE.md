@@ -9632,10 +9632,19 @@ FIN-02 · o mecanismo funciona, o financeiro não lançou) e o **NPS de culto**
   sem decidir a régua faria o indicador "piorar" por mudança de critério, não por
   mudança de vida. Entrou o campo **`comparaLive`**: mostra "o sistema calcula
   hoje: X" ao lado, sem substituir o número da planilha. **Decisão do Pr. Juninho.**
-- ⚠️ **Resíduo declarado:** "DS online · crescimento YoY" tem alvo de +20% ao ano
-  e exibe a CONTAGEM de decisões dos últimos 90 dias (66) — o painel compara 66
-  com 20 e pinta de verde. Não consertei: ou o alvo vira "≥ 20 decisões", ou o
-  número passa a ser o crescimento de verdade, e isso é de quem definiu o OKR.
+- ⚠️⚠️ **Correção de um alarme MEU (19/08).** Eu reportei que "DS online ·
+  crescimento YoY" exibia a CONTAGEM de decisões (66) contra a meta de +20% e
+  ficava verde. **Falso.** O cálculo YoY certo — views do Dia Seguinte, YTD
+  contra o mesmo período do ano anterior — já existia em `painel.js` e roda
+  DEPOIS, sobrescrevendo: o painel mostra **−21,2%** (156.764 views em 2026 ×
+  198.839 em 2025), vermelho. Meu erro foi ler o `fn_monitoramento_okr_raw` (que
+  só devolve `dsOnline.ds_90d = 66`) e concluir sobre a resposta do ENDPOINT, que
+  é outra coisa. **Régua: `metricas[chave]` do monitoramento é montado em duas
+  etapas — o raw do SQL e os blocos JS que vêm depois; ler só o raw é ler metade.**
+  O que virou conserto de verdade: o `addM` da contagem foi REMOVIDO (publicar um
+  valor errado e corrigi-lo 117 linhas abaixo é a armadilha que me pegou) e o card
+  ganhou a série mensal de VIEWS — ele estava sem gráfico, porque o segundo `addM`
+  recria o objeto sem a série.
 
 ## ⚠️⚠️ KPI · ZERO É DADO (2026-08-18 · migrations `20260818180000`, `190000`, `200000`)
 

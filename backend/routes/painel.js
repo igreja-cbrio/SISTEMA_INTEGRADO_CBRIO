@@ -1982,10 +1982,16 @@ router.get('/monitoramento-okr', async (req, res) => {
       addM('tempo_batismo', num(tempoBat.media_dias), ' dias',
         `média de ${tempoBat.n} batizados com data de conversão registrada`);
     }
-    if (dsOnline) {
-      addM('ds_online', num(dsOnline.ds_90d), '',
-        'decisões online nos últimos 90 dias', serieFmt(dsSerie));
-    }
+    // ⚠️ `ds_online` NÃO é publicado aqui. O indicador da planilha é
+    // "DS online · crescimento YoY" — views do Dia Seguinte, variação contra o
+    // ano anterior — e quem o calcula é o bloco 1) mais abaixo. Até 19/08 esta
+    // linha publicava a CONTAGEM de decisões online (66) e era sobrescrita 117
+    // linhas depois: valor certo no fim, e um valor errado no meio do caminho
+    // que fazia qualquer leitura do código (a minha, inclusive) concluir que o
+    // painel comparava 66 com a meta de +20%. Publicar e corrigir depois é
+    // armadilha de leitura — o número nasce uma vez só.
+    // (`dsOnline.ds_90d` e `dsSerie` continuam vindo do raw e são as DECISÕES
+    // online; se um dia virarem indicador próprio, entram com chave própria.)
     if (assentos && assentos.n > 0) {
       addM('assentos', num(assentos.pct), '%',
         `${assentos.media_pres} de 1050 lugares · média do Templo (90 dias)`, serieFmt(assentosSerie));
@@ -2100,8 +2106,25 @@ router.get('/monitoramento-okr', async (req, res) => {
         if (d >= iniAtual && d <= hojeStr) atual += v;
         else if (d >= iniAnt && d <= fimAnt) ant += v;
       }
+      // Série do card = views por mês (6 meses FECHADOS). Antes o "Por mês"
+      // deste item não existia: o addM do YoY recria o objeto sem série, então a
+      // série de decisões que vinha do raw sumia. Gráfico de decisões embaixo de
+      // um número de audiência seria pior ainda.
+      const _ini6 = new Date(Date.UTC(_hoje.getFullYear(), _hoje.getMonth() - 6, 1)).toISOString().slice(0, 10);
+      const _fim6 = new Date(Date.UTC(_hoje.getFullYear(), _hoje.getMonth(), 1)).toISOString().slice(0, 10);
+      const porMes = new Map();
+      for (const c of cs) {
+        const d = _d10(c.data);
+        if (d < _ini6 || d >= _fim6) continue;
+        const mes = d.slice(0, 7);
+        porMes.set(mes, (porMes.get(mes) || 0) + (Number(c.online_ds) || 0));
+      }
+      const serieViews = [...porMes.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([mes, valor]) => ({ mes, valor }));
+
       if (ant > 0) addM('ds_online', Math.round((atual - ant) / ant * 1000) / 10, '%',
-        `${atual.toLocaleString('pt-BR')} views em ${anoAtual} vs ${ant.toLocaleString('pt-BR')} em ${anoAtual - 1} (mesmo período do ano)`);
+        `${atual.toLocaleString('pt-BR')} views em ${anoAtual} vs ${ant.toLocaleString('pt-BR')} em ${anoAtual - 1} (mesmo período do ano)`,
+        serieViews);
     } catch (e) { console.error('okr · ds_online yoy:', e.message); }
 
     // 2) % assentos ocupados · SÓ domingos (exclui AMI/Quarta/Bridge) ÷ 1.050
