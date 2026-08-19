@@ -38,6 +38,10 @@ describe('idadeEmAnos', () => {
     expect(idadeEmAnos('1996-07-29')).toBe(29);        // faz amanhã
   });
 
+  // ⚠️ SIMETRIA COM O BANCO (migration 20260819200000): `fn_faixa_etaria`
+  // não tinha essa guarda e `age()` de data FUTURA dá 0 anos ⇒ classificava
+  // 3 mulheres adultas do import de grupos como CRIANÇA na Membresia. Os dois
+  // espelhos só concordam se os DOIS recusarem data impossível.
   it('devolve null pra ausente, inválido ou absurdo', () => {
     expect(idadeEmAnos(null)).toBeNull();
     expect(idadeEmAnos(undefined)).toBeNull();
@@ -86,6 +90,18 @@ describe('faixaEtaria · limiares exatos da fn_faixa_etaria', () => {
   it('slug nunca leva acento (é identificador); rótulo leva', () => {
     expect(faixaEtaria(nascidoHaAnos(5))).toBe('crianca');   // sem cedilha
     expect(faixaLabel(nascidoHaAnos(5), true)).toBe('Criança'); // com cedilha
+  });
+});
+
+describe('data impossível não vira faixa', () => {
+  // Caso real: `grupos_import_2026` carimbou o ano corrente em aniversário que
+  // veio só com dia e mês, e uma linha ficou com 1886 (século errado, o mesmo
+  // padrão do 1085 da inscrição de batismo).
+  it('nascimento no futuro e idade acima de 130 devolvem null', () => {
+    expect(faixaEtaria(nascidoHaAnos(-1))).toBeNull();
+    expect(faixaEtaria('2026-11-21', new Date(2026, 7, 19))).toBeNull();
+    expect(faixaEtaria('1886-03-15')).toBeNull();
+    expect(faixaLabel('2026-11-21')).toBe('Sem data de nascimento');
   });
 });
 
