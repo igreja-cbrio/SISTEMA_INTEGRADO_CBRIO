@@ -781,7 +781,7 @@ function Slide3Comparativos({ completo }) {
   return (
     <>
       <YtdCard ytd={completo.ytd} />
-      <DecendioCard dados={completo.decendio} mes={completo.mes_atual} />
+      <DecendioCard dados={completo.decendio} mes={completo.mes_atual} comparativo={completo.decendio_comparativo} />
       {completo.yoy_semanal?.length > 0 && (
         <YoYSemanalChart dados={completo.yoy_semanal} anoAtual={completo.ano_atual} anoAnterior={completo.ano_anterior} />
       )}
@@ -1186,8 +1186,112 @@ function SazonalidadeSemanalChart() {
   );
 }
 
-function DecendioCard({ dados, mes }) {
+/** O que explicar quando não há percentual — "—" sozinho vira suspeita de bug. */
+const MOTIVO_TXT = {
+  periodo_em_aberto: 'período ainda em aberto',
+  base_zero: 'mês anterior sem receita neste decêndio',
+  sem_mes_anterior: 'não há mês anterior na série',
+};
+
+/** A variação de um decêndio contra o mesmo decêndio do mês anterior. */
+function VariacaoDecendio({ cmp }) {
+  if (!cmp) return null;
+  if (cmp.percentual === null || cmp.percentual === undefined) {
+    return (
+      <span className="text-[10px] text-muted-foreground" title={MOTIVO_TXT[cmp.motivo_sem_percentual] || ''}>
+        {cmp.situacao === 'em_andamento' ? 'em andamento' : '—'}
+        {cmp.base_mes ? ` · ${monthShort(cmp.base_mes)}: ${fmtKbrl(cmp.base_receita)}` : ''}
+      </span>
+    );
+  }
+  const sobe = cmp.percentual >= 0;
+  return (
+    <span
+      className="text-[10px] tabular-nums font-medium"
+      style={{ color: sobe ? COL.green : COL.red }}
+      title={`${monthShort(cmp.base_mes)}: ${fmtMoney(cmp.base_receita)}`}
+    >
+      {fmtPct(cmp.percentual)} vs {monthShort(cmp.base_mes)}
+    </span>
+  );
+}
+
+/**
+ * A grade decêndio × mês.
+ *
+ * Pedido do Matheus: comparar o 1º decêndio de agosto com o 1º de julho, e
+ * assim por diante. A leitura natural é por LINHA — cada linha é um decêndio
+ * atravessando os meses —, então os meses viram colunas.
+ *
+ * ⚠️ Últimos 6 meses. A série do backend tem 12, mas 12 colunas num card
+ * lateral não se leem; e cortar em silêncio seria pior, por isso o rodapé diz
+ * o recorte.
+ */
+function GradeDecendios({ comparativo, mesAtual }) {
+  const meses = (comparativo || []).slice(-6);
+  if (meses.length < 2) return null;
+  const LABEL = { 1: '1-10', 2: '11-20', 3: '21-fim' };
+
+  return (
+    <div className="mt-5 pt-4 border-t border-border">
+      <p className="text-xs font-medium mb-2">Mesmo decêndio, mês a mês</p>
+      {/* ⚠️ overflow-x no container: em tela estreita a tabela rola dentro de
+          si mesma, sem empurrar a página inteira pro lado. */}
+      <div className="overflow-x-auto -mx-1 px-1">
+        <table className="w-full text-[11px] border-collapse">
+          <thead>
+            <tr className="text-muted-foreground">
+              <th className="text-left font-medium pb-1.5 pr-2 whitespace-nowrap">Dias</th>
+              {meses.map(m => (
+                <th
+                  key={m.mes}
+                  className={`text-right font-medium pb-1.5 px-1.5 whitespace-nowrap ${m.mes === mesAtual ? 'text-foreground' : ''}`}
+                >
+                  {monthShort(m.mes)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {[1, 2, 3].map(d => (
+              <tr key={d} className="border-t border-border/50">
+                <td className="py-1.5 pr-2 font-medium whitespace-nowrap">{LABEL[d]}</td>
+                {meses.map(m => {
+                  const c = m.decendios?.find(x => x && x.decendio === d);
+                  const valor = Number(c?.receita || 0);
+                  const pct = c?.percentual;
+                  return (
+                    <td key={m.mes} className="py-1.5 px-1.5 text-right tabular-nums whitespace-nowrap">
+                      <div>{fmtKbrl(valor)}</div>
+                      {pct === null || pct === undefined ? (
+                        <div className="text-[9px] text-muted-foreground">
+                          {c?.situacao === 'em_andamento' ? 'parcial' : c?.situacao === 'futuro' ? '—' : ''}
+                        </div>
+                      ) : (
+                        <div className="text-[9px]" style={{ color: pct >= 0 ? COL.green : COL.red }}>
+                          {fmtPct(pct)}
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[10px] text-muted-foreground mt-1.5">
+        Cada percentual compara com o mesmo decêndio do mês anterior. Últimos {meses.length} meses ·
+        decêndio em curso aparece como <span className="font-medium">parcial</span>, sem percentual.
+      </p>
+    </div>
+  );
+}
+
+function DecendioCard({ dados, mes, comparativo }) {
   const total = dados.reduce((s, d) => s + Number(d.receita), 0);
+  const doMes = (comparativo || []).find(m => m.mes === mes);
+  const cmpDe = (d) => doMes?.decendios?.find(x => x && x.decendio === d) || null;
   return (
     <Card>
       <CardContent className="pt-6">
@@ -1219,13 +1323,17 @@ function DecendioCard({ dados, mes }) {
                     transition={{ delay: 0.9 + i * 0.1, duration: 0.8 }}
                   />
                 </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5 tabular-nums">
-                  {pct.toFixed(1)}% do mês
+                <div className="flex items-center justify-between gap-2 mt-0.5">
+                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                    {pct.toFixed(1)}% do mês
+                  </span>
+                  <VariacaoDecendio cmp={cmpDe(d)} />
                 </div>
               </motion.div>
             );
           })}
         </div>
+        <GradeDecendios comparativo={comparativo} mesAtual={mes} />
         <div className="mt-4 pt-3 border-t border-border flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Total do mês</span>
           <span className="font-bold tabular-nums">{fmtMoney(total)}</span>

@@ -21,6 +21,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { montarGrade } = require('../utils/decendioComparativo');
 const { parseOfx } = require('../services/ofxParser');
 const { parsePixExtrato } = require('../services/pixExtratoParser');
 const { vincularIdentidadeOfx } = require('../services/ofxIdentidade');
@@ -2621,8 +2622,10 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
         .gte('mes', inicio12m.slice(0, 7)).order('mes'),
       supabase.from('vw_fin_arrecadacao_semanal').select('*')
         .gte('semana_inicio', inicio52s).order('semana_inicio'),
+      // ⚠️ Era `.eq('mes', mesAtual)` — só o mês corrente. Agora vem a série,
+      // porque comparar decêndio com decêndio dos outros meses exige tê-los.
       supabase.from('vw_fin_decendio').select('*')
-        .eq('mes', mesAtual).order('decendio'),
+        .gte('mes', inicio12m.slice(0, 7)).order('mes').order('decendio'),
       supabase.from('vw_fin_ano_acumulado').select('*')
         .in('ano', [anoAtual, anoAnterior]),
       supabase.from('vw_fin_yoy_semanal').select('*')
@@ -2665,6 +2668,15 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
       return { ...m, delta_freq_pct: dFreq, delta_receita_pct: dRec, elasticidade: elast };
     });
 
+    // ⚠️ O "hoje" é BRT: em UTC o dia vira às 21h, e no dia 10 às 22h o decêndio
+    // já seria contado como fechado um dia antes do que é.
+    const hojeBRT = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+    const decendioSerie = (decendio.data || []).map(r => ({
+      ...r,
+      receita: Number(r.receita || 0) - (semExtra ? Number(r.receita_extraordinaria || 0) : 0),
+      despesa: Number(r.despesa),
+    }));
+
     res.json({
       mes_atual: mesAtual,
       ano_atual: anoAtual,
@@ -2672,11 +2684,12 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
       sem_extra: semExtra,
       mensal: (mensal.data || []).map(ajSerie),
       semanal: (semanal.data || []).map(ajSerie),
-      decendio: (decendio.data || []).map(r => ({
-        ...r,
-        receita: Number(r.receita || 0) - (semExtra ? Number(r.receita_extraordinaria || 0) : 0),
-        despesa: Number(r.despesa),
-      })),
+      // O card do mês continua recebendo o mesmo formato de antes.
+      decendio: decendioSerie.filter(r => r.mes === mesAtual),
+      // ⚠️ A grade comparativa sai do MESMO array já ajustado pelo "sem
+      // extraordinárias": calcular de novo a partir do cru faria o comparativo
+      // discordar do card logo acima dele, com o toggle ligado.
+      decendio_comparativo: montarGrade(decendioSerie, hojeBRT),
       ytd: {
         ano_atual: {
           ano: anoAtual,
