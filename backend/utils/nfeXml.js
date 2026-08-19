@@ -136,6 +136,18 @@ function lerNfe(xml, { cnpjDestinatario } = {}) {
   const intermed = dentroDe(infNFe, 'infIntermed');
   const idIntermediador = intermed ? (txt(intermed, 'idCadIntTran') || '').toLowerCase() : null;
 
+  // Endereço: os dois lados usam as MESMAS folhas (xLgr, nro, xMun…) dentro de
+  // blocos diferentes (<enderEmit> × <enderDest>) — mais um motivo pra escopar.
+  const endereco = (bloco, tag) => {
+    const e = dentroDe(bloco || '', tag);
+    if (!e) return null;
+    return {
+      logradouro: txt(e, 'xLgr'), numero: txt(e, 'nro'), complemento: txt(e, 'xCpl'),
+      bairro: txt(e, 'xBairro'), municipio: txt(e, 'xMun'), uf: txt(e, 'UF'),
+      cep: txt(e, 'CEP'), fone: txt(e, 'fone'),
+    };
+  };
+
   return {
     ok: true,
     nota: {
@@ -154,6 +166,26 @@ function lerNfe(xml, { cnpjDestinatario } = {}) {
       intermediador: idIntermediador || null,
       via_mercadolivre: idIntermediador === 'mercadolivre',
       protocolo: infProt ? txt(infProt, 'nProt') : null,
+
+      // ── Campos para o espelho impresso (aditivos) ───────────────────────
+      natureza_operacao: txt(ide, 'natOp'),
+      emitente_ie: txt(emit, 'IE'),
+      emitente_endereco: endereco(emit, 'enderEmit'),
+      destinatario_nome: txt(dest, 'xNome'),
+      destinatario_endereco: endereco(dest, 'enderDest'),
+      totais: icmsTot ? {
+        produtos: num(icmsTot, 'vProd'),
+        frete: num(icmsTot, 'vFrete'),
+        seguro: num(icmsTot, 'vSeg'),
+        desconto: num(icmsTot, 'vDesc'),
+        outros: num(icmsTot, 'vOutro'),
+        icms: num(icmsTot, 'vICMS'),
+        ipi: num(icmsTot, 'vIPI'),
+        tributos_aprox: num(icmsTot, 'vTotTrib'),
+        nota: num(icmsTot, 'vNF'),
+      } : null,
+      informacoes_complementares: txt(dentroDe(infNFe, 'infAdic') || '', 'infCpl'),
+      autorizada_em: infProt ? txt(infProt, 'dhRecbto') : null,
     },
   };
 }

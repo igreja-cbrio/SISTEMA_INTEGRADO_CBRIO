@@ -1746,6 +1746,11 @@ export const logistica = {
     // Importa NF-e a partir do XML. ⚠️ Lotes de no máximo 25 — o corpo JSON do
     // Express é limitado a 1 MB e uma NF-e com muitos itens passa de 50 KB.
     importarXml: (arquivos) => post('/logistica/notas/importar-xml', { arquivos }),
+    // NF-e interpretada (para o espelho impresso). Só notas com XML guardado.
+    nfe: (id) => get(`/logistica/notas/${id}/nfe`),
+    // DANFE oficial (PDF do ML) · lotes menores: base64 infla ~33%
+    importarDanfe: (arquivos) => post('/logistica/notas/importar-danfe', { arquivos }),
+    danfeUrl: (id) => get(`/logistica/notas/${id}/danfe`),
     enviarFinanceiro: (id) => post(`/logistica/notas/${id}/enviar-financeiro`, {}),
     categorias: () => get('/logistica/notas/aux/categorias'),
   },
