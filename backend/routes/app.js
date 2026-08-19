@@ -7,6 +7,7 @@ const { semCache } = require('../middleware/semCache');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
+const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo } = require('../utils/supervisorArea');
 const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior } = require('../utils/agendaGrupo');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
@@ -1847,6 +1848,34 @@ async function supervisorAreasApp(req) {
   return { membro, areas: [...new Set((data || []).map(r => r.area).filter(Boolean))] };
 }
 
+/**
+ * A escala existente está numa área que esta pessoa supervisiona?
+ *
+ * ⚠️ Vale para MOVER e REMOVER, não só para adicionar. Uma trava só no POST
+ * deixa a porta aberta pelos outros verbos: bastaria o id da escala pra tirar
+ * alguém da área de outro supervisor.
+ */
+async function escalaSobSupervisao(scheduleId, areas) {
+  if (supervisionaTudo(areas)) return { ok: true };
+  const { data: sc } = await supabase.from('vol_schedules')
+    .select('id, team_id, team_name').eq('id', scheduleId).maybeSingle();
+  if (!sc) return { ok: false, motivo: 'nao_encontrada' };
+  let equipe = null;
+  if (sc.team_id) {
+    const { data } = await supabase.from('vol_teams').select('id, name, area').eq('id', sc.team_id).maybeSingle();
+    equipe = data;
+  } else if (sc.team_name) {
+    const { data } = await supabase.from('vol_teams').select('id, name, area').eq('name', sc.team_name).maybeSingle();
+    equipe = data;
+  }
+  // ⚠️ Escala sem equipe resolvível NÃO é liberada: seria a brecha por onde
+  // qualquer linha antiga do Planning Center viraria terreno de todo mundo.
+  if (!equipe) return { ok: false, motivo: 'sem_equipe' };
+  return equipeSupervisionada(equipe, areas)
+    ? { ok: true }
+    : { ok: false, motivo: 'outra_area', equipe: equipe.name };
+}
+
 // GET /app/voluntariado/escala/servicos — próximos cultos (para montar escala)
 router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, res) => {
   try {
@@ -1885,7 +1914,7 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
     const [{ data, error }, { data: composicao, error: composicaoErr }] = await Promise.all([
       supabase
       .from('vol_schedules')
-      .select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status, recusa_motivo')
+      .select('id, volunteer_id, volunteer_name, team_id, team_name, position_name, confirmation_status, recusa_motivo')
       .eq('service_id', req.params.serviceId)
       .order('team_name', { ascending: true })
       .order('volunteer_name', { ascending: true }),
@@ -1898,19 +1927,37 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
     ]);
     if (error) throw error;
     if (composicaoErr) throw composicaoErr;
-    const itens = (composicao || []).map(item => {
+    const todosItens = (composicao || []).map(item => {
       const team = Array.isArray(item.team) ? item.team[0] : item.team;
       const position = Array.isArray(item.position) ? item.position[0] : item.position;
       return {
         team_id: item.team_id,
         team_name: team?.name || 'Sem equipe',
-        area: team?.area || 'Sem área',
+        area: team?.area || null,
         position_id: item.position_id || null,
         position_name: position?.name || null,
         quantidade: item.quantidade || 1,
       };
     });
-    res.json({ escalas: data || [], composicao: itens });
+    // ⚠️ O supervisor vê SÓ as áreas dele. O card no app do membro já dizia
+    // "monte e veja as escalas da sua área" — a promessa existia, o filtro não.
+    const itens = filtrarPorSupervisao(todosItens, areas);
+    // ⚠️ A escala também é recortada: mostrar quem está escalado em áreas que
+    // ele não supervisiona transformaria a tela num diretório de gente, e o
+    // botão de remover apagaria escala alheia.
+    const equipesVisiveis = new Set(itens.map(i => i.team_id).filter(Boolean));
+    const nomesVisiveis = new Set(itens.map(i => i.team_name));
+    const escalasVisiveis = supervisionaTudo(areas)
+      ? (data || [])
+      : (data || []).filter(e => equipesVisiveis.has(e.team_id) || nomesVisiveis.has(e.team_name));
+    res.json({
+      escalas: escalasVisiveis,
+      composicao: itens.map(i => ({ ...i, area: i.area || 'Sem área' })),
+      areas_supervisionadas: areas,
+      // Declara o que foi escondido: uma tela que some com linhas sem dizer
+      // parece dado faltando.
+      ocultos: todosItens.length - itens.length,
+    });
   } catch (e) {
     console.error('[APP vol/escala get]', e.message);
     res.status(500).json({ error: 'Erro ao carregar a escala' });
@@ -1993,6 +2040,23 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const { service_id, volunteer_id, team_name, position_name } = req.body || {};
     if (!service_id || !volunteer_id) return res.status(400).json({ error: 'service_id e volunteer_id obrigatórios' });
+
+    // ⚠️⚠️ A TRAVA DE ESCRITA. Esconder a área na tela é sugestão; o que impede
+    // um supervisor de escalar na área de outro é esta checagem, porque o
+    // cliente manda `team_name` no corpo e nada impedia mandar qualquer um.
+    if (!supervisionaTudo(areas)) {
+      if (!team_name) {
+        return res.status(400).json({ error: 'Escolha a equipe: supervisor de área não escala sem equipe definida.' });
+      }
+      const { data: eq } = await supabase.from('vol_teams')
+        .select('id, name, area').eq('name', team_name).maybeSingle();
+      if (!eq || !equipeSupervisionada(eq, areas)) {
+        return res.status(403).json({
+          error: `Você não supervisiona ${team_name}. Fale com quem responde por essa área.`,
+        });
+      }
+    }
+
     const { data: vp } = await supabase.from('vol_profiles')
       .select('id, full_name, planning_center_id, auth_user_id, membresia_id').eq('id', volunteer_id).maybeSingle();
     if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
@@ -2069,6 +2133,21 @@ router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res
       const { data: dup } = await dupQ.maybeSingle();
       if (dup) return res.status(409).json({ error: 'Essa pessoa já está nessa equipe' });
     }
+    // Trava de escrita no MOVER: tanto a origem quanto o destino têm que ser
+    // áreas desta pessoa — senão dá pra "mover pra fora" o que não é seu.
+    if (!supervisionaTudo(areas)) {
+      const origem = await escalaSobSupervisao(req.params.id, areas);
+      if (!origem.ok) {
+        return res.status(403).json({ error: `Essa escala é de ${origem.equipe || 'outra área'}, que você não supervisiona.` });
+      }
+      if (novoTeam) {
+        const { data: destino } = await supabase.from('vol_teams')
+          .select('id, name, area').eq('name', novoTeam).maybeSingle();
+        if (!destino || !equipeSupervisionada(destino, areas)) {
+          return res.status(403).json({ error: `Você não supervisiona ${novoTeam}.` });
+        }
+      }
+    }
     const patch = { team_name: novoTeam };
     if (position_name !== undefined) patch.position_name = position_name || null;
     const { data, error } = await supabase.from('vol_schedules').update(patch)
@@ -2089,6 +2168,10 @@ router.delete('/voluntariado/escala/:id', authApp, limiterNormal, async (req, re
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     // Só remove quem foi escalado pelo app (source='manual'). Escala do Planning
     // Center é gerida lá — se apagar aqui, o próximo sync recria (remoção fantasma).
+    const sob = await escalaSobSupervisao(req.params.id, areas);
+    if (!sob.ok) {
+      return res.status(403).json({ error: `Essa escala é de ${sob.equipe || 'outra área'}, que você não supervisiona.` });
+    }
     const { data: sc } = await supabase.from('vol_schedules').select('source').eq('id', req.params.id).maybeSingle();
     if (sc && sc.source && sc.source !== 'manual') {
       return res.status(400).json({ error: 'Essa pessoa veio do Planning Center — remova por lá. Pelo app só dá pra tirar quem foi escalado aqui.' });

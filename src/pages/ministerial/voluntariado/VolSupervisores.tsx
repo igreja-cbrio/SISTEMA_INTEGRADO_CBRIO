@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
@@ -8,22 +8,46 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ShieldCheck, Search, Trash2, Loader2, UserPlus } from 'lucide-react';
 
-// Áreas de supervisão · alinhadas às áreas de voluntariado/culto.
-const AREAS = [
-  { v: 'kids', label: 'Kids' },
-  { v: 'sede', label: 'Sede (Domingo)' },
-  { v: 'quarta', label: 'Quarta' },
-  { v: 'ami', label: 'AMI' },
-  { v: 'bridge', label: 'Bridge' },
-  { v: 'online', label: 'Online' },
-  { v: 'geral', label: 'Geral' },
-];
-const areaLabel = (v: string) => AREAS.find(a => a.v === v)?.label || v;
+/**
+ * ⚠️ A lista era FIXA no código e guardava dimensão de CULTO — kids, sede,
+ * quarta, ami, bridge, online. A área que a escala usa é outra: a de
+ * VOLUNTARIADO, em `vol_teams.area` (Louvor, Produção, Integração, Cuidados…).
+ * Os dois campos se chamavam "área" e nunca se cruzaram, então conceder
+ * supervisão de "sede" não dava supervisão de equipe nenhuma.
+ *
+ * Agora vem do banco: quem manda é a área cadastrada nas equipes ativas.
+ * 'geral' continua existindo como curinga — é o que preserva quem já tinha
+ * acesso amplo.
+ */
+const CURINGA = { v: 'geral', label: 'Geral (todas as áreas)' };
 
 export default function VolSupervisores() {
   const qc = useQueryClient();
   const [busca, setBusca] = useState('');
-  const [area, setArea] = useState('kids');
+  const [area, setArea] = useState('');
+
+  const { data: teams = [] } = useQuery<{ area?: string | null; is_active?: boolean }[]>({
+    queryKey: ['vol-teams-manage'],
+    queryFn: () => voluntariado.teamsManage.list(),
+  });
+  const AREAS = useMemo(() => {
+    const vistas = new Map<string, string>();
+    for (const t of teams) {
+      if (t.is_active === false) continue;
+      const a = (t.area || '').trim();
+      if (a) vistas.set(a.toLowerCase(), a);
+    }
+    const lista = [...vistas.values()]
+      .sort((x, y) => x.localeCompare(y, 'pt-BR'))
+      .map(a => ({ v: a, label: a }));
+    return [...lista, CURINGA];
+  }, [teams]);
+  // ⚠️ `useCallback`: ela entra na lista de dependências do agrupamento abaixo,
+  // e recriada a cada render faria o memo nunca memorizar nada.
+  const areaLabel = useCallback(
+    (v: string) => AREAS.find(a => a.v.toLowerCase() === String(v).toLowerCase())?.label || v,
+    [AREAS],
+  );
   const [selMembro, setSelMembro] = useState<{ id: string; nome: string } | null>(null);
 
   const { data: supers = [], isLoading } = useQuery<any[]>({
@@ -67,7 +91,7 @@ export default function VolSupervisores() {
       arr.push(s); m.set(s.area, arr);
     }
     return [...m.entries()].sort((a, b) => areaLabel(a[0]).localeCompare(areaLabel(b[0]), 'pt-BR'));
-  }, [supers]);
+  }, [supers, areaLabel]);
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -109,10 +133,10 @@ export default function VolSupervisores() {
               )}
             </div>
             <Select value={area} onValueChange={setArea}>
-              <SelectTrigger className="sm:w-48"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="sm:w-48"><SelectValue placeholder="Escolher área" /></SelectTrigger>
               <SelectContent>{AREAS.map(a => <SelectItem key={a.v} value={a.v}>{a.label}</SelectItem>)}</SelectContent>
             </Select>
-            <Button onClick={() => grantMut.mutate()} disabled={!selMembro || grantMut.isPending} className="bg-[#00B39D] hover:bg-[#00B39D]/90">
+            <Button onClick={() => grantMut.mutate()} disabled={!selMembro || !area || grantMut.isPending} className="bg-[#00B39D] hover:bg-[#00B39D]/90">
               {grantMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Conceder'}
             </Button>
           </div>
