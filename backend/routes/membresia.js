@@ -477,15 +477,16 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
 
       if (status) query = query.eq('status', status);
       if (semCpf) query = query.is('cpf', null);
-      // Filtro por faixa etária (janela de data de nascimento ·
-      // criança <13, adolescente 13-17, jovem 18-30, adulto 31+).
+      // Filtro por faixa etária (janela de data de nascimento · régua da
+      // igreja desde 19/08/2026: criança <13, adolescente 13-17, jovem 18-25,
+      // adulto 26+ · espelho de fn_faixa_etaria).
       if (faixa) {
         const h = new Date();
         const f = (anos) => `${h.getFullYear() - anos}-${String(h.getMonth() + 1).padStart(2, '0')}-${String(h.getDate()).padStart(2, '0')}`;
         if (faixa === 'crianca') query = query.gt('data_nascimento', f(13));
         else if (faixa === 'adolescente') query = query.gt('data_nascimento', f(18)).lte('data_nascimento', f(13));
-        else if (faixa === 'jovem') query = query.gt('data_nascimento', f(31)).lte('data_nascimento', f(18));
-        else if (faixa === 'adulto') query = query.lte('data_nascimento', f(31));
+        else if (faixa === 'jovem') query = query.gt('data_nascimento', f(26)).lte('data_nascimento', f(18));
+        else if (faixa === 'adulto') query = query.lte('data_nascimento', f(26));
       }
       // Busca por tokens: "matheus toscano" casa "Matheus Ribeiro Toscano".
       // Cada palavra vira um ILIKE (AND), case-insensitive, em qualquer ordem.

@@ -73,6 +73,13 @@ describe('faixa etária', () => {
     expect(adu.lte).toBe(jov.gt);
   });
 
+  // ⚠️ A continuidade acima sobrevive a QUALQUER corte — foi por isso que o
+  // 31 antigo passou despercebido. O corte da igreja fica fixado aqui.
+  it('jovem acaba aos 25 · adulto começa aos 26 (régua da igreja, 19/08/2026)', () => {
+    expect(janelaDaFaixa('jovem', HOJE)).toEqual({ gt: '2000-08-10', lte: '2008-08-10' });
+    expect(janelaDaFaixa('adulto', HOJE)).toEqual({ lte: '2000-08-10' });
+  });
+
   it('faixa desconhecida não filtra nada (em vez de filtrar errado)', () => {
     expect(janelaDaFaixa('sei_la', HOJE)).toBeNull();
     expect(janelaDaFaixa(undefined, HOJE)).toBeNull();

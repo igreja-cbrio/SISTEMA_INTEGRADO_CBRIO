@@ -1578,8 +1578,8 @@ export default function Membresia() {
               <SelectItem value="__all__">Todas as idades</SelectItem>
               <SelectItem value="crianca">Crianças (até 12)</SelectItem>
               <SelectItem value="adolescente">Adolescentes (13–17)</SelectItem>
-              <SelectItem value="jovem">Jovens (18–30)</SelectItem>
-              <SelectItem value="adulto">Adultos (31+)</SelectItem>
+              <SelectItem value="jovem">Jovens (18–25)</SelectItem>
+              <SelectItem value="adulto">Adultos (26+)</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -1735,7 +1735,7 @@ export default function Membresia() {
                       const n = new Date(dn); if (isNaN(n.getTime())) return null;
                       const h = new Date(); let i = h.getFullYear() - n.getFullYear();
                       const mo = h.getMonth() - n.getMonth(); if (mo < 0 || (mo === 0 && h.getDate() < n.getDate())) i--;
-                      const fa = i < 13 ? ['Criança', '#fce7f3', '#831843'] : i <= 17 ? ['Adolescente', '#fef3c7', '#92400e'] : i <= 30 ? ['Jovem', '#e0f2fe', '#075985'] : ['Adulto', '#f1f5f9', '#334155'];
+                      const fa = i < 13 ? ['Criança', '#fce7f3', '#831843'] : i <= 17 ? ['Adolescente', '#fef3c7', '#92400e'] : i <= 25 ? ['Jovem', '#e0f2fe', '#075985'] : ['Adulto', '#f1f5f9', '#334155'];
                       return <span title={`${i} anos`} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: fa[1], color: fa[2], fontWeight: 700 }}>{fa[0].toUpperCase()}</span>;
                     })()}
                     {selectedMembro.frequenta_area && <span title="Ministério que declarou frequentar (cadastro do app)" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#cffafe', color: '#155e75', fontWeight: 700 }}>{String(selectedMembro.frequenta_area).toUpperCase()}</span>}
