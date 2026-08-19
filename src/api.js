@@ -2474,6 +2474,9 @@ export const solicitacoes = {
     removerTransicao: (id) => del(`/solicitacoes/fluxos/transicoes/${id}`),
   },
   // Vinculo com pedido Mercado Livre (compras)
+  // Solicitações que ESTE usuário pode vincular — alimenta o seletor da aba
+  // Compras ML. Mesma régua do POST abaixo (backend/utils/vinculoMlSolicitacao).
+  vinculaveisML: () => get('/solicitacoes/vinculaveis-ml'),
   vincularML:   (id, mlInput) => post(`/solicitacoes/${id}/vincular-ml`, { ml_input: mlInput }),
   desvincularML: (id) => del(`/solicitacoes/${id}/vincular-ml`),
   atualizarML:  (id) => post(`/solicitacoes/${id}/atualizar-ml`, {}),

@@ -6,6 +6,7 @@ const { enviarEmail } = require('../services/email');
 const painelCache = require('../services/painelCache');
 const mlTracker = require('../services/solicitacoesMlTracker');
 const solicFluxo = require('../services/solicFluxo');
+const { podeVincular, candidatas } = require('../utils/vinculoMlSolicitacao');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
@@ -4199,6 +4200,69 @@ router.put('/area-responsaveis', async (req, res) => {
 // VINCULO COM PEDIDO DO MERCADO LIVRE
 // ─────────────────────────────────────────────────────────────────────────
 
+// GET /api/solicitacoes/vinculaveis-ml
+// Solicitações de compra que ESTE usuário pode vincular a um pedido do ML.
+// Serve o seletor da aba Compras ML — antes disso, vincular exigia copiar o id
+// do pedido e colar dentro da solicitação (medido em 19/08/2026: 1 vínculo em
+// toda a história, com 21 candidatas em aberto).
+//
+// ⚠️⚠️ A régua é a MESMA do POST abaixo (utils/vinculoMlSolicitacao). Listar por
+// um critério e decidir por outro faria a tela oferecer opção que o servidor
+// recusa com 403 — erro de permissão que a própria tela causou.
+router.get('/vinculaveis-ml', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const role = req.user.role;
+
+    // Áreas em que a pessoa é responsável (um dos quatro caminhos de permissão).
+    const { data: areasRows, error: areasErr } = await supabase
+      .from('area_solicitacoes_responsaveis')
+      .select('area').eq('profile_id', userId);
+    // ⚠️ Falha aqui NÃO pode virar "não é responsável por área nenhuma": a lista
+    // sairia curta e a pessoa concluiria que a solicitação dela sumiu.
+    if (areasErr) throw new Error(`Não foi possível conferir suas áreas: ${areasErr.message}`);
+    const areasResponsavel = (areasRows || []).map((r) => r.area).filter(Boolean);
+
+    const { data, error } = await supabase
+      .from('solicitacoes')
+      .select('id, titulo, status, categoria, area_responsavel, area_cliente, valor_estimado, '
+        + 'solicitante_id, responsavel_id, created_at, deleted_at, ml_order_id, ml_item_title')
+      .eq('categoria', 'compras')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (error) throw error;
+
+    const lista = candidatas(data || [], { userId, role, areasResponsavel });
+
+    // Nome de quem pediu, só para a lista ser reconhecível.
+    const ids = [...new Set(lista.map((s) => s.solicitante_id).filter(Boolean))];
+    const nomes = new Map();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: profs } = await supabase.from('profiles')
+        .select('id, name').in('id', ids.slice(i, i + 200));
+      for (const p of profs || []) nomes.set(p.id, p.name);
+    }
+
+    res.json(lista.map((s) => ({
+      id: s.id,
+      titulo: s.titulo,
+      status: s.status,
+      area_responsavel: s.area_responsavel,
+      area_cliente: s.area_cliente,
+      valor_estimado: s.valor_estimado,
+      created_at: s.created_at,
+      solicitante_nome: nomes.get(s.solicitante_id) || null,
+      // Já tem pedido? A tela avisa antes de trocar, em vez de sobrescrever calada.
+      ml_order_id: s.ml_order_id || null,
+      ml_item_title: s.ml_item_title || null,
+    })));
+  } catch (e) {
+    console.error('[SOLICITACOES] vinculaveis-ml error:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao listar solicitações.' });
+  }
+});
+
 // POST /api/solicitacoes/:id/vincular-ml
 // Body: { ml_input } · URL ou ID do pedido do Mercado Livre
 // Apenas o solicitante, responsável ou admin/diretor podem vincular.
@@ -4219,19 +4283,21 @@ router.post('/:id/vincular-ml', async (req, res) => {
       .maybeSingle();
     if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
 
-    const isAdmin = ['admin', 'diretor'].includes(role);
-    const isMine = sol.solicitante_id === userId || sol.responsavel_id === userId;
-    let isAreaResp = false;
-    if (!isAdmin && !isMine && sol.area_responsavel) {
+    // ⚠️ MESMA régua que monta a lista do seletor (utils/vinculoMlSolicitacao).
+    // A consulta de áreas só roda quando os caminhos baratos não resolveram.
+    let areasResponsavel = [];
+    const atalho = ['admin', 'diretor'].includes(role)
+      || sol.solicitante_id === userId || sol.responsavel_id === userId;
+    if (!atalho && sol.area_responsavel) {
       const { data: respRow } = await supabase
         .from('area_solicitacoes_responsaveis')
-        .select('profile_id')
+        .select('area')
         .eq('area', sol.area_responsavel)
         .eq('profile_id', userId)
         .maybeSingle();
-      isAreaResp = !!respRow;
+      if (respRow?.area) areasResponsavel = [respRow.area];
     }
-    if (!isAdmin && !isMine && !isAreaResp) {
+    if (!podeVincular(sol, { userId, role, areasResponsavel })) {
       return res.status(403).json({ error: 'Sem permissão para vincular o pedido.' });
     }
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
-import { logistica, ml, arquivei } from '../../../api';
+import { logistica, ml, arquivei, solicitacoes as solicitacoesApi } from '../../../api';
 import { supabase } from '../../../supabaseClient';
 import { Button } from '../../../components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -1215,8 +1215,134 @@ async function copiarRastreio(codigo) {
   }
 }
 
+// ── Vincular um pedido do ML a uma solicitação de compra ────────────────────
+// Pedido do Matheus (19/08/2026): "ao invés de ter que copiar o id do pedido e
+// colar dentro da solicitação de compra". Medido no mesmo dia: 1 vínculo em toda
+// a história do sistema, com 21 solicitações de compra em aberto — o caminho
+// antigo era doloroso o bastante para ninguém usar.
+//
+// ⚠️ A LISTA vem de GET /solicitacoes/vinculaveis-ml, que usa a MESMA régua do
+// POST que grava (backend/utils/vinculoMlSolicitacao). Se a tela filtrasse por
+// conta própria, ofereceria opção que o servidor recusa com 403.
+// ⚠️ Quem grava continua sendo `linkOrder()` — ele valida o pedido na API do ML,
+// guarda o shipment e dispara a notificação. Aqui não existe 2º caminho de
+// escrita; só um jeito melhor de escolher o destino.
+function VincularSolicitacao({ order, solicitacoes: lista, carregando, erro, onVinculado, onRecarregar }) {
+  const [aberto, setAberto] = useState(false);
+  const [busca, setBusca] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  // Esta compra já está pendurada em alguma solicitação?
+  const jaVinculada = (lista || []).find(s => String(s.ml_order_id || '') === String(order.id));
+
+  const filtradas = (lista || []).filter(s => {
+    if (!busca.trim()) return true;
+    const t = busca.trim().toLowerCase();
+    return [s.titulo, s.solicitante_nome, s.area_responsavel, s.area_cliente]
+      .filter(Boolean).some(v => String(v).toLowerCase().includes(t));
+  });
+
+  async function vincular(sol) {
+    // ⚠️ Trocar um vínculo existente é ato consciente: a solicitação passa a
+    // rastrear OUTRA entrega, e o histórico dela já cita a anterior.
+    if (sol.ml_order_id && String(sol.ml_order_id) !== String(order.id)) {
+      const ok = window.confirm(
+        `"${sol.titulo}" já está vinculada ao pedido #${sol.ml_order_id}.\n\n`
+        + `Vincular ao #${order.id} substitui o anterior. Continuar?`);
+      if (!ok) return;
+    }
+    setSalvando(true);
+    try {
+      await solicitacoesApi.vincularML(sol.id, String(order.id));
+      toast.success(`Pedido vinculado a "${sol.titulo}"`);
+      setAberto(false); setBusca('');
+      onVinculado?.();
+    } catch (e) {
+      // O servidor é quem decide — mostramos o motivo dele, sem traduzir.
+      toast.error(e?.message || 'Não foi possível vincular.');
+    }
+    setSalvando(false);
+  }
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
+      <div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', fontWeight: 600, marginBottom: 6 }}>
+        Solicitação de compra
+      </div>
+
+      {jaVinculada ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, color: C.text }}>
+            ✅ Vinculado a <strong>{jaVinculada.titulo}</strong>
+          </span>
+          <a href={`/solicitacoes?id=${jaVinculada.id}`} style={{ fontSize: 12, color: C.primary }}>abrir ↗</a>
+        </div>
+      ) : !aberto ? (
+        <Button variant="outline" size="sm" onClick={() => { setAberto(true); onRecarregar?.(); }}>
+          🔗 Vincular a uma solicitação
+        </Button>
+      ) : (
+        <div>
+          <input value={busca} onChange={e => setBusca(e.target.value)} autoFocus
+            placeholder="Buscar por título, quem pediu ou área..."
+            style={{ width: '100%', padding: '8px 10px', borderRadius: 8, marginBottom: 8,
+              border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 13 }} />
+
+          {/* ⚠️ Erro NÃO se disfarça de lista vazia: "nenhuma solicitação" e
+              "a consulta falhou" levam a decisões opostas. */}
+          {erro ? (
+            <div style={{ fontSize: 13, color: C.red, padding: '10px 0' }}>
+              {erro} <button onClick={onRecarregar} style={{ color: C.primary, background: 'none', border: 0, cursor: 'pointer' }}>tentar de novo</button>
+            </div>
+          ) : carregando ? (
+            <div style={{ fontSize: 13, color: C.text3, padding: '10px 0' }}>Carregando solicitações...</div>
+          ) : filtradas.length === 0 ? (
+            <div style={{ fontSize: 13, color: C.text3, padding: '10px 0' }}>
+              {(lista || []).length === 0
+                ? 'Nenhuma solicitação de compra em aberto que você possa vincular.'
+                : 'Nada encontrado com esse texto.'}
+            </div>
+          ) : (
+            <div style={{ maxHeight: 260, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
+              {filtradas.map(s => (
+                <button key={s.id} onClick={() => vincular(s)} disabled={salvando}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px',
+                    background: 'none', border: 0, borderBottom: `1px solid ${C.border}`,
+                    cursor: salvando ? 'wait' : 'pointer', color: C.text }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{s.titulo}</div>
+                  <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
+                    {s.solicitante_nome ? `${s.solicitante_nome} · ` : ''}
+                    {s.area_responsavel || s.area_cliente || 'sem área'} · {s.status}
+                    {s.ml_order_id ? ` · ⚠️ já tem o pedido #${s.ml_order_id}` : ''}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <button onClick={() => { setAberto(false); setBusca(''); }}
+            style={{ marginTop: 8, fontSize: 12, color: C.text3, background: 'none', border: 0, cursor: 'pointer' }}>
+            cancelar
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ComprasMLTab() {
   const [mlStatus, setMlStatus] = useState(null);
+  // Solicitações vinculáveis — carregadas uma vez e reusadas por todos os
+  // pedidos da lista (é também o que diz se a compra JÁ está vinculada).
+  const [solVinc, setSolVinc] = useState([]);
+  const [solLoading, setSolLoading] = useState(false);
+  const [solErro, setSolErro] = useState('');
+  const carregarVinculaveis = useCallback(async () => {
+    setSolLoading(true); setSolErro('');
+    try { setSolVinc(await solicitacoesApi.vinculaveisML() || []); }
+    catch (e) { setSolErro(e?.message || 'Não foi possível carregar as solicitações.'); }
+    setSolLoading(false);
+  }, []);
   const [orders, setOrders] = useState([]);
   const [paging, setPaging] = useState({ total: 0, offset: 0 });
   const [loading, setLoading] = useState(true);
@@ -1276,6 +1402,9 @@ function ComprasMLTab() {
   }
 
   useEffect(() => { if (mlStatus?.connected) loadOrders(0); }, [filtroStatus]);
+  // Best-effort: falhar aqui não pode derrubar a lista de pedidos — o vínculo é
+  // um extra da tela, não o conteúdo dela.
+  useEffect(() => { if (mlStatus?.connected) carregarVinculaveis(); }, [mlStatus?.connected, carregarVinculaveis]);
 
   function handleSearch(e) {
     if (e.key === 'Enter') loadOrders(0);
@@ -1435,6 +1564,15 @@ function ComprasMLTab() {
                       style={{ fontSize: 13, color: C.primary, textDecoration: 'none' }}>Abrir compra ↗</a>
                   </div>
                 </div>
+
+                <VincularSolicitacao
+                  order={o}
+                  solicitacoes={solVinc}
+                  carregando={solLoading}
+                  erro={solErro}
+                  onRecarregar={carregarVinculaveis}
+                  onVinculado={carregarVinculaveis}
+                />
 
                 {/* Info de envio/rastreio */}
                 {shipDetail && (
