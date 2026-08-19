@@ -120,3 +120,31 @@ describe('resposta da lista', () => {
       .toBe(false);
   });
 });
+
+describe('planoDaPagina · filtro de CPF', () => {
+  it('com_cpf liga o filtro inverso', () => {
+    expect(planoDaPagina({ com_cpf: '1' }).comCpf).toBe(true);
+    expect(planoDaPagina({ com_cpf: 'true' }).comCpf).toBe(true);
+    expect(planoDaPagina({ com_cpf: true }).comCpf).toBe(true);
+  });
+
+  it('sem nada, os dois ficam desligados', () => {
+    const p = planoDaPagina({});
+    expect(p.comCpf).toBe(false);
+    expect(p.semCpf).toBe(false);
+  });
+
+  it('valor lixo não liga o filtro', () => {
+    expect(planoDaPagina({ com_cpf: '0' }).comCpf).toBe(false);
+    expect(planoDaPagina({ com_cpf: 'sim' }).comCpf).toBe(false);
+  });
+
+  it('⚠️ os dois juntos não se anulam — a rota decide, e a régua reporta os dois', () => {
+    // Um pedido contraditório tem que chegar visível na rota, que dá
+    // precedência a "sem CPF". Se a régua zerasse um deles aqui, a rota
+    // devolveria a lista inteira como se nada tivesse sido filtrado.
+    const p = planoDaPagina({ sem_cpf: '1', com_cpf: '1' });
+    expect(p.semCpf).toBe(true);
+    expect(p.comCpf).toBe(true);
+  });
+});

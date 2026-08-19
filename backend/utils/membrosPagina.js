@@ -48,7 +48,8 @@ function janelaDaFaixa(faixa, hoje = new Date()) {
  * Traduz a query da tela num plano de consulta.
  *
  * @returns {{ limite, offset, ascending, range: [number, number],
- *            status: string|null, semCpf: boolean, faixa: object|null,
+ *            status: string|null, semCpf: boolean, comCpf: boolean,
+ *            faixa: object|null,
  *            tokens: string[] }}
  */
 function planoDaPagina(query = {}, hoje = new Date()) {
@@ -78,6 +79,12 @@ function planoDaPagina(query = {}, hoje = new Date()) {
     range: [offset, offset + limite - 1],
     status: query.status ? String(query.status) : null,
     semCpf: query.sem_cpf === '1' || query.sem_cpf === true || query.sem_cpf === 'true',
+    // ⚠️ "Com CPF" é o inverso EXATO de "sem CPF" nesta base, e isso foi
+    // medido (19/08/2026): dos 3.893 ativos, 2.173 têm `cpf` NULL e 1.720 têm
+    // 11 dígitos — zero string vazia, zero malformado, zero com pontuação.
+    // Por isso `is not null` basta. Se um dia entrar CPF vazio ou com máscara,
+    // este filtro passa a mentir e a régua tem que virar contagem de dígitos.
+    comCpf: query.com_cpf === '1' || query.com_cpf === true || query.com_cpf === 'true',
     faixa: janelaDaFaixa(query.faixa, hoje),
     tokens,
   };

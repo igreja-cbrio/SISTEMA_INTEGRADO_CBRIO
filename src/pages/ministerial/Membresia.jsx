@@ -869,7 +869,10 @@ export default function Membresia() {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPapel, setFilterPapel] = useState('');
   const [filterFaixa, setFilterFaixa] = useState('');
-  const [filterSemCpf, setFilterSemCpf] = useState(false);
+  // ⚠️ Um estado só, com três valores ('' | 'sem' | 'com'). Dois toggles
+  // independentes deixariam ligar "Sem CPF" e "Com CPF" ao mesmo tempo — um
+  // pedido contraditório, que a tela não deve nem permitir formular.
+  const [filtroCpf, setFiltroCpf] = useState('');
   const [selectedMembro, setSelectedMembro] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editMembro, setEditMembro] = useState(null);
@@ -1018,7 +1021,8 @@ export default function Membresia() {
       if (filterStatus) params.status = filterStatus;
       if (filterPapel) params.papel = filterPapel;
       if (filterFaixa) params.faixa = filterFaixa;
-      if (filterSemCpf) params.sem_cpf = '1';
+      if (filtroCpf === 'sem') params.sem_cpf = '1';
+      if (filtroCpf === 'com') params.com_cpf = '1';
       const m = await membresia.membros.list(Object.keys(params).length ? params : null);
       setMembros(m);
     } catch (e) {
@@ -1027,7 +1031,7 @@ export default function Membresia() {
       setLoading(false);
       setSearching(false);
     }
-  }, [busca, filterStatus, filterPapel, filterFaixa, filterSemCpf]);
+  }, [busca, filterStatus, filterPapel, filterFaixa, filtroCpf]);
 
   // Card inteligente · título muda conforme o filtro ativo
   const filtroResumo = useMemo(() => {
@@ -1035,10 +1039,11 @@ export default function Membresia() {
     if (filterFaixa) partes.push(FAIXA_LABEL[filterFaixa] || filterFaixa);
     if (filterStatus) partes.push(STATUS_MAP[filterStatus]?.label || filterStatus);
     if (filterPapel) partes.push(PAPEL_LABEL[filterPapel] || filterPapel);
-    if (filterSemCpf) partes.push('Sem CPF');
+    if (filtroCpf === 'sem') partes.push('Sem CPF');
+    if (filtroCpf === 'com') partes.push('Com CPF');
     if (busca) partes.push(`"${busca.trim()}"`);
     return { ativo: partes.length > 0, titulo: partes.join(' · ') };
-  }, [filterFaixa, filterStatus, filterPapel, filterSemCpf, busca]);
+  }, [filterFaixa, filterStatus, filterPapel, filtroCpf, busca]);
 
   // Clique nos cards de resumo · aplica o filtro correspondente (limpa os demais)
   // e rola até a lista. cfg=null = "Total de pessoas" (limpa tudo).
@@ -1047,7 +1052,7 @@ export default function Membresia() {
     setFilterFaixa('');
     setFilterStatus(cfg?.status || '');
     setFilterPapel(cfg?.papel || '');
-    setFilterSemCpf(!!cfg?.sem_cpf);
+    setFiltroCpf(cfg?.sem_cpf ? 'sem' : (cfg?.com_cpf ? 'com' : ''));
     requestAnimationFrame(() => {
       document.querySelector('[data-membros-lista]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
@@ -1583,21 +1588,34 @@ export default function Membresia() {
             </SelectContent>
           </Select>
         </div>
-        <button
-          type="button"
-          onClick={() => setFilterSemCpf(v => !v)}
-          title="Mostrar só quem está sem CPF cadastrado"
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 16px', borderRadius: 8,
-            fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
-            border: `1.5px solid ${filterSemCpf ? C.amber : 'var(--cbrio-border)'}`,
-            background: filterSemCpf ? C.amber : 'transparent',
-            color: filterSemCpf ? '#fff' : C.text2,
-          }}
-        >
-          <CreditCard style={{ width: 15, height: 15 }} />
-          Sem CPF
-        </button>
+        {/* Três estados num controle só: todos · com CPF · sem CPF. */}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+          <CreditCard style={{ width: 15, height: 15, color: C.text2 }} />
+          {[
+            { v: '', label: 'Todos', cor: C.text2, titulo: 'Sem filtrar por CPF' },
+            { v: 'com', label: 'Com CPF', cor: C.green || '#10b981', titulo: 'Mostrar só quem já tem CPF cadastrado' },
+            { v: 'sem', label: 'Sem CPF', cor: C.amber, titulo: 'Mostrar só quem está sem CPF cadastrado' },
+          ].map(op => {
+            const ativo = filtroCpf === op.v;
+            return (
+              <button
+                key={op.v || 'todos'}
+                type="button"
+                onClick={() => setFiltroCpf(op.v)}
+                title={op.titulo}
+                style={{
+                  padding: '0 14px', height: 38, borderRadius: 8,
+                  fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  border: `1.5px solid ${ativo ? op.cor : 'var(--cbrio-border)'}`,
+                  background: ativo ? op.cor : 'transparent',
+                  color: ativo ? '#fff' : C.text2,
+                }}
+              >
+                {op.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Table */}

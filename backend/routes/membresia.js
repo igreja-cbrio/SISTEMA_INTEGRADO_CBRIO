@@ -465,6 +465,8 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
     const { status, busca, papel, faixa } = req.query;
     // "Sem CPF": captação de dado — lista quem está sem CPF (todos são NULL).
     const semCpf = req.query.sem_cpf === '1' || req.query.sem_cpf === 'true';
+    // "Com CPF": o inverso, pra ver quem já está identificado.
+    const comCpf = req.query.com_cpf === '1' || req.query.com_cpf === 'true';
 
     // Builders do supabase-js são de uso único — recria por página.
     const montar = () => {
@@ -477,6 +479,9 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
 
       if (status) query = query.eq('status', status);
       if (semCpf) query = query.is('cpf', null);
+      // ⚠️ `semCpf` vence se vierem os dois: um pedido contraditório não pode
+      // devolver a lista inteira como se nenhum filtro tivesse sido pedido.
+      else if (comCpf) query = query.not('cpf', 'is', null);
       // Filtro por faixa etária (janela de data de nascimento · régua da
       // igreja desde 19/08/2026: criança <13, adolescente 13-17, jovem 18-25,
       // adulto 26+ · espelho de fn_faixa_etaria).
@@ -628,6 +633,7 @@ router.get('/membros/pagina', authorizeModule('membros', 1), async (req, res) =>
 
     if (p.status) q = q.eq('status', p.status);
     if (p.semCpf) q = q.is('cpf', null);
+    else if (p.comCpf) q = q.not('cpf', 'is', null);
     if (p.faixa?.gt) q = q.gt('data_nascimento', p.faixa.gt);
     if (p.faixa?.lte) q = q.lte('data_nascimento', p.faixa.lte);
     for (const t of p.tokens) q = q.ilike('nome', `%${t}%`);
