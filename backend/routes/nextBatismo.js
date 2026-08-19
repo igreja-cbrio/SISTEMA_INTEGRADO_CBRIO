@@ -23,6 +23,7 @@ const { avaliarCadastroPessoa } = require('../utils/prontidaoCadastro');
 const censoDisparo = require('../services/censoDisparo');
 const { avaliarRelacaoFamiliar } = require('../services/familiaPolicy');
 const { montarPatchFusao } = require('../services/fusaoCampos');
+const { parKey, dedupPorParKey } = require('../utils/paresDuplicados');
 
 router.use(authenticate);
 
@@ -591,7 +592,6 @@ async function carregarDuplicadosProgressivos() {
 // do momento do adiamento. Formulário completo (CPF+nascimento) empurra o par.
 const MARGEM_REATIVA = 10;
 const ORDEM_PRIORIDADE = { quase_confirmado: 0, alta: 1, media: 2, descoberta: 3 };
-function parKey(a, b) { return [a, b].sort().join('_'); }
 function ordenarPares(a, b) {
   if (a.prioridade !== b.prioridade) return (ORDEM_PRIORIDADE[a.prioridade] ?? 9) - (ORDEM_PRIORIDADE[b.prioridade] ?? 9);
   if ((a.confianca || 0) !== (b.confianca || 0)) return (b.confianca || 0) - (a.confianca || 0);
@@ -630,10 +630,23 @@ async function montarDuplicados() {
   const [triagem, progressivos, adiados] = await Promise.all([
     carregarTriagemFamilias(), carregarDuplicadosProgressivos(), carregarAdiados(),
   ]);
-  const porPar = new Map(reshapeDuplicados(triagem.duplicatas || []).map((p) => [p.par_id, p]));
+  // ⚠️⚠️ A chave do mapa é o par ORDENADO (`parKey`), NUNCA o `par_id` cru: a
+  // triagem grava os ids na ordem em que varreu os blocos e a progressiva grava
+  // sempre (menor, maior). Chaveando pelo cru, o MESMO par sobrevivia duas vezes
+  // — a fila mostrava o par em duplicidade e o "Adiar todos" mandava duas linhas
+  // com o mesmo `par_key` no mesmo upsert (erro 21000). Ver utils/paresDuplicados.
+  const porPar = new Map();
+  for (const p of reshapeDuplicados(triagem.duplicatas || [])) {
+    const chave = parKey(p.membro_a_id, p.membro_b_id);
+    if (chave) porPar.set(chave, p);
+  }
   // A identidade progressiva conhece várias portas e prevalece sobre o retrato
-  // atual de mem_membros para o mesmo par.
-  for (const p of progressivos) porPar.set(p.par_id, p);
+  // atual de mem_membros para o mesmo par — e só prevalece de verdade porque a
+  // chave é ordenada dos dois lados.
+  for (const p of progressivos) {
+    const chave = parKey(p.membro_a_id, p.membro_b_id);
+    if (chave) porPar.set(chave, p);
+  }
 
   const ativos = [];
   const adiadosLista = [];
@@ -1265,16 +1278,28 @@ router.post('/adiar-em-lote', authorizeModule('next-batismo', 2), async (req, re
     const alvo = ativos.filter(soBateNome);
     if (!alvo.length) return res.json({ ok: true, total: 0 });
     const agora = new Date().toISOString();
-    const rows = alvo.map((par) => {
-      const [a, b] = [par.membro_a_id, par.membro_b_id].sort();
-      return {
-        par_key: `${a}_${b}`, membro_a_id: a, membro_b_id: b,
-        confianca_no_adiamento: Number.isFinite(Number(par.confianca)) ? Number(par.confianca) : 0,
-        prioridade_no_adiamento: par.prioridade || null,
-        adiado_por: req.user?.id || null, adiado_em: agora,
-        reativado_em: null, reativado_motivo: null,
-      };
-    });
+    // ⚠️⚠️ DEDUP OBRIGATÓRIO: `ON CONFLICT` recusa o statement INTEIRO quando a
+    // mesma linha-alvo aparece 2× no mesmo INSERT (21000 · "cannot affect row a
+    // second time") — não é "a última vence". Hoje o mapa da fila já é chaveado
+    // pelo par ordenado, então em tese não chegam repetidos aqui; esta é a 2ª
+    // camada, pra que fonte de par nova não derrube o lote inteiro em silêncio.
+    const { linhas: rows, duplicadas, semChave } = dedupPorParKey(
+      alvo.map((par) => {
+        const [a, b] = [par.membro_a_id, par.membro_b_id].sort();
+        return {
+          par_key: parKey(a, b), membro_a_id: a, membro_b_id: b,
+          confianca_no_adiamento: Number.isFinite(Number(par.confianca)) ? Number(par.confianca) : 0,
+          prioridade_no_adiamento: par.prioridade || null,
+          adiado_por: req.user?.id || null, adiado_em: agora,
+          reativado_em: null, reativado_motivo: null,
+        };
+      }),
+      (linha) => linha.par_key,
+    );
+    if (duplicadas || semChave) {
+      console.warn('[next-batismo/adiar-em-lote] descartadas', { duplicadas, semChave });
+    }
+    if (!rows.length) return res.json({ ok: true, total: 0, duplicadas, sem_chave: semChave });
     for (let i = 0; i < rows.length; i += 500) {
       const { error } = await supabase.from('entradas_pares_adiados')
         .upsert(rows.slice(i, i + 500), { onConflict: 'par_key' });
@@ -1286,11 +1311,11 @@ router.post('/adiar-em-lote', authorizeModule('next-batismo', 2), async (req, re
     await registrarResolucao({
       tipo: 'duplicidade', acao: 'adiado',
       origem: 'entradas_pares_adiados', origem_id: `lote:${agora}`,
-      detalhe: { criterio: 'nome_apenas', total: rows.length },
+      detalhe: { criterio: 'nome_apenas', total: rows.length, duplicadas, sem_chave: semChave },
       resolvido_por: req.user?.id || null,
     });
     invalidarTriagemPessoas();
-    res.json({ ok: true, total: rows.length });
+    res.json({ ok: true, total: rows.length, duplicadas, sem_chave: semChave });
   } catch (e) {
     console.error('[next-batismo/adiar-em-lote]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao adiar em lote' });
