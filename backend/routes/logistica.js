@@ -5,6 +5,8 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { getMLConfig, mlFetch, ensureUserId, searchOrders } = require('../services/mercadoLivreService');
 const { lerNfe } = require('../utils/nfeXml');
+const { pedidoDoNome } = require('../utils/nfeArquivo');
+const { caminhoNoBucket } = require('../utils/storagePath');
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
 const { importar: importarComprasPlanilha } = require('../services/comprasImporter');
 const { sugerirSaidas } = require('../services/comprasMatch');
@@ -464,7 +466,9 @@ router.post('/notas/importar-xml', async (req, res) => {
       // outro CNPJ, nota cancelada e arquivo corrompido, e o importador precisa
       // seguir e DIZER o que ficou de fora — não morrer no primeiro.
       if (!r.ok) { recusadas.push({ nome, erro: r.erro, detalhe: r.detalhe || null }); continue; }
-      lidas.push({ nome, nota: r.nota, xml: arq.xml });
+      // ⚠️ O pedido do ML vem do NOME do arquivo (invoice-<id>.xml) — o XML não
+      // o traz. É isso que liga a nota ao pedido e casa o PDF depois.
+      lidas.push({ nome, nota: r.nota, xml: arq.xml, mlOrderId: pedidoDoNome(nome) });
     }
 
     // Idempotência pela chave de acesso (a coluna tem UNIQUE) — reenviar o mesmo
@@ -486,7 +490,18 @@ router.post('/notas/importar-xml', async (req, res) => {
     const falhas = [];
     for (const l of lidas) {
       const ch = l.nota.chave_acesso;
-      if (jaExistem.has(ch) || noLote.has(ch)) { repetidas += 1; continue; }
+      if (jaExistem.has(ch) || noLote.has(ch)) {
+        repetidas += 1;
+        // ⚠️ BACKFILL: as notas importadas ANTES desta versão entraram sem
+        // ml_order_id (o importador não lia o nome). Reimportar o mesmo ZIP
+        // preenche o vínculo — só onde está nulo, nunca sobrescreve.
+        if (l.mlOrderId) {
+          await supabase.from('log_notas_fiscais')
+            .update({ ml_order_id: l.mlOrderId })
+            .eq('chave_acesso', ch).is('ml_order_id', null);
+        }
+        continue;
+      }
       noLote.add(ch);
       const { error } = await supabase.from('log_notas_fiscais').insert({
         numero: l.nota.numero,
@@ -499,7 +514,8 @@ router.post('/notas/importar-xml', async (req, res) => {
         descricao: l.nota.descricao,
         itens: l.nota.itens?.length ? l.nota.itens : null,
         xml_content: l.xml,
-        origem: l.nota.via_mercadolivre ? 'mercadolivre' : 'xml',
+        ml_order_id: l.mlOrderId,
+        origem: (l.nota.via_mercadolivre || l.mlOrderId) ? 'mercadolivre' : 'xml',
         status: 'registrada',
         created_by: req.user.userId,
       });
@@ -516,6 +532,114 @@ router.post('/notas/importar-xml', async (req, res) => {
   } catch (e) {
     console.error('[LOG] importar-xml:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao importar XML' });
+  }
+});
+
+// ── IMPORTAR o DANFE (PDF) e casar com a nota pelo número do pedido ─────────
+// ⚠️ O DANFE OFICIAL é este PDF, gerado pela SEFAZ/emissor — não o espelho que
+// o sistema desenha a partir do XML. O ML entrega os dois no "Baixar NF-e
+// disponíveis" (você escolhe xml OU pdf na hora), com o MESMO nome:
+//   invoice-<pedido>.xml   ·   invoice-<pedido>.pdf
+// É por esse número que o PDF encontra a nota que o XML já criou.
+const MAX_PDF_POR_LOTE = 6; // PDF em base64 infla ~33% · corpo do Express é 1 MB
+
+router.post('/notas/importar-danfe', async (req, res) => {
+  try {
+    const arquivos = Array.isArray(req.body?.arquivos) ? req.body.arquivos : [];
+    if (!arquivos.length) return res.status(400).json({ error: 'Nenhum PDF enviado.' });
+    if (arquivos.length > MAX_PDF_POR_LOTE) {
+      return res.status(400).json({ error: `Máximo de ${MAX_PDF_POR_LOTE} PDFs por envio.` });
+    }
+
+    let anexados = 0, jaTinham = 0;
+    const semNota = [], falhas = [];
+
+    for (const arq of arquivos) {
+      const nome = String(arq?.nome || 'sem-nome.pdf');
+      const pedido = pedidoDoNome(nome);
+      if (!pedido) { semNota.push({ nome, motivo: 'nome_sem_pedido' }); continue; }
+
+      const { data: nota, error: eBusca } = await supabase.from('log_notas_fiscais')
+        .select('id, storage_path').eq('ml_order_id', pedido).limit(1).maybeSingle();
+      // ⚠️ Falha de LEITURA não vira "nota não existe": diria pra pessoa que o
+      // XML não foi importado quando o problema é o banco.
+      if (eBusca) throw new Error(`Não foi possível procurar a nota do pedido ${pedido}: ${eBusca.message}`);
+      if (!nota) { semNota.push({ nome, motivo: 'sem_xml_importado', pedido }); continue; }
+      if (nota.storage_path) { jaTinham += 1; continue; }
+
+      let buffer;
+      try {
+        buffer = Buffer.from(String(arq.base64 || ''), 'base64');
+      } catch { falhas.push({ nome, erro: 'base64 inválido' }); continue; }
+      if (!buffer.length) { falhas.push({ nome, erro: 'arquivo vazio' }); continue; }
+
+      const caminho = `notas-fiscais/${pedido}/danfe.pdf`;
+      const { error: eUp } = await supabase.storage.from('log-arquivos')
+        .upload(caminho, buffer, { contentType: 'application/pdf', upsert: true });
+      if (eUp) { falhas.push({ nome, erro: eUp.message }); continue; }
+
+      // ⚠️ Guarda o CAMINHO, não a URL pública. `log-arquivos` é público HOJE, e
+      // documento fiscal em bucket público é dívida — guardando o caminho, o dia
+      // em que ele fechar a leitura só passa a assinar, sem migrar dado nenhum
+      // (é exatamente o que utils/storagePath existe pra permitir).
+      const { error: eUpd } = await supabase.from('log_notas_fiscais')
+        .update({ storage_path: caminho }).eq('id', nota.id).is('storage_path', null);
+      if (eUpd) { falhas.push({ nome, erro: eUpd.message }); continue; }
+      anexados += 1;
+    }
+
+    res.json({ anexados, jaTinham, semNota, falhas, lidos: arquivos.length });
+  } catch (e) {
+    console.error('[LOG] importar-danfe:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao importar DANFE' });
+  }
+});
+
+// GET /logistica/notas/:id/nfe · devolve a NF-e JÁ INTERPRETADA para o espelho
+// impresso. ⚠️ Reusa o MESMO `lerNfe` da importação — um 2º leitor no cliente
+// divergiria do que foi gravado, e a folha passaria a mostrar número diferente
+// do que está na lista.
+// ⚠️ `xml_content` NÃO entra na listagem (são ~8 KB por linha); só aqui, sob
+// demanda, para uma nota.
+router.get('/notas/:id/nfe', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('log_notas_fiscais')
+      .select('id, numero, xml_content, chave_acesso').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Nota não encontrada' });
+    if (!data.xml_content) {
+      return res.status(409).json({ error: 'Esta nota não tem XML guardado — só notas importadas por XML têm o documento.' });
+    }
+    const r = lerNfe(data.xml_content);
+    if (!r.ok) return res.status(422).json({ error: `XML guardado não pôde ser lido (${r.erro}).` });
+    res.json({ nota: r.nota });
+  } catch (e) {
+    console.error('[LOG] notas/:id/nfe:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao ler a NF-e' });
+  }
+});
+
+// GET /logistica/notas/:id/danfe · devolve URL ASSINADA do PDF (15 min).
+// ⚠️ Assinar mesmo com o bucket público hoje: quando `log-arquivos` fechar
+// (documento fiscal não deveria estar em bucket aberto), esta leitura já
+// funciona sem mudar nada. Padrão do utils/storagePath.
+router.get('/notas/:id/danfe', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('log_notas_fiscais')
+      .select('id, storage_path').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!data?.storage_path) return res.status(404).json({ error: 'Esta nota não tem DANFE anexado.' });
+
+    const caminho = caminhoNoBucket(data.storage_path, 'log-arquivos');
+    if (!caminho) return res.status(422).json({ error: 'Caminho do arquivo não reconhecido.' });
+
+    const { data: assinada, error: eSign } = await supabase.storage
+      .from('log-arquivos').createSignedUrl(caminho, 900);
+    if (eSign) throw eSign;
+    res.json({ url: assinada.signedUrl });
+  } catch (e) {
+    console.error('[LOG] notas/:id/danfe:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao abrir o DANFE' });
   }
 });
 

@@ -736,13 +736,26 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
     setLocalError(''); setSuccessMsg('');
 
     let arquivos = [];
+    const pdfs = [];
+    // ⚠️ PDF é BINÁRIO: vai em base64. XML é texto. Separar aqui evita mandar
+    // um pro endpoint do outro.
+    const comoBase64 = (buf) => {
+      let bin = ''; const b = new Uint8Array(buf);
+      for (let i = 0; i < b.length; i += 1) bin += String.fromCharCode(b[i]);
+      return btoa(bin);
+    };
     try {
       for (const f of files) {
         if (/\.zip$/i.test(f.name)) {
           const JSZip = (await import('jszip')).default;
           const zip = await JSZip.loadAsync(f);
-          const entradas = Object.values(zip.files).filter(z => !z.dir && /\.xml$/i.test(z.name));
-          for (const z of entradas) arquivos.push({ nome: z.name, xml: await z.async('string') });
+          for (const z of Object.values(zip.files)) {
+            if (z.dir) continue;
+            if (/\.xml$/i.test(z.name)) arquivos.push({ nome: z.name, xml: await z.async('string') });
+            else if (/\.pdf$/i.test(z.name)) pdfs.push({ nome: z.name, base64: await z.async('base64') });
+          }
+        } else if (/\.pdf$/i.test(f.name)) {
+          pdfs.push({ nome: f.name, base64: comoBase64(await f.arrayBuffer()) });
         } else {
           arquivos.push({ nome: f.name, xml: await f.text() });
         }
@@ -751,7 +764,7 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
       setLocalError('Não foi possível abrir o arquivo: ' + e.message);
       return;
     }
-    if (!arquivos.length) { setLocalError('Nenhum XML encontrado no que você enviou.'); return; }
+    if (!arquivos.length && !pdfs.length) { setLocalError('Nenhum XML ou PDF encontrado no que você enviou.'); return; }
 
     // ⚠️ Acumula o resultado LOTE A LOTE: se a conexão cair no meio, o que já
     // entrou está gravado e a tela diz quanto foi (lei de 04/08 — registrar o
@@ -759,7 +772,7 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
     const LOTE = 25;
     let importadas = 0, repetidas = 0;
     const recusadas = [], falhas = [];
-    setImpNf({ rodando: true, feitos: 0, total: arquivos.length });
+    setImpNf({ rodando: true, feitos: 0, total: arquivos.length + pdfs.length });
     try {
       for (let i = 0; i < arquivos.length; i += LOTE) {
         const r = await logistica.notas.importarXml(arquivos.slice(i, i + LOTE));
@@ -775,12 +788,35 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
       onReload();
       return;
     }
+    // ⚠️ Os PDFs vão DEPOIS dos XMLs, e a ordem importa: o PDF se encontra pela
+    // nota que o XML criou. Invertido, todo DANFE cairia em "sem XML importado".
+    let anexados = 0, jaTinham = 0;
+    const semNota = [];
+    if (pdfs.length) {
+      const LOTE_PDF = 6; // base64 infla ~33% e o corpo do Express é 1 MB
+      try {
+        for (let i = 0; i < pdfs.length; i += LOTE_PDF) {
+          const r = await logistica.notas.importarDanfe(pdfs.slice(i, i + LOTE_PDF));
+          anexados += r.anexados || 0;
+          jaTinham += r.jaTinham || 0;
+          semNota.push(...(r.semNota || []));
+          setImpNf({ rodando: true, feitos: arquivos.length + Math.min(i + LOTE_PDF, pdfs.length),
+            total: arquivos.length + pdfs.length });
+        }
+      } catch (e) {
+        setLocalError(`DANFEs interrompidos: ${e.message}. ${anexados} já foram anexados.`);
+      }
+    }
     setImpNf({ rodando: false, feitos: 0, total: 0 });
 
     // Declara os quatro destinos — "12 importadas" não distingue sucesso de
     // importação parcial.
-    const partes = [`${importadas} importada(s)`];
-    if (repetidas) partes.push(`${repetidas} já estavam`);
+    const partes = [];
+    if (arquivos.length) partes.push(`${importadas} nota(s) importada(s)`);
+    if (anexados) partes.push(`${anexados} DANFE anexado(s)`);
+    if (jaTinham) partes.push(`${jaTinham} DANFE já estavam`);
+    if (semNota.length) partes.push(`${semNota.length} PDF sem a nota correspondente`);
+    if (repetidas) partes.push(`${repetidas} nota(s) já estavam`);
     if (recusadas.length) partes.push(`${recusadas.length} recusada(s)`);
     if (falhas.length) partes.push(`${falhas.length} falhou/falharam`);
     setSuccessMsg(partes.join(' · '));
@@ -801,6 +837,43 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
   const [localError, setLocalError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [nfEstoque, setNfEstoque] = useState(null); // NF sendo lançada no estoque
+  const [espelhoId, setEspelhoId] = useState(null);
+
+  // DANFE oficial: pede a URL assinada e abre. ⚠️ Diferente do espelho — este
+  // é o documento que o emissor gerou, não um desenho nosso a partir do XML.
+  async function abrirDanfe(n) {
+    setEspelhoId(n.id); setLocalError('');
+    try {
+      const { logistica: apiLog } = await import('../../../api');
+      const r = await apiLog.notas.danfeUrl(n.id);
+      if (!window.open(r.url, '_blank')) {
+        setLocalError('O navegador bloqueou a janela. Libere pop-ups para este site.');
+      }
+    } catch (e) {
+      setLocalError(e?.message || 'Não foi possível abrir o DANFE.');
+    }
+    setEspelhoId(null);
+  }
+
+  // Busca a NF-e JÁ INTERPRETADA pelo backend (o mesmo `lerNfe` da importação —
+  // um 2º leitor aqui divergiria do que foi gravado) e abre a folha A4.
+  async function abrirEspelho(n) {
+    setEspelhoId(n.id); setLocalError('');
+    try {
+      const { nfe: buscarNfe } = await import('../../../api').then(m => ({ nfe: m.logistica.notas.nfe }));
+      const r = await buscarNfe(n.id);
+      const { imprimirNfe } = await import('../../../lib/imprimirNfe');
+      // ⚠️ Bloqueador de pop-up derruba isso em silêncio — sem avisar, a pessoa
+      // clica e nada acontece, e conclui que o botão quebrou.
+      if (!imprimirNfe(r.nota)) {
+        setLocalError('O navegador bloqueou a janela. Libere pop-ups para este site e tente de novo.');
+      }
+    } catch (e) {
+      setLocalError(e?.message || 'Não foi possível abrir a NF-e.');
+    }
+    setEspelhoId(null);
+  }
+
 
   useEffect(() => { checkArquivei(); }, []);
 
@@ -864,13 +937,13 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
           "Importar do Mercado Livre", que chamava uma rota inexistente e sempre
           deu 404 — e que, mesmo funcionando, traria PEDIDO e não nota fiscal.
           O XML sai do "Baixar NF-e disponíveis" do próprio Mercado Livre. */}
-      <input ref={xmlRef} type="file" accept=".xml,.zip" multiple style={{ display: 'none' }}
+      <input ref={xmlRef} type="file" accept=".xml,.pdf,.zip" multiple style={{ display: 'none' }}
         onChange={e => { importarXmls(e.target.files); e.target.value = ''; }} />
       <Button variant="outline" onClick={() => xmlRef.current?.click()} disabled={impNf.rodando}
-        title="Aceita .xml e .zip (o ZIP é aberto aqui no navegador)">
+        title="Aceita .xml, .pdf (DANFE) e .zip — o ZIP é aberto aqui no navegador">
         {impNf.rodando
           ? `⏳ Importando ${impNf.feitos}/${impNf.total}...`
-          : '📄 Importar NF-e (XML ou ZIP)'}
+          : '📄 Importar NF-e (XML, DANFE ou ZIP)'}
       </Button>
       {arquiveiStatus?.connected ? (
         <Button variant="outline" onClick={syncArquiveiNFs} disabled={syncing}>
@@ -937,12 +1010,32 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
           </td>
           <td style={styles.td}><Badge status={n.origem || 'manual'} map={NF_ORIGEM} /></td>
           <td style={styles.td}>
-            {n.storage_path ? (
+            {n.storage_path && !/^https?:\/\//i.test(n.storage_path) ? (
+              /* DANFE OFICIAL importado do ML. ⚠️ Guardamos o CAMINHO (não a URL
+                 pública), então a leitura pede uma URL assinada — funciona hoje
+                 e continua funcionando quando `log-arquivos` for fechado. */
+              <button onClick={() => abrirDanfe(n)} disabled={espelhoId === n.id}
+                title="Abre o DANFE oficial (PDF) desta nota"
+                style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer',
+                  color: C.primary, fontSize: 12, fontWeight: 600 }}>
+                {espelhoId === n.id ? '⏳ abrindo...' : '📕 DANFE'}
+              </button>
+            ) : n.storage_path ? (
               <span style={{ display: 'inline-flex', gap: 10, whiteSpace: 'nowrap' }}>
                 <a href={n.storage_path} target="_blank" rel="noopener noreferrer" style={{ color: C.primary }}>📄 Ver</a>
                 {/* ?download força o Content-Disposition attachment no Storage público do Supabase */}
                 <a href={`${n.storage_path}${n.storage_path.includes('?') ? '&' : '?'}download`} style={{ color: C.primary, fontSize: 12 }}>⬇ Baixar</a>
               </span>
+            ) : n.chave_acesso ? (
+              /* Nota importada por XML: monta o espelho A4 e abre a impressão
+                 (o navegador salva em PDF). ⚠️ NÃO é o DANFE oficial — a folha
+                 diz isso; o documento fiscal válido é o XML guardado. */
+              <button onClick={() => abrirEspelho(n)} disabled={espelhoId === n.id}
+                title="Abre o espelho da NF-e para imprimir ou salvar em PDF"
+                style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer',
+                  color: C.primary, fontSize: 12 }}>
+                {espelhoId === n.id ? '⏳ abrindo...' : '📄 Ver NF-e'}
+              </button>
             ) : n.origem === 'mercadolivre' && n.ml_order_id ? (
               <a href={`https://www.mercadolivre.com.br/purchases/${n.ml_order_id}`} target="_blank" rel="noopener noreferrer" style={{ color: C.primary, fontSize: 12 }}>🛒 Ver no ML</a>
             ) : '—'}
