@@ -641,8 +641,16 @@ function DuplicadosTab({ onVerFicha }) {
       )}
 
       <Dialog open={!!mergeDialog} onOpenChange={(o) => { if (!o) { setMergeDialog(null); setMergeCampos({}); setVizinhosSel([]); } }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
+        {/* ⚠️ PADRÃO DE MODAL ALTO (lei da casa · 25/06): o DialogContent vira
+            `flex flex-col` com teto de altura e SEM overflow próprio; quem rola é
+            o CORPO, com `flex-1 overflow-y-auto min-h-0`. O `min-h-0` não é
+            enfeite — sem ele o filho não encolhe abaixo do conteúdo e o modal
+            CORTA em vez de rolar. Aqui o corpo cresce de verdade: o
+            MergeFieldPicker rende uma linha por campo divergente e o VizinhosDoPar
+            lista N cadastros parecidos, então o rodapé com "Confirmar fusão" saía
+            da tela e a fusão ficava inalcançável. */}
+        <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Confirmar fusão</DialogTitle>
             <DialogDescription>
               Esta ação é <strong>permanente</strong> · só dá pra auditar pelo log, não desfazer pela tela.
@@ -652,7 +660,7 @@ function DuplicadosTab({ onVerFicha }) {
             const keep = mergeDialog.par.membro_a_id === mergeDialog.keep_id ? mergeDialog.par.membro_a : mergeDialog.par.membro_b;
             const drop = mergeDialog.par.membro_a_id === mergeDialog.keep_id ? mergeDialog.par.membro_b : mergeDialog.par.membro_a;
             return (
-              <div className="space-y-3 text-sm">
+              <div className="flex-1 overflow-y-auto min-h-0 space-y-3 text-sm pr-1">
                 <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 p-3">
                   <div className="text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300 mb-1">Manter este</div>
                   <div className="font-semibold text-foreground">{keep.nome}</div>
@@ -680,7 +688,7 @@ function DuplicadosTab({ onVerFicha }) {
               </div>
             );
           })()}
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button variant="outline" onClick={() => setMergeDialog(null)} disabled={mergeMut.isPending}>Cancelar</Button>
             <Button
               onClick={() => {
