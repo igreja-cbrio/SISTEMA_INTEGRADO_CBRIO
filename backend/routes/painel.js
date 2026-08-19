@@ -2171,6 +2171,51 @@ router.get('/monitoramento-okr', async (req, res) => {
         `(${sl} curtidas + ${sc} comentários) ÷ ${sv} views · ${vids.length} vídeos do ano`);
     } catch (e) { console.error('okr · eng_interacao:', e.message); }
 
+    // 6) Indicadores da planilha que a tela ainda exibia como "preciso de..." e
+    //    que o sistema JÁ apura. Vêm prontos de `vw_kpi_trajetoria_atual` — a
+    //    régua de cada um é a do KPI tático, não uma segunda conta aqui (duas
+    //    contas para o mesmo indicador divergem no dia em que uma mudar).
+    //
+    // ⚠️ `nps_culto_presencial` é a MÉDIA das áreas presenciais que têm nota, e
+    // o detalhe DIZ quais entraram. Hoje só o AMI aplicou a pesquisa: mostrar
+    // 9,7 como "NPS presencial da igreja" seria dar à nota de uma área o nome de
+    // todas. O online tem indicador próprio e segue sem nota até a área aplicar.
+    try {
+      const { data: kpisPlanilha } = await supabase
+        .from('vw_kpi_trajetoria_atual')
+        .select('kpi_id, indicador, area, ultimo_valor, ultimo_periodo')
+        .in('kpi_id', ['FIN-03', 'FIN-02']);
+      const acha = (id) => (kpisPlanilha || []).find(k => k.kpi_id === id);
+
+      const prazo = acha('FIN-03');   // % cumprimento de prazos de pagamento
+      if (prazo?.ultimo_valor != null) {
+        addM('pagamentos_prazo', num(prazo.ultimo_valor), '%',
+          `contas pagas até o vencimento · ${prazo.ultimo_periodo}`);
+      }
+      const reserva = acha('FIN-02');  // % reserva de caixa
+      if (reserva?.ultimo_valor != null) {
+        addM('fundo_reserva', num(reserva.ultimo_valor), '%',
+          `lançado no fundo ÷ 10% da arrecadação · ${reserva.ultimo_periodo}`);
+      }
+
+      const { data: npsKpis } = await supabase
+        .from('vw_kpi_trajetoria_atual')
+        .select('area, ultimo_valor, ultimo_periodo, indicador')
+        .like('indicador', 'NPS Culto%');
+      const comNota = (npsKpis || []).filter(k => k.ultimo_valor != null);
+      const presenciais = comNota.filter(k => ['ami', 'bridge', 'kids', 'sede'].includes(String(k.area || '').toLowerCase()));
+      if (presenciais.length) {
+        const media = presenciais.reduce((a, k) => a + Number(k.ultimo_valor), 0) / presenciais.length;
+        addM('nps_culto_presencial', Math.round(media * 100) / 100, '',
+          `média de ${presenciais.length} área(s) com pesquisa aplicada: ${presenciais.map(k => String(k.area).toUpperCase()).join(', ')}`);
+      }
+      const online = comNota.find(k => String(k.area || '').toLowerCase() === 'online');
+      if (online) {
+        addM('nps_culto_online', num(online.ultimo_valor), '',
+          `pesquisa do culto online · ${online.ultimo_periodo}`);
+      }
+    } catch (e) { console.error('okr · indicadores da planilha:', e.message); }
+
     const resp = { geradoEm: new Date().toISOString(), nsm, metricas };
     cacheSet(cacheKey, resp);
     res.json(resp);

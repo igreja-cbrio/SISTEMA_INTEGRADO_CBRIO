@@ -337,6 +337,22 @@ function TaticoRow({ tatico, metricas }) {
           {m && m.detalhe && (
             <div style={{ fontSize: 11, color: C.t2 }}>{m.detalhe}</div>
           )}
+          {/* Número da planilha × número do sistema. Aparece só quando o item
+              tem `comparaLive` — a planilha e o sistema usam bases diferentes
+              (3.000 × membros ativos) e a diretoria precisa ver os dois antes de
+              decidir qual régua vale. O número exibido no topo continua sendo o
+              da planilha; aqui não se troca nada, só se mostra. */}
+          {tatico.comparaLive && metricas?.[tatico.comparaLive] && (
+            <div style={{ display: 'flex', gap: 8, background: C.bgAlt || 'transparent', border: `1px dashed ${C.border}`, borderRadius: 8, padding: '9px 11px' }}>
+              <Info size={14} style={{ color: C.t3, flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 11, color: C.t2, lineHeight: 1.5 }}>
+                <strong style={{ color: C.text }}>O sistema calcula hoje: </strong>
+                {fmt(metricas[tatico.comparaLive].valor, tatico.casas ?? 1)}{metricas[tatico.comparaLive].unidade || ''}
+                {metricas[tatico.comparaLive].detalhe ? ` · ${metricas[tatico.comparaLive].detalhe}` : ''}
+                {' — o número acima é o da planilha, com base própria.'}
+              </span>
+            </div>
+          )}
           {!m && tatico.precisa && (
             <div style={{ display: 'flex', gap: 8, background: C.primaryBg, border: `1px solid ${C.primary}40`, borderRadius: 8, padding: '9px 11px' }}>
               <Info size={14} style={{ color: C.primaryDark, flexShrink: 0, marginTop: 1 }} />

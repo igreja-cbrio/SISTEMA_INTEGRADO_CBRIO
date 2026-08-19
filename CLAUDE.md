@@ -9568,6 +9568,75 @@ mexer no React.
   dado de culto vive em `cultos.*`, não em dados_brutos). Líderes:
   Kids=Mariane · AMI=Arthur Cecconi · Bridge=Lillian Xavier · Online=Renata.
 
+## ⚠️⚠️ OKR · o KR é ligado ao KPI QUE O MEDE, não ao que está por perto (2026-08-19 · migration `20260819120000`)
+
+Pedido do Matheus: *"ligue tudo que dá pra ligar"*. Dos 316 KRs ativos só 13
+mostravam resultado; os outros 303 são texto de meta sem número atrás.
+
+⚠️⚠️ **Registro de um erro meu, porque a régua sai dele.** Eu havia classificado
+128 KRs como "ligação direta — existe indicador com número no mesmo objetivo e na
+mesma área, é só apontar". Ao LISTAR os pares antes de gravar, a amostra mostrou o
+que aquele critério produz:
+
+| KR | KPI que "mesmo objetivo + mesma área" escolheu |
+|---|---|
+| 100% das solicitações com 1ª resposta em ≤48h | % de voluntários com check-in correto (100%) |
+| Total de inscritos no ano ≥ 200 *(pessoas)* | % crescimento de inscritos no ciclo (0) |
+| Total de voluntários ativos no ano ≥ 750 *(pessoas)* | % frequentes que são voluntários |
+
+**Ser o único indicador do objetivo naquela área não significa que ele meça aquele
+KR.** Ligar os 128 encheria o painel da diretoria de farol verde falso e de número
+com unidade trocada — pior que a lacuna que resolve.
+
+⇒ **Critério que fica, para a próxima leva:** (a) mesma GRANDEZA — nível com
+nível, crescimento com crescimento; (b) mesma UNIDADE — KR em "pessoas",
+"grupos" ou "datas" não recebe indicador percentual; (c) mesma JANELA — "vs 2025"
+não é medido por "vs a semana anterior". Ligados **31 KRs** em 7 pares curados um
+a um (13 → 44). O que ficou de fora está listado no fim da migration.
+
+⚠️ **Um par foi ligado e DESFEITO na conferência**: `% frequentes que são
+voluntários` é `soma_periodo` de `voluntarios_ativos` — devolve a CONTAGEM (207 na
+sede, 160 no kids) com nome de porcentagem. KR ligado nele mostraria "207%, verde".
+O KPI está mal configurado; consertar a fórmula é decisão de quem o definiu.
+
+### ⚠️ O FAROL do KR é a meta DO KR (`estrategia.js`)
+
+`enriquecerKrs` herdava `status` e `percentual_meta` do KPI — ou seja, comparava o
+valor com a meta do INDICADOR, não com a do KR. Medido depois de ligar: o KR
+"Valor total 2026 cresce ≥15%" com **26,6%** apurado aparecia **VERMELHO**, e
+"≥60% dos ativos com 3+ meses" com **56,9%** aparecia **VERDE**. Farol invertido é
+pior que farol ausente — a diretoria decide em cima dele. Agora, quando o KR tem
+`meta_valor`, o farol é calculado contra ela (verde / amarelo a 10% / vermelho),
+com o **sentido** vindo do KPI.
+⚠️ O vocabulário da coluna é `maior_melhor`/`menor_melhor` (164 e 4 ativos) —
+comparar com `'menor'` seco não casa nunca, e o KR de prazo ficaria verde
+justamente quando estourasse.
+
+### A tela do Pr. Juninho · 4 indicadores saíram de "preciso de…"
+
+`/monitoramento-okr` é a planilha "CBRio_cabeca_Juninho": 1 NSM, 9 OKRs, 27
+indicadores — **11 ao vivo, 8 com número CONGELADO no código, 8 sem fonte**. Três
+dos "sem fonte" já eram medidos pelo sistema e a tela não mostrava:
+`% de prazos de pagamento` (**71,3%**, FIN-03), `% de fundo de reserva` (**0,0%**,
+FIN-02 · o mecanismo funciona, o financeiro não lançou) e o **NPS de culto**
+(9,7 no AMI). Agora vêm de `vw_kpi_trajetoria_atual` pelo endpoint.
+
+- ⚠️ **`nps_culto_presencial` é a MÉDIA das áreas que aplicaram a pesquisa, e o
+  detalhe DIZ quais entraram.** Hoje só o AMI tem nota: publicar 9,7 como "NPS
+  presencial da igreja" daria à nota de uma área o nome de todas.
+- ⚠️⚠️ **Os 3 congelados que têm equivalente vivo NÃO foram trocados**
+  (frequência em grupos 48% × 55,8% · voluntários 29,8% × 34,4% · dizimistas
+  28,5% × **14,8%**). A divergência é de BASE — a planilha divide por **3.000**
+  (critério do Pr. Juninho), o sistema por **1.728** membros ativos — e nos
+  dizimistas o numerador também muda (o sistema exige 3 meses seguidos). Trocar
+  sem decidir a régua faria o indicador "piorar" por mudança de critério, não por
+  mudança de vida. Entrou o campo **`comparaLive`**: mostra "o sistema calcula
+  hoje: X" ao lado, sem substituir o número da planilha. **Decisão do Pr. Juninho.**
+- ⚠️ **Resíduo declarado:** "DS online · crescimento YoY" tem alvo de +20% ao ano
+  e exibe a CONTAGEM de decisões dos últimos 90 dias (66) — o painel compara 66
+  com 20 e pinta de verde. Não consertei: ou o alvo vira "≥ 20 decisões", ou o
+  número passa a ser o crescimento de verdade, e isso é de quem definiu o OKR.
+
 ## ⚠️⚠️ KPI · ZERO É DADO (2026-08-18 · migrations `20260818180000`, `190000`, `200000`)
 
 Pergunta do Matheus sobre o relatório semanal: *"diz que temos 45 KPIs manuais sem

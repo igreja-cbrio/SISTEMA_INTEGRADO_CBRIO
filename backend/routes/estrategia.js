@@ -132,23 +132,58 @@ async function enriquecerKrs(krs) {
   const arr = krs || [];
   const fontes = [...new Set(arr.map(k => k.fonte_kpi_id).filter(Boolean))];
   const byKpi = {};
+  const sentidoKpi = {};
   if (fontes.length) {
     const { data: vals } = await supabase
       .from('vw_kpi_trajetoria_atual')
       .select('kpi_id, ultimo_valor, ultimo_periodo, status, percentual_meta')
       .in('kpi_id', fontes);
     (vals || []).forEach(v => { byKpi[v.kpi_id] = v; });
+    // O SENTIDO da meta vive no KPI (menor-é-melhor existe: prazo, rotatividade).
+    // Consulta isolada: se a coluna faltar num deploy antigo, o KR cai no default
+    // "maior é melhor" em vez de derrubar a página inteira.
+    const { data: kpisMeta } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, sentido_meta')
+      .in('id', fontes);
+    (kpisMeta || []).forEach(k => { sentidoKpi[k.id] = k.sentido_meta; });
   }
   // 1) KRs com fonte direta (específicos) puxam do KPI que os mede
+  //
+  // ⚠️ O FAROL é do KR, não do KPI. O valor vem do indicador, mas quem decide
+  // verde/vermelho é a meta escrita NO KR — as duas divergem de verdade: o KR
+  // "Valor total 2026 cresce >=15%" com 26,6% apurado aparecia VERMELHO porque
+  // herdava o status do KPI (que tem meta própria), e o KR ">=60% dos ativos com
+  // 3+ meses" aparecia VERDE com 56,9%. Farol invertido é pior que farol ausente:
+  // a diretoria decide em cima dele.
   const enr = arr.map(k => {
     if (!k.fonte_kpi_id) return { ...k };
     const v = byKpi[k.fonte_kpi_id];
+    const valor = v?.ultimo_valor != null ? Number(v.ultimo_valor) : null;
+    const metaKr = k.meta_valor != null ? Number(k.meta_valor) : null;
+
+    let kr_status = v?.status ?? 'sem_dado';
+    let percentual_meta = v?.percentual_meta ?? null;
+
+    if (valor != null && metaKr != null && metaKr !== 0) {
+      // ⚠️ O vocabulário da coluna é `maior_melhor` / `menor_melhor` (conferido no
+      // banco: 164 e 4 KPIs ativos). Comparar com 'menor' seco não casaria nunca,
+      // e o KR de prazo/rotatividade ficaria verde justamente quando estourasse.
+      const menorEhMelhor = String(sentidoKpi[k.fonte_kpi_id] || '').toLowerCase().startsWith('menor');
+      const atingiu = menorEhMelhor ? valor <= metaKr : valor >= metaKr;
+      const quase = menorEhMelhor ? valor <= metaKr * 1.1 : valor >= metaKr * 0.9;
+      kr_status = atingiu ? 'verde' : (quase ? 'amarelo' : 'vermelho');
+      percentual_meta = menorEhMelhor
+        ? Math.round((metaKr / valor) * 1000) / 10
+        : Math.round((valor / metaKr) * 1000) / 10;
+    }
+
     return {
       ...k,
       realizado: v?.ultimo_valor ?? null,
       realizado_periodo: v?.ultimo_periodo ?? null,
-      kr_status: v?.status ?? 'sem_dado',
-      percentual_meta: v?.percentual_meta ?? null,
+      kr_status,
+      percentual_meta,
     };
   });
   // 2) KR geral (sem fonte) agrega dos filhos medidos · avg p/ %, soma caso contrário

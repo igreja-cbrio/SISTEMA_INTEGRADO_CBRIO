@@ -12,6 +12,12 @@
 //   fixo      → número oficial estático (Pr. Juninho · módulo-fim, não sai daqui)
 //   alvoNum   → alvo numérico p/ colorir · cmp: gte | lte | range (+alvoMax)
 //   precisa   → o que falta pra puxar automático (mostra ao expandir)
+//   comparaLive → chave da métrica viva EQUIVALENTE a um número `fixo`. Mostra
+//                 "o sistema calcula X" ao lado do número da planilha, SEM
+//                 trocá-lo. Existe porque os dois divergem por BASE (a planilha
+//                 divide por 3.000, o sistema por membros ativos) e por
+//                 definição — trocar sem decidir a régua faria o indicador
+//                 "piorar" por mudança de critério, não por mudança de vida.
 // ============================================================================
 
 export const PRIMARY = '#00B39D';
@@ -77,9 +83,9 @@ export const BLOCOS = [
         media: true, alvoNum: 50, cmp: 'gte',
         taticos: [
           // Valores estáticos (Pr. Juninho) · contagem real de cada área ÷ base definida pelo Juninho (módulo-fim, não sai dado daqui).
-          { ind: '% frequência em Grupos', alvo: '60%', fixo: { valor: 48, unidade: '%', detalhe: '1.431 em grupos ativos · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
-          { ind: '% Voluntários ativos', alvo: '60%', fixo: { valor: 29.8, unidade: '%', detalhe: '893 voluntários cadastrados · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
-          { ind: '% dizimistas regulares', alvo: '60%', fixo: { valor: 28.5, unidade: '%', detalhe: '856 dizimistas · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
+          { ind: '% frequência em Grupos', alvo: '60%', fixo: { valor: 48, unidade: '%', detalhe: '1.431 em grupos ativos · base 3.000 membros.' }, comparaLive: 'freq_grupos', alvoNum: 60, cmp: 'gte', casas: 1 },
+          { ind: '% Voluntários ativos', alvo: '60%', fixo: { valor: 29.8, unidade: '%', detalhe: '893 voluntários cadastrados · base 3.000 membros.' }, comparaLive: 'volunt_ativos', alvoNum: 60, cmp: 'gte', casas: 1 },
+          { ind: '% dizimistas regulares', alvo: '60%', fixo: { valor: 28.5, unidade: '%', detalhe: '856 dizimistas · base 3.000 membros.' }, comparaLive: 'dizimistas', alvoNum: 60, cmp: 'gte', casas: 1 },
         ],
       },
       {
@@ -109,7 +115,7 @@ export const BLOCOS = [
           // DS online (views do Dia Seguinte) · crescimento YoY real · verde ≥ +20%.
           { ind: 'DS online · crescimento YoY', alvo: '+20% YoY', live: 'ds_online', alvoNum: 20, cmp: 'gte', casas: 1 },
           { ind: '% de decisões com follow up', alvo: '≥50% com follow up realizado', fixo: { valor: 17.5, unidade: '%', detalhe: '≈317 de 1.821 decisões online com follow-up · média anual.' }, alvoNum: 50, cmp: 'gte', casas: 1 },
-          { ind: 'NPS de culto online', alvo: 'Nota ≥ 9', memoria: 'Pesquisa com os frequentadores Online, resultado em planilha — trimestral', precisa: 'as notas da pesquisa de NPS online — posso ligar no módulo NPS ou você lança em /dados-brutos (tipo nps_culto)' },
+          { ind: 'NPS de culto online', alvo: 'Nota ≥ 9', memoria: 'Nota lançada por área no painel do culto (fonte nps_culto · área Online)', live: 'nps_culto_online', alvoNum: 9, cmp: 'gte', casas: 1, precisa: 'a área Online aplicar a pesquisa — o caminho já está ligado, falta a primeira nota' },
         ],
       },
       {
@@ -118,7 +124,7 @@ export const BLOCOS = [
         objetivo: 'Proporcionar uma experiência presencial fluida, acolhedora e tecnicamente excelente, favorecendo o engajamento e a permanência das pessoas no culto.',
         envolvida: 'Produção / Adoração / Marketing / Online',
         taticos: [
-          { ind: 'NPS de culto presencial', alvo: 'Nota ≥ 9', memoria: 'NPS mensal via QR Code ao final do culto, dados em planilha', precisa: 'as notas do NPS via QR no fim do culto (mesma fonte nps_culto por área)' },
+          { ind: 'NPS de culto presencial', alvo: 'Nota ≥ 9', memoria: 'Média das áreas presenciais que já aplicaram a pesquisa · o detalhe diz quais entraram', live: 'nps_culto_presencial', alvoNum: 9, cmp: 'gte', casas: 1, precisa: 'as áreas que ainda não aplicaram a pesquisa (hoje só o AMI tem nota)' },
           { ind: '% de assentos ocupados', alvo: '30% a 80% (base 1050)', memoria: 'Ação em conjunto com a Integração', live: 'assentos', alvoNum: 30, alvoMax: 80, cmp: 'range' },
           // Fonte viva = aba Produção de Culto (culto_producao.duracao_minutos vs
           // meta de 60 min). Os cultos passados (jan–jun/2026) entraram com o tempo
@@ -151,8 +157,8 @@ export const BLOCOS = [
         envolvida: 'Gestão estratégica / Financeiro',
         taticos: [
           { ind: '% de despesas dentro do orçamento', alvo: '80%', memoria: 'Acompanhamento do planejado vs executado no LouvaDeus e no Power BI', precisa: 'o planejado vs realizado (exportação do LouvaDeus / Power BI ou integração)' },
-          { ind: '% fundo reserva', alvo: '100% dos 10%', memoria: 'Acompanhamento por meio de relatórios financeiros', precisa: 'o saldo do fundo de reserva vs a meta de 10% (relatório financeiro mensal)' },
-          { ind: '% cumprimento de prazos de pagamento internos e externos', alvo: '90%', memoria: 'Consolidação e aprimoramento do sistema de Contas a Pagar', precisa: 'as datas de vencimento vs pagamento (módulo Contas a Pagar do Financeiro)' },
+          { ind: '% fundo reserva', alvo: '100% dos 10%', memoria: 'Lançado no centro de custo FUNDO DE RESERVA ÷ 10% da arrecadação do mês', live: 'fundo_reserva', alvoNum: 100, cmp: 'gte', casas: 1 },
+          { ind: '% cumprimento de prazos de pagamento internos e externos', alvo: '90%', memoria: 'Contas pagas até o vencimento ÷ contas pagas no mês · módulo Contas a Pagar', live: 'pagamentos_prazo', alvoNum: 90, cmp: 'gte', casas: 1 },
         ],
       },
       {
