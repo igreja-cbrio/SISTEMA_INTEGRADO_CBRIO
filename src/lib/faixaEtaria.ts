@@ -37,14 +37,17 @@ export const FAIXA_LABEL_CURTO: Record<Faixa, string> = {
  * apareceria um dia mais velho, e no limiar da faixa isso muda a
  * classificação.
  */
-export function idadeEmAnos(nascimento?: string | Date | null): number | null {
+export function idadeEmAnos(nascimento?: string | Date | null, agora?: Date): number | null {
   if (!nascimento) return null;
   const d = nascimento instanceof Date
     ? nascimento
     : new Date(`${String(nascimento).slice(0, 10)}T00:00:00`);
   if (Number.isNaN(d.getTime())) return null;
 
-  const hoje = new Date();
+  // `agora` é opcional e existe para TESTE: régua de idade que lê o relógio da
+  // máquina passa hoje e falha no aniversário seguinte. Em produção ninguém
+  // passa o parâmetro e o comportamento é o de sempre.
+  const hoje = agora instanceof Date && !Number.isNaN(agora.getTime()) ? agora : new Date();
   let anos = hoje.getFullYear() - d.getFullYear();
   const m = hoje.getMonth() - d.getMonth();
   if (m < 0 || (m === 0 && hoje.getDate() < d.getDate())) anos -= 1;

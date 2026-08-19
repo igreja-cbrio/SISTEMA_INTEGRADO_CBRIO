@@ -9568,6 +9568,39 @@ mexer no React.
   dado de culto vive em `cultos.*`, não em dados_brutos). Líderes:
   Kids=Mariane · AMI=Arthur Cecconi · Bridge=Lillian Xavier · Online=Renata.
 
+## ⚠️ Batismo · categoria etária do batizando · 4 faixas (2026-08-19 · migration `20260819160000`)
+
+Faixas definidas pelo Matheus: **criança < 13 · adolescente 13–17 · jovem 18–25
+· adulto 26+** ("12 anos, 11 meses e 29 dias" é 12 — anos completos resolvem sem
+conta de dias). A tag aparece na lista e na ficha, e o filtro por categoria ficou
+com as 4.
+
+⚠️ **O que existia divergia nas duas pontas**: não havia `jovem`, e os cortes
+eram `< 12` criança · `12 a 18` adolescente · `> 18` adulto — quem tinha 12 anos
+era adolescente e quem tinha 18 também. Trigger, CHECK e as 625 linhas foram
+recalculados.
+
+- **`src/lib/categoriaBatismo.ts`** é a régua (espelho de
+  `tg_batismo_categoria_etaria`) · `src/test/categoriaBatismo.test.ts` (12 casos,
+  **no gate**) trava os limiares exatos, com `agora` INJETADO.
+- ⚠️⚠️ **NÃO é a `faixaEtaria` geral** (`src/lib/faixaEtaria.ts`), que usa jovem
+  18–30 / adulto 31+ e é lida pela **Membresia**, pelo **painel de área** e pela
+  **lista impressa de inscritos**. São réguas diferentes de propósito; unificar
+  muda números que outras telas publicam — decisão da liderança. Ambas
+  documentam a outra no cabeçalho.
+- ⚠️ **A tela deriva da DATA, não da coluna.** `categoria_etaria` é snapshot do
+  último insert/update: quem era jovem aos 25 continuaria jovem aos 26 até
+  alguém editar. A coluna segue preenchida (exports, app do staff) e só decide
+  quando não há data de nascimento.
+- ⚠️ **`eh_crianca = true` vence a data** — é declaração de quem cadastrou e o
+  fluxo do Kids depende dela. Caso real na base: Enzo, 13 anos, marcado como
+  criança.
+- `idadeEmAnos` (do `faixaEtaria`) ganhou o parâmetro opcional `agora` só para
+  teste; produção não passa nada e o comportamento é o de sempre.
+- ⚠️ **Achado de dado (não corrigido)**: uma inscrição com nascimento
+  `1085-04-20` (941 anos). A régua devolve `null` para idade absurda em vez de
+  classificar como adulto, mas o cadastro segue errado.
+
 ## ⚠️⚠️ OKR · o KR é ligado ao KPI QUE O MEDE, não ao que está por perto (2026-08-19 · migration `20260819120000`)
 
 Pedido do Matheus: *"ligue tudo que dá pra ligar"*. Dos 316 KRs ativos só 13
