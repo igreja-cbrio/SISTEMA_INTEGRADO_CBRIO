@@ -9,19 +9,20 @@
 // 20260819160000). Mudou lá, muda aqui — duas réguas fariam a tag da tela
 // discordar do que está gravado na tabela e do que o app do staff lê.
 //
-// ⚠️ NÃO é a `faixaEtaria` geral do sistema (`./faixaEtaria`), que usa
-// jovem 18–30 e adulto 31+ e é lida pela Membresia, pelo painel de área e pela
-// lista impressa de inscritos. São réguas DIFERENTES de propósito: esta é a do
-// batismo. Unificar as duas muda números que outras telas publicam — decisão da
-// liderança, não efeito colateral.
+// ⚠️ Desde 19/08/2026 estas SÃO as faixas da igreja inteira (decisão do
+// Matheus): este arquivo NÃO tem régua própria — ele delega a
+// `faixaPorIdade` de `./faixaEtaria`, que é o espelho de `fn_faixa_etaria`.
+// O que sobra aqui é só o que é específico do batismo: a ordem de precedência
+// dos sinais (eh_crianca > data > coluna gravada), os rótulos com o intervalo e
+// as cores da tag.
 //
 // ⚠️ A idade muda com o tempo, então a categoria é derivada da DATA a cada
 // leitura. A coluna `categoria_etaria` do banco é snapshot do último
 // insert/update e só entra quando não há data de nascimento.
 
-import { idadeEmAnos } from './faixaEtaria';
+import { idadeEmAnos, faixaPorIdade, type Faixa } from './faixaEtaria';
 
-export type CategoriaEtaria = 'crianca' | 'adolescente' | 'jovem' | 'adulto';
+export type CategoriaEtaria = Faixa;
 
 export const CATEGORIAS: CategoriaEtaria[] = ['crianca', 'adolescente', 'jovem', 'adulto'];
 
@@ -47,14 +48,8 @@ export const CATEGORIA_COR: Record<CategoriaEtaria, string> = {
   adulto: '#0ea5e9',       // azul
 };
 
-/** A régua, sobre a idade em anos completos. */
-export function categoriaPorIdade(idade: number | null | undefined): CategoriaEtaria | null {
-  if (idade == null || !Number.isFinite(idade) || idade < 0) return null;
-  if (idade < 13) return 'crianca';
-  if (idade < 18) return 'adolescente';
-  if (idade < 26) return 'jovem';
-  return 'adulto';
-}
+/** Régua única do sistema — delega, não duplica. */
+export const categoriaPorIdade = faixaPorIdade;
 
 type Batizando = {
   data_nascimento?: string | null;

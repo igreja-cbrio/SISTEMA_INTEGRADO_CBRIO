@@ -9583,11 +9583,9 @@ recalculados.
 - **`src/lib/categoriaBatismo.ts`** é a régua (espelho de
   `tg_batismo_categoria_etaria`) · `src/test/categoriaBatismo.test.ts` (12 casos,
   **no gate**) trava os limiares exatos, com `agora` INJETADO.
-- ⚠️⚠️ **NÃO é a `faixaEtaria` geral** (`src/lib/faixaEtaria.ts`), que usa jovem
-  18–30 / adulto 31+ e é lida pela **Membresia**, pelo **painel de área** e pela
-  **lista impressa de inscritos**. São réguas diferentes de propósito; unificar
-  muda números que outras telas publicam — decisão da liderança. Ambas
-  documentam a outra no cabeçalho.
+- ⚠️⚠️ **A DECISÃO VEIO NO MESMO DIA E É A DA SEÇÃO SEGUINTE**: *"essa régua deve
+  ser para a igreja toda"*. Estas 4 faixas passaram a valer em todo lugar, e
+  `categoriaBatismo.ts` **delega** a `faixaPorIdade` em vez de ter cópia própria.
 - ⚠️ **A tela deriva da DATA, não da coluna.** `categoria_etaria` é snapshot do
   último insert/update: quem era jovem aos 25 continuaria jovem aos 26 até
   alguém editar. A coluna segue preenchida (exports, app do staff) e só decide
@@ -9600,6 +9598,72 @@ recalculados.
 - ⚠️ **Achado de dado (não corrigido)**: uma inscrição com nascimento
   `1085-04-20` (941 anos). A régua devolve `null` para idade absurda em vez de
   classificar como adulto, mas o cadastro segue errado.
+
+## ⚠️⚠️ LEI · a faixa etária é UMA SÓ na igreja inteira (2026-08-19 · migration `20260819180000`)
+
+Decisão do Matheus, minutos depois de definir as faixas do batismo: **"essa
+régua deve ser para a igreja toda"**. Até aqui havia DUAS, e elas divergiam
+justamente no corte que mais aparece:
+
+| | criança | adolescente | jovem | adulto |
+|---|---|---|---|---|
+| `fn_faixa_etaria` (Membresia, painel de área, lista impressa) | <13 | 13–17 | **18–30** | **31+** |
+| batismo (`tg_batismo_categoria_etaria` · 20260819160000) | <13 | 13–17 | **18–25** | **26+** |
+
+Agora vale a segunda em todo lugar. ⚠️⚠️ **ISTO MUDA NÚMERO JÁ PUBLICADO:
+medido em 19/08, **154 membros de 26 a 30 anos** deixam de contar como "jovem"
+e passam a "adulto"** (de 1.658 membros com data de nascimento). Quem comparar
+com um print antigo vai ver a diferença — **é a régua nova, não erro de dado**.
+
+⚠️ `fn_faixa_etaria` é `STABLE` e derivada da data: **não há valor gravado para
+recalcular**. Toda tela responde com as faixas novas na próxima leitura.
+
+### Os espelhos, e por que eles precisam andar juntos
+
+`faixaPorIdade(idade)` em **`src/lib/faixaEtaria.ts`** é a régua; todo o resto
+delega ou espelha. Mudou num, muda em TODOS:
+
+| onde | o que é |
+|---|---|
+| `fn_faixa_etaria` (SQL) | a régua no banco · `COMMENT` lista os espelhos |
+| `src/lib/faixaEtaria.ts` | `faixaPorIdade` + rótulos ("Jovem (18–25)" / "Adulto (26+)") |
+| `src/lib/categoriaBatismo.ts` | **delega** · só a precedência do batismo (`eh_crianca` > data > coluna) e as cores |
+| `backend/utils/membrosPagina.js` | janelas de data do filtro do `GET /membros` **paginado** |
+| `backend/routes/membresia.js` | janelas do `GET /membros` completo |
+| `backend/routes/painelArea.js` | espelho JS da faixa na aba Pessoas do AMI/Bridge |
+| `src/pages/ministerial/Membresia.jsx` | rótulos do seletor **e a régua inline do gráfico** |
+
+⚠️⚠️ **`membrosPagina.js` e a régua inline do gráfico da Membresia quase
+passaram batido** — o `grep` por `faixaEtaria` não os acha (um faz a conta em
+janela de DATA, o outro é um ternário solto). Ao mexer em régua de idade,
+procurar também por `31`, `f(31)`, `<= 30` e `idade <=`.
+
+⚠️ **O teste de continuidade NÃO pega mudança de corte**: `membrosPagina.test.ts`
+só exigia que o topo de uma faixa fosse o piso da seguinte — o que sobrevive a
+QUALQUER corte, e foi por isso que o 31 antigo ficou anos invisível. Entrou uma
+asserção do **corte absoluto**.
+
+### ⚠️ A janela de alcance do AMI/Bridge NÃO encolheu
+
+`janelaJovemAdolescente()` (`painelArea.js`) continua indo até os **30 anos**.
+Ela não é faixa etária — é **quem a aba lista como "potencial"** mesmo sem ter
+declarado que frequenta. A régua nova mudou o RÓTULO da pessoa, não a quem o
+ministério quer alcançar; estreitar tiraria as ~154 pessoas de 26 a 30 da lista
+**sem ninguém ter decidido isso**. ⏳ Encolher é decisão do ministério.
+
+### Renata Rabello · nascimento corrigido
+
+`batismo_inscricoes` id `6786bef3` tinha `1085-04-20` (941 anos · o "achado de
+dado" da seção acima). Corrigido para **`1985-04-20`** — dia e mês preservados,
+só o século — com o motivo registrado em `observacoes`. Hoje: 41 anos, adulto.
+⚠️ **O `mem_membros` dela continua com nascimento NULO**: a correção foi na
+inscrição, não propagada — propagar é decisão de cadastro.
+
+- Testes no gate: `src/test/faixaEtaria.test.ts` (15) e
+  `src/test/categoriaBatismo.test.ts` (12). **5 mutantes RODADOS e mortos**:
+  voltar jovem até 30 → 4 vermelhos · limiar do adolescente 13→12 → 3 · idade
+  impossível virando criança → 1 · batismo com régua própria de novo → 2 ·
+  janela do paginado voltando a 31 → 1.
 
 ## ⚠️⚠️ OKR · o KR é ligado ao KPI QUE O MEDE, não ao que está por perto (2026-08-19 · migration `20260819120000`)
 
