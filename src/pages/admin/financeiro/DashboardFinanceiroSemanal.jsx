@@ -1198,7 +1198,7 @@ function VariacaoDecendio({ cmp }) {
   if (!cmp) return null;
   if (cmp.percentual === null || cmp.percentual === undefined) {
     return (
-      <span className="text-[10px] text-muted-foreground" title={MOTIVO_TXT[cmp.motivo_sem_percentual] || ''}>
+      <span className="text-sm text-muted-foreground" title={MOTIVO_TXT[cmp.motivo_sem_percentual] || ''}>
         {cmp.situacao === 'em_andamento' ? 'em andamento' : '—'}
         {cmp.base_mes ? ` · ${monthShort(cmp.base_mes)}: ${fmtKbrl(cmp.base_receita)}` : ''}
       </span>
@@ -1207,7 +1207,7 @@ function VariacaoDecendio({ cmp }) {
   const sobe = cmp.percentual >= 0;
   return (
     <span
-      className="text-[10px] tabular-nums font-medium"
+      className="text-sm tabular-nums font-semibold"
       style={{ color: sobe ? COL.green : COL.red }}
       title={`${monthShort(cmp.base_mes)}: ${fmtMoney(cmp.base_receita)}`}
     >
@@ -1233,19 +1233,26 @@ function GradeDecendios({ comparativo, mesAtual }) {
   const LABEL = { 1: '1-10', 2: '11-20', 3: '21-fim' };
 
   return (
-    <div className="mt-5 pt-4 border-t border-border">
-      <p className="text-xs font-medium mb-2">Mesmo decêndio, mês a mês</p>
+    <div className="mt-6 pt-5 border-t border-border">
+      <h4 className="text-base font-semibold mb-3">Mesmo decêndio, mês a mês</h4>
       {/* ⚠️ overflow-x no container: em tela estreita a tabela rola dentro de
           si mesma, sem empurrar a página inteira pro lado. */}
       <div className="overflow-x-auto -mx-1 px-1">
-        <table className="w-full text-[11px] border-collapse">
+        {/* ⚠️ A escala segue a tabela "Cultos da semana" deste mesmo dashboard
+            (corpo text-sm, cabeçalho text-xs) e sobe um degrau: este bloco vive
+            no Dashboard SEMANAL, que roda em modo apresentação e é lido de
+            longe. A primeira versão saiu em text-[11px] com percentual em
+            text-[9px] — some na projeção. */}
+        <table className="w-full text-base border-collapse">
           <thead>
             <tr className="text-muted-foreground">
-              <th className="text-left font-medium pb-1.5 pr-2 whitespace-nowrap">Dias</th>
+              <th className="text-left text-xs uppercase tracking-wider font-medium pb-2 pr-3 whitespace-nowrap">Dias</th>
               {meses.map(m => (
                 <th
                   key={m.mes}
-                  className={`text-right font-medium pb-1.5 px-1.5 whitespace-nowrap ${m.mes === mesAtual ? 'text-foreground' : ''}`}
+                  className={`text-right text-xs uppercase tracking-wider pb-2 px-3 whitespace-nowrap ${
+                    m.mes === mesAtual ? 'text-foreground font-bold' : 'font-medium'
+                  }`}
                 >
                   {monthShort(m.mes)}
                 </th>
@@ -1254,21 +1261,28 @@ function GradeDecendios({ comparativo, mesAtual }) {
           </thead>
           <tbody>
             {[1, 2, 3].map(d => (
-              <tr key={d} className="border-t border-border/50">
-                <td className="py-1.5 pr-2 font-medium whitespace-nowrap">{LABEL[d]}</td>
+              <tr key={d} className="border-t border-border/60">
+                <td className="py-3 pr-3 font-semibold whitespace-nowrap">{LABEL[d]}</td>
                 {meses.map(m => {
                   const c = m.decendios?.find(x => x && x.decendio === d);
                   const valor = Number(c?.receita || 0);
                   const pct = c?.percentual;
+                  const ehAtual = m.mes === mesAtual;
                   return (
-                    <td key={m.mes} className="py-1.5 px-1.5 text-right tabular-nums whitespace-nowrap">
-                      <div>{fmtKbrl(valor)}</div>
+                    <td
+                      key={m.mes}
+                      className={`py-3 px-3 text-right tabular-nums whitespace-nowrap ${ehAtual ? 'bg-muted/40 rounded' : ''}`}
+                    >
+                      <div className={ehAtual ? 'font-bold' : 'font-medium'}>{fmtKbrl(valor)}</div>
                       {pct === null || pct === undefined ? (
-                        <div className="text-[9px] text-muted-foreground">
+                        <div className="text-sm text-muted-foreground mt-0.5">
                           {c?.situacao === 'em_andamento' ? 'parcial' : c?.situacao === 'futuro' ? '—' : ''}
                         </div>
                       ) : (
-                        <div className="text-[9px]" style={{ color: pct >= 0 ? COL.green : COL.red }}>
+                        <div
+                          className="text-sm font-semibold mt-0.5"
+                          style={{ color: pct >= 0 ? COL.green : COL.red }}
+                        >
                           {fmtPct(pct)}
                         </div>
                       )}
@@ -1280,7 +1294,7 @@ function GradeDecendios({ comparativo, mesAtual }) {
           </tbody>
         </table>
       </div>
-      <p className="text-[10px] text-muted-foreground mt-1.5">
+      <p className="text-xs text-muted-foreground mt-3">
         Cada percentual compara com o mesmo decêndio do mês anterior. Últimos {meses.length} meses ·
         decêndio em curso aparece como <span className="font-medium">parcial</span>, sem percentual.
       </p>
@@ -1324,7 +1338,7 @@ function DecendioCard({ dados, mes, comparativo }) {
                   />
                 </div>
                 <div className="flex items-center justify-between gap-2 mt-0.5">
-                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                  <span className="text-sm text-muted-foreground tabular-nums">
                     {pct.toFixed(1)}% do mês
                   </span>
                   <VariacaoDecendio cmp={cmpDe(d)} />
