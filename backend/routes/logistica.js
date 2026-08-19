@@ -72,11 +72,11 @@ router.get('/dashboard', async (req, res) => {
       const mlConfig = await getMLConfig();
       mlDebug.hasConfig = !!mlConfig;
       mlDebug.hasToken = !!mlConfig?.access_token;
-      mlDebug.hasUserIdSaved = !!mlConfig?.ml_user_id;
+      mlDebug.hasUserIdSaved = !!mlConfig?.user_id;
 
       if (mlConfig?.access_token) {
         // Resolver user_id (usa o salvo ou busca via /users/me — mesma lógica de ml.js)
-        let userId = mlConfig.ml_user_id;
+        let userId = mlConfig.user_id;
         if (!userId) {
           mlDebug.stage = 'ensure_user_id';
           try {

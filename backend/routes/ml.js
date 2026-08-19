@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { getMLConfig, mlFetch, ensureUserId, searchOrders } = require('../services/mercadoLivreService');
+const { separarNovos } = require('../utils/mlNotaFiscal');
 
 // ── Cache em memória para shipments e orders ──────────────
 const CACHE_TTL = 300_000; // 5 minutos em ms
@@ -42,7 +43,7 @@ router.post('/config', async (req, res) => {
 
     if (existing) {
       await supabase.from('ml_config').update({
-        client_id, client_secret, access_token: null, refresh_token: null, token_expires_at: null,
+        client_id, client_secret, access_token: null, refresh_token: null, token_expires: null,
       }).eq('id', existing.id);
     } else {
       await supabase.from('ml_config').insert({ client_id, client_secret });
@@ -86,14 +87,29 @@ router.post('/auth-callback', async (req, res) => {
     }
 
     const tokens = await tokenRes.json();
+    // ⚠️⚠️ A GRAVAÇÃO DECIDE A RESPOSTA — nunca `success: true` com o token
+    // perdido. Até 19/08/2026 este bloco escrevia nas colunas `token_expires_at`
+    // e `ml_user_id`, que NÃO EXISTEM em `ml_config` (as reais são
+    // `token_expires` e `user_id`): o PostgREST recusava o UPDATE inteiro (42703),
+    // o erro ia pro console e a rota respondia sucesso. Resultado: reconectar o
+    // Mercado Livre pela tela dizia "conectado" e não gravava nada — a conexão
+    // ficou morta de 08/04 a 19/08 sem ninguém conseguir consertar clicando.
+    // ⚠️ E o refresh token do ML é de USO ÚNICO: cada tentativa queimava o token
+    // guardado sem salvar o novo, então o estrago era cumulativo.
     const { error: dbErr } = await supabase.from('ml_config').update({
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token,
-      token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-      ml_user_id: tokens.user_id?.toString() || null,
+      token_expires: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+      user_id: tokens.user_id?.toString() || null,
+      connected: true,
     }).eq('id', config.id);
 
-    if (dbErr) console.error('[ML] Erro ao salvar auth tokens:', dbErr.message);
+    if (dbErr) {
+      console.error('[ML] Erro ao salvar auth tokens:', dbErr.message);
+      return res.status(500).json({
+        error: `Autorizamos no Mercado Livre, mas não foi possível salvar o token: ${dbErr.message}. Reconecte — o código de autorização já foi consumido.`,
+      });
+    }
 
     res.json({ success: true });
   } catch (e) {
@@ -107,9 +123,16 @@ router.post('/disconnect', async (req, res) => {
   try {
     const config = await getMLConfig();
     if (config) {
-      await supabase.from('ml_config').update({
-        access_token: null, refresh_token: null, token_expires_at: null, ml_user_id: null,
+      // Mesma lei do callback: se não limpou, não desconectou — dizer "success"
+      // deixaria o token vivo com a tela afirmando que saiu.
+      const { error: dbErr } = await supabase.from('ml_config').update({
+        access_token: null, refresh_token: null, token_expires: null,
+        user_id: null, connected: false,
       }).eq('id', config.id);
+      if (dbErr) {
+        console.error('[ML] Erro ao desconectar:', dbErr.message);
+        return res.status(500).json({ error: `Não foi possível desconectar: ${dbErr.message}` });
+      }
     }
     shipmentsCache = { data: null, timestamp: 0 };
     ordersCache.clear();
@@ -117,6 +140,71 @@ router.post('/disconnect', async (req, res) => {
   } catch (e) {
     console.error('[ML] Disconnect error:', e.message);
     res.status(500).json({ error: 'Erro ao desconectar ML' });
+  }
+});
+
+// ── SYNC NOTAS · importa os PEDIDOS do ML como linhas de log_notas_fiscais ──
+//
+// ⚠️⚠️ Esta rota NUNCA EXISTIU no backend (conferido com `git log -S` em
+// 19/08/2026): o botão "Importar do Mercado Livre" chamava `POST /ml/sync-notas`
+// desde sempre e recebia 404 ("Endpoint de API não encontrado"). As 50 linhas de
+// 02/04/2026 entraram por outro caminho.
+//
+// ⚠️ O que se importa é PEDIDO, não documento fiscal — ver a lei em
+// utils/mlNotaFiscal.js. A NF-e com chave e XML vem do Arquivei.
+router.post('/sync-notas', async (req, res) => {
+  try {
+    const config = await getMLConfig();
+    if (!config?.access_token) {
+      return res.status(400).json({ error: 'Mercado Livre não está conectado. Conecte na aba Compras ML.' });
+    }
+
+    const { userId } = await ensureUserId(config);
+
+    // Pagina até o teto pra não travar a função serverless num acervo grande.
+    const PAGINA = 50;
+    const TETO = 300;
+    const pedidos = [];
+    for (let offset = 0; offset < TETO; offset += PAGINA) {
+      const data = await searchOrders(config, userId, { offset, limit: PAGINA });
+      const lote = data?.results || [];
+      pedidos.push(...lote);
+      if (lote.length < PAGINA) break;
+    }
+
+    if (!pedidos.length) {
+      return res.json({ imported: 0, repetidos: 0, ignorados: 0, lidos: 0,
+        aviso: 'O Mercado Livre não devolveu nenhum pedido para esta conta.' });
+    }
+
+    // ⚠️ Idempotência é obrigação daqui: a tabela não tem UNIQUE em ml_order_id.
+    const ids = pedidos.map((o) => String(o?.id)).filter(Boolean);
+    const existentes = new Set();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await supabase.from('log_notas_fiscais')
+        .select('ml_order_id').in('ml_order_id', ids.slice(i, i + 200));
+      // ⚠️ Falha de LEITURA não pode virar "não existe" — reimportaria tudo.
+      if (error) throw new Error(`Não foi possível conferir o que já está importado: ${error.message}`);
+      for (const r of data || []) if (r.ml_order_id) existentes.add(String(r.ml_order_id));
+    }
+
+    const { novas, repetidos, ignorados } = separarNovos(pedidos, existentes, {
+      createdBy: req.user?.userId || null,
+    });
+
+    let imported = 0;
+    for (let i = 0; i < novas.length; i += 100) {
+      const bloco = novas.slice(i, i + 100);
+      const { error } = await supabase.from('log_notas_fiscais').insert(bloco);
+      if (error) throw error;
+      imported += bloco.length; // grava o efeito DURANTE (lei de 04/08)
+    }
+
+    res.json({ imported, repetidos, ignorados, lidos: pedidos.length,
+      truncado: pedidos.length >= TETO });
+  } catch (e) {
+    console.error('[ML] sync-notas:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao importar do Mercado Livre' });
   }
 });
 
@@ -138,13 +226,13 @@ router.get('/orders', async (req, res) => {
     }
 
     // Resolve user_id automatically
-    let userId = config.ml_user_id;
+    let userId = config.user_id;
     if (!userId) {
       try {
         const resolved = await ensureUserId(config);
         userId = resolved.userId;
       } catch (e) {
-        console.error('[ML] Não foi possível resolver ml_user_id:', e.message);
+        console.error('[ML] Não foi possível resolver user_id:', e.message);
         return res.status(400).json({ error: 'Não foi possível identificar o usuário do ML. Reconecte.' });
       }
     }
@@ -189,13 +277,13 @@ router.get('/shipments', async (req, res) => {
     }
 
     // Resolve user_id automatically
-    let userId = config.ml_user_id;
+    let userId = config.user_id;
     if (!userId) {
       try {
         const resolved = await ensureUserId(config);
         userId = resolved.userId;
       } catch (e) {
-        console.error('[ML] Não foi possível resolver ml_user_id para shipments:', e.message);
+        console.error('[ML] Não foi possível resolver o user_id do ML para shipments:', e.message);
         return res.status(400).json({ error: 'Não foi possível identificar o usuário do ML.' });
       }
     }
