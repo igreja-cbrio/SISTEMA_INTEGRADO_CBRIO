@@ -15,7 +15,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { jornada as jornadaApi } from '../../api';
 import { useAuth } from '../../contexts/AuthContext';
-import { Users, Filter, Download, Check, X, Heart, Link2, Activity, HandHeart, Sparkles, UserCheck, UserPlus, ChevronDown, BookOpenCheck } from 'lucide-react';
+import { Users, Filter, Download, Check, X, Heart, Link2, Activity, HandHeart, Sparkles, UserCheck, UserPlus, ChevronDown, BookOpenCheck, Droplets, GraduationCap, Flame } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatErro } from '../../lib/formatErro';
 import { SkeletonBlock } from '../../components/Skeleton';
@@ -46,12 +46,77 @@ const CRITERIOS = [
     grupo: 'Papéis no sistema',
     desc: 'Status binario · sem janela de tempo',
     itens: [
-      { key: 'voluntario',     label: 'Voluntário ativo',   cor: COLORS.green, Icone: UserCheck, info: 'Tem entrada em vol_profiles' },
+      { key: 'voluntario',     label: 'Voluntário ativo',   cor: COLORS.green, Icone: UserCheck, info: 'Tem entrada em vol_profiles — hoje é exatamente o mesmo conjunto do valor Servir (as duas leituras vivem em sincronia por trigger)' },
       { key: 'visitante',      label: 'Já foi visitante',   cor: COLORS.amber, Icone: UserPlus,  info: 'Tem entrada em int_visitantes' },
-      { key: 'inscrito_next',  label: 'Inscrito no NEXT',   cor: COLORS.blue,  Icone: Activity,  info: 'Tem entrada em next_inscricoes' },
+      { key: 'inscrito_next',  label: 'Inscrito no NEXT',   cor: COLORS.blue,  Icone: Activity,  info: 'Tem entrada em next_inscricoes — SE INSCREVEU, não necessariamente concluiu' },
       { key: 'grupo_ativo',    label: 'Em grupo ativo',     cor: COLORS.blue,  Icone: Link2,     info: 'mem_grupo_membros sem saída (mesmo set do Conectar)' },
       { key: 'contribuinte',   label: 'Contribuinte (90d)', cor: COLORS.pink,  Icone: Heart,     info: 'Mesmo set da Generosidade' },
     ],
+  },
+  {
+    grupo: 'Marcos da jornada',
+    desc: 'O que o sistema tem REGISTRO de — ausência de registro não é prova de que não aconteceu',
+    itens: [
+      { key: 'batizado',  label: 'Batismo registrado', cor: COLORS.purple, Icone: Droplets,
+        info: 'Cerimônia registrada (batismo_inscricoes realizado) OU marcação "batizei em outra igreja". ⚠️ O registro começa em 02/2024 — quem se batizou antes pode não ter linha.' },
+      { key: 'fez_next',  label: 'Concluiu o NEXT',    cor: COLORS.blue,   Icone: GraduationCap,
+        info: 'Presença em ao menos um encontro (vw_next_formado_pessoa) — a fonte única do sistema. Diferente de "Inscrito no NEXT".' },
+      { key: 'convertido', label: 'Convertido',        cor: COLORS.amber,  Icone: Flame,
+        info: 'Tem linha em cui_convertidos (decidiu num culto e entrou na fila do cuidado pastoral). Com a janela ao lado, vira "recém-convertido".' },
+    ],
+  },
+];
+
+// Janelas para recortar "recém-convertido". Só valem com o critério
+// "Convertido ✓" ativo — em "não tem" a pessoa não tem data, e aplicar a janela
+// devolveria zero sem explicar por quê.
+const JANELAS_CONVERSAO = [
+  { dias: null, label: 'qualquer época' },
+  { dias: 90,   label: 'últimos 90 dias' },
+  { dias: 180,  label: 'últimos 6 meses' },
+  { dias: 365,  label: 'último ano' },
+];
+
+// Perguntas que a liderança faz de verdade (pedido do Matheus · 20/08/2026),
+// cada uma virando a combinação de chips que a responde.
+const PERGUNTAS_PRONTAS = [
+  {
+    label: 'Voluntários com batismo registrado',
+    criterios: { servir: 'tem', batizado: 'tem' },
+    info: 'Serve ativamente e tem batismo registrado no sistema',
+  },
+  {
+    label: 'Voluntários sem registro de batismo',
+    criterios: { servir: 'tem', batizado: 'nao_tem' },
+    info: 'Serve ativamente e NÃO tem batismo registrado — lista para conferir e regularizar, não contagem de não-batizados',
+  },
+  {
+    label: 'Concluíram o NEXT e são recém-convertidos',
+    criterios: { fez_next: 'tem', convertido: 'tem' },
+    dias: 180,
+    info: 'Presença em ao menos um encontro do NEXT + decisão nos últimos 6 meses',
+  },
+  {
+    label: 'Inscreveram no NEXT e são recém-convertidos',
+    criterios: { inscrito_next: 'tem', convertido: 'tem' },
+    dias: 180,
+    info: 'Se inscreveram (concluíram ou não) + decisão nos últimos 6 meses',
+  },
+  {
+    label: 'Recém-convertidos que ainda não fizeram o NEXT',
+    criterios: { convertido: 'tem', fez_next: 'nao_tem' },
+    dias: 180,
+    info: 'A fila de convite para o NEXT',
+  },
+  {
+    label: 'Convertidos sem batismo registrado',
+    criterios: { convertido: 'tem', batizado: 'nao_tem' },
+    info: 'Decidiram num culto e não têm batismo registrado — o trilho do batismo',
+  },
+  {
+    label: 'Batizados que não servem',
+    criterios: { batizado: 'tem', servir: 'nao_tem' },
+    info: 'Têm batismo registrado e não estão em nenhuma escala ativa',
   },
 ];
 
@@ -73,6 +138,10 @@ export default function CruzamentosPessoas() {
   const [showLista, setShowLista] = useState(true);
   const [page, setPage] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  // Janela de "recém-convertido" (null = qualquer época). Vive fora de
+  // `criterios` porque não é um chip de 3 estados — é um recorte do critério
+  // "Convertido ✓".
+  const [convertidoDias, setConvertidoDias] = useState(null);
 
   const toggleCriterio = (key) => {
     setCriterios(c => {
@@ -85,22 +154,31 @@ export default function CruzamentosPessoas() {
     setPage(0);
   };
 
-  const limparTudo = () => { setCriterios({}); setPage(0); };
+  const limparTudo = () => { setCriterios({}); setConvertidoDias(null); setPage(0); };
 
   const ativos = useMemo(() =>
     Object.entries(criterios).filter(([, v]) => v === 'tem' || v === 'nao_tem'),
     [criterios]
   );
 
+  // ⚠️ A janela só entra no payload quando "Convertido ✓" está ativo: em
+  // "não tem" a pessoa não tem data de conversão, e mandar a janela devolveria
+  // zero sem a tela explicar por quê. O servidor tem a mesma guarda.
+  const payload = useMemo(() => (
+    criterios.convertido === 'tem' && convertidoDias
+      ? { ...criterios, convertido_dias: convertidoDias }
+      : criterios
+  ), [criterios, convertidoDias]);
+
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await jornadaApi.cruzar(criterios, { limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+      const r = await jornadaApi.cruzar(payload, { limit: PAGE_SIZE, offset: page * PAGE_SIZE });
       setResultado(r);
     } catch (e) {
       toast.error(formatErro(e, 'cruzamento'));
     } finally { setLoading(false); }
-  }, [criterios, page]);
+  }, [payload, page]);
 
   const forcarRefresh = async () => {
     setRefreshing(true);
@@ -153,7 +231,41 @@ export default function CruzamentosPessoas() {
         </button>
       </header>
 
-      {/* Painel de critérios · 2 grupos */}
+      {/* Perguntas prontas · leva direto à combinação de chips.
+          ⚠️ NÃO é um segundo caminho de consulta: cada atalho só SETA os chips,
+          então o que a tela mostra depois é exatamente o que os chips dizem —
+          a pessoa vê a combinação e pode ajustar. Um atalho que consultasse por
+          conta própria daria duas respostas para a mesma pergunta. */}
+      <section style={{
+        background: 'var(--panel)', WebkitBackdropFilter: 'blur(14px) saturate(140%)', backdropFilter: 'blur(14px) saturate(140%)',
+        border: '1px solid var(--hairline)', boxShadow: 'var(--shadow), var(--hi)',
+        borderRadius: 16, padding: 14, marginBottom: 16,
+      }}>
+        <h3 style={{ fontSize: 12, fontWeight: 700, color: C.t2, margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          Perguntas prontas
+        </h3>
+        <p style={{ fontSize: 11, color: C.t3, margin: '0 0 10px' }}>
+          Um clique monta a combinação de chips — dá para ajustar depois
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {PERGUNTAS_PRONTAS.map(p => (
+            <button
+              key={p.label}
+              onClick={() => { setCriterios(p.criterios); setConvertidoDias(p.dias ?? null); setPage(0); }}
+              title={p.info}
+              style={{
+                padding: '7px 12px', borderRadius: 10, fontSize: 12, fontWeight: 600,
+                cursor: 'pointer', textAlign: 'left',
+                border: `1px solid ${C.border}`, background: C.inputBg, color: C.text,
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* Painel de critérios · 3 grupos */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 20 }}>
         {CRITERIOS.map(grupo => (
           <section key={grupo.grupo} style={{
@@ -208,6 +320,53 @@ export default function CruzamentosPessoas() {
                 );
               })}
             </div>
+
+            {/* Janela de "recém-convertido" · só aparece com Convertido ✓ ativo.
+                ⚠️ Seletor que não faz nada é pior que seletor ausente: em
+                "não tem" a pessoa não tem data e a janela não se aplica. */}
+            {grupo.grupo === 'Marcos da jornada' && criterios.convertido === 'tem' && (
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 11, color: C.t3 }}>Converteu em:</span>
+                {JANELAS_CONVERSAO.map(j => {
+                  const ativo = (convertidoDias || null) === j.dias;
+                  return (
+                    <button
+                      key={j.label}
+                      onClick={() => { setConvertidoDias(j.dias); setPage(0); }}
+                      style={{
+                        padding: '4px 10px', borderRadius: 99, fontSize: 11, fontWeight: 600,
+                        cursor: 'pointer', transition: 'all 0.15s',
+                        border: `1px solid ${ativo ? COLORS.amber : C.border}`,
+                        background: ativo ? COLORS.amber + '20' : 'transparent',
+                        color: ativo ? COLORS.amber : C.t2,
+                      }}
+                    >
+                      {j.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* ⚠️⚠️ A RESSALVA MAIS IMPORTANTE DESTA TELA.
+                Medido em 20/08/2026: `batismo_inscricoes` começa em 02/2024 e
+                1.208 dos 1.699 membros ativos não têm linha. Numa igreja
+                batista membro é batizado por definição — então "sem registro"
+                é lacuna de CADASTRO, não ausência de batismo. Sem isto escrito
+                ao lado do número, "495 voluntários não batizados" vira decisão
+                pastoral em cima de um artefato. */}
+            {grupo.grupo === 'Marcos da jornada' && criterios.batizado === 'nao_tem' && (
+              <div style={{
+                marginTop: 10, padding: '8px 10px', borderRadius: 10, fontSize: 11.5, lineHeight: 1.5,
+                border: `1px solid ${COLORS.amber}`, background: COLORS.amber + '14', color: C.t2,
+              }}>
+                <strong>Isto é “sem registro”, não “não batizado”.</strong> O registro de batismos
+                do sistema começa em <strong>fevereiro de 2024</strong>, e quem se batizou antes
+                (ou em outra igreja, sem ter marcado no app) não tem linha. Use como
+                <strong> lista para conferir e regularizar</strong> — não como contagem de
+                não-batizados.
+              </div>
+            )}
           </section>
         ))}
 
