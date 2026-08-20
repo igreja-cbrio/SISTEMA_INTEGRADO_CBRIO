@@ -3,6 +3,11 @@
  * Auth: Supabase JWT leve (sem sistema de permissões do ERP interno)
  */
 const router   = require('express').Router();
+const kidsVisitante = require('../utils/kidsVisitante');
+// Dia BRT — dia de operação da igreja nunca é UTC (das 21h o dia já virou).
+function hojeBRTKids() {
+  return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
 const { semCache } = require('../middleware/semCache');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
@@ -5783,6 +5788,12 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
             data_nascimento: p.crianca.data_nascimento,
             sexo: p.crianca.sexo || null,            // Kids fala M/F, igual ao app
             visitante: true,
+        // ⚠️⚠️ `data_limite` OBRIGATÓRIO em toda visitante criada (20/08/2026).
+        // Os 5 pontos que criam criança visitante gravavam sem prazo, e a
+        // varredura `inativarVisitantesVencidos` só pega quem tem prazo VENCIDO
+        // — então essas viravam VISITANTES ETERNAS: nunca promovidas (sem
+        // check-in) e nunca inativadas. Medido: 23 assim em produção.
+        data_limite: kidsVisitante.prazoDe(hojeBRTKids()),
             observacoes_internas: `Cadastrado pela Apresentação de Crianças no app (${dataApres}).`,
             ...(p.crianca.saude || {}),
           })

@@ -2191,6 +2191,9 @@ export const totemKids = {
     pagerDevolvido: (id, devolvido = true) => patch(`/totem-kids/checkin/${id}/pager-devolvido`, { devolvido }),
   },
   cultosDoDia: (data) => get(`/totem-kids/cultos-do-dia?data=${encodeURIComponent(data)}`),
+  // Crianças ativas que NUNCA fizeram check-in no totem — lista SEPARADA do
+  // radar de ausentes (aquele exige presença para calcular ausência).
+  semCheckin: (limit) => get('/totem-kids/sem-checkin' + (limit ? `?limit=${limit}` : '')),
   ausentes: (min = 3) => get(`/totem-kids/ausentes?min=${min}`),
   aniversariantesMes: (mes) => get(`/totem-kids/aniversariantes?mes=${mes}`),
   ausenteContatar: (criancaId) => post(`/totem-kids/ausentes/${criancaId}/contato`, {}),
