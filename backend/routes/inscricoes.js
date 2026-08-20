@@ -20,6 +20,7 @@ const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../servi
 const { contarInscritosVivos } = require('../services/inscricaoContagem');
 const { normalizarIds, separarExclusaoLote, resumoDoLote } = require('../utils/exclusaoInscricaoLote');
 const checkoutExterno = require('../utils/checkoutExterno');
+const { sanitizarLotes } = require('../utils/lotesEvento');
 const {
   previewTemplate,
   esqueletoPadrao,
@@ -2210,6 +2211,9 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
     if (metodos) payload.pagamento_metodos = metodos;
     const termos = sanitizeTermosExtra(b.termos_extra);
     if (termos) payload.termos_extra = termos;
+    // Lotes de preço (20/08): jsonb com saneador próprio, como termos_extra.
+    const lotes = sanitizarLotes(b.lotes);
+    if (lotes) payload.lotes = lotes;
     const erroCheckout = conferirCheckoutExterno(payload);
     if (erroCheckout) return res.status(400).json({ error: erroCheckout });
 
@@ -2270,6 +2274,11 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
     if (b.termos_extra !== undefined) {
       const termos = sanitizeTermosExtra(b.termos_extra);
       if (termos) patch.termos_extra = termos;
+    }
+    // `[]` = tirar os lotes (volta ao preço único); `undefined` = não mexeu.
+    if (b.lotes !== undefined) {
+      const lotes = sanitizarLotes(b.lotes);
+      if (lotes) patch.lotes = lotes;
     }
     const erroCheckout = conferirCheckoutExterno(patch);
     if (erroCheckout) return res.status(400).json({ error: erroCheckout });
