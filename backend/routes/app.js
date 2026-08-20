@@ -28,6 +28,7 @@ const { chaveMesMembro } = require('../services/nextMatricula');
 // ⚠️ Reuso da porta pública de eventos (espinha): a inscrição pelo app roda a
 // MESMA função do site. Ver o cabeçalho do bloco de eventos mais abaixo.
 const { inscreverEspinha, eventoEspinhaPorId, anexarConfigMenor } = require('./publicEventoExterno');
+const { portasCompartilhaveis, linkDoEvento } = require('../utils/linkInscricaoApp');
 const { TEXTOS: TEXTOS_INSCRICAO } = require('../services/inscricaoContrato');
 const { gerarTokenComprovante } = require('../services/inscricaoComprovante');
 const checkoutExterno = require('../utils/checkoutExterno');
@@ -832,6 +833,26 @@ const SEV_CUIDADOS = { sos: 'urgente', aconselhamento: 'aviso', oracao: 'info' }
 function extrairMensagem(d) {
   return d.mensagem || d.message || d.texto || d.descricao || d.obs || d.observacao || null;
 }
+
+// GET /api/app/inscricoes/portas — os links públicos que o MEMBRO pode mandar
+// pra outra pessoa ("vem se inscrever"). Pedido do Matheus (20/08/2026).
+//
+// ⚠️ SÓ LEITURA e sem dado de pessoa: a resposta é o catálogo de portas com a
+// URL pública, igual pra todo mundo. Nada aqui depende de quem está pedindo.
+//
+// ⚠️ Quem monta a URL é o SERVIDOR (`utils/linkInscricaoApp`), nunca o app —
+// URL escrita no bundle é URL que ninguém valida e que só se conserta por OTA.
+// Ver o link morto de `/apresentacao-criancas` (11/08/2026).
+router.get('/inscricoes/portas', authApp, limiterNormal, async (req, res) => {
+  try {
+    res.json({ portas: portasCompartilhaveis() });
+  } catch (e) {
+    console.error('[APP] inscricoes/portas:', e.message);
+    // ⚠️ Lista vazia com 200 faria o app esconder os botões e parecer que a
+    // igreja não tem porta de inscrição nenhuma. Erro é erro.
+    res.status(500).json({ error: 'Erro ao carregar os links de inscrição' });
+  }
+});
 
 router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
   try {
@@ -6087,8 +6108,10 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
       msg_sucesso_titulo: e.msg_sucesso_titulo || null,
       msg_sucesso_texto: e.msg_sucesso_texto || null,
       inscrito: inscritos.has(e.id),
-      // Link do form público — fallback (build antigo do app) e compartilhamento.
-      url: `https://www.cbrio.org/evento/${e.slug}`,
+      // Link do form público — fallback (build antigo do app) e o link que o
+      // membro COMPARTILHA. ⚠️ Vem da régua (`utils/linkInscricaoApp`), não de
+      // string aqui: é o único lugar que decide o domínio público.
+      url: linkDoEvento(e.slug),
       // ⚠️⚠️ Cartão cobrado numa plataforma externa (e-Inscrição): o app NÃO
       // reimplementa a escolha de forma. `so_web` manda a tela abrir o
       // formulário público, que é quem sabe perguntar Pix × cartão e mandar
@@ -6204,6 +6227,9 @@ router.get('/eventos/minhas', authApp, limiterNormal, async (req, res) => {
           id: ev.id, nome: ev.nome, slug: ev.slug, data: ev.data, hora: ev.hora,
           local: ev.local, capa_url: ev.capa_url, tem_sorteio: ev.tem_sorteio,
           pago: !!ev.pagamento_ativo, checkin_ativo: !!ev.checkin_ativo,
+          // Link público, pro membro CONVIDAR alguém pelo botão de compartilhar
+          // da aba "Meus eventos". Mesma régua do catálogo — o app não monta URL.
+          url: linkDoEvento(ev.slug),
         },
       };
     });
@@ -6234,7 +6260,7 @@ router.post('/eventos/:id/inscrever', authApp, limiterStrict, async (req, res) =
       return res.status(409).json({
         error: 'A inscrição deste evento é feita pelo formulário completo, no navegador.',
         so_web: true,
-        url: `https://www.cbrio.org/evento/${ev.slug}`,
+        url: linkDoEvento(ev.slug),
       });
     }
     // Vincula ao cadastro do app quando o matcher não achar por CPF/telefone.
