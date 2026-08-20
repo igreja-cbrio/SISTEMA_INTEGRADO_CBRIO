@@ -6,6 +6,7 @@ const { supabase } = require('../utils/supabase');
 const { getMLConfig, mlFetch, ensureUserId, searchOrders } = require('../services/mercadoLivreService');
 const { lerNfe } = require('../utils/nfeXml');
 const { pedidoDoNome, lerNomeArquivo } = require('../utils/nfeArquivo');
+const { assinarLinhas } = require('../services/anexosLogArquivos');
 const { caminhoNoBucket } = require('../utils/storagePath');
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
 const { importar: importarComprasPlanilha } = require('../services/comprasImporter');
@@ -342,7 +343,9 @@ router.get('/notas', async (req, res) => {
     if (status) query = query.eq('status', status);
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    // ⚠️ `storage_path` guarda o arquivo fiscal (NF escaneada ou DANFE oficial).
+    // Assinar na leitura é o que permite fechar o bucket sem migrar dado.
+    res.json(await assinarLinhas(data || [], ['storage_path']));
   } catch (e) { res.status(500).json({ error: 'Erro ao listar notas fiscais' }); }
 });
 
@@ -371,7 +374,9 @@ router.post('/notas/escanear', uploadNf.single('arquivo'), async (req, res) => {
     const { error: upErr } = await supabase.storage.from('log-arquivos')
       .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
     if (upErr) return res.status(500).json({ error: `Erro ao salvar arquivo: ${upErr.message}` });
-    const storagePath = supabase.storage.from('log-arquivos').getPublicUrl(path).data.publicUrl;
+    // ⚠️ CAMINHO, não URL pública (o bucket guarda documento fiscal e vai
+    // fechar). A leitura assina — ver services/anexosLogArquivos.
+    const storagePath = path;
 
     // 2. Extração via IA (falha não derruba o fluxo · usuário completa na revisão)
     let extraido = null;
@@ -804,7 +809,9 @@ router.get('/compras', async (req, res) => {
     if (busca) q = q.or(`fornecedor.ilike.%${busca}%,materiais.ilike.%${busca}%,n_pedido.ilike.%${busca}%`);
     const { data, error } = await q.order('data_compra', { ascending: false, nullsFirst: false }).limit(1000);
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data || []);
+    // ⚠️ `storage_path` é a foto/PDF da nota da compra — assinada na leitura
+    // para o bucket poder fechar (ver services/anexosLogArquivos).
+    res.json(await assinarLinhas(data || [], ['storage_path']));
   } catch (e) { console.error('[LOG] listar compras:', e); res.status(500).json({ error: 'Erro ao listar compras' }); }
 });
 
@@ -887,7 +894,9 @@ router.post('/compras/escanear', uploadNf.single('arquivo'), async (req, res) =>
     const { error: upErr } = await supabase.storage.from('log-arquivos')
       .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
     if (upErr) return res.status(500).json({ error: `Erro ao salvar arquivo: ${upErr.message}` });
-    const storagePath = supabase.storage.from('log-arquivos').getPublicUrl(path).data.publicUrl;
+    // ⚠️ CAMINHO, não URL pública (o bucket guarda documento fiscal e vai
+    // fechar). A leitura assina — ver services/anexosLogArquivos.
+    const storagePath = path;
 
     let extraido = null; let raw = null;
     try { ({ extraido, raw } = await extrairNotaFiscal(req.file.buffer, req.file.mimetype)); }

@@ -22,6 +22,7 @@ const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { montarGrade } = require('../utils/decendioComparativo');
+const { assinarAnexosDeObjetos, assinarLinhas } = require('../services/anexosLogArquivos');
 const { parseOfx } = require('../services/ofxParser');
 const { parsePixExtrato } = require('../services/pixExtratoParser');
 const { vincularIdentidadeOfx } = require('../services/ofxIdentidade');
@@ -1401,10 +1402,17 @@ router.get('/transacoes/:id/detalhe', async (req, res) => {
         .eq('fin_transacao_id', t.id).is('deleted_at', null).limit(1),
     ]);
 
+    // ⚠️ Assina os anexos do bucket `log-arquivos` (comprovante da transação e
+    // o arquivo da NF vinculada). `anexos_url` é jsonb com lista de OBJETOS
+    // `{url, nome, tipo, em}`, por isso o percurso próprio.
+    const [comAnexos] = await assinarAnexosDeObjetos(
+      [{ ...t, anexos_url: Array.isArray(t.anexos_url) ? t.anexos_url : [] }], 'anexos_url');
+    const [notaAssinada] = nf.data?.[0]
+      ? await assinarLinhas([nf.data[0]], ['storage_path']) : [null];
+
     res.json({
-      ...t,
-      anexos_url: Array.isArray(t.anexos_url) ? t.anexos_url : [],
-      nota_fiscal: nf.data?.[0] || null,
+      ...comAnexos,
+      nota_fiscal: notaAssinada,
       conta_pagar: cp.data?.[0] || null,
     });
   } catch (e) {
@@ -1434,7 +1442,10 @@ router.post('/transacoes/:id/anexos', uploadAnexo.single('arquivo'), async (req,
     const { error: upErr } = await supabase.storage.from('log-arquivos')
       .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
     if (upErr) return res.status(500).json({ error: `Erro ao salvar arquivo: ${upErr.message}` });
-    const url = supabase.storage.from('log-arquivos').getPublicUrl(path).data.publicUrl;
+    // ⚠️ Guarda o CAMINHO, não a URL pública: `log-arquivos` guarda documento
+    // fiscal e vai ser fechado. Quem lê assina na hora (anexosLogArquivos), e o
+    // helper é idempotente, então as linhas antigas com URL seguem funcionando.
+    const url = path;
 
     const anexos = [
       ...(Array.isArray(t.anexos_url) ? t.anexos_url : []),

@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { fetchAllRows } = require('../utils/pagination');
+const { assinarLinhas } = require('../services/anexosLogArquivos');
 
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
@@ -203,7 +204,12 @@ router.get('/comprovantes', async (req, res) => {
     });
     if (error) return res.status(400).json({ error: error.message });
     const itens = Array.isArray(data) ? data : [];
-    res.json({ itens, total: itens.length });
+    // ⚠️ A RPC concatena a URL pública do bucket por dentro
+    // (`p_base||'/storage/v1/object/public/log-arquivos/'||storage_path`).
+    // Assinar aqui cobre os dois formatos que a coluna carrega hoje — caminho
+    // cru (DANFE) e URL pública (nota escaneada) —, porque `caminhoNoBucket` é
+    // idempotente e recorta a marca do Storage mesmo quando ela aparece 2×.
+    res.json({ itens: await assinarLinhas(itens, ['url']), total: itens.length });
   } catch (e) {
     console.error('[FIN] banco de comprovantes:', e);
     res.status(500).json({ error: 'Erro ao listar comprovantes' });
