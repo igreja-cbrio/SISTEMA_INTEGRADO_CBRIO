@@ -130,8 +130,14 @@ function nextEstado(estado) {
 const PAGE_SIZE = 100;
 
 export default function CruzamentosPessoas() {
-  const { profile } = useAuth();
-  const isAdmin = ['admin', 'diretor'].includes(profile?.role);
+  // ⚠️ ESPELHO do guard do servidor (`authorizeModule('membresia', 2)` em
+  // backend/routes/jornada.js), não uma régua própria. Antes era
+  // `['admin','diretor'].includes(profile.role)` — que deixava de fora
+  // coordenação com cargo alto e role `assistente` (o caso do Pedro Paiva, e o
+  // padrão nesta base), e pior: era o ÚNICO guard, porque o backend não tinha
+  // nenhum. `canAccessModule` já embute o bypass de admin/diretor.
+  const { canAccessModule } = useAuth();
+  const isAdmin = canAccessModule(['membresia'], 'leitura', 2);
   const [criterios, setCriterios] = useState({});  // { seguir: 'tem', servir: 'tem', ... }
   const [resultado, setResultado] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -203,7 +209,7 @@ export default function CruzamentosPessoas() {
   if (!isAdmin) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>
-        Acesso restrito · cruzamentos sao exclusivos para admin/diretor.
+        Acesso restrito · cruzamentos exigem nível 2 em Membresia (a lista traz nome, e-mail e telefone).
       </div>
     );
   }
