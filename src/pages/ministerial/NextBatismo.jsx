@@ -141,7 +141,15 @@ export default function Entradas() {
           <div className="rounded-xl border p-3">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Base com CPF</div>
             <div className="text-2xl font-bold text-foreground">{resumo.saude.pct_cpf}%</div>
-            <div className="text-xs text-muted-foreground">{resumo.saude.com_cpf} de {resumo.saude.pessoas} pessoas vivas</div>
+            {/* ⚠️ O verbo é obrigatório aqui. "1722 de 3891 pessoas vivas" lê
+                como um SEGUNDO total de gente, e o Matheus comparou esse número
+                com os 1699 membros ativos da Membresia achando que um dos dois
+                estava errado (20/08). Eles medem coisas diferentes e a
+                proximidade dos valores torna a frase incompleta uma armadilha:
+                dos 1722 com CPF, 571 nem são membros. */}
+            <div className="text-xs text-muted-foreground">
+              {resumo.saude.com_cpf} das {resumo.saude.pessoas} pessoas vivas têm CPF
+            </div>
           </div>
           <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => escolherFiltro('identidade')}>
             {/* ⚠️ O card mostra o número da fila em que ele CAI (conflitos), não o
