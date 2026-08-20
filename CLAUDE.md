@@ -9731,6 +9731,77 @@ recalculados.
   `1085-04-20` (941 anos). A régua devolve `null` para idade absurda em vez de
   classificar como adulto, mas o cadastro segue errado.
 
+## ⚠️ App do membro · COMPARTILHAR o link de inscrição (2026-08-20 · SEM migration)
+
+Pedido do Matheus: *"no app dos membros, nas inscrições, tivesse uma
+funcionalidade para compartilhar o link de inscrição. caso uma pessoa queira
+mandar para outra"*. Convite boca a boca, do membro pra quem está de fora.
+
+- **`GET /api/app/inscricoes/portas`** devolve as 5 portas com link público, e
+  `GET /app/eventos` **já devolvia `url`** (o comentário dele dizia "e
+  compartilhamento" desde sempre — o dado chegava e nada compartilhava, a mesma
+  classe do avatar de 13/08). `/app/eventos/minhas` passou a devolver `url`
+  também, senão a aba "Meus eventos" não teria o que mandar.
+- No app: `lib/compartilharInscricao.ts` (régua do TEXTO) +
+  `components/inscricoes/BotaoCompartilhar.tsx`, montado em três lugares — nas
+  5 linhas de porta, nos cartões de evento e no cabeçalho do detalhe do evento.
+
+### ⚠️⚠️ LEI · o app NÃO monta URL de convite — o servidor manda
+
+`backend/utils/linkInscricaoApp.js` (puro, no gate) deriva a rota do **registro
+canônico** (`services/inscricaoPortas.js`). O motivo é medido, não teórico: a
+URL `cbrio.org/apresentacao-criancas` **foi um link morto por meses** (11/08) —
+devolvia 200 pelo catch-all do SPA e não renderizava formulário nenhum. URL
+escrita no bundle é URL que ninguém valida, num aparelho que só se conserta por
+OTA. E é isso que permite trocar o destino por código curto do módulo Links um
+dia: muda no servidor, e todo bundle já publicado passa a mandar o novo.
+
+⚠️⚠️ **A base é CONSTANTE (`https://www.cbrio.org`) e NÃO lê env**, de propósito:
+`FRONTEND_URL` existe em produção com valor **encriptado** (não auditável daqui)
+e pode apontar pro domínio da Vercel — este link vai pro WhatsApp de gente de
+fora, e apontar pra `crmcbrio.vercel.app` sem ninguém perceber só apareceria
+quando alguém não conseguisse se inscrever. Base vinda de env também é como um
+link de `localhost` foi entregue a uma líder (29/07). Sem env, a classe de bug
+não existe — melhor que se defender dela com regex. Os 2 hardcodes que já
+existiam em `app.js` passaram a usar a régua (mesmo valor, um lugar só).
+
+- ⚠️ **`linkDaRota` barra rota de TEMPLATE** (`/evento/:slug`): virar link
+  mandaria `www.cbrio.org/evento/:slug` literal pra alguém. Quem compartilha
+  evento usa `linkDoEvento(slug)`.
+- ⚠️ **`eventos` e `grupos_lider` ficam FORA** das portas compartilháveis —
+  o primeiro é link por evento, o segundo é recrutamento de liderança (decisão
+  de líder, não convite de membro).
+- ⚠️ **Sem link, `mensagem*` devolve `null` e o botão NÃO renderiza.** Mensagem
+  sem endereço é lixo no WhatsApp de um estranho, e ninguém do lado de dentro
+  descobre. Vale pro bundle novo contra backend antigo (`url` é opcional).
+- ⚠️ **A falha de `/inscricoes/portas` é silenciosa no app** (o botão não
+  aparece) mas o endpoint **responde 500, nunca lista vazia**: `200 []` faria a
+  tela parecer que a igreja não tem porta de inscrição nenhuma.
+- ⚠️ **Copy por porta, não genérica**: "Vem se inscrever em Batismo" é frase que
+  ninguém manda pra um amigo. Porta que o servidor mandar sem copy no bundle cai
+  no genérico com o nome que ELE mandou — nunca desaparece da tela (tem mutante).
+- ⚠️ `refId`, não `ref`, na prop do botão: `ref` é reservada do React e o valor
+  nem chega. A telemetria usa `label`/`entity_id`, que já estão na whitelist.
+
+⚠️ **`insc_eventos.msg_whatsapp` NÃO é usada aqui, e é decisão.** Medido em
+20/08: dos 2 eventos publicados, um tem o campo NULO e o outro tem
+**literalmente a URL** (`https://www.cbrio.org/evento/celebra`), sem `{link}` —
+então o `replaceAll('{link}')` do ERP não substitui nada e o "texto de convite"
+dele é a URL sozinha. Além disso o contexto é outro: aquele campo é divulgação
+da EQUIPE; aqui é um membro escrevendo pro amigo.
+
+⚠️ **Dois mutantes SOBREVIVERAM na 1ª rodada** e o motivo vale a régua: a
+proteção era dupla (a chave `eventos` fora da lista **E** a guarda do `:`), e
+cada metade escondia a ausência da outra. **Guarda que só se observa por efeito
+colateral não está testada** — `linkDaRota` foi extraída e testada direto.
+Depois: 4 mutantes mortos no ERP (base lendo env · slug vazio virando link pela
+metade · guarda do `:` · rota relativa) e **59/59** no harness do app, com os 2
+novos (convite sem link · porta sem copy desaparecendo).
+
+⚠️ **ORDEM DE ENTREGA**: o endpoint chega por MERGE; o botão das portas só
+aparece depois do OTA. Bundle antigo ignora tudo (nenhum campo obrigatório
+novo), e bundle novo com backend antigo só não mostra o botão.
+
 ## ⚠️⚠️ LEI · a faixa etária é UMA SÓ na igreja inteira (2026-08-19 · migration `20260819180000`)
 
 Decisão do Matheus, minutos depois de definir as faixas do batismo: **"essa
