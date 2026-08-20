@@ -88,6 +88,31 @@ jobs:
       - name: Deploy to Production
         run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
 
+  # ⚠️ Job SEPARADO com `if: failure()`, não um step dentro do deploy. Um step
+  # com `if: failure()` só roda se o job chegou até ele; se a falha for no
+  # checkout, no npm install ou num dos contratos de teste lá em cima, o step
+  # nunca é alcançado e o aviso não sai — justamente nos casos em que ele mais
+  # importa. Como job com `needs`, ele dispara para QUALQUER falha do deploy.
+  avisar-falha:
+    needs: deploy
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Avisar que o deploy falhou
+        env:
+          MICROSOFT_TENANT_ID: ${{ secrets.MICROSOFT_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          MICROSOFT_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          MICROSOFT_CLIENT_SECRET: ${{ secrets.MICROSOFT_CLIENT_SECRET || secrets.AZURE_CLIENT_SECRET }}
+          MERGE_MAIL_SENDER: ${{ secrets.MERGE_MAIL_SENDER || secrets.GRAPH_MAIL_SENDER || 'noreply@cbrio.org' }}
+          DEPLOY_ALERTA_TO: ${{ secrets.DEPLOY_ALERTA_TO || vars.DEPLOY_ALERTA_TO || 'matheus.toscano@cbrio.org' }}
+          COMMIT_MENSAGEM: ${{ github.event.head_commit.message }}
+          COMMIT_AUTOR: ${{ github.event.head_commit.author.name }}
+        run: node scripts/alerta-deploy-falhou.mjs
+
 # NOTA (2026-06-23): o job 'notify-email' (e-mail "Produção no ar" a CADA deploy
 # de produção, enviado pro MERGE_NOTIFY_TO via Microsoft Graph) foi REMOVIDO —
 # era ele que mandava um e-mail pro Eduardo a cada atualização do sistema.
