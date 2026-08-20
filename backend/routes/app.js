@@ -5448,6 +5448,11 @@ const {
   pessoaDaCrianca,
   nomesDosPais,
 } = require('../utils/criancaApresentacao');
+const {
+  hojeBRT: _hojeBrtApres,
+  separar: _separarApres,
+  juntar: _juntarApres,
+} = require('../utils/apresentacaoHistorico');
 
 /**
  * Quem são os pais/mães de cada criança da lista (id → [ids dos responsáveis]).
@@ -5473,6 +5478,84 @@ async function paisDasCriancas(ids) {
   return mapa;
 }
 
+/**
+ * Todas as apresentações que são DESTA pessoa, pelos 3 caminhos possíveis.
+ *
+ * ⚠️⚠️ Buscar só por `responsavel_membro_id` devolve VAZIO pra quem apresentou:
+ * medido em 20/08, as 5 apresentações passadas têm essa coluna NULA (vieram do
+ * formulário público, que não resolve membro) e as 2 atribuíveis chegam **só**
+ * pela ficha do Kids. Um caminho só faria a tela AFIRMAR "você nunca apresentou"
+ * a quem apresentou — e campo vazio parece dado, então ninguém investigaria.
+ *
+ * Cadeia, na ordem da força da evidência:
+ *   1. `responsavel_membro_id` — o vínculo que o app/matcher gravou;
+ *   2. `cpf_responsavel` = CPF do membro — chave FORTE do Contrato de porta;
+ *   3. `crianca_id` → `kids_responsaveis` — a criança é minha (é o que alcança
+ *      o histórico hoje).
+ *
+ * ⚠️ E-MAIL E TELEFONE FICAM FORA, de propósito: família compartilha os dois, e
+ * casar por eles mostraria a apresentação do filho de OUTRA pessoa da casa como
+ * se fosse minha. Lei do Contrato de porta.
+ */
+async function apresentacoesDaPessoa(membro) {
+  const COLS = 'id, crianca_nome, data_apresentacao, status, crianca_id, created_at';
+  const vazio = { vinculo: [], cpf: [], ficha_kids: [] };
+  if (!membro?.id) return { linhas: [], incompleto: false };
+
+  const falhas = [];
+  const seguro = async (nome, fn) => {
+    try { return (await fn()) || []; }
+    catch (e) { falhas.push(nome); console.warn('[APP] apres/%s: %s', nome, e.message); return []; }
+  };
+
+  // 1 · vínculo direto
+  const porCaminho = { ...vazio };
+  porCaminho.vinculo = await seguro('vinculo', async () => {
+    const { data, error } = await supabase.from('apresentacao_criancas')
+      .select(COLS).eq('responsavel_membro_id', membro.id).is('deleted_at', null);
+    if (error) throw error;
+    return data;
+  });
+
+  // 2 · CPF (só com 11 dígitos — CPF pela metade não é chave)
+  const cpf = String(membro.cpf || '').replace(/\D/g, '');
+  if (cpf.length === 11) {
+    porCaminho.cpf = await seguro('cpf', async () => {
+      const { data, error } = await supabase.from('apresentacao_criancas')
+        .select(COLS).eq('cpf_responsavel', cpf).is('deleted_at', null);
+      if (error) throw error;
+      return data;
+    });
+  }
+
+  // 3 · a criança é minha (ficha do Kids)
+  const criancas = await seguro('kids', async () => {
+    const { data, error } = await supabase.from('kids_responsaveis')
+      .select('crianca_id').eq('membro_id', membro.id).is('deleted_at', null);
+    if (error) throw error;
+    return data;
+  });
+  const ids = [...new Set((criancas || []).map((c) => c.crianca_id).filter(Boolean))];
+  if (ids.length) {
+    porCaminho.ficha_kids = await seguro('kids_apres', async () => {
+      const out = [];
+      // ⚠️ Lotes de 200: `.in()` com lista grande estoura a URL do PostgREST.
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data, error } = await supabase.from('apresentacao_criancas')
+          .select(COLS).in('crianca_id', ids.slice(i, i + 200)).is('deleted_at', null);
+        if (error) throw error;
+        out.push(...(data || []));
+      }
+      return out;
+    });
+  }
+
+  // ⚠️ Falha de consulta é DECLARADA, nunca silenciosa: "você não apresentou
+  // ninguém" e "não consegui perguntar" levam a decisões opostas — a segunda
+  // faria a família cadastrar de novo o filho que já está inscrito.
+  return { linhas: _juntarApres(porCaminho), incompleto: falhas.length > 0 };
+}
+
 // GET /api/app/apresentacao-crianca — data da próxima cerimônia + o que já pedi
 router.get('/apresentacao-crianca', authApp, limiterNormal, async (req, res) => {
   try {
@@ -5495,21 +5578,21 @@ router.get('/apresentacao-crianca', authApp, limiterNormal, async (req, res) => 
       } catch (e) { console.warn('[APP] apres familia:', e.message); }
     }
 
-    let pedidos = [];
-    if (membro?.id) {
-      const { data: rows } = await supabase.from('apresentacao_criancas')
-        .select('id, crianca_nome, data_apresentacao, status')
-        .eq('responsavel_membro_id', membro.id)
-        .is('deleted_at', null)
-        .gte('data_apresentacao', _isoData(new Date()))
-        .order('data_apresentacao');
-      pedidos = rows || [];
-    }
+    // ⚠️ `pedidos` CONTINUA sendo só as próximas — é o que o bundle já publicado
+    // lê, e mudar o significado dele faria o app antigo listar apresentações
+    // passadas como se fossem pedidos em aberto. O histórico vai em campo NOVO.
+    const { linhas, incompleto } = await apresentacoesDaPessoa(membro);
+    const { proximas, historico } = _separarApres(linhas, _hojeBrtApres());
 
     res.json({
       proxima_data: data,
       familia,
-      pedidos,
+      pedidos: proximas,
+      // Apresentações que já aconteceram (mais recente primeiro).
+      historico,
+      // true = alguma consulta da cadeia falhou; a tela DIZ que a lista pode
+      // estar incompleta em vez de afirmar que não há histórico.
+      historico_incompleto: incompleto,
       // A tela usa isto pra decidir se pode oferecer o caminho "é meu filho".
       pode_indicar_vinculo: !!membro?.id,
     });
