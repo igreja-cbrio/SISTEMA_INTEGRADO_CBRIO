@@ -329,7 +329,13 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         tipo: 'nova_apresentacao_crianca',
         titulo: criados.length > 1 ? 'Nova apresentação de crianças' : 'Nova apresentação de criança',
         mensagem: `${nomes} — inscriç${criados.length > 1 ? 'ões' : 'ão'} para a apresentação de ${dataApresentacao}. Entrar em contato com a família para agendar o horário.`,
-        link: '/ministerial/totem-kids/apresentacao',
+        // ⚠️ O `?id=` é o que faz o toque na notificação abrir A INSCRIÇÃO em
+        // vez da lista inteira (app do staff · `destinoDoPush`). Só vai quando
+        // é UMA criança: com várias, apontar para a primeira seria arbitrário
+        // e esconderia as outras — aí a lista é o destino certo.
+        link: criados.length === 1
+          ? `/ministerial/totem-kids/apresentacao?id=${criados[0]}`
+          : '/ministerial/totem-kids/apresentacao',
         severidade: 'info',
         chaveDedup: `apresentacao_crianca_${criados[0]}`,
       }).catch(err => console.error('[publicApresentacao] notificacao falhou:', err.message));
