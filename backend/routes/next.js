@@ -1085,23 +1085,59 @@ router.get('/pessoas', async (req, res) => {
       (q) => q.is('deleted_at', null));
     const turmas = await fetchAllNext('next_turmas', 'id, nome', (q) => q.is('deleted_at', null));
     const turmaNome = new Map(turmas.map(t => [t.id, t.nome]));
+    // ⚠️ "Fez o Next" vem da FONTE ÚNICA `vw_next_formado_pessoa` (régua de
+    // 14/08/2026: UM encontro basta), não de `next_matriculas.status`. O status
+    // é POR TURMA e diz "não formou" para quem esteve num encontro de outra
+    // turma — era isso que fazia a tela discordar da NSM, do /painel e dos KPIs,
+    // que já leem a view.
+    const formadosPessoa = await fetchAllNext('vw_next_formado_pessoa', 'membro_id, cpf');
+    const fMembro = new Set(), fCpf = new Set();
+    for (const f of formadosPessoa) {
+      if (f.membro_id) fMembro.add(f.membro_id);
+      const c = digits(f.cpf); if (c.length === 11) fCpf.add(c);
+    }
+    const fezNext = (p) => {
+      if (p && p.membro_id && fMembro.has(p.membro_id)) return true;
+      const c = digits(p && p.cpf); return c.length === 11 && fCpf.has(c);
+    };
     // Direcionamento (pra onde a pessoa vai ao fim do Next) · vem da matrícula
     const dirFlags = (mm) => ({
       indicou_grupo: !!(mm && mm.indicou_grupo), indicou_servir: !!(mm && mm.indicou_servir),
       indicou_batismo: !!(mm && mm.indicou_batismo), indicou_devocional: !!(mm && mm.indicou_devocional),
     });
 
-    // índice de matrículas por identidade (membro_id > cpf > nome completo)
-    const mByMembro = new Map(), mByCpf = new Map(), mByNome = new Map();
+    // índice de matrículas por identidade (membro_id > cpf > nome completo >
+    // telefone + PRIMEIRO NOME)
+    //
+    // ⚠️ O ramo do telefone entrou em 14/08/2026: sem ele, 22 convertidos que
+    // TÊM matrícula apareciam como "Sem Next" na tela — 11 deles com presença
+    // registrada em pelo menos um encontro. A causa é o convertido chegar sem
+    // CPF (o cadastro da decisão do culto exige só nome + telefone) e o nome
+    // estar escrito diferente das duas portas.
+    //
+    // ⚠️⚠️ Telefone SOZINHO nunca identifica (lei do Contrato de porta: família
+    // compartilha o número). Por isso o ramo exige o PRIMEIRO NOME igual. Medido
+    // no dia: 22 casam por telefone, 14 têm o primeiro nome igual e 8 NÃO —
+    // esses 8 seguem sem casar, que é o comportamento correto.
+    const primeiroNome = (s) => nomeKey(String(s || '').trim().split(/\s+/)[0]);
+    const tel8 = (v) => { const d = digits(v); return d.length >= 10 ? d.slice(-8) : null; };
+    const mByMembro = new Map(), mByCpf = new Map(), mByNome = new Map(), mByTel = new Map();
     for (const m of matriculas) {
       if (m.membro_id && !mByMembro.has(m.membro_id)) mByMembro.set(m.membro_id, m);
       const c = digits(m.cpf); if (c.length === 11 && !mByCpf.has(c)) mByCpf.set(c, m);
       const nk = nomeKey(`${m.nome || ''} ${m.sobrenome || ''}`); if (nk && !mByNome.has(nk)) mByNome.set(nk, m);
+      const t = tel8(m.telefone);
+      if (t) { if (!mByTel.has(t)) mByTel.set(t, []); mByTel.get(t).push(m); }
     }
     const matchMatricula = (cv) => {
       if (cv.membro_id && mByMembro.has(cv.membro_id)) return mByMembro.get(cv.membro_id);
       const c = digits(cv.cpf); if (c.length === 11 && mByCpf.has(c)) return mByCpf.get(c);
       const nk = nomeKey(cv.nome); if (nk && mByNome.has(nk)) return mByNome.get(nk);
+      const t = tel8(cv.telefone), pn = primeiroNome(cv.nome);
+      if (t && pn && mByTel.has(t)) {
+        const m = mByTel.get(t).find((x) => primeiroNome(x.nome) === pn);
+        if (m) return m;
+      }
       return null;
     };
 
@@ -1114,7 +1150,7 @@ router.get('/pessoas', async (req, res) => {
       const dias = cv.data_culto ? Math.floor((agora - new Date(cv.data_culto + 'T12:00:00').getTime()) / DIA) : null;
       let next_status; let bucket = null;
       if (cv.next_resolucao) next_status = 'resolvido';
-      else if (m && m.status === 'formado') next_status = 'formado';
+      else if (fezNext(cv) || fezNext(m) || (m && m.status === 'formado')) next_status = 'formado';
       else if (m) next_status = 'matriculado';
       else { next_status = 'nao_inscrito'; bucket = dias == null ? 'no_prazo' : dias > 90 ? 'fora_prazo' : dias > 75 ? 'vencendo' : 'no_prazo'; }
       itens.push({
@@ -1134,7 +1170,7 @@ router.get('/pessoas', async (req, res) => {
         nome: `${m.nome || ''}${m.sobrenome ? ' ' + m.sobrenome : ''}`.trim(), telefone: m.telefone, email: m.email, membro_id: m.membro_id,
         area: null, data_nsm: null, dias_desde_conversao: null,
         turma_id: m.turma_id, turma_nome: m.turma_id ? (turmaNome.get(m.turma_id) || null) : null,
-        next_status: m.status === 'formado' ? 'formado' : 'matriculado', bucket: null, next_resolucao: null, next_resolucao_em: null,
+        next_status: (fezNext(m) || m.status === 'formado') ? 'formado' : 'matriculado', bucket: null, next_resolucao: null, next_resolucao_em: null,
         ...dirFlags(m),
       });
     }
