@@ -25,8 +25,22 @@ router.use(authenticate, authorizeModule('voluntariado', 3));
 function statusDaRodada(r) {
   const falhas = Number(r?.tiposComFalha || 0);
   const total = Number(r?.tiposTotal || 0);
+  const cultos = Number(r?.services || 0);
+
+  // ⚠️⚠️ O QUE ENTROU MANDA NA MENSAGEM. Na primeira rodada com o conserto
+  // (20/08 13:11) saiu `error` dizendo "nada foi sincronizado" enquanto 21
+  // cultos e 796 escalas TINHAM entrado — os 17 tipos falharam só na busca de
+  // ROSTER, que é outra coisa. Um status que contradiz o próprio número ao
+  // lado dele é pior que status nenhum: ensina a não acreditar no log, que foi
+  // exatamente o que deixou o sync quebrado três dias.
+  if (falhas > 0 && cultos > 0) {
+    return {
+      status: 'partial',
+      error_message: `${cultos} culto(s) e ${Number(r?.schedules || 0)} escala(s) entraram normalmente, mas ${falhas} de ${total} tipos ficaram sem roster completo — o arquivamento de perfis foi pulado nesta rodada.`,
+    };
+  }
   if (falhas > 0 && total > 0 && falhas >= total) {
-    return { status: 'error', error_message: `Todos os ${total} tipos de serviço falharam no Planning Center — nada foi sincronizado.` };
+    return { status: 'error', error_message: `Todos os ${total} tipos de serviço falharam no Planning Center e nenhum culto entrou.` };
   }
   if (falhas > 0) {
     return { status: 'partial', error_message: `${falhas} de ${total} tipos de serviço com roster incompleto — arquivamento de perfis foi pulado nesta rodada.` };
