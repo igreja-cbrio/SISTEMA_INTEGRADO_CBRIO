@@ -479,6 +479,9 @@ export const inscricoesApi = {
   // o que ficou de fora por ter pagamento e o que já não estava na lista.
   excluirInscricoesLote: (eventoId, ids) => post(`/inscricoes/eventos/${eventoId}/inscricoes/excluir-lote`, { ids }),
   uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-capa', fd); },
+  // Documentos do evento (orientações gerais, autorização de menor) — bucket
+  // público evento-arquivos. Devolve { url, nome }.
+  uploadArquivoEvento: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-arquivo', fd); },
   // Check-in do evento (SPEC-06) — tela fullscreen: QR do comprovante + busca
   // Inventário das portas públicas do sistema (grupos/next/batismo/…) — read-only
   portas: () => get('/inscricoes/portas'),

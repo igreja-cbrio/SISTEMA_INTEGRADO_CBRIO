@@ -72,8 +72,19 @@ const novaChaveTermo = () => `t_${Date.now().toString(36)}_${Math.random().toStr
  * alguém editasse o texto depois, ninguém saberia qual versão foi aceita.
  */
 function TermosExtraEditor({ termos, setTermos }: { termos: any[]; setTermos: (v: any[]) => void }) {
+  const [subindo, setSubindo] = useState<number | null>(null);
   function add() { setTermos([...termos, { chave: novaChaveTermo(), titulo: '', texto: '', url: '' }]); }
   function upd(i: number, patch: any) { const t = [...termos]; t[i] = { ...t[i], ...patch }; setTermos(t); }
+  // Sobe o documento do termo (ex.: a autorização de embarque de menor em .docx)
+  // pro bucket público e preenche o link — a pessoa baixa na hora do aceite e,
+  // no termo de menor, recebe o arquivo anexado no e-mail de confirmação.
+  async function enviarDoc(i: number, file?: File) {
+    if (!file) return;
+    setSubindo(i);
+    try { const r: any = await api.uploadArquivoEvento(file); upd(i, { url: r.url }); toast.success('Documento anexado ao aceite'); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao enviar o documento'); }
+    finally { setSubindo(null); }
+  }
   return (
     <div className="rounded-lg border border-border p-3 space-y-2">
       <div className="text-xs font-medium text-muted-foreground">Aceites deste evento (além do termo de dados)</div>
@@ -93,8 +104,20 @@ function TermosExtraEditor({ termos, setTermos }: { termos: any[]; setTermos: (v
           <textarea placeholder="Texto que a pessoa lê e aceita" value={t.texto || ''}
             onChange={e => upd(i, { texto: e.target.value })}
             className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1.5 text-xs min-h-[80px]" />
-          <Input placeholder="Link do documento completo (opcional · https://…)" value={t.url || ''}
-            onChange={e => upd(i, { url: e.target.value })} className="h-8 text-xs" />
+          <div className="flex gap-2 items-center">
+            <Input placeholder="Link do documento completo (opcional · https://…)" value={t.url || ''}
+              onChange={e => upd(i, { url: e.target.value })} className="h-8 text-xs flex-1" />
+            <label className="inline-flex items-center gap-1 text-[11px] text-primary border border-primary/50 rounded-md px-2 py-1.5 cursor-pointer whitespace-nowrap">
+              {subindo === i ? 'Enviando…' : 'Enviar arquivo'}
+              <input type="file" accept=".pdf,.doc,.docx" className="hidden" disabled={subindo != null}
+                onChange={e => { enviarDoc(i, e.target.files?.[0]); e.target.value = ''; }} />
+            </label>
+          </div>
+          {t.so_menor === true && t.url && (
+            <p className="text-[11px] text-muted-foreground">
+              Como este aceite é só de menor, o documento acima vai ANEXADO no e-mail de confirmação de quem se inscrever como menor.
+            </p>
+          )}
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <input type="checkbox" checked={t.so_menor === true} onChange={e => upd(i, { so_menor: e.target.checked })} />
             Só para menor de idade
@@ -231,6 +254,9 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
 const EVENTO_VAZIO = {
   nome: '', area: '', periodicidade: 'unica', tipo: 'evento',
   data: '', hora: '', local: '', descricao: '', capa_url: '',
+  // Último dia (retiro/viagem de vários dias) + arquivo de instruções gerais
+  // que a pessoa baixa ao concluir e recebe anexado no e-mail (20/08).
+  data_fim: '', instrucoes_url: '', instrucoes_nome: '',
   vagas: '', inscricoes_encerram_em: '', recorre_ate: '',
   msg_sucesso_titulo: '', msg_sucesso_texto: '', msg_whatsapp: '',
   tem_sorteio: false, checkin_ativo: false,
@@ -347,6 +373,9 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
     parcelas_max: evento.parcelas_max ?? 1,
     checkout_externo_url: evento.checkout_externo_url || '',
     checkout_externo_nome: evento.checkout_externo_nome || '',
+    data_fim: evento.data_fim || '',
+    instrucoes_url: evento.instrucoes_url || '',
+    instrucoes_nome: evento.instrucoes_nome || '',
     pagamento_expira_horas: evento.pagamento_expira_horas ?? '',
     inscricoes_encerram_em: isoParaInputLocal(evento.inscricoes_encerram_em),
   } : { ...EVENTO_VAZIO });
@@ -362,6 +391,16 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
     setEnviandoCapa(true);
     try { const r: any = await api.uploadCapa(file); setF((s: any) => ({ ...s, capa_url: r.url })); }
     catch (e: any) { toast.error(e?.message || 'Erro ao enviar a capa'); } finally { setEnviandoCapa(false); }
+  }
+
+  const [enviandoInstrucoes, setEnviandoInstrucoes] = useState(false);
+  async function enviarInstrucoes(file?: File) {
+    if (!file) return;
+    setEnviandoInstrucoes(true);
+    try {
+      const r: any = await api.uploadArquivoEvento(file);
+      setF((s: any) => ({ ...s, instrucoes_url: r.url, instrucoes_nome: r.nome || file.name }));
+    } catch (e: any) { toast.error(e?.message || 'Erro ao enviar o arquivo'); } finally { setEnviandoInstrucoes(false); }
   }
 
   async function salvar() {
@@ -384,6 +423,9 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
       const payload: any = {
         nome: f.nome, area: f.area, tipo: f.tipo, data: f.data || null, hora: f.hora || null,
         local: f.local || null, descricao: f.descricao || null, capa_url: f.capa_url || null,
+        data_fim: f.data_fim || null,
+        instrucoes_url: f.instrucoes_url || null,
+        instrucoes_nome: f.instrucoes_url ? (f.instrucoes_nome || null) : null,
         campos, premios: premios.map(p => p.trim()).filter(Boolean),
         vagas: f.vagas === '' ? null : Number(f.vagas),
         inscricoes_encerram_em: f.inscricoes_encerram_em ? new Date(f.inscricoes_encerram_em).toISOString() : null,
@@ -484,6 +526,11 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
               <Input value={f.hora || ''} onChange={e => setF((s: any) => ({ ...s, hora: mascaraHora(e.target.value) }))}
                 placeholder="19:30" inputMode="numeric" maxLength={5} />
             </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Termina em (retiro/viagem · opcional)</label>
+              <DatePicker value={f.data_fim || ''} onChange={set('data_fim')} />
+              <p className="mt-1 text-[11px] text-muted-foreground">A página pública mostra o período: “5 a 10 de fevereiro”.</p>
+            </div>
             <div className="sm:col-span-2">
               <label className="text-xs text-muted-foreground">Local</label>
               <Input value={f.local || ''} onChange={set('local')} />
@@ -510,6 +557,32 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
                   <input type="file" accept="image/*" className="hidden" disabled={enviandoCapa}
                     onChange={e => enviarCapa(e.target.files?.[0])} />
                 </label>
+              </div>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs text-muted-foreground">Instruções gerais (PDF ou Word)</label>
+              <p className="text-[11px] text-muted-foreground mb-1.5">
+                Quem conclui a inscrição pode baixar na hora (“Deseja baixar as instruções gerais?”)
+                e recebe o arquivo anexado no e-mail de confirmação.
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                {f.instrucoes_url && (
+                  <a href={f.instrucoes_url} target="_blank" rel="noreferrer"
+                    className="text-xs text-primary underline max-w-[280px] truncate">
+                    {f.instrucoes_nome || 'Arquivo de instruções'}
+                  </a>
+                )}
+                <label className="inline-flex items-center gap-1.5 text-xs text-primary border border-primary/50 rounded-md px-2.5 py-1.5 cursor-pointer">
+                  {enviandoInstrucoes ? 'Enviando…' : (f.instrucoes_url ? 'Trocar arquivo' : 'Enviar arquivo')}
+                  <input type="file" accept=".pdf,.doc,.docx" className="hidden" disabled={enviandoInstrucoes}
+                    onChange={e => { enviarInstrucoes(e.target.files?.[0]); e.target.value = ''; }} />
+                </label>
+                {f.instrucoes_url && (
+                  <button type="button" className="text-xs text-red-500"
+                    onClick={() => setF((s: any) => ({ ...s, instrucoes_url: '', instrucoes_nome: '' }))}>
+                    Remover
+                  </button>
+                )}
               </div>
             </div>
           </div>

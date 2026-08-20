@@ -182,6 +182,9 @@ const CAMPOS_EVENTO = [
   // ⚠️ `termos_extra` NÃO entra nesta lista — é jsonb e passa pelo saneador
   // próprio (`sanitizeTermosExtra`), igual a `pagamento_metodos`.
   'exigir_endereco', 'exige_dados_menor',
+  // Período (retiro de vários dias) + instruções gerais pra download/e-mail
+  // (migration 20260820120000). Nullable: limpar é edição legítima.
+  'data_fim', 'instrucoes_url', 'instrucoes_nome',
 ];
 
 // ⚠️ INCIDENTE 2026-08-04 · colunas NOT NULL da whitelist acima.
@@ -2388,6 +2391,36 @@ router.post('/upload-capa', authorizeModule('inscricoes', 3), upload.single('arq
   } catch (e) {
     console.error('[inscricoes] upload-capa:', e.message);
     res.status(500).json({ error: 'Erro ao enviar a capa' });
+  }
+});
+
+// POST /upload-arquivo — documentos do evento (orientações gerais, autorização
+// de embarque de menor). Bucket público `evento-arquivos` (migration
+// 20260820120000): o link estável é o que a tela de download e o anexo do
+// e-mail usam. ⚠️ Documento com dado de PESSOA não entra aqui — bucket público.
+const TIPOS_ARQUIVO_EVENTO = {
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+};
+router.post('/upload-arquivo', authorizeModule('inscricoes', 3), upload.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo não enviado' });
+    // Extensão sai do MIME validado, nunca do nome (lição da capa do app):
+    // .exe renomeado pra .pdf não passa, e nome sem extensão não quebra.
+    const ext = TIPOS_ARQUIVO_EVENTO[req.file.mimetype];
+    if (!ext) return res.status(400).json({ error: 'Só PDF ou Word (.doc/.docx) — este arquivo vai para download público.' });
+    const path = `espinha/arquivos/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { error } = await supabase.storage.from('evento-arquivos').upload(path, req.file.buffer, {
+      contentType: req.file.mimetype, upsert: false,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from('evento-arquivos').getPublicUrl(path);
+    // O nome original volta pra tela guardar como rótulo de exibição.
+    res.json({ url: data.publicUrl, nome: String(req.file.originalname || `arquivo.${ext}`).slice(0, 160) });
+  } catch (e) {
+    console.error('[inscricoes] upload-arquivo:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar o arquivo' });
   }
 });
 

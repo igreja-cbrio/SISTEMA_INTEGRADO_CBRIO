@@ -95,6 +95,7 @@ async function eventoEspinhaPorSlug(slug) {
     .eq('slug', slug).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   await anexarConfigMenor(data);
+  await anexarExtrasEvento(data);
   return data;
 }
 
@@ -128,6 +129,32 @@ async function anexarConfigMenor(ev) {
   return ev;
 }
 
+/**
+ * ⚠️ Colunas da migration 20260820120000 (data_fim + instruções gerais), em
+ * SELECT PRÓPRIO e best-effort — separado do `anexarConfigMenor` de propósito:
+ * se fosse na mesma query, um deploy antes desta migration derrubaria também o
+ * bloco de menor e os aceites, que já estão em produção. Ausente ⇒ evento de um
+ * dia, sem arquivo de instruções (o comportamento de antes).
+ */
+async function anexarExtrasEvento(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('data_fim, instrucoes_url, instrucoes_nome')
+      .eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    ev.data_fim = data?.data_fim || null;
+    ev.instrucoes_url = /^https:\/\//.test(String(data?.instrucoes_url || '')) ? data.instrucoes_url : null;
+    ev.instrucoes_nome = data?.instrucoes_nome || null;
+  } catch (e) {
+    console.warn('[publicEvento espinha] período/instruções indisponíveis:', e.message);
+    ev.data_fim = null;
+    ev.instrucoes_url = null;
+    ev.instrucoes_nome = null;
+  }
+  return ev;
+}
+
 // Mesmo SELECT/régua do por-slug, mas por ID: o app de membros já tem o id do
 // evento (veio do catálogo `GET /api/app/eventos`) e não precisa do slug.
 // ⚠️ Reusar este loader é o que garante que o app veja EXATAMENTE o mesmo
@@ -138,6 +165,7 @@ async function eventoEspinhaPorId(id) {
     .eq('id', id).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   await anexarConfigMenor(data);
+  await anexarExtrasEvento(data);
   return data;
 }
 
@@ -450,6 +478,9 @@ function emailConfirmadaBestEffort({ ev, inscricaoId, val, comprovanteToken }) {
       .eq('id', inscricaoId).maybeSingle();
     await enviarEmailInscricaoConfirmada({
       inscricao: {
+        // O id vai junto: é ele que deixa o e-mail saber se a inscrição é de
+        // menor (pra anexar a autorização de embarque do responsável).
+        id: inscricaoId,
         codigo: data?.codigo || null,
         nome_completo: data?.nome_completo || val?.nomeCompleto,
         email: data?.email || val?.email,
@@ -540,6 +571,25 @@ async function comprovantesDaInscricao(inscricaoId) {
   } catch { return []; }
 }
 
+/**
+ * Instruções gerais do EVENTO desta inscrição — pra página de pagamento
+ * oferecer o download quando o pagamento confirma ("a tela de sucesso do
+ * formulário ficou pra trás quando a pessoa foi pro checkout"). Isolada e
+ * fail-soft: colunas da migration 20260820120000.
+ */
+async function instrucoesDaInscricao(inscricaoId) {
+  if (!inscricaoId) return null;
+  try {
+    const { data, error } = await supabase.from('inscricoes')
+      .select('evento:insc_eventos(instrucoes_url, instrucoes_nome)')
+      .eq('id', inscricaoId).maybeSingle();
+    if (error) return null;
+    const url = data?.evento?.instrucoes_url;
+    if (!/^https:\/\//.test(String(url || ''))) return null;
+    return { url, nome: data.evento.instrucoes_nome || 'Instruções gerais' };
+  } catch { return null; }
+}
+
 /** Código legível da inscrição. Consulta isolada e fail-soft (a coluna é nova). */
 async function codigoDaInscricao(inscricaoId) {
   if (!inscricaoId) return null;
@@ -573,6 +623,10 @@ async function respostaPagamento(cobranca) {
     // AQUI — a tela de sucesso do formulário já ficou pra trás quando a
     // pessoa foi pro checkout, e esta é a página que ela reabre.
     comprovante_token: comprovanteToken,
+    // Instruções gerais do evento: só com `pago` (inscrição concluída). O
+    // mesmo arquivo vai anexado no e-mail de confirmação — o download aqui é
+    // o "quer baixar agora?".
+    instrucoes: cobranca.status === 'pago' ? await instrucoesDaInscricao(daInscricao) : null,
 
     // ── Comprovante de Pix/transferência (fila humana) ──
     // Só faz sentido oferecer enquanto NÃO está pago e em forma que pode ter
@@ -841,6 +895,13 @@ router.get('/:slug', async (req, res) => {
     return res.json({
       fonte: 'espinha',
       nome: esp.nome, slug: esp.slug, data: esp.data, hora: esp.hora, local: esp.local,
+      // Último dia (retiro de vários dias) — a tela mostra "5 a 10 de fevereiro".
+      data_fim: esp.data_fim || null,
+      // Instruções gerais: a tela de sucesso oferece o download depois de
+      // concluir (quem paga por Pix recebe na página de pagamento, quando paga).
+      instrucoes: esp.instrucoes_url
+        ? { url: esp.instrucoes_url, nome: esp.instrucoes_nome || 'Instruções gerais' }
+        : null,
       descricao: esp.descricao, form_ativo: !encerradas, tem_sorteio: esp.tem_sorteio,
       campos: Array.isArray(esp.campos) ? esp.campos : [], capa_url: esp.capa_url || null,
       inscricoes_encerram_em: esp.inscricoes_encerram_em || null,
