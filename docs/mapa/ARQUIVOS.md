@@ -1,0 +1,587 @@
+# Todos os arquivos · índice plano
+
+<!-- GERADO por backend/scripts/gerar-mapa.cjs — NÃO editar à mão. -->
+
+> ⚠️ **Este mapa responde ONDE algo mora, nunca SE está certo.** Ele é derivado do
+> código, então não mente sobre caminho de arquivo, rota ou endpoint. Mas continua
+> obrigatório MEDIR: número do banco, se um cron roda, se uma coluna existe, o que a
+> definição **viva** de uma função SQL diz, e o formato real de arquivo de terceiro.
+>
+> ⚠️ É regenerado sem travar deploy, então pode estar algumas horas atrás. Se citar
+> arquivo que não existe, **vale o código**.
+
+**Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
+chegar com um nome e sair com um caminho, sem varrer o repositório.
+
+568 arquivos.
+
+| arquivo | tipo | módulo | rota / teste |
+|---|---|---|---|
+| `Aplicativo-CBRio/app/(app)/anotacoes.tsx` | tela app | — | `/anotacoes` |
+| `Aplicativo-CBRio/app/(app)/apresentacao-crianca.tsx` | tela app | — | `/apresentacao-crianca` |
+| `Aplicativo-CBRio/app/(app)/batismo.tsx` | tela app | — | `/batismo` |
+| `Aplicativo-CBRio/app/(app)/cartoes.tsx` | tela app | — | `/cartoes` |
+| `Aplicativo-CBRio/app/(app)/censo.tsx` | tela app | — | `/censo` |
+| `Aplicativo-CBRio/app/(app)/completar-cadastro.tsx` | tela app | — | `/completar-cadastro` |
+| `Aplicativo-CBRio/app/(app)/comprovante-doacoes.tsx` | tela app | — | `/comprovante-doacoes` |
+| `Aplicativo-CBRio/app/(app)/configuracoes.tsx` | tela app | — | `/configuracoes` |
+| `Aplicativo-CBRio/app/(app)/cuidados.tsx` | tela app | — | `/cuidados` |
+| `Aplicativo-CBRio/app/(app)/culto-detalhe.tsx` | tela app | — | `/culto-detalhe` |
+| `Aplicativo-CBRio/app/(app)/devocional.tsx` | tela app | — | `/devocional` |
+| `Aplicativo-CBRio/app/(app)/escala-supervisor.tsx` | tela app | — | `/escala-supervisor` |
+| `Aplicativo-CBRio/app/(app)/evento.tsx` | tela app | — | `/evento` |
+| `Aplicativo-CBRio/app/(app)/falar-com-a-igreja.tsx` | tela app | — | `/falar-com-a-igreja` |
+| `Aplicativo-CBRio/app/(app)/fale-conosco.tsx` | tela app | — | `/fale-conosco` |
+| `Aplicativo-CBRio/app/(app)/familia.tsx` | tela app | — | `/familia` |
+| `Aplicativo-CBRio/app/(app)/generosidade.tsx` | tela app | — | `/generosidade` |
+| `Aplicativo-CBRio/app/(app)/grupo-detalhe.tsx` | tela app | — | `/grupo-detalhe` |
+| `Aplicativo-CBRio/app/(app)/grupo-editar.tsx` | tela app | — | `/grupo-editar` |
+| `Aplicativo-CBRio/app/(app)/grupo-inscricoes.tsx` | tela app | — | `/grupo-inscricoes` |
+| `Aplicativo-CBRio/app/(app)/grupo-membros.tsx` | tela app | — | `/grupo-membros` |
+| `Aplicativo-CBRio/app/(app)/grupo-visita.tsx` | tela app | — | `/grupo-visita` |
+| `Aplicativo-CBRio/app/(app)/grupos.tsx` | tela app | — | `/grupos` |
+| `Aplicativo-CBRio/app/(app)/index.tsx` | tela app | — | `/index` |
+| `Aplicativo-CBRio/app/(app)/inscricao-batismo.tsx` | tela app | — | `/inscricao-batismo` |
+| `Aplicativo-CBRio/app/(app)/inscricao-next.tsx` | tela app | — | `/inscricao-next` |
+| `Aplicativo-CBRio/app/(app)/inscricoes.tsx` | tela app | — | `/inscricoes` |
+| `Aplicativo-CBRio/app/(app)/jornada.tsx` | tela app | — | `/jornada` |
+| `Aplicativo-CBRio/app/(app)/kids-filho.tsx` | tela app | — | `/kids-filho` |
+| `Aplicativo-CBRio/app/(app)/kids-solicitar-vinculo.tsx` | tela app | — | `/kids-solicitar-vinculo` |
+| `Aplicativo-CBRio/app/(app)/kids.tsx` | tela app | — | `/kids` |
+| `Aplicativo-CBRio/app/(app)/menu.tsx` | tela app | — | `/menu` |
+| `Aplicativo-CBRio/app/(app)/meu-grupo.tsx` | tela app | — | `/meu-grupo` |
+| `Aplicativo-CBRio/app/(app)/modo-culto.tsx` | tela app | — | `/modo-culto` |
+| `Aplicativo-CBRio/app/(app)/mural.tsx` | tela app | — | `/mural` |
+| `Aplicativo-CBRio/app/(app)/next-turma.tsx` | tela app | — | `/next-turma` |
+| `Aplicativo-CBRio/app/(app)/next.tsx` | tela app | — | `/next` |
+| `Aplicativo-CBRio/app/(app)/notificacoes.tsx` | tela app | — | `/notificacoes` |
+| `Aplicativo-CBRio/app/(app)/perfil.tsx` | tela app | — | `/perfil` |
+| `Aplicativo-CBRio/app/(app)/sobre.tsx` | tela app | — | `/sobre` |
+| `Aplicativo-CBRio/app/(app)/trocar-senha.tsx` | tela app | — | `/trocar-senha` |
+| `Aplicativo-CBRio/app/(app)/videos.tsx` | tela app | — | `/videos` |
+| `Aplicativo-CBRio/app/(app)/voluntariado.tsx` | tela app | — | `/voluntariado` |
+| `Aplicativo-CBRio/app/(auth)/cadastro.tsx` | tela app | — | `/cadastro` |
+| `Aplicativo-CBRio/app/(auth)/login.tsx` | tela app | — | `/login` |
+| `Aplicativo-CBRio/app/(auth)/recuperar-senha.tsx` | tela app | — | `/recuperar-senha` |
+| `Aplicativo-CBRio/app/(auth)/redefinir-senha.tsx` | tela app | — | `/redefinir-senha` |
+| `Aplicativo-CBRio/app/(auth)/verificar-telefone.tsx` | tela app | — | `/verificar-telefone` |
+| `Aplicativo-CBRio/components/anim/AnimatedBell.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/anim/AnimatedCard.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/anim/AnimatedCountdown.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/anim/AnimatedShortcut.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/anim/Breathing.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/anim/HeartPulse.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/anim/HeartRefresh.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/anim/Skeleton.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/app/ErrorBoundary.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/app/PortaoAtualizacao.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/auth/BiometriaLock.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/auth/CadastroGate.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/brand/CbrioHeart.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/brand/SplashPulse.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/cartao/AddToWalletButton.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/cartao/HolographicCard.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/cartao/HoloTicket.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/censo/CampoCenso.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/censo/FormCenso.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/generosidade/CheckoutWebView.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/generosidade/GenerosidadeTexto.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/generosidade/SucessoDoacao.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/grupos/ModalAgendaEncontro.tsx` | lib app | — | `1 chamada(s)` |
+| `Aplicativo-CBRio/components/home/Carrossel.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/home/ProximosCultos.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/inscricoes/BotaoCompartilhar.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/inscricoes/FormScaffold.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/inscricoes/SeusDados.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/onboarding/Onboarding.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/BottomBar.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/Button.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/CalendarioBR.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/Checkbox.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/CodeInput.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/ComingSoon.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/Dialogo.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/EmptyState.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/ErrorState.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/GlassCard.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/GruposMapa.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/Input.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/PhoneInput.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/ScreenBackground.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/SecaoRecolhivel.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/SocialButton.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/TecladoSeguro.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/ui/TopBar.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/components/voluntariado/Disponibilidade.tsx` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/api.ts` | lib app | — | `52 chamada(s)` |
+| `Aplicativo-CBRio/lib/applePay.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/applyFontScale.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/apresentacaoCrianca.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/batismo.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/biometria.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/buscaTexto.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/cache.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/cadastroAberto.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/cadastroEmAndamento.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/canalRealtime.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/capaGrupo.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/cartaoQr.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/carteira.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/censoApi.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/censoForm.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/compartilharInscricao.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/contribuicoes.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/convite.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/cultos.ts` | lib app | — | `1 chamada(s)` |
+| `Aplicativo-CBRio/lib/dataBRT.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/descartarRascunho.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/destaques.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/devocional.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/devocionalShare.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/dialogosNativos.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/disponibilidade.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/escalas.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/eventos.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/falhaDeLeitura.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/features.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/ficha.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/fonts.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/grupos.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/hierarquia.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/homeCultos.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/i18n.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/inscricaoPayload.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/inscricoes.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/inscricoesStatus.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/jornada.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/marcadoresJornada.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/meusPedidos.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/motivoPush.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/nav.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/navegacao.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/notifTap.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/onboarding.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/papelGrupo.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/portaUnica.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/preferenciaPagamento.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/proximoBatismo.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/proximoEncontro.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/push.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/pushLotes.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/resumoEscalas.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/stripeCheckout.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/supabase.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/teclado.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/telefone.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/telemetria.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/temporadaGrupos.ts` | lib app | — | `1 chamada(s)` |
+| `Aplicativo-CBRio/lib/translations.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/useAdminGrupo.ts` | lib app | — | `1 chamada(s)` |
+| `Aplicativo-CBRio/lib/useMembro.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/useNextSync.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/useNotificacoes.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/useVoluntariadoSync.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/validators.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/versaoApp.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/visitaSupervisao.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/volStatus.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/voluntariadoMe.ts` | lib app | — | `0 chamada(s)` |
+| `Aplicativo-CBRio/lib/wallet.ts` | lib app | — | `0 chamada(s)` |
+| `backend/routes/agenteBatismoNext.js` | rota backend | — | `/api/agente-batismo-next` |
+| `backend/routes/agentePrimeiroContato.js` | rota backend | — | `/api/agente-primeiro-contato` |
+| `backend/routes/agenteVoluntariado.js` | rota backend | voluntariado | `/api/agente-voluntariado` |
+| `backend/routes/agents.js` | rota backend | — | `/api/agents` |
+| `backend/routes/agentTasks.js` | rota backend | — | `/api/agent-tasks` |
+| `backend/routes/app.js` | rota backend | — | `/api/app` |
+| `backend/routes/appAnalytics.js` | rota backend | — | `/api/app-analytics` |
+| `backend/routes/apresentacoes.js` | rota backend | apresentacoes | `(não montado)` |
+| `backend/routes/arquivei.js` | rota backend | — | `/api/arquivei` |
+| `backend/routes/ataSemanal.js` | rota backend | — | `/api/ata-semanal` |
+| `backend/routes/auth.js` | rota backend | — | `/api/auth` |
+| `backend/routes/authPlanningCenter.js` | rota backend | — | `/api/auth/planning-center` |
+| `backend/routes/batismoFotos.js` | rota backend | marketing | `/api/batismo-fotos` |
+| `backend/routes/bible.js` | rota backend | — | `/api/bible` |
+| `backend/routes/censo.js` | rota backend | censo | `/api/censo` |
+| `backend/routes/cerebro.js` | rota backend | cerebro | `/api/cerebro` |
+| `backend/routes/coberturas.js` | rota backend | — | `/api/coberturas` |
+| `backend/routes/completions.js` | rota backend | — | `/api/completions` |
+| `backend/routes/comunicacao.js` | rota backend | comunicacao | `/api/comunicacao` |
+| `backend/routes/comunicados.js` | rota backend | marketing | `/api/comunicados` |
+| `backend/routes/cuidados.js` | rota backend | cuidados | `/api/cuidados` |
+| `backend/routes/cycles.js` | rota backend | — | `/api/cycles` |
+| `backend/routes/dadosBrutos.js` | rota backend | — | `/api/dados-brutos` |
+| `backend/routes/dashboard.js` | rota backend | — | `/api/dashboard` |
+| `backend/routes/dashboardSemanal.js` | rota backend | — | `/api/dashboard-semanal` |
+| `backend/routes/destaques.js` | rota backend | marketing | `/api/destaques` |
+| `backend/routes/devocionais.js` | rota backend | — | `/api/devocionais` |
+| `backend/routes/devocionalMembro.js` | rota backend | — | `/api/devocional-membro` |
+| `backend/routes/devocionalPlanos.js` | rota backend | — | `/api/devocional-planos` |
+| `backend/routes/encaminhamentos.js` | rota backend | — | `/api/encaminhamentos` |
+| `backend/routes/estrategia.js` | rota backend | — | `/api/estrategia` |
+| `backend/routes/eventosExternos.js` | rota backend | eventos-externos | `/api/eventos-externos` |
+| `backend/routes/events.js` | rota backend | rh | `/api/events` |
+| `backend/routes/expansion.js` | rota backend | — | `/api/expansion` |
+| `backend/routes/face.js` | rota backend | face | `/api/face` |
+| `backend/routes/feedback.js` | rota backend | — | `/api/feedback` |
+| `backend/routes/financeiro.js` | rota backend | financeiro | `/api/financeiro` |
+| `backend/routes/financeiroV2.js` | rota backend | financeiro | `/api/financeiro-v2` |
+| `backend/routes/gestao.js` | rota backend | — | `/api/gestao` |
+| `backend/routes/governanca.js` | rota backend | governanca | `/api/governanca` |
+| `backend/routes/grupos.js` | rota backend | grupos | `/api/grupos` |
+| `backend/routes/inscricoes.js` | rota backend | inscricoes | `/api/inscricoes` |
+| `backend/routes/integracao.js` | rota backend | integracao | `/api/integracao` |
+| `backend/routes/jornada.js` | rota backend | — | `/api/jornada` |
+| `backend/routes/kpis.js` | rota backend | — | `/api/kpis` |
+| `backend/routes/kpisV2.js` | rota backend | — | `/api/kpis/v2` |
+| `backend/routes/lgpd.js` | rota backend | membresia | `/api/lgpd` |
+| `backend/routes/links.js` | rota backend | links | `/api/links` |
+| `backend/routes/logistica.js` | rota backend | logistica | `/api/logistica` |
+| `backend/routes/marketing.js` | rota backend | marketing | `/api/marketing` |
+| `backend/routes/meetings.js` | rota backend | — | `/api/meetings` |
+| `backend/routes/membresia.js` | rota backend | membresia | `/api/membresia` |
+| `backend/routes/ml.js` | rota backend | — | `/api/ml` |
+| `backend/routes/monitorAutomacoes.js` | rota backend | — | `/api/monitor-automacoes` |
+| `backend/routes/next.js` | rota backend | — | `/api/next` |
+| `backend/routes/nextBatismo.js` | rota backend | next-batismo | `(não montado)` |
+| `backend/routes/nextConvite.js` | rota backend | cuidados | `/api/next-convite` |
+| `backend/routes/notificacoes.js` | rota backend | — | `/api/notificacoes` |
+| `backend/routes/nps.js` | rota backend | nps | `/api/nps` |
+| `backend/routes/nsm.js` | rota backend | — | `/api/nsm` |
+| `backend/routes/occurrences.js` | rota backend | — | `/api/occurrences` |
+| `backend/routes/online.js` | rota backend | — | `/api/online` |
+| `backend/routes/pagamentosWebhook.js` | rota backend | — | `/api/pagamentos-webhook` |
+| `backend/routes/painel.js` | rota backend | — | `/api/painel` |
+| `backend/routes/painelArea.js` | rota backend | painel-area | `/api/painel-area` |
+| `backend/routes/painelRh.js` | rota backend | rh | `/api/painel-rh` |
+| `backend/routes/patrimonio.js` | rota backend | patrimonio | `/api/patrimonio` |
+| `backend/routes/pcs.js` | rota backend | — | `/api/pcs` |
+| `backend/routes/permissoes.js` | rota backend | — | `/api/permissoes` |
+| `backend/routes/pessoas.js` | rota backend | membros | `/api/pessoas` |
+| `backend/routes/planejamento.js` | rota backend | — | `/api/planejamento` |
+| `backend/routes/planejamentoAnual.js` | rota backend | — | `/api/planejamento-anual` |
+| `backend/routes/processos.js` | rota backend | — | `/api/processos` |
+| `backend/routes/producao.js` | rota backend | producao | `/api/producao` |
+| `backend/routes/projects.js` | rota backend | — | `/api/projects` |
+| `backend/routes/propostas.js` | rota backend | propostas | `/api/propostas` |
+| `backend/routes/publicApresentacao.js` | rota backend | — | `/api/public/apresentacao-criancas` |
+| `backend/routes/publicBatismo.js` | rota backend | — | `/api/public/batismo` |
+| `backend/routes/publicCenso.js` | rota backend | — | `/api/public/censo` |
+| `backend/routes/publicDecisaoCulto.js` | rota backend | — | `/api/public/decisao-culto` |
+| `backend/routes/publicDecisaoOnline.js` | rota backend | — | `/api/public/decisao-online` |
+| `backend/routes/publicDevocional.js` | rota backend | — | `/api/public/devocional` |
+| `backend/routes/publicEventoExterno.js` | rota backend | — | `/api/public/evento` |
+| `backend/routes/publicFamilia.js` | rota backend | — | `/api/public/familia` |
+| `backend/routes/publicGenerosidade.js` | rota backend | — | `/api/public/generosidade` |
+| `backend/routes/publicGrupos.js` | rota backend | — | `/api/public/grupos` |
+| `backend/routes/publicMembresia.js` | rota backend | — | `/api/public/membresia` |
+| `backend/routes/publicNext.js` | rota backend | — | `/api/public/next` |
+| `backend/routes/publicNps.js` | rota backend | — | `/api/public/nps` |
+| `backend/routes/publicRhOnboarding.js` | rota backend | — | `/api/public/rh-onboarding` |
+| `backend/routes/publicVolEmail.js` | rota backend | — | `/api/public/vol-email` |
+| `backend/routes/publicVoluntariado.js` | rota backend | — | `/api/public/voluntariado` |
+| `backend/routes/publicWhatsapp.js` | rota backend | — | `/api/whatsapp/webhook` |
+| `backend/routes/redirecionador.js` | rota backend | — | `(não montado)` |
+| `backend/routes/relatorios.js` | rota backend | relatorios | `/api/relatorios` |
+| `backend/routes/reports.js` | rota backend | — | `/api/events` |
+| `backend/routes/revisoes.js` | rota backend | — | `/api/revisoes` |
+| `backend/routes/rh.js` | rota backend | rh | `/api/rh` |
+| `backend/routes/ritual.js` | rota backend | — | `/api/ritual` |
+| `backend/routes/santander.js` | rota backend | financeiro | `/api/santander` |
+| `backend/routes/santanderCron.js` | rota backend | — | `/api/santander/cron` |
+| `backend/routes/sistema.js` | rota backend | — | `/api/sistema` |
+| `backend/routes/sistemaV1.js` | rota backend | — | `/api/sistema` |
+| `backend/routes/solicitacoes.js` | rota backend | — | `/api/solicitacoes` |
+| `backend/routes/staff.js` | rota backend | — | `/api/staff` |
+| `backend/routes/strategic.js` | rota backend | — | `/api/strategic` |
+| `backend/routes/systemTelemetry.js` | rota backend | — | `/api/telemetry` |
+| `backend/routes/tarefas.js` | rota backend | — | `/api/tarefas` |
+| `backend/routes/tasks.js` | rota backend | — | `/api/tasks` |
+| `backend/routes/totem.js` | rota backend | — | `/api/totem` |
+| `backend/routes/totemKids.js` | rota backend | kids | `/api/totem-kids` |
+| `backend/routes/tutorial.js` | rota backend | — | `/api/tutorial` |
+| `backend/routes/volEmails.js` | rota backend | voluntariado | `(não montado)` |
+| `backend/routes/voluntariado-sync.js` | rota backend | voluntariado | `/api/voluntariado` |
+| `backend/routes/voluntariado.js` | rota backend | membresia | `/api/voluntariado` |
+| `backend/routes/waInbox.js` | rota backend | conversas | `/api/wa-inbox` |
+| `backend/routes/whatsapp.js` | rota backend | whatsapp-admin | `/api/whatsapp` |
+| `backend/routes/whatsappAutoRoutes.js` | rota backend | — | `(não montado)` |
+| `backend/routes/whatsappCron.js` | rota backend | — | `/api/whatsapp-cron` |
+| `backend/routes/whatsappGrupos.js` | rota backend | grupos | `/api/whatsapp-grupos` |
+| `backend/routes/wifi.js` | rota backend | wifi | `/api/wifi` |
+| `backend/utils/agendaGrupo.js` | régua pura | — | `src/test/agendaGrupo.test.ts` |
+| `backend/utils/agradecimento.js` | régua pura | — | `src/test/agradecimento.test.ts` |
+| `backend/utils/alcadaCompra.js` | régua pura | — | `src/test/alcadaCompra.test.ts` |
+| `backend/utils/alcadaCompras.js` | régua pura | — | `src/test/alcadaCompras.test.ts` |
+| `backend/utils/appError.js` | régua pura | — | `backend/middleware/errorHandler.test.js` |
+| `backend/utils/appRateLimit.js` | régua pura | — | `src/test/appRateLimit.test.ts` |
+| `backend/utils/avisoAgregado.js` | régua pura | — | `src/test/avisoAgregado.test.ts` |
+| `backend/utils/avisoEscala.js` | régua pura | — | `src/test/avisoEscala.test.ts` |
+| `backend/utils/avisoGrupoApp.js` | régua pura | — | `src/test/avisoGrupoApp.test.ts` |
+| `backend/utils/batismoHorario.js` | régua pura | — | `src/test/batismoHorario.test.ts` |
+| `backend/utils/campoKey.js` | régua pura | — | `src/test/campoKey.test.ts` |
+| `backend/utils/camposCondicionais.js` | régua pura | — | `src/test/camposCondicionais.test.ts` |
+| `backend/utils/camposContato.js` | régua pura | — | `src/test/saneamentoInscricaoApp.test.ts` |
+| `backend/utils/censoCampoCadastro.js` | régua pura | — | `src/test/censoCampoCadastro.test.ts` |
+| `backend/utils/censoConvite.js` | régua pura | — | `src/test/censoConvite.test.ts` |
+| `backend/utils/censoPerguntas.js` | régua pura | — | `src/test/censoFormEspelho.test.ts` |
+| `backend/utils/censoPrefill.js` | régua pura | — | `src/test/censoPrefill.test.ts` |
+| `backend/utils/censoRespostaToken.js` | régua pura | — | `src/test/censoRespostaToken.test.ts` |
+| `backend/utils/censoToken.js` | régua pura | — | `src/test/censoRespostaToken.test.ts` |
+| `backend/utils/censoVocabulario.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/checkoutExterno.js` | régua pura | — | `src/test/checkoutExterno.test.ts` |
+| `backend/utils/corsPolicy.js` | régua pura | — | `backend/middleware/errorHandler.test.js` |
+| `backend/utils/cpf.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/criancaApresentacao.js` | régua pura | — | `src/test/cultoApresentacao.test.ts` |
+| `backend/utils/cronAuth.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/cultoJanela.js` | régua pura | — | `src/test/cultoJanela.test.ts` |
+| `backend/utils/cultoToken.js` | régua pura | — | `src/test/cultoToken.test.ts` |
+| `backend/utils/cursorLote.js` | régua pura | — | `src/test/cursorLote.test.ts` |
+| `backend/utils/dadosDoCadastro.js` | régua pura | — | `backend/services/membroMatchInsert.test.js` |
+| `backend/utils/dadosSensiveisPessoa.js` | régua pura | — | `src/test/dadosSensiveisPessoa.test.ts` |
+| `backend/utils/decendioComparativo.js` | régua pura | — | `src/test/decendioComparativo.test.ts` |
+| `backend/utils/divisorMandala.js` | régua pura | — | `src/test/divisorMandala.test.ts` |
+| `backend/utils/entradaGrupoApp.js` | régua pura | — | `src/test/entradaGrupoApp.test.ts` |
+| `backend/utils/escalaToken.js` | régua pura | — | `src/test/escalaToken.test.ts` |
+| `backend/utils/exclusaoInscricaoLote.js` | régua pura | — | `src/test/exclusaoInscricaoLote.test.ts` |
+| `backend/utils/grupoCapaApp.js` | régua pura | — | `src/test/grupoCapaApp.test.ts` |
+| `backend/utils/grupoEdicaoApp.js` | régua pura | — | `src/test/grupoEdicaoApp.test.ts` |
+| `backend/utils/gruposToken.js` | régua pura | — | `src/test/gruposToken.test.ts` |
+| `backend/utils/inscricaoMenor.js` | régua pura | — | `src/test/inscricaoMenor.test.ts` |
+| `backend/utils/isoWeek.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/jornadaMarcadores.js` | régua pura | — | `src/test/jornadaMarcadores.test.ts` |
+| `backend/utils/jornadaTempo.js` | régua pura | — | `src/test/jornadaTempo.test.ts` |
+| `backend/utils/kidsFrequencia.js` | régua pura | — | `src/test/kidsFrequencia.test.ts` |
+| `backend/utils/kidsResponsavel.js` | régua pura | — | `backend/routes/incidentRemediation.test.js` |
+| `backend/utils/lentesDomingo.js` | régua pura | — | `src/test/lentesDomingo.test.ts` |
+| `backend/utils/linkInscricaoApp.js` | régua pura | — | `src/test/linkInscricaoApp.test.ts` |
+| `backend/utils/marketingCores.js` | régua pura | — | `src/test/marketingCores.test.ts` |
+| `backend/utils/marketingOcupacao.js` | régua pura | — | `src/test/marketingOcupacao.test.ts` |
+| `backend/utils/marketingSemanas.js` | régua pura | — | `src/test/marketingSemanas.test.ts` |
+| `backend/utils/marketingSolicitante.js` | régua pura | — | `src/test/marketingSolicitante.test.ts` |
+| `backend/utils/membrosPagina.js` | régua pura | — | `src/test/membrosPagina.test.ts` |
+| `backend/utils/mlAvisoEntrega.js` | régua pura | — | `src/test/mlAvisoEntrega.test.ts` |
+| `backend/utils/moduloDaAreaEvento.js` | régua pura | — | `src/test/moduloDaAreaEvento.test.ts` |
+| `backend/utils/nfeArquivo.js` | régua pura | — | `src/test/nfeArquivo.test.ts` |
+| `backend/utils/nfeXml.js` | régua pura | — | `src/test/nfeXml.test.ts` |
+| `backend/utils/onlineDiag.js` | régua pura | — | `src/test/onlineDiag.test.ts` |
+| `backend/utils/pagination.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/paresDuplicados.js` | régua pura | — | `src/test/paresDuplicados.test.ts` |
+| `backend/utils/patrimonioDepreciacao.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/pcoChave.js` | régua pura | — | `src/test/pcoChave.test.ts` |
+| `backend/utils/periodoYtd.js` | régua pura | — | `src/test/periodoYtd.test.ts` |
+| `backend/utils/prontidaoCadastro.js` | régua pura | — | `src/test/cadastroPessoaCompleto.test.ts` |
+| `backend/utils/pushLotes.js` | régua pura | — | `src/test/pushLotes.test.ts` |
+| `backend/utils/remetenteEmail.js` | régua pura | — | `src/test/remetenteEmail.test.ts` |
+| `backend/utils/resilientFetch.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/respostaEscala.js` | régua pura | — | `src/test/respostaEscala.test.ts` |
+| `backend/utils/rhOnboardingProntidao.js` | régua pura | — | `src/test/rhOnboardingProntidao.test.ts` |
+| `backend/utils/rpcsCliente.js` | régua pura | — | `src/test/rpcsCliente.test.ts` |
+| `backend/utils/saneamentoInscricaoApp.js` | régua pura | — | `src/test/saneamentoInscricaoApp.test.ts` |
+| `backend/utils/sanitize.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/saudeCrianca.js` | régua pura | — | `src/test/portasAlinhadas.test.ts` |
+| `backend/utils/sentry.js` | régua pura | — | `backend/middleware/errorHandler.test.js` |
+| `backend/utils/sexoDeclarado.js` | régua pura | — | `src/test/sexoDeclarado.test.ts` |
+| `backend/utils/storagePath.js` | régua pura | — | `src/test/storagePath.test.ts` |
+| `backend/utils/supabase.js` | régua pura | — | `src/test/anexosLogArquivos.test.ts` |
+| `backend/utils/supervisorArea.js` | régua pura | — | `src/test/supervisorArea.test.ts` |
+| `backend/utils/telefoneVoluntario.js` | régua pura | — | `src/test/telefoneVoluntario.test.ts` |
+| `backend/utils/totemCerco.js` | régua pura | — | `src/test/totemCerco.test.ts` |
+| `backend/utils/vigenciaTipoCulto.js` | régua pura | — | `src/test/vigenciaTipoCulto.test.ts` |
+| `backend/utils/vinculoMlSolicitacao.js` | régua pura | — | `src/test/vinculoMlSolicitacao.test.ts` |
+| `backend/utils/vinculosDuplicados.js` | régua pura | — | `src/test/vinculosDuplicados.test.ts` |
+| `backend/utils/volCobertura.js` | régua pura | — | `src/test/volCobertura.test.ts` |
+| `backend/utils/volDisponibilidade.js` | régua pura | — | `src/test/volDisponibilidade.test.ts` |
+| `backend/utils/volIntegradoEm.js` | régua pura | — | `src/test/volIntegradoEm.test.ts` |
+| `backend/utils/volRodizio.js` | régua pura | — | `src/test/volRodizio.test.ts` |
+| `backend/utils/volSyncIntegrity.js` | régua pura | — | `src/test/volSyncIntegrity.test.ts` |
+| `backend/utils/whatsappModulo.js` | régua pura | — | `src/test/whatsappModulo.test.ts` |
+| `backend/utils/whatsappOrigem.js` | régua pura | — | `src/test/whatsappOrigem.test.ts` |
+| `backend/utils/workerHmac.js` | régua pura | — | `SEM TESTE` |
+| `CBRio-Staff/app/(app)/(tabs)/aprovar.tsx` | tela app | — | `/aprovar` |
+| `CBRio-Staff/app/(app)/(tabs)/index.tsx` | tela app | — | `/index` |
+| `CBRio-Staff/app/(app)/(tabs)/menu.tsx` | tela app | — | `/menu` |
+| `CBRio-Staff/app/(app)/(tabs)/paineis.tsx` | tela app | — | `/paineis` |
+| `CBRio-Staff/app/(app)/(tabs)/solicitacoes.tsx` | tela app | — | `/solicitacoes` |
+| `CBRio-Staff/app/(app)/batismo/[id].tsx` | tela app | — | `/batismo/[id]` |
+| `CBRio-Staff/app/(app)/batismo/novo.tsx` | tela app | — | `/batismo/novo` |
+| `CBRio-Staff/app/(app)/batismos.tsx` | tela app | — | `/batismos` |
+| `CBRio-Staff/app/(app)/coleta-aprovar.tsx` | tela app | — | `/coleta-aprovar` |
+| `CBRio-Staff/app/(app)/coleta-culto.tsx` | tela app | — | `/coleta-culto` |
+| `CBRio-Staff/app/(app)/culto/[id].tsx` | tela app | — | `/culto/[id]` |
+| `CBRio-Staff/app/(app)/documentos.tsx` | tela app | — | `/documentos` |
+| `CBRio-Staff/app/(app)/escanear-nota.tsx` | tela app | — | `/escanear-nota` |
+| `CBRio-Staff/app/(app)/evento-inscritos/[id].tsx` | tela app | — | `/evento-inscritos/[id]` |
+| `CBRio-Staff/app/(app)/grupo-detalhe/[id].tsx` | tela app | — | `/grupo-detalhe/[id]` |
+| `CBRio-Staff/app/(app)/grupo-inscricoes.tsx` | tela app | — | `/grupo-inscricoes` |
+| `CBRio-Staff/app/(app)/inscricoes.tsx` | tela app | — | `/inscricoes` |
+| `CBRio-Staff/app/(app)/kids-apresentacoes.tsx` | tela app | — | `/kids-apresentacoes` |
+| `CBRio-Staff/app/(app)/kids-batismos.tsx` | tela app | — | `/kids-batismos` |
+| `CBRio-Staff/app/(app)/kids-sala/[id].tsx` | tela app | — | `/kids-sala/[id]` |
+| `CBRio-Staff/app/(app)/kids.tsx` | tela app | — | `/kids` |
+| `CBRio-Staff/app/(app)/membresia.tsx` | tela app | — | `/membresia` |
+| `CBRio-Staff/app/(app)/membro/[id].tsx` | tela app | — | `/membro/[id]` |
+| `CBRio-Staff/app/(app)/meus-bugs.tsx` | tela app | — | `/meus-bugs` |
+| `CBRio-Staff/app/(app)/meus-dados.tsx` | tela app | — | `/meus-dados` |
+| `CBRio-Staff/app/(app)/next-turma/[id].tsx` | tela app | — | `/next-turma/[id]` |
+| `CBRio-Staff/app/(app)/next.tsx` | tela app | — | `/next` |
+| `CBRio-Staff/app/(app)/notificacoes-config.tsx` | tela app | — | `/notificacoes-config` |
+| `CBRio-Staff/app/(app)/notificacoes.tsx` | tela app | — | `/notificacoes` |
+| `CBRio-Staff/app/(app)/perfil.tsx` | tela app | — | `/perfil` |
+| `CBRio-Staff/app/(app)/qr.tsx` | tela app | — | `/qr` |
+| `CBRio-Staff/app/(app)/reportar-bug.tsx` | tela app | — | `/reportar-bug` |
+| `CBRio-Staff/app/(app)/rh.tsx` | tela app | — | `/rh` |
+| `CBRio-Staff/app/(app)/rh/[id].tsx` | tela app | — | `/rh/[id]` |
+| `CBRio-Staff/app/(app)/rh/editar.tsx` | tela app | — | `/rh/editar` |
+| `CBRio-Staff/app/(app)/rh/ferias.tsx` | tela app | — | `/rh/ferias` |
+| `CBRio-Staff/app/(app)/solicitacao/[id].tsx` | tela app | — | `/solicitacao/[id]` |
+| `CBRio-Staff/app/(app)/solicitacao/nova.tsx` | tela app | — | `/solicitacao/nova` |
+| `CBRio-Staff/app/(app)/tarefas.tsx` | tela app | — | `/tarefas` |
+| `CBRio-Staff/app/(app)/voluntariado.tsx` | tela app | — | `/voluntariado` |
+| `CBRio-Staff/app/(app)/voluntariado/escala/[serviceId].tsx` | tela app | — | `/voluntariado/escala/[serviceId]` |
+| `CBRio-Staff/app/(auth)/login.tsx` | tela app | — | `/login` |
+| `CBRio-Staff/components/kids/EditarInscricaoSheet.tsx` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/components/LockScreen.tsx` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/components/ui/BackHeader.tsx` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/components/ui/Glass.tsx` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/components/ui/MenuRow.tsx` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/components/ui/SectionLabelFit.tsx` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/components/ui/Select.tsx` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/components/ui/States.tsx` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/components/ui/TabBarIcon.tsx` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/api.ts` | lib app | — | `78 chamada(s)` |
+| `CBRio-Staff/lib/atalhosHome.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/batismos.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/cacheUsuario.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/dataHora.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/destinoPush.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/gradeCulto.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/homeSinais.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/indicadores.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/membresia.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/permissoes.ts` | lib app | — | `1 chamada(s)` |
+| `CBRio-Staff/lib/push.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/qr.ts` | lib app | — | `1 chamada(s)` |
+| `CBRio-Staff/lib/rh.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/semana.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/supabase.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/theme.ts` | lib app | — | `0 chamada(s)` |
+| `CBRio-Staff/lib/useStaffMe.ts` | lib app | — | `1 chamada(s)` |
+| `src/pages/admin/AppAnalytics` | tela ERP | — | `/admin/app-analytics` |
+| `src/pages/admin/AssistenteIA` | tela ERP | — | `/assistente-ia` |
+| `src/pages/admin/CruzamentosPessoas` | tela ERP | — | `/admin/cruzamentos` |
+| `src/pages/admin/Feedback` | tela ERP | — | `/admin/feedback` |
+| `src/pages/admin/GruposGeocode` | tela ERP | — | `/admin/grupos/geocode` |
+| `src/pages/admin/InscricaoGruposQRCode` | tela ERP | — | `/admin/grupos/qrcode-inscricao` |
+| `src/pages/admin/NotificacaoRegras` | tela ERP | — | `/admin/notificacao-regras` |
+| `src/pages/admin/Permissoes` | tela ERP | — | `/admin/permissoes` |
+| `src/pages/admin/SolicitacoesFluxo` | tela ERP | — | `/admin/solicitacoes-fluxo` |
+| `src/pages/admin/SolicitacoesResponsaveis` | tela ERP | — | `/admin/solicitacoes-responsaveis` |
+| `src/pages/admin/TemporadasGrupos` | tela ERP | — | `/admin/grupos/temporadas` |
+| `src/pages/admin/totemKids/TotemKidsAdmin` | tela ERP | kids | `/ministerial/totem-kids/configuracoes` |
+| `src/pages/atlas/Atlas` | tela ERP | — | `/atlas` |
+| `src/pages/atlas/Atlas` | tela ERP | — | `/atlas/fluxograma` |
+| `src/pages/auth/PcCallback` | tela ERP | — | `/auth/pc-callback` |
+| `src/pages/Comunicacao` | tela ERP | comunicacao | `/comunicacao` |
+| `src/pages/DadosBrutos` | tela ERP | — | `/dados-brutos` |
+| `src/pages/Dashboard` | tela ERP | — | `/dashboard` |
+| `src/pages/DashboardSemanal` | tela ERP | — | `/dashboard-semanal` |
+| `src/pages/DesignPreview` | tela ERP | — | `/design-preview` |
+| `src/pages/devocional/DevocionalMovido` | tela ERP | — | `/devocional` |
+| `src/pages/eventos/EventDetail` | tela ERP | — | `/eventos/:id` |
+| `src/pages/eventos/Eventos` | tela ERP | — | `/eventos` |
+| `src/pages/Expansao` | tela ERP | expansao | `/expansao` |
+| `src/pages/GestaoAnual` | tela ERP | — | `/planejamento` |
+| `src/pages/governanca/Governanca` | tela ERP | governanca | `/governanca` |
+| `src/pages/governanca/RitualPage` | tela ERP | governanca | `/governanca/:sigla` |
+| `src/pages/InscricaoEventoCheckin` | tela ERP | inscricoes | `/inscricoes/evento/:id/checkin` |
+| `src/pages/InscricaoEventoDetalhe` | tela ERP | inscricoes | `/inscricoes/evento/:id` |
+| `src/pages/InscricaoTotens` | tela ERP | inscricoes | `/inscricoes/totens` |
+| `src/pages/Inscricoes` | tela ERP | inscricoes | `/inscricoes` |
+| `src/pages/inteligencia/AtaSemanal` | tela ERP | — | `/ata-semanal` |
+| `src/pages/marketing/MarketingAdmin` | tela ERP | marketing | `/marketing/admin` |
+| `src/pages/marketing/MarketingAnalytics` | tela ERP | marketing | `/marketing/analytics` |
+| `src/pages/marketing/MarketingApp` | tela ERP | marketing | `/marketing/app` |
+| `src/pages/marketing/MarketingDashboard` | tela ERP | marketing | `/marketing` |
+| `src/pages/marketing/MarketingGenerosidade` | tela ERP | marketing | `/marketing/generosidade` |
+| `src/pages/marketing/MarketingKanban` | tela ERP | marketing | `/marketing/kanban` |
+| `src/pages/marketing/MarketingPlanner` | tela ERP | marketing | `/marketing/planner` |
+| `src/pages/MinhasTarefas` | tela ERP | — | `/tarefas` |
+| `src/pages/ministerial/Batismos` | tela ERP | batismo | `/batismo` |
+| `src/pages/ministerial/coleta/ColetaCulto` | tela ERP | integracao | `/integracao/coleta` |
+| `src/pages/ministerial/Cuidados` | tela ERP | cuidados | `/ministerial/cuidados` |
+| `src/pages/ministerial/Grupos` | tela ERP | grupos | `/grupos` |
+| `src/pages/ministerial/GruposSupervisao` | tela ERP | grupos | `/grupos/supervisao` |
+| `src/pages/ministerial/Integracao` | tela ERP | — | `/ministerial/integracao` |
+| `src/pages/ministerial/NextBatismo` | tela ERP | next-batismo | `/entradas` |
+| `src/pages/ministerial/Online` | tela ERP | — | `/online` |
+| `src/pages/ministerial/PainelAmi` | tela ERP | ami | `/ami` |
+| `src/pages/ministerial/PainelBridge` | tela ERP | bridge | `/bridge` |
+| `src/pages/ministerial/PainelKids` | tela ERP | kids | `/kids` |
+| `src/pages/ministerial/Producao` | tela ERP | producao | `/producao` |
+| `src/pages/ministerial/reconhecimentoFacial/ReconhecimentoFacial` | tela ERP | — | `/ministerial/reconhecimento-facial` |
+| `src/pages/ministerial/totemKids/ApresentacaoCriancas` | tela ERP | kids | `/ministerial/totem-kids/apresentacao` |
+| `src/pages/ministerial/totemKids/BatismosKids` | tela ERP | kids | `/ministerial/totem-kids/batismos` |
+| `src/pages/ministerial/totemKids/EstoqueKids` | tela ERP | kids | `/ministerial/totem-kids/estoque` |
+| `src/pages/ministerial/totemKids/GestaoCriancas` | tela ERP | kids | `/ministerial/totem-kids/criancas` |
+| `src/pages/ministerial/totemKids/KidsFrequencia` | tela ERP | kids | `/ministerial/totem-kids/frequencia` |
+| `src/pages/ministerial/totemKids/KidsHub` | tela ERP | kids | `/ministerial/kids` |
+| `src/pages/ministerial/totemKids/TotemKidsCheckin` | tela ERP | kids | `/ministerial/totem-kids` |
+| `src/pages/ministerial/totemKids/TotemKidsCheckout` | tela ERP | kids | `/ministerial/totem-kids/checkout` |
+| `src/pages/ministerial/totemKids/TotemKidsDecisoes` | tela ERP | kids | `/ministerial/totem-kids/decisoes` |
+| `src/pages/ministerial/totemKids/TotemKidsPainel` | tela ERP | kids | `/ministerial/totem-kids/painel` |
+| `src/pages/ministerial/totemKids/TotemKidsPortao` | tela ERP | kids | `/ministerial/totem-kids/portao` |
+| `src/pages/ministerial/totemKids/TotemKidsTesteEtiqueta` | tela ERP | kids | `/ministerial/totem-kids/teste-etiqueta` |
+| `src/pages/ministerial/totemKids/TotemKidsVinculos` | tela ERP | kids | `/ministerial/totem-kids/vinculos` |
+| `src/pages/ministerial/totemKids/VoluntariadoInscricoesKids` | tela ERP | kids | `/ministerial/totem-kids/voluntariado-inscricoes` |
+| `src/pages/ministerial/totemKids/VoluntariosKids` | tela ERP | kids | `/ministerial/totem-kids/voluntarios` |
+| `src/pages/ministerial/voluntariado/VolSelfCheckin` | tela ERP | — | `/voluntariado/self-checkin` |
+| `src/pages/ministerial/voluntariado/VolTotem` | tela ERP | — | `/voluntariado/totem` |
+| `src/pages/ministerial/Wifi` | tela ERP | — | `/wifi` |
+| `src/pages/MonitoramentoOkr` | tela ERP | — | `/monitoramento-okr` |
+| `src/pages/Painel` | tela ERP | — | `/painel` |
+| `src/pages/PainelJornada` | tela ERP | — | `/jornada` |
+| `src/pages/PainelNsmPessoas` | tela ERP | — | `/painel/nsm/pessoas` |
+| `src/pages/Perfil` | tela ERP | — | `/perfil` |
+| `src/pages/planejamentoAnual/PlanejamentoAnual` | tela ERP | planejamento-anual | `/planejamento-anual` |
+| `src/pages/Projetos` | tela ERP | — | `/projetos` |
+| `src/pages/Propostas` | tela ERP | propostas | `/propostas` |
+| `src/pages/public/ApresentacaoCriancas` | tela ERP | — | `/apresentacao-criancas` |
+| `src/pages/public/BatismoAcesso` | tela ERP | — | `/batismo/acesso` |
+| `src/pages/public/CadastroMembresia` | tela ERP | — | `/cadastro-membresia` |
+| `src/pages/public/CensoPublica` | tela ERP | — | `/censo/p/:slug` |
+| `src/pages/public/DecisaoCulto` | tela ERP | — | `/c/:token` |
+| `src/pages/public/DecisaoOnline` | tela ERP | — | `/decisao` |
+| `src/pages/public/Doar` | tela ERP | — | `/doar` |
+| `src/pages/public/Doar` | tela ERP | — | `/doar/:token` |
+| `src/pages/public/EscalaResposta` | tela ERP | — | `/e/:token` |
+| `src/pages/public/EventoExterno` | tela ERP | — | `/evento/:slug` |
+| `src/pages/public/FamiliaConvite` | tela ERP | — | `/f/a/:codigo` |
+| `src/pages/public/GrupoAprovarPedido` | tela ERP | — | `/g/a/:token` |
+| `src/pages/public/GrupoConfiraLista` | tela ERP | — | `/g/c/:token` |
+| `src/pages/public/GrupoFrequenciaMes` | tela ERP | — | `/g/f/:token` |
+| `src/pages/public/GrupoRenovacao` | tela ERP | — | `/g/r/:token` |
+| `src/pages/public/GrupoSugestaoAceite` | tela ERP | — | `/g/s/:token` |
+| `src/pages/public/InscricaoBatismo` | tela ERP | — | `/inscricao-batismo` |
+| `src/pages/public/InscricaoComprovante` | tela ERP | — | `/i/c/:token` |
+| `src/pages/public/InscricaoGrupos` | tela ERP | — | `/inscricao-grupos` |
+| `src/pages/public/InscricaoLideres` | tela ERP | — | `/inscricao-lideres` |
+| `src/pages/public/InscricaoNext` | tela ERP | — | `/next` |
+| `src/pages/public/InscricaoNext` | tela ERP | — | `/next/inscrever` |
+| `src/pages/public/InscricaoVoluntariado` | tela ERP | — | `/inscricao-voluntariado` |
+| `src/pages/public/KidsRetirada` | tela ERP | — | `/kids/retirada/:codigo` |
+| `src/pages/public/Motion` | tela ERP | — | `/motion` |
+| `src/pages/public/NextDirecionar` | tela ERP | — | `/next/direcionar/:token` |
+| `src/pages/public/NovoSite` | tela ERP | — | `/novosite` |
+| `src/pages/public/NpsPublica` | tela ERP | — | `/nps/publica/:token` |
+| `src/pages/public/OnboardingColaborador` | tela ERP | — | `/onboarding/:token` |
+| `src/pages/public/PagamentoInscricao` | tela ERP | — | `/pagamento/:token` |
+| `src/pages/public/PoliticaReembolso` | tela ERP | — | `/politica-reembolso` |
+| `src/pages/public/QuemSomos` | tela ERP | — | `/novosite/quem-somos` |
+| `src/pages/public/Suporte` | tela ERP | — | `/suporte` |
+| `src/pages/public/Suporte` | tela ERP | — | `/suporte` |
+| `src/pages/public/WalletPage` | tela ERP | — | `/wallet` |
+| `src/pages/RevisaoDetalhe` | tela ERP | — | `/revisao/:tipo/:id` |
+| `src/pages/RevisaoEstrategica` | tela ERP | — | `/revisao` |
+| `src/pages/sistema/Sistema` | tela ERP | — | `/sistema` |
+| `src/pages/Solicitacoes` | tela ERP | — | `/solicitacoes` |
+| `src/pages/TotemMembro` | tela ERP | totem-membro | `/totem` |

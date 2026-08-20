@@ -21,6 +21,47 @@ decisões/time-lapse do sistema). Regras de manutenção:
   vivo (lição `cui_atendimentos`: achado de auditoria baseado em arquivo de
   migration que nunca foi aplicado em prod).
 
+## 📍 ANTES DE INVESTIGAR "onde mora X", LEIA O MAPA (2026-08-20)
+
+Pedido do Matheus: *"queria que já tivesse um contexto definido de cada módulo,
+cada funcionalidade, cada botão — para você não gastar tokens procurando algo que
+você mesmo construiu"*. O gatilho foi eu responder *"vou investigar como a tela de
+inscrições do app funciona"* a um pedido cuja resposta **já estava neste arquivo**,
+em duas linhas distintas.
+
+⇒ **`docs/mapa/`** é gerado por `node backend/scripts/gerar-mapa.cjs` a partir do
+CÓDIGO (`App.tsx`, `ROUTE_MODULE_MAP`, `server.js`, `backend/routes/*`,
+`src/api.js`, `backend/utils/*`, `vercel.json`, e os 2 repos de app). Ordem de
+consulta, sempre antes de sair grepando:
+
+| pergunta | arquivo | custo |
+|---|---|---|
+| tenho um NOME, quero o caminho | **`docs/mapa/ARQUIVOS.md`** (índice plano · 1 grep) | ~6k |
+| que módulos existem e onde ficam | `docs/mapa/INDICE.md` | ~2k |
+| tudo de um módulo (rotas, endpoints, réguas, tabelas) | `docs/mapa/<slug>.md` | ~1k |
+| telas dos apps e o que cada uma chama | `docs/mapa/APPS.md` | ~2k |
+| o que nenhum módulo reivindica | `docs/mapa/ORFAOS.md` | <1k |
+
+⚠️⚠️ **O mapa responde ONDE, NUNCA "se está certo".** Continua obrigatório MEDIR:
+número do banco, se um cron roda, se uma coluna existe, o que a definição **viva**
+de uma função SQL diz, e o formato real de arquivo de terceiro. Só em 20/08 foram
+quatro casos em que o documento estava velho e o banco estava certo — o mapa não
+muda isso e não deve.
+
+⚠️ **Ele é regenerado sem travar deploy** (decisão do Matheus), de carona no
+`system-report.yml`. Logo pode estar horas atrás: mapa é ponteiro, não prova. Se
+citar arquivo que não existe, **vale o código** — e `src/test/mapaGerador.test.ts`
+fica vermelho, que é justamente o que impede o mapa de virar o `atlas.html`
+(840 KB, parado em 25/06, descrevendo como vivo um pareamento do Kids que nunca
+existiu).
+
+⚠️ **NUNCA editar `docs/mapa/` à mão.** É saída de gerador; edição manual é
+sobrescrita na próxima rodada e, pior, reintroduz a classe de erro que ele existe
+pra eliminar. Para forçar o estado de agora: `/mapa` (skill) ou o comando acima.
+
+⚠️ **`src/pages/atlas/atlas.html` NÃO é fonte.** É uma TELA do sistema (`/atlas`),
+escrita à mão e desatualizada. Não citar como referência.
+
 ## ⚠️ LEI · Contrato de porta — toda entrada de PESSOA no sistema (2026-07-17)
 
 Decisão do Marcos: dados de pessoa entram IGUAIS em todas as portas (Kids,

@@ -1,0 +1,333 @@
+# Módulo `financeiro`
+<!-- GERADO por backend/scripts/gerar-mapa.cjs — NÃO editar à mão. -->
+
+> ⚠️ **Este mapa responde ONDE algo mora, nunca SE está certo.** Ele é derivado do
+> código, então não mente sobre caminho de arquivo, rota ou endpoint. Mas continua
+> obrigatório MEDIR: número do banco, se um cron roda, se uma coluna existe, o que a
+> definição **viva** de uma função SQL diz, e o formato real de arquivo de terceiro.
+>
+> ⚠️ É regenerado sem travar deploy, então pode estar algumas horas atrás. Se citar
+> arquivo que não existe, **vale o código**.
+
+## Backend
+- `backend/routes/financeiro.js`
+- `backend/routes/financeiroV2.js`
+- `backend/routes/santander.js`
+Guard: `authorizeModule('financeiro', 3 | 4 | 5 | padrão)`
+<details><summary>Endpoints (188)</summary>
+- `DELETE /api/financeiro-v2/centros-custo/:id`
+- `DELETE /api/financeiro-v2/contas-pagar/:id`
+- `DELETE /api/financeiro-v2/contas-pagar/:id/tornar-recorrente`
+- `DELETE /api/financeiro-v2/culto-slots/:id`
+- `DELETE /api/financeiro-v2/identificadores/:id`
+- `DELETE /api/financeiro-v2/metas/:id`
+- `DELETE /api/financeiro-v2/plano-contas/:id`
+- `DELETE /api/financeiro-v2/regras-classificacao/:id`
+- `DELETE /api/financeiro-v2/transacoes/:id/anexos`
+- `DELETE /api/financeiro/categorias/:id`
+- `DELETE /api/financeiro/contas-pagar/:id`
+- `DELETE /api/financeiro/contas/:id`
+- `DELETE /api/financeiro/recorrentes/:id`
+- `DELETE /api/financeiro/transacoes/:id`
+- `DELETE /api/santander/comprovantes/:paymentId/vincular`
+- `GET /api/financeiro-v2/alertas`
+- `GET /api/financeiro-v2/analises/forecast`
+- `GET /api/financeiro-v2/analises/heatmap`
+- `GET /api/financeiro-v2/arrecadacao-anual`
+- `GET /api/financeiro-v2/arrecadacoes`
+- `GET /api/financeiro-v2/aux/funcionarios`
+- `GET /api/financeiro-v2/cartoes`
+- `GET /api/financeiro-v2/categoria-transacoes`
+- `GET /api/financeiro-v2/centros-custo`
+- `GET /api/financeiro-v2/conciliacao/sugestoes`
+- `GET /api/financeiro-v2/conciliar-balanco-ofx/revisao`
+- `GET /api/financeiro-v2/contas-pagar`
+- `GET /api/financeiro-v2/contas-pagar/resumo`
+- `GET /api/financeiro-v2/culto-slots`
+- `GET /api/financeiro-v2/dashboard/analise-profunda`
+- `GET /api/financeiro-v2/dashboard/assistente`
+- `GET /api/financeiro-v2/dashboard/financeiro-completo`
+- `GET /api/financeiro-v2/dashboard/melhor-semana`
+- `GET /api/financeiro-v2/dashboard/overview`
+- `GET /api/financeiro-v2/dashboard/saidas-detalhadas`
+- `GET /api/financeiro-v2/dashboard/semana`
+- `GET /api/financeiro-v2/dashboard/semana-completa`
+- `GET /api/financeiro-v2/despesa-transacoes`
+- `GET /api/financeiro-v2/despesas/detalhe`
+- `GET /api/financeiro-v2/dizimo-oferta`
+- `GET /api/financeiro-v2/doador/transacoes`
+- `GET /api/financeiro-v2/doadores`
+- `GET /api/financeiro-v2/dre/comparativo`
+- `GET /api/financeiro-v2/dre/mensal`
+- `GET /api/financeiro-v2/faturas`
+- `GET /api/financeiro-v2/faturas/:id`
+- `GET /api/financeiro-v2/fila-classificacao`
+- `GET /api/financeiro-v2/filtros-disponiveis`
+- `GET /api/financeiro-v2/freq-arrecadacao-semanal`
+- `GET /api/financeiro-v2/historico-pagador`
+- `GET /api/financeiro-v2/identificadores`
+- `GET /api/financeiro-v2/kpis/taticos`
+- `GET /api/financeiro-v2/lancamentos-brutos`
+- `GET /api/financeiro-v2/metas`
+- `GET /api/financeiro-v2/metas-progresso`
+- `GET /api/financeiro-v2/notas-compras`
+- `GET /api/financeiro-v2/plano-contas`
+- `GET /api/financeiro-v2/recorrencias`
+- `GET /api/financeiro-v2/regras-classificacao`
+- `GET /api/financeiro-v2/saude-financeira`
+- `GET /api/financeiro-v2/sazonalidade-semanal`
+- `GET /api/financeiro-v2/sugerir-plano-horario`
+- `GET /api/financeiro-v2/transacoes`
+- `GET /api/financeiro-v2/transacoes/:id/detalhe`
+- `GET /api/financeiro-v2/uploads`
+- `GET /api/financeiro/alertas`
+- `GET /api/financeiro/alertas/cron-gerar`
+- `GET /api/financeiro/audit`
+- `GET /api/financeiro/audit/:tabela/:row_id`
+- `GET /api/financeiro/calendario`
+- `GET /api/financeiro/categorias`
+- `GET /api/financeiro/centros-custo`
+- `GET /api/financeiro/closing`
+- `GET /api/financeiro/comprovantes`
+- `GET /api/financeiro/contas`
+- `GET /api/financeiro/contas-pagar`
+- `GET /api/financeiro/dashboard`
+- `GET /api/financeiro/dre-centro-custo/:id/historico`
+- `GET /api/financeiro/dre-centro-custo/atual`
+- `GET /api/financeiro/dre-comparativo`
+- `GET /api/financeiro/fila-classificacao/items`
+- `GET /api/financeiro/fila-classificacao/stats`
+- `GET /api/financeiro/generosidade/anonimos`
+- `GET /api/financeiro/generosidade/overview`
+- `GET /api/financeiro/generosidade/pararam`
+- `GET /api/financeiro/generosidade/top`
+- `GET /api/financeiro/generosidade/top/:membroId/historico`
+- `GET /api/financeiro/projecao-caixa`
+- `GET /api/financeiro/recorrentes`
+- `GET /api/financeiro/reembolsos`
+- `GET /api/financeiro/transacoes`
+- `GET /api/santander/boletos`
+- `GET /api/santander/boletos/:id`
+- `GET /api/santander/boletos/health`
+- `GET /api/santander/bulk`
+- `GET /api/santander/bulk/:orderId`
+- `GET /api/santander/comprovantes`
+- `GET /api/santander/comprovantes-local`
+- `GET /api/santander/comprovantes/:paymentId/pdf-url`
+- `GET /api/santander/contas`
+- `GET /api/santander/extrato`
+- `GET /api/santander/health`
+- `GET /api/santander/log`
+- `GET /api/santander/pagamentos`
+- `GET /api/santander/pagamentos/:id`
+- `GET /api/santander/pagamentos/health`
+- `GET /api/santander/pix-api/diagnostico`
+- `GET /api/santander/pix-cob`
+- `GET /api/santander/pix-cob/:txid`
+- `GET /api/santander/pix-cob/health`
+- `GET /api/santander/pix/culto-atual`
+- `GET /api/santander/saldo`
+- `GET /api/santander/saldo/historico`
+- `GET /api/santander/sync-extrato-historico`
+- `PATCH /api/financeiro/recorrentes/:id`
+- `PATCH /api/financeiro/reembolsos/:id`
+- `PATCH /api/santander/boletos/:id/cancelar`
+- `PATCH /api/santander/pagamentos/:id/cancelar`
+- `PATCH /api/santander/pix-cob/:txid/cancelar`
+- `POST /api/financeiro-v2/alertas/:id/dismiss`
+- `POST /api/financeiro-v2/analises/rodar`
+- `POST /api/financeiro-v2/backfill/transacoes`
+- `POST /api/financeiro-v2/cartoes`
+- `POST /api/financeiro-v2/centros-custo`
+- `POST /api/financeiro-v2/classificar/:filaId/aprovar`
+- `POST /api/financeiro-v2/classificar/:filaId/ignorar`
+- `POST /api/financeiro-v2/conciliacao/aplicar`
+- `POST /api/financeiro-v2/conciliacao/aplicar-seguros`
+- `POST /api/financeiro-v2/conciliar-balanco-ofx`
+- `POST /api/financeiro-v2/conciliar-balanco-ofx/confirmar`
+- `POST /api/financeiro-v2/conciliar-balanco-ofx/ignorar`
+- `POST /api/financeiro-v2/contas-pagar`
+- `POST /api/financeiro-v2/contas-pagar/:id/tornar-recorrente`
+- `POST /api/financeiro-v2/contas-pagar/importar`
+- `POST /api/financeiro-v2/culto-slots`
+- `POST /api/financeiro-v2/faturas/:id/comparar`
+- `POST /api/financeiro-v2/faturas/:id/sincronizar`
+- `POST /api/financeiro-v2/fila-classificacao/sugerir-lote`
+- `POST /api/financeiro-v2/identificadores`
+- `POST /api/financeiro-v2/importar/balanco`
+- `POST /api/financeiro-v2/importar/contribuicoes`
+- `POST /api/financeiro-v2/importar/contribuicoes/previa`
+- `POST /api/financeiro-v2/importar/ofx`
+- `POST /api/financeiro-v2/importar/pix-extrato`
+- `POST /api/financeiro-v2/metas`
+- `POST /api/financeiro-v2/notas-compras/:id/lancar`
+- `POST /api/financeiro-v2/notas-compras/:id/rejeitar`
+- `POST /api/financeiro-v2/plano-contas`
+- `POST /api/financeiro-v2/recorrencias/detectar`
+- `POST /api/financeiro-v2/regras-classificacao`
+- `POST /api/financeiro-v2/sync-saldo-bancos`
+- `POST /api/financeiro-v2/transacoes`
+- `POST /api/financeiro-v2/transacoes/:id/anexos`
+- `POST /api/financeiro/alertas/:id/atender`
+- `POST /api/financeiro/alertas/gerar`
+- `POST /api/financeiro/categorias`
+- `POST /api/financeiro/closing/fechar`
+- `POST /api/financeiro/closing/reabrir`
+- `POST /api/financeiro/contas`
+- `POST /api/financeiro/contas-pagar`
+- `POST /api/financeiro/fila-classificacao/:id/decidir`
+- `POST /api/financeiro/fila-classificacao/aprovar-massa`
+- `POST /api/financeiro/fila-classificacao/reclassificar`
+- `POST /api/financeiro/recorrentes`
+- `POST /api/financeiro/recorrentes/gerar-contas-pagar`
+- `POST /api/financeiro/transacoes`
+- `POST /api/santander/boletos`
+- `POST /api/santander/bulk`
+- `POST /api/santander/comprovantes/:paymentId/baixar`
+- `POST /api/santander/comprovantes/:paymentId/vincular`
+- `POST /api/santander/importar-historico`
+- `POST /api/santander/pagamentos`
+- `POST /api/santander/pagamentos/parse`
+- `POST /api/santander/pix-cob`
+- `POST /api/santander/sync-extrato-fila`
+- `PUT /api/financeiro-v2/cartoes/:id`
+- `PUT /api/financeiro-v2/centros-custo/:id`
+- `PUT /api/financeiro-v2/contas-pagar/:id`
+- `PUT /api/financeiro-v2/culto-slots/:id`
+- `PUT /api/financeiro-v2/identificadores/:id`
+- `PUT /api/financeiro-v2/metas/:id`
+- `PUT /api/financeiro-v2/plano-contas/:id`
+- `PUT /api/financeiro-v2/recorrencias/:id`
+- `PUT /api/financeiro-v2/regras-classificacao/:id`
+- `PUT /api/financeiro-v2/transacoes/:id`
+- `PUT /api/financeiro/contas-pagar/:id`
+- `PUT /api/financeiro/contas/:id`
+- `PUT /api/financeiro/transacoes/:id`
+</details>
+
+**Réguas puras (backend/utils)**
+
+- `backend/utils/cronAuth.js`
+- `backend/utils/decendioComparativo.js`
+- `backend/utils/pagination.js`
+- `backend/utils/supabase.js`
+
+**Serviços**
+
+- `backend/services/analiseFinanceira.js`
+- `backend/services/anexosLogArquivos.js`
+- `backend/services/balancoImporter.js`
+- `backend/services/conciliacaoBalancoOfx.js`
+- `backend/services/contasPagarImporter.js`
+- `backend/services/contribuicoesImporter.js`
+- `backend/services/finConciliador.js`
+- `backend/services/finFaturaComparador.js`
+- `backend/services/finFaturas.js`
+- `backend/services/financeiroClassificador.js`
+- `backend/services/notificar.js`
+- `backend/services/ofxIdentidade.js`
+- `backend/services/ofxParser.js`
+- `backend/services/pixExtratoParser.js`
+- `backend/services/recorrenciaDetector.js`
+
+**Tabelas que estas rotas tocam**
+
+- `app_audit_log`
+- `fin_alertas`
+- `fin_cartoes`
+- `fin_categorias`
+- `fin_centros_custo`
+- `fin_closing_mensal`
+- `fin_contas`
+- `fin_contas_pagar`
+- `fin_culto_slots`
+- `fin_despesas_recorrentes`
+- `fin_faturas`
+- `fin_fila_classificacao`
+- `fin_identificadores_centavo`
+- `fin_lancamentos_brutos`
+- `fin_metas`
+- `fin_pix_detalhe`
+- `fin_plano_contas`
+- `fin_reembolsos`
+- `fin_regras_classificacao`
+- `fin_transacoes`
+- `fin_uploads`
+- `kpi_indicadores_taticos`
+- `log_notas_fiscais`
+- `mem_membros`
+- `rh_funcionarios`
+- `santander_boletos`
+- `santander_bulk_orders`
+- `santander_comprovantes`
+- `santander_pagamentos`
+- `santander_pix_cob`
+- `santander_saldo_snapshot`
+- `santander_sync_log`
+- `solicitacoes`
+- `vw_calendario_financeiro`
+- `vw_classificacao_stats`
+- `vw_doacoes_mensal`
+- `vw_doacoes_unificada`
+- `vw_doadores_anonimos_top`
+- `vw_dre_centro_custo_atual`
+- `vw_dre_centro_custo_mensal`
+- `vw_dre_comparativo`
+- `vw_dre_comparativo_totais`
+- `vw_fin_alertas_abertos`
+- `vw_fin_ano_acumulado`
+- `vw_fin_arrecadacao_mensal`
+- `vw_fin_arrecadacao_semanal`
+- `vw_fin_culto_ao_vivo`
+- `vw_fin_decendio`
+- `vw_fin_dre_classe`
+- `vw_fin_dre_mensal`
+- `vw_fin_freq_vs_arrecadacao_semanal`
+- `vw_fin_freq_vs_receita_mensal`
+- `vw_fin_heatmap_arrecadacao`
+- `vw_fin_melhor_semana_ano`
+- `vw_fin_melhor_semana_mes`
+- `vw_fin_saidas_categoria`
+- `vw_fin_saidas_centro`
+- `vw_fin_saidas_plano`
+- `vw_fin_semana_cultos`
+- `vw_fin_semana_resumo`
+- `vw_fin_top_contribuintes_semana`
+- `vw_fin_transacoes_completa`
+- `vw_fin_yoy_semanal`
+- `vw_kpi_trajetoria_atual`
+- `vw_projecao_caixa_mensal`
+
+**RPCs**
+
+- `fechar_mes_financeiro`
+- `fin_arrecadacoes_listar`
+- `fin_dashboard_periodo`
+- `fin_dashboard_serie_mensal`
+- `fin_despesas_detalhe`
+- `fin_dizimo_oferta_mensal`
+- `fin_force_sync_saldo_bancos`
+- `fin_historico_pagador`
+- `fin_identifica_culto`
+- `fin_metas_progresso`
+- `fin_resolver_ou_criar_contribuinte`
+- `fin_saude_financeira`
+- `fin_semana_qua_ter`
+- `fin_sugerir_plano_por_horario`
+- `fn_banco_comprovantes`
+- `fn_contas_pagar_resumo`
+- `fn_fin_doadores_lista`
+- `fn_fin_transacoes_por_referencia`
+- `gerar_alertas_financeiros`
+- `gerar_contas_pagar_recorrentes`
+- `reabrir_mes_financeiro`
+- `reclassificar_fila_pendente`
+
+**Namespace no front (src/api.js)**
+
+- `financeiro`
+
+**Onde os APPS tocam este módulo**
+
+- CBRio-Staff: `lib/api.ts`
+
