@@ -12,14 +12,24 @@ describe('a rodada de sync tem que se declarar', () => {
   const statusDaRodada = (r: any) => {
     const falhas = Number(r?.tiposComFalha || 0);
     const total = Number(r?.tiposTotal || 0);
+    const cultos = Number(r?.services || 0);
+    if (falhas > 0 && cultos > 0) return 'partial';
     if (falhas > 0 && total > 0 && falhas >= total) return 'error';
     if (falhas > 0) return 'partial';
-    if (!r?.services) return 'partial';
+    if (!cultos) return 'partial';
     return 'success';
   };
 
   it('⚠️ o caso que passou três dias escondido: tudo falhou e o log dizia sucesso', () => {
     expect(statusDaRodada({ services: 0, schedules: 0, tiposComFalha: 7, tiposTotal: 7 })).toBe('error');
+  });
+
+  it('⚠️ falha de ROSTER com culto entrando é parcial, nunca erro', () => {
+    // Caso REAL da primeira rodada com o conserto (20/08 13:11): os 17 tipos
+    // falharam na busca de roster, mas 21 cultos e 796 escalas entraram. Sair
+    // como 'error' dizendo "nada foi sincronizado" contradizia o número ao
+    // lado — e um log que se contradiz ensina a não acreditar nele.
+    expect(statusDaRodada({ services: 21, schedules: 796, tiposComFalha: 17, tiposTotal: 17 })).toBe('partial');
   });
 
   it('⚠️ zero culto SEM falha declarada também não é sucesso', () => {
