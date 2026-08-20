@@ -5,6 +5,7 @@ const multer = require('multer');
 const router = express.Router();
 const { supabase } = require('../utils/supabase');
 const { authenticate, authorizeModule } = require('../middleware/auth');
+const { assinarLinhas } = require('../services/anexosLogArquivos');
 let notificar; try { ({ notificar } = require('../services/notificar')); } catch { notificar = async () => {}; }
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -266,7 +267,11 @@ router.get('/:id', authorizeModule('propostas', 1), async (req, res, next) => {
     supabase.from('prop_desembolso').select('*').eq('proposta_id', p.id).order('ordem'),
     supabase.from('prop_anexo').select('*').eq('proposta_id', p.id).order('ordem'),
   ]);
-  res.json({ ...p, indicadores: ind.data || [], atividades: ati.data || [], riscos: ris.data || [], desembolsos: des.data || [], anexos: anx.data || [] });
+  // ⚠️ `prop_anexo.storage_path` já guardava o CAMINHO (nunca a URL pública),
+  // então o front montava o link por conta própria. Com o bucket privado quem
+  // entrega o link é o servidor, assinado por 1h.
+  const anexos = await assinarLinhas(anx.data || [], ['storage_path']);
+  res.json({ ...p, indicadores: ind.data || [], atividades: ati.data || [], riscos: ris.data || [], desembolsos: des.data || [], anexos });
 });
 
 // Criar (rascunho)

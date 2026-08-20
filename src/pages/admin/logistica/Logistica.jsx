@@ -1190,8 +1190,11 @@ function NotaFiscalModal({ open, data, onClose, onSave, saving, fornecedores, pe
       const filePath = `notas-fiscais/${crypto.randomUUID()}_${file.name}`;
       const { error } = await supabase.storage.from('log-arquivos').upload(filePath, file, { upsert: true });
       if (error) throw error;
-      const { data: { publicUrl } } = supabase.storage.from('log-arquivos').getPublicUrl(filePath);
-      upNota('storage_path', publicUrl);
+      // ⚠️ Guarda o CAMINHO, não a URL pública: `log-arquivos` guarda documento
+      // fiscal e é privado. Quem transforma em link é o backend, assinando por
+      // 1h na leitura (services/anexosLogArquivos) — então a lista continua
+      // abrindo o arquivo, e o histórico com URL antiga também.
+      upNota('storage_path', filePath);
     } catch (e) { setLocalError('Erro ao enviar arquivo: ' + e.message); }
     finally { setUploading(false); }
   }
