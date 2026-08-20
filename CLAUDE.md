@@ -6769,6 +6769,58 @@ quebrada fail-closed · `multi` comparado como string inteira · cascata desliga
 `autoriza_batismo` aceitando texto solto como "sim" · espelho do front divergindo
 (`<=` em vez de `<`).
 
+## ⚠️ RETIRO 2027 · período, instruções pra download e ANEXO no e-mail (2026-08-20 · migration `20260820120000`)
+
+Pedido do Marcos: link do E-Inscrição configurado · datas 05–10/02/2027 · a
+autorização de embarque de menor "a pessoa deve baixar na hora e receber no
+e-mail" · e, ao concluir a inscrição, a tela pergunta **"Deseja baixar as
+instruções gerais?"** (sim = baixa · não = só recebe por e-mail).
+
+- **`insc_eventos.data_fim`** (evento de vários dias) + **`instrucoes_url`/
+  `instrucoes_nome`** (arquivo de orientações) + **bucket público
+  `evento-arquivos`** (documentos SEM dado de pessoa — dado de pessoa é o
+  `inscricao-comprovantes`, privado). Upload pelo admin:
+  `POST /inscricoes/upload-arquivo` (nível 3 · só PDF/DOC/DOCX, **extensão sai
+  do MIME validado, nunca do nome**).
+- ⚠️⚠️ **A tela de sucesso do formulário SÓ aparece pra inscrição
+  gratuita/isenta** — quem paga vai pra `/pagamento/<token>`. Por isso o convite
+  de download existe NOS DOIS lugares (`BaixarInstrucoes.tsx`, componente único):
+  na tela de sucesso do `EventoExterno` e na página de pagamento **quando
+  `pago === true` lido do servidor** (`respostaPagamento` só manda `instrucoes`
+  com status pago). Quem escolhe cartão sai pro E-Inscrição e recebe a
+  confirmação por lá — fora do nosso fluxo, de propósito.
+- **E-mail com ANEXO agora existe** (`services/email.js` · Graph
+  `fileAttachment` + Resend `attachments`): o e-mail de CONFIRMAÇÃO leva as
+  instruções gerais anexadas e — **só quando a inscrição é de MENOR**
+  (`responsavel_nome` preenchido) — o documento do aceite `so_menor` que tiver
+  `url` (a autorização de embarque). ⚠️ Teto de ~3 MB no total dos anexos
+  (sendMail do Graph recusa >4 MB): anexo que estoura é DESCARTADO com aviso, e
+  é por isso que **os LINKS dos arquivos vão sempre no corpo** (bloco "Arquivos
+  do evento", que entra também em template custom, como a assinatura). Tudo
+  best-effort: e-mail de compra confirmada nunca deixa de sair porque o Storage
+  soluçou.
+- ⚠️ **Toda leitura das colunas novas é ISOLADA e fail-soft** (lição do
+  `parcelas_max`): `anexarExtrasEvento` em `publicEventoExterno.js` é select
+  PRÓPRIO, separado do `anexarConfigMenor` — na mesma query, um deploy antes da
+  migration derrubaria também o bloco de menor/aceites, que já estão em prod. O
+  e-mail busca `data_fim`/arquivos por `extrasDoEvento` (isolado) porque os
+  chamadores (handler de pagamento, porta pública) selecionam o evento SEM as
+  colunas novas de propósito. **O que NÃO tolera ausência é salvar evento pelo
+  admin com os campos novos** (entraram em `CAMPOS_EVENTO`) — aplicar a
+  migration antes do merge.
+- "Quando" do e-mail e pílula da página pública mostram o PERÍODO
+  (`formatarQuando` com `data_fim` · `periodoLongo` no front): "05/02/2027 a
+  10/02/2027 · 16:00".
+- **Config aplicada em produção (20/08, evento segue RASCUNHO)**: link
+  `https://www.e-inscricao.com/igreja-cbrio/amicamp2027` + nome "E-Inscrição" ·
+  data 05/02 · hora 16:00 (check-in, pelo doc do Arthur) · local Sítio Recanto
+  Ideal · encerram 04/02/2027 23:59 BRT (o valor antigo caía DEPOIS do início) ·
+  os 2 aceites com TEXTO REAL dos documentos do Arthur + url dos arquivos no
+  bucket (chaves `termo_menor`/`info_retiro` PRESERVADAS). Backup em
+  `~/Downloads/backup_retiro_2027_config_20260820.json`. `data_fim` +
+  instruções do retiro vão DENTRO da migration (dependem das colunas), guardadas
+  por slug e só-onde-vazio. ⏳ Valor/prazo: o Marcos disse "já falo dos valores".
+
 ## ⚠️⚠️ EXCLUIR EVENTO travava no card espelho do Marketing (2026-08-14 · migration `20260814190000`)
 
 Marcos, ao tentar apagar o "Dia Reforma Protestante": *"quero apagar o da reforma

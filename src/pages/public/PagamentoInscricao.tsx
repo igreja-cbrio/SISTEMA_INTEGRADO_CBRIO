@@ -19,6 +19,7 @@ import QRCode from 'qrcode';
 import confetti from 'canvas-confetti';
 import { eventoPublico } from '../../api';
 import CartaoBrick from '../../components/pagamento/CartaoBrick';
+import BaixarInstrucoes from './BaixarInstrucoes';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 
 interface Pagamento {
@@ -49,6 +50,8 @@ interface Pagamento {
   // ter sido paga por fora.
   aceita_comprovante?: boolean;
   comprovantes?: ComprovanteEnviado[] | null;
+  // Instruções gerais do evento (só vem com `pago` — inscrição concluída).
+  instrucoes?: { url: string; nome?: string | null } | null;
 }
 
 interface ComprovanteEnviado {
@@ -596,6 +599,11 @@ export default function PagamentoInscricao() {
             {pag.pago && pag.comprovante_token && (
               <ComprovanteCheckin token={pag.comprovante_token} corTexto={C.text3} />
             )}
+
+            {/* Instruções gerais do evento: a inscrição CONCLUIU aqui (quem
+                pagou por Pix nunca volta na tela de sucesso do formulário).
+                O servidor só manda `instrucoes` com `pago`. */}
+            {pag.pago && <BaixarInstrucoes instrucoes={pag.instrucoes} C={C} />}
 
             {emAberto && (
               <>

@@ -118,6 +118,14 @@ function formatarQuando(evento) {
   const data = String(evento?.data || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return null;
   const [a, m, d] = data.split('-');
+  // Evento de vários dias (retiro): "05/02/2027 a 10/02/2027". A hora do início
+  // continua junto — é o horário de chegada/check-in.
+  const fim = String(evento?.data_fim || '').slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fim) && fim !== data) {
+    const [a2, m2, d2] = fim.split('-');
+    const periodo = `${d}/${m}/${a} a ${d2}/${m2}/${a2}`;
+    return evento?.hora ? `${periodo} · ${evento.hora}` : periodo;
+  }
   return evento?.hora ? `${d}/${m}/${a} às ${evento.hora}` : `${d}/${m}/${a}`;
 }
 
@@ -168,6 +176,107 @@ function montarTexto({ titulo, saudacao, paragrafos = [], linhas = [], acao }) {
   if (acao?.url) partes.push('', `${acao.rotulo}: ${acao.url}`);
   partes.push('', 'Comunidade Batista do Rio de Janeiro');
   return partes.join('\n');
+}
+
+// ============================================================================
+// Arquivos do evento no e-mail (2026-08-20 · retiro)
+//
+// O e-mail de CONFIRMAÇÃO leva anexado o arquivo de instruções gerais do evento
+// (`insc_eventos.instrucoes_url`) e — quando a inscrição é de MENOR — o
+// documento do aceite `so_menor` que tiver `url` (a autorização de embarque).
+// Os LINKS vão no corpo também, sempre: são a rede pro anexo descartado por
+// tamanho e pro cliente de e-mail que bloqueia anexo.
+//
+// ⚠️ Tudo best-effort: e-mail de compra confirmada não pode deixar de sair
+// porque o Storage soluçou. E as colunas são da migration 20260820120000, então
+// a leitura é isolada (lição do parcelas_max).
+// ============================================================================
+
+/** Colunas novas do evento, em consulta isolada e fail-soft. */
+async function extrasDoEvento(eventoId) {
+  if (!eventoId) return null;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('data_fim, instrucoes_url, instrucoes_nome, termos_extra')
+      .eq('id', eventoId).maybeSingle();
+    if (error) return null;
+    return data || null;
+  } catch { return null; }
+}
+
+/** A inscrição é de menor? (bloco do responsável preenchido · 20260817160000) */
+async function inscricaoDeMenor(inscricaoId) {
+  if (!inscricaoId) return false;
+  try {
+    const { data, error } = await supabase.from('inscricoes')
+      .select('responsavel_nome').eq('id', inscricaoId).maybeSingle();
+    if (error) return false;
+    return !!String(data?.responsavel_nome || '').trim();
+  } catch { return false; }
+}
+
+const TIPO_POR_EXTENSAO = Object.freeze({
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+});
+
+// Teto POR ARQUIVO no download (binário). O canal ainda aplica o teto total do
+// Graph; este evita baixar um arquivo gigante à toa.
+const TETO_ARQUIVO_BYTES = 2.5 * 1024 * 1024;
+
+async function baixarAnexo({ nome, url }) {
+  if (!/^https:\/\//.test(String(url || ''))) return null;
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!resp.ok) return null;
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (!buf.length || buf.length > TETO_ARQUIVO_BYTES) return null;
+    const ext = String(url).split('?')[0].split('.').pop().toLowerCase();
+    return {
+      nome: String(nome || `arquivo.${ext}`).slice(0, 200),
+      tipo: TIPO_POR_EXTENSAO[ext] || 'application/octet-stream',
+      base64: buf.toString('base64'),
+    };
+  } catch { return null; }
+}
+
+/**
+ * Arquivos que acompanham a CONFIRMAÇÃO: instruções gerais sempre; documento de
+ * aceite `so_menor` com `url` só quando a inscrição é de menor (mandar a
+ * autorização de embarque pra um adulto é ruído). Devolve `{ anexos, links }` —
+ * os links entram no corpo mesmo quando o anexo falhou.
+ */
+async function arquivosDaConfirmacao({ eventoId, inscricaoId }) {
+  const extras = await extrasDoEvento(eventoId);
+  if (!extras) return { anexos: [], links: [], extras: null };
+  const alvos = [];
+  if (/^https:\/\//.test(String(extras.instrucoes_url || ''))) {
+    alvos.push({ nome: extras.instrucoes_nome || 'Instruções gerais', url: extras.instrucoes_url });
+  }
+  if (Array.isArray(extras.termos_extra) && await inscricaoDeMenor(inscricaoId)) {
+    for (const t of extras.termos_extra) {
+      if (t && t.so_menor === true && /^https:\/\//.test(String(t.url || ''))) {
+        alvos.push({ nome: t.titulo || 'Documento do responsável', url: t.url });
+      }
+    }
+  }
+  const anexos = (await Promise.all(alvos.map(baixarAnexo))).filter(Boolean);
+  return { anexos, links: alvos, extras };
+}
+
+/** Bloco de links dos arquivos, no corpo (padrão E template, como a assinatura). */
+function arquivosHtml(links) {
+  if (!links.length) return '';
+  const itens = links.map((l) => `<li style="margin:4px 0"><a href="${escapar(l.url)}"
+      style="color:#00B39D;font-weight:600">${escapar(l.nome)}</a></li>`).join('');
+  return `<div style="margin-top:22px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:12px;
+                font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
+    <div style="font-size:14px;font-weight:700;color:#111827">Arquivos do evento</div>
+    <p style="margin:6px 0 8px;color:#374151;font-size:13px">
+      Eles também vão anexados neste e-mail — guarde para o dia do evento.</p>
+    <ul style="margin:0;padding-left:18px;color:#374151;font-size:13px">${itens}</ul>
+  </div>`;
 }
 
 /** Guardas comuns. Devolve null quando não há nada a fazer. */
@@ -291,7 +400,7 @@ function semTags(html) {
     .trim();
 }
 
-async function despachar({ to, subject, corpo, html, text }) {
+async function despachar({ to, subject, corpo, html, text, attachments }) {
   const corpoHtml = html || montarHtml(corpo);
   const r = await enviarEmail({
     to,
@@ -299,6 +408,7 @@ async function despachar({ to, subject, corpo, html, text }) {
     html: corpoHtml,
     text: text || (html ? semTags(html) : montarTexto(corpo)),
     fromName: 'CBRio',
+    attachments,
   });
   if (!r.ok) console.error('[inscricaoEmail]', subject, '→', r.error);
   return r;
@@ -307,8 +417,10 @@ async function despachar({ to, subject, corpo, html, text }) {
 /**
  * Caminho comum: usa o template do banco quando existe, senão o layout do
  * código. `assuntoPadrao`/`corpo` são o padrão; `vars` alimenta os dois.
+ * `extraHtml` (ex.: bloco de arquivos do evento) entra ANTES da assinatura,
+ * nos DOIS caminhos — como a assinatura, pra template custom não perder o bloco.
  */
-async function despacharTipo({ tipo, eventoId, to, vars, assuntoPadrao, corpo }) {
+async function despacharTipo({ tipo, eventoId, to, vars, assuntoPadrao, corpo, attachments, extraHtml = '' }) {
   const [tpl, assinaturaBruta] = await Promise.all([
     carregarTemplate(tipo, eventoId),
     carregarAssinatura(),
@@ -328,14 +440,16 @@ async function despacharTipo({ tipo, eventoId, to, vars, assuntoPadrao, corpo })
     return despachar({
       to,
       subject: renderizar(tpl.assunto, vars) || assuntoPadrao,
-      html: sanitizarHtml(renderizar(tpl.corpo_html, vars)) + assinatura,
+      html: sanitizarHtml(renderizar(tpl.corpo_html, vars)) + extraHtml + assinatura,
+      attachments,
     });
   }
   return despachar({
     to,
     subject: assuntoPadrao,
-    html: montarHtml(corpo) + assinatura,
+    html: montarHtml(corpo) + extraHtml + assinatura,
     text: montarTexto(corpo),
+    attachments,
   });
 }
 
@@ -361,9 +475,15 @@ async function enviarEmailInscricaoConfirmada({ inscricao, evento, cobranca, com
   const g = preparar(inscricao);
   if (g.pular) return { sent: false, reason: g.pular };
 
+  // Arquivos do evento (instruções gerais + doc de menor quando for o caso) e o
+  // período completo (data_fim), em leitura isolada — os chamadores selecionam
+  // o evento SEM as colunas novas de propósito (deploy em 2 etapas).
+  const arq = await arquivosDaConfirmacao({ eventoId: evento?.id, inscricaoId: inscricao?.id });
+  const ev = arq.extras?.data_fim ? { ...evento, data_fim: arq.extras.data_fim } : evento;
+
   const base = baseUrl();
   const link = (base && comprovanteToken) ? `${base}/i/c/${comprovanteToken}` : null;
-  const quando = formatarQuando(evento);
+  const quando = formatarQuando(ev);
   const pagou = cobranca?.valor_pago_centavos > 0;
   const isento = inscricao?.bolsa_tipo === 'integral' || inscricao?.valor_cobrado_centavos === 0;
 
@@ -378,9 +498,9 @@ async function enviarEmailInscricaoConfirmada({ inscricao, evento, cobranca, com
     ].filter(Boolean),
     linhas: [
       { rotulo: 'Código', valor: inscricao.codigo },
-      { rotulo: 'Evento', valor: evento?.nome },
+      { rotulo: 'Evento', valor: ev?.nome },
       { rotulo: 'Quando', valor: quando },
-      { rotulo: 'Local', valor: evento?.local },
+      { rotulo: 'Local', valor: ev?.local },
       { rotulo: 'Valor', valor: pagou ? reais(cobranca.valor_pago_centavos) : (isento ? 'Isenta' : null) },
       { rotulo: 'Forma', valor: pagou ? (ROTULO_METODO[cobranca?.metodo] || cobranca?.metodo) : null },
     ],
@@ -397,12 +517,16 @@ async function enviarEmailInscricaoConfirmada({ inscricao, evento, cobranca, com
     eventoId: evento?.id,
     to: g.email,
     vars: {
-      ...varsBase({ inscricao, evento, link }),
+      ...varsBase({ inscricao, evento: ev, link }),
       valor: pagou ? reais(cobranca.valor_pago_centavos) : (isento ? 'Isenta' : ''),
       forma: pagou ? (ROTULO_METODO[cobranca?.metodo] || cobranca?.metodo || '') : '',
     },
-    assuntoPadrao: `Inscrição confirmada · ${evento?.nome || 'evento'} (${inscricao.codigo})`,
+    assuntoPadrao: `Inscrição confirmada · ${ev?.nome || 'evento'} (${inscricao.codigo})`,
     corpo,
+    // Instruções gerais (+ autorização de menor quando for o caso): anexadas E
+    // linkadas no corpo — o link é a rede pro anexo descartado por tamanho.
+    attachments: arq.anexos,
+    extraHtml: arquivosHtml(arq.links),
   });
 }
 
@@ -411,6 +535,11 @@ async function enviarEmailInscricaoPendente({ inscricao, evento, cobranca }) {
   const g = preparar(inscricao);
   if (g.pular) return { sent: false, reason: g.pular };
   if (!cobranca?.public_token) return { sent: false, reason: 'sem_public_token' };
+
+  // Só o período (data_fim) — os arquivos vão no e-mail de CONFIRMAÇÃO, quando
+  // a inscrição estiver de fato concluída.
+  const extras = await extrasDoEvento(evento?.id);
+  const ev = extras?.data_fim ? { ...evento, data_fim: extras.data_fim } : evento;
 
   const base = baseUrl();
   const link = base ? `${base}/pagamento/${cobranca.public_token}` : null;
@@ -430,7 +559,7 @@ async function enviarEmailInscricaoPendente({ inscricao, evento, cobranca }) {
     linhas: [
       { rotulo: 'Código', valor: inscricao.codigo },
       { rotulo: 'Evento', valor: evento?.nome },
-      { rotulo: 'Quando', valor: formatarQuando(evento) },
+      { rotulo: 'Quando', valor: formatarQuando(ev) },
       { rotulo: 'Valor', valor: reais(cobranca.valor_centavos) },
     ],
     acao: link ? { rotulo: 'Pagar minha inscrição', url: link } : null,
@@ -443,7 +572,7 @@ async function enviarEmailInscricaoPendente({ inscricao, evento, cobranca }) {
     eventoId: evento?.id,
     to: g.email,
     vars: {
-      ...varsBase({ inscricao, evento, link }),
+      ...varsBase({ inscricao, evento: ev, link }),
       valor: reais(cobranca.valor_centavos) || '',
       expira_em: expira || '',
     },

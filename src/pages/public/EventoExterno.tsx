@@ -29,12 +29,26 @@ import {
 // amarrando os dois. Não reimplementar nada disto na tela.
 import { keysVisiveis } from '../../lib/camposCondicionais';
 import { exigeResponsavel, PARENTESCOS } from '../../lib/inscricaoMenor';
+import BaixarInstrucoes from './BaixarInstrucoes';
 
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 function dataLonga(iso?: string | null) {
   if (!iso) return '';
   const d = new Date(iso + 'T12:00:00');
   return `${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`;
+}
+
+// Evento de vários dias (retiro): "5 a 10 de fevereiro de 2027". Mesmo mês/ano
+// não repete o resto; meses diferentes caem nas duas datas por extenso.
+function periodoLongo(inicio?: string | null, fim?: string | null) {
+  if (!inicio) return '';
+  if (!fim || fim === inicio) return dataLonga(inicio);
+  const d1 = new Date(inicio + 'T12:00:00');
+  const d2 = new Date(fim + 'T12:00:00');
+  if (d1.getMonth() === d2.getMonth() && d1.getFullYear() === d2.getFullYear()) {
+    return `${d1.getDate()} a ${d2.getDate()} de ${MESES[d1.getMonth()]} de ${d1.getFullYear()}`;
+  }
+  return `${dataLonga(inicio)} a ${dataLonga(fim)}`;
 }
 
 const SPAN: React.CSSProperties = { gridColumn: '1 / -1' };
@@ -542,9 +556,9 @@ export default function EventoExterno() {
               <h1 style={{ fontSize: 'clamp(22px, 6vw, 27px)', fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
                 {evento?.nome}
               </h1>
-              {(dataLonga(evento?.data) || evento?.hora) && (
+              {(periodoLongo(evento?.data, evento?.data_fim) || evento?.hora) && (
                 <div style={{ display: 'inline-block', marginTop: 10, padding: '6px 16px', borderRadius: 999, background: 'rgba(0,179,157,0.12)', border: '1px solid rgba(0,179,157,0.3)', color: '#00B39D', fontSize: 14, fontWeight: 700 }}>
-                  {[dataLonga(evento?.data), evento?.hora].filter(Boolean).join(' · ')}
+                  {[periodoLongo(evento?.data, evento?.data_fim), evento?.hora].filter(Boolean).join(' · ')}
                 </div>
               )}
               {evento?.local && <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>{evento.local}</p>}
@@ -595,6 +609,10 @@ export default function EventoExterno() {
                 </p>
               )}
               {resultado.comprovanteToken && <ComprovanteQr token={resultado.comprovanteToken} />}
+              {/* Instruções gerais do evento — a inscrição CONCLUIU (este bloco
+                  só existe na tela de sucesso; quem foi pagar recebe o mesmo
+                  convite na página de pagamento, quando o Pix confirma). */}
+              <BaixarInstrucoes instrucoes={evento.instrucoes} C={C} />
             </div>
           ) : (evento.inscricoes_encerradas ?? !evento.form_ativo) ? (
             <p style={{ textAlign: 'center', color: C.text3, fontSize: 14, padding: '20px 0' }}>{evento.aviso || 'As inscrições deste evento estão encerradas.'}</p>
