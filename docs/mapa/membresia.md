@@ -10,11 +10,12 @@
 > arquivo que não existe, **vale o código**.
 
 ## Backend
+- `backend/routes/jornada.js`
 - `backend/routes/lgpd.js`
 - `backend/routes/membresia.js`
 - `backend/routes/voluntariado.js`
 Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
-<details><summary>Endpoints (147)</summary>
+<details><summary>Endpoints (155)</summary>
 - `DELETE /api/membresia/cadastros/:id`
 - `DELETE /api/membresia/checkins/:id`
 - `DELETE /api/membresia/contribuicoes/:id`
@@ -27,6 +28,11 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `DELETE /api/voluntariado/inscricoes/:id`
 - `DELETE /api/voluntariado/schedule-templates/:id`
 - `DELETE /api/voluntariado/schedules/:id`
+- `GET /api/jornada/cron/refresh-papeis`
+- `GET /api/jornada/dashboard`
+- `GET /api/jornada/membro/:id`
+- `GET /api/jornada/membros`
+- `GET /api/jornada/visao`
 - `GET /api/lgpd/historico-solicitacoes`
 - `GET /api/lgpd/membro/:id/exportar`
 - `GET /api/membresia/cadastros`
@@ -98,6 +104,9 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `PATCH /api/voluntariado/antecedentes/:id`
 - `PATCH /api/voluntariado/inscricoes/:id`
 - `PATCH /api/voluntariado/inscricoes/:id/dados`
+- `POST /api/jornada/cron/refresh-papeis`
+- `POST /api/jornada/cruzar`
+- `POST /api/jornada/refresh-papeis`
 - `POST /api/membresia/cadastros/:id/aprovar`
 - `POST /api/membresia/cadastros/:id/confirmar-whatsapp`
 - `POST /api/membresia/cadastros/:id/rejeitar`
@@ -199,9 +208,11 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `backend/services/identidadeProgressiva.js`
 - `backend/services/inscricaoContrato.js`
 - `backend/services/inscricaoOrfas.js`
+- `backend/services/jornadaEngajamento.js`
 - `backend/services/jornadaMarcadores.js`
 - `backend/services/membroMatch.js`
 - `backend/services/notificar.js`
+- `backend/services/painelCache.js`
 - `backend/services/planningCenter.js`
 - `backend/services/solicitacoesMlTracker.js`
 - `backend/services/storageService.js`
@@ -303,8 +314,10 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 **RPCs**
 
 - `app_soft_delete`
+- `cruzar_pessoas`
 - `fn_membro_tem_atividade`
 - `merge_membros`
+- `refresh_vw_pessoas_papeis_mat`
 
 **Namespace no front (src/api.js)**
 

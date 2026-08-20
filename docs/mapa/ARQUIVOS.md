@@ -60,7 +60,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/grupos.js` | rota backend | grupos | `/api/grupos` |
 | `backend/routes/inscricoes.js` | rota backend | inscricoes | `/api/inscricoes` |
 | `backend/routes/integracao.js` | rota backend | integracao | `/api/integracao` |
-| `backend/routes/jornada.js` | rota backend | — | `/api/jornada` |
+| `backend/routes/jornada.js` | rota backend | membresia | `/api/jornada` |
 | `backend/routes/kpis.js` | rota backend | — | `/api/kpis` |
 | `backend/routes/kpisV2.js` | rota backend | — | `/api/kpis/v2` |
 | `backend/routes/lgpd.js` | rota backend | membresia | `/api/lgpd` |

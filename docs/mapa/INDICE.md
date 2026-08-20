@@ -37,7 +37,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **links** | — | `links.js` | [links](links.md) |
 | **logistica** | — | `logistica.js` | [logistica](logistica.md) |
 | **marketing** | `/marketing` `/marketing/kanban` `/marketing/planner` … | `batismoFotos.js` `comunicados.js` | [marketing](marketing.md) |
-| **membresia** | — | `lgpd.js` `membresia.js` | [membresia](membresia.md) |
+| **membresia** | — | `jornada.js` `lgpd.js` | [membresia](membresia.md) |
 | **membros** | — | `membresia.js` `pessoas.js` | [membros](membros.md) |
 | **membros-financeiro** | — | `membresia.js` | [membros-financeiro](membros-financeiro.md) |
 | **membros-totem** | — | `membresia.js` | [membros-totem](membros-totem.md) |
@@ -146,7 +146,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/sentry.js` | `backend/middleware/errorHandler.test.js` `backend/services/systemWebOps.test.js` |
 | `backend/utils/sexoDeclarado.js` | `src/test/sexoDeclarado.test.ts` |
 | `backend/utils/storagePath.js` | `src/test/storagePath.test.ts` |
-| `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
+| `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
 | `backend/utils/supervisorArea.js` | `src/test/supervisorArea.test.ts` |
 | `backend/utils/telefoneVoluntario.js` | `src/test/telefoneVoluntario.test.ts` |
 | `backend/utils/totemCerco.js` | `src/test/totemCerco.test.ts` |
