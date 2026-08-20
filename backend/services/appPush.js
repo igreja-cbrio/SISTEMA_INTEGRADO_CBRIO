@@ -7,6 +7,7 @@ const { supabase } = require('../utils/supabase');
 const { fetchAllRows } = require('../utils/pagination');
 // ⚠️ Régua gêmea de `Aplicativo-CBRio/lib/pushLotes.ts` — ver o cabeçalho de lá.
 const { lotesDePush, tokenMorreu } = require('../utils/pushLotes');
+const { filtrarPorApp, contarSemCarimbo } = require('../utils/appPushDestino');
 
 // ⚠️⚠️ LEITURA DE TOKEN É PAGINADA E EM LOTES (auditoria 06/08/2026).
 // Duas armadilhas somadas, as duas SILENCIOSAS:
@@ -53,7 +54,7 @@ async function membrosParaUsuarios(membroIds) {
 // app_push_tokens dos usuários informados. Best-effort: nunca lança — loga e
 // retorna { enviados: 0 } em caso de erro. Lotes de até 100 (limite da Expo
 // Push API por request).
-async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
+async function pushExpoParaUsers(userIds, { title, body, data, app } = {}) {
   try {
     const ids = [...new Set((userIds || []).filter(Boolean))];
     if (!ids.length || !title) return { enviados: 0 };
@@ -75,6 +76,24 @@ async function pushExpoParaUsers(userIds, { title, body, data } = {}) {
         ids,
         (fatia) => supabase.from('app_push_tokens').select('token,platform').in('user_id', fatia),
       );
+    }
+
+    // ⚠️⚠️ SEPARA OS DOIS APPS (20/08/2026). `app_push_tokens` é UMA tabela pros
+    // DOIS apps Expo, e sem `app` o push ia pra TODOS os tokens da pessoa —
+    // então o aviso operacional do ERP (`notificar`) aparecia no app de
+    // MEMBROS de quem usa os dois com a mesma conta. A régua está em
+    // `utils/appPushDestino` e EXCLUI o que é comprovadamente do outro app;
+    // token sem carimbo continua recebendo (lista branca derrubaria o push de
+    // todo aparelho de staff que ainda não reabriu o app).
+    // ⚠️ Sem `app`, o comportamento é o de sempre — chamador que não declara
+    // alvo não pode ser silenciado por engano.
+    if (app) {
+      const antes = (toks || []).length;
+      toks = filtrarPorApp(toks, app);
+      const semCarimbo = contarSemCarimbo(toks);
+      if (antes !== toks.length || semCarimbo) {
+        console.log(`[appPush] app=${app} tokens=${antes}->${toks.length} sem_carimbo=${semCarimbo}`);
+      }
     }
 
     // ⚠️⚠️ AGRUPA POR APP EXPO (07/08/2026). Aqui o chunk era só de 100, POR
@@ -289,10 +308,14 @@ async function notificarApp(userIds, payload) {
     }
 
     // 2) push Expo pros tokens
+    // ⚠️ `app: 'membros'` porque o histórico acima (`app_notificacoes`) é lido
+    // SÓ pelo app do membro — mandar a banner pro Staff daria push de um aviso
+    // que não existe no sino de lá.
     const { enviados } = await pushExpoParaUsers(ids, {
       title: payload.titulo,
       body: payload.body,
       data: { tipo: payload.tipo, ...(payload.data || {}) },
+      app: 'membros',
     });
     return { enviados, persistidos };
   } catch (e) {
