@@ -14,6 +14,32 @@ const { executarSyncCompleto } = require('../services/voluntariadoSync');
 // Antes era restrito a role admin/diretor, o que bloqueava os donos do módulo.
 router.use(authenticate, authorizeModule('voluntariado', 3));
 
+/**
+ * O status honesto de uma rodada de sync.
+ *
+ * ⚠️ Existe porque `status: 'success'` estava fixo no código. Entre 17 e 20/08
+ * o sync devolveu 0 cultos e 0 escalas em toda rodada — sempre gravando
+ * 'success' — e ninguém percebeu por três dias. Um log que sempre diz sucesso
+ * não é log, é enfeite.
+ */
+function statusDaRodada(r) {
+  const falhas = Number(r?.tiposComFalha || 0);
+  const total = Number(r?.tiposTotal || 0);
+  if (falhas > 0 && total > 0 && falhas >= total) {
+    return { status: 'error', error_message: `Todos os ${total} tipos de serviço falharam no Planning Center — nada foi sincronizado.` };
+  }
+  if (falhas > 0) {
+    return { status: 'partial', error_message: `${falhas} de ${total} tipos de serviço com roster incompleto — arquivamento de perfis foi pulado nesta rodada.` };
+  }
+  // ⚠️ Zero cultos SEM falha declarada também não é sucesso: ou a janela não
+  // tem culto nenhum, ou algo silencioso quebrou. Nos dois casos, quem lê o
+  // log precisa ver a diferença.
+  if (!r?.services) {
+    return { status: 'partial', error_message: 'Nenhum culto retornado pelo Planning Center nesta rodada.' };
+  }
+  return { status: 'success', error_message: null };
+}
+
 // ══════════════════════════════════════════════════════════════
 // SYNC — MANUAL
 // Estrategia dupla:
@@ -25,7 +51,7 @@ router.post('/sync', async (req, res) => {
     const r = await executarSyncCompleto();
     await supabase.from('vol_sync_logs').insert({
       sync_type: 'manual', services_synced: r.services, schedules_synced: r.schedules,
-      qrcodes_generated: r.qrCodesGenerated, status: 'success', triggered_by: req.user.userId,
+      qrcodes_generated: r.qrCodesGenerated, ...statusDaRodada(r), triggered_by: req.user.userId,
     });
     res.json({
       success: true, services: r.services, newSchedules: r.schedules,
@@ -149,7 +175,11 @@ router.post('/sync-historical', async (req, res) => {
 
     await supabase.from('vol_sync_logs').insert({
       sync_type: 'historical', services_synced: totalServices, schedules_synced: totalSchedules,
-      qrcodes_generated: qrCount, status: 'success', triggered_by: req.user.userId,
+      qrcodes_generated: qrCount,
+      // ⚠️ O sync histórico varre uma FAIXA escolhida à mão; devolver zero
+      // culto ali pode ser a faixa não ter culto nenhum, não uma falha. Por
+      // isso só o total entra na régua, sem contador de tipos.
+      ...statusDaRodada({ services: totalServices }), triggered_by: req.user.userId,
     });
 
     res.json({ success: true, services: totalServices, schedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount });
@@ -188,8 +218,10 @@ router.post('/sync-auto', async (req, res) => {
       return { result, teamPersons };
     }));
 
+    let tiposComFalha = 0;
     for (const item of settled) {
       if (item.status === 'rejected') {
+        tiposComFalha += 1;
         console.error('[VOL SYNC AUTO] Service type error:', item.reason?.message || item.reason);
         continue;
       }
@@ -210,7 +242,8 @@ router.post('/sync-auto', async (req, res) => {
 
     await supabase.from('vol_sync_logs').insert({
       sync_type: 'automatic', services_synced: totalServices, schedules_synced: totalSchedules,
-      qrcodes_generated: qrCount, status: 'success',
+      qrcodes_generated: qrCount,
+      ...statusDaRodada({ services: totalServices, tiposComFalha, tiposTotal: serviceTypes.length }),
     });
 
     res.json({ success: true, services: totalServices, schedules: totalSchedules, qrCodesGenerated: qrCount, volunteersSynced: profilesCount, avatarsImported, totalMembersFound, totalMembersProcessed, timestamp: new Date().toISOString(), ...(dbError ? { dbError } : {}) });

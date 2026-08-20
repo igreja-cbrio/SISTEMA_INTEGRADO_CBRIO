@@ -24,14 +24,40 @@ async function executarSyncCompleto() {
   let totalServices = 0, totalSchedules = 0, totalMembersFound = 0, totalMembersProcessed = 0;
   const allVolunteers = new Map();
 
-  // Todos os tipos de serviço em paralelo
+  // Todos os tipos de serviço em paralelo.
+  //
+  // ⚠️⚠️ A ENTRADA DE DADOS NÃO EXIGE COMPLETUDE — só o ARQUIVAMENTO exige.
+  // Entre 17/08 10:02 e 20/08 o sync devolveu 0 cultos e 0 escalas em TODA
+  // rodada, com status 'success', e voluntários escalados no Planning Center
+  // pararam de aparecer no sistema. Causa: `fetchAllPlans` e
+  // `fetchAllTeamPersons` passaram a rodar com `requireComplete: true`, que
+  // troca `break` por `throw`. Uma única página com erro no PCO derrubava o
+  // tipo de serviço inteiro, o `Promise.allSettled` engolia a exceção num
+  // contador, e o total ficava zero.
+  //
+  // A intenção do PR #2524 era legítima e continua valendo: NÃO arquivar
+  // gente com base num roster parcial. Mas isso se resolve travando a
+  // reconciliação (que é o passo destrutivo), não travando a ingestão.
+  // Escala é ADITIVA: uma página perdida significa menos escalas nesta
+  // rodada, e a próxima rodada traz. Zero escalas não é mais seguro que
+  // escalas parciais — é só pior.
+  //
+  // ⚠️ `fetchAllTeamPersons` alimenta `allVolunteers`, que é o roster contra
+  // o qual a reconciliação decide quem sumiu. Ele fica em try/catch PRÓPRIO:
+  // se falhar, marca o tipo como incompleto (bloqueando o arquivamento) mas
+  // NÃO impede os planos daquele mesmo tipo de entrar.
   const settled = await Promise.allSettled(serviceTypes.map(async (st) => {
-    const [plans, teamPersons] = await Promise.all([
-      fetchAllPlans(PC_SERVICES_BASE, st.id, credentials, { requireComplete: true }),
-      fetchAllTeamPersons(st.id, credentials, { requireComplete: true }),
-    ]);
+    const plans = await fetchAllPlans(PC_SERVICES_BASE, st.id, credentials);
+    let teamPersons = new Map();
+    let rosterCompleto = true;
+    try {
+      teamPersons = await fetchAllTeamPersons(st.id, credentials, { requireComplete: true });
+    } catch (e) {
+      rosterCompleto = false;
+      console.error(`[VOL SYNC] roster incompleto no tipo ${st.id}:`, e.message);
+    }
     const result = await processServiceType(supabase, st, plans, credentials);
-    return { result, teamPersons };
+    return { result, teamPersons, rosterCompleto };
   }));
 
   let tiposComFalha = 0;
@@ -41,7 +67,10 @@ async function executarSyncCompleto() {
       console.error('[VOL SYNC] Service type error:', item.reason?.message || item.reason);
       continue;
     }
-    const { result, teamPersons } = item.value;
+    const { result, teamPersons, rosterCompleto } = item.value;
+    // Roster incompleto conta como falha PARA A RECONCILIAÇÃO, mesmo com os
+    // planos tendo entrado normalmente.
+    if (!rosterCompleto) tiposComFalha += 1;
     totalServices += result.services;
     totalSchedules += result.schedules;
     totalMembersFound += result.membersFound;
@@ -116,6 +145,12 @@ async function executarSyncCompleto() {
   }
 
   return {
+    // ⚠️ Sai no retorno pra quem grava `vol_sync_logs` poder marcar a rodada
+    // como parcial. Era isto que faltava: a falha existia, virava um contador
+    // interno, e o log dizia 'success' com 0 cultos. Três dias assim sem
+    // ninguém notar.
+    tiposComFalha,
+    tiposTotal: serviceTypes.length,
     services: totalServices,
     schedules: totalSchedules,
     qrCodesGenerated: qrCount,
