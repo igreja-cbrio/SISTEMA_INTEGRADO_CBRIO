@@ -110,6 +110,57 @@ function nomeComApelido(nome, apelido) {
   return apelido ? `${nome} (${apelido})` : nome;
 }
 
+// Régua ÚNICA de montagem das listas de líderes de um grupo (principal do
+// mem_grupos.lider_id + líderes ADICIONAIS do roster · Natasha 20/08: TODOS os
+// líderes aparecem no cartão e acham o grupo na busca). Usada pelo /buscar e
+// pelo GET /:id (deep-link ?grupo= do QR/mapa) — duplicar era o que fazia o
+// deep-link mostrar só o principal.
+// lideres_nomes / lider_nome = SÓ nomes reais (é o que a equipe cadastrou).
+// lideres_exibicao = "Nome (Apelido)" · lideres_busca = nomes + apelidos.
+function montarListaLideres({ principalNome, principalId, roster = [], apelidos = {} }) {
+  const lideresNomes = [];
+  const lideresExibicao = [];
+  const lideresBusca = [];
+  const addLider = (nome, membroId) => {
+    if (!nome || lideresNomes.includes(nome)) return;
+    const ap = membroId ? (apelidos[membroId] || null) : null;
+    lideresNomes.push(nome);
+    lideresExibicao.push(nomeComApelido(nome, ap));
+    lideresBusca.push(nome);
+    if (ap) lideresBusca.push(ap);
+  };
+  addLider(principalNome, principalId);
+  roster.forEach(r => addLider(r.nome, r.membro_id));
+  return {
+    lideres_nomes: lideresNomes,
+    lideres_exibicao: lideresExibicao,
+    lideres_busca: [...new Set(lideresBusca)],
+  };
+}
+
+// Líderes do roster de UM grupo (funcao lider/co_lider · vínculo vivo).
+// Best-effort: falha aqui não pode derrubar o deep-link — devolve [] e o
+// grupo fica só com o principal (comportamento anterior).
+async function rosterLideresDoGrupo(grupoId) {
+  try {
+    const { data, error } = await supabase.from('mem_grupo_membros')
+      .select('membro_id, mem_membros!inner(nome)')
+      .eq('grupo_id', grupoId)
+      .in('funcao', ['lider', 'co_lider'])
+      .is('saiu_em', null).is('deleted_at', null);
+    if (error) {
+      console.warn('[public grupos] roster de líderes indisponível:', error.message);
+      return [];
+    }
+    return (data || [])
+      .filter(v => v.mem_membros?.nome)
+      .map(v => ({ nome: v.mem_membros.nome, membro_id: v.membro_id || null }));
+  } catch (e) {
+    console.warn('[public grupos] roster de líderes falhou:', e.message);
+    return [];
+  }
+}
+
 // GET /api/public/grupos/temporadas
 router.get('/temporadas', async (req, res) => {
   try {
@@ -224,29 +275,17 @@ router.get('/buscar', async (req, res) => {
 
     let resultado = (grupos || []).map(g => {
       const principal = lideresMap[g.lider_id]?.nome || null;
-      // lideres_nomes / lider_nome = SÓ nomes reais (é o que a equipe cadastrou).
-      // lideres_exibicao = "Nome (Apelido)" · lideres_busca = nomes + apelidos.
-      const lideresNomes = [];
-      const lideresExibicao = [];
-      const lideresBusca = [];
-      const addLider = (nome, membroId) => {
-        if (!nome || lideresNomes.includes(nome)) return;
-        const ap = membroId ? (apelidos[membroId] || null) : null;
-        lideresNomes.push(nome);
-        lideresExibicao.push(nomeComApelido(nome, ap));
-        lideresBusca.push(nome);
-        if (ap) lideresBusca.push(ap);
-      };
-      addLider(principal, g.lider_id);
-      (rosterLideres[g.id] || []).forEach(r => addLider(r.nome, r.membro_id));
       return {
         ...g,
         lider_nome: principal,
         lider_apelido: g.lider_id ? (apelidos[g.lider_id] || null) : null,
         lider_foto: lideresMap[g.lider_id]?.foto_url || null,
-        lideres_nomes: lideresNomes,
-        lideres_exibicao: lideresExibicao,
-        lideres_busca: [...new Set(lideresBusca)],
+        ...montarListaLideres({
+          principalNome: principal,
+          principalId: g.lider_id,
+          roster: rosterLideres[g.id] || [],
+          apelidos,
+        }),
       };
     });
 
@@ -349,23 +388,30 @@ router.get('/:id', async (req, res) => {
 
     let lider_nome = null;
     let lider_foto = null;
-    let lider_apelido = null;
     if (grupo.lider_id) {
       const { data: lider } = await supabase.from('mem_membros').select('nome, foto_url').eq('id', grupo.lider_id).maybeSingle();
       if (lider) { lider_nome = lider.nome; lider_foto = lider.foto_url; }
-      // Apelido isolado/best-effort (deep-link ?grupo=<id> não pode quebrar se a
-      // coluna ainda não existir).
-      const ap = await buscarApelidos([grupo.lider_id]);
-      lider_apelido = ap[grupo.lider_id] || null;
     }
+    // Líderes ADICIONAIS do roster também no deep-link (?grupo=<id> do QR/mapa):
+    // sem isso, quem chegava por QR via só o principal enquanto a busca mostrava
+    // todos (Natasha 20/08 · grupo da Ana Paula tem 2 líderes). Roster e apelido
+    // são best-effort — falha degrada pro principal, nunca quebra a página.
+    const roster = await rosterLideresDoGrupo(grupo.id);
+    // Apelido isolado/best-effort (deep-link ?grupo=<id> não pode quebrar se a
+    // coluna ainda não existir).
+    const apelidos = await buscarApelidos([grupo.lider_id, ...roster.map(r => r.membro_id)]);
+    const lider_apelido = grupo.lider_id ? (apelidos[grupo.lider_id] || null) : null;
     res.json({
       ...grupo,
       lider_nome,
       lider_apelido,
       lider_foto,
-      lideres_nomes: lider_nome ? [lider_nome] : [],
-      lideres_exibicao: lider_nome ? [nomeComApelido(lider_nome, lider_apelido)] : [],
-      lideres_busca: [lider_nome, lider_apelido].filter(Boolean),
+      ...montarListaLideres({
+        principalNome: lider_nome,
+        principalId: grupo.lider_id,
+        roster,
+        apelidos,
+      }),
     });
   } catch (e) {
     console.error('[public grupos getById]', e.message);

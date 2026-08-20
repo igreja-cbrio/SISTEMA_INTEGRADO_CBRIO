@@ -2310,6 +2310,34 @@ casal junto** (idem recusa). A opção aparece **só** nessa categoria.
   vale no link do WhatsApp; (2) a caixa de entrada não mostra selo de "casal"
   ainda.
 
+## Grupos · TODOS os líderes no cartão e no deep-link da inscrição pública (2026-08-20 · SEM migration)
+
+Pedido da Natasha (via Marcos), com o exemplo do grupo da Ana Paula Silva
+Ogheri (MULHER ÚNICA · T2-2026-033 · Ana Paula é `lider_id` + Simone Pereira
+Da Silva é `funcao='lider'` no roster): buscar por QUALQUER líder e mostrar
+todos "em cima". **Medido antes de codar: a BUSCA já funcionava** —
+`/buscar?lider_nome=simone pereira` devolvia o grupo com
+`lideres_exibicao: [Ana Paula, Simone]` (régua de 15/07). O que faltava era
+EXIBIÇÃO, em 2 pontos:
+
+- **Box "grupo escolhido" do form público** (`InscricaoGrupos.jsx` · step 2)
+  mostrava só `lider_nome` (o principal). Agora usa `lideres_exibicao`
+  (rótulo "Líder:"/"Líderes:" · join " · "), com fallback pro principal em
+  bundle antigo/deploy em 2 etapas.
+- **`GET /public/grupos/:id` (deep-link `?grupo=` de QR/mapa)** devolvia
+  `lideres_*` só com o principal — quem chegava por QR via um líder e quem
+  buscava via dois. Agora enriquece com o roster.
+- **Régua única**: `montarListaLideres` + `rosterLideresDoGrupo` em
+  `publicGrupos.js` — o `/buscar` passou a usar a MESMA montagem (zero-diff,
+  smoke em prod conferiu). Roster/apelido no `GET /:id` são **best-effort**:
+  falha degrada pro principal, nunca derruba o deep-link.
+- ⚠️ `GET /lideres/buscar` (autocomplete · só líderes principais) segue **sem
+  nenhum consumidor** no ERP e no app — a busca por líder do form é
+  client-side sobre `lideres_busca`. Não "consertei" endpoint morto.
+- ⏳ **Follow-up (repo do app · exige OTA)**: `grupos.tsx` do app consome o
+  MESMO `/buscar` mas filtra e exibe só `lider_nome` — os campos
+  `lideres_busca`/`lideres_exibicao` já chegam prontos lá.
+
 ## Grupos · busca sem acento + apelido do líder (2026-07-30 · migration 20260730170000)
 
 Caso real: a Patrícia tentou se inscrever no grupo do "Antônio" no domingo e
