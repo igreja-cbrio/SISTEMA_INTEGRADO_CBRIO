@@ -206,12 +206,19 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
       tag: chaveDedup || `${modulo}-${Date.now()}`,
     }).catch(e => console.warn('[notificar push]', e.message));
 
-    // Push Expo pro app (CBRio Staff/membros) · best-effort, nunca quebra o
-    // fluxo — no-op gracioso pra quem não tem token em app_push_tokens.
+    // Push Expo pro app do STAFF · best-effort, nunca quebra o fluxo — no-op
+    // gracioso pra quem não tem token em app_push_tokens.
+    //
+    // ⚠️⚠️ `app: 'staff'` (20/08/2026). Isto aqui é o aviso OPERACIONAL do ERP
+    // (inscrição no Next, cadastro aprovado, falha de WhatsApp) e a linha vai
+    // pra `notificacoes`, que o app do MEMBRO não lê. Sem o alvo, a banner do
+    // push ia pra todos os tokens da pessoa e aparecia no app de membros de
+    // quem usa os dois com a mesma conta — foi o relato do Matheus.
     pushExpoParaUsers(usersInseridos, {
       title: titulo,
       body: mensagem,
       data: { tipo: tipo || modulo, modulo, link: link || null },
+      app: 'staff',
     }).catch(e => console.warn('[notificar push expo]', e.message));
   }
 
