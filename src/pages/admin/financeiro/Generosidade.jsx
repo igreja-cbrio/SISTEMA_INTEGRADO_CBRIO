@@ -524,6 +524,7 @@ function HistoricoDialog({ contribuinte, periodo, onClose }) {
 }
 
 function AbaPararam() {
+  const [periodo, setPeriodo] = useState('2m'); // '2m' | '3m' | '6m'
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   // Ordenação: por valor total ou nº de doações. Default = maior valor primeiro
@@ -533,10 +534,10 @@ function AbaPararam() {
 
   useEffect(() => {
     setLoading(true);
-    financeiro.generosidade.pararam()
+    financeiro.generosidade.pararam(periodo)
       .then(r => setItems(Array.isArray(r) ? r : []))
       .finally(() => setLoading(false));
-  }, []);
+  }, [periodo]);
 
   function ordenarPor(k) {
     if (sortKey === k) setSortDir(d => (d === 'desc' ? 'asc' : 'desc'));
@@ -559,21 +560,41 @@ function AbaPararam() {
   return (
     <Card>
       <CardContent className="pt-6">
-        <div className="mb-3">
-          <h3 className="text-sm font-semibold flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-500" />
-            Membros que pararam de doar
-          </h3>
-          <p className="text-[11px] text-muted-foreground mt-1">
-            Doadores regulares (≥3 doações no histórico) que não doam há mais de 60 dias. Conversa pastoral pode reativar.
-          </p>
+        <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
+          <div>
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              Membros que pararam de doar
+            </h3>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Doadores regulares (≥3 doações no histórico) que não doam há mais de{' '}
+              {{ '2m': '2 meses', '3m': '3 meses', '6m': '6 meses' }[periodo]}. Conversa pastoral pode reativar.
+            </p>
+          </div>
+          <div className="flex rounded-lg border border-border overflow-hidden">
+            {[
+              ['2m', '2 meses'],
+              ['3m', '3 meses'],
+              ['6m', '6 meses'],
+            ].map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => setPeriodo(k)}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                  periodo === k ? 'bg-primary text-white' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {loading ? (
           <div className="py-8 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" /></div>
         ) : items.length === 0 ? (
           <div className="py-10 text-center text-sm text-muted-foreground">
-            Todos os doadores regulares estão ativos · 🎉
+            Nenhum doador regular nesse período de inatividade
           </div>
         ) : (
           <div className="overflow-x-auto">

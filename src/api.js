@@ -1344,7 +1344,7 @@ export const financeiro = {
   generosidade: {
     overview: () => get('/financeiro/generosidade/overview'),
     anonimos: () => get('/financeiro/generosidade/anonimos'),
-    pararam: () => get('/financeiro/generosidade/pararam'),
+    pararam: (periodo = '2m') => get(`/financeiro/generosidade/pararam?periodo=${encodeURIComponent(periodo)}`),
     top: (periodo = '12m', ordem = 'desc') =>
       get(`/financeiro/generosidade/top?periodo=${encodeURIComponent(periodo)}&ordem=${encodeURIComponent(ordem)}`),
     historico: (membroId, periodo = '12m') =>
