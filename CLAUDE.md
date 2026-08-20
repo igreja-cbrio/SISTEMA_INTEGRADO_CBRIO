@@ -21,6 +21,47 @@ decisões/time-lapse do sistema). Regras de manutenção:
   vivo (lição `cui_atendimentos`: achado de auditoria baseado em arquivo de
   migration que nunca foi aplicado em prod).
 
+## 📍 ANTES DE INVESTIGAR "onde mora X", LEIA O MAPA (2026-08-20)
+
+Pedido do Matheus: *"queria que já tivesse um contexto definido de cada módulo,
+cada funcionalidade, cada botão — para você não gastar tokens procurando algo que
+você mesmo construiu"*. O gatilho foi eu responder *"vou investigar como a tela de
+inscrições do app funciona"* a um pedido cuja resposta **já estava neste arquivo**,
+em duas linhas distintas.
+
+⇒ **`docs/mapa/`** é gerado por `node backend/scripts/gerar-mapa.cjs` a partir do
+CÓDIGO (`App.tsx`, `ROUTE_MODULE_MAP`, `server.js`, `backend/routes/*`,
+`src/api.js`, `backend/utils/*`, `vercel.json`, e os 2 repos de app). Ordem de
+consulta, sempre antes de sair grepando:
+
+| pergunta | arquivo | custo |
+|---|---|---|
+| tenho um NOME, quero o caminho | **`docs/mapa/ARQUIVOS.md`** (índice plano · 1 grep) | ~6k |
+| que módulos existem e onde ficam | `docs/mapa/INDICE.md` | ~2k |
+| tudo de um módulo (rotas, endpoints, réguas, tabelas) | `docs/mapa/<slug>.md` | ~1k |
+| telas dos apps e o que cada uma chama | `docs/mapa/APPS.md` | ~2k |
+| o que nenhum módulo reivindica | `docs/mapa/ORFAOS.md` | <1k |
+
+⚠️⚠️ **O mapa responde ONDE, NUNCA "se está certo".** Continua obrigatório MEDIR:
+número do banco, se um cron roda, se uma coluna existe, o que a definição **viva**
+de uma função SQL diz, e o formato real de arquivo de terceiro. Só em 20/08 foram
+quatro casos em que o documento estava velho e o banco estava certo — o mapa não
+muda isso e não deve.
+
+⚠️ **Ele é regenerado sem travar deploy** (decisão do Matheus), de carona no
+`system-report.yml`. Logo pode estar horas atrás: mapa é ponteiro, não prova. Se
+citar arquivo que não existe, **vale o código** — e `src/test/mapaGerador.test.ts`
+fica vermelho, que é justamente o que impede o mapa de virar o `atlas.html`
+(840 KB, parado em 25/06, descrevendo como vivo um pareamento do Kids que nunca
+existiu).
+
+⚠️ **NUNCA editar `docs/mapa/` à mão.** É saída de gerador; edição manual é
+sobrescrita na próxima rodada e, pior, reintroduz a classe de erro que ele existe
+pra eliminar. Para forçar o estado de agora: `/mapa` (skill) ou o comando acima.
+
+⚠️ **`src/pages/atlas/atlas.html` NÃO é fonte.** É uma TELA do sistema (`/atlas`),
+escrita à mão e desatualizada. Não citar como referência.
+
 ## ⚠️ LEI · Contrato de porta — toda entrada de PESSOA no sistema (2026-07-17)
 
 Decisão do Marcos: dados de pessoa entram IGUAIS em todas as portas (Kids,
@@ -2488,296 +2529,101 @@ que sobrou como regra viva:
 - ⚠️ O **e2e do Next** foi atualizado pro contrato mas **não foi EXECUTADO**
   (exige app rodando + cria inscrição real).
 
-## ⚠️ Comunicação · os 5 críticos da revisão de 05/08 corrigidos (2026-08-12 · migration `20260812150000`)
+## ⚠️ Comunicação · módulo central de WhatsApp (revisão de 05/08 → 14/08/2026)
 
-Revisão profunda do módulo (05/08 · 3 agentes + verificação manual, achados com
-file:line) apontou 5 críticos; Marcos aprovou corrigir. O que mudou:
+Estado consolidado. **Diário completo (5 críticos, lotes 2–5, F1/F2/F3, recibos,
+citações) em `docs/CLAUDE-LEGADO.md`.** 📍 onde mora: `docs/mapa/comunicacao.md`
 
-1. **Leitura do módulo = nível 1** (`routes/comunicacao.js`): o `router.use`
-   usava `authorizeModule('comunicacao')` → default **2** do middleware, e
-   front/menu/RLS assumem leitura 1 — cargo com comunicacao=1 via as 9 abas em
-   403. Escritas seguem com guard próprio (3/4/5).
-2. **Aba Bot só aparece pra quem pode**: ela embute telas cujo backend exige
-   `whatsapp-admin` (= integracao OU grupos ≥3) — usuário com comunicacao=5 sem
-   isso via a aba inteira em 403. Fix é de EXIBIÇÃO (`podeBot` em
-   `Comunicacao.tsx`); ampliar o mapa `whatsapp-admin` no auth.js pra incluir
-   `comunicacao` é decisão pendente do Marcos (lei "parar e perguntar" de auth).
-3. **Deep-link `?telefone=&texto=` ressuscitado**: os redirects de `/conversas`,
-   `/admin/whatsapp` e `/admin/conversas-setores` viraram `RedirectComunicacao`
-   (App.tsx · preserva a query); `Conversas.tsx` remove SÓ telefone/texto (o
-   `setSearchParams({})` apagava o `?tab` e a página voltava pro dashboard);
-   `hrefConversa` (usado em ~13 telas) aponta direto pra
-   `/comunicacao?tab=conversas&…`; o link de transferência do waInbox idem.
-4. **Multi-número (preparo do CBZap)**: o webhook lê
-   `value.metadata.phone_number_id`. Número ≠ institucional → **`inboxDireto`**
-   (nada de opt-out/triagem/coleta/institucional — personas são do número do
-   bot; só pesquisa de satisfação, que é da CONVERSA, + inbox). A conversa
-   grava `wa_conversas.phone_number_id` (migration `20260812150000` ·
-   **best-effort/isolado** — o inbox funciona sem a coluna, lição do
-   parcelas_max) e TODAS as respostas do inbox (`routes/waInbox.js` nova/
-   responder/anexo/pesquisa) saem pelo número da conversa via
-   `opts.phoneNumberId`, que agora atravessa `whatsappService`/`whatsappSend` →
-   `waSender`. A pesquisa 0-5 virou função única `tratarPesquisaSatisfacao`
-   (publicWhatsapp.js), usada pelo bot E pelo multi-número. ⚠️ Payload sem
-   metadata conta como número do bot (comportamento histórico).
-5. **Kill-switch não engole mais mensagem** (`whatsappFila.js`): com CREDENCIAL
-   presente + `WHATSAPP_ENABLED` desligado, `enfileirar`/`enfileirarLote`
-   REGISTRAM como `pendente` (sai quando religar — o contrato documentado do
-   notificarMembro); sem credencial (dev/preview) segue não gravando nada, pra
-   ambiente sem WhatsApp não encher a fila que o cron DE PROD drenaria. E o
-   cron de agendamentos (`/comunicacao/cron/agendamentos`) só marca
-   `ultimo_disparo`/desativa único quando `queued > 0` (antes consumia o
-   disparo no vazio) + erro de consulta virou 500 (não mais `ok:true`).
+**Estado do módulo:** `/comunicacao` com **6 abas** — Dashboard · Disparos
+(Programadas ∪ Automáticas, com chips) · Envios (absorveu Erros) · Conversas ·
+Contatos · Configurações (Templates/Números/Atendentes/Tarifas). Leitura = nível
+**1**; escritas com guard próprio (3/4/5). Deep-links antigos caem na aba nova via
+`TAB_LEGADO`, e `?telefone=&texto=` sobrevive aos redirects (`RedirectComunicacao`).
 
-### Lote 2 · médios do atendimento corrigidos (2026-08-12 · SEM migration)
+**Aposentado por decisão do Marcos (13/08), com o código DORMANTE:**
+**coleta do bot** (`podeColetar = false` · *"os líderes de integração não
+compraram a ideia"*) e **Avisos/broadcast** (o caminho é Disparos→Agendadas;
+`admin/Whatsapp.jsx` só serve a `AbaConfig`).
+⚠️ **Os fluxos de grupos por LINK (`/g/f`, `/g/c`, `/g/a`, renovação) NÃO são a
+persona** — seguem intactos e não têm relação com a coleta aposentada.
 
-Os médios que morderiam o atendimento real do CBZap, na mesma leva:
+**Multi-número (CBZap):** o webhook lê `value.metadata.phone_number_id`; número
+≠ institucional cai em `inboxDireto` (sem opt-out/triagem/coleta/institucional —
+persona é do número do bot). Toda resposta do inbox sai pelo número da conversa
+(`opts.phoneNumberId` atravessa `whatsappService`/`whatsappSend` → `waSender`).
+⚠️ **Payload sem `metadata` conta como número do bot** (comportamento histórico).
 
-- **Thread mostra as 500 mais RECENTES** (`routes/waInbox.js` /mensagens):
-  era `asc+limit` — conversa >500 mensagens nunca exibia a mensagem de hoje
-  (a conversa é 1 por telefone PRA SEMPRE, então era inevitável). Virou
-  `desc+limit+reverse`.
-- **Nono dígito não duplica mais conversa**: `mesmoNumeroBR` em
-  `services/waInbox.js` (pura · `src/test/waInboxMesmoNumero.test.ts`, 7 casos,
-  mutation-testado) — antes de CRIAR conversa, reconcilia pelos 8 últimos
-  dígitos (o wa_id da Meta pode vir SEM o 9; match exato criava 2 conversas e
-  a janela de 24h abria na errada). ⚠️ Estrangeiro/ambíguo NÃO casa (lição do
-  suíço `41765764538` × DDD 41 de Curitiba).
-- **Pesquisa de satisfação com CLAIM atômico** (PATCH /conversas/:id): o
-  UPDATE `resolvida=true` guardado por `.eq('resolvida', false)` decide QUEM
-  transicionou — duplo-clique/2 atendentes não mandam mais a pesquisa 2×.
-- **Corrida de criação não descarta mais a 1ª mensagem**: 23505 do
-  UNIQUE(telefone) → relê e segue com a linha do vencedor (antes
-  `registrarInbound` recebia null e a mensagem sumia).
-- **`/comunicacao/custo` paginado com `.order()`** (criado_em + id): range sem
-  ORDER BY duplicava/perdia linhas entre páginas.
-- **Programadas: PUT valida como o POST** (estado final linha+patch — teto de
-  500 telefones valia só na criação) e **reagendar única já disparada volta a
-  disparar** (trocar `quando` zera `ultimo_disparo`; recorrente NÃO zera, senão
-  dispararia 2× no mesmo dia).
+**Mídia recebida é PRIVADA** (bucket `wa-inbox-privado`, migration
+`20260812190000`): a linha guarda o **PATH**, e a thread assina em lote por 15 min.
+⚠️⚠️ **OUTBOUND continua no bucket público `wa-inbox` DE PROPÓSITO** — a Meta busca
+o anexo pelo link no envio, e privar quebraria o envio de anexo.
+**Retenção:** `limparMidiasAntigas` apaga arquivo com mais de
+`WA_INBOX_MEDIA_RETENCAO_DIAS` (default **90** · 0 desliga) e zera `media_url` —
+**o TEXTO fica pra sempre; o que expira é o ARQUIVO**. Ordem deliberada: arquivo
+primeiro, ponteiro depois (morrer no meio deixa ponteiro pra arquivo morto, que a
+assinatura trata como null; o inverso deixaria arquivo órfão eterno).
+⚠️ `pathDoBucketPublico` só extrai path do NOSSO bucket — URL externa devolve null
+e nunca é apagada (mutation-testado).
 
-### Lote 3 · mídia RECEBIDA em bucket privado + retenção (2026-08-12 · migration `20260812190000`)
+**Fluxos por opção do menu** (`conversas_setores` · migration `20260813150000`):
+cada opção carrega o caminho (`mensagem_resposta`, `pedir_nome`, `destino_tipo`
+area|atendente, `atendente_id`). Destino atendente ⇒ a conversa **nasce
+atribuída** e o aviso vai só pra ele.
+⚠️ `bot_area_pendente` guarda o **ID da opção**, não a área: duas opções podem
+apontar pra mesma área com fluxos diferentes.
+⚠️ `setoresAtivos()` usa `select('*')` de propósito (tolera a migration ausente —
+lição do `parcelas_max`; sem as colunas, tudo cai no fluxo padrão).
+⚠️ Pré-migration, salvar campo de fluxo **AVISA e ignora** (42703 → retry só com o
+básico + `aviso` na resposta) — nunca silêncio.
 
-Decisões do Marcos (12/08): mídia inbound privada = SIM · Realtime por área =
-**NÃO MEXER ainda** · e a pergunta dele "existe política de apagar depois de um
-tempo?" virou a retenção (não existia nenhuma — anexo vivia pra sempre).
+**Recibos do chat são reais** (migration `20260813190000`): ✓ aceito · ✓✓ entregue
+· ✓✓ azul lido · ⚠ não entregue com o motivo. Todo outbound registrado passa o
+`wa_message_id`, e `failed` de mensagem de ATENDENTE notifica o módulo.
+⚠️ Mensagem de ANTES da migration fica **sem recibo pra sempre** (não tem wamid
+gravado).
 
-- **Bucket `wa-inbox-privado`** (migration `20260812190000` · public=false ·
-  nenhuma policy de propósito — só o backend/service_role toca): foto/documento
-  que o MEMBRO manda deixa de ter URL pública permanente. A linha de
-  `wa_mensagens` guarda o **PATH** (não URL); a thread assina em LOTE por 15
-  min na leitura (`createSignedUrls`). ⚠️ **OUTBOUND continua no bucket público
-  `wa-inbox` DE PROPÓSITO** — a Meta busca o anexo pelo link no envio; privar
-  quebraria o envio de anexo. Histórico antigo (URL http) passa direto.
-  Fallback de deploy em 2 etapas: bucket privado ausente → upload cai no
-  público (comportamento histórico), nada quebra.
-- **Retenção**: `limparMidiasAntigas` (services/waInbox.js) apaga do storage
-  anexos com mais de `WA_INBOX_MEDIA_RETENCAO_DIAS` (default **90** · 0
-  desliga) e zera `media_url` — **o TEXTO da conversa fica pra sempre; o que
-  expira é o ARQUIVO** (o front já mostra o placeholder `[image]`/`[document]`).
-  Vale pros DOIS buckets (privado + público). Ordem deliberada: arquivo
-  primeiro, ponteiro depois (morrer no meio deixa ponteiro pra arquivo morto,
-  que a assinatura trata como null — o inverso deixaria arquivo órfão eterno);
-  efeito em blocos de 100 (lei de 04/08). `pathDoBucketPublico` só extrai path
-  do NOSSO bucket — URL de outro bucket/externa devolve null e nunca é apagada
-  (mutation-testado em `waInboxMesmoNumero.test.ts`).
-- **Roda 1×/dia às ~4h05 BRT de CARONA no cron `/comunicacao/cron/agendamentos`**
-  (horário) — sem slot novo no vercel.json (45 crons · lição dos pagamentos).
-  Cap 400 anexos/dia (backlog drena em dias).
+**Contexto na thread:** inbound grava `reply_to_wa_id` (UPDATE isolado
+best-effort — coluna nova NUNCA entra no INSERT da mensagem) e a thread resolve a
+citação pelo wamid, inclusive quando o alvo é template da fila. Os templates
+automáticos aparecem intercalados na conversa.
+⚠️⚠️ **Merge SÓ NA LEITURA** — nada é gravado: registrar a fila em `wa_mensagens`
+criaria conversa no inbox pra CADA disparo em massa. Não fazer.
 
-### Reorganização das abas · F1 (2026-08-13 · SEM migration · decisão do Marcos)
+**Todo template pago passa pela FILA** (lote 5 · 14/08): devocional, fallback dos
+grupos, automáticas table-driven, Kids (resumo + retirada), reenvio de cadastro e
+aprovação fria. `whatsappModulo.MAPA` ganhou os donos `cuidados`/`kids`/
+`solicitacoes` para a falha avisar o módulo certo. Seguem DIRETO de propósito:
+texto de sessão do bot (grátis na janela) e envio do chat humano (o atendente vê o
+erro na hora).
+⚠️ Na aprovação fria, `queued` **também** marca `'aguardando'` — deixar `'na_fila'`
+faria o próximo despacho enfileirar de novo (2 templates na liberação da cota).
 
-Pedido dele: otimizar o uso interno do módulo. 10 abas viraram **6**
-(`Comunicacao.tsx` · deep-links antigos caem na aba nova via `TAB_LEGADO`):
+**Interruptor central** (`whatsapp_config.disparos_off` · migration
+`20260814150000`): os 4 crons consultam antes de montar público. Cache 60s e
+**fail-open** (coluna ausente = tudo ligado).
+⚠️ Desligar **não** é caminho de envio — a nota "100% leitura" do serviço vale pro
+ENVIO; o freio central é decisão do dono.
 
-- **Disparos** = Programadas ∪ Automáticas com UM filtro (chips Agendadas ×
-  Automáticas) — os componentes internos são os mesmos; a fusão é de navegação.
-- **Envios absorveu a aba Erros**: filtro de status ganhou `erro`/`falha_meta`
-  (`falha_meta` no backend = `failed_at NOT NULL` — envio ACEITO que a Meta
-  depois recusou, não é status da fila), Reenviar na própria linha (só
-  `status='erro'`, mesma regra de sempre), tooltip do status mostra o motivo,
-  e selo de órfãos quando > 0 (`/envios/resumo` ganhou `orfaos` — ⚠️ a coluna
-  da tabela é `criado_em`, não `created_at`). O endpoint `GET /erros` segue
-  existindo (compat), mas a UI antiga foi removida.
-- **Configurações** = Templates · Números · Atendentes · **Tarifas** (o
-  backend de tarifas existia desde julho SEM tela — o custo do Dashboard lê
-  daqui; edição nível 5).
+**Lei do template aprovado:** `templateBloqueado()` recusa REJECTED/PAUSED/DISABLED
+no espelho `wa_templates`, e o espelho sincroniza de hora em hora.
+⚠️⚠️ **PENDING/ausente PASSA de propósito**: a medição de 14/08 pegou o espelho
+**2 semanas velho** (v2 dos grupos como PENDING, 2 templates nem constavam) — trava
+ingênua teria matado os fluxos dos grupos.
 
-### Reorganização · F2 (2026-08-13 · SEM migration · decisões do Marcos)
+**Faxina que ficou** (lote 4): órfãos reconciliados 1×/hora (`waStatusReconcile`,
+carona no cron de agendamentos) · `nao_lidas` atômico por RPC · busca com
+`escapePostgrestValue` ("Silva, Maria" virava inbox falsamente vazio) · anexo com
+`fileFilter` (`.exe` subia antes de a Meta recusar) · nono dígito não duplica
+conversa (`mesmoNumeroBR`, mutation-testado).
+⚠️ Estrangeiro/ambíguo **NÃO casa** no nono dígito (lição do suíço `41765764538`
+contra o DDD 41 de Curitiba).
+⚠️ Em `whatsapp_envios` a coluna é **`criado_em`**, não `created_at`.
 
-- **COLETA DO BOT APOSENTADA** ("os líderes de integração não compraram a
-  ideia — pode inclusive aposentar isso"): `podeColetar = false` no
-  `publicWhatsapp.js` (todo mundo cai na persona 1 · o código da coleta —
-  Flow do culto, parseConversa, relato de grupos por texto/áudio — fica
-  DORMANTE abaixo do bloco; reativar = restaurar `lider && papel ===
-  'coordenador'`); `processarFlowReply` registra e descarta reply de Flow
-  antigo (`erro: 'coleta_aposentada'`). ⚠️ Os fluxos de grupos por LINK
-  (/g/f, /g/c, /g/a, renovação) NÃO são a persona — seguem intactos.
-- **AVISOS (broadcast) APOSENTADO**: nem persistia resultado; o caminho é
-  Disparos→Agendadas. `admin/Whatsapp.jsx` ficou dormante como tela (header
-  documenta); só a `AbaConfig` segue viva (export `WhatsappBotConfig`,
-  montada na aba Bot).
-- **Aba CONTATOS** (`ContatosTab.tsx` + `GET /comunicacao/contatos`): a
-  audiência REAL — membros com `whatsapp_optin=true` + líderes do bot
-  (papel implica aceite: líder aprova pedidos por WhatsApp), 1 linha por
-  TELEFONE (quem é os dois aparece 1×), cada um com **DE ONDE VEIO** (porta
-  do consentimento `inscricao_consentimentos` tipo whatsapp · ou vínculo de
-  líder auto-sync com o nome do grupo). Busca acento-insensível
-  (`contemNormalizado`), cap DECLARADO de 5k com aviso `truncado`. Gestão:
-  toggle de lembretes do líder (endpoints `whatsapp-admin`, botão gated).
-- Aba Bot enxugou: Menu do bot + Configuração (2 sub-abas).
-
-### Reorganização · F3 — FLUXOS por opção do menu (2026-08-13 · migration `20260813150000`)
-
-Diagnóstico que motivou (confirmado no código): escolher "1" ou "4" no menu
-fazia A MESMA coisa — pede nome → grava área → notifica; a única diferença era
-a etiqueta. Agora cada opção de `conversas_setores` carrega o CAMINHO:
-
-- **Colunas novas**: `mensagem_resposta` (confirmação própria · NULL = padrão ·
-  o protocolo é acrescentado no fim), `pedir_nome` (false = encaminha direto —
-  ex.: oração), `destino_tipo` (`area` | `atendente`) e `atendente_id` (FK
-  profiles · lei nº 10: CHECK/FK em bloco próprio, não no ADD COLUMN).
-- **Motor** (`whatsappTriagem.js`): `concluirTriagem()` única pros 2 caminhos;
-  destino atendente ⇒ a conversa NASCE atribuída (`atribuido_a`) e o aviso vai
-  SÓ pro atendente (`targetIds`). ⚠️ `bot_area_pendente` passou a guardar o
-  **ID da opção** (2 opções podem apontar pra mesma área com fluxos
-  diferentes); conversa em andamento com a ÁREA antiga resolve por fallback.
-  `setoresAtivos()` usa `select('*')` de propósito (tolera a migration
-  ausente — lição do parcelas_max; sem as colunas, tudo cai no fluxo padrão).
-- **Rotas** (`waInbox.js` setores): POST/PUT aceitam os campos de fluxo;
-  destino atendente sem `atendente_id` = 400; pré-migration, salvar campos
-  de fluxo AVISA e ignora (42703 → retry só com o básico + `aviso` na
-  resposta) — nunca silêncio.
-- **Tela** (`ConversasSetores.jsx` reescrita · "Fluxos do menu"): cada opção é
-  um TRILHO de nós (pessoa escolhe → pede nome? → bot confirma → destino →
-  aviso · linguagem do /atlas/fluxograma) + prévia do menu como a pessoa vê +
-  editor com os passos na ordem do caminho e prévia ao vivo.
-- V2 futura (combinada): sub-menus de 2 níveis, mensagem fora-de-horário
-  (escala dos atendentes), opção que envia link/formulário.
-
-### Recibos do CHAT · ✓✓ de verdade (2026-08-13 · migration `20260813190000` · caso da Júlia)
-
-O 1º teste real do inbox (Marcos respondeu a Júlia) expôs a cadeia: a resposta
-saiu e o sistema não sabia dizer se entregou/leu. DOIS furos consertados:
-
-- **O chat não gravava o `wa_message_id` do que enviava** (`registrarOutbound`
-  nem aceitava o campo) — o recibo da Meta não tinha onde pousar. Agora TODOS
-  os outbounds registrados passam o id (respostas/nova/anexo/pesquisa do
-  inbox · bot de triagem · agradecimento da pesquisa · institucional).
-- **O webhook descartava recibo de mensagem do chat** — agora grava
-  `delivered_at/read_at/failed_at/erro_status` em `wa_mensagens` (guardas
-  `.is(col, null)` idempotentes · 42703 = migration ausente → vira órfão,
-  comportamento antigo) e **`failed` de mensagem de ATENDENTE notifica** o
-  módulo conversas (o ⚠ na thread só aparece quando alguém reabre).
-- **Thread**: o ✓✓ era DECORATIVO (aparecia sempre). Agora: ✓ aceito ·
-  ✓✓ entregue · ✓✓ azul lido · ⚠ não entregue com o motivo (`ReciboMsg`).
-- ⚠️ Mensagens de ANTES da migration ficam sem recibo pra sempre (não têm
-  wa_message_id gravado) — inclusive a da Júlia.
-- ⚠️ Flake conhecido do gate LOCAL nesta máquina: sob carga, ConstrutorPerguntas/
-  cronAlcancavel/rpcsCliente falham aleatoriamente e passam isolados — o
-  veredito é o CI (runner limpo).
-
-### Contexto completo na thread · citações + automáticas (2026-08-13 · migration `20260813210000` · caso da Júlia parte 2)
-
-Ela respondeu "Esse aqui" + "Obrigada 😊" e o Marcos não entendeu — a tela
-escondia o contexto DUAS vezes:
-
-- **Citação (reply)**: ela citou o template com o nome do grupo e o webhook
-  descartava `m.context`. Agora todo inbound grava `reply_to_wa_id` (UPDATE
-  isolado best-effort — coluna nova NUNCA entra no INSERT da mensagem) e a
-  thread resolve o trecho citado pelo wamid — **inclusive quando o alvo é um
-  template da fila**. UI: bloco de citação estilo WhatsApp no balão.
-- **Automáticas do sistema na thread**: template da fila (confirmação de
-  inscrição, aprovação de grupo…) não aparecia na conversa. `GET
-  /wa-inbox/conversas/:id/mensagens` intercala `whatsapp_envios` do telefone
-  (últimos 60 · match pelos 8 últimos dígitos · corpo legível = `exemplo` de
-  `wa_templates` com os `{{n}}` preenchidos pelos params) como mensagens
-  sintéticas `tipo='automatica'` com recibos. ⚠️ **Merge SÓ NA LEITURA** —
-  nada é gravado; registrar fila em wa_mensagens criaria conversa no inbox
-  pra CADA disparo em massa (não fazer).
-
-### Lote 4 · faxina dos médios restantes (2026-08-14 · migration `20260814120000`)
-
-- **Órfãos deixaram de ser write-only**: `services/waStatusReconcile.js` roda
-  1×/hora (carona no cron de agendamentos) — casa cada órfão com a fila OU o
-  chat com as MESMAS guardas idempotentes do webhook; `failed` que casou
-  tardiamente também avisa (`avisarNaoEntregue`); órfão >60 dias sem dono é
-  descartado (declarado no retorno do cron).
-- **`nao_lidas` atômico**: RPC `wa_conversa_inbound` (migration
-  `20260814120000` · só função, não trava tabela) soma no banco — o
-  read-modify-write perdia contagem quando 2 mensagens chegavam juntas (o
-  download de mídia leva segundos entre o read e o write). RPC ausente →
-  fallback no caminho antigo.
-- **Busca do inbox com `escapePostgrestValue`** ("Silva, Maria" quebrava o
-  `.or()` e virava inbox falsamente vazio).
-- **Anexo com `fileFilter`** (o comentário prometia jpg/png/webp/pdf/doc/xls e
-  nada filtrava — .exe subia pro bucket público antes de a Meta recusar);
-  recusa vira 400 com o tipo no texto.
-- **Sino do header gated pelo DESTINO** (`comunicacao`, pra onde ele navega —
-  antes `conversas` podia ver o sino e ser quicado) e aponta direto pra
-  `/comunicacao?tab=conversas`.
-- **Dashboard ganhou "Respostas recebidas"** (inbound do chat na janela) —
-  era o pedaço que faltava do requisito original "custo, envios e respostas".
-
-### Lote 5 · C2 — os TEMPLATES que sobravam foram pra FILA (2026-08-14 · SEM migration)
-
-Os envios de template (pagos, proativos) que ainda saíam DIRETO — sem registro,
-sem retry no teto da Meta, sem recibo — migraram pra `whatsappFila.enfileirar`:
-
-| Origem | Contexto na fila |
-|---|---|
-| Devocional diário (`devocionalSender`) | `cuidados.devocional_diario` (o ledger `devocional_envios` segue como DEDUP do item; a ENTREGA é da fila · motivo `na_fila` = sai depois) |
-| Fallback de template dos grupos (`enviarComFallback`) | `grupos.fallback_template` (ok = aceito OU na fila) |
-| Automáticas table-driven (`whatsappAuto` modo template) | `auto.<chave>` |
-| Kids: resumo do dia + código de retirada ×2 (`totemKids`) | `kids.resumo_dia` · `kids.retirada_codigo` |
-| Reenvio manual do cadastro (`membresia`) | `membresia.cadastro_confirmado` (na fila ≠ erro → não responde mais 502) |
-| Aprovação fria de solicitação (`solicitacaoWpp` TEMPLATE_COLD) | `solicitacoes.aprovacao_cold` · ⚠️ `queued` TAMBÉM marca 'aguardando' — deixar 'na_fila' faria o próximo despacho enfileirar DE NOVO (2 templates na liberação da cota) |
-
-`whatsappModulo.MAPA` ganhou os donos `cuidados`/`kids`/`solicitacoes` (falha
-terminal/failed avisa o módulo certo). O que segue DIRETO de propósito: textos
-de sessão do bot (grátis na janela · registrados em wa_mensagens com recibo) e
-os envios do chat humano (o atendente vê o erro na hora · 502).
-
-### Interruptor central + lei do template aprovado (2026-08-14 · migration `20260814150000`)
-
-Decisões do Marcos ("na aba de disparos automáticos eu não consigo cancelar
-isso" · "vamos trabalhar com todas que tem template aprovado"):
-
-- **Interruptor central**: `whatsapp_config.disparos_off` (jsonb · ids do
-  catálogo `comunicacaoAutomaticas`) + `services/comunicacaoDisparosOff.js`
-  (cache 60s · **fail-open**: coluna ausente = tudo ligado). Os 4 crons
-  consultam ANTES de montar público (aniversário, batismo-lembrete,
-  frequência-mensal de grupos — 2º interruptor, o kill-switch de grupos segue
-  — e devocional). `PATCH /comunicacao/automaticas/:id` (nível 3) + Switch nos
-  cards da aba. ⚠️ Desligar NÃO é caminho de envio — a nota "100% leitura" do
-  serviço vale pro ENVIO; o freio central é decisão do dono (14/08).
-- **Lei do template aprovado (na FILA)**: `templateBloqueado()` em
-  `whatsappFila` — bloqueia template com status **REJECTED/PAUSED/DISABLED**
-  no espelho `wa_templates` (enfileirar recusa · lote conta
-  `bloqueados_template` DECLARADO · pendente antigo vira erro permanente com
-  aviso). ⚠️ **PENDING/ausente PASSA de propósito**: a medição de 14/08 pegou o
-  espelho 2 SEMANAS velho (v2 dos grupos como PENDING, 2 templates nem
-  constavam) — uma trava ingênua teria matado os fluxos dos grupos. Por isso o
-  espelho agora **sincroniza de hora em hora** na carona do cron de
-  agendamentos (best-effort).
-- Executado direto em prod (14/08, registrado): sync do espelho (28 templates,
-  v2 = APPROVED) e `whatsapp_auto_config.cuidados_aconselhamento` → ativo=false
-  (era um TESTE ativo · reversível).
-- Estado dos 3 dormentes que o Marcos pediu pra matar: **relatórios de culto**
-  (persona aposentada 13/08) · **devocional** (guarda de template não-aprovado
-  + interruptor) · **retirada kids** (template REJECTED → a fila bloqueia; pra
-  ligar, criar `_v2` na Meta e trocar a env).
-
-⚠️ Ficam da revisão (médios · ainda abertos):
-**Realtime sem filtro por área —
-decisão explícita do Marcos (12/08) de NÃO mexer por ora** · `nao_lidas`
-read-modify-write · custo cego aos ~15 call sites fora da fila · 2 `is_default`
-possíveis em wa_numeros (e nada lê a tabela) · aba Conversas exige módulo
-`conversas` (matrizes editáveis separadamente) · badge do header gated por
-`conversas` navegando pra rota gated por `comunicacao` · dashboard sem
-"respostas recebidas". Lista completa com file:line na memória da sessão de
-05/08 ("revisão da comunicação").
-
+⚠️ **Aberto, com decisão registrada:** **Realtime sem filtro por área — o Marcos
+decidiu em 12/08 NÃO mexer por ora.** Também abertos: custo cego aos ~15 call
+sites fora da fila · 2 `is_default` possíveis em `wa_numeros` (e nada lê a tabela)
+· aba Conversas exige o módulo `conversas` enquanto o sino aponta pra
+`comunicacao`.
 ## ⚠️ Módulo de Comunicação (WhatsApp central) · handoff pro MATHEUS (2026-07-28)
 
 Decisão do Marcos (bloco C da revisão estrutural): fundir Conversas + Menu das
@@ -4360,273 +4206,128 @@ pessoa de grupo, **sem autorização do líder**.
   confirmação de aprovado enfileirada na `whatsapp_envios` pra quem tem opt-in —
   Rafaela ficou de fora por `whatsapp_optin=false`).
 
-## ⚠️ Grupos · link de aprovação 7d → 30d + PRORROGAÇÃO dos já entregues (2026-08-12 · SEM migration)
+## ⚠️ Grupos · o link de aprovação vale enquanto a TEMPORADA estiver aberta (2026-08-12 → 18/08)
 
-Pedido da Natasha: *"o link de aprovação de pessoas em grupos fique válido por
-mais de 7 dias, os líderes estão aprendendo e alguns deixaram muito tempo sem
-aprovar; revalide o link novamente e renove ele até o fim do mês."*
+Pedido da Natasha (o link de 7 dias morria antes de o líder usar: **51 dos 90
+pendentes já tinham passado**), refinado pelo Pr. Nélio em 17/08. **Diário
+completo — reenvio dos 82 avisos, limpeza dos cadastros de teste, investigação da
+Márcia — em `docs/CLAUDE-LEGADO.md`.** 📍 `docs/mapa/grupos.md`
 
-**Medido em produção antes de mexer (12/08): dos 90 pedidos pendentes, 51 (57%)
-já tinham passado dos 7 dias** — ou seja, o link mais cobrado era exatamente o
-que não abria mais. 35 líderes, 36 grupos, **0 com opt-out**, 0 líder sem
-telefone (1 pedido em grupo sem `lider_id`: JOVENS - GRUPO DE JIU-JITSU). O TTL
-de 7 dias briga com o próprio fluxo que a casa adotou em 29/07 (o template v2
-manda o líder **LIGAR** pra pessoa antes de aceitar).
-
-### ⚠️⚠️ O `exp` vive DENTRO do token assinado — subir o TTL não revalida nada
-
-Essa é a parte que engana: `APROV_TTL_MS` de 30 dias só vale pra link **NOVO**.
-Os 51 já entregues continuariam mortos, e "revalidar" pareceria exigir
-**reenviar ~90 mensagens** — 8 pra um mesmo líder (Cristiano), 7 pro Pr. Nélio,
-6 pra Camila. É o padrão que a Meta lê como spam, e **a nota de qualidade é o
-que decide a subida de tier** que a igreja quer.
-
-⇒ Quem revalida é o **SERVIDOR**: `verificarToken` aceita token `'aprov'`
-vencido. O líder abre a mensagem que já está no WhatsApp dele e funciona.
-
-⚠️⚠️ **A CONDIÇÃO MUDOU EM 17/08 — leia o bloco da temporada abaixo.** Por 5
-dias a tolerância foi até uma **data fixa (31/08)**, que era o "renove até o fim
-do mês" da Natasha. Depois da conversa dela com o **Pr. Nélio**, a régua virou
-**"enquanto aquela temporada estiver aberta"**. A data fixa **não existe mais**
-(env `GRUPOS_APROV_PRORROGADO_ATE` removida) — se algum lugar ainda a citar,
+**A régua:** o link `/g/a/` continua válido **enquanto a temporada daquele pedido
+estiver aberta**. Calendário foi descartado: o que dá sentido a um pedido de
+entrada é a temporada em que ele foi feito, e trocar de data fixa em data fixa
+seria um remendo por mês. A data de 31/08 e a env
+`GRUPOS_APROV_PRORROGADO_ATE` **foram REMOVIDAS** — se algum lugar ainda as citar,
 está desatualizado.
 
-- ⚠️ **NÃO é afrouxamento geral**, e o teste existe pra que virar um seja
-  decisão consciente: a assinatura HMAC continua obrigatória, vale **SÓ** pro
-  tipo `'aprov'` (que dá acesso a UM pedido) e as duas travas de
-  `publicGrupos.js` seguem mandando — pedido tem que estar **`pendente`** e
-  `payload.l` tem que ser o **líder ATUAL** do grupo (trocou a liderança, o link
-  morre na hora, prorrogado ou não). É a mesma tese já aplicada à renovação e à
-  conferência: *"a validade real é decidida no servidor a cada uso"*.
+⚠️⚠️ **O `exp` vive DENTRO do token assinado, então subir o TTL não revalida
+nada.** Link já entregue continuaria morto, e "revalidar" pareceria exigir
+reenviar ~90 mensagens — 8 para um mesmo líder. Isso é o padrão que a Meta lê como
+spam, e a nota de qualidade é o que decide a subida de tier que a igreja quer.
+⇒ Quem revalida é o **SERVIDOR**: `verificarToken` aceita token `'aprov'` vencido,
+e o líder abre a mensagem que já está no WhatsApp dele.
+
+- **Onde a régua mora:** `backend/utils/gruposToken.js` é PURO (só `crypto` + env,
+  por isso entra no gate) e **recebe a decisão** —
+  `verificarToken(token, tipo, agora, { aceitarExpirado })`. Quem decide é
+  `publicGrupos.js` (`haTemporadaAberta`, lendo `mem_temporadas.inscricoes_abertas`
+  com cache de 60s). Régua de negócio no lugar que tem o dado; função pura no gate.
+  ⚠️ `gruposWhatsapp.js` **re-exporta** `assinarToken`/`verificarToken` — NÃO
+  reimplementar assinatura ou validade lá: duas cópias divergiriam.
+- ⚠️⚠️ **FAIL-CLOSED em três camadas:** o default de `aceitarExpirado` é **false**
+  (quem esquecer de consultar não prorroga) · só o booleano **`true`** abre
+  (string/objeto/`1` não contam — resposta estranha de consulta não pode virar
+  "pode") · e **erro de consulta também não prorroga**. Link vencido tem de PROVAR
+  que ainda vale.
+- ⚠️ **Erro não derruba o endpoint:** link dentro dos 30 dias do TTL segue abrindo.
+  O TTL virou o **piso** que segura o link de pé se a consulta da temporada falhar.
+- ⚠️ **A régua é a MESMA no GET e no POST.** Se o GET abrisse e o POST recusasse, o
+  líder decidiria e levaria erro na cara — pior que não abrir.
+- ⚠️ **NÃO é afrouxamento geral:** a assinatura HMAC continua obrigatória, vale só
+  pro tipo `'aprov'` (acesso a UM pedido), e as duas travas seguem mandando —
+  pedido `pendente` e `payload.l` sendo o líder ATUAL (trocou a liderança, o link
+  morre na hora, prorrogado ou não).
 - ⚠️ **O default de 7 dias NÃO subiu junto** (`TOKEN_TTL_MS` intocado): sugestão
   (`/g/s/`) e chamada do mês (`/g/f/`) não foram pedidas, e subir o default
-  esticaria TRÊS fluxos de uma vez sem ninguém pedir.
-- `payload.prorrogado = true` marca quem entrou pela exceção (sem a marca, não
-  há como distinguir depois o que passou pela tolerância).
+  esticaria TRÊS fluxos de uma vez.
+- `payload.prorrogado = true` marca quem entrou pela exceção.
 
-**A régua saiu de `services/gruposWhatsapp.js` para `backend/utils/gruposToken.js`**
-(pura: só `crypto` + env) — é o que a coloca no **gate de deploy**; o serviço
-**re-exporta** `assinarToken`/`verificarToken`, então nenhum import mudou. NÃO
-reimplementar assinatura/validade no serviço: duas cópias divergiriam.
+`src/test/gruposToken.test.ts` (15 casos · `agora` **injetado**) é
+**mutation-testado**: inverter o default, aceitar valor truthy em vez de `=== true`,
+estender a tolerância a qualquer tipo, ou deixar token sem `exp` passar deixa o
+gate vermelho.
 
-### ⚠️⚠️ 17/08 · a validade virou A TEMPORADA (Pr. Nélio + Natasha)
+### ⚠️ TERCEIRO desfecho do líder: "não consegui contato" (17/08 · migration `20260817140000`)
 
-Ela levou o caso ao Pr. Nélio e voltou com outra régua, melhor: **"deixe o link
-ativo enquanto aquela temporada estiver aberta"**. Faz mais sentido que
-calendário — o que dá sentido a um pedido de entrada é a temporada em que ele
-foi feito; e trocar de data fixa em data fixa seria um remendo por mês. A data
-de 31/08 e a env `GRUPOS_APROV_PRORROGADO_ATE` **foram REMOVIDAS**.
+Pedido da Naná. O link só tinha duas saídas, e nenhuma serve quando a pessoa não
+atende: **recusar diz "não quero essa pessoa no meu grupo", que não é verdade**, e
+deixar pendente não registra que houve tentativa.
 
-Medido em 17/08: **1 temporada aberta (T2-2026, 01/08→31/12)** e **todos os 112
-pendentes** são de grupos dela. Ou seja a cobertura *aumentou* (de 31/08 para
-enquanto a temporada durar).
+- **Status novo `sem_contato`** — não coluna nem só evento: status dá chip de
+  filtro, badge, card e estatística de graça. O evento `sem_contato_lider` entrou
+  também, na timeline.
+- ⚠️ **Anda pelo mesmo caminho da recusa** (vai pra triagem, pessoa NÃO é avisada),
+  mas **não é sinônimo**: a notificação tem texto próprio ("tentou falar e não
+  conseguiu · não é recusa"), porque as ações são diferentes — tentar por outro
+  canal × realocar.
+- ⚠️ **Fora de `recusados`** na contagem, com card próprio em **âmbar** (pendência),
+  nunca vermelho. Somar apagaria justamente o que ela pediu pra separar.
+- ⚠️ **Não pode virar beco sem saída:** `sem_contato` entrou nos status que a
+  triagem move — `aprovar-direto`, sugerir outro grupo, rejeitar de vez.
+- ⚠️ **O motivo NÃO é oferecido nem gravado:** o motivo é o próprio desfecho, e um
+  texto de recusa no campo confundiria os dois.
+- Na tela o botão fica em **terceiro plano** (tracejado, abaixo dos dois) e o texto
+  diz que não é recusa. **CASAL**: os dois vão juntos, como na recusa.
+- ⚠️ A migration **DERIVA a lista do CHECK VIVO** em vez de reescrevê-la decorada —
+  prod pode ter valor que o repo não conhece (lição do CHECK de `app_inscricoes`).
+- ⚠️ **FORA desta entrega:** o app mobile do líder segue com só duas opções. O
+  pedido foi sobre os **links**.
 
-- **Onde a régua mora:** `gruposToken` é PURO (não sabe o que é temporada), então
-  `verificarToken(token, tipo, agora, { aceitarExpirado })` **recebe a decisão**;
-  quem a toma é `publicGrupos.js` (`haTemporadaAberta`, consultando
-  `mem_temporadas.inscricoes_abertas` com cache de 60s). Régua de negócio no
-  lugar que tem o dado; função pura segue no gate.
-- ⚠️⚠️ **FAIL-CLOSED em três camadas**: o default de `aceitarExpirado` é
-  **false** (quem esquecer de consultar não prorroga) · só o booleano **`true`**
-  abre (string/objeto/`1` não contam — resposta estranha de consulta não pode
-  virar "pode") · e **erro de consulta também não prorroga**. Link vencido tem
-  que PROVAR que ainda vale, não o contrário.
-- ⚠️ **O erro não derruba o endpoint**: link dentro dos 30 dias do TTL segue
-  abrindo (é 100% do tráfego recente). O TTL virou o **piso** que segura o link
-  de pé se a consulta da temporada falhar.
-- ⚠️ **A régua é a MESMA no GET e no POST.** Se o GET abrisse a página e o POST
-  recusasse, o líder decidiria e levaria erro na cara — pior que não abrir.
+### ⚠️⚠️ Lições de método que saíram daqui (valem além de grupos)
 
-`src/test/gruposToken.test.ts` (15 casos, `agora` **injetado**) é
-**mutation-testado**: inverter o default para "aceita", aceitar valor truthy em
-vez de `=== true`, estender a tolerância a qualquer tipo, ou deixar token sem
-`exp` passar deixa o gate vermelho.
+- **Ao auditar entrega de aviso de grupo, conferir `casal_pedido_id` antes de
+  contar.** 9 pedidos pareciam sem aviso; **6 eram o CÔNJUGE** de inscrição de
+  casal, onde o desenho é UM aviso só no pedido do titular. Sem essa conferência,
+  todo grupo de casais aparece como falha de entrega.
+- **Erro de envio aponta para um TELEFONE, não para uma pessoa** — e com duplicata
+  na base os dois não são a mesma coisa. Eu afirmei que o telefone de uma líder
+  estava errado; ela recebia normalmente, e o `invalid_phone` era de uma
+  **duplicata órfã** com número de 9 dígitos. Conferir `whatsapp_envios.telefone`
+  contra `mem_grupos.lider_id → mem_membros.telefone` **antes** de dizer que o
+  cadastro de alguém está errado. (5ª vez que esse tipo de alarme meu não se
+  sustentou.)
+- ⚠️ **`mem_grupo_pedido_eventos` usa `created_at`; `whatsapp_envios` usa
+  `criado_em`.** Filtrar pelo nome errado faz o PostgREST recusar a query e
+  devolver `data: null`, que o código lê como "não há registro" — foi assim que uma
+  sonda minha concluiu que um evento faltava quando ele estava lá. **Conferir o
+  `error` da consulta, não só a contagem.**
+- ⚠️⚠️ **`montarEnvioNovoPedido` existe por anti-spam:** `enfileirar` tenta entregar
+  na hora, e em lote isso manda rajada (o líder mais carregado tinha 8 pedidos).
+  Com `montarEnvio*` + `enfileirarLote` (que só GRAVA), quem entrega é o cron, com
+  a trava de 2 por telefone por rodada. `notificarLiderNovoPedido` usa o montador —
+  **uma régua só**.
+- ⚠️ **Disparo em lote da máquina exige as envs de WhatsApp:** sem
+  `WHATSAPP_ENABLED`/`PHONE_NUMBER_ID` o gate fecha e o montador devolve `disabled`
+  pra tudo — **0 gravados, parecendo sucesso**. `WHATSAPP_ACCESS_TOKEN` vem
+  `[SENSITIVE]` no `env pull`, então a entrega sai acionando o cron da fila.
+  ⚠️ `vercel env pull` numa **worktree** falha ("not_linked"), e script que precise
+  de serviço do backend tem de rodar na worktree de `origin/main`.
 
-### ⚠️ Quem NÃO tem mensagem antiga pra revalidar são 3, não 9 (alarme meu, medido de novo)
+⚠️ **A aprovação em massa foi cogitada e DESCARTADA** (Pr. Nélio, 17/08): o lote
+estava medido (45 pedidos, 0 caso problemático), mas `aprovarPedidoCore` cria
+vínculo de pessoa e dispara WhatsApp de boas-vindas — aprovar "em silêncio" põe
+gente em grupo sem ela saber, e "com aviso" manda dezenas de mensagens. **Não
+existe opção neutra.** Régua: **lote de aprovação varre cadastro de teste junto** —
+filtrar antes, não depois.
+⚠️ **E o critério de exclusão precisa de DOIS sinais:** para apagar os cadastros
+de teste da Natasha o alvo exigiu **nome com "teste" E o telefone dela** — cada
+critério sozinho pega gente real ("Teste" existe como sobrenome, e o telefone é o
+dela de verdade). Um sinal só, numa exclusão em lote, apaga pessoa.
 
-9 pendentes estavam sem envio PRÓPRIO e eu ia reportar isso como "9 líderes sem
-aviso". **6 deles são o CÔNJUGE de uma inscrição de casal** — e ali o desenho é
-mandar **UM aviso só**, no pedido do titular, com os dois nomes em `{{3}}`
-(decisão de 30/07). O par foi avisado; o pedido do cônjuge nunca teria envio
-próprio. Régua que fica: **ao auditar entrega de aviso de grupo, conferir
-`casal_pedido_id` antes de contar** — senão todo grupo de casais aparece como
-falha de entrega.
-
-Sobravam **3** sem mensagem nenhuma a revalidar:
-- **ROTEIRO DA MENSAGEM DE DOMINGO** (Rodrigo Paula Silva · líder Roberto da
-  Silva Franco Neto) — pedido de 27/07, **nenhum envio**. Data anterior ao fix
-  de 31/07 que passou o aviso ao líder a ser **awaited**; é o sintoma exato
-  daquele bug (serverless congela na resposta e descarta o trabalho pendente).
-- **JOVENS - GRUPO DE JIU-JITSU** (Rodrigo Costa) — o **grupo não tem
-  `lider_id`**, então não há a quem avisar. É cadastro: resolver na aba Pessoas.
-- ~~**SER MULHER** (líder Márcia Trigo) — telefone da líder precisa ser
-  corrigido~~ → **ERRADO, e o erro era MEU** (corrigido 18/08 · ver abaixo).
-
-### ✅ 17/08 · reenvio do aviso aos líderes (82 mensagens · 36 líderes · 0 erro)
-
-Decisão do Pr. Nélio: em vez de aprovar em massa, **reenviar o aviso pra que os
-líderes aprovem e recebam os contatos de novo** (a Naná comunicou os líderes que
-a mensagem viria). Resultado: **82 enfileiradas · 55 entregues na 1ª rodada · 29
-adiadas pela trava de 2 por telefone · ZERO erro · 36 líderes** (teto Meta
-TIER_250 usado em 14%).
-
-Filtros aplicados (de 101 pendentes vivos): **2 cadastros de TESTE** · **1 grupo
-sem `lider_id`** · **9 cônjuges** (vão no aviso do par, um aviso por casal) ·
-**7 já avisados nas últimas 12h** (dedup do próprio script).
-
-⚠️⚠️ **`montarEnvioNovoPedido` NASCEU PRA ISSO, e a razão é anti-spam.** O aviso
-de pedido era o único fluxo sem a irmã "monta sem enviar" (os outros 4 já tinham:
-frequência, renovação, conferência, abertura). `enfileirar` **tenta entregar na
-hora** — em lote isso manda tudo em rajada, e o líder mais carregado tinha **8
-pedidos**: 8 templates idênticos em segundos é o padrão que a Meta lê como spam,
-e a nota de qualidade é o que decide a subida de tier. Com `montarEnvio*` +
-`enfileirarLote` (que só GRAVA), quem entrega é o cron da fila, com a trava de 2
-por telefone por rodada. `notificarLiderNovoPedido` passou a usar o montador —
-**uma régua só**, o caminho de evento (1 inscrição por vez) inalterado.
-
-⚠️ **Disparo em lote a partir da máquina exige as envs de WhatsApp**: o `.env`
-local não tem `WHATSAPP_ENABLED`/`PHONE_NUMBER_ID`, então o gate fecha e
-`montarEnvioNovoPedido` devolve `disabled` pra tudo — **0 gravados, parecendo
-sucesso** (a lição do `dispararConfira`, 04/08). O caminho que funcionou:
-`WHATSAPP_ENABLED=true` + `WHATSAPP_PHONE_NUMBER_ID` (do `vercel env pull`) só
-no ambiente do processo → **grava** sem enviar → e a entrega sai acionando
-`GET /api/public/grupos/cron/whatsapp-fila` com `Bearer CRON_SECRET`, onde as
-credenciais REAIS existem. ⚠️ `WHATSAPP_ACCESS_TOKEN` vem **`[SENSITIVE]`** no
-`env pull` — não dá pra enviar da máquina, e não precisa.
-⚠️ `vercel env pull` numa **worktree** falha com "not_linked" (o
-`.vercel/project.json` só existe no checkout principal) — rodar de lá, com
-`--project crmcbrio`.
-⚠️ E o script tem que rodar na **worktree de origin/main**: o checkout principal
-está numa branch antiga que **não tem** `services/gruposWhatsapp.js`
-(MODULE_NOT_FOUND num arquivo que existe em produção · lição de 31/07).
-
-### ⚠️⚠️ 18/08 · o "telefone inválido da líder" era ALARME MEU (5ª vez)
-
-Márcia Trigo disse que **recebe as mensagens normalmente** e a Natasha conferiu
-que **o número no sistema está certo**. As duas estavam certas; eu é que li o
-dado errado. Medido:
-
-| | |
-|---|---|
-| Líder do SER MULHER | `18e1325c` · "Márcia de Matos Trigo Pereira" · **`21981899151`** · cadastro VIVO, no roster, vínculo ativo no bot |
-| Envios do reenvio de 17/08 | **`enviado` + `delivered_at` preenchido** (entregues) |
-| Prova definitiva | a Mayla foi **aprovada em 18/08 09:50 pela própria Márcia**, com `decidido_por_nome = "Márcia de Matos Trigo Pereira (link WhatsApp)"` — ela recebeu, abriu o link e decidiu |
-
-**De onde veio o `invalid_phone`:** UM envio de **11/08**, para o telefone
-**`991899151`** (9 dígitos, **sem DDD**) — que é de OUTRO cadastro, uma
-**duplicata órfã** (`c84b3fe2` "Márcia Trigo", origem `pco_import_2026`, sem CPF,
-sem nascimento, **zero vínculos**, mesmo e-mail do cadastro bom). Eu li "erro no
-envio ao líder do SER MULHER" e concluí "o telefone da líder está errado", sem
-conferir **para qual telefone** o envio tinha ido nem **qual cadastro** é o líder
-hoje.
-
-⚠️ **A régua que eu não segui**: erro de envio aponta para um TELEFONE, não para
-uma pessoa — e com duplicata na base os dois não são a mesma coisa. Conferir
-`whatsapp_envios.telefone` contra `mem_grupos.lider_id → mem_membros.telefone`
-**antes** de dizer que o cadastro de alguém está errado. Custa uma consulta e
-evita mandar a coordenação caçar um problema que não existe.
-
-⏳ **Fica um achado REAL, esse sim**: a duplicata `c84b3fe2` continua VIVA, com
-telefone quebrado de 9 dígitos (o padrão dos "sem DDD" da auditoria de 31/07).
-É órfã e tem **e-mail idêntico** ao do cadastro bom, então a fila de Possíveis
-duplicidades das Entradas deve pegá-la. **NÃO fundi** — fundir/apagar pessoa é
-decisão caso a caso.
-
-### ⚠️ 17/08 · TERCEIRO desfecho do líder: "não consegui contato" (migration `20260817140000`)
-
-Pedido da Naná: *"nos próximos links que mandarem ter também a opção de 'não
-respondeu', pois aí temos as pessoas que aceitaram, que recusaram e que não
-conseguiram contato"*.
-
-O link `/g/a/` só tinha DUAS saídas, e isso brigava com o próprio fluxo adotado
-em 29/07 — o template v2 manda o líder **LIGAR** antes de decidir. Quando a
-pessoa não atende, nenhuma serve: **recusar diz "não quero essa pessoa no meu
-grupo", que não é verdade**, e deixar pendente não conta pra ninguém que houve
-tentativa (era o que vinha acontecendo — a fila só crescia).
-
-- **Status novo `sem_contato`**, não coluna nem só evento: ela quer **VER** a
-  categoria, e status dá chip de filtro, badge, card e as estatísticas de graça.
-  Evento serviria pra auditar, não pra filtrar; coluna paralela criaria duas
-  verdades sobre o desfecho do mesmo pedido. O evento
-  (`sem_contato_lider`) entrou TAMBÉM, na timeline.
-- ⚠️ **Anda pelo mesmo caminho da recusa** (vai pra triagem, pessoa NÃO é
-  avisada) e muda só o desfecho. **Mas NÃO é sinônimo**: a notificação à
-  coordenação tem texto próprio ("tentou falar e não conseguiu · não é recusa"),
-  porque as duas pedem ações diferentes — tentar por outro canal × realocar.
-- ⚠️ **Fora de `recusados` na contagem** do Retrato do período, e com **card
-  próprio**. Somar apagaria exatamente a informação que ela pediu pra separar.
-  Cor **âmbar** (pendência), nunca vermelha/violeta (decisão contra a pessoa).
-- ⚠️ **Não pode virar beco sem saída**: `sem_contato` entrou nos status que a
-  triagem consegue mover — `aprovar-direto` (o caso MAIS provável: a Naná fala
-  com a pessoa por outro canal e destrava), sugerir outro grupo e rejeitar de
-  vez. Sem isso o desfecho novo prenderia o pedido.
-- ⚠️ **O motivo NÃO é oferecido nem gravado** aqui: o motivo é o próprio
-  desfecho, e um texto de recusa no campo confundiria os dois na leitura.
-- Na tela do líder o botão fica em **terceiro plano** (largura cheia, tracejado,
-  abaixo dos dois): é o desfecho menos desejado — não pode competir com
-  "Aprovar". O texto diz explicitamente que **não é recusa**.
-- **CASAL**: os dois vão juntos, como já era na recusa.
-- ⚠️ A migration **DERIVA a lista de valores do CHECK VIVO** em vez de
-  reescrevê-la decorada — prod pode ter valor que o repo não conhece, e
-  reescrever à mão estreitaria em silêncio (lição do CHECK de `app_inscricoes`,
-  06/08). Aborta se não achar o CHECK.
-
-⚠️ **FORA desta entrega (declarado)**: o app mobile do líder segue com só duas
-opções (`POST /app/grupos/pedidos/:id/rejeitar`). O pedido da Naná foi sobre os
-**links**; ampliar o app é outra leva.
-
-**✅ Validado em produção (17/08), ponta a ponta e COM REVERSÃO** (status, campos
-de decisão, evento e notificação restaurados — o pedido usado voltou intacto ao
-estado original): ação inválida → **400** · `sem_contato` → **200** · status no
-banco → `sem_contato` · `motivo_rejeicao` → **null** · evento
-`sem_contato_lider` gravado com o autor certo · aviso à coordenação com o título
-próprio ("Sem contato — o líder não conseguiu falar: …").
-
-⚠️ **Armadilha de schema que me deu falso negativo**:
-`mem_grupo_pedido_eventos` tem **`created_at`**, NÃO `criado_em` (diferente de
-`whatsapp_envios`, que usa `criado_em`). Filtrar pelo nome errado faz o PostgREST
-recusar a query e o cliente entregar `data: null` — que o código lê como "não há
-evento". Minha sonda concluiu "evento faltou" quando ele estava lá, e por isso
-**não o apagou** na reversão (limpei depois). É a lei de sempre: **conferir o
-`error` da consulta, não só a contagem** — vazio por erro e vazio de verdade são
-indistinguíveis quando se olha só o `length`.
-
-### 🧹 17/08 · cadastros de teste da Natasha removidos
-
-Os 2 pedidos **"Natasha teste"** (tel 21984555026 · um com e-mail
-`natasha.lit.faria@gnail.dom`, typo proposital) saíram por `app_soft_delete`
-(backup em `~/Downloads/backup_pedidos_teste_natasha_20260817.json`). Pendentes:
-84 → **82**.
-
-⚠️ O alvo exigiu **nome com "teste" E o telefone dela** — cada critério sozinho
-pega gente real ("Teste" existe como sobrenome; o telefone é o dela de verdade).
-
-**"Alice teste"** (tel 21992752602) ficou de fora naquele dia porque é de OUTRA
-pessoa; em 18/08 a Naná confirmou que é **filha dela** e autorizou — removida
-também (backup `backup_pedidos_teste_alice_20260818.json`). O pedido estava
-`rejeitado`, não pendente. **A fila não tem mais nenhum "teste".**
-
-### ⚠️ 17/08 · a APROVAÇÃO EM MASSA foi cogitada e DESCARTADA (decisão do Pr. Nélio)
-
-Chegou a ser pedida ("aprovar todos os pedidos de 06/08 pra trás, sem reenviar
-mensagem · ciente dos riscos") e eu já tinha o lote medido: **45 pedidos reais,
-45 pessoas, 19 grupos** (a estimativa era 30–40), com **0 caso problemático** —
-nenhum grupo apagado/inativo, nenhum pedido sem solicitante, ninguém já dentro
-do grupo. **Não foi executada**: conversando com o Pr. Nélio, a decisão virou
-**reenviar o aviso aos líderes pra que eles mesmos aprovem e recebam os
-contatos** — a Naná comunicou os líderes que a mensagem viria.
-
-Fica registrado por que aprovar em massa não é inócuo, se voltar à mesa:
-- `aprovarPedidoCore` **cria vínculo de pessoa** e dispara **WhatsApp de
-  boas-vindas à PESSOA** (`notificarPessoaAprovada`, gated por opt-in dela) —
-  que é OUTRA mensagem, diferente do link ao líder. Aprovar "em silêncio" põe
-  gente em grupo sem que ela saiba; aprovar "com aviso" manda dezenas de
-  mensagens. Não existe opção neutra, e por isso a pergunta foi feita.
-- ⚠️ **"Natasha teste"** (tel 21984555026 · e-mail `natasha.lit.faria@gnail.dom`,
-  com typo proposital) estava **dentro** do recorte de 06/08 — havia 2 desses
-  pedidos de teste na fila. Régua: **lote de aprovação varre teste junto**;
-  filtrar antes, não depois.
-
+⏳ **Achado real em aberto:** a duplicata `c84b3fe2` ("Márcia Trigo", origem
+`pco_import_2026`) segue viva com telefone de 9 dígitos e e-mail idêntico ao do
+cadastro bom — a fila de Possíveis duplicidades deve pegá-la. **Não fundi**:
+fundir pessoa é decisão caso a caso.
 ## ⚠️ Grupos · o líder REMARCA ou CANCELA um encontro pelo app (2026-08-18 · migration `20260818140000`)
 
 Pedido do Marcos: *"no box de 'próximo encontro' gostaria que tivesse uma opção
@@ -7561,123 +7262,69 @@ de YouTube — a API NÃO foi ligada (coletor futuro faz UPSERT por mês).
 ⚠️ Base dos % = membros ativos (provisório · confirmar "total da igreja" quando
 grupos/voluntários/dízimos popularem). Histórico de versões v1→v3 no legado.
 
-## Produção de Culto · /producao (2026-06-02 · cronograma 2026-06-16 · preview por culto + gráfico no Detalhado 2026-06-25)
+## Produção de Culto · /producao (2026-06 · estado consolidado)
 
-Módulo `producao` (matriz copiada de kids · boost de área pro Pedro Fernandes).
-KPIs técnicos POR CULTO em satélite 1:1 de `cultos` (`culto_producao` + log
-unificado `culto_producao_ocorrencias` + checklist itemizado). Os 4 KPIs
-`PROD-CULTO-*` são **específicos, não cascateiam** (`is_okr=false`,
-`valores='{}'`, fora da matriz NSM) · ⚠️ `tipo_kpi` só aceita
-`qualitativo|quantitativo|operacional`. SLA/NPS gerais já existiam
-(`ADM-C-G/Q-PRODUCAO`). Categoria `producao` no form de Solicitações roteia
-`area_responsavel='producao'`. **4 sub-abas** em `Producao.jsx`: Preenchimento ·
-Detalhado · Modelos · Desempenho. (A aba "Solicitações" foi removida em #1364 — era só
-um espelho filtrado do `/solicitacoes`; o Pedro usa o módulo Solicitações direto. Pra ele
-ver a fila de Produção lá, a área **Produção** foi adicionada ao `/admin/solicitacoes-responsaveis`
-(`AREAS` em `SolicitacoesResponsaveis.jsx`) e o Pedro Fernandes cadastrado em
-`area_solicitacoes_responsaveis` (`area='producao'`) — a fila "Atender" filtra POR ESSA
-tabela, não pelo cargo/boost; isso também faz a notificação de ocorrência crítica chegar nele.)
+📍 `docs/mapa/producao.md` · **diário (cargas de cronograma de 07/06 e 14/06,
+consolidação de momentos, evolução do gráfico) em `docs/CLAUDE-LEGADO.md`**
 
-**Ocorrência → "Fazer solicitação" (2026-07-03 · ideia do Pedro Fernandes):** na
-linha da ocorrência do `ModalProducao`, o link sublinhado **"Fazer solicitação"**
-abre um modal (z 1100 · convenção modal-sobre-modal · ⚠️ os SelectContent do form usam z-[1200], senão o portal Radix z-50 abre ATRÁS do overlay e o dropdown "trava") com o `NovaSolicitacaoForm`
-prefillado (contexto do culto + tipo/severidade/momento · categorias
-`infraestrutura`/`ti`/`compras` **sem default — a pessoa escolhe ativamente**
-quem resolve · urgente pré-marcado SÓ na severidade crítica, sempre desmarcável). Ao criar, `PATCH
-/producao/ocorrencias/:id/solicitacao` grava
-`culto_producao_ocorrencias.solicitacao_id` (migration `20260703150000` ·
-**máx. 1 por ocorrência** · FK SET NULL · só vincula solicitação do próprio
-usuário) e o link vira **chip com o status vivo** da solicitação (o GET
-`/culto/:id` enriquece com `{status, titulo}`). O pedido segue o fluxo oficial
-inteiro (aprovação de origem → área) — nenhum bypass.
+Módulo `producao` (matriz copiada de kids · boost de área para o Pedro
+Fernandes). KPI técnico **por culto** em satélite 1:1 de `cultos`
+(`culto_producao` + `culto_producao_ocorrencias` + checklist). 4 sub-abas:
+**Preenchimento · Detalhado · Modelos · Desempenho**.
 
-**Cronograma por etapas (2026-06-16):** a equipe lança o tempo POR MOMENTO em
-mm:ss; a soma dos executados da seção 'culto' é a duração total
-(`culto_producao.duracao_minutos` segue derivada disso → KPI/trigger de
-pontualidade intactos). `producao_roteiro_etapas` = roteiro/preview padrão por
-tipo (aba Modelos · `service_type_id` NULL = geral · seed Música 1/2/3 +
-Intercessão + Pregação + … = 60:00). `culto_producao_etapas` = etapas por culto
-(pré-carregam do roteiro · `previsto_seg`/`executado_seg`/`secao` culto|pos_culto
-+ atividades especiais ceia/batismo). A análise previsto×executado / estouro por
-etapa é computada no `/acumulado` (NÃO mexe em `kpi_calcular_valor_auto`). ⚠️ **Culto com
-executado 0 = NÃO preenchido** (teste/pendente) → fica de fora de TODAS as médias do Detalhado
-(duração média, pontualidade, aderência, desvio, por-etapa, gráfico) via `cultoTemExec` +
-`duracao_minutos/segundos > 0`. Senão um culto vazio (prev 60:00 / exec 0 = desvio −60:00) afunda
-a média (bug pego 2026-06-26: a "Quarta teste" puxava o "Culto inteiro" pra −3:43 com 78% estourando).
+Os 4 `PROD-CULTO-*` são **específicos e NÃO cascateiam** (`is_okr=false`,
+`valores='{}'`, fora da matriz NSM).
+⚠️ `tipo_kpi` só aceita `qualitativo|quantitativo|operacional`.
 
-**Aba Preenchimento · seletor Semana/Pendentes (2026-06-26 · só código, sem migration):**
-`AbaSemana` tem um seletor **Semana | Pendentes** (estilo `vistaBtn` da aba Cultos da Integração ·
-`CalendarioCultos.jsx`), com badge de contagem no Pendentes. **Semana** = o calendário de cultos.
-**Pendentes** = 2 cards (`CardPendencia`): **Cultos pendentes** (vermelho) + **Cultos incompletos**
-(âmbar), cada um listando os cultos no estilo `LinhaPendenciaProd` (bloco data + nome/hora + badge),
-clicáveis → abrem o `ModalProducao` (mantido — é o modal de cronograma; NÃO trocar pelo `ModalCulto`
-da Integração, que é de frequência/decisões). `GET /producao/pendencias` (varre 07/06→hoje, paginado)
-classifica: **não preenchido** = `culto_producao.duracao_segundos` null/0 (nada lançado ou teste
-zerado); **incompleto** = executado real mas ≥1 etapa com `executado_seg IS NULL`; **completo** =
-todas lançadas. Recarrega ao salvar. `prodApi.pendencias()`. Cultos < 07/06 ficam fora (sem etapas).
-Quando zero, mostra "✓ Tudo preenchido desde 07/06".
+**Cronograma por etapas:** a equipe lança o tempo POR MOMENTO em mm:ss, e a soma
+dos executados da seção `culto` é a duração total (`duracao_minutos` segue
+derivada dela, então KPI e trigger de pontualidade ficam intactos).
+`producao_roteiro_etapas` é o padrão por tipo de culto (`service_type_id` NULL =
+geral); `culto_producao_etapas` são as etapas daquele culto, pré-carregadas do
+roteiro. A análise previsto×executado vive no `/acumulado` e **não** mexe em
+`kpi_calcular_valor_auto`.
 
-**Preview editável por culto + Louvor no Detalhado (2026-06-25 · só código, sem migration):**
-- O `Previsto` de cada momento virou input mm:ss no modal de preenchimento
-  (`EtapasEditor` · era um `<span>` travado no roteiro). O roteiro em Modelos
-  segue como BASE/default; ajustar por culto só grava `culto_producao_etapas.previsto_seg`
-  (já persistido pelo `PUT /culto/:id/etapas`) e flui automático pra "Prev.
-  média"/"Aderência" do Detalhado. Atividade especial continua sem previsto (—).
-- No `por_etapa` do `/acumulado`, as músicas NUMERADAS do louvor (nome casa
-  `/^m[uú]sica\s*\d/i` → Música 1/2/3) colapsam num único momento **"Louvor"**:
-  rollup por (culto × grupo) somando previsto+executado, depois média entre cultos
-  (desvio = média de exec−prev por culto; % que estourou idem). Uma música maior
-  compensa outra menor → sem falso "estourou" quando o tempo só se deslocou entre
-  elas. **Só as numeradas** — "Música Dízimo"/"Música Ceia" são momentos próprios
-  (atrelados a dízimo/ceia) e ficam separados. NÃO altera o tempo total nem os
-  outros momentos. Agrupamento por nome (não por coluna) · decisão do Marcos (2026-06-25).
+⚠️⚠️ **Culto com executado 0 = NÃO preenchido**, e fica fora de TODAS as médias do
+Detalhado (duração, pontualidade, aderência, desvio, por-etapa, gráfico). Sem
+isso um culto vazio (prev 60:00 / exec 0 = desvio −60:00) afunda a média — foi o
+que fez a "Quarta teste" puxar o "Culto inteiro" para −3:43 com 78% estourando.
 
-**Carga do cronograma real de 2026-06-07 (migration `20260625150000_producao_cronograma_07jun.sql`):**
-Carrega as etapas dos 4 cultos de domingo 07/06 (08:30/10:00/11:30/19:00) da planilha
-"Cronograma Culto 07.06.2026" (espelha a carga de 14/06). Casa o culto por
-(`data` × `vol_service_types.recurrence_time`), REPLACE idempotente das etapas +
-recomputa os totais do satélite `culto_producao`. Momentos reais incluem "Música
-Dízimo"/"Música Ceia" (separados do Louvor pela regra acima) e "Intercessão"/"Avisos"
-com executado 0 (feitos dentro da música / junto da generosidade). Carga só de dados ·
-o código não depende dela. Aplicar no SQL Editor (RAISE NOTICE confirma os 4 cultos).
+⚠️ **Pontualidade e Aderência medem coisas DIFERENTES, e confundi-las inverte a
+leitura:** *pontualidade* = % de cultos dentro do ALVO (`meta_duracao_min`,
+default 60) — "estourou o tempo?"; *aderência* = fidelidade ao PREVISTO
+(`100 − média(|exec−prev|/prev)`, desvio ABSOLUTO relativo ao previsto de cada
+culto, **não** a 60) — "executou perto do planejado?". Os cabeçalhos do Detalhado
+têm `title` explicando cada coluna.
 
-**Consolidação dos momentos do 07/06 (migration `20260626120000` · pedido do Marcos 2026-06-26):**
-Os 4 cultos de 07/06 tinham os momentos "crus" da planilha; consolidados pra forma
-canônica do roteiro (o 14/06 já estava assim via 20260616190000): Generosidade + Música
-Dízimo → **"Dízimos e Ofertas"**, Vídeo Testemunho + Vídeo Pré-Pregação → **"Vídeo
-Pré-Pregação"**, Avisos + Benção → **"Avisos / Benção"** (os três somando previsto +
-executado), e Música Ceia → **"Ceia"** (`tipo='especial'`, `categoria_especial='ceia'`,
-segue na seção 'culto' → entra no tempo total, como a "Apresentação de Criança" do 14/06).
-**Totais do culto inalterados** (só junta linhas). REPLACE idempotente + recomputa o
-satélite `culto_producao` (totais derivados das etapas).
-- **Follow-up (`20260626130000`):** removida a **Intercessão** dos 4 cultos (ficava com
-  executado 0:00 — a intercessão rolava DENTRO da Música 2). O previsto dela (3:00) foi
-  **somado na Música 2** → previsto total do culto **inalterado** (~60min), corrige o falso
-  "estouro" da música e o falso "-3:00" da intercessão. 10 → **9 momentos/culto**.
+⚠️ **As músicas numeradas do louvor colapsam em UM momento "Louvor"** no
+`por_etapa`: rollup por (culto × grupo), somando previsto+executado. Uma música
+maior compensa outra menor, então não aparece falso "estourou" quando o tempo só
+se deslocou entre elas. **Só as numeradas** — "Música Dízimo" e "Música Ceia" são
+momentos próprios. Agrupamento por NOME, não por coluna (decisão do Marcos).
 
-**Gráfico de tempo de culto + total do estouro no Detalhado (2026-06-25 · só código, sem migration):**
-- O `/acumulado` ganhou 2 campos: `serie` (1 ponto por culto preenchido ·
-  `{data, tipo, duracao_min, previsto_min}` ordenado por data) e `por_etapa_total`
-  (resumo do culto INTEIRO: previsto/executado médios, desvio e % que estourou ·
-  sobre os cultos com ambos lançados). NÃO mexe em `kpi_calcular_valor_auto`.
-- A aba **Detalhado** (`Producao.jsx`) abre com um **gráfico de linhas** (recharts):
-  **1 linha por tipo de culto** (Domingo 08:30/10:00/11:30/19:00, Quarta, AMI, Bridge),
-  duração executada (min) ao longo do tempo — pivot por data (`linhasChart`/`tiposChart`,
-  cada tipo vira uma coluna). Alvo 60 min via `ReferenceLine`; **eixo Y começa em 40**
-  (`domain={[40,'auto']}`) pra destacar as variações; **cultos não preenchidos (0 min)
-  ficam fora** (filtro `duracao_min > 0`). **Legenda clicável · multi-seleção** (`cultosSel`
-  Set + `Legend onClick` toggle → `Line hide`): clicar 1 culto isola só ele, clicar outros
-  soma à seleção, clicar de novo tira; Set vazio = todos (1ª seleção a partir do vazio = isolar). A tabela
-  "Estouro por etapa" ganhou uma faixa-resumo do culto inteiro (`por_etapa_total`) no rodapé (abaixo da tabela). Recharts
-  herda o tema vidro do `index.css`; linhas NÃO usam gradiente (regra da casa); cores em `CORES_CULTO`.
-  (Ajustes 2026-06-25/26, pedidos do Marcos: era executado×previsto numa linha só → 1 linha
-  por culto → eixo 40 + esconde não-preenchidos + legenda isola culto.)
-- **Métricas do Detalhado (definições · NÃO confundir) + tooltips:** **Pontualidade** = % de
-  cultos ≤ ALVO (`meta_duracao_min`, default 60) = "estourou o tempo?". **Aderência** = fidelidade
-  ao PREVISTO (`100 − média(|exec−prev|/prev)`, desvio ABSOLUTO, relativo ao previsto de cada culto,
-  NÃO a 60) = "executou perto do planejado?". Os cabeçalhos das tabelas do Detalhado têm `title`
-  (tooltip nativo no hover · sublinhado pontilhado + cursor help) explicando cada coluna.
+⚠️ **Aba Preenchimento tem seletor Semana | Pendentes**, e a distinção importa:
+`GET /producao/pendencias` classifica **não preenchido** (`duracao_segundos`
+null/0 — nada lançado, ou teste zerado) × **incompleto** (executado real, mas ≥1
+etapa com `executado_seg` NULL) × completo. Culto antes de 07/06 fica fora (não
+tem etapas).
 
+⚠️ **Ocorrência → "Fazer solicitação"** (ideia do Pedro Fernandes) abre o
+`NovaSolicitacaoForm` prefillado e grava
+`culto_producao_ocorrencias.solicitacao_id` (**máx. 1 por ocorrência** · FK SET
+NULL · só vincula solicitação do próprio usuário). O pedido segue o fluxo oficial
+inteiro — **nenhum bypass**. Categorias `infraestrutura`/`ti`/`compras` **sem
+default**: a pessoa escolhe ativamente quem resolve. Urgente pré-marcado só na
+severidade crítica, e sempre desmarcável.
+⚠️ **Armadilha de z-index (vale pra todo modal-sobre-modal):** o modal é z 1100 e
+os `SelectContent` do form precisam de **z-[1200]** — senão o portal Radix (z-50)
+abre ATRÁS do overlay e o dropdown "trava" sem erro nenhum.
+
+⚠️ **A fila "Atender" do Solicitações filtra por
+`area_solicitacoes_responsaveis`, NÃO por cargo/boost.** Foi por isso que a área
+**Produção** teve de ser cadastrada lá com o Pedro Fernandes — é o mesmo registro
+que faz a notificação de ocorrência crítica chegar nele. A aba "Solicitações"
+dentro do `/producao` foi removida (#1364): era espelho filtrado do
+`/solicitacoes`, e duas telas para a mesma fila divergiriam.
 ## Grupos · aba Relatórios de KPIs (2026-06-02)
 
 Aba Relatórios em `/grupos` (estilo Integração): nº grupos/líderes, líderes em
@@ -9375,106 +9022,42 @@ A fonte de verdade de permissão é **cargo + matriz + overrides** (seção
   (atribuições em massa, fixes pessoa a pessoa, limpeza de código morto) está
   no legado.
 
-## Permissoes · matriz cargo x modulo (reuniao Marcos Paulo · 2026-05-18)
+## Permissoes · matriz cargo × módulo (reunião Marcos Paulo · 2026-05-18)
 
-A matriz aprovada vive em duas tabelas (Supabase):
+📍 `docs/mapa/INDICE.md` lista os módulos vivos e onde cada um mora.
+**Detalhe (endpoints admin, hooks legados, listas de cargo/módulo) em
+`docs/CLAUDE-LEGADO.md`** — e a fonte real é o BANCO, não este arquivo.
 
-- `cargo_modulo_permissao` · **default por cargo** (matriz que veio da
-  planilha · source of truth). Linha por (cargo, modulo) com nivel 0-5
-  + modificadores (`pode_exportar`, `pode_aprovar`, `escopo_proprio`).
-- `permissoes_modulo` · **override por usuario** (excecao individual).
-  Tem os mesmos campos + `motivo` e `expira_em` (override temporario).
+**Duas tabelas:** `cargo_modulo_permissao` (default por cargo · vindo da
+planilha) e `permissoes_modulo` (override por usuário, com `motivo` e
+`expira_em`). A view **`vw_permissao_efetiva`** já faz o fallback
+`override → default do cargo → 0` — usar ela, nunca juntar à mão.
 
-A view `vw_permissao_efetiva` ja faz o fallback `override -> default
-do cargo -> 0`. Quando precisar consultar permissao efetiva, usa essa view
-ao inves de juntar manualmente.
+**Níveis:** `0` sem acesso (não aparece no menu nem responde a URL) · `1` ver ·
+`2` ver + lançar dado bruto · `3` CRUD · `4` + deletar · `5` admin do módulo.
+**Modificadores:** `pode_exportar` (dado sensível · LGPD) · `pode_aprovar`
+(workflow) · `escopo_proprio` (só a própria área/valor/setor).
 
-### Niveis 0-5
+**Backend:** `router.use(authenticate, authorizeModule('financeiro', 2))`.
+`req.user.granular.modulePerms[slug]` devolve
+`{leitura, escrita, pode_exportar, pode_aprovar, escopo_proprio}`.
+**Frontend:** `getAccessLevel(['financeiro'])` do `AuthContext` (os hooks
+`canX` são legados e ainda existem).
 
-- `0` Sem acesso · modulo nao aparece no menu nem responde a URL
-- `1` Ver (so leitura)
-- `2` Ver + preencher dado bruto (lancar numeros)
-- `3` Ver + editar (CRUD)
-- `4` Ver + editar + deletar
-- `5` Admin do modulo (configura regras, metas, seeds, deleta tudo)
+⚠️ **`ROUTE_MODULE_MAP` (`backend/middleware/auth.js`) é obrigatório para rota
+nova** — routeKey sem entrada lá DESLIGA a matriz em silêncio (lei própria neste
+arquivo, caso `links` de 17/08). `src/test/routeModuleMap.test.ts` guarda isso, e
+`docs/mapa/ORFAOS.md` mostra o que ninguém reivindica.
 
-### Modificadores
+⚠️⚠️ **Quantos cargos e quais módulos existem é dado de BANCO** (`cargos`,
+`modulos`), nunca lista neste arquivo. A lista que morava aqui — 25 cargos e 30
+módulos, escrita em maio — estava **muito** desatualizada: medido em 20/08 são
+**45 cargos e 59 módulos (52 ativos)**. Consultar ao vivo, sempre; e este número
+também envelhece.
 
-- `pode_exportar` (`+E`) · exportar dados (CPF, telefone, financeiro · LGPD)
-- `pode_aprovar`  (`+A`) · aprovar workflows daquele modulo (ex: despesa)
-- `escopo_proprio` (`*`) · acesso so da propria area / valor / setor
-
-### 25 cargos (slugs)
-
-`pastor-senior`, `pastor-presidente`, `diretor-administrativo`,
-`coordenador-estrategia`, `diretor-ministerial`, `diretor-criativo`,
-`lider-ministerial`, `assistente-area`, `assistente-ministerial`,
-`coordenador-financeiro`, `assistente-financeiro`,
-`coordenador-marketing`, `assistente-marketing`,
-`lider-producao`, `assistente-producao`,
-`lider-operacoes`, `lider-logistica`, `assistente-logistica`,
-`assistente-operacoes`,
-`diretor-rh`, `coordenador-voluntarios`, `voluntario`, `membro`,
-`conselho`, `dev`.
-
-### 30 modulos (slugs)
-
-- **Estrategica**: `dashboard`, `painel-cbrio`, `minha-area`, `gestao`,
-  `planejamento`, `ritual`, `governanca`, `revisao-estrategica`
-- **Ministerial**: `integracao`, `cuidados`, `online`, `next`,
-  `voluntariado`, `membresia`, `grupos`
-- **Operacional**: `eventos`, `projetos`, `expansao`, `rh`, `financeiro`,
-  `logistica`, `patrimonio`, `solicitacoes`
-- **Dados / IA / Admin**: `dados-brutos`, `nps`, `notificacoes-config`,
-  `assistente-ia`, `cerebro`, `perfil`, `permissoes-admin`, `usuarios-admin`
-
-### Backend · como usar
-
-```js
-const { authorizeModule } = require('../middleware/auth');
-// Bloqueia acesso ao endpoint se o usuario nao tiver nivel >= 2 em /financeiro
-router.use(authenticate, authorizeModule('financeiro', 2));
-```
-
-`ROUTE_MODULE_MAP` em `backend/middleware/auth.js` mapeia routeKey -> slugs
-de modulo. Quando criar rota nova, adicionar entrada la.
-
-`req.user.granular.modulePerms[slug]` retorna
-`{ leitura, escrita, pode_exportar, pode_aprovar, escopo_proprio }`.
-
-### Frontend · como usar
-
-```jsx
-const { canFinanceiro, canMembresia, getAccessLevel } = useAuth();
-if (!canFinanceiro) return <Navigate to="/dashboard" />;
-const nivel = getAccessLevel(['financeiro']);
-```
-
-Hooks ja definidos em `src/contexts/AuthContext.jsx`: `canRH`, `canFinanceiro`,
-`canLogistica`, `canPatrimonio`, `canMembresia`, `canProjetos`, `canExpansao`,
-`canAgenda`, `canIA`, `canKPIs`, `canCuidados`, `canSolicitacoes`, `canNPS`,
-`canDadosBrutos`, `canPainel`.
-
-### Overrides com expiracao
-
-`permissoes_modulo.expira_em` permite override temporario (cobrir licenca,
-projeto pontual). Quando expira, o usuario volta automaticamente para o
-default do cargo. O middleware filtra overrides expirados antes de compor
-a permissao efetiva.
-
-### Endpoints admin (`/api/permissoes/*`)
-
-- `GET /matriz` · matriz completa (cargos, modulos, celulas)
-- `PUT /matriz/celula` · editar uma celula da matriz (default por cargo)
-- `GET /cargo/:id` · detalhe + celulas de um cargo
-- `GET /usuario/:id` · permissoes efetivas + overrides + areas
-- `PUT /usuario/:id/cargo` · trocar cargo do usuario
-- `PUT /usuario/:id/modulo` · criar/atualizar override por modulo
-- `DELETE /usuario/:id/modulo/:moduloId` · remover override
-
-Todos exigem `authorize('admin','diretor')`. Ao editar matriz ou override,
-o cache do middleware e' invalidado automaticamente.
-
+⚠️ **Depois de mexer na matriz por SQL**: bust do cache do middleware
+(`POST /api/permissoes/cache/bust` ou o botão em `/admin/permissoes`) **e**
+logout/login do afetado (o JWT carrega o cargo).
 ## Membro Modelo — Fluxo da jornada nos 5 valores
 
 A migration `20260430130000_membro_modelo_completo.sql` fechou os 4 gaps
@@ -9603,103 +9186,62 @@ Marcos Paulo leva bebês/batismo/apps/ocupação.
 
 ## Cultos recorrentes — slots fixos e identidade única
 
-Os horários de culto vivem em `vol_service_types` com `recurrence_day`
-(0=Dom … 6=Sáb) + `recurrence_time`. A função
-`gerar_cultos_recorrentes(data_inicio, data_fim)` materializa rows em
-`public.cultos` para cada ocorrência no range — idempotente, pula slots
-que já existem.
+📍 `docs/mapa/integracao.md` · **detalhe no `docs/CLAUDE-LEGADO.md`**
 
-### Slots vigentes e config do modal
+Os horários vivem em **`vol_service_types`** (`recurrence_day` 0=Dom…6=Sáb +
+`recurrence_time`), e `gerar_cultos_recorrentes(inicio, fim)` materializa as
+linhas em `cultos` — idempotente, pula slot que já existe.
 
-`vol_service_types` tem 3 colunas que configuram o `ModalCulto`:
-- `presencial_label` (texto) · label do input de presencial
-- `has_kids` (bool) · mostra campo Kids
-- `has_online` (bool) · mostra decisoes_online + bloco Transmissão online
+⚠️⚠️ **A GRADE DE HORÁRIOS NÃO MORA NESTE ARQUIVO — é `vol_service_types` ao
+vivo.** A tabela que ficava aqui listava os 4 cultos de domingo (08:30 · 10:00 ·
+11:30 · 19:00) e **estava a dias de ficar errada**: o corte de 24/08/2026 encerra
+08:30 e 10:00 e cria 09:30 (ver a seção própria de "Cultos de domingo"). Doc que
+guarda dado de banco é doc que apodrece — foi essa a lição, e por isso a tabela
+saiu.
 
-| Service Type | Dia | Hora | Presencial label | Kids | Online |
-|--------------|-----|------|------------------|------|--------|
-| Domingo 08:30 | Dom (0) | 08:30 | **Sede** | ✓ | ✓ |
-| Domingo 10:00 | Dom (0) | 10:00 | **Sede** | ✓ | ✓ |
-| Domingo 11:30 | Dom (0) | 11:30 | **Sede** | ✓ | ✓ |
-| Domingo 19:00 | Dom (0) | 19:00 | **Sede** | ✓ | ✓ |
-| Quarta com Deus | Qua (3) | 20:00 | Presencial | ✓ | ✓ |
-| Bridge | Sáb (6) | 17:00 | Presencial | — | — |
-| AMI | Sáb (6) | 20:00 | Presencial | — | ✓ |
+Três colunas de `vol_service_types` configuram o `ModalCulto` sozinhas —
+`presencial_label`, `has_kids`, `has_online`. **Tipo de culto novo é INSERT**, o
+modal se adapta e não se mexe no React.
+⚠️ Mas o `POST /service-types` **descarta** essas três (achado de 13/08): tipo
+criado pela UI nasce sem Kids e nenhuma criança faz check-in. Tipo novo nasce por
+SQL até isso ser corrigido.
 
-Para adicionar um novo tipo de culto: `INSERT INTO vol_service_types
-(name, recurrence_day, recurrence_time, presencial_label, has_kids,
-has_online, color)`. Modal adapta automaticamente · não precisa
-mexer no React.
+**Identidade do culto:** `cultos.id` é uuid próprio, e **UNIQUE
+(service_type_id, data)** garante que não existam duas linhas pro mesmo slot
+lógico — é o que faz `(service_type_id, data)` ser chave estável pra série
+histórica.
+⚠️ **NUNCA deletar `vol_service_types`**: `producao_roteiro_etapas.service_type_id`
+é ON DELETE CASCADE, e o DELETE anula `service_type_id` em ~209 cultos (eles saem
+dos KPIs). Tipo é **encerrado** (`is_active=false`), nunca apagado.
 
-### Identidade única do culto
+### Regras vigentes (o resto do diário está no legado)
 
-- `cultos.id` é `uuid PRIMARY KEY DEFAULT gen_random_uuid()` — cada row
-  tem ID único naturalmente.
-- **UNIQUE (service_type_id, data)** em `cultos` garante que não exista
-  2 rows pro mesmo slot lógico. Migração:
-  `20260514110000_ami_sabado_20h_unique_culto.sql`.
-- Série histórica de indicadores por culto cruza `cultos.service_type_id`
-  com `cultos.data` sem ambiguidade — `(service_type_id, data)` é
-  chave estável.
-
-### Regras e decisões vigentes (condensado · detalhes no legado)
-
-- **Contagem de visitantes descontinuada** (2026-05-14 · decisão do Marcos):
-  UI removida (abas Visitantes/Pendentes, campos do modal); schema preservado
-  (`cultos.visitantes`, `int_visitantes`). Coletor `cultos.conv_visit` soma só
-  decisões. Tabs vigentes de `/integracao`: Cultos · Frequência · Decisões ·
-  Batismos · Histórico.
-- **KPIs só-visualização ficam fora do painel NSM** via `valores = '{}'::text[]`
-  (array vazio passa no isArray mas não casa nenhum valor da Jornada). Padrão
-  usado nos KPIs do Online (`ON-AUD-01`/`ON-DS-01`/`ON-DDUS-01` · aparecem só
-  em `/minha-area`) e nos `PROD-CULTO-*`.
-- **Recálculo de KPI em tempo real por trigger SQL**: `kpi_calcular_valor_auto`
-  + `kpi_recalcular_para_data` + triggers em `cultos` e `batismo_inscricoes`
-  (20260514210000). Latência zero; editar culto antigo recalcula o período
-  daquele culto. Backend só limpa o cache do `/painel`.
-- **Decisões · aba única com toggle** Por culto | Pessoas (CPFs) — a aba
-  "Pessoas decididas" separada foi removida (2026-05-14). Lista de pendências
-  lê `vw_nsm_sem_dados`.
-- **Cadastro flexível na decisão**: obrigatórios só nome + telefone (11
-  dígitos); CPF/nascimento/email opcionais → badge `incompleto` + endpoint
-  `GET /api/kpis/decisoes-pessoas/incompletos` pro censo posterior. Trigger
-  resolve/cria membro com o que houver.
-- **Decisão Kids (LGPD)**: `tipo_decisao='kids'` guarda nome da criança + dados
-  do RESPONSÁVEL; triggers pulam criação de membro/trilha/nsm_eventos —
-  criança fica fora do NSM (motivo real: a jornada não avança pra ela, não só
-  LGPD). Campo agregado `cultos.decisoes_kids`.
-- **Cutoff temporal "de hoje pra cá" (18/05) foi REVERTIDO em 2026-06-09**
-  (migration `20260609160000`): com a NSM em janela móvel de 90d, o cutoff
-  escondia gap que JÁ contava no denominador do card. A `vw_nsm_sem_dados`
-  cobre tudo; o recorte de período é do consumidor.
-- **Membros duplicados**: detecção pela `vw_membros_duplicados` (CPF/nome+nasc/
-  telefone/email/trigram) + `mem_duplicados_ignorados` + função
-  `merge_membros(keep, merge_ids[], ...)` (migra FKs de 9+ tabelas, enriquece o
-  keep, loga snapshot em `mem_merge_log`). Aba Duplicados em
-  `/ministerial/membresia`. Decisão: não impedir cadastro duplicado · juntar
-  depois.
-- **Cascata Seguir → KPIs por área**: coletores `cultos.{ami,bridge,sede,
-  online,kids}_{freq,conv}` alimentam AMI/BRG/SED/ONL/KIDS-* filtrando por
-  `service_type_name` (Bridge ≠ AMI · separado em 2026-05-21). Convertidos
-  atendidos pertencem ao valor **'seguir'** (não 'investir').
-- **KPIs semanais comparam YoY** (mesma semana do ano anterior · decisão
-  2026-05-21, liturgias mensais distorcem semana-a-semana): 22 KPIs com
-  `comparacao='ano_anterior'`; os 6 de batismo seguem `evento_anterior`;
-  mensais/semestrais intocados. `_kpi_periodo_anterior` suporta YoY em todas as
-  periodicidades.
-- **NPS do culto**: `POST /api/painel-area/:area/nps` (nível ≥3) faz UPSERT em
-  `dados_brutos` tipo `nps_culto` → KPIs CULTO-NPS-* recalculam por trigger.
-  Canal provisório até o módulo NPS rodar pesquisa pós-culto.
-- **Histórico longo**: aba Histórico usa `vw_culto_historico_anual` (1 linha
-  por ano×tipo · escala sem limit); visualizações usam react-query staleTime
-  5min. Calendário semanal Dom–Sáb na aba Cultos.
-- **Rotas dos módulos de culto na raiz** (`/online` `/kids` `/ami` `/bridge` ·
-  2026-05-21): `<Navigate>` cobre os paths antigos `/ministerial/*`.
-  `PainelArea.jsx` é o componente reusável (score de saúde + abas Cultos/Dados/
-  Indicadores · aba Cultos lê `vw_culto_stats` filtrada por área — decisão:
-  dado de culto vive em `cultos.*`, não em dados_brutos). Líderes:
-  Kids=Mariane · AMI=Arthur Cecconi · Bridge=Lillian Xavier · Online=Renata.
-
+- **Contagem de visitantes descontinuada** (05/2026 · Marcos): UI removida, schema
+  preservado (`cultos.visitantes`, `int_visitantes`). Abas de `/integracao`:
+  Cultos · Frequência · Decisões · Batismos · Histórico.
+- **KPI só-visualização fica fora do painel NSM** via `valores = '{}'::text[]`
+  (array vazio passa no isArray e não casa valor nenhum). Usado nos `ON-*` do
+  Online e nos `PROD-CULTO-*`.
+- **Recálculo de KPI é por trigger SQL** (`kpi_calcular_valor_auto` +
+  `kpi_recalcular_para_data` em `cultos` e `batismo_inscricoes`): latência zero, e
+  editar culto antigo recalcula o período dele. O backend só limpa o cache do
+  `/painel`.
+- **Cadastro flexível na decisão**: obrigatórios só nome + telefone; o resto vira
+  badge `incompleto` para o censo depois.
+- **Decisão Kids fica FORA do NSM** — e o motivo real não é só LGPD: a jornada não
+  avança para a criança. `tipo_decisao='kids'` guarda os dados do RESPONSÁVEL e os
+  triggers pulam membro/trilha/`nsm_eventos`; o agregado é `cultos.decisoes_kids`.
+- **Cascata Seguir → KPI por área**: coletores `cultos.{ami,bridge,sede,online,
+  kids}_{freq,conv}` filtram por `service_type_name` (Bridge ≠ AMI). Convertido
+  atendido pertence a **'seguir'**, não a 'investir'.
+- **KPI semanal compara YoY** (mesma semana do ano anterior — liturgia mensal
+  distorce semana-a-semana): 22 KPIs em `comparacao='ano_anterior'`; os 6 de
+  batismo seguem `evento_anterior`.
+- **Dado de culto vive em `cultos.*`, não em `dados_brutos`** — a aba Cultos do
+  `PainelArea` lê `vw_culto_stats` filtrada por área.
+- ⚠️ O **cutoff "de hoje pra cá"** de 18/05 foi **REVERTIDO** em 09/06
+  (`20260609160000`): com a NSM em janela móvel de 90d ele escondia gap que JÁ
+  contava no denominador. `vw_nsm_sem_dados` cobre tudo; o recorte é do consumidor.
 ## ⚠️ Batismo · categoria etária do batizando · 4 faixas (2026-08-19 · migration `20260819160000`)
 
 Faixas definidas pelo Matheus: **criança < 13 · adolescente 13–17 · jovem 18–25
