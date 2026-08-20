@@ -67,7 +67,3 @@ Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
 
 - `censo`
 
-**Onde os APPS tocam este módulo**
-
-- Aplicativo-CBRio: `app/(app)/censo.tsx` (`/censo`)
-

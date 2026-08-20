@@ -310,9 +310,3 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 
 - `membresia`
 
-**Onde os APPS tocam este módulo**
-
-- Aplicativo-CBRio: `app/(app)/voluntariado.tsx` (`/voluntariado`)
-- Aplicativo-CBRio: `lib/api.ts`
-- CBRio-Staff: `lib/api.ts`
-

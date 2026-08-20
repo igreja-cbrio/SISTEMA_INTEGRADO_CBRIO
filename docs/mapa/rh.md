@@ -182,7 +182,3 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 5 | padrão)`
 
 - `rh`
 
-**Onde os APPS tocam este módulo**
-
-- CBRio-Staff: `lib/api.ts`
-

@@ -215,10 +215,3 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 
 - `grupos`
 
-**Onde os APPS tocam este módulo**
-
-- Aplicativo-CBRio: `components/grupos/ModalAgendaEncontro.tsx`
-- Aplicativo-CBRio: `lib/api.ts`
-- Aplicativo-CBRio: `lib/useAdminGrupo.ts`
-- CBRio-Staff: `lib/api.ts`
-

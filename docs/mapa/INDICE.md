@@ -64,18 +64,20 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **89** arquivos, **80** com teste.
+`backend/utils/` tem **91** arquivos, **82** com teste.
 
 <details><summary>Lista completa</summary>
 
 | régua | teste |
 |---|---|
+| `backend/utils/acessibilidadeBatismo.js` | `src/test/acessibilidadeBatismo.test.ts` |
 | `backend/utils/agendaGrupo.js` | `src/test/agendaGrupo.test.ts` |
 | `backend/utils/agradecimento.js` | `src/test/agradecimento.test.ts` |
 | `backend/utils/alcadaCompra.js` | `src/test/alcadaCompra.test.ts` `src/test/alcadaCompras.test.ts` |
 | `backend/utils/alcadaCompras.js` | `src/test/alcadaCompras.test.ts` |
 | `backend/utils/appError.js` | `backend/middleware/errorHandler.test.js` |
 | `backend/utils/appRateLimit.js` | `src/test/appRateLimit.test.ts` |
+| `backend/utils/apresentacaoHistorico.js` | `src/test/apresentacaoHistorico.test.ts` |
 | `backend/utils/avisoAgregado.js` | `src/test/avisoAgregado.test.ts` |
 | `backend/utils/avisoEscala.js` | `src/test/avisoEscala.test.ts` |
 | `backend/utils/avisoGrupoApp.js` | `src/test/avisoGrupoApp.test.ts` `src/test/avisoSaidaGrupo.test.ts` |

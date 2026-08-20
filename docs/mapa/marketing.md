@@ -157,7 +157,3 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 
 - `marketing`
 
-**Onde os APPS tocam este módulo**
-
-- Aplicativo-CBRio: `app/(app)/mural.tsx` (`/mural`)
-

@@ -327,7 +327,3 @@ Guard: `authorizeModule('financeiro', 3 | 4 | 5 | padrão)`
 
 - `financeiro`
 
-**Onde os APPS tocam este módulo**
-
-- CBRio-Staff: `lib/api.ts`
-

@@ -123,8 +123,3 @@ Guard: `authorizeModule('inscricoes-totem', 1)`
 - `fn_insc_checkin_marcar`
 - `fn_insc_portas_resumo`
 
-**Onde os APPS tocam este módulo**
-
-- Aplicativo-CBRio: `lib/api.ts`
-- CBRio-Staff: `lib/api.ts`
-

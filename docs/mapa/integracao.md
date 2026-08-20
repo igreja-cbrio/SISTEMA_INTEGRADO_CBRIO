@@ -65,7 +65,3 @@ Guard: `authorizeModule('integracao', 1 | 2 | 3)`
 
 - `integracao`
 
-**Onde os APPS tocam este módulo**
-
-- CBRio-Staff: `lib/api.ts`
-

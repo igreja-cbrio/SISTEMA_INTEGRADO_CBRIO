@@ -202,7 +202,3 @@ Guard: `authorizeModule('membros-financeiro', 2)`
 - `fn_membro_tem_atividade`
 - `merge_membros`
 
-**Onde os APPS tocam este módulo**
-
-- CBRio-Staff: `lib/api.ts`
-

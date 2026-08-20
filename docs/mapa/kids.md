@@ -213,10 +213,3 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `fn_registrar_contato`
 - `merge_kids_criancas`
 
-**Onde os APPS tocam este módulo**
-
-- Aplicativo-CBRio: `app/(app)/kids-filho.tsx` (`/kids-filho`)
-- Aplicativo-CBRio: `app/(app)/kids-solicitar-vinculo.tsx` (`/kids-solicitar-vinculo`)
-- Aplicativo-CBRio: `app/(app)/kids.tsx` (`/kids`)
-- CBRio-Staff: `lib/api.ts`
-

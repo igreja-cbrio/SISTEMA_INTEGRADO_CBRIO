@@ -112,7 +112,3 @@ Guard: `authorizeModule('logistica', padrão)`
 
 - `logistica`
 
-**Onde os APPS tocam este módulo**
-
-- CBRio-Staff: `lib/api.ts`
-

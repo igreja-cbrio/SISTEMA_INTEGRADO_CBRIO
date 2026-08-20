@@ -191,9 +191,3 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3)`
 
 - `voluntariado`
 
-**Onde os APPS tocam este módulo**
-
-- Aplicativo-CBRio: `app/(app)/voluntariado.tsx` (`/voluntariado`)
-- Aplicativo-CBRio: `lib/api.ts`
-- CBRio-Staff: `lib/api.ts`
-

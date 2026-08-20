@@ -13,180 +13,10 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-568 arquivos.
+331 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
-| `Aplicativo-CBRio/app/(app)/anotacoes.tsx` | tela app | — | `/anotacoes` |
-| `Aplicativo-CBRio/app/(app)/apresentacao-crianca.tsx` | tela app | — | `/apresentacao-crianca` |
-| `Aplicativo-CBRio/app/(app)/batismo.tsx` | tela app | — | `/batismo` |
-| `Aplicativo-CBRio/app/(app)/cartoes.tsx` | tela app | — | `/cartoes` |
-| `Aplicativo-CBRio/app/(app)/censo.tsx` | tela app | — | `/censo` |
-| `Aplicativo-CBRio/app/(app)/completar-cadastro.tsx` | tela app | — | `/completar-cadastro` |
-| `Aplicativo-CBRio/app/(app)/comprovante-doacoes.tsx` | tela app | — | `/comprovante-doacoes` |
-| `Aplicativo-CBRio/app/(app)/configuracoes.tsx` | tela app | — | `/configuracoes` |
-| `Aplicativo-CBRio/app/(app)/cuidados.tsx` | tela app | — | `/cuidados` |
-| `Aplicativo-CBRio/app/(app)/culto-detalhe.tsx` | tela app | — | `/culto-detalhe` |
-| `Aplicativo-CBRio/app/(app)/devocional.tsx` | tela app | — | `/devocional` |
-| `Aplicativo-CBRio/app/(app)/escala-supervisor.tsx` | tela app | — | `/escala-supervisor` |
-| `Aplicativo-CBRio/app/(app)/evento.tsx` | tela app | — | `/evento` |
-| `Aplicativo-CBRio/app/(app)/falar-com-a-igreja.tsx` | tela app | — | `/falar-com-a-igreja` |
-| `Aplicativo-CBRio/app/(app)/fale-conosco.tsx` | tela app | — | `/fale-conosco` |
-| `Aplicativo-CBRio/app/(app)/familia.tsx` | tela app | — | `/familia` |
-| `Aplicativo-CBRio/app/(app)/generosidade.tsx` | tela app | — | `/generosidade` |
-| `Aplicativo-CBRio/app/(app)/grupo-detalhe.tsx` | tela app | — | `/grupo-detalhe` |
-| `Aplicativo-CBRio/app/(app)/grupo-editar.tsx` | tela app | — | `/grupo-editar` |
-| `Aplicativo-CBRio/app/(app)/grupo-inscricoes.tsx` | tela app | — | `/grupo-inscricoes` |
-| `Aplicativo-CBRio/app/(app)/grupo-membros.tsx` | tela app | — | `/grupo-membros` |
-| `Aplicativo-CBRio/app/(app)/grupo-visita.tsx` | tela app | — | `/grupo-visita` |
-| `Aplicativo-CBRio/app/(app)/grupos.tsx` | tela app | — | `/grupos` |
-| `Aplicativo-CBRio/app/(app)/index.tsx` | tela app | — | `/index` |
-| `Aplicativo-CBRio/app/(app)/inscricao-batismo.tsx` | tela app | — | `/inscricao-batismo` |
-| `Aplicativo-CBRio/app/(app)/inscricao-next.tsx` | tela app | — | `/inscricao-next` |
-| `Aplicativo-CBRio/app/(app)/inscricoes.tsx` | tela app | — | `/inscricoes` |
-| `Aplicativo-CBRio/app/(app)/jornada.tsx` | tela app | — | `/jornada` |
-| `Aplicativo-CBRio/app/(app)/kids-filho.tsx` | tela app | — | `/kids-filho` |
-| `Aplicativo-CBRio/app/(app)/kids-solicitar-vinculo.tsx` | tela app | — | `/kids-solicitar-vinculo` |
-| `Aplicativo-CBRio/app/(app)/kids.tsx` | tela app | — | `/kids` |
-| `Aplicativo-CBRio/app/(app)/menu.tsx` | tela app | — | `/menu` |
-| `Aplicativo-CBRio/app/(app)/meu-grupo.tsx` | tela app | — | `/meu-grupo` |
-| `Aplicativo-CBRio/app/(app)/modo-culto.tsx` | tela app | — | `/modo-culto` |
-| `Aplicativo-CBRio/app/(app)/mural.tsx` | tela app | — | `/mural` |
-| `Aplicativo-CBRio/app/(app)/next-turma.tsx` | tela app | — | `/next-turma` |
-| `Aplicativo-CBRio/app/(app)/next.tsx` | tela app | — | `/next` |
-| `Aplicativo-CBRio/app/(app)/notificacoes.tsx` | tela app | — | `/notificacoes` |
-| `Aplicativo-CBRio/app/(app)/perfil.tsx` | tela app | — | `/perfil` |
-| `Aplicativo-CBRio/app/(app)/sobre.tsx` | tela app | — | `/sobre` |
-| `Aplicativo-CBRio/app/(app)/trocar-senha.tsx` | tela app | — | `/trocar-senha` |
-| `Aplicativo-CBRio/app/(app)/videos.tsx` | tela app | — | `/videos` |
-| `Aplicativo-CBRio/app/(app)/voluntariado.tsx` | tela app | — | `/voluntariado` |
-| `Aplicativo-CBRio/app/(auth)/cadastro.tsx` | tela app | — | `/cadastro` |
-| `Aplicativo-CBRio/app/(auth)/login.tsx` | tela app | — | `/login` |
-| `Aplicativo-CBRio/app/(auth)/recuperar-senha.tsx` | tela app | — | `/recuperar-senha` |
-| `Aplicativo-CBRio/app/(auth)/redefinir-senha.tsx` | tela app | — | `/redefinir-senha` |
-| `Aplicativo-CBRio/app/(auth)/verificar-telefone.tsx` | tela app | — | `/verificar-telefone` |
-| `Aplicativo-CBRio/components/anim/AnimatedBell.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/anim/AnimatedCard.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/anim/AnimatedCountdown.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/anim/AnimatedShortcut.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/anim/Breathing.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/anim/HeartPulse.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/anim/HeartRefresh.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/anim/Skeleton.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/app/ErrorBoundary.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/app/PortaoAtualizacao.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/auth/BiometriaLock.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/auth/CadastroGate.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/brand/CbrioHeart.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/brand/SplashPulse.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/cartao/AddToWalletButton.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/cartao/HolographicCard.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/cartao/HoloTicket.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/censo/CampoCenso.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/censo/FormCenso.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/generosidade/CheckoutWebView.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/generosidade/GenerosidadeTexto.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/generosidade/SucessoDoacao.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/grupos/ModalAgendaEncontro.tsx` | lib app | — | `1 chamada(s)` |
-| `Aplicativo-CBRio/components/home/Carrossel.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/home/ProximosCultos.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/inscricoes/BotaoCompartilhar.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/inscricoes/FormScaffold.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/inscricoes/SeusDados.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/onboarding/Onboarding.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/BottomBar.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/Button.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/CalendarioBR.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/Checkbox.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/CodeInput.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/ComingSoon.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/Dialogo.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/EmptyState.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/ErrorState.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/GlassCard.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/GruposMapa.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/Input.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/PhoneInput.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/ScreenBackground.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/SecaoRecolhivel.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/SocialButton.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/TecladoSeguro.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/ui/TopBar.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/components/voluntariado/Disponibilidade.tsx` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/api.ts` | lib app | — | `52 chamada(s)` |
-| `Aplicativo-CBRio/lib/applePay.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/applyFontScale.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/apresentacaoCrianca.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/batismo.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/biometria.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/buscaTexto.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/cache.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/cadastroAberto.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/cadastroEmAndamento.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/canalRealtime.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/capaGrupo.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/cartaoQr.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/carteira.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/censoApi.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/censoForm.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/compartilharInscricao.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/contribuicoes.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/convite.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/cultos.ts` | lib app | — | `1 chamada(s)` |
-| `Aplicativo-CBRio/lib/dataBRT.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/descartarRascunho.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/destaques.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/devocional.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/devocionalShare.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/dialogosNativos.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/disponibilidade.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/escalas.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/eventos.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/falhaDeLeitura.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/features.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/ficha.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/fonts.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/grupos.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/hierarquia.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/homeCultos.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/i18n.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/inscricaoPayload.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/inscricoes.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/inscricoesStatus.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/jornada.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/marcadoresJornada.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/meusPedidos.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/motivoPush.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/nav.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/navegacao.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/notifTap.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/onboarding.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/papelGrupo.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/portaUnica.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/preferenciaPagamento.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/proximoBatismo.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/proximoEncontro.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/push.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/pushLotes.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/resumoEscalas.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/stripeCheckout.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/supabase.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/teclado.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/telefone.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/telemetria.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/temporadaGrupos.ts` | lib app | — | `1 chamada(s)` |
-| `Aplicativo-CBRio/lib/translations.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/useAdminGrupo.ts` | lib app | — | `1 chamada(s)` |
-| `Aplicativo-CBRio/lib/useMembro.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/useNextSync.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/useNotificacoes.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/useVoluntariadoSync.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/validators.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/versaoApp.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/visitaSupervisao.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/volStatus.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/voluntariadoMe.ts` | lib app | — | `0 chamada(s)` |
-| `Aplicativo-CBRio/lib/wallet.ts` | lib app | — | `0 chamada(s)` |
 | `backend/routes/agenteBatismoNext.js` | rota backend | — | `/api/agente-batismo-next` |
 | `backend/routes/agentePrimeiroContato.js` | rota backend | — | `/api/agente-primeiro-contato` |
 | `backend/routes/agenteVoluntariado.js` | rota backend | voluntariado | `/api/agente-voluntariado` |
@@ -308,12 +138,14 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/whatsappCron.js` | rota backend | — | `/api/whatsapp-cron` |
 | `backend/routes/whatsappGrupos.js` | rota backend | grupos | `/api/whatsapp-grupos` |
 | `backend/routes/wifi.js` | rota backend | wifi | `/api/wifi` |
+| `backend/utils/acessibilidadeBatismo.js` | régua pura | — | `src/test/acessibilidadeBatismo.test.ts` |
 | `backend/utils/agendaGrupo.js` | régua pura | — | `src/test/agendaGrupo.test.ts` |
 | `backend/utils/agradecimento.js` | régua pura | — | `src/test/agradecimento.test.ts` |
 | `backend/utils/alcadaCompra.js` | régua pura | — | `src/test/alcadaCompra.test.ts` |
 | `backend/utils/alcadaCompras.js` | régua pura | — | `src/test/alcadaCompras.test.ts` |
 | `backend/utils/appError.js` | régua pura | — | `backend/middleware/errorHandler.test.js` |
 | `backend/utils/appRateLimit.js` | régua pura | — | `src/test/appRateLimit.test.ts` |
+| `backend/utils/apresentacaoHistorico.js` | régua pura | — | `src/test/apresentacaoHistorico.test.ts` |
 | `backend/utils/avisoAgregado.js` | régua pura | — | `src/test/avisoAgregado.test.ts` |
 | `backend/utils/avisoEscala.js` | régua pura | — | `src/test/avisoEscala.test.ts` |
 | `backend/utils/avisoGrupoApp.js` | régua pura | — | `src/test/avisoGrupoApp.test.ts` |
@@ -397,75 +229,6 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/whatsappModulo.js` | régua pura | — | `src/test/whatsappModulo.test.ts` |
 | `backend/utils/whatsappOrigem.js` | régua pura | — | `src/test/whatsappOrigem.test.ts` |
 | `backend/utils/workerHmac.js` | régua pura | — | `SEM TESTE` |
-| `CBRio-Staff/app/(app)/(tabs)/aprovar.tsx` | tela app | — | `/aprovar` |
-| `CBRio-Staff/app/(app)/(tabs)/index.tsx` | tela app | — | `/index` |
-| `CBRio-Staff/app/(app)/(tabs)/menu.tsx` | tela app | — | `/menu` |
-| `CBRio-Staff/app/(app)/(tabs)/paineis.tsx` | tela app | — | `/paineis` |
-| `CBRio-Staff/app/(app)/(tabs)/solicitacoes.tsx` | tela app | — | `/solicitacoes` |
-| `CBRio-Staff/app/(app)/batismo/[id].tsx` | tela app | — | `/batismo/[id]` |
-| `CBRio-Staff/app/(app)/batismo/novo.tsx` | tela app | — | `/batismo/novo` |
-| `CBRio-Staff/app/(app)/batismos.tsx` | tela app | — | `/batismos` |
-| `CBRio-Staff/app/(app)/coleta-aprovar.tsx` | tela app | — | `/coleta-aprovar` |
-| `CBRio-Staff/app/(app)/coleta-culto.tsx` | tela app | — | `/coleta-culto` |
-| `CBRio-Staff/app/(app)/culto/[id].tsx` | tela app | — | `/culto/[id]` |
-| `CBRio-Staff/app/(app)/documentos.tsx` | tela app | — | `/documentos` |
-| `CBRio-Staff/app/(app)/escanear-nota.tsx` | tela app | — | `/escanear-nota` |
-| `CBRio-Staff/app/(app)/evento-inscritos/[id].tsx` | tela app | — | `/evento-inscritos/[id]` |
-| `CBRio-Staff/app/(app)/grupo-detalhe/[id].tsx` | tela app | — | `/grupo-detalhe/[id]` |
-| `CBRio-Staff/app/(app)/grupo-inscricoes.tsx` | tela app | — | `/grupo-inscricoes` |
-| `CBRio-Staff/app/(app)/inscricoes.tsx` | tela app | — | `/inscricoes` |
-| `CBRio-Staff/app/(app)/kids-apresentacoes.tsx` | tela app | — | `/kids-apresentacoes` |
-| `CBRio-Staff/app/(app)/kids-batismos.tsx` | tela app | — | `/kids-batismos` |
-| `CBRio-Staff/app/(app)/kids-sala/[id].tsx` | tela app | — | `/kids-sala/[id]` |
-| `CBRio-Staff/app/(app)/kids.tsx` | tela app | — | `/kids` |
-| `CBRio-Staff/app/(app)/membresia.tsx` | tela app | — | `/membresia` |
-| `CBRio-Staff/app/(app)/membro/[id].tsx` | tela app | — | `/membro/[id]` |
-| `CBRio-Staff/app/(app)/meus-bugs.tsx` | tela app | — | `/meus-bugs` |
-| `CBRio-Staff/app/(app)/meus-dados.tsx` | tela app | — | `/meus-dados` |
-| `CBRio-Staff/app/(app)/next-turma/[id].tsx` | tela app | — | `/next-turma/[id]` |
-| `CBRio-Staff/app/(app)/next.tsx` | tela app | — | `/next` |
-| `CBRio-Staff/app/(app)/notificacoes-config.tsx` | tela app | — | `/notificacoes-config` |
-| `CBRio-Staff/app/(app)/notificacoes.tsx` | tela app | — | `/notificacoes` |
-| `CBRio-Staff/app/(app)/perfil.tsx` | tela app | — | `/perfil` |
-| `CBRio-Staff/app/(app)/qr.tsx` | tela app | — | `/qr` |
-| `CBRio-Staff/app/(app)/reportar-bug.tsx` | tela app | — | `/reportar-bug` |
-| `CBRio-Staff/app/(app)/rh.tsx` | tela app | — | `/rh` |
-| `CBRio-Staff/app/(app)/rh/[id].tsx` | tela app | — | `/rh/[id]` |
-| `CBRio-Staff/app/(app)/rh/editar.tsx` | tela app | — | `/rh/editar` |
-| `CBRio-Staff/app/(app)/rh/ferias.tsx` | tela app | — | `/rh/ferias` |
-| `CBRio-Staff/app/(app)/solicitacao/[id].tsx` | tela app | — | `/solicitacao/[id]` |
-| `CBRio-Staff/app/(app)/solicitacao/nova.tsx` | tela app | — | `/solicitacao/nova` |
-| `CBRio-Staff/app/(app)/tarefas.tsx` | tela app | — | `/tarefas` |
-| `CBRio-Staff/app/(app)/voluntariado.tsx` | tela app | — | `/voluntariado` |
-| `CBRio-Staff/app/(app)/voluntariado/escala/[serviceId].tsx` | tela app | — | `/voluntariado/escala/[serviceId]` |
-| `CBRio-Staff/app/(auth)/login.tsx` | tela app | — | `/login` |
-| `CBRio-Staff/components/kids/EditarInscricaoSheet.tsx` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/components/LockScreen.tsx` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/components/ui/BackHeader.tsx` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/components/ui/Glass.tsx` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/components/ui/MenuRow.tsx` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/components/ui/SectionLabelFit.tsx` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/components/ui/Select.tsx` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/components/ui/States.tsx` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/components/ui/TabBarIcon.tsx` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/api.ts` | lib app | — | `78 chamada(s)` |
-| `CBRio-Staff/lib/atalhosHome.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/batismos.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/cacheUsuario.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/dataHora.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/destinoPush.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/gradeCulto.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/homeSinais.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/indicadores.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/membresia.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/permissoes.ts` | lib app | — | `1 chamada(s)` |
-| `CBRio-Staff/lib/push.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/qr.ts` | lib app | — | `1 chamada(s)` |
-| `CBRio-Staff/lib/rh.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/semana.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/supabase.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/theme.ts` | lib app | — | `0 chamada(s)` |
-| `CBRio-Staff/lib/useStaffMe.ts` | lib app | — | `1 chamada(s)` |
 | `src/pages/admin/AppAnalytics` | tela ERP | — | `/admin/app-analytics` |
 | `src/pages/admin/AssistenteIA` | tela ERP | — | `/assistente-ia` |
 | `src/pages/admin/CruzamentosPessoas` | tela ERP | — | `/admin/cruzamentos` |
