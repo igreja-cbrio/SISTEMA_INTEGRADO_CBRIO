@@ -26,6 +26,7 @@ import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
+import { faltandoParaSalvar, frasePendencias, pendenciasInformativas, ROTULO_CAMPO, CAMPOS_CRIACAO, CAMPOS_EDICAO } from '../../lib/camposObrigatoriosMembro';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../../components/ui/select';
@@ -372,20 +373,34 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
     if (file) processarFoto(file);
   };
 
+  // ⚠️⚠️ EDITAR EXIGE SÓ O NOME (21/08/2026 · pedido do Matheus). Exigir CPF e
+  // nascimento pra salvar uma edição impedia corrigir o telefone de quem está
+  // sem esses dados — são 545 membros sem CPF — e o efeito real não é
+  // incômodo, é CHUTE: CPF inventado vira chave forte no matcher e liga a
+  // pessoa ao cadastro de outra. Criar continua exigindo os quatro (Contrato
+  // de porta). Régua e o porquê em `src/lib/camposObrigatoriosMembro`.
+  const faltando = faltandoParaSalvar(form, { edicao: isEdit });
+  const pendentesInfo = isEdit ? pendenciasInformativas(form) : [];
+  // ⚠️ O asterisco sai do MESMO catálogo que trava o salvar — decidir de novo
+  // aqui faria os dois divergirem no primeiro ajuste. Marcar como obrigatório
+  // um campo que o salvar não exige faz a pessoa preencher por obediência ao
+  // símbolo, que é exatamente onde nasce o CPF chutado. `Nome` mantém o
+  // asterisco nos dois modos, porque a coluna é NOT NULL.
+  const obrig = (campo) => ((isEdit ? CAMPOS_EDICAO : CAMPOS_CRIACAO).includes(campo) ? ' *' : '');
+
   const isStepValid = () => {
     switch (currentStep) {
       case 0:
-        return form.nome.trim() !== '' && form.sobrenome.trim() !== '' && form.cpf.trim() !== '' && !!form.data_nascimento;
+        // ⚠️ O passo 0 usa a MESMA régua do salvar — travar "Próximo" com um
+        // critério e o botão final com outro faz a pessoa não achar o bloqueio.
+        return faltando.length === 0;
       default:
         return true;
     }
   };
 
   const handleSave = async () => {
-    if (!form.nome.trim()) { toast.error('Nome é obrigatório.'); return; }
-    if (!form.sobrenome.trim()) { toast.error('Sobrenome é obrigatório.'); return; }
-    if (!form.cpf.trim()) { toast.error('CPF é obrigatório.'); return; }
-    if (!form.data_nascimento) { toast.error('Data de nascimento é obrigatória.'); return; }
+    if (faltando.length) { toast.error(frasePendencias(faltando)); return; }
     setSaving(true);
     try {
       const payload = { ...form };
@@ -476,6 +491,20 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
           {/* Step 1: Dados Pessoais */}
           {currentStep === 0 && (
             <div>
+              {/* ⚠️ Na EDIÇÃO o que falta é INFORMADO, não exigido: a equipe vê
+                  o buraco e completa quando tiver o dado. Exigir aqui só produz
+                  chute — e CPF chutado liga a pessoa ao cadastro de outra. */}
+              {pendentesInfo.length > 0 && (
+                <div style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 10, border: '1px dashed rgba(245,158,11,0.5)', background: 'rgba(245,158,11,0.07)' }}>
+                  <div style={{ fontSize: 12, color: C.text, fontWeight: 600 }}>
+                    Falta no cadastro: {pendentesInfo.map(k => ROTULO_CAMPO[k] || k).join(' · ')}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.text2, marginTop: 3, lineHeight: 1.5 }}>
+                    Dá para salvar assim mesmo — preencha quando tiver o dado. Não invente CPF nem
+                    data: chute vira chave de identidade e liga esta pessoa ao cadastro de outra.
+                  </div>
+                </div>
+              )}
               {/* Foto upload */}
               <div className="flex flex-col items-center gap-2 py-4">
                 <div
@@ -507,11 +536,11 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <Label>Nome *</Label>
+                  <Label>Nome{obrig('nome')}</Label>
                   <Input value={form.nome} onChange={e => set('nome', e.target.value)} placeholder="Nome" />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Sobrenome *</Label>
+                  <Label>Sobrenome{obrig('sobrenome')}</Label>
                   <Input value={form.sobrenome} onChange={e => set('sobrenome', e.target.value)} placeholder="Sobrenome" />
                 </div>
                 <div className="space-y-1.5 sm:col-span-2">
@@ -522,11 +551,11 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
                   </p>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>CPF *</Label>
+                  <Label>CPF{obrig('cpf')}</Label>
                   <Input value={form.cpf} onChange={e => set('cpf', e.target.value)} placeholder="000.000.000-00" inputMode="numeric" maxLength={14} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Data de Nascimento *</Label>
+                  <Label>Data de Nascimento{obrig('data_nascimento')}</Label>
                   <BirthDatePicker value={form.data_nascimento} onChange={v => set('data_nascimento', v)} />
                 </div>
                 <div className="space-y-1.5">
