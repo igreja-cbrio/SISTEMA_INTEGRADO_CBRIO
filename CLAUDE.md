@@ -6613,11 +6613,21 @@ prometer número da outra plataforma.
   somam). Reemissão/ja_inscrito/corrida-duplicada também passam o valor do lote
   (senão a cobrança reemitida nasceria com o valor de tabela). O NOME do lote
   vai em `metadata.lote` da cobrança — registro pra conciliação, nunca decisão.
-- **Tela**: box de valor vira "Valor da inscrição · Lote 1" + "restam N
-  inscrições neste valor — depois vai a R$ X"; a `EscolhaPagamento` (Pix ×
-  cartão) mostra "Lote 1 · no Pix: R$ 830" ANTES do formulário. Bundle antigo
-  mostra o número certo sem saber o que é lote (o GET devolve `valor_centavos`
-  já do lote atual). Admin: `LotesEditor` dentro do bloco de pagamento.
+- **Tela**: box de valor vira "Valor da inscrição · Lote 1"; a
+  `EscolhaPagamento` (Pix × cartão) mostra "Lote 1 · no Pix: R$ 830" ANTES do
+  formulário. Bundle antigo mostra o número certo sem saber o que é lote (o GET
+  devolve `valor_centavos` já do lote atual). Admin: `LotesEditor` dentro do
+  bloco de pagamento.
+- ⚠️⚠️ **NENHUMA CONTAGEM na tela pública de evento COM LOTES** (pedido do
+  Arthur · 21/08, revertendo o que estreou em 20/08): saiu a frase "restam N
+  inscrições neste valor — depois vai a R$ X" **e** a pílula "Restam N vagas"
+  (a condição da pílula ganhou `&& !evento.lote_atual` — as outras 6 portas
+  seguem mostrando vaga). O payload público também **não devolve mais**
+  `restantes_no_lote` nem `proximo` (`lote_atual` = só `nome` +
+  `valor_centavos`): a contagem revela quanta gente já entrou, e evento em
+  divulgação vende melhor sem placar. `lotesEvento.loteAtual` **continua**
+  calculando os dois campos — o servidor usa pra decidir preço/metadata; o que
+  mudou é o que SAI. Anunciar "o lote vai virar" é trabalho de quem divulga.
 - ⚠️ Leitura da coluna é ISOLADA (`anexarLotesEvento`, separada dos outros dois
   anexadores) — mas salvar evento pelo admin com lotes exige a migration.
 - ⚠️ **Soma dos lotes (300) ≠ vagas do evento (200)** — decisão de capacidade
@@ -6627,8 +6637,9 @@ prometer número da outra plataforma.
   não monta lote) — a COBRANÇA pelo app sai certa (usa `inscreverEspinha`).
   Irrelevante pro retiro (`so_web` manda o app pro navegador).
 
-⏳ Retiro: lotes seedados na migration; falta aplicar, mergear, decidir o total
-de vagas e publicar.
+Retiro: migration aplicada, PR mergeada, `vagas=350` e **PUBLICADO em 21/08**
+como "AMI CAMP 2027" (descrição "Evento teste." apagada no banco em 21/08 —
+`descricao` NULL, a tela simplesmente não mostra parágrafo).
 
 ## ⚠️ Deploy sem derrubar aba aberta · Skew Protection ligado DE VERDADE (2026-08-21 · SEM migration)
 

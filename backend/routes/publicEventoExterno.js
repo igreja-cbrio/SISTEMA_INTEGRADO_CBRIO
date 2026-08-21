@@ -1019,9 +1019,14 @@ router.get('/:slug', async (req, res) => {
       // saber o que é lote).
       pagamento_ativo: pago,
       valor_centavos: pago ? (lote ? lote.valor_centavos : Number(esp.valor_centavos)) : null,
-      // Lote atual por extenso, pra tela rotular ("Lote 1 · restam N · depois
-      // sobe pra R$ X"). null = evento sem lotes, ou ocupação indisponível.
-      lote_atual: lote,
+      // Lote atual por extenso, pra tela rotular ("Lote 1 · R$ 830 no Pix").
+      // null = evento sem lotes, ou ocupação indisponível.
+      // ⚠️ SÓ nome e preço de HOJE: `restantes_no_lote` e `proximo` NÃO saem no
+      // payload público (pedido do Arthur · 21/08) — anunciar quanto falta e
+      // quanto vai custar depois entrega o placar de inscritos pra qualquer um
+      // que abra a API. O preço de cada inscrição continua decidido no POST,
+      // pela posição, com a régua inteira do `lotesEvento` no servidor.
+      lote_atual: lote ? { nome: lote.nome, valor_centavos: lote.valor_centavos } : null,
       // Grupo de WhatsApp pra dúvidas (21/08): link de ENTRADA exibido no
       // cabeçalho — cobre escolha de forma, formulário e tela de sucesso.
       whatsapp_duvidas: esp.whatsapp_duvidas_url || null,

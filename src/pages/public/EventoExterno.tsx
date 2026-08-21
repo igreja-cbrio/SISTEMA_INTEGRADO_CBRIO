@@ -660,8 +660,13 @@ export default function EventoExterno() {
             <form onSubmit={enviar}>
               {/* Vagas limitadas: mostrar ANTES de preencher. A conferência que
                   vale é a do servidor (dentro do lock) — aqui é só aviso, então
-                  pode ficar 1 ou 2 vagas defasado num lançamento movimentado. */}
-              {typeof evento.vagas_restantes === 'number' && (
+                  pode ficar 1 ou 2 vagas defasado num lançamento movimentado.
+                  ⚠️ Evento com LOTES não mostra contagem nenhuma (pedido do
+                  Arthur · 21/08, AMI CAMP 2027): número de vagas restantes na
+                  divulgação conta quanta gente já entrou, e evento de lote
+                  vende melhor sem esse placar. As outras portas seguem
+                  mostrando — quem tem lote é quem cala. */}
+              {typeof evento.vagas_restantes === 'number' && !evento.lote_atual && (
                 <div style={{
                   marginBottom: 16, padding: '8px 14px', borderRadius: 999, display: 'inline-block',
                   fontSize: 12.5, fontWeight: 600,
@@ -686,18 +691,10 @@ export default function EventoExterno() {
                   <div style={{ fontSize: 24, fontWeight: 800, color: '#00B39D', marginTop: 2 }}>
                     {(evento.valor_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </div>
-                  {/* O lote vira SOZINHO quando as vagas dele esgotam — dizer
-                      quanto falta e quanto vai custar depois é o que faz a
-                      pessoa entender por que o preço de hoje é este. */}
-                  {evento.lote_atual?.proximo && (
-                    <p style={{ fontSize: 12, color: C.text3, margin: '6px 0 0', lineHeight: 1.5 }}>
-                      {typeof evento.lote_atual.restantes_no_lote === 'number'
-                        ? `Restam ${evento.lote_atual.restantes_no_lote} inscrições neste valor — depois vai a `
-                        : 'Quando este lote esgotar, o valor vai a '}
-                      {(evento.lote_atual.proximo.valor_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                      {` (${evento.lote_atual.proximo.nome})`}.
-                    </p>
-                  )}
+                  {/* ⚠️ NÃO voltar a anunciar quanto falta pro lote virar nem o
+                      preço do próximo (pedido do Arthur · 21/08): a tela diz o
+                      lote e o preço de HOJE, e mais nada. O que vem depois é
+                      argumento de divulgação, dito por quem divulga. */}
                   <div style={{ fontSize: 12, color: C.text3, marginTop: 4 }}>
                     {rotuloMetodos(evento)}
                     {' '}Ao enviar, você vai para a página de pagamento.
