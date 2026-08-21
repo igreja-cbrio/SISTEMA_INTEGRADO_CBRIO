@@ -11,6 +11,7 @@ import {
   Users, Search, Plus, ChevronRight, X,
   Phone, Mail, MapPin, Heart, Calendar, Star,
   CheckCircle2, Circle, UserPlus, Home, Pencil,
+  UserMinus,
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
   Copy, Share2, Download, QrCode, Camera, ScanLine,
@@ -1206,6 +1207,46 @@ export default function Membresia() {
     }
   };
 
+  // ── Desativar / reativar membro (pedido do Matheus · 21/08) ───────────────
+  // ⚠️ NÃO é o "remover" (soft-delete): aqui a pessoa CONTINUA na base, só sai
+  // das contagens e dos disparos. Quem decide é o servidor; a tela só mostra.
+  const [desativarAberto, setDesativarAberto] = useState(false);
+  const [desativarMotivo, setDesativarMotivo] = useState('');
+  const [desativando, setDesativando] = useState(false);
+
+  const confirmarDesativacao = async () => {
+    if (!selectedMembro?.id || desativando) return;
+    setDesativando(true);
+    try {
+      const r = await membresia.membros.desativar(selectedMembro.id, desativarMotivo);
+      setDesativarAberto(false);
+      setDesativarMotivo('');
+      // ⚠️ Aviso do servidor (migration pendente) é EXIBIDO: "desativou mas o
+      // motivo não foi guardado" é diferente de "deu tudo certo".
+      if (r?.aviso) setError(r.aviso);
+      await reloadDetail();
+      await fetchMembros();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDesativando(false);
+    }
+  };
+
+  const reativarMembro = async () => {
+    if (!selectedMembro?.id || desativando) return;
+    setDesativando(true);
+    try {
+      await membresia.membros.reativar(selectedMembro.id);
+      await reloadDetail();
+      await fetchMembros();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDesativando(false);
+    }
+  };
+
   const toggleEtapa = async (etapaKey) => {
     if (!isDiretor || !selectedMembro) return;
     const registro = selectedMembro.trilha?.find(t => t.etapa === etapaKey);
@@ -1777,6 +1818,16 @@ export default function Membresia() {
                     <ShieldCheck style={{ width: 16, height: 16 }} />
                   </Button>
                 )}
+                {isDiretor && selectedMembro.status !== 'inativo' && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => { setDesativarMotivo(''); setDesativarAberto(true); }}
+                    title="Desativar membro · sai das contagens, continua na base"
+                  >
+                    <UserMinus style={{ width: 16, height: 16 }} />
+                  </Button>
+                )}
                 {isDiretor && (
                   <Button variant="ghost" size="icon" onClick={() => openEdit(selectedMembro)} title="Editar">
                     <Pencil style={{ width: 16, height: 16 }} />
@@ -1789,6 +1840,37 @@ export default function Membresia() {
             </div>
 
             <div style={{ padding: '20px 32px 28px' }}>
+              {selectedMembro.status === 'inativo' && (
+                <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.07)' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                    <div style={{ minWidth: 220, flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Membro desativado</div>
+                      <div style={{ fontSize: 11.5, color: C.text2, marginTop: 4, lineHeight: 1.5 }}>
+                        {selectedMembro.inativado_em
+                          ? `Desde ${new Date(selectedMembro.inativado_em).toLocaleDateString('pt-BR')}`
+                          : 'Sem data registrada'}
+                        {selectedMembro.inativado_status_anterior
+                          ? ` · era ${STATUS_MAP[selectedMembro.inativado_status_anterior]?.label || selectedMembro.inativado_status_anterior}`
+                          : ''}
+                      </div>
+                      {/* ⚠️ Motivo é OPCIONAL: dizer "não informado" é diferente
+                          de deixar em branco, que se lê como campo quebrado. */}
+                      <div style={{ fontSize: 12, color: C.text, marginTop: 6 }}>
+                        <span style={{ color: C.text3 }}>Motivo: </span>
+                        {selectedMembro.inativado_motivo || <span style={{ color: C.text3, fontStyle: 'italic' }}>não informado</span>}
+                      </div>
+                      <div style={{ fontSize: 10.5, color: C.text3, marginTop: 6 }}>
+                        Continua na base e no histórico — sai das contagens, do censo e dos disparos.
+                      </div>
+                    </div>
+                    {isDiretor && (
+                      <Button variant="outline" size="sm" onClick={reativarMembro} disabled={desativando}>
+                        {desativando ? 'Reativando…' : 'Reativar'}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
               {possiveisDupErro && (
                 <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: '1px dashed #F09595', background: '#FCEBEB' }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível consultar duplicados</div>
@@ -3278,6 +3360,58 @@ export default function Membresia() {
 
       {censoAberto && (
         <CensoRespostasDialog membroId={censoAberto} onClose={() => setCensoAberto(null)} />
+      )}
+
+      {/* ⚠️ Confirmação de desativação. O texto DIZ o que acontece e o que NÃO
+          acontece: sem isso, "desativar" se lê como "apagar" e a equipe evita o
+          botão — ou pior, usa achando que apagou. */}
+      {desativarAberto && selectedMembro && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+          onClick={() => !desativando && setDesativarAberto(false)}
+        >
+          <div
+            className="glass-solid"
+            style={{ width: '100%', maxWidth: 460, borderRadius: 16, padding: 24, background: 'var(--cbrio-modal-bg)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 17, fontWeight: 700, color: C.text }}>Desativar {selectedMembro.nome}?</div>
+            <div style={{ fontSize: 12.5, color: C.text2, marginTop: 8, lineHeight: 1.6 }}>
+              A pessoa <strong>continua na base</strong>, com histórico, contribuições e vínculos
+              intactos — e pode ser reativada a qualquer momento. O que muda: ela sai da contagem
+              de membros ativos, dos indicadores, do censo e dos disparos.
+            </div>
+            <div style={{ fontSize: 11.5, color: C.text3, marginTop: 8, lineHeight: 1.5 }}>
+              Não desliga grupo nem voluntariado — isso continua sendo feito nos módulos deles.
+            </div>
+
+            <div style={{ marginTop: 16 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                Motivo da saída (opcional)
+              </label>
+              <Textarea
+                value={desativarMotivo}
+                onChange={(e) => setDesativarMotivo(e.target.value.slice(0, 500))}
+                rows={3}
+                placeholder="Ex.: mudou de cidade, transferiu-se para outra igreja, afastou-se…"
+                style={{ marginTop: 6 }}
+                autoFocus
+              />
+              <div style={{ fontSize: 10.5, color: C.text3, marginTop: 4 }}>
+                {desativarMotivo.trim().length}/500 · fica registrado na ficha e no log de auditoria
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+              <Button variant="ghost" onClick={() => setDesativarAberto(false)} disabled={desativando}>
+                Cancelar
+              </Button>
+              <Button onClick={confirmarDesativacao} disabled={desativando} style={{ background: C.red, color: '#fff' }}>
+                {desativando ? 'Desativando…' : 'Desativar membro'}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Form Modal */}
