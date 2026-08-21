@@ -5,7 +5,7 @@
 // os campos cujo valor escolhido difere do que o mantido já tem (o resto o
 // merge resolve sozinho). Funciona pra par (prop `drop`) e pra grupo de N
 // cadastros (prop `outros`).
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 
 const maskCpf = (v) => {
   const d = String(v || '').replace(/\D/g, '');
@@ -36,8 +36,31 @@ const norm = (key, v) => {
   return (key === 'cpf' || key === 'telefone') ? s.replace(/\D/g, '') : s.toLowerCase();
 };
 
+// ⚠️ Igualdade RASA do objeto de override. É ela que decide se vale avisar o
+// pai de novo — ver o aviso do `useEffect` lá embaixo.
+function mesmosCampos(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  return ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && a[k] === b[k]);
+}
+
 export default function MergeFieldPicker({ keep, drop, outros, onCampos }) {
-  const others = Array.isArray(outros) ? outros : (drop ? [drop] : []);
+  // ⚠️⚠️ LAÇO DE RENDER INFINITO (relato do Matheus · 21/08/2026: "fica quicando
+  // o card dos nomes"). `others` era um array literal NOVO a cada render, então
+  // `camposConf` (que depende dele) também nascia novo, o `useEffect` abaixo
+  // disparava e chamava `onCampos({...})` — o pai fazia `setState` e o ciclo
+  // recomeçava, sem parar. A `key` de identidade tem que sair dos IDS, não da
+  // identidade do array.
+  const idsOutros = (Array.isArray(outros) ? outros : (drop ? [drop] : []))
+    .filter(Boolean).map((o) => o?.id ?? '').join('|');
+  const others = useMemo(
+    () => (Array.isArray(outros) ? outros : (drop ? [drop] : [])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [idsOutros],
+  );
 
   // Por campo, os valores DISTINTOS não-vazios entre [mantido, ...absorvidos].
   // Só vira escolha quando há >=2 valores distintos (conflito real); onde só um
@@ -66,6 +89,12 @@ export default function MergeFieldPicker({ keep, drop, outros, onCampos }) {
     const o = {}; camposConf.forEach((c) => { o[c.key] = escolhaInicial(c); }); return o;
   });
 
+  // ⚠️⚠️ SÓ AVISA O PAI QUANDO O VALOR MUDOU. O memo acima conserta a causa
+  // conhecida, mas o pai continua livre pra remontar props a cada render (o
+  // `GruposDuplicatas` monta a lista de absorvidos com `.filter()` inline). Sem
+  // esta comparação, qualquer churn de identidade lá em cima ressuscita o laço
+  // — e o sintoma é a tela tremendo numa decisão que é PERMANENTE.
+  const ultimoEmitido = useRef(null);
   useEffect(() => {
     const campos = {};
     camposConf.forEach((c) => {
@@ -74,6 +103,8 @@ export default function MergeFieldPicker({ keep, drop, outros, onCampos }) {
       if (!esc) return;
       if (!doKeep || doKeep.norm !== esc.norm) campos[c.key] = esc.valor; // só override real
     });
+    if (ultimoEmitido.current && mesmosCampos(ultimoEmitido.current, campos)) return;
+    ultimoEmitido.current = campos;
     onCampos?.(campos);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [escolhas, camposConf]);
