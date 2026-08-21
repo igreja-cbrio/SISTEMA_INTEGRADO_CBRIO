@@ -16,6 +16,7 @@ import { SkeletonBlock } from '../../components/Skeleton';
 import { useAuth } from '../../contexts/AuthContext';
 import { Plus, Pencil, Trash2, ChevronDown, ChevronRight, Target, ListChecks, Activity, X, Save, Filter } from 'lucide-react';
 import { toast } from 'sonner';
+import OkrCiclo from './OkrCiclo';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -195,6 +196,12 @@ export default function EstruturaOkr({ embedded = false }) {
           </button>
         </div>
       )}
+
+      {/* Fase 2A · Índice da Base (derivado) + OKRs de ciclo (trimestrais).
+          Vem ANTES dos direcionadores de propósito: no desenho novo o que se
+          pactua no trimestre é o que a liderança olha primeiro; a matriz de
+          objetivos/KPIs é a cobertura permanente embaixo. */}
+      <OkrCiclo />
 
       {/* Direcionadores (compactos) */}
       <section style={{ ...cardStyle, marginBottom: 16 }}>

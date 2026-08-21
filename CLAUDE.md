@@ -5725,6 +5725,134 @@ frase (MBO ×1,30), não resultados-chave de ciclo.
 - A seção histórica abaixo (Frente B1) descreve o mecanismo antigo — vale
   como arqueologia, não como padrão a seguir.
 
+## ⚠️⚠️ OKR · FASE 2A · a fundação do desenho novo (2026-08-21 · migration `20260821150000`)
+
+Autorizado pelo Marcos ("tudo bem, podemos seguir dessa forma") no dia em que os
+637 KRs foram desativados. Entrega as **três** fundações da tese "O Motor e os
+Anéis" (19/08), **sem** tela nova de cadastro estratégico:
+
+| peça | o que é | onde vive |
+|---|---|---|
+| **LINHAGEM** | etiqueta de LEITURA nos KPIs táticos (`nsm` · `jornada` · `sistema`) | coluna `kpi_indicadores_taticos.linhagem` |
+| **OKRs DE CICLO** | a camada que substitui os KRs (trimestral · dono · delta · morre no fim) | `okr_ciclos` + `okr_ciclo_krs` |
+| **ÍNDICE DA BASE** | agregação DERIVADA da membresia (nunca cadastro) | `fn_indice_engajamento_base()` |
+
+### ⚠️⚠️ LEI · nível estratégico é DERIVADO, nunca cadastrável
+
+NSM, Índice da Base e as leituras dos anéis são **fórmula**. Um agregado
+cadastrável na mesma prateleira dos seus componentes é literalmente a **contagem
+dupla** que derrubou os 637 KRs — 258 daquelas linhas eram cópias de cascata do
+mesmo número. Por isso o Índice é FUNÇÃO e a opção "tudo no mesmo nível" foi
+rejeitada no desenho.
+
+⇒ **Corolário: `linhagem` NÃO é fórmula.** Ela responde *"este indicador descreve
+o funil da NSM, a base engajada, ou é operação?"* — é agrupamento de tela. **Somar
+KPIs por essa coluna produz contagem dupla**, e está escrito no `COMMENT` da
+coluna pra quem for auditar. `DEFAULT 'sistema'` é fail-safe deliberado: KPI novo
+não entra em agregado nenhum até alguém decidir que pertence ali.
+
+### ⚠️ O que uma linha de `okr_ciclo_krs` PODE ser · os 3 filtros de cadastro
+
+O POST recusa, com mensagem em português, o que não passar nos três:
+
+1. **É um delta com prazo?** `baseline` e `alvo` obrigatórios e **diferentes** —
+   "de X para Y", não frase de meta. Delta zero não é KR.
+2. **Tem dono que pactuou?** `dono_id` obrigatório (FK `profiles` · lei nº 3) —
+   "meta sem quem pactuou é a meta cascateada de novo".
+3. **O KPI de origem responde sozinho?** `kpi_id` obrigatório. Era isso que
+   faltava em **303 dos 316** KRs antigos.
+
+E a pergunta que decide se o assunto é KR ou meta de KPI: **"isso para de fazer
+sentido em 31 de dezembro?"** Se não para, é meta de faixa no próprio KPI.
+
+- ⚠️ **`okr_ciclo_krs` NUNCA guarda valor apurado** — a medição chega por join com
+  `vw_kpi_trajetoria_atual`. Guardar valor era um dos erros da camada antiga
+  (número que envelhece e ninguém sabe de quando é).
+- ⚠️⚠️ **Progresso é FRAÇÃO DO DELTA percorrida**, `(valor − baseline) / (alvo −
+  baseline)` clampado 0..1 — **não** `valor/alvo`. O jeito antigo ignora o ponto
+  de partida: um KR "de 41% para 70%" com 45% apurado apareceria como 64% feito
+  quando andou 14% do caminho. Funciona igual para `menor_melhor` (numerador e
+  denominador trocam de sinal juntos), e é por isso que a direção vive na PRÓPRIA
+  linha do KR.
+- ⚠️ **`direcao` usa o vocabulário de `sentido_meta`** (`maior_melhor` /
+  `menor_melhor`). Comparar com `'menor'` seco não casa nunca — e o efeito seria
+  KR de prazo ou de churn ficando **verde ao estourar**.
+- ⚠️ **Sem medição o farol é `sem_dado`, nunca vermelho**: ausência de medição não
+  é mau desempenho.
+- ⚠️ **`uniq_okr_ciclo_aberto` é índice PARCIAL ⇒ `ON CONFLICT` NÃO infere** (lei
+  de 04/08). Abrir ciclo novo **FECHA o anterior num UPDATE explícito antes do
+  INSERT**, e o POST devolve `fechados[]` pra a tela DECLARAR o que encerrou —
+  fechar o trimestre em curso sem avisar é o pior efeito colateral possível aqui.
+  Reabrir ciclo com outro aberto responde **409 nomeando o outro**.
+- ⚠️ **Sem `dono_nome` snapshot**: poria PII numa tabela de estrutura e
+  envelheceria a cada renomeação. O nome vem do join na leitura.
+- ⚠️ **RLS de escrita é `is_super_admin()` só** — quem escreve é o backend com
+  service_role atrás de `authorize('admin','diretor')`. Ampliar o que a anon key
+  do bundle alcança sem nenhum cliente precisar é a lei nº 11.
+- **Ciclo sem nenhum aberto é estado LEGÍTIMO** (entre trimestres): `/ciclos/vigente`
+  devolve `{ciclo: null, krs: []}` e a tela diz isso, não "erro".
+
+### ⚠️⚠️ O Índice da Base é a LENTE VIVA — a fatia da presidência é OUTRA régua
+
+`fn_indice_engajamento_base()` lê `vw_pessoas_papeis_mat` e divide por **membros
+ativos** (1.703 em 21/08). A fatia do Pr. Juninho
+(`src/lib/monitoramentoOkrEstrutura.js`) divide por **3.000 fixos**, com
+numeradores próprios. **NUNCA misturar as duas no mesmo documento** (lei de 18/08)
+— é assim que uma reunião vira discussão sobre qual número está certo. O card da
+tela declara a base e diz que a planilha usa outra.
+
+Medido em 21/08 (base 1.703): conectar **46,6%** · seguir 30,2% · servir 25,7% ·
+generosidade 14,0% · **investir 0,0%** · media_3 28,8% · media_5 23,3% — todos
+contra o alvo ≥50% dele. Na base 3.000 esses mesmos numeradores dariam conectar
+26,5% / servir 14,6% / generosidade 7,9%, **muito abaixo** dos 48% / 29,8% / 28,5%
+que a fatia publica: os números dela vêm da planilha, não da view.
+
+- ⚠️⚠️ **`investir = 0%` é FATO MEDIDO, não bug**: `mem_devocionais` tem **12
+  check-ins na história inteira** e o último é de 15/07 — fora de qualquer janela.
+  O card escreve isso, senão o zero se lê como tela quebrada.
+- ⚠️ **A função devolve `media_3` E `media_5`** e a tela tem as duas em um toggle:
+  a planilha conta 3 valores, o sistema mede 5 desde o devocional. **Escolher uma
+  aqui seria decidir no lugar do Pr. Juninho**, e trocar depois mudaria número já
+  apresentado.
+- ⚠️ **Base zero devolve percentual NULL, nunca 0%** — "não há base para medir" e
+  "a base não está engajada" levam a decisões opostas. O endpoint responde **500
+  com o motivo** em vez de índice zerado, e o card fica âmbar dizendo que o número
+  é **desconhecido**, não zero.
+- ⚠️ **Sem grant para `anon`/`authenticated`** (lei de 10/08): ela lê a matview de
+  pessoas e quem a chama é o backend.
+
+### ⚠️ CONECTAR e SEGUIR não têm etiqueta `jornada` — e é por isso que o Índice é função
+
+Conferido em 21/08: **não existe KPI tático de "% da base em grupo" nem de "% da
+base batizada"**. Ou seja, o Índice **não poderia** ser soma de KPIs nem se
+quiséssemos — ele lê a matview direto. Criar esses dois KPIs é decisão da **fase
+2B**, não efeito colateral desta migration.
+
+⚠️ **KIDS-19 ficou FORA de `nsm` de propósito**: decisão Kids está fora da NSM por
+desenho (a jornada não avança para a criança · o trigger pula membro/trilha/
+`nsm_eventos`). Etiquetá-lo faria a tela agrupar um funil que não existe.
+
+Backfill medido: `sistema` ~139 · `nsm` ~18 · `jornada` 13.
+
+### Onde isso aparece
+
+`GET /estrategia/indice-base` · `GET|PUT /estrategia/linhagem[/:kpiId]` ·
+`GET|POST /estrategia/ciclos[...]` · `POST|PATCH|DELETE /estrategia/ciclo-krs`.
+Tela: **`src/pages/admin/OkrCiclo.jsx`** montado no TOPO da `EstruturaOkr`
+(embedded em `/gestao`) — antes dos direcionadores, porque o que se pactua no
+trimestre é o que a liderança olha primeiro; a matriz permanente fica embaixo.
+
+⚠️ `EstruturaOkr` já é gated por `isAdmin` (`admin`/`diretor`), então a tela
+inteira só abre pra quem o backend autoriza a escrever. Abrir leitura pra
+`gestao >= 1` (o que a RLS permite) exige tirar aquele gate — decisão separada.
+
+⏳ **Fase 2B (combinada, não feita)**: curar os objetivos dos anéis (topos 4–9 ×
+os 39 `kpi_objetivos_gerais` com `valores=[]`) · resgatar as ~15 réguas órfãs ·
+**metas anuais pactuadas por KPI substituindo o ×1,30** (⚠️ cuidado com a
+semântica delta × anual) · criar os KPIs de conectar/seguir da base · ligar
+"≥80% recomendam o Next" · o bug da meta 90 no churn (exige "menor é melhor" na
+view) · reforma profunda da `EstruturaOkr`.
+
 ## OKR · KR medido pelo KPI (Frente B1 · 2026-06-03)
 
 Marcos: "o KR é pra ser respondido pelo **KPI central** do indicador · **sem entrada manual**;
