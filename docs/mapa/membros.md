@@ -13,7 +13,7 @@
 - `backend/routes/membresia.js`
 - `backend/routes/pessoas.js`
 Guard: `authorizeModule('membros', 1 | 2)`
-<details><summary>Endpoints (93)</summary>
+<details><summary>Endpoints (95)</summary>
 - `DELETE /api/membresia/cadastros/:id`
 - `DELETE /api/membresia/checkins/:id`
 - `DELETE /api/membresia/contribuicoes/:id`
@@ -85,8 +85,10 @@ Guard: `authorizeModule('membros', 1 | 2)`
 - `POST /api/membresia/identidade-pendencias/:id/status`
 - `POST /api/membresia/identidade-pendencias/ligar-lote`
 - `POST /api/membresia/membros`
+- `POST /api/membresia/membros/:id/desativar`
 - `POST /api/membresia/membros/:id/foto`
 - `POST /api/membresia/membros/:id/mesma-familia`
+- `POST /api/membresia/membros/:id/reativar`
 - `POST /api/membresia/membros/:id/vinculos`
 - `POST /api/membresia/membros/merge`
 - `POST /api/membresia/ministerios`
@@ -114,6 +116,7 @@ Guard: `authorizeModule('membros', 1 | 2)`
 - `backend/utils/cpf.js`
 - `backend/utils/criancaApresentacao.js`
 - `backend/utils/dadosSensiveisPessoa.js`
+- `backend/utils/desativarMembro.js`
 - `backend/utils/membrosPagina.js`
 - `backend/utils/prontidaoCadastro.js`
 - `backend/utils/sanitize.js`

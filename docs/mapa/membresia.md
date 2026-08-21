@@ -15,7 +15,7 @@
 - `backend/routes/membresia.js`
 - `backend/routes/voluntariado.js`
 Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
-<details><summary>Endpoints (155)</summary>
+<details><summary>Endpoints (157)</summary>
 - `DELETE /api/membresia/cadastros/:id`
 - `DELETE /api/membresia/checkins/:id`
 - `DELETE /api/membresia/contribuicoes/:id`
@@ -125,8 +125,10 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `POST /api/membresia/identidade-pendencias/:id/status`
 - `POST /api/membresia/identidade-pendencias/ligar-lote`
 - `POST /api/membresia/membros`
+- `POST /api/membresia/membros/:id/desativar`
 - `POST /api/membresia/membros/:id/foto`
 - `POST /api/membresia/membros/:id/mesma-familia`
+- `POST /api/membresia/membros/:id/reativar`
 - `POST /api/membresia/membros/:id/vinculos`
 - `POST /api/membresia/membros/merge`
 - `POST /api/membresia/ministerios`
@@ -180,6 +182,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `backend/utils/cronAuth.js`
 - `backend/utils/cursorLote.js`
 - `backend/utils/dadosSensiveisPessoa.js`
+- `backend/utils/desativarMembro.js`
 - `backend/utils/exclusaoInscricaoLote.js`
 - `backend/utils/membrosPagina.js`
 - `backend/utils/pcoChave.js`
