@@ -20,6 +20,55 @@ const { diaBRT } = require('./volDisponibilidade');
 
 const DIAS_SEMANA = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
 
+// ⚠️⚠️ ANTECEDÊNCIA POR ÁREA (21/08/2026). Pedido do Matheus: *"os voluntários
+// que são do kids, recebessem 3 dias antes do culto, para que a Mari Gaia e a
+// Milena possam se organizar para escalar outra pessoa no lugar."*
+//
+// A véspera serve pra lembrar quem já vai; NÃO serve pra REPOR. Descobrir no
+// sábado que falta gente no Kids no domingo não dá tempo de achar substituto —
+// e no Kids a vaga aberta não é só uma função a menos, é razão de criança por
+// adulto na sala.
+const ANTECEDENCIA_PADRAO_DIAS = 1;
+const ANTECEDENCIA_KIDS_DIAS = 3;
+
+/** Sem acento, minúsculo, sem espaço nas pontas. */
+function _chaveArea(v) {
+  return String(v == null ? '' : v)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .trim().toLowerCase();
+}
+
+/**
+ * A escala é do Kids?
+ *
+ * ⚠️ Decide pela ÁREA da equipe (`vol_teams.area`), não pelo NOME. Medido em
+ * 21/08: das 130 equipes, as 116 sem área estão TODAS inativas e as 13 ativas
+ * têm área — exatamente uma é `KIDS`. Casar por nome pegaria "CBKIDS", "Kids
+ * Louvor" e qualquer equipe que alguém renomeie, e é o tipo de régua que muda
+ * sozinha quando a coordenação mexe num rótulo.
+ */
+function ehEscalaKids(escala) {
+  return _chaveArea(escala?.team_area).includes('kid');
+}
+
+/** Quantos dias antes esta escala deve ser avisada. */
+function antecedenciaDaEscala(escala) {
+  return ehEscalaKids(escala) ? ANTECEDENCIA_KIDS_DIAS : ANTECEDENCIA_PADRAO_DIAS;
+}
+
+/**
+ * A antecedência de um GRUPO (pessoa × dia) é a MAIOR entre as escalas dele.
+ *
+ * ⚠️⚠️ Isto não é detalhe: quem serve no Kids E em outra área no mesmo domingo
+ * receberia DUAS mensagens quase idênticas — uma no D-3 e outra na véspera —,
+ * que é exatamente o padrão de spam que o agrupamento por (pessoa, dia) existe
+ * pra evitar. Com o máximo, sai UMA mensagem no D-3 cobrindo tudo, e a véspera
+ * pula a pessoa porque as escalas dela já constam como avisadas.
+ */
+function antecedenciaDoGrupo(escalas) {
+  return (escalas || []).reduce((m, e) => Math.max(m, antecedenciaDaEscala(e)), ANTECEDENCIA_PADRAO_DIAS);
+}
+
 /** Chave da pessoa: o perfil de voluntário, ou o id do Planning Center. */
 function chavePessoa(escala) {
   return escala?.volunteer_id || escala?.planning_center_person_id || null;
@@ -128,11 +177,15 @@ function textoEvento(nomes) {
  * Devolve um grupo por pessoa/dia, já com os textos prontos para os três
  * parâmetros do template (`{{1}}` área · `{{2}}` evento · `{{3}}` quando).
  */
-function agruparParaAviso({ escalas, agora, dias = 7, diasAlvo = null }) {
+function agruparParaAviso({ escalas, agora, dias = 7, diasAlvo = null, porAntecedencia = false }) {
   const alvo = diasAlvo ? (diasAlvo instanceof Set ? diasAlvo : new Set(diasAlvo)) : null;
   const grupos = new Map();
   for (const e of escalas || []) {
-    if (!elegivelParaAviso(e, agora, dias, alvo)) continue;
+    // ⚠️ No modo por antecedência o recorte de DIA não pode ser por escala: a
+    // decisão é do GRUPO (a maior antecedência entre as escalas da pessoa
+    // naquele dia), e ela só existe depois de agrupar. Aqui passa quem está na
+    // janela; o corte vem no filtro do final.
+    if (!elegivelParaAviso(e, agora, dias, porAntecedencia ? null : alvo)) continue;
     const pessoa = chavePessoa(e);
     const dia = diaBRT(e.scheduled_at);
     const k = `${pessoa}::${dia}`;
@@ -143,10 +196,12 @@ function agruparParaAviso({ escalas, agora, dias = 7, diasAlvo = null }) {
         volunteer_id: e.volunteer_id || null,
         planning_center_person_id: e.planning_center_person_id || null,
         escala_ids: [], areas: [], cultos: [], horarios: [],
+        _escalas: [],
         primeiro: e.scheduled_at,
       });
     }
     const g = grupos.get(k);
+    g._escalas.push(e);
     g.escala_ids.push(e.id);
     if (e.team_name) g.areas.push(e.team_name);
     if (e.service_name) g.cultos.push(e.service_name);
@@ -155,6 +210,11 @@ function agruparParaAviso({ escalas, agora, dias = 7, diasAlvo = null }) {
   }
 
   return [...grupos.values()]
+    .map(g => ({ ...g, antecedencia: antecedenciaDoGrupo(g._escalas), kids: g._escalas.some(ehEscalaKids) }))
+    // ⚠️ O corte por dia acontece AQUI no modo por antecedência: o grupo entra
+    // só quando o dia do serviço é exatamente `hoje + antecedência`. Usar `<=`
+    // faria o Kids ser avisado no D-3, no D-2 e na véspera.
+    .filter(g => !porAntecedencia || diaBRT(g.primeiro) === diaRelativoBRT(agora, g.antecedencia))
     .map(g => ({
       ...g,
       params: (() => {
@@ -222,4 +282,6 @@ function diaRelativoBRT(agoraISO, deslocamento) {
 module.exports = {
   chavePessoa, elegivelParaAviso, agruparParaAviso, selecionarRodada,
   textoQuando, textoAreas, textoEvento, horaBRT, diaRelativoBRT, nomeJaDizODia,
+  ANTECEDENCIA_PADRAO_DIAS, ANTECEDENCIA_KIDS_DIAS,
+  ehEscalaKids, antecedenciaDaEscala, antecedenciaDoGrupo,
 };
