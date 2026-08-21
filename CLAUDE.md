@@ -5696,6 +5696,35 @@ TEXTO** (fallback conversacional), que é o caminho em uso.
 flow existente; (2) publicar; (3) **remover `WHATSAPP_FLOW_MODE=draft` do
 Vercel**; (4) redeploy; (5) testar com "quero lançar culto".
 
+## ⚠️ KRs · camada DESATIVADA em massa (2026-08-21 · decisão do Marcos)
+
+**Todos os KRs de `kpi_krs` estão `ativo=false`** (migration
+`20260821130000_krs_desativacao_massa.sql` · aplicada em prod em 21/08 pelo
+Marcos · backup completo das 637 linhas em Downloads). Motivo, medido na base:
+316 ativos eram 58 "gerais" + 258 cópias de cascata; só 44 com `fonte_kpi_id`
+e 1 geral medido; a camada não guarda dado (medição chega por join com
+`vw_kpi_trajetoria_atual`) e era metas permanentes de KPI reescritas como
+frase (MBO ×1,30), não resultados-chave de ciclo.
+
+- **NÃO recriar KRs neste formato.** O desenho novo (tese "O Motor e os
+  Anéis" · 19/08): metas viram **meta de faixa no próprio KPI** (pactuadas,
+  substituindo o ×1,30) e nasce a camada de **OKRs DE CICLO** — trimestrais,
+  com dono, KR = delta pactuado sobre um KPI vivo, morrem no fim do ciclo
+  (tabela nova; NÃO reaproveitar `kpi_krs`).
+- Telas que liam KRs (EstruturaOkr no /gestao, KpiEditorModal, aba do
+  Devocional) seguem funcionando com listas vazias; reforma na fase dos
+  OKRs de ciclo.
+- Réguas órfãs resgatáveis (backlog na memória da sessão · "krs
+  desativação"): churn voluntários ≤5%/mês (⚠️ o KPI de churn está com
+  meta 90 — bug de cascata; exige comparação "menor é melhor" na view),
+  recuperação de inativos ≥60%, integração de voluntário novo no 1º mês,
+  alocação ≤14d, comparecimento/recomendação do Next (NPS #2607 no ar),
+  ≤15% de solicitações urgentes, conclusão da Jornada 180, supervisão
+  1×/mês por líder, devocional familiar (⚠️ DEV-03 conta FAMÍLIAS/mês, a
+  régua órfã é % — precisa denominador).
+- A seção histórica abaixo (Frente B1) descreve o mecanismo antigo — vale
+  como arqueologia, não como padrão a seguir.
+
 ## OKR · KR medido pelo KPI (Frente B1 · 2026-06-03)
 
 Marcos: "o KR é pra ser respondido pelo **KPI central** do indicador · **sem entrada manual**;
