@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogD
 import { useAuth } from '../../../contexts/AuthContext';
 import { rh, permissoes } from '../../../api';
 import { exportCSV, exportPDF } from '../../../lib/export';
+import { mascaraTelefone } from '../../../lib/inscricao';
 import { supabase } from '../../../supabaseClient';
 import { C, fmtDate, fmtMoney, TIPO_CONTRATO, TIPO_FERIAS, FERIAS_STATUS } from '../../../lib/theme';
 import { ResponsiveContainer, ComposedChart, AreaChart, BarChart, PieChart, Pie, Cell, Bar, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
@@ -1479,7 +1480,7 @@ function OrgProfilePanel({ func, funcs, onClose, onDetail }) {
           {func.telefone && (
             <div className="flex items-center gap-2 text-muted-foreground">
               <span className="font-medium text-foreground w-20">Telefone</span>
-              <span>{func.telefone}</span>
+              <span>{mascaraTelefone(func.telefone)}</span>
             </div>
           )}
           {func.tipo_contrato && (
@@ -3221,7 +3222,7 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           <SecaoHeader icon={Mail} title="Contato & contratação" />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px' }}>
             <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700 }}>Email</div><div style={{ fontSize: 14, color: C.text, marginTop: 1 }}>{data.email || '—'}</div></div>
-            <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700 }}>Telefone</div><div style={{ fontSize: 14, color: C.text, marginTop: 1 }}>{data.telefone || '—'}</div></div>
+            <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700 }}>Telefone</div><div style={{ fontSize: 14, color: C.text, marginTop: 1 }}>{data.telefone ? mascaraTelefone(data.telefone) : '—'}</div></div>
             <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700 }}>CPF</div><div style={{ fontSize: 14, color: C.text, marginTop: 1 }}>{podeRemun ? (data.cpf || '—') : '•••'}</div></div>
             <div><div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700 }}>Salário</div><div style={{ fontSize: 14, color: C.text, marginTop: 1, fontWeight: 600 }}>{podeRemun ? fmtMoney(data.salario) : '•••'}</div></div>
           </div>

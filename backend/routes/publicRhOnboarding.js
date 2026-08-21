@@ -9,13 +9,6 @@ const router = express.Router();
 const { supabase } = require('../utils/supabase');
 
 const soDigitos = (v) => String(v || '').replace(/\D/g, '');
-function mascaraTelefone(dig) {
-  const d = soDigitos(dig).slice(0, 11);
-  if (d.length <= 2) return d;
-  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
-  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-}
 function normalizarFilhos(filhos) {
   const arr = Array.isArray(filhos) ? filhos : [];
   return arr.slice(0, 20).map((f) => ({
@@ -64,9 +57,13 @@ router.post('/:token', async (req, res) => {
 
     const patch = { updated_at: new Date().toISOString(), onboarding_preenchido_em: new Date().toISOString() };
     if (telefone !== undefined) {
-      const d = soDigitos(telefone);
+      let d = soDigitos(telefone);
+      if (d.length > 11 && d.startsWith('55')) d = d.slice(2);
       if (d && (d.length < 10 || d.length > 11)) return res.status(400).json({ error: 'Telefone inválido (DDD + número).' });
-      patch.telefone = d ? mascaraTelefone(d) : null;
+      // Padrão da casa (mesmo de membresia.js): só dígitos, sem máscara — a
+      // exibição formata na tela; gravar mascarado deixava o telefone fora do
+      // padrão que o resto do sistema usa pra casar/enviar WhatsApp.
+      patch.telefone = d || null;
     }
     if (cpf !== undefined) {
       const d = soDigitos(cpf);

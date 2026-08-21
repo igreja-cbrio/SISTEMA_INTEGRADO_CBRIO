@@ -762,7 +762,7 @@ const CAMPOS_RH_SENSIVEIS = [
 // recusa o cast pra numeric/date — era o que estourava ("invalid input syntax
 // for type numeric: \"\"") ao inativar/editar quem nao tem salario lancado.
 const RH_FIELD_TYPES = {
-  nome: 'text', cpf: 'text', email: 'text', telefone: 'text', cargo: 'text',
+  nome: 'text', cpf: 'text', email: 'text', telefone: 'fone', cargo: 'text',
   area: 'text', tipo_contrato: 'upper', observacoes: 'text', status: 'text', foto_url: 'text',
   setor_id: 'int',
   salario: 'num', remuneracao_bruta: 'num',
@@ -792,6 +792,13 @@ function coerceRh(val, type) {
   if (type === 'num') { const n = Number(val); return Number.isFinite(n) ? n : null; }
   if (type === 'int') { const n = parseInt(val, 10); return Number.isFinite(n) ? n : null; }
   if (type === 'upper') return String(val).toUpperCase();  // tipo_contrato · CHECK exige CLT/PJ/PJ+/PREBENDA
+  if (type === 'fone') {
+    // Padrão da casa (mesma régua de normalizarTelefonePayload em membresia.js):
+    // só dígitos, DDD + número (10-11), sem o "55" (é acrescentado na hora do envio).
+    let d = String(val).replace(/\D/g, '');
+    if (d.length > 11 && d.startsWith('55')) d = d.slice(2);
+    return d || null;
+  }
   return val;                                     // text/date/uuid passam direto
 }
 

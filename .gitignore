@@ -56,3 +56,4 @@ graphify-out/
 # a checagem passaria sem checar, que é exatamente o buraco que ela existe para
 # fechar.
 *.tsbuildinfo
+.env*
