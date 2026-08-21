@@ -6624,8 +6624,11 @@ prometer número da outra plataforma.
   (a condição da pílula ganhou `&& !evento.lote_atual` — as outras 6 portas
   seguem mostrando vaga). O payload público também **não devolve mais**
   `restantes_no_lote` nem `proximo` (`lote_atual` = só `nome` +
-  `valor_centavos`): a contagem revela quanta gente já entrou, e evento em
-  divulgação vende melhor sem placar. `lotesEvento.loteAtual` **continua**
+  `valor_centavos`) **e `vagas_restantes` vem NULL em evento com lotes**: a
+  contagem revela quanta gente já entrou, e evento em divulgação vende melhor
+  sem placar. Calar na API (e não só na tela) cobre bundle velho em cache e
+  quem abre o JSON na mão; o teto de vagas continua valendo, quem recusa
+  `sem_vaga` é a RPC do POST dentro do lock. `lotesEvento.loteAtual` **continua**
   calculando os dois campos — o servidor usa pra decidir preço/metadata; o que
   mudou é o que SAI. Anunciar "o lote vai virar" é trabalho de quem divulga.
 - ⚠️ Leitura da coluna é ISOLADA (`anexarLotesEvento`, separada dos outros dois
