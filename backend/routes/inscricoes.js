@@ -177,7 +177,10 @@ const CAMPOS_EVENTO = [
   'no_totem',
   // Cartão cobrado FORA (e-Inscrição) · migration 20260811180000. Preenchido,
   // remove 'cartao' do nosso checkout — ver backend/utils/checkoutExterno.js.
-  'checkout_externo_url', 'checkout_externo_nome',
+  // `checkout_externo_valor_centavos` (20260821190000) é só EXIBIÇÃO: o preço
+  // do cartão na plataforma deles, pra tela de escolha dizer "R$ 850 no cartão
+  // · R$ 830 no Pix". Nenhuma cobrança nossa lê esse número.
+  'checkout_externo_url', 'checkout_externo_nome', 'checkout_externo_valor_centavos',
   // Retiro/viagem (migration 20260817160000): endereço obrigatório neste evento
   // e bloco do responsável quando a pessoa é menor de 18 na inscrição.
   // ⚠️ `termos_extra` NÃO entra nesta lista — é jsonb e passa pelo saneador
@@ -246,6 +249,27 @@ function conferirCheckoutExterno(patch) {
     const nome = String(patch.checkout_externo_nome ?? '').trim();
     patch.checkout_externo_nome = nome ? nome.slice(0, 40) : null;
   }
+  return null;
+}
+
+/**
+ * Preço do cartão na plataforma externa — só pra tela.
+ *
+ * ⚠️ Vazio/0/lixo ⇒ NULL (a tela volta a não prometer preço de cartão), nunca
+ * 0: "R$ 0,00 no cartão" numa tela de escolha é promessa de gratuidade. Teto
+ * igual ao do CHECK do banco pra o typo (8500000 no lugar de 85000) ser
+ * recusado com mensagem, não com 23514.
+ */
+function sanitizeValorCartaoExterno(patch) {
+  if (patch.checkout_externo_valor_centavos === undefined) return null;
+  const bruto = patch.checkout_externo_valor_centavos;
+  if (bruto === null || bruto === '') { patch.checkout_externo_valor_centavos = null; return null; }
+  const n = Math.round(Number(bruto));
+  if (!Number.isFinite(n) || n <= 0) { patch.checkout_externo_valor_centavos = null; return null; }
+  if (n > 10000000) {
+    return 'O valor do cartão na outra plataforma passou de R$ 100.000 — confira se não sobrou um zero.';
+  }
+  patch.checkout_externo_valor_centavos = n;
   return null;
 }
 
@@ -2216,7 +2240,8 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
     // Lotes de preço (20/08): jsonb com saneador próprio, como termos_extra.
     const lotes = sanitizarLotes(b.lotes);
     if (lotes) payload.lotes = lotes;
-    const erroCheckout = conferirCheckoutExterno(payload);
+    const erroCheckout = conferirCheckoutExterno(payload)
+      || sanitizeValorCartaoExterno(payload);
     if (erroCheckout) return res.status(400).json({ error: erroCheckout });
 
     const { data, error } = await supabase.from('insc_eventos').insert(payload).select('id, slug').single();
@@ -2282,7 +2307,8 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
       const lotes = sanitizarLotes(b.lotes);
       if (lotes) patch.lotes = lotes;
     }
-    const erroCheckout = conferirCheckoutExterno(patch);
+    const erroCheckout = conferirCheckoutExterno(patch)
+      || sanitizeValorCartaoExterno(patch);
     if (erroCheckout) return res.status(400).json({ error: erroCheckout });
     if (b.status !== undefined) {
       if (!['rascunho', 'publicado', 'encerrado', 'arquivado'].includes(b.status)) {

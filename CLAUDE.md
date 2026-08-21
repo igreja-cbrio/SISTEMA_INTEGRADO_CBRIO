@@ -6772,6 +6772,42 @@ Retiro: migration aplicada, PR mergeada, `vagas=350` e **PUBLICADO em 21/08**
 como "AMI CAMP 2027" (descrição "Evento teste." apagada no banco em 21/08 —
 `descricao` NULL, a tela simplesmente não mostra parágrafo).
 
+## Os DOIS preços na tela de escolha · e o aceite curto (2026-08-21 · migration `20260821190000`)
+
+Pedido do Arthur pro AMI CAMP 2027: *"como o retiro é 850 reais no cartão, nessa
+primeira tela coloque lá em cima o valor de 850 reais e em cada opção coloque
+830 reais como desconto no pix e 850 no cartão valor normal"* + *"no aceite
+final, o texto ficou muito grande, coloque apenas li e aceito o termo e deixe o
+link para baixar"*.
+
+- **`insc_eventos.checkout_externo_valor_centavos`** (integer nullable · CHECK
+  `> 0 AND <= 10000000`). ⚠️⚠️ **É valor de EXIBIÇÃO, nunca cobrado**: quem paga
+  cartão sai da nossa página antes de existir inscrição aqui. Nenhuma cobrança,
+  conciliação ou relatório lê esta coluna — o valor da NOSSA cobrança segue
+  vindo de `valor_centavos`/`lotes`.
+- ⚠️ **Por que coluna e não conta**: o preço do cartão é da tabela do
+  E-Inscrição (lotes 850/880/900, régua deles). Nosso `valor_centavos` é 870
+  (tabela do Pix) e o lote atual do Pix é 830 — **nenhum dos dois dá 850**.
+  Derivar seria a nossa tela afirmando preço de outra plataforma a partir de um
+  chute. Quem digita é quem configurou o evento lá (campo no bloco de cartão
+  externo, na edição do evento).
+- **Tela de escolha** (`EscolhaPagamento`): valor NORMAL (cartão) em cima, e
+  cada opção repete o seu preço à direita do título — "Pix R$ 830 · com
+  desconto" × "Cartão R$ 850 · valor normal".
+- ⚠️ **"Desconto" é CALCULADO, não escrito**: só aparece com `valorPix <
+  valorCartao`. Com o lote virando (830 → 850 → 870) o Pix empata e depois passa
+  o cartão; texto fixo viraria mentira sozinho, sem ninguém tocar no código.
+- ⚠️ **Sem o valor configurado, a tela é a de antes** (chip "Lote 1 · no Pix:
+  R$ 830"): coluna ausente/NULL ⇒ nenhum número de cartão é prometido. O
+  anexador é isolado por coorte de migration (`anexarValorCartaoExterno`), então
+  deploy antes da migration não derruba nada — **mas salvar evento pelo admin
+  exige a migration** (a coluna entrou em `CAMPOS_EVENTO`).
+- **Aceites do evento (`termos_extra`) com documento não mostram mais o texto
+  inteiro**: fica "Li e aceito: <título>" + link **Baixar o documento**. ⚠️ O
+  texto continua gravado INTEIRO no consentimento — a prova não mudou, mudou a
+  leitura. ⚠️⚠️ **Aceite SEM `url` segue mostrando o texto**: aceitar o que não
+  está na tela nem em arquivo nenhum não seria aceite.
+
 ## ⚠️ Deploy sem derrubar aba aberta · Skew Protection ligado DE VERDADE (2026-08-21 · SEM migration)
 
 Preocupação do Marcos ("não posso travar o sistema por 4 minutos enquanto as

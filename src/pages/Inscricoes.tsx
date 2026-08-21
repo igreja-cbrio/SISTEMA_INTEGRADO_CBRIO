@@ -323,7 +323,7 @@ const EVENTO_VAZIO = {
   pagamento_metodos: ['pix', 'cartao'], parcelas_max: 1,
   pagamento_expira_horas: '',
   // Cartão numa plataforma externa (e-Inscrição). Vazio = cobrado aqui.
-  checkout_externo_url: '', checkout_externo_nome: '',
+  checkout_externo_url: '', checkout_externo_nome: '', checkout_externo_valor: '',
   // Retiro/viagem (17/08): endereço obrigatório e bloco do responsável quando a
   // pessoa é menor de 18 na inscrição. Default false = o Contrato de sempre.
   exigir_endereco: false, exige_dados_menor: false,
@@ -424,6 +424,8 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
     parcelas_max: evento.parcelas_max ?? 1,
     checkout_externo_url: evento.checkout_externo_url || '',
     checkout_externo_nome: evento.checkout_externo_nome || '',
+    checkout_externo_valor: evento.checkout_externo_valor_centavos != null
+      ? String(evento.checkout_externo_valor_centavos / 100) : '',
     data_fim: evento.data_fim || '',
     instrucoes_url: evento.instrucoes_url || '',
     instrucoes_nome: evento.instrucoes_nome || '',
@@ -499,6 +501,10 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
         // não pode manter gente sendo mandada pra um checkout.
         checkout_externo_url: f.pagamento_ativo ? String(f.checkout_externo_url || '').trim() : '',
         checkout_externo_nome: f.pagamento_ativo ? String(f.checkout_externo_nome || '').trim() : '',
+        // Preço do cartão LÁ, só pra tela de escolha (20260821190000). Vazio ⇒
+        // null ⇒ a tela volta a não prometer preço de cartão.
+        checkout_externo_valor_centavos: f.pagamento_ativo && String(f.checkout_externo_valor || '').trim() !== ''
+          ? Math.round(Number(String(f.checkout_externo_valor).replace(',', '.')) * 100) : null,
         // Lotes: vazio = preço único. Linha incompleta é descartada aqui e o
         // servidor saneia de novo (utils/lotesEvento).
         lotes: f.pagamento_ativo ? lotes
@@ -771,15 +777,26 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
                 <Input value={f.checkout_externo_url || ''} onChange={set('checkout_externo_url')}
                   placeholder="https://www.e-inscricao.com/… (link da inscrição deste evento)" />
                 {f.checkout_externo_url ? (
-                  <div className="mt-2">
-                    <label className="text-xs text-muted-foreground">Nome da plataforma (aparece pra pessoa)</label>
-                    <Input value={f.checkout_externo_nome || ''} onChange={set('checkout_externo_nome')}
-                      placeholder="e-Inscrição" />
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-muted-foreground">Nome da plataforma (aparece pra pessoa)</label>
+                      <Input value={f.checkout_externo_nome || ''} onChange={set('checkout_externo_nome')}
+                        placeholder="e-Inscrição" />
+                    </div>
+                    {/* ⚠️ Preço de OUTRA plataforma: a tela só anuncia porque
+                        alguém digitou aqui. Em branco, a escolha não promete
+                        número nenhum pro cartão (o valor de lá pode mudar sem
+                        avisar, e tela errada sobre preço é reclamação). */}
+                    <div>
+                      <label className="text-xs text-muted-foreground">Valor no cartão, nessa plataforma (opcional)</label>
+                      <Input value={f.checkout_externo_valor || ''} onChange={set('checkout_externo_valor')}
+                        placeholder="850,00" inputMode="decimal" />
+                    </div>
                   </div>
                 ) : null}
                 <p className="text-[11px] text-muted-foreground mt-1.5">
                   {f.checkout_externo_url
-                    ? 'A página do evento vai perguntar a forma de pagamento antes do formulário: Pix segue aqui (com QR), cartão vai para este link. Enquanto ele estiver preenchido, o cartão NÃO é cobrado pelo nosso checkout.'
+                    ? 'A página do evento vai perguntar a forma de pagamento antes do formulário: Pix segue aqui (com QR), cartão vai para este link. Enquanto ele estiver preenchido, o cartão NÃO é cobrado pelo nosso checkout. Com o valor do cartão preenchido, a tela de escolha mostra os dois preços lado a lado (e marca o Pix como desconto quando ele é menor).'
                     : 'Em branco, o cartão é cobrado aqui mesmo, junto com o Pix.'}
                 </p>
                 {f.checkout_externo_url && !f.pagamento_metodos?.filter((m: string) => m !== 'cartao').length ? (
