@@ -6630,6 +6630,36 @@ prometer número da outra plataforma.
 ⏳ Retiro: lotes seedados na migration; falta aplicar, mergear, decidir o total
 de vagas e publicar.
 
+## ⚠️ Deploy sem derrubar aba aberta · Skew Protection ligado DE VERDADE (2026-08-21 · SEM migration)
+
+Preocupação do Marcos ("não posso travar o sistema por 4 minutos enquanto as
+pessoas estão usando"), no dia em que ele caiu 2× na tela do ErrorBoundary.
+Medido: **o plano é PRO e o Skew Protection JÁ ESTAVA LIGADO no painel
+(`skewProtectionMaxAge: 43200`) — e INERTE**: pra Vite ele só funciona se cada
+asset construído carregar `?dpl=<deployment>`, e o HTML de produção não trazia
+nem o parâmetro nem o cookie `__vdpl` (conferido por curl).
+
+- **`vite.config.ts` ganhou `experimental.renderBuiltUrl`** anexando
+  `?dpl=${VERCEL_DEPLOYMENT_ID}` a toda URL construída (script do index, CSS,
+  chunks dinâmicos). Com isso o Vercel serve o chunk da versão ANTIGA pra quem
+  está com a aba aberta durante/depois de um deploy, por até 12h — a pessoa só
+  pega a versão nova quando recarregar naturalmente, e a tela "uma atualização
+  está sendo publicada" deixa de existir no caminho comum.
+- ⚠️⚠️ **GUARDADO por `deploymentId ?`**: sem a env (build local, CI), o build é
+  IDÊNTICO ao de hoje — **nunca** `?dpl=undefined`, que quebraria todo asset.
+  Provado nos dois modos: com env falso, 6 ocorrências no index.html + imports
+  dinâmicos com o parâmetro; sem env, zero.
+- ⚠️ **Validar no PRIMEIRO deploy de produção depois do merge**: `curl -s
+  https://www.cbrio.org/ | grep dpl` tem que mostrar o parâmetro. Se NÃO
+  mostrar, o `vercel build` do GitHub Action não está expondo
+  `VERCEL_DEPLOYMENT_ID` — aí o caminho é investigar a versão do CLI/pipeline,
+  e o comportamento segue o de antes (a guarda garante).
+- ⚠️ Régua de leitura que fica: **"tela de atualização presa" NÃO significa 4
+  min de sistema fora** — quem está usando segue na versão antiga durante o
+  build; o corte é só na troca atômica, pra aba aberta que carrega tela nova.
+  Episódios de MINUTOS preso são outra coisa (rede do usuário/cache corrompido
+  — ver a régua de diagnóstico na memória de 21/08).
+
 ## Evento · grupo de WhatsApp pra DÚVIDAS (2026-08-21 · migration `20260821150000`)
 
 Pedido do Marcos pro AMI CAMP 2027: link de grupo "caso alguém queira tirar
