@@ -1013,7 +1013,12 @@ router.get('/:slug', async (req, res) => {
       inscricoes_encerram_em: esp.inscricoes_encerram_em || null,
       inscricoes_encerradas: encerradas,
       vagas: esp.vagas ?? null,
-      vagas_restantes: ocup ? ocup.restantes : null, // null = ilimitado
+      // null = ilimitado — E TAMBÉM evento com LOTES: ali a contagem de quem já
+      // entrou não sai nem pela API (pedido do Arthur · 21/08). Zerar aqui, e
+      // não só na tela, é o que cala o placar pra bundle velho em cache e pra
+      // quem abre o JSON na mão. O teto continua valendo: quem decide vaga é a
+      // RPC do POST, dentro do lock.
+      vagas_restantes: temLotes || !ocup ? null : ocup.restantes,
       // Pagamento: a tela mostra o valor ANTES de a pessoa preencher — e com
       // lotes é o preço do LOTE ATUAL (bundle antigo mostra o número certo sem
       // saber o que é lote).
