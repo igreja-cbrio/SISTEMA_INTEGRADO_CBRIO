@@ -4194,6 +4194,32 @@ export const estrategia = {
   okrsPorTipo:  () => get('/estrategia/okrs-por-tipo'),
   setOkrTipo:   (id, tipo_okr) => put(`/estrategia/objetivos/${id}/tipo`, { tipo_okr }),
   setDadoPrincipal: (id, dado_tipo_principal) => put(`/estrategia/objetivos/${id}/dado-tipo-principal`, { dado_tipo_principal }),
+
+  // ── Fase 2A (21/08/2026) · o desenho que substitui a camada de KRs ──
+  // Índice da Base = agregação DERIVADA (topo 2 da fatia da presidência).
+  // ⚠️ LENTE VIVA — não é a base fixa de 3.000 da planilha do Pr. Juninho.
+  indiceBase: () => get('/estrategia/indice-base'),
+
+  // Linhagem = etiqueta de LEITURA do KPI tático (nsm | jornada | sistema)
+  linhagem: {
+    resumo: () => get('/estrategia/linhagem/resumo'),
+    set:    (kpiId, linhagem) => put(`/estrategia/linhagem/${kpiId}`, { linhagem }),
+  },
+
+  // OKRs de ciclo · trimestrais, com dono, delta pactuado; morrem no fim.
+  // ⚠️ NÃO confundir com `krs` acima (camada kpi_krs, desativada em 21/08).
+  ciclos: {
+    list:    () => get('/estrategia/ciclos'),
+    vigente: () => get('/estrategia/ciclos/vigente'),
+    get:     (id) => get(`/estrategia/ciclos/${id}`),
+    create:  (body) => post('/estrategia/ciclos', body),
+    update:  (id, body) => patch(`/estrategia/ciclos/${id}`, body),
+    krs: {
+      create: (cicloId, body) => post(`/estrategia/ciclos/${cicloId}/krs`, body),
+      update: (id, body) => patch(`/estrategia/ciclo-krs/${id}`, body),
+      remove: (id) => del(`/estrategia/ciclo-krs/${id}`),
+    },
+  },
 };
 
 // ── Painel CBRio (mandalas, matriz, alertas, drilldown) ──
