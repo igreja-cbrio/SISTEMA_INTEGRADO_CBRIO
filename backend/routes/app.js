@@ -3663,7 +3663,13 @@ router.post('/telemetria', tryAuth, async (req, res) => {
 
 // Resolve o papel do usuário do app no domínio de grupos:
 //  - membro (mem_membros do logado, pra checar liderança e montar o nome)
-//  - grupos_liderados: grupos onde ele é lider_id
+//  - grupos_liderados: grupos onde ele é lider_id OU tem vínculo vivo no
+//    roster com funcao lider/co_lider (Natasha 21/08: os outros líderes, não
+//    só o principal, também gerenciam — o `meu-grupo.tsx` do app JÁ mostrava
+//    o botão "Gerenciar" pra funcao lider/co_lider e o servidor recusava 403;
+//    era a divergência tela × gate). ⚠️ Quem RECEBE WhatsApp do grupo segue
+//    sendo SÓ o `lider_id` (lei de 31/07 · um destinatário) — isto é gestão,
+//    não notificação.
 //  - grupos_supervisionados: grupos onde ele é supervisor_id
 //  - grupos_geridos: união (dedup por id) de liderados + supervisionados — é o
 //    ESCOPO DE GESTÃO (líder OU supervisor pode gerenciar esses grupos)
@@ -3676,16 +3682,38 @@ async function gruposPapelApp(req) {
   let gruposLiderados = [];
   let gruposSupervisionados = [];
   if (membro?.id) {
-    const [glRes, gsRes] = await Promise.all([
+    const [glRes, gsRes, rosterRes] = await Promise.all([
       supabase.from('mem_grupos')
         .select('id, nome').eq('lider_id', membro.id).is('deleted_at', null)
         .order('nome', { ascending: true }),
       supabase.from('mem_grupos')
         .select('id, nome').eq('supervisor_id', membro.id).is('deleted_at', null)
         .order('nome', { ascending: true }),
+      // Líder ADICIONAL do roster: a MESMA régua que põe o nome na busca
+      // pública (`funcao IN lider/co_lider` + vínculo vivo · publicGrupos).
+      // Best-effort no erro: falha aqui degrada pra "só lider_id" (fail-closed
+      // pro poder novo, nunca derruba quem já gerenciava).
+      supabase.from('mem_grupo_membros')
+        .select('grupo_id, mem_grupos!inner(id, nome)')
+        .eq('membro_id', membro.id)
+        .in('funcao', ['lider', 'co_lider'])
+        .is('saiu_em', null).is('deleted_at', null)
+        .is('mem_grupos.deleted_at', null),
     ]);
     gruposLiderados = glRes.data || [];
     gruposSupervisionados = gsRes.data || [];
+    if (rosterRes.error) {
+      console.warn('[APP] gruposPapelApp · roster de líderes:', rosterRes.error.message);
+    } else {
+      const vistos = new Set(gruposLiderados.map(g => g.id));
+      for (const v of (rosterRes.data || [])) {
+        const g = v.mem_grupos;
+        if (!g?.id || vistos.has(g.id)) continue;
+        vistos.add(g.id);
+        gruposLiderados.push({ id: g.id, nome: g.nome });
+      }
+      gruposLiderados.sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
+    }
   }
 
   // Escopo de gestão = líder OU supervisor (dedup por id).

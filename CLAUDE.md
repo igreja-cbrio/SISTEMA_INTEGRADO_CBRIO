@@ -2351,6 +2351,31 @@ casal junto** (idem recusa). A opção aparece **só** nessa categoria.
   vale no link do WhatsApp; (2) a caixa de entrada não mostra selo de "casal"
   ainda.
 
+## Grupos · líder do ROSTER também GERENCIA o grupo no app (2026-08-21 · SEM migration)
+
+Segunda parte do pedido da Natasha: *"os outros líderes que não são o principal
+possam gerenciar um grupo também"*. Medido antes: **8 pessoas em 6 grupos
+ativos** têm `funcao IN ('lider','co_lider')` no roster sem serem o `lider_id`.
+
+⚠️ **A divergência era tela × gate**: o `meu-grupo.tsx` do app JÁ mostrava o
+botão "Gerenciar" pra quem tem `funcao` lider/co_lider (linha ~131), e o
+servidor recusava **403** — `gruposGeridos` só olhava `lider_id`/`supervisor_id`.
+
+- **Conserto em UM ponto**: `gruposPapelApp` (`backend/routes/app.js`) passou a
+  somar em `grupos_liderados` os grupos onde o membro tem vínculo VIVO no
+  roster com `funcao lider/co_lider` (a MESMA régua que põe o nome na busca
+  pública). Tudo deriva dele: `gateGrupoApp` (os ~15 endpoints de gerenciar),
+  fila de pedidos, `GET /grupos/papel` (o que o app consulta) e o `papel` de
+  `/grupos/meus` → tela COMPLETA de gestão. **Vale sem OTA** — o app já lê
+  essas listas do servidor.
+- ⚠️ **Quem recebe WhatsApp do grupo segue sendo SÓ o `lider_id`** (lei de
+  31/07 · um destinatário). Isto é GESTÃO, não notificação — o sino de
+  `grupo_pedido` no app também segue no principal (`donosDoGrupoApp`).
+- ⚠️ **Fail-closed no poder novo**: erro na consulta do roster degrada pra
+  "só lider_id" (log), nunca derruba quem já gerenciava.
+- ⚠️ As proteções sobre o ALVO continuam: ninguém muda função/registra saída
+  da pessoa que é `lider_id`, e lider/co_lider não sai pelo botão "Sair".
+
 ## Grupos · TODOS os líderes no cartão e no deep-link da inscrição pública (2026-08-20 · SEM migration)
 
 Pedido da Natasha (via Marcos), com o exemplo do grupo da Ana Paula Silva
