@@ -74,6 +74,7 @@ Guard: `authorizeModule('inscricoes-totem', 1)`
 - `backend/utils/campoKey.js`
 - `backend/utils/checkoutExterno.js`
 - `backend/utils/exclusaoInscricaoLote.js`
+- `backend/utils/lotesEvento.js`
 - `backend/utils/pagination.js`
 - `backend/utils/sanitize.js`
 - `backend/utils/supabase.js`
