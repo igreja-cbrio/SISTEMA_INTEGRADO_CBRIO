@@ -6520,7 +6520,61 @@ instruções gerais?"** (sim = baixa · não = só recebe por e-mail).
   bucket (chaves `termo_menor`/`info_retiro` PRESERVADAS). Backup em
   `~/Downloads/backup_retiro_2027_config_20260820.json`. `data_fim` +
   instruções do retiro vão DENTRO da migration (dependem das colunas), guardadas
-  por slug e só-onde-vazio. ⏳ Valor/prazo: o Marcos disse "já falo dos valores".
+  por slug e só-onde-vazio.
+
+## ⚠️⚠️ LOTES de preço por evento (2026-08-20 · migration `20260821120000`)
+
+Pedido do Arthur via Marcos: o preço muda SOZINHO quando bate um número de
+inscritos, e a pessoa vê o lote atual e o preço antes de se inscrever. No nosso
+site (só Pix): Lote 1 · 50 vagas · R$ 830 → Lote 2 · 100 · R$ 850 → Lote 3 ·
+150 · R$ 870. **A tabela do cartão (850/880/900) é do E-Inscrição, gerida LÁ**
+— a nossa tela diz o preço do Pix e manda o cartão pro link externo sem
+prometer número da outra plataforma.
+
+- **`insc_eventos.lotes` jsonb** `[{nome, vagas, valor_centavos}]` · CHECK só
+  de forma (array ≤ 6 · lei do 0A000); a forma do item é do saneador. Régua
+  PURA em **`backend/utils/lotesEvento.js`** (`src/test/lotesEvento.test.ts`,
+  13 casos **no gate** · **3 mutantes RODADOS e mortos**: fronteira off-by-one
+  → 3 vermelhos · clamp do último lote removido → 1 · saneador aceitando lote
+  de 0 vagas → 1).
+- ⚠️⚠️ **As vagas dos lotes são POSIÇÕES CUMULATIVAS na ordem de chegada**
+  (1..50 = lote 1, 51..150 = lote 2, 151..300 = lote 3), contadas pela MESMA
+  régua da vaga (viva não-cancelada — só `cancelada` devolve). Contar diferente
+  da `fn_insc_inscrever` faria o lote e o "restam N vagas" discordarem na mesma
+  tela.
+- ⚠️⚠️ **Quem decide o preço é o POST, pela POSIÇÃO da inscrição**
+  (`valorLoteDaInscricao` em publicEventoExterno.js: count determinístico de
+  `(created_at, id) <=` os meus — duas pessoas cruzando a fronteira do lote no
+  mesmo segundo recebem posições DISTINTAS). A exibição do GET é convite, não
+  decisão. Exercitado contra produção (read-only): posições 1, 2, 3 na ordem
+  certa, `.or()` com timestamp `+00:00` passa.
+- ⚠️ **Posição além da soma dos lotes cai no ÚLTIMO lote, nunca null**: quem
+  limita entrada é o `vagas` do EVENTO (RPC recusa `sem_vaga`); null derrubaria
+  a cobrança de inscrição que a RPC já aceitou.
+- ⚠️ **Fail-soft é SEMPRE pro valor de TABELA** (`valor_centavos` = preço
+  FINAL, R$ 870 no retiro): errar pra cima é devolver diferença a uma pessoa;
+  errar pra baixo é desconto silencioso que ninguém revisa. Por isso a
+  migration também sobe `valor_centavos` do retiro pra 87000.
+- **Benefício por CPF VENCE o lote** (autorização individual do líder; não se
+  somam). Reemissão/ja_inscrito/corrida-duplicada também passam o valor do lote
+  (senão a cobrança reemitida nasceria com o valor de tabela). O NOME do lote
+  vai em `metadata.lote` da cobrança — registro pra conciliação, nunca decisão.
+- **Tela**: box de valor vira "Valor da inscrição · Lote 1" + "restam N
+  inscrições neste valor — depois vai a R$ X"; a `EscolhaPagamento` (Pix ×
+  cartão) mostra "Lote 1 · no Pix: R$ 830" ANTES do formulário. Bundle antigo
+  mostra o número certo sem saber o que é lote (o GET devolve `valor_centavos`
+  já do lote atual). Admin: `LotesEditor` dentro do bloco de pagamento.
+- ⚠️ Leitura da coluna é ISOLADA (`anexarLotesEvento`, separada dos outros dois
+  anexadores) — mas salvar evento pelo admin com lotes exige a migration.
+- ⚠️ **Soma dos lotes (300) ≠ vagas do evento (200)** — decisão de capacidade
+  PENDENTE do Marcos/Arthur ("Lote 3 150 vagas ou até 200"): subir `vagas` pra
+  300/350 é 1 campo na tela; os lotes funcionam com qualquer teto.
+- ⚠️ **App do staff mostra o valor de TABELA no catálogo** (o `GET /app/eventos`
+  não monta lote) — a COBRANÇA pelo app sai certa (usa `inscreverEspinha`).
+  Irrelevante pro retiro (`so_web` manda o app pro navegador).
+
+⏳ Retiro: lotes seedados na migration; falta aplicar, mergear, decidir o total
+de vagas e publicar.
 
 ## ⚠️⚠️ EXCLUIR EVENTO travava no card espelho do Marketing (2026-08-14 · migration `20260814190000`)
 

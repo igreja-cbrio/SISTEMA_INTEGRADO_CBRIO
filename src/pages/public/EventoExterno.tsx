@@ -345,6 +345,23 @@ function EscolhaPagamento({ C, evento, onProprio }: { C: any; evento: any; onPro
           : 'A forma muda o lugar onde você preenche a inscrição — por isso a gente pergunta antes.'}
       </p>
 
+      {/* Com lotes, o preço do Pix aparece JÁ NA ESCOLHA (pedido do Arthur:
+          "a pessoa vê qual o lote atual e quanto está"). O valor do cartão é o
+          da tabela do E-Inscrição, definido lá — prometer um número aqui seria
+          afirmar preço de outra plataforma. */}
+      {evento.lote_atual && (
+        <div style={{
+          marginTop: 12, padding: '8px 12px', borderRadius: 10, display: 'inline-block',
+          background: '#00B39D12', border: '1px solid #00B39D33', fontSize: 12.5, color: C.text2,
+        }}>
+          <b style={{ color: '#00B39D' }}>{evento.lote_atual.nome}</b>
+          {' · no Pix: '}
+          <b style={{ color: '#00B39D' }}>
+            {(evento.lote_atual.valor_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+          </b>
+        </div>
+      )}
+
       {!so && (
         <button type="button" onClick={onProprio} style={btn(true)}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>Pix</div>
@@ -651,10 +668,24 @@ export default function EventoExterno() {
                   marginBottom: 16, padding: '12px 14px', borderRadius: 12,
                   background: '#00B39D12', border: '1px solid #00B39D33',
                 }}>
-                  <div style={{ fontSize: 12, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4 }}>Valor da inscrição</div>
+                  <div style={{ fontSize: 12, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                    {evento.lote_atual ? `Valor da inscrição · ${evento.lote_atual.nome}` : 'Valor da inscrição'}
+                  </div>
                   <div style={{ fontSize: 24, fontWeight: 800, color: '#00B39D', marginTop: 2 }}>
                     {(evento.valor_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </div>
+                  {/* O lote vira SOZINHO quando as vagas dele esgotam — dizer
+                      quanto falta e quanto vai custar depois é o que faz a
+                      pessoa entender por que o preço de hoje é este. */}
+                  {evento.lote_atual?.proximo && (
+                    <p style={{ fontSize: 12, color: C.text3, margin: '6px 0 0', lineHeight: 1.5 }}>
+                      {typeof evento.lote_atual.restantes_no_lote === 'number'
+                        ? `Restam ${evento.lote_atual.restantes_no_lote} inscrições neste valor — depois vai a `
+                        : 'Quando este lote esgotar, o valor vai a '}
+                      {(evento.lote_atual.proximo.valor_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      {` (${evento.lote_atual.proximo.nome})`}.
+                    </p>
+                  )}
                   <div style={{ fontSize: 12, color: C.text3, marginTop: 4 }}>
                     {rotuloMetodos(evento)}
                     {' '}Ao enviar, você vai para a página de pagamento.

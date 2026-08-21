@@ -131,6 +131,55 @@ function TermosExtraEditor({ termos, setTermos }: { termos: any[]; setTermos: (v
 }
 
 /**
+ * Lotes de preço do evento (pedido do Arthur pro AMI CAMP 2027 · 20/08).
+ *
+ * As vagas de cada lote são POSIÇÕES na ordem de chegada: com 50/100/150, as
+ * inscrições 1..50 pagam o lote 1, 51..150 o lote 2, 151..300 o lote 3 — o lote
+ * vira SOZINHO quando esgota. Quem decide o preço cobrado é o servidor, pela
+ * posição da inscrição (backend/utils/lotesEvento.js).
+ *
+ * `valor` fica em REAIS na tela (como o campo Valor) e vira centavos no save.
+ */
+function LotesEditor({ lotes, setLotes, valorTabela }: {
+  lotes: any[]; setLotes: (v: any[]) => void; valorTabela: string;
+}) {
+  function add() { setLotes([...lotes, { nome: `Lote ${lotes.length + 1}`, vagas: '', valor: '' }]); }
+  function upd(i: number, patch: any) { const l = [...lotes]; l[i] = { ...l[i], ...patch }; setLotes(l); }
+  const somaVagas = lotes.reduce((s, l) => s + (Number(l.vagas) > 0 ? Number(l.vagas) : 0), 0);
+  return (
+    <div className="rounded-lg border border-dashed border-border p-3 space-y-2">
+      <div className="text-xs font-medium text-muted-foreground">Lotes de preço (opcional)</div>
+      <p className="text-[11px] text-muted-foreground">
+        O lote muda sozinho quando as vagas dele esgotam, na ordem de chegada — e a pessoa vê o lote
+        atual e o preço antes de se inscrever. Sem lotes, vale o Valor único acima.
+      </p>
+      {lotes.map((l, i) => (
+        <div key={i} className="flex gap-2 items-center">
+          <Input placeholder={`Lote ${i + 1}`} value={l.nome || ''} onChange={e => upd(i, { nome: e.target.value })} className="h-8 text-sm flex-1" />
+          <Input placeholder="Vagas" value={l.vagas} onChange={e => upd(i, { vagas: e.target.value.replace(/\D/g, '') })}
+            inputMode="numeric" className="h-8 text-sm w-20" />
+          <Input placeholder="R$" value={l.valor} onChange={e => upd(i, { valor: e.target.value })}
+            inputMode="decimal" className="h-8 text-sm w-24" />
+          <button onClick={() => setLotes(lotes.filter((_, j) => j !== i))} className="text-red-500 px-1" title="Remover lote">
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+      {lotes.length < 6 && (
+        <Button size="sm" variant="outline" onClick={add}><Plus className="h-3.5 w-3.5 mr-1" /> Adicionar lote</Button>
+      )}
+      {lotes.length > 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          Os lotes descrevem <b>{somaVagas}</b> posições. Quem limita as inscrições é o campo <b>Vagas</b> do
+          evento; inscrição além dos lotes paga o último preço. O Valor acima ({valorTabela || '—'}) é o
+          preço de tabela — se a leitura dos lotes falhar, é ele que vale (deixe-o igual ao último lote).
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
  * "Mostrar só quando…" de UM campo.
  *
  * ⚠️ Só oferece como pergunta-mãe os campos ANTERIORES a este e que têm opções
@@ -382,6 +431,9 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
   const [campos, setCampos] = useState<any[]>(evento?.campos || []);
   const [premios, setPremios] = useState<string[]>(evento?.premios || []);
   const [termos, setTermos] = useState<any[]>(Array.isArray(evento?.termos_extra) ? evento.termos_extra : []);
+  // Lotes na tela ficam em REAIS (como o campo Valor); viram centavos no save.
+  const [lotes, setLotes] = useState<any[]>(() => (Array.isArray(evento?.lotes) ? evento.lotes : [])
+    .map((l: any) => ({ nome: l.nome || '', vagas: String(l.vagas ?? ''), valor: l.valor_centavos != null ? String(l.valor_centavos / 100) : '' })));
   const [salvando, setSalvando] = useState(false);
   const [enviandoCapa, setEnviandoCapa] = useState(false);
   const set = (k: string) => (e: any) => setF((s: any) => ({ ...s, [k]: e?.target ? e.target.value : e }));
@@ -443,6 +495,15 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
         // não pode manter gente sendo mandada pra um checkout.
         checkout_externo_url: f.pagamento_ativo ? String(f.checkout_externo_url || '').trim() : '',
         checkout_externo_nome: f.pagamento_ativo ? String(f.checkout_externo_nome || '').trim() : '',
+        // Lotes: vazio = preço único. Linha incompleta é descartada aqui e o
+        // servidor saneia de novo (utils/lotesEvento).
+        lotes: f.pagamento_ativo ? lotes
+          .map((l: any) => ({
+            nome: String(l.nome || '').trim(),
+            vagas: Number(l.vagas),
+            valor_centavos: Math.round(Number(String(l.valor || '').replace(',', '.')) * 100),
+          }))
+          .filter((l: any) => l.vagas > 0 && l.valor_centavos > 0) : [],
         exigir_endereco: !!f.exigir_endereco,
         exige_dados_menor: !!f.exige_dados_menor,
         termos_extra: termos
@@ -716,6 +777,7 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
                   </p>
                 ) : null}
               </div>
+              <LotesEditor lotes={lotes} setLotes={setLotes} valorTabela={f.valor_centavos ? `R$ ${f.valor_centavos}` : ''} />
             </div>
           )}
           {f.tem_sorteio && (

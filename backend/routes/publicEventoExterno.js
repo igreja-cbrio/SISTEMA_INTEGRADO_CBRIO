@@ -44,6 +44,7 @@ const checkoutExterno = require('../utils/checkoutExterno');
 // teste no gate amarrando os dois lados. Não reimplementar aqui.
 const camposCondicionais = require('../utils/camposCondicionais');
 const inscricaoMenor = require('../utils/inscricaoMenor');
+const lotesEvento = require('../utils/lotesEvento');
 // Régua ÚNICA da tela pública de pagamento (compartilhada com a doação). É onde
 // vivem as leis do parcelado e da forma que o provedor CONFIRMOU — uma segunda
 // cópia dessa lógica seria a garantia de que uma das duas telas ia divergir.
@@ -96,6 +97,7 @@ async function eventoEspinhaPorSlug(slug) {
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   await anexarConfigMenor(data);
   await anexarExtrasEvento(data);
+  await anexarLotesEvento(data);
   return data;
 }
 
@@ -125,6 +127,26 @@ async function anexarConfigMenor(ev) {
     ev.exigir_endereco = false;
     ev.exige_dados_menor = false;
     ev.termos_extra = [];
+  }
+  return ev;
+}
+
+/**
+ * ⚠️ Coluna da migration 20260821120000 (lotes de preço), em select PRÓPRIO e
+ * best-effort — separada dos outros dois anexadores pra falha aqui não levar
+ * junto o bloco de menor nem o período/instruções. Ausente ⇒ `lotes = []` =
+ * preço único (valor_centavos), o comportamento de sempre.
+ */
+async function anexarLotesEvento(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('lotes').eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    ev.lotes = lotesEvento.sanitizarLotes(data?.lotes) || [];
+  } catch (e) {
+    console.warn('[publicEvento espinha] lotes indisponíveis:', e.message);
+    ev.lotes = [];
   }
   return ev;
 }
@@ -166,6 +188,7 @@ async function eventoEspinhaPorId(id) {
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   await anexarConfigMenor(data);
   await anexarExtrasEvento(data);
+  await anexarLotesEvento(data);
   return data;
 }
 
@@ -307,6 +330,39 @@ function avisoPagamento(ev) {
 const refCobranca = (inscricaoId) => `inscricao:${inscricaoId}`;
 
 /**
+ * O LOTE desta inscrição, pela POSIÇÃO dela na ordem de chegada — nunca pelo
+ * "lote atual" da tela, que pode ter virado entre abrir o formulário e enviar.
+ *
+ * Posição = quantas inscrições vivas NÃO-canceladas chegaram antes (ou junto,
+ * desempatadas pelo id) — a MESMA régua de ocupação da `fn_insc_inscrever`, e
+ * DETERMINÍSTICA: duas pessoas cruzando a fronteira do lote no mesmo segundo
+ * recebem posições distintas, então uma paga o lote velho e a outra o novo, sem
+ * depender da ordem em que as consultas rodaram.
+ *
+ * ⚠️ Fail-soft PRO VALOR DE TABELA (null ⇒ o chamador cobra `ev.valor_centavos`,
+ * que com lotes é o preço FINAL): errar pra cima é a equipe devolvendo diferença
+ * a uma pessoa; errar pra baixo é desconto silencioso que ninguém revisa.
+ */
+async function valorLoteDaInscricao(ev, inscricaoId) {
+  if (!Array.isArray(ev?.lotes) || !ev.lotes.length || !inscricaoId) return null;
+  try {
+    const { data: eu, error: e1 } = await supabase.from('inscricoes')
+      .select('created_at').eq('id', inscricaoId).maybeSingle();
+    if (e1 || !eu?.created_at) return null;
+    const { count, error: e2 } = await supabase.from('inscricoes')
+      .select('id', { count: 'exact', head: true })
+      .eq('evento_id', ev.id).is('deleted_at', null).neq('status', 'cancelada')
+      .or(`created_at.lt.${eu.created_at},and(created_at.eq.${eu.created_at},id.lte.${inscricaoId})`);
+    if (e2 || !(count > 0)) return null;
+    const lote = lotesEvento.loteDaPosicao(ev.lotes, count);
+    return lote ? { valor_centavos: lote.valor_centavos, nome: lote.nome } : null;
+  } catch (e) {
+    console.error('[publicEvento espinha] lote da inscrição:', e.message);
+    return null;
+  }
+}
+
+/**
  * Benefício (gratuidade/desconto) pré-autorizado pra este CPF neste evento.
  *
  * Só devolve o que ainda NÃO foi usado: a autorização vale uma vez, senão o
@@ -371,7 +427,7 @@ async function aplicarBeneficio(beneficio, inscricaoId) {
  * Cria (ou recupera) a cobrança da inscrição e espelha em `insc_pagamentos`,
  * que é a linha que a UI de inscrições lê. O estado canônico vive no motor.
  */
-async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos, estacaoId }) {
+async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos, estacaoId, lote }) {
   const horas = Number(ev.pagamento_expira_horas) > 0 ? Number(ev.pagamento_expira_horas) : 48;
   const { cobranca, reemitida } = await pagamentos.criarCobranca({
     origem_tipo: pagamentos.ORIGENS.INSCRICAO,
@@ -396,7 +452,9 @@ async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos, 
     // Totem: atribuído pelo SERVIDOR a partir da conta de quiosque logada.
     // NULL = veio da web (o caso normal).
     estacao_id: estacaoId || null,
-    metadata: { evento_id: ev.id, evento_slug: ev.slug, evento_nome: ev.nome },
+    // `lote` é REGISTRO de qual lote precificou (a conciliação lê daqui por que
+    // duas cobranças do mesmo evento têm valores diferentes) — nunca decide nada.
+    metadata: { evento_id: ev.id, evento_slug: ev.slug, evento_nome: ev.nome, ...(lote ? { lote } : {}) },
   });
 
   // ⚠️ Reemissão (a cobrança anterior morreu sem dinheiro): o espelho tem
@@ -883,15 +941,21 @@ router.get('/:slug', async (req, res) => {
   try {
   const esp = await eventoEspinhaPorSlug(req.params.slug);
   if (esp) {
+    const pago = !!esp.pagamento_ativo && Number(esp.valor_centavos) > 0;
+    const temLotes = pago && Array.isArray(esp.lotes) && esp.lotes.length > 0;
     // Evento pago ABRE desde a F3.3 — o curto-circuito `pago ||` saiu. O de
     // vagas continua: evento sem limite (o Celebra migrou com vagas=null) não
-    // gasta a RPC.
-    const ocup = esp.vagas == null ? null : await ocupacaoEspinha(esp.id);
+    // gasta a RPC — a menos que haja LOTES, cuja exibição depende da ocupação.
+    const ocup = (esp.vagas != null || temLotes) ? await ocupacaoEspinha(esp.id) : null;
+    // Lote ATUAL só com a ocupação em mãos: sem ela (RPC soluçou), a tela cai
+    // no valor de tabela (o preço FINAL) em vez de prometer um desconto que a
+    // cobrança pode não dar. Quem decide o preço cobrado é o POST, pela POSIÇÃO
+    // da inscrição — esta exibição é o convite, não a decisão.
+    const lote = temLotes && ocup ? lotesEvento.loteAtual(esp.lotes, ocup.ocupadas || 0) : null;
     // ⚠️ Evento pago MAL CONFIGURADO conta como fechado, senão a pessoa preenche
     // o formulário inteiro e só então leva 503 do POST. O aviso explica por quê.
     const bloqueio = bloqueioPagamento(esp);
     const encerradas = !!bloqueio || await espinhaEncerrada(esp);
-    const pago = !!esp.pagamento_ativo && Number(esp.valor_centavos) > 0;
     return res.json({
       fonte: 'espinha',
       nome: esp.nome, slug: esp.slug, data: esp.data, hora: esp.hora, local: esp.local,
@@ -908,9 +972,14 @@ router.get('/:slug', async (req, res) => {
       inscricoes_encerradas: encerradas,
       vagas: esp.vagas ?? null,
       vagas_restantes: ocup ? ocup.restantes : null, // null = ilimitado
-      // Pagamento: a tela mostra o valor ANTES de a pessoa preencher.
+      // Pagamento: a tela mostra o valor ANTES de a pessoa preencher — e com
+      // lotes é o preço do LOTE ATUAL (bundle antigo mostra o número certo sem
+      // saber o que é lote).
       pagamento_ativo: pago,
-      valor_centavos: pago ? Number(esp.valor_centavos) : null,
+      valor_centavos: pago ? (lote ? lote.valor_centavos : Number(esp.valor_centavos)) : null,
+      // Lote atual por extenso, pra tela rotular ("Lote 1 · restam N · depois
+      // sobe pra R$ X"). null = evento sem lotes, ou ocupação indisponível.
+      lote_atual: lote,
       pagamento_metodos: pago ? metodosDoEvento(esp) : [],
       // Cartão numa plataforma externa (e-Inscrição): a tela pergunta a forma
       // ANTES do formulário e manda pra lá quem escolher cartão. `null` = o
@@ -1196,8 +1265,13 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
       // Quem já pagou vê o comprovante; quem não pagou recebe o MESMO link
       // (a `referencia` idempotente devolve a cobrança existente em vez de
       // criar uma segunda — é assim que ninguém paga duas vezes).
+      // ⚠️ O valor do lote vai junto pro caso de REEMISSÃO (cobrança anterior
+      // morta sem dinheiro): a nova precisa nascer com o preço da POSIÇÃO da
+      // pessoa, não com o valor de tabela.
+      const loteExistente = await valorLoteDaInscricao(ev, existente.id);
       const cobranca = await cobrarInscricao({
         ev, inscricaoId: existente.id, val, membroId: existente.membro_id,
+        valorCentavos: loteExistente?.valor_centavos, lote: loteExistente?.nome,
       });
       return res.json({ ...respostaCobranca(cobranca, ev), ja_inscrito: true });
     }
@@ -1244,7 +1318,11 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
       // da cobrança que já existe (a `referencia` idempotente garante que é a
       // mesma, então ninguém paga duas vezes).
       if (ehPago && rpc.id) {
-        const cobranca = await cobrarInscricao({ ev, inscricaoId: rpc.id, val, membroId: null, estacaoId });
+        const loteCorrida = await valorLoteDaInscricao(ev, rpc.id);
+        const cobranca = await cobrarInscricao({
+          ev, inscricaoId: rpc.id, val, membroId: null, estacaoId,
+          valorCentavos: loteCorrida?.valor_centavos, lote: loteCorrida?.nome,
+        });
         return res.json({ ...respostaCobranca(cobranca, ev), ja_inscrito: true });
       }
       // Busca a linha vencedora pra devolver o número da sorte — sem isso a
@@ -1396,8 +1474,14 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
     // falhar aqui, a inscrição fica pendente e o cron de expiração devolve a
     // vaga — melhor que o inverso (cobrar sem vaga garantida).
     try {
+      // LOTES (20/08): o preço é o do lote da POSIÇÃO desta inscrição. O
+      // benefício por CPF (autorização individual do líder) VENCE o lote — as
+      // duas coisas não se somam. Sem lote resolvido, vale o valor de tabela.
+      const loteInsc = valorComBeneficio == null ? await valorLoteDaInscricao(ev, ins.id) : null;
       const cobranca = await cobrarInscricao({
-        ev, inscricaoId: ins.id, val, membroId: null, valorCentavos: valorComBeneficio,
+        ev, inscricaoId: ins.id, val, membroId: null,
+        valorCentavos: valorComBeneficio ?? loteInsc?.valor_centavos,
+        lote: loteInsc?.nome,
         estacaoId,
       });
       return res.status(201).json({ ...respostaCobranca(cobranca, ev), beneficio: beneficio ? 'parcial' : null });
