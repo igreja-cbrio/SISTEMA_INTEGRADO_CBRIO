@@ -306,6 +306,8 @@ const EVENTO_VAZIO = {
   // Último dia (retiro/viagem de vários dias) + arquivo de instruções gerais
   // que a pessoa baixa ao concluir e recebe anexado no e-mail (20/08).
   data_fim: '', instrucoes_url: '', instrucoes_nome: '',
+  // Grupo de WhatsApp pra dúvidas, exibido nas telas públicas (21/08).
+  whatsapp_duvidas_url: '',
   vagas: '', inscricoes_encerram_em: '', recorre_ate: '',
   msg_sucesso_titulo: '', msg_sucesso_texto: '', msg_whatsapp: '',
   tem_sorteio: false, checkin_ativo: false,
@@ -425,6 +427,7 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
     data_fim: evento.data_fim || '',
     instrucoes_url: evento.instrucoes_url || '',
     instrucoes_nome: evento.instrucoes_nome || '',
+    whatsapp_duvidas_url: evento.whatsapp_duvidas_url || '',
     pagamento_expira_horas: evento.pagamento_expira_horas ?? '',
     inscricoes_encerram_em: isoParaInputLocal(evento.inscricoes_encerram_em),
   } : { ...EVENTO_VAZIO });
@@ -478,6 +481,7 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
         data_fim: f.data_fim || null,
         instrucoes_url: f.instrucoes_url || null,
         instrucoes_nome: f.instrucoes_url ? (f.instrucoes_nome || null) : null,
+        whatsapp_duvidas_url: String(f.whatsapp_duvidas_url || '').trim() || null,
         campos, premios: premios.map(p => p.trim()).filter(Boolean),
         vagas: f.vagas === '' ? null : Number(f.vagas),
         inscricoes_encerram_em: f.inscricoes_encerram_em ? new Date(f.inscricoes_encerram_em).toISOString() : null,
@@ -645,6 +649,15 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
                   </button>
                 )}
               </div>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs text-muted-foreground">Grupo de WhatsApp pra dúvidas (opcional)</label>
+              <Input value={f.whatsapp_duvidas_url || ''} onChange={set('whatsapp_duvidas_url')}
+                placeholder="https://chat.whatsapp.com/…" />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Aparece como “Dúvidas? Entre no grupo do WhatsApp” na página do evento e na de pagamento —
+                antes e depois de a pessoa se inscrever. Não é a mensagem de divulgação.
+              </p>
             </div>
           </div>
 
