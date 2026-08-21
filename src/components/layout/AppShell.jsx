@@ -15,7 +15,7 @@ import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
 import { navItemAllowed } from '../../lib/menuAccess';
 import {
-  Activity, ArrowRight, ArrowRightLeft, Baby, BarChart2, Bell, BellOff, BellRing, BookOpen, BrainCircuit, CalendarDays, Camera, Check, CheckCheck, ClipboardCheck, ClipboardList, Compass, DollarSign, Droplets, FileText, FolderKanban, GraduationCap, HandHelping, Heart, Images, Landmark, LayoutDashboard, ListChecks, LogOut, Map, Megaphone, Menu as MenuIcon, MessageSquare, MonitorSmartphone, Moon, QrCode, Search, Settings, Shield, ShoppingCart, SlidersHorizontal, Sparkles, Sun, Tag, TrendingUp, Truck, UserCheck, UserSearch, Users, UsersRound, Youtube, Filter,
+  Activity, ArrowRight, ArrowRightLeft, Baby, BarChart2, Bell, BellOff, BellRing, BookOpen, BrainCircuit, CalendarDays, Camera, Check, CheckCheck, ClipboardCheck, ClipboardList, Compass, DollarSign, Droplets, FileText, FolderKanban, GraduationCap, HandHelping, Heart, Landmark, LayoutDashboard, ListChecks, LogOut, Map, Megaphone, Menu as MenuIcon, MessageSquare, MonitorSmartphone, Moon, QrCode, Search, Settings, Shield, ShoppingCart, SlidersHorizontal, Sparkles, Sun, Tag, TrendingUp, Truck, UserCheck, UserSearch, Users, UsersRound, Youtube, Filter,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -223,10 +223,10 @@ const NAV_ITEMS = [
         items: [
           { label: 'Marketing', description: 'Kanban de demandas criativas · capacidade · analytics', icon: Megaphone, path: '/marketing', module: 'marketing' },
           { label: 'Produção de Culto', description: 'Indicadores técnicos por culto · solicitações · desempenho', icon: SlidersHorizontal, path: '/producao', module: 'producao' },
-          // ⚠️ Destaques da Home e Fotos de Batismo SAÍRAM daqui (17/08): viraram
-          // sub-abas da aba "App" do Marketing, junto dos Comunicados — eram 3
-          // itens de menu para publicar coisa no MESMO app de membros.
-          { label: 'App de membros', description: 'Comunicados do mural · destaques da Home · fotos de batismo', icon: Images, path: '/marketing/app', module: 'marketing' },
+          // ⚠️ "App de membros" (comunicados do mural · destaques da Home · fotos
+          // de batismo) NÃO tem item de menu próprio (21/08): é só a aba "App"
+          // dentro de Marketing. A rota /marketing/app e os redirects continuam
+          // valendo — não recriar aqui.
         ],
       },
     ],

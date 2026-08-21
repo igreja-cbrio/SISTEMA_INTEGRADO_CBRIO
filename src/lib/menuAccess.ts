@@ -78,11 +78,12 @@ const DOMINIO_POR_PATH: Record<string, { dom: Dominio; slug?: string }> = {
   // 2 · Criativo (time criativo + admin)
   '/marketing': { dom: 'criativo' },
   '/producao': { dom: 'criativo' },
-  // ⚠️ O lookup é por path EXATO. Quando Destaques e Fotos de Batismo viraram a
-  // aba "App" do Marketing (17/08), o item de menu passou a apontar pra
-  // `/marketing/app` — sem esta linha o declutter de domínio deixa de valer e o
-  // item volta a aparecer pra quem tem `marketing` >= 1 fora do Criativo
-  // (pastor-senior, diretor-administrativo, diretor-ministerial têm nível 1).
+  // ⚠️ O lookup é por path EXATO. Desde 21/08 `/marketing/app` NÃO tem item de
+  // menu (é só a aba "App" do Marketing), mas a linha CONTINUA valendo: sem ela
+  // o declutter de domínio deixa de se aplicar a quem chega pela busca, por link
+  // salvo ou pelos redirects abaixo, e a tela volta a se abrir pra quem tem
+  // `marketing` >= 1 fora do Criativo (pastor-senior, diretor-administrativo,
+  // diretor-ministerial têm nível 1). Não remover junto com o item de menu.
   '/marketing/app': { dom: 'criativo' },
   // Os dois endereços antigos ficam mapeados de propósito: são `Navigate` hoje,
   // mas link salvo e atalho antigo ainda passam por aqui.

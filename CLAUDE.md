@@ -12216,3 +12216,29 @@ contra `utils/respostaEscala.js`.
 ⚠️ Botão ESTÁTICO — o envio não muda por causa dele. Só se um dia virar botão
 com payload dinâmico é que será preciso mandar `components` com
 `sub_type: 'quick_reply'`.
+
+## "App de membros" SAIU do menu · é aba do Marketing (2026-08-21 · SEM migration)
+
+O item **"App de membros"** (`/marketing/app`) foi **removido do `NAV_ITEMS`** do
+`AppShell.jsx` (grupo Criativo → "Demandas criativas"). Motivo do Marcos: aquilo
+não é módulo, é a **aba "App" de dentro do Marketing** — publicar comunicado do
+mural, destaque da Home e foto de batismo é trabalho do Marketing, e ter item de
+menu próprio dava a entender que era um módulo à parte. O ícone `Images` saiu do
+import do `lucide-react` junto (era o único uso no arquivo; import órfão trava o
+lint).
+
+**O que NÃO mudou — e não deve ser "limpado" por parecer sobra:**
+- A rota `/marketing/app` (`src/App.tsx`) e o `MarketingApp` continuam de pé; o
+  caminho de acesso agora é **Marketing → aba "App"** (`MarketingNav.jsx`).
+- Os `Navigate` de `/marketing/comunicados`, `/admin/destaques` e
+  `/admin/fotos-batismo` continuam — link salvo e atalho antigo ainda passam ali.
+- ⚠️ `'/marketing/app': { dom: 'criativo' }` **fica** no `DOMINIO_POR_PATH`
+  (`src/lib/menuAccess.ts`). Ele não existe só pelo menu: o mapa é lookup por
+  path exato e sustenta o declutter de domínio pra quem chega pela busca, por
+  link salvo ou pelos redirects acima. Tirar a linha reabre exatamente a
+  regressão de 17/08 documentada mais acima neste arquivo.
+
+⚠️ **Régua: tirar item do menu é tirar do `NAV_ITEMS`, não da rota.** O menu é
+vitrine; quem decide acesso é o `ModuleGuard` (front) e o `authorizeModule`
+(backend). A busca ⌘K (`command-search.tsx`) tem lista própria (`PAGES`) e nunca
+teve esta entrada — nada a sincronizar aqui.
