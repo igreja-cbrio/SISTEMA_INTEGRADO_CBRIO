@@ -6630,6 +6630,24 @@ prometer número da outra plataforma.
 ⏳ Retiro: lotes seedados na migration; falta aplicar, mergear, decidir o total
 de vagas e publicar.
 
+## Evento · grupo de WhatsApp pra DÚVIDAS (2026-08-21 · migration `20260821150000`)
+
+Pedido do Marcos pro AMI CAMP 2027: link de grupo "caso alguém queira tirar
+dúvida antes ou depois de se inscrever". **`insc_eventos.whatsapp_duvidas_url`**
+(CHECK https) vira o chip "Dúvidas? Entre no grupo do WhatsApp" em DOIS lugares:
+no **cabeçalho da página do evento** (de propósito — cobre a escolha Pix×cartão,
+o formulário e a tela de sucesso, que dividem a página) e na **página de
+pagamento**, pago ou não (dúvida acontece antes E depois de pagar).
+
+- ⚠️ **NÃO confundir com `msg_whatsapp`** (texto de divulgação com `{link}` que
+  o admin copia) nem com envio: é link de ENTRADA em grupo, exibido, nunca
+  disparado.
+- Leitura isolada/fail-soft por migration-coorte (`anexarWhatsappDuvidas` — um
+  anexador POR migration, pra coluna nova falhando não apagar da tela o que as
+  migrations já aplicadas entregam) + `whatsappDuvidasDaInscricao` na página de
+  pagamento. Admin: campo no EventoForm. Seed do retiro na migration
+  (só-onde-vazio).
+
 ## ⚠️⚠️ EXCLUIR EVENTO travava no card espelho do Marketing (2026-08-14 · migration `20260814190000`)
 
 Marcos, ao tentar apagar o "Dia Reforma Protestante": *"quero apagar o da reforma

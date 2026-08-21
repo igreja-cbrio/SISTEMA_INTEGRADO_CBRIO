@@ -98,6 +98,7 @@ async function eventoEspinhaPorSlug(slug) {
   await anexarConfigMenor(data);
   await anexarExtrasEvento(data);
   await anexarLotesEvento(data);
+  await anexarWhatsappDuvidas(data);
   return data;
 }
 
@@ -127,6 +128,27 @@ async function anexarConfigMenor(ev) {
     ev.exigir_endereco = false;
     ev.exige_dados_menor = false;
     ev.termos_extra = [];
+  }
+  return ev;
+}
+
+/**
+ * ⚠️ Coluna da migration 20260821150000 (grupo de WhatsApp de dúvidas), em
+ * select PRÓPRIO e best-effort — isolada dos outros anexadores porque cada um
+ * cobre uma migration: a falha de uma coluna nova não pode apagar da tela o
+ * que as migrations já aplicadas entregam. Só sai https.
+ */
+async function anexarWhatsappDuvidas(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('whatsapp_duvidas_url').eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    ev.whatsapp_duvidas_url = /^https:\/\//.test(String(data?.whatsapp_duvidas_url || ''))
+      ? data.whatsapp_duvidas_url : null;
+  } catch (e) {
+    console.warn('[publicEvento espinha] whatsapp de dúvidas indisponível:', e.message);
+    ev.whatsapp_duvidas_url = null;
   }
   return ev;
 }
@@ -189,6 +211,7 @@ async function eventoEspinhaPorId(id) {
   await anexarConfigMenor(data);
   await anexarExtrasEvento(data);
   await anexarLotesEvento(data);
+  await anexarWhatsappDuvidas(data);
   return data;
 }
 
@@ -648,6 +671,23 @@ async function instrucoesDaInscricao(inscricaoId) {
   } catch { return null; }
 }
 
+/**
+ * Grupo de WhatsApp de dúvidas do EVENTO desta inscrição — a página de
+ * pagamento é o "depois de se inscrever" (quem paga nunca volta na tela de
+ * sucesso do formulário). Isolada e fail-soft (coluna da 20260821150000).
+ */
+async function whatsappDuvidasDaInscricao(inscricaoId) {
+  if (!inscricaoId) return null;
+  try {
+    const { data, error } = await supabase.from('inscricoes')
+      .select('evento:insc_eventos(whatsapp_duvidas_url)')
+      .eq('id', inscricaoId).maybeSingle();
+    if (error) return null;
+    const url = data?.evento?.whatsapp_duvidas_url;
+    return /^https:\/\//.test(String(url || '')) ? url : null;
+  } catch { return null; }
+}
+
 /** Código legível da inscrição. Consulta isolada e fail-soft (a coluna é nova). */
 async function codigoDaInscricao(inscricaoId) {
   if (!inscricaoId) return null;
@@ -685,6 +725,8 @@ async function respostaPagamento(cobranca) {
     // mesmo arquivo vai anexado no e-mail de confirmação — o download aqui é
     // o "quer baixar agora?".
     instrucoes: cobranca.status === 'pago' ? await instrucoesDaInscricao(daInscricao) : null,
+    // Grupo de dúvidas: SEMPRE (antes e depois de pagar — é pra tirar dúvida).
+    whatsapp_duvidas: await whatsappDuvidasDaInscricao(daInscricao),
 
     // ── Comprovante de Pix/transferência (fila humana) ──
     // Só faz sentido oferecer enquanto NÃO está pago e em forma que pode ter
@@ -980,6 +1022,9 @@ router.get('/:slug', async (req, res) => {
       // Lote atual por extenso, pra tela rotular ("Lote 1 · restam N · depois
       // sobe pra R$ X"). null = evento sem lotes, ou ocupação indisponível.
       lote_atual: lote,
+      // Grupo de WhatsApp pra dúvidas (21/08): link de ENTRADA exibido no
+      // cabeçalho — cobre escolha de forma, formulário e tela de sucesso.
+      whatsapp_duvidas: esp.whatsapp_duvidas_url || null,
       pagamento_metodos: pago ? metodosDoEvento(esp) : [],
       // Cartão numa plataforma externa (e-Inscrição): a tela pergunta a forma
       // ANTES do formulário e manda pra lá quem escolher cartão. `null` = o

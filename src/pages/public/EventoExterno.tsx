@@ -580,6 +580,18 @@ export default function EventoExterno() {
               )}
               {evento?.local && <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>{evento.local}</p>}
               {evento?.descricao && <p style={{ fontSize: 13, color: C.text3, marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-line' }}>{evento.descricao}</p>}
+              {/* Grupo de dúvidas (21/08): fica no CABEÇALHO de propósito —
+                  aparece na escolha Pix×cartão, no formulário e na tela de
+                  sucesso, que dividem esta página. Link real (<a>), nova aba. */}
+              {evento?.whatsapp_duvidas && (
+                <a href={evento.whatsapp_duvidas} target="_blank" rel="noopener noreferrer" style={{
+                  display: 'inline-block', marginTop: 10, padding: '7px 14px', borderRadius: 999,
+                  background: 'rgba(37,211,102,0.10)', border: '1px solid rgba(37,211,102,0.35)',
+                  color: '#1da851', fontSize: 12.5, fontWeight: 700, textDecoration: 'none',
+                }}>
+                  Dúvidas? Entre no grupo do WhatsApp
+                </a>
+              )}
             </>
           )}
         </div>

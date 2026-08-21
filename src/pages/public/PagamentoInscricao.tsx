@@ -52,6 +52,8 @@ interface Pagamento {
   comprovantes?: ComprovanteEnviado[] | null;
   // Instruções gerais do evento (só vem com `pago` — inscrição concluída).
   instrucoes?: { url: string; nome?: string | null } | null;
+  // Grupo de WhatsApp pra dúvidas do evento (antes e depois de pagar).
+  whatsapp_duvidas?: string | null;
 }
 
 interface ComprovanteEnviado {
@@ -592,6 +594,18 @@ export default function PagamentoInscricao() {
                 Política de reembolso e cancelamento
               </a>
             </p>
+
+            {/* Grupo de dúvidas do evento (21/08): visível pago ou não — dúvida
+                acontece antes E depois de pagar. Link real, nova aba. */}
+            {pag.whatsapp_duvidas && (
+              <a href={pag.whatsapp_duvidas} target="_blank" rel="noopener noreferrer" style={{
+                display: 'inline-block', marginTop: 10, padding: '8px 14px', borderRadius: 999,
+                background: 'rgba(37,211,102,0.10)', border: '1px solid rgba(37,211,102,0.35)',
+                color: '#1da851', fontSize: 12.5, fontWeight: 700, textDecoration: 'none',
+              }}>
+                Dúvidas? Entre no grupo do WhatsApp
+              </a>
+            )}
 
             {/* Comprovante do check-in (SPEC-06): pagou → o QR da entrada
                 aparece AQUI (a tela de sucesso do formulário ficou pra trás

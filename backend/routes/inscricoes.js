@@ -186,6 +186,8 @@ const CAMPOS_EVENTO = [
   // Período (retiro de vários dias) + instruções gerais pra download/e-mail
   // (migration 20260820120000). Nullable: limpar é edição legítima.
   'data_fim', 'instrucoes_url', 'instrucoes_nome',
+  // Grupo de WhatsApp pra dúvidas, exibido nas telas públicas (20260821150000).
+  'whatsapp_duvidas_url',
 ];
 
 // ⚠️ INCIDENTE 2026-08-04 · colunas NOT NULL da whitelist acima.
