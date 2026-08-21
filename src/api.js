@@ -2629,6 +2629,10 @@ export const membresia = {
     create: (data) => post('/membresia/membros', data),
     update: (id, data) => put(`/membresia/membros/${id}`, data),
     remove: (id) => del(`/membresia/membros/${id}`),
+    // ⚠️ Desativar NÃO é `remove` (que é soft-delete e some da base): é
+    // `status='inativo'`, reversível, com motivo opcional.
+    desativar: (id, motivo) => post(`/membresia/membros/${id}/desativar`, { motivo: motivo || null }),
+    reativar: (id, status) => post(`/membresia/membros/${id}/reativar`, status ? { status } : {}),
     uploadFoto: (id, formData) => requestFile(`/membresia/membros/${id}/foto`, formData),
     wifi: (id) => get(`/membresia/membros/${id}/wifi`),
     reconhecimentoFacial: (id) => get(`/membresia/membros/${id}/reconhecimento-facial`),

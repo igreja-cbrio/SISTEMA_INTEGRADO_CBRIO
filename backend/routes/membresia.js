@@ -15,6 +15,7 @@ const { montarPatchFusao } = require('../services/fusaoCampos');
 const { normalizarCpf: normCpf11, cpfValido } = require('../utils/cpf');
 const censoDisparo = require('../services/censoDisparo');
 const { avaliarProntidao } = require('../utils/prontidaoCadastro');
+const { decidirDesativacao, decidirReativacao } = require('../utils/desativarMembro');
 // ⚠️⚠️ `donosDoGrupo` era CHAMADO em `/totem/grupos/:id/entrar` e NUNCA foi
 // importado neste arquivo — ReferenceError latente. O insert do pedido roda
 // ANTES, então o primeiro uso real do totem gravaria o pedido e responderia
@@ -1392,6 +1393,106 @@ router.delete('/membros/:id', authorize('admin', 'diretor'), async (req, res) =>
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao remover membro' });
+  }
+});
+
+// ── DESATIVAR / REATIVAR MEMBRO ────────────────────────────────────────────
+// Pedido do Matheus (21/08): botão na ficha, com motivo OPCIONAL da saída.
+//
+// ⚠️⚠️ ENDPOINT PRÓPRIO, não o `PUT /membros/:id` genérico (que faz
+// `.update(req.body)` cru). Desativar é um ATO — tem autor, instante, motivo e
+// o status de onde a pessoa saiu. Passar por "editar um campo" perderia os
+// quatro e deixaria a reativação sem para onde voltar.
+//
+// ⚠️ NÃO fecha vínculo de grupo nem de voluntariado, e é decisão: sair da
+// membresia não é a mesma coisa que sair do grupo, e desligar em cascata faria
+// uma ação reversível apagar em silêncio o que outras equipes gerenciam.
+// A régua vive em `utils/desativarMembro` (pura, no gate).
+function _erroDesativacao(codigo) {
+  const mapa = {
+    nao_encontrado: [404, 'Membro não encontrado.'],
+    apagado: [409, 'Este cadastro está excluído — restaure antes de mudar o status.'],
+    ja_inativo: [409, 'Este membro já está desativado.'],
+    nao_esta_inativo: [409, 'Este membro não está desativado.'],
+    sem_status_anterior: [409, 'Não sei para qual status voltar (a desativação é anterior a esta tela). Escolha o status na edição do cadastro.'],
+    destino_invalido: [400, 'Status de destino inválido.'],
+  };
+  return mapa[codigo] || [400, 'Não foi possível concluir.'];
+}
+
+// ⚠️ Deploy em 2 etapas: sem a migration `20260821120000` as colunas
+// `inativado_*` não existem e o PostgREST recusa a query INTEIRA (42703).
+// Aqui o certo é DEGRADAR (gravar só o status) em vez de derrubar a ação —
+// perder o motivo é ruim, não conseguir desativar é pior.
+const _COLS_INATIVACAO = 'inativado_em,inativado_motivo,inativado_por,inativado_status_anterior';
+function _semColunasInativacao(error) {
+  return !!error && (error.code === '42703' || error.code === 'PGRST204'
+    || /inativado_/i.test(String(error.message || '')));
+}
+async function _lerMembroParaStatus(id) {
+  const { data, error } = await supabase.from('mem_membros')
+    .select(`id, nome, status, deleted_at, ${_COLS_INATIVACAO}`).eq('id', id).maybeSingle();
+  if (error && _semColunasInativacao(error)) {
+    const r = await supabase.from('mem_membros')
+      .select('id, nome, status, deleted_at').eq('id', id).maybeSingle();
+    if (r.error) throw r.error;
+    return { membro: r.data, degradado: true };
+  }
+  if (error) throw error;
+  return { membro: data, degradado: false };
+}
+async function _gravarStatus(id, patch, degradado) {
+  const enxuto = degradado ? { status: patch.status } : patch;
+  const { data, error } = await supabase.from('mem_membros')
+    .update(enxuto).eq('id', id).select('id, nome, status').single();
+  if (error && !degradado && _semColunasInativacao(error)) {
+    const r = await supabase.from('mem_membros')
+      .update({ status: patch.status }).eq('id', id).select('id, nome, status').single();
+    if (r.error) throw r.error;
+    return { linha: r.data, perdeuContexto: true };
+  }
+  if (error) throw error;
+  return { linha: data, perdeuContexto: false };
+}
+
+router.post('/membros/:id/desativar', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { membro, degradado } = await _lerMembroParaStatus(req.params.id);
+    const d = decidirDesativacao(membro, {
+      motivo: req.body?.motivo,
+      agora: new Date().toISOString(),
+      porUsuario: req.user?.id ?? null,
+    });
+    if (!d.ok) { const [st, msg] = _erroDesativacao(d.codigo); return res.status(st).json({ error: msg, code: d.codigo }); }
+
+    const { linha, perdeuContexto } = await _gravarStatus(req.params.id, d.patch, degradado);
+    if (degradado || perdeuContexto) {
+      console.warn('[membresia] desativar sem contexto — rode a migration 20260821120000');
+    }
+    res.json({
+      ok: true,
+      membro: linha,
+      motivo: d.motivo,
+      status_anterior: d.patch.inativado_status_anterior,
+      ...((degradado || perdeuContexto) ? { aviso: 'O membro foi desativado, mas o motivo não foi guardado (migration pendente).' } : {}),
+    });
+  } catch (e) {
+    console.error('[membresia] desativar:', e.message);
+    res.status(500).json({ error: 'Erro ao desativar o membro' });
+  }
+});
+
+router.post('/membros/:id/reativar', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { membro, degradado } = await _lerMembroParaStatus(req.params.id);
+    const d = decidirReativacao(membro, { statusEscolhido: req.body?.status });
+    if (!d.ok) { const [st, msg] = _erroDesativacao(d.codigo); return res.status(st).json({ error: msg, code: d.codigo }); }
+
+    const { linha } = await _gravarStatus(req.params.id, d.patch, degradado);
+    res.json({ ok: true, membro: linha, status: d.statusDestino });
+  } catch (e) {
+    console.error('[membresia] reativar:', e.message);
+    res.status(500).json({ error: 'Erro ao reativar o membro' });
   }
 });
 
