@@ -1987,6 +1987,14 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
       : (data || []).filter(e => equipesVisiveis.has(e.team_id) || nomesVisiveis.has(e.team_name));
     res.json({
       escalas: escalasVisiveis,
+      // ⚠️ ALIAS DE COMPATIBILIDADE (22/08/2026). O app do STAFF lê `escala`
+      // (singular) e o do MEMBRO lê `escalas` — mesmo endpoint. O do staff caía
+      // no fallback `[]` e a tela de montar escala abria VAZIA em todo culto,
+      // sem erro nenhum: o card da lista anterior mostrava "107 escalados"
+      // porque vem de outro endpoint. O app foi corrigido, mas o alias faz o
+      // binário que JÁ está no celular voltar a funcionar no merge, sem
+      // esperar o OTA. Remover quando a frota do staff tiver atualizado.
+      escala: escalasVisiveis,
       composicao: itens.map(i => ({ ...i, area: i.area || 'Sem área' })),
       areas_supervisionadas: areas,
       // Declara o que foi escondido: uma tela que some com linhas sem dizer
