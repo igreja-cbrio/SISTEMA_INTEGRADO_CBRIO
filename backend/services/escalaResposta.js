@@ -14,7 +14,8 @@
 // "recusou pelo app e ninguém foi avisado".
 
 const { supabase } = require('../utils/supabase');
-const { notificar } = require('./notificar');
+const { notificar, resolverDestinatarios } = require('./notificar');
+const { ehEscalaKids } = require('../utils/avisoEscala');
 const { notificarApp } = require('./appPush');
 
 const STATUS_VALIDOS = ['confirmed', 'declined'];
@@ -68,6 +69,24 @@ async function _contaDoSupervisor(teamId) {
  * @param {object} opts  { origem: 'link'|'app'|'sistema', porUserId }
  * @returns {{ok:boolean, status?:number, erro?:string, escala?:object, mudou?:boolean}}
  */
+/**
+ * A equipe é do Kids? Lê `vol_teams.area` — a MESMA régua do aviso de escala
+ * (`utils/avisoEscala.ehEscalaKids`), nunca uma segunda cópia.
+ *
+ * ⚠️ Decide pela ÁREA, não pelo nome: medido em 21/08, as 13 equipes ATIVAS têm
+ * área e exatamente uma é `KIDS`; casar por nome pegaria qualquer rótulo que a
+ * coordenação renomeasse.
+ * ⚠️ Erro de leitura devolve `false` — deixar de avisar o Kids é ruim, mas
+ * inventar que uma equipe é Kids mandaria recusa alheia pra Mari e pra Milena.
+ */
+async function _equipeEhKids(teamId) {
+  if (!teamId) return false;
+  const { data, error } = await supabase
+    .from('vol_teams').select('area').eq('id', teamId).maybeSingle();
+  if (error) throw error;
+  return ehEscalaKids({ team_area: data?.area });
+}
+
 async function responderEscala(scheduleId, status, opts = {}) {
   if (!STATUS_VALIDOS.includes(status)) {
     return { ok: false, status: 400, erro: 'Status deve ser confirmed ou declined' };
@@ -109,10 +128,33 @@ async function responderEscala(scheduleId, status, opts = {}) {
   // ⚠️ Quem recebe vem de `notificacao_regras` do módulo `voluntariado`, NÃO de
   // uma lista de nomes no código: é a lei do projeto (o dono do fluxo muda sem
   // PR). Sem regra configurada, cai no fallback de admin/diretor.
+  // ⚠️⚠️ RECUSA DO KIDS TAMBÉM AVISA QUEM CUIDA DO MÓDULO `kids` (21/08/2026).
+  // Pedido do Matheus: a Mari Gaia e a Milena precisam saber QUEM disse que não
+  // vai e em QUAL função, pra escalar outra pessoa. Elas estão em
+  // `notificacao_regras` do módulo `kids` e NÃO do `voluntariado`, então sem
+  // isto a recusa do Kids nunca chegava nelas.
+  //
+  // ⚠️ Mesmo padrão do `moduloDaAreaEvento` (17/08): a ÁREA do fato leva ao
+  // módulo dono, e as pessoas continuam vindo de `notificacao_regras` — nome de
+  // gente não entra no código (lei do projeto). Vai por `extraTargetIds` numa
+  // ÚNICA notificação: dois `notificar()` dariam duas linhas no sino de quem
+  // estivesse nas duas regras.
+  let avisarTambem = [];
+  try {
+    if (await _equipeEhKids(atual.team_id)) {
+      avisarTambem = await resolverDestinatarios('kids', 'escala_recusada');
+    }
+  } catch (e) {
+    // Falha aqui NÃO pode derrubar o aviso à coordenação do voluntariado, que
+    // é o destinatário que já funcionava.
+    console.error('[escalaResposta] destinatários do Kids falharam:', e.message);
+  }
+
   try {
     await notificar({
       modulo: 'voluntariado',
       tipo: 'escala_recusada',
+      extraTargetIds: avisarTambem,
       titulo: `${nome} não vai poder servir`,
       mensagem: `${nome} avisou que não vai poder servir em ${area}${funcao}${quando ? ` · ${quando}` : ''}${servico?.name ? ` (${servico.name})` : ''}. A vaga voltou a ficar em aberto.`,
       link: ondeVer,

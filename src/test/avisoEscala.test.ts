@@ -16,6 +16,7 @@ import { describe, it, expect } from 'vitest';
 import {
   elegivelParaAviso, agruparParaAviso, selecionarRodada,
   textoQuando, textoAreas, textoEvento, horaBRT, diaRelativoBRT, nomeJaDizODia,
+  ehEscalaKids, antecedenciaDaEscala, antecedenciaDoGrupo,
 } from '../../backend/utils/avisoEscala.js';
 
 const AGORA = '2026-08-11T09:00:00-03:00'; // terça
@@ -300,5 +301,98 @@ describe('⚠️ sem repetir o dia da semana (14/08)', () => {
   it('textoQuando sem horários e com omissão', () => {
     expect(textoQuando(DOM_0830, [], true)).toBe('16/08');
     expect(textoQuando(DOM_0830, [])).toBe('domingo, 16/08');
+  });
+});
+
+// ⚠️⚠️ ANTECEDÊNCIA POR ÁREA (21/08/2026). Pedido do Matheus: *"os voluntários
+// que são do kids, recebessem 3 dias antes do culto, para que a Mari Gaia e a
+// Milena possam se organizar para escalar outra pessoa no lugar."*
+//
+// A véspera serve pra LEMBRAR quem já vai; não serve pra REPOR. Descobrir no
+// sábado que falta gente no Kids no domingo não dá tempo de achar substituto.
+describe('antecedência por área · Kids avisa 3 dias antes', () => {
+  const AGORA = '2026-08-19T12:00:00.000Z'; // quarta, 09:00 BRT
+  const DOM = '2026-08-23T12:30:00.000Z';   // domingo 09:30 BRT (D+4)
+  const QUI = '2026-08-20T22:00:00.000Z';   // quinta 19:00 BRT (D+1)
+
+  const esc = (over: Record<string, unknown> = {}) => ({
+    id: 's1', volunteer_id: 'v1', volunteer_name: 'Ana',
+    team_name: 'Kids', service_name: 'Culto de Domingo',
+    confirmation_status: 'pending', ...over,
+  });
+
+  it('⚠️ decide pela ÁREA da equipe, nunca pelo NOME', () => {
+    expect(ehEscalaKids({ team_area: 'KIDS' })).toBe(true);
+    expect(ehEscalaKids({ team_area: 'kids' })).toBe(true);
+    expect(ehEscalaKids({ team_area: ' Kids ' })).toBe(true);
+    expect(ehEscalaKids({ team_area: 'Louvor' })).toBe(false);
+    // nome "CBKIDS" com área de outro time NÃO é Kids
+    expect(ehEscalaKids({ team_area: 'Produção', team_name: 'CBKIDS' })).toBe(false);
+    // sem área (as 116 equipes inativas) não vira Kids por acidente
+    expect(ehEscalaKids({ team_area: null })).toBe(false);
+    expect(ehEscalaKids({})).toBe(false);
+    expect(ehEscalaKids(null as never)).toBe(false);
+  });
+
+  it('Kids = 3 dias, resto = véspera', () => {
+    expect(antecedenciaDaEscala(esc({ team_area: 'KIDS' }))).toBe(3);
+    expect(antecedenciaDaEscala(esc({ team_area: 'Louvor' }))).toBe(1);
+    expect(antecedenciaDaEscala(esc())).toBe(1);
+  });
+
+  it('⚠️⚠️ o grupo usa a MAIOR antecedência — senão quem serve no Kids E em outra área recebe DUAS mensagens pelo mesmo domingo', () => {
+    expect(antecedenciaDoGrupo([{ team_area: 'Louvor' }, { team_area: 'KIDS' }])).toBe(3);
+    expect(antecedenciaDoGrupo([{ team_area: 'Louvor' }, { team_area: 'Produção' }])).toBe(1);
+    expect(antecedenciaDoGrupo([])).toBe(1);
+  });
+
+  it('⚠️ no dia certo o Kids entra, e nos outros dias NÃO — nada de avisar D-3, D-2 e véspera', () => {
+    const kids = [esc({ id: 'k', team_area: 'KIDS', scheduled_at: DOM })];
+    // quarta 09:00 BRT → domingo é D+4: ainda não
+    expect(agruparParaAviso({ escalas: kids, agora: AGORA, dias: 4, porAntecedencia: true })).toHaveLength(0);
+    // quinta → domingo é D+3: entra
+    const naQuinta = agruparParaAviso({ escalas: kids, agora: '2026-08-20T12:00:00.000Z', dias: 4, porAntecedencia: true });
+    expect(naQuinta).toHaveLength(1);
+    expect(naQuinta[0].antecedencia).toBe(3);
+    // sábado → D+1: já foi avisado no D-3, não entra de novo
+    expect(agruparParaAviso({ escalas: kids, agora: '2026-08-22T12:00:00.000Z', dias: 4, porAntecedencia: true })).toHaveLength(0);
+  });
+
+  it('quem não é do Kids segue na véspera', () => {
+    const louvor = [esc({ id: 'l', team_area: 'Louvor', scheduled_at: QUI, service_name: 'Quarta com Deus' })];
+    // quarta → quinta é D+1: entra
+    expect(agruparParaAviso({ escalas: louvor, agora: AGORA, dias: 4, porAntecedencia: true })).toHaveLength(1);
+    // dois dias antes: não
+    expect(agruparParaAviso({ escalas: louvor, agora: '2026-08-18T12:00:00.000Z', dias: 4, porAntecedencia: true })).toHaveLength(0);
+  });
+
+  it('⚠️ pessoa no Kids E no Louvor no mesmo dia: UMA mensagem, no D-3, cobrindo as duas', () => {
+    const misto = [
+      esc({ id: 'a', team_area: 'KIDS', team_name: 'Kids', scheduled_at: DOM }),
+      esc({ id: 'b', team_area: 'Louvor', team_name: 'Louvor', scheduled_at: DOM }),
+    ];
+    const noD3 = agruparParaAviso({ escalas: misto, agora: '2026-08-20T12:00:00.000Z', dias: 4, porAntecedencia: true });
+    expect(noD3).toHaveLength(1);
+    expect(noD3[0].escala_ids.sort()).toEqual(['a', 'b']);
+    // e na véspera não sai nada de novo pra essa pessoa
+    expect(agruparParaAviso({ escalas: misto, agora: '2026-08-22T12:00:00.000Z', dias: 4, porAntecedencia: true })).toHaveLength(0);
+  });
+
+  it('⚠️ sem a área (leitura falhou), TODO MUNDO cai na véspera — ninguém fica sem aviso', () => {
+    const semArea = [esc({ id: 'x', team_area: null, scheduled_at: QUI })];
+    expect(agruparParaAviso({ escalas: semArea, agora: AGORA, dias: 4, porAntecedencia: true })).toHaveLength(1);
+  });
+
+  it('quem RECUSOU continua fora, e culto que já passou também', () => {
+    const recusou = [esc({ id: 'r', team_area: 'KIDS', scheduled_at: DOM, confirmation_status: 'declined' })];
+    expect(agruparParaAviso({ escalas: recusou, agora: '2026-08-20T12:00:00.000Z', dias: 4, porAntecedencia: true })).toHaveLength(0);
+    const passou = [esc({ id: 'p', team_area: 'KIDS', scheduled_at: '2026-08-16T12:00:00.000Z' })];
+    expect(agruparParaAviso({ escalas: passou, agora: AGORA, dias: 4, porAntecedencia: true })).toHaveLength(0);
+  });
+
+  it('o modo antigo (diasAlvo) segue intacto — é o botão manual', () => {
+    const kids = [esc({ id: 'k', team_area: 'KIDS', scheduled_at: DOM })];
+    const manual = agruparParaAviso({ escalas: kids, agora: AGORA, dias: 7, diasAlvo: null });
+    expect(manual).toHaveLength(1);
   });
 });
