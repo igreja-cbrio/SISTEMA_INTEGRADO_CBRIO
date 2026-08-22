@@ -15,7 +15,8 @@
 
 const { supabase } = require('../utils/supabase');
 const { notificar, resolverDestinatarios } = require('./notificar');
-const { ehEscalaKids } = require('../utils/avisoEscala');
+const { moduloDaAreaEvento } = require('../utils/moduloDaAreaEvento');
+const { equipeSupervisionada } = require('../utils/supervisorArea');
 const { notificarApp } = require('./appPush');
 
 const STATUS_VALIDOS = ['confirmed', 'declined'];
@@ -70,21 +71,76 @@ async function _contaDoSupervisor(teamId) {
  * @returns {{ok:boolean, status?:number, erro?:string, escala?:object, mudou?:boolean}}
  */
 /**
- * A equipe é do Kids? Lê `vol_teams.area` — a MESMA régua do aviso de escala
- * (`utils/avisoEscala.ehEscalaKids`), nunca uma segunda cópia.
+ * A ÁREA da equipe da escala. É o eixo de tudo aqui: decide quem supervisiona e
+ * qual módulo é dono do aviso.
  *
- * ⚠️ Decide pela ÁREA, não pelo nome: medido em 21/08, as 13 equipes ATIVAS têm
- * área e exatamente uma é `KIDS`; casar por nome pegaria qualquer rótulo que a
- * coordenação renomeasse.
- * ⚠️ Erro de leitura devolve `false` — deixar de avisar o Kids é ruim, mas
- * inventar que uma equipe é Kids mandaria recusa alheia pra Mari e pra Milena.
+ * ⚠️ Erro de leitura devolve `null` (área desconhecida) — o aviso à coordenação
+ * do voluntariado sai igual, e ninguém recebe recusa de área alheia.
  */
-async function _equipeEhKids(teamId) {
-  if (!teamId) return false;
+async function _areaDaEquipe(teamId) {
+  if (!teamId) return null;
   const { data, error } = await supabase
     .from('vol_teams').select('area').eq('id', teamId).maybeSingle();
   if (error) throw error;
-  return ehEscalaKids({ team_area: data?.area });
+  return data?.area || null;
+}
+
+/**
+ * Quem mais é avisado de uma recusa, além da coordenação do voluntariado.
+ *
+ * ⚠️⚠️ SÃO DUAS FONTES, e nenhuma delas é lista de nome no código:
+ *
+ * 1 · **Supervisores da área** (`vol_area_supervisores`) — o que o Matheus
+ *    pediu em 21/08: *"o perfeito era avisar para o supervisor da área. Com o
+ *    tempo vamos cadastrando os supervisores de cada área"*. Fica LIGADO desde
+ *    já: à medida que a coordenação cadastra, o aviso passa a chegar sozinho,
+ *    sem PR. O curinga `geral` (`supervisorArea.CURINGA`) supervisiona tudo.
+ *
+ * 2 · **Módulo dono da área** (`moduloDaAreaEvento`) — o MESMO mapa de 17/08
+ *    (`KIDS → kids`, `AMI → ami`…). Generaliza o caso do Kids em vez de
+ *    mantê-lo como exceção: duas réguas para "quem cuida do Kids" divergiriam
+ *    no primeiro ajuste. As pessoas seguem vindo de `notificacao_regras`.
+ *
+ * ⚠️ Área sem módulo no mapa (Louvor, Produção…) devolve `null` de propósito —
+ * inventar slug faria o resolver procurar regra de um módulo inexistente: sem
+ * erro, sem destinatário, e sem ninguém descobrir.
+ */
+async function _avisarTambem(area) {
+  const ids = new Set();
+
+  // 1 · supervisores da área (+ os do curinga `geral`)
+  try {
+    const { data, error } = await supabase
+      .from('vol_area_supervisores').select('membro_id, area');
+    if (error) throw error;
+    const membros = (data || [])
+      .filter((r) => equipeSupervisionada({ area }, [r.area]))
+      .map((r) => r.membro_id)
+      .filter(Boolean);
+    if (membros.length) {
+      // ⚠️ O supervisor é um MEMBRO; quem recebe aviso é o PROFILE. Sem esta
+      // ponte o id não casaria com nada e o aviso sumiria em silêncio.
+      const { data: perfis } = await supabase
+        .from('profiles').select('id').in('membro_id', [...new Set(membros)]);
+      for (const p of perfis || []) if (p?.id) ids.add(p.id);
+    }
+  } catch (e) {
+    console.error('[escalaResposta] supervisores da área falharam:', e.message);
+  }
+
+  // 2 · módulo dono da área
+  try {
+    const modulo = moduloDaAreaEvento(area);
+    if (modulo) {
+      for (const id of await resolverDestinatarios(modulo, 'escala_recusada')) {
+        if (id) ids.add(id);
+      }
+    }
+  } catch (e) {
+    console.error('[escalaResposta] destinatários do módulo da área falharam:', e.message);
+  }
+
+  return [...ids];
 }
 
 async function responderEscala(scheduleId, status, opts = {}) {
@@ -122,6 +178,38 @@ async function responderEscala(scheduleId, status, opts = {}) {
   const nome = atual.volunteer_name || 'Um voluntário';
   const ondeVer = '/ministerial/voluntariado/montar-escala';
 
+  // ⚠️⚠️ TRAVA A PESSOA NAQUELE CULTO (21/08/2026). Pedido do Matheus: *"o
+  // sistema já deve deixar a pessoa inativa para aquele culto que ela disse que
+  // não pode ir, pois senão o supervisor da área pode escalar a pessoa de novo
+  // sem querer."*
+  //
+  // A recusa só mudava `confirmation_status`, e a trava de disponibilidade
+  // (`utils/volDisponibilidade`, que barra o POST de escala, o /bulk, o /copy,
+  // o auto-preencher e o aplicar-template) lê `vol_availability` — que NUNCA
+  // recebia nada. Medido em 21/08: **27 escalas futuras recusadas e as 27 sem
+  // trava nenhuma**; a tabela por culto estava vazia.
+  //
+  // ⚠️ É a linha POR CULTO (`service_id` preenchido), nunca a faixa de datas:
+  // a pessoa disse que não pode NESTE culto, não que está de férias.
+  // ⚠️ Best-effort e DEPOIS da mudança de status: a recusa dela é o que não
+  // pode se perder. Falhar aqui deixa a vaga reabrindo sem a trava — ruim, mas
+  // melhor que engolir o "não vou poder".
+  try {
+    const { data: jaTem } = await supabase.from('vol_availability')
+      .select('id').eq('service_id', atual.service_id)
+      .eq('volunteer_profile_id', atual.volunteer_id).limit(1);
+    if (!jaTem?.length) {
+      const { error: eDisp } = await supabase.from('vol_availability').insert({
+        volunteer_profile_id: atual.volunteer_id,
+        service_id: atual.service_id,
+        reason: 'Avisou que não pode servir neste culto',
+      });
+      if (eDisp) throw eDisp;
+    }
+  } catch (e) {
+    console.error('[escalaResposta] não consegui travar a disponibilidade:', e.message);
+  }
+
   // 1 · Coordenação — o SISTEMA e o app do STAFF leem a mesma tabela, então
   //     uma chamada cobre os dois.
   //
@@ -141,13 +229,11 @@ async function responderEscala(scheduleId, status, opts = {}) {
   // estivesse nas duas regras.
   let avisarTambem = [];
   try {
-    if (await _equipeEhKids(atual.team_id)) {
-      avisarTambem = await resolverDestinatarios('kids', 'escala_recusada');
-    }
+    avisarTambem = await _avisarTambem(await _areaDaEquipe(atual.team_id));
   } catch (e) {
     // Falha aqui NÃO pode derrubar o aviso à coordenação do voluntariado, que
     // é o destinatário que já funcionava.
-    console.error('[escalaResposta] destinatários do Kids falharam:', e.message);
+    console.error('[escalaResposta] destinatários extras falharam:', e.message);
   }
 
   try {

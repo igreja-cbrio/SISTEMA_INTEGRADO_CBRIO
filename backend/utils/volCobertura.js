@@ -45,11 +45,23 @@ function montarCobertura(itens, escalas) {
     }
   }
 
+  // ⚠️⚠️ QUEM RECUSOU NÃO PREENCHE A VAGA (21/08/2026). Antes disto, uma escala
+  // `declined` contava como preenchida: o aviso dizia "a vaga voltou a ficar em
+  // aberto" e a tela mostrava o lugar OCUPADO por quem acabou de dizer que não
+  // vai. Medido em 21/08: 27 escalas futuras recusadas, nenhuma reabrindo vaga.
+  //
+  // ⚠️ A pessoa CONTINUA aparecendo em `pessoas`, marcada — sumir com ela faria
+  // o supervisor perder a informação de quem era e por que a vaga abriu, que é
+  // justamente o que ele precisa pra repor.
+  const contaVaga = (s) => !!s && s.confirmation_status !== 'declined';
+
   const usadas = new Set();
   const resultado = (Array.isArray(itens) ? itens : []).map(a => {
     const diretas = (porItemId.get(a.id) || []).filter(s => !usadas.has(s.id));
     // Só busca no fallback o que ainda falta depois do vínculo explícito.
-    const querFaltando = Math.max(0, (a.quantidade || 0) - diretas.length);
+    // ⚠️ Conta só quem PREENCHE: recusada no vínculo direto não pode impedir o
+    // fallback de mostrar que a vaga está aberta.
+    const querFaltando = Math.max(0, (a.quantidade || 0) - diretas.filter(contaVaga).length);
     const doPar = querFaltando > 0
       ? (porPar.get(chavePar(a.team_id, a.position_id)) || [])
         .filter(s => !usadas.has(s.id)).slice(0, querFaltando)
@@ -65,8 +77,9 @@ function montarCobertura(itens, escalas) {
       position: a.position?.name || a.position || null,
       fixo: a.fixo,
       alvo: a.quantidade || 0,
-      preenchidas: pessoas.length,
-      faltam: Math.max(0, (a.quantidade || 0) - pessoas.length),
+      preenchidas: pessoas.filter(contaVaga).length,
+      recusadas: pessoas.length - pessoas.filter(contaVaga).length,
+      faltam: Math.max(0, (a.quantidade || 0) - pessoas.filter(contaVaga).length),
       pessoas,
     };
   });
