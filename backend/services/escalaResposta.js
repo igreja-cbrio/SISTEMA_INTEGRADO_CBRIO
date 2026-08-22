@@ -105,42 +105,30 @@ async function _areaDaEquipe(teamId) {
  * inventar slug faria o resolver procurar regra de um módulo inexistente: sem
  * erro, sem destinatário, e sem ninguém descobrir.
  */
-async function _avisarTambem(area) {
+async function _supervisoresDaArea(area) {
   const ids = new Set();
-
-  // 1 · supervisores da área (+ os do curinga `geral`)
-  try {
-    const { data, error } = await supabase
-      .from('vol_area_supervisores').select('membro_id, area');
-    if (error) throw error;
-    const membros = (data || [])
-      .filter((r) => equipeSupervisionada({ area }, [r.area]))
-      .map((r) => r.membro_id)
-      .filter(Boolean);
-    if (membros.length) {
-      // ⚠️ O supervisor é um MEMBRO; quem recebe aviso é o PROFILE. Sem esta
-      // ponte o id não casaria com nada e o aviso sumiria em silêncio.
-      const { data: perfis } = await supabase
-        .from('profiles').select('id').in('membro_id', [...new Set(membros)]);
-      for (const p of perfis || []) if (p?.id) ids.add(p.id);
-    }
-  } catch (e) {
-    console.error('[escalaResposta] supervisores da área falharam:', e.message);
-  }
-
-  // 2 · módulo dono da área
-  try {
-    const modulo = moduloDaAreaEvento(area);
-    if (modulo) {
-      for (const id of await resolverDestinatarios(modulo, 'escala_recusada')) {
-        if (id) ids.add(id);
-      }
-    }
-  } catch (e) {
-    console.error('[escalaResposta] destinatários do módulo da área falharam:', e.message);
-  }
-
+  const { data, error } = await supabase
+    .from('vol_area_supervisores').select('membro_id, area');
+  if (error) throw error;
+  const membros = (data || [])
+    .filter((r) => equipeSupervisionada({ area }, [r.area]))
+    .map((r) => r.membro_id)
+    .filter(Boolean);
+  if (!membros.length) return [];
+  // ⚠️ O supervisor é um MEMBRO; quem recebe aviso é o PROFILE. Sem esta ponte
+  // o id não casaria com nada e o aviso sumiria em silêncio.
+  const { data: perfis, error: pErr } = await supabase
+    .from('profiles').select('id').in('membro_id', [...new Set(membros)]);
+  if (pErr) throw pErr;
+  for (const p of perfis || []) if (p?.id) ids.add(p.id);
   return [...ids];
+}
+
+/** Quem cuida do MÓDULO dono daquela área (`notificacao_regras`). */
+async function _donosDoModulo(area) {
+  const modulo = moduloDaAreaEvento(area);
+  if (!modulo) return [];
+  return (await resolverDestinatarios(modulo, 'escala_recusada')).filter(Boolean);
 }
 
 async function responderEscala(scheduleId, status, opts = {}) {
@@ -227,13 +215,30 @@ async function responderEscala(scheduleId, status, opts = {}) {
   // gente não entra no código (lei do projeto). Vai por `extraTargetIds` numa
   // ÚNICA notificação: dois `notificar()` dariam duas linhas no sino de quem
   // estivesse nas duas regras.
-  let avisarTambem = [];
+  // ⚠️ A ÁREA é o eixo: decide quem supervisiona e qual módulo é dono.
+  let areaEquipe = null;
+  try { areaEquipe = await _areaDaEquipe(atual.team_id); }
+  catch (e) { console.error('[escalaResposta] área da equipe falhou:', e.message); }
+
+  // ⚠️⚠️ Os supervisores da área servem aos DOIS canais (21-22/08): no sistema
+  // e no app do staff via `notificar`, e no app do MEMBRO via `notificarApp` —
+  // pedido do Matheus. Resolvidos UMA vez e reusados: duas consultas dariam
+  // duas respostas possíveis pra "quem supervisiona esta área".
+  let supervisores = [];
+  try { supervisores = await _supervisoresDaArea(areaEquipe); }
+  catch (e) { console.error('[escalaResposta] supervisores da área falharam:', e.message); }
+
+  let avisarTambem = [...supervisores];
   try {
-    avisarTambem = await _avisarTambem(await _areaDaEquipe(atual.team_id));
+    // ⚠️ Donos do módulo entram SÓ no canal do sistema/staff: `notificacao_regras`
+    // é régua de quem opera o ERP, e o app do membro é outro público.
+    for (const id of await _donosDoModulo(areaEquipe)) {
+      if (!avisarTambem.includes(id)) avisarTambem.push(id);
+    }
   } catch (e) {
     // Falha aqui NÃO pode derrubar o aviso à coordenação do voluntariado, que
     // é o destinatário que já funcionava.
-    console.error('[escalaResposta] destinatários extras falharam:', e.message);
+    console.error('[escalaResposta] donos do módulo falharam:', e.message);
   }
 
   try {
@@ -252,14 +257,25 @@ async function responderEscala(scheduleId, status, opts = {}) {
     console.error('[escalaResposta] aviso à coordenação falhou:', e.message);
   }
 
-  // 2 · App do MEMBRO — só o supervisor da área, como pedido.
+  // 2 · App do MEMBRO — os SUPERVISORES DA ÁREA + o líder da equipe.
+  //
+  // ⚠️⚠️ Pedido do Matheus (22/08): *"preciso que os supervisores de cada área
+  // sejam notificados no app dos membros tbm."* Antes só o líder da equipe
+  // (`vol_teams.leader_profile_id`) recebia aqui — e líder de equipe NÃO é
+  // supervisor de área: a Mari e a Milena não lideram a equipe Kids, elas
+  // supervisionam a área. Os dois entram, sem repetir.
   //
   // ⚠️ O tipo `escala` já é roteado pelos dois mapas do app pra /voluntariado.
   // Tipo novo cairia em "Outros" e o toque não levaria a lugar nenhum.
+  //
+  // ⚠️ `chaveDedup` amarra ao FATO (a escala), então quem for supervisor E
+  // líder recebe UMA linha só — e reabrir o link não gera outra.
   try {
+    const alvos = new Set(supervisores);
     const sup = await _contaDoSupervisor(atual.team_id);
-    if (sup) {
-      await notificarApp([sup.userId], {
+    if (sup?.userId) alvos.add(sup.userId);
+    if (alvos.size) {
+      await notificarApp([...alvos], {
         tipo: 'escala',
         titulo: `${nome} não vai poder servir`,
         body: `${area}${funcao}${quando ? ` · ${quando}` : ''}. A vaga está em aberto.`,
@@ -268,7 +284,7 @@ async function responderEscala(scheduleId, status, opts = {}) {
       });
     }
   } catch (e) {
-    console.error('[escalaResposta] aviso ao supervisor falhou:', e.message);
+    console.error('[escalaResposta] aviso no app do membro falhou:', e.message);
   }
 
   return { ok: true, escala, mudou };
