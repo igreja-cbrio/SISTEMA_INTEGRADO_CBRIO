@@ -23,7 +23,7 @@ const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { moduloDaAreaEvento } = require('../utils/moduloDaAreaEvento');
 const {
   validarCamposPadrao, processarIdentidade, registrarConsentimentos,
-  honeypotPreenchido, TEXTOS,
+  honeypotPreenchido, TEXTOS, normalizarCpf,
 } = require('../services/inscricaoContrato');
 const { nomesMesmaPessoa } = require('../services/membroMatch');
 const {
@@ -516,6 +516,24 @@ async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos, 
   });
   if (error && error.code !== '23505') {
     console.error('[publicEvento espinha] espelho insc_pagamentos:', error.message);
+  }
+
+  // ⚠️ O PREÇO DESTA INSCRIÇÃO (23/08/2026). `valor_cobrado_centavos` só era
+  // escrito pela `aplicarBeneficio` — quem paga o valor CHEIO ficava com a
+  // coluna NULL, e ela é lida pela lista de inscritos (INSCRITOS_COLS), pelo
+  // e-mail e pela conciliação. Medido na 1ª inscrição paga real do AMI CAMP
+  // 2027: cobrança de R$ 830 (lote 1) e inscrição em branco.
+  // Fica AQUI, e não no chamador, porque este é o único ponto que conhece o
+  // valor efetivamente cobrado — inclusive o fallback pro valor de tabela
+  // quando o evento não tem lote — e por ele passam os TRÊS caminhos de
+  // cobrança (nova, re-inscrição e quem perdeu a corrida do lock).
+  // Best-effort e DEPOIS da cobrança: o dinheiro já foi decidido, e uma coluna
+  // de leitura não pode derrubar a inscrição de quem já tem vaga reservada.
+  if (Number(cobranca?.valor_centavos) > 0) {
+    const { error: eValor } = await supabase.from('inscricoes')
+      .update({ valor_cobrado_centavos: Number(cobranca.valor_centavos) })
+      .eq('id', inscricaoId);
+    if (eValor) console.error('[publicEvento espinha] valor cobrado na inscrição:', eValor.message);
   }
 
   // E-mail com o LINK DE PAGAMENTO (decisão do Marcos · 31/07). Sem ele, quem
@@ -1469,10 +1487,26 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
   // autorização. Antes da cobrança, porque é ele que define o valor cobrado.
   await aplicarBeneficio(beneficio, ins.id);
 
-  // Funil de identidade (matcher read-only + observação) + consentimentos.
+  // Funil de identidade (matcher + observação) + consentimentos.
+  //
+  // ⚠️⚠️ COM CPF, ESTA PORTA CRIA (23/08/2026). Ela era `ligar` puro — só
+  // ACHAVA cadastro existente —, então toda pessoa NOVA que se inscrevia ficava
+  // com `membro_id` NULL: fora da membresia, fora dos cruzamentos, invisível
+  // pra qualquer área. Medido na 1ª inscrição paga real do AMI CAMP 2027: a
+  // pessoa pagou R$ 830 e não existia no cadastro da igreja.
+  //
+  // Isto NÃO reabre o que a #2170 fechou. Aquilo proibiu fabricar cadastro
+  // *sem chave* (o import financeiro criava pessoa por NOME EXATO — 3.441
+  // registros sem CPF/telefone/e-mail). Aqui a criação é condicionada ao CPF
+  // válido, que é a chave FORTE do matcher: sem CPF continua `ligar` e a
+  // inscrição segue sem vínculo, pra decisão humana. O contrato de porta já
+  // exige CPF em toda inscrição (D5), então o caminho normal é sempre o
+  // `criar` — e `acharOuCriarGuardado` liga no cadastro existente quando o CPF
+  // bate, só criando quando a pessoa é mesmo nova.
+  const politicaIdentidade = normalizarCpf(val.cpf) ? 'criar' : 'ligar';
   processarIdentidade({
     nomeCompleto: val.nomeCompleto, cpf: val.cpf, email: val.email, telefone: val.telefone,
-    dataNascimento: val.dataNascimento, politica: 'ligar',
+    dataNascimento: val.dataNascimento, genero: val.sexo, politica: politicaIdentidade,
     origem: 'inscricoes_formulario', origemId: ins.id,
   }).then((ident) => {
     if (ident.membroId) {
