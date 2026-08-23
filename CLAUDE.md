@@ -1617,6 +1617,143 @@ E `vol_inscricoes.vol_profile_id` está **100% vazio** (0 de 827) — o vínculo
 perfil↔inscrição nunca foi preenchido, e é por isso que o canal do formulário
 precisa casar por e-mail em vez de seguir a FK que existe no schema.
 
+## ⚠️ Membresia · aba PERFIL · mapa por bairro + cortes (2026-08-23 · migration `20260823160000`)
+
+Pedido do Matheus: *"queria um modulo estilo dashboards, para analises dos
+membros. quero um mapa para saber onde se concentra a maior parte dos membros
+(isso deve vir do endereco deles, cep e etc). quero um grafico de faixa de
+idade, genero sexual e etc... a partir do que ja temos hoje, e ai quando o censo
+for sendo feito esse modulo vai sendo alimentado."*
+
+**As 3 decisões dele, antes de escrever uma linha:** mapa **agregado por
+BAIRRO** (nenhum endereço de pessoa sai do servidor — a tela é aberta a líder de
+área) · **ABA** dentro de `/ministerial/membresia`, não módulo novo ·
+geocodificação **em massa E automática a cada novo cadastro**.
+
+### Banco
+
+- **`dem_bairro_geo`** — centróide por bairro (PK = `bairro_norm`), com
+  `alias_de` e `ignorar`.
+- **`vw_dem_pessoa`** — cadastro + enriquecimento **READ-ONLY** de
+  `batismo_inscricoes`, `inscricoes` e `mem_cadastros_pendentes` (mais recente
+  não-nulo por campo). É o que levou o endereço de `membro_ativo` de ~10% para
+  33%. ⚠️ **Nunca escreve de volta** — Contrato de porta.
+- **`fn_dem_perfil(status, bairro)`** — o retrato inteiro numa ida ao banco.
+  Agrega no Postgres porque o PostgREST corta em 1000 linhas e a base passou
+  disso. **Todo corte devolve `base` (quem respondeu) ao lado de `total`.**
+
+⚠️⚠️ **O centróide NUNCA é gravado em `mem_membros.lat/lng`** — é a lição do
+`pinosMapa.ts` (31/07): precisão inventada apaga para sempre a distinção entre
+endereço real e chute, e ninguém percebe depois. `lat/lng` da pessoa segue
+reservado para acerto de RUA.
+
+⚠️ **`faixa_detalhada` é histograma ANINHADO em `fn_faixa_etaria`** (0-12/13-17/
+18-25 = criança/adolescente/jovem; 26+ em cinco faixas), e a migration
+**ABORTA** se as duas não somarem igual. Segunda régua de idade neste sistema é
+bug garantido (lei de 19/08).
+
+⚠️ **`alias_de` existe porque o mapa MENTIA**: "barra da tijuca", "Barra" e
+"Barra Olímpica" desenhavam três círculos médios (25/16/14) em vez de um de 55.
+E "Rio de Janeiro"/"RJ"/"Brasil" digitados no campo de bairro entram com
+`ignorar=true`. A view resolve **UM salto** de alias — o PATCH recusa alias de
+alias e auto-alias.
+
+⚠️ **A v1 embarcou dado MORTO**: `mem_membros.batizado`, `.voluntario` e
+`.data_membresia` são colunas zeradas, então `engajamento` veio 0/0/0. Trocado
+por **`vw_pessoas_papeis_mat`** (a mesma régua de `/admin/cruzamentos`), com
+assert na migration que aborta se `batizado <= 0`. ⚠️ Ela é MATERIALIZADA: o
+`atualizado_em` vai no JSON e a tela declara o atraso de até 24 h.
+
+⚠️ `DROP VIEW` sem `CASCADE` de propósito: `CREATE OR REPLACE VIEW` recusa
+coluna nova no MEIO da lista (só append), e o CASCADE derrubaria em silêncio
+quem viesse a depender dela.
+
+### Auto-geocode no salvamento
+
+`completarBairroPorCep()` (`routes/membresia.js`) em `POST /membros`,
+`PUT /membros/:id`, `PUT /totem/membros/:id` e na aprovação de cadastro pendente.
+
+- ⚠️ **SÓ ViaCEP** (~200 ms, sem rate-limit). O Nominatim exige 1,1 s por
+  chamada (política do OSM) e travaria quem está clicando em Salvar — centróide
+  é trabalho do lote em segundo plano.
+- ⚠️ **SÓ-ONDE-VAZIO nos DOIS lados**: nem o payload nem o que já está gravado é
+  sobrescrito. Mesma política do censo. **Resíduo declarado**: trocar o CEP de
+  quem já tem bairro NÃO corrige o bairro antigo — corrigir seria decidir que o
+  ViaCEP vence a equipe, e ele não vence.
+- ⚠️ Na aprovação, **só no ramo de CRIAÇÃO**: no ramo de atualização o patch
+  sobrescreve o cadastro existente, e ali o valor não veio do formulário (não
+  está na tela de ninguém) — veio de um terceiro.
+- **Best-effort**: ViaCEP fora do ar não impede ninguém de salvar cadastro.
+
+**`backend/services/geoBrasil.js`** mata a **4ª cópia** da sequência
+ViaCEP+Nominatim (as outras eram `grupos.js` ×2 e `publicGrupos.js`; só a do
+`geocode-batch` validava a caixa do RJ, então as demais aceitavam em silêncio
+uma "Rua São João" em Santa Catarina). `/geocode-cep` passou a delegar e ganhou
+o **timeout** que faltava — o `fetch` cru pendurava a requisição até a
+plataforma matar.
+
+- ⚠️ `esperarVezNoNominatim()` é fila **do processo**: `await sleep(1100)`
+  espalhado não serializa nada quando dois handlers HTTP correm em paralelo.
+- ⚠️ `exigirRio` é `true` por padrão e **só `/geocode-cep` passa `false`** —
+  lá a consulta é ENDEREÇO COMPLETO (logradouro+cidade+UF), onde a ambiguidade
+  que a caixa resolve não existe, e membro que mora fora do Rio precisa da
+  coordenada dele. **Nome de lugar solto nunca passa false.**
+- ⚠️ **`normalizarBairro` é espelho EXATO de
+  `nullif(f_unaccent(lower(trim(bairro))),'')`.** Divergir faz o backend gravar
+  o centróide numa chave que a view nunca procura — o mapa fica vazio depois de
+  o lote dizer "resolvido", sem erro nenhum.
+
+### Tela
+
+`src/components/membresia/AbaPerfil.tsx` + `MapaBairros.tsx`, aba `perfil` (o
+deep-link `?tab=perfil` entrou na whitelist).
+
+- ⚠️⚠️ **Todo corte mostra a BASE ao lado do número.** "65% são mulheres" com
+  28% de cobertura não é retrato da igreja — é retrato de quem tem o campo
+  preenchido, e as duas frases levam a decisões diferentes.
+- ⚠️ **Corte com `base === 0` SOME** em vez de virar barra chapada em zero:
+  barra em zero se lê como "ninguém tem ensino superior", que é diferente de
+  "ninguém respondeu".
+- ⚠️ **O buraco do mapa é DECLARADO** (quantas pessoas ficaram de fora e por
+  quê). Mapa que esconde o próprio buraco é pior que mapa vazio — quem olha
+  conclui que a igreja inteira mora ali.
+- **Área do círculo ∝ pessoas** (raio ∝ √n): raio ∝ n faria o maior bairro
+  parecer 10× o que ele é.
+- **LAZY** de propósito: maplibre é ~1 MB e não pode entrar no chunk de quem
+  abre a Membresia para achar UMA pessoa.
+
+### Estado medido em produção (23/08 · `membro_ativo` = 1.730)
+
+faixa etária 1.377 · sexo 691 (460 F / 229 M) · nascimento 1.381 · endereço 569
+· CEP 144 · **bairro 124** · estado civil 139 · escolaridade 8. Engajamento:
+batizado 492 · em grupo 797 · voluntário 437 · fez o Next 410 · contribuinte 237.
+
+⚠️ **O mapa nasce VAZIO**: 0 pessoas posicionadas, 27 bairros sem coordenada. É
+o botão **"Resolver bairros"** (nível 3, lotes de 20 · ~1,1–2,2 s por bairro)
+que resolve, em ~2 rodadas. **Não há offset de paginação de propósito** — o
+conjunto pendente MUTA a cada rodada, e offset numérico sobre filtro que muda
+PULA linhas.
+
+⏳ **Pendência de GENTE**: `censoCampoCadastro.js` já tem **`bairro` como destino
+de primeira classe** — marcar "Guardar no cadastro da pessoa → Bairro" na
+pergunta de bairro do censo é o que faz o censo alimentar o mapa. Derivar do CEP
+dentro do `censoReconciliar` foi descartado: poria chamada de rede num serviço
+que está no gate, para resolver o que o construtor resolve por configuração.
+
+Teste: `src/test/geoBrasil.test.ts` (20 casos · **no gate** pelo `npm test`).
+⚠️ As 12 saídas esperadas de `normalizarBairro` foram **MEDIDAS** contra o
+`f_unaccent` de produção, não deduzidas. **4 mutantes RODADOS**: acento não
+removido → 9 vermelhos · vazio em vez de null → 2 · caixa do RJ alargada → 1 ·
+guarda `Number.isFinite` removida → 1. ⚠️ O último **expôs um buraco real no
+teste**: para NaN/null a guarda é redundante (comparação com NaN já é false); o
+que ela pega de verdade é **coordenada em STRING**, porque `'-22.9' <= -21.8` é
+`true` em JS.
+
+⚠️ **CORREÇÃO DE REGISTRO (23/08)**: este arquivo diz em dois lugares que o gate
+de deploy tem **10 scripts**. São **12** — `test:kpi-periodos` e
+`test:matcher-insert` entraram depois e não foram citados. "Rodei os 10" deixava
+2 sem verificação.
+
 ## ⚠️ Membresia · aprovação em massa da fila de cadastros (2026-08-04 · SEM migration)
 
 Pedido do Matheus: selecionar alguns ou todos e aprovar de uma vez, *"mas o sistema deve ter uma
