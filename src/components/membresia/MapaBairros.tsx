@@ -122,7 +122,14 @@ function Camadas({
   onSelRef.current = onSelecionar;
 
   useEffect(() => {
-    if (!isLoaded || !map) return;
+    // ⚠️⚠️ Depende só do MAPA, nunca de `isLoaded`. O efeito precisa REGISTRAR
+    // os gatilhos (`styledata`/`idle`/`load`) o quanto antes: se ele esperar
+    // `isLoaded`, existe a janela em que o mapa já existe, o estilo termina de
+    // carregar e NINGUÉM está escutando — o basemap desenha e as camadas nunca
+    // nascem, sem erro no console. Foi exatamente o que aconteceu em produção
+    // (23/08/2026). Quem decide a hora certa de criar a camada é o
+    // `map.isStyleLoaded()` dentro do `aplicar`, que roda a cada gatilho.
+    if (!map) return;
     let vivo = true;
 
     const pintarSelecao = () => {
@@ -297,13 +304,13 @@ function Camadas({
 
   // Dado novo entra pela source, sem recriar camada nem listener.
   useEffect(() => {
-    if (!isLoaded || !map) return;
+    if (!map) return;
     const src = map.getSource(SRC) as MapLibreGL.GeoJSONSource | undefined;
     if (src) src.setData(dados as never);
   }, [dados, map, isLoaded]);
 
   useEffect(() => {
-    if (!isLoaded || !map || !map.getLayer(L_CIRCULO)) return;
+    if (!map || !map.getLayer(L_CIRCULO)) return;
     const sel = selecionado ?? ' ';
     map.setPaintProperty(L_CIRCULO, 'circle-color', [
       'case', ['==', ['get', 'norm'], sel], TEAL, TEAL_SUAVE,
