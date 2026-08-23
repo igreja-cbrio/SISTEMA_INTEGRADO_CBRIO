@@ -191,19 +191,25 @@ function Camadas({
               // `heatmap-radius`/`heatmap-intensity` por zoom é o uso canônico
               // do tipo `heatmap` na própria maplibre — não é a expressão
               // aninhada exótica que o comentário do círculo abaixo evita.
+              // ⚠️⚠️ A CURVA É CALIBRADA PELO ZOOM INICIAL, que é ~9 (o
+              // `fitBounds` do núcleo abre de Itaguaí a Maricá). Medido em
+              // produção em 24/08/2026: com 48px em z9 as manchas nascem do
+              // tamanho dos chips e o mapa parece vazio — bastava UM clique de
+              // zoom para o calor aparecer. Quem abre a tela não dá esse
+              // clique, então o raio em z9 tem de ser generoso desde o início.
               'heatmap-intensity': [
                 'interpolate', ['linear'], ['zoom'],
-                7, 1.5,
-                11, 2.4,
+                7, 2.2,
+                11, 2.6,
                 15, 3.2,
               ],
               'heatmap-radius': [
                 'interpolate', ['linear'], ['zoom'],
-                7, 28,
-                9, 48,
-                11, 85,
-                13, 140,
-                15, 220,
+                7, 55,
+                9, 95,
+                11, 130,
+                13, 175,
+                15, 240,
               ],
               'heatmap-opacity': 0.85,
               // ⚠️ A rampa começa a colorir em densidade BAIXA (0.06): são ~24
@@ -246,10 +252,10 @@ function Camadas({
               // então a comparação entre bairros continua de pé.
               'circle-radius': [
                 'interpolate', ['linear'], ['get', 'total'],
-                1, 7,
-                5, 10,
-                20, 15,
-                60, 20,
+                1, 8,
+                5, 12,
+                20, 17,
+                60, 22,
               ],
               'circle-color': TEAL_SUAVE,
               'circle-stroke-color': '#ffffff',
