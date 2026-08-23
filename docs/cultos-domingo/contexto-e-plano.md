@@ -1166,3 +1166,84 @@ véspera e monta a hora de `vol_services.scheduled_at`
 (`avisoEscala.js:153` → `horaBRT`), então para o domingo 30/08 ele dispara em
 **29/08**. Antes disso, o que fica errado é a hora nas telas de escala; a partir
 dele, 106 pessoas recebem "domingo, 30/08, às 08:30" no WhatsApp.
+
+---
+
+## 18 · 23/08 · o corte ABORTARIA, e o motivo nasceu em 18/08
+
+Auditoria feita no domingo 23/08 (o último com 3 cultos de manhã), a pedido do
+Matheus — *"está tudo pronto já?"*. **Não estava.**
+
+### 18.1 O que estava armado
+
+Três tipos nasceram em **18/08 às 16:25 BRT**, todos no mesmo instante, com os
+nomes exatos dos serviços de TURNO do Planning Center:
+
+| tipo | hora | assinatura |
+|---|---|---|
+| `CBKIDS - Manhã Domingo` | **09:30** | `has_kids=false` · `has_online=false` · `presencial_label='Presencial'` · `bloco_servico=null` · `color=null` |
+| `CBKIDS - Noite Domingo` | 19:00 | idem |
+| `CBKIDS - Quarta-feira` | 20:00 | idem |
+
+⚠️ **Essa assinatura identifica a origem:** é exatamente o que o
+`POST /voluntariado/service-types` grava — ele **descarta**
+`has_kids`/`has_online`/`presencial_label` (a "mina nº 2", registrada no §5 e no
+comentário do passo 2 do script). Foram criados **pela tela** de Tipos de Culto,
+não pelo sync.
+
+**Dois estragos, e o primeiro é o corte:**
+
+1. ⚠️⚠️ **A invariante do passo 9 abortaria o corte.** Ela exige *"grade ativa da
+   manhã = exatamente {09:30, 11:30}"*, contando
+   `recurrence_day=0 AND is_active AND recurrence_time < 14:00`. Com o
+   `CBKIDS - Manhã Domingo` **também às 09:30**, depois do corte haveria **três**
+   tipos de manhã → `RAISE EXCEPTION` → **rollback total**, no dia, na janela
+   combinada.
+2. **O cron já os materializou.** `auto-create` rodou às 00:05 de 23/08 e criou
+   culto para os três: **hoje havia 6 cultos de domingo em vez de 4** (os dois
+   CBKIDS com frequência 0), inflando o denominador da média justamente no último
+   domingo do formato antigo.
+
+⚠️ **O conserto de vigência (PR #2600) NÃO pega esses** — ele filtra
+`vigente_de`/`vigente_ate`, e esses tipos nasceram sem vigência. A proteção era
+para o `Domingo 09:30`; tipo novo sem vigência passa.
+
+### 18.2 O que foi feito (decisão do Matheus: não eram de propósito)
+
+Tipos **encerrados** (`is_active=false` — **nunca deletados**, CASCADE apagaria
+roteiro de produção) e os **3 cultos removidos**. Backup em
+`_bk_20260823_cbkids_tipos` e `_bk_20260823_cbkids_cultos`.
+
+⚠️ A remoção repetiu a guarda de vazio **dentro do bloco**, sem confiar na leitura
+anterior: soma dos 10 contadores = 0 e nenhum satélite (`kids_sessoes`,
+`culto_producao`, `cultos_dados_submissoes`, `cultos_decisoes_pessoas`,
+`app_decisoes`, `apresentacao_bebes`). Qualquer um > 0 abortaria.
+
+**Conferido depois, com culto ainda acontecendo no dia:** cultos de hoje **6 → 4**
+· CBKIDS ativos **0** · cultos CBKIDS **0** · e os 4 reais **intactos**, com o Kids
+já lançado (11 · 74 · 111), as 3 `kids_sessoes` preservadas e o de 19:00 de pé.
+As escalas e check-ins do dia também: a limpeza tocou `cultos` (frequência), **não**
+`vol_services` — os do PCO seguem com 58 e 111 escalas e 108 check-ins no total.
+
+⇒ Depois do corte a manhã fica **{09:30, 11:30}** e a invariante passa.
+
+### 18.3 O PCO está 90% resolvido
+
+Medido em 23/08: `Domingo - Manhã` já está **09:30** de **06/09** em diante, e
+`CBKIDS - Manhã Domingo` está 09:30 em **todas** as datas.
+
+⚠️ **Falta um:** o `Domingo - Manhã` de **30/08** segue às **08:30**, com **19
+escalas** — e é o primeiro domingo do formato novo. O lembrete de escala dispara
+em 29/08 lendo `vol_services.scheduled_at`, então é esse o prazo.
+
+### 18.4 A causa raiz segue aberta (de propósito, não hoje)
+
+`POST /voluntariado/service-types` deixa criar tipo de culto pela tela **sem** as
+flags que o definem, e o `auto-create` materializa culto para ele toda semana. O
+filtro do cron é `has_online_stream = true`, que é **default true** — não
+discrimina. O que distingue culto de sede de serviço de escala hoje é a
+combinação `presencial_label='Sede'` + `has_kids` + `has_online` +
+`bloco_servico`, e nenhuma leitura usa isso como régua.
+
+Não mexi nisso em 23/08: é domingo de culto e o corte é amanhã. Fica como a
+próxima peça — e é a mesma dívida que o §11.5 chama de catálogo central de cultos.
