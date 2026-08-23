@@ -281,6 +281,17 @@ function precisaPager(c: { idade_meses?: number | null; tem_espectro?: boolean |
   return menor4 || !!c.tem_espectro || !!c.tem_limitacao_fisica;
 }
 
+// Modo totem persiste entre reloads (pedido do Diego 2026-08-23): a tela fica
+// dias abertas sem ninguém olhar, e um reload (deploy novo, "Atualizar" do
+// AvisoNovaVersao, Ctrl+Shift+R) resetava totemMode pro estado inicial — o
+// tablet voltava DESTRAVADO até alguém passar de novo e reativar na mão. O PIN
+// já sobrevivia ao reload (localStorage); só a flag "está travado agora" não.
+// Mesmo padrão do TotemMembro.tsx (lá o kiosk também nasce 'locked' por
+// default). requestFullscreen() no mount pode falhar sem gesto do usuário —
+// o .catch(() => {}) já cobre isso; o que importa pra "voltar bloqueado" é a
+// tela de check-in ficar presa (sem navegação), não o Fullscreen API real.
+const TOTEM_KIDS_ATIVO_KEY = 'cbrio-totem-kids-ativo';
+
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
   const [sessao, setSessao] = useState<Sessao | null>(null);
@@ -362,7 +373,9 @@ export default function TotemKidsCheckin() {
   const [preCheckinIds, setPreCheckinIds] = useState<string[]>([]); // checkins já criados
 
   // Modo totem · trava o tablet em tela cheia; sair exige PIN (como no totem de membros)
-  const [totemMode, setTotemMode] = useState(false);
+  const [totemMode, setTotemMode] = useState(() => {
+    try { return localStorage.getItem(TOTEM_KIDS_ATIVO_KEY) === '1'; } catch { return false; }
+  });
   const [pinModal, setPinModal] = useState(false);
   const [pinSetup, setPinSetup] = useState(false);
   const [pinInput, setPinInput] = useState('');
@@ -957,6 +970,7 @@ export default function TotemKidsCheckin() {
   function ativarTotem() {
     document.documentElement.requestFullscreen?.().catch(() => {});
     setTotemMode(true);
+    try { localStorage.setItem(TOTEM_KIDS_ATIVO_KEY, '1'); } catch { /* storage indisponível · segue */ }
   }
   function iniciarModoTotem() {
     let stored = '';
@@ -983,6 +997,7 @@ export default function TotemKidsCheckin() {
       if (!stored || typed === stored) {
         setPinModal(false); setPinInput(''); setPinErro('');
         setTotemMode(false);
+        try { localStorage.removeItem(TOTEM_KIDS_ATIVO_KEY); } catch { /* storage indisponível · segue */ }
         if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
       } else { setPinErro('PIN incorreto'); setPinInput(''); }
     }
