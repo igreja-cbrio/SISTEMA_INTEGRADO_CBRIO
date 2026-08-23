@@ -171,8 +171,21 @@ export function MapMarker({
   useEffect(() => {
     if (!isLoaded || !map) return;
 
+    // ⚠⚠ DOIS nós DE PROPÓSITO. `container` é do MAPLIBRE (ele insere e
+    // REMOVE do documento em `marker.remove()`); `interno` é do REACT — o portal
+    // do `MarkerContent` monta dentro dele. Com um nó só, o maplibre arranca do
+    // DOM justamente o pai que o React ainda vai desmontar, e aí o desmonte
+    // estoura `NotFoundError: removeChild` e derruba TODOS os marcadores da
+    // tela — não só o que saiu. Medido em produção (23/08/2026): o mapa da
+    // Membresia E o mapa público de Grupos ficaram com ZERO pinos por isto.
+    // Mesma lição do arrasto do Kanban (14/08): nó renderizado pelo React nunca
+    // pode ser removido por terceiro. Com o nó interno, o vínculo
+    // `interno.parentNode === container` sobrevive à saída do documento e o
+    // React desmonta em paz.
     const container = document.createElement("div");
-    markerElementRef.current = container;
+    const interno = document.createElement("div");
+    container.appendChild(interno);
+    markerElementRef.current = interno;
 
     const marker = new MapLibreGL.Marker({
       ...markerOptions,
@@ -250,8 +263,12 @@ export function MarkerPopup({
   useEffect(() => {
     if (!isReady || !markerRef.current) return;
 
+    // Mesma razão do MapMarker acima: o pop-up também é desmontado pelo
+    // maplibre, então o React precisa de um nó próprio lá dentro.
     const container = document.createElement("div");
-    containerRef.current = container;
+    const interno = document.createElement("div");
+    container.appendChild(interno);
+    containerRef.current = interno;
 
     const popup = new MapLibreGL.Popup({
       offset: 24,
