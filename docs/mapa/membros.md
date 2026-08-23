@@ -13,7 +13,7 @@
 - `backend/routes/membresia.js`
 - `backend/routes/pessoas.js`
 Guard: `authorizeModule('membros', 1 | 2)`
-<details><summary>Endpoints (95)</summary>
+<details><summary>Endpoints (99)</summary>
 - `DELETE /api/membresia/cadastros/:id`
 - `DELETE /api/membresia/checkins/:id`
 - `DELETE /api/membresia/contribuicoes/:id`
@@ -58,6 +58,8 @@ Guard: `authorizeModule('membros', 1 | 2)`
 - `GET /api/membresia/ministerios`
 - `GET /api/membresia/ministerios/:id`
 - `GET /api/membresia/orfaos-stats`
+- `GET /api/membresia/perfil`
+- `GET /api/membresia/perfil/bairros`
 - `GET /api/membresia/qr-lookup/:token`
 - `GET /api/membresia/totem/apresentacao-bebe/status`
 - `GET /api/membresia/totem/next/status`
@@ -65,6 +67,7 @@ Guard: `authorizeModule('membros', 1 | 2)`
 - `PATCH /api/membresia/cadastros/:id`
 - `PATCH /api/membresia/grupo-membros/:id/sair`
 - `PATCH /api/membresia/membros/:id/familia`
+- `PATCH /api/membresia/perfil/bairros/:norm`
 - `PATCH /api/membresia/trilha/:id`
 - `PATCH /api/membresia/voluntarios/:id/sair`
 - `POST /api/membresia/cadastros/:id/aprovar`
@@ -92,6 +95,7 @@ Guard: `authorizeModule('membros', 1 | 2)`
 - `POST /api/membresia/membros/:id/vinculos`
 - `POST /api/membresia/membros/merge`
 - `POST /api/membresia/ministerios`
+- `POST /api/membresia/perfil/bairros/geocode`
 - `POST /api/membresia/promover-orfaos`
 - `POST /api/membresia/totem/apresentacao-bebe`
 - `POST /api/membresia/totem/grupos/:id/entrar`
@@ -129,6 +133,7 @@ Guard: `authorizeModule('membros', 1 | 2)`
 - `backend/services/cpfReconciliar.js`
 - `backend/services/duplicidadePolicy.js`
 - `backend/services/fusaoCampos.js`
+- `backend/services/geoBrasil.js`
 - `backend/services/grupoPedidoEventos.js`
 - `backend/services/gruposAvisoApp.js`
 - `backend/services/gruposDestinatarios.js`
@@ -155,6 +160,7 @@ Guard: `authorizeModule('membros', 1 | 2)`
 - `cui_jornada180`
 - `cultos`
 - `cultos_decisoes_pessoas`
+- `dem_bairro_geo`
 - `entradas_resolucoes`
 - `ext_inscricoes`
 - `face_presencas`
@@ -206,6 +212,8 @@ Guard: `authorizeModule('membros', 1 | 2)`
 **RPCs**
 
 - `app_soft_delete`
+- `fn_dem_perfil`
+- `fn_dem_semear_bairros`
 - `fn_membro_tem_atividade`
 - `merge_membros`
 
