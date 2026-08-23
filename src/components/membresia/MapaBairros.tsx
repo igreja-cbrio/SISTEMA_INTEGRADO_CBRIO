@@ -46,7 +46,13 @@ const L_NUMERO = 'dem-bairros-numero';
 // falhou TRÊS vezes em produção sem emitir uma linha de console — e sem sinal
 // nenhum a investigação vira chute. Não liga nada sozinho.
 const DIAG = typeof location !== 'undefined' && location.search.includes('diagmapa=1');
-const diag = (...a: unknown[]) => { if (DIAG) console.info('[mapa-bairros]', ...a); };
+// ⚠️ Loga STRING, não objeto: o objeto aparece como "Object" em ferramenta de
+// leitura de console e some justamente o dado que importa.
+const diag = (msg: string, extra?: Record<string, unknown>) => {
+  if (!DIAG) return;
+  const cauda = extra ? ' ' + Object.entries(extra).map(([k, v]) => `${k}=${String(v)}`).join(' ') : '';
+  console.info(`[mapa-bairros] ${msg}${cauda}`);
+};
 
 const TEAL = '#00B39D';
 const TEAL_SUAVE = 'rgba(0,179,157,0.62)';
@@ -177,11 +183,11 @@ function Camadas({
             source: SRC,
             paint: {
               'heatmap-weight': ['get', 'peso'],
-              'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 8, 0.8, 14, 1.6],
+              'heatmap-intensity': 1,
               // Raio em PIXEL: é o que faz a mancha continuar legível quando o
               // enquadramento afasta por causa de um bairro distante.
-              'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 8, 26, 11, 44, 14, 70],
-              'heatmap-opacity': ['interpolate', ['linear'], ['zoom'], 9, 0.9, 14, 0.55],
+              'heatmap-radius': 46,
+              'heatmap-opacity': 0.8,
               'heatmap-color': [
                 'interpolate', ['linear'], ['heatmap-density'],
                 0, 'rgba(0,0,0,0)',
@@ -205,11 +211,17 @@ function Camadas({
               // Área proporcional a pessoas (raio pela raiz): é assim que o olho
               // compara círculo. Raio proporcional a n faria o maior bairro
               // parecer 10x o que ele é.
+              // ⚠️ Interpolação por TOTAL, sem aninhar no zoom. Expressão
+              // zoom-e-propriedade é aceita na especificação, mas aninhar duas
+              // interpolações é justamente o tipo de expressão que falha em
+              // runtime deixando a camada criada e invisível. Área cresce com a
+              // contagem sem precisar disso.
               'circle-radius': [
-                'interpolate', ['linear'], ['zoom'],
-                8, ['+', 4, ['*', 2.2, ['sqrt', ['get', 'total']]]],
-                12, ['+', 6, ['*', 3.4, ['sqrt', ['get', 'total']]]],
-                15, ['+', 8, ['*', 4.6, ['sqrt', ['get', 'total']]]],
+                'interpolate', ['linear'], ['get', 'total'],
+                1, 9,
+                5, 14,
+                20, 24,
+                60, 34,
               ],
               'circle-color': TEAL_SUAVE,
               'circle-stroke-color': '#ffffff',
@@ -230,7 +242,7 @@ function Camadas({
               layout: {
                 'text-field': ['to-string', ['get', 'total']],
                 'text-font': ['Open Sans Semibold', 'Open Sans Regular', 'Noto Sans Regular'],
-                'text-size': ['interpolate', ['linear'], ['zoom'], 9, 10, 14, 13],
+                'text-size': 12,
                 'text-allow-overlap': true,
               },
               paint: {
@@ -265,6 +277,13 @@ function Camadas({
     map.on('idle', aplicar);
     map.on('load', aplicar);
     map.on('style.load', aplicar);
+    // ⚠️⚠️ Erro de EXPRESSÃO de camada chega por este evento, não como exceção
+    // do `addLayer`. Sem escutar, uma expressão inválida deixa a camada criada e
+    // invisível, sem nada no console — que foi o estado da tela em 23/08/2026.
+    const aoErrar = (e: { error?: { message?: string } }) => {
+      diag('erro do mapa', { msg: e?.error?.message ?? 'sem mensagem' });
+    };
+    map.on('error', aoErrar);
 
     const popup = new MapLibreGL.Popup({ closeButton: false, closeOnClick: false, offset: 14 });
     const aoClicar = (e: MapLibreGL.MapLayerMouseEvent) => {
@@ -308,6 +327,7 @@ function Camadas({
       map.off('idle', aplicar);
       map.off('load', aplicar);
       map.off('style.load', aplicar);
+      map.off('error', aoErrar);
       map.off('click', L_CIRCULO, aoClicar);
       map.off('mouseenter', L_CIRCULO, aoEntrar);
       map.off('mouseleave', L_CIRCULO, aoSair);
