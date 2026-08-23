@@ -211,10 +211,21 @@ function agruparParaAviso({ escalas, agora, dias = 7, diasAlvo = null, porAntece
 
   return [...grupos.values()]
     .map(g => ({ ...g, antecedencia: antecedenciaDoGrupo(g._escalas), kids: g._escalas.some(ehEscalaKids) }))
-    // ⚠️ O corte por dia acontece AQUI no modo por antecedência: o grupo entra
-    // só quando o dia do serviço é exatamente `hoje + antecedência`. Usar `<=`
-    // faria o Kids ser avisado no D-3, no D-2 e na véspera.
-    .filter(g => !porAntecedencia || diaBRT(g.primeiro) === diaRelativoBRT(agora, g.antecedencia))
+    // ⚠️⚠️ `<=`, NÃO `===` (corrigido em 22/08/2026). Eu tinha escrito `===`
+    // achando que `<=` avisaria o Kids no D-3, no D-2 e na véspera — e isso
+    // estava ERRADO: quem impede a repetição é a DEDUP de `selecionarRodada`,
+    // que pula o grupo cuja escala já tem envio registrado. O `===` só tornava
+    // a régua frágil, e cobrou caro: ao ligar os 3 dias do Kids em 21/08, o
+    // culto de 23/08 já tinha passado do D-3 (que foi 20/08, antes do merge) e
+    // **38 pessoas do Kids ficaram sem aviso nenhum** pro domingo.
+    //
+    // Com `<=` a régua se recupera sozinha de qualquer dia perdido — merge no
+    // meio da janela, cron que não rodou, deploy demorado. Avisar tarde é pior
+    // que avisar no D-3; não avisar é muito pior que os dois.
+    //
+    // ⚠️ Não vira enxurrada: `dias` continua limitando a janela externa, e a
+    // dedup garante UMA mensagem por pessoa por dia de serviço.
+    .filter(g => !porAntecedencia || diaBRT(g.primeiro) <= diaRelativoBRT(agora, g.antecedencia))
     .map(g => ({
       ...g,
       params: (() => {
