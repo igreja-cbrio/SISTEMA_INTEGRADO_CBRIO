@@ -183,19 +183,42 @@ function Camadas({
             source: SRC,
             paint: {
               'heatmap-weight': ['get', 'peso'],
-              'heatmap-intensity': 1,
-              // Raio em PIXEL: é o que faz a mancha continuar legível quando o
-              // enquadramento afasta por causa de um bairro distante.
-              'heatmap-radius': 46,
-              'heatmap-opacity': 0.8,
+              // ⚠️⚠️ RAIO E INTENSIDADE ESCALAM COM O ZOOM, e isto é o conserto
+              // do calor invisível (medido em produção, 24/08/2026): com raio
+              // FIXO de 46px a mancha nascia do mesmo tamanho do chip que é
+              // desenhado em cima dela, então o calor existia (as camadas
+              // sobem: `camadas ok calor=true`) e ficava 100% coberto. Interpolar
+              // `heatmap-radius`/`heatmap-intensity` por zoom é o uso canônico
+              // do tipo `heatmap` na própria maplibre — não é a expressão
+              // aninhada exótica que o comentário do círculo abaixo evita.
+              'heatmap-intensity': [
+                'interpolate', ['linear'], ['zoom'],
+                7, 1.5,
+                11, 2.4,
+                15, 3.2,
+              ],
+              'heatmap-radius': [
+                'interpolate', ['linear'], ['zoom'],
+                7, 28,
+                9, 48,
+                11, 85,
+                13, 140,
+                15, 220,
+              ],
+              'heatmap-opacity': 0.85,
+              // ⚠️ A rampa começa a colorir em densidade BAIXA (0.06): são ~24
+              // bairros espalhados pela região metropolitana, então a densidade
+              // real nunca chega perto de 1 fora da Barra. Rampa que só acende
+              // no fim deixaria o mapa cinza justamente onde mora quase todo
+              // mundo — e o pedido era ver a concentração.
               'heatmap-color': [
                 'interpolate', ['linear'], ['heatmap-density'],
                 0, 'rgba(0,0,0,0)',
-                0.15, 'rgba(0,179,157,0.40)',
-                0.35, 'rgba(56,189,248,0.60)',
-                0.55, 'rgba(163,230,53,0.70)',
-                0.75, 'rgba(250,204,21,0.82)',
-                0.9, 'rgba(249,115,22,0.88)',
+                0.06, 'rgba(0,179,157,0.35)',
+                0.22, 'rgba(56,189,248,0.55)',
+                0.42, 'rgba(163,230,53,0.68)',
+                0.62, 'rgba(250,204,21,0.80)',
+                0.82, 'rgba(249,115,22,0.88)',
                 1, 'rgba(220,38,38,0.92)',
               ],
             },
@@ -216,12 +239,17 @@ function Camadas({
               // interpolações é justamente o tipo de expressão que falha em
               // runtime deixando a camada criada e invisível. Área cresce com a
               // contagem sem precisar disso.
+              // ⚠️ Raios ENCOLHIDOS (era 9→34) porque o chip passou a ser o
+              // rótulo do número, não o protagonista: quem responde "onde se
+              // concentra mais gente" agora é a mancha de calor, e chip grande
+              // tapa exatamente o ponto mais quente. A área segue proporcional,
+              // então a comparação entre bairros continua de pé.
               'circle-radius': [
                 'interpolate', ['linear'], ['get', 'total'],
-                1, 9,
-                5, 14,
-                20, 24,
-                60, 34,
+                1, 7,
+                5, 10,
+                20, 15,
+                60, 20,
               ],
               'circle-color': TEAL_SUAVE,
               'circle-stroke-color': '#ffffff',
