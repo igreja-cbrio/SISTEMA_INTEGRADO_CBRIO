@@ -42,6 +42,12 @@ const L_CALOR = 'dem-bairros-calor';
 const L_CIRCULO = 'dem-bairros-circulo';
 const L_NUMERO = 'dem-bairros-numero';
 
+// ⚠️ Diagnóstico OPT-IN (`?diagmapa=1` na URL). Existe porque este mapa já
+// falhou TRÊS vezes em produção sem emitir uma linha de console — e sem sinal
+// nenhum a investigação vira chute. Não liga nada sozinho.
+const DIAG = typeof location !== 'undefined' && location.search.includes('diagmapa=1');
+const diag = (...a: unknown[]) => { if (DIAG) console.info('[mapa-bairros]', ...a); };
+
 const TEAL = '#00B39D';
 const TEAL_SUAVE = 'rgba(0,179,157,0.62)';
 
@@ -131,6 +137,7 @@ function Camadas({
     // `map.isStyleLoaded()` dentro do `aplicar`, que roda a cada gatilho.
     if (!map) return;
     let vivo = true;
+    diag('effect montou', { isLoaded });
 
     const pintarSelecao = () => {
       if (!map.getLayer(L_CIRCULO)) return;
@@ -144,9 +151,20 @@ function Camadas({
     };
 
     const aplicar = () => {
-      // ⚠️ `styledata` dispara antes de o estilo estar pronto para receber
-      // camada; sem esta guarda o addSource lança e o mapa fica vazio.
-      if (!vivo || !map.isStyleLoaded()) return;
+      if (!vivo) return;
+      // ⚠️⚠️ NÃO guardar com `map.isStyleLoaded()`. Ele pode ficar `false` para
+      // sempre (estilo com recurso que não resolve), e aí a camada NUNCA é
+      // criada — sem erro, sem log, com o basemap desenhado por cima. Foi
+      // exatamente esse silêncio que custou três tentativas em 23/08/2026.
+      // A régua correta é TENTAR: se o estilo ainda não aceita, o `addSource`
+      // lança, o catch registra e o próximo gatilho tenta de novo. `aplicar` é
+      // idempotente, então tentar de novo é de graça.
+      diag('aplicar', {
+        estiloPronto: map.isStyleLoaded(),
+        features: dadosRef.current.features.length,
+        temSource: !!map.getSource(SRC),
+        temCalor: !!map.getLayer(L_CALOR),
+      });
       try {
         const src = map.getSource(SRC) as MapLibreGL.GeoJSONSource | undefined;
         if (src) src.setData(dadosRef.current as never);
@@ -227,8 +245,11 @@ function Camadas({
         }
 
         pintarSelecao();
+        diag('camadas ok', { calor: !!map.getLayer(L_CALOR), circulo: !!map.getLayer(L_CIRCULO), numero: !!map.getLayer(L_NUMERO) });
       } catch (e) {
-        console.warn('[mapa-bairros] nao consegui montar as camadas', e);
+        // ⚠️ Não é erro fatal: o próximo gatilho tenta de novo. Fica em `warn`
+        // para não gritar em cima de uma tentativa que a seguinte resolve.
+        diag('aplicar falhou (o proximo gatilho tenta de novo)', e);
       }
     };
 
@@ -243,6 +264,7 @@ function Camadas({
     map.on('styledata', aplicar);
     map.on('idle', aplicar);
     map.on('load', aplicar);
+    map.on('style.load', aplicar);
 
     const popup = new MapLibreGL.Popup({ closeButton: false, closeOnClick: false, offset: 14 });
     const aoClicar = (e: MapLibreGL.MapLayerMouseEvent) => {
@@ -285,6 +307,7 @@ function Camadas({
       map.off('styledata', aplicar);
       map.off('idle', aplicar);
       map.off('load', aplicar);
+      map.off('style.load', aplicar);
       map.off('click', L_CIRCULO, aoClicar);
       map.off('mouseenter', L_CIRCULO, aoEntrar);
       map.off('mouseleave', L_CIRCULO, aoSair);
