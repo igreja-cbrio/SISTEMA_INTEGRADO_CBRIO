@@ -16,7 +16,7 @@ import {
 } from '../../components/ui/table';
 import {
   Building2, CalendarDays, Check, Clipboard, Info, RefreshCw, Target,
-  TrendingUp, WalletCards
+  TrendingUp, WalletCards, Coins
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -181,7 +181,8 @@ export default function MarketingGenerosidade() {
     if (!mes || !dados) return;
     const texto = [
       `Generosidade — ${mes.mes_label}/${dados.ano}`,
-      `Cobertura mensal: ${mes.tem_dados ? fmtPercentual(mes.percentual_mensal) : 'sem dados'} (${resumoMensal}).`,
+      `Cobertura mensal: ${mes.tem_dados ? fmtPercentual(mes.percentual_mensal) : 'sem dados'} (${resumoMensal} em dízimos e ofertas).`,
+      ...(mes.receita_total === undefined ? [] : [`Receita total do mês: ${fmtMoeda(mes.receita_total)}.`]),
       `Expansão do novo campus: ${fmtPercentual(mes.percentual_campus)} (${fmtMoeda(mes.campus_acumulado)} de ${fmtMoeda(dados.configuracao.meta_campus)}).`,
       `Dados do balanço atualizados em ${atualizadoTexto}.`,
     ].join('\n');
@@ -303,11 +304,27 @@ export default function MarketingGenerosidade() {
             </Card>
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {/* ⚠️ "Arrecadado" se lia como TUDO que entrou, e este número é só
+                  dízimos e ofertas (plano 3.01) — foi o que gerou a divergência
+                  com o Dashboard Semanal (23/08). O rótulo agora diz o que conta,
+                  e o card ao lado mostra o total. */}
               <ResumoStat
                 icon={WalletCards}
-                label={`Arrecadado em ${mes.mes_label}`}
+                label={`Dízimos e ofertas em ${mes.mes_label}`}
                 valor={mes.tem_dados ? fmtMoeda(mes.arrecadado) : '—'}
                 detalhe={mes.tem_dados ? `${fmtPercentual(mes.percentual_mensal)} da meta mensal` : 'Sem dados do balanço neste mês'}
+              />
+              <ResumoStat
+                icon={Coins}
+                label={`Receita total em ${mes.mes_label}`}
+                valor={mes.receita_total === undefined ? '—' : fmtMoeda(mes.receita_total)}
+                detalhe={
+                  mes.receita_total === undefined
+                    ? 'Não consegui ler o total — mostrando só dízimos e ofertas'
+                    : mes.outras_receitas
+                      ? `+ ${fmtMoeda(mes.outras_receitas)} fora de dízimos e ofertas${mes.receita_extraordinaria ? ` (${fmtMoeda(mes.receita_extraordinaria)} extraordinárias)` : ''}`
+                      : 'Igual aos dízimos e ofertas neste mês'
+                }
               />
               <ResumoStat
                 icon={Target}

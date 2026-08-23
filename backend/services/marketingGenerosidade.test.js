@@ -49,3 +49,94 @@ assert.deepEqual(agregado, [
 ]);
 
 console.log('marketingGenerosidade: regra mensal e acumulado do campus aprovados');
+
+// ── Receita total ao lado da generosidade (23/08/2026) ──────────────────────
+//
+// ⚠️⚠️ POR QUE ESTE BLOCO EXISTE: o Matheus perguntou por que o painel de
+// generosidade mostrava valor diferente do Dashboard Semanal. Medido em
+// agosto/2026: Dashboard R$ 805.267,90 (toda receita) × Marketing R$
+// 733.461,87 (só o plano 3.01), diferença de R$ 71.806,03 — R$ 60.000 de três
+// doações extraordinárias e o resto bazar/material/campanha.
+//
+// A invariante: **`arrecadado` não muda de significado**. É ele que alimenta a
+// meta mensal e o excedente do campus; a receita total entra AO LADO, como
+// informação. Trocar um pelo outro mudaria a régua da campanha do campus.
+const { combinarComReceitaTotal } = require('./marketingGenerosidade');
+
+{
+  const mensal = [{ mes: '2026-08', arrecadado: 733_461.87, qtd_lancamentos: 1800 }];
+  // A view devolve 3 linhas por mês (um decêndio cada) — a soma é o mês.
+  const totais = [
+    { mes: '2026-08', receita: 300_000, receita_extraordinaria: 60_000 },
+    { mes: '2026-08', receita: 250_000, receita_extraordinaria: 0 },
+    { mes: '2026-08', receita: 255_267.90, receita_extraordinaria: 0 },
+  ];
+  const [r] = combinarComReceitaTotal(mensal, totais);
+  assert.equal(r.arrecadado, 733_461.87, 'arrecadado NÃO pode mudar');
+  assert.equal(r.receita_total, 805_267.90, 'soma os decêndios do mês');
+  assert.equal(r.receita_extraordinaria, 60_000);
+  assert.equal(r.outras_receitas, 71_806.03, 'a diferença medida em agosto');
+  assert.equal(r.divergencia, null);
+}
+
+{
+  // ⚠️ Mês sem linha na view: `receita_total` fica UNDEFINED, não zero — a tela
+  // precisa distinguir "não entrou nada" de "não consegui ler".
+  const [r] = combinarComReceitaTotal(
+    [{ mes: '2026-09', arrecadado: 1000, qtd_lancamentos: 2 }], [],
+  );
+  assert.equal(r.arrecadado, 1000);
+  assert.equal(r.receita_total, undefined, 'ausente não é zero');
+  assert.equal('receita_total' in r, false);
+}
+
+{
+  // ⚠️ Divergência (generosidade > total) é DECLARADA, nunca exibida como
+  // "outras receitas: -300". Hoje é impossível, mas o silêncio é que custa.
+  const [r] = combinarComReceitaTotal(
+    [{ mes: '2026-08', arrecadado: 1000, qtd_lancamentos: 1 }],
+    [{ mes: '2026-08', receita: 700, receita_extraordinaria: 0 }],
+  );
+  assert.equal(r.outras_receitas, null);
+  assert.equal(r.divergencia, -300);
+}
+
+{
+  // Mês igual: sem "outras receitas" pra mostrar.
+  const [r] = combinarComReceitaTotal(
+    [{ mes: '2026-08', arrecadado: 500, qtd_lancamentos: 1 }],
+    [{ mes: '2026-08', receita: 500, receita_extraordinaria: 0 }],
+  );
+  assert.equal(r.outras_receitas, 0);
+}
+
+{
+  // Entrada inválida não quebra e não inventa mês.
+  assert.deepEqual(combinarComReceitaTotal([], []), []);
+  assert.deepEqual(combinarComReceitaTotal(null, null), []);
+  const [r] = combinarComReceitaTotal(
+    [{ mes: '2026-08', arrecadado: 10, qtd_lancamentos: 1 }],
+    [{ mes: 'lixo', receita: 999 }, { receita: 999 }],
+  );
+  assert.equal(r.receita_total, undefined);
+}
+
+{
+  // ⚠️ A meta e o campus seguem calculados SÓ sobre `arrecadado`, mesmo com o
+  // total maior ao lado — é a régua da campanha, não muda por causa de um card.
+  const snap = calcularGenerosidade(
+    combinarComReceitaTotal(
+      [{ mes: '2026-01', arrecadado: 900_000, qtd_lancamentos: 10 }],
+      [{ mes: '2026-01', receita: 2_000_000, receita_extraordinaria: 0 }],
+    ),
+    2026,
+    new Date('2026-07-28T12:00:00-03:00'),
+  );
+  const jan = snap.meses.find((m) => m.mes === '2026-01');
+  assert.equal(jan.arrecadado, 900_000);
+  assert.equal(jan.receita_total, 2_000_000);
+  assert.equal(jan.excedente_campus, 0, 'o excedente vem do arrecadado, não do total');
+  assert.equal(jan.falta_meta_mensal, 100_000);
+}
+
+console.log('✓ receita total ao lado da generosidade');

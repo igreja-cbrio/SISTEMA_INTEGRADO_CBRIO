@@ -28,6 +28,7 @@ const spMarketing = require('../services/sharepointMarketing');
 const {
   CAMPANHA_INICIO,
   agruparArrecadacaoMensal,
+  combinarComReceitaTotal,
   calcularGenerosidade,
 } = require('../services/marketingGenerosidade');
 
@@ -210,7 +211,27 @@ async function carregarGenerosidadeDoBalanco(inicio, fim) {
     if (!data || data.length < pageSize) break;
   }
 
-  return agruparArrecadacaoMensal(linhas);
+  const mensal = agruparArrecadacaoMensal(linhas);
+
+  // ⚠️⚠️ A RECEITA TOTAL VEM DA MESMA VIEW QUE O DASHBOARD SEMANAL LÊ. Recalcular
+  // aqui criaria uma TERCEIRA régua sobre "quanto entrou", e o próximo "por que
+  // os números divergem?" teria três respostas em vez de duas.
+  //
+  // ⚠️ Best-effort: se a view falhar, o painel segue mostrando a generosidade e
+  // a tela DECLARA que o total não veio. Derrubar o painel inteiro por causa do
+  // número informativo seria trocar um dado a menos por nenhum dado.
+  try {
+    const { data: totais, error } = await supabase
+      .from('vw_fin_decendio')
+      .select('mes, receita, receita_extraordinaria')
+      .gte('mes', inicio.slice(0, 7))
+      .lt('mes', fim.slice(0, 7));
+    if (error) throw error;
+    return combinarComReceitaTotal(mensal, totais || []);
+  } catch (e) {
+    console.warn('[MARKETING] receita total indisponível:', e.message);
+    return mensal;
+  }
 }
 
 router.get('/generosidade', authorizeModule('marketing', 1), async (req, res) => {
