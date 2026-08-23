@@ -117,6 +117,36 @@ Celebra com só nome+telefone continuam válidas para sempre).
   imagem, menor_responsavel, whatsapp). O ESTADO do opt-in continua nas
   colunas `whatsapp_optin/_em` de cada tabela.
 
+### ⚠️⚠️ A porta de EVENTOS cria pessoa quando tem CPF (2026-08-23 · SEM migration)
+
+`publicEventoExterno` usava `politica: 'ligar'` — o matcher só ACHAVA cadastro
+existente. Toda pessoa **nova** que se inscrevia num evento ficava com
+`membro_id` NULL: fora da membresia, fora de todo cruzamento, invisível pra
+qualquer área. Medido na 1ª inscrição paga real do AMI CAMP 2027 (23/08): a
+pessoa pagou R$ 830 e **não existia no cadastro da igreja**. Escopo do estrago:
+**77 de 318 inscrições vivas sem vínculo** (71 do Celebra), 63 delas com CPF
+válido — 18 em que o CPF **já existia** (bastava ligar) e 45 pessoas novas.
+
+- Agora: `politica = normalizarCpf(cpf) ? 'criar' : 'ligar'`. **Sem CPF continua
+  sem criar** — é a regra da #2170 ("para de fabricar cadastro sem chave"), que
+  proibiu fabricar pessoa por NOME EXATO no import financeiro. CPF é a chave
+  FORTE do matcher, então criar com CPF não reabre aquilo.
+- `acharOuCriarGuardado` liga no cadastro existente quando o CPF bate e só cria
+  quando a pessoa é nova de verdade. O `genero` passou a ser repassado.
+- Backfill: `backend/scripts/_reparo_inscricoes_valor_vinculo.cjs` (`--exec`,
+  backup em `~/Downloads/_bk_20260823_inscricoes_valor_vinculo.json`). Inscrição
+  **sem CPF não é tocada** — fica pra decisão humana.
+
+### ⚠️ `valor_cobrado_centavos` é escrito por quem COBRA, não só pela bolsa (2026-08-23)
+
+A coluna só era preenchida pela `aplicarBeneficio` (bolsa/desconto). **Quem
+pagava o valor cheio ficava com ela NULL** — e ela é lida pela lista de
+inscritos (`INSCRITOS_COLS`), pelo e-mail e pela conciliação. Passou pra dentro
+da `cobrarInscricao`, logo após o espelho em `insc_pagamentos`: é o **único**
+ponto que conhece o valor efetivamente cobrado (inclusive o fallback pro valor
+de tabela quando o evento não tem lote) e por ele passam os TRÊS caminhos de
+cobrança (nova · re-inscrição · quem perdeu a corrida do advisory lock).
+
 **Estado do rollout — CONCLUÍDO (narrativa PR a PR no legado):** as 7 portas
 entraram no contrato em 28/07 (F3.1) e a **espinha `inscricoes` + módulo
 `/inscricoes`** ficou completa no mesmo dia (F3.2 · 6 tabelas · 5 abas ·
