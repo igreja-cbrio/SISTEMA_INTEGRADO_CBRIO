@@ -121,9 +121,15 @@ const { combinarComReceitaTotal } = require('./marketingGenerosidade');
   assert.equal(r.receita_total, undefined);
 }
 
+// ── A barra mede a RECEITA TOTAL (decisão do Matheus · 23/08/2026) ──────────
+//
+// ⚠️⚠️ ISTO INVERTE a regra anterior, e de propósito: *"a barra de progresso
+// deve acompanhar a receita total e não só dízimos e ofertas"*. O motivo é
+// concreto — as doações EXTRAORDINÁRIAS ficavam fora da conta, e são elas que
+// financiam o campus. Medido em 2026: só julho tem R$ 2.081.222,40 em três
+// doações extraordinárias, e o acumulado sai de R$ 233.372,03 (2,9% da meta de
+// R$ 8M) para R$ 2.703.182,34 (33,8%).
 {
-  // ⚠️ A meta e o campus seguem calculados SÓ sobre `arrecadado`, mesmo com o
-  // total maior ao lado — é a régua da campanha, não muda por causa de um card.
   const snap = calcularGenerosidade(
     combinarComReceitaTotal(
       [{ mes: '2026-01', arrecadado: 900_000, qtd_lancamentos: 10 }],
@@ -133,10 +139,55 @@ const { combinarComReceitaTotal } = require('./marketingGenerosidade');
     new Date('2026-07-28T12:00:00-03:00'),
   );
   const jan = snap.meses.find((m) => m.mes === '2026-01');
-  assert.equal(jan.arrecadado, 900_000);
+  assert.equal(jan.arrecadado, 900_000, 'dízimos e ofertas continuam expostos');
   assert.equal(jan.receita_total, 2_000_000);
-  assert.equal(jan.excedente_campus, 0, 'o excedente vem do arrecadado, não do total');
+  assert.equal(jan.base_meta, 2_000_000, 'a barra mede o TOTAL');
+  assert.equal(jan.base_meta_origem, 'receita_total');
+  assert.equal(jan.percentual_mensal, 200);
+  assert.equal(jan.excedente_campus, 1_000_000, 'o excedente vem do TOTAL');
+  assert.equal(jan.campus_acumulado, 1_000_000);
+  assert.equal(jan.falta_meta_mensal, 0);
+}
+
+{
+  // ⚠️ Sem o total (a view falhou), cai no arrecadado e DECLARA a origem —
+  // trocar a régua em silêncio é o que faz um painel financeiro perder a
+  // confiança de quem o lê.
+  const snap = calcularGenerosidade(
+    [{ mes: '2026-01', arrecadado: 900_000, qtd_lancamentos: 10 }],
+    2026,
+    new Date('2026-07-28T12:00:00-03:00'),
+  );
+  const jan = snap.meses.find((m) => m.mes === '2026-01');
+  assert.equal(jan.base_meta, 900_000);
+  assert.equal(jan.base_meta_origem, 'dizimos_ofertas');
+  assert.equal(jan.excedente_campus, 0);
   assert.equal(jan.falta_meta_mensal, 100_000);
+}
+
+{
+  // ⚠️ Total ZERO é um total, não "não sei": a barra tem que ir a 0%, não cair
+  // no arrecadado (que viria do balanço e mostraria progresso onde não há).
+  const snap = calcularGenerosidade(
+    [{ mes: '2026-01', arrecadado: 900_000, receita_total: 0, qtd_lancamentos: 10 }],
+    2026,
+    new Date('2026-07-28T12:00:00-03:00'),
+  );
+  const jan = snap.meses.find((m) => m.mes === '2026-01');
+  assert.equal(jan.base_meta, 0);
+  assert.equal(jan.base_meta_origem, 'receita_total');
+  assert.equal(jan.percentual_mensal, 0);
+}
+
+{
+  // O caso real de julho/2026, com os números medidos no banco.
+  const snap = calcularGenerosidade([
+    { mes: '2026-07', arrecadado: 948_336.56, receita_total: 3_056_235.72, qtd_lancamentos: 900 },
+  ], 2026, new Date('2026-08-23T12:00:00-03:00'));
+  const jul = snap.meses.find((m) => m.mes === '2026-07');
+  assert.equal(jul.base_meta, 3_056_235.72);
+  assert.equal(jul.excedente_campus, 2_056_235.72);
+  assert.equal(jul.arrecadado, 948_336.56, 'o número de dízimos não se perde');
 }
 
 console.log('✓ receita total ao lado da generosidade');

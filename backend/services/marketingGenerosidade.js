@@ -120,9 +120,28 @@ function calcularGenerosidade(rows, ano, agora = new Date()) {
       const row = porMes.get(key);
       const temDados = Boolean(row && Number(row.qtd_lancamentos || 0) > 0);
       const arrecadado = arredondarMoeda(row?.arrecadado || 0);
+
+      // ⚠️⚠️ A BARRA MEDE A RECEITA TOTAL (decisão do Matheus · 23/08/2026:
+      // *"a barra de progresso deve acompanhar a receita total e não só dízimos
+      // e ofertas"*). Antes a meta e o excedente do campus saíam só do plano
+      // 3.01, e isso deixava de fora as doações EXTRAORDINÁRIAS — que são
+      // justamente as que financiam o campus. Medido em 2026: só julho tem
+      // R$ 2.081.222,40 em três doações extraordinárias, e o acumulado do
+      // campus sai de R$ 233.372,03 (2,9%) para R$ 2.703.182,34 (33,8%).
+      //
+      // ⚠️ `arrecadado` continua existindo e sendo EXIBIDO — a tela mostra os
+      // dois. O que mudou é o que a BARRA mede.
+      //
+      // ⚠️ Sem o total (a leitura da view falhou), cai no arrecadado e DECLARA
+      // a origem em `base_meta_origem`. Trocar a régua em silêncio é o que faz
+      // um painel financeiro perder a confiança de quem o lê.
+      const temTotal = row?.receita_total !== undefined && row?.receita_total !== null;
+      const baseMeta = temTotal ? arredondarMoeda(row.receita_total) : arrecadado;
+      const baseMetaOrigem = temTotal ? 'receita_total' : 'dizimos_ofertas';
+
       const excedente = antesDaCampanha
         ? 0
-        : arredondarMoeda(Math.max(0, arrecadado - META_MENSAL));
+        : arredondarMoeda(Math.max(0, baseMeta - META_MENSAL));
 
       campusAcumulado = arredondarMoeda(campusAcumulado + excedente);
 
@@ -130,7 +149,7 @@ function calcularGenerosidade(rows, ano, agora = new Date()) {
 
       const futuro = y > anoAtual || (y === anoAtual && m > mesAtual);
       const parcial = y === anoAtual && m === mesAtual;
-      const faltaMetaMensal = arredondarMoeda(Math.max(0, META_MENSAL - arrecadado));
+      const faltaMetaMensal = arredondarMoeda(Math.max(0, META_MENSAL - baseMeta));
 
       mesesDoAno.push({
         mes: key,
@@ -147,7 +166,9 @@ function calcularGenerosidade(rows, ano, agora = new Date()) {
         tem_dados: temDados,
         futuro,
         parcial,
-        percentual_mensal: percentual(arrecadado, META_MENSAL),
+        base_meta: baseMeta,
+        base_meta_origem: baseMetaOrigem,
+        percentual_mensal: percentual(baseMeta, META_MENSAL),
         falta_meta_mensal: faltaMetaMensal,
         excedente_campus: excedente,
         campus_acumulado: campusAcumulado,
