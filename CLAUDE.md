@@ -1617,6 +1617,87 @@ E `vol_inscricoes.vol_profile_id` está **100% vazio** (0 de 827) — o vínculo
 perfil↔inscrição nunca foi preenchido, e é por isso que o canal do formulário
 precisa casar por e-mail em vez de seguir a FK que existe no schema.
 
+## ⚠️⚠️ LEI · lista de opções no CLIENTE fabrica vocabulário divergente (2026-08-24 · migration `20260824120000`)
+
+Pedido do Matheus: *"nos formularios, o bairro da pessoa deve aparecer
+automaticamente quando ela colocar o cep, deve existir um sistema de validacao,
+com lista suspensa dos bairros."*
+
+**A medição achou mais que o pedido — e o achado é a lei.** O formulário público
+tinha uma constante `BAIRROS` com **11 APELIDOS CURTOS** (`'Barra'`,
+`'Recreio'`, `'Freguesia'`) e o ViaCEP devolve o nome **OFICIAL**. O casamento
+normalizado **nunca batia** nos três bairros com mais gente:
+
+| bairro | pela lista | pelo CEP |
+|---|---|---|
+| Barra da Tijuca | `Barra` · 22 | `Barra da Tijuca` · 33 |
+| Recreio | `Recreio` · 14 | `Recreio dos Bandeirantes` · 15 |
+| Freguesia | `Freguesia` · 4 | `Freguesia (Jacarepaguá)` · 5 |
+
+⇒ **O próprio formulário fabricava as duas grafias**, e o `alias_de` criado em
+23/08 tratava o SINTOMA no mapa. Medido em `mem_membros` vivos, mais 4 registros
+com espaço no fim (`"Barra da Tijuca "`, `"Jacarepaguá "`).
+
+**A LEI: lista de opções que vira DADO não vive no cliente.** É a irmã da lei de
+17/08 ("rótulo de opção NÃO é vocabulário de coluna"): lá o rótulo não podia ir
+cru para a coluna; aqui a lista do cliente não pode ser a fonte do vocabulário.
+Quem define o que se pode escolher é o SERVIDOR (`fn_dem_bairros_catalogo`), e
+quem decide a grafia gravada é o BACKEND (`fn_dem_bairro_canonico`) — nunca a
+tela. ⚠️ **NÃO reintroduzir lista de bairros no cliente.**
+
+### ⚠️⚠️ `alias_de` carregava DUAS relações — e isso decide se pode reescrever
+
+| `alias_tipo` | o que é | a gravação troca? |
+|---|---|---|
+| `grafia` | "Barra" **é** "Barra da Tijuca", escrito curto | **SIM** — mesma informação |
+| `agrupamento` | "Barra Olímpica" fica na Barra **no mapa**, mas é lugar próprio | **NÃO** — trocar apaga onde a pessoa mora |
+
+Sem separar as duas, canonicalizar na escrita destruiria granularidade real. A
+migration **ABORTA** se `fn_dem_bairro_canonico('Barra Olímpica')` devolver
+outra coisa. `alias_tipo` nasce `'grafia'` porque é o caso comum e o único em
+que a reescrita é segura — agrupamento é decisão humana e se declara.
+
+### O resto das decisões
+
+- **`services/bairroCanonico.js` canonicaliza em TODA porta** (POST/PUT de
+  membro, totem, aprovação de cadastro, porta pública). A lista sozinha não
+  fecharia: sobram totem, RH, censo e import gravando texto.
+- ⚠️ **Bairro desconhecido PASSA, trimado — nunca é recusado.** Porta pública não
+  pode barrar quem mora onde a base ainda não viu; ele entra no catálogo e a
+  próxima pessoa escolhe da lista.
+- ⚠️ **`SeletorBairro` NÃO trava**, e é decisão: o `<select>` fechado de antes
+  jogava quem morava em Copacabana no "Outro", e era dali que vinha a variação.
+  Sugere forte, aceita o resto, **declara** quando é novo.
+- ⚠️ **A busca casa por APELIDO** e oferece o canônico: sem isso quem digita
+  "barra" não acha nada e escreve o apelido, recriando a duplicidade.
+- **Ligado em**: cadastro público · Membresia · totem · inscrição de líderes ·
+  RH · censo. No censo por **`preenche_de`**, nunca pelo enunciado — mesma régua
+  que o `PerguntaCampo` já usava para nascimento.
+- ⚠️ **A 5ª cópia local do ViaCEP morreu** (`Membresia.jsx:150`). A régua é
+  `lib/cepAutopreenche`, que trata os dois casos que toda cópia esquecia:
+  `erro: true` com **HTTP 200** (CEP inexistente lido como sucesso, apagando o
+  endereço digitado) e **timeout** (no wi-fi do templo o campo ficava
+  "buscando…" para sempre). **CEP → bairro passou a existir no totem.**
+- **Rótulos corrigidos NOMINALMENTE**, nunca por `initcap()`: em português
+  "da/de/dos" ficam minúsculos e o initcap devolveria "Barra Da Tijuca".
+
+### ⚠️ Duas lições de MÉTODO, das minhas próprias falhas nesta leva
+
+1. **Um mutante SOBREVIVEU e o teste é que estava fraco.** Os 3 apelidos vivos
+   (`barra`, `recreio`, `freguesia`) são **todos PREFIXO** do nome oficial,
+   então casavam pelo ramo de prefixo e o casamento por apelido **nunca era
+   exercitado**. Régua: **ao testar casamento por sinônimo, incluir um sinônimo
+   que NÃO seja prefixo** — senão o ramo passa despercebido.
+2. **O BUILD pegou o que o typecheck não pegou**: import inserido no meio de um
+   `import { … }` multilinha. É a lição de 17/08 se repetindo — em `.jsx`,
+   **o verificador é `npm run build`**, não `tsc`.
+
+⏳ **Pendente de DECISÃO (não de código)**: o dado gravado do passado não foi
+reescrito — 22 cadastros com `"Barra"`, 14 com `"Recreio"`, 4 com `"Freguesia"`.
+A LEITURA já está consolidada (o catálogo mostra Barra da Tijuca com 57 e
+Recreio com 29). Reescrever é `UPDATE` em cadastro de pessoa, reversível, ~40
+linhas — decisão do Matheus.
+
 ## ⚠️ Membresia · aba PERFIL · mapa por bairro + cortes (2026-08-23 · migration `20260823160000`)
 
 Pedido do Matheus: *"queria um modulo estilo dashboards, para analises dos
