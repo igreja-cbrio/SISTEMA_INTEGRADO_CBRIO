@@ -15,6 +15,10 @@ const { montarPatchFusao } = require('../services/fusaoCampos');
 const { normalizarCpf: normCpf11, cpfValido } = require('../utils/cpf');
 const censoDisparo = require('../services/censoDisparo');
 const { avaliarProntidao } = require('../utils/prontidaoCadastro');
+// Endereco brasileiro -> bairro/coordenada. `bairroPorCep` (ViaCEP, ~200ms) roda
+// no salvamento do cadastro; `centroideDeBairro` (Nominatim, 1,1s de fila) so no
+// lote de geocodificacao do Perfil da Membresia.
+const { bairroPorCep, coordenadaPorTexto, centroideDeBairro } = require('../services/geoBrasil');
 const { decidirDesativacao, decidirReativacao } = require('../utils/desativarMembro');
 // ⚠️⚠️ `donosDoGrupo` era CHAMADO em `/totem/grupos/:id/entrar` e NUNCA foi
 // importado neste arquivo — ReferenceError latente. O insert do pedido roda
@@ -1311,6 +1315,42 @@ function normalizarTelefonePayload(body, telefoneAtual) {
   return null;
 }
 
+// ⚠️ AUTO-GEOCODE NO SALVAMENTO · decisão do Matheus (23/08): o Perfil da
+// Membresia agrega o mapa por BAIRRO, e hoje só 125 dos 1.730 membros ativos
+// têm bairro preenchido. Toda porta que grava endereço passa a derivar o
+// bairro do CEP.
+//
+// ⚠️ SÓ ViaCEP (~200 ms, sem rate-limit). O Nominatim tem fila de 1,1 s por
+// chamada (política do OSM) e travaria o salvamento do cadastro — coordenada
+// de bairro é trabalho do lote em segundo plano, não do caminho de quem está
+// clicando em Salvar.
+//
+// ⚠️⚠️ SÓ-ONDE-VAZIO, nos DOIS lados: nem o que a pessoa digitou no payload
+// nem o que já está gravado é sobrescrito. É a mesma política do censo — dado
+// de terceiro nunca passa por cima de correção humana.
+// ⇒ Resíduo declarado: trocar o CEP de quem já tem bairro NÃO corrige o
+// bairro antigo. Corrigir isso exigiria decidir que o ViaCEP vence a equipe,
+// e ele não vence. O formulário da Membresia já preenche o campo na tela.
+//
+// ⚠️ BEST-EFFORT: ViaCEP fora do ar não pode impedir ninguém de salvar um
+// cadastro. Falha vira log e o salvamento segue sem bairro.
+async function completarBairroPorCep(body, atual = null) {
+  try {
+    if (!body || typeof body !== 'object') return;
+    const cep = String(body.cep || '').replace(/\D/g, '');
+    if (cep.length !== 8) return;
+    const bairroDefinido = String(body.bairro ?? atual?.bairro ?? '').trim();
+    const cidadeDefinida = String(body.cidade ?? atual?.cidade ?? '').trim();
+    if (bairroDefinido && cidadeDefinida) return;
+    const via = await bairroPorCep(cep);
+    if (!via) return;
+    if (!bairroDefinido && via.bairro) body.bairro = via.bairro;
+    if (!cidadeDefinida && via.cidade) body.cidade = via.cidade;
+  } catch (e) {
+    console.warn('[MEMBROS] auto-geocode por CEP falhou (segue sem bairro):', e.message);
+  }
+}
+
 // POST /api/membresia/membros
 router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
   try {
@@ -1318,6 +1358,7 @@ router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
     if (errCpf) return res.status(400).json({ error: errCpf });
     const errTel = normalizarTelefonePayload(req.body);
     if (errTel) return res.status(400).json({ error: errTel });
+    await completarBairroPorCep(req.body);
     const resultado = await acharOuCriarGuardado({
       nome: req.body?.nome, cpf: req.body?.cpf, telefone: req.body?.telefone,
       email: req.body?.email, dataNascimento: req.body?.data_nascimento,
@@ -1347,16 +1388,21 @@ router.put('/membros/:id', authorize('admin', 'diretor'), async (req, res) => {
     // CPF/telefone atuais do membro: idêntico ao payload passa sem validar (legado)
     let cpfAtual = null;
     let telefoneAtual = null;
-    if (req.body?.cpf || req.body?.telefone) {
+    let enderecoAtual = null;
+    // Uma leitura só serve os dois: validação de CPF/telefone legado e o
+    // só-onde-vazio do bairro.
+    if (req.body?.cpf || req.body?.telefone || req.body?.cep) {
       const { data: atual } = await supabase.from('mem_membros')
-        .select('cpf, telefone').eq('id', req.params.id).maybeSingle();
+        .select('cpf, telefone, bairro, cidade').eq('id', req.params.id).maybeSingle();
       cpfAtual = atual?.cpf || null;
       telefoneAtual = atual?.telefone || null;
+      enderecoAtual = atual || null;
     }
     const errCpf = normalizarCpfPayload(req.body, cpfAtual);
     if (errCpf) return res.status(400).json({ error: errCpf });
     const errTel = normalizarTelefonePayload(req.body, telefoneAtual);
     if (errTel) return res.status(400).json({ error: errTel });
+    await completarBairroPorCep(req.body, enderecoAtual);
     const { data, error } = await supabase
       .from('mem_membros')
       .update(req.body)
@@ -1920,26 +1966,44 @@ router.post('/grupos/:id/membros', authorize('admin', 'diretor'), async (req, re
   }
 });
 
-// GET /api/membresia/geocode-cep?cep=XXXXXXXX — geocodifica um CEP brasileiro (ViaCEP + Nominatim)
+// GET /api/membresia/geocode-cep?cep=XXXXXXXX — CEP -> endereco + coordenada.
+// Alimenta o formulario da Membresia enquanto a pessoa digita.
+//
+// ⚠️ Era a 4a copia da sequencia ViaCEP+Nominatim; agora delega a
+// `services/geoBrasil`. Ganha de graca o TIMEOUT que faltava (o fetch cru
+// pendurava a requisicao ate a plataforma matar) e a fila de 1,1s do
+// Nominatim, que a politica do OSM exige e que nenhuma das copias respeitava.
+//
+// ⚠️ `exigirRio: false` DE PROPOSITO, e e a unica chamada do sistema assim:
+// aqui a consulta e um ENDERECO COMPLETO (logradouro + cidade + UF vindos do
+// ViaCEP), nao um nome de bairro solto — o risco de casar homonimo em outro
+// estado e baixo, e membro que mora fora do Rio precisa da coordenada dele.
+// A caixa do RJ existe para o centroide de BAIRRO, onde "Centro" casa em
+// qualquer cidade do Brasil.
 router.get('/geocode-cep', async (req, res) => {
   try {
-    const cep = (req.query.cep || '').replace(/\D/g, '');
-    if (cep.length !== 8) return res.status(400).json({ error: 'CEP invalido' });
-    const viaCepRes = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
-    const viaCep = await viaCepRes.json();
-    if (viaCep.erro) return res.status(404).json({ error: 'CEP não encontrado' });
-    const q = encodeURIComponent(`${viaCep.logradouro || ''} ${viaCep.localidade} ${viaCep.uf} Brasil`.trim());
-    const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1`, {
-      headers: { 'User-Agent': 'CBRio-Sistema/1.0 (contato@cbrio.com.br)' },
-    });
-    const nom = await nomRes.json();
+    const cepBruto = String(req.query.cep || '');
+    const end = await bairroPorCep(cepBruto);
+    if (!end) {
+      const so = cepBruto.replace(/\D/g, '');
+      if (so.length !== 8) return res.status(400).json({ error: 'CEP invalido' });
+      return res.status(404).json({ error: 'CEP não encontrado' });
+    }
+    const alvo = [end.logradouro, end.cidade, end.uf, 'Brasil'].filter(Boolean).join(', ');
+    const coord = await coordenadaPorTexto(alvo, { exigirRio: false });
     res.json({
-      cep, logradouro: viaCep.logradouro, bairro: viaCep.bairro,
-      cidade: viaCep.localidade, uf: viaCep.uf,
-      lat: nom?.[0] ? parseFloat(nom[0].lat) : null,
-      lng: nom?.[0] ? parseFloat(nom[0].lon) : null,
+      cep: end.cep,
+      logradouro: end.logradouro,
+      bairro: end.bairro,
+      cidade: end.cidade,
+      uf: end.uf,
+      lat: coord?.lat ?? null,
+      lng: coord?.lng ?? null,
     });
-  } catch (e) { res.status(500).json({ error: 'Erro ao geocodificar' }); }
+  } catch (e) {
+    console.error('[MEMBROS] geocode-cep error:', e.message);
+    res.status(500).json({ error: 'Erro ao geocodificar' });
+  }
 });
 
 // POST /api/membresia/totem/grupos/:id/entrar — pedido de entrada via totem.
@@ -2099,12 +2163,17 @@ router.put('/totem/membros/:id', async (req, res) => {
       if (req.body[f] !== undefined && req.body[f] !== null) updates[f] = req.body[f];
     }
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
+    let atual = null;
+    if (updates.telefone !== undefined || updates.cep !== undefined) {
+      const r = await supabase.from('mem_membros')
+        .select('telefone, bairro, cidade').eq('id', id).maybeSingle();
+      atual = r.data || null;
+    }
     if (updates.telefone !== undefined) {
-      const { data: atual } = await supabase.from('mem_membros')
-        .select('telefone').eq('id', id).maybeSingle();
       const errTel = normalizarTelefonePayload(updates, atual?.telefone);
       if (errTel) return res.status(400).json({ error: errTel });
     }
+    await completarBairroPorCep(updates, atual);
     const { data, error } = await supabase.from('mem_membros').update(updates).eq('id', id).select().single();
     if (error) throw error;
     res.json(data);
@@ -3647,6 +3716,17 @@ async function aprovarCadastroCore({
       'endereco', 'bairro', 'cidade', 'cep', 'profissao',
     ];
 
+    // Auto-geocode da aprovação: o formulário público pede CEP e NÃO pede
+    // bairro, então o cadastro pendente chega com CEP e sem bairro — e é o
+    // bairro que o mapa do Perfil da Membresia agrega.
+    //
+    // ⚠️ SÓ no ramo de CRIAÇÃO. No ramo de atualização o patch sobrescreve o
+    // cadastro existente, e um bairro derivado do ViaCEP passaria por cima do
+    // que a equipe corrigiu à mão — sem estar na tela de ninguém. Aqui não vale
+    // a semântica de "reaplica o formulário inteiro": este valor não veio do
+    // formulário, veio de um terceiro.
+    if (!cad.duplicado_de_id) await completarBairroPorCep(cad);
+
     // Extrai nome da coluna ausente da mensagem do PostgREST
     function missingCol(err) {
       if (!err?.message) return null;
@@ -4979,6 +5059,209 @@ router.get('/exclusoes', authorizeModule('membresia', 3), async (req, res) => {
   } catch (e) {
     console.error('[membresia/exclusoes]', e.message);
     res.status(500).json({ error: 'Erro ao carregar os pedidos de exclusao de conta' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PERFIL DA MEMBRESIA · aba de análise demográfica (2026-08-23)
+//
+// Tudo aqui é AGREGADO. Nenhuma destas rotas devolve nome, CPF, telefone,
+// e-mail ou endereço de pessoa — nem para nível 4. Quem precisa de pessoa
+// nominal usa `/membresia/membros`, que tem o guard de nível 2 e a régua de
+// `utils/dadosSensiveisPessoa`. É o que permite abrir o perfil para líder de
+// área sem abrir o CRM junto.
+//
+// A conta é feita em `fn_dem_perfil` (Postgres), não aqui: o PostgREST corta em
+// 1.000 linhas e a base já passou de 3.900 — ler "cru" e somar em JS mostraria
+// o perfil de 1/4 da igreja com cara de perfil da igreja inteira.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Status válidos de `mem_membros.status`. Whitelist e não passagem direta: a
+// função é parametrizada (não há injeção), mas status digitado errado devolve
+// um perfil VAZIO que parece "a igreja não tem ninguém" em vez de um erro.
+const PERFIL_STATUS = ['membro_ativo', 'visitante', 'contribuinte_avulso', 'inativo'];
+
+// GET /api/membresia/perfil?status=membro_ativo&bairro=barra%20da%20tijuca
+// Nível 1: o retrato é agregado, quem enxerga a Membresia enxerga o perfil.
+router.get('/perfil', authorizeModule('membresia', 1), async (req, res) => {
+  try {
+    const status = String(req.query.status || '').trim();
+    if (status && !PERFIL_STATUS.includes(status)) {
+      return res.status(400).json({ error: `Status inválido. Use um de: ${PERFIL_STATUS.join(', ')}` });
+    }
+    const bairro = String(req.query.bairro || '').trim().slice(0, 120);
+
+    const { data, error } = await supabase.rpc('fn_dem_perfil', {
+      p_status: status || null,
+      p_bairro: bairro || null,
+    });
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[membresia/perfil]', e.message);
+    res.status(500).json({ error: 'Erro ao montar o perfil da membresia' });
+  }
+});
+
+// GET /api/membresia/perfil/bairros — a fila do mapa.
+// Devolve TODO bairro conhecido com seu estado (tem coordenada? é apelido de
+// outro? é lixo?). É o que a tela usa para dizer quantas pessoas o mapa ainda
+// não consegue desenhar.
+router.get('/perfil/bairros', authorizeModule('membresia', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('dem_bairro_geo')
+      .select('bairro_norm, bairro, cidade, uf, lat, lng, fonte, alias_de, ignorar, nota, tentativas, geocodificado_em, ultima_tentativa_em')
+      .order('bairro', { ascending: true })
+      .limit(2000);
+    if (error) throw error;
+
+    const itens = data || [];
+    res.json({
+      itens,
+      total: itens.length,
+      // "Pendente" é o que o botão de geocodificar tem para fazer: bairro real
+      // (não é apelido de outro, não é lixo) e ainda sem coordenada.
+      pendentes: itens.filter((b) => !b.ignorar && !b.alias_de && (b.lat == null || b.lng == null)).length,
+      com_coordenada: itens.filter((b) => b.lat != null && b.lng != null).length,
+    });
+  } catch (e) {
+    console.error('[membresia/perfil/bairros]', e.message);
+    res.status(500).json({ error: 'Erro ao listar os bairros' });
+  }
+});
+
+// POST /api/membresia/perfil/bairros/geocode { limite }
+// Resolve o centróide dos bairros pendentes, em lote.
+//
+// ⚠️ Nível 3: escreve em `dem_bairro_geo` e o centróide errado desloca o
+// círculo de dezenas de pessoas no mapa.
+//
+// ⚠️ Lote pequeno DE PROPÓSITO. A política do Nominatim é 1 req/s e
+// `geoBrasil` serializa numa fila: cada bairro custa 1,1s a 2,2s (duas
+// tentativas). 20 bairros ≈ 45s, dentro dos 300s da função da Vercel com folga
+// larga. A tela chama de novo enquanto sobrar pendente — o conjunto encolhe a
+// cada chamada, então não há paginação por offset (o filtro MUTA, e offset
+// numérico sobre filtro que muta PULA linha).
+router.post('/perfil/bairros/geocode', authorizeModule('membresia', 3), async (req, res) => {
+  try {
+    const limite = Math.min(Math.max(parseInt(req.body?.limite, 10) || 20, 1), 40);
+
+    // Cadastro novo pode ter trazido bairro inédito desde a última rodada.
+    const { data: semeados } = await supabase.rpc('fn_dem_semear_bairros');
+
+    const { data: pendentes, error } = await supabase
+      .from('dem_bairro_geo')
+      .select('bairro_norm, bairro, cidade, uf, tentativas')
+      .is('lat', null)
+      .is('alias_de', null)
+      .eq('ignorar', false)
+      // Quem já falhou muitas vezes vai para o fim da fila em vez de bloquear
+      // os bairros que nunca foram tentados.
+      .order('tentativas', { ascending: true })
+      .order('bairro', { ascending: true })
+      .limit(limite);
+    if (error) throw error;
+
+    const ok = [];
+    const falhas = [];
+    for (const b of pendentes || []) {
+      const hit = await centroideDeBairro(b.bairro, b.cidade || 'Rio de Janeiro', b.uf || 'RJ');
+      // ⚠️ Grava o resultado A CADA bairro, não no fim: se a função for
+      // interrompida (timeout, deploy no meio), o trabalho já feito não se
+      // perde e o lote seguinte continua de onde parou. É a LEI "em operação
+      // longa, gravar o efeito DURANTE".
+      const patch = hit
+        ? { lat: hit.lat, lng: hit.lng, fonte: 'nominatim', geocodificado_em: new Date().toISOString() }
+        : {};
+      await supabase
+        .from('dem_bairro_geo')
+        .update({
+          ...patch,
+          tentativas: (b.tentativas || 0) + 1,
+          ultima_tentativa_em: new Date().toISOString(),
+        })
+        .eq('bairro_norm', b.bairro_norm);
+
+      if (hit) ok.push({ bairro: b.bairro, lat: hit.lat, lng: hit.lng });
+      else falhas.push({ bairro: b.bairro, tentativas: (b.tentativas || 0) + 1 });
+    }
+
+    const { count: restam } = await supabase
+      .from('dem_bairro_geo')
+      .select('bairro_norm', { count: 'exact', head: true })
+      .is('lat', null).is('alias_de', null).eq('ignorar', false);
+
+    res.json({
+      bairros_novos: semeados || 0,
+      processados: (pendentes || []).length,
+      resolvidos: ok.length,
+      falharam: falhas.length,
+      ok,
+      falhas,
+      restam: restam ?? 0,
+    });
+  } catch (e) {
+    console.error('[membresia/perfil/bairros/geocode]', e.message);
+    res.status(500).json({ error: 'Erro ao geocodificar os bairros' });
+  }
+});
+
+// PATCH /api/membresia/perfil/bairros/:norm — correção humana.
+//
+// Existe porque geocodificação automática erra e o mapa precisa de uma saída
+// que não seja "esperar alguém mexer no banco": marcar que um nome é apelido de
+// outro bairro, marcar que um texto não é bairro nenhum, ou fixar a coordenada
+// na mão. Nível 3, pelo mesmo motivo do lote.
+router.patch('/perfil/bairros/:norm', authorizeModule('membresia', 3), async (req, res) => {
+  try {
+    const norm = String(req.params.norm || '').trim().toLowerCase();
+    if (!norm) return res.status(400).json({ error: 'Bairro não informado' });
+
+    const patch = {};
+    if ('alias_de' in (req.body || {})) {
+      const alvo = req.body.alias_de ? String(req.body.alias_de).trim().toLowerCase() : null;
+      // Apelido de si mesmo laçaria o join da view (o CHECK do banco também
+      // barra, mas a mensagem daqui é a que a pessoa lê).
+      if (alvo && alvo === norm) {
+        return res.status(400).json({ error: 'Um bairro não pode ser apelido dele mesmo' });
+      }
+      if (alvo) {
+        const { data: existe } = await supabase
+          .from('dem_bairro_geo').select('bairro_norm, alias_de').eq('bairro_norm', alvo).maybeSingle();
+        if (!existe) return res.status(400).json({ error: 'O bairro de destino não existe' });
+        // Apelido de apelido faria o mapa perder gente no meio da corrente: a
+        // view resolve UM salto só, de propósito.
+        if (existe.alias_de) {
+          return res.status(400).json({ error: 'O bairro de destino já é apelido de outro — aponte direto para o canônico' });
+        }
+      }
+      patch.alias_de = alvo;
+    }
+    if ('ignorar' in (req.body || {})) patch.ignorar = !!req.body.ignorar;
+    if ('nota' in (req.body || {})) patch.nota = req.body.nota ? String(req.body.nota).slice(0, 300) : null;
+    if ('bairro' in (req.body || {}) && req.body.bairro) patch.bairro = String(req.body.bairro).trim().slice(0, 120);
+    if ('lat' in (req.body || {}) || 'lng' in (req.body || {})) {
+      const lat = req.body.lat == null ? null : Number(req.body.lat);
+      const lng = req.body.lng == null ? null : Number(req.body.lng);
+      if ((lat != null && !Number.isFinite(lat)) || (lng != null && !Number.isFinite(lng))) {
+        return res.status(400).json({ error: 'Coordenada inválida' });
+      }
+      patch.lat = lat;
+      patch.lng = lng;
+      patch.fonte = lat != null && lng != null ? 'manual' : null;
+      patch.geocodificado_em = lat != null && lng != null ? new Date().toISOString() : null;
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
+
+    const { data, error } = await supabase
+      .from('dem_bairro_geo').update(patch).eq('bairro_norm', norm).select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Bairro não encontrado' });
+    res.json(data);
+  } catch (e) {
+    console.error('[membresia/perfil/bairros PATCH]', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar o bairro' });
   }
 });
 

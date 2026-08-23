@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -16,9 +16,13 @@ import {
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
   Copy, Share2, Download, QrCode, Camera, ScanLine,
   TrendingUp, ArrowRightLeft, GitMerge, ShieldCheck, Loader2, BookOpen, Flame,
-  ClipboardList, CreditCard, Ticket,
+  ClipboardList, CreditCard, Ticket, PieChart,
 } from 'lucide-react';
 import { toast } from 'sonner';
+// ⚠️ LAZY de propósito: o Perfil carrega o maplibre-gl (~200 kB). Importado no
+// topo, todo mundo que abre a Membresia para procurar UMA pessoa pagaria o
+// mapa. Assim ele só desce quando a aba é aberta.
+const AbaPerfil = lazy(() => import('../../components/membresia/AbaPerfil'));
 import { Button } from '../../components/ui/button';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import { Input } from '../../components/ui/input';
@@ -920,7 +924,7 @@ export default function Membresia() {
   // não leva ao destino é pior que não ter link — gasta a confiança no sino.
   const [pageTab, setPageTab] = useState(() => {
     const t = new URLSearchParams(window.location.search).get('tab');
-    return ['membros', 'jornada', 'duplicados', 'cadastros'].includes(t) ? t : 'membros';
+    return ['membros', 'perfil', 'jornada', 'duplicados', 'cadastros'].includes(t) ? t : 'membros';
   });
   const [showShareLink, setShowShareLink] = useState(false);
   const [showContribForm, setShowContribForm] = useState(false);
@@ -1545,6 +1549,7 @@ export default function Membresia() {
         <TabsList className="inline-flex flex-wrap h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5" data-tour="membresia-tabs">
           {[
             { key: 'membros', label: 'Membros', icon: Users },
+            { key: 'perfil', label: 'Perfil', icon: PieChart },
             { key: 'jornada', label: 'Jornada (5 valores)', icon: TrendingUp },
             { key: 'duplicados', label: 'Duplicados', icon: GitMerge },
             { key: 'cadastros', label: 'Cadastros pendentes', icon: Inbox },
@@ -1769,6 +1774,16 @@ export default function Membresia() {
         </table>
       </div>
       <Paginacao {...membrosPagProps} itemLabel="membros" />
+        </TabsContent>
+
+        <TabsContent value="perfil">
+          <Suspense fallback={(
+            <div className="h-64 grid place-items-center text-muted-foreground">
+              <Loader2 className="size-6 animate-spin" />
+            </div>
+          )}>
+            <AbaPerfil />
+          </Suspense>
         </TabsContent>
 
         <TabsContent value="jornada">

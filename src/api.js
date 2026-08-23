@@ -2582,6 +2582,20 @@ export const nextBatismo = {
 
 export const membresia = {
   kpis: () => get('/membresia/kpis'),
+  // Perfil da Membresia (aba de análises · mapa por bairro + cortes).
+  // ⚠️ Só AGREGADO: nenhum destes endpoints devolve nome, CPF, telefone,
+  // e-mail ou endereço — é o que permite abrir a aba pra líder de área sem
+  // abrir o cadastro de gente junto.
+  perfil: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+    ).toString();
+    return get('/membresia/perfil' + (qs ? '?' + qs : ''));
+  },
+  perfilBairros: () => get('/membresia/perfil/bairros'),
+  perfilGeocode: (limite) => post('/membresia/perfil/bairros/geocode', { limite }),
+  perfilBairroPatch: (norm, campos) =>
+    patch(`/membresia/perfil/bairros/${encodeURIComponent(norm)}`, campos),
   qrLookup: (token) => get(`/membresia/qr-lookup/${encodeURIComponent(token)}`),
   cpfLookup: (cpf, nascimento) => get(`/membresia/cpf-lookup/${encodeURIComponent(String(cpf).replace(/\D/g, ''))}?nascimento=${encodeURIComponent(nascimento || '')}`),
   orfaosStats: () => get('/membresia/orfaos-stats'),
