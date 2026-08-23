@@ -11,6 +11,10 @@ export function ThemeProvider({ children }) {
   useEffect(() => {
     localStorage.setItem('cbrio-theme', isDark ? 'dark' : 'light');
     document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    // Tailwind está configurado com darkMode: ["class"] — sem a classe .dark
+    // aqui, todo utilitário `dark:` do Tailwind fica inerte (só o tema "Vidro",
+    // que lê [data-theme], responde). Ver CLAUDE.md · dark-mode-classe-ausente.
+    document.documentElement.classList.toggle('dark', isDark);
   }, [isDark]);
 
   return (
