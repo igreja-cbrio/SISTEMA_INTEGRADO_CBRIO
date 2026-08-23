@@ -354,8 +354,20 @@ describe('antecedência por área · Kids avisa 3 dias antes', () => {
     const naQuinta = agruparParaAviso({ escalas: kids, agora: '2026-08-20T12:00:00.000Z', dias: 4, porAntecedencia: true });
     expect(naQuinta).toHaveLength(1);
     expect(naQuinta[0].antecedencia).toBe(3);
-    // sábado → D+1: já foi avisado no D-3, não entra de novo
-    expect(agruparParaAviso({ escalas: kids, agora: '2026-08-22T12:00:00.000Z', dias: 4, porAntecedencia: true })).toHaveLength(0);
+    // ⚠️ sábado → D+1: o grupo AINDA entra na régua pura. Quem impede a segunda
+    // mensagem é a DEDUP de `selecionarRodada` (a escala já tem envio
+    // registrado), não o corte por dia — e é isso que faz a régua se recuperar
+    // de um dia perdido em vez de deixar a pessoa sem aviso nenhum.
+    expect(agruparParaAviso({ escalas: kids, agora: '2026-08-22T12:00:00.000Z', dias: 4, porAntecedencia: true })).toHaveLength(1);
+  });
+
+  it('⚠️⚠️ RECUPERA o dia perdido: Kids que passou do D-3 ainda é avisado (o vão de 21/08)', () => {
+    // Ligar os 3 dias em 21/08 deixou o culto de 23/08 sem aviso: o D-3 dele
+    // (20/08) já tinha passado. 38 pessoas do Kids ficaram sem nada pro domingo.
+    const kids = [esc({ id: 'k', team_area: 'KIDS', scheduled_at: DOM })];
+    const atrasado = agruparParaAviso({ escalas: kids, agora: '2026-08-22T12:00:00.000Z', dias: 4, porAntecedencia: true });
+    expect(atrasado).toHaveLength(1);
+    expect(atrasado[0].antecedencia).toBe(3);
   });
 
   it('quem não é do Kids segue na véspera', () => {
@@ -374,8 +386,9 @@ describe('antecedência por área · Kids avisa 3 dias antes', () => {
     const noD3 = agruparParaAviso({ escalas: misto, agora: '2026-08-20T12:00:00.000Z', dias: 4, porAntecedencia: true });
     expect(noD3).toHaveLength(1);
     expect(noD3[0].escala_ids.sort()).toEqual(['a', 'b']);
-    // e na véspera não sai nada de novo pra essa pessoa
-    expect(agruparParaAviso({ escalas: misto, agora: '2026-08-22T12:00:00.000Z', dias: 4, porAntecedencia: true })).toHaveLength(0);
+    // ⚠️ na véspera o grupo ainda aparece na régua pura — quem não deixa sair a
+    // segunda mensagem é a dedup, não o corte por dia.
+    expect(agruparParaAviso({ escalas: misto, agora: '2026-08-22T12:00:00.000Z', dias: 4, porAntecedencia: true })).toHaveLength(1);
   });
 
   it('⚠️ sem a área (leitura falhou), TODO MUNDO cai na véspera — ninguém fica sem aviso', () => {
