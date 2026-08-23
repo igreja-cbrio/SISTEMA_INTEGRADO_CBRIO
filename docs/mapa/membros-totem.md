@@ -125,6 +125,7 @@ Guard: `authorizeModule('membros-totem', 1)`
 
 **Serviços**
 
+- `backend/services/bairroCanonico.js`
 - `backend/services/censoDisparo.js`
 - `backend/services/cerebroSync.js`
 - `backend/services/cpfReconciliar.js`

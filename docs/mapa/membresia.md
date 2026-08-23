@@ -203,6 +203,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 **Serviços**
 
 - `backend/services/antecedentesCriminais.js`
+- `backend/services/bairroCanonico.js`
 - `backend/services/censoDisparo.js`
 - `backend/services/cerebroSync.js`
 - `backend/services/cpfReconciliar.js`

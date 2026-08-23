@@ -128,6 +128,7 @@ Guard: `authorizeModule('membros', 1 | 2)`
 
 **Serviços**
 
+- `backend/services/bairroCanonico.js`
 - `backend/services/censoDisparo.js`
 - `backend/services/cerebroSync.js`
 - `backend/services/cpfReconciliar.js`
