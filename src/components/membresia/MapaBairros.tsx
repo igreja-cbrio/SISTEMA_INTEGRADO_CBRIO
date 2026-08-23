@@ -226,7 +226,16 @@ function Camadas({
     };
 
     aplicar();
+    // ⚠️⚠️ TRÊS gatilhos, e nenhum é redundante. `aplicar()` só age com
+    // `isStyleLoaded()` true; se na montagem o estilo ainda não estiver pronto
+    // e o último `styledata` já tiver passado, NÃO existe nova chance — o mapa
+    // desenha o basemap e fica sem camada nenhuma, em silêncio (medido em
+    // produção em 23/08/2026: mapa certo, enquadramento certo, zero calor).
+    // `idle` dispara toda vez que o mapa termina de acomodar e é o que fecha
+    // essa janela; `load` cobre o caminho feliz.
     map.on('styledata', aplicar);
+    map.on('idle', aplicar);
+    map.on('load', aplicar);
 
     const popup = new MapLibreGL.Popup({ closeButton: false, closeOnClick: false, offset: 14 });
     const aoClicar = (e: MapLibreGL.MapLayerMouseEvent) => {
@@ -267,6 +276,8 @@ function Camadas({
     return () => {
       vivo = false;
       map.off('styledata', aplicar);
+      map.off('idle', aplicar);
+      map.off('load', aplicar);
       map.off('click', L_CIRCULO, aoClicar);
       map.off('mouseenter', L_CIRCULO, aoEntrar);
       map.off('mouseleave', L_CIRCULO, aoSair);
