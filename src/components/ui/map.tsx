@@ -94,10 +94,23 @@ export function Map({ children, className, styles, theme = "dark", ...props }: M
 
     mapInstance.on("load", loadHandler);
     mapInstance.on("styledata", styleDataHandler);
+    // ⚠️⚠️ `load` NÃO é garantia. Ele exige o primeiro quadro completo, e um
+    // container que nasce com altura 0 (mapa dentro de aba/toggle, que é o caso
+    // do mapa de grupos e do da membresia) pode nunca chegar lá — o mapa
+    // desenha, o estilo carrega, e `load` simplesmente não vem. Sem esta rede,
+    // todo consumidor que espera `isLoaded` fica parado para sempre: foi assim
+    // que as duas telas ficaram com ZERO marcadores (medido em 23/08/2026).
+    // `idle` dispara sempre que o mapa termina de acomodar, então serve de
+    // fallback; e se o mapa JÁ estiver carregado quando chegamos aqui, marcamos
+    // na hora.
+    const idleHandler = () => setIsLoaded(true);
+    mapInstance.on("idle", idleHandler);
+    if (mapInstance.loaded()) setIsLoaded(true);
     mapRef.current = mapInstance;
 
     return () => {
       mapInstance.off("load", loadHandler);
+      mapInstance.off("idle", idleHandler);
       mapInstance.off("styledata", styleDataHandler);
       mapInstance.remove();
       mapRef.current = null;
@@ -169,7 +182,10 @@ export function MapMarker({
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    if (!isLoaded || !map) return;
+    // ⚠️ Depende só do MAPA, nunca de `isLoaded`: marcador é nó DOM ancorado
+    // por coordenada, não precisa do estilo pronto — e amarrá-lo ao `load` foi
+    // o que sumiu com os pinos das duas telas.
+    if (!map) return;
 
     // ⚠⚠ DOIS nós DE PROPÓSITO. `container` é do MAPLIBRE (ele insere e
     // REMOVE do documento em `marker.remove()`); `interno` é do REACT — o portal
