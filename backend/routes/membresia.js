@@ -19,6 +19,7 @@ const { avaliarProntidao } = require('../utils/prontidaoCadastro');
 // no salvamento do cadastro; `centroideDeBairro` (Nominatim, 1,1s de fila) so no
 // lote de geocodificacao do Perfil da Membresia.
 const { bairroPorCep, coordenadaPorTexto, centroideDeBairro } = require('../services/geoBrasil');
+const { normalizarEnderecoDoPayload } = require('../services/bairroCanonico');
 const { decidirDesativacao, decidirReativacao } = require('../utils/desativarMembro');
 // ⚠️⚠️ `donosDoGrupo` era CHAMADO em `/totem/grupos/:id/entrar` e NUNCA foi
 // importado neste arquivo — ReferenceError latente. O insert do pedido roda
@@ -1315,41 +1316,10 @@ function normalizarTelefonePayload(body, telefoneAtual) {
   return null;
 }
 
-// ⚠️ AUTO-GEOCODE NO SALVAMENTO · decisão do Matheus (23/08): o Perfil da
-// Membresia agrega o mapa por BAIRRO, e hoje só 125 dos 1.730 membros ativos
-// têm bairro preenchido. Toda porta que grava endereço passa a derivar o
-// bairro do CEP.
-//
-// ⚠️ SÓ ViaCEP (~200 ms, sem rate-limit). O Nominatim tem fila de 1,1 s por
-// chamada (política do OSM) e travaria o salvamento do cadastro — coordenada
-// de bairro é trabalho do lote em segundo plano, não do caminho de quem está
-// clicando em Salvar.
-//
-// ⚠️⚠️ SÓ-ONDE-VAZIO, nos DOIS lados: nem o que a pessoa digitou no payload
-// nem o que já está gravado é sobrescrito. É a mesma política do censo — dado
-// de terceiro nunca passa por cima de correção humana.
-// ⇒ Resíduo declarado: trocar o CEP de quem já tem bairro NÃO corrige o
-// bairro antigo. Corrigir isso exigiria decidir que o ViaCEP vence a equipe,
-// e ele não vence. O formulário da Membresia já preenche o campo na tela.
-//
-// ⚠️ BEST-EFFORT: ViaCEP fora do ar não pode impedir ninguém de salvar um
-// cadastro. Falha vira log e o salvamento segue sem bairro.
-async function completarBairroPorCep(body, atual = null) {
-  try {
-    if (!body || typeof body !== 'object') return;
-    const cep = String(body.cep || '').replace(/\D/g, '');
-    if (cep.length !== 8) return;
-    const bairroDefinido = String(body.bairro ?? atual?.bairro ?? '').trim();
-    const cidadeDefinida = String(body.cidade ?? atual?.cidade ?? '').trim();
-    if (bairroDefinido && cidadeDefinida) return;
-    const via = await bairroPorCep(cep);
-    if (!via) return;
-    if (!bairroDefinido && via.bairro) body.bairro = via.bairro;
-    if (!cidadeDefinida && via.cidade) body.cidade = via.cidade;
-  } catch (e) {
-    console.warn('[MEMBROS] auto-geocode por CEP falhou (segue sem bairro):', e.message);
-  }
-}
+// ⚠️ CEP preenche o que falta + o bairro entra com UMA grafia só. A régua mora
+// em `services/bairroCanonico` porque a porta PÚBLICA precisa da mesma coisa, e
+// duas cópias divergiriam no primeiro ajuste — foi exatamente uma lista de
+// bairros duplicada na tela que fabricou "Barra" ao lado de "Barra da Tijuca".
 
 // POST /api/membresia/membros
 router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
@@ -1358,7 +1328,7 @@ router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
     if (errCpf) return res.status(400).json({ error: errCpf });
     const errTel = normalizarTelefonePayload(req.body);
     if (errTel) return res.status(400).json({ error: errTel });
-    await completarBairroPorCep(req.body);
+    await normalizarEnderecoDoPayload(req.body);
     const resultado = await acharOuCriarGuardado({
       nome: req.body?.nome, cpf: req.body?.cpf, telefone: req.body?.telefone,
       email: req.body?.email, dataNascimento: req.body?.data_nascimento,
@@ -1402,7 +1372,7 @@ router.put('/membros/:id', authorize('admin', 'diretor'), async (req, res) => {
     if (errCpf) return res.status(400).json({ error: errCpf });
     const errTel = normalizarTelefonePayload(req.body, telefoneAtual);
     if (errTel) return res.status(400).json({ error: errTel });
-    await completarBairroPorCep(req.body, enderecoAtual);
+    await normalizarEnderecoDoPayload(req.body, enderecoAtual);
     const { data, error } = await supabase
       .from('mem_membros')
       .update(req.body)
@@ -2173,7 +2143,7 @@ router.put('/totem/membros/:id', async (req, res) => {
       const errTel = normalizarTelefonePayload(updates, atual?.telefone);
       if (errTel) return res.status(400).json({ error: errTel });
     }
-    await completarBairroPorCep(updates, atual);
+    await normalizarEnderecoDoPayload(updates, atual);
     const { data, error } = await supabase.from('mem_membros').update(updates).eq('id', id).select().single();
     if (error) throw error;
     res.json(data);
@@ -3725,7 +3695,7 @@ async function aprovarCadastroCore({
     // que a equipe corrigiu à mão — sem estar na tela de ninguém. Aqui não vale
     // a semântica de "reaplica o formulário inteiro": este valor não veio do
     // formulário, veio de um terceiro.
-    if (!cad.duplicado_de_id) await completarBairroPorCep(cad);
+    if (!cad.duplicado_de_id) await normalizarEnderecoDoPayload(cad);
 
     // Extrai nome da coluna ausente da mensagem do PostgREST
     function missingCol(err) {

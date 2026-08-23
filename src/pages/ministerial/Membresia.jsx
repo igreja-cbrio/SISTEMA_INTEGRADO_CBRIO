@@ -19,6 +19,8 @@ import {
   ClipboardList, CreditCard, Ticket, PieChart,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { mascaraCep, cepCompleto, buscarCep } from '../../lib/cepAutopreenche';
+import SeletorBairro from '../../components/ui/seletor-bairro';
 // ⚠️ LAZY de propósito: o Perfil carrega o maplibre-gl (~200 kB). Importado no
 // topo, todo mundo que abre a Membresia para procurar UMA pessoa pagaria o
 // mapa. Assim ele só desce quando a aba é aberta.
@@ -139,33 +141,11 @@ function fmtMoeda(v) {
   return (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-function soDigitosCep(v) { return (v || '').toString().replace(/\D+/g, ''); }
-
-function mascaraCep(v) {
-  const d = soDigitosCep(v).slice(0, 8);
-  if (d.length <= 5) return d;
-  return `${d.slice(0, 5)}-${d.slice(5)}`;
-}
-
-async function buscarCep(cep) {
-  const d = soDigitosCep(cep);
-  if (d.length !== 8) return null;
-  try {
-    const res = await fetch(`https://viacep.com.br/ws/${d}/json/`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data?.erro) return null;
-    return {
-      logradouro: data.logradouro || '',
-      bairro: data.bairro || '',
-      cidade: data.localidade || '',
-      uf: data.uf || '',
-    };
-  } catch {
-    return null;
-  }
-}
-
+// ⚠️ A cópia local do ViaCEP (e da máscara de CEP) SAIU daqui em 24/08/2026 —
+// era a 5ª do sistema. A régua vive em `lib/cepAutopreenche`, que já trata os
+// dois casos que toda cópia esquecia: `erro: true` com HTTP 200 (CEP
+// inexistente lido como sucesso) e TIMEOUT (no wi-fi do templo o campo ficava
+// "buscando..." para sempre).
 const EMPTY_FORM = {
   nome: '', sobrenome: '', apelido: '', cpf: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
   endereco: '', bairro: '', cidade: '', cep: '', profissao: '',
@@ -336,22 +316,24 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
   const [cepBuscando, setCepBuscando] = useState(false);
+  const [bairroDoCep, setBairroDoCep] = useState(false);
   const handleCepChange = async (value) => {
     const masked = mascaraCep(value);
     setForm(prev => ({ ...prev, cep: masked }));
-    if (soDigitosCep(masked).length === 8) {
-      setCepBuscando(true);
-      const result = await buscarCep(masked);
-      setCepBuscando(false);
-      if (result) {
-        setForm(prev => ({
-          ...prev,
-          endereco: result.logradouro && !prev.endereco ? result.logradouro : prev.endereco,
-          bairro: result.bairro || prev.bairro,
-          cidade: result.cidade || prev.cidade,
-        }));
-      }
-    }
+    if (!cepCompleto(masked)) return;
+    setCepBuscando(true);
+    const result = await buscarCep(masked);
+    setCepBuscando(false);
+    if (!result) return;
+    // ⚠️ `cepAutopreenche` OMITE campo vazio (CEP de cidade inteira vem sem
+    // logradouro/bairro): devolver '' aqui apagaria o que a equipe digitou.
+    setBairroDoCep(!!result.bairro);
+    setForm(prev => ({
+      ...prev,
+      endereco: result.endereco && !prev.endereco ? result.endereco : prev.endereco,
+      bairro: result.bairro || prev.bairro,
+      cidade: result.cidade || prev.cidade,
+    }));
   };
 
   const handleFotoSelect = (e) => {
@@ -604,7 +586,14 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
               </div>
               <div className="space-y-1.5">
                 <Label>Bairro</Label>
-                <Input value={form.bairro} onChange={e => set('bairro', e.target.value)} />
+                {/* Sem `atalhos`: aqui quem preenche é a equipe, sentada, e
+                    chips de toque roubariam espaço de um formulário longo. */}
+                <SeletorBairro
+                  value={form.bairro}
+                  onChange={(v) => { set('bairro', v); setBairroDoCep(false); }}
+                  doCep={bairroDoCep}
+                  placeholder="Digite ou escolha"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Cidade</Label>

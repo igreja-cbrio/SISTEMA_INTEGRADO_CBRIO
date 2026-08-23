@@ -3045,6 +3045,20 @@ export const relatorios = {
 };
 
 export const cadastroPublico = {
+  // Catálogo de bairros da lista suspensa. ⚠️ PÚBLICO de propósito: nome de
+  // bairro não identifica ninguém, e a porta de cadastro não tem sessão.
+  // ⚠️ Falha devolve lista VAZIA em vez de lançar — o seletor degrada para
+  // campo de texto e a pessoa termina o cadastro. Catálogo indisponível não
+  // pode travar porta pública.
+  bairros: async () => {
+    try {
+      const res = await fetch(`${API}/public/membresia/bairros`);
+      if (!res.ok) return { bairros: [] };
+      return res.json();
+    } catch {
+      return { bairros: [] };
+    }
+  },
   uploadFoto: async (file) => {
     const fd = new FormData();
     fd.append('foto', file);
