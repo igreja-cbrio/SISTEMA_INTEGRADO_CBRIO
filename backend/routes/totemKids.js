@@ -2279,7 +2279,12 @@ router.patch('/batismos/:id', authorizeModule('kids', 3), async (req, res) => {
 router.get('/apresentacoes', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data } = await supabase.from('apresentacao_criancas')
-      .select('id, nome_pai, nome_mae, crianca_nome, crianca_idade, telefone, data_apresentacao, status, observacoes, origem, crianca_id, created_at')
+      // ⚠️ `crianca_data_nascimento` (22/08/2026): `crianca_idade` é SNAPSHOT do dia
+      // da inscrição e envelhece sozinho — "8 meses" de maio segue 8 meses em
+      // setembro. Com a data, o app calcula a idade de HOJE.
+      // ⚠️ Nada de CPF, e-mail ou endereço aqui: a lista é PII na tela de um
+      // celular, e nada disso é preciso pra contatar a família.
+      .select('id, nome_pai, nome_mae, crianca_nome, crianca_idade, crianca_data_nascimento, telefone, data_apresentacao, status, observacoes, origem, crianca_id, created_at')
       .is('deleted_at', null)
       .order('data_apresentacao', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
