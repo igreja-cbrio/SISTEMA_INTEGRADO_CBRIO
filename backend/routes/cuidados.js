@@ -7,6 +7,7 @@ const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { registrarPedidoCuidado } = require('../services/cuidadosPedidos');
 const { podeVerFinanceiroDePessoa } = require('../utils/dadosSensiveisPessoa');
+const { resolverJanelaPeriodo } = require('../utils/janelaPeriodo');
 const jt = require('../utils/jornadaTempo');
 const { carregarSinaisConvertidos } = require('../services/marcosConvertido');
 
@@ -126,10 +127,13 @@ function dashBucket(dataIso, gran) {
   }
   return s;
 }
-// Todos os buckets de [inicio, hoje] · preenche períodos vazios pra o gráfico ter eixo contínuo
-function dashBucketsIntervalo(inicioIso, gran) {
+// Todos os buckets de [inicio, fim] · preenche períodos vazios pra o gráfico ter
+// eixo contínuo. ⚠️ `fimIso` existe por causa do filtro POR ANO (24/08/2026):
+// sem ele o eixo de "2024" iria de jan/2024 até HOJE, desenhando 20 meses vazios
+// depois do fim do ano — a janela fechada tem que fechar no gráfico também.
+function dashBucketsIntervalo(inicioIso, gran, fimIso = null) {
   const out = [];
-  const hoje = new Date();
+  const hoje = fimIso ? new Date(fimIso + 'T12:00:00') : new Date();
   let cur = new Date(inicioIso + 'T12:00:00');
   if (gran === 'mes') cur = new Date(cur.getFullYear(), cur.getMonth(), 1, 12);
   else if (gran === 'semana') { const dow = (cur.getDay() + 6) % 7; cur.setDate(cur.getDate() - dow); }
@@ -188,11 +192,17 @@ router.get('/kpis/taticos', authorizeModule('cuidados', 1), async (req, res) => 
 
 router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res) => {
   try {
-    let dias = parseInt(req.query.dias, 10);
-    if (!DASH_DIAS_VALIDOS.includes(dias)) dias = 90;
-    const inicio = dashInicioJanela(dias);
-    const granTrend = dias <= 90 ? 'semana' : 'mes';
-    const granDevoc = dias <= 90 ? 'dia' : (dias <= 730 ? 'semana' : 'mes');
+    // Régua ÚNICA da janela (aceita `dias` OU `ano` · ver backend/utils/janelaPeriodo.js).
+    const janela = resolverJanelaPeriodo({
+      dias: req.query.dias, ano: req.query.ano,
+      diasValidos: DASH_DIAS_VALIDOS, diasPadrao: 90,
+    });
+    const { inicio, fim, dias, ano } = janela;
+    // ⚠️ `ate` só existe na janela de ANO. Toda leitura abaixo aplica o
+    // `.lte(...)` junto com o `.gte(...)` — sem isso "2024" traria 2024→hoje.
+    const ateFiltro = (q, col) => (fim ? q.lte(col, fim) : q);
+    const granTrend = janela.gran;
+    const granDevoc = ano ? 'mes' : (dias <= 90 ? 'dia' : (dias <= 730 ? 'semana' : 'mes'));
 
     // Paginação genérica (PostgREST capa em 1000 linhas server-side)
     const fetchAll = async (table, columns, applyFilter) => {
@@ -215,7 +225,7 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
       // membro_id/cpf/nome entram só pra CASAR identidade no servidor — nada
       // disso sai na resposta, que é 100% agregada.
       'id, data_culto, primeiro_contato_em, primeiro_contato_status, responsavel_atendimento, area, telefone, membro_id, cpf, nome',
-      (q) => q.is('deleted_at', null).gte('data_culto', inicio),
+      (q) => ateFiltro(q.is('deleted_at', null).gte('data_culto', inicio), 'data_culto'),
     );
 
     // ── "Engajados +1 valor" = SEGUIU pra outro valor, medido pelos FATOS ──
@@ -253,7 +263,7 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
       if (engajadosSet.has(c.id)) o.engajados++;
       funilMap.set(b, o);
     }
-    const funil = dashBucketsIntervalo(inicio, granTrend).map(b => ({
+    const funil = dashBucketsIntervalo(inicio, granTrend, fim).map(b => ({
       periodo: b, ...(funilMap.get(b) || { convertidos: 0, contato: 0, atendido: 0, engajados: 0 }),
     }));
 
@@ -300,7 +310,7 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     // ── Visitas e atendimentos por tipo (cui_visitas) · substitui o antigo "processos"/Jornada 180 ──
     const VIS_TIPOS = ['visita_domiciliar', 'visita_hospitalar', 'funeral', 'casamento', 'aconselhamento', 'outro'];
     const zeroVis = () => Object.fromEntries(VIS_TIPOS.map(t => [t, 0]));
-    const vis = await fetchAll('cui_visitas', 'id, data_visita, tipo', (q) => q.is('deleted_at', null).gte('data_visita', inicio));
+    const vis = await fetchAll('cui_visitas', 'id, data_visita, tipo', (q) => ateFiltro(q.is('deleted_at', null).gte('data_visita', inicio), 'data_visita'));
     const visMap = new Map();
     for (const v of vis) {
       const b = dashBucket(v.data_visita, granTrend);
@@ -309,10 +319,10 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
       o[VIS_TIPOS.includes(v.tipo) ? v.tipo : 'outro']++;
       visMap.set(b, o);
     }
-    const visitas = dashBucketsIntervalo(inicio, granTrend).map(b => ({ periodo: b, ...(visMap.get(b) || zeroVis()) }));
+    const visitas = dashBucketsIntervalo(inicio, granTrend, fim).map(b => ({ periodo: b, ...(visMap.get(b) || zeroVis()) }));
 
     // ── Devocional · leitores distintos por bucket ──
-    const devoc = await fetchAll('mem_devocionais', 'membro_id, data_devocional', (q) => q.gte('data_devocional', inicio));
+    const devoc = await fetchAll('mem_devocionais', 'membro_id, data_devocional', (q) => ateFiltro(q.gte('data_devocional', inicio), 'data_devocional'));
     const devMap = new Map();
     for (const d of devoc) {
       const b = dashBucket(d.data_devocional, granDevoc);
@@ -321,11 +331,11 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
       set.add(d.membro_id);
       devMap.set(b, set);
     }
-    const devocional = dashBucketsIntervalo(inicio, granDevoc).map(b => ({
+    const devocional = dashBucketsIntervalo(inicio, granDevoc, fim).map(b => ({
       periodo: b, leitores: devMap.get(b) ? devMap.get(b).size : 0,
     }));
 
-    res.json({ dias, gran_trend: granTrend, gran_devoc: granDevoc, funil, cards, visitas, devocional, statusDist, porResponsavel });
+    res.json({ dias, ano, inicio, fim, gran_trend: granTrend, gran_devoc: granDevoc, funil, cards, visitas, devocional, statusDist, porResponsavel });
   } catch (e) {
     console.error('[CUIDADOS] dashboard-series:', e.message);
     res.status(500).json({ error: e.message });

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import PeriodFilter from './components/reports/PeriodFilter';
+import { ehAno, anoDe } from '@/lib/janelaPeriodo';
 import VolunteerThermometer from './components/reports/VolunteerThermometer';
 import { useVolReportData, useVolunteerThermometer, useInactiveVolunteers } from './hooks';
 import { useVolTeams } from './hooks';
@@ -466,6 +467,16 @@ ${porCulto}
             INATIVOS — Por Check-in / Por Escala
         ═══════════════════════════════════════════════════════════════ */}
         <TabsContent value="inactive">
+          {/* ⚠️ Declarado, nunca escondido: esta lista é SEMPRE relativa a hoje
+              — "quem parou de servir e é candidato a contato". Janela de ano não
+              se aplica (quem não serviu em 2024 pode ter voltado em 2025). */}
+          {ehAno(period) && (
+            <p className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground">
+              Esta lista <strong className="text-foreground">ignora o filtro de ano</strong> e usa os últimos
+              3 meses: "inativo" é quem parou de servir <strong className="text-foreground">agora</strong>.
+              As outras abas respeitam {anoDe(period)}.
+            </p>
+          )}
           <div className="flex items-center justify-between mb-4">
             <div className="flex gap-1 bg-muted rounded-lg p-1">
               <button
