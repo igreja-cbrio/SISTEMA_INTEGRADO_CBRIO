@@ -89,6 +89,12 @@ jobs:
       - name: Alerta de culto sem dados (flags, nao numeros)
         run: npm run test:alerta-culto
 
+      # Trava de 24/08: interruptor de disparo so funciona se remetente, catalogo
+      # e validacao do PATCH concordarem no mesmo id. `wa_templates.ativo` e o
+      # exemplo do que da errado — switch na tela que ninguem le.
+      - name: Interruptor dos disparos automaticos (id casado ponta a ponta)
+        run: npm run test:disparo-interruptor
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 

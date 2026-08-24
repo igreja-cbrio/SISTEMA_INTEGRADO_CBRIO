@@ -25,8 +25,12 @@ const fila = require('./whatsappFila');
 const { perfisPorId } = require('./agenteVoluntariado');
 const { notificarApp } = require('./appPush');
 const { agruparParaAviso, selecionarRodada } = require('../utils/avisoEscala');
+const { disparoDesligado } = require('./comunicacaoDisparosOff');
 
 const CONTEXTO = 'voluntariado.escala_aviso';
+// ID no catálogo de disparos automáticos (`comunicacaoAutomaticas`) · é a chave
+// que o interruptor da tela (Comunicação → Disparos → Automáticas) liga/desliga.
+const DISPARO_ID = 'escala_vespera';
 // Chave do aviso no app. Mesma raiz do contexto da fila, e por escala — a
 // checagem procura QUALQUER escala do grupo, então a ordem do array não importa.
 const chaveApp = (escalaId) => `escala_aviso:${escalaId}`;
@@ -204,6 +208,29 @@ async function avisarEscalasDaSemana({ dias = 7, diasAlvo = null, porAntecedenci
     };
   }
 
+  // ⚠️⚠️ INTERRUPTOR DA TELA (Comunicação → Disparos → Automáticas · id
+  // `escala_vespera`). Ele fica DEPOIS do aviso no app de propósito: desligar
+  // aqui silencia o WhatsApp e MANTÉM o app (decisão do Matheus, 24/08). Quem
+  // quiser silêncio total desliga o disparo inteiro no cron, não aqui.
+  //
+  // ⚠️ Fail-OPEN, como o resto do freio (`comunicacaoDisparosOff`): erro de
+  // leitura = nada desligado. Um freio que falha FECHADO silenciaria o aviso
+  // legítimo por causa de uma migration não aplicada.
+  //
+  // ⚠️ Por que um interruptor e não apagar a env `WHATSAPP_TEMPLATE_ESCALA`:
+  // env só vale em deployment novo, e arquivar o template na Meta é PIOR ainda
+  // — `ARCHIVED` não está em `ESTADOS_TEMPLATE_BLOQUEADOS` (whatsappFila.js),
+  // então o envio sai, a Meta recusa com 132001 (permanente) e cada pessoa
+  // vira uma notificação de falha terminal.
+  if (await disparoDesligado(DISPARO_ID)) {
+    const porApp = app_avisados > 0 ? ` ${app_avisados} pessoa(s) foram avisadas pelo app.` : '';
+    return {
+      ...relatorio,
+      desligado: true,
+      motivo: `O lembrete de escala por WhatsApp está DESLIGADO na tela (Comunicação → Disparos → Automáticas).${porApp}`,
+    };
+  }
+
   // ⚠️ Sem template aprovado NADA sai — e o relatório diz isso, em vez de
   // devolver "0 enviados" como se fosse sucesso (lição do disparo do censo:
   // caixa verde para envio que não aconteceu).
@@ -269,4 +296,4 @@ async function avisarVespera(opts = {}) {
   return avisarEscalasDaSemana({ ...opts, agora, dias: 4, porAntecedencia: true });
 }
 
-module.exports = { avisarEscalasDaSemana, avisarVespera, CONTEXTO, TETO_RODADA };
+module.exports = { avisarEscalasDaSemana, avisarVespera, CONTEXTO, TETO_RODADA, DISPARO_ID };
