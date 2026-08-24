@@ -12891,3 +12891,55 @@ consertei medindo contra produção:
 
 ⚠️ Ele não aplica dedup nem teto de rodada, igual aos outros itens: o número é
 "quem se encaixa na regra HOJE", não "quantas mensagens saem agora".
+
+## ⚠️⚠️ A política 'ligar' do contrato de porta NÃO cumpria o contrato (2026-08-24 · SEM migration)
+
+Pergunta do Matheus: *"não podemos usar as inscrições do Celebra para atualizar os
+dados cadastrais de membresia?"* — e a LEI do Contrato de porta já mandava. Medido
+no Celebra 2026 (301 inscrições, `insc_eventos` + `inscricoes`):
+
+| | |
+|---|---|
+| CPF que preencheria cadastro vazio | **19** · **0 conflitos** em 151 comparações |
+| Telefone divergente | 25 · só **11** chegaram em `mem_contatos` (**14 perdidos**) |
+| Inscrição sem `membro_id` | **71** (23%) · 38 pessoa nova, 18 com CPF de membro ATIVO, 6 só de apagado |
+
+**A causa é UMA e explica os dois sintomas.** `processarIdentidade` tem dois ramos:
+`'criar'` chama `acharOuCriarGuardado`, que consolida CPF tardio **e** acumula
+contato. `'ligar'` chamava `acharMembroGuardado` — **só-leitura** — e não fazia
+**nenhum** dos dois. Antes de 23/08 o Celebra usava `'ligar'` pra todo mundo.
+
+⚠️ **A escrita NÃO pode ir pra dentro de `acharMembroGuardado`**: 15+ chamadores, e
+`publicGenerosidade.js:19` declara no cabeçalho que aquele match é read-only. Ela
+mora na camada da PORTA (`inscricaoContrato.processarIdentidade`), que é onde a lei
+se aplica.
+
+**Hipóteses que a medição DERRUBOU** (registradas porque são as tentadoras):
+- *"o gate `sinal_fraco_ignorado` do `cpfReconciliar` barra os 19"* — **não**: 18 dos
+  19 têm o nascimento conferindo dos dois lados, o gate passaria. Só 1 é barrado.
+- *"o ramo de CPF exato passa pelo `candidatoCompativel`"* (que exige nascimento dos
+  2 lados) — **não**: aquele gate só vale nos ramos FRACOS. CPF exato liga sem condição.
+- *"CPF guardado formatado faz o `.eq()` falhar"* — **não**: 1.840 CPFs, **0**
+  com máscara, 0 com tamanho errado, 0 duplicado ativo.
+- *"24 órfãs deveriam ter ligado"* — era **18**: 6 batiam só com membro **apagado**
+  (não-match legítimo). ⚠️ Eu tinha esquecido o `deleted_at` na primeira medição.
+
+⚠️ **`data_nascimento` NÃO pode ser preenchido pela inscrição.** Os 20 conflitos têm
+**o CPF idêntico dos dois lados** — o match está certo, a DATA está errada em um dos
+lados, e **13 dos 20 divergem em mais de 5 anos**. Não é dedo escorregando: é fila
+humana. Telefone/e-mail idem — divergir é o caso NORMAL (família compartilha), e o
+destino deles é `mem_contatos`, nunca sobrescrever o principal.
+
+**Backfill:** `reconciliar-cpf-backfill.js` cobria batismo/vol/next e **não cobria
+`inscricoes`** — a espinha, que é a porta que mais coleta CPF. Incluída. Dry-run em
+produção (24/08): `inscricoes` → 18 vinculadas ao dono + 18 CPFs preenchidos + 1
+conflito pra fila; e apareceu de brinde **`vol_inscricoes.preencher_cpf_no_membro:
+63`**, estoque que ninguém tinha aplicado.
+
+- Gate de deploy: `npm run test:porta-ligar` — guarda ESTÁTICA (sobre o código sem
+  comentário) de que o ramo 'ligar' chama `registrarContatoDaPorta` e
+  `reconciliarCpfTardio`, que a confiança é `'forte'` **só** para `nome+nascimento`,
+  e que `inscricoes` está nos SATELITES do backfill.
+- ⚠️ A fila de `/entradas` só vê `membro_id IS NULL` (`inscricaoOrfas.js:60`): a
+  inscrição que **deu match** e trouxe dado divergente **nunca vira sugestão**. E quem
+  enfileira as órfãs é **script manual**, não cron. Os dois seguem pendentes.
