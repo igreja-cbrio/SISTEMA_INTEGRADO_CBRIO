@@ -135,6 +135,43 @@ async function centroideDeBairro(bairro, cidade = 'Rio de Janeiro', uf = 'RJ') {
   return null;
 }
 
+/**
+ * CEP → { lat, lng, logradouro, bairro, cidade, uf } ou `null`.
+ *
+ * ViaCEP para virar ENDEREÇO (rápido, sem rate-limit) e Nominatim para virar
+ * COORDENADA. É a sequência que dá ponto de RUA, não de bairro — é isso que faz
+ * o mapa por trecho de CEP ser mais específico que o mapa por bairro.
+ *
+ * ⚠️ `exigirRio: false` de propósito, pelo mesmo motivo do `/geocode-cep`: a
+ * consulta é um endereço COMPLETO (logradouro + cidade + UF vindos do ViaCEP),
+ * então a ambiguidade que a caixa do Rio resolve não existe — e membro que mora
+ * em Niterói, São Paulo ou Portugal tem endereço legítimo. Quem protege o
+ * enquadramento do mapa contra o ponto distante é o `nucleoDoMapa` (90%) no
+ * front, não um descarte de dado verdadeiro aqui.
+ *
+ * ⚠️ Duas tentativas no MÁXIMO (1,1s de fila cada): rua completa e, se falhar,
+ * bairro da rua. Sem logradouro (CEP de cidade inteira, comum no interior) vai
+ * direto para a segunda.
+ */
+async function coordenadaDeCep(cepBruto) {
+  const via = await bairroPorCep(cepBruto);
+  if (!via) return null;
+  const { logradouro, bairro, cidade, uf } = via;
+  const partes = [cidade, uf, 'Brasil'].filter(Boolean).join(', ');
+  const tentativas = [
+    logradouro && partes ? `${logradouro}, ${bairro || ''}, ${partes}`.replace(/, ,/g, ',') : null,
+    bairro && partes ? `${bairro}, ${partes}` : null,
+  ].filter(Boolean);
+  for (const q of tentativas) {
+    const hit = await coordenadaPorTexto(q, { exigirRio: false });
+    if (hit) return { ...via, lat: hit.lat, lng: hit.lng };
+  }
+  // Endereço reconhecido pelo ViaCEP mas sem coordenada: devolve o endereço
+  // mesmo assim. O trecho não entra no mapa, mas o rótulo ("22640 · Barra da
+  // Tijuca") já fica correto e a tela sabe dizer o que falta.
+  return { ...via, lat: null, lng: null };
+}
+
 /** Normalização do bairro · espelho EXATO de `f_unaccent(lower(trim(bairro)))`
  *  usado por `vw_dem_pessoa.bairro_norm_raw`. Duas normalizações diferentes
  *  fariam o backend gravar numa chave que a view nunca procura. */
@@ -150,6 +187,7 @@ module.exports = {
   bairroPorCep,
   coordenadaPorTexto,
   centroideDeBairro,
+  coordenadaDeCep,
   normalizarBairro,
   dentroDoRio,
   CAIXA_RJ,

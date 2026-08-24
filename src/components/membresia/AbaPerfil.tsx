@@ -31,7 +31,7 @@ type Corte = { base: number; valores: Valor[] };
 type Piramide = { faixa: string; masculino: number; feminino: number; total: number };
 type Perfil = {
   total: number;
-  filtros: { status: string | null; bairro: string | null };
+  filtros: { status: string | null; bairro: string | null; cep_regiao?: string | null; cep_regiao_bloqueado?: boolean };
   cobertura: Record<string, number>;
   cortes: Record<string, Corte>;
   piramide: { base: number; valores: Piramide[] };
@@ -47,7 +47,32 @@ type Perfil = {
     pessoas_fora_do_mapa: number;
     bairros_sem_coordenada: number;
   };
+  // Corte por TRECHO DE CEP (os 5 primeiros dígitos) — mais específico que
+  // bairro. Opcional porque bundle novo pode rodar contra backend antigo.
+  mapa_cep?: {
+    minimo: number;
+    trechos: TrechoMapa[];
+    trechos_conhecidos: number;
+    pessoas_no_mapa: number;
+    pessoas_sem_massa: number;
+    pessoas_fora_do_mapa: number;
+    trechos_sem_coordenada: number;
+    trechos_sem_massa: number;
+  };
 };
+
+type TrechoMapa = {
+  regiao: string;
+  bairro: string | null;
+  total: number;
+  lat: number;
+  lng: number;
+};
+
+/** "22640" → "22640-000 a -999". O trecho é uma FAIXA de CEPs, e escrever um
+ *  CEP fechado faria parecer endereço exato de alguém. */
+const rotuloTrecho = (t: TrechoMapa) =>
+  `${t.regiao}-xxx${t.bairro ? ` · ${t.bairro}` : ''}`;
 
 const STATUS = [
   { key: 'membro_ativo', label: 'Membros ativos' },
@@ -153,6 +178,11 @@ export default function AbaPerfil() {
 
   const [status, setStatus] = useState('membro_ativo');
   const [bairro, setBairro] = useState<string | null>(null);
+  // Granularidade do mapa. Bairro é o padrão porque é onde há dado hoje; CEP
+  // fica mais rico à medida que as pessoas atualizam o cadastro e respondem o
+  // censo — e a tela DIZ isso em vez de parecer vazia.
+  const [dimensao, setDimensao] = useState<'bairro' | 'cep'>('bairro');
+  const [cepRegiao, setCepRegiao] = useState<string | null>(null);
   const [d, setD] = useState<Perfil | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -161,7 +191,7 @@ export default function AbaPerfil() {
   const carregar = useCallback(async () => {
     setCarregando(true); setErro(null);
     try {
-      setD(await membresia.perfil({ status, bairro }));
+      setD(await membresia.perfil({ status, bairro, cep_regiao: cepRegiao }));
     } catch (e: unknown) {
       // ⚠️ Erro NUNCA vira tela vazia: "não há ninguém" e "a consulta falhou"
       // levam a decisões opostas.
@@ -170,27 +200,63 @@ export default function AbaPerfil() {
     } finally {
       setCarregando(false);
     }
-  }, [status, bairro]);
+  }, [status, bairro, cepRegiao]);
   useEffect(() => { carregar(); }, [carregar]);
 
-  const resolverBairros = useCallback(async () => {
+  // Resolve a coordenada do que está pendente NA DIMENSÃO EM QUE A PESSOA
+  // ESTÁ OLHANDO — botão que resolve bairro enquanto a tela mostra CEP faria o
+  // mapa continuar vazio depois de "resolvido".
+  const resolverCoordenadas = useCallback(async () => {
     setGeo({ rodando: true, msg: null });
+    const cep = dimensao === 'cep';
     try {
-      const r = await membresia.perfilGeocode(20);
+      const r = cep ? await membresia.perfilCepsGeocode(20) : await membresia.perfilGeocode(20);
       const partes = [`${r.resolvidos} resolvido(s)`];
       if (r.falharam) partes.push(`${r.falharam} sem coordenada`);
-      if (r.bairros_novos) partes.push(`${r.bairros_novos} bairro(s) novo(s) na fila`);
+      const novos = cep ? r.ceps_novos : r.bairros_novos;
+      if (novos) partes.push(`${novos} ${cep ? 'CEP(s)' : 'bairro(s)'} novo(s) na fila`);
       if (r.restam) partes.push(`${r.restam} ainda pendente(s) — rode de novo`);
       setGeo({ rodando: false, msg: partes.join(' · ') });
       await carregar();
     } catch (e: unknown) {
-      setGeo({ rodando: false, msg: e instanceof Error ? e.message : 'Erro ao resolver bairros' });
+      setGeo({ rodando: false, msg: e instanceof Error ? e.message : 'Erro ao resolver as coordenadas' });
     }
-  }, [carregar]);
+  }, [carregar, dimensao]);
 
   const nomeBairro = useMemo(
     () => d?.mapa.bairros.find((b) => b.norm === bairro)?.bairro || bairro,
     [d, bairro],
+  );
+
+  // ⚠️ Derivados declarados ANTES do JSX que os usa (o array de deps de hook é
+  // avaliado NO RENDER — const usada em useMemo tem de existir antes).
+  const porCep = dimensao === 'cep';
+  const mapaCep = d?.mapa_cep;
+  const minimoCep = mapaCep?.minimo ?? 3;
+
+  // O mapa é o MESMO componente nas duas lentes: o trecho entra na forma que
+  // ele já entende (`bairro` = o rótulo lido, `norm` = a chave do filtro).
+  // Um segundo mapa teria calibração e comportamento próprios e divergiria.
+  const pontosCep = useMemo<BairroMapa[]>(
+    () => (mapaCep?.trechos || []).map((t) => ({
+      bairro: rotuloTrecho(t), norm: t.regiao, total: t.total, lat: t.lat, lng: t.lng,
+    })),
+    [mapaCep],
+  );
+
+  // Os dois filtros são MUTUAMENTE EXCLUSIVOS na tela: bairro e trecho se
+  // sobrepõem (o trecho está DENTRO do bairro), e somar os dois daria um
+  // recorte que a pessoa não pediu e não consegue enxergar.
+  const selecionarBairro = useCallback((norm: string | null) => {
+    setBairro(norm); setCepRegiao(null);
+  }, []);
+  const selecionarCep = useCallback((regiao: string | null) => {
+    setCepRegiao(regiao); setBairro(null);
+  }, []);
+
+  const rotuloCepAtivo = useMemo(
+    () => (mapaCep?.trechos || []).find((t) => t.regiao === cepRegiao),
+    [mapaCep, cepRegiao],
   );
 
   if (erro) {
@@ -226,7 +292,7 @@ export default function AbaPerfil() {
         {STATUS.map((s) => (
           <button
             key={s.key || 'todos'}
-            onClick={() => { setStatus(s.key); setBairro(null); }}
+            onClick={() => { setStatus(s.key); setBairro(null); setCepRegiao(null); }}
             className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
               status === s.key
                 ? 'bg-primary text-primary-foreground border-primary'
@@ -243,6 +309,13 @@ export default function AbaPerfil() {
             <button className="ml-1 hover:text-foreground" onClick={() => setBairro(null)}>✕</button>
           </Badge>
         )}
+        {cepRegiao && (
+          <Badge variant="secondary" className="gap-1.5">
+            <MapPin className="size-3" />
+            CEP {rotuloCepAtivo ? rotuloTrecho(rotuloCepAtivo) : `${cepRegiao}-xxx`}
+            <button className="ml-1 hover:text-foreground" onClick={() => setCepRegiao(null)}>✕</button>
+          </Badge>
+        )}
         {carregando && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
       </div>
 
@@ -254,6 +327,7 @@ export default function AbaPerfil() {
             <p className="text-2xl font-semibold tabular-nums leading-none">{d.total}</p>
             <p className="text-xs text-muted-foreground mt-1">
               pessoas neste recorte{bairro ? ` · bairro ${nomeBairro}` : ''}
+              {cepRegiao ? ` · CEP ${cepRegiao}-xxx` : ''}
             </p>
           </div>
         </CardContent>
@@ -266,27 +340,72 @@ export default function AbaPerfil() {
             <div>
               <h3 className="text-sm font-semibold">Onde a membresia mora</h3>
               <p className="text-[11px] text-muted-foreground">
-                Agregado por bairro — nenhum endereço de pessoa sai do servidor.
-                Clique num círculo para filtrar a tela inteira por aquele bairro.
+                {porCep
+                  ? 'Agregado por trecho de CEP (os 5 primeiros dígitos) — mais específico que bairro. Nenhum endereço de pessoa sai do servidor.'
+                  : 'Agregado por bairro — nenhum endereço de pessoa sai do servidor. Clique num círculo para filtrar a tela inteira.'}
               </p>
             </div>
-            {podeGeocodificar && (
-              <Button size="sm" variant="outline" onClick={resolverBairros} disabled={geo.rodando}>
-                {geo.rodando ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="size-3.5 mr-1.5" />}
-                Resolver bairros
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              {/* Granularidade. Só troca a LENTE — o recorte de status e o
+                  filtro ativo continuam valendo. */}
+              <div className="flex rounded-full border border-border p-0.5">
+                {([['bairro', 'Bairro'], ['cep', 'CEP']] as const).map(([k, rot]) => (
+                  <button
+                    key={k}
+                    onClick={() => setDimensao(k)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                      dimensao === k ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {rot}
+                  </button>
+                ))}
+              </div>
+              {podeGeocodificar && (
+                <Button size="sm" variant="outline" onClick={resolverCoordenadas} disabled={geo.rodando}>
+                  {geo.rodando ? <Loader2 className="size-3.5 mr-1.5 animate-spin" /> : <RefreshCw className="size-3.5 mr-1.5" />}
+                  {porCep ? 'Resolver CEPs' : 'Resolver bairros'}
+                </Button>
+              )}
+            </div>
           </div>
 
-          <MapaBairros bairros={d.mapa.bairros} selecionado={bairro} onSelecionar={setBairro} />
+          {/* ⚠️ Trecho abaixo do piso NÃO é filtrável (o servidor recusa) — e a
+              tela DIZ o que aconteceu, em vez de mostrar um recorte errado. */}
+          {d.filtros?.cep_regiao_bloqueado && (
+            <p className="text-[11px] text-amber-600 dark:text-amber-500">
+              Aquele trecho de CEP tem menos de {minimoCep} pessoas e não pode ser
+              filtrado — o perfil de um grupo tão pequeno identificaria as pessoas.
+            </p>
+          )}
+
+          <MapaBairros
+            bairros={porCep ? pontosCep : d.mapa.bairros}
+            selecionado={porCep ? cepRegiao : bairro}
+            onSelecionar={porCep ? selecionarCep : selecionarBairro}
+          />
 
           {/* ⚠️ O buraco do mapa é DECLARADO, sempre. */}
-          <p className="text-[11px] text-muted-foreground">
-            {d.mapa.pessoas_no_mapa} de {d.total} pessoas aparecem no mapa.
-            {d.mapa.pessoas_fora_do_mapa > 0 && ` ${d.mapa.pessoas_fora_do_mapa} têm bairro no cadastro mas o bairro ainda não tem coordenada (${d.mapa.bairros_sem_coordenada} bairro(s)).`}
-            {' '}
-            {(cob.bairro ?? 0) < d.total && `${d.total - (cob.bairro ?? 0)} pessoas não têm bairro nenhum cadastrado.`}
-          </p>
+          {porCep ? (
+            <p className="text-[11px] text-muted-foreground">
+              {mapaCep
+                ? <>
+                  {mapaCep.pessoas_no_mapa} de {d.total} pessoas aparecem no mapa, em{' '}
+                  {mapaCep.trechos.length} trecho(s) de CEP.
+                  {mapaCep.pessoas_fora_do_mapa > 0 && ` ${mapaCep.pessoas_fora_do_mapa} têm CEP mas o trecho ainda não tem coordenada (${mapaCep.trechos_sem_coordenada} trecho(s)) — use "Resolver CEPs".`}
+                  {mapaCep.pessoas_sem_massa > 0 && ` ${mapaCep.pessoas_sem_massa} estão em trechos com menos de ${mapaCep.minimo} pessoas e não entram no mapa (evita apontar a rua de uma pessoa só).`}
+                  {(cob.cep_regiao ?? cob.cep ?? 0) < d.total && ` ${d.total - (cob.cep_regiao ?? cob.cep ?? 0)} pessoas não têm CEP no cadastro — o mapa fica mais rico à medida que atualizam o cadastro e respondem o censo.`}
+                </>
+                : 'Este corte precisa de uma versão mais nova do servidor.'}
+            </p>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              {d.mapa.pessoas_no_mapa} de {d.total} pessoas aparecem no mapa.
+              {d.mapa.pessoas_fora_do_mapa > 0 && ` ${d.mapa.pessoas_fora_do_mapa} têm bairro no cadastro mas o bairro ainda não tem coordenada (${d.mapa.bairros_sem_coordenada} bairro(s)).`}
+              {' '}
+              {(cob.bairro ?? 0) < d.total && `${d.total - (cob.bairro ?? 0)} pessoas não têm bairro nenhum cadastrado.`}
+            </p>
+          )}
           {geo.msg && <p className="text-[11px] text-primary">{geo.msg}</p>}
         </CardContent>
       </Card>
