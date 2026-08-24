@@ -1247,3 +1247,73 @@ combinação `presencial_label='Sede'` + `has_kids` + `has_online` +
 
 Não mexi nisso em 23/08: é domingo de culto e o corte é amanhã. Fica como a
 próxima peça — e é a mesma dívida que o §11.5 chama de catálogo central de cultos.
+
+---
+
+## 19 · ✅ O CORTE FOI EXECUTADO — 24/08/2026, 12:2x BRT
+
+`v_executar := true`, rodado com `SET statement_timeout = '10min'` antes do bloco.
+
+⚠️ **O cliente estourou o timeout e isso NÃO diz se commitou.** O `DO` é uma
+instrução: ou tudo, ou nada — e as 10 invariantes rodam ANTES do commit, então
+qualquer uma falhando teria revertido o corte inteiro. A resposta vem de MEDIR o
+catálogo, não da mensagem do cliente. (Régua que fica: para este script, o
+resultado se lê nas queries de conferência do rodapé.)
+
+### 19.1 Estado depois (medido)
+
+| tipo | is_active | hora | vigência | linhagem · consolidação |
+|---|---|---|---|---|
+| Domingo 08:30 | **false** | 08:30 | até **23/08** | — · domingo-0930 |
+| Domingo 10:00 | **false** | 10:00 | até **23/08** | domingo-0930 · domingo-0930 |
+| **Domingo 09:30** | **true** | 09:30 | de **24/08** | domingo-0930 · domingo-0930 |
+| Domingo 11:30 · 19:00 | true | — | — | — |
+
+`has_kids`, `has_online`, `has_online_stream` e `presencial_label='Sede'` do 09:30
+herdados do 10:00 — é isso que faz criança fazer check-in e a grade se materializar.
+
+- grade ativa da manhã = **2** ✅ · cultos do 09:30 = **18** ✅ · fantasmas = **0** ✅
+- slots de domingo ativos = **3** · batismo: novos **2** abertos, velhos **0** ✅
+- véu aberto ✅ · anchor da `vw_dashboard_voluntariado` em **09:30** ✅
+
+**A fronteira financeira morreu** (era o motivo do passo 5):
+
+| PIX às | slot |
+|---|---|
+| 08:00 · 09:29 · 09:30 · 10:59 | **Domingo 9:30** |
+| 11:00 · 11:30 | Domingo 11:30 |
+| 19:15 | Domingo Noite |
+
+**O histórico está preservado, e é o requisito nº 1:**
+
+| tipo | cultos | de → até |
+|---|---|---|
+| Domingo 08:30 | **191** | 01/01/2023 → **23/08/2026** |
+| Domingo 10:00 | **88** | 22/12/2024 → **23/08/2026** |
+| Domingo 09:30 | **18** | **30/08/2026** → 27/12/2026 |
+| Domingo 11:30 · 19:00 | 209 · 207 | intactos |
+
+Nenhum culto do passado foi tocado; o 08:30 e o 10:00 param exatamente no último
+domingo em que aconteceram.
+
+### 19.2 O que a execução ensinou
+
+⚠️ **A oferta de 23/08 NÃO corre risco de cair nas contas novas** — e o motivo é
+outro do que eu supunha: medido em 24/08, `fin_pix_detalhe` tem 301 linhas, todas
+de **abril/2026**, e `fin_transacoes` tem **159.102** linhas com o último pagamento
+em **30/04** e `culto_slot_id` preenchido em **ZERO** delas. O import de extrato
+está parado há 4 meses e o roteamento por slot nunca foi usado. O passo 5 é
+**preparação** para quando o financeiro voltar a alimentar, não movimento de
+dinheiro hoje. Vale para a D2 também: a conta nova é preparação.
+
+⚠️ **A limpeza dos CBKIDS de 23/08 foi o que permitiu o corte rodar.** Sem ela a
+invariante da grade teria contado 3 e abortado. Registrado no §18.
+
+### 19.3 O que falta
+
+| Quando | O quê | Quem |
+|---|---|---|
+| **até 29/08** | plano `Domingo - Manhã` de **30/08** no PCO → 09:30 (19 escalas; o lembrete de escala dispara em 29/08 lendo `vol_services.scheduled_at`) | Matheus |
+| **30/08** | verificação de campo §4.3: totem Kids no buraco 10:30–11:00 · voluntariado × view · `online_pico` do 09:30 · PIX da manhã | os dois |
+| depois de conciliar 23/08 | `aceita_lancamento = false` nas contas velhas (§15.1) | Matheus |
+| aberto | a causa raiz do §18.4 — `POST /service-types` deixa criar tipo sem as flags e o `auto-create` materializa culto para ele | — |
