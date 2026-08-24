@@ -327,6 +327,27 @@ function Camadas({
         // que torna isto auto-curável sem depender da ordem dos eventos do
         // maplibre — que é justamente o que enganou quatro tentativas.
         agendarConferencia();
+        // ⚠️ INSTRUMENTAÇÃO opt-in (`?diagmapa=1`). Existe porque este mapa já
+        // consumiu CINCO hipóteses erradas de "por que não pinta" — todas
+        // plausíveis, todas indistinguíveis pelo sintoma. Sem poder inspecionar
+        // a instância no navegador a investigação continua sendo chute. Só
+        // atribui quando o diagnóstico está pedido, então não vaza referência
+        // global em uso normal.
+        if (DIAG) (window as unknown as { __mapaBairros?: unknown }).__mapaBairros = map;
+        diag('estado do render', {
+          zoom: map.getZoom().toFixed(2),
+          centro: map.getCenter().toArray().map((n) => n.toFixed(3)).join(','),
+          estiloPronto: map.isStyleLoaded(),
+          calorVisivel: map.getLayoutProperty(L_CALOR, 'visibility') ?? 'default',
+          raioCalor: JSON.stringify(map.getPaintProperty(L_CALOR, 'heatmap-radius')),
+          featuresRenderizadas: (() => {
+            try { return map.queryRenderedFeatures(undefined, { layers: [L_CIRCULO] }).length; }
+            catch { return 'erro'; }
+          })(),
+          featuresNaSource: (() => {
+            try { return map.querySourceFeatures(SRC).length; } catch { return 'erro'; }
+          })(),
+        });
         diag('camadas ok', { calor: !!map.getLayer(L_CALOR), circulo: !!map.getLayer(L_CIRCULO), numero: !!map.getLayer(L_NUMERO) });
       } catch (e) {
         // ⚠️ Não é erro fatal: o próximo gatilho tenta de novo. Fica em `warn`
