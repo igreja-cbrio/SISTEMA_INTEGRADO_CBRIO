@@ -99,6 +99,7 @@ async function eventoEspinhaPorSlug(slug) {
   await anexarExtrasEvento(data);
   await anexarLotesEvento(data);
   await anexarWhatsappDuvidas(data);
+  await anexarValorCartaoExterno(data);
   return data;
 }
 
@@ -149,6 +150,31 @@ async function anexarWhatsappDuvidas(ev) {
   } catch (e) {
     console.warn('[publicEvento espinha] whatsapp de dúvidas indisponível:', e.message);
     ev.whatsapp_duvidas_url = null;
+  }
+  return ev;
+}
+
+/**
+ * ⚠️ Coluna da migration 20260821190000 (preço do cartão na plataforma
+ * externa), em select PRÓPRIO e best-effort — um anexador por coorte de
+ * migration, pela mesma razão dos outros: deploy antes da migration não pode
+ * derrubar o que já está em produção. Ausente ⇒ `null` = a tela não anuncia
+ * preço de cartão, o comportamento de antes.
+ *
+ * ⚠️ Valor só de EXIBIÇÃO: quem paga cartão sai daqui antes de existir
+ * inscrição nossa. Nenhuma cobrança lê este número.
+ */
+async function anexarValorCartaoExterno(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('checkout_externo_valor_centavos').eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    const n = Number(data?.checkout_externo_valor_centavos);
+    ev.checkout_externo_valor_centavos = Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+  } catch (e) {
+    console.warn('[publicEvento espinha] valor do cartão externo indisponível:', e.message);
+    ev.checkout_externo_valor_centavos = null;
   }
   return ev;
 }
@@ -212,6 +238,7 @@ async function eventoEspinhaPorId(id) {
   await anexarExtrasEvento(data);
   await anexarLotesEvento(data);
   await anexarWhatsappDuvidas(data);
+  await anexarValorCartaoExterno(data);
   return data;
 }
 
@@ -1063,6 +1090,12 @@ router.get('/:slug', async (req, res) => {
         // Não sobrou método nosso ⇒ TODA inscrição acontece lá fora, e a tela
         // não pergunta nada: pergunta de uma alternativa só é atrito puro.
         exclusivo: !metodosDoEvento(esp).length,
+        // Preço do cartão LÁ (migration 20260821190000) — pedido do Arthur pro
+        // AMI CAMP 2027: "R$ 850 no cartão, valor normal · R$ 830 de desconto
+        // no Pix". null = não anunciar preço de cartão (a tela só fala do Pix).
+        // ⚠️ Configurado na tela do evento, não derivado: é preço de OUTRA
+        // plataforma, e derivar seria a nossa tela chutando o número deles.
+        valor_centavos: esp.checkout_externo_valor_centavos || null,
       } : null,
       pagamento_expira_horas: pago ? (esp.pagamento_expira_horas || 48) : null,
       // ⚠️ Evento marcado como pago mas sem valor (ou sem PSP configurado) NÃO

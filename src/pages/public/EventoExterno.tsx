@@ -329,6 +329,18 @@ function rotuloMetodos(evento: any): string {
 function EscolhaPagamento({ C, evento, onProprio }: { C: any; evento: any; onProprio: () => void }) {
   const ext = evento.checkout_externo;
   const so = !!ext?.exclusivo;
+  const brl = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  // Preço do Pix = o do LOTE atual quando há lotes (o GET já devolve
+  // `valor_centavos` do lote; ser explícito aqui evita depender dessa ordem).
+  const valorPix = Number(evento.lote_atual?.valor_centavos ?? evento.valor_centavos) || 0;
+  // Preço do cartão vem CONFIGURADO na tela do evento — é preço da plataforma
+  // deles. Ausente ⇒ a tela não promete número nenhum pro cartão.
+  const valorCartao = Number(ext?.valor_centavos) || 0;
+  const mostrarPrecos = valorPix > 0 && valorCartao > 0;
+  // ⚠️ "Desconto no Pix" só quando o Pix é REALMENTE menor: com o lote virando
+  // (830 → 850 → 870) o Pix empata e depois passa o cartão, e a tela não pode
+  // seguir chamando de desconto o que virou o preço mais alto.
+  const pixEhDesconto = mostrarPrecos && valorPix < valorCartao;
   const btn = (destaque: boolean) => ({
     display: 'block', width: '100%', textAlign: 'left' as const, cursor: 'pointer',
     padding: '14px 16px', borderRadius: 14, marginTop: 10,
@@ -336,6 +348,9 @@ function EscolhaPagamento({ C, evento, onProprio }: { C: any; evento: any; onPro
     border: `1px solid ${destaque ? '#00B39D55' : C.cardBorder}`,
     color: C.text, font: 'inherit',
   });
+  // Título e preço na MESMA linha, preço à direita: é o que a pessoa compara, e
+  // comparar exige os dois números no mesmo eixo.
+  const linhaTopo = { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 };
   return (
     <div style={{ padding: '4px 0 8px' }}>
       <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Como você quer pagar?</div>
@@ -345,28 +360,51 @@ function EscolhaPagamento({ C, evento, onProprio }: { C: any; evento: any; onPro
           : 'A forma muda o lugar onde você preenche a inscrição — por isso a gente pergunta antes.'}
       </p>
 
-      {/* Com lotes, o preço do Pix aparece JÁ NA ESCOLHA (pedido do Arthur:
-          "a pessoa vê qual o lote atual e quanto está"). O valor do cartão é o
-          da tabela do E-Inscrição, definido lá — prometer um número aqui seria
-          afirmar preço de outra plataforma. */}
-      {evento.lote_atual && (
+      {/* Pedido do Arthur (21/08): o valor NORMAL abre a tela e cada opção
+          repete o seu — o Pix aparece como DESCONTO, não como um preço
+          diferente sem explicação. Sem o valor do cartão configurado, a tela
+          segue como antes (só o lote e o preço do Pix): prometer número de
+          outra plataforma que ninguém digitou seria chute nosso. */}
+      {mostrarPrecos ? (
+        <div style={{
+          marginTop: 12, padding: '10px 14px', borderRadius: 12,
+          background: '#00B39D12', border: '1px solid #00B39D33',
+        }}>
+          <div style={{ fontSize: 11.5, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            Valor da inscrição
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#00B39D', marginTop: 2 }}>
+            {brl(valorCartao)}
+          </div>
+          {pixEhDesconto && (
+            <div style={{ fontSize: 12.5, color: C.text3, marginTop: 2 }}>
+              {brl(valorPix)} com desconto no Pix.
+            </div>
+          )}
+        </div>
+      ) : evento.lote_atual ? (
         <div style={{
           marginTop: 12, padding: '8px 12px', borderRadius: 10, display: 'inline-block',
           background: '#00B39D12', border: '1px solid #00B39D33', fontSize: 12.5, color: C.text2,
         }}>
           <b style={{ color: '#00B39D' }}>{evento.lote_atual.nome}</b>
           {' · no Pix: '}
-          <b style={{ color: '#00B39D' }}>
-            {(evento.lote_atual.valor_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-          </b>
+          <b style={{ color: '#00B39D' }}>{brl(evento.lote_atual.valor_centavos)}</b>
         </div>
-      )}
+      ) : null}
 
       {!so && (
         <button type="button" onClick={onProprio} style={btn(true)}>
-          <div style={{ fontSize: 15, fontWeight: 700 }}>Pix</div>
+          <div style={linhaTopo}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>Pix</div>
+            {mostrarPrecos && (
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#00B39D', whiteSpace: 'nowrap' }}>
+                {brl(valorPix)}
+              </div>
+            )}
+          </div>
           <div style={{ fontSize: 12.5, color: C.text3, marginTop: 2 }}>
-            Você preenche a inscrição aqui e recebe o QR Code na hora.
+            {pixEhDesconto ? 'Com desconto. ' : ''}Você preenche a inscrição aqui e recebe o QR Code na hora.
           </div>
         </button>
       )}
@@ -375,9 +413,16 @@ function EscolhaPagamento({ C, evento, onProprio }: { C: any; evento: any; onPro
           destino no toque longo, e bloqueador de pop-up não engole a navegação.
           `rel="noopener"` porque a outra página não pode mexer nesta. */}
       <a href={ext.url} target="_blank" rel="noopener noreferrer" style={{ ...btn(so), textDecoration: 'none' }}>
-        <div style={{ fontSize: 15, fontWeight: 700 }}>Cartão de crédito</div>
+        <div style={linhaTopo}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>Cartão de crédito</div>
+          {mostrarPrecos && (
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.text, whiteSpace: 'nowrap' }}>
+              {brl(valorCartao)}
+            </div>
+          )}
+        </div>
         <div style={{ fontSize: 12.5, color: C.text3, marginTop: 2 }}>
-          Sua inscrição é feita no {ext.nome} — você sai desta página e preenche por lá.
+          {pixEhDesconto ? 'Valor normal. ' : ''}Sua inscrição é feita no {ext.nome} — você sai desta página e preenche por lá.
         </div>
       </a>
 
@@ -814,16 +859,24 @@ export default function EventoExterno() {
                 {termosEvento.map((t: any) => (
                   <ConsentBox key={t.chave} checked={!!aceites[t.chave]}
                     onChange={(v) => setAceites(a => ({ ...a, [t.chave]: v }))}>
-                    <b style={{ color: C.text }}>Confirmo que li e aceito: {t.titulo} *</b><br />
-                    {t.texto}
+                    <b style={{ color: C.text }}>Li e aceito: {t.titulo} *</b>
+                    {/* ⚠️ COM documento, o texto inteiro NÃO vai pra tela
+                        (pedido do Arthur · 21/08: "o texto ficou muito grande,
+                        coloque apenas li e aceito o termo e deixe o link para
+                        baixar"). O texto continua gravado inteiro no
+                        consentimento — a prova não mudou, mudou a leitura.
+                        SEM documento, o texto FICA: aceitar o que não está na
+                        tela nem em arquivo nenhum não seria aceite. */}
                     {t.url ? (
                       <>
-                        {' '}
+                        <br />
                         <a href={t.url} target="_blank" rel="noreferrer" style={{ color: '#00B39D', textDecoration: 'underline' }}>
-                          Ler o documento completo
+                          Baixar o documento
                         </a>
                       </>
-                    ) : null}
+                    ) : (
+                      <><br />{t.texto}</>
+                    )}
                   </ConsentBox>
                 ))}
 
