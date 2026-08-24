@@ -901,7 +901,16 @@ export default function Batismos() {
           pessoas={turmas.find(t => t.data === turmaAberta)?.pessoas || []}
           labelHorario={labelHorario}
           onClose={() => setTurmaAberta(null)}
-          onSelectPessoa={(b) => { setTurmaAberta(null); setSelected(b); }}
+          // ⚠️ NÃO fecha a turma ao abrir a ficha de uma pessoa (pedido do
+          // Matheus · 24/08/2026: "na hora do batismo o pessoal marca quem veio
+          // e quem não veio · se eu faço o check-in de uma pessoa o pop-up fecha
+          // e atrapalha a operação"). A lista da turma É a prancheta do culto:
+          // fechá-la a cada pessoa obriga a reabrir a data e rolar até o culto
+          // certo, 17 vezes num domingo. A ficha empilha por cima (Radix trata
+          // as camadas: Esc e clique fora só dispensam a de cima) e, ao salvar,
+          // `onSaved` fecha só a ficha — a turma continua aberta ATRÁS, já
+          // atualizada, porque `pessoas` vem de `list`, que o `load()` recarrega.
+          onSelectPessoa={(b) => setSelected(b)}
           onChanged={load}
         />
       )}
