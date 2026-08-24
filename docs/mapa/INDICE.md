@@ -115,7 +115,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/inscricaoMenor.js` | `src/test/inscricaoMenor.test.ts` |
 | `backend/utils/isoWeek.js` | — |
 | `backend/utils/jornadaMarcadores.js` | `src/test/jornadaMarcadores.test.ts` |
-| `backend/utils/jornadaTempo.js` | `src/test/jornadaTempo.test.ts` |
+| `backend/utils/jornadaTempo.js` | `src/test/engajouOutroValor.test.ts` `src/test/jornadaTempo.test.ts` |
 | `backend/utils/kidsFrequencia.js` | `src/test/kidsFrequencia.test.ts` |
 | `backend/utils/kidsResponsavel.js` | `backend/routes/incidentRemediation.test.js` |
 | `backend/utils/lentesDomingo.js` | `src/test/lentesDomingo.test.ts` |

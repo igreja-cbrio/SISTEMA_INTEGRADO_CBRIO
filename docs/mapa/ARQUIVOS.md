@@ -183,7 +183,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/inscricaoMenor.js` | régua pura | — | `src/test/inscricaoMenor.test.ts` |
 | `backend/utils/isoWeek.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/jornadaMarcadores.js` | régua pura | — | `src/test/jornadaMarcadores.test.ts` |
-| `backend/utils/jornadaTempo.js` | régua pura | — | `src/test/jornadaTempo.test.ts` |
+| `backend/utils/jornadaTempo.js` | régua pura | — | `src/test/engajouOutroValor.test.ts` |
 | `backend/utils/kidsFrequencia.js` | régua pura | — | `src/test/kidsFrequencia.test.ts` |
 | `backend/utils/kidsResponsavel.js` | régua pura | — | `backend/routes/incidentRemediation.test.js` |
 | `backend/utils/lentesDomingo.js` | régua pura | — | `src/test/lentesDomingo.test.ts` |

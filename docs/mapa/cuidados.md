@@ -64,6 +64,7 @@ Guard: `authorizeModule('cuidados', 1 | 2 | 3)`
 
 - `backend/services/cerebroSync.js`
 - `backend/services/cuidadosPedidos.js`
+- `backend/services/marcosConvertido.js`
 - `backend/services/membroMatch.js`
 - `backend/services/notificar.js`
 - `backend/services/whatsappFila.js`
