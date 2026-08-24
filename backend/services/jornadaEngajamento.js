@@ -23,6 +23,7 @@
 // ============================================================================
 
 const { supabase } = require('../utils/supabase');
+const { ANO_INICIAL, diaLocal } = require('../utils/janelaPeriodo');
 
 const VALORES = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
 
@@ -33,8 +34,30 @@ const JANELA_PADRAO = '3m'; // 90d · preserva continuidade com a métrica anter
 function janelaDias(janela) {
   return Object.prototype.hasOwnProperty.call(JANELAS, janela) ? JANELAS[janela] : JANELAS[JANELA_PADRAO];
 }
+// ⚠️ Aceita também `ano:2024` (pedido do Marcos · 24/08/2026: "não consigo ver
+// a jornada por ano"). É a única janela FECHADA daqui — as outras são rolling.
 function normalizaJanela(janela) {
+  if (ehJanelaAno(janela)) return String(janela);
   return Object.prototype.hasOwnProperty.call(JANELAS, janela) ? janela : JANELA_PADRAO;
+}
+function ehJanelaAno(janela) {
+  if (typeof janela !== 'string' || !/^ano:\d{4}$/.test(janela)) return false;
+  const n = Number(janela.slice(4));
+  return n >= ANO_INICIAL && n <= new Date().getFullYear();
+}
+/**
+ * Recorte de datas da janela. `ate` só existe na janela de ANO.
+ * ⚠️⚠️ Sem o `ate`, escolher "2024" mostraria 2024→hoje em silêncio.
+ */
+function recorteJanela(janela) {
+  if (ehJanelaAno(janela)) {
+    const n = Number(String(janela).slice(4));
+    const fimDoAno = new Date(n, 11, 31, 12);
+    const fim = fimDoAno.getTime() <= Date.now() ? fimDoAno : new Date();
+    return { dias: null, ano: n, desde: `${n}-01-01`, ate: diaLocal(fim) };
+  }
+  const dias = janelaDias(janela);
+  return { dias, ano: null, desde: dias == null ? null : daysAgo(dias), ate: null };
 }
 function daysAgo(n) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10); }
 
@@ -65,9 +88,17 @@ async function fetchMembroSet(table, build) {
 // Retorna { janela, dias, total_base, membros:[{id,nome,...,valores,total_valores,engajado}] }.
 async function computeJornada(janelaIn = JANELA_PADRAO) {
   const janela = normalizaJanela(janelaIn);
-  const dias = janelaDias(janela);
-  // aplica corte de data só quando a janela não é 'atual' (dias != null)
-  const comJanela = (q, col) => (dias == null ? q : q.gte(col, daysAgo(dias)));
+  const rec = recorteJanela(janela);
+  const dias = rec.dias;
+  // Corte só quando a janela tem recorte ('atual' não tem). ⚠️ O `.lte` existe
+  // por causa da janela de ANO — é ele que a fecha; sem ele "2024" traria
+  // 2024→hoje e o número só ficaria maior, sem nada quebrar.
+  const comJanela = (q, col) => {
+    let out = q;
+    if (rec.desde) out = out.gte(col, rec.desde);
+    if (rec.ate) out = out.lte(col, rec.ate);
+    return out;
+  };
 
   const membros = await fetchAllRows('mem_membros', (q) =>
     q.select('id, nome, email, telefone, foto_url, status')
@@ -115,7 +146,7 @@ async function computeJornada(janelaIn = JANELA_PADRAO) {
     };
   });
 
-  return { janela, dias, total_base: lista.length, membros: lista };
+  return { janela, dias, ano: rec.ano, desde: rec.desde, ate: rec.ate, total_base: lista.length, membros: lista };
 }
 
 // Agrega uma lista de membros enriquecidos (ou um subconjunto/coorte do funil).
@@ -135,4 +166,7 @@ function agregar(lista) {
   };
 }
 
-module.exports = { computeJornada, agregar, VALORES, JANELAS, JANELA_PADRAO, janelaDias, normalizaJanela };
+module.exports = {
+  computeJornada, agregar, VALORES, JANELAS, JANELA_PADRAO,
+  janelaDias, normalizaJanela, ehJanelaAno, recorteJanela,
+};

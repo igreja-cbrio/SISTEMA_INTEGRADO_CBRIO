@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-333 arquivos.
+336 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -172,6 +172,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/dadosDoCadastro.js` | régua pura | — | `backend/services/membroMatchInsert.test.js` |
 | `backend/utils/dadosSensiveisPessoa.js` | régua pura | — | `src/test/dadosSensiveisPessoa.test.ts` |
 | `backend/utils/decendioComparativo.js` | régua pura | — | `src/test/decendioComparativo.test.ts` |
+| `backend/utils/desativarMembro.js` | régua pura | — | `src/test/desativarMembro.test.ts` |
 | `backend/utils/divisorMandala.js` | régua pura | — | `src/test/divisorMandala.test.ts` |
 | `backend/utils/entradaGrupoApp.js` | régua pura | — | `src/test/entradaGrupoApp.test.ts` |
 | `backend/utils/escalaToken.js` | régua pura | — | `src/test/escalaToken.test.ts` |
@@ -181,8 +182,9 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/gruposToken.js` | régua pura | — | `src/test/gruposToken.test.ts` |
 | `backend/utils/inscricaoMenor.js` | régua pura | — | `src/test/inscricaoMenor.test.ts` |
 | `backend/utils/isoWeek.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/janelaPeriodo.js` | régua pura | — | `src/test/janelaPeriodoBackend.test.ts` |
 | `backend/utils/jornadaMarcadores.js` | régua pura | — | `src/test/jornadaMarcadores.test.ts` |
-| `backend/utils/jornadaTempo.js` | régua pura | — | `src/test/jornadaTempo.test.ts` |
+| `backend/utils/jornadaTempo.js` | régua pura | — | `src/test/engajouOutroValor.test.ts` |
 | `backend/utils/kidsFrequencia.js` | régua pura | — | `src/test/kidsFrequencia.test.ts` |
 | `backend/utils/kidsResponsavel.js` | régua pura | — | `backend/routes/incidentRemediation.test.js` |
 | `backend/utils/lentesDomingo.js` | régua pura | — | `src/test/lentesDomingo.test.ts` |
@@ -220,6 +222,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/supervisorArea.js` | régua pura | — | `src/test/supervisorArea.test.ts` |
 | `backend/utils/telefoneVoluntario.js` | régua pura | — | `src/test/telefoneVoluntario.test.ts` |
 | `backend/utils/totemCerco.js` | régua pura | — | `src/test/totemCerco.test.ts` |
+| `backend/utils/trechoCep.js` | régua pura | — | `src/test/trechoCep.test.ts` |
 | `backend/utils/vigenciaTipoCulto.js` | régua pura | — | `src/test/vigenciaTipoCulto.test.ts` |
 | `backend/utils/vinculoMlSolicitacao.js` | régua pura | — | `src/test/vinculoMlSolicitacao.test.ts` |
 | `backend/utils/vinculosDuplicados.js` | régua pura | — | `src/test/vinculosDuplicados.test.ts` |

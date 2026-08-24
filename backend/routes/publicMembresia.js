@@ -12,6 +12,7 @@ const { registrarObservacaoSegura } = require('../services/identidadeProgressiva
 const { cpfValido, emailValido } = require('../services/inscricaoContrato');
 const { verificarTokenCenso } = require('../utils/censoToken');
 const { avaliarProntidao } = require('../utils/prontidaoCadastro');
+const { canonizarBairro } = require('../services/bairroCanonico');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -128,6 +129,53 @@ router.post('/upload-foto', cadastroLimiter, uploadMw.single('foto'), async (req
 // GET /api/public/membresia/verificar-familia?sobrenome=...
 // Retorna famílias cujo nome contenha o sobrenome informado.
 // Usado pelo formulário público para sugerir vínculo antes do envio.
+// GET /api/public/membresia/bairros — o catálogo que a lista suspensa lê.
+//
+// ⚠️⚠️ POR QUE ISTO EXISTE: a lista do formulário era uma constante de 11
+// APELIDOS CURTOS no próprio arquivo ('Barra', 'Recreio', 'Freguesia'), e o
+// ViaCEP devolve o nome OFICIAL. A comparação nunca casava nos três bairros com
+// mais gente, então o CEP jogava a pessoa em "Outro" e ela gravava o nome longo
+// enquanto quem escolhia da lista gravava o curto. Medido em 23/08: Barra da
+// Tijuca 33 × Barra 22 · Recreio dos Bandeirantes 15 × Recreio 14. O formulário
+// fabricava a duplicidade que o mapa depois tentava remendar com alias.
+//
+// ⚠️ NÃO é PII: nome de bairro e quantas pessoas moram nele não identificam
+// ninguém. Por isso pode ser público — e precisa ser, porque a porta pública de
+// cadastro não tem sessão.
+// ⚠️ Balde do LOOKUP, não o da submissão: é consulta, e a cota da submissão é o
+// que não pode acabar (lição da cota compartilhada que quebrava o formulário na
+// 3ª pessoa).
+//
+// ⚠️ Cache de 10 min em memória: o catálogo muda quando alguém cadastra um
+// bairro novo, e a lista abre a cada formulário. Sem cache, cada abertura no
+// culto vira uma agregação sobre mem_membros.
+let _bairrosCache = { em: 0, itens: null };
+const BAIRROS_CACHE_MS = 10 * 60 * 1000;
+
+router.get('/bairros', lookupLimiter, async (req, res) => {
+  try {
+    if (_bairrosCache.itens && Date.now() - _bairrosCache.em < BAIRROS_CACHE_MS) {
+      return res.json({ bairros: _bairrosCache.itens, cache: true });
+    }
+    const { data, error } = await supabase.rpc('fn_dem_bairros_catalogo');
+    if (error) throw error;
+    const itens = (data || []).map((b) => ({
+      norm: b.bairro_norm,
+      nome: b.bairro,
+      pessoas: b.pessoas || 0,
+      apelidos: b.apelidos || [],
+    }));
+    _bairrosCache = { em: Date.now(), itens };
+    res.json({ bairros: itens, cache: false });
+  } catch (e) {
+    // ⚠️ Catálogo indisponível NÃO pode travar cadastro: o seletor cai em campo
+    // de texto e a pessoa termina o formulário. Lista vazia é degradação
+    // aceitável; 500 aqui derrubaria a porta pública inteira.
+    console.error('[public/membresia/bairros]', e.message);
+    res.json({ bairros: [], indisponivel: true });
+  }
+});
+
 router.get('/verificar-familia', lookupLimiter, async (req, res) => {
   try {
     const { sobrenome } = req.query;
@@ -476,6 +524,11 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     const origemValida = ['site', 'qr_code', 'evento', 'importacao'];
     const origemFinal = origemValida.includes(origem) ? origem : 'site';
 
+    // Uma grafia só para o bairro, antes de qualquer gravação.
+    // ⚠️ Best-effort por dentro: catálogo fora do ar devolve o texto trimado —
+    // qualidade de dado nunca derruba a submissão de um cadastro.
+    const bairroCanon = await canonizarBairro(bairro);
+
     // ── Detecção de duplicado contra mem_membros ──
     let duplicadoDeId = null;
     // Como o vínculo foi encontrado — decide se o censo pode aplicar dado
@@ -545,7 +598,11 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       genero: generoNorm,   // já validado acima — só o canônico chega aqui
       estado_civil: estado_civil || null,
       endereco: endereco || null,
-      bairro: bairro || null,
+      // ⚠️ Grafia canônica JÁ NA PORTA: sem isto a fila acumula "Barra" ao lado
+      // de "Barra da Tijuca" e a aprovação copia a variação para o cadastro.
+      // Bairro que o catálogo não conhece passa como veio (trimado) — porta
+      // pública não recusa quem mora onde a base ainda não viu.
+      bairro: bairroCanon,
       cidade: cidade || null,
       cep: cep || null,
       profissao: profissao || null,

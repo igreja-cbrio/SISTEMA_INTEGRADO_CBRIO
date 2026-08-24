@@ -18,6 +18,8 @@ import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import { Badge } from '@/components/ui/badge';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { QRCodeSVG } from 'qrcode.react';
+import { mascaraCep, cepCompleto, buscarCep } from '../lib/cepAutopreenche';
+import SeletorBairro from '../components/ui/seletor-bairro';
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
 
@@ -1285,6 +1287,30 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
     onActivity();
   };
 
+  // CEP preenche endereço/bairro/cidade. ⚠️ No totem isto vale mais que em
+  // qualquer outra tela: a pessoa preenche EM PÉ, com fila atrás — digitar 8
+  // dígitos e receber três campos é a diferença entre terminar e desistir.
+  // ⚠️ Só-onde-vazio: nunca apaga o que a pessoa acabou de escrever.
+  const [cepBuscando, setCepBuscando] = useState(false);
+  const [bairroDoCep, setBairroDoCep] = useState(false);
+  const handleCepTotem = async (valor: string) => {
+    const masked = mascaraCep(valor);
+    setForm(f => ({ ...f, cep: masked }));
+    onActivity();
+    if (!cepCompleto(masked)) return;
+    setCepBuscando(true);
+    const r = await buscarCep(masked);
+    setCepBuscando(false);
+    if (!r) return;
+    setBairroDoCep(!!r.bairro);
+    setForm(f => ({
+      ...f,
+      endereco: r.endereco && !f.endereco ? r.endereco : f.endereco,
+      bairro: r.bairro || f.bairro,
+      cidade: r.cidade || f.cidade,
+    }));
+  };
+
   const ESTADO_CIVIL_OPTS = [
     { value: 'solteiro', label: 'Solteiro(a)' },
     { value: 'casado', label: 'Casado(a)' },
@@ -1443,14 +1469,22 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className={`block text-xs mb-1 ${label}`}>Bairro</label>
-                <input value={form.bairro} onChange={setField('bairro')}
+                <label className={`block text-xs mb-1 ${label}`}>
+                  CEP {cepBuscando && <span className="opacity-60">(buscando...)</span>}
+                </label>
+                <input value={form.cep} onChange={(e) => handleCepTotem(e.target.value)}
+                  inputMode="numeric" maxLength={9} autoComplete="postal-code"
                   className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
               </div>
               <div>
-                <label className={`block text-xs mb-1 ${label}`}>CEP</label>
-                <input value={form.cep} onChange={setField('cep')}
-                  className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
+                <label className={`block text-xs mb-1 ${label}`}>Bairro</label>
+                <SeletorBairro
+                  value={form.bairro}
+                  onChange={(v) => { setForm(f => ({ ...f, bairro: v })); setBairroDoCep(false); onActivity(); }}
+                  doCep={bairroDoCep}
+                  placeholder="Digite ou escolha"
+                  className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`}
+                />
               </div>
             </div>
             <div>

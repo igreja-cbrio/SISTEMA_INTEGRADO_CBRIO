@@ -76,6 +76,31 @@ jobs:
       - name: Matcher grava nascimento e sexo na criacao
         run: npm run test:matcher-insert
 
+      # Trava o conserto de 24/08: o verificador cobrava o DS do culto de ontem
+      # as 09:00 UTC, uma hora ANTES do ds-collect (10:00 UTC) que preenche o
+      # campo. Resultado: alerta falso "Culto online sem dados" todo dia, para
+      # todo culto online, com a coleta funcionando.
+      - name: Janela do DS online (nao cobrar antes do coletor rodar)
+        run: npm run test:online-ds-janela
+
+      # Trava o conserto de 24/08: o alerta de segunda pro Marcelo nunca rodou
+      # (selecionava cultos.decisoes, coluna inexistente) e olhava numeros em vez
+      # das flags — lancar 0 e lancar, regra do Marcos.
+      - name: Alerta de culto sem dados (flags, nao numeros)
+        run: npm run test:alerta-culto
+
+      # Trava de 24/08: interruptor de disparo so funciona se remetente, catalogo
+      # e validacao do PATCH concordarem no mesmo id. `wa_templates.ativo` e o
+      # exemplo do que da errado — switch na tela que ninguem le.
+      - name: Interruptor dos disparos automaticos (id casado ponta a ponta)
+        run: npm run test:disparo-interruptor
+
+      # Trava de 24/08: a politica 'ligar' do contrato de porta nao consolidava
+      # CPF nem acumulava contato — 18 CPFs e 14 telefones presos na linha da
+      # inscricao no Celebra 2026, com o cadastro ao lado sem CPF.
+      - name: Politica 'ligar' cumpre o contrato de porta (CPF + mem_contatos)
+        run: npm run test:porta-ligar
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 

@@ -64,7 +64,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **93** arquivos, **84** com teste.
+`backend/utils/` tem **96** arquivos, **87** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -104,6 +104,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/dadosDoCadastro.js` | `backend/services/membroMatchInsert.test.js` `src/test/portasAlinhadas.test.ts` |
 | `backend/utils/dadosSensiveisPessoa.js` | `src/test/dadosSensiveisPessoa.test.ts` |
 | `backend/utils/decendioComparativo.js` | `src/test/decendioComparativo.test.ts` |
+| `backend/utils/desativarMembro.js` | `src/test/desativarMembro.test.ts` |
 | `backend/utils/divisorMandala.js` | `src/test/divisorMandala.test.ts` |
 | `backend/utils/entradaGrupoApp.js` | `src/test/entradaGrupoApp.test.ts` |
 | `backend/utils/escalaToken.js` | `src/test/escalaToken.test.ts` |
@@ -113,8 +114,9 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/gruposToken.js` | `src/test/gruposToken.test.ts` |
 | `backend/utils/inscricaoMenor.js` | `src/test/inscricaoMenor.test.ts` |
 | `backend/utils/isoWeek.js` | — |
+| `backend/utils/janelaPeriodo.js` | `src/test/janelaPeriodoBackend.test.ts` |
 | `backend/utils/jornadaMarcadores.js` | `src/test/jornadaMarcadores.test.ts` |
-| `backend/utils/jornadaTempo.js` | `src/test/jornadaTempo.test.ts` |
+| `backend/utils/jornadaTempo.js` | `src/test/engajouOutroValor.test.ts` `src/test/jornadaTempo.test.ts` |
 | `backend/utils/kidsFrequencia.js` | `src/test/kidsFrequencia.test.ts` |
 | `backend/utils/kidsResponsavel.js` | `backend/routes/incidentRemediation.test.js` |
 | `backend/utils/lentesDomingo.js` | `src/test/lentesDomingo.test.ts` |
@@ -152,6 +154,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/supervisorArea.js` | `src/test/supervisorArea.test.ts` |
 | `backend/utils/telefoneVoluntario.js` | `src/test/telefoneVoluntario.test.ts` |
 | `backend/utils/totemCerco.js` | `src/test/totemCerco.test.ts` |
+| `backend/utils/trechoCep.js` | `src/test/trechoCep.test.ts` |
 | `backend/utils/vigenciaTipoCulto.js` | `src/test/vigenciaTipoCulto.test.ts` |
 | `backend/utils/vinculoMlSolicitacao.js` | `src/test/vinculoMlSolicitacao.test.ts` |
 | `backend/utils/vinculosDuplicados.js` | `src/test/vinculosDuplicados.test.ts` |

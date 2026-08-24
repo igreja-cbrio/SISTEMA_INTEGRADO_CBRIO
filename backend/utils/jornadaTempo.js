@@ -211,6 +211,45 @@ function totalMarcos(pessoa) {
   return Object.values(pessoa?.marcos || {}).filter((m) => m && m.alcancado).length;
 }
 
+/**
+ * Chaves que contam como "seguiu para OUTRO valor".
+ *
+ * ⚠️ `contato` fica FORA: ele é o passo ANTERIOR do funil e já tem linha
+ * própria no gráfico do /cuidados. Contá-lo faria as duas linhas quase
+ * coincidirem e o gráfico deixaria de responder o que promete.
+ */
+const CHAVES_OUTRO_VALOR = CHAVES_TEMPO.filter((c) => c !== 'contato');
+
+/**
+ * Este marco prova que a pessoa se moveu DEPOIS de decidir?
+ *
+ * ⚠️⚠️ Os três motivos de `aproximada` NÃO valem o mesmo aqui:
+ *   · `sem_data`            → CONTA. O fato é certo (ela esteve no encontro do
+ *                             Next); o que falta é a data. Descartar diria
+ *                             "não fez".
+ *   · `antes_da_decisao`    → NÃO conta. É gente que já estava na igreja e
+ *                             decidiu depois — não é "seguiu para outro valor".
+ *   · `data_de_importacao`  → NÃO conta. A carga em massa carimbou o dia; não
+ *                             dá para afirmar que o vínculo nasceu depois da
+ *                             decisão, e é justamente nessas datas que a maior
+ *                             parte dos vínculos de grupo cai.
+ */
+function marcoContaComoEngajamento(marco) {
+  if (!marco || marco.alcancado !== true) return false;
+  return marco.aproximada !== true || marco.motivo === 'sem_data';
+}
+
+/** Quais valores (além do contato) a pessoa alcançou depois de decidir. */
+function valoresEngajados(pessoa) {
+  const marcos = pessoa?.marcos || {};
+  return CHAVES_OUTRO_VALOR.filter((c) => marcoContaComoEngajamento(marcos[c]));
+}
+
+/** A pessoa seguiu para pelo menos UM outro valor depois de decidir. */
+function engajouEmOutroValor(pessoa) {
+  return valoresEngajados(pessoa).length > 0;
+}
+
 module.exports = {
   MARCOS_TEMPO,
   CHAVES_TEMPO,
@@ -224,4 +263,8 @@ module.exports = {
   estatisticaMarco,
   diasParado,
   totalMarcos,
+  CHAVES_OUTRO_VALOR,
+  marcoContaComoEngajamento,
+  valoresEngajados,
+  engajouEmOutroValor,
 };

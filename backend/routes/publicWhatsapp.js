@@ -341,10 +341,35 @@ async function processarStatuses(statuses) {
 // contexto NÃO é tratada aqui — segue pro fluxo normal do bot.
 //
 // @returns {boolean} true se assumiu a mensagem.
+/**
+ * O ÚNICO disparo de escala das últimas 48h pra este telefone — ou null.
+ *
+ * ⚠️ Devolve null quando há DOIS ou mais: sem o `context.id` não dá pra saber
+ * de qual convite a pessoa está falando, e aplicar a recusa na escala errada é
+ * pior que abrir uma conversa.
+ * ⚠️ Casa pelos 8 últimos dígitos: `whatsapp_envios.telefone` guarda o que o
+ * chamador passou (uns com 55, outros sem), e comparar cru dependeria de sorte.
+ */
+async function _envioUnicoRecente(from) {
+  const alvo = String(from || '').replace(/\D/g, '').slice(-8);
+  if (alvo.length < 8) return null;
+  const desde = new Date(Date.now() - 48 * 3600000).toISOString();
+  const { data, error } = await supabase
+    .from('whatsapp_envios')
+    .select('id, ref_id, contexto, telefone, criado_em')
+    .eq('contexto', CONTEXTO_ESCALA)
+    .gte('criado_em', desde)
+    .order('criado_em', { ascending: false })
+    .limit(200);
+  if (error) return null;
+  const meus = (data || []).filter(
+    (e) => String(e.telefone || '').replace(/\D/g, '').slice(-8) === alvo && e.ref_id,
+  );
+  return meus.length === 1 ? meus[0] : null;
+}
+
 async function processarRespostaEscala(m) {
   const wamid = wamidRespondido(m);
-  if (!wamid) return false;
-
   const bruto = textoDaResposta(m);
   if (!bruto) return false;
 
@@ -357,9 +382,28 @@ async function processarRespostaEscala(m) {
     if (optSvc.intencaoOptOut(bruto, { deBotao: m.type !== 'text' })) return false;
   } catch (e) { /* sem o serviço, segue a régua da escala */ }
 
-  const { data: envio } = await supabase
-    .from('whatsapp_envios').select('id, ref_id, contexto')
-    .eq('message_id', wamid).eq('contexto', CONTEXTO_ESCALA).maybeSingle();
+  // ⚠️⚠️ SEM `context.id` TAMBÉM VALE — quando não há ambiguidade (24/08/2026).
+  //
+  // Relato do Matheus: as pessoas respondem ao disparo e a conversa fica aberta
+  // no inbox, sendo que a única resposta esperada é "não vou poder". Medido:
+  // das 67 conversas abertas, 9 vieram de resposta ao disparo — e o texto delas
+  // é "Ok", "Eu vou", "estarei lá". Nenhuma usou o "responder" do WhatsApp,
+  // então nenhuma chegava aqui: caíam no bot, que abria conversa e respondia
+  // "responderemos o mais breve possível" a quem não perguntou nada.
+  //
+  // ⚠️ O motivo de exigir o contexto CONTINUA valendo: quem serve em duas áreas
+  // teria a recusa aplicada na escala errada. Por isso o caminho sem contexto
+  // só age quando existe EXATAMENTE UM disparo de escala nas últimas 48h pra
+  // aquele telefone. Dois ou mais ⇒ devolve false e a pessoa fala com gente.
+  let envio = null;
+  if (wamid) {
+    const { data } = await supabase
+      .from('whatsapp_envios').select('id, ref_id, contexto')
+      .eq('message_id', wamid).eq('contexto', CONTEXTO_ESCALA).maybeSingle();
+    envio = data || null;
+  } else {
+    envio = await _envioUnicoRecente(m.from);
+  }
   if (!envio?.ref_id) return false;
 
   const messageId = m.id;
@@ -377,6 +421,14 @@ async function processarRespostaEscala(m) {
   // ⚠️ Não entendeu? NÃO CHUTA. Marcar presença que a pessoa não deu é pior que
   // pedir de novo — e ela está com a janela de 24h aberta, então o texto chega.
   if (!status) {
+    // ⚠️ ASSIMETRIA PROPOSITAL. Com contexto, a pessoa respondeu À NOSSA
+    // mensagem: pedir o botão de novo é o certo. SEM contexto, ela pode estar
+    // falando de outra coisa — e as respostas reais mostram que a segunda mais
+    // comum é CORREÇÃO DE HORÁRIO ("meu horário é às 10", "não sirvo as 8.30").
+    // Isso precisa de gente, então devolvemos false e o fluxo normal abre a
+    // conversa. Responder "não entendi" a quem está corrigindo a escala seria
+    // ignorar um problema real.
+    if (!wamid) return false;
     await registrar(`[escala] não interpretado: ${bruto}`.slice(0, 500));
     // ⚠️ A instrução espelha o template de UM botão (modelo opt-out): quem não
     // vai é que precisa agir. Prometer um botão "Vou sim" que não existe na

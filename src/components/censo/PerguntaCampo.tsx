@@ -12,6 +12,7 @@ import type { Pergunta } from '@/lib/censoForm';
 import { NAO_SE_APLICA, alternarOpcao, ehNeutra } from '@/lib/censoForm';
 import { usePublicPalette } from '@/pages/public/publicTheme';
 import { mascaraCep } from '@/lib/cepAutopreenche';
+import SeletorBairro from '@/components/ui/seletor-bairro';
 import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import { DatePicker } from '@/components/ui/date-picker';
 
@@ -211,6 +212,23 @@ export default function PerguntaCampo({ pergunta: p, valor, onChange, faltando, 
         min={p.min_num ?? 0} max={p.max_num ?? 99}
         value={valor === null || valor === undefined ? '' : String(valor)}
         onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))} />
+    );
+  }
+
+  // ── bairro · lista validada ──
+  // ⚠️ Decidido por `preenche_de`, NUNCA pelo enunciado — mesma régua do
+  // `ehNascimento` acima. Casar por texto ("a pergunta que fala em bairro?")
+  // quebraria assim que alguém reescrevesse a pergunta no construtor.
+  // ⚠️ O CEP já preenchia este campo (o `aplicarEndereco` do CensoForm); o que
+  // faltava era a lista, e sem ela cada resposta inventava uma grafia.
+  if (p.preenche_de === 'bairro') {
+    return (
+      <SeletorBairro
+        value={typeof valor === 'string' ? valor : ''}
+        onChange={onChange}
+        atalhos={6}
+        placeholder="Digite ou escolha"
+      />
     );
   }
 

@@ -24,9 +24,13 @@ const { supabase } = require('../utils/supabase');
 const fila = require('./whatsappFila');
 const { perfisPorId } = require('./agenteVoluntariado');
 const { notificarApp } = require('./appPush');
-const { agruparParaAviso, selecionarRodada, diaRelativoBRT } = require('../utils/avisoEscala');
+const { agruparParaAviso, selecionarRodada } = require('../utils/avisoEscala');
+const { disparoDesligado } = require('./comunicacaoDisparosOff');
 
 const CONTEXTO = 'voluntariado.escala_aviso';
+// ID no catálogo de disparos automáticos (`comunicacaoAutomaticas`) · é a chave
+// que o interruptor da tela (Comunicação → Disparos → Automáticas) liga/desliga.
+const DISPARO_ID = 'escala_vespera';
 // Chave do aviso no app. Mesma raiz do contexto da fila, e por escala — a
 // checagem procura QUALQUER escala do grupo, então a ordem do array não importa.
 const chaveApp = (escalaId) => `escala_aviso:${escalaId}`;
@@ -59,7 +63,7 @@ async function _emLotes(valores, build) {
  *  · `diasAlvo` — dias BRT a avisar. O cron manda `[amanhã]` (véspera, pedido
  *    do Matheus em 14/08). Sem ele, vale a janela em `dias` (o botão manual).
  */
-async function avisarEscalasDaSemana({ dias = 7, diasAlvo = null, teto = TETO_RODADA, agora = new Date().toISOString() } = {}) {
+async function avisarEscalasDaSemana({ dias = 7, diasAlvo = null, porAntecedencia = false, teto = TETO_RODADA, agora = new Date().toISOString() } = {}) {
   const base = {
     janela_dias: dias, grupos: 0, enfileirados: 0, app_avisados: 0, adiados: 0,
     sem_telefone: 0, ja_avisados: 0, template_configurado: false, motivo: null,
@@ -80,17 +84,33 @@ async function avisarEscalasDaSemana({ dias = 7, diasAlvo = null, teto = TETO_RO
   // 2 · Escalas desses cultos.
   const escalasBrutas = await _emLotes(cultos.map(c => c.id), (chunk) => supabase
     .from('vol_schedules')
-    .select('id, service_id, volunteer_id, planning_center_person_id, volunteer_name, team_name, confirmation_status')
+    .select('id, service_id, team_id, volunteer_id, planning_center_person_id, volunteer_name, team_name, confirmation_status')
     .in('service_id', chunk));
   if (!escalasBrutas.length) return { ...base, motivo: 'Ninguém escalado na janela.' };
 
+  // ⚠️ A ÁREA DA EQUIPE decide a antecedência (Kids = 3 dias). Leitura ISOLADA
+  // e best-effort: sem ela ninguém fica sem aviso — todo mundo cai na véspera,
+  // que é o comportamento anterior. Derrubar o cron inteiro por causa do
+  // recorte do Kids seria trocar um atraso por silêncio geral.
+  let areaPorEquipe = {};
+  try {
+    const equipes = await _emLotes(
+      [...new Set(escalasBrutas.map(e => e.team_id).filter(Boolean))],
+      (chunk) => supabase.from('vol_teams').select('id, area').in('id', chunk),
+    );
+    areaPorEquipe = Object.fromEntries((equipes || []).map(t => [t.id, t.area]));
+  } catch (e) {
+    console.warn('[escalaAviso] área das equipes indisponível — todos na véspera:', e.message);
+  }
+
   const escalas = escalasBrutas.map(e => ({
     ...e,
+    team_area: areaPorEquipe[e.team_id] || null,
     scheduled_at: nomePorCulto[e.service_id]?.scheduled_at,
     service_name: nomePorCulto[e.service_id]?.name,
   }));
 
-  const grupos = agruparParaAviso({ escalas, agora, dias, diasAlvo });
+  const grupos = agruparParaAviso({ escalas, agora, dias, diasAlvo, porAntecedencia });
   if (!grupos.length) return { ...base, motivo: 'Ninguém a avisar nesta janela.' };
 
   // 3 · Quem já foi avisado — pelos DOIS canais.
@@ -188,6 +208,29 @@ async function avisarEscalasDaSemana({ dias = 7, diasAlvo = null, teto = TETO_RO
     };
   }
 
+  // ⚠️⚠️ INTERRUPTOR DA TELA (Comunicação → Disparos → Automáticas · id
+  // `escala_vespera`). Ele fica DEPOIS do aviso no app de propósito: desligar
+  // aqui silencia o WhatsApp e MANTÉM o app (decisão do Matheus, 24/08). Quem
+  // quiser silêncio total desliga o disparo inteiro no cron, não aqui.
+  //
+  // ⚠️ Fail-OPEN, como o resto do freio (`comunicacaoDisparosOff`): erro de
+  // leitura = nada desligado. Um freio que falha FECHADO silenciaria o aviso
+  // legítimo por causa de uma migration não aplicada.
+  //
+  // ⚠️ Por que um interruptor e não apagar a env `WHATSAPP_TEMPLATE_ESCALA`:
+  // env só vale em deployment novo, e arquivar o template na Meta é PIOR ainda
+  // — `ARCHIVED` não está em `ESTADOS_TEMPLATE_BLOQUEADOS` (whatsappFila.js),
+  // então o envio sai, a Meta recusa com 132001 (permanente) e cada pessoa
+  // vira uma notificação de falha terminal.
+  if (await disparoDesligado(DISPARO_ID)) {
+    const porApp = app_avisados > 0 ? ` ${app_avisados} pessoa(s) foram avisadas pelo app.` : '';
+    return {
+      ...relatorio,
+      desligado: true,
+      motivo: `O lembrete de escala por WhatsApp está DESLIGADO na tela (Comunicação → Disparos → Automáticas).${porApp}`,
+    };
+  }
+
   // ⚠️ Sem template aprovado NADA sai — e o relatório diz isso, em vez de
   // devolver "0 enviados" como se fosse sucesso (lição do disparo do censo:
   // caixa verde para envio que não aconteceu).
@@ -240,17 +283,17 @@ async function avisarEscalasDaSemana({ dias = 7, diasAlvo = null, teto = TETO_RO
 }
 
 /**
- * O disparo do cron: a VÉSPERA. Avisa quem serve AMANHÃ (dia da igreja).
+ * O disparo do cron. Cada grupo é avisado na SUA antecedência: **3 dias** para
+ * quem serve no Kids, **véspera** para o resto (pedido do Matheus · 21/08).
  *
- * ⚠️ `dias: 2` é só o limite externo da régua — quem recorta de verdade é o
- * `diasAlvo`. Com 1 o corte cairia em cima do culto de amanhã à noite (mais de
- * 24h à frente) e ele nunca seria avisado.
+ * ⚠️ `dias: 4` é só o limite externo da régua — quem recorta de verdade é a
+ * antecedência de cada grupo. Precisa ser MAIOR que os 3 do Kids: com 3 o corte
+ * cairia em cima do culto de daqui a 3 dias à noite (mais de 72h à frente) e
+ * ele nunca seria avisado. É a mesma armadilha do `dias: 2` da véspera.
  */
 async function avisarVespera(opts = {}) {
   const agora = opts.agora || new Date().toISOString();
-  return avisarEscalasDaSemana({
-    ...opts, agora, dias: 2, diasAlvo: new Set([diaRelativoBRT(agora, 1)]),
-  });
+  return avisarEscalasDaSemana({ ...opts, agora, dias: 4, porAntecedencia: true });
 }
 
-module.exports = { avisarEscalasDaSemana, avisarVespera, CONTEXTO, TETO_RODADA };
+module.exports = { avisarEscalasDaSemana, avisarVespera, CONTEXTO, TETO_RODADA, DISPARO_ID };

@@ -12,15 +12,6 @@ export default defineConfig(({ mode }) => {
     || "";
   const environment = process.env.SENTRY_ENV || process.env.VERCEL_ENV || mode;
 
-  // ── Skew Protection do Vercel (2026-08-21 · pedido do Marcos) ──
-  // O projeto tem Skew Protection LIGADO no painel (12h), mas pra Vite ele só
-  // funciona se cada asset construído carregar o id do deployment (`?dpl=`):
-  // é ele que faz o Vercel servir o chunk da versão ANTIGA pra quem está com a
-  // aba aberta durante/depois de um deploy — em vez do 404 que joga a pessoa
-  // na tela "uma atualização está sendo publicada" do ErrorBoundary.
-  // ⚠️ GUARDADO: sem a env (build local, CI de teste), o build sai IDÊNTICO ao
-  // de hoje — nunca anexar `?dpl=undefined`, que quebraria todo asset.
-  const deploymentId = process.env.VERCEL_DEPLOYMENT_ID || "";
   const sentryUploadEnabled = Boolean(
     process.env.SENTRY_AUTH_TOKEN
     && process.env.SENTRY_ORG
@@ -43,14 +34,24 @@ export default defineConfig(({ mode }) => {
   build: {
     sourcemap: sentryUploadEnabled ? "hidden" : false,
   },
-  experimental: deploymentId ? {
-    // Anexa `?dpl=<deployment>` a TODA URL construída (script do index, chunks
-    // dinâmicos, CSS). O Vercel usa o parâmetro pra rotear o pedido ao
-    // deployment de ORIGEM da página, pela janela do Skew Protection.
-    renderBuiltUrl(filename: string) {
-      return `/${filename}?dpl=${deploymentId}`;
-    },
-  } : undefined,
+  // ⚠️⚠️ NÃO REINTRODUZIR `experimental.renderBuiltUrl` COM `?dpl=` AQUI.
+  // Ligado em 21/08/2026 para o Skew Protection da Vercel, ele quebrou o
+  // sistema inteiro em silêncio: o Vite aplica a query no HTML e nos
+  // `modulepreload`, mas os `import()` internos do rollup continuam apontando
+  // para o caminho SEM a query — então o navegador baixa CADA chunk por DUAS
+  // URLs e instancia CADA módulo DUAS VEZES.
+  //
+  // Medido no navegador em 23/08/2026, na porta pública de inscrição em grupos:
+  // 42 requisições para 21 arquivos, TODOS em dobro. Com dois módulos do React
+  // vivos, todo componente de tela `lazy` estoura
+  // `Minified React error #321 (Invalid hook call)` e, na sequência,
+  // `NotFoundError: removeChild` — que derruba a árvore. O sintoma visível era
+  // mapa sem pino nenhum (Membresia e Grupos), mas o alcance é toda tela lazy.
+  //
+  // Se o Skew Protection voltar à mesa, a versão precisa garantir UMA URL por
+  // módulo (nome de arquivo versionado, não query) e ser conferida no navegador
+  // contando `performance.getEntriesByType('resource')` — o build e o typecheck
+  // passam limpos com o defeito presente.
   plugins: [
     react(),
     mode === "development" && componentTagger(),

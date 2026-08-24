@@ -133,3 +133,60 @@ describe('⚠️ modelo OPT-OUT · um botão só, ou um número (14/08)', () => 
     expect(interpretarRespostaEscala('Não vou conseguir')).toBe('declined');
   });
 });
+
+// ⚠️⚠️ AS RESPOSTAS REAIS AO DISPARO (medidas em 24/08/2026) ─────────────────
+//
+// O Matheus relatou caixa de entrada cheia: as pessoas respondem ao disparo
+// automático e a conversa fica aberta. Ao ler o que elas ESCREVEM, apareceu um
+// problema maior que o inbox — a régua antiga lia "Não sirvo as 8.30" como
+// RECUSA, e essa pessoa não está faltando: ela serve às 10h e a escala está no
+// culto errado. O sistema a tiraria da escala e travaria a disponibilidade.
+//
+// A invariante deste bloco: **"não" no meio de uma frase NÃO é recusa.**
+describe('respostas reais ao disparo de escala', () => {
+  it('⚠️⚠️ correção de horário NUNCA é recusa — é a invariante', () => {
+    for (const t of [
+      'Não sirvo as 8.30',
+      'Meu horário é às 10',
+      'No services estou 10h',
+      'Desculpa esqueci de me colocar\nAmanhã as 10h',
+      'nao sirvo nesse horario',
+      'nao é esse culto, sirvo no de 19h',
+    ]) {
+      expect(interpretarRespostaEscala(t), t).toBeNull();
+    }
+  });
+
+  it('a recusa de verdade continua sendo entendida', () => {
+    for (const t of [
+      'não', 'nao', 'NÃO', 'n',
+      'Não vou poder',            // o texto do botão
+      'nao vou poder',
+      'Não vou conseguir ir',
+      'Infelizmente não posso',
+      'nao vou poder ir domingo',
+      'não consigo dessa vez',
+      '2',
+    ]) {
+      expect(interpretarRespostaEscala(t), t).toBe('declined');
+    }
+  });
+
+  it('confirmação segue frouxa DE PROPÓSITO — os dois erros não custam igual', () => {
+    // Confirmar errado é no-op (o padrão já é "a pessoa vai"); recusar errado
+    // tira gente da escala. Por isso só a negação é estrita.
+    for (const t of ['Ok', 'Eu vou', 'Bom dia!! estarei lá sim 🙏', 'confirmo', '1', 'blz']) {
+      expect(interpretarRespostaEscala(t), t).toBe('confirmed');
+    }
+  });
+
+  it('saudação solta continua sem interpretação — vai pra gente', () => {
+    for (const t of ['Oiii, bom diaa', 'oi', 'boa noite']) {
+      expect(interpretarRespostaEscala(t), t).toBeNull();
+    }
+  });
+
+  it('⚠️ "chego 2 minutos antes" não é recusa (o dígito casa a mensagem inteira)', () => {
+    expect(interpretarRespostaEscala('chego 2 minutos antes')).toBeNull();
+  });
+});

@@ -2582,6 +2582,22 @@ export const nextBatismo = {
 
 export const membresia = {
   kpis: () => get('/membresia/kpis'),
+  // Perfil da Membresia (aba de análises · mapa por bairro + cortes).
+  // ⚠️ Só AGREGADO: nenhum destes endpoints devolve nome, CPF, telefone,
+  // e-mail ou endereço — é o que permite abrir a aba pra líder de área sem
+  // abrir o cadastro de gente junto.
+  perfil: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+    ).toString();
+    return get('/membresia/perfil' + (qs ? '?' + qs : ''));
+  },
+  perfilBairros: () => get('/membresia/perfil/bairros'),
+  perfilGeocode: (limite) => post('/membresia/perfil/bairros/geocode', { limite }),
+  perfilBairroPatch: (norm, campos) =>
+    patch(`/membresia/perfil/bairros/${encodeURIComponent(norm)}`, campos),
+  perfilCeps: () => get('/membresia/perfil/ceps'),
+  perfilCepsGeocode: (limite) => post('/membresia/perfil/ceps/geocode', { limite }),
   qrLookup: (token) => get(`/membresia/qr-lookup/${encodeURIComponent(token)}`),
   cpfLookup: (cpf, nascimento) => get(`/membresia/cpf-lookup/${encodeURIComponent(String(cpf).replace(/\D/g, ''))}?nascimento=${encodeURIComponent(nascimento || '')}`),
   orfaosStats: () => get('/membresia/orfaos-stats'),
@@ -2629,6 +2645,10 @@ export const membresia = {
     create: (data) => post('/membresia/membros', data),
     update: (id, data) => put(`/membresia/membros/${id}`, data),
     remove: (id) => del(`/membresia/membros/${id}`),
+    // ⚠️ Desativar NÃO é `remove` (que é soft-delete e some da base): é
+    // `status='inativo'`, reversível, com motivo opcional.
+    desativar: (id, motivo) => post(`/membresia/membros/${id}/desativar`, { motivo: motivo || null }),
+    reativar: (id, status) => post(`/membresia/membros/${id}/reativar`, status ? { status } : {}),
     uploadFoto: (id, formData) => requestFile(`/membresia/membros/${id}/foto`, formData),
     wifi: (id) => get(`/membresia/membros/${id}/wifi`),
     reconhecimentoFacial: (id) => get(`/membresia/membros/${id}/reconhecimento-facial`),
@@ -3027,6 +3047,20 @@ export const relatorios = {
 };
 
 export const cadastroPublico = {
+  // Catálogo de bairros da lista suspensa. ⚠️ PÚBLICO de propósito: nome de
+  // bairro não identifica ninguém, e a porta de cadastro não tem sessão.
+  // ⚠️ Falha devolve lista VAZIA em vez de lançar — o seletor degrada para
+  // campo de texto e a pessoa termina o cadastro. Catálogo indisponível não
+  // pode travar porta pública.
+  bairros: async () => {
+    try {
+      const res = await fetch(`${API}/public/membresia/bairros`);
+      if (!res.ok) return { bairros: [] };
+      return res.json();
+    } catch {
+      return { bairros: [] };
+    }
+  },
   uploadFoto: async (file) => {
     const fd = new FormData();
     fd.append('foto', file);

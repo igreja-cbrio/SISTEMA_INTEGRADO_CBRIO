@@ -57,6 +57,7 @@ Guard: `authorizeModule('cuidados', 1 | 2 | 3)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/dadosSensiveisPessoa.js`
+- `backend/utils/janelaPeriodo.js`
 - `backend/utils/jornadaTempo.js`
 - `backend/utils/supabase.js`
 
@@ -64,6 +65,7 @@ Guard: `authorizeModule('cuidados', 1 | 2 | 3)`
 
 - `backend/services/cerebroSync.js`
 - `backend/services/cuidadosPedidos.js`
+- `backend/services/marcosConvertido.js`
 - `backend/services/membroMatch.js`
 - `backend/services/notificar.js`
 - `backend/services/whatsappFila.js`

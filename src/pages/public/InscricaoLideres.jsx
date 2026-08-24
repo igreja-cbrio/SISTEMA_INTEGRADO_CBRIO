@@ -26,6 +26,7 @@ import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { CheckCircle2, Camera, X, Users, Home } from 'lucide-react';
+import SeletorBairro from '../../components/ui/seletor-bairro';
 import {
   soDigitos, mascaraCpf, mascaraTelefone, cpfValido, telefoneValido,
   nomeCompletoValido, temAbreviacaoNome, AVISO_OPTIN,
@@ -292,13 +293,27 @@ export default function InscricaoLideres() {
                 </div>
                 <Field campo="cpf" error={errosCampos.cpf} label="CPF *" value={form.cpf} onChange={set('cpf', mascaraCpf)} maxLength={14} inputMode="numeric" />
                 <Field campo="email" error={errosCampos.email} label="E-mail *" type="email" value={form.email} onChange={set('email')} />
-                <Field
-                  campo="bairro"
-                  error={errosCampos.bairro}
-                  label={querAnfitriao ? 'Bairro *' : 'Bairro (opcional)'}
-                  value={form.bairro}
-                  onChange={set('bairro')}
-                />
+                {/* ⚠️ Este formulário não pede CEP — quem se candidata a líder
+                    informa o bairro onde o grupo aconteceria, e pedir CEP para
+                    isso seria atrito sem ganho. O que ele ganha aqui é a lista
+                    validada: sem ela, cada candidatura inventava uma grafia. */}
+                <div data-campo="bairro">
+                  <label
+                    htmlFor="bairro"
+                    style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 6, color: 'var(--cbrio-text2, #555)' }}
+                  >
+                    {querAnfitriao ? 'Bairro *' : 'Bairro (opcional)'}
+                  </label>
+                  <SeletorBairro
+                    id="bairro"
+                    value={form.bairro}
+                    onChange={(v) => setForm((f) => ({ ...f, bairro: v }))}
+                    atalhos={6}
+                  />
+                  {errosCampos.bairro && (
+                    <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos.bairro}</p>
+                  )}
+                </div>
                 <Field
                   campo="endereco"
                   error={errosCampos.endereco}

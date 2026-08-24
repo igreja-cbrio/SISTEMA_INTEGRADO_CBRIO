@@ -273,6 +273,68 @@ function DispensaCpfInline({ dispensado, onDispensar, onCancelar }: {
   );
 }
 
+// Reimpressão de etiqueta = credencial de RETIRADA (Milena, 2026-08-24). Com o
+// check-in já feito, QUALQUER pessoa que digitasse o nome da criança chegava na
+// família e tirava a 2ª via do recibo do responsável — que é justamente o que a
+// equipe confere pra entregar a criança. Agora as duas reimpressões (só da
+// criança / kit completo) pedem senha: o pai precisa chamar um voluntário do
+// Kids pra digitar. Vale o PIN do supervisor (0000, o mesmo da dispensa de CPF)
+// e também a senha do Kids da liderança (a da edição de ficha), pra Mari/Milena
+// não ficarem presas ao PIN fixo. Pedida TODA vez de propósito: "lembrar" a
+// liberação por sessão devolveria o buraco no tablet que fica aberto o culto
+// inteiro.
+function ModalSenhaReimpressao({ titulo, onLiberar, onCancelar }: {
+  titulo: string;
+  onLiberar: () => void;
+  onCancelar: () => void;
+}) {
+  const [senha, setSenha] = useState('');
+  const [erro, setErro] = useState('');
+  const [verificando, setVerificando] = useState(false);
+
+  async function confirmar() {
+    const typed = senha.trim();
+    if (!typed || verificando) return;
+    // PIN fixo primeiro: resolve local, sem rede — o totem não pode depender da
+    // internet pra liberar uma 2ª via no meio da fila.
+    if (typed === DISPENSA_PIN) { onLiberar(); return; }
+    setVerificando(true); setErro('');
+    try {
+      const r: any = await totemKids.editSenha.verificar(typed);
+      if (r?.ok) { onLiberar(); return; }
+    } catch { /* rede caiu · cai no erro abaixo (o PIN do supervisor segue valendo) */ }
+    setErro('Senha incorreta — chame um voluntário do Kids.');
+    setSenha('');
+    setVerificando(false);
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onCancelar(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Lock className="h-5 w-5 text-pink-600" /> Senha pra reimprimir</DialogTitle>
+          <DialogDescription>
+            {titulo} — a 2ª via serve pra <b>retirar a criança</b>, então só um <b>voluntário do Kids</b> libera.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Input type="password" inputMode="numeric" autoComplete="off" autoFocus placeholder="Senha do Kids"
+            value={senha} onChange={(e) => { setSenha(e.target.value); setErro(''); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') confirmar(); }}
+            className="h-12 text-center text-lg tracking-widest" />
+          {!!erro && <p className="text-xs text-red-500">{erro}</p>}
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={onCancelar}>Cancelar</Button>
+            <Button className="flex-1 bg-pink-600 hover:bg-pink-700" disabled={!senha.trim() || verificando} onClick={confirmar}>
+              {verificando ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Printer className="h-4 w-4 mr-1" /> Liberar</>}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // Pager no balcão (sugestão da equipe · 2026-07-22): criança pequena (< 4 anos =
 // < 48 meses) OU com espectro/limitação física → a equipe entrega um pager ao
 // responsável. Ao concluir o check-in, o totem avisa pra pegar no balcão.
@@ -280,6 +342,17 @@ function precisaPager(c: { idade_meses?: number | null; tem_espectro?: boolean |
   const menor4 = c.idade_meses != null && c.idade_meses < 48;
   return menor4 || !!c.tem_espectro || !!c.tem_limitacao_fisica;
 }
+
+// Modo totem persiste entre reloads (pedido do Diego 2026-08-23): a tela fica
+// dias abertas sem ninguém olhar, e um reload (deploy novo, "Atualizar" do
+// AvisoNovaVersao, Ctrl+Shift+R) resetava totemMode pro estado inicial — o
+// tablet voltava DESTRAVADO até alguém passar de novo e reativar na mão. O PIN
+// já sobrevivia ao reload (localStorage); só a flag "está travado agora" não.
+// Mesmo padrão do TotemMembro.tsx (lá o kiosk também nasce 'locked' por
+// default). requestFullscreen() no mount pode falhar sem gesto do usuário —
+// o .catch(() => {}) já cobre isso; o que importa pra "voltar bloqueado" é a
+// tela de check-in ficar presa (sem navegação), não o Fullscreen API real.
+const TOTEM_KIDS_ATIVO_KEY = 'cbrio-totem-kids-ativo';
 
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
@@ -362,7 +435,9 @@ export default function TotemKidsCheckin() {
   const [preCheckinIds, setPreCheckinIds] = useState<string[]>([]); // checkins já criados
 
   // Modo totem · trava o tablet em tela cheia; sair exige PIN (como no totem de membros)
-  const [totemMode, setTotemMode] = useState(false);
+  const [totemMode, setTotemMode] = useState(() => {
+    try { return localStorage.getItem(TOTEM_KIDS_ATIVO_KEY) === '1'; } catch { return false; }
+  });
   const [pinModal, setPinModal] = useState(false);
   const [pinSetup, setPinSetup] = useState(false);
   const [pinInput, setPinInput] = useState('');
@@ -483,6 +558,11 @@ export default function TotemKidsCheckin() {
   const [checkinAberto, setCheckinAberto] = useState<any>(null);
   const [reimprimindoAberto, setReimprimindoAberto] = useState(false);
   const [reimprimindoCompletoId, setReimprimindoCompletoId] = useState<string | null>(null);
+  // Gate de senha das reimpressões (Milena 2026-08-24) · ver ModalSenhaReimpressao.
+  const [gateReimpressao, setGateReimpressao] = useState<{ titulo: string; executar: () => void } | null>(null);
+  function pedirSenhaReimpressao(titulo: string, executar: () => void) {
+    setGateReimpressao({ titulo, executar });
+  }
   // Check-ins abertos em OUTRAS sessões (culto anterior sem check-out) — não
   // impedem o novo check-in; o totem avisa e oferece regularizar.
   const [abertosAnteriores, setAbertosAnteriores] = useState<any[]>([]);
@@ -703,7 +783,11 @@ export default function TotemKidsCheckin() {
 
   // Reimprime SÓ a etiqueta da criança do check-in ABERTO (perdeu/borrou) ·
   // mesmo código · a do responsável não precisa (decisão do Matheus 2026-07-07).
-  async function reimprimirCheckinAberto() {
+  function reimprimirCheckinAberto() {
+    if (!crianca || !checkinAberto) return;
+    pedirSenhaReimpressao(`Etiqueta de ${crianca.nome.split(' ')[0]}`, executarReimprimirCheckinAberto);
+  }
+  async function executarReimprimirCheckinAberto() {
     if (!crianca || !checkinAberto) return;
     setReimprimindoAberto(true);
     try {
@@ -718,7 +802,7 @@ export default function TotemKidsCheckin() {
         cultoNome: checkinAberto.sessao?.culto?.nome || null,
         cultoData: checkinAberto.sessao?.culto?.data || null,
       });
-      await reimprimirEtiqueta(dados, 'crianca', 'Etiqueta perdida — reimpressão pelo totem');
+      await reimprimirEtiqueta(dados, 'crianca', 'Etiqueta perdida — reimpressão pelo totem (liberada com senha)');
       toast.success(`Etiqueta da criança reimpressa · mesmo código ${checkinAberto.codigo_seguranca}`);
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro ao reimprimir a etiqueta');
@@ -727,7 +811,10 @@ export default function TotemKidsCheckin() {
 
   // Reimprime a etiqueta de um membro da família que JÁ está com check-in aberto
   // (mesmo helper/código · `ck` vem de abertosFamilia).
-  async function reimprimirMembroFamilia(ck: any, cr: Crianca) {
+  function reimprimirMembroFamilia(ck: any, cr: Crianca) {
+    pedirSenhaReimpressao(`Etiqueta de ${cr.nome.split(' ')[0]}`, () => executarReimprimirMembroFamilia(ck, cr));
+  }
+  async function executarReimprimirMembroFamilia(ck: any, cr: Crianca) {
     try {
       const dados = montarDadosEtiqueta(cr, {
         checkinId: ck.id, salaNome: ck.sala?.nome || '', salaCor: ck.sala?.cor || null,
@@ -735,7 +822,7 @@ export default function TotemKidsCheckin() {
         codigo: ck.codigo_seguranca, codigoBarras: ck.codigo_barras,
         cultoNome: ck.sessao?.culto?.nome || null, cultoData: ck.sessao?.culto?.data || null,
       });
-      await reimprimirEtiqueta(dados, 'crianca', 'Etiqueta perdida — reimpressão pelo totem (família)');
+      await reimprimirEtiqueta(dados, 'crianca', 'Etiqueta perdida — reimpressão pelo totem (família · liberada com senha)');
       toast.success(`Etiqueta de ${cr.nome.split(' ')[0]} reimpressa · código ${ck.codigo_seguranca}`);
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro ao reimprimir');
@@ -744,7 +831,11 @@ export default function TotemKidsCheckin() {
 
   // Opção adicional: mantém a reimpressão rápida acima e permite refazer o kit
   // completo (duas etiquetas da criança + recibo/QR do responsável).
-  async function reimprimirCompleto(ck: any, cr: Crianca) {
+  function reimprimirCompleto(ck: any, cr: Crianca) {
+    if (!ck?.id || reimprimindoCompletoId) return;
+    pedirSenhaReimpressao(`Kit completo de ${cr.nome.split(' ')[0]}`, () => executarReimprimirCompleto(ck, cr));
+  }
+  async function executarReimprimirCompleto(ck: any, cr: Crianca) {
     if (!ck?.id || reimprimindoCompletoId) return;
     setReimprimindoCompletoId(ck.id);
     try {
@@ -754,7 +845,7 @@ export default function TotemKidsCheckin() {
         codigo: ck.codigo_seguranca, codigoBarras: ck.codigo_barras,
         cultoNome: ck.sessao?.culto?.nome || null, cultoData: ck.sessao?.culto?.data || null,
       });
-      await reimprimirEtiquetasCompletas(dados, 'Kit completo perdido — reimpressão pelo totem');
+      await reimprimirEtiquetasCompletas(dados, 'Kit completo perdido — reimpressão pelo totem (liberado com senha)');
       toast.success(`Kit completo de ${cr.nome.split(' ')[0]} reimpresso · código ${ck.codigo_seguranca}`);
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro ao reimprimir o kit completo');
@@ -957,6 +1048,7 @@ export default function TotemKidsCheckin() {
   function ativarTotem() {
     document.documentElement.requestFullscreen?.().catch(() => {});
     setTotemMode(true);
+    try { localStorage.setItem(TOTEM_KIDS_ATIVO_KEY, '1'); } catch { /* storage indisponível · segue */ }
   }
   function iniciarModoTotem() {
     let stored = '';
@@ -983,6 +1075,7 @@ export default function TotemKidsCheckin() {
       if (!stored || typed === stored) {
         setPinModal(false); setPinInput(''); setPinErro('');
         setTotemMode(false);
+        try { localStorage.removeItem(TOTEM_KIDS_ATIVO_KEY); } catch { /* storage indisponível · segue */ }
         if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
       } else { setPinErro('PIN incorreto'); setPinInput(''); }
     }
@@ -1801,6 +1894,14 @@ export default function TotemKidsCheckin() {
           onConfirmar={(cpf) => resolverCpfPrompt({ cpf })}
           onDispensar={() => resolverCpfPrompt({ dispensado: true })}
           onCancelar={() => resolverCpfPrompt(null)}
+        />
+      )}
+
+      {gateReimpressao && (
+        <ModalSenhaReimpressao
+          titulo={gateReimpressao.titulo}
+          onLiberar={() => { const acao = gateReimpressao.executar; setGateReimpressao(null); acao(); }}
+          onCancelar={() => setGateReimpressao(null)}
         />
       )}
 

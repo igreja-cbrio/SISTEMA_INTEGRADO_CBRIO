@@ -117,6 +117,36 @@ Celebra com só nome+telefone continuam válidas para sempre).
   imagem, menor_responsavel, whatsapp). O ESTADO do opt-in continua nas
   colunas `whatsapp_optin/_em` de cada tabela.
 
+### ⚠️⚠️ A porta de EVENTOS cria pessoa quando tem CPF (2026-08-23 · SEM migration)
+
+`publicEventoExterno` usava `politica: 'ligar'` — o matcher só ACHAVA cadastro
+existente. Toda pessoa **nova** que se inscrevia num evento ficava com
+`membro_id` NULL: fora da membresia, fora de todo cruzamento, invisível pra
+qualquer área. Medido na 1ª inscrição paga real do AMI CAMP 2027 (23/08): a
+pessoa pagou R$ 830 e **não existia no cadastro da igreja**. Escopo do estrago:
+**77 de 318 inscrições vivas sem vínculo** (71 do Celebra), 63 delas com CPF
+válido — 18 em que o CPF **já existia** (bastava ligar) e 45 pessoas novas.
+
+- Agora: `politica = normalizarCpf(cpf) ? 'criar' : 'ligar'`. **Sem CPF continua
+  sem criar** — é a regra da #2170 ("para de fabricar cadastro sem chave"), que
+  proibiu fabricar pessoa por NOME EXATO no import financeiro. CPF é a chave
+  FORTE do matcher, então criar com CPF não reabre aquilo.
+- `acharOuCriarGuardado` liga no cadastro existente quando o CPF bate e só cria
+  quando a pessoa é nova de verdade. O `genero` passou a ser repassado.
+- Backfill: `backend/scripts/_reparo_inscricoes_valor_vinculo.cjs` (`--exec`,
+  backup em `~/Downloads/_bk_20260823_inscricoes_valor_vinculo.json`). Inscrição
+  **sem CPF não é tocada** — fica pra decisão humana.
+
+### ⚠️ `valor_cobrado_centavos` é escrito por quem COBRA, não só pela bolsa (2026-08-23)
+
+A coluna só era preenchida pela `aplicarBeneficio` (bolsa/desconto). **Quem
+pagava o valor cheio ficava com ela NULL** — e ela é lida pela lista de
+inscritos (`INSCRITOS_COLS`), pelo e-mail e pela conciliação. Passou pra dentro
+da `cobrarInscricao`, logo após o espelho em `insc_pagamentos`: é o **único**
+ponto que conhece o valor efetivamente cobrado (inclusive o fallback pro valor
+de tabela quando o evento não tem lote) e por ele passam os TRÊS caminhos de
+cobrança (nova · re-inscrição · quem perdeu a corrida do advisory lock).
+
 **Estado do rollout — CONCLUÍDO (narrativa PR a PR no legado):** as 7 portas
 entraram no contrato em 28/07 (F3.1) e a **espinha `inscricoes` + módulo
 `/inscricoes`** ficou completa no mesmo dia (F3.2 · 6 tabelas · 5 abas ·
@@ -1586,6 +1616,355 @@ Dice puro → 9 vermelhos · canal do formulário sem exigir nome → 6 · sem
 E `vol_inscricoes.vol_profile_id` está **100% vazio** (0 de 827) — o vínculo
 perfil↔inscrição nunca foi preenchido, e é por isso que o canal do formulário
 precisa casar por e-mail em vez de seguir a FK que existe no schema.
+
+## ⚠️⚠️ LEI · lista de opções no CLIENTE fabrica vocabulário divergente (2026-08-24 · migration `20260824120000`)
+
+Pedido do Matheus: *"nos formularios, o bairro da pessoa deve aparecer
+automaticamente quando ela colocar o cep, deve existir um sistema de validacao,
+com lista suspensa dos bairros."*
+
+**A medição achou mais que o pedido — e o achado é a lei.** O formulário público
+tinha uma constante `BAIRROS` com **11 APELIDOS CURTOS** (`'Barra'`,
+`'Recreio'`, `'Freguesia'`) e o ViaCEP devolve o nome **OFICIAL**. O casamento
+normalizado **nunca batia** nos três bairros com mais gente:
+
+| bairro | pela lista | pelo CEP |
+|---|---|---|
+| Barra da Tijuca | `Barra` · 22 | `Barra da Tijuca` · 33 |
+| Recreio | `Recreio` · 14 | `Recreio dos Bandeirantes` · 15 |
+| Freguesia | `Freguesia` · 4 | `Freguesia (Jacarepaguá)` · 5 |
+
+⇒ **O próprio formulário fabricava as duas grafias**, e o `alias_de` criado em
+23/08 tratava o SINTOMA no mapa. Medido em `mem_membros` vivos, mais 4 registros
+com espaço no fim (`"Barra da Tijuca "`, `"Jacarepaguá "`).
+
+**A LEI: lista de opções que vira DADO não vive no cliente.** É a irmã da lei de
+17/08 ("rótulo de opção NÃO é vocabulário de coluna"): lá o rótulo não podia ir
+cru para a coluna; aqui a lista do cliente não pode ser a fonte do vocabulário.
+Quem define o que se pode escolher é o SERVIDOR (`fn_dem_bairros_catalogo`), e
+quem decide a grafia gravada é o BACKEND (`fn_dem_bairro_canonico`) — nunca a
+tela. ⚠️ **NÃO reintroduzir lista de bairros no cliente.**
+
+### ⚠️⚠️ `alias_de` carregava DUAS relações — e isso decide se pode reescrever
+
+| `alias_tipo` | o que é | a gravação troca? |
+|---|---|---|
+| `grafia` | "Barra" **é** "Barra da Tijuca", escrito curto | **SIM** — mesma informação |
+| `agrupamento` | "Barra Olímpica" fica na Barra **no mapa**, mas é lugar próprio | **NÃO** — trocar apaga onde a pessoa mora |
+
+Sem separar as duas, canonicalizar na escrita destruiria granularidade real. A
+migration **ABORTA** se `fn_dem_bairro_canonico('Barra Olímpica')` devolver
+outra coisa. `alias_tipo` nasce `'grafia'` porque é o caso comum e o único em
+que a reescrita é segura — agrupamento é decisão humana e se declara.
+
+### O resto das decisões
+
+- **`services/bairroCanonico.js` canonicaliza em TODA porta** (POST/PUT de
+  membro, totem, aprovação de cadastro, porta pública). A lista sozinha não
+  fecharia: sobram totem, RH, censo e import gravando texto.
+- ⚠️ **Bairro desconhecido PASSA, trimado — nunca é recusado.** Porta pública não
+  pode barrar quem mora onde a base ainda não viu; ele entra no catálogo e a
+  próxima pessoa escolhe da lista.
+- ⚠️ **`SeletorBairro` NÃO trava**, e é decisão: o `<select>` fechado de antes
+  jogava quem morava em Copacabana no "Outro", e era dali que vinha a variação.
+  Sugere forte, aceita o resto, **declara** quando é novo.
+- ⚠️ **A busca casa por APELIDO** e oferece o canônico: sem isso quem digita
+  "barra" não acha nada e escreve o apelido, recriando a duplicidade.
+- **Ligado em**: cadastro público · Membresia · totem · inscrição de líderes ·
+  RH · censo. No censo por **`preenche_de`**, nunca pelo enunciado — mesma régua
+  que o `PerguntaCampo` já usava para nascimento.
+- ⚠️ **A 5ª cópia local do ViaCEP morreu** (`Membresia.jsx:150`). A régua é
+  `lib/cepAutopreenche`, que trata os dois casos que toda cópia esquecia:
+  `erro: true` com **HTTP 200** (CEP inexistente lido como sucesso, apagando o
+  endereço digitado) e **timeout** (no wi-fi do templo o campo ficava
+  "buscando…" para sempre). **CEP → bairro passou a existir no totem.**
+- **Rótulos corrigidos NOMINALMENTE**, nunca por `initcap()`: em português
+  "da/de/dos" ficam minúsculos e o initcap devolveria "Barra Da Tijuca".
+
+### ⚠️ Duas lições de MÉTODO, das minhas próprias falhas nesta leva
+
+1. **Um mutante SOBREVIVEU e o teste é que estava fraco.** Os 3 apelidos vivos
+   (`barra`, `recreio`, `freguesia`) são **todos PREFIXO** do nome oficial,
+   então casavam pelo ramo de prefixo e o casamento por apelido **nunca era
+   exercitado**. Régua: **ao testar casamento por sinônimo, incluir um sinônimo
+   que NÃO seja prefixo** — senão o ramo passa despercebido.
+2. **O BUILD pegou o que o typecheck não pegou**: import inserido no meio de um
+   `import { … }` multilinha. É a lição de 17/08 se repetindo — em `.jsx`,
+   **o verificador é `npm run build`**, não `tsc`.
+
+### ✅ O passado FOI consolidado (2026-08-24 · decisão do Matheus · SEM migration)
+
+`UPDATE ... SET bairro = fn_dem_bairro_canonico(bairro)` em **`mem_membros`
+(48 cadastros)** e **`mem_cadastros_pendentes` (56 linhas)**.
+
+- ⚠️⚠️ **As DUAS tabelas, não só `mem_membros`.** `vw_dem_pessoa` faz
+  `COALESCE(m.bairro, e.bairro)`, e o `e.bairro` vem do enriquecimento por
+  `mem_cadastros_pendentes` — consolidar só a principal faria a grafia velha
+  **reaparecer** para quem tem o campo vazio no cadastro.
+- ⚠️⚠️ **Quem decide a grafia é `fn_dem_bairro_canonico`, NUNCA uma lista escrita
+  no script**: é ela que lê `alias_tipo` e por isso reescreve GRAFIA ("Barra" →
+  "Barra da Tijuca") e deixa AGRUPAMENTO em paz — **"Barra Olímpica" seguiu
+  intacta em 21 pessoas**, conferido depois. Uma lista à mão teria apagado onde
+  essas 21 moram.
+- ⚠️ Ela pega **mais que os 3 apelidos**: acento (`"Barra Olimpica"` →
+  `"Barra Olímpica"`, que NÃO vira Barra da Tijuca), caixa (`"olaria"`) e espaço
+  sobrando (`"Jacarepaguá "`, `"Copacabana "`, `"barra da tijuca "`). Eram 48 e
+  não os ~40 que este arquivo estimava.
+- **Backup**: `_bk_20260824_bairro_membros` e `_bk_20260824_bairro_pendentes`
+  (`update ... set bairro = b.bairro from _bk_... b where id = b.id` reverte).
+- ⚠️⚠️ **A NEUTRALIDADE PARA A LEITURA FOI PROVADA, não suposta**: recalculando o
+  `bairro_norm` da view com o valor ANTIGO e com o NOVO nas 48 linhas, **zero**
+  mudaram de chave — o alias já resolvia para o mesmo lugar.
+  ⚠️ **Comparar o total do mapa NÃO serve de prova**: ele subiu de 123 para 124
+  entre as duas leituras, e a causa foi um cadastro que a equipe preencheu no
+  meio da medição (`"Vargem Pequena"`, 23/08 22:42), não a consolidação. Nesta
+  base os números andam sozinhos — comparar totais confunde efeito com operação.
+
+## ⚠️ Membresia · aba PERFIL · mapa por bairro + cortes (2026-08-23 · migration `20260823160000`)
+
+Pedido do Matheus: *"queria um modulo estilo dashboards, para analises dos
+membros. quero um mapa para saber onde se concentra a maior parte dos membros
+(isso deve vir do endereco deles, cep e etc). quero um grafico de faixa de
+idade, genero sexual e etc... a partir do que ja temos hoje, e ai quando o censo
+for sendo feito esse modulo vai sendo alimentado."*
+
+**As 3 decisões dele, antes de escrever uma linha:** mapa **agregado por
+BAIRRO** (nenhum endereço de pessoa sai do servidor — a tela é aberta a líder de
+área) · **ABA** dentro de `/ministerial/membresia`, não módulo novo ·
+geocodificação **em massa E automática a cada novo cadastro**.
+
+### Banco
+
+- **`dem_bairro_geo`** — centróide por bairro (PK = `bairro_norm`), com
+  `alias_de` e `ignorar`.
+- **`vw_dem_pessoa`** — cadastro + enriquecimento **READ-ONLY** de
+  `batismo_inscricoes`, `inscricoes` e `mem_cadastros_pendentes` (mais recente
+  não-nulo por campo). É o que levou o endereço de `membro_ativo` de ~10% para
+  33%. ⚠️ **Nunca escreve de volta** — Contrato de porta.
+- **`fn_dem_perfil(status, bairro)`** — o retrato inteiro numa ida ao banco.
+  Agrega no Postgres porque o PostgREST corta em 1000 linhas e a base passou
+  disso. **Todo corte devolve `base` (quem respondeu) ao lado de `total`.**
+
+⚠️⚠️ **O centróide NUNCA é gravado em `mem_membros.lat/lng`** — é a lição do
+`pinosMapa.ts` (31/07): precisão inventada apaga para sempre a distinção entre
+endereço real e chute, e ninguém percebe depois. `lat/lng` da pessoa segue
+reservado para acerto de RUA.
+
+⚠️ **`faixa_detalhada` é histograma ANINHADO em `fn_faixa_etaria`** (0-12/13-17/
+18-25 = criança/adolescente/jovem; 26+ em cinco faixas), e a migration
+**ABORTA** se as duas não somarem igual. Segunda régua de idade neste sistema é
+bug garantido (lei de 19/08).
+
+⚠️ **`alias_de` existe porque o mapa MENTIA**: "barra da tijuca", "Barra" e
+"Barra Olímpica" desenhavam três círculos médios (25/16/14) em vez de um de 55.
+E "Rio de Janeiro"/"RJ"/"Brasil" digitados no campo de bairro entram com
+`ignorar=true`. A view resolve **UM salto** de alias — o PATCH recusa alias de
+alias e auto-alias.
+
+⚠️ **A v1 embarcou dado MORTO**: `mem_membros.batizado`, `.voluntario` e
+`.data_membresia` são colunas zeradas, então `engajamento` veio 0/0/0. Trocado
+por **`vw_pessoas_papeis_mat`** (a mesma régua de `/admin/cruzamentos`), com
+assert na migration que aborta se `batizado <= 0`. ⚠️ Ela é MATERIALIZADA: o
+`atualizado_em` vai no JSON e a tela declara o atraso de até 24 h.
+
+⚠️ `DROP VIEW` sem `CASCADE` de propósito: `CREATE OR REPLACE VIEW` recusa
+coluna nova no MEIO da lista (só append), e o CASCADE derrubaria em silêncio
+quem viesse a depender dela.
+
+### Auto-geocode no salvamento
+
+`completarBairroPorCep()` (`routes/membresia.js`) em `POST /membros`,
+`PUT /membros/:id`, `PUT /totem/membros/:id` e na aprovação de cadastro pendente.
+
+- ⚠️ **SÓ ViaCEP** (~200 ms, sem rate-limit). O Nominatim exige 1,1 s por
+  chamada (política do OSM) e travaria quem está clicando em Salvar — centróide
+  é trabalho do lote em segundo plano.
+- ⚠️ **SÓ-ONDE-VAZIO nos DOIS lados**: nem o payload nem o que já está gravado é
+  sobrescrito. Mesma política do censo. **Resíduo declarado**: trocar o CEP de
+  quem já tem bairro NÃO corrige o bairro antigo — corrigir seria decidir que o
+  ViaCEP vence a equipe, e ele não vence.
+- ⚠️ Na aprovação, **só no ramo de CRIAÇÃO**: no ramo de atualização o patch
+  sobrescreve o cadastro existente, e ali o valor não veio do formulário (não
+  está na tela de ninguém) — veio de um terceiro.
+- **Best-effort**: ViaCEP fora do ar não impede ninguém de salvar cadastro.
+
+**`backend/services/geoBrasil.js`** mata a **4ª cópia** da sequência
+ViaCEP+Nominatim (as outras eram `grupos.js` ×2 e `publicGrupos.js`; só a do
+`geocode-batch` validava a caixa do RJ, então as demais aceitavam em silêncio
+uma "Rua São João" em Santa Catarina). `/geocode-cep` passou a delegar e ganhou
+o **timeout** que faltava — o `fetch` cru pendurava a requisição até a
+plataforma matar.
+
+- ⚠️ `esperarVezNoNominatim()` é fila **do processo**: `await sleep(1100)`
+  espalhado não serializa nada quando dois handlers HTTP correm em paralelo.
+- ⚠️ `exigirRio` é `true` por padrão e **só `/geocode-cep` passa `false`** —
+  lá a consulta é ENDEREÇO COMPLETO (logradouro+cidade+UF), onde a ambiguidade
+  que a caixa resolve não existe, e membro que mora fora do Rio precisa da
+  coordenada dele. **Nome de lugar solto nunca passa false.**
+- ⚠️ **`normalizarBairro` é espelho EXATO de
+  `nullif(f_unaccent(lower(trim(bairro))),'')`.** Divergir faz o backend gravar
+  o centróide numa chave que a view nunca procura — o mapa fica vazio depois de
+  o lote dizer "resolvido", sem erro nenhum.
+
+### Tela
+
+`src/components/membresia/AbaPerfil.tsx` + `MapaBairros.tsx`, aba `perfil` (o
+deep-link `?tab=perfil` entrou na whitelist).
+
+- ⚠️⚠️ **Todo corte mostra a BASE ao lado do número.** "65% são mulheres" com
+  28% de cobertura não é retrato da igreja — é retrato de quem tem o campo
+  preenchido, e as duas frases levam a decisões diferentes.
+- ⚠️ **Corte com `base === 0` SOME** em vez de virar barra chapada em zero:
+  barra em zero se lê como "ninguém tem ensino superior", que é diferente de
+  "ninguém respondeu".
+- ⚠️ **O buraco do mapa é DECLARADO** (quantas pessoas ficaram de fora e por
+  quê). Mapa que esconde o próprio buraco é pior que mapa vazio — quem olha
+  conclui que a igreja inteira mora ali.
+- **Área do círculo ∝ pessoas** (raio ∝ √n): raio ∝ n faria o maior bairro
+  parecer 10× o que ele é.
+- **LAZY** de propósito: maplibre é ~1 MB e não pode entrar no chunk de quem
+  abre a Membresia para achar UMA pessoa.
+
+### Estado medido em produção (23/08 · `membro_ativo` = 1.730)
+
+faixa etária 1.377 · sexo 691 (460 F / 229 M) · nascimento 1.381 · endereço 569
+· CEP 144 · **bairro 124** · estado civil 139 · escolaridade 8. Engajamento:
+batizado 492 · em grupo 797 · voluntário 437 · fez o Next 410 · contribuinte 237.
+
+⚠️ **O mapa nasce VAZIO**: 0 pessoas posicionadas, 27 bairros sem coordenada. É
+o botão **"Resolver bairros"** (nível 3, lotes de 20 · ~1,1–2,2 s por bairro)
+que resolve, em ~2 rodadas. **Não há offset de paginação de propósito** — o
+conjunto pendente MUTA a cada rodada, e offset numérico sobre filtro que muda
+PULA linhas.
+
+⏳ **Pendência de GENTE**: `censoCampoCadastro.js` já tem **`bairro` como destino
+de primeira classe** — marcar "Guardar no cadastro da pessoa → Bairro" na
+pergunta de bairro do censo é o que faz o censo alimentar o mapa. Derivar do CEP
+dentro do `censoReconciliar` foi descartado: poria chamada de rede num serviço
+que está no gate, para resolver o que o construtor resolve por configuração.
+
+Teste: `src/test/geoBrasil.test.ts` (20 casos · **no gate** pelo `npm test`).
+⚠️ As 12 saídas esperadas de `normalizarBairro` foram **MEDIDAS** contra o
+`f_unaccent` de produção, não deduzidas. **4 mutantes RODADOS**: acento não
+removido → 9 vermelhos · vazio em vez de null → 2 · caixa do RJ alargada → 1 ·
+guarda `Number.isFinite` removida → 1. ⚠️ O último **expôs um buraco real no
+teste**: para NaN/null a guarda é redundante (comparação com NaN já é false); o
+que ela pega de verdade é **coordenada em STRING**, porque `'-22.9' <= -21.8` é
+`true` em JS.
+
+⚠️ **CORREÇÃO DE REGISTRO (23/08)**: este arquivo diz em dois lugares que o gate
+de deploy tem **10 scripts**. São **12** — `test:kpi-periodos` e
+`test:matcher-insert` entraram depois e não foram citados. "Rodei os 10" deixava
+2 sem verificação.
+
+## ⚠️⚠️ Perfil · o mapa virou CALOR, e as 4 leis que isso custou (2026-08-24)
+
+Pedido do Matheus: *"o mapa tá bugado, não tá aparecendo as pessoas. eu gostaria
+de um mapa com calor, para entender melhor onde se concentra mais gente"* + *"a
+opção de expandir o mapa para ver em tela cheia"* + *"um filtro no mapa para
+escolher bairro ou cep, para ficar mais específico ainda e aí vai sendo
+alimentado com o tempo, com as pessoas atualizando o cadastro e pelo censo tbm"*.
+
+O calor entrou (`heatmap` nativo do maplibre + chip com a contagem por cima),
+e **o mapa nascia VAZIO — só um clique de zoom mostrava tudo**. Foram SEIS
+hipóteses até a causa, e cinco delas custaram um deploy cada. As leis:
+
+### ⚠️⚠️ LEI 1 · `isLoaded` no array de deps REMONTA o mapa e apaga o que ele acabou de pintar
+
+Era a causa raiz. O efeito que cria as camadas tinha, no topo, o comentário
+*"Depende só do MAPA, nunca de `isLoaded`"* — e o array dizia `[map, isLoaded]`.
+**O código fazia o oposto do que prometia.** Medido em produção:
+
+```
+22:04:04 aplicar estiloPronto=true → featuresRenderizadas=26 featuresNaSource=27
+22:04:04 effect montou isLoaded=true            ← o efeito REMONTOU
+22:04:04 aplicar temSource=false temCalor=false → featuresNaSource=0
+```
+
+As camadas nasciam, PINTAVAM, e o cleanup as removia junto com a source no
+instante seguinte — porque `isLoaded` acabara de virar true. **Source recriada
+não tem tile nenhum até a câmera se mover**, que é exatamente o "um clique de
+zoom mostra tudo". Quem decide a hora certa é o `map.isStyleLoaded()` dentro do
+`aplicar`, chamado a cada `styledata`/`idle`/`load` — nunca uma dep do React.
+
+⚠️⚠️ **Corolário que vale além deste mapa: comentário que mente é pior que
+comentário ausente.** Ele me fez descartar a hipótese certa duas vezes, porque eu
+lia a promessa e não o array. Ao mexer em efeito de mapa, **ler o array**.
+
+### ⚠️ LEI 2 · `setStyle()` descarta TODA camada criada por `addLayer`
+
+Trocar o tema (claro/escuro) apagava o mapa **de vez**. `ui/map.tsx` ganhou
+`temaAplicadoRef` para não chamar `setStyle` quando o tema efetivo não mudou, e
+`MapaBairros` tem uma conferência que reaplica as camadas se elas sumirem. Vale
+para o mapa de grupos e o do totem, que dividem o mesmo componente.
+
+### ⚠️⚠️ LEI 3 · `position: fixed` dentro de um `<Card>` NÃO usa a viewport
+
+A 1ª tela cheia colapsou numa faixa de ~40px em produção. O `backdrop-filter` do
+tema Vidro (base do `<Card>`) cria **containing block**, então `fixed inset-0` se
+ancora no CARD. Nenhum overlay dentro de um Card escapa disso.
+⇒ **Fullscreen API**, que não move nó nenhum. Portal para o `body` resolveria o
+ancoramento e faria o React **remontar o `<Map>`** (instância nova, estilo
+recarregado, câmera de volta ao início).
+⚠️ E o `requestFullscreen` **precisa avisar quando é recusado** (iframe sem
+`allow`, política do navegador, chamada sem gesto): o `catch` mudo faz o botão
+parecer quebrado.
+
+### ⚠️⚠️ LEI 4 · enquadramento se decide por PROXIMIDADE, não por tamanho
+
+`nucleoDoMapa` ordenava pelo maior e parava em 90% de cobertura. Com a cauda
+longa de hoje — **Barra 55 + Recreio 21 = 62% de 123 pessoas** — chegar a 90%
+exige **14 dos 26 bairros**, e entre eles entram Barra Mansa (2 pessoas), Volta
+Redonda (1) e Teresópolis (1). **TRÊS pessoas** abriam o mapa no estado inteiro.
+Ordem por tamanho mede QUANTAS pessoas; o que estica o quadro é ONDE elas estão.
+⇒ ordem por distância ao centro (**mediana**, não média) com a mesma cobertura:
+span de longitude **1,547° → 0,231°**.
+⚠️ **Um corte só.** Encadear dois de 90% derruba a cobertura efetiva para 88%
+(pior caso 81%) e quebra a promessa que o teste já fazia.
+
+### O filtro Bairro | CEP (migration `20260824180000`)
+
+**Trecho de CEP = os 5 primeiros dígitos**, com **piso de 3 pessoas por ponto**.
+⚠️⚠️ CEP completo é RUA: com 197 pessoas em 114 CEPs quase todo ponto teria uma
+pessoa só, e ponto de uma pessoa **é o endereço dela** — numa tela que promete ser
+agregada e é aberta a nível 1. O piso vale para desenhar E para filtrar (clicar
+num trecho de 1 pessoa mostraria o perfil completo dela), e trecho abaixo do piso
+devolve `cep_regiao_bloqueado` para a tela DIZER o motivo.
+- `dem_cep_geo` guarda por **CEP completo** (é o que ViaCEP e Nominatim
+  respondem); a agregação por trecho é na leitura.
+- A coordenada do trecho é a **média sobre PESSOAS**: rua com 8 pessoas pesa 8×.
+- `coordenadaDeCep` = ViaCEP → endereço → Nominatim = ponto de **RUA**. É isso que
+  faz o corte por CEP ser mais específico que o por bairro.
+- ⚠️ `utils/trechoCep.js` é espelho de `vw_dem_pessoa.cep_regiao`: **CEP
+  incompleto devolve null, nunca os 5 primeiros do que veio** — o censo já coletou
+  7 dígitos por engano, e truncar poria a pessoa no lugar errado.
+- ⚠️ **DROP + CREATE** em `fn_dem_perfil`, não `CREATE OR REPLACE`: parâmetro novo
+  muda a assinatura e as duas versões deixariam a chamada de 2 argumentos
+  **ambígua**. E `DROP FUNCTION` **leva os grants embora** — regravar só
+  `service_role`, porque `authenticated` foi revogado na faxina de segurança.
+
+**Estado medido em 24/08**: bairro 123 de 1.730 no mapa · CEP **97 pessoas em 12
+trechos** (Recreio 22 · Barra 20 · Barra Olímpica 13), com 147 CEPs geocodificados
+(142 com coordenada).
+
+### ⚠️ Lições de MÉTODO desta sessão (as três se repetiram)
+
+1. **Instrumentar em vez de adivinhar.** Cinco deploys foram gastos em hipóteses
+   plausíveis (expressão aninhada, chip cobrindo o calor, calibração de raio,
+   frame não agendado, `setStyle`). O log opt-in `?diagmapa=1` — que segue no
+   código — deu a resposta na primeira medição.
+2. **Comentário deste arquivo envelhece.** Eu escrevi aqui que `isLoaded` "nunca
+   virou true" e que `resize()` era a cura; as duas coisas estavam erradas, e o
+   texto foi corrigido no próprio `MapaBairros.tsx`. **Medir de novo antes de
+   repetir um achado.**
+3. **Teste com amostra inventada não testa a régua.** A 1ª versão do teste de
+   enquadramento usava 11 pontos e **3 mutantes sobreviveram** — com poucos
+   pontos, a ordem por tamanho já resolvia sozinha. Os casos agora são a
+   distribuição REAL, com a cauda inteira. E dois mutantes só morreram com o caso
+   certo: endereço em outro **continente** (média × mediana) e cidade ao **NORTE
+   com a mesma longitude do centro** — com Petrópolis o mutante sobrevivia, porque
+   a longitude dela também é periférica e ela caía fora **por acaso, não pela
+   régua**.
 
 ## ⚠️ Membresia · aprovação em massa da fila de cadastros (2026-08-04 · SEM migration)
 
@@ -7735,6 +8114,18 @@ da área KIDS + "líder Kids do dia" dinâmico via `vol_check_ins`.
   documento e passa por aprovação da equipe Kids.
 - **Sem checkout remoto pelo app** (decisão de segurança): o pré-check-in prepara
   e gera código/QR; entrada e retirada continuam presenciais.
+- ⚠️ **Reimprimir etiqueta EXIGE SENHA** (Milena, 24/08): a 2ª via — tanto "só da
+  criança" quanto o "kit completo" — é a **credencial de retirada**, e sem gate
+  qualquer pessoa que digitasse o nome de uma criança já com check-in tirava o
+  recibo do responsável e saía com ela. `ModalSenhaReimpressao` intercepta os 3
+  caminhos (família, card individual e kit completo) e aceita o **PIN do
+  supervisor `0000`** (`DISPENSA_PIN`, resolvido local pra não depender de rede
+  no meio da fila) **ou a senha do Kids** da liderança (`/edit-senha/verificar`,
+  a mesma da edição de ficha). Pedida **toda vez** de propósito: guardar a
+  liberação por sessão devolve o buraco no tablet, que fica aberto o culto
+  inteiro. O log de `kids_etiquetas_log` carimba "liberada com senha" no
+  `motivo_reimpressao`. **Fora do gate de propósito**: a faixa "reimprimir" que
+  aparece por 10s logo após o check-in que o próprio operador acabou de fazer.
 
 **Pendências operacionais**: aplicar
 `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
@@ -12406,3 +12797,311 @@ lint).
 vitrine; quem decide acesso é o `ModuleGuard` (front) e o `authorizeModule`
 (backend). A busca ⌘K (`command-search.tsx`) tem lista própria (`PAGES`) e nunca
 teve esta entrada — nada a sincronizar aqui.
+
+## ⚠️⚠️ Online · o alerta "Culto online sem dados" era 100% falso positivo (2026-08-24 · SEM migration)
+
+Matheus recebeu *"o online não foi coletado"*. **A coleta estava funcionando.** O
+alerta cobrava um dado uma hora ANTES do único cron que o preenche:
+
+| cron (`vercel.json`) | horário UTC | o que faz |
+|---|---|---|
+| `/api/notificacoes/cron` | **09:00** | chama `verificarColetaOnline()` e alerta |
+| `/api/online/cron/ds-collect` | **10:00** | é quem grava `cultos.online_ds` |
+
+`verificarColetaOnline` varre os cultos de **ontem + anteontem** e cobrava
+`online_ds` dos dois. Mas o DS de um culto do dia D só nasce no `ds-collect` de
+**D+1 às 10:00** — logo, às 09:00 o culto de ontem *sempre* aparecia sem DS.
+Resultado: **176 notificações, 163 não lidas, 100% falsas** desde que o alerta
+nasceu (08/08). Todos os cultos citados tinham `youtube_video_id`, `online_pico`
+e `online_ds` preenchidos, e o token OAuth estava saudável (`last_error` NULL).
+
+**Conserto** (`backend/services/onlineCollectors.js`): `dsJaDeviaTerColetado(data,
+agora)` — DS só é cobrado quando a janela do coletor já passou (`D+2` sempre;
+`D+1` só depois de `DS_CRON_HORA_UTC = 10`). `video_id` e `pico` continuam
+cobrados de ontem, porque quem os preenche (`sync` 06:00 e o live-monitor
+durante a transmissão) já rodou.
+
+**A rede de segurança não caiu:** falha REAL de DS não escapa, só atrasa um dia —
+no dia seguinte o culto entra na varredura como "anteontem" e o alerta sai com o
+dado já podendo ser cobrado de verdade.
+
+- ⚠️ **`DS_CRON_HORA_UTC` é um espelho do `vercel.json`.** Mexer no horário de
+  `ds-collect` ou do cron de notificações obriga a revisitar a constante.
+- Gate de deploy: `npm run test:online-ds-janela`
+  (`backend/services/onlineDsJanela.test.js`), que falha se a guarda voltar a
+  cobrar o culto de ontem às 09:00.
+- `online_ddus` NULL nos cultos recentes **não é falha**: DDUS é D+7 e nem entra
+  nesta verificação. Não perseguir.
+
+⚠️ **A lição, que vale pra qualquer alerta novo:** antes de subir uma verificação,
+conferir se ela roda DEPOIS de quem preenche o campo. Alerta que grita todo dia
+com o sistema saudável treina o time a ignorar o sino — e aí o dia da falha real
+passa batido. Ao criar alerta sobre dado de cron, o horário do verificador é
+parte do contrato, não detalhe de agenda.
+
+## ⚠️⚠️ O alerta de segunda pro Marcelo NUNCA rodou — coluna inexistente (2026-08-24 · SEM migration)
+
+O incidente `cron · alerta-culto-dados` (3 falhas consecutivas) chegou no app do
+staff. Medido em `system_job_runs`: **4 execuções, 4 falhas, ZERO sucessos**
+(10/08, 17/08, 24/08 ×2) e **ZERO notificações `culto_sem_dados` na história do
+banco**. O alerta que o Marcos pediu — "até segunda 10h os dados dos cultos têm
+que estar no sistema" — nunca disparou uma única vez.
+
+**Causa, provada pelo log do Postgres nos timestamps exatos das falhas:**
+`column cultos.decisoes does not exist`. O `apurarCultosPendentes` selecionava
+`presencial_adulto, decisoes` — mas **não existe `cultos.decisoes`**; as colunas
+reais são `decisoes_presenciais`, `decisoes_online`, `decisoes_kids`. PostgREST
+devolvia 42703, o `if (error) throw` derrubava, a rota respondia 500.
+
+⚠️ **O erro de fundo não era o nome da coluna, era olhar NÚMERO.** A regra do
+Marcos já estava escrita em `backend/routes/integracao.js`: **as flags
+`frequencia_lancada`/`decisoes_lancadas`, nunca os números** — lançar 0 conta
+como lançado, porque `0` é o DEFAULT da coluna e não distingue "ninguém tocou"
+de "veio zero de verdade". Com número, o culto que legitimamente teve 0 seria
+cobrado do Marcelo toda segunda, para sempre. O conserto alinhou o serviço à
+regra que o painel já seguia.
+
+**Dois silêncios fechados na mesma passada** (os dois diziam "ok" fazendo nada):
+- A query de `cultos_dados_submissoes` **ignorava o erro**. Sem ela, o `Set`
+  fica vazio, TODO culto parece pendente e o Marcelo recebe uma lista falsa.
+  Agora lança. Alerta errado queima a confiança no alerta.
+- Responsável não encontrado em `profiles` deixava os 3 canais `false` e
+  retornava `ok: true, pendentes: 6` — **sucesso aparente notificando ninguém**.
+  Agora lança, pra virar incidente visível (cobre `ALERTA_CULTO_EMAIL` trocado,
+  login desativado, e-mail renomeado).
+
+- Gate de deploy: `npm run test:alerta-culto`
+  (`backend/services/alertaCultoPendente.test.js`), que fica vermelho se o
+  predicado voltar a olhar os números.
+- ⚠️ **Marcelo não tem `telefone` em `profiles`** → o canal WhatsApp nunca vai
+  disparar; hoje o alerta chega por notificação + e-mail. Não é bug do código.
+- Na primeira segunda com o conserto no ar, o alerta tem **6 cultos** de verdade
+  pra cobrar (Bridge e AMI de 22/08 + os 4 domingos de 23/08).
+
+⚠️ **A lição de MÉTODO, que é a mesma do falso positivo do DS acima:** as duas
+falhas deste dia foram de **alerta**, não de dado — um gritando sem motivo, o
+outro mudo desde que nasceu. `system_job_runs` responde "isto já funcionou
+alguma vez?" em uma query, e é a primeira pergunta a fazer sobre qualquer cron:
+**"3 falhas consecutivas" pode significar "nunca funcionou", não "quebrou".**
+Nenhum teste unitário pega coluna inexistente — só o banco vivo pega.
+
+## ⚠️⚠️ Lembrete de escala ganhou interruptor de VERDADE (2026-08-24 · SEM migration)
+
+Matheus quis desligar o aviso *"Você está escalado(a)"* (o dos dois botões
+"Vou sim"/"Não vou poder") e perguntou se **arquivar o template na Meta** resolvia.
+**Não resolve — piora.**
+
+```js
+// backend/services/whatsappFila.js:40
+const ESTADOS_TEMPLATE_BLOQUEADOS = new Set(['REJECTED', 'PAUSED', 'DISABLED']);
+```
+
+⚠️ **`ARCHIVED` não está na lista** — e a palavra não aparece **nenhuma vez** em
+`backend/`, `src/` ou `supabase/`. Template arquivado passa a trava, o envio sai,
+a Meta recusa com **132001** (que está em `CODIGOS_META_PERMANENTES`) e cada
+pessoa vira uma linha `status='erro'` + uma notificação de falha terminal
+(`avisarFalhaTerminal`). Troca-se mensagem indesejada por alerta indesejado.
+
+⚠️⚠️ **`wa_templates.ativo` É UM INTERRUPTOR DE MENTIRA.** A coluna existe, está
+editável na tela de Comunicação (`src/pages/Comunicacao.tsx:521`,
+`backend/routes/comunicacao.js:197`) e **NENHUMA query do sistema a lê**. Era o
+caminho mais natural pra desligar um disparo, e não desliga nada. Não usar, e não
+criar o terceiro caso.
+
+**O que passou a existir:** o disparo entrou no catálogo
+(`comunicacaoAutomaticas.js`, id **`escala_vespera`**), então ganhou o switch em
+**Comunicação → Disparos → Automáticas** — desliga na hora (cache de 60s), sem
+redeploy, e religa igual. O freio é o `disparos_off` que já existia; só faltava
+este disparo (e o resumo Kids, que **continua sem interruptor**).
+
+- ⚠️ **A guarda no remetente fica DEPOIS do aviso no app, de propósito**
+  (`escalaAviso.js`): desligar silencia **só o WhatsApp**, o push do app continua.
+  Foi a escolha do Matheus. Quem lê "desligado" na tela esperando silêncio total
+  se engana — está escrito no comentário da entrada do catálogo.
+- Fail-OPEN, como o resto do freio: erro de leitura = nada desligado.
+- Gate de deploy: `npm run test:disparo-interruptor`, que exige que **remetente,
+  catálogo e validação do PATCH concordem no mesmo id**. Id que o remetente checa
+  e o catálogo não tem = switch invisível; id no catálogo que remetente nenhum
+  checa = o `wa_templates.ativo` de novo.
+
+**Sobre o espelho de público** (`publicoEscalaVespera`): ele NÃO reescreve a
+régua — chama `utils/avisoEscala.agruparParaAviso`, a mesma função pura do
+remetente (e que já está no gate), com os mesmos `dias: 4, porAntecedencia: true`.
+Só as duas leituras (cultos + escalas) são espelho. Duas armadilhas que eu caí e
+consertei medindo contra produção:
+- **`params` é `[ÁREAS, evento, quando]`** — `params[0]` NÃO é o nome da pessoa.
+  Usar `params[0]` como nome renderizava *"Coordenação"* na coluna de gente. O
+  nome é `g.nome` (`vol_schedules.volunteer_name`).
+- **`planning_center_person_id` não é decoração no select**: `chavePessoa` é
+  `volunteer_id || planning_center_person_id`. Sem a coluna, quem não tem
+  `volunteer_id` agrupa sob a chave `null` e várias pessoas viram um grupo só —
+  o espelho subcontaria.
+
+⚠️ Ele não aplica dedup nem teto de rodada, igual aos outros itens: o número é
+"quem se encaixa na regra HOJE", não "quantas mensagens saem agora".
+
+## ⚠️⚠️ FILTRO POR ANO · a primeira janela FECHADA do sistema (2026-08-24 · SEM migration)
+
+Pedido do Marcos, logo depois de apresentar os OKRs ao ministerial: *"nenhum
+filtro de data tem 'por ano' e aí selecionar o ano — não consigo ver a jornada
+por ano, só os últimos 6 meses ou 365 dias, dentro de grupos, cuidados,
+voluntarios, nsm, jornada, inscrições. Todos os módulos que tem essa área de
+filtro, adicione o filtro de ano (não crie filtros novos)."*
+
+### ⚠️⚠️ A LEI: toda janela do sistema era ABERTA — ano é a primeira que FECHA
+
+Todo filtro daqui era **"últimos N dias a partir de agora"**, então bastava um
+`desde`/`inicio`; ninguém nunca precisou da ponta de cima. Ano tem começo **E**
+fim: resolver "2024" e usar só o `desde` mostraria **2024→hoje** — e erra em
+**SILÊNCIO**, do jeito mais difícil de perceber, porque o número só fica maior e
+nada quebra.
+
+⇒ **Toda régua de janela passou a devolver a ponta de cima, e quem consome é
+OBRIGADO a aplicá-la:**
+
+| lado | função | como o fim aparece |
+|---|---|---|
+| cliente | `src/lib/janelaPeriodo.js` · `resolverJanela` | `ateMs` SEMPRE — `Infinity` na janela móvel |
+| servidor | `backend/utils/janelaPeriodo.js` · `resolverJanelaPeriodo` | `fim` (data) no ano · `null` na móvel |
+| jornada | `services/jornadaEngajamento.js` · `recorteJanela` | `ate` no ano · `null` na móvel |
+
+`Infinity`/`null` na janela móvel é o que preserva o comportamento antigo byte a
+byte: `data <= Infinity` é sempre verdade, e `if (fim)` não aplica `.lte`.
+
+⚠️ **O contrato de query é ADITIVO**: `?dias=90` continua valendo; `?ano=2024` é
+o caminho novo. Cliente antigo não muda de comportamento.
+
+⚠️ **A lista de anos NÃO é escrita à mão** (`opcoesAno()` · `ANO_INICIAL = 2022`,
+o 1º ano com dado real — 2.383 contribuições). Ano novo aparece sozinho em 1º de
+janeiro, sem PR.
+
+### ⚠️⚠️ `toISOString()` MATA a janela fechada — o teste pegou
+
+`janelaIso` formatava com `toISOString().slice(0,10)`. **31/12/2024 às 23:59:59
+LOCAL é 01/01/2025 em UTC**, então o `ate` do ano fechado vazava para o ano
+seguinte — a janela "fechada" fechando no lugar errado. Formatação passou a ser
+por componentes LOCAIS (`diaLocal`), nos dois lados. É a mesma armadilha do dia
+da curva do censo, do "culto de agora" e do totem Kids, agora numa borda em que
+ela é literalmente o bug que a feature existe para evitar.
+
+⚠️ **Ano CORRENTE nunca termina em 31/12**, e sim HOJE: os cultos nascem
+**pré-agendados até dezembro com frequência 0**, então ir até o fim do ano
+encheria a série de meses vazios e inflaria todo denominador de "cultos no
+período".
+
+### Onde entrou, e o que cada tela precisou
+
+| módulo | onde | o que mudou |
+|---|---|---|
+| **Grupos** | Caixa de entrada (`GruposEntrada.jsx`) | `dentro()` passou a cortar em cima nos **4** grupos de linha (a rota corta só o `desde`) · `/entrada/cobertura` ganhou `ate` |
+| **Cuidados** | Dashboard | `dashboard-series` aceita `?ano=` · `.lte` nas 3 leituras · o EIXO do gráfico fecha no ano |
+| **Voluntariado** | Relatórios (`PeriodFilter`) | `getPeriodRange` já devolvia `{start,end}` — o ano entrou sem consumidor novo |
+| **Jornada** | `PainelJornada` | janela `ano:AAAA` no motor (`comJanela` aplica `.lte`) |
+| **Inscrições** | Dashboard | seletor de ano **PREENCHE** os campos De/Até que já existiam |
+| **Governança** | Ritual (OKR/DRE/KPI/CC) | `from`/`to`, meses do fetch de KPI, gate do comparativo e as COLUNAS do comparativo (12 meses DAQUELE ano) |
+| **NSM** | — | **já tinha** seletor de ano próprio (começa em 2026 por decisão do Marcos de 10/06) · nada a fazer |
+
+⚠️⚠️ **DUAS telas NÃO entregam "retrato fechado do ano", e a tela DIZ isso:**
+
+1. **Jornada** — o motor corta pela janela só **Investir** (devocional) e
+   **Generosidade** (dízimo); **Seguir, Conectar e Servir são ESTADO ATUAL** (em
+   grupo agora, serve agora). "Jornada em 2024" mistura atividade de 2024 com o
+   estado de hoje. Faixa âmbar na tela declara isso. Um retrato histórico de
+   verdade exigiria ler `entrou_em/saiu_em` e `desde/ate` — é mudança de MOTOR,
+   e mexeria no número que o `/painel` já publica. **Decisão do Marcos.**
+2. **Voluntariado → aba Inativos** — "inativo" é sempre relativo a **HOJE** (quem
+   parou e é candidato a contato). "Quem não serviu em 2024" não é a pergunta
+   dessa lista, e responder com o cutoff de um ano fechado devolveria gente que
+   voltou a servir depois. Com ano selecionado ela **cai no padrão de 3 meses** e
+   avisa em âmbar; as outras abas respeitam o ano.
+
+Publicar qualquer um dos dois sem a ressalva seria um número que mente — a mesma
+lei do "todo corte mostra a BASE ao lado" do Perfil da Membresia.
+
+### De carona: uma contagem que podia inflar o buraco de divulgação
+
+`/grupos/entrada/cobertura` lia os pedidos com **`.limit(1000)`**, e ali "pedido
+que não veio na página" é lido como **"grupo sem pedido"** — ou seja, o painel
+INFLARIA a lista de grupos a cobrar. Com janela de um ano inteiro isso deixa de
+ser hipótese. Virou paginação.
+
+- Testes no gate: `src/test/janelaPeriodo.test.ts` (19) e
+  `src/test/janelaPeriodoBackend.test.ts` (16 · inclui o **espelho** cliente ×
+  servidor: `ANO_INICIAL` e a granularidade têm que concordar em toda opção que a
+  tela oferece). **6 mutantes RODADOS e mortos**: `fim: null` no ano → 4
+  vermelhos · `toISOString` no fim → 1 · ano corrente indo a 31/12 → 1 · aceitar
+  ano fora da faixa → 3 · granularidade do ano voltando a 'semana' → 2 · tirar o
+  `.lte` do `comJanela` da jornada → 1.
+- ⚠️⚠️ **O CI pegou o que a minha máquina escondia, e a lição vale pra toda
+  guarda de fuso deste repo.** Três casos afirmavam INSTANTES em `-03:00` contra
+  uma janela que `resolverJanela` monta com componentes **LOCAIS** (de propósito:
+  ele roda no NAVEGADOR de quem está no Rio). Local aqui = **America/Sao_Paulo**;
+  no gate = **UTC**. Verde na máquina, vermelho no CI — e no caso do `janelaIso`
+  era pior: em UTC o mutante do formatador **SOBREVIVERIA**, porque
+  `toISOString()` dá a mesma resposta. ⇒ **teste de fuso que não FORÇA o fuso não
+  guarda nada** (`process.env.TZ` dentro do caso, com restauração no `finally` ·
+  mesmo recurso do `divisorMandala.test.ts`). Os 2 mutantes foram reconferidos
+  **rodando sob `TZ=UTC`**: 1 e 3 vermelhos.
+- ⚠️ `src/test/mapaGerador.test.ts` ganhou timeout explícito de 30s no caso de
+  determinismo: ele roda o gerador **duas vezes** (varre `backend/routes`,
+  `backend/utils`, os 2 repos de app) e **um arquivo novo em `backend/utils/`
+  bastou** pra estourar os 5s do default na suíte inteira. Ficava vermelho **por
+  tempo, não por indeterminismo** — a asserção é sobre a saída ser igual, não
+  sobre ser rápida.
+- ⚠️ **CORREÇÃO DE REGISTRO**: este arquivo diz em dois lugares que o gate de
+  deploy tem 10 (e depois 12) scripts. Em 24/08 são **16** — entraram
+  `test:online-ds-janela`, `test:alerta-culto`, `test:disparo-interruptor` e
+  `test:porta-ligar`. Conferir no `.github/workflows/deploy-vercel.yml`, nunca
+  aqui: este número envelhece a cada leva.
+
+## ⚠️⚠️ A política 'ligar' do contrato de porta NÃO cumpria o contrato (2026-08-24 · SEM migration)
+
+Pergunta do Matheus: *"não podemos usar as inscrições do Celebra para atualizar os
+dados cadastrais de membresia?"* — e a LEI do Contrato de porta já mandava. Medido
+no Celebra 2026 (301 inscrições, `insc_eventos` + `inscricoes`):
+
+| | |
+|---|---|
+| CPF que preencheria cadastro vazio | **19** · **0 conflitos** em 151 comparações |
+| Telefone divergente | 25 · só **11** chegaram em `mem_contatos` (**14 perdidos**) |
+| Inscrição sem `membro_id` | **71** (23%) · 38 pessoa nova, 18 com CPF de membro ATIVO, 6 só de apagado |
+
+**A causa é UMA e explica os dois sintomas.** `processarIdentidade` tem dois ramos:
+`'criar'` chama `acharOuCriarGuardado`, que consolida CPF tardio **e** acumula
+contato. `'ligar'` chamava `acharMembroGuardado` — **só-leitura** — e não fazia
+**nenhum** dos dois. Antes de 23/08 o Celebra usava `'ligar'` pra todo mundo.
+
+⚠️ **A escrita NÃO pode ir pra dentro de `acharMembroGuardado`**: 15+ chamadores, e
+`publicGenerosidade.js:19` declara no cabeçalho que aquele match é read-only. Ela
+mora na camada da PORTA (`inscricaoContrato.processarIdentidade`), que é onde a lei
+se aplica.
+
+**Hipóteses que a medição DERRUBOU** (registradas porque são as tentadoras):
+- *"o gate `sinal_fraco_ignorado` do `cpfReconciliar` barra os 19"* — **não**: 18 dos
+  19 têm o nascimento conferindo dos dois lados, o gate passaria. Só 1 é barrado.
+- *"o ramo de CPF exato passa pelo `candidatoCompativel`"* (que exige nascimento dos
+  2 lados) — **não**: aquele gate só vale nos ramos FRACOS. CPF exato liga sem condição.
+- *"CPF guardado formatado faz o `.eq()` falhar"* — **não**: 1.840 CPFs, **0**
+  com máscara, 0 com tamanho errado, 0 duplicado ativo.
+- *"24 órfãs deveriam ter ligado"* — era **18**: 6 batiam só com membro **apagado**
+  (não-match legítimo). ⚠️ Eu tinha esquecido o `deleted_at` na primeira medição.
+
+⚠️ **`data_nascimento` NÃO pode ser preenchido pela inscrição.** Os 20 conflitos têm
+**o CPF idêntico dos dois lados** — o match está certo, a DATA está errada em um dos
+lados, e **13 dos 20 divergem em mais de 5 anos**. Não é dedo escorregando: é fila
+humana. Telefone/e-mail idem — divergir é o caso NORMAL (família compartilha), e o
+destino deles é `mem_contatos`, nunca sobrescrever o principal.
+
+**Backfill:** `reconciliar-cpf-backfill.js` cobria batismo/vol/next e **não cobria
+`inscricoes`** — a espinha, que é a porta que mais coleta CPF. Incluída. Dry-run em
+produção (24/08): `inscricoes` → 18 vinculadas ao dono + 18 CPFs preenchidos + 1
+conflito pra fila; e apareceu de brinde **`vol_inscricoes.preencher_cpf_no_membro:
+63`**, estoque que ninguém tinha aplicado.
+
+- Gate de deploy: `npm run test:porta-ligar` — guarda ESTÁTICA (sobre o código sem
+  comentário) de que o ramo 'ligar' chama `registrarContatoDaPorta` e
+  `reconciliarCpfTardio`, que a confiança é `'forte'` **só** para `nome+nascimento`,
+  e que `inscricoes` está nos SATELITES do backfill.
+- ⚠️ A fila de `/entradas` só vê `membro_id IS NULL` (`inscricaoOrfas.js:60`): a
+  inscrição que **deu match** e trouxe dado divergente **nunca vira sugestão**. E quem
+  enfileira as órfãs é **script manual**, não cron. Os dois seguem pendentes.

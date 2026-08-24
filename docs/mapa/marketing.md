@@ -147,6 +147,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `marketing_recorrentes_participantes`
 - `profiles`
 - `solicitacoes`
+- `vw_fin_decendio`
 
 **RPCs**
 

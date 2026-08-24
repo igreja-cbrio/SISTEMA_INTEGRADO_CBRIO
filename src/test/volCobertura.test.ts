@@ -134,3 +134,64 @@ describe('contarStatus · escalado ≠ confirmou', () => {
       .toEqual({ total: 1, confirmados: 0, recusados: 0, pendentes: 1 });
   });
 });
+
+// ⚠️⚠️ RECUSA REABRE A VAGA (21/08/2026). Pedido do Matheus: *"o sistema já deve
+// deixar a pessoa inativa para aquele culto que ela disse que não pode ir, pois
+// senão o supervisor da área pode escalar a pessoa de novo sem querer."*
+//
+// Antes disto, uma escala `declined` contava como PREENCHIDA: o aviso de recusa
+// dizia "a vaga voltou a ficar em aberto" e a tela mostrava o lugar ocupado por
+// quem acabou de dizer que não vai. Medido em 21/08: 27 escalas futuras
+// recusadas, nenhuma reabrindo vaga.
+describe('recusa reabre a vaga', () => {
+  const item = (over: Record<string, unknown> = {}) => ({
+    id: 'i1', team_id: 't1', position_id: 'p1', quantidade: 2, ...over,
+  });
+  const esc = (id: string, status: string | null, over: Record<string, unknown> = {}) => ({
+    id, volunteer_id: `v_${id}`, team_id: 't1', position_id: 'p1',
+    escala_culto_item_id: 'i1', confirmation_status: status, ...over,
+  });
+
+  it('⚠️ quem recusou NÃO preenche — é a invariante', () => {
+    const r = montarCobertura([item()], [esc('a', 'confirmed'), esc('b', 'declined')]);
+    expect(r.itens[0].preenchidas).toBe(1);
+    expect(r.itens[0].faltam).toBe(1);
+    expect(r.itens[0].recusadas).toBe(1);
+    expect(r.resumo.preenchidas).toBe(1);
+    expect(r.resumo.faltam).toBe(1);
+  });
+
+  it('⚠️ mas CONTINUA aparecendo na vaga — sumir tira do supervisor quem ele precisa repor', () => {
+    const r = montarCobertura([item()], [esc('a', 'confirmed'), esc('b', 'declined')]);
+    expect(r.itens[0].pessoas.map(p => p.id).sort()).toEqual(['a', 'b']);
+    expect(r.sobrando).toHaveLength(0);
+  });
+
+  it('pendente e confirmado seguem preenchendo — só a recusa abre vaga', () => {
+    const r = montarCobertura([item()], [esc('a', 'pending'), esc('b', 'confirmed')]);
+    expect(r.itens[0].preenchidas).toBe(2);
+    expect(r.itens[0].faltam).toBe(0);
+    expect(r.itens[0].recusadas).toBe(0);
+  });
+
+  it('status nulo conta como preenchido (o default da base)', () => {
+    const r = montarCobertura([item({ quantidade: 1 })], [esc('a', null)]);
+    expect(r.itens[0].preenchidas).toBe(1);
+  });
+
+  it('⚠️ recusada no vínculo DIRETO não bloqueia o fallback de mostrar a vaga aberta', () => {
+    // 'a' está amarrada ao item e recusou; 'c' está solta no par (equipe,função).
+    const solta = { id: 'c', volunteer_id: 'v_c', team_id: 't1', position_id: 'p1', confirmation_status: 'confirmed' };
+    const r = montarCobertura([item({ quantidade: 1 })], [esc('a', 'declined'), solta]);
+    expect(r.itens[0].preenchidas).toBe(1); // a 'c' entrou no lugar
+    expect(r.itens[0].faltam).toBe(0);
+    expect(r.sobrando).toHaveLength(0);
+  });
+
+  it('todos recusaram: a vaga fica INTEIRA em aberto', () => {
+    const r = montarCobertura([item()], [esc('a', 'declined'), esc('b', 'declined')]);
+    expect(r.itens[0].preenchidas).toBe(0);
+    expect(r.itens[0].faltam).toBe(2);
+    expect(r.resumo.cobertura_pct).toBe(0);
+  });
+});

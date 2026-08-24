@@ -241,6 +241,108 @@ async function bloqueiosGruposFrequencia() {
 // de portas do /inscricoes: o que não está no inventário fica invisível, e
 // mensagem automática invisível é a que ninguém descobre que está errada (foi
 // assim que o devocional falhou 187 vezes sem ninguém saber).
+/**
+ * ESPELHO de `services/escalaAviso.js` (cron `/api/agente-voluntariado/cron/checar`,
+ * 8h10 BRT) — o aviso "Você está escalado(a)" com os dois botões de quick-reply
+ * ("Vou sim" / "Não vou poder").
+ *
+ * ⚠️ A RÉGUA NÃO É REESCRITA AQUI. Quem decide quem e quando é
+ * `utils/avisoEscala.agruparParaAviso`, a MESMA função pura que o remetente usa
+ * (e que está no gate de deploy), chamada com os MESMOS parâmetros de
+ * `avisarVespera` (`dias: 4, porAntecedencia: true` · Kids em 3 dias, o resto na
+ * véspera). Só as duas leituras (cultos + escalas) são espelho — se elas mudarem
+ * no remetente, mudar aqui também.
+ *
+ * ⚠️ O telefone sai da MESMA cadeia canônica do remetente (`perfisPorId`), não
+ * de `vol_profiles.phone` — ler só ali é o bug de 13/08 (8 de 930 perfis têm
+ * telefone nessa coluna). Quem fica sem telefone alcançável entra em `fora`,
+ * porque conta pro universo mas não recebe.
+ *
+ * ⚠️ NÃO aplica a dedup de "já avisei" nem o teto de rodada — igual aos outros
+ * itens do catálogo, o número é "quem se encaixa na regra HOJE", não "quantas
+ * mensagens vão sair agora". Quem já foi avisado ontem conta aqui e não recebe
+ * de novo (a dedup vive em `selecionarRodada`, no remetente).
+ */
+async function publicoEscalaVespera() {
+  const { agruparParaAviso } = require('../utils/avisoEscala');
+  const { perfisPorId } = require('./agenteVoluntariado');
+
+  const agora = new Date().toISOString();
+  const DIAS = 4; // espelha avisarVespera · limite externo, não a antecedência
+  const fim = new Date(Date.now() + DIAS * 86400000).toISOString();
+
+  const { data: cultos, error: cErr } = await supabase.from('vol_services')
+    .select('id, name, scheduled_at')
+    .gte('scheduled_at', agora).lte('scheduled_at', fim).order('scheduled_at');
+  if (cErr) throw cErr;
+  if (!cultos?.length) {
+    return { total: 0, pessoas: [], fora: [], universo: { rotulo: 'nenhum culto nos próximos 4 dias', qtd: 0 } };
+  }
+  const porCulto = Object.fromEntries(cultos.map(c => [c.id, c]));
+
+  const escalasBrutas = [];
+  const ids = cultos.map(c => c.id);
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from('vol_schedules')
+      // ⚠️ `planning_center_person_id` NÃO é decoração: `chavePessoa` é
+      // `volunteer_id || planning_center_person_id`. Sem ela, quem não tem
+      // volunteer_id agrupa sob a chave `null` e VÁRIAS pessoas viram um grupo
+      // só — o espelho passaria a subcontar. Mesmo select do remetente.
+      .select('id, service_id, team_id, volunteer_id, planning_center_person_id, volunteer_name, team_name, confirmation_status')
+      .in('service_id', ids.slice(i, i + 200));
+    if (error) throw error;
+    escalasBrutas.push(...(data || []));
+  }
+  if (!escalasBrutas.length) {
+    return { total: 0, pessoas: [], fora: [], universo: { rotulo: 'ninguém escalado nos próximos 4 dias', qtd: 0 } };
+  }
+
+  // Área da equipe decide a antecedência (Kids = 3 dias). Best-effort igual ao
+  // remetente: sem ela todo mundo cai na véspera, que é o default.
+  let areaPorEquipe = {};
+  try {
+    const teamIds = [...new Set(escalasBrutas.map(e => e.team_id).filter(Boolean))];
+    for (let i = 0; i < teamIds.length; i += 200) {
+      const { data } = await supabase.from('vol_teams').select('id, area').in('id', teamIds.slice(i, i + 200));
+      (data || []).forEach(t => { areaPorEquipe[t.id] = t.area; });
+    }
+  } catch { /* todos na véspera */ }
+
+  const grupos = agruparParaAviso({
+    escalas: escalasBrutas.map(e => ({
+      ...e,
+      team_area: areaPorEquipe[e.team_id] || null,
+      scheduled_at: porCulto[e.service_id]?.scheduled_at,
+      service_name: porCulto[e.service_id]?.name,
+    })),
+    agora, dias: DIAS, diasAlvo: null, porAntecedencia: true,
+  });
+
+  const perfis = await perfisPorId(grupos.map(g => g.volunteer_id).filter(Boolean));
+  const comTelefone = [];
+  let semTelefone = 0;
+  for (const g of grupos) {
+    const tel = g.volunteer_id ? perfis[g.volunteer_id]?.phone : null;
+    if (tel) comTelefone.push({ g, tel });
+    else semTelefone++;
+  }
+
+  return {
+    total: comTelefone.length,
+    // ⚠️ O nome é `g.nome` (= `vol_schedules.volunteer_name`). NÃO usar
+    // `params[0]`: os params do template são [ÁREAS, evento, quando], então
+    // params[0] renderizaria "Coordenação" na coluna de nome de pessoa.
+    pessoas: comTelefone.slice(0, TETO_PESSOAS).map(({ g, tel }) => ({
+      nome: g.nome || '(sem nome na escala)',
+      telefone: tel,
+      quando: [g.params?.[1], g.params?.[2]].filter(Boolean).join(' · ') || null,
+      hoje: false,
+    })),
+    fora: [{ rotulo: 'escalados sem telefone alcançável (recebem só pelo app)', qtd: semTelefone }],
+    universo: { rotulo: 'escalados na antecedência de aviso (Kids em 3 dias, o resto na véspera)', qtd: grupos.length },
+  };
+}
+
 const CATALOGO = [
   {
     id: 'aniversario_voluntario',
@@ -298,6 +400,19 @@ const CATALOGO = [
       return ['O nome do template não está configurado (env WHATSAPP_TEMPLATE_DEVOCIONAL) e o código cai num nome fixo, "devocional_diario", que não existe na conta da Meta. Resultado: ele TENTA todo dia e a Meta recusa todas.'];
     },
     publico: publicoDevocional,
+  },
+  {
+    id: 'escala_vespera',
+    nome: 'Você está escalado(a) (véspera)',
+    quando: 'Todo dia às 8h10 BRT · Kids com 3 dias de antecedência, o resto na véspera',
+    regra: 'Quem está escalado na antecedência da sua área, ainda não avisado por nenhum dos dois canais, e com telefone alcançável pela cadeia canônica (perfil → cadastro → CPF → formulário → contato secundário). Teto de 200 por rodada; quem não couber sai amanhã.',
+    fonte: 'GET /api/agente-voluntariado/cron/checar → services/escalaAviso.js',
+    contexto: 'voluntariado.escala_aviso',
+    envTemplate: 'WHATSAPP_TEMPLATE_ESCALA',
+    // ⚠️ DESLIGAR AQUI SILENCIA SÓ O WHATSAPP. O aviso no app continua saindo —
+    // é decisão do Matheus (24/08), e a guarda no remetente fica DEPOIS do push
+    // justamente por isso. Quem espera silêncio total nesta tela se engana.
+    publico: publicoEscalaVespera,
   },
 ];
 

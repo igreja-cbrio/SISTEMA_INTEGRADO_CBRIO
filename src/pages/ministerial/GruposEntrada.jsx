@@ -253,11 +253,14 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     if (!painelAberto) return;
     let vivo = true;
     const desde = new Date(janela.desdeMs).toISOString();
-    api.entradaCobertura({ desde })
+    // `ate` so vai na janela FECHADA (ano) — na movel e Infinity.
+    const params = { desde };
+    if (Number.isFinite(janela.ateMs)) params.ate = new Date(janela.ateMs).toISOString();
+    api.entradaCobertura(params)
       .then(r => { if (vivo) setCobertura(r || null); })
       .catch(() => { if (vivo) setCobertura(null); });
     return () => { vivo = false; };
-  }, [painelAberto, janela.desdeMs]);
+  }, [painelAberto, janela.desdeMs, janela.ateMs]);
 
   // Painel da conferência (quem respondeu × quem falta) — reusa o MESMO
   // endpoint do card da aba Envios; lazy, só quando o bloco de líderes abre.
@@ -281,8 +284,21 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   // Marcos 14/07) — assim, filtrar um status não zera os outros cards.
   const rowsBase = useMemo(() => {
     const desdeMs = janela.desdeMs;
+    // ⚠️ `ateMs` existe por causa do filtro POR ANO (24/08/2026), a primeira
+    // janela FECHADA daqui. Nas janelas móveis é Infinity, então este corte não
+    // muda nada nelas. Sem ele, escolher "2024" traria 2024→hoje em silêncio.
+    const ateMs = janela.ateMs;
+    const dentro = (quando) => {
+      if (!quando) return true;               // sem data: nunca esconder
+      const t = new Date(quando).getTime();
+      if (Number.isNaN(t)) return true;       // data ilegível: nunca esconder
+      return t >= desdeMs && t <= ateMs;
+    };
     const lista = [];
     for (const p of pedidos) {
+      // ⚠️ A rota já corta pelo `desde`, mas NÃO pelo fim — o corte de cima só
+      // pode ser feito aqui.
+      if (!dentro(p.created_at)) continue;
       lista.push({
         tipo: 'pedido', key: `p_${p.id}`, data: p.created_at,
         nome: p.nome, telefone: p.telefone, email: p.email,
@@ -296,7 +312,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     }
     for (const e of encs) {
       const quando = e.encaminhado_em || e.created_at;
-      if (quando && new Date(quando).getTime() < desdeMs) continue;
+      if (!dentro(quando)) continue;
       lista.push({
         tipo: 'enc', key: `e_${e.id}`, data: quando,
         nome: e.nome, telefone: e.telefone, email: null,
@@ -308,6 +324,9 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
       });
     }
     for (const l of lideresInsc) {
+      // A rota tambem corta so o `desde` aqui — sem este `dentro()` a janela
+      // POR ANO traria candidatura de 2024 ate hoje, em silencio.
+      if (!dentro(l.created_at)) continue;
       lista.push({
         tipo: 'lider', key: `l_${l.id}`, data: l.created_at,
         nome: l.nome, telefone: l.telefone, email: l.email,
@@ -321,7 +340,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     for (const r of renovacoes) {
       if (!r.renovacao) continue;
       const quando = r.renovacao.ultima_resposta_em || r.renovacao.enviado_em;
-      if (quando && new Date(quando).getTime() < desdeMs) continue;
+      if (!dentro(quando)) continue;
       lista.push({
         tipo: 'renov', key: `r_${r.renovacao.id}`, data: quando,
         nome: r.lider_nome || 'Líder', telefone: r.lider_telefone, email: null,
@@ -346,7 +365,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         return true;
       })
       .sort((a, b) => new Date(b.data) - new Date(a.data));
-  }, [pedidos, encs, lideresInsc, renovacoes, busca, fOrigem, janela.desdeMs]);
+  }, [pedidos, encs, lideresInsc, renovacoes, busca, fOrigem, janela.desdeMs, janela.ateMs]);
 
   // Pedidos parados aguardando o LÍDER decidir — derivado das mesmas linhas da
   // tela (segue origem/período/busca · "não existirem duas verdades"). O nome
@@ -749,7 +768,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
             {/* ⚠️ O período TEM que aparecer no título. Sem isso o Marcos leu os
                 301 pedidos de 180 dias como se fossem os do lançamento (que foram
                 177) — o rótulo genérico "Retrato do período" era a armadilha. */}
-            <span>Retrato · {janela.rotulo} <span style={{ fontWeight: 400, color: C.t3 }}>({fmtData(janela.desdeMs)} a hoje)</span></span>
+            <span>Retrato · {janela.rotulo} <span style={{ fontWeight: 400, color: C.t3 }}>({fmtData(janela.desdeMs)} a {janela.ano ? fmtData(janela.ateMs) : 'hoje'})</span></span>
             <span style={{ fontWeight: 400, color: C.t3, fontSize: 12 }}>
               · {estat.pedidos} pedido{estat.pedidos === 1 ? '' : 's'} de {estat.pessoas} pessoa{estat.pessoas === 1 ? '' : 's'}
               {estat.novas > 0 && ` · ${estat.novas} nova${estat.novas === 1 ? '' : 's'} na plataforma`}
@@ -971,7 +990,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         <select value={fStatus} onChange={e => setFStatus(e.target.value)} style={selStyle}>
           {FILTRO_STATUS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
         </select>
-        <select value={fPeriodo} onChange={e => { const v = e.target.value; setFPeriodo(v === 'temporada' ? 'temporada' : Number(v)); }} style={selStyle}>
+        <select value={fPeriodo} onChange={e => { const v = e.target.value; setFPeriodo(v === 'temporada' || v.startsWith('ano:') ? v : Number(v)); }} style={selStyle}>
           {FILTRO_PERIODO.map(p => <option key={p.dias} value={p.dias}>{p.label}</option>)}
         </select>
       </div>
