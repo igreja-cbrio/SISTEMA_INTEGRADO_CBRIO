@@ -94,7 +94,16 @@ function Enquadrar({ bairros, tudo }: { bairros: BairroMapa[]; tudo: boolean }) 
   // do pai reenquadraria o mapa e a pessoa não conseguiria dar zoom.
   const chave = alvo.map((b) => b.norm).sort().join('|');
   useEffect(() => {
-    if (!isLoaded || !map || alvo.length === 0) return;
+    // ⚠️ NÃO exige `isLoaded`. Medido em produção em 24/08/2026: neste mapa o
+    // `load`/`idle` do MapLibre pode nunca chegar, e o enquadramento ficava
+    // preso para sempre — o mapa abria no centro/zoom das props e nenhum tile
+    // era gerado, então o calor não pintava até a pessoa mexer na câmera.
+    // `fitBounds`/`flyTo` funcionam sem o estilo estar pronto; `isLoaded`
+    // continua nas dependências só para reenquadrar se o evento aparecer.
+    if (!map || alvo.length === 0) return;
+    // O container pode ter nascido com o tamanho errado (mapa dentro de aba).
+    // Sem isto o enquadramento é calculado sobre a caixa antiga.
+    map.resize();
     if (alvo.length === 1) {
       map.flyTo({ center: [alvo[0].lng, alvo[0].lat], zoom: 13, duration: 600 });
       return;
@@ -317,6 +326,22 @@ function Camadas({
         // cruel de diagnosticar: `camadas ok calor=true`, source com as
         // features, zero erro no console, tela vazia — e UM clique de zoom
         // mostra tudo, porque mover a câmera é o que agendava o frame.
+        // ⚠️⚠️ `resize()` É O QUE ACORDA O MAPA, e esta é a causa REAL do mapa
+        // vazio — medida em produção em 24/08/2026 com a instrumentação:
+        //
+        //   zoom=10.00 centro=-43.350,-22.930  ← os valores das PROPS
+        //   estiloPronto=false
+        //   featuresRenderizadas=0 featuresNaSource=0
+        //   raioCalor=[interpolate,zoom,7,55,...]  ← o paint estava certo
+        //   effect montou isLoaded=false           ← e nunca virou true
+        //
+        // Ou seja: o mapa NUNCA termina de carregar (nem `load`, nem `idle`),
+        // então o `fitBounds` do `Enquadrar` nunca roda e nenhum tile é gerado.
+        // As camadas e o paint estavam corretos o tempo todo. Era isso que UM
+        // clique de zoom "consertava": o movimento força o recálculo.
+        // `resize()` recalcula o viewport e é o que faz o mapa tilificar sem
+        // depender de evento nenhum. É público, idempotente e barato.
+        map.resize();
         map.triggerRepaint();
         // ⚠️⚠️ CONFERIR DEPOIS, porque `setStyle` apaga camada de `addLayer`.
         // Medido em produção em 24/08/2026: trocar o tema com o mapa na tela
