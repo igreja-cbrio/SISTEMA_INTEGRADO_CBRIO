@@ -8078,6 +8078,18 @@ da área KIDS + "líder Kids do dia" dinâmico via `vol_check_ins`.
   documento e passa por aprovação da equipe Kids.
 - **Sem checkout remoto pelo app** (decisão de segurança): o pré-check-in prepara
   e gera código/QR; entrada e retirada continuam presenciais.
+- ⚠️ **Reimprimir etiqueta EXIGE SENHA** (Milena, 24/08): a 2ª via — tanto "só da
+  criança" quanto o "kit completo" — é a **credencial de retirada**, e sem gate
+  qualquer pessoa que digitasse o nome de uma criança já com check-in tirava o
+  recibo do responsável e saía com ela. `ModalSenhaReimpressao` intercepta os 3
+  caminhos (família, card individual e kit completo) e aceita o **PIN do
+  supervisor `0000`** (`DISPENSA_PIN`, resolvido local pra não depender de rede
+  no meio da fila) **ou a senha do Kids** da liderança (`/edit-senha/verificar`,
+  a mesma da edição de ficha). Pedida **toda vez** de propósito: guardar a
+  liberação por sessão devolve o buraco no tablet, que fica aberto o culto
+  inteiro. O log de `kids_etiquetas_log` carimba "liberada com senha" no
+  `motivo_reimpressao`. **Fora do gate de propósito**: a faixa "reimprimir" que
+  aparece por 10s logo após o check-in que o próprio operador acabou de fazer.
 
 **Pendências operacionais**: aplicar
 `20260522300000_totem_kids_chamadas_display.sql`; Brother no Windows do totem
