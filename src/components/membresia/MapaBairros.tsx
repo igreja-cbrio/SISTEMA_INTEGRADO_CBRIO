@@ -23,6 +23,7 @@
 // `pessoas_fora_do_mapa` e mostra ao lado. Mapa que esconde o próprio buraco é
 // pior que mapa vazio — quem olha conclui que a igreja inteira mora ali.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Maximize2, Minimize2 } from 'lucide-react';
 import MapLibreGL from 'maplibre-gl';
 import { Map, MapControls, useMap } from '@/components/ui/map';
 import { nucleoDoMapa } from '@/lib/nucleoMapaBairros';
@@ -436,6 +437,24 @@ function Camadas({
   return null;
 }
 
+/** ⚠️⚠️ O maplibre NÃO descobre sozinho que o container mudou de tamanho: o
+ *  canvas fica com a dimensão antiga e a tela cheia mostra o mapa pequeno num
+ *  quadro grande. `map.resize()` é obrigatório a cada troca — e vai num
+ *  `requestAnimationFrame` porque o efeito roda antes do browser aplicar o
+ *  layout novo, então medir na hora leria o tamanho velho. */
+function AjustarTamanho({ marca }: { marca: unknown }) {
+  const { map } = useMap();
+  useEffect(() => {
+    if (!map) return;
+    const id = requestAnimationFrame(() => {
+      map.resize();
+      map.triggerRepaint();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [map, marca]);
+  return null;
+}
+
 /** Tema do sistema. O `[data-theme]` só existe quando alguém escolheu — sem
  *  ele vale o escuro, que é o padrão do ERP. */
 function useTemaDoSistema(): 'light' | 'dark' {
@@ -464,6 +483,26 @@ export default function MapaBairros({
 }) {
   const tema = useTemaDoSistema();
   const [verTudo, setVerTudo] = useState(false);
+  const [expandido, setExpandido] = useState(false);
+
+  // ⚠️ Esc é o gesto que a pessoa TENTA primeiro em qualquer tela cheia. Sem
+  // ele o único jeito de sair é achar o botão, e em tela cheia o botão some no
+  // meio do mapa.
+  useEffect(() => {
+    if (!expandido) return;
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpandido(false);
+    };
+    window.addEventListener('keydown', aoTeclar);
+    // ⚠️ Trava o scroll do documento: sem isto a roda do mouse sobre a borda do
+    // mapa rola a página por trás do overlay.
+    const antes = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', aoTeclar);
+      document.body.style.overflow = antes;
+    };
+  }, [expandido]);
   const totalNoMapa = useMemo(() => bairros.reduce((s, b) => s + b.total, 0), [bairros]);
   const fora = useMemo(() => nucleoDoMapa(bairros).fora, [bairros]);
 
@@ -482,11 +521,29 @@ export default function MapaBairros({
   }
 
   return (
-    <div className="space-y-2">
-      <div className="h-[420px] rounded-[16px] overflow-hidden border border-border">
+    // ⚠️⚠️ A ÁRVORE É A MESMA nos dois modos — só as classes mudam. Mover o
+    // `<Map>` para dentro de outro wrapper faria o React desmontar e remontar o
+    // mapa a cada expansão: instância nova, estilo recarregado, camadas
+    // recriadas e a câmera de volta ao enquadramento inicial. Trocar classe
+    // preserva tudo.
+    <div
+      className={
+        expandido
+          ? 'fixed inset-0 z-[1100] flex flex-col gap-2 bg-background p-4'
+          : 'space-y-2'
+      }
+    >
+      <div
+        className={
+          expandido
+            ? 'relative flex-1 min-h-0 rounded-[16px] overflow-hidden border border-border'
+            : 'relative h-[420px] rounded-[16px] overflow-hidden border border-border'
+        }
+      >
         <Map theme={tema} center={[-43.35, -22.93]} zoom={10}>
           <Enquadrar bairros={bairros} tudo={verTudo} />
           <MapControls position="top-right" />
+          <AjustarTamanho marca={expandido} />
           <Camadas
             bairros={bairros}
             totalNoMapa={totalNoMapa}
@@ -494,6 +551,19 @@ export default function MapaBairros({
             onSelecionar={onSelecionar}
           />
         </Map>
+
+        {/* ⚠️ Canto superior ESQUERDO: o direito é dos controles de zoom do
+            maplibre (`MapControls position="top-right"`). */}
+        <button
+          type="button"
+          onClick={() => setExpandido((v) => !v)}
+          aria-label={expandido ? 'Sair da tela cheia' : 'Ver o mapa em tela cheia'}
+          title={expandido ? 'Sair da tela cheia (Esc)' : 'Ver em tela cheia'}
+          className="absolute left-2 top-2 z-10 inline-flex items-center gap-1.5 rounded-md border border-border bg-card/90 px-2.5 py-1.5 text-xs font-medium shadow-sm backdrop-blur hover:bg-card"
+        >
+          {expandido ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+          {expandido ? 'Sair da tela cheia' : 'Tela cheia'}
+        </button>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
