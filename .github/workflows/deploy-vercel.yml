@@ -83,6 +83,12 @@ jobs:
       - name: Janela do DS online (nao cobrar antes do coletor rodar)
         run: npm run test:online-ds-janela
 
+      # Trava o conserto de 24/08: o alerta de segunda pro Marcelo nunca rodou
+      # (selecionava cultos.decisoes, coluna inexistente) e olhava numeros em vez
+      # das flags — lancar 0 e lancar, regra do Marcos.
+      - name: Alerta de culto sem dados (flags, nao numeros)
+        run: npm run test:alerta-culto
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
