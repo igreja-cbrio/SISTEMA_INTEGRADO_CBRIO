@@ -505,25 +505,34 @@ export default function MapaBairros({
   const tema = useTemaDoSistema();
   const [verTudo, setVerTudo] = useState(false);
   const [expandido, setExpandido] = useState(false);
+  const caixaRef = useRef<HTMLDivElement>(null);
 
-  // ⚠️ Esc é o gesto que a pessoa TENTA primeiro em qualquer tela cheia. Sem
-  // ele o único jeito de sair é achar o botão, e em tela cheia o botão some no
-  // meio do mapa.
+  // ⚠️⚠️ FULLSCREEN API, não overlay `position: fixed`. A 1ª versão usava
+  // `fixed inset-0` e o mapa COLAPSOU numa faixa de ~40px em produção
+  // (24/08/2026): o `backdrop-filter` do tema Vidro no `<Card>` cria containing
+  // block, então `fixed` se ancora no CARD e não na viewport — `inset-0` passa a
+  // valer os limites do card. É a armadilha do tema Vidro registrada no
+  // CLAUDE.md, e nenhum overlay dentro de um Card escapa dela.
+  //
+  // Portal para o body resolveria o ancoramento, mas mudar a posição do `<Map>`
+  // na árvore de DOM faz o React remontá-lo: instância nova, estilo recarregado,
+  // camadas recriadas e câmera de volta ao início. A Fullscreen API não move nó
+  // nenhum — é o que o próprio `FullscreenControl` do maplibre usa.
+  const alternar = () => {
+    const el = caixaRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void el.requestFullscreen?.().catch(() => setExpandido(false));
+  };
+
+  // ⚠️ O ESTADO SEGUE O NAVEGADOR, nunca o clique: Esc, F11 e o gesto de sair do
+  // sistema operacional encerram o fullscreen sem passar pelo nosso botão, e um
+  // estado próprio ficaria mentindo (botão dizendo "Sair" fora da tela cheia).
   useEffect(() => {
-    if (!expandido) return;
-    const aoTeclar = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setExpandido(false);
-    };
-    window.addEventListener('keydown', aoTeclar);
-    // ⚠️ Trava o scroll do documento: sem isto a roda do mouse sobre a borda do
-    // mapa rola a página por trás do overlay.
-    const antes = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      window.removeEventListener('keydown', aoTeclar);
-      document.body.style.overflow = antes;
-    };
-  }, [expandido]);
+    const aoMudar = () => setExpandido(document.fullscreenElement === caixaRef.current);
+    document.addEventListener('fullscreenchange', aoMudar);
+    return () => document.removeEventListener('fullscreenchange', aoMudar);
+  }, []);
   const totalNoMapa = useMemo(() => bairros.reduce((s, b) => s + b.total, 0), [bairros]);
   const fora = useMemo(() => nucleoDoMapa(bairros).fora, [bairros]);
 
@@ -548,11 +557,11 @@ export default function MapaBairros({
     // recriadas e a câmera de volta ao enquadramento inicial. Trocar classe
     // preserva tudo.
     <div
-      className={
-        expandido
-          ? 'fixed inset-0 z-[1100] flex flex-col gap-2 bg-background p-4'
-          : 'space-y-2'
-      }
+      ref={caixaRef}
+      // ⚠️ Em tela cheia o elemento recebe a tela inteira, então precisa de
+      // `h-full` e de fundo PRÓPRIO: o `bg` que vinha do card ficou do lado de
+      // fora, e sem isto o fundo é o preto padrão do fullscreen.
+      className={expandido ? 'flex h-full w-full flex-col gap-2 bg-background p-4' : 'space-y-2'}
     >
       <div
         className={
@@ -577,7 +586,7 @@ export default function MapaBairros({
             maplibre (`MapControls position="top-right"`). */}
         <button
           type="button"
-          onClick={() => setExpandido((v) => !v)}
+          onClick={alternar}
           aria-label={expandido ? 'Sair da tela cheia' : 'Ver o mapa em tela cheia'}
           title={expandido ? 'Sair da tela cheia (Esc)' : 'Ver em tela cheia'}
           className="absolute left-2 top-2 z-10 inline-flex items-center gap-1.5 rounded-md border border-border bg-card/90 px-2.5 py-1.5 text-xs font-medium shadow-sm backdrop-blur hover:bg-card"
