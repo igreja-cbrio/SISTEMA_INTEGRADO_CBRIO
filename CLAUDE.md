@@ -12790,3 +12790,49 @@ conferir se ela roda DEPOIS de quem preenche o campo. Alerta que grita todo dia
 com o sistema saudável treina o time a ignorar o sino — e aí o dia da falha real
 passa batido. Ao criar alerta sobre dado de cron, o horário do verificador é
 parte do contrato, não detalhe de agenda.
+
+## ⚠️⚠️ O alerta de segunda pro Marcelo NUNCA rodou — coluna inexistente (2026-08-24 · SEM migration)
+
+O incidente `cron · alerta-culto-dados` (3 falhas consecutivas) chegou no app do
+staff. Medido em `system_job_runs`: **4 execuções, 4 falhas, ZERO sucessos**
+(10/08, 17/08, 24/08 ×2) e **ZERO notificações `culto_sem_dados` na história do
+banco**. O alerta que o Marcos pediu — "até segunda 10h os dados dos cultos têm
+que estar no sistema" — nunca disparou uma única vez.
+
+**Causa, provada pelo log do Postgres nos timestamps exatos das falhas:**
+`column cultos.decisoes does not exist`. O `apurarCultosPendentes` selecionava
+`presencial_adulto, decisoes` — mas **não existe `cultos.decisoes`**; as colunas
+reais são `decisoes_presenciais`, `decisoes_online`, `decisoes_kids`. PostgREST
+devolvia 42703, o `if (error) throw` derrubava, a rota respondia 500.
+
+⚠️ **O erro de fundo não era o nome da coluna, era olhar NÚMERO.** A regra do
+Marcos já estava escrita em `backend/routes/integracao.js`: **as flags
+`frequencia_lancada`/`decisoes_lancadas`, nunca os números** — lançar 0 conta
+como lançado, porque `0` é o DEFAULT da coluna e não distingue "ninguém tocou"
+de "veio zero de verdade". Com número, o culto que legitimamente teve 0 seria
+cobrado do Marcelo toda segunda, para sempre. O conserto alinhou o serviço à
+regra que o painel já seguia.
+
+**Dois silêncios fechados na mesma passada** (os dois diziam "ok" fazendo nada):
+- A query de `cultos_dados_submissoes` **ignorava o erro**. Sem ela, o `Set`
+  fica vazio, TODO culto parece pendente e o Marcelo recebe uma lista falsa.
+  Agora lança. Alerta errado queima a confiança no alerta.
+- Responsável não encontrado em `profiles` deixava os 3 canais `false` e
+  retornava `ok: true, pendentes: 6` — **sucesso aparente notificando ninguém**.
+  Agora lança, pra virar incidente visível (cobre `ALERTA_CULTO_EMAIL` trocado,
+  login desativado, e-mail renomeado).
+
+- Gate de deploy: `npm run test:alerta-culto`
+  (`backend/services/alertaCultoPendente.test.js`), que fica vermelho se o
+  predicado voltar a olhar os números.
+- ⚠️ **Marcelo não tem `telefone` em `profiles`** → o canal WhatsApp nunca vai
+  disparar; hoje o alerta chega por notificação + e-mail. Não é bug do código.
+- Na primeira segunda com o conserto no ar, o alerta tem **6 cultos** de verdade
+  pra cobrar (Bridge e AMI de 22/08 + os 4 domingos de 23/08).
+
+⚠️ **A lição de MÉTODO, que é a mesma do falso positivo do DS acima:** as duas
+falhas deste dia foram de **alerta**, não de dado — um gritando sem motivo, o
+outro mudo desde que nasceu. `system_job_runs` responde "isto já funcionou
+alguma vez?" em uma query, e é a primeira pergunta a fazer sobre qualquer cron:
+**"3 falhas consecutivas" pode significar "nunca funcionou", não "quebrou".**
+Nenhum teste unitário pega coluna inexistente — só o banco vivo pega.
