@@ -1,4 +1,10 @@
-// Prévia do NOVO FORMATO de domingo (docs/cultos-domingo/ · corte 24/08/2026),
+// Prévia do NOVO FORMATO de domingo (docs/cultos-domingo/ · corte 24/08/2026).
+//
+// ⚠️ Mora na ABA "Domingo" do Dashboard Semanal, NÃO na aba Semanal (pedido do
+// Matheus em 24/08: no meio do resumo da semana ele polui a tela de quem só
+// quer o número do domingo passado). Quem decide se a aba existe é o mesmo
+// `useLentesDomingo` que este card consome.
+//
 // ATRÁS DO VÉU: o backend só devolve dado com a flag ligada OU pra super-admin
 // (GET /dashboard-semanal/lentes-domingo). Sem visibilidade, o card nem
 // renderiza — é a "página teste" combinada com o Marcos em 13/08.
@@ -7,8 +13,7 @@
 // ocupação sobre lugares OFERECIDOS (1050 × cultos vigentes no domingo) e a
 // tabela de vigência/chaves dos tipos — os dados do Lote 3 ficam visíveis aqui.
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { dashboardSemanal as api } from '../../api';
+import useLentesDomingo from './useLentesDomingo';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import OcupacaoGauge from './OcupacaoGauge';
 import { FlaskConical } from 'lucide-react';
@@ -33,12 +38,7 @@ function fmtVigencia(t) {
 
 export default function LentesDomingoCard() {
   const [lente, setLente] = useState('separada');
-  const { data } = useQuery({
-    queryKey: ['dash-sem', 'lentes-domingo'],
-    queryFn: () => api.lentesDomingo({ semanas: 16 }),
-    staleTime: 60_000,
-    retry: 1,
-  });
+  const { data } = useLentesDomingo();
 
   // véu fechado / carregando / erro → não ocupa espaço de ninguém
   if (!data?.visivel) return null;
