@@ -2191,8 +2191,18 @@ export default function Cuidados() {
               {/* Gráfico 1 · funil do cuidado (a ponte pros outros valores) */}
               <div className="rounded-lg border border-border bg-card p-4">
                 <h3 className="font-semibold text-sm mb-1">Convertidos → 1º contato → engajados em +1 valor</h3>
-                <p className="text-xs text-muted-foreground mb-3">
-                  O gargalo do cuidado: de quem se converteu, com quantos a gente falou e quantos seguiram pra outro valor (grupo, voluntário, Next).
+                <p className="text-xs text-muted-foreground mb-2">
+                  O gargalo do cuidado: de quem se converteu, com quantos a gente falou e quantos seguiram pra outro valor.
+                </p>
+                {/* ⚠️ A régua vai ESCRITA: até 24/08 esta linha lia só a
+                    devolutiva do encaminhamento pastoral (4 linhas na história
+                    inteira) e vivia em zero. Agora lê os fatos — e quem olha
+                    precisa saber quais, senão volta a discutir o número. */}
+                <p className="text-[11px] text-muted-foreground mb-3">
+                  <strong>Engajados +1 valor</strong> = entrou em grupo, virou voluntário, esteve num encontro do Next
+                  ou se batizou <em>depois</em> de decidir. Contribuição fica de fora (é dado restrito e o gráfico é
+                  aberto). Vínculo de grupo com data de importação em massa não conta — não dá pra afirmar que nasceu
+                  depois da decisão.
                 </p>
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={dashSeries.funil} margin={{ top: 8, right: 16, left: -10, bottom: 0 }}>
