@@ -326,21 +326,23 @@ function Camadas({
         // cruel de diagnosticar: `camadas ok calor=true`, source com as
         // features, zero erro no console, tela vazia — e UM clique de zoom
         // mostra tudo, porque mover a câmera é o que agendava o frame.
-        // ⚠️⚠️ `resize()` É O QUE ACORDA O MAPA, e esta é a causa REAL do mapa
-        // vazio — medida em produção em 24/08/2026 com a instrumentação:
+        // ⚠️ `resize()` recalcula o viewport quando o container nasceu com o
+        // tamanho errado (mapa dentro de aba). É público, idempotente e barato.
         //
-        //   zoom=10.00 centro=-43.350,-22.930  ← os valores das PROPS
-        //   estiloPronto=false
-        //   featuresRenderizadas=0 featuresNaSource=0
-        //   raioCalor=[interpolate,zoom,7,55,...]  ← o paint estava certo
-        //   effect montou isLoaded=false           ← e nunca virou true
+        // ⚠️⚠️ CORREÇÃO DE REGISTRO (24/08/2026): este comentário afirmava que
+        // `isLoaded` "nunca virou true" e que o `resize()` era a causa RAIZ. As
+        // duas coisas estavam ERRADAS, e a medição seguinte desmentiu:
         //
-        // Ou seja: o mapa NUNCA termina de carregar (nem `load`, nem `idle`),
-        // então o `fitBounds` do `Enquadrar` nunca roda e nenhum tile é gerado.
-        // As camadas e o paint estavam corretos o tempo todo. Era isso que UM
-        // clique de zoom "consertava": o movimento força o recálculo.
-        // `resize()` recalcula o viewport e é o que faz o mapa tilificar sem
-        // depender de evento nenhum. É público, idempotente e barato.
+        //   22:04:04 aplicar estiloPronto=true → featuresRenderizadas=26
+        //   22:04:04 effect montou isLoaded=true       ← ele VIRA true, só tarde
+        //   22:04:04 aplicar temSource=false           ← e o efeito REMONTOU
+        //
+        // A causa raiz era o efeito das camadas depender de `isLoaded`: quando
+        // ele finalmente virava true, o cleanup removia camadas e source no
+        // instante seguinte ao mapa ter pintado. Está consertado no array de
+        // dependências, lá embaixo. Mantive o `resize()` porque o container
+        // dentro de aba é um problema real e separado — mas ele NÃO era a cura,
+        // e dizer que era mandaria a próxima sessão pro lugar errado.
         map.resize();
         map.triggerRepaint();
         // ⚠️⚠️ CONFERIR DEPOIS, porque `setStyle` apaga camada de `addLayer`.
@@ -459,15 +461,35 @@ function Camadas({
         /* mapa ja foi embora */
       }
     };
+    // ⚠️⚠️ `[map]` E SÓ. O comentário no topo deste efeito sempre disse isso e o
+    // array dizia `[map, isLoaded]` — o código fazia o oposto do que prometia, e
+    // era a causa do mapa nascer vazio. Medido em produção em 24/08/2026:
+    //
+    //   22:04:04 aplicar estiloPronto=true → featuresRenderizadas=26 na source=27
+    //   22:04:04 effect montou isLoaded=true            ← o efeito REMONTOU
+    //   22:04:04 aplicar temSource=false temCalor=false → featuresNaSource=0
+    //
+    // Ou seja: as camadas nasciam, PINTAVAM, e no instante seguinte o cleanup as
+    // removia junto com a source porque `isLoaded` acabara de virar true. A
+    // source recriada não tem tile nenhum até a câmera se mover — que é
+    // exatamente o "um clique de zoom mostra tudo" que a gente via.
+    //
+    // Recriar camada por mudança de estado do React não conserta nada aqui:
+    // quem decide a hora certa é o `map.isStyleLoaded()` dentro do `aplicar`,
+    // que roda a cada `styledata`/`idle`/`load`. `isLoaded` fica no `diag` só
+    // como informação do primeiro render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [map, isLoaded]);
+  }, [map]);
 
   // Dado novo entra pela source, sem recriar camada nem listener.
+  // ⚠️ `isLoaded` FORA das deps pelo mesmo motivo: este efeito não recria nada,
+  // mas rodar de novo à toa é ruído — e o `setData` correto acontece dentro do
+  // `aplicar`, que já é chamado quando o estilo fica pronto.
   useEffect(() => {
     if (!map) return;
     const src = map.getSource(SRC) as MapLibreGL.GeoJSONSource | undefined;
     if (src) src.setData(dados as never);
-  }, [dados, map, isLoaded]);
+  }, [dados, map]);
 
   useEffect(() => {
     if (!map || !map.getLayer(L_CIRCULO)) return;
@@ -478,7 +500,7 @@ function Camadas({
     map.setPaintProperty(L_CIRCULO, 'circle-stroke-width', [
       'case', ['==', ['get', 'norm'], sel], 3, 1.5,
     ]);
-  }, [selecionado, map, isLoaded]);
+  }, [selecionado, map]);
 
   return null;
 }
