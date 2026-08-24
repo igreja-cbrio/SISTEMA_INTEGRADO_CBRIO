@@ -95,6 +95,12 @@ jobs:
       - name: Interruptor dos disparos automaticos (id casado ponta a ponta)
         run: npm run test:disparo-interruptor
 
+      # Trava de 24/08: a politica 'ligar' do contrato de porta nao consolidava
+      # CPF nem acumulava contato — 18 CPFs e 14 telefones presos na linha da
+      # inscricao no Celebra 2026, com o cadastro ao lado sem CPF.
+      - name: Politica 'ligar' cumpre o contrato de porta (CPF + mem_contatos)
+        run: npm run test:porta-ligar
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
