@@ -12904,6 +12904,120 @@ consertei medindo contra produção:
 ⚠️ Ele não aplica dedup nem teto de rodada, igual aos outros itens: o número é
 "quem se encaixa na regra HOJE", não "quantas mensagens saem agora".
 
+## ⚠️⚠️ FILTRO POR ANO · a primeira janela FECHADA do sistema (2026-08-24 · SEM migration)
+
+Pedido do Marcos, logo depois de apresentar os OKRs ao ministerial: *"nenhum
+filtro de data tem 'por ano' e aí selecionar o ano — não consigo ver a jornada
+por ano, só os últimos 6 meses ou 365 dias, dentro de grupos, cuidados,
+voluntarios, nsm, jornada, inscrições. Todos os módulos que tem essa área de
+filtro, adicione o filtro de ano (não crie filtros novos)."*
+
+### ⚠️⚠️ A LEI: toda janela do sistema era ABERTA — ano é a primeira que FECHA
+
+Todo filtro daqui era **"últimos N dias a partir de agora"**, então bastava um
+`desde`/`inicio`; ninguém nunca precisou da ponta de cima. Ano tem começo **E**
+fim: resolver "2024" e usar só o `desde` mostraria **2024→hoje** — e erra em
+**SILÊNCIO**, do jeito mais difícil de perceber, porque o número só fica maior e
+nada quebra.
+
+⇒ **Toda régua de janela passou a devolver a ponta de cima, e quem consome é
+OBRIGADO a aplicá-la:**
+
+| lado | função | como o fim aparece |
+|---|---|---|
+| cliente | `src/lib/janelaPeriodo.js` · `resolverJanela` | `ateMs` SEMPRE — `Infinity` na janela móvel |
+| servidor | `backend/utils/janelaPeriodo.js` · `resolverJanelaPeriodo` | `fim` (data) no ano · `null` na móvel |
+| jornada | `services/jornadaEngajamento.js` · `recorteJanela` | `ate` no ano · `null` na móvel |
+
+`Infinity`/`null` na janela móvel é o que preserva o comportamento antigo byte a
+byte: `data <= Infinity` é sempre verdade, e `if (fim)` não aplica `.lte`.
+
+⚠️ **O contrato de query é ADITIVO**: `?dias=90` continua valendo; `?ano=2024` é
+o caminho novo. Cliente antigo não muda de comportamento.
+
+⚠️ **A lista de anos NÃO é escrita à mão** (`opcoesAno()` · `ANO_INICIAL = 2022`,
+o 1º ano com dado real — 2.383 contribuições). Ano novo aparece sozinho em 1º de
+janeiro, sem PR.
+
+### ⚠️⚠️ `toISOString()` MATA a janela fechada — o teste pegou
+
+`janelaIso` formatava com `toISOString().slice(0,10)`. **31/12/2024 às 23:59:59
+LOCAL é 01/01/2025 em UTC**, então o `ate` do ano fechado vazava para o ano
+seguinte — a janela "fechada" fechando no lugar errado. Formatação passou a ser
+por componentes LOCAIS (`diaLocal`), nos dois lados. É a mesma armadilha do dia
+da curva do censo, do "culto de agora" e do totem Kids, agora numa borda em que
+ela é literalmente o bug que a feature existe para evitar.
+
+⚠️ **Ano CORRENTE nunca termina em 31/12**, e sim HOJE: os cultos nascem
+**pré-agendados até dezembro com frequência 0**, então ir até o fim do ano
+encheria a série de meses vazios e inflaria todo denominador de "cultos no
+período".
+
+### Onde entrou, e o que cada tela precisou
+
+| módulo | onde | o que mudou |
+|---|---|---|
+| **Grupos** | Caixa de entrada (`GruposEntrada.jsx`) | `dentro()` passou a cortar em cima nos **4** grupos de linha (a rota corta só o `desde`) · `/entrada/cobertura` ganhou `ate` |
+| **Cuidados** | Dashboard | `dashboard-series` aceita `?ano=` · `.lte` nas 3 leituras · o EIXO do gráfico fecha no ano |
+| **Voluntariado** | Relatórios (`PeriodFilter`) | `getPeriodRange` já devolvia `{start,end}` — o ano entrou sem consumidor novo |
+| **Jornada** | `PainelJornada` | janela `ano:AAAA` no motor (`comJanela` aplica `.lte`) |
+| **Inscrições** | Dashboard | seletor de ano **PREENCHE** os campos De/Até que já existiam |
+| **Governança** | Ritual (OKR/DRE/KPI/CC) | `from`/`to`, meses do fetch de KPI, gate do comparativo e as COLUNAS do comparativo (12 meses DAQUELE ano) |
+| **NSM** | — | **já tinha** seletor de ano próprio (começa em 2026 por decisão do Marcos de 10/06) · nada a fazer |
+
+⚠️⚠️ **DUAS telas NÃO entregam "retrato fechado do ano", e a tela DIZ isso:**
+
+1. **Jornada** — o motor corta pela janela só **Investir** (devocional) e
+   **Generosidade** (dízimo); **Seguir, Conectar e Servir são ESTADO ATUAL** (em
+   grupo agora, serve agora). "Jornada em 2024" mistura atividade de 2024 com o
+   estado de hoje. Faixa âmbar na tela declara isso. Um retrato histórico de
+   verdade exigiria ler `entrou_em/saiu_em` e `desde/ate` — é mudança de MOTOR,
+   e mexeria no número que o `/painel` já publica. **Decisão do Marcos.**
+2. **Voluntariado → aba Inativos** — "inativo" é sempre relativo a **HOJE** (quem
+   parou e é candidato a contato). "Quem não serviu em 2024" não é a pergunta
+   dessa lista, e responder com o cutoff de um ano fechado devolveria gente que
+   voltou a servir depois. Com ano selecionado ela **cai no padrão de 3 meses** e
+   avisa em âmbar; as outras abas respeitam o ano.
+
+Publicar qualquer um dos dois sem a ressalva seria um número que mente — a mesma
+lei do "todo corte mostra a BASE ao lado" do Perfil da Membresia.
+
+### De carona: uma contagem que podia inflar o buraco de divulgação
+
+`/grupos/entrada/cobertura` lia os pedidos com **`.limit(1000)`**, e ali "pedido
+que não veio na página" é lido como **"grupo sem pedido"** — ou seja, o painel
+INFLARIA a lista de grupos a cobrar. Com janela de um ano inteiro isso deixa de
+ser hipótese. Virou paginação.
+
+- Testes no gate: `src/test/janelaPeriodo.test.ts` (19) e
+  `src/test/janelaPeriodoBackend.test.ts` (16 · inclui o **espelho** cliente ×
+  servidor: `ANO_INICIAL` e a granularidade têm que concordar em toda opção que a
+  tela oferece). **6 mutantes RODADOS e mortos**: `fim: null` no ano → 4
+  vermelhos · `toISOString` no fim → 1 · ano corrente indo a 31/12 → 1 · aceitar
+  ano fora da faixa → 3 · granularidade do ano voltando a 'semana' → 2 · tirar o
+  `.lte` do `comJanela` da jornada → 1.
+- ⚠️⚠️ **O CI pegou o que a minha máquina escondia, e a lição vale pra toda
+  guarda de fuso deste repo.** Três casos afirmavam INSTANTES em `-03:00` contra
+  uma janela que `resolverJanela` monta com componentes **LOCAIS** (de propósito:
+  ele roda no NAVEGADOR de quem está no Rio). Local aqui = **America/Sao_Paulo**;
+  no gate = **UTC**. Verde na máquina, vermelho no CI — e no caso do `janelaIso`
+  era pior: em UTC o mutante do formatador **SOBREVIVERIA**, porque
+  `toISOString()` dá a mesma resposta. ⇒ **teste de fuso que não FORÇA o fuso não
+  guarda nada** (`process.env.TZ` dentro do caso, com restauração no `finally` ·
+  mesmo recurso do `divisorMandala.test.ts`). Os 2 mutantes foram reconferidos
+  **rodando sob `TZ=UTC`**: 1 e 3 vermelhos.
+- ⚠️ `src/test/mapaGerador.test.ts` ganhou timeout explícito de 30s no caso de
+  determinismo: ele roda o gerador **duas vezes** (varre `backend/routes`,
+  `backend/utils`, os 2 repos de app) e **um arquivo novo em `backend/utils/`
+  bastou** pra estourar os 5s do default na suíte inteira. Ficava vermelho **por
+  tempo, não por indeterminismo** — a asserção é sobre a saída ser igual, não
+  sobre ser rápida.
+- ⚠️ **CORREÇÃO DE REGISTRO**: este arquivo diz em dois lugares que o gate de
+  deploy tem 10 (e depois 12) scripts. Em 24/08 são **16** — entraram
+  `test:online-ds-janela`, `test:alerta-culto`, `test:disparo-interruptor` e
+  `test:porta-ligar`. Conferir no `.github/workflows/deploy-vercel.yml`, nunca
+  aqui: este número envelhece a cada leva.
+
 ## ⚠️⚠️ A política 'ligar' do contrato de porta NÃO cumpria o contrato (2026-08-24 · SEM migration)
 
 Pergunta do Matheus: *"não podemos usar as inscrições do Celebra para atualizar os

@@ -1510,20 +1510,34 @@ router.get('/pedidos/list', async (req, res) => {
 // derivados da própria lista no cliente, pra não existirem duas verdades.
 router.get('/entrada/cobertura', async (req, res) => {
   try {
-    const { desde } = req.query;
+    const { desde, ate } = req.query;
     const desdeISO = desde && !Number.isNaN(new Date(desde).getTime())
       ? new Date(desde).toISOString() : null;
+    // ⚠️ `ate` existe por causa do filtro POR ANO (24/08/2026): é a primeira
+    // janela FECHADA do sistema. Sem ele, escolher "2024" contaria pedido de
+    // 2024 ATÉ HOJE e o painel diria que o grupo recebeu pedido no ano — em
+    // silêncio. Janela móvel não manda `ate` e o comportamento é o de sempre.
+    const ateISO = ate && !Number.isNaN(new Date(ate).getTime())
+      ? new Date(ate).toISOString() : null;
 
     const { data: grupos, error: eg } = await supabase.from('mem_grupos')
       .select('id, codigo, nome, bairro, modo_inscricao, temporada')
       .eq('ativo', true).is('deleted_at', null);
     if (eg) throw eg;
 
-    let q = supabase.from('mem_grupo_pedidos').select('grupo_id').is('deleted_at', null);
-    if (desdeISO) q = q.gte('created_at', desdeISO);
-    const { data: peds, error: ep } = await q.limit(1000);
-    if (ep) throw ep;
-    const comPedido = new Set((peds || []).map(p => p.grupo_id).filter(Boolean));
+    // ⚠️ PAGINADO: `.limit(1000)` truncava em silêncio, e "pedido que não veio
+    // na página" é lido como "grupo sem pedido" — o painel INFLARIA o buraco de
+    // divulgação. Com janela de um ano inteiro isso deixa de ser hipótese.
+    const comPedido = new Set();
+    for (let offset = 0; ; offset += 1000) {
+      let q = supabase.from('mem_grupo_pedidos').select('grupo_id').is('deleted_at', null);
+      if (desdeISO) q = q.gte('created_at', desdeISO);
+      if (ateISO) q = q.lte('created_at', ateISO);
+      const { data: pagina, error: ep } = await q.range(offset, offset + 999);
+      if (ep) throw ep;
+      for (const p of pagina || []) if (p.grupo_id) comPedido.add(p.grupo_id);
+      if (!pagina || pagina.length < 1000) break;
+    }
 
     // Grupo 'fechado' não recebe inscrição pelo formulário — não faz sentido
     // cobrar divulgação dele.

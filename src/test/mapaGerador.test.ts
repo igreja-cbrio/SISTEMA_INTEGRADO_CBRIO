@@ -99,12 +99,18 @@ describe('mapa · as páginas saem completas', () => {
     }
   });
 
+  // ⚠️ Timeout EXPLÍCITO (24/08/2026): este é o único caso que roda o gerador
+  // DUAS vezes — ele varre `backend/routes`, `backend/utils`, `src/api.js` e os
+  // 2 repos de app. Sozinho leva ~0,9s; na suíte inteira, com os workers
+  // disputando disco, passava dos 5s do default e ficava VERMELHO por tempo, não
+  // por indeterminismo (a asserção é sobre a saída ser igual, não sobre ela ser
+  // rápida). Um arquivo novo em `backend/utils/` bastou pra estourar a borda.
   it('a saída é DETERMINÍSTICA — senão o auto-commit vira ruído no histórico', () => {
     const a = gerar().arquivos;
     const b = gerar().arquivos;
     expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
     for (const k of Object.keys(a)) expect(a[k], k).toBe(b[k]);
-  });
+  }, 30000);
 });
 
 describe('mapa · responde aos pedidos que me fizeram investigar', () => {

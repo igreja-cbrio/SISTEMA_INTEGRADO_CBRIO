@@ -1,4 +1,5 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { opcoesAno } from '@/lib/janelaPeriodo';
 
 interface PeriodFilterProps {
   value: string;
@@ -17,6 +18,11 @@ export default function PeriodFilter({ value, onChange }: PeriodFilterProps) {
         <SelectItem value="3months">3 Meses</SelectItem>
         <SelectItem value="4months">4 Meses</SelectItem>
         <SelectItem value="6months">6 Meses</SelectItem>
+        {/* ⚠️ Janela FECHADA por ANO — os anos vêm da régua única
+            (src/lib/janelaPeriodo.ts), então ano novo aparece sozinho. */}
+        {opcoesAno().map((a) => (
+          <SelectItem key={a.dias} value={String(a.dias)}>{a.label}</SelectItem>
+        ))}
       </SelectContent>
     </Select>
   );
