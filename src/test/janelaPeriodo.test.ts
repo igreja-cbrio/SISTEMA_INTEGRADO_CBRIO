@@ -64,26 +64,44 @@ describe('resolverJanela · uma fonte só pra lista, painel e rótulo', () => {
 // POR ANO (2026-08-24) · a primeira janela FECHADA do sistema.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('resolverJanela · por ano', () => {
+  // ⚠️⚠️ Os três casos abaixo afirmam INSTANTES no fuso da igreja (`-03:00`), e
+  // `resolverJanela` monta as bordas do ano com componentes LOCAIS — de
+  // propósito, porque ele roda no NAVEGADOR de quem está no Rio. O gate roda em
+  // **UTC**, então sem forçar o fuso aqui eles ficariam vermelhos no CI e verdes
+  // na máquina de quem escreveu (foi exatamente o que aconteceu em 24/08). Mesmo
+  // recurso do `divisorMandala.test.ts`, e pela mesma razão: guarda de fuso que
+  // não força o fuso não guarda nada.
+  const noFusoDaIgreja = (fn: () => void) => {
+    const tz = process.env.TZ;
+    try { process.env.TZ = 'America/Sao_Paulo'; fn(); } finally { process.env.TZ = tz; }
+  };
+
   it('ano fechado: dezembro entra, janeiro do ano seguinte NÃO', () => {
-    const j = resolverJanela({ fPeriodo: 'ano:2024', agora: AGORA });
-    const natal = new Date('2024-12-25T10:00:00-03:00').getTime();
-    const anoNovo = new Date('2025-01-01T10:00:00-03:00').getTime();
-    expect(natal).toBeGreaterThanOrEqual(j.desdeMs);
-    expect(natal).toBeLessThanOrEqual(j.ateMs);
-    // ⚠️ O bug que este teste tranca: usar só o `desde` mostraria 2024→hoje.
-    expect(anoNovo).toBeGreaterThan(j.ateMs);
+    noFusoDaIgreja(() => {
+      const j = resolverJanela({ fPeriodo: 'ano:2024', agora: AGORA });
+      const natal = new Date('2024-12-25T10:00:00-03:00').getTime();
+      const anoNovo = new Date('2025-01-01T10:00:00-03:00').getTime();
+      expect(natal).toBeGreaterThanOrEqual(j.desdeMs);
+      expect(natal).toBeLessThanOrEqual(j.ateMs);
+      // ⚠️ O bug que este teste tranca: usar só o `desde` mostraria 2024→hoje.
+      expect(anoNovo).toBeGreaterThan(j.ateMs);
+    });
   });
 
   it('1º de janeiro entra na janela do próprio ano', () => {
-    const j = resolverJanela({ fPeriodo: 'ano:2025', agora: AGORA });
-    const primeiroDia = new Date('2025-01-01T08:00:00-03:00').getTime();
-    expect(primeiroDia).toBeGreaterThanOrEqual(j.desdeMs);
+    noFusoDaIgreja(() => {
+      const j = resolverJanela({ fPeriodo: 'ano:2025', agora: AGORA });
+      const primeiroDia = new Date('2025-01-01T08:00:00-03:00').getTime();
+      expect(primeiroDia).toBeGreaterThanOrEqual(j.desdeMs);
+    });
   });
 
   it('31 de dezembro às 22h ainda é do ano (fuso não pode empurrar pro seguinte)', () => {
-    const j = resolverJanela({ fPeriodo: 'ano:2025', agora: AGORA });
-    const reveillon = new Date('2025-12-31T22:00:00-03:00').getTime();
-    expect(reveillon).toBeLessThanOrEqual(j.ateMs);
+    noFusoDaIgreja(() => {
+      const j = resolverJanela({ fPeriodo: 'ano:2025', agora: AGORA });
+      const reveillon = new Date('2025-12-31T22:00:00-03:00').getTime();
+      expect(reveillon).toBeLessThanOrEqual(j.ateMs);
+    });
   });
 
   it('ano CORRENTE não termina no futuro', () => {
@@ -142,9 +160,19 @@ describe('resolverJanela · por ano', () => {
   });
 
   it('janelaIso: ano devolve as duas pontas; janela móvel devolve ate=null', () => {
-    const a = janelaIso({ fPeriodo: 'ano:2024', agora: AGORA });
-    expect(a.de).toBe('2024-01-01');
-    expect(a.ate).toBe('2024-12-31');
-    expect(janelaIso({ fPeriodo: 90, agora: AGORA }).ate).toBeNull();
+    // ⚠️⚠️ FORÇA o fuso da igreja: em UTC (o do gate) `toISOString()` daria a
+    // mesma resposta e o mutante do formatador SOBREVIVERIA — a guarda existe
+    // justamente pro caso em que a máquina está no Rio e o fim de 31/12 às
+    // 23:59 vira 01/01 em UTC. Sem forçar, o teste passa por acaso.
+    const tz = process.env.TZ;
+    try {
+      process.env.TZ = 'America/Sao_Paulo';
+      const a = janelaIso({ fPeriodo: 'ano:2024', agora: AGORA });
+      expect(a.de).toBe('2024-01-01');
+      expect(a.ate).toBe('2024-12-31');
+      expect(janelaIso({ fPeriodo: 90, agora: AGORA }).ate).toBeNull();
+    } finally {
+      process.env.TZ = tz;
+    }
   });
 });

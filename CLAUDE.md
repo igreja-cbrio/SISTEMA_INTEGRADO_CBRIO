@@ -12984,6 +12984,16 @@ ser hipótese. Virou paginação.
   vermelhos · `toISOString` no fim → 1 · ano corrente indo a 31/12 → 1 · aceitar
   ano fora da faixa → 3 · granularidade do ano voltando a 'semana' → 2 · tirar o
   `.lte` do `comJanela` da jornada → 1.
+- ⚠️⚠️ **O CI pegou o que a minha máquina escondia, e a lição vale pra toda
+  guarda de fuso deste repo.** Três casos afirmavam INSTANTES em `-03:00` contra
+  uma janela que `resolverJanela` monta com componentes **LOCAIS** (de propósito:
+  ele roda no NAVEGADOR de quem está no Rio). Local aqui = **America/Sao_Paulo**;
+  no gate = **UTC**. Verde na máquina, vermelho no CI — e no caso do `janelaIso`
+  era pior: em UTC o mutante do formatador **SOBREVIVERIA**, porque
+  `toISOString()` dá a mesma resposta. ⇒ **teste de fuso que não FORÇA o fuso não
+  guarda nada** (`process.env.TZ` dentro do caso, com restauração no `finally` ·
+  mesmo recurso do `divisorMandala.test.ts`). Os 2 mutantes foram reconferidos
+  **rodando sob `TZ=UTC`**: 1 e 3 vermelhos.
 - ⚠️ `src/test/mapaGerador.test.ts` ganhou timeout explícito de 30s no caso de
   determinismo: ele roda o gerador **duas vezes** (varre `backend/routes`,
   `backend/utils`, os 2 repos de app) e **um arquivo novo em `backend/utils/`
