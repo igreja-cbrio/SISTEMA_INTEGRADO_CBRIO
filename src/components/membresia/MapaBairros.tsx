@@ -291,6 +291,15 @@ function Camadas({
         }
 
         pintarSelecao();
+        // ⚠️⚠️ PEDIR O FRAME É OBRIGATÓRIO, e é a 4ª causa do mapa vazio (medida
+        // em produção em 24/08/2026). `Enquadrar` dispara o `fitBounds` no
+        // `isLoaded`, e as camadas nascem DEPOIS, no `styledata`/`idle` — ou
+        // seja, quando elas passam a existir não há mais movimento de câmera
+        // nenhum, e o maplibre não redesenha por conta própria. O sintoma é
+        // cruel de diagnosticar: `camadas ok calor=true`, source com as
+        // features, zero erro no console, tela vazia — e UM clique de zoom
+        // mostra tudo, porque mover a câmera é o que agendava o frame.
+        map.triggerRepaint();
         diag('camadas ok', { calor: !!map.getLayer(L_CALOR), circulo: !!map.getLayer(L_CIRCULO), numero: !!map.getLayer(L_NUMERO) });
       } catch (e) {
         // ⚠️ Não é erro fatal: o próximo gatilho tenta de novo. Fica em `warn`
