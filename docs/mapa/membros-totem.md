@@ -12,7 +12,7 @@
 ## Backend
 - `backend/routes/membresia.js`
 Guard: `authorizeModule('membros-totem', 1)`
-<details><summary>Endpoints (97)</summary>
+<details><summary>Endpoints (99)</summary>
 - `DELETE /api/membresia/cadastros/:id`
 - `DELETE /api/membresia/checkins/:id`
 - `DELETE /api/membresia/contribuicoes/:id`
@@ -59,6 +59,7 @@ Guard: `authorizeModule('membros-totem', 1)`
 - `GET /api/membresia/orfaos-stats`
 - `GET /api/membresia/perfil`
 - `GET /api/membresia/perfil/bairros`
+- `GET /api/membresia/perfil/ceps`
 - `GET /api/membresia/qr-lookup/:token`
 - `GET /api/membresia/totem/apresentacao-bebe/status`
 - `GET /api/membresia/totem/next/status`
@@ -94,6 +95,7 @@ Guard: `authorizeModule('membros-totem', 1)`
 - `POST /api/membresia/membros/merge`
 - `POST /api/membresia/ministerios`
 - `POST /api/membresia/perfil/bairros/geocode`
+- `POST /api/membresia/perfil/ceps/geocode`
 - `POST /api/membresia/promover-orfaos`
 - `POST /api/membresia/totem/apresentacao-bebe`
 - `POST /api/membresia/totem/grupos/:id/entrar`
@@ -122,6 +124,7 @@ Guard: `authorizeModule('membros-totem', 1)`
 - `backend/utils/prontidaoCadastro.js`
 - `backend/utils/sanitize.js`
 - `backend/utils/supabase.js`
+- `backend/utils/trechoCep.js`
 
 **Serviços**
 
@@ -159,6 +162,7 @@ Guard: `authorizeModule('membros-totem', 1)`
 - `cultos`
 - `cultos_decisoes_pessoas`
 - `dem_bairro_geo`
+- `dem_cep_geo`
 - `entradas_resolucoes`
 - `ext_inscricoes`
 - `face_presencas`
@@ -211,6 +215,7 @@ Guard: `authorizeModule('membros-totem', 1)`
 - `app_soft_delete`
 - `fn_dem_perfil`
 - `fn_dem_semear_bairros`
+- `fn_dem_semear_ceps`
 - `fn_membro_tem_atividade`
 - `merge_membros`
 
