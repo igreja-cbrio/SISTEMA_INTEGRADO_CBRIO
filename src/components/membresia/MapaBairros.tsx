@@ -544,14 +544,24 @@ export default function MapaBairros({
   bairros,
   selecionado,
   onSelecionar,
+  // ⚠️ Como a UNIDADE do mapa se chama na legenda. O mesmo componente desenha
+  // bairro e trecho de CEP, e o rótulo fixo "bairro" fazia a legenda MENTIR no
+  // modo CEP ("quantas pessoas moram naquele bairro" embaixo de um mapa por
+  // faixa postal). Rótulo que não corresponde ao que está desenhado é a classe
+  // de erro que fez o mapa custar uma sessão inteira.
+  unidade = 'bairro',
+  unidadePlural = 'bairro(s)',
 }: {
   bairros: BairroMapa[];
   selecionado?: string | null;
   onSelecionar?: (norm: string | null) => void;
+  unidade?: string;
+  unidadePlural?: string;
 }) {
   const tema = useTemaDoSistema();
   const [verTudo, setVerTudo] = useState(false);
   const [expandido, setExpandido] = useState(false);
+  const [avisoTela, setAvisoTela] = useState<string | null>(null);
   const caixaRef = useRef<HTMLDivElement>(null);
 
   // ⚠️⚠️ FULLSCREEN API, não overlay `position: fixed`. A 1ª versão usava
@@ -565,11 +575,24 @@ export default function MapaBairros({
   // na árvore de DOM faz o React remontá-lo: instância nova, estilo recarregado,
   // camadas recriadas e câmera de volta ao início. A Fullscreen API não move nó
   // nenhum — é o que o próprio `FullscreenControl` do maplibre usa.
+  // ⚠️⚠️ RECUSA DO NAVEGADOR PRECISA APARECER. A 1ª versão fazia
+  // `.catch(() => setExpandido(false))`: quando o `requestFullscreen` é negado
+  // — iframe sem `allow="fullscreen"`, política do navegador, ou chamada sem
+  // gesto de usuário — a pessoa clicava e NADA acontecia, sem uma palavra. Botão
+  // que fica mudo se lê como sistema quebrado, e ninguém descobre o motivo.
   const alternar = () => {
     const el = caixaRef.current;
     if (!el) return;
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void el.requestFullscreen?.().catch(() => setExpandido(false));
+    setAvisoTela(null);
+    if (document.fullscreenElement) { void document.exitFullscreen(); return; }
+    if (!document.fullscreenEnabled || !el.requestFullscreen) {
+      setAvisoTela('Este navegador não permite tela cheia nesta página.');
+      return;
+    }
+    el.requestFullscreen().catch(() => {
+      setExpandido(false);
+      setAvisoTela('O navegador recusou a tela cheia. Tente a tecla F11.');
+    });
   };
 
   // ⚠️ O ESTADO SEGUE O NAVEGADOR, nunca o clique: Esc, F11 e o gesto de sair do
@@ -587,7 +610,7 @@ export default function MapaBairros({
     return (
       <div className="h-[420px] rounded-[16px] border border-border grid place-items-center text-center p-6">
         <div>
-          <p className="text-sm font-medium">Nenhum bairro no mapa ainda</p>
+          <p className="text-sm font-medium">Nenhum {unidade} no mapa ainda</p>
           <p className="text-xs text-muted-foreground mt-1 max-w-sm">
             O mapa precisa de duas coisas: pessoas com bairro no cadastro e o centróide
             daquele bairro resolvido. Use “Resolver bairros” abaixo.
@@ -643,6 +666,13 @@ export default function MapaBairros({
         </button>
       </div>
 
+      {/* ⚠️ O motivo da recusa fica onde a pessoa clicou. Sem isto o botão de
+          tela cheia é mudo quando o navegador nega, e "não fez nada" é
+          indistinguível de "está quebrado". */}
+      {avisoTela && (
+        <p className="text-xs text-amber-600 dark:text-amber-500">{avisoTela}</p>
+      )}
+
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-2">
           <span>menos gente</span>
@@ -655,7 +685,7 @@ export default function MapaBairros({
           />
           <span>mais gente</span>
         </span>
-        <span>O número dentro do círculo é quantas pessoas moram naquele bairro.</span>
+        <span>O número dentro do círculo é quantas pessoas moram naquele {unidade}.</span>
         {fora.length > 0 && (
           <button
             type="button"
@@ -664,7 +694,7 @@ export default function MapaBairros({
           >
             {verTudo
               ? 'Voltar ao enquadramento principal'
-              : `${fora.length} bairro(s) fora do quadro inicial — enquadrar tudo`}
+              : `${fora.length} ${unidadePlural} fora do quadro inicial — enquadrar tudo`}
           </button>
         )}
       </div>

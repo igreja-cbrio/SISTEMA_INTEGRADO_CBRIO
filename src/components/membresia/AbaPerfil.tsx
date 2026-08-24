@@ -383,6 +383,8 @@ export default function AbaPerfil() {
             bairros={porCep ? pontosCep : d.mapa.bairros}
             selecionado={porCep ? cepRegiao : bairro}
             onSelecionar={porCep ? selecionarCep : selecionarBairro}
+            unidade={porCep ? 'trecho de CEP' : 'bairro'}
+            unidadePlural={porCep ? 'trecho(s) de CEP' : 'bairro(s)'}
           />
 
           {/* ⚠️ O buraco do mapa é DECLARADO, sempre. */}
