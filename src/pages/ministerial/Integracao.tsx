@@ -152,8 +152,8 @@ export default function Integracao() {
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground">
               Clique num culto pra preencher os dados daquele culto: presencial (adultos/kids),
-              decisões e transmissão online. Cada culto é vinculado ao seu tipo (Domingo 08:30 /
-              10:00 / 11:30 / 19:00 · AMI · Bridge · Quarta com Deus) · relatórios saem por culto
+              decisões e transmissão online. Cada culto é vinculado ao seu tipo (Domingo 09:30 /
+              11:30 / 19:00 · AMI · Bridge · Quarta com Deus) · relatórios saem por culto
               automaticamente.
             </p>
             <p className="text-sm text-muted-foreground">

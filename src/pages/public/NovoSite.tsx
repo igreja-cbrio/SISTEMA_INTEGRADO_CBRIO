@@ -168,7 +168,7 @@ export default function NovoSite() {
               A gente adora receber quem está chegando. Venha como você está — tem um lugar pra você.
             </p>
             <ul className="ns-info">
-              <li><Clock size={20} /><div><strong>Cultos de domingo</strong><span>08:30 · 10:00 · 11:30 · 19:00</span></div></li>
+              <li><Clock size={20} /><div><strong>Cultos de domingo</strong><span>09:30 · 11:30 · 19:00</span></div></li>
               <li><Clock size={20} /><div><strong>Sábado · jovens e teens</strong><span>Bridge (adolescentes) 17h · AMI (jovens) 20h</span></div></li>
               <li><Clock size={20} /><div><strong>Quarta com Deus</strong><span>Quartas, às 20h</span></div></li>
               <li><Droplet size={20} /><div><strong>Batismos</strong><span>Todo 4º domingo do mês</span></div></li>
