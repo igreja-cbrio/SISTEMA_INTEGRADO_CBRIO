@@ -156,6 +156,23 @@ function Camadas({
       ]);
     };
 
+    // ⚠️ Teto de tentativas: sem ele uma falha permanente (estilo sem glyph,
+    // por exemplo) viraria laço infinito de timer numa tela que fica aberta.
+    let conferencias = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const agendarConferencia = () => {
+      if (!vivo || conferencias >= 12) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!vivo) return;
+        if (!map.getLayer(L_CALOR) || !map.getLayer(L_CIRCULO)) {
+          conferencias += 1;
+          diag('camadas sumiram (setStyle?) — reaplicando', { tentativa: conferencias });
+          aplicar();
+        }
+      }, 400);
+    };
+
     const aplicar = () => {
       if (!vivo) return;
       // ⚠️⚠️ NÃO guardar com `map.isStyleLoaded()`. Ele pode ficar `false` para
@@ -300,6 +317,15 @@ function Camadas({
         // features, zero erro no console, tela vazia — e UM clique de zoom
         // mostra tudo, porque mover a câmera é o que agendava o frame.
         map.triggerRepaint();
+        // ⚠️⚠️ CONFERIR DEPOIS, porque `setStyle` apaga camada de `addLayer`.
+        // Medido em produção em 24/08/2026: trocar o tema com o mapa na tela
+        // some com o calor e com os chips, e nada os traz de volta — o
+        // `styledata` da troca chega enquanto o estilo está em transição, o
+        // `addLayer` daquele instante é descartado sem lançar, e depois não vem
+        // mais gatilho nenhum. Conferir o estado 400 ms depois e reaplicar é o
+        // que torna isto auto-curável sem depender da ordem dos eventos do
+        // maplibre — que é justamente o que enganou quatro tentativas.
+        agendarConferencia();
         diag('camadas ok', { calor: !!map.getLayer(L_CALOR), circulo: !!map.getLayer(L_CIRCULO), numero: !!map.getLayer(L_NUMERO) });
       } catch (e) {
         // ⚠️ Não é erro fatal: o próximo gatilho tenta de novo. Fica em `warn`
@@ -377,6 +403,7 @@ function Camadas({
       popup.remove();
       // ⚠️ Remoção defensiva: o mapa pode já ter sido destruído pelo pai.
       try {
+        if (timer) clearTimeout(timer);
         [L_NUMERO, L_CIRCULO, L_CALOR].forEach((l) => {
           if (map.getLayer(l)) map.removeLayer(l);
         });

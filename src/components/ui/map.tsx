@@ -60,6 +60,10 @@ const DefaultLoader = () => (
 export function Map({ children, className, styles, theme = "dark", ...props }: MapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreGL.Map | null>(null);
+  // ⚠️ Declarado AQUI, junto dos outros refs: é usado pelo efeito de criação do
+  // mapa, que aparece antes no arquivo. Array de deps e corpo de efeito avaliam
+  // depois do render, mas manter a ordem evita a armadilha de TDZ.
+  const temaAplicadoRef = useRef<"light" | "dark" | null>(null);
   const [isMounted, setIsMounted] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isStyleLoaded, setIsStyleLoaded] = useState(false);
@@ -80,6 +84,10 @@ export function Map({ children, className, styles, theme = "dark", ...props }: M
     if (!isMounted || !containerRef.current) return;
 
     const mapStyle = theme === "dark" ? mapStyles.dark : mapStyles.light;
+    // ⚠️ Registra o tema com que o mapa NASCEU: sem isto o efeito de tema
+    // dispara um `setStyle` redundante no primeiro commit depois do mount — e
+    // `setStyle` apaga as camadas do consumidor.
+    temaAplicadoRef.current = theme === "dark" ? "dark" : "light";
 
     const mapInstance = new MapLibreGL.Map({
       container: containerRef.current,
@@ -118,14 +126,23 @@ export function Map({ children, className, styles, theme = "dark", ...props }: M
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMounted]);
 
+  // ⚠️⚠️ `setStyle` DESCARTA toda camada criada por `addLayer` — medido em
+  // produção em 24/08/2026 trocando o tema com o mapa de calor da Membresia na
+  // tela: o basemap troca e as camadas somem, sem voltar. Por isso este efeito
+  // só roda quando o tema EFETIVO mudou de verdade; sem a guarda ele disparava
+  // um `setStyle` logo depois do mount (o `[data-theme]` do ERP é aplicado
+  // depois do primeiro render), apagando as camadas que o consumidor acabara de
+  // criar e deixando o mapa vazio até alguém mexer na câmera.
   useEffect(() => {
-    if (mapRef.current) {
-      setIsStyleLoaded(false);
-      mapRef.current.setStyle(
-        (theme === "dark" ? mapStyles.dark : mapStyles.light) as any,
-        { diff: true }
-      );
-    }
+    if (!mapRef.current) return;
+    const efetivo = theme === "dark" ? "dark" : "light";
+    if (temaAplicadoRef.current === efetivo) return;
+    temaAplicadoRef.current = efetivo;
+    setIsStyleLoaded(false);
+    mapRef.current.setStyle(
+      (efetivo === "dark" ? mapStyles.dark : mapStyles.light) as any,
+      { diff: true }
+    );
   }, [theme, mapStyles]);
 
   const isLoading = !isMounted || !isLoaded || !isStyleLoaded;
