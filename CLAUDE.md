@@ -10272,6 +10272,67 @@ achados por ele.
 mês fechado devolve o número de HOJE. Não entrou aqui porque mexer nisso muda
 valores de períodos já publicados; é decisão do Marcos/Matheus.
 
+## ⚠️⚠️ LEI · o farol respeita a DIREÇÃO da meta (2026-08-24 · migration `20260824120000`)
+
+Achado ao atacar a fase 2B: **`vw_kpi_trajetoria_atual` comparava sempre
+`valor >= meta` e ignorava `sentido_meta`** — o farol dos KPIs "menor é melhor"
+saía **exatamente invertido**. Medido em produção em 24/08, nos 4 ativos:
+
+| KPI | meta | valor | antes | agora |
+|---|---|---|---|---|
+| MKT-LEAD · lead time | ≤ 7 dias | 75,7 | **verde** (1081%) | vermelho (9,2%) |
+| PROD-CULTO-ESTAB | ≤ 2 ocorr. | 3 | **verde** (150%) | vermelho (66,7%) |
+| PROD-CULTO-FALHAS | ≤ 3 ocorr. | 1 | **vermelho** (33%) | verde (300%) |
+| RH-03 · rotatividade | ≤ 10% | 0 | **vermelho** (0%) | verde (100%) |
+
+⚠️⚠️ **A semântica NÃO foi inventada: a view IRMÃ `vw_kpi_taticos_status` JÁ
+acertava** (mesmo instante: MKT-LEAD vermelho · RH-03 verde · FALHAS verde ·
+ESTAB vermelho). As duas views da casa estavam se **contradizendo**, e o
+conserto foi fazer a errada concordar com a certa. **Se voltarem a divergir, uma
+das duas está errada** — a consulta que compara as duas está no fim da migration.
+
+- **A régua vive em DOIS helpers**, não espalhada: `_kpi_atingiu(valor, meta,
+  sentido, fator)` e `_kpi_pct_meta(valor, meta, sentido)`. Eram **10 sítios de
+  comparação** na view; replicar `CASE WHEN sentido = …` em cada um é como as
+  duas views divergiram em primeiro lugar.
+- ⚠️ **Banda de atenção SIMÉTRICA**: maior-é-melhor → amarelo a partir de
+  `meta × 0,9`; menor-é-melhor → `meta / 0,9` (11% acima do teto). Usar
+  `meta × 0,9` nos dois casos **apertaria** o teto em vez de afrouxar.
+- ⚠️ **Em teto, o percentual é `meta/valor`** — 75,7 dias contra ≤7 dá **9,2%**,
+  não 1081%. `valor <= 0` devolve **100** (zero ocorrência contra um teto é a
+  meta cumprida, não infinito).
+- ⚠️ **Helper devolve NULL sem valor ou sem meta**, nunca `false`: `false`
+  pintaria de vermelho todo KPI sem meta. Quem decide o rótulo é a view
+  (`pendente` / `sem_meta`).
+- ⚠️ **`sentido_meta` entrou como coluna NOVA no FIM** da view — `CREATE OR
+  REPLACE VIEW` só permite acrescentar no fim, nunca reordenar ou remover.
+- ⚠️ **RESÍDUO CONSCIENTE preservado**: sem meta, a regra legada `valor > 0 →
+  verde` ficou **idêntica**. Não existe hoje KPI `menor_melhor` sem meta, e
+  inventar política onde não há teto é pior que preservar o conhecido.
+- ⚠️ A view foi recriada **por inteiro a partir da definição VIVA**
+  (`pg_get_viewdef` de 24/08 · o patch `_kpi_periodo_corrente` de 18/08 está
+  verbatim nos CTEs), com **guarda de drift que ABORTA** se a forma divergir —
+  contar 11 sítios de `me.meta_anual / me.divisor`. Colar o corpo do repo teria
+  revertido em silêncio os patches de produção.
+
+### ⚠️ O churn de voluntários pedia 90%
+
+`% de voluntários que pararam de servir` (AMI-13 · BRG-12 · KIDS-05 · ONL-20 ·
+SED-08 ativos + CBA-20 inativo) estava com **`meta_valor = 90` e
+`maior_melhor`** — herança da cascata ×1,30 sobre um indicador de PERDA. Em
+português: *"queremos que 90% dos voluntários parem de servir, e mais é
+melhor"*. Passou a `menor_melhor` com **meta ≤5%/mês** (a régua que veio do KR
+desativado em 21/08).
+
+⚠️ **`unidade = '%'` não é cosmético**: `aplicar_meta_institucional`
+(20260608140000) **não grava `meta_valor_absoluto` em KPI de percentual** — sem
+isso, a próxima passada da cascata sobrescreveria a meta 5 com baseline×1,30 e o
+bug voltaria sozinho.
+
+⚠️ Estavam todos `pendente` (sem dado coletado), então era **bomba armada, não
+estrago em curso**: no dia em que o coletor rodasse, churn de 90% apareceria
+como meta batida.
+
 ### ⚠️ Meta absoluta × periodicidade do KPI · regra importante
 
 **Sempre** que adicionar novo KPI tático com `tipo_calculo != 'manual'` E meta
