@@ -1692,11 +1692,33 @@ que a reescrita é segura — agrupamento é decisão humana e se declara.
    `import { … }` multilinha. É a lição de 17/08 se repetindo — em `.jsx`,
    **o verificador é `npm run build`**, não `tsc`.
 
-⏳ **Pendente de DECISÃO (não de código)**: o dado gravado do passado não foi
-reescrito — 22 cadastros com `"Barra"`, 14 com `"Recreio"`, 4 com `"Freguesia"`.
-A LEITURA já está consolidada (o catálogo mostra Barra da Tijuca com 57 e
-Recreio com 29). Reescrever é `UPDATE` em cadastro de pessoa, reversível, ~40
-linhas — decisão do Matheus.
+### ✅ O passado FOI consolidado (2026-08-24 · decisão do Matheus · SEM migration)
+
+`UPDATE ... SET bairro = fn_dem_bairro_canonico(bairro)` em **`mem_membros`
+(48 cadastros)** e **`mem_cadastros_pendentes` (56 linhas)**.
+
+- ⚠️⚠️ **As DUAS tabelas, não só `mem_membros`.** `vw_dem_pessoa` faz
+  `COALESCE(m.bairro, e.bairro)`, e o `e.bairro` vem do enriquecimento por
+  `mem_cadastros_pendentes` — consolidar só a principal faria a grafia velha
+  **reaparecer** para quem tem o campo vazio no cadastro.
+- ⚠️⚠️ **Quem decide a grafia é `fn_dem_bairro_canonico`, NUNCA uma lista escrita
+  no script**: é ela que lê `alias_tipo` e por isso reescreve GRAFIA ("Barra" →
+  "Barra da Tijuca") e deixa AGRUPAMENTO em paz — **"Barra Olímpica" seguiu
+  intacta em 21 pessoas**, conferido depois. Uma lista à mão teria apagado onde
+  essas 21 moram.
+- ⚠️ Ela pega **mais que os 3 apelidos**: acento (`"Barra Olimpica"` →
+  `"Barra Olímpica"`, que NÃO vira Barra da Tijuca), caixa (`"olaria"`) e espaço
+  sobrando (`"Jacarepaguá "`, `"Copacabana "`, `"barra da tijuca "`). Eram 48 e
+  não os ~40 que este arquivo estimava.
+- **Backup**: `_bk_20260824_bairro_membros` e `_bk_20260824_bairro_pendentes`
+  (`update ... set bairro = b.bairro from _bk_... b where id = b.id` reverte).
+- ⚠️⚠️ **A NEUTRALIDADE PARA A LEITURA FOI PROVADA, não suposta**: recalculando o
+  `bairro_norm` da view com o valor ANTIGO e com o NOVO nas 48 linhas, **zero**
+  mudaram de chave — o alias já resolvia para o mesmo lugar.
+  ⚠️ **Comparar o total do mapa NÃO serve de prova**: ele subiu de 123 para 124
+  entre as duas leituras, e a causa foi um cadastro que a equipe preencheu no
+  meio da medição (`"Vargem Pequena"`, 23/08 22:42), não a consolidação. Nesta
+  base os números andam sozinhos — comparar totais confunde efeito com operação.
 
 ## ⚠️ Membresia · aba PERFIL · mapa por bairro + cortes (2026-08-23 · migration `20260823160000`)
 
