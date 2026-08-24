@@ -57,6 +57,7 @@ Guard: `authorizeModule('cuidados', 1 | 2 | 3)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/dadosSensiveisPessoa.js`
+- `backend/utils/janelaPeriodo.js`
 - `backend/utils/jornadaTempo.js`
 - `backend/utils/supabase.js`
 
