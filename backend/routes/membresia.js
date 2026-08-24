@@ -18,7 +18,10 @@ const { avaliarProntidao } = require('../utils/prontidaoCadastro');
 // Endereco brasileiro -> bairro/coordenada. `bairroPorCep` (ViaCEP, ~200ms) roda
 // no salvamento do cadastro; `centroideDeBairro` (Nominatim, 1,1s de fila) so no
 // lote de geocodificacao do Perfil da Membresia.
-const { bairroPorCep, coordenadaPorTexto, centroideDeBairro } = require('../services/geoBrasil');
+const {
+  bairroPorCep, coordenadaPorTexto, centroideDeBairro, coordenadaDeCep,
+} = require('../services/geoBrasil');
+const { trechoValido } = require('../utils/trechoCep');
 const { normalizarEnderecoDoPayload } = require('../services/bairroCanonico');
 const { decidirDesativacao, decidirReativacao } = require('../utils/desativarMembro');
 // ⚠️⚠️ `donosDoGrupo` era CHAMADO em `/totem/grupos/:id/entrar` e NUNCA foi
@@ -5061,9 +5064,18 @@ router.get('/perfil', authorizeModule('membresia', 1), async (req, res) => {
     }
     const bairro = String(req.query.bairro || '').trim().slice(0, 120);
 
+    // ⚠️ A régua do trecho vive em `utils/trechoCep` (pura, no gate) porque ela
+    // é ESPELHO de `vw_dem_pessoa.cep_regiao` — duas cópias divergiriam e o
+    // filtro passaria a procurar chave que a view nunca produz.
+    const cepRegiaoBruto = String(req.query.cep_regiao || '').replace(/\D/g, '');
+    if (req.query.cep_regiao && !trechoValido(cepRegiaoBruto)) {
+      return res.status(400).json({ error: 'Trecho de CEP inválido. Use os 5 primeiros dígitos.' });
+    }
+
     const { data, error } = await supabase.rpc('fn_dem_perfil', {
       p_status: status || null,
       p_bairro: bairro || null,
+      p_cep_regiao: cepRegiaoBruto || null,
     });
     if (error) throw error;
     res.json(data);
@@ -5174,6 +5186,113 @@ router.post('/perfil/bairros/geocode', authorizeModule('membresia', 3), async (r
   } catch (e) {
     console.error('[membresia/perfil/bairros/geocode]', e.message);
     res.status(500).json({ error: 'Erro ao geocodificar os bairros' });
+  }
+});
+
+// GET /api/membresia/perfil/ceps — a fila do mapa por trecho de CEP.
+// Espelha `/perfil/bairros`: devolve todo CEP conhecido com seu estado.
+router.get('/perfil/ceps', authorizeModule('membresia', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('dem_cep_geo')
+      .select('cep, logradouro, bairro, cidade, uf, lat, lng, fonte, ignorar, nota, tentativas, geocodificado_em, ultima_tentativa_em')
+      .order('cep', { ascending: true })
+      .limit(3000);
+    if (error) throw error;
+
+    const itens = data || [];
+    res.json({
+      itens,
+      total: itens.length,
+      pendentes: itens.filter((c) => !c.ignorar && (c.lat == null || c.lng == null)).length,
+      com_coordenada: itens.filter((c) => c.lat != null && c.lng != null).length,
+    });
+  } catch (e) {
+    console.error('[membresia/perfil/ceps]', e.message);
+    res.status(500).json({ error: 'Erro ao listar os CEPs' });
+  }
+});
+
+// POST /api/membresia/perfil/ceps/geocode { limite }
+// Resolve a coordenada dos CEPs pendentes, em lote.
+//
+// ⚠️ Nível 3 pelo mesmo motivo do lote de bairros: escreve a coordenada que
+// posiciona o ponto de um trecho inteiro no mapa.
+//
+// ⚠️ Cada CEP custa ViaCEP (~200ms) + até 2 idas ao Nominatim (1,1s de fila
+// cada) = 1,3s a 2,5s. 20 CEPs ≈ 50s, dentro dos 300s da função com folga.
+// A tela chama de novo enquanto sobrar pendente — sem paginação por offset,
+// porque o conjunto MUTA a cada rodada (offset sobre filtro que muda PULA linha).
+router.post('/perfil/ceps/geocode', authorizeModule('membresia', 3), async (req, res) => {
+  try {
+    const limite = Math.min(Math.max(parseInt(req.body?.limite, 10) || 20, 1), 40);
+
+    // Cadastro novo pode ter trazido CEP inédito desde a última rodada.
+    const { data: semeados } = await supabase.rpc('fn_dem_semear_ceps');
+
+    const { data: pendentes, error } = await supabase
+      .from('dem_cep_geo')
+      .select('cep, tentativas')
+      .is('lat', null)
+      .eq('ignorar', false)
+      // Quem já falhou muitas vezes vai pro fim da fila em vez de bloquear
+      // os CEPs que nunca foram tentados.
+      .order('tentativas', { ascending: true })
+      .order('cep', { ascending: true })
+      .limit(limite);
+    if (error) throw error;
+
+    const ok = [];
+    const falhas = [];
+    for (const c of pendentes || []) {
+      const hit = await coordenadaDeCep(c.cep);
+      // ⚠️ Grava A CADA CEP, não no fim: se a função for interrompida
+      // (timeout, deploy no meio), o trabalho já feito não se perde. É a LEI
+      // "em operação longa, gravar o efeito DURANTE".
+      //
+      // ⚠️ O ENDEREÇO é gravado mesmo sem coordenada — é ele que dá o rótulo
+      // "22640 · Barra da Tijuca" no mapa, e ele já é útil sozinho.
+      const patch = hit
+        ? {
+          logradouro: hit.logradouro,
+          bairro: hit.bairro,
+          cidade: hit.cidade,
+          uf: hit.uf,
+          ...(hit.lat != null
+            ? { lat: hit.lat, lng: hit.lng, fonte: 'nominatim', geocodificado_em: new Date().toISOString() }
+            : {}),
+        }
+        : {};
+      await supabase
+        .from('dem_cep_geo')
+        .update({
+          ...patch,
+          tentativas: (c.tentativas || 0) + 1,
+          ultima_tentativa_em: new Date().toISOString(),
+        })
+        .eq('cep', c.cep);
+
+      if (hit && hit.lat != null) ok.push({ cep: c.cep, bairro: hit.bairro, lat: hit.lat, lng: hit.lng });
+      else falhas.push({ cep: c.cep, endereco_ok: !!hit, tentativas: (c.tentativas || 0) + 1 });
+    }
+
+    const { count: restam } = await supabase
+      .from('dem_cep_geo')
+      .select('cep', { count: 'exact', head: true })
+      .is('lat', null).eq('ignorar', false);
+
+    res.json({
+      ceps_novos: semeados || 0,
+      processados: (pendentes || []).length,
+      resolvidos: ok.length,
+      falharam: falhas.length,
+      ok,
+      falhas,
+      restam: restam ?? 0,
+    });
+  } catch (e) {
+    console.error('[membresia/perfil/ceps/geocode]', e.message);
+    res.status(500).json({ error: 'Erro ao geocodificar os CEPs' });
   }
 });
 

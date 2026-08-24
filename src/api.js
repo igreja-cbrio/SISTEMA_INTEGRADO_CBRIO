@@ -2596,6 +2596,8 @@ export const membresia = {
   perfilGeocode: (limite) => post('/membresia/perfil/bairros/geocode', { limite }),
   perfilBairroPatch: (norm, campos) =>
     patch(`/membresia/perfil/bairros/${encodeURIComponent(norm)}`, campos),
+  perfilCeps: () => get('/membresia/perfil/ceps'),
+  perfilCepsGeocode: (limite) => post('/membresia/perfil/ceps/geocode', { limite }),
   qrLookup: (token) => get(`/membresia/qr-lookup/${encodeURIComponent(token)}`),
   cpfLookup: (cpf, nascimento) => get(`/membresia/cpf-lookup/${encodeURIComponent(String(cpf).replace(/\D/g, ''))}?nascimento=${encodeURIComponent(nascimento || '')}`),
   orfaosStats: () => get('/membresia/orfaos-stats'),
