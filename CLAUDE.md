@@ -1835,6 +1835,115 @@ de deploy tem **10 scripts**. São **12** — `test:kpi-periodos` e
 `test:matcher-insert` entraram depois e não foram citados. "Rodei os 10" deixava
 2 sem verificação.
 
+## ⚠️⚠️ Perfil · o mapa virou CALOR, e as 4 leis que isso custou (2026-08-24)
+
+Pedido do Matheus: *"o mapa tá bugado, não tá aparecendo as pessoas. eu gostaria
+de um mapa com calor, para entender melhor onde se concentra mais gente"* + *"a
+opção de expandir o mapa para ver em tela cheia"* + *"um filtro no mapa para
+escolher bairro ou cep, para ficar mais específico ainda e aí vai sendo
+alimentado com o tempo, com as pessoas atualizando o cadastro e pelo censo tbm"*.
+
+O calor entrou (`heatmap` nativo do maplibre + chip com a contagem por cima),
+e **o mapa nascia VAZIO — só um clique de zoom mostrava tudo**. Foram SEIS
+hipóteses até a causa, e cinco delas custaram um deploy cada. As leis:
+
+### ⚠️⚠️ LEI 1 · `isLoaded` no array de deps REMONTA o mapa e apaga o que ele acabou de pintar
+
+Era a causa raiz. O efeito que cria as camadas tinha, no topo, o comentário
+*"Depende só do MAPA, nunca de `isLoaded`"* — e o array dizia `[map, isLoaded]`.
+**O código fazia o oposto do que prometia.** Medido em produção:
+
+```
+22:04:04 aplicar estiloPronto=true → featuresRenderizadas=26 featuresNaSource=27
+22:04:04 effect montou isLoaded=true            ← o efeito REMONTOU
+22:04:04 aplicar temSource=false temCalor=false → featuresNaSource=0
+```
+
+As camadas nasciam, PINTAVAM, e o cleanup as removia junto com a source no
+instante seguinte — porque `isLoaded` acabara de virar true. **Source recriada
+não tem tile nenhum até a câmera se mover**, que é exatamente o "um clique de
+zoom mostra tudo". Quem decide a hora certa é o `map.isStyleLoaded()` dentro do
+`aplicar`, chamado a cada `styledata`/`idle`/`load` — nunca uma dep do React.
+
+⚠️⚠️ **Corolário que vale além deste mapa: comentário que mente é pior que
+comentário ausente.** Ele me fez descartar a hipótese certa duas vezes, porque eu
+lia a promessa e não o array. Ao mexer em efeito de mapa, **ler o array**.
+
+### ⚠️ LEI 2 · `setStyle()` descarta TODA camada criada por `addLayer`
+
+Trocar o tema (claro/escuro) apagava o mapa **de vez**. `ui/map.tsx` ganhou
+`temaAplicadoRef` para não chamar `setStyle` quando o tema efetivo não mudou, e
+`MapaBairros` tem uma conferência que reaplica as camadas se elas sumirem. Vale
+para o mapa de grupos e o do totem, que dividem o mesmo componente.
+
+### ⚠️⚠️ LEI 3 · `position: fixed` dentro de um `<Card>` NÃO usa a viewport
+
+A 1ª tela cheia colapsou numa faixa de ~40px em produção. O `backdrop-filter` do
+tema Vidro (base do `<Card>`) cria **containing block**, então `fixed inset-0` se
+ancora no CARD. Nenhum overlay dentro de um Card escapa disso.
+⇒ **Fullscreen API**, que não move nó nenhum. Portal para o `body` resolveria o
+ancoramento e faria o React **remontar o `<Map>`** (instância nova, estilo
+recarregado, câmera de volta ao início).
+⚠️ E o `requestFullscreen` **precisa avisar quando é recusado** (iframe sem
+`allow`, política do navegador, chamada sem gesto): o `catch` mudo faz o botão
+parecer quebrado.
+
+### ⚠️⚠️ LEI 4 · enquadramento se decide por PROXIMIDADE, não por tamanho
+
+`nucleoDoMapa` ordenava pelo maior e parava em 90% de cobertura. Com a cauda
+longa de hoje — **Barra 55 + Recreio 21 = 62% de 123 pessoas** — chegar a 90%
+exige **14 dos 26 bairros**, e entre eles entram Barra Mansa (2 pessoas), Volta
+Redonda (1) e Teresópolis (1). **TRÊS pessoas** abriam o mapa no estado inteiro.
+Ordem por tamanho mede QUANTAS pessoas; o que estica o quadro é ONDE elas estão.
+⇒ ordem por distância ao centro (**mediana**, não média) com a mesma cobertura:
+span de longitude **1,547° → 0,231°**.
+⚠️ **Um corte só.** Encadear dois de 90% derruba a cobertura efetiva para 88%
+(pior caso 81%) e quebra a promessa que o teste já fazia.
+
+### O filtro Bairro | CEP (migration `20260824180000`)
+
+**Trecho de CEP = os 5 primeiros dígitos**, com **piso de 3 pessoas por ponto**.
+⚠️⚠️ CEP completo é RUA: com 197 pessoas em 114 CEPs quase todo ponto teria uma
+pessoa só, e ponto de uma pessoa **é o endereço dela** — numa tela que promete ser
+agregada e é aberta a nível 1. O piso vale para desenhar E para filtrar (clicar
+num trecho de 1 pessoa mostraria o perfil completo dela), e trecho abaixo do piso
+devolve `cep_regiao_bloqueado` para a tela DIZER o motivo.
+- `dem_cep_geo` guarda por **CEP completo** (é o que ViaCEP e Nominatim
+  respondem); a agregação por trecho é na leitura.
+- A coordenada do trecho é a **média sobre PESSOAS**: rua com 8 pessoas pesa 8×.
+- `coordenadaDeCep` = ViaCEP → endereço → Nominatim = ponto de **RUA**. É isso que
+  faz o corte por CEP ser mais específico que o por bairro.
+- ⚠️ `utils/trechoCep.js` é espelho de `vw_dem_pessoa.cep_regiao`: **CEP
+  incompleto devolve null, nunca os 5 primeiros do que veio** — o censo já coletou
+  7 dígitos por engano, e truncar poria a pessoa no lugar errado.
+- ⚠️ **DROP + CREATE** em `fn_dem_perfil`, não `CREATE OR REPLACE`: parâmetro novo
+  muda a assinatura e as duas versões deixariam a chamada de 2 argumentos
+  **ambígua**. E `DROP FUNCTION` **leva os grants embora** — regravar só
+  `service_role`, porque `authenticated` foi revogado na faxina de segurança.
+
+**Estado medido em 24/08**: bairro 123 de 1.730 no mapa · CEP **97 pessoas em 12
+trechos** (Recreio 22 · Barra 20 · Barra Olímpica 13), com 147 CEPs geocodificados
+(142 com coordenada).
+
+### ⚠️ Lições de MÉTODO desta sessão (as três se repetiram)
+
+1. **Instrumentar em vez de adivinhar.** Cinco deploys foram gastos em hipóteses
+   plausíveis (expressão aninhada, chip cobrindo o calor, calibração de raio,
+   frame não agendado, `setStyle`). O log opt-in `?diagmapa=1` — que segue no
+   código — deu a resposta na primeira medição.
+2. **Comentário deste arquivo envelhece.** Eu escrevi aqui que `isLoaded` "nunca
+   virou true" e que `resize()` era a cura; as duas coisas estavam erradas, e o
+   texto foi corrigido no próprio `MapaBairros.tsx`. **Medir de novo antes de
+   repetir um achado.**
+3. **Teste com amostra inventada não testa a régua.** A 1ª versão do teste de
+   enquadramento usava 11 pontos e **3 mutantes sobreviveram** — com poucos
+   pontos, a ordem por tamanho já resolvia sozinha. Os casos agora são a
+   distribuição REAL, com a cauda inteira. E dois mutantes só morreram com o caso
+   certo: endereço em outro **continente** (média × mediana) e cidade ao **NORTE
+   com a mesma longitude do centro** — com Petrópolis o mutante sobrevivia, porque
+   a longitude dela também é periférica e ela caía fora **por acaso, não pela
+   régua**.
+
 ## ⚠️ Membresia · aprovação em massa da fila de cadastros (2026-08-04 · SEM migration)
 
 Pedido do Matheus: selecionar alguns ou todos e aprovar de uma vez, *"mas o sistema deve ter uma
