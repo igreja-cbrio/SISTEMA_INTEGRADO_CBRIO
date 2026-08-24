@@ -25,6 +25,7 @@
     "test:matcher-insert": "node backend/services/membroMatchInsert.test.js",
     "test:online-ds-janela": "node backend/services/onlineDsJanela.test.js",
     "test:alerta-culto": "node backend/services/alertaCultoPendente.test.js",
+    "test:disparo-interruptor": "node backend/services/disparoInterruptor.test.js",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",

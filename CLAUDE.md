@@ -12836,3 +12836,58 @@ outro mudo desde que nasceu. `system_job_runs` responde "isto já funcionou
 alguma vez?" em uma query, e é a primeira pergunta a fazer sobre qualquer cron:
 **"3 falhas consecutivas" pode significar "nunca funcionou", não "quebrou".**
 Nenhum teste unitário pega coluna inexistente — só o banco vivo pega.
+
+## ⚠️⚠️ Lembrete de escala ganhou interruptor de VERDADE (2026-08-24 · SEM migration)
+
+Matheus quis desligar o aviso *"Você está escalado(a)"* (o dos dois botões
+"Vou sim"/"Não vou poder") e perguntou se **arquivar o template na Meta** resolvia.
+**Não resolve — piora.**
+
+```js
+// backend/services/whatsappFila.js:40
+const ESTADOS_TEMPLATE_BLOQUEADOS = new Set(['REJECTED', 'PAUSED', 'DISABLED']);
+```
+
+⚠️ **`ARCHIVED` não está na lista** — e a palavra não aparece **nenhuma vez** em
+`backend/`, `src/` ou `supabase/`. Template arquivado passa a trava, o envio sai,
+a Meta recusa com **132001** (que está em `CODIGOS_META_PERMANENTES`) e cada
+pessoa vira uma linha `status='erro'` + uma notificação de falha terminal
+(`avisarFalhaTerminal`). Troca-se mensagem indesejada por alerta indesejado.
+
+⚠️⚠️ **`wa_templates.ativo` É UM INTERRUPTOR DE MENTIRA.** A coluna existe, está
+editável na tela de Comunicação (`src/pages/Comunicacao.tsx:521`,
+`backend/routes/comunicacao.js:197`) e **NENHUMA query do sistema a lê**. Era o
+caminho mais natural pra desligar um disparo, e não desliga nada. Não usar, e não
+criar o terceiro caso.
+
+**O que passou a existir:** o disparo entrou no catálogo
+(`comunicacaoAutomaticas.js`, id **`escala_vespera`**), então ganhou o switch em
+**Comunicação → Disparos → Automáticas** — desliga na hora (cache de 60s), sem
+redeploy, e religa igual. O freio é o `disparos_off` que já existia; só faltava
+este disparo (e o resumo Kids, que **continua sem interruptor**).
+
+- ⚠️ **A guarda no remetente fica DEPOIS do aviso no app, de propósito**
+  (`escalaAviso.js`): desligar silencia **só o WhatsApp**, o push do app continua.
+  Foi a escolha do Matheus. Quem lê "desligado" na tela esperando silêncio total
+  se engana — está escrito no comentário da entrada do catálogo.
+- Fail-OPEN, como o resto do freio: erro de leitura = nada desligado.
+- Gate de deploy: `npm run test:disparo-interruptor`, que exige que **remetente,
+  catálogo e validação do PATCH concordem no mesmo id**. Id que o remetente checa
+  e o catálogo não tem = switch invisível; id no catálogo que remetente nenhum
+  checa = o `wa_templates.ativo` de novo.
+
+**Sobre o espelho de público** (`publicoEscalaVespera`): ele NÃO reescreve a
+régua — chama `utils/avisoEscala.agruparParaAviso`, a mesma função pura do
+remetente (e que já está no gate), com os mesmos `dias: 4, porAntecedencia: true`.
+Só as duas leituras (cultos + escalas) são espelho. Duas armadilhas que eu caí e
+consertei medindo contra produção:
+- **`params` é `[ÁREAS, evento, quando]`** — `params[0]` NÃO é o nome da pessoa.
+  Usar `params[0]` como nome renderizava *"Coordenação"* na coluna de gente. O
+  nome é `g.nome` (`vol_schedules.volunteer_name`).
+- **`planning_center_person_id` não é decoração no select**: `chavePessoa` é
+  `volunteer_id || planning_center_person_id`. Sem a coluna, quem não tem
+  `volunteer_id` agrupa sob a chave `null` e várias pessoas viram um grupo só —
+  o espelho subcontaria.
+
+⚠️ Ele não aplica dedup nem teto de rodada, igual aos outros itens: o número é
+"quem se encaixa na regra HOJE", não "quantas mensagens saem agora".
