@@ -12727,3 +12727,44 @@ lint).
 vitrine; quem decide acesso é o `ModuleGuard` (front) e o `authorizeModule`
 (backend). A busca ⌘K (`command-search.tsx`) tem lista própria (`PAGES`) e nunca
 teve esta entrada — nada a sincronizar aqui.
+
+## ⚠️⚠️ Online · o alerta "Culto online sem dados" era 100% falso positivo (2026-08-24 · SEM migration)
+
+Matheus recebeu *"o online não foi coletado"*. **A coleta estava funcionando.** O
+alerta cobrava um dado uma hora ANTES do único cron que o preenche:
+
+| cron (`vercel.json`) | horário UTC | o que faz |
+|---|---|---|
+| `/api/notificacoes/cron` | **09:00** | chama `verificarColetaOnline()` e alerta |
+| `/api/online/cron/ds-collect` | **10:00** | é quem grava `cultos.online_ds` |
+
+`verificarColetaOnline` varre os cultos de **ontem + anteontem** e cobrava
+`online_ds` dos dois. Mas o DS de um culto do dia D só nasce no `ds-collect` de
+**D+1 às 10:00** — logo, às 09:00 o culto de ontem *sempre* aparecia sem DS.
+Resultado: **176 notificações, 163 não lidas, 100% falsas** desde que o alerta
+nasceu (08/08). Todos os cultos citados tinham `youtube_video_id`, `online_pico`
+e `online_ds` preenchidos, e o token OAuth estava saudável (`last_error` NULL).
+
+**Conserto** (`backend/services/onlineCollectors.js`): `dsJaDeviaTerColetado(data,
+agora)` — DS só é cobrado quando a janela do coletor já passou (`D+2` sempre;
+`D+1` só depois de `DS_CRON_HORA_UTC = 10`). `video_id` e `pico` continuam
+cobrados de ontem, porque quem os preenche (`sync` 06:00 e o live-monitor
+durante a transmissão) já rodou.
+
+**A rede de segurança não caiu:** falha REAL de DS não escapa, só atrasa um dia —
+no dia seguinte o culto entra na varredura como "anteontem" e o alerta sai com o
+dado já podendo ser cobrado de verdade.
+
+- ⚠️ **`DS_CRON_HORA_UTC` é um espelho do `vercel.json`.** Mexer no horário de
+  `ds-collect` ou do cron de notificações obriga a revisitar a constante.
+- Gate de deploy: `npm run test:online-ds-janela`
+  (`backend/services/onlineDsJanela.test.js`), que falha se a guarda voltar a
+  cobrar o culto de ontem às 09:00.
+- `online_ddus` NULL nos cultos recentes **não é falha**: DDUS é D+7 e nem entra
+  nesta verificação. Não perseguir.
+
+⚠️ **A lição, que vale pra qualquer alerta novo:** antes de subir uma verificação,
+conferir se ela roda DEPOIS de quem preenche o campo. Alerta que grita todo dia
+com o sistema saudável treina o time a ignorar o sino — e aí o dia da falha real
+passa batido. Ao criar alerta sobre dado de cron, o horário do verificador é
+parte do contrato, não detalhe de agenda.

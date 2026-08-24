@@ -21,6 +21,14 @@ const JANELA_LIVE_MIN_DEPOIS = 240; // até 4h depois (cultos longos)
 // caminho via Analytics e so um recovery best-effort pra quando o monitor falhou.
 const PICO_ANALYTICS_DELAY_DIAS = 3;
 
+// Hora UTC do cron `/api/online/cron/ds-collect` (vercel.json · "0 10 * * *").
+// O DS de um culto so existe DEPOIS que esse cron roda em D+1. O verificador
+// (`verificarColetaOnline`) e chamado pelo cron de notificações, que roda uma
+// hora ANTES (09:00 UTC) · sem esta guarda ele cobrava o DS de ontem que ainda
+// nao tinha tido a chance de ser coletado e disparava alerta falso TODO DIA.
+// Se qualquer um dos dois horarios mudar no vercel.json, ajustar aqui tambem.
+const DS_CRON_HORA_UTC = 10;
+
 // Fallback do formulário de decisão · fora da janela ao vivo, ainda anexa a
 // decisão ao último culto online que já comecou até este limite (minutos após
 // o início). Cobre quem so preenche o form DEPOIS que o culto acaba, sem
@@ -1029,6 +1037,16 @@ async function engajamentoCollector({ ano, mesesRecentes } = {}) {
   return { ok: true, ano: anoAlvo, processados: meses.length, coletados, resultados };
 }
 
+// O ds-collect de um culto do dia D roda em D+1 as DS_CRON_HORA_UTC. Antes
+// disso, DS vazio e o estado NORMAL · nao e problema pra reportar.
+function dsJaDeviaTerColetado(dataCulto, agora = new Date()) {
+  const dt = new Date(`${dataCulto}T00:00:00`);
+  const dias = Math.floor((agora.getTime() - dt.getTime()) / 86400000);
+  if (dias >= 2) return true;              // D+2 ou mais · janela ja passou
+  if (dias < 1) return false;              // culto de hoje · nem existe DS
+  return agora.getUTCHours() >= DS_CRON_HORA_UTC;  // ontem · so depois do cron
+}
+
 // ---------------------------------------------------------------------------
 // verificarColetaOnline · BLINDAGEM · confere se os cultos online já encerrados
 // dos últimos 2 dias receberam as metricas automáticas (video_id, pico, DS) e a
@@ -1078,7 +1096,12 @@ async function verificarColetaOnline() {
     const faltando = [];
     if (!c.youtube_video_id) faltando.push('video_id (live não detectada)');
     if (!c.online_pico || c.online_pico === 0) faltando.push('pico de audiencia');
-    if (!c.online_ds || c.online_ds === 0) faltando.push('views D+1 (DS)');
+    // DS so e cobrado depois que o ds-collect de D+1 teve a chance de rodar.
+    // Falha real nao escapa: no dia seguinte o culto entra como "anteontem" e
+    // o alerta sai com o dado ja podendo ser cobrado de verdade.
+    if ((!c.online_ds || c.online_ds === 0) && dsJaDeviaTerColetado(c.data)) {
+      faltando.push('views D+1 (DS)');
+    }
     if (faltando.length) {
       problemas.push({ id: c.id, nome: st.name || 'Culto', data: c.data, faltando });
     }
@@ -1108,4 +1131,5 @@ module.exports = {
   backfillCultoVideoIds, catchUpMetricas, backfillRange,
   engajamentoCollector,
   verificarColetaOnline, findCultoAtual,
+  dsJaDeviaTerColetado,
 };

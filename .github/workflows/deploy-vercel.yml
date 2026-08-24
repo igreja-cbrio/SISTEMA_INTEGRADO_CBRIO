@@ -76,6 +76,13 @@ jobs:
       - name: Matcher grava nascimento e sexo na criacao
         run: npm run test:matcher-insert
 
+      # Trava o conserto de 24/08: o verificador cobrava o DS do culto de ontem
+      # as 09:00 UTC, uma hora ANTES do ds-collect (10:00 UTC) que preenche o
+      # campo. Resultado: alerta falso "Culto online sem dados" todo dia, para
+      # todo culto online, com a coleta funcionando.
+      - name: Janela do DS online (nao cobrar antes do coletor rodar)
+        run: npm run test:online-ds-janela
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
