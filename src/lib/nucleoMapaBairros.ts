@@ -18,12 +18,50 @@ export type PontoBairro = {
   lng: number;
 };
 
-/** Bairros que somam `cobertura` das pessoas (padrão 90%), do maior para o
- *  menor. O resto volta em `fora` para a tela poder declarar.
+/** Distância angular ao quadrado. Serve para ORDENAR, então a raiz é
+ *  desnecessária — e a distorção do cosseno da latitude é irrelevante aqui
+ *  (comparamos pontos da mesma região metropolitana entre si). */
+const dist2 = (a: PontoBairro, lat: number, lng: number) =>
+  (a.lat - lat) ** 2 + (a.lng - lng) ** 2;
+
+/** Mediana simples de uma lista já ordenada. Mediana e não média porque UM
+ *  ponto distante move a média e não move a mediana — é o ponto distante que
+ *  esta régua existe para não deixar mandar no enquadramento. */
+const mediana = (ordenada: number[]) => {
+  const n = ordenada.length;
+  if (n === 0) return 0;
+  const meio = Math.floor(n / 2);
+  return n % 2 ? ordenada[meio] : (ordenada[meio - 1] + ordenada[meio]) / 2;
+};
+
+/** Bairros que entram no QUADRO INICIAL. O resto volta em `fora` para a tela
+ *  poder declarar — e continua desenhado no mapa.
  *
- *  Motivo concreto (medido em 23/08/2026): a Barra concentra 55 de 79 pessoas
- *  e UM cadastro em Volta Redonda esticava o enquadramento até lá, espremendo
- *  o Rio inteiro num canto — justamente a leitura que o mapa existe para dar. */
+ *  A régua é UMA: os bairros MAIS PRÓXIMOS do centro de massa que, somados,
+ *  cobrem `cobertura` das pessoas (padrão 90%).
+ *
+ *  ⚠️⚠️ ORDENAR POR PROXIMIDADE, NÃO POR TAMANHO — foi a correção de
+ *  24/08/2026, medida em produção. A versão anterior ordenava pelo maior e
+ *  parava em 90%, e com a cauda longa de hoje isso não protegia de nada:
+ *  Barra 55 + Recreio 21 = 62% de 123 pessoas, então chegar a 90% exigia **14
+ *  bairros**, e entre eles entravam "Centro" em Barra Mansa (2 pessoas),
+ *  "Jardim Amália" em Volta Redonda (1) e "Várzea" em Teresópolis (1). TRÊS
+ *  pessoas esticavam o quadro de −44,08° a −42,53° de longitude: o mapa abria
+ *  no estado inteiro e a concentração da Barra virava uma bolinha — justamente
+ *  a leitura que este mapa existe para dar.
+ *
+ *  ⚠️ Ordenar por tamanho mede QUANTAS pessoas; o que estica o quadro é ONDE
+ *  elas estão. Só a ordem por distância responde a pergunta certa.
+ *
+ *  ⚠️⚠️ E a cobertura continua valendo sobre o TOTAL, não sobre um subconjunto:
+ *  a 1ª tentativa deste conserto encadeou DOIS cortes de 90% (um por gente,
+ *  outro por distância) e a cobertura efetiva caiu para 88% — no pior caso
+ *  0,9 × 0,9 = 81%. O teste pegou. Um corte só mantém a promessa.
+ *
+ *  ⚠️ POLO LEGÍTIMO NUNCA É CORTADO, e não por sorte: sem ele a cobertura não
+ *  fecha. Um segundo bairro com 40 de 100 pessoas entra obrigatoriamente,
+ *  porque os vizinhos do centro só chegam a 60%. Quem fica de fora é sempre
+ *  massa desprezível — 4 pessoas em 123, no caso real. */
 export function nucleoDoMapa<T extends PontoBairro>(bairros: T[], cobertura = 0.9) {
   if (bairros.length <= 1) return { nucleo: bairros, fora: [] as T[] };
   const total = bairros.reduce((s, b) => s + b.total, 0);
@@ -37,14 +75,23 @@ export function nucleoDoMapa<T extends PontoBairro>(bairros: T[], cobertura = 0.
   // forma diferente), não por cobertura que eu não tenho.
   if (total <= 0) return { nucleo: bairros, fora: [] as T[] };
 
-  const ordenados = [...bairros].sort((a, b) => b.total - a.total);
+  // O centro é a MEDIANA das coordenadas, não a média: a média é arrastada por
+  // um ponto distante, e é exatamente o ponto distante que esta régua existe
+  // para não deixar mandar no enquadramento.
+  const centroLat = mediana(bairros.map((b) => b.lat).sort((a, b) => a - b));
+  const centroLng = mediana(bairros.map((b) => b.lng).sort((a, b) => a - b));
+
+  const porDistancia = [...bairros].sort(
+    (a, b) => dist2(a, centroLat, centroLng) - dist2(b, centroLat, centroLng),
+  );
   const nucleo: T[] = [];
   let acumulado = 0;
-  for (const b of ordenados) {
+  for (const b of porDistancia) {
     nucleo.push(b);
     acumulado += b.total;
     if (acumulado / total >= cobertura) break;
   }
+
   const dentro = new Set(nucleo.map((b) => b.norm));
   return { nucleo, fora: bairros.filter((b) => !dentro.has(b.norm)) };
 }
