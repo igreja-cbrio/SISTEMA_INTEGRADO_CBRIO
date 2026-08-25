@@ -2183,48 +2183,81 @@ router.get('/monitoramento-okr', async (req, res) => {
       }
     } catch (e) { console.error('okr · batismos coorte:', e.message); }
 
-    // 4b) NEXT · "% com 1º contato que fizeram o Next" (pedido do Matheus em
-    //     25/08/2026, revisando o relatório de agosto mandado ao Pr. Juninho).
+    // 4b) NEXT · "% com 1º contato que foi a >=1 encontro do Next"
+    //     (Matheus, 25/08/2026, revisando o relatório mandado ao Pr. Juninho)
     //
-    // ⚠️⚠️ O relatório dizia "25 de 416 formados no Next" (6,0%), e aquele 25
-    // vinha de `next_matriculas.status='formado'` — o status POR TURMA, que a
-    // lei do projeto proíbe justamente porque diz "não formou" pra quem esteve
-    // num encontro de OUTRA turma. A régua pedida é "foi a pelo menos 1
-    // encontro", que é o que `vw_next_formado_pessoa` já faz desde 14/08
-    // (presença ∪ marcação manual ∪ status). Medido em 25/08: as duas listas
-    // são as MESMAS 30 pessoas, zero diferença nos dois sentidos.
+    // ⚠️⚠️ O relatório dizia "25 de 416 formados" e o 25 vinha de
+    // `next_matriculas.status='formado'` — o status POR TURMA, proibido pela lei
+    // do projeto (diz "não formou" pra quem esteve num encontro de OUTRA turma).
     //
-    // ⚠️ Denominador = convertidos com 1º CONTATO FEITO (é o que o nome do
-    // indicador diz). "Número errado" conta como contato feito — a mensagem
-    // saiu. Medido: 416 de 426.
+    // ⚠️⚠️ NÃO usa `vw_next_formado_pessoa`, e o motivo é o pedido: a view é
+    // presença ∪ marcação manual ∪ **status 'formado'**, e o Matheus foi
+    // explícito — "não contabilizamos os formados". Aqui só entra EVIDÊNCIA DE
+    // PRESENÇA. Medido em 25/08: ninguém tem status sem ter presença, então
+    // hoje as duas listas coincidem; a diferença é de semântica, não de gente.
+    //
+    // ⚠️ A camada LEGADA conta: `next_inscricoes.check_in_at` é a marca de
+    // presença das 56 listas digitalizadas em 13/05. ⚠️ Mas linha SEM
+    // `check_in_at` NÃO conta — nas listas IMPRESSAS o nome vinha pré-impresso
+    // (roster) e só o tique prova presença. Medido: incluir o roster levaria de
+    // 33 para 41 pessoas, contando quem se inscreveu e nunca apareceu.
+    //
+    // ⚠️⚠️ CASA TAMBÉM POR TELEFONE + PRIMEIRO NOME. O convertido do culto entra
+    // sem CPF (a porta pede só nome e telefone), então chave forte sozinha perde
+    // gente — e o que ela perde, medido, são **cadastros DUPLICADOS**: a mesma
+    // pessoa com dois `membro_id` ("Solano Castro C. Pinto" × "Solano Castro
+    // Carneiro Pinto"). Sem o telefone o indicador subconta enquanto a fila de
+    // duplicatas não é tratada. Telefone SOZINHO nunca identifica (família
+    // compartilha número) — por isso vai com o primeiro nome junto.
     try {
       const dig = (v) => String(v || '').replace(/\D/g, '');
-      const chaveCpf = (v) => (dig(v).length === 11 ? dig(v) : null);
-      const chaveNome = (v) => String(v || '').trim().toLowerCase() || null;
+      const kCpf = (v) => (dig(v).length === 11 ? dig(v) : null);
+      const kNome = (v) => String(v || '').trim().toLowerCase() || null;
+      const kTel = (v) => { const d = dig(v); return d.length >= 10 ? d.slice(-8) : null; };
+      const kPri = (v) => kNome(v)?.split(' ')[0] || null;
       const CONTATO_FEITO = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
 
-      const convs = await fetchPaged('cui_convertidos', 'membro_id, cpf, nome, primeiro_contato_em, primeiro_contato_status',
+      const convs = await fetchPaged('cui_convertidos', 'membro_id, cpf, nome, telefone, primeiro_contato_em, primeiro_contato_status',
         (q) => q.is('deleted_at', null));
       const comContato = convs.filter((c) => !!c.primeiro_contato_em || CONTATO_FEITO.has(c.primeiro_contato_status));
+
       if (comContato.length) {
-        const fez = await fetchPaged('vw_next_formado_pessoa', 'membro_id, cpf, nome', (q) => q);
-        const fM = new Set(), fC = new Set(), fN = new Set();
-        for (const f of fez) {
-          if (f.membro_id) fM.add(f.membro_id);
-          if (chaveCpf(f.cpf)) fC.add(chaveCpf(f.cpf));
-          if (chaveNome(f.nome)) fN.add(chaveNome(f.nome));
-        }
-        // ⚠️ Chave FORTE primeiro; nome SÓ quando não há identificação nenhuma.
-        // Cruzar por nome com membro_id disponível gera homônimo e superconta.
+        const pM = new Set(), pC = new Set(), pN = new Set(), pT = new Set();
+        const anota = (r) => {
+          if (r.membro_id) pM.add(r.membro_id);
+          if (kCpf(r.cpf)) pC.add(kCpf(r.cpf));
+          if (kNome(r.nome)) pN.add(kNome(r.nome));
+          if (kTel(r.telefone) && kPri(r.nome)) pT.add(`${kTel(r.telefone)}|${kPri(r.nome)}`);
+        };
+        // presença na camada VIVA (matrícula × encontro)
+        const mats = await fetchPaged('next_matriculas', 'id, membro_id, cpf, nome, telefone', (q) => q.is('deleted_at', null));
+        const matPorId = new Map(mats.map((m) => [m.id, m]));
+        const presencas = await fetchPaged('next_presencas', 'matricula_id', (q) => q.eq('presente', true));
+        for (const pr of presencas) { const m = matPorId.get(pr.matricula_id); if (m) anota(m); }
+        // presença na camada LEGADA (o tique das listas de 13/05)
+        const legado = await fetchPaged('next_inscricoes', 'membro_id, cpf, nome, telefone',
+          (q) => q.not('check_in_at', 'is', null));
+        for (const l of legado) anota(l);
+        // marcação manual de aula (a pessoa esteve; não há data do encontro)
+        const manual = await fetchPaged('next_pessoa_aula_manual', 'membro_id',
+          (q) => q.or('fez_aula1.eq.true,fez_aula2.eq.true'));
+        for (const m of manual) if (m.membro_id) pM.add(m.membro_id);
+
+        // ⚠️ Chave FORTE primeiro; telefone+1º nome como PONTE; nome sozinho só
+        // quando não há identificação nenhuma (com id disponível, nome puro é
+        // homônimo e superconta).
         const casa = (c) => {
-          const cpf = chaveCpf(c.cpf);
-          if (c.membro_id || cpf) return (!!c.membro_id && fM.has(c.membro_id)) || (!!cpf && fC.has(cpf));
-          const n = chaveNome(c.nome);
-          return !!n && fN.has(n);
+          const cpf = kCpf(c.cpf);
+          if ((c.membro_id && pM.has(c.membro_id)) || (cpf && pC.has(cpf))) return true;
+          const t = kTel(c.telefone), pr = kPri(c.nome);
+          if (t && pr && pT.has(`${t}|${pr}`)) return true;
+          if (c.membro_id || cpf) return false;
+          const n = kNome(c.nome);
+          return !!n && pN.has(n);
         };
         const ok = comContato.filter(casa).length;
         addM('next_pos_contato', Math.round(ok / comContato.length * 1000) / 10, '%',
-          `${ok} de ${comContato.length} com 1º contato feito estiveram em ao menos 1 encontro do Next (não é "formado" — é presença)`);
+          `${ok} de ${comContato.length} com 1º contato estiveram em ao menos 1 encontro do Next (presença, não "formado")`);
       }
     } catch (e) { console.error('okr · next_pos_contato:', e.message); }
 
