@@ -2788,8 +2788,11 @@ EXIBIÇÃO, em 2 pontos:
 Caso real: a Patrícia tentou se inscrever no grupo do "Antônio" no domingo e
 **nenhum pedido dela existe no banco** — não conseguiu concluir. O líder está
 cadastrado como **"ANTONIO MARCO PEREIRA"** (sem acento) e a busca era
-acento-SENSÍVEL, então quem digitava a grafia correta não achava o grupo. Ele
-também é conhecido como **"Tuninho"**, e não havia busca por apelido.
+acento-SENSÍVEL, então quem digitava a grafia correta não achava o grupo. ~~Ele
+também é conhecido como "Tuninho"~~ — **ERRADO, corrigido em 25/08** (ver a
+ressalva no fim desta seção): a busca por apelido é boa; o apelido semeado é que
+não era dele. **O caso da Patrícia foi resolvido pela busca sem acento**, que não
+depende de apelido nenhum.
 
 - **Régua ÚNICA de busca em 2 espelhos** (a filtragem acontece nos dois lados):
   `src/lib/busca.js` (cliente) e `backend/services/busca.js` (servidor) —
@@ -2813,7 +2816,7 @@ também é conhecido como **"Tuninho"**, e não havia busca por apelido.
   nomes + apelidos (é nele que os filtros procuram, com fallback pros nomes pra
   bundle antigo/deploy em 2 etapas); `lideres_exibicao`/`lider_apelido` montam
   "Nome (Apelido)" no cartão do grupo, no balão do mapa e na confirmação do
-  grupo escolhido (`InscricaoGrupos`) — é o "ah, é o Tuninho".
+  grupo escolhido (`InscricaoGrupos`) — é o "ah, é o Fulano".
 - ⚠️ **O `apelido` é selecionado em consulta ISOLADA e best-effort**
   (`buscarApelidos` em publicGrupos.js): se a migration não tiver sido aplicada,
   pedir a coluna faria o PostgREST recusar a query INTEIRA e derrubaria a busca
@@ -2825,6 +2828,23 @@ também é conhecido como **"Tuninho"**, e não havia busca por apelido.
   porque **160000 já estava ocupado** (`..._next_dia_sessao_real_e_semana`).
   NÃO cadastrar outros apelidos por migration — é dado que a equipe preenche
   caso a caso na Membresia.
+  ⚠️⚠️ **O SEED DAQUELA MIGRATION ESTAVA ERRADO e foi DESFEITO** (migration
+  `20260825190000` · Marcos: *"o antonio marco pereira não é o tuninho"*).
+  **A de 30/07 NÃO foi editada** — migration aplicada não se reescreve, e num
+  replay do zero a ordem cronológica entrega o estado certo (ela semeia, a de
+  25/08 remove).
+  ⚠️⚠️ **MEDIDO em 25/08: "Tuninho" era o ÚNICO apelido da base inteira**, então
+  `mem_membros.apelido` ficou 100% vazia. A coluna, o índice e a régua de busca
+  por apelido FICAM (são infraestrutura — voltam a valer no primeiro apelido que
+  alguém cadastrar de verdade pela Membresia). Os outros 18 Antônios vivos não
+  têm apelido e não foram tocados.
+  ⚠️ `apelido` **não está entre as colunas auditadas** pelo `audit_log_changes`
+  (cpf/status/deleted_at/nome/email/telefone), então mudança nela não deixa
+  trilha em `app_audit_log` — o porquê tem que viver na migration e aqui.
+  ⚠️⚠️ **LIÇÃO**: apelido é afirmação sobre uma PESSOA. Semear por migration a
+  partir de um relato de terceiro publica identidade errada no cartão público do
+  grupo e no mapa — e ninguém audita o que parece dado. Preencher pela tela, com
+  quem conhece a pessoa, é mais lento e é o caminho certo.
 - **Limitações conhecidas:** o `/grupos/buscar` **autenticado** não devolve
   `lideres_busca`/apelido (a busca lá é acento-insensível, mas não acha por
   apelido); a ficha da pessoa da aba Pessoas do /grupos ainda não edita apelido;
