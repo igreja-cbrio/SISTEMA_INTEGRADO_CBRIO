@@ -3581,7 +3581,8 @@ export const voluntariado = {
   // Supervisores de área (concedido no sistema · usado pelo app pra montar escala)
   supervisores: {
     list: () => get('/voluntariado/supervisores'),
-    grant: (membro_id, area) => post('/voluntariado/supervisores', { membro_id, area }),
+    // `position_id` = SUBÁREA (vol_positions). null/omitido = toda a área.
+    grant: (membro_id, area, position_id = null) => post('/voluntariado/supervisores', { membro_id, area, position_id }),
     revoke: (id) => del(`/voluntariado/supervisores/${id}`),
   },
   // CPF / Membresia unification

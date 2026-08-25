@@ -101,6 +101,12 @@ jobs:
       - name: Politica 'ligar' cumpre o contrato de porta (CPF + mem_contatos)
         run: npm run test:porta-ligar
 
+      # PERMISSAO. A supervisao passou a recortar por area E subarea (25/08); a
+      # licao de 18/08 e que a trava existia so como PORTA e todo supervisor
+      # montava escala de tudo. Cada regra do recorte tem um caso aqui.
+      - name: Supervisao recorta por area e subarea (permissao)
+        run: npm run test:supervisor-subarea
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 

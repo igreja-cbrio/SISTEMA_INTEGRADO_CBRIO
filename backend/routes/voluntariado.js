@@ -1643,7 +1643,9 @@ router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res)
   try {
     const { data, error } = await supabase
       .from('vol_area_supervisores')
-      .select('id, area, created_at, membro:mem_membros(id, nome, telefone, foto_url)')
+      // ⚠️ `position` é a SUBÁREA (Ofertório, Estacionamento…). Vem embutida
+      // pra tela não precisar de um segundo round-trip por linha.
+      .select('id, area, position_id, created_at, membro:mem_membros(id, nome, telefone, foto_url), position:vol_positions(id, name, team_id)')
       .order('area', { ascending: true });
     if (error) throw error;
     res.json(data || []);
@@ -1655,15 +1657,36 @@ router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res)
 
 router.post('/supervisores', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
-    const { membro_id, area } = req.body || {};
+    const { membro_id, area, position_id } = req.body || {};
     if (!membro_id || !area) return res.status(400).json({ error: 'membro_id e area obrigatórios' });
+
+    // ⚠️ A subárea tem que PERTENCER à área concedida. Sem esta checagem daria
+    // pra conceder "Integração + Recepção do KIDS" mandando o id cru no corpo —
+    // e o predicado casaria pelo id, liberando a subárea de outra área. É a
+    // mesma razão por que a supervisão guarda ID e não nome.
+    let posId = position_id || null;
+    if (posId) {
+      const { data: pos } = await supabase.from('vol_positions')
+        .select('id, name, team:vol_teams(id, area)').eq('id', posId).maybeSingle();
+      const areaDaPos = Array.isArray(pos?.team) ? pos.team[0]?.area : pos?.team?.area;
+      const norm = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+      if (!pos || norm(areaDaPos) !== norm(area)) {
+        return res.status(400).json({ error: 'Essa subárea não pertence à área escolhida.' });
+      }
+    }
+
     const { data, error } = await supabase
       .from('vol_area_supervisores')
-      .insert({ membro_id, area: String(area).trim().toLowerCase(), concedido_por: req.user?.userId || null })
-      .select('id, area, created_at, membro:mem_membros(id, nome, telefone, foto_url)')
+      .insert({
+        membro_id,
+        area: String(area).trim().toLowerCase(),
+        position_id: posId,
+        concedido_por: req.user?.userId || null,
+      })
+      .select('id, area, position_id, created_at, membro:mem_membros(id, nome, telefone, foto_url), position:vol_positions(id, name, team_id)')
       .single();
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Essa pessoa já é supervisora dessa área' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Essa pessoa já supervisiona isso' });
       throw error;
     }
     res.status(201).json(data);

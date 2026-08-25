@@ -7,7 +7,7 @@ const { semCache } = require('../middleware/semCache');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
-const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo } = require('../utils/supervisorArea');
+const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo, podeSupervisionar, subareasNaArea } = require('../utils/supervisorArea');
 const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior } = require('../utils/agendaGrupo');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
@@ -1868,10 +1868,32 @@ router.delete('/voluntariado/indisponibilidade/:id', authApp, limiterNormal, asy
 // Retorna as áreas onde o membro logado é supervisor (ou [] se não for).
 async function supervisorAreasApp(req) {
   const membro = await resolveMembroApp(req).catch(() => null);
-  if (!membro) return { membro: null, areas: [] };
+  if (!membro) return { membro: null, areas: [], grants: [] };
+  // ⚠️ `grants` é a concessão INTEIRA (área + subárea). `areas` continua sendo
+  // devolvido porque é o que abre o portão do 403 e o que a tela do app exibe
+  // em `areas_supervisionadas` — mas quem decide permissão fina é `grants`.
   const { data } = await supabase
-    .from('vol_area_supervisores').select('area').eq('membro_id', membro.id);
-  return { membro, areas: [...new Set((data || []).map(r => r.area).filter(Boolean))] };
+    .from('vol_area_supervisores').select('area, position_id').eq('membro_id', membro.id);
+  const grants = (data || []).filter(r => r.area);
+  return {
+    membro,
+    areas: [...new Set(grants.map(r => r.area))],
+    grants,
+  };
+}
+
+/**
+ * Resolve a subárea (vol_positions.id) a partir do nome que o cliente mandou.
+ *
+ * ⚠️ Escopado pela EQUIPE, nunca só pelo nome: "Recepção" existe em Integração
+ * e em KIDS, "Cuidados" em AMI/Bridge/Voluntariado. Buscar só por nome traria a
+ * posição de outra área e a trava aprovaria o alvo errado.
+ */
+async function resolverPosicaoId(teamId, positionName) {
+  if (!teamId || !positionName) return null;
+  const { data } = await supabase.from('vol_positions')
+    .select('id').eq('team_id', teamId).eq('name', positionName).maybeSingle();
+  return data?.id || null;
 }
 
 /**
@@ -1884,7 +1906,7 @@ async function supervisorAreasApp(req) {
 async function escalaSobSupervisao(scheduleId, areas) {
   if (supervisionaTudo(areas)) return { ok: true };
   const { data: sc } = await supabase.from('vol_schedules')
-    .select('id, team_id, team_name').eq('id', scheduleId).maybeSingle();
+    .select('id, team_id, team_name, position_id, position_name').eq('id', scheduleId).maybeSingle();
   if (!sc) return { ok: false, motivo: 'nao_encontrada' };
   let equipe = null;
   if (sc.team_id) {
@@ -1897,9 +1919,17 @@ async function escalaSobSupervisao(scheduleId, areas) {
   // ⚠️ Escala sem equipe resolvível NÃO é liberada: seria a brecha por onde
   // qualquer linha antiga do Planning Center viraria terreno de todo mundo.
   if (!equipe) return { ok: false, motivo: 'sem_equipe' };
-  return equipeSupervisionada(equipe, areas)
-    ? { ok: true }
-    : { ok: false, motivo: 'outra_area', equipe: equipe.name };
+  if (!equipeSupervisionada(equipe, areas)) {
+    return { ok: false, motivo: 'outra_area', equipe: equipe.name };
+  }
+  // ⚠️ Recorte de SUBÁREA (2026-08-25). Quem tem concessão só do Ofertório não
+  // pode mover/remover a linha do Estacionamento, mesmo sendo a mesma equipe.
+  // Vale pra MOVER e REMOVER, não só pra adicionar — a lição do bloco acima.
+  const alvo = { area: equipe.area, position_id: sc.position_id || null };
+  if (!podeSupervisionar(areas, alvo)) {
+    return { ok: false, motivo: 'outra_subarea', equipe: equipe.name, subarea: sc.position_name || null };
+  }
+  return { ok: true };
 }
 
 // GET /app/voluntariado/escala/servicos — próximos cultos (para montar escala)
@@ -1944,12 +1974,14 @@ router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, 
 // visíveis no app, exatamente como no sistema web.
 router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const [{ data, error }, { data: composicao, error: composicaoErr }] = await Promise.all([
       supabase
       .from('vol_schedules')
-      .select('id, volunteer_id, volunteer_name, team_id, team_name, position_name, confirmation_status, recusa_motivo')
+      // ⚠️ `position_id` entrou pro filtro de SUBÁREA. Sem ele o recorte fino
+      // só teria o nome, que repete entre áreas.
+      .select('id, volunteer_id, volunteer_name, team_id, team_name, position_id, position_name, confirmation_status, recusa_motivo')
       .eq('service_id', req.params.serviceId)
       .order('team_name', { ascending: true })
       .order('volunteer_name', { ascending: true }),
@@ -1976,15 +2008,28 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
     });
     // ⚠️ O supervisor vê SÓ as áreas dele. O card no app do membro já dizia
     // "monte e veja as escalas da sua área" — a promessa existia, o filtro não.
-    const itens = filtrarPorSupervisao(todosItens, areas);
+    //
+    // ⚠️ Desde 25/08 o corte é por ÁREA + SUBÁREA: os itens da composição já
+    // trazem `position_id`, então quem recebeu só o Ofertório vê só a linha do
+    // Ofertório dentro da equipe Integração.
+    const itens = (todosItens || []).filter(i => podeSupervisionar(grants, { area: i.area, position_id: i.position_id }));
     // ⚠️ A escala também é recortada: mostrar quem está escalado em áreas que
     // ele não supervisiona transformaria a tela num diretório de gente, e o
     // botão de remover apagaria escala alheia.
     const equipesVisiveis = new Set(itens.map(i => i.team_id).filter(Boolean));
     const nomesVisiveis = new Set(itens.map(i => i.team_name));
+    // ⚠️ A subárea também recorta a ESCALA, não só a composição. Sem isto,
+    // esconder a linha "Estacionamento" da composição e ainda listar quem está
+    // escalado nela deixaria o botão de remover apagando escala alheia — o
+    // mesmo furo que o comentário acima descreve, um nível abaixo.
+    const posicoesVisiveis = new Set(itens.map(i => i.position_id).filter(Boolean));
+    const recortaSubarea = itens.some(i => i.position_id) && !supervisionaTudo(areas)
+      && (data || []).some(e => e.position_id);
     const escalasVisiveis = supervisionaTudo(areas)
       ? (data || [])
-      : (data || []).filter(e => equipesVisiveis.has(e.team_id) || nomesVisiveis.has(e.team_name));
+      : (data || [])
+        .filter(e => equipesVisiveis.has(e.team_id) || nomesVisiveis.has(e.team_name))
+        .filter(e => !recortaSubarea || !e.position_id || posicoesVisiveis.has(e.position_id));
     res.json({
       escalas: escalasVisiveis,
       // ⚠️ ALIAS DE COMPATIBILIDADE (22/08/2026). O app do STAFF lê `escala`
@@ -2079,7 +2124,7 @@ router.get('/voluntariado/voluntario/:id/detalhe', authApp, limiterNormal, async
 // POST /app/voluntariado/escala — adiciona à escala { service_id, volunteer_id, team_name, position_name }
 router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const { service_id, volunteer_id, team_name, position_name } = req.body || {};
     if (!service_id || !volunteer_id) return res.status(400).json({ error: 'service_id e volunteer_id obrigatórios' });
@@ -2097,6 +2142,24 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
         return res.status(403).json({
           error: `Você não supervisiona ${team_name}. Fale com quem responde por essa área.`,
         });
+      }
+      // ⚠️⚠️ TRAVA DE SUBÁREA (25/08/2026). Mesma lógica da trava de equipe uma
+      // camada abaixo: o cliente manda `position_name` no corpo e nada impedia
+      // mandar a subárea de outro. Quem tem concessão de área INTEIRA
+      // (`subareasNaArea` vazio) não é afetado.
+      const recorte = subareasNaArea(grants, eq.area);
+      if (recorte.length) {
+        if (!position_name) {
+          return res.status(400).json({
+            error: 'Escolha a subárea: sua supervisão é de subárea específica, não da área inteira.',
+          });
+        }
+        const posId = await resolverPosicaoId(eq.id, position_name);
+        if (!posId || !podeSupervisionar(grants, { area: eq.area, position_id: posId })) {
+          return res.status(403).json({
+            error: `Você não supervisiona ${position_name} em ${team_name}.`,
+          });
+        }
       }
     }
 
@@ -2161,7 +2224,7 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
 // PATCH /app/voluntariado/escala/:id — move de equipe (drag & drop) / muda função
 router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const { team_name, position_name } = req.body || {};
     const { data: atual } = await supabase.from('vol_schedules')
@@ -2188,6 +2251,20 @@ router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res
           .select('id, name, area').eq('name', novoTeam).maybeSingle();
         if (!destino || !equipeSupervisionada(destino, areas)) {
           return res.status(403).json({ error: `Você não supervisiona ${novoTeam}.` });
+        }
+        // ⚠️ Subárea do DESTINO. Sem isto, quem só tem o Ofertório moveria a
+        // linha pra dentro do Estacionamento — saindo do próprio escopo por um
+        // caminho que a trava de equipe aprova.
+        const recorte = subareasNaArea(grants, destino.area);
+        if (recorte.length) {
+          const nomePos = position_name !== undefined ? position_name : null;
+          if (!nomePos) {
+            return res.status(400).json({ error: 'Escolha a subárea do destino: sua supervisão é de subárea específica.' });
+          }
+          const posId = await resolverPosicaoId(destino.id, nomePos);
+          if (!posId || !podeSupervisionar(grants, { area: destino.area, position_id: posId })) {
+            return res.status(403).json({ error: `Você não supervisiona ${nomePos} em ${novoTeam}.` });
+          }
         }
       }
     }
