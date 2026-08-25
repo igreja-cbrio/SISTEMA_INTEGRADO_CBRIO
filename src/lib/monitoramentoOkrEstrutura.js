@@ -12,6 +12,9 @@
 //   fixo      → número oficial estático (Pr. Juninho · módulo-fim, não sai daqui)
 //   alvoNum   → alvo numérico p/ colorir · cmp: gte | lte | range (+alvoMax)
 //   precisa   → o que falta pra puxar automático (mostra ao expandir)
+//   ressalva  → aviso que aparece MESMO COM número (fonte parada, base frágil).
+//               ⚠️ Diferente de `precisa`, que só aparece quando NÃO há número:
+//               aqui o número existe e é o que não se pode citar sem a ressalva.
 //   comparaLive → chave da métrica viva EQUIVALENTE a um número `fixo`. Mostra
 //                 "o sistema calcula X" ao lado do número da planilha, SEM
 //                 trocá-lo. Existe porque os dois divergem por BASE (a planilha
@@ -71,7 +74,10 @@ export const BLOCOS = [
           // Valores estáticos (Pr. Juninho) · módulo-fim, não saem pro sistema.
           { ind: 'Prazo médio para primeiro contato', alvo: '3 dias entre a conversão e o contato do pastor', fixo: { valor: 24, unidade: 'h' }, alvoNum: 72, cmp: 'lte' },
           { ind: '% de novos convertidos com primeiro contato feito', alvo: '70%', fixo: { valor: 100, unidade: '%' }, alvoNum: 70, cmp: 'gte' },
-          { ind: '% Pessoas com 1° contato que fizeram o Next', alvo: '50%', fixo: { valor: 17, unidade: '%', detalhe: 'Média anual até agora.' }, alvoNum: 50, cmp: 'gte' },
+          // ⚠️ Régua trocada em 25/08/2026 (Matheus): "fez o Next" = esteve em PELO MENOS UM
+          // encontro, NÃO "formado". O relatório de agosto trazia 6,0% porque contou
+          // `next_matriculas.status='formado'` (status por TURMA, proibido pela lei do projeto).
+          { ind: '% Pessoas com 1° contato que foram a ≥1 encontro do Next', alvo: '50%', live: 'next_pos_contato', alvoNum: 50, cmp: 'gte', casas: 1 },
         ],
       },
       {
@@ -84,8 +90,14 @@ export const BLOCOS = [
         taticos: [
           // Valores estáticos (Pr. Juninho) · contagem real de cada área ÷ base definida pelo Juninho (módulo-fim, não sai dado daqui).
           { ind: '% frequência em Grupos', alvo: '60%', fixo: { valor: 48, unidade: '%', detalhe: '1.431 em grupos ativos · base 3.000 membros.' }, comparaLive: 'freq_grupos', alvoNum: 60, cmp: 'gte', casas: 1 },
-          { ind: '% Voluntários ativos', alvo: '60%', fixo: { valor: 29.8, unidade: '%', detalhe: '893 voluntários cadastrados · base 3.000 membros.' }, comparaLive: 'volunt_ativos', alvoNum: 60, cmp: 'gte', casas: 1 },
-          { ind: '% dizimistas regulares', alvo: '60%', fixo: { valor: 28.5, unidade: '%', detalhe: '856 dizimistas · base 3.000 membros.' }, comparaLive: 'dizimistas', alvoNum: 60, cmp: 'gte', casas: 1 },
+          // ⚠️⚠️ Régua trocada em 25/08/2026 (Matheus): ATIVO = escalado nos últimos 3 meses ·
+          // BASE = quem esteve na escala nos últimos 6. TROCA A PERGUNTA — antes era
+          // "cadastro de voluntário ÷ membros ativos" (35,2%), com um numerador que só cresce
+          // (`mem_voluntarios.ate` preenchido em ZERO linhas) e 156 pessoas que nem eram membro.
+          { ind: '% Voluntários ativos', alvo: '60%', live: 'volunt_ativos_base', alvoNum: 60, cmp: 'gte', casas: 1,
+            ressalva: 'Régua nova (25/08): ativo = escalado nos últimos 3 meses · base = quem esteve na escala nos últimos 6. O salto em relação aos 29,8% da planilha é MUDANÇA DE PERGUNTA, não melhora de operação — a base deixou de ser os membros da igreja e passou a ser a escala. ⚠️ O número fica perto de 100% porque a escala é semanal e quase todo mundo que serviu em 6 meses serviu em 3; quem tem folga pra melhorar é o comparecimento (73,6% dos escalados fizeram check-in nos últimos 90 dias).' },
+          { ind: '% dizimistas regulares', alvo: '60%', fixo: { valor: 28.5, unidade: '%', detalhe: '856 dizimistas · base 3.000 membros.' }, comparaLive: 'dizimistas', alvoNum: 60, cmp: 'gte', casas: 1,
+            ressalva: '⚠️ FONTE PARADA. A última contribuição nominal em `mem_contribuicoes` é de 16/06/2026 — a base que alimenta este número não recebe lançamento há mais de dois meses. E o cruzamento contribuição↔pessoa praticamente não existe: das 131.228 receitas em `fin_transacoes`, 9 têm membro identificado (0,007%). Qualquer % de dizimistas hoje é piso, não medida.' },
         ],
       },
       {
