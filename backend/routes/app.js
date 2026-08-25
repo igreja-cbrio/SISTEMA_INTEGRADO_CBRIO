@@ -4143,6 +4143,7 @@ router.post('/batismo/gestao/pessoas', authApp, autorizarGestaoBatismoApp, limit
       data_nascimento: dataIsoValida(req.body?.data_nascimento) ? req.body.data_nascimento : null,
       data_batismo: dataBatismo, horario_culto: limparTexto(req.body?.horario_culto, 40),
       tamanho_camisa: limparTexto(req.body?.tamanho_camisa, 12)?.toUpperCase() || null,
+      endereco: limparTexto(req.body?.endereco, 300),
       observacoes: limparTexto(req.body?.observacoes, 1000),
       status: 'confirmado', origem: 'app_gestao_batismo', inscrito_por: req.user.id,
       area_kpi: ['kids', 'sede', 'bridge', 'ami', 'online'].includes(req.body?.area_kpi) ? req.body.area_kpi : 'sede',
