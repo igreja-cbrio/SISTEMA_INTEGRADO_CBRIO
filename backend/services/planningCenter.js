@@ -581,6 +581,20 @@ async function upsertVolunteerProfiles(supabase, volunteersMap) {
 // (origem<>planning_center) nunca sao tocados.
 // Guarda de seguranca: nao reconcilia se o roster veio pequeno (pull parcial/falho) —
 // exige cobrir >= metade dos ativos atuais e >= 100 pessoas.
+// Quem o sync pode DESARQUIVAR: está no roster ativo do PCO e a baixa NÃO foi
+// decisão nossa.
+//
+// ⚠️⚠️ Sem o `arquivado_manual` a limpeza de base se desfaz sozinha: essas
+// pessoas continuam no roster do PCO (768 `active` em 25/08), então o cron
+// horário as traria de volta — em silêncio, e ninguém ligaria uma coisa à
+// outra. `arquivado_manual` ausente (migration não aplicada) conta como false,
+// que é o comportamento antigo: na dúvida, o PCO manda.
+function podeDesarquivar(perfil, pcIds) {
+  if (!perfil || !perfil.planning_center_id) return false;
+  if (perfil.arquivado_manual === true) return false;
+  return pcIds.has(String(perfil.planning_center_id));
+}
+
 // Separa o roster do PCO entre quem ele considera ATIVO e o tamanho BRUTO do
 // pull. Puro de propósito: é a régua que decide desativação de gente.
 function rosterAtivoDoPco(volunteersMap) {
@@ -644,9 +658,22 @@ async function reconcilePlanningCenterProfiles(supabase, volunteersMap) {
   const arquivados = paraArquivar.length
     ? await updateInChunks(paraArquivar, { arquivado: true, arquivado_em: nowIso }) : 0;
 
-  const arquivadosDb = await fetchAll(true);
+  // ⚠️ `select('*')` de propósito: a coluna `arquivado_manual` pode não existir
+  // ainda (deploy antes da migration), e pedir coluna inexistente faz o
+  // PostgREST recusar a QUERY INTEIRA — a reconciliação morreria toda. Com `*`
+  // ela simplesmente não vem, e `podeDesarquivar` trata ausência como false.
+  const arquivadosDb = [];
+  for (let off = 0; ; off += 1000) {
+    const { data, error } = await supabase
+      .from('vol_profiles').select('*')
+      .eq('origem', 'planning_center').eq('arquivado', true)
+      .range(off, off + 999);
+    if (error) throw error;
+    arquivadosDb.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
   const paraDesarquivar = arquivadosDb
-    .filter(p => p.planning_center_id && pcIds.has(String(p.planning_center_id)))
+    .filter(p => podeDesarquivar(p, pcIds))
     .map(p => p.id);
   const desarquivados = paraDesarquivar.length
     ? await updateInChunks(paraDesarquivar, { arquivado: false, arquivado_em: null }) : 0;
@@ -1108,6 +1135,7 @@ module.exports = {
   upsertVolunteerProfiles,
   reconcilePlanningCenterProfiles,
   rosterAtivoDoPco,
+  podeDesarquivar,
   assignVolunteersToTeams,
   syncTeamMembersFromSchedules,
   fetchPcoCpfMap,
