@@ -13416,3 +13416,113 @@ vaga dele.
 ⚠️ **A lista da Ariel NÃO foi semeada por script.** São nomes que precisam casar
 com `mem_membros`, e o caso Palladino (registrado acima) mostrou que casar nome de
 família por sinal fraco troca pessoa. Cadastro é decisão humana, na tela.
+## ⚠️ Supervisores · a tela ficava MUDA pra quem não tem cadastro de membro (2026-08-25)
+
+Relato do Matheus: *"o Luiz Felipe Palladino está na minha lista de voluntários mas
+na lista suspensa para colocar ele como supervisor ele não aparece."*
+
+O filtro `p.membresia_id` está **certo** e não pode cair: o app identifica o
+supervisor pelo cadastro de membro, então conceder a um perfil sem membro criaria
+supervisão que nunca funciona. O errado era o **silêncio** — o nome existia no
+pool, era descartado, e nada explicava. Ele foi procurar no banco.
+
+Medido: **339 dos 936 `vol_profiles` (36%) estão sem `membresia_id`.** Não é caso
+isolado, é mais de um terço da lista. Agora a tela DECLARA: mostra os nomes
+achados, diz que estão sem cadastro e aponta *Entradas → Identidade*.
+
+### ⚠️⚠️ E o caso Palladino é identidade CRUZADA — não religar por e-mail
+
+| `vol_profiles` | e-mail do perfil | `membresia_id` |
+|---|---|---|
+| **Enzo Palladino** | `lfbpalladino@palladinoadvogados.com.br` | → membro **Luiz Felipe Bittencourt Palladino** |
+| **Luiz Felipe Palladino** | `lfpalladino@gmail.com` | **NULL** |
+
+O e-mail do perfil do **Enzo** é o e-mail do cadastro do **Luiz Felipe**; e o
+e-mail do perfil do **Luiz Felipe** é o do cadastro da **Lara Melchiades
+Palladino** — que tem a **MESMA data de nascimento** do Luiz Felipe (1981-06-27) e
+telefone vizinho (…902 × …901). **Não existe membro "Enzo Palladino".**
+
+⇒ Religar por e-mail aqui daria supervisão ao membro ERRADO. É literalmente o
+caso da LEI do contrato de porta ("família compartilha telefone/e-mail — NUNCA
+ligar por sinal fraco sozinho"). Decisão: **fila humana, não script.**
+
+**A medida do problema geral** (25/08): dos 596 perfis COM vínculo, **29 têm o
+primeiro nome divergente** do membro apontado — **14 com o mesmo sobrenome**
+(assinatura de cruzamento familiar) e **0** que sejam apelido/prefixo. Ou seja:
+não são grafias, são pessoas trocadas. Vale varredura própria.
+
+## ⚠️ Supervisores · EDITAR + a busca que perdia gente por ACENTO (2026-08-25)
+
+Dois pedidos do Matheus no mesmo dia, e o segundo era **bug**, não pedido:
+
+**1. Editar.** *"preciso conseguir editar os supervisores também, o horário deles,
+área e etc"*. Antes só havia conceder e revogar, então trocar o turno de alguém
+exigia apagar e recriar — o que **perdia `concedido_por` e `created_at`**, a
+trilha de quem deu o acesso e quando. Agora há `PATCH /voluntariado/supervisores/:id`
+e edição **inline** na linha (não modal: a pessoa está comparando o supervisor com
+os vizinhos da mesma área, e o modal esconde justamente esse contexto).
+
+⚠️ POST e PATCH passam pela MESMA `validarEscopoSupervisao`. Um PATCH com régua
+própria seria a porta dos fundos pra conceder o que o POST recusa (por exemplo
+subárea de outra área). O 23505 do unique vira 409 com mensagem, porque o unique
+cobre membro+área+subárea+dia+período+semana.
+
+⚠️ Os seletores viraram UM componente (`SeletoresEscopo`) usado por conceder e
+por editar. A régua "quarta é culto único, não tem manhã/noite" e "trocar de área
+zera a subárea" mora nele — duas cópias do JSX divergiriam e uma passaria a
+mandar combinação que o servidor recusa com 400.
+
+**2. ⚠️⚠️ A BUSCA NÃO NORMALIZAVA ACENTO.** *"a Mônica não está aparecendo na
+lista de voluntários para eu colocar como supervisora"*. Ela **tinha** cadastro
+vinculado e **não** estava arquivada. O filtro fazia
+`full_name.toLowerCase().includes(q)` — e digitar `monica` **não casa** com
+`M`**`ô`**`nica`. A lista de `/voluntariado/lista` normaliza e achava; o seletor
+não, então a tela parecia dizer que a pessoa não existe.
+
+⇒ `norm()` (NFD + strip diacríticos + lower) aplicado nos DOIS filtros do
+seletor. **Foi a segunda vez no mesmo dia** que ele concluiu "falta gente na
+lista" — a primeira foi o Palladino, por outro motivo (vínculo cruzado). Tela que
+esconde sem dizer produz exatamente essa conclusão.
+
+⚠️ **E o teto de 8 era SILENCIOSO.** Com 596 perfis vinculados, digitar um
+primeiro nome comum cortava gente sem avisar. Subiu pra 20 e a lista agora
+declara "Mostrando N de M — refine a busca". Truncar em silêncio é a mesma doença
+do acento.
+
+## ⚠️ Supervisores atuais · agrupado por TURNO → ÁREA (2026-08-25)
+
+Pedido do Matheus: *"no card de supervisores atuais quero a separação por culto:
+primeiro domingo, segundo domingo etc. Primeira quarta, segunda quarta. E aí
+dentro de cada dia, ver as áreas e seus respectivos supervisores."*
+
+⚠️ **A ordem NÃO é alfabética, e isso é o ponto.** A pessoa lê esta tela pra
+responder *"quem cobre o 2º domingo de manhã?"*. Domingo antes de quarta, semana
+crescente, manhã antes de noite — a ordem em que a escala acontece. Grupos
+AMPLOS ("todas as semanas", "todo culto") vão pro FIM: no topo empurrariam os
+turnos reais pra baixo da dobra.
+
+⚠️ **E a tela passou a DECLARAR quem está sem turno.** O print dele mostrava
+4 pessoas com "· todo culto" que, pela lista da Ariel, **têm** turno — foram
+cadastradas antes do rodízio subir, e hoje supervisionam **todos** os cultos:
+mais acesso do que a casa combinou. Aviso âmbar no topo do card, com os nomes.
+
+### As DUAS causas de "a pessoa não aparece no seletor" (medidas em 25/08)
+
+Aconteceu 3× no mesmo dia, e cada uma tinha causa diferente:
+
+| Caso | Causa | Conserto |
+|---|---|---|
+| **Luiz Felipe Palladino** | perfil sem `membresia_id`; o cadastro dele estava ligado ao perfil do FILHO (Enzo, criado no PCO com o e-mail do pai) | religado à mão, com backup |
+| **Mônica Hernandez Duarte** | **acento** — o filtro fazia `includes()` sem normalizar, e `monica` não casa com `Mônica` | `norm()` nos dois filtros |
+| **Clayton Araújo** | perfil sem `membresia_id`; o cadastro existia como "Clayton Farias de Araújo" | religado (e-mail `araujo98@` × `araujo982025@`, mesma raiz, nenhum outro cadastro com o endereço) |
+
+⚠️ **A trigger `trg_sync_email_vol_para_membro` reescreve o e-mail do PERFIL** ao
+vincular (canônico do cadastro vence). Nos dois religamentos o e-mail antigo do
+perfil foi sobrescrito — está em `_bk_20260825_palladino_vinculo` e
+`_bk_20260825_vinculo_vol`. O cadastro do membro NÃO é tocado (o inverso só
+preenche vazio).
+
+⚠️ **O padrão que se repetiu 4× hoje:** a tela esconde sem dizer e quem usa
+conclui que o dado não existe. Alerta do DS mudo, `wa_templates.ativo` que não
+desliga nada, o Palladino sumindo, e a busca com acento. **"A tela ficou muda" é
+bug, não detalhe.**
