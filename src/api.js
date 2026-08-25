@@ -3582,7 +3582,8 @@ export const voluntariado = {
   supervisores: {
     list: () => get('/voluntariado/supervisores'),
     // `position_id` = SUBÁREA (vol_positions). null/omitido = toda a área.
-    grant: (membro_id, area, position_id = null) => post('/voluntariado/supervisores', { membro_id, area, position_id }),
+    // `rodizio` = { culto_dia, culto_periodo, culto_semana } · null em cada eixo = curinga.
+    grant: (membro_id, area, position_id = null, rodizio = {}) => post('/voluntariado/supervisores', { membro_id, area, position_id, ...rodizio }),
     revoke: (id) => del(`/voluntariado/supervisores/${id}`),
   },
   // CPF / Membresia unification

@@ -13352,3 +13352,67 @@ chamam janela **e** escopo, e que a janela não está aninhada num
 backend está pronto e sem consumidor; o botão de marcar/desmarcar é trabalho no
 app (Expo/RN, TestFlight). ⚠️ Ao mexer lá, **nunca** subir `version` de 1.0.0
 (congela o OTA da frota).
+
+## ⚠️⚠️ Supervisão · o RODÍZIO da casa é semana × dia × período (2026-08-25 · migration `20260825170000`)
+
+A Ariel mandou a lista real, e ela derrubou o que eu estava construindo:
+
+```
+1 Dom manhã: Luiz Felipe Palladino, Marcelo Ricart   1 Dom Noite: Cleber Machado, Simone Oliveira
+2 Dom Manhã: Olivares Filho, Monica Duarte           2 Dom Noite: Alexander Caldas, Noemi Caldas
+3 Dom Manhã: Leandra Ribeiro                         3 Dom Noite: Anselmo Fernandez, Carla Suellen
+4 Dom Manhã: Leandro Luizi, Cristiane Pacheco        4 Dom Noite: Clayton Araújo, Patricia Araújo
+1ª/2ª/3ª/4ª 4ª feira: Carlos Henrique Martins, Simone Oliveira (×3)
+```
+
+**"1 Dom manhã" é o PRIMEIRO DOMINGO DO MÊS**, não o culto das 08:30. O eixo é a
+**enésima semana**, e ninguém tinha dito isso antes.
+
+⚠️⚠️ **A DIMENSÃO QUE EU IA CONSTRUIR NÃO SEPARARIA NINGUÉM — e isso foi MEDIDO
+no PCO antes de abandonar.** Eu ia trazer os `times` do `team_members` pra
+supervisionar por horário (08:30 × 09:30 × 10:00 × 11:30). No domingo 23/08, dos
+**110** escalados: **102 têm SÓ horário de ensaio** e os **8** com horário de
+culto têm **AS QUATRO** horas. Teria sido sync novo + coluna + backfill pra um
+seletor decorativo. **Lição: medir a capacidade DISCRIMINANTE do eixo antes de
+construí-lo, não só se o dado existe.** (O dado existe: `team_members` tem
+`times` e `service_times`, e os `plan_times` do PCO batem com nossos cultos —
+11:30Z/12:30Z/13:00Z/14:30Z = 08:30/09:30/10:00/11:30 BRT. Só não serve pra isto.)
+
+**Como funciona:** `vol_area_supervisores` ganhou `culto_dia` (domingo|quarta),
+`culto_periodo` (manha|noite) e `culto_semana` (1..4). **NULL = curinga** em cada
+eixo — é o que preservou as 5 concessões existentes. A régua é pura em
+`utils/rodizioCulto.js` e **não depende do Planning Center**: dia, período e
+semana saem do `vol_services.scheduled_at`, que já está no banco.
+
+- **5ª semana repete a 1ª** (decisão do Matheus): a lista só vai até 4, e culto
+  órfão de supervisão é pior que supervisor repetido. `ordinal_real` fica no
+  retorno pra a tela poder dizer "era o 5º".
+- **Quarta é culto ÚNICO** (decisão dele): `culto_periodo` NULL. A rota recusa
+  período na quarta com 400, e a tela não oferece o seletor.
+- **Culto fora do rodízio** (AMI é sábado, Bridge, eventos) tem `dia: null` e só
+  é coberto por concessão SEM recorte de dia — quem recebeu "1º domingo" não
+  passa a supervisionar o AMI.
+- `ceil(dia/7)` **é** a enésima ocorrência do dia-da-semana, não aproximação: o
+  1º domingo cai entre os dias 1 e 7, o 2º entre 8 e 14, qualquer que seja o dia
+  em que o mês começa.
+- Gate: `npm run test:rodizio-culto` (verificado vermelho ao tirar a regra do 5º
+  e ao trocar a data BRT por UTC).
+
+⚠️⚠️ **DOIS BUGS DE FUSO/JS que o teste pegou, não a revisão:**
+1. **`new Date(null)` NÃO é data inválida — é a EPOCH**, que em BRT cai numa
+   QUARTA dia 31, ou seja `{ dia: 'quarta', semana: 1 }`. Culto sem data entrava
+   no rodízio de alguém. Guarda de falsy ANTES do `new Date`.
+2. O dia-da-semana **nunca** pode vir de `getDay()` do Date cru (fuso da máquina)
+   nem de UTC: domingo 19h é 22h UTC, e em UTC já é segunda — o culto da noite
+   sairia do rodízio.
+
+⚠️ Onde a trava mora: `podeSupervisionar` compõe **área × subárea × rodízio** e é
+aplicada na composição, nas escalas visíveis, no POST escalar, no
+`escalaSobSupervisao` (mover/remover) **e** no check-in (POST, DELETE e recorte da
+lista). Nível de EQUIPE continua ignorando subárea e rodízio de propósito — quem
+tem só o Ofertório do 1º domingo precisa VER a equipe Integração pra chegar na
+vaga dele.
+
+⚠️ **A lista da Ariel NÃO foi semeada por script.** São nomes que precisam casar
+com `mem_membros`, e o caso Palladino (registrado acima) mostrou que casar nome de
+família por sinal fraco troca pessoa. Cadastro é decisão humana, na tela.

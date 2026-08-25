@@ -113,6 +113,12 @@ jobs:
       - name: Janela do check-in do supervisor (dia do culto em BRT)
         run: npm run test:checkin-janela
 
+      # PERMISSAO. O rodizio da casa e semana do mes x dia x periodo (lista da
+      # Ariel), NAO horario de culto — medido no PCO: 102 dos 110 escalados tem so
+      # horario de ensaio e os 8 restantes tem as QUATRO horas.
+      - name: Rodizio de supervisao (semana x dia x periodo)
+        run: npm run test:rodizio-culto
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 

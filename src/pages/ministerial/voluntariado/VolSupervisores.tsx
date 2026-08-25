@@ -21,12 +21,38 @@ import { ShieldCheck, Search, Trash2, Loader2, UserPlus } from 'lucide-react';
  */
 const CURINGA = { v: 'geral', label: 'Geral (todas as áreas)' };
 
+/**
+ * O turno da concessão em texto ("1ª sem · Dom manhã").
+ *
+ * ⚠️ Sem isto, duas linhas com PERMISSÕES diferentes ficam idênticas na tela —
+ * e a diferença entre "supervisiona todo domingo" e "supervisiona só o 1º" é
+ * exatamente o que a pessoa vem aqui conferir.
+ */
+function rotuloRodizio(s: { culto_dia?: string | null; culto_periodo?: string | null; culto_semana?: number | null }): string | null {
+  const partes: string[] = [];
+  if (s.culto_semana) partes.push(`${s.culto_semana}ª sem`);
+  if (s.culto_dia) {
+    const dia = s.culto_dia === 'domingo' ? 'Dom' : 'Qua';
+    const per = s.culto_periodo === 'manha' ? ' manhã' : s.culto_periodo === 'noite' ? ' noite' : '';
+    partes.push(dia + per);
+  }
+  return partes.length ? partes.join(' · ') : null;
+}
+
 export default function VolSupervisores() {
   const qc = useQueryClient();
   const [busca, setBusca] = useState('');
   const [area, setArea] = useState('');
 
   const [posId, setPosId] = useState('');   // subárea (vol_positions.id) · '' = área inteira
+  // ⚠️ RODÍZIO (25/08) · a lista real da Ariel é "1 Dom manhã / 2 Dom Noite /
+  // 1ª 4ª feira …": semana do mês × dia × período. NÃO é horário de culto —
+  // medido no PCO, 102 dos 110 escalados têm só horário de ensaio e os 8 com
+  // horário de culto têm as QUATRO horas, então aquela dimensão não separa
+  // ninguém. '' em cada eixo = curinga ("qualquer").
+  const [cultoDia, setCultoDia] = useState('');
+  const [cultoPeriodo, setCultoPeriodo] = useState('');
+  const [cultoSemana, setCultoSemana] = useState('');
   const { data: teams = [] } = useQuery<{
     id: string; area?: string | null; is_active?: boolean;
     positions?: { id: string; name: string; is_active?: boolean }[];
@@ -103,13 +129,19 @@ export default function VolSupervisores() {
   }, [pool, busca]);
 
   const grantMut = useMutation({
-    mutationFn: () => voluntariado.supervisores.grant(selMembro!.id, area, posId || null),
+    mutationFn: () => voluntariado.supervisores.grant(selMembro!.id, area, posId || null, {
+      culto_dia: cultoDia || null,
+      // Quarta é culto ÚNICO (decisão do Matheus): nunca manda período nela.
+      culto_periodo: cultoDia === 'domingo' ? (cultoPeriodo || null) : null,
+      culto_semana: cultoSemana ? Number(cultoSemana) : null,
+    }),
     onSuccess: () => {
       const alvo = posId
         ? `${SUBAREAS.find(p => p.v === posId)?.label || 'subárea'} (${areaLabel(area)})`
         : areaLabel(area);
       toast.success(`${selMembro!.nome} agora é supervisor de ${alvo}`);
       setSelMembro(null); setBusca(''); setPosId('');
+      setCultoDia(''); setCultoPeriodo(''); setCultoSemana('');
       qc.invalidateQueries({ queryKey: ['vol', 'supervisores'] });
     },
     onError: (e: any) => toast.error(e?.message || 'Erro ao conceder'),
@@ -198,7 +230,55 @@ export default function VolSupervisores() {
                 </SelectContent>
               </Select>
             )}
-            <Button onClick={() => grantMut.mutate()} disabled={!selMembro || !area || grantMut.isPending} className="bg-[#00B39D] hover:bg-[#00B39D]/90">
+          </div>
+
+          {/* ⚠️ RODÍZIO em linha própria: com 5 seletores lado a lado o campo de
+              busca fica estreito e os nomes quebram em duas linhas. */}
+          <div className="flex flex-col sm:flex-row gap-2">
+            <Select
+              value={cultoDia || '__qualquer'}
+              onValueChange={(v) => { const d = v === '__qualquer' ? '' : v; setCultoDia(d); if (d !== 'domingo') setCultoPeriodo(''); }}
+            >
+              <SelectTrigger className="sm:w-44"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__qualquer">Qualquer culto</SelectItem>
+                <SelectItem value="domingo">Domingo</SelectItem>
+                <SelectItem value="quarta">Quarta</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Quarta é culto ÚNICO — o período só existe no domingo. */}
+            {cultoDia === 'domingo' && (
+              <Select value={cultoPeriodo || '__ambos'} onValueChange={(v) => setCultoPeriodo(v === '__ambos' ? '' : v)}>
+                <SelectTrigger className="sm:w-40"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__ambos">Manhã e noite</SelectItem>
+                  <SelectItem value="manha">Manhã</SelectItem>
+                  <SelectItem value="noite">Noite</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+
+            {cultoDia && (
+              <Select value={cultoSemana || '__todas'} onValueChange={(v) => setCultoSemana(v === '__todas' ? '' : v)}>
+                <SelectTrigger className="sm:w-52"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__todas">Todas as semanas</SelectItem>
+                  <SelectItem value="1">1ª semana do mês</SelectItem>
+                  <SelectItem value="2">2ª semana</SelectItem>
+                  <SelectItem value="3">3ª semana</SelectItem>
+                  <SelectItem value="4">4ª semana</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+            {/* ⚠️ Declara a régua do 5º: a lista da Ariel só vai até 4, e culto
+                sem supervisor é pior que supervisor repetido. */}
+            {cultoSemana === '1' && (
+              <p className="self-center text-[11px] text-muted-foreground">
+                O 5º {cultoDia === 'quarta' ? 'da quarta' : 'domingo'} do mês, quando existe, também cai aqui.
+              </p>
+            )}
+            <Button onClick={() => grantMut.mutate()} disabled={!selMembro || !area || grantMut.isPending} className="bg-[#00B39D] hover:bg-[#00B39D]/90 sm:ml-auto">
               {grantMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Conceder'}
             </Button>
           </div>
@@ -232,6 +312,9 @@ export default function VolSupervisores() {
                           {s.position?.name
                             ? <span className="ml-2 rounded-full border px-2 py-0.5 text-[11px] font-normal text-muted-foreground">{s.position.name}</span>
                             : <span className="ml-2 text-[11px] font-normal text-muted-foreground">· toda a área</span>}
+                          {rotuloRodizio(s)
+                            ? <span className="ml-1.5 rounded-full border border-[#00B39D]/40 bg-[#00B39D]/5 px-2 py-0.5 text-[11px] font-normal text-[#00806f]">{rotuloRodizio(s)}</span>
+                            : <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">· todo culto</span>}
                         </span>
                         <button onClick={() => revokeMut.mutate(s.id)} className="text-muted-foreground hover:text-red-600" title="Remover supervisão">
                           <Trash2 className="h-4 w-4" />

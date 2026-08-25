@@ -9,6 +9,7 @@ const multer = require('multer');
 const { supabase } = require('../utils/supabase');
 const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo, podeSupervisionar, subareasNaArea } = require('../utils/supervisorArea');
 const { ehDiaDoCulto } = require('../utils/janelaCulto');
+const { classificarCulto } = require('../utils/rodizioCulto');
 const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior } = require('../utils/agendaGrupo');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
@@ -1874,7 +1875,9 @@ async function supervisorAreasApp(req) {
   // devolvido porque é o que abre o portão do 403 e o que a tela do app exibe
   // em `areas_supervisionadas` — mas quem decide permissão fina é `grants`.
   const { data } = await supabase
-    .from('vol_area_supervisores').select('area, position_id').eq('membro_id', membro.id);
+    .from('vol_area_supervisores')
+    .select('area, position_id, culto_dia, culto_periodo, culto_semana')
+    .eq('membro_id', membro.id);
   const grants = (data || []).filter(r => r.area);
   return {
     membro,
@@ -1890,6 +1893,24 @@ async function supervisorAreasApp(req) {
  * e em KIDS, "Cuidados" em AMI/Bridge/Voluntariado. Buscar só por nome traria a
  * posição de outra área e a trava aprovaria o alvo errado.
  */
+/**
+ * O rodízio deste culto (`{ dia, periodo, semana }`) a partir do service_id.
+ *
+ * ⚠️ Sem isto a trava de rodízio não teria como saber se o culto é "1º domingo
+ * manhã". A régua é pura (`utils/rodizioCulto`, no gate); aqui só entra a
+ * leitura do `scheduled_at`.
+ *
+ * ⚠️ Culto sem data devolve `null`, e `cultoCoberto` NEGA para quem tem recorte
+ * — mesma lei da equipe sem área: liberar "porque não dá pra saber" devolve o
+ * acesso amplo bastando um campo vazio.
+ */
+async function rodizioDoServico(serviceId) {
+  if (!serviceId) return null;
+  const { data } = await supabase.from('vol_services')
+    .select('scheduled_at').eq('id', serviceId).maybeSingle();
+  return classificarCulto(data?.scheduled_at || null);
+}
+
 async function resolverPosicaoId(teamId, positionName) {
   if (!teamId || !positionName) return null;
   const { data } = await supabase.from('vol_positions')
@@ -1907,7 +1928,7 @@ async function resolverPosicaoId(teamId, positionName) {
 async function escalaSobSupervisao(scheduleId, areas) {
   if (supervisionaTudo(areas)) return { ok: true };
   const { data: sc } = await supabase.from('vol_schedules')
-    .select('id, team_id, team_name, position_id, position_name').eq('id', scheduleId).maybeSingle();
+    .select('id, team_id, team_name, position_id, position_name, service_id').eq('id', scheduleId).maybeSingle();
   if (!sc) return { ok: false, motivo: 'nao_encontrada' };
   let equipe = null;
   if (sc.team_id) {
@@ -1926,7 +1947,7 @@ async function escalaSobSupervisao(scheduleId, areas) {
   // ⚠️ Recorte de SUBÁREA (2026-08-25). Quem tem concessão só do Ofertório não
   // pode mover/remover a linha do Estacionamento, mesmo sendo a mesma equipe.
   // Vale pra MOVER e REMOVER, não só pra adicionar — a lição do bloco acima.
-  const alvo = { area: equipe.area, position_id: sc.position_id || null };
+  const alvo = { area: equipe.area, position_id: sc.position_id || null, culto: await rodizioDoServico(sc.service_id) };
   if (!podeSupervisionar(areas, alvo)) {
     return { ok: false, motivo: 'outra_subarea', equipe: equipe.name, subarea: sc.position_name || null };
   }
@@ -2013,7 +2034,13 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
     // ⚠️ Desde 25/08 o corte é por ÁREA + SUBÁREA: os itens da composição já
     // trazem `position_id`, então quem recebeu só o Ofertório vê só a linha do
     // Ofertório dentro da equipe Integração.
-    const itens = (todosItens || []).filter(i => podeSupervisionar(grants, { area: i.area, position_id: i.position_id }));
+    // ⚠️ O `culto` entra no alvo desde 25/08: quem supervisiona o 1º domingo de
+    // manhã não vê a composição do 4º domingo. A classificação é do SERVIÇO, não
+    // do item — por isso é resolvida uma vez, fora do filtro.
+    const rodizio = await rodizioDoServico(req.params.serviceId);
+    const itens = (todosItens || []).filter(i => podeSupervisionar(grants, {
+      area: i.area, position_id: i.position_id, culto: rodizio,
+    }));
     // ⚠️ A escala também é recortada: mostrar quem está escalado em áreas que
     // ele não supervisiona transformaria a tela num diretório de gente, e o
     // botão de remover apagaria escala alheia.
@@ -2144,23 +2171,34 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
           error: `Você não supervisiona ${team_name}. Fale com quem responde por essa área.`,
         });
       }
-      // ⚠️⚠️ TRAVA DE SUBÁREA (25/08/2026). Mesma lógica da trava de equipe uma
-      // camada abaixo: o cliente manda `position_name` no corpo e nada impedia
-      // mandar a subárea de outro. Quem tem concessão de área INTEIRA
-      // (`subareasNaArea` vazio) não é afetado.
+      // ⚠️⚠️ TRAVA DE SUBÁREA + RODÍZIO (25/08/2026). O cliente manda
+      // `position_name` e `service_id` no corpo, e nada impedia mandar a subárea
+      // de outro ou o culto de outro turno. As duas checagens vivem no MESMO
+      // `podeSupervisionar` de propósito: separar em dois ifs foi a minha
+      // primeira versão e ela recusava quem tinha subárea no culto certo,
+      // porque a pré-checagem de rodízio passava `position_id: null`.
+      const rodizio = await rodizioDoServico(service_id);
       const recorte = subareasNaArea(grants, eq.area);
       if (recorte.length) {
+        // Supervisão de subárea específica: a subárea é obrigatória no corpo.
         if (!position_name) {
           return res.status(400).json({
             error: 'Escolha a subárea: sua supervisão é de subárea específica, não da área inteira.',
           });
         }
         const posId = await resolverPosicaoId(eq.id, position_name);
-        if (!posId || !podeSupervisionar(grants, { area: eq.area, position_id: posId })) {
+        if (!posId || !podeSupervisionar(grants, { area: eq.area, position_id: posId, culto: rodizio })) {
           return res.status(403).json({
-            error: `Você não supervisiona ${position_name} em ${team_name}.`,
+            error: `Você não supervisiona ${position_name} em ${team_name} neste culto.`,
           });
         }
+      } else if (!podeSupervisionar(grants, { area: eq.area, position_id: null, culto: rodizio })) {
+        // Supervisão da área inteira: só o rodízio pode barrar aqui (a área já
+        // passou no `equipeSupervisionada` acima).
+        return res.status(403).json({
+          error: 'Este culto não está no seu turno de supervisão.',
+          fora_do_rodizio: true,
+        });
       }
     }
 
@@ -2352,7 +2390,7 @@ async function checkinSobSupervisao(scheduleId, areas) {
   if (supervisionaTudo(areas)) return { ok: true };
   if (!scheduleId) return { ok: true, sem_escala: true };
   const { data: sc } = await supabase.from('vol_schedules')
-    .select('id, team_id, team_name, position_id, position_name').eq('id', scheduleId).maybeSingle();
+    .select('id, team_id, team_name, position_id, position_name, service_id').eq('id', scheduleId).maybeSingle();
   if (!sc) return { ok: false, motivo: 'escala_nao_encontrada' };
   let equipe = null;
   if (sc.team_id) {
@@ -2363,7 +2401,7 @@ async function checkinSobSupervisao(scheduleId, areas) {
     equipe = data;
   }
   if (!equipe) return { ok: false, motivo: 'sem_equipe' };
-  if (!podeSupervisionar(areas, { area: equipe.area, position_id: sc.position_id || null })) {
+  if (!podeSupervisionar(areas, { area: equipe.area, position_id: sc.position_id || null, culto: await rodizioDoServico(sc.service_id) })) {
     return { ok: false, motivo: 'fora_do_escopo', equipe: equipe.name, subarea: sc.position_name || null };
   }
   return { ok: true };
@@ -2393,6 +2431,8 @@ router.get('/voluntariado/escala/:serviceId/checkins', authApp, limiterNormal, a
         if (t.name) areaPorEquipe[`n:${t.name}`] = t.area;
       }
     }
+    // ⚠️ O rodizio do SERVICO e resolvido UMA vez, fora do filtro.
+    const rodizioLista = supervisionaTudo(grants) ? null : await rodizioDoServico(req.params.serviceId);
     const noEscopo = (c) => {
       if (supervisionaTudo(grants)) return true;
       const sch = Array.isArray(c.schedule) ? c.schedule[0] : c.schedule;
@@ -2400,7 +2440,7 @@ router.get('/voluntariado/escala/:serviceId/checkins', authApp, limiterNormal, a
       // criá-lo, senão o supervisor não veria o que ele mesmo acabou de marcar.
       if (!sch) return true;
       const area = areaPorEquipe[sch.team_id] ?? areaPorEquipe[`n:${sch.team_name}`] ?? null;
-      return podeSupervisionar(grants, { area, position_id: sch.position_id || null });
+      return podeSupervisionar(grants, { area, position_id: sch.position_id || null, culto: rodizioLista });
     };
     const visiveis = (data || []).filter(noEscopo);
 
