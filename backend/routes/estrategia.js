@@ -533,6 +533,47 @@ router.get('/indice-base', async (req, res) => {
 });
 
 // ============================================================================
+// LEITURA DOS ANÉIS · a 3ª agregação derivada (2026-08-25)
+// ============================================================================
+// O nível estratégico do mapa do motor tem 3 agregações DERIVADAS: NSM (funil) ·
+// Índice da Base (estoque) · leitura dos anéis (o anel está sustentando o motor?).
+//
+// ⚠️⚠️ É um PAR — entrega (% no SLA) e qualidade (nota 0-10) — e NUNCA uma média
+// única: as duas falham separado e pedem ações opostas. Medido em 25/08 o anel
+// Criativo está com entrega 0,0% e qualidade 10,0; uma média diria "5" e
+// esconderia o diagnóstico, que é "quando entregam, o cliente adora — o problema
+// é prazo".
+//
+// ⚠️ O Ministerial NÃO tem leitura de anel: ele é o MOTOR, e a leitura dele já são
+// a NSM e o Índice da Base. Criar uma terceira seria contagem dupla — o erro dos
+// 637 KRs de novo.
+const ANEIS = ['criativo', 'gestao'];
+
+router.get('/anel/:anel', async (req, res) => {
+  try {
+    const anel = String(req.params.anel || '').toLowerCase();
+    if (!ANEIS.includes(anel)) {
+      return res.status(400).json({ error: `anel deve ser ${ANEIS.join(' | ')}` });
+    }
+    // Janela móvel: os KPIs de entrega são mensais e os de qualidade trimestrais,
+    // então 90 dias é o menor recorte com amostra na demanda atual (89
+    // solicitações em 90 dias, e várias áreas com zero).
+    const dias = Math.min(Math.max(parseInt(req.query.dias, 10) || 90, 1), 730);
+    const { data, error } = await supabase.rpc('fn_leitura_anel', {
+      p_anel: anel,
+      p_dias: dias,
+    });
+    if (error) throw error;
+    res.json(data || null);
+  } catch (e) {
+    console.error('[estrategia/anel]', e?.message);
+    // ⚠️ Erro NÃO vira anel zerado: "o anel não está entregando" e "a consulta
+    // falhou" levam a decisões opostas.
+    res.status(500).json({ error: e?.message || 'Erro ao calcular a leitura do anel' });
+  }
+});
+
+// ============================================================================
 // LINHAGEM do KPI tático · etiqueta de LEITURA (nsm | jornada | sistema)
 // ============================================================================
 const LINHAGENS = ['nsm', 'jornada', 'sistema'];

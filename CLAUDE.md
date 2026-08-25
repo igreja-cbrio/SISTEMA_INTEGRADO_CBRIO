@@ -10522,6 +10522,87 @@ objetivos específicos, já integrado na ótica sistema/jornada/nsm"*.
 colhido** — 630 deles têm meta numérica e são a única fonte legível dessas réguas
 (o backup JSON em Downloads é a rede, não a fonte de trabalho).
 
+## ⚠️⚠️ A LEITURA DOS ANÉIS · a 3ª agregação derivada (2026-08-25 · migration `20260825150000`)
+
+Fecha o nível estratégico do mapa do motor, que tinha 3 agregações derivadas e só
+2 existiam: **NSM** (funil · já existia) · **Índice da Base** (estoque · fase 2A) ·
+**leitura dos anéis** (esta).
+
+⚠️⚠️ **O Ministerial NÃO tem leitura de anel** — ele é o MOTOR, e a leitura dele já
+são a NSM e o Índice. Criar uma terceira seria contagem dupla, o erro dos 637 KRs
+outra vez. Só existem **2** leituras: Criativo (combustível) e Gestão (carcaça).
+
+⚠️⚠️ **Anel e linhagem são EIXOS DIFERENTES** (a confusão que o Marcos levantou em
+25/08): *anel* é ONDE/QUEM (a função na igreja); *linhagem* é EM QUAL AGREGADO o
+KPI entra. Um anel **não alimenta** as três linhagens — **quase todo KPI de anel é
+`sistema`**, ou seja não entra em agregado nenhum. Se o SLA do Criativo entrasse na
+fórmula da NSM, estaríamos somando "atendeu a solicitação" com "a pessoa se
+converteu". Dos 168 KPIs ativos, **137 são `sistema`** — e isso é o desenho
+funcionando, não lacuna.
+
+### ⚠️⚠️ É um PAR, nunca uma média única
+
+Medido em 25/08 (janela de 90 dias):
+
+| anel | entrega (alvo 85%) | qualidade (alvo 8) | cobertura |
+|---|---|---|---|
+| **Criativo** | **0,0%** (0 de 12 vencidas) | **10,0** (2 respostas) | 2 de 3 áreas |
+| **Gestão** | **26,5%** (18 de 68) | **10,0** (6 respostas) | 5 de 8 áreas |
+
+Qualidade nota máxima com entrega no chão. Uma média única diria "5" e apagaria o
+diagnóstico — que é *"quando entregam, o cliente adora; o problema é PRAZO"*.
+Entrega e qualidade falham separado e pedem ações opostas (processo × capacidade).
+
+### As decisões que a régua carrega
+
+- **PONDERADO, não média de médias** — e essa régua estava **pactuada no próprio
+  KR** desativado: *"média ponderada das 9 áreas adm · soma das atendidas no prazo
+  / soma total"*. Média de percentuais daria o mesmo peso a uma área com 1
+  solicitação e a `logistica_compras`, que tem **51 das 75** da Gestão.
+- ⚠️⚠️ **ALVO da qualidade é 8, não 70.** Corrige o número que eu havia proposto:
+  os `ADM-*-Q` guardam **NOTA 0-10** (`metrica: nps_medio` · `unidade: nota` ·
+  meta 8) e o KR pactuou "8 nota". 70 nessa escala deixaria o anel vermelho para
+  sempre.
+- ⚠️ **Denominador da entrega = prazo JÁ VENCIDO** (`concluiu_no_prazo` +
+  `concluiu_atrasado` + `atrasado`). **`em_andamento` fica FORA**: punir a área por
+  trabalho ainda dentro do prazo inverteria o indicador. Quantas ficaram de fora é
+  declarado.
+  ⚠️ Os valores de `sla_resolucao_status` são `concluiu_no_prazo` /
+  `concluiu_atrasado` / `atrasado` / `em_andamento` — **não** `no_prazo` (minha
+  sonda usou o valor errado e contou zero em tudo antes de eu conferir os
+  DISTINCTs).
+- ⚠️ **"Sem demanda" não é falha**: área sem solicitação não entra em numerador nem
+  denominador, e a **cobertura vai declarada** ("5 de 8 áreas com demanda"). Sem
+  isso, cobertura parcial passa por total.
+- ⚠️ **Área órfã é DECLARADA** (`areas_sem_anel`): hoje **`hospitalidade`** tem
+  solicitações e nenhum KPI `ADM-*`. Trabalho que não aparece em anel nenhum é
+  trabalho que ninguém cobra.
+- ⚠️ **A composição do anel é DERIVADA do catálogo pelo PREFIXO DO ID**
+  (`ADM-C-*` = Criativo · `ADM-G-*`/`ADM-Q-*` = Gestão), não de uma lista escrita
+  na função: não existe segunda fonte de verdade, e área nova entra sozinha ao
+  ganhar KPI. **Derivar pelo NOME do objetivo seria frágil** — renomear um
+  objetivo esvaziaria o anel em silêncio.
+  ⚠️ `'ADM-C-%'` não colide com `ADM-COZ-01` (o hífen exige `ADM-C-`).
+- **Janela móvel de 90 dias, declarada**: os KPIs de entrega são mensais e os de
+  qualidade trimestrais, e com 89 solicitações/90 dias um recorte menor não tem
+  amostra.
+- `GET /api/estrategia/anel/:anel` (`criativo`|`gestao` · `?dias=`) ·
+  `estrategia.anel()` no `api.js`. **Sem UI ainda** — o Marcos deferiu as
+  visualizações ("quando tudo estiver alinhado, vamos corrigir as visualizações").
+- ⚠️ Erro **não vira anel zerado**: 500 com o motivo.
+
+### ⚠️ BALDE 2 executado · os doadores passam a comparar com o ANO
+
+Os 5 KPIs (AMI-23 · BRG-22 · KIDS-21 · ONL-22 · SED-24) se chamavam *"% crescimento
+no número de doadores ativos **em relação ao último ano**"* com
+`comparacao = 'mes_anterior'`. A conta passou a concordar com o nome
+(`ano_anterior`) e a meta virou a pactuada no KR: **20%** (era 30, da cascata).
+⚠️ **Isso muda o VALOR publicado**, não só a meta — era decisão de gestão e o
+Marcos autorizou executar. Segue o precedente de 21/05, quando 22 KPIs semanais
+foram movidos para YoY porque "a igreja tem eventos/liturgias mensais que fazem
+variar a frequência".
+⚠️ `unidade = '%'` (estava nula) protege a meta 20 da próxima passada da cascata.
+
 ### ⚠️ Meta absoluta × periodicidade do KPI · regra importante
 
 **Sempre** que adicionar novo KPI tático com `tipo_calculo != 'manual'` E meta
