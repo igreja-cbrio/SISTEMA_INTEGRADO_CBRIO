@@ -10452,6 +10452,76 @@ engajamento é ESTADO ATUAL; recortá-lo pelo mês compararia janela com estoque
 `sem_meta` (correto) e o `status` legado mostra verde por ter valor > 0 (resíduo
 antigo já registrado). **Pactuar as duas metas é decisão pendente.**
 
+## ⚠️⚠️ LEI · meta ANUAL não cabe em KPI que compara com o período ANTERIOR (2026-08-25 · migration `20260825140000`)
+
+Item 3 do Marcos ("se as metas já estão apresentadas substitua pelo pactuado"). A
+colheita dos **96 KRs gerais** desativados em 21/08 devolveu as metas que a
+liderança realmente pactuou — contra as metas **30** que a cascata ×1,30 escreveu
+em quase todo KPI. Mas a substituição **não é mecânica**, e a medição mostra por quê.
+
+⚠️⚠️ **Dos 52 KPIs de crescimento ativos, só 11 comparam com o ANO anterior.** Os
+outros 41 comparam com o período imediatamente anterior:
+
+| `formula_config.comparacao` | KPIs |
+|---|---|
+| `ciclo_anterior` | 29 |
+| `ano_anterior` | **11** |
+| `evento_anterior` | 6 |
+| `mes_anterior` | 5 |
+| nenhuma declarada | 1 |
+
+⇒ **Escrever "crescer 20% no ano" num KPI que mede crescimento mensal exige 20%
+POR MÊS — cerca de 790% ao ano.** É a lei "meta × periodicidade" numa forma nova:
+não é o divisor da meta absoluta, é a **semântica do delta**. Antes de escrever
+meta colhida de KR, conferir `formula_config.comparacao`.
+
+### O que foi substituído (a janela batia)
+
+Os 5 KPIs de **valor arrecadado** (AMI-24 · BRG-23 · KIDS-22 · ONL-24 · SED-25):
+`ano_anterior`, mensal, meta **30 → 15** (a pactuada no KR "crescimento anual em
+R$"). Crescer 15% no ano e crescer 15% contra o mesmo mês do ano passado são a
+mesma grandeza na mesma janela.
+
+⚠️ **Efeito medido, e é o retrato do problema**: hoje marcam **26,61%** (jul/2026)
+contra meta 30 → **vermelho a 88,7%**. Com a meta pactuada de 15% → **verde a
+177%**. O ×1,30 estava fazendo um resultado BOM (+26,6% no ano) parecer falha.
+
+⚠️ Resíduo conhecido: os 5 devolvem o MESMO número, porque doação não é
+segmentada por área (`mem_contribuicoes.area` é NULL nas 20.196 linhas e o filtro
+saiu em 14/08). Cinco rótulos de área para um número global — igual aos clones de
+frequência do Next.
+
+### ⚠️ BALDE 2 · o nome do KPI contradiz a janela dele
+
+**5 KPIs** se chamam *"% crescimento no número de doadores ativos em relação ao
+último ano"* e têm **`comparacao = 'mes_anterior'`**: AMI-23 · BRG-22 · KIDS-21 ·
+ONL-22 · SED-24. O nome promete ano, a conta entrega mês, e o KR pactuado é +20%
+no ano. Consertar a janela faria nome e conta concordarem **e** liberaria a meta —
+mas **muda o VALOR publicado**, não só a meta. Decisão pendente do Marcos/Matheus.
+
+### ⚠️ BALDE 3 · grandeza diferente pede KPI novo, não meta nova
+
+Metas de KR importantes cujo KPI do mesmo objetivo mede **outra coisa** — trocar a
+meta ali seria pôr alvo de nota num indicador de crescimento:
+
+| régua pactuada no KR | o que o KPI do objetivo mede |
+|---|---|
+| NPS do Next ≥ 70 | % crescimento de respostas positivas · **JÁ RESOLVIDO** (NEXT-04) |
+| Satisfação de voluntários ≥ 70 | % voluntários com 90%+ de respostas |
+| Conclusão da Jornada 180 ≥ 60% | % crescimento de inscritos no ciclo |
+| Onboarding de voluntário ≥ 90% no 1º mês | % em treinamento |
+| Alocação ≤ 14d · 1ª resposta ≤ 48h | não há KPI |
+| Migração de doadores C→B 30% · B→A 5% | não há KPI |
+| Supervisão: 1 encontro/mês por líder | % crescimento de líderes acompanhados |
+| Devocional familiar ≥ 25% das famílias | DEV-03 conta FAMÍLIAS/mês, não % |
+
+São estes que o Marcos descreveu como *"criar um Objetivo Geral que desdobre em
+objetivos específicos, já integrado na ótica sistema/jornada/nsm"*.
+
+⚠️ **Os 637 KRs seguem `ativo=false` mas NÃO devem ser apagados até o BALDE 3 ser
+colhido** — 630 deles têm meta numérica e são a única fonte legível dessas réguas
+(o backup JSON em Downloads é a rede, não a fonte de trabalho).
+
 ### ⚠️ Meta absoluta × periodicidade do KPI · regra importante
 
 **Sempre** que adicionar novo KPI tático com `tipo_calculo != 'manual'` E meta
