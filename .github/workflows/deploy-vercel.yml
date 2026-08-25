@@ -101,6 +101,24 @@ jobs:
       - name: Politica 'ligar' cumpre o contrato de porta (CPF + mem_contatos)
         run: npm run test:porta-ligar
 
+      # PERMISSAO. A supervisao passou a recortar por area E subarea (25/08); a
+      # licao de 18/08 e que a trava existia so como PORTA e todo supervisor
+      # montava escala de tudo. Cada regra do recorte tem um caso aqui.
+      - name: Supervisao recorta por area e subarea (permissao)
+        run: npm run test:supervisor-subarea
+
+      # Janela do check-in pelo supervisor: DIA DO CULTO EM BRT. Culto de domingo
+      # 19h e 22h UTC — comparar em UTC fecha a janela no meio do culto da noite,
+      # justamente quando o supervisor esta batendo os check-ins.
+      - name: Janela do check-in do supervisor (dia do culto em BRT)
+        run: npm run test:checkin-janela
+
+      # PERMISSAO. O rodizio da casa e semana do mes x dia x periodo (lista da
+      # Ariel), NAO horario de culto — medido no PCO: 102 dos 110 escalados tem so
+      # horario de ensaio e os 8 restantes tem as QUATRO horas.
+      - name: Rodizio de supervisao (semana x dia x periodo)
+        run: npm run test:rodizio-culto
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 

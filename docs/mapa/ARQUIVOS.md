@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-336 arquivos.
+338 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -182,6 +182,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/gruposToken.js` | régua pura | — | `src/test/gruposToken.test.ts` |
 | `backend/utils/inscricaoMenor.js` | régua pura | — | `src/test/inscricaoMenor.test.ts` |
 | `backend/utils/isoWeek.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/janelaCulto.js` | régua pura | — | `backend/services/checkinJanela.test.js` |
 | `backend/utils/janelaPeriodo.js` | régua pura | — | `src/test/janelaPeriodoBackend.test.ts` |
 | `backend/utils/jornadaMarcadores.js` | régua pura | — | `src/test/jornadaMarcadores.test.ts` |
 | `backend/utils/jornadaTempo.js` | régua pura | — | `src/test/engajouOutroValor.test.ts` |
@@ -211,6 +212,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/resilientFetch.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/respostaEscala.js` | régua pura | — | `src/test/respostaEscala.test.ts` |
 | `backend/utils/rhOnboardingProntidao.js` | régua pura | — | `src/test/rhOnboardingProntidao.test.ts` |
+| `backend/utils/rodizioCulto.js` | régua pura | — | `backend/services/rodizioCulto.test.js` |
 | `backend/utils/rpcsCliente.js` | régua pura | — | `src/test/rpcsCliente.test.ts` |
 | `backend/utils/saneamentoInscricaoApp.js` | régua pura | — | `src/test/saneamentoInscricaoApp.test.ts` |
 | `backend/utils/sanitize.js` | régua pura | — | `SEM TESTE` |
@@ -219,7 +221,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/sexoDeclarado.js` | régua pura | — | `src/test/sexoDeclarado.test.ts` |
 | `backend/utils/storagePath.js` | régua pura | — | `src/test/storagePath.test.ts` |
 | `backend/utils/supabase.js` | régua pura | — | `src/test/anexosLogArquivos.test.ts` |
-| `backend/utils/supervisorArea.js` | régua pura | — | `src/test/supervisorArea.test.ts` |
+| `backend/utils/supervisorArea.js` | régua pura | — | `backend/services/supervisorSubarea.test.js` |
 | `backend/utils/telefoneVoluntario.js` | régua pura | — | `src/test/telefoneVoluntario.test.ts` |
 | `backend/utils/totemCerco.js` | régua pura | — | `src/test/totemCerco.test.ts` |
 | `backend/utils/trechoCep.js` | régua pura | — | `src/test/trechoCep.test.ts` |

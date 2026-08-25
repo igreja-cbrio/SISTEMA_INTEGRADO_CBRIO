@@ -64,7 +64,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **96** arquivos, **87** com teste.
+`backend/utils/` tem **98** arquivos, **89** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -114,6 +114,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/gruposToken.js` | `src/test/gruposToken.test.ts` |
 | `backend/utils/inscricaoMenor.js` | `src/test/inscricaoMenor.test.ts` |
 | `backend/utils/isoWeek.js` | — |
+| `backend/utils/janelaCulto.js` | `backend/services/checkinJanela.test.js` |
 | `backend/utils/janelaPeriodo.js` | `src/test/janelaPeriodoBackend.test.ts` |
 | `backend/utils/jornadaMarcadores.js` | `src/test/jornadaMarcadores.test.ts` |
 | `backend/utils/jornadaTempo.js` | `src/test/engajouOutroValor.test.ts` `src/test/jornadaTempo.test.ts` |
@@ -143,6 +144,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/resilientFetch.js` | — |
 | `backend/utils/respostaEscala.js` | `src/test/respostaEscala.test.ts` |
 | `backend/utils/rhOnboardingProntidao.js` | `src/test/rhOnboardingProntidao.test.ts` |
+| `backend/utils/rodizioCulto.js` | `backend/services/rodizioCulto.test.js` |
 | `backend/utils/rpcsCliente.js` | `src/test/rpcsCliente.test.ts` |
 | `backend/utils/saneamentoInscricaoApp.js` | `src/test/saneamentoInscricaoApp.test.ts` |
 | `backend/utils/sanitize.js` | — |
@@ -151,7 +153,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/sexoDeclarado.js` | `src/test/sexoDeclarado.test.ts` |
 | `backend/utils/storagePath.js` | `src/test/storagePath.test.ts` |
 | `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
-| `backend/utils/supervisorArea.js` | `src/test/supervisorArea.test.ts` |
+| `backend/utils/supervisorArea.js` | `backend/services/supervisorSubarea.test.js` `src/test/supervisorArea.test.ts` |
 | `backend/utils/telefoneVoluntario.js` | `src/test/telefoneVoluntario.test.ts` |
 | `backend/utils/totemCerco.js` | `src/test/totemCerco.test.ts` |
 | `backend/utils/trechoCep.js` | `src/test/trechoCep.test.ts` |

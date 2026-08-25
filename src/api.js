@@ -3596,7 +3596,13 @@ export const voluntariado = {
   // Supervisores de área (concedido no sistema · usado pelo app pra montar escala)
   supervisores: {
     list: () => get('/voluntariado/supervisores'),
-    grant: (membro_id, area) => post('/voluntariado/supervisores', { membro_id, area }),
+    // `position_id` = SUBÁREA (vol_positions). null/omitido = toda a área.
+    // `rodizio` = { culto_dia, culto_periodo, culto_semana } · null em cada eixo = curinga.
+    grant: (membro_id, area, position_id = null, rodizio = {}) => post('/voluntariado/supervisores', { membro_id, area, position_id, ...rodizio }),
+    // Editar área, subárea e rodízio de uma concessão que já existe (25/08).
+    // ⚠️ Preserva `concedido_por`/`created_at` — apagar e recriar perdia a
+    // trilha de quem deu o acesso e quando.
+    update: (id, body) => patch(`/voluntariado/supervisores/${id}`, body),
     revoke: (id) => del(`/voluntariado/supervisores/${id}`),
   },
   // CPF / Membresia unification

@@ -1643,7 +1643,9 @@ router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res)
   try {
     const { data, error } = await supabase
       .from('vol_area_supervisores')
-      .select('id, area, created_at, membro:mem_membros(id, nome, telefone, foto_url)')
+      // ⚠️ `position` é a SUBÁREA (Ofertório, Estacionamento…). Vem embutida
+      // pra tela não precisar de um segundo round-trip por linha.
+      .select(SELECT_SUPERVISOR)
       .order('area', { ascending: true });
     if (error) throw error;
     res.json(data || []);
@@ -1653,23 +1655,126 @@ router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res)
   }
 });
 
+/**
+ * Valida o ESCOPO de uma concessão de supervisão (área, subárea, rodízio).
+ *
+ * ⚠️ Compartilhada entre POST e PATCH de propósito. Duas cópias divergiriam no
+ * primeiro ajuste, e a regra aqui não é cosmética: ela é o que impede conceder
+ * "Integração + Recepção do KIDS" mandando o id cru no corpo, e o que traduz o
+ * CHECK do banco em 400 com mensagem em vez de um 23514 cru.
+ */
+async function validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana }) {
+  // Subárea tem que PERTENCER à área concedida (nome de posição repete entre
+  // áreas: "Recepção" existe em Integração E em KIDS).
+  let posId = position_id || null;
+  if (posId) {
+    const { data: pos } = await supabase.from('vol_positions')
+      .select('id, name, team:vol_teams(id, area)').eq('id', posId).maybeSingle();
+    const areaDaPos = Array.isArray(pos?.team) ? pos.team[0]?.area : pos?.team?.area;
+    const norm = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    if (!pos || norm(areaDaPos) !== norm(area)) {
+      return { erro: 'Essa subárea não pertence à área escolhida.' };
+    }
+  }
+
+  // Rodízio · a lista da Ariel: semana × dia × período. null = curinga.
+  const DIAS = ['domingo', 'quarta'];
+  const PERIODOS = ['manha', 'noite'];
+  const dia = culto_dia ? String(culto_dia).trim().toLowerCase() : null;
+  const per = culto_periodo ? String(culto_periodo).trim().toLowerCase() : null;
+  const sem = (culto_semana === 0 || culto_semana) ? Number(culto_semana) : null;
+  if (dia && !DIAS.includes(dia)) return { erro: 'Dia do culto invalido (domingo|quarta).' };
+  if (per && !PERIODOS.includes(per)) return { erro: 'Periodo invalido (manha|noite).' };
+  if (sem !== null && !(Number.isInteger(sem) && sem >= 1 && sem <= 4)) {
+    return { erro: 'Semana do rodizio invalida (1 a 4).' };
+  }
+  // ⚠️ Período SEM dia não existe no modelo da casa ("manhã" sozinho não diz se
+  // é domingo ou quarta), e a quarta é culto ÚNICO (decisão do Matheus).
+  if (per && !dia) return { erro: 'Escolha o dia do culto antes do periodo.' };
+  if (per && dia === 'quarta') return { erro: 'A quarta e culto unico — nao tem manha/noite.' };
+
+  return { posId, dia, per, sem };
+}
+
+const SELECT_SUPERVISOR = 'id, area, position_id, culto_dia, culto_periodo, culto_semana, created_at, membro:mem_membros(id, nome, telefone, foto_url), position:vol_positions(id, name, team_id)';
+
 router.post('/supervisores', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
-    const { membro_id, area } = req.body || {};
+    const { membro_id, area, position_id, culto_dia, culto_periodo, culto_semana } = req.body || {};
     if (!membro_id || !area) return res.status(400).json({ error: 'membro_id e area obrigatórios' });
+
+    const esc = await validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana });
+    if (esc.erro) return res.status(400).json({ error: esc.erro });
+
     const { data, error } = await supabase
       .from('vol_area_supervisores')
-      .insert({ membro_id, area: String(area).trim().toLowerCase(), concedido_por: req.user?.userId || null })
-      .select('id, area, created_at, membro:mem_membros(id, nome, telefone, foto_url)')
+      .insert({
+        membro_id,
+        area: String(area).trim().toLowerCase(),
+        position_id: esc.posId,
+        culto_dia: esc.dia,
+        culto_periodo: esc.per,
+        culto_semana: esc.sem,
+        concedido_por: req.user?.userId || null,
+      })
+      .select(SELECT_SUPERVISOR)
       .single();
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Essa pessoa já é supervisora dessa área' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Essa pessoa já supervisiona isso' });
       throw error;
     }
     res.status(201).json(data);
   } catch (e) {
     console.error('[voluntariado] supervisores post:', e.message);
     res.status(500).json({ error: 'Erro ao conceder supervisão' });
+  }
+});
+
+// PATCH /supervisores/:id — EDITA a concessão (área, subárea e rodízio).
+//
+// ⚠️ Pedido do Matheus (25/08): *"preciso conseguir editar os supervisores
+// também, o horário deles, área e etc"*. Antes só existia conceder e revogar —
+// trocar o turno de alguém exigia apagar e recriar, o que perdia o
+// `concedido_por` e o `created_at` (a trilha de quem deu o acesso e quando).
+//
+// ⚠️ Passa pela MESMA `validarEscopoSupervisao` do POST. Um PATCH com régua
+// própria seria o caminho pra conceder pela porta dos fundos o que o POST
+// recusa — por exemplo subárea de outra área.
+router.patch('/supervisores/:id', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { area, position_id, culto_dia, culto_periodo, culto_semana } = req.body || {};
+    if (!area) return res.status(400).json({ error: 'area obrigatória' });
+
+    const esc = await validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana });
+    if (esc.erro) return res.status(400).json({ error: esc.erro });
+
+    const { data, error } = await supabase
+      .from('vol_area_supervisores')
+      .update({
+        area: String(area).trim().toLowerCase(),
+        position_id: esc.posId,
+        culto_dia: esc.dia,
+        culto_periodo: esc.per,
+        culto_semana: esc.sem,
+      })
+      .eq('id', req.params.id)
+      .select(SELECT_SUPERVISOR)
+      .single();
+
+    if (error) {
+      // ⚠️ 23505 = a pessoa JÁ tem uma concessão com exatamente este escopo (o
+      // unique cobre membro+area+subárea+dia+período+semana). Sem esta mensagem
+      // o usuário veria erro cru e não saberia que a linha duplicada já existe.
+      if (error.code === '23505') {
+        return res.status(409).json({ error: 'Essa pessoa já tem uma supervisão com exatamente esse escopo.' });
+      }
+      throw error;
+    }
+    if (!data) return res.status(404).json({ error: 'Supervisão não encontrada' });
+    res.json(data);
+  } catch (e) {
+    console.error('[voluntariado] supervisores patch:', e.message);
+    res.status(500).json({ error: 'Erro ao editar a supervisão' });
   }
 });
 

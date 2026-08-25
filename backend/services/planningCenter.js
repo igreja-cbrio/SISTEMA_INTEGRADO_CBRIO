@@ -318,6 +318,12 @@ async function fetchAllServicesPeople(credentials, { requireComplete = false } =
           volunteer_name: name,
           avatar_url: a.photo_thumbnail || a.photo_url || null,
           email: null,
+          // ⚠️ O PCO tem baixa PRÓPRIA (`archived` / `status:'inactive'`) e ela
+          // vinha sendo ignorada: a pessoa continuava no roster, então a
+          // reconciliação a via como presente e mantinha o perfil ativo aqui.
+          // Medido em 25/08: 17 pessoas inativas no PCO seguiam ativas na nossa
+          // base — e apareciam pro líder na hora de montar escala.
+          pco_inativo: a.archived === true || a.status === 'inactive',
         });
       }
     }
@@ -575,8 +581,40 @@ async function upsertVolunteerProfiles(supabase, volunteersMap) {
 // (origem<>planning_center) nunca sao tocados.
 // Guarda de seguranca: nao reconcilia se o roster veio pequeno (pull parcial/falho) —
 // exige cobrir >= metade dos ativos atuais e >= 100 pessoas.
+// Quem o sync pode DESARQUIVAR: está no roster ativo do PCO e a baixa NÃO foi
+// decisão nossa.
+//
+// ⚠️⚠️ Sem o `arquivado_manual` a limpeza de base se desfaz sozinha: essas
+// pessoas continuam no roster do PCO (768 `active` em 25/08), então o cron
+// horário as traria de volta — em silêncio, e ninguém ligaria uma coisa à
+// outra. `arquivado_manual` ausente (migration não aplicada) conta como false,
+// que é o comportamento antigo: na dúvida, o PCO manda.
+function podeDesarquivar(perfil, pcIds) {
+  if (!perfil || !perfil.planning_center_id) return false;
+  if (perfil.arquivado_manual === true) return false;
+  return pcIds.has(String(perfil.planning_center_id));
+}
+
+// Separa o roster do PCO entre quem ele considera ATIVO e o tamanho BRUTO do
+// pull. Puro de propósito: é a régua que decide desativação de gente.
+function rosterAtivoDoPco(volunteersMap) {
+  const entradas = volunteersMap instanceof Map
+    ? Array.from(volunteersMap.entries())
+    : Object.entries(volunteersMap || {});
+  const validas = entradas.filter(([id]) => !!id);
+  return {
+    rosterBruto: validas.length,
+    pcIds: new Set(validas.filter(([, v]) => !(v && v.pco_inativo)).map(([id]) => String(id))),
+  };
+}
+
 async function reconcilePlanningCenterProfiles(supabase, volunteersMap) {
-  const pcIds = new Set(Array.from(volunteersMap.keys()).filter(Boolean).map(String));
+  // ⚠️ Quem está no roster mas marcado `archived`/`inactive` LÁ é tratado como
+  // quem saiu — a baixa é deles, e ignorá-la fazia o nosso cadastro discordar
+  // da fonte. ⚠️ A guarda de roster pequeno usa o tamanho BRUTO do pull: ela
+  // existe pra detectar pull parcial, e medir pelo filtrado faria uma rodada
+  // em que muita gente foi desativada no PCO parecer um pull quebrado.
+  const { rosterBruto, pcIds } = rosterAtivoDoPco(volunteersMap);
 
   // Le os perfis PC do sistema, paginado (cap de 1000 do PostgREST).
   const fetchAll = async (arquivado) => {
@@ -599,8 +637,8 @@ async function reconcilePlanningCenterProfiles(supabase, volunteersMap) {
 
   const ativos = await fetchAll(false);
   const minRoster = Math.max(100, Math.floor(ativos.length * 0.5));
-  if (pcIds.size < minRoster) {
-    return { skipped: true, motivo: 'roster_pequeno', roster: pcIds.size, minRoster, arquivados: 0, desarquivados: 0 };
+  if (rosterBruto < minRoster) {
+    return { skipped: true, motivo: 'roster_pequeno', roster: rosterBruto, minRoster, arquivados: 0, desarquivados: 0 };
   }
 
   const nowIso = new Date().toISOString();
@@ -620,14 +658,28 @@ async function reconcilePlanningCenterProfiles(supabase, volunteersMap) {
   const arquivados = paraArquivar.length
     ? await updateInChunks(paraArquivar, { arquivado: true, arquivado_em: nowIso }) : 0;
 
-  const arquivadosDb = await fetchAll(true);
+  // ⚠️ `select('*')` de propósito: a coluna `arquivado_manual` pode não existir
+  // ainda (deploy antes da migration), e pedir coluna inexistente faz o
+  // PostgREST recusar a QUERY INTEIRA — a reconciliação morreria toda. Com `*`
+  // ela simplesmente não vem, e `podeDesarquivar` trata ausência como false.
+  const arquivadosDb = [];
+  for (let off = 0; ; off += 1000) {
+    const { data, error } = await supabase
+      .from('vol_profiles').select('*')
+      .eq('origem', 'planning_center').eq('arquivado', true)
+      .range(off, off + 999);
+    if (error) throw error;
+    arquivadosDb.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
   const paraDesarquivar = arquivadosDb
-    .filter(p => p.planning_center_id && pcIds.has(String(p.planning_center_id)))
+    .filter(p => podeDesarquivar(p, pcIds))
     .map(p => p.id);
   const desarquivados = paraDesarquivar.length
     ? await updateInChunks(paraDesarquivar, { arquivado: false, arquivado_em: null }) : 0;
 
-  return { skipped: false, roster: pcIds.size, arquivados, desarquivados };
+  return { skipped: false, roster: pcIds.size, roster_bruto: rosterBruto,
+    inativos_no_pco: rosterBruto - pcIds.size, arquivados, desarquivados };
 }
 
 // ── Sync team members from vol_schedules ────────────────────────────────────
@@ -1082,6 +1134,8 @@ module.exports = {
   upsertVolunteerQrCodes,
   upsertVolunteerProfiles,
   reconcilePlanningCenterProfiles,
+  rosterAtivoDoPco,
+  podeDesarquivar,
   assignVolunteersToTeams,
   syncTeamMembersFromSchedules,
   fetchPcoCpfMap,

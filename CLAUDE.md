@@ -3239,8 +3239,11 @@ EXIBIÇÃO, em 2 pontos:
 Caso real: a Patrícia tentou se inscrever no grupo do "Antônio" no domingo e
 **nenhum pedido dela existe no banco** — não conseguiu concluir. O líder está
 cadastrado como **"ANTONIO MARCO PEREIRA"** (sem acento) e a busca era
-acento-SENSÍVEL, então quem digitava a grafia correta não achava o grupo. Ele
-também é conhecido como **"Tuninho"**, e não havia busca por apelido.
+acento-SENSÍVEL, então quem digitava a grafia correta não achava o grupo. ~~Ele
+também é conhecido como "Tuninho"~~ — **ERRADO, corrigido em 25/08** (ver a
+ressalva no fim desta seção): a busca por apelido é boa; o apelido semeado é que
+não era dele. **O caso da Patrícia foi resolvido pela busca sem acento**, que não
+depende de apelido nenhum.
 
 - **Régua ÚNICA de busca em 2 espelhos** (a filtragem acontece nos dois lados):
   `src/lib/busca.js` (cliente) e `backend/services/busca.js` (servidor) —
@@ -3264,7 +3267,7 @@ também é conhecido como **"Tuninho"**, e não havia busca por apelido.
   nomes + apelidos (é nele que os filtros procuram, com fallback pros nomes pra
   bundle antigo/deploy em 2 etapas); `lideres_exibicao`/`lider_apelido` montam
   "Nome (Apelido)" no cartão do grupo, no balão do mapa e na confirmação do
-  grupo escolhido (`InscricaoGrupos`) — é o "ah, é o Tuninho".
+  grupo escolhido (`InscricaoGrupos`) — é o "ah, é o Fulano".
 - ⚠️ **O `apelido` é selecionado em consulta ISOLADA e best-effort**
   (`buscarApelidos` em publicGrupos.js): se a migration não tiver sido aplicada,
   pedir a coluna faria o PostgREST recusar a query INTEIRA e derrubaria a busca
@@ -3276,6 +3279,23 @@ também é conhecido como **"Tuninho"**, e não havia busca por apelido.
   porque **160000 já estava ocupado** (`..._next_dia_sessao_real_e_semana`).
   NÃO cadastrar outros apelidos por migration — é dado que a equipe preenche
   caso a caso na Membresia.
+  ⚠️⚠️ **O SEED DAQUELA MIGRATION ESTAVA ERRADO e foi DESFEITO** (migration
+  `20260825190000` · Marcos: *"o antonio marco pereira não é o tuninho"*).
+  **A de 30/07 NÃO foi editada** — migration aplicada não se reescreve, e num
+  replay do zero a ordem cronológica entrega o estado certo (ela semeia, a de
+  25/08 remove).
+  ⚠️⚠️ **MEDIDO em 25/08: "Tuninho" era o ÚNICO apelido da base inteira**, então
+  `mem_membros.apelido` ficou 100% vazia. A coluna, o índice e a régua de busca
+  por apelido FICAM (são infraestrutura — voltam a valer no primeiro apelido que
+  alguém cadastrar de verdade pela Membresia). Os outros 18 Antônios vivos não
+  têm apelido e não foram tocados.
+  ⚠️ `apelido` **não está entre as colunas auditadas** pelo `audit_log_changes`
+  (cpf/status/deleted_at/nome/email/telefone), então mudança nela não deixa
+  trilha em `app_audit_log` — o porquê tem que viver na migration e aqui.
+  ⚠️⚠️ **LIÇÃO**: apelido é afirmação sobre uma PESSOA. Semear por migration a
+  partir de um relato de terceiro publica identidade errada no cartão público do
+  grupo e no mapa — e ninguém audita o que parece dado. Preencher pela tela, com
+  quem conhece a pessoa, é mais lento e é o caminho certo.
 - **Limitações conhecidas:** o `/grupos/buscar` **autenticado** não devolve
   `lideres_busca`/apelido (a busca lá é acento-insensível, mas não acha por
   apelido); a ficha da pessoa da aba Pessoas do /grupos ainda não edita apelido;
@@ -13688,3 +13708,292 @@ conflito pra fila; e apareceu de brinde **`vol_inscricoes.preencher_cpf_no_membr
 - ⚠️ A fila de `/entradas` só vê `membro_id IS NULL` (`inscricaoOrfas.js:60`): a
   inscrição que **deu match** e trouxe dado divergente **nunca vira sugestão**. E quem
   enfileira as órfãs é **script manual**, não cron. Os dois seguem pendentes.
+
+## ⚠️⚠️ Supervisão de voluntariado ganhou SUBÁREA (2026-08-25 · migration `20260825140000`)
+
+Pedido do Matheus: *"preciso das subáreas também — se eu escolher Integração, deve
+aparecer as subáreas da Integração: ofertório, estacionamento e etc"*.
+
+**Subárea = `vol_positions`.** Medido: Integração → Assistência Médica, Batismo,
+Ceia, **Estacionamento**, Intercessão, **Ofertório**, Recepção. `vol_teams` NÃO
+serve: é praticamente 1:1 com a área (Integração tem UMA equipe chamada
+"Integração"). Vocabulário: o comentário do app chama a EQUIPE de "subárea/
+equipe" e a POSIÇÃO de "posição" — o que o Matheus chama de subárea é a POSIÇÃO.
+
+⚠️⚠️ **GUARDA O ID, NUNCA O NOME.** Nome de posição REPETE entre áreas:
+"Recepção" em Integração **e** KIDS; "Cuidados" em AMI/Bridge/Voluntariado;
+"Produção" em AMI/Bridge/Produção; "Intercessão" em AMI/Integração; "Staff" em
+AMI/Bridge. Comparar texto faria "Recepção da Integração" liberar o Kids.
+
+⚠️ **`position_id` NULL = curinga** ("toda a área"). É o que preserva toda
+concessão anterior — sem isso a migration seria remoção silenciosa de acesso.
+E **`geral` + subárea NÃO é curinga**: seria "todas as áreas, mas só o Ofertório",
+e ler isso como "tudo" devolveria o bug de 18/08 pela porta dos fundos.
+
+**Onde a trava vive** (`utils/supervisorArea.podeSupervisionar`):
+- **Equipe** ignora o recorte de propósito — quem tem só o Ofertório precisa VER
+  a equipe Integração pra chegar na vaga dele. O corte fino é no ITEM.
+- Recorta: composição, escalas visíveis, POST escalar, PATCH mover **e** o
+  `escalaSobSupervisao` (que vale pra mover **e remover** — a lei preexistente).
+- Alvo **sem subárea resolvível é NEGADO** pra quem tem concessão de subárea:
+  liberar "porque não dá pra saber" devolve o acesso amplo bastando um
+  `position_id` vazio. Mesma lei da equipe sem área.
+- `escalaResposta._supervisoresDaArea` **NÃO** estreita: é NOTIFICAÇÃO, não
+  permissão, e silêncio é pior que ruído num aviso de véspera.
+- Gate: `npm run test:supervisor-subarea`.
+
+### ⚠️⚠️ Por que NÃO existe seletor de CULTO/HORÁRIO nesta tela
+
+O Matheus pediu também *"o horário de culto em qual eles são supervisores"*, e
+**a escala de hoje não expressa isso.** Medido em 90 dias:
+
+| Serviço | Origem | Escalas | `service_type_id` |
+|---|---|---|---|
+| **Domingo - Manhã** (08:30) | Planning Center | **1.304** | **NULL** |
+| **Domingo - Noite** (19:00) | Planning Center | **764** | **NULL** |
+| CBKIDS Manhã/Noite/Quarta | tipo próprio | 882 / 369 / 202 | ok |
+| Domingo 08:30 · 10:00 · 11:30 | nossos | **0 · 0 · 0** | ok |
+
+⇒ **O PCO consolida a manhã inteira num serviço só**: "Domingo - Manhã" é UM
+serviço que cobre 08:30 + 10:00 + 11:30. Os serviços por horário existem e têm
+ZERO escala. E **63% das escalas (3.119/4.941) estão em serviço sem
+`service_type_id`** — travar por tipo trancaria a maioria fora.
+
+Um seletor de culto aqui seria **um interruptor que não filtra nada** — o erro do
+`wa_templates.ativo` (24/08). Por isso ficou de fora, e não por esquecimento.
+
+⚠️ **Pré-requisito para o horário** (é o pendente *"tipo dos cultos"* do PR #2518):
+`fetchAllTeamMembers` (`services/planningCenter.js`) chama
+`team_members?include=person` — **sem `times`**. No PCO o `PlanPerson` carrega os
+`PlanTime`s (08:30/10:00/11:30) que a pessoa serve. Falta: incluir `times` no
+fetch + um mapa PlanTime→culto, análogo ao `vol_pco_mapa`. Também a flag
+`vol_service_types.is_active` está mentindo (os 3 CBKIDS, com 1.453 escalas,
+estão `false`; os "Domingo" ativos têm 0) — **não confiar nela para popular
+seletor**; usar uso real.
+
+## ⚠️⚠️ Check-in pelo SUPERVISOR no app · escopo + janela do dia (2026-08-25 · SEM migration)
+
+Pedido do Matheus: *"no app de membros os supervisores devem poder fazer check-in
+dos voluntários das suas respectivas áreas, e só nos dias de culto. Isso ajuda a
+gente não ficar refém de apenas um local de check-in (que hoje é na sala de
+voluntários)."*
+
+⚠️⚠️ **O endpoint `POST /app/voluntariado/checkin` JÁ EXISTIA — com o furo de
+18/08 intacto.** Ele conferia `areas.length` (a PORTA) e depois registrava
+presença de QUALQUER pessoa, em QUALQUER culto, de QUALQUER dia: supervisor de
+Louvor batia ponto do Kids num culto de três meses atrás. O `GET .../checkins`
+listava os check-ins de TODAS as áreas. Nenhuma das duas coisas tinha teste.
+
+**O que passou a valer:**
+- **Janela = DIA DO CULTO em BRT** (decisão dele: dia inteiro, não faixa de
+  horas). Vale para TODO MUNDO, **inclusive `geral`** — a restrição é da
+  OPERAÇÃO, não do escopo de área.
+- **Escopo = área + subárea** (`podeSupervisionar`), aplicado no POST, no DELETE
+  e no recorte da LISTA.
+- **Desfazer** (`DELETE /app/voluntariado/checkin/:id`) dentro da mesma janela e
+  do mesmo escopo.
+
+⚠️ **A trava de escopo fica DEPOIS da resolução da escala**, de propósito: é o
+`resolvedScheduleId` (que o match acha no dia) que carrega equipe e subárea.
+Checar antes, no `schedule_id` cru do corpo, deixaria passar todo check-in em que
+o cliente manda só `volunteer_id`.
+
+⚠️ **Check-in SEM escala (`is_unscheduled`) é liberado para escopo restrito** — e
+é exceção CONSCIENTE à lei de "alvo sem equipe resolvível é negado". Registrar
+que alguém APARECEU não concede nada a ninguém, e negar travaria justamente o
+caso que descentralizar o check-in existe para atender. A janela do dia é o que
+impede abuso.
+
+⚠️ **O desfazer é HARD DELETE**, e tem que ser: os uniques de `vol_check_ins` são
+índices **PARCIAIS** (`schedule_id` · `volunteer_id+service_id`), então
+soft-delete deixaria a linha morta ocupando o unique e o próximo check-in da
+mesma pessoa bateria 409 **para sempre**. A trilha vai para `audit_log`.
+
+⚠️⚠️ **A ARMADILHA DE FUSO, que é o teste principal.** Culto de domingo 19h é
+**22h UTC**; das 21h BRT em diante o UTC já virou o dia seguinte. Comparar em UTC
+(ou `toISOString().slice(0,10)`) **fecha a janela no meio do culto da noite** —
+exatamente quando o supervisor está batendo os check-ins. A régua é pura em
+`utils/janelaCulto.ehDiaDoCulto` (com `agora` injetável) e está no gate:
+`npm run test:checkin-janela`, que também é guarda ESTÁTICA de que as duas rotas
+chamam janela **e** escopo, e que a janela não está aninhada num
+`if (!supervisionaTudo(...))`.
+
+⚠️ **PENDENTE: a outra metade.** `app/(app)/escala-supervisor.tsx` (repo
+`Aplicativo-CBRio`) só **exibe** check-ins — **nunca chama** o endpoint. O
+backend está pronto e sem consumidor; o botão de marcar/desmarcar é trabalho no
+app (Expo/RN, TestFlight). ⚠️ Ao mexer lá, **nunca** subir `version` de 1.0.0
+(congela o OTA da frota).
+
+## ⚠️⚠️ Supervisão · o RODÍZIO da casa é semana × dia × período (2026-08-25 · migration `20260825170000`)
+
+A Ariel mandou a lista real, e ela derrubou o que eu estava construindo:
+
+```
+1 Dom manhã: Luiz Felipe Palladino, Marcelo Ricart   1 Dom Noite: Cleber Machado, Simone Oliveira
+2 Dom Manhã: Olivares Filho, Monica Duarte           2 Dom Noite: Alexander Caldas, Noemi Caldas
+3 Dom Manhã: Leandra Ribeiro                         3 Dom Noite: Anselmo Fernandez, Carla Suellen
+4 Dom Manhã: Leandro Luizi, Cristiane Pacheco        4 Dom Noite: Clayton Araújo, Patricia Araújo
+1ª/2ª/3ª/4ª 4ª feira: Carlos Henrique Martins, Simone Oliveira (×3)
+```
+
+**"1 Dom manhã" é o PRIMEIRO DOMINGO DO MÊS**, não o culto das 08:30. O eixo é a
+**enésima semana**, e ninguém tinha dito isso antes.
+
+⚠️⚠️ **A DIMENSÃO QUE EU IA CONSTRUIR NÃO SEPARARIA NINGUÉM — e isso foi MEDIDO
+no PCO antes de abandonar.** Eu ia trazer os `times` do `team_members` pra
+supervisionar por horário (08:30 × 09:30 × 10:00 × 11:30). No domingo 23/08, dos
+**110** escalados: **102 têm SÓ horário de ensaio** e os **8** com horário de
+culto têm **AS QUATRO** horas. Teria sido sync novo + coluna + backfill pra um
+seletor decorativo. **Lição: medir a capacidade DISCRIMINANTE do eixo antes de
+construí-lo, não só se o dado existe.** (O dado existe: `team_members` tem
+`times` e `service_times`, e os `plan_times` do PCO batem com nossos cultos —
+11:30Z/12:30Z/13:00Z/14:30Z = 08:30/09:30/10:00/11:30 BRT. Só não serve pra isto.)
+
+**Como funciona:** `vol_area_supervisores` ganhou `culto_dia` (domingo|quarta),
+`culto_periodo` (manha|noite) e `culto_semana` (1..4). **NULL = curinga** em cada
+eixo — é o que preservou as 5 concessões existentes. A régua é pura em
+`utils/rodizioCulto.js` e **não depende do Planning Center**: dia, período e
+semana saem do `vol_services.scheduled_at`, que já está no banco.
+
+- **5ª semana repete a 1ª** (decisão do Matheus): a lista só vai até 4, e culto
+  órfão de supervisão é pior que supervisor repetido. `ordinal_real` fica no
+  retorno pra a tela poder dizer "era o 5º".
+- **Quarta é culto ÚNICO** (decisão dele): `culto_periodo` NULL. A rota recusa
+  período na quarta com 400, e a tela não oferece o seletor.
+- **Culto fora do rodízio** (AMI é sábado, Bridge, eventos) tem `dia: null` e só
+  é coberto por concessão SEM recorte de dia — quem recebeu "1º domingo" não
+  passa a supervisionar o AMI.
+- `ceil(dia/7)` **é** a enésima ocorrência do dia-da-semana, não aproximação: o
+  1º domingo cai entre os dias 1 e 7, o 2º entre 8 e 14, qualquer que seja o dia
+  em que o mês começa.
+- Gate: `npm run test:rodizio-culto` (verificado vermelho ao tirar a regra do 5º
+  e ao trocar a data BRT por UTC).
+
+⚠️⚠️ **DOIS BUGS DE FUSO/JS que o teste pegou, não a revisão:**
+1. **`new Date(null)` NÃO é data inválida — é a EPOCH**, que em BRT cai numa
+   QUARTA dia 31, ou seja `{ dia: 'quarta', semana: 1 }`. Culto sem data entrava
+   no rodízio de alguém. Guarda de falsy ANTES do `new Date`.
+2. O dia-da-semana **nunca** pode vir de `getDay()` do Date cru (fuso da máquina)
+   nem de UTC: domingo 19h é 22h UTC, e em UTC já é segunda — o culto da noite
+   sairia do rodízio.
+
+⚠️ Onde a trava mora: `podeSupervisionar` compõe **área × subárea × rodízio** e é
+aplicada na composição, nas escalas visíveis, no POST escalar, no
+`escalaSobSupervisao` (mover/remover) **e** no check-in (POST, DELETE e recorte da
+lista). Nível de EQUIPE continua ignorando subárea e rodízio de propósito — quem
+tem só o Ofertório do 1º domingo precisa VER a equipe Integração pra chegar na
+vaga dele.
+
+⚠️ **A lista da Ariel NÃO foi semeada por script.** São nomes que precisam casar
+com `mem_membros`, e o caso Palladino (registrado acima) mostrou que casar nome de
+família por sinal fraco troca pessoa. Cadastro é decisão humana, na tela.
+## ⚠️ Supervisores · a tela ficava MUDA pra quem não tem cadastro de membro (2026-08-25)
+
+Relato do Matheus: *"o Luiz Felipe Palladino está na minha lista de voluntários mas
+na lista suspensa para colocar ele como supervisor ele não aparece."*
+
+O filtro `p.membresia_id` está **certo** e não pode cair: o app identifica o
+supervisor pelo cadastro de membro, então conceder a um perfil sem membro criaria
+supervisão que nunca funciona. O errado era o **silêncio** — o nome existia no
+pool, era descartado, e nada explicava. Ele foi procurar no banco.
+
+Medido: **339 dos 936 `vol_profiles` (36%) estão sem `membresia_id`.** Não é caso
+isolado, é mais de um terço da lista. Agora a tela DECLARA: mostra os nomes
+achados, diz que estão sem cadastro e aponta *Entradas → Identidade*.
+
+### ⚠️⚠️ E o caso Palladino é identidade CRUZADA — não religar por e-mail
+
+| `vol_profiles` | e-mail do perfil | `membresia_id` |
+|---|---|---|
+| **Enzo Palladino** | `lfbpalladino@palladinoadvogados.com.br` | → membro **Luiz Felipe Bittencourt Palladino** |
+| **Luiz Felipe Palladino** | `lfpalladino@gmail.com` | **NULL** |
+
+O e-mail do perfil do **Enzo** é o e-mail do cadastro do **Luiz Felipe**; e o
+e-mail do perfil do **Luiz Felipe** é o do cadastro da **Lara Melchiades
+Palladino** — que tem a **MESMA data de nascimento** do Luiz Felipe (1981-06-27) e
+telefone vizinho (…902 × …901). **Não existe membro "Enzo Palladino".**
+
+⇒ Religar por e-mail aqui daria supervisão ao membro ERRADO. É literalmente o
+caso da LEI do contrato de porta ("família compartilha telefone/e-mail — NUNCA
+ligar por sinal fraco sozinho"). Decisão: **fila humana, não script.**
+
+**A medida do problema geral** (25/08): dos 596 perfis COM vínculo, **29 têm o
+primeiro nome divergente** do membro apontado — **14 com o mesmo sobrenome**
+(assinatura de cruzamento familiar) e **0** que sejam apelido/prefixo. Ou seja:
+não são grafias, são pessoas trocadas. Vale varredura própria.
+
+## ⚠️ Supervisores · EDITAR + a busca que perdia gente por ACENTO (2026-08-25)
+
+Dois pedidos do Matheus no mesmo dia, e o segundo era **bug**, não pedido:
+
+**1. Editar.** *"preciso conseguir editar os supervisores também, o horário deles,
+área e etc"*. Antes só havia conceder e revogar, então trocar o turno de alguém
+exigia apagar e recriar — o que **perdia `concedido_por` e `created_at`**, a
+trilha de quem deu o acesso e quando. Agora há `PATCH /voluntariado/supervisores/:id`
+e edição **inline** na linha (não modal: a pessoa está comparando o supervisor com
+os vizinhos da mesma área, e o modal esconde justamente esse contexto).
+
+⚠️ POST e PATCH passam pela MESMA `validarEscopoSupervisao`. Um PATCH com régua
+própria seria a porta dos fundos pra conceder o que o POST recusa (por exemplo
+subárea de outra área). O 23505 do unique vira 409 com mensagem, porque o unique
+cobre membro+área+subárea+dia+período+semana.
+
+⚠️ Os seletores viraram UM componente (`SeletoresEscopo`) usado por conceder e
+por editar. A régua "quarta é culto único, não tem manhã/noite" e "trocar de área
+zera a subárea" mora nele — duas cópias do JSX divergiriam e uma passaria a
+mandar combinação que o servidor recusa com 400.
+
+**2. ⚠️⚠️ A BUSCA NÃO NORMALIZAVA ACENTO.** *"a Mônica não está aparecendo na
+lista de voluntários para eu colocar como supervisora"*. Ela **tinha** cadastro
+vinculado e **não** estava arquivada. O filtro fazia
+`full_name.toLowerCase().includes(q)` — e digitar `monica` **não casa** com
+`M`**`ô`**`nica`. A lista de `/voluntariado/lista` normaliza e achava; o seletor
+não, então a tela parecia dizer que a pessoa não existe.
+
+⇒ `norm()` (NFD + strip diacríticos + lower) aplicado nos DOIS filtros do
+seletor. **Foi a segunda vez no mesmo dia** que ele concluiu "falta gente na
+lista" — a primeira foi o Palladino, por outro motivo (vínculo cruzado). Tela que
+esconde sem dizer produz exatamente essa conclusão.
+
+⚠️ **E o teto de 8 era SILENCIOSO.** Com 596 perfis vinculados, digitar um
+primeiro nome comum cortava gente sem avisar. Subiu pra 20 e a lista agora
+declara "Mostrando N de M — refine a busca". Truncar em silêncio é a mesma doença
+do acento.
+
+## ⚠️ Supervisores atuais · agrupado por TURNO → ÁREA (2026-08-25)
+
+Pedido do Matheus: *"no card de supervisores atuais quero a separação por culto:
+primeiro domingo, segundo domingo etc. Primeira quarta, segunda quarta. E aí
+dentro de cada dia, ver as áreas e seus respectivos supervisores."*
+
+⚠️ **A ordem NÃO é alfabética, e isso é o ponto.** A pessoa lê esta tela pra
+responder *"quem cobre o 2º domingo de manhã?"*. Domingo antes de quarta, semana
+crescente, manhã antes de noite — a ordem em que a escala acontece. Grupos
+AMPLOS ("todas as semanas", "todo culto") vão pro FIM: no topo empurrariam os
+turnos reais pra baixo da dobra.
+
+⚠️ **E a tela passou a DECLARAR quem está sem turno.** O print dele mostrava
+4 pessoas com "· todo culto" que, pela lista da Ariel, **têm** turno — foram
+cadastradas antes do rodízio subir, e hoje supervisionam **todos** os cultos:
+mais acesso do que a casa combinou. Aviso âmbar no topo do card, com os nomes.
+
+### As DUAS causas de "a pessoa não aparece no seletor" (medidas em 25/08)
+
+Aconteceu 3× no mesmo dia, e cada uma tinha causa diferente:
+
+| Caso | Causa | Conserto |
+|---|---|---|
+| **Luiz Felipe Palladino** | perfil sem `membresia_id`; o cadastro dele estava ligado ao perfil do FILHO (Enzo, criado no PCO com o e-mail do pai) | religado à mão, com backup |
+| **Mônica Hernandez Duarte** | **acento** — o filtro fazia `includes()` sem normalizar, e `monica` não casa com `Mônica` | `norm()` nos dois filtros |
+| **Clayton Araújo** | perfil sem `membresia_id`; o cadastro existia como "Clayton Farias de Araújo" | religado (e-mail `araujo98@` × `araujo982025@`, mesma raiz, nenhum outro cadastro com o endereço) |
+
+⚠️ **A trigger `trg_sync_email_vol_para_membro` reescreve o e-mail do PERFIL** ao
+vincular (canônico do cadastro vence). Nos dois religamentos o e-mail antigo do
+perfil foi sobrescrito — está em `_bk_20260825_palladino_vinculo` e
+`_bk_20260825_vinculo_vol`. O cadastro do membro NÃO é tocado (o inverso só
+preenche vazio).
+
+⚠️ **O padrão que se repetiu 4× hoje:** a tela esconde sem dizer e quem usa
+conclui que o dado não existe. Alerta do DS mudo, `wa_templates.ativo` que não
+desliga nada, o Palladino sumindo, e a busca com acento. **"A tela ficou muda" é
+bug, não detalhe.**

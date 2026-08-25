@@ -674,10 +674,18 @@ function OkrCardCompacto({ okr, metricas, onClick }) {
           const corNum = !m ? CINZA : (aval.ok == null ? C.primary : aval.cor);
           return (
             <div key={t.ind} className="flex items-center gap-2 px-3 py-2" style={{ borderTop: `1px solid ${C.border}66` }}
-              title={m?.detalhe || (!m && t.precisa ? `Para puxar automático, preciso de: ${t.precisa}` : undefined)}>
+              title={t.ressalva || m?.detalhe || (!m && t.precisa ? `Para puxar automático, preciso de: ${t.precisa}` : undefined)}>
               <div className="flex-1 min-w-0">
                 <div className="text-xs font-medium leading-snug" style={{ color: C.text }}>{t.ind}</div>
                 <div className="text-[10.5px]" style={{ color: C.t3 }}>Alvo: {t.alvo}</div>
+                {/* ⚠️ Na reunião o número é lido em voz alta — a ressalva tem
+                    que estar VISÍVEL na linha, não só no title do mouse. */}
+                {t.ressalva && (
+                  <div className="text-[9.5px] font-bold mt-0.5 inline-block rounded-full px-1.5 py-px"
+                    style={{ color: '#92400e', background: '#fef3c7', border: '1px solid #fcd34d' }}>
+                    ⚠ LEIA A RESSALVA
+                  </div>
+                )}
               </div>
               <div className="text-base font-extrabold flex-shrink-0" style={{ color: corNum }}>
                 {m ? `${fmt(m.valor, t.casas)}${m.unidade}` : '—'}
@@ -1824,13 +1832,15 @@ function TaticoDetalheModal({ t, metricas }) {
         </div>
       ) : (
         <p className="text-xs p-2.5" style={{ color: C.t3 }}>
-          {m?.detalhe
-            ? m.detalhe
-            : m
-              ? 'Sem série mensal ainda — este indicador mostra o número oficial/atual.'
-              : t.precisa
-                ? `Para puxar automático, preciso de: ${t.precisa}`
-                : 'Sem fonte de dado ainda.'}
+          {t.ressalva
+            ? t.ressalva
+            : m?.detalhe
+              ? m.detalhe
+              : m
+                ? 'Sem série mensal ainda — este indicador mostra o número oficial/atual.'
+                : t.precisa
+                  ? `Para puxar automático, preciso de: ${t.precisa}`
+                  : 'Sem fonte de dado ainda.'}
         </p>
       )}
     </div>

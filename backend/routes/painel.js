@@ -2183,6 +2183,138 @@ router.get('/monitoramento-okr', async (req, res) => {
       }
     } catch (e) { console.error('okr · batismos coorte:', e.message); }
 
+    // 4b) NEXT · "% com 1º contato que foi a >=1 encontro do Next"
+    //     (Matheus, 25/08/2026, revisando o relatório mandado ao Pr. Juninho)
+    //
+    // ⚠️⚠️ O relatório dizia "25 de 416 formados" e o 25 vinha de
+    // `next_matriculas.status='formado'` — o status POR TURMA, proibido pela lei
+    // do projeto (diz "não formou" pra quem esteve num encontro de OUTRA turma).
+    //
+    // ⚠️⚠️ NÃO usa `vw_next_formado_pessoa`, e o motivo é o pedido: a view é
+    // presença ∪ marcação manual ∪ **status 'formado'**, e o Matheus foi
+    // explícito — "não contabilizamos os formados". Aqui só entra EVIDÊNCIA DE
+    // PRESENÇA. Medido em 25/08: ninguém tem status sem ter presença, então
+    // hoje as duas listas coincidem; a diferença é de semântica, não de gente.
+    //
+    // ⚠️ A camada LEGADA conta: `next_inscricoes.check_in_at` é a marca de
+    // presença das 56 listas digitalizadas em 13/05. ⚠️ Mas linha SEM
+    // `check_in_at` NÃO conta — nas listas IMPRESSAS o nome vinha pré-impresso
+    // (roster) e só o tique prova presença. Medido: incluir o roster levaria de
+    // 33 para 41 pessoas, contando quem se inscreveu e nunca apareceu.
+    //
+    // ⚠️⚠️ CASA TAMBÉM POR TELEFONE + PRIMEIRO NOME. O convertido do culto entra
+    // sem CPF (a porta pede só nome e telefone), então chave forte sozinha perde
+    // gente — e o que ela perde, medido, são **cadastros DUPLICADOS**: a mesma
+    // pessoa com dois `membro_id` ("Solano Castro C. Pinto" × "Solano Castro
+    // Carneiro Pinto"). Sem o telefone o indicador subconta enquanto a fila de
+    // duplicatas não é tratada. Telefone SOZINHO nunca identifica (família
+    // compartilha número) — por isso vai com o primeiro nome junto.
+    try {
+      const dig = (v) => String(v || '').replace(/\D/g, '');
+      const kCpf = (v) => (dig(v).length === 11 ? dig(v) : null);
+      const kNome = (v) => String(v || '').trim().toLowerCase() || null;
+      const kTel = (v) => { const d = dig(v); return d.length >= 10 ? d.slice(-8) : null; };
+      const kPri = (v) => kNome(v)?.split(' ')[0] || null;
+      const CONTATO_FEITO = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
+
+      const convs = await fetchPaged('cui_convertidos', 'membro_id, cpf, nome, telefone, primeiro_contato_em, primeiro_contato_status',
+        (q) => q.is('deleted_at', null));
+      const comContato = convs.filter((c) => !!c.primeiro_contato_em || CONTATO_FEITO.has(c.primeiro_contato_status));
+
+      if (comContato.length) {
+        const pM = new Set(), pC = new Set(), pN = new Set(), pT = new Set();
+        const anota = (r) => {
+          if (r.membro_id) pM.add(r.membro_id);
+          if (kCpf(r.cpf)) pC.add(kCpf(r.cpf));
+          if (kNome(r.nome)) pN.add(kNome(r.nome));
+          if (kTel(r.telefone) && kPri(r.nome)) pT.add(`${kTel(r.telefone)}|${kPri(r.nome)}`);
+        };
+        // presença na camada VIVA (matrícula × encontro)
+        const mats = await fetchPaged('next_matriculas', 'id, membro_id, cpf, nome, telefone', (q) => q.is('deleted_at', null));
+        const matPorId = new Map(mats.map((m) => [m.id, m]));
+        const presencas = await fetchPaged('next_presencas', 'matricula_id', (q) => q.eq('presente', true));
+        for (const pr of presencas) { const m = matPorId.get(pr.matricula_id); if (m) anota(m); }
+        // presença na camada LEGADA (o tique das listas de 13/05)
+        const legado = await fetchPaged('next_inscricoes', 'membro_id, cpf, nome, telefone',
+          (q) => q.not('check_in_at', 'is', null));
+        for (const l of legado) anota(l);
+        // marcação manual de aula (a pessoa esteve; não há data do encontro)
+        const manual = await fetchPaged('next_pessoa_aula_manual', 'membro_id',
+          (q) => q.or('fez_aula1.eq.true,fez_aula2.eq.true'));
+        for (const m of manual) if (m.membro_id) pM.add(m.membro_id);
+
+        // ⚠️ Chave FORTE primeiro; telefone+1º nome como PONTE; nome sozinho só
+        // quando não há identificação nenhuma (com id disponível, nome puro é
+        // homônimo e superconta).
+        const casa = (c) => {
+          const cpf = kCpf(c.cpf);
+          if ((c.membro_id && pM.has(c.membro_id)) || (cpf && pC.has(cpf))) return true;
+          const t = kTel(c.telefone), pr = kPri(c.nome);
+          if (t && pr && pT.has(`${t}|${pr}`)) return true;
+          if (c.membro_id || cpf) return false;
+          const n = kNome(c.nome);
+          return !!n && pN.has(n);
+        };
+        const ok = comContato.filter(casa).length;
+        addM('next_pos_contato', Math.round(ok / comContato.length * 1000) / 10, '%',
+          `${ok} de ${comContato.length} com 1º contato estiveram em ao menos 1 encontro do Next (presença, não "formado")`);
+      }
+    } catch (e) { console.error('okr · next_pos_contato:', e.message); }
+
+    // 4c) VOLUNTÁRIOS ATIVOS · régua confirmada pelo Matheus em 25/08/2026:
+    //     ATIVO = SERVIU nos últimos 3 meses (fez CHECK-IN)
+    //     BASE  = todo mundo com cadastro de voluntário ativo
+    //
+    // Palavras dele: "todos têm o cadastro ativo, mas não necessariamente é um
+    // voluntário ativo — só se torna ativo se serviu no período de 3 meses".
+    //
+    // ⚠️⚠️ ISTO TROCA A PERGUNTA, não mede melhora. O indicador antigo era
+    // "cadastro de voluntário ÷ membros ativos" = 29,8% na planilha, e tinha
+    // dois defeitos medidos: `mem_voluntarios.ate` está preenchido em ZERO
+    // linhas (ninguém nunca deu baixa, o numerador só cresce) e 156 dos 594 nem
+    // eram `membro_ativo` — gente contada sobre uma população da qual não faz
+    // parte. A conta nova vive inteira dentro do vol_*, sem depender do vínculo
+    // perfil↔membro (339 dos 935 perfis não o têm).
+    //
+    // ⚠️ SERVIU = check-in, NÃO escalado. Escalado ÷ escalado dá 96,9% e não
+    // discrimina: a escala é semanal, quem esteve nela em 6 meses esteve em 3.
+    // Check-in ÷ base dá 57,5%, que é a pergunta que tem resposta útil.
+    //
+    // ⚠️ O numerador é filtrado pela MESMA base do denominador (perfil não
+    // arquivado): sem isso o check-in de um perfil arquivado deixaria o
+    // numerador fora do denominador, e a razão poderia passar de 100%.
+    //
+    // ⚠️ `vol_check_ins` só existe desde 15/04/2026. A janela de 90 dias já
+    // cabe, mas qualquer janela maior que ~4 meses ainda não tem dado.
+    try {
+      const perfis = await fetchPaged('vol_profiles', 'id, arquivado', (q) => q);
+      const base = new Set(perfis.filter((p) => !p.arquivado).map((p) => p.id));
+      if (base.size) {
+        const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
+        // ⚠️⚠️ 27% dos check-ins (589 de 2.167, medido em 25/08) chegam SEM
+        // `volunteer_id` — e só UM deles tem nome. Contar só os identificados
+        // subconta quem serviu: 413 desses 589 têm `schedule_id`, e a escala
+        // sabe de quem é. Sem essa recuperação o numerador cai de 495 pra 460
+        // e 35 pessoas que serviram aparecem como inativas.
+        const checkins = await fetchPaged('vol_check_ins', 'volunteer_id, schedule_id',
+          (q) => q.gte('checked_in_at', d90));
+        const semDono = [...new Set(checkins.filter((c) => !c.volunteer_id && c.schedule_id).map((c) => c.schedule_id))];
+        const donoDaEscala = new Map();
+        for (let i = 0; i < semDono.length; i += 200) {
+          const lote = semDono.slice(i, i + 200);
+          const escalas = await fetchPaged('vol_schedules', 'id, volunteer_id', (q) => q.in('id', lote));
+          for (const e of escalas) if (e.volunteer_id) donoDaEscala.set(e.id, e.volunteer_id);
+        }
+        const serviram = new Set();
+        for (const c of checkins) {
+          const quem = c.volunteer_id || donoDaEscala.get(c.schedule_id);
+          if (quem && base.has(quem)) serviram.add(quem);
+        }
+        addM('volunt_ativos_base', Math.round(serviram.size / base.size * 1000) / 10, '%',
+          `${serviram.size} serviram (check-in) nos últimos 3 meses ÷ ${base.size} com cadastro de voluntário ativo · check-in sem dono recuperado pela escala`);
+      }
+    } catch (e) { console.error('okr · volunt_ativos_base:', e.message); }
+
     // 5) Taxa de engajamento YouTube = (curtidas + comentários) ÷ views × 100 (ano)
     try {
       const vids = await fetchPaged('online_videos', 'view_count, like_count, comment_count',

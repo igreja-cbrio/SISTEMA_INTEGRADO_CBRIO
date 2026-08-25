@@ -27,9 +27,6 @@ function chaveArea(v) {
 /** 'geral' é o curinga: supervisiona tudo. É o que preserva quem já tinha acesso. */
 const CURINGA = 'geral';
 
-function supervisionaTudo(areasDoSupervisor) {
-  return (areasDoSupervisor || []).some((a) => chaveArea(a) === CURINGA);
-}
 
 /**
  * A equipe está sob a supervisão desta pessoa?
@@ -44,18 +41,106 @@ function equipeSupervisionada(equipe, areasDoSupervisor) {
   if (supervisionaTudo(areasDoSupervisor)) return true;
   const alvo = chaveArea(equipe && equipe.area);
   if (!alvo) return false;
-  return (areasDoSupervisor || []).some((a) => chaveArea(a) === alvo);
+  // ⚠️ Nível de EQUIPE: ignora o recorte de subárea E de rodízio, de propósito.
+  // A equipe é o container da área; quem supervisiona só o Ofertório do 1º
+  // domingo ainda precisa VER a equipe Integração pra chegar na vaga dele. O
+  // corte fino é no ITEM (subárea) e no CULTO (rodízio).
+  return normalizarConcessoes(areasDoSupervisor).some((g) => chaveArea(g.area) === alvo);
 }
 
 /** Filtra itens (de composição, de equipe…) pelo que a pessoa supervisiona. */
 function filtrarPorSupervisao(itens, areasDoSupervisor, lerArea) {
   const ler = lerArea || ((i) => i && i.area);
   if (supervisionaTudo(areasDoSupervisor)) return itens || [];
-  const permitidas = new Set((areasDoSupervisor || []).map(chaveArea).filter(Boolean));
+  const permitidas = new Set(normalizarConcessoes(areasDoSupervisor).map((g) => chaveArea(g.area)).filter(Boolean));
   return (itens || []).filter((i) => {
     const a = chaveArea(ler(i));
     return !!a && permitidas.has(a);
   });
 }
 
-module.exports = { chaveArea, supervisionaTudo, equipeSupervisionada, filtrarPorSupervisao, CURINGA };
+
+// ══════════════════════════════════════════════════════════════════════════
+// SUBÁREA (2026-08-25) · a concessão passou a ter dois níveis
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Uma CONCESSÃO é `{ area, position_id }`. `position_id` NULL = curinga ("toda
+// a área"), que é o que preserva quem já tinha acesso antes desta mudança.
+//
+// ⚠️ A comparação de subárea é por ID, nunca por nome. Nome de posição REPETE
+// entre áreas ("Recepção" em Integração e KIDS, "Cuidados" em AMI/Bridge/
+// Voluntariado). Comparar texto faria a concessão vazar pra outra área.
+//
+// ⚠️ Regra de escopo: a pessoa passa se QUALQUER concessão dela cobrir o alvo.
+// Uma concessão cobre quando (a) a área bate — ou é `geral` — E (b) ou ela é
+// curinga de subárea, ou a subárea bate exatamente.
+
+/** Normaliza a entrada em lista de concessões. Aceita string[] (contrato antigo). */
+function normalizarConcessoes(entrada) {
+  return (entrada || []).map((g) => (
+    typeof g === 'string'
+      ? { area: g, position_id: null, culto_dia: null, culto_periodo: null, culto_semana: null }
+      : {
+        area: g && g.area,
+        position_id: (g && g.position_id) || null,
+        // Rodízio (25/08): semana × dia × período. NULL em cada eixo = curinga,
+        // que é o que mantém string[] e as concessões antigas funcionando igual.
+        culto_dia: (g && g.culto_dia) || null,
+        culto_periodo: (g && g.culto_periodo) || null,
+        culto_semana: (g && g.culto_semana) || null,
+      }
+  ));
+}
+
+/**
+ * Supervisiona TUDO? Só quem tem `geral` SEM recorte de subárea.
+ *
+ * ⚠️ `geral` + uma subárea NÃO é curinga: seria "todas as áreas, mas só o
+ * Ofertório", e tratar isso como tudo devolveria o bug de 18/08 (supervisor de
+ * qualquer coisa montando escala de todas as áreas) pela porta dos fundos.
+ */
+function _semRecorte(g) {
+  return !g.position_id && !g.culto_dia && !g.culto_periodo && !g.culto_semana;
+}
+
+function supervisionaTudo(entrada) {
+  return normalizarConcessoes(entrada).some((g) => chaveArea(g.area) === CURINGA && _semRecorte(g));
+}
+
+/** Uma concessão cobre este alvo `{ area, position_id, culto }`? */
+function _cobre(g, alvo) {
+  const areaOk = chaveArea(g.area) === CURINGA || (!!chaveArea(alvo.area) && chaveArea(g.area) === chaveArea(alvo.area));
+  if (!areaOk) return false;
+  // Subárea
+  if (g.position_id && !(alvo.position_id && String(g.position_id) === String(alvo.position_id))) return false;
+  // Rodízio · delegado à régua pura (`utils/rodizioCulto`), que é quem sabe
+  // que a 5ª semana repete a 1ª e que quarta é culto único.
+  const { cultoCoberto } = require('./rodizioCulto');
+  return cultoCoberto(g, alvo.culto || null);
+}
+
+/**
+ * A pessoa pode mexer neste alvo?
+ *
+ * ⚠️ Alvo SEM subárea resolvível é NEGADO para quem tem concessão de subárea —
+ * mesma lei da equipe sem área: liberar "porque não dá pra saber" devolve o
+ * acesso amplo bastando um `position_id` vazio na linha. Quem precisa cadastra
+ * a posição, que é correção de segundos na tela de Equipes.
+ */
+function podeSupervisionar(entrada, alvo) {
+  const gs = normalizarConcessoes(entrada);
+  if (gs.some((g) => chaveArea(g.area) === CURINGA && _semRecorte(g))) return true;
+  return gs.some((g) => _cobre(g, alvo || {}));
+}
+
+/** Só as subáreas concedidas nesta área (vazio = a área inteira). */
+function subareasNaArea(entrada, area) {
+  const gs = normalizarConcessoes(entrada).filter((g) => chaveArea(g.area) === chaveArea(area) || chaveArea(g.area) === CURINGA);
+  if (gs.some((g) => !g.position_id)) return [];   // curinga: sem recorte
+  return [...new Set(gs.map((g) => String(g.position_id)))];
+}
+
+module.exports = {
+  chaveArea, supervisionaTudo, equipeSupervisionada, filtrarPorSupervisao, CURINGA,
+  normalizarConcessoes, podeSupervisionar, subareasNaArea,
+};

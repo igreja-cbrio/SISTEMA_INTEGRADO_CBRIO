@@ -7,7 +7,9 @@ const { semCache } = require('../middleware/semCache');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
-const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo } = require('../utils/supervisorArea');
+const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo, podeSupervisionar, subareasNaArea } = require('../utils/supervisorArea');
+const { ehDiaDoCulto } = require('../utils/janelaCulto');
+const { classificarCulto } = require('../utils/rodizioCulto');
 const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, ocorrenciasPassadas, janelaCorrecaoPassada } = require('../utils/agendaGrupo');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
@@ -1871,10 +1873,52 @@ router.delete('/voluntariado/indisponibilidade/:id', authApp, limiterNormal, asy
 // Retorna as áreas onde o membro logado é supervisor (ou [] se não for).
 async function supervisorAreasApp(req) {
   const membro = await resolveMembroApp(req).catch(() => null);
-  if (!membro) return { membro: null, areas: [] };
+  if (!membro) return { membro: null, areas: [], grants: [] };
+  // ⚠️ `grants` é a concessão INTEIRA (área + subárea). `areas` continua sendo
+  // devolvido porque é o que abre o portão do 403 e o que a tela do app exibe
+  // em `areas_supervisionadas` — mas quem decide permissão fina é `grants`.
   const { data } = await supabase
-    .from('vol_area_supervisores').select('area').eq('membro_id', membro.id);
-  return { membro, areas: [...new Set((data || []).map(r => r.area).filter(Boolean))] };
+    .from('vol_area_supervisores')
+    .select('area, position_id, culto_dia, culto_periodo, culto_semana')
+    .eq('membro_id', membro.id);
+  const grants = (data || []).filter(r => r.area);
+  return {
+    membro,
+    areas: [...new Set(grants.map(r => r.area))],
+    grants,
+  };
+}
+
+/**
+ * Resolve a subárea (vol_positions.id) a partir do nome que o cliente mandou.
+ *
+ * ⚠️ Escopado pela EQUIPE, nunca só pelo nome: "Recepção" existe em Integração
+ * e em KIDS, "Cuidados" em AMI/Bridge/Voluntariado. Buscar só por nome traria a
+ * posição de outra área e a trava aprovaria o alvo errado.
+ */
+/**
+ * O rodízio deste culto (`{ dia, periodo, semana }`) a partir do service_id.
+ *
+ * ⚠️ Sem isto a trava de rodízio não teria como saber se o culto é "1º domingo
+ * manhã". A régua é pura (`utils/rodizioCulto`, no gate); aqui só entra a
+ * leitura do `scheduled_at`.
+ *
+ * ⚠️ Culto sem data devolve `null`, e `cultoCoberto` NEGA para quem tem recorte
+ * — mesma lei da equipe sem área: liberar "porque não dá pra saber" devolve o
+ * acesso amplo bastando um campo vazio.
+ */
+async function rodizioDoServico(serviceId) {
+  if (!serviceId) return null;
+  const { data } = await supabase.from('vol_services')
+    .select('scheduled_at').eq('id', serviceId).maybeSingle();
+  return classificarCulto(data?.scheduled_at || null);
+}
+
+async function resolverPosicaoId(teamId, positionName) {
+  if (!teamId || !positionName) return null;
+  const { data } = await supabase.from('vol_positions')
+    .select('id').eq('team_id', teamId).eq('name', positionName).maybeSingle();
+  return data?.id || null;
 }
 
 /**
@@ -1887,7 +1931,7 @@ async function supervisorAreasApp(req) {
 async function escalaSobSupervisao(scheduleId, areas) {
   if (supervisionaTudo(areas)) return { ok: true };
   const { data: sc } = await supabase.from('vol_schedules')
-    .select('id, team_id, team_name').eq('id', scheduleId).maybeSingle();
+    .select('id, team_id, team_name, position_id, position_name, service_id').eq('id', scheduleId).maybeSingle();
   if (!sc) return { ok: false, motivo: 'nao_encontrada' };
   let equipe = null;
   if (sc.team_id) {
@@ -1900,9 +1944,17 @@ async function escalaSobSupervisao(scheduleId, areas) {
   // ⚠️ Escala sem equipe resolvível NÃO é liberada: seria a brecha por onde
   // qualquer linha antiga do Planning Center viraria terreno de todo mundo.
   if (!equipe) return { ok: false, motivo: 'sem_equipe' };
-  return equipeSupervisionada(equipe, areas)
-    ? { ok: true }
-    : { ok: false, motivo: 'outra_area', equipe: equipe.name };
+  if (!equipeSupervisionada(equipe, areas)) {
+    return { ok: false, motivo: 'outra_area', equipe: equipe.name };
+  }
+  // ⚠️ Recorte de SUBÁREA (2026-08-25). Quem tem concessão só do Ofertório não
+  // pode mover/remover a linha do Estacionamento, mesmo sendo a mesma equipe.
+  // Vale pra MOVER e REMOVER, não só pra adicionar — a lição do bloco acima.
+  const alvo = { area: equipe.area, position_id: sc.position_id || null, culto: await rodizioDoServico(sc.service_id) };
+  if (!podeSupervisionar(areas, alvo)) {
+    return { ok: false, motivo: 'outra_subarea', equipe: equipe.name, subarea: sc.position_name || null };
+  }
+  return { ok: true };
 }
 
 // GET /app/voluntariado/escala/servicos — próximos cultos (para montar escala)
@@ -1947,12 +1999,14 @@ router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, 
 // visíveis no app, exatamente como no sistema web.
 router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const [{ data, error }, { data: composicao, error: composicaoErr }] = await Promise.all([
       supabase
       .from('vol_schedules')
-      .select('id, volunteer_id, volunteer_name, team_id, team_name, position_name, confirmation_status, recusa_motivo')
+      // ⚠️ `position_id` entrou pro filtro de SUBÁREA. Sem ele o recorte fino
+      // só teria o nome, que repete entre áreas.
+      .select('id, volunteer_id, volunteer_name, team_id, team_name, position_id, position_name, confirmation_status, recusa_motivo')
       .eq('service_id', req.params.serviceId)
       .order('team_name', { ascending: true })
       .order('volunteer_name', { ascending: true }),
@@ -1979,15 +2033,34 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
     });
     // ⚠️ O supervisor vê SÓ as áreas dele. O card no app do membro já dizia
     // "monte e veja as escalas da sua área" — a promessa existia, o filtro não.
-    const itens = filtrarPorSupervisao(todosItens, areas);
+    //
+    // ⚠️ Desde 25/08 o corte é por ÁREA + SUBÁREA: os itens da composição já
+    // trazem `position_id`, então quem recebeu só o Ofertório vê só a linha do
+    // Ofertório dentro da equipe Integração.
+    // ⚠️ O `culto` entra no alvo desde 25/08: quem supervisiona o 1º domingo de
+    // manhã não vê a composição do 4º domingo. A classificação é do SERVIÇO, não
+    // do item — por isso é resolvida uma vez, fora do filtro.
+    const rodizio = await rodizioDoServico(req.params.serviceId);
+    const itens = (todosItens || []).filter(i => podeSupervisionar(grants, {
+      area: i.area, position_id: i.position_id, culto: rodizio,
+    }));
     // ⚠️ A escala também é recortada: mostrar quem está escalado em áreas que
     // ele não supervisiona transformaria a tela num diretório de gente, e o
     // botão de remover apagaria escala alheia.
     const equipesVisiveis = new Set(itens.map(i => i.team_id).filter(Boolean));
     const nomesVisiveis = new Set(itens.map(i => i.team_name));
+    // ⚠️ A subárea também recorta a ESCALA, não só a composição. Sem isto,
+    // esconder a linha "Estacionamento" da composição e ainda listar quem está
+    // escalado nela deixaria o botão de remover apagando escala alheia — o
+    // mesmo furo que o comentário acima descreve, um nível abaixo.
+    const posicoesVisiveis = new Set(itens.map(i => i.position_id).filter(Boolean));
+    const recortaSubarea = itens.some(i => i.position_id) && !supervisionaTudo(areas)
+      && (data || []).some(e => e.position_id);
     const escalasVisiveis = supervisionaTudo(areas)
       ? (data || [])
-      : (data || []).filter(e => equipesVisiveis.has(e.team_id) || nomesVisiveis.has(e.team_name));
+      : (data || [])
+        .filter(e => equipesVisiveis.has(e.team_id) || nomesVisiveis.has(e.team_name))
+        .filter(e => !recortaSubarea || !e.position_id || posicoesVisiveis.has(e.position_id));
     res.json({
       escalas: escalasVisiveis,
       // ⚠️ ALIAS DE COMPATIBILIDADE (22/08/2026). O app do STAFF lê `escala`
@@ -2082,7 +2155,7 @@ router.get('/voluntariado/voluntario/:id/detalhe', authApp, limiterNormal, async
 // POST /app/voluntariado/escala — adiciona à escala { service_id, volunteer_id, team_name, position_name }
 router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const { service_id, volunteer_id, team_name, position_name } = req.body || {};
     if (!service_id || !volunteer_id) return res.status(400).json({ error: 'service_id e volunteer_id obrigatórios' });
@@ -2099,6 +2172,35 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
       if (!eq || !equipeSupervisionada(eq, areas)) {
         return res.status(403).json({
           error: `Você não supervisiona ${team_name}. Fale com quem responde por essa área.`,
+        });
+      }
+      // ⚠️⚠️ TRAVA DE SUBÁREA + RODÍZIO (25/08/2026). O cliente manda
+      // `position_name` e `service_id` no corpo, e nada impedia mandar a subárea
+      // de outro ou o culto de outro turno. As duas checagens vivem no MESMO
+      // `podeSupervisionar` de propósito: separar em dois ifs foi a minha
+      // primeira versão e ela recusava quem tinha subárea no culto certo,
+      // porque a pré-checagem de rodízio passava `position_id: null`.
+      const rodizio = await rodizioDoServico(service_id);
+      const recorte = subareasNaArea(grants, eq.area);
+      if (recorte.length) {
+        // Supervisão de subárea específica: a subárea é obrigatória no corpo.
+        if (!position_name) {
+          return res.status(400).json({
+            error: 'Escolha a subárea: sua supervisão é de subárea específica, não da área inteira.',
+          });
+        }
+        const posId = await resolverPosicaoId(eq.id, position_name);
+        if (!posId || !podeSupervisionar(grants, { area: eq.area, position_id: posId, culto: rodizio })) {
+          return res.status(403).json({
+            error: `Você não supervisiona ${position_name} em ${team_name} neste culto.`,
+          });
+        }
+      } else if (!podeSupervisionar(grants, { area: eq.area, position_id: null, culto: rodizio })) {
+        // Supervisão da área inteira: só o rodízio pode barrar aqui (a área já
+        // passou no `equipeSupervisionada` acima).
+        return res.status(403).json({
+          error: 'Este culto não está no seu turno de supervisão.',
+          fora_do_rodizio: true,
         });
       }
     }
@@ -2164,7 +2266,7 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
 // PATCH /app/voluntariado/escala/:id — move de equipe (drag & drop) / muda função
 router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const { team_name, position_name } = req.body || {};
     const { data: atual } = await supabase.from('vol_schedules')
@@ -2191,6 +2293,20 @@ router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res
           .select('id, name, area').eq('name', novoTeam).maybeSingle();
         if (!destino || !equipeSupervisionada(destino, areas)) {
           return res.status(403).json({ error: `Você não supervisiona ${novoTeam}.` });
+        }
+        // ⚠️ Subárea do DESTINO. Sem isto, quem só tem o Ofertório moveria a
+        // linha pra dentro do Estacionamento — saindo do próprio escopo por um
+        // caminho que a trava de equipe aprova.
+        const recorte = subareasNaArea(grants, destino.area);
+        if (recorte.length) {
+          const nomePos = position_name !== undefined ? position_name : null;
+          if (!nomePos) {
+            return res.status(400).json({ error: 'Escolha a subárea do destino: sua supervisão é de subárea específica.' });
+          }
+          const posId = await resolverPosicaoId(destino.id, nomePos);
+          if (!posId || !podeSupervisionar(grants, { area: destino.area, position_id: posId })) {
+            return res.status(403).json({ error: `Você não supervisiona ${nomePos} em ${novoTeam}.` });
+          }
         }
       }
     }
@@ -2231,25 +2347,120 @@ router.delete('/voluntariado/escala/:id', authApp, limiterNormal, async (req, re
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// CHECK-IN PELO SUPERVISOR · escopo + janela (2026-08-25)
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Pedido do Matheus: *"no app de membros os supervisores devem poder fazer
+// check-in dos voluntários das suas respectivas áreas, e só nos dias de culto.
+// Isso ajuda a gente não ficar refém de apenas um local de check-in (que hoje é
+// na sala de voluntários)."*
+//
+// ⚠️⚠️ O endpoint de check-in JÁ EXISTIA e tinha o furo de 18/08 intacto: ele
+// conferia `areas.length` — a PORTA — e depois registrava presença de QUALQUER
+// pessoa em QUALQUER culto de QUALQUER dia. Supervisor de Louvor podia bater
+// ponto do Kids em culto de três meses atrás.
+
+/**
+ * Hoje é o dia deste culto? (dia inteiro, em BRT · decisão do Matheus)
+ *
+ * ⚠️ A comparação é por DATA em America/Sao_Paulo, nunca por UTC: culto de
+ * domingo 19h é 22h UTC, e depois das 21h BRT o UTC já virou segunda — a janela
+ * fecharia no meio do culto da noite. É a mesma armadilha que o
+ * `periodoSP`/`dateSP` deste arquivo já trata.
+ */
+async function cultoEhHoje(serviceId) {
+  const { data: svc } = await supabase.from('vol_services')
+    .select('id, scheduled_at, name').eq('id', serviceId).maybeSingle();
+  if (!svc?.scheduled_at) return { ok: false, motivo: 'servico_sem_data' };
+  // A régua de fuso é PURA e está no gate de deploy (`utils/janelaCulto`) —
+  // aqui só entra a leitura do banco.
+  const r = ehDiaDoCulto(svc.scheduled_at);
+  return { ...r, servico: svc.name };
+}
+
+/**
+ * Esta escala está no escopo (área + subárea) desta pessoa?
+ *
+ * ⚠️ Check-in SEM escala (`is_unscheduled`) é liberado de propósito para quem
+ * tem escopo restrito — e é uma EXCEÇÃO consciente à lei de "alvo sem equipe
+ * resolvível é negado". Motivo: registrar que alguém APARECEU não concede nada
+ * a ninguém, e negar seria travar exatamente o caso que descentralizar o
+ * check-in existe para atender (chegou gente pra ajudar e não estava na
+ * escala). A janela do dia do culto é o que impede abuso.
+ */
+async function checkinSobSupervisao(scheduleId, areas) {
+  if (supervisionaTudo(areas)) return { ok: true };
+  if (!scheduleId) return { ok: true, sem_escala: true };
+  const { data: sc } = await supabase.from('vol_schedules')
+    .select('id, team_id, team_name, position_id, position_name, service_id').eq('id', scheduleId).maybeSingle();
+  if (!sc) return { ok: false, motivo: 'escala_nao_encontrada' };
+  let equipe = null;
+  if (sc.team_id) {
+    const { data } = await supabase.from('vol_teams').select('id, name, area').eq('id', sc.team_id).maybeSingle();
+    equipe = data;
+  } else if (sc.team_name) {
+    const { data } = await supabase.from('vol_teams').select('id, name, area').eq('name', sc.team_name).maybeSingle();
+    equipe = data;
+  }
+  if (!equipe) return { ok: false, motivo: 'sem_equipe' };
+  if (!podeSupervisionar(areas, { area: equipe.area, position_id: sc.position_id || null, culto: await rodizioDoServico(sc.service_id) })) {
+    return { ok: false, motivo: 'fora_do_escopo', equipe: equipe.name, subarea: sc.position_name || null };
+  }
+  return { ok: true };
+}
+
 // GET /app/voluntariado/escala/:serviceId/checkins — quem já tem presença
 // (pra UI de gestão de check-in do supervisor saber quem bateu ponto no culto).
 router.get('/voluntariado/escala/:serviceId/checkins', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    // ⚠️ A escala vem embutida com equipe e subárea porque a LISTA também é
+    // recortada: mostrar o check-in de uma área que a pessoa não supervisiona
+    // transformaria a tela num diretório — e o botão de desfazer apagaria
+    // presença alheia. Mesmo raciocínio do recorte da composição.
     const { data, error } = await supabase.from('vol_check_ins')
-      .select('id, schedule_id, volunteer_id, checked_in_at, method, volunteer_name, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')
+      .select('id, schedule_id, volunteer_id, checked_in_at, method, volunteer_name, is_unscheduled, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name, team_id, team_name, position_id, position_name)')
       .eq('service_id', req.params.serviceId)
       .order('checked_in_at', { ascending: false });
     if (error) throw error;
-    res.json((data || []).map((c) => ({
-      id: c.id,
-      schedule_id: c.schedule_id,
-      volunteer_id: c.volunteer_id,
-      volunteer_name: c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name || null,
-      checked_in_at: c.checked_in_at,
-      method: c.method,
-    })));
+
+    let areaPorEquipe = {};
+    if (!supervisionaTudo(grants)) {
+      const { data: eqs } = await supabase.from('vol_teams').select('id, name, area');
+      for (const t of eqs || []) {
+        if (t.id) areaPorEquipe[t.id] = t.area;
+        if (t.name) areaPorEquipe[`n:${t.name}`] = t.area;
+      }
+    }
+    // ⚠️ O rodizio do SERVICO e resolvido UMA vez, fora do filtro.
+    const rodizioLista = supervisionaTudo(grants) ? null : await rodizioDoServico(req.params.serviceId);
+    const noEscopo = (c) => {
+      if (supervisionaTudo(grants)) return true;
+      const sch = Array.isArray(c.schedule) ? c.schedule[0] : c.schedule;
+      // Check-in avulso (sem escala) não tem área — fica visível pra quem pode
+      // criá-lo, senão o supervisor não veria o que ele mesmo acabou de marcar.
+      if (!sch) return true;
+      const area = areaPorEquipe[sch.team_id] ?? areaPorEquipe[`n:${sch.team_name}`] ?? null;
+      return podeSupervisionar(grants, { area, position_id: sch.position_id || null, culto: rodizioLista });
+    };
+    const visiveis = (data || []).filter(noEscopo);
+
+    res.json(visiveis.map((c) => {
+      const sch = Array.isArray(c.schedule) ? c.schedule[0] : c.schedule;
+      return {
+        id: c.id,
+        schedule_id: c.schedule_id,
+        volunteer_id: c.volunteer_id,
+        volunteer_name: c.volunteer?.full_name || sch?.volunteer_name || c.volunteer_name || null,
+        checked_in_at: c.checked_in_at,
+        method: c.method,
+        is_unscheduled: c.is_unscheduled || false,
+        equipe: sch?.team_name || null,
+        subarea: sch?.position_name || null,
+      };
+    }));
   } catch (e) {
     console.error('[APP vol/escala checkins]', e.message);
     res.status(500).json({ error: 'Erro ao carregar os check-ins' });
@@ -2264,11 +2475,25 @@ router.get('/voluntariado/escala/:serviceId/checkins', authApp, limiterNormal, a
 // default 'manual'. NÃO mexe em cultos/Integração — só controle do voluntariado.
 router.post('/voluntariado/checkin', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const { service_id, schedule_id, volunteer_id, method } = req.body || {};
     if (!service_id) return res.status(400).json({ error: 'service_id obrigatório' });
     const metodo = ['qr_code', 'manual', 'facial', 'self_service'].includes(method) ? method : 'manual';
+
+    // ⚠️⚠️ JANELA: só no DIA do culto. Vale pra TODO MUNDO, inclusive `geral` —
+    // a restrição é da operação ("só nos dias de culto"), não do escopo de área.
+    // Sem ela, presença de um culto de três meses atrás entraria hoje e a
+    // frequência do voluntariado passaria a aceitar retroativo sem trilha.
+    const janela = await cultoEhHoje(service_id);
+    if (!janela.ok) {
+      return res.status(403).json({
+        error: janela.motivo === 'fora_do_dia'
+          ? `Check-in só no dia do culto. "${janela.servico || 'Este culto'}" é ${janela.dia?.split('-').reverse().join('/')}.`
+          : 'Este culto não tem data definida — não é possível registrar presença.',
+        fora_da_janela: true,
+      });
+    }
 
     const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
     const dateSP = (iso) => { try { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { return (iso || '').slice(0, 10); } };
@@ -2338,6 +2563,20 @@ router.post('/voluntariado/checkin', authApp, limiterNormal, async (req, res) =>
       return res.status(400).json({ error: 'Informe o voluntário (volunteer_id) ou a escala (schedule_id) pra registrar o check-in.' });
     }
 
+    // ⚠️⚠️ A TRAVA DE ESCOPO. Fica DEPOIS da resolução da escala de propósito:
+    // é `resolvedScheduleId` (que o match acha no dia) que carrega equipe e
+    // subárea. Checar antes, no `schedule_id` cru do corpo, deixaria passar todo
+    // check-in em que o cliente manda só `volunteer_id`.
+    const escopo = await checkinSobSupervisao(resolvedScheduleId, grants);
+    if (!escopo.ok) {
+      return res.status(403).json({
+        error: escopo.motivo === 'fora_do_escopo'
+          ? `${escopo.subarea ? `${escopo.subarea} (${escopo.equipe})` : escopo.equipe} não está na sua supervisão.`
+          : 'Não foi possível confirmar que essa escala está na sua supervisão.',
+        fora_do_escopo: true,
+      });
+    }
+
     const { data, error } = await supabase.from('vol_check_ins').insert({
       schedule_id: resolvedScheduleId,
       volunteer_id: resolvedVolunteerId,
@@ -2363,6 +2602,73 @@ router.post('/voluntariado/checkin', authApp, limiterNormal, async (req, res) =>
   } catch (e) {
     console.error('[APP vol/checkin post]', e.message);
     res.status(500).json({ error: 'Erro ao registrar check-in' });
+  }
+});
+
+// DELETE /app/voluntariado/checkin/:id — supervisor DESFAZ um check-in.
+//
+// Decisão do Matheus (25/08): "sim, dentro da janela" — marcou errado, desmarca;
+// fora do dia do culto ninguém mexe.
+//
+// ⚠️ É HARD DELETE, de propósito. Os uniques de `vol_check_ins` são índices
+// PARCIAIS (`schedule_id` / `volunteer_id+service_id`); soft-delete deixaria a
+// linha morta ocupando o unique e o próximo check-in da mesma pessoa bateria
+// 409 pra sempre. A trilha vai pro `audit_log`, que é onde ela é consultável.
+//
+// ⚠️ Mesmo escopo e mesma janela do POST. Um DELETE só com o id do check-in,
+// sem essas duas checagens, seria a porta dos fundos do endpoint inteiro — a
+// lição do `escalaSobSupervisao` ("vale para MOVER e REMOVER, não só adicionar").
+router.delete('/voluntariado/checkin/:id', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas, grants } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+
+    const { data: ci } = await supabase.from('vol_check_ins')
+      .select('id, service_id, schedule_id, volunteer_id, volunteer_name, checked_in_at, method, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')
+      .eq('id', req.params.id).maybeSingle();
+    if (!ci) return res.status(404).json({ error: 'Check-in não encontrado' });
+
+    const janela = await cultoEhHoje(ci.service_id);
+    if (!janela.ok) {
+      return res.status(403).json({
+        error: 'Só é possível desfazer no dia do culto. Fale com a coordenação do voluntariado.',
+        fora_da_janela: true,
+      });
+    }
+
+    const escopo = await checkinSobSupervisao(ci.schedule_id, grants);
+    if (!escopo.ok) {
+      return res.status(403).json({ error: 'Esse check-in não está na sua supervisão.', fora_do_escopo: true });
+    }
+
+    const nome = ci.volunteer?.full_name
+      || (Array.isArray(ci.schedule) ? ci.schedule[0]?.volunteer_name : ci.schedule?.volunteer_name)
+      || ci.volunteer_name || null;
+
+    const { error } = await supabase.from('vol_check_ins').delete().eq('id', ci.id);
+    if (error) throw error;
+
+    // Trilha: quem desfez, de quem, quando era. Best-effort — a tabela de audit
+    // não pode derrubar a operação do culto.
+    try {
+      await supabase.from('audit_log').insert({
+        table_name: 'vol_check_ins',
+        record_id: ci.id,
+        action: 'DELETE',
+        field_name: 'checked_in_at',
+        old_value: ci.checked_in_at ? String(ci.checked_in_at) : null,
+        new_value: null,
+        description: `Check-in de ${nome || 'voluntário'} desfeito pelo supervisor no app (método ${ci.method || '—'}).`,
+        changed_by: req.user?.id || null,
+      });
+    } catch (e) {
+      console.warn('[APP vol/checkin delete] audit não gravado:', e.message);
+    }
+
+    res.json({ ok: true, id: ci.id, volunteer_name: nome });
+  } catch (e) {
+    console.error('[APP vol/checkin delete]', e.message);
+    res.status(500).json({ error: 'Erro ao desfazer o check-in' });
   }
 });
 
@@ -3738,6 +4044,7 @@ async function autorizarGestaoBatismoApp(req, res, next) {
 }
 
 function dataIsoValida(v) { return /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')); }
+function dataBatismoFutura(v) { return dataIsoValida(v) && String(v) >= hojeBRT(); }
 function limparTexto(v, max = 500) {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();
@@ -3775,11 +4082,14 @@ router.get('/batismo/gestao', authApp, autorizarGestaoBatismoApp, limiterNormal,
     if (datasRes.error) throw datasRes.error;
     const datasSet = new Set((datasRes.data || []).map(x => x.data_batismo).filter(dataIsoValida));
     if (dataIsoValida(proxima)) datasSet.add(proxima);
-    const datas = [...datasSet].sort();
+    // A gestão só precisa das próximas datas: históricos antigos não devem
+    // poluir o seletor nem voltar a ser selecionados por engano.
+    const datas = [...datasSet].filter(d => d >= hoje).sort().slice(0, 3);
+    const datasPermitidas = new Set(datas);
     const pedida = dataIsoValida(req.query.data) ? String(req.query.data) : null;
-    const selecionada = pedida && datasSet.has(pedida)
+    const selecionada = pedida && datasPermitidas.has(pedida)
       ? pedida
-      : (datas.find(d => d >= hoje) || datas[datas.length - 1] || proxima || hoje);
+      : (datas[0] || (dataIsoValida(proxima) ? proxima : hoje));
     const [pessoasRes, aprovacoesRes] = await Promise.all([
       supabase.from('batismo_inscricoes').select(BATISMO_COLUNAS_APP)
         .eq('data_batismo', selecionada).is('deleted_at', null)
@@ -3815,6 +4125,7 @@ router.post('/batismo/gestao/pessoas', authApp, autorizarGestaoBatismoApp, limit
     const dataBatismo = dataIsoValida(req.body?.data_batismo) ? String(req.body.data_batismo) : await dataProximoBatismo();
     if (!nome || !sobrenome) return res.status(400).json({ error: 'Nome e sobrenome são obrigatórios.' });
     if (!dataIsoValida(dataBatismo)) return res.status(400).json({ error: 'Selecione uma data de Batismo.' });
+    if (!dataBatismoFutura(dataBatismo)) return res.status(400).json({ error: 'A data de Batismo já passou.' });
     const cpf = String(req.body?.cpf || '').replace(/\D/g, '') || null;
     let membroId = null;
     try {
@@ -3854,6 +4165,7 @@ router.post('/batismo/gestao/:id/aprovar', authApp, autorizarGestaoBatismoApp, l
     const dataBatismo = dataIsoValida(req.body?.data_batismo)
       ? String(req.body.data_batismo) : (atual.data_batismo || await dataProximoBatismo());
     if (!dataIsoValida(dataBatismo)) return res.status(400).json({ error: 'Selecione a data antes de aprovar.' });
+    if (!dataBatismoFutura(dataBatismo)) return res.status(400).json({ error: 'A data de Batismo já passou.' });
     const update = { status: 'confirmado', data_batismo: dataBatismo, updated_at: new Date().toISOString() };
     if (req.body?.horario_culto !== undefined) update.horario_culto = limparTexto(req.body.horario_culto, 40);
     const { data, error } = await supabase.from('batismo_inscricoes').update(update)
@@ -3878,6 +4190,7 @@ router.put('/batismo/gestao/:id', authApp, autorizarGestaoBatismoApp, limiterNor
     if (req.body?.sobrenome !== undefined && !update.sobrenome) return res.status(400).json({ error: 'Sobrenome é obrigatório.' });
     if (req.body?.data_batismo !== undefined) {
       if (!dataIsoValida(req.body.data_batismo)) return res.status(400).json({ error: 'Data de Batismo inválida.' });
+      if (!dataBatismoFutura(req.body.data_batismo)) return res.status(400).json({ error: 'A data de Batismo já passou.' });
       update.data_batismo = req.body.data_batismo;
     }
     if (req.body?.data_nascimento !== undefined) update.data_nascimento = dataIsoValida(req.body.data_nascimento) ? req.body.data_nascimento : null;
