@@ -1,71 +1,41 @@
 // ============================================================================
-// CAMPOS do "Adicionar pessoa" no grupo · régua PURA (Marcos · 25/08/2026)
+// "Adicionar pessoa" no grupo · o que é POLÍTICA DESTA PORTA (Marcos · 25/08/2026)
 //
-// ⚠️ Mora em `utils/` e NÃO em `services/`, de propósito: `services/` carrega o
-// cliente do Supabase, e o gate de deploy roda sem as dependências de
-// `backend/` instaladas — régua que precisa estar no gate não pode arrastar o
-// banco atrás dela. É a mesma razão pela qual `validarNascimento`,
-// `emailValido` e `tirarCodigoPaisTelefone` mudaram de casa em 06/08.
+// ⚠️⚠️ A VALIDAÇÃO DOS CAMPOS NÃO MORA AQUI, e é decisão: ela é
+// `inscricaoContrato.validarCamposPadrao`, a MESMA que o formulário público de
+// grupos usa. A lei do Contrato de Inscrição é explícita — *"Usar SEMPRE
+// `backend/services/inscricaoContrato.js`... NÃO recriar cópias locais de
+// máscara/CPF — era assim que divergia."*
 //
-// Quem lê o banco e escreve é `services/grupoPessoaDireta.js`, que importa
-// isto. O porquê de cada decisão de produto está no cabeçalho de lá.
+// A 1ª versão desta porta (25/08, antes do ajuste do Marcos) tinha validação
+// própria e mais frouxa (só nome + telefone). Ele corrigiu: *"queremos cadastro
+// completo, os mesmos campos que solicitam a inscrição de grupos."* Então a
+// porta passou a exigir nome completo sem abreviação, telefone, nascimento,
+// sexo, CPF com DV e e-mail — endereço fixo-opcional —, tudo pelo validador
+// canônico.
+//
+// O que sobra aqui é o que é SÓ desta porta e não existe no contrato: qual
+// `funcao` do roster ela pode gravar. Fica em `utils/` porque `services/`
+// carrega o cliente do Supabase e o gate de deploy roda sem as dependências de
+// `backend/` instaladas.
 // ============================================================================
-const {
-  soDigitos, tirarCodigoPaisTelefone, emailValido, validarNascimento,
-} = require('./camposContato');
 
 /**
- * Valida e normaliza o que a tela mandou. PURA — nenhuma ida ao banco, então
- * o teste do gate a exercita sem serviço nenhum de pé.
+ * A função no roster que esta porta pode gravar.
  *
- * ⚠️ Obrigatórios: nome + telefone. É o mesmo mínimo do irmão mais próximo
- * (`POST /public/grupos/grupo/frequencia/visitante`, o líder registrando um
- * visitante do encontro) e é DELIBERADO não exigir o contrato inteiro (CPF,
- * nascimento, sexo): quem preenche está no meio de um encontro, no celular, por
- * OUTRA pessoa. Exigir 6 campos faz o líder não usar a tela e a pessoa não
- * entrar em lugar nenhum — resultado pior que o cadastro incompleto, que a fila
- * de "faltam dados" da aba Pessoas já cobra (lei de 14/08).
+ * ⚠️⚠️ WHITELIST FECHADA, e o motivo é de AUTORIZAÇÃO: desde 25/08/2026
+ * `lider` e `lider_treinamento` decidem quem GERENCIA o grupo. Aceitar `funcao`
+ * cru do corpo daria a qualquer líder o poder de promover alguém a gestor do
+ * grupo por uma tela de cadastro — e a supervisor/coordenador, que são papéis
+ * da hierarquia de supervisão.
+ *
+ * ⚠️ O default é `frequentador`: adicionar alguém DE PROPÓSITO é PARTICIPAÇÃO,
+ * não visita (régua de 13/08). `visitante` só quando quem preenche DECLARA —
+ * lei de 14/08: *"quem o líder realmente identifica como visitante, deve ser
+ * visitante."*
  */
-function validarPessoaDireta(body = {}) {
-  const nome = String(body.nome || '').trim().replace(/\s+/g, ' ');
-  if (nome.length < 3) return { ok: false, erro: 'Digite o nome da pessoa.', campo: 'nome' };
-
-  const telefone = tirarCodigoPaisTelefone(soDigitos(body.telefone));
-  if (![10, 11].includes(telefone.length)) {
-    return { ok: false, erro: 'Digite um celular com DDD.', campo: 'telefone' };
-  }
-
-  const email = String(body.email || '').trim().toLowerCase() || null;
-  if (email && !emailValido(email)) {
-    return { ok: false, erro: 'E-mail inválido.', campo: 'email' };
-  }
-
-  // ⚠️ `validarNascimento` devolve a data NORMALIZADA ou `null` — não um objeto.
-  const nascBruto = String(body.data_nascimento || '').trim();
-  const dataNascimento = nascBruto ? validarNascimento(nascBruto) : null;
-  if (nascBruto && !dataNascimento) {
-    return { ok: false, erro: 'Data de nascimento inválida.', campo: 'data_nascimento' };
-  }
-
-  // ⚠️ `masculino|feminino`, NUNCA "outro" (Contrato de Inscrição · 28/07), e
-  // ⚠️ NUNCA inferido do nome: a lei de 10/08 proíbe GRAVAR sexo por palpite.
-  // Em branco fica NULL e a fila de "faltam dados" cobra depois.
-  const generoBruto = String(body.genero || '').toLowerCase();
-  const genero = ['masculino', 'feminino'].includes(generoBruto) ? generoBruto : null;
-
-  // ⚠️ CPF: quem confere o DV é o matcher (é a chave FORTE dele). CPF com
-  // tamanho errado é DESCARTADO em vez de virar identidade errada — mesma régua
-  // do gatilho do auth (04/08) — e NÃO recusa o cadastro por causa disso.
-  const cpfDigitos = soDigitos(body.cpf);
-  const cpf = cpfDigitos.length === 11 ? cpfDigitos : null;
-
-  // ⚠️ `visitante` SÓ quando quem preenche declara (lei de 14/08: "quem o líder
-  // realmente identifica como visitante, deve ser visitante"). O default é
-  // `frequentador`, porque adicionar alguém de propósito é PARTICIPAÇÃO, não
-  // visita — a mesma régua da coordenação adicionando pela tela do ERP.
-  const funcao = String(body.funcao || '') === 'visitante' ? 'visitante' : 'frequentador';
-
-  return { ok: true, nome, telefone, email, dataNascimento, genero, cpf, funcao };
+function funcaoDoRoster(body = {}) {
+  return String(body.funcao || '') === 'visitante' ? 'visitante' : 'frequentador';
 }
 
-module.exports = { validarPessoaDireta };
+module.exports = { funcaoDoRoster };

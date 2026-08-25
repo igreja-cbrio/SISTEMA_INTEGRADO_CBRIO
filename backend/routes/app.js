@@ -8,7 +8,7 @@ const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
 const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo } = require('../utils/supervisorArea');
-const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, ocorrenciasPassadas } = require('../utils/agendaGrupo');
+const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, ocorrenciasPassadas, janelaCorrecaoPassada } = require('../utils/agendaGrupo');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
@@ -36,7 +36,8 @@ const checkoutExterno = require('../utils/checkoutExterno');
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
 const { cadastrarPessoaNoGrupo } = require('../services/grupoPessoaDireta');
-const { ancorasDeGrupos } = require('../services/grupoAncora');
+const { ancorasDeGrupos, iniciosDeGrupos } = require('../services/grupoAncora');
+const { aplicarExcecaoAgenda } = require('../services/grupoAgendaExcecao');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const appIdentidade = require('../services/appIdentidade');
 const { acharRespostaDaPessoa } = require('../services/censoJaRespondeu');
@@ -5150,14 +5151,46 @@ router.get('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, res
         .select('data_original, status, nova_data, novo_horario, motivo')
         .eq('grupo_id', gid).gte('data_original', desdeExcecoes);
       if (eE) throw eE;
-      const ancoras = await ancorasDeGrupos([gid]);
+      const [ancoras, inicios] = await Promise.all([
+        ancorasDeGrupos([gid]),
+        // ⚠️ O INÍCIO é o que permite listar o histórico de grupo quinzenal/
+        // mensal que nunca registrou encontro — 34 dos 35 não-semanais ativos,
+        // medido em 25/08. Sem ele a aba deles fica permanentemente vazia, e sem
+        // lista não há o que corrigir (o pedido do Marcos).
+        iniciosDeGrupos([gid]),
+      ]);
       const porData = new Map(lista.map(e => [String(e.data).slice(0, 10), e]));
-      ocorrencias = ocorrenciasPassadas({
+      const brutas = ocorrenciasPassadas({
         diaSemana: grupo?.dia_semana, horario: grupo?.horario,
         recorrencia: grupo?.recorrencia, ancoraISO: ancoras[gid] || null,
+        inicioISO: inicios[gid] || null,
+        // ⚠️⚠️ PISO no início da temporada. Sem ele a lista atravessa pra trás
+        // além do começo do grupo: medido em 25/08 no grupo 00000068 (temporada
+        // aberta em 01/08), a timeline mostrava 22/06 e 06/07 como "presença não
+        // registrada" — pendência de encontro que aquele grupo não tinha por que
+        // ter feito. Cobrar chamada de antes do grupo existir é a versão nova do
+        // erro que a régua de âncora existia pra evitar.
+        // ⚠️ Encontro REGISTRADO fora do piso NÃO se perde: ele volta pela lista
+        // de avulsos logo abaixo.
+        desdeISO: inicios[gid] || null,
         excecoes: exc || [], registradas: [...porData.keys()], quantas: 12,
-      }).map((o) => {
+      });
+      // ⚠️⚠️ A JANELA DE CORREÇÃO É DECIDIDA AQUI, no servidor, e vai pronta pra
+      // tela (mesma lei da remarcação futura · 18/08): o app NÃO recalcula. Duas
+      // contas pra "que datas posso escolher" apareceriam como "o calendário
+      // deixou e o servidor recusou".
+      // ⚠️ Os vizinhos saem da PRÓPRIA lista (`data_original` ordenada desc),
+      // então a janela reflete a cadência real do grupo, não uma suposição.
+      ocorrencias = brutas.map((o, i) => {
         const enc = porData.get(o.data) || null;
+        const janela = janelaCorrecaoPassada({
+          dataOriginal: o.data_original,
+          // A lista vem do mais RECENTE pro mais antigo: o índice seguinte é a
+          // ocorrência ANTERIOR no tempo, e o anterior é a SEGUINTE.
+          anteriorISO: brutas[i + 1]?.data || null,
+          proximaISO: brutas[i - 1]?.data || null,
+          hojeISO: hojeBRT(),
+        });
         return {
           ...o,
           encontro_id: enc?.id || null,
@@ -5165,6 +5198,9 @@ router.get('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, res
           tema: enc?.tema || null,
           observacoes: enc?.observacoes || null,
           registrado_por_nome: enc?.registrado_por_nome || null,
+          pode_corrigir: !!janela?.pode,
+          corrigir_de: janela?.de || null,
+          corrigir_ate: janela?.ate || null,
         };
       });
       // ⚠️ Encontro REGISTRADO que não cai em ocorrência nenhuma (chamada feita
@@ -5540,115 +5576,69 @@ router.post('/grupos/:grupoId/agenda', authApp, limiterStrict, async (req, res) 
     if (!gate.ok) return;
     const { data_original, acao, nova_data, novo_horario, motivo } = req.body || {};
 
-    const D = /^\d{4}-\d{2}-\d{2}$/;
-    if (!D.test(String(data_original || ''))) return res.status(400).json({ error: 'Informe a data do encontro que você quer alterar.' });
-    if (!['remarcar', 'cancelar', 'desfazer'].includes(acao)) return res.status(400).json({ error: 'Ação inválida.' });
-
-    const hojeBRT = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
-    // ⚠️ Só ocorrência FUTURA: mexer no passado não muda o que aconteceu e
-    // confundiria com o registro de presença, que é outra coisa.
-    if (data_original < hojeBRT) return res.status(400).json({ error: 'Só dá para alterar encontros que ainda vão acontecer.' });
-
-    if (acao === 'desfazer') {
-      const { error } = await supabase.from('mem_grupo_agenda_excecoes')
-        .delete().eq('grupo_id', gid).eq('data_original', data_original);
-      if (error) throw error;
-      return res.json({ ok: true, acao: 'desfeito' });
-    }
-
-    let linha = {
-      grupo_id: gid, data_original, status: acao === 'cancelar' ? 'cancelado' : 'remarcado',
-      motivo: motivo ? String(motivo).trim().slice(0, 300) : null,
-      decidido_por: gate.membro?.id || null,
-      decidido_por_nome: gate.membro?.nome || null,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (acao === 'remarcar') {
-      if (!D.test(String(nova_data || ''))) return res.status(400).json({ error: 'Informe a nova data.' });
-      if (nova_data < hojeBRT) return res.status(400).json({ error: 'A nova data não pode ser no passado.' });
-      if (novo_horario && !/^\d{2}:\d{2}$/.test(String(novo_horario))) return res.status(400).json({ error: 'Horário inválido (use HH:MM).' });
-
-      // ⚠️⚠️ A JANELA É DECIDIDA AQUI, nunca no app: o payload diz QUAL
-      // encontro, jamais SE pode (mesma lei da aprovação em lote e do
-      // `ligar-lote`). O calendário do app já limita, mas bundle antigo,
-      // requisição na mão ou tela aberta por horas passariam direto.
-      // ⚠️ Falha ao MONTAR a agenda recusa (409), nunca libera: guarda que
-      // falha aberta é enfeite.
-      let janela = null;
-      try {
-        const { data: gAg } = await supabase.from('mem_grupos')
-          .select('dia_semana, horario, recorrencia').eq('id', gid).maybeSingle();
-        const anc = await ancorasDeGrupos([gid]);
-        const lista = proximasOcorrencias({
-          diaSemana: gAg?.dia_semana, horario: gAg?.horario,
-          recorrencia: gAg?.recorrencia, ancoraISO: anc[gid] || null,
-          excecoes: [], quantas: 40, janelaDias: 200,
-        });
-        janela = lista.find(o => o.data_original === data_original) || null;
-      } catch (e) {
-        console.warn('[APP] agenda janela:', e.message);
-      }
-      if (!janela) {
-        return res.status(409).json({
-          error: 'Não consegui conferir a agenda deste grupo agora. Tente de novo em instantes.',
-          codigo: 'janela_indisponivel',
-        });
-      }
-      if (!janela.pode_remarcar) {
-        return res.status(409).json({
-          error: 'Este encontro está colado no seguinte — não dá para remarcar. Se ele não vai acontecer, cancele.',
-          codigo: 'sem_janela',
-        });
-      }
-      if (nova_data < janela.remarcar_de || nova_data > janela.remarcar_ate) {
-        return res.status(409).json({
-          error: `A nova data precisa ficar entre ${janela.remarcar_de} e ${janela.remarcar_ate}. Para mover mais que isso, cancele este encontro.`,
-          codigo: 'fora_da_janela',
-          remarcar_de: janela.remarcar_de,
-          remarcar_ate: janela.remarcar_ate,
-        });
-      }
-      linha.nova_data = nova_data;
-      linha.novo_horario = novo_horario || null;
-    } else {
-      linha.nova_data = null;
-      linha.novo_horario = null;
-    }
-
-    // Uma exceção por ocorrência: remarcar de novo ATUALIZA (o UNIQUE garante).
-    const { error } = await supabase.from('mem_grupo_agenda_excecoes')
-      .upsert(linha, { onConflict: 'grupo_id,data_original' });
-    if (error) {
-      if (/does not exist|schema cache/i.test(error.message)) {
-        return res.status(503).json({ error: 'A agenda ainda não está disponível. Avise a equipe de grupos.' });
-      }
-      throw error;
+    // ⚠️ CASCA FINA: a régua (as DUAS janelas de data, a coerência com a chamada
+    // já registrada, a tradução dos erros de banco) vive em
+    // `services/grupoAgendaExcecao` — a MESMA que o ERP usa desde 25/08. Duas
+    // cópias divergiriam, e o sintoma seria "no app deu, no web não".
+    const r = await aplicarExcecaoAgenda({
+      grupoId: gid,
+      dataOriginal: data_original,
+      acao,
+      novaData: nova_data,
+      novoHorario: novo_horario,
+      motivo,
+      autor: { id: gate.membro?.id || null, nome: gate.membro?.nome || null },
+    });
+    if (!r.ok) {
+      const corpo = { error: r.error };
+      if (r.codigo) corpo.codigo = r.codigo;
+      if (r.remarcar_de) corpo.remarcar_de = r.remarcar_de;
+      if (r.remarcar_ate) corpo.remarcar_ate = r.remarcar_ate;
+      return res.status(r.http || 400).json(corpo);
     }
 
     // ⚠️ Avisa a COORDENAÇÃO, não o grupo: quem fala com os participantes é o
     // líder, no WhatsApp dele. Disparar pra todo o roster daqui seria mensagem
     // que ninguém pediu — e o app não tem o contexto ("adiamos por causa do
     // feriado") que só ele sabe dar.
-    (async () => {
-      try {
-        await notificar({
-          modulo: 'grupos',
-          tipo: 'agenda_grupo_alterada',
-          titulo: acao === 'cancelar'
-            ? `Encontro cancelado: ${gate.grupo.nome}`
-            : `Encontro remarcado: ${gate.grupo.nome}`,
-          mensagem: acao === 'cancelar'
-            ? `${gate.membro?.nome || 'O líder'} cancelou o encontro de ${data_original}.${linha.motivo ? ` Motivo: ${linha.motivo}` : ''}`
-            : `${gate.membro?.nome || 'O líder'} remarcou o encontro de ${data_original} para ${nova_data}${novo_horario ? ` às ${novo_horario}` : ''}.${linha.motivo ? ` Motivo: ${linha.motivo}` : ''}`,
-          link: '/grupos',
-          severidade: 'info',
-          chaveDedup: `agenda_${gid}_${data_original}_${linha.status}`,
-        });
-      } catch (err) { console.error('[APP] agenda notify:', err.message); }
-    })();
+    if (r.acao !== 'desfeito') {
+      (async () => {
+        try {
+          const cancelou = r.acao === 'cancelado';
+          // ⚠️ O vocabulário muda no passado: "cancelou o encontro de amanhã" e
+          // "registrou que o encontro da semana passada não aconteceu" são fatos
+          // diferentes, e a coordenação decide coisas diferentes a partir deles.
+          const titulo = cancelou
+            ? (r.no_passado
+              ? `Encontro não aconteceu: ${gate.grupo.nome}`
+              : `Encontro cancelado: ${gate.grupo.nome}`)
+            : (r.no_passado
+              ? `Data de encontro corrigida: ${gate.grupo.nome}`
+              : `Encontro remarcado: ${gate.grupo.nome}`);
+          const quem = gate.membro?.nome || 'O líder';
+          const mensagem = cancelou
+            ? (r.no_passado
+              ? `${quem} registrou que o encontro de ${data_original} não aconteceu.${r.motivo ? ` Motivo: ${r.motivo}` : ''}`
+              : `${quem} cancelou o encontro de ${data_original}.${r.motivo ? ` Motivo: ${r.motivo}` : ''}`)
+            : (r.no_passado
+              ? `${quem} corrigiu a data do encontro de ${data_original} para ${r.nova_data}.`
+                + `${r.chamada_movida ? ' A chamada foi movida junto.' : ''}${r.motivo ? ` Motivo: ${r.motivo}` : ''}`
+              : `${quem} remarcou o encontro de ${data_original} para ${r.nova_data}`
+                + `${r.novo_horario ? ` às ${r.novo_horario}` : ''}.${r.motivo ? ` Motivo: ${r.motivo}` : ''}`);
+          await notificar({
+            modulo: 'grupos',
+            tipo: 'agenda_grupo_alterada',
+            titulo,
+            mensagem,
+            link: '/grupos',
+            severidade: 'info',
+            chaveDedup: `agenda_${gid}_${data_original}_${r.acao}`,
+          });
+        } catch (err) { console.error('[APP] agenda notify:', err.message); }
+      })();
+    }
 
-    res.json({ ok: true, acao: linha.status });
+    res.json({ ok: true, acao: r.acao, chamada_movida: r.chamada_movida });
   } catch (e) {
     console.error('[APP] agenda escrita:', e.message);
     res.status(500).json({ error: 'Erro ao alterar o encontro' });

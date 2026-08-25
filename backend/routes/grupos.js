@@ -21,6 +21,8 @@ const gruposEnviosConfig = require('../services/gruposEnviosConfig');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const { cadastrarPessoaNoGrupo } = require('../services/grupoPessoaDireta');
 const { ocorrenciasPassadas } = require('../utils/agendaGrupo');
+const { ancorasDeGrupos, iniciosDeGrupos } = require('../services/grupoAncora');
+const { aplicarExcecaoAgenda } = require('../services/grupoAgendaExcecao');
 const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
 const { agruparDuplicados, validarResolucao } = require('../utils/vinculosDuplicados');
 // Régua única de "dá pra falar com essa pessoa?" (varredura do lançamento 02/08)
@@ -369,10 +371,17 @@ router.get('/:id/encontros-pendentes', async (req, res) => {
     const excecoes = excRes.error ? [] : (excRes.data || []);
 
     const registradas = (encRes.data || []).map(e => String(e.data).slice(0, 10));
-    const ancoras = await ancorasDeGrupos([gid]).catch(() => ({}));
+    const [ancoras, inicios] = await Promise.all([
+      ancorasDeGrupos([gid]).catch(() => ({})),
+      // Sem isto, grupo quinzenal/mensal que nunca registrou encontro (34 dos 35
+      // não-semanais ativos, medido em 25/08) nunca aparece como pendente aqui.
+      iniciosDeGrupos([gid]).catch(() => ({})),
+    ]);
     const ocorrencias = ocorrenciasPassadas({
       diaSemana: grupo.dia_semana, horario: grupo.horario,
       recorrencia: grupo.recorrencia, ancoraISO: ancoras[gid] || null,
+      // Piso no início da temporada — ver o comentário longo em routes/app.js.
+      inicioISO: inicios[gid] || null, desdeISO: inicios[gid] || null,
       excecoes, registradas, quantas: 12,
     });
 
@@ -387,6 +396,47 @@ router.get('/:id/encontros-pendentes', async (req, res) => {
   } catch (e) {
     console.error('[Grupos encontros-pendentes]', e.message);
     res.status(500).json({ error: 'Erro ao apurar os encontros sem chamada' });
+  }
+});
+
+// POST /api/grupos/:id/agenda — remarcar / cancelar / desfazer UMA ocorrência
+// body { data_original, acao, nova_data?, novo_horario?, motivo? }
+//
+// ⚠️ O GÊMEO WEB do `POST /app/grupos/:id/agenda` (Marcos · 25/08/2026: o
+// encontro passado tem que ser gerenciável, e "alinhe com o sistema web"). A
+// régua é a MESMA (`services/grupoAgendaExcecao`) — as duas janelas de data, a
+// coerência com a chamada já registrada e a tradução dos erros de banco.
+//
+// ⚠️ NÃO notifica: no app quem age é o líder e a coordenação precisa saber; aqui
+// quem age É a coordenação, e avisar a si mesma é ruído (o mesmo raciocínio que
+// tirou o aviso duplicado da transferência).
+router.post('/:id/agenda', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('id, nome').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
+
+    const { data_original, acao, nova_data, novo_horario, motivo } = req.body || {};
+    const r = await aplicarExcecaoAgenda({
+      grupoId: grupo.id,
+      dataOriginal: data_original,
+      acao,
+      novaData: nova_data,
+      novoHorario: novo_horario,
+      motivo,
+      autor: { id: req.user?.id || null, nome: req.user?.name || req.user?.email || 'Equipe' },
+    });
+    if (!r.ok) {
+      const corpo = { error: r.error };
+      if (r.codigo) corpo.codigo = r.codigo;
+      if (r.remarcar_de) corpo.remarcar_de = r.remarcar_de;
+      if (r.remarcar_ate) corpo.remarcar_ate = r.remarcar_ate;
+      return res.status(r.http || 400).json(corpo);
+    }
+    res.json({ ok: true, acao: r.acao, chamada_movida: r.chamada_movida });
+  } catch (e) {
+    console.error('[Grupos agenda]', e.message);
+    res.status(500).json({ error: 'Erro ao alterar o encontro' });
   }
 });
 

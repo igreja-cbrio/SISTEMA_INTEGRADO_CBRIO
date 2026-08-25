@@ -4,6 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { AbrirRotaMenu } from '../../components/grupos/AbrirRotaMenu';
 import { grupos as api, membresia, encaminhamentos } from '../../api';
+// ⚠️ Máscaras da fonte ÚNICA (`src/lib/inscricao`) — a lei do Contrato de
+// Inscrição proíbe cópia local de máscara/CPF.
+import { mascaraTelefone, mascaraCpf } from '../../lib/inscricao';
 // Régua ÚNICA de busca (acento/caixa/espaço) · espelho de backend/services/busca.js
 import { contemNormalizado } from '../../lib/busca';
 import { Button } from '../../components/ui/button';
@@ -189,7 +192,14 @@ export default function Grupos() {
   const [npEmail, setNpEmail] = useState('');
   const [npNasc, setNpNasc] = useState('');
   const [npSexo, setNpSexo] = useState('');
+  const [npCpf, setNpCpf] = useState('');
+  const [npEndereco, setNpEndereco] = useState('');
   const [npVisitante, setNpVisitante] = useState(false);
+  // ⚠️⚠️ LGPD · quem preenche está DECLARANDO por outra pessoa. O aceite é
+  // obrigatório (é a base legal) e o opt-in de WhatsApp é opt-in de verdade —
+  // default false (Contrato de Inscrição · D4).
+  const [npTermos, setNpTermos] = useState(false);
+  const [npOptin, setNpOptin] = useState(false);
   const [npSalvando, setNpSalvando] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [qrCopied, setQrCopied] = useState(false);
@@ -280,6 +290,7 @@ export default function Grupos() {
   // defeito que o Marcos viu no app.
   const [chamadaDataInicial, setChamadaDataInicial] = useState(null);
   const [encontrosPendentes, setEncontrosPendentes] = useState([]);
+  const [naoAconteceuId, setNaoAconteceuId] = useState(null);
   const [encontroEdit, setEncontroEdit] = useState(null);
   const [encontros, setEncontros] = useState([]);
   const [entradasSaidas, setEntradasSaidas] = useState([]);
@@ -550,15 +561,46 @@ export default function Grupos() {
   // Next → "engajar" (materializa o vínculo + alimenta NSM/KPI + sincroniza o
   // Next); Inscrição → "aprovar" o pedido (coloca neste grupo + notifica). Assim
   // a pessoa sai da fila e nada fica "pendente pra sempre".
+  // ⚠️ Espelho do que o servidor exige — mas ele é a autoridade. As duas réguas
+  // podem discordar em borda (DV do CPF, nome abreviado) e nesse caso quem manda
+  // é o 400 do servidor, que devolve o campo.
+  const npPodeEnviar = npNome.trim().split(/\s+/).filter(Boolean).length >= 2
+    && npNome.trim().length >= 5
+    && npTel.replace(/\D/g, '').length >= 10
+    && npCpf.replace(/\D/g, '').length === 11
+    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(npEmail.trim())
+    && /^\d{4}-\d{2}-\d{2}$/.test(npNasc.trim())
+    && !!npSexo
+    && npTermos;
+
+  // ⚠️ "Não aconteceu" é FATO, e precisa caber em algum lugar: sem ele o
+  // encontro fica pendente pra sempre e a coordenação cobra uma reunião que não
+  // houve. Escreve a MESMA exceção que o app escreve (services/grupoAgendaExcecao).
+  const marcarNaoAconteceu = async (o) => {
+    setNaoAconteceuId(o.data_original);
+    try {
+      await api.agendaExcecao(selectedGrupo, { data_original: o.data_original, acao: 'cancelar' });
+      toast.success('Marcado como não realizado');
+      loadEncontros(selectedGrupo);
+    } catch (e) {
+      // ⚠️ O servidor recusa quando o dia TEM chamada registrada (contradição) —
+      // e a mensagem dele explica o caminho. Não engolir.
+      toast.error(e.message || 'Erro ao marcar');
+    } finally { setNaoAconteceuId(null); }
+  };
+
   const handleCadastrarNovaPessoa = async () => {
     setNpSalvando(true);
     try {
       const r = await api.addPessoaNova(selectedGrupo, {
         nome: npNome.trim(),
         telefone: npTel.trim(),
-        email: npEmail.trim() || undefined,
-        data_nascimento: npNasc.trim() || undefined,
+        email: npEmail.trim(),
+        data_nascimento: npNasc.trim(),
         genero: npSexo || undefined,
+        cpf: npCpf.trim(),
+        endereco: npEndereco.trim() || undefined,
+        whatsapp_optin: npOptin,
         funcao: npVisitante ? 'visitante' : 'frequentador',
       });
       // ⚠️⚠️ A tela DIZ quando o matcher LIGOU numa pessoa que já existia. Sem
@@ -569,7 +611,8 @@ export default function Grupos() {
       else toast.success(`${r?.nome || 'Pessoa'} cadastrada e adicionada ao grupo`);
       setNovaPessoaOpen(false);
       setAddMembroOpen(false);
-      setNpNome(''); setNpTel(''); setNpEmail(''); setNpNasc(''); setNpSexo(''); setNpVisitante(false);
+      setNpNome(''); setNpTel(''); setNpEmail(''); setNpNasc(''); setNpSexo('');
+      setNpCpf(''); setNpEndereco(''); setNpVisitante(false); setNpTermos(false); setNpOptin(false);
       loadDetail(selectedGrupo);
       loadList();
     } catch (e) {
@@ -1205,10 +1248,21 @@ export default function Grupos() {
                       </div>
                     </div>
                     {podeEditarGrupos && (
-                      <Button size="sm" variant="outline"
-                        onClick={() => { setEncontroEdit(null); setChamadaDataInicial(o.data); setChamadaOpen(true); }}>
-                        Registrar
-                      </Button>
+                      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                        <Button size="sm" variant="outline"
+                          onClick={() => { setEncontroEdit(null); setChamadaDataInicial(o.data); setChamadaOpen(true); }}>
+                          Registrar
+                        </Button>
+                        {/* ⚠️ "Não aconteceu" é FATO, e precisa caber em algum
+                            lugar: sem ele o encontro fica pendente pra sempre e
+                            a coordenação cobra uma reunião que não houve. Escreve
+                            exceção `cancelado` — a MESMA que o app escreve. */}
+                        <Button size="sm" variant="ghost"
+                          disabled={naoAconteceuId === o.data_original}
+                          onClick={() => marcarNaoAconteceu(o)}>
+                          {naoAconteceuId === o.data_original ? '...' : 'Não aconteceu'}
+                        </Button>
+                      </div>
                     )}
                   </div>
                 ))}
@@ -1410,10 +1464,17 @@ export default function Grupos() {
             <div style={{ fontSize: 12, color: C.t3, marginBottom: 4 }}>
               Ela entra no grupo na hora. Não recebe mensagem e não precisa confirmar.
             </div>
-            <Input placeholder="Nome completo *" value={npNome} onChange={e => setNpNome(e.target.value)} />
-            <Input placeholder="Celular com DDD *" value={npTel} onChange={e => setNpTel(e.target.value)} />
-            <Input placeholder="E-mail (opcional)" value={npEmail} onChange={e => setNpEmail(e.target.value)} />
-            <Input placeholder="Nascimento AAAA-MM-DD (opcional)" value={npNasc} onChange={e => setNpNasc(e.target.value)} />
+            {/* ⚠️⚠️ OS MESMOS CAMPOS do formulário público de grupos (Marcos ·
+                25/08: "queremos cadastro completo, os mesmos campos que
+                solicitam a inscrição de grupos"). Quem valida é o SERVIDOR, pelo
+                `inscricaoContrato.validarCamposPadrao` — a régua abaixo só decide
+                quando o botão acende, pra ninguém clicar e levar erro. */}
+            <Input placeholder="Nome completo, sem abreviar *" value={npNome} onChange={e => setNpNome(e.target.value)} />
+            <Input placeholder="Celular com DDD *" value={npTel} onChange={e => setNpTel(mascaraTelefone(e.target.value))} maxLength={16} />
+            <Input placeholder="CPF *" value={npCpf} onChange={e => setNpCpf(mascaraCpf(e.target.value))} maxLength={14} />
+            <Input placeholder="E-mail *" type="email" value={npEmail} onChange={e => setNpEmail(e.target.value)} />
+            <Input placeholder="Nascimento AAAA-MM-DD *" value={npNasc} onChange={e => setNpNasc(e.target.value)} maxLength={10} />
+            <Input placeholder="Endereço (opcional)" value={npEndereco} onChange={e => setNpEndereco(e.target.value)} />
             {/* ⚠️ Sexo em branco fica em branco — NUNCA inferido do nome (lei de
                 10/08). E só masculino/feminino: é o vocabulário da coluna. */}
             <select value={npSexo} onChange={e => setNpSexo(e.target.value)}
@@ -1424,6 +1485,20 @@ export default function Grupos() {
             </select>
             {/* ⚠️ Adicionar de propósito é PARTICIPAÇÃO (lei de 14/08); visitante
                 só quando quem cadastra DECLARA. */}
+            {/* ⚠️⚠️ LGPD · QUEM PREENCHE ESTÁ DECLARANDO POR OUTRA PESSOA, e o
+                texto diz isso. No formulário público quem marca a caixa é a
+                própria pessoa; aqui é a equipe. O servidor grava o consentimento
+                com o prefixo "DECLARADO PRESENCIALMENTE POR <nome>" — gravar como
+                aceite do titular seria fabricar prova legal (mesma decisão do
+                link do voluntário · 14/08). */}
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, color: C.t2, cursor: 'pointer', lineHeight: 1.35 }}>
+              <input type="checkbox" checked={npTermos} onChange={e => setNpTermos(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>Confirmo que a pessoa está presente e autorizou o cadastro dos dados dela na igreja (LGPD) *</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, color: C.t2, cursor: 'pointer', lineHeight: 1.35 }}>
+              <input type="checkbox" checked={npOptin} onChange={e => setNpOptin(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>Ela autorizou receber mensagens da igreja no WhatsApp</span>
+            </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: C.t2, cursor: 'pointer' }}>
               <input type="checkbox" checked={npVisitante} onChange={e => setNpVisitante(e.target.checked)} />
               É visitante (veio conhecer)
@@ -1431,7 +1506,7 @@ export default function Grupos() {
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
               <Button variant="outline" size="sm" onClick={() => setNovaPessoaOpen(false)}>Cancelar</Button>
               <Button size="sm"
-                disabled={npSalvando || npNome.trim().length < 3 || npTel.replace(/\D/g, '').length < 10}
+                disabled={npSalvando || !npPodeEnviar}
                 onClick={handleCadastrarNovaPessoa}>
                 {npSalvando ? 'Cadastrando...' : 'Cadastrar e adicionar'}
               </Button>

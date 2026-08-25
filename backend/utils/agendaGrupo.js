@@ -146,6 +146,41 @@ function gerarOriginais({ diaSemana, recorrencia, ancoraISO, hojeISO, diaSemanaH
   return { originais, ancoraIncerta };
 }
 
+// A janela pra CORRIGIR a data de uma ocorrência que JÁ PASSOU.
+//
+// ⚠️⚠️ É régua DIFERENTE da `janelaRemarcacao`, e tem que ser. Aquela protege o
+// futuro ("não alcançar o próximo encontro", teto de 7 dias) e recusa data no
+// passado — de propósito, porque remarcar pra ontem não é remarcar. Aqui o ato é
+// outro: o líder está dizendo *"o encontro do dia 18 na verdade foi no dia 20"*,
+// que é CORREÇÃO de registro.
+//
+// A régua: a data nova fica ESTRITAMENTE entre a ocorrência anterior e a
+// seguinte, e nunca no futuro.
+// ⚠️ O cerco pelos vizinhos não é burocracia: sem ele, corrigir o encontro de
+// agosto pra uma data de julho embaralharia a ordem da sequência (e a âncora da
+// cadência sai justamente do encontro mais recente, então a agenda seguinte
+// nasceria errada).
+function janelaCorrecaoPassada({ dataOriginal, anteriorISO = null, proximaISO = null, hojeISO }) {
+  if (!dataOriginal || !hojeISO) return null;
+  const orig = String(dataOriginal).slice(0, 10);
+
+  // Piso: o dia seguinte à ocorrência anterior. Sem anterior, um limite generoso
+  // (a cadência) — nunca "qualquer data", pra um dedo escorregado não jogar o
+  // encontro pra 2019.
+  const passoFolga = 60;
+  let de = anteriorISO
+    ? somarDias(String(anteriorISO).slice(0, 10), 1)
+    : somarDias(orig, -passoFolga);
+
+  // Teto: a véspera da ocorrência seguinte, e nunca depois de HOJE (encontro que
+  // ainda não aconteceu não se corrige — se a data mudou pra frente, é o
+  // caminho de REMARCAR).
+  let ate = proximaISO ? somarDias(String(proximaISO).slice(0, 10), -1) : somarDias(orig, passoFolga);
+  if (ate > hojeISO) ate = hojeISO;
+
+  return { de, ate, pode: de <= ate };
+}
+
 // Próximas `quantas` ocorrências, já com as exceções aplicadas.
 // `excecoes`: [{ data_original, status, nova_data, novo_horario, motivo }]
 //
@@ -276,7 +311,41 @@ function proximoEncontro(args) {
 // listar passado que nao se sabe se aconteceu.
 // ============================================================================
 
-// Gera as DATAS ORIGINAIS que ja passaram, do mais recente para o mais antigo.
+// A ANCORA DERIVADA DO INÍCIO · a 1ª ocorrência do dia da semana em (ou depois
+// de) `inicioISO`.
+//
+// ⚠️⚠️ Existe por decisão do Marcos (25/08/2026): *"sobre os encontros de grupos
+// quinzenais ou mensais, devem aparecer na aba de encontros TODAS as datas que os
+// grupos deveriam ter feito o encontro."*
+//
+// A régua anterior devolvia VAZIO pra trás sem âncora real, pra não cobrar
+// chamada de encontro que talvez não tenha existido. Ele decidiu o contrário — e
+// tem razão sobre o efeito prático: **36 dos 37 grupos não-semanais nunca
+// registraram um encontro**, então "sem âncora" era o caso NORMAL, e o histórico
+// deles ficava permanentemente vazio. Sem lista, não há o que corrigir.
+//
+// ⚠️ O que a decisão dele PEDE em troca é o que este arquivo entrega junto: a
+// data vem marcada como ESTIMADA (`data_estimada`), a tela diz isso, e o líder
+// pode corrigi-la — e a correção passa a valer como âncora real. É a diferença
+// entre chutar em silêncio e propor uma data pra ser confirmada.
+function ancoraDeInicio({ diaSemana, inicioISO }) {
+  if (!inicioISO) return null;
+  const ini = String(inicioISO).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ini)) return null;
+  // ⚠️⚠️ `Number(null) === 0` e 0 é DOMINGO. Sem esta guarda, grupo sem dia
+  // marcado ganhava uma agenda inteira de domingos INVENTADA — e o pior: ela
+  // sairia marcada como estimativa, com cara de proposta legítima. É a MESMA
+  // armadilha que `gerarOriginais` guarda desde 18/08, e eu a comentei aqui sem
+  // implementar: o teste pegou.
+  if (diaSemana === null || diaSemana === undefined || diaSemana === '') return null;
+  const alvo = Number(diaSemana);
+  if (!Number.isInteger(alvo) || alvo < 0 || alvo > 6) return null;
+  // Anda pra frente até cair no dia da semana do grupo.
+  const delta = (alvo - diaSemanaDe(ini) + 7) % 7;
+  return somarDias(ini, delta);
+}
+
+// Gera as DATAS ORIGINAIS que já passaram, do mais recente para o mais antigo.
 // Espelho de `gerarOriginais`, andando para tras - e com as MESMAS guardas
 // (dia_semana ausente, cadencia lida de `recorrencia`, ancora obrigatoria fora
 // do semanal).
@@ -350,10 +419,21 @@ function gerarOriginaisPassadas({ diaSemana, recorrencia, ancoraISO, hojeISO, di
 function ocorrenciasPassadas({
   diaSemana, horario, recorrencia = 'semanal', ancoraISO = null,
   excecoes = [], registradas = [], agora = new Date(), quantas = 12, desdeISO = null,
+  inicioISO = null,
 }) {
   const n = agoraBRT(agora);
   const hojeISO = iso(n.ano, n.mes, n.dia);
   const minutosAgora = n.hora * 60 + n.min;
+
+  // ⚠️⚠️ Sem âncora REAL (nenhum encontro registrado), a cadência não-semanal é
+  // derivada do INÍCIO — e toda data sai marcada como ESTIMADA. Semanal não usa
+  // âncora (o dia da semana já determina tudo), então nunca é estimado.
+  const passo = cadenciaDias(recorrencia);
+  const ancoraDerivada = (!ancoraISO && passo !== 7 && passo !== 1)
+    ? ancoraDeInicio({ diaSemana, inicioISO })
+    : null;
+  const ancoraFinal = ancoraISO || ancoraDerivada;
+  const estimada = !ancoraISO && Boolean(ancoraDerivada);
 
   const porData = new Map();
   for (const e of excecoes || []) if (e && e.data_original) porData.set(String(e.data_original).slice(0, 10), e);
@@ -364,7 +444,7 @@ function ocorrenciasPassadas({
   // Pede folga no gerador: ocorrencia remarcada PARA O FUTURO sai da lista, e
   // sem folga o historico voltaria curto sem motivo aparente.
   const originais = gerarOriginaisPassadas({
-    diaSemana, recorrencia, ancoraISO, hojeISO,
+    diaSemana, recorrencia, ancoraISO: ancoraFinal, hojeISO,
     diaSemanaHoje: n.diaSemana, quantas: quantas + 4, desdeISO,
   });
 
@@ -396,6 +476,20 @@ function ocorrenciasPassadas({
       motivo: ex?.motivo || null,
       dia_semana: diaSemanaDe(dataFinal),
       registrado,
+      // ⚠️⚠️ `remarcado` e `cancelado` vão em campos PRÓPRIOS porque o `status`
+      // desta lista responde outra pergunta ("a chamada foi feita?") e colapsa
+      // os dois. Sem eles a tela não sabe que existe exceção a DESFAZER — o
+      // botão "voltar ao normal" simplesmente nunca apareceria depois de uma
+      // correção, e o líder ficaria preso com a data que acabou de mudar.
+      remarcado,
+      cancelado,
+      // ⚠️ A data é PROPOSTA, não fato: a cadência foi derivada do início da
+      // temporada porque o grupo nunca registrou um encontro. A tela DIZ isso e
+      // oferece "alterar data" — e a correção vira âncora real, então na próxima
+      // leitura as datas param de ser estimadas.
+      // ⚠️ Ocorrência com exceção JÁ TEM data decidida por gente: ela deixa de
+      // ser estimativa.
+      data_estimada: estimada && !ex,
     });
   }
   return out;
@@ -403,6 +497,6 @@ function ocorrenciasPassadas({
 
 module.exports = {
   agoraBRT, proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, ocorrenciasPassadas,
-  instanteISO, somarDias,
+  ancoraDeInicio, janelaCorrecaoPassada, instanteISO, somarDias,
   cadenciaDias, janelaRemarcacao, FUSO_BRT_MIN, LIMITE_REMARCA_DIAS, CADENCIA_DIAS,
 };

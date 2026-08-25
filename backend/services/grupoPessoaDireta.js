@@ -5,9 +5,15 @@
 // pessoa do grupo, colocar como se fosse mais uma linha, na foto um botão de
 // '+' e no nome escrito Adicionar pessoa. Se o líder clica ele pode preencher o
 // formulário de inscrição dali para aquela pessoa já nascer aprovada; se for
-// criado ali, ela não passa por whatsapp e confirmação nenhuma, isso é para o
-// líder já cadastrar novos visitantes."* E, no fim do mesmo pedido: *"alinhe
-// todas essas mudanças com o sistema web."*
+// criado ali, ela não passa por whatsapp e confirmação nenhuma."* E no fim:
+// *"alinhe todas essas mudanças com o sistema web."*
+//
+// ⚠️⚠️ AJUSTE DELE NO MESMO DIA, e é o que define o formulário: *"queremos
+// cadastro completo, os mesmos campos que solicitam a inscrição de grupos."* A
+// 1ª versão pedia só nome + telefone (o mínimo do "registrar visitante" do
+// WhatsApp) — agora é o CONTRATO INTEIRO, igual ao formulário público:
+// nome completo sem abreviação · telefone · nascimento · sexo · CPF com DV ·
+// e-mail · endereço fixo-opcional.
 //
 // ⚠️⚠️ É POR ISSO QUE ISTO É UM SERVIÇO, e não código dentro da rota do app: o
 // app e o ERP fazem a MESMA coisa aqui, e duas cópias divergiriam no primeiro
@@ -24,17 +30,18 @@
 // nenhuma". O vínculo é criado DIRETO, que é o que `POST /grupos/:id/membros`
 // (a coordenação adicionando à mão) já fazia desde sempre.
 //
-// ⚠️⚠️ MAS A IDENTIDADE PASSA PELO CONTRATO DE PORTA, sem exceção: o matcher
-// canônico (`acharOuCriarGuardado`) decide se é pessoa nova ou alguém que já
-// está na base. Sem ele, esta tela seria uma fábrica de duplicata operada por
-// ~89 líderes que não têm nenhuma visão do cadastro. É a MESMA função que o
-// formulário público e o "registrar visitante" do WhatsApp usam.
+// ⚠️⚠️ E A IDENTIDADE PASSA PELO CONTRATO DE PORTA, sem exceção: o matcher
+// canônico decide se é pessoa nova ou alguém que já está na base. Sem ele, esta
+// tela seria uma fábrica de duplicata operada por ~89 líderes que não têm visão
+// nenhuma do cadastro. É a MESMA função que o formulário público usa.
 // ============================================================================
 const { supabase } = require('../utils/supabase');
-const { acharOuCriarGuardado } = require('./membroMatch');
-const { registrarConsentimentos } = require('./inscricaoContrato');
+const {
+  validarCamposPadrao, processarIdentidade, registrarConsentimentos, TEXTOS,
+} = require('./inscricaoContrato');
+const { registrarContatoDaPorta } = require('./membroMatch');
 const { registrarEventoPedido } = require('./grupoPedidoEventos');
-const { validarPessoaDireta } = require('../utils/pessoaDiretaCampos');
+const { funcaoDoRoster } = require('../utils/pessoaDiretaCampos');
 
 /**
  * Cria (ou liga) a pessoa e põe no grupo, já ativa.
@@ -44,50 +51,120 @@ const { validarPessoaDireta } = require('../utils/pessoaDiretaCampos');
  * o líder não tem conta no ERP, então o NOME é guardado, não só o id.
  *
  * `origem` distingue quem chamou ('grupos_app_lider' × 'grupos_erp_equipe') na
- * observação de identidade — é o que permite auditar depois de qual tela o
- * cadastro veio.
+ * observação de identidade — é o que permite auditar de qual tela o cadastro veio.
  *
  * Devolve `{ ok, http, ... }`. Regra de negócio NUNCA vira exceção: quem chama
  * decide o HTTP a partir do `http` devolvido (mesma lei do `fn_insc_inscrever`).
  */
-async function cadastrarPessoaNoGrupo({ grupo, dados, autor = {}, origem = 'grupos_app_lider', ip = null, userAgent = null }) {
-  const v = validarPessoaDireta(dados);
-  if (!v.ok) return { ok: false, http: 400, error: v.erro, campo: v.campo };
+async function cadastrarPessoaNoGrupo({ grupo, dados = {}, autor = {}, origem = 'grupos_app_lider', ip = null, userAgent = null }) {
+  // ── 1. Os campos, pelo validador CANÔNICO ────────────────────────────────
+  // ⚠️ Os mesmos `exigir*` do formulário público de grupos (todos true): é
+  // literalmente o que o Marcos pediu. `endereco` é fixo-opcional (28/07).
+  const { erros, valores } = validarCamposPadrao(dados, {
+    exigirCpf: true, exigirEmail: true, exigirNascimento: true, exigirSexo: true,
+  });
+  if (Object.keys(erros).length) {
+    const campo = Object.keys(erros)[0];
+    return { ok: false, http: 400, error: erros[campo], campo, erros };
+  }
 
-  const achado = await acharOuCriarGuardado({
-    cpf: v.cpf, email: v.email, telefone: v.telefone, nome: v.nome,
-    dataNascimento: v.dataNascimento, genero: v.genero,
-    // ⚠️ `status` é da PESSOA na igreja (visitante até a igreja decidir outra
+  const funcao = funcaoDoRoster(dados);
+  // ⚠️ Opt-in é EXPLÍCITO e default false (Contrato de Inscrição · D4). Nunca
+  // derivado de "a pessoa deu o telefone".
+  const optin = dados.whatsapp_optin === true;
+
+  // ── 2. Identidade pelo matcher canônico ─────────────────────────────────
+  // ⚠️ `politica: 'criar'`: a pessoa está na frente do líder e VAI entrar no
+  // grupo agora — é o mesmo caso do batismo/next ("o evento VAI acontecer"),
+  // não o de uma triagem humana posterior. E com CPF obrigatório, criar é
+  // seguro: CPF é a chave FORTE do matcher (régua de 23/08).
+  const ident = await processarIdentidade({
+    nomeCompleto: valores.nomeCompleto,
+    cpf: valores.cpf,
+    email: valores.email,
+    telefone: valores.telefone,
+    dataNascimento: valores.dataNascimento,
+    genero: valores.sexo,
+    politica: 'criar',
+    // `status` é da PESSOA na igreja (visitante até a igreja decidir outra
     // coisa) e NÃO tem relação com a `funcao` dela no grupo. Confundir os dois
     // é o que fazia o roster e a membresia discordarem.
     status: 'visitante',
-    origem, origemId: grupo.id,
+    origem,
+    origemId: grupo.id,
   });
-  const membroId = achado?.membro_id;
+  const membroId = ident?.membroId;
   if (!membroId) {
     return { ok: false, http: 502, error: 'Não foi possível registrar a pessoa. Tente de novo.' };
   }
 
-  // Já está no grupo? Idempotente — dois toques não criam dois vínculos.
+  // ── 3. Enriquecer o cadastro que já existia · SÓ ONDE VAZIO ─────────────
+  // ⚠️ Mesma política do censo e do `processarPessoaPedido`: o que a pessoa
+  // acabou de declarar preenche o que falta, e NUNCA sobrescreve o que existe
+  // (pode ter sido corrigido pela equipe depois). Best-effort: falhar aqui não
+  // pode impedir a pessoa de entrar no grupo.
+  try {
+    const { data: mem } = await supabase.from('mem_membros')
+      .select('genero, data_nascimento, email, telefone, endereco')
+      .eq('id', membroId).maybeSingle();
+    if (mem) {
+      const upd = {};
+      if (valores.sexo && !mem.genero) upd.genero = valores.sexo;
+      if (valores.dataNascimento && !mem.data_nascimento) upd.data_nascimento = valores.dataNascimento;
+      if (valores.email && !mem.email) upd.email = valores.email;
+      const telAtual = String(mem.telefone || '').replace(/\D/g, '');
+      if (valores.telefone && !telAtual) upd.telefone = valores.telefone;
+      if (valores.endereco && !mem.endereco) upd.endereco = valores.endereco;
+      if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
+
+      // ⚠️ Contato DIVERGENTE do principal não é conflito e NÃO sobrescreve:
+      // acumula em `mem_contatos` (Contrato de porta, item 3). Família
+      // compartilha telefone e e-mail — é o caso NORMAL, não a exceção.
+      const emailDiverge = valores.email && mem.email
+        && String(mem.email).trim().toLowerCase() !== valores.email;
+      const telDiverge = valores.telefone && telAtual && telAtual !== valores.telefone;
+      if (emailDiverge || telDiverge) {
+        registrarContatoDaPorta(membroId, {
+          telefone: telDiverge ? valores.telefone : null,
+          email: emailDiverge ? valores.email : null,
+        }, origem);
+      }
+    }
+  } catch (e) { console.warn('[grupoPessoaDireta] enriquecer cadastro:', e.message); }
+
+  // ⚠️ Opt-in SÓ LIGA, NUNCA DESLIGA (política de 05/08): não marcar a caixa é
+  // ausência de consentimento NESTA porta, não revogação do que a pessoa
+  // autorizou em outra. E preserva o `whatsapp_optin_em` de quem já havia
+  // consentido — a data é a PROVA, e sobrescrevê-la apaga desde quando vale.
+  if (optin) {
+    try {
+      await supabase.from('mem_membros')
+        .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+        .eq('id', membroId).is('deleted_at', null)
+        .or('whatsapp_optin.is.null,whatsapp_optin.eq.false');
+    } catch (e) { console.warn('[grupoPessoaDireta] optin:', e.message); }
+  }
+
+  // ── 4. Já está no grupo? Idempotente ────────────────────────────────────
   const { data: jaAtivo } = await supabase.from('mem_grupo_membros')
     .select('id').eq('grupo_id', grupo.id).eq('membro_id', membroId)
     .is('saiu_em', null).is('deleted_at', null).limit(1).maybeSingle();
   if (jaAtivo) {
-    return { ok: true, http: 200, ja_no_grupo: true, membro_id: membroId, nome: v.nome };
+    return { ok: true, http: 200, ja_no_grupo: true, membro_id: membroId, nome: valores.nomeCompleto };
   }
 
   const { data: vinculo, error: eV } = await supabase.from('mem_grupo_membros').insert({
     grupo_id: grupo.id,
     membro_id: membroId,
-    funcao: v.funcao,
+    funcao,
     entrou_em: new Date().toISOString().slice(0, 10),
   }).select('id').single();
   if (eV) throw eV;
 
-  // ⚠️ Pedido PENDENTE da mesma pessoa neste grupo é FECHADO: ela acabou de
-  // entrar, e deixá-lo na Caixa de entrada faria a coordenação decidir sobre um
-  // fato já resolvido. Best-effort e condicionado ao status atual — falhar aqui
-  // não pode desfazer o vínculo que já existe.
+  // ── 5. Pedido PENDENTE da mesma pessoa neste grupo é FECHADO ────────────
+  // Ela acabou de entrar; deixá-lo na Caixa de entrada faria a coordenação
+  // decidir sobre um fato já resolvido. Best-effort e condicionado ao status
+  // atual — falhar aqui não pode desfazer o vínculo que já existe.
   let pedidoFechado = null;
   try {
     const { data: ped } = await supabase.from('mem_grupo_pedidos')
@@ -105,28 +182,31 @@ async function cadastrarPessoaNoGrupo({ grupo, dados, autor = {}, origem = 'grup
     }
   } catch (e) { console.warn('[grupoPessoaDireta] fechar pedido pendente:', e.message); }
 
-  // ── Consentimento: DECLARAÇÃO DE TERCEIRO, gravada como tal ───────────────
-  // ⚠️⚠️ LGPD: quem marca a caixa no formulário público é a PRÓPRIA pessoa; aqui
-  // é o líder declarando por ela. Gravar como consentimento do titular seria
-  // fabricar prova legal (mesma decisão do link do voluntário, 14/08) — então o
-  // texto guardado diz explicitamente que foi declarado por terceiro. E
-  // **nenhum opt-in de WhatsApp é ligado**: ninguém consente marketing no lugar
-  // de outra pessoa.
+  // ── 6. Consentimento: DECLARAÇÃO DE TERCEIRO, gravada como tal ──────────
+  // ⚠️⚠️ LGPD: no formulário público quem marca a caixa é a PRÓPRIA pessoa;
+  // aqui quem preenche é o líder, por ela. Gravar como aceite do titular seria
+  // fabricar prova legal — então o texto guardado É o canônico (a pessoa tem
+  // direito a saber exatamente o que foi autorizado) com um PREFIXO dizendo
+  // quem declarou. É a mesma decisão do link do voluntário (14/08), onde o
+  // snapshot diz "DECLARADO PELO VOLUNTARIO".
   // Best-effort DEPOIS do vínculo: a pessoa já está no grupo, e falha aqui não
   // desfaz nada.
+  const prefixo = `DECLARADO PRESENCIALMENTE POR ${autor.nome || 'um líder/equipe'} `
+    + `no cadastro do grupo "${grupo.nome}" pelo ${origem === 'grupos_erp_equipe' ? 'sistema' : 'app'} `
+    + '(não é aceite digitado pelo próprio titular). Texto apresentado: ';
   registrarConsentimentos({
     porta: 'grupos',
     refId: vinculo?.id || null,
     membroId,
     ip,
     userAgent,
-    itens: [{
-      tipo: 'termos_lgpd',
-      aceito: true,
-      texto: 'DECLARADO POR TERCEIRO (não é aceite do titular): a pessoa foi cadastrada '
-        + `presencialmente por ${autor.nome || 'um líder/equipe'} no grupo "${grupo.nome}" `
-        + 'e está ciente de que os dados dela ficam no cadastro da igreja.',
-    }],
+    itens: [
+      { tipo: 'termos_lgpd', aceito: true, texto: prefixo + TEXTOS.termos_lgpd },
+      // ⚠️ O item de WhatsApp é registrado SEMPRE, com `aceito` refletindo a
+      // caixa: gravar só quando é `true` perderia a prova de que a pergunta foi
+      // feita e a pessoa disse não.
+      { tipo: 'whatsapp', aceito: optin, texto: prefixo + (TEXTOS.whatsapp || 'Autorizo receber mensagens no WhatsApp.') },
+    ],
   }).catch(e => console.warn('[grupoPessoaDireta] consentimento:', e.message));
 
   return {
@@ -134,16 +214,15 @@ async function cadastrarPessoaNoGrupo({ grupo, dados, autor = {}, origem = 'grup
     http: 201,
     membro_id: membroId,
     vinculo_id: vinculo?.id || null,
-    nome: v.nome,
-    funcao: v.funcao,
+    nome: valores.nomeCompleto,
+    funcao,
     // ⚠️ DECLARADO pra a tela poder dizer "essa pessoa já existia e foi ligada"
     // em vez de deixar quem preencheu achando que criou alguém novo — é isso que
     // faz confiar no matcher em vez de tentar de novo com outro nome, que é o
     // comportamento que fabrica duplicata.
-    pessoa_nova: achado?.created === true,
-    ligada_por: achado?.matched_by || null,
+    pessoa_nova: ident?.created === true,
+    ligada_por: ident?.matchedBy || null,
     pedido_fechado: pedidoFechado,
-    sem_cpf: !v.cpf,
   };
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { proximasOcorrencias, proximoEncontro, agoraBRT, ocorrenciasPassadas } from '../../backend/utils/agendaGrupo.js';
+import { proximasOcorrencias, proximoEncontro, agoraBRT, ocorrenciasPassadas, ancoraDeInicio, janelaCorrecaoPassada } from '../../backend/utils/agendaGrupo.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pedido da Naná (18/08/2026): no box "Próximo encontro" do app, o líder poder
@@ -396,5 +396,160 @@ describe('ocorrencias passadas - o historico a vista', () => {
       diaSemana: 2, horario: '19:30', agora: new Date('2026-08-26T02:00:00Z'), quantas: 1,
     });
     expect(r[0].data).toBe('2026-08-25');
+  });
+});
+
+// =============================================================================
+// O PASSADO GERENCIÁVEL (Marcos · 25/08/2026, corrigindo a leva anterior)
+//
+// *"Sobre os encontros de grupos quinzenais ou mensais, devem aparecer na aba de
+// encontros TODAS as datas que os grupos deveriam ter feito o encontro, e deve
+// ser gerenciável: a pessoa clica em um encontro passado, altera data ou
+// registra que encontro não aconteceu, registra presença e fica naquele
+// encontro. Isso também para encontros semanais."*
+//
+// ⚠️⚠️ ISTO REVERTE UMA DECISÃO MINHA da mesma manhã. Eu havia feito
+// `ocorrenciasPassadas` devolver VAZIO sem âncora real, pra não cobrar chamada de
+// encontro que talvez não tenha existido. Ele decidiu o contrário — e o número
+// dá razão a ele: dos 108 grupos ativos, **35 são não-semanais e apenas 1 tem
+// encontro registrado** (medido em 25/08). "Sem âncora" era o caso NORMAL, então
+// o histórico daqueles 34 grupos ficava permanentemente vazio — e sem lista não
+// há o que corrigir.
+//
+// A troca honesta: a data aparece marcada como ESTIMADA, e o líder corrige.
+// =============================================================================
+
+const passadasComInicio = (extra: Record<string, unknown> = {}) =>
+  ocorrenciasPassadas({
+    diaSemana: 2, horario: '19:30', agora: TER_25_12H, quantas: 4,
+    recorrencia: 'quinzenal', inicioISO: '2026-07-01', ...extra,
+  });
+
+describe('datas estimadas · o histórico do quinzenal/mensal existe', () => {
+  it('⚠️⚠️ quinzenal SEM âncora real gera as datas a partir do início', () => {
+    // Era exatamente isto que devolvia [] antes do pedido dele.
+    expect(passadasComInicio().map((o: any) => o.data))
+      .toEqual(['2026-08-18', '2026-08-04', '2026-07-21', '2026-07-07']);
+  });
+
+  it('⚠️ e TODAS vêm marcadas como ESTIMADAS', () => {
+    // É o que separa "propor uma data pra confirmar" de "chutar em silêncio".
+    expect(passadasComInicio().every((o: any) => o.data_estimada === true)).toBe(true);
+  });
+
+  it('⚠️⚠️ com âncora REAL (encontro registrado) NADA é estimado', () => {
+    // A âncora sai do encontro mais recente: aí a cadência é fato, não suposição.
+    const r = passadasComInicio({ ancoraISO: '2026-08-11' });
+    expect(r.map((o: any) => o.data)).toEqual(['2026-08-11', '2026-07-28', '2026-07-14', '2026-06-30']);
+    expect(r.every((o: any) => o.data_estimada === false)).toBe(true);
+  });
+
+  it('⚠️ SEMANAL nunca é estimado — o dia da semana já determina tudo', () => {
+    const r = passadasComInicio({ recorrencia: 'semanal' });
+    expect(r.every((o: any) => o.data_estimada === false)).toBe(true);
+  });
+
+  it('mensal também gera (28 dias) a partir do início', () => {
+    const r = passadasComInicio({ recorrencia: 'mensal', inicioISO: '2026-05-01', quantas: 3 });
+    expect(r.map((o: any) => o.data)).toEqual(['2026-07-28', '2026-06-30', '2026-06-02']);
+    expect(r[0].data_estimada).toBe(true);
+  });
+
+  it('⚠️ ocorrência com EXCEÇÃO deixa de ser estimativa (gente já decidiu)', () => {
+    const r = passadasComInicio({
+      excecoes: [{ data_original: '2026-08-18', status: 'remarcado', nova_data: '2026-08-19' }],
+    });
+    expect(r[0]).toMatchObject({ data: '2026-08-19', data_estimada: false });
+    expect(r[1].data_estimada).toBe(true);
+  });
+
+  it('⚠️ sem âncora E sem início continua VAZIO — não há de onde derivar', () => {
+    expect(ocorrenciasPassadas({
+      diaSemana: 2, recorrencia: 'quinzenal', agora: TER_25_12H,
+    })).toEqual([]);
+  });
+
+  it('⚠️ grupo sem dia_semana não ganha agenda estimada', () => {
+    expect(ocorrenciasPassadas({
+      diaSemana: null, recorrencia: 'quinzenal', inicioISO: '2026-07-01', agora: TER_25_12H,
+    })).toEqual([]);
+  });
+
+  it('⚠️⚠️ desdeISO é o PISO: não lista antes de o grupo começar', () => {
+    // Medido em produção (grupo 00000068, temporada aberta em 01/08): sem o piso
+    // a timeline mostrava 22/06 e 06/07 como "presença não registrada" —
+    // pendência de encontro que o grupo não tinha por que ter feito naquela
+    // temporada.
+    const r = passadasComInicio({ desdeISO: '2026-08-01', quantas: 12 });
+    expect(r.map((o: any) => o.data)).toEqual(['2026-08-18', '2026-08-04']);
+  });
+});
+
+describe('ancoraDeInicio · a 1a ocorrência do dia da semana', () => {
+  it('01/07/2026 é quarta; para grupo de TERÇA a âncora é 07/07', () => {
+    expect(ancoraDeInicio({ diaSemana: 2, inicioISO: '2026-07-01' })).toBe('2026-07-07');
+  });
+
+  it('quando o início JÁ cai no dia da semana, é ele mesmo', () => {
+    expect(ancoraDeInicio({ diaSemana: 3, inicioISO: '2026-07-01' })).toBe('2026-07-01');
+  });
+
+  it('⚠️ sem início, sem dia da semana ou com data ilegível devolve null', () => {
+    expect(ancoraDeInicio({ diaSemana: 2, inicioISO: null })).toBeNull();
+    expect(ancoraDeInicio({ diaSemana: null, inicioISO: '2026-07-01' })).toBeNull();
+    expect(ancoraDeInicio({ diaSemana: 2, inicioISO: 'ontem' })).toBeNull();
+    // Number(null) === 0 é DOMINGO — a guarda tem que ver o valor, não o cast.
+    expect(ancoraDeInicio({ diaSemana: 9, inicioISO: '2026-07-01' })).toBeNull();
+  });
+});
+
+describe('janelaCorrecaoPassada · corrigir a data de um encontro que já passou', () => {
+  const HOJE = '2026-08-25';
+
+  it('fica ESTRITAMENTE entre os vizinhos', () => {
+    // Sem esse cerco, corrigir o encontro de agosto pra julho embaralharia a
+    // ordem — e a âncora da cadência sai do encontro mais RECENTE, então a
+    // agenda seguinte nasceria errada.
+    expect(janelaCorrecaoPassada({
+      dataOriginal: '2026-08-18', anteriorISO: '2026-08-11', proximaISO: '2026-08-25', hojeISO: HOJE,
+    })).toMatchObject({ de: '2026-08-12', ate: '2026-08-24', pode: true });
+  });
+
+  it('⚠️⚠️ NUNCA passa de hoje — encontro futuro não se corrige', () => {
+    // Se a data mudou pra frente, o caminho é REMARCAR (outra régua, outra
+    // janela). Deixar passar aqui criaria dois jeitos de mover o mesmo encontro,
+    // com regras diferentes.
+    const j = janelaCorrecaoPassada({ dataOriginal: '2026-08-25', hojeISO: HOJE });
+    expect(j?.ate).toBe(HOJE);
+  });
+
+  it('sem vizinhos, abre uma folga limitada — nunca qualquer data', () => {
+    // Um dedo escorregado não pode jogar o encontro pra 2019.
+    const j = janelaCorrecaoPassada({ dataOriginal: '2026-08-18', hojeISO: HOJE });
+    expect(j).toMatchObject({ de: '2026-06-19', ate: HOJE, pode: true });
+  });
+
+  it('⚠️ vizinhos colados espremem a janela até a PRÓPRIA data, e isso é pode:true', () => {
+    // ⚠️ Escrevi este caso esperando `pode: false` e o código me corrigiu — a
+    // razão já está documentada na irmã `janelaRemarcacao`: janela espremida até
+    // a própria data ainda serve, porque sobra corrigir só o HORÁRIO ("o
+    // encontro foi às 20h, não às 19h30"), que é uso legítimo. Criar um segundo
+    // comportamento aqui daria duas regras pra a mesma pergunta.
+    expect(janelaCorrecaoPassada({
+      dataOriginal: '2026-08-18', anteriorISO: '2026-08-17', proximaISO: '2026-08-19', hojeISO: HOJE,
+    })).toMatchObject({ de: '2026-08-18', ate: '2026-08-18', pode: true });
+  });
+
+  it('⚠️⚠️ vizinhos INCOERENTES fecham a janela, nunca abrem', () => {
+    // Dado inconsistente (a "próxima" antes da "anterior") não pode virar
+    // permissão: `pode: false` é a resposta fail-closed.
+    expect(janelaCorrecaoPassada({
+      dataOriginal: '2026-08-18', anteriorISO: '2026-08-20', proximaISO: '2026-08-10', hojeISO: HOJE,
+    })).toMatchObject({ pode: false });
+  });
+
+  it('sem data ou sem hoje devolve null, nunca uma janela inventada', () => {
+    expect(janelaCorrecaoPassada({ dataOriginal: null as unknown as string, hojeISO: HOJE })).toBeNull();
+    expect(janelaCorrecaoPassada({ dataOriginal: '2026-08-18', hojeISO: null as unknown as string })).toBeNull();
   });
 });

@@ -870,6 +870,8 @@ export const grupos = {
   // As ocorrências que já passaram e ficaram SEM chamada (espelho web do item 3
   // do Marcos · 25/08). Endpoint próprio porque `encontros` devolve array cru.
   encontrosPendentes: (grupoId) => get(`/grupos/${grupoId}/encontros-pendentes`),
+  // Remarcar / cancelar / desfazer UMA ocorrência da agenda. Mesma régua do app.
+  agendaExcecao: (grupoId, body) => post(`/grupos/${grupoId}/agenda`, body),
   // Histórico simples de quem entrou e saiu do grupo (leitura pura · o formato
   // foi pedido pelo Marcos: "tela pequena, com pouco destaque, sem muita
   // interação"). Aprovar pedido segue na Caixa de entrada.

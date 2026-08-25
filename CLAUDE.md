@@ -2953,10 +2953,163 @@ cópias divergiriam, e o sintoma seria **o app e o web discordando sobre em que
 semana um grupo quinzenal se reuniu** — praticamente indepurável. Os 4 call sites
 de `app.js` seguem idênticos.
 
+### ⚠️⚠️ 2ª RODADA no MESMO DIA (25/08) · ele corrigiu DUAS decisões minhas
+
+Depois de ver a primeira leva, o Marcos pediu três coisas — e duas delas revertem
+escolhas que eu tinha feito com justificativa escrita. **Registrado assim de
+propósito**: a justificativa era boa e o efeito prático era ruim.
+
+#### 1 · "Adicionar pessoa" passou a exigir CADASTRO COMPLETO
+
+*"Queremos cadastro completo, os mesmos campos que solicitam a inscrição de
+grupos."*
+
+Eu havia feito a porta com o mínimo do irmão mais próximo (nome + telefone, como
+o "registrar visitante" do WhatsApp), argumentando que exigir 6 campos no meio de
+um encontro faria o líder não usar a tela. **E isso violava a lei do Contrato de
+Inscrição** — *"Usar SEMPRE `inscricaoContrato.js`… NÃO recriar cópias locais de
+máscara/CPF, era assim que divergia"* —, porque eu tinha escrito validação
+própria em vez de chamar `validarCamposPadrao`.
+
+- A validação virou **`validarCamposPadrao` com os 4 `exigir*` em `true`**,
+  exatamente como o formulário público de grupos: nome completo sem abreviação ·
+  telefone · **CPF com DV** · **e-mail** · **nascimento** · **sexo** · endereço
+  fixo-opcional.
+- ⚠️ **O CPF obrigatório é o que mais muda de comportamento**, e pra melhor: ele
+  é a chave FORTE do matcher, então o cadastro criado por um líder passa a LIGAR
+  na pessoa que já está na base em vez de duplicar. Com CPF, `politica: 'criar'`
+  é seguro (régua de 23/08).
+- ⚠️⚠️ **LGPD · o consentimento é de TERCEIRO**: o líder marca a caixa POR outra
+  pessoa. O snapshot gravado é o texto CANÔNICO com o prefixo `DECLARADO
+  PRESENCIALMENTE POR <nome> … (não é aceite digitado pelo próprio titular)` —
+  mesma decisão do link do voluntário (14/08). Gravar como aceite do titular
+  seria fabricar prova legal.
+- ⚠️ **O item de WhatsApp é gravado mesmo quando a pessoa diz NÃO** (`aceito:
+  optin`): registrar só o `true` perderia a prova de que a pergunta foi feita. E
+  o opt-in **SÓ LIGA, NUNCA DESLIGA**, preservando o `whatsapp_optin_em` de quem
+  já havia consentido (a data é a prova de desde quando vale).
+- ⚠️ **Enriquecimento SÓ-ONDE-VAZIO** no cadastro que já existia, e contato
+  DIVERGENTE acumula em `mem_contatos` — não sobrescreve o principal (Contrato de
+  porta, item 3: família compartilha telefone e e-mail, é o caso NORMAL).
+- **`utils/pessoaDiretaCampos.js` encolheu** pra o que é só desta porta: a
+  whitelist de `funcao` no roster. É AUTORIZAÇÃO, não formato — desde 25/08
+  `lider`/`lider_treinamento` decidem quem GERENCIA o grupo, então aceitar
+  `funcao` cru daria a qualquer líder o poder de promover alguém a gestor por uma
+  tela de cadastro.
+- O teste virou **guard estático** (`validarCamposPadrao` é chamado · os 4
+  `exigir*` são `true` · identidade pelo funil canônico · nada de WhatsApp/pedido)
+  + os casos puros da whitelist. Quem cobre o formato é `test:inscricao-contrato`,
+  que já está no gate.
+
+#### 2 · ⚠️⚠️ O PASSADO DOS ENCONTROS virou gerenciável — e o "vazio sem âncora" MORREU
+
+*"Sobre os encontros de grupos quinzenais ou mensais, devem aparecer na aba de
+encontros TODAS as datas que os grupos deveriam ter feito o encontro, e deve ser
+gerenciável: a pessoa clica em um encontro passado, altera data ou registra que
+encontro não aconteceu, registra presença e fica naquele encontro. Isso também
+para encontros semanais."*
+
+Eu tinha feito `ocorrenciasPassadas` devolver **VAZIO** sem âncora real, com o
+argumento de que cobrar chamada de encontro que talvez não tenha existido é pior
+que não cobrar. **O número dá razão a ele:** medido em 25/08, dos **108 grupos
+ativos, 35 são não-semanais e apenas 1 tem encontro registrado**. "Sem âncora"
+era o caso NORMAL (34 de 35) — o histórico daqueles grupos ficava
+permanentemente vazio, e **sem lista não há o que corrigir**.
+
+- **`ancoraDeInicio`** deriva a cadência do **início da temporada** do grupo
+  (`iniciosDeGrupos`: temporada → `created_at`). Todos os 35 têm `temporada` e
+  `dia_semana` preenchidos, então a derivação alcança todos.
+- ⚠️⚠️ **A troca honesta: `data_estimada: true`.** A tela DIZ que a data foi
+  calculada e oferece corrigir; a correção grava exceção e **vira âncora real**,
+  então na leitura seguinte as datas param de ser estimadas. É a diferença entre
+  propor uma data pra ser confirmada e chutar em silêncio.
+- ⚠️ **SEMANAL nunca é estimado** (o dia da semana já determina tudo) e
+  **ocorrência com exceção deixa de ser estimativa** (gente já decidiu).
+- ⚠️⚠️ **`desdeISO` é PISO no início da temporada.** Sem ele a lista atravessava
+  pra trás além do começo do grupo: medido no grupo **00000068** (temporada
+  aberta em 01/08), a timeline mostrava **22/06 e 06/07** como "presença não
+  registrada" — pendência de encontro que aquele grupo não tinha por que ter
+  feito. Cobrar chamada de antes do grupo existir é a versão nova do erro que a
+  régua de âncora existia pra evitar. Encontro REGISTRADO fora do piso não se
+  perde: volta pela lista de avulsos.
+- **`janelaCorrecaoPassada`** é régua **DIFERENTE** da `janelaRemarcacao`, e tem
+  que ser: aquela protege o futuro (não alcançar o próximo encontro, teto de 7
+  dias) e **recusa data no passado**; usá-la aqui recusaria toda correção. A nova
+  cerca a data pelos **vizinhos** (senão corrigir agosto pra julho embaralharia a
+  ordem — e a âncora sai do encontro mais RECENTE, então a agenda seguinte
+  nasceria errada) e **nunca passa de hoje**.
+- ⚠️⚠️ **A CHAMADA JÁ REGISTRADA é um FATO e ela manda**, com duas consequências:
+  "não aconteceu" num dia que TEM chamada é **recusado** (o efeito seria
+  INVISÍVEL, porque a timeline dá precedência ao registrado — o líder clicaria,
+  nada mudaria e ele concluiria que o app quebrou); e corrigir a data **move a
+  chamada junto**, ANTES de gravar a exceção. A ordem importa: exceção primeiro +
+  falha no UPDATE deixaria a ocorrência vazia na data nova e a chamada como
+  "avulso" na antiga — dois registros do mesmo encontro. `UNIQUE (grupo_id, data)`
+  em `mem_grupo_encontros` vira **409 `data_ocupada`**, resposta de negócio.
+- **`remarcado` e `cancelado` viraram campos PRÓPRIOS** na saída da régua: o
+  `status` da timeline responde outra pergunta ("a chamada foi feita?") e colapsa
+  os dois. Sem eles a tela não sabe que existe exceção a DESFAZER — o botão
+  "voltar ao normal" nunca apareceria depois de uma correção, e o líder ficaria
+  preso com a data que acabou de mudar.
+
+##### `services/grupoAgendaExcecao.js` · o ÚNICO escritor
+
+A régua nasceu dentro do `POST /app/grupos/:id/agenda` e o ERP passou a precisar
+dela. Foi extraída: as duas janelas, a coerência com a chamada e a tradução dos
+erros de banco vivem lá, e as duas rotas são cascas finas.
+⚠️ **O AVISO fica com quem chama**: o app avisa a coordenação em nome do líder; o
+ERP **não notifica**, porque quem age ali É a coordenação e avisar a si mesma é
+ruído (o mesmo raciocínio que tirou o aviso duplicado da transferência).
+⚠️ O vocabulário do aviso muda no passado: *"cancelou o encontro de amanhã"* e
+*"registrou que o encontro da semana passada não aconteceu"* são fatos
+diferentes, e a coordenação decide coisas diferentes a partir deles.
+
+##### O modal é UM, com dois modos
+
+`ModalAgendaEncontro` ganhou `modo="futuro" | "passado"`. As duas telas escrevem
+no MESMO endpoint; o que muda é a janela de datas e o vocabulário ("Cancelar
+encontro" × **"Não aconteceu"**, "Salvar data" × "Salvar correção"). Duas telas
+divergiriam no primeiro ajuste, e a divergência apareceria como *"no futuro deu,
+no passado não"*.
+⚠️ No modo passado o calendário **não pode ter piso em hoje** — seria o mês
+inteiro cinza.
+
+#### ⚠️⚠️ Três achados de MÉTODO desta rodada
+
+1. **`node --check` não pega `ReferenceError`.** Eu havia deixado
+   `ancorasDeGrupos` **usado e não importado** em `routes/grupos.js` — sintaxe
+   válida, e o endpoint responderia 500 pra sempre. Só apareceu ao **carregar os
+   módulos de verdade** (`require` em cada rota) e ao exercitar a régua contra
+   produção. Régua: depois de mexer em imports de rota, **carregar o módulo**, não
+   só checar sintaxe.
+2. **O teste pegou um bug meu que o comentário dizia estar guardado.**
+   `ancoraDeInicio` fazia `Number(diaSemana)` sem a guarda de nulo — e
+   **`Number(null) === 0` é DOMINGO**, então grupo sem dia marcado ganhava uma
+   agenda inteira de domingos INVENTADA, saindo marcada como "estimativa" com cara
+   de proposta legítima. Eu tinha escrito o comentário sobre a armadilha e não
+   implementado a guarda.
+3. **`as any` num mapeamento entre dois vocabulários esconde efeito real.** Eu
+   passei `OcorrenciaEncontro` pro modal com cast; compilava, e o modal (que lê
+   `status === "remarcado"`) **nunca veria a exceção** — o botão de desfazer a
+   correção não apareceria. Virou mapeamento explícito campo a campo.
+
+#### Verificação da 2ª rodada
+
+`tsc -b` sem cache · `npm run build` · `npm test` (**2.374 verdes**) · **os 16
+scripts** do gate · app `tsc --noEmit` + **210 testes**.
+**6 mutantes novos RODADOS e mortos** na régua de agenda (11 no total): semanal
+virando estimado → 1 · estimada nunca marcada → 3 · exceção continuando estimada
+→ 1 · âncora derivada sem guarda de dia → 1 · correção passando de hoje → 2 ·
+correção sem cerco de vizinhos → 3.
+⚠️ **E o caminho de ESCRITA foi exercitado contra produção** (grupo de teste
+T2-2026-022): "não aconteceu" gravou · data futura no passado recusou com 400 ·
+correção de data gravou · desfazer limpou — **resíduo ZERO** conferido em
+`mem_grupo_agenda_excecoes` depois.
+
 ### Estado / verificação
 
 Gate completo: `npx tsc -b` sem cache · `npm run build` · `npm test`
-(**2.366 verdes**) · **os 16 scripts** do `deploy-vercel.yml`. App:
+(**2.374 verdes**) · **os 16 scripts** do `deploy-vercel.yml`. App:
 `npx tsc --noEmit` limpo · `npm test` (210 verdes).
 
 ⚠️ **Aplicar `20260825170000` ANTES do merge.** O código tolera a ausência dela na

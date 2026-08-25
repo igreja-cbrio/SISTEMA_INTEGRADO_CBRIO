@@ -1,152 +1,148 @@
 import { describe, it, expect } from 'vitest';
-import { validarPessoaDireta } from '../../backend/utils/pessoaDiretaCampos.js';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { funcaoDoRoster } from '../../backend/utils/pessoaDiretaCampos.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // "Adicionar pessoa" no grupo (Marcos · 25/08/2026 · pedido do Pr. Nélio e da
 // Natasha): o líder preenche e a pessoa já nasce dentro do grupo, sem WhatsApp
 // e sem confirmação.
 //
-// ⚠️⚠️ O QUE ESTES CASOS PROTEGEM: esta é uma PORTA DE PESSOA operada por ~89
-// líderes, no celular, no meio de um encontro. Afrouxar a validação enche a base
-// de lixo; apertar faz o líder não usar a tela e a pessoa não entrar em lugar
-// nenhum. O ponto de equilíbrio (nome + telefone obrigatórios, o resto validado
-// SÓ quando vem) está fixado aqui.
+// ⚠️⚠️ AJUSTE DELE NO MESMO DIA: *"queremos cadastro completo, os mesmos campos
+// que solicitam a inscrição de grupos."* A 1ª versão validava por conta própria
+// (só nome + telefone) e isso VIOLAVA a lei do Contrato de Inscrição — *"NÃO
+// recriar cópias locais de máscara/CPF, era assim que divergia"*. A validação
+// virou `inscricaoContrato.validarCamposPadrao`, que já tem teste próprio no
+// gate (`test:inscricao-contrato`).
+//
+// ⇒ ESTE ARQUIVO guarda o que sobrou de POLÍTICA DESTA PORTA:
+//   1. a whitelist de `funcao` no roster (autorização, não formato);
+//   2. estaticamente, que a porta CHAMA o contrato em vez de validar sozinha —
+//      é a regressão provável (alguém "simplifica" a exigência de CPF porque um
+//      líder reclamou) e ela não quebra teste nenhum por si só.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const base = { nome: 'Maria Aparecida Souza', telefone: '(21) 99876-5432' };
-
-describe('obrigatórios: nome e telefone, e nada mais', () => {
-  it('nome + telefone bastam', () => {
-    const r = validarPessoaDireta(base);
-    expect(r.ok).toBe(true);
-    expect(r).toMatchObject({ nome: 'Maria Aparecida Souza', telefone: '21998765432' });
-  });
-
-  it('⚠️ NÃO exige CPF, nascimento nem sexo — eles saem NULOS', () => {
-    // Exigi-los aqui repetiria o erro que travou a fila da membresia em 04/08:
-    // campo que a tela não tem como preencher deixa o registro inalcançável.
-    const r = validarPessoaDireta(base);
-    expect(r).toMatchObject({ cpf: null, dataNascimento: null, genero: null, email: null });
-  });
-
-  it('nome com menos de 3 letras é recusado, apontando o campo', () => {
-    expect(validarPessoaDireta({ ...base, nome: 'Jo' }))
-      .toMatchObject({ ok: false, campo: 'nome' });
-  });
-
-  it('nome ausente é recusado (não vira string vazia gravada)', () => {
-    expect(validarPessoaDireta({ telefone: '21998765432' })).toMatchObject({ ok: false, campo: 'nome' });
-  });
-
-  it('colapsa espaço repetido do nome', () => {
-    expect(validarPessoaDireta({ ...base, nome: '  Ana   Paula  ' }).nome).toBe('Ana Paula');
-  });
-});
-
-describe('telefone · normaliza como o resto do sistema', () => {
-  it('guarda digits-only', () => {
-    expect(validarPessoaDireta({ ...base, telefone: '+55 (21) 99876-5432' }).telefone).toBe('21998765432');
-  });
-
-  it('aceita fixo de 10 dígitos', () => {
-    expect(validarPessoaDireta({ ...base, telefone: '2122334455' })).toMatchObject({ ok: true, telefone: '2122334455' });
-  });
-
-  it('menos de 10 dígitos é recusado', () => {
-    expect(validarPessoaDireta({ ...base, telefone: '99876543' }))
-      .toMatchObject({ ok: false, campo: 'telefone' });
-  });
-
-  it('⚠️ DDD 55 (Santa Maria/RS) NÃO perde o prefixo', () => {
-    // Armadilha já registrada no projeto: `replace(/^55/,'')` destruiria todo
-    // número legítimo de lá. `5522334455` tem 10 dígitos e é telefone completo.
-    expect(validarPessoaDireta({ ...base, telefone: '5522334455' }).telefone).toBe('5522334455');
-  });
-});
-
-describe('opcionais: validados SÓ quando vêm', () => {
-  it('e-mail válido passa em minúsculas', () => {
-    expect(validarPessoaDireta({ ...base, email: ' Maria@Exemplo.COM ' }).email).toBe('maria@exemplo.com');
-  });
-
-  it('e-mail inválido é recusado', () => {
-    expect(validarPessoaDireta({ ...base, email: 'maria@' })).toMatchObject({ ok: false, campo: 'email' });
-  });
-
-  it('e-mail vazio não é erro', () => {
-    expect(validarPessoaDireta({ ...base, email: '' })).toMatchObject({ ok: true, email: null });
-  });
-
-  it('nascimento válido é normalizado', () => {
-    expect(validarPessoaDireta({ ...base, data_nascimento: '1990-04-20' }).dataNascimento).toBe('1990-04-20');
-  });
-
-  it('⚠️ nascimento no FUTURO é recusado, não gravado', () => {
-    expect(validarPessoaDireta({ ...base, data_nascimento: '2099-01-01' }))
-      .toMatchObject({ ok: false, campo: 'data_nascimento' });
-  });
-
-  it('⚠️ nascimento absurdo (ano < 1900) é recusado', () => {
-    // A base já tem `1085-04-20` e `1886-03-15` de import — é dado real, e a
-    // porta não pode continuar produzindo mais.
-    expect(validarPessoaDireta({ ...base, data_nascimento: '1085-04-20' }))
-      .toMatchObject({ ok: false, campo: 'data_nascimento' });
-  });
-});
-
-describe('⚠️⚠️ sexo: masculino|feminino, NUNCA inferido nem "outro"', () => {
-  it('aceita os dois valores canônicos', () => {
-    expect(validarPessoaDireta({ ...base, genero: 'feminino' }).genero).toBe('feminino');
-    expect(validarPessoaDireta({ ...base, genero: 'MASCULINO' }).genero).toBe('masculino');
-  });
-
-  it('⚠️ "outro" NÃO entra (Contrato de Inscrição · 28/07)', () => {
-    expect(validarPessoaDireta({ ...base, genero: 'outro' }).genero).toBeNull();
-  });
-
-  it('⚠️ vocabulário curto M/F NÃO é aceito nesta coluna', () => {
-    // `mem_membros.genero` é `masculino`/`feminino` — medido: ZERO linhas com
-    // valor curto. Aceitar 'M' aqui gravaria o único registro que nenhum filtro
-    // do sistema encontra depois.
-    expect(validarPessoaDireta({ ...base, genero: 'M' }).genero).toBeNull();
-  });
-
-  it('⚠️ ausente fica NULL, nunca chutado a partir do nome', () => {
-    // A lei de 10/08 proíbe GRAVAR sexo por palpite: errar isso constrange uma
-    // pessoa real e decide em qual grupo ela pode entrar.
-    expect(validarPessoaDireta({ nome: 'Maria Aparecida Souza', telefone: '21998765432' }).genero).toBeNull();
-  });
-});
-
-describe('CPF: descartado quando não serve, sem recusar o cadastro', () => {
-  it('11 dígitos passam pro matcher (que confere o DV)', () => {
-    expect(validarPessoaDireta({ ...base, cpf: '123.456.789-09' }).cpf).toBe('12345678909');
-  });
-
-  it('⚠️ CPF incompleto é DESCARTADO e o cadastro CONTINUA válido', () => {
-    // Mesma régua do gatilho do auth (04/08): CPF errado não pode virar
-    // identidade errada, e travar o cadastro por causa dele deixaria a pessoa
-    // fora do grupo.
-    const r = validarPessoaDireta({ ...base, cpf: '123456' });
-    expect(r).toMatchObject({ ok: true, cpf: null });
-  });
-});
-
-describe('⚠️ função no grupo: visitante só quando DECLARADO', () => {
+describe('⚠️ função no grupo: whitelist FECHADA, não o que vier no corpo', () => {
   it('o default é frequentador — adicionar de propósito é PARTICIPAÇÃO', () => {
-    // Régua de 13/08 e da lei de 14/08.
-    expect(validarPessoaDireta(base).funcao).toBe('frequentador');
+    // Régua de 13/08 ("a coordenação adicionou esta pessoa DE PROPÓSITO — isso é
+    // participação, não visita") e lei de 14/08.
+    expect(funcaoDoRoster({})).toBe('frequentador');
+    expect(funcaoDoRoster({ funcao: '' })).toBe('frequentador');
+    expect(funcaoDoRoster()).toBe('frequentador');
   });
 
-  it('visitante quando o líder marca', () => {
-    expect(validarPessoaDireta({ ...base, funcao: 'visitante' }).funcao).toBe('visitante');
+  it('visitante quando quem preenche DECLARA', () => {
+    // Lei de 14/08: "quem o líder realmente identifica como visitante, deve ser
+    // visitante".
+    expect(funcaoDoRoster({ funcao: 'visitante' })).toBe('visitante');
   });
 
-  it('⚠️ função arbitrária NÃO passa — ninguém nasce líder por esta porta', () => {
-    // Aceitar `funcao` cru daria a qualquer líder o poder de marcar liderança
-    // (e liderança é o que decide quem GERENCIA o grupo desde 25/08).
-    expect(validarPessoaDireta({ ...base, funcao: 'lider' }).funcao).toBe('frequentador');
-    expect(validarPessoaDireta({ ...base, funcao: 'coordenador' }).funcao).toBe('frequentador');
-    expect(validarPessoaDireta({ ...base, funcao: 'co_lider' }).funcao).toBe('frequentador');
+  it('⚠️⚠️ liderança NÃO passa por esta porta — é AUTORIZAÇÃO, não rótulo', () => {
+    // Desde 25/08/2026 `lider` e `lider_treinamento` decidem quem GERENCIA o
+    // grupo (`gruposPapelApp`). Aceitar `funcao` cru daria a qualquer líder o
+    // poder de promover alguém a gestor por uma tela de cadastro.
+    expect(funcaoDoRoster({ funcao: 'lider' })).toBe('frequentador');
+    expect(funcaoDoRoster({ funcao: 'lider_treinamento' })).toBe('frequentador');
+    expect(funcaoDoRoster({ funcao: 'co_lider' })).toBe('frequentador');
+    expect(funcaoDoRoster({ funcao: 'supervisor' })).toBe('frequentador');
+    expect(funcaoDoRoster({ funcao: 'coordenador' })).toBe('frequentador');
+  });
+
+  it('valor inventado cai no default, nunca vai cru pro banco', () => {
+    // `funcao` é ENUM (`grupo_funcao`): valor fora dele estoura 22P02 e a tela
+    // diria "erro ao cadastrar" sem explicar nada.
+    expect(funcaoDoRoster({ funcao: 'chefe' })).toBe('frequentador');
+    expect(funcaoDoRoster({ funcao: 42 as unknown as string })).toBe('frequentador');
+    expect(funcaoDoRoster({ funcao: null as unknown as string })).toBe('frequentador');
+  });
+});
+
+// ⚠️ Guarda ESTÁTICA (o mesmo estilo do `test:porta-ligar` e do
+// `routeModuleMap`): o serviço lê o banco, então exercitá-lo aqui exigiria
+// Supabase de pé — e o que precisa de rede não entra no gate.
+// ⚠️ Comentário é REMOVIDO antes de casar: este arquivo cita os nomes que
+// procura, e a armadilha de "checagem por texto casa o próprio comentário" já
+// mordeu este repo duas vezes (06/08) — e mordeu de novo nesta leva.
+const SERVICO = (() => {
+  const bruto = readFileSync(
+    resolve(process.cwd(), 'backend/services/grupoPessoaDireta.js'), 'utf8',
+  );
+  return bruto
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .split('\n')
+    .map(l => l.replace(/(^|[^:])\/\/[^\n]*/, '$1'))
+    .join('\n');
+})();
+
+describe('⚠️⚠️ a porta usa o CONTRATO, não uma validação própria', () => {
+  it('chama validarCamposPadrao', () => {
+    expect(SERVICO).toMatch(/validarCamposPadrao\(/);
+  });
+
+  it('⚠️ exige os 4 campos que o formulário público de grupos exige', () => {
+    // É literalmente o pedido do Marcos: "os mesmos campos que solicitam a
+    // inscrição de grupos". Afrouxar qualquer um destes muda o contrato da porta
+    // e tem que ser decisão consciente, não "simplificação".
+    expect(SERVICO).toMatch(/exigirCpf:\s*true/);
+    expect(SERVICO).toMatch(/exigirEmail:\s*true/);
+    expect(SERVICO).toMatch(/exigirNascimento:\s*true/);
+    expect(SERVICO).toMatch(/exigirSexo:\s*true/);
+  });
+
+  it('resolve identidade pelo funil canônico, nunca por insert direto em mem_membros', () => {
+    // Sem o matcher esta tela é fábrica de duplicata operada por ~89 líderes que
+    // não têm visão nenhuma do cadastro.
+    expect(SERVICO).toMatch(/processarIdentidade\(/);
+    expect(SERVICO).not.toMatch(/from\('mem_membros'\)\s*\.insert/);
+  });
+
+  it('⚠️ enriquece o cadastro existente SÓ ONDE VAZIO', () => {
+    // Política do censo: o que a pessoa declarou preenche o que falta e NUNCA
+    // sobrescreve o que existe (pode ter sido corrigido pela equipe depois).
+    expect(SERVICO).toMatch(/!mem\.genero/);
+    expect(SERVICO).toMatch(/!mem\.data_nascimento/);
+    expect(SERVICO).toMatch(/!mem\.email/);
+  });
+
+  it('⚠️ contato divergente ACUMULA em mem_contatos, não sobrescreve o principal', () => {
+    // Contrato de porta, item 3. Família compartilha telefone e e-mail — é o
+    // caso NORMAL, não a exceção.
+    expect(SERVICO).toMatch(/registrarContatoDaPorta\(/);
+  });
+
+  it('⚠️⚠️ o opt-in de WhatsApp SÓ LIGA, nunca desliga', () => {
+    // Política de 05/08: não marcar a caixa é ausência de consentimento NESTA
+    // porta, não revogação do que a pessoa autorizou em outra. E a guarda do
+    // `.or(...)` preserva o `whatsapp_optin_em` de quem já havia consentido — a
+    // data é a PROVA de desde quando vale.
+    expect(SERVICO).toMatch(/whatsapp_optin\.is\.null,whatsapp_optin\.eq\.false/);
+    expect(SERVICO).not.toMatch(/whatsapp_optin:\s*false/);
+  });
+
+  it('⚠️⚠️ o consentimento é gravado como DECLARAÇÃO DE TERCEIRO', () => {
+    // No formulário público quem marca a caixa é a própria pessoa; aqui é o
+    // líder por ela. Gravar como aceite do titular seria fabricar prova legal —
+    // mesma decisão do link do voluntário (14/08).
+    expect(SERVICO).toMatch(/DECLARADO PRESENCIALMENTE POR/);
+    expect(SERVICO).toMatch(/não é aceite digitado pelo próprio titular/);
+    // O texto canônico vai junto: a pessoa tem direito a saber o que foi
+    // autorizado, então o prefixo ACRESCENTA, não substitui.
+    expect(SERVICO).toMatch(/TEXTOS\.termos_lgpd/);
+  });
+
+  it('⚠️ registra o item de WhatsApp mesmo quando a pessoa disse NÃO', () => {
+    // Gravar só quando é `true` perderia a prova de que a pergunta foi feita.
+    expect(SERVICO).toMatch(/tipo:\s*'whatsapp',\s*aceito:\s*optin/);
+  });
+
+  it('⚠️ NÃO manda WhatsApp nem cria pedido — foi o pedido explícito', () => {
+    // *"se for criado ali, ela não passa por whatsapp e confirmação nenhuma"*.
+    expect(SERVICO).not.toMatch(/notificarLiderNovoPedido|gruposWpp|sendTemplate/);
+    expect(SERVICO).not.toMatch(/from\('mem_grupo_pedidos'\)\s*\.insert/);
+    expect(SERVICO).not.toMatch(/aprovarPedidoCore/);
+  });
+
+  it('⚠️ o vínculo é idempotente: dois toques não criam dois', () => {
+    expect(SERVICO).toMatch(/ja_no_grupo/);
   });
 });
