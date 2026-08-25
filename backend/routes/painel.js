@@ -2291,12 +2291,27 @@ router.get('/monitoramento-okr', async (req, res) => {
       const base = new Set(perfis.filter((p) => !p.arquivado).map((p) => p.id));
       if (base.size) {
         const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
-        const checkins = await fetchPaged('vol_check_ins', 'volunteer_id',
-          (q) => q.gte('checked_in_at', d90).not('volunteer_id', 'is', null));
+        // ⚠️⚠️ 27% dos check-ins (589 de 2.167, medido em 25/08) chegam SEM
+        // `volunteer_id` — e só UM deles tem nome. Contar só os identificados
+        // subconta quem serviu: 413 desses 589 têm `schedule_id`, e a escala
+        // sabe de quem é. Sem essa recuperação o numerador cai de 495 pra 460
+        // e 35 pessoas que serviram aparecem como inativas.
+        const checkins = await fetchPaged('vol_check_ins', 'volunteer_id, schedule_id',
+          (q) => q.gte('checked_in_at', d90));
+        const semDono = [...new Set(checkins.filter((c) => !c.volunteer_id && c.schedule_id).map((c) => c.schedule_id))];
+        const donoDaEscala = new Map();
+        for (let i = 0; i < semDono.length; i += 200) {
+          const lote = semDono.slice(i, i + 200);
+          const escalas = await fetchPaged('vol_schedules', 'id, volunteer_id', (q) => q.in('id', lote));
+          for (const e of escalas) if (e.volunteer_id) donoDaEscala.set(e.id, e.volunteer_id);
+        }
         const serviram = new Set();
-        for (const c of checkins) if (base.has(c.volunteer_id)) serviram.add(c.volunteer_id);
+        for (const c of checkins) {
+          const quem = c.volunteer_id || donoDaEscala.get(c.schedule_id);
+          if (quem && base.has(quem)) serviram.add(quem);
+        }
         addM('volunt_ativos_base', Math.round(serviram.size / base.size * 1000) / 10, '%',
-          `${serviram.size} serviram (check-in) nos últimos 3 meses ÷ ${base.size} com cadastro de voluntário ativo`);
+          `${serviram.size} serviram (check-in) nos últimos 3 meses ÷ ${base.size} com cadastro de voluntário ativo · check-in sem dono recuperado pela escala`);
       }
     } catch (e) { console.error('okr · volunt_ativos_base:', e.message); }
 
