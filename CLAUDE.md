@@ -13488,3 +13488,41 @@ esconde sem dizer produz exatamente essa conclusão.
 primeiro nome comum cortava gente sem avisar. Subiu pra 20 e a lista agora
 declara "Mostrando N de M — refine a busca". Truncar em silêncio é a mesma doença
 do acento.
+
+## ⚠️ Supervisores atuais · agrupado por TURNO → ÁREA (2026-08-25)
+
+Pedido do Matheus: *"no card de supervisores atuais quero a separação por culto:
+primeiro domingo, segundo domingo etc. Primeira quarta, segunda quarta. E aí
+dentro de cada dia, ver as áreas e seus respectivos supervisores."*
+
+⚠️ **A ordem NÃO é alfabética, e isso é o ponto.** A pessoa lê esta tela pra
+responder *"quem cobre o 2º domingo de manhã?"*. Domingo antes de quarta, semana
+crescente, manhã antes de noite — a ordem em que a escala acontece. Grupos
+AMPLOS ("todas as semanas", "todo culto") vão pro FIM: no topo empurrariam os
+turnos reais pra baixo da dobra.
+
+⚠️ **E a tela passou a DECLARAR quem está sem turno.** O print dele mostrava
+4 pessoas com "· todo culto" que, pela lista da Ariel, **têm** turno — foram
+cadastradas antes do rodízio subir, e hoje supervisionam **todos** os cultos:
+mais acesso do que a casa combinou. Aviso âmbar no topo do card, com os nomes.
+
+### As DUAS causas de "a pessoa não aparece no seletor" (medidas em 25/08)
+
+Aconteceu 3× no mesmo dia, e cada uma tinha causa diferente:
+
+| Caso | Causa | Conserto |
+|---|---|---|
+| **Luiz Felipe Palladino** | perfil sem `membresia_id`; o cadastro dele estava ligado ao perfil do FILHO (Enzo, criado no PCO com o e-mail do pai) | religado à mão, com backup |
+| **Mônica Hernandez Duarte** | **acento** — o filtro fazia `includes()` sem normalizar, e `monica` não casa com `Mônica` | `norm()` nos dois filtros |
+| **Clayton Araújo** | perfil sem `membresia_id`; o cadastro existia como "Clayton Farias de Araújo" | religado (e-mail `araujo98@` × `araujo982025@`, mesma raiz, nenhum outro cadastro com o endereço) |
+
+⚠️ **A trigger `trg_sync_email_vol_para_membro` reescreve o e-mail do PERFIL** ao
+vincular (canônico do cadastro vence). Nos dois religamentos o e-mail antigo do
+perfil foi sobrescrito — está em `_bk_20260825_palladino_vinculo` e
+`_bk_20260825_vinculo_vol`. O cadastro do membro NÃO é tocado (o inverso só
+preenche vazio).
+
+⚠️ **O padrão que se repetiu 4× hoje:** a tela esconde sem dizer e quem usa
+conclui que o dado não existe. Alerta do DS mudo, `wa_templates.ativo` que não
+desliga nada, o Palladino sumindo, e a busca com acento. **"A tela ficou muda" é
+bug, não detalhe.**

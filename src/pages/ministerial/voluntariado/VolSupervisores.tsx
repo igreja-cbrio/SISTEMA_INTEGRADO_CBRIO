@@ -311,14 +311,73 @@ export default function VolSupervisores() {
     onError: (e: any) => toast.error(e?.message || 'Erro ao remover'),
   });
 
-  const porArea = useMemo(() => {
-    const m = new Map<string, any[]>();
-    for (const s of supers) {
-      const arr = m.get(s.area) || [];
-      arr.push(s); m.set(s.area, arr);
+  /**
+   * Agrupa por TURNO → ÁREA → pessoas (pedido do Matheus, 25/08: *"no card de
+   * supervisores atuais quero a separação por culto: primeiro domingo, segundo
+   * domingo… e aí dentro de cada dia ver as áreas e seus respectivos
+   * supervisores"*).
+   *
+   * ⚠️ A ordem NÃO é alfabética e isso é o ponto: a pessoa lê esta tela pra
+   * responder "quem cobre o 2º domingo de manhã?". Domingo antes de quarta,
+   * semana crescente, manhã antes de noite — a ordem em que a escala acontece.
+   *
+   * ⚠️ Os grupos AMPLOS ("todas as semanas", "todo culto") vão pro FIM, não pro
+   * começo: eles são a exceção, e no topo empurrariam os turnos reais pra baixo
+   * da dobra. Ver também o aviso de `semTurno` — quem está em "todo culto"
+   * provavelmente foi cadastrado antes do rodízio existir.
+   */
+  const porTurno = useMemo(() => {
+    const DIA_ORDEM: Record<string, number> = { domingo: 1, quarta: 2 };
+    const PER_ORDEM: Record<string, number> = { manha: 1, noite: 2 };
+
+    const chave = (x: any) => [x.culto_dia || '', x.culto_periodo || '', x.culto_semana || ''].join('|');
+    const rotulo = (x: any) => {
+      if (!x.culto_dia) return 'Todo culto (sem turno definido)';
+      const dia = x.culto_dia === 'domingo' ? 'Domingo' : 'Quarta';
+      const per = x.culto_periodo === 'manha' ? ' · manhã' : x.culto_periodo === 'noite' ? ' · noite' : '';
+      if (!x.culto_semana) return `${dia}${per} — todas as semanas`;
+      const ord = x.culto_dia === 'domingo' ? `${x.culto_semana}º` : `${x.culto_semana}ª`;
+      return `${ord} ${dia}${per}`;
+    };
+    // Peso: turnos específicos primeiro (na ordem da escala), amplos no fim.
+    const peso = (x: any) => {
+      if (!x.culto_dia) return 9000;                       // todo culto
+      const base = (DIA_ORDEM[x.culto_dia] || 3) * 1000;
+      if (!x.culto_semana) return base + 500;              // "todas as semanas"
+      return base + Number(x.culto_semana) * 10 + (PER_ORDEM[x.culto_periodo] || 0);
+    };
+
+    const grupos = new Map<string, { rotulo: string; peso: number; areas: Map<string, any[]> }>();
+    for (const sup of supers) {
+      const k = chave(sup);
+      if (!grupos.has(k)) grupos.set(k, { rotulo: rotulo(sup), peso: peso(sup), areas: new Map() });
+      const g = grupos.get(k)!;
+      const arr = g.areas.get(sup.area) || [];
+      arr.push(sup);
+      g.areas.set(sup.area, arr);
     }
-    return [...m.entries()].sort((a, b) => areaLabel(a[0]).localeCompare(areaLabel(b[0]), 'pt-BR'));
+    return [...grupos.values()]
+      .sort((a, b) => a.peso - b.peso || a.rotulo.localeCompare(b.rotulo, 'pt-BR'))
+      .map(g => ({
+        rotulo: g.rotulo,
+        amplo: g.peso >= 1500,
+        areas: [...g.areas.entries()]
+          .sort((a, b) => areaLabel(a[0]).localeCompare(areaLabel(b[0]), 'pt-BR')),
+      }));
   }, [supers, areaLabel]);
+
+  /**
+   * Quem ficou SEM turno mas não é o curinga `geral`.
+   *
+   * ⚠️ Isto existe porque o print do Matheus mostrou 4 pessoas com "· todo
+   * culto" que, pela lista da Ariel, TÊM turno — foram cadastradas antes do
+   * rodízio subir. Hoje elas supervisionam TODOS os cultos, o que é mais acesso
+   * do que a casa combinou. A tela declara em vez de deixar passar.
+   */
+  const semTurno = useMemo(
+    () => supers.filter((x: any) => !x.culto_dia && x.area !== CURINGA.v),
+    [supers],
+  );
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -428,10 +487,30 @@ export default function VolSupervisores() {
             <p className="text-sm text-muted-foreground py-4 text-center">Nenhum supervisor cadastrado ainda.</p>
           ) : (
             <div className="space-y-4">
-              {porArea.map(([a, lista]) => (
-                <div key={a}>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{areaLabel(a)}</p>
-                  <div className="space-y-1.5">
+              {semTurno.length > 0 && (
+                /* ⚠️ Declara em vez de deixar passar: sem turno, a pessoa
+                   supervisiona TODOS os cultos — mais acesso do que a casa
+                   combinou. Aparece antes da lista pra ser visto. */
+                <div className="rounded-lg border border-amber-500/50 bg-amber-500/5 p-2.5">
+                  <p className="text-xs font-semibold text-amber-600">
+                    {semTurno.length} sem turno definido
+                  </p>
+                  <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
+                    {semTurno.map((x: any) => x.membro?.nome).filter(Boolean).join(', ')} — hoje supervisionam
+                    <b> todos os cultos</b>. Use o lápis pra definir o turno de cada um.
+                  </p>
+                </div>
+              )}
+
+              {porTurno.map((g) => (
+                <div key={g.rotulo} className="space-y-2">
+                  <p className={`text-sm font-bold ${g.amplo ? 'text-muted-foreground' : 'text-foreground'}`}>
+                    {g.rotulo}
+                  </p>
+                  {g.areas.map(([a, lista]) => (
+                    <div key={a} className="pl-2 border-l-2 border-border">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1.5">{areaLabel(a)}</p>
+                      <div className="space-y-1.5">
                     {lista.map(s => (
                       <div key={s.id} className="rounded-lg border p-2.5">
                       <div className="flex items-center justify-between gap-2">
@@ -508,7 +587,9 @@ export default function VolSupervisores() {
                       )}
                       </div>
                     ))}
-                  </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
