@@ -107,6 +107,12 @@ jobs:
       - name: Supervisao recorta por area e subarea (permissao)
         run: npm run test:supervisor-subarea
 
+      # Janela do check-in pelo supervisor: DIA DO CULTO EM BRT. Culto de domingo
+      # 19h e 22h UTC — comparar em UTC fecha a janela no meio do culto da noite,
+      # justamente quando o supervisor esta batendo os check-ins.
+      - name: Janela do check-in do supervisor (dia do culto em BRT)
+        run: npm run test:checkin-janela
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 

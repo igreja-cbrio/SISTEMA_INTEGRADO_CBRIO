@@ -13299,3 +13299,56 @@ fetch + um mapa PlanTime→culto, análogo ao `vol_pco_mapa`. Também a flag
 `vol_service_types.is_active` está mentindo (os 3 CBKIDS, com 1.453 escalas,
 estão `false`; os "Domingo" ativos têm 0) — **não confiar nela para popular
 seletor**; usar uso real.
+
+## ⚠️⚠️ Check-in pelo SUPERVISOR no app · escopo + janela do dia (2026-08-25 · SEM migration)
+
+Pedido do Matheus: *"no app de membros os supervisores devem poder fazer check-in
+dos voluntários das suas respectivas áreas, e só nos dias de culto. Isso ajuda a
+gente não ficar refém de apenas um local de check-in (que hoje é na sala de
+voluntários)."*
+
+⚠️⚠️ **O endpoint `POST /app/voluntariado/checkin` JÁ EXISTIA — com o furo de
+18/08 intacto.** Ele conferia `areas.length` (a PORTA) e depois registrava
+presença de QUALQUER pessoa, em QUALQUER culto, de QUALQUER dia: supervisor de
+Louvor batia ponto do Kids num culto de três meses atrás. O `GET .../checkins`
+listava os check-ins de TODAS as áreas. Nenhuma das duas coisas tinha teste.
+
+**O que passou a valer:**
+- **Janela = DIA DO CULTO em BRT** (decisão dele: dia inteiro, não faixa de
+  horas). Vale para TODO MUNDO, **inclusive `geral`** — a restrição é da
+  OPERAÇÃO, não do escopo de área.
+- **Escopo = área + subárea** (`podeSupervisionar`), aplicado no POST, no DELETE
+  e no recorte da LISTA.
+- **Desfazer** (`DELETE /app/voluntariado/checkin/:id`) dentro da mesma janela e
+  do mesmo escopo.
+
+⚠️ **A trava de escopo fica DEPOIS da resolução da escala**, de propósito: é o
+`resolvedScheduleId` (que o match acha no dia) que carrega equipe e subárea.
+Checar antes, no `schedule_id` cru do corpo, deixaria passar todo check-in em que
+o cliente manda só `volunteer_id`.
+
+⚠️ **Check-in SEM escala (`is_unscheduled`) é liberado para escopo restrito** — e
+é exceção CONSCIENTE à lei de "alvo sem equipe resolvível é negado". Registrar
+que alguém APARECEU não concede nada a ninguém, e negar travaria justamente o
+caso que descentralizar o check-in existe para atender. A janela do dia é o que
+impede abuso.
+
+⚠️ **O desfazer é HARD DELETE**, e tem que ser: os uniques de `vol_check_ins` são
+índices **PARCIAIS** (`schedule_id` · `volunteer_id+service_id`), então
+soft-delete deixaria a linha morta ocupando o unique e o próximo check-in da
+mesma pessoa bateria 409 **para sempre**. A trilha vai para `audit_log`.
+
+⚠️⚠️ **A ARMADILHA DE FUSO, que é o teste principal.** Culto de domingo 19h é
+**22h UTC**; das 21h BRT em diante o UTC já virou o dia seguinte. Comparar em UTC
+(ou `toISOString().slice(0,10)`) **fecha a janela no meio do culto da noite** —
+exatamente quando o supervisor está batendo os check-ins. A régua é pura em
+`utils/janelaCulto.ehDiaDoCulto` (com `agora` injetável) e está no gate:
+`npm run test:checkin-janela`, que também é guarda ESTÁTICA de que as duas rotas
+chamam janela **e** escopo, e que a janela não está aninhada num
+`if (!supervisionaTudo(...))`.
+
+⚠️ **PENDENTE: a outra metade.** `app/(app)/escala-supervisor.tsx` (repo
+`Aplicativo-CBRio`) só **exibe** check-ins — **nunca chama** o endpoint. O
+backend está pronto e sem consumidor; o botão de marcar/desmarcar é trabalho no
+app (Expo/RN, TestFlight). ⚠️ Ao mexer lá, **nunca** subir `version` de 1.0.0
+(congela o OTA da frota).
