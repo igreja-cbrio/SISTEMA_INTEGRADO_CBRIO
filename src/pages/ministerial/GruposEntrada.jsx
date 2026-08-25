@@ -5,6 +5,9 @@
 //  · pedido de inscrição — a pessoa escolheu um grupo no form/QR (sem label);
 //  · pessoa direcionada pelo NEXT — ainda sem grupo definido (label "Next";
 //    precisa de contato + devolutiva; "engajou" matricula direto no grupo);
+//  · TRANSFERÊNCIA pedida pelo LÍDER no app — SEM destino escolhido (25/08/2026):
+//    ele aperta "Solicitar transferência" e a coordenação decide pra onde. O
+//    destino só existe na RESOLUÇÃO;
 //  · NOVO LÍDER/ANFITRIÃO — candidatura do form público /inscricao-lideres
 //    (Marcos 17/07). Fluxo assistido, SEM WhatsApp: aceitar/recusar e, no
 //    aceite, vincular a um grupo existente (como MAIS UM líder/anfitrião/
@@ -61,6 +64,12 @@ const STATUS_ROW = {
   lid_aceito: { label: 'Aceito · a vincular', cor: C.blue, bg: C.blueBg },
   lid_vinculado: { label: 'Vinculado', cor: C.green, bg: C.greenBg },
   lid_recusado: { label: 'Recusado', cor: C.red, bg: C.redBg },
+  // Transferência pedida pelo líder no app (25/08/2026)
+  // ⚠️ ÂMBAR, não vermelho: é PENDÊNCIA de decisão, não decisão contra ninguém
+  // — mesma leitura do `sem_contato` logo acima.
+  transf_pendente: { label: 'Transferência · a decidir', cor: C.amber, bg: C.amberBg },
+  transf_concluida: { label: 'Transferida', cor: C.green, bg: C.greenBg },
+  transf_recusada: { label: 'Transferência recusada', cor: C.t3, bg: C.bg },
   // Renovação de temporada — líder respondeu que NÃO continua (triagem)
   ren_nao_continua: { label: 'Líder não continua', cor: C.red, bg: C.redBg },
   ren_triada: { label: 'Renovação triada', cor: C.green, bg: C.greenBg },
@@ -76,6 +85,7 @@ const FILTRO_STATUS = [
   { key: 'encaminhado', label: 'Encaminhados', casa: ['encaminhado'] },
   { key: 'a_contatar', label: 'Next · a contatar', casa: ['enc_pendente', 'enc_nao_respondeu', 'enc_em_duvida'] },
   { key: 'lideres_decidir', label: 'Novos líderes · a decidir', casa: ['lid_pendente', 'lid_aceito'] },
+  { key: 'transferencias', label: 'Transferências a decidir', casa: ['transf_pendente'] },
   { key: 'renovacao_triagem', label: 'Renovação · líder não continua', casa: ['ren_nao_continua'] },
   { key: 'aprovado', label: 'Aprovados / engajaram', casa: ['aprovado', 'resolvido', 'enc_engajou', 'lid_vinculado'] },
   { key: 'rejeitado', label: 'Rejeitados / sem interesse', casa: ['rejeitado', 'cancelado', 'enc_sem_interesse', 'lid_recusado'] },
@@ -136,6 +146,11 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   const [encs, setEncs] = useState([]);
   const [lideresInsc, setLideresInsc] = useState([]);
   const [renovacoes, setRenovacoes] = useState([]);
+  const [transferencias, setTransferencias] = useState([]);
+  // ⚠️ A origem pode estar fora do ar (migration não aplicada). `null` = não
+  // sei; a tela DECLARA isso em vez de mostrar "nenhuma transferência", que é
+  // resposta errada com cara de resposta.
+  const [transfAviso, setTransfAviso] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const [busca, setBusca] = useState('');
@@ -223,7 +238,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     setLoading(true);
     try {
       const desde = new Date(janela.desdeMs).toISOString();
-      const [peds, encRows, lidRows, renRows] = await Promise.all([
+      const [peds, encRows, lidRows, renRows, transfRes] = await Promise.all([
         api.listarPedidos({ desde }),
         encApi.list({ destino: 'grupos' }).catch(() => []),
         // Terceira origem: candidaturas de líder/anfitrião (falha silenciosa
@@ -232,11 +247,16 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         // Quarta origem: renovação de temporada — líderes que responderam que
         // NÃO continuam (aguardando triagem). Mesma tolerância a migration.
         api.renovacao.painel({ status: 'nao_continua' }).then(r => r?.rows || []).catch(() => []),
+        // Quinta origem: transferências pedidas pelo líder no app, sem destino.
+        // ⚠️ Falha vira AVISO, não lista vazia — ver o comentário do estado.
+        api.transferencias.list().catch(() => ({ disponivel: false, rows: [], aviso: 'Não deu pra carregar as transferências agora.' })),
       ]);
       setPedidos(Array.isArray(peds) ? peds : []);
       setEncs(Array.isArray(encRows) ? encRows : []);
       setLideresInsc(Array.isArray(lidRows) ? lidRows : []);
       setRenovacoes(Array.isArray(renRows) ? renRows : []);
+      setTransferencias(Array.isArray(transfRes?.rows) ? transfRes.rows : []);
+      setTransfAviso(transfRes?.disponivel === false ? (transfRes.aviso || 'Transferências indisponíveis.') : null);
       setSelected(new Set());
     } catch {
       toast.error('Erro ao carregar a caixa de entrada');
@@ -351,6 +371,22 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
       });
     }
 
+    for (const t of transferencias) {
+      if (!dentro(t.created_at)) continue;
+      lista.push({
+        tipo: 'transf', key: `t_${t.id}`, data: t.created_at,
+        nome: t.pessoa?.nome || 'Pessoa', telefone: t.pessoa?.telefone || null, email: t.pessoa?.email || null,
+        statusKey: `transf_${t.status}`,
+        veioNext: false,
+        // ⚠️ O grupo exibido é o de ORIGEM enquanto está pendente (é de onde a
+        // pessoa está saindo); resolvida, mostra o DESTINO — é o que a linha
+        // passou a significar.
+        grupoNome: t.status === 'concluida' ? (t.destino_grupo?.nome || null) : (t.origem_grupo?.nome || null),
+        grupoCodigo: t.status === 'concluida' ? (t.destino_grupo?.codigo || null) : (t.origem_grupo?.codigo || null),
+        raw: t,
+      });
+    }
+
     const s = busca.trim().toLowerCase();
     return lista
       .filter(r => {
@@ -358,6 +394,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         if (fOrigem === 'inscricao' && (r.tipo !== 'pedido' || r.veioNext)) return false;
         if (fOrigem === 'lideres' && r.tipo !== 'lider') return false;
         if (fOrigem === 'renovacao' && r.tipo !== 'renov') return false;
+        if (fOrigem === 'transferencia' && r.tipo !== 'transf') return false;
         if (s) {
           const alvo = [r.nome, r.telefone, r.email, r.grupoNome, r.grupoCodigo].filter(Boolean).join(' ').toLowerCase();
           if (!alvo.includes(s)) return false;
@@ -365,7 +402,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
         return true;
       })
       .sort((a, b) => new Date(b.data) - new Date(a.data));
-  }, [pedidos, encs, lideresInsc, renovacoes, busca, fOrigem, janela.desdeMs, janela.ateMs]);
+  }, [pedidos, encs, lideresInsc, renovacoes, transferencias, busca, fOrigem, janela.desdeMs, janela.ateMs]);
 
   // Pedidos parados aguardando o LÍDER decidir — derivado das mesmas linhas da
   // tela (segue origem/período/busca · "não existirem duas verdades"). O nome
@@ -986,6 +1023,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
           <option value="next">Next</option>
           <option value="lideres">Novos líderes/anfitriões</option>
           <option value="renovacao">Renovação de temporada</option>
+          <option value="transferencia">Transferências (app)</option>
         </select>
         <select value={fStatus} onChange={e => setFStatus(e.target.value)} style={selStyle}>
           {FILTRO_STATUS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
@@ -1014,6 +1052,15 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
               </Button>
             </>
           )}
+        </div>
+      )}
+
+      {/* ⚠️ Origem fora do ar é DECLARADA. "Nenhuma transferência pendente" e "a
+          consulta falhou" levam a decisões opostas — e a segunda, silenciosa,
+          deixaria pedido de líder parado sem ninguém saber que existe. */}
+      {transfAviso && (
+        <div style={{ background: C.amberBg, border: `1px solid ${C.amber}44`, color: C.amber, borderRadius: 10, padding: '8px 12px', fontSize: 12.5, marginBottom: 12 }}>
+          {transfAviso} As outras origens da caixa seguem completas.
         </div>
       )}
 
@@ -1120,6 +1167,8 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
                         <td style={{ padding: '10px 8px' }}>
                           {r.tipo === 'renov' ? (
                             <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.redBg, color: C.red, fontWeight: 700 }}>Renovação</span>
+                          ) : r.tipo === 'transf' ? (
+                            <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.amberBg, color: C.amber, fontWeight: 700 }}>Transferência</span>
                           ) : r.tipo === 'lider' ? (
                             <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 700 }}>
                               {[r.raw.quer_lider && 'Líder', r.raw.quer_anfitriao && 'Anfitrião'].filter(Boolean).join(' + ')}
@@ -1179,6 +1228,14 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
                                 />
                               : r.tipo === 'renov'
                               ? <PainelRenovacao row={r.raw} podeEditar={podeEditar} onTriado={depois} />
+                              : r.tipo === 'transf'
+                              ? <PainelTransferencia
+                                  t={r.raw}
+                                  podeEditar={podeEditar}
+                                  gruposAtivos={gruposAtivos}
+                                  carregarGrupos={carregarGrupos}
+                                  onResolvido={depois}
+                                />
                               : r.tipo === 'lider'
                               ? <PainelLider
                                   insc={r.raw}
@@ -1896,6 +1953,147 @@ function PainelRenovacao({ row, podeEditar, onTriado }) {
             </Button>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Painel da TRANSFERÊNCIA pedida pelo líder no app (Marcos · 25/08/2026)
+//
+// Pedido dele: *"eu quero que o líder de grupo não escolha para onde ele está
+// transferindo, eu quero que ele aperte e solicite transferência, isso vai para
+// caixa de entradas como pendente para Naná gerenciar."*
+//
+// ⚠️⚠️ É AQUI que o destino é escolhido — o pedido do app nasce SEM ele. Por
+// isso o painel mostra de onde a pessoa está saindo, o motivo que o líder
+// escreveu e o contato dela: quem decide precisa dos três pra escolher o grupo,
+// e nenhum deles existe na linha da tabela.
+//
+// ⚠️ "Transferir" MOVE a pessoa (cria o vínculo no destino e encerra o da
+// origem) — NÃO cria pedido pro líder de lá aprovar. É a decisão da coordenação,
+// e é exatamente isso que o líder pediu ao abrir a solicitação. O texto do botão
+// diz o que vai acontecer, porque é ação que mexe em vínculo de gente.
+// ============================================================================
+function PainelTransferencia({ t, podeEditar, gruposAtivos, carregarGrupos, onResolvido }) {
+  const [destino, setDestino] = useState('');
+  const [obs, setObs] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [recusando, setRecusando] = useState(false);
+
+  // A lista de grupos é carregada sob demanda (mesma régua dos outros painéis).
+  useEffect(() => { if (t.status === 'pendente') carregarGrupos?.(); }, [t.status, carregarGrupos]);
+
+  const resolvido = t.status !== 'pendente';
+
+  const acao = async (tipo) => {
+    if (tipo === 'transferir' && !destino) { toast.error('Escolha o grupo de destino'); return; }
+    setSalvando(true);
+    try {
+      const r = await api.transferencias.resolver(t.id, {
+        acao: tipo,
+        grupo_destino_id: tipo === 'transferir' ? destino : undefined,
+        obs: obs.trim() || undefined,
+      });
+      // ⚠️ A tela DIZ se o vínculo de origem foi encerrado. Quando a pessoa
+      // sai por outro caminho no meio (o líder registrou a saída antes), o
+      // resultado é "entrou no destino e não havia o que encerrar" — e não
+      // avisar isso deixaria a coordenação achando que ficou pela metade.
+      if (tipo === 'transferir') {
+        toast.success(`Transferida para ${r?.destino || 'o grupo escolhido'}`
+          + (r?.vinculo_origem_encerrado === false ? ' (o vínculo antigo já não estava ativo)' : ''));
+      } else {
+        toast.success('Transferência recusada — a pessoa fica onde está');
+      }
+      onResolvido?.();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao resolver a transferência');
+    } finally { setSalvando(false); }
+  };
+
+  return (
+    <div style={{ fontSize: 12.5, color: C.t2 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 10.5, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4 }}>Sai do grupo</div>
+          <div style={{ color: C.text, fontWeight: 600 }}>
+            {t.origem_grupo?.nome || '—'}
+            {t.origem_grupo?.codigo && <span style={{ color: C.t3, fontWeight: 400 }}> · {t.origem_grupo.codigo}</span>}
+          </div>
+          {t.origem_grupo?.bairro && <div style={{ fontSize: 11, color: C.t3 }}>{t.origem_grupo.bairro}</div>}
+        </div>
+        <div>
+          <div style={{ fontSize: 10.5, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4 }}>Quem pediu</div>
+          <div style={{ color: C.text }}>{t.pedido_por_nome || '—'}</div>
+          <div style={{ fontSize: 11, color: C.t3 }}>pelo {t.origem === 'app' ? 'app' : t.origem}</div>
+        </div>
+        {t.destino_grupo && (
+          <div>
+            <div style={{ fontSize: 10.5, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4 }}>Foi para</div>
+            <div style={{ color: C.green, fontWeight: 600 }}>{t.destino_grupo.nome}</div>
+          </div>
+        )}
+      </div>
+
+      {/* ⚠️ O motivo é o que o líder escreveu — é o insumo principal da decisão,
+          então aparece inteiro, não truncado. */}
+      {t.motivo && (
+        <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: '8px 10px', marginBottom: 10 }}>
+          <div style={{ fontSize: 10.5, color: C.t3, marginBottom: 2 }}>Motivo escrito pelo líder</div>
+          <div style={{ color: C.text, whiteSpace: 'pre-wrap' }}>{t.motivo}</div>
+        </div>
+      )}
+
+      {resolvido ? (
+        <div style={{ fontSize: 12, color: C.t3 }}>
+          {t.status === 'concluida' ? 'Concluída' : 'Recusada'}
+          {t.resolvido_por_nome ? ` por ${t.resolvido_por_nome}` : ''}
+          {t.resolvido_em ? ` em ${new Date(t.resolvido_em).toLocaleDateString('pt-BR')}` : ''}
+          {t.resolucao_obs ? ` · ${t.resolucao_obs}` : ''}
+        </div>
+      ) : !podeEditar ? (
+        <div style={{ fontSize: 12, color: C.t3 }}>Você não tem permissão para resolver transferências.</div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <select
+              value={destino}
+              onChange={e => setDestino(e.target.value)}
+              style={{ padding: '7px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12.5, minWidth: 260 }}>
+              <option value="">Escolha o grupo de destino…</option>
+              {(gruposAtivos || [])
+                .filter(g => g.id !== t.grupo_origem_id)
+                .map(g => (
+                  <option key={g.id} value={g.id}>
+                    {g.nome}{g.bairro ? ` · ${g.bairro}` : ''}{g.categoria ? ` · ${g.categoria}` : ''}
+                  </option>
+                ))}
+            </select>
+            <Input
+              placeholder="Observação da decisão (opcional)…"
+              value={obs}
+              onChange={e => setObs(e.target.value)}
+              style={{ flex: 1, minWidth: 200 }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+            {/* ⚠️ Recusar em CONTORNO: a hierarquia tem que dizer qual é a ação
+                esperada, e o líder pediu a transferência de verdade. */}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={salvando}
+              onClick={() => (recusando ? acao('recusar') : setRecusando(true))}>
+              {recusando ? 'Confirmar recusa (a pessoa fica)' : 'Recusar'}
+            </Button>
+            <Button size="sm" disabled={salvando || !destino} onClick={() => acao('transferir')}>
+              {salvando ? 'Movendo…' : 'Mover para este grupo'}
+            </Button>
+          </div>
+          <div style={{ fontSize: 11, color: C.t3, marginTop: 6, textAlign: 'right' }}>
+            Ao mover, a pessoa entra no grupo escolhido e sai do atual. Ninguém recebe mensagem automática.
+          </div>
+        </>
       )}
     </div>
   );

@@ -138,7 +138,15 @@ function montarListaLideres({ principalNome, principalId, roster = [], apelidos 
   };
 }
 
-// Líderes do roster de UM grupo (funcao lider/co_lider · vínculo vivo).
+// Líderes do roster de UM grupo (funcao `lider` · vínculo vivo).
+//
+// ⚠️⚠️ `lider_treinamento` NÃO entra na VITRINE, e é decisão (25/08/2026): ele
+// GERENCIA o grupo no app, mas não é anunciado como líder na página pública de
+// inscrição nem no mapa — quem está em treinamento não é a face do grupo para
+// quem procura de fora. `co_lider` saiu porque o termo foi aposentado.
+// ⚠️ Se um dia a vitrine tiver que incluir treinamento, é decisão de produto:
+// NÃO alinhar por engano com a lista de GESTÃO do `gruposPapelApp`, que é mais
+// larga de propósito.
 // Best-effort: falha aqui não pode derrubar o deep-link — devolve [] e o
 // grupo fica só com o principal (comportamento anterior).
 async function rosterLideresDoGrupo(grupoId) {
@@ -146,7 +154,7 @@ async function rosterLideresDoGrupo(grupoId) {
     const { data, error } = await supabase.from('mem_grupo_membros')
       .select('membro_id, mem_membros!inner(nome)')
       .eq('grupo_id', grupoId)
-      .in('funcao', ['lider', 'co_lider'])
+      .in('funcao', ['lider'])
       .is('saiu_em', null).is('deleted_at', null);
     if (error) {
       console.warn('[public grupos] roster de líderes indisponível:', error.message);
@@ -243,7 +251,7 @@ router.get('/buscar', async (req, res) => {
 
     // Enriquecer com líder principal (mem_grupos.lider_id — é quem recebe a
     // aprovação por WhatsApp) + líderes ADICIONAIS do roster (funcao lider/
-    // co_lider · Marcos 15/07: grupo com dois líderes aparece na busca por
+    // Marcos 15/07: grupo com dois líderes aparece na busca por
     // QUALQUER um deles).
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     let lideresMap = {};
@@ -257,7 +265,7 @@ router.get('/buscar', async (req, res) => {
       const { data: rl } = await supabase.from('mem_grupo_membros')
         .select('grupo_id, membro_id, mem_membros!inner(nome)')
         .in('grupo_id', gIds.slice(i, i + 200))
-        .in('funcao', ['lider', 'co_lider'])
+        .in('funcao', ['lider'])
         .is('saiu_em', null).is('deleted_at', null);
       (rl || []).forEach(v => {
         if (!v.mem_membros?.nome) return;
@@ -2446,14 +2454,19 @@ async function contextoConferencia(token) {
   return { payload, conf, grupo };
 }
 
-// ⚠️ LIDERANÇA NÃO É REMOVÍVEL por este fluxo. Cenário real: co-líder Ana no
-// roster; o líder desmarca achando que é participante → `saiu_em` gravado → o
-// `GET /public/grupos/buscar` (que monta lideres_busca/lideres_exibicao com
-// `funcao IN ('lider','co_lider')` + `saiu_em IS NULL`) para de devolver a Ana
-// e **o grupo deixa de ser encontrável pelo nome dela** na página pública e no
-// mapa, sem ninguém ser avisado. Trocar liderança é ato de gestão (aba Pessoas
-// do /grupos · PUT /membros/:id/funcao), não efeito colateral de conferir lista.
-const FUNCOES_PROTEGIDAS = new Set(['lider', 'co_lider']);
+// ⚠️ LIDERANÇA NÃO É REMOVÍVEL por este fluxo. Cenário real: líder Ana no
+// roster; o líder principal desmarca achando que é participante → `saiu_em`
+// gravado → o `GET /public/grupos/buscar` (que monta lideres_busca/
+// lideres_exibicao com `funcao='lider'` + `saiu_em IS NULL`) para de devolver a
+// Ana e **o grupo deixa de ser encontrável pelo nome dela** na página pública e
+// no mapa, sem ninguém ser avisado. Trocar liderança é ato de gestão (aba
+// Pessoas do /grupos · PUT /membros/:id/funcao), não efeito colateral de
+// conferir lista.
+// ⚠️⚠️ `lider_treinamento` ENTROU aqui em 25/08/2026 por um motivo DIFERENTE do
+// da vitrine: ele passou a GERENCIAR o grupo (`gruposPapelApp`), e um checklist
+// de conferência não pode tirar do roster quem administra o grupo — o gate de
+// gestão lê o vínculo vivo, então o líder em treinamento perderia o acesso.
+const FUNCOES_PROTEGIDAS = new Set(['lider', 'lider_treinamento']);
 
 // ── 4 categorias da conferência (Marcos · 04/08, fechamento com a Naná) ──
 // lideranca 🔒 · inscrito (entrou NESTA temporada, incluindo o piloto
@@ -2533,10 +2546,13 @@ async function membrosInscritosPreAbertura(grupoId, vincs, temporada) {
   }
   return inscritos;
 }
-const RANK_FUNCAO = { coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, lider_treinamento: 3, frequentador: 2, visitante: 1 };
+// ⚠️ `co_lider` fica no mapa só como LEITURA de dado histórico: a migration
+// 20260825170000 converteu as linhas, mas ler é tolerante de propósito (um
+// backup restaurado ou uma cópia velha não pode virar `null` na tela).
+const RANK_FUNCAO = { coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, lider_treinamento: 4, frequentador: 2, visitante: 1 };
 const rotuloFuncao = (f) => ({
   coordenador: 'Coordenador', supervisor: 'Supervisor', lider: 'Líder',
-  co_lider: 'Co-líder', lider_treinamento: 'Em treinamento',
+  co_lider: 'Líder em treinamento', lider_treinamento: 'Líder em treinamento',
 }[f] || null);
 
 // Roster pra tela: vínculos ATIVOS (marcados = "faz parte") + os que ESTA

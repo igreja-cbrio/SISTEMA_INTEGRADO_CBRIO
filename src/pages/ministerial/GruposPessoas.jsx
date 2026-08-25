@@ -38,8 +38,9 @@ const PAPEIS = {
   coordenador: { label: 'Coordenador', plural: 'Coordenadores', cor: '#8b5cf6', Icon: Crown },
   supervisor: { label: 'Supervisor', plural: 'Supervisores', cor: '#3b82f6', Icon: Eye },
   lider: { label: 'Líder', plural: 'Líderes', cor: '#00B39D', Icon: Star },
-  co_lider: { label: 'Co-líder', plural: 'Co-líderes', cor: '#0ea5e9', Icon: Star },
-  lider_treinamento: { label: 'Em treinamento', plural: 'Em treinamento', cor: '#f59e0b', Icon: GraduationCap },
+  // ⚠️ só pra LER dado histórico — ver a nota do TIPO_PAPEL em Grupos.jsx.
+  co_lider: { label: 'Líder em treinamento', plural: 'Líderes em treinamento', cor: '#f59e0b', Icon: GraduationCap },
+  lider_treinamento: { label: 'Líder em treinamento', plural: 'Líderes em treinamento', cor: '#f59e0b', Icon: GraduationCap },
   frequentador: { label: 'Membro', plural: 'Membros', cor: '#10b981', Icon: Users },
   visitante: { label: 'Visitante', plural: 'Visitantes', cor: '#94a3b8', Icon: Users },
 };
@@ -355,7 +356,10 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
       c[p.papel] = (c[p.papel] || 0) + 1;
       if (p.ultima_frequencia) freq++; else visit++;
     }
-    c.lideres_total = (c.lider || 0) + (c.co_lider || 0);
+    // ⚠️ "Liderança" passou a ser QUEM GERENCIA o grupo (25/08/2026): líder +
+    // líder em treinamento. O `co_lider` entra na soma só pra não perder linha
+    // de dado histórico que alguém restaure.
+    c.lideres_total = (c.lider || 0) + (c.lider_treinamento || 0) + (c.co_lider || 0);
     c.frequentadores = freq;
     c.visitantes = visit;
     c.com_presenca = freq > 0; // a frequência já começou a ser preenchida?
@@ -371,7 +375,7 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
         p.nome?.toLowerCase().includes(s) ||
         gruposDe(p).some(g => g.nome?.toLowerCase().includes(s)));
     }
-    if (filtro === 'lideres') lista = lista.filter(p => p.papel === 'lider' || p.papel === 'co_lider');
+    if (filtro === 'lideres') lista = lista.filter(p => ['lider', 'lider_treinamento', 'co_lider'].includes(p.papel));
     else if (filtro === 'frequentadores') lista = lista.filter(p => !!p.ultima_frequencia);
     else if (filtro === 'visitantes') lista = lista.filter(p => !p.ultima_frequencia);
     else if (filtro !== 'todos') lista = lista.filter(p => p.papel === filtro);

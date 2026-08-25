@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { proximasOcorrencias, proximoEncontro, agoraBRT } from '../../backend/utils/agendaGrupo.js';
+import { proximasOcorrencias, proximoEncontro, agoraBRT, ocorrenciasPassadas } from '../../backend/utils/agendaGrupo.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pedido da Naná (18/08/2026): no box "Próximo encontro" do app, o líder poder
@@ -262,5 +262,139 @@ describe('encontro anterior · é o que decide "faltou registrar"', () => {
 
   it('grupo sem dia_semana devolve null, não erro', () => {
     expect(ocorrenciaAnterior({ diaSemana: null, horario: '20:00', agora: TER_14H })).toBeNull();
+  });
+});
+
+// =============================================================================
+// AS OCORRENCIAS QUE JA PASSARAM (Marcos - 25/08/2026)
+//
+// Pedido: "sempre manter os encontros a vista - se a pessoa passar 1 semana e
+// nao registrar, ele entra automaticamente como presenca nao registrada e pode
+// ser registrada posteriormente".
+//
+// ATENCAO O QUE ESTES CASOS PROTEGEM: o app passou a MANDAR a data da chamada,
+// escolhida desta lista. Se a lista errar a data, a chamada do encontro do dia
+// 18 volta a ser gravada no dia 24 - que e exatamente o defeito relatado.
+// =============================================================================
+
+// Terca 25/08/2026, 12:00 BRT (15:00Z). O encontro de terca as 19:30 de HOJE
+// ainda NAO aconteceu.
+const TER_25_12H = new Date('2026-08-25T15:00:00Z');
+
+const passadas = (extra: Record<string, unknown> = {}) =>
+  ocorrenciasPassadas({ diaSemana: 2, horario: '19:30', agora: TER_25_12H, quantas: 4, ...extra });
+
+describe('ocorrencias passadas - o historico a vista', () => {
+  it('lista da mais RECENTE para a mais antiga', () => {
+    expect(passadas().map((o: any) => o.data))
+      .toEqual(['2026-08-18', '2026-08-11', '2026-08-04', '2026-07-28']);
+  });
+
+  it('ATENCAO o encontro de HOJE que ainda nao chegou na hora NAO entra', () => {
+    // Se entrasse, a tela ofereceria "registrar presenca" de uma reuniao que
+    // acontece a noite - e a chamada nasceria vazia.
+    expect(passadas().map((o: any) => o.data)).not.toContain('2026-08-25');
+  });
+
+  it('o encontro de hoje ENTRA depois de passar a hora', () => {
+    // 23:00Z de 25/08 = 20:00 BRT, depois das 19:30.
+    const depois = ocorrenciasPassadas({
+      diaSemana: 2, horario: '19:30', agora: new Date('2026-08-25T23:00:00Z'), quantas: 2,
+    });
+    expect(depois[0]).toMatchObject({ data: '2026-08-25', status: 'nao_registrado' });
+  });
+
+  it('sem chamada registrada, tudo volta como nao_registrado', () => {
+    expect(passadas().every((o: any) => o.status === 'nao_registrado')).toBe(true);
+  });
+
+  it('ATENCAO a semana em que o lider registrou fica registrado, e SO ela', () => {
+    // E o caso do relato: pulou o 18 e preencheu o 24. Aqui, registrado no 18.
+    const r = passadas({ registradas: ['2026-08-18'] });
+    expect(r[0]).toMatchObject({ data: '2026-08-18', status: 'registrado', registrado: true });
+    expect(r[1]).toMatchObject({ data: '2026-08-11', status: 'nao_registrado' });
+  });
+
+  it('aceita Set de datas registradas, nao so array', () => {
+    const r = passadas({ registradas: new Set(['2026-08-11']) });
+    expect(r.find((o: any) => o.data === '2026-08-11')?.status).toBe('registrado');
+  });
+
+  it('ATENCAO encontro CANCELADO nao e pendencia de chamada', () => {
+    const r = passadas({ excecoes: [{ data_original: '2026-08-18', status: 'cancelado' }] });
+    expect(r[0]).toMatchObject({ data: '2026-08-18', status: 'cancelado' });
+  });
+
+  it('cancelado que TEM chamada registrada conta como registrado', () => {
+    // O fato (a chamada existe) vence a intencao (o lider havia cancelado).
+    const r = passadas({
+      excecoes: [{ data_original: '2026-08-18', status: 'cancelado' }],
+      registradas: ['2026-08-18'],
+    });
+    expect(r[0]).toMatchObject({ data: '2026-08-18', status: 'registrado' });
+  });
+
+  it('remarcado para tras aparece na DATA NOVA, com a original ao lado', () => {
+    const r = passadas({ excecoes: [{ data_original: '2026-08-18', status: 'remarcado', nova_data: '2026-08-20' }] });
+    expect(r[0]).toMatchObject({ data: '2026-08-20', data_original: '2026-08-18' });
+  });
+
+  it('ATENCAO remarcado para o FUTURO sai do historico', () => {
+    // Ele vive na agenda futura. Listar aqui cobraria chamada de encontro que
+    // ainda vai acontecer.
+    const r = passadas({ excecoes: [{ data_original: '2026-08-18', status: 'remarcado', nova_data: '2026-08-28' }] });
+    expect(r.map((o: any) => o.data)).not.toContain('2026-08-18');
+    expect(r.map((o: any) => o.data)).not.toContain('2026-08-28');
+    expect(r[0].data).toBe('2026-08-11');
+  });
+
+  it('remarcado leva o horario novo', () => {
+    const r = passadas({ excecoes: [{ data_original: '2026-08-18', status: 'remarcado', nova_data: '2026-08-19', novo_horario: '21:00' }] });
+    expect(r[0]).toMatchObject({ data: '2026-08-19', horario: '21:00' });
+  });
+
+  it('respeita a cadencia: quinzenal COM ancora salta de 14 em 14', () => {
+    const r = passadas({ recorrencia: 'quinzenal', ancoraISO: '2026-08-11' });
+    expect(r.map((o: any) => o.data)).toEqual(['2026-08-11', '2026-07-28', '2026-07-14', '2026-06-30']);
+  });
+
+  it('ATENCAO quinzenal SEM ancora devolve VAZIO - nao inventa passado', () => {
+    // Pra frente uma ocorrencia incerta e um convite; pra tras seria cobrar
+    // chamada de encontro que talvez nao tenha existido.
+    expect(passadas({ recorrencia: 'quinzenal' })).toEqual([]);
+  });
+
+  it('mensal COM ancora salta de 28 em 28', () => {
+    const r = passadas({ recorrencia: 'mensal', ancoraISO: '2026-08-04', quantas: 3 });
+    expect(r.map((o: any) => o.data)).toEqual(['2026-08-04', '2026-07-07', '2026-06-09']);
+  });
+
+  it('diario devolve os dias corridos, incluindo hoje', () => {
+    const r = ocorrenciasPassadas({ diaSemana: 2, recorrencia: 'diario', horario: '07:00', agora: TER_25_12H, quantas: 3 });
+    expect(r.map((o: any) => o.data)).toEqual(['2026-08-25', '2026-08-24', '2026-08-23']);
+  });
+
+  it('ATENCAO grupo sem dia_semana devolve VAZIO (Number(null) e DOMINGO)', () => {
+    expect(ocorrenciasPassadas({ diaSemana: null, horario: '20:00', agora: TER_25_12H })).toEqual([]);
+    expect(ocorrenciasPassadas({ diaSemana: undefined, horario: '20:00', agora: TER_25_12H })).toEqual([]);
+    expect(ocorrenciasPassadas({ diaSemana: '', horario: '20:00', agora: TER_25_12H })).toEqual([]);
+  });
+
+  it('respeita o teto de quantas', () => {
+    expect(ocorrenciasPassadas({ diaSemana: 2, horario: '19:30', agora: TER_25_12H, quantas: 2 })).toHaveLength(2);
+  });
+
+  it('desdeISO corta o inicio da temporada', () => {
+    const r = passadas({ desdeISO: '2026-08-05', quantas: 10 });
+    expect(r.map((o: any) => o.data)).toEqual(['2026-08-18', '2026-08-11']);
+  });
+
+  it('ATENCAO o dia e BRT: as 23h BRT de terca ainda e TERCA', () => {
+    // 02:00Z de quarta = 23:00 BRT de terca. Em UTC o dia ja virou, e o
+    // encontro de terca cairia fora do historico da propria terca.
+    const r = ocorrenciasPassadas({
+      diaSemana: 2, horario: '19:30', agora: new Date('2026-08-26T02:00:00Z'), quantas: 1,
+    });
+    expect(r[0].data).toBe('2026-08-25');
   });
 });

@@ -844,6 +844,16 @@ export const grupos = {
   update: (id, data) => put(`/grupos/${id}`, data),
   remove: (id) => del(`/grupos/${id}`),
   addMembro: (grupoId, data) => post(`/grupos/${grupoId}/membros`, data),
+  // Cadastrar pessoa NOVA já dentro do grupo (Marcos · 25/08/2026). ⚠️ NÃO
+  // substitui o `addMembro`, que é pra quem JÁ EXISTE na base (manda membro_id);
+  // este passa pelo matcher canônico e cria/liga a pessoa. Mesma régua do app.
+  addPessoaNova: (grupoId, data) => post(`/grupos/${grupoId}/pessoas`, data),
+  // Transferências pedidas pelo líder no app, SEM destino — a 5ª origem da
+  // Caixa de entrada. Quem escolhe o grupo é a coordenação.
+  transferencias: {
+    list: (params) => get('/grupos/transferencias' + (params ? '?' + new URLSearchParams(params) : '')),
+    resolver: (id, body) => post(`/grupos/transferencias/${id}/resolver`, body),
+  },
   // Funil de entrada pro botão "Adicionar": direcionados do Next + inscritos neste grupo
   candidatosAdicionar: (grupoId) => get(`/grupos/${grupoId}/candidatos-adicionar`),
   sairMembro: (participacaoId, data) => patch(`/grupos/participacao/${participacaoId}/sair`, data),
@@ -857,6 +867,9 @@ export const grupos = {
   removeMaterial: (docId) => del(`/grupos/materiais/${docId}`),
   encontros: (grupoId, params) => get(`/grupos/${grupoId}/encontros` + (params ? '?' + new URLSearchParams(params) : '')),
   encontro: (encontroId) => get(`/grupos/encontros/${encontroId}`),
+  // As ocorrências que já passaram e ficaram SEM chamada (espelho web do item 3
+  // do Marcos · 25/08). Endpoint próprio porque `encontros` devolve array cru.
+  encontrosPendentes: (grupoId) => get(`/grupos/${grupoId}/encontros-pendentes`),
   // Histórico simples de quem entrou e saiu do grupo (leitura pura · o formato
   // foi pedido pelo Marcos: "tela pequena, com pouco destaque, sem muita
   // interação"). Aprovar pedido segue na Caixa de entrada.

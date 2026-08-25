@@ -251,7 +251,158 @@ function proximoEncontro(args) {
   return lista.find(o => o.status !== 'cancelado') || null;
 }
 
+// ============================================================================
+// AS OCORRENCIAS QUE JA PASSARAM (Marcos - 25/08/2026)
+//
+// Pedido dele, sobre a aba Encontros do app: "quando eu nao preencho uma semana
+// e preencho a outra ele da meio que um bug - ele provavelmente ficou em duvida
+// se eu estava registrando a presenca do dia 18, ai ele marcou que o encontro
+// foi dia 24. Acho que vale a pena sempre manter os encontros a vista: se a
+// pessoa passar 1 semana e nao registrar, ele entra automaticamente como
+// presenca nao registrada e pode ser registrada posteriormente se o lider
+// quiser."
+//
+// ATENCAO A CAUSA do "bug" nao era duvida do sistema - era o app NAO MANDAR
+// data nenhuma. O `POST /app/grupos/:id/encontros` ja aceitava `data` e caia em
+// `hojeBRT()` quando ela nao vinha; a tela nunca mandou. Registrar no dia 24 a
+// chamada do encontro do dia 18 gravava, corretamente do ponto de vista do
+// servidor, um encontro no dia 24. A regua abaixo e o que da ao app a LISTA de
+// datas possiveis, pra ele mandar a certa.
+//
+// Simetrica de `proximasOcorrencias`, com uma diferenca que importa: aqui SEM
+// ANCORA NAO se inventa nada. Pra frente, uma ocorrencia incerta e um convite a
+// registrar presenca (e a tela declara a incerteza); pra tras, ela seria uma
+// cobranca de chamada de um encontro que talvez nunca tenha existido. Nunca
+// listar passado que nao se sabe se aconteceu.
+// ============================================================================
+
+// Gera as DATAS ORIGINAIS que ja passaram, do mais recente para o mais antigo.
+// Espelho de `gerarOriginais`, andando para tras - e com as MESMAS guardas
+// (dia_semana ausente, cadencia lida de `recorrencia`, ancora obrigatoria fora
+// do semanal).
+function gerarOriginaisPassadas({ diaSemana, recorrencia, ancoraISO, hojeISO, diaSemanaHoje, quantas, desdeISO = null }) {
+  const passo = cadenciaDias(recorrencia);
+  const originais = [];
+
+  // Number(null) === 0 e 0 e DOMINGO - grupo sem dia marcado viraria grupo de
+  // domingo com historico inventado. Mesma guarda do gerador para frente.
+  const semDia = diaSemana === null || diaSemana === undefined || diaSemana === '';
+  if (semDia && passo !== 1) return originais;
+
+  const dentro = (d) => !desdeISO || d >= String(desdeISO).slice(0, 10);
+
+  if (passo === 1) {
+    for (let i = 0; i < quantas; i++) {
+      const d = somarDias(hojeISO, -i);
+      if (!dentro(d)) break;
+      originais.push(d);
+    }
+    return originais;
+  }
+
+  const alvo = Number(diaSemana);
+  if (!Number.isInteger(alvo) || alvo < 0 || alvo > 6) return originais;
+
+  if (passo === 7) {
+    // A ultima ocorrencia do dia da semana em (ou antes de) hoje.
+    const delta = (diaSemanaHoje - alvo + 7) % 7;
+    for (let i = 0; i < quantas; i++) {
+      const d = somarDias(hojeISO, -(delta + i * 7));
+      if (!dentro(d)) break;
+      originais.push(d);
+    }
+    return originais;
+  }
+
+  // Quinzenal/mensal SEM ANCORA devolve VAZIO, de proposito. "De 14 em 14 dias
+  // as tercas" nao diz EM QUAL terca, e no passado a consequencia de chutar e
+  // pior que no futuro: a tela cobraria a chamada de um encontro que talvez nao
+  // tenha acontecido, e o lider registraria presenca na data errada.
+  if (!ancoraISO) return originais;
+
+  // Caminha da ancora para a frente ate passar de hoje, depois volta.
+  let d = String(ancoraISO).slice(0, 10);
+  while (somarDias(d, passo) <= hojeISO) d = somarDias(d, passo);
+  for (let i = 0; i < quantas; i++) {
+    const atual = somarDias(d, -i * passo);
+    if (atual > hojeISO) continue;
+    if (!dentro(atual)) break;
+    originais.push(atual);
+  }
+  return originais;
+}
+
+/**
+ * As ocorrencias que JA PASSARAM, mais recente primeiro, com as excecoes
+ * aplicadas. E o que a aba Encontros usa para manter o historico a vista e
+ * marcar o que ficou sem chamada.
+ *
+ * `registradas`: Set/array de datas ISO que JA tem encontro em
+ * `mem_grupo_encontros`. Quem decide isso e o banco - a regua so carimba.
+ *
+ * Devolve { data_original, data, horario, status, motivo, dia_semana,
+ * registrado }, onde `status` e:
+ *   'registrado'     - houve encontro e a chamada foi feita
+ *   'nao_registrado' - a ocorrencia passou e ninguem registrou (o que o Marcos
+ *                      chamou de "presenca nao registrada" - registravel depois)
+ *   'cancelado'      - o lider cancelou aquela reuniao => NAO e pendencia
+ */
+function ocorrenciasPassadas({
+  diaSemana, horario, recorrencia = 'semanal', ancoraISO = null,
+  excecoes = [], registradas = [], agora = new Date(), quantas = 12, desdeISO = null,
+}) {
+  const n = agoraBRT(agora);
+  const hojeISO = iso(n.ano, n.mes, n.dia);
+  const minutosAgora = n.hora * 60 + n.min;
+
+  const porData = new Map();
+  for (const e of excecoes || []) if (e && e.data_original) porData.set(String(e.data_original).slice(0, 10), e);
+  const jaRegistradas = registradas instanceof Set
+    ? registradas
+    : new Set((registradas || []).map(d => String(d).slice(0, 10)));
+
+  // Pede folga no gerador: ocorrencia remarcada PARA O FUTURO sai da lista, e
+  // sem folga o historico voltaria curto sem motivo aparente.
+  const originais = gerarOriginaisPassadas({
+    diaSemana, recorrencia, ancoraISO, hojeISO,
+    diaSemanaHoje: n.diaSemana, quantas: quantas + 4, desdeISO,
+  });
+
+  const out = [];
+  for (const dataOrig of originais) {
+    if (out.length >= quantas) break;
+    const ex = porData.get(dataOrig);
+    const cancelado = ex?.status === 'cancelado';
+    const remarcado = ex?.status === 'remarcado';
+    const dataFinal = remarcado ? String(ex.nova_data).slice(0, 10) : dataOrig;
+    const horaFinal = hhmm(remarcado && ex.novo_horario ? ex.novo_horario : horario);
+
+    // Remarcado PARA A FRENTE nao e passado: ele vive na agenda futura, e
+    // lista-lo aqui como "nao registrado" cobraria chamada de encontro que
+    // ainda vai acontecer.
+    const jaPassou = dataFinal < hojeISO
+      || (dataFinal === hojeISO
+        && minutosAgora > (parseInt(horaFinal.slice(0, 2), 10) * 60 + parseInt(horaFinal.slice(3, 5), 10)));
+    if (!jaPassou) continue;
+
+    const registrado = jaRegistradas.has(dataFinal);
+    out.push({
+      data_original: dataOrig,
+      data: dataFinal,
+      horario: horaFinal,
+      // Cancelado que TEM encontro registrado conta como registrado: o fato (a
+      // chamada existe) vence a intencao (o lider havia cancelado).
+      status: registrado ? 'registrado' : (cancelado ? 'cancelado' : 'nao_registrado'),
+      motivo: ex?.motivo || null,
+      dia_semana: diaSemanaDe(dataFinal),
+      registrado,
+    });
+  }
+  return out;
+}
+
 module.exports = {
-  agoraBRT, proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, instanteISO, somarDias,
+  agoraBRT, proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, ocorrenciasPassadas,
+  instanteISO, somarDias,
   cadenciaDias, janelaRemarcacao, FUSO_BRT_MIN, LIMITE_REMARCA_DIAS, CADENCIA_DIAS,
 };
