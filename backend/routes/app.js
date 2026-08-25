@@ -3727,6 +3727,7 @@ async function autorizarGestaoBatismoApp(req, res, next) {
 }
 
 function dataIsoValida(v) { return /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')); }
+function dataBatismoFutura(v) { return dataIsoValida(v) && String(v) >= hojeBRT(); }
 function limparTexto(v, max = 500) {
   if (v === null || v === undefined) return null;
   const s = String(v).trim();
@@ -3764,11 +3765,14 @@ router.get('/batismo/gestao', authApp, autorizarGestaoBatismoApp, limiterNormal,
     if (datasRes.error) throw datasRes.error;
     const datasSet = new Set((datasRes.data || []).map(x => x.data_batismo).filter(dataIsoValida));
     if (dataIsoValida(proxima)) datasSet.add(proxima);
-    const datas = [...datasSet].sort();
+    // A gestão só precisa das próximas datas: históricos antigos não devem
+    // poluir o seletor nem voltar a ser selecionados por engano.
+    const datas = [...datasSet].filter(d => d >= hoje).sort().slice(0, 3);
+    const datasPermitidas = new Set(datas);
     const pedida = dataIsoValida(req.query.data) ? String(req.query.data) : null;
-    const selecionada = pedida && datasSet.has(pedida)
+    const selecionada = pedida && datasPermitidas.has(pedida)
       ? pedida
-      : (datas.find(d => d >= hoje) || datas[datas.length - 1] || proxima || hoje);
+      : (datas[0] || (dataIsoValida(proxima) ? proxima : hoje));
     const [pessoasRes, aprovacoesRes] = await Promise.all([
       supabase.from('batismo_inscricoes').select(BATISMO_COLUNAS_APP)
         .eq('data_batismo', selecionada).is('deleted_at', null)
@@ -3804,6 +3808,7 @@ router.post('/batismo/gestao/pessoas', authApp, autorizarGestaoBatismoApp, limit
     const dataBatismo = dataIsoValida(req.body?.data_batismo) ? String(req.body.data_batismo) : await dataProximoBatismo();
     if (!nome || !sobrenome) return res.status(400).json({ error: 'Nome e sobrenome são obrigatórios.' });
     if (!dataIsoValida(dataBatismo)) return res.status(400).json({ error: 'Selecione uma data de Batismo.' });
+    if (!dataBatismoFutura(dataBatismo)) return res.status(400).json({ error: 'A data de Batismo já passou.' });
     const cpf = String(req.body?.cpf || '').replace(/\D/g, '') || null;
     let membroId = null;
     try {
@@ -3843,6 +3848,7 @@ router.post('/batismo/gestao/:id/aprovar', authApp, autorizarGestaoBatismoApp, l
     const dataBatismo = dataIsoValida(req.body?.data_batismo)
       ? String(req.body.data_batismo) : (atual.data_batismo || await dataProximoBatismo());
     if (!dataIsoValida(dataBatismo)) return res.status(400).json({ error: 'Selecione a data antes de aprovar.' });
+    if (!dataBatismoFutura(dataBatismo)) return res.status(400).json({ error: 'A data de Batismo já passou.' });
     const update = { status: 'confirmado', data_batismo: dataBatismo, updated_at: new Date().toISOString() };
     if (req.body?.horario_culto !== undefined) update.horario_culto = limparTexto(req.body.horario_culto, 40);
     const { data, error } = await supabase.from('batismo_inscricoes').update(update)
@@ -3867,6 +3873,7 @@ router.put('/batismo/gestao/:id', authApp, autorizarGestaoBatismoApp, limiterNor
     if (req.body?.sobrenome !== undefined && !update.sobrenome) return res.status(400).json({ error: 'Sobrenome é obrigatório.' });
     if (req.body?.data_batismo !== undefined) {
       if (!dataIsoValida(req.body.data_batismo)) return res.status(400).json({ error: 'Data de Batismo inválida.' });
+      if (!dataBatismoFutura(req.body.data_batismo)) return res.status(400).json({ error: 'A data de Batismo já passou.' });
       update.data_batismo = req.body.data_batismo;
     }
     if (req.body?.data_nascimento !== undefined) update.data_nascimento = dataIsoValida(req.body.data_nascimento) ? req.body.data_nascimento : null;
