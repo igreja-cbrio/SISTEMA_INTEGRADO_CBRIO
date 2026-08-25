@@ -30,7 +30,7 @@
 
 /** Rank de função, pra não sugerir manter a linha de menor papel. */
 const RANK_FUNCAO = {
-  coordenador: 7, supervisor: 6, lider: 5, co_lider: 4,
+  coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, // co_lider: só leitura de dado histórico
   lider_treinamento: 3, frequentador: 2, membro: 2, visitante: 1,
 };
 

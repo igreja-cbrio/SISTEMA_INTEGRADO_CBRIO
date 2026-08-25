@@ -2755,6 +2755,457 @@ servidor recusava **403** — `gruposGeridos` só olhava `lider_id`/`supervisor_
 - ⚠️ As proteções sobre o ALVO continuam: ninguém muda função/registra saída
   da pessoa que é `lider_id`, e lider/co_lider não sai pelo botão "Sair".
 
+## ⚠️⚠️ Grupos · 6 mudanças na tela do app + o alinhamento web (2026-08-25 · migration `20260825170000`)
+
+Marcos avaliando a tela de grupos do app de membros. Seis pedidos numa mensagem,
+e o último foi *"alinhe todas essas mudanças com o sistema web"*.
+
+| # | pedido | onde |
+|---|---|---|
+| 1 | **"Co-líder" MORRE** · quem tinha vira `lider_treinamento` | migration + 4 arquivos de backend + 3 de web + 4 do app |
+| 2 | **Líder em treinamento GERENCIA o grupo** | `gruposPapelApp` (vale **sem OTA**) |
+| 3 | **Encontros à vista** · semana sem chamada = "presença não registrada", registrável depois | `utils/agendaGrupo` + 2 endpoints + app + web |
+| 4 | **"Remover do grupo"** (era "Registrar saída") e as folhas SOBEM | app |
+| 5 | **Transferência SEM destino** · o líder solicita, a Naná decide | tabela nova + Caixa de entrada |
+| 6 | **"Adicionar pessoa"** no fim do roster · nasce aprovada, sem WhatsApp | serviço único app+web |
+
+### ⚠️ MEDIDO ANTES DE CODAR (base inteira de `mem_grupo_membros` = 3.077 linhas)
+
+`co_lider` vivo: **1 linha, 1 pessoa, 1 grupo** — e o grupo se chama **"Teste"**.
+`co_lider` histórico: **ZERO**. `lider_treinamento`: **0 linhas** (o valor existe
+no enum desde 13/05 e nunca foi usado). Vivos: frequentador 1.291 · lider 20 ·
+visitante 5. **O termo que morreu não tinha uso real** — o `UPDATE` da migration
+toca 1 linha, e o trabalho de verdade foi fechar a porta pra ele não voltar.
+
+### ⚠️⚠️ `co_lider` não é DROPADO do enum — é um CHECK
+
+**Postgres não remove valor de enum.** Recriar `grupo_funcao` sem ele exigiria
+derrubar a coluna, o índice parcial e as views que a leem, num módulo com 1.317
+vínculos vivos. `chk_grupo_membros_sem_colider` entrega o pedido (o banco recusa
+gravá-lo) por custo perto de zero, e é reversível.
+⚠️ **Os mapas de LEITURA guardam a chave `co_lider` de propósito**, apontando pro
+rótulo NOVO — backup restaurado, export velho ou bundle em cache não podem virar
+`undefined`/`"co_lider"` cru na tela. Nenhuma tela OFERECE o valor.
+
+### ⚠️⚠️ GESTÃO e VITRINE são listas DIFERENTES, e é decisão
+
+| pergunta | régua | lista |
+|---|---|---|
+| quem GERENCIA o grupo no app | `gruposPapelApp` (`routes/app.js`) | `lider` + **`lider_treinamento`** |
+| quem aparece como LÍDER na página pública / mapa | `montarListaLideres` (`publicGrupos.js`) | **só `lider`** |
+
+Quem está em treinamento gerencia, **mas não é anunciado como a face do grupo**
+pra quem procura de fora. **NÃO "alinhar" as duas achando que divergiram por
+descuido** — há ponteiro cruzado nos dois arquivos. Se um dia a vitrine tiver que
+incluir treinamento, é decisão de produto.
+⚠️ Isso não regride o pedido da Natasha de 20/08 (o exemplo dela era
+`funcao='lider'` no roster, que continua na vitrine).
+⚠️ `lider_treinamento` ENTROU em `FUNCOES_PROTEGIDAS` do "confira a lista" por um
+motivo DIFERENTE do da vitrine: ele passou a gerenciar, e um checklist de
+conferência não pode tirar do roster quem administra o grupo — o gate lê o vínculo
+vivo, então ele perderia o acesso. Mesma razão pela qual ele não sai pelo botão
+"Sair" do `/meu-grupo`.
+
+### ⚠️⚠️ ITEM 3 · o "bug" da chamada não era dúvida do sistema
+
+Relato dele: *"quando eu não preencho uma semana e preencho a outra ele dá meio
+que um bug — ele provavelmente ficou em dúvida se eu estava registrando a presença
+do dia 18, aí ele marcou que o encontro foi dia 24."*
+
+**A causa: `POST /app/grupos/:id/encontros` sempre aceitou `data` e caía em
+`hojeBRT()` quando ela não vinha — e a TELA NUNCA MANDAVA data nenhuma.** Nada
+ficou em dúvida; o servidor gravou o único dia que recebeu. E a aba Encontros só
+listava o que JÁ estava registrado, então a semana pulada não existia na tela e o
+único caminho de registro era o botão do herói, que grava hoje.
+
+- **`ocorrenciasPassadas`** em `backend/utils/agendaGrupo.js` — simétrica de
+  `proximasOcorrencias`, com **uma diferença que importa**: pra frente, ocorrência
+  sem âncora é um convite marcado como incerto; **pra trás, sem âncora devolve
+  VAZIO**. Cobrar chamada de um encontro que talvez não tenha existido é pior que
+  não cobrar. (Quinzenal/mensal sem âncora ⇒ `[]`.)
+- ⚠️ **Remarcado pra FRENTE sai do histórico** (vive na agenda futura) ·
+  **cancelado NÃO é pendência** · **cancelado COM chamada registrada conta como
+  registrado** (o fato vence a intenção) · **encontro de hoje só entra depois de
+  passar a hora**.
+- ⚠️ **Chamada gravada FORA da recorrência aparece como `avulso`**, inclusive as
+  que nasceram com a data errada ANTES deste conserto: esconder faria o trabalho
+  do líder desaparecer da tela, que é pior que o defeito original.
+- ⚠️ `GET /app/grupos/:id/encontros` ganhou `ocorrencias` **de forma ADITIVA** —
+  `encontros` continua igual, porque o binário que está no celular hoje lê essa
+  chave e o OTA leva 2 aberturas. `ocorrencias: null` ⇒ o app cai na lista crua.
+- **Web**: endpoint **PRÓPRIO** `GET /grupos/:id/encontros-pendentes`. O
+  `/encontros` devolve um **ARRAY cru** (`res.json([...])`) — enfiar um objeto ali
+  quebraria todos os consumidores de uma vez.
+- Testes: 20 casos novos em `src/test/agendaGrupo.test.ts` (53 no total).
+  **5 mutantes RODADOS e mortos**: sem âncora caindo no semanal → 1 · dia em UTC →
+  1 · guarda de `dia_semana` ausente → 1 · remarcado futuro entrando → **10** ·
+  cancelado vencendo a chamada registrada → 1.
+  ⚠️ **Lição de método**: o 1º mutante do item "sem âncora" foi **REMOVER a
+  guarda**, e ele **SOBREVIVEU** — sem ela, `String(null)` produz `"NaN-NaN-NaN"`
+  e o filtro de "já passou" descarta o lixo, dando o mesmo `[]` **por acidente**.
+  O mutante FIEL é o que um dev bem-intencionado escreveria ("sem âncora? usa o
+  dia da semana"), e esse morre. **Remoção crua de guarda pode ser equivalente por
+  acidente — mutar para o comportamento PLAUSÍVEL, não para o vazio.**
+
+### ⚠️ ITEM 4 · o piso é o conserto MONOTÔNICO
+
+*"Subir um pouco pois esse botão fica onde está os botões do android."* As 5
+folhas usavam o inset cru mais um respiro pequeno; agora há **piso** (`spacing.lg
++ Math.max(insets.bottom, spacing.lg)`). Dentro de um `<Modal>` do Android o
+inset pode vir 0 (a folha é outra janela), e diagnosticar QUAL das três causas é
+(inset 0 · gesture bar de 24 dp · barra de 3 botões de 48 dp) exigiria o aparelho
+dele. **Mais folga embaixo = botão mais alto, valha qual valer a causa.** De
+quebra, a opção "Co-líder" saindo do menu encurtou a folha em uma linha.
+
+### ⚠️⚠️ ITEM 5 · tabela NOVA, não `mem_grupo_pedidos`
+
+Pedido é "quero entrar NESTE grupo": exige `grupo_id` e tem índice único
+(grupo, membro). A transferência nasce **sem destino**. Enfiá-la em
+`mem_grupo_pedidos` com a ORIGEM no `grupo_id` faria a fila do próprio líder
+mostrar um pedido de entrar num grupo onde a pessoa já está — e a Caixa de entrada
+contaria isso como demanda de inscrição nos KPIs. ⇒ `mem_grupo_transferencias`.
+
+- **O fluxo antigo MORREU** (líder escolhia o destino → nascia pedido lá) e tinha
+  **zero uso histórico** (reconferido): nenhuma linha de `mem_grupo_pedidos` com
+  observação de transferência, desde sempre. Nada a migrar.
+- ⚠️ **`uniq_grupo_transf_pendente` é índice PARCIAL** (`WHERE status='pendente'`):
+  dois toques no botão não viram duas linhas na mão da Naná, e o histórico de
+  transferências já resolvidas da mesma pessoa continua podendo empilhar.
+  Conferir antes do INSERT é o que transforma o 23505 em resposta amigável.
+- ⚠️ **SEM `deleted_at`**, mesma razão da irmã `mem_grupo_agenda_excecoes`: não
+  guarda PII e "desfazer" aqui tem nome próprio, que é `status='recusada'`.
+- ⚠️ **A pessoa NÃO sai do grupo ao pedir** — ela continua onde está até a
+  coordenação resolver. Tirar no pedido a deixaria sem grupo nenhum no caminho.
+- **Resolver `transferir`** cria o vínculo no destino **e depois** encerra o da
+  origem: morrer no meio deixa a pessoa nos DOIS grupos (visível e corrigível),
+  nunca em NENHUM. ⚠️ Encerra **só o vínculo da ORIGEM** — nunca `.eq('membro_id')`
+  solto: multi-grupo é real desde que a UNIQUE de vínculo ativo foi dropada
+  (21/07), e fechar tudo tiraria a pessoa de grupos que ninguém pediu pra mexer.
+- ⚠️ **A 5ª origem da Caixa de entrada declara indisponibilidade**: sem a migration
+  o endpoint devolve `disponivel: false` + aviso âmbar, **nunca lista vazia** —
+  "não há transferência pendente" e "a consulta falhou" levam a decisões opostas.
+- ⚠️ Status em **ÂMBAR**, não vermelho: é pendência de decisão, não decisão contra
+  ninguém (mesma leitura do `sem_contato` de 17/08).
+
+#### ⚠️⚠️ E o guard de notificação de grupo teve que ser REESCRITO
+
+`src/test/notificacaoGrupoDono.test.ts` protegia o desenho de 10/08 ("avisa o dono
+do grupo de DESTINO, e pelo WhatsApp") — 5 asserts que passaram a defender um
+comportamento que o produto **não quer mais**. O bloco foi reescrito para guardar
+o inverso: que `destino_grupo_id` **não volte** ao corpo, que nenhum pedido de
+entrada seja criado, que **nenhum WhatsApp** saia daqui, e que a pessoa não seja
+tirada do grupo pelo pedido.
+⚠️ **Exceção DECLARADA à lei do arquivo** (todo aviso de grupo tem `targetIds`):
+aqui não há dono de grupo a mirar, então o destinatário sai de
+`resolverDestinatarios('grupos')` — e **lista vazia OMITE `targetIds`** de
+propósito, pra cair no fallback de admin/diretor. `targetIds: []` seria SILÊNCIO,
+e pedido de líder parado sem ninguém saber é pior que aviso pra gente demais num
+fluxo raro. O assert exige a **forma condicional**, não a ausência.
+
+### ⚠️⚠️ ITEM 6 · "Adicionar pessoa" é PORTA DE PESSOA, e passa pelo Contrato
+
+*"Se o líder clica ele pode preencher o formulário de inscrição dali para aquela
+pessoa já nascer aprovada; se for criado ali, ela não passa por whatsapp e
+confirmação nenhuma."*
+
+- **Régua ÚNICA em `services/grupoPessoaDireta.js`** (lê o banco) +
+  **`utils/pessoaDiretaCampos.js`** (validação PURA). ⚠️ A parte pura mora em
+  `utils/` porque `services/` carrega o Supabase e o gate roda sem as dependências
+  de `backend/` — régua no gate não pode arrastar o banco atrás dela (lição de
+  06/08). App e ERP são cascas finas em cima dela: o pedido terminou com "alinhe
+  com o web", e alinhar é **uma régua só**.
+- ⚠️⚠️ **NÃO passa por `mem_grupo_pedidos`/`aprovarPedidoCore`**: aquele caminho
+  existe pra o líder DECIDIR e dispara WhatsApp pros dois lados. Criar pedido pra
+  aprovar em seguida mandaria duas mensagens sobre um fato já consumado.
+- ⚠️⚠️ **MAS a identidade passa pelo matcher canônico**, sem exceção. Sem
+  `acharOuCriarGuardado`, esta tela seria uma fábrica de duplicata operada por ~89
+  líderes que não têm visão nenhuma do cadastro.
+- ⚠️ **Obrigatórios só nome + telefone.** É o mínimo do irmão mais próximo
+  (`/grupo/frequencia/visitante`) e é DELIBERADO não exigir o contrato inteiro:
+  quem preenche está num encontro, no celular, **por outra pessoa** — exigir 6
+  campos faz o líder não usar a tela, e aí a pessoa não entra em lugar nenhum. O
+  cadastro incompleto cai na fila de "faltam dados" (14/08), que existe pra isso.
+- ⚠️⚠️ **LGPD · o consentimento é de TERCEIRO e é gravado como tal.** O texto
+  guardado começa com `DECLARADO POR TERCEIRO (não é aceite do titular)` — gravar
+  como consentimento do titular seria fabricar prova legal (mesma decisão do link
+  do voluntário, 14/08). E **nenhum opt-in de WhatsApp é ligado**: ninguém consente
+  marketing no lugar de outra pessoa.
+- ⚠️ `funcao` default **`frequentador`** (adicionar de propósito é PARTICIPAÇÃO ·
+  13/08) e `visitante` só quando o líder DECLARA (lei de 14/08). **Função
+  arbitrária no corpo NÃO passa** — aceitar `funcao` cru daria a qualquer líder o
+  poder de marcar liderança, e liderança agora decide quem GERENCIA.
+- ⚠️ **NÃO checa categoria × sexo**, de propósito: a trava de `entradaGrupoApp`
+  existe pra impedir DESCONHECIDO se inscrevendo sozinho no grupo errado, e
+  bloquearia caso real — "NEW HEART - RECOMEÇO 40+" está `categoria='Homens'` com
+  4 mulheres no roster (cadastro do GRUPO errado, medido em 10/08).
+- ⚠️ **Pedido pendente da mesma pessoa é FECHADO** (best-effort, condicionado ao
+  status): ela acabou de entrar, e deixá-lo na Caixa faria a coordenação decidir
+  sobre fato resolvido.
+- ⚠️ **A tela DIZ quando o matcher LIGOU** numa pessoa que já existia
+  (`pessoa_nova: false`). Sem isso o líder acha que não funcionou e tenta de novo
+  com outro nome — o comportamento que fabrica duplicata.
+- Teste: `src/test/grupoPessoaDireta.test.ts` (24 casos · no gate via `npm test`).
+
+### `ancorasDeGrupos` saiu de `routes/app.js` pra `services/grupoAncora.js`
+
+O ERP passou a precisar da MESMA âncora (card de encontros sem chamada). Duas
+cópias divergiriam, e o sintoma seria **o app e o web discordando sobre em que
+semana um grupo quinzenal se reuniu** — praticamente indepurável. Os 4 call sites
+de `app.js` seguem idênticos.
+
+### ⚠️⚠️ 2ª RODADA no MESMO DIA (25/08) · ele corrigiu DUAS decisões minhas
+
+Depois de ver a primeira leva, o Marcos pediu três coisas — e duas delas revertem
+escolhas que eu tinha feito com justificativa escrita. **Registrado assim de
+propósito**: a justificativa era boa e o efeito prático era ruim.
+
+#### 1 · "Adicionar pessoa" passou a exigir CADASTRO COMPLETO
+
+*"Queremos cadastro completo, os mesmos campos que solicitam a inscrição de
+grupos."*
+
+Eu havia feito a porta com o mínimo do irmão mais próximo (nome + telefone, como
+o "registrar visitante" do WhatsApp), argumentando que exigir 6 campos no meio de
+um encontro faria o líder não usar a tela. **E isso violava a lei do Contrato de
+Inscrição** — *"Usar SEMPRE `inscricaoContrato.js`… NÃO recriar cópias locais de
+máscara/CPF, era assim que divergia"* —, porque eu tinha escrito validação
+própria em vez de chamar `validarCamposPadrao`.
+
+- A validação virou **`validarCamposPadrao` com os 4 `exigir*` em `true`**,
+  exatamente como o formulário público de grupos: nome completo sem abreviação ·
+  telefone · **CPF com DV** · **e-mail** · **nascimento** · **sexo** · endereço
+  fixo-opcional.
+- ⚠️ **O CPF obrigatório é o que mais muda de comportamento**, e pra melhor: ele
+  é a chave FORTE do matcher, então o cadastro criado por um líder passa a LIGAR
+  na pessoa que já está na base em vez de duplicar. Com CPF, `politica: 'criar'`
+  é seguro (régua de 23/08).
+- ⚠️⚠️ **LGPD · o consentimento é de TERCEIRO**: o líder marca a caixa POR outra
+  pessoa. O snapshot gravado é o texto CANÔNICO com o prefixo `DECLARADO
+  PRESENCIALMENTE POR <nome> … (não é aceite digitado pelo próprio titular)` —
+  mesma decisão do link do voluntário (14/08). Gravar como aceite do titular
+  seria fabricar prova legal.
+- ⚠️ **O item de WhatsApp é gravado mesmo quando a pessoa diz NÃO** (`aceito:
+  optin`): registrar só o `true` perderia a prova de que a pergunta foi feita. E
+  o opt-in **SÓ LIGA, NUNCA DESLIGA**, preservando o `whatsapp_optin_em` de quem
+  já havia consentido (a data é a prova de desde quando vale).
+- ⚠️ **Enriquecimento SÓ-ONDE-VAZIO** no cadastro que já existia, e contato
+  DIVERGENTE acumula em `mem_contatos` — não sobrescreve o principal (Contrato de
+  porta, item 3: família compartilha telefone e e-mail, é o caso NORMAL).
+- **`utils/pessoaDiretaCampos.js` encolheu** pra o que é só desta porta: a
+  whitelist de `funcao` no roster. É AUTORIZAÇÃO, não formato — desde 25/08
+  `lider`/`lider_treinamento` decidem quem GERENCIA o grupo, então aceitar
+  `funcao` cru daria a qualquer líder o poder de promover alguém a gestor por uma
+  tela de cadastro.
+- O teste virou **guard estático** (`validarCamposPadrao` é chamado · os 4
+  `exigir*` são `true` · identidade pelo funil canônico · nada de WhatsApp/pedido)
+  + os casos puros da whitelist. Quem cobre o formato é `test:inscricao-contrato`,
+  que já está no gate.
+
+#### 2 · ⚠️⚠️ O PASSADO DOS ENCONTROS virou gerenciável — e o "vazio sem âncora" MORREU
+
+*"Sobre os encontros de grupos quinzenais ou mensais, devem aparecer na aba de
+encontros TODAS as datas que os grupos deveriam ter feito o encontro, e deve ser
+gerenciável: a pessoa clica em um encontro passado, altera data ou registra que
+encontro não aconteceu, registra presença e fica naquele encontro. Isso também
+para encontros semanais."*
+
+Eu tinha feito `ocorrenciasPassadas` devolver **VAZIO** sem âncora real, com o
+argumento de que cobrar chamada de encontro que talvez não tenha existido é pior
+que não cobrar. **O número dá razão a ele:** medido em 25/08, dos **108 grupos
+ativos, 35 são não-semanais e apenas 1 tem encontro registrado**. "Sem âncora"
+era o caso NORMAL (34 de 35) — o histórico daqueles grupos ficava
+permanentemente vazio, e **sem lista não há o que corrigir**.
+
+- **`ancoraDeInicio`** deriva a cadência do **início da temporada** do grupo
+  (`iniciosDeGrupos`: temporada → `created_at`). Todos os 35 têm `temporada` e
+  `dia_semana` preenchidos, então a derivação alcança todos.
+- ⚠️⚠️ **A troca honesta: `data_estimada: true`.** A tela DIZ que a data foi
+  calculada e oferece corrigir; a correção grava exceção e **vira âncora real**,
+  então na leitura seguinte as datas param de ser estimadas. É a diferença entre
+  propor uma data pra ser confirmada e chutar em silêncio.
+- ⚠️ **SEMANAL nunca é estimado** (o dia da semana já determina tudo) e
+  **ocorrência com exceção deixa de ser estimativa** (gente já decidiu).
+- ⚠️⚠️ **`desdeISO` é PISO no início da temporada.** Sem ele a lista atravessava
+  pra trás além do começo do grupo: medido no grupo **00000068** (temporada
+  aberta em 01/08), a timeline mostrava **22/06 e 06/07** como "presença não
+  registrada" — pendência de encontro que aquele grupo não tinha por que ter
+  feito. Cobrar chamada de antes do grupo existir é a versão nova do erro que a
+  régua de âncora existia pra evitar. Encontro REGISTRADO fora do piso não se
+  perde: volta pela lista de avulsos.
+- **`janelaCorrecaoPassada`** é régua **DIFERENTE** da `janelaRemarcacao`, e tem
+  que ser: aquela protege o futuro (não alcançar o próximo encontro, teto de 7
+  dias) e **recusa data no passado**; usá-la aqui recusaria toda correção. A nova
+  cerca a data pelos **vizinhos** (senão corrigir agosto pra julho embaralharia a
+  ordem — e a âncora sai do encontro mais RECENTE, então a agenda seguinte
+  nasceria errada) e **nunca passa de hoje**.
+- ⚠️⚠️ **A CHAMADA JÁ REGISTRADA é um FATO e ela manda**, com duas consequências:
+  "não aconteceu" num dia que TEM chamada é **recusado** (o efeito seria
+  INVISÍVEL, porque a timeline dá precedência ao registrado — o líder clicaria,
+  nada mudaria e ele concluiria que o app quebrou); e corrigir a data **move a
+  chamada junto**, ANTES de gravar a exceção. A ordem importa: exceção primeiro +
+  falha no UPDATE deixaria a ocorrência vazia na data nova e a chamada como
+  "avulso" na antiga — dois registros do mesmo encontro. `UNIQUE (grupo_id, data)`
+  em `mem_grupo_encontros` vira **409 `data_ocupada`**, resposta de negócio.
+- **`remarcado` e `cancelado` viraram campos PRÓPRIOS** na saída da régua: o
+  `status` da timeline responde outra pergunta ("a chamada foi feita?") e colapsa
+  os dois. Sem eles a tela não sabe que existe exceção a DESFAZER — o botão
+  "voltar ao normal" nunca apareceria depois de uma correção, e o líder ficaria
+  preso com a data que acabou de mudar.
+
+##### `services/grupoAgendaExcecao.js` · o ÚNICO escritor
+
+A régua nasceu dentro do `POST /app/grupos/:id/agenda` e o ERP passou a precisar
+dela. Foi extraída: as duas janelas, a coerência com a chamada e a tradução dos
+erros de banco vivem lá, e as duas rotas são cascas finas.
+⚠️ **O AVISO fica com quem chama**: o app avisa a coordenação em nome do líder; o
+ERP **não notifica**, porque quem age ali É a coordenação e avisar a si mesma é
+ruído (o mesmo raciocínio que tirou o aviso duplicado da transferência).
+⚠️ O vocabulário do aviso muda no passado: *"cancelou o encontro de amanhã"* e
+*"registrou que o encontro da semana passada não aconteceu"* são fatos
+diferentes, e a coordenação decide coisas diferentes a partir deles.
+
+##### O modal é UM, com dois modos
+
+`ModalAgendaEncontro` ganhou `modo="futuro" | "passado"`. As duas telas escrevem
+no MESMO endpoint; o que muda é a janela de datas e o vocabulário ("Cancelar
+encontro" × **"Não aconteceu"**, "Salvar data" × "Salvar correção"). Duas telas
+divergiriam no primeiro ajuste, e a divergência apareceria como *"no futuro deu,
+no passado não"*.
+⚠️ No modo passado o calendário **não pode ter piso em hoje** — seria o mês
+inteiro cinza.
+
+#### ⚠️⚠️ Três achados de MÉTODO desta rodada
+
+1. **`node --check` não pega `ReferenceError`.** Eu havia deixado
+   `ancorasDeGrupos` **usado e não importado** em `routes/grupos.js` — sintaxe
+   válida, e o endpoint responderia 500 pra sempre. Só apareceu ao **carregar os
+   módulos de verdade** (`require` em cada rota) e ao exercitar a régua contra
+   produção. Régua: depois de mexer em imports de rota, **carregar o módulo**, não
+   só checar sintaxe.
+2. **O teste pegou um bug meu que o comentário dizia estar guardado.**
+   `ancoraDeInicio` fazia `Number(diaSemana)` sem a guarda de nulo — e
+   **`Number(null) === 0` é DOMINGO**, então grupo sem dia marcado ganhava uma
+   agenda inteira de domingos INVENTADA, saindo marcada como "estimativa" com cara
+   de proposta legítima. Eu tinha escrito o comentário sobre a armadilha e não
+   implementado a guarda.
+3. **`as any` num mapeamento entre dois vocabulários esconde efeito real.** Eu
+   passei `OcorrenciaEncontro` pro modal com cast; compilava, e o modal (que lê
+   `status === "remarcado"`) **nunca veria a exceção** — o botão de desfazer a
+   correção não apareceria. Virou mapeamento explícito campo a campo.
+
+#### Verificação da 2ª rodada
+
+`tsc -b` sem cache · `npm run build` · `npm test` (**2.374 verdes**) · **os 16
+scripts** do gate · app `tsc --noEmit` + **210 testes**.
+**6 mutantes novos RODADOS e mortos** na régua de agenda (11 no total): semanal
+virando estimado → 1 · estimada nunca marcada → 3 · exceção continuando estimada
+→ 1 · âncora derivada sem guarda de dia → 1 · correção passando de hoje → 2 ·
+correção sem cerco de vizinhos → 3.
+⚠️ **E o caminho de ESCRITA foi exercitado contra produção** (grupo de teste
+T2-2026-022): "não aconteceu" gravou · data futura no passado recusou com 400 ·
+correção de data gravou · desfazer limpou — **resíduo ZERO** conferido em
+`mem_grupo_agenda_excecoes` depois.
+
+### ⚠️⚠️ 3ª RODADA (mesmo dia) · os BECOS SEM SAÍDA foram fechados
+
+*"Precisamos corrigir essas coisas que você falou que valem saber, não podem
+acontecer."* Eram as três ressalvas que eu havia listado como "vale saber" no fim
+da 2ª rodada — e ele está certo: **ressalva que tranca o líder não é ressalva, é
+defeito**. As três viraram caminho.
+
+#### 1 · "Não aconteceu" num dia com chamada · ação de DOIS PASSOS
+
+O servidor recusava com 409 e mandava *"apague a chamada antes"* — ou seja, o app
+sabia que a chamada estava errada e não deixava o líder arrumar; quem podia
+apagar era a coordenação, noutra tela, que o líder não abre.
+
+- A 1ª tentativa devolve **409 `tem_chamada` com `presentes`**, a tela pergunta
+  com o número na frente (*"isso vai apagar a presença de 3 pessoas"*) e reenvia
+  com `confirmar_apagar_chamada`.
+- ⚠️⚠️ **O 409 continua existindo DE PROPÓSITO.** Sem ele, um toque errado
+  apagaria uma chamada real sem ninguém perceber. O que mudou é que a recusa
+  passou a ter resposta.
+- ⚠️⚠️ **`=== true`, nunca truthy** nas duas portas (fail-closed): é este
+  parâmetro que apaga presença de gente, e string/`1`/objeto de um cliente
+  distraído não podem valer como decisão. Mutante rodado.
+- ⚠️ **Apaga ANTES de gravar a exceção.** Morrer no meio deixa a chamada apagada
+  e o dia sem a marca — visível na tela e corrigível com um toque. A ordem
+  inversa deixaria a marca com a chamada ainda lá, e a timeline dá precedência ao
+  registrado ("o fato vence a intenção"): a ação pareceria não ter pegado.
+- **`services/grupoEncontroApagar.js` é o caminho ÚNICO** (o `DELETE
+  /grupos/encontros/:id` virou casca fina sobre ele). ⚠️⚠️ Apagar chamada NÃO é
+  apagar uma linha: `registrar_encontro_grupo` INCREMENTA
+  `mem_grupo_membros.presencas` de cada presente, e esse contador alimenta a
+  régua de visitante→frequentador (14/08). `delete` cru deixaria o contador
+  inflado **pra sempre, sem erro nenhum** — por isso o decremento vem antes e é
+  por pessoa.
+
+#### 2 · Data ocupada · sai da janela antes de alguém escolher
+
+`mem_grupo_encontros` tem UNIQUE (grupo_id, data), então corrigir para um dia que
+já tem chamada levantava **23505 depois de salvar**. `janelaCorrecaoPassada`
+passou a receber `ocupadas` e devolver **`bloqueadas`**; o app apaga esses dias do
+calendário (`CalendarioBR` ganhou `bloqueadasISO`).
+
+- ⚠️ **Só as que caem DENTRO da janela** — mandar a lista inteira faria a tela
+  desenhar bloqueio em mês que ela nem mostra.
+- ⚠️⚠️ **A própria data da ocorrência NUNCA é bloqueada**: corrigir só o HORÁRIO
+  mantendo o dia é uso legítimo (a mesma decisão já registrada na irmã
+  `janelaRemarcacao`) e é o caminho mais comum de todos.
+- ⚠️ **`pode` conta as datas REALMENTE escolhíveis**: janela cheia de dia ocupado
+  é janela vazia, e oferecer "corrigir a data" nela é o beco de novo, agora com
+  cara de recurso disponível.
+- ⚠️ **O servidor recusa mesmo assim** (`codigo: 'data_ocupada'`): a tela é
+  conveniência, o cinto de segurança é o backend. E `datasComChamada` é
+  best-effort — falhar ali volta à janela de antes, nunca derruba a correção.
+- No GET do app as ocupadas saem do `porData` que já estava carregado: **custo
+  zero**, nenhuma consulta nova.
+
+#### 3 · As recusas que sobraram dizem o CAMINHO
+
+Corrigir encontro passado para data futura **continua recusado** — e não é beco,
+é lógica: "corrigir" é dizer em que dia o encontro ACONTECEU, e nada aconteceu no
+futuro. O que mudou é a mensagem: `codigo: 'correcao_no_futuro'` apontando que a
+próxima reunião já está na agenda, e a janela sem data livre mandando marcar
+"não aconteceu" em vez de dizer só que não dá.
+
+#### ⚠️ O corpo do erro chegou à tela do app · `lib/api.ts`
+
+O helper de erro devolvia **só a string** e o resto do JSON era descartado —
+então resposta de negócio que carrega dado ("tem chamada com 3 presenças: confirma
+apagar?") chegava como texto solto, e a tela não tinha como perguntar nem
+reenviar a confirmação. Agora o corpo vem em **`err.corpo`**, ao lado do
+`err.status` que já vinha, e os **6 blocos duplicados** viraram um helper só.
+⚠️ No ERP isso já funcionava (`Object.assign(error, err)` no `request()`).
+
+#### Verificação da 3ª rodada
+
+`tsc -b` sem cache · `npm run build` · **os 16 scripts** do gate (16/16) · app
+`tsc --noEmit` limpo + **210 testes**. **5 mutantes novos RODADOS e mortos**:
+lista de bloqueadas sem recorte pela janela → 1 vermelho · bloquear a própria
+data original → 2 · `pode` ignorando se sobrou data livre → 1 · confirmação
+aceitando truthy → 1 · gravar a exceção antes de apagar a chamada → 2.
+⚠️ **Flake conhecido deste PC, não regressão**: na suíte cheia (2.389) UM caso
+estoura o timeout de 5s por carga — e em duas rodadas foi um arquivo DIFERENTE
+(`cronAlcancavel`, depois `ConstrutorPerguntas`), os dois passando sozinhos. É a
+mesma família já registrada em `rpcsCliente`/`mapaGerador`.
+
+### Estado / verificação
+
+Gate completo: `npx tsc -b` sem cache · `npm run build` · `npm test`
+(**2.374 verdes**) · **os 16 scripts** do `deploy-vercel.yml`. App:
+`npx tsc --noEmit` limpo · `npm test` (210 verdes).
+
+⚠️ **Aplicar `20260825170000` ANTES do merge.** O código tolera a ausência dela na
+LEITURA (a Caixa de entrada declara a origem fora do ar), mas **o `POST` de
+transferência do app precisa da tabela** — e o `UPDATE` do `co_lider` precisa
+rodar antes de a tela deixar de oferecer o valor.
+
+⏳ **Pendências de GENTE (não é código)**: publicar o **OTA** do app (itens 3, 4, 5
+e 6 são tela — o item 2 vale sem OTA porque é servidor) · a Naná decidir os
+destinos das primeiras transferências · e o follow-up antigo de 20/08 segue aberto
+(`grupos.tsx` do app exibe só `lider_nome`, ignorando `lideres_exibicao`).
+
 ## Grupos · TODOS os líderes no cartão e no deep-link da inscrição pública (2026-08-20 · SEM migration)
 
 Pedido da Natasha (via Marcos), com o exemplo do grupo da Ana Paula Silva

@@ -37,7 +37,8 @@ const fmtData = (d) => {
 
 const FUNCAO_LABEL = {
   coordenador: 'Coordenador', supervisor: 'Supervisor', lider: 'Líder',
-  co_lider: 'Co-líder', lider_treinamento: 'Em treinamento',
+  // `co_lider`: só leitura de dado histórico (termo aposentado em 25/08/2026).
+  co_lider: 'Líder em treinamento', lider_treinamento: 'Líder em treinamento',
   frequentador: 'Membro', membro: 'Membro', visitante: 'Visitante',
 };
 

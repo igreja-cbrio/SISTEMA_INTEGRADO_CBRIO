@@ -10,7 +10,7 @@ const { supabase } = require('../utils/supabase');
 const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo, podeSupervisionar, subareasNaArea } = require('../utils/supervisorArea');
 const { ehDiaDoCulto } = require('../utils/janelaCulto');
 const { classificarCulto } = require('../utils/rodizioCulto');
-const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior } = require('../utils/agendaGrupo');
+const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, ocorrenciasPassadas, janelaCorrecaoPassada } = require('../utils/agendaGrupo');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
@@ -37,6 +37,9 @@ const checkoutExterno = require('../utils/checkoutExterno');
 // Reuso: núcleo de aprovação de pedidos de grupo (claim atômico + vínculo +
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
+const { cadastrarPessoaNoGrupo } = require('../services/grupoPessoaDireta');
+const { ancorasDeGrupos, iniciosDeGrupos } = require('../services/grupoAncora');
+const { aplicarExcecaoAgenda } = require('../services/grupoAgendaExcecao');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const appIdentidade = require('../services/appIdentidade');
 const { acharRespostaDaPessoa } = require('../services/censoJaRespondeu');
@@ -4252,14 +4255,23 @@ async function gruposPapelApp(req) {
       supabase.from('mem_grupos')
         .select('id, nome').eq('supervisor_id', membro.id).is('deleted_at', null)
         .order('nome', { ascending: true }),
-      // Líder ADICIONAL do roster: a MESMA régua que põe o nome na busca
-      // pública (`funcao IN lider/co_lider` + vínculo vivo · publicGrupos).
+      // Líder ADICIONAL do roster: quem GERENCIA o grupo sem ser o `lider_id`.
+      // ⚠️⚠️ `lider_treinamento` ENTRA aqui por decisão do Marcos (25/08/2026):
+      // *"quero que quem for líder em treinamento também possa gerenciar
+      // grupo"*. E `co_lider` SAIU — o termo foi aposentado no mesmo pedido
+      // (migration 20260825170000 converteu quem tinha em lider_treinamento e
+      // o CHECK do banco recusa gravá-lo de novo).
+      // ⚠️ Esta lista é GESTÃO, e é MAIS LARGA que a da vitrine pública
+      // (`montarListaLideres` em publicGrupos só põe `lider` como líder do
+      // grupo): quem está em treinamento gerencia, mas não é anunciado como
+      // líder na página de inscrição. Se um dia as duas tiverem que coincidir,
+      // é decisão de produto — não alinhar por engano achando que divergiram.
       // Best-effort no erro: falha aqui degrada pra "só lider_id" (fail-closed
       // pro poder novo, nunca derruba quem já gerenciava).
       supabase.from('mem_grupo_membros')
         .select('grupo_id, mem_grupos!inner(id, nome)')
         .eq('membro_id', membro.id)
-        .in('funcao', ['lider', 'co_lider'])
+        .in('funcao', ['lider', 'lider_treinamento'])
         .is('saiu_em', null).is('deleted_at', null)
         .is('mem_grupos.deleted_at', null),
     ]);
@@ -5056,7 +5068,12 @@ router.post('/membro/foto', authApp, limiterStrict, uploadCapaMw, async (req, re
 // continua protegido é a PESSOA que é `lider_id`.
 // ⚠️ `supervisor` e `coordenador` seguem fora: são papéis da hierarquia de
 // supervisão (grupo_supervisao_*), não do roster do grupo.
-const FUNCOES_APP = ['frequentador', 'lider_treinamento', 'co_lider', 'lider'];
+// ⚠️ `co_lider` SAIU (Marcos · 25/08/2026: *"nós não usamos o termo co-líder,
+// pode excluir esse termo"*). Quem tinha virou `lider_treinamento` na migration
+// 20260825170000, e o CHECK `chk_grupo_membros_sem_colider` recusa o valor —
+// então mandá-lo aqui de volta faria o UPDATE estourar 23514 e a tela dizer
+// "erro ao mudar a função" sem explicar nada.
+const FUNCOES_APP = ['frequentador', 'lider_treinamento', 'lider'];
 
 // PUT /api/app/grupos/:grupoId/membros/:rowId/funcao — body { funcao }
 router.put('/grupos/:grupoId/membros/:rowId/funcao', authApp, limiterNormal, async (req, res) => {
@@ -5067,7 +5084,7 @@ router.put('/grupos/:grupoId/membros/:rowId/funcao', authApp, limiterNormal, asy
     const funcao = String(req.body?.funcao || '').trim();
     if (!FUNCOES_APP.includes(funcao)) {
       return res.status(400).json({
-        error: 'Função inválida. Pelo app dá pra marcar frequentador, em treinamento, co-líder ou líder (cadastro) — supervisor e coordenador são da hierarquia de supervisão.',
+        error: 'Função inválida. Pelo app dá pra marcar frequentador, líder em treinamento ou líder (cadastro) — supervisor e coordenador são da hierarquia de supervisão.',
       });
     }
     // A linha tem que ser DESTE grupo (id de outro grupo no corpo não faz nada).
@@ -5163,12 +5180,12 @@ router.post('/meu-grupo/:grupoId/sair', authApp, limiterStrict, async (req, res)
       return res.status(409).json({ error: 'Você já não faz parte deste grupo.', codigo: 'nao_participa' });
     }
 
-    // ⚠️ CO-LÍDER também não sai por aqui. `lideres_busca` (a busca pública dos
-    // grupos) monta a lista com `funcao IN ('lider','co_lider')` — tirar um
-    // co-líder faz o grupo deixar de ser encontrável pelo nome dele, sem
-    // ninguém perceber. Trocar liderança é ato de gestão (mesma régua do
-    // "confira a lista", 31/07).
-    if (vinculos.some(v => ['lider', 'co_lider'].includes(String(v.funcao)))) {
+    // ⚠️ LÍDER EM TREINAMENTO também não sai por aqui, e o motivo mudou de
+    // lugar em 25/08/2026: ele passou a GERENCIAR o grupo (`gruposPapelApp`),
+    // então sair por este botão o deixaria com gestão de um grupo em que não
+    // está — e o gate lê o vínculo vivo. Trocar liderança é ato de gestão
+    // (mesma régua do "confira a lista", 31/07).
+    if (vinculos.some(v => ['lider', 'lider_treinamento'].includes(String(v.funcao)))) {
       return res.status(409).json({
         error: 'Você é da liderança deste grupo — fale com a coordenação para registrar a saída.',
         codigo: 'e_lideranca',
@@ -5221,132 +5238,195 @@ router.post('/meu-grupo/:grupoId/sair', authApp, limiterStrict, async (req, res)
   }
 });
 
-// POST /api/app/grupos/:grupoId/membros/:rowId/transferir — body { destino_grupo_id }
-// ⚠️ Transferência NÃO empurra ninguém pra dentro de outro grupo: cria um PEDIDO
-// no grupo de destino, pra o líder de lá aprovar (é o mesmo fluxo de quem se
-// inscreve). Um líder colocando gente no grupo do outro sem aprovação é
-// exatamente o tipo de atalho que a Caixa de entrada existe pra evitar.
-// A SAÍDA do grupo atual é um passo separado (o líder decide).
+// ============================================================================
+// POST /api/app/grupos/:grupoId/pessoas — O LÍDER CADASTRA E A PESSOA JÁ NASCE
+// DENTRO DO GRUPO (Marcos · 25/08/2026)
+//
+// ⚠️ CASCA FINA de propósito: a régua vive em `services/grupoPessoaDireta` e é a
+// MESMA que o ERP usa em `POST /grupos/:id/pessoas` — o pedido dele terminou com
+// *"alinhe todas essas mudanças com o sistema web"*, e alinhar significa uma
+// régua só, não duas telas parecidas. O porquê de cada decisão (não passar por
+// pedido, identidade pelo matcher, consentimento de terceiro, mínimo de campos)
+// está no cabeçalho do serviço.
+//
+// ⚠️ NÃO checa categoria × sexo do grupo, de propósito. A trava de
+// `utils/entradaGrupoApp` existe pra impedir que um DESCONHECIDO se inscreva
+// sozinho no grupo errado; aqui quem preenche está com a pessoa na frente. E ela
+// bloquearia caso real: o "NEW HEART - RECOMEÇO 40+" está cadastrado como
+// `categoria='Homens'` com 4 mulheres no roster (cadastro do GRUPO errado,
+// medido em 10/08) — enforcement ali impediria o líder de usar a tela.
+// ============================================================================
+router.post('/grupos/:grupoId/pessoas', authApp, limiterStrict, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const g = await gateGrupoApp(req, res, gid);
+    if (!g.ok) return;
+
+    const r = await cadastrarPessoaNoGrupo({
+      grupo: g.grupo,
+      dados: req.body || {},
+      autor: { id: req.user?.id || null, nome: g.membro?.nome || req.user?.email || 'Líder (app)' },
+      origem: 'grupos_app_lider',
+      ip: req.ip || null,
+      userAgent: req.get?.('user-agent') || null,
+    });
+    if (!r.ok) return res.status(r.http || 400).json({ error: r.error, campo: r.campo });
+
+    // ⚠️ NENHUM WhatsApp — nem pra pessoa, nem pro líder (pedido explícito:
+    // *"não passa por whatsapp e confirmação nenhuma"*). A coordenação é avisada
+    // porque é ela que cuida do cadastro e da qualidade dos dados; o aviso vai
+    // pelas regras do módulo `grupos`, nunca por lista de nomes no código.
+    if (!r.ja_no_grupo) {
+      notificar({
+        modulo: 'grupos',
+        tipo: 'novo_membro_grupo',
+        titulo: `Nova pessoa no grupo ${g.grupo.nome}`,
+        mensagem: `${r.nome} foi cadastrada pelo líder no app e já entrou em "${g.grupo.nome}".`
+          + (r.sem_cpf ? ' Cadastro sem CPF — aparece na fila de "faltam dados".' : ''),
+        link: '/grupos',
+        severidade: 'info',
+        chaveDedup: `novo_membro_${gid}_${r.membro_id}`,
+      }).catch(e => console.warn('[APP] pessoas · notificar:', e.message));
+    }
+
+    const { ok, http, ...corpo } = r;
+    res.status(http || 201).json({ ok: true, ...corpo });
+  } catch (e) {
+    console.error('[APP] grupos/pessoas:', e.message);
+    res.status(500).json({ error: 'Erro ao cadastrar a pessoa' });
+  }
+});
+
+// POST /api/app/grupos/:grupoId/membros/:rowId/transferir — body { motivo? }
+//
+// ⚠️⚠️ O LÍDER NÃO ESCOLHE O DESTINO (Marcos · 25/08/2026): *"sobre a opção de
+// transferência eu quero que o líder de grupo não escolha para onde ele está
+// transferindo, eu quero que ele aperte e solicite transferência, isso vai para
+// caixa de entradas como pendente para Naná gerenciar."*
+//
+// O que MORREU aqui: o líder escolhia um grupo entre os que ELE gerencia e o
+// sistema criava um pedido lá. Duas coisas erradas nisso — o destino certo
+// raramente é outro grupo do mesmo líder (é o que estivesse mais perto da
+// pessoa, na categoria dela), e a decisão de realocar gente é da coordenação,
+// que enxerga a malha inteira. Medido: **zero uso histórico** (nenhuma linha de
+// `mem_grupo_pedidos` com observação de transferência, desde sempre), então não
+// há dado velho a migrar nem hábito a quebrar.
+//
+// ⚠️ A linha nasce em `mem_grupo_transferencias` (migration 20260825170000), NÃO
+// em `mem_grupo_pedidos`: pedido é "quero entrar NESTE grupo" e exige
+// `grupo_id`. Ver o comentário da migration pro porquê inteiro.
+//
+// ⚠️ A SAÍDA do grupo atual continua sendo um passo separado — o líder decide
+// quando (e a coordenação pode resolver a transferência antes disso). Tirar a
+// pessoa aqui a deixaria sem grupo nenhum enquanto a triagem não resolvesse.
 router.post('/grupos/:grupoId/membros/:rowId/transferir', authApp, limiterNormal, async (req, res) => {
   try {
     const gid = req.params.grupoId;
     const g = await gateGrupoApp(req, res, gid);
     if (!g.ok) return;
-    const destinoId = String(req.body?.destino_grupo_id || '').trim();
-    if (!destinoId || destinoId === gid) {
-      return res.status(400).json({ error: 'Escolha um grupo de destino diferente.' });
-    }
-    const { data: destino } = await supabase.from('mem_grupos')
-      .select('id, nome, ativo, lider_id').eq('id', destinoId).is('deleted_at', null).maybeSingle();
-    if (!destino || destino.ativo === false) {
-      return res.status(404).json({ error: 'Grupo de destino não encontrado' });
-    }
+
     const { data: linha } = await supabase.from('mem_grupo_membros')
       .select('id, membro_id').eq('id', req.params.rowId)
       .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null).maybeSingle();
     if (!linha?.membro_id) return res.status(404).json({ error: 'Participante não encontrado neste grupo' });
 
-    // Já está no destino? Então não há o que pedir.
-    const { data: jaLa } = await supabase.from('mem_grupo_membros')
-      .select('id').eq('grupo_id', destinoId).eq('membro_id', linha.membro_id)
-      .is('saiu_em', null).is('deleted_at', null).limit(1).maybeSingle();
-    if (jaLa) return res.json({ ok: true, ja_no_destino: true, destino: destino.nome });
-
-    const { data: jaPediu } = await supabase.from('mem_grupo_pedidos')
-      .select('id').eq('grupo_id', destinoId).eq('membro_id', linha.membro_id)
-      .eq('status', 'pendente').is('deleted_at', null).limit(1).maybeSingle();
-    if (jaPediu) return res.json({ ok: true, ja_pedido: true, destino: destino.nome });
-
-    const { data: pessoa } = await supabase.from('mem_membros')
-      .select('nome, telefone, email').eq('id', linha.membro_id).is('deleted_at', null).maybeSingle();
-    const { data: novo, error } = await supabase.from('mem_grupo_pedidos').insert({
-      grupo_id: destinoId,
-      membro_id: linha.membro_id,
-      nome: pessoa?.nome || 'Participante',
-      telefone: pessoa?.telefone || null,
-      email: pessoa?.email || null,
-      status: 'pendente',
-      origem: 'app',
-      // ⚠️ A coluna é `observacao` (SINGULAR) — conferido no banco em 05/08/2026.
-      // Pedir `observacoes` faria o PostgREST recusar o INSERT inteiro.
-      observacao: `Transferência pedida pelo líder de "${g.grupo.nome}" no app.`,
-    }).select('id').single();
-    if (error) throw error;
-
-    // ⚠️⚠️ QUEM PRECISA SABER É O LÍDER DO DESTINO — e ele não era avisado por
-    // NADA (10/08/2026). O comentário no topo desta rota diz que a transferência
-    // "é o mesmo fluxo de quem se inscreve", mas só a criação do pedido foi
-    // igual: os dois avisos daquele fluxo ficaram de fora. O pedido nascia
-    // `pendente` na fila de um grupo cujo líder nunca ouvia falar dele, e a
-    // única notificação existente ia pro público do módulo — pessoas que não
-    // aprovam nada naquele grupo.
-    //
-    // ⚠️ A funcionalidade tem ZERO uso histórico (medido: nenhuma linha em
-    // `mem_grupo_pedidos` com observação de transferência, desde sempre). Então
-    // isto é gatilho armado, não incêndio — e é por isso que dá pra consertar
-    // sem migração nem varredura de dado velho.
-    (async () => {
-      const donosDestino = await donosDoGrupo(destino.id).catch(() => []);
-      if (donosDestino.length) {
-        await notificar({
-          modulo: 'grupos',
-          tipo: 'grupo_transferencia_pedida',
-          titulo: `Transferência para ${destino.nome}`,
-          mensagem: `${pessoa?.nome || 'Alguém'} foi indicada pelo líder de "${g.grupo.nome}" para o seu grupo. `
-            + 'O pedido está na sua fila, aguardando você aprovar ou recusar.',
-          link: '/grupos?tab=entrada',
-          severidade: 'aviso',
-          chaveDedup: `grupo_transf_${novo?.id}`,
-          targetIds: donosDestino,
-        });
-      }
-
-      // A coordenação continua sabendo (transferência entre grupos é assunto de
-      // triagem), MENOS quem já foi avisado como dono do destino — senão a mesma
-      // pessoa recebe duas linhas do mesmo fato, que é o defeito que esta leva
-      // de consertos existe pra tirar.
-      const coordenacao = (await resolverDestinatarios('grupos').catch(() => []))
-        .filter(id => !donosDestino.includes(id));
-      if (coordenacao.length) {
-        await notificar({
-          modulo: 'grupos',
-          tipo: 'grupo_transferencia_pedida',
-          titulo: 'Transferência pedida entre grupos',
-          mensagem: `${pessoa?.nome || 'Alguém'} foi indicada de "${g.grupo.nome}" para "${destino.nome}" pelo app. `
-            + 'O pedido está na fila do grupo de destino.',
-          link: '/grupos?tab=entrada',
-          chaveDedup: `grupo_transf_coord_${novo?.id}`,
-          targetIds: coordenacao,
-        });
-      }
-    })().catch(e => console.warn('[APP] transferir · notificar:', e.message));
-
-    // ⚠️ E O WHATSAPP, que é o canal que de fato funciona: 368 das 388 decisões
-    // de pedido dos últimos 90 dias saíram pelo link do WhatsApp do líder, não
-    // pelo sistema. Mandar só notificação in-app pra um líder que, em 86 dos 102
-    // grupos ativos, não tem conta no sistema, seria manter o pedido invisível.
-    // Mesma função dos outros caminhos de pedido — o template leva link de
-    // aprovar sem login, amarrado ao líder e ao pedido.
-    if (novo?.id) {
-      gruposWpp.notificarLiderNovoPedido({
-        grupo: destino,
-        pedidoId: novo.id,
-        pessoa: {
-          nome: pessoa?.nome || 'Participante',
-          telefone: pessoa?.telefone || null,
-          email: pessoa?.email || null,
-        },
-      }).catch(e => console.warn('[APP] transferir · wpp líder destino:', e.message));
+    // ⚠️ O líder PRINCIPAL não é transferido pelo app: sem ele o grupo fica sem
+    // destinatário dos avisos de WhatsApp (lei de 31/07). Mesma proteção que a
+    // mudança de função e a saída já têm.
+    if (linha.membro_id === g.grupo.lider_id) {
+      return res.status(400).json({
+        error: 'Esta é a líder principal do grupo — mover a liderança é com a coordenação.',
+      });
     }
 
-    res.status(201).json({ ok: true, destino: destino.nome, pedido_id: novo?.id || null });
+    const { data: pessoa } = await supabase.from('mem_membros')
+      .select('nome').eq('id', linha.membro_id).is('deleted_at', null).maybeSingle();
+    const motivo = String(req.body?.motivo || '').trim().slice(0, 500) || null;
+
+    // ⚠️ Já existe pedido pendente desta pessoa neste grupo? Devolve o MESMO,
+    // sem criar outro. O índice `uniq_grupo_transf_pendente` garante isso no
+    // banco; conferir antes é o que transforma o 23505 numa resposta amigável
+    // em vez de um 500 ("o líder tocou duas vezes" é o caso normal).
+    const { data: jaPediu } = await supabase.from('mem_grupo_transferencias')
+      .select('id, created_at').eq('membro_id', linha.membro_id)
+      .eq('grupo_origem_id', gid).eq('status', 'pendente').limit(1).maybeSingle();
+    if (jaPediu) {
+      return res.json({ ok: true, ja_pedido: true, transferencia_id: jaPediu.id });
+    }
+
+    const { data: novo, error } = await supabase.from('mem_grupo_transferencias').insert({
+      membro_id: linha.membro_id,
+      grupo_origem_id: gid,
+      vinculo_id: linha.id,
+      motivo,
+      status: 'pendente',
+      pedido_por: req.user?.id || null,
+      // Snapshot de nome: em 86 dos 102 grupos ativos o líder não tem conta no
+      // ERP, então resolver o nome depois pelo `pedido_por` não funcionaria.
+      pedido_por_nome: g.membro?.nome || req.user?.email || 'Líder (app)',
+      origem: 'app',
+    }).select('id').single();
+    if (error) {
+      // Corrida com outra aba/toque: o índice parcial pegou. Não é erro pro
+      // líder — o pedido dele está registrado.
+      if (error.code === '23505') return res.json({ ok: true, ja_pedido: true });
+      throw error;
+    }
+
+    // ⚠️⚠️ Quem precisa saber é a COORDENAÇÃO, e não o dono de nenhum grupo: é
+    // ela que vai ESCOLHER o destino, e destino é justamente o que este pedido
+    // não tem. Por isso aqui o `targetIds` não sai de `donosDoGrupo` (como em
+    // todo outro aviso de grupo) e sim de `resolverDestinatarios('grupos')` — as
+    // regras do módulo em `notificacao_regras`, nunca uma lista de nomes no
+    // código (a lei do projeto: o dono do fluxo muda sem PR).
+    //
+    // ⚠️ Lista VAZIA (nenhuma regra configurada) omite `targetIds` de propósito,
+    // pra cair no fallback de admin/diretor: transferência é rara e o custo de
+    // avisar gente demais é bem menor que o de um pedido de líder ficar parado
+    // sem ninguém saber que existe. Mandar `targetIds: []` seria SILÊNCIO.
+    (async () => {
+      const coordenacao = await resolverDestinatarios('grupos').catch(() => []);
+      await notificar({
+        modulo: 'grupos',
+        tipo: 'grupo_transferencia_pedida',
+        titulo: 'Transferência pedida por um líder',
+        mensagem: `${pessoa?.nome || 'Alguém'} do grupo "${g.grupo.nome}" precisa ser transferida. `
+          + `${motivo ? `Motivo: ${motivo}. ` : ''}O pedido está na Caixa de entrada, aguardando a coordenação escolher o grupo.`,
+        link: '/grupos?tab=entrada',
+        severidade: 'aviso',
+        chaveDedup: `grupo_transf_${novo?.id}`,
+        ...(coordenacao.length ? { targetIds: coordenacao } : {}),
+      });
+    })().catch(e => console.warn('[APP] transferir · notificar:', e.message));
+
+    res.status(201).json({ ok: true, transferencia_id: novo?.id || null });
   } catch (e) {
     console.error('[APP] grupos/transferir:', e.message);
     res.status(500).json({ error: 'Erro ao pedir a transferência' });
   }
 });
 
-// GET /api/app/grupos/:grupoId/encontros — histórico de frequência
+// GET /api/app/grupos/:grupoId/encontros — o histórico de frequência **com os
+// encontros que ficaram SEM CHAMADA à vista**.
+//
+// ⚠️⚠️ Pedido do Marcos (25/08/2026), a partir de um defeito que ele viu no
+// app: *"quando eu não preencho uma semana e preencho a outra ele dá meio que
+// um bug — ele provavelmente ficou em dúvida se eu estava registrando a
+// presença do dia 18, aí ele marcou que o encontro foi dia 24. Acho que vale a
+// pena sempre manter os encontros à vista: se a pessoa passar 1 semana e não
+// registrar, ele entra automaticamente como presença não registrada e pode ser
+// registrada posteriormente se o líder quiser."*
+//
+// ⚠️⚠️ A CAUSA não era ambiguidade do servidor: o `POST` de encontro sempre
+// aceitou `data` e caía em `hojeBRT()` quando ela não vinha — **e a tela nunca
+// mandava data nenhuma**. Registrar no dia 24 a chamada do dia 18 gravava um
+// encontro no dia 24, corretamente do ponto de vista de quem só recebeu
+// "presentes". O conserto é DOS DOIS LADOS: aqui nasce a lista de datas
+// possíveis (com o que falta), e o app passa a mandar a data escolhida.
+//
+// ⚠️ `encontros` (o histórico cru) CONTINUA na resposta, sem mudança: o binário
+// que está no celular hoje lê essa chave, e o OTA leva 2 aberturas pra aplicar.
+// A `ocorrencias` é aditiva.
 router.get('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, res) => {
   try {
     const gid = req.params.grupoId;
@@ -5364,9 +5444,111 @@ router.get('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, res
         .select('encontro_id, presente').in('encontro_id', ids);
       (pres || []).forEach(p => { if (p.presente) presentes[p.encontro_id] = (presentes[p.encontro_id] || 0) + 1; });
     }
-    res.json({
-      encontros: (encontros || []).map(e => ({ ...e, presentes: presentes[e.id] || 0 })),
-    });
+    const lista = (encontros || []).map(e => ({ ...e, presentes: presentes[e.id] || 0 }));
+
+    // ── A timeline: cada ocorrência que já passou, registrada ou não ─────────
+    // ⚠️ TODO este bloco é best-effort e ISOLADO: a aba de Encontros existe
+    // hoje e não pode sumir porque a agenda falhou (lição do `parcelas_max`).
+    // Sem `ocorrencias`, o app cai na lista crua — o comportamento de antes.
+    let ocorrencias = null;
+    let ocorrenciasAviso = null;
+    try {
+      const { data: grupo, error: eG } = await supabase.from('mem_grupos')
+        .select('dia_semana, horario, recorrencia').eq('id', gid).maybeSingle();
+      if (eG) throw eG;
+      // ⚠️ Janela de 180 dias na leitura das exceções: `ocorrenciasPassadas`
+      // devolve no máximo 12 ocorrências, e mesmo num grupo mensal isso são
+      // ~48 semanas — buscar a tabela inteira só cresceria com o tempo.
+      const desdeExcecoes = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+      const { data: exc, error: eE } = await supabase.from('mem_grupo_agenda_excecoes')
+        .select('data_original, status, nova_data, novo_horario, motivo')
+        .eq('grupo_id', gid).gte('data_original', desdeExcecoes);
+      if (eE) throw eE;
+      const [ancoras, inicios] = await Promise.all([
+        ancorasDeGrupos([gid]),
+        // ⚠️ O INÍCIO é o que permite listar o histórico de grupo quinzenal/
+        // mensal que nunca registrou encontro — 34 dos 35 não-semanais ativos,
+        // medido em 25/08. Sem ele a aba deles fica permanentemente vazia, e sem
+        // lista não há o que corrigir (o pedido do Marcos).
+        iniciosDeGrupos([gid]),
+      ]);
+      const porData = new Map(lista.map(e => [String(e.data).slice(0, 10), e]));
+      const brutas = ocorrenciasPassadas({
+        diaSemana: grupo?.dia_semana, horario: grupo?.horario,
+        recorrencia: grupo?.recorrencia, ancoraISO: ancoras[gid] || null,
+        inicioISO: inicios[gid] || null,
+        // ⚠️⚠️ PISO no início da temporada. Sem ele a lista atravessa pra trás
+        // além do começo do grupo: medido em 25/08 no grupo 00000068 (temporada
+        // aberta em 01/08), a timeline mostrava 22/06 e 06/07 como "presença não
+        // registrada" — pendência de encontro que aquele grupo não tinha por que
+        // ter feito. Cobrar chamada de antes do grupo existir é a versão nova do
+        // erro que a régua de âncora existia pra evitar.
+        // ⚠️ Encontro REGISTRADO fora do piso NÃO se perde: ele volta pela lista
+        // de avulsos logo abaixo.
+        desdeISO: inicios[gid] || null,
+        excecoes: exc || [], registradas: [...porData.keys()], quantas: 12,
+      });
+      // ⚠️⚠️ A JANELA DE CORREÇÃO É DECIDIDA AQUI, no servidor, e vai pronta pra
+      // tela (mesma lei da remarcação futura · 18/08): o app NÃO recalcula. Duas
+      // contas pra "que datas posso escolher" apareceriam como "o calendário
+      // deixou e o servidor recusou".
+      // ⚠️ Os vizinhos saem da PRÓPRIA lista (`data_original` ordenada desc),
+      // então a janela reflete a cadência real do grupo, não uma suposição.
+      ocorrencias = brutas.map((o, i) => {
+        const enc = porData.get(o.data) || null;
+        const janela = janelaCorrecaoPassada({
+          dataOriginal: o.data_original,
+          // A lista vem do mais RECENTE pro mais antigo: o índice seguinte é a
+          // ocorrência ANTERIOR no tempo, e o anterior é a SEGUINTE.
+          anteriorISO: brutas[i + 1]?.data || null,
+          proximaISO: brutas[i - 1]?.data || null,
+          hojeISO: hojeBRT(),
+          // ⚠⚠ Dia que JÁ TEM chamada sai da janela: `mem_grupo_encontros` tem
+          // UNIQUE (grupo_id, data), então escolher um deles levantaria 23505 e o
+          // líder só descobriria DEPOIS de salvar. É de graça — `porData` já foi
+          // carregado aqui em cima.
+          // ⚠ A data DESTA ocorrência não entra: a chamada dela não pode bloquear
+          // a própria linha (mover pra onde já está é no-op, não colisão).
+          ocupadas: [...porData.keys()].filter(d => d !== o.data),
+        });
+        return {
+          ...o,
+          encontro_id: enc?.id || null,
+          presentes: enc ? enc.presentes : null,
+          tema: enc?.tema || null,
+          observacoes: enc?.observacoes || null,
+          registrado_por_nome: enc?.registrado_por_nome || null,
+          pode_corrigir: !!janela?.pode,
+          corrigir_de: janela?.de || null,
+          corrigir_ate: janela?.ate || null,
+          // A tela apaga estes dias do calendário; o servidor recusa de novo,
+          // como cinto de segurança.
+          corrigir_bloqueadas: janela?.bloqueadas || [],
+        };
+      });
+      // ⚠️ Encontro REGISTRADO que não cai em ocorrência nenhuma (chamada feita
+      // num dia fora da recorrência — inclusive as gravadas com a data errada
+      // ANTES deste conserto) entra como avulso. Sumir com ele faria a chamada
+      // que a pessoa fez desaparecer da tela, que é pior que o defeito original.
+      const naTimeline = new Set(ocorrencias.map(o => o.data));
+      for (const e of lista) {
+        const d = String(e.data).slice(0, 10);
+        if (naTimeline.has(d)) continue;
+        ocorrencias.push({
+          data_original: d, data: d, horario: null, status: 'registrado',
+          motivo: null, dia_semana: null, registrado: true, avulso: true,
+          encontro_id: e.id, presentes: e.presentes, tema: e.tema,
+          observacoes: e.observacoes, registrado_por_nome: e.registrado_por_nome,
+        });
+      }
+      ocorrencias.sort((a, b) => (a.data < b.data ? 1 : a.data > b.data ? -1 : 0));
+    } catch (e) {
+      console.warn('[APP] encontros · timeline indisponível:', e.message);
+      ocorrencias = null;
+      ocorrenciasAviso = 'Não deu pra montar a agenda dos encontros agora.';
+    }
+
+    res.json({ encontros: lista, ocorrencias, ocorrencias_aviso: ocorrenciasAviso });
   } catch (e) {
     console.error('[APP] grupos/encontros:', e.message);
     res.status(500).json({ error: 'Erro ao carregar os encontros' });
@@ -5644,25 +5826,9 @@ router.get('/grupos/:grupoId/visitas', authApp, limiterNormal, async (req, res) 
 // EXCEÇÃO. Mesmo gate dos outros endpoints de gerenciar grupo.
 // ⚠️ NÃO escreve em `mem_grupo_encontros`: aquela é o registro do que
 // ACONTECEU (com presenças) e alimenta os KPIs de frequência.
-// ⚠️ ÂNCORA da cadência: quinzenal/mensal não se derivam de `dia_semana`
-// sozinho ("de 14 em 14 às terças" não diz EM QUAL terça). A única evidência no
-// banco é o último encontro REALIZADO. Sem ela a régua devolve UMA ocorrência
-// marcada como incerta, em vez de listar uma agenda inteira que é palpite.
-// Best-effort: falhar aqui não pode derrubar a tela do grupo.
-async function ancorasDeGrupos(ids) {
-  const out = {};
-  if (!ids || !ids.length) return out;
-  try {
-    for (let i = 0; i < ids.length; i += 200) {
-      const { data, error } = await supabase.from('mem_grupo_encontros')
-        .select('grupo_id, data').in('grupo_id', ids.slice(i, i + 200))
-        .order('data', { ascending: false });
-      if (error) throw error;
-      for (const e of data || []) if (e.data && !out[e.grupo_id]) out[e.grupo_id] = String(e.data).slice(0, 10);
-    }
-  } catch (e) { console.warn('[APP] ancora de agenda indisponivel:', e.message); }
-  return out;
-}
+// ⚠️ ÂNCORA da cadência: extraída pra `services/grupoAncora` em 25/08/2026,
+// quando o ERP passou a precisar da MESMA (card de encontros sem chamada). O
+// porquê inteiro — e por que sem ela a régua não inventa agenda — está lá.
 
 // Quantos dias à frente vale listar: até o fim da temporada aberta (o líder
 // pediu "todos os encontros da temporada"), com teto. Sem temporada aberta cai
@@ -5731,117 +5897,81 @@ router.post('/grupos/:grupoId/agenda', authApp, limiterStrict, async (req, res) 
     const gid = req.params.grupoId;
     const gate = await gateGrupoApp(req, res, gid);
     if (!gate.ok) return;
-    const { data_original, acao, nova_data, novo_horario, motivo } = req.body || {};
+    const {
+      data_original, acao, nova_data, novo_horario, motivo,
+      confirmar_apagar_chamada,
+    } = req.body || {};
 
-    const D = /^\d{4}-\d{2}-\d{2}$/;
-    if (!D.test(String(data_original || ''))) return res.status(400).json({ error: 'Informe a data do encontro que você quer alterar.' });
-    if (!['remarcar', 'cancelar', 'desfazer'].includes(acao)) return res.status(400).json({ error: 'Ação inválida.' });
-
-    const hojeBRT = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
-    // ⚠️ Só ocorrência FUTURA: mexer no passado não muda o que aconteceu e
-    // confundiria com o registro de presença, que é outra coisa.
-    if (data_original < hojeBRT) return res.status(400).json({ error: 'Só dá para alterar encontros que ainda vão acontecer.' });
-
-    if (acao === 'desfazer') {
-      const { error } = await supabase.from('mem_grupo_agenda_excecoes')
-        .delete().eq('grupo_id', gid).eq('data_original', data_original);
-      if (error) throw error;
-      return res.json({ ok: true, acao: 'desfeito' });
-    }
-
-    let linha = {
-      grupo_id: gid, data_original, status: acao === 'cancelar' ? 'cancelado' : 'remarcado',
-      motivo: motivo ? String(motivo).trim().slice(0, 300) : null,
-      decidido_por: gate.membro?.id || null,
-      decidido_por_nome: gate.membro?.nome || null,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (acao === 'remarcar') {
-      if (!D.test(String(nova_data || ''))) return res.status(400).json({ error: 'Informe a nova data.' });
-      if (nova_data < hojeBRT) return res.status(400).json({ error: 'A nova data não pode ser no passado.' });
-      if (novo_horario && !/^\d{2}:\d{2}$/.test(String(novo_horario))) return res.status(400).json({ error: 'Horário inválido (use HH:MM).' });
-
-      // ⚠️⚠️ A JANELA É DECIDIDA AQUI, nunca no app: o payload diz QUAL
-      // encontro, jamais SE pode (mesma lei da aprovação em lote e do
-      // `ligar-lote`). O calendário do app já limita, mas bundle antigo,
-      // requisição na mão ou tela aberta por horas passariam direto.
-      // ⚠️ Falha ao MONTAR a agenda recusa (409), nunca libera: guarda que
-      // falha aberta é enfeite.
-      let janela = null;
-      try {
-        const { data: gAg } = await supabase.from('mem_grupos')
-          .select('dia_semana, horario, recorrencia').eq('id', gid).maybeSingle();
-        const anc = await ancorasDeGrupos([gid]);
-        const lista = proximasOcorrencias({
-          diaSemana: gAg?.dia_semana, horario: gAg?.horario,
-          recorrencia: gAg?.recorrencia, ancoraISO: anc[gid] || null,
-          excecoes: [], quantas: 40, janelaDias: 200,
-        });
-        janela = lista.find(o => o.data_original === data_original) || null;
-      } catch (e) {
-        console.warn('[APP] agenda janela:', e.message);
-      }
-      if (!janela) {
-        return res.status(409).json({
-          error: 'Não consegui conferir a agenda deste grupo agora. Tente de novo em instantes.',
-          codigo: 'janela_indisponivel',
-        });
-      }
-      if (!janela.pode_remarcar) {
-        return res.status(409).json({
-          error: 'Este encontro está colado no seguinte — não dá para remarcar. Se ele não vai acontecer, cancele.',
-          codigo: 'sem_janela',
-        });
-      }
-      if (nova_data < janela.remarcar_de || nova_data > janela.remarcar_ate) {
-        return res.status(409).json({
-          error: `A nova data precisa ficar entre ${janela.remarcar_de} e ${janela.remarcar_ate}. Para mover mais que isso, cancele este encontro.`,
-          codigo: 'fora_da_janela',
-          remarcar_de: janela.remarcar_de,
-          remarcar_ate: janela.remarcar_ate,
-        });
-      }
-      linha.nova_data = nova_data;
-      linha.novo_horario = novo_horario || null;
-    } else {
-      linha.nova_data = null;
-      linha.novo_horario = null;
-    }
-
-    // Uma exceção por ocorrência: remarcar de novo ATUALIZA (o UNIQUE garante).
-    const { error } = await supabase.from('mem_grupo_agenda_excecoes')
-      .upsert(linha, { onConflict: 'grupo_id,data_original' });
-    if (error) {
-      if (/does not exist|schema cache/i.test(error.message)) {
-        return res.status(503).json({ error: 'A agenda ainda não está disponível. Avise a equipe de grupos.' });
-      }
-      throw error;
+    // ⚠️ CASCA FINA: a régua (as DUAS janelas de data, a coerência com a chamada
+    // já registrada, a tradução dos erros de banco) vive em
+    // `services/grupoAgendaExcecao` — a MESMA que o ERP usa desde 25/08. Duas
+    // cópias divergiriam, e o sintoma seria "no app deu, no web não".
+    const r = await aplicarExcecaoAgenda({
+      grupoId: gid,
+      dataOriginal: data_original,
+      acao,
+      novaData: nova_data,
+      novoHorario: novo_horario,
+      motivo,
+      autor: { id: gate.membro?.id || null, nome: gate.membro?.nome || null },
+      // ⚠⚠ `=== true` e nada mais: fail-closed. String, 1 ou objeto vindos de
+      // um cliente distraído NÃO podem apagar a chamada de um encontro real —
+      // a segunda etapa existe justamente pra isso ser uma decisão.
+      confirmarApagarChamada: confirmar_apagar_chamada === true,
+    });
+    if (!r.ok) {
+      const corpo = { error: r.error };
+      if (r.codigo) corpo.codigo = r.codigo;
+      if (r.remarcar_de) corpo.remarcar_de = r.remarcar_de;
+      if (r.remarcar_ate) corpo.remarcar_ate = r.remarcar_ate;
+      // Pra a pergunta da tela ser concreta ("isso apaga a presença de 3
+      // pessoas") em vez de abstrata. `null` = não deu pra contar.
+      if (r.presentes !== undefined) corpo.presentes = r.presentes;
+      return res.status(r.http || 400).json(corpo);
     }
 
     // ⚠️ Avisa a COORDENAÇÃO, não o grupo: quem fala com os participantes é o
     // líder, no WhatsApp dele. Disparar pra todo o roster daqui seria mensagem
     // que ninguém pediu — e o app não tem o contexto ("adiamos por causa do
     // feriado") que só ele sabe dar.
-    (async () => {
-      try {
-        await notificar({
-          modulo: 'grupos',
-          tipo: 'agenda_grupo_alterada',
-          titulo: acao === 'cancelar'
-            ? `Encontro cancelado: ${gate.grupo.nome}`
-            : `Encontro remarcado: ${gate.grupo.nome}`,
-          mensagem: acao === 'cancelar'
-            ? `${gate.membro?.nome || 'O líder'} cancelou o encontro de ${data_original}.${linha.motivo ? ` Motivo: ${linha.motivo}` : ''}`
-            : `${gate.membro?.nome || 'O líder'} remarcou o encontro de ${data_original} para ${nova_data}${novo_horario ? ` às ${novo_horario}` : ''}.${linha.motivo ? ` Motivo: ${linha.motivo}` : ''}`,
-          link: '/grupos',
-          severidade: 'info',
-          chaveDedup: `agenda_${gid}_${data_original}_${linha.status}`,
-        });
-      } catch (err) { console.error('[APP] agenda notify:', err.message); }
-    })();
+    if (r.acao !== 'desfeito') {
+      (async () => {
+        try {
+          const cancelou = r.acao === 'cancelado';
+          // ⚠️ O vocabulário muda no passado: "cancelou o encontro de amanhã" e
+          // "registrou que o encontro da semana passada não aconteceu" são fatos
+          // diferentes, e a coordenação decide coisas diferentes a partir deles.
+          const titulo = cancelou
+            ? (r.no_passado
+              ? `Encontro não aconteceu: ${gate.grupo.nome}`
+              : `Encontro cancelado: ${gate.grupo.nome}`)
+            : (r.no_passado
+              ? `Data de encontro corrigida: ${gate.grupo.nome}`
+              : `Encontro remarcado: ${gate.grupo.nome}`);
+          const quem = gate.membro?.nome || 'O líder';
+          const mensagem = cancelou
+            ? (r.no_passado
+              ? `${quem} registrou que o encontro de ${data_original} não aconteceu.${r.motivo ? ` Motivo: ${r.motivo}` : ''}`
+              : `${quem} cancelou o encontro de ${data_original}.${r.motivo ? ` Motivo: ${r.motivo}` : ''}`)
+            : (r.no_passado
+              ? `${quem} corrigiu a data do encontro de ${data_original} para ${r.nova_data}.`
+                + `${r.chamada_movida ? ' A chamada foi movida junto.' : ''}${r.motivo ? ` Motivo: ${r.motivo}` : ''}`
+              : `${quem} remarcou o encontro de ${data_original} para ${r.nova_data}`
+                + `${r.novo_horario ? ` às ${r.novo_horario}` : ''}.${r.motivo ? ` Motivo: ${r.motivo}` : ''}`);
+          await notificar({
+            modulo: 'grupos',
+            tipo: 'agenda_grupo_alterada',
+            titulo,
+            mensagem,
+            link: '/grupos',
+            severidade: 'info',
+            chaveDedup: `agenda_${gid}_${data_original}_${r.acao}`,
+          });
+        } catch (err) { console.error('[APP] agenda notify:', err.message); }
+      })();
+    }
 
-    res.json({ ok: true, acao: linha.status });
+    res.json({ ok: true, acao: r.acao, chamada_movida: r.chamada_movida });
   } catch (e) {
     console.error('[APP] agenda escrita:', e.message);
     res.status(500).json({ error: 'Erro ao alterar o encontro' });

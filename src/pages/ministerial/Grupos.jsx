@@ -4,6 +4,9 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { AbrirRotaMenu } from '../../components/grupos/AbrirRotaMenu';
 import { grupos as api, membresia, encaminhamentos } from '../../api';
+// ⚠️ Máscaras da fonte ÚNICA (`src/lib/inscricao`) — a lei do Contrato de
+// Inscrição proíbe cópia local de máscara/CPF.
+import { mascaraTelefone, mascaraCpf } from '../../lib/inscricao';
 // Régua ÚNICA de busca (acento/caixa/espaço) · espelho de backend/services/busca.js
 import { contemNormalizado } from '../../lib/busca';
 import { Button } from '../../components/ui/button';
@@ -84,11 +87,15 @@ const PAGE_TABS = ['grupos', 'pessoas', 'relatorios', 'entrada', 'materiais', 'v
 // Tipo/papel do membro no grupo · vem da funcao (mem_grupo_membros). "Membro" é
 // o padrão (frequentador); "Visitante" só quem foi marcado como tal (regra:
 // quem vai >3 vezes vira membro). Líder/treinamento aparecem aqui também.
+// ⚠️ `co_lider` continua no mapa APENAS pra LER dado histórico (backup
+// restaurado, export velho): o termo foi aposentado em 25/08/2026 e nenhuma
+// tela oferece o valor. Ele mostra o rótulo novo — chave sem rótulo viraria
+// "undefined" na tela, que é pior que um rótulo desatualizado.
 const TIPO_PAPEL = {
   visitante: { label: 'Visitante', cor: '#f59e0b', bg: '#f59e0b20' },
   frequentador: { label: 'Membro', cor: '#10b981', bg: '#10b98120' },
   lider_treinamento: { label: 'Líder em treinamento', cor: '#8b5cf6', bg: '#8b5cf620' },
-  co_lider: { label: 'Co-líder', cor: '#0ea5e9', bg: '#0ea5e920' },
+  co_lider: { label: 'Líder em treinamento', cor: '#8b5cf6', bg: '#8b5cf620' },
   lider: { label: 'Líder', cor: '#00B39D', bg: '#00B39D20' },
   supervisor: { label: 'Supervisor', cor: '#3b82f6', bg: '#3b82f620' },
   coordenador: { label: 'Coordenador', cor: '#8b5cf6', bg: '#8b5cf620' },
@@ -177,6 +184,23 @@ export default function Grupos() {
   const [editData, setEditData] = useState(null);
   const [saving, setSaving] = useState(false);
   const [addMembroOpen, setAddMembroOpen] = useState(false);
+  // ⚠️ Cadastrar pessoa NOVA (item 6 do Marcos · 25/08, alinhado com o app). Não
+  // substitui o funil de entrada ao lado: aquele é pra quem JÁ EXISTE na base.
+  const [novaPessoaOpen, setNovaPessoaOpen] = useState(false);
+  const [npNome, setNpNome] = useState('');
+  const [npTel, setNpTel] = useState('');
+  const [npEmail, setNpEmail] = useState('');
+  const [npNasc, setNpNasc] = useState('');
+  const [npSexo, setNpSexo] = useState('');
+  const [npCpf, setNpCpf] = useState('');
+  const [npEndereco, setNpEndereco] = useState('');
+  const [npVisitante, setNpVisitante] = useState(false);
+  // ⚠️⚠️ LGPD · quem preenche está DECLARANDO por outra pessoa. O aceite é
+  // obrigatório (é a base legal) e o opt-in de WhatsApp é opt-in de verdade —
+  // default false (Contrato de Inscrição · D4).
+  const [npTermos, setNpTermos] = useState(false);
+  const [npOptin, setNpOptin] = useState(false);
+  const [npSalvando, setNpSalvando] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [qrCopied, setQrCopied] = useState(false);
   const [membrosSearch, setMembrosSearch] = useState('');
@@ -260,6 +284,13 @@ export default function Grupos() {
   const [uploadGrupoIds, setUploadGrupoIds] = useState([]);
   const [customTag, setCustomTag] = useState('');
   const [chamadaOpen, setChamadaOpen] = useState(false);
+  // ⚠️ Data inicial da chamada (item 3 · 25/08): quando a coordenação clica em
+  // "Registrar" numa semana atrasada, o modal tem que abrir NAQUELE dia. Sem
+  // isso ela registraria a chamada da semana passada com a data de hoje — o
+  // defeito que o Marcos viu no app.
+  const [chamadaDataInicial, setChamadaDataInicial] = useState(null);
+  const [encontrosPendentes, setEncontrosPendentes] = useState([]);
+  const [naoAconteceuId, setNaoAconteceuId] = useState(null);
   const [encontroEdit, setEncontroEdit] = useState(null);
   const [encontros, setEncontros] = useState([]);
   const [entradasSaidas, setEntradasSaidas] = useState([]);
@@ -358,6 +389,11 @@ export default function Grupos() {
   }, [materiaisFilter]);
 
   const loadEncontros = useCallback(async (id) => {
+    // ⚠️ Best-effort e ISOLADO: sem a agenda o card volta ao comportamento de
+    // antes (só os registrados). Erro aqui não pode esvaziar o histórico.
+    api.encontrosPendentes(id)
+      .then(r => setEncontrosPendentes(r?.pendentes || []))
+      .catch(() => setEncontrosPendentes([]));
     try {
       const data = await api.encontros(id, { limit: 10 });
       // Histórico de entradas/saídas — mesma carga, painel discreto (ver abaixo).
@@ -391,7 +427,8 @@ export default function Grupos() {
       }
       setChamadaOpen(false);
       setEncontroEdit(null);
-      loadEncontros(selectedGrupo);
+      setChamadaDataInicial(null);
+      loadEncontros(selectedGrupo); // recarrega o histórico E os pendentes
       loadDetail(selectedGrupo);
       loadMetricas(selectedGrupo);
     } catch (e) {
@@ -524,6 +561,85 @@ export default function Grupos() {
   // Next → "engajar" (materializa o vínculo + alimenta NSM/KPI + sincroniza o
   // Next); Inscrição → "aprovar" o pedido (coloca neste grupo + notifica). Assim
   // a pessoa sai da fila e nada fica "pendente pra sempre".
+  // ⚠️ Espelho do que o servidor exige — mas ele é a autoridade. As duas réguas
+  // podem discordar em borda (DV do CPF, nome abreviado) e nesse caso quem manda
+  // é o 400 do servidor, que devolve o campo.
+  const npPodeEnviar = npNome.trim().split(/\s+/).filter(Boolean).length >= 2
+    && npNome.trim().length >= 5
+    && npTel.replace(/\D/g, '').length >= 10
+    && npCpf.replace(/\D/g, '').length === 11
+    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(npEmail.trim())
+    && /^\d{4}-\d{2}-\d{2}$/.test(npNasc.trim())
+    && !!npSexo
+    && npTermos;
+
+  // ⚠️ "Não aconteceu" é FATO, e precisa caber em algum lugar: sem ele o
+  // encontro fica pendente pra sempre e a coordenação cobra uma reunião que não
+  // houve. Escreve a MESMA exceção que o app escreve (services/grupoAgendaExcecao).
+  // ⚠⚠ AÇÃO DE DOIS PASSOS quando o dia JÁ TEM chamada (Marcos · 25/08: os
+  // becos sem saída "não podem acontecer"). Antes o servidor recusava com um
+  // toast e a coordenação não tinha caminho nenhum pela tela. Agora o 409
+  // `tem_chamada` vira PERGUNTA (com quantas presenças se perdem) e a resposta
+  // reenvia com `confirmar_apagar_chamada`.
+  //
+  // ⚠ Na prática a lista daqui só traz ocorrência SEM chamada, então este
+  // caminho é raro — fica porque o endpoint é o mesmo do app e a recusa não
+  // pode voltar a ser um beco se a lista um dia crescer.
+  const marcarNaoAconteceu = async (o, confirmarApagarChamada = false) => {
+    setNaoAconteceuId(o.data_original);
+    try {
+      const corpo = { data_original: o.data_original, acao: 'cancelar' };
+      if (confirmarApagarChamada) corpo.confirmar_apagar_chamada = true;
+      await api.agendaExcecao(selectedGrupo, corpo);
+      toast.success('Marcado como não realizado');
+      loadEncontros(selectedGrupo);
+    } catch (e) {
+      if (e?.codigo === 'tem_chamada') {
+        const n = typeof e.presentes === 'number' ? e.presentes : null;
+        const quantas = n ? `a presença de ${n} ${n === 1 ? 'pessoa' : 'pessoas'}` : 'a chamada deste dia';
+        // ⚠ `window.confirm` é síncrono e bloqueia a aba — aceitável aqui
+        // porque é ação destrutiva e rara, e o padrão da casa pro resto da tela.
+        if (window.confirm(`Isso vai APAGAR ${quantas} e não tem como desfazer. Marcar que o encontro não aconteceu?`)) {
+          setNaoAconteceuId(null);
+          return marcarNaoAconteceu(o, true);
+        }
+        return;
+      }
+      toast.error(e.message || 'Erro ao marcar');
+    } finally { setNaoAconteceuId(null); }
+  };
+
+  const handleCadastrarNovaPessoa = async () => {
+    setNpSalvando(true);
+    try {
+      const r = await api.addPessoaNova(selectedGrupo, {
+        nome: npNome.trim(),
+        telefone: npTel.trim(),
+        email: npEmail.trim(),
+        data_nascimento: npNasc.trim(),
+        genero: npSexo || undefined,
+        cpf: npCpf.trim(),
+        endereco: npEndereco.trim() || undefined,
+        whatsapp_optin: npOptin,
+        funcao: npVisitante ? 'visitante' : 'frequentador',
+      });
+      // ⚠️⚠️ A tela DIZ quando o matcher LIGOU numa pessoa que já existia. Sem
+      // isso quem cadastrou acha que não funcionou e tenta de novo com outro
+      // nome — o comportamento que fabrica duplicata na base.
+      if (r?.ja_no_grupo) toast.info(`${r.nome} já faz parte deste grupo`);
+      else if (r?.pessoa_nova === false) toast.success(`${r.nome} já tinha cadastro e entrou no grupo`);
+      else toast.success(`${r?.nome || 'Pessoa'} cadastrada e adicionada ao grupo`);
+      setNovaPessoaOpen(false);
+      setAddMembroOpen(false);
+      setNpNome(''); setNpTel(''); setNpEmail(''); setNpNasc(''); setNpSexo('');
+      setNpCpf(''); setNpEndereco(''); setNpVisitante(false); setNpTermos(false); setNpOptin(false);
+      loadDetail(selectedGrupo);
+      loadList();
+    } catch (e) {
+      toast.error(e.message || 'Erro ao cadastrar a pessoa');
+    } finally { setNpSalvando(false); }
+  };
+
   const handleAddCandidato = async (c) => {
     try {
       if (c.tipo === 'next') {
@@ -738,7 +854,7 @@ export default function Grupos() {
                 const lid = [];
                 if (g.lider) lid.push({ id: g.lider.id, nome: g.lider.nome });
                 membrosAtivos.forEach(m => {
-                  if ((m.funcao === 'lider' || m.funcao === 'co_lider') && !lid.some(l => l.id === m.id)) lid.push({ id: m.id, nome: m.nome });
+                  if (m.funcao === 'lider' && !lid.some(l => l.id === m.id)) lid.push({ id: m.id, nome: m.nome });
                 });
                 if (!lid.length) return null;
                 return <span style={{ fontSize: 13, color: C.t2 }}>{lid.length > 1 ? 'Líderes' : 'Líder'}: <strong style={{ color: C.text }}>{lid.map(l => l.nome).join(', ')}</strong></span>;
@@ -997,7 +1113,11 @@ export default function Grupos() {
                     <td style={{ padding: '10px 16px', textAlign: 'center' }}>
                       {(() => {
                         const isPrincipal = g.lider && m.id === g.lider.id;
-                        const isLider = m.funcao === 'lider' || m.funcao === 'co_lider';
+                        // ⚠️ `co_lider` some daqui: quem gerencia junto agora é o
+                        // `lider_treinamento`, que tem coluna PRÓPRIA ("Em treino")
+                        // logo ao lado. Somá-lo aqui faria os dois botões acenderem
+                        // pra a mesma pessoa e um desligar o outro.
+                        const isLider = m.funcao === 'lider';
                         if (isPrincipal) {
                           return (
                             <span title="Líder principal (definido em Editar)" style={{ fontSize: 11, padding: '2px 10px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -1120,6 +1240,54 @@ export default function Grupos() {
               <Calendar size={14} style={{ color: C.primary }} />
               <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Encontros recentes ({encontros.length})</span>
             </div>
+            {/* ⚠️⚠️ AS SEMANAS SEM CHAMADA ficam à vista (item 3 do Marcos ·
+                25/08, alinhado com o app). Antes o card só mostrava o que foi
+                registrado — a semana que ninguém preencheu não existia na tela,
+                e a coordenação não tinha como saber que faltava.
+                ⚠️ ÂMBAR, não vermelho: é pendência, não erro. */}
+            {encontrosPendentes.length > 0 && (
+              <div style={{ background: C.amberBg, borderBottom: `1px solid ${C.border}` }}>
+                <div style={{ padding: '8px 16px', fontSize: 11.5, fontWeight: 700, color: C.amber, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                  Sem chamada registrada ({encontrosPendentes.length})
+                </div>
+                {encontrosPendentes.map(o => (
+                  <div key={o.data} style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 12, borderTop: `1px solid ${C.border}` }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 10, background: `${C.amber}22`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <div style={{ fontSize: 9, fontWeight: 600, color: C.amber, textTransform: 'uppercase' }}>
+                        {new Date(o.data + 'T12:00:00').toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '')}
+                      </div>
+                      <div style={{ fontSize: 16, fontWeight: 700, color: C.amber, lineHeight: 1 }}>
+                        {new Date(o.data + 'T12:00:00').getDate()}
+                      </div>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Presença não registrada</div>
+                      <div style={{ fontSize: 11.5, color: C.t3 }}>
+                        {new Date(o.data + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long' })}
+                        {o.horario ? ` · ${String(o.horario).slice(0, 5)}` : ''}
+                      </div>
+                    </div>
+                    {podeEditarGrupos && (
+                      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                        <Button size="sm" variant="outline"
+                          onClick={() => { setEncontroEdit(null); setChamadaDataInicial(o.data); setChamadaOpen(true); }}>
+                          Registrar
+                        </Button>
+                        {/* ⚠️ "Não aconteceu" é FATO, e precisa caber em algum
+                            lugar: sem ele o encontro fica pendente pra sempre e
+                            a coordenação cobra uma reunião que não houve. Escreve
+                            exceção `cancelado` — a MESMA que o app escreve. */}
+                        <Button size="sm" variant="ghost"
+                          disabled={naoAconteceuId === o.data_original}
+                          onClick={() => marcarNaoAconteceu(o)}>
+                          {naoAconteceuId === o.data_original ? '...' : 'Não aconteceu'}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             {encontros.length === 0 ? (
               <div style={{ padding: 24, textAlign: 'center', color: C.t3, fontSize: 13 }}>
                 Nenhum encontro registrado. Clique em "Registrar encontro" para fazer a primeira chamada.
@@ -1221,10 +1389,11 @@ export default function Grupos() {
         {/* Modal de chamada / edição */}
         <ChamadaModal
           open={chamadaOpen}
-          onClose={() => { setChamadaOpen(false); setEncontroEdit(null); }}
+          onClose={() => { setChamadaOpen(false); setEncontroEdit(null); setChamadaDataInicial(null); }}
           membros={membrosAtivos}
           onSubmit={handleRegistrarEncontro}
           encontroEdit={encontroEdit}
+          dataInicial={chamadaDataInicial}
         />
 
         {/* Modal adicionar pessoa — funil de entrada (Next + inscrições deste grupo) */}
@@ -1268,6 +1437,13 @@ export default function Grupos() {
                   style={{ marginTop: 8, background: 'none', border: 'none', color: C.primary, fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 4 }}>
                   Não está na lista? Buscar na base toda
                 </button>
+                {/* ⚠️ Item 6, o espelho web: quando a pessoa não existe em lugar
+                    nenhum, cadastrar dali. O matcher canônico roda igual — se ela
+                    existir mesmo assim, ele LIGA em vez de duplicar. */}
+                <button onClick={() => setNovaPessoaOpen(true)}
+                  style={{ marginTop: 4, background: 'none', border: 'none', color: C.primary, fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 4, display: 'block' }}>
+                  + Cadastrar pessoa nova
+                </button>
               </>
             ) : (
               <>
@@ -1294,6 +1470,67 @@ export default function Grupos() {
                 </button>
               </>
             )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal cadastrar pessoa NOVA — item 6 (25/08) */}
+        {/* ⚠️ Ela nasce APROVADA no grupo: sem pedido, sem WhatsApp, sem
+            confirmação. Mesma régua do app (`services/grupoPessoaDireta`).
+            ⚠️ Obrigatórios só nome e celular — o resto é opcional de propósito, e
+            cadastro incompleto aparece na fila de "faltam dados" da aba Pessoas. */}
+        <Dialog open={novaPessoaOpen} onOpenChange={setNovaPessoaOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader><DialogTitle>Cadastrar pessoa nova</DialogTitle></DialogHeader>
+            <div style={{ fontSize: 12, color: C.t3, marginBottom: 4 }}>
+              Ela entra no grupo na hora. Não recebe mensagem e não precisa confirmar.
+            </div>
+            {/* ⚠️⚠️ OS MESMOS CAMPOS do formulário público de grupos (Marcos ·
+                25/08: "queremos cadastro completo, os mesmos campos que
+                solicitam a inscrição de grupos"). Quem valida é o SERVIDOR, pelo
+                `inscricaoContrato.validarCamposPadrao` — a régua abaixo só decide
+                quando o botão acende, pra ninguém clicar e levar erro. */}
+            <Input placeholder="Nome completo, sem abreviar *" value={npNome} onChange={e => setNpNome(e.target.value)} />
+            <Input placeholder="Celular com DDD *" value={npTel} onChange={e => setNpTel(mascaraTelefone(e.target.value))} maxLength={16} />
+            <Input placeholder="CPF *" value={npCpf} onChange={e => setNpCpf(mascaraCpf(e.target.value))} maxLength={14} />
+            <Input placeholder="E-mail *" type="email" value={npEmail} onChange={e => setNpEmail(e.target.value)} />
+            <Input placeholder="Nascimento AAAA-MM-DD *" value={npNasc} onChange={e => setNpNasc(e.target.value)} maxLength={10} />
+            <Input placeholder="Endereço (opcional)" value={npEndereco} onChange={e => setNpEndereco(e.target.value)} />
+            {/* ⚠️ Sexo em branco fica em branco — NUNCA inferido do nome (lei de
+                10/08). E só masculino/feminino: é o vocabulário da coluna. */}
+            <select value={npSexo} onChange={e => setNpSexo(e.target.value)}
+              style={{ padding: '8px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 13 }}>
+              <option value="">Sexo (opcional)</option>
+              <option value="masculino">Masculino</option>
+              <option value="feminino">Feminino</option>
+            </select>
+            {/* ⚠️ Adicionar de propósito é PARTICIPAÇÃO (lei de 14/08); visitante
+                só quando quem cadastra DECLARA. */}
+            {/* ⚠️⚠️ LGPD · QUEM PREENCHE ESTÁ DECLARANDO POR OUTRA PESSOA, e o
+                texto diz isso. No formulário público quem marca a caixa é a
+                própria pessoa; aqui é a equipe. O servidor grava o consentimento
+                com o prefixo "DECLARADO PRESENCIALMENTE POR <nome>" — gravar como
+                aceite do titular seria fabricar prova legal (mesma decisão do
+                link do voluntário · 14/08). */}
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, color: C.t2, cursor: 'pointer', lineHeight: 1.35 }}>
+              <input type="checkbox" checked={npTermos} onChange={e => setNpTermos(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>Confirmo que a pessoa está presente e autorizou o cadastro dos dados dela na igreja (LGPD) *</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5, color: C.t2, cursor: 'pointer', lineHeight: 1.35 }}>
+              <input type="checkbox" checked={npOptin} onChange={e => setNpOptin(e.target.checked)} style={{ marginTop: 2 }} />
+              <span>Ela autorizou receber mensagens da igreja no WhatsApp</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: C.t2, cursor: 'pointer' }}>
+              <input type="checkbox" checked={npVisitante} onChange={e => setNpVisitante(e.target.checked)} />
+              É visitante (veio conhecer)
+            </label>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+              <Button variant="outline" size="sm" onClick={() => setNovaPessoaOpen(false)}>Cancelar</Button>
+              <Button size="sm"
+                disabled={npSalvando || !npPodeEnviar}
+                onClick={handleCadastrarNovaPessoa}>
+                {npSalvando ? 'Cadastrando...' : 'Cadastrar e adicionar'}
+              </Button>
+            </div>
           </DialogContent>
         </Dialog>
 
@@ -2526,7 +2763,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
 }
 
 // ── MODAL DE CHAMADA / REGISTRO / EDIÇÃO DE ENCONTRO ──
-function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
+function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit, dataInicial = null }) {
   const [data, setData] = useState('');
   const [tema, setTema] = useState('');
   const [observacoes, setObservacoes] = useState('');
@@ -2543,7 +2780,11 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
         setObservacoes(encontroEdit.observacoes || '');
         setPresentes(new Set(encontroEdit.membros_presentes || []));
       } else {
-        setData(new Date().toISOString().split('T')[0]);
+        // ⚠️ `dataInicial` vem do card de "sem chamada registrada": a chamada
+        // atrasada tem que nascer NA DATA DA OCORRÊNCIA, não hoje. Sem isso, o
+        // registro da semana passada seria gravado com a data de hoje — o
+        // defeito que este conserto existe pra tirar.
+        setData(dataInicial || new Date().toISOString().split('T')[0]);
         setTema('');
         setObservacoes('');
         // Default: todos selecionados (mais comum o líder desmarcar quem faltou)
@@ -2551,7 +2792,7 @@ function ChamadaModal({ open, onClose, membros, onSubmit, encontroEdit }) {
       }
       setSaving(false);
     }
-  }, [open, membros, encontroEdit]);
+  }, [open, membros, encontroEdit, dataInicial]);
 
   const toggle = (id) => {
     setPresentes(prev => {

@@ -52,45 +52,77 @@ describe('pedido de grupo · avisa o dono do grupo, nunca o público do módulo'
   }
 });
 
-describe('transferência de participante · quem aprova é avisado', () => {
+describe('transferência de participante · o líder SOLICITA, a coordenação decide', () => {
   const APP = lerBackend('backend/routes/app.js');
   const ROTA = corpoDaRota(APP, '/grupos/:grupoId/membros/:rowId/transferir');
 
+  // ⚠️⚠️ ESTE BLOCO FOI REESCRITO EM 25/08/2026, e o motivo importa mais que os
+  // asserts. Ele guardava o desenho de 10/08: o líder escolhia o grupo de
+  // destino, nascia um PEDIDO lá, e o cuidado era avisar o dono do DESTINO (não
+  // o de origem) — inclusive pelo WhatsApp, porque é o líder de lá quem aprova.
+  //
+  // Aquele desenho MORREU por decisão do Marcos: *"eu quero que o líder de grupo
+  // não escolha para onde ele está transferindo, eu quero que ele aperte e
+  // solicite transferência, isso vai para caixa de entradas como pendente para
+  // Naná gerenciar."* Não existe mais "dono do destino" na hora do pedido —
+  // então os 4 asserts antigos passaram a proteger um comportamento que o
+  // produto não quer. Ele tinha ZERO uso histórico, então nada foi perdido.
+  //
+  // O que este bloco protege AGORA é o inverso: que o destino NÃO volte a ser
+  // escolhido pelo líder, e que o aviso chegue a quem decide.
+
   it('a rota existe e foi encontrada pelo extrator', () => {
-    expect(ROTA).toContain('mem_grupo_pedidos');
-    expect(ROTA).toContain('destino');
+    expect(ROTA).toContain('mem_grupo_transferencias');
   });
 
-  it('avisa o dono do grupo de DESTINO (não o de origem)', () => {
-    // O pedido nasce na fila do destino; quem aprova é o líder de lá.
-    expect(ROTA).toMatch(/donosDoGrupo\(destino\.id\)/);
+  it('⚠️⚠️ o líder NÃO escolhe o destino — nada de destino_grupo_id no corpo', () => {
+    // É o ponto todo da mudança. Reintroduzir isso devolve ao líder uma escolha
+    // que ele não tem informação pra fazer (ele só via os grupos dele).
+    expect(ROTA).not.toMatch(/destino_grupo_id/);
+    expect(ROTA).not.toMatch(/req\.body\?\.destino/);
+  });
+
+  it('⚠️ NÃO cria pedido de entrada em grupo nenhum', () => {
+    // `mem_grupo_pedidos` é "quero entrar NESTE grupo" e exige grupo_id — a
+    // transferência nasce sem destino. O único toque naquela tabela aqui seria
+    // sinal de que o desenho antigo voltou.
+    expect(ROTA).not.toMatch(/from\('mem_grupo_pedidos'\)\.insert/);
+  });
+
+  it('avisa a COORDENAÇÃO pelas regras do módulo, não uma lista no código', () => {
+    // Não há dono de grupo a mirar (o destino não existe ainda), então o
+    // destinatário sai de `notificacao_regras` via resolverDestinatarios.
+    expect(ROTA).toMatch(/resolverDestinatarios\('grupos'\)/);
     const aviso = chamadasNotificar(ROTA)
       .filter(b => b.includes("tipo: 'grupo_transferencia_pedida'"));
     expect(aviso.length).toBeGreaterThan(0);
-    for (const bloco of aviso) expect(bloco).toMatch(/targetIds:/);
+    for (const bloco of aviso) {
+      // ⚠️ EXCEÇÃO DECLARADA à lei deste arquivo: o `targetIds` é condicional
+      // (`coordenacao.length ? ... : {}`) porque lista vazia tem que cair no
+      // fallback de admin/diretor — `targetIds: []` seria SILÊNCIO, e pedido de
+      // líder parado sem ninguém saber é pior que aviso pra gente demais num
+      // fluxo raro. O assert exige a forma condicional, não a ausência.
+      expect(bloco, 'o aviso tem que carregar targetIds condicionado à lista da coordenação')
+        .toMatch(/coordenacao\.length \? \{ targetIds: coordenacao \} : \{\}/);
+    }
   });
 
-  it('⚠️ manda o WhatsApp do líder — o canal que de fato decide', () => {
-    // 368 das 388 decisões de pedido dos últimos 90 dias saíram pelo link do
-    // WhatsApp, não pelo sistema. E em 86 dos 102 grupos ativos o líder não tem
-    // conta: sem este envio, a transferência fica invisível pra quem aprova.
-    expect(ROTA).toMatch(/notificarLiderNovoPedido\(/);
+  it('⚠️ NENHUM WhatsApp sai daqui', () => {
+    // O desenho antigo mandava o link de aprovação pro líder do destino. Sem
+    // destino, não há a quem mandar — e disparar pra coordenação seria mensagem
+    // paga sobre uma decisão que ela toma no sistema, onde já vê a fila.
+    expect(ROTA).not.toMatch(/notificarLiderNovoPedido\(/);
+    expect(ROTA).not.toMatch(/gruposWpp\./);
   });
 
-  it('⚠️ o WhatsApp vai pro grupo de DESTINO, não pro de origem', () => {
-    // Errar aqui manda pro líder de origem um link que aprova pedido no grupo
-    // de OUTRA pessoa — o token é assinado com o par (pedido, líder), então
-    // seria um link-capability entregue a quem não deveria decidir.
-    const i = ROTA.indexOf('notificarLiderNovoPedido(');
-    const chamada = ROTA.slice(i, i + 400);
-    expect(chamada).toMatch(/grupo:\s*destino/);
-    expect(chamada).not.toMatch(/grupo:\s*g\.grupo/);
+  it('⚠️ a pessoa NÃO é tirada do grupo pelo pedido', () => {
+    // Ela continua onde está até a coordenação resolver. Encerrar o vínculo aqui
+    // a deixaria sem grupo nenhum no meio do caminho.
+    expect(ROTA).not.toMatch(/saiu_em:/);
   });
 
-  it('a coordenação não recebe em dobro quando também é dona do destino', () => {
-    // Duas linhas do mesmo fato pra mesma pessoa é o defeito que esta leva de
-    // consertos existe pra tirar.
-    expect(ROTA).toMatch(/resolverDestinatarios\('grupos'\)/);
-    expect(ROTA).toMatch(/filter\(\s*id\s*=>\s*!donosDestino\.includes\(id\)\s*\)/);
+  it('⚠️ a líder PRINCIPAL não é transferida pelo app', () => {
+    // Sem ela o grupo fica sem destinatário de aviso no WhatsApp (lei de 31/07).
+    expect(ROTA).toMatch(/g\.grupo\.lider_id/);
   });
 });
