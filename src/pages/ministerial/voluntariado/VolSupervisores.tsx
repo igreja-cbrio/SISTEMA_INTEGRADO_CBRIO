@@ -141,7 +141,21 @@ export default function VolSupervisores() {
       </div>
 
       {/* Conceder */}
-      <Card>
+      {/* ⚠️⚠️ `relative z-20` NÃO é enfeite: sem ele a lista de sugestões de
+          voluntário é COBERTA pelo card "Supervisores atuais" (reportado pelo
+          Matheus em 25/08 — "a lista suspensa dos voluntários está cortada").
+
+          A causa não é overflow: `.glass-surface` (a base do <Card>) declara no
+          index.css que NÃO tem overflow justamente pra não cortar menu. O que
+          acontece é STACKING CONTEXT — `.glass-surface` tem `backdrop-filter`, e
+          qualquer valor diferente de `none` cria contexto próprio. Aí os dois
+          cards viram contextos irmãos com `z-index: auto` e pintam na ordem do
+          DOM: o de baixo cobre o que transborda do de cima. O `z-10` do dropdown
+          é inerte — ele só ordena DENTRO do card dele, nunca entre cards.
+
+          ⚠️ `z-20` e não mais: o header do AppShell é `sticky z-30`. Subir acima
+          disso faria a lista passar POR CIMA do menu ao rolar a página. */}
+      <Card className="relative z-20">
         <CardHeader><CardTitle className="text-base flex items-center gap-2"><UserPlus className="h-4 w-4" /> Conceder supervisão</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <div className="flex flex-col sm:flex-row gap-2">
