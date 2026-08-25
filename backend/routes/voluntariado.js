@@ -1645,7 +1645,7 @@ router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res)
       .from('vol_area_supervisores')
       // ⚠️ `position` é a SUBÁREA (Ofertório, Estacionamento…). Vem embutida
       // pra tela não precisar de um segundo round-trip por linha.
-      .select('id, area, position_id, created_at, membro:mem_membros(id, nome, telefone, foto_url), position:vol_positions(id, name, team_id)')
+      .select('id, area, position_id, culto_dia, culto_periodo, culto_semana, created_at, membro:mem_membros(id, nome, telefone, foto_url), position:vol_positions(id, name, team_id)')
       .order('area', { ascending: true });
     if (error) throw error;
     res.json(data || []);
@@ -1657,7 +1657,7 @@ router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res)
 
 router.post('/supervisores', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
-    const { membro_id, area, position_id } = req.body || {};
+    const { membro_id, area, position_id, culto_dia, culto_periodo, culto_semana } = req.body || {};
     if (!membro_id || !area) return res.status(400).json({ error: 'membro_id e area obrigatórios' });
 
     // ⚠️ A subárea tem que PERTENCER à área concedida. Sem esta checagem daria
@@ -1675,15 +1675,36 @@ router.post('/supervisores', authorizeModule('voluntariado', 3), async (req, res
       }
     }
 
+    // ⚠️ RODIZIO (25/08) · semana x dia x periodo, a lista da Ariel. Cada eixo
+    // aceita null = curinga. Validado contra os valores que o CHECK do banco
+    // permite, pra o 400 vir daqui com mensagem, nao um 23514 cru.
+    const DIAS = ['domingo', 'quarta'];
+    const PERIODOS = ['manha', 'noite'];
+    const dia = culto_dia ? String(culto_dia).trim().toLowerCase() : null;
+    const per = culto_periodo ? String(culto_periodo).trim().toLowerCase() : null;
+    const sem = culto_semana === 0 || culto_semana ? Number(culto_semana) : null;
+    if (dia && !DIAS.includes(dia)) return res.status(400).json({ error: 'Dia do culto invalido (domingo|quarta).' });
+    if (per && !PERIODOS.includes(per)) return res.status(400).json({ error: 'Periodo invalido (manha|noite).' });
+    if (sem !== null && !(Number.isInteger(sem) && sem >= 1 && sem <= 4)) {
+      return res.status(400).json({ error: 'Semana do rodizio invalida (1 a 4).' });
+    }
+    // ⚠️ Periodo SEM dia nao existe no modelo da casa: "manha" sozinho nao diz
+    // se e domingo ou quarta, e a quarta e culto UNICO (decisao do Matheus).
+    if (per && !dia) return res.status(400).json({ error: 'Escolha o dia do culto antes do periodo.' });
+    if (per && dia === 'quarta') return res.status(400).json({ error: 'A quarta e culto unico — nao tem manha/noite.' });
+
     const { data, error } = await supabase
       .from('vol_area_supervisores')
       .insert({
         membro_id,
         area: String(area).trim().toLowerCase(),
         position_id: posId,
+        culto_dia: dia,
+        culto_periodo: per,
+        culto_semana: sem,
         concedido_por: req.user?.userId || null,
       })
-      .select('id, area, position_id, created_at, membro:mem_membros(id, nome, telefone, foto_url), position:vol_positions(id, name, team_id)')
+      .select('id, area, position_id, culto_dia, culto_periodo, culto_semana, created_at, membro:mem_membros(id, nome, telefone, foto_url), position:vol_positions(id, name, team_id)')
       .single();
     if (error) {
       if (error.code === '23505') return res.status(409).json({ error: 'Essa pessoa já supervisiona isso' });

@@ -87,4 +87,10 @@ assert.equal(podeSupervisionar([{ area: 'integracao', position_id: null }], { ar
 assert.equal(supervisionaTudo(['geral']), true, 'string[] antigo ainda funciona');
 assert.equal(podeSupervisionar(['Integração'], { area: 'Integração', position_id: ESTACIONA }), true,
   'string[] equivale a concessão de área inteira');
-assert.deepEqual(normalizarConcessoes(['geral']), [{ area: 'geral', position_id: null }]);
+// ⚠️ A forma cresceu em 25/08 com o RODÍZIO (semana × dia × período). O que
+// importa aqui é o contrato: string[] vira concessão SEM recorte nenhum — todos
+// os eixos NULL. Se um eixo novo entrar sem NULL por padrão, a compatibilidade
+// com `escalaResposta` (que passa string[]) quebra em silêncio.
+assert.deepEqual(normalizarConcessoes(['geral']), [{
+  area: 'geral', position_id: null, culto_dia: null, culto_periodo: null, culto_semana: null,
+}]);

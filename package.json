@@ -29,6 +29,7 @@
     "test:porta-ligar": "node backend/services/portaLigarEscreve.test.js",
     "test:supervisor-subarea": "node backend/services/supervisorSubarea.test.js",
     "test:checkin-janela": "node backend/services/checkinJanela.test.js",
+    "test:rodizio-culto": "node backend/services/rodizioCulto.test.js",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
