@@ -219,7 +219,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/sexoDeclarado.js` | régua pura | — | `src/test/sexoDeclarado.test.ts` |
 | `backend/utils/storagePath.js` | régua pura | — | `src/test/storagePath.test.ts` |
 | `backend/utils/supabase.js` | régua pura | — | `src/test/anexosLogArquivos.test.ts` |
-| `backend/utils/supervisorArea.js` | régua pura | — | `src/test/supervisorArea.test.ts` |
+| `backend/utils/supervisorArea.js` | régua pura | — | `backend/services/supervisorSubarea.test.js` |
 | `backend/utils/telefoneVoluntario.js` | régua pura | — | `src/test/telefoneVoluntario.test.ts` |
 | `backend/utils/totemCerco.js` | régua pura | — | `src/test/totemCerco.test.ts` |
 | `backend/utils/trechoCep.js` | régua pura | — | `src/test/trechoCep.test.ts` |
