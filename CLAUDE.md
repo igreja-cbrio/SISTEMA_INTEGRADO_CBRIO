@@ -3106,6 +3106,90 @@ T2-2026-022): "não aconteceu" gravou · data futura no passado recusou com 400 
 correção de data gravou · desfazer limpou — **resíduo ZERO** conferido em
 `mem_grupo_agenda_excecoes` depois.
 
+### ⚠️⚠️ 3ª RODADA (mesmo dia) · os BECOS SEM SAÍDA foram fechados
+
+*"Precisamos corrigir essas coisas que você falou que valem saber, não podem
+acontecer."* Eram as três ressalvas que eu havia listado como "vale saber" no fim
+da 2ª rodada — e ele está certo: **ressalva que tranca o líder não é ressalva, é
+defeito**. As três viraram caminho.
+
+#### 1 · "Não aconteceu" num dia com chamada · ação de DOIS PASSOS
+
+O servidor recusava com 409 e mandava *"apague a chamada antes"* — ou seja, o app
+sabia que a chamada estava errada e não deixava o líder arrumar; quem podia
+apagar era a coordenação, noutra tela, que o líder não abre.
+
+- A 1ª tentativa devolve **409 `tem_chamada` com `presentes`**, a tela pergunta
+  com o número na frente (*"isso vai apagar a presença de 3 pessoas"*) e reenvia
+  com `confirmar_apagar_chamada`.
+- ⚠️⚠️ **O 409 continua existindo DE PROPÓSITO.** Sem ele, um toque errado
+  apagaria uma chamada real sem ninguém perceber. O que mudou é que a recusa
+  passou a ter resposta.
+- ⚠️⚠️ **`=== true`, nunca truthy** nas duas portas (fail-closed): é este
+  parâmetro que apaga presença de gente, e string/`1`/objeto de um cliente
+  distraído não podem valer como decisão. Mutante rodado.
+- ⚠️ **Apaga ANTES de gravar a exceção.** Morrer no meio deixa a chamada apagada
+  e o dia sem a marca — visível na tela e corrigível com um toque. A ordem
+  inversa deixaria a marca com a chamada ainda lá, e a timeline dá precedência ao
+  registrado ("o fato vence a intenção"): a ação pareceria não ter pegado.
+- **`services/grupoEncontroApagar.js` é o caminho ÚNICO** (o `DELETE
+  /grupos/encontros/:id` virou casca fina sobre ele). ⚠️⚠️ Apagar chamada NÃO é
+  apagar uma linha: `registrar_encontro_grupo` INCREMENTA
+  `mem_grupo_membros.presencas` de cada presente, e esse contador alimenta a
+  régua de visitante→frequentador (14/08). `delete` cru deixaria o contador
+  inflado **pra sempre, sem erro nenhum** — por isso o decremento vem antes e é
+  por pessoa.
+
+#### 2 · Data ocupada · sai da janela antes de alguém escolher
+
+`mem_grupo_encontros` tem UNIQUE (grupo_id, data), então corrigir para um dia que
+já tem chamada levantava **23505 depois de salvar**. `janelaCorrecaoPassada`
+passou a receber `ocupadas` e devolver **`bloqueadas`**; o app apaga esses dias do
+calendário (`CalendarioBR` ganhou `bloqueadasISO`).
+
+- ⚠️ **Só as que caem DENTRO da janela** — mandar a lista inteira faria a tela
+  desenhar bloqueio em mês que ela nem mostra.
+- ⚠️⚠️ **A própria data da ocorrência NUNCA é bloqueada**: corrigir só o HORÁRIO
+  mantendo o dia é uso legítimo (a mesma decisão já registrada na irmã
+  `janelaRemarcacao`) e é o caminho mais comum de todos.
+- ⚠️ **`pode` conta as datas REALMENTE escolhíveis**: janela cheia de dia ocupado
+  é janela vazia, e oferecer "corrigir a data" nela é o beco de novo, agora com
+  cara de recurso disponível.
+- ⚠️ **O servidor recusa mesmo assim** (`codigo: 'data_ocupada'`): a tela é
+  conveniência, o cinto de segurança é o backend. E `datasComChamada` é
+  best-effort — falhar ali volta à janela de antes, nunca derruba a correção.
+- No GET do app as ocupadas saem do `porData` que já estava carregado: **custo
+  zero**, nenhuma consulta nova.
+
+#### 3 · As recusas que sobraram dizem o CAMINHO
+
+Corrigir encontro passado para data futura **continua recusado** — e não é beco,
+é lógica: "corrigir" é dizer em que dia o encontro ACONTECEU, e nada aconteceu no
+futuro. O que mudou é a mensagem: `codigo: 'correcao_no_futuro'` apontando que a
+próxima reunião já está na agenda, e a janela sem data livre mandando marcar
+"não aconteceu" em vez de dizer só que não dá.
+
+#### ⚠️ O corpo do erro chegou à tela do app · `lib/api.ts`
+
+O helper de erro devolvia **só a string** e o resto do JSON era descartado —
+então resposta de negócio que carrega dado ("tem chamada com 3 presenças: confirma
+apagar?") chegava como texto solto, e a tela não tinha como perguntar nem
+reenviar a confirmação. Agora o corpo vem em **`err.corpo`**, ao lado do
+`err.status` que já vinha, e os **6 blocos duplicados** viraram um helper só.
+⚠️ No ERP isso já funcionava (`Object.assign(error, err)` no `request()`).
+
+#### Verificação da 3ª rodada
+
+`tsc -b` sem cache · `npm run build` · **os 16 scripts** do gate (16/16) · app
+`tsc --noEmit` limpo + **210 testes**. **5 mutantes novos RODADOS e mortos**:
+lista de bloqueadas sem recorte pela janela → 1 vermelho · bloquear a própria
+data original → 2 · `pode` ignorando se sobrou data livre → 1 · confirmação
+aceitando truthy → 1 · gravar a exceção antes de apagar a chamada → 2.
+⚠️ **Flake conhecido deste PC, não regressão**: na suíte cheia (2.389) UM caso
+estoura o timeout de 5s por carga — e em duas rodadas foi um arquivo DIFERENTE
+(`cronAlcancavel`, depois `ConstrutorPerguntas`), os dois passando sozinhos. É a
+mesma família já registrada em `rpcsCliente`/`mapaGerador`.
+
 ### Estado / verificação
 
 Gate completo: `npx tsc -b` sem cache · `npm run build` · `npm test`

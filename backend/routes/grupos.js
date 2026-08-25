@@ -23,6 +23,7 @@ const { cadastrarPessoaNoGrupo } = require('../services/grupoPessoaDireta');
 const { ocorrenciasPassadas } = require('../utils/agendaGrupo');
 const { ancorasDeGrupos, iniciosDeGrupos } = require('../services/grupoAncora');
 const { aplicarExcecaoAgenda } = require('../services/grupoAgendaExcecao');
+const { apagarEncontroGrupo } = require('../services/grupoEncontroApagar');
 const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
 const { agruparDuplicados, validarResolucao } = require('../utils/vinculosDuplicados');
 // Régua única de "dá pra falar com essa pessoa?" (varredura do lançamento 02/08)
@@ -416,7 +417,10 @@ router.post('/:id/agenda', authorizeModule('grupos', 3), async (req, res) => {
       .select('id, nome').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
 
-    const { data_original, acao, nova_data, novo_horario, motivo } = req.body || {};
+    const {
+      data_original, acao, nova_data, novo_horario, motivo,
+      confirmar_apagar_chamada,
+    } = req.body || {};
     const r = await aplicarExcecaoAgenda({
       grupoId: grupo.id,
       dataOriginal: data_original,
@@ -425,12 +429,18 @@ router.post('/:id/agenda', authorizeModule('grupos', 3), async (req, res) => {
       novoHorario: novo_horario,
       motivo,
       autor: { id: req.user?.id || null, nome: req.user?.name || req.user?.email || 'Equipe' },
+      // ⚠⚠ `=== true` e nada mais (fail-closed): é este parâmetro que apaga
+      // uma chamada real, e só vem depois de a tela ter dito quantas presenças
+      // serão perdidas e alguém ter confirmado.
+      confirmarApagarChamada: confirmar_apagar_chamada === true,
     });
     if (!r.ok) {
       const corpo = { error: r.error };
       if (r.codigo) corpo.codigo = r.codigo;
       if (r.remarcar_de) corpo.remarcar_de = r.remarcar_de;
       if (r.remarcar_ate) corpo.remarcar_ate = r.remarcar_ate;
+      // Deixa a pergunta da tela concreta; `null` = não deu pra contar.
+      if (r.presentes !== undefined) corpo.presentes = r.presentes;
       return res.status(r.http || 400).json(corpo);
     }
     res.json({ ok: true, acao: r.acao, chamada_movida: r.chamada_movida });
@@ -547,25 +557,12 @@ router.patch('/encontros/:encontroId', authorizeModule('grupos', 2), async (req,
 // DELETE /api/grupos/encontros/:encontroId — remove encontro (decrementa contadores)
 router.delete('/encontros/:encontroId', authorizeModule('grupos', 3), async (req, res) => {
   try {
-    // Buscar membros presentes para reverter contador
-    const { data: presencas } = await supabase.from('mem_grupo_encontro_presencas')
-      .select('membro_id, mem_grupo_encontros!inner(grupo_id)')
-      .eq('encontro_id', req.params.encontroId);
-
-    const grupoId = presencas?.[0]?.mem_grupo_encontros?.grupo_id;
-
-    // Delete cascateia presenças; antes decrementa contador de cada membro presente
-    if (grupoId && presencas?.length) {
-      for (const p of presencas) {
-        await supabase.rpc('decrementar_presenca_grupo_membro', {
-          p_grupo_id: grupoId, p_membro_id: p.membro_id,
-        }).catch(() => {});
-      }
-    }
-
-    const { error } = await supabase.from('mem_grupo_encontros').delete().eq('id', req.params.encontroId);
-    if (error) throw error;
-    res.json({ success: true });
+    // ⚠️ CASCA FINA: a régua (decrementar `mem_grupo_membros.presencas` de cada
+    // presente ANTES do delete) vive em `services/grupoEncontroApagar` desde
+    // 25/08 — o fluxo de "o encontro não aconteceu" passou a precisar dela, e
+    // uma 2ª cópia deixaria um dos dois caminhos inflando contador em silêncio.
+    const r = await apagarEncontroGrupo(req.params.encontroId);
+    res.json({ success: true, presentes_revertidas: r.presentes });
   } catch (e) { console.error('[Grupos encontro delete]', e.message); res.status(500).json({ error: 'Erro ao remover encontro' }); }
 });
 

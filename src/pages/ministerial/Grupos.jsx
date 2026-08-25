@@ -576,15 +576,35 @@ export default function Grupos() {
   // ⚠️ "Não aconteceu" é FATO, e precisa caber em algum lugar: sem ele o
   // encontro fica pendente pra sempre e a coordenação cobra uma reunião que não
   // houve. Escreve a MESMA exceção que o app escreve (services/grupoAgendaExcecao).
-  const marcarNaoAconteceu = async (o) => {
+  // ⚠⚠ AÇÃO DE DOIS PASSOS quando o dia JÁ TEM chamada (Marcos · 25/08: os
+  // becos sem saída "não podem acontecer"). Antes o servidor recusava com um
+  // toast e a coordenação não tinha caminho nenhum pela tela. Agora o 409
+  // `tem_chamada` vira PERGUNTA (com quantas presenças se perdem) e a resposta
+  // reenvia com `confirmar_apagar_chamada`.
+  //
+  // ⚠ Na prática a lista daqui só traz ocorrência SEM chamada, então este
+  // caminho é raro — fica porque o endpoint é o mesmo do app e a recusa não
+  // pode voltar a ser um beco se a lista um dia crescer.
+  const marcarNaoAconteceu = async (o, confirmarApagarChamada = false) => {
     setNaoAconteceuId(o.data_original);
     try {
-      await api.agendaExcecao(selectedGrupo, { data_original: o.data_original, acao: 'cancelar' });
+      const corpo = { data_original: o.data_original, acao: 'cancelar' };
+      if (confirmarApagarChamada) corpo.confirmar_apagar_chamada = true;
+      await api.agendaExcecao(selectedGrupo, corpo);
       toast.success('Marcado como não realizado');
       loadEncontros(selectedGrupo);
     } catch (e) {
-      // ⚠️ O servidor recusa quando o dia TEM chamada registrada (contradição) —
-      // e a mensagem dele explica o caminho. Não engolir.
+      if (e?.codigo === 'tem_chamada') {
+        const n = typeof e.presentes === 'number' ? e.presentes : null;
+        const quantas = n ? `a presença de ${n} ${n === 1 ? 'pessoa' : 'pessoas'}` : 'a chamada deste dia';
+        // ⚠ `window.confirm` é síncrono e bloqueia a aba — aceitável aqui
+        // porque é ação destrutiva e rara, e o padrão da casa pro resto da tela.
+        if (window.confirm(`Isso vai APAGAR ${quantas} e não tem como desfazer. Marcar que o encontro não aconteceu?`)) {
+          setNaoAconteceuId(null);
+          return marcarNaoAconteceu(o, true);
+        }
+        return;
+      }
       toast.error(e.message || 'Erro ao marcar');
     } finally { setNaoAconteceuId(null); }
   };

@@ -160,7 +160,7 @@ function gerarOriginais({ diaSemana, recorrencia, ancoraISO, hojeISO, diaSemanaH
 // agosto pra uma data de julho embaralharia a ordem da sequência (e a âncora da
 // cadência sai justamente do encontro mais recente, então a agenda seguinte
 // nasceria errada).
-function janelaCorrecaoPassada({ dataOriginal, anteriorISO = null, proximaISO = null, hojeISO }) {
+function janelaCorrecaoPassada({ dataOriginal, anteriorISO = null, proximaISO = null, hojeISO, ocupadas = [] }) {
   if (!dataOriginal || !hojeISO) return null;
   const orig = String(dataOriginal).slice(0, 10);
 
@@ -178,7 +178,28 @@ function janelaCorrecaoPassada({ dataOriginal, anteriorISO = null, proximaISO = 
   let ate = proximaISO ? somarDias(String(proximaISO).slice(0, 10), -1) : somarDias(orig, passoFolga);
   if (ate > hojeISO) ate = hojeISO;
 
-  return { de, ate, pode: de <= ate };
+  // ⚠️⚠️ Dia que JÁ TEM chamada sai da janela (Marcos · 25/08: os becos sem
+  // saída "não podem acontecer"). `mem_grupo_encontros` tem UNIQUE (grupo_id, data),
+  // então escolher um deles levantaria 23505 — e o líder só descobriria DEPOIS de
+  // salvar. A tela recebe `bloqueadas` e apaga esses dias do calendário; o servidor
+  // continua recusando, como cinto de segurança.
+  // ⚠️ Só as que caem DENTRO da janela: mandar a lista inteira faria a tela
+  // desenhar bloqueio em mês que ela nem mostra.
+  const bloqueadas = (ocupadas || [])
+    .map(d => String(d).slice(0, 10))
+    .filter(d => d >= de && d <= ate && d !== orig);
+
+  // ⚠️ `pode` conta as datas REALMENTE escolhíveis: janela cheia de dia ocupado é
+  // janela vazia, e oferecer "corrigir" nela é o beco de novo. A própria data original
+  // NUNCA entra em `bloqueadas` — sobra corrigir só o HORÁRIO, que é uso legítimo
+  // (a mesma decisão já registrada na irmã `janelaRemarcacao`).
+  const bloq = new Set(bloqueadas);
+  let temLivre = false;
+  for (let d = de; d <= ate; d = somarDias(d, 1)) {
+    if (!bloq.has(d)) { temLivre = true; break; }
+  }
+
+  return { de, ate, bloqueadas, pode: de <= ate && temLivre };
 }
 
 // Próximas `quantas` ocorrências, já com as exceções aplicadas.

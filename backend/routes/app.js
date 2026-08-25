@@ -5190,6 +5190,13 @@ router.get('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, res
           anteriorISO: brutas[i + 1]?.data || null,
           proximaISO: brutas[i - 1]?.data || null,
           hojeISO: hojeBRT(),
+          // ⚠⚠ Dia que JÁ TEM chamada sai da janela: `mem_grupo_encontros` tem
+          // UNIQUE (grupo_id, data), então escolher um deles levantaria 23505 e o
+          // líder só descobriria DEPOIS de salvar. É de graça — `porData` já foi
+          // carregado aqui em cima.
+          // ⚠ A data DESTA ocorrência não entra: a chamada dela não pode bloquear
+          // a própria linha (mover pra onde já está é no-op, não colisão).
+          ocupadas: [...porData.keys()].filter(d => d !== o.data),
         });
         return {
           ...o,
@@ -5201,6 +5208,9 @@ router.get('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, res
           pode_corrigir: !!janela?.pode,
           corrigir_de: janela?.de || null,
           corrigir_ate: janela?.ate || null,
+          // A tela apaga estes dias do calendário; o servidor recusa de novo,
+          // como cinto de segurança.
+          corrigir_bloqueadas: janela?.bloqueadas || [],
         };
       });
       // ⚠️ Encontro REGISTRADO que não cai em ocorrência nenhuma (chamada feita
@@ -5574,7 +5584,10 @@ router.post('/grupos/:grupoId/agenda', authApp, limiterStrict, async (req, res) 
     const gid = req.params.grupoId;
     const gate = await gateGrupoApp(req, res, gid);
     if (!gate.ok) return;
-    const { data_original, acao, nova_data, novo_horario, motivo } = req.body || {};
+    const {
+      data_original, acao, nova_data, novo_horario, motivo,
+      confirmar_apagar_chamada,
+    } = req.body || {};
 
     // ⚠️ CASCA FINA: a régua (as DUAS janelas de data, a coerência com a chamada
     // já registrada, a tradução dos erros de banco) vive em
@@ -5588,12 +5601,19 @@ router.post('/grupos/:grupoId/agenda', authApp, limiterStrict, async (req, res) 
       novoHorario: novo_horario,
       motivo,
       autor: { id: gate.membro?.id || null, nome: gate.membro?.nome || null },
+      // ⚠⚠ `=== true` e nada mais: fail-closed. String, 1 ou objeto vindos de
+      // um cliente distraído NÃO podem apagar a chamada de um encontro real —
+      // a segunda etapa existe justamente pra isso ser uma decisão.
+      confirmarApagarChamada: confirmar_apagar_chamada === true,
     });
     if (!r.ok) {
       const corpo = { error: r.error };
       if (r.codigo) corpo.codigo = r.codigo;
       if (r.remarcar_de) corpo.remarcar_de = r.remarcar_de;
       if (r.remarcar_ate) corpo.remarcar_ate = r.remarcar_ate;
+      // Pra a pergunta da tela ser concreta ("isso apaga a presença de 3
+      // pessoas") em vez de abstrata. `null` = não deu pra contar.
+      if (r.presentes !== undefined) corpo.presentes = r.presentes;
       return res.status(r.http || 400).json(corpo);
     }
 

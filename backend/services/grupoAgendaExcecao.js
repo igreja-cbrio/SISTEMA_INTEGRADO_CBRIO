@@ -24,6 +24,7 @@ const {
   proximasOcorrencias, ocorrenciasPassadas, janelaCorrecaoPassada,
 } = require('../utils/agendaGrupo');
 const { ancorasDeGrupos, iniciosDeGrupos } = require('./grupoAncora');
+const { apagarEncontroGrupo } = require('./grupoEncontroApagar');
 
 const D = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -35,6 +36,13 @@ function hojeBRTLocal() {
 async function aplicarExcecaoAgenda({
   grupoId, dataOriginal, acao, novaData = null, novoHorario = null, motivo = null,
   autor = {},
+  /**
+   * ⚠️⚠️ Só vem `true` depois de a TELA ter dito quantas presenças serão
+   * apagadas e a pessoa ter confirmado. É o que transforma o antigo beco sem
+   * saída ("fale com a coordenação") numa ação de dois passos — sem virar um
+   * toque que apaga chamada por engano.
+   */
+  confirmarApagarChamada = false,
 }) {
   if (!D.test(String(dataOriginal || ''))) {
     return { ok: false, http: 400, error: 'Informe a data do encontro que você quer alterar.' };
@@ -72,11 +80,41 @@ async function aplicarExcecaoAgenda({
       .is('deleted_at', null).limit(1).maybeSingle();
     encontroNaData = enc || null;
   }
+  // ⚠️⚠️ ISTO ERA UM BECO SEM SAÍDA e o Marcos mandou consertar (25/08): o
+  // servidor recusava e mandava o líder "falar com a coordenação" — ou seja, o
+  // app sabia que a chamada estava errada e não deixava ele arrumar.
+  //
+  // Agora é ação de DOIS PASSOS: a 1ª tentativa devolve 409 com `presentes`,
+  // a tela pergunta ("isso vai apagar a presença de N pessoas") e reenvia com
+  // `confirmar_apagar_chamada`. O 409 continua existindo de propósito — sem ele,
+  // um toque errado apagaria uma chamada real sem ninguém perceber.
   if (acao === 'cancelar' && encontroNaData) {
-    return {
-      ok: false, http: 409, codigo: 'tem_chamada',
-      error: 'Esse dia já tem presença registrada, então ele aconteceu. Se a chamada foi lançada por engano, apague-a antes.',
-    };
+    if (!confirmarApagarChamada) {
+      // Conta quem estava presente pra a pergunta ser concreta ("3 pessoas"),
+      // não abstrata. Best-effort: falhar aqui só deixa a pergunta mais vaga.
+      let presentes = null;
+      try {
+        const { count } = await supabase.from('mem_grupo_encontro_presencas')
+          .select('membro_id', { count: 'exact', head: true })
+          .eq('encontro_id', encontroNaData.id).eq('presente', true);
+        presentes = typeof count === 'number' ? count : null;
+      } catch (e) { console.warn('[grupoAgendaExcecao] contar presentes:', e.message); }
+      return {
+        ok: false, http: 409, codigo: 'tem_chamada', presentes,
+        error: presentes
+          ? `Esse dia tem chamada com ${presentes} ${presentes === 1 ? 'presença' : 'presenças'}. Marcar que não aconteceu vai APAGAR essa chamada.`
+          : 'Esse dia tem uma chamada registrada. Marcar que não aconteceu vai APAGAR essa chamada.',
+      };
+    }
+    // ⚠️ Apaga ANTES de gravar a exceção: morrer no meio deixa a chamada apagada
+    // e o dia sem a marca de "não aconteceu" — visível na tela e corrigível com
+    // um toque. A ordem inversa deixaria a marca com a chamada ainda lá, e a
+    // timeline daria precedência ao registrado ("o fato vence a intenção"),
+    // fazendo a ação parecer que não pegou.
+    // ⚠️ O apagador decrementa `mem_grupo_membros.presencas` de cada presente —
+    // sem isso o contador ficaria inflado pra sempre, sem erro nenhum.
+    await apagarEncontroGrupo(encontroNaData.id);
+    encontroNaData = null;
   }
 
   const linha = {
@@ -99,9 +137,13 @@ async function aplicarExcecaoAgenda({
       return { ok: false, http: 400, error: 'A nova data não pode ser no passado.' };
     }
     if (noPassado && novaData > hojeISO) {
+      // ⚠️ Não é beco: é lógica. "Corrigir" um encontro passado é dizer em que
+      // dia ele ACONTECEU, e nada aconteceu no futuro. Quem quer marcar a
+      // próxima reunião já tem a ocorrência seguinte da recorrência — a mensagem
+      // diz o caminho em vez de apontar pra uma tela genérica.
       return {
-        ok: false, http: 400,
-        error: 'Para mover o encontro para frente, use a agenda dos próximos encontros.',
+        ok: false, http: 400, codigo: 'correcao_no_futuro',
+        error: 'Um encontro que já passou só pode ser corrigido para uma data passada. Se ele não aconteceu, marque "não aconteceu" — o próximo encontro do grupo já está na agenda.',
       };
     }
     if (novoHorario && !/^\d{2}:\d{2}$/.test(String(novoHorario))) {
@@ -133,10 +175,15 @@ async function aplicarExcecaoAgenda({
             anteriorISO: passadas[i + 1]?.data || null,
             proximaISO: passadas[i - 1]?.data || null,
             hojeISO,
+            // ⚠️⚠️ Dias que JÁ TÊM chamada saem da janela. `mem_grupo_encontros`
+            // tem UNIQUE (grupo_id, data), então mover pra lá levantaria 23505 —
+            // e o líder só descobriria DEPOIS de escolher a data. A tela recebe
+            // `bloqueadas` e apaga esses dias do calendário.
+            ocupadas: await datasComChamada(grupoId, dataOriginal),
           });
           // Normaliza pro MESMO formato do ramo futuro, pra as recusas abaixo
           // servirem aos dois — duas cópias das mensagens divergiriam.
-          if (j) janela = { pode_remarcar: j.pode, remarcar_de: j.de, remarcar_ate: j.ate };
+          if (j) janela = { pode_remarcar: j.pode, remarcar_de: j.de, remarcar_ate: j.ate, bloqueadas: j.bloqueadas };
         }
       } else {
         const lista = proximasOcorrencias({
@@ -160,8 +207,14 @@ async function aplicarExcecaoAgenda({
       return {
         ok: false, http: 409, codigo: 'sem_janela',
         error: noPassado
-          ? 'Este encontro está colado nos vizinhos — não sobra data para corrigir.'
+          ? 'Não sobra nenhuma data livre entre os encontros vizinhos. Se este não aconteceu, marque "não aconteceu".'
           : 'Este encontro está colado no seguinte — não dá para remarcar. Se ele não vai acontecer, cancele.',
+      };
+    }
+    if ((janela.bloqueadas || []).includes(novaData)) {
+      return {
+        ok: false, http: 409, codigo: 'data_ocupada',
+        error: 'Já existe um encontro registrado nessa data. Escolha outro dia.',
       };
     }
     if (novaData < janela.remarcar_de || novaData > janela.remarcar_ate) {
@@ -212,6 +265,29 @@ async function aplicarExcecaoAgenda({
     motivo: linha.motivo, nova_data: linha.nova_data, novo_horario: linha.novo_horario,
     chamada_movida: Boolean(encontroNaData && acao === 'remarcar'),
   };
+}
+
+/**
+ * As datas que JÁ TÊM chamada neste grupo (fora a que está sendo corrigida).
+ *
+ * ⚠️ `mem_grupo_encontros` tem UNIQUE (grupo_id, data): sem tirar estas datas da
+ * janela, o líder escolhe um dia ocupado e só descobre depois de salvar. É o
+ * beco sem saída nº 2 que o Marcos mandou fechar.
+ * ⚠️ Best-effort: se a consulta falhar, a janela volta a ser a de antes e quem
+ * recusa é o UNIQUE — pior experiência, nunca dado errado.
+ */
+async function datasComChamada(grupoId, exceto) {
+  try {
+    const { data, error } = await supabase.from('mem_grupo_encontros')
+      .select('data').eq('grupo_id', grupoId).is('deleted_at', null);
+    if (error) throw error;
+    return (data || [])
+      .map(e => String(e.data).slice(0, 10))
+      .filter(d => d !== exceto);
+  } catch (e) {
+    console.warn('[grupoAgendaExcecao] datas ocupadas:', e.message);
+    return [];
+  }
 }
 
 /** Migration não aplicada não pode virar 500 genérico (lição do `parcelas_max`). */

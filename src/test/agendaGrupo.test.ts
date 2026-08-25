@@ -553,3 +553,75 @@ describe('janelaCorrecaoPassada · corrigir a data de um encontro que já passou
     expect(janelaCorrecaoPassada({ dataOriginal: '2026-08-18', hojeISO: null as unknown as string })).toBeNull();
   });
 });
+
+// ⚠️⚠️ Marcos · 25/08/2026: *"precisamos corrigir essas coisas que você falou
+// que valem saber, não podem acontecer."* Um dos becos era este: o líder
+// escolhia uma data que JÁ tinha chamada e só descobria depois de salvar,
+// porque `mem_grupo_encontros` tem UNIQUE (grupo_id, data) e o banco levantava
+// 23505. A janela passou a EXCLUIR esses dias, e a tela os apaga do calendário.
+describe('janelaCorrecaoPassada · o dia que já tem chamada sai da janela', () => {
+  const HOJE = '2026-08-25';
+  const base = { dataOriginal: '2026-08-18', anteriorISO: '2026-08-11', proximaISO: '2026-08-25', hojeISO: HOJE };
+
+  it('sem `ocupadas` a janela é a de sempre e `bloqueadas` vem vazia', () => {
+    const j = janelaCorrecaoPassada(base)!;
+    expect(j.de).toBe('2026-08-12');
+    expect(j.ate).toBe('2026-08-24');
+    expect(j.bloqueadas).toEqual([]);
+    expect(j.pode).toBe(true);
+  });
+
+  it('devolve as datas ocupadas que caem DENTRO da janela', () => {
+    const j = janelaCorrecaoPassada({ ...base, ocupadas: ['2026-08-13', '2026-08-20'] })!;
+    expect(j.bloqueadas).toEqual(['2026-08-13', '2026-08-20']);
+    // a faixa não encolhe: os buracos são no meio dela
+    expect(j.de).toBe('2026-08-12');
+    expect(j.ate).toBe('2026-08-24');
+    expect(j.pode).toBe(true);
+  });
+
+  // ⚠️ Mandar a lista inteira faria a tela desenhar bloqueio em mês que ela nem
+  // mostra — e o líder ficaria procurando o motivo de um dia cinza fora da faixa.
+  it('data ocupada FORA da janela não é devolvida', () => {
+    const j = janelaCorrecaoPassada({ ...base, ocupadas: ['2026-07-01', '2026-12-25'] })!;
+    expect(j.bloqueadas).toEqual([]);
+  });
+
+  // ⚠️⚠️ A própria data da ocorrência NUNCA é bloqueada: corrigir só o HORÁRIO,
+  // mantendo o dia, é uso legítimo (a mesma decisão já registrada na irmã
+  // `janelaRemarcacao`). Bloqueá-la fecharia o caminho mais comum de todos.
+  it('a data original nunca entra em bloqueadas, mesmo constando em ocupadas', () => {
+    const j = janelaCorrecaoPassada({ ...base, ocupadas: ['2026-08-18'] })!;
+    expect(j.bloqueadas).toEqual([]);
+    expect(j.pode).toBe(true);
+  });
+
+  // ⚠️ Janela cheia de dia ocupado é janela VAZIA: oferecer "corrigir a data"
+  // nela é o beco de novo, agora com cara de recurso disponível.
+  it('sem NENHUMA data livre, `pode` é false', () => {
+    const j = janelaCorrecaoPassada({
+      dataOriginal: '2026-08-18', anteriorISO: '2026-08-16', proximaISO: '2026-08-20',
+      hojeISO: HOJE, ocupadas: ['2026-08-17', '2026-08-18', '2026-08-19'],
+    })!;
+    // 08-18 é a original (nunca bloqueada), então ela é a data livre
+    expect(j.bloqueadas).toEqual(['2026-08-17', '2026-08-19']);
+    expect(j.pode).toBe(true);
+
+    // já com a original FORA da faixa (janela que não a alcança), sobra nada
+    const vazia = janelaCorrecaoPassada({
+      dataOriginal: '2026-08-18', anteriorISO: '2026-08-18', proximaISO: '2026-08-20',
+      hojeISO: HOJE, ocupadas: ['2026-08-19'],
+    })!;
+    expect(vazia.de).toBe('2026-08-19');
+    expect(vazia.ate).toBe('2026-08-19');
+    expect(vazia.bloqueadas).toEqual(['2026-08-19']);
+    expect(vazia.pode).toBe(false);
+  });
+
+  it('tolera timestamp e lista nula sem quebrar', () => {
+    expect(janelaCorrecaoPassada({ ...base, ocupadas: null as unknown as string[] })!.bloqueadas).toEqual([]);
+    expect(
+      janelaCorrecaoPassada({ ...base, ocupadas: ['2026-08-13T00:00:00+00:00'] })!.bloqueadas
+    ).toEqual(['2026-08-13']);
+  });
+});
