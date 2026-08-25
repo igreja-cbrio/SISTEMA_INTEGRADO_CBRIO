@@ -18,7 +18,7 @@
 - `backend/routes/grupos.js`
 - `backend/routes/whatsappGrupos.js`
 Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
-<details><summary>Endpoints (112)</summary>
+<details><summary>Endpoints (102)</summary>
 - `DELETE /api/grupos/:id`
 - `DELETE /api/grupos/encontros/:encontroId`
 - `DELETE /api/grupos/materiais/:docId`
@@ -27,6 +27,7 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 - `GET /api/grupos/:id`
 - `GET /api/grupos/:id/candidatos-adicionar`
 - `GET /api/grupos/:id/encontros`
+- `GET /api/grupos/:id/encontros-pendentes`
 - `GET /api/grupos/:id/entradas-saidas`
 - `GET /api/grupos/:id/frequencia`
 - `GET /api/grupos/:id/historico-alteracoes`
@@ -36,12 +37,9 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 - `GET /api/grupos/:id/visitas`
 - `GET /api/grupos/bairros/list`
 - `GET /api/grupos/buscar`
-- `GET /api/grupos/confira/painel`
 - `GET /api/grupos/duplicatas`
 - `GET /api/grupos/encontros/:encontroId`
 - `GET /api/grupos/entrada/cobertura`
-- `GET /api/grupos/envios/aux`
-- `GET /api/grupos/envios/config`
 - `GET /api/grupos/envios/historico`
 - `GET /api/grupos/kpis/frequencia-grupos`
 - `GET /api/grupos/kpis/lideres-treinamento`
@@ -85,21 +83,14 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 - `PATCH /api/grupos/visitas/:visitaId`
 - `PATCH /api/whatsapp-grupos/materiais/:docId/estudo-semana`
 - `POST /api/grupos`
+- `POST /api/grupos/:id/agenda`
 - `POST /api/grupos/:id/encontros`
 - `POST /api/grupos/:id/membros`
 - `POST /api/grupos/:id/pedidos`
+- `POST /api/grupos/:id/pessoas`
 - `POST /api/grupos/:id/visitas`
-- `POST /api/grupos/confira/:confId/triar`
-- `POST /api/grupos/confira/disparar`
-- `POST /api/grupos/confira/preview`
 - `POST /api/grupos/duplicatas/fundir`
 - `POST /api/grupos/duplicatas/ignorar`
-- `POST /api/grupos/envios/abertura`
-- `POST /api/grupos/envios/abertura/preview`
-- `POST /api/grupos/envios/frequencia`
-- `POST /api/grupos/envios/frequencia/preview`
-- `POST /api/grupos/envios/material`
-- `POST /api/grupos/envios/material/preview`
 - `POST /api/grupos/geocode-batch`
 - `POST /api/grupos/importar-lideres/analisar`
 - `POST /api/grupos/importar-lideres/aplicar`
@@ -127,7 +118,6 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 - `PUT /api/grupos/:id`
 - `PUT /api/grupos/:id/observacoes/:periodo`
 - `PUT /api/grupos/:id/supervisor`
-- `PUT /api/grupos/envios/config`
 - `PUT /api/grupos/membros/:membroRowId/funcao`
 - `PUT /api/grupos/redes/:id`
 - `PUT /api/grupos/temporada-inscricoes`
@@ -135,6 +125,7 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/agendaGrupo.js`
 - `backend/utils/cronAuth.js`
 - `backend/utils/prontidaoCadastro.js`
 - `backend/utils/supabase.js`
@@ -146,7 +137,11 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 - `backend/services/contatoPessoa.js`
 - `backend/services/duplicidadePolicy.js`
 - `backend/services/fusaoCampos.js`
+- `backend/services/grupoAgendaExcecao.js`
+- `backend/services/grupoAncora.js`
+- `backend/services/grupoEncontroApagar.js`
 - `backend/services/grupoPedidoEventos.js`
+- `backend/services/grupoPessoaDireta.js`
 - `backend/services/gruposAvisoApp.js`
 - `backend/services/gruposDestinatarios.js`
 - `backend/services/gruposEnvios.js`
@@ -175,7 +170,7 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 - `kpi_indicadores_taticos`
 - `mem_cadastros_pendentes`
 - `mem_duplicados_ignorados`
-- `mem_grupo_conferencias`
+- `mem_grupo_agenda_excecoes`
 - `mem_grupo_documentos`
 - `mem_grupo_encontro_presencas`
 - `mem_grupo_encontros`
@@ -200,7 +195,6 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 
 - `app_soft_delete`
 - `atualizar_encontro_grupo`
-- `decrementar_presenca_grupo_membro`
 - `fn_consolidar_temporada`
 - `fn_grupos_kpis_relatorio`
 - `fn_grupos_ultima_frequencia`
