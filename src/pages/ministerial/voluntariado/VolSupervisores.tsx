@@ -128,6 +128,31 @@ export default function VolSupervisores() {
       .slice(0, 8);
   }, [pool, busca]);
 
+  /**
+   * ⚠️⚠️ QUEM BATEU NA BUSCA MAS ESTÁ SEM CADASTRO DE MEMBRO (25/08/2026).
+   *
+   * Relato do Matheus: *"o Luiz Felipe Palladino está na minha lista de
+   * voluntários mas na lista suspensa para colocar ele como supervisor ele não
+   * aparece."* A tela ficava MUDA: o nome existia no pool, o filtro
+   * `p.membresia_id` o descartava, e nada explicava. Ele foi procurar no banco.
+   *
+   * Medido: **339 dos 936 perfis de voluntário (36%) estão sem `membresia_id`**
+   * — então isto não é um caso isolado, é mais de um terço da lista.
+   *
+   * O filtro está CERTO e não pode cair: o app identifica o supervisor pelo
+   * cadastro de membro, então conceder a um perfil sem membro criaria uma
+   * supervisão que nunca funciona. O que estava errado era o SILÊNCIO — a tela
+   * escondia sem dizer, que é a mesma classe do painel que esconde o próprio
+   * buraco.
+   */
+  const semCadastro = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    if (!q) return [];
+    return (pool || [])
+      .filter(p => !p.membresia_id && (p.full_name || '').toLowerCase().includes(q))
+      .slice(0, 4);
+  }, [pool, busca]);
+
   const grantMut = useMutation({
     mutationFn: () => voluntariado.supervisores.grant(selMembro!.id, area, posId || null, {
       culto_dia: cultoDia || null,
@@ -199,6 +224,23 @@ export default function VolSupervisores() {
                 value={selMembro ? selMembro.nome : busca}
                 onChange={(e) => { setSelMembro(null); setBusca(e.target.value); }}
               />
+              {!selMembro && candidatos.length === 0 && semCadastro.length > 0 && (
+                <div className="absolute z-10 mt-1 w-full rounded-lg border border-amber-500/50 bg-card p-3 shadow-lg">
+                  <p className="text-xs font-semibold text-amber-600">
+                    {semCadastro.length === 1 ? 'Encontrado, mas sem cadastro de membro:' : 'Encontrados, mas sem cadastro de membro:'}
+                  </p>
+                  <ul className="mt-1 space-y-0.5">
+                    {semCadastro.map(c => (
+                      <li key={c.id} className="text-[13px] text-foreground">{c.full_name}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+                    O app identifica o supervisor pelo cadastro de membro, então a concessão só
+                    funciona depois de vincular. Resolva em <b>Entradas → Identidade</b> e a pessoa
+                    passa a aparecer aqui.
+                  </p>
+                </div>
+              )}
               {!selMembro && candidatos.length > 0 && (
                 <div className="absolute z-10 mt-1 w-full rounded-lg border bg-card shadow-lg max-h-56 overflow-y-auto">
                   {candidatos.map(c => (
