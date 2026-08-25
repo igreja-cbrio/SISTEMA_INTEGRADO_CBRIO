@@ -10333,6 +10333,77 @@ bug voltaria sozinho.
 estrago em curso**: no dia em que o coletor rodasse, churn de 90% apareceria
 como meta batida.
 
+## ⚠️⚠️ NEXT · os indicadores alinhados a sistema | jornada | nsm (2026-08-25 · migration `20260825120000`)
+
+Pedido do Marcos: *"o next precisamos de frequência, nps kpís de sistema, na
+jornada aí seria kpi de next × valor (quantas pessoas que fizeram o next estão
+engajados em algum outro valor), e nsm, convertidos que fizeram next"*.
+
+| linhagem | KPIs |
+|---|---|
+| **sistema** (operação do Next) | NEXT-05 frequência (novo) · NEXT-04 NPS · NEXT-01/02/03 indicações · GEN-04 |
+| **jornada** (next × valor real) | **NEXT-06** (novo) · % dos que fizeram o Next engajados em ≥1 valor |
+| **nsm** | `AMI/BRG/ONL/SED-NEXT90` (já estavam · intocados) |
+
+### ⚠️⚠️ NEXT-01/02/03 medem INTENÇÃO, não conversão — e o nome mentia
+
+`next.batismos`, `next.voluntarios` e `next.dizimo` contam
+`next_matriculas.indicou_*` — a marcação feita no fim do encontro — enquanto o
+indicador dizia *"% convertidos em batizandos/voluntários/doadores"*. Etiquetá-los
+como `jornada` publicaria **"50% converteram em voluntários"** onde o dado diz
+"50% disseram que queriam". Ficaram em `sistema` (é operação do Next: quantos
+saem com indicação) e o **indicador foi renomeado para dizer "indicaram"**.
+
+⚠️ **GEN-04 também é `sistema`**, e por outro motivo: mede o *follow-through* das
+indicações (`next_indicacoes` com `status='concluido'`) — o denominador é
+INDICAÇÃO, não pessoa. Não responde "% dos que fizeram o Next que doam".
+
+### ⚠️⚠️ A frequência lia a camada MORTA
+
+O `dado_tipo` `frequencia_next` lê `next_inscricoes.check_in_at`, aposentada no
+cutover de 17/06 — **última presença ali: 13/05/2026**, contra 3.882 linhas em
+`next_presencas` (última em 23/08). Ativar KPI de frequência sem repontar entrega
+indicador que marca **zero para sempre**, a mesma doença do lembrete de véspera e
+da aba Next do app.
+
+A régua canônica virou **`fn_next_frequencia_periodo(inicio, fim)`**: pessoas
+DISTINTAS presentes em encontro cuja **`data` do ENCONTRO** cai no período, e o
+coletor `next.frequencia` a chama por RPC — uma régua, não duas.
+⚠️ Encontro com `data` nula (o "Check-in legado" do backfill) fica FORA: sem data
+não há período a que pertencer.
+⚠️ **O ramo de `_kpi_agregar_dado` NÃO foi patchado**, de propósito: quem o
+consome são só os 5 clones por área, que seguem inativos. **Quem for ativá-los
+tem de repontar o ramo primeiro** — e `replace('next_inscricoes','next_presencas')`
+cego não serve, porque deixaria o filtro `check_in_at`, coluna que
+`next_presencas` não tem.
+
+### ⚠️ Frequência do Next é 1 KPI, não 5
+
+Medido em 25/08: `next_turmas`, `next_encontros` e `next_matriculas` **não têm
+dimensão de área**. Os 5 clones (AMI-03 · BRG-04 · CBA-03 · KIDS-12 · ONL-12)
+publicariam o MESMO número global cinco vezes com rótulo de área diferente —
+ficam inativos. O Next é um curso da igreja toda.
+
+### NEXT-06 · o "next × valor" real
+
+Denominador: `vw_next_formado_pessoa` (a fonte ÚNICA de "fez o Next" desde 14/08 —
+1 encontro basta). Valores: `vw_pessoas_papeis_mat`, **a MESMA matview do Índice
+da Base**, para os dois números não poderem discordar.
+⚠️ **A coluna de pessoa na matview é `membresia_id`, não `membro_id`** — pedir a
+errada faz o PostgREST recusar a query inteira e o KPI nunca calcularia (o
+coletor foi escrito errado e a sonda pegou antes do merge).
+⚠️ Conferido: as duas fontes concordam (884 × 888 pessoas · **56,9% × 56,6%**).
+⚠️ **O denominador são os MEDÍVEIS**: quem fez o Next e não está na base viva não
+pode contar como "não engajado" (deflacionaria). Quem ficou de fora é DECLARADO
+na observação — 52 sem cadastro ligado + 4 fora da base viva.
+⚠️ **O denominador é ACUMULADO** (quem fez o Next até o fim do período) porque
+engajamento é ESTADO ATUAL; recortá-lo pelo mês compararia janela com estoque.
+
+⚠️ **NEXT-05 e NEXT-06 nascem SEM META** — nenhuma foi pactuada, e inventar número
+é pior que assumir a lacuna. Efeito conhecido: `status_trajetoria` mostra
+`sem_meta` (correto) e o `status` legado mostra verde por ter valor > 0 (resíduo
+antigo já registrado). **Pactuar as duas metas é decisão pendente.**
+
 ### ⚠️ Meta absoluta × periodicidade do KPI · regra importante
 
 **Sempre** que adicionar novo KPI tático com `tipo_calculo != 'manual'` E meta
