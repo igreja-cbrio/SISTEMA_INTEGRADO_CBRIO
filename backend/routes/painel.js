@@ -2261,54 +2261,42 @@ router.get('/monitoramento-okr', async (req, res) => {
       }
     } catch (e) { console.error('okr · next_pos_contato:', e.message); }
 
-    // 4c) VOLUNTÁRIOS ATIVOS · régua decidida pelo Matheus em 25/08/2026:
-    //     ATIVO = escalado nos últimos 3 meses · BASE = escalado nos últimos 6.
+    // 4c) VOLUNTÁRIOS ATIVOS · régua confirmada pelo Matheus em 25/08/2026:
+    //     ATIVO = SERVIU nos últimos 3 meses (fez CHECK-IN)
+    //     BASE  = todo mundo com cadastro de voluntário ativo
     //
-    // ⚠️⚠️ ISTO TROCA A PERGUNTA, não mede melhora. Até aqui o indicador era
-    // "594 com cadastro de voluntário ÷ 1.730 membros ativos" = 35,2%. Duas
-    // coisas estavam erradas nele: `mem_voluntarios.ate` está preenchido em
-    // ZERO linhas (ninguém nunca deu baixa, então o numerador só cresce) e
-    // 156 dos 594 nem eram `membro_ativo` — gente contada em cima de uma
-    // população da qual não faz parte. Agora a conta vive inteira dentro do
-    // vol_*, sem depender do vínculo perfil↔membro (339 dos 935 perfis não
-    // têm esse vínculo).
+    // Palavras dele: "todos têm o cadastro ativo, mas não necessariamente é um
+    // voluntário ativo — só se torna ativo se serviu no período de 3 meses".
     //
-    // ⚠️ "Serviu" foi lido como "esteve na escala", NÃO como check-in: com
-    // check-in no denominador a conta dá 633 ÷ 467 = **135,5%**, porque o
-    // numerador não é subconjunto do denominador (184 escalados dos últimos
-    // 90 dias não têm nenhum check-in). Além disso o check-in só existe desde
-    // 15/04/2026 — "últimos 6 meses" de check-in ainda não existe no banco.
+    // ⚠️⚠️ ISTO TROCA A PERGUNTA, não mede melhora. O indicador antigo era
+    // "cadastro de voluntário ÷ membros ativos" = 29,8% na planilha, e tinha
+    // dois defeitos medidos: `mem_voluntarios.ate` está preenchido em ZERO
+    // linhas (ninguém nunca deu baixa, o numerador só cresce) e 156 dos 594 nem
+    // eram `membro_ativo` — gente contada sobre uma população da qual não faz
+    // parte. A conta nova vive inteira dentro do vol_*, sem depender do vínculo
+    // perfil↔membro (339 dos 935 perfis não o têm).
     //
-    // ⚠️ `scheduled_at <= now()` é obrigatório: `vol_services` guarda cultos
-    // FUTUROS já escalados (56 hoje, até 28/10), e sem o corte entrariam no
-    // numerador pessoas que ainda não serviram.
+    // ⚠️ SERVIU = check-in, NÃO escalado. Escalado ÷ escalado dá 96,9% e não
+    // discrimina: a escala é semanal, quem esteve nela em 6 meses esteve em 3.
+    // Check-in ÷ base dá 57,5%, que é a pergunta que tem resposta útil.
+    //
+    // ⚠️ O numerador é filtrado pela MESMA base do denominador (perfil não
+    // arquivado): sem isso o check-in de um perfil arquivado deixaria o
+    // numerador fora do denominador, e a razão poderia passar de 100%.
+    //
+    // ⚠️ `vol_check_ins` só existe desde 15/04/2026. A janela de 90 dias já
+    // cabe, mas qualquer janela maior que ~4 meses ainda não tem dado.
     try {
       const perfis = await fetchPaged('vol_profiles', 'id, arquivado', (q) => q);
-      const arquivado = new Set(perfis.filter((p) => p.arquivado).map((p) => p.id));
-      const agoraIso = new Date().toISOString();
-      const d180 = new Date(Date.now() - 180 * 86400000).toISOString();
-      const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
-      const servs = await fetchPaged('vol_services', 'id, scheduled_at',
-        (q) => q.gte('scheduled_at', d180).lte('scheduled_at', agoraIso));
-      if (servs.length) {
-        // ⚠️ Comparar por TIMESTAMP, não por string ISO: o Postgres devolve
-        // `+00:00` e o JS gera `Z`, e no caractere do fuso a ordem lexical
-        // inverte — o culto da fronteira cairia do lado errado da janela.
-        const corte90 = Date.parse(d90);
-        const quando = new Map(servs.map((x) => [x.id, Date.parse(x.scheduled_at)]));
-        const base = new Set(), ativos = new Set();
-        for (let i = 0; i < servs.length; i += 200) {
-          const lote = servs.slice(i, i + 200).map((x) => x.id);
-          const escalas = await fetchPaged('vol_schedules', 'volunteer_id, service_id',
-            (q) => q.in('service_id', lote).not('volunteer_id', 'is', null));
-          for (const e of escalas) {
-            if (arquivado.has(e.volunteer_id)) continue;
-            base.add(e.volunteer_id);
-            if (quando.get(e.service_id) >= corte90) ativos.add(e.volunteer_id);
-          }
-        }
-        if (base.size) addM('volunt_ativos_base', Math.round(ativos.size / base.size * 1000) / 10, '%',
-          `${ativos.size} escalados nos últimos 3 meses ÷ ${base.size} na escala nos últimos 6 (base de voluntários, sem arquivados)`);
+      const base = new Set(perfis.filter((p) => !p.arquivado).map((p) => p.id));
+      if (base.size) {
+        const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
+        const checkins = await fetchPaged('vol_check_ins', 'volunteer_id',
+          (q) => q.gte('checked_in_at', d90).not('volunteer_id', 'is', null));
+        const serviram = new Set();
+        for (const c of checkins) if (base.has(c.volunteer_id)) serviram.add(c.volunteer_id);
+        addM('volunt_ativos_base', Math.round(serviram.size / base.size * 1000) / 10, '%',
+          `${serviram.size} serviram (check-in) nos últimos 3 meses ÷ ${base.size} com cadastro de voluntário ativo`);
       }
     } catch (e) { console.error('okr · volunt_ativos_base:', e.message); }
 

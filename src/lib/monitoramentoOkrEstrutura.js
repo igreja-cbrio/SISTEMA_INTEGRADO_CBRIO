@@ -90,12 +90,13 @@ export const BLOCOS = [
         taticos: [
           // Valores estáticos (Pr. Juninho) · contagem real de cada área ÷ base definida pelo Juninho (módulo-fim, não sai dado daqui).
           { ind: '% frequência em Grupos', alvo: '60%', fixo: { valor: 48, unidade: '%', detalhe: '1.431 em grupos ativos · base 3.000 membros.' }, comparaLive: 'freq_grupos', alvoNum: 60, cmp: 'gte', casas: 1 },
-          // ⚠️⚠️ Régua trocada em 25/08/2026 (Matheus): ATIVO = escalado nos últimos 3 meses ·
-          // BASE = quem esteve na escala nos últimos 6. TROCA A PERGUNTA — antes era
-          // "cadastro de voluntário ÷ membros ativos" (35,2%), com um numerador que só cresce
-          // (`mem_voluntarios.ate` preenchido em ZERO linhas) e 156 pessoas que nem eram membro.
+          // ⚠️⚠️ Régua confirmada pelo Matheus em 25/08/2026: ATIVO = SERVIU (check-in) nos
+          // últimos 3 meses · BASE = todo mundo com cadastro de voluntário ativo. TROCA A
+          // PERGUNTA — antes era "cadastro ÷ membros ativos" (29,8%), com um numerador que
+          // só cresce (`mem_voluntarios.ate` preenchido em ZERO linhas) e 156 pessoas que
+          // nem eram membro. ⚠️ Escalado÷escalado daria 96,9% e não discriminaria.
           { ind: '% Voluntários ativos', alvo: '60%', live: 'volunt_ativos_base', alvoNum: 60, cmp: 'gte', casas: 1,
-            ressalva: 'Régua nova (25/08): ativo = escalado nos últimos 3 meses · base = quem esteve na escala nos últimos 6. O salto em relação aos 29,8% da planilha é MUDANÇA DE PERGUNTA, não melhora de operação — a base deixou de ser os membros da igreja e passou a ser a escala. ⚠️ O número fica perto de 100% porque a escala é semanal e quase todo mundo que serviu em 6 meses serviu em 3; quem tem folga pra melhorar é o comparecimento (73,6% dos escalados fizeram check-in nos últimos 90 dias).' },
+            ressalva: 'Régua nova (25/08): ATIVO = serviu (fez check-in) nos últimos 3 meses · BASE = todos com cadastro de voluntário ativo. A diferença em relação aos 29,8% da planilha é MUDANÇA DE PERGUNTA, não de operação — a base deixou de ser os membros da igreja e passou a ser o cadastro de voluntários. ⚠️ O numerador depende de o check-in ter sido feito: a adesão varia por equipe (de 38% no Apoio GC a 100% em Batismo, Bateria e Mesa de corte), então parte de quem aparece como inativo pode ter servido sem registrar. ⚠️ `vol_check_ins` só existe desde 15/04/2026 — janela maior que ~4 meses ainda não tem dado.' },
           { ind: '% dizimistas regulares', alvo: '60%', fixo: { valor: 28.5, unidade: '%', detalhe: '856 dizimistas · base 3.000 membros.' }, comparaLive: 'dizimistas', alvoNum: 60, cmp: 'gte', casas: 1,
             ressalva: '⚠️ FONTE PARADA. A última contribuição nominal em `mem_contribuicoes` é de 16/06/2026 — a base que alimenta este número não recebe lançamento há mais de dois meses. E o cruzamento contribuição↔pessoa praticamente não existe: das 131.228 receitas em `fin_transacoes`, 9 têm membro identificado (0,007%). Qualquer % de dizimistas hoje é piso, não medida.' },
         ],
