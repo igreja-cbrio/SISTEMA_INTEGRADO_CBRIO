@@ -13352,3 +13352,38 @@ chamam janela **e** escopo, e que a janela não está aninhada num
 backend está pronto e sem consumidor; o botão de marcar/desmarcar é trabalho no
 app (Expo/RN, TestFlight). ⚠️ Ao mexer lá, **nunca** subir `version` de 1.0.0
 (congela o OTA da frota).
+
+## ⚠️ Supervisores · a tela ficava MUDA pra quem não tem cadastro de membro (2026-08-25)
+
+Relato do Matheus: *"o Luiz Felipe Palladino está na minha lista de voluntários mas
+na lista suspensa para colocar ele como supervisor ele não aparece."*
+
+O filtro `p.membresia_id` está **certo** e não pode cair: o app identifica o
+supervisor pelo cadastro de membro, então conceder a um perfil sem membro criaria
+supervisão que nunca funciona. O errado era o **silêncio** — o nome existia no
+pool, era descartado, e nada explicava. Ele foi procurar no banco.
+
+Medido: **339 dos 936 `vol_profiles` (36%) estão sem `membresia_id`.** Não é caso
+isolado, é mais de um terço da lista. Agora a tela DECLARA: mostra os nomes
+achados, diz que estão sem cadastro e aponta *Entradas → Identidade*.
+
+### ⚠️⚠️ E o caso Palladino é identidade CRUZADA — não religar por e-mail
+
+| `vol_profiles` | e-mail do perfil | `membresia_id` |
+|---|---|---|
+| **Enzo Palladino** | `lfbpalladino@palladinoadvogados.com.br` | → membro **Luiz Felipe Bittencourt Palladino** |
+| **Luiz Felipe Palladino** | `lfpalladino@gmail.com` | **NULL** |
+
+O e-mail do perfil do **Enzo** é o e-mail do cadastro do **Luiz Felipe**; e o
+e-mail do perfil do **Luiz Felipe** é o do cadastro da **Lara Melchiades
+Palladino** — que tem a **MESMA data de nascimento** do Luiz Felipe (1981-06-27) e
+telefone vizinho (…902 × …901). **Não existe membro "Enzo Palladino".**
+
+⇒ Religar por e-mail aqui daria supervisão ao membro ERRADO. É literalmente o
+caso da LEI do contrato de porta ("família compartilha telefone/e-mail — NUNCA
+ligar por sinal fraco sozinho"). Decisão: **fila humana, não script.**
+
+**A medida do problema geral** (25/08): dos 596 perfis COM vínculo, **29 têm o
+primeiro nome divergente** do membro apontado — **14 com o mesmo sobrenome**
+(assinatura de cruzamento familiar) e **0** que sejam apelido/prefixo. Ou seja:
+não são grafias, são pessoas trocadas. Vale varredura própria.
