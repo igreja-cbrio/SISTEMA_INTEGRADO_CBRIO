@@ -15,7 +15,7 @@
 - `backend/routes/membresia.js`
 - `backend/routes/voluntariado.js`
 Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
-<details><summary>Endpoints (163)</summary>
+<details><summary>Endpoints (229)</summary>
 - `DELETE /api/membresia/cadastros/:id`
 - `DELETE /api/membresia/checkins/:id`
 - `DELETE /api/membresia/contribuicoes/:id`
@@ -25,9 +25,18 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `DELETE /api/membresia/membros/:id`
 - `DELETE /api/membresia/ministerios/:id`
 - `DELETE /api/membresia/vinculos/:id`
+- `DELETE /api/voluntariado/1x1/:id`
+- `DELETE /api/voluntariado/availability/:id`
 - `DELETE /api/voluntariado/inscricoes/:id`
+- `DELETE /api/voluntariado/positions/:id`
+- `DELETE /api/voluntariado/roles/:profileId/:role`
 - `DELETE /api/voluntariado/schedule-templates/:id`
 - `DELETE /api/voluntariado/schedules/:id`
+- `DELETE /api/voluntariado/service-types/:id`
+- `DELETE /api/voluntariado/services/:id`
+- `DELETE /api/voluntariado/supervisores/:id`
+- `DELETE /api/voluntariado/team-members/:id`
+- `DELETE /api/voluntariado/teams-manage/:id`
 - `GET /api/jornada/cron/refresh-papeis`
 - `GET /api/jornada/dashboard`
 - `GET /api/jornada/membro/:id`
@@ -79,10 +88,13 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `GET /api/voluntariado/acessos`
 - `GET /api/voluntariado/acessos/cargos`
 - `GET /api/voluntariado/antecedentes/pendentes`
+- `GET /api/voluntariado/availability`
+- `GET /api/voluntariado/check-ins`
 - `GET /api/voluntariado/config`
 - `GET /api/voluntariado/cron/antecedentes`
 - `GET /api/voluntariado/cron/emails`
 - `GET /api/voluntariado/cron/sync`
+- `GET /api/voluntariado/cultos-manha`
 - `GET /api/voluntariado/escala-matriz`
 - `GET /api/voluntariado/frequencia`
 - `GET /api/voluntariado/frequencia/detalhe`
@@ -92,13 +104,34 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `GET /api/voluntariado/inscricoes/:id/antecedentes`
 - `GET /api/voluntariado/inscricoes/por-direcionada`
 - `GET /api/voluntariado/kpis/taticos`
+- `GET /api/voluntariado/my-check-ins`
+- `GET /api/voluntariado/positions`
+- `GET /api/voluntariado/relatorio-dados`
+- `GET /api/voluntariado/roles`
 - `GET /api/voluntariado/schedule-templates`
 - `GET /api/voluntariado/schedule-templates/:id`
 - `GET /api/voluntariado/schedule-templates/por-tipo/:serviceTypeId`
+- `GET /api/voluntariado/schedules`
+- `GET /api/voluntariado/service-types`
+- `GET /api/voluntariado/services`
+- `GET /api/voluntariado/services-availability`
 - `GET /api/voluntariado/services/:serviceId/contexto-montagem`
 - `GET /api/voluntariado/services/:serviceId/escala-cobertura`
+- `GET /api/voluntariado/services/checkin-window`
+- `GET /api/voluntariado/services/today`
+- `GET /api/voluntariado/services/upcoming`
+- `GET /api/voluntariado/sync-logs`
+- `GET /api/voluntariado/team-members`
+- `GET /api/voluntariado/team/:teamId/members`
+- `GET /api/voluntariado/teams`
+- `GET /api/voluntariado/teams-manage`
 - `GET /api/voluntariado/teams-manage/mapa-pco`
 - `GET /api/voluntariado/teams-manage/pendencias-pco`
+- `GET /api/voluntariado/training-checkins`
+- `GET /api/voluntariado/vol-by-membro/:membroId`
+- `GET /api/voluntariado/volunteer-qrcodes`
+- `GET /api/voluntariado/volunteers-pool`
+- `GET /api/voluntariado/waiting-allocation`
 - `PATCH /api/membresia/cadastros/:id`
 - `PATCH /api/membresia/grupo-membros/:id/sair`
 - `PATCH /api/membresia/membros/:id/familia`
@@ -108,6 +141,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `PATCH /api/voluntariado/antecedentes/:id`
 - `PATCH /api/voluntariado/inscricoes/:id`
 - `PATCH /api/voluntariado/inscricoes/:id/dados`
+- `PATCH /api/voluntariado/supervisores/:id`
 - `POST /api/jornada/cron/refresh-papeis`
 - `POST /api/jornada/cruzar`
 - `POST /api/jornada/refresh-papeis`
@@ -146,7 +180,16 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `POST /api/membresia/totem/next/inscrever`
 - `POST /api/membresia/trilha`
 - `POST /api/membresia/voluntarios`
+- `POST /api/voluntariado/1x1`
 - `POST /api/voluntariado/acessos/criar-login`
+- `POST /api/voluntariado/allocate/:id`
+- `POST /api/voluntariado/availability`
+- `POST /api/voluntariado/check-ins`
+- `POST /api/voluntariado/check-ins/manha`
+- `POST /api/voluntariado/check-ins/rematch`
+- `POST /api/voluntariado/face/match`
+- `POST /api/voluntariado/face/save-profile`
+- `POST /api/voluntariado/face/save-qrcode`
 - `POST /api/voluntariado/frequencia/importar`
 - `POST /api/voluntariado/frequencia/revincular`
 - `POST /api/voluntariado/frequencia/saiu-igreja`
@@ -157,6 +200,12 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `POST /api/voluntariado/inscricoes/:id/antecedentes/consultar`
 - `POST /api/voluntariado/inscricoes/:id/desistiu`
 - `POST /api/voluntariado/inscricoes/excluir-lote`
+- `POST /api/voluntariado/pc/get-person`
+- `POST /api/voluntariado/pc/search-people`
+- `POST /api/voluntariado/positions`
+- `POST /api/voluntariado/qr-lookup`
+- `POST /api/voluntariado/quero-servir`
+- `POST /api/voluntariado/roles`
 - `POST /api/voluntariado/schedule-templates`
 - `POST /api/voluntariado/schedule-templates/:id/apply`
 - `POST /api/voluntariado/schedules`
@@ -164,9 +213,20 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `POST /api/voluntariado/schedules/bulk`
 - `POST /api/voluntariado/schedules/copy`
 - `POST /api/voluntariado/schedules/desfazer-lote`
+- `POST /api/voluntariado/self-checkin`
+- `POST /api/voluntariado/service-types`
+- `POST /api/voluntariado/service-types/:id/generate`
+- `POST /api/voluntariado/services`
+- `POST /api/voluntariado/services/limpar-vazios`
+- `POST /api/voluntariado/supervisores`
+- `POST /api/voluntariado/team-members`
+- `POST /api/voluntariado/teams-manage`
 - `POST /api/voluntariado/teams-manage/import-from-schedules`
 - `POST /api/voluntariado/teams-manage/mapa-pco`
 - `POST /api/voluntariado/teams-manage/sync-members-from-schedules`
+- `POST /api/voluntariado/training-checkins`
+- `POST /api/voluntariado/vincular-membros`
+- `POST /api/voluntariado/volunteer-qrcodes`
 - `PUT /api/membresia/contribuicoes/:id`
 - `PUT /api/membresia/escalas/:id`
 - `PUT /api/membresia/familias/:id`
@@ -177,8 +237,14 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `PUT /api/membresia/voluntarios/:id`
 - `PUT /api/voluntariado/config`
 - `PUT /api/voluntariado/frequencia/inatividade`
+- `PUT /api/voluntariado/positions/:id`
+- `PUT /api/voluntariado/profiles/:id/contact`
 - `PUT /api/voluntariado/schedule-templates/:id`
 - `PUT /api/voluntariado/schedules/:id`
+- `PUT /api/voluntariado/service-types/:id`
+- `PUT /api/voluntariado/services/:id`
+- `PUT /api/voluntariado/team-members/:id`
+- `PUT /api/voluntariado/teams-manage/:id`
 </details>
 
 **Réguas puras (backend/utils)**
@@ -294,6 +360,8 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `nsm_eventos`
 - `profiles`
 - `usuarios`
+- `vol_1x1_meetings`
+- `vol_area_supervisores`
 - `vol_availability`
 - `vol_background_checks`
 - `vol_check_ins`
@@ -308,13 +376,18 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `vol_inscricoes`
 - `vol_inscritos`
 - `vol_pco_mapa`
+- `vol_positions`
 - `vol_profiles`
 - `vol_schedules`
+- `vol_service_types`
 - `vol_services`
 - `vol_servicos_historico`
 - `vol_sync_logs`
 - `vol_team_members`
 - `vol_teams`
+- `vol_training_checkins`
+- `vol_user_roles`
+- `vol_volunteer_qrcodes`
 - `vw_censo_campanha`
 - `vw_insc_pagamento_estado`
 - `vw_kpi_trajetoria_atual`
@@ -335,6 +408,9 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `fn_membro_tem_atividade`
 - `merge_membros`
 - `refresh_vw_pessoas_papeis_mat`
+- `vol_find_face_match`
+- `vol_save_profile_face_descriptor`
+- `vol_save_qrcode_face_descriptor`
 
 **Namespace no front (src/api.js)**
 
