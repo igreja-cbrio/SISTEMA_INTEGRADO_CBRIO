@@ -64,7 +64,13 @@ function SeletoresEscopo({
 }) {
   const subs = subareasDe(valor.area);
   const set = (patch: Partial<Escopo>) => onChange({ ...valor, ...patch });
-  const w = compacto ? 'w-full sm:w-36' : 'sm:w-44';
+  /**
+   * ⚠️ Largura MÍNIMA + `flex-1`, não largura fixa (25/08). Com `sm:w-44` e
+   * `sm:w-52` fixos, os cinco seletores somavam mais que o card e o navegador
+   * apertava tudo — foi o que quebrou o layout. Agora eles dividem o espaço e
+   * caem pra linha de baixo quando não cabem, sem nunca ficar ilegíveis.
+   */
+  const w = compacto ? 'w-full sm:w-auto sm:min-w-[8.5rem] sm:flex-1' : 'w-full sm:w-auto sm:min-w-[9.5rem] sm:flex-1';
   return (
     <>
       <Select
@@ -77,7 +83,7 @@ function SeletoresEscopo({
 
       {subs.length > 0 && (
         <Select value={valor.posId || '__todas'} onValueChange={(v) => set({ posId: v === '__todas' ? '' : v })}>
-          <SelectTrigger className={compacto ? 'w-full sm:w-40' : 'sm:w-52'}><SelectValue /></SelectTrigger>
+          <SelectTrigger className={w}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="__todas">Toda a área ({subs.length} subáreas)</SelectItem>
             {subs.map(x => <SelectItem key={x.v} value={x.v}>{x.label}</SelectItem>)}
@@ -103,7 +109,7 @@ function SeletoresEscopo({
 
       {valor.dia === 'domingo' && (
         <Select value={valor.periodo || '__ambos'} onValueChange={(v) => set({ periodo: v === '__ambos' ? '' : v })}>
-          <SelectTrigger className={compacto ? 'w-full sm:w-32' : 'sm:w-40'}><SelectValue /></SelectTrigger>
+          <SelectTrigger className={w}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="__ambos">Manhã e noite</SelectItem>
             <SelectItem value="manha">Manhã</SelectItem>
@@ -114,7 +120,7 @@ function SeletoresEscopo({
 
       {valor.dia && (
         <Select value={valor.semana || '__todas'} onValueChange={(v) => set({ semana: v === '__todas' ? '' : v })}>
-          <SelectTrigger className={compacto ? 'w-full sm:w-44' : 'sm:w-52'}><SelectValue /></SelectTrigger>
+          <SelectTrigger className={w}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="__todas">Todas as semanas</SelectItem>
             <SelectItem value="1">1ª semana do mês</SelectItem>
@@ -408,8 +414,14 @@ export default function VolSupervisores() {
       <Card className="relative z-20">
         <CardHeader><CardTitle className="text-base flex items-center gap-2"><UserPlus className="h-4 w-4" /> Conceder supervisão</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="relative flex-1">
+          {/* ⚠️⚠️ LINHA PRÓPRIA PRA BUSCA (25/08 · "melhore o layout pq tá quebrado
+              quando vou selecionando as áreas e os dias e turnos"). A primeira
+              versão punha o input e os CINCO seletores no mesmo `flex-row`: o
+              `flex-1` do input era esmagado até ~50px, o ícone da lupa quebrava
+              pra baixo, a nota do 5º domingo virava uma coluna de uma palavra e o
+              botão Conceder era empurrado fora. Seletor tem largura mínima; campo
+              de busca precisa de espaço — os dois não cabem na mesma linha. */}
+          <div className="relative">
               <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
                 className="pl-9"
@@ -453,24 +465,34 @@ export default function VolSupervisores() {
                   ))}
                 </div>
               )}
-            </div>
+          </div>
+
+          {/* Seletores em linha própria, com wrap: em tela estreita eles
+              empilham em vez de encolher até ficar ilegível. */}
+          <div className="flex flex-wrap items-center gap-2">
             <SeletoresEscopo
               valor={{ area, posId, dia: cultoDia, periodo: cultoPeriodo, semana: cultoSemana }}
               onChange={(e) => { setArea(e.area); setPosId(e.posId); setCultoDia(e.dia); setCultoPeriodo(e.periodo); setCultoSemana(e.semana); }}
               areas={AREAS}
               subareasDe={subareasDe}
             />
-            {/* ⚠️ Declara a régua do 5º: a lista da Ariel só vai até 4, e culto
-                sem supervisor é pior que supervisor repetido. */}
-            {cultoSemana === '1' && (
-              <p className="self-center text-[11px] text-muted-foreground">
-                O 5º {cultoDia === 'quarta' ? 'da quarta' : 'domingo'} do mês, quando existe, também cai aqui.
-              </p>
-            )}
-            <Button onClick={() => grantMut.mutate()} disabled={!selMembro || !area || grantMut.isPending} className="bg-[#00B39D] hover:bg-[#00B39D]/90 sm:ml-auto">
+            <Button
+              onClick={() => grantMut.mutate()}
+              disabled={!selMembro || !area || grantMut.isPending}
+              className="bg-[#00B39D] hover:bg-[#00B39D]/90 ml-auto"
+            >
               {grantMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Conceder'}
             </Button>
           </div>
+
+          {/* ⚠️ Declara a régua do 5º · LINHA PRÓPRIA. Dentro do flex dos
+              seletores esta frase virava uma coluna de uma palavra por linha
+              (foi o que apareceu no print do Matheus). */}
+          {cultoSemana === '1' && (
+            <p className="text-[11px] text-muted-foreground">
+              O 5º {cultoDia === 'quarta' ? 'da quarta' : 'domingo'} do mês, quando existe, também cai aqui.
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
             Só aparecem voluntários com cadastro de membro (é por ele que o app identifica a pessoa).
           </p>
