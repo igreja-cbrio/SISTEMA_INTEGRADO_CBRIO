@@ -104,6 +104,13 @@ async function _areaDaEquipe(teamId) {
  * ⚠️ Área sem módulo no mapa (Louvor, Produção…) devolve `null` de propósito —
  * inventar slug faria o resolver procurar regra de um módulo inexistente: sem
  * erro, sem destinatário, e sem ninguém descobrir.
+ *
+ * ⚠️ SUBÁREA NÃO ESTREITA ESTE AVISO (decisão de 25/08/2026). A concessão passou
+ * a ter subárea (`position_id`), e aqui continua valendo só a ÁREA — de
+ * propósito: isto é NOTIFICAÇÃO, não permissão. Estreitar deixaria a recusa do
+ * Estacionamento sem ninguém avisado quando a área só tem supervisor de
+ * Ofertório, e silêncio é pior que ruído num aviso de véspera. Permissão fina
+ * vive em `utils/supervisorArea.podeSupervisionar`, usada pelas rotas do app.
  */
 async function _supervisoresDaArea(area) {
   const ids = new Set();

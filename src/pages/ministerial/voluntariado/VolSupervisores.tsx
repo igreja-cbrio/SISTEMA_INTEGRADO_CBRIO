@@ -26,7 +26,11 @@ export default function VolSupervisores() {
   const [busca, setBusca] = useState('');
   const [area, setArea] = useState('');
 
-  const { data: teams = [] } = useQuery<{ area?: string | null; is_active?: boolean }[]>({
+  const [posId, setPosId] = useState('');   // subárea (vol_positions.id) · '' = área inteira
+  const { data: teams = [] } = useQuery<{
+    id: string; area?: string | null; is_active?: boolean;
+    positions?: { id: string; name: string; is_active?: boolean }[];
+  }[]>({
     queryKey: ['vol-teams-manage'],
     queryFn: () => voluntariado.teamsManage.list(),
   });
@@ -50,6 +54,35 @@ export default function VolSupervisores() {
   );
   const [selMembro, setSelMembro] = useState<{ id: string; nome: string } | null>(null);
 
+  /**
+   * As SUBÁREAS da área escolhida = `vol_positions` das equipes daquela área.
+   * Ex.: Integração → Assistência Médica, Batismo, Ceia, Estacionamento,
+   * Intercessão, Ofertório, Recepção.
+   *
+   * ⚠️ Vocabulário: no app a árvore é "área → equipe → posição", e o comentário
+   * de lá chama a EQUIPE de "subárea". O que o Matheus chama de subárea é a
+   * POSIÇÃO (ofertório, estacionamento) — e é ela que o banco guarda aqui.
+   *
+   * ⚠️ O `value` é o ID, nunca o nome: "Recepção" existe em Integração E em
+   * KIDS, "Cuidados" em AMI/Bridge/Voluntariado. Nome faria a concessão vazar.
+   */
+  const SUBAREAS = useMemo(() => {
+    if (!area || area === CURINGA.v) return [];
+    const norm = (v?: string | null) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const vistas = new Map<string, string>();
+    for (const t of teams) {
+      if (t.is_active === false) continue;
+      if (norm(t.area) !== norm(area)) continue;
+      for (const p of t.positions || []) {
+        if (p.is_active === false) continue;
+        if (p?.id && p?.name) vistas.set(p.id, p.name);
+      }
+    }
+    return [...vistas.entries()]
+      .map(([v, label]) => ({ v, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+  }, [teams, area]);
+
   const { data: supers = [], isLoading } = useQuery<any[]>({
     queryKey: ['vol', 'supervisores'],
     queryFn: () => voluntariado.supervisores.list(),
@@ -70,10 +103,13 @@ export default function VolSupervisores() {
   }, [pool, busca]);
 
   const grantMut = useMutation({
-    mutationFn: () => voluntariado.supervisores.grant(selMembro!.id, area),
+    mutationFn: () => voluntariado.supervisores.grant(selMembro!.id, area, posId || null),
     onSuccess: () => {
-      toast.success(`${selMembro!.nome} agora é supervisor de ${areaLabel(area)}`);
-      setSelMembro(null); setBusca('');
+      const alvo = posId
+        ? `${SUBAREAS.find(p => p.v === posId)?.label || 'subárea'} (${areaLabel(area)})`
+        : areaLabel(area);
+      toast.success(`${selMembro!.nome} agora é supervisor de ${alvo}`);
+      setSelMembro(null); setBusca(''); setPosId('');
       qc.invalidateQueries({ queryKey: ['vol', 'supervisores'] });
     },
     onError: (e: any) => toast.error(e?.message || 'Erro ao conceder'),
@@ -132,10 +168,22 @@ export default function VolSupervisores() {
                 </div>
               )}
             </div>
-            <Select value={area} onValueChange={setArea}>
-              <SelectTrigger className="sm:w-48"><SelectValue placeholder="Escolher área" /></SelectTrigger>
+            <Select value={area} onValueChange={(v) => { setArea(v); setPosId(''); }}>
+              <SelectTrigger className="sm:w-44"><SelectValue placeholder="Escolher área" /></SelectTrigger>
               <SelectContent>{AREAS.map(a => <SelectItem key={a.v} value={a.v}>{a.label}</SelectItem>)}</SelectContent>
             </Select>
+            {/* ⚠️ Só aparece quando a área ESCOLHIDA tem subárea cadastrada.
+                Mostrar um seletor vazio (ou com "toda a área" sozinho) sugeriria
+                que falta escolher algo que não existe. */}
+            {SUBAREAS.length > 0 && (
+              <Select value={posId || '__todas'} onValueChange={(v) => setPosId(v === '__todas' ? '' : v)}>
+                <SelectTrigger className="sm:w-52"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__todas">Toda a área ({SUBAREAS.length} subáreas)</SelectItem>
+                  {SUBAREAS.map(p => <SelectItem key={p.v} value={p.v}>{p.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            )}
             <Button onClick={() => grantMut.mutate()} disabled={!selMembro || !area || grantMut.isPending} className="bg-[#00B39D] hover:bg-[#00B39D]/90">
               {grantMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Conceder'}
             </Button>
@@ -162,7 +210,15 @@ export default function VolSupervisores() {
                   <div className="space-y-1.5">
                     {lista.map(s => (
                       <div key={s.id} className="flex items-center justify-between gap-2 rounded-lg border p-2.5">
-                        <span className="text-sm font-medium">{s.membro?.nome || '—'}</span>
+                        <span className="text-sm font-medium">
+                          {s.membro?.nome || '—'}
+                          {/* Sem subárea = área inteira. O rótulo diz qual das
+                              duas coisas é, porque as duas linhas são idênticas
+                              de resto e a diferença é de PERMISSÃO. */}
+                          {s.position?.name
+                            ? <span className="ml-2 rounded-full border px-2 py-0.5 text-[11px] font-normal text-muted-foreground">{s.position.name}</span>
+                            : <span className="ml-2 text-[11px] font-normal text-muted-foreground">· toda a área</span>}
+                        </span>
                         <button onClick={() => revokeMut.mutate(s.id)} className="text-muted-foreground hover:text-red-600" title="Remover supervisão">
                           <Trash2 className="h-4 w-4" />
                         </button>

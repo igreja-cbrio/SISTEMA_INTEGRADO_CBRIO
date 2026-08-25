@@ -13237,3 +13237,65 @@ conflito pra fila; e apareceu de brinde **`vol_inscricoes.preencher_cpf_no_membr
 - ⚠️ A fila de `/entradas` só vê `membro_id IS NULL` (`inscricaoOrfas.js:60`): a
   inscrição que **deu match** e trouxe dado divergente **nunca vira sugestão**. E quem
   enfileira as órfãs é **script manual**, não cron. Os dois seguem pendentes.
+
+## ⚠️⚠️ Supervisão de voluntariado ganhou SUBÁREA (2026-08-25 · migration `20260825140000`)
+
+Pedido do Matheus: *"preciso das subáreas também — se eu escolher Integração, deve
+aparecer as subáreas da Integração: ofertório, estacionamento e etc"*.
+
+**Subárea = `vol_positions`.** Medido: Integração → Assistência Médica, Batismo,
+Ceia, **Estacionamento**, Intercessão, **Ofertório**, Recepção. `vol_teams` NÃO
+serve: é praticamente 1:1 com a área (Integração tem UMA equipe chamada
+"Integração"). Vocabulário: o comentário do app chama a EQUIPE de "subárea/
+equipe" e a POSIÇÃO de "posição" — o que o Matheus chama de subárea é a POSIÇÃO.
+
+⚠️⚠️ **GUARDA O ID, NUNCA O NOME.** Nome de posição REPETE entre áreas:
+"Recepção" em Integração **e** KIDS; "Cuidados" em AMI/Bridge/Voluntariado;
+"Produção" em AMI/Bridge/Produção; "Intercessão" em AMI/Integração; "Staff" em
+AMI/Bridge. Comparar texto faria "Recepção da Integração" liberar o Kids.
+
+⚠️ **`position_id` NULL = curinga** ("toda a área"). É o que preserva toda
+concessão anterior — sem isso a migration seria remoção silenciosa de acesso.
+E **`geral` + subárea NÃO é curinga**: seria "todas as áreas, mas só o Ofertório",
+e ler isso como "tudo" devolveria o bug de 18/08 pela porta dos fundos.
+
+**Onde a trava vive** (`utils/supervisorArea.podeSupervisionar`):
+- **Equipe** ignora o recorte de propósito — quem tem só o Ofertório precisa VER
+  a equipe Integração pra chegar na vaga dele. O corte fino é no ITEM.
+- Recorta: composição, escalas visíveis, POST escalar, PATCH mover **e** o
+  `escalaSobSupervisao` (que vale pra mover **e remover** — a lei preexistente).
+- Alvo **sem subárea resolvível é NEGADO** pra quem tem concessão de subárea:
+  liberar "porque não dá pra saber" devolve o acesso amplo bastando um
+  `position_id` vazio. Mesma lei da equipe sem área.
+- `escalaResposta._supervisoresDaArea` **NÃO** estreita: é NOTIFICAÇÃO, não
+  permissão, e silêncio é pior que ruído num aviso de véspera.
+- Gate: `npm run test:supervisor-subarea`.
+
+### ⚠️⚠️ Por que NÃO existe seletor de CULTO/HORÁRIO nesta tela
+
+O Matheus pediu também *"o horário de culto em qual eles são supervisores"*, e
+**a escala de hoje não expressa isso.** Medido em 90 dias:
+
+| Serviço | Origem | Escalas | `service_type_id` |
+|---|---|---|---|
+| **Domingo - Manhã** (08:30) | Planning Center | **1.304** | **NULL** |
+| **Domingo - Noite** (19:00) | Planning Center | **764** | **NULL** |
+| CBKIDS Manhã/Noite/Quarta | tipo próprio | 882 / 369 / 202 | ok |
+| Domingo 08:30 · 10:00 · 11:30 | nossos | **0 · 0 · 0** | ok |
+
+⇒ **O PCO consolida a manhã inteira num serviço só**: "Domingo - Manhã" é UM
+serviço que cobre 08:30 + 10:00 + 11:30. Os serviços por horário existem e têm
+ZERO escala. E **63% das escalas (3.119/4.941) estão em serviço sem
+`service_type_id`** — travar por tipo trancaria a maioria fora.
+
+Um seletor de culto aqui seria **um interruptor que não filtra nada** — o erro do
+`wa_templates.ativo` (24/08). Por isso ficou de fora, e não por esquecimento.
+
+⚠️ **Pré-requisito para o horário** (é o pendente *"tipo dos cultos"* do PR #2518):
+`fetchAllTeamMembers` (`services/planningCenter.js`) chama
+`team_members?include=person` — **sem `times`**. No PCO o `PlanPerson` carrega os
+`PlanTime`s (08:30/10:00/11:30) que a pessoa serve. Falta: incluir `times` no
+fetch + um mapa PlanTime→culto, análogo ao `vol_pco_mapa`. Também a flag
+`vol_service_types.is_active` está mentindo (os 3 CBKIDS, com 1.453 escalas,
+estão `false`; os "Domingo" ativos têm 0) — **não confiar nela para popular
+seletor**; usar uso real.
