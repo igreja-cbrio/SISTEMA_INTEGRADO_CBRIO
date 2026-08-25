@@ -9,7 +9,7 @@
 // a reconciliação a via como presente. Medido em 25/08: 17 pessoas inativas no
 // PCO seguiam ativas aqui.
 import { describe, it, expect } from 'vitest';
-import { rosterAtivoDoPco } from '../../backend/services/planningCenter.js';
+import { rosterAtivoDoPco, podeDesarquivar } from '../../backend/services/planningCenter.js';
 
 const p = (id: string, extra = {}) => [id, { planning_center_person_id: id, ...extra }] as const;
 
@@ -53,5 +53,43 @@ describe('rosterAtivoDoPco', () => {
     expect(rosterAtivoDoPco({ a: { pco_inativo: false } }).pcIds.size).toBe(1);
     expect(rosterAtivoDoPco(new Map()).rosterBruto).toBe(0);
     expect(rosterAtivoDoPco(null as never).rosterBruto).toBe(0);
+  });
+});
+
+// ⚠️⚠️ Sem esta guarda a limpeza de base se DESFAZ SOZINHA em uma hora: quem
+// foi arquivado à mão continua no roster do PCO (768 `active` medidos em
+// 25/08), e o cron horário o traria de volta — em silêncio.
+describe('podeDesarquivar', () => {
+  const roster = new Set(['1', '2']);
+
+  it('quem voltou pro roster do PCO é desarquivado', () => {
+    expect(podeDesarquivar({ planning_center_id: '1' }, roster)).toBe(true);
+  });
+
+  it('⚠️⚠️ quem foi arquivado À MÃO fica arquivado, mesmo estando no roster', () => {
+    expect(podeDesarquivar({ planning_center_id: '1', arquivado_manual: true }, roster)).toBe(false);
+  });
+
+  it('quem não está no roster não volta', () => {
+    expect(podeDesarquivar({ planning_center_id: '99' }, roster)).toBe(false);
+  });
+
+  it('⚠️ coluna AUSENTE (migration não aplicada) = comportamento antigo, o PCO manda', () => {
+    expect(podeDesarquivar({ planning_center_id: '1' }, roster)).toBe(true);
+    expect(podeDesarquivar({ planning_center_id: '1', arquivado_manual: undefined }, roster)).toBe(true);
+    expect(podeDesarquivar({ planning_center_id: '1', arquivado_manual: false }, roster)).toBe(true);
+  });
+
+  it('⚠️ só o booleano TRUE trava — string "true" vinda de payload não conta', () => {
+    expect(podeDesarquivar({ planning_center_id: '1', arquivado_manual: 'true' as never }, roster)).toBe(true);
+  });
+
+  it('id numérico casa com o roster em string', () => {
+    expect(podeDesarquivar({ planning_center_id: 1 as never }, roster)).toBe(true);
+  });
+
+  it('perfil sem planning_center_id ou nulo não quebra', () => {
+    expect(podeDesarquivar({ planning_center_id: null }, roster)).toBe(false);
+    expect(podeDesarquivar(null as never, roster)).toBe(false);
   });
 });
