@@ -13450,3 +13450,41 @@ ligar por sinal fraco sozinho"). Decisão: **fila humana, não script.**
 primeiro nome divergente** do membro apontado — **14 com o mesmo sobrenome**
 (assinatura de cruzamento familiar) e **0** que sejam apelido/prefixo. Ou seja:
 não são grafias, são pessoas trocadas. Vale varredura própria.
+
+## ⚠️ Supervisores · EDITAR + a busca que perdia gente por ACENTO (2026-08-25)
+
+Dois pedidos do Matheus no mesmo dia, e o segundo era **bug**, não pedido:
+
+**1. Editar.** *"preciso conseguir editar os supervisores também, o horário deles,
+área e etc"*. Antes só havia conceder e revogar, então trocar o turno de alguém
+exigia apagar e recriar — o que **perdia `concedido_por` e `created_at`**, a
+trilha de quem deu o acesso e quando. Agora há `PATCH /voluntariado/supervisores/:id`
+e edição **inline** na linha (não modal: a pessoa está comparando o supervisor com
+os vizinhos da mesma área, e o modal esconde justamente esse contexto).
+
+⚠️ POST e PATCH passam pela MESMA `validarEscopoSupervisao`. Um PATCH com régua
+própria seria a porta dos fundos pra conceder o que o POST recusa (por exemplo
+subárea de outra área). O 23505 do unique vira 409 com mensagem, porque o unique
+cobre membro+área+subárea+dia+período+semana.
+
+⚠️ Os seletores viraram UM componente (`SeletoresEscopo`) usado por conceder e
+por editar. A régua "quarta é culto único, não tem manhã/noite" e "trocar de área
+zera a subárea" mora nele — duas cópias do JSX divergiriam e uma passaria a
+mandar combinação que o servidor recusa com 400.
+
+**2. ⚠️⚠️ A BUSCA NÃO NORMALIZAVA ACENTO.** *"a Mônica não está aparecendo na
+lista de voluntários para eu colocar como supervisora"*. Ela **tinha** cadastro
+vinculado e **não** estava arquivada. O filtro fazia
+`full_name.toLowerCase().includes(q)` — e digitar `monica` **não casa** com
+`M`**`ô`**`nica`. A lista de `/voluntariado/lista` normaliza e achava; o seletor
+não, então a tela parecia dizer que a pessoa não existe.
+
+⇒ `norm()` (NFD + strip diacríticos + lower) aplicado nos DOIS filtros do
+seletor. **Foi a segunda vez no mesmo dia** que ele concluiu "falta gente na
+lista" — a primeira foi o Palladino, por outro motivo (vínculo cruzado). Tela que
+esconde sem dizer produz exatamente essa conclusão.
+
+⚠️ **E o teto de 8 era SILENCIOSO.** Com 596 perfis vinculados, digitar um
+primeiro nome comum cortava gente sem avisar. Subiu pra 20 e a lista agora
+declara "Mostrando N de M — refine a busca". Truncar em silêncio é a mesma doença
+do acento.
