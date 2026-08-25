@@ -10320,6 +10320,138 @@ achados por ele.
 mês fechado devolve o número de HOJE. Não entrou aqui porque mexer nisso muda
 valores de períodos já publicados; é decisão do Marcos/Matheus.
 
+## ⚠️⚠️ LEI · o farol respeita a DIREÇÃO da meta (2026-08-24 · migration `20260824120000`)
+
+Achado ao atacar a fase 2B: **`vw_kpi_trajetoria_atual` comparava sempre
+`valor >= meta` e ignorava `sentido_meta`** — o farol dos KPIs "menor é melhor"
+saía **exatamente invertido**. Medido em produção em 24/08, nos 4 ativos:
+
+| KPI | meta | valor | antes | agora |
+|---|---|---|---|---|
+| MKT-LEAD · lead time | ≤ 7 dias | 75,7 | **verde** (1081%) | vermelho (9,2%) |
+| PROD-CULTO-ESTAB | ≤ 2 ocorr. | 3 | **verde** (150%) | vermelho (66,7%) |
+| PROD-CULTO-FALHAS | ≤ 3 ocorr. | 1 | **vermelho** (33%) | verde (300%) |
+| RH-03 · rotatividade | ≤ 10% | 0 | **vermelho** (0%) | verde (100%) |
+
+⚠️⚠️ **A semântica NÃO foi inventada: a view IRMÃ `vw_kpi_taticos_status` JÁ
+acertava** (mesmo instante: MKT-LEAD vermelho · RH-03 verde · FALHAS verde ·
+ESTAB vermelho). As duas views da casa estavam se **contradizendo**, e o
+conserto foi fazer a errada concordar com a certa. **Se voltarem a divergir, uma
+das duas está errada** — a consulta que compara as duas está no fim da migration.
+
+- **A régua vive em DOIS helpers**, não espalhada: `_kpi_atingiu(valor, meta,
+  sentido, fator)` e `_kpi_pct_meta(valor, meta, sentido)`. Eram **10 sítios de
+  comparação** na view; replicar `CASE WHEN sentido = …` em cada um é como as
+  duas views divergiram em primeiro lugar.
+- ⚠️ **Banda de atenção SIMÉTRICA**: maior-é-melhor → amarelo a partir de
+  `meta × 0,9`; menor-é-melhor → `meta / 0,9` (11% acima do teto). Usar
+  `meta × 0,9` nos dois casos **apertaria** o teto em vez de afrouxar.
+- ⚠️ **Em teto, o percentual é `meta/valor`** — 75,7 dias contra ≤7 dá **9,2%**,
+  não 1081%. `valor <= 0` devolve **100** (zero ocorrência contra um teto é a
+  meta cumprida, não infinito).
+- ⚠️ **Helper devolve NULL sem valor ou sem meta**, nunca `false`: `false`
+  pintaria de vermelho todo KPI sem meta. Quem decide o rótulo é a view
+  (`pendente` / `sem_meta`).
+- ⚠️ **`sentido_meta` entrou como coluna NOVA no FIM** da view — `CREATE OR
+  REPLACE VIEW` só permite acrescentar no fim, nunca reordenar ou remover.
+- ⚠️ **RESÍDUO CONSCIENTE preservado**: sem meta, a regra legada `valor > 0 →
+  verde` ficou **idêntica**. Não existe hoje KPI `menor_melhor` sem meta, e
+  inventar política onde não há teto é pior que preservar o conhecido.
+- ⚠️ A view foi recriada **por inteiro a partir da definição VIVA**
+  (`pg_get_viewdef` de 24/08 · o patch `_kpi_periodo_corrente` de 18/08 está
+  verbatim nos CTEs), com **guarda de drift que ABORTA** se a forma divergir —
+  contar 11 sítios de `me.meta_anual / me.divisor`. Colar o corpo do repo teria
+  revertido em silêncio os patches de produção.
+
+### ⚠️ O churn de voluntários pedia 90%
+
+`% de voluntários que pararam de servir` (AMI-13 · BRG-12 · KIDS-05 · ONL-20 ·
+SED-08 ativos + CBA-20 inativo) estava com **`meta_valor = 90` e
+`maior_melhor`** — herança da cascata ×1,30 sobre um indicador de PERDA. Em
+português: *"queremos que 90% dos voluntários parem de servir, e mais é
+melhor"*. Passou a `menor_melhor` com **meta ≤5%/mês** (a régua que veio do KR
+desativado em 21/08).
+
+⚠️ **`unidade = '%'` não é cosmético**: `aplicar_meta_institucional`
+(20260608140000) **não grava `meta_valor_absoluto` em KPI de percentual** — sem
+isso, a próxima passada da cascata sobrescreveria a meta 5 com baseline×1,30 e o
+bug voltaria sozinho.
+
+⚠️ Estavam todos `pendente` (sem dado coletado), então era **bomba armada, não
+estrago em curso**: no dia em que o coletor rodasse, churn de 90% apareceria
+como meta batida.
+
+## ⚠️⚠️ NEXT · os indicadores alinhados a sistema | jornada | nsm (2026-08-25 · migration `20260825120000`)
+
+Pedido do Marcos: *"o next precisamos de frequência, nps kpís de sistema, na
+jornada aí seria kpi de next × valor (quantas pessoas que fizeram o next estão
+engajados em algum outro valor), e nsm, convertidos que fizeram next"*.
+
+| linhagem | KPIs |
+|---|---|
+| **sistema** (operação do Next) | NEXT-05 frequência (novo) · NEXT-04 NPS · NEXT-01/02/03 indicações · GEN-04 |
+| **jornada** (next × valor real) | **NEXT-06** (novo) · % dos que fizeram o Next engajados em ≥1 valor |
+| **nsm** | `AMI/BRG/ONL/SED-NEXT90` (já estavam · intocados) |
+
+### ⚠️⚠️ NEXT-01/02/03 medem INTENÇÃO, não conversão — e o nome mentia
+
+`next.batismos`, `next.voluntarios` e `next.dizimo` contam
+`next_matriculas.indicou_*` — a marcação feita no fim do encontro — enquanto o
+indicador dizia *"% convertidos em batizandos/voluntários/doadores"*. Etiquetá-los
+como `jornada` publicaria **"50% converteram em voluntários"** onde o dado diz
+"50% disseram que queriam". Ficaram em `sistema` (é operação do Next: quantos
+saem com indicação) e o **indicador foi renomeado para dizer "indicaram"**.
+
+⚠️ **GEN-04 também é `sistema`**, e por outro motivo: mede o *follow-through* das
+indicações (`next_indicacoes` com `status='concluido'`) — o denominador é
+INDICAÇÃO, não pessoa. Não responde "% dos que fizeram o Next que doam".
+
+### ⚠️⚠️ A frequência lia a camada MORTA
+
+O `dado_tipo` `frequencia_next` lê `next_inscricoes.check_in_at`, aposentada no
+cutover de 17/06 — **última presença ali: 13/05/2026**, contra 3.882 linhas em
+`next_presencas` (última em 23/08). Ativar KPI de frequência sem repontar entrega
+indicador que marca **zero para sempre**, a mesma doença do lembrete de véspera e
+da aba Next do app.
+
+A régua canônica virou **`fn_next_frequencia_periodo(inicio, fim)`**: pessoas
+DISTINTAS presentes em encontro cuja **`data` do ENCONTRO** cai no período, e o
+coletor `next.frequencia` a chama por RPC — uma régua, não duas.
+⚠️ Encontro com `data` nula (o "Check-in legado" do backfill) fica FORA: sem data
+não há período a que pertencer.
+⚠️ **O ramo de `_kpi_agregar_dado` NÃO foi patchado**, de propósito: quem o
+consome são só os 5 clones por área, que seguem inativos. **Quem for ativá-los
+tem de repontar o ramo primeiro** — e `replace('next_inscricoes','next_presencas')`
+cego não serve, porque deixaria o filtro `check_in_at`, coluna que
+`next_presencas` não tem.
+
+### ⚠️ Frequência do Next é 1 KPI, não 5
+
+Medido em 25/08: `next_turmas`, `next_encontros` e `next_matriculas` **não têm
+dimensão de área**. Os 5 clones (AMI-03 · BRG-04 · CBA-03 · KIDS-12 · ONL-12)
+publicariam o MESMO número global cinco vezes com rótulo de área diferente —
+ficam inativos. O Next é um curso da igreja toda.
+
+### NEXT-06 · o "next × valor" real
+
+Denominador: `vw_next_formado_pessoa` (a fonte ÚNICA de "fez o Next" desde 14/08 —
+1 encontro basta). Valores: `vw_pessoas_papeis_mat`, **a MESMA matview do Índice
+da Base**, para os dois números não poderem discordar.
+⚠️ **A coluna de pessoa na matview é `membresia_id`, não `membro_id`** — pedir a
+errada faz o PostgREST recusar a query inteira e o KPI nunca calcularia (o
+coletor foi escrito errado e a sonda pegou antes do merge).
+⚠️ Conferido: as duas fontes concordam (884 × 888 pessoas · **56,9% × 56,6%**).
+⚠️ **O denominador são os MEDÍVEIS**: quem fez o Next e não está na base viva não
+pode contar como "não engajado" (deflacionaria). Quem ficou de fora é DECLARADO
+na observação — 52 sem cadastro ligado + 4 fora da base viva.
+⚠️ **O denominador é ACUMULADO** (quem fez o Next até o fim do período) porque
+engajamento é ESTADO ATUAL; recortá-lo pelo mês compararia janela com estoque.
+
+⚠️ **NEXT-05 e NEXT-06 nascem SEM META** — nenhuma foi pactuada, e inventar número
+é pior que assumir a lacuna. Efeito conhecido: `status_trajetoria` mostra
+`sem_meta` (correto) e o `status` legado mostra verde por ter valor > 0 (resíduo
+antigo já registrado). **Pactuar as duas metas é decisão pendente.**
+
 ### ⚠️ Meta absoluta × periodicidade do KPI · regra importante
 
 **Sempre** que adicionar novo KPI tático com `tipo_calculo != 'manual'` E meta
