@@ -2061,8 +2061,55 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
       : (data || [])
         .filter(e => equipesVisiveis.has(e.team_id) || nomesVisiveis.has(e.team_name))
         .filter(e => !recortaSubarea || !e.position_id || posicoesVisiveis.has(e.position_id));
+    // ⚠️ ÁREA em cada linha da escala (26/08 · pedido do Matheus: "no check-in
+    // pelo app dos membros deve ter separado por área"). A área vive em
+    // `vol_teams.area`, não em `vol_schedules` — sem isto o app teria que
+    // remontar o mapa equipe→área por conta própria, criando uma SEGUNDA fonte
+    // pra divergir desta na primeira equipe que trocar de área.
+    //
+    // ⚠️ Mapa por id E por nome: linha antiga do Planning Center pode ter só
+    // `team_name` (é o mesmo motivo por que `escalaSobSupervisao` resolve a
+    // equipe pelos dois caminhos).
+    const areaPorEquipeResp = {};
+    {
+      const { data: eqs } = await supabase.from('vol_teams').select('id, name, area');
+      for (const t of eqs || []) {
+        if (t.id) areaPorEquipeResp[t.id] = t.area || null;
+        if (t.name) areaPorEquipeResp[`n:${t.name}`] = t.area || null;
+      }
+    }
+    // ⚠️⚠️ FOTO só quando é FOTO (26/08 · "se a pessoa tem foto cadastrada, deve
+    // mostrar a foto de avatar"). MEDIDO: dos 619 escalados nos últimos 60 dias,
+    // 352 têm em `vol_profiles.avatar_url` um PLACEHOLDER DE INICIAIS gerado pelo
+    // Planning Center (`/uploads/initials/MS.png`) — não uma foto. Mandar isso
+    // pro app trocaria as iniciais desenhadas pela tela por um PNG cinza do PCO,
+    // baixando bytes pra ficar pior. Só `/uploads/person/` é foto de gente.
+    //
+    // ⚠️ E o nosso cadastro tem quase nada: 10 de 619 em `mem_membros.foto_url`.
+    // Fica como preferência (é a foto que a igreja tirou), com o PCO de fallback.
+    // Resultado: 269 dos 619 (43%) mostram foto; o resto cai nas iniciais.
+    const ehFotoDeVerdade = (u) => !!u && /\/uploads\/person\//.test(String(u));
+    const idsVol = [...new Set((escalasVisiveis || []).map(e => e.volunteer_id).filter(Boolean))];
+    const fotoPorVol = {};
+    for (let i = 0; i < idsVol.length; i += 200) {
+      const { data: perfis } = await supabase.from('vol_profiles')
+        .select('id, avatar_url, membresia_id, membro:mem_membros(foto_url)')
+        .in('id', idsVol.slice(i, i + 200));
+      for (const vp of perfis || []) {
+        const m = Array.isArray(vp.membro) ? vp.membro[0] : vp.membro;
+        const nossa = m?.foto_url || null;
+        fotoPorVol[vp.id] = nossa || (ehFotoDeVerdade(vp.avatar_url) ? vp.avatar_url : null);
+      }
+    }
+
+    const comArea = (escalasVisiveis || []).map((e) => ({
+      ...e,
+      area: areaPorEquipeResp[e.team_id] ?? areaPorEquipeResp[`n:${e.team_name}`] ?? null,
+      foto_url: e.volunteer_id ? (fotoPorVol[e.volunteer_id] || null) : null,
+    }));
+
     res.json({
-      escalas: escalasVisiveis,
+      escalas: comArea,
       // ⚠️ ALIAS DE COMPATIBILIDADE (22/08/2026). O app do STAFF lê `escala`
       // (singular) e o do MEMBRO lê `escalas` — mesmo endpoint. O do staff caía
       // no fallback `[]` e a tela de montar escala abria VAZIA em todo culto,
@@ -2070,7 +2117,7 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
       // porque vem de outro endpoint. O app foi corrigido, mas o alias faz o
       // binário que JÁ está no celular voltar a funcionar no merge, sem
       // esperar o OTA. Remover quando a frota do staff tiver atualizado.
-      escala: escalasVisiveis,
+      escala: comArea,
       composicao: itens.map(i => ({ ...i, area: i.area || 'Sem área' })),
       areas_supervisionadas: areas,
       // Declara o que foi escondido: uma tela que some com linhas sem dizer
