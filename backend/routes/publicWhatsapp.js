@@ -11,6 +11,7 @@
 //     NAO coleta dado · so responde.
 const router = require('express').Router();
 const crypto = require('crypto');
+const freioBot = require('../utils/freioBot');
 const { supabase } = require('../utils/supabase');
 const { enviarTexto, normalizarTelefone } = require('../services/whatsappSend');
 // Resposta do voluntário ao aviso de escala (botão de quick-reply ou texto).
@@ -120,11 +121,22 @@ async function processarEvento(req) {
   // existe `respostas_automaticas` (migration 20260812130000), lida em
   // `processarMensagem`, que desliga só o que o bot RESPONDE e mantém o inbox
   // recebendo.
-  const { data: cfg } = await supabase
+  // ⚠️⚠️ O `error` PRECISA ser lido (achado 26/08). Ele era descartado, e o
+  // gate de `respostas_automaticas` lá embaixo é `cfg && ...` — com `cfg` null
+  // por falha de consulta a condição vira false e O BOT VOLTA A FALAR. Era
+  // fail-OPEN: instabilidade no banco religava o bot. Assinatura no histórico:
+  // 18·7·29·21·8 respostas/dia até 11/08, o gate entrou em 12/08 e caiu pra 1
+  // no mesmo dia, e depois 1·3·1·1 em 22-25/08 — "1 a cada dois dias" é falha
+  // intermitente, não gate quebrado.
+  const { data: cfg, error: erroCfg } = await supabase
     .from('whatsapp_config')
     .select('ia_ativa, institucional, respostas_automaticas')
     .eq('id', 1).maybeSingle();
-  if (cfg && cfg.ia_ativa === false) return;
+  if (erroCfg) console.warn('[whatsapp webhook] config:', erroCfg.message);
+  // ⚠️ FAIL-OPEN aqui de propósito: este freio corta o webhook INTEIRO,
+  // inclusive o `registrarInbound`. Fechar em caso de falha faria a mensagem da
+  // pessoa não aparecer no inbox — pior que o bot falar.
+  if (freioBot.webhookDesligado({ cfg })) return;
 
   const entry = req.body?.entry || [];
   // Cap defensivo · um unico POST forjado nao deve disparar N inserts + N
@@ -177,7 +189,7 @@ async function processarEvento(req) {
           await processarBotaoAprovacao(m).catch(err =>
             console.error('[whatsapp webhook] botao:', err.message));
         } else {
-          await processarMensagem(m, cfg, pnid).catch(err =>
+          await processarMensagem(m, cfg, pnid, erroCfg).catch(err =>
             console.error('[whatsapp webhook] mensagem:', err.message));
         }
       }
@@ -505,7 +517,7 @@ async function processarBotaoAprovacao(m) {
   }).catch(() => {});
 }
 
-async function processarMensagem(m, cfg, pnid = null) {
+async function processarMensagem(m, cfg, pnid = null, erroCfg = null) {
   const messageId = m.id;
   const telefone = normalizarTelefone(m.from);
   // Cap de tamanho · evita mandar payload gigante pro parser (LLM) e pro banco.
@@ -633,10 +645,17 @@ async function processarMensagem(m, cfg, pnid = null) {
     // ⚠️ E é depois do `podeColetar`: o formulário de números de culto dos
     // COORDENADORES é ferramenta de trabalho, não atendimento — não é o "bot"
     // de que ele está falando.
-    if (cfg && cfg.respostas_automaticas === false) {
+    // ⚠️⚠️ FAIL-CLOSED (26/08): não conseguir LER a configuração significa NÃO
+    // RESPONDER. Aqui o custo de errar fechado é uma resposta a menos numa
+    // caixa que gente atende de qualquer forma — a mensagem já foi gravada no
+    // inbox pelo `registrarInbound` acima. O custo de errar aberto é o bot
+    // abrindo o menu de setores contra a lei de 12/08 ("não quero bot"), que é
+    // exatamente o que aconteceu com a Thalya em 25/08.
+    if (!freioBot.botPodeResponder({ cfg, erroConfig: erroCfg })) {
       await supabase.from('whatsapp_coletas').insert({
         whatsapp_message_id: messageId, telefone, raw_text: texto,
-        status: 'ignorado', erro: 'respostas_automaticas_desligadas',
+        status: 'ignorado',
+        erro: erroCfg ? 'config_indisponivel' : 'respostas_automaticas_desligadas',
         modulo_destino: 'conversas',
       }).catch(() => {});
       return;
