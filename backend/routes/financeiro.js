@@ -586,6 +586,13 @@ router.get('/generosidade/pararam', async (req, res) => {
 // por construção: a view só agrega fin_transacoes com plano 3.01% (3.02.06 = empréstimo).
 // Agregação em JS sobre fetchAllRows (cap 1000 do PostgREST subcontaria o total).
 // Período aceito: '12m' (últimos 12 meses) · 'tudo' · '<AAAA-MM>' (mês específico).
+const {
+  parsePeriodoDoacoes, parseLimite, coberturaNominal,
+} = require('../utils/periodoDoacoes');
+
+// ⚠️ MANTIDA só para não quebrar chamador que eu não tenha visto. A régua viva é
+// `parsePeriodoDoacoes` (backend/utils/periodoDoacoes.js), que entra no gate e
+// aceita também 'ano' e intervalo de datas. Não acrescentar forma nova aqui.
 function parsePeriodo(periodo) {
   if (typeof periodo === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(periodo)) {
     const [ano, mes] = periodo.split('-').map(Number);
@@ -601,7 +608,10 @@ function parsePeriodo(periodo) {
 
 router.get('/generosidade/top', async (req, res) => {
   try {
-    const { periodo, desde, ate } = parsePeriodo(req.query.periodo);
+    // Régua do período e do teto em backend/utils/periodoDoacoes.js (no gate).
+    // Aceita '12m' | 'tudo' | 'AAAA-MM' | 'ano' | 'AAAA-MM-DD:AAAA-MM-DD'.
+    const { periodo, desde, ate, rotulo } = parsePeriodoDoacoes(req.query.periodo);
+    const limite = parseLimite(req.query.limite);
     const ordem = req.query.ordem === 'asc' ? 'asc' : 'desc';
 
     const linhas = await fetchAllRows(() => {
@@ -629,7 +639,7 @@ router.get('/generosidade/top', async (req, res) => {
 
     const ordenado = Array.from(porMembro.values())
       .sort((a, b) => ordem === 'asc' ? a.total - b.total : b.total - a.total);
-    const top = ordenado.slice(0, 20);
+    const top = ordenado.slice(0, limite);
 
     if (top.length > 0) {
       const { data: membros } = await supabase
@@ -641,7 +651,34 @@ router.get('/generosidade/top', async (req, res) => {
       for (const m of top) m.nome = nomes.get(m.membro_id) || null;
     }
 
-    res.json({ periodo, ordem, top });
+    // ⚠️⚠️ COBERTURA NOMINAL — é o que impede o ranking de mentir por omissão.
+    // `vw_doacoes_unificada` tem a doação de julho e agosto de 2026 com
+    // `membro_id` NULO nas duas: o dinheiro está lançado e a identificação
+    // nominal parou em junho. Um "top 30 de janeiro até agora" somaria só até
+    // junho e pareceria completo. A tela declara a partir daqui.
+    //
+    // ⚠️ Best-effort: falhar em descobrir o último dia nominal NÃO derruba o
+    // ranking — devolve cobertura desconhecida, e a tela cala em vez de mentir
+    // nos dois sentidos.
+    let cobertura = { ultimo_dia_nominal: null, incompleto: false, fim_pedido: null };
+    try {
+      const { data: ult } = await supabase
+        .from('vw_doacoes_unificada')
+        .select('data')
+        .not('membro_id', 'is', null)
+        .order('data', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      cobertura = coberturaNominal({ desde, ate, ultimoDiaNominal: ult?.data || null });
+    } catch (e) {
+      console.error('[generosidade/top] cobertura nominal:', e.message);
+    }
+
+    res.json({
+      periodo, rotulo, ordem, limite, top,
+      pessoas_no_periodo: porMembro.size,
+      cobertura,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -651,7 +688,7 @@ router.get('/generosidade/top/:membroId/historico', async (req, res) => {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.membroId)) {
       return res.status(400).json({ error: 'membro_id inválido' });
     }
-    const { periodo, desde, ate } = parsePeriodo(req.query.periodo);
+    const { periodo, desde, ate } = parsePeriodoDoacoes(req.query.periodo);
 
     const linhas = await fetchAllRows(() => {
       let q = supabase
