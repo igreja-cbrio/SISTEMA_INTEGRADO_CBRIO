@@ -11,6 +11,7 @@
 //    o servidor devolver a resposta que já existe em vez de criar outra. Sem
 //    isso o total do censo vem inflado — e número inflado é pior que faltando.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { podeAplicarRascunho, soDigitos } from '@/lib/censoRascunho';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { censoPublico } from '../../api';
 import type { Pergunta, Respostas } from '@/lib/censoForm';
@@ -66,6 +67,15 @@ export default function CensoPublica() {
 
   const iniciadaEm = useRef(new Date().toISOString());
   const envioId = useRef<string>('');
+  /**
+   * O rascunho lido do aparelho, AINDA NÃO aplicado.
+   *
+   * ⚠️ Fica aqui, fora do estado, de propósito: no estado ele iria pra tela, e
+   * é justamente isso que não pode acontecer antes de a pessoa provar que é ela
+   * (ver o bloco de restauração). O `retomar` do SERVIDOR usa o mesmo portão.
+   */
+  const rascunhoGuardado = useRef<{ respostas: Respostas; iniciada_em?: string; dono_cpf?: string | null } | null>(null);
+  const rascunhoServidor = useRef<{ respostas: Respostas } | null>(null);
 
   // ── chaves locais ──
   const FILA = `censo_fila_${slug}`;
@@ -79,10 +89,16 @@ export default function CensoPublica() {
   const lerLocal = useCallback((): { respostas: Respostas; iniciada_em?: string } | null => {
     try { return JSON.parse(localStorage.getItem(LOCAL) || 'null'); } catch { return null; }
   }, [LOCAL]);
+  /** Só os dígitos do CPF que está nas respostas (a pergunta 1 tem chave `cpf`). */
+  const cpfDasRespostas = (r: Respostas): string =>
+    soDigitos((r as Record<string, unknown>)?.cpf);
+
   const gravarLocal = useCallback((r: Respostas) => {
     try {
       localStorage.setItem(LOCAL, JSON.stringify({
         respostas: r, iniciada_em: iniciadaEm.current, em: new Date().toISOString(),
+        // ⚠️ DONO do rascunho · ver o bloco de restauração abaixo.
+        dono_cpf: cpfDasRespostas(r) || null,
       }));
     } catch { /* quota / modo privado: o formulário continua funcionando */ }
   }, [LOCAL]);
@@ -106,6 +122,32 @@ export default function CensoPublica() {
     if (restante.length) setTimeout(subir, 8000);                // re-tenta até zerar
   }, [slug, lerFila, salvarFila]);
 
+  /**
+   * Aplica o rascunho guardado SE o CPF digitado for o de quem o gerou.
+   *
+   * ⚠️ Compara só dígitos (o campo tem máscara) e exige CPF completo — comparar
+   * prefixo deixaria um rascunho vazar pra quem digitasse os primeiros números.
+   *
+   * ⚠️ Idempotente: uma vez aplicado, o rascunho sai da memória. Sem isso, a
+   * pessoa que apagasse uma resposta veria ela voltar no toque seguinte.
+   */
+  const aplicarRascunhoSeForDono = useCallback((cpfDigitado: string) => {
+    const guardado = rascunhoGuardado.current;
+    // ⚠️ A régua vive em `lib/censoRascunho` e está no gate (vitest). Aqui não
+    // pode haver uma segunda cópia da comparação pra divergir dela.
+    if (!guardado || !podeAplicarRascunho(guardado.dono_cpf, cpfDigitado)) return;
+    const doServidor = rascunhoServidor.current?.respostas;
+    const escolhido = doServidor && Object.keys(doServidor).length > Object.keys(guardado.respostas).length
+      ? doServidor
+      : guardado.respostas;
+    rascunhoGuardado.current = null;
+    rascunhoServidor.current = null;
+    if (guardado.iniciada_em) iniciadaEm.current = guardado.iniciada_em;
+    // Não sobrescreve o que a pessoa acabou de digitar nesta sessão.
+    setRespostas((atuais) => ({ ...escolhido, ...atuais }));
+    setRetomado(true);
+  }, []);
+
   // ── carrega o questionário e tenta retomar ──
   useEffect(() => {
     let vivo = true;
@@ -115,12 +157,33 @@ export default function CensoPublica() {
         if (!vivo) return;
         setPesquisa(p);
 
-        // (a) Local primeiro: aparece na hora, mesmo sem rede.
+        // ══════════════════════════════════════════════════════════════
+        // (a) Rascunho LOCAL · NÃO restaura sozinho (25/08/2026)
+        // ══════════════════════════════════════════════════════════════
+        //
+        // ⚠️⚠️ ISTO ERA UM VAZAMENTO DE DADO PESSOAL EM APARELHO COMPARTILHADO.
+        // Até aqui o rascunho era aplicado na abertura, para QUALQUER pessoa, com
+        // o aviso "recuperamos o que VOCÊ já havia preenchido". Num tablet na
+        // entrada do templo (ou num celular passado de mão em mão) a pessoa
+        // seguinte via **cpf, nome, e-mail, telefone e nascimento** de quem
+        // preencheu antes — e, se seguisse clicando, enviava a resposta sob o
+        // CPF alheio.
+        //
+        // Medido em produção em 25/08: 5 rascunhos criados via QR em 12 minutos,
+        // cada um durando 16 a 54 SEGUNDOS e chegando ao servidor com 18 a 26
+        // campos preenchidos. Ninguém digita 25 campos em 26 segundos — era o
+        // rascunho anterior sendo reenviado por quem abriu depois.
+        //
+        // ⇒ O rascunho agora fica GUARDADO e só é aplicado quando a pessoa
+        // digitar o MESMO CPF que o gerou (`aplicarRascunhoSeForDono`). Quem
+        // volta no próprio aparelho continua de onde parou; quem pega o aparelho
+        // de outro começa do zero e não vê nada.
+        //
+        // ⚠️ Rascunho SEM CPF (abandonado antes da pergunta 1) nunca é aplicado.
+        // É pouco dado e nenhum jeito seguro de saber de quem é.
         const local = lerLocal();
-        if (vivo && local?.respostas && Object.keys(local.respostas).length) {
-          setRespostas(local.respostas);
-          if (local.iniciada_em) iniciadaEm.current = local.iniciada_em;
-          setRetomado(true);
+        if (vivo && local?.respostas && Object.keys(local.respostas).length && local?.dono_cpf) {
+          rascunhoGuardado.current = local;
         }
 
         // (b) Depois o servidor, que pode ter rascunho de OUTRO aparelho.
@@ -131,9 +194,14 @@ export default function CensoPublica() {
           if (salvo?.rascunho_id && salvo?.retomar) {
             const r = await censoPublico.retomar(slug, salvo);
             if (vivo && r?.ok && !r.concluida && r.respostas) {
+              // ⚠️ MESMO PORTÃO do rascunho local: o do servidor também não vai
+              // pra tela sozinho. Ele é retomado por um id guardado NESTE
+              // aparelho, então numa máquina compartilhada carrega o mesmo risco
+              // — e este caminho é ainda pior, porque traz dado de OUTRO
+              // aparelho da mesma pessoa... ou de quem usou este antes.
               const doServidor = Object.keys(r.respostas).length;
-              const doAparelho = Object.keys(local?.respostas || {}).length;
-              if (doServidor > doAparelho) { setRespostas(r.respostas); setRetomado(true); }
+              const doAparelho = Object.keys(rascunhoGuardado.current?.respostas || {}).length;
+              if (doServidor > doAparelho) rascunhoServidor.current = { respostas: r.respostas };
             }
             if (r?.concluida) { localStorage.removeItem(RASCUNHO); localStorage.removeItem(LOCAL); }
           }
@@ -214,6 +282,10 @@ export default function CensoPublica() {
   function aoMudar(novas: Respostas) {
     setRespostas(novas);
     gravarLocal(novas);            // a cada toque, sem rede
+    // ⚠️ O PORTÃO do rascunho: assim que o CPF completo é digitado, e SÓ se for
+    // o mesmo que gerou o rascunho guardado, o resto volta pra tela. É o que
+    // impede o aparelho compartilhado de mostrar o dado de quem preencheu antes.
+    aplicarRascunhoSeForDono(cpfDasRespostas(novas));
   }
 
   const perguntas = pesquisa?.perguntas || [];
@@ -300,7 +372,7 @@ export default function CensoPublica() {
               border: '1px solid color-mix(in srgb, #00B39D 35%, transparent)',
               color: palette.text2,
             }}>
-              Recuperamos o que você já havia preenchido — pode continuar de onde parou.
+              Recuperamos o que você já havia preenchido neste aparelho — pode continuar de onde parou.
             </div>
           )}
 

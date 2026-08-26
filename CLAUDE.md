@@ -13997,3 +13997,55 @@ preenche vazio).
 conclui que o dado não existe. Alerta do DS mudo, `wa_templates.ativo` que não
 desliga nada, o Palladino sumindo, e a busca com acento. **"A tela ficou muda" é
 bug, não detalhe.**
+
+## ⚠️⚠️ Censo · o rascunho VAZAVA entre pessoas no mesmo aparelho (2026-08-25)
+
+Descoberto medindo um teste de tempo do Matheus. Ele perguntou se a trava do
+censo é por dispositivo ou por CPF — e a resposta expôs outra coisa.
+
+**A trava de "já respondeu" é por PESSOA**, não por aparelho:
+`acharRespostaDaPessoa({ pesquisaId, membroId, cpf })` olha `membro_id` **E** CPF
+(só por membro_id, quem respondeu no culto e ainda não passou pelo
+pós-processamento seria convidado de novo). O QR genérico
+(`/censo/p/<slug>`) **não bloqueia na abertura** — conferido em produção: o
+formulário abre pedindo CPF. Quem é bloqueado ao abrir está no link PESSOAL
+(`?t=`), que carrega identidade.
+
+⚠️ **Não confundir com o outro "censo":** o QR `?censo=1` aponta pra
+`/cadastro-membresia` (atualização cadastral) e **não bloqueia ninguém** — link
+ruim cai no cadastro normal. Só a pesquisa `/censo/p/<slug>` trava por CPF.
+
+### O vazamento
+
+O rascunho local (`censo_respostas_<slug>`) era aplicado **na abertura, pra
+qualquer pessoa**, com o aviso *"recuperamos o que **você** já havia preenchido"*
+— e **sem botão de "não sou eu"**. Em aparelho compartilhado (tablet na entrada,
+celular passado de mão em mão) a pessoa seguinte via **cpf, nome, e-mail,
+telefone e nascimento** de quem preencheu antes, e podia enviar sob o CPF alheio.
+
+⚠️⚠️ **A EVIDÊNCIA, e é o tipo de sinal que denuncia sozinho:** 5 rascunhos
+criados via QR em 12 minutos, cada um durando **16 a 54 SEGUNDOS** e chegando ao
+servidor com **18 a 26 campos** preenchidos. *Ninguém digita 25 campos em 26
+segundos.* Duração absurdamente curta com payload cheio = restauração, não
+digitação.
+
+**Conserto:** o rascunho fica guardado (em `ref`, fora do estado — no estado ele
+iria pra tela) e só é aplicado quando a pessoa digitar o **mesmo CPF** que o
+gerou. O rascunho do SERVIDOR (`retomar`) passa pelo mesmo portão: ele é buscado
+por um id guardado neste aparelho, então carrega o mesmo risco.
+
+- Régua pura em `src/lib/censoRascunho.ts` + `src/test/censoRascunho.test.ts`.
+- ⚠️ Exige CPF **completo** e igualdade exata: aceitar prefixo faria o rascunho
+  aparecer enquanto a próxima pessoa ainda digita os primeiros números — o mesmo
+  buraco por outro caminho. Mutante verificado.
+- ⚠️ Rascunho **sem dono** (abandonado antes da pergunta 1, que é o CPF) nunca é
+  aplicado.
+
+### E o tempo de preenchimento, que era a pergunta original
+
+O sistema já grava `cen_resposta.duracao_seg` — não precisa cronômetro. Das 15
+concluídas (todas por `cpf_nascimento`, todas anteriores a 25/08):
+**mediana 4,1 min · média 4,2 · p90 6,0 · mín 1,3 · máx 6,9**.
+
+⚠️ Para medir de novo com honestidade: **CPF diferente por rodada** (a trava é
+por pessoa) e **janela privada** (o rascunho do aparelho encurtaria o tempo).
