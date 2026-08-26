@@ -86,7 +86,7 @@ export default function CensoPublica() {
   // Este aqui é síncrono, funciona sem rede e sobrevive a recarregar a página.
   const LOCAL = `censo_respostas_${slug}`;
 
-  const lerLocal = useCallback((): { respostas: Respostas; iniciada_em?: string } | null => {
+  const lerLocal = useCallback((): { respostas: Respostas; iniciada_em?: string; dono_cpf?: string | null } | null => {
     try { return JSON.parse(localStorage.getItem(LOCAL) || 'null'); } catch { return null; }
   }, [LOCAL]);
   /** Só os dígitos do CPF que está nas respostas (a pergunta 1 tem chave `cpf`). */
