@@ -1698,6 +1698,82 @@ async function validarEscopoSupervisao({ area, position_id, culto_dia, culto_per
 
 const SELECT_SUPERVISOR = 'id, area, position_id, culto_dia, culto_periodo, culto_semana, created_at, membro:mem_membros(id, nome, telefone, foto_url), position:vol_positions(id, name, team_id)';
 
+// GET /supervisores/candidatos?vol_profile_id=… — POR QUE a pessoa não aparece.
+//
+// ⚠️⚠️ ISTO EXISTE PORQUE A MINHA MENSAGEM ANTERIOR MENTIA (26/08/2026). A tela
+// dizia *"resolva em Entradas → Identidade e a pessoa passa a aparecer aqui"* —
+// e o Matheus foi lá e não achou ninguém. Duas coisas erradas:
+//
+//  1. A fila de `/entradas` é de INSCRIÇÃO órfã (`inscricao_sem_vinculo`), não de
+//     perfil de voluntário sem `membresia_id`. São problemas diferentes.
+//  2. Na maioria dos casos NÃO HÁ o que vincular: medido em 26/08, dos 148
+//     perfis ativos sem vínculo, **101 (68%) não têm cadastro nenhum** na
+//     membresia — o caso do "Fabinho Marques", que motivou o relato.
+//
+// ⇒ Em vez de mandar pra um lugar que não resolve, a tela passa a DIZER qual dos
+// dois casos é, e mostrar o candidato quando existe.
+//
+// ⚠️ Ordem dos sinais = a do matcher canônico: CPF → e-mail → nome exato. E o
+// resultado NUNCA é aplicado sozinho: e-mail é sinal que a FAMÍLIA compartilha
+// (a lição do caso Palladino, em que o e-mail do perfil do filho era o do
+// cadastro do pai). Quem decide é gente, vendo o candidato.
+router.get('/supervisores/candidatos', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const volId = String(req.query.vol_profile_id || '').trim();
+    if (!volId) return res.status(400).json({ error: 'vol_profile_id obrigatório' });
+
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, email, cpf, membresia_id').eq('id', volId).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+    if (vp.membresia_id) return res.json({ ja_vinculado: true, candidatos: [] });
+
+    const digitos = (v) => String(v || '').replace(/\D/g, '');
+    const semAcento = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const cpf = digitos(vp.cpf);
+    const email = (vp.email || '').trim().toLowerCase();
+
+    const achados = new Map();   // membro_id -> { ...membro, sinal }
+    const guardar = (m, sinal) => {
+      if (!m?.id || achados.has(m.id)) return;
+      achados.set(m.id, {
+        id: m.id, nome: m.nome, status: m.status,
+        tem_cpf: !!m.cpf, data_nascimento: m.data_nascimento || null,
+        email: m.email || null, telefone: m.telefone || null,
+        sinal,
+      });
+    };
+    const COLS = 'id, nome, cpf, email, telefone, data_nascimento, status';
+
+    if (cpf.length === 11) {
+      const { data } = await supabase.from('mem_membros').select(COLS)
+        .eq('cpf', cpf).is('deleted_at', null).limit(3);
+      (data || []).forEach((m) => guardar(m, 'cpf'));
+    }
+    if (email) {
+      const { data } = await supabase.from('mem_membros').select(COLS)
+        .ilike('email', email).is('deleted_at', null).limit(5);
+      (data || []).forEach((m) => guardar(m, 'email'));
+    }
+    if (vp.full_name) {
+      // Nome exato (sem acento/caixa) — o `ilike` cobre a caixa; o acento é
+      // conferido aqui, porque `unaccent` não está exposto no PostgREST.
+      const { data } = await supabase.from('mem_membros').select(COLS)
+        .ilike('nome', vp.full_name.trim()).is('deleted_at', null).limit(5);
+      (data || []).filter((m) => semAcento(m.nome) === semAcento(vp.full_name))
+        .forEach((m) => guardar(m, 'nome'));
+    }
+
+    res.json({
+      ja_vinculado: false,
+      perfil: { id: vp.id, full_name: vp.full_name, email: vp.email || null, tem_cpf: !!cpf },
+      candidatos: [...achados.values()],
+    });
+  } catch (e) {
+    console.error('[voluntariado] supervisores candidatos:', e.message);
+    res.status(500).json({ error: 'Erro ao procurar cadastro da pessoa' });
+  }
+});
+
 router.post('/supervisores', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { membro_id, area, position_id, culto_dia, culto_periodo, culto_semana } = req.body || {};
@@ -1775,6 +1851,45 @@ router.patch('/supervisores/:id', authorizeModule('voluntariado', 3), async (req
   } catch (e) {
     console.error('[voluntariado] supervisores patch:', e.message);
     res.status(500).json({ error: 'Erro ao editar a supervisão' });
+  }
+});
+
+// POST /supervisores/vincular — liga um PERFIL de voluntário a um CADASTRO.
+//
+// ⚠️⚠️ DECISÃO HUMANA, sempre. Não existe versão automática disto de propósito:
+// no caso Palladino (25/08) o e-mail do perfil do FILHO era o e-mail do cadastro
+// do PAI, e vincular por e-mail teria dado supervisão ao membro errado. Aqui o
+// humano vê o candidato (nome, CPF?, nascimento, e por qual sinal casou) e
+// escolhe. O servidor só recusa o que é claramente inválido.
+router.post('/supervisores/vincular', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { vol_profile_id, membro_id } = req.body || {};
+    if (!vol_profile_id || !membro_id) {
+      return res.status(400).json({ error: 'vol_profile_id e membro_id obrigatórios' });
+    }
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, membresia_id').eq('id', vol_profile_id).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+    // ⚠️ Não sobrescreve vínculo existente: trocar o cadastro de alguém por aqui
+    // seria mexer em identidade sem trilha. Desvincular é operação própria.
+    if (vp.membresia_id) {
+      return res.status(409).json({ error: 'Esse perfil já está vinculado a um cadastro.' });
+    }
+    const { data: m } = await supabase.from('mem_membros')
+      .select('id, nome').eq('id', membro_id).is('deleted_at', null).maybeSingle();
+    if (!m) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+
+    const { error } = await supabase.from('vol_profiles')
+      .update({ membresia_id: m.id }).eq('id', vp.id).is('membresia_id', null);
+    if (error) throw error;
+
+    // ⚠️ O UPDATE dispara `trg_sync_email_vol_para_membro`, que reescreve o
+    // e-mail do PERFIL com o canônico do cadastro (o do membro NÃO é tocado — o
+    // inverso só preenche vazio). É esperado; medido nos religamentos de 25/08.
+    res.json({ ok: true, vol_profile_id: vp.id, membro_id: m.id, membro_nome: m.nome });
+  } catch (e) {
+    console.error('[voluntariado] supervisores vincular:', e.message);
+    res.status(500).json({ error: 'Erro ao vincular' });
   }
 });
 

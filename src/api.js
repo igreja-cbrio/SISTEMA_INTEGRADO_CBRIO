@@ -3603,6 +3603,10 @@ export const voluntariado = {
     // ⚠️ Preserva `concedido_por`/`created_at` — apagar e recriar perdia a
     // trilha de quem deu o acesso e quando.
     update: (id, body) => patch(`/voluntariado/supervisores/${id}`, body),
+    // Diz POR QUE a pessoa não aparece: tem cadastro pra vincular, ou não tem
+    // cadastro nenhum? (a mensagem anterior mandava pra Entradas, que não resolve)
+    candidatos: (volProfileId) => get(`/voluntariado/supervisores/candidatos?vol_profile_id=${encodeURIComponent(volProfileId)}`),
+    vincular: (vol_profile_id, membro_id) => post('/voluntariado/supervisores/vincular', { vol_profile_id, membro_id }),
     revoke: (id) => del(`/voluntariado/supervisores/${id}`),
   },
   // CPF / Membresia unification

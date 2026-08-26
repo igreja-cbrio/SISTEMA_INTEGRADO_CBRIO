@@ -14049,3 +14049,41 @@ concluídas (todas por `cpf_nascimento`, todas anteriores a 25/08):
 
 ⚠️ Para medir de novo com honestidade: **CPF diferente por rodada** (a trava é
 por pessoa) e **janela privada** (o rascunho do aparelho encurtaria o tempo).
+
+## ⚠️⚠️ "Resolva em Entradas" era MENTIRA da minha mensagem (2026-08-26)
+
+O Matheus buscou "fabinh" no seletor de supervisor, viu o aviso *"Encontrado, mas
+sem cadastro de membro — resolva em **Entradas → Identidade**"*, foi lá e **não
+achou a pessoa**. A mensagem era minha e estava errada em duas pontas:
+
+1. A fila de `/entradas` é de **INSCRIÇÃO órfã** (`inscricao_sem_vinculo`,
+   `services/inscricaoOrfas.js`, e o enfileirador é **script manual**). Perfil de
+   voluntário sem `membresia_id` **não gera pendência nenhuma lá**. São problemas
+   diferentes com nomes parecidos.
+2. Na maioria dos casos **não há o que vincular**: medido em 26/08, dos **148**
+   perfis ATIVOS sem vínculo, **101 (68%) não têm cadastro** na membresia. Só 36
+   casam por e-mail, 17 por nome exato, 1 por CPF.
+
+⇒ Agora a tela tem **"por quê?"** por pessoa: consulta `GET /voluntariado/
+supervisores/candidatos`, mostra o candidato **com o sinal que casou** e um botão
+**Vincular** (`POST .../vincular`). Sem candidato, diz o que realmente resolve:
+*"não existe cadastro pra ela — precisa ser cadastrada primeiro"*.
+
+⚠️ **Vincular é DECISÃO HUMANA, sempre** — não existe versão automática de
+propósito. No caso Palladino (25/08) o e-mail do perfil do FILHO era o e-mail do
+cadastro do PAI; vincular por e-mail teria dado supervisão ao membro errado. Por
+isso a tela mostra **por qual sinal casou**, mais CPF/nascimento, e avisa que
+e-mail e telefone são compartilhados na família.
+
+⚠️ `POST .../vincular` **não sobrescreve** vínculo existente (409): trocar o
+cadastro de alguém por ali seria mexer em identidade sem trilha.
+
+### ⚠️ LIÇÃO DE MÉTODO (minha, e custou uma afirmação errada)
+
+Eu disse ao Matheus que **"não existe cadastro nenhum pro Fabinho"**. Existe:
+*Fabio Luiz Ferreira Passy Marques*, casado pelo e-mail. O erro: mandei **duas
+consultas numa só chamada** do `execute_sql`, que devolve **apenas o resultado da
+ÚLTIMA**. A primeira rodou e o resultado sumiu do retorno — e eu li o vazio da
+segunda como resposta da primeira.
+
+⇒ **Uma pergunta por chamada.** Se precisar de duas, duas chamadas.

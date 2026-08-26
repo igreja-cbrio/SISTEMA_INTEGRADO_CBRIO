@@ -311,6 +311,33 @@ export default function VolSupervisores() {
     onError: (e: any) => toast.error(e?.message || 'Erro ao editar'),
   });
 
+  /**
+   * POR QUE a pessoa não aparece — consultado sob demanda.
+   *
+   * ⚠️⚠️ A mensagem anterior MENTIA: dizia "resolva em Entradas → Identidade" e o
+   * Matheus foi lá e não achou ninguém. A fila de `/entradas` é de INSCRIÇÃO
+   * órfã, não de perfil de voluntário sem cadastro — e, medido em 26/08, dos 148
+   * perfis ativos sem vínculo **101 (68%) não têm cadastro nenhum**. Mandar pra
+   * uma tela que não resolve nem existe pro caso é pior que não dizer nada.
+   */
+  const [diagAberto, setDiagAberto] = useState<string | null>(null);
+  const { data: diag, isLoading: diagCarregando } = useQuery<any>({
+    queryKey: ['vol', 'supervisor-candidatos', diagAberto],
+    queryFn: () => voluntariado.supervisores.candidatos(diagAberto!),
+    enabled: !!diagAberto,
+  });
+
+  const vincularMut = useMutation({
+    mutationFn: ({ volId, membroId }: { volId: string; membroId: string }) =>
+      voluntariado.supervisores.vincular(volId, membroId),
+    onSuccess: (r: any) => {
+      toast.success(`Vinculado a ${r?.membro_nome || 'cadastro'} — agora a pessoa aparece na busca`);
+      setDiagAberto(null);
+      qc.invalidateQueries({ queryKey: ['vol', 'pool-supervisores'] });
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro ao vincular'),
+  });
+
   const revokeMut = useMutation({
     mutationFn: (id: string) => voluntariado.supervisores.revoke(id),
     onSuccess: () => { toast.success('Supervisão removida'); qc.invalidateQueries({ queryKey: ['vol', 'supervisores'] }); },
@@ -434,15 +461,72 @@ export default function VolSupervisores() {
                   <p className="text-xs font-semibold text-amber-600">
                     {semCadastro.length === 1 ? 'Encontrado, mas sem cadastro de membro:' : 'Encontrados, mas sem cadastro de membro:'}
                   </p>
-                  <ul className="mt-1 space-y-0.5">
+                  <ul className="mt-1 space-y-1">
                     {semCadastro.map(c => (
-                      <li key={c.id} className="text-[13px] text-foreground">{c.full_name}</li>
+                      <li key={c.id} className="text-[13px] text-foreground">
+                        <div className="flex items-center gap-2">
+                          <span>{c.full_name}</span>
+                          <button
+                            type="button"
+                            onClick={() => setDiagAberto(diagAberto === c.id ? null : c.id)}
+                            className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:text-foreground"
+                          >
+                            {diagAberto === c.id ? 'fechar' : 'por quê?'}
+                          </button>
+                        </div>
+
+                        {diagAberto === c.id && (
+                          <div className="mt-1.5 rounded-md border bg-muted/30 p-2">
+                            {diagCarregando ? (
+                              <p className="text-[11px] text-muted-foreground">Procurando o cadastro dela…</p>
+                            ) : (diag?.candidatos?.length ? (
+                              <>
+                                <p className="text-[11px] font-semibold text-foreground">
+                                  Existe cadastro que parece ser dela:
+                                </p>
+                                {diag.candidatos.map((m: any) => (
+                                  <div key={m.id} className="mt-1 flex flex-wrap items-center gap-2">
+                                    <span className="text-[12px]">{m.nome}</span>
+                                    {/* ⚠️ Mostra POR QUAL SINAL casou. E-mail é sinal que a
+                                        FAMÍLIA compartilha — no caso Palladino o e-mail do
+                                        perfil do filho era o do cadastro do pai. Quem decide
+                                        é gente, e gente precisa ver isso. */}
+                                    <span className="rounded-full border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                      casou por {m.sinal === 'cpf' ? 'CPF' : m.sinal === 'email' ? 'e-mail' : 'nome'}
+                                    </span>
+                                    {m.tem_cpf && <span className="text-[10px] text-muted-foreground">tem CPF</span>}
+                                    {m.data_nascimento && <span className="text-[10px] text-muted-foreground">nasc. {String(m.data_nascimento).split('-').reverse().join('/')}</span>}
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={vincularMut.isPending}
+                                      onClick={() => vincularMut.mutate({ volId: c.id, membroId: m.id })}
+                                      className="h-6 px-2 text-[11px]"
+                                    >
+                                      Vincular
+                                    </Button>
+                                  </div>
+                                ))}
+                                <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
+                                  Confira que é a mesma pessoa antes de vincular — e-mail e telefone
+                                  são compartilhados dentro da família.
+                                </p>
+                              </>
+                            ) : (
+                              <p className="text-[11px] leading-snug text-muted-foreground">
+                                <b>Não existe cadastro de membro pra ela.</b> Não é caso de vincular:
+                                a pessoa precisa ser cadastrada primeiro (Membresia → novo cadastro,
+                                ou o formulário público). Depois disso ela aparece nesta busca.
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </li>
                     ))}
                   </ul>
                   <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
                     O app identifica o supervisor pelo cadastro de membro, então a concessão só
-                    funciona depois de vincular. Resolva em <b>Entradas → Identidade</b> e a pessoa
-                    passa a aparecer aqui.
+                    funciona depois que a pessoa tem cadastro vinculado.
                   </p>
                 </div>
               )}
