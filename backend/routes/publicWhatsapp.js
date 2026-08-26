@@ -43,9 +43,39 @@ router.get('/', (req, res) => {
 });
 
 // ── POST · recebimento ──────────────────────────────────────────────
-router.post('/', (req, res) => {
+// ⚠️⚠️ AWAITED ANTES DO 200 — e o `res.sendStatus` fora do fluxo era um BUG
+// silencioso de 2 anos (achado 26/08/2026).
+//
+// Em serverless o container CONGELA quando a resposta é enviada. Responder
+// primeiro e processar depois (`processarEvento(req).catch()`, sem await)
+// significava que TODO trabalho lento era descartado no meio. É a lei de
+// 31/07 — "o que não pode se perder vai AWAITED" — aplicada ao webhook
+// inteiro, que é justamente onde ninguém tinha olhado.
+//
+// O que se perdia, medido: **6 das 12 mídias recebidas em 30 dias ficaram
+// com `media_url` NULL** (o download da Meta são dois fetches + upload ao
+// Storage, segundos — o primeiro a morrer), e **`whatsapp_coletas` não
+// registrou UMA linha desde 19/08**, porque o insert dela vem depois no
+// fluxo. O texto sobrevivia porque o insert da mensagem é rápido.
+//
+// ⚠️ O 200 é GARANTIDO pelo `.catch` — nunca 4xx/5xx: a Meta reentrega em
+// erro e DESATIVA o webhook depois de N falhas (lei já registrada para os
+// webhooks de pagamento). Assinatura inválida é tratada dentro do
+// `processarEvento`, que só loga e retorna.
+//
+// ⚠️ O custo é LATÊNCIA: a Meta pode reentregar o que demorar. É inofensivo
+// aqui e por construção — `wa_mensagens.wa_message_id` e
+// `whatsapp_coletas.whatsapp_message_id` são UNIQUE, e o código já trata o
+// caso explicitamente ("provável reentrega → não incrementa"). O pior caso é
+// limitado: `waSender.baixarMedia` tem teto de 15s + 20s.
+//
+// ⚠️ NÃO usar `res.sendStatus(200)` antes com `await` depois: isso dependeria
+// de o adaptador da Vercel aguardar o handler async depois da resposta, o que
+// não é contrato documentado. Aqui a garantia é do Express, não da
+// plataforma — previsível vence elegante.
+router.post('/', async (req, res) => {
+  await processarEvento(req).catch(e => console.error('[whatsapp webhook] processar:', e.message));
   res.sendStatus(200);
-  processarEvento(req).catch(e => console.error('[whatsapp webhook] processar:', e.message));
 });
 
 // Validação HMAC · so se o APP_SECRET estiver configurado (prod).

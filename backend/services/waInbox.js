@@ -252,6 +252,15 @@ async function registrarInbound({ telefone, texto, tipo = 'text', messageId, med
   }
   if (mediaId && ins.data?.id && ['image', 'document', 'audio'].includes(tipo)) {
     const media = await wpp.baixarMedia(mediaId);
+    // ⚠️ Falha de download era MUDA: `if (media?.buffer)` sem `else`, e a linha
+    // ficava com o tipo e sem arquivo. Foi assim que 6 de 12 mídias sumiram em
+    // 30 dias sem ninguém notar (26/08). A mensagem NÃO é derrubada por isso —
+    // a thread mostra "[imagem]" e o texto ao redor sobrevive —, mas o silêncio
+    // é o que fez o problema durar. A URL da Meta expira, então não há retry
+    // possível depois: ou baixa agora, ou o arquivo se perde.
+    if (!media?.buffer) {
+      console.warn('[waInbox] mídia não baixada · conversa=%s tipo=%s mediaId=%s', c.id, tipo, mediaId);
+    }
     if (media?.buffer) {
       // Recebida → bucket PRIVADO (guarda o PATH; a thread assina na leitura).
       const ref = await subirMediaPrivada({ buffer: media.buffer, mime: media.mime, conversaId: c.id });
