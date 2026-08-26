@@ -27,6 +27,10 @@ export const INDICADORES = [
   { key: 'ao_vivo',           label: 'Ao vivo',           usa_ocupacao: false },
   { key: 'online_ds',         label: 'Online DS',         usa_ocupacao: false },
   { key: 'online_ddus',       label: 'Online DDUS',       usa_ocupacao: false },
+  // ⚠️ ESPELHO de INDICADORES em backend/routes/dashboardSemanal.js — as duas
+  // listas TÊM que concordar (src/test/indicadoresDashboard.test.ts trava isso):
+  // chave só no front vira 400 do servidor; só no backend fica invisível.
+  { key: 'online_views_live', label: 'Views totais da live', usa_ocupacao: false },
   { key: 'voluntariado',      label: 'Voluntariado',      usa_ocupacao: false },
 ];
 

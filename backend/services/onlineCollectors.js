@@ -10,6 +10,7 @@
 const { supabase } = require('../utils/supabase');
 const { patchDiagOnline } = require('../utils/onlineDiag');
 const yt = require('./youtubeAnalytics');
+const dsOnline = require('../utils/dsOnline');
 
 const JANELA_LIVE_MIN_ANTES = 30;  // monitora 30 min antes do horario marcado
 const JANELA_LIVE_MIN_DEPOIS = 240; // até 4h depois (cultos longos)
@@ -110,7 +111,7 @@ async function findCultoAtual({ fallbackUltimoDoDia = false } = {}) {
 
   const { data: cultos } = await supabase
     .from('cultos')
-    .select('id, data, service_type_id, vol_service_types(name, recurrence_time, has_online), online_pico, youtube_video_id')
+    .select('id, data, service_type_id, vol_service_types(name, recurrence_time, has_online), online_pico, online_views_live, youtube_video_id')
     .in('data', [hojeStr, ontemStr])
     .order('data', { ascending: false });
 
@@ -257,8 +258,24 @@ async function liveMonitor() {
         .eq('id', culto.id);
     }
 
-    // Pega concurrent viewers
-    const viewers = await yt.fetchLiveConcurrentViewers(null, videoId);
+    // Pega simultâneos E views acumuladas na MESMA chamada (26/08/2026).
+    // ⚠️ `viewers` (simultâneos) e `viewCount` (acumulado) são grandezas
+    // diferentes — ver o cabeçalho de `utils/dsOnline`.
+    const snap = await yt.fetchLiveSnapshot(null, videoId);
+    const viewers = snap?.viewers ?? null;
+
+    // ⚠️ As views totais são gravadas ANTES de decidir sobre o pico e mesmo
+    // quando `viewers` já vem null (live encerrando): é justamente a ÚLTIMA
+    // amostra, com a live no fim, que produz o total mais próximo do real. Sair
+    // antes perderia exatamente o número que o indicador novo existe pra ter.
+    const viewsLive = dsOnline.maiorViewCount(culto.online_views_live, snap?.viewCount);
+    if (viewsLive !== null && viewsLive !== (culto.online_views_live ?? null)) {
+      await supabase.from('cultos')
+        .update({ online_views_live: viewsLive })
+        .eq('id', culto.id)
+        .catch(() => {});
+    }
+
     if (viewers === null) {
       await registrarDiagToken(patchDiagOnline('live_encerrada_ou_sem_dado', agora));
       return { skipped: true, reason: 'live_encerrada_ou_sem_dado', culto_id: culto.id, video_id: videoId };
@@ -329,7 +346,7 @@ async function dsCollector() {
   const ontem = fmtData(dataMaisDias(new Date(), -1));
   const { data: cultos } = await supabase
     .from('cultos')
-    .select('id, data, youtube_video_id, online_ds, online_pico')
+    .select('id, data, youtube_video_id, online_ds, online_pico, online_views_live')
     .gte('data', seteDias).lte('data', ontem)
     .not('youtube_video_id', 'is', null)
     .or('online_ds.is.null,online_ds.eq.0');
@@ -366,7 +383,15 @@ async function dsCollector() {
       // ontem zerado). watch time / retencao seguem da Analytics (best-effort:
       // se ainda não processou, o número de views já foi gravado mesmo assim).
       const stats = await yt.fetchVideoStatistics(null, c.youtube_video_id);
-      const update = { online_ds: stats?.viewCount ?? 0 };
+      // ⚠️⚠️ DS = views DEPOIS da live (26/08/2026). Antes era o `viewCount`
+      // acumulado cru, que incluía tudo o que aconteceu DURANTE a transmissão —
+      // o "dia seguinte" inflado pelo próprio ao vivo. A régua devolve também a
+      // `regra`, porque culto sem `online_views_live` (todos os anteriores a
+      // esta data, irrecuperáveis) segue na leitura antiga.
+      const { ds, regra } = dsOnline.calcularDs({
+        viewCountD1: stats?.viewCount, viewsLive: c.online_views_live,
+      });
+      const update = { online_ds: ds ?? 0 };
       try {
         const a = await yt.fetchVideoViews(null, c.youtube_video_id, c.data, c.data);
         update.online_watch_minutes_ds = Math.round(a.watch_minutes || 0) || null;
@@ -376,7 +401,7 @@ async function dsCollector() {
       }
       await supabase.from('cultos').update(update).eq('id', c.id);
       coletados++;
-      resultados.push({ culto_id: c.id, video_id: c.youtube_video_id, online_ds: update.online_ds });
+      resultados.push({ culto_id: c.id, video_id: c.youtube_video_id, online_ds: update.online_ds, regra, views_live: c.online_views_live ?? null });
     } catch (e) {
       resultados.push({ culto_id: c.id, error: e.message });
     }

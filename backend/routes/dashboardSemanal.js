@@ -42,6 +42,10 @@ const INDICADORES = {
   ao_vivo:           { coluna: 'ao_vivo',           rotulo: 'Ao vivo',           usa_ocupacao: false },
   online_ds:         { coluna: 'online_ds',         rotulo: 'Online DS',         usa_ocupacao: false },
   online_ddus:       { coluna: 'online_ddus',       rotulo: 'Online DDUS',       usa_ocupacao: false },
+  // ⚠️ Views ACUMULADAS até o fim da live — NÃO confundir com `ao_vivo`, que é
+  // o pico de espectadores SIMULTÂNEOS. Medido em 23/08 no culto das 19:00:
+  // pico 300 × 1.355 views. Existe desde 26/08; culto anterior vem 0.
+  online_views_live: { coluna: 'online_views_live', rotulo: 'Views totais da live', usa_ocupacao: false },
   voluntariado:      { coluna: 'voluntariado',      rotulo: 'Voluntariado',      usa_ocupacao: false },
 };
 
