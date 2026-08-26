@@ -32,7 +32,7 @@
 ## Backend
 - `backend/routes/totemKids.js`
 Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
-<details><summary>Endpoints (114)</summary>
+<details><summary>Endpoints (115)</summary>
 - `DELETE /api/totem-kids/apresentacoes/:id`
 - `DELETE /api/totem-kids/atendimentos/:id`
 - `DELETE /api/totem-kids/ausentes/:criancaId/contato`
@@ -88,6 +88,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `GET /api/totem-kids/responsavel-familia`
 - `GET /api/totem-kids/salas`
 - `GET /api/totem-kids/salas/localizacoes-kids`
+- `GET /api/totem-kids/sem-checkin`
 - `GET /api/totem-kids/sessoes`
 - `GET /api/totem-kids/sessoes/:id/criancas-presentes`
 - `GET /api/totem-kids/sessoes/atual`
@@ -154,6 +155,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `backend/utils/cronAuth.js`
 - `backend/utils/kidsFrequencia.js`
 - `backend/utils/kidsResponsavel.js`
+- `backend/utils/kidsVisitante.js`
 - `backend/utils/supabase.js`
 
 **Serviços**

@@ -258,6 +258,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `backend/utils/dadosSensiveisPessoa.js`
 - `backend/utils/desativarMembro.js`
 - `backend/utils/exclusaoInscricaoLote.js`
+- `backend/utils/kidsVisitante.js`
 - `backend/utils/membrosPagina.js`
 - `backend/utils/pcoChave.js`
 - `backend/utils/prontidaoCadastro.js`

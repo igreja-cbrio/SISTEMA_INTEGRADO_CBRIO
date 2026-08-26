@@ -123,6 +123,7 @@ Guard: `authorizeModule('membros', 1 | 2)`
 - `backend/utils/criancaApresentacao.js`
 - `backend/utils/dadosSensiveisPessoa.js`
 - `backend/utils/desativarMembro.js`
+- `backend/utils/kidsVisitante.js`
 - `backend/utils/membrosPagina.js`
 - `backend/utils/prontidaoCadastro.js`
 - `backend/utils/sanitize.js`
