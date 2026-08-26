@@ -274,6 +274,21 @@ async function registrarInbound({ telefone, texto, tipo = 'text', messageId, med
       nao_lidas: (c.nao_lidas || 0) + 1, resolvida: false, ultima_previa: previa,
     }).eq('id', c.id);
   }
+
+  // ── ROTEAMENTO POR DISPARO (Matheus · 25/08/2026) ──────────────────────────
+  // "Toda mensagem respondida referente a grupos já deve chegar atribuída [...]
+  //  com a tag de entrada de grupos" + o mesmo para voluntariado.
+  //
+  // ⚠️ Fica AQUI e não no webhook porque `registrarInbound` é o funil ÚNICO:
+  // passa por ele a mensagem do número do bot E a do multi-número (inboxDireto).
+  // No webhook seriam dois pontos, e o segundo seria esquecido.
+  // ⚠️ DEPOIS do incremento de propósito — é ele que marca `resolvida=false` e
+  // reabre a conversa. Rotear antes seria decidir sobre um estado que o RPC
+  // ainda vai mexer.
+  // ⚠️ AWAITED: em serverless o container CONGELA na resposta, e
+  // fire-and-forget aqui perderia a atribuição em silêncio (lei de 31/07).
+  // O serviço nunca lança — a mensagem já está gravada e nada pode derrubá-la.
+  await require('./conversaRoteamento').rotearPorDisparo(c).catch(() => {});
 }
 
 // Mensagem que SAIU (bot ou humano). Não mexe em não-lidas nem na janela.
