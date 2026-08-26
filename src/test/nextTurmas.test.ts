@@ -19,7 +19,8 @@ describe('nextTurmas · a régua das turmas do mês', () => {
 
   it('acha os CINCO domingos quando o mês tem cinco', () => {
     // Novembro/2026 começa num domingo → 1, 8, 15, 22, 29.
-    // Decisão do Matheus: uma turma por domingo, então aqui são 5.
+    // Confirmado pelo Matheus (26/08): "quinto domingo tbm vai ter" — uma turma
+    // por domingo, então aqui são 5. Cortar em 4 é regressão.
     expect(domingosDoMes('2026-11')).toEqual(
       ['2026-11-01', '2026-11-08', '2026-11-15', '2026-11-22', '2026-11-29'],
     );

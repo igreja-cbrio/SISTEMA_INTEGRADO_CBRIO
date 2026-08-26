@@ -8623,9 +8623,11 @@ cortar o 5º domingo → 2 · `numero` virando a ordem do domingo → 2 · domin
 hoje deixando de ser opção → 1 · garantir só o mês corrente → 1 · hoje em UTC →
 1 · voltar a planejar domingo vencido → 2.
 
-- ⚠️⚠️ **Mês com 5 domingos abre 5 turmas** (decisão do Matheus, 26/08). Fixar 4
-  deixaria um domingo com o culto de 09:30 acontecendo e **ninguém conseguindo se
-  inscrever nele**. A coordenação cancela a que não vai acontecer.
+- ⚠️⚠️ **Mês com 5 domingos abre 5 turmas, e o 5º encontro ACONTECE**
+  (confirmado pelo Matheus em 26/08: *"quinto domingo tbm vai ter"*). O pedido
+  original dizia "4 encontros no mês" — são 4 na maioria dos meses por
+  consequência do calendário, **não por regra**. Fixar 4 deixaria um domingo com
+  o culto de 09:30 acontecendo e **ninguém conseguindo se inscrever nele**.
 - ⚠️⚠️ **Data de calendário com `Date.UTC` + `getUTCDay`, NUNCA
   `new Date('YYYY-MM-DD')`**: a string sem horário é lida como meia-noite UTC, que
   no Rio é 21h do dia anterior — **todo domingo viraria sábado** e o gerador não
