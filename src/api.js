@@ -1367,8 +1367,9 @@ export const financeiro = {
     overview: () => get('/financeiro/generosidade/overview'),
     anonimos: () => get('/financeiro/generosidade/anonimos'),
     pararam: (periodo = '2m') => get(`/financeiro/generosidade/pararam?periodo=${encodeURIComponent(periodo)}`),
-    top: (periodo = '12m', ordem = 'desc') =>
-      get(`/financeiro/generosidade/top?periodo=${encodeURIComponent(periodo)}&ordem=${encodeURIComponent(ordem)}`),
+    top: (periodo = '12m', ordem = 'desc', limite) =>
+      get(`/financeiro/generosidade/top?periodo=${encodeURIComponent(periodo)}&ordem=${encodeURIComponent(ordem)}`
+        + (limite ? `&limite=${encodeURIComponent(limite)}` : '')),
     historico: (membroId, periodo = '12m') =>
       get(`/financeiro/generosidade/top/${encodeURIComponent(membroId)}/historico?periodo=${encodeURIComponent(periodo)}`),
   },
