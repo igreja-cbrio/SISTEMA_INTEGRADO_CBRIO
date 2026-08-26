@@ -262,6 +262,35 @@ async function fetchLiveConcurrentViewers(channelId, videoId) {
   return viewers ? parseInt(viewers, 10) : null;
 }
 
+// Snapshot da live: espectadores SIMULTÂNEOS + views ACUMULADAS, numa chamada.
+//
+// ⚠️⚠️ São grandezas DIFERENTES e confundi-las foi o defeito que o Matheus
+// achou em 26/08: `concurrentViewers` é quanta gente está assistindo AGORA
+// (sobe e desce); `viewCount` é o total de visualizações (só sobe). Medido no
+// culto de 23/08 19:00: pico 300 × 1.355 views.
+//
+// ⚠️ As duas `part` vêm na MESMA chamada de propósito — pedir separado dobraria
+// a quota de um cron que roda a cada 5 min durante todo culto.
+// ⚠️ Devolve `{ viewers, viewCount }` com null em cada campo que a API não
+// trouxer: live encerrada para de mandar `concurrentViewers` mas continua
+// mandando `viewCount`, e é justamente esse último valor que vira o total da
+// live.
+async function fetchLiveSnapshot(channelId, videoId) {
+  const { token } = await getValidAccessToken(channelId);
+  const url = `${DATA_API}/videos?part=liveStreamingDetails,statistics&id=${videoId}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  const data = await res.json();
+  const item = (data.items || [])[0];
+  if (!item) return null;
+  const v = item.liveStreamingDetails?.concurrentViewers;
+  const vc = item.statistics?.viewCount;
+  return {
+    viewers: v ? parseInt(v, 10) : null,
+    viewCount: vc !== undefined && vc !== null ? parseInt(vc, 10) : null,
+  };
+}
+
 // Estatísticas lifetime do vídeo via Data API (videos.list?part=statistics).
 // viewCount = total ACUMULADO de views até o momento da chamada · quase em tempo
 // real, SEM o atraso de 1-2 dias da Analytics. Usado pelo DS (snapshot da manha
@@ -630,6 +659,7 @@ module.exports = {
   findActiveBroadcast,
   fetchLiveChatMessages,
   fetchLiveConcurrentViewers,
+  fetchLiveSnapshot,
   fetchVideoStatistics,
   fetchLivePeakConcurrentViewers,
   fetchVideoViews,
