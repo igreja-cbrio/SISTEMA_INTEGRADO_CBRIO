@@ -64,7 +64,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **100** arquivos, **91** com teste.
+`backend/utils/` tem **101** arquivos, **92** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -144,6 +144,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/remetenteEmail.js` | `src/test/remetenteEmail.test.ts` |
 | `backend/utils/resilientFetch.js` | — |
 | `backend/utils/respostaEscala.js` | `src/test/respostaEscala.test.ts` |
+| `backend/utils/respostaGrupoAgenda.js` | `src/test/respostaGrupoAgenda.test.ts` |
 | `backend/utils/rhOnboardingProntidao.js` | `src/test/rhOnboardingProntidao.test.ts` |
 | `backend/utils/rodizioCulto.js` | `backend/services/rodizioCulto.test.js` |
 | `backend/utils/roteamentoDisparo.js` | `src/test/roteamentoDisparo.test.ts` |
@@ -154,7 +155,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/sentry.js` | `backend/middleware/errorHandler.test.js` `backend/services/systemWebOps.test.js` |
 | `backend/utils/sexoDeclarado.js` | `src/test/sexoDeclarado.test.ts` |
 | `backend/utils/storagePath.js` | `src/test/storagePath.test.ts` |
-| `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
+| `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/importSupabase.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
 | `backend/utils/supervisorArea.js` | `backend/services/supervisorSubarea.test.js` `src/test/supervisorArea.test.ts` |
 | `backend/utils/telefoneVoluntario.js` | `src/test/telefoneVoluntario.test.ts` |
 | `backend/utils/totemCerco.js` | `src/test/totemCerco.test.ts` |

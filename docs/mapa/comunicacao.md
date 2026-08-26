@@ -16,12 +16,13 @@
 ## Backend
 - `backend/routes/comunicacao.js`
 Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
-<details><summary>Endpoints (24)</summary>
+<details><summary>Endpoints (25)</summary>
 - `DELETE /api/comunicacao/agendamentos/:id`
 - `GET /api/comunicacao/agendamentos`
 - `GET /api/comunicacao/atendentes`
 - `GET /api/comunicacao/automaticas`
 - `GET /api/comunicacao/contatos`
+- `GET /api/comunicacao/conversas/:id/sugestao-grupo`
 - `GET /api/comunicacao/cron/agendamentos`
 - `GET /api/comunicacao/custo`
 - `GET /api/comunicacao/envios`
@@ -55,6 +56,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `backend/services/busca.js`
 - `backend/services/comunicacaoAutomaticas.js`
 - `backend/services/comunicacaoDisparosOff.js`
+- `backend/services/sugestaoGrupoAgenda.js`
 - `backend/services/waInbox.js`
 - `backend/services/waStatusReconcile.js`
 - `backend/services/waTemplates.js`
