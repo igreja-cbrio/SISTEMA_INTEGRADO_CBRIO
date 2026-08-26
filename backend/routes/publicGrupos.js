@@ -28,6 +28,12 @@ const { contatoParaLider } = require('../services/contatoPessoa');
 const { requireCron } = require('../utils/cronAuth');
 // Régua ÚNICA de busca (acento/caixa/espaço) · espelho de src/lib/busca.js.
 const { normalizarBusca, contemNormalizado, algumContemNormalizado } = require('../services/busca');
+// Guarda de UUID no GET /:id (deep-link ?grupo=<id> do QR/mapa/bookmark antigo):
+// sem ela, um id malformado (bot, link velho, "undefined") faz o Postgres recusar
+// `.eq('id', ...)` com 22P02 e a rota devolvia 500 — mesma lição já registrada
+// pro /:id de Propostas (CLAUDE.md). Aqui vira 404 "Grupo não encontrado", que já
+// é a resposta padrão deste handler pra id inexistente.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ── Rate limit dedicado do totem de inscrição de grupos ──
 // O formulário roda num navegador quiosque no lounge (1 IP) e, num domingo
@@ -384,6 +390,7 @@ router.get('/lideres/buscar', async (req, res) => {
 // GET /api/public/grupos/:id — usado pelo formulário público
 // quando o link vem com ?grupo=<id> (ex.: clique no mapa).
 router.get('/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Grupo não encontrado' });
   try {
     const { data: grupo, error } = await supabase
       .from('mem_grupos')
