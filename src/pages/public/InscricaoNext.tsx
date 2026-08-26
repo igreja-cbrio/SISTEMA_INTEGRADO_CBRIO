@@ -148,6 +148,24 @@ function Row({ children }: { children: React.ReactNode }) {
 }
 
 type Evento = { id: string; data: string; titulo?: string };
+type TurmaOpcao = { id: string; nome: string; data: string };
+
+const DIA_MES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+
+/**
+ * "Domingo, 6 de setembro · 9h30".
+ *
+ * ⚠️ Fatia a string 'YYYY-MM-DD' em vez de usar `new Date(...)`: a data sem
+ * horário é lida como meia-noite UTC, que no Rio é 21h do dia anterior — o
+ * domingo 06/09 apareceria como sábado 05/09 no rótulo.
+ */
+function rotuloDomingo(data: string) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(data || ''));
+  if (!m) return String(data || '');
+  const dia = Number(m[3]);
+  return `Domingo, ${dia} de ${DIA_MES[Number(m[2]) - 1]} · 9h30`;
+}
 
 // Motivo da inscrição · value = slug estável (identificador · sem acento),
 // label = texto exibido. O backend persiste o slug em next_inscricoes.motivo.
@@ -170,6 +188,7 @@ export default function InscricaoNext() {
     cpf: '', telefone: '', email: '',
     data_nascimento: '', sexo: '', endereco: '',
     motivo: '',
+    turma_id: '',
     observacoes: '',
     website: '', // honeypot
   });
@@ -179,12 +198,25 @@ export default function InscricaoNext() {
   const [aceitaTermos, setAceitaTermos] = useState(false);
   const [whatsappOptin, setWhatsappOptin] = useState(false);
   const [textos, setTextos] = useState<any>(TEXTOS_FALLBACK);
+  // Domingos disponíveis (1 turma por domingo · culto de 09:30 · 26/08/2026).
+  // `null` = ainda carregando · `[]` = nenhum domingo aberto · undefined = falhou.
+  const [turmas, setTurmas] = useState<TurmaOpcao[] | null>(null);
+  const [turmasErro, setTurmasErro] = useState(false);
   const submittingRef = useRef(false);
 
   useEffect(() => {
     nextApi.publicTextos()
       .then((t: any) => { if (t?.termos_lgpd) setTextos(t); })
       .catch(() => { /* fallback local */ });
+  }, []);
+
+  useEffect(() => {
+    nextApi.publicTurmas()
+      .then((r: any) => setTurmas(Array.isArray(r?.turmas) ? r.turmas : []))
+      // ⚠️ Falha de rede NÃO vira "nenhum domingo": o campo fica de fora e a
+      // inscrição segue pelo caminho antigo (o servidor resolve a turma). Sumir
+      // com o campo é melhor que travar a inscrição inteira.
+      .catch(() => { setTurmas([]); setTurmasErro(true); });
   }, []);
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -210,6 +242,10 @@ export default function InscricaoNext() {
     if (!validarNascimento(form.data_nascimento)) return setError('Informe sua data de nascimento');
     if (!SEXOS.includes(form.sexo)) return setError('Selecione o sexo');
     if (!form.motivo) return setError('Selecione por que você quer participar do NEXT');
+    // Só exige a escolha quando houve domingo para escolher.
+    if (turmas && turmas.length > 0 && !form.turma_id) {
+      return setError('Escolha o domingo em que você vai participar');
+    }
     if (!aceitaTermos) return setError('É preciso aceitar os termos para se inscrever');
 
     submittingRef.current = true;
@@ -224,6 +260,7 @@ export default function InscricaoNext() {
         sexo: form.sexo,
         endereco: form.endereco.trim() || null,
         motivo: form.motivo || null,
+        turma_id: form.turma_id || null,
         observacoes: form.observacoes || null,
         aceita_termos: aceitaTermos,
         whatsapp_optin: whatsappOptin,
@@ -263,7 +300,7 @@ export default function InscricaoNext() {
             O NEXT é o seu próximo passo dentro da Igreja CBRio! É onde conhecemos
             sua história, apresentamos nossa igreja e compartilhamos nossa visão!
             <br />
-            São apenas 2 encontros, domingo às 10h.
+            É um encontro só, no domingo às 9h30.
           </p>
         </div>
 
@@ -341,6 +378,20 @@ export default function InscricaoNext() {
                 </div>
               </Row>
               <Field id="endereco" label="Endereço (opcional)" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" />
+
+              {(turmas && turmas.length > 0) && (
+                <>
+                  <SectionTitle>Qual domingo?</SectionTitle>
+                  <SelectField
+                    id="turma_id"
+                    label="Escolha o domingo em que você vai participar"
+                    value={form.turma_id}
+                    onChange={set('turma_id') as any}
+                    options={turmas.map(t => ({ value: t.id, label: rotuloDomingo(t.data) }))}
+                    required
+                  />
+                </>
+              )}
 
               <SectionTitle>Por que o NEXT?</SectionTitle>
               <SelectField

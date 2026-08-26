@@ -29,7 +29,7 @@ function msgTurma(nome: string, turmaNome: string, encontros?: { data?: string |
   const datas = (encontros || []).map(e => e.data).filter(Boolean)
     .map(d => { const [, m, day] = String(d).split('-'); return `${day}/${m}`; });
   const quando = datas.length
-    ? ` Os encontros são no dia ${datas.join(' e ')} (confirme o horário com a gente).`
+    ? ` O encontro é no dia ${datas.join(' e ')}, no culto de 9h30.`
     : '';
   return `Olá, ${nome}! 🎉 Você foi alocado(a) na turma do Next "${turmaNome}".${quando} Qualquer dúvida, é só chamar por aqui. Te esperamos!`;
 }
@@ -130,7 +130,7 @@ export default function NextTurmas() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// TURMAS (mensais · 2 encontros · presença)
+// TURMAS (uma por domingo · 1 encontro · presença)
 // ──────────────────────────────────────────────────────────────────────────
 function TurmasView() {
   const [turmas, setTurmas] = useState<Turma[]>([]);
@@ -164,7 +164,7 @@ function TurmasView() {
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
       ) : turmas.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-          Nenhuma turma ainda. Abra a primeira turma (2 encontros).
+          Nenhuma turma ainda. As turmas de cada domingo abrem automaticamente; use "Abrir turma" para um domingo fora da regra.
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -247,16 +247,19 @@ function FilaEspera({ pessoas, turmasAbertas, onChanged }: { pessoas: any[]; tur
   );
 }
 
+// Turma = UM domingo, UM encontro, culto de 09:30 (26/08/2026 · era 2 encontros).
+// ⚠️ As turmas do mês são abertas AUTOMATICAMENTE pela rotina diária. Este modal
+// serve para o caso fora da regra (domingo extra, turma de reposição).
 function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [nome, setNome] = useState(nomeMesAtual());
   const [data1, setData1] = useState('');
-  const [data2, setData2] = useState('');
   const [saving, setSaving] = useState(false);
   const salvar = async () => {
     if (!nome.trim()) { toast.error('Informe o nome da turma'); return; }
+    if (!data1) { toast.error('Informe a data do encontro'); return; }
     setSaving(true);
     try {
-      const r = await nextApi.turmas.create({ nome: nome.trim(), encontros: [{ numero: 1, data: data1 || null }, { numero: 2, data: data2 || null }] });
+      const r = await nextApi.turmas.create({ nome: nome.trim(), encontros: [{ numero: 1, data: data1 }] });
       const n = r?.puxados_da_espera || 0;
       toast.success(n > 0 ? `Turma aberta · ${n} da lista de espera incluído(s)` : 'Turma aberta');
       onCreated();
@@ -271,11 +274,12 @@ function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated
           <div>
             <Label>Nome *</Label>
             <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: Julho 2026 · Turma 1" />
-            <p className="text-[11px] text-muted-foreground mt-1">Pode ter mais de uma turma aberta (ex.: 2 por mês — 1º/2º domingo e 3º/4º domingo). A lista de espera entra automaticamente só quando esta for a única turma aberta; com mais de uma, você organiza quem vai em cada uma.</p>
+            <p className="text-[11px] text-muted-foreground mt-1">As turmas de cada domingo são abertas <strong>automaticamente</strong> — use este formulário só para um domingo fora da regra ou uma turma de reposição. Quem se inscreve escolhe o domingo no próprio formulário público.</p>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><Label>1º encontro</Label><DatePicker value={data1} onChange={setData1} /></div>
-            <div><Label>2º encontro</Label><DatePicker value={data2} onChange={setData2} /></div>
+          <div>
+            <Label>Data do encontro (domingo) *</Label>
+            <DatePicker value={data1} onChange={setData1} />
+            <p className="text-[11px] text-muted-foreground mt-1">O Next acontece no culto de <strong>09:30</strong>.</p>
           </div>
         </div>
         <DialogFooter>
@@ -450,7 +454,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                   })}
                   <StatCard label="Vieram ao menos 1x" value={unicos} sub={`${pct(unicos)}% dos inscritos`}
                     color={C.warn} icon={CheckCircle2} />
-                  <StatCard label="Formados" value={formados} sub={`${pct(formados)}% dos inscritos · presentes nos 2 encontros`}
+                  <StatCard label="Formados" value={formados} sub={`${pct(formados)}% dos inscritos · presentes no encontro`}
                     color={C.primary} icon={GraduationCap} />
                 </div>
               );
