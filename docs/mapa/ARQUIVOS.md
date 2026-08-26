@@ -225,7 +225,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/supervisorArea.js` | régua pura | — | `backend/services/supervisorSubarea.test.js` |
 | `backend/utils/telefoneVoluntario.js` | régua pura | — | `src/test/telefoneVoluntario.test.ts` |
 | `backend/utils/totemCerco.js` | régua pura | — | `src/test/totemCerco.test.ts` |
-| `backend/utils/trechoCep.js` | régua pura | — | `src/test/trechoCep.test.ts` |
+| `backend/utils/trechoCep.js` | régua pura | — | `src/test/cepObrigatorio.test.ts` |
 | `backend/utils/vigenciaTipoCulto.js` | régua pura | — | `src/test/vigenciaTipoCulto.test.ts` |
 | `backend/utils/vinculoMlSolicitacao.js` | régua pura | — | `src/test/vinculoMlSolicitacao.test.ts` |
 | `backend/utils/vinculosDuplicados.js` | régua pura | — | `src/test/vinculosDuplicados.test.ts` |

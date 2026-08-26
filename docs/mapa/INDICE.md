@@ -157,7 +157,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/supervisorArea.js` | `backend/services/supervisorSubarea.test.js` `src/test/supervisorArea.test.ts` |
 | `backend/utils/telefoneVoluntario.js` | `src/test/telefoneVoluntario.test.ts` |
 | `backend/utils/totemCerco.js` | `src/test/totemCerco.test.ts` |
-| `backend/utils/trechoCep.js` | `src/test/trechoCep.test.ts` |
+| `backend/utils/trechoCep.js` | `src/test/cepObrigatorio.test.ts` `src/test/trechoCep.test.ts` |
 | `backend/utils/vigenciaTipoCulto.js` | `src/test/vigenciaTipoCulto.test.ts` |
 | `backend/utils/vinculoMlSolicitacao.js` | `src/test/vinculoMlSolicitacao.test.ts` |
 | `backend/utils/vinculosDuplicados.js` | `src/test/vinculosDuplicados.test.ts` |
