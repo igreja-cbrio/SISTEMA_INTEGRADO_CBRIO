@@ -3857,6 +3857,12 @@ export const waInbox = {
 
 // Módulo Comunicação (central de WhatsApp · C3 backend · rotas /comunicacao/*)
 export const comunicacao = {
+  // Sugestão de resposta para "quando é o meu grupo?" — as 4 conversas reais de
+  // 25/08 (Ana Cristina, Jessica, Thalya e o 98633-5326) eram a MESMA pergunta.
+  // ⚠️ Só SUGERE: devolve texto pra pessoa revisar e enviar. A lei de 12/08
+  // ("não quero bot; será apenas atendimento humanizado") continua valendo.
+  sugestaoGrupo: (conversaId) => get(`/comunicacao/conversas/${conversaId}/sugestao-grupo`),
+
   // Inventário dos disparos automáticos + o público de cada um. `pessoas=1`
   // carrega nome/telefone e o servidor só devolve com nível >= 2.
   // ⚠️ Timeout maior: cada item resolve o próprio público paginando a base
