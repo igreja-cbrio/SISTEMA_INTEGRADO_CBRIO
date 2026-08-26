@@ -10,12 +10,29 @@ const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const { enfileirar } = require('../services/agenteBatismoNext');
+const { garantirTurmasAutomaticas } = require('../services/nextTurmasAuto');
 
 async function cronEnfileirar(req, res) {
   if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const n = await enfileirar();
-    res.json({ ok: true, enfileirados: n });
+
+    // ⚠️ CARONA (26/08/2026): a abertura automática das turmas do Next roda aqui
+    // em vez de ter cron próprio — a Vercel está com 46 crons e o teto do plano
+    // é apertado. Este é o cron diário do domínio Next, então é o host certo.
+    //
+    // ⚠️ Em bloco protegido: falhar ao abrir turma NÃO pode derrubar a fila de
+    // convites do agente, que é o trabalho principal deste cron.
+    let turmas = null;
+    try {
+      turmas = await garantirTurmasAutomaticas();
+      if (turmas.erros.length) console.error('[next/turmas-auto]', JSON.stringify(turmas.erros));
+    } catch (e) {
+      console.error('[next/turmas-auto]', e.message);
+      turmas = { erro: e.message };
+    }
+
+    res.json({ ok: true, enfileirados: n, turmas_next: turmas });
   } catch (e) {
     console.error('[agente-batismo-next/cron]', e.message);
     res.status(500).json({ error: e.message });

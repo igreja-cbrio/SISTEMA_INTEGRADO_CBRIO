@@ -501,8 +501,9 @@ router.get('/dashboard', async (_req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// TURMAS · Next como coorte de 2 encontros com presença
-//   "formado" = presente em TODOS os encontros da turma.
+// TURMAS · Next como coorte de UM encontro com presença (desde 26/08/2026 ·
+// era 2 encontros). Uma turma por domingo, sempre no culto de 09:30.
+//   "formado" = presente em TODOS os encontros da turma (hoje: no único).
 //   turma_id NULL numa matrícula = fila de espera (encaixe manual depois).
 // ----------------------------------------------------------------------------
 
@@ -683,7 +684,7 @@ router.get('/lista-espera', async (req, res) => {
   res.json({ count: (data || []).length, pessoas: data || [] });
 });
 
-// POST /turmas — cria turma (+ os encontros · default 2)
+// POST /turmas — cria turma (+ o encontro · default 1 desde 26/08/2026)
 router.post('/turmas', async (req, res) => {
   const { nome, responsavel_id, observacoes, encontros } = req.body || {};
   if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'nome obrigatório' });
@@ -696,7 +697,10 @@ router.post('/turmas', async (req, res) => {
     .insert({ nome: String(nome).trim(), responsavel_id: responsavel_id || null, observacoes: observacoes || null })
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
-  const base = Array.isArray(encontros) && encontros.length ? encontros : [{ numero: 1 }, { numero: 2 }];
+  // ⚠️ UM encontro por turma desde 26/08/2026 (era 2 — aula 1 + aula 2). A turma
+  // agora é o domingo: 1 encontro, culto de 09:30, uma turma por domingo do mês.
+  // Régua e horário em backend/utils/nextTurmas.js.
+  const base = Array.isArray(encontros) && encontros.length ? encontros : [{ numero: 1 }];
   const rows = base.map((e, i) => ({ turma_id: turma.id, numero: e.numero || (i + 1), data: e.data || null, tema: e.tema || null }));
   const { error: encErr } = await supabase.from('next_encontros').insert(rows);
   if (encErr) return res.status(500).json({ error: encErr.message });
