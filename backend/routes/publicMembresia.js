@@ -3,6 +3,7 @@ const multer = require('multer');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
+const { cepCompleto } = require('../utils/trechoCep');
 const { notificar } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
@@ -519,7 +520,25 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     const generoNorm = String(genero || '').trim().toLowerCase();
     if (!['masculino', 'feminino'].includes(generoNorm)) {
       return res.status(400).json({ error: 'Selecione o sexo (masculino ou feminino).', campo: 'genero' });
-    }
+
+
+    // CEP OBRIGATÓRIO nesta porta (pedido do Matheus · 25/08/2026, antes do
+    // censo presencial). ⚠️ É decisão DESTA porta, não do Contrato de
+    // Inscrição — endereço segue fixo-opcional nas outras 6.
+    //
+    // ⚠️ Exige COMPLETO (8 dígitos), não "preenchido": CEP pela metade entra
+    // no cadastro parecendo endereço e o mapa da aba Perfil não consegue
+    // posicionar a pessoa — `regiaoDeCep` recusa qualquer coisa que não tenha
+    // 8. O censo já coletou CEP de 7 dígitos por engano justamente porque o
+    // formulário não avisava.
+    if (!cepCompleto(cep)) {
+      return res.status(400).json({
+        error: String(cep || '').trim()
+          ? 'CEP incompleto — informe os 8 dígitos.'
+          : 'CEP é obrigatório.',
+        campo: 'cep',
+      });
+    }    }
 
     const origemValida = ['site', 'qr_code', 'evento', 'importacao'];
     const origemFinal = origemValida.includes(origem) ? origem : 'site';

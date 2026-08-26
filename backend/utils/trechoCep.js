@@ -64,8 +64,32 @@ const MINIMO_POR_TRECHO = 3;
 const trechoTemMassa = (total) =>
   Number.isFinite(Number(total)) && Number(total) >= MINIMO_POR_TRECHO;
 
+/**
+ * CEP em 8 dígitos, ou `null`.
+ *
+ * ⚠️ Espelho de `src/lib/cepAutopreenche.cepCompleto` — o formulário público
+ * valida no cliente e o servidor CONFERE. Divergir faria uma das duas coisas,
+ * as duas ruins: formulário insubmissível (a tela deixa mandar e o servidor
+ * recusa) ou CEP pela metade gravado como se fosse endereço.
+ *
+ * ⚠️ Incompleto NÃO é completado nem truncado: o censo já coletou CEP de 7
+ * dígitos por engano, e truncar poria a pessoa na faixa postal errada — é a
+ * mesma razão de `regiaoDeCep` exigir 8.
+ */
+function normalizarCep(valor) {
+  const d = soDigitos(valor);
+  return d.length === 8 ? d : null;
+}
+
+/** O CEP está completo (8 dígitos)? */
+function cepCompleto(valor) {
+  return normalizarCep(valor) !== null;
+}
+
 module.exports = {
   regiaoDeCep,
+  normalizarCep,
+  cepCompleto,
   trechoValido,
   rotuloTrecho,
   trechoTemMassa,
