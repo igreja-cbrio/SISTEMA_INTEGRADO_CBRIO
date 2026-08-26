@@ -150,6 +150,13 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
   const [busyId, setBusyId] = useState(null);
   const [confirmar, setConfirmar] = useState(null); // pendência do dialog "Confirmar CPF"
   const [fundir, setFundir] = useState(null);       // pendência do dialog "Fundir"
+  // ⚠️ Estado PRÓPRIO do dialog. O `busyId` pinta a linha da LISTA, que está
+  // atrás do overlay — quem clica em "Manter este" não vê nada acontecer.
+  // A fusão é longa (merge_membros reaponta todas as FKs e faz hard delete,
+  // depois marca a pendência), então sem isto o clique parece não ter
+  // funcionado, a pessoa clica de novo e a 2ª chamada bate em "Pendência já
+  // triada" — o erro vermelho que o Matheus reportou em 25/08.
+  const [fundindoId, setFundindoId] = useState(null);
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['identidade-pendencias', status, tipo],
@@ -331,13 +338,20 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
   async function fundirCadastros(p, keepId) {
     const mergeId = keepId === p.membro?.id ? p.conflito?.id : p.membro?.id;
     if (!keepId || !mergeId) return;
+    if (fundindoId) return; // ⚠️ 2º clique não dispara 2ª fusão
+    setFundindoId(keepId);
     setBusyId(p.id);
+    let fundiu = false;
     try {
       await membresiaApi.duplicados.merge({
         keep_id: keepId,
         merge_ids: [mergeId],
         observacao: `Fusão via fila de identidade (pendência ${p.id} · ${p.tipo})`,
       });
+      fundiu = true;
+      // ⚠️ A fusão JÁ ACONTECEU aqui. Se o passo seguinte falhar, o cadastro
+      // não volta — a mensagem tem que dizer isso, senão a pessoa tenta de
+      // novo e leva "Pendência já triada" sem entender.
       await membresiaApi.identidade.setStatus(p.id, 'resolvida');
       toast.success('Cadastros fundidos');
       // Fundir some com um cadastro: qualquer OUTRA pendência que o cite ficou
@@ -350,9 +364,14 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
       });
       qc.invalidateQueries({ queryKey: ['identidade-pendencias'], refetchType: 'none' });
     } catch (e) {
-      toast.error(e?.message || 'Erro ao fundir os cadastros');
+      if (fundiu) {
+        toast.warning('Cadastros fundidos, mas a pendência não foi marcada como resolvida. Recarregue a fila.');
+      } else {
+        toast.error(e?.message || 'Erro ao fundir os cadastros');
+      }
     } finally {
       setBusyId(null);
+      setFundindoId(null);
       setFundir(null);
     }
   }
@@ -658,7 +677,7 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
       </AlertDialog>
 
       {/* Dialog · Fundir */}
-      <AlertDialog open={!!fundir} onOpenChange={(o) => { if (!o) setFundir(null); }}>
+      <AlertDialog open={!!fundir} onOpenChange={(o) => { if (!o && !fundindoId) setFundir(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Fundir os dois cadastros?</AlertDialogTitle>
@@ -668,18 +687,34 @@ export default function IdentidadePendenciasPanel({ statusFixo = null, ocultarFi
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="flex gap-3 flex-wrap">
-            {[fundir?.conflito, fundir?.membro].filter(Boolean).map((m) => (
-              <button key={m.id}
-                className="flex-1 min-w-[200px] rounded-lg border border-border p-3 text-left hover:border-primary transition-colors"
-                onClick={() => fundir && fundirCadastros(fundir, m.id)}>
-                <div className="font-semibold text-sm">{m.nome}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">{maskCpf(m.cpf)} · {maskTelefone(m.telefone)}</div>
-                <div className="text-[11px] font-medium text-primary mt-1.5">Manter este</div>
-              </button>
-            ))}
+            {[fundir?.conflito, fundir?.membro].filter(Boolean).map((m) => {
+              const esteFundindo = fundindoId === m.id;
+              return (
+                <button key={m.id} type="button"
+                  disabled={!!fundindoId}
+                  aria-busy={esteFundindo}
+                  className="flex-1 min-w-[200px] rounded-lg border border-border p-3 text-left transition-colors hover:border-primary disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:border-border"
+                  onClick={() => fundir && fundirCadastros(fundir, m.id)}>
+                  <div className="font-semibold text-sm">{m.nome}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">{maskCpf(m.cpf)} · {maskTelefone(m.telefone)}</div>
+                  <div className="text-[11px] font-medium text-primary mt-1.5 flex items-center gap-1.5">
+                    {esteFundindo
+                      ? <><Loader2 className="size-3 animate-spin" /> Fundindo…</>
+                      : 'Manter este'}
+                  </div>
+                </button>
+              );
+            })}
           </div>
+          {/* ⚠️ A fusão pode levar alguns segundos (reaponta todo o histórico
+              da pessoa). Dizer isso evita o 2º clique. */}
+          {fundindoId && (
+            <p className="text-xs text-muted-foreground">
+              Reapontando o histórico das duas pessoas — isso pode levar alguns segundos. Não feche esta janela.
+            </p>
+          )}
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel disabled={!!fundindoId}>Cancelar</AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
