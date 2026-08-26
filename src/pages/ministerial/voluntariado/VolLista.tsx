@@ -22,6 +22,33 @@ import MarcadoresJornada from '@/components/MarcadoresJornada';
 
 type Tab = 'todos' | 'fila';
 
+// Vínculo de equipe que VALE. ⚠️ `is_active=false` é vínculo encerrado (o
+// /team-members já filtra assim, e o botão de remover do totem Kids marca a
+// flag em vez de apagar a linha) — contá-lo faria "tem equipe" mentir. Hoje não
+// há nenhum inativo no banco, então isto é guarda contra o dia em que houver.
+function equipesDe(vol: any): any[] {
+  return ((vol?.team_members || []) as any[]).filter(tm => tm?.is_active !== false);
+}
+
+// Card de resumo que também é filtro. `ativo` só pinta a borda — quem decide o
+// recorte é o estado do pai, pra não existir uma segunda régua de "o que está
+// filtrado" (era o que fazia o card e o seletor discordarem).
+function CardFiltro({ valor, rotulo, cor, ativo, onClick }: {
+  valor: number; rotulo: string; cor?: string; ativo: boolean; onClick: () => void;
+}) {
+  return (
+    <button
+      type="button" onClick={onClick} aria-pressed={ativo}
+      className={`rounded-lg border bg-card p-3 text-center transition-colors hover:bg-accent/40 ${
+        ativo ? 'border-primary ring-1 ring-primary/30' : ''
+      }`}
+    >
+      <p className={`text-xl font-bold ${cor || ''}`}>{valor}</p>
+      <p className="text-xs text-muted-foreground">{rotulo}</p>
+    </button>
+  );
+}
+
 export default function VolLista() {
   const [tab, setTab] = useState<Tab>('todos');
 
@@ -198,7 +225,7 @@ function TodosList() {
   const allTeams = useMemo(() => {
     const map = new Map<string, { id: string; name: string; color?: string }>();
     for (const vol of pool as any[]) {
-      for (const tm of vol.team_members || []) {
+      for (const tm of equipesDe(vol)) {
         if (tm.team) map.set(tm.team.id, tm.team);
       }
     }
@@ -208,6 +235,14 @@ function TodosList() {
   // Ativos = roster atual do PCO + internos. Arquivados = saíram do PCO (reconciliação).
   const ativos = useMemo(() => (pool as any[]).filter(v => !v.arquivado), [pool]);
   const arquivados = useMemo(() => (pool as any[]).filter(v => v.arquivado), [pool]);
+  // Fila de trabalho da coordenação. ⚠️ Conta só o que o servidor devolve, e o
+  // embed do pool alcança a membership pelo FK do PERFIL — linha "pc-only"
+  // (ligada só pelo id do Planning Center) NÃO vinha, e a tela dizia "sem
+  // equipe" pra quem TEM equipe: em 26/08 eram 40 exibidos contra 19 reais.
+  // As 57 linhas órfãs foram religadas e o sync passou a repontar as futuras
+  // (`repontarOrfas` em services/planningCenter.js) — se este número voltar a
+  // inchar, é lá que a resposta está, não neste filtro.
+  const semEquipe = useMemo(() => ativos.filter(v => !equipesDe(v).length), [ativos]);
 
   const filtered = useMemo(() => {
     // O filtro "arquivados" mostra os que saíram do PCO; os demais operam sobre os ativos.
@@ -221,10 +256,10 @@ function TodosList() {
       );
     }
     if (teamFilter === 'none') {
-      list = list.filter(v => !((v.team_members || []).length));
+      list = list.filter(v => !equipesDe(v).length);
     } else if (teamFilter !== 'all') {
       list = list.filter(v =>
-        (v.team_members || []).some((tm: any) => tm.team_id === teamFilter)
+        equipesDe(v).some((tm: any) => tm.team_id === teamFilter)
       );
     }
     if (sourceFilter === 'pc') list = list.filter(v => !!v.planning_center_id);
@@ -302,14 +337,64 @@ function TodosList() {
         </Select>
       </div>
 
+      {/* ⚠️ Os cards são BOTÕES-FILTRO, não placar (padrão que o /grupos adotou em
+          10/06 — "o Marcos não achava as pills"). O filtro "sem equipe" EXISTIA
+          desde sempre como 2ª opção do seletor "Equipe" e o Matheus não achou
+          (26/08) — é a lição do lápis de 18px: afordância escondida é afordância
+          que não existe. O card diz o número e leva ao recorte num toque. */}
       <div className={`grid gap-3 ${arquivados.length > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
-        <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold">{ativos.length}</p><p className="text-xs text-muted-foreground">Total ativos</p></CardContent></Card>
-        <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold text-blue-600">{ativos.filter(v => v.planning_center_id).length}</p><p className="text-xs text-muted-foreground">Planning Center</p></CardContent></Card>
-        <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold text-[#00B39D]">{ativos.filter(v => !v.planning_center_id).length}</p><p className="text-xs text-muted-foreground">Internos</p></CardContent></Card>
+        <CardFiltro
+          valor={ativos.length} rotulo="Total ativos"
+          ativo={teamFilter === 'all' && sourceFilter === 'all'}
+          onClick={() => { setTeamFilter('all'); setSourceFilter('all'); }}
+        />
+        <CardFiltro
+          valor={ativos.filter(v => v.planning_center_id).length} rotulo="Planning Center" cor="text-blue-600"
+          ativo={sourceFilter === 'pc'}
+          onClick={() => setSourceFilter(sourceFilter === 'pc' ? 'all' : 'pc')}
+        />
+        <CardFiltro
+          valor={ativos.filter(v => !v.planning_center_id).length} rotulo="Internos" cor="text-[#00B39D]"
+          ativo={sourceFilter === 'sistema'}
+          onClick={() => setSourceFilter(sourceFilter === 'sistema' ? 'all' : 'sistema')}
+        />
         {arquivados.length > 0 && (
-          <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold text-muted-foreground">{arquivados.length}</p><p className="text-xs text-muted-foreground">Arquivados</p></CardContent></Card>
+          <CardFiltro
+            valor={arquivados.length} rotulo="Arquivados" cor="text-muted-foreground"
+            ativo={sourceFilter === 'arquivados'}
+            onClick={() => setSourceFilter(sourceFilter === 'arquivados' ? 'all' : 'arquivados')}
+          />
         )}
       </div>
+
+      {/* Sem equipe: é a fila de trabalho da coordenação ("pra a equipe de
+          voluntariado ir alimentando"), então tem card próprio, âmbar (pendência,
+          não erro) e só aparece quando há o que fazer. */}
+      {semEquipe.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setTeamFilter(teamFilter === 'none' ? 'all' : 'none')}
+          className={`w-full text-left rounded-lg border px-4 py-3 transition-colors ${
+            teamFilter === 'none'
+              ? 'border-amber-500 bg-amber-500/10'
+              : 'border-amber-500/40 bg-amber-500/5 hover:bg-amber-500/10'
+          }`}
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <Users className="h-4 w-4 text-amber-600 shrink-0" />
+            <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+              {semEquipe.length} voluntário(s) ativo(s) sem equipe atribuída
+            </span>
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-500/40 text-amber-700 dark:text-amber-400">
+              {teamFilter === 'none' ? 'filtrando — toque pra ver todos' : 'toque pra ver quem'}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            Sem equipe eles não entram na composição de nenhuma escala. Use o botão
+            <strong> Atribuir</strong> na linha da pessoa.
+          </p>
+        </button>
+      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-16">
@@ -329,7 +414,7 @@ function TodosList() {
         <>
         <div className="space-y-1.5">
           {filteredPag.map((vol: any) => {
-            const teamsOf = (vol.team_members || []) as any[];
+            const teamsOf = equipesDe(vol);
             const hasPc = !!vol.planning_center_id;
             return (
               <div key={vol.id} onClick={() => setDetalheId(vol.id)} className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-card hover:bg-accent/40 transition-colors cursor-pointer">
@@ -429,7 +514,7 @@ function TodosList() {
           <div className="py-1 space-y-4">
             <div>
               <Label className="text-xs text-muted-foreground">Equipes atuais</Label>
-              {(gvol?.team_members || []).length ? (
+              {equipesDe(gvol).length ? (
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
                   {(gvol.team_members as any[]).map(tm => (
                     <span key={tm.id} className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full bg-muted">
@@ -448,7 +533,7 @@ function TodosList() {
                 <Select value={addTeam} onValueChange={setAddTeam}>
                   <SelectTrigger className="flex-1"><SelectValue placeholder="Escolher equipe" /></SelectTrigger>
                   <SelectContent>
-                    {(teamsManaged as any[]).filter(t => t.is_active && !((gvol?.team_members || []).some((tm: any) => tm.team_id === t.id))).map(t => (
+                    {(teamsManaged as any[]).filter(t => t.is_active && !(equipesDe(gvol).some((tm: any) => tm.team_id === t.id))).map(t => (
                       <SelectItem key={t.id} value={t.id}>
                         <span className="flex items-center gap-2">
                           {t.color && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: t.color }} />}

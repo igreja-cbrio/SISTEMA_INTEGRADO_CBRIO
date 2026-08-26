@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { semComentariosJs } from './_semComentarios';
 
 const require_ = createRequire(import.meta.url);
 const {
@@ -35,26 +36,7 @@ function todasAsMigrations(): string {
     .join('\n');
 }
 
-/**
- * Tira comentário de JS/TS antes de procurar CHAMADA.
- * ⚠️ A 1ª versão deste teste ficou vermelha por causa do comentário do PRÓPRIO
- * teste, que cita a chamada como exemplo — a mesma armadilha de 06/08, agora no
- * lado JS. Procurar comando, nunca o identificador solto.
- */
-export function semComentariosJs(src: string): string {
-  // ⚠️⚠️ A ORDEM IMPORTA, e estava invertida (achado 26/08/2026). Tirar o
-  // bloco `/* */` PRIMEIRO faz um `//` de linha que CONTENHA `/*` abrir um
-  // comentário falso, e a limpeza engole tudo até o próximo `*/`. Caso real:
-  // `backend/routes/painel.js` linha 2 é `// /api/painel/* - Endpoints...` e o
-  // `*/` seguinte está na linha 1101 — **1.099 linhas de código sumiam** para
-  // esta guarda. Medido em toda a árvore: **84 arquivos, 8.169 linhas**.
-  // ⚠️ Nada perigoso escapava HOJE (0 routeKeys e 1 RPC de backend, que não
-  // precisa de grant), mas a guarda estava parcialmente cega — e guarda cega é
-  // pior que guarda ausente, porque o gate verde diz que está tudo conferido.
-  return String(src || '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
-}
+
 
 /** Varre `src/` procurando chamada de RPC — o que o front executa de fato. */
 function rpcsChamadasNoFront(): Set<string> {
