@@ -1974,7 +1974,14 @@ export default function Membresia() {
                       { icon: Heart, label: 'Estado Civil', value: ESTADO_CIVIL_OPTIONS.find(e => e.value === selectedMembro.estado_civil)?.label || selectedMembro.estado_civil },
                       { icon: Home, label: 'Família', value: selectedMembro.familia?.nome },
                       { icon: Users, label: 'Ministério', value: selectedMembro.ministerio },
-                      { icon: Star, label: 'Grupo', value: selectedMembro.grupo },
+                      // ⚠️ O grupo vem do VÍNCULO (`mem_grupo_membros`), nunca da coluna
+                      // `mem_membros.grupo`: ela é texto legado e está VAZIA nas 3.995
+                      // linhas, enquanto 1.045 pessoas têm vínculo ativo (medido 26/08).
+                      // Ou seja este campo aparecia em branco pra TODO MUNDO — foi o que
+                      // o Matheus viu na ficha do William, que está em grupo desde 09/08.
+                      // O fallback pra coluna existe só pra não perder texto que alguém
+                      // tenha digitado à mão antes desta correção.
+                      { icon: Star, label: 'Grupo', value: selectedMembro.grupo_atual?.grupo?.nome || selectedMembro.grupo },
                     ].map((item, i) => (
                       <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'start' }}>
                         <item.icon style={{ width: 16, height: 16, color: C.text3, marginTop: 2, flexShrink: 0 }} />
