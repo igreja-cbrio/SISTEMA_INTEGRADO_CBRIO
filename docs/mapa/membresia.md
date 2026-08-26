@@ -15,7 +15,7 @@
 - `backend/routes/membresia.js`
 - `backend/routes/voluntariado.js`
 Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
-<details><summary>Endpoints (229)</summary>
+<details><summary>Endpoints (231)</summary>
 - `DELETE /api/membresia/cadastros/:id`
 - `DELETE /api/membresia/checkins/:id`
 - `DELETE /api/membresia/contribuicoes/:id`
@@ -120,6 +120,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `GET /api/voluntariado/services/checkin-window`
 - `GET /api/voluntariado/services/today`
 - `GET /api/voluntariado/services/upcoming`
+- `GET /api/voluntariado/supervisores/candidatos`
 - `GET /api/voluntariado/sync-logs`
 - `GET /api/voluntariado/team-members`
 - `GET /api/voluntariado/team/:teamId/members`
@@ -219,6 +220,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `POST /api/voluntariado/services`
 - `POST /api/voluntariado/services/limpar-vazios`
 - `POST /api/voluntariado/supervisores`
+- `POST /api/voluntariado/supervisores/vincular`
 - `POST /api/voluntariado/team-members`
 - `POST /api/voluntariado/teams-manage`
 - `POST /api/voluntariado/teams-manage/import-from-schedules`

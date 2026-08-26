@@ -15,7 +15,7 @@
 - `backend/routes/voluntariado-sync.js`
 - `backend/routes/voluntariado.js`
 Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
-<details><summary>Endpoints (158)</summary>
+<details><summary>Endpoints (160)</summary>
 - `DELETE /:id`
 - `DELETE /api/voluntariado/1x1/:id`
 - `DELETE /api/voluntariado/availability/:id`
@@ -73,6 +73,7 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
 - `GET /api/voluntariado/services/checkin-window`
 - `GET /api/voluntariado/services/today`
 - `GET /api/voluntariado/services/upcoming`
+- `GET /api/voluntariado/supervisores/candidatos`
 - `GET /api/voluntariado/sync-logs`
 - `GET /api/voluntariado/team-members`
 - `GET /api/voluntariado/team/:teamId/members`
@@ -145,6 +146,7 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
 - `POST /api/voluntariado/services`
 - `POST /api/voluntariado/services/limpar-vazios`
 - `POST /api/voluntariado/supervisores`
+- `POST /api/voluntariado/supervisores/vincular`
 - `POST /api/voluntariado/sync`
 - `POST /api/voluntariado/sync-auto`
 - `POST /api/voluntariado/sync-historical`
