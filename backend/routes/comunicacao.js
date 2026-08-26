@@ -147,6 +147,26 @@ router.get('/numeros', async (_req, res) => {
   res.json({ numeros: data || [], env_phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID || null });
 });
 
+// Sugestão de resposta para "quando é o meu grupo?" — as 4 conversas reais de
+// 25/08 (Ana Cristina, Jessica, Thalya e o 98633-5326) eram a MESMA pergunta.
+//
+// ⚠️ É SUGESTÃO, não envio: devolve texto para o atendente revisar e mandar. A
+// lei de 12/08 ("não quero bot; será apenas atendimento humanizado") continua
+// valendo, e é ela que permite a régua ser generosa — errar aqui custa uma
+// sugestão recusada, não uma mensagem errada em nome da igreja.
+// ⚠️ Nível 1 (o mesmo que abre a aba): quem lê a conversa pode ver a sugestão.
+router.get('/conversas/:id/sugestao-grupo', async (req, res) => {
+  try {
+    const r = await require('../services/sugestaoGrupoAgenda').sugerirAgenda(req.params.id);
+    res.json(r);
+  } catch (e) {
+    // ⚠️ 500 com motivo, nunca `{disponivel:false}`: "não há sugestão" e "a
+    // consulta falhou" levam a decisões opostas na tela.
+    console.error('[comunicacao] sugestao-grupo:', e.message);
+    res.status(500).json({ error: 'Erro ao montar a sugestão', detalhe: e.message });
+  }
+});
+
 router.post('/numeros', authorizeModule('comunicacao', 5), async (req, res) => {
   const b = req.body || {};
   if (!b.phone_number_id) return res.status(400).json({ error: 'phone_number_id obrigatório' });

@@ -37,9 +37,18 @@ const AUTH = join(RAIZ, 'backend', 'middleware', 'auth.js');
 
 /** Tira comentário de bloco e de linha, preservando `://` de URL. */
 export function semComentariosJs(src: string): string {
+  // ⚠️⚠️ A ORDEM IMPORTA, e estava invertida (achado 26/08/2026). Tirar o
+  // bloco `/* */` PRIMEIRO faz um `//` de linha que CONTENHA `/*` abrir um
+  // comentário falso, e a limpeza engole tudo até o próximo `*/`. Caso real:
+  // `backend/routes/painel.js` linha 2 é `// /api/painel/* - Endpoints...` e o
+  // `*/` seguinte está na linha 1101 — **1.099 linhas de código sumiam** para
+  // esta guarda. Medido em toda a árvore: **84 arquivos, 8.169 linhas**.
+  // ⚠️ Nada perigoso escapava HOJE (0 routeKeys e 1 RPC de backend, que não
+  // precisa de grant), mas a guarda estava parcialmente cega — e guarda cega é
+  // pior que guarda ausente, porque o gate verde diz que está tudo conferido.
   return String(src || '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
 /**
