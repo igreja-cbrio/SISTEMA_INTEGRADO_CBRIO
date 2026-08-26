@@ -42,6 +42,7 @@ const {
   jaConvidadoEmQualquerCanal,
 } = require('../utils/censoConvite');
 const { gerarTokenCenso } = require('../utils/censoToken');
+const { tetoEfetivo } = require('../utils/cotaMeta');
 
 // ⚠️ Orçamento de TEMPO, além do teto de quantidade: o `enviarEmail` faz 3
 // tentativas com backoff (1,5s + 3s) em falha transitória, então uma rodada com
@@ -50,6 +51,32 @@ const { gerarTokenCenso } = require('../utils/censoToken');
 // são registrados e a próxima rodada os manda de novo. Melhor parar antes,
 // declarar o que ficou e gravar o que saiu.
 const ORCAMENTO_EMAIL_MS = 200000;
+
+/**
+ * Destinatários ÚNICOS já contatados nas últimas 24h, em QUALQUER contexto.
+ *
+ * ⚠️⚠️ É assim que a Meta conta a cota do TIER_250 — pela CONTA, não por
+ * template. Contar só o censo deixaria passar exatamente o incidente de 26/08.
+ *
+ * ⚠️ Devolve **null** quando não dá para contar, e `cotaMeta` trata null como
+ * "não dispare": não saber quanto já saiu é quando disparar é mais perigoso.
+ */
+async function unicosUltimas24h() {
+  const desde = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const vistos = new Set();
+  for (let pag = 0; pag < 20; pag += 1) {
+    const { data, error } = await supabase.from('whatsapp_envios')
+      .select('telefone').gte('criado_em', desde).not('telefone', 'is', null)
+      .range(pag * 1000, pag * 1000 + 999);
+    if (error) { console.warn('[censoDisparo] cota 24h:', error.message); return null; }
+    for (const l of data || []) {
+      const d = String(l.telefone || '').replace(/\D+/g, '');
+      if (d.length >= 8) vistos.add(d.slice(-8));
+    }
+    if (!data || data.length < 1000) break;
+  }
+  return vistos.size;
+}
 
 const TEMPLATE_PADRAO = 'atualizacao_cadastro';
 const CONTEXTO = 'membresia.censo_atualizacao';
@@ -206,7 +233,13 @@ async function previewCenso({ status, canais = ['whatsapp', 'email'], reenviar =
     else if (alcancavel && cruzado) jaConvidadasOutroCanal += 1;
   }
 
-  const whats = limitarPorTeto(alvoWhats, TETO_RODADA_WHATSAPP);
+  // ⚠️⚠️ O teto da rodada é o MENOR entre o do canal e o que a cota de 24h da
+  // Meta ainda permite (26/08). O teto por rodada sozinho não protegia: saíram
+  // 3 rodadas de 200 em 48 segundos, todas "respeitando" o teto, e o número foi
+  // marcado como spam — derrubando junto os avisos de grupo do dia seguinte.
+  const usados24h = await unicosUltimas24h();
+  const cota = tetoEfetivo({ tetoCanal: TETO_RODADA_WHATSAPP, unicos24h: usados24h });
+  const whats = limitarPorTeto(alvoWhats, cota.teto);
   const mail = limitarPorTeto(alvoEmail, TETO_RODADA_EMAIL);
   const proxRodada = Math.max(0, ...convites.porRodada.keys()) + 1;
 
@@ -218,7 +251,14 @@ async function previewCenso({ status, canais = ['whatsapp', 'email'], reenviar =
       elegiveis: alvoWhats.length,
       enviar_agora: whats.envia.length,
       adiados: whats.adiados,
-      teto: TETO_RODADA_WHATSAPP,
+      teto: cota.teto,
+      // ⚠️ A tela PRECISA dizer por que a rodada encolheu. "Só 40 de 380 vão
+      // sair" sem explicação faz a pessoa apertar disparar de novo — que é
+      // literalmente o que produziu o incidente de 26/08.
+      teto_canal: TETO_RODADA_WHATSAPP,
+      cota_motivo: cota.motivo,
+      cota_disponivel: cota.cota_disponivel,
+      contatados_24h: cota.unicos_24h,
       template: nomeTemplate(),
       configurado: whatsappPronto(),
     },
@@ -348,7 +388,13 @@ async function dispararCenso({ status, canais = ['whatsapp', 'email'], reenviar 
     if (c.whatsapp && (reenviar || (!convites.jaConvidado.has(`${p.id}:whatsapp`) && !cruzado))) alvoWhats.push(p);
     if (c.email && (reenviar || (!convites.jaConvidado.has(`${p.id}:email`) && !cruzado))) alvoEmail.push(p);
   }
-  const whats = limitarPorTeto(alvoWhats, TETO_RODADA_WHATSAPP);
+  // ⚠️⚠️ O DISPARO obedece o teto que a PRÉVIA calculou — não o do canal.
+  // Este era o ponto que importava: travar só a prévia deixaria o envio real
+  // mandando 200 de qualquer jeito, e foi por aqui que as rodadas 10 e 11
+  // saíram em 26/08. `previewCenso` roda na mesma execução (linha acima), então
+  // a cota é a de agora.
+  const tetoWhats = Number.isFinite(prev?.whatsapp?.teto) ? prev.whatsapp.teto : 0;
+  const whats = limitarPorTeto(alvoWhats, tetoWhats);
   const mail = limitarPorTeto(alvoEmail, TETO_RODADA_EMAIL);
 
   let gravados = 0;
