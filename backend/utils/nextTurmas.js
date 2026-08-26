@@ -10,10 +10,11 @@
 // `backend/services/nextTurmasAuto.js`; quem decide QUAIS turmas devem existir
 // é este arquivo, e só ele.
 //
-// ⚠️ Decisão do Matheus (26/08) sobre mês com 5 domingos: **uma turma por
-// domingo**, então abre 5. A coordenação cancela a que não vai acontecer. O
-// contrário — fixar 4 — deixaria um domingo com culto de 09:30 acontecendo e
-// ninguém conseguindo se inscrever nele.
+// ⚠️ Mês com 5 domingos: **uma turma por domingo**, então abre 5 — e o 5º
+// encontro ACONTECE (confirmado pelo Matheus em 26/08: "quinto domingo tbm vai
+// ter"). O pedido original dizia "4 encontros no mês"; são 4 na maioria dos meses
+// por consequência do calendário, não por regra. Fixar 4 deixaria um domingo com
+// culto de 09:30 acontecendo e ninguém conseguindo se inscrever nele.
 // ============================================================================
 
 /** Horário do culto em que o Next acontece. Espelha `vol_service_types` "Domingo 09:30". */
