@@ -2269,7 +2269,7 @@ router.get('/volunteers-pool', async (req, res) => {
         .select(`
           id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado, membresia_id,
           team_members:vol_team_members(
-            id, team_id, position_id,
+            id, team_id, position_id, is_active,
             team:vol_teams(id, name, color),
             position:vol_positions(id, name)
           )
@@ -5756,7 +5756,7 @@ router.get('/services/:serviceId/contexto-montagem', async (req, res) => {
         .select(`
           id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado, membresia_id,
           team_members:vol_team_members(
-            id, team_id, position_id,
+            id, team_id, position_id, is_active,
             team:vol_teams(id, name, color),
             position:vol_positions(id, name)
           )

@@ -683,6 +683,64 @@ async function reconcilePlanningCenterProfiles(supabase, volunteersMap) {
 }
 
 // ── Sync team members from vol_schedules ────────────────────────────────────
+// ⚠️⚠️ Reponta a linha ÓRFÃ (`volunteer_profile_id` NULL) pro perfil que já
+// existe, e APAGA a que virou redundante. Sem isto a equipe da pessoa fica
+// invisível no sistema (o embed do `/volunteers-pool` só alcança pelo FK do
+// perfil) e o dedup de `withProfile` insere uma SEGUNDA linha, inflando a
+// contagem de membros da equipe.
+//
+// ⚠️ `vol_team_members` NÃO tem `deleted_at` — hard delete é o padrão da casa
+// aqui (é o que o `DELETE /team-members/:id` faz). A linha apagada é sempre
+// REDUNDANTE: o mesmo (equipe, função, pessoa) já existe ligado ao perfil.
+// ⚠️ Best-effort e SILENCIOSO no erro: falhar aqui devolve o comportamento de
+// antes, e nunca pode derrubar o sync.
+async function repontarOrfas(supabase, memberships, profByPc) {
+  const pcs = [...new Set(
+    memberships
+      .filter(m => m.planning_center_person_id && profByPc.has(m.planning_center_person_id))
+      .map(m => m.planning_center_person_id),
+  )];
+  if (!pcs.length) return { repontadas: 0, apagadas: 0 };
+
+  let orfas = [];
+  for (let i = 0; i < pcs.length; i += 200) {
+    const { data, error } = await supabase.from('vol_team_members')
+      .select('id, team_id, position_id, planning_center_person_id')
+      .is('volunteer_profile_id', null)
+      .in('planning_center_person_id', pcs.slice(i, i + 200));
+    if (error) {
+      // Não conseguir LER não pode virar "não há órfã" nem derrubar o sync.
+      console.error('[sync-members] leitura de órfãs:', error.message);
+      return { repontadas: 0, apagadas: 0 };
+    }
+    orfas = orfas.concat(data || []);
+  }
+  if (!orfas.length) return { repontadas: 0, apagadas: 0 };
+
+  let repontadas = 0; let apagadas = 0;
+  for (const o of orfas) {
+    const perfil = profByPc.get(o.planning_center_person_id);
+    if (!perfil) continue;
+    const { error } = await supabase.from('vol_team_members')
+      .update({ volunteer_profile_id: perfil })
+      .eq('id', o.id)
+      .is('volunteer_profile_id', null);   // guarda de corrida
+    if (!error) { repontadas += 1; continue; }
+    // 23505 = o vínculo já existe ligado ao perfil ⇒ a órfã é redundante.
+    if (error.code === '23505') {
+      const { error: eDel } = await supabase.from('vol_team_members').delete().eq('id', o.id);
+      if (!eDel) apagadas += 1;
+      else console.error('[sync-members] apagar órfã redundante:', eDel.message);
+    } else {
+      console.error('[sync-members] repontar órfã:', error.message);
+    }
+  }
+  if (repontadas || apagadas) {
+    console.log(`[sync-members] órfãs: ${repontadas} repontada(s), ${apagadas} redundante(s) apagada(s)`);
+  }
+  return { repontadas, apagadas };
+}
+
 // Reads vol_schedules (source of truth) and populates vol_teams, vol_positions,
 // and vol_team_members. Supports both membresia-linked (volunteer_profile_id)
 // and PC-only (planning_center_person_id) volunteers.
@@ -813,6 +871,19 @@ async function syncTeamMembersFromSchedules(supabase, restrictPersonIds = null) 
         m.volunteer_profile_id = profByPc.get(m.planning_center_person_id);
       }
     }
+    // ⚠️⚠️ REPONTAR A LINHA ÓRFÃ QUE JÁ ESTÁ NO BANCO (26/08/2026).
+    // A resolução acima só arruma o payload DESTE sync. A linha antiga — gravada
+    // como "pc-only" antes de o perfil existir — fica com `volunteer_profile_id`
+    // NULL pra sempre, e o embed `team_members:vol_team_members(...)` do
+    // `/volunteers-pool` só alcança pelo FK do perfil: a pessoa aparece SEM
+    // EQUIPE no sistema tendo equipe no Planning Center. Pior, o dedup de
+    // `withProfile` procura por `volunteer_profile_id` e NÃO acha a órfã, então
+    // insere uma linha nova — e o banco fica com as DUAS (medido em 26/08: 59
+    // órfãs, 28 delas já duplicadas assim, inflando a contagem de membros da
+    // equipe). Repontar aqui é o que faz o dedup seguinte encontrá-la e pular.
+    // ⚠️ Best-effort: falhar aqui não pode derrubar o sync — o pior caso é o
+    // comportamento de antes.
+    await repontarOrfas(supabase, memberships, profByPc);
   }
 
   // Re-dedup pós-resolução: uma membership que era "pc-only" pode ter ganhado o
