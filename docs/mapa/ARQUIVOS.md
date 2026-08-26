@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-343 arquivos.
+344 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -178,6 +178,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/entradaGrupoApp.js` | régua pura | — | `src/test/entradaGrupoApp.test.ts` |
 | `backend/utils/escalaToken.js` | régua pura | — | `src/test/escalaToken.test.ts` |
 | `backend/utils/exclusaoInscricaoLote.js` | régua pura | — | `src/test/exclusaoInscricaoLote.test.ts` |
+| `backend/utils/freioBot.js` | régua pura | — | `src/test/freioBot.test.ts` |
 | `backend/utils/grupoCapaApp.js` | régua pura | — | `src/test/grupoCapaApp.test.ts` |
 | `backend/utils/grupoEdicaoApp.js` | régua pura | — | `src/test/grupoEdicaoApp.test.ts` |
 | `backend/utils/gruposToken.js` | régua pura | — | `src/test/gruposToken.test.ts` |
