@@ -24,6 +24,7 @@ const { AppError, ERROR_CODES } = require('../utils/appError');
 const { captureHandledException } = require('../utils/sentry');
 const { setSystemJobOutcome } = require('../services/systemJobOutcome');
 const { reconcileTransactions, summarizeInsertErrors } = require('../services/santander/reconciliation');
+const { parseDateBR } = require('../services/pixExtratoParser');
 
 function bankSyncError(error, publicMessage) {
   return new AppError(error?.message || publicMessage, {
@@ -70,7 +71,12 @@ async function extratoNormalizado({ inicio, fim, usarCache = false } = {}) {
     const valorAbs = Number(t.amount || 0);
     return {
       id: t.transactionId,
-      data: t.transactionDate,
+      // O Santander manda transactionDate em DD/MM/YYYY (ex: "06/08/2026").
+      // NUNCA passar a string crua pro Postgres: com DateStyle padrão (ISO, MDY)
+      // dia<=12 é SILENCIOSAMENTE trocado com o mês (06/08 vira 2026-06-08 em vez
+      // de 2026-08-06) e dia>12 estoura 22008 "date/time field value out of
+      // range" — foi isso que zerou 8 sincronizações seguidas em 08/2026.
+      data: parseDateBR(t.transactionDate) || t.transactionDate,
       valor: isDebito ? -valorAbs : valorAbs,
       tipo: t.type,
       descricao: t.transactionName,
