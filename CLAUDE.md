@@ -8604,6 +8604,110 @@ da área KIDS + "líder Kids do dia" dinâmico via `vol_check_ins`.
 `PAGER_BRIDGE_TOKEN` no Vercel + `.env` do agente; confirmar porta TCP/NetPage
 com a LRS. Dados: 660 famílias + 894 crianças importadas (56% com responsável).
 
+## ⚠️ NEXT · 1 turma por DOMINGO, 1 encontro, culto de 09:30 (2026-08-26 · migration `20260826120000`)
+
+Pedido do Matheus: *"agora é um encontro para cada turma, e vamos ter 4 encontros
+no mês, então é 1 encontro por turma, e será sempre no culto de 09:30 de
+domingo"* + *"no formulário deve ter um novo campo para a pessoa escolher em qual
+daquele mês ela vai querer participar"* + *"preciso que todo mês as turmas sejam
+abertas automaticamente, sem ter que abrir manualmente no módulo"*.
+
+⚠️ **ISTO SUBSTITUI o modelo de 2 encontros** (aula 1 + aula 2 · fundação de
+17/06/2026) e a prática de ~2 turmas por mês (30/06). A régua "UM encontro basta
+para ter feito o Next" (14/08) já apontava para cá — agora a turma tem um só.
+
+**A régua é PURA e mora em `backend/utils/nextTurmas.js`** (no gate ·
+`src/test/nextTurmas.test.ts`, 19 casos · **8 mutantes RODADOS e mortos**): dia
+da semana em fuso local → 2 vermelhos · gerador de domingos em fuso local → 4 ·
+cortar o 5º domingo → 2 · `numero` virando a ordem do domingo → 2 · domingo de
+hoje deixando de ser opção → 1 · garantir só o mês corrente → 1 · hoje em UTC →
+1 · voltar a planejar domingo vencido → 2.
+
+- ⚠️⚠️ **Mês com 5 domingos abre 5 turmas** (decisão do Matheus, 26/08). Fixar 4
+  deixaria um domingo com o culto de 09:30 acontecendo e **ninguém conseguindo se
+  inscrever nele**. A coordenação cancela a que não vai acontecer.
+- ⚠️⚠️ **Data de calendário com `Date.UTC` + `getUTCDay`, NUNCA
+  `new Date('YYYY-MM-DD')`**: a string sem horário é lida como meia-noite UTC, que
+  no Rio é 21h do dia anterior — **todo domingo viraria sábado** e o gerador não
+  acharia nenhum. O "hoje" é BRT (`hojeBRT`).
+- ⚠️ **`next_encontros.numero` é sempre 1** — é o número do encontro DENTRO da
+  turma, não a ordem do domingo. Se fosse a ordem, o 5º domingo violaria o
+  `CHECK (numero BETWEEN 1 AND 4)`.
+- ⚠️ **Domingo que já passou não é planejado.** Sem esse corte a primeira
+  execução abriria turma para cada domingo vencido do mês corrente (em 26/08
+  seriam 4 turmas de agosto colidindo com as turmas reais daquelas datas). O
+  corte reusa `domingosInscritiveis`, que é a mesma régua do formulário.
+- ⚠️ `domingosInscritiveis` é declarada DEPOIS de `turmasPlanejadas` e funciona
+  por **hoisting de `function`** — não converter para `const` sem mover (o TDZ do
+  sweep de 28/07).
+
+### Abertura automática · DE CARONA, sem cron novo
+
+`services/nextTurmasAuto.js`, chamado dentro de
+`/api/agente-batismo-next/cron/enfileirar` (diário · 15:11 UTC).
+
+- ⚠️ **Sem cron próprio**: a Vercel está com **46 crons** e o teto do plano é
+  apertado. Aquele é o cron diário do domínio Next, então é o host certo.
+- ⚠️ **Bloco protegido**: falhar ao abrir turma NÃO derruba a fila de convites do
+  agente, que é o trabalho principal daquele cron.
+- Garante **o mês corrente e o seguinte**, para o formulário sempre ter domingo
+  futuro (quem se inscreve no dia 28 precisa escolher um domingo do mês que vem).
+- ⚠️ **NÃO puxa a lista de espera.** O `POST /turmas` só puxa quando a turma nova
+  é a ÚNICA aberta, e com 4-5 turmas abertas isso nunca é verdade. Quem escolhe
+  agora é a pessoa, no formulário — é o que substituiu a fila.
+
+### ⚠️⚠️ Idempotência = a UNIQUE, não um SELECT antes do INSERT
+
+`next_turmas.auto_domingo date` + **`uq_next_turmas_auto_domingo` SEM PREDICADO**.
+
+- É a lei de 04/08: a guarda tem de ser **a mesma chave do índice** — duas
+  execuções concorrentes (cron + clique manual) veriam ambas "não existe".
+- ⚠️ **Índice sem predicado de propósito**: `ON CONFLICT` **não infere índice
+  PARCIAL**. Um `WHERE auto_domingo IS NOT NULL` faria o insert estourar 42P10 em
+  vez de pular, e a falha seria silenciosa (o serviço trata 23505, não 42P10).
+  Seguro porque `NULLS DISTINCT` é o padrão e as **36 turmas anteriores têm
+  `auto_domingo` NULL**.
+- ⚠️ **Turma apagada NÃO é recriada** — soft-delete é decisão humana e a rotina a
+  respeita. `auto_domingo` NULL = turma criada à mão ou histórica.
+- Se o **encontro** falhar depois da turma, a turma recém-criada é **desfeita**
+  (hard delete · ela não tem matrícula nem presença ainda): turma sem data
+  apareceria no formulário sem domingo, o que é pior que não existir.
+
+⚠️ **O que NÃO precisou de migration** (medido antes de escrever): `numero` já era
+`CHECK 1..4` · `data` já era nullable · e o **`uq_next_turmas_origem_mes` (UNIQUE
+em `origem_mes`) não atrapalha** — as turmas vivas de 2026 têm essa coluna NULA,
+só o backfill histórico de 2024 a preencheu. A criação automática segue deixando
+NULL. (Eu havia levantado esse índice como bloqueio; a medição desmentiu.)
+
+### O formulário público escolhe o domingo
+
+`GET /api/public/next/turmas` → só turma **aberta** com encontro de **hoje ou
+futuro**, ordenada por data, devolvendo **o mínimo** (id, nome, data).
+
+- ⚠️ Rota pública **sem login**: não devolve responsável, observação nem contagem
+  de matriculados. Dado interno não sai por aqui.
+- ⚠️ **`turma_id` é revalidado no SERVIDOR** (`turmaEscolhida`): id de turma
+  encerrada, de outro status ou de domingo vencido **cai no comportamento
+  antigo** em vez de matricular em turma morta. O id vem de um `<select>`, e
+  aceitar qualquer uuid seria matricular onde o cliente mandar.
+- ⚠️ **Erro do endpoint responde 500, nunca lista vazia**: lista vazia se lê como
+  "não há Next marcado" e o formulário esconderia o campo, matriculando às cegas.
+  No cliente, falha de rede **esconde o campo** em vez de travar a inscrição.
+- Só **exige** a escolha quando há domingo para escolher — bundle antigo em cache
+  continua inscrevendo.
+- ⚠️ O rótulo do domingo é montado **fatiando a string** `YYYY-MM-DD`, não com
+  `new Date(...)`: mesma armadilha de fuso, o rótulo mostraria o sábado.
+
+⚠️ **Corrigido de carona**: o formulário dizia *"São apenas 2 encontros, domingo
+às 10h"* — errado nas duas metades, e o culto das 10:00 foi **encerrado no corte
+de 24/08**.
+
+**Estado em 26/08**: a turma de agosto no formato antigo foi **encerrada pelo
+Matheus**; nada foi convertido retroativamente. As 5 turmas do formato novo
+(30/08 + os 4 domingos de setembro) foram criadas e o endpoint público as devolve
+em produção. A rotina automática roda pela primeira vez em 27/08 e vai **pular**
+essas 5 pela UNIQUE.
+
 ## ⚠️⚠️ Next · "fez o Next" passou a ser UM encontro (2026-08-14 · migration `20260814200000`)
 
 Decisão do **Matheus**, olhando o funil da Integração: *"a pessoa é considerada
