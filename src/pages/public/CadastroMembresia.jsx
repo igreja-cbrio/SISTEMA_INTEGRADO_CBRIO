@@ -10,6 +10,11 @@ import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import MemberWalletPass from '../../components/membresia/MemberWalletPass';
 import MemberWalletDialog from '../../components/membresia/MemberWalletDialog';
 import { QRCodeSVG } from 'qrcode.react';
+// ⚠️ Régua ÚNICA de CEP (lei de 24/08): a cópia local do ViaCEP que vivia
+// aqui era a 6ª, e a única SEM TIMEOUT — no wi-fi do templo o campo ficava
+// "buscando…" para sempre. Com o CEP agora obrigatório, esse campo está no
+// caminho crítico de toda submissão do censo presencial.
+import { mascaraCep, cepCompleto, buscarCep } from '../../lib/cepAutopreenche';
 
 // ── Helpers de máscara ──
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -30,26 +35,7 @@ function mascaraTelefone(v) {
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
 
-function mascaraCep(v) {
-  const d = soDigitos(v).slice(0, 8);
-  if (d.length <= 5) return d;
-  return `${d.slice(0, 5)}-${d.slice(5)}`;
-}
 
-// ViaCEP · usado só pra sugerir o bairro a partir do CEP (fail-open · nunca bloqueia).
-async function buscarCep(cep) {
-  const d = soDigitos(cep);
-  if (d.length !== 8) return null;
-  try {
-    const res = await fetch(`https://viacep.com.br/ws/${d}/json/`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data?.erro) return null;
-    return { bairro: data.bairro || '', cidade: data.localidade || '', uf: data.uf || '' };
-  } catch {
-    return null;
-  }
-}
 
 function cpfValido(v) {
   const d = soDigitos(v);
@@ -469,7 +455,7 @@ export default function CadastroMembresia() {
   const handleCepChange = async (e) => {
     const masked = mascaraCep(e.target.value);
     setForm((f) => ({ ...f, cep: masked }));
-    if (soDigitos(masked).length === 8) {
+    if (cepCompleto(masked)) {
       setCepBuscando(true);
       const result = await buscarCep(masked);
       setCepBuscando(false);
@@ -603,6 +589,12 @@ export default function CadastroMembresia() {
       if (!form.senha) return 'Crie uma senha de acesso.';
       if (form.senha.length < 6) return 'A senha precisa ter ao menos 6 caracteres.';
       if (form.senha !== form.confirmar_senha) return 'As senhas não conferem.';
+    }
+    // ⚠️ Exige COMPLETO, não "preenchido": CEP pela metade entra parecendo
+    // endereço e o mapa da Membresia não posiciona a pessoa. O servidor
+    // confere a MESMA régua — divergir daria formulário insubmissível.
+    if (!cepCompleto(form.cep)) {
+      return soDigitos(form.cep) ? 'CEP incompleto — informe os 8 dígitos.' : 'Informe seu CEP.';
     }
     if (ehCenso && !vinculoDeclarado) return 'Informe seu vínculo com a igreja.';
     if (!aceitaTermos) return 'É necessário aceitar os termos para enviar o cadastro.';
@@ -1218,7 +1210,7 @@ export default function CadastroMembresia() {
                   </Row>
                   <Field
                     id="cep"
-                    label={cepBuscando ? 'CEP (buscando bairro...)' : 'CEP (opcional)'}
+                    label={cepBuscando ? 'CEP (buscando bairro...)' : 'CEP'}
                     value={form.cep}
                     onChange={handleCepChange}
                     inputMode="numeric"
