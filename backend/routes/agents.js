@@ -6,6 +6,7 @@ const { supabase } = require('../utils/supabase');
 const { sanitizeObj, isValidUUID } = require('../utils/sanitize');
 const { ENVIRONMENT_ID, getAgentId, listModulesForUser, canUseAgent } = require('../config/managedAgents');
 const { buildContext, serializeContext } = require('../services/agentContext');
+const { resilientFetch } = require('../utils/resilientFetch');
 
 // Persistência via cliente supabase (REST · service_role). O pool pg direto não
 // conecta no serverless do Vercel, então toda a leitura/escrita aqui usa REST.
@@ -764,14 +765,31 @@ router.post('/worker/trigger', authorize('admin', 'diretor'), async (req, res) =
     const { sign } = require('../utils/workerHmac');
     const sig = sign(body);
 
-    const resp = await fetch(`${workerUrl.replace(/\/$/, '')}/run/${agentType}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Agent-Signature': sig,
-      },
-      body,
-    });
+    // ⚠️ O worker do Railway pode devolver 502/503/504 quando o container está
+    // reiniciando/redeployando (a app ainda não subiu para o proxy da Railway
+    // rotear) — nesse caso o /run/:agentType NUNCA chegou a ser executado
+    // (ele responde 202 assim que recebe, antes de rodar o agente de verdade),
+    // então repetir é seguro e resolve a indisponibilidade transitória em vez
+    // de só reportá-la. `retrySafe: true` porque é exatamente essa a garantia.
+    let resp;
+    try {
+      resp = await resilientFetch(
+        `${workerUrl.replace(/\/$/, '')}/run/${agentType}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Agent-Signature': sig,
+          },
+          body,
+        },
+        { timeoutMs: 8000, maxRetries: 2, retrySafe: true, dependency: 'Worker de agentes (Railway)' },
+      );
+    } catch (fetchErr) {
+      const status = Number(fetchErr?.status) || 503;
+      console.error('[AGENTS] /worker/trigger indisponível após retries:', fetchErr.message);
+      return res.status(status).json({ error: fetchErr.message || 'Worker de agentes indisponível' });
+    }
     if (!resp.ok) {
       const txt = await resp.text().catch(() => '');
       return res.status(502).json({ error: `Worker respondeu ${resp.status}: ${txt.slice(0, 200)}` });
@@ -780,7 +798,7 @@ router.post('/worker/trigger', authorize('admin', 'diretor'), async (req, res) =
     res.json({ accepted: true, worker: data });
   } catch (e) {
     console.error('[AGENTS] /worker/trigger error:', e.message);
-    res.status(500).json({ error: e.message || 'Erro ao chamar worker' });
+    res.status(e.status || 500).json({ error: e.message || 'Erro ao chamar worker' });
   }
 });
 
