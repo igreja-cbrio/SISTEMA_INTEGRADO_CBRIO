@@ -85,13 +85,19 @@ function nomeTurma(dia) {
 }
 
 /**
- * As turmas que DEVEM existir num mês: uma por domingo, um encontro cada.
- * `numero` é o número do encontro DENTRO da turma — sempre 1, agora que a turma
- * tem um só. (O CHECK de `next_encontros.numero` é 1..4; ele nunca é o número
- * do domingo, senão o 5º domingo violaria a constraint.)
+ * As turmas que DEVEM existir num mês: uma por domingo AINDA POR VIR, um
+ * encontro cada. `numero` é o número do encontro DENTRO da turma — sempre 1,
+ * agora que a turma tem um só. (O CHECK de `next_encontros.numero` é 1..4; ele
+ * nunca é o número do domingo, senão o 5º domingo violaria a constraint.)
+ *
+ * ⚠️⚠️ DOMINGO QUE JÁ PASSOU NÃO ENTRA. Sem esse corte, a primeira execução da
+ * rotina abriria uma turma para cada domingo já vencido do mês corrente — em
+ * 26/08/2026 seriam 4 turmas de agosto (02, 09, 16 e 23) para encontros que já
+ * aconteceram, colidindo com as turmas reais daquelas datas. `agora` só existe
+ * para teste.
  */
-function turmasPlanejadas(mes) {
-  return domingosDoMes(mes).map(dia => ({
+function turmasPlanejadas(mes, agora = new Date()) {
+  return domingosInscritiveis(domingosDoMes(mes), agora).map(dia => ({
     data: dia,
     nome: nomeTurma(dia),
     horario: HORARIO_NEXT,
@@ -113,6 +119,10 @@ function mesesAGarantir(agora = new Date()) {
 
 /**
  * Domingos que ainda podem receber inscrição: hoje ou no futuro.
+ *
+ * ⚠️ Usada por `turmasPlanejadas`, que é declarada ANTES desta — funciona pelo
+ * hoisting de `function`. NÃO converter para `const` sem mover (é o TDZ que
+ * derrubou o formulário no sweep de 28/07).
  * Domingo que já passou não é opção — a pessoa escolheria um encontro que não
  * vai acontecer, e a matrícula nasceria numa turma vencida.
  */

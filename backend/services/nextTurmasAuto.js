@@ -20,8 +20,8 @@ const { turmasPlanejadas, mesesAGarantir } = require('../utils/nextTurmas');
  * turmas para o mesmo domingo. É a lei de 04/08 — a guarda tem de ser a mesma
  * chave do índice.
  */
-async function garantirTurmasDoMes(mes) {
-  const plano = turmasPlanejadas(mes);
+async function garantirTurmasDoMes(mes, agora = new Date()) {
+  const plano = turmasPlanejadas(mes, agora); // domingo vencido não entra
   const criadas = [];
   const jaExistiam = [];
   const erros = [];
@@ -74,7 +74,7 @@ async function garantirTurmasDoMes(mes) {
 async function garantirTurmasAutomaticas(agora = new Date()) {
   const out = { meses: [], criadas: 0, ja_existiam: 0, erros: [] };
   for (const mes of mesesAGarantir(agora)) {
-    const r = await garantirTurmasDoMes(mes);
+    const r = await garantirTurmasDoMes(mes, agora);
     out.meses.push({ mes, criadas: r.criadas.length, ja_existiam: r.ja_existiam.length });
     out.criadas += r.criadas.length;
     out.ja_existiam += r.ja_existiam.length;
