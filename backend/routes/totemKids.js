@@ -16,6 +16,7 @@
 // ============================================================================
 
 const router = require('express').Router();
+const kidsVisitante = require('../utils/kidsVisitante');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
@@ -346,10 +347,11 @@ function _hojeBRT() {
 
 // Data-limite de uma criança visitante = hoje (BRT) + 28 dias (4 domingos · o
 // dia + 3 semanas · Marcos 2026-07-20). Passou disso, ela inativa sozinha.
+// ⚠️ Delega para `utils/kidsVisitante` — a régua de prazo e de promoção vive lá
+// (pura, no gate). Duas cópias divergiriam no dia em que o prazo mudasse, e é
+// justamente o prazo que torna a régua de 3 check-ins viável.
 function _dataLimiteVisitante() {
-  const d = new Date(_hojeBRT() + 'T12:00:00Z');
-  d.setUTCDate(d.getUTCDate() + 28);
-  return d.toISOString().slice(0, 10);
+  return kidsVisitante.prazoDe(_hojeBRT());
 }
 
 // ── Ensaio (Marcos 2026-07-21/22 · design v5) ────────────────────────────────
@@ -492,25 +494,48 @@ async function inativarVisitantesVencidos() {
   return (data || []).length;
 }
 
-// Visitante que VOLTA (Marcos 2026-07-20): um novo check-in com check-in anterior
-// de OUTRO dia promove a criança a FREQUENTADOR na hora — definitivo (limpa prazo
-// e relação; nada volta a marcá-la visitante sozinho). Roda DEPOIS do insert do
-// check-in, best-effort: nunca trava nem atrasa o check-in.
+// Visitante que VOLTA · régua de 20/08/2026 (Matheus): promove no **3º dia** com
+// check-in — era o 2º (Marcos, 20/07). E o prazo de 4 semanas passa a ser
+// RENOVADO a cada check-in.
+//
+// ⚠️⚠️ O prazo rolante NÃO é detalhe: visitante que passa do `data_limite` é
+// INATIVADA automaticamente. Medido em 20/08, a mediana entre o 1º e o 2º
+// check-in é 7 dias, então o 3º cai por volta do 28º–30º dia para quem vem de
+// 15 em 15 — com prazo FIXO, exigir 3 check-ins DESATIVARIA a criança antes de
+// ela poder ser promovida. Com o prazo rolando, a régua é "3 visitas, com no
+// máximo 4 semanas entre elas".
+//
+// ⚠️ Conta DIAS DISTINTOS, não linhas de `kids_checkins`: são 4 horários de
+// culto no domingo, e contar linha promoveria numa única manhã.
+//
+// Roda DEPOIS do insert do check-in, best-effort: nunca trava nem atrasa o
+// check-in. Devolve true só quando PROMOVEU (o chamador loga).
 async function promoverVisitanteRecorrente(criancaId) {
   try {
     const { data: cr } = await supabase.from('kids_criancas')
       .select('id, visitante').eq('id', criancaId).maybeSingle();
     if (!cr || cr.visitante !== true) return false;
-    // Já veio em outro dia? (o check-in de agora é de hoje · compara em BRT)
-    const { data: prev } = await supabase.from('kids_checkins')
-      .select('id').eq('crianca_id', criancaId).is('deleted_at', null)
-      .lt('checkin_at', `${_hojeBRT()}T00:00:00-03:00`).limit(1);
-    if (!prev || !prev.length) return false;
+
+    // Dias DISTINTOS com check-in, o de hoje incluído.
+    const { data: todos, error: eCk } = await supabase.from('kids_checkins')
+      .select('checkin_at').eq('crianca_id', criancaId).is('deleted_at', null)
+      .order('checkin_at', { ascending: false }).limit(50);
+    // ⚠️ Falha de LEITURA não promove nem renova: não sabemos quantos dias são,
+    // e promover no escuro é definitivo (nada rebaixa depois).
+    if (eCk) { console.error('[totemKids/promoverVisitanteRecorrente]', eCk.message); return false; }
+    const dias = new Set((todos || []).map((c) => String(c.checkin_at).slice(0, 10))).size;
+
+    const patch = kidsVisitante.patchAposCheckin({
+      eVisitante: true, diasComCheckin: dias, hojeISO: _hojeBRT(),
+    });
+    if (!patch) return false;
+    const { promovida, ...campos } = patch;
+
     const { error } = await supabase.from('kids_criancas')
-      .update({ visitante: false, data_limite: null, visitante_relacao: null, updated_at: new Date().toISOString() })
+      .update({ ...campos, updated_at: new Date().toISOString() })
       .eq('id', criancaId).eq('visitante', true);
     if (error) { console.error('[totemKids/promoverVisitanteRecorrente]', error.message); return false; }
-    return true;
+    return promovida === true;
   } catch (e) {
     console.error('[totemKids/promoverVisitanteRecorrente]', e.message);
     return false;
@@ -2752,6 +2777,66 @@ router.delete('/responsaveis/:id', authorizeModule('kids', 3), async (req, res) 
 // CHECK-IN / CHECK-OUT
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── GET /api/totem-kids/sem-checkin · crianças ATIVAS que nunca fizeram um
+// único check-in no totem ────────────────────────────────────────────────────
+// ⚠️⚠️ POR QUE É UMA LISTA SEPARADA, e não parte do radar de ausentes.
+// `fn_kids_ausentes_consecutivos` faz `JOIN` com a presença para calcular
+// quantos cultos a criança perdeu — quem NUNCA teve check-in não tem de onde
+// contar e sai do resultado. Medido em 20/08/2026: **554 crianças ativas** nesse
+// estado, invisíveis em qualquer tela. São "não estão vindo" tanto quanto as 270
+// do radar, mas por outro motivo, e o encaminhamento é outro: a maioria veio do
+// import do Planning Center e provavelmente é cadastro a desativar, enquanto o
+// ausente é criança que vinha e parou (e se liga para ela).
+// Juntar os dois num número só (decisão do Matheus · 20/08) faria o radar saltar
+// de 270 para ~824 e a fila de acompanhamento pastoral virar limpeza de base.
+//
+// ⚠️ Só criança ATIVA: desativar tira daqui, que é o pedido dele.
+router.get('/sem-checkin', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const limite = Math.min(Math.max(Number(req.query.limit) || 500, 1), 2000);
+
+    const { data: comCheckin, error: eCk } = await supabase
+      .from('kids_checkins').select('crianca_id').is('deleted_at', null).limit(100000);
+    // ⚠️ Falha de LEITURA não vira "ninguém fez check-in": isso listaria as
+    // 1.076 ativas como se nunca tivessem vindo, e alguém desativaria em massa.
+    if (eCk) throw new Error(`Não foi possível ler os check-ins: ${eCk.message}`);
+    const jaVeio = new Set((comCheckin || []).map((c) => c.crianca_id));
+
+    const { data: ativas, error: eAt } = await supabase
+      .from('kids_criancas')
+      .select('id, nome, data_nascimento, sexo, visitante, created_at, planning_center_id')
+      .eq('ativo', true).is('deleted_at', null)
+      .order('created_at', { ascending: true }).limit(5000);
+    if (eAt) throw eAt;
+
+    const semCheckin = (ativas || []).filter((c) => !jaVeio.has(c.id));
+
+    const itens = semCheckin.slice(0, limite).map((c) => ({
+      crianca_id: c.id,
+      nome: c.nome,
+      idade_meses: c.data_nascimento ? calcIdadeMeses(c.data_nascimento) : null,
+      idade_label: c.data_nascimento ? formatIdade(calcIdadeMeses(c.data_nascimento)) : null,
+      sexo: c.sexo || null,
+      visitante: c.visitante === true,
+      cadastrada_em: c.created_at ? String(c.created_at).slice(0, 10) : null,
+      // ⚠️ Distingue quem veio do import do PCO de quem foi cadastrada aqui: são
+      // encaminhamentos diferentes (limpeza de base × criança que não apareceu).
+      do_import: !!c.planning_center_id,
+    }));
+
+    res.json({
+      total: semCheckin.length,
+      do_import: semCheckin.filter((c) => c.planning_center_id).length,
+      cadastradas_aqui: semCheckin.filter((c) => !c.planning_center_id).length,
+      truncado: semCheckin.length > itens.length,
+      itens,
+    });
+  } catch (e) {
+    console.error('[totemKids/sem-checkin]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao listar crianças sem check-in' });
+  }
+});
+
 // GET /api/totem-kids/ausentes?min=3 · crianças ativas faltando N cultos seguidos
 // (aba dedicada · mesma régua do alerta) + contato dos responsáveis pra ação.
 router.get('/ausentes', authorizeModule('kids', 1), async (req, res) => {
@@ -4930,6 +5015,10 @@ async function processarLinhaImport(row, colMap, dryRun, userId) {
       observacoes_medicas: alergia,
       observacoes_internas: obs,
       visitante: true,
+      // ⚠️⚠️ `data_limite` OBRIGATÓRIO: sem prazo a visitante nunca é promovida
+      // (não tem check-in) nem inativada (a varredura exige prazo vencido) —
+      // vira VISITANTE ETERNA. Eram 23 assim em produção (20/08/2026).
+      data_limite: _dataLimiteVisitante(),
       ativo: true,
       created_by: userId,
     }).select('id').single();
@@ -5265,6 +5354,10 @@ router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), asy
           observacoes_medicas: s.observacoes_medicas || null,
           familia_id: familiaId,
           visitante: true,
+      // ⚠️⚠️ `data_limite` OBRIGATÓRIO: sem prazo a visitante nunca é promovida
+      // (não tem check-in) nem inativada (a varredura exige prazo vencido) —
+      // vira VISITANTE ETERNA. Eram 23 assim em produção (20/08/2026).
+      data_limite: _dataLimiteVisitante(),
           created_by: req.user?.id || null,
         })
         .select('id')

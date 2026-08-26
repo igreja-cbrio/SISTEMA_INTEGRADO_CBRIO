@@ -1,4 +1,9 @@
 const router = require('express').Router();
+const kidsVisitante = require('../utils/kidsVisitante');
+// Dia BRT — dia de operação da igreja nunca é UTC (das 21h o dia já virou).
+function hojeBRTKids() {
+  return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
 const multer = require('multer');
 const {
   planoDaPagina, montarResposta, COLUNAS_LISTA,
@@ -2718,6 +2723,12 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
               data_nascimento: bebe_data_nascimento || null,
               sexo: ['M', 'F', 'outro'].includes(bebe_sexo) ? bebe_sexo : null,
               visitante: true,
+        // ⚠️⚠️ `data_limite` OBRIGATÓRIO em toda visitante criada (20/08/2026).
+        // Os 5 pontos que criam criança visitante gravavam sem prazo, e a
+        // varredura `inativarVisitantesVencidos` só pega quem tem prazo VENCIDO
+        // — então essas viravam VISITANTES ETERNAS: nunca promovidas (sem
+        // check-in) e nunca inativadas. Medido: 23 assim em produção.
+        data_limite: kidsVisitante.prazoDe(hojeBRTKids()),
               created_by: req.user?.id || null,
             })
             .select('id')

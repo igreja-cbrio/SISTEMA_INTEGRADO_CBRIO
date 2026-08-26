@@ -9,6 +9,11 @@
 // e-mail do responsável obrigatório; endereço opcional. Linhas antigas nunca
 // são alteradas nem re-validadas.
 const router = require('express').Router();
+const kidsVisitante = require('../utils/kidsVisitante');
+// Dia BRT — dia de operação da igreja nunca é UTC (das 21h o dia já virou).
+function hojeBRTKids() {
+  return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
@@ -212,6 +217,12 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
               data_nascimento: c.nascimento,
               sexo: c.sexo === 'masculino' ? 'M' : 'F', // vocabulário local do Kids
               visitante: true,
+        // ⚠️⚠️ `data_limite` OBRIGATÓRIO em toda visitante criada (20/08/2026).
+        // Os 5 pontos que criam criança visitante gravavam sem prazo, e a
+        // varredura `inativarVisitantesVencidos` só pega quem tem prazo VENCIDO
+        // — então essas viravam VISITANTES ETERNAS: nunca promovidas (sem
+        // check-in) e nunca inativadas. Medido: 23 assim em produção.
+        data_limite: kidsVisitante.prazoDe(hojeBRTKids()),
               observacoes_internas: obsInterna,
               ...c.saude,
             })
