@@ -300,7 +300,8 @@ export default function InscricaoNext() {
             O NEXT é o seu próximo passo dentro da Igreja CBRio! É onde conhecemos
             sua história, apresentamos nossa igreja e compartilhamos nossa visão!
             <br />
-            É um encontro só, no domingo às 9h30.
+            <strong>Acontece todo domingo, às 9h30.</strong> Você participa de
+            um encontro só — escolha abaixo a data que preferir.
           </p>
         </div>
 
@@ -319,8 +320,8 @@ export default function InscricaoNext() {
               Inscrição confirmada!
             </h2>
             <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
-              Você está inscrito(a) no NEXT. Em breve nossa equipe entrará em contato com mais detalhes.
-              Nos vemos no domingo!
+              Você está inscrito(a) no NEXT, no domingo que você escolheu, às 9h30.
+              Em breve nossa equipe entrará em contato com mais detalhes. Nos vemos lá!
             </p>
           </div>
         ) : (
