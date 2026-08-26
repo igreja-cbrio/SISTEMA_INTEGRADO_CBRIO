@@ -283,14 +283,43 @@ router.put('/pedidos/:id', async (req, res) => {
   try {
     const { descricao, valor_total, data_prevista, status, codigo_rastreio, transportadora } = req.body;
     const { data: antigo } = await supabase.from('log_pedidos').select('status, solicitacao_id').eq('id', req.params.id).maybeSingle();
-    const { data, error } = await supabase.from('log_pedidos')
+    // ⚠️⚠️ UPDATE CONDICIONADO ao status anterior (26/08/2026), e é ele que
+    // decide se HOUVE transição. Sem isso, N chamadas quase simultâneas (duplo
+    // clique, retry do cliente) leem o mesmo `antigo`, todas passam no
+    // `status !== antigo.status` e todas notificam.
+    //
+    // Foi exatamente o que aconteceu: a Mariane recebeu SETE mensagens do
+    // mesmo pedido ("Ar condicionado recepção", mesmo `ref_id`), QUATRO delas
+    // no mesmo minuto, todas com os mesmos params — assinatura de corrida, não
+    // de mudanças reais de status. Isso alimentou o `Spam Rate limit hit` que
+    // bloqueou o número inteiro da igreja no mesmo dia.
+    //
+    // ⚠️ Só condiciona quando o status está mudando: PUT que mexe em descrição
+    // ou rastreio sem tocar no status continua passando normalmente.
+    let q = supabase.from('log_pedidos')
       .update({ descricao, valor_total, data_prevista, status, codigo_rastreio, transportadora })
-      .eq('id', req.params.id).select().single();
+      .eq('id', req.params.id);
+    const mudandoStatus = !!(status && antigo && status !== antigo.status);
+    if (mudandoStatus) q = q.eq('status', antigo.status);
+    const { data, error } = await q.select().maybeSingle();
     if (error) return res.status(400).json({ error: error.message });
+    // ⚠️ 0 linhas com status mudando = OUTRA chamada chegou primeiro. Relê e
+    // devolve o estado real em vez de 404: o pedido existe e foi atualizado —
+    // só não por esta requisição. Erro aqui faria a tela dizer que falhou algo
+    // que deu certo.
+    if (!data) {
+      const { data: atual } = await supabase.from('log_pedidos')
+        .select('*').eq('id', req.params.id).maybeSingle();
+      if (!atual) return res.status(404).json({ error: 'Pedido não encontrado' });
+      return res.json(atual);
+    }
     // WhatsApp pro solicitante quando o status de ENTREGA muda (template
     // pedido_atualizado · {{4}} = rastreio). No-op se sem env/sem telefone.
-    if (status && antigo && status !== antigo.status && data.solicitacao_id) {
-      (async () => {
+    // ⚠️ AWAITED: em serverless o container congela na resposta e o disparo
+    // se perderia (lei de 31/07). O `try` interno garante que falhar aqui não
+    // derruba a atualização do pedido, que já está commitada.
+    if (mudandoStatus && data.solicitacao_id) {
+      await (async () => {
         try {
           const { data: sol } = await supabase.from('solicitacoes').select('titulo, solicitante_id').eq('id', data.solicitacao_id).maybeSingle();
           if (!sol?.solicitante_id) return;
