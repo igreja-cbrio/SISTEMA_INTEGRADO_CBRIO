@@ -6,7 +6,7 @@
 // e `escalaAviso` foram feitos, pelo mesmo motivo: régua que exige webhook,
 // banco e WhatsApp para ser testada não é testada.
 
-const supabase = require('../utils/supabase');
+const { supabase } = require('../utils/supabase');
 const { decidirRoteamento, JANELA_DIAS } = require('../utils/roteamentoDisparo');
 const { notificar } = require('./notificar');
 
