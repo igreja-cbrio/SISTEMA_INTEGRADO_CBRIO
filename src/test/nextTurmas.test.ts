@@ -67,7 +67,7 @@ describe('nextTurmas · a régua das turmas do mês', () => {
   });
 
   it('cada turma planejada tem exatamente UM encontro, no próprio domingo', () => {
-    const t = turmasPlanejadas('2026-09');
+    const t = turmasPlanejadas('2026-09', new Date('2026-08-01T12:00:00Z'));
     expect(t).toHaveLength(4);
     for (const x of t) {
       expect(x.encontros).toHaveLength(1);
@@ -77,8 +77,26 @@ describe('nextTurmas · a régua das turmas do mês', () => {
     }
   });
 
+  it('⚠️ NÃO planeja turma para domingo que já passou', () => {
+    // 26/08/2026 (quarta). Agosto tem domingos 02, 09, 16, 23 e 30 — só o 30 vem.
+    const agora = new Date('2026-08-26T15:00:00Z');
+    expect(turmasPlanejadas('2026-08', agora).map(t => t.data)).toEqual(['2026-08-30']);
+  });
+
+  it('planeja o mês seguinte inteiro', () => {
+    const agora = new Date('2026-08-26T15:00:00Z');
+    expect(turmasPlanejadas('2026-09', agora).map(t => t.data)).toEqual(
+      ['2026-09-06', '2026-09-13', '2026-09-20', '2026-09-27'],
+    );
+  });
+
+  it('mês inteiro no passado não planeja nada', () => {
+    const agora = new Date('2026-08-26T15:00:00Z');
+    expect(turmasPlanejadas('2026-07', agora)).toEqual([]);
+  });
+
   it('o numero do encontro é 1 mesmo no 5º domingo (o CHECK do banco é 1..4)', () => {
-    const t = turmasPlanejadas('2026-11');
+    const t = turmasPlanejadas('2026-11', new Date('2026-10-01T12:00:00Z'));
     expect(t).toHaveLength(5);
     expect(t.map(x => x.encontros[0].numero)).toEqual([1, 1, 1, 1, 1]);
   });
