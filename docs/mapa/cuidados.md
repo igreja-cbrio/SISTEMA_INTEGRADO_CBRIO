@@ -83,6 +83,7 @@ Guard: `authorizeModule('cuidados', 1 | 2 | 3)`
 - `cui_pedidos`
 - `cui_responsaveis`
 - `cui_visitas`
+- `cultos`
 - `dados_brutos`
 - `jornada_encaminhamentos`
 - `mem_membros`
