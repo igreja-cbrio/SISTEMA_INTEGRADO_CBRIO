@@ -228,3 +228,87 @@ module.exports = {
   vetosDaCampanha,
   hojeBrt,
 };
+
+/**
+ * TROCA O DÍGITO da campanha, FIXANDO o que já foi identificado.
+ *
+ * ⚠️⚠️ POR QUE ISTO É MAIS QUE UM UPDATE: `vw_camp_arrecadacao` casa o caixa por
+ * `identificador_centavo = c.digito`. Trocar 07 por 08 faria TODA doação já
+ * identificada com ,07 **desaparecer da barrinha, em silêncio** — o número só
+ * ficaria menor, sem erro nenhum. A saída NÃO é mudar a chave da view (é ela que
+ * impede a dupla contagem do repasse do PSP · LEI Nº 6): é fixar o passado em
+ * `camp_vinculos` (incluir = true), que a view soma desde a migration
+ * `20260827170000`.
+ *
+ * ⚠️ ORDEM: fixa ANTES de trocar. Morrer no meio deixa inclusões manuais
+ * redundantes (inofensivas — a view conta a linha UMA vez, o dígito ainda bate) e
+ * o dígito antigo de pé. A ordem inversa deixaria o dinheiro fora da barrinha.
+ *
+ * ⚠️ `ignoreDuplicates: true` é o que PRESERVA O VETO: se alguém já marcou "este
+ * crédito não é daqui", a fixação não pode sobrescrever para `true`.
+ */
+async function trocarDigito({ campanhaId, digitoNovo, motivo, autorId }) {
+  const { data: camp, error: e0 } = await supabase.from('camp_campanhas')
+    .select('id, nome, digito, data_inicio, data_fim')
+    .eq('id', campanhaId).is('deleted_at', null).maybeSingle();
+  if (e0) throw e0;
+  if (!camp) return { ok: false, motivo: 'campanha_nao_encontrada' };
+
+  const anterior = camp.digito || null;
+  if (anterior === digitoNovo) return { ok: true, sem_mudanca: true, fixados: 0 };
+
+  let fixados = 0;
+
+  // Só há passado a fixar se havia dígito antes.
+  if (anterior) {
+    const linhas = await lancamentos(campanhaId, { limite: 1000 });
+    const doCaixa = linhas.filter((l) => l.origem === 'caixa');
+
+    const paraFixar = doCaixa.map((l) => ({
+      campanha_id: campanhaId,
+      lancamento_bruto_id: l.lancamento_bruto_id || null,
+      transacao_id: l.transacao_id || null,
+      incluir: true,
+      motivo: `Dígito da campanha mudou de ${anterior} para ${digitoNovo}` +
+        `${motivo ? ` · ${String(motivo).slice(0, 200)}` : ''}`,
+      created_by: autorId || null,
+    }));
+
+    // ⚠️ Duas chaves de conflito distintas (bruto × transação), então são dois
+    // upserts: um `onConflict` só não cobriria as duas famílias de linha.
+    const brutos = paraFixar.filter((v) => v.lancamento_bruto_id && !v.transacao_id);
+    const trans = paraFixar.filter((v) => v.transacao_id);
+
+    for (const [lote, conflito] of [[brutos, 'campanha_id,lancamento_bruto_id'],
+      [trans, 'campanha_id,transacao_id']]) {
+      for (let i = 0; i < lote.length; i += 200) {
+        const fatia = lote.slice(i, i + 200);
+        if (!fatia.length) break;
+        const { error } = await supabase.from('camp_vinculos')
+          .upsert(fatia, { onConflict: conflito, ignoreDuplicates: true });
+        if (error && error.code !== '23505') throw error;
+        fixados += fatia.length;
+      }
+    }
+  }
+
+  const { error: eUp } = await supabase.from('camp_campanhas')
+    .update({ digito: digitoNovo, updated_at: new Date().toISOString() })
+    .eq('id', campanhaId).is('deleted_at', null);
+  if (eUp) throw eUp;
+
+  // Trilha append-only: é ela que explica, meses depois, por que existe inclusão
+  // manual em massa naquela data.
+  await supabase.from('camp_digito_historico').insert({
+    campanha_id: campanhaId,
+    digito_anterior: anterior,
+    digito_novo: digitoNovo,
+    lancamentos_fixados: fixados,
+    motivo: motivo ? String(motivo).slice(0, 500) : null,
+    created_by: autorId || null,
+  }).catch((e) => console.error('[campanhaArrecadacao] trilha do dígito:', e.message));
+
+  return { ok: true, anterior, novo: digitoNovo, fixados };
+}
+
+module.exports.trocarDigito = trocarDigito;

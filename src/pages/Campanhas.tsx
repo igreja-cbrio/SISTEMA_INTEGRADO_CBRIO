@@ -16,7 +16,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import {
   Loader2, Plus, Target, CalendarDays, Send, Wallet, Check, X, Trash2,
-  ArrowLeft, Play, Pause, AlertTriangle, Copy, Heart,
+  ArrowLeft, Play, Pause, AlertTriangle, Copy, Heart, Pencil, Users,
 } from 'lucide-react';
 
 const brl = (c: number) => (Number(c || 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -98,6 +98,25 @@ function Barrinha({ d }: { d: any }) {
       )}
     </div>
   );
+}
+
+/**
+ * Quem responde pela tarefa, em texto.
+ *
+ * ⚠️ "sem responsável" e "a área toda" são coisas DIFERENTES: a primeira é
+ * trabalho que ninguém pegou (cobrança), a segunda é decisão registrada.
+ * Colapsar as duas num traço faz a coordenação cobrar quem já está atribuído.
+ */
+function rotuloDono(m: any) {
+  const nomes = (m?.responsaveis || []).map((r: any) => r.nome).filter(Boolean);
+  if (!nomes.length && !m?.area_nome) return { texto: 'sem responsável', tem_dono: false };
+  if (!nomes.length) return { texto: `${m.area_nome} (área toda)`, tem_dono: true };
+  // Até 2 nomes na linha; daí "+N" — 12 nomes numa linha de tabela é parede de
+  // texto e ninguém lê nenhum.
+  const visiveis = nomes.slice(0, 2).join(', ');
+  const resto = nomes.length - 2;
+  const pessoas = resto > 0 ? `${visiveis} +${resto}` : visiveis;
+  return { texto: m.area_nome ? `${pessoas} · ${m.area_nome}` : pessoas, tem_dono: true };
 }
 
 function Chip({ children, cor }: { children: any; cor: string }) {
@@ -412,28 +431,7 @@ function AbaGeral({ det, podeEditar, podeAtivar, onMudou }: any) {
       </Card>
 
       <div className="space-y-4">
-        <Card><CardContent className="p-5 space-y-3">
-          <div className="font-medium text-sm">Como o dinheiro é identificado</div>
-          {c.digito ? (
-            <div className="text-sm space-y-1">
-              <div>Dígito <strong className="text-lg">{c.digito}</strong></div>
-              <div className="text-muted-foreground text-xs">
-                Quem transferir pelo banco põe esses centavos no valor.
-                Doar R$ 500 = transferir <strong>R$ 500,{c.digito}</strong>.
-              </div>
-            </div>
-          ) : (
-            <div className="text-sm text-amber-600 flex gap-2">
-              <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-              Sem dígito configurado — quem transferir pelo banco não vai ser reconhecido nesta campanha.
-            </div>
-          )}
-          <div className="text-xs text-muted-foreground">
-            {c.aceita_online
-              ? 'Quem doa pelo link/QR é contado com atribuição exata, sem depender dos centavos.'
-              : 'Doação online está desligada nesta campanha.'}
-          </div>
-        </CardContent></Card>
+        <ConfigDigito det={det} podeAtivar={podeAtivar} onMudou={onMudou} />
 
         <Card><CardContent className="p-5 space-y-3">
           <div className="font-medium text-sm">Barrinha pública</div>
@@ -494,73 +492,450 @@ function AbaGeral({ det, podeEditar, podeAtivar, onMudou }: any) {
   );
 }
 
-// ── Aba · Cronograma ───────────────────────────────────────────────────────
+/**
+ * Configuração do DÍGITO VERIFICADOR.
+ *
+ * ⚠️⚠️ Trocar o dígito não é editar um campo de texto: a barrinha casa o caixa por
+ * `identificador_centavo = digito`, então sem tratamento toda doação já
+ * identificada com o dígito antigo DESAPARECERIA do total, em silêncio. O
+ * servidor FIXA o passado antes de trocar e devolve quantos lançamentos fixou —
+ * e é isso que esta tela declara. Por isso é rota própria e nível 4.
+ */
+function ConfigDigito({ det, podeAtivar, onMudou }: any) {
+  const c = det.campanha;
+  const [editando, setEditando] = useState(false);
+  const [valor, setValor] = useState(c.digito || '');
+  const [motivo, setMotivo] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [ocupados, setOcupados] = useState<any[] | null>(null);
+  const [historico, setHistorico] = useState<any[] | null>(null);
 
-function AbaCronograma({ det, podeEditar, onMudou }: any) {
-  const [novo, setNovo] = useState<any | null>(null);
-  const marcos = det.marcos || [];
+  useEffect(() => {
+    if (!editando) return;
+    campanhas.digitos().then((d: any) => setOcupados(d.ocupados || [])).catch(() => setOcupados([]));
+    campanhas.digitoHistorico(c.id).then(setHistorico).catch(() => setHistorico([]));
+  }, [editando, c.id]);
 
-  const salvarNovo = async () => {
-    if (!novo?.titulo?.trim()) return toast.error('Dê um título ao marco.');
+  const jaTemDinheiro = (det.total_centavos || 0) > 0;
+
+  const salvar = async () => {
+    const novo = String(valor || '').trim();
+    if (novo && novo === c.digito) { setEditando(false); return; }
+    if (jaTemDinheiro && !confirm(
+      `Esta campanha já tem ${brl(det.total_centavos)} identificados pelo dígito ${c.digito}.\n\n` +
+      `Ao trocar, o sistema vai FIXAR esses lançamentos na campanha para que o total não caia — ` +
+      `e as doações novas passam a ser reconhecidas pelo dígito ${novo || '(nenhum)'}.\n\nConfirma?`
+    )) return;
+
+    setSalvando(true);
     try {
-      await campanhas.marcos.criar(det.campanha.id, {
-        titulo: novo.titulo.trim(), descricao: novo.descricao || null,
-        tipo: novo.tipo || 'tarefa', data_prevista: novo.data_prevista || null,
-        responsavel_nome: novo.responsavel_nome || null,
-        ordem: (marcos.at(-1)?.ordem || 0) + 10,
-      });
-      toast.success('Marco criado.'); setNovo(null); onMudou();
-    } catch (e: any) { toast.error(e?.message || 'Erro ao criar o marco'); }
+      const r = await campanhas.definirDigito(c.id, novo || null, motivo || null);
+      if (r?.sem_mudanca) toast.info('O dígito já era esse.');
+      else if (r?.fixados) toast.success(`Dígito alterado. ${r.fixados} lançamento(s) foram fixados na campanha para o total não cair.`);
+      else toast.success('Dígito configurado.');
+      setEditando(false); setMotivo(''); onMudou();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao configurar o dígito'); }
+    finally { setSalvando(false); }
   };
 
-  const mudar = async (m: any, patch: any) => {
-    try { await campanhas.marcos.atualizar(m.id, patch); onMudou(); }
-    catch (e: any) { toast.error(e?.message || 'Erro ao atualizar'); }
+  return (
+    <Card><CardContent className="p-5 space-y-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="font-medium text-sm">Como o dinheiro é identificado</div>
+        {podeAtivar && !editando && (
+          <Button variant="ghost" size="sm" onClick={() => { setValor(c.digito || ''); setEditando(true); }}>
+            <Pencil className="h-4 w-4 mr-1" /> Configurar
+          </Button>
+        )}
+      </div>
+
+      {!editando && (c.digito ? (
+        <div className="text-sm space-y-1">
+          <div>Dígito <strong className="text-lg">{c.digito}</strong></div>
+          <div className="text-muted-foreground text-xs">
+            Quem transferir pelo banco põe esses centavos no valor.
+            Doar R$ 500 = transferir <strong>R$ 500,{c.digito}</strong>.
+          </div>
+          {/* ⚠️ Em rascunho o dígito NÃO classifica nada: `camp_digitos_ativos()`
+              só devolve campanha ativa ou pausada. Sem dizer isso, dinheiro que
+              chegar antes do lançamento não é reconhecido e ninguém entende. */}
+          {c.status === 'rascunho' && (
+            <div className="text-xs text-amber-600 flex gap-1.5 mt-1">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+              Enquanto a campanha está em rascunho, este dígito ainda NÃO identifica
+              doação nenhuma. Ative a campanha para ele começar a valer.
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-sm text-amber-600 flex gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+          Sem dígito configurado — quem transferir pelo banco não vai ser reconhecido nesta campanha.
+        </div>
+      ))}
+
+      {editando && (
+        <div className="space-y-3">
+          <div className="flex items-end gap-2">
+            <div>
+              <label className="block text-xs mb-1 text-muted-foreground">Centavos (01 a 99)</label>
+              <Input value={valor} maxLength={2} className="w-20 text-center text-lg"
+                onChange={(e) => setValor(e.target.value.replace(/\D/g, ''))} placeholder="07" />
+            </div>
+            <div className="text-xs text-muted-foreground pb-2">
+              Doar R$ 500 = transferir <strong>R$ 500,{valor || '__'}</strong>
+            </div>
+          </div>
+
+          {ocupados === null ? (
+            <div className="text-xs text-muted-foreground">Conferindo os dígitos em uso…</div>
+          ) : ocupados.length ? (
+            <div className="text-xs text-muted-foreground space-y-0.5">
+              <div>Já em uso (o sistema recusa repetir):</div>
+              {ocupados.map((o: any) => (
+                <div key={o.digito}><strong>{o.digito}</strong> — {o.descricao}</div>
+              ))}
+            </div>
+          ) : null}
+
+          {jaTemDinheiro && (
+            <div className="text-xs rounded-md p-3 text-amber-700 dark:text-amber-400"
+              style={{ background: 'var(--surface)' }}>
+              <strong>Atenção:</strong> já há {brl(det.total_centavos)} identificados pelo
+              dígito {c.digito}. Ao trocar, esses lançamentos são <strong>fixados</strong> nesta
+              campanha para o total não cair — e as doações novas passam a usar o dígito novo.
+            </div>
+          )}
+
+          <Input value={motivo} onChange={(e) => setMotivo(e.target.value)}
+            placeholder="Por que está trocando? (fica registrado)" />
+
+          <div className="flex gap-2">
+            <Button size="sm" onClick={salvar} disabled={salvando}>
+              {salvando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Salvar dígito
+            </Button>
+            {c.digito && (
+              <Button size="sm" variant="outline" disabled={salvando}
+                onClick={() => { setValor(''); }}>
+                Tirar o dígito
+              </Button>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => { setEditando(false); setMotivo(''); }}>
+              Cancelar
+            </Button>
+          </div>
+
+          {historico && historico.length > 0 && (
+            <div className="text-xs text-muted-foreground space-y-0.5 pt-2 border-t">
+              <div>Trocas anteriores:</div>
+              {historico.map((h: any) => (
+                <div key={h.id}>
+                  {dataBr(h.created_at)} · {h.digito_anterior || '(nenhum)'} → {h.digito_novo || '(nenhum)'}
+                  {h.lancamentos_fixados ? ` · ${h.lancamentos_fixados} fixado(s)` : ''}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="text-xs text-muted-foreground">
+        {c.aceita_online
+          ? 'Quem doa pelo link/QR é contado com atribuição exata, sem depender dos centavos.'
+          : 'Doação online está desligada nesta campanha.'}
+      </div>
+    </CardContent></Card>
+  );
+}
+
+// ── Aba · Cronograma ───────────────────────────────────────────────────────
+
+
+/**
+ * Seletor de pessoas · multi.
+ *
+ * ⚠️ DOIS grupos, e é decisão: `vw_colaboradores` (a definição de equipe da casa)
+ * exclui 7 contas com login do ERP — uma delas é o Pr. Juninho. Esconder faria a
+ * tela afirmar que uma pessoa real não existe, que é a conclusão a que o Matheus
+ * chegou 3× em 25/08 quando um seletor omitia alguém em silêncio.
+ */
+function SeletorPessoas({ aux, valor, onChange, max }: any) {
+  const [busca, setBusca] = useState('');
+  const sel: string[] = Array.isArray(valor) ? valor : [];
+
+  // ⚠️ Normaliza acento nos DOIS lados: `monica` não casa com `Mônica` num
+  // `includes()` cru, e foi assim que a Mônica "não existia" no seletor de
+  // supervisor em 25/08.
+  const norm = (t: string) => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const q = norm(busca);
+
+  const filtrar = (lista: any[]) => (lista || []).filter((p: any) =>
+    !q || norm(p.nome).includes(q) || norm(p.email).includes(q) || norm(p.area).includes(q));
+
+  const alternar = (id: string) => {
+    if (sel.includes(id)) return onChange(sel.filter((x) => x !== id));
+    if (max && sel.length >= max) {
+      toast.error(`Máximo de ${max} responsáveis. Para mais gente que isso, atribua a uma ÁREA.`);
+      return;
+    }
+    onChange([...sel, id]);
+  };
+
+  const nomeDe = (id: string) => {
+    const t = [...(aux?.equipe || []), ...(aux?.fora_da_equipe || [])].find((p: any) => p.id === id);
+    return t?.nome || 'pessoa';
+  };
+
+  const equipe = filtrar(aux?.equipe);
+  const fora = filtrar(aux?.fora_da_equipe);
+
+  return (
+    <div className="space-y-2">
+      {sel.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {sel.map((id) => (
+            <span key={id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-primary/15 text-primary">
+              {nomeDe(id)}
+              <button type="button" onClick={() => alternar(id)} className="opacity-60 hover:opacity-100">
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <Input value={busca} onChange={(e) => setBusca(e.target.value)}
+        placeholder="Buscar pessoa por nome, e-mail ou área…" />
+      <div className="max-h-52 overflow-y-auto rounded-md border divide-y">
+        {!equipe.length && !fora.length && (
+          <div className="p-3 text-xs text-muted-foreground">Ninguém encontrado com esse termo.</div>
+        )}
+        {equipe.map((p: any) => (
+          <button type="button" key={p.id} onClick={() => alternar(p.id)}
+            className={`w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-2 hover:bg-foreground/5 ${
+              sel.includes(p.id) ? 'bg-primary/10' : ''}`}>
+            <span>
+              {p.nome}
+              <span className="text-xs text-muted-foreground">
+                {p.cargo ? ` · ${p.cargo}` : ''}{p.area ? ` · ${p.area}` : ''}
+              </span>
+            </span>
+            {sel.includes(p.id) && <Check className="h-4 w-4 text-primary shrink-0" />}
+          </button>
+        ))}
+        {fora.length > 0 && (
+          <div className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-muted-foreground bg-foreground/5">
+            Fora da definição de equipe
+          </div>
+        )}
+        {fora.map((p: any) => (
+          <button type="button" key={p.id} onClick={() => alternar(p.id)}
+            className={`w-full text-left px-3 py-2 text-sm flex items-center justify-between gap-2 hover:bg-foreground/5 ${
+              sel.includes(p.id) ? 'bg-primary/10' : ''}`}>
+            <span>{p.nome}<span className="text-xs text-muted-foreground"> · {p.email}</span></span>
+            {sel.includes(p.id) && <Check className="h-4 w-4 text-primary shrink-0" />}
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Quem for adicionado recebe um aviso. Atribuir a uma <strong>área</strong> avisa
+        quem cuida dela — mas só quando ninguém é nomeado.
+      </p>
+    </div>
+  );
+}
+
+/** Formulário de tarefa · serve para criar e para EDITAR (mesma régua). */
+function FormMarco({ aux, inicial, onSalvar, onCancelar, salvando }: any) {
+  const [f, setF] = useState<any>(() => ({
+    titulo: inicial?.titulo || '',
+    descricao: inicial?.descricao || '',
+    tipo: inicial?.tipo || 'tarefa',
+    status: inicial?.status || 'pendente',
+    data_prevista: inicial?.data_prevista || '',
+    area_id: inicial?.area_id ? String(inicial.area_id) : '',
+    responsaveis: (inicial?.responsaveis || []).map((r: any) => r.profile_id),
+  }));
+
+  return (
+    <Card className="glass-solid"><CardContent className="p-5 space-y-4">
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="md:col-span-2">
+          <label className="block text-sm mb-1">Tarefa</label>
+          <Input value={f.titulo} onChange={(e) => setF({ ...f, titulo: e.target.value })}
+            placeholder="O que precisa ser feito" />
+        </div>
+        <div className="md:col-span-2">
+          <label className="block text-sm mb-1">Detalhe (opcional)</label>
+          <Textarea rows={2} value={f.descricao}
+            onChange={(e) => setF({ ...f, descricao: e.target.value })} />
+        </div>
+        <div>
+          <label className="block text-sm mb-1">Tipo</label>
+          <Select value={f.tipo} onValueChange={(v) => setF({ ...f, tipo: v })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent className="z-[1200]">
+              {Object.entries(MARCO_TIPO).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label className="block text-sm mb-1">Situação</label>
+          <Select value={f.status} onValueChange={(v) => setF({ ...f, status: v })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent className="z-[1200]">
+              {Object.entries(MARCO_STATUS).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div>
+          <label className="block text-sm mb-1">Prazo</label>
+          <DatePicker value={f.data_prevista}
+            onChange={(v: any) => setF({ ...f, data_prevista: v })} placeholder="Prazo" />
+        </div>
+        <div>
+          <label className="block text-sm mb-1">Área responsável</label>
+          {/* ⚠️ `__nenhuma` como valor: o Select do shadcn não aceita `value=""`
+              (ele o trata como "sem valor" e o placeholder volta), então "tirar a
+              área" precisa de um item de verdade. */}
+          <Select value={f.area_id || '__nenhuma'}
+            onValueChange={(v) => setF({ ...f, area_id: v === '__nenhuma' ? '' : v })}>
+            <SelectTrigger><SelectValue placeholder="Nenhuma" /></SelectTrigger>
+            <SelectContent className="z-[1200]">
+              <SelectItem value="__nenhuma">Nenhuma</SelectItem>
+              {(aux?.areas || []).map((a: any) => (
+                <SelectItem key={a.id} value={String(a.id)}>{a.nome}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="md:col-span-2">
+          <label className="block text-sm mb-1">Responsáveis</label>
+          <SeletorPessoas aux={aux} valor={f.responsaveis} max={aux?.max_responsaveis}
+            onChange={(v: string[]) => setF({ ...f, responsaveis: v })} />
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <Button size="sm" disabled={salvando} onClick={() => onSalvar(f)}>
+          {salvando ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Salvar
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancelar}>Cancelar</Button>
+      </div>
+    </CardContent></Card>
+  );
+}
+
+function AbaCronograma({ det, podeEditar, onMudou }: any) {
+  const [novo, setNovo] = useState(false);
+  const [editando, setEditando] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [aux, setAux] = useState<any | null>(null);
+  const [auxErro, setAuxErro] = useState<string | null>(null);
+  const marcos = det.marcos || [];
+
+  useEffect(() => {
+    campanhas.aux()
+      .then((a: any) => { setAux(a); setAuxErro(null); })
+      // ⚠️ Erro NÃO vira lista vazia de pessoas: "não há ninguém pra atribuir" é a
+      // leitura errada de uma consulta que falhou, e faria a equipe achar que o
+      // cadastro se perdeu.
+      .catch((e: any) => setAuxErro(e?.message || 'Erro ao carregar pessoas e áreas'));
+  }, []);
+
+  const declararResultado = (r: any) => {
+    if (r?.truncados) toast.warning(`${r.truncados} responsável(is) não entrou: o máximo é ${r.max_responsaveis}. Para mais gente, atribua a uma área.`);
+    if (r?.invalidos?.length) toast.warning(`${r.invalidos.length} responsável(is) não foi reconhecido e ficou de fora.`);
+    if (r?.avisados) toast.success(`Salvo · ${r.avisados} pessoa(s) avisada(s).`);
+    else if (r?.avisados_area) toast.success(`Salvo · ${r.avisados_area} pessoa(s) da área avisada(s).`);
+    else toast.success('Salvo.');
+  };
+
+  const criar = async (f: any) => {
+    if (!f.titulo?.trim()) return toast.error('Dê um título à tarefa.');
+    setSalvando(true);
+    try {
+      const r = await campanhas.marcos.criar(det.campanha.id, {
+        titulo: f.titulo.trim(), descricao: f.descricao || null, tipo: f.tipo,
+        status: f.status, data_prevista: f.data_prevista || null,
+        area_id: f.area_id ? Number(f.area_id) : null,
+        responsaveis: f.responsaveis,
+        ordem: (marcos.at(-1)?.ordem || 0) + 10,
+      });
+      declararResultado(r); setNovo(false); onMudou();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao criar a tarefa'); }
+    finally { setSalvando(false); }
+  };
+
+  const salvarEdicao = async (marcoId: string, f: any) => {
+    if (!f.titulo?.trim()) return toast.error('O título não pode ficar vazio.');
+    setSalvando(true);
+    try {
+      const r = await campanhas.marcos.atualizar(marcoId, {
+        titulo: f.titulo.trim(), descricao: f.descricao || null, tipo: f.tipo,
+        status: f.status, data_prevista: f.data_prevista || null,
+        area_id: f.area_id ? Number(f.area_id) : null,
+        responsaveis: f.responsaveis,
+      });
+      declararResultado(r); setEditando(null); onMudou();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); }
+    finally { setSalvando(false); }
+  };
+
+  const alternarConcluido = async (m: any) => {
+    try {
+      await campanhas.marcos.atualizar(m.id, { status: m.status === 'concluido' ? 'pendente' : 'concluido' });
+      onMudou();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao atualizar'); }
   };
 
   const remover = async (m: any) => {
-    if (!confirm(`Excluir o marco "${m.titulo}"?`)) return;
-    try { await campanhas.marcos.remover(m.id); toast.success('Marco excluído.'); onMudou(); }
+    if (!confirm(`Excluir a tarefa "${m.titulo}"?`)) return;
+    try { await campanhas.marcos.remover(m.id); toast.success('Tarefa excluída.'); onMudou(); }
     catch (e: any) { toast.error(e?.message || 'Erro ao excluir'); }
   };
 
   const hoje = det.hoje;
+  const semDono = marcos.filter((m: any) => !m.responsaveis?.length && !m.area_id
+    && !['concluido', 'cancelado'].includes(m.status)).length;
+
   return (
     <div className="space-y-4">
+      {auxErro && (
+        <Card className="border-amber-500/40"><CardContent className="p-4 text-sm text-amber-600 flex gap-2">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          <div>Não foi possível carregar as pessoas e áreas: {auxErro}. Sem isso não dá para atribuir responsável.</div>
+        </CardContent></Card>
+      )}
+      {det.atribuicao_incompleta && (
+        <Card className="border-amber-500/40"><CardContent className="p-4 text-sm text-amber-600 flex gap-2">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+          {/* ⚠️ "sem responsável" e "não deu pra saber" são coisas diferentes —
+              a primeira é cobrança, a segunda é falha de leitura. */}
+          <div>Os responsáveis não carregaram ({det.atribuicao_incompleta}). As tarefas
+          abaixo podem aparecer como "sem responsável" sem estar.</div>
+        </CardContent></Card>
+      )}
+      {semDono > 0 && !det.atribuicao_incompleta && (
+        <Card><CardContent className="p-4 text-sm flex gap-2 text-muted-foreground">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+          <div><strong>{semDono}</strong> tarefa(s) em aberto sem responsável nem área.
+          Tarefa sem dono é trabalho que ninguém pegou.</div>
+        </CardContent></Card>
+      )}
+
       {podeEditar && (
         novo ? (
-          <Card className="glass-solid"><CardContent className="p-5 space-y-3">
-            <div className="grid gap-3 md:grid-cols-2">
-              <Input placeholder="Título do marco" value={novo.titulo || ''}
-                onChange={(e) => setNovo({ ...novo, titulo: e.target.value })} />
-              <div className="grid grid-cols-2 gap-2">
-                <Select value={novo.tipo || 'tarefa'} onValueChange={(v) => setNovo({ ...novo, tipo: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent className="z-[1200]">
-                    {Object.entries(MARCO_TIPO).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                <DatePicker value={novo.data_prevista} onChange={(v: any) => setNovo({ ...novo, data_prevista: v })}
-                  placeholder="Prazo" />
-              </div>
-              <Input placeholder="Responsável (nome)" value={novo.responsavel_nome || ''}
-                onChange={(e) => setNovo({ ...novo, responsavel_nome: e.target.value })} />
-              <Textarea placeholder="Descrição (opcional)" rows={2} value={novo.descricao || ''}
-                onChange={(e) => setNovo({ ...novo, descricao: e.target.value })} />
-            </div>
-            <div className="flex gap-2">
-              <Button size="sm" onClick={salvarNovo}>Salvar marco</Button>
-              <Button size="sm" variant="ghost" onClick={() => setNovo(null)}>Cancelar</Button>
-            </div>
-          </CardContent></Card>
+          <FormMarco aux={aux} inicial={null} salvando={salvando}
+            onSalvar={criar} onCancelar={() => setNovo(false)} />
         ) : (
-          <Button size="sm" onClick={() => setNovo({})}><Plus className="h-4 w-4 mr-1" /> Novo marco</Button>
+          <Button size="sm" onClick={() => setNovo(true)} disabled={!aux}>
+            <Plus className="h-4 w-4 mr-1" /> Nova tarefa
+          </Button>
         )
       )}
 
       {!marcos.length && (
         <Card><CardContent className="p-8 text-center text-sm text-muted-foreground">
-          Nenhum marco no cronograma.
+          Nenhuma tarefa no cronograma.
         </CardContent></Card>
       )}
 
@@ -568,28 +943,29 @@ function AbaCronograma({ det, podeEditar, onMudou }: any) {
         {marcos.map((m: any) => {
           const atrasado = m.status !== 'concluido' && m.status !== 'cancelado'
             && m.data_prevista && String(m.data_prevista) < hoje;
+          const atrib = rotuloDono(m);
+          if (editando === m.id) {
+            return (
+              <FormMarco key={m.id} aux={aux} inicial={m} salvando={salvando}
+                onSalvar={(f: any) => salvarEdicao(m.id, f)} onCancelar={() => setEditando(null)} />
+            );
+          }
           return (
             <Card key={m.id} className={atrasado ? 'border-red-500/40' : ''}>
               <CardContent className="p-4 flex flex-wrap items-start gap-3">
-                {podeEditar ? (
-                  <button title={m.status === 'concluido' ? 'Reabrir' : 'Concluir'}
-                    onClick={() => mudar(m, { status: m.status === 'concluido' ? 'pendente' : 'concluido' })}
-                    className={`h-6 w-6 shrink-0 rounded-full border flex items-center justify-center ${
-                      m.status === 'concluido' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-600' : 'border-foreground/25'}`}>
-                    {m.status === 'concluido' ? <Check className="h-3.5 w-3.5" /> : null}
-                  </button>
-                ) : (
-                  <div className={`h-6 w-6 shrink-0 rounded-full border flex items-center justify-center ${
+                <button type="button" title={m.status === 'concluido' ? 'Reabrir' : 'Concluir'}
+                  disabled={!podeEditar}
+                  onClick={() => podeEditar && alternarConcluido(m)}
+                  className={`h-6 w-6 shrink-0 rounded-full border flex items-center justify-center ${
                     m.status === 'concluido' ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-600' : 'border-foreground/25'}`}>
-                    {m.status === 'concluido' ? <Check className="h-3.5 w-3.5" /> : null}
-                  </div>
-                )}
-                <div className="flex-1 min-w-[200px]">
+                  {m.status === 'concluido' ? <Check className="h-3.5 w-3.5" /> : null}
+                </button>
+                <div className="flex-1 min-w-[220px]">
                   <div className={`font-medium text-sm ${m.status === 'concluido' ? 'line-through text-muted-foreground' : ''}`}>
                     {m.titulo}
                   </div>
                   {m.descricao && <div className="text-xs text-muted-foreground mt-0.5">{m.descricao}</div>}
-                  <div className="flex flex-wrap gap-2 mt-1.5 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center gap-2 mt-1.5 text-xs text-muted-foreground">
                     <Chip cor="bg-foreground/10 text-foreground">{MARCO_TIPO[m.tipo] || m.tipo}</Chip>
                     {m.data_prevista && (
                       <span className={atrasado ? 'text-red-600 font-medium' : ''}>
@@ -597,22 +973,25 @@ function AbaCronograma({ det, podeEditar, onMudou }: any) {
                       </span>
                     )}
                     {m.data_conclusao && <span>concluído em {dataBr(m.data_conclusao)}</span>}
-                    {m.responsavel_nome && <span>· {m.responsavel_nome}</span>}
-                    {!m.responsavel_nome && (
-                      <span className="text-amber-600">· sem responsável</span>
-                    )}
+                    <span className={atrib.tem_dono ? '' : 'text-amber-600'}>· {atrib.texto}</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
                   <Chip cor={m.status === 'concluido' ? 'bg-emerald-500/15 text-emerald-600'
                     : m.status === 'bloqueado' ? 'bg-red-500/15 text-red-600'
                     : m.status === 'em_andamento' ? 'bg-sky-500/15 text-sky-600' : 'bg-foreground/10 text-muted-foreground'}>
                     {MARCO_STATUS[m.status] || m.status}
                   </Chip>
                   {podeEditar && (
-                    <Button variant="ghost" size="icon" onClick={() => remover(m)} title="Excluir">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <>
+                      <Button variant="ghost" size="icon" title="Editar"
+                        disabled={!aux} onClick={() => setEditando(m.id)}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" title="Excluir" onClick={() => remover(m)}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </>
                   )}
                 </div>
               </CardContent>
@@ -623,6 +1002,7 @@ function AbaCronograma({ det, podeEditar, onMudou }: any) {
     </div>
   );
 }
+
 
 // ── Aba · Disparos ─────────────────────────────────────────────────────────
 
