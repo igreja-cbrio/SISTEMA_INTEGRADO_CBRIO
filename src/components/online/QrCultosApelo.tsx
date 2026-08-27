@@ -13,11 +13,12 @@
 // voluntário LANÇAR a decisão de terceiros; este é o QR que a PRÓPRIA pessoa
 // escaneia. Ter os dois no mesmo botão seria a receita para o link errado ir
 // ao ar num domingo.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { online as onlineApi } from '../../api';
+import { cultoEncerrado } from '@/lib/cultoQrJanela';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { QrCode, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { QrCode, Loader2, ChevronLeft, ChevronRight, History } from 'lucide-react';
 import QrLinkDialog from '../QrLinkDialog';
 
 type CultoQr = { id: string; data: string; hora: string | null; nome: string; link: string | null };
@@ -37,6 +38,12 @@ export default function QrCultosApelo() {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [qr, setQr] = useState<{ link: string; titulo: string } | null>(null);
+  // ⚠️ Culto que já passou nasce BLOQUEADO (pedido do Matheus, 27/08/2026):
+  // navegando pelas semanas, o cartaz de um culto de duas semanas atrás vinha
+  // com o mesmo destaque do próximo domingo — e quem pega esse cartaz é a
+  // equipe que monta o telão. O escape existe porque o vídeo às vezes é
+  // publicado DEPOIS do culto e aí o QR daquele culto ainda é o certo.
+  const [mostrarPassados, setMostrarPassados] = useState(false);
 
   const carregar = useCallback(async () => {
     setCarregando(true); setErro(null);
@@ -55,10 +62,19 @@ export default function QrCultosApelo() {
 
   const mover = (dias: number) => {
     const d = new Date(semana); d.setDate(d.getDate() + dias); setSemana(d);
+    // Trocar de semana re-arma o bloqueio: ele existe pra evitar que o cartaz
+    // errado vá ao telão, e deixá-lo destravado ao navegar devolveria o risco.
+    setMostrarPassados(false);
   };
   const fimSemana = new Date(semana); fimSemana.setDate(fimSemana.getDate() + 6);
   const rotulo = `${semana.getDate()}/${semana.getMonth() + 1} a ${fimSemana.getDate()}/${fimSemana.getMonth() + 1}`;
   const semLink = cultos.filter((c) => !c.link).length;
+  // `cultos` só muda ao trocar de semana, então recalcular aqui é barato — e o
+  // "agora" tem que ser lido na hora, não congelado na montagem da tela.
+  const encerrados = useMemo(
+    () => new Set(cultos.filter((c) => cultoEncerrado(c.data, c.hora)).map((c) => c.id)),
+    [cultos],
+  );
 
   return (
     <Card>
@@ -85,6 +101,23 @@ export default function QrCultosApelo() {
           </div>
         </div>
 
+        {/* ⚠️ O escape só aparece quando existe culto passado nesta semana —
+            botão que não faz nada é ruído. E ele DIZ pra que serve: o link do
+            culto passado continua vivo (está gravado no vídeo), o que estava
+            bloqueado era só baixar o cartaz de novo. */}
+        {!carregando && !erro && encerrados.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setMostrarPassados((v) => !v)}
+            className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+          >
+            <History className="h-3.5 w-3.5" />
+            {mostrarPassados
+              ? `Ocultar o QR dos ${encerrados.size} culto(s) que já passaram`
+              : `${encerrados.size} culto(s) já passaram — mostrar o QR deles mesmo assim`}
+          </button>
+        )}
+
         {carregando ? (
           <div className="py-6 text-center text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin mx-auto" /></div>
         ) : erro ? (
@@ -102,25 +135,35 @@ export default function QrCultosApelo() {
               </p>
             )}
             <div className="grid gap-2 sm:grid-cols-2">
-              {cultos.map((c) => (
-                <div key={c.id} className="flex items-center gap-3 rounded-lg border border-border p-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-semibold truncate">{c.nome}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {String(c.data).split('-').reverse().join('/')}
-                      {c.hora ? ` · ${c.hora.slice(0, 5)}` : ''}
+              {cultos.map((c) => {
+                const passou = encerrados.has(c.id);
+                const bloqueado = passou && !mostrarPassados;
+                return (
+                  <div key={c.id}
+                    className={`flex items-center gap-3 rounded-lg border border-border p-3 ${bloqueado ? 'opacity-60' : ''}`}>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold truncate">{c.nome}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {String(c.data).split('-').reverse().join('/')}
+                        {c.hora ? ` · ${c.hora.slice(0, 5)}` : ''}
+                        {passou && ' · já passou'}
+                      </div>
                     </div>
+                    {bloqueado ? (
+                      /* ⚠️ O culto NÃO some da lista: sumir faria parecer que
+                         ele nunca existiu. O que sai é a oferta do cartaz. */
+                      <span className="text-[11px] text-muted-foreground">encerrado</span>
+                    ) : c.link ? (
+                      <Button size="sm" variant="outline"
+                        onClick={() => setQr({ link: c.link!, titulo: `${c.nome} · ${String(c.data).split('-').reverse().join('/')}` })}>
+                        <QrCode className="h-3.5 w-3.5 mr-1" /> QR
+                      </Button>
+                    ) : (
+                      <span className="text-[11px] text-muted-foreground">indisponível</span>
+                    )}
                   </div>
-                  {c.link ? (
-                    <Button size="sm" variant="outline"
-                      onClick={() => setQr({ link: c.link!, titulo: `${c.nome} · ${String(c.data).split('-').reverse().join('/')}` })}>
-                      <QrCode className="h-3.5 w-3.5 mr-1" /> QR
-                    </Button>
-                  ) : (
-                    <span className="text-[11px] text-muted-foreground">indisponível</span>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}

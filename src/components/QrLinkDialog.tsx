@@ -159,7 +159,21 @@ export default function QrLinkDialog({
 
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
-      <DialogContent className="max-w-md" style={{ zIndex: 1100 }}>
+      {/* ⚠️⚠️ `flex flex-col` + corpo com `overflow-y-auto min-h-0` é o padrão da
+          casa pra modal alto: o DialogContent do shadcn é `grid` SEM altura
+          máxima, então conteúdo mais alto que a tela vaza pra fora da janela e
+          NÃO rola. Com o QR (240px) + a caixa do QR dinâmico + a do cartaz, este
+          diálogo passa de 700px e estourava em notebook.
+
+          ⚠️⚠️ `min-w-0` conserta o vazamento HORIZONTAL que o Matheus viu em
+          27/08/2026 ("tá bugado quando abre o QR code"): o link do token tem 64
+          caracteres SEM espaço e o `<a>` é `truncate` (= `white-space: nowrap`).
+          Item de grid/flex nasce com `min-width: auto`, ou seja NÃO encolhe
+          abaixo do próprio min-content — então a linha do link esticava o corpo
+          inteiro pra ~490px dentro de um cartão de 448px, e o texto do bloco do
+          cartaz saía por baixo da borda direita. `min-w-0` devolve o poder de
+          encolher e aí o `truncate` finalmente trunca. */}
+      <DialogContent className="max-w-md flex flex-col max-h-[90vh]" style={{ zIndex: 1100 }}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <QrCodeIcon className="h-5 w-5 text-primary" />
@@ -169,7 +183,7 @@ export default function QrLinkDialog({
         {erro ? (
           <p className="text-sm text-destructive text-center py-6">{erro}</p>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3 flex-1 min-h-0 min-w-0 overflow-y-auto">
             <p className="text-xs text-muted-foreground">
               {descricao || 'Aponte a câmera do celular pro QR pra abrir o formulário de inscrição.'}
             </p>
