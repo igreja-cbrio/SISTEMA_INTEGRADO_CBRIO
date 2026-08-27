@@ -4528,6 +4528,10 @@ export const online = {
     return get('/online/aceitacoes' + (qs ? '?' + qs : ''));
   },
   qrCultos: (inicio, fim) => get(`/online/qr-cultos?inicio=${inicio}&fim=${fim}`),
+  // O link do cadastro de membresia com `?origem=online`. Vem do SERVIDOR de
+  // propósito: o caminho sai do catálogo de formulários públicos e a base é
+  // única — montar a URL na tela é como link público vira link morto.
+  linkMembresia: () => get('/online/link-membresia'),
   dashboard: () => get('/online/dashboard'),
   engajamento: () => get('/online/engajamento'),
   cultosMetricas: (limit) => get('/online/cultos-metricas' + (limit ? '?limit=' + limit : '')),

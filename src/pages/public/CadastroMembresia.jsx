@@ -444,7 +444,11 @@ export default function CadastroMembresia() {
     try {
       const params = new URLSearchParams(window.location.search);
       const o = params.get('origem');
-      return ['qr_code', 'evento', 'site'].includes(o) ? o : 'site';
+      // ⚠️ `online` é o link que o time do Online distribui (aba do módulo). O
+      // que ele muda não é o formulário — é a ORIGEM, que na aprovação vira
+      // `mem_membros.frequenta_area = 'online'`. Quem manda é o CHECK do banco;
+      // esta lista é espelho. Valor desconhecido cai em 'site'.
+      return ['qr_code', 'evento', 'site', 'online'].includes(o) ? o : 'site';
     } catch { return 'site'; }
   }, []);
 

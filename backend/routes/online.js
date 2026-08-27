@@ -656,4 +656,44 @@ router.get('/qr-cultos', async (req, res) => {
   }
 });
 
+// GET /api/online/link-membresia
+// O link do CADASTRO DE MEMBRESIA que o time do Online distribui.
+//
+// ⚠️⚠️ NÃO é um segundo formulário. É o MESMO `/cadastro-membresia` (Contrato
+// de porta: uma pessoa = um cadastro = um funil), com `?origem=online` — e a
+// origem não é enfeite: na APROVAÇÃO ela vira
+// `mem_membros.frequenta_area = 'online'`, que é a coluna que o painel do
+// Online já lê. Um formulário paralelo daria duas fichas divergindo no primeiro
+// campo novo, e um funil de identidade a reconstruir do zero.
+//
+// ⚠️ O CAMINHO vem do catálogo de formulários públicos (`routes/links.js`) e a
+// BASE de `utils/linkInscricaoApp` — os dois pontos únicos de mudança. Montar a
+// URL na tela é como `/apresentacao-criancas` ficou link morto por meses: URL
+// escrita à mão é URL que ninguém valida.
+router.get('/link-membresia', async (req, res) => {
+  try {
+    const { basePublica } = require('../utils/linkInscricaoApp');
+    const { OUTROS_FORMULARIOS } = require('./links');
+
+    const porta = (OUTROS_FORMULARIOS || []).find((f) => f.chave === 'cadastro_membresia');
+    // Fail-closed: sem a porta no catálogo eu NÃO invento o caminho. Link que
+    // não abre entregue a quem está convidando é pior que botão ausente.
+    if (!porta?.caminho) {
+      return res.status(503).json({
+        error: 'O catálogo de formulários públicos não trouxe o cadastro de membresia.',
+      });
+    }
+
+    res.json({
+      link: `${basePublica()}${porta.caminho}?origem=online`,
+      nome: porta.nome,
+    });
+  } catch (e) {
+    console.error('[online/link-membresia]', e.message);
+    // ⚠️ Erro NUNCA vira link vazio: a tela some com o botão e diz o motivo, em
+    // vez de oferecer um endereço que não existe.
+    res.status(500).json({ error: 'Erro ao montar o link do cadastro de membresia' });
+  }
+});
+
 module.exports = router;
