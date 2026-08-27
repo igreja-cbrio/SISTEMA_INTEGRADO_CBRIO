@@ -342,7 +342,7 @@ export default function ConversasInbox({
           </div>
           <div className="px-3 pt-1.5 text-[11px] text-muted-foreground">Vendo: <span className="font-medium text-foreground">{filtroLabel}</span>{status === 'todas' ? ' · c/ resolvidas' : ''}{soNaoLidas ? ' · não lidas' : ''}</div>
 
-          <ScrollArea className="flex-1 mt-1">
+          <ScrollArea className="flex-1 mt-1" viewportClassName="[&>div]:!block">
             <div className="flex flex-col gap-0.5 p-2 pt-1.5">
               {conversas === null ? (
                 <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
@@ -467,7 +467,7 @@ export default function ConversasInbox({
                 </div>
               </div>
 
-              <ScrollArea className="flex-1 bg-muted/20">
+              <ScrollArea className="flex-1 bg-muted/20" viewportClassName="[&>div]:!block">
                 <div className="flex flex-col gap-2 p-5">
                   <div className="mx-auto rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">Conversa</div>
                   {msgs.map(m => m.tipo === 'sistema' ? (
@@ -656,7 +656,7 @@ export default function ConversasInbox({
         {/* ── Detalhes ──────────────────────────────────────── */}
         {conv && (
           <div className="hidden min-w-0 max-w-full shrink flex-col overflow-hidden border-l border-border xl:flex xl:basis-[240px] 2xl:basis-[268px]">
-            <ScrollArea className="flex-1">
+            <ScrollArea className="flex-1" viewportClassName="[&>div]:!block">
               <div className="flex flex-col items-center gap-2 border-b border-border p-5">
                 <Avatar className="h-16 w-16 shrink-0">{conv.foto_url && <AvatarImage src={conv.foto_url} alt={conv.nome || ''} />}<AvatarFallback className="bg-primary/15 text-primary text-lg font-semibold">{iniciais(conv.nome, conv.telefone)}</AvatarFallback></Avatar>
                 {/* ⚠️ `break-words` e não `truncate` no NOME: nome cortado com

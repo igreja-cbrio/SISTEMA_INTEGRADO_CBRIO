@@ -5,10 +5,18 @@ import { cn } from "@/lib/utils";
 
 const ScrollArea = React.forwardRef<
   React.ElementRef<typeof ScrollAreaPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof ScrollAreaPrimitive.Root> & { viewportClassName?: string }
+>(({ className, viewportClassName, children, ...props }, ref) => (
   <ScrollAreaPrimitive.Root ref={ref} className={cn("relative overflow-hidden", className)} {...props}>
-    <ScrollAreaPrimitive.Viewport className="h-full w-full rounded-[inherit]">{children}</ScrollAreaPrimitive.Viewport>
+    {/* O Radix injeta um wrapper interno com `display: table` (shrink-to-fit),
+        que ignora a largura do viewport quando o conteúdo tem uma palavra/URL
+        longa sem quebra — o conteúdo "empurra" a largura em vez de quebrar
+        linha. `viewportClassName="[&>div]:!block"` força esse wrapper a
+        `display: block` (respeita a largura do pai) nos casos que precisam
+        de quebra de texto correta. NÃO aplicar por padrão: quebraria os
+        ScrollArea que dependem do overflow horizontal de propósito
+        (RH.jsx/TabPCS.jsx, abas com `ScrollBar orientation="horizontal"`). */}
+    <ScrollAreaPrimitive.Viewport className={cn("h-full w-full rounded-[inherit]", viewportClassName)}>{children}</ScrollAreaPrimitive.Viewport>
     <ScrollBar />
     <ScrollAreaPrimitive.Corner />
   </ScrollAreaPrimitive.Root>
