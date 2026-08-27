@@ -218,12 +218,18 @@ router.post('/doacao', async (req, res) => {
     }
 
     const telefone = normalizarTelefone(tirarCodigoPaisTelefone(b.telefone || ''));
-    // CPF é OPCIONAL e o texto da tela diz por que vale a pena informar (é o que
-    // liga a doação ao cadastro e faz ela entrar no comprovante anual). Se vier,
-    // tem que ser válido: CPF com DV errado não casa com nada e só suja o dado.
+    // ⚠️ CPF é OBRIGATÓRIO desde 27/08/2026 (decisão do Matheus). Ele é a chave
+    // FORTE do matcher: sem ele a doação entra anônima no razão nominal, fica
+    // fora do comprovante anual de contribuições e ninguém consegue ligá-la à
+    // pessoa depois — o dado nasce perdido. O custo é atrito real (quem não tem
+    // o número em mãos desiste), e é escolha declarada.
+    // ⚠️ DV validado no servidor: CPF errado não casa com nada e só suja o dado.
     const cpf = normalizarCpf(b.cpf);
-    if (b.cpf && String(b.cpf).trim() && !cpfValido(cpf)) {
-      return res.status(400).json({ error: 'Esse CPF não parece válido. Confira ou deixe em branco.', campo: 'cpf' });
+    if (!cpf) {
+      return res.status(400).json({ error: 'Informe seu CPF — é o que liga a doação ao seu cadastro e ao comprovante anual.', campo: 'cpf' });
+    }
+    if (!cpfValido(cpf)) {
+      return res.status(400).json({ error: 'Esse CPF não parece válido. Confira os números.', campo: 'cpf' });
     }
 
     // ── Match READ-ONLY. Nunca cria, nunca escreve. ──
