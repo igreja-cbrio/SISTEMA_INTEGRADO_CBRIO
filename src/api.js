@@ -257,6 +257,41 @@ export const events = {
 };
 
 // Módulo Propostas · ciclo anual (Fase 1A: configuração)
+// Campanhas de arrecadação · meta, dígito verificador, cronograma e disparos.
+// ⚠️ A soma do arrecadado vem SEMPRE do servidor (view `vw_camp_arrecadacao`) —
+// nenhuma tela recalcula dinheiro no cliente.
+export const campanhas = {
+  list: (params) => get('/campanhas' + (params ? '?' + new URLSearchParams(params) : '')),
+  get: (id) => get(`/campanhas/${id}`),
+  criar: (data) => post('/campanhas', data),
+  atualizar: (id, data) => put(`/campanhas/${id}`, data),
+  status: (id, status) => post(`/campanhas/${id}/status`, { status }),
+  remover: (id) => del(`/campanhas/${id}`),
+  digitos: () => get('/campanhas/digitos'),
+  segmentos: () => get('/campanhas/segmentos'),
+  lancamentos: (id) => get(`/campanhas/${id}/lancamentos`),
+  pendentes: (id) => get(`/campanhas/${id}/pendentes`),
+  vincular: (id, data) => post(`/campanhas/${id}/vinculo`, data),
+  desvincular: (id, vinculoId) => del(`/campanhas/${id}/vinculo/${vinculoId}`),
+  marcos: {
+    criar: (id, data) => post(`/campanhas/${id}/marcos`, data),
+    atualizar: (marcoId, data) => put(`/campanhas/marcos/${marcoId}`, data),
+    remover: (marcoId) => del(`/campanhas/marcos/${marcoId}`),
+  },
+  disparos: {
+    previa: (id, data) => post(`/campanhas/${id}/disparos/previa`, data),
+    criar: (id, data) => post(`/campanhas/${id}/disparos`, data),
+    atualizar: (disparoId, data) => put(`/campanhas/disparos/${disparoId}`, data),
+    agendar: (disparoId, agendado_para) => post(`/campanhas/disparos/${disparoId}/agendar`, { agendado_para }),
+    cancelar: (disparoId) => post(`/campanhas/disparos/${disparoId}/cancelar`, {}),
+    envios: (disparoId) => get(`/campanhas/disparos/${disparoId}/envios`),
+  },
+  agradecimentos: {
+    list: (id) => get(`/campanhas/${id}/agradecimentos`),
+    rodar: () => post('/campanhas/agradecimentos/rodar', {}),
+  },
+};
+
 export const propostas = {
   config: {
     ciclos: () => get('/propostas/config/ciclos'),

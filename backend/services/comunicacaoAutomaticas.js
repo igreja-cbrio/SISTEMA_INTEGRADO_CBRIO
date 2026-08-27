@@ -343,6 +343,95 @@ async function publicoEscalaVespera() {
   };
 }
 
+/**
+ * Público do e-mail semanal da campanha.
+ *
+ * ⚠️ Espelha `services/campanhaDisparo.js` (`pessoasDoSegmento` +
+ * `montarPublico`), que é quem manda de verdade. O espelho é declarado: se o
+ * remetente mudar a régua, ISTO PASSA A MENTIR — e mentir com número na tela é
+ * pior que não ter tela.
+ *
+ * ⚠️ Sem campanha ATIVA o total é 0, e isso não é defeito: o disparo semanal
+ * não sai fora de campanha ativa (`processarUm` cancela).
+ */
+async function publicoCampanhaSemanal() {
+  const { data: campanhas } = await supabase.from('camp_campanhas')
+    .select('id, nome').eq('status', 'ativa').is('deleted_at', null);
+  if (!campanhas?.length) {
+    return {
+      total: 0, pessoas: [], fora: [],
+      universo: { rotulo: 'nenhuma campanha ativa — o disparo semanal não sai', qtd: 0 },
+    };
+  }
+  const { previa } = require('./campanhaDisparo');
+  // Segmento do disparo semanal configurado; na falta dele, a base viva inteira.
+  const { data: modelo } = await supabase.from('camp_disparos')
+    .select('segmento').eq('campanha_id', campanhas[0].id)
+    .eq('recorrencia', 'semanal_segunda').is('deleted_at', null)
+    .order('created_at', { ascending: false }).limit(1).maybeSingle();
+
+  const pub = await previa({
+    campanha_id: campanhas[0].id,
+    canal: 'email',
+    segmento: modelo?.segmento || 'todos',
+  });
+
+  return {
+    total: pub.total_alvo,
+    pessoas: pub.alvo.slice(0, TETO_PESSOAS).map(a => ({
+      nome: a.nome || '(sem nome)', email: a.destino, hoje: false,
+    })),
+    fora: Object.entries(pub.motivos || {}).map(([rotulo, qtd]) => ({ rotulo, qtd })),
+    universo: { rotulo: `base do segmento "${modelo?.segmento || 'todos'}"`, qtd: pub.total_base },
+  };
+}
+
+/**
+ * Público do agradecimento ao doador.
+ *
+ * ⚠️ Não é uma lista de pessoas com data marcada: é reativo (quem doar recebe).
+ * O número aqui é quantas doações AINDA não foram agradecidas — que é a
+ * pergunta útil, e a que revela fila parada.
+ */
+async function publicoCampanhaAgradecimento() {
+  const { data: campanhas } = await supabase.from('camp_campanhas')
+    .select('id, nome, digito, data_inicio, data_fim')
+    .eq('status', 'ativa').is('deleted_at', null);
+  if (!campanhas?.length) {
+    return {
+      total: 0, pessoas: [], fora: [],
+      universo: { rotulo: 'nenhuma campanha ativa', qtd: 0 },
+    };
+  }
+
+  let pendentes = 0;
+  let jaFeitos = 0;
+  for (const c of campanhas) {
+    if (!c.digito) continue;
+    let q = supabase.from('fin_transacoes')
+      .select('id', { count: 'exact', head: true })
+      .eq('tipo', 'receita').eq('identificador_centavo', c.digito)
+      .not('membro_id', 'is', null);
+    if (c.data_inicio) q = q.gte('data_competencia', c.data_inicio);
+    if (c.data_fim) q = q.lte('data_competencia', c.data_fim);
+    const { count: doacoes } = await q;
+
+    const { count: feitos } = await supabase.from('camp_agradecimentos')
+      .select('id', { count: 'exact', head: true })
+      .eq('campanha_id', c.id).in('status', ['enviado', 'pulado']);
+
+    pendentes += Math.max(0, (doacoes || 0) - (feitos || 0));
+    jaFeitos += feitos || 0;
+  }
+
+  return {
+    total: pendentes,
+    pessoas: [],
+    fora: [{ rotulo: 'doações já agradecidas ou puladas (anônimas, sem contato)', qtd: jaFeitos }],
+    universo: { rotulo: 'doações com cadastro vinculado nas campanhas ativas', qtd: pendentes + jaFeitos },
+  };
+}
+
 const CATALOGO = [
   {
     id: 'aniversario_voluntario',
@@ -413,6 +502,47 @@ const CATALOGO = [
     // é decisão do Matheus (24/08), e a guarda no remetente fica DEPOIS do push
     // justamente por isso. Quem espera silêncio total nesta tela se engana.
     publico: publicoEscalaVespera,
+  },
+  {
+    id: 'campanha_semanal',
+    nome: 'Pocket semanal da campanha (e-mail)',
+    quando: 'Toda segunda-feira · o resumo do domingo, com o link do vídeo e o CTA de contribuição',
+    regra: 'Base VIVA do segmento configurado no disparo, com e-mail válido e sem opt-out. '
+      + 'Uma pessoa por DESTINO: a casa com 4 cadastros no mesmo e-mail recebe 1 cópia. '
+      + 'Só sai com campanha ATIVA.',
+    fonte: 'GET /api/comunicacao/cron/agendamentos → services/campanhaDisparo.js',
+    contexto: null, // e-mail não passa pela fila do WhatsApp
+    envTemplate: null,
+    tabelaPropria: 'camp_disparo_envios',
+    publico: publicoCampanhaSemanal,
+  },
+  {
+    id: 'campanha_agradecimento',
+    nome: 'Obrigado ao doador da campanha',
+    quando: 'De hora em hora · reativo, quando uma doação é confirmada',
+    regra: 'Quem doou para uma campanha ativa, TEM cadastro vinculado e tem e-mail (ou opt-in de '
+      + 'WhatsApp, na falta de e-mail). ⚠️ A mensagem é GENÉRICA: não cita nome nem valor, porque '
+      + 'telefone e e-mail nesta base estão cadastrados em nome de familiares e filhos. '
+      + 'Doação anônima não é agradecida (não há para onde mandar). '
+      + 'Janela de silêncio de 72h por pessoa: quem doa 3× na semana recebe 1 obrigado.',
+    fonte: 'GET /api/comunicacao/cron/agendamentos → services/campanhaAgradece.js',
+    contexto: 'campanha.agradecimento',
+    // ⚠️ `envTemplate` fica NULL DE PROPÓSITO, mesmo existindo a env
+    // WHATSAPP_TEMPLATE_CAMPANHA_OBRIGADO. O `listar()` transforma
+    // `envTemplate` sem valor em BLOQUEIO ("sem isso a mensagem não sai") — e
+    // aqui isso seria FALSO: sem a env o agradecimento continua saindo por
+    // e-mail, que é o canal primário. A env só destrava o plano B (WhatsApp pra
+    // quem não tem e-mail). Declarar a env aqui pintaria de vermelho um disparo
+    // que está funcionando, que é a classe de mentira que esta tela evita.
+    envTemplate: null,
+    bloqueios: async () => {
+      const { data } = await supabase.from('camp_campanhas')
+        .select('id').eq('status', 'ativa').is('deleted_at', null).limit(1);
+      if (!data?.length) return ['Nenhuma campanha está ATIVA — nada é agradecido enquanto isso.'];
+      return [];
+    },
+    tabelaPropria: 'camp_agradecimentos',
+    publico: publicoCampanhaAgradecimento,
   },
 ];
 

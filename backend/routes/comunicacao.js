@@ -127,7 +127,54 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
       }
     }
 
-    res.json({ ok: true, disparados, resultados, orfaos_reconciliados, ...(faxina_midia ? { faxina_midia } : {}) });
+    // ── CAMPANHAS · de carona neste cron HORÁRIO (27/08) ────────────────────
+    //
+    // ⚠️ Sem slot novo no `vercel.json`: a Vercel está com 46 crons e o teto do
+    // plano é apertado. Este é o cron horário da Comunicação, e disparo de
+    // campanha É comunicação — é o host certo, não um atalho.
+    //
+    // ⚠️⚠️ CADA BLOCO É PROTEGIDO. Falhar no disparo da campanha NÃO pode
+    // derrubar o agendamento do WhatsApp, o sync de templates nem a
+    // reconciliação de recibos, que são o trabalho principal deste cron. É a
+    // mesma régua da abertura automática de turmas do Next.
+    let campanha_semanal = null;
+    let campanha_disparos = null;
+    let campanha_agradecimentos = null;
+    try {
+      const campanhas = require('./campanhas');
+
+      // Segunda-feira: garante o "pocket" semanal da campanha (o resumo do
+      // domingo, com o link do vídeo e o CTA). A criação é idempotente pela
+      // semana ISO, então rodar 24× na segunda cria UM disparo.
+      if (diaSemana === 1) {
+        const { data: ativas } = await supabase.from('camp_campanhas')
+          .select('id').eq('status', 'ativa').is('deleted_at', null);
+        const criados = [];
+        for (const c of ativas || []) {
+          criados.push(await campanhas.garantirSemanal(c.id).catch((e) => ({ erro: e.message })));
+        }
+        campanha_semanal = criados;
+      }
+
+      // Envia o que está agendado e vencido, com orçamento de tempo: o que não
+      // couber fica pendente e sai na próxima hora (o snapshot por destinatário
+      // é o que faz a retomada não duplicar ninguém).
+      campanha_disparos = await campanhas.enviarPendentes({ budgetMs: 120000 });
+
+      // Agradecimento ao doador: reativo, de hora em hora.
+      campanha_agradecimentos = await campanhas.rodarAgradecimentos({ limite: 40 });
+    } catch (e) {
+      console.error('[comunicacao] campanhas (carona no cron):', e.message);
+      campanha_disparos = { erro: e.message };
+    }
+
+    res.json({
+      ok: true, disparados, resultados, orfaos_reconciliados,
+      ...(faxina_midia ? { faxina_midia } : {}),
+      ...(campanha_semanal ? { campanha_semanal } : {}),
+      ...(campanha_disparos ? { campanha_disparos } : {}),
+      ...(campanha_agradecimentos ? { campanha_agradecimentos } : {}),
+    });
   } catch (e) {
     console.error('[comunicacao] cron agendamentos:', e.message);
     next(communicationError(e, 'Erro no cron de agendamentos.'));

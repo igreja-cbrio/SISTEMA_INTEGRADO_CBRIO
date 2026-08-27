@@ -418,6 +418,8 @@ const InscricaoEventoCheckin = lazyWithRetry(() => import('./pages/InscricaoEven
 // 1 ciclo sem divergência (rollback = restaurar as 2 rotas).
 const Inscricoes = lazyWithRetry(() => import('./pages/Inscricoes'));
 const Propostas = lazyWithRetry(() => import('./pages/Propostas'));
+const Campanhas = lazyWithRetry(() => import('./pages/Campanhas'));
+const CampanhaPublica = lazyWithRetry(() => import('./pages/public/CampanhaPublica'));
 const InscricaoEventoDetalhe = lazyWithRetry(() => import('./pages/InscricaoEventoDetalhe'));
 const InscricaoTotens = lazyWithRetry(() => import('./pages/InscricaoTotens'));
 // ⚠️ NÃO criar quiosque separado pra inscrições. As inscrições de evento vivem
@@ -699,6 +701,13 @@ function AppRoutes() {
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
       {/* Censo público · é o endereço que vai no QR impresso do culto. */}
       <Route path="/censo/p/:slug" element={<Suspense fallback={<Loading />}><CensoPublica /></Suspense>} />
+      {/* Barrinha pública da campanha · é o endereço que vai nas TELAS do culto
+          e no link que a igreja compartilha. Fora do AppShell de propósito.
+          ⚠️ NÃO usar `/c/:slug`: `/c/:token` (linha acima) é o link assinado do
+          voluntário para lançar decisões no culto, e dois padrões idênticos fazem
+          o PRIMEIRO vencer — a barrinha abriria a tela de decisões. É a mesma
+          armadilha do `/:id` que engoliu `/avaliar` e `/mural` nas Propostas. */}
+      <Route path="/campanha/:slug" element={<Suspense fallback={<Loading />}><CampanhaPublica /></Suspense>} />
       {/* Retirada do Kids · QR aberto pelo link do WhatsApp · público, sem PII */}
       <Route path="/kids/retirada/:codigo" element={<Suspense fallback={<Loading />}><KidsRetirada /></Suspense>} />
       <Route path="/auth/pc-callback" element={<Suspense fallback={<Loading />}><PcCallback /></Suspense>} />
@@ -822,6 +831,7 @@ function AppRoutes() {
         <Route path="/eventos-externos/:id" element={<Navigate to="/inscricoes" replace />} />
         <Route path="/inscricoes" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><Inscricoes /></Suspense></ModuleGuard>} />
         <Route path="/propostas" element={<ModuleGuard moduleSlug="propostas" nivelMinimo={1}><Suspense fallback={<Loading />}><Propostas /></Suspense></ModuleGuard>} />
+        <Route path="/campanhas" element={<ModuleGuard moduleSlug="campanhas" nivelMinimo={1}><Suspense fallback={<Loading />}><Campanhas /></Suspense></ModuleGuard>} />
         <Route path="/inscricoes/evento/:id" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><InscricaoEventoDetalhe /></Suspense></ModuleGuard>} />
         {/* Check-in do evento (SPEC-06) · nível 2 = operar check-in (SPEC-08) */}
         <Route path="/inscricoes/evento/:id/checkin" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={2}><Suspense fallback={<Loading />}><InscricaoEventoCheckin /></Suspense></ModuleGuard>} />

@@ -15,7 +15,7 @@ import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
 import { navItemAllowed } from '../../lib/menuAccess';
 import {
-  Activity, ArrowRight, ArrowRightLeft, Baby, BarChart2, Bell, BellOff, BellRing, BookOpen, BrainCircuit, CalendarDays, Camera, Check, CheckCheck, ClipboardCheck, ClipboardList, Compass, DollarSign, Droplets, FileText, FolderKanban, GraduationCap, HandHelping, Heart, Landmark, LayoutDashboard, ListChecks, LogOut, Map, Megaphone, Menu as MenuIcon, MessageSquare, MonitorSmartphone, Moon, QrCode, Search, Settings, Shield, ShoppingCart, SlidersHorizontal, Sparkles, Sun, Tag, TrendingUp, Truck, UserCheck, UserSearch, Users, UsersRound, Youtube, Filter,
+  Activity, ArrowRight, ArrowRightLeft, Baby, BarChart2, Bell, BellOff, BellRing, BookOpen, BrainCircuit, CalendarDays, Camera, Check, CheckCheck, ClipboardCheck, ClipboardList, Compass, DollarSign, Droplets, FileText, FolderKanban, GraduationCap, HandHelping, Heart, Landmark, LayoutDashboard, ListChecks, LogOut, Map, Megaphone, Menu as MenuIcon, MessageSquare, MonitorSmartphone, Moon, QrCode, Search, Settings, Shield, ShoppingCart, SlidersHorizontal, Sparkles, Sun, Tag, Target, TrendingUp, Truck, UserCheck, UserSearch, Users, UsersRound, Youtube, Filter,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -96,6 +96,10 @@ const NAV_ITEMS = [
         items: [
           { label: 'Recursos Humanos', description: 'Funcionários, treinamentos e férias', icon: Users, path: '/admin/rh', perm: 'canRH' },
           { label: 'Financeiro', description: 'Contas, transações e reembolsos', icon: DollarSign, path: '/admin/financeiro', perm: 'canFinanceiro' },
+          // Campanhas fica ao lado do Financeiro (não em Planejamento): quem lê a
+          // arrecadação é quem já lê o caixa, e a matriz de permissão do módulo foi
+          // semeada da do financeiro. `module:` (não `perm:`) — quem decide é a matriz.
+          { label: 'Campanhas', description: 'Arrecadação · meta, dígito verificador, cronograma e disparos', icon: Target, path: '/campanhas', module: 'campanhas' },
           { label: 'Logística', description: 'Fornecedores, compras e pedidos', icon: Truck, path: '/admin/logistica', perm: 'canLogistica' },
           { label: 'Patrimônio', description: 'Bens, localizações e inventário', icon: Tag, path: '/admin/patrimonio', perm: 'canPatrimonio' },
         ],

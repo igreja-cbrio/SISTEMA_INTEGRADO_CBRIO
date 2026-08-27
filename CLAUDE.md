@@ -14193,3 +14193,207 @@ consultas numa só chamada** do `execute_sql`, que devolve **apenas o resultado 
 segunda como resposta da primeira.
 
 ⇒ **Uma pergunta por chamada.** Se precisar de duas, duas chamadas.
+
+## ⚠️⚠️ MÓDULO CAMPANHAS · e o DÍGITO VERIFICADOR estava morto (2026-08-27 · migration `20260827120000`)
+
+Pedido do Matheus: *"vamos começar uma campanha para a obra do KIDS. e aí a partir
+disso, gostaria de um módulo feito para campanhas, onde lá tem as funcionalidades
+de disparo de mensagens, valor arrecadado, configuração do dígito verificador da
+campanha, cronograma e etc."* Primeira campanha: **Reforma do Espaço Kids**
+(lançamento 06/09 · meta R$ 500k · dígito **07**).
+
+### ⚠️⚠️ O ACHADO PRINCIPAL: o dígito já existia e nunca classificou NADA
+
+`fin_identificadores_centavo` tinha **4 dígitos ativos desde 21/05/2026** (17
+Templo · 22 Bazar · 25 Campanha 2025 · 31 Ação Social), com tela de configuração
+funcionando em `/financeiro-v2`. Mas a régua do centavo vivia **só no JS**
+(`services/financeiroClassificador.js`), e o caminho que classifica de verdade é o
+trigger `tg_fila_auto_classificar` → **`aplicar_classificacao_lancamento`**, cuja
+definição **VIVA** (conferida com `pg_get_functiondef`, não com o arquivo do repo)
+não mencionava centavo nenhum. Medido em produção em 26/08:
+
+| dígito | destino | créditos na fila | valor | classificados pelo dígito |
+|---|---|---|---|---|
+| 25 | Campanha 2025 | 105 | R$ 21.745,25 | **0** — todos `sem_sugestao` |
+| 22 | Bazar | 90 | R$ 7.063,80 | **0** |
+| 31 | Ação Social | 10 | R$ 13.379,10 | **0** |
+
+E **`fin_transacoes.identificador_centavo` estava preenchido em ZERO linhas do
+sistema inteiro**. Sem esta migration, a campanha do Kids nasceria com a barrinha
+em R$ 0 **para sempre** — e os outros 3 dígitos voltam a funcionar de carona.
+
+⚠️⚠️ **Eram DUAS metades mortas.** A segunda: `POST /financeiro-v2/classificar/
+:filaId/aprovar` copiava `identificador_centavo` **do `req.body`** — ou seja,
+dependia do operador DIGITAR o que o próprio valor já diz. Agora o dígito é
+**DERIVADO do valor** pela régua canônica (o `req.body` ainda vence quando vem
+explícito: correção humana manda). Consertar só uma das metades não produz efeito
+nenhum.
+
+⚠️ **Provado depois de aplicar**, num crédito real que a fila marcava
+`sem_sugestao`: R$ 16.488,25 → `origem: centavo`, confiança **1.0**, *"Dígito 25 ·
+Campanha para construção do templo central"*.
+
+### ⚠️⚠️ LEI · a régua do dígito vive em DOIS caminhos, e o gate trava a divergência
+
+`backend/utils/digitoCampanha.js` (JS, puro) **e** a função SQL. Dois caminhos são
+necessários porque o trigger decide no INSERT sem poder chamar JS — e foi **um
+caminho só, no JS**, que deixou o dígito morto por 3 meses. O gate de deploy
+(`npm run test:campanha-digito`) trava se eles divergirem: exige que a migration
+reescreva `aplicar_classificacao_lancamento`, consulte os dígitos ativos,
+**ARREDONDE** o centavo e exclua o `'00'`.
+
+- ⚠️ **ARREDONDAR, NÃO TRUNCAR**, nos dois lados: `1907.25 % 1` dá
+  `0.25000000000004547` e `0.07` dá `0.07000000000000028` — truncar devolve 24 e 6,
+  e a doação vai pra campanha errada ou pra nenhuma. A aritmética foi conferida no
+  dialeto real (`round(abs(v)*100) % 100`) contra os 6 casos do teste JS.
+- ⚠️ **`'00'` NUNCA é dígito de campanha**: 87,5% dos créditos da igreja têm
+  centavo `,00` (4.261 de 4.868 em 12 meses) — aceitá-lo jogaria o caixa inteiro
+  dentro de uma campanha. É regra, não configuração.
+- ⚠️⚠️ **O dígito vem ANTES da memória** na função. Memória é o que o sistema
+  APRENDEU de decisões passadas; dígito é o que o doador ACABOU DE DECLARAR nesta
+  transferência. Quem dizimava todo mês e neste domingo mandou R$ 500,07 está
+  dizendo "esta aqui é da campanha" — e a memória ("esse CPF é dízimo") jogaria a
+  doação no dízimo. **Declaração explícita vence inferência histórica.**
+- ⚠️ Só **CRÉDITO** carrega dígito: uma SAÍDA de R$ 500,07 é pagamento a fornecedor
+  cujo centavo é coincidência, e contá-la somaria DESPESA na arrecadação.
+- ⚠️ A migration preserva o corpo VIVO da função inteiro (memória por documento,
+  por nome, regras, `sem_sugestao`) com UM bloco novo na frente. Colar o corpo do
+  arquivo do repo reverteria em silêncio o que só existe em produção.
+- ⚠️ `'centavo'` já estava nos CHECKs de `fin_fila_classificacao.sugestao_origem` e
+  `fin_transacoes.classificacao_origem` — conferido antes, senão o INSERT do
+  trigger estouraria 23514 e **abortaria o INSERT do lançamento**.
+
+### ⚠️⚠️ LEI Nº 6 aplicada à barrinha · três baldes DISJUNTOS por construção
+
+`mem_contribuicoes` **NÃO É CAIXA** — somar as duas camadas é como nasceu a dupla
+contagem de ~R$ 1,5 mi. `vw_camp_arrecadacao` **não a toca**:
+
+| balde | fonte | o que é |
+|---|---|---|
+| `caixa_confirmado` | `fin_transacoes` com o dígito | já virou lançamento contábil |
+| `caixa_conciliando` | `fin_lancamentos_brutos` com o dígito e **SEM transação** | o dinheiro está no banco; só a fila humana não passou |
+| `online_pago` | `pag_cobrancas` paga da campanha | link/QR |
+
+- ⚠️⚠️ **Aprovar na fila NÃO muda o total** — a linha MIGRA do balde 2 pro 1 (o
+  balde 2 exclui todo bruto que já tem `lancamento_bruto_id` apontando pra ele). É
+  isso que faz a barrinha não pular quando o financeiro trabalha, e é o assert que
+  quebra se alguém mexer nos baldes.
+- ⚠️⚠️ **O balde 1 é chaveado ESTRITAMENTE no dígito, NUNCA no centro de custo.**
+  O repasse do PSP entra no banco como UM valor agrupado com centavo arbitrário; no
+  dia em que o financeiro classificar esse repasse dentro do centro de custo da
+  campanha, chavear por centro de custo contaria a mesma doação duas vezes. A
+  armadilha é fechada por **escolha de chave**, não por conferência depois.
+- ⚠️ **A barrinha mostra o dinheiro que está no banco, mesmo antes da fila** — de
+  propósito: a fila geral tem **5.311 itens pendentes** (o último de 13/08), e
+  esperar por ela deixaria a barrinha meses atrás da realidade. A tela interna
+  DECLARA a fatia em conciliação; a pública não precisa saber.
+- ⚠️ `doadores_aprox` é o **MAIOR** dos dois baldes, nunca a soma: a mesma pessoa
+  pode ter doado pelos dois caminhos, e somar inventaria doador que não existe.
+
+### ⚠️ O dígito é DECLARAÇÃO, não prova — daí o veto humano
+
+Medido: o dígito 07 aparece **11× em 12 meses** (R$ 4.456,77) contra média orgânica
+de **4,5** por centavo não-designado. Ou seja **07 está livre, mas colhe ruído**:
+uma parte das doações cai na campanha por coincidência (um dízimo de R$ 1.000,07).
+`camp_vinculos.incluir = false` é o veto (e `true` a inclusão manual de quem
+depositou em espécie). Sem caminho de veto a barrinha superestima e ninguém corrige.
+
+### Disparo e agradecimento
+
+- **E-mail é o canal PRIMÁRIO** (decisão da reunião). ⚠️ Medido em 26/08: a base
+  VIVA tem **3.970 pessoas** (`deleted_at IS NULL AND active`), **não** as 8.090
+  linhas da tabela — 4.120 estão soft-deletadas. Dessas: **2.392 com e-mail
+  válido** · **727 com opt-in de WhatsApp** (mais que os ~200 que a reunião
+  estimava). ⚠️ Contar `mem_membros` sem `deleted_at IS NULL` **infla o público em
+  2×** e faz a prévia mentir pra quem vai autorizar o disparo.
+- ⚠️⚠️ **SNAPSHOT ANTES DE ENVIAR**: 2.392 e-mails não cabem numa invocação
+  serverless. Uma linha por destinatário em `camp_disparo_envios` (`pendente`), e só
+  então o envio, marcando cada linha ao sair. Morte no meio ⇒ a próxima rodada
+  continua de onde parou. É a LEI "gravar o efeito DURANTE, não no fim".
+- ⚠️⚠️ **Idempotência pelo DESTINO, não pelo membro**: família compartilha e-mail
+  nesta base (é a razão de `mem_contatos` existir), então a casa com 4 cadastros no
+  mesmo e-mail receberia 4 cópias do mesmo pedido de doação.
+- ⚠️ **O interruptor é REAL**: os dois disparos entraram no catálogo
+  (`comunicacaoAutomaticas` · ids `campanha_semanal` e `campanha_agradecimento`),
+  então ganharam switch em **Comunicação → Disparos → Automáticas**. O gate trava a
+  divergência remetente × catálogo — é o que impede criar o terceiro
+  `wa_templates.ativo` (interruptor de mentira).
+- ⚠️ O agradecimento **NÃO declara `envTemplate`** no catálogo de propósito: o
+  `listar()` transforma env de template sem valor em BLOQUEIO, e aqui seria FALSO —
+  sem a env ele continua saindo por e-mail, que é o canal primário. Pintar de
+  vermelho um disparo que funciona é a mentira que aquela tela existe pra evitar.
+- ⚠️⚠️ **O agradecimento NÃO cita nome nem valor.** Decisão da reunião, com motivo
+  técnico: *"por causa de inconsistências na base de contatos — como números de
+  telefone cadastrados em nome de familiares ou filhos — a mensagem deverá ser
+  genérica"*. O valor fica de fora porque a mensagem pode chegar no celular da
+  família e exibiria na tela de bloqueio quanto a casa doou.
+- ⚠️ **Só agradece doação que já é TRANSAÇÃO ou COBRANÇA PAGA** — crédito bruto
+  esperando a fila NÃO gera obrigado: a barrinha pode contar dinheiro que está no
+  banco, mas dizer "obrigado pela sua doação" a partir de um crédito não conferido
+  é agradecer o que pode ser um dízimo que caiu no dígito por coincidência.
+- ⚠️ **Janela de silêncio de 72h por pessoa**: quem doa 3× na mesma semana recebe
+  UM obrigado — 3 e-mails viram spam e queimam a reputação do domínio no Graph, o
+  que quebra o e-mail de TODOS os módulos.
+- ⚠️ **Estorno nunca dispara obrigado** (valor ≤ 0) e doação anônima é `pulado` com
+  motivo, não erro.
+- **`mem_membros.email_optout`** nasceu aqui: **não existia NENHUM** caminho de
+  descadastro de e-mail (só o de WhatsApp), e mandar campanha em massa sem ele
+  queima a reputação do domínio e é falta de revogação do consentimento (LGPD).
+  O rodapé do e-mail leva o link, e a rota pública `/descadastrar` resolve num
+  clique, com **resposta neutra** (id inválido, inexistente ou já descadastrado
+  respondem igual — senão o endereço vira oráculo de "este uuid é da igreja?").
+
+### ⚠️ Sem cron novo · e a colisão de rota que quase passou
+
+O disparo e o agradecimento pegam **carona no cron horário
+`/api/comunicacao/cron/agendamentos`** (a Vercel está com 46 crons e o teto do
+plano é apertado). ⚠️ Cada bloco é **protegido**: falhar na campanha não pode
+derrubar o agendamento do WhatsApp nem o sync de templates, que são o trabalho
+principal daquele cron.
+
+⚠️⚠️ **A barrinha pública é `/campanha/:slug`, NUNCA `/c/:slug`**: `/c/:token` já é
+o link assinado do voluntário pra lançar decisões no culto (leva de 14/08), e dois
+padrões idênticos no React Router fazem o **primeiro vencer** — a barrinha abriria
+a tela de decisões. É a mesma armadilha do `/:id` que engoliu `/avaliar` e `/mural`
+nas Propostas. A rota pública está montada ANTES do `publicLimiter` e no `skip()`
+do limiter global: ela vive nas telas laterais do culto fazendo polling de 30s, com
+a igreja atrás do mesmo NAT.
+
+### Estado e ⏳ PENDÊNCIAS (é gente, não código)
+
+Migration aplicada em produção em 27/08 (whitelist de soft-delete **73 → 76** por
+patch dinâmico · módulo no catálogo com 34 cargos herdando a matriz do financeiro ·
+campanha do Kids semeada + 8 marcos do cronograma).
+
+⚠️ **A campanha nasce `rascunho` e `publica = false` de propósito** — quem a liga é
+gente, no dia do lançamento. Enquanto está em rascunho, `camp_digitos_ativos()` NÃO
+inclui o 07 (conferido): dinheiro que chegar com ,07 antes da ativação não é
+classificado. **Ativar em `/campanhas` antes de 06/09.**
+
+1. **`plano_contas_id` / `centro_custo_id` da campanha estão VAZIOS.** Sem eles o
+   dígito sugere com confiança **0.5** ("escolher a conta") e o financeiro escolhe
+   a cada crédito — a barrinha funciona igual, mas dá trabalho manual. Existe
+   `0.01.06 CAMPANHAS (Barra)` com o padrão de nome pronto (`TEMPLO 0,17`,
+   `CAMPANHA 2025`…). ⚠️ **Não criei**: é decisão contábil, e os dados existentes
+   são inconsistentes entre si (Templo aponta pra conta de RECEITA `3.02.01.01`,
+   Campanha 2025 aponta pra uma conta BANCÁRIA `1.01.01.01.03`) — escolher qual
+   seria inventar a régua contábil da igreja.
+2. **Doação online nunca foi usada**: `/api/public/generosidade` está construído e
+   o núcleo de pagamentos funciona (8 cobranças pagas de verdade no MercadoPago em
+   agosto), mas há **ZERO** cobranças com `origem_tipo='generosidade'`. Para a
+   campanha receber pelo link, a tela precisa passar `metadata.campanha_id` — é o
+   que a view lê. **Não ligado nesta leva.**
+3. **Template de WhatsApp**: `wa_template` do disparo e
+   `WHATSAPP_TEMPLATE_CAMPANHA_OBRIGADO` são nomes que precisam existir e estar
+   APROVADOS na Meta (Marketing, porque pedir dinheiro é Marketing — a categoria
+   Utility já foi rejeitada nesta conta). Sem eles o disparo por WhatsApp e o
+   agradecimento por WhatsApp **não saem**, e isso é DECLARADO na resposta em vez
+   de virar "0 enviados" com cara de sucesso.
+
+### ⚠️ Achado de carona, NÃO corrigido (é preexistente e não é do escopo)
+
+`POST /financeiro/fila-classificacao/aprovar-massa` marca a fila como `aprovado`
+e **NÃO cria `fin_transacoes`** — diferente do `/classificar/:filaId/aprovar`, que
+é o único caminho que gera o lançamento contábil. Ou seja: aprovar em massa tira o
+item da fila **sem lançar nada**. Não mexi porque muda o comportamento de um botão
+do financeiro que existe desde maio; é conversa com quem opera a fila.
