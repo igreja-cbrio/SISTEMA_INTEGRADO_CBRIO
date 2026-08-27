@@ -90,12 +90,7 @@ function Barrinha({ d }: { d: any }) {
             Aguardando conciliação {brl(d.caixa_conciliando_centavos)}</span>
         )}
       </div>
-      {d.dias_restantes != null && d.por_dia_centavos != null && (
-        <div className="mt-3 text-sm">
-          Faltam <strong>{d.dias_restantes} dias</strong> — o ritmo para bater a meta é{' '}
-          <strong>{brl(d.por_dia_centavos)}/dia</strong>.
-        </div>
-      )}
+      <Ritmo d={d} />
     </div>
   );
 }
@@ -117,6 +112,55 @@ function rotuloDono(m: any) {
   const resto = nomes.length - 2;
   const pessoas = resto > 0 ? `${visiveis} +${resto}` : visiveis;
   return { texto: m.area_nome ? `${pessoas} · ${m.area_nome}` : pessoas, tem_dono: true };
+}
+
+/**
+ * O ritmo necessário — por DOMINGO primeiro.
+ *
+ * ⚠️ Pedido do Matheus (27/08): é no CULTO que a oferta entra, então "R$ 62 mil
+ * por domingo" é a frase que a liderança usa. "R$ 7.692 por dia" não descreve
+ * nenhum momento real da igreja — fica como contexto, em letra menor.
+ *
+ * ⚠️ Atualiza sozinho: `falta_centavos` vem da view, então cada doação que entra
+ * derruba o número. Não há nada a recalcular à mão.
+ */
+function Ritmo({ d }: { d: any }) {
+  if (d?.falta_centavos === 0) {
+    return (
+      <div className="mt-3 text-sm text-emerald-600">
+        Meta alcançada — não falta mais nada.
+      </div>
+    );
+  }
+  // ⚠️ Sem domingo restante NÃO é "R$ 0 por domingo": é uma frase própria. Zerar
+  // ou dividir por zero aqui daria "Infinity" ou um número que engana.
+  if (d?.por_domingo_centavos == null && d?.por_dia_centavos == null) return null;
+
+  const antesDeComecar = !!d.parte_do_inicio;
+
+  return (
+    <div className="mt-3 space-y-1">
+      {d.por_domingo_centavos != null ? (
+        <div className="text-sm">
+          Faltam <strong>{d.domingos_restantes} domingos</strong> — o ritmo para bater a meta é{' '}
+          <strong className="text-base">{brl(d.por_domingo_centavos)} por domingo</strong>.
+        </div>
+      ) : (
+        <div className="text-sm text-amber-600">
+          Não há mais domingo até o fim da campanha ({dataBr(d.data_fim)}) —
+          faltam <strong>{brl(d.falta_centavos)}</strong>.
+        </div>
+      )}
+      {d.por_dia_centavos != null && (
+        <div className="text-xs text-muted-foreground">
+          {d.dias_restantes} dias de campanha · equivale a {brl(d.por_dia_centavos)}/dia
+          {/* ⚠️ Declara quando a conta parte do INÍCIO e não de hoje: sem isso o
+              número parece errado pra quem soma os dias no calendário. */}
+          {antesDeComecar ? ` · contado a partir de ${dataBr(d.inicio_efetivo)}, quando a arrecadação abre` : ''}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Chip({ children, cor }: { children: any; cor: string }) {

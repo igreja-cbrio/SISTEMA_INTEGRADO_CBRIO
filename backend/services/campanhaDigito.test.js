@@ -261,6 +261,80 @@ assert.ok(/<> *'00'|!= *'00'/.test(sql),
 assert.ok(/'centavo'/.test(sql),
   "a origem 'centavo' precisa continuar no CHECK de sugestao_origem, senão o INSERT do trigger estoura");
 
+// ── 11b. ⚠️⚠️ O RITMO POR DOMINGO · é no CULTO que a oferta entra ──────────
+// Pedido do Matheus (27/08): a meta por domingo, atualizando conforme o dinheiro
+// entra. "R$ 62 mil por domingo" é frase que a liderança usa; "R$ 7.692 por dia"
+// não descreve nenhum momento real da igreja.
+const { domingosEntre } = require('../utils/campanhaProgresso');
+
+// A janela real da campanha do Kids: 8 domingos (06,13,20,27/09 + 04,11,18,25/10).
+assert.equal(domingosEntre('2026-09-01', '2026-10-31'), 8);
+// Ponta que É domingo conta nas DUAS pontas — senão o último culto sai da conta.
+assert.equal(domingosEntre('2026-08-30', '2026-08-30'), 1, 'domingo único conta 1');
+assert.equal(domingosEntre('2026-08-31', '2026-09-05'), 0, 'semana sem domingo conta 0');
+assert.equal(domingosEntre('2026-10-25', '2026-10-31'), 1);
+// Intervalo invertido não pode virar número negativo nem NaN.
+assert.equal(domingosEntre('2026-10-31', '2026-09-01'), 0);
+assert.equal(domingosEntre(null, '2026-10-31'), 0);
+
+// ⚠️⚠️ A JANELA COMEÇA NO INÍCIO DA CAMPANHA, não em hoje. A view só conta
+// dinheiro DENTRO da janela, então contar dias/domingos antes de a arrecadação
+// abrir infla o denominador e faz o ritmo parecer mais folgado do que é. Medido
+// em 27/08: a tela dizia "faltam 65 dias" com a arrecadação abrindo só em 01/09.
+const RITMO_PRE = ritmoNecessario({
+  total_centavos: 0, meta_centavos: 50000000,
+  hoje: '2026-08-27', data_inicio: '2026-09-01', data_fim: '2026-10-31',
+});
+assert.equal(RITMO_PRE.domingos_restantes, 8);
+assert.equal(RITMO_PRE.por_domingo_centavos, 6250000, 'R$ 500 mil / 8 domingos = R$ 62.500');
+assert.equal(RITMO_PRE.inicio_efetivo, '2026-09-01');
+assert.equal(RITMO_PRE.parte_do_inicio, true,
+  'a régua tem que DIZER que a conta parte do início — o card da lista não recebe `hoje` e comparar lá daria sempre true');
+
+// Campanha já em curso: conta de HOJE, e o número SOBE conforme o tempo passa.
+const RITMO_MEIO = ritmoNecessario({
+  total_centavos: 0, meta_centavos: 50000000,
+  hoje: '2026-09-20', data_inicio: '2026-09-01', data_fim: '2026-10-31',
+});
+assert.equal(RITMO_MEIO.domingos_restantes, 6);
+assert.equal(RITMO_MEIO.parte_do_inicio, false);
+assert.ok(RITMO_MEIO.por_domingo_centavos > RITMO_PRE.por_domingo_centavos,
+  'com menos domingos restantes e a mesma falta, o ritmo por domingo tem que SUBIR');
+
+// ⚠️ E o número CAI conforme o dinheiro entra — é o "vai sempre atualizando".
+const RITMO_COM_DINHEIRO = ritmoNecessario({
+  total_centavos: 25000000, meta_centavos: 50000000,
+  hoje: '2026-09-20', data_inicio: '2026-09-01', data_fim: '2026-10-31',
+});
+assert.equal(RITMO_COM_DINHEIRO.por_domingo_centavos, Math.ceil(25000000 / 6));
+assert.ok(RITMO_COM_DINHEIRO.por_domingo_centavos < RITMO_MEIO.por_domingo_centavos);
+
+// ⚠️ ZERO domingo restante devolve NULL, NUNCA Infinity nem 0: "não há mais
+// domingo até o fim da campanha" é uma frase própria, e 0 mentiria dizendo que
+// não falta nada.
+const RITMO_SEM_DOMINGO = ritmoNecessario({
+  total_centavos: 0, meta_centavos: 50000000,
+  hoje: '2026-10-26', data_inicio: '2026-09-01', data_fim: '2026-10-31',
+});
+assert.equal(RITMO_SEM_DOMINGO.domingos_restantes, 0);
+assert.equal(RITMO_SEM_DOMINGO.por_domingo_centavos, null);
+assert.ok(RITMO_SEM_DOMINGO.falta_centavos > 0, 'ainda falta dinheiro — o que não há é domingo');
+
+// ⚠️ Se HOJE é o último dia E é domingo, o por-domingo ainda existe e é tudo o
+// que falta: zerá-lo esconderia justamente a cobrança do último culto.
+const RITMO_ULTIMO = ritmoNecessario({
+  total_centavos: 0, meta_centavos: 50000000,
+  hoje: '2026-10-25', data_inicio: '2026-09-01', data_fim: '2026-10-25',
+});
+assert.equal(RITMO_ULTIMO.dias_restantes, 0);
+assert.equal(RITMO_ULTIMO.por_domingo_centavos, 50000000);
+
+// Meta batida não pede ritmo nenhum.
+assert.equal(ritmoNecessario({
+  total_centavos: 60000000, meta_centavos: 50000000,
+  hoje: '2026-09-20', data_inicio: '2026-09-01', data_fim: '2026-10-31',
+}).falta_centavos, 0);
+
 // ── 12. ⚠️ O INTERRUPTOR TEM QUE SER REAL ─────────────────────────────────
 // `wa_templates.ativo` existe, é editável na tela de Comunicação e NENHUMA
 // query do sistema lê aquela coluna — é um interruptor de mentira, e foi o que

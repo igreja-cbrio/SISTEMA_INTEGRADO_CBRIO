@@ -85,26 +85,92 @@ function calcularProgresso({
 }
 
 /**
- * Quanto falta por dia pra bater a meta até o fim da campanha.
+ * Quantos DOMINGOS existem no intervalo, inclusive as duas pontas.
  *
- * ⚠️ Recebe as datas como STRING 'YYYY-MM-DD' de propósito: `new Date('2026-09-06')`
- * é meia-noite UTC, que no Rio ainda é dia 5 — a lição de UTC que este projeto
- * já pagou no check-in do Kids, na curva do censo e na agenda de grupos. Comparar
- * string de data ISO é exato e não tem fuso.
+ * ⚠️⚠️ O dia da semana vem de `Date.UTC` + `getUTCDay()`, NUNCA de
+ * `new Date('YYYY-MM-DD').getDay()`: a string sem horário é meia-noite UTC, que
+ * no Rio é 21h do dia ANTERIOR — todo domingo viraria sábado e a conta devolveria
+ * o número errado. É a mesma armadilha do rodízio de supervisão (25/08), da curva
+ * do censo e do check-in do Kids.
  */
-function ritmoNecessario({ total_centavos = 0, meta_centavos = 0, hoje, data_fim }) {
+function domingosEntre(de, ate) {
+  const a = parseIso(de);
+  const b = parseIso(ate);
+  // ⚠️ `b < a` é guarda DEFENSIVA e NÃO É OBSERVÁVEL: com o fim antes do início,
+  // `primeiro` (o 1º domingo em `a` ou depois) é sempre > `b`, então o retorno já
+  // seria 0 sem ela. Mutante rodado em 27/08 e SOBREVIVEU — fica pela intenção,
+  // mas não afirmo cobertura que não existe (é a lição do mutante equivalente-por-
+  // acidente da régua de agenda de grupos, 25/08).
+  if (a === null || b === null || b < a) return 0;
+
+  // Primeiro domingo em `a` ou depois: 0 = domingo em getUTCDay().
+  const diaSemana = new Date(a).getUTCDay();
+  const primeiro = a + ((7 - diaSemana) % 7) * 86400000;
+  if (primeiro > b) return 0;
+  return Math.floor((b - primeiro) / (7 * 86400000)) + 1;
+}
+
+/**
+ * O ritmo necessário pra bater a meta — por DIA e por DOMINGO.
+ *
+ * ⚠️ Pedido do Matheus (27/08): *"quero que tenha o cálculo automático para saber
+ * a meta por domingo, e aí vai sempre atualizando conforme o dinheiro vai
+ * entrando"*. O por-domingo é o número que mobiliza, porque **é no culto que a
+ * oferta entra** — "R$ 62 mil por domingo" é uma frase que a liderança usa; "R$
+ * 7.692 por dia" não descreve nenhum momento real da igreja.
+ *
+ * ⚠️⚠️ A JANELA COMEÇA EM `max(hoje, data_inicio)`, não em `hoje`. A view só conta
+ * dinheiro dentro da janela da campanha, então contar dias/domingos ANTES do
+ * início infla o denominador e faz o ritmo parecer mais folgado do que é. Medido
+ * em 27/08 na campanha do Kids: com `hoje` a tela dizia "faltam 65 dias"; a
+ * janela real de arrecadação (01/09 → 31/10) tem **61 dias e 8 domingos**.
+ *
+ * ⚠️ `data_inicio` é OPCIONAL: sem ela vale `hoje`, que é o comportamento antigo.
+ */
+function ritmoNecessario({ total_centavos = 0, meta_centavos = 0, hoje, data_inicio, data_fim }) {
   const falta = Math.max(0, cent(meta_centavos) - cent(total_centavos));
-  if (!hoje || !data_fim) return { dias_restantes: null, por_dia_centavos: null, falta_centavos: falta };
+  const vazio = {
+    dias_restantes: null, por_dia_centavos: null,
+    domingos_restantes: null, por_domingo_centavos: null,
+    inicio_efetivo: null, parte_do_inicio: false, falta_centavos: falta,
+  };
+  if (!hoje || !data_fim) return vazio;
 
-  const dias = diasEntre(hoje, data_fim);
-  if (dias === null) return { dias_restantes: null, por_dia_centavos: null, falta_centavos: falta };
+  // A campanha ainda não começou a arrecadar? A contagem parte do início dela.
+  const ini = parseIso(data_inicio);
+  const h = parseIso(hoje);
+  if (h === null) return vazio;
+  const parteDoInicio = ini !== null && ini > h;
+  const inicioEfetivo = parteDoInicio ? data_inicio : hoje;
 
-  // Campanha encerrada (ou último dia): não existe "por dia" — existe o que falta.
-  if (dias <= 0) return { dias_restantes: 0, por_dia_centavos: null, falta_centavos: falta };
+  const dias = diasEntre(inicioEfetivo, data_fim);
+  if (dias === null) return vazio;
+
+  const domingos = domingosEntre(inicioEfetivo, data_fim);
+
+  // Campanha encerrada (ou último dia): não existe "por dia" nem "por domingo" —
+  // existe o que falta. Dividir por zero aqui daria Infinity na tela.
+  if (dias <= 0) {
+    return {
+      ...vazio, dias_restantes: 0, domingos_restantes: domingos,
+      inicio_efetivo: inicioEfetivo, parte_do_inicio: parteDoInicio,
+      // ⚠️ Se HOJE é o último domingo, o por-domingo ainda existe e é tudo o que
+      // falta — zerá-lo esconderia justamente a cobrança do último culto.
+      por_domingo_centavos: domingos > 0 ? falta : null,
+    };
+  }
 
   return {
     dias_restantes: dias,
     por_dia_centavos: Math.ceil(falta / dias),
+    domingos_restantes: domingos,
+    // ⚠️ Zero domingo restante devolve NULL, nunca Infinity: "não há mais domingo
+    // até o fim da campanha" é uma frase que a tela sabe dizer.
+    por_domingo_centavos: domingos > 0 ? Math.ceil(falta / domingos) : null,
+    inicio_efetivo: inicioEfetivo,
+    // ⚠️ Quem decide se a contagem parte do INÍCIO (e não de hoje) é a régua, não
+    // a tela: o card da lista não recebe `hoje`, e comparar lá daria sempre true.
+    parte_do_inicio: parteDoInicio,
     falta_centavos: falta,
   };
 }
@@ -170,6 +236,7 @@ function brlRedondo(centavos) {
 module.exports = {
   calcularProgresso,
   ritmoNecessario,
+  domingosEntre,
   diasEntre,
   estaNoAr,
   brl,

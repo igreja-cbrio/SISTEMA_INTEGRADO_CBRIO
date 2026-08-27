@@ -14510,3 +14510,47 @@ view nem inventar schema.
   identifica nada** (`camp_digitos_ativos()` só devolve campanha ativa/pausada) —
   sem isso, dinheiro que chegue antes do lançamento não é reconhecido e ninguém
   entende por quê.
+
+### ⚠️ Campanhas · o ritmo é por DOMINGO, e a janela começa no INÍCIO (2026-08-27 · SEM migration)
+
+Pedido do Matheus vendo a Visão geral: *"ali onde fala sobre o ritmo que deveríamos
+arrecadar por dia para bater a meta, quero que tenha o cálculo automático para
+saber a meta por domingo, e aí vai sempre atualizando conforme o dinheiro vai
+entrando"*.
+
+**É no CULTO que a oferta entra.** "R$ 62 mil por domingo" é frase que a liderança
+usa numa reunião; "R$ 7.692 por dia" não descreve nenhum momento real da igreja —
+ficou como contexto, em letra menor.
+
+⚠️⚠️ **E o número por dia estava ERRADO, o que o print do pedido mostrava sem
+ninguém ter notado**: `ritmoNecessario` dividia por "de HOJE até o fim", mas a view
+só conta dinheiro **dentro da janela da campanha**. Medido em 27/08 na campanha do
+Kids: a tela dizia *"faltam 65 dias"* (27/08 → 31/10) quando a arrecadação só abre
+em **01/09** — 60 dias e **8 domingos**. Contar antes de a arrecadação abrir infla o
+denominador e faz o ritmo parecer mais folgado do que é. A janela passou a ser
+`max(hoje, data_inicio)` → `data_fim`.
+
+- ⚠️⚠️ **Dia da semana com `Date.UTC` + `getUTCDay()`, NUNCA
+  `new Date('YYYY-MM-DD').getDay()`**: a string sem horário é meia-noite UTC, que
+  no Rio é 21h do dia ANTERIOR — **todo domingo viraria sábado** e a contagem sairia
+  errada. Mesma armadilha do rodízio de supervisão (25/08), da curva do censo e do
+  check-in do Kids. Mutante rodado.
+- ⚠️ **Domingo conta nas DUAS pontas** (`domingosEntre` é inclusive): sem isso o
+  último culto sai da conta, que é justamente o que mais importa cobrar.
+- ⚠️⚠️ **Zero domingo restante devolve NULL, nunca 0 nem Infinity.** `0` mentiria
+  dizendo que não falta nada; a tela tem frase própria ("não há mais domingo até o
+  fim da campanha — faltam R$ X"). Mutante rodado.
+- ⚠️ **Se HOJE é o último dia E é domingo, o por-domingo ainda existe e é TUDO o que
+  falta** — zerá-lo esconderia exatamente a cobrança do último culto. Mutante rodado.
+- ⚠️ **Quem decide se a contagem parte do início é a RÉGUA** (`parte_do_inicio`), não
+  a tela: o card da lista não recebe `hoje`, e comparar lá daria **sempre true** —
+  a tela declararia "contado a partir de X" em toda campanha, inclusive as já em
+  curso. Régua devolve o booleano; a tela só exibe.
+- **Atualiza sozinho** porque `falta_centavos` vem da view: cada doação que entra
+  derruba o número, e o ritmo SOBE conforme os domingos passam. As duas direções
+  têm assert.
+- Teste no gate (`test:campanha-digito`). **6 mutantes RODADOS: 5 mortos, 1
+  SOBREVIVEU e está DECLARADO no código** — a guarda de intervalo invertido
+  (`b < a`) não é observável, porque com o fim antes do início o primeiro domingo é
+  sempre maior que o fim e o retorno já seria 0. Fica pela intenção; não afirmo
+  cobertura que não existe (lição do mutante equivalente-por-acidente de 25/08).
