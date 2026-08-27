@@ -533,4 +533,127 @@ router.post('/sync', authorize('admin', 'diretor'), async (_req, res) => {
   }
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// ACEITAÇÕES ONLINE · a lista de quem decidiu assistindo, para o time do Online
+// ════════════════════════════════════════════════════════════════════════════
+// Pedido do Matheus (27/08/2026): "quem vai acompanhar essas pessoas é o time
+// do online, então deve ter lá a lista com as aceitações, botão de wpp e
+// checkbox de contatado" · e "prefiro que esse QR code de cada culto esteja na
+// aba do online, para a equipe do online pegar lá".
+//
+// ⚠️⚠️ NÃO HÁ CAMPO NOVO DE "CONTATADO". Quem registra o primeiro contato é
+// `cui_convertidos.primeiro_contato_em`, que já existe e é de onde saem o SLA
+// de 3 dias, os KPIs da jornada e a fila do módulo de Cuidados. Um checkbox
+// próprio aqui criaria uma SEGUNDA VERDADE sobre o mesmo fato — o time do
+// Online marcaria "contatado" e o painel pastoral continuaria cobrando a mesma
+// pessoa. A tela grava pelo endpoint que já existe.
+
+// GET /api/online/aceitacoes?dias=&replay=
+// Lista as decisões online nominais (as que vieram do formulário do QR).
+router.get('/aceitacoes', async (req, res) => {
+  try {
+    const dias = Math.min(Math.max(parseInt(req.query.dias, 10) || 90, 1), 365);
+    const desde = new Date(Date.now() - 3 * 3600e3 - dias * 86400e3).toISOString().slice(0, 10);
+
+    // `cui_convertidos` é a fila pastoral — é ela que o time vai trabalhar, e é
+    // nela que o contato é registrado. `data_culto` aqui É a data em que a
+    // jornada começou (para replay, o dia em que a pessoa preencheu).
+    const { data, error } = await supabase
+      .from('cui_convertidos')
+      .select('id, nome, telefone, membro_id, data_culto, culto_id, primeiro_contato_em, primeiro_contato_status, created_at, cultos(data, vol_service_types(name))')
+      .eq('area', 'online')
+      .is('deleted_at', null)
+      .gte('data_culto', desde)
+      .order('data_culto', { ascending: false })
+      .limit(500);
+    if (error) throw error;
+
+    const itens = (data || []).map((c) => {
+      const dataCultoOrigem = c.cultos?.data || null;
+      // ⚠️ "Veio de vídeo passado" é DERIVADO, não guardado: se a jornada
+      // começou num dia diferente do culto de origem, a pessoa assistiu a
+      // gravação. Coluna para isso seria coluna que um dia dessincroniza.
+      const replay = !!(dataCultoOrigem && c.data_culto && dataCultoOrigem !== c.data_culto);
+      return {
+        id: c.id,
+        nome: c.nome,
+        telefone: c.telefone,
+        membro_id: c.membro_id,
+        // Quando a pessoa decidiu (e de quando conta o prazo de contato).
+        decidiu_em: c.data_culto,
+        contatado_em: c.primeiro_contato_em,
+        replay,
+        culto: dataCultoOrigem
+          ? { data: dataCultoOrigem, nome: c.cultos?.vol_service_types?.name || 'Culto' }
+          : null,
+      };
+    });
+
+    const filtrados = req.query.replay === '1' ? itens.filter((i) => i.replay)
+      : req.query.replay === '0' ? itens.filter((i) => !i.replay)
+      : itens;
+
+    res.json({
+      dias,
+      itens: filtrados,
+      total: itens.length,
+      de_replay: itens.filter((i) => i.replay).length,
+      sem_contato: itens.filter((i) => !i.contatado_em).length,
+    });
+  } catch (e) {
+    console.error('[online/aceitacoes]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar as aceitações online' });
+  }
+});
+
+// GET /api/online/qr-cultos?inicio=&fim=
+// Os QRs do apelo dos cultos do período, para a produção montar o overlay.
+//
+// ⚠️ Endpoint PRÓPRIO em vez de reusar `/kpis/cultos/links-decisoes`: aquele é
+// guardado por `authorizeIntegracao` e entrega o link do VOLUNTÁRIO lançar
+// decisão de terceiro. Aqui o público é a equipe do Online e o link é outro —
+// o que a própria pessoa usa. Compartilhar o endpoint acabaria entregando o
+// link errado a um dos dois times.
+router.get('/qr-cultos', async (req, res) => {
+  try {
+    const { montarLinkDecisao } = require('../utils/decisaoToken');
+    const ISO = /^\d{4}-\d{2}-\d{2}$/;
+    const inicio = String(req.query.inicio || '').slice(0, 10);
+    const fim = String(req.query.fim || '').slice(0, 10);
+    if (!ISO.test(inicio) || !ISO.test(fim)) {
+      return res.status(400).json({ error: 'Informe inicio e fim no formato AAAA-MM-DD.' });
+    }
+    if (fim < inicio) return res.status(400).json({ error: 'O fim não pode ser anterior ao início.' });
+
+    const { data, error } = await supabase
+      .from('vw_culto_stats')
+      .select('id, data, hora, nome, service_type_name, service_type_has_online')
+      .gte('data', inicio)
+      .lte('data', fim)
+      .order('data', { ascending: true })
+      .order('hora', { ascending: true })
+      .limit(100);
+    if (error) throw error;
+
+    // ⚠️ Só culto COM transmissão: gerar QR de decisão online para um tipo sem
+    // live entregaria à produção um QR que nunca deveria ir ao ar.
+    const cultos = (data || [])
+      .filter((c) => c.service_type_has_online)
+      .map((c) => ({
+        id: c.id,
+        data: c.data,
+        hora: c.hora,
+        nome: c.service_type_name || c.nome || 'Culto',
+        // `null` sem segredo configurado (fail-closed): a tela declara
+        // "indisponível" em vez de a produção pôr no telão um QR que não abre.
+        link: montarLinkDecisao(c.id),
+      }));
+
+    res.json({ inicio, fim, cultos });
+  } catch (e) {
+    console.error('[online/qr-cultos]', e.message);
+    res.status(500).json({ error: 'Erro ao gerar os QRs dos cultos' });
+  }
+});
+
 module.exports = router;

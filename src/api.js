@@ -4520,6 +4520,14 @@ export const censoPublico = {
 };
 
 export const online = {
+  // Aceitações online (decisões nominais) + QRs do apelo por culto.
+  aceitacoes: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+    ).toString();
+    return get('/online/aceitacoes' + (qs ? '?' + qs : ''));
+  },
+  qrCultos: (inicio, fim) => get(`/online/qr-cultos?inicio=${inicio}&fim=${fim}`),
   dashboard: () => get('/online/dashboard'),
   engajamento: () => get('/online/engajamento'),
   cultosMetricas: (limit) => get('/online/cultos-metricas' + (limit ? '?limit=' + limit : '')),

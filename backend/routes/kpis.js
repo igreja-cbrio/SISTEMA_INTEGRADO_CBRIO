@@ -404,7 +404,6 @@ router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
 router.get('/cultos/links-decisoes', authorizeIntegracao, async (req, res) => {
   try {
     const { montarLinkCulto } = require('../utils/cultoToken');
-    const { montarLinkDecisao } = require('../utils/decisaoToken');
     const ISO = /^\d{4}-\d{2}-\d{2}$/;
     const inicio = String(req.query.inicio || '').slice(0, 10);
     const fim = String(req.query.fim || '').slice(0, 10);
@@ -415,7 +414,7 @@ router.get('/cultos/links-decisoes', authorizeIntegracao, async (req, res) => {
 
     const { data, error } = await supabase
       .from('vw_culto_stats')
-      .select('id, data, hora, nome, service_type_name, service_type_has_online')
+      .select('id, data, hora, nome, service_type_name')
       .gte('data', inicio)
       .lte('data', fim)
       .order('data', { ascending: true })
@@ -432,16 +431,6 @@ router.get('/cultos/links-decisoes', authorizeIntegracao, async (req, res) => {
       // "indisponível" em vez de o conferente mandar no grupo um link que não
       // abre pra ninguém.
       link: montarLinkCulto(c.id),
-      // ⚠️ QR do APELO — link DIFERENTE e público, com propósito oposto ao de
-      // cima: aquele é do voluntário LANÇAR quem decidiu; este é a PESSOA
-      // registrar a própria decisão. Vai no overlay da transmissão e fica
-      // gravado no vídeo, então quem assistir daqui a anos cai neste culto e
-      // não no da semana em que abriu o vídeo.
-      //
-      // ⚠️ Só onde o tipo TEM transmissão: gerar QR de decisão online para o
-      // Bridge (que hoje é `has_online = false`) entregaria à produção um QR
-      // que nunca deveria ir ao ar.
-      link_decisao_online: c.service_type_has_online ? montarLinkDecisao(c.id) : null,
     }));
     res.json({ inicio, fim, cultos });
   } catch (e) {
