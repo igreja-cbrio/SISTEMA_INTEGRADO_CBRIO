@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-361 arquivos.
+362 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -142,6 +142,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/wifi.js` | rota backend | wifi | `/api/wifi` |
 | `backend/utils/acessibilidadeBatismo.js` | régua pura | — | `src/test/acessibilidadeBatismo.test.ts` |
 | `backend/utils/agendaGrupo.js` | régua pura | — | `src/test/agendaGrupo.test.ts` |
+| `backend/utils/agentDiagnostico.js` | régua pura | — | `src/test/agentDiagnostico.test.ts` |
 | `backend/utils/agradecimento.js` | régua pura | — | `src/test/agradecimento.test.ts` |
 | `backend/utils/alcadaCompra.js` | régua pura | — | `src/test/alcadaCompra.test.ts` |
 | `backend/utils/alcadaCompras.js` | régua pura | — | `src/test/alcadaCompras.test.ts` |
