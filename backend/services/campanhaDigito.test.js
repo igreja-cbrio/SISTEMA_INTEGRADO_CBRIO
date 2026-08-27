@@ -291,4 +291,23 @@ const itemObrigado = CATALOGO.find(i => i.id === ID_OBRIGADO);
 assert.equal(itemObrigado.envTemplate, null,
   'o agradecimento não deve declarar envTemplate: sem a env ele ainda sai por e-mail');
 
+// ── 13. ⚠️ A INCLUSÃO MANUAL tem que SOMAR, não só o veto ──────────────────
+// Furo real de 27/08: `POST /:id/vinculo` aceitava `incluir: true` e a view só
+// lia `incluir = false` — o financeiro marcava "este crédito É da campanha" e o
+// total não se movia, em silêncio. E é disso que a TROCA DE DÍGITO depende: sem
+// somar a inclusão manual, trocar 07 por 08 faria toda doação já identificada
+// desaparecer da barrinha.
+const MIG_MANUAL = path.join(__dirname, '../../supabase/migrations/20260827170000_camp_arrecadacao_inclusao_manual.sql');
+const sqlManual = fs.readFileSync(MIG_MANUAL, 'utf8');
+assert.ok(/vw_camp_arrecadacao/.test(sqlManual),
+  'a migration TEM que reescrever a view da arrecadação');
+// Nos DOIS baldes de caixa (transação e bruto), não só num.
+assert.equal((sqlManual.match(/v\.incluir = true/g) || []).length, 2,
+  'a inclusão manual precisa somar nos DOIS baldes (transação E bruto) — só num deles deixa metade do furo aberto');
+assert.equal((sqlManual.match(/v\.incluir = false/g) || []).length, 2,
+  'o veto precisa continuar valendo nos dois baldes');
+// A guarda que impede a dupla contagem quando a fila aprova.
+assert.ok(/NOT EXISTS \(SELECT 1 FROM fin_transacoes t WHERE t\.lancamento_bruto_id = b\.id\)/.test(sqlManual),
+  'sem este NOT EXISTS o total DOBRA quando a fila aprova um crédito');
+
 console.log('campanhaDigito: ok');

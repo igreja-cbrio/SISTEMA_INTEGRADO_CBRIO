@@ -269,6 +269,11 @@ export const campanhas = {
   remover: (id) => del(`/campanhas/${id}`),
   digitos: () => get('/campanhas/digitos'),
   segmentos: () => get('/campanhas/segmentos'),
+  aux: () => get('/campanhas/aux'),
+  // ⚠️ Rota PRÓPRIA (não o PUT): trocar o dígito fixa o passado em camp_vinculos
+  // pra a barrinha não perder o que já foi identificado. Ver o handler.
+  definirDigito: (id, digito, motivo) => post(`/campanhas/${id}/digito`, { digito, motivo }),
+  digitoHistorico: (id) => get(`/campanhas/${id}/digito-historico`),
   lancamentos: (id) => get(`/campanhas/${id}/lancamentos`),
   pendentes: (id) => get(`/campanhas/${id}/pendentes`),
   vincular: (id, data) => post(`/campanhas/${id}/vinculo`, data),

@@ -17,6 +17,7 @@ const disparo = require('../services/campanhaDisparo');
 const agradece = require('../services/campanhaAgradece');
 const { normalizarDigito, checarDigitoLivre, sugerirDigito } = require('../utils/digitoCampanha');
 const { SEGMENTOS, CANAIS } = require('../utils/campanhaPublico');
+const svcMarcos = require('../services/campanhaMarcos');
 let notificar; try { ({ notificar } = require('../services/notificar')); } catch { notificar = async () => {}; }
 
 router.use(authenticate);
@@ -89,6 +90,29 @@ router.get('/segmentos', authorizeModule('campanhas', 1), (_req, res) => {
   res.json({ segmentos: SEGMENTOS, canais: CANAIS });
 });
 
+/**
+ * Quem pode receber tarefa + as áreas.
+ *
+ * ⚠️ Devolve a equipe e o "fora da definição de equipe" SEPARADOS: a
+ * `vw_colaboradores` (a definição única da casa) exclui 7 contas com login do
+ * ERP, e uma delas é o Pr. Juninho. Omiti-las faria a tela afirmar que uma
+ * pessoa real não existe — o que o Matheus concluiu 3× em 25/08 quando um
+ * seletor escondia alguém em silêncio.
+ */
+router.get('/aux', authorizeModule('campanhas', 1), async (_req, res) => {
+  try {
+    const [pessoas, areas] = await Promise.all([
+      svcMarcos.pessoasAtribuiveis(),
+      svcMarcos.areasAtivas(),
+    ]);
+    res.json({ ...pessoas, areas });
+  } catch (e) {
+    // ⚠️ 400 com o motivo, nunca listas vazias: "não há ninguém pra atribuir" é
+    // a leitura errada de uma consulta que falhou.
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // ⚠️ `/:id` vem DEPOIS das rotas literais. No Express o primeiro match vence, e
 // `/digitos` cairia aqui como `req.params.id` — a armadilha que engoliu
 // `/avaliar` e `/mural` no módulo de Propostas (03/08).
@@ -100,14 +124,30 @@ router.get('/:id', authorizeModule('campanhas', 1), async (req, res) => {
     if (!camp) return res.status(404).json({ error: 'Campanha não encontrada' });
 
     const retrato = await arrecadacao.retrato(camp.id);
-    const { data: marcos } = await supabase.from('camp_marcos')
+    const { data: marcosRaw, error: eM } = await supabase.from('camp_marcos')
       .select('*').eq('campanha_id', camp.id).is('deleted_at', null)
       .order('ordem').order('data_prevista');
+    if (eM) return res.status(400).json({ error: eM.message });
+    // ⚠️ Best-effort: se a atribuição não carregar, o cronograma AINDA aparece
+    // (com `responsaveis: []` e um aviso) em vez de a aba inteira sumir. Mas o
+    // aviso EXISTE — "sem responsável" e "não deu pra saber" são coisas diferentes.
+    let marcosLista = (marcosRaw || []).map((m) => ({ ...m, responsaveis: [], area_nome: null }));
+    let atribuicao_incompleta = null;
+    try {
+      marcosLista = await svcMarcos.anexarAtribuicao(marcosRaw || []);
+    } catch (e) {
+      console.error('[campanhas] anexar atribuição:', e.message);
+      atribuicao_incompleta = e.message;
+    }
     const { data: disparos } = await supabase.from('camp_disparos')
       .select('*').eq('campanha_id', camp.id).is('deleted_at', null)
       .order('created_at', { ascending: false }).limit(50);
 
-    res.json({ campanha: camp, ...retrato, marcos: marcos || [], disparos: disparos || [] });
+    res.json({
+      campanha: camp, ...retrato,
+      marcos: marcosLista, disparos: disparos || [],
+      ...(atribuicao_incompleta ? { atribuicao_incompleta } : {}),
+    });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -259,6 +299,73 @@ router.delete('/:id', authorizeModule('campanhas', 4), async (req, res) => {
   }
 });
 
+// ── Dígito verificador ─────────────────────────────────────────────────────
+
+/**
+ * Configura (ou troca) o dígito da campanha.
+ *
+ * ⚠️⚠️ Rota PRÓPRIA, fora do PUT, e nível 4. Trocar o dígito é decisão com
+ * consequência contábil: toda doação já identificada com o dígito ANTIGO
+ * desapareceria da barrinha se nada fosse feito, porque a view casa o caixa por
+ * `identificador_centavo = c.digito`. O serviço FIXA o passado em
+ * `camp_vinculos` antes de trocar, e devolve quantos lançamentos foram fixados —
+ * a tela DECLARA isso. Trocar o dígito como efeito colateral de salvar um
+ * formulário de texto seria a pior forma possível de fazer isso.
+ */
+router.post('/:id/digito', authorizeModule('campanhas', 4), async (req, res) => {
+  try {
+    const cru = req.body?.digito;
+    // Tirar o dígito é legítimo (campanha que só arrecada pelo link).
+    const remover = cru === null || cru === '';
+    const digito = remover ? null : normalizarDigito(cru);
+    if (!remover && !digito) {
+      return res.status(400).json({
+        error: 'O dígito precisa ser dois números de 01 a 99. O 00 não pode: ele é o centavo de quem não declarou nada, e está em 87% dos créditos da igreja.',
+      });
+    }
+
+    if (digito) {
+      // ⚠️ `ignorar` é a própria campanha — sem ele, reconfirmar o mesmo dígito
+      // colidiria consigo mesma e a tela viraria um beco sem saída.
+      const livre = checarDigitoLivre(digito, await digitosOcupados(), { ignorar: req.params.id });
+      if (!livre.ok) return res.status(409).json({ error: livre.motivo, codigo: 'digito_ocupado' });
+    }
+
+    const r = await arrecadacao.trocarDigito({
+      campanhaId: req.params.id,
+      digitoNovo: digito,
+      motivo: req.body?.motivo || null,
+      autorId: req.user?.userId || null,
+    });
+    if (!r.ok) return res.status(404).json({ error: 'Campanha não encontrada' });
+
+    if (!r.sem_mudanca) {
+      await notificar({
+        modulo: 'campanhas',
+        tipo: 'campanha_digito',
+        titulo: `Dígito da campanha mudou: ${r.anterior || '(nenhum)'} → ${r.novo || '(nenhum)'}`,
+        mensagem: r.fixados
+          ? `${r.fixados} lançamento(s) que já estavam identificados pelo dígito ${r.anterior} foram FIXADOS na campanha, então o total não muda. Doações novas passam a ser identificadas pelo dígito ${r.novo}.`
+          : `Não havia nenhum lançamento identificado pelo dígito anterior, então nada precisou ser fixado.`,
+        link: '/campanhas',
+        chaveDedup: `camp_digito_${req.params.id}_${r.novo || 'nulo'}`,
+      }).catch((e) => console.error('[campanhas] notificar dígito:', e.message));
+    }
+    res.json(r);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+/** Trilha de quando cada dígito valeu — explica inclusão manual em massa. */
+router.get('/:id/digito-historico', authorizeModule('campanhas', 1), async (req, res) => {
+  const { data, error } = await supabase.from('camp_digito_historico')
+    .select('id, digito_anterior, digito_novo, lancamentos_fixados, motivo, created_at')
+    .eq('campanha_id', req.params.id).order('created_at', { ascending: false }).limit(50);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json(data || []);
+});
+
 // ── Arrecadação ────────────────────────────────────────────────────────────
 
 router.get('/:id/lancamentos', authorizeModule('campanhas', 1), async (req, res) => {
@@ -318,23 +425,81 @@ router.delete('/:id/vinculo/:vinculoId', authorizeModule('campanhas', 3), async 
 
 // ── Cronograma ─────────────────────────────────────────────────────────────
 
-const CAMPOS_MARCO = ['titulo', 'descricao', 'tipo', 'responsavel_id', 'responsavel_nome',
+// ⚠️ `responsavel_id`/`responsavel_nome` SAÍRAM do write path (deprecados em
+// 27/08): quem guarda responsável é `camp_marco_responsaveis`. Duas fontes para
+// "quem responde" é a divergência que o módulo Cuidados pagou pra descobrir — o
+// mesmo pastor em 4 grafias, com o total dele partido em 4 cards.
+const CAMPOS_MARCO = ['titulo', 'descricao', 'tipo', 'area_id',
   'data_prevista', 'data_conclusao', 'status', 'ordem', 'marketing_card_id'];
 
 router.post('/:id/marcos', authorizeModule('campanhas', 3), async (req, res) => {
-  const titulo = String(req.body?.titulo || '').trim();
-  if (!titulo) return res.status(400).json({ error: 'O título do marco é obrigatório.' });
-  const payload = { campanha_id: req.params.id, titulo, created_by: req.user?.userId || null };
-  for (const c of CAMPOS_MARCO) if (c !== 'titulo' && req.body?.[c] !== undefined) payload[c] = req.body[c];
-  const { data, error } = await supabase.from('camp_marcos').insert(payload).select().single();
-  if (error) return res.status(400).json({ error: error.message });
-  res.status(201).json(data);
+  try {
+    const titulo = String(req.body?.titulo || '').trim();
+    if (!titulo) return res.status(400).json({ error: 'O título da tarefa é obrigatório.' });
+    const payload = { campanha_id: req.params.id, titulo, created_by: req.user?.userId || null };
+    for (const c of CAMPOS_MARCO) if (c !== 'titulo' && req.body?.[c] !== undefined) payload[c] = req.body[c];
+    payload.area_id = svcMarcos.normalizarArea(req.body?.area_id);
+
+    const { data, error } = await supabase.from('camp_marcos').insert(payload).select().single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    const atrib = await aplicarAtribuicao({
+      marco: data, body: req.body, campanhaId: req.params.id, autorId: req.user?.userId,
+    });
+    res.status(201).json({ ...data, ...atrib });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
+/**
+ * Grava responsáveis + avisa quem entrou. Compartilhado pelo POST e pelo PUT.
+ *
+ * ⚠️ Régua ÚNICA: criar a tarefa já atribuída e editá-la depois têm de produzir o
+ * MESMO efeito, inclusive o aviso. Duas cópias divergiriam no primeiro ajuste, e
+ * a divergência apareceria como "avisou quando eu editei e não quando eu criei".
+ */
+async function aplicarAtribuicao({ marco, body, campanhaId, autorId }) {
+  const out = {};
+  const { data: camp } = await supabase.from('camp_campanhas')
+    .select('nome').eq('id', campanhaId).maybeSingle();
+  const contexto = {
+    marcoId: marco.id,
+    marcoTitulo: marco.titulo,
+    campanhaNome: camp?.nome || 'campanha',
+    prazo: marco.data_prevista,
+  };
+
+  if (body?.responsaveis !== undefined) {
+    Object.assign(out, await svcMarcos.definirResponsaveis({
+      marcoId: marco.id, bruto: body.responsaveis, autorId, contexto,
+    }));
+  }
+
+  // ⚠️ Área só avisa quando NÃO há ninguém nomeado — com "Marketing + Pedro",
+  // quem puxa é o Pedro, e avisar a área junto viraria 6 avisos por atribuição.
+  const semNomeados = !Array.isArray(body?.responsaveis) || !body.responsaveis.length;
+  if (marco.area_id && semNomeados) {
+    out.avisados_area = await svcMarcos.avisarAtribuidos({
+      adicionados: [], autorId, contexto, areaId: marco.area_id,
+    });
+  }
+  return out;
+}
+
 router.put('/marcos/:marcoId', authorizeModule('campanhas', 3), async (req, res) => {
+ try {
   const patch = {};
   for (const c of CAMPOS_MARCO) if (req.body?.[c] !== undefined) patch[c] = req.body[c];
-  if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada a atualizar.' });
+  if (req.body?.area_id !== undefined) patch.area_id = svcMarcos.normalizarArea(req.body.area_id);
+  if (req.body?.titulo !== undefined && !String(req.body.titulo).trim()) {
+    return res.status(400).json({ error: 'O título da tarefa não pode ficar vazio.' });
+  }
+  // ⚠️ Mexer SÓ nos responsáveis é edição legítima — sem isso, atribuir alguém
+  // sem tocar em mais nada responderia "nada a atualizar".
+  if (!Object.keys(patch).length && req.body?.responsaveis === undefined) {
+    return res.status(400).json({ error: 'Nada a atualizar.' });
+  }
   // ⚠️ Concluir carimba a data sozinho (e desfazer limpa): sem isso o cronograma
   // teria marco "concluído" sem dizer quando, que é o dado que interessa depois.
   if (patch.status === 'concluido' && patch.data_conclusao === undefined) {
@@ -345,11 +510,26 @@ router.put('/marcos/:marcoId', authorizeModule('campanhas', 3), async (req, res)
   }
   patch.updated_at = new Date().toISOString();
 
-  const { data, error } = await supabase.from('camp_marcos')
-    .update(patch).eq('id', req.params.marcoId).is('deleted_at', null).select().maybeSingle();
-  if (error) return res.status(400).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: 'Marco não encontrado' });
-  res.json(data);
+  let atual = null;
+  if (Object.keys(patch).length) {
+    const { data, error } = await supabase.from('camp_marcos')
+      .update(patch).eq('id', req.params.marcoId).is('deleted_at', null).select().maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    atual = data;
+  } else {
+    const { data } = await supabase.from('camp_marcos')
+      .select('*').eq('id', req.params.marcoId).is('deleted_at', null).maybeSingle();
+    atual = data;
+  }
+  if (!atual) return res.status(404).json({ error: 'Tarefa não encontrada' });
+
+  const atrib = await aplicarAtribuicao({
+    marco: atual, body: req.body, campanhaId: atual.campanha_id, autorId: req.user?.userId,
+  });
+  res.json({ ...atual, ...atrib });
+ } catch (e) {
+  res.status(400).json({ error: e.message });
+ }
 });
 
 router.delete('/marcos/:marcoId', authorizeModule('campanhas', 3), async (req, res) => {

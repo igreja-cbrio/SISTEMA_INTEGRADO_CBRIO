@@ -14390,79 +14390,123 @@ classificado. **Ativar em `/campanhas` antes de 06/09.**
    agradecimento por WhatsApp **não saem**, e isso é DECLARADO na resposta em vez
    de virar "0 enviados" com cara de sucesso.
 
-### ⚠️⚠️ A PRIMEIRA DOAÇÃO REAL quebrou nas duas formas de pagamento (2026-08-27 · SEM migration)
-
-O Matheus doou R$ 20,00 em `/doar` e os dois botões falharam: **"Pagar com cartão"
-abriu a tela do PIX** no Mercado Pago, e voltar pro Pix riscou "Pix" como
-indisponível. Uma cobrança, duas causas independentes, e **nenhum teste as
-alcançava** porque só aparecem quando a pessoa TROCA de forma — caminho que 75
-testes do adapter nunca exercitaram.
-
-Diagnosticado no banco (`pag_cobrancas` · `bd799e24…`), não por leitura de código:
-`metodo='cartao'` com `checkout_url` = `…/payments/175870574924/ticket` e
-`ultimo_erro` = `409 idempotency_key_already_used`.
-
-### ⚠️⚠️ LEI · `checkout_url` é UMA coluna com DOIS significados
-
-Página do Checkout Pro (o que o cartão precisa) **e** `ticket_url` do Pix (a
-página do QR no MP). Quem escolhia Pix primeiro sobrescrevia a coluna, e
-`definirMetodo(CARTAO)` devolvia `c.checkout_url` de volta — entregando ao cartão
-o endereço do Pix.
-
-- **`definirMetodo(PIX)` não devolve mais `checkout_url`.** Nada se perde: a tela
-  desenha QR e copia-e-cola do `pix_payload`, e o `checkout_url` que sobra (o
-  Checkout Pro) **também aceita Pix**, então segue válido como alternativa.
-- **`urlCheckoutHospedado(c)`** confere de forma **POSITIVA** (`/checkout/` no
-  host do MP) e, quando não reconhece, **cria uma preference nova**. Conferência
-  negativa ("não é ticket") entregaria como checkout qualquer artefato futuro que
-  eu não conheça. Isso também **auto-cura a cobrança já gravada** — não houve
-  UPDATE de reparo no banco.
-- ⚠️ Preference é só um LINK (nenhum estado de pagamento vive nela), então criar
-  outra não duplica cobrança — **e ela NUNCA reponta `provider_cobranca_id`**:
-  tirar a ORDER do núcleo cegaria `consultarStatus`, que só sabe ler order.
-
-### ⚠️⚠️ LEI · `X-Idempotency-Key` do MP NÃO replica a resposta — ele 409
-
-A doc promete idempotência; o comportamento real é **`409
-idempotency_key_already_used` + "retry with a different value"**. Como a chave é
-`(cobrança + forma + tentativa)` e `escolherFormaPagamento` **nunca passa
-`tentativa`**, Pix → cartão → **Pix de novo** era garantia de 409 — com o QR
-válido guardado no banco a tela dizia "Pix não está disponível agora".
-
-- **QR que já existe é DEVOLVIDO sem falar com o MP.** É a resposta certa, não
-  contorno: ele segue pagável até a cobrança expirar, e criar um segundo deixaria
-  dois QRs vivos para uma doação só.
-- **Retentativa no 409 só alcança quem NÃO tem QR** (o curto-circuito atendeu o
-  resto), ou seja: a tentativa anterior morreu antes de gravar o artefato e sem
-  chave nova essa cobrança **nunca mais** teria um Pix pagável.
-- ⚠️ A chave da retentativa usa **balde de 1 minuto**, não `Date.now()` cru: dois
-  cliques seguidos compartilham a chave (não viram duas orders) e uma tentativa
-  de verdade mais tarde ganha a sua.
-
-### CPF virou OBRIGATÓRIO em `/doar` (decisão do Matheus)
-
-Era opcional com o texto explicando o custo de omitir. Agora o servidor recusa
-(400 · `campo: 'cpf'`) e a tela valida antes. ⚠️ **O DV vem de
-`src/lib/inscricao.cpfValido`** — a página tinha cópia local de máscara, e uma 4ª
-cópia do algoritmo é exatamente o que a lei do Contrato de Inscrição proíbe.
-⚠️ Custo declarado: quem não tem o número em mãos desiste. A troca é dado que
-nasce ligado ao cadastro e entra no comprovante anual, em vez de doação anônima.
-⚠️ Sem impacto no app: `FEATURES.generosidade = false` — a tela de doação do app
-está DESLIGADA, então não há bundle antigo a quebrar.
-
-Testes: 7 casos novos em `src/test/pagamentosMercadoPago.test.ts` (75 no total).
-**5 mutantes RODADOS e mortos**: cartão voltando a `c.checkout_url` → 1 · Pix
-devolvendo `ticket_url` → 1 · sem o curto-circuito do QR → 1 · sem a retentativa
-do 409 → 1 · conferência de URL aceitando qualquer coisa → 1.
-
-⚠️ **CORREÇÃO DE REGISTRO**: o gate de deploy tem **20** scripts em 27/08 (este
-arquivo diz 10, 12 e 16 em lugares diferentes). Conferir no
-`.github/workflows/deploy-vercel.yml`, nunca aqui.
-
-## ⚠️ Achado de carona, NÃO corrigido (é preexistente e não é do escopo)
+### ⚠️ Achado de carona, NÃO corrigido (é preexistente e não é do escopo)
 
 `POST /financeiro/fila-classificacao/aprovar-massa` marca a fila como `aprovado`
 e **NÃO cria `fin_transacoes`** — diferente do `/classificar/:filaId/aprovar`, que
 é o único caminho que gera o lançamento contábil. Ou seja: aprovar em massa tira o
 item da fila **sem lançar nada**. Não mexi porque muda o comportamento de um botão
 do financeiro que existe desde maio; é conversa com quem opera a fila.
+
+### ⚠️ Campanhas · tarefa EDITÁVEL, N responsáveis ou uma ÁREA (2026-08-27 · migrations `20260827160000` + `20260827170000`)
+
+Pedido do Matheus vendo a aba Cronograma: *"aqui as tarefas devem poder ser
+alteradas, e deve ter a funcionalidade para atribuir responsavel ou
+responsaveis. ou entao atribuir para uma area inteira"* + *"preciso de uma
+funcionalidade para configurar o digito verificador"*.
+
+⚠️⚠️ **N pessoas exige TABELA SATÉLITE** (`camp_marco_responsaveis`), não coluna.
+Lista de gente em texto é o que o módulo Cuidados pagou para descobrir: o mesmo
+pastor em 4 grafias, com o total dele partido em 4 cards. E a LEI nº 3 do projeto
+proíbe responsável como TEXT livre — é UUID com FK. `responsavel_id`/
+`responsavel_nome` ficaram **DEPRECADOS com COMMENT** e saíram do write path
+(medido: 8 marcos, as duas colunas NULAS nos 8 ⇒ zero a migrar). ⏳ Dropar as
+duas quando o Matheus confirmar — DROP COLUMN é destrutivo.
+
+### ⚠️⚠️ A área é `areas` (19), NUNCA `areas_kpi` nem os slugs de `area_responsaveis`
+
+São **três vocabulários diferentes** e escolher o errado faz "atribuir à área"
+não achar ninguém: `areas` (19 · id INTEGER · o organizacional, e o ÚNICO que
+mapeia para PESSOAS) × `areas_kpi` (17 · de indicador, tem "Igreja", "Jornada",
+"Generosidade") × `area_responsaveis` (8 slugs · adm/compras/cozinha/…).
+
+⚠️ A ponte área→pessoa tem **TRÊS saltos** e o último é por **e-mail
+normalizado**, porque `usuarios.id` é INTEGER legado e `profiles.id` é UUID:
+`areas.id → usuario_areas.area_id → usuarios → profiles`. Vive em
+**`fn_camp_pessoas_da_area`** (SQL) de propósito — deixar a cadeia solta no JS
+garantiria que a próxima tela escrevesse a própria versão com um salto de menos.
+Medido em 27/08: **as 19 áreas resolvem entre 1 e 8 pessoas cada**, então avisar
+a área é viável sem risco de spam.
+
+### ⚠️ `vw_colaboradores` exclui 7 contas — e uma é o Pr. Juninho
+
+Ela é a **definição única de equipe** da casa (48 pessoas) e foi reusada em vez
+de eu recriar o filtro. Mas exclui 7 contas COM login do ERP: 5 com nome vindo do
+prefixo do e-mail (resíduo do gatilho de `auth.users`), a conta do revisor da App
+Store e o **Pr. Juninho**. Esconder as 7 faria a tela afirmar que uma pessoa real
+não existe — foi a conclusão a que o Matheus chegou **3× em 25/08** quando um
+seletor omitia alguém em silêncio.
+⇒ O seletor devolve **DOIS grupos rotulados**: a equipe primeiro, e "fora da
+definição de equipe" depois. Ninguém fica invisível e o ruído fica contido.
+⚠️ E a busca do seletor **normaliza acento nos dois lados** (`monica` × `Mônica`)
+— o bug exato do seletor de supervisor de 25/08.
+
+### ⚠️⚠️ O aviso vai só para quem ENTROU
+
+`diffResponsaveis` é o coração: sem ele, salvar a tarefa três vezes (prazo,
+título, status) mandaria **três avisos para as MESMAS pessoas** — o padrão que
+treina a equipe a ignorar o sino (esta base já teve 10.914 avisos em 21 dias, 88%
+não lidos). `chaveDedup` amarra o aviso ao FATO (marco + via).
+
+- ⚠️ **Pessoa nomeada VENCE a área**: com "Marketing + Pedro", quem puxa é o
+  Pedro. Avisar a área junto transformaria toda atribuição nominal em 6-7 avisos.
+  A área só avisa quando **ninguém** foi nomeado.
+- ⚠️ **Quem atribuiu não se avisa a si mesmo.**
+- ⚠️ **Teto de 12 responsáveis**, e é por causa do aviso: tarefa que precisa de
+  mais gente que isso é uma ÁREA, que é o outro caminho. O que ficou de fora é
+  **DECLARADO** (`truncados`/`invalidos`) — descartar em silêncio faz a pessoa
+  salvar, ver menos gente do que marcou e concluir que a tela quebrou.
+- ⚠️ **"sem responsável" ≠ "a área toda"**: a primeira é trabalho que ninguém
+  pegou (cobrança), a segunda é decisão registrada. Colapsar as duas num traço faz
+  a coordenação cobrar quem já está atribuído. E **"não deu pra saber"** é um
+  terceiro estado (`atribuicao_incompleta`), com faixa âmbar.
+- ⚠️ O RÓTULO de exibição mora **só na tela**: um gêmeo em `utils/` não teria
+  chamador e divergiria no primeiro ajuste (regra de não manter código morto como
+  referência viva).
+- Teste: `src/test/marcoAtribuicao.test.ts` (14 casos · no `npm test`). **5
+  mutantes RODADOS e mortos**: área avisada junto da pessoa → 1 vermelho · diff
+  ignorando quem já estava → 3 · `truncados` não declarado → 1 · área aceitando
+  float → 1 · autor recebendo o próprio aviso → 1.
+
+### ⚠️⚠️ A INCLUSÃO MANUAL não somava — furo meu do dia anterior
+
+`POST /campanhas/:id/vinculo` aceitava `incluir: true` desde 26/08 e a view **só
+lia o VETO** (`incluir = false`). O financeiro marcava "este crédito É desta
+campanha" e **o total não se movia, em silêncio**. O caminho do veto funcionava; o
+da inclusão era decoração.
+
+Isso trava duas coisas: quem deposita em espécie ou transfere sem os centavos
+(caso previsto na reunião) e — o urgente — a **troca de dígito**.
+
+⚠️ **E a janela de datas passou a valer SÓ para o caminho do dígito.** Inclusão
+manual é decisão humana explícita: se alguém do financeiro disse que aquele
+crédito é da campanha, a data de início não tem por que desautorizá-lo.
+✅ Provado em produção com um vínculo real e depois removido: um crédito de
+**abril** (R$ 250,25 · fora da janela 01/09→31/10) entrou no total, e o resíduo
+ficou em **zero** depois de apagar.
+
+### ⚠️⚠️ TROCAR O DÍGITO faria o dinheiro desaparecer da barrinha
+
+`vw_camp_arrecadacao` casa o caixa por `identificador_centavo = c.digito`. Trocar
+07 por 08 faria **toda doação já identificada com ,07 sumir do total, sem erro
+nenhum** — o número só ficaria menor.
+
+⚠️ A saída **NÃO é mudar a chave da view** (é ela que impede a dupla contagem do
+repasse do PSP · LEI Nº 6): é o backend **FIXAR o passado** em `camp_vinculos`
+(`incluir = true`) antes de trocar — reusando a máquina que já existe, sem mudar a
+view nem inventar schema.
+
+- ⚠️ **ORDEM: fixa ANTES de trocar.** Morrer no meio deixa inclusões redundantes
+  (inofensivas — a view conta a linha uma vez) e o dígito antigo de pé. A ordem
+  inversa deixaria o dinheiro fora da barrinha.
+- ⚠️ **`ignoreDuplicates: true` é o que PRESERVA O VETO**: se alguém já marcou
+  "este crédito não é daqui", a fixação não pode sobrescrever para `true`.
+- **Rota própria, nível 4** (`POST /:id/digito`), nunca o PUT: trocar o dígito
+  como efeito colateral de salvar um formulário de texto seria a pior forma.
+- **`camp_digito_historico`** é a trilha append-only — é ela que explica, meses
+  depois, por que existe inclusão manual em massa naquela data.
+- ⚠️ A tela DIZ, antes de salvar, quanto já está identificado e que os
+  lançamentos serão fixados. E DIZ que **em rascunho o dígito ainda não
+  identifica nada** (`camp_digitos_ativos()` só devolve campanha ativa/pausada) —
+  sem isso, dinheiro que chegue antes do lançamento não é reconhecido e ninguém
+  entende por quê.
