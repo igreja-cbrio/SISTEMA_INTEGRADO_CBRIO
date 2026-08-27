@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel, bustPermissionCaches } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const atividadeVol = require('../utils/atividadeVoluntario');
 const { acharOuCriarGuardado, acharMembroGuardado, normalizarTelefone } = require('../services/membroMatch');
 const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
 const { cpfValido } = require('../utils/cpf');
@@ -1285,11 +1286,13 @@ router.get('/profiles/:id/detalhe', async (req, res) => {
     const ultimaAtividade = [ultimoServico, ultimoCheckin].filter(Boolean).sort().pop() || null;
     let diasDesde = Infinity;
     if (ultimaAtividade) diasDesde = Math.floor((Date.now() - new Date(ultimaAtividade).getTime()) / 86400000);
-    let nivel, label;
-    if (diasDesde <= 30 && serv4m >= 4) { nivel = 'muito_ativo'; label = 'Muito ativo'; }
-    else if (diasDesde <= 45) { nivel = 'ativo'; label = 'Ativo'; }
-    else if (diasDesde <= 90) { nivel = 'pouco_ativo'; label = 'Pouco ativo'; }
-    else { nivel = 'inativo'; label = 'Inativo'; }
+    // ⚠️ Régua ÚNICA em `utils/atividadeVoluntario` (27/08). Ela nasceu aqui e
+    // saiu porque a LISTA passou a precisar da mesma resposta — duas cópias
+    // divergiriam, e o sintoma seria a lista dizer "inativo" e a ficha "pouco
+    // ativo" sobre a mesma pessoa.
+    const { nivel, label } = atividadeVol.nivelPorDias(
+      Number.isFinite(diasDesde) ? diasDesde : null, serv4m,
+    );
     const termometro = {
       nivel, label,
       dias_desde_ultima_atividade: Number.isFinite(diasDesde) ? diasDesde : null,
@@ -2256,6 +2259,52 @@ router.post('/allocate/:id', async (req, res) => {
 // VOLUNTEERS POOL — all active vol_profiles with team memberships
 // Used by the schedule builder popup. Cached on the client (5 min staleTime).
 // ══════════════════════════════════════════════════════════════
+/**
+ * Última atividade (check-in OU serviço) por voluntário, numa janela.
+ *
+ * ⚠️ Duas consultas AGREGADAS, não uma por pessoa: são ~674 perfis, e o padrão
+ * "N+1" nesta tela seria centenas de idas ao banco a cada abertura.
+ * ⚠️ Janela curta de propósito (120 dias). Quem não aparece nela está a 90+
+ * dias sem servir — que é exatamente o que a tag precisa dizer. Varrer o
+ * histórico inteiro custaria muito para responder a mesma coisa.
+ * ⚠️ As duas leituras são best-effort: falhar aqui devolve mapa vazio e a lista
+ * sai SEM tag, nunca com todo mundo marcado como inativo. Marcar 674 pessoas
+ * como inativas por causa de um erro de consulta seria pior que não marcar.
+ */
+async function ultimaAtividadePorVoluntario() {
+  const desde = new Date(Date.now() - atividadeVol.JANELA_LISTA_DIAS * 86400000).toISOString();
+  const mapa = new Map();
+  const guarda = (chave, iso) => {
+    if (!chave || !iso) return;
+    const atual = mapa.get(chave);
+    if (!atual || iso > atual) mapa.set(chave, iso);
+  };
+  try {
+    for (let pag = 0; pag < 20; pag += 1) {
+      const { data, error } = await supabase.from('vol_check_ins')
+        .select('volunteer_id, checked_in_at')
+        .gte('checked_in_at', desde).not('volunteer_id', 'is', null)
+        .range(pag * 1000, pag * 1000 + 999);
+      if (error) throw error;
+      for (const r of data || []) guarda(r.volunteer_id, r.checked_in_at);
+      if (!data || data.length < 1000) break;
+    }
+    for (let pag = 0; pag < 20; pag += 1) {
+      const { data, error } = await supabase.from('vol_servicos_historico')
+        .select('vol_profile_id, data')
+        .gte('data', desde.slice(0, 10)).is('deleted_at', null)
+        .range(pag * 1000, pag * 1000 + 999);
+      if (error) throw error;
+      for (const r of data || []) guarda(r.vol_profile_id, r.data);
+      if (!data || data.length < 1000) break;
+    }
+  } catch (e) {
+    console.warn('[voluntariado] ultima atividade:', e.message);
+    return null; // ⚠️ null = "não deu pra saber", tratado como SEM tag
+  }
+  return mapa;
+}
+
 router.get('/volunteers-pool', async (req, res) => {
   try {
     // Arquivados (saíram do PCO na reconciliação) ficam FORA por padrão;
@@ -2293,6 +2342,17 @@ router.get('/volunteers-pool', async (req, res) => {
     await anexarMarcadores(all, (p) => p.membresia_id || null, {
       incluirSensiveis: podeVerMarcadorSensivel(req.user),
     });
+
+    // Termômetro de atividade na LISTA (Matheus · 27/08) — a tag "sem servir há
+    // 90+ dias" e o filtro de inativos precisam disto por linha.
+    const atividade = await ultimaAtividadePorVoluntario();
+    for (const p of all) {
+      if (!atividade) { p.atividade = null; continue; } // não deu pra saber
+      const ultima = atividade.get(p.id) || null;
+      const dias = atividadeVol.diasDesde(ultima);
+      const { nivel, label } = atividadeVol.nivelPorDias(dias);
+      p.atividade = { nivel, label, dias_desde: dias, ultima_atividade: ultima };
+    }
 
     res.json(all);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar pool de voluntários' }); }

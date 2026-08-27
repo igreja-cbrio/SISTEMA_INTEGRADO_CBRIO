@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck, UserPlus, X, Cake, Pencil, MessageCircle } from 'lucide-react';
+import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck, UserPlus, X, Cake, Pencil, MessageCircle, ChevronDown } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -98,6 +98,11 @@ function AniversariantesSemana() {
   const [msg, setMsg] = useState<string>(() => {
     try { return localStorage.getItem(BDAY_MSG_KEY) || BDAY_MSG_DEFAULT; } catch { return BDAY_MSG_DEFAULT; }
   });
+  // ⚠️ Nasce RECOLHIDA (pedido do Matheus · 27/08). Recolher só é honesto
+  // porque a CONTAGEM fica no cabeçalho: quem abre a tela continua vendo que há
+  // 10 aniversariantes na semana — o que some é a lista, não o fato. É o mesmo
+  // desenho do painel do agente de voluntariado (13/08).
+  const [aberta, setAberta] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [draft, setDraft] = useState(msg);
 
@@ -125,17 +130,28 @@ function AniversariantesSemana() {
   return (
     <Card className="border-[#00B39D]/30">
       <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <Cake className="h-4 w-4 text-[#00B39D]" />
+        <div className={`flex items-center justify-between gap-2 ${aberta ? 'mb-3' : ''}`}>
+          {/* ⚠️ O cabeçalho INTEIRO abre e fecha — alvo grande, e o chevron
+              deixa claro que há conteúdo embaixo. Ícone pequeno e sozinho não é
+              achado nem por quem pediu a funcionalidade (lição de 18/08). */}
+          <button type="button" onClick={() => setAberta(v => !v)}
+            className="flex flex-1 items-center gap-2 text-left"
+            aria-expanded={aberta}
+            title={aberta ? 'Recolher' : 'Ver os aniversariantes'}>
+            <Cake className="h-4 w-4 shrink-0 text-[#00B39D]" />
             <h3 className="font-semibold text-sm">Aniversariantes da semana</h3>
             <Badge variant="secondary">{rows.length}</Badge>
-          </div>
-          <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-xs" onClick={() => { setDraft(msg); setEditOpen(true); }}>
-            <Pencil className="h-3.5 w-3.5" /> Editar mensagem
-          </Button>
+            <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${aberta ? 'rotate-180' : ''}`} />
+          </button>
+          {/* ⚠️ "Editar mensagem" só com a lista ABERTA: editar o texto de uma
+              lista que não se vê é ruído no cabeçalho recolhido. */}
+          {aberta && (
+            <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-xs" onClick={() => { setDraft(msg); setEditOpen(true); }}>
+              <Pencil className="h-3.5 w-3.5" /> Editar mensagem
+            </Button>
+          )}
         </div>
-        {rows.length === 0 ? (
+        {!aberta ? null : rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhum aniversariante nos próximos 7 dias.</p>
         ) : (
           <div className="space-y-1.5">
@@ -198,6 +214,11 @@ function TodosList() {
   const [search, setSearch] = useState('');
   const [teamFilter, setTeamFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState('all');
+  // ⚠️ "Atividade" é uma pergunta DIFERENTE de "origem" e de "arquivado".
+  // Arquivado = saiu do roster do Planning Center. Inativo = está no roster e
+  // NÃO SERVE há 90+ dias. Dá pra estar ativo no cadastro e inativo na prática
+  // — e é justamente essa lista que o Matheus quis ver (27/08).
+  const [atividadeFilter, setAtividadeFilter] = useState('all');
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ full_name: '', email: '', phone: '', cpf: '' });
   const [detalheId, setDetalheId] = useState<string | null>(null);
@@ -264,8 +285,13 @@ function TodosList() {
     }
     if (sourceFilter === 'pc') list = list.filter(v => !!v.planning_center_id);
     else if (sourceFilter === 'sistema') list = list.filter(v => !v.planning_center_id);
+    // ⚠️ Sem `atividade` (o servidor não conseguiu apurar) a pessoa NÃO entra
+    // nem em "inativos" nem em "servindo": filtrar por um dado que falhou
+    // produziria uma lista de cobrança errada.
+    if (atividadeFilter === 'inativos') list = list.filter(v => v.atividade?.nivel === 'inativo');
+    else if (atividadeFilter === 'servindo') list = list.filter(v => v.atividade && v.atividade.nivel !== 'inativo');
     return list;
-  }, [ativos, arquivados, search, teamFilter, sourceFilter]);
+  }, [ativos, arquivados, search, teamFilter, sourceFilter, atividadeFilter]);
 
   const { pageItems: filteredPag, paginacaoProps: volPagProps } = usePaginacaoLocal(filtered, 25);
 
@@ -333,6 +359,14 @@ function TodosList() {
             <SelectItem value="pc">Planning Center</SelectItem>
             <SelectItem value="sistema">Cadastro interno</SelectItem>
             {arquivados.length > 0 && <SelectItem value="arquivados">Arquivados (saíram do PCO)</SelectItem>}
+          </SelectContent>
+        </Select>
+        <Select value={atividadeFilter} onValueChange={setAtividadeFilter}>
+          <SelectTrigger className="w-full sm:w-44"><SelectValue placeholder="Atividade" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Toda atividade</SelectItem>
+            <SelectItem value="servindo">Servindo (até 90 dias)</SelectItem>
+            <SelectItem value="inativos">Inativos (90+ dias sem servir)</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -427,6 +461,19 @@ function TodosList() {
                     <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${hasPc ? 'border-blue-200 text-blue-700 dark:text-blue-300' : 'border-[#00B39D]/30 text-[#00B39D]'}`}>
                       {hasPc ? 'Planning Center' : 'Interno'}
                     </Badge>
+                    {/* ⚠️ O texto diz "sem servir há 90+ dias", não "Inativo"
+                        solto: nesta MESMA tela "ativo" já significa "não
+                        arquivado" no cabeçalho (674). Rótulo ambíguo em cima de
+                        duas réguas que convivem é como a tela discorda de si
+                        mesma. O title traz o número exato de dias. */}
+                    {vol.atividade?.nivel === 'inativo' && (
+                      <Badge variant="outline" className="border-red-300 px-1.5 py-0 text-[10px] text-red-600 dark:border-red-500/40 dark:text-red-400"
+                        title={vol.atividade?.dias_desde != null
+                          ? `Última vez que serviu: há ${vol.atividade.dias_desde} dias`
+                          : 'Nenhum serviço nem check-in nos últimos 120 dias'}>
+                        sem servir 90+ dias
+                      </Badge>
+                    )}
                     {vol.qr_code && <QrCode className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />}
                     {/* Marcadores de jornada (Arthur Serpa / Pr. Nélio · 13/08/2026).
                         ⚠️ Perfil sem `membresia_id` fica SEM marcador — não dá pra
