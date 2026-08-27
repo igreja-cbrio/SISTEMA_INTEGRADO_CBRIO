@@ -53,15 +53,31 @@ function soDigitos(s) {
 async function ultimoCultoOnlineRecente() {
   const desde = new Date(Date.now() - 3 * 60 * 60 * 1000 - DIAS_REPLAY * 86400000)
     .toISOString().slice(0, 10);
+  // ⚠️⚠️ ORDENA POR DATA **E HORA**. Antes era `.order('data').limit(1)`, e
+  // domingo tem TRÊS cultos online na mesma data (09:30, 11:30 e 19:00) — o
+  // Postgres devolvia qualquer um deles, conforme o plano de execução. Ou
+  // seja: quem decidia na segunda-feira vendo o replay caía num culto
+  // SORTEADO entre os três. O domingo estava certo, o culto não, e o número
+  // por culto ficava sujo sem ninguém perceber.
+  //
+  // ⚠️ A ordenação por hora é feita em JS de propósito: `recurrence_time` vive
+  // na tabela do TIPO (join), e ordenar por coluna de relação no PostgREST é
+  // frágil. São no máximo ~10 cultos online em 7 dias — cabe na memória.
   const { data } = await supabase
     .from('cultos')
-    .select('id, data, vol_service_types!inner(name, has_online)')
+    .select('id, data, vol_service_types!inner(name, has_online, recurrence_time)')
     .eq('vol_service_types.has_online', true)
     .gte('data', desde)
     .order('data', { ascending: false })
-    .limit(1);
-  const c = data?.[0];
-  if (!c) return null;
+    .limit(60);
+  if (!data?.length) return null;
+  const ordenados = [...data].sort((a, b) => {
+    if (a.data !== b.data) return a.data < b.data ? 1 : -1;
+    const ha = a.vol_service_types?.recurrence_time || '';
+    const hb = b.vol_service_types?.recurrence_time || '';
+    return ha < hb ? 1 : ha > hb ? -1 : 0;
+  });
+  const c = ordenados[0];
   return { id: c.id, data: c.data, nome: c.vol_service_types?.name || 'Culto' };
 }
 
