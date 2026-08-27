@@ -45,26 +45,32 @@ function semComentarios(src: string): string {
 describe('import do cliente Supabase no backend', () => {
   const arquivos = arquivosJs(RAIZ);
 
+  // ⚠️ Lê e limpa cada arquivo UMA vez. Antes cada `it` varria os ~700 sozinho,
+  // e na suíte cheia os dois casos estouravam o timeout de 5s do vitest (11,8s
+  // e 12,4s medidos) — passando isolados. Guarda que fica vermelha por TEMPO
+  // acaba sendo ignorada ou removida, que é o oposto do que ela existe pra
+  // fazer. O timeout explícito abaixo é o cinto; isto é o conserto.
+  const fontes = arquivos.map(f => ({ f, src: semComentarios(readFileSync(f, 'utf8')) }));
+  const T = 30_000;
+
   it('há arquivos para varrer (o próprio varredor não pode virar no-op)', () => {
     expect(arquivos.length).toBeGreaterThan(50);
   });
 
   it('⚠️ NENHUM arquivo importa utils/supabase sem desestruturar', () => {
     const errados: string[] = [];
-    for (const f of arquivos) {
-      const src = semComentarios(readFileSync(f, 'utf8'));
+    for (const { f, src } of fontes) {
       // pega `const supabase = require('.../utils/supabase')` (sem chaves)
       if (/(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*require\([^)]*utils\/supabase[^)]*\)/.test(src)) {
         errados.push(f.replace(RAIZ, 'backend'));
       }
     }
     expect(errados, `importe com chaves: const { supabase } = require('../utils/supabase')`).toEqual([]);
-  });
+  }, T);
 
   it('quem usa `supabase.from` importa o cliente de verdade', () => {
     const semImport: string[] = [];
-    for (const f of arquivos) {
-      const src = semComentarios(readFileSync(f, 'utf8'));
+    for (const { f, src } of fontes) {
       if (!/\bsupabase\s*\.\s*(from|rpc|storage)\b/.test(src)) continue;
       const ok = /\{[^}]*\bsupabase\b[^}]*\}\s*=\s*require\([^)]*supabase[^)]*\)/.test(src)
         || /\bsupabase\s*=\s*createClient\(/.test(src)
@@ -73,5 +79,5 @@ describe('import do cliente Supabase no backend', () => {
       if (!ok) semImport.push(f.replace(RAIZ, 'backend'));
     }
     expect(semImport).toEqual([]);
-  });
+  }, T);
 });
