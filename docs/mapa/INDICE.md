@@ -65,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **115** arquivos, **106** com teste.
+`backend/utils/` tem **116** arquivos, **107** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -105,12 +105,13 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/criancaApresentacao.js` | `src/test/cultoApresentacao.test.ts` |
 | `backend/utils/cronAuth.js` | — |
 | `backend/utils/cultoJanela.js` | `src/test/cultoJanela.test.ts` |
-| `backend/utils/cultoToken.js` | `src/test/cultoToken.test.ts` |
+| `backend/utils/cultoToken.js` | `src/test/cultoToken.test.ts` `src/test/decisaoToken.test.ts` |
 | `backend/utils/cursorLote.js` | `src/test/cursorLote.test.ts` |
 | `backend/utils/dadosDoCadastro.js` | `backend/services/membroMatchInsert.test.js` `src/test/portasAlinhadas.test.ts` |
 | `backend/utils/dadosSensiveisPessoa.js` | `src/test/dadosSensiveisPessoa.test.ts` |
 | `backend/utils/decendioComparativo.js` | `src/test/decendioComparativo.test.ts` |
 | `backend/utils/decisaoCampos.js` | `src/test/decisaoCampos.test.ts` |
+| `backend/utils/decisaoToken.js` | `src/test/decisaoToken.test.ts` |
 | `backend/utils/desativarMembro.js` | `src/test/desativarMembro.test.ts` |
 | `backend/utils/digitoCampanha.js` | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/divisorMandala.js` | `src/test/divisorMandala.test.ts` |

@@ -20,7 +20,7 @@ nenhum módulo reivindica são exatamente os candidatos a esse buraco.
 guard (públicas, totens, `/perfil`). Significa que ninguém decidiu — vale
 conferir.
 
-## Telas sem ModuleGuard (76)
+## Telas sem ModuleGuard (77)
 
 | rota | arquivo | pública? |
 |---|---|---|
@@ -49,6 +49,7 @@ conferir.
 | `/next/direcionar/:token` | `src/pages/public/NextDirecionar` | sim |
 | `/inscricao-voluntariado` | `src/pages/public/InscricaoVoluntariado` | sim |
 | `/decisao` | `src/pages/public/DecisaoOnline` | sim |
+| `/decisao/:token` | `src/pages/public/DecisaoOnline` | sim |
 | `/c/:token` | `src/pages/public/DecisaoCulto` | sim |
 | `/wallet` | `src/pages/public/WalletPage` | sim |
 | `/motion` | `src/pages/public/Motion` | sim |
