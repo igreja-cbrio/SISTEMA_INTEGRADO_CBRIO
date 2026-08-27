@@ -1954,9 +1954,30 @@ router.get('/jornada-convertidos', async (req, res) => {
 
     const convertidos = await fetchAll(
       'cui_convertidos',
-      'id, nome, telefone, cpf, membro_id, data_culto, area, primeiro_contato_em, primeiro_contato_status, encontro_status, encontro_responsavel_nome',
+      'id, nome, telefone, cpf, membro_id, data_culto, culto_id, area, primeiro_contato_em, primeiro_contato_status, encontro_status, encontro_responsavel_nome',
       (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; },
     );
+
+    // ⚠️⚠️ DECISÃO VINDA DE VÍDEO ANTIGO. Quando alguém assiste a gravação de um
+    // culto de meses atrás e decide, a jornada começa NO DIA EM QUE PREENCHEU
+    // (é o que `data_culto` guarda), e o culto fica em `culto_id` como ORIGEM.
+    // Sem dizer isso na tela, quem acompanha vê a data do culto lá atrás e lê
+    // como "atrasado há mil dias" — quando a pessoa decidiu ontem.
+    //
+    // ⚠️ É DERIVADO, não guardado: `data_culto` diferente da data do culto de
+    // origem = veio de replay. Coluna para isto seria coluna que um dia
+    // dessincroniza e passa a mentir.
+    const cultoIds = [...new Set(convertidos.map((c) => c.culto_id).filter(Boolean))];
+    const cultoPorId = new Map();
+    for (let i = 0; i < cultoIds.length; i += 200) {
+      const { data: cs } = await supabase
+        .from('cultos')
+        .select('id, data, vol_service_types(name)')
+        .in('id', cultoIds.slice(i, i + 200));
+      for (const c of cs || []) {
+        cultoPorId.set(c.id, { data: c.data, nome: c.vol_service_types?.name || 'Culto' });
+      }
+    }
 
     // ⚠️ RÉGUA ÚNICA com o gráfico do /cuidados (services/marcosConvertido):
     // as duas telas respondem "esse convertido seguiu pra outro valor?" e
@@ -1990,7 +2011,18 @@ router.get('/jornada-convertidos', async (req, res) => {
       // marcos COM DATA (o "quanto tempo levou"). Chave ausente = sem registro.
       const marcos = marcosDe(c, { contatoFeito: contato.feito });
 
-      return { id: c.id, nome: c.nome, telefone: c.telefone, area: c.area, data_culto: c.data_culto, dias_desde_conversao: ddesde, membro_id: c.membro_id, encontro_responsavel_nome: c.encontro_responsavel_nome, contato, batismo, next: nxt, marcos };
+      const origem = c.culto_id ? cultoPorId.get(c.culto_id) : null;
+      const origemReplay = !!(origem?.data && c.data_culto && origem.data !== c.data_culto);
+      return {
+        id: c.id, nome: c.nome, telefone: c.telefone, area: c.area, data_culto: c.data_culto,
+        dias_desde_conversao: ddesde, membro_id: c.membro_id,
+        encontro_responsavel_nome: c.encontro_responsavel_nome,
+        origem_replay: origemReplay,
+        culto_origem: origemReplay
+          ? `${origem.nome} de ${String(origem.data).split('-').reverse().join('/')}`
+          : null,
+        contato, batismo, next: nxt, marcos,
+      };
     });
 
     // derivados de tempo (pura · `hoje` injetado, nunca lido dentro da régua)
