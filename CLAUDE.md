@@ -14523,7 +14523,88 @@ classificado. **Ativar em `/campanhas` antes de 06/09.**
    agradecimento por WhatsApp **não saem**, e isso é DECLARADO na resposta em vez
    de virar "0 enviados" com cara de sucesso.
 
-### ⚠️ Achado de carona, NÃO corrigido (é preexistente e não é do escopo)
+### ⚠️⚠️ Os agentes diagnosticavam e MANDAVAM PUSH pra uma tela que não existia (2026-08-27 · SEM migration)
+
+O Matheus recebeu no celular *"Incident Backend_diagnostician: 1 problema(s)
+crítico(s) — Causa provável: falha silenciosa na lógica de negócio da rota"* e
+perguntou onde ler aquilo. **Não havia onde.**
+
+| peça | estado |
+|---|---|
+| agente de incidente | ✅ roda desde 17/08 · **18 diagnósticos** completos |
+| diagnóstico estruturado | ✅ gravado em `system_incident_events.metadata.diagnosis` (causa provável, evidências, plano de ação, passos de validação, pergunta de decisão) |
+| notificação | ✅ sai, com `link: /assistente-ia?run=<id>` |
+| `/assistente-ia` | 🔴 3 abas (Equipe · Entrada · Membros) · **`grep` por `agent_runs`/`findings` = ZERO** · e **ignorava o `?run=`** |
+| `/sistema` → "Ver análise" | 🔴 carregava o evento e renderizava **só o `message`**, jogando fora o `metadata.diagnosis` |
+| `GET /agents/runs` | ✅ existe em `api.js` e **nenhuma tela consumia** |
+
+⇒ Aba **Diagnósticos** em `/assistente-ia` (`TabDiagnosticos.jsx` +
+`GET /api/agents/diagnosticos`), e o `/sistema` passou a renderizar o
+diagnóstico que já vinha na resposta.
+
+### ⚠️ As decisões que impedem a aba de mentir
+
+- ⚠️⚠️ **Finding SEM incidente NÃO desaparece.** Medido: dos **61** achados,
+  **43 são auditorias de módulo** sem `incident_id`. Filtrar por incidente
+  esvaziaria a aba — e "vazia" é indistinguível de "não há nada errado".
+- ⚠️⚠️ **Incidente RESOLVIDO/risco_aceito é `encerrado`, em CINZA**, e não conta
+  no badge: plano de ação de coisa já decidida cobraria trabalho feito. Verde
+  também está errado — `risco_aceito` não foi consertado.
+- **Plano de ação tem DUAS fontes**: `recommended_actions` (array, dos agentes de
+  incidente) e o `suggestion` do finding (string com ` | `, das auditorias
+  antigas). Sem nenhuma, a TELA **declara** a ausência — lista vazia sem
+  explicação é a tela muda de novo.
+- ⚠️ **`agent_type` cru nunca vai pra tela**: `module_rh` viraria "module_rh" no
+  card; vira "Auditoria · Rh". Conferido nos 61 itens reais: 0 crus.
+- ⚠️ **O item que veio do push nunca é escondido pelo filtro** — a pessoa clicou
+  na notificação pra ler AQUELE.
+- ⚠️ **Uma requisição resolve a tela**: o front NÃO costura `agent_runs` +
+  `system_incidents` + `system_incident_events` (61 findings viravam ~120 idas ao
+  banco numa tela aberta por push). `.in()` em lotes ≤200, e **erro PROPAGA** —
+  incidente que não veio faria um caso resolvido reaparecer como pendência.
+- ⚠️ **100% leitura.** Decidir o incidente segue no `/sistema`, o módulo dono da
+  fila. 2º caminho de escrita é a classe de bug que o desenho evita.
+- ⚠️ `id` do item é `(run_id, posição)`: a mesma run tem N findings, e só o
+  `run_id` faria o React reusar o card errado ao filtrar.
+- ⚠️ `GET /agents/diagnosticos` é `authorize('admin','diretor')` — o corpo
+  descreve falha interna, rota e release. **O `GET /agents/runs` preexistente tem
+  só `authenticate`**; estreitá-lo é mudança de autorização e fica pra decisão.
+
+**Estado medido em 27/08**: 61 achados · **8 abertos, todos críticos, todos com
+plano de ação e todos pedindo decisão** · 10 encerrados · 43 auditorias antigas.
+
+### ⚠️⚠️ E o incidente da notificação era REAL · `POST /patrimonio/bens/bulk/baixa`
+
+500 em produção às 14:10 BRT, 14 segundos depois de duas baixas individuais
+darem certo. **A rota escrevia NADA** (2 baixas hoje, 2 movimentações — sem
+resíduo parcial), então o erro veio ANTES do laço: em `bensEmRevisaoAtiva`, o
+único ponto que **lança**.
+
+- ⚠️⚠️ **`.in('bem_id', ids)` sem lote, alimentado por "Selecionar todos os N
+  filtrados" numa base de 4.271 bens** — a URL do PostgREST estoura. Virou lotes
+  de 200 (lei do projeto), e a função é compartilhada com o `PUT /bens/bulk`.
+- ⚠️⚠️ **O laço fazia 2 idas ao banco POR BEM**: 2.488 bens = ~5 mil round-trips,
+  o cliente aborta em 30s e mostra "tempo esgotado" enquanto o servidor segue
+  gravando — baixa PARCIAL sem ninguém saber quais. Virou escrita em LOTE, com
+  **fallback item-a-item quando o lote é recusado** (senão um bem problemático
+  levaria 199 bons em silêncio).
+- ⚠️⚠️ **O `catch` respondia texto genérico SEM LOGAR o `e`** — então o motivo
+  real não existia em lugar nenhum: nem no banco, nem no log da função. É por
+  isso que `app_erros_servidor` só tinha *"HTTP 500 respondido pela rota (sem
+  exceção)"* e o agente só pôde dizer "falha silenciosa". Agora loga e devolve
+  `detalhe`.
+
+⚠️ **NÃO afirmo qual das duas causas disparou aquele 500**: o motivo foi
+destruído pelo catch, e não há credencial de Vercel nesta sessão pra ler o log da
+função. As duas são defeitos reais e as duas foram corrigidas; a próxima
+ocorrência vai se nomear.
+
+⚠️ **Régua que fica: `catch (e) { res.status(500).json({error:'texto'}) }` sem
+logar o `e` é apagar o diagnóstico.** Com o coletor de erros vendo só o status
+HTTP, o agente de incidente fica sem matéria-prima — e o push chega dizendo
+"falha silenciosa" porque ela é, literalmente, silenciosa por construção.
+
+## ⚠️ Achado de carona, NÃO corrigido (é preexistente e não é do escopo)
 
 `POST /financeiro/fila-classificacao/aprovar-massa` marca a fila como `aprovado`
 e **NÃO cria `fin_transacoes`** — diferente do `/classificar/:filaId/aprovar`, que

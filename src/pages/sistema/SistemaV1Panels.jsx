@@ -333,6 +333,58 @@ function IncidentForm({ onCreated }) {
   );
 }
 
+/**
+ * Diagnóstico estruturado que o agente especialista registrou no evento.
+ *
+ * ⚠️ Renderiza NADA quando não há diagnóstico (evento de triagem, nota humana) —
+ * bloco vazio com título faria toda nota parecer diagnóstico faltando.
+ * ⚠️ Só LEITURA: decidir o incidente é o `select` de status ao lado; a versão
+ * completa desta análise, com filtros, é a aba Diagnósticos do /assistente-ia.
+ */
+function DiagnosticoDoAgente({ diagnosis }) {
+  if (!diagnosis || typeof diagnosis !== 'object') return null;
+  const acoes = Array.isArray(diagnosis.recommended_actions) ? diagnosis.recommended_actions.filter(Boolean) : [];
+  const validacao = Array.isArray(diagnosis.validation_steps) ? diagnosis.validation_steps.filter(Boolean) : [];
+  const evidencias = Array.isArray(diagnosis.evidence) ? diagnosis.evidence.filter(Boolean) : [];
+  const pergunta = diagnosis.decision_required === true ? String(diagnosis.decision_question || '').trim() : '';
+
+  return (
+    <div className="mt-2 space-y-3 rounded-lg border bg-background/60 p-3">
+      {diagnosis.probable_cause && (
+        <p className="text-sm"><span className="font-semibold">Causa provável · </span>{diagnosis.probable_cause}</p>
+      )}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        {diagnosis.classification && <span>tipo: <strong>{diagnosis.classification}</strong></span>}
+        {diagnosis.confidence && <span>confiança: <strong>{diagnosis.confidence}</strong></span>}
+        {diagnosis.risk_level && <span>risco: <strong>{diagnosis.risk_level}</strong></span>}
+      </div>
+      {acoes.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Plano de ação sugerido</p>
+          <ol className="mt-1 list-decimal space-y-1 pl-5 text-sm">{acoes.map((a, i) => <li key={i}>{a}</li>)}</ol>
+        </div>
+      )}
+      {validacao.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Como validar antes de mexer</p>
+          <ol className="mt-1 list-decimal space-y-1 pl-5 text-sm">{validacao.map((a, i) => <li key={i}>{a}</li>)}</ol>
+        </div>
+      )}
+      {evidencias.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Evidências</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">{evidencias.map((a, i) => <li key={i}>{a}</li>)}</ul>
+        </div>
+      )}
+      {pergunta && (
+        <div className="rounded-md border border-primary/40 bg-primary/10 p-2 text-sm">
+          <span className="font-semibold">O agente precisa de uma decisão: </span>{pergunta}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function IncidentsPanel() {
   const [items, setItems] = useState([]);
   const [filter, setFilter] = useState('ativos');
@@ -480,9 +532,13 @@ export function IncidentsPanel() {
                             {(eventsByIncident[incident.id] || []).map((event) => (
                               <div key={event.id} className="flex gap-3 text-sm">
                                 <CircleDot className="mt-0.5 h-4 w-4 shrink-0 text-cyan-500" />
-                                <div>
+                                <div className="min-w-0 flex-1">
                                   <p>{event.message || (String(event.from_status || '') + ' → ' + String(event.to_status || ''))}</p>
                                   <p className="mt-0.5 text-xs text-muted-foreground">{event.actor_email || 'sistema'} · {relativeTime(event.created_at)}</p>
+                                  {/* ⚠️ O diagnóstico do agente vinha nesta resposta e era
+                                      DESCARTADO — a tela mostrava só a 1ª frase do `message`
+                                      e o plano de ação nunca chegava a ninguém (27/08/2026). */}
+                                  <DiagnosticoDoAgente diagnosis={event.metadata?.diagnosis} />
                                 </div>
                               </div>
                             ))}

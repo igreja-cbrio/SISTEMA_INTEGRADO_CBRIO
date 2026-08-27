@@ -1271,6 +1271,8 @@ export const agents = {
   log: () => get('/agents/log'),
   run: (data) => post('/agents/run', data),
   runs: (params) => get('/agents/runs' + (params ? '?' + new URLSearchParams(params) : '')),
+  // O que os agentes acharam + plano de ação (aba Diagnósticos do /assistente-ia).
+  diagnosticos: (params) => get('/agents/diagnosticos' + (params ? '?' + new URLSearchParams(params) : '')),
   runDetail: (id) => get(`/agents/runs/${id}`),
   runSteps: (id) => get(`/agents/runs/${id}/steps`),
   cancelRun: (id) => post(`/agents/runs/${id}/cancel`),

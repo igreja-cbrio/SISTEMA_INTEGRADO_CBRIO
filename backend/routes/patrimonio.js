@@ -579,11 +579,23 @@ router.delete('/bens/:id', authorizeModule('patrimonio', 4), async (req, res) =>
 // minúcia que a revisão busca. Bloqueia em vez de deixar acontecer em
 // silêncio (mesmo risco já existia editando 1 bem por vez; em massa é mais
 // fácil atingir vários sem perceber).
+// ⚠️⚠️ `.in()` SEMPRE EM LOTES ≤200 (lei do projeto). Esta função é chamada com
+// o resultado do botão "Selecionar todos os N filtrados", e a base tem **4.271
+// bens** — a URL do PostgREST com milhares de UUIDs estoura, a consulta falha, e
+// como a função LANÇA, o handler devolvia **500 sem motivo nenhum** (foi o
+// incidente de 27/08/2026 no `bulk/baixa`, diagnosticado pelo agente como
+// "falha silenciosa").
+const LOTE_IDS = 200;
+
 async function bensEmRevisaoAtiva(ids) {
-  const { data, error } = await supabase.from('pat_revisao_itens')
-    .select('bem_id, pat_bens(nome), convocacao:pat_revisao_convocacoes(status, pat_localizacoes(nome))')
-    .in('bem_id', ids);
-  if (error) throw new Error(error.message);
+  const data = [];
+  for (let i = 0; i < ids.length; i += LOTE_IDS) {
+    const { data: parte, error } = await supabase.from('pat_revisao_itens')
+      .select('bem_id, pat_bens(nome), convocacao:pat_revisao_convocacoes(status, pat_localizacoes(nome))')
+      .in('bem_id', ids.slice(i, i + LOTE_IDS));
+    if (error) throw new Error(error.message);
+    data.push(...(parte || []));
+  }
   const vistos = new Set();
   const conflitos = [];
   for (const item of data || []) {
@@ -625,7 +637,12 @@ router.put('/bens/bulk', authorizeModule('patrimonio', 3), async (req, res) => {
     const { data, error } = await supabase.from('pat_bens').update(update).in('id', ids).select('id');
     if (error) return res.status(400).json({ error: error.message });
     res.json({ atualizados: (data || []).length });
-  } catch (e) { res.status(500).json({ error: 'Erro ao editar bens em massa' }); }
+  } catch (e) {
+    // Mesma régua do `bulk/baixa`: catch que não loga apaga o diagnóstico, e o
+    // agente de incidente só consegue dizer "falha silenciosa".
+    console.error('[patrimonio] bulk (editar) falhou:', e.message, { ids: (req.body?.ids || []).length });
+    res.status(500).json({ error: 'Erro ao editar bens em massa', detalhe: e.message });
+  }
 });
 
 // Corrige erro de digitação repetido no nome de vários bens de uma vez
@@ -686,16 +703,52 @@ router.post('/bens/bulk/baixa', authorizeModule('patrimonio', 4), async (req, re
     const falhas = [];
     let sucesso = 0;
     const hoje = new Date().toISOString().slice(0, 10);
-    for (const bemId of ids) {
-      const { error: movErr } = await supabase.from('pat_movimentacoes')
-        .insert({ bem_id: bemId, tipo: 'baixa', responsavel_id: req.user.userId, motivo: motivo || null, created_by: req.user.userId });
-      if (movErr) { falhas.push({ id: bemId, erro: movErr.message }); continue; }
-      const { error } = await supabase.from('pat_bens').update({ status: 'baixado', data_baixa: hoje }).eq('id', bemId);
-      if (error) { falhas.push({ id: bemId, erro: error.message }); continue; }
-      sucesso++;
+
+    // ⚠️⚠️ EM LOTES, não um-a-um. Eram 2 idas ao banco POR BEM: com o botão
+    // "Selecionar todos os N filtrados" (a base tem 4.271 bens) isso vira
+    // milhares de round-trips — o cliente aborta em 30s e mostra "tempo
+    // esgotado" enquanto o servidor segue gravando, deixando baixa PARCIAL sem
+    // ninguém saber quais. É a lei de 04/08 ("gravar o efeito DURANTE"): agora
+    // cada lote conclui e é contado antes do próximo.
+    for (let i = 0; i < ids.length; i += LOTE_IDS) {
+      const lote = ids.slice(i, i + LOTE_IDS);
+      const linhas = lote.map((bemId) => ({
+        bem_id: bemId, tipo: 'baixa', responsavel_id: req.user.userId,
+        motivo: motivo || null, created_by: req.user.userId,
+      }));
+      const { error: movErr } = await supabase.from('pat_movimentacoes').insert(linhas);
+      if (movErr) {
+        // ⚠️ Lote recusado NÃO condena os 200: refaz um a um pra identificar
+        // QUEM falhou (mesma régua do UPDATE campo-a-campo do censo, 17/08).
+        // Sem isso, um bem problemático levaria 199 bons embora em silêncio.
+        for (const bemId of lote) {
+          const { error: e1 } = await supabase.from('pat_movimentacoes').insert({
+            bem_id: bemId, tipo: 'baixa', responsavel_id: req.user.userId,
+            motivo: motivo || null, created_by: req.user.userId,
+          });
+          if (e1) { falhas.push({ id: bemId, erro: e1.message }); continue; }
+          const { error: e2 } = await supabase.from('pat_bens')
+            .update({ status: 'baixado', data_baixa: hoje }).eq('id', bemId);
+          if (e2) { falhas.push({ id: bemId, erro: e2.message }); continue; }
+          sucesso += 1;
+        }
+        continue;
+      }
+      const { data: atualizados, error } = await supabase.from('pat_bens')
+        .update({ status: 'baixado', data_baixa: hoje }).in('id', lote).select('id');
+      if (error) { lote.forEach((id) => falhas.push({ id, erro: error.message })); continue; }
+      sucesso += (atualizados || []).length;
     }
     res.json({ sucesso, falhas });
-  } catch (e) { res.status(500).json({ error: 'Erro ao dar baixa em massa' }); }
+  } catch (e) {
+    // ⚠️⚠️ O MOTIVO PRECISA SAIR DAQUI. Antes o catch respondia texto genérico
+    // **sem logar o `e`**, então o motivo real não existia em lugar nenhum — nem
+    // no banco, nem no log da função. O coletor `app_erros_servidor` só via
+    // "HTTP 500 respondido pela rota (sem exceção)", e o agente de incidente não
+    // tinha o que diagnosticar além de "falha silenciosa".
+    console.error('[patrimonio] bulk/baixa falhou:', e.message, { ids: (req.body?.ids || []).length });
+    res.status(500).json({ error: 'Erro ao dar baixa em massa', detalhe: e.message });
+  }
 });
 
 // ── MOVIMENTAÇÕES ──────────────────────────────────────────
