@@ -16,7 +16,7 @@ const path = require('path');
 const { requestContext } = require('./middleware/requestContext');
 const { systemJobTracking } = require('./middleware/systemJobTracking');
 const { setSystemJobOutcome } = require('./services/systemJobOutcome');
-const { recordServerError } = require('./services/serverErrorTelemetry');
+const { criarTelemetria500 } = require('./middleware/telemetria500');
 const { createCorsOriginValidator } = require('./utils/corsPolicy');
 const { createErrorHandler, requestRoute } = require('./middleware/errorHandler');
 
@@ -118,30 +118,10 @@ app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody =
 if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
 app.use(systemJobTracking);
 
-// ── Telemetria de 500 (aba "Erros do servidor" do Feedback) ──
-// O error handler global só vê exceções NÃO tratadas; a maioria dos 500 reais
-// é respondida pela própria rota (res.status(500).json(...)) e ficava
-// invisível — "nenhum erro" na tela era falso. Este hook registra QUALQUER
-// resposta >= 500 no finish; o error handler marca res.locals pra não duplicar.
-app.use((req, res, next) => {
-  res.on('finish', () => {
-    if (res.statusCode < 500 || res.locals._erro500Registrado) return;
-    try {
-      void recordServerError({
-        user_id: req.user?.id || null,
-        user_email: req.user?.email || null,
-        metodo: req.method,
-        rota: requestRoute(req),
-        mensagem: `HTTP ${res.statusCode} respondido pela rota (sem exceção · ver logs da função)`,
-        status: res.statusCode,
-        request_id: req.requestId,
-        release: process.env.VERCEL_GIT_COMMIT_SHA || null,
-        environment: process.env.VERCEL_ENV || process.env.NODE_ENV || 'unknown',
-      }).catch((e) => console.warn('[app_erros_servidor]', e.message));
-    } catch (_) { /* tabela ausente / supabase off · ignora */ }
-  });
-  next();
-});
+// ── Telemetria de 500 (alimenta a aba "Erros do servidor" e o agente) ──
+// A régua vive em `middleware/telemetria500.js` pra poder ser TESTADA — ver o
+// cabeçalho de lá (caminho 3: dar motivo real ao agente de incidente).
+app.use(criarTelemetria500());
 
 // ── Routes ──
 app.use('/api/telemetry', require('./routes/systemTelemetry')); // Web Vitals anônimos, best-effort

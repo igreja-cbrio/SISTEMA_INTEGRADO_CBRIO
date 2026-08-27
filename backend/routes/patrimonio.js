@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const { falhaInterna } = require('../utils/responderFalha');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
@@ -641,7 +642,7 @@ router.put('/bens/bulk', authorizeModule('patrimonio', 3), async (req, res) => {
     // Mesma régua do `bulk/baixa`: catch que não loga apaga o diagnóstico, e o
     // agente de incidente só consegue dizer "falha silenciosa".
     console.error('[patrimonio] bulk (editar) falhou:', e.message, { ids: (req.body?.ids || []).length });
-    res.status(500).json({ error: 'Erro ao editar bens em massa', detalhe: e.message });
+    return falhaInterna(res, 'Erro ao editar bens em massa', e, { exporDetalhe: true });
   }
 });
 
@@ -747,7 +748,7 @@ router.post('/bens/bulk/baixa', authorizeModule('patrimonio', 4), async (req, re
     // "HTTP 500 respondido pela rota (sem exceção)", e o agente de incidente não
     // tinha o que diagnosticar além de "falha silenciosa".
     console.error('[patrimonio] bulk/baixa falhou:', e.message, { ids: (req.body?.ids || []).length });
-    res.status(500).json({ error: 'Erro ao dar baixa em massa', detalhe: e.message });
+    return falhaInterna(res, 'Erro ao dar baixa em massa', e, { exporDetalhe: true });
   }
 });
 

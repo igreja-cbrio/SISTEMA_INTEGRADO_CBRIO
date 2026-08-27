@@ -14604,6 +14604,104 @@ logar o `e` é apagar o diagnóstico.** Com o coletor de erros vendo só o statu
 HTTP, o agente de incidente fica sem matéria-prima — e o push chega dizendo
 "falha silenciosa" porque ela é, literalmente, silenciosa por construção.
 
+## ⚠️⚠️ CAMINHO 3 · dar OLHOS ao agente em vez de afrouxar os portões (2026-08-27 · SEM migration)
+
+Pergunta do Matheus, olhando a aba nova: *"mas eles só apontam, não corrigem os
+erros??"* — e a medição mostrou que **a correção automática existe ponta a ponta e
+nunca disparou uma única vez**.
+
+### O que foi medido
+
+O agente de incidente tem TRÊS etapas: triagem → diagnóstico →
+**`runIncidentCorrectionPlanningBatch`** (`services/systemIncidentCorrection.js`,
+`incident-correction-v3`), que vira tarefa pro agente dev do Railway — o qual
+corrige, aplica migration e mergeia o PR, atrás de **dois portões humanos** (G1
+antes de tocar o código, G2 no PR). A máquina FUNCIONA: as 2 tarefas que o agente
+dev já recebeu (14/08) estão `concluida`.
+
+**Mas: 0 propostas de correção na história do banco.** Rodando a régua REAL de
+elegibilidade contra os 18 diagnósticos:
+
+| exigência | quantos passam |
+|---|---|
+| não pedir decisão humana | **0 de 18** |
+| risco `baixo` ou `medio` | 1 de 18 (17 são `alto`) |
+| confiança `media`/`alta` | 16 de 18 |
+| classificação `codigo`/`experiencia_usuario` | 14 de 18 |
+
+⇒ **zero elegíveis**, com cada diagnóstico barrado por 2–3 gates ao mesmo tempo.
+
+⚠️⚠️ **A causa é UMA: o agente não tem olhos.** O único sinal que chegava a ele
+era o STATUS HTTP — `app_erros_servidor.mensagem` gravava literalmente
+`"HTTP 500 respondido pela rota (sem exceção · ver logs da função)"`, e ele não lê
+o log da função. Sem matéria-prima, ele **sempre** termina perguntando "você tem
+acesso aos logs estruturados?" (`decision_required: true`) e classifica risco como
+`alto` por prudência. Os dois gates que fecham 18/18 são consequência da cegueira,
+não de conservadorismo configurado.
+
+**Medido no backend: 791 blocos `catch` respondem 5xx sem logar NADA** (60
+arquivos · top: voluntariado 92, financeiroV2 51, financeiro 47, membresia 44) — e
+mesmo os **1.208** que logam mandam pro log da Vercel, que o agente não lê.
+
+### ⚠️⚠️ A escolha: capturar no CLIENTE DO SUPABASE, não nos 791 catches
+
+Editar 791 blocos à mão não é caminho. O `fetch` do cliente do Supabase é o ponto
+ÚNICO por onde passa toda consulta ao PostgREST — e `global.fetch` é ponto de
+extensão **oficial** do supabase-js, não monkey-patch de builder.
+
+- **`utils/supabase.js` · `fetchQueAnotaFalha`** anota `message · details · hint` +
+  `code` da falha, por requisição.
+- **`utils/contextoFalha.js`** (`AsyncLocalStorage`) carrega isso até o coletor: o
+  cliente é singleton importado por 298 arquivos e **não tem o `res` na mão**.
+  Aberto no `requestContext`, o 1º middleware da cadeia.
+- **`middleware/telemetria500.js`** (extraído do `server.js` **pra poder ser
+  testado**) escolhe o motivo: `res.locals.motivoFalha` (a rota entregou) →
+  falha de banco da requisição → **nada, e aí a mensagem fica IDÊNTICA à de antes**.
+- **`utils/responderFalha.falhaInterna(res, publico, erro)`** é o caminho pro erro
+  que nasce FORA do banco. O texto que a pessoa lê **não muda**; o que muda é o
+  motivo passar a existir. Semeado no `patrimonio` (as 2 rotas de lote).
+- O `stack` entregue pela rota alimenta o **`code_context`** do agente, que ele já
+  sabia extrair e nunca recebia.
+
+⚠️⚠️ **`resposta.clone()` e SÓ quando falha**: ler o corpo direto o consumiria e
+**quebraria toda consulta do sistema** — é o mutante que mata 6 testes. E o
+wrapper é `try/catch` inteiro: exceção de TELEMETRIA não pode derrubar a consulta
+de quem está usando o sistema.
+
+⚠️⚠️ **O texto vai pra uma IA.** `systemIncidentDiagnosis` lê essa coluna e manda
+pro modelo, então `sanitizarMotivo` é obrigatório: mensagem do PostgREST embute
+VALOR (`Key (cpf)=(12345678901) already exists`). Mascara CPF/e-mail/segredo e
+**preserva o que é diagnóstico** (coluna, constraint, código).
+⚠️ **O UUID é poupado explicitamente** — meu comentário dizia que "o hífen quebra
+a sequência" e era MENTIRA (`-` está no charset), então o `request_id` virava
+`[segredo]`, apagando o rastreio. O teste pegou.
+⚠️ **Só o CAMINHO da URL é guardado, nunca a query string**: ela carrega valor de
+filtro (cpf, e-mail, id de pessoa).
+
+### ⚠️ O que isto NÃO faz
+
+- **Não afrouxou nenhum gate de correção.** `decision_required` e o teto de risco
+  seguem como estavam — a aposta é que, com motivo real, a confiança suba e o
+  risco caia por MÉRITO. Se em duas semanas os diagnósticos novos continuarem
+  todos `alto`, a conversa volta.
+- **Não conserta os 18 incidentes existentes**: a mensagem deles já foi gravada
+  genérica e o motivo original não existe em lugar nenhum. Vale pra frente.
+- **Não editou os 791 catches.** A maioria passa a ter motivo de graça (falha de
+  PostgREST); erro que nasce fora do banco segue precisando do `falhaInterna`, e a
+  varredura é trabalho mecânico pra outra leva.
+
+Testes no gate: `motivoFalha` (16) · `telemetria500` (6, **Express de verdade**) ·
+`fetchFalhaDb` (9, **servidor HTTP de verdade**). **7 mutantes RODADOS e mortos**:
+ALS não aberto → 3 vermelhos · ignorar o motivo do banco → 3 · não gravar o stack →
+1 · sanitização desligada → 2 · guarda de uuid removida → 1 · **ler o corpo sem
+clonar → 6** · guardar a query string → 2.
+
+⚠️ **LIÇÃO DE MÉTODO, 2ª vez no dia**: `run(){ npx vitest run $T }` em **zsh NÃO
+separa `$T` em palavras** — os 7 mutantes "passaram" em silêncio na primeira
+rodada porque o vitest recebia um argumento só e não achava arquivo nenhum. Em
+zsh, usar `eval` ou `${=T}`, e **conferir a linha BASE do mutation test** (se a
+base não imprime contagem, o loop está quebrado, não o código).
+
 ## ⚠️ Achado de carona, NÃO corrigido (é preexistente e não é do escopo)
 
 `POST /financeiro/fila-classificacao/aprovar-massa` marca a fila como `aprovado`
