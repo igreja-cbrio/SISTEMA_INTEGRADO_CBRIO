@@ -20,7 +20,7 @@ nenhum módulo reivindica são exatamente os candidatos a esse buraco.
 guard (públicas, totens, `/perfil`). Significa que ninguém decidiu — vale
 conferir.
 
-## Telas sem ModuleGuard (75)
+## Telas sem ModuleGuard (76)
 
 | rota | arquivo | pública? |
 |---|---|---|
@@ -57,6 +57,7 @@ conferir.
 | `/suporte` | `src/pages/public/Suporte` | sim |
 | `/nps/publica/:token` | `src/pages/public/NpsPublica` | sim |
 | `/censo/p/:slug` | `src/pages/public/CensoPublica` | sim |
+| `/campanha/:slug` | `src/pages/public/CampanhaPublica` | sim |
 | `/kids/retirada/:codigo` | `src/pages/public/KidsRetirada` | sim |
 | `/auth/pc-callback` | `src/pages/auth/PcCallback` | sim |
 | `/devocional` | `src/pages/devocional/DevocionalMovido` | sim |
@@ -100,7 +101,7 @@ conferir.
 | `/admin/grupos/temporadas` | `src/pages/admin/TemporadasGrupos` | sim |
 | `/suporte` | `src/pages/public/Suporte` | sim |
 
-## Arquivos de rota que nenhum módulo reivindica (77)
+## Arquivos de rota que nenhum módulo reivindica (78)
 
 - `backend/routes/agentTasks.js`
 - `backend/routes/agenteBatismoNext.js`
@@ -147,6 +148,7 @@ conferir.
 - `backend/routes/projects.js`
 - `backend/routes/publicApresentacao.js`
 - `backend/routes/publicBatismo.js`
+- `backend/routes/publicCampanha.js`
 - `backend/routes/publicCenso.js`
 - `backend/routes/publicDecisaoCulto.js`
 - `backend/routes/publicDecisaoOnline.js`

@@ -64,6 +64,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 
 **Tabelas que estas rotas tocam**
 
+- `camp_campanhas`
 - `inscricao_consentimentos`
 - `mem_grupos`
 - `mem_membros`

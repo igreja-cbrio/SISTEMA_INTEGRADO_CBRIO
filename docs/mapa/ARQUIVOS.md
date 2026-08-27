@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-348 arquivos.
+356 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -31,6 +31,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/authPlanningCenter.js` | rota backend | — | `/api/auth/planning-center` |
 | `backend/routes/batismoFotos.js` | rota backend | marketing | `/api/batismo-fotos` |
 | `backend/routes/bible.js` | rota backend | — | `/api/bible` |
+| `backend/routes/campanhas.js` | rota backend | campanhas | `/api/campanhas` |
 | `backend/routes/censo.js` | rota backend | censo | `/api/censo` |
 | `backend/routes/cerebro.js` | rota backend | cerebro | `/api/cerebro` |
 | `backend/routes/coberturas.js` | rota backend | — | `/api/coberturas` |
@@ -95,6 +96,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/propostas.js` | rota backend | propostas | `/api/propostas` |
 | `backend/routes/publicApresentacao.js` | rota backend | — | `/api/public/apresentacao-criancas` |
 | `backend/routes/publicBatismo.js` | rota backend | — | `/api/public/batismo` |
+| `backend/routes/publicCampanha.js` | rota backend | — | `/api/public/campanhas` |
 | `backend/routes/publicCenso.js` | rota backend | — | `/api/public/censo` |
 | `backend/routes/publicDecisaoCulto.js` | rota backend | — | `/api/public/decisao-culto` |
 | `backend/routes/publicDecisaoOnline.js` | rota backend | — | `/api/public/decisao-online` |
@@ -151,6 +153,9 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/avisoEscala.js` | régua pura | — | `src/test/avisoEscala.test.ts` |
 | `backend/utils/avisoGrupoApp.js` | régua pura | — | `src/test/avisoGrupoApp.test.ts` |
 | `backend/utils/batismoHorario.js` | régua pura | — | `src/test/batismoHorario.test.ts` |
+| `backend/utils/campanhaAgradecimento.js` | régua pura | — | `backend/services/campanhaDigito.test.js` |
+| `backend/utils/campanhaProgresso.js` | régua pura | — | `backend/services/campanhaDigito.test.js` |
+| `backend/utils/campanhaPublico.js` | régua pura | — | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/campoKey.js` | régua pura | — | `src/test/campoKey.test.ts` |
 | `backend/utils/camposCondicionais.js` | régua pura | — | `src/test/camposCondicionais.test.ts` |
 | `backend/utils/camposContato.js` | régua pura | — | `src/test/saneamentoInscricaoApp.test.ts` |
@@ -175,6 +180,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/decendioComparativo.js` | régua pura | — | `src/test/decendioComparativo.test.ts` |
 | `backend/utils/decisaoCampos.js` | régua pura | — | `src/test/decisaoCampos.test.ts` |
 | `backend/utils/desativarMembro.js` | régua pura | — | `src/test/desativarMembro.test.ts` |
+| `backend/utils/digitoCampanha.js` | régua pura | — | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/divisorMandala.js` | régua pura | — | `src/test/divisorMandala.test.ts` |
 | `backend/utils/dsOnline.js` | régua pura | — | `src/test/dsOnline.test.ts` |
 | `backend/utils/entradaGrupoApp.js` | régua pura | — | `src/test/entradaGrupoApp.test.ts` |
@@ -261,6 +267,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/atlas/Atlas` | tela ERP | — | `/atlas` |
 | `src/pages/atlas/Atlas` | tela ERP | — | `/atlas/fluxograma` |
 | `src/pages/auth/PcCallback` | tela ERP | — | `/auth/pc-callback` |
+| `src/pages/Campanhas` | tela ERP | campanhas | `/campanhas` |
 | `src/pages/Comunicacao` | tela ERP | comunicacao | `/comunicacao` |
 | `src/pages/DadosBrutos` | tela ERP | — | `/dados-brutos` |
 | `src/pages/Dashboard` | tela ERP | — | `/dashboard` |
@@ -328,6 +335,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/public/ApresentacaoCriancas` | tela ERP | — | `/apresentacao-criancas` |
 | `src/pages/public/BatismoAcesso` | tela ERP | — | `/batismo/acesso` |
 | `src/pages/public/CadastroMembresia` | tela ERP | — | `/cadastro-membresia` |
+| `src/pages/public/CampanhaPublica` | tela ERP | — | `/campanha/:slug` |
 | `src/pages/public/CensoPublica` | tela ERP | — | `/censo/p/:slug` |
 | `src/pages/public/DecisaoCulto` | tela ERP | — | `/c/:token` |
 | `src/pages/public/DecisaoOnline` | tela ERP | — | `/decisao` |

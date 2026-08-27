@@ -19,6 +19,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **apresentacoes** | — | `apresentacoes.js` | [apresentacoes](apresentacoes.md) |
 | **batismo** | `/batismo` | — | [batismo](batismo.md) |
 | **bridge** | `/bridge` | — | [bridge](bridge.md) |
+| **campanhas** | `/campanhas` | `campanhas.js` | [campanhas](campanhas.md) |
 | **censo** | — | `censo.js` | [censo](censo.md) |
 | **cerebro** | — | `cerebro.js` | [cerebro](cerebro.md) |
 | **comunicacao** | `/comunicacao` | `comunicacao.js` | [comunicacao](comunicacao.md) |
@@ -64,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **108** arquivos, **99** com teste.
+`backend/utils/` tem **112** arquivos, **103** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -83,6 +84,9 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/avisoEscala.js` | `src/test/avisoEscala.test.ts` |
 | `backend/utils/avisoGrupoApp.js` | `src/test/avisoGrupoApp.test.ts` `src/test/avisoSaidaGrupo.test.ts` |
 | `backend/utils/batismoHorario.js` | `src/test/batismoHorario.test.ts` |
+| `backend/utils/campanhaAgradecimento.js` | `backend/services/campanhaDigito.test.js` |
+| `backend/utils/campanhaProgresso.js` | `backend/services/campanhaDigito.test.js` |
+| `backend/utils/campanhaPublico.js` | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/campoKey.js` | `src/test/campoKey.test.ts` |
 | `backend/utils/camposCondicionais.js` | `src/test/camposCondicionais.test.ts` |
 | `backend/utils/camposContato.js` | `src/test/saneamentoInscricaoApp.test.ts` `src/test/telefoneCodigoPais.test.ts` |
@@ -107,6 +111,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/decendioComparativo.js` | `src/test/decendioComparativo.test.ts` |
 | `backend/utils/decisaoCampos.js` | `src/test/decisaoCampos.test.ts` |
 | `backend/utils/desativarMembro.js` | `src/test/desativarMembro.test.ts` |
+| `backend/utils/digitoCampanha.js` | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/divisorMandala.js` | `src/test/divisorMandala.test.ts` |
 | `backend/utils/dsOnline.js` | `src/test/dsOnline.test.ts` |
 | `backend/utils/entradaGrupoApp.js` | `src/test/entradaGrupoApp.test.ts` |

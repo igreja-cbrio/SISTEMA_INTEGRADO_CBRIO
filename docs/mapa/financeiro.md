@@ -209,6 +209,7 @@ Guard: `authorizeModule('financeiro', 3 | 4 | 5 | padrão)`
 
 - `backend/utils/cronAuth.js`
 - `backend/utils/decendioComparativo.js`
+- `backend/utils/digitoCampanha.js`
 - `backend/utils/pagination.js`
 - `backend/utils/periodoDoacoes.js`
 - `backend/utils/supabase.js`
@@ -301,6 +302,7 @@ Guard: `authorizeModule('financeiro', 3 | 4 | 5 | padrão)`
 
 **RPCs**
 
+- `camp_digitos_ativos`
 - `fechar_mes_financeiro`
 - `fin_arrecadacoes_listar`
 - `fin_dashboard_periodo`
