@@ -65,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **112** arquivos, **103** com teste.
+`backend/utils/` tem **114** arquivos, **105** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -80,6 +80,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/appPushDestino.js` | `src/test/appPushDestino.test.ts` |
 | `backend/utils/appRateLimit.js` | `src/test/appRateLimit.test.ts` |
 | `backend/utils/apresentacaoHistorico.js` | `src/test/apresentacaoHistorico.test.ts` |
+| `backend/utils/atividadeVoluntario.js` | `src/test/atividadeVoluntario.test.ts` |
 | `backend/utils/avisoAgregado.js` | `src/test/avisoAgregado.test.ts` |
 | `backend/utils/avisoEscala.js` | `src/test/avisoEscala.test.ts` |
 | `backend/utils/avisoGrupoApp.js` | `src/test/avisoGrupoApp.test.ts` `src/test/avisoSaidaGrupo.test.ts` |
@@ -117,6 +118,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/entradaGrupoApp.js` | `src/test/entradaGrupoApp.test.ts` |
 | `backend/utils/escalaToken.js` | `src/test/escalaToken.test.ts` |
 | `backend/utils/exclusaoInscricaoLote.js` | `src/test/exclusaoInscricaoLote.test.ts` |
+| `backend/utils/fotoVoluntario.js` | `src/test/fotoVoluntario.test.ts` |
 | `backend/utils/freioBot.js` | `src/test/freioBot.test.ts` |
 | `backend/utils/grupoCapaApp.js` | `src/test/grupoCapaApp.test.ts` |
 | `backend/utils/grupoEdicaoApp.js` | `src/test/grupoEdicaoApp.test.ts` |

@@ -251,6 +251,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/atividadeVoluntario.js`
 - `backend/utils/cpf.js`
 - `backend/utils/criancaApresentacao.js`
 - `backend/utils/cronAuth.js`
@@ -258,6 +259,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `backend/utils/dadosSensiveisPessoa.js`
 - `backend/utils/desativarMembro.js`
 - `backend/utils/exclusaoInscricaoLote.js`
+- `backend/utils/fotoVoluntario.js`
 - `backend/utils/kidsVisitante.js`
 - `backend/utils/membrosPagina.js`
 - `backend/utils/pcoChave.js`
