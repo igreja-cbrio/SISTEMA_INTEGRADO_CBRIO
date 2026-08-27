@@ -455,8 +455,11 @@ function payerDaCobranca(c) {
  * ⚠️ O vínculo estável entre TODAS as tentativas (preference + N orders) é o
  * `external_reference` = nossa `referencia`. É por ele que o webhook reencontra
  * a cobrança quando o id do provider é de outro objeto.
+ *
+ * ⚠️ Extraída de `criarCobranca` porque `definirMetodo(CARTAO)` também precisa
+ * dela — ver `urlCheckoutHospedado`.
  */
-async function criarCobranca(c) {
+async function criarPreference(c) {
   const base = urlBase();
   const corpo = {
     items: [{
@@ -493,6 +496,40 @@ async function criarCobranca(c) {
   // `init_point` é produção, `sandbox_init_point` é teste. Mandar a pessoa pro
   // link errado é ou cobrança real num ensaio, ou "pagamento" que não existe.
   const checkout = ehProducao() ? pref?.init_point : (pref?.sandbox_init_point || pref?.init_point);
+  return { pref, checkout };
+}
+
+/**
+ * ⚠️⚠️ A URL do CHECKOUT HOSPEDADO, e por que ela não pode sair de
+ * `c.checkout_url` cru (incidente de 27/08/2026, primeira doação real).
+ *
+ * `pag_cobrancas.checkout_url` é UMA coluna servindo DOIS significados: a página
+ * do Checkout Pro (o que o cartão precisa) e o `ticket_url` do Pix (a página do
+ * QR no MP). Quem escolhia Pix primeiro sobrescrevia a coluna com o ticket, e o
+ * `definirMetodo(CARTAO)` devolvia essa URL de volta — então **"Pagar com
+ * cartão" abria a tela do Pix**, exatamente o que o Matheus viu.
+ *
+ * ⚠️ A conferência é POSITIVA (`/checkout/`), nunca "não é ticket": URL de
+ * artefato que eu não conheça cai no ramo seguro (cria preference nova) em vez
+ * de ser entregue como se fosse checkout.
+ */
+function ehUrlDeCheckoutHospedado(url) {
+  return typeof url === 'string' && /mercadopago\.com(\.br)?\/checkout\//i.test(url);
+}
+
+async function urlCheckoutHospedado(c) {
+  if (ehUrlDeCheckoutHospedado(c.checkout_url)) return c.checkout_url;
+  // Cobrança antiga (com ticket do Pix gravado) ou cuja preference não nasceu:
+  // cria uma nova. Preference é só um LINK — nenhum estado de pagamento vive
+  // nela, então criar outra não duplica cobrança. ⚠️ E NÃO devolvemos
+  // `provider_cobranca_id` daqui: repontar pra preference tiraria do núcleo a
+  // ORDER, que é o único objeto consultável (`GET /v1/orders/{id}`).
+  const { checkout } = await criarPreference(c);
+  return checkout || null;
+}
+
+async function criarCobranca(c) {
+  const { pref, checkout } = await criarPreference(c);
 
   return {
     provider_cobranca_id: pref?.id ? String(pref.id) : null,
@@ -529,11 +566,29 @@ async function definirMetodo(c, metodo, opcoes = {}) {
     // ⚠️ NÃO devolve `parcelas`: quem escolhe é o pagador na página do MP, e
     // afirmar aqui o que foi PEDIDO violaria "a forma/parcela confirmada é a
     // que o PSP devolveu". O número real chega no webhook (`installments`).
-    return { metodo: METODOS.CARTAO, checkout_url: c.checkout_url || null };
+    return { metodo: METODOS.CARTAO, checkout_url: await urlCheckoutHospedado(c) };
   }
 
   if (metodo !== METODOS.PIX) {
     throw new Error(`Mercado Pago: forma "${metodo}" não é oferecida por este adapter.`);
+  }
+
+  // ⚠️⚠️ QR QUE JÁ EXISTE É DEVOLVIDO, sem falar com o MP (incidente de
+  // 27/08/2026, mesma doação). `X-Idempotency-Key` no MP **não replica a
+  // resposta** — ele responde `409 idempotency_key_already_used` e manda usar
+  // outra chave. Como a chave é `(cobrança + forma + tentativa)` e `tentativa`
+  // nunca chega, quem escolhia Pix → cartão → **Pix de novo** tomava 409, e a
+  // tela riscava "Pix" como indisponível com o QR válido guardado no banco.
+  //
+  // Devolver o mesmo QR é a resposta CERTA, não um contorno: ele segue pagável
+  // até a cobrança expirar, e criar um segundo deixaria dois QRs vivos pra uma
+  // doação só.
+  if (c.pix_payload && ehOrderId(c.provider_cobranca_id)) {
+    return {
+      metodo: METODOS.PIX,
+      pix_payload: c.pix_payload,
+      pix_qrcode_base64: c.pix_qrcode_base64 || null,
+    };
   }
 
   const corpo = {
@@ -552,10 +607,25 @@ async function definirMetodo(c, metodo, opcoes = {}) {
   };
 
   // Idempotência amarrada à (cobrança + forma + tentativa): reenvio do mesmo
-  // clique não cria duas orders, mas trocar de forma e voltar cria uma nova.
-  const order = await req('POST', '/v1/orders', corpo, {
-    idempotencyKey: `${c.id}:${metodo}:${opcoes.tentativa || 1}`,
-  });
+  // clique não cria duas orders.
+  let order;
+  try {
+    order = await req('POST', '/v1/orders', corpo, {
+      idempotencyKey: `${c.id}:${metodo}:${opcoes.tentativa || 1}`,
+    });
+  } catch (e) {
+    // ⚠️ Só chega aqui quem NÃO tem QR guardado (o curto-circuito acima já
+    // atendeu quem tem). Então "chave já usada" significa que a tentativa
+    // anterior morreu ANTES de a gente gravar o artefato — sem uma chave nova,
+    // esta cobrança nunca mais consegue um Pix pagável.
+    if (!ehChaveIdempotenteUsada(e)) throw e;
+    order = await req('POST', '/v1/orders', corpo, {
+      // ⚠️ Balde de 1 MINUTO, não `Date.now()` cru: dois cliques seguidos
+      // compartilham a chave (não viram duas orders) e uma tentativa de verdade
+      // mais tarde ganha a sua.
+      idempotencyKey: `${c.id}:${metodo}:r${Math.floor(Date.now() / 60000)}`,
+    });
+  }
 
   const pg = order?.transactions?.payments?.[0] || {};
   const pm = pg.payment_method || {};
@@ -581,8 +651,19 @@ async function definirMetodo(c, metodo, opcoes = {}) {
     provider_cobranca_id: order?.id ? String(order.id) : null,
     pix_payload: pm.qr_code,
     pix_qrcode_base64: pm.qr_code_base64 || null,
-    checkout_url: pm.ticket_url || null,
+    // ⚠️⚠️ O `ticket_url` do Pix NÃO volta como `checkout_url`, de propósito: era
+    // ele que sobrescrevia a página do Checkout Pro e fazia o botão do cartão
+    // abrir a tela do Pix. A tela já desenha o QR e o copia-e-cola a partir do
+    // `pix_payload`, então nada se perde — e o `checkout_url` que sobra (o
+    // Checkout Pro) também aceita Pix, o que o mantém válido como alternativa.
   };
+}
+
+/** `409 idempotency_key_already_used` — ver o `catch` do POST da order. */
+function ehChaveIdempotenteUsada(e) {
+  return e?.status === 409 && /idempotency_key_already_used/i.test(
+    `${e?.message || ''} ${JSON.stringify(e?.corpo || {})}`,
+  );
 }
 
 /**

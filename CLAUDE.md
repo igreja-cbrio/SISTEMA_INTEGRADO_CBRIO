@@ -14390,7 +14390,76 @@ classificado. **Ativar em `/campanhas` antes de 06/09.**
    agradecimento por WhatsApp **não saem**, e isso é DECLARADO na resposta em vez
    de virar "0 enviados" com cara de sucesso.
 
-### ⚠️ Achado de carona, NÃO corrigido (é preexistente e não é do escopo)
+### ⚠️⚠️ A PRIMEIRA DOAÇÃO REAL quebrou nas duas formas de pagamento (2026-08-27 · SEM migration)
+
+O Matheus doou R$ 20,00 em `/doar` e os dois botões falharam: **"Pagar com cartão"
+abriu a tela do PIX** no Mercado Pago, e voltar pro Pix riscou "Pix" como
+indisponível. Uma cobrança, duas causas independentes, e **nenhum teste as
+alcançava** porque só aparecem quando a pessoa TROCA de forma — caminho que 75
+testes do adapter nunca exercitaram.
+
+Diagnosticado no banco (`pag_cobrancas` · `bd799e24…`), não por leitura de código:
+`metodo='cartao'` com `checkout_url` = `…/payments/175870574924/ticket` e
+`ultimo_erro` = `409 idempotency_key_already_used`.
+
+### ⚠️⚠️ LEI · `checkout_url` é UMA coluna com DOIS significados
+
+Página do Checkout Pro (o que o cartão precisa) **e** `ticket_url` do Pix (a
+página do QR no MP). Quem escolhia Pix primeiro sobrescrevia a coluna, e
+`definirMetodo(CARTAO)` devolvia `c.checkout_url` de volta — entregando ao cartão
+o endereço do Pix.
+
+- **`definirMetodo(PIX)` não devolve mais `checkout_url`.** Nada se perde: a tela
+  desenha QR e copia-e-cola do `pix_payload`, e o `checkout_url` que sobra (o
+  Checkout Pro) **também aceita Pix**, então segue válido como alternativa.
+- **`urlCheckoutHospedado(c)`** confere de forma **POSITIVA** (`/checkout/` no
+  host do MP) e, quando não reconhece, **cria uma preference nova**. Conferência
+  negativa ("não é ticket") entregaria como checkout qualquer artefato futuro que
+  eu não conheça. Isso também **auto-cura a cobrança já gravada** — não houve
+  UPDATE de reparo no banco.
+- ⚠️ Preference é só um LINK (nenhum estado de pagamento vive nela), então criar
+  outra não duplica cobrança — **e ela NUNCA reponta `provider_cobranca_id`**:
+  tirar a ORDER do núcleo cegaria `consultarStatus`, que só sabe ler order.
+
+### ⚠️⚠️ LEI · `X-Idempotency-Key` do MP NÃO replica a resposta — ele 409
+
+A doc promete idempotência; o comportamento real é **`409
+idempotency_key_already_used` + "retry with a different value"**. Como a chave é
+`(cobrança + forma + tentativa)` e `escolherFormaPagamento` **nunca passa
+`tentativa`**, Pix → cartão → **Pix de novo** era garantia de 409 — com o QR
+válido guardado no banco a tela dizia "Pix não está disponível agora".
+
+- **QR que já existe é DEVOLVIDO sem falar com o MP.** É a resposta certa, não
+  contorno: ele segue pagável até a cobrança expirar, e criar um segundo deixaria
+  dois QRs vivos para uma doação só.
+- **Retentativa no 409 só alcança quem NÃO tem QR** (o curto-circuito atendeu o
+  resto), ou seja: a tentativa anterior morreu antes de gravar o artefato e sem
+  chave nova essa cobrança **nunca mais** teria um Pix pagável.
+- ⚠️ A chave da retentativa usa **balde de 1 minuto**, não `Date.now()` cru: dois
+  cliques seguidos compartilham a chave (não viram duas orders) e uma tentativa
+  de verdade mais tarde ganha a sua.
+
+### CPF virou OBRIGATÓRIO em `/doar` (decisão do Matheus)
+
+Era opcional com o texto explicando o custo de omitir. Agora o servidor recusa
+(400 · `campo: 'cpf'`) e a tela valida antes. ⚠️ **O DV vem de
+`src/lib/inscricao.cpfValido`** — a página tinha cópia local de máscara, e uma 4ª
+cópia do algoritmo é exatamente o que a lei do Contrato de Inscrição proíbe.
+⚠️ Custo declarado: quem não tem o número em mãos desiste. A troca é dado que
+nasce ligado ao cadastro e entra no comprovante anual, em vez de doação anônima.
+⚠️ Sem impacto no app: `FEATURES.generosidade = false` — a tela de doação do app
+está DESLIGADA, então não há bundle antigo a quebrar.
+
+Testes: 7 casos novos em `src/test/pagamentosMercadoPago.test.ts` (75 no total).
+**5 mutantes RODADOS e mortos**: cartão voltando a `c.checkout_url` → 1 · Pix
+devolvendo `ticket_url` → 1 · sem o curto-circuito do QR → 1 · sem a retentativa
+do 409 → 1 · conferência de URL aceitando qualquer coisa → 1.
+
+⚠️ **CORREÇÃO DE REGISTRO**: o gate de deploy tem **20** scripts em 27/08 (este
+arquivo diz 10, 12 e 16 em lugares diferentes). Conferir no
+`.github/workflows/deploy-vercel.yml`, nunca aqui.
+
+## ⚠️ Achado de carona, NÃO corrigido (é preexistente e não é do escopo)
 
 `POST /financeiro/fila-classificacao/aprovar-massa` marca a fila como `aprovado`
 e **NÃO cria `fin_transacoes`** — diferente do `/classificar/:filaId/aprovar`, que

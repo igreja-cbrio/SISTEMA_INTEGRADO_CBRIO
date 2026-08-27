@@ -810,3 +810,112 @@ describe('mercadopago · order que FALHA não mata a cobrança', () => {
     expect(r?.status).toBe('pago');
   });
 });
+
+// ── definirMetodo · o incidente da PRIMEIRA doação real (27/08/2026) ────────
+//
+// Uma doação de R$ 20,00 expôs dois defeitos que só aparecem quando a pessoa
+// TROCA de forma de pagamento — caminho que nenhum teste exercitava:
+//
+//   1. escolher Pix gravava o `ticket_url` em `checkout_url`, e o
+//      `definirMetodo(CARTAO)` devolvia essa URL de volta ⇒ **"Pagar com cartão"
+//      abria a tela do Pix**;
+//   2. voltar pro Pix reenviava o POST /v1/orders com a MESMA
+//      `X-Idempotency-Key` ⇒ `409 idempotency_key_already_used`, e a tela
+//      riscava "Pix" como indisponível **com o QR válido guardado no banco**.
+describe('mercadopago · definirMetodo ao TROCAR de forma', () => {
+  const CHECKOUT = 'https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=1';
+  const TICKET = 'https://www.mercadopago.com.br/payments/175870574924/ticket?caller_id=1';
+
+  const base = {
+    id: 'cob-1', valor_centavos: 2000, descricao: 'Oferta',
+    referencia: 'generosidade:abc', public_token: 'tok', parcelas_max: 12,
+    pagador_email: 'pessoa@exemplo.com', pagador_nome: 'Maria Silva',
+  };
+
+  function stubJson(fn: (url: string, opts: any) => any) {
+    const mock = vi.fn(async (url: string, opts: any) => {
+      const r = fn(url, opts);
+      return {
+        ok: r.ok !== false,
+        status: r.status ?? 200,
+        text: async () => JSON.stringify(r.corpo ?? {}),
+      } as any;
+    });
+    vi.stubGlobal('fetch', mock);
+    return mock;
+  }
+
+  it('CARTÃO não devolve o ticket do Pix — cria checkout novo', async () => {
+    // É o bug nº 1, na forma exata em que ele estava em produção: a coluna
+    // `checkout_url` com o ticket do Pix gravado por uma escolha anterior.
+    const mock = stubJson(() => ({ corpo: { id: 'PREF9', init_point: CHECKOUT, sandbox_init_point: CHECKOUT } }));
+
+    const r = await mp.definirMetodo({ ...base, checkout_url: TICKET }, 'cartao');
+
+    expect(r.checkout_url).toBe(CHECKOUT);
+    expect(r.checkout_url).not.toContain('/ticket');
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(String(mock.mock.calls[0][0])).toContain('/checkout/preferences');
+    // ⚠️ Nunca reponta o id do provider: a ORDER é o único objeto consultável.
+    expect(r.provider_cobranca_id).toBeUndefined();
+  });
+
+  it('CARTÃO reusa a URL guardada quando ela JÁ é de checkout (sem chamar o MP)', async () => {
+    const mock = stubJson(() => ({ corpo: {} }));
+    const r = await mp.definirMetodo({ ...base, checkout_url: CHECKOUT }, 'cartao');
+    expect(r.checkout_url).toBe(CHECKOUT);
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it('PIX com QR guardado devolve o MESMO QR e não chama o MP', async () => {
+    const mock = stubJson(() => ({ corpo: {} }));
+    const r = await mp.definirMetodo({
+      ...base, provider_cobranca_id: 'ORD01M11', pix_payload: '000201-pix', pix_qrcode_base64: 'iVBOR',
+    }, 'pix');
+    expect(r.pix_payload).toBe('000201-pix');
+    expect(r.pix_qrcode_base64).toBe('iVBOR');
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it('PIX NUNCA devolve checkout_url — era isso que sobrescrevia o cartão', async () => {
+    stubJson(() => ({
+      corpo: {
+        id: 'ORD01NOVA',
+        transactions: { payments: [{ payment_method: { id: 'pix', qr_code: 'qr', ticket_url: TICKET } }] },
+      },
+    }));
+    const r = await mp.definirMetodo(base, 'pix');
+    expect(r.pix_payload).toBe('qr');
+    expect(r.checkout_url).toBeUndefined();
+  });
+
+  it('PIX sem QR guardado: 409 de idempotência retenta com OUTRA chave', async () => {
+    const chaves: string[] = [];
+    const mock = stubJson((_url, opts) => {
+      chaves.push(opts.headers['X-Idempotency-Key']);
+      if (chaves.length === 1) {
+        return { ok: false, status: 409, corpo: { errors: [{ code: 'idempotency_key_already_used' }] } };
+      }
+      return {
+        corpo: {
+          id: 'ORD01SEG',
+          transactions: { payments: [{ payment_method: { id: 'pix', qr_code: 'qr-novo' } }] },
+        },
+      };
+    });
+
+    const r = await mp.definirMetodo(base, 'pix');
+
+    expect(r.pix_payload).toBe('qr-novo');
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect(chaves[1]).not.toBe(chaves[0]);
+    // A chave continua amarrada à cobrança — não é um valor solto qualquer.
+    expect(chaves[1]).toContain('cob-1');
+  });
+
+  it('erro que NÃO é de idempotência propaga (não vira retentativa cega)', async () => {
+    const mock = stubJson(() => ({ ok: false, status: 400, corpo: { message: 'pix indisponível na conta' } }));
+    await expect(mp.definirMetodo(base, 'pix')).rejects.toThrow(/pix indispon/i);
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+});
