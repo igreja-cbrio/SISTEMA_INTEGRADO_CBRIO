@@ -893,9 +893,12 @@ function ModalCulto({ culto, onClose, onSaved }) {
       // digitar o número (ou 0) de cada seção.
       const freqLancada = !!culto.frequencia_lancada
         || form.presencial_adulto !== '' || (hasKids && form.presencial_kids !== '');
+      // ⚠️ O online saiu daqui junto: ele não é mais LANÇADO por ninguém, é
+      // contado pelo formulário. Mantê-lo na condição faria um culto parecer
+      // "decisões lançadas" só porque o campo (agora somente leitura) tinha
+      // número vindo do trigger.
       const decisoesLancadas = !!culto.decisoes_lancadas
         || form.decisoes_presenciais !== ''
-        || (hasOnline && form.decisoes_online !== '')
         || (hasKids && form.decisoes_kids !== '');
 
       // Campo que o tipo não usa é OMITIDO, não zerado (docs/cultos-domingo/ ·
@@ -910,7 +913,20 @@ function ModalCulto({ culto, onClose, onSaved }) {
           presencial_kids: Number(form.presencial_kids) || 0,
           decisoes_kids:   Number(form.decisoes_kids) || 0,
         } : {}),
-        ...(hasOnline ? { decisoes_online: Number(form.decisoes_online) || 0 } : {}),
+        // ⚠️⚠️ `decisoes_online` NÃO VAI NO PAYLOAD — decisão do Matheus em
+        // 27/08/2026: "no dashboard semanal, vai contabilizar apenas as pessoas
+        // que preencheram o formulário".
+        //
+        // Quem escreve essa coluna agora é o TRIGGER
+        // `fn_cultos_dec_online_form_incrementa`, que soma +1 a cada decisão
+        // registrada em cbrio.org/decisao (o QR do apelo). Mandá-la daqui
+        // SOBRESCREVERIA a contagem: o modal carrega "3", alguém preenche o
+        // formulário durante o culto e vira 5, a pessoa salva a frequência e o
+        // número volta pra 3 — perda silenciosa, no meio do culto.
+        //
+        // ⚠️ Omitir é diferente de zerar: o UPDATE simplesmente não toca a
+        // coluna (a mesma técnica que o campo do tipo que não usa Kids já
+        // usava, por causa do totem).
         observacoes:          (form.observacoes ?? '').trim() || null,
         frequencia_lancada:   freqLancada,
         decisoes_lancadas:    decisoesLancadas,
@@ -982,8 +998,19 @@ function ModalCulto({ culto, onClose, onSaved }) {
                   <input type="number" min="0" value={form.decisoes_presenciais} onChange={e => set('decisoes_presenciais', e.target.value)} style={inp} />
                 </Field>
                 {hasOnline && (
-                  <Field label="Online">
-                    <input type="number" min="0" value={form.decisoes_online} onChange={e => set('decisoes_online', e.target.value)} style={inp} />
+                  /* ⚠️ SOMENTE LEITURA · o online passou a ser CONTADO, não
+                     lançado: cada pessoa que preenche cbrio.org/decisao (o QR
+                     do apelo) soma 1 aqui, por trigger. Campo editável aqui
+                     sobrescreveria a contagem com o valor que estava na tela
+                     quando o modal abriu. */
+                  <Field label="Online (do formulário)">
+                    <input
+                      type="number"
+                      value={form.decisoes_online}
+                      readOnly
+                      title="Contado automaticamente por quem preenche cbrio.org/decisao"
+                      style={{ ...inp, opacity: 0.7, cursor: 'not-allowed' }}
+                    />
                   </Field>
                 )}
                 {hasKids && (
@@ -991,9 +1018,18 @@ function ModalCulto({ culto, onClose, onSaved }) {
                     <input type="number" min="0" value={form.decisoes_kids} onChange={e => set('decisoes_kids', e.target.value)} style={inp} />
                   </Field>
                 )}
+                {/* Sem isto, "por que não consigo digitar?" vira chamado. */}
               </div>
             );
           })()}
+          {hasOnline && (
+            <p style={{ fontSize: 11, color: C.t3, marginTop: -4, marginBottom: 12, lineHeight: 1.5 }}>
+              O número de <strong>decisões online</strong> é contado sozinho: soma 1 a cada
+              pessoa que preenche o formulário do QR do apelo (cbrio.org/decisao). Por isso
+              o campo não é editável — e por isso ele reflete pessoas com nome e contato,
+              não uma estimativa.
+            </p>
+          )}
 
           {/* Dados individuais das pessoas que decidiram */}
           <DecisoesPessoasSection
