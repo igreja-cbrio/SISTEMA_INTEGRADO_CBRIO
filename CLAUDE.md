@@ -1966,6 +1966,79 @@ trechos** (Recreio 22 · Barra 20 · Barra Olímpica 13), com 147 CEPs geocodifi
    a longitude dela também é periférica e ela caía fora **por acaso, não pela
    régua**.
 
+## ⚠️⚠️ A jornada do app perguntava se a pessoa PREENCHEU O FORMULÁRIO (2026-08-27 · migration `20260827120000`)
+
+Relato do Marcos sobre a **Mariana Dalsgaard**, líder do GRUPO DE MENINAS:
+*"ela tem histórico de serviço, porém não aparece o check quando ela acessa o
+módulo de jornada… a aba de jornada é alimentada pelo voluntariado do sistema?"*
+
+**Não era.** `lib/jornada.ts` (app) decidia "esta pessoa serve?" com
+`!!me.inscricao` — o **formulário público de voluntariado** (`vol_inscricoes`).
+Formulário não é serviço: quem entrou pelo **Planning Center** ou foi integrada
+pela liderança nunca preencheu um.
+
+⚠️⚠️ **MEDIDO em 27/08: das 598 pessoas com vínculo ATIVO de voluntário
+(`mem_voluntarios.ate IS NULL`), 314 — 52% — não têm inscrição nenhuma ligada.**
+Todas viam a própria jornada dizendo *"Comece a servir num ministério"*. É a
+mesma classe do bug de 13/08 (ler telefone só de `vol_profiles` e concluir "não
+tem"): **confundir "não procurei no lugar certo" com "a pessoa não faz"**.
+
+- **`GET /app/voluntariado/me` ganhou `serve`**, a régua CANÔNICA — a mesma que
+  a NSM, o `/painel` e a `vw_pessoas_papeis_mat` usam. ⚠️ **Três campos, três
+  perguntas diferentes**, e é o que a confusão custou: `inscricao` = preencheu o
+  formulário · `voluntario_ativo` = há perfil do PCO alcançável por ESTA conta
+  (só **35 dos 938** perfis têm `auth_user_id`) · **`serve` = serve**.
+- ⚠️ `serve` é **tri-estado**: `true` · `false` · **`null` = não sei** (consulta
+  falhou, ou servidor antigo). Colapsar em boolean faria a jornada afirmar "não
+  serve" quando o servidor apenas não respondeu.
+- ⚠️ `serve === false` **MANDA e não cai no fallback** — senão uma inscrição
+  antiga de quem PAROU de servir ressuscitaria o check.
+- ⚠️ **O ERP já estava certo**: `services/jornadaMarcadores.js` sempre leu
+  `mem_voluntarios`. O furo era só do app — as duas pontas do mesmo produto
+  respondendo coisas diferentes sobre a mesma pessoa.
+- ⚠️ **Resíduo declarado, NÃO corrigido aqui**: a **tela de Servir** ainda decide
+  por `voluntario_ativo`, então voluntária do PCO sem `auth_user_id` continua
+  vendo o formulário de inscrição. Consertar muda quem vê aquela tela e é decisão
+  de produto, não efeito colateral de um conserto de leitura.
+
+### "Já me batizei aqui na CBRio" · a opção que faltava
+
+*"Ela se batizou na igreja, mas não tem opção de marcar isso; como não temos o
+histórico de batismo antigo, pode colocar essa opção."* O app só oferecia **"Já
+sou batizado(a) em OUTRA igreja"** — e digitar "CBRio" ali gravaria a própria
+igreja como se fosse outra.
+
+- **`mem_membros.batismo_cbrio_declarado_em`** (+ `batismo_cbrio_data`, opcional)
+  + RPCs `app_marcar_batizado_cbrio(date)` / `app_desmarcar_batizado_cbrio()`.
+- ⚠️⚠️ **NÃO cria linha em `batismo_inscricoes`**: aquela tabela é o REGISTRO da
+  igreja (588 realizados) e alimenta KPI de batismo, NSM e o YoY do Dashboard
+  Semanal. Autodeclarado retroativo entraria no número que a liderança publica,
+  sem ninguém conferir — a mesma lei do censo, que não promove ninguém a membro.
+  **Declaração é declaração; registro é registro.**
+- ⚠️ **NÃO reusa `mem_membros.batizado`**: coluna MORTA (medido: `true` em **0**
+  linhas) e que não distingue "a igreja registrou" de "a pessoa disse".
+- ⚠️ **As duas declarações se EXCLUEM** (aqui × outra igreja). A RPC nova limpa a
+  antiga; a RPC de "outra igreja" é anterior e não conhece a coluna nova, então
+  quem limpa nessa direção é a TELA — reescrever função viva arriscaria reverter
+  ajuste que só existe em produção.
+- ⚠️ O marcador de jornada do ERP ganhou a 3ª fonte, com **detalhe distinto**:
+  `'declarado pela pessoa (sem registro)'` × `'em outra igreja'` × registro (sem
+  detalhe). A diferença importa: a equipe pode querer conferir e criar o
+  histórico. E o batismo só é "indisponível" se as **três** fontes caírem.
+- ⚠️⚠️ **A guarda de data futura ficou na RPC, não num CHECK**: `CURRENT_DATE`
+  **não é IMMUTABLE** e o Postgres recusa função mutável em CHECK. É erro
+  SEMÂNTICO — o `pglast` passa e só quebra ao aplicar, a mesma armadilha do
+  `0A000` (subquery em CHECK) da leva do retiro. **Parser verde não prova CHECK
+  válido.**
+- ⚠️ A leitura das colunas novas no app é **SELECT SEPARADO**: pedir coluna que
+  ainda não existe faz o PostgREST recusar a QUERY INTEIRA (42703), e o app
+  perderia também a declaração de outra igreja, que já está em produção.
+
+⚠️ As 2 RPCs entraram em `backend/utils/rpcsCliente.js` **com o grant declarado
+na migration** — o teste do gate exige, porque RPC sem `GRANT authenticated`
+falha em SILÊNCIO no app (a lei de 10/08, quando o sweep de segurança quebrou o
+QR do cartão e o check-in de batismo).
+
 ## ⚠️ Membresia · aprovação em massa da fila de cadastros (2026-08-04 · SEM migration)
 
 Pedido do Matheus: selecionar alguns ou todos e aprovar de uma vez, *"mas o sistema deve ter uma

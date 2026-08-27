@@ -1616,6 +1616,35 @@ router.get('/voluntariado/me', authApp, limiterNormal, async (req, res) => {
     }
 
     const ativo = vp?.allocation_status === 'active';
+
+    // ⚠️⚠️ `serve` é a régua CANÔNICA de "esta pessoa serve", a MESMA que a NSM,
+    // o /painel e a `vw_pessoas_papeis_mat` usam: vínculo VIVO em
+    // `mem_voluntarios` (`ate IS NULL`). Ela existe porque a jornada do app
+    // perguntava outra coisa — se a pessoa preencheu o FORMULÁRIO público
+    // (`vol_inscricoes`) — e formulário não é serviço.
+    //
+    // Medido em 27/08: das 598 pessoas com vínculo ativo de voluntário, **314
+    // (52%) não têm inscrição nenhuma ligada** — são as que vieram pelo
+    // Planning Center ou foram integradas pela liderança. Todas viam "Comece a
+    // servir num ministério" na própria jornada. É a mesma classe do bug de
+    // 13/08 (ler o telefone só da satélite e concluir "não tem"): confundir
+    // "não procurei no lugar certo" com "a pessoa não faz".
+    //
+    // ⚠️ Best-effort: falha aqui NÃO derruba a tela de Servir, que é o que este
+    // endpoint serve primariamente. Sem resposta, `serve` fica `null` — que o
+    // app lê como "não sei", nunca como "não serve".
+    let serve = null;
+    if (membro?.id) {
+      try {
+        const { data: mv, error: eMv } = await supabase.from('mem_voluntarios')
+          .select('id').eq('membro_id', membro.id)
+          .is('ate', null).is('deleted_at', null).limit(1);
+        if (eMv) throw eMv;
+        serve = (mv || []).length > 0;
+      } catch (e) {
+        console.warn('[app/voluntariado/me] serve:', e.message);
+      }
+    }
     const [escalas, indispRes] = await Promise.all([
       escalasDoVoluntario(vp),
       vp ? supabase.from('vol_availability').select('*').eq('volunteer_profile_id', vp.id).order('unavailable_from') : Promise.resolve({ data: [] }),
@@ -1625,6 +1654,10 @@ router.get('/voluntariado/me', authApp, limiterNormal, async (req, res) => {
       membro_id: membro?.id || null,
       vol_profile_id: vp?.id || null,
       voluntario_ativo: ativo,
+      // ⚠️ `serve` (vínculo real) × `voluntario_ativo` (perfil do PCO alcançado
+      // por esta CONTA) × `inscricao` (o formulário) são TRÊS perguntas
+      // diferentes. Quem quer saber "esta pessoa serve?" usa `serve`.
+      serve,
       inscricao,                              // status: inscrito | enviado_ministerio | integrado
       area: inscricao?.area || null,
       ministerios: inscricao?.ministerios_interesse || null,
