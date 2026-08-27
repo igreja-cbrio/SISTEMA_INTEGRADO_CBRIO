@@ -56,6 +56,7 @@ Guard: `authorizeModule('patrimonio', 3 | 4 | padrão)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/patrimonioDepreciacao.js`
+- `backend/utils/responderFalha.js`
 - `backend/utils/sanitize.js`
 - `backend/utils/supabase.js`
 

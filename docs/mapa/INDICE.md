@@ -65,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **117** arquivos, **108** com teste.
+`backend/utils/` tem **120** arquivos, **111** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -100,6 +100,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/censoToken.js` | `src/test/censoRespostaToken.test.ts` `src/test/censoToken.test.ts` |
 | `backend/utils/censoVocabulario.js` | — |
 | `backend/utils/checkoutExterno.js` | `src/test/checkoutExterno.test.ts` |
+| `backend/utils/contextoFalha.js` | `src/test/fetchFalhaDb.test.ts` `src/test/telemetria500.test.ts` |
 | `backend/utils/corsPolicy.js` | `backend/middleware/errorHandler.test.js` |
 | `backend/utils/cotaMeta.js` | `src/test/cotaMeta.test.ts` |
 | `backend/utils/cpf.js` | — |
@@ -145,6 +146,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/membrosPagina.js` | `src/test/membrosPagina.test.ts` |
 | `backend/utils/mlAvisoEntrega.js` | `src/test/mlAvisoEntrega.test.ts` |
 | `backend/utils/moduloDaAreaEvento.js` | `src/test/moduloDaAreaEvento.test.ts` |
+| `backend/utils/motivoFalha.js` | `src/test/motivoFalha.test.ts` |
 | `backend/utils/nextTurmas.js` | `src/test/nextTurmas.test.ts` |
 | `backend/utils/nfeArquivo.js` | `src/test/nfeArquivo.test.ts` |
 | `backend/utils/nfeXml.js` | `src/test/nfeXml.test.ts` |
@@ -160,6 +162,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/pushLotes.js` | `src/test/pushLotes.test.ts` |
 | `backend/utils/remetenteEmail.js` | `src/test/remetenteEmail.test.ts` |
 | `backend/utils/resilientFetch.js` | — |
+| `backend/utils/responderFalha.js` | `src/test/telemetria500.test.ts` |
 | `backend/utils/respostaEscala.js` | `src/test/respostaEscala.test.ts` |
 | `backend/utils/respostaGrupoAgenda.js` | `src/test/respostaGrupoAgenda.test.ts` |
 | `backend/utils/rhOnboardingProntidao.js` | `src/test/rhOnboardingProntidao.test.ts` |
@@ -172,7 +175,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/sentry.js` | `backend/middleware/errorHandler.test.js` `backend/services/systemWebOps.test.js` |
 | `backend/utils/sexoDeclarado.js` | `src/test/sexoDeclarado.test.ts` |
 | `backend/utils/storagePath.js` | `src/test/storagePath.test.ts` |
-| `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/importSupabase.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
+| `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/fetchFalhaDb.test.ts` `src/test/importSupabase.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
 | `backend/utils/supervisorArea.js` | `backend/services/supervisorSubarea.test.js` `src/test/supervisorArea.test.ts` |
 | `backend/utils/telefoneVoluntario.js` | `src/test/telefoneVoluntario.test.ts` |
 | `backend/utils/totemCerco.js` | `src/test/totemCerco.test.ts` |

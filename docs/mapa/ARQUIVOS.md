@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-362 arquivos.
+365 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -169,6 +169,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/censoToken.js` | régua pura | — | `src/test/censoRespostaToken.test.ts` |
 | `backend/utils/censoVocabulario.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/checkoutExterno.js` | régua pura | — | `src/test/checkoutExterno.test.ts` |
+| `backend/utils/contextoFalha.js` | régua pura | — | `src/test/fetchFalhaDb.test.ts` |
 | `backend/utils/corsPolicy.js` | régua pura | — | `backend/middleware/errorHandler.test.js` |
 | `backend/utils/cotaMeta.js` | régua pura | — | `src/test/cotaMeta.test.ts` |
 | `backend/utils/cpf.js` | régua pura | — | `SEM TESTE` |
@@ -214,6 +215,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/membrosPagina.js` | régua pura | — | `src/test/membrosPagina.test.ts` |
 | `backend/utils/mlAvisoEntrega.js` | régua pura | — | `src/test/mlAvisoEntrega.test.ts` |
 | `backend/utils/moduloDaAreaEvento.js` | régua pura | — | `src/test/moduloDaAreaEvento.test.ts` |
+| `backend/utils/motivoFalha.js` | régua pura | — | `src/test/motivoFalha.test.ts` |
 | `backend/utils/nextTurmas.js` | régua pura | — | `src/test/nextTurmas.test.ts` |
 | `backend/utils/nfeArquivo.js` | régua pura | — | `src/test/nfeArquivo.test.ts` |
 | `backend/utils/nfeXml.js` | régua pura | — | `src/test/nfeXml.test.ts` |
@@ -229,6 +231,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/pushLotes.js` | régua pura | — | `src/test/pushLotes.test.ts` |
 | `backend/utils/remetenteEmail.js` | régua pura | — | `src/test/remetenteEmail.test.ts` |
 | `backend/utils/resilientFetch.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/responderFalha.js` | régua pura | — | `src/test/telemetria500.test.ts` |
 | `backend/utils/respostaEscala.js` | régua pura | — | `src/test/respostaEscala.test.ts` |
 | `backend/utils/respostaGrupoAgenda.js` | régua pura | — | `src/test/respostaGrupoAgenda.test.ts` |
 | `backend/utils/rhOnboardingProntidao.js` | régua pura | — | `src/test/rhOnboardingProntidao.test.ts` |
