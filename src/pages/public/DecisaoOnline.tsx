@@ -248,7 +248,22 @@ export default function DecisaoOnline() {
             a partir de hoje. Uma pessoa da nossa equipe vai falar com você nos
             próximos dias.
           </p>
-          {culto && (
+          {/* ⚠️⚠️ O CHIP SÓ APARECE AO VIVO — e isso é conserto de um defeito
+              REAL, visto pelo Matheus em 27/08/2026: numa QUINTA às 12h a
+              página exibia "Culto · Quarta Com Deus".
+              
+              Não era dado errado: o culto de quarta (20:00) já tinha saído da
+              janela ao vivo (até 00:00) e do grace pós-live (até 08:00), então
+              o servidor caiu no REPLAY — o último culto online dos 7 dias, que
+              é a rede que impede a decisão de ser descartada. O `culto_id`
+              estava CERTO; quem mentia era o rótulo, que anunciava um culto de
+              ontem como se fosse o de agora.
+              
+              Fora do ar, a que culto a decisão será anexada é escrituração
+              NOSSA — não é informação que ajuda quem acabou de decidir, e
+              exibi-la produz exatamente a dúvida que ele teve ("hoje é
+              quinta"). O formulário funciona igual sem o chip. */}
+          {culto && aoVivo && (
             <div style={{
               display: 'inline-block', marginTop: 14,
               padding: '8px 16px', borderRadius: 12,
@@ -256,7 +271,7 @@ export default function DecisaoOnline() {
               border: '1px solid rgba(0,179,157,0.3)',
               color: '#00B39D', fontSize: 13, fontWeight: 600,
             }}>
-              {aoVivo ? `Ao vivo agora · ${culto.nome}` : `Culto · ${culto.nome}`}
+              Ao vivo agora · {culto.nome}
             </div>
           )}
         </div>
