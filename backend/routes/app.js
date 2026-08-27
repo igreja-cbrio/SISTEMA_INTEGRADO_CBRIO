@@ -124,6 +124,7 @@ const {
 } = require('../services/batismoHorarios');
 // Régua PURA da edição de grupo pelo app (allowlist + categoria fechada + horário).
 const { validarEdicaoGrupoApp } = require('../utils/grupoEdicaoApp');
+const { mapaDeFotos } = require('../utils/fotoVoluntario');
 
 function limiterApp({ max, maxAnonimo, nome }) {
   const chave = (req) => chaveLimiteApp(req);
@@ -2093,19 +2094,12 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
     // ⚠️ E o nosso cadastro tem quase nada: 10 de 619 em `mem_membros.foto_url`.
     // Fica como preferência (é a foto que a igreja tirou), com o PCO de fallback.
     // Resultado: 269 dos 619 (43%) mostram foto; o resto cai nas iniciais.
-    const ehFotoDeVerdade = (u) => !!u && /\/uploads\/person\//.test(String(u));
-    const idsVol = [...new Set((escalasVisiveis || []).map(e => e.volunteer_id).filter(Boolean))];
-    const fotoPorVol = {};
-    for (let i = 0; i < idsVol.length; i += 200) {
-      const { data: perfis } = await supabase.from('vol_profiles')
-        .select('id, avatar_url, membresia_id, membro:mem_membros(foto_url)')
-        .in('id', idsVol.slice(i, i + 200));
-      for (const vp of perfis || []) {
-        const m = Array.isArray(vp.membro) ? vp.membro[0] : vp.membro;
-        const nossa = m?.foto_url || null;
-        fotoPorVol[vp.id] = nossa || (ehFotoDeVerdade(vp.avatar_url) ? vp.avatar_url : null);
-      }
-    }
+    // ⚠️ A régua saiu daqui e virou `utils/fotoVoluntario` (27/08): a tela de
+    // MONTAR ESCALA no ERP passou a mostrar foto também, e duas cópias
+    // divergiriam — o sintoma seria o app e o ERP discordando sobre quem tem
+    // foto. Comportamento IDÊNTICO ao que estava inline aqui.
+    const idsVol = (escalasVisiveis || []).map(e => e.volunteer_id);
+    const fotoPorVol = await mapaDeFotos(supabase, idsVol);
 
     const comArea = (escalasVisiveis || []).map((e) => ({
       ...e,

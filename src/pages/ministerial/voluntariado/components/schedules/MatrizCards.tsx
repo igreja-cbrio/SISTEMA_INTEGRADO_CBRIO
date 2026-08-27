@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { CheckCircle2, XCircle, HelpCircle, Plus, Star, X, ChevronDown, ChevronRight } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import AvatarVoluntario from './AvatarVoluntario';
 
 /**
  * A MATRIZ em CARDS POR ÁREA — no estilo da tela de Escalas.
@@ -29,21 +30,6 @@ type Linha = {
 };
 type Subarea = { team_id: string | null; team: string; cor: string | null; linhas: Linha[] };
 type Grupo = { area: string; subareas: Subarea[] };
-
-function iniciais(nome: string): string {
-  const p = (nome || '').trim().split(/\s+/).filter(Boolean);
-  if (!p.length) return '?';
-  if (p.length === 1) return p[0].slice(0, 2).toUpperCase();
-  return (p[0][0] + p[p.length - 1][0]).toUpperCase();
-}
-
-// Espelha o `avatarClasse` do SchedulesByTeam — é o mesmo vocabulário visual da
-// tela de Escalas, que é justamente o estilo pedido.
-const avatarClasse: Record<string, string> = {
-  confirmed: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300',
-  declined: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
-  pending: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
-};
 
 function IconeStatus({ status }: { status: string }) {
   if (status === 'confirmed') return <CheckCircle2 className="h-3.5 w-3.5 text-green-600 shrink-0" />;
@@ -203,9 +189,7 @@ export default function MatrizCards({
                                     <div className="space-y-0.5">
                                       {(cel!.pessoas || []).map((p: any) => (
                                         <div key={p.id} className="group/p flex items-center gap-2 p-1 rounded-lg hover:bg-muted/50">
-                                          <span className={`h-6 w-6 shrink-0 rounded-full flex items-center justify-center text-[10px] font-semibold ${avatarClasse[p.status] || avatarClasse.pending}`}>
-                                            {iniciais(p.nome)}
-                                          </span>
+                                          <AvatarVoluntario nome={p.nome} fotoUrl={p.foto_url} status={p.status} tamanho={24} />
                                           <button
                                             type="button"
                                             onClick={() => onDetalhe({ id: p.volunteer_id || null, nome: p.nome })}

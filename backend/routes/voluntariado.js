@@ -33,6 +33,7 @@ const antecedentes = require('../services/antecedentesCriminais');
 const { executarSyncCompleto } = require('../services/voluntariadoSync');
 const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
 const multer = require('multer');
+const { mapaDeFotos, fotoDoPerfil } = require('../utils/fotoVoluntario');
 const uploadCsv = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
 // ── Cron (sem login · CRON_SECRET) ──────────────────────────────────────────
@@ -2317,6 +2318,7 @@ router.get('/volunteers-pool', async (req, res) => {
         .from('vol_profiles')
         .select(`
           id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado, membresia_id,
+          membro:mem_membros(foto_url),
           team_members:vol_team_members(
             id, team_id, position_id, is_active,
             team:vol_teams(id, name, color),
@@ -2339,6 +2341,14 @@ router.get('/volunteers-pool', async (req, res) => {
     // pra afirmar nada sobre a jornada de quem o sistema não conseguiu ligar
     // a um `mem_membros` (o import do Planning Center deixou muitos assim).
     // ⚠️ Generosidade continua gated no servidor (decisão do Matheus).
+    // ⚠️ `foto_url` RESOLVIDA no servidor: `avatar_url` está preenchido em quase
+    // todo mundo e a maioria é PLACEHOLDER DE INICIAIS do Planning Center — em
+    // 27/08, 121 dos 226 escalados. A tela que mostra `avatar_url` cru troca as
+    // iniciais desenhadas pelo tema por um PNG cinza. Régua em
+    // `utils/fotoVoluntario`; a coluna crua segue no payload pra não quebrar
+    // quem já a lê.
+    for (const v of all) v.foto_url = fotoDoPerfil(v);
+
     await anexarMarcadores(all, (p) => p.membresia_id || null, {
       incluirSensiveis: podeVerMarcadorSensivel(req.user),
     });
@@ -5815,6 +5825,7 @@ router.get('/services/:serviceId/contexto-montagem', async (req, res) => {
         .from('vol_profiles')
         .select(`
           id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado, membresia_id,
+          membro:mem_membros(foto_url),
           team_members:vol_team_members(
             id, team_id, position_id, is_active,
             team:vol_teams(id, name, color),
@@ -5839,6 +5850,10 @@ router.get('/services/:serviceId/contexto-montagem', async (req, res) => {
     // Espelha `ehNomePlaceholder` do matcher: nenhum fluxo de PESSOAS deve
     // exibir isso — muito menos um em que se escolhe quem serve no culto.
     all = all.filter((v) => ehPessoaEscalavel(v.full_name));
+
+    // Foto do CANDIDATO no painel de escalar (27/08). Vem do embed, sem consulta
+    // extra. ⚠️ Só foto de verdade — ver `utils/fotoVoluntario`.
+    for (const v of all) v.foto_url = fotoDoPerfil(v);
 
     // Indisponibilidade: por culto específico + por período que cobre a data.
     const chave = (pid, pcid) => `${pid || ''}::${pcid || ''}`;
@@ -5941,11 +5956,21 @@ async function _coberturaDoCulto(sid) {
   ]);
   if (aErr || sErr) throw new Error((aErr || sErr).message);
 
+  // Foto de quem está escalado (27/08) — os cards de área do builder mostram
+  // avatar. Anexa ANTES da cobertura pra a foto viajar junto da pessoa em
+  // `itens[].pessoas` e em `sobrando`, sem o front precisar cruzar duas listas.
+  // ⚠️ Best-effort: `mapaDeFotos` não lança; sem foto a tela cai nas iniciais.
+  const fotos = await mapaDeFotos(supabase, (sched || []).map(s => s.volunteer_id));
+  const comFoto = (sched || []).map(s => ({
+    ...s,
+    foto_url: s.volunteer_id ? (fotos[s.volunteer_id] || null) : null,
+  }));
+
   // ⚠️ A conta em si é da régua PURA `utils/volCobertura` (no gate), a MESMA
   // que a visão matriz usa para N cultos. Reimplementar aqui faria a grade e a
   // tela do culto discordarem sobre o que ainda falta.
-  const { itens, sobrando, resumo } = montarCobertura(alvo || [], sched || []);
-  return { itens, sobrando, escalas: sched || [], resumo };
+  const { itens, sobrando, resumo } = montarCobertura(alvo || [], comFoto);
+  return { itens, sobrando, escalas: comFoto, resumo };
 }
 
 /**
@@ -6057,9 +6082,16 @@ router.get('/escala-matriz', async (req, res) => {
     };
 
     let alvoTotal = 0, preenchTotal = 0, faltamTotal = 0;
+    // Foto de quem está escalado (pedido do Matheus em 27/08: "na funcionalidade
+    // de montar escala tbm deve ter a foto dos voluntários").
+    // ⚠️ UMA consulta em lote pra toda a grade — por pessoa seriam centenas numa
+    // tela que se abre o tempo todo. Quem não tem foto DE VERDADE fica `null` e
+    // a tela desenha as iniciais; ver a régua em `utils/fotoVoluntario`.
+    const fotoPorVol = await mapaDeFotos(supabase, escalas.map(e => e.volunteer_id));
     const pessoaDaEscala = s => ({
       id: s.id, nome: s.volunteer_name, status: s.confirmation_status || 'pending',
       volunteer_id: s.volunteer_id, planning_center_person_id: s.planning_center_person_id,
+      foto_url: s.volunteer_id ? (fotoPorVol[s.volunteer_id] || null) : null,
     });
 
     for (const culto of cultos) {
