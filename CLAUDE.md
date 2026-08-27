@@ -11941,6 +11941,139 @@ tabela/endpoint existe** — não tratar como recurso vivo. Spec completa (schem
 pesos, dashboard, perguntas pendentes) em `docs/CLAUDE-LEGADO.md`; só
 implementar com aval do Marcos.
 
+## ⚠️⚠️ DECISÃO ONLINE · o QR por culto, o replay e o cadastro do Online (2026-08-27 · migrations `20260827150000` + `20260827180000`)
+
+Pedido do Matheus: *"preciso criar um formulário de aceitação do online. mas ele
+deve alimentar as decisões online, mas agr igual as presenciais, com os dados das
+pessoas. no momento do apelo, o pastor que estiver pregando vai pedir para a
+pessoa que está online escanear o qr code que vai aparecer na tela"*.
+
+**O buraco medido**: 78% de conversão nominal no presencial contra **1%** no
+online — 92 pessoas decidiram online e o sistema não sabe quem são.
+
+📍 A porta pública é `/decisao/:token` (`src/pages/public/DecisaoOnline.tsx`) e o
+QR de cada culto vive na **aba do Online** (`components/online/QrCultosApelo.tsx`),
+por pedido dele: *"prefiro que esse QR code de cada culto esteja na aba do online,
+para a equipe do online pegar lá"*.
+
+### ⚠️⚠️ LEI · o culto vem do TOKEN, e é isso que resolve o vídeo de 2 anos
+
+Pergunta dele: *"quando um cara assistir um video de 2 anos e se converter, ele
+vai preencher o formulário, eai, como fica?"*. Com QR fixo (`/decisao`), o
+servidor deduz o culto pelo RELÓGIO — quem abre a gravação hoje entra no culto
+desta semana, que nunca assistiu. Com o culto DENTRO do link assinado, o QR fica
+gravado naquele vídeo e aponta para aquele culto **para sempre**.
+
+- `backend/utils/decisaoToken.js` · HMAC, **namespace `decisao-online:`**,
+  fail-closed, **sem expiração** (o vídeo não expira). ⚠️ O namespace é o que
+  impede um token do censo, do comprovante de inscrição ou do link do voluntário
+  — **mesmo segredo** — de valer aqui.
+- ⚠️ **NÃO confundir com `culto-decisoes:`** (`utils/cultoToken.js`): aquele é o
+  link do VOLUNTÁRIO lançar decisão de terceiros, com janela de 2 dias. Este é a
+  PRÓPRIA pessoa. Ter os dois no mesmo botão põe o link errado no telão.
+
+### ⚠️⚠️ `decidiu_em` · o relógio do contato pastoral não é o do culto
+
+Decisão dele: *"essas aceitações em vídeos antigos não entram na mesma régua de
+contato pastoral"*. O SLA de 1º contato conta a partir de `data_culto`, e num
+replay de 2 anos ele já nasceria vencido.
+
+⇒ `cultos_decisoes_pessoas.decidiu_em` (migration `20260827150000`), preenchido
+**só no replay**, com o dia de HOJE. O trigger de cuidados virou
+`COALESCE(NEW.decidiu_em, v_data_culto)` por **patch dinâmico** sobre a definição
+VIVA — ⚠️ colar o corpo do arquivo do repo reverteria em silêncio o que só existe
+em produção. Isso evitou tocar em ~112 usos de `data_culto` espalhados.
+
+⚠️ **`origem_replay` e `culto_origem` são DERIVADOS na leitura**, nunca colunas:
+guardar a flag criaria uma segunda verdade que envelhece na primeira correção de
+data.
+
+### ⚠️ `ultimoCultoOnlineRecente` ordenava só por DATA
+
+O fallback de replay (o último culto online em 7 dias) fazia `order('data')` sem
+`hora` — num domingo com três cultos, a decisão caía num deles ao acaso. Régua
+corrigida: **data E hora**.
+
+### ⚠️⚠️ O modal do culto APAGAVA `decisoes_online`
+
+Perda de dado real, achada de carona: o `PUT` do `CalendarioCultos.jsx` mandava
+`decisoes_online` no payload, sobrescrevendo o agregado que o trigger tinha
+somado a partir das pessoas nominais. O campo saiu do payload e virou
+somente-leitura, com a nota explicando de onde ele vem.
+
+### Os três reparos do mesmo dia (27/08, depois do Matheus testar em produção)
+
+1. ⚠️⚠️ **O diálogo do QR vazava para fora do cartão** ("tá bugado quando abre o
+   qr code"). O link do token tem **64 caracteres sem espaço** e o `<a>` é
+   `truncate` (= `white-space: nowrap`). Item de grid/flex nasce com
+   `min-width: auto` e **não encolhe abaixo do próprio min-content** — a linha do
+   link esticava o corpo para ~490px dentro de um cartão de 448px e o bloco do
+   cartaz saía por baixo da borda. **`min-w-0`** devolve o poder de encolher e o
+   `truncate` finalmente trunca. De carona, o `QrLinkDialog` foi para o padrão da
+   casa de modal alto (`flex flex-col max-h-[90vh]` + corpo `flex-1
+   overflow-y-auto min-h-0`): com QR de 240px + caixa do dinâmico + caixa do
+   cartaz ele passa de 700px e estourava sem rolagem.
+2. **Culto que já passou não oferece mais o cartaz** ("bloqueie os cultos que
+   forem passando, para não confundir"). ⚠️⚠️ **Bloquear é esconder o BOTÃO, nunca
+   matar o link** — ele está gravado no vídeo e precisa abrir daqui a dois anos.
+   O culto **continua na lista**, marcado "já passou"; some a OFERTA. Escape
+   explícito ("mostrar mesmo assim"), porque o vídeo às vezes é publicado DEPOIS.
+   Régua pura em `src/lib/cultoQrJanela.ts`, margem de **4h após o início** (o
+   apelo é perto do fim). ⚠️ Data montada por **componentes locais** —
+   `new Date('2026-08-30')` é meia-noite UTC, 21h do dia anterior no Rio, e o
+   culto de domingo à noite seria bloqueado durante o próprio culto. **Fail-open**:
+   data ilegível não bloqueia (esconder o cartaz de HOJE é pior).
+3. **O chip do replay diz só o culto e a data** ("não precisa deixar escrito, vc
+   assistiu tal dia"). O QR estava gravado naquele vídeo, então o culto é fato;
+   afirmar o que a pessoa assistiu é afirmar sobre ELA, e ela pode ter chegado por
+   um link encaminhado. ⚠️ E o chip **só aparece ao vivo ou no replay com token** —
+   fora disso o culto é deduzido pelo relógio, e anunciá-lo produzia o defeito que
+   ele viu antes ("numa quinta a página dizia Quarta Com Deus").
+
+### Cadastro de membresia do ONLINE · mesma porta, origem própria (migration `20260827180000`)
+
+Pedido: *"deve ter um cadastro de membresia online também, dentro do módulo do
+online... pode ser as mesmas perguntas que já temos no formulário de membresia"*.
+
+⚠️⚠️ **NÃO nasce um segundo formulário** — é o MESMO `/cadastro-membresia` com
+`?origem=online`. Duplicar a porta de PESSOAS é o que o Contrato de porta proíbe:
+duas fichas divergiriam no primeiro campo novo e o funil pós-submit (matcher
+canônico, `mem_contatos`, CPF tardio, fila de aprovação) teria de ser
+reconstruído.
+
+- ⚠️ **A origem não é etiqueta**: `mem_cadastros_pendentes` **não tem** coluna
+  `frequenta_area` (conferido no catálogo), então é ela que carrega a declaração
+  até a APROVAÇÃO, onde `aprovarCadastroCore` grava
+  `mem_membros.frequenta_area = 'online'` — a coluna que a aba Pessoas do painel
+  de área já lê. **SÓ-ONDE-VAZIO**: se a equipe já marcou AMI ou Bridge, o
+  formulário não sobrescreve. Best-effort: perder a etiqueta não desfaz uma
+  aprovação que já criou gente.
+- ⚠️⚠️ A migration **DERIVA a lista viva** do CHECK e acrescenta `'online'`.
+  `DROP + ADD` com lista estática é remoção silenciosa disfarçada de acréscimo
+  (lei do `app_soft_deletable_tables()`). Guarda de drift: aborta se o CHECK não
+  existir ou a derivação vier vazia. Estado depois:
+  `'{evento,importacao,qr_code,site,online}'`.
+- ⚠️ **O link é montado no SERVIDOR** (`GET /api/online/link-membresia`): caminho
+  do catálogo de formulários públicos (`routes/links.js`) + base de
+  `utils/linkInscricaoApp`. URL escrita na tela é URL que ninguém valida — foi
+  assim que `/apresentacao-criancas` ficou link morto por meses. **Fail-closed**:
+  sem a porta no catálogo, 503 — nunca um endereço inventado.
+
+### Verificação e ⚠️ correção de registro
+
+Gate completo nas duas levas: `tsc -b` sem cache · `npm run build` · `npm test`
+(**2.616 verdes**) · **os 20 scripts** do `deploy-vercel.yml` · `lint:hooks`.
+**3 mutantes RODADOS e mortos** em `cultoQrJanela`: fail-closed em data ilegível →
+1 vermelho · sem margem após o início → 5 · data lida em UTC → 5.
+⚠️ O último **só morre porque o caso de fuso FORÇA `TZ=America/Sao_Paulo`** — em
+UTC, que é onde o gate roda, os dois caminhos dariam a mesma resposta e o mutante
+sobreviveria. É a lição de 24/08 aplicada de novo.
+
+⚠️⚠️ **CORREÇÃO DE REGISTRO**: este arquivo diz, em pontos diferentes, que o gate
+tem 8, 10, 12, 13 ou 16 scripts. Em **27/08/2026 são 20**. **Contar no
+`.github/workflows/deploy-vercel.yml`, nunca decorar** — cada número que este
+arquivo já registrou envelheceu, este inclusive.
+
 ## Online · visao do canal YouTube (somente leitura)
 
 Modulo `/online` mostra desempenho do canal YouTube CBRio com
