@@ -374,3 +374,8 @@ module.exports = router;
 module.exports.normalizarDestino = normalizarDestino;
 module.exports.SLUG_RE = SLUG_RE;
 module.exports.RESERVADOS = RESERVADOS;
+// ⚠️ Exportado para quem precisa do CAMINHO de um formulário público sem
+// reescrevê-lo à mão (hoje: o link do cadastro de membresia na aba do Online).
+// Uma segunda lista de rotas públicas divergiria no primeiro endereço que
+// mudasse — foi assim que `/apresentacao-criancas` virou link morto por meses.
+module.exports.OUTROS_FORMULARIOS = OUTROS_FORMULARIOS;

@@ -540,7 +540,13 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       });
     }    }
 
-    const origemValida = ['site', 'qr_code', 'evento', 'importacao'];
+    // ⚠️ Espelho do CHECK `mem_cadastros_pendentes_origem_check` (o banco é a
+    // régua; aqui é só a porta recusando cedo). `online` entrou em 27/08/2026 e
+    // NÃO é só etiqueta: a tabela não tem `frequenta_area`, então é a origem que
+    // carrega a declaração "acompanha pelo Online" até a APROVAÇÃO, que a grava
+    // em `mem_membros.frequenta_area`. Origem desconhecida cai em 'site' —
+    // recusar o cadastro por causa de um parâmetro de URL seria perder a pessoa.
+    const origemValida = ['site', 'qr_code', 'evento', 'importacao', 'online'];
     const origemFinal = origemValida.includes(origem) ? origem : 'site';
 
     // Uma grafia só para o bairro, antes de qualquer gravação.

@@ -3788,6 +3788,32 @@ async function aprovarCadastroCore({
       }
     }
 
+    // ── A porta ONLINE declara a área (27/08/2026) ───────────────────────────
+    // ⚠️ `mem_cadastros_pendentes` NÃO tem coluna `frequenta_area` (conferido no
+    // catálogo), então quem carrega a declaração do formulário até aqui é a
+    // ORIGEM. É neste ponto — a APROVAÇÃO — que ela vira cadastro, porque é aqui
+    // que a pessoa passa a existir em `mem_membros`.
+    //
+    // ⚠️⚠️ SÓ-ONDE-VAZIO (`.is('frequenta_area', null)`), a mesma política do
+    // censo e do CPF tardio: se a equipe já marcou AMI ou Bridge nessa pessoa,
+    // um formulário não sobrescreve trabalho humano. E o `.eq('id')` +
+    // `deleted_at` são o de sempre.
+    //
+    // ⚠️ Best-effort: falhar aqui não pode desfazer uma aprovação que já criou
+    // ou atualizou a pessoa. O que se perde é uma etiqueta de área; o que se
+    // preservaria com um throw seria nada.
+    if (cad.origem === 'online' && membro?.id) {
+      try {
+        await supabase.from('mem_membros')
+          .update({ frequenta_area: 'online' })
+          .eq('id', membro.id)
+          .is('frequenta_area', null)
+          .is('deleted_at', null);
+      } catch (e) {
+        console.warn('[CADASTROS] propagar frequenta_area online:', e.message);
+      }
+    }
+
     // Marca cadastro como aprovado e liga ao membro criado/atualizado
     const { error: e3 } = await supabase
       .from('mem_cadastros_pendentes')
