@@ -689,6 +689,10 @@ function AppRoutes() {
       <Route path="/next/direcionar/:token" element={<Suspense fallback={<Loading />}><NextDirecionar /></Suspense>} />
       <Route path="/inscricao-voluntariado" element={<Suspense fallback={<Loading />}><InscricaoVoluntariado /></Suspense>} />
       <Route path="/decisao" element={<Suspense fallback={<Loading />}><DecisaoOnline /></Suspense>} />
+      {/* QR gravado no vídeo: o culto vai DENTRO do token, então quem assiste um
+          replay de anos atrás cai no culto certo em vez de no culto da semana
+          em que ele abriu o vídeo. */}
+      <Route path="/decisao/:token" element={<Suspense fallback={<Loading />}><DecisaoOnline /></Suspense>} />
       {/* Link ASSINADO do culto · o voluntário lança as decisões na hora, sem login */}
       <Route path="/c/:token" element={<Suspense fallback={<Loading />}><DecisaoCulto /></Suspense>} />
       <Route path="/wallet" element={<Suspense fallback={<Loading />}><WalletPage /></Suspense>} />

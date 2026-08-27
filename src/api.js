@@ -672,7 +672,9 @@ export const generosidadePublica = {
 
 // Decisão online · formulário público "Eu aceito Jesus" (sem auth)
 export const decisaoOnline = {
-  ativo: () => fetch(`${API}/public/decisao-online/ativo`).then(r => r.json()),
+  ativo: (token) => fetch(
+    `${API}/public/decisao-online/ativo${token ? `?t=${encodeURIComponent(token)}` : ''}`,
+  ).then(r => r.json()),
   registrar: (data) => fetch(`${API}/public/decisao-online`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

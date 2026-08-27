@@ -19,6 +19,8 @@ const { supabase } = require('../utils/supabase');
 const { findCultoAtual } = require('../services/onlineCollectors');
 const { registrarConsentimentos, TEXTOS } = require('../services/inscricaoContrato');
 const { validarDecisao } = require('../utils/decisaoCampos');
+const { verificarTokenDecisao } = require('../utils/decisaoToken');
+const { hojeBRT } = require('../utils/cultoJanela');
 const { bairroPorCep } = require('../services/geoBrasil');
 const { canonizarBairro } = require('../services/bairroCanonico');
 
@@ -147,13 +149,62 @@ async function levarCepAoCadastro(membroId, cep) {
   await q;
 }
 
+/**
+ * Culto vindo do TOKEN do QR gravado no vídeo.
+ *
+ * Devolve `{ culto, replay }`:
+ *   · `replay: false` — aquele culto é o que está no ar (ou acabou de sair):
+ *     comportamento de sempre, a jornada pastoral conta da data do culto;
+ *   · `replay: true`  — vídeo antigo: a pessoa decidiu HOJE, e é de hoje que
+ *     o relógio do primeiro contato precisa contar.
+ *
+ * ⚠️ Token inválido devolve `null` e o chamador cai na resolução por relógio —
+ * NUNCA recusa a decisão. Um QR arranhado, mal impresso ou de uma versão antiga
+ * do overlay não pode custar a decisão de alguém.
+ */
+async function cultoDoToken(token) {
+  const cultoId = verificarTokenDecisao(token);
+  if (!cultoId) return null;
+
+  const { data } = await supabase
+    .from('cultos')
+    .select('id, data, vol_service_types!inner(name, has_online)')
+    .eq('id', cultoId)
+    .eq('vol_service_types.has_online', true)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (!data) return null;
+
+  const culto = { id: data.id, data: data.data, nome: data.vol_service_types?.name || 'Culto' };
+
+  // "É o culto de agora?" é decidido pela MESMA régua de sempre — não por uma
+  // segunda conta de janela aqui, que divergiria no primeiro ajuste.
+  const agora = await resolverCultoOnline({ comFallback: true });
+  return { culto, replay: !agora || agora.id !== culto.id };
+}
+
 // GET /ativo · o frontend pergunta se deve mostrar o form. aoVivo = janela real
 // (label "Ao vivo agora"); ativo = janela OU fallback pos-live (form utilizavel).
-router.get('/ativo', async (_req, res) => {
+router.get('/ativo', async (req, res) => {
   try {
+    // Com token, o culto vem do QR — não há o que deduzir.
+    if (req.query.t) {
+      const doToken = await cultoDoToken(req.query.t);
+      if (doToken) {
+        return res.json({
+          ativo: true,
+          // ⚠️ "ao vivo" só quando o culto do QR é mesmo o do momento. Num
+          // vídeo antigo isso é false, e a tela não anuncia transmissão que
+          // não existe — foi o defeito do chip "Quarta Com Deus" na quinta.
+          aoVivo: !doToken.replay,
+          replay: doToken.replay,
+          culto: doToken.culto,
+        });
+      }
+    }
     const aoVivoCulto = await resolverCultoOnline();
     const culto = aoVivoCulto || await resolverCultoOnline({ comFallback: true });
-    res.json({ ativo: !!culto, aoVivo: !!aoVivoCulto, culto });
+    res.json({ ativo: !!culto, aoVivo: !!aoVivoCulto, replay: false, culto });
   } catch (e) {
     console.error('[public/decisao-online/ativo]', e.message);
     res.json({ ativo: false, culto: null });
@@ -170,9 +221,19 @@ router.post('/', async (req, res) => {
     if (!v.ok) return res.status(400).json({ error: v.erro, campo: v.campo });
     const { nome, dataNascimento, telefone, cep, email } = v.valores;
 
-    // comFallback · aceita quem preenche logo após o culto (grace pos-live) e
-    // quem assiste o REPLAY nos dias seguintes. Nunca descarta a decisão.
-    const culto = await resolverCultoOnline({ comFallback: true });
+    // ⚠️ O TOKEN MANDA quando existe: ele é o culto gravado no vídeo, e é o
+    // único jeito de acertar o culto de quem assiste um replay de dois anos.
+    // Sem token (ou com token inválido), cai na resolução por relógio de
+    // sempre: comFallback aceita quem preenche logo após o culto e quem vê o
+    // replay nos dias seguintes. Nunca descarta a decisão.
+    const doToken = req.body?.t ? await cultoDoToken(req.body.t) : null;
+    const culto = doToken?.culto || await resolverCultoOnline({ comFallback: true });
+    // ⚠️⚠️ A DATA QUE INICIA A JORNADA. Só é preenchida no replay: aí a pessoa
+    // decidiu HOJE, e é de hoje que o SLA de 3 dias do primeiro contato precisa
+    // contar. Sem isto ela entraria na fila com a data do culto — atrasada em
+    // centenas de dias, aparecendo como caso perdido, e ninguém ligaria pra
+    // ela. `culto_id` continua guardando de qual vídeo ela veio.
+    const decidiuEm = doToken?.replay ? hojeBRT() : null;
     if (!culto) {
       return res.status(409).json({
         error: 'sem_culto_recente',
@@ -203,6 +264,7 @@ router.post('/', async (req, res) => {
         email,
         data_nascimento: dataNascimento,
         cep,
+        decidiu_em: decidiuEm,
         tipo_decisao: 'online',
         fonte: 'form_publico',
       })

@@ -19,6 +19,7 @@
 // — aparecia visivelmente fora do conjunto. Uma porta de decisão de fé com
 // cara de página estranha não ajuda ninguém a confiar.
 import { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { decisaoOnline } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
@@ -71,9 +72,14 @@ function Field({
 }
 
 export default function DecisaoOnline() {
+  // ⚠️ Token do QR gravado no vídeo. Quando existe, o culto vem DELE e o
+  // servidor não precisa deduzir nada pelo relógio — é o que faz a decisão de
+  // quem assiste um replay de anos atrás cair no culto certo.
+  const { token } = useParams<{ token?: string }>();
   const { C } = usePublicTheme();
   const [carregando, setCarregando] = useState(true);
   const [aoVivo, setAoVivo] = useState(false);
+  const [replay, setReplay] = useState(false);
   const [culto, setCulto] = useState<Culto | null>(null);
   const [nome, setNome] = useState('');
   const [nascimento, setNascimento] = useState('');
@@ -87,16 +93,17 @@ export default function DecisaoOnline() {
   useEffect(() => {
     document.title = 'Eu aceito Jesus · CBRio';
     decisaoOnline
-      .ativo()
-      .then((r: { ativo: boolean; aoVivo?: boolean; culto: Culto | null }) => {
+      .ativo(token)
+      .then((r: { ativo: boolean; aoVivo?: boolean; replay?: boolean; culto: Culto | null }) => {
         setAoVivo(!!r.aoVivo);
+        setReplay(!!r.replay);
         setCulto(r.culto || null);
       })
       // Falha ao consultar o culto NÃO trava o formulário: quem decidiu registra
       // mesmo assim e o servidor resolve a qual culto anexar.
       .catch(() => setCulto(null))
       .finally(() => setCarregando(false));
-  }, []);
+  }, [token]);
 
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
@@ -139,6 +146,7 @@ export default function DecisaoOnline() {
         telefone: tel,
         cep: cepDigitos || null,
         aceite_lgpd: true,
+        t: token || null,
       });
       setPronto(true);
     } catch (err: unknown) {
@@ -272,6 +280,22 @@ export default function DecisaoOnline() {
               color: '#00B39D', fontSize: 13, fontWeight: 600,
             }}>
               Ao vivo agora · {culto.nome}
+            </div>
+          )}
+          {/* ⚠️ Só no REPLAY, e citando a DATA. Aqui o culto veio do QR gravado
+              no vídeo, então a informação é verdadeira e ajuda a pessoa a
+              confirmar que é a mensagem que ela assistiu. É diferente do chip
+              antigo, que anunciava um culto deduzido pelo relógio como se fosse
+              o do momento. */}
+          {culto && replay && (
+            <div style={{
+              display: 'inline-block', marginTop: 14,
+              padding: '8px 16px', borderRadius: 12,
+              background: 'rgba(0,179,157,0.10)',
+              border: `1px solid ${C.cardBorder}`,
+              color: C.text3, fontSize: 12.5, fontWeight: 500,
+            }}>
+              Você assistiu · {culto.nome} de {culto.data.split('-').reverse().join('/')}
             </div>
           )}
         </div>

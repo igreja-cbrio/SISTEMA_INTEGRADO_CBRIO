@@ -9,9 +9,10 @@ import { kpis as kpisApi } from '../api';
 import { BirthDatePicker } from './ui/birth-date-picker';
 
 const cultosApi = kpisApi.cultos;
-import { Calendar, CalendarClock, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, AlertTriangle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon, FileText } from 'lucide-react';
+import { Calendar, CalendarClock, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, AlertTriangle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon, FileText, QrCode } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatErro } from '../lib/formatErro';
+import QrLinkDialog from './QrLinkDialog';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -386,6 +387,8 @@ export default function CalendarioCultos({ pendenciaSignal = 0, pendenciaFiltro 
 // "qual culto" pra errar — que foi o bug de 12/07 (19 nomes no culto errado).
 // ----------------------------------------------------------------------------
 function ModalLinksSemana({ semanaInicio, labelSemana, onClose }) {
+  // QR do apelo · aberto por culto (o link já traz o culto dentro).
+  const [qrApelo, setQrApelo] = useState(null);
   const [carregando, setCarregando] = useState(true);
   const [cultos, setCultos] = useState([]);
   const [erro, setErro] = useState('');
@@ -507,10 +510,43 @@ function ModalLinksSemana({ semanaInicio, labelSemana, onClose }) {
                           <LinkIcon size={12} /> Copiar
                         </button>
                       )}
+                      {/* ⚠️ Botão SEPARADO e com propósito OPOSTO ao "Copiar" ao
+                          lado: aquele é o link do VOLUNTÁRIO lançar quem
+                          decidiu; este é o QR que vai no TELÃO para a PRÓPRIA
+                          pessoa registrar a decisão dela. Misturar os dois num
+                          botão só seria a receita para o link errado ir ao ar. */}
+                      {c.link_decisao_online && (
+                        <button
+                          onClick={() => setQrApelo({
+                            link: c.link_decisao_online,
+                            titulo: `${c.nome} · ${formataDataCurta(c.data).dia}`,
+                          })}
+                          style={{ ...btnGhost, fontSize: 11, padding: '6px 10px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                          title="QR do apelo · para a produção pôr no telão deste culto"
+                        >
+                          <QrCode size={12} /> QR do apelo
+                        </button>
+                      )}
                     </div>
                   );
                 })}
               </div>
+
+              {qrApelo && (
+                <QrLinkDialog
+                  link={qrApelo.link}
+                  titulo={qrApelo.titulo}
+                  nomeArquivo={`qr-apelo-${qrApelo.titulo.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
+                  descricao="Este QR vai no telão no momento do apelo — e fica gravado no vídeo. Quem assistir a gravação daqui a meses cai NESTE culto, não no culto da semana em que abrir o vídeo."
+                  chamada="Decidiu seguir a Jesus agora? Queremos caminhar com você."
+                  /* ⚠️ Sem a oferta de QR dinâmico DE PROPÓSITO: o link curto é
+                     repontável, e repontar um QR que já está gravado num vídeo
+                     mandaria as decisões daquele vídeo para outro culto. Aqui o
+                     endereço final é justamente o que garante o vínculo. */
+                  semDinamico
+                  onClose={() => setQrApelo(null)}
+                />
+              )}
 
               {comLink.length > 0 && (
                 <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
