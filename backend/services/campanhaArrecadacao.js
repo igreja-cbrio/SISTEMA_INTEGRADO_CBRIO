@@ -43,6 +43,12 @@ async function retrato(campanhaId) {
     total_centavos: progresso.total_centavos,
     meta_centavos: data.meta_centavos,
     hoje,
+    // ⚠️ `data_inicio` é obrigatória aqui: a view só conta dinheiro DENTRO da
+    // janela da campanha, então o ritmo tem de ser dividido pela janela em que
+    // ainda dá pra arrecadar — não por "de hoje até o fim". Sem ela, a campanha
+    // do Kids dizia "faltam 65 dias" em 27/08 quando a arrecadação só abre em
+    // 01/09 (61 dias, 8 domingos), e o ritmo saía folgado.
+    data_inicio: data.data_inicio,
     data_fim: data.data_fim,
   });
 
@@ -71,6 +77,7 @@ async function listar({ incluirEncerradas = true } = {}) {
         + (c.online_pago_centavos || 0),
       meta_centavos: c.meta_centavos,
       hoje,
+      data_inicio: c.data_inicio,
       data_fim: c.data_fim,
     }),
     no_ar: estaNoAr(c, hoje),
