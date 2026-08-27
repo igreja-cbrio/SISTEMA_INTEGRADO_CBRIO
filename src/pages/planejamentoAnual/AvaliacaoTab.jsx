@@ -1,8 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 import { ClipboardCheck } from 'lucide-react';
-import { planejamentoAnual as api } from '../../api';
-import { C, cardStyle, btn, input, hint, fmtBRL, fmtQuando, thStyle, tdStyle, Badge } from './comum';
+import { planejamentoAnual as api, users as usersApi } from '../../api';
+import {
+  C, cardStyle, btn, input, label, hint, fmtBRL, fmtQuando, thStyle, tdStyle, Badge,
+  NATUREZAS, RECORRENCIAS, DIAS_SEMANA,
+} from './comum';
 
 // Evidência do proponente exibida ao lado de cada critério (protótipo · coluna 2)
 function evidencia(chave, p) {
@@ -20,14 +23,23 @@ function evidencia(chave, p) {
   }
 }
 
-export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria }) {
+const ORDENS = [
+  { valor: 'pendente', rotulo: 'Pendentes primeiro' },
+  { valor: 'nome', rotulo: 'Nome (A-Z)' },
+  { valor: 'area', rotulo: 'Área' },
+  { valor: 'quando', rotulo: 'Quando' },
+];
+
+export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria, locais }) {
   const [propostas, setPropostas] = useState([]);
+  const [pessoas, setPessoas] = useState([]);
   const [carregando, setCarregando] = useState(true);
   const [aberta, setAberta] = useState(null);   // proposta projetada (avaliador)
   const [notas, setNotas] = useState({});
   const [coments, setComents] = useState({});
   const [geral, setGeral] = useState('');
   const [salvando, setSalvando] = useState(false);
+  const [ordenarPor, setOrdenarPor] = useState('pendente');
 
   const criterios = constantes?.criterios || [];
 
@@ -40,6 +52,24 @@ export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria }) {
     } catch { toast.error('Erro ao carregar o painel'); } finally { setCarregando(false); }
   }, [ciclo?.id]);
   useEffect(() => { carregar(); }, [carregar]);
+  useEffect(() => { usersApi.list().then((u) => setPessoas(Array.isArray(u) ? u : [])).catch(() => {}); }, []);
+
+  const propostasOrdenadas = useMemo(() => {
+    const lista = [...propostas];
+    const porNome = (a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR');
+    if (ordenarPor === 'nome') return lista.sort(porNome);
+    if (ordenarPor === 'area') return lista.sort((a, b) => (a.area || '').localeCompare(b.area || '', 'pt-BR') || porNome(a, b));
+    if (ordenarPor === 'quando') return lista.sort((a, b) => String(a.data_inicio || '').localeCompare(String(b.data_inicio || '')));
+    // pendente primeiro
+    return lista.sort((a, b) => {
+      const pa = a.minha_avaliacao_enviada ? 1 : 0;
+      const pb = b.minha_avaliacao_enviada ? 1 : 0;
+      return pa - pb || porNome(a, b);
+    });
+  }, [propostas, ordenarPor]);
+
+  const nomeLider = (id) => pessoas.find((u) => u.id === id)?.name || pessoas.find((u) => u.id === id)?.email || '—';
+  const nomeLocal = (id) => (locais || []).find((l) => l.id === id)?.nome || '—';
 
   const abrir = async (p) => {
     try {
@@ -85,6 +115,38 @@ export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria }) {
             </p>
           </div>
           <button style={btn('ghost')} onClick={() => setAberta(null)}>Voltar</button>
+        </div>
+
+        <div style={{ display: 'grid', gap: 10, padding: 14, borderRadius: 12, border: `1px solid ${C.border}`, background: 'var(--panel, var(--cbrio-card))' }}>
+          <strong style={{ fontSize: 13, color: C.primary }}>Resumo da proposta</strong>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+            <div><span style={label}>Natureza</span><div style={{ fontSize: 13, color: C.text }}>{NATUREZAS.find((n) => n.valor === aberta.natureza)?.rotulo || aberta.natureza || '—'}</div></div>
+            <div><span style={label}>Área</span><div style={{ fontSize: 13, color: C.text }}>{aberta.area || '—'}</div></div>
+            <div><span style={label}>Líder responsável</span><div style={{ fontSize: 13, color: C.text }}>{nomeLider(aberta.lider_id)}</div></div>
+            <div><span style={label}>Quando</span><div style={{ fontSize: 13, color: C.text }}>{fmtQuando(aberta)}</div></div>
+            <div>
+              <span style={label}>Recorrência</span>
+              <div style={{ fontSize: 13, color: C.text }}>
+                {RECORRENCIAS.find((r) => r.valor === aberta.recorrencia)?.rotulo || aberta.recorrencia || '—'}
+                {aberta.dia_semana != null && ` · ${DIAS_SEMANA[aberta.dia_semana] || ''}`}
+              </div>
+            </div>
+            <div>
+              <span style={label}>Horário</span>
+              <div style={{ fontSize: 13, color: C.text }}>
+                {aberta.hora_inicio ? String(aberta.hora_inicio).slice(0, 5) : '—'}
+                {aberta.hora_fim ? ` – ${String(aberta.hora_fim).slice(0, 5)}` : ''}
+              </div>
+            </div>
+            <div><span style={label}>Local</span><div style={{ fontSize: 13, color: C.text }}>{nomeLocal(aberta.local_id)}</div></div>
+            <div><span style={label}>Público-alvo</span><div style={{ fontSize: 13, color: C.text }}>{aberta.publico_alvo || '—'}</div></div>
+          </div>
+          {aberta.descricao && (
+            <div>
+              <span style={label}>Descrição</span>
+              <div style={{ fontSize: 13, color: C.text, whiteSpace: 'pre-wrap' }}>{aberta.descricao}</div>
+            </div>
+          )}
         </div>
 
         <div style={{ overflowX: 'auto' }}>
@@ -167,10 +229,18 @@ export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria }) {
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
-      <p style={{ margin: 0, fontSize: 12.5, color: C.t3, maxWidth: 720 }}>
-        Você não vê a nota das outras diretorias até que as quatro tenham enviado. A proposta só entra no ranking depois disso.
-        {!ciclo?.avaliacao_aberta && ' · A janela de avaliação está fechada.'}
-      </p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+        <p style={{ margin: 0, fontSize: 12.5, color: C.t3, maxWidth: 640 }}>
+          Você não vê a nota das outras diretorias até que as quatro tenham enviado. A proposta só entra no ranking depois disso.
+          {!ciclo?.avaliacao_aberta && ' · A janela de avaliação está fechada.'}
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 12, color: C.t2 }}>Ordenar por</span>
+          <select style={{ ...input, width: 'auto' }} value={ordenarPor} onChange={(e) => setOrdenarPor(e.target.value)}>
+            {ORDENS.map((o) => <option key={o.valor} value={o.valor}>{o.rotulo}</option>)}
+          </select>
+        </div>
+      </div>
       <div style={{ ...cardStyle, overflow: 'hidden' }}>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -181,7 +251,7 @@ export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria }) {
             <tbody>
               {carregando && <tr><td style={tdStyle} colSpan={6}>Carregando…</td></tr>}
               {!carregando && !propostas.length && <tr><td style={tdStyle} colSpan={6}>Nenhuma proposta para avaliar.</td></tr>}
-              {propostas.map((p) => (
+              {propostasOrdenadas.map((p) => (
                 <tr key={p.id}>
                   <td style={{ ...tdStyle, fontWeight: 600 }}>{p.nome}</td>
                   <td style={tdStyle}>{p.area}</td>
