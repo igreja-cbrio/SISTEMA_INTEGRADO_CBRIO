@@ -28,6 +28,16 @@ const ROUTE_MODULE_MAP = {
   'expansion':    ['expansao'],
   'solicitacoes': ['solicitacoes'],
   'propostas':    ['propostas'],
+  // Campanhas de arrecadação. ⚠️ Sem esta entrada, `authorizeModule('campanhas',
+  // N)` recebe `undefined` e cai no nível PADRÃO DO CARGO — a matriz de
+  // permissões deixa de valer em silêncio, nos dois sentidos (ninguém toma 403 e
+  // a tela de Permissões desenha uma régua que o servidor não aplica). É a LEI de
+  // 17/08, e o módulo `links` caiu nela por 9 dias. Guardado por
+  // `src/test/routeModuleMap.test.ts`.
+  // ⚠️ Escrita é 3 e ativar/agendar disparo é 4: publicar a barrinha e mandar
+  // pedido de doação pra milhares de pessoas não é a mesma decisão que corrigir
+  // o texto de um marco do cronograma.
+  'campanhas':    ['campanhas'],
   // ministeriais
   'integracao':   ['integracao'],
   'relatorios':   ['relatorios'],

@@ -119,6 +119,17 @@ jobs:
       - name: Rodizio de supervisao (semana x dia x periodo)
         run: npm run test:rodizio-culto
 
+      # DINHEIRO. O digito verificador de campanha JA MORREU UMA VEZ: a regra do
+      # centavo foi escrita so no JS e o caminho vivo era o trigger SQL, entao
+      # 205 creditos (R$ 42 mil so no digito 25) ficaram 3 meses sem ser
+      # classificados e `fin_transacoes.identificador_centavo` estava em ZERO
+      # linhas. Este teste guarda a regra nos DOIS caminhos (JS + espelho SQL) e
+      # trava o deploy se eles divergirem. Tambem guarda: WhatsApp sem opt-in
+      # fora do publico, agradecimento sem nome nem valor, e a barrinha nao
+      # somar camadas que geram dupla contagem (LEI No 6 do nucleo).
+      - name: Digito verificador de campanha (JS x espelho SQL)
+        run: npm run test:campanha-digito
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 

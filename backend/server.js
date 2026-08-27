@@ -78,6 +78,11 @@ app.use(rateLimit({
     // levaria 429 — e 429 aqui é resposta perdida de quem preencheu 93 campos.
     // Limiter próprio (e medido) em routes/publicCenso.js.
     || req.path.startsWith('/api/public/censo')
+    // ⚠️ A BARRINHA da campanha sai do teto por IP: ela vive nas telas laterais
+    // do culto fazendo polling, e o efeito de 429 ali é a igreja inteira vendo
+    // um progresso congelado no domingo do lançamento. É leitura de uma view
+    // agregada — nenhum dado de pessoa, nenhum custo relevante.
+    || req.path.startsWith('/api/public/campanhas')
     // ⚠️ O REDIRECIONADOR DE QR sai do teto por IP pelo mesmo motivo, e aqui a
     // falha é a mais visível de todas: 429 no /r/ é o cartaz não abrindo nada.
     // A pessoa não vê "muitas requisições", vê um QR quebrado — e conclui que o
@@ -149,6 +154,7 @@ app.use('/api/revisoes', require('./routes/revisoes'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/propostas', require('./routes/propostas')); // Ciclo anual de propostas (projetos/eventos/rotinas)
+app.use('/api/campanhas', require('./routes/campanhas')); // Campanhas de arrecadação (dígito verificador, cronograma, disparos)
 app.use('/api/tasks', require('./routes/tasks'));  // Kanban de tarefas transversal (Projetos/Eventos) · guard por módulo dentro do router
 app.use('/api/expansion', require('./routes/expansion'));
 app.use('/api/strategic', require('./routes/strategic'));
@@ -247,6 +253,12 @@ app.use('/api/public/generosidade', require('./routes/publicGenerosidade'));
 // vivem nos dois routers.
 app.use('/api/public/decisao-culto', require('./routes/publicDecisaoCulto'));
 app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
+// ⚠️ CAMPANHAS montada ANTES do publicLimiter estrito: a barrinha de progresso
+// vai para as TELAS LATERAIS DO CULTO e faz polling, com a igreja inteira atrás
+// do mesmo NAT — sob 30/15min por IP ela congelaria no meio do lançamento, e
+// barrinha travada no domingo do lançamento é o pior momento possível pra ela
+// falhar. Limiter próprio generoso em routes/publicCampanha.js.
+app.use('/api/public/campanhas', require('./routes/publicCampanha'));
 app.use('/api/public', publicLimiter);
 
 app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));

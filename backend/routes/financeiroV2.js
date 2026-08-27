@@ -782,7 +782,15 @@ router.get('/fila-classificacao', async (req, res) => {
 // ====================================================================
 router.post('/classificar/:filaId/aprovar', async (req, res) => {
   try {
-    const { plano_contas_id, centro_custo_id, membro_id, identificador_centavo, observacoes, criar_contribuinte } = req.body;
+    const { plano_contas_id, centro_custo_id, membro_id, observacoes, criar_contribuinte } = req.body;
+    // ⚠️⚠️ O DÍGITO É DERIVADO DO VALOR, não digitado. Até 27/08/2026 ele só vinha
+    // do `req.body` — ou seja, dependia do operador DIGITAR o que o próprio valor
+    // já diz. Efeito medido: `fin_transacoes.identificador_centavo` estava
+    // preenchido em ZERO linhas do sistema inteiro, então nenhuma campanha
+    // conseguia somar o que já estava na conta da igreja. É a segunda metade do
+    // dígito morto (a primeira era a régua ausente na função SQL que classifica).
+    // O `req.body` ainda vence quando vem explícito: correção humana manda.
+    let identificador_centavo = req.body?.identificador_centavo;
 
     // Busca fila + lancamento bruto
     const { data: fila, error: errFila } = await supabase
@@ -792,6 +800,23 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
     if (errFila || !fila) return res.status(404).json({ error: 'Item não encontrado' });
 
     const lanc = fila.lancamento;
+
+    // Deriva o dígito do valor do crédito, se houver identificador ATIVO pra ele.
+    // ⚠️ Régua ÚNICA em `utils/digitoCampanha.js`, a mesma que a função SQL
+    // espelha — duas contas do centavo divergiriam no primeiro arredondamento.
+    // ⚠️ Best-effort: falha ao consultar os dígitos NÃO derruba a aprovação (o
+    // trabalho do operador vale mais que o carimbo), só deixa a coluna nula.
+    if (identificador_centavo === undefined) {
+      try {
+        const { digitoDoLancamento } = require('../utils/digitoCampanha');
+        const { data: ativos } = await supabase.rpc('camp_digitos_ativos');
+        identificador_centavo = digitoDoLancamento(lanc, ativos || []) || null;
+      } catch (e) {
+        console.error('[FIN-V2] derivar dígito:', e.message);
+        identificador_centavo = null;
+      }
+    }
+
     const finalPlanoContas = plano_contas_id || fila.sugestao_plano_contas_id;
     const finalCentroCusto = centro_custo_id !== undefined ? centro_custo_id : fila.sugestao_centro_custo_id;
     let finalMembro = membro_id !== undefined ? membro_id : fila.sugestao_membro_id;
