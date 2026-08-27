@@ -18,6 +18,9 @@ const crypto = require('crypto');
 const { supabase } = require('../utils/supabase');
 const { findCultoAtual } = require('../services/onlineCollectors');
 const { registrarConsentimentos, TEXTOS } = require('../services/inscricaoContrato');
+const { validarDecisao } = require('../utils/decisaoCampos');
+const { bairroPorCep } = require('../services/geoBrasil');
+const { canonizarBairro } = require('../services/bairroCanonico');
 
 // Quantos dias pra trás aceitamos anexar a decisão de quem assiste o REPLAY.
 // Medido em 14/08/2026: nos últimos 120 dias houve culto online em 111 deles,
@@ -75,6 +78,59 @@ async function resolverCultoOnline({ comFallback = false } = {}) {
   return comFallback ? await ultimoCultoOnlineRecente() : null;
 }
 
+/**
+ * Leva o CEP declarado ao CADASTRO da pessoa — é o que transforma o campo do
+ * formulário na análise que o Matheus pediu ("de onde a maior parte das pessoas
+ * assiste"). O mapa da aba Perfil agrega por `vw_dem_pessoa.cep_regiao`, que sai
+ * de `mem_membros.cep`; parado em `cultos_decisoes_pessoas` o CEP não vira mapa.
+ *
+ * ⚠️⚠️ SÓ-ONDE-VAZIO, nos dois campos. É a política do censo e do
+ * `completarBairroPorCep` da Membresia: valor já preenchido é decisão humana (a
+ * equipe corrigiu, ou a própria pessoa atualizou o cadastro) e um formulário
+ * NÃO sobrescreve isso. O que a pessoa declarou aqui fica guardado em
+ * `cultos_decisoes_pessoas.cep` de qualquer forma.
+ *
+ * ⚠️ O bairro vem do ViaCEP (`bairroPorCep` · ~200 ms, sem rate-limit) e passa
+ * pela grafia canônica, senão a porta volta a fabricar as duas escritas que a
+ * consolidação de 24/08 acabou de juntar ("Barra" × "Barra da Tijuca").
+ * NUNCA chamar o Nominatim aqui: são 1,1 s de fila por consulta, e isso é o
+ * caminho de alguém esperando a tela responder.
+ *
+ * ⚠️ NÃO grava `mem_membros.lat/lng`: coordenada de pessoa é reservada a
+ * endereço de RUA conferido (lição do `pinosMapa.ts`). O mapa por CEP resolve a
+ * coordenada em `dem_cep_geo`, que é cache de código postal.
+ */
+async function levarCepAoCadastro(membroId, cep) {
+  if (!membroId || !cep) return;
+
+  const { data: membro } = await supabase
+    .from('mem_membros')
+    .select('id, cep, bairro')
+    .eq('id', membroId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  if (!membro) return;
+
+  const patch = {};
+  if (!String(membro.cep || '').trim()) patch.cep = cep;
+
+  if (!String(membro.bairro || '').trim()) {
+    const via = await bairroPorCep(cep);
+    if (via?.bairro) patch.bairro = await canonizarBairro(via.bairro);
+  }
+
+  if (!Object.keys(patch).length) return;
+
+  // ⚠️ Guarda de corrida: `.is(campo, null)` não serve porque a coluna pode
+  // estar com string VAZIA (a base tem as duas formas de "sem valor" — lição do
+  // `genero = ''`). Reconferimos o valor lido, então uma escrita humana entre a
+  // leitura e o UPDATE não é sobrescrita.
+  let q = supabase.from('mem_membros').update(patch).eq('id', membroId);
+  if (patch.cep !== undefined) q = q.or('cep.is.null,cep.eq.');
+  if (patch.bairro !== undefined) q = q.or('bairro.is.null,bairro.eq.');
+  await q;
+}
+
 // GET /ativo · o frontend pergunta se deve mostrar o form. aoVivo = janela real
 // (label "Ao vivo agora"); ativo = janela OU fallback pos-live (form utilizavel).
 router.get('/ativo', async (_req, res) => {
@@ -91,27 +147,12 @@ router.get('/ativo', async (_req, res) => {
 // POST / · registra a decisão online
 router.post('/', async (req, res) => {
   try {
-    const nome = String(req.body?.nome || '').trim();
-    const telefone = soDigitos(req.body?.telefone);
-    const email = String(req.body?.email || '').trim() || null;
-    const aceiteLgpd = req.body?.aceite_lgpd === true;
-
-    if (nome.length < 2) {
-      return res.status(400).json({ error: 'Informe seu nome.' });
-    }
-    // ⚠️ Telefone passa a ser OBRIGATÓRIO (era opcional). O módulo inteiro
-    // existe pra fazer o 1º contato em até 3 dias — decisão sem contato é um
-    // número no painel e uma pessoa que ninguém alcança.
-    if (telefone.length < 10 || telefone.length > 11) {
-      return res.status(400).json({ error: 'Informe seu WhatsApp com DDD (10 ou 11 dígitos) para a equipe falar com você.' });
-    }
-    // ⚠️ Convicção religiosa é dado SENSÍVEL (LGPD art. 11) e a base aqui é
-    // consentimento específico — legítimo interesse não alcança. Diferente da
-    // porta do voluntário (onde um terceiro transcreve), aqui é a própria
-    // pessoa declarando sobre si, então a caixa é dela e não pode vir marcada.
-    if (!aceiteLgpd) {
-      return res.status(400).json({ error: 'Para registrar, é preciso aceitar o tratamento dos seus dados.' });
-    }
+    // ⚠️ UMA régua só, e ela é PURA (`utils/decisaoCampos`, no gate). O
+    // formulário valida antes para dar erro na hora, mas quem MANDA é aqui —
+    // payload é do cliente.
+    const v = validarDecisao(req.body);
+    if (!v.ok) return res.status(400).json({ error: v.erro, campo: v.campo });
+    const { nome, dataNascimento, telefone, cep, email } = v.valores;
 
     // comFallback · aceita quem preenche logo após o culto (grace pos-live) e
     // quem assiste o REPLAY nos dias seguintes. Nunca descarta a decisão.
@@ -136,16 +177,31 @@ router.post('/', async (req, res) => {
       itens: [{ tipo: 'termos_lgpd', aceito: true, texto: TEXTOS.termos_lgpd }],
     });
 
-    const { error } = await supabase.from('cultos_decisoes_pessoas').insert({
-      id: decisaoId,
-      culto_id: culto.id,
-      nome,
-      telefone,
-      email,
-      tipo_decisao: 'online',
-      fonte: 'form_publico',
-    });
+    const { data: criada, error } = await supabase
+      .from('cultos_decisoes_pessoas')
+      .insert({
+        id: decisaoId,
+        culto_id: culto.id,
+        nome,
+        telefone,
+        email,
+        data_nascimento: dataNascimento,
+        cep,
+        tipo_decisao: 'online',
+        fonte: 'form_publico',
+      })
+      // `membro_id` é preenchido pelo trigger BEFORE INSERT — só dá pra saber
+      // qual pessoa ficou depois de gravar.
+      .select('membro_id')
+      .maybeSingle();
     if (error) throw error;
+
+    // ⚠️ BEST-EFFORT e DEPOIS da resposta estar garantida: a decisão é o que
+    // não pode se perder. Falha do ViaCEP ou do UPDATE não pode derrubar o
+    // registro de alguém que acabou de decidir seguir a Jesus.
+    await levarCepAoCadastro(criada?.membro_id, cep).catch((e) => {
+      console.warn('[decisao-online] cep nao propagado:', e.message);
+    });
 
     res.json({ ok: true, culto: { nome: culto.nome, data: culto.data } });
   } catch (e) {

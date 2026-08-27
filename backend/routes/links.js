@@ -267,8 +267,12 @@ const OUTROS_FORMULARIOS = [
     grupo: 'Membresia', descricao: 'Ficha completa de cadastro — a porta principal da membresia.' },
   { chave: 'doar', nome: 'Doação / generosidade', caminho: '/doar',
     grupo: 'Generosidade', descricao: 'Página de contribuição (PIX e cartão).' },
+  // ⚠️ `chamada_qr` é o texto que vai NO CARTAZ do telão, junto do QR. Fica
+  // aqui, e não no componente, porque é palavra pastoral: muda sem deploy e
+  // quem decide não é quem escreve o React.
   { chave: 'decisao', nome: 'Decisão por Cristo', caminho: '/decisao',
-    grupo: 'Ministerial', descricao: 'Registro de decisão — usado no culto e no online.' },
+    grupo: 'Ministerial', descricao: 'Registro de decisão — usado no culto e no online.',
+    chamada_qr: 'Decidiu seguir a Jesus agora? Queremos caminhar com você.' },
   { chave: 'wallet', nome: 'Carteirinha do membro', caminho: '/wallet',
     grupo: 'Membresia', descricao: 'Onde a pessoa acessa a própria carteirinha.' },
   { chave: 'vol_self_checkin', nome: 'Check-in do voluntário', caminho: '/voluntariado/self-checkin',
@@ -297,7 +301,10 @@ async function catalogoHandler(req, res) {
 
     // 2. Formulários fixos que não são portas.
     for (const f of OUTROS_FORMULARIOS) {
-      itens.push({ chave: f.chave, nome: f.nome, grupo: f.grupo, url: url(f.caminho), descricao: f.descricao });
+      itens.push({
+        chave: f.chave, nome: f.nome, grupo: f.grupo, url: url(f.caminho),
+        descricao: f.descricao, chamada_qr: f.chamada_qr || null,
+      });
     }
 
     // 3. Por registro. Só o que está ABERTO: um QR para pesquisa encerrada ou
