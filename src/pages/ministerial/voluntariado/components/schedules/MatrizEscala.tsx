@@ -12,6 +12,7 @@ import { voluntariado } from '@/api';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import PainelEscalar, { type Vaga } from './PainelEscalar';
 import MatrizCards from './MatrizCards';
+import AvatarVoluntario from './AvatarVoluntario';
 import VolunteerDetailDialog from './VolunteerDetailDialog';
 
 /**
@@ -310,6 +311,11 @@ export default function MatrizEscala({ ehMinhaArea, onFixar, serviceIds, context
                           <td key={c.id} className="border-b px-2 py-1.5 align-top">
                             {cel?.pessoas?.map((p: any) => (
                               <div key={p.id} className="group/p flex items-center gap-1 min-w-0" title={p.nome}>
+                                {/* Avatar também na tabela (27/08): a grade é a
+                                    outra metade da mesma tela, e reconhecer a
+                                    pessoa não pode depender de qual vista está
+                                    aberta. 20 px cabe na célula estreita. */}
+                                <AvatarVoluntario nome={p.nome} fotoUrl={p.foto_url} status={p.status} tamanho={20} />
                                 <IconeStatus status={p.status} />
                                 {/* O nome abre o detalhe da PESSOA (perfil, contato,
                                     histórico de escalas e presenças). Antes a grade

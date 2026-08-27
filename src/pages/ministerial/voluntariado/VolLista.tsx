@@ -453,7 +453,11 @@ function TodosList() {
             return (
               <div key={vol.id} onClick={() => setDetalheId(vol.id)} className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-card hover:bg-accent/40 transition-colors cursor-pointer">
                 <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-sm font-semibold shrink-0 overflow-hidden">
-                  {vol.avatar_url ? <img data-foto-avatar="" src={vol.avatar_url} alt={vol.full_name} className="h-full w-full object-cover" /> : vol.full_name.charAt(0).toUpperCase()}
+                  {/* ⚠️ `foto_url` (resolvida no servidor), não `avatar_url`:
+                      aquele campo está preenchido em quase todo mundo e a
+                      maioria é PLACEHOLDER DE INICIAIS do Planning Center — a
+                      lista mostrava um PNG cinza pra 54% das pessoas. */}
+                  {vol.foto_url ? <img data-foto-avatar="" src={vol.foto_url} alt={vol.full_name} className="h-full w-full object-cover" /> : vol.full_name.charAt(0).toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
