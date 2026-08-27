@@ -16,19 +16,22 @@
 ## Backend
 - `backend/routes/campanhas.js`
 Guard: `authorizeModule('campanhas', 1 | 2 | 3 | 4)`
-<details><summary>Endpoints (23)</summary>
+<details><summary>Endpoints (26)</summary>
 - `DELETE /api/campanhas/:id`
 - `DELETE /api/campanhas/:id/vinculo/:vinculoId`
 - `DELETE /api/campanhas/marcos/:marcoId`
 - `GET /api/campanhas`
 - `GET /api/campanhas/:id`
 - `GET /api/campanhas/:id/agradecimentos`
+- `GET /api/campanhas/:id/digito-historico`
 - `GET /api/campanhas/:id/lancamentos`
 - `GET /api/campanhas/:id/pendentes`
+- `GET /api/campanhas/aux`
 - `GET /api/campanhas/digitos`
 - `GET /api/campanhas/disparos/:disparoId/envios`
 - `GET /api/campanhas/segmentos`
 - `POST /api/campanhas`
+- `POST /api/campanhas/:id/digito`
 - `POST /api/campanhas/:id/disparos`
 - `POST /api/campanhas/:id/disparos/previa`
 - `POST /api/campanhas/:id/marcos`
@@ -53,12 +56,14 @@ Guard: `authorizeModule('campanhas', 1 | 2 | 3 | 4)`
 - `backend/services/campanhaAgradece.js`
 - `backend/services/campanhaArrecadacao.js`
 - `backend/services/campanhaDisparo.js`
+- `backend/services/campanhaMarcos.js`
 - `backend/services/notificar.js`
 
 **Tabelas que estas rotas tocam**
 
 - `camp_agradecimentos`
 - `camp_campanhas`
+- `camp_digito_historico`
 - `camp_disparo_envios`
 - `camp_disparos`
 - `camp_marcos`
