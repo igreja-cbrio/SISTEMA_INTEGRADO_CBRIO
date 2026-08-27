@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useSearchParams } from 'react-router-dom';
 import { agents } from '../../api';
 import FilaAprovacao from './FilaAprovacao';
+import TabDiagnosticos from './TabDiagnosticos';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { Switch } from '../../components/ui/switch';
@@ -866,7 +868,11 @@ function TabMembros() {
 // ─── Página ──────────────────────────────────────────────────────────────────
 
 export default function AssistenteIA() {
-  const [tab, setTab] = useState('equipe');
+  // ⚠️ A notificação de push dos agentes linka `/assistente-ia?run=<id>` — e até
+  // 27/08/2026 esta página IGNORAVA o parâmetro e não tinha onde mostrar o
+  // achado. Quem chega por ali cai direto na aba Diagnósticos.
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(params.get('run') || params.get('tab') === 'diagnosticos' ? 'diagnosticos' : 'equipe');
 
   // Mesma queryKey da FilaAprovacao — o react-query dedupe a requisição, então o
   // contador da aba não custa uma leitura a mais.
@@ -875,6 +881,15 @@ export default function AssistenteIA() {
     queryFn: () => agents.queue('pending'),
     refetchInterval: 30000,
   });
+
+  // Contador da aba Diagnósticos. Mesma queryKey da TabDiagnosticos — o
+  // react-query dedupe, então o badge não custa uma leitura a mais.
+  const { data: diagData } = useQuery({
+    queryKey: ['agent-diagnosticos'],
+    queryFn: () => agents.diagnosticos({ limite: 60 }),
+    staleTime: 60_000,
+  });
+  const diag = diagData?.resumo || {};
 
   const tabStyle = (ativo) => ({
     display: 'inline-flex', alignItems: 'center', gap: 8,
@@ -905,11 +920,24 @@ export default function AssistenteIA() {
             </span>
           )}
         </button>
+        <button style={tabStyle(tab === 'diagnosticos')} onClick={() => setTab('diagnosticos')}>
+          Diagnósticos
+          {diag.abertos > 0 && (
+            <span style={{
+              fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 999,
+              background: tab === 'diagnosticos' ? 'rgba(255,255,255,0.25)' : (diag.criticos_abertos ? C.redBg : C.amberBg),
+              color: tab === 'diagnosticos' ? '#fff' : (diag.criticos_abertos ? C.red : C.amber),
+            }}>
+              {diag.abertos}
+            </span>
+          )}
+        </button>
         <button style={tabStyle(tab === 'membros')} onClick={() => setTab('membros')}>Membros</button>
       </div>
 
       {tab === 'equipe' && <TabEquipe />}
       {tab === 'entrada' && <FilaAprovacao />}
+      {tab === 'diagnosticos' && <TabDiagnosticos />}
       {tab === 'membros' && <TabMembros />}
     </div>
   );

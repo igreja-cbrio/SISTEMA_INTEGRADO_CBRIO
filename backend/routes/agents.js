@@ -868,6 +868,32 @@ router.post('/run', authorize('admin', 'diretor'), aiLimiter, async (req, res) =
   }
 });
 
+// GET /api/agents/diagnosticos — o que os agentes acharam, com PLANO DE AÇÃO
+//
+// ⚠️ Existe porque o diagnóstico dos agentes de incidente não aparecia em tela
+// nenhuma: a notificação apontava pra `/assistente-ia?run=<id>`, e a página não
+// lia `agent_runs`. Ver o cabeçalho de `utils/agentDiagnostico.js`.
+//
+// ⚠️ Guardado por admin/diretor: o corpo descreve falha interna, rota e release.
+// (O `GET /runs` abaixo é mais antigo e só tem `authenticate` — estreitá-lo é
+// mudança de autorização e fica pra decisão de quem opera, não efeito colateral
+// desta leva.)
+router.get('/diagnosticos', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { listarDiagnosticos } = require('../services/agentDiagnosticos');
+    const r = await listarDiagnosticos({
+      limite: req.query.limite,
+      agentType: req.query.agentType,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('[AGENTS] /diagnosticos error:', e.message);
+    // ⚠️ Erro NÃO vira lista vazia: "nenhum diagnóstico" e "a consulta falhou"
+    // levam a decisões opostas — e a aba nasceu justamente de um silêncio.
+    res.status(500).json({ error: 'Erro ao carregar os diagnósticos dos agentes.' });
+  }
+});
+
 // GET /api/agents/runs — lista runs (filtros: agentType, status, limit)
 router.get('/runs', async (req, res) => {
   try {
