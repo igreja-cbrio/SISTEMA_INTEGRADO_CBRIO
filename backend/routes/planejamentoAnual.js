@@ -37,6 +37,18 @@ async function ehPastorOuSuper(req) {
   return isSuperAdminEmail(req.user?.email);
 }
 
+// ⚠️ 2026-08-27 (decisão do Diego): visibilidade do CONTEÚDO das propostas
+// (nome/área/descrição/custo — não confundir com avaliação, que já era
+// cega) passou a ser restrita a proponente + diretoria + Pastor + super-
+// admin. `is_diretoria_geral` é o flag canônico dos "5 nominais" da
+// diretoria geral (ver CLAUDE.md) — NÃO é o mesmo que profiles.role
+// ('diretor'/'admin'): Pedro Paulo Menezes e o Pastor Presidente têm
+// role='assistente' mas is_diretoria_geral=true, e são exatamente os
+// avaliadores do ciclo. Usar role aqui excluiria quem precisa avaliar.
+function ehDiretoria(req) {
+  return Boolean(req.user?.is_diretoria_geral);
+}
+
 async function carregarCiclo(cicloId) {
   const { data, error } = await supabase.from('plan_ciclos').select('*').eq('id', cicloId).single();
   if (error) return null;
@@ -186,10 +198,12 @@ router.get('/ciclos/:id/propostas', authorizeModule(MOD, 1), async (req, res) =>
   if (!ciclo) return res.status(404).json({ error: 'Ciclo não encontrado' });
   const avaliadores = await carregarAvaliadores(ciclo.id);
   const quorum = avaliadores.length;
+  const pastorFlag = await ehPastorOuSuper(req);
+  const podeVerTudo = pastorFlag || ehDiretoria(req);
 
   let query = supabase.from('plan_propostas').select('*')
     .eq('ciclo_id', ciclo.id).is('deleted_at', null).order('created_at');
-  if (req.query.minhas === 'true') {
+  if (!podeVerTudo || req.query.minhas === 'true') {
     query = query.or(`lider_id.eq.${req.user.id},preenchido_por_id.eq.${req.user.id},created_by.eq.${req.user.id}`);
   }
   const { data: propostas, error } = await query;
@@ -200,7 +214,6 @@ router.get('/ciclos/:id/propostas', authorizeModule(MOD, 1), async (req, res) =>
   const decs = await decisoesPorProposta(ids);
 
   // Lista leve: projeção por papel SEM notas detalhadas (o detalhe traz)
-  const pastorFlag = await ehPastorOuSuper(req);
   const lista = (propostas || []).map((p) => {
     const { papel, minhaDiretoria } = papelPara(req, avaliadores, p, pastorFlag);
     const proj = PA.projetarProposta({
@@ -272,8 +285,15 @@ router.post('/propostas', authorizeModule(MOD, 2), async (req, res) => {
 router.get('/propostas/:id', authorizeModule(MOD, 1), async (req, res) => {
   const p = await carregarProposta(req.params.id);
   if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
+  const pastorFlag = await ehPastorOuSuper(req);
+  // Mesma régua do GET de lista: quem não é proponente/diretoria/Pastor/
+  // super-admin não vê a proposta — nem projeção reduzida (era o furo:
+  // 'observador' recebia nome/área/descrição/custo por inteiro).
+  if (!pastorFlag && !ehDiretoria(req) && !proponenteIds(p).includes(req.user.id)) {
+    return res.status(404).json({ error: 'Proposta não encontrada' });
+  }
   const avaliadores = await carregarAvaliadores(p.ciclo_id);
-  const { papel, minhaDiretoria } = papelPara(req, avaliadores, p, await ehPastorOuSuper(req));
+  const { papel, minhaDiretoria } = papelPara(req, avaliadores, p, pastorFlag);
   const avs = await avaliacoesPorProposta([p.id]);
   const decs = await decisoesPorProposta([p.id]);
   const { data: apontamentos } = await supabase
