@@ -1,9 +1,21 @@
 import { useEffect, useState } from 'react';
 import { decisaoOnline } from '../../api';
+import { BirthDatePicker } from '@/components/ui/birth-date-picker';
+import { mascaraCep } from '@/lib/cepAutopreenche';
 
 // Página PUBLICA standalone (fora do AppShell/ProtectedRoute · sem login).
-// Link fixado na descricao/chat da live. Quem assiste online e decide por
-// Jesus preenche nome + telefone · alimenta cultos.decisoes_online automático.
+// Aberta pelo QR que o pastor manda escanear no APELO, e também pelo link
+// fixado na descrição/chat da live. Quem decide preenche nome, nascimento,
+// telefone e (opcional) CEP · alimenta `cultos_decisoes_pessoas` como pessoa
+// NOMINAL e soma no agregado `cultos.decisoes_online`.
+//
+// ⚠️⚠️ POR QUE ESTA PÁGINA PRECISA EXISTIR DE VERDADE — medido em 27/08/2026,
+// nos últimos 120 dias: das decisões PRESENCIAIS declaradas, 150 de 193 (78%)
+// viraram pessoa com nome e contato. Das ONLINE, **1 de 93**. Ou seja, 92
+// pessoas decidiram seguir a Jesus assistindo de casa e ninguém sabe quem são
+// — e o módulo de Cuidados inteiro existe para fazer o 1º contato em 3 dias.
+// O formulário já existia e nunca registrou ninguém (`fonte='form_publico'` =
+// 0): o que faltava era o CAMINHO até ele, que é o QR do apelo.
 
 const PRIMARY = '#00B39D';
 
@@ -14,7 +26,9 @@ export default function DecisaoOnline() {
   const [aoVivo, setAoVivo] = useState(false);
   const [culto, setCulto] = useState<Culto | null>(null);
   const [nome, setNome] = useState('');
+  const [nascimento, setNascimento] = useState('');
   const [telefone, setTelefone] = useState('');
+  const [cep, setCep] = useState('');
   const [aceite, setAceite] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState('');
@@ -41,11 +55,26 @@ export default function DecisaoOnline() {
       setErro('Por favor, informe seu nome.');
       return;
     }
+    // ⚠️ `BirthDatePicker` só emite ISO completo ou '' — data pela metade nunca
+    // vira valor. Quem decide "obrigatório" é este formulário, e o servidor
+    // revalida com a régua do Contrato de porta.
+    if (!nascimento) {
+      setErro('Informe sua data de nascimento (dia, mês e ano).');
+      return;
+    }
     // Telefone é obrigatório: é por ele que a equipe fala com você. Sem contato
     // a decisão vira número no painel e ninguém consegue te alcançar.
     const tel = telefone.replace(/\D/g, '');
     if (tel.length < 10 || tel.length > 11) {
       setErro('Informe seu WhatsApp com DDD (10 ou 11 dígitos).');
+      return;
+    }
+    // ⚠️ CEP é OPCIONAL — e por isso só é recusado quando foi preenchido PELA
+    // METADE. Campo em branco passa direto: travar aqui custaria uma decisão
+    // por causa de um dado de análise.
+    const cepDigitos = cep.replace(/\D/g, '');
+    if (cepDigitos.length > 0 && cepDigitos.length !== 8) {
+      setErro('O CEP precisa ter 8 dígitos — ou deixe em branco.');
       return;
     }
     if (!aceite) {
@@ -54,7 +83,13 @@ export default function DecisaoOnline() {
     }
     setEnviando(true);
     try {
-      await decisaoOnline.registrar({ nome: nome.trim(), telefone: tel, aceite_lgpd: true });
+      await decisaoOnline.registrar({
+        nome: nome.trim(),
+        data_nascimento: nascimento,
+        telefone: tel,
+        cep: cepDigitos || null,
+        aceite_lgpd: true,
+      });
       setPronto(true);
     } catch (err: any) {
       setErro(err?.message || 'Não foi possível registrar agora. Tente novamente.');
@@ -124,8 +159,9 @@ export default function DecisaoOnline() {
             Que decisão linda!
           </h1>
           <p style={{ fontSize: 16, lineHeight: 1.5, color: '#444' }}>
-            O céu está em festa por você. Nossa equipe vai entrar em contato para
-            te ajudar nos primeiros passos com Jesus.
+            O céu está em festa por você — e você não vai seguir sozinho. Uma
+            pessoa da nossa equipe vai falar com você nos próximos dias para
+            caminhar junto nos primeiros passos com Jesus.
           </p>
           <p style={{ fontSize: 14, color: '#888', marginTop: 16 }}>
             "Se você confessar com a sua boca que Jesus é Senhor… será salvo." — Rm 10.9
@@ -140,8 +176,10 @@ export default function DecisaoOnline() {
       <div style={{ marginBottom: 22 }}>
         <h1 style={{ fontSize: 30, fontWeight: 800, margin: 0 }}>Eu aceito Jesus</h1>
         <p style={{ fontSize: 16, opacity: 0.92, marginTop: 8 }}>
-          Decidiu seguir a Jesus assistindo online? Registre aqui — queremos
-          caminhar com você.
+          Decidiu seguir a Jesus assistindo online? Deixe seu contato — não é
+          cadastro, é para <strong>caminharmos junto com você</strong> a partir
+          de agora. Uma pessoa da nossa equipe vai falar com você nos próximos
+          dias.
         </p>
       </div>
 
@@ -166,6 +204,16 @@ export default function DecisaoOnline() {
             onChange={(e) => setNome(e.target.value)}
             autoComplete="name"
           />
+          {/* ⚠️ `BirthDatePicker` e NUNCA `<input type="date">` — é a lei da casa
+              (as 10 portas públicas usam este componente). O nativo tem seletor
+              de ano ruim, e aqui quase todo mundo chega pelo celular, vindo do
+              QR do apelo. Ele deixa DIGITAR dd/mm/aaaa ou usar o calendário. */}
+          <div style={{ marginTop: 12, textAlign: 'left' }}>
+            <span style={{ fontSize: 13, color: '#666' }}>Data de nascimento</span>
+            <div style={{ marginTop: 6 }}>
+              <BirthDatePicker value={nascimento} onChange={setNascimento} />
+            </div>
+          </div>
           <input
             style={input}
             type="tel"
@@ -175,6 +223,23 @@ export default function DecisaoOnline() {
             autoComplete="tel"
             inputMode="numeric"
           />
+          {/* ⚠️ OPCIONAL, e o rótulo DIZ isso e diz PRA QUÊ. Pedir um dado sem
+              explicar o motivo numa página de decisão de fé é o jeito mais
+              rápido de a pessoa fechar a aba. */}
+          <input
+            style={input}
+            type="text"
+            placeholder="CEP (opcional)"
+            value={cep}
+            onChange={(e) => setCep(mascaraCep(e.target.value))}
+            autoComplete="postal-code"
+            inputMode="numeric"
+            maxLength={9}
+          />
+          <p style={{ fontSize: 12, color: '#888', marginTop: 6, textAlign: 'left' }}>
+            O CEP é opcional e serve só para sabermos de que regiões as pessoas
+            assistem — ajuda a igreja a chegar mais perto de você.
+          </p>
           <label
             style={{
               display: 'flex',
