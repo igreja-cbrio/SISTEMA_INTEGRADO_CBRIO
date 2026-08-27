@@ -282,11 +282,12 @@ export default function DecisaoOnline() {
               Ao vivo agora · {culto.nome}
             </div>
           )}
-          {/* ⚠️ Só no REPLAY, e citando a DATA. Aqui o culto veio do QR gravado
-              no vídeo, então a informação é verdadeira e ajuda a pessoa a
-              confirmar que é a mensagem que ela assistiu. É diferente do chip
-              antigo, que anunciava um culto deduzido pelo relógio como se fosse
-              o do momento. */}
+          {/* ⚠️ Só no REPLAY, e o chip diz APENAS o culto e a data dele — sem
+              "Você assistiu" (pedido do Matheus, 27/08/2026). O QR estava
+              gravado NAQUELE vídeo, então o culto é fato; já afirmar o que a
+              pessoa assistiu é afirmar sobre ela, e ela pode ter chegado ali
+              por um link encaminhado. O chip identifica a mensagem; não conta a
+              história de quem está lendo. */}
           {culto && replay && (
             <div style={{
               display: 'inline-block', marginTop: 14,
@@ -295,7 +296,7 @@ export default function DecisaoOnline() {
               border: `1px solid ${C.cardBorder}`,
               color: C.text3, fontSize: 12.5, fontWeight: 500,
             }}>
-              Você assistiu · {culto.nome} de {culto.data.split('-').reverse().join('/')}
+              {culto.nome} · {culto.data.split('-').reverse().join('/')}
             </div>
           )}
         </div>
