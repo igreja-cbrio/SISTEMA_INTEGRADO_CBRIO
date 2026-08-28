@@ -9,8 +9,17 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { usePublicTheme } from './publicTheme';
 import { mascaraCpf } from '../../lib/inscricao';
+import { resolveApiBaseUrl } from '../../lib/api-base';
 
-const API = (import.meta as any).env?.VITE_API_URL || '/api';
+// ⚠️⚠️ NUNCA `VITE_API_URL || '/api'` inline (lição de 07/07, TVs do Kids,
+// e o defeito que travou este autoatendimento na véspera do Celebra): em
+// produção a env é `https://crmcbrio.vercel.app`, SEM `/api`. Sem o helper, a
+// chamada vira `…/public/evento-checkin/<token>`, que não casa o rewrite
+// `/api/(.*)` da Vercel, cai no catch-all do SPA e devolve o `index.html` com
+// **HTTP 200** — `r.ok` verdadeiro, `.json()` estourando no HTML e sendo
+// engolido pelo catch, `evento` undefined e a tela presa em “Abrindo…” PARA
+// SEMPRE. Falha determinística, em qualquer aparelho, sem erro nenhum na tela.
+const API = resolveApiBaseUrl((import.meta as any).env?.VITE_API_URL);
 
 type Evento = { nome: string; data: string | null; hora: string | null; local: string | null };
 type Achado = { id: string; nome_mascarado: string; ja_fez_checkin: boolean };
@@ -19,6 +28,17 @@ async function chamar(url: string, body?: any) {
   const r = await fetch(url, body
     ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
     : undefined);
+  // ⚠️ Resposta que NÃO é JSON é falha, mesmo com 200. Sem esta guarda, uma
+  // URL fora do rewrite `/api/(.*)` devolve o `index.html` do SPA com 200, o
+  // `.json()` estoura, o catch devolve `{}` e a tela fica presa no estado de
+  // carregamento sem erro nenhum — exatamente o que travou o QR do Celebra.
+  // Falhar aqui troca “trava em silêncio” por “diz o que houve”.
+  const tipo = r.headers.get('content-type') || '';
+  if (!tipo.includes('application/json')) {
+    throw new Error(r.ok
+      ? 'O check-in respondeu de um jeito inesperado. Procure a equipe na entrada.'
+      : 'Não foi possível concluir.');
+  }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || 'Não foi possível concluir.');
   return j;

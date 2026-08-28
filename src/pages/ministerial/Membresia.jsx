@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
+import { resolveApiBaseUrl } from '@/lib/api-base';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -1149,7 +1150,10 @@ export default function Membresia() {
     if (!motivo || !motivo.trim()) return;
     try {
       toast.info('Gerando relatório LGPD...');
-      const apiBase = import.meta.env.VITE_API_URL || '/api';
+      // ⚠️ `VITE_API_URL || '/api'` inline não acrescenta `/api` quando a env
+      // não termina nele (em prod ela é `https://crmcbrio.vercel.app`): a URL cai
+      // no catch-all do SPA e volta HTML com 200. O helper é a régua única.
+      const apiBase = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
       const url = `${apiBase}/lgpd/membro/${membro.id}/exportar?motivo=${encodeURIComponent(motivo.trim())}`;
       const { data: { session } } = await supabase.auth.getSession();
       const r = await fetch(url, {
