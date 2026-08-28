@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { usePublicTheme } from './publicTheme';
 import { mascaraCpf } from '../../lib/inscricao';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { resolveApiBaseUrl } from '../../lib/api-base';
 
 // ⚠️⚠️ NUNCA `VITE_API_URL || '/api'` inline (lição de 07/07, TVs do Kids,
@@ -66,6 +67,10 @@ export default function EventoCheckin() {
   const buscar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (enviando.current) return;
+    // O `required` nativo saiu com o <input type="date">; o BirthDatePicker
+    // só emite ISO completo, entao vazio = data incompleta. Dizer o que falta
+    // e melhor que desabilitar o botao sem explicar.
+    if (!nasc) { setErro('Informe sua data de nascimento.'); return; }
     enviando.current = true; setErro(''); setCarregando(true);
     try {
       const r = await chamar(`${API}/public/evento-checkin/${token}/buscar`, { cpf, nascimento: nasc });
@@ -200,13 +205,16 @@ export default function EventoCheckin() {
             value={cpf} onChange={e => setCpf(mascaraCpf(e.target.value))}
           />
         </label>
-        <label style={{ fontSize: 14, color: C.text3, display: 'block', marginTop: 18 }}>
+        {/* ⚠️ `type="date"` nativo abre a roleta do iOS: pra chegar em 1978 são
+            dezenas de toques, na fila da porta do evento. O BirthDatePicker é
+            o padrão da casa desde 07/08 — campo de texto com máscara
+            dd/mm/aaaa E o calendário no ícone ao lado, os dois escrevendo no
+            mesmo valor. Emite ISO completo ou '', que é o formato que o
+            servidor exige (RE_DIA em utils/checkinAutoatendimento.js). */}
+        <label style={{ fontSize: 14, color: C.text3, display: 'block', marginTop: 18, marginBottom: 6 }}>
           Data de nascimento
-          <input
-            style={campo} type="date" required
-            value={nasc} onChange={e => setNasc(e.target.value)}
-          />
         </label>
+        <BirthDatePicker value={nasc} onChange={setNasc} />
         {erro && <p style={{ color: '#ef4444', marginTop: 14, fontSize: 14, lineHeight: 1.5 }}>{erro}</p>}
         <button style={botao} type="submit" disabled={carregando}>
           {carregando ? 'Procurando…' : 'Continuar'}
