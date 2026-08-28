@@ -7,6 +7,7 @@ const painelCache = require('../services/painelCache');
 const mlTracker = require('../services/solicitacoesMlTracker');
 const solicFluxo = require('../services/solicFluxo');
 const { podeVincular, candidatas } = require('../utils/vinculoMlSolicitacao');
+const { rotuloStatusSolicitacao } = require('../utils/solicitacaoStatusLabel');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
@@ -3605,7 +3606,7 @@ router.patch('/:id', async (req, res) => {
     // Notify solicitante + área managers about status change
     if (status && data) {
       const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
-      const statusLabel = status.replace('_', ' ');
+      const statusLabel = rotuloStatusSolicitacao(status);
       const obsNote = observacoes ? ` — "${observacoes}"` : '';
 
       // Conclusão · pede avaliação NPS pro solicitante (alimenta KPIs ADM-*-Q)
