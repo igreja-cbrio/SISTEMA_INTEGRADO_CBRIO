@@ -43,7 +43,7 @@ const checkoutExterno = require('../utils/checkoutExterno');
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
 const { cadastrarPessoaNoGrupo } = require('../services/grupoPessoaDireta');
-const { ancorasDeGrupos, iniciosDeGrupos } = require('../services/grupoAncora');
+const { ancorasDeGrupos, iniciosDeGrupos, janelasDeGrupos } = require('../services/grupoAncora');
 const { aplicarExcecaoAgenda } = require('../services/grupoAgendaExcecao');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const appIdentidade = require('../services/appIdentidade');
@@ -3687,6 +3687,9 @@ router.get('/meu-grupo', authApp, async (req, res) => {
     // ⚠️ Quinzenal/mensal precisam da âncora (último encontro realizado) — sem
     // ela a régua devolve 1 ocorrência marcada como incerta em vez de chutar.
     const ancorasMeuGrupo = await ancorasDeGrupos([...porId.keys()]);
+    // ⚠️ A agenda do grupo vive DENTRO da temporada dele (Marcos · 28/08): sem o
+    // teto, a lista propunha encontro depois do fim do ciclo.
+    const janelasMeuGrupo = await janelasDeGrupos([...porId.keys()]).catch(() => ({}));
 
     const grupos = [];
     for (const { g, funcao } of porId.values()) {
@@ -3718,6 +3721,7 @@ router.get('/meu-grupo', authApp, async (req, res) => {
           diaSemana: g.dia_semana, horario: g.horario,
           recorrencia: g.recorrencia, ancoraISO: ancorasMeuGrupo[g.id] || null,
           excecoes: excecoesPorGrupo[g.id] || [], quantas: 6,
+          ateISO: janelasMeuGrupo[g.id]?.fim || null,
         }),
         materiais,
       });
@@ -5511,19 +5515,23 @@ router.get('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, res
         .select('data_original, status, nova_data, novo_horario, motivo')
         .eq('grupo_id', gid).gte('data_original', desdeExcecoes);
       if (eE) throw eE;
-      const [ancoras, inicios] = await Promise.all([
+      const [ancoras, janelas] = await Promise.all([
         ancorasDeGrupos([gid]),
         // ⚠️ O INÍCIO é o que permite listar o histórico de grupo quinzenal/
         // mensal que nunca registrou encontro — 34 dos 35 não-semanais ativos,
         // medido em 25/08. Sem ele a aba deles fica permanentemente vazia, e sem
         // lista não há o que corrigir (o pedido do Marcos).
-        iniciosDeGrupos([gid]),
+        // ⚠️ A JANELA traz início E fim: o piso impede cobrar encontro de antes
+        // da temporada; o teto impede a contagem seguir depois que ela acaba.
+        janelasDeGrupos([gid]),
       ]);
+      const inicios = { [gid]: janelas[gid]?.inicio || null };
       const porData = new Map(lista.map(e => [String(e.data).slice(0, 10), e]));
       const brutas = ocorrenciasPassadas({
         diaSemana: grupo?.dia_semana, horario: grupo?.horario,
         recorrencia: grupo?.recorrencia, ancoraISO: ancoras[gid] || null,
         inicioISO: inicios[gid] || null,
+        ateISO: janelas[gid]?.fim || null,
         // ⚠️⚠️ PISO no início da temporada. Sem ele a lista atravessa pra trás
         // além do começo do grupo: medido em 25/08 no grupo 00000068 (temporada
         // aberta em 01/08), a timeline mostrava 22/06 e 06/07 como "presença não
@@ -5912,6 +5920,10 @@ router.get('/grupos/:grupoId/agenda', authApp, limiterNormal, async (req, res) =
     }
     const ancoras = await ancorasDeGrupos([gid]);
     const janelaDias = await janelaDaTemporada();
+    // ⚠️⚠️ `janelaDaTemporada()` é aproximação em DIAS e tem piso de 30 — ou
+    // seja, com a temporada encerrada ela ainda devolve um mês de agenda. O teto
+    // por DATA vem da temporada DO GRUPO e é exato.
+    const janelasAgenda = await janelasDeGrupos([gid]).catch(() => ({}));
     res.json({
       grupo: {
         id: g?.id, nome: g?.nome, dia_semana: g?.dia_semana,
@@ -5921,6 +5933,7 @@ router.get('/grupos/:grupoId/agenda', authApp, limiterNormal, async (req, res) =
         diaSemana: g?.dia_semana, horario: g?.horario,
         recorrencia: g?.recorrencia, ancoraISO: ancoras[gid] || null,
         excecoes, quantas: 40, janelaDias,
+        ateISO: janelasAgenda[gid]?.fim || null,
       }),
       // ⚠️ O herói da tela ("faltou registrar") precisa saber qual foi o
       // ENCONTRO ANTERIOR com as exceções aplicadas. Ele calculava sozinho por
