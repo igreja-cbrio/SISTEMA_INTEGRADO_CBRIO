@@ -58,6 +58,15 @@ export const ESTADOS = {
   enviada: { rotulo: 'Enviada', cor: C.blue },
 };
 
+// `area` é a chave técnica (slug, sem acento) gravada em plan_propostas.area.
+// `areas` é a lista de `/aux/areas` ({area, rotulo}); quando a área não está
+// nela (ex.: proposta antiga usando uma área desativada), cai no slug cru —
+// melhor que travar a tela, mas o normal é achar o rótulo.
+export function rotuloArea(area, areas) {
+  if (!area) return '—';
+  return (areas || []).find((a) => a.area === area)?.rotulo || area;
+}
+
 export function Badge({ texto, cor }) {
   return (
     <span style={{

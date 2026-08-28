@@ -121,7 +121,7 @@ router.get('/aux/locais', authorizeModule(MOD, 1), async (_req, res) => {
 
 router.get('/aux/areas', authorizeModule(MOD, 1), async (_req, res) => {
   const { data } = await supabase
-    .from('plan_areas_diretoria').select('area, diretoria, ativo').order('area');
+    .from('plan_areas_diretoria').select('area, diretoria, rotulo, ativo').order('area');
   res.json((data || []).filter((a) => a.ativo !== false));
 });
 

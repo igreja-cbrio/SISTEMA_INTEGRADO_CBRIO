@@ -4,7 +4,7 @@ import { ClipboardCheck } from 'lucide-react';
 import { planejamentoAnual as api, users as usersApi } from '../../api';
 import {
   C, cardStyle, btn, input, label, hint, fmtBRL, fmtQuando, thStyle, tdStyle, Badge,
-  NATUREZAS, RECORRENCIAS, DIAS_SEMANA,
+  NATUREZAS, RECORRENCIAS, DIAS_SEMANA, rotuloArea,
 } from './comum';
 
 // Evidência do proponente exibida ao lado de cada critério (protótipo · coluna 2)
@@ -30,7 +30,7 @@ const ORDENS = [
   { valor: 'quando', rotulo: 'Quando' },
 ];
 
-export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria, locais }) {
+export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria, locais, areas }) {
   const [propostas, setPropostas] = useState([]);
   const [pessoas, setPessoas] = useState([]);
   const [carregando, setCarregando] = useState(true);
@@ -121,7 +121,7 @@ export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria, locais
           <strong style={{ fontSize: 13, color: C.primary }}>Resumo da proposta</strong>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
             <div><span style={label}>Natureza</span><div style={{ fontSize: 13, color: C.text }}>{NATUREZAS.find((n) => n.valor === aberta.natureza)?.rotulo || aberta.natureza || '—'}</div></div>
-            <div><span style={label}>Área</span><div style={{ fontSize: 13, color: C.text }}>{aberta.area || '—'}</div></div>
+            <div><span style={label}>Área</span><div style={{ fontSize: 13, color: C.text }}>{rotuloArea(aberta.area, areas)}</div></div>
             <div><span style={label}>Líder responsável</span><div style={{ fontSize: 13, color: C.text }}>{nomeLider(aberta.lider_id)}</div></div>
             <div><span style={label}>Quando</span><div style={{ fontSize: 13, color: C.text }}>{fmtQuando(aberta)}</div></div>
             <div>
@@ -254,7 +254,7 @@ export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria, locais
               {propostasOrdenadas.map((p) => (
                 <tr key={p.id}>
                   <td style={{ ...tdStyle, fontWeight: 600 }}>{p.nome}</td>
-                  <td style={tdStyle}>{p.area}</td>
+                  <td style={tdStyle}>{rotuloArea(p.area, areas)}</td>
                   <td style={tdStyle}>{fmtQuando(p)}</td>
                   <td style={tdStyle}>{p.avaliacoes_recebidas}/{p.quorum}</td>
                   <td style={tdStyle}>
