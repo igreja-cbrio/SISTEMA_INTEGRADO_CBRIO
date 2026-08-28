@@ -15,6 +15,7 @@ const { escapePostgrestValue } = require('../utils/sanitize');
 const { fetchAllRows } = require('../utils/pagination');
 const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/inscricaoComprovante');
 const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../services/inscricaoPortas');
+const { elegiveisDoSorteio, motivoSemElegivel } = require('../services/inscricaoSorteio');
 // ⚠️ Contagem de inscritos NÃO usa o embed `inscricoes(count)` (não filtra
 // soft-delete — ver o cabeçalho do serviço).
 const { contarInscritosVivos } = require('../services/inscricaoContagem');
@@ -915,7 +916,23 @@ router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) =>
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Evento não encontrado' });
-    const sorteios = (data.sorteios || []).sort((a, b) => String(b.sorteado_em).localeCompare(String(a.sorteado_em)));
+    // Sorteio SUBSTITUÍDO (re-sorteio do mesmo prêmio) sai da leitura — senão a
+    // tela mostraria o ganhador antigo, que não ficou com o prêmio. A linha fica
+    // no banco como trilha.
+    // ⚠️ Consulta ISOLADA e best-effort de propósito: pedir a coluna nova DENTRO
+    // do embed faria o PostgREST recusar a query INTEIRA enquanto a migration
+    // não estiver aplicada, derrubando a tela principal do evento (lição do
+    // `parcelas_max` / `apelido`). Sem a coluna, nada é filtrado — o pior caso é
+    // exibir o ganhador antigo, não perder a tela.
+    const substituidos = new Set();
+    try {
+      const { data: subs } = await supabase.from('insc_sorteios')
+        .select('id').eq('evento_id', req.params.id).not('substituido_em', 'is', null);
+      for (const s of (subs || [])) substituidos.add(s.id);
+    } catch { /* migration ainda não aplicada */ }
+    const sorteios = (data.sorteios || [])
+      .filter((s) => !substituidos.has(s.id))
+      .sort((a, b) => String(b.sorteado_em).localeCompare(String(a.sorteado_em)));
     // Mesmo helper da lista (o embed `inscricoes(count)` contava apagadas).
     const contagem = await contarInscritosVivos(supabase, [data.id]);
     res.json({ ...data, inscritos: contagem.get(data.id) || 0, sorteios });
@@ -1876,33 +1893,104 @@ router.post('/eventos/:id/inscricoes/excluir-lote', authorizeModule('inscricoes'
   }
 });
 
-// POST /eventos/:id/sortear — sorteia um inscrito (espelho do eventos-externos).
-// Body: { premio, permitir_repetir }. Pool = inscrições ativas não-canceladas
-// com número da sorte; por padrão exclui quem já ganhou neste evento.
+// POST /eventos/:id/sortear — sorteia entre quem FEZ CHECK-IN.
+// Body: { premio, substituir }.
+//
+// ⚠️ 3 decisões do Marcos (2026-07-31 · não regredir):
+//   1. **Só concorre quem fez check-in.** Sortear ausente mata o momento no
+//      palco e devolve o prêmio pro monte. Sem check-in nenhum, o endpoint
+//      RECUSA com a razão certa — não cai no bolo antigo em silêncio.
+//   2. **Inscrição migrada concorre igual** (85 das 98 do Celebra são legado e
+//      82 não têm CPF): o filtro exige só `numero_sorte` + não-cancelada.
+//   3. **Uma pessoa nunca leva 2 prêmios no mesmo evento** — dedup por PESSOA
+//      (membro_id > cpf > telefone > nome), não por linha de inscrição.
+//      `permitir_repetir` foi REMOVIDO: bundle antigo que ainda mande a flag é
+//      ignorado, porque a regra passou a ser da casa, não opção de tela.
+// Re-sortear o MESMO prêmio: `substituir: true` marca o sorteio anterior daquele
+// prêmio como substituído (o ganhador trocado volta a concorrer — ele não ficou
+// com prêmio nenhum) em vez de gravar 2 linhas pro mesmo prêmio, que era o que
+// acontecia antes (a tela mostrava o 1º e o 2º bloqueava a pessoa pra sempre).
 router.post('/eventos/:id/sortear', authorizeModule('inscricoes', 3), async (req, res) => {
   try {
-    const { premio, permitir_repetir } = req.body || {};
-    const { data: inscritos } = await supabase.from('inscricoes')
-      .select('id, nome_completo, numero_sorte')
-      .eq('evento_id', req.params.id).is('deleted_at', null)
-      .neq('status', 'cancelada').not('numero_sorte', 'is', null);
-    if (!inscritos || !inscritos.length) return res.status(400).json({ error: 'Sem inscritos pra sortear' });
-    let elegiveis = inscritos;
-    if (!permitir_repetir) {
-      const { data: jaSorteados } = await supabase.from('insc_sorteios')
-        .select('inscricao_id').eq('evento_id', req.params.id);
-      const ganhos = new Set((jaSorteados || []).map(s => s.inscricao_id));
-      elegiveis = inscritos.filter(i => !ganhos.has(i.id));
+    const { premio, substituir } = req.body || {};
+    const nomePremio = premio ? String(premio).trim().slice(0, 200) : null;
+
+    // Inscritos PAGINADOS: `.select()` cru trunca em 1000 no PostgREST e num
+    // evento grande o milésimo-primeiro não concorreria, em silêncio.
+    const inscritos = [];
+    for (let off = 0; off < 20000; off += 1000) {
+      const { data, error } = await supabase.from('inscricoes')
+        .select('id, nome_completo, numero_sorte, status, membro_id, cpf, telefone')
+        .eq('evento_id', req.params.id).is('deleted_at', null)
+        .neq('status', 'cancelada').not('numero_sorte', 'is', null)
+        .range(off, off + 999);
+      if (error) throw error;
+      inscritos.push(...(data || []));
+      if (!data || data.length < 1000) break;
     }
-    if (!elegiveis.length) return res.status(400).json({ error: 'Todos os inscritos já foram sorteados (marque "permitir repetir" pra sortear de novo)' });
+
+    // Presentes: `insc_checkins` não tem evento_id — filtra pelo embed !inner.
+    const presentesIds = [];
+    for (let off = 0; off < 20000; off += 1000) {
+      const { data, error } = await supabase.from('insc_checkins')
+        .select('inscricao_id, inscricao:inscricoes!inner(evento_id)')
+        .eq('inscricao.evento_id', req.params.id)
+        .range(off, off + 999);
+      if (error) throw error;
+      for (const c of (data || [])) presentesIds.push(c.inscricao_id);
+      if (!data || data.length < 1000) break;
+    }
+
+    // ⚠️ Se a coluna nova não existir (migration não aplicada), o PostgREST
+    // recusa a query e `data` volta null — tratar como "nenhum sorteio" faria a
+    // MESMA pessoa poder ganhar de novo, em silêncio. Então: fallback explícito
+    // pro select sem a coluna, e o dedup por pessoa continua valendo.
+    let sorteios = [];
+    {
+      const r1 = await supabase.from('insc_sorteios')
+        .select('id, inscricao_id, premio, substituido_em').eq('evento_id', req.params.id);
+      if (r1.error) {
+        const r2 = await supabase.from('insc_sorteios')
+          .select('id, inscricao_id, premio').eq('evento_id', req.params.id);
+        if (r2.error) throw r2.error;
+        sorteios = r2.data || [];
+      } else {
+        sorteios = r1.data || [];
+      }
+    }
+
+    // Re-sorteio do mesmo prêmio: aposenta o anterior ANTES de calcular o bolo.
+    if (substituir && nomePremio) {
+      const anteriores = sorteios.filter((s) => (s.premio || '') === nomePremio && !s.substituido_em);
+      if (anteriores.length) {
+        const { error: eSub } = await supabase.from('insc_sorteios')
+          .update({ substituido_em: new Date().toISOString() })
+          .in('id', anteriores.map((s) => s.id));
+        if (eSub) throw eSub;
+        const trocados = new Set(anteriores.map((s) => s.id));
+        sorteios = sorteios.map((s) => (trocados.has(s.id) ? { ...s, substituido_em: 'agora' } : s));
+      }
+    }
+
+    const elegiveis = elegiveisDoSorteio({ inscritos, presentesIds, sorteios });
+    if (!elegiveis.length) {
+      const m = motivoSemElegivel({ inscritos, presentesIds, sorteios });
+      const texto = m.motivo === 'sem_inscritos'
+        ? 'Sem inscritos com número da sorte neste evento.'
+        : m.motivo === 'ninguem_presente'
+          ? `O sorteio é entre quem fez check-in, e ninguém foi marcado ainda (${m.ativos} inscritos). Ative o check-in e marque a presença na portaria.`
+          : `As ${m.presentes} pessoas presentes já ganharam um prêmio — uma pessoa não leva dois no mesmo evento.`;
+      return res.status(400).json({ error: texto, motivo: m.motivo, presentes: m.presentes, inscritos: m.ativos });
+    }
+
     const g = elegiveis[Math.floor(Math.random() * elegiveis.length)];
     const { data: sorteio, error } = await supabase.from('insc_sorteios').insert({
-      evento_id: req.params.id, premio: premio ? String(premio).trim().slice(0, 200) : null,
+      evento_id: req.params.id, premio: nomePremio,
       numero_sorteado: g.numero_sorte, inscricao_id: g.id, ganhador_nome: g.nome_completo,
       sorteado_por: req.user?.id || null,
     }).select('*').single();
     if (error) throw error;
-    res.status(201).json(sorteio);
+    res.status(201).json({ ...sorteio, elegiveis: elegiveis.length, presentes: presentesIds.length });
   } catch (e) {
     console.error('[inscricoes] sortear:', e.message);
     res.status(500).json({ error: 'Erro ao sortear' });
@@ -2008,12 +2096,24 @@ router.get('/eventos/:id/checkin/buscar', authorizeModule('inscricoes', 2), asyn
   try {
     const digits = String(req.query.q || '').replace(/\D/g, '').slice(0, 14);
     if (digits.length < 4) return res.json([]);
+    // 4 dígitos = também pode ser o CÓDIGO da inscrição (`numero_sorte`, único
+    // por evento e o que a pessoa recebe no WhatsApp/comprovante). Buscar por
+    // ele é o caminho mais rápido da portaria quando o QR não abre — e a mesma
+    // busca continua achando por CPF/telefone (o código NUNCA substitui isso).
+    const filtros = [`cpf.like.%${digits}%`, `telefone.like.%${digits}%`];
+    const comoCodigo = digits.length === 4 ? Number(digits) : null;
+    if (comoCodigo) filtros.push(`numero_sorte.eq.${comoCodigo}`);
     const { data, error } = await supabase.from('inscricoes')
       .select('id, nome_completo, telefone, numero_sorte, status')
       .eq('evento_id', req.params.id).is('deleted_at', null)
-      .or(`cpf.like.%${digits}%,telefone.like.%${digits}%`)
+      .or(filtros.join(','))
       .limit(20);
     if (error) throw error;
+    // Código exato vem PRIMEIRO: quem digitou 4 dígitos quer aquela pessoa, não
+    // os telefones que por acaso contêm a sequência.
+    if (comoCodigo && data) {
+      data.sort((a, b) => (b.numero_sorte === comoCodigo ? 1 : 0) - (a.numero_sorte === comoCodigo ? 1 : 0));
+    }
     const ids = (data || []).map((i) => i.id);
     const marcas = new Map();
     if (ids.length) {

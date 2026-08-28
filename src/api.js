@@ -509,7 +509,10 @@ export const inscricoesApi = {
   atualizarEvento: (id, data) => put(`/inscricoes/eventos/${id}`, data),
   excluirEvento: (id) => del(`/inscricoes/eventos/${id}`),
   novaEdicao: (id, data) => post(`/inscricoes/eventos/${id}/nova-edicao`, data),
-  sortear: (id, premio, permitirRepetir) => post(`/inscricoes/eventos/${id}/sortear`, { premio, permitir_repetir: !!permitirRepetir }),
+  // O sorteio é SEMPRE entre quem fez check-in e uma pessoa nunca leva 2 prêmios
+  // no mesmo evento (decisões do Marcos · 31/07) — não há mais "permitir
+  // repetir". `substituir` = re-sorteio do MESMO prêmio (troca o ganhador).
+  sortear: (id, premio, opts) => post(`/inscricoes/eventos/${id}/sortear`, { premio, substituir: !!opts?.substituir }),
   unificadas: (qs) => get(`/inscricoes/unificadas${qs ? `?${qs}` : ''}`),
   unificadasPessoas: (qs) => get(`/inscricoes/unificadas/pessoas${qs ? `?${qs}` : ''}`),
   unificadasDashboard: (qs) => get(`/inscricoes/unificadas/dashboard${qs ? `?${qs}` : ''}`),
