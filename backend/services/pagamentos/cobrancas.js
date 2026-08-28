@@ -16,7 +16,7 @@
 const { supabase } = require('../../utils/supabase');
 const providers = require('./providers');
 const handlers = require('./handlers');
-const { STATUS, TIPO_PAGAMENTO, STATUS_ABERTOS } = require('./tipos');
+const { STATUS, TIPO_PAGAMENTO, STATUS_ABERTOS, METODOS } = require('./tipos');
 const {
   aplicarTransicao, statusPorValor, podeExpirar, estaTerminal, estaAberta,
 } = require('./maquinaEstados');
@@ -334,6 +334,17 @@ async function pedirAoProvider(adapter, linha) {
 }
 
 /**
+ * O método pedido já está fixado NESTA cobrança com o artefato que o prova?
+ * Cartão não tem artefato próprio aqui (o checkout é montado na hora), então
+ * ele nunca conta como "já existe" — não há custo em rechamar o adapter.
+ */
+function artefatoJaExiste(c, metodo) {
+  if (metodo === METODOS.PIX) return !!c.pix_payload;
+  if (metodo === METODOS.BOLETO) return !!c.boleto_linha_digitavel;
+  return false;
+}
+
+/**
  * Registra a forma de pagamento ESCOLHIDA pelo pagador e guarda o artefato que
  * o PSP devolveu (QR do Pix, linha digitável, checkout).
  *
@@ -352,6 +363,17 @@ async function definirMetodo(cobrancaOuId, metodo, opcoes = {}) {
     return { cobranca: c, alterada: false, motivo: 'cobranca_nao_editavel' };
   }
 
+  // Reenvio do mesmo clique (duplo clique, retry de rede, nova aba): a forma
+  // já está fixada E o artefato que a prova (QR/checkout/linha) já existe —
+  // não chamar o provider de novo. Reenviar a mesma criação pro PSP não é
+  // seguro em geral: idempotência de HTTP não garante replay idêntico (o
+  // Mercado Pago RECUSA a 2ª chamada com a mesma X-Idempotency-Key em vez de
+  // devolver o resultado cacheado — ver providers/mercadopago.js). Devolver o
+  // estado atual é o que a pessoa espera: continuar vendo o MESMO QR/link.
+  if (c.metodo === metodo && artefatoJaExiste(c, metodo)) {
+    return { cobranca: c, alterada: true };
+  }
+
   const adapter = providers.obter(c.provider);
   if (!adapter.capacidades.metodos.includes(metodo)) {
     throw new Error(`Forma de pagamento "${metodo}" não é oferecida por ${adapter.nome}.`);
@@ -367,7 +389,15 @@ async function definirMetodo(cobrancaOuId, metodo, opcoes = {}) {
 
   let r;
   try {
-    r = await adapter.definirMetodo(c, metodo, opcoes);
+    // `tentativa` amarra a chave de idempotência do adapter a ESTA versão da
+    // linha (ver mercadopago.js) — sem isso, uma retentativa genuína após uma
+    // falha real (a linha morreu antes de guardar o artefato, então o guard
+    // acima não a pegou) reusaria a mesma chave e o PSP recusaria a chamada
+    // por "idempotency key already used" em vez de tentar de novo. Cada
+    // falha grava `ultimo_erro` (mais abaixo), o que já avança `updated_at`
+    // — então a PRÓXIMA tentativa nasce com uma chave nova, sem precisar de
+    // um contador dedicado.
+    r = await adapter.definirMetodo(c, metodo, { ...opcoes, tentativa: c.updated_at });
   } catch (e) {
     // Guarda o motivo e propaga: aqui a pessoa PEDIU esta forma, então engolir
     // o erro em silêncio a deixaria olhando uma aba vazia sem explicação.
