@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { supabase } from "../supabase.js";
+import { montarSystemPrompt } from "../instrucoes.js";
 import { financeiroReadTools, financeiroReadToolNames } from "../tools/financeiroRead.js";
 import { createFinanceiroProposeTools } from "../tools/financeiroPropose.js";
 
@@ -101,6 +102,7 @@ export async function runFinanceiroExecutor(opts: {
     const allowedTools = [...financeiroReadToolNames, ...proposeToolNames];
 
     const skill = loadSkill();
+    const systemPrompt = await montarSystemPrompt(AGENT_TYPE, skill);
 
     const stream = query({
       prompt: USER_PROMPT,
@@ -108,7 +110,7 @@ export async function runFinanceiroExecutor(opts: {
         model: MODEL,
         mcpServers: { financeiro: financeiroServer },
         allowedTools,
-        systemPrompt: skill,
+        systemPrompt,
         maxTurns: MAX_TURNS,
         // permitir somente as tools MCP listadas · sem filesystem/bash
         permissionMode: "default",

@@ -11,7 +11,7 @@
 // Layout no MODELO DO GRUPOS (pedido do Marcos 28/07): campos em caixa com
 // label em cima, grid lado a lado (auto-fit 220px), cartão 720px, fonte 16
 // nos inputs (anti-zoom iOS) e container 100dvh + margin auto (fix do iPhone).
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import confetti from 'canvas-confetti';
 import QRCode from 'qrcode';
@@ -24,12 +24,31 @@ import {
   soDigitos, mascaraTelefone, mascaraCpf, cpfValido, telefoneValido,
   nomeCompletoValido, temAbreviacaoNome, validarNascimento, SEXOS, AVISO_OPTIN,
 } from '../../lib/inscricao';
+// Perguntas condicionais e bloco do responsável (17/08). ⚠️ Espelhos de
+// backend/utils/* — a MESMA régua decide aqui e no servidor, e há teste no gate
+// amarrando os dois. Não reimplementar nada disto na tela.
+import { keysVisiveis } from '../../lib/camposCondicionais';
+import { exigeResponsavel, PARENTESCOS } from '../../lib/inscricaoMenor';
+import BaixarInstrucoes from './BaixarInstrucoes';
 
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 function dataLonga(iso?: string | null) {
   if (!iso) return '';
   const d = new Date(iso + 'T12:00:00');
   return `${d.getDate()} de ${MESES[d.getMonth()]} de ${d.getFullYear()}`;
+}
+
+// Evento de vários dias (retiro): "5 a 10 de fevereiro de 2027". Mesmo mês/ano
+// não repete o resto; meses diferentes caem nas duas datas por extenso.
+function periodoLongo(inicio?: string | null, fim?: string | null) {
+  if (!inicio) return '';
+  if (!fim || fim === inicio) return dataLonga(inicio);
+  const d1 = new Date(inicio + 'T12:00:00');
+  const d2 = new Date(fim + 'T12:00:00');
+  if (d1.getMonth() === d2.getMonth() && d1.getFullYear() === d2.getFullYear()) {
+    return `${d1.getDate()} a ${d2.getDate()} de ${MESES[d1.getMonth()]} de ${d1.getFullYear()}`;
+  }
+  return `${dataLonga(inicio)} a ${dataLonga(fim)}`;
 }
 
 const SPAN: React.CSSProperties = { gridColumn: '1 / -1' };
@@ -272,8 +291,147 @@ function ComprovanteQr({ token }: { token: string }) {
 const TEXTOS_FALLBACK = {
   termos_lgpd: 'Autorizo a Igreja CBRio a tratar os dados deste formulário para organizar esta atividade e me comunicar sobre ela, conforme a LGPD.',
   imagem: 'Autorizo o uso de fotos do evento em que eu apareça nas mídias da Igreja CBRio.',
+  // ⚠️ Fallback local; o canônico vem de `GET /textos` (services/inscricaoContrato)
+  // e é o snapshot que fica gravado no consentimento. Este texto só cobre a rede
+  // caindo antes de a tela carregar.
+  menor_responsavel: 'Declaro que sou responsável legal pela pessoa inscrita, que ela é menor de 18 anos e que autorizo a inscrição e o tratamento dos dados dela pela Igreja CBRio para este evento, conforme a LGPD (art. 14).',
   aviso_optin: AVISO_OPTIN,
 };
+
+/**
+ * Como o valor é apresentado antes de a pessoa preencher: as formas REAIS deste
+ * evento, não uma frase fixa. Dizer "Pix, cartão ou boleto" num evento que só
+ * aceita Pix é a tela prometendo o que o servidor vai recusar.
+ */
+function rotuloMetodos(evento: any): string {
+  const m: string[] = Array.isArray(evento?.pagamento_metodos) ? evento.pagamento_metodos : [];
+  const nomes: string[] = [];
+  if (m.includes('pix')) nomes.push('Pix');
+  if (m.includes('cartao')) {
+    nomes.push(`cartão${evento?.parcelas_max > 1 ? ` (em até ${evento.parcelas_max}x)` : ''}`);
+  }
+  if (m.includes('boleto')) nomes.push('boleto');
+  if (!nomes.length) return 'Pagamento online.';
+  const lista = nomes.length === 1 ? nomes[0] : `${nomes.slice(0, -1).join(', ')} ou ${nomes[nomes.length - 1]}`;
+  return `Pagamento por ${lista}.`;
+}
+
+/**
+ * A escolha da forma ANTES do formulário, quando o cartão foi terceirizado.
+ *
+ * ⚠️ Os dois caminhos são HONESTOS sobre o que acontece: "continua aqui" x "vai
+ * para outro site". Botão que muda de site sem avisar é como a pessoa desiste no
+ * meio — ela acha que errou o clique.
+ *
+ * ⚠️ `exclusivo` (não sobrou forma nossa) mostra UM botão só: perguntar entre
+ * uma alternativa é atrito puro, e a resposta seria sempre a mesma.
+ */
+function EscolhaPagamento({ C, evento, onProprio }: { C: any; evento: any; onProprio: () => void }) {
+  const ext = evento.checkout_externo;
+  const so = !!ext?.exclusivo;
+  const brl = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  // Preço do Pix = o do LOTE atual quando há lotes (o GET já devolve
+  // `valor_centavos` do lote; ser explícito aqui evita depender dessa ordem).
+  const valorPix = Number(evento.lote_atual?.valor_centavos ?? evento.valor_centavos) || 0;
+  // Preço do cartão vem CONFIGURADO na tela do evento — é preço da plataforma
+  // deles. Ausente ⇒ a tela não promete número nenhum pro cartão.
+  const valorCartao = Number(ext?.valor_centavos) || 0;
+  const mostrarPrecos = valorPix > 0 && valorCartao > 0;
+  // ⚠️ "Desconto no Pix" só quando o Pix é REALMENTE menor: com o lote virando
+  // (830 → 850 → 870) o Pix empata e depois passa o cartão, e a tela não pode
+  // seguir chamando de desconto o que virou o preço mais alto.
+  const pixEhDesconto = mostrarPrecos && valorPix < valorCartao;
+  const btn = (destaque: boolean) => ({
+    display: 'block', width: '100%', textAlign: 'left' as const, cursor: 'pointer',
+    padding: '14px 16px', borderRadius: 14, marginTop: 10,
+    background: destaque ? '#00B39D14' : C.card,
+    border: `1px solid ${destaque ? '#00B39D55' : C.cardBorder}`,
+    color: C.text, font: 'inherit',
+  });
+  // Título e preço na MESMA linha, preço à direita: é o que a pessoa compara, e
+  // comparar exige os dois números no mesmo eixo.
+  const linhaTopo = { display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 };
+  return (
+    <div style={{ padding: '4px 0 8px' }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Como você quer pagar?</div>
+      <p style={{ fontSize: 13, color: C.text3, marginTop: 4, lineHeight: 1.5 }}>
+        {so
+          ? `A inscrição deste evento é feita pelo ${ext.nome}.`
+          : 'A forma muda o lugar onde você preenche a inscrição — por isso a gente pergunta antes.'}
+      </p>
+
+      {/* Pedido do Arthur (21/08): o valor NORMAL abre a tela e cada opção
+          repete o seu — o Pix aparece como DESCONTO, não como um preço
+          diferente sem explicação. Sem o valor do cartão configurado, a tela
+          segue como antes (só o lote e o preço do Pix): prometer número de
+          outra plataforma que ninguém digitou seria chute nosso. */}
+      {mostrarPrecos ? (
+        <div style={{
+          marginTop: 12, padding: '10px 14px', borderRadius: 12,
+          background: '#00B39D12', border: '1px solid #00B39D33',
+        }}>
+          <div style={{ fontSize: 11.5, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+            Valor da inscrição
+          </div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#00B39D', marginTop: 2 }}>
+            {brl(valorCartao)}
+          </div>
+          {pixEhDesconto && (
+            <div style={{ fontSize: 12.5, color: C.text3, marginTop: 2 }}>
+              {brl(valorPix)} com desconto no Pix.
+            </div>
+          )}
+        </div>
+      ) : evento.lote_atual ? (
+        <div style={{
+          marginTop: 12, padding: '8px 12px', borderRadius: 10, display: 'inline-block',
+          background: '#00B39D12', border: '1px solid #00B39D33', fontSize: 12.5, color: C.text2,
+        }}>
+          <b style={{ color: '#00B39D' }}>{evento.lote_atual.nome}</b>
+          {' · no Pix: '}
+          <b style={{ color: '#00B39D' }}>{brl(evento.lote_atual.valor_centavos)}</b>
+        </div>
+      ) : null}
+
+      {!so && (
+        <button type="button" onClick={onProprio} style={btn(true)}>
+          <div style={linhaTopo}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>Pix</div>
+            {mostrarPrecos && (
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#00B39D', whiteSpace: 'nowrap' }}>
+                {brl(valorPix)}
+              </div>
+            )}
+          </div>
+          <div style={{ fontSize: 12.5, color: C.text3, marginTop: 2 }}>
+            {pixEhDesconto ? 'Com desconto. ' : ''}Você preenche a inscrição aqui e recebe o QR Code na hora.
+          </div>
+        </button>
+      )}
+
+      {/* ⚠️ Link de verdade (`<a>`), não window.open: o navegador mostra o
+          destino no toque longo, e bloqueador de pop-up não engole a navegação.
+          `rel="noopener"` porque a outra página não pode mexer nesta. */}
+      <a href={ext.url} target="_blank" rel="noopener noreferrer" style={{ ...btn(so), textDecoration: 'none' }}>
+        <div style={linhaTopo}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>Cartão de crédito</div>
+          {mostrarPrecos && (
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.text, whiteSpace: 'nowrap' }}>
+              {brl(valorCartao)}
+            </div>
+          )}
+        </div>
+        <div style={{ fontSize: 12.5, color: C.text3, marginTop: 2 }}>
+          {pixEhDesconto ? 'Valor normal. ' : ''}Sua inscrição é feita no {ext.nome} — você sai desta página e preenche por lá.
+        </div>
+      </a>
+
+      <p style={{ fontSize: 11.5, color: C.text3, marginTop: 12, lineHeight: 1.5 }}>
+        Quem se inscreve pelo {ext.nome} recebe a confirmação por lá.
+      </p>
+    </div>
+  );
+}
 
 export default function EventoExterno() {
   const { slug = '' } = useParams();
@@ -291,11 +449,21 @@ export default function EventoExterno() {
   const [aceitaTermos, setAceitaTermos] = useState(false);
   const [optin, setOptin] = useState(false);
   const [consentImagem, setConsentImagem] = useState(false);
+  // Bloco do responsável (só aparece pra menor de 18 em evento que pede) +
+  // aceites próprios do evento. ⚠️ Quem decide se são obrigatórios é o SERVIDOR.
+  const [resp, setResp] = useState<Record<string, string>>({});
+  const [consentMenor, setConsentMenor] = useState(false);
+  const [aceites, setAceites] = useState<Record<string, boolean>>({});
   const [textos, setTextos] = useState<any>(TEXTOS_FALLBACK);
   const [dados, setDados] = useState<Record<string, string>>({});
   const [website, setWebsite] = useState('');
   const [erro, setErro] = useState('');
   const [enviando, setEnviando] = useState(false);
+  // Forma escolhida ANTES do formulário, quando o cartão é cobrado por uma
+  // plataforma externa (e-Inscrição). null = ainda não escolheu · 'proprio' =
+  // escolheu pagar por aqui (o formulário abre). Quem escolhe cartão sai da
+  // página, então não há um terceiro estado.
+  const [formaPropria, setFormaPropria] = useState(false);
   const [subindoImg, setSubindoImg] = useState(0);
   const [resultado, setResultado] = useState<{ numero: number | null; jaInscrito?: boolean; temSorteio?: boolean; comprovanteToken?: string | null; isento?: boolean } | null>(null);
   const marcarBusy = (b: boolean) => setSubindoImg(n => Math.max(0, n + (b ? 1 : -1)));
@@ -305,7 +473,20 @@ export default function EventoExterno() {
     eventoPublico.textos().then((t: any) => { if (t?.termos_lgpd) setTextos(t); }).catch(() => { /* fallback local */ });
   }, [slug]);
 
-  const temCampoImagem = (evento?.campos || []).some((c: any) => c.tipo === 'imagem');
+  // ⚠️ Visibilidade das perguntas condicionais — MESMA régua do servidor. Campo
+  // escondido não é exigido e a resposta dele é DESCARTADA lá; aqui ele só não
+  // aparece. Recalcula a cada resposta (é o que faz "Qual medicamento?" surgir
+  // no instante em que a pessoa marca "Sim").
+  const visiveis = useMemo(() => keysVisiveis(evento?.campos || [], dados), [evento?.campos, dados]);
+  const camposVisiveis = (evento?.campos || []).filter((c: any) => c.key && visiveis.has(String(c.key)));
+  const temCampoImagem = camposVisiveis.some((c: any) => c.tipo === 'imagem');
+  // Bloco do responsável: evento marcado + nascimento de menor de 18 HOJE.
+  const precisaResponsavel = exigeResponsavel(evento, nascimento);
+  // ⚠️ Aceite `so_menor` aparece só junto do bloco do responsável — a MESMA
+  // condição que o servidor usa. Exigir de adulto seria pedir que ele aceite um
+  // termo sobre si mesmo como menor de idade.
+  const termosEvento: any[] = (Array.isArray(evento?.termos_extra) ? evento.termos_extra : [])
+    .filter((t: any) => !t.so_menor || precisaResponsavel);
 
   function confete() {
     const cores = ['#00B39D', '#00d9bd', '#ffd166', '#ef476f', '#118ab2'];
@@ -326,10 +507,25 @@ export default function EventoExterno() {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErro('Informe um e-mail válido.'); return; }
     if (!validarNascimento(nascimento)) { setErro('Informe sua data de nascimento.'); return; }
     if (!SEXOS.includes(sexo)) { setErro('Selecione o sexo.'); return; }
+    // Endereço é opcional por padrão; retiro/viagem ligam a exigência.
+    if (evento?.exigir_endereco && !endereco.trim()) { setErro('Informe o endereço completo.'); return; }
     if (!aceitaTermos) { setErro('É preciso aceitar os termos para se inscrever.'); return; }
     if (subindoImg > 0) { setErro('Aguarde o envio da imagem terminar.'); return; }
-    for (const c of (evento?.campos || [])) {
+    // ⚠️ Só os campos VISÍVEIS são exigidos — a MESMA régua do servidor. Exigir
+    // pergunta escondida deixaria o formulário insubmissível.
+    for (const c of camposVisiveis) {
       if (c.obrigatorio && !String(dados[c.key] || '').trim()) { setErro(`Preencha: ${c.label}`); return; }
+    }
+    if (precisaResponsavel) {
+      if (!nomeCompletoValido(resp.nome || '')) { setErro('Informe o nome completo do responsável, sem abreviações.'); return; }
+      if (!cpfValido(resp.cpf || '')) { setErro('Informe um CPF válido do responsável.'); return; }
+      if (!String(resp.parentesco || '').trim()) { setErro('Informe o grau de parentesco com o menor.'); return; }
+      if (!telefoneValido(resp.telefone || '')) { setErro('Informe o celular do responsável, com DDD.'); return; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(resp.email || '').trim())) { setErro('Informe um e-mail válido do responsável.'); return; }
+      if (!consentMenor) { setErro('É preciso a autorização do responsável para inscrever menor de idade.'); return; }
+    }
+    for (const t of termosEvento) {
+      if (!aceites[t.chave]) { setErro(`É preciso aceitar: ${t.titulo || 'termo do evento'}.`); return; }
     }
     setEnviando(true);
     try {
@@ -341,6 +537,23 @@ export default function EventoExterno() {
         aceita_termos: aceitaTermos,
         whatsapp_optin: optin,
         consent_imagem: temCampoImagem ? consentImagem : undefined,
+        // ⚠️ Só manda o bloco do responsável quando ele foi EXIBIDO: enviar
+        // campos que a pessoa não viu (de um estado antigo, se ela corrigiu o
+        // nascimento pra maior) gravaria contato de responsável em inscrição de
+        // adulto. Quem decide se é obrigatório continua sendo o servidor.
+        ...(precisaResponsavel ? {
+          responsavel_nome: (resp.nome || '').trim(),
+          responsavel_cpf: soDigitos(resp.cpf || ''),
+          responsavel_parentesco: (resp.parentesco || '').trim(),
+          responsavel_telefone: resp.telefone || '',
+          responsavel_email: (resp.email || '').trim(),
+          responsavel_autoriza_batismo: resp.autoriza_batismo || undefined,
+          consent_menor: consentMenor,
+        } : {}),
+        // Aceites próprios do evento, na chave estável de cada termo.
+        ...(termosEvento.length ? {
+          aceites: Object.fromEntries(termosEvento.map((t) => [t.chave, !!aceites[t.chave]])),
+        } : {}),
         dados, website,
       });
       // Evento PAGO: a vaga ficou reservada e a pessoa escolhe como pagar na
@@ -405,13 +618,25 @@ export default function EventoExterno() {
               <h1 style={{ fontSize: 'clamp(22px, 6vw, 27px)', fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
                 {evento?.nome}
               </h1>
-              {(dataLonga(evento?.data) || evento?.hora) && (
+              {(periodoLongo(evento?.data, evento?.data_fim) || evento?.hora) && (
                 <div style={{ display: 'inline-block', marginTop: 10, padding: '6px 16px', borderRadius: 999, background: 'rgba(0,179,157,0.12)', border: '1px solid rgba(0,179,157,0.3)', color: '#00B39D', fontSize: 14, fontWeight: 700 }}>
-                  {[dataLonga(evento?.data), evento?.hora].filter(Boolean).join(' · ')}
+                  {[periodoLongo(evento?.data, evento?.data_fim), evento?.hora].filter(Boolean).join(' · ')}
                 </div>
               )}
               {evento?.local && <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>{evento.local}</p>}
               {evento?.descricao && <p style={{ fontSize: 13, color: C.text3, marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-line' }}>{evento.descricao}</p>}
+              {/* Grupo de dúvidas (21/08): fica no CABEÇALHO de propósito —
+                  aparece na escolha Pix×cartão, no formulário e na tela de
+                  sucesso, que dividem esta página. Link real (<a>), nova aba. */}
+              {evento?.whatsapp_duvidas && (
+                <a href={evento.whatsapp_duvidas} target="_blank" rel="noopener noreferrer" style={{
+                  display: 'inline-block', marginTop: 10, padding: '7px 14px', borderRadius: 999,
+                  background: 'rgba(37,211,102,0.10)', border: '1px solid rgba(37,211,102,0.35)',
+                  color: '#1da851', fontSize: 12.5, fontWeight: 700, textDecoration: 'none',
+                }}>
+                  Dúvidas? Entre no grupo do WhatsApp
+                </a>
+              )}
             </>
           )}
         </div>
@@ -458,15 +683,35 @@ export default function EventoExterno() {
                 </p>
               )}
               {resultado.comprovanteToken && <ComprovanteQr token={resultado.comprovanteToken} />}
+              {/* Instruções gerais do evento — a inscrição CONCLUIU (este bloco
+                  só existe na tela de sucesso; quem foi pagar recebe o mesmo
+                  convite na página de pagamento, quando o Pix confirma). */}
+              <BaixarInstrucoes instrucoes={evento.instrucoes} C={C} />
             </div>
           ) : (evento.inscricoes_encerradas ?? !evento.form_ativo) ? (
             <p style={{ textAlign: 'center', color: C.text3, fontSize: 14, padding: '20px 0' }}>{evento.aviso || 'As inscrições deste evento estão encerradas.'}</p>
+          ) : evento.checkout_externo && !formaPropria ? (
+            /* ⚠️ A PERGUNTA VEM ANTES DO FORMULÁRIO (pedido do Matheus · 11/08):
+               quem vai pagar no cartão se inscreve na OUTRA plataforma, então
+               pedir CPF, nascimento e endereço aqui seria coletar dado de gente
+               que não vai se inscrever aqui — e ainda deixaria a pessoa preencher
+               tudo pra só no fim descobrir que precisa recomeçar lá fora. */
+            <EscolhaPagamento
+              C={C}
+              evento={evento}
+              onProprio={() => setFormaPropria(true)}
+            />
           ) : (
             <form onSubmit={enviar}>
               {/* Vagas limitadas: mostrar ANTES de preencher. A conferência que
                   vale é a do servidor (dentro do lock) — aqui é só aviso, então
-                  pode ficar 1 ou 2 vagas defasado num lançamento movimentado. */}
-              {typeof evento.vagas_restantes === 'number' && (
+                  pode ficar 1 ou 2 vagas defasado num lançamento movimentado.
+                  ⚠️ Evento com LOTES não mostra contagem nenhuma (pedido do
+                  Arthur · 21/08, AMI CAMP 2027): número de vagas restantes na
+                  divulgação conta quanta gente já entrou, e evento de lote
+                  vende melhor sem esse placar. As outras portas seguem
+                  mostrando — quem tem lote é quem cala. */}
+              {typeof evento.vagas_restantes === 'number' && !evento.lote_atual && (
                 <div style={{
                   marginBottom: 16, padding: '8px 14px', borderRadius: 999, display: 'inline-block',
                   fontSize: 12.5, fontWeight: 600,
@@ -485,12 +730,18 @@ export default function EventoExterno() {
                   marginBottom: 16, padding: '12px 14px', borderRadius: 12,
                   background: '#00B39D12', border: '1px solid #00B39D33',
                 }}>
-                  <div style={{ fontSize: 12, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4 }}>Valor da inscrição</div>
+                  <div style={{ fontSize: 12, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                    {evento.lote_atual ? `Valor da inscrição · ${evento.lote_atual.nome}` : 'Valor da inscrição'}
+                  </div>
                   <div style={{ fontSize: 24, fontWeight: 800, color: '#00B39D', marginTop: 2 }}>
                     {(evento.valor_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
                   </div>
+                  {/* ⚠️ NÃO voltar a anunciar quanto falta pro lote virar nem o
+                      preço do próximo (pedido do Arthur · 21/08): a tela diz o
+                      lote e o preço de HOJE, e mais nada. O que vem depois é
+                      argumento de divulgação, dito por quem divulga. */}
                   <div style={{ fontSize: 12, color: C.text3, marginTop: 4 }}>
-                    Pagamento por Pix, cartão{evento.parcelas_max > 1 ? ` (em até ${evento.parcelas_max}x)` : ''} ou boleto.
+                    {rotuloMetodos(evento)}
                     {' '}Ao enviar, você vai para a página de pagamento.
                   </div>
                   {evento.pagamento_expira_horas > 0 && (
@@ -514,10 +765,14 @@ export default function EventoExterno() {
                 <SexoBox value={sexo} onPick={setSexo} />
                 <Field id="cpf" label="CPF" value={cpf} onChange={e => setCpf(mascaraCpf(e.target.value))} required inputMode="numeric" maxLength={14} />
                 <Field id="email" label="E-mail" value={email} onChange={e => setEmail(e.target.value)} required inputMode="email" />
-                <Field id="endereco" label="Endereço (opcional)" value={endereco} onChange={e => setEndereco(e.target.value)} />
+                <Field id="endereco"
+                  label={evento.exigir_endereco ? 'Endereço completo' : 'Endereço (opcional)'}
+                  value={endereco} onChange={e => setEndereco(e.target.value)}
+                  required={!!evento.exigir_endereco} span={!!evento.exigir_endereco} />
 
-                {/* Campos específicos deste evento (form-builder) */}
-                {(evento.campos || []).map((c: any) => (
+                {/* Campos específicos deste evento (form-builder) ·
+                    ⚠️ só os VISÍVEIS pela régua condicional — a mesma do servidor. */}
+                {camposVisiveis.map((c: any) => (
                   c.tipo === 'select' ? (
                     <SelectBox key={c.key} id={c.key} label={c.label} value={dados[c.key] || ''} onChange={setCampo(c.key)} required={c.obrigatorio} opcoes={c.opcoes || []} />
                   ) : (c.tipo === 'escolha' || c.tipo === 'multi') ? (
@@ -545,6 +800,49 @@ export default function EventoExterno() {
                 ))}
               </div>
 
+              {/* Bloco do RESPONSÁVEL — aparece só quando o nascimento informado
+                  é de menor de 18 e o evento pede (LGPD art. 14 §1º).
+                  ⚠️ A tela DIZ por que apareceu: um bloco de 6 campos surgindo do
+                  nada depois de digitar a data se lê como bug. */}
+              {precisaResponsavel && (
+                <div style={{
+                  marginTop: 18, padding: '14px 16px', borderRadius: 14,
+                  background: '#f59e0b12', border: '1px solid #f59e0b40',
+                }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Dados do responsável</div>
+                  <p style={{ fontSize: 12.5, color: C.text3, marginTop: 4, lineHeight: 1.5 }}>
+                    A data de nascimento informada é de menor de 18 anos, então precisamos dos dados de
+                    quem é responsável legal — é ele quem autoriza a inscrição e quem procuramos em caso
+                    de emergência.
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: 12, marginTop: 12 }}>
+                    <Field id="resp_nome" label="Nome completo do responsável" required span
+                      value={resp.nome || ''} onChange={e => setResp(r => ({ ...r, nome: e.target.value }))} />
+                    <Field id="resp_cpf" label="CPF do responsável" required inputMode="numeric" maxLength={14}
+                      value={resp.cpf || ''} onChange={e => setResp(r => ({ ...r, cpf: mascaraCpf(e.target.value) }))} />
+                    <SelectBox id="resp_parentesco" label="Grau de parentesco com o menor" required
+                      opcoes={Array.isArray(evento.parentescos) && evento.parentescos.length ? evento.parentescos : PARENTESCOS}
+                      value={resp.parentesco || ''} onChange={e => setResp(r => ({ ...r, parentesco: e.target.value }))} />
+                    <Field id="resp_telefone" label="Celular do responsável" required inputMode="tel" maxLength={16}
+                      value={resp.telefone || ''} onChange={e => setResp(r => ({ ...r, telefone: mascaraTelefone(e.target.value) }))} />
+                    <Field id="resp_email" label="E-mail do responsável" required inputMode="email"
+                      value={resp.email || ''} onChange={e => setResp(r => ({ ...r, email: e.target.value }))} />
+                    {/* Autorização de batismo · NÃO é obrigatória: a pergunta é
+                        sobre INTERESSE em batizar, e quem não pretende não
+                        precisa responder. Sem resposta ≠ autorizado. */}
+                    <PillSelect label="Se o menor quiser se batizar no evento, você autoriza?"
+                      opcoes={['Sim', 'Não']} value={resp.autoriza_batismo || ''}
+                      onPick={(v) => setResp(r => ({ ...r, autoriza_batismo: v }))} />
+                  </div>
+                  <div style={{ marginTop: 12 }}>
+                    <ConsentBox checked={consentMenor} onChange={setConsentMenor}>
+                      <b style={{ color: C.text }}>Autorização do responsável *</b><br />
+                      {textos.menor_responsavel || TEXTOS_FALLBACK.menor_responsavel}
+                    </ConsentBox>
+                  </div>
+                </div>
+              )}
+
               {/* Consentimentos (Contrato de Inscrição) */}
               <div style={{ marginTop: 18 }}>
                 <ConsentBox checked={aceitaTermos} onChange={setAceitaTermos}>
@@ -553,10 +851,55 @@ export default function EventoExterno() {
                 {temCampoImagem && (
                   <ConsentBox checked={consentImagem} onChange={setConsentImagem}>{textos.imagem}</ConsentBox>
                 )}
+                {/* Aceites PRÓPRIOS do evento (regulamento, termo de
+                    responsabilidade). Todos obrigatórios — a lista existe pra o
+                    que a igreja precisa que a pessoa leia; aceite opcional não
+                    prova nada. O link abre em nova aba pra não perder o
+                    formulário preenchido. */}
+                {termosEvento.map((t: any) => (
+                  <ConsentBox key={t.chave} checked={!!aceites[t.chave]}
+                    onChange={(v) => setAceites(a => ({ ...a, [t.chave]: v }))}>
+                    <b style={{ color: C.text }}>Li e aceito: {t.titulo} *</b>
+                    {/* ⚠️ COM documento, o texto inteiro NÃO vai pra tela
+                        (pedido do Arthur · 21/08: "o texto ficou muito grande,
+                        coloque apenas li e aceito o termo e deixe o link para
+                        baixar"). O texto continua gravado inteiro no
+                        consentimento — a prova não mudou, mudou a leitura.
+                        SEM documento, o texto FICA: aceitar o que não está na
+                        tela nem em arquivo nenhum não seria aceite. */}
+                    {t.url ? (
+                      <>
+                        <br />
+                        <a href={t.url} target="_blank" rel="noreferrer" style={{ color: '#00B39D', textDecoration: 'underline' }}>
+                          Baixar o documento
+                        </a>
+                      </>
+                    ) : (
+                      <><br />{t.texto}</>
+                    )}
+                  </ConsentBox>
+                ))}
+
                 <ConsentBox checked={optin} onChange={setOptin}>
                   📲 <b style={{ color: C.text }}>Quero receber avisos deste evento no WhatsApp</b><br />
                   {textos.aviso_optin || AVISO_OPTIN}
                 </ConsentBox>
+
+                {/* Só em evento PAGO: em evento gratuito não há o que reembolsar,
+                    e o link viraria ruído. O CDC exige informação PRÉVIA — por
+                    isso o link fica ANTES do botão de enviar, não na tela de
+                    sucesso. Abre em nova aba pra não perder o formulário
+                    preenchido. */}
+                {evento?.pagamento_ativo && (
+                  <p style={{ fontSize: 12.5, color: C.text3, margin: '10px 0 0', lineHeight: 1.5 }}>
+                    Inscrição paga. Antes de continuar, veja como funcionam
+                    cancelamento e devolução na{' '}
+                    <a href="/politica-reembolso" target="_blank" rel="noreferrer"
+                      style={{ color: '#00B39D', textDecoration: 'underline' }}>
+                      Política de Reembolso
+                    </a>.
+                  </p>
+                )}
               </div>
 
               <input value={website} onChange={e => setWebsite(e.target.value)} tabIndex={-1} autoComplete="off" style={{ display: 'none' }} aria-hidden="true" />

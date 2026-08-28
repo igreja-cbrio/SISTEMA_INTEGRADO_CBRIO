@@ -29,6 +29,7 @@ const ROTAS: Rota[] = [
   { path: '/dashboard',                       modulo: 'Dashboard',                  esperado: /(dashboard|bem.?vindo|boas.?vindas|cbrio)/i },
   { path: '/perfil',                          modulo: 'Perfil',                     esperado: /perfil/i },
   { path: '/planejamento',                    modulo: 'Planejamento',               esperado: /planejamento|estrategia|estratégia/i },
+  { path: '/planejamento-anual',              modulo: 'Planejamento Anual',         esperado: /planejamento anual|propostas|ciclo/i, optional: true },
   { path: '/solicitacoes',                    modulo: 'Solicitacoes',               esperado: /solicita/i },
   { path: '/revisao',                         modulo: 'Revisao Estrategica',        esperado: /revisao|revisão|estratégica|estrategica/i },
 

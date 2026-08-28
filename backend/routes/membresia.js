@@ -1,5 +1,13 @@
 const router = require('express').Router();
+const kidsVisitante = require('../utils/kidsVisitante');
+// Dia BRT — dia de operação da igreja nunca é UTC (das 21h o dia já virou).
+function hojeBRTKids() {
+  return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
 const multer = require('multer');
+const {
+  planoDaPagina, montarResposta, COLUNAS_LISTA,
+} = require('../utils/membrosPagina');
 const { authenticate, authorize, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
@@ -10,6 +18,34 @@ const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
 const { montarPatchFusao } = require('../services/fusaoCampos');
 const { normalizarCpf: normCpf11, cpfValido } = require('../utils/cpf');
+const censoDisparo = require('../services/censoDisparo');
+const { avaliarProntidao } = require('../utils/prontidaoCadastro');
+// Endereco brasileiro -> bairro/coordenada. `bairroPorCep` (ViaCEP, ~200ms) roda
+// no salvamento do cadastro; `centroideDeBairro` (Nominatim, 1,1s de fila) so no
+// lote de geocodificacao do Perfil da Membresia.
+const {
+  bairroPorCep, coordenadaPorTexto, centroideDeBairro, coordenadaDeCep,
+} = require('../services/geoBrasil');
+const { trechoValido } = require('../utils/trechoCep');
+const { normalizarEnderecoDoPayload } = require('../services/bairroCanonico');
+const { decidirDesativacao, decidirReativacao } = require('../utils/desativarMembro');
+// ⚠️⚠️ `donosDoGrupo` era CHAMADO em `/totem/grupos/:id/entrar` e NUNCA foi
+// importado neste arquivo — ReferenceError latente. O insert do pedido roda
+// ANTES, então o primeiro uso real do totem gravaria o pedido e responderia
+// 500 pra pessoa. Medido em 11/08: **0 pedidos com origem 'totem'** na base
+// inteira (570 do formulário público, 2 do app), ou seja a rota nunca foi
+// exercitada e o erro nunca disparou. Achado ao ligar o sino do app.
+const { donosDoGrupo } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
+const {
+  anexarMarcadores, marcadoresDeMembros, podeVerMarcadorSensivel,
+} = require('../services/jornadaMarcadores');
+// ⚠️ Fecha o furo do `ROUTE_MODULE_MAP['membros']` (12 módulos · qualquer um
+// com nível 1 chegava aqui): dinheiro e cuidado pastoral DA PESSOA passam a ser
+// filtrados no payload. Ver o cabeçalho de `utils/dadosSensiveisPessoa.js`.
+const {
+  podeVerFinanceiroDePessoa, podeVerPastoralDePessoa, filtrarTimeline,
+} = require('../utils/dadosSensiveisPessoa');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -68,9 +104,14 @@ router.post('/cadastros/:id/confirmar-whatsapp', podeAprovarMembresia, async (re
     if (!tel) return res.status(400).json({ error: 'Cadastro sem telefone.' });
 
     const primeiro = String(cad.nome || '').trim().split(/\s+/)[0] || 'tudo bem';
-    const wpp = require('../services/whatsappService');
-    const r = await wpp.sendTemplate(tel, nomeTemplate, 'pt_BR', [primeiro]);
-    if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o envio.', detail: r?.reason || r?.detail || null });
+    // C2 (lote 5 · 14/08): pela FILA — registro + retry + recibos. Na fila
+    // (teto da Meta) não é erro: sai quando a cota liberar.
+    const { enfileirar } = require('../services/whatsappFila');
+    const r = await enfileirar({
+      telefone: tel, template: nomeTemplate, params: [primeiro],
+      contexto: 'membresia.cadastro_confirmado', refId: cad.id,
+    });
+    if (!r?.sent && !r?.queued) return res.status(502).json({ error: 'O WhatsApp não aceitou o envio.', detail: r?.reason || null });
     try {
       await require('../services/waInbox').registrarOutbound({
         telefone: tel, texto: `Confirmação de cadastro (template: ${nomeTemplate})`, tipo: 'template',
@@ -182,10 +223,18 @@ router.get('/qr-lookup/:token', async (req, res) => {
       const [grupoAtualRes, ministeriosRes, ultContribRes, ultCheckinRes, trilhaRes] = await Promise.all([
         supabase
           .from('mem_grupo_membros')
-          .select('grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario)')
+          // !inner + filtros no embed: sem eles, quem tem vinculo aberto em
+          // grupo ja ENCERRADO mostrava grupo morto no cartao — e .maybeSingle()
+          // sem limit ERRAVA ("multiple rows") pra quem tem 2+ vinculos abertos
+          // (257 pessoas medidas em 11/08). Mostra o vinculo mais recente.
+          .select('grupo:mem_grupos!inner(id, nome, categoria, local, dia_semana, horario)')
           .is('deleted_at', null)
           .eq('membro_id', membro.id)
           .is('saiu_em', null)
+          .eq('grupo.ativo', true)
+          .is('grupo.deleted_at', null)
+          .order('entrou_em', { ascending: false })
+          .limit(1)
           .maybeSingle(),
         supabase
           .from('mem_voluntarios')
@@ -321,10 +370,18 @@ router.get('/cpf-lookup/:cpf', authorizeModule('membros-totem', 1), async (req, 
       const [grupoAtualRes, ministeriosRes, ultContribRes, ultCheckinRes, trilhaRes] = await Promise.all([
         supabase
           .from('mem_grupo_membros')
-          .select('grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario)')
+          // !inner + filtros no embed: sem eles, quem tem vinculo aberto em
+          // grupo ja ENCERRADO mostrava grupo morto no cartao — e .maybeSingle()
+          // sem limit ERRAVA ("multiple rows") pra quem tem 2+ vinculos abertos
+          // (257 pessoas medidas em 11/08). Mostra o vinculo mais recente.
+          .select('grupo:mem_grupos!inner(id, nome, categoria, local, dia_semana, horario)')
           .is('deleted_at', null)
           .eq('membro_id', membro.id)
           .is('saiu_em', null)
+          .eq('grupo.ativo', true)
+          .is('grupo.deleted_at', null)
+          .order('entrou_em', { ascending: false })
+          .limit(1)
           .maybeSingle(),
         supabase
           .from('mem_voluntarios')
@@ -422,6 +479,8 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
     const { status, busca, papel, faixa } = req.query;
     // "Sem CPF": captação de dado — lista quem está sem CPF (todos são NULL).
     const semCpf = req.query.sem_cpf === '1' || req.query.sem_cpf === 'true';
+    // "Com CPF": o inverso, pra ver quem já está identificado.
+    const comCpf = req.query.com_cpf === '1' || req.query.com_cpf === 'true';
 
     // Builders do supabase-js são de uso único — recria por página.
     const montar = () => {
@@ -434,15 +493,19 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
 
       if (status) query = query.eq('status', status);
       if (semCpf) query = query.is('cpf', null);
-      // Filtro por faixa etária (janela de data de nascimento ·
-      // criança <13, adolescente 13-17, jovem 18-30, adulto 31+).
+      // ⚠️ `semCpf` vence se vierem os dois: um pedido contraditório não pode
+      // devolver a lista inteira como se nenhum filtro tivesse sido pedido.
+      else if (comCpf) query = query.not('cpf', 'is', null);
+      // Filtro por faixa etária (janela de data de nascimento · régua da
+      // igreja desde 19/08/2026: criança <13, adolescente 13-17, jovem 18-25,
+      // adulto 26+ · espelho de fn_faixa_etaria).
       if (faixa) {
         const h = new Date();
         const f = (anos) => `${h.getFullYear() - anos}-${String(h.getMonth() + 1).padStart(2, '0')}-${String(h.getDate()).padStart(2, '0')}`;
         if (faixa === 'crianca') query = query.gt('data_nascimento', f(13));
         else if (faixa === 'adolescente') query = query.gt('data_nascimento', f(18)).lte('data_nascimento', f(13));
-        else if (faixa === 'jovem') query = query.gt('data_nascimento', f(31)).lte('data_nascimento', f(18));
-        else if (faixa === 'adulto') query = query.lte('data_nascimento', f(31));
+        else if (faixa === 'jovem') query = query.gt('data_nascimento', f(26)).lte('data_nascimento', f(18));
+        else if (faixa === 'adulto') query = query.lte('data_nascimento', f(26));
       }
       // Busca por tokens: "matheus toscano" casa "Matheus Ribeiro Toscano".
       // Cada palavra vira um ILIKE (AND), case-insensitive, em qualquer ordem.
@@ -494,9 +557,21 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
       },
     }));
 
+    // ⚠️ `is_contribuinte` é dado financeiro da pessoa e sai daqui pra quem não
+    // pode vê-lo (mesma régua da ficha e do `GET /contribuicoes`). O guard desta
+    // rota é `membros` nível 1, que passa com qualquer um dos 12 módulos do
+    // ROUTE_MODULE_MAP — `grupos` nível 1 inclusive.
+    const podeFinanceiro = podeVerFinanceiroDePessoa(req.user);
+
     // Filtro por papel (depois de enriched pra suportar 'sem_papel')
     let filtered = enriched;
     if (papel) {
+      // ⚠️ Filtrar POR contribuinte é a mesma informação que ver a flag — a
+      // lista devolvida É a resposta. Recusa explícita, não filtro ignorado em
+      // silêncio (que devolveria a lista inteira e pareceria "ninguém contribui").
+      if (papel === 'contribuinte' && !podeFinanceiro) {
+        return res.status(403).json({ error: 'Sem permissão para filtrar por contribuinte.' });
+      }
       filtered = enriched.filter(m => {
         const p = m.papeis;
         if (papel === 'voluntario') return p.is_voluntario;
@@ -506,12 +581,33 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
         if (papel === 'com_familia') return !!m.familia_id;
         if (papel === 'inscrito_next') return p.is_inscrito_next;
         if (papel === 'sem_papel') {
+          // ⚠️ Sem permissão financeira, "sem papel" ignora o termo de
+          // contribuinte: senão quem aparece na lista SEM nenhuma flag visível
+          // seria, por eliminação, exatamente quem contribui — a flag escondida
+          // voltaria por inferência.
+          const semContrib = podeFinanceiro ? !p.is_contribuinte : true;
           return !p.is_voluntario && !p.is_visitante && !p.is_inscrito_next
-            && !p.in_grupo_ativo && !p.is_contribuinte;
+            && !p.in_grupo_ativo && semContrib;
         }
         return true;
       });
     }
+
+    if (!podeFinanceiro) {
+      for (const m of filtered) {
+        if (m.papeis) m.papeis = { ...m.papeis, is_contribuinte: false, financeiro_oculto: true };
+      }
+    }
+
+    // Marcadores de jornada (batismo · Next · grupo · servir · devocional +
+    // generosidade só pra quem pode) — pedido do Arthur Serpa / Pr. Nélio,
+    // 13/08/2026. Anexa DEPOIS do filtro: a lista já está recortada, então o
+    // custo acompanha o que a tela vai mostrar, não a base inteira.
+    // ⚠️ Best-effort dentro do serviço: marcador que falha vira `indisponiveis`
+    // DECLARADO no payload, nunca lista sem gente.
+    await anexarMarcadores(filtered, (m) => m.id, {
+      incluirSensiveis: podeVerMarcadorSensivel(req.user),
+    });
 
     res.json(filtered);
   } catch (e) {
@@ -521,6 +617,53 @@ router.get('/membros', authorizeModule('membros', 1), async (req, res) => {
 });
 
 // GET /api/membresia/membros/:id (detalhe com trilha e histórico)
+// ══════════════════════════════════════════════════════════════════════════
+//  GET /membros/pagina · lista PAGINADA e ORDENÁVEL (o app do staff usa esta)
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Por que não reusar `GET /membros`: ele devolve a base INTEIRA (pagina por
+// dentro até 20 mil) e ordena só A→Z. Medido em 10/08: 4.056 pessoas ativas,
+// 853 kB de dados crus — em JSON, com todas as colunas e o embed de família,
+// passa de 2 MB. É aceitável no navegador do ERP e é ruim no celular, a cada
+// abertura de tela, em rede de rua.
+//
+// Duas diferenças que importam:
+//  · PAGINA de verdade (range no banco), com `total` para a tela saber onde está.
+//  · ORDEM escolhível (A→Z ou Z→A), pedido do Matheus. O endpoint antigo tem a
+//    ordem fixa no código.
+//
+// ⚠️ O filtro por PAPEL não entra aqui de propósito. Ele depende de cruzar
+// `vw_pessoas_papeis` e é aplicado DEPOIS, em memória — com paginação no banco,
+// filtrar depois devolveria páginas de tamanho irregular e um `total` mentiroso
+// (a conta viria antes do filtro). Preferi não oferecer a não oferecer errado;
+// os filtros daqui são todos resolvidos no banco.
+router.get('/membros/pagina', authorizeModule('membros', 1), async (req, res) => {
+  try {
+    const p = planoDaPagina(req.query);
+
+    let q = supabase.from('mem_membros')
+      .select(COLUNAS_LISTA, { count: 'exact' })
+      .eq('active', true).is('deleted_at', null);
+
+    if (p.status) q = q.eq('status', p.status);
+    if (p.semCpf) q = q.is('cpf', null);
+    else if (p.comCpf) q = q.not('cpf', 'is', null);
+    if (p.faixa?.gt) q = q.gt('data_nascimento', p.faixa.gt);
+    if (p.faixa?.lte) q = q.lte('data_nascimento', p.faixa.lte);
+    for (const t of p.tokens) q = q.ilike('nome', `%${t}%`);
+
+    const { data, error, count } = await q
+      .order('nome', { ascending: p.ascending })
+      .range(p.range[0], p.range[1]);
+    if (error) throw error;
+
+    res.json(montarResposta(data, { total: count, offset: p.offset, limite: p.limite }));
+  } catch (e) {
+    console.error('membresia/membros/pagina:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar membros' });
+  }
+});
+
 router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
   try {
     const id = req.params.id;
@@ -687,17 +830,39 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
       }));
     }
 
+    // Marcadores de jornada da ficha (mesma régua da lista · serviço único).
+    // Best-effort: a ficha existe pra mostrar a pessoa, não os marcadores.
+    let marcadores = null;
+    try {
+      const { porMembro } = await marcadoresDeMembros([id], {
+        incluirSensiveis: podeVerMarcadorSensivel(req.user),
+      });
+      marcadores = porMembro.get(id) || null;
+    } catch (eMarc) {
+      console.error('[membresia] marcadores da ficha:', eMarc.message);
+    }
+
+    // ⚠️ Dízimo/oferta da pessoa só pra quem pode (mesma régua do
+    // `GET /membresia/contribuicoes`). O guard da rota é `membros` nível 1, que
+    // passa com qualquer um dos 12 módulos do ROUTE_MODULE_MAP — era por aqui
+    // que `grupos` nível 1 lia o extrato de qualquer pessoa.
+    // ⚠️ Omissão DECLARADA (`financeiro_oculto`): campo que some sem aviso é
+    // lido como "esta pessoa nunca contribuiu".
+    const podeFinanceiro = podeVerFinanceiroDePessoa(req.user);
+
     res.json({
       ...membro,
+      marcadores,
       familiares,
       trilha: trilha || [],
       historico: historico || [],
       grupo_atual,
       grupo_historico,
-      contribuicoes: contribuicoes || [],
-      nivel_generosidade: nivelGenerosidade,
-      ultima_contribuicao: ultimaContribuicao,
-      totais_ano: totaisAno,
+      financeiro_oculto: !podeFinanceiro,
+      contribuicoes: podeFinanceiro ? (contribuicoes || []) : [],
+      nivel_generosidade: podeFinanceiro ? nivelGenerosidade : null,
+      ultima_contribuicao: podeFinanceiro ? ultimaContribuicao : null,
+      totais_ano: podeFinanceiro ? totaisAno : null,
       // Voluntariado (lido de vol_profiles - fonte única)
       vol_profile_id,
       allocation_status,
@@ -723,6 +888,74 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
+// ── GET /membros/:id/censo · as respostas do censo daquela pessoa ────────────
+//
+// Pedido do Matheus (07/08): "se eu responder o censo, a equipe de membresia
+// deve conseguir ver isso nas minhas atividades e ver as minhas respostas".
+// A atividade vai na linha do tempo; as RESPOSTAS vêm por aqui.
+//
+// ⚠️ O bloco sensível (saúde emocional, casamento, "nunca teve coragem") NÃO
+// sai daqui para quem não está em `cen_acesso_sensivel`. Ter o módulo de
+// membresia não é autorização para ler saúde emocional de ninguém: a régua é a
+// mesma do módulo do censo, e é aplicada no SERVIDOR — filtrar no cliente seria
+// maquiagem, o dado já teria saído pela rede.
+router.get('/membros/:id/censo', authorizeModule('membros', 2), async (req, res) => {
+  try {
+    const { data: respostas, error } = await supabase
+      .from('cen_resposta')
+      .select('id, concluida_em, canal, identificado_por, duracao_seg, pesquisa:cen_pesquisa(id, titulo, slug, perguntas)')
+      .eq('membro_id', req.params.id)
+      .not('concluida_em', 'is', null)
+      .is('deleted_at', null)
+      .order('concluida_em', { ascending: false })
+      .limit(10);
+    if (error) return res.status(400).json({ error: error.message });
+    if (!respostas?.length) return res.json({ respostas: [] });
+
+    // Quem pode ver o bloco sensível é a lista nomeada, não o nível no módulo.
+    let podeSensivel = false;
+    try {
+      const { data: acesso } = await supabase
+        .from('cen_acesso_sensivel').select('profile_id')
+        .eq('profile_id', req.user?.id || '').is('revogado_em', null).maybeSingle();
+      podeSensivel = !!acesso;
+    } catch { podeSensivel = false; }   // fail-closed
+
+    const ids = respostas.map((r) => r.id);
+    const { data: itens } = await supabase
+      .from('cen_resposta_item')
+      .select('resposta_id, pergunta_id, pergunta_texto, tipo, valor_texto, valor_num, valor_opcoes, sensivel, acao')
+      .in('resposta_id', ids);
+
+    const saida = respostas.map((r) => {
+      const meus = (itens || []).filter((i) => i.resposta_id === r.id);
+      const visiveis = podeSensivel ? meus : meus.filter((i) => i.sensivel !== true);
+      // A ORDEM do questionário é a ordem que faz a leitura ter sentido; a do
+      // banco é a de inserção.
+      const ordem = new Map((r.pesquisa?.perguntas || [])
+        .map((q, idx) => [q.id, idx]));
+      visiveis.sort((a, b) => (ordem.get(a.pergunta_id) ?? 1e9) - (ordem.get(b.pergunta_id) ?? 1e9));
+      return {
+        id: r.id,
+        pesquisa: r.pesquisa?.titulo || null,
+        concluida_em: r.concluida_em,
+        canal: r.canal,
+        identificado_por: r.identificado_por,
+        duracao_seg: r.duracao_seg,
+        itens: visiveis,
+        // Diz que EXISTE algo oculto, em vez de fingir que a resposta é só isso.
+        // Quem precisa e não tem acesso sabe a quem pedir.
+        itens_sensiveis_ocultos: meus.length - visiveis.length,
+      };
+    });
+
+    res.json({ respostas: saida, pode_ver_sensivel: podeSensivel });
+  } catch (e) {
+    console.error('[membresia] censo:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar as respostas do censo' });
+  }
+});
+
 // GET /api/membresia/membros/:id/timeline · "log do membro" — linha do tempo
 // agregando as atividades da pessoa em vários módulos, em ordem cronológica.
 // Read-only. Uma query .eq por fonte (poucas linhas por membro · seguro).
@@ -747,6 +980,7 @@ router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, r
     const [
       trilha, grupos, contribs, devos, next, batismos, jornada,
       convertidos, acompanh, encaminh, decisoes, historico, checkins, inscEspinha,
+      censoRespostas,
     ] = await Promise.all([
       supabase.from('mem_trilha_valores').select('etapa, concluida, data_conclusao, created_at').eq('membro_id', id),
       supabase.from('mem_grupo_membros').select('entrou_em, saiu_em, motivo_saida, grupo:mem_grupos(nome)').eq('membro_id', id),
@@ -768,6 +1002,13 @@ router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, r
       // /inscricoes não aparecia na história da pessoa.
       supabase.from('inscricoes').select('created_at, status, evento:insc_eventos(nome, tipo)')
         .eq('membro_id', id).is('deleted_at', null).order('created_at', { ascending: false }).limit(100),
+      // Censo: responder o censo é atividade da pessoa como qualquer outra, e a
+      // equipe de membresia precisa ver isso na ficha (pedido do Matheus, 07/08).
+      // Só respostas CONCLUÍDAS — rascunho não é atividade.
+      supabase.from('cen_resposta')
+        .select('id, concluida_em, canal, pesquisa:cen_pesquisa(titulo, slug)')
+        .eq('membro_id', id).not('concluida_em', 'is', null).is('deleted_at', null)
+        .order('concluida_em', { ascending: false }).limit(20),
     ]);
 
     (trilha.data || []).forEach((t) => t.concluida && add('trilha', t.data_conclusao || t.created_at, `Trilha: ${t.etapa}`, 'Etapa concluída', '/ministerial/membresia'));
@@ -789,6 +1030,12 @@ router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, r
     (convertidos.data || []).forEach((c) => add('conversao', c.data_culto, 'Decisão / conversão', c.observacoes, '/ministerial/cuidados'));
     (acompanh.data || []).forEach((a) => add('aconselhamento', a.data_inicio, 'Aconselhamento', [a.motivo, a.status].filter(Boolean).join(' · ') || null, '/ministerial/cuidados'));
     (encaminh.data || []).forEach((e) => add('encaminhamento', e.encaminhado_em, `Encaminhado · ${e.destino}`, e.status, '/ministerial/cuidados'));
+    (censoRespostas.data || []).forEach((c) => add(
+      'censo', c.concluida_em,
+      `Respondeu o censo${c.pesquisa?.titulo ? ` · ${c.pesquisa.titulo}` : ''}`,
+      c.canal === 'app' ? 'pelo aplicativo' : c.canal === 'qr' ? 'pelo QR do culto' : `por ${c.canal}`,
+      '/censo',
+    ));
     (decisoes.data || []).forEach((d) => add('decisao', d.registrado_em || d.culto?.data, `Decisão no culto`, d.tipo_decisao, '/integracao'));
     (historico.data || []).forEach((h) => add('nota', h.data, h.descricao, 'Registro manual', '/ministerial/membresia'));
     (checkins.data || []).forEach((ci) => add('voluntariado', ci.checked_in_at, 'Check-in de voluntariado', ci.service?.name || null, '/voluntariado'));
@@ -801,7 +1048,18 @@ router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, r
     ));
 
     eventos.sort((a, b) => (a.data < b.data ? 1 : -1));
-    res.json({ eventos, total: eventos.length });
+
+    // ⚠️ Contribuição (com VALOR) e cuidado pastoral (com MOTIVO) saem daqui
+    // pra quem não pode vê-los. Até 13/08/2026 a rota inteira era
+    // `authorizeModule('membros', 1)`, que passa com QUALQUER um dos 12 módulos
+    // do ROUTE_MODULE_MAP — inclusive `grupos` nível 1.
+    // ⚠️ O que foi omitido é DECLARADO: sumir em silêncio faria a tela afirmar
+    // que a pessoa não tem histórico.
+    const { eventos: visiveis, ocultos } = filtrarTimeline(eventos, {
+      financeiro: podeVerFinanceiroDePessoa(req.user),
+      pastoral: podeVerPastoralDePessoa(req.user),
+    });
+    res.json({ eventos: visiveis, total: visiveis.length, ocultos });
   } catch (e) {
     console.error('[membresia] timeline:', e.message);
     res.status(500).json({ error: 'Erro ao montar linha do tempo' });
@@ -1066,6 +1324,11 @@ function normalizarTelefonePayload(body, telefoneAtual) {
   return null;
 }
 
+// ⚠️ CEP preenche o que falta + o bairro entra com UMA grafia só. A régua mora
+// em `services/bairroCanonico` porque a porta PÚBLICA precisa da mesma coisa, e
+// duas cópias divergiriam no primeiro ajuste — foi exatamente uma lista de
+// bairros duplicada na tela que fabricou "Barra" ao lado de "Barra da Tijuca".
+
 // POST /api/membresia/membros
 router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
   try {
@@ -1073,6 +1336,7 @@ router.post('/membros', authorize('admin', 'diretor'), async (req, res) => {
     if (errCpf) return res.status(400).json({ error: errCpf });
     const errTel = normalizarTelefonePayload(req.body);
     if (errTel) return res.status(400).json({ error: errTel });
+    await normalizarEnderecoDoPayload(req.body);
     const resultado = await acharOuCriarGuardado({
       nome: req.body?.nome, cpf: req.body?.cpf, telefone: req.body?.telefone,
       email: req.body?.email, dataNascimento: req.body?.data_nascimento,
@@ -1102,16 +1366,21 @@ router.put('/membros/:id', authorize('admin', 'diretor'), async (req, res) => {
     // CPF/telefone atuais do membro: idêntico ao payload passa sem validar (legado)
     let cpfAtual = null;
     let telefoneAtual = null;
-    if (req.body?.cpf || req.body?.telefone) {
+    let enderecoAtual = null;
+    // Uma leitura só serve os dois: validação de CPF/telefone legado e o
+    // só-onde-vazio do bairro.
+    if (req.body?.cpf || req.body?.telefone || req.body?.cep) {
       const { data: atual } = await supabase.from('mem_membros')
-        .select('cpf, telefone').eq('id', req.params.id).maybeSingle();
+        .select('cpf, telefone, bairro, cidade').eq('id', req.params.id).maybeSingle();
       cpfAtual = atual?.cpf || null;
       telefoneAtual = atual?.telefone || null;
+      enderecoAtual = atual || null;
     }
     const errCpf = normalizarCpfPayload(req.body, cpfAtual);
     if (errCpf) return res.status(400).json({ error: errCpf });
     const errTel = normalizarTelefonePayload(req.body, telefoneAtual);
     if (errTel) return res.status(400).json({ error: errTel });
+    await normalizarEnderecoDoPayload(req.body, enderecoAtual);
     const { data, error } = await supabase
       .from('mem_membros')
       .update(req.body)
@@ -1148,6 +1417,106 @@ router.delete('/membros/:id', authorize('admin', 'diretor'), async (req, res) =>
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: 'Erro ao remover membro' });
+  }
+});
+
+// ── DESATIVAR / REATIVAR MEMBRO ────────────────────────────────────────────
+// Pedido do Matheus (21/08): botão na ficha, com motivo OPCIONAL da saída.
+//
+// ⚠️⚠️ ENDPOINT PRÓPRIO, não o `PUT /membros/:id` genérico (que faz
+// `.update(req.body)` cru). Desativar é um ATO — tem autor, instante, motivo e
+// o status de onde a pessoa saiu. Passar por "editar um campo" perderia os
+// quatro e deixaria a reativação sem para onde voltar.
+//
+// ⚠️ NÃO fecha vínculo de grupo nem de voluntariado, e é decisão: sair da
+// membresia não é a mesma coisa que sair do grupo, e desligar em cascata faria
+// uma ação reversível apagar em silêncio o que outras equipes gerenciam.
+// A régua vive em `utils/desativarMembro` (pura, no gate).
+function _erroDesativacao(codigo) {
+  const mapa = {
+    nao_encontrado: [404, 'Membro não encontrado.'],
+    apagado: [409, 'Este cadastro está excluído — restaure antes de mudar o status.'],
+    ja_inativo: [409, 'Este membro já está desativado.'],
+    nao_esta_inativo: [409, 'Este membro não está desativado.'],
+    sem_status_anterior: [409, 'Não sei para qual status voltar (a desativação é anterior a esta tela). Escolha o status na edição do cadastro.'],
+    destino_invalido: [400, 'Status de destino inválido.'],
+  };
+  return mapa[codigo] || [400, 'Não foi possível concluir.'];
+}
+
+// ⚠️ Deploy em 2 etapas: sem a migration `20260821120000` as colunas
+// `inativado_*` não existem e o PostgREST recusa a query INTEIRA (42703).
+// Aqui o certo é DEGRADAR (gravar só o status) em vez de derrubar a ação —
+// perder o motivo é ruim, não conseguir desativar é pior.
+const _COLS_INATIVACAO = 'inativado_em,inativado_motivo,inativado_por,inativado_status_anterior';
+function _semColunasInativacao(error) {
+  return !!error && (error.code === '42703' || error.code === 'PGRST204'
+    || /inativado_/i.test(String(error.message || '')));
+}
+async function _lerMembroParaStatus(id) {
+  const { data, error } = await supabase.from('mem_membros')
+    .select(`id, nome, status, deleted_at, ${_COLS_INATIVACAO}`).eq('id', id).maybeSingle();
+  if (error && _semColunasInativacao(error)) {
+    const r = await supabase.from('mem_membros')
+      .select('id, nome, status, deleted_at').eq('id', id).maybeSingle();
+    if (r.error) throw r.error;
+    return { membro: r.data, degradado: true };
+  }
+  if (error) throw error;
+  return { membro: data, degradado: false };
+}
+async function _gravarStatus(id, patch, degradado) {
+  const enxuto = degradado ? { status: patch.status } : patch;
+  const { data, error } = await supabase.from('mem_membros')
+    .update(enxuto).eq('id', id).select('id, nome, status').single();
+  if (error && !degradado && _semColunasInativacao(error)) {
+    const r = await supabase.from('mem_membros')
+      .update({ status: patch.status }).eq('id', id).select('id, nome, status').single();
+    if (r.error) throw r.error;
+    return { linha: r.data, perdeuContexto: true };
+  }
+  if (error) throw error;
+  return { linha: data, perdeuContexto: false };
+}
+
+router.post('/membros/:id/desativar', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { membro, degradado } = await _lerMembroParaStatus(req.params.id);
+    const d = decidirDesativacao(membro, {
+      motivo: req.body?.motivo,
+      agora: new Date().toISOString(),
+      porUsuario: req.user?.id ?? null,
+    });
+    if (!d.ok) { const [st, msg] = _erroDesativacao(d.codigo); return res.status(st).json({ error: msg, code: d.codigo }); }
+
+    const { linha, perdeuContexto } = await _gravarStatus(req.params.id, d.patch, degradado);
+    if (degradado || perdeuContexto) {
+      console.warn('[membresia] desativar sem contexto — rode a migration 20260821120000');
+    }
+    res.json({
+      ok: true,
+      membro: linha,
+      motivo: d.motivo,
+      status_anterior: d.patch.inativado_status_anterior,
+      ...((degradado || perdeuContexto) ? { aviso: 'O membro foi desativado, mas o motivo não foi guardado (migration pendente).' } : {}),
+    });
+  } catch (e) {
+    console.error('[membresia] desativar:', e.message);
+    res.status(500).json({ error: 'Erro ao desativar o membro' });
+  }
+});
+
+router.post('/membros/:id/reativar', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { membro, degradado } = await _lerMembroParaStatus(req.params.id);
+    const d = decidirReativacao(membro, { statusEscolhido: req.body?.status });
+    if (!d.ok) { const [st, msg] = _erroDesativacao(d.codigo); return res.status(st).json({ error: msg, code: d.codigo }); }
+
+    const { linha } = await _gravarStatus(req.params.id, d.patch, degradado);
+    res.json({ ok: true, membro: linha, status: d.statusDestino });
+  } catch (e) {
+    console.error('[membresia] reativar:', e.message);
+    res.status(500).json({ error: 'Erro ao reativar o membro' });
   }
 });
 
@@ -1561,7 +1930,11 @@ router.post('/grupos/:id/membros', authorize('admin', 'diretor'), async (req, re
     // Cria nova
     const { data, error } = await supabase
       .from('mem_grupo_membros')
-      .insert({ grupo_id: grupoId, membro_id, entrou_em: entrou_em || hoje })
+      // ⚠️ `funcao` EXPLÍCITA (13/08/2026): a equipe adicionou esta pessoa ao
+      // grupo DE PROPÓSITO — participação, não visita. Antes caía no default da
+      // coluna, que era 'visitante' desde 20/06. Mesma régua da aprovação de
+      // pedido; setar aqui vale mesmo antes da migration 20260814120000.
+      .insert({ grupo_id: grupoId, membro_id, funcao: 'frequentador', entrou_em: entrou_em || hoje })
       .select()
       .single();
     if (error) throw error;
@@ -1571,26 +1944,44 @@ router.post('/grupos/:id/membros', authorize('admin', 'diretor'), async (req, re
   }
 });
 
-// GET /api/membresia/geocode-cep?cep=XXXXXXXX — geocodifica um CEP brasileiro (ViaCEP + Nominatim)
+// GET /api/membresia/geocode-cep?cep=XXXXXXXX — CEP -> endereco + coordenada.
+// Alimenta o formulario da Membresia enquanto a pessoa digita.
+//
+// ⚠️ Era a 4a copia da sequencia ViaCEP+Nominatim; agora delega a
+// `services/geoBrasil`. Ganha de graca o TIMEOUT que faltava (o fetch cru
+// pendurava a requisicao ate a plataforma matar) e a fila de 1,1s do
+// Nominatim, que a politica do OSM exige e que nenhuma das copias respeitava.
+//
+// ⚠️ `exigirRio: false` DE PROPOSITO, e e a unica chamada do sistema assim:
+// aqui a consulta e um ENDERECO COMPLETO (logradouro + cidade + UF vindos do
+// ViaCEP), nao um nome de bairro solto — o risco de casar homonimo em outro
+// estado e baixo, e membro que mora fora do Rio precisa da coordenada dele.
+// A caixa do RJ existe para o centroide de BAIRRO, onde "Centro" casa em
+// qualquer cidade do Brasil.
 router.get('/geocode-cep', async (req, res) => {
   try {
-    const cep = (req.query.cep || '').replace(/\D/g, '');
-    if (cep.length !== 8) return res.status(400).json({ error: 'CEP invalido' });
-    const viaCepRes = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
-    const viaCep = await viaCepRes.json();
-    if (viaCep.erro) return res.status(404).json({ error: 'CEP não encontrado' });
-    const q = encodeURIComponent(`${viaCep.logradouro || ''} ${viaCep.localidade} ${viaCep.uf} Brasil`.trim());
-    const nomRes = await fetch(`https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1`, {
-      headers: { 'User-Agent': 'CBRio-Sistema/1.0 (contato@cbrio.com.br)' },
-    });
-    const nom = await nomRes.json();
+    const cepBruto = String(req.query.cep || '');
+    const end = await bairroPorCep(cepBruto);
+    if (!end) {
+      const so = cepBruto.replace(/\D/g, '');
+      if (so.length !== 8) return res.status(400).json({ error: 'CEP invalido' });
+      return res.status(404).json({ error: 'CEP não encontrado' });
+    }
+    const alvo = [end.logradouro, end.cidade, end.uf, 'Brasil'].filter(Boolean).join(', ');
+    const coord = await coordenadaPorTexto(alvo, { exigirRio: false });
     res.json({
-      cep, logradouro: viaCep.logradouro, bairro: viaCep.bairro,
-      cidade: viaCep.localidade, uf: viaCep.uf,
-      lat: nom?.[0] ? parseFloat(nom[0].lat) : null,
-      lng: nom?.[0] ? parseFloat(nom[0].lon) : null,
+      cep: end.cep,
+      logradouro: end.logradouro,
+      bairro: end.bairro,
+      cidade: end.cidade,
+      uf: end.uf,
+      lat: coord?.lat ?? null,
+      lng: coord?.lng ?? null,
     });
-  } catch (e) { res.status(500).json({ error: 'Erro ao geocodificar' }); }
+  } catch (e) {
+    console.error('[MEMBROS] geocode-cep error:', e.message);
+    res.status(500).json({ error: 'Erro ao geocodificar' });
+  }
 });
 
 // POST /api/membresia/totem/grupos/:id/entrar — pedido de entrada via totem.
@@ -1707,21 +2098,27 @@ router.post('/totem/grupos/:id/entrar', async (req, res) => {
       require('../services/grupoPedidoEventos').registrarEventoPedido(pedido.id, 'criado', { grupo: grupo.nome, origem: 'totem' });
     } catch { /* best-effort */ }
 
-    let liderAuthUserId = null;
-    if (grupo.lider_id) {
-      const { data: liderProf } = await supabase.from('vol_profiles')
-        .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
-      liderAuthUserId = liderProf?.auth_user_id || null;
-    }
-    notificar({
-      modulo: 'grupos',
-      tipo: 'pedido_grupo',
-      titulo: `Novo pedido para ${grupo.nome || 'grupo'}`,
-      mensagem: `${pessoa.nome} pediu para entrar no grupo pelo totem.`,
-      link: '/grupos?tab=entrada',
-      severidade: 'aviso',
-      chaveDedup: `pedido_grupo_${pedido.id}`,
-      extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
+    // Só quem responde por ESTE grupo (líder + supervisor). Sem dono com conta
+    // de sistema, o aviso não sai — o líder recebe o WhatsApp e a coordenação vê
+    // no resumo diário. Ver services/gruposDestinatarios.js.
+    // Sino do app do líder (ver services/gruposAvisoApp.js) — AWAITED, como nas
+    // outras origens: é o canal do líder que só tem o app do membro.
+    await avisarPedidoNovoNoApp({
+      grupoId, pedidoId: pedido.id, grupoNome: grupo.nome, pessoaNome: pessoa.nome,
+    });
+
+    donosDoGrupo(grupoId).then((donos) => {
+      if (!donos.length) return;
+      return notificar({
+        modulo: 'grupos',
+        tipo: 'pedido_grupo',
+        titulo: `Novo pedido para ${grupo.nome || 'grupo'}`,
+        mensagem: `${pessoa.nome} pediu para entrar no grupo pelo totem.`,
+        link: '/grupos?tab=entrada',
+        severidade: 'aviso',
+        chaveDedup: `pedido_grupo_${pedido.id}`,
+        targetIds: donos,
+      });
     }).catch(() => {});
 
     res.status(201).json({ ok: true, pedido_id: pedido.id, grupo_nome: grupo.nome || null });
@@ -1744,12 +2141,17 @@ router.put('/totem/membros/:id', async (req, res) => {
       if (req.body[f] !== undefined && req.body[f] !== null) updates[f] = req.body[f];
     }
     if (Object.keys(updates).length === 0) return res.status(400).json({ error: 'Nenhum campo para atualizar' });
+    let atual = null;
+    if (updates.telefone !== undefined || updates.cep !== undefined) {
+      const r = await supabase.from('mem_membros')
+        .select('telefone, bairro, cidade').eq('id', id).maybeSingle();
+      atual = r.data || null;
+    }
     if (updates.telefone !== undefined) {
-      const { data: atual } = await supabase.from('mem_membros')
-        .select('telefone').eq('id', id).maybeSingle();
       const errTel = normalizarTelefonePayload(updates, atual?.telefone);
       if (errTel) return res.status(400).json({ error: errTel });
     }
+    await normalizarEnderecoDoPayload(updates, atual);
     const { data, error } = await supabase.from('mem_membros').update(updates).eq('id', id).select().single();
     if (error) throw error;
     res.json(data);
@@ -2053,8 +2455,12 @@ function _fmtDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// Regra do culto da apresentação (D3 · 09:30 primário, overflow 11:30 por
+// limite · docs/cultos-domingo §12.1) — régua PURA, no gate de deploy.
+const { escolherCultoApresentacao, rotuloHora } = require('../utils/criancaApresentacao');
+
 // GET /api/membresia/totem/apresentacao-bebe/status?membro_id=X
-// Retorna { proxima_data, culto?, apresentacao_existente? }
+// Retorna { proxima_data, horario_previsto?, horario_rotulo?, apresentacao_existente? }
 router.get('/totem/apresentacao-bebe/status', async (req, res) => {
   try {
     const { membro_id } = req.query;
@@ -2066,7 +2472,12 @@ router.get('/totem/apresentacao-bebe/status', async (req, res) => {
       .from('cultos')
       .select('id, data, service_type:vol_service_types(name, recurrence_time)')
       .eq('data', proximaStr)
+      .is('deleted_at', null)
       .limit(5);
+
+    // Horário previsto pela MESMA régua do POST — era o "às 10h" hardcoded na
+    // tela, que ficaria errado depois do corte de 24/08 (o 10:00 encerra).
+    const previsto = escolherCultoApresentacao(cultos || []);
 
     let apresentacao_existente = null;
     if (membro_id) {
@@ -2083,6 +2494,8 @@ router.get('/totem/apresentacao-bebe/status', async (req, res) => {
     res.json({
       proxima_data: proximaStr,
       cultos: cultos || [],
+      horario_previsto: previsto.hora,
+      horario_rotulo: rotuloHora(previsto.hora),
       apresentacao_existente,
     });
   } catch (e) {
@@ -2160,24 +2573,42 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
       return res.status(409).json({ error: `${bebeNomeLimpo} já está com a apresentação agendada para ${proximaStr.split('-').reverse().join('/')}.` });
     }
 
-    // Culto da cerimônia: a apresentação é SEMPRE no culto das 10:00 (regra do
-    // Marcos 2026-07-23 · sem escolha). Vincula ao culto de 10:00 do 2º domingo;
-    // se não houver, cai no primeiro por horário (não trava o agendamento).
+    // Culto da cerimônia: 09:30 primário com overflow pro 11:30 por LIMITE
+    // (D3 · Marcos+Matheus 11/08 · docs/cultos-domingo §12.1). Bebês estão SEM
+    // limite por enquanto (Marcos 12/08) ⇒ env vazia = nunca transborda; ligar
+    // o overflow no futuro é setar APRESENTACAO_LIMITE_POR_CULTO, sem deploy
+    // de regra. Antes do corte de 24/08 o 09:30 não existe e a régua cai no
+    // 10:00 — comportamento IDÊNTICO ao atual até lá.
+    // ⚠️ Sem candidato: agenda SEM culto (culto_id null) — o fallback antigo
+    // "primeiro por horário" penduraria a cerimônia no fantasma de 08:30 (B9).
     let culto_id = null;
+    let cultoHora = null;
     const { data: cultosDia } = await supabase
       .from('cultos')
       .select('id, service_type:vol_service_types(recurrence_time)')
-      .eq('data', proximaStr);
-    if (cultosDia && cultosDia.length) {
-      const das10 = cultosDia.find((c) => String(c.service_type?.recurrence_time || '').startsWith('10:00'));
-      if (das10) {
-        culto_id = das10.id;
-      } else {
-        const ordenados = [...cultosDia].sort((a, b) =>
-          String(a.service_type?.recurrence_time || '99:99').localeCompare(String(b.service_type?.recurrence_time || '99:99')));
-        culto_id = ordenados[0].id;
+      .eq('data', proximaStr)
+      .is('deleted_at', null);
+    const limiteApres = parseInt(process.env.APRESENTACAO_LIMITE_POR_CULTO || '', 10) || null;
+    let contagemApres = null;
+    if (limiteApres && cultosDia?.length) {
+      // Contagem só quando há limite — cancelada não ocupa vaga.
+      const { data: agendadas } = await supabase
+        .from('apresentacao_bebes')
+        .select('culto_id')
+        .eq('data_apresentacao', proximaStr)
+        .is('deleted_at', null)
+        .neq('status', 'cancelada');
+      contagemApres = {};
+      for (const a of agendadas || []) {
+        if (a.culto_id) contagemApres[a.culto_id] = (contagemApres[a.culto_id] || 0) + 1;
       }
     }
+    const escolhido = escolherCultoApresentacao(cultosDia || [], {
+      limite: limiteApres,
+      contagem: contagemApres,
+    });
+    culto_id = escolhido.culto?.id || null;
+    cultoHora = escolhido.hora;
 
     // Identidade da família: resolve/cria o membro do responsável pelo CPF
     // (matcher canônico) — sem isso a família não fica ligada pro Kids depois.
@@ -2247,12 +2678,15 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
         enfileirar({
           telefone: cleanTel,
           template: process.env.WHATSAPP_TEMPLATE_BEBE_CONF || 'apresentacao_bebes_confirmacao',
-          // {{1}} responsável · {{2}} bebê · {{3}} data · {{4}} horário (10h fixo)
+          // {{1}} responsável · {{2}} bebê · {{3}} data · {{4}} horário — o do
+          // culto escolhido pela régua D3 (era '10:00' fixo; pós-corte 09:30).
+          // ⚠️ Conferir na Meta se o CORPO do template cita "10h" fora do {{4}}
+          // — se citar, é template _v2 (edição volta pra revisão e o envio para).
           params: [
             String(responsavel_nome).split(' ')[0] || 'Olá',
             String(bebe_nome).trim(),
             proximaStr.split('-').reverse().join('/'),
-            '10:00',
+            cultoHora || 'a confirmar',
           ],
           contexto: 'apresentacao_bebe_totem',
           refId: data.id,
@@ -2289,6 +2723,12 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
               data_nascimento: bebe_data_nascimento || null,
               sexo: ['M', 'F', 'outro'].includes(bebe_sexo) ? bebe_sexo : null,
               visitante: true,
+        // ⚠️⚠️ `data_limite` OBRIGATÓRIO em toda visitante criada (20/08/2026).
+        // Os 5 pontos que criam criança visitante gravavam sem prazo, e a
+        // varredura `inativarVisitantesVencidos` só pega quem tem prazo VENCIDO
+        // — então essas viravam VISITANTES ETERNAS: nunca promovidas (sem
+        // check-in) e nunca inativadas. Medido: 23 assim em produção.
+        data_limite: kidsVisitante.prazoDe(hojeBRTKids()),
               created_by: req.user?.id || null,
             })
             .select('id')
@@ -2309,7 +2749,7 @@ router.post('/totem/apresentacao-bebe', async (req, res) => {
       }
     }
 
-    res.status(201).json({ ok: true, apresentacao: data, data_apresentacao: proximaStr });
+    res.status(201).json({ ok: true, apresentacao: data, data_apresentacao: proximaStr, horario_rotulo: rotuloHora(cultoHora) });
   } catch (e) {
     console.error('[TOTEM] apresentacao-bebe POST error:', e.message);
     res.status(500).json({ error: 'Erro ao agendar apresentação: ' + e.message });
@@ -2775,6 +3215,377 @@ router.delete('/checkins/:id', authorize('admin', 'diretor'), async (req, res) =
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+//  CENSO · cobertura (quem já respondeu / quem falta)
+//
+// É a pergunta que DEFINE um censo e que nenhuma tela respondia: o módulo de
+// Inscrições conta inscrições e o formulário de membresia conta submissões —
+// nenhum dos dois sabe dizer quantas pessoas da base ainda faltam.
+//
+// ⚠️ TODO número sai com a JANELA colada nele (payload e rótulo da tela). Já
+//    reportei "176 pessoas" sem dizer o período uma vez e o número correto
+//    pareceu errado — a janela é parte do número, não um detalhe.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Nome-placeholder do import financeiro ("Contribuinte 059412...") — espelha
+// `ehNomePlaceholder` do membroMatch. Não é pessoa, então não entra no
+// denominador do censo (senão a cobertura nasce artificialmente baixa).
+const CENSO_PLACEHOLDER = 'contribuinte%';
+
+// Base viva do censo: pessoa ativa, não deletada e com nome de gente.
+// `soMembros` recorta em `status='membro_ativo'`.
+// ⚠️ Os DOIS recortes vão no payload de propósito. "Cobertura de quem?" não é
+// pergunta técnica: a base viva inclui ~2.9 mil `visitante` (gente que responde
+// o censo no culto, e deve responder) e a membresia formal é bem menor. Escolher
+// um só faria o painel afirmar uma definição que é da liderança, não minha — e
+// "quem falta" com 3 mil visitantes é lista de cobrança inútil, enquanto só-
+// membros esconde metade de quem respondeu.
+function queryBaseCenso(select, opts, soMembros = false) {
+  let q = supabase
+    .from('mem_membros')
+    .select(select, opts)
+    .eq('active', true)
+    .is('deleted_at', null)
+    .not('nome', 'ilike', CENSO_PLACEHOLDER);
+  if (soMembros) q = q.eq('status', 'membro_ativo');
+  return q;
+}
+
+function censoSchemaAusente(error) {
+  if (!error) return false;
+  return error.code === '42703'
+    || /column .* does not exist/i.test(error.message || '')
+    || /could not find the .* column/i.test(error.message || '');
+}
+
+// GET /api/membresia/censo/cobertura?desde=YYYY-MM-DD
+router.get('/censo/cobertura', authorizeModule('membresia', 1), async (req, res) => {
+  try {
+    // ── Submissões do censo (colunas pequenas · paginado pelo cap de 1000) ──
+    // Uma leitura paginada em vez de 6 COUNTs: com os mesmos bytes sai também o
+    // recorte por vínculo e a curva por dia.
+    const PAGE = 1000;
+    const linhas = [];
+    let offset = 0;
+    let schemaOk = true;
+    for (;;) {
+      let q = supabase
+        .from('mem_cadastros_pendentes')
+        .select('created_at, status, duplicado_de_id, vinculo_declarado, censo_conflitos')
+        .eq('censo', true)
+        .order('created_at', { ascending: true })
+        .range(offset, offset + PAGE - 1);
+      if (req.query.desde) q = q.gte('created_at', req.query.desde);
+
+      const { data, error } = await q;
+      if (error) {
+        if (censoSchemaAusente(error)) { schemaOk = false; break; }
+        throw error;
+      }
+      linhas.push(...(data || []));
+      if (!data || data.length < PAGE) break;
+      offset += PAGE;
+    }
+
+    if (!schemaOk) {
+      return res.json({
+        disponivel: false,
+        aviso: 'A parte 1 da migration do censo (20260803160000 · mem_cadastros_pendentes) ainda não foi aplicada — o painel de cobertura fica indisponível até lá. O formulário público continua funcionando.',
+      });
+    }
+
+    // ── Base e respondentes (COUNT no banco · nenhuma linha transferida) ──
+    const [rBase, rResp, rMemb, rMembResp] = await Promise.all([
+      queryBaseCenso('id', { count: 'exact', head: true }),
+      queryBaseCenso('id', { count: 'exact', head: true }).not('censo_respondido_em', 'is', null),
+      queryBaseCenso('id', { count: 'exact', head: true }, true),
+      queryBaseCenso('id', { count: 'exact', head: true }, true).not('censo_respondido_em', 'is', null),
+    ]);
+    // As colunas de mem_membros vêm da MESMA migration das de pendentes, mas
+    // uma aplicação parcial não pode virar "0% de cobertura" (número errado é
+    // pior que número ausente).
+    if (censoSchemaAusente(rBase.error) || censoSchemaAusente(rResp.error)) {
+      return res.json({
+        disponivel: false,
+        aviso: 'Falta a parte 2 da migration do censo (20260803160100 · mem_membros) — as colunas de cobertura ainda não existem. Aplique-a numa colagem separada da parte 1.',
+      });
+    }
+    if (rBase.error) throw rBase.error;
+    if (rResp.error) throw rResp.error;
+
+    const total = rBase.count || 0;
+    const jaResponderam = rResp.count || 0;
+    const totalMembros = rMemb.count || 0;
+    const respMembros = rMembResp.count || 0;
+    const recorte = (t, r) => ({
+      total: t, respondidos: r, faltando: Math.max(0, t - r),
+      pct: t ? Math.round((r / t) * 1000) / 10 : 0,
+    });
+
+    let novos = 0, comConflito = 0, aplicados = 0, aRevisar = 0;
+    const porVinculo = { membro: 0, congregado: 0, visitante: 0, nao_informado: 0 };
+    const porDia = new Map();
+    const pessoasCasadas = new Set();
+
+    for (const l of linhas) {
+      if (l.duplicado_de_id) pessoasCasadas.add(l.duplicado_de_id);
+      else novos += 1;
+
+      if (Array.isArray(l.censo_conflitos) && l.censo_conflitos.length) comConflito += 1;
+      if (l.status === 'aplicado') aplicados += 1;
+      // Fila humana de verdade: o que ainda espera decisão.
+      if (l.status === 'pendente' || l.status === 'duplicado') aRevisar += 1;
+
+      const v = l.vinculo_declarado || 'nao_informado';
+      if (porVinculo[v] === undefined) porVinculo[v] = 0;
+      porVinculo[v] += 1;
+
+      // Dia em BRT: `created_at` é UTC e às 21h do Rio o dia UTC já virou —
+      // sem o deslocamento a curva joga o culto da noite pro dia seguinte.
+      const dia = new Date(new Date(l.created_at).getTime() - 3 * 3600 * 1000)
+        .toISOString().slice(0, 10);
+      porDia.set(dia, (porDia.get(dia) || 0) + 1);
+    }
+
+    const desde = req.query.desde
+      || (linhas.length ? String(linhas[0].created_at).slice(0, 10) : null);
+
+    res.json({
+      disponivel: true,
+      // A janela vai NO PAYLOAD pra tela poder rotular o número.
+      janela: { desde, ate: new Date().toISOString().slice(0, 10) },
+      // `base` = todo mundo ativo (inclui visitante) · `membros` = só membro_ativo
+      base: recorte(total, jaResponderam),
+      membros: recorte(totalMembros, respMembros),
+      submissoes: {
+        // pedidos × PESSOAS: quem preenche 2× conta 1 pessoa (a mesma régua de
+        // vínculo × pessoa dos Grupos). Sem isso o total infla e não bate com a
+        // cobertura.
+        total: linhas.length,
+        pessoas_ja_cadastradas: pessoasCasadas.size,
+        novos,
+        aplicados,
+        com_conflito: comConflito,
+        a_revisar: aRevisar,
+      },
+      por_vinculo: porVinculo,
+      por_dia: [...porDia.entries()].map(([dia, total_dia]) => ({ dia, total: total_dia })),
+    });
+  } catch (e) {
+    console.error('[CENSO cobertura]', e.message);
+    res.status(500).json({ error: 'Erro ao calcular a cobertura do censo' });
+  }
+});
+
+// GET /api/membresia/censo/faltantes?q=&limit=&offset=
+// Lista nominal de quem ainda NÃO respondeu — é a fila de cobrança.
+// Nível 2: carrega nome + telefone (a cobertura agregada é nível 1).
+router.get('/censo/faltantes', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+    const q = (req.query.q || '').toString().trim();
+
+    // `recorte=membros` restringe a fila de cobrança à membresia formal — é o
+    // uso real ("quem da membresia ainda não respondeu"), sem os visitantes.
+    const soMembros = req.query.recorte === 'membros';
+    let query = queryBaseCenso('id, nome, telefone, email, status', { count: 'exact' }, soMembros)
+      .is('censo_respondido_em', null)
+      .order('nome', { ascending: true })
+      .range(offset, offset + limit - 1);
+    if (q.length >= 2) query = query.ilike('nome', `%${escapePostgrestValue(q)}%`);
+
+    const { data, error, count } = await query;
+    if (error) {
+      if (censoSchemaAusente(error)) {
+        return res.json({
+          disponivel: false, items: [], total: 0,
+          aviso: 'Falta a parte 2 da migration do censo (20260803160100 · mem_membros).',
+        });
+      }
+      throw error;
+    }
+    res.json({ disponivel: true, items: data || [], total: count || 0, limit, offset });
+  } catch (e) {
+    console.error('[CENSO faltantes]', e.message);
+    res.status(500).json({ error: 'Erro ao listar quem falta responder' });
+  }
+});
+
+// ── CENSO · disparo do convite (WhatsApp + e-mail) ─────────────────────────
+//
+// Pedido do Matheus (04/08): convidar quem NÃO tem CPF cadastrado, mas tem
+// celular ou e-mail, a atualizar os dados pelo link do cadastro de membresia.
+// A régua inteira (público, teto da Meta, quem já foi convidado) vive em
+// services/censoDisparo.js — aqui só ficam autorização e forma da resposta.
+
+// GET /api/membresia/censo/disparo/preview?status=&canais=&reenviar=
+// Nível 2: a prévia é agregada, mas diz quantas pessoas seriam alcançadas.
+router.get('/censo/disparo/preview', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const prev = await censoDisparo.previewCenso({
+      status: parseStatusCenso(req.query.status),
+      canais: parseCanaisCenso(req.query.canais),
+      reenviar: req.query.reenviar === '1' || req.query.reenviar === 'true',
+      // Reforço deliberado: manda pelo 2º canal pra quem já foi convidado no 1º.
+      permitirCanalCruzado: req.query.cruzado === '1' || req.query.cruzado === 'true',
+    });
+    res.json(prev);
+  } catch (e) {
+    console.error('[CENSO disparo preview]', e.message);
+    res.status(500).json({ error: 'Erro ao montar a prévia do disparo' });
+  }
+});
+
+// GET /api/membresia/censo/disparo/resultado
+// Resultado da CAMPANHA por rodada + quem respondeu (nominal).
+//
+// ⚠️ Mede a campanha, NÃO a igreja. O painel de cobertura tem a base inteira no
+//    denominador (uma rodada de 200 com 7 respostas aparece como 0,1%) e conta
+//    RESPOSTA, não CPF — foi por isso que o CPF ficou sendo descartado por um
+//    bug sem ninguém perceber: o número que a tela mostrava subia igual.
+//
+// Nível 2: a lista carrega nome e e-mail. ⚠️ CPF NÃO viaja — só o booleano de
+// "tem CPF agora", que é o que a tela precisa saber.
+router.get('/censo/disparo/resultado', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const { data: rodadas, error } = await supabase
+      .from('vw_censo_campanha')
+      .select('*')
+      .order('rodada', { ascending: false });
+    if (error) {
+      if (censoSchemaAusente(error) || error.code === '42P01') {
+        return res.json({ disponivel: false, rodadas: [], responderam: [], aviso: 'A view vw_censo_campanha ainda não foi criada.' });
+      }
+      throw error;
+    }
+
+    // Quem respondeu, para a tela poder mostrar nome. Paginado pelo cap de 1000.
+    const PAGE = 1000;
+    const convites = [];
+    for (let off = 0; ; off += PAGE) {
+      const { data, error: eC } = await supabase
+        .from('mem_censo_convites')
+        .select('membro_id, canal, rodada, enviado_em, ok')
+        .eq('ok', true)
+        .range(off, off + PAGE - 1);
+      if (eC) throw eC;
+      if (!data?.length) break;
+      convites.push(...data);
+      if (data.length < PAGE) break;
+    }
+
+    // Quem está com CPF em CONFLITO: informou, e o CPF pertence a outro
+    // cadastro. ⚠️ Sem isso a tela dizia só "sem CPF" e lia-se "a pessoa não
+    // preencheu" — quando o CPF é obrigatório no formulário e ela preencheu.
+    // Confundir "não informou" com "informamos e seguramos de propósito" faz a
+    // equipe procurar problema no lugar errado (e duvidar do formulário).
+    const emConflito = new Set();
+    {
+      const { data: pend } = await supabase
+        .from('identidade_pendencias')
+        .select('membro_id')
+        .eq('status', 'pendente')
+        .in('origem', ['censo_link_pessoal', 'censo_formulario']);
+      for (const p of pend || []) if (p.membro_id) emConflito.add(p.membro_id);
+    }
+
+    const responderam = [];
+    for (let i = 0; i < convites.length; i += 200) {
+      const lote = convites.slice(i, i + 200);
+      const { data: membros } = await supabase
+        .from('mem_membros')
+        .select('id, nome, email, cpf, censo_respondido_em')
+        .in('id', lote.map(c => c.membro_id))
+        .is('deleted_at', null)
+        .not('censo_respondido_em', 'is', null);
+      for (const m of membros || []) {
+        const c = lote.find(x => x.membro_id === m.id);
+        if (!c || !(m.censo_respondido_em >= c.enviado_em)) continue;
+        const temCpf = String(m.cpf || '').replace(/\D/g, '').length === 11;
+        responderam.push({
+          nome: m.nome,
+          email: m.email,
+          rodada: c.rodada,
+          canal: c.canal,
+          respondeu_em: m.censo_respondido_em,
+          tem_cpf: temCpf,
+          // 'com_cpf' | 'conflito' (informou, CPF é de outro cadastro) |
+          // 'sem_cpf' (não veio CPF — não deveria acontecer, é obrigatório)
+          cpf_situacao: temCpf ? 'com_cpf' : (emConflito.has(m.id) ? 'conflito' : 'sem_cpf'),
+        });
+      }
+    }
+    responderam.sort((a, b) => String(b.respondeu_em).localeCompare(String(a.respondeu_em)));
+
+    res.json({ disponivel: true, rodadas: rodadas || [], responderam });
+  } catch (e) {
+    console.error('[CENSO resultado]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o resultado da campanha' });
+  }
+});
+
+// GET /api/membresia/censo/disparo/preview-email
+// Renderiza o e-mail EXATAMENTE como ele sai (mesma função `corpoEmail` do
+// disparo — não uma imitação, senão a prévia mente).
+//
+// ⚠️ O link do exemplo leva um token FALSO de propósito. Devolver um token
+//    válido de alguém real transformaria a prévia num vazamento: quem abrisse a
+//    tela veria um link que abre o cadastro daquela pessoa.
+router.get('/censo/disparo/preview-email', authorizeModule('membresia', 2), async (req, res) => {
+  try {
+    const nome = String(req.query.nome || 'Maria').trim() || 'Maria';
+    const base = String(process.env.FRONTEND_URL || 'https://cbrio.org').replace(/\/+$/, '');
+    const { subject, html, text } = censoDisparo.corpoEmail({
+      nome,
+      link: `${base}/cadastro-membresia?censo=1&t=exemplo0000000000000000000000000.00000000000000000000`,
+      destinatario: 'pessoa@exemplo.com',
+    });
+    res.json({ assunto: subject, html, texto: text });
+  } catch (e) {
+    console.error('[CENSO preview-email]', e.message);
+    res.status(500).json({ error: 'Erro ao montar a prévia do e-mail' });
+  }
+});
+
+// POST /api/membresia/censo/disparo
+// ⚠️ Nível 4 (não 3): é envio em MASSA para fora, no número institucional da
+//    igreja, e cada destinatário consome cota do TIER_250 da Meta. Editar
+//    cadastro é 3; falar com 200 pessoas de uma vez é outra ordem de risco.
+router.post('/censo/disparo', authorizeModule('membresia', 4), async (req, res) => {
+  try {
+    const r = await censoDisparo.dispararCenso({
+      status: parseStatusCenso(req.body?.status),
+      canais: parseCanaisCenso(req.body?.canais),
+      reenviar: req.body?.reenviar === true,
+      permitirCanalCruzado: req.body?.permitirCanalCruzado === true,
+      por: req.user?.id || null,
+    });
+    if (r.ok === false) return res.status(409).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error('[CENSO disparo]', e.message);
+    res.status(500).json({ error: 'Erro ao disparar o convite do censo' });
+  }
+});
+
+// `status` vem da tela como CSV. Default membro_ativo: é o público que a igreja
+// tem relação com, e o que caberia numa rodada. Visitante entra só se pedido
+// explicitamente (são ~1.800 pessoas, semanas de disparo no tier atual).
+function parseStatusCenso(raw) {
+  const PERMITIDOS = new Set(['membro_ativo', 'visitante', 'congregado', 'contribuinte_avulso']);
+  const lista = String(raw || '')
+    .split(',').map(s => s.trim()).filter(s => PERMITIDOS.has(s));
+  return lista.length ? lista : ['membro_ativo'];
+}
+
+function parseCanaisCenso(raw) {
+  const PERMITIDOS = new Set(['whatsapp', 'email']);
+  const lista = String(raw ?? 'whatsapp,email')
+    .split(',').map(s => s.trim()).filter(s => PERMITIDOS.has(s));
+  return lista.length ? lista : ['whatsapp', 'email'];
+}
+
 // ── Cadastros pendentes (fila de aprovação do formulário público) ──
 
 // GET /api/membresia/cadastros — lista cadastros pendentes (filtro por status)
@@ -2789,7 +3600,10 @@ router.get('/cadastros', async (req, res) => {
     if (status) query = query.eq('status', status);
     const { data, error } = await query;
     if (error) throw error;
-    res.json(data);
+    // `prontidao` viaja na lista pra tela poder pintar quem entra na aprovação
+    // em massa e por que alguém ficou de fora. ⚠️ É informativo: quem decide de
+    // verdade é o servidor, que reavalia a linha no `aprovar-lote`.
+    res.json((data || []).map((c) => ({ ...c, prontidao: avaliarProntidao(c) })));
   } catch (e) {
     console.error('[CADASTROS] list error:', e.message);
     res.status(500).json({ error: 'Erro ao buscar cadastros pendentes' });
@@ -2797,36 +3611,58 @@ router.get('/cadastros', async (req, res) => {
 });
 
 // GET /api/membresia/cadastros/kpis — contadores por status
+// ⚠️ COUNT no banco (head: true), um por status. Era `.select('status')` sem
+// paginação: o PostgREST capa em 1000 linhas server-side, então a partir da
+// 1001ª submissão os contadores CONGELAVAM em silêncio — e o censo passa de
+// 1000 no primeiro domingo. Nenhuma linha é transferida aqui.
+const STATUS_CADASTRO = ['pendente', 'aprovado', 'rejeitado', 'duplicado', 'aplicado'];
 router.get('/cadastros/kpis', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('mem_cadastros_pendentes')
-      .select('status');
-    if (error) throw error;
-    const counts = { pendente: 0, aprovado: 0, rejeitado: 0, duplicado: 0 };
-    (data || []).forEach((c) => {
-      counts[c.status] = (counts[c.status] || 0) + 1;
-    });
+    const counts = {};
+    const resultados = await Promise.all(STATUS_CADASTRO.map(async (status) => {
+      const { count, error } = await supabase
+        .from('mem_cadastros_pendentes')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', status);
+      // 'aplicado' só existe no CHECK depois da migration do censo — status
+      // inexistente devolve 0, não derruba o painel.
+      if (error) {
+        console.warn('[CADASTROS kpis]', status, error.message);
+        return [status, 0];
+      }
+      return [status, count || 0];
+    }));
+    for (const [status, n] of resultados) counts[status] = n;
     res.json(counts);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar KPIs de cadastros' });
   }
 });
 
-// POST /api/membresia/cadastros/:id/aprovar — cria mem_membros e marca aprovado
-router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => {
+// ⚠️ NÚCLEO da aprovação — usado pela rota individual E pela aprovação em massa.
+// Extraído (não duplicado) pelo mesmo motivo do `aprovarPedidoCore` dos Grupos:
+// duas cópias desta lógica divergiriam, e o que ela faz é CRIAR PESSOA no
+// sistema (matcher canônico, opt-in, histórico). Nunca escreve em `res`.
+//
+// @returns {{ok:true, membro, atualizacao:boolean}} | {{ok:false, status, error}}
+async function aprovarCadastroCore({
+  cad, familia_id: reqFamiliaId, parentesco, observacoes, userId,
+  notificarIndividual = true,
+}) {
   try {
-    const { id } = req.params;
-    const { familia_id: reqFamiliaId, parentesco, observacoes } = req.body || {};
-
-    const { data: cad, error: e1 } = await supabase
-      .from('mem_cadastros_pendentes')
-      .select('*')
-      .eq('id', id)
-      .single();
-    if (e1 || !cad) return res.status(404).json({ error: 'Cadastro não encontrado' });
+    const id = cad.id;
     if (cad.status === 'aprovado') {
-      return res.status(400).json({ error: 'Cadastro já foi aprovado.' });
+      return { ok: false, status: 400, error: 'Cadastro já foi aprovado.' };
+    }
+    // Censo já reconciliado: o reconciliador preencheu os campos vazios e não
+    // sobrou divergência. Aprovar de novo faria o caminho de ATUALIZAÇÃO
+    // reaplicar o formulário inteiro sobre o cadastro — inclusive por cima de
+    // valor que a equipe pode ter corrigido depois. A linha fica só como prova.
+    if (cad.status === 'aplicado') {
+      return {
+        ok: false, status: 400,
+        error: 'Este cadastro do censo já foi aplicado automaticamente ao cadastro existente. Não há nada a aprovar.',
+      };
     }
 
     // Família: prioriza a escolhida no modal, senão usa sugestão do formulário público
@@ -2852,10 +3688,28 @@ router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => 
 
     // Campos que PODEM existir em mem_membros (depende de quais migrations rodaram).
     // Se PostgREST reclamar de coluna ausente, retiramos e tentamos de novo.
+    // ⚠️ `genero` entrou em 18/08. Ele FALTAVA aqui, e a aprovação perdia o sexo
+    // que o cadastro pendente já tinha: casos reais Janice Pinto e Aline Adão da
+    // Fonseca, aprovadas em lote em 12/08 02:36 com `genero: feminino` no pendente
+    // (censo por QR de 11/08) e o membro criado sem sexo. Vale nos DOIS caminhos:
+    // na criação é ganho puro; na ATUALIZAÇÃO ele sobrescreve, que é a semântica
+    // já documentada daquele ramo (reaplica o formulário inteiro, decisão humana
+    // com o dado na tela) — não estou inventando política nova pra este campo.
     const cadFields = [
-      'nome', 'cpf', 'email', 'telefone', 'data_nascimento', 'estado_civil',
+      'nome', 'cpf', 'email', 'telefone', 'data_nascimento', 'genero', 'estado_civil',
       'endereco', 'bairro', 'cidade', 'cep', 'profissao',
     ];
+
+    // Auto-geocode da aprovação: o formulário público pede CEP e NÃO pede
+    // bairro, então o cadastro pendente chega com CEP e sem bairro — e é o
+    // bairro que o mapa do Perfil da Membresia agrega.
+    //
+    // ⚠️ SÓ no ramo de CRIAÇÃO. No ramo de atualização o patch sobrescreve o
+    // cadastro existente, e um bairro derivado do ViaCEP passaria por cima do
+    // que a equipe corrigiu à mão — sem estar na tela de ninguém. Aqui não vale
+    // a semântica de "reaplica o formulário inteiro": este valor não veio do
+    // formulário, veio de um terceiro.
+    if (!cad.duplicado_de_id) await normalizarEnderecoDoPayload(cad);
 
     // Extrai nome da coluna ausente da mensagem do PostgREST
     function missingCol(err) {
@@ -2891,10 +3745,10 @@ router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => 
         }
         const msg = eUpd?.message || 'registro não encontrado';
         console.error('[CADASTROS] erro ao atualizar membro:', msg);
-        return res.status(500).json({ error: `Erro ao atualizar membro: ${msg}` });
+        return { ok: false, status: 500, error: `Erro ao atualizar membro: ${msg}` };
       }
       if (!membro) {
-        return res.status(500).json({ error: 'Não foi possível atualizar: muitas colunas ausentes.' });
+        return { ok: false, status: 500, error: 'Não foi possível atualizar: muitas colunas ausentes.' };
       }
       foiAtualizacao = true;
     } else {
@@ -2916,7 +3770,7 @@ router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => 
       });
       const { data: encontrado, error: e2 } = await supabase.from('mem_membros')
         .select().eq('id', resultado.membro_id).single();
-      if (e2) return res.status(500).json({ error: `Erro ao criar ou localizar membro: ${e2.message}` });
+      if (e2) return { ok: false, status: 500, error: `Erro ao criar ou localizar membro: ${e2.message}` };
       membro = encontrado;
       foiAtualizacao = !resultado.created;
     }
@@ -2934,12 +3788,38 @@ router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => 
       }
     }
 
+    // ── A porta ONLINE declara a área (27/08/2026) ───────────────────────────
+    // ⚠️ `mem_cadastros_pendentes` NÃO tem coluna `frequenta_area` (conferido no
+    // catálogo), então quem carrega a declaração do formulário até aqui é a
+    // ORIGEM. É neste ponto — a APROVAÇÃO — que ela vira cadastro, porque é aqui
+    // que a pessoa passa a existir em `mem_membros`.
+    //
+    // ⚠️⚠️ SÓ-ONDE-VAZIO (`.is('frequenta_area', null)`), a mesma política do
+    // censo e do CPF tardio: se a equipe já marcou AMI ou Bridge nessa pessoa,
+    // um formulário não sobrescreve trabalho humano. E o `.eq('id')` +
+    // `deleted_at` são o de sempre.
+    //
+    // ⚠️ Best-effort: falhar aqui não pode desfazer uma aprovação que já criou
+    // ou atualizou a pessoa. O que se perde é uma etiqueta de área; o que se
+    // preservaria com um throw seria nada.
+    if (cad.origem === 'online' && membro?.id) {
+      try {
+        await supabase.from('mem_membros')
+          .update({ frequenta_area: 'online' })
+          .eq('id', membro.id)
+          .is('frequenta_area', null)
+          .is('deleted_at', null);
+      } catch (e) {
+        console.warn('[CADASTROS] propagar frequenta_area online:', e.message);
+      }
+    }
+
     // Marca cadastro como aprovado e liga ao membro criado/atualizado
     const { error: e3 } = await supabase
       .from('mem_cadastros_pendentes')
       .update({
         status: 'aprovado',
-        aprovado_por: req.user.userId,
+        aprovado_por: userId,
         aprovado_em: new Date().toISOString(),
         membro_id: membro.id,
         observacoes: observacoes || cad.observacoes,
@@ -2956,25 +3836,177 @@ router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => 
         descricao: foiAtualizacao
           ? `Atualização cadastral a partir do formulário público (origem: ${cad.origem}).`
           : `Aprovado a partir do formulário público (origem: ${cad.origem}).`,
-        registrado_por: req.user.userId,
+        registrado_por: userId,
       });
       if (eHist) console.warn('[CADASTROS] histórico não gravado:', eHist.message);
     } catch (_) { /* histórico é opcional */ }
 
-    notificar({
-      modulo: 'membresia',
-      tipo: 'cadastro_aprovado',
-      titulo: `Cadastro aprovado: ${cad.nome}`,
-      mensagem: `O cadastro de ${cad.nome} foi ${foiAtualizacao ? 'atualizado' : 'aprovado'} e o membro está ativo no sistema.`,
-      link: `/ministerial/membresia`,
-      severidade: 'info',
-      chaveDedup: `cadastro_aprovado_${id}`,
-    }).catch(() => {});
+    // ── Status pela ATIVIDADE (regra do Matheus · 04/08) ────────────────────
+    // "Membro ativo se tiver qualquer ação na igreja em 1 ano; sem ação, fica
+    // frequentador." Participar de grupo conta; ter filho com check-in no Kids
+    // conta. A régua é a função `fn_membro_tem_atividade` — a MESMA da varredura
+    // da base, pra o status não depender de por onde a pessoa entrou.
+    //
+    // ⚠️ Aqui só PROMOVE (ou define no ato da criação). NUNCA rebaixa quem já é
+    //    membro_ativo: aprovar um cadastro não pode ter como efeito colateral
+    //    tirar a membresia de alguém — e o sistema não tem presença nominal de
+    //    culto, então "sem ação" pode ser falta de DADO, não falta de igreja.
+    //    Rebaixar é varredura deliberada, com a lista na mão.
+    try {
+      const { data: temAtividade, error: eAtiv } = await supabase
+        .rpc('fn_membro_tem_atividade', { p_membro_id: membro.id, p_dias: 365 });
+      if (eAtiv) {
+        // Função ausente (deploy em 2 etapas) não pode derrubar a aprovação: o
+        // membro já existe e o cadastro já está sendo aprovado.
+        console.warn('[CADASTROS] fn_membro_tem_atividade indisponível:', eAtiv.message);
+      } else {
+        // `foiAtualizacao` é false só quando o cadastro CRIOU a pessoa agora
+        // (nos dois ramos: duplicado_de_id sempre atualiza; o outro usa
+        // `!resultado.created`). Pessoa recém-criada sem sinal nasce
+        // frequentador; pessoa que já existia sem sinal não é tocada.
+        const novoStatus = temAtividade
+          ? 'membro_ativo'
+          : (foiAtualizacao ? null : 'frequentador');
+        if (novoStatus && membro.status !== novoStatus && membro.status !== 'membro_ativo') {
+          const { data: ajustado } = await supabase.from('mem_membros')
+            .update({ status: novoStatus })
+            .eq('id', membro.id).is('deleted_at', null)
+            .select().single();
+          if (ajustado) membro = ajustado;
+        }
+      }
+    } catch (e) {
+      console.warn('[CADASTROS] status por atividade:', e.message);
+    }
 
-    res.status(foiAtualizacao ? 200 : 201).json({ ok: true, membro, atualizacao: foiAtualizacao });
+    // ⚠️ No LOTE isto vem desligado e o chamador manda UM aviso com o resumo.
+    // Sem regra configurada, `notificar` cai no fallback de todos os
+    // admin/diretor (16 pessoas): aprovar 50 cadastros geraria ~800 linhas de
+    // notificação e enterraria o sino. Mesma lição do censo — aviso é pra
+    // trabalho PENDENTE, e lote aprovado é trabalho FEITO.
+    if (notificarIndividual) {
+      notificar({
+        modulo: 'membresia',
+        tipo: 'cadastro_aprovado',
+        titulo: `Cadastro aprovado: ${cad.nome}`,
+        // Diz o status REAL: com a regra de atividade, aprovar não significa
+        // mais "está ativo" em todo caso (sem sinal, a pessoa nasce
+        // frequentador) — e aviso que afirma o que não aconteceu é pior que
+        // aviso genérico.
+        mensagem: `O cadastro de ${cad.nome} foi ${foiAtualizacao ? 'atualizado' : 'aprovado'} (status: ${membro.status}).`,
+        link: `/ministerial/membresia`,
+        severidade: 'info',
+        chaveDedup: `cadastro_aprovado_${id}`,
+      }).catch(() => {});
+    }
+
+    return { ok: true, membro, atualizacao: foiAtualizacao };
   } catch (e) {
     console.error('[CADASTROS] aprovar exception:', e.message, e.stack);
-    res.status(500).json({ error: `Erro ao aprovar cadastro: ${e.message}` });
+    return { ok: false, status: 500, error: `Erro ao aprovar cadastro: ${e.message}` };
+  }
+}
+
+// POST /api/membresia/cadastros/:id/aprovar — cria mem_membros e marca aprovado
+router.post('/cadastros/:id/aprovar', podeAprovarMembresia, async (req, res) => {
+  const { familia_id, parentesco, observacoes } = req.body || {};
+  const { data: cad, error } = await supabase
+    .from('mem_cadastros_pendentes').select('*').eq('id', req.params.id).single();
+  if (error || !cad) return res.status(404).json({ error: 'Cadastro não encontrado' });
+
+  const r = await aprovarCadastroCore({
+    cad, familia_id, parentesco, observacoes, userId: req.user.userId,
+  });
+  if (!r.ok) return res.status(r.status || 500).json({ error: r.error });
+  res.status(r.atualizacao ? 200 : 201).json({ ok: true, membro: r.membro, atualizacao: r.atualizacao });
+});
+
+// ── APROVAÇÃO EM MASSA ─────────────────────────────────────────────────────
+//
+// Pedido do Matheus (04/08): selecionar alguns ou todos e aprovar de uma vez,
+// com o sistema conferindo os dados obrigatórios e deixando quem está
+// incompleto para aprovação manual.
+//
+// ⚠️ A régua de "está pronto?" vive em utils/prontidaoCadastro.js (pura,
+//    testada) e é conferida NO SERVIDOR sobre a linha do banco — nunca a partir
+//    do que o cliente mandou. A tela sabe quem está pronto para pintar a
+//    seleção; a decisão de criar pessoa é sempre daqui.
+//
+// ⚠️ Não é um "aprovar tudo" mais permissivo que o manual: o que este endpoint
+//    recusa continua aprovável na mão, com a pessoa vendo os dados. Nada fica
+//    inalcançável — fica pendente de gente.
+const LOTE_APROVACAO_MAX = 200;
+const UUID_RE_CADASTRO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// ⚠️ Rota LITERAL: não é engolida por `/cadastros/:id/aprovar` (3 segmentos vs
+//    2), mas fica declarada junto pra ninguém precisar conferir isso de novo —
+//    é a armadilha que derrubou as abas Avaliar/Mural do Propostas.
+router.post('/cadastros/aprovar-lote', podeAprovarMembresia, async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.map(String).filter(id => UUID_RE_CADASTRO.test(id))
+      : [];
+    if (!ids.length) return res.status(400).json({ error: 'Nenhum cadastro selecionado.' });
+    if (ids.length > LOTE_APROVACAO_MAX) {
+      return res.status(400).json({
+        error: `Selecione no máximo ${LOTE_APROVACAO_MAX} cadastros por vez.`,
+      });
+    }
+
+    // Relê do banco: o payload diz QUAIS, nunca SE pode.
+    const { data: linhas, error } = await supabase
+      .from('mem_cadastros_pendentes').select('*').in('id', ids);
+    if (error) throw error;
+
+    const aprovados = [];
+    const ignorados = [];
+    const falhas = [];
+
+    for (const id of ids) {
+      const cad = (linhas || []).find(l => l.id === id);
+      if (!cad) {
+        ignorados.push({ id, nome: null, motivos: ['cadastro não encontrado'] });
+        continue;
+      }
+      const prontidao = avaliarProntidao(cad);
+      if (!prontidao.pronto) {
+        ignorados.push({ id, nome: cad.nome, motivos: prontidao.rotulos });
+        continue;
+      }
+      // Sequencial de propósito: cada aprovação passa pelo matcher canônico e
+      // pode CRIAR pessoa. Em paralelo, dois cadastros da mesma família (mesmo
+      // telefone/e-mail) correriam no matcher ao mesmo tempo e poderiam gerar
+      // duplicata — exatamente o que a fila de Entradas existe pra limpar.
+      const r = await aprovarCadastroCore({
+        cad, userId: req.user.userId, notificarIndividual: false,
+      });
+      if (r.ok) aprovados.push({ id, nome: cad.nome, membro_id: r.membro?.id, atualizacao: r.atualizacao });
+      else falhas.push({ id, nome: cad.nome, erro: r.error });
+    }
+
+    if (aprovados.length) {
+      notificar({
+        modulo: 'membresia',
+        tipo: 'cadastros_aprovados_lote',
+        titulo: `${aprovados.length} cadastro(s) aprovados em lote`,
+        mensagem: `${aprovados.length} aprovados${ignorados.length ? ` · ${ignorados.length} ficaram para aprovação manual (dados incompletos)` : ''}${falhas.length ? ` · ${falhas.length} falharam` : ''}.`,
+        // O trabalho que sobra é o que ficou PENDENTE — o link leva direto lá.
+        link: '/ministerial/membresia?tab=cadastros&status=pendente',
+        severidade: 'info',
+        chaveDedup: `cadastros_lote_${new Date().toISOString().slice(0, 16)}`,
+      }).catch(() => {});
+    }
+
+    res.json({
+      ok: true,
+      aprovados: aprovados.length,
+      ignorados,
+      falhas,
+      detalhe_aprovados: aprovados,
+    });
+  } catch (e) {
+    console.error('[CADASTROS] aprovar-lote exception:', e.message);
+    res.status(500).json({ error: `Erro ao aprovar em lote: ${e.message}` });
   }
 });
 
@@ -3442,15 +4474,90 @@ async function cpfDaPendencia(p) {
   return d.length === 11 ? d : null;
 }
 
+// Régua da pessoa órfã + mapa porta→ponteiro + força da evidência: fonte ÚNICA,
+// compartilhada com o script de enfileiramento (services/inscricaoOrfas.js).
+// ⚠️ Declarado ANTES do primeiro uso de propósito (o GET, o clique individual e
+// o lote leem daqui) — a versão anterior tinha este require 100 linhas abaixo,
+// e mover uma delas pra cima quebraria por TDZ.
+const {
+  chavePessoa, PORTA_VINCULO, lerLinhasOrfas, ordemAncora,
+  FORCA, avaliarForcaOrfa, forcaPodeLote,
+} = require('../services/inscricaoOrfas');
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Evidência das pendências `inscricao_sem_vinculo`: o que a PESSOA digitou na
+// inscrição (nome/telefone/CPF/nascimento) + quantas linhas ela tem + a FORÇA
+// do vínculo proposto.
+//
+// ⚠️ Por que ler a view aqui: o card mostrava só o CADASTRO candidato, então o
+// CPF que a pessoa informou não aparecia em lugar nenhum — era isso que fazia o
+// chip "Só com CPF" listar gente com o CPF em branco na tela (a chave `cpf:` do
+// `origem_id` é da INSCRIÇÃO, não do cadastro).
+//
+// Best-effort: se a view falhar, `evidencia` vem null e a tela cai no
+// comportamento antigo — a fila não pode deixar de abrir por causa disso.
+async function evidenciaDasOrfas(pendencias) {
+  const alvo = (pendencias || []).filter((p) => p.tipo === 'inscricao_sem_vinculo' && p.origem_id);
+  if (!alvo.length) return new Map();
+  const orfas = await lerLinhasOrfas(supabase);
+  const porChave = new Map();
+  for (const l of orfas) {
+    const k = chavePessoa(l);
+    if (!porChave.has(k)) porChave.set(k, []);
+    porChave.get(k).push(l);
+  }
+  for (const ls of porChave.values()) ls.sort(ordemAncora);
+  return porChave;
+}
+
+function montarEvidencia(p, porChave, membro) {
+  if (p.tipo !== 'inscricao_sem_vinculo') return null;
+  const linhas = porChave.get(p.origem_id) || [];
+  const anc = linhas[0] || null;
+  // Chave morta = as inscrições dessa pessoa já foram ligadas a algum cadastro.
+  // Declarar isso evita o clique que só devolve 409 (o Matheus resolveu 110
+  // pendências na mão em 05/08 — clique que erra é caro).
+  if (!anc) {
+    return {
+      chave_viva: false, linhas: 0, insc: null,
+      forca: FORCA.MANUAL, motivo: 'as inscrições dessa pessoa já foram ligadas a algum cadastro', veto: null,
+      pode_lote: false,
+    };
+  }
+  const av = avaliarForcaOrfa(anc, membro || {});
+  return {
+    chave_viva: true,
+    linhas: linhas.length,
+    portas: [...new Set(linhas.map((l) => l.porta))],
+    insc: {
+      nome: anc.nome_display || null,
+      telefone: anc.telefone_norm || null,
+      cpf: anc.cpf_norm || null,
+      email: anc.email_norm || null,
+      data_nascimento: anc.nascimento || null,
+    },
+    forca: av.forca,
+    motivo: av.motivo,
+    veto: av.veto,
+    // O servidor é quem decide; o campo existe pra tela poder pré-selecionar.
+    pode_lote: forcaPodeLote(av.forca) && !!membro && !membro.deleted_at
+      && linhas.every((l) => !!PORTA_VINCULO[l.porta]),
+  };
+}
+
 // GET /api/membresia/identidade-pendencias?status=pendente&tipo=
 router.get('/identidade-pendencias', async (req, res) => {
   try {
     if (nivelFilaIdentidade(req) < 1) return res.status(403).json({ error: 'Sem permissão' });
     const status = req.query.status || 'pendente';
+    // ⚠️ Teto era 500 e em 04/08 havia 495 pendentes — a 5 de truncar em SILÊNCIO
+    // (a fila some do fim sem erro nenhum). 1000 é o cap do PostgREST; passando
+    // disso, paginar é obrigatório.
     let q = supabase.from('identidade_pendencias')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(500);
+      .limit(1000);
     if (status !== 'todas') q = q.eq('status', status);
     if (req.query.tipo) q = q.eq('tipo', req.query.tipo);
     const { data: pend, error } = await q;
@@ -3477,14 +4584,29 @@ router.get('/identidade-pendencias', async (req, res) => {
       resumo[p.status][p.tipo] = (resumo[p.status][p.tipo] || 0) + 1;
     }
 
+    // Evidência das órfãs (best-effort · falha não derruba a fila)
+    let porChave = new Map();
+    let avisoEvidencia = null;
+    try {
+      porChave = await evidenciaDasOrfas(pend);
+    } catch (e) {
+      console.warn('[identidade-pendencias] evidência não carregada:', e.message);
+      avisoEvidencia = 'Não foi possível ler as inscrições órfãs agora — a seleção em lote fica desligada até recarregar.';
+    }
+
     res.json({
-      items: (pend || []).map((p) => ({
-        ...p,
-        membro: porId.get(p.membro_id) || null,
-        conflito: porId.get(p.membro_conflito_id) || null,
-        cpf_proposto: p.tipo === 'cpf_para_confirmar' ? cpfDoTexto(p) : null,
-      })),
+      items: (pend || []).map((p) => {
+        const membro = porId.get(p.membro_id) || null;
+        return {
+          ...p,
+          membro,
+          conflito: porId.get(p.membro_conflito_id) || null,
+          cpf_proposto: p.tipo === 'cpf_para_confirmar' ? cpfDoTexto(p) : null,
+          evidencia: avisoEvidencia ? null : montarEvidencia(p, porChave, membro),
+        };
+      }),
       resumo,
+      aviso: avisoEvidencia,
       pode_agir: nivelFilaIdentidade(req) >= 3,
     });
   } catch (e) {
@@ -3542,12 +4664,6 @@ router.post('/identidade-pendencias/:id/confirmar-cpf', async (req, res) => {
   }
 });
 
-// Régua da pessoa órfã + mapa porta→ponteiro: fonte ÚNICA, compartilhada com
-// o script de enfileiramento (services/inscricaoOrfas.js).
-const { chavePessoa, PORTA_VINCULO, lerLinhasOrfas } = require('../services/inscricaoOrfas');
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 // POST /api/membresia/identidade-pendencias/:id/ligar-inscricao
 // Liga ao cadastro CANDIDATO **todas as linhas de inscrição daquela pessoa**. É
 // a ação humana da fila `inscricao_sem_vinculo` — o sistema nunca liga sozinho
@@ -3558,154 +4674,283 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // então pessoa com 2+ inscrições ficava com as outras órfãs e SEM pendência
 // nenhuma (18 casos, 20 linhas, medido em 31/07). Agora `origem_id` é a chave
 // da pessoa e o clique varre a view.
+//
+// ⚠️ EXTRAÍDO em `ligarInscricaoCore` (padrão do `aprovarCadastroCore`): a rota
+// individual e o LOTE precisam da mesma lógica, e duas cópias divergindo aqui
+// significaria criar vínculo de pessoa por dois caminhos com réguas diferentes.
+// Devolve `{ status, body }` — quem chama decide o HTTP (no lote é por item).
+async function ligarInscricaoCore(p, { userId = null, orfas = null, exigirForte = false } = {}) {
+  if (!p) return { status: 404, body: { error: 'Pendência não encontrada' } };
+  if (p.status !== 'pendente') return { status: 409, body: { error: 'Pendência já triada' } };
+  if (p.tipo !== 'inscricao_sem_vinculo') {
+    return { status: 422, body: { error: 'Só pendências de inscrição sem vínculo aceitam esta ação' } };
+  }
+  if (!p.membro_id) return { status: 422, body: { error: 'Pendência sem cadastro candidato' } };
+  if (!p.origem_id) return { status: 422, body: { error: 'Pendência sem referência da inscrição' } };
+
+  // O membro candidato precisa estar vivo (pode ter sido fundido/apagado
+  // entre o enfileiramento e o clique).
+  const { data: m } = await supabase.from('mem_membros')
+    .select('id, nome, telefone, email, cpf, data_nascimento, deleted_at')
+    .eq('id', p.membro_id).is('deleted_at', null).maybeSingle();
+  if (!m) return { status: 409, body: { error: 'O cadastro candidato não existe mais (fundido ou removido) — reavalie' } };
+
+  // Alvos = as linhas ÓRFÃS dessa pessoa, relidas AGORA (a view é a verdade;
+  // lista guardada no enfileiramento envelhece).
+  let alvos;
+  if (UUID_RE.test(String(p.origem_id))) {
+    // Pendência do formato antigo (origem_id = 1 linha). Mantido pra não
+    // travar a fila entre o deploy e o re-enfileiramento.
+    const map = PORTA_VINCULO[p.origem];
+    if (!map) {
+      return { status: 422, body: { error: `Porta "${p.origem}" não tem ponteiro de pessoa mapeado — resolva pelo módulo dono` } };
+    }
+    alvos = [{ porta: p.origem, ref_id: p.origem_id }];
+  } else {
+    const base = orfas || await lerLinhasOrfas(supabase);
+    alvos = base.filter((l) => chavePessoa(l) === p.origem_id);
+    if (!alvos.length) {
+      return { status: 409, body: { error: 'As inscrições dessa pessoa já foram ligadas a algum cadastro — recarregue a fila' } };
+    }
+  }
+
+  // ⚠️ No LOTE a força é REAVALIADA aqui, no servidor: o payload diz QUAIS
+  // pendências, nunca SE PODE (mesma régua do `aprovar-lote` da Membresia). O
+  // clique individual não exige força — a tela mostra os dois lados e quem
+  // decide é a pessoa olhando.
+  let avaliacao = null;
+  if (exigirForte) {
+    alvos.sort(ordemAncora);
+    avaliacao = avaliarForcaOrfa(alvos[0], m);
+    if (!forcaPodeLote(avaliacao.forca)) {
+      return {
+        status: 422,
+        body: { error: `Evidência fraca pra lote: ${avaliacao.motivo}`, forca: avaliacao.forca, veto: avaliacao.veto },
+      };
+    }
+    const semMapa = [...new Set(alvos.map((l) => l.porta).filter((porta) => !PORTA_VINCULO[porta]))];
+    if (semMapa.length) {
+      return { status: 422, body: { error: `Porta(s) ${semMapa.join(', ')} sem ponteiro mapeado — resolva pelo módulo dono` } };
+    }
+  }
+
+  const ligadas = [], jaLigadas = [], naoMapeadas = [];
+  for (const l of alvos) {
+    const map = PORTA_VINCULO[l.porta];
+    if (!map) { naoMapeadas.push(l.porta); continue; }
+    // `.is(col, null)` é a trava: se alguém já ligou essa linha no meio do
+    // caminho, não sobrescreve o vínculo alheio.
+    const { data: ok, error: eUp } = await supabase.from(map.tabela)
+      .update({ [map.col]: p.membro_id })
+      .eq('id', l.ref_id).is(map.col, null)
+      .select('id').maybeSingle();
+    if (eUp) throw eUp;
+    if (ok) ligadas.push({ porta: l.porta, tabela: map.tabela, inscricao_id: l.ref_id, linha: l });
+    else jaLigadas.push({ porta: l.porta, inscricao_id: l.ref_id });
+  }
+
+  if (!ligadas.length) {
+    return {
+      status: 409,
+      body: {
+        error: naoMapeadas.length
+          ? `Nenhuma linha ligada: porta(s) ${[...new Set(naoMapeadas)].join(', ')} sem ponteiro mapeado — resolva pelo módulo dono`
+          : 'Essas inscrições já estão ligadas a algum cadastro — recarregue a fila',
+        ja_ligadas: jaLigadas.length,
+      },
+    };
+  }
+
+  // Contrato de porta: o vínculo novo é uma observação de identidade — com os
+  // dados DA INSCRIÇÃO, não os do candidato. Registrar o que o cadastro já
+  // tinha não acrescenta chave nenhuma; o que faz a próxima porta encontrar
+  // essa pessoa é o telefone/CPF que ela usou no formulário.
+  try {
+    const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
+    for (const g of ligadas) {
+      const l = g.linha || {};
+      await registrarObservacaoSegura({
+        membroId: p.membro_id,
+        nome: l.nome_display || m.nome,
+        telefone: l.telefone_norm || null,
+        cpf: l.cpf_norm || null,
+        email: l.email_norm || null,
+        dataNascimento: l.nascimento || null,
+        origem: 'fila_identidade:' + g.porta,
+        origemId: String(g.inscricao_id),
+      });
+    }
+  } catch (e) { console.warn('[ligar-inscricao] observação:', e.message); }
+
+  // Contato divergente ACUMULA (mem_contatos · nunca sobrescreve o principal).
+  // É o que o matcher consulta pra achar a pessoa na porta seguinte.
+  try {
+    const { registrarContatoDaPorta } = require('../services/membroMatch');
+    for (const g of ligadas) {
+      const l = g.linha || {};
+      if (l.telefone_norm || l.email_norm) {
+        registrarContatoDaPorta(p.membro_id, { telefone: l.telefone_norm, email: l.email_norm }, 'fila_identidade:' + g.porta);
+      }
+    }
+  } catch (e) { console.warn('[ligar-inscricao] contato:', e.message); }
+
+  // CPF que veio na inscrição e o cadastro não tem → consolida pelo caminho
+  // canônico. `confianca: 'forte'` porque a decisão é HUMANA e auditada
+  // (`resolvida_por`), não um match por sinal fraco; conflito de CPF continua
+  // virando pendência, nunca fusão automática. O nascimento da inscrição vai
+  // junto justamente pra guarda de divergência funcionar.
+  let cpfTardio = null;
+  const comCpf = ligadas.find((g) => String(g.linha?.cpf_norm || '').replace(/\D/g, '').length === 11);
+  if (comCpf && !m.cpf) {
+    try {
+      const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
+      const r = await reconciliarCpfTardio({
+        membroId: p.membro_id, cpf: comCpf.linha.cpf_norm,
+        origem: 'fila_identidade:' + comCpf.porta, origemId: String(comCpf.inscricao_id),
+        dataNascimento: comCpf.linha.nascimento || null, confianca: 'forte',
+      });
+      cpfTardio = r?.acao || null;
+    } catch (e) { console.warn('[ligar-inscricao] cpf tardio:', e.message); }
+  }
+
+  await supabase.from('identidade_pendencias').update({
+    status: 'resolvida',
+    resolvida_por: userId,
+    resolvida_em: new Date().toISOString(),
+  }).eq('id', p.id).eq('status', 'pendente');
+
+  await registrarResolucaoEntrada({
+    tipo: 'identidade', acao: exigirForte ? 'inscricao_vinculada_lote' : 'inscricao_vinculada',
+    membro_principal_id: p.membro_id, membro_secundario_id: null,
+    origem: 'identidade_pendencias', origem_id: String(p.id),
+    detalhe: {
+      chave_pessoa: p.origem_id,
+      ligadas: ligadas.map((g) => ({ porta: g.porta, tabela: g.tabela, inscricao_id: g.inscricao_id })),
+      ja_ligadas: jaLigadas,
+      nao_mapeadas: [...new Set(naoMapeadas)],
+      cpf_tardio: cpfTardio,
+      forca: avaliacao?.forca || null,
+      motivo_forca: avaliacao?.motivo || null,
+    },
+    resolvido_por: userId,
+  });
+
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      membro_id: p.membro_id,
+      membro_nome: m.nome || null,
+      ligadas: ligadas.length,
+      portas: [...new Set(ligadas.map((g) => g.porta))],
+      ja_ligadas: jaLigadas.length,
+      nao_mapeadas: [...new Set(naoMapeadas)],
+      cpf_tardio: cpfTardio,
+      forca: avaliacao?.forca || null,
+    },
+  };
+}
+
+// Casca fina sobre o core (a régua vive num lugar só).
 router.post('/identidade-pendencias/:id/ligar-inscricao', async (req, res) => {
   try {
     if (nivelFilaIdentidade(req) < 3) return res.status(403).json({ error: 'Sem permissão para agir na fila' });
     const { data: p, error } = await supabase.from('identidade_pendencias')
       .select('*').eq('id', req.params.id).maybeSingle();
     if (error) throw error;
-    if (!p) return res.status(404).json({ error: 'Pendência não encontrada' });
-    if (p.status !== 'pendente') return res.status(409).json({ error: 'Pendência já triada' });
-    if (p.tipo !== 'inscricao_sem_vinculo') {
-      return res.status(422).json({ error: 'Só pendências de inscrição sem vínculo aceitam esta ação' });
-    }
-    if (!p.membro_id) return res.status(422).json({ error: 'Pendência sem cadastro candidato' });
-    if (!p.origem_id) return res.status(422).json({ error: 'Pendência sem referência da inscrição' });
-
-    // O membro candidato precisa estar vivo (pode ter sido fundido/apagado
-    // entre o enfileiramento e o clique).
-    const { data: m } = await supabase.from('mem_membros')
-      .select('id, nome, telefone, email, cpf, data_nascimento')
-      .eq('id', p.membro_id).is('deleted_at', null).maybeSingle();
-    if (!m) return res.status(409).json({ error: 'O cadastro candidato não existe mais (fundido ou removido) — reavalie' });
-
-    // Alvos = as linhas ÓRFÃS dessa pessoa, relidas AGORA (a view é a verdade;
-    // lista guardada no enfileiramento envelhece).
-    let alvos;
-    if (UUID_RE.test(String(p.origem_id))) {
-      // Pendência do formato antigo (origem_id = 1 linha). Mantido pra não
-      // travar a fila entre o deploy e o re-enfileiramento.
-      const map = PORTA_VINCULO[p.origem];
-      if (!map) {
-        return res.status(422).json({ error: `Porta "${p.origem}" não tem ponteiro de pessoa mapeado — resolva pelo módulo dono` });
-      }
-      alvos = [{ porta: p.origem, ref_id: p.origem_id }];
-    } else {
-      const orfas = await lerLinhasOrfas(supabase);
-      alvos = orfas.filter((l) => chavePessoa(l) === p.origem_id);
-      if (!alvos.length) {
-        return res.status(409).json({ error: 'As inscrições dessa pessoa já foram ligadas a algum cadastro — recarregue a fila' });
-      }
-    }
-
-    const ligadas = [], jaLigadas = [], naoMapeadas = [];
-    for (const l of alvos) {
-      const map = PORTA_VINCULO[l.porta];
-      if (!map) { naoMapeadas.push(l.porta); continue; }
-      // `.is(col, null)` é a trava: se alguém já ligou essa linha no meio do
-      // caminho, não sobrescreve o vínculo alheio.
-      const { data: ok, error: eUp } = await supabase.from(map.tabela)
-        .update({ [map.col]: p.membro_id })
-        .eq('id', l.ref_id).is(map.col, null)
-        .select('id').maybeSingle();
-      if (eUp) throw eUp;
-      if (ok) ligadas.push({ porta: l.porta, tabela: map.tabela, inscricao_id: l.ref_id, linha: l });
-      else jaLigadas.push({ porta: l.porta, inscricao_id: l.ref_id });
-    }
-
-    if (!ligadas.length) {
-      return res.status(409).json({
-        error: naoMapeadas.length
-          ? `Nenhuma linha ligada: porta(s) ${[...new Set(naoMapeadas)].join(', ')} sem ponteiro mapeado — resolva pelo módulo dono`
-          : 'Essas inscrições já estão ligadas a algum cadastro — recarregue a fila',
-        ja_ligadas: jaLigadas.length,
-      });
-    }
-
-    // Contrato de porta: o vínculo novo é uma observação de identidade — com os
-    // dados DA INSCRIÇÃO, não os do candidato. Registrar o que o cadastro já
-    // tinha não acrescenta chave nenhuma; o que faz a próxima porta encontrar
-    // essa pessoa é o telefone/CPF que ela usou no formulário.
-    try {
-      const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
-      for (const g of ligadas) {
-        const l = g.linha || {};
-        await registrarObservacaoSegura({
-          membroId: p.membro_id,
-          nome: l.nome_display || m.nome,
-          telefone: l.telefone_norm || null,
-          cpf: l.cpf_norm || null,
-          email: l.email_norm || null,
-          dataNascimento: l.nascimento || null,
-          origem: 'fila_identidade:' + g.porta,
-          origemId: String(g.inscricao_id),
-        });
-      }
-    } catch (e) { console.warn('[ligar-inscricao] observação:', e.message); }
-
-    // Contato divergente ACUMULA (mem_contatos · nunca sobrescreve o principal).
-    // É o que o matcher consulta pra achar a pessoa na porta seguinte.
-    try {
-      const { registrarContatoDaPorta } = require('../services/membroMatch');
-      for (const g of ligadas) {
-        const l = g.linha || {};
-        if (l.telefone_norm || l.email_norm) {
-          registrarContatoDaPorta(p.membro_id, { telefone: l.telefone_norm, email: l.email_norm }, 'fila_identidade:' + g.porta);
-        }
-      }
-    } catch (e) { console.warn('[ligar-inscricao] contato:', e.message); }
-
-    // CPF que veio na inscrição e o cadastro não tem → consolida pelo caminho
-    // canônico. `confianca: 'forte'` porque a decisão é HUMANA e auditada
-    // (`resolvida_por`), não um match por sinal fraco; conflito de CPF continua
-    // virando pendência, nunca fusão automática. O nascimento da inscrição vai
-    // junto justamente pra guarda de divergência funcionar.
-    let cpfTardio = null;
-    const comCpf = ligadas.find((g) => String(g.linha?.cpf_norm || '').replace(/\D/g, '').length === 11);
-    if (comCpf && !m.cpf) {
-      try {
-        const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
-        const r = await reconciliarCpfTardio({
-          membroId: p.membro_id, cpf: comCpf.linha.cpf_norm,
-          origem: 'fila_identidade:' + comCpf.porta, origemId: String(comCpf.inscricao_id),
-          dataNascimento: comCpf.linha.nascimento || null, confianca: 'forte',
-        });
-        cpfTardio = r?.acao || null;
-      } catch (e) { console.warn('[ligar-inscricao] cpf tardio:', e.message); }
-    }
-
-    await supabase.from('identidade_pendencias').update({
-      status: 'resolvida',
-      resolvida_por: req.user?.id || null,
-      resolvida_em: new Date().toISOString(),
-    }).eq('id', p.id).eq('status', 'pendente');
-
-    await registrarResolucaoEntrada({
-      tipo: 'identidade', acao: 'inscricao_vinculada',
-      membro_principal_id: p.membro_id, membro_secundario_id: null,
-      origem: 'identidade_pendencias', origem_id: String(p.id),
-      detalhe: {
-        chave_pessoa: p.origem_id,
-        ligadas: ligadas.map((g) => ({ porta: g.porta, tabela: g.tabela, inscricao_id: g.inscricao_id })),
-        ja_ligadas: jaLigadas,
-        nao_mapeadas: [...new Set(naoMapeadas)],
-        cpf_tardio: cpfTardio,
-      },
-      resolvido_por: req.user?.id || null,
-    });
-
-    res.json({
-      ok: true,
-      membro_id: p.membro_id,
-      ligadas: ligadas.length,
-      portas: [...new Set(ligadas.map((g) => g.porta))],
-      ja_ligadas: jaLigadas.length,
-      nao_mapeadas: [...new Set(naoMapeadas)],
-      cpf_tardio: cpfTardio,
-    });
+    const r = await ligarInscricaoCore(p, { userId: req.user?.id || null });
+    res.status(r.status).json(r.body);
   } catch (e) {
     console.error('[membresia/identidade-pendencias/ligar-inscricao]', e.message);
     res.status(500).json({ error: 'Erro ao ligar a inscrição ao cadastro' });
+  }
+});
+
+// POST /api/membresia/identidade-pendencias/ligar-lote  { ids: [...] }
+// Liga em massa as pendências cuja evidência é FORTE. Pedido do Matheus em
+// 05/08 depois de resolver 110 pendências clicando uma por uma.
+//
+// ⚠️ O payload diz QUAIS, nunca SE PODE: cada pendência é relida do banco e a
+// força é REAVALIADA aqui (`exigirForte`). Bundle antigo, id colado à mão ou
+// pendência que mudou entre a tela e o clique não furam a régua.
+//
+// ⚠️ SEQUENCIAL de propósito (mesma razão do `aprovar-lote` da Membresia): cada
+// ligação passa pelo matcher, por `mem_contatos` e pode consolidar CPF tardio —
+// em paralelo, duas pessoas da mesma família correriam no matcher ao mesmo
+// tempo e poderiam gerar a duplicata que esta fila existe pra limpar.
+//
+// ⚠️ `lerLinhasOrfas` roda UMA vez pro lote inteiro. Por item seriam ~380
+// linhas × N requisições ao PostgREST.
+router.post('/identidade-pendencias/ligar-lote', async (req, res) => {
+  try {
+    if (nivelFilaIdentidade(req) < 3) return res.status(403).json({ error: 'Sem permissão para agir na fila' });
+    const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : [])
+      .map((v) => String(v || '').trim()).filter((v) => UUID_RE.test(v)))];
+    if (!ids.length) return res.status(400).json({ error: 'Informe os ids das pendências a ligar' });
+    if (ids.length > 100) return res.status(400).json({ error: 'Máximo de 100 pendências por lote' });
+
+    const { data: pend, error } = await supabase.from('identidade_pendencias')
+      .select('*').in('id', ids);
+    if (error) throw error;
+    const porId = new Map((pend || []).map((p) => [p.id, p]));
+
+    // A view é lida uma vez e reusada por todos os itens do lote.
+    const orfas = await lerLinhasOrfas(supabase);
+
+    const ligadas = [], recusadas = [];
+    let linhasLigadas = 0;
+    for (const id of ids) {
+      const p = porId.get(id);
+      if (!p) { recusadas.push({ id, motivo: 'Pendência não encontrada' }); continue; }
+      let r;
+      try {
+        r = await ligarInscricaoCore(p, {
+          userId: req.user?.id || null, orfas, exigirForte: true,
+        });
+      } catch (e) {
+        console.error('[ligar-lote] item', id, e.message);
+        recusadas.push({ id, motivo: 'Erro ao ligar — tente individualmente' });
+        continue;
+      }
+      if (r.status === 200) {
+        linhasLigadas += r.body.ligadas || 0;
+        ligadas.push({ id, nome: r.body.membro_nome || null, linhas: r.body.ligadas, portas: r.body.portas, forca: r.body.forca });
+      } else {
+        recusadas.push({ id, motivo: r.body?.error || 'Não foi possível ligar' });
+      }
+    }
+
+    // ⚠️ UM aviso com o resumo, nunca um por pessoa: sem regra configurada o
+    // `notificar` cai no fallback de todos os admin/diretor (16), e 50 ligações
+    // gerariam ~800 linhas — o sino enterrado. Lição do censo/aprovar-lote:
+    // aviso é pra trabalho PENDENTE, e lote ligado é trabalho FEITO.
+    if (ligadas.length) {
+      try {
+        const { notificar } = require('../services/notificar');
+        await notificar({
+          modulo: 'membresia',
+          tipo: 'identidade_lote_ligado',
+          titulo: `${ligadas.length} inscrição(ões) ligada(s) ao cadastro em lote`,
+          mensagem: `${linhasLigadas} linha(s) de inscrição de ${ligadas.length} pessoa(s) foram ligadas ao cadastro`
+            + (recusadas.length ? ` · ${recusadas.length} ficaram para decisão manual` : '')
+            + '. Evidência exigida: CPF igual ou telefone + nome completo idêntico.',
+          link: '/entradas',
+          chaveDedup: `identidade_lote_${new Date().toISOString().slice(0, 10)}`,
+        });
+      } catch (e) { console.warn('[ligar-lote] notificação:', e.message); }
+    }
+
+    res.json({
+      ok: true,
+      ligadas: ligadas.length,
+      linhas_ligadas: linhasLigadas,
+      recusadas: recusadas.length,
+      detalhe_ligadas: ligadas,
+      detalhe_recusadas: recusadas,
+    });
+  } catch (e) {
+    console.error('[membresia/identidade-pendencias/ligar-lote]', e.message);
+    res.status(500).json({ error: 'Erro ao ligar as inscrições em lote' });
   }
 });
 
@@ -3738,6 +4983,411 @@ router.post('/identidade-pendencias/:id/status', async (req, res) => {
   } catch (e) {
     console.error('[membresia/identidade-pendencias/status]', e.message);
     res.status(500).json({ error: 'Erro ao atualizar a pendência' });
+  }
+});
+
+// ============================================================================
+// PEDIDOS DE EXCLUSAO DE CONTA (LGPD art. 18) · 06/08/2026 · Onda 1b
+// ============================================================================
+//
+// O QUE ESTAVA ABERTO: o app grava em `app_solicitacoes_exclusao` e promete
+// "em breve sua conta sera desativada" — e o ERP **nao lia essa tabela em lugar
+// nenhum**. Grep no repo inteiro: zero rotas, zero telas, zero servicos. O
+// primeiro pedido cairia num buraco com o prazo da LGPD correndo, e a Apple
+// TESTA esse fluxo na revisao da loja. Hoje a tabela esta VAZIA (0 pedidos) —
+// entao isto e gatilho armado, e e o melhor momento pra construir.
+//
+// ⚠️ ESTA ONDA E SO LEITOR. Nao processa, nao desativa, nao apaga. Motivo: **nao
+// existe nenhum caminho de desativacao de conta no sistema** (o unico
+// `auth.admin.deleteUser` do repo e script de teste; `ban_duration` tem 0
+// ocorrencias; `profiles.active` e so LIDO — nada nunca escreve false). Decidir
+// o que a igreja RETEM por obrigacao legal/fiscal (contribuicao, batismo) antes
+// de desativar e decisao do Marcos, nao efeito colateral de um endpoint.
+//
+// ⚠️ O app grava DIRETO no Supabase com o JWT da pessoa (`configuracoes.tsx`),
+// sem passar por aqui — entao nao existe hook no servidor pra avisar na hora. A
+// fila e PULL (esta rota + o bloco na tela) e e o que tira o pedido do buraco
+// hoje. O aviso periodico esta escrito em `notificacaoGenerator`, mas depende de
+// um cron que NAO esta agendado (ver o comentario la).
+//
+// Nivel 3 = o mesmo do export LGPD (`routes/lgpd.js`): e dado de pessoa pedindo
+// pra sair, nao leitura de painel.
+router.get('/exclusoes', authorizeModule('membresia', 3), async (req, res) => {
+  try {
+    const { status } = req.query;
+    let q = supabase
+      .from('app_solicitacoes_exclusao')
+      .select('id, user_id, motivo, detalhe, status, criada_em, processada_em')
+      .order('criada_em', { ascending: false })
+      .limit(200);
+    // A coluna nao tem CHECK (o 'pendente|processado|cancelado' do .sql e so
+    // comentario), entao o filtro e permissivo de proposito.
+    if (status && typeof status === 'string') q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    const linhas = data || [];
+    // Nome/e-mail vem de `profiles` em consulta SEPARADA e best-effort: se ela
+    // falhar, a fila ainda aparece (com o id) em vez de sumir. E a regua do
+    // select isolado — pedir coluna inexistente derruba a query inteira.
+    let porUser = {};
+    const ids = [...new Set(linhas.map((l) => l.user_id).filter(Boolean))];
+    if (ids.length) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, name, email')
+        .in('id', ids);
+      porUser = Object.fromEntries((profs || []).map((p) => [p.id, p]));
+    }
+
+    const itens = linhas.map((l) => {
+      const p = porUser[l.user_id] || null;
+      return {
+        id: l.id,
+        user_id: l.user_id,
+        nome: (p && p.name) || null,
+        email: (p && p.email) || null,
+        motivo: l.motivo || null,
+        detalhe: l.detalhe || null,
+        status: l.status || 'pendente',
+        criada_em: l.criada_em,
+        processada_em: l.processada_em || null,
+      };
+    });
+
+    res.json({
+      itens,
+      total: itens.length,
+      total_pendentes: itens.filter((i) => i.status === 'pendente').length,
+      // ⚠️ A tela DIZ que ninguem processa automaticamente. Prometer menos do que
+      // o sistema faz e melhor que o contrario — e era justamente a promessa
+      // vazia do app que criou este problema.
+      aviso_processamento:
+        'A desativacao de conta ainda e manual e nao existe no sistema: trate com '
+        + 'a secretaria e registre o atendimento. O prazo da LGPD (art. 18) e de 15 dias.',
+    });
+  } catch (e) {
+    console.error('[membresia/exclusoes]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os pedidos de exclusao de conta' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PERFIL DA MEMBRESIA · aba de análise demográfica (2026-08-23)
+//
+// Tudo aqui é AGREGADO. Nenhuma destas rotas devolve nome, CPF, telefone,
+// e-mail ou endereço de pessoa — nem para nível 4. Quem precisa de pessoa
+// nominal usa `/membresia/membros`, que tem o guard de nível 2 e a régua de
+// `utils/dadosSensiveisPessoa`. É o que permite abrir o perfil para líder de
+// área sem abrir o CRM junto.
+//
+// A conta é feita em `fn_dem_perfil` (Postgres), não aqui: o PostgREST corta em
+// 1.000 linhas e a base já passou de 3.900 — ler "cru" e somar em JS mostraria
+// o perfil de 1/4 da igreja com cara de perfil da igreja inteira.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Status válidos de `mem_membros.status`. Whitelist e não passagem direta: a
+// função é parametrizada (não há injeção), mas status digitado errado devolve
+// um perfil VAZIO que parece "a igreja não tem ninguém" em vez de um erro.
+const PERFIL_STATUS = ['membro_ativo', 'visitante', 'contribuinte_avulso', 'inativo'];
+
+// GET /api/membresia/perfil?status=membro_ativo&bairro=barra%20da%20tijuca
+// Nível 1: o retrato é agregado, quem enxerga a Membresia enxerga o perfil.
+router.get('/perfil', authorizeModule('membresia', 1), async (req, res) => {
+  try {
+    const status = String(req.query.status || '').trim();
+    if (status && !PERFIL_STATUS.includes(status)) {
+      return res.status(400).json({ error: `Status inválido. Use um de: ${PERFIL_STATUS.join(', ')}` });
+    }
+    const bairro = String(req.query.bairro || '').trim().slice(0, 120);
+
+    // ⚠️ A régua do trecho vive em `utils/trechoCep` (pura, no gate) porque ela
+    // é ESPELHO de `vw_dem_pessoa.cep_regiao` — duas cópias divergiriam e o
+    // filtro passaria a procurar chave que a view nunca produz.
+    const cepRegiaoBruto = String(req.query.cep_regiao || '').replace(/\D/g, '');
+    if (req.query.cep_regiao && !trechoValido(cepRegiaoBruto)) {
+      return res.status(400).json({ error: 'Trecho de CEP inválido. Use os 5 primeiros dígitos.' });
+    }
+
+    const { data, error } = await supabase.rpc('fn_dem_perfil', {
+      p_status: status || null,
+      p_bairro: bairro || null,
+      p_cep_regiao: cepRegiaoBruto || null,
+    });
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[membresia/perfil]', e.message);
+    res.status(500).json({ error: 'Erro ao montar o perfil da membresia' });
+  }
+});
+
+// GET /api/membresia/perfil/bairros — a fila do mapa.
+// Devolve TODO bairro conhecido com seu estado (tem coordenada? é apelido de
+// outro? é lixo?). É o que a tela usa para dizer quantas pessoas o mapa ainda
+// não consegue desenhar.
+router.get('/perfil/bairros', authorizeModule('membresia', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('dem_bairro_geo')
+      .select('bairro_norm, bairro, cidade, uf, lat, lng, fonte, alias_de, ignorar, nota, tentativas, geocodificado_em, ultima_tentativa_em')
+      .order('bairro', { ascending: true })
+      .limit(2000);
+    if (error) throw error;
+
+    const itens = data || [];
+    res.json({
+      itens,
+      total: itens.length,
+      // "Pendente" é o que o botão de geocodificar tem para fazer: bairro real
+      // (não é apelido de outro, não é lixo) e ainda sem coordenada.
+      pendentes: itens.filter((b) => !b.ignorar && !b.alias_de && (b.lat == null || b.lng == null)).length,
+      com_coordenada: itens.filter((b) => b.lat != null && b.lng != null).length,
+    });
+  } catch (e) {
+    console.error('[membresia/perfil/bairros]', e.message);
+    res.status(500).json({ error: 'Erro ao listar os bairros' });
+  }
+});
+
+// POST /api/membresia/perfil/bairros/geocode { limite }
+// Resolve o centróide dos bairros pendentes, em lote.
+//
+// ⚠️ Nível 3: escreve em `dem_bairro_geo` e o centróide errado desloca o
+// círculo de dezenas de pessoas no mapa.
+//
+// ⚠️ Lote pequeno DE PROPÓSITO. A política do Nominatim é 1 req/s e
+// `geoBrasil` serializa numa fila: cada bairro custa 1,1s a 2,2s (duas
+// tentativas). 20 bairros ≈ 45s, dentro dos 300s da função da Vercel com folga
+// larga. A tela chama de novo enquanto sobrar pendente — o conjunto encolhe a
+// cada chamada, então não há paginação por offset (o filtro MUTA, e offset
+// numérico sobre filtro que muta PULA linha).
+router.post('/perfil/bairros/geocode', authorizeModule('membresia', 3), async (req, res) => {
+  try {
+    const limite = Math.min(Math.max(parseInt(req.body?.limite, 10) || 20, 1), 40);
+
+    // Cadastro novo pode ter trazido bairro inédito desde a última rodada.
+    const { data: semeados } = await supabase.rpc('fn_dem_semear_bairros');
+
+    const { data: pendentes, error } = await supabase
+      .from('dem_bairro_geo')
+      .select('bairro_norm, bairro, cidade, uf, tentativas')
+      .is('lat', null)
+      .is('alias_de', null)
+      .eq('ignorar', false)
+      // Quem já falhou muitas vezes vai para o fim da fila em vez de bloquear
+      // os bairros que nunca foram tentados.
+      .order('tentativas', { ascending: true })
+      .order('bairro', { ascending: true })
+      .limit(limite);
+    if (error) throw error;
+
+    const ok = [];
+    const falhas = [];
+    for (const b of pendentes || []) {
+      const hit = await centroideDeBairro(b.bairro, b.cidade || 'Rio de Janeiro', b.uf || 'RJ');
+      // ⚠️ Grava o resultado A CADA bairro, não no fim: se a função for
+      // interrompida (timeout, deploy no meio), o trabalho já feito não se
+      // perde e o lote seguinte continua de onde parou. É a LEI "em operação
+      // longa, gravar o efeito DURANTE".
+      const patch = hit
+        ? { lat: hit.lat, lng: hit.lng, fonte: 'nominatim', geocodificado_em: new Date().toISOString() }
+        : {};
+      await supabase
+        .from('dem_bairro_geo')
+        .update({
+          ...patch,
+          tentativas: (b.tentativas || 0) + 1,
+          ultima_tentativa_em: new Date().toISOString(),
+        })
+        .eq('bairro_norm', b.bairro_norm);
+
+      if (hit) ok.push({ bairro: b.bairro, lat: hit.lat, lng: hit.lng });
+      else falhas.push({ bairro: b.bairro, tentativas: (b.tentativas || 0) + 1 });
+    }
+
+    const { count: restam } = await supabase
+      .from('dem_bairro_geo')
+      .select('bairro_norm', { count: 'exact', head: true })
+      .is('lat', null).is('alias_de', null).eq('ignorar', false);
+
+    res.json({
+      bairros_novos: semeados || 0,
+      processados: (pendentes || []).length,
+      resolvidos: ok.length,
+      falharam: falhas.length,
+      ok,
+      falhas,
+      restam: restam ?? 0,
+    });
+  } catch (e) {
+    console.error('[membresia/perfil/bairros/geocode]', e.message);
+    res.status(500).json({ error: 'Erro ao geocodificar os bairros' });
+  }
+});
+
+// GET /api/membresia/perfil/ceps — a fila do mapa por trecho de CEP.
+// Espelha `/perfil/bairros`: devolve todo CEP conhecido com seu estado.
+router.get('/perfil/ceps', authorizeModule('membresia', 1), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('dem_cep_geo')
+      .select('cep, logradouro, bairro, cidade, uf, lat, lng, fonte, ignorar, nota, tentativas, geocodificado_em, ultima_tentativa_em')
+      .order('cep', { ascending: true })
+      .limit(3000);
+    if (error) throw error;
+
+    const itens = data || [];
+    res.json({
+      itens,
+      total: itens.length,
+      pendentes: itens.filter((c) => !c.ignorar && (c.lat == null || c.lng == null)).length,
+      com_coordenada: itens.filter((c) => c.lat != null && c.lng != null).length,
+    });
+  } catch (e) {
+    console.error('[membresia/perfil/ceps]', e.message);
+    res.status(500).json({ error: 'Erro ao listar os CEPs' });
+  }
+});
+
+// POST /api/membresia/perfil/ceps/geocode { limite }
+// Resolve a coordenada dos CEPs pendentes, em lote.
+//
+// ⚠️ Nível 3 pelo mesmo motivo do lote de bairros: escreve a coordenada que
+// posiciona o ponto de um trecho inteiro no mapa.
+//
+// ⚠️ Cada CEP custa ViaCEP (~200ms) + até 2 idas ao Nominatim (1,1s de fila
+// cada) = 1,3s a 2,5s. 20 CEPs ≈ 50s, dentro dos 300s da função com folga.
+// A tela chama de novo enquanto sobrar pendente — sem paginação por offset,
+// porque o conjunto MUTA a cada rodada (offset sobre filtro que muda PULA linha).
+router.post('/perfil/ceps/geocode', authorizeModule('membresia', 3), async (req, res) => {
+  try {
+    const limite = Math.min(Math.max(parseInt(req.body?.limite, 10) || 20, 1), 40);
+
+    // Cadastro novo pode ter trazido CEP inédito desde a última rodada.
+    const { data: semeados } = await supabase.rpc('fn_dem_semear_ceps');
+
+    const { data: pendentes, error } = await supabase
+      .from('dem_cep_geo')
+      .select('cep, tentativas')
+      .is('lat', null)
+      .eq('ignorar', false)
+      // Quem já falhou muitas vezes vai pro fim da fila em vez de bloquear
+      // os CEPs que nunca foram tentados.
+      .order('tentativas', { ascending: true })
+      .order('cep', { ascending: true })
+      .limit(limite);
+    if (error) throw error;
+
+    const ok = [];
+    const falhas = [];
+    for (const c of pendentes || []) {
+      const hit = await coordenadaDeCep(c.cep);
+      // ⚠️ Grava A CADA CEP, não no fim: se a função for interrompida
+      // (timeout, deploy no meio), o trabalho já feito não se perde. É a LEI
+      // "em operação longa, gravar o efeito DURANTE".
+      //
+      // ⚠️ O ENDEREÇO é gravado mesmo sem coordenada — é ele que dá o rótulo
+      // "22640 · Barra da Tijuca" no mapa, e ele já é útil sozinho.
+      const patch = hit
+        ? {
+          logradouro: hit.logradouro,
+          bairro: hit.bairro,
+          cidade: hit.cidade,
+          uf: hit.uf,
+          ...(hit.lat != null
+            ? { lat: hit.lat, lng: hit.lng, fonte: 'nominatim', geocodificado_em: new Date().toISOString() }
+            : {}),
+        }
+        : {};
+      await supabase
+        .from('dem_cep_geo')
+        .update({
+          ...patch,
+          tentativas: (c.tentativas || 0) + 1,
+          ultima_tentativa_em: new Date().toISOString(),
+        })
+        .eq('cep', c.cep);
+
+      if (hit && hit.lat != null) ok.push({ cep: c.cep, bairro: hit.bairro, lat: hit.lat, lng: hit.lng });
+      else falhas.push({ cep: c.cep, endereco_ok: !!hit, tentativas: (c.tentativas || 0) + 1 });
+    }
+
+    const { count: restam } = await supabase
+      .from('dem_cep_geo')
+      .select('cep', { count: 'exact', head: true })
+      .is('lat', null).eq('ignorar', false);
+
+    res.json({
+      ceps_novos: semeados || 0,
+      processados: (pendentes || []).length,
+      resolvidos: ok.length,
+      falharam: falhas.length,
+      ok,
+      falhas,
+      restam: restam ?? 0,
+    });
+  } catch (e) {
+    console.error('[membresia/perfil/ceps/geocode]', e.message);
+    res.status(500).json({ error: 'Erro ao geocodificar os CEPs' });
+  }
+});
+
+// PATCH /api/membresia/perfil/bairros/:norm — correção humana.
+//
+// Existe porque geocodificação automática erra e o mapa precisa de uma saída
+// que não seja "esperar alguém mexer no banco": marcar que um nome é apelido de
+// outro bairro, marcar que um texto não é bairro nenhum, ou fixar a coordenada
+// na mão. Nível 3, pelo mesmo motivo do lote.
+router.patch('/perfil/bairros/:norm', authorizeModule('membresia', 3), async (req, res) => {
+  try {
+    const norm = String(req.params.norm || '').trim().toLowerCase();
+    if (!norm) return res.status(400).json({ error: 'Bairro não informado' });
+
+    const patch = {};
+    if ('alias_de' in (req.body || {})) {
+      const alvo = req.body.alias_de ? String(req.body.alias_de).trim().toLowerCase() : null;
+      // Apelido de si mesmo laçaria o join da view (o CHECK do banco também
+      // barra, mas a mensagem daqui é a que a pessoa lê).
+      if (alvo && alvo === norm) {
+        return res.status(400).json({ error: 'Um bairro não pode ser apelido dele mesmo' });
+      }
+      if (alvo) {
+        const { data: existe } = await supabase
+          .from('dem_bairro_geo').select('bairro_norm, alias_de').eq('bairro_norm', alvo).maybeSingle();
+        if (!existe) return res.status(400).json({ error: 'O bairro de destino não existe' });
+        // Apelido de apelido faria o mapa perder gente no meio da corrente: a
+        // view resolve UM salto só, de propósito.
+        if (existe.alias_de) {
+          return res.status(400).json({ error: 'O bairro de destino já é apelido de outro — aponte direto para o canônico' });
+        }
+      }
+      patch.alias_de = alvo;
+    }
+    if ('ignorar' in (req.body || {})) patch.ignorar = !!req.body.ignorar;
+    if ('nota' in (req.body || {})) patch.nota = req.body.nota ? String(req.body.nota).slice(0, 300) : null;
+    if ('bairro' in (req.body || {}) && req.body.bairro) patch.bairro = String(req.body.bairro).trim().slice(0, 120);
+    if ('lat' in (req.body || {}) || 'lng' in (req.body || {})) {
+      const lat = req.body.lat == null ? null : Number(req.body.lat);
+      const lng = req.body.lng == null ? null : Number(req.body.lng);
+      if ((lat != null && !Number.isFinite(lat)) || (lng != null && !Number.isFinite(lng))) {
+        return res.status(400).json({ error: 'Coordenada inválida' });
+      }
+      patch.lat = lat;
+      patch.lng = lng;
+      patch.fonte = lat != null && lng != null ? 'manual' : null;
+      patch.geocodificado_em = lat != null && lng != null ? new Date().toISOString() : null;
+    }
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
+
+    const { data, error } = await supabase
+      .from('dem_bairro_geo').update(patch).eq('bairro_norm', norm).select().maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Bairro não encontrado' });
+    res.json(data);
+  } catch (e) {
+    console.error('[membresia/perfil/bairros PATCH]', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar o bairro' });
   }
 });
 

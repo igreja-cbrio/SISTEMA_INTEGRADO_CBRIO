@@ -10,6 +10,8 @@ const { montarPatchFusao } = require('../services/fusaoCampos');
 const multer = require('multer');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
+const { donosDoGrupo, donosDeVariosGrupos } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 const { importarParticipantes } = require('../services/gruposImporter');
 const { notificarPessoaAprovada, notificarPessoaSugestao, montarEnvioRenovacao } = require('../services/gruposWhatsapp');
 const { enfileirarLote } = require('../services/whatsappFila');
@@ -17,6 +19,22 @@ const { configurado: whatsappConfigurado } = require('../services/whatsappServic
 const gruposEnvios = require('../services/gruposEnvios');
 const gruposEnviosConfig = require('../services/gruposEnviosConfig');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
+const { cadastrarPessoaNoGrupo } = require('../services/grupoPessoaDireta');
+const { ocorrenciasPassadas } = require('../utils/agendaGrupo');
+const { ancorasDeGrupos, iniciosDeGrupos } = require('../services/grupoAncora');
+const { aplicarExcecaoAgenda } = require('../services/grupoAgendaExcecao');
+const { apagarEncontroGrupo } = require('../services/grupoEncontroApagar');
+const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
+const { agruparDuplicados, validarResolucao } = require('../utils/vinculosDuplicados');
+// Régua única de "dá pra falar com essa pessoa?" (varredura do lançamento 02/08)
+const { classificarContato, digitos: contatoDigitos } = require('../services/contatoPessoa');
+// "Temos os dados dessa pessoa?" — espelho JS de fn_membro_cadastro_completo,
+// o trigger que promove visitante → participante quando o cadastro fecha.
+const { avaliarCadastroPessoa } = require('../utils/prontidaoCadastro');
+const censoDisparo = require('../services/censoDisparo');
+// Completar o sexo: colher DECLARAÇÃO de outras portas (grava) × palpite por
+// nome (só sugere · quem legitima é a confirmação humana).
+const sexoCompletar = require('../services/sexoCompletar');
 
 // Auto-sync dos vínculos do bot WhatsApp (Marcos 2026-06-10): novo líder /
 // troca de líder reflete em whatsapp_lideres sem passo manual. Fire-and-forget
@@ -315,6 +333,163 @@ router.get('/:id/encontros', async (req, res) => {
   } catch (e) { console.error('[Grupos encontros list]', e.message); res.status(500).json({ error: 'Erro ao buscar encontros' }); }
 });
 
+// GET /api/grupos/:id/encontros-pendentes — as ocorrências que já passaram e
+// ficaram SEM chamada (o espelho web do item 3 do Marcos · 25/08/2026:
+// *"sempre manter os encontros à vista: se a pessoa passar 1 semana e não
+// registrar, ele entra automaticamente como presença não registrada e pode ser
+// registrada posteriormente"*).
+//
+// ⚠️ Endpoint PRÓPRIO, e não um campo novo em `GET /:id/encontros`: aquele
+// devolve um ARRAY cru (`res.json([...])`), então enfiar um objeto ali quebraria
+// todos os consumidores de uma vez.
+//
+// ⚠️ A régua é a MESMA do app (`utils/agendaGrupo.ocorrenciasPassadas`) — o
+// pedido dele terminou com "alinhe todas essas mudanças com o sistema web", e
+// alinhar significa uma régua só. Sem âncora, grupo quinzenal/mensal devolve
+// vazio: cobrar chamada de encontro que talvez não tenha existido é pior que
+// não cobrar.
+router.get('/:id/encontros-pendentes', async (req, res) => {
+  try {
+    const gid = req.params.id;
+    const { data: grupo, error: eG } = await supabase.from('mem_grupos')
+      .select('dia_semana, horario, recorrencia').eq('id', gid).is('deleted_at', null).maybeSingle();
+    if (eG) throw eG;
+    if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
+
+    // Janela de 180 dias: `ocorrenciasPassadas` devolve no máximo 12, e mesmo
+    // num grupo mensal isso são ~48 semanas.
+    const desde = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+    const [encRes, excRes] = await Promise.all([
+      supabase.from('mem_grupo_encontros')
+        .select('data').eq('grupo_id', gid).is('deleted_at', null).gte('data', desde),
+      supabase.from('mem_grupo_agenda_excecoes')
+        .select('data_original, status, nova_data, novo_horario, motivo')
+        .eq('grupo_id', gid).gte('data_original', desde),
+    ]);
+    if (encRes.error) throw encRes.error;
+    // ⚠️ A tabela de exceções é de 18/08 e pode não existir num ambiente antigo:
+    // falhar aqui degrada pra "sem exceção", nunca derruba a lista.
+    const excecoes = excRes.error ? [] : (excRes.data || []);
+
+    const registradas = (encRes.data || []).map(e => String(e.data).slice(0, 10));
+    const [ancoras, inicios] = await Promise.all([
+      ancorasDeGrupos([gid]).catch(() => ({})),
+      // Sem isto, grupo quinzenal/mensal que nunca registrou encontro (34 dos 35
+      // não-semanais ativos, medido em 25/08) nunca aparece como pendente aqui.
+      iniciosDeGrupos([gid]).catch(() => ({})),
+    ]);
+    const ocorrencias = ocorrenciasPassadas({
+      diaSemana: grupo.dia_semana, horario: grupo.horario,
+      recorrencia: grupo.recorrencia, ancoraISO: ancoras[gid] || null,
+      // Piso no início da temporada — ver o comentário longo em routes/app.js.
+      inicioISO: inicios[gid] || null, desdeISO: inicios[gid] || null,
+      excecoes, registradas, quantas: 12,
+    });
+
+    res.json({
+      // Só o que a coordenação precisa AGIR: pendente. Registrado já está na
+      // lista ao lado e cancelado não é pendência.
+      pendentes: ocorrencias.filter(o => o.status === 'nao_registrado'),
+      // ⚠️ Devolvido pra a tela poder DIZER que a agenda é incerta em vez de
+      // mostrar lista vazia como se estivesse tudo em dia.
+      total_avaliadas: ocorrencias.length,
+    });
+  } catch (e) {
+    console.error('[Grupos encontros-pendentes]', e.message);
+    res.status(500).json({ error: 'Erro ao apurar os encontros sem chamada' });
+  }
+});
+
+// POST /api/grupos/:id/agenda — remarcar / cancelar / desfazer UMA ocorrência
+// body { data_original, acao, nova_data?, novo_horario?, motivo? }
+//
+// ⚠️ O GÊMEO WEB do `POST /app/grupos/:id/agenda` (Marcos · 25/08/2026: o
+// encontro passado tem que ser gerenciável, e "alinhe com o sistema web"). A
+// régua é a MESMA (`services/grupoAgendaExcecao`) — as duas janelas de data, a
+// coerência com a chamada já registrada e a tradução dos erros de banco.
+//
+// ⚠️ NÃO notifica: no app quem age é o líder e a coordenação precisa saber; aqui
+// quem age É a coordenação, e avisar a si mesma é ruído (o mesmo raciocínio que
+// tirou o aviso duplicado da transferência).
+router.post('/:id/agenda', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('id, nome').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
+
+    const {
+      data_original, acao, nova_data, novo_horario, motivo,
+      confirmar_apagar_chamada,
+    } = req.body || {};
+    const r = await aplicarExcecaoAgenda({
+      grupoId: grupo.id,
+      dataOriginal: data_original,
+      acao,
+      novaData: nova_data,
+      novoHorario: novo_horario,
+      motivo,
+      autor: { id: req.user?.id || null, nome: req.user?.name || req.user?.email || 'Equipe' },
+      // ⚠⚠ `=== true` e nada mais (fail-closed): é este parâmetro que apaga
+      // uma chamada real, e só vem depois de a tela ter dito quantas presenças
+      // serão perdidas e alguém ter confirmado.
+      confirmarApagarChamada: confirmar_apagar_chamada === true,
+    });
+    if (!r.ok) {
+      const corpo = { error: r.error };
+      if (r.codigo) corpo.codigo = r.codigo;
+      if (r.remarcar_de) corpo.remarcar_de = r.remarcar_de;
+      if (r.remarcar_ate) corpo.remarcar_ate = r.remarcar_ate;
+      // Deixa a pergunta da tela concreta; `null` = não deu pra contar.
+      if (r.presentes !== undefined) corpo.presentes = r.presentes;
+      return res.status(r.http || 400).json(corpo);
+    }
+    res.json({ ok: true, acao: r.acao, chamada_movida: r.chamada_movida });
+  } catch (e) {
+    console.error('[Grupos agenda]', e.message);
+    res.status(500).json({ error: 'Erro ao alterar o encontro' });
+  }
+});
+
+// GET /api/grupos/:id/entradas-saidas — histórico simples de quem entrou e saiu
+// ⚠️ Pedido do Marcos (05/08/2026), com o formato definido por ele: "deve ser uma
+// tela pequena, com pouco destaque, como se fosse uma tela de histórico de
+// entradas e saídas SEM MUITA INTERAÇÃO". Então é leitura pura — nenhuma ação
+// aqui. Aprovar pedido (inclusive transferência vinda do app) continua onde
+// sempre foi: a Caixa de entrada.
+// Saída é soft (`saiu_em`), então a MESMA linha do roster aparece como entrada e,
+// se a pessoa saiu, também como saída.
+router.get('/:id/entradas-saidas', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('mem_grupo_membros')
+      .select('id, entrou_em, saiu_em, motivo_saida, funcao, created_at, membro:mem_membros(id, nome)')
+      .eq('grupo_id', req.params.id).is('deleted_at', null)
+      .order('created_at', { ascending: false }).limit(200);
+    if (error) throw error;
+
+    const eventos = [];
+    for (const r of data || []) {
+      const m = Array.isArray(r.membro) ? r.membro[0] : r.membro;
+      const nome = m?.nome || '—';
+      eventos.push({
+        tipo: 'entrada', nome, membro_id: m?.id || null, funcao: r.funcao || null,
+        data: r.entrou_em || (r.created_at ? String(r.created_at).slice(0, 10) : null),
+        motivo: null,
+      });
+      if (r.saiu_em) {
+        eventos.push({
+          tipo: 'saida', nome, membro_id: m?.id || null, funcao: r.funcao || null,
+          data: String(r.saiu_em).slice(0, 10), motivo: r.motivo_saida || null,
+        });
+      }
+    }
+    eventos.sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')));
+    res.json({ eventos: eventos.slice(0, 60) });
+  } catch (e) {
+    console.error('[Grupos entradas-saidas]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar o histórico' });
+  }
+});
+
 // POST /api/grupos/:id/encontros — registrar encontro com chamada
 router.post('/:id/encontros', authorizeModule('grupos', 2), async (req, res) => {
   try {
@@ -382,25 +557,12 @@ router.patch('/encontros/:encontroId', authorizeModule('grupos', 2), async (req,
 // DELETE /api/grupos/encontros/:encontroId — remove encontro (decrementa contadores)
 router.delete('/encontros/:encontroId', authorizeModule('grupos', 3), async (req, res) => {
   try {
-    // Buscar membros presentes para reverter contador
-    const { data: presencas } = await supabase.from('mem_grupo_encontro_presencas')
-      .select('membro_id, mem_grupo_encontros!inner(grupo_id)')
-      .eq('encontro_id', req.params.encontroId);
-
-    const grupoId = presencas?.[0]?.mem_grupo_encontros?.grupo_id;
-
-    // Delete cascateia presenças; antes decrementa contador de cada membro presente
-    if (grupoId && presencas?.length) {
-      for (const p of presencas) {
-        await supabase.rpc('decrementar_presenca_grupo_membro', {
-          p_grupo_id: grupoId, p_membro_id: p.membro_id,
-        }).catch(() => {});
-      }
-    }
-
-    const { error } = await supabase.from('mem_grupo_encontros').delete().eq('id', req.params.encontroId);
-    if (error) throw error;
-    res.json({ success: true });
+    // ⚠️ CASCA FINA: a régua (decrementar `mem_grupo_membros.presencas` de cada
+    // presente ANTES do delete) vive em `services/grupoEncontroApagar` desde
+    // 25/08 — o fluxo de "o encontro não aconteceu" passou a precisar dela, e
+    // uma 2ª cópia deixaria um dos dois caminhos inflando contador em silêncio.
+    const r = await apagarEncontroGrupo(req.params.encontroId);
+    res.json({ success: true, presentes_revertidas: r.presentes });
   } catch (e) { console.error('[Grupos encontro delete]', e.message); res.status(500).json({ error: 'Erro ao remover encontro' }); }
 });
 
@@ -668,6 +830,52 @@ router.get('/kpis/relatorio', async (req, res) => {
   } catch (e) {
     console.error('[Grupos relatorio kpis]', e.message);
     res.status(500).json({ error: 'Erro ao gerar relatório de KPIs' });
+  }
+});
+
+// GET /api/grupos/kpis/taticos — KPI TÁTICO OFICIAL da área 'grupos'
+// (kpi_indicadores_taticos + vw_kpi_trajetoria_atual), mesmo padrão de
+// backend/routes/painelArea.js. Isto é DIFERENTE do /kpis/relatorio acima
+// (fn_grupos_kpis_relatorio, métrica OPERACIONAL calculada direto das tabelas
+// de origem) — os dois números podem legitimamente divergir por definição.
+// Piloto: fechar a lacuna de que só "Minha Área" mostrava este dado hoje.
+router.get('/kpis/taticos', async (req, res) => {
+  try {
+    const { data: kpisRaw, error: kpisErr } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, descricao, meta_descricao, meta_valor, unidade, periodicidade, lider_funcionario_id')
+      .eq('ativo', true)
+      .ilike('area', 'grupos')
+      .order('indicador', { ascending: true });
+    if (kpisErr) throw kpisErr;
+    const kpis = kpisRaw || [];
+    const kpiIds = kpis.map(k => k.id);
+
+    let trajByKpi = {};
+    if (kpiIds.length > 0) {
+      const { data: traj, error: trajErr } = await supabase
+        .from('vw_kpi_trajetoria_atual')
+        .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, checkpoint_meta, percentual_meta')
+        .in('kpi_id', kpiIds);
+      if (trajErr) console.error('[grupos kpis/taticos] trajetoria falhou:', trajErr.message);
+      (traj || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
+    }
+
+    const enriched = kpis.map(k => ({
+      id: k.id,
+      indicador: k.indicador,
+      descricao: k.descricao,
+      meta_descricao: k.meta_descricao,
+      meta_valor: k.meta_valor,
+      unidade: k.unidade,
+      periodicidade: k.periodicidade,
+      trajetoria: trajByKpi[k.id] || null,
+    }));
+
+    res.json({ area: 'grupos', total: enriched.length, kpis: enriched });
+  } catch (e) {
+    console.error('[Grupos kpis/taticos]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar KPIs táticos de grupos' });
   }
 });
 
@@ -1168,17 +1376,30 @@ router.post('/:id/pedidos', async (req, res) => {
     }).select().single();
     if (error) throw error;
 
-    // Notificar líder (em background) + admins via fallback
+    // Avisa QUEM RESPONDE POR ESTE GRUPO (líder + supervisor) — nunca o fan-out
+    // do módulo. Ver services/gruposDestinatarios.js: sem lista nomeada em
+    // `notificacao_regras`, o fallback escrevia para ~16 admins, uma linha cada.
+    // Sino do app do líder (ver services/gruposAvisoApp.js). Aqui NÃO precisa
+    // ser awaited: é rota autenticada de tela interna, não porta pública
+    // serverless — mas fica awaited de qualquer forma porque o custo é 1 insert
+    // e a lei da casa é "o que não pode se perder vai awaited".
+    try {
+      const { data: gApp } = await supabase.from('mem_grupos').select('nome').eq('id', grupoId).maybeSingle();
+      await avisarPedidoNovoNoApp({
+        grupoId, pedidoId: data.id, grupoNome: gApp?.nome, pessoaNome: b.nome,
+      });
+    } catch (err) { console.warn('[Pedidos] aviso app:', err.message); }
+
     (async () => {
       try {
-        const { data: grupo } = await supabase.from('mem_grupos').select('nome, lider_id').eq('id', grupoId).single();
+        const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', grupoId).single();
         if (!grupo) return;
-        let liderAuthUserId = null;
-        if (grupo.lider_id) {
-          const { data: liderProf } = await supabase.from('vol_profiles')
-            .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
-          liderAuthUserId = liderProf?.auth_user_id || null;
-        }
+        const donos = await donosDoGrupo(grupoId);
+        // Sem dono com conta de sistema, o aviso in-app não tem a quem ir: o
+        // líder já recebe o link do WhatsApp (por onde 95% das decisões saem) e
+        // a coordenação vê no resumo diário. Escrever pra 16 pessoas aqui era o
+        // que enchia o sino de todo mundo.
+        if (!donos.length) return;
         await notificar({
           modulo: 'grupos',
           tipo: 'pedido_grupo',
@@ -1187,7 +1408,7 @@ router.post('/:id/pedidos', async (req, res) => {
           link: '/grupos',
           severidade: 'aviso',
           chaveDedup: `pedido_grupo_${data.id}`,
-          extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
+          targetIds: donos,
         });
       } catch (notifErr) { console.error('[Pedidos notify]', notifErr.message); }
     })();
@@ -1255,7 +1476,7 @@ router.get('/pedidos/list', async (req, res) => {
 
     // Ocupação atual dos grupos com pedido em aberto — alimenta o aviso de
     // capacidade no frontend (capacidade é conselho, não trava).
-    const abertos = rows.filter(p => ['pendente', 'devolvido'].includes(p.status));
+    const abertos = rows.filter(p => ['pendente', 'devolvido', 'sem_contato'].includes(p.status));
     const grupoIds = [...new Set(abertos.map(p => p.grupo_id).filter(Boolean))].slice(0, 50);
     const ocupacao = {};
     await Promise.all(grupoIds.map(async (gid) => {
@@ -1275,7 +1496,7 @@ router.get('/pedidos/list', async (req, res) => {
     // vazio é só preenchido, não ganha selo). Lotes de 200 no .in().
     try {
       const abertosComMembro = rows.filter(p =>
-        ['pendente', 'devolvido', 'encaminhado'].includes(p.status) && p.membro_id && (p.telefone || p.email));
+        ['pendente', 'devolvido', 'sem_contato', 'encaminhado'].includes(p.status) && p.membro_id && (p.telefone || p.email));
       const memIds = [...new Set(abertosComMembro.map(p => p.membro_id))];
       const memMap = {};
       for (let i = 0; i < memIds.length; i += 200) {
@@ -1309,8 +1530,141 @@ router.get('/pedidos/list', async (req, res) => {
       });
     } catch (e) { console.error('[Pedidos list veio_next]', e.message); }
 
+    // Contato alcançável + entrega das mensagens (varredura do lançamento de
+    // 02/08 · ver services/contatoPessoa.js). Dois selos que a triagem precisa:
+    //   · contato_status → "Número errado — impossível contato" (telefone que o
+    //     envio não alcança OU número que a Meta disse "undeliverable"), com o
+    //     e-mail como caminho alternativo. NÃO bloqueia nada: é leitura.
+    //   · avisos → o líder foi avisado? a pessoa recebeu? (enviado/entregue/
+    //     lido/falhou) — no domingo isso só era respondível consultando a fila
+    //     na mão, e o "líder não recebeu" foi o incidente de 30/07.
+    try {
+      const telsPedido = [...new Set(rows.map(p => contatoDigitos(p.telefone)).filter(t => t.length >= 8))];
+      // Falha de entrega é POR NÚMERO (não por pedido): o mesmo telefone pode
+      // ter recebido por outro contexto. Só as falhas interessam aqui.
+      const falhou = new Set();
+      const avisoPorRef = {}; // ref_id → { lider, pessoa }
+      for (let i = 0; i < telsPedido.length; i += 200) {
+        const { data: envs } = await supabase.from('whatsapp_envios')
+          .select('telefone, failed_at')
+          .in('telefone', telsPedido.slice(i, i + 200))
+          .not('failed_at', 'is', null);
+        (envs || []).forEach(e => falhou.add(contatoDigitos(e.telefone)));
+      }
+      // ⚠️ `whatsapp_envios.telefone` guarda o que o CHAMADOR passou, não uma
+      // forma canônica: hoje os envios de grupos vão digits-only (conferido nos
+      // 3 `failed_at` do lançamento), mas `whatsapp_lideres` guarda com o 55 na
+      // frente e outros fluxos podem passar E.164. Comparar cru dependeria de
+      // sorte — os 8 últimos dígitos sobrevivem ao 55/DDD e não colidem em
+      // volume desta ordem.
+      const fim8 = (t) => contatoDigitos(t).slice(-8);
+      const falhou8 = new Set([...falhou].map(fim8));
+      const refIds = rows.map(p => p.id);
+      for (let i = 0; i < refIds.length; i += 200) {
+        const { data: envs } = await supabase.from('whatsapp_envios')
+          .select('ref_id, contexto, status, delivered_at, read_at, failed_at')
+          .in('ref_id', refIds.slice(i, i + 200));
+        (envs || []).forEach(e => {
+          const alvo = e.contexto === 'grupos.pedido_novo_lider' ? 'lider'
+            : (e.contexto === 'grupos.inscricao_confirmada' || e.contexto === 'grupos.pedido_aprovado') ? 'pessoa'
+            : null;
+          if (!alvo) return;
+          const estado = e.failed_at ? 'falhou' : e.read_at ? 'lido' : e.delivered_at ? 'entregue'
+            : e.status === 'enviado' ? 'enviado' : e.status;
+          const at = (avisoPorRef[e.ref_id] = avisoPorRef[e.ref_id] || {});
+          // Mais informativo vence (lido > entregue > enviado); falha sempre aparece.
+          const peso = { falhou: 4, lido: 3, entregue: 2, enviado: 1 };
+          if (!at[alvo] || (peso[estado] || 0) > (peso[at[alvo]] || 0)) at[alvo] = estado;
+        });
+      }
+      rows.forEach(p => {
+        p.contato_status = classificarContato({
+          telefone: p.telefone,
+          email: p.email,
+          entregaFalhou: falhou8.has(fim8(p.telefone)),
+        });
+        p.avisos = avisoPorRef[p.id] || {};
+      });
+    } catch (e) { console.error('[Pedidos list contato_status]', e.message); }
+
+    // Pessoa NOVA na plataforma? (varredura 02/08: 85 de 160 eram inéditas)
+    // Novo = virou cadastro pendente, ou o membro nasceu junto com o pedido
+    // (a diferença de segundos entre criar o membro e criar o pedido).
+    try {
+      const memIds = [...new Set(rows.map(p => p.membro_id).filter(Boolean))];
+      const criadoEm = {};
+      for (let i = 0; i < memIds.length; i += 200) {
+        const { data: mems } = await supabase.from('mem_membros')
+          .select('id, created_at').in('id', memIds.slice(i, i + 200));
+        (mems || []).forEach(m => { criadoEm[m.id] = m.created_at; });
+      }
+      rows.forEach(p => {
+        if (p.cadastro_pendente_id) { p.pessoa_nova = true; return; }
+        const c = p.membro_id ? criadoEm[p.membro_id] : null;
+        if (!c) { p.pessoa_nova = null; return; } // não deu pra saber
+        // 10 min de folga: o membro criado no mesmo fluxo do pedido é "novo";
+        // quem já existia tem created_at de dias/meses antes.
+        p.pessoa_nova = (new Date(p.created_at) - new Date(c)) < 10 * 60000;
+      });
+    } catch (e) { console.error('[Pedidos list pessoa_nova]', e.message); }
+
     res.json(rows);
   } catch (e) { console.error('[Pedidos list]', e.message); res.status(500).json({ error: 'Erro ao listar pedidos' }); }
+});
+
+// GET /api/grupos/entrada/cobertura?desde=ISO — a ÚNICA coisa do painel da
+// Caixa de entrada que a lista de pedidos não responde: quais grupos ativos
+// NÃO receberam pedido nenhum no período (no lançamento de 02/08 foram 30 de
+// 87 — é onde o Pr. Nélio precisa divulgar). Os outros números do painel são
+// derivados da própria lista no cliente, pra não existirem duas verdades.
+router.get('/entrada/cobertura', async (req, res) => {
+  try {
+    const { desde, ate } = req.query;
+    const desdeISO = desde && !Number.isNaN(new Date(desde).getTime())
+      ? new Date(desde).toISOString() : null;
+    // ⚠️ `ate` existe por causa do filtro POR ANO (24/08/2026): é a primeira
+    // janela FECHADA do sistema. Sem ele, escolher "2024" contaria pedido de
+    // 2024 ATÉ HOJE e o painel diria que o grupo recebeu pedido no ano — em
+    // silêncio. Janela móvel não manda `ate` e o comportamento é o de sempre.
+    const ateISO = ate && !Number.isNaN(new Date(ate).getTime())
+      ? new Date(ate).toISOString() : null;
+
+    const { data: grupos, error: eg } = await supabase.from('mem_grupos')
+      .select('id, codigo, nome, bairro, modo_inscricao, temporada')
+      .eq('ativo', true).is('deleted_at', null);
+    if (eg) throw eg;
+
+    // ⚠️ PAGINADO: `.limit(1000)` truncava em silêncio, e "pedido que não veio
+    // na página" é lido como "grupo sem pedido" — o painel INFLARIA o buraco de
+    // divulgação. Com janela de um ano inteiro isso deixa de ser hipótese.
+    const comPedido = new Set();
+    for (let offset = 0; ; offset += 1000) {
+      let q = supabase.from('mem_grupo_pedidos').select('grupo_id').is('deleted_at', null);
+      if (desdeISO) q = q.gte('created_at', desdeISO);
+      if (ateISO) q = q.lte('created_at', ateISO);
+      const { data: pagina, error: ep } = await q.range(offset, offset + 999);
+      if (ep) throw ep;
+      for (const p of pagina || []) if (p.grupo_id) comPedido.add(p.grupo_id);
+      if (!pagina || pagina.length < 1000) break;
+    }
+
+    // Grupo 'fechado' não recebe inscrição pelo formulário — não faz sentido
+    // cobrar divulgação dele.
+    const elegiveis = (grupos || []).filter(g => g.modo_inscricao !== 'fechado');
+    const semPedido = elegiveis.filter(g => !comPedido.has(g.id))
+      .map(g => ({ id: g.id, codigo: g.codigo, nome: g.nome, bairro: g.bairro }))
+      .sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
+
+    res.json({
+      grupos_ativos: (grupos || []).length,
+      grupos_elegiveis: elegiveis.length,
+      grupos_com_pedido: elegiveis.length - semPedido.length,
+      sem_pedido: semPedido,
+    });
+  } catch (e) {
+    console.error('[Entrada cobertura]', e.message);
+    res.status(500).json({ error: 'Erro ao calcular a cobertura dos grupos' });
+  }
 });
 
 // GET /api/grupos/pedidos/resumo — cockpit da caixa de entrada (Nana):
@@ -1893,6 +2247,185 @@ router.post('/renovacao/:renId/triar', authorizeModule('grupos', 3), async (req,
 // GET /api/grupos/confira/painel?temporada=&status=
 // Painel de triagem: resumo + 1 linha por grupo (última rodada, líder, nº de
 // membros ativos, contadores da resposta).
+// ============================================================================
+// TRANSFERÊNCIAS PEDIDAS PELO LÍDER · a 5ª origem da Caixa de entrada
+// (Marcos · 25/08/2026 · migration 20260825170000)
+//
+// O líder aperta "Solicitar transferência" no app SEM escolher destino, e a
+// linha cai aqui pendente. Quem escolhe o grupo é a coordenação, que enxerga a
+// malha inteira — ver o cabeçalho da migration pro raciocínio completo.
+//
+// ⚠️ Caminho de DOIS segmentos de propósito: `router.get('/:id')` (linha ~3800)
+// casa qualquer rota de UM segmento declarada depois dele. É a armadilha que
+// este módulo já pagou com os `/kpis/*`.
+// ============================================================================
+
+// GET /api/grupos/transferencias?status=pendente
+router.get('/transferencias', authorizeModule('grupos', 1), async (req, res) => {
+  try {
+    const status = ['pendente', 'concluida', 'recusada'].includes(String(req.query.status || ''))
+      ? String(req.query.status) : null;
+    let q = supabase.from('mem_grupo_transferencias')
+      .select('id, membro_id, grupo_origem_id, vinculo_id, motivo, status, grupo_destino_id, '
+        + 'pedido_por_nome, origem, resolvido_por_nome, resolvido_em, resolucao_obs, created_at')
+      .order('created_at', { ascending: false }).limit(300);
+    if (status) q = q.eq('status', status);
+    const { data: linhas, error } = await q;
+    // ⚠️ Tabela nova: sem a migration aplicada o PostgREST recusa a consulta
+    // inteira. Devolver lista VAZIA faria a Caixa de entrada afirmar que não há
+    // transferência pendente — resposta errada com cara de resposta. Devolve
+    // `disponivel: false` e a tela DECLARA que a origem está fora do ar.
+    if (error) {
+      console.warn('[grupos transferencias] indisponível:', error.message);
+      return res.json({ disponivel: false, rows: [], aviso: 'As transferências ainda não estão disponíveis.' });
+    }
+
+    const rows = linhas || [];
+    if (!rows.length) return res.json({ disponivel: true, rows: [] });
+
+    // Enriquecimento em LOTES de 200 (`.in()` gigante estoura a URL do PostgREST).
+    const membroIds = [...new Set(rows.map(r => r.membro_id).filter(Boolean))];
+    const grupoIds = [...new Set(rows.flatMap(r => [r.grupo_origem_id, r.grupo_destino_id]).filter(Boolean))];
+    const pessoas = {};
+    const grupos = {};
+    for (let i = 0; i < membroIds.length; i += 200) {
+      const { data } = await supabase.from('mem_membros')
+        .select('id, nome, telefone, email, genero').in('id', membroIds.slice(i, i + 200));
+      (data || []).forEach(m => { pessoas[m.id] = m; });
+    }
+    for (let i = 0; i < grupoIds.length; i += 200) {
+      const { data } = await supabase.from('mem_grupos')
+        .select('id, nome, codigo, categoria, bairro').in('id', grupoIds.slice(i, i + 200));
+      (data || []).forEach(g => { grupos[g.id] = g; });
+    }
+
+    res.json({
+      disponivel: true,
+      rows: rows.map(r => ({
+        ...r,
+        pessoa: pessoas[r.membro_id] || null,
+        origem_grupo: grupos[r.grupo_origem_id] || null,
+        destino_grupo: r.grupo_destino_id ? (grupos[r.grupo_destino_id] || null) : null,
+      })),
+    });
+  } catch (e) {
+    console.error('[grupos transferencias]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar as transferências' });
+  }
+});
+
+// POST /api/grupos/transferencias/:id/resolver
+// body { acao: 'transferir' | 'recusar', grupo_destino_id?, obs? }
+//
+// ⚠️⚠️ `transferir` MOVE a pessoa: cria o vínculo no destino e ENCERRA o da
+// origem. Não cria pedido pro líder do destino aprovar — a decisão é da
+// coordenação, e é exatamente isso que o líder pediu ao abrir a solicitação.
+// ⚠️ Encerra SÓ o vínculo da ORIGEM (nunca `.eq('membro_id')` solto): a pessoa
+// pode participar de mais de um grupo de propósito — a UNIQUE de vínculo ativo
+// foi dropada em 21/07 justamente porque multi-grupo é real. Fechar tudo tiraria
+// a pessoa de grupos que ninguém pediu pra mexer.
+router.post('/transferencias/:id/resolver', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const acao = String(req.body?.acao || '');
+    if (!['transferir', 'recusar'].includes(acao)) {
+      return res.status(400).json({ error: 'Ação inválida. Use transferir ou recusar.' });
+    }
+    const obs = String(req.body?.obs || '').trim().slice(0, 500) || null;
+
+    const { data: t, error: eT } = await supabase.from('mem_grupo_transferencias')
+      .select('id, membro_id, grupo_origem_id, vinculo_id, status').eq('id', req.params.id).maybeSingle();
+    if (eT) throw eT;
+    if (!t) return res.status(404).json({ error: 'Transferência não encontrada' });
+    if (t.status !== 'pendente') {
+      return res.status(409).json({ error: `Esta transferência já foi ${t.status === 'concluida' ? 'concluída' : 'recusada'}.` });
+    }
+
+    const quem = req.user?.name || req.user?.email || null;
+    const agora = new Date().toISOString();
+
+    if (acao === 'recusar') {
+      // ⚠️ UPDATE condicionado ao status ATUAL: duas pessoas da triagem abrindo
+      // a mesma linha não podem resolver duas vezes.
+      const { data: upd, error } = await supabase.from('mem_grupo_transferencias')
+        .update({ status: 'recusada', resolvido_por: req.user?.id || null, resolvido_por_nome: quem, resolvido_em: agora, resolucao_obs: obs })
+        .eq('id', t.id).eq('status', 'pendente').select('id');
+      if (error) throw error;
+      if (!upd?.length) return res.status(409).json({ error: 'Alguém já resolveu esta transferência.' });
+      return res.json({ ok: true, status: 'recusada' });
+    }
+
+    const destinoId = String(req.body?.grupo_destino_id || '').trim();
+    if (!destinoId) return res.status(400).json({ error: 'Escolha o grupo de destino.' });
+    if (destinoId === t.grupo_origem_id) {
+      return res.status(400).json({ error: 'O destino tem que ser diferente do grupo de origem.' });
+    }
+    const { data: destino } = await supabase.from('mem_grupos')
+      .select('id, nome, ativo').eq('id', destinoId).is('deleted_at', null).maybeSingle();
+    if (!destino || destino.ativo === false) {
+      return res.status(404).json({ error: 'Grupo de destino não encontrado ou inativo.' });
+    }
+
+    // Já está no destino? Não duplica vínculo — segue e fecha a origem.
+    const { data: jaLa } = await supabase.from('mem_grupo_membros')
+      .select('id').eq('grupo_id', destinoId).eq('membro_id', t.membro_id)
+      .is('saiu_em', null).is('deleted_at', null).limit(1).maybeSingle();
+    if (!jaLa) {
+      const { error: eIns } = await supabase.from('mem_grupo_membros').insert({
+        grupo_id: destinoId,
+        membro_id: t.membro_id,
+        // Mesma régua de 13/08: entrar por decisão da coordenação é
+        // PARTICIPAÇÃO, não visita.
+        funcao: 'frequentador',
+        entrou_em: new Date().toISOString().slice(0, 10),
+      });
+      if (eIns) throw eIns;
+    }
+
+    // ⚠️ Fecha a origem DEPOIS de garantir o destino: morrer no meio deixa a
+    // pessoa nos dois grupos (visível e corrigível), nunca em NENHUM.
+    let vinculoFechado = false;
+    const alvoVinculo = supabase.from('mem_grupo_membros')
+      .update({ saiu_em: new Date().toISOString().slice(0, 10), motivo_saida: `Transferida para "${destino.nome}" pela coordenação` })
+      .eq('grupo_id', t.grupo_origem_id).eq('membro_id', t.membro_id)
+      .is('saiu_em', null).is('deleted_at', null);
+    const { data: fechou, error: eFech } = await alvoVinculo.select('id');
+    if (eFech) throw eFech;
+    vinculoFechado = !!(fechou && fechou.length);
+
+    const { data: upd, error } = await supabase.from('mem_grupo_transferencias')
+      .update({
+        status: 'concluida', grupo_destino_id: destinoId,
+        resolvido_por: req.user?.id || null, resolvido_por_nome: quem,
+        resolvido_em: agora, resolucao_obs: obs,
+      })
+      .eq('id', t.id).eq('status', 'pendente').select('id');
+    if (error) throw error;
+    if (!upd?.length) return res.status(409).json({ error: 'Alguém já resolveu esta transferência.' });
+
+    // Avisa quem responde pelo grupo de DESTINO — ele acabou de receber gente.
+    (async () => {
+      const donos = await donosDoGrupo(destinoId).catch(() => []);
+      if (!donos.length) return;
+      const { data: p } = await supabase.from('mem_membros').select('nome').eq('id', t.membro_id).maybeSingle();
+      await notificar({
+        modulo: 'grupos',
+        tipo: 'novo_membro_grupo',
+        titulo: `Nova pessoa no grupo ${destino.nome}`,
+        mensagem: `${p?.nome || 'Alguém'} foi transferida pela coordenação e já faz parte de "${destino.nome}".`,
+        link: '/grupos',
+        severidade: 'info',
+        chaveDedup: `transf_ok_${t.id}`,
+        targetIds: donos,
+      });
+    })().catch(e => console.warn('[grupos transferencias] notificar destino:', e.message));
+
+    res.json({ ok: true, status: 'concluida', destino: destino.nome, vinculo_origem_encerrado: vinculoFechado });
+  } catch (e) {
+    console.error('[grupos transferencias resolver]', e.message);
+    res.status(500).json({ error: 'Erro ao resolver a transferência' });
+  }
+});
+
 router.get('/confira/painel', authorizeModule('grupos', 1), async (req, res) => {
   try {
     let temporadaId = req.query.temporada || null;
@@ -2502,6 +3035,13 @@ async function aprovarPedidoCore(pedidoId, user) {
       if (!jaAtivo || !jaAtivo.length) {
         const { error: eVinc } = await supabase.from('mem_grupo_membros').insert({
           grupo_id: pedido.grupo_id, membro_id: membroId,
+          // ⚠️ EXPLÍCITO (Matheus, 13/08/2026): quem se inscreveu e teve o
+          // pedido APROVADO pelo líder é participante, não visitante. Antes
+          // caía no default da coluna, que era 'visitante' desde 20/06 — e como
+          // a promoção só acontece com chamada lançada (fn_grupo_auto_membro),
+          // a temporada inteira ficava marcada "Visitante". Setar aqui faz
+          // valer mesmo antes da migration 20260814120000 ser aplicada.
+          funcao: 'frequentador',
           entrou_em: new Date().toISOString().slice(0, 10),
         });
         if (eVinc) throw eVinc;
@@ -2613,8 +3153,18 @@ async function aprovarPedidoCore(pedidoId, user) {
           });
         }
 
-        // Notifica o líder — novo membro chegando
-        if (liderAuthUserId) {
+        // Notifica quem responde pelo grupo — novo membro chegando.
+        //
+        // ⚠️ O `liderAuthUserId` acima vem de `vol_profiles` (a tabela do
+        // VOLUNTARIADO) e por isso alcança 8 dos 100 grupos com líder, contra 12
+        // por `profiles.membro_id` — e nunca o supervisor. É a mesma
+        // sub-cobertura silenciosa consertada nos caminhos de pedido em 10/08:
+        // aqui ela deixava o líder sem saber que alguém entrou no grupo dele.
+        // A UNIÃO das duas fontes é o que existe de vínculo; mantenho o
+        // `liderAuthUserId` no conjunto pra não perder quem só ele alcança.
+        const donosDoDestino = await donosDoGrupo(grupo.id).catch(() => []);
+        const avisarEntrada = [...new Set([...donosDoDestino, liderAuthUserId].filter(Boolean))];
+        if (avisarEntrada.length) {
           await notificar({
             modulo: 'grupos',
             tipo: 'novo_membro_grupo',
@@ -2623,7 +3173,7 @@ async function aprovarPedidoCore(pedidoId, user) {
             link: `/grupos`,
             severidade: 'info',
             chaveDedup: `novo_membro_${pedido.id}`,
-            targetIds: [liderAuthUserId],
+            targetIds: avisarEntrada,
           });
         }
 
@@ -2730,7 +3280,7 @@ router.post('/pedidos/:pedidoId/sugerir', authorizeModule('grupos', 3), async (r
       sugerido_grupo_id: grupoSugerido.id,
       sugerido_em: new Date().toISOString(),
       sugerido_por_nome: req.user.name || null,
-    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'encaminhado', 'rejeitado']).select('id');
+    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'sem_contato', 'encaminhado', 'rejeitado']).select('id');
     if (marcado && marcado.length) {
       registrarEventoPedido(pedido.id, 'encaminhado', {
         grupo_sugerido: grupoSugerido.nome,
@@ -2816,6 +3366,69 @@ router.post('/pedidos/:pedidoId/aprovar', authorizeModule('grupos', 3), async (r
   } catch (e) { console.error('[Pedido aprovar]', e.message); res.status(500).json({ error: 'Erro ao aprovar pedido' }); }
 });
 
+// POST /api/grupos/pedidos/:pedidoId/aprovar-direto — body: { grupo_id? }
+// A TRIAGEM decide por cima (Marcos · 2026-08-05): erro humano de recusa é
+// frequente (caso real: 4 mulheres devolvidas por engano na "Confira a lista"
+// do MULHER ÚNICA), então a equipe pode aprovar um pedido rejeitado/devolvido/
+// encaminhado E, opcionalmente, mudar o grupo ali mesmo — sem depender do link
+// do líder nem do aceite da pessoa (diferente do "Sugerir outro grupo").
+// O pedido é reaberto pra 'pendente' e passa pelo aprovarPedidoCore canônico
+// (cria vínculo, avisa líder e pessoa, registra evento) — nada de 2º caminho
+// de aprovação com regras próprias.
+router.post('/pedidos/:pedidoId/aprovar-direto', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const grupoNovoId = typeof req.body?.grupo_id === 'string' && req.body.grupo_id ? req.body.grupo_id : null;
+    const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos')
+      .select('id, status, grupo_id, nome').eq('id', req.params.pedidoId).is('deleted_at', null).maybeSingle();
+    if (ePed) throw ePed;
+    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
+    // 'sem_contato' entra aqui (Naná · 17/08): é o caso MAIS provável de a
+    // triagem aprovar por cima — ela consegue falar com a pessoa por outro
+    // canal e destrava na hora. Deixá-lo de fora tornaria o desfecho novo um
+    // beco sem saída, que é o oposto do que ele existe pra resolver.
+    if (!['pendente', 'devolvido', 'rejeitado', 'encaminhado', 'sem_contato'].includes(pedido.status)) {
+      return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
+    }
+
+    // Realocação opcional: valida o grupo de destino contra o catálogo vivo.
+    let grupoDestinoNome = null;
+    const vaiRealocar = grupoNovoId && grupoNovoId !== pedido.grupo_id;
+    if (vaiRealocar) {
+      const { data: gNovo } = await supabase.from('mem_grupos')
+        .select('id, nome, ativo').eq('id', grupoNovoId).is('deleted_at', null).maybeSingle();
+      if (!gNovo || gNovo.ativo === false) {
+        return res.status(400).json({ error: 'Grupo de destino inválido ou inativo' });
+      }
+      grupoDestinoNome = gNovo.nome;
+    }
+
+    // Reabre + realoca num UPDATE só, com guarda de corrida no status atual
+    // (uma aprovação/recusa simultânea não é sobrescrita — quem perde vê 409).
+    const statusAntes = pedido.status;
+    if (statusAntes !== 'pendente' || vaiRealocar) {
+      const upd = { status: 'pendente', decidido_por: null, decidido_por_nome: null, decidido_em: null };
+      if (vaiRealocar) upd.grupo_id = grupoNovoId;
+      const { data: claimed, error: eUpd } = await supabase.from('mem_grupo_pedidos')
+        .update(upd).eq('id', pedido.id).eq('status', statusAntes).select('id');
+      if (eUpd) throw eUpd;
+      if (!claimed || !claimed.length) {
+        return res.status(409).json({ error: 'Pedido mudou de status — recarregue a lista' });
+      }
+      // Linha do tempo: a decisão "por cima" fica registrada com quem fez e de
+      // onde veio (o core registra o 'aprovado' logo em seguida). Awaited de
+      // propósito (serverless descarta trabalho pendente pós-res.json).
+      await registrarEventoPedido(pedido.id, 'aprovado_triagem', {
+        status_anterior: statusAntes,
+        ...(grupoDestinoNome ? { realocado_para: grupoDestinoNome } : {}),
+      }, req.user.name);
+    }
+
+    const r = await aprovarPedidoCore(pedido.id, req.user);
+    if (!r.ok) return res.status(r.code).json({ error: r.error });
+    res.json({ success: true, grupo_id: r.grupo_id || null });
+  } catch (e) { console.error('[Pedido aprovar-direto]', e.message); res.status(500).json({ error: 'Erro ao aprovar pedido' }); }
+});
+
 // POST /api/grupos/pedidos/:pedidoId/rejeitar — body: { motivo? }
 // Quem recusa AQUI é a EQUIPE da triagem (Naná/Nélio — o líder não usa a
 // plataforma: ele decide pelo link do WhatsApp, e a recusa dele DEVOLVE o
@@ -2827,7 +3440,7 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
     const { data: pedido } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, membro_id, nome, motivo_rejeicao').eq('id', req.params.pedidoId).single();
     if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    if (!['pendente', 'devolvido', 'encaminhado'].includes(pedido.status)) {
+    if (!['pendente', 'devolvido', 'sem_contato', 'encaminhado'].includes(pedido.status)) {
       return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
     }
 
@@ -2840,7 +3453,7 @@ router.post('/pedidos/:pedidoId/rejeitar', authorizeModule('grupos', 3), async (
       decidido_por: req.user.userId,
       decidido_por_nome: req.user.name,
       decidido_em: new Date().toISOString(),
-    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'encaminhado']).select('id');
+    }).eq('id', pedido.id).in('status', ['pendente', 'devolvido', 'sem_contato', 'encaminhado']).select('id');
     if (!claimed || !claimed.length) {
       return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
     }
@@ -3039,6 +3652,22 @@ router.patch('/pessoas/:membroId/ficha', authorizeModule('grupos', 5), async (re
         }
       }
       upd.data_nascimento = v || null;
+    }
+    // ⚠️ `genero` ENTROU em 13/08/2026: o GET já o devolvia e o PATCH o
+    // descartava em silêncio, então era IMPOSSÍVEL completar um cadastro por
+    // esta tela — e sexo é um dos 6 campos que a régua exige pra promover
+    // visitante → participante. A pessoa ficaria visitante pra sempre com a
+    // tela mostrando "falta: sexo" e nenhum lugar pra preencher. Mesmo defeito
+    // que travou a fila de membresia em 04/08.
+    //
+    // ⚠️ `masculino|feminino`, NUNCA "outro" — o canônico do Contrato de
+    // Inscrição em todas as 7 portas. Aceita M/F na entrada (o legado gravou
+    // assim) e normaliza pro canônico na saída.
+    if ('genero' in body) {
+      const v = limpo(body.genero).toLowerCase();
+      const mapa = { m: 'masculino', f: 'feminino', masculino: 'masculino', feminino: 'feminino' };
+      if (v && !mapa[v]) return res.status(400).json({ error: 'Sexo deve ser masculino ou feminino.', campo: 'genero' });
+      upd.genero = v ? mapa[v] : null;
     }
     if ('observacoes' in body) {
       const v = limpo(body.observacoes);
@@ -3980,6 +4609,61 @@ router.get('/:id/candidatos-adicionar', authorizeModule('grupos', 3), async (req
 });
 
 // POST /api/grupos/:id/membros — adicionar membro
+// POST /api/grupos/:id/pessoas — cadastrar pessoa NOVA já dentro do grupo
+//
+// ⚠️ O GÊMEO WEB do `POST /app/grupos/:id/pessoas` (Marcos · 25/08/2026:
+// *"alinhe todas essas mudanças com o sistema web"*). A régua é a MESMA
+// (`services/grupoPessoaDireta`); aqui só muda quem autoriza e o rótulo da
+// origem na observação de identidade.
+//
+// ⚠️ NÃO substitui `POST /:id/membros`, que continua sendo o caminho pra quem
+// JÁ EXISTE na base (o funil de entrada da tela escolhe uma pessoa e manda o
+// `membro_id`). Este é pra quem não existe ainda — e é por isso que passa pelo
+// matcher: se a pessoa existir mesmo assim, ele liga em vez de duplicar.
+router.post('/:id/pessoas', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('id, nome').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
+
+    const r = await cadastrarPessoaNoGrupo({
+      grupo,
+      dados: req.body || {},
+      autor: { id: req.user?.id || null, nome: req.user?.name || req.user?.email || 'Equipe' },
+      origem: 'grupos_erp_equipe',
+      ip: req.ip || null,
+      userAgent: req.get?.('user-agent') || null,
+    });
+    if (!r.ok) return res.status(r.http || 400).json({ error: r.error, campo: r.campo });
+
+    // Mesma régua do `POST /:id/membros`: "novo membro NO GRUPO X" é assunto do
+    // grupo X, então o aviso vai pros donos dele, não pro fan-out do módulo.
+    if (!r.ja_no_grupo) {
+      (async () => {
+        const donos = await donosDoGrupo(grupo.id).catch(() => []);
+        if (!donos.length) return;
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'novo_membro_grupo',
+          titulo: `Novo membro no grupo ${grupo.nome}`,
+          mensagem: `${r.nome} foi cadastrada pela equipe e entrou no grupo ${grupo.nome}.`
+            + (r.sem_cpf ? ' Cadastro sem CPF — aparece na fila de "faltam dados".' : ''),
+          link: '/grupos',
+          severidade: 'info',
+          chaveDedup: `novo_membro_${grupo.id}_${r.membro_id}`,
+          targetIds: donos,
+        });
+      })().catch(e => console.warn('[Grupos pessoas] notificar:', e.message));
+    }
+
+    const { ok, http, ...corpo } = r;
+    res.status(http || 201).json({ ok: true, ...corpo });
+  } catch (e) {
+    console.error('[Grupos pessoas]', e.message);
+    res.status(500).json({ error: 'Erro ao cadastrar a pessoa' });
+  }
+});
+
 router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const { membro_id } = req.body;
@@ -3991,7 +4675,11 @@ router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
       .eq('membro_id', membro_id).is('saiu_em', null);
 
     const { data, error } = await supabase.from('mem_grupo_membros').insert({
-      grupo_id: req.params.id, membro_id, entrou_em: new Date().toISOString().split('T')[0],
+      grupo_id: req.params.id, membro_id,
+      // ⚠️ A coordenação adicionou esta pessoa ao grupo DE PROPÓSITO — isso é
+      // participação, não visita (mesma régua da aprovação de pedido · 13/08/2026).
+      funcao: 'frequentador',
+      entrou_em: new Date().toISOString().split('T')[0],
     }).select().single();
     if (error) throw error;
 
@@ -4002,7 +4690,12 @@ router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
           supabase.from('mem_grupos').select('nome').eq('id', req.params.id).single(),
           supabase.from('mem_membros').select('nome').eq('id', membro_id).single(),
         ]);
-        if (grupo && membro) {
+        // ⚠️ "Novo membro NO GRUPO X" é assunto do grupo X. Este ponto era o
+        // contraste mais claro do problema: o MESMO tipo `novo_membro_grupo`
+        // disparado pela aprovação de pedido já ia dirigido ao líder, e aqui
+        // (inclusão à mão) ia pro fan-out de ~16 admins.
+        const donos = await donosDoGrupo(req.params.id);
+        if (grupo && membro && donos.length) {
           await notificar({
             modulo: 'grupos',
             tipo: 'novo_membro_grupo',
@@ -4011,6 +4704,7 @@ router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
             link: '/grupos',
             severidade: 'info',
             chaveDedup: `novo_membro_${req.params.id}_${membro_id}`,
+            targetIds: donos,
           });
         }
       } catch (notifErr) { console.error('[Grupos notify add]', notifErr.message); }
@@ -4028,6 +4722,147 @@ router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
 // mem_grupos.supervisor_id (supervisor). Este endpoint agrega tudo em 1 linha
 // por pessoa com o papel efetivo (o mais alto entre os 3).
 // ============================================================================
+
+// ══════════════════════════════════════════════════════════════════════════
+// VÍNCULOS DUPLICADOS · a mesma pessoa com 2+ linhas ATIVAS no MESMO grupo
+// ══════════════════════════════════════════════════════════════════════════
+// Relatório de saneamento pra coordenação (pedido do Matheus, 13/08/2026, depois
+// que a coluna Grupo apareceu repetindo o mesmo grupo 5× na mesma pessoa).
+// Régua PURA em `utils/vinculosDuplicados.js`. Ver lá o porquê de remover ser
+// `deleted_at` e não `saiu_em`.
+//
+// ⚠️ Caminho de DOIS segmentos de propósito: `router.get('/:id')` (linha ~3722)
+// casa qualquer rota de UM segmento declarada depois dele. É a armadilha que
+// este módulo já pagou (os `/kpis/*` e o `/avaliar` das Propostas) — com dois
+// segmentos a ordem de declaração deixa de importar.
+
+// GET /api/grupos/vinculos/duplicados
+router.get('/vinculos/duplicados', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    // Vínculos ATIVOS · paginado (passa do cap de 1000 do PostgREST: ~1.4 mil)
+    let linhas = [];
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await supabase.from('mem_grupo_membros')
+        .select('id, membro_id, grupo_id, funcao, presencas, entrou_em, created_at')
+        .is('saiu_em', null).is('deleted_at', null)
+        .order('created_at', { ascending: true })
+        .range(offset, offset + 999);
+      if (error) throw error;
+      linhas = linhas.concat(data || []);
+      if (!data || data.length < 1000) break;
+    }
+
+    const resumo = agruparDuplicados(linhas);
+    if (!resumo.casos.length) {
+      return res.json({ ...resumo, total_casos: 0, casos: [], truncado: false });
+    }
+
+    // Nomes de pessoa e de grupo · `.in()` em lotes de 200 (URL do PostgREST)
+    const nomes = async (tabela, ids, campo = 'nome') => {
+      const mapa = {};
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data } = await supabase.from(tabela).select(`id, ${campo}`).in('id', ids.slice(i, i + 200));
+        (data || []).forEach((r) => { mapa[r.id] = r[campo]; });
+      }
+      return mapa;
+    };
+    const [nomePessoa, nomeGrupo] = await Promise.all([
+      nomes('mem_membros', [...new Set(resumo.casos.map((c) => c.membro_id))]),
+      nomes('mem_grupos', [...new Set(resumo.casos.map((c) => c.grupo_id))]),
+    ]);
+
+    // Teto DECLARADO: relatório que corta em silêncio faz a coordenação achar
+    // que terminou o saneamento quando ainda há fila.
+    const TETO = 300;
+    const truncado = resumo.casos.length > TETO;
+    const casos = resumo.casos.slice(0, TETO).map((c) => ({
+      ...c,
+      membro_nome: nomePessoa[c.membro_id] || '—',
+      grupo_nome: nomeGrupo[c.grupo_id] || '—',
+    }));
+
+    res.json({
+      ...resumo,
+      total_casos: resumo.casos.length,
+      casos,
+      truncado,
+      exibidos: casos.length,
+    });
+  } catch (e) {
+    console.error('[grupos] vinculos/duplicados:', e.message);
+    res.status(500).json({ error: 'Erro ao levantar vínculos duplicados' });
+  }
+});
+
+// POST /api/grupos/vinculos/duplicados/resolver  { manter_id, remover_ids[] }
+// ⚠️ Nível 4: isto REMOVE linha (soft delete), não é edição.
+router.post('/vinculos/duplicados/resolver', authorizeModule('grupos', 4), async (req, res) => {
+  try {
+    const manterId = String(req.body?.manter_id || '');
+    const removerIds = Array.isArray(req.body?.remover_ids) ? req.body.remover_ids.map(String) : [];
+    if (!manterId || !removerIds.length) {
+      return res.status(400).json({ error: 'Informe manter_id e remover_ids.' });
+    }
+
+    // Relê a linha mantida pra descobrir o CASO (membro, grupo) — o payload diz
+    // QUAIS linhas, nunca SE pode. Mesma régua do lote de cadastros.
+    const { data: base, error: eBase } = await supabase.from('mem_grupo_membros')
+      .select('id, membro_id, grupo_id')
+      .eq('id', manterId).is('saiu_em', null).is('deleted_at', null).maybeSingle();
+    if (eBase) throw eBase;
+    if (!base) return res.status(409).json({ error: 'A linha escolhida não está mais ativa. Recarregue o relatório.' });
+
+    const { data: vivas, error: eVivas } = await supabase.from('mem_grupo_membros')
+      .select('id, membro_id, grupo_id, funcao, presencas, entrou_em, created_at')
+      .eq('membro_id', base.membro_id).eq('grupo_id', base.grupo_id)
+      .is('saiu_em', null).is('deleted_at', null);
+    if (eVivas) throw eVivas;
+
+    const veredito = validarResolucao(vivas, manterId, removerIds);
+    if (!veredito.ok) {
+      const MSG = {
+        nao_ha_duplicata: 'Este caso já foi resolvido. Recarregue o relatório.',
+        manter_invalido: 'A linha escolhida não pertence a este caso.',
+        nada_a_remover: 'Nenhuma linha para remover.',
+        manter_na_lista_de_remover: 'A linha mantida não pode estar na lista de remoção.',
+        linha_fora_do_caso: 'Há uma linha de outro caso no pedido. Recarregue o relatório.',
+        removeria_todas: 'Isso removeria todos os vínculos da pessoa neste grupo.',
+      };
+      return res.status(409).json({ error: MSG[veredito.erro] || 'Pedido inválido.', codigo: veredito.erro });
+    }
+
+    // Sequencial e um a um: são poucas linhas por caso, e o que importa é saber
+    // exatamente qual falhou. `app_soft_delete` é o caminho canônico (a tabela
+    // está na whitelist · LEI nº 2 do runbook de segurança).
+    const removidos = [];
+    const falhas = [];
+    for (const id of veredito.remover) {
+      const { data, error } = await supabase.rpc('app_soft_delete', {
+        p_table_name: 'mem_grupo_membros',
+        p_row_id: id,
+        p_deleted_by: req.user?.id ?? null,
+      });
+      if (error || data === false) {
+        falhas.push({ id, erro: error?.message || 'app_soft_delete devolveu false' });
+      } else {
+        removidos.push(id);
+      }
+    }
+
+    if (falhas.length) console.error('[grupos] duplicados/resolver falhas:', JSON.stringify(falhas));
+    res.json({
+      ok: falhas.length === 0,
+      membro_id: base.membro_id,
+      grupo_id: base.grupo_id,
+      manter_id: manterId,
+      removidos,
+      falhas,
+    });
+  } catch (e) {
+    console.error('[grupos] duplicados/resolver:', e.message);
+    res.status(500).json({ error: 'Erro ao resolver o vínculo duplicado' });
+  }
+});
 
 // GET /api/grupos/pessoas/papeis
 router.get('/pessoas/papeis', async (req, res) => {
@@ -4073,24 +4908,36 @@ router.get('/pessoas/papeis', async (req, res) => {
     const ids = [...pessoaIds];
     const membrosMap = {};
     for (let i = 0; i < ids.length; i += 400) {
+      // ⚠️ cpf/email/nascimento/genero entram SÓ pra decidir se o cadastro está
+      // completo (selo "faltam dados" · régua do Matheus 13/08). Os VALORES não
+      // vão pro payload — quem precisa deles abre a ficha na Membresia, que é
+      // gated por módulo próprio. Aqui a resposta carrega só o que FALTA.
       const { data: ms } = await supabase
         .from('mem_membros')
-        .select('id, nome, foto_url, telefone')
+        .select('id, nome, foto_url, telefone, cpf, email, data_nascimento, genero')
         .in('id', ids.slice(i, i + 400))
         .is('deleted_at', null);
       (ms || []).forEach(m => { membrosMap[m.id] = m; });
     }
 
-    const RANK = { coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, lider_treinamento: 3, frequentador: 2, visitante: 1 };
+    // `co_lider` fica no mapa só pra LER dado histórico (ver publicGrupos).
+    const RANK = { coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, lider_treinamento: 4, frequentador: 2, visitante: 1 };
     const pessoas = {};
     const garante = (mid) => {
       if (!pessoas[mid]) {
         const m = membrosMap[mid] || {};
+        // Espelho JS de `fn_membro_cadastro_completo` (o trigger que promove
+        // visitante → participante quando os dados chegam). A tela mostra o que
+        // FALTA; os valores ficam no servidor.
+        const cadastro = avaliarCadastroPessoa(m);
         pessoas[mid] = {
           membro_id: mid,
           nome: m.nome || '—',
           foto_url: m.foto_url || null,
           telefone: m.telefone || null,
+          cadastro_completo: cadastro.completo,
+          cadastro_faltando: cadastro.faltando,
+          cadastro_rotulos: cadastro.rotulos,
           papel: null,
           rank: 0,
           grupos: [],
@@ -4171,6 +5018,15 @@ router.get('/pessoas/papeis', async (req, res) => {
 
     const lista = Object.values(pessoas)
       .sort((a, b) => b.rank - a.rank || (a.nome || '').localeCompare(b.nome || ''));
+
+    // Marcadores de jornada (pedido do Arthur Serpa / Pr. Nélio · 13/08/2026):
+    // o líder vê em que etapa cada pessoa da turma está e direciona.
+    // ⚠️ `incluirSensiveis` decide no SERVIDOR: quem só tem o módulo `grupos`
+    // NÃO recebe o marcador de generosidade — nem o booleano (decisão do
+    // Matheus). Filtrar isso no cliente seria maquiagem.
+    const { indisponiveis: marcIndisp } = await anexarMarcadores(lista, (p) => p.membro_id, {
+      incluirSensiveis: podeVerMarcadorSensivel(req.user),
+    });
     // total = PESSOAS distintas · inscritos = TODA conexão pessoa×grupo (roster +
     // liderar + supervisionar · líder/supervisor também é inscrição naquele grupo,
     // Marcos 2026-07-23). Distinct (membro|grupo) pra não duplicar quem lidera e é
@@ -4181,10 +5037,109 @@ router.get('/pessoas/papeis', async (req, res) => {
       if (g.lider_id) conex.add(g.lider_id + '|' + g.id);
       if (g.supervisor_id) conex.add(g.supervisor_id + '|' + g.id);
     });
-    res.json({ total: lista.length, inscritos: conex.size, pessoas: lista });
+    res.json({
+      total: lista.length, inscritos: conex.size, pessoas: lista,
+      marcadores_indisponiveis: marcIndisp,
+    });
   } catch (e) {
     console.error('[grupos] pessoas/papeis:', e.message);
     res.status(500).json({ error: 'Erro ao carregar pessoas' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Completar o SEXO de quem está sem (Matheus · 14/08/2026)
+//
+//  ⚠️⚠️ Nível 5 e restrito ao UNIVERSO DE GRUPOS. Escrever `genero` em massa
+//  mexe na régua que decide quem entra em grupo de Homens/Mulheres; e um
+//  endpoint guardado por `grupos` não pode escrever em quem nunca passou por um
+//  grupo — por isso `apenasIds`, e não a base inteira.
+//
+//  ⚠️ DUAS camadas, e a diferença entre elas é a LEI de 10/08:
+//    · /sexo/colher     → a pessoa JÁ declarou em outra porta. Grava direto.
+//    · /sexo/sugestoes  → palpite por nome. NÃO grava. Só sugere.
+//    · /sexo/confirmar  → grava o que uma PESSOA confirmou.
+// ════════════════════════════════════════════════════════════════════════════
+router.post('/pessoas/sexo/colher', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    const universo = await universoGrupos();
+    const r = await sexoCompletar.colherDeclaracoes({
+      aplicar: req.body?.aplicar === true,   // default = dry-run
+      apenasIds: universo,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('[grupos] sexo/colher:', e.message);
+    res.status(500).json({ error: 'Erro ao colher o sexo declarado nas outras portas.' });
+  }
+});
+
+router.get('/pessoas/sexo/sugestoes', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    const universo = await universoGrupos();
+    // ⚠️ Em BLOCOS (`offset`): o `request()` do cliente aborta em 30s, e no 1º
+    // uso real (14/08) a tela ficou presa em "Consultando a IA…" sem retorno.
+    // Quem varre a lista inteira é a TELA, um bloco por vez, com progresso — a
+    // lei de 04/08 (operação longa não cabe numa requisição só).
+    const r = await sexoCompletar.sugerirPorNome({
+      limite: Number(req.query.limite) || undefined,
+      offset: Number(req.query.offset) || 0,
+      apenasIds: universo,
+    });
+    res.json(r);
+  } catch (e) {
+    // Chave de IA ausente/inválida é o caso mais comum aqui (lição de 22/07):
+    // dizer isso em vez de "erro" evita meia hora procurando bug de código.
+    const semChave = /ANTHROPIC_API_KEY|authentication_error|invalid x-api-key/i.test(e.message || '');
+    console.error('[grupos] sexo/sugestoes:', e.message);
+    res.status(semChave ? 503 : 500).json({
+      error: semChave
+        ? 'A IA não está configurada no servidor — sem ela não há sugestão de sexo por nome.'
+        : 'Erro ao pedir as sugestões.',
+    });
+  }
+});
+
+router.post('/pessoas/sexo/confirmar', authorizeModule('grupos', 5), async (req, res) => {
+  try {
+    const universo = await universoGrupos();
+    // ⚠️ O payload diz QUAIS, nunca "se pode": o servidor recorta pro universo
+    // antes de escrever. Sem isto, um id colado à mão escreveria em qualquer
+    // cadastro da base.
+    const itens = (Array.isArray(req.body?.itens) ? req.body.itens : [])
+      .filter(i => universo.has(i?.membro_id));
+    if (!itens.length) return res.status(400).json({ error: 'Nada a confirmar.' });
+    const r = await sexoCompletar.confirmarSexos(itens, { por: req.user?.id || null });
+    res.json(r);
+  } catch (e) {
+    console.error('[grupos] sexo/confirmar:', e.message);
+    res.status(500).json({ error: 'Erro ao gravar os sexos confirmados.' });
+  }
+});
+
+// POST /api/grupos/pessoas/:membroId/pedir-dados
+//
+// "O líder deve ter o papel de pegar os dados dele" (Matheus · 13/08/2026), sem
+// ninguém digitar CPF alheio: manda pra PRÓPRIA PESSOA o link pessoal do censo,
+// pelo canal dela, e ela preenche. Quando o cadastro fecha, o trigger
+// `tg_grupo_visitante_vira_participante` promove sozinho.
+//
+// ⚠️ Nível 3, não 4: o disparo em MASSA do censo é nível 4 porque fala com 200
+// pessoas de uma vez e consome a cota do TIER_250. Aqui é UMA mensagem, para
+// uma pessoa do grupo — mesma ordem de risco de editar um cadastro.
+//
+// ⚠️ Quem envia é o SERVIDOR, e o link nunca passa por quem clicou: aquele link
+// abre o cadastro da pessoa preenchido E editável. Ver o comentário longo em
+// `censoDisparo.convidarPessoa`.
+router.post('/pessoas/:membroId/pedir-dados', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const r = await censoDisparo.convidarPessoa(req.params.membroId, { por: req.user?.id || null });
+    // 409 (não 500) quando a régua recusou: não é erro do servidor, é resposta.
+    if (r.ok === false) return res.status(409).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error('[grupos] pedir-dados:', e.message);
+    res.status(500).json({ error: 'Não foi possível enviar o pedido de dados agora.' });
   }
 });
 
@@ -4703,7 +5658,10 @@ router.put('/:id/supervisor', authorizeModule('grupos', 5), async (req, res) => 
 router.put('/membros/:membroRowId/funcao', async (req, res) => {
   try {
     const { funcao } = req.body || {};
-    const VALIDAS = ['visitante', 'frequentador', 'lider_treinamento', 'lider', 'co_lider', 'supervisor', 'coordenador'];
+    // ⚠️ `co_lider` SAIU (Marcos · 25/08/2026). O banco recusa o valor
+    // (`chk_grupo_membros_sem_colider`), então aceitá-lo aqui só produziria
+    // 23514 com mensagem de erro genérica na tela.
+    const VALIDAS = ['visitante', 'frequentador', 'lider_treinamento', 'lider', 'supervisor', 'coordenador'];
     if (!VALIDAS.includes(funcao)) {
       return res.status(400).json({ error: `função deve ser uma de: ${VALIDAS.join(', ')}` });
     }

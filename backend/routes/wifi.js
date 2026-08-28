@@ -3,16 +3,31 @@ const { authenticate, authorizeModule, requireSuperAdmin } = require('../middlew
 const { supabase } = require('../utils/supabase');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const { runWifiSync } = require('../services/wifiSync');
+const { AppError, ERROR_CODES } = require('../utils/appError');
 
+// ⚠️⚠️ A COLETA AUTOMÁTICA DO WI-FI ESTÁ DESLIGADA (13/08/2026 · decisão do
+// Matheus): o portal cativo que pedia dados da pessoa saiu do ar (última
+// conexão real 26/06) e o alerta diário de "automação parada" virou barulho —
+// 619 notificações, 515 não lidas. O cron saiu do `vercel.json` e do
+// `systemCatalog`; esta rota FICA porque é o caminho de reativação (e o
+// disparo manual de depuração), mas hoje NINGUÉM a chama.
+// ⚠️ Antes de repor o cron, consertar `fn_wifi_processar_vinculos`: o
+// `ON CONFLICT ... WHERE status='pendente'` dela não casa mais com o índice
+// `uniq_identidade_pendencia_aberta` (que ganhou `AND tipo <>
+// 'inscricao_sem_vinculo'` na migration 20260731120000) → 42P10 a cada
+// execução. As LEITURAS abaixo (histórico, pessoas, cultos) não dependem
+// disso e seguem funcionando.
 // ── Cron · ANTES de authenticate ──
-router.get('/cron/sync', async (req, res) => {
+router.get('/cron/sync', async (req, res, next) => {
   if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'unauthorized' });
   try {
     const r = await runWifiSync();
     res.json(r);
   } catch (e) {
-    console.error('[wifi/cron/sync]', e.message);
-    res.status(500).json({ error: e.message });
+    next(new AppError('Falha na sincronização automática do Wi-Fi', {
+      code: ERROR_CODES.WIFI_SYNC_FAILED,
+      cause: e,
+    }));
   }
 });
 
@@ -21,12 +36,15 @@ router.get('/cron/sync', async (req, res) => {
 router.use(authenticate, requireSuperAdmin);
 
 // Sincronizar agora (manual)
-router.post('/sync', authorizeModule('wifi', 3), async (_req, res) => {
+router.post('/sync', authorizeModule('wifi', 3), async (_req, res, next) => {
   try {
     const r = await runWifiSync();
     res.json(r);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    next(new AppError('Falha na sincronização manual do Wi-Fi', {
+      code: ERROR_CODES.WIFI_SYNC_FAILED,
+      cause: e,
+    }));
   }
 });
 

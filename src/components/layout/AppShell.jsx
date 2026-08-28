@@ -15,12 +15,7 @@ import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
 import { navItemAllowed } from '../../lib/menuAccess';
 import {
-  Users, DollarSign, Truck, Tag,
-  CalendarDays, FolderKanban, Map, ListChecks,
-  UserCheck, UsersRound, Heart, HandHelping, BookOpen, ArrowRight, TrendingUp, Youtube,
-  Megaphone, BrainCircuit, ShoppingCart, LayoutDashboard, SlidersHorizontal, Images,
-  Sun, Moon, Bell, BellRing, BellOff, LogOut, Search, Check, CheckCheck, Settings, MonitorSmartphone, BarChart2, ClipboardCheck, Activity, MessageSquare, Shield, Menu as MenuIcon,
-  Baby, GraduationCap, ArrowRightLeft, Sparkles, Compass, Camera, UserSearch, Droplets, Landmark,
+  Activity, ArrowRight, ArrowRightLeft, Baby, BarChart2, Bell, BellOff, BellRing, BookOpen, BrainCircuit, CalendarDays, Camera, Check, CheckCheck, ClipboardCheck, ClipboardList, Compass, DollarSign, Droplets, FileText, FolderKanban, GraduationCap, HandHelping, Heart, Landmark, LayoutDashboard, ListChecks, LogOut, Map, Megaphone, Menu as MenuIcon, MessageSquare, MonitorSmartphone, Moon, QrCode, Search, Settings, Shield, ShoppingCart, SlidersHorizontal, Sparkles, Sun, Tag, Target, TrendingUp, Truck, UserCheck, UserSearch, Users, UsersRound, Youtube, Filter,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -69,9 +64,29 @@ function tempoAtras(iso) {
   return `${Math.floor(mins / 1440)}d`;
 }
 
-// 6 módulos macro · alinhados com o roadmap apresentado ao gestor
-// (Administração · Inteligência · Planejamento · Ministerial · Cultos · Criativo)
+// 7 módulos macro · alinhados com o roadmap apresentado ao gestor
+// (Staff · Administração · Inteligência · Planejamento · Ministerial · Cultos · Criativo)
+// "Staff" (2026-08-14 · decisão do Marcos): Solicitações + Minhas Tarefas saíram do
+// grupo Administração (que agora só reúne quem de fato usa RH/Financeiro/Logística/
+// Patrimônio/Sistema/Permissões) e viraram grupo próprio, no topo do menu, porque
+// são usados por TODO colaborador — pura reorganização de EXIBIÇÃO, sem mudança
+// de módulo/permissão/rota (Solicitações segue perm 'isColaborador'; Minhas Tarefas
+// segue sem module/perm, aberta a qualquer autenticado).
 const NAV_ITEMS = [
+  {
+    id: 7,
+    label: 'Staff',
+    subMenus: [
+      {
+        title: 'Serviços',
+        items: [
+          { label: 'Solicitações', description: 'TI, compras, reembolso, espaços e férias', icon: ShoppingCart, path: '/solicitacoes', perm: 'isColaborador' },
+          // Sem perm/module: página pessoal · visível pra qualquer autenticado
+          { label: 'Minhas Tarefas', description: 'Suas tarefas pessoais — lista, kanban e calendário', icon: ListChecks, path: '/tarefas' },
+        ],
+      },
+    ],
+  },
   {
     id: 1,
     label: 'Administração',
@@ -81,16 +96,12 @@ const NAV_ITEMS = [
         items: [
           { label: 'Recursos Humanos', description: 'Funcionários, treinamentos e férias', icon: Users, path: '/admin/rh', perm: 'canRH' },
           { label: 'Financeiro', description: 'Contas, transações e reembolsos', icon: DollarSign, path: '/admin/financeiro', perm: 'canFinanceiro' },
+          // Campanhas fica ao lado do Financeiro (não em Planejamento): quem lê a
+          // arrecadação é quem já lê o caixa, e a matriz de permissão do módulo foi
+          // semeada da do financeiro. `module:` (não `perm:`) — quem decide é a matriz.
+          { label: 'Campanhas', description: 'Arrecadação · meta, dígito verificador, cronograma e disparos', icon: Target, path: '/campanhas', module: 'campanhas' },
           { label: 'Logística', description: 'Fornecedores, compras e pedidos', icon: Truck, path: '/admin/logistica', perm: 'canLogistica' },
           { label: 'Patrimônio', description: 'Bens, localizações e inventário', icon: Tag, path: '/admin/patrimonio', perm: 'canPatrimonio' },
-        ],
-      },
-      {
-        title: 'Serviços',
-        items: [
-          { label: 'Solicitações', description: 'TI, compras, reembolso, espaços e férias', icon: ShoppingCart, path: '/solicitacoes', perm: 'isColaborador' },
-          // Sem perm/module: página pessoal · visível pra qualquer autenticado
-          { label: 'Minhas Tarefas', description: 'Suas tarefas pessoais — lista, kanban e calendário', icon: ListChecks, path: '/tarefas' },
         ],
       },
       {
@@ -111,17 +122,32 @@ const NAV_ITEMS = [
         items: [
           { label: 'Painel CBRio', description: 'NSM · 5 valores · 6 áreas — visão macro · ritual mensal', icon: Activity, path: '/painel', module: 'painel-cbrio' },
           { label: 'Monitoramento OKR', description: 'Planejamento estratégico 2026 · NSM, 9 OKRs e indicadores táticos', icon: Compass, path: '/monitoramento-okr' },
-          { label: 'Jornada da Igreja', description: 'Profundidade da igreja · 5 valores · Membro Modelo (≥2 valores)', icon: Sparkles, path: '/jornada' },
+          // ⚠️ `module: 'membresia'` acrescentado em 20/08: a tela lista PESSOAS
+          // (`GET /jornada/membros`), e aquele endpoint passou a exigir nível 2.
+          // Sem isto o item aparece pra quem depois toma 403 — item de menu que
+          // não abre é pior que item ausente.
+          { label: 'Jornada da Igreja', description: 'Profundidade da igreja · 5 valores · Membro Modelo (≥2 valores)', icon: Sparkles, path: '/jornada', module: 'membresia' },
           { label: 'Dashboard Semanal', description: 'Painel da reunião de quarta · semanal · mensal · metas · gerador IA', icon: LayoutDashboard, path: '/dashboard-semanal' },
+          { label: 'ATA Semanal', description: 'Ata da reunião ministerial de segunda · redigida a partir da gravação', icon: FileText, path: '/ata-semanal' },
           { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area', module: 'minha-area' },
         ],
       },
       {
         title: 'Análise',
         items: [
+          // ⚠️ Entrou no menu em 20/08/2026. A tela existia desde MAIO e nunca teve
+          // item — só abria digitando /admin/cruzamentos. É a lei "tela fora do
+          // menu é tela invisível": o Matheus pediu critérios novos nela e depois
+          // perguntou onde a funcionalidade estava.
+          // `module: 'membresia'` espelha o guard do servidor (jornada.js). Fica em
+          // Inteligência (decisão dele) porque quem pergunta "quantos voluntários
+          // são batizados" procura em análise, não em Administração.
+          { label: 'Cruzamentos', description: 'Cruza batismo, NEXT, conversão, grupos e voluntariado · quem está onde', icon: Filter, path: '/admin/cruzamentos', module: 'membresia' },
           { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
+          { label: 'Censo', description: 'Perfil demográfico e engajamento da comunidade · pesquisas próprias', icon: ClipboardList, path: '/censo', module: 'censo' },
+          { label: 'Links e QR', description: 'QR que não precisa ser reimpresso · o código fica, o destino muda', icon: QrCode, path: '/links', module: 'links' },
           { label: 'Gestão (PMO)', description: 'Pulso · Estrutura OKR · Saúde · Configurar (admin)', icon: Settings, path: '/gestao', perm: 'isAdmin' },
-          { label: 'Agentes & Auditoria', description: 'Fila de aprovação e agentes de auditoria · acesso restrito (devs)', icon: BrainCircuit, path: '/assistente-ia', perm: 'isDev' },
+          { label: 'Agentes & Auditoria', description: 'Time de agentes: equipe, fila de aprovação e job descriptions · super-admins', icon: BrainCircuit, path: '/assistente-ia', perm: 'isSuperAdmin' },
         ],
       },
     ],
@@ -139,6 +165,7 @@ const NAV_ITEMS = [
           { label: 'Projetos', description: 'Acompanhamento de projetos com Kanban/Gantt', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
           { label: 'Propostas', description: 'Ciclo anual de propostas de projetos, eventos e rotinas', icon: ClipboardCheck, path: '/propostas', module: 'propostas' },
           { label: 'Planejamento Estratégico', description: 'Plano plurianual · etapas e marcos (vigente: Expansão 2026–2029)', icon: Map, path: '/expansao', module: 'expansao' },
+          { label: 'Planejamento Anual', description: 'Propostas do ciclo · avaliação pelas diretorias · decisão do Pastor · calendário e orçamento', icon: CalendarDays, path: '/planejamento-anual', module: 'planejamento-anual' },
         ],
       },
       {
@@ -200,8 +227,10 @@ const NAV_ITEMS = [
         items: [
           { label: 'Marketing', description: 'Kanban de demandas criativas · capacidade · analytics', icon: Megaphone, path: '/marketing', module: 'marketing' },
           { label: 'Produção de Culto', description: 'Indicadores técnicos por culto · solicitações · desempenho', icon: SlidersHorizontal, path: '/producao', module: 'producao' },
-          { label: 'Destaques do App', description: 'Carrossel de fotos da Home do app de membros', icon: Images, path: '/admin/destaques', perm: 'isAdmin' },
-          { label: 'Fotos de Batismo', description: 'Álbum do dia — aparece na aba Batismo do app pros batizados', icon: Camera, path: '/admin/fotos-batismo', perm: 'isAdmin' },
+          // ⚠️ "App de membros" (comunicados do mural · destaques da Home · fotos
+          // de batismo) NÃO tem item de menu próprio (21/08): é só a aba "App"
+          // dentro de Marketing. A rota /marketing/app e os redirects continuam
+          // valendo — não recriar aqui.
         ],
       },
     ],
@@ -388,7 +417,11 @@ export default function AppShell() {
   // ── Conversas (WhatsApp) · badge dedicado no header ──────────────────
   // Mensagens do inbox NÃO poluem o sino: têm o próprio ícone. Contador é o
   // total de não-lidas do ESCOPO do usuário (área/atribuição). Realtime + poll.
-  const podeConversas = itemAllowed({ module: 'conversas' });
+  // Gate pelo DESTINO: o sino navega pra /comunicacao — gate por 'conversas'
+  // deixava quem tem conversas sem comunicacao clicando num beco (ModuleGuard
+  // quicava pro dashboard). O polling das não-lidas segue no backend de
+  // 'conversas'; se faltar, degrada pra badge 0 (o catch já zera).
+  const podeConversas = itemAllowed({ module: 'comunicacao' });
   const prevWaUnread = useRef(-1);
   async function loadWaUnread() {
     try {
@@ -528,7 +561,7 @@ export default function AppShell() {
             {/* Conversas (WhatsApp) · badge próprio, fora do sino */}
             {podeConversas && (
               <button
-                onClick={() => navigate('/conversas')}
+                onClick={() => navigate('/comunicacao?tab=conversas')}
                 className="relative p-2 rounded-lg hover:bg-accent transition-colors text-muted-foreground"
                 title="Conversas (WhatsApp)"
               >

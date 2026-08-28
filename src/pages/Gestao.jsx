@@ -170,7 +170,7 @@ function AbaDiagnostico() {
         { label: 'KPIs ativos', value: pulso?.total_kpis_ativos ?? saude?.total_kpis_ativos ?? 0, cor: C.text },
         { label: 'KPIs críticos', value: pulso?.cronicamente_vermelhos?.length || 0, cor: '#EF4444' },
         { label: 'Líderes com pendência', value: (pulso?.lideres || []).filter(l => l.criticos > 0 || l.atrasados > 0).length, cor: '#EF4444' },
-        { label: 'Sem registro 60d', value: saude?.sem_registro_60d?.total || 0, cor: '#F59E0B' },
+        { label: 'Sem dado 60d', value: saude?.sem_registro_60d?.total || 0, cor: '#F59E0B' },
         { label: 'Sem meta', value: saude?.sem_meta?.total || 0, cor: '#9CA3AF' },
         { label: 'Sem dono', value: saude?.sem_dono?.total || 0, cor: '#9CA3AF' },
       ]} />
@@ -178,7 +178,7 @@ function AbaDiagnostico() {
       {/* SECAO 1 · STATUS OPERACIONAL (do Pulso) */}
       <h3 style={hSec}>Status operacional</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 16, marginBottom: 24 }}>
-        <Card title="Líderes com pendências" subtitle="Ordenado por gravidade (criticos > atrasados > sem dado)">
+        <Card title="Líderes com pendências" subtitle="Ordenado por gravidade (críticos > atrasados > sem dado)">
           {!pulso?.lideres?.length ? (
             <Vazio>Nenhum líder com pendência.</Vazio>
           ) : (
@@ -289,8 +289,21 @@ function AbaDiagnostico() {
             subtitulo="Não alimentam cascata automática" items={saude.sem_objetivo.items} cor="#3B82F6" onAbrirKpi={setDetalheKpiId} />
           <ListaSaude titulo="Sem valores da Jornada"
             subtitulo="Não aparecem na matriz nem nas mandalas" items={saude.sem_valores.items} cor="#8B5CF6" onAbrirKpi={setDetalheKpiId} />
-          <ListaSaude titulo="Sem registro nos últimos 60 dias"
-            subtitulo="KPIs vivos mas que ninguém preenche" items={saude.sem_registro_60d.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
+          <ListaSaude titulo="Sem dado nenhum nos últimos 60 dias"
+            subtitulo={saude.sem_registro_60d.aviso
+              || 'Nem preenchimento manual, nem valor calculado — ninguém alimenta'}
+            items={saude.sem_registro_60d.items}
+            cor={saude.sem_registro_60d.incompleto ? '#F59E0B' : '#EF4444'}
+            onAbrirKpi={setDetalheKpiId} />
+          {/* Problema DIFERENTE do de cima: aqui a fórmula roda e não devolve
+              nada, quase sempre porque o processo de origem não gera evento.
+              Cobrar preenchimento não resolve — é decidir quem passa a
+              registrar, ou aposentar o KPI. */}
+          {saude.calculam_nulo?.total > 0 && (
+            <ListaSaude titulo="Calculam, mas não devolvem valor"
+              subtitulo="A fórmula roda e o resultado é nulo — falta a fonte do dado, não a cobrança"
+              items={saude.calculam_nulo.items} cor="#F59E0B" onAbrirKpi={setDetalheKpiId} />
+          )}
           <Card title="Cobertura da matriz Valor × Área" subtitle="Quais valores cada área já tem KPI">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {saude.matriz_cobertura.map(c => (
@@ -523,7 +536,7 @@ function AbaMetasInstitucionais() {
                   </>
                 ) : (
                   <div style={{ fontSize: 11, color: C.t3, fontStyle: 'italic' }}>
-                    Nenhuma meta definida para {ano}. Click em Editar para criar.
+                    Nenhuma meta definida para {ano}. Clique em Editar para criar.
                   </div>
                 )}
               </div>
@@ -811,6 +824,209 @@ const inpStyle = {
   border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-input-bg)',
   color: 'var(--cbrio-text)', fontFamily: 'inherit',
 };
+
+// ============================================================================
+// ABA · OPERACIONAL (Painel Adm)
+// 8 áreas adm (reserva_espaco, cozinha, manutenção, log_estoque, log_compras,
+// ti, rh, financeiro) · indicadores operacionais puxados de vw_solicitacoes_sla
+// ============================================================================
+function AbaPainelAdm() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [recalculando, setRecalculando] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
+
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await gestaoApi.painelAdm();
+      setData(r);
+    } catch (e) {
+      toast.error(formatErro(e, 'painel adm'));
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { carregar(); }, [carregar]);
+
+  const recalcular = async () => {
+    setRecalculando(true);
+    try {
+      const r = await gestaoApi.recalcularAdm();
+      toast.success(`${r.resultado?.kpis_recalculados || 0} KPIs recalculados`);
+      await carregar();
+    } catch (e) {
+      toast.error(formatErro(e));
+    } finally { setRecalculando(false); }
+  };
+
+  // Backfill histórico dos KPIs automáticos (popula registros/valores dos
+  // períodos passados · ex.: KIDS-02/03 que passaram a ter fonte_auto agora).
+  const backfillKpis = async () => {
+    setBackfilling(true);
+    try {
+      const r = await kpisApi.v2.coletarBackfill({ meses: 6 });
+      toast.success(`Backfill concluído · ${r.periodos} períodos, ${r.coletas_ok} coletas`);
+      await carregar();
+    } catch (e) {
+      toast.error(formatErro(e));
+    } finally { setBackfilling(false); }
+  };
+
+  if (loading) return <Loading />;
+  if (!data) return null;
+
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+        <p style={{ fontSize: 12, color: C.t3, margin: 0, maxWidth: 700 }}>
+          Cada área da administração mede SLA e NPS interno das solicitações vindas das
+          áreas de culto (kids/ami/bridge/sede/online/cba). Clique numa área pra ver
+          detalhes. Período: <strong>{data.periodo_mes.inicio} a {data.periodo_mes.fim}</strong>
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={recalcular} disabled={recalculando} style={{ ...btnPrimary, opacity: recalculando ? 0.5 : 1 }}>
+            <Zap size={11} /> {recalculando ? 'Recalculando...' : 'Recalcular KPIs'}
+          </button>
+          <button onClick={backfillKpis} disabled={backfilling} style={{ ...btnPrimary, opacity: backfilling ? 0.5 : 1 }} title="Coleta os últimos 6 meses e recalcula (popula histórico dos KPIs automáticos)">
+            <Zap size={11} /> {backfilling ? 'Processando...' : 'Backfill KPIs (6 meses)'}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 14 }}>
+        {data.areas.map(area => <AreaAdmCard key={area.key} area={area} />)}
+      </div>
+    </>
+  );
+}
+
+function AreaAdmCard({ area }) {
+  const respostaSla = area.indicadores.find(i => i.metrica === 'resposta_no_sla');
+  const resolucaoSla = area.indicadores.find(i => i.metrica === 'resolucao_no_sla');
+  const nps = area.indicadores.find(i => i.metrica === 'nps_medio');
+
+  const corSemForte = '#9CA3AF';
+  const corPctOk = v => v == null ? corSemForte : v >= 90 ? '#10B981' : v >= 70 ? '#F59E0B' : '#EF4444';
+  const corNps = v => v == null ? corSemForte : v >= 9 ? '#10B981' : v >= 7 ? '#F59E0B' : '#EF4444';
+  const corUrgente = pct => pct >= 30 ? '#EF4444' : pct >= 15 ? '#F59E0B' : '#10B981';
+
+  return (
+    <section style={{
+      background: C.card, borderRadius: 16, border: '1px solid var(--hairline)',
+      boxShadow: 'var(--shadow)',
+      borderTop: `4px solid ${area.cor}`,
+      padding: 16,
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, margin: 0 }}>{area.label}</h3>
+        <span style={{ fontSize: 11, color: C.t3 }}>{area.total_mes} solicitações no mês</span>
+      </div>
+
+      {/* 3 indicadores principais · % resposta SLA, % resolução SLA, NPS */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
+        <Indicador label="Resposta no SLA" valor={respostaSla?.valor} unidade="%" cor={corPctOk(respostaSla?.valor)} meta={respostaSla?.meta} />
+        <Indicador label="Conclusão no SLA" valor={resolucaoSla?.valor} unidade="%" cor={corPctOk(resolucaoSla?.valor)} meta={resolucaoSla?.meta} />
+        <Indicador label="NPS interno" valor={nps?.valor} unidade="" cor={corNps(nps?.valor)} meta={nps?.meta} />
+      </div>
+
+      {/* Linha de status operacional */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, color: C.t2,
+                    paddingTop: 10, borderTop: `1px solid ${C.border}` }}>
+        <span>
+          <strong style={{ color: corUrgente(area.pct_urgentes) }}>{area.pct_urgentes}%</strong> urgentes
+          <span style={{ color: C.t3 }}> ({area.urgentes_mes} de {area.total_mes})</span>
+        </span>
+        <span>
+          <strong>{area.pendentes_agora}</strong> pendentes agora
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function Indicador({ label, valor, unidade, cor, meta }) {
+  const sd = valor == null;
+  return (
+    <div style={{ background: 'var(--cbrio-input-bg)', padding: 10, borderRadius: 8, textAlign: 'center' }}>
+      <div style={{ fontSize: 9, color: C.t3, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color: sd ? C.t3 : cor, lineHeight: 1 }}>
+        {sd ? '—' : (valor != null ? `${Number(valor).toFixed(unidade === '%' ? 0 : 1)}${unidade}` : '—')}
+      </div>
+      {meta != null && (
+        <div style={{ fontSize: 9, color: C.t3, marginTop: 4 }}>meta: ≥{meta}{unidade}</div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// ABA · CONFIGURAR
+// ============================================================================
+function AbaConfigurar() {
+  const navigate = useNavigate();
+  const items = [
+    {
+      titulo: 'Cruzamentos de pessoas',
+      desc: 'Quem cruza papéis e valores · "voluntários que dizimam", "NEXT + grupos", etc',
+      Icon: Filter,
+      path: '/admin/cruzamentos',
+      cor: '#00B39D',
+    },
+    {
+      titulo: 'Regras de Notificação',
+      desc: 'Quem recebe alertas de cada módulo',
+      Icon: Bell,
+      path: '/admin/notificacao-regras',
+      cor: '#F59E0B',
+    },
+  ];
+
+  return (
+    <>
+      {/* Atalhos */}
+      <h3 style={hSec}>Ferramentas</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14, marginBottom: 24 }}>
+        {items.map(item => {
+          const Icon = item.Icon;
+          return (
+            <button
+              key={item.titulo}
+              onClick={() => navigate(item.path)}
+              style={{
+                background: C.card, border: '1px solid var(--hairline)',
+                boxShadow: 'var(--shadow)',
+                borderRadius: 16, padding: 18, cursor: 'pointer',
+                textAlign: 'left',
+                display: 'flex', alignItems: 'flex-start', gap: 14,
+                transition: 'border-color 0.15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = item.cor}
+              onMouseLeave={e => e.currentTarget.style.borderColor = C.border}
+            >
+              <div style={{
+                width: 40, height: 40, borderRadius: 10,
+                background: item.cor + '20', color: item.cor,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                <Icon size={18} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 700, color: C.text, margin: 0 }}>{item.titulo}</h3>
+                <p style={{ fontSize: 11, color: C.t3, marginTop: 4, lineHeight: 1.4 }}>{item.desc}</p>
+              </div>
+              <ArrowRight size={16} style={{ color: C.t3, flexShrink: 0, alignSelf: 'center' }} />
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Metas Institucionais embutidas */}
+      <h3 style={hSec}>Metas Institucionais</h3>
+      <AbaMetasInstitucionais />
+    </>
+  );
+}
 
 // ============================================================================
 // Componentes auxiliares

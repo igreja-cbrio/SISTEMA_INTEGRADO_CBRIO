@@ -84,9 +84,11 @@ const ORDEM_VALORES = ['seguir', 'conectar', 'investir', 'servir', 'generosidade
 
 const STATUS_META = {
   no_alvo:   { label: 'No alvo',  color: '#10b981', className: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400' },
+  atras:     { label: 'Atrasado', color: '#f59e0b', className: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
   atrasado:  { label: 'Atrasado', color: '#f59e0b', className: 'bg-amber-500/15 text-amber-700 dark:text-amber-400' },
   critico:   { label: 'Crítico',  color: '#ef4444', className: 'bg-red-500/15 text-red-700 dark:text-red-400' },
   sem_dado:  { label: 'Sem dado', color: '#94a3b8', className: 'bg-muted text-muted-foreground' },
+  sem_meta:  { label: 'Sem meta', color: '#94a3b8', className: 'bg-muted text-muted-foreground' },
 };
 
 const SAUDE_META = {
@@ -1170,7 +1172,7 @@ function IndicadoresAgrupados({ kpis, navigate }) {
 
 function KpiCard({ kpi, onClick }) {
   const sKey = statusKey(kpi.trajetoria);
-  const sMeta = STATUS_META[sKey];
+  const sMeta = STATUS_META[sKey] || STATUS_META.sem_dado;
   const traj = kpi.trajetoria || {};
   const valor = traj.ultimo_valor;
   const metaV = traj.checkpoint_meta;

@@ -12,10 +12,12 @@ import { Textarea } from '../../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../../components/ui/dialog';
-import { Megaphone, Kanban, CalendarDays, Plus, Trash2, Settings, Loader2 } from 'lucide-react';
+import {
+  Plus, Trash2, Loader2
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '../../supabaseClient';
-import MarketingNav from './MarketingNav';
+import MarketingPagina from './MarketingPagina';
 
 const DIAS_LABEL = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
 const HABILIDADES = ['coordenador', 'videomaker', 'fotografo', 'designer', 'social_media', 'social_media_assistente'];
@@ -37,19 +39,7 @@ export default function MarketingAdmin() {
   }
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Settings className="h-6 w-6 text-primary" />
-            Marketing · Admin
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Equipe · etiquetas · recorrentes · overrides · padrões por fase
-          </p>
-        </div>
-        <MarketingNav />
-      </div>
+    <MarketingPagina subtitulo="Equipe · etiquetas · recorrentes · overrides · padrões por fase">
 
       <Tabs defaultValue="membros" className="w-full">
         <TabsList className="grid w-full grid-cols-2 md:grid-cols-5">
@@ -66,7 +56,7 @@ export default function MarketingAdmin() {
         <TabsContent value="overrides" className="mt-4"><AbaOverrides /></TabsContent>
         <TabsContent value="padroes" className="mt-4"><AbaPadroes /></TabsContent>
       </Tabs>
-    </div>
+    </MarketingPagina>
   );
 }
 

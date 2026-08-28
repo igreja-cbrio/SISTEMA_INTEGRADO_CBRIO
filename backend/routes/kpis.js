@@ -5,9 +5,13 @@ const { authenticate, authorize, getEffectiveLevel } = require('../middleware/au
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
+const { tipoVigenteEm } = require('../utils/lentesDomingo');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { reconciliarCpfTardio, propagarCpfConvertido } = require('../services/cpfReconciliar');
 const { cpfValido } = require('../utils/cpf');
+// Divisor da média de frequência da mandala = nº de DOMINGOS (régua pura · o
+// cabeçalho de utils/divisorMandala.js tem o porquê e os números medidos).
+const { divisorDomingos } = require('../utils/divisorMandala');
 const painelCache = require('../services/painelCache');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
@@ -21,7 +25,37 @@ const uploadFotoRef = multer({
   },
 });
 
-router.use(authenticate);
+// ⚠️⚠️ O `authenticate` ENGOLIA O CRON ANTES DO HANDLER (conserto de 11/08/2026).
+//
+// O `router.use(authenticate)` roda antes de qualquer rota deste arquivo. O
+// Vercel Cron chama com `Authorization: Bearer <CRON_SECRET>`; o `authenticate`
+// tenta validar isso como JWT do Supabase, falha, e devolve **401**. Resultado:
+// a checagem `isAuthorizedCron(req) || isAdmin` escrita dentro dos handlers era
+// CÓDIGO MORTO para cron — nunca era alcançada.
+//
+// Medido antes do conserto, em `system_job_runs`: HTTP_401 em **11 de 11**
+// execuções de `/api/kpis/youtube/sync` e o mesmo em `/api/kpis/cultos/auto-create`
+// e `/api/governanca/cron/lembrete`. Três rotinas que não faziam nada, todos os
+// dias, em silêncio — quem percebeu foi o alarme de incidente, não uma pessoa.
+//
+// ⚠️ A LISTA É EXPLÍCITA de propósito. Deixar qualquer requisição com
+// CRON_SECRET passar por todo o router transformaria o segredo do cron numa
+// chave-mestra para as dezenas de rotas autenticadas daqui. Só entram caminhos
+// que TÊM cron no `vercel.json`, e o handler continua fazendo a própria
+// verificação (agora alcançável).
+//
+// ⚠️ Sem segredo válido nada muda: cai no `authenticate` normal, então admin e
+// diretor seguem podendo disparar a rotina à mão pela tela.
+// ⚠️ LISTA, e não o prefixo `/cron/` usado em governanca.js e totemKids.js: esta
+// rotina se chama `/cultos/auto-create` (a tela chama o MESMO caminho por POST),
+// então não cai na convenção. Renomear pra `/cron/...` quebraria o botão da tela.
+// Rota de cron NOVA neste arquivo deve nascer sob `/cron/` — aí some a lista.
+const CAMINHOS_DE_CRON = new Set(['/cultos/auto-create']);
+router.use((req, res, next) => (
+  CAMINHOS_DE_CRON.has(req.path) && isAuthorizedCron(req)
+    ? next()
+    : authenticate(req, res, next)
+));
 
 // Helper: permite escrita em cultos/decisoes/batismos pra admin/diretor OU
 // quem tem 'integração' em kpi_areas (Lorena, líder de Integração).
@@ -352,6 +386,83 @@ router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
   res.json(out);
 });
 
+// GET /cultos/links-decisoes?inicio=&fim= — os links de TODOS os cultos de um
+// período (na prática: a semana escolhida no calendário), pra a Integração
+// distribuir ANTES do culto.
+//
+// ⚠️ Existe porque a distribuição é ANTECIPADA e o lançamento não é: o link é
+// mandado no grupo dos voluntários na semana, e cada um só consegue lançar no
+// dia do culto (a janela é reconferida no servidor a cada uso, em
+// `publicDecisaoCulto`). Pedir link culto a culto na véspera é o tipo de tarefa
+// que ninguém faz 4 vezes num domingo — e porta sem caminho de distribuição não
+// existe na prática (foi assim que o formulário do online passou 3 meses no ar
+// com zero registros).
+//
+// ⚠️ Rota LITERAL declarada antes de qualquer `/cultos/:id/...` de um segmento
+// só — no Express o primeiro match vence, e é assim que `/cultos/auto-create`
+// já convive com os handlers por id.
+router.get('/cultos/links-decisoes', authorizeIntegracao, async (req, res) => {
+  try {
+    const { montarLinkCulto } = require('../utils/cultoToken');
+    const ISO = /^\d{4}-\d{2}-\d{2}$/;
+    const inicio = String(req.query.inicio || '').slice(0, 10);
+    const fim = String(req.query.fim || '').slice(0, 10);
+    if (!ISO.test(inicio) || !ISO.test(fim)) {
+      return res.status(400).json({ error: 'Informe inicio e fim no formato AAAA-MM-DD.' });
+    }
+    if (fim < inicio) return res.status(400).json({ error: 'O fim não pode ser anterior ao início.' });
+
+    const { data, error } = await supabase
+      .from('vw_culto_stats')
+      .select('id, data, hora, nome, service_type_name')
+      .gte('data', inicio)
+      .lte('data', fim)
+      .order('data', { ascending: true })
+      .order('hora', { ascending: true })
+      .limit(100);
+    if (error) throw error;
+
+    const cultos = (data || []).map(c => ({
+      id: c.id,
+      data: c.data,
+      hora: c.hora,
+      nome: c.service_type_name || c.nome || 'Culto',
+      // `null` quando não há segredo configurado (fail-closed): a tela declara
+      // "indisponível" em vez de o conferente mandar no grupo um link que não
+      // abre pra ninguém.
+      link: montarLinkCulto(c.id),
+    }));
+    res.json({ inicio, fim, cultos });
+  } catch (e) {
+    console.error('[kpis/links-decisoes]', e.message);
+    res.status(500).json({ error: 'Erro ao gerar os links da semana' });
+  }
+});
+
+// GET /cultos/:id/link-decisoes — link assinado pro VOLUNTÁRIO lançar as
+// decisões daquele culto pelo celular, na hora, sem login.
+//
+// ⚠️ O link é o único caminho de distribuição que existe: sem um botão aqui, a
+// porta nova não chega em ninguém. Foi exatamente isso que matou o formulário
+// do online — ele existe desde junho, nunca teve QR nem link divulgado, e por
+// isso registrou ZERO decisões em 3 meses.
+//
+// Devolve `null` quando não há segredo configurado (fail-closed): a tela mostra
+// "indisponível" em vez de entregar um link quebrado que o voluntário
+// distribui e ninguém consegue usar.
+router.get('/cultos/:id/link-decisoes', authorizeIntegracao, async (req, res) => {
+  try {
+    const { montarLinkCulto } = require('../utils/cultoToken');
+    const { data: c } = await supabase
+      .from('cultos').select('id, data').eq('id', req.params.id).maybeSingle();
+    if (!c) return res.status(404).json({ error: 'Culto não encontrado' });
+    res.json({ link: montarLinkCulto(c.id), data: c.data });
+  } catch (e) {
+    console.error('[kpis/link-decisoes]', e.message);
+    res.status(500).json({ error: 'Erro ao gerar o link' });
+  }
+});
+
 router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res) => {
   const {
     nome, telefone, email, idade, data_nascimento, cpf,
@@ -530,7 +641,12 @@ router.delete('/decisoes-pessoas/:id', authorizeIntegracao, async (req, res) => 
 // Cria cultos da semana corrente a partir de vol_service_types (recurrence_day, recurrence_time).
 // Idempotente: ON CONFLICT DO NOTHING via índice único (service_type_id, data, hora).
 // weeks=N: backfill das últimas N semanas (default 1 = só semana corrente).
-router.post('/cultos/auto-create', async (req, res) => {
+// ⚠️ GET **E** POST: o Vercel Cron chama sempre por GET, e rota só-POST não dá
+// "não autorizado" — dá NÃO ENCONTRADO, que é ainda mais difícil de diagnosticar
+// (o job registra o erro HTTP e ninguém suspeita do verbo). O
+// `/api/kpis/v2/cron/coletar` já registrava os dois; aqui tinha ficado só POST.
+// A tela continua chamando por POST.
+async function cultosAutoCreate(req, res) {
   const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
   if (!isAuthorizedCron(req) && !isAdmin) {
     return res.status(401).json({ error: 'Não autorizado' });
@@ -547,6 +663,44 @@ router.post('/cultos/auto-create', async (req, res) => {
     .not('recurrence_time', 'is', null);
   if (typesErr) return res.status(500).json({ error: typesErr.message });
 
+  // ⚠️⚠️ VIGÊNCIA. Sem isto o cron materializa culto em data em que o culto NÃO
+  // EXISTE — e não é hipótese: em 18/08 o tipo "Domingo 09:30" (que só passa a
+  // valer em 24/08) foi ativado por alguém, e a próxima execução, domingo 23/08
+  // às 00:05, teria criado um culto de 09:30 no ÚLTIMO domingo do formato antigo.
+  // Pior: o script do corte remove futuros a partir de 30/08, então o fantasma de
+  // 23/08 ficaria lá para sempre, com os gatilhos de KPI e NSM já disparados.
+  //
+  // É a régua do §9.1 da varredura (docs/cultos-domingo/) aplicada ao lado da
+  // ESCRITA: quem LISTA o que existiu não filtra vigência; quem GERA culto novo
+  // filtra "vigente NAQUELA data". `is_active` não substitui isto — é um flag que
+  // qualquer um vira na tela de Tipos de Culto, e foi exatamente o que aconteceu.
+  //
+  // SELECT isolado e best-effort: pedir coluna que a migration ainda não criou faz
+  // o PostgREST recusar a query INTEIRA (lição do parcelas_max), e aqui isso
+  // pararia a criação de TODOS os cultos.
+  const vigencia = new Map();
+  try {
+    const { data: vig, error: vErr } = await supabase
+      .from('vol_service_types')
+      .select('id, vigente_de, vigente_ate');
+    if (!vErr && Array.isArray(vig)) {
+      for (const v of vig) vigencia.set(v.id, v);
+    }
+  } catch { /* sem as colunas, o comportamento é o de antes */ }
+
+  // ⚠️ A comparação é DELEGADA a `tipoVigenteEm` (utils/lentesDomingo), que já
+  // existe e já é coberta por teste — uma SEGUNDA cópia de "este culto vale nesta
+  // data?" é a duplicação que produziu o bug da régua do voluntariado.
+  // ⚠️⚠️ O que NÃO se delega é o fallback: `tipoVigenteEm` é fail-CLOSED
+  // (`!tipo → false`), e se as colunas de vigência não existirem o mapa vem vazio
+  // — delegar direto pararia a criação de TODOS os cultos. Sem informação, o
+  // comportamento é o de antes.
+  const vigenteEm = (tipoId, dataStr) => {
+    const v = vigencia.get(tipoId);
+    if (!v) return true;
+    return tipoVigenteEm(v, dataStr);
+  };
+
   // Calcula a data do "weekStart" (domingo) para cada semana no range [hoje - (weeks-1) semanas, hoje]
   const today = new Date();
   today.setHours(12, 0, 0, 0);
@@ -562,6 +716,9 @@ router.post('/cultos/auto-create', async (req, res) => {
 
   const created = [];
   const skipped = [];
+  const erros = [];
+
+  const foraDeVigencia = [];
 
   for (const ws of weekStarts) {
     for (const t of types || []) {
@@ -572,13 +729,24 @@ router.post('/cultos/auto-create', async (req, res) => {
       const dFmt = dayDate.toLocaleDateString('pt-BR');
       const nome = `${t.name} — ${dFmt}`;
 
-      // Idempotência: verifica antes de inserir (não dependemos do índice único existir)
+      // fora de vigência naquela data: não é erro nem "já existe" — é culto que
+      // não acontece nesse dia. Vai DECLARADO, para não sumir em silêncio.
+      if (!vigenteEm(t.id, dataStr)) {
+        foraDeVigencia.push({ tipo: t.name, data: dataStr });
+        continue;
+      }
+
+      // Idempotência pela MESMA chave do índice único: (service_type_id, data) —
+      // lei de 2026-08-04 (guarda em chave diferente do índice deixa o INSERT
+      // estourar). Checar também a `hora` escondia culto EXISTENTE com hora
+      // divergente (snapshot cultos.hora ≠ recurrence_time do tipo — o caso real
+      // da virada dos cultos de domingo · docs/cultos-domingo/) → o insert
+      // violava o UNIQUE e a falha sumia no meio dos "skipped".
       const { data: existente } = await supabase
         .from('cultos')
         .select('id')
         .eq('service_type_id', t.id)
         .eq('data', dataStr)
-        .eq('hora', horaStr)
         .maybeSingle();
 
       if (existente) { skipped.push({ tipo: t.name, data: dataStr, hora: horaStr }); continue; }
@@ -598,13 +766,23 @@ router.post('/cultos/auto-create', async (req, res) => {
         })
         .select('id, nome, data, hora')
         .single();
-      if (insErr) { skipped.push({ tipo: t.name, data: dataStr, hora: horaStr, error: insErr.message }); continue; }
+      // Falha AUDÍVEL: insert que erra não se mistura com skip normal — vai em
+      // lista própria + log (cron sem leitor de resposta ainda deixa rastro).
+      if (insErr) {
+        console.error('[kpis/cultos/auto-create] insert falhou', t.name, dataStr, insErr.message);
+        erros.push({ tipo: t.name, data: dataStr, hora: horaStr, error: insErr.message });
+        continue;
+      }
       created.push(novo);
     }
   }
 
-  res.json({ weeks, created: created.length, skipped: skipped.length, items: created, skippedItems: skipped });
-});
+  res.json({ weeks, created: created.length, skipped: skipped.length, erros: erros.length,
+    fora_de_vigencia: foraDeVigencia.length, items: created, skippedItems: skipped, erroItems: erros,
+    foraDeVigenciaItems: foraDeVigencia });
+}
+router.get('/cultos/auto-create', cultosAutoCreate);
+router.post('/cultos/auto-create', cultosAutoCreate);
 
 // ── Batismos ──────────────────────────────────────────────────────────────────
 router.get('/batismos', async (req, res) => {
@@ -1237,127 +1415,38 @@ router.put('/metas/:id', authorize('admin', 'diretor'), async (req, res) => {
   res.json(data);
 });
 
-// ── YouTube status (verifica se a API key está configurada e quando rodou a última sync) ──
-router.get('/youtube/status', async (req, res) => {
-  const apiKeyConfigured = !!process.env.YOUTUBE_API_KEY;
-  const { data: ultimo } = await supabase
-    .from('cultos')
-    .select('ds_coletado_em, ddus_coletado_em')
-    .or('ds_coletado_em.not.is.null,ddus_coletado_em.not.is.null')
-    .order('ds_coletado_em', { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle();
-  const lastSync = ultimo
-    ? (ultimo.ds_coletado_em && ultimo.ddus_coletado_em
-        ? (ultimo.ds_coletado_em > ultimo.ddus_coletado_em ? ultimo.ds_coletado_em : ultimo.ddus_coletado_em)
-        : (ultimo.ds_coletado_em || ultimo.ddus_coletado_em))
-    : null;
-  res.json({ apiKeyConfigured, lastSync });
-});
+// ⚠️⚠️ OS DOIS ENDPOINTS DE YOUTUBE FORAM REMOVIDOS AQUI (11/08/2026) — e a
+// razão é o oposto de "limpeza": eles eram a ÚNICA manifestação viva de uma
+// rotina morta, na forma de um alarme diário no celular do Matheus.
+//
+// O que foi medido antes de apagar:
+//  · `POST /kpis/youtube/sync` rodava por cron às 13h e falhava com HTTP 401 em
+//    **11 de 11 execuções** registradas (desde 01/08, quando o system_job_runs
+//    começou a gravar). Nunca teve um sucesso.
+//  · a causa do 401 é o `router.use(authenticate)` do topo deste arquivo: ele
+//    roda ANTES do handler, tenta validar o `Authorization: Bearer <CRON_SECRET>`
+//    do Vercel como JWT do Supabase, falha e devolve 401. A checagem
+//    `isAuthorizedCron(req) || isAdmin` que o handler fazia era CÓDIGO MORTO pra
+//    cron — nunca era alcançada. (Somado a isso, a rota era POST e o Vercel Cron
+//    chama por GET: dois defeitos empilhados.)
+//  · o dado que ela ia buscar JÁ É COLETADO, e por fonte melhor: os coletores do
+//    módulo `online` (`/api/online/cron/ds-collect` e `ddus-collect`, verdes
+//    todos os dias) gravam `cultos.online_ds`, `online_ddus` e `online_pico`
+//    pela YouTube **Analytics** API, contra o `videos?part=statistics` público
+//    daqui. Conferido em produção: os cultos das últimas 3 semanas estão com os
+//    três campos preenchidos.
+//  · e NENHUMA tela chamava: `youtubeSync`/`youtubeStatus` existiam em
+//    `src/api.js` sem um único consumidor.
+//
+// Consertar o 401 para uma rotina redundante seria manter de pé um segundo
+// escritor dos mesmos campos, com fonte pior, só para calar um alarme. O alarme
+// estava certo: a rotina não funcionava. O que estava errado era ela existir.
+//
+// ⚠️ `cultos.ds_coletado_em` / `ddus_coletado_em` continuam existindo e
+// permanentemente NULL: só esta rotina os escrevia, e ela nunca rodou. Não vale
+// migration pra derrubar coluna vazia — mas quem for usá-las precisa saber que
+// não significam "nunca coletado", significam "ninguém nunca estampou".
 
-// ── YouTube sync (chamado pelo cron Vercel) ───────────────────────────────────
-router.post('/youtube/sync', async (req, res) => {
-  const isAdmin = ['admin', 'diretor'].includes(req.user?.role);
-  if (!isAuthorizedCron(req) && !isAdmin) {
-    return res.status(401).json({ error: 'Não autorizado' });
-  }
-
-  const apiKey = process.env.YOUTUBE_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'YOUTUBE_API_KEY não configurada' });
-
-  const ontem = new Date();
-  ontem.setDate(ontem.getDate() - 1);
-  const ontemStr = ontem.toISOString().split('T')[0];
-
-  const seteDias = new Date();
-  seteDias.setDate(seteDias.getDate() - 7);
-  const seteDiasStr = seteDias.toISOString().split('T')[0];
-
-  // Tipos de culto que têm transmissão online (filtro p/ ignorar Bridge etc.)
-  const { data: onlineTypes } = await supabase
-    .from('vol_service_types')
-    .select('id')
-    .eq('has_online_stream', true);
-  const onlineTypeIds = new Set((onlineTypes || []).map(t => t.id));
-  const isOnline = (c) => !c.service_type_id || onlineTypeIds.has(c.service_type_id);
-
-  // Backfill-friendly: pega TODOS os cultos com vídeo pendente até a data limite,
-  // não so a data exata. Se o cron falhou em algum dia, na próxima execucao ele
-  // ainda recupera o dado (best-effort com viewCount atual). O cron diario
-  // limita o backlog a poucos itens.
-  //
-  // D+1 (online_ds): cultos com data <= ontem, com vídeo, sem online_ds
-  // D+7 (online_ddus): cultos com data <= 7 dias atras, com vídeo, com online_ds, sem online_ddus
-  const [{ data: cultosDSRaw }, { data: cultosDDUSRaw }] = await Promise.all([
-    supabase.from('cultos').select('id, data, youtube_video_id, service_type_id').is('deleted_at', null).lte('data', ontemStr).not('youtube_video_id', 'is', null).is('online_ds', null).order('data', { ascending: false }).limit(50),
-    supabase.from('cultos').select('id, data, youtube_video_id, online_ds, service_type_id').is('deleted_at', null).lte('data', seteDiasStr).not('youtube_video_id', 'is', null).not('online_ds', 'is', null).is('online_ddus', null).order('data', { ascending: false }).limit(50),
-  ]);
-  const cultosDS = (cultosDSRaw || []).filter(isOnline);
-  const cultosDDUS = (cultosDDUSRaw || []).filter(isOnline);
-
-  const fetchStats = async (videoId) => {
-    const url = `https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${videoId}&key=${apiKey}`;
-    const r = await fetch(url);
-    const json = await r.json();
-    return json.items?.[0]?.statistics;
-  };
-
-  const results = [];
-
-  for (const culto of (cultosDS || [])) {
-    try {
-      const stats = await fetchStats(culto.youtube_video_id);
-      if (stats?.viewCount) {
-        await supabase.from('cultos').update({ online_ds: parseInt(stats.viewCount), ds_coletado_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', culto.id);
-        results.push({ id: culto.id, tipo: 'DS', views: stats.viewCount });
-      }
-    } catch (e) {
-      results.push({ id: culto.id, tipo: 'DS', error: e.message });
-    }
-  }
-
-  for (const culto of (cultosDDUS || [])) {
-    try {
-      const stats = await fetchStats(culto.youtube_video_id);
-      if (stats?.viewCount) {
-        const ddus = Math.max(0, parseInt(stats.viewCount) - (culto.online_ds || 0));
-        await supabase.from('cultos').update({ online_ddus: ddus, ddus_coletado_em: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', culto.id);
-        results.push({ id: culto.id, tipo: 'DDUS', ddus });
-      }
-    } catch (e) {
-      results.push({ id: culto.id, tipo: 'DDUS', error: e.message });
-    }
-  }
-
-  // Cultos do dia anterior SEM youtube_video_id → notifica para vincular
-  // (apenas para tipos que têm transmissão online — ignora Bridge etc.)
-  const { data: cultosSemVideoRaw } = await supabase
-    .from('cultos')
-    .select('id, nome, data, service_type_id')
-    .eq('data', ontemStr)
-    .is('youtube_video_id', null);
-  const cultosSemVideo = (cultosSemVideoRaw || []).filter(isOnline);
-
-  for (const c of cultosSemVideo) {
-    try {
-      const fmt = new Date(c.data + 'T12:00:00').toLocaleDateString('pt-BR');
-      await notificar({
-        modulo: 'kpis',
-        tipo: 'culto_sem_video',
-        titulo: 'Culto sem vídeo do YouTube',
-        mensagem: `"${c.nome}" (${fmt}) não tem ID de vídeo vinculado. Sem isso, D+1 não será coletado.`,
-        link: '/kpis',
-        severidade: 'aviso',
-        chaveDedup: `culto_sem_video_sync_${c.id}`,
-      });
-      results.push({ id: c.id, tipo: 'ALERT', msg: 'sem video_id' });
-    } catch (e) {
-      results.push({ id: c.id, tipo: 'ALERT', error: e.message });
-    }
-  }
-
-  res.json({ synced: results.length, results, semVideo: cultosSemVideo.length });
-});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MANDALA CULTURA — 5 valores CBRio + Decisões (centro)
@@ -1399,7 +1488,7 @@ function parseMes(input) {
 // GET /kpis/cultura?mes=YYYY-MM
 router.get('/cultura', async (req, res) => {
   try {
-    const { mesISO, inicioStr, fimInclusivoStr, diasNoMes, semanasNoMes } = parseMes(req.query.mes);
+    const { y: anoRef, m: mesRef, mesISO, inicioStr, fimInclusivoStr, diasNoMes, semanasNoMes } = parseMes(req.query.mes);
 
     // Hoje - 90d para Servir
     const noventaDias = new Date();
@@ -1473,6 +1562,15 @@ router.get('/cultura', async (req, res) => {
     };
     const semanasComCulto = new Set(cultos.map((c) => c.data && chaveSemana(c.data)).filter(Boolean)).size;
     const divisorSemanas = semanasComCulto || semanasNoMes;
+
+    // ⚠️ A MÉDIA DE FREQUÊNCIA é por DOMINGO, não por semana (decisão do Marcos ·
+    // 2026-08-12). A semana ISO das bordas do mês entrava na conta trazendo a
+    // quarta sem o domingo dela, e isso derrubava a média em ~25% nos meses de 4
+    // domingos (jan/fev/abr/jul de 2026). Só a média MUDA: meta, semáforo e
+    // periodicidade de KPI seguem intactos, e nenhum outro valor da mandala usa
+    // este divisor. `divisorSemanas` continua sendo o que a resposta publica em
+    // `semanas_no_mes` (informativo).
+    const divisorFrequencia = divisorDomingos(cultos, { ano: anoRef, mes: mesRef });
     // Decisões: presencial + online + KIDS (kids passou a entrar na conta ·
     // pedido do Matheus 2026-07-29). Guardamos o detalhe pra exibir no clique.
     const decisoesPresencial = cultos.reduce((s, c) => s + (c.decisoes_presenciais || 0), 0);
@@ -1516,16 +1614,19 @@ router.get('/cultura', async (req, res) => {
     // cultos · permite lancar mês consolidado sem cultos individuais.
     const presencialSemanal = cm?.freq_presencial_semanal != null
       ? cm.freq_presencial_semanal
-      : Math.round(presencialTotal / divisorSemanas);
+      : Math.round(presencialTotal / divisorFrequencia);
     const onlineSemanal = cm?.freq_online_semanal != null
       ? cm.freq_online_semanal
-      : Math.round(onlineDsTotal / divisorSemanas);
+      : Math.round(onlineDsTotal / divisorFrequencia);
     const decisoesMes = cm?.decisoes_total != null ? cm.decisoes_total : decisoesTotal;
     const conectarMes = cm?.freq_grupos_total != null ? cm.freq_grupos_total : conectarPessoas;
 
     res.json({
       mes: mesISO,
       semanas_no_mes: divisorSemanas,
+      // Divisor REAL da média de frequência. `semanas_no_mes` fica só como
+      // informação do mês — quem divide é este.
+      domingos_no_mes: divisorFrequencia,
       dias_no_mes: diasNoMes,
       seguir_jesus: {
         presencial: presencialSemanal,

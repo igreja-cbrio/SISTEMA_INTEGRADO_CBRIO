@@ -17,7 +17,7 @@ import { useParams } from 'react-router-dom';
 import { gruposPublic } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
-import { Check, X, User, Phone, Mail, MapPin, Clock, Users, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Check, X, User, Phone, PhoneOff, Mail, MapPin, Clock, Users, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 const VERDE = '#00B39D';
 const VERMELHO = '#ef4444';
@@ -115,6 +115,7 @@ export default function GrupoAprovarPedido() {
               {decisao === 'aprovado' ? 'Pedido aprovado!'
                 : decisao === 'encaminhado' ? 'Pedido com a equipe de grupos'
                 : decisao === 'cancelado' ? 'Pedido encerrado'
+                : decisao === 'sem_contato' ? 'Obrigado por tentar!'
                 : 'Pedido recusado'}
             </h1>
             {pedido && (
@@ -125,6 +126,9 @@ export default function GrupoAprovarPedido() {
                   ? <>A equipe de grupos sugeriu outro grupo para <strong>{pedido.nome}</strong> — não precisa fazer mais nada.</>
                   : decisao === 'cancelado'
                   ? <>O pedido de <strong>{pedido.nome}</strong> foi encerrado.</>
+                  : decisao === 'sem_contato'
+                  ? <>Registramos que você tentou falar com <strong>{casalResultado?.ok ? `${pedido.nome} e ${casalResultado.nome}` : pedido.nome}</strong> e não conseguiu.
+                      Isso <strong>não</strong> foi registrado como recusa — a equipe de grupos assume o contato daqui.</>
                   // rejeitado (agora) ou devolvido (recusa sua aguardando a triagem)
                   : <>O pedido de <strong>{casalResultado?.ok ? `${pedido.nome} e ${casalResultado.nome}` : pedido.nome}</strong> para o grupo {grupo?.nome} não segue.
                       A equipe de grupos foi avisada e cuida do próximo passo com {casalResultado?.ok ? 'o casal' : 'a pessoa'} — não precisa fazer mais nada.</>}
@@ -203,30 +207,56 @@ export default function GrupoAprovarPedido() {
             {erroMsg && <p style={{ fontSize: 13, color: VERMELHO, marginBottom: 12 }}>{erroMsg}</p>}
 
             {!recusando ? (
-              <div style={{ display: 'flex', gap: 10 }}>
+              <>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    onClick={() => { setErroMsg(''); setRecusando(true); }}
+                    disabled={estado === 'enviando'}
+                    style={{
+                      flex: 1, padding: '13px 10px', borderRadius: 12, fontSize: 15, fontWeight: 600,
+                      border: `1px solid ${C.inputBorder}`, background: 'transparent', color: C.text2, cursor: 'pointer',
+                    }}
+                  >
+                    <X size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} />Recusar
+                  </button>
+                  <button
+                    onClick={() => { setErroMsg(''); decidir('aprovar'); }}
+                    disabled={estado === 'enviando'}
+                    style={{
+                      flex: 2, padding: '13px 10px', borderRadius: 12, fontSize: 15, fontWeight: 700,
+                      border: 'none', background: VERDE, color: '#fff', cursor: 'pointer',
+                      opacity: estado === 'enviando' ? 0.6 : 1,
+                    }}
+                  >
+                    <Check size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} />
+                    {estado === 'enviando' ? 'Aprovando...' : (casalPendente ? 'Aprovar o casal' : 'Aprovar entrada')}
+                  </button>
+                </div>
+
+                {/* 3ª saída (Naná · 17/08): o fluxo pede que o líder LIGUE antes
+                    de decidir, e quando a pessoa não atende nenhuma das duas
+                    acima serve — recusar diria "não quero essa pessoa", que não
+                    é o caso. Fica em terceiro plano de propósito: é o desfecho
+                    menos desejado dos três, não pode competir com "Aprovar". */}
                 <button
-                  onClick={() => { setErroMsg(''); setRecusando(true); }}
+                  onClick={() => { setErroMsg(''); decidir('sem_contato'); }}
                   disabled={estado === 'enviando'}
                   style={{
-                    flex: 1, padding: '13px 10px', borderRadius: 12, fontSize: 15, fontWeight: 600,
-                    border: `1px solid ${C.inputBorder}`, background: 'transparent', color: C.text2, cursor: 'pointer',
-                  }}
-                >
-                  <X size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} />Recusar
-                </button>
-                <button
-                  onClick={() => { setErroMsg(''); decidir('aprovar'); }}
-                  disabled={estado === 'enviando'}
-                  style={{
-                    flex: 2, padding: '13px 10px', borderRadius: 12, fontSize: 15, fontWeight: 700,
-                    border: 'none', background: VERDE, color: '#fff', cursor: 'pointer',
+                    width: '100%', marginTop: 10, padding: '11px 10px', borderRadius: 12,
+                    fontSize: 14, fontWeight: 600, border: `1px dashed ${C.inputBorder}`,
+                    background: 'transparent', color: C.text3, cursor: 'pointer',
                     opacity: estado === 'enviando' ? 0.6 : 1,
                   }}
                 >
-                  <Check size={16} style={{ display: 'inline', marginRight: 6, verticalAlign: -3 }} />
-                  {estado === 'enviando' ? 'Aprovando...' : (casalPendente ? 'Aprovar o casal' : 'Aprovar entrada')}
+                  <PhoneOff size={15} style={{ display: 'inline', marginRight: 6, verticalAlign: -2 }} />
+                  Tentei, mas não consegui contato
                 </button>
-              </div>
+                <p style={{ fontSize: 11.5, color: C.textDim, margin: '8px 0 0', lineHeight: 1.5 }}>
+                  Use quando {casalPendente ? 'eles não responderam' : 'a pessoa não respondeu'} suas
+                  tentativas. Isso <strong>não é uma recusa</strong> — a equipe de grupos assume o
+                  contato por outro caminho.
+                </p>
+              </>
             ) : (
               <div>
                 {casalPendente && (

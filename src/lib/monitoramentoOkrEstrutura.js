@@ -12,6 +12,15 @@
 //   fixo      → número oficial estático (Pr. Juninho · módulo-fim, não sai daqui)
 //   alvoNum   → alvo numérico p/ colorir · cmp: gte | lte | range (+alvoMax)
 //   precisa   → o que falta pra puxar automático (mostra ao expandir)
+//   ressalva  → aviso que aparece MESMO COM número (fonte parada, base frágil).
+//               ⚠️ Diferente de `precisa`, que só aparece quando NÃO há número:
+//               aqui o número existe e é o que não se pode citar sem a ressalva.
+//   comparaLive → chave da métrica viva EQUIVALENTE a um número `fixo`. Mostra
+//                 "o sistema calcula X" ao lado do número da planilha, SEM
+//                 trocá-lo. Existe porque os dois divergem por BASE (a planilha
+//                 divide por 3.000, o sistema por membros ativos) e por
+//                 definição — trocar sem decidir a régua faria o indicador
+//                 "piorar" por mudança de critério, não por mudança de vida.
 // ============================================================================
 
 export const PRIMARY = '#00B39D';
@@ -65,7 +74,10 @@ export const BLOCOS = [
           // Valores estáticos (Pr. Juninho) · módulo-fim, não saem pro sistema.
           { ind: 'Prazo médio para primeiro contato', alvo: '3 dias entre a conversão e o contato do pastor', fixo: { valor: 24, unidade: 'h' }, alvoNum: 72, cmp: 'lte' },
           { ind: '% de novos convertidos com primeiro contato feito', alvo: '70%', fixo: { valor: 100, unidade: '%' }, alvoNum: 70, cmp: 'gte' },
-          { ind: '% Pessoas com 1° contato que fizeram o Next', alvo: '50%', fixo: { valor: 17, unidade: '%', detalhe: 'Média anual até agora.' }, alvoNum: 50, cmp: 'gte' },
+          // ⚠️ Régua trocada em 25/08/2026 (Matheus): "fez o Next" = esteve em PELO MENOS UM
+          // encontro, NÃO "formado". O relatório de agosto trazia 6,0% porque contou
+          // `next_matriculas.status='formado'` (status por TURMA, proibido pela lei do projeto).
+          { ind: '% Pessoas com 1° contato que foram a ≥1 encontro do Next', alvo: '50%', live: 'next_pos_contato', alvoNum: 50, cmp: 'gte', casas: 1 },
         ],
       },
       {
@@ -77,9 +89,16 @@ export const BLOCOS = [
         media: true, alvoNum: 50, cmp: 'gte',
         taticos: [
           // Valores estáticos (Pr. Juninho) · contagem real de cada área ÷ base definida pelo Juninho (módulo-fim, não sai dado daqui).
-          { ind: '% frequência em Grupos', alvo: '60%', fixo: { valor: 48, unidade: '%', detalhe: '1.431 em grupos ativos · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
-          { ind: '% Voluntários ativos', alvo: '60%', fixo: { valor: 29.8, unidade: '%', detalhe: '893 voluntários cadastrados · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
-          { ind: '% dizimistas regulares', alvo: '60%', fixo: { valor: 28.5, unidade: '%', detalhe: '856 dizimistas · base 3.000 membros.' }, alvoNum: 60, cmp: 'gte', casas: 1 },
+          { ind: '% frequência em Grupos', alvo: '60%', fixo: { valor: 48, unidade: '%', detalhe: '1.431 em grupos ativos · base 3.000 membros.' }, comparaLive: 'freq_grupos', alvoNum: 60, cmp: 'gte', casas: 1 },
+          // ⚠️⚠️ Régua confirmada pelo Matheus em 25/08/2026: ATIVO = SERVIU (check-in) nos
+          // últimos 3 meses · BASE = todo mundo com cadastro de voluntário ativo. TROCA A
+          // PERGUNTA — antes era "cadastro ÷ membros ativos" (29,8%), com um numerador que
+          // só cresce (`mem_voluntarios.ate` preenchido em ZERO linhas) e 156 pessoas que
+          // nem eram membro. ⚠️ Escalado÷escalado daria 96,9% e não discriminaria.
+          { ind: '% Voluntários ativos', alvo: '60%', live: 'volunt_ativos_base', alvoNum: 60, cmp: 'gte', casas: 1,
+            ressalva: 'Régua nova (25/08): ATIVO = serviu (fez check-in) nos últimos 3 meses · BASE = todos com cadastro de voluntário ativo. A diferença em relação aos 29,8% da planilha é MUDANÇA DE PERGUNTA, não de operação — a base deixou de ser os membros da igreja e passou a ser o cadastro de voluntários. ⚠️ O numerador depende de o check-in ter sido feito: a adesão varia por equipe (de 38% no Apoio GC a 100% em Batismo, Bateria e Mesa de corte), então parte de quem aparece como inativo pode ter servido sem registrar. ⚠️ `vol_check_ins` só existe desde 15/04/2026 — janela maior que ~4 meses ainda não tem dado.' },
+          { ind: '% dizimistas regulares', alvo: '60%', fixo: { valor: 28.5, unidade: '%', detalhe: '856 dizimistas · base 3.000 membros.' }, comparaLive: 'dizimistas', alvoNum: 60, cmp: 'gte', casas: 1,
+            ressalva: '⚠️ FONTE PARADA. A última contribuição nominal em `mem_contribuicoes` é de 16/06/2026 — a base que alimenta este número não recebe lançamento há mais de dois meses. E o cruzamento contribuição↔pessoa praticamente não existe: das 131.228 receitas em `fin_transacoes`, 9 têm membro identificado (0,007%). Qualquer % de dizimistas hoje é piso, não medida.' },
         ],
       },
       {
@@ -109,7 +128,7 @@ export const BLOCOS = [
           // DS online (views do Dia Seguinte) · crescimento YoY real · verde ≥ +20%.
           { ind: 'DS online · crescimento YoY', alvo: '+20% YoY', live: 'ds_online', alvoNum: 20, cmp: 'gte', casas: 1 },
           { ind: '% de decisões com follow up', alvo: '≥50% com follow up realizado', fixo: { valor: 17.5, unidade: '%', detalhe: '≈317 de 1.821 decisões online com follow-up · média anual.' }, alvoNum: 50, cmp: 'gte', casas: 1 },
-          { ind: 'NPS de culto online', alvo: 'Nota ≥ 9', memoria: 'Pesquisa com os frequentadores Online, resultado em planilha — trimestral', precisa: 'as notas da pesquisa de NPS online — posso ligar no módulo NPS ou você lança em /dados-brutos (tipo nps_culto)' },
+          { ind: 'NPS de culto online', alvo: 'Nota ≥ 9', memoria: 'Nota lançada por área no painel do culto (fonte nps_culto · área Online)', live: 'nps_culto_online', alvoNum: 9, cmp: 'gte', casas: 1, precisa: 'a área Online aplicar a pesquisa — o caminho já está ligado, falta a primeira nota' },
         ],
       },
       {
@@ -118,7 +137,7 @@ export const BLOCOS = [
         objetivo: 'Proporcionar uma experiência presencial fluida, acolhedora e tecnicamente excelente, favorecendo o engajamento e a permanência das pessoas no culto.',
         envolvida: 'Produção / Adoração / Marketing / Online',
         taticos: [
-          { ind: 'NPS de culto presencial', alvo: 'Nota ≥ 9', memoria: 'NPS mensal via QR Code ao final do culto, dados em planilha', precisa: 'as notas do NPS via QR no fim do culto (mesma fonte nps_culto por área)' },
+          { ind: 'NPS de culto presencial', alvo: 'Nota ≥ 9', memoria: 'Média das áreas presenciais que já aplicaram a pesquisa · o detalhe diz quais entraram', live: 'nps_culto_presencial', alvoNum: 9, cmp: 'gte', casas: 1, precisa: 'as áreas que ainda não aplicaram a pesquisa (hoje só o AMI tem nota)' },
           { ind: '% de assentos ocupados', alvo: '30% a 80% (base 1050)', memoria: 'Ação em conjunto com a Integração', live: 'assentos', alvoNum: 30, alvoMax: 80, cmp: 'range' },
           // Fonte viva = aba Produção de Culto (culto_producao.duracao_minutos vs
           // meta de 60 min). Os cultos passados (jan–jun/2026) entraram com o tempo
@@ -151,8 +170,8 @@ export const BLOCOS = [
         envolvida: 'Gestão estratégica / Financeiro',
         taticos: [
           { ind: '% de despesas dentro do orçamento', alvo: '80%', memoria: 'Acompanhamento do planejado vs executado no LouvaDeus e no Power BI', precisa: 'o planejado vs realizado (exportação do LouvaDeus / Power BI ou integração)' },
-          { ind: '% fundo reserva', alvo: '100% dos 10%', memoria: 'Acompanhamento por meio de relatórios financeiros', precisa: 'o saldo do fundo de reserva vs a meta de 10% (relatório financeiro mensal)' },
-          { ind: '% cumprimento de prazos de pagamento internos e externos', alvo: '90%', memoria: 'Consolidação e aprimoramento do sistema de Contas a Pagar', precisa: 'as datas de vencimento vs pagamento (módulo Contas a Pagar do Financeiro)' },
+          { ind: '% fundo reserva', alvo: '100% dos 10%', memoria: 'Lançado no centro de custo FUNDO DE RESERVA ÷ 10% da arrecadação do mês', live: 'fundo_reserva', alvoNum: 100, cmp: 'gte', casas: 1 },
+          { ind: '% cumprimento de prazos de pagamento internos e externos', alvo: '90%', memoria: 'Contas pagas até o vencimento ÷ contas pagas no mês · módulo Contas a Pagar', live: 'pagamentos_prazo', alvoNum: 90, cmp: 'gte', casas: 1 },
         ],
       },
       {

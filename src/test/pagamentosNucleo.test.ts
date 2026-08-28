@@ -5,11 +5,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // espelho de status do handler da espinha. O que fala com o Supabase fica pro
 // teste de integração (precisa de banco).
 
-// @ts-expect-error módulo JS sem tipos
 import * as providers from '../../backend/services/pagamentos/providers/index.js';
-// @ts-expect-error módulo JS sem tipos
 import * as manual from '../../backend/services/pagamentos/providers/manual.js';
-// @ts-expect-error módulo JS sem tipos
 import { STATUS, METODOS_VALIDOS } from '../../backend/services/pagamentos/tipos.js';
 
 const P = providers as any;
@@ -100,7 +97,6 @@ describe('pagamentos · espelho de status pra insc_pagamentos', () => {
   // cairia no default 'pendente' e a UI mostraria "aguardando" pra cobrança
   // estornada.
   it('cobre todos os status canônicos', async () => {
-    // @ts-expect-error módulo JS sem tipos
     const h = await import('../../backend/services/pagamentos/handlers/inscricao.js');
     const mapa = (h as any).STATUS_ESPELHO;
     for (const s of Object.values(STATUS) as string[]) {
@@ -110,7 +106,6 @@ describe('pagamentos · espelho de status pra insc_pagamentos', () => {
 
   it('só pago vira pago; parcial NÃO', async () => {
     // Parcial marcado como 'pago' confirmaria inscrição com dinheiro faltando.
-    // @ts-expect-error módulo JS sem tipos
     const h = await import('../../backend/services/pagamentos/handlers/inscricao.js');
     const mapa = (h as any).STATUS_ESPELHO;
     expect(mapa[STATUS.PAGO]).toBe('pago');

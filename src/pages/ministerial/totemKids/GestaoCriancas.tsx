@@ -3,7 +3,10 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { totemKids as api } from '../../../api';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { hrefConversa } from '@/lib/conversas';
+// hrefConversa (inbox interno) segue nos botões da FICHA da criança; hrefWhatsapp
+// (WhatsApp de quem clica) é só na lista de faltantes, que é trabalho de ligar
+// pra família — pedido do Matheus 2026-08-03.
+import { hrefConversa, hrefWhatsapp } from '@/lib/conversas';
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Label } from '../../../components/ui/label';
@@ -11,7 +14,8 @@ import { Textarea } from '../../../components/ui/textarea';
 import { Badge } from '../../../components/ui/badge';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
+import { FAIXAS_CHECKIN, faixaCheckin, casaFaixaCheckin } from '../../../lib/kidsFrequencia';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
 import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, Sparkles, Pencil, MessageSquare } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
@@ -20,27 +24,78 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import useConfirmarSaida from '../../../hooks/useConfirmarSaida';
 
-const FAIXAS = [
-  { key: 'todas', label: 'Todas as idades', min: 0, max: 9999 },
-  { key: '0-2', label: '0–2 anos', min: 0, max: 35 },
-  { key: '3-5', label: '3–5 anos', min: 36, max: 71 },
-  { key: '6-8', label: '6–8 anos', min: 72, max: 107 },
-  { key: '9-12', label: '9–12 anos', min: 108, max: 155 },
-];
+// Filtro por IDADE EXATA em anos (pedido do Marcos · antes eram faixas 0-2/3-5/
+// 6-8/9-12, que não respondem "quantas crianças de 4 anos eu tenho?").
+//
+// ⚠️ Deriva de `idade_meses`, que o backend já calcula e é a MESMA fonte da coluna
+// "Idade" da tabela (`calcIdadeMeses`/`formatIdade` em routes/totemKids.js).
+// Recalcular a partir de `data_nascimento` no cliente faria o filtro discordar da
+// linha exibida — e no dia do aniversário a diferença é de um ano inteiro.
+//
+// ⚠️ Abaixo de 24 meses a coluna mostra MESES ("14 meses"), não anos. Então quem
+// filtrar por "1 ano" vê crianças cuja coluna diz "12 meses"…"23 meses" — está
+// certo (14 meses É 1 ano), mas é a única leitura em que o rótulo do filtro e o
+// texto da linha não são idênticos.
+const IDADE_SEM_DATA = 'sem-data';
+// ⚠️ `sexo` está VAZIO em ~40% das crianças (1.726 de 4.321 medidas em 03/08), então
+// o filtro de gênero PRECISA de opção própria pra "não informado" — sem ela, quase
+// metade da base desaparece de qualquer filtro, em silêncio.
+const SEXO_SEM_INFO = 'sem-info';
+const SEXO_LABEL: Record<string, string> = { M: 'Menino', F: 'Menina' };
+const idadeAnos = (meses: number | null | undefined) =>
+  meses == null ? null : Math.floor(Number(meses) / 12);
 const TIPO_ATEND: Record<string, string> = {
   contato: 'Contato', ausencia: 'Ausência', saude: 'Saúde', observacao: 'Observação', outro: 'Outro',
 };
 const fmt = (d?: string | null) => { if (!d) return '—'; try { return new Date(d + (d.length === 10 ? 'T00:00:00' : '')).toLocaleDateString('pt-BR'); } catch { return d; } };
 
+// Motivos de desativação · pedido do Matheus (20/08/2026): ele precisa saber
+// POR QUE o cadastro saiu da conta — "saiu do país", "saiu da igreja" — e antes
+// a tela gravava sempre a string fixa "Desativado manualmente".
+//
+// ⚠️ Opção pronta + campo livre, não só texto livre: texto livre não agrupa, e o
+// mesmo motivo vira 5 grafias — foi o que aconteceu com o `responsavel` das
+// visitas pastorais (o mesmo pastor em 4 escritas, 6 cards para 4 pessoas).
+// A opção pronta dá relatório; o "Outro" evita forçar a pessoa a escolher errado.
+const MOTIVOS_DESATIVAR = [
+  'Mudou de cidade ou país',
+  'Saiu da igreja',
+  'Passou da idade do Kids',
+  'Cadastro duplicado',
+  'Nunca frequentou (cadastro de import)',
+  'Outro',
+] as const;
+
 export default function GestaoCriancas() {
   const [lista, setLista] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [busca, setBusca] = useState('');
-  const [faixa, setFaixa] = useState('todas');
+  const [idadeSel, setIdadeSel] = useState('todas'); // 'todas' | '<anos>' | IDADE_SEM_DATA
   const [status, setStatus] = useState('ativos'); // ativos | inativos
   const [jornadaF, setJornadaF] = useState('todas'); // todas | convertidos | batizados
-  const [modo, setModo] = useState<'lista' | 'faltantes'>('lista');
+  // Visitante é a criança que veio com alguém (prazo em `data_limite`) e ainda
+  // não é frequentadora. São poucas no meio de mil — sem filtro próprio, achar
+  // quem está com o prazo correndo exige rolar a lista inteira.
+  const [visitanteF, setVisitanteF] = useState('todas'); // todas | visitantes | frequentadores
+  // Frequência: "ativa" passou a significar QUEM VEIO (check-in na janela de
+  // 12 meses), não quem está cadastrada — a base herdou o import do Planning
+  // Center e contava mil crianças onde metade nunca apareceu no totem.
+  const [checkinF, setCheckinF] = useState('todas'); // todas | zero | 1 | 2-5 | 6-10 | 11+
+  const [freq, setFreq] = useState<any>(null);       // resumo do servidor
+  const [modo, setModo] = useState<'lista' | 'faltantes' | 'semCheckin'>('lista');
+  // ⚠️⚠️ LISTA SEPARADA, e não parte do radar de ausentes (decisão do Matheus ·
+  // 20/08). `fn_kids_ausentes_consecutivos` faz JOIN com a presença pra contar
+  // cultos perdidos, então quem NUNCA teve check-in sai do resultado — eram 554
+  // crianças ativas invisíveis em qualquer tela. Juntar num número só levaria o
+  // radar de 270 para ~824 e a fila pastoral viraria limpeza de base: quem
+  // "vinha e parou" pede telefonema, quem "nunca apareceu" pede desativar.
+  const [semCk, setSemCk] = useState<any>(null);
+  const [semCkLoading, setSemCkLoading] = useState(false);
   const [ausentes, setAusentes] = useState<any[]>([]);
+  const [ausIdade, setAusIdade] = useState('todas');   // 'todas' | '<anos>' | IDADE_SEM_DATA
+  const [ausSexo, setAusSexo] = useState('todos');     // 'todos' | 'M' | 'F' | SEXO_SEM_INFO
+  const [ausContato, setAusContato] = useState('todos'); // 'todos' | 'contatados' | 'pendentes'
+  const [salvandoContato, setSalvandoContato] = useState<string | null>(null);
   const [loadingAus, setLoadingAus] = useState(false);
   const [sel, setSel] = useState<any>(null);     // criança aberta na ficha
   const [novoOpen, setNovoOpen] = useState(false);
@@ -54,8 +109,14 @@ export default function GestaoCriancas() {
 
   const carregar = useCallback(() => {
     setLoading(true);
-    api.criancas.list({ ativo: status === 'ativos' })
-      .then((d: any) => setLista(Array.isArray(d) ? d : []))
+    // `meta: 1` traz o resumo de frequência junto (quantas vieram na janela e
+    // desde quando existe check-in). A rota segue devolvendo array puro sem
+    // isso — o app do Staff e a ficha consomem a mesma URL.
+    api.criancas.list({ ativo: status === 'ativos', meta: 1 })
+      .then((d: any) => {
+        setLista(Array.isArray(d) ? d : (d?.itens || []));
+        setFreq(Array.isArray(d) ? null : (d?.frequencia || null));
+      })
       .catch(() => toast.error('Erro ao carregar crianças'))
       .finally(() => setLoading(false));
   }, [status]);
@@ -70,21 +131,133 @@ export default function GestaoCriancas() {
   }, []);
   useEffect(() => { if (modo === 'faltantes') carregarAusentes(); }, [modo, carregarAusentes]);
 
+  const carregarSemCheckin = useCallback(() => {
+    setSemCkLoading(true);
+    api.semCheckin(500)
+      .then((d: any) => setSemCk(d))
+      // ⚠️ Erro NÃO vira lista vazia: "nenhuma criança sem check-in" é conclusão
+      // oposta de "não consegui carregar", e a primeira faz parecer que a base
+      // está limpa.
+      .catch((e: any) => { toast.error(e?.message || 'Erro ao carregar'); setSemCk(null); })
+      .finally(() => setSemCkLoading(false));
+  }, []);
+  useEffect(() => { if (modo === 'semCheckin') carregarSemCheckin(); }, [modo, carregarSemCheckin]);
+
+  // Idades que EXISTEM na lista carregada, com a contagem de cada uma. Montar as
+  // opções a partir do dado (em vez de fixar 0..12) evita oferecer idade vazia e
+  // já responde "quantas de 4 anos?" no próprio seletor.
+  const idadesDisponiveis = useMemo(() => {
+    const porIdade = new Map<number, number>();
+    let semData = 0;
+    for (const c of lista) {
+      const a = idadeAnos(c.idade_meses);
+      if (a == null) { semData += 1; continue; }
+      porIdade.set(a, (porIdade.get(a) || 0) + 1);
+    }
+    return {
+      anos: [...porIdade.entries()].sort((x, y) => x[0] - y[0]).map(([anos, qtd]) => ({ anos, qtd })),
+      semData,
+    };
+  }, [lista]);
+
+  // Opções e filtragem da aba "Faltando 3+ cultos". Mesmas réguas da lista
+  // principal (idade exata derivada de idade_meses, opção própria pra quem não
+  // tem o dado) — duas réguas diferentes na mesma tela seriam duas verdades.
+  const ausOpcoes = useMemo(() => {
+    const porIdade = new Map<number, number>();
+    let semData = 0, semSexo = 0;
+    const porSexo = new Map<string, number>();
+    for (const a of ausentes) {
+      const anos = idadeAnos(a.idade_meses);
+      if (anos == null) semData += 1; else porIdade.set(anos, (porIdade.get(anos) || 0) + 1);
+      if (!a.sexo) semSexo += 1; else porSexo.set(a.sexo, (porSexo.get(a.sexo) || 0) + 1);
+    }
+    return {
+      anos: [...porIdade.entries()].sort((x, y) => x[0] - y[0]).map(([anos, qtd]) => ({ anos, qtd })),
+      semData,
+      sexos: [...porSexo.entries()].sort().map(([sexo, qtd]) => ({ sexo, qtd })),
+      semSexo,
+    };
+  }, [ausentes]);
+
+  const ausentesFiltrados = useMemo(() => ausentes.filter(a => {
+    const anos = idadeAnos(a.idade_meses);
+    if (ausIdade === IDADE_SEM_DATA) { if (anos != null) return false; }
+    else if (ausIdade !== 'todas') { if (anos == null || anos !== Number(ausIdade)) return false; }
+    if (ausSexo === SEXO_SEM_INFO) { if (a.sexo) return false; }
+    else if (ausSexo !== 'todos') { if (a.sexo !== ausSexo) return false; }
+    if (ausContato === 'contatados' && !a.contatado) return false;
+    if (ausContato === 'pendentes' && a.contatado) return false;
+    return true;
+  }), [ausentes, ausIdade, ausSexo, ausContato]);
+
+  const ausContatados = useMemo(() => ausentes.filter(a => a.contatado).length, [ausentes]);
+
+  // Marca/desmarca "família contatada". Atualiza a linha na hora (otimista) e
+  // reverte se o servidor recusar — a lista é de ação, travar em spinner a cada
+  // clique atrapalharia quem está ligando pra uma família atrás da outra.
+  const toggleContato = async (a: any) => {
+    const marcar = !a.contatado;
+    setSalvandoContato(a.crianca_id);
+    const antes = ausentes;
+    setAusentes(l => l.map(x => (x.crianca_id === a.crianca_id
+      ? { ...x, contatado: marcar, contatado_em: marcar ? new Date().toISOString().slice(0, 10) : null }
+      : x)));
+    try {
+      if (marcar) await api.ausenteContatar(a.crianca_id);
+      else await api.ausenteDescontatar(a.crianca_id, a.ultima_presenca || undefined);
+    } catch {
+      setAusentes(antes);
+      toast.error(marcar ? 'Não consegui marcar o contato' : 'Não consegui desmarcar');
+    } finally {
+      setSalvandoContato(null);
+    }
+  };
+
   const filtradas = useMemo(() => {
-    const f = FAIXAS.find(x => x.key === faixa)!;
     const t = busca.trim().toLowerCase();
     return lista.filter(c => {
-      const m = c.idade_meses;
-      if (faixa !== 'todas' && (m == null || m < f.min || m > f.max)) return false;
+      const a = idadeAnos(c.idade_meses);
+      // Criança sem data de nascimento tem opção PRÓPRIA no seletor: antes ela
+      // desaparecia em silêncio de qualquer filtro de idade, e é justamente ela
+      // que a equipe precisa achar pra completar o cadastro.
+      if (idadeSel === IDADE_SEM_DATA) {
+        if (a != null) return false;
+      } else if (idadeSel !== 'todas') {
+        if (a == null || a !== Number(idadeSel)) return false;
+      }
       if (t) {
         const resp = (c.responsaveis || []).map((r: any) => r.membro?.nome || '').join(' ');
         if (!(`${c.nome} ${resp}`.toLowerCase().includes(t))) return false;
       }
       if (jornadaF === 'convertidos' && !c.data_conversao) return false;
       if (jornadaF === 'batizados' && !c.data_batismo) return false;
+      if (visitanteF === 'visitantes' && c.visitante !== true) return false;
+      if (visitanteF === 'frequentadores' && c.visitante === true) return false;
+      if (!casaFaixaCheckin(c.checkins_total, checkinF)) return false;
       return true;
     });
-  }, [lista, faixa, busca, status, jornadaF]);
+  }, [lista, idadeSel, busca, status, jornadaF, visitanteF, checkinF]);
+
+  // Quantas crianças em cada faixa de check-in (sobre a lista carregada, não
+  // sobre o recorte — contagem que muda a cada letra digitada não ajuda a
+  // decidir por qual faixa filtrar).
+  const totaisCheckin = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of lista) {
+      const k = faixaCheckin(c.checkins_total);
+      m.set(k, (m.get(k) || 0) + 1);
+    }
+    return m;
+  }, [lista]);
+
+  // Contagem por situação, sobre a lista CARREGADA (não sobre o recorte atual):
+  // número que muda a cada letra digitada não serve pra decidir por qual opção
+  // filtrar — mesma régua dos filtros de campo das inscrições.
+  const totaisVisitante = useMemo(() => ({
+    visitantes: lista.filter(c => c.visitante === true).length,
+    frequentadores: lista.filter(c => c.visitante !== true).length,
+  }), [lista]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-4">
@@ -110,9 +283,57 @@ export default function GestaoCriancas() {
           className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${modo === 'faltantes' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
           <AlertCircle className="h-4 w-4" /> Faltando 3+ cultos{ausentes.length > 0 && modo !== 'faltantes' ? ` (${ausentes.length})` : ''}
         </button>
+        <button type="button" onClick={() => setModo('semCheckin')}
+          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${modo === 'semCheckin' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+          <UserX className="h-4 w-4" /> Nunca fez check-in{semCk?.total ? ` (${semCk.total})` : ''}
+        </button>
       </div>
 
-      {modo === 'faltantes' ? (
+      {modo === 'semCheckin' && (
+        <Card>
+          <CardContent className="p-3">
+            <p className="text-xs text-muted-foreground mb-2">
+              Crianças <strong>ativas</strong> que nunca fizeram um único check-in no totem.
+              Elas <strong>não aparecem</strong> em "Faltando 3+ cultos" — aquele radar precisa de
+              presença para contar ausência. A maioria veio do import do Planning Center e
+              provavelmente é cadastro a desativar; abra a ficha e use{' '}
+              <strong>Desativar cadastro</strong> para tirá-la das contagens.
+            </p>
+            {semCkLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
+            {!semCkLoading && !semCk && <p className="text-sm text-destructive">Não foi possível carregar.</p>}
+            {!semCkLoading && semCk && (
+              <>
+                <div className="flex flex-wrap gap-3 text-xs mb-2">
+                  <span><strong>{semCk.total}</strong> no total</span>
+                  <span className="text-muted-foreground">{semCk.do_import} do import do Planning Center</span>
+                  <span className="text-muted-foreground">{semCk.cadastradas_aqui} cadastradas aqui</span>
+                  {semCk.truncado && <span className="text-amber-600">mostrando as {semCk.itens.length} mais antigas</span>}
+                </div>
+                <div className="space-y-1 max-h-[60vh] overflow-y-auto">
+                  {semCk.itens.map((c: any) => (
+                    <button key={c.crianca_id} onClick={() => setSel({ id: c.crianca_id })}
+                      className="w-full flex items-center gap-3 rounded-lg border p-2.5 text-left hover:bg-muted/40 transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm truncate flex items-center gap-2">
+                          {c.nome}
+                          {c.idade_label && <span className="text-xs font-normal text-muted-foreground shrink-0">{c.idade_label}</span>}
+                          {c.visitante && <span className="text-xs font-normal text-amber-600 shrink-0">· visitante</span>}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          cadastrada {c.cadastrada_em ? new Date(c.cadastrada_em + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}
+                          {c.do_import ? ' · veio do Planning Center' : ''}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {modo === 'semCheckin' ? null : modo === 'faltantes' ? (
         <Card>
           <CardContent className="p-3">
             <div className="flex items-start justify-between gap-2 mb-2">
@@ -120,31 +341,98 @@ export default function GestaoCriancas() {
                 Crianças frequentadoras ativas que ficaram <b>3+ cultos seguidos sem check-in</b> (última presença nos últimos 90 dias). Vale um contato com a família. A frequência vem dos check-ins do totem.
               </p>
             </div>
+            {/* Filtros da lista de faltantes · idade exata, gênero e contato */}
+            {ausentes.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2 mb-3">
+                <Select value={ausIdade} onValueChange={setAusIdade}>
+                  <SelectTrigger className="w-44 h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todas">Todas as idades</SelectItem>
+                    {ausOpcoes.anos.map(({ anos, qtd }) => (
+                      <SelectItem key={anos} value={String(anos)}>
+                        {anos === 0 ? 'Menos de 1 ano' : `${anos} ${anos === 1 ? 'ano' : 'anos'}`} ({qtd})
+                      </SelectItem>
+                    ))}
+                    {ausOpcoes.semData > 0 && (
+                      <SelectItem value={IDADE_SEM_DATA}>Sem data de nascimento ({ausOpcoes.semData})</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <Select value={ausSexo} onValueChange={setAusSexo}>
+                  <SelectTrigger className="w-40 h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Meninos e meninas</SelectItem>
+                    {ausOpcoes.sexos.map(({ sexo, qtd }) => (
+                      <SelectItem key={sexo} value={sexo}>{SEXO_LABEL[sexo] || sexo} ({qtd})</SelectItem>
+                    ))}
+                    {ausOpcoes.semSexo > 0 && (
+                      <SelectItem value={SEXO_SEM_INFO}>Sexo não informado ({ausOpcoes.semSexo})</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <Select value={ausContato} onValueChange={setAusContato}>
+                  <SelectTrigger className="w-44 h-9 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Contatados e não</SelectItem>
+                    <SelectItem value="pendentes">Falta contatar ({ausentes.length - ausContatados})</SelectItem>
+                    <SelectItem value="contatados">Já contatados ({ausContatados})</SelectItem>
+                  </SelectContent>
+                </Select>
+                <span className="text-xs text-muted-foreground ml-auto">
+                  {ausentesFiltrados.length} de {ausentes.length} · {ausContatados} contatada{ausContatados === 1 ? '' : 's'}
+                </span>
+              </div>
+            )}
             {loadingAus ? (
               <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
             ) : ausentes.length === 0 ? (
               <p className="text-sm text-muted-foreground py-8 text-center">Nenhuma criança faltando 3+ cultos. 🎉</p>
+            ) : ausentesFiltrados.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-8 text-center">Nenhuma criança nesses filtros.</p>
             ) : (
               <div className="space-y-2">
-                {ausentes.map(a => {
+                {ausentesFiltrados.map(a => {
                   const resp = (a.responsaveis || []).find((r: any) => r.telefone) || (a.responsaveis || [])[0];
-                  const tel = resp?.telefone ? String(resp.telefone).replace(/\D/g, '') : null;
-                  const telFull = tel ? (tel.length <= 11 && !tel.startsWith('55') ? '55' + tel : tel) : null;
+                  const wpp = hrefWhatsapp(resp?.telefone);
                   return (
-                    <div key={a.crianca_id} className="flex items-center gap-3 rounded-lg border border-border p-2.5">
+                    <div key={a.crianca_id} className={`flex items-center gap-3 rounded-lg border p-2.5 transition-colors ${
+                      a.contatado ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-border'
+                    }`}>
+                      {/* Contatado · marca no clique e some da fila de "falta contatar" */}
+                      <label
+                        className="flex items-center shrink-0 cursor-pointer"
+                        title={a.contatado
+                          ? `Contatada${a.contatado_em ? ` em ${new Date(a.contatado_em + 'T12:00:00').toLocaleDateString('pt-BR')}` : ''}${a.contatado_por ? ` por ${a.contatado_por}` : ''} · clique pra desmarcar`
+                          : 'Marcar como contatada'}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!a.contatado}
+                          disabled={salvandoContato === a.crianca_id}
+                          onChange={() => toggleContato(a)}
+                          className="h-4 w-4 accent-emerald-600 cursor-pointer"
+                        />
+                      </label>
                       <button onClick={() => setSel({ id: a.crianca_id })} className="flex-1 min-w-0 text-left">
-                        <div className="font-medium text-sm truncate">{a.nome}</div>
+                        <div className="font-medium text-sm truncate flex items-center gap-2">
+                          {a.nome}
+                          {a.idade_label && <span className="text-xs font-normal text-muted-foreground shrink-0">{a.idade_label}</span>}
+                          {a.sexo && <span className="text-xs font-normal text-muted-foreground shrink-0">· {SEXO_LABEL[a.sexo] || a.sexo}</span>}
+                        </div>
                         <div className="text-xs text-muted-foreground">
                           <span className="text-amber-600 font-medium">{a.cultos_perdidos} cultos sem vir</span>
                           {a.ultima_presenca ? ` · última presença ${new Date(a.ultima_presenca + 'T12:00:00').toLocaleDateString('pt-BR')}` : ''}
-                          {resp?.nome ? ` · ${resp.nome}` : ''}
+                          {resp?.nome ? <> · <span className="text-muted-foreground/70">resp.:</span> {resp.nome}</> : ''}
+                          {a.contatado && a.contatado_em && (
+                            <span className="text-emerald-600 font-medium"> · contatada {new Date(a.contatado_em + 'T12:00:00').toLocaleDateString('pt-BR')}</span>
+                          )}
                         </div>
                       </button>
-                      {telFull && (
-                        <Link to={hrefConversa(telFull)}
-                          className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600 shrink-0" title={`WhatsApp de ${resp?.nome || 'responsável'}`}>
+                      {wpp && (
+                        <a href={wpp} target="_blank" rel="noopener noreferrer"
+                          className="inline-flex items-center justify-center h-9 w-9 rounded-full bg-emerald-500 text-white hover:bg-emerald-600 shrink-0" title={`Falar com ${resp?.nome || 'responsável'} no seu WhatsApp`}>
                           <Phone className="h-4 w-4" />
-                        </Link>
+                        </a>
                       )}
                     </div>
                   );
@@ -161,9 +449,21 @@ export default function GestaoCriancas() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Buscar por nome da criança ou responsável..." value={busca} onChange={e => setBusca(e.target.value)} />
         </div>
-        <Select value={faixa} onValueChange={setFaixa}>
-          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-          <SelectContent>{FAIXAS.map(f => <SelectItem key={f.key} value={f.key}>{f.label}</SelectItem>)}</SelectContent>
+        <Select value={idadeSel} onValueChange={setIdadeSel}>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Todas as idades</SelectItem>
+            {idadesDisponiveis.anos.map(({ anos, qtd }) => (
+              <SelectItem key={anos} value={String(anos)}>
+                {anos === 0 ? 'Menos de 1 ano' : `${anos} ${anos === 1 ? 'ano' : 'anos'}`} ({qtd})
+              </SelectItem>
+            ))}
+            {idadesDisponiveis.semData > 0 && (
+              <SelectItem value={IDADE_SEM_DATA}>
+                Sem data de nascimento ({idadesDisponiveis.semData})
+              </SelectItem>
+            )}
+          </SelectContent>
         </Select>
         <Select value={status} onValueChange={setStatus}>
           <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
@@ -180,7 +480,52 @@ export default function GestaoCriancas() {
             <SelectItem value="batizados">Batizados</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={visitanteF} onValueChange={setVisitanteF}>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Visitantes e frequentadores</SelectItem>
+            <SelectItem value="visitantes">Só visitantes ({totaisVisitante.visitantes})</SelectItem>
+            <SelectItem value="frequentadores">Só frequentadores ({totaisVisitante.frequentadores})</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={checkinF} onValueChange={setCheckinF}>
+          <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Qualquer nº de check-in</SelectItem>
+            {FAIXAS_CHECKIN.map(f => (
+              <SelectItem key={f.key} value={f.key}>
+                {f.rotulo} ({totaisCheckin.get(f.key) || 0})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
+
+      {/* ⚠️ "Ativa" agora é quem VEIO, e o número vem com a janela colada.
+          Enquanto a coleta for mais curta que a janela, a tela DIZ isso — sem
+          essa linha, "sem check-in em 12 meses" seria lido como "não frequenta"
+          quando na verdade o totem ainda não existia. */}
+      {modo === 'lista' && freq && (
+        <div className="rounded-lg border border-border bg-foreground/[0.03] px-3 py-2 text-xs space-y-1">
+          {freq.aviso ? (
+            <div className="text-amber-600">{freq.aviso}</div>
+          ) : (
+            <>
+              <div>
+                <strong className="text-foreground">{freq.frequentam}</strong> vieram pelo menos 1× nos
+                últimos {freq.janela_meses} meses · <strong className="text-foreground">{freq.sem_checkin}</strong> sem
+                nenhum check-in na janela · {freq.total} cadastradas.
+              </div>
+              {freq.cobertura_parcial && freq.coleta_desde && (
+                <div className="text-amber-600">
+                  ⚠️ O totem só registra check-in desde {new Date(freq.coleta_desde).toLocaleDateString('pt-BR')} —
+                  quem está sem check-in pode simplesmente não ter passado pelo totem ainda.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Lista */}
       <Card>
@@ -200,12 +545,29 @@ export default function GestaoCriancas() {
                       {c.foto_url ? <img src={c.foto_url} alt="" className="h-full w-full object-cover" /> : <span className="text-sm font-bold text-primary">{c.nome?.charAt(0) || '?'}</span>}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">{c.nome}</div>
-                      <div className="text-xs text-muted-foreground truncate">{c.idade_label || '—'}{resp ? ` · ${resp.nome}` : ''}</div>
+                      {/* Idade AO LADO do nome (pedido do Matheus 2026-08-03) — antes
+                          ficava na 2ª linha, misturada com o nome do responsável, e
+                          era o dado que a equipe mais procura pra saber a sala. */}
+                      <div className="font-medium text-sm truncate flex items-center gap-2">
+                        <span className="truncate">{c.nome}</span>
+                        <span className="text-xs font-normal text-muted-foreground shrink-0">
+                          {c.idade_label || 'idade não informada'}
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">{resp ? resp.nome : '—'}</div>
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       {c.necessidades_especiais && <AlertCircle className="h-4 w-4 text-amber-500" />}
                       {c.visitante && <Badge variant="secondary" className="text-[10px]">visitante</Badge>}
+                      {/* `null` = não deu pra ler os check-ins (o aviso está no
+                          topo) — diferente de 0, que é "nunca veio". */}
+                      {c.checkins_total != null && (
+                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">
+                          {c.checkins_total === 0
+                            ? 'sem check-in'
+                            : `${c.checkins_total} check-in${c.checkins_total === 1 ? '' : 's'}`}
+                        </span>
+                      )}
                     </div>
                   </button>
                 );
@@ -323,17 +685,37 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
     try { await api.criancas.addAtendimento(criancaId, { tipo: novoTipo, descricao: novoDesc, data: novoData }); setNovoDesc(''); load(); }
     catch (e: any) { toast.error(e?.message || 'Erro'); } finally { setSalvando(false); }
   }
+  const [motivoAberto, setMotivoAberto] = useState(false);
+  const [motivoSel, setMotivoSel] = useState<string>(MOTIVOS_DESATIVAR[0]);
+  const [motivoLivre, setMotivoLivre] = useState('');
+  const [salvandoMotivo, setSalvandoMotivo] = useState(false);
+
   async function delAtend(id: string) {
     try { await api.criancas.removeAtendimento(id); load(); } catch (e: any) { toast.error(e?.message || 'Erro'); }
   }
+  // Reativar é direto; DESATIVAR abre o diálogo que pergunta o motivo.
   async function toggleAtivo() {
-    const inativar = c.ativo;
-    if (inativar && !window.confirm('Desativar o cadastro desta criança?')) return;
+    if (c.ativo) { setMotivoAberto(true); return; }
     try {
-      await api.criancas.inativar(criancaId, inativar ? { motivo: 'Desativado manualmente' } : { ativo: true });
-      toast.success(inativar ? 'Cadastro desativado' : 'Cadastro reativado');
+      await api.criancas.inativar(criancaId, { ativo: true });
+      toast.success('Cadastro reativado');
       load(); onChanged();
     } catch (e: any) { toast.error(e?.message || 'Erro'); }
+  }
+
+  async function confirmarDesativar() {
+    // ⚠️ "Outro" exige o texto: gravar a palavra "Outro" como motivo não
+    // responde nada a quem for ler o relatório depois.
+    const texto = motivoSel === 'Outro' ? motivoLivre.trim() : motivoSel;
+    if (!texto) { toast.error('Diga o motivo da desativação'); return; }
+    setSalvandoMotivo(true);
+    try {
+      await api.criancas.inativar(criancaId, { motivo: texto });
+      toast.success('Cadastro desativado · sai das contagens de crianças');
+      setMotivoAberto(false); setMotivoLivre('');
+      load(); onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro'); }
+    finally { setSalvandoMotivo(false); }
   }
 
   return (
@@ -478,6 +860,54 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
               </Button>
               {!c.ativo && c.motivo_inativacao && <p className="text-xs text-muted-foreground mt-1">Motivo: {c.motivo_inativacao}</p>}
             </div>
+
+            {/* Desativar PERGUNTA o motivo. ⚠️ z-[1100]: modal dentro de modal —
+                convenção da casa (o Dialog padrão é 1000). */}
+            <Dialog open={motivoAberto} onOpenChange={(o) => !o && setMotivoAberto(false)}>
+              <DialogContent className="max-w-md z-[1100]">
+                <DialogHeader>
+                  <DialogTitle>Desativar o cadastro de {c.nome}</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    A criança <strong>sai das contagens</strong> — some da lista de crianças
+                    ativas, do radar de ausentes e do check-in do totem. O cadastro não é
+                    apagado: dá para reativar depois.
+                  </p>
+                  <div className="space-y-1.5">
+                    {MOTIVOS_DESATIVAR.map((m) => (
+                      <label key={m} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input
+                          type="radio" name="motivo-desativar" value={m}
+                          checked={motivoSel === m}
+                          onChange={() => setMotivoSel(m)}
+                          className="h-3.5 w-3.5 accent-primary cursor-pointer"
+                        />
+                        {m}
+                      </label>
+                    ))}
+                  </div>
+                  {motivoSel === 'Outro' && (
+                    <Input
+                      autoFocus
+                      placeholder="Qual o motivo?"
+                      value={motivoLivre}
+                      onChange={(e) => setMotivoLivre(e.target.value)}
+                      maxLength={300}
+                    />
+                  )}
+                </div>
+                <DialogFooter className="gap-2">
+                  <Button variant="ghost" onClick={() => setMotivoAberto(false)}>Cancelar</Button>
+                  <Button
+                    onClick={confirmarDesativar}
+                    disabled={salvandoMotivo || (motivoSel === 'Outro' && !motivoLivre.trim())}
+                  >
+                    {salvandoMotivo ? 'Desativando...' : 'Desativar cadastro'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
           )
         ) : aba === 'frequencia' ? (

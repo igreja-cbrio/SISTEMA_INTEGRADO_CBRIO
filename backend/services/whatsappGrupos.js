@@ -32,7 +32,7 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { supabase } = require('../utils/supabase');
-const { enviarTexto, enviarTemplate } = require('./whatsappSend');
+const { enviarTexto } = require('./whatsappSend');
 
 const MODEL = 'claude-haiku-4-5-20251001';
 const GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || 'v21.0';
@@ -57,8 +57,12 @@ async function enviarComFallback(telefone, texto, templateEnv, params) {
   if (r.ok) return { ...r, via: 'texto' };
   const tpl = process.env[templateEnv];
   if (tpl) {
-    const rt = await enviarTemplate(telefone, tpl, 'pt_BR', params);
-    return { ...rt, via: 'template' };
+    // C2 (lote 5 · 14/08): o TEMPLATE (pago, fora da janela) sai pela FILA —
+    // registro + retry no teto da Meta + recibos. ok = aceito OU na fila
+    // (na fila = vai sair; quem chama só decide se loga falha).
+    const { enfileirar } = require('./whatsappFila');
+    const rt = await enfileirar({ telefone, template: tpl, params, contexto: 'grupos.fallback_template' });
+    return { ok: !!(rt.sent || rt.queued), message_id: rt.messageId || null, error: rt.sent || rt.queued ? null : (rt.reason || 'erro'), via: 'template' };
   }
   return { ...r, via: 'texto' };
 }

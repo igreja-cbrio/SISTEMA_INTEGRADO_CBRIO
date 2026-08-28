@@ -57,6 +57,11 @@ export interface VolCheckIn {
   checked_in_at: string;
   method: 'qr_code' | 'manual' | 'facial' | 'self_service';
   is_unscheduled: boolean;
+  // Coluna real de `vol_check_ins`: o nome gravado no PRÓPRIO check-in. É o
+  // fallback do check-in avulso, quando não há escala nem voluntário vinculado
+  // (VolCheckin.tsx manda `volunteer_name` no check-in manual). Sem declarar,
+  // VolRelatorios acessava um campo que o tipo dizia não existir.
+  volunteer_name?: string | null;
   volunteer?: { id: string; full_name: string; planning_center_id?: string | null } | null;
   schedule?: { id: string; volunteer_name: string; volunteer_id: string | null; team_name?: string | null; position_name?: string | null } | null;
   service?: { id: string; name: string; scheduled_at: string } | null;

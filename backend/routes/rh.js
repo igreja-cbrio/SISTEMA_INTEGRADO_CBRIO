@@ -7,6 +7,7 @@ const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
 const { chamarModelo: organogramaIA } = require('../services/organogramaIA');
 const { aplicarCobertura, encerrarCobertura } = require('../services/cobertura');
+const rhOnboardingEnvios = require('../services/rhOnboardingEnvios');
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -761,7 +762,7 @@ const CAMPOS_RH_SENSIVEIS = [
 // recusa o cast pra numeric/date — era o que estourava ("invalid input syntax
 // for type numeric: \"\"") ao inativar/editar quem nao tem salario lancado.
 const RH_FIELD_TYPES = {
-  nome: 'text', cpf: 'text', email: 'text', telefone: 'text', cargo: 'text',
+  nome: 'text', cpf: 'text', email: 'text', telefone: 'fone', cargo: 'text',
   area: 'text', tipo_contrato: 'upper', observacoes: 'text', status: 'text', foto_url: 'text',
   setor_id: 'int',
   salario: 'num', remuneracao_bruta: 'num',
@@ -775,9 +776,14 @@ const RH_FIELD_TYPES = {
   fgts: 'num', ir: 'num', inss: 'num',
   remuneracao_liquida: 'num', custo_total_mensal: 'num',
   bonus_anual_50: 'num', bonus_anual_integral: 'num', ferias_integral: 'num',
-  data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date',
+  data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date', data_nascimento: 'date',
   grau_id: 'uuid',
   admissao_dados: 'json', // jsonb com dados extras do onboarding (RG, PJ, contrato…) · não sensível
+  // Modernização do cadastro (revisão Feedz/HRIS, 2026-08-12): matrícula,
+  // cargo visível e endereço estruturado (padrão do censo · cepAutopreenche.ts).
+  matricula: 'text', cargo_visivel: 'text',
+  endereco: 'text', cep: 'text', numero: 'text', complemento: 'text',
+  bairro: 'text', cidade: 'text', uf: 'text',
 };
 function coerceRh(val, type) {
   if (val === undefined) return undefined;       // nao veio no body → nao mexe na coluna
@@ -786,6 +792,13 @@ function coerceRh(val, type) {
   if (type === 'num') { const n = Number(val); return Number.isFinite(n) ? n : null; }
   if (type === 'int') { const n = parseInt(val, 10); return Number.isFinite(n) ? n : null; }
   if (type === 'upper') return String(val).toUpperCase();  // tipo_contrato · CHECK exige CLT/PJ/PJ+/PREBENDA
+  if (type === 'fone') {
+    // Padrão da casa (mesma régua de normalizarTelefonePayload em membresia.js):
+    // só dígitos, DDD + número (10-11), sem o "55" (é acrescentado na hora do envio).
+    let d = String(val).replace(/\D/g, '');
+    if (d.length > 11 && d.startsWith('55')) d = d.slice(2);
+    return d || null;
+  }
   return val;                                     // text/date/uuid passam direto
 }
 
@@ -1091,21 +1104,58 @@ router.post('/funcionarios/:id/onboarding-link', authorizeModule('rh', 2), async
       .select('id, nome, onboarding_token').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!func) return res.status(404).json({ error: 'Colaborador não encontrado' });
 
-    let token = func.onboarding_token;
-    if (!token || (req.body && req.body.regenerar)) {
-      token = require('crypto').randomBytes(18).toString('base64url'); // ~24 chars
-    }
-    const { error } = await supabase.from('rh_funcionarios')
-      .update({ onboarding_token: token, onboarding_enviado_em: new Date().toISOString() })
-      .eq('id', func.id);
-    if (error) return res.status(400).json({ error: error.message });
-
-    const base = process.env.FRONTEND_URL || 'https://cbrio.org';
-    const url = `${base.replace(/\/$/, '')}/onboarding/${token}`;
-    res.json({ url, token, nome: func.nome });
+    const link = await rhOnboardingEnvios.gerarOnboardingLink(func, { regenerar: !!(req.body && req.body.regenerar) });
+    if (link.erro) return res.status(400).json({ error: link.erro });
+    res.json({ url: link.url, token: link.token, nome: func.nome });
   } catch (e) {
     console.error('[RH] onboarding-link:', e.message);
     res.status(500).json({ error: 'Erro ao gerar o link do formulário' });
+  }
+});
+
+// GET /api/rh/onboarding/pendentes — colaboradores com dados faltando (o que
+// o disparo em massa alcançaria). Só leitura, nível 2 (mesmo do link individual).
+router.get('/onboarding/pendentes', authorizeModule('rh', 2), async (req, res) => {
+  try {
+    const r = await rhOnboardingEnvios.listarPendentes();
+    if (r.erro) return res.status(400).json({ error: r.erro });
+    res.json(r);
+  } catch (e) {
+    console.error('[RH] onboarding/pendentes:', e.message);
+    res.status(500).json({ error: 'Erro ao listar colaboradores com dados faltando' });
+  }
+});
+
+// POST /api/rh/onboarding/preview — nunca enfileira, só resolve quem entraria.
+router.post('/onboarding/preview', authorizeModule('rh', 3), async (req, res) => {
+  try {
+    const r = await rhOnboardingEnvios.previewLote();
+    if (r.erro) return res.status(400).json({ error: r.erro });
+    res.json(r);
+  } catch (e) {
+    console.error('[RH] onboarding/preview:', e.message);
+    res.status(500).json({ error: 'Erro ao montar a prévia do disparo' });
+  }
+});
+
+// POST /api/rh/onboarding/disparar — dispara o formulário pra todos os
+// colaboradores com dados faltando. Nível 5 (admin do módulo, como o disparo
+// em massa de grupos/censo) — é ação mais sensível que editar um cadastro.
+router.post('/onboarding/disparar', authorizeModule('rh', 5), async (req, res) => {
+  try {
+    const { configurado: whatsappConfigurado } = require('../services/whatsappService');
+    if (!whatsappConfigurado()) {
+      return res.status(409).json({ error: 'O envio de WhatsApp não está configurado no servidor — nada foi enviado.' });
+    }
+    const r = await rhOnboardingEnvios.dispararLote();
+    if (r.erro) return res.status(400).json({ error: r.erro });
+    console.log('[RH onboarding lote] disparo:', JSON.stringify({
+      autor: req.user?.email, enfileirados: r.enfileirados, erros: r.erros,
+    }));
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[RH] onboarding/disparar:', e.message);
+    res.status(500).json({ error: 'Erro ao disparar o formulário em lote' });
   }
 });
 

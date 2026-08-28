@@ -20,10 +20,30 @@ const contasService = require('../services/santander/contasService');
 const pixApiService = require('../services/santander/pixApiService');
 const { matchOfxPix, classificarBatch } = require('../services/financeiroClassificador');
 const { isAuthorizedCron } = require('../utils/cronAuth');
+const { AppError, ERROR_CODES } = require('../utils/appError');
+const { captureHandledException } = require('../utils/sentry');
+const { setSystemJobOutcome } = require('../services/systemJobOutcome');
+const { reconcileTransactions, summarizeInsertErrors } = require('../services/santander/reconciliation');
+const { parseDateBR } = require('../services/pixExtratoParser');
+
+function bankSyncError(error, publicMessage) {
+  return new AppError(error?.message || publicMessage, {
+    code: ERROR_CODES.BANK_SYNC_FAILED,
+    publicMessage,
+    cause: error,
+    isOperational: false,
+  });
+}
+
 
 function checkCronSecret(req, res, next) {
   if (!process.env.CRON_SECRET) {
-    return res.status(500).json({ error: 'CRON_SECRET nao configurado' });
+    return next(new AppError('CRON_SECRET nao configurado', {
+      status: 503,
+      code: ERROR_CODES.DEPENDENCY_UNAVAILABLE,
+      publicMessage: 'Serviço temporariamente indisponível.',
+      isOperational: false,
+    }));
   }
   // NAO confiar em User-Agent (header controlavel pelo cliente). So o secret vale.
   if (!isAuthorizedCron(req)) {
@@ -51,7 +71,12 @@ async function extratoNormalizado({ inicio, fim, usarCache = false } = {}) {
     const valorAbs = Number(t.amount || 0);
     return {
       id: t.transactionId,
-      data: t.transactionDate,
+      // O Santander manda transactionDate em DD/MM/YYYY (ex: "06/08/2026").
+      // NUNCA passar a string crua pro Postgres: com DateStyle padrão (ISO, MDY)
+      // dia<=12 é SILENCIOSAMENTE trocado com o mês (06/08 vira 2026-06-08 em vez
+      // de 2026-08-06) e dia>12 estoura 22008 "date/time field value out of
+      // range" — foi isso que zerou 8 sincronizações seguidas em 08/2026.
+      data: parseDateBR(t.transactionDate) || t.transactionDate,
       valor: isDebito ? -valorAbs : valorAbs,
       tipo: t.type,
       descricao: t.transactionName,
@@ -69,11 +94,14 @@ async function extratoNormalizado({ inicio, fim, usarCache = false } = {}) {
 // POST /api/santander/cron/sync · sync diario do extrato
 // ─────────────────────────────────────────────────────────────────────
 // Handler reutilizavel pra GET (Vercel cron) e POST (manual via secret)
-async function handlerSync(req, res) {
+async function handlerSync(req, res, next) {
   const startTime = Date.now();
 
   // 1. Verifica config Santander
   if (!isConfigured()) {
+    setSystemJobOutcome(res, {
+      status: 'skipped', effectStatus: 'not_applicable', result: 'santander_nao_configurado',
+    });
     return res.json({
       ok: true,
       skipped: 'santander_nao_configurado',
@@ -84,6 +112,7 @@ async function handlerSync(req, res) {
 
   try {
     const { dias = 3, conta_id_override } = req.body || {};
+    const dryRun = req.body?.dry_run === true || req.body?.dry_run === 'true';
     const hoje = new Date();
     const desde = new Date(hoje.getTime() - dias * 86400000);
     const inicio = desde.toISOString().slice(0, 10);
@@ -104,6 +133,10 @@ async function handlerSync(req, res) {
     }
 
     if (!contaLocal) {
+      setSystemJobOutcome(res, {
+        status: 'failed', effectStatus: 'failed', errorCode: 'BANK_ACCOUNT_NOT_FOUND',
+        errorMessage: 'Conta Santander nao cadastrada no Financeiro.', result: 'conta_santander_nao_cadastrada',
+      });
       return res.json({
         ok: false,
         erro: 'conta_santander_nao_cadastrada',
@@ -115,6 +148,10 @@ async function handlerSync(req, res) {
     const { transacoes } = await extratoNormalizado({ inicio, fim, usarCache: false });
 
     if (transacoes.length === 0) {
+      setSystemJobOutcome(res, {
+        status: 'success', effectStatus: 'confirmed', inputCount: 0, outputCount: 0,
+        result: 'sem_transacoes_no_periodo',
+      });
       return res.json({
         ok: true,
         conta_id: contaLocal.id,
@@ -122,7 +159,37 @@ async function handlerSync(req, res) {
         periodo: { inicio, fim },
       });
     }
-    const extrato = { transacoes };
+    const reconciliation = await reconcileTransactions(supabase, transacoes);
+    if (dryRun) {
+      setSystemJobOutcome(res, {
+        status: 'skipped', effectStatus: 'not_applicable', inputCount: transacoes.length,
+        outputCount: reconciliation.candidates.length, result: 'simulacao_concluida',
+      });
+      return res.json({
+        ok: true,
+        dry_run: true,
+        conta_id: contaLocal.id,
+        periodo: { inicio, fim },
+        origem_total: transacoes.length,
+        ja_existentes_brutos: reconciliation.existingRaw.size,
+        ja_existentes_transacoes: reconciliation.existingFinal.size,
+        duplicados_na_origem: reconciliation.duplicateInOrigin,
+        candidatos_novos: reconciliation.candidates.length,
+        por_data: reconciliation.byDate,
+      });
+    }
+    const extrato = { transacoes: reconciliation.candidates };
+    if (extrato.transacoes.length === 0) {
+      setSystemJobOutcome(res, {
+        status: 'success', effectStatus: 'confirmed', inputCount: transacoes.length,
+        outputCount: 0, result: 'todos_lancamentos_ja_existentes',
+      });
+      return res.json({
+        ok: true, conta_id: contaLocal.id, periodo: { inicio, fim },
+        origem_total: transacoes.length, inseridos: 0,
+        duplicados: reconciliation.existingRaw.size + reconciliation.existingFinal.size + reconciliation.duplicateInOrigin,
+      });
+    }
 
     // 4. Cria registro de upload
     const { data: uploadRow } = await supabase
@@ -141,8 +208,9 @@ async function handlerSync(req, res) {
 
     // 5. Insere lancamentos brutos
     let inseridos = 0;
-    let duplicados = 0;
+    let duplicados = reconciliation.existingRaw.size + reconciliation.existingFinal.size + reconciliation.duplicateInOrigin;
     let erros = 0;
+    const insertErrors = [];
 
     for (const t of extrato.transacoes) {
       const tipoTrn = Number(t.valor) >= 0 ? 'CREDIT' : 'DEBIT';
@@ -166,7 +234,7 @@ async function handlerSync(req, res) {
         memo,
         nome_contraparte: t.partieNome || null,
         documento_contraparte: documento,
-        fitid: t.id || `santander-${t.data}-${t.valor}-${Math.random().toString(36).slice(2, 8)}`,
+        fitid: t.fitid,
         raw_data: { santander_api: t.raw || t },
         upload_id: uploadRow?.id,
       };
@@ -174,7 +242,10 @@ async function handlerSync(req, res) {
       const { error } = await supabase.from('fin_lancamentos_brutos').insert(payload);
       if (error) {
         if (error.code === '23505') duplicados++;
-        else erros++;
+        else {
+          erros++;
+          insertErrors.push(error);
+        }
       } else {
         inseridos++;
       }
@@ -197,6 +268,16 @@ async function handlerSync(req, res) {
       }).eq('id', uploadRow.id);
     }
 
+    setSystemJobOutcome(res, erros > 0 ? {
+      status: 'warning', effectStatus: 'failed', inputCount: extrato.transacoes.length,
+      outputCount: inseridos, discardedCount: erros, errorCode: 'BANK_SYNC_PARTIAL',
+      errorMessage: `${erros} lancamentos nao foram inseridos. ${summarizeInsertErrors(insertErrors)}`.trim(),
+      result: 'sincronizacao_parcial',
+    } : {
+      status: 'success', effectStatus: 'confirmed', inputCount: extrato.transacoes.length,
+      outputCount: inseridos, discardedCount: 0, result: 'sincronizacao_concluida',
+    });
+
     res.json({
       ok: true,
       ambiente: AMBIENTE,
@@ -209,7 +290,7 @@ async function handlerSync(req, res) {
     });
   } catch (e) {
     console.error('[SANTANDER-CRON] erro:', e.stack || e);
-    res.status(500).json({ error: e.message || 'Erro no sync' });
+    next(bankSyncError(e, 'Erro ao sincronizar o extrato bancário.'));
   }
 }
 
@@ -223,7 +304,7 @@ router.get('/sync', handlerSync);  // Vercel cron usa GET
 // as últimas 4h do extrato. Roda a cada 3min durante cultos pra alimentar
 // a aba "Culto ao Vivo". Idempotente · transacoes já inseridas viram
 // duplicados via FITID UNIQUE.
-router.post('/pix-sync', async (req, res) => {
+router.post('/pix-sync', async (req, res, next) => {
   const startTime = Date.now();
 
   if (!isConfigured()) {
@@ -277,6 +358,7 @@ router.post('/pix-sync', async (req, res) => {
       } catch (e) {
         console.warn('[pix-sync] API PIX erro:', e.message);
         pixApiResult = { erro: e.message };
+        captureHandledException(bankSyncError(e, 'Falha na estratégia PIX.'), req, 'bank.pix_sync.pix_api_fallback');
       }
     }
 
@@ -344,7 +426,7 @@ router.post('/pix-sync', async (req, res) => {
     });
   } catch (e) {
     console.error('[SANTANDER-PIX-SYNC] erro:', e);
-    res.status(500).json({ error: e.message || 'Erro no pix-sync' });
+    next(bankSyncError(e, 'Erro ao sincronizar recebimentos PIX.'));
   }
 });
 
@@ -352,7 +434,7 @@ router.post('/pix-sync', async (req, res) => {
 // GET/POST /api/santander/cron/saldo · atualiza snapshot do saldo + fin_contas
 // Roda de hora em hora pra manter o dashboard atualizado sem usuário sincronizar.
 // ─────────────────────────────────────────────────────────────────────
-async function handlerSaldoCron(req, res) {
+async function handlerSaldoCron(req, res, next) {
   if (!isConfigured()) {
     return res.json({ ok: true, skipped: 'santander_nao_configurado' });
   }
@@ -367,7 +449,7 @@ async function handlerSaldoCron(req, res) {
     });
   } catch (e) {
     console.error('[SANTANDER-CRON saldo]', e.message);
-    res.status(500).json({ ok: false, erro: e.message });
+    next(bankSyncError(e, 'Erro ao atualizar o saldo bancário.'));
   }
 }
 router.post('/saldo', handlerSaldoCron);

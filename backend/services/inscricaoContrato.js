@@ -13,7 +13,14 @@ const {
   cpfValido, normalizarCpf, normalizarTelefone, normalizarEmail,
   registrarObservacaoSegura,
 } = require('./identidadeProgressiva');
-const { acharOuCriarGuardado, acharMembroGuardado } = require('./membroMatch');
+const { acharOuCriarGuardado, acharMembroGuardado, registrarContatoDaPorta } = require('./membroMatch');
+// Réguas PURAS de campo de contato (moradia nova em 06/08/2026 · ver comentário
+// mais abaixo). Espelho de tirarCodigoPais de src/lib/inscricao.js — mudou lá,
+// mude no util.
+const {
+  tirarCodigoPaisTelefone, emailValido, validarNascimento,
+  CONECTIVOS_NOME, temAbreviacaoNome,
+} = require('../utils/camposContato');
 
 const SEXOS = ['masculino', 'feminino']; // D8 — nunca "outro"
 
@@ -31,6 +38,19 @@ const TEXTOS = {
     'pela Igreja CBRio, exclusivamente para organização da apresentação de crianças ' +
     'e comunicação relacionada, conforme a LGPD (art. 14). Sei que posso solicitar ' +
     'acesso, correção ou exclusão desses dados a qualquer momento.',
+  // ⚠️ Texto PRÓPRIO da inscrição em evento (17/08 · retiro 2027), e não uma
+  // edição do de cima: aquele fala explicitamente de "apresentação de crianças",
+  // e é o snapshot já gravado nos consentimentos daquela porta. Reescrevê-lo pra
+  // servir aos dois faria a prova legal de uma porta descrever a outra.
+  // O `tipo` gravado continua sendo `menor_responsavel` (é o vocabulário do
+  // CHECK); o que muda é o TEXTO que a pessoa lê e que fica registrado.
+  menor_responsavel_inscricao:
+    'Declaro que sou o responsável legal pela pessoa inscrita, que ela é menor de ' +
+    '18 anos, e autorizo a inscrição dela nesta atividade e o tratamento dos dados ' +
+    'informados (dela e meus, como contato de emergência) pela Igreja CBRio, ' +
+    'exclusivamente para organizar a atividade e me comunicar sobre ela, conforme a ' +
+    'LGPD (art. 14). Sei que posso solicitar acesso, correção ou exclusão desses ' +
+    'dados a qualquer momento pelos canais da igreja.',
   imagem:
     'Autorizo o uso de fotos do evento em que eu (ou a criança sob minha ' +
     'responsabilidade) apareça nas mídias da Igreja CBRio.',
@@ -43,29 +63,18 @@ const TEXTOS = {
     'Se você não marcar, não conseguiremos te enviar confirmações, lembretes e avisos pelo WhatsApp.',
 };
 
-const CONECTIVOS_NOME = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
+// `CONECTIVOS_NOME` e `temAbreviacaoNome` MUDARAM DE CASA em 17/08/2026 (pra
+// `utils/camposContato.js`, pelo mesmo motivo das três réguas citadas abaixo:
+// entrar no gate de deploy). Seguem re-exportadas daqui — nenhuma das 7 portas
+// muda de import, e o comportamento é idêntico.
 
-// Migrada de publicVoluntariado (era duplicada front+back) — parte com "." ou
-// de 1 letra é abreviação; conectivos são permitidos.
-function temAbreviacaoNome(nome) {
-  const partes = String(nome || '').trim().split(/\s+/).filter(Boolean);
-  return partes.some((p) => {
-    const limpa = p.replace(/\./g, '');
-    if (CONECTIVOS_NOME.has(limpa.toLowerCase())) return false;
-    return p.includes('.') || limpa.length <= 1;
-  });
-}
-
-// ISO YYYY-MM-DD, data real, não-futura, ano >= 1900 → string normalizada ou null
-function validarNascimento(v) {
-  const s = String(v || '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-  const d = new Date(`${s}T00:00:00Z`);
-  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) return null;
-  if (Number(s.slice(0, 4)) < 1900) return null;
-  if (s > new Date().toISOString().slice(0, 10)) return null;
-  return s;
-}
+// ⚠️ `validarNascimento`, `emailValido` e `tirarCodigoPaisTelefone` MUDARAM DE
+// CASA em 06/08/2026 (auditoria do app, Onda 1): moraram aqui, mas este arquivo
+// carrega o cliente do Supabase, então elas não podiam ser testadas no gate sem
+// banco. Foram pra `utils/camposContato.js` (puras) e seguem sendo
+// **re-exportadas daqui** — nenhuma das 7 portas muda de import.
+// Comportamento idêntico; `validarNascimento` só ganhou um 2º parâmetro
+// OPCIONAL (`hoje`) pra teste determinístico.
 
 // D1 — regra determinística de split para tabelas com nome+sobrenome
 function splitNomeCompleto(nomeCompleto) {
@@ -77,23 +86,10 @@ function honeypotPreenchido(body) {
   return Boolean(String((body && body.website) || '').trim());
 }
 
-// Regex ÚNICA do e-mail (a mesma dos forms client) — era re-declarada em
-// grupos/next/voluntariado (P3 do sweep 28/07: cópia local diverge um dia).
-// Não normaliza de propósito: valida o que recebeu; quem normaliza pra gravar
-// é normalizarEmail/validarCamposPadrao.
-function emailValido(v) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || ''));
-}
 
 // Valida o bloco de campos padrão. Retorna { erros, valores } — erros vazio = ok.
 // opts existe SÓ para exceções documentadas (ex.: walk-in do totem não exige
 // nascimento); o default é o contrato pleno.
-// Espelho de tirarCodigoPais de src/lib/inscricao.js — mudou aqui, mude lá.
-function tirarCodigoPaisTelefone(digitos) {
-  const d = String(digitos || '');
-  if (d.length >= 12 && d.length <= 13 && d.startsWith('55')) return d.slice(2);
-  return d;
-}
 
 function validarCamposPadrao(body = {}, opts = {}) {
   const {
@@ -151,13 +147,16 @@ function validarCamposPadrao(body = {}, opts = {}) {
 //   politica 'criar' → acharOuCriarGuardado (batismo/next: o evento VAI acontecer)
 //   politica 'ligar' → acharMembroGuardado (portas com triagem humana) + observação
 async function processarIdentidade({
-  nomeCompleto, cpf, email, telefone, dataNascimento,
+  nomeCompleto, cpf, email, telefone, dataNascimento, genero,
   politica = 'ligar', status = 'visitante', origem, origemId = null,
   soChaveForte = false, extra = {},
 }) {
   if (politica === 'criar') {
     const r = await acharOuCriarGuardado(
-      { cpf, email, telefone, nome: nomeCompleto, dataNascimento, status, extra, origem, origemId },
+      // `genero` repassado: quem cria pessoa aqui é o matcher, e ele traduz o
+      // vocabulário (M/F × masculino/feminino). Sem o repasse, o sexo que a
+      // porta exige da pessoa nunca chegaria ao cadastro na criação.
+      { cpf, email, telefone, nome: nomeCompleto, dataNascimento, genero, status, extra, origem, origemId },
       { soChaveForte },
     );
     return { membroId: (r && r.membro_id) || null, matchedBy: (r && r.matched_by) || null, created: Boolean(r && r.created) };
@@ -167,6 +166,57 @@ async function processarIdentidade({
     { soChaveForte },
   );
   const membroId = (r && r.membro_id) || null;
+
+  // ⚠️⚠️ O VAZAMENTO DA POLÍTICA 'ligar' (achado em 24/08/2026, medido no
+  // Celebra 2026: 18 CPFs e 14 telefones presos na linha da inscrição).
+  //
+  // `acharMembroGuardado` é SÓ-LEITURA de propósito e tem 15+ chamadores — um
+  // deles declara no cabeçalho que o match não escreve (`publicGenerosidade`).
+  // Então a escrita NÃO pode morar lá dentro: mora aqui, na camada da PORTA,
+  // que é exatamente onde o "Contrato de porta" do CLAUDE.md manda acumular
+  // contato divergente e consolidar CPF. A política 'criar' já fazia os dois
+  // (dentro de `acharOuCriarGuardado`); a 'ligar' não fazia nenhum.
+  //
+  // ⚠️ Best-effort nos dois: falha aqui NÃO derruba a inscrição (o vínculo já
+  // está resolvido). Mesma régua do resto da porta.
+  if (membroId) {
+    // 1. Contato divergente → mem_contatos. Sem isso a próxima porta não acha a
+    //    pessoa pelo telefone que ela mesma acabou de digitar.
+    try {
+      registrarContatoDaPorta(membroId, { telefone, email }, 'porta');
+    } catch (e) {
+      console.error('[inscricaoContrato] contato da porta não registrado:', e.message);
+    }
+
+    // 2. CPF tardio → cadastro. Delegado ao `cpfReconciliar`, que é quem sabe
+    //    a régua: preenche só se o membro está SEM CPF, conflito vira pendência
+    //    humana e nunca funde sozinho.
+    //
+    // ⚠️ A confiança espelha `_consolidarCpfNoMatch` (membroMatch.js) e NÃO é
+    // detalhe: e-mail e telefone+nome são sinais que a FAMÍLIA compartilha, e
+    // com homônimo (pai/filho) o CPF de um viraria a identidade permanente do
+    // outro. Por isso 'fraca' — que só consolida com o nascimento conferível
+    // dos DOIS lados. 'nome+nascimento' já conferiu por construção → 'forte'.
+    // Match por CPF não precisa de nada: o membro já tem esse CPF.
+    const matchedBy = (r && r.matched_by) || null;
+    if (cpf && matchedBy && matchedBy !== 'cpf') {
+      try {
+        const { reconciliarCpfTardio } = require('./cpfReconciliar');
+        const { normalizarCpf } = require('./membroMatch');
+        const cpf11 = normalizarCpf(cpf);
+        if (cpf11) {
+          await reconciliarCpfTardio({
+            membroId, cpf: cpf11, origem: `porta:${origem || 'inscricao'}`, origemId,
+            dataNascimento,
+            confianca: matchedBy === 'nome+nascimento' ? 'forte' : 'fraca',
+          });
+        }
+      } catch (e) {
+        console.error('[inscricaoContrato] cpf tardio não consolidado:', e.message);
+      }
+    }
+  }
+
   try {
     await registrarObservacaoSegura({
       membroId, origem, origemId, nome: nomeCompleto, cpf, telefone, email, dataNascimento,

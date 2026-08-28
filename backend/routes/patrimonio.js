@@ -1,32 +1,44 @@
 const router = require('express').Router();
+const { falhaInterna } = require('../utils/responderFalha');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
+const { calcularDepreciacao } = require('../utils/patrimonioDepreciacao');
 
 router.use(authenticate, authorizeModule('patrimonio'));
 
-// Depreciação · indicador GERENCIAL interno (decisão do usuário 2026-07-29 ·
-// NÃO é cálculo contábil oficial). Método linear simples, sempre derivado na
-// hora — nunca gravado por período. Retorna null quando faltar algum dado
-// necessário (valor de aquisição, data de aquisição ou vida útil da categoria).
-function calcularDepreciacao(bem) {
-  const vidaUtilMeses = bem?.pat_categorias?.vida_util_meses;
-  const valor = bem?.valor_aquisicao != null ? Number(bem.valor_aquisicao) : null;
-  if (!vidaUtilMeses || valor == null || !bem?.data_aquisicao) return null;
-  const aquisicao = new Date(bem.data_aquisicao + 'T00:00:00');
-  if (Number.isNaN(aquisicao.getTime())) return null;
-  const agora = new Date();
-  let mesesDecorridos = (agora.getFullYear() - aquisicao.getFullYear()) * 12 + (agora.getMonth() - aquisicao.getMonth());
-  if (agora.getDate() < aquisicao.getDate()) mesesDecorridos -= 1;
-  mesesDecorridos = Math.max(0, mesesDecorridos);
-  const percentual = Math.min(100, (mesesDecorridos / vidaUtilMeses) * 100);
-  const valorAtual = Math.max(0, valor * (1 - percentual / 100));
-  return {
-    vida_util_meses: vidaUtilMeses,
-    meses_decorridos: mesesDecorridos,
-    percentual_depreciado: Math.round(percentual * 10) / 10,
-    valor_atual_estimado: Math.round(valorAtual * 100) / 100,
-  };
+// Recalcula porCategoria/porLocalizacao só com bens ATIVOS (pedido do usuário
+// 2026-08-03: os gráficos "Por Categoria"/"Por Localização" do dashboard
+// somavam TODOS os status, incluindo baixado/extraviado/manutenção — inflava
+// contagem de item que já nem está mais em uso). A função SQL
+// `pat_dashboard_stats` é opaca (existe só no banco vivo, sem migration no
+// repo) — em vez de arriscar reescrevê-la sem ver a definição atual, o
+// recorte é feito aqui, sobrescrevendo só essas 2 chaves da resposta da RPC.
+// Paginado (cap de 1000 do PostgREST).
+async function porCategoriaLocalizacaoAtivos() {
+  let all = [];
+  let offset = 0;
+  const pageSize = 1000;
+  while (true) {
+    const { data, error } = await supabase.from('pat_bens')
+      .select('categoria_id, localizacao_id, pat_categorias(nome), pat_localizacoes(nome)')
+      .eq('status', 'ativo')
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    all = all.concat(data);
+    if (data.length < pageSize) break;
+    offset += pageSize;
+  }
+  const porCategoria = {};
+  const porLocalizacao = {};
+  for (const b of all) {
+    const catNome = b.categoria_id ? (b.pat_categorias?.nome || 'Sem categoria') : 'Sem categoria';
+    const locNome = b.localizacao_id ? (b.pat_localizacoes?.nome || 'Sem localização') : 'Sem localização';
+    porCategoria[catNome] = (porCategoria[catNome] || 0) + 1;
+    porLocalizacao[locNome] = (porLocalizacao[locNome] || 0) + 1;
+  }
+  return { porCategoria, porLocalizacao };
 }
 
 // ── DASHBOARD ──────────────────────────────────────────────
@@ -36,6 +48,13 @@ router.get('/dashboard', async (req, res) => {
     // 1k linhas. (O antigo fallback via pool pg não conecta no Vercel · removido.)
     const { data, error } = await supabase.rpc('pat_dashboard_stats');
     if (error) throw error;
+    try {
+      const { porCategoria, porLocalizacao } = await porCategoriaLocalizacaoAtivos();
+      data.porCategoria = porCategoria;
+      data.porLocalizacao = porLocalizacao;
+    } catch (e2) {
+      console.error('[PAT] Recorte de ativos em porCategoria/porLocalizacao falhou (mantendo RPC crua):', e2.message);
+    }
     res.json(data);
   } catch (e) {
     console.error('[PAT] Dashboard RPC falhou:', e.message);
@@ -211,7 +230,7 @@ router.get('/categorias', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar categorias' }); }
 });
 
-router.post('/categorias', async (req, res) => {
+router.post('/categorias', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { nome, icone, pai_id, vida_util_meses } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
@@ -222,7 +241,7 @@ router.post('/categorias', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar categoria' }); }
 });
 
-router.put('/categorias/:id', async (req, res) => {
+router.put('/categorias/:id', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { nome, icone, vida_util_meses } = req.body;
     const update = {};
@@ -236,7 +255,7 @@ router.put('/categorias/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar categoria' }); }
 });
 
-router.delete('/categorias/:id', async (req, res) => {
+router.delete('/categorias/:id', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('pat_categorias').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -271,7 +290,7 @@ async function paiCriaCiclo(paiId, ownId) {
   return false;
 }
 
-router.post('/localizacoes', async (req, res) => {
+router.post('/localizacoes', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { nome, pai_id } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });
@@ -285,9 +304,19 @@ router.post('/localizacoes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar localização' }); }
 });
 
-router.put('/localizacoes/:id', async (req, res) => {
+// Intervalo e prazo de revisão são NULLABLE de propósito (pedido do usuário
+// 2026-08-10): NULL mantém o comportamento legado (localização entra em todo
+// ciclo · prazo distribuído proporcionalmente). Só grava número > 0.
+function sanitizarDiasRevisao(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return undefined; // undefined = inválido, distinto de null
+  return Math.round(n);
+}
+
+router.put('/localizacoes/:id', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
-    const { nome, pai_id } = req.body;
+    const { nome, pai_id, revisao_intervalo_dias, revisao_prazo_dias } = req.body;
     const update = {};
     if (nome !== undefined) update.nome = nome;
     if (pai_id !== undefined) {
@@ -296,6 +325,16 @@ router.put('/localizacoes/:id', async (req, res) => {
       }
       update.pai_id = pai_id || null;
     }
+    if (revisao_intervalo_dias !== undefined) {
+      const v = sanitizarDiasRevisao(revisao_intervalo_dias);
+      if (v === undefined) return res.status(400).json({ error: 'Intervalo de revisão precisa ser um número de dias maior que zero (ou vazio)' });
+      update.revisao_intervalo_dias = v;
+    }
+    if (revisao_prazo_dias !== undefined) {
+      const v = sanitizarDiasRevisao(revisao_prazo_dias);
+      if (v === undefined) return res.status(400).json({ error: 'Prazo (tempo de análise) precisa ser um número de dias maior que zero (ou vazio)' });
+      update.revisao_prazo_dias = v;
+    }
     const { data, error } = await supabase.from('pat_localizacoes')
       .update(update).eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
@@ -303,7 +342,7 @@ router.put('/localizacoes/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar localização' }); }
 });
 
-router.delete('/localizacoes/:id', async (req, res) => {
+router.delete('/localizacoes/:id', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('pat_localizacoes').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -316,7 +355,13 @@ router.get('/bens', async (req, res) => {
   try {
     const { status, categoria_id, localizacao_id, busca } = req.query;
     const montarQuery = (offset, pageSize) => {
-      let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').order('nome');
+      // .order('nome') sozinho não é estável entre páginas: bens com o mesmo
+      // nome (comum aqui — ex. "10 Un Luminaria...") podem trocar de ordem
+      // entre duas chamadas de range() separadas, fazendo a paginação repetir
+      // um bem em 2 páginas e pular outro. `id` como desempate garante ordem
+      // determinística (achado do usuário: "Selecionar todos" selecionava
+      // menos ids que o total filtrado).
+      let query = supabase.from('pat_bens').select('*, pat_categorias(nome, vida_util_meses), pat_localizacoes(nome), responsavel:profiles!responsavel_id(name), alerta:pat_revisao_itens!alerta_divergencia_item_id(data_revisao, localizacao_encontrada:pat_localizacoes!localizacao_encontrada_id(nome))').order('nome').order('id');
       if (status) query = query.eq('status', status);
       // Sentinela "__sem__" filtra bens SEM categoria/localização — pra
       // priorizar o saneamento de cadastro (pedido do usuário 2026-07-28).
@@ -398,6 +443,19 @@ router.get('/bens/barcode/:codigo', async (req, res) => {
   }
 });
 
+// Próximo(s) número(s) de patrimônio em sequência (pedido do usuário
+// 2026-07-31: novo bem sempre segue a ordem — último 4433 → próximo 4434).
+// Precisa vir ANTES de /bens/:id para não conflitar.
+router.get('/bens/proximo-codigo', async (req, res) => {
+  try {
+    const qtd = Math.max(1, Number(req.query.qtd) || 1);
+    const { data, error } = await supabase.rpc('pat_proximo_codigo_barras', { p_qtd: qtd });
+    if (error) return res.status(400).json({ error: error.message });
+    const codigos = (data || []).map(r => String(r.codigo));
+    res.json({ proximo: codigos[0] || null, codigos });
+  } catch (e) { res.status(500).json({ error: 'Erro ao calcular próximo número de patrimônio' }); }
+});
+
 router.get('/bens/:id', async (req, res) => {
   try {
     const { data: bem, error } = await supabase.from('pat_bens')
@@ -409,25 +467,77 @@ router.get('/bens/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar bem' }); }
 });
 
-router.post('/bens', async (req, res) => {
+router.post('/bens', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
-    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id } = req.body;
+    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id, origem_aquisicao, doador, doador_tipo } = req.body;
     if (!codigo_barras || !nome) return res.status(400).json({ error: 'Código de barras e nome são obrigatórios' });
+    // Doação recebida (pedido do usuário 2026-07-31): "doado" exige quem doou —
+    // "comprado" (default) ignora esses 2 campos mesmo que venham no payload.
+    const origem = origem_aquisicao === 'doado' ? 'doado' : 'comprado';
+    if (origem === 'doado' && (!doador || !doador.trim())) return res.status(400).json({ error: 'Informe quem doou o bem' });
     const { data, error } = await supabase.from('pat_bens')
-      .insert({ codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, observacoes: observacoes || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia, garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null, created_by: req.user.userId })
+      .insert({ codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, observacoes: observacoes || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia, garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null, created_by: req.user.userId, origem_aquisicao: origem, doador: origem === 'doado' ? doador.trim() : null, doador_tipo: origem === 'doado' ? (doador_tipo || null) : null })
       .select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao cadastrar bem' }); }
 });
 
-router.put('/bens/:id', async (req, res) => {
+// Cadastro em massa (pedido do usuário 2026-07-31): vários bens do MESMO tipo
+// e categoria, não necessariamente no mesmo local — ex. 10 lâmpadas iguais
+// distribuídas em salas diferentes. Cada unidade recebe um número de
+// patrimônio sequencial (ver pat_proximo_codigo_barras), calculado na hora do
+// insert (não reservado antes — evita número "furado" se o usuário cancelar).
+router.post('/bens/lote', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
-    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, status, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id, data_baixa } = req.body;
+    const { nome, descricao, categoria_id, marca, modelo, valor_aquisicao, data_aquisicao, numero_nf, tem_garantia, garantia_ate, responsavel_id, distribuicao, origem_aquisicao, doador, doador_tipo } = req.body;
+    if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome é obrigatório' });
+    const dist = Array.isArray(distribuicao) ? distribuicao.filter(d => Number(d?.quantidade) > 0) : [];
+    const totalQtd = dist.reduce((s, d) => s + Number(d.quantidade), 0);
+    if (!dist.length || totalQtd <= 0) return res.status(400).json({ error: 'Informe ao menos uma quantidade maior que zero' });
+    if (totalQtd > 300) return res.status(400).json({ error: 'Máximo de 300 bens por lote' });
+    // Doação recebida em lote (pedido do usuário 2026-07-31): mesmo doador pra
+    // todo o lote — cobre o caso real "uma empresa doou 20 cadeiras de uma vez".
+    // Doação heterogênea (doador diferente por item) segue pelo cadastro individual.
+    const origem = origem_aquisicao === 'doado' ? 'doado' : 'comprado';
+    if (origem === 'doado' && (!doador || !doador.trim())) return res.status(400).json({ error: 'Informe quem doou os bens' });
+
+    const { data: codigosData, error: codigosErr } = await supabase.rpc('pat_proximo_codigo_barras', { p_qtd: totalQtd });
+    if (codigosErr) return res.status(400).json({ error: codigosErr.message });
+    const codigos = (codigosData || []).map(r => String(r.codigo));
+    if (codigos.length < totalQtd) return res.status(500).json({ error: 'Falha ao gerar números de patrimônio para o lote' });
+
+    const base = {
+      nome: nome.trim(), descricao: descricao || null, categoria_id: categoria_id || null,
+      marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null,
+      data_aquisicao: data_aquisicao || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia,
+      garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null, created_by: req.user.userId,
+      origem_aquisicao: origem, doador: origem === 'doado' ? doador.trim() : null, doador_tipo: origem === 'doado' ? (doador_tipo || null) : null,
+    };
+    const rows = [];
+    let cursor = 0;
+    for (const d of dist) {
+      const qtd = Number(d.quantidade);
+      const localizacao_id = d.localizacao_id || null;
+      for (let i = 0; i < qtd; i++) {
+        rows.push({ ...base, codigo_barras: codigos[cursor], localizacao_id });
+        cursor += 1;
+      }
+    }
+    const { data, error } = await supabase.from('pat_bens').insert(rows).select('id, codigo_barras, localizacao_id');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ criados: data.length, codigo_inicial: codigos[0], codigo_final: codigos[codigos.length - 1], bens: data });
+  } catch (e) { res.status(500).json({ error: 'Erro ao cadastrar bens em massa' }); }
+});
+
+router.put('/bens/:id', authorizeModule('patrimonio', 3), async (req, res) => {
+  try {
+    const { codigo_barras, nome, descricao, categoria_id, localizacao_id, numero_serie, marca, modelo, valor_aquisicao, data_aquisicao, status, observacoes, numero_nf, tem_garantia, garantia_ate, responsavel_id, data_baixa, origem_aquisicao, doador, doador_tipo } = req.body;
     // Reatribuir a localização (edição manual do cadastro) é decisão humana —
     // limpa o alerta de "localização pendente de reavaliação" (hierarquia
     // 2026-07-29). Se localizacao_id não veio no payload, o alerta é preservado.
-    const update = { codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia, garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null };
+    const origem = origem_aquisicao === 'doado' ? 'doado' : 'comprado';
+    const update = { codigo_barras, nome, descricao: descricao || null, categoria_id: categoria_id || null, localizacao_id: localizacao_id || null, numero_serie: numero_serie || null, marca: marca || null, modelo: modelo || null, valor_aquisicao: valor_aquisicao || null, data_aquisicao: data_aquisicao || null, status, observacoes: observacoes || null, numero_nf: numero_nf || null, tem_garantia: !!tem_garantia, garantia_ate: garantia_ate || null, responsavel_id: responsavel_id || null, origem_aquisicao: origem, doador: origem === 'doado' ? (doador || null) : null, doador_tipo: origem === 'doado' ? (doador_tipo || null) : null };
     if (localizacao_id !== undefined) { update.localizacao_pendente = false; update.alerta_divergencia_item_id = null; }
     // Data de baixa acompanha o status editado direto no cadastro (item 4 ·
     // 2026-07-29): entra em "baixado" grava a data (a informada ou hoje);
@@ -444,7 +554,7 @@ router.put('/bens/:id', async (req, res) => {
 
 // "Dar baixa" (não é exclusão): grava a movimentação de baixa e marca o bem
 // como baixado, preservando cadastro e histórico — NUNCA hard-delete aqui.
-router.delete('/bens/:id', async (req, res) => {
+router.delete('/bens/:id', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { error: movErr } = await supabase.from('pat_movimentacoes')
       .insert({ bem_id: req.params.id, tipo: 'baixa', responsavel_id: req.user.userId, motivo: req.body?.motivo || null, created_by: req.user.userId });
@@ -470,11 +580,23 @@ router.delete('/bens/:id', async (req, res) => {
 // minúcia que a revisão busca. Bloqueia em vez de deixar acontecer em
 // silêncio (mesmo risco já existia editando 1 bem por vez; em massa é mais
 // fácil atingir vários sem perceber).
+// ⚠️⚠️ `.in()` SEMPRE EM LOTES ≤200 (lei do projeto). Esta função é chamada com
+// o resultado do botão "Selecionar todos os N filtrados", e a base tem **4.271
+// bens** — a URL do PostgREST com milhares de UUIDs estoura, a consulta falha, e
+// como a função LANÇA, o handler devolvia **500 sem motivo nenhum** (foi o
+// incidente de 27/08/2026 no `bulk/baixa`, diagnosticado pelo agente como
+// "falha silenciosa").
+const LOTE_IDS = 200;
+
 async function bensEmRevisaoAtiva(ids) {
-  const { data, error } = await supabase.from('pat_revisao_itens')
-    .select('bem_id, pat_bens(nome), convocacao:pat_revisao_convocacoes(status, pat_localizacoes(nome))')
-    .in('bem_id', ids);
-  if (error) throw new Error(error.message);
+  const data = [];
+  for (let i = 0; i < ids.length; i += LOTE_IDS) {
+    const { data: parte, error } = await supabase.from('pat_revisao_itens')
+      .select('bem_id, pat_bens(nome), convocacao:pat_revisao_convocacoes(status, pat_localizacoes(nome))')
+      .in('bem_id', ids.slice(i, i + LOTE_IDS));
+    if (error) throw new Error(error.message);
+    data.push(...(parte || []));
+  }
   const vistos = new Set();
   const conflitos = [];
   for (const item of data || []) {
@@ -494,7 +616,7 @@ function mensagemBensEmRevisao(conflitos) {
 
 // Define um valor comum (categoria/localização/responsável/status) pra N bens
 // de uma vez. Cada campo é opcional — só atualiza o que veio no body.
-router.put('/bens/bulk', async (req, res) => {
+router.put('/bens/bulk', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { ids, categoria_id, localizacao_id, responsavel_id, status } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
@@ -516,13 +638,18 @@ router.put('/bens/bulk', async (req, res) => {
     const { data, error } = await supabase.from('pat_bens').update(update).in('id', ids).select('id');
     if (error) return res.status(400).json({ error: error.message });
     res.json({ atualizados: (data || []).length });
-  } catch (e) { res.status(500).json({ error: 'Erro ao editar bens em massa' }); }
+  } catch (e) {
+    // Mesma régua do `bulk/baixa`: catch que não loga apaga o diagnóstico, e o
+    // agente de incidente só consegue dizer "falha silenciosa".
+    console.error('[patrimonio] bulk (editar) falhou:', e.message, { ids: (req.body?.ids || []).length });
+    return falhaInterna(res, 'Erro ao editar bens em massa', e, { exporDetalhe: true });
+  }
 });
 
 // Corrige erro de digitação repetido no nome de vários bens de uma vez
 // (busca um trecho e substitui, igual pra todos os selecionados) — "definir
 // valor comum" acima não resolve isso porque cada bem tem um nome diferente.
-router.put('/bens/bulk/renomear', async (req, res) => {
+router.put('/bens/bulk/renomear', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { ids, buscar, substituir } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
@@ -544,7 +671,7 @@ router.put('/bens/bulk/renomear', async (req, res) => {
 // Movimentação (entrada/saída/transferência/manutenção) pra N bens de uma vez
 // — chama a MESMA RPC atômica do fluxo individual, bem por bem (não é uma
 // transação única entre bens; reporta quem falhou em vez de abortar tudo).
-router.post('/bens/bulk/movimentar', async (req, res) => {
+router.post('/bens/bulk/movimentar', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { ids, tipo, localizacao_origem_id, localizacao_destino_id, motivo } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
@@ -568,7 +695,7 @@ router.post('/bens/bulk/movimentar', async (req, res) => {
 
 // Dar baixa em N bens de uma vez — mesma lógica do DELETE individual (nunca
 // hard-delete: grava a movimentação de baixa e marca o status).
-router.post('/bens/bulk/baixa', async (req, res) => {
+router.post('/bens/bulk/baixa', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { ids, motivo } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
@@ -577,16 +704,52 @@ router.post('/bens/bulk/baixa', async (req, res) => {
     const falhas = [];
     let sucesso = 0;
     const hoje = new Date().toISOString().slice(0, 10);
-    for (const bemId of ids) {
-      const { error: movErr } = await supabase.from('pat_movimentacoes')
-        .insert({ bem_id: bemId, tipo: 'baixa', responsavel_id: req.user.userId, motivo: motivo || null, created_by: req.user.userId });
-      if (movErr) { falhas.push({ id: bemId, erro: movErr.message }); continue; }
-      const { error } = await supabase.from('pat_bens').update({ status: 'baixado', data_baixa: hoje }).eq('id', bemId);
-      if (error) { falhas.push({ id: bemId, erro: error.message }); continue; }
-      sucesso++;
+
+    // ⚠️⚠️ EM LOTES, não um-a-um. Eram 2 idas ao banco POR BEM: com o botão
+    // "Selecionar todos os N filtrados" (a base tem 4.271 bens) isso vira
+    // milhares de round-trips — o cliente aborta em 30s e mostra "tempo
+    // esgotado" enquanto o servidor segue gravando, deixando baixa PARCIAL sem
+    // ninguém saber quais. É a lei de 04/08 ("gravar o efeito DURANTE"): agora
+    // cada lote conclui e é contado antes do próximo.
+    for (let i = 0; i < ids.length; i += LOTE_IDS) {
+      const lote = ids.slice(i, i + LOTE_IDS);
+      const linhas = lote.map((bemId) => ({
+        bem_id: bemId, tipo: 'baixa', responsavel_id: req.user.userId,
+        motivo: motivo || null, created_by: req.user.userId,
+      }));
+      const { error: movErr } = await supabase.from('pat_movimentacoes').insert(linhas);
+      if (movErr) {
+        // ⚠️ Lote recusado NÃO condena os 200: refaz um a um pra identificar
+        // QUEM falhou (mesma régua do UPDATE campo-a-campo do censo, 17/08).
+        // Sem isso, um bem problemático levaria 199 bons embora em silêncio.
+        for (const bemId of lote) {
+          const { error: e1 } = await supabase.from('pat_movimentacoes').insert({
+            bem_id: bemId, tipo: 'baixa', responsavel_id: req.user.userId,
+            motivo: motivo || null, created_by: req.user.userId,
+          });
+          if (e1) { falhas.push({ id: bemId, erro: e1.message }); continue; }
+          const { error: e2 } = await supabase.from('pat_bens')
+            .update({ status: 'baixado', data_baixa: hoje }).eq('id', bemId);
+          if (e2) { falhas.push({ id: bemId, erro: e2.message }); continue; }
+          sucesso += 1;
+        }
+        continue;
+      }
+      const { data: atualizados, error } = await supabase.from('pat_bens')
+        .update({ status: 'baixado', data_baixa: hoje }).in('id', lote).select('id');
+      if (error) { lote.forEach((id) => falhas.push({ id, erro: error.message })); continue; }
+      sucesso += (atualizados || []).length;
     }
     res.json({ sucesso, falhas });
-  } catch (e) { res.status(500).json({ error: 'Erro ao dar baixa em massa' }); }
+  } catch (e) {
+    // ⚠️⚠️ O MOTIVO PRECISA SAIR DAQUI. Antes o catch respondia texto genérico
+    // **sem logar o `e`**, então o motivo real não existia em lugar nenhum — nem
+    // no banco, nem no log da função. O coletor `app_erros_servidor` só via
+    // "HTTP 500 respondido pela rota (sem exceção)", e o agente de incidente não
+    // tinha o que diagnosticar além de "falha silenciosa".
+    console.error('[patrimonio] bulk/baixa falhou:', e.message, { ids: (req.body?.ids || []).length });
+    return falhaInterna(res, 'Erro ao dar baixa em massa', e, { exporDetalhe: true });
+  }
 });
 
 // ── MOVIMENTAÇÕES ──────────────────────────────────────────
@@ -643,7 +806,7 @@ router.get('/movimentacoes', async (req, res) => {
 // escritas separadas; se a 2ª falhasse no meio, a aba de Movimentações
 // passava a mentir sobre onde o bem está de verdade (dívida técnica
 // corrigida a pedido do usuário 2026-07-29).
-router.post('/bens/:id/movimentacoes', async (req, res) => {
+router.post('/bens/:id/movimentacoes', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { tipo, localizacao_origem_id, localizacao_destino_id, motivo } = req.body;
     if (!tipo) return res.status(400).json({ error: 'Tipo é obrigatório' });
@@ -732,7 +895,7 @@ router.get('/revisao/ciclos', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar ciclos de revisão' }); }
 });
 
-router.post('/revisao/ciclos', async (req, res) => {
+router.post('/revisao/ciclos', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { responsavel_id, data_inicio } = req.body;
     if (!responsavel_id || !data_inicio) return res.status(400).json({ error: 'Responsável e data de início são obrigatórios' });
@@ -753,7 +916,8 @@ router.post('/revisao/ciclos', async (req, res) => {
       .select().single();
     if (error) return res.status(400).json({ error: error.message });
 
-    const { data: localizacoes } = await supabase.from('pat_localizacoes').select('id');
+    const { data: localizacoes } = await supabase.from('pat_localizacoes')
+      .select('id, revisao_intervalo_dias, revisao_prazo_dias');
     const { data: bens } = await supabase.from('pat_bens').select('id, localizacao_id')
       .eq('status', 'ativo').not('localizacao_id', 'is', null);
     const bensPorLoc = new Map();
@@ -761,13 +925,45 @@ router.post('/revisao/ciclos', async (req, res) => {
       if (!bensPorLoc.has(b.localizacao_id)) bensPorLoc.set(b.localizacao_id, []);
       bensPorLoc.get(b.localizacao_id).push(b.id);
     }
-    const locsComBens = (localizacoes || []).filter((l) => bensPorLoc.has(l.id));
+    const todasComBens = (localizacoes || []).filter((l) => bensPorLoc.has(l.id));
+
+    // Intervalo variável (pedido do usuário 2026-08-10): localização com
+    // `revisao_intervalo_dias` preenchido só entra neste ciclo se já passou
+    // esse número de dias desde a ÚLTIMA convocação concluída dela (em
+    // qualquer ciclo anterior). Nunca revisada = sempre entra (não tem "última
+    // vez" pra contar). Sem `revisao_intervalo_dias` = comportamento legado
+    // (entra em todo ciclo).
+    const idsComIntervalo = todasComBens.filter((l) => l.revisao_intervalo_dias).map((l) => l.id);
+    const ultimaConclusaoPorLoc = new Map();
+    if (idsComIntervalo.length) {
+      const { data: concluidas } = await supabase.from('pat_revisao_convocacoes')
+        .select('localizacao_id, data_conclusao')
+        .in('localizacao_id', idsComIntervalo).eq('status', 'concluida').not('data_conclusao', 'is', null);
+      for (const c of concluidas || []) {
+        const atual = ultimaConclusaoPorLoc.get(c.localizacao_id);
+        if (!atual || c.data_conclusao > atual) ultimaConclusaoPorLoc.set(c.localizacao_id, c.data_conclusao);
+      }
+    }
+    const locsComBens = todasComBens.filter((l) => {
+      if (!l.revisao_intervalo_dias) return true; // legado: sempre entra
+      const ultima = ultimaConclusaoPorLoc.get(l.id);
+      if (!ultima) return true; // nunca revisada: sempre entra
+      const diasDesde = Math.floor((inicio.getTime() - new Date(ultima).getTime()) / 86400000);
+      return diasDesde >= l.revisao_intervalo_dias;
+    });
+
     const spanMs = fim.getTime() - inicio.getTime();
     const n = locsComBens.length;
     for (let i = 0; i < n; i++) {
       const loc = locsComBens[i];
       const bensIds = bensPorLoc.get(loc.id);
-      const prazoMs = n > 1 ? inicio.getTime() + Math.round((spanMs * (i + 1)) / n) : fim.getTime();
+      // Prazo variável (pedido do usuário 2026-08-10): localização com
+      // `revisao_prazo_dias` preenchido usa prazo próprio (data_inicio + N
+      // dias, no lugar dos limites do ciclo). Sem isso, cai no legado
+      // (distribuído proporcionalmente dentro do período do ciclo).
+      const prazoMs = loc.revisao_prazo_dias
+        ? inicio.getTime() + loc.revisao_prazo_dias * 86400000
+        : (n > 1 ? inicio.getTime() + Math.round((spanMs * (i + 1)) / n) : fim.getTime());
       const { data: conv, error: convErr } = await supabase.from('pat_revisao_convocacoes')
         .insert({ ciclo_id: ciclo.id, localizacao_id: loc.id, prazo: new Date(prazoMs).toISOString().slice(0, 10), total_bens_esperados: bensIds.length })
         .select().single();
@@ -792,7 +988,7 @@ router.get('/revisao/convocacoes/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar convocação' }); }
 });
 
-router.post('/revisao/convocacoes/:id/iniciar', async (req, res) => {
+router.post('/revisao/convocacoes/:id/iniciar', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { data, error } = await supabase.from('pat_revisao_convocacoes')
       .update({ status: 'em_andamento', data_inicio: new Date().toISOString() })
@@ -846,7 +1042,7 @@ router.put('/revisao/itens/:id', async (req, res) => {
 
 // Dispensar o alerta de divergência ligado num bem (mantido no lugar mas
 // sinalizado) — decisão humana explícita, nunca automática.
-router.post('/bens/:id/dispensar-alerta', async (req, res) => {
+router.post('/bens/:id/dispensar-alerta', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('pat_bens').update({ alerta_divergencia_item_id: null }).eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -854,7 +1050,7 @@ router.post('/bens/:id/dispensar-alerta', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao dispensar alerta' }); }
 });
 
-router.post('/revisao/convocacoes/:id/concluir', async (req, res) => {
+router.post('/revisao/convocacoes/:id/concluir', authorizeModule('patrimonio', 4), async (req, res) => {
   try {
     const { data, error } = await supabase.from('pat_revisao_convocacoes')
       .update({ status: 'concluida', data_conclusao: new Date().toISOString() })

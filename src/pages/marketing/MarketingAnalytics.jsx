@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { marketing as api } from '../../api';
-import MarketingNav from './MarketingNav';
+import MarketingPagina from './MarketingPagina';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
@@ -11,8 +11,7 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
 import {
-  Megaphone, BarChart3, Kanban, CalendarDays, Settings, Loader2, TrendingUp,
-  Clock, Users, CheckCircle2, AlertTriangle,
+  Loader2, TrendingUp, Clock, Users, CheckCircle2, AlertTriangle
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -53,17 +52,7 @@ export default function MarketingAnalytics() {
   useEffect(() => { carregar(); }, [carregar]);
 
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <BarChart3 className="h-6 w-6 text-primary" />
-            Marketing · Analytics
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">4 KPIs MKT-* + tempo de aprovação dos diretores</p>
-        </div>
-        <MarketingNav />
-      </div>
+    <MarketingPagina subtitulo="4 KPIs MKT-* + tempo de aprovação dos diretores">
 
       {/* Filtro de período */}
       <div className="flex items-center gap-2">
@@ -168,7 +157,7 @@ export default function MarketingAnalytics() {
           </Card>
         </>
       )}
-    </div>
+    </MarketingPagina>
   );
 }
 

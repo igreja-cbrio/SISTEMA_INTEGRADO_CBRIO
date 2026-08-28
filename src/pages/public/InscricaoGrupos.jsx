@@ -35,6 +35,7 @@ import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarCl
 // Contrato de Inscrição (F3.1 · porta 7 · docs/modulo-inscricoes/): validadores
 // da fonte única — só os que não colidem com os helpers locais deste form.
 import { nomeCompletoValido, temAbreviacaoNome, validarNascimento, tirarCodigoPais } from '../../lib/inscricao';
+import { useFunilInscricao, medirInscricaoConcluida, desfechoInscricaoGrupos } from '../../lib/gtm';
 
 const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicação com a igreja e participação em grupo de conexão, conforme a LGPD.`;
 // LGPD: o titular não consente sozinho pelo outro — ele DECLARA que o cônjuge
@@ -166,6 +167,18 @@ export default function InscricaoGrupos() {
     } catch { return false; }
   }, []);
 
+  // ── Medição do Marketing (pedido do Gustavo · GTM · container GTM-PQHGF574) ──
+  // Carrega SÓ nesta página, não no index.html: o bundle é compartilhado com o
+  // ERP e o container não pode subir nas telas com dado de membro (ver
+  // src/lib/gtm.ts). O funil tem 3 etapas — abriu a página, chegou no
+  // formulário (etapa 2, no efeito mais abaixo) e o servidor criou o pedido
+  // (etapa 3, no doSubmit). `totem` vai marcado porque a MESMA aba do quiosque
+  // atende muita gente: sem isso a taxa de conversão do lounge sai sem sentido.
+  const { medirFormulario, esquecerEtapas } = useFunilInscricao('grupos', {
+    origem: grupoParam ? 'link_grupo' : 'escolha',
+    totem: totemMode,
+  });
+
   const [grupoEscolhido, setGrupoEscolhido] = useState(null);
   const [form, setForm] = useState(FORM_VAZIO);
   const [comConjuge, setComConjuge] = useState(false);
@@ -252,7 +265,8 @@ export default function InscricaoGrupos() {
     const deepLinkValido = grupoParam && !avisoDeepLink;
     setStep(deepLinkValido ? 1 : 0);
     if (!deepLinkValido) setGrupoEscolhido(null);
-  }, [grupoParam, avisoDeepLink]);
+    esquecerEtapas(); // no totem começa outra pessoa: o funil recomeça do zero
+  }, [grupoParam, avisoDeepLink, esquecerEtapas]);
 
   // ── Auto-reset por ociosidade (SÓ no totem) ──
   const busyRef = useRef(false);
@@ -407,6 +421,19 @@ export default function InscricaoGrupos() {
   // Trocou de grupo → o bloqueio confirmado pelo servidor não vale mais.
   useEffect(() => { setBloqueio(null); }, [grupoEscolhido]);
 
+  // Etapa 2 do funil: a pessoa escolheu o grupo e está no formulário. Vale por
+  // GRUPO (voltar e reescolher o mesmo não conta de novo); o reset do totem
+  // limpa a marcação porque ali começa outra pessoa.
+  useEffect(() => {
+    if (step !== 1 || !grupoEscolhido?.id) return;
+    medirFormulario(String(grupoEscolhido.id), {
+      grupo_id: grupoEscolhido.id,
+      categoria: grupoEscolhido.categoria || null,
+      origem: grupoParam ? 'link_grupo' : 'escolha',
+      totem: totemMode,
+    });
+  }, [step, grupoEscolhido, medirFormulario, grupoParam, totemMode]);
+
   // "Procurar outro grupo": volta pra escolha SEM apagar o que a pessoa digitou
   // (pedido explícito do Marcos — ela não deve reescrever tudo).
   const procurarOutroGrupo = () => {
@@ -489,6 +516,20 @@ export default function InscricaoGrupos() {
       setResultado(r && (r.ja_membro || r.ja_pedido) ? { mensagem: r.mensagem, renovado: r.renovado === true } : null);
       setCasalResp(r && r.conjuge ? { ...r.conjuge, nome: r.conjuge.nome || conjuge.nome.trim() } : null);
       setStep(2);
+      // Etapa 3 · conversão. NÃO é "chegou no passo 2": esta tela também recebe
+      // quem já é membro ou já tinha pedido (reenvio não cria nada) e a resposta
+      // do honeypot de bot vem sem id. Quem decide é o servidor — a regra e os
+      // formatos de resposta estão em desfechoInscricaoGrupos (src/lib/gtm.ts).
+      const desfecho = desfechoInscricaoGrupos(r);
+      if (desfecho) {
+        medirInscricaoConcluida('grupos', {
+          grupo_id: grupoEscolhido.id,
+          categoria: grupoEscolhido.categoria || null,
+          origem: grupoParam ? 'link_grupo' : 'escolha',
+          totem: totemMode,
+          ...desfecho,
+        });
+      }
     } catch (e) {
       if (e.status === 409 && e.codigo === 'possivel_duplicado') {
         setDup({ onde: e.onde || 'pedido_pendente' });
@@ -654,25 +695,34 @@ export default function InscricaoGrupos() {
                 Para o grupo <strong style={{ color: C.text }}>{grupoEscolhido?.nome}</strong>
               </p>
               {/* Confirma o grupo certo: líder + dia/horário logo abaixo do nome (Nana · 23/07) */}
-              {grupoEscolhido && (grupoEscolhido.lider_nome || formatarQuando(grupoEscolhido)) && (
+              {grupoEscolhido && (grupoEscolhido.lider_nome || grupoEscolhido.lideres_exibicao?.length || formatarQuando(grupoEscolhido)) && (
                 <div style={{
                   display: 'flex', flexDirection: 'column', gap: 5,
                   padding: '10px 12px', marginBottom: 16, borderRadius: 10,
                   background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
                   border: `1px solid ${C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)'}`,
                 }}>
-                  {grupoEscolhido.lider_nome && (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: C.text3 }}>
-                      <User size={14} style={{ color: '#00B39D', flexShrink: 0 }} />
-                      {/* Com apelido cadastrado mostra "Nome (Apelido)" — é como a
-                          pessoa conhece o líder ("ah, é o Tuninho"). */}
-                      Líder: <strong style={{ color: C.text, fontWeight: 600 }}>
-                        {grupoEscolhido.lider_apelido
+                  {(() => {
+                    // TODOS os líderes do grupo, não só o principal (Natasha 20/08 ·
+                    // grupo com 2+ líderes confirma pelos dois nomes). O backend já
+                    // manda "Nome (Apelido)" pronto em lideres_exibicao; o fallback
+                    // cobre bundle antigo/deploy em 2 etapas.
+                    const nomes = (grupoEscolhido.lideres_exibicao?.length
+                      ? grupoEscolhido.lideres_exibicao
+                      : [grupoEscolhido.lider_apelido
                           ? `${grupoEscolhido.lider_nome} (${grupoEscolhido.lider_apelido})`
-                          : grupoEscolhido.lider_nome}
-                      </strong>
-                    </span>
-                  )}
+                          : grupoEscolhido.lider_nome]).filter(Boolean);
+                    if (!nomes.length) return null;
+                    return (
+                      <span style={{ display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: 12.5, color: C.text3 }}>
+                        <User size={14} style={{ color: '#00B39D', flexShrink: 0, marginTop: 2 }} />
+                        <span>
+                          {nomes.length > 1 ? 'Líderes: ' : 'Líder: '}
+                          <strong style={{ color: C.text, fontWeight: 600 }}>{nomes.join(' · ')}</strong>
+                        </span>
+                      </span>
+                    );
+                  })()}
                   {formatarQuando(grupoEscolhido) && (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: C.text3 }}>
                       <CalendarClock size={14} style={{ color: '#00B39D', flexShrink: 0 }} />

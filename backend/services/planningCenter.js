@@ -10,6 +10,8 @@
  *  - STATUS_MAP / STATUS_PRIORITY
  */
 
+const { chavePco } = require('../utils/pcoChave');
+
 const STATUS_PRIORITY = { confirmed: 4, scheduled: 3, pending: 2, unknown: 1, declined: 0 };
 const STATUS_MAP = { C: 'confirmed', U: 'pending', D: 'declined', S: 'scheduled', P: 'pending', N: 'pending' };
 
@@ -58,7 +60,7 @@ async function fetchWithRetry(url, headers, maxRetries = 3) {
 }
 
 // ── Paginated service types ─────────────────────────────────────────────────
-async function fetchAllServiceTypes(credentials) {
+async function fetchAllServiceTypes(credentials, { requireComplete = false } = {}) {
   const headers = { Authorization: `Basic ${credentials}` };
   const all = [];
   let offset = 0;
@@ -66,13 +68,19 @@ async function fetchAllServiceTypes(credentials) {
   while (true) {
     const url = `${PC_SERVICES_BASE}/service_types?per_page=${perPage}&offset=${offset}`;
     const response = await fetchWithRetry(url, headers);
-    if (!response || !response.ok) break;
+    if (!response || !response.ok) {
+      if (requireComplete) throw new Error(`Planning Center não retornou todos os tipos de serviço (offset ${offset})`);
+      break;
+    }
     const data = await response.json();
     const batch = data.data || [];
     all.push(...batch);
     if (batch.length < perPage) break;
     offset += perPage;
-    if (offset > 5000) break; // safety
+    if (offset > 5000) {
+      if (requireComplete) throw new Error('Planning Center excedeu o limite de paginação dos tipos de serviço');
+      break; // safety
+    }
   }
   console.log(`[PC] Found ${all.length} service types (after pagination)`);
   return all;
@@ -103,7 +111,7 @@ async function fetchAllTeamMembers(baseUrl, serviceTypeId, planId, credentials) 
 // Janela ampla por padrão: próximos 60 dias + últimos 7 dias. Página por
 // `offset` até esgotar — assim service types movimentados (Kids, Domingo etc.)
 // não ficam limitados a 5 cultos futuros.
-async function fetchAllPlans(baseUrl, serviceTypeId, credentials) {
+async function fetchAllPlans(baseUrl, serviceTypeId, credentials, { requireComplete = false } = {}) {
   const headers = { Authorization: `Basic ${credentials}` };
   const planMap = new Map();
 
@@ -118,12 +126,19 @@ async function fetchAllPlans(baseUrl, serviceTypeId, credentials) {
   while (true) {
     const url = `${baseUrl}/service_types/${serviceTypeId}/plans?filter=after,before&after=${fmt(past)}&before=${fmt(future)}&per_page=${perPage}&offset=${offset}&order=sort_date`;
     const res = await fetchWithRetry(url, headers);
-    if (!res || !res.ok) break;
+    if (!res || !res.ok) {
+      if (requireComplete) throw new Error(`Planning Center não retornou todos os planos do tipo ${serviceTypeId} (offset ${offset})`);
+      break;
+    }
     const d = await res.json();
     pageCount++;
     const batch = d.data || [];
     for (const p of batch) planMap.set(p.id, p);
-    if (batch.length < perPage || pageCount >= 20) break;
+    if (batch.length < perPage) break;
+    if (pageCount >= 20) {
+      if (requireComplete) throw new Error(`Planning Center excedeu o limite de paginação dos planos do tipo ${serviceTypeId}`);
+      break;
+    }
     offset += perPage;
   }
 
@@ -211,13 +226,16 @@ function getVolunteerName(member, personData) {
 }
 
 // ── Fetch all persons from all teams of a service type (independent of plans) ─
-async function fetchAllTeamPersons(serviceTypeId, credentials) {
+async function fetchAllTeamPersons(serviceTypeId, credentials, { requireComplete = false } = {}) {
   const headers = { Authorization: `Basic ${credentials}` };
   const volunteers = new Map();
 
   // 1. Get all teams for this service type
   const teamsRes = await fetchWithRetry(`${PC_SERVICES_BASE}/service_types/${serviceTypeId}/teams?per_page=100`, headers);
-  if (!teamsRes.ok) return volunteers;
+  if (!teamsRes || !teamsRes.ok) {
+    if (requireComplete) throw new Error(`Planning Center não retornou as equipes do tipo ${serviceTypeId}`);
+    return volunteers;
+  }
 
   const teamsData = await teamsRes.json();
   const teams = teamsData.data || [];
@@ -230,7 +248,10 @@ async function fetchAllTeamPersons(serviceTypeId, credentials) {
     while (true) {
       const url = `${PC_SERVICES_BASE}/service_types/${serviceTypeId}/teams/${team.id}/team_members?per_page=${perPage}&offset=${offset}&include=person`;
       const res = await fetchWithRetry(url, headers);
-      if (!res.ok) break;
+      if (!res || !res.ok) {
+        if (requireComplete) throw new Error(`Planning Center não retornou todos os membros da equipe ${team.id}`);
+        break;
+      }
 
       const data = await res.json();
       pageCount++;
@@ -259,7 +280,11 @@ async function fetchAllTeamPersons(serviceTypeId, credentials) {
         }
       }
 
-      if (!data.data || data.data.length < perPage || pageCount >= 50) break;
+      if (!data.data || data.data.length < perPage) break;
+      if (pageCount >= 50) {
+        if (requireComplete) throw new Error(`Planning Center excedeu o limite de paginação da equipe ${team.id}`);
+        break;
+      }
       offset += perPage;
     }
   }
@@ -270,7 +295,7 @@ async function fetchAllTeamPersons(serviceTypeId, credentials) {
 // Lista COMPLETA de people do Planning Center Services — inclui quem nunca foi
 // escalado e não está em nenhuma equipe. É o total do "Services" (ex.: 875).
 // Usada pra a galeria de voluntários espelhar o Planning Center inteiro.
-async function fetchAllServicesPeople(credentials) {
+async function fetchAllServicesPeople(credentials, { requireComplete = false } = {}) {
   const headers = { Authorization: `Basic ${credentials}` };
   const people = new Map();
   const perPage = 100;
@@ -278,7 +303,10 @@ async function fetchAllServicesPeople(credentials) {
   while (true) {
     const url = `${PC_SERVICES_BASE}/people?per_page=${perPage}&offset=${offset}`;
     const res = await fetchWithRetry(url, headers);
-    if (!res.ok) break;
+    if (!res || !res.ok) {
+      if (requireComplete) throw new Error(`Planning Center não retornou todas as pessoas do Services (offset ${offset})`);
+      break;
+    }
     const data = await res.json();
     for (const p of (data.data || [])) {
       const a = p.attributes || {};
@@ -290,6 +318,12 @@ async function fetchAllServicesPeople(credentials) {
           volunteer_name: name,
           avatar_url: a.photo_thumbnail || a.photo_url || null,
           email: null,
+          // ⚠️ O PCO tem baixa PRÓPRIA (`archived` / `status:'inactive'`) e ela
+          // vinha sendo ignorada: a pessoa continuava no roster, então a
+          // reconciliação a via como presente e mantinha o perfil ativo aqui.
+          // Medido em 25/08: 17 pessoas inativas no PCO seguiam ativas na nossa
+          // base — e apareciam pro líder na hora de montar escala.
+          pco_inativo: a.archived === true || a.status === 'inactive',
         });
       }
     }
@@ -297,7 +331,10 @@ async function fetchAllServicesPeople(credentials) {
     if (!data.data || data.data.length < perPage) break;
     offset += perPage;
     if (total && offset >= total) break;
-    if (offset > 20000) break; // safety
+    if (offset > 20000) {
+      if (requireComplete) throw new Error('Planning Center excedeu o limite de paginação das pessoas do Services');
+      break; // safety
+    }
   }
   return people;
 }
@@ -544,8 +581,40 @@ async function upsertVolunteerProfiles(supabase, volunteersMap) {
 // (origem<>planning_center) nunca sao tocados.
 // Guarda de seguranca: nao reconcilia se o roster veio pequeno (pull parcial/falho) —
 // exige cobrir >= metade dos ativos atuais e >= 100 pessoas.
+// Quem o sync pode DESARQUIVAR: está no roster ativo do PCO e a baixa NÃO foi
+// decisão nossa.
+//
+// ⚠️⚠️ Sem o `arquivado_manual` a limpeza de base se desfaz sozinha: essas
+// pessoas continuam no roster do PCO (768 `active` em 25/08), então o cron
+// horário as traria de volta — em silêncio, e ninguém ligaria uma coisa à
+// outra. `arquivado_manual` ausente (migration não aplicada) conta como false,
+// que é o comportamento antigo: na dúvida, o PCO manda.
+function podeDesarquivar(perfil, pcIds) {
+  if (!perfil || !perfil.planning_center_id) return false;
+  if (perfil.arquivado_manual === true) return false;
+  return pcIds.has(String(perfil.planning_center_id));
+}
+
+// Separa o roster do PCO entre quem ele considera ATIVO e o tamanho BRUTO do
+// pull. Puro de propósito: é a régua que decide desativação de gente.
+function rosterAtivoDoPco(volunteersMap) {
+  const entradas = volunteersMap instanceof Map
+    ? Array.from(volunteersMap.entries())
+    : Object.entries(volunteersMap || {});
+  const validas = entradas.filter(([id]) => !!id);
+  return {
+    rosterBruto: validas.length,
+    pcIds: new Set(validas.filter(([, v]) => !(v && v.pco_inativo)).map(([id]) => String(id))),
+  };
+}
+
 async function reconcilePlanningCenterProfiles(supabase, volunteersMap) {
-  const pcIds = new Set(Array.from(volunteersMap.keys()).filter(Boolean).map(String));
+  // ⚠️ Quem está no roster mas marcado `archived`/`inactive` LÁ é tratado como
+  // quem saiu — a baixa é deles, e ignorá-la fazia o nosso cadastro discordar
+  // da fonte. ⚠️ A guarda de roster pequeno usa o tamanho BRUTO do pull: ela
+  // existe pra detectar pull parcial, e medir pelo filtrado faria uma rodada
+  // em que muita gente foi desativada no PCO parecer um pull quebrado.
+  const { rosterBruto, pcIds } = rosterAtivoDoPco(volunteersMap);
 
   // Le os perfis PC do sistema, paginado (cap de 1000 do PostgREST).
   const fetchAll = async (arquivado) => {
@@ -568,8 +637,8 @@ async function reconcilePlanningCenterProfiles(supabase, volunteersMap) {
 
   const ativos = await fetchAll(false);
   const minRoster = Math.max(100, Math.floor(ativos.length * 0.5));
-  if (pcIds.size < minRoster) {
-    return { skipped: true, motivo: 'roster_pequeno', roster: pcIds.size, minRoster, arquivados: 0, desarquivados: 0 };
+  if (rosterBruto < minRoster) {
+    return { skipped: true, motivo: 'roster_pequeno', roster: rosterBruto, minRoster, arquivados: 0, desarquivados: 0 };
   }
 
   const nowIso = new Date().toISOString();
@@ -589,17 +658,89 @@ async function reconcilePlanningCenterProfiles(supabase, volunteersMap) {
   const arquivados = paraArquivar.length
     ? await updateInChunks(paraArquivar, { arquivado: true, arquivado_em: nowIso }) : 0;
 
-  const arquivadosDb = await fetchAll(true);
+  // ⚠️ `select('*')` de propósito: a coluna `arquivado_manual` pode não existir
+  // ainda (deploy antes da migration), e pedir coluna inexistente faz o
+  // PostgREST recusar a QUERY INTEIRA — a reconciliação morreria toda. Com `*`
+  // ela simplesmente não vem, e `podeDesarquivar` trata ausência como false.
+  const arquivadosDb = [];
+  for (let off = 0; ; off += 1000) {
+    const { data, error } = await supabase
+      .from('vol_profiles').select('*')
+      .eq('origem', 'planning_center').eq('arquivado', true)
+      .range(off, off + 999);
+    if (error) throw error;
+    arquivadosDb.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
   const paraDesarquivar = arquivadosDb
-    .filter(p => p.planning_center_id && pcIds.has(String(p.planning_center_id)))
+    .filter(p => podeDesarquivar(p, pcIds))
     .map(p => p.id);
   const desarquivados = paraDesarquivar.length
     ? await updateInChunks(paraDesarquivar, { arquivado: false, arquivado_em: null }) : 0;
 
-  return { skipped: false, roster: pcIds.size, arquivados, desarquivados };
+  return { skipped: false, roster: pcIds.size, roster_bruto: rosterBruto,
+    inativos_no_pco: rosterBruto - pcIds.size, arquivados, desarquivados };
 }
 
 // ── Sync team members from vol_schedules ────────────────────────────────────
+// ⚠️⚠️ Reponta a linha ÓRFÃ (`volunteer_profile_id` NULL) pro perfil que já
+// existe, e APAGA a que virou redundante. Sem isto a equipe da pessoa fica
+// invisível no sistema (o embed do `/volunteers-pool` só alcança pelo FK do
+// perfil) e o dedup de `withProfile` insere uma SEGUNDA linha, inflando a
+// contagem de membros da equipe.
+//
+// ⚠️ `vol_team_members` NÃO tem `deleted_at` — hard delete é o padrão da casa
+// aqui (é o que o `DELETE /team-members/:id` faz). A linha apagada é sempre
+// REDUNDANTE: o mesmo (equipe, função, pessoa) já existe ligado ao perfil.
+// ⚠️ Best-effort e SILENCIOSO no erro: falhar aqui devolve o comportamento de
+// antes, e nunca pode derrubar o sync.
+async function repontarOrfas(supabase, memberships, profByPc) {
+  const pcs = [...new Set(
+    memberships
+      .filter(m => m.planning_center_person_id && profByPc.has(m.planning_center_person_id))
+      .map(m => m.planning_center_person_id),
+  )];
+  if (!pcs.length) return { repontadas: 0, apagadas: 0 };
+
+  let orfas = [];
+  for (let i = 0; i < pcs.length; i += 200) {
+    const { data, error } = await supabase.from('vol_team_members')
+      .select('id, team_id, position_id, planning_center_person_id')
+      .is('volunteer_profile_id', null)
+      .in('planning_center_person_id', pcs.slice(i, i + 200));
+    if (error) {
+      // Não conseguir LER não pode virar "não há órfã" nem derrubar o sync.
+      console.error('[sync-members] leitura de órfãs:', error.message);
+      return { repontadas: 0, apagadas: 0 };
+    }
+    orfas = orfas.concat(data || []);
+  }
+  if (!orfas.length) return { repontadas: 0, apagadas: 0 };
+
+  let repontadas = 0; let apagadas = 0;
+  for (const o of orfas) {
+    const perfil = profByPc.get(o.planning_center_person_id);
+    if (!perfil) continue;
+    const { error } = await supabase.from('vol_team_members')
+      .update({ volunteer_profile_id: perfil })
+      .eq('id', o.id)
+      .is('volunteer_profile_id', null);   // guarda de corrida
+    if (!error) { repontadas += 1; continue; }
+    // 23505 = o vínculo já existe ligado ao perfil ⇒ a órfã é redundante.
+    if (error.code === '23505') {
+      const { error: eDel } = await supabase.from('vol_team_members').delete().eq('id', o.id);
+      if (!eDel) apagadas += 1;
+      else console.error('[sync-members] apagar órfã redundante:', eDel.message);
+    } else {
+      console.error('[sync-members] repontar órfã:', error.message);
+    }
+  }
+  if (repontadas || apagadas) {
+    console.log(`[sync-members] órfãs: ${repontadas} repontada(s), ${apagadas} redundante(s) apagada(s)`);
+  }
+  return { repontadas, apagadas };
+}
+
 // Reads vol_schedules (source of truth) and populates vol_teams, vol_positions,
 // and vol_team_members. Supports both membresia-linked (volunteer_profile_id)
 // and PC-only (planning_center_person_id) volunteers.
@@ -643,47 +784,65 @@ async function syncTeamMembersFromSchedules(supabase, restrictPersonIds = null) 
   }
   if (!assignments.size) return { assigned: 0, volunteers: 0, teams: 0 };
 
-  // Ensure teams
+  // ⚠️⚠️ O "team" do Planning Center é a nossa FUNÇÃO, não a nossa EQUIPE.
+  // Lá a granularidade é Vocal, Câmeras, Recepção, Bateria; aqui isso são
+  // POSIÇÕES dentro de Banda / Produção / Integração. Esta função criava um
+  // `vol_teams` por nome recebido — e foi assim que o banco chegou a 129
+  // equipes (113 espelho bruto do PCO, com "Cameras"/"Câmeras" e "Bazar 8:30"/
+  // "Bazar 10h" como equipes distintas), enquanto as equipes que a montagem de
+  // escala usa ficavam com 0 a 7 membros.
+  //
+  // Agora a tradução passa por `vol_pco_mapa` (de-para semeado na migration
+  // 20260816120000). Nome que NÃO está no mapa não vira equipe: fica pendente,
+  // visível na tela de Equipes, pra alguém dizer onde ele entra. Criar equipe
+  // por nome desconhecido é exatamente o que produziu a bagunça.
   const allTeamNames = [...new Set([...assignments.values()].map(a => a.team_name))];
-  await supabase.from('vol_teams')
-    .upsert(allTeamNames.map(name => ({ name })), { onConflict: 'name', ignoreDuplicates: true });
-  const { data: teamRows } = await supabase.from('vol_teams')
-    .select('id, name').in('name', allTeamNames);
-  const teamByName = new Map((teamRows || []).map(t => [t.name, t.id]));
 
-  // Ensure positions
-  const positionsSeen = new Set();
-  const positionsToInsert = [];
-  for (const a of assignments.values()) {
-    if (!a.position_name) continue;
-    const teamId = teamByName.get(a.team_name);
-    if (!teamId) continue;
-    const k = `${teamId}:${a.position_name}`;
-    if (positionsSeen.has(k)) continue;
-    positionsSeen.add(k);
-    positionsToInsert.push({ team_id: teamId, name: a.position_name });
+  const mapa = new Map();
+  for (let i = 0; i < allTeamNames.length; i += 200) {
+    const lote = allTeamNames.slice(i, i + 200).map(chavePco);
+    const { data, error } = await supabase.from('vol_pco_mapa')
+      .select('pco_chave, team_id, position_id, ignorar').in('pco_chave', lote);
+    if (error) {
+      // ⚠️ Falhar a CONSULTA do mapa não pode virar "não conheço nenhum nome" —
+      // isso zeraria o sync de membros em silêncio. Aborta declarando.
+      console.error('[sync-members] mapa PCO indisponivel:', error.message);
+      return { assigned: 0, volunteers: 0, teams: 0, erro: 'mapa_indisponivel' };
+    }
+    (data || []).forEach(r => mapa.set(r.pco_chave, r));
   }
-  if (positionsToInsert.length) {
-    await supabase.from('vol_positions')
-      .upsert(positionsToInsert, { onConflict: 'team_id,name', ignoreDuplicates: true });
-  }
-  const teamIds = [...teamByName.values()];
-  const { data: posRows } = teamIds.length
-    ? await supabase.from('vol_positions').select('id, team_id, name').in('team_id', teamIds)
-    : { data: [] };
-  const posByKey = new Map((posRows || []).map(p => [`${p.team_id}:${p.name}`, p.id]));
 
-  // Build memberships — one per (team, person); if multiple positions collide,
-  // keep the first that has a position_id (vol_team_members doesn't support multi-position per team).
+  const naoMapeados = allTeamNames.filter(n => !mapa.has(chavePco(n)));
+  if (naoMapeados.length) {
+    console.warn('[sync-members] times do PCO fora do mapa (viram pendencia, nao equipe):', naoMapeados.join(' · '));
+  }
+
+  const posByKey = new Map();
+  const teamIds = [...new Set([...mapa.values()].map(r => r.team_id).filter(Boolean))];
+  if (teamIds.length) {
+    const { data: posRows } = await supabase.from('vol_positions')
+      .select('id, team_id, name').in('team_id', teamIds);
+    (posRows || []).forEach(p => posByKey.set(`${p.team_id}:${chavePco(p.name)}`, p.id));
+  }
+
+  // Build memberships — uma por (equipe, FUNÇÃO, pessoa).
+  // ⚠️ Não é mais uma por (equipe, pessoa): depois do colapso, quem faz Câmeras
+  // E Projeção é a mesma pessoa na MESMA equipe em duas funções, e o índice
+  // único passou a admitir isso (migration 20260816120000). Guardar só a
+  // primeira apagaria a segunda função de 129 pessoas.
   const membershipByKey = new Map();
   for (const a of assignments.values()) {
-    const teamId = teamByName.get(a.team_name);
-    if (!teamId) continue;
+    const alvo = mapa.get(chavePco(a.team_name));
+    if (!alvo || alvo.ignorar || !alvo.team_id) continue;
+    const teamId = alvo.team_id;
+    // A função vem do MAPA (o "team" do PCO). O `position_name` do PCO é um
+    // detalhe abaixo disso ("Câmera 3") e só é usado se casar com uma função
+    // real da equipe — senão criaria função nova a cada nome novo do PCO.
+    const positionId = alvo.position_id
+      || (a.position_name ? posByKey.get(`${teamId}:${chavePco(a.position_name)}`) || null : null);
     const personKey = a.volunteer_profile_id || `pc:${a.planning_center_person_id}`;
-    const key = `${teamId}:${personKey}`;
-    const positionId = a.position_name ? posByKey.get(`${teamId}:${a.position_name}`) || null : null;
-    const existing = membershipByKey.get(key);
-    if (!existing) {
+    const key = `${teamId}:${positionId || ''}:${personKey}`;
+    if (!membershipByKey.has(key)) {
       membershipByKey.set(key, {
         team_id: teamId,
         volunteer_profile_id: a.volunteer_profile_id,
@@ -692,8 +851,6 @@ async function syncTeamMembersFromSchedules(supabase, restrictPersonIds = null) 
         position_id: positionId,
         is_active: true,
       });
-    } else if (positionId && !existing.position_id) {
-      existing.position_id = positionId;
     }
   }
 
@@ -714,52 +871,80 @@ async function syncTeamMembersFromSchedules(supabase, restrictPersonIds = null) 
         m.volunteer_profile_id = profByPc.get(m.planning_center_person_id);
       }
     }
+    // ⚠️⚠️ REPONTAR A LINHA ÓRFÃ QUE JÁ ESTÁ NO BANCO (26/08/2026).
+    // A resolução acima só arruma o payload DESTE sync. A linha antiga — gravada
+    // como "pc-only" antes de o perfil existir — fica com `volunteer_profile_id`
+    // NULL pra sempre, e o embed `team_members:vol_team_members(...)` do
+    // `/volunteers-pool` só alcança pelo FK do perfil: a pessoa aparece SEM
+    // EQUIPE no sistema tendo equipe no Planning Center. Pior, o dedup de
+    // `withProfile` procura por `volunteer_profile_id` e NÃO acha a órfã, então
+    // insere uma linha nova — e o banco fica com as DUAS (medido em 26/08: 59
+    // órfãs, 28 delas já duplicadas assim, inflando a contagem de membros da
+    // equipe). Repontar aqui é o que faz o dedup seguinte encontrá-la e pular.
+    // ⚠️ Best-effort: falhar aqui não pode derrubar o sync — o pior caso é o
+    // comportamento de antes.
+    await repontarOrfas(supabase, memberships, profByPc);
   }
 
   // Re-dedup pós-resolução: uma membership que era "pc-only" pode ter ganhado o
-  // MESMO volunteer_profile_id de outra já existente pra mesma equipe — duas
-  // linhas com o mesmo (team_id, volunteer_profile_id) num batch estouram
-  // "ON CONFLICT DO UPDATE command cannot affect row a second time".
+  // MESMO volunteer_profile_id de outra já existente pra mesma equipe E função —
+  // duas linhas com a mesma chave num batch estouram "ON CONFLICT DO UPDATE
+  // command cannot affect row a second time".
+  // ⚠️ A chave inclui `position_id`: depois do colapso das equipes-espelho, a
+  // mesma pessoa na MESMA equipe em duas funções é dado legítimo (129 pessoas),
+  // e reduzir por (equipe, pessoa) apagaria a segunda função.
   const vistosProfile = new Map();
   for (const m of memberships.filter(x => x.volunteer_profile_id)) {
-    const k = `${m.team_id}:${m.volunteer_profile_id}`;
-    const ja = vistosProfile.get(k);
-    if (!ja) vistosProfile.set(k, m);
-    else if (m.position_id && !ja.position_id) ja.position_id = m.position_id;
+    const k = `${m.team_id}:${m.position_id || ''}:${m.volunteer_profile_id}`;
+    if (!vistosProfile.has(k)) vistosProfile.set(k, m);
   }
   const withProfile = [...vistosProfile.values()];
   const pcOnly = memberships.filter(m => !m.volunteer_profile_id && m.planning_center_person_id);
 
   let assigned = 0;
 
-  // Upsert profile-linked (unique: team_id, volunteer_profile_id)
-  for (let i = 0; i < withProfile.length; i += 100) {
-    const batch = withProfile.slice(i, i + 100);
-    const { error: e } = await supabase.from('vol_team_members')
-      .upsert(batch, { onConflict: 'team_id,volunteer_profile_id', ignoreDuplicates: false });
-    if (e) console.error('[sync-members] profile batch:', e.message);
-    else assigned += batch.length;
-  }
-
-  // PC-only: check existing first to avoid duplicates (partial unique index covers the case
-  // but PostgREST can't always target it, so we dedup manually).
-  if (pcOnly.length) {
-    const pcTeamIds = [...new Set(pcOnly.map(m => m.team_id))];
-    const pcIds = [...new Set(pcOnly.map(m => m.planning_center_person_id))];
-    const { data: existing } = await supabase.from('vol_team_members')
-      .select('team_id, planning_center_person_id')
-      .is('volunteer_profile_id', null)
-      .in('team_id', pcTeamIds)
-      .in('planning_center_person_id', pcIds);
-    const existingKeys = new Set((existing || []).map(e => `${e.team_id}:${e.planning_center_person_id}`));
-    const toInsert = pcOnly.filter(m => !existingKeys.has(`${m.team_id}:${m.planning_center_person_id}`));
-    for (let i = 0; i < toInsert.length; i += 100) {
-      const batch = toInsert.slice(i, i + 100);
-      const { error: e } = await supabase.from('vol_team_members').insert(batch);
-      if (e) console.error('[sync-members] pc-only batch:', e.message);
-      else assigned += batch.length;
+  // ⚠️ SEM `upsert`/`onConflict` aqui. Os dois índices únicos passaram a ser
+  // PARCIAIS (migration 20260816120000) e o PostgREST não consegue mirar índice
+  // parcial — um `onConflict` apontando pro nome antigo falharia a cada sync,
+  // em silêncio, no `console.error`. Dedup manual, como o ramo pc-only já fazia.
+  const gravarSemDuplicar = async (linhas, comPerfil) => {
+    if (!linhas.length) return 0;
+    const teamIds = [...new Set(linhas.map(m => m.team_id))];
+    const pessoaIds = [...new Set(linhas.map(m => (comPerfil ? m.volunteer_profile_id : m.planning_center_person_id)))];
+    const existentes = new Set();
+    for (let i = 0; i < pessoaIds.length; i += 200) {
+      let q = supabase.from('vol_team_members')
+        .select('team_id, position_id, volunteer_profile_id, planning_center_person_id')
+        .in('team_id', teamIds);
+      q = comPerfil
+        ? q.in('volunteer_profile_id', pessoaIds.slice(i, i + 200))
+        : q.is('volunteer_profile_id', null).in('planning_center_person_id', pessoaIds.slice(i, i + 200));
+      const { data, error } = await q;
+      if (error) {
+        // Não conseguir LER o que já existe não pode virar "não existe nada" —
+        // isso duplicaria o vínculo de todo mundo a cada sync.
+        console.error('[sync-members] leitura de existentes:', error.message);
+        return 0;
+      }
+      (data || []).forEach(e => existentes.add(
+        `${e.team_id}:${e.position_id || ''}:${comPerfil ? e.volunteer_profile_id : e.planning_center_person_id}`,
+      ));
     }
-  }
+    const novos = linhas.filter(m => !existentes.has(
+      `${m.team_id}:${m.position_id || ''}:${comPerfil ? m.volunteer_profile_id : m.planning_center_person_id}`,
+    ));
+    let n = 0;
+    for (let i = 0; i < novos.length; i += 100) {
+      const batch = novos.slice(i, i + 100);
+      const { error: e } = await supabase.from('vol_team_members').insert(batch);
+      if (e) console.error(`[sync-members] batch ${comPerfil ? 'perfil' : 'pc-only'}:`, e.message);
+      else n += batch.length;
+    }
+    return n;
+  };
+
+  assigned += await gravarSemDuplicar(withProfile, true);
+  assigned += await gravarSemDuplicar(pcOnly, false);
 
   // Mark profile-linked volunteers as active
   const profileIds = [...new Set(withProfile.map(m => m.volunteer_profile_id))];
@@ -1020,6 +1205,8 @@ module.exports = {
   upsertVolunteerQrCodes,
   upsertVolunteerProfiles,
   reconcilePlanningCenterProfiles,
+  rosterAtivoDoPco,
+  podeDesarquivar,
   assignVolunteersToTeams,
   syncTeamMembersFromSchedules,
   fetchPcoCpfMap,

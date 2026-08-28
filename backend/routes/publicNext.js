@@ -11,6 +11,12 @@ const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { verifyDirecionarToken, direcionarMatricula } = require('../services/nextDirecionar');
+const { horariosDisponiveis } = require('../utils/batismoHorario');
+const {
+  horariosConfigurados: batismoHorariosConfigurados,
+  ocupacaoPorHorario: batismoOcupacaoPorHorario,
+  dataProximoBatismo,
+} = require('../services/batismoHorarios');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 
@@ -43,12 +49,37 @@ router.use(limiter);
 // era usada 80 linhas antes da declaração, salva só pelo hoisting de `async
 // function` — converter pra arrow const derrubava o form inteiro com TDZ
 // (mesmo padrão do bug do Ariel · sweep 28/07).
+/**
+ * A turma que a PESSOA escolheu no formulário (26/08/2026). Devolve null quando
+ * o id não veio, não existe, não está aberta ou o domingo já passou — e aí o
+ * chamador cai no comportamento antigo.
+ *
+ * ⚠️ Validado no SERVIDOR e não confiando no que o cliente mandou: o id vem de
+ * um <select>, e aceitar qualquer uuid matricularia gente em turma encerrada ou
+ * de outro mês.
+ */
+async function turmaEscolhida(turmaId) {
+  if (!turmaId || !/^[0-9a-f-]{36}$/i.test(String(turmaId))) return null;
+  const { data } = await supabase.from('next_turmas')
+    .select('id, nome, next_encontros(data)')
+    .eq('id', String(turmaId)).eq('status', 'aberta').is('deleted_at', null)
+    .maybeSingle();
+  if (!data) return null;
+  const datas = (data.next_encontros || []).map(e => e.data).filter(Boolean).sort();
+  const dia = datas[0] || null;
+  if (!dia || dia < hojeBRT()) return null; // domingo já passou
+  return { id: data.id, nome: data.nome, data: dia };
+}
+
 async function turmaAbertaAtual() {
   const { data } = await supabase.from('next_turmas')
     .select('id, nome').eq('status', 'aberta').is('deleted_at', null)
     .order('created_at', { ascending: false }).limit(1).maybeSingle();
   return data || null;
 }
+
+// Régua das turmas do Next (1 turma por domingo · culto de 09:30 · 26/08/2026)
+const { HORARIO_NEXT, hojeBRT } = require('../utils/nextTurmas');
 
 // Contrato de Inscrição (F3.1 · docs/modulo-inscricoes/) — utils da fonte única
 const {
@@ -77,6 +108,43 @@ router.get('/eventos', async (_req, res) => {
     .order('data');
   if (error) return res.status(500).json({ error: error.message });
   res.json(data || []);
+});
+
+// ----------------------------------------------------------------------------
+// GET /turmas — os DOMINGOS que a pessoa pode escolher no formulário (26/08/2026)
+//
+// Uma turma por domingo, um encontro, culto de 09:30. Devolve só turma ABERTA
+// com encontro de HOJE ou do futuro, ordenada por data.
+//
+// ⚠️ Devolve o MÍNIMO: id, data e rótulo. Nome de responsável, observação e
+// contagem de matriculados são dado interno — esta rota é pública e sem login.
+// ----------------------------------------------------------------------------
+router.get('/turmas', async (_req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('next_turmas')
+      .select('id, nome, next_encontros(data)')
+      .eq('status', 'aberta').is('deleted_at', null)
+      .limit(200);
+    if (error) throw error;
+
+    const hoje = hojeBRT();
+    const lista = (data || [])
+      .map(t => {
+        // A turma nova tem UM encontro; turma antiga (2 encontros) usa o primeiro.
+        const datas = (t.next_encontros || []).map(e => e.data).filter(Boolean).sort();
+        return { id: t.id, nome: t.nome, data: datas[0] || null };
+      })
+      .filter(t => t.data && t.data >= hoje)
+      .sort((a, b) => a.data.localeCompare(b.data));
+
+    res.json({ horario: HORARIO_NEXT, turmas: lista });
+  } catch (e) {
+    // ⚠️ Erro NÃO vira lista vazia: lista vazia se lê como "não há Next marcado"
+    // e o formulário esconderia o campo, matriculando às cegas.
+    console.error('[public/next/turmas]', e.message);
+    res.status(500).json({ error: 'Não foi possível carregar as datas.' });
+  }
 });
 
 // GET /textos — textos canônicos de consentimento (o snapshot gravado é
@@ -164,6 +232,11 @@ router.post('/inscrever', async (req, res) => {
         telefone,
         nome: [cleanNome, cleanSobrenome].filter(Boolean).join(' '),
         dataNascimento: cleanNascimento,
+        // ⚠️ O sexo é OBRIGATÓRIO neste formulário desde 28/07 (`cleanSexo`,
+        // 400 se faltar) e era gravado só em `next_matriculas` — o cadastro
+        // nascia sem ele. Medido em 18/08: 3 dos 4 cadastros criados por esta
+        // porta desde 05/08 estão sem sexo, com o valor guardado na matrícula.
+        genero: cleanSexo || null,
         status: 'visitante',
         origem: 'next_formulario',
       });
@@ -204,7 +277,10 @@ router.post('/inscrever', async (req, res) => {
     // turma abrir. NUNCA matricula numa turma já encerrada (decisão Marcos ·
     // 2026-06-26). O legado next_inscricoes foi aposentado como destino de escrita
     // (a coleta agora vive só em next_matriculas · migration 20260626180000).
-    const turma = await turmaAbertaAtual(); // null = sem turma aberta → lista de espera
+    // A pessoa escolhe o domingo no formulário (26/08/2026). Sem escolha — bundle
+    // antigo em cache, ou nenhum domingo disponível — cai no comportamento
+    // anterior: turma aberta mais recente, ou lista de espera.
+    const turma = (await turmaEscolhida(req.body?.turma_id)) || await turmaAbertaAtual();
 
     // Dedup por membro_id (CPF é opcional no formulário): se a pessoa JÁ está na
     // lista de espera (sem turma) OU na turma aberta, não duplica (reenvio do form).
@@ -301,15 +377,40 @@ router.get('/direcionar/:token', async (req, res) => {
         nome: `${p.nome || ''}${p.sobrenome ? ' ' + p.sobrenome : ''}`.trim(),
         ja: { grupos: !!p.indicou_grupo, voluntarios: !!p.indicou_servir, batismo: !!p.indicou_batismo },
       })),
+      // Horários do batismo pro seletor de "Quero me batizar" — vai no MESMO
+      // payload (o totem já recarrega a cada pessoa, então a ocupação chega
+      // fresca sem round-trip novo).
+      batismo: await horariosDoBatismo(),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// Horários ABERTOS e COM VAGA pro próximo batismo (catálogo da Integração ·
+// régua única `utils/batismoHorario`).
+// ⚠️ BEST-EFFORT: falha aqui NÃO pode derrubar o totem inteiro — o check-in e os
+// outros destinos seguem funcionando. Devolve `indisponivel` pra tela distinguir
+// "a equipe fechou tudo" de "não conseguimos ler agora"; nos dois casos o botão
+// de batismo fica desligado, que é a mesma falha fechada do servidor.
+async function horariosDoBatismo() {
+  try {
+    const dataBatismo = await dataProximoBatismo();
+    const configurados = await batismoHorariosConfigurados();
+    if (!dataBatismo || configurados === null) {
+      return { data_batismo: dataBatismo || null, horarios: [], indisponivel: true };
+    }
+    const ocup = await batismoOcupacaoPorHorario(dataBatismo);
+    return { data_batismo: dataBatismo, horarios: horariosDisponiveis(configurados, ocup) };
+  } catch (e) {
+    console.error('[publicNext] horariosDoBatismo:', e.message);
+    return { data_batismo: null, horarios: [], indisponivel: true };
+  }
+}
 
 // POST /api/public/next/direcionar/:token — { matricula_id, destinos: ['grupos','voluntarios','batismo'] }
 router.post('/direcionar/:token', async (req, res) => {
   try {
     if (!verifyDirecionarToken(req.params.token)) return res.status(403).json({ error: 'Link inválido' });
-    const { matricula_id, destinos, areas } = req.body || {};
+    const { matricula_id, destinos, areas, horario_batismo } = req.body || {};
     if (!matricula_id) return res.status(400).json({ error: 'Selecione a pessoa' });
     const turma = await turmaAbertaAtual();
     if (!turma) return res.status(409).json({ error: 'Nenhuma turma aberta no momento' });
@@ -318,11 +419,15 @@ router.post('/direcionar/:token', async (req, res) => {
       .select('id, turma_id').eq('id', matricula_id).is('deleted_at', null).maybeSingle();
     if (!m || m.turma_id !== turma.id) return res.status(403).json({ error: 'Pessoa não pertence à turma aberta' });
     const r = await direcionarMatricula({
-      matriculaId: matricula_id, destinos, areas, userId: null,
+      matriculaId: matricula_id, destinos, areas,
+      horarioBatismo: horario_batismo || null,
+      userId: null,
       permitir: ['grupos', 'voluntarios', 'batismo'], // Devocional = Fase 2b (com o app do Matheus)
     });
     res.json(r);
-  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message, codigo: e.codigo, campo: e.campo });
+  }
 });
 
 // ── Check-in / lista de presença do NEXT (totem · token assinado) ────────────

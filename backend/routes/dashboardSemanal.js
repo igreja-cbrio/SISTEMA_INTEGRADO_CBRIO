@@ -16,9 +16,10 @@
 // ============================================================================
 
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, isSuperAdminEmail } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const Anthropic = require('@anthropic-ai/sdk');
+const { montarLentes, CORTE_DOMINGO_0930 } = require('../utils/lentesDomingo');
 
 router.use(authenticate);
 
@@ -41,6 +42,10 @@ const INDICADORES = {
   ao_vivo:           { coluna: 'ao_vivo',           rotulo: 'Ao vivo',           usa_ocupacao: false },
   online_ds:         { coluna: 'online_ds',         rotulo: 'Online DS',         usa_ocupacao: false },
   online_ddus:       { coluna: 'online_ddus',       rotulo: 'Online DDUS',       usa_ocupacao: false },
+  // ⚠️ Views ACUMULADAS até o fim da live — NÃO confundir com `ao_vivo`, que é
+  // o pico de espectadores SIMULTÂNEOS. Medido em 23/08 no culto das 19:00:
+  // pico 300 × 1.355 views. Existe desde 26/08; culto anterior vem 0.
+  online_views_live: { coluna: 'online_views_live', rotulo: 'Views totais da live', usa_ocupacao: false },
   voluntariado:      { coluna: 'voluntariado',      rotulo: 'Voluntariado',      usa_ocupacao: false },
 };
 
@@ -50,22 +55,176 @@ const INDICADORES = {
 // ─────────────────────────────────────────────────────────────────────────────
 const { isoWeekRange, isoWeekOf, fmtDateBr, semanasDoMes } = require('../utils/isoWeek');
 
+const {
+  hojeBrt, corteDoAno, ultimaSemanaIsoCompleta, resolverPeriodo,
+  MES_NOMES_LONGO, MES_NOMES_CURTO,
+} = require('../utils/periodoYtd');
+
+// Lê TODAS as linhas de uma query, respeitando o cap de 1000 do PostgREST (que é
+// server-side e trunca em SILÊNCIO). Recebe uma FÁBRICA de query, não a query:
+// reusar o mesmo builder entre páginas depende de detalhe interno do supabase-js.
+async function selectPaginado(montarQuery, ordenarPor) {
+  const PAGINA = 1000;
+  const tudo = [];
+  for (let offset = 0; ; offset += PAGINA) {
+    let q = montarQuery();
+    if (ordenarPor) q = q.order(ordenarPor);
+    const { data, error } = await q.range(offset, offset + PAGINA - 1);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    tudo.push(...data);
+    if (data.length < PAGINA) break;
+  }
+  return tudo;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// GET /cultos · lista service_types ativos
+// GET /cultos · lista os tipos de culto para o SELETOR do Dashboard Semanal
+//
+// ⚠️⚠️ NÃO filtra `is_active` — e é essa a correção. Este endpoint alimenta um
+// FILTRO DE ANÁLISE HISTÓRICA (DashSemanalAba.jsx:343), não uma lista de slots
+// agendáveis. Com `.eq('is_active', true)`, no instante em que o corte de 24/08
+// encerrasse o 08:30 e o 10:00 (docs/cultos-domingo/) os dois SUMIRIAM do
+// seletor e ficaria impossível isolar o histórico deles — o oposto do requisito
+// nº 1 da mudança ("o histórico do 08:30 deve continuar"). O §9.1 da varredura
+// diagnosticou exatamente isto: `is_active` responde DUAS perguntas ("este culto
+// ainda acontece?" e "deve aparecer em análise histórica?") e esta mudança é a
+// primeira vez que elas divergem.
+//
+// A régua: quem LISTA o que existiu não filtra vigência; quem OFERECE slot para
+// agendar filtra. Este é o primeiro caso. Os dados das séries nunca dependeram
+// disto (`/mensal`, `/ytd` e `/lentes-domingo` leem `cultos`/a view sem tocar
+// `is_active`) — o que se perdia era só o acesso pelo nome.
+//
+// Devolve `is_active` + vigência para a tela poder rotular "encerrado" e "a
+// partir de dd/mm" em vez de misturar tudo. Colunas do Lote 3 em SELECT
+// ISOLADO e best-effort (lição do parcelas_max: pedir coluna que a migration
+// ainda não criou faz o PostgREST recusar a query INTEIRA).
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/cultos', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('vol_service_types')
-      .select('id, name, recurrence_day, recurrence_time, color')
-      .eq('is_active', true)
+      .select('id, name, recurrence_day, recurrence_time, color, is_active')
       .order('recurrence_day', { ascending: true })
       .order('recurrence_time', { ascending: true });
     if (error) throw error;
-    res.json(data || []);
+
+    const linhas = (data || []).map((t) => ({ ...t, is_active: t.is_active !== false }));
+    try {
+      const { data: vig, error: vErr } = await supabase
+        .from('vol_service_types')
+        .select('id, vigente_de, vigente_ate');
+      if (!vErr && Array.isArray(vig)) {
+        const porId = new Map(vig.map((v) => [v.id, v]));
+        for (const l of linhas) {
+          const v = porId.get(l.id);
+          if (v) { l.vigente_de = v.vigente_de || null; l.vigente_ate = v.vigente_ate || null; }
+        }
+      }
+    } catch { /* sem as colunas do Lote 3 o seletor segue funcionando */ }
+
+    res.json(linhas);
   } catch (e) {
     console.error('[DASH-SEM] cultos', e.message);
     res.status(500).json({ error: 'Erro ao listar cultos' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /lentes-domingo?semanas=16 · prévia do novo formato de domingo ATRÁS DO
+// VÉU (docs/cultos-domingo/ · Lotes 3-4). Devolve as 3 lentes (separada /
+// continuidade / consolidação) + ocupação sobre lugares OFERECIDOS (1050 ×
+// cultos vigentes no domingo) + o marcador do corte (24/08/2026).
+//
+// O VÉU: só responde dado quando cultos_config.lentes_domingo_publicas = true
+// OU o usuário é super-admin (é assim que Marcos/Matheus testam em produção
+// antes do corte; destravar pra todos = 1 UPDATE na config, sem deploy).
+// Falha ao ler a config = véu FECHADO (fail-closed — a prévia não vaza).
+//
+// Deploy em 2 etapas: as colunas novas de vol_service_types (migration
+// 20260813150000) vão em SELECT ISOLADO — sem elas o endpoint segue de pé e
+// avisa (chaves_ok=false · as lentes degradam pra separada). Lição parcelas_max.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/lentes-domingo', async (req, res) => {
+  try {
+    let flagPublica = false;
+    try {
+      const { data: cfg } = await supabase
+        .from('cultos_config')
+        .select('lentes_domingo_publicas')
+        .eq('id', true)
+        .maybeSingle();
+      flagPublica = cfg?.lentes_domingo_publicas === true;
+    } catch { /* config ausente → véu fechado */ }
+    const souSuper = await isSuperAdminEmail(req.user?.email);
+    if (!flagPublica && !souSuper) return res.json({ visivel: false });
+
+    const nSemanas = Math.min(Math.max(parseInt(req.query.semanas, 10) || 16, 4), 60);
+
+    // tipos de DOMINGO — inclui inativos de propósito (pós-corte o 08:30/10:00
+    // encerram mas o histórico deles continua nas lentes)
+    const { data: tiposBase, error: tErr } = await supabase
+      .from('vol_service_types')
+      .select('id, name, recurrence_time, is_active, color')
+      .eq('recurrence_day', 0)
+      .order('recurrence_time', { ascending: true });
+    if (tErr) throw tErr;
+
+    // colunas do Lote 3 em SELECT ISOLADO e best-effort
+    let chavesOk = true;
+    const extras = {};
+    try {
+      const { data: ext, error: eErr } = await supabase
+        .from('vol_service_types')
+        .select('id, vigente_de, vigente_ate, linhagem_key, consolidacao_key')
+        .eq('recurrence_day', 0);
+      if (eErr) throw eErr;
+      for (const e of ext || []) extras[e.id] = e;
+    } catch { chavesOk = false; }
+    const tipos = (tiposBase || []).map((t) => ({ ...t, ...(extras[t.id] || {}) }));
+
+    // linhas semanais da view (2 anos ISO cobrem qualquer janela ≤60 semanas) —
+    // paginado: anos × semanas × tipos passa do cap de 1000 do PostgREST
+    const ids = tipos.map((t) => t.id);
+    const hj = hojeBrt();
+    const linhas = ids.length ? await selectPaginado(() =>
+      supabase
+        .from('vw_dashboard_semanal')
+        .select('ano_iso, semana_iso, service_type_id, frequencia')
+        .in('service_type_id', ids)
+        .in('ano_iso', [hj.ano - 1, hj.ano])) : [];
+
+    const hojeISO = `${hj.ano}-${String(hj.mes).padStart(2, '0')}-${String(hj.dia).padStart(2, '0')}`;
+    const out = montarLentes({
+      tipos,
+      linhas: (linhas || []).map((r) => ({
+        ano_iso: r.ano_iso, semana_iso: r.semana_iso,
+        service_type_id: r.service_type_id, valor: Number(r.frequencia) || 0,
+      })),
+      capacidadeUnitaria: CAPACIDADE_TEMPLO,
+      hoje: hojeISO,
+      nSemanas,
+    });
+
+    res.json({
+      visivel: true,
+      flag_publica: flagPublica,
+      sou_super_admin: souSuper,
+      chaves_ok: chavesOk,
+      capacidade_unitaria: CAPACIDADE_TEMPLO,
+      corte_data: CORTE_DOMINGO_0930,
+      tipos: tipos.map((t) => ({
+        id: t.id, nome: t.name, hora: String(t.recurrence_time || '').slice(0, 5),
+        is_active: t.is_active !== false,
+        vigente_de: t.vigente_de || null, vigente_ate: t.vigente_ate || null,
+        linhagem_key: t.linhagem_key || null, consolidacao_key: t.consolidacao_key || null,
+      })),
+      ...out,
+    });
+  } catch (e) {
+    console.error('[DASH-SEM] lentes-domingo', e.message);
+    res.status(500).json({ error: 'Erro ao montar a prévia dos cultos de domingo' });
   }
 });
 
@@ -822,11 +981,9 @@ router.get('/mensal', async (req, res) => {
       acc.set(key, (acc.get(key) || 0) + v);
     }
 
-    const MES_NOMES = ['janeiro','fevereiro','março','abril','maio','junho',
-                       'julho','agosto','setembro','outubro','novembro','dezembro'];
     const mesesUsados = meses || [1,2,3,4,5,6,7,8,9,10,11,12];
     const series = mesesUsados.map(m => {
-      const row = { mes: m, mes_nome: MES_NOMES[m - 1] };
+      const row = { mes: m, mes_nome: MES_NOMES_LONGO[m - 1] };
       // null (não 0) onde não há culto naquele mês/ano · linha de gráfico não cai a 0
       for (const a of anos) {
         const key = `${m}-${a}`;
@@ -901,6 +1058,246 @@ router.get('/resumo-semana', async (req, res) => {
   } catch (e) {
     console.error('[DASH-SEM] resumo-semana', e.message);
     res.status(500).json({ error: 'Erro ao montar resumo da semana' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /ytd?anos=&indicador=&culto= · acumulado do ano ATÉ HOJE comparado com o
+// MESMO PERÍODO dos anos anteriores.
+//
+// ⚠️ O corte é por DIA (dia/mês de hoje em BRT), NÃO por mês fechado nem por ano
+// inteiro. Motivo medido em produção: os cultos do ano corrente já nascem
+// pré-agendados até dezembro com frequência 0 (2026 tem 347 linhas em `cultos`,
+// só ~199 até agosto). Somar "o ano" sem corte compararia 7 meses de 2026 com 12
+// de 2025 E inflaria o denominador de cultos — os dois erros na mesma direção.
+//
+// ⚠️ O nº de cultos no mesmo período MUDA de ano pra ano (154 em 2023 → 199 em
+// 2026, porque a igreja abriu horários novos). Por isso o total absoluto vem
+// sempre acompanhado da MÉDIA POR CULTO: é ela que compara igreja com igreja, e
+// não "mais cultos" com "mais gente".
+//
+// Voluntariado é a exceção do corte: vem de vw_dashboard_voluntariado (check-ins
+// reais), que agrega por semana ISO e NÃO tem coluna de data — o corte dele é a
+// última semana ISO COMPLETA, igual em todos os anos (YoY segue justo).
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/ytd', async (req, res) => {
+  try {
+    const indicadorKey = req.query.indicador || 'frequencia';
+    const indDef = INDICADORES[indicadorKey];
+    if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
+    const cultoId = req.query.culto && req.query.culto !== 'todos' ? req.query.culto : null;
+
+    const hoje = hojeBrt();
+    const anos = (req.query.anos
+      ? String(req.query.anos).split(',').map(Number).filter(Number.isInteger)
+      : [hoje.ano - 2, hoje.ano - 1, hoje.ano]);
+    const anosOrd = [...new Set(anos)].sort((a, b) => a - b);
+    if (!anosOrd.length) return res.status(400).json({ error: 'anos é obrigatório' });
+
+    // Período vem dos meses marcados no filtro da aba (lista vazia/ausente = ano
+    // todo). resolverPeriodo decide se o recorte é parcial (até hoje) ou fechado.
+    const periodo = resolverPeriodo({
+      meses: req.query.meses ? String(req.query.meses).split(',').map(Number) : [],
+      anos: anosOrd,
+      hoje,
+    });
+    const mesesNoPeriodo = new Set(periodo.meses);
+
+    const avisos = [];
+
+    // Kids · exclui cultos sem kids (mesma régua de /yoy e /media-mes)
+    let excluir = new Set();
+    if (indicadorKey.includes('kids')) {
+      const { data: semKids } = await supabase
+        .from('vol_service_types')
+        .select('id')
+        .eq('has_kids', false);
+      excluir = new Set((semKids || []).map(s => s.id));
+    }
+
+    const porAno = new Map(); // ano -> { total, comDado, noPeriodo, porMes: Map }
+    let corte;
+
+    if (indicadorKey === 'voluntariado') {
+      // A semana ISO só entra como corte quando o período é PARCIAL. Período
+      // fechado já termina no fim de um mês passado — cortar por semana ali
+      // recortaria o mês pela metade sem motivo.
+      const semanaCorte = periodo.parcial ? ultimaSemanaIsoCompleta(hoje) : null;
+      corte = {
+        tipo: semanaCorte ? 'semana' : 'mes',
+        semana: semanaCorte,
+        rotulo: periodo.rotulo,
+        parcial: periodo.parcial,
+      };
+      if (semanaCorte) {
+        avisos.push(`O corte do Voluntariado é a última semana ISO completa (semana ${semanaCorte}): a view de check-ins agrega por semana e não tem coluna de data.`);
+      }
+      if (cultoId) {
+        avisos.push('O filtro de culto não vale para Voluntariado: os check-ins são agregados por bloco (Domingo manhã/noite, Quarta, AMI, Bridge), que não são os mesmos tipos de culto do seletor.');
+      }
+      const cols = colunasView(indicadorKey);
+      await Promise.all(anosOrd.map(async (ano) => {
+        const linhas = await selectPaginado(() => {
+          let q = supabase
+            .from(fonteView(indicadorKey))
+            .select(`mes, service_type_id, total_cultos, ${cols.join(', ')}`)
+            .eq('ano_iso', ano);
+          if (semanaCorte) q = q.lte('semana_iso', semanaCorte);
+          return q;
+        }, 'mes');
+        const acc = { total: 0, comDado: 0, noPeriodo: 0, porMes: new Map() };
+        for (const r of linhas) {
+          if (excluir.has(r.service_type_id)) continue;
+          if (!mesesNoPeriodo.has(r.mes)) continue;
+          const v = somaColunas(r, cols);
+          const cultos = Number(r.total_cultos) || 0;
+          acc.noPeriodo += cultos;
+          acc.total += v;
+          if (v > 0) acc.comDado += cultos;
+          acc.porMes.set(r.mes, (acc.porMes.get(r.mes) || 0) + v);
+        }
+        porAno.set(ano, acc);
+      }));
+      avisos.push('Voluntariado conta presenças de voluntário (pessoas distintas por semana e bloco), não voluntários únicos no ano — a mesma pessoa servindo em duas semanas conta duas vezes.');
+    } else {
+      corte = {
+        tipo: 'dia',
+        dia: periodo.dia,
+        mes: periodo.fimMes,
+        rotulo: periodo.rotulo,
+        parcial: periodo.parcial,
+      };
+      const cols = colunasCultos(indicadorKey);
+      await Promise.all(anosOrd.map(async (ano) => {
+        const linhas = await selectPaginado(() => {
+          let q = supabase.from('cultos')
+            .select(`data, service_type_id, ${cols.join(', ')}`)
+            .gte('data', `${ano}-${String(periodo.inicioMes).padStart(2, '0')}-01`)
+            .lte('data', corteDoAno(ano, periodo.fimMes, periodo.dia));
+          if (cultoId) q = q.eq('service_type_id', cultoId);
+          return q;
+        }, 'data');
+        const acc = { total: 0, comDado: 0, noPeriodo: 0, porMes: new Map() };
+        for (const r of linhas) {
+          if (excluir.has(r.service_type_id)) continue;
+          const mesLinha = Number(String(r.data).slice(5, 7));
+          // Seleção não-contígua (ex.: só mar, mai, jul) — a janela de datas pega
+          // o intervalo inteiro, então o mês tem que ser conferido linha a linha.
+          if (!mesesNoPeriodo.has(mesLinha)) continue;
+          acc.noPeriodo += 1;
+          const v = somaColunas(r, cols);
+          if (v > 0) { acc.comDado += 1; acc.total += v; }
+          acc.porMes.set(mesLinha, (acc.porMes.get(mesLinha) || 0) + v);
+        }
+        porAno.set(ano, acc);
+      }));
+    }
+
+    // Δ% sempre contra o ano anterior COM DADO na lista (ordem cronológica) — o
+    // usuário pode marcar 2024+2026 sem 2025, e comparar contra "nada" mentiria.
+    const resultados = anosOrd.map((ano, idx) => {
+      const acc = porAno.get(ano) || { total: 0, comDado: 0, noPeriodo: 0 };
+      const temDado = acc.total > 0;
+      let deltaPct = null, baseAno = null, deltaMediaPct = null;
+      const media = acc.comDado ? acc.total / acc.comDado : null;
+      for (let j = idx - 1; j >= 0; j--) {
+        const prev = porAno.get(anosOrd[j]);
+        if (!temDado || !prev || prev.total <= 0) continue;
+        deltaPct = ((acc.total - prev.total) / prev.total) * 100;
+        const mediaPrev = prev.comDado ? prev.total / prev.comDado : null;
+        if (media != null && mediaPrev) deltaMediaPct = ((media - mediaPrev) / mediaPrev) * 100;
+        baseAno = anosOrd[j];
+        break;
+      }
+      return {
+        ano,
+        total: acc.total,
+        cultos_com_dado: acc.comDado,
+        cultos_no_periodo: acc.noPeriodo,
+        media_por_culto: media != null ? Math.round(media * 10) / 10 : null,
+        delta_pct: deltaPct,
+        delta_media_pct: deltaMediaPct,
+        base_ano: baseAno,
+        tem_dado: temDado,
+      };
+    });
+
+    // Ano sem dado é COMUM e não é defeito: os check-ins de voluntário só começam
+    // na semana 16 de 2026 e o Online DS só existe a partir de 2024. Dizer isso na
+    // resposta evita que a tela pareça quebrada.
+    const anosComDado = resultados.filter(r => r.tem_dado).map(r => r.ano);
+    if (!anosComDado.length) {
+      avisos.push('Nenhum dos anos selecionados tem dado deste indicador no período.');
+    } else if (anosComDado.length === 1) {
+      avisos.push(`Só ${anosComDado[0]} tem dado deste indicador no período — não há histórico para comparar.`);
+    } else if (anosComDado.length < anosOrd.length) {
+      avisos.push(`Sem dado deste indicador no período em ${anosOrd.filter(a => !anosComDado.includes(a)).join(', ')}.`);
+    }
+
+    // Curva acumulada mês a mês · mesma janela em todos os anos (o último mês é
+    // parcial de propósito — é ele que representa "até hoje").
+    const running = new Map(anosOrd.map(a => [a, 0]));
+    const acumulado = [];
+    for (const m of periodo.meses) {
+      const row = { mes: m, mes_nome: MES_NOMES_CURTO[m - 1] };
+      for (const a of anosOrd) {
+        const acc = porAno.get(a);
+        running.set(a, (running.get(a) || 0) + (acc?.porMes.get(m) || 0));
+        // Ano sem NENHUM dado no período vira null · linha não nasce rastejando no zero
+        row[String(a)] = acc && acc.total > 0 ? running.get(a) : null;
+      }
+      acumulado.push(row);
+    }
+
+    // Batismos realizados no mesmo período · não depende do filtro de culto
+    // (batismo não acontece "num tipo de culto"). Conta pela data da cerimônia.
+    // ⚠️ A janela é contígua (gte/lte). Com seleção de meses não-contígua o número
+    // incluiria mês fora do recorte, então nesse caso o bloco não é calculado —
+    // devolver um total "quase certo" é pior que não devolver.
+    const batismos = periodo.contiguo
+      ? await Promise.all(anosOrd.map(async (ano) => {
+          const { count, error } = await supabase
+            .from('batismo_inscricoes')
+            .select('id', { count: 'exact', head: true })
+            .eq('status', 'realizado')
+            // ⚠️ `deleted_at` faltava (27/08/2026): a tabela está na whitelist de
+            // soft-delete, então batismo apagado entraria na contagem. Hoje são
+            // 0 apagados nos 3 anos — era bomba armada, não estrago em curso, e
+            // sem isto a tela passaria a discordar do número no dia em que a
+            // equipe apagasse uma linha.
+            .is('deleted_at', null)
+            .gte('data_batismo', `${ano}-${String(periodo.inicioMes).padStart(2, '0')}-01`)
+            .lte('data_batismo', corteDoAno(ano, periodo.fimMes, periodo.dia));
+          if (error) throw error;
+          return { ano, total: count || 0 };
+        }))
+      : [];
+    if (!periodo.contiguo) {
+      avisos.push('Os meses escolhidos não são seguidos, então o bloco de batismos fica de fora: a contagem dele é por intervalo de datas e incluiria mês fora do recorte.');
+    }
+
+    res.json({
+      indicador: indicadorKey,
+      rotulo: indDef.rotulo,
+      corte,
+      periodo: {
+        meses: periodo.meses,
+        inicio_mes: periodo.inicioMes,
+        fim_mes: periodo.fimMes,
+        dia_fim: periodo.dia,
+        parcial: periodo.parcial,
+        contiguo: periodo.contiguo,
+        rotulo: periodo.rotulo,
+      },
+      anos: anosOrd,
+      resultados,
+      acumulado,
+      batismos,
+      avisos,
+    });
+  } catch (e) {
+    console.error('[DASH-SEM] ytd', e.message, e);
+    res.status(500).json({ error: 'Erro ao montar o acumulado do ano' });
   }
 });
 
@@ -1789,43 +2186,45 @@ router.delete('/indicadores-custom/:id', async (req, res) => {
   }
 });
 
-// GET /next-presenca-mensal?meses=12 · quantas pessoas estiveram PRESENTES no
-// NEXT por mês (aba simples do Dashboard Semanal). Presença = inscrição do NEXT
-// com check-in feito (next_inscricoes.check_in_at) — mesma régua do módulo /next.
-// Agrupa pelo mês do EVENTO (next_eventos.data · "no NEXT de tal mês"); se o
-// evento não tiver data, cai no mês do próprio check-in. Paginado (cap 1000).
+// GET /next-presenca-mensal?meses=12 · quantas PESSOAS estiveram presentes no
+// NEXT por mês (aba simples do Dashboard Semanal).
+//
+// ⚠️⚠️ A FONTE É A CHAMADA DOS ENCONTROS (`vw_next_presenca_mes` · migration
+// 20260811150000), não mais `next_inscricoes.check_in_at`. Aquele é o modelo
+// ANTERIOR ao cutover de turmas (17/06/2026) e sua última data é 2026-04 — era
+// por isso que mai/2026 em diante aparecia "sem dado" e jun/jul tiveram que ser
+// digitados na mão. Pedido do Matheus em 11/08: "a presença do NEXT inputada de
+// forma automática, a partir da presença das pessoas."
+//
+// ⚠️ O número do histórico DIMINUI, e está certo: o legado contava LINHAS
+// (participações — a mesma pessoa nos 2 encontros do mês contava 2) e a pergunta
+// do card é quantas PESSOAS estiveram. set/2025 eram 44 linhas de 31 pessoas.
+//
+// ⚠️ A view devolve o mês inteiro (12 linhas hoje); a janela é recortada aqui.
+// ⚠️ Se a view ainda não existir (deploy em 2 etapas), o automático vira 0 e o
+// ajuste MANUAL segue mandando — a aba não quebra (lição do `parcelas_max`).
 router.get('/next-presenca-mensal', async (req, res) => {
   try {
     const meses = Math.min(Math.max(parseInt(req.query.meses, 10) || 12, 1), 36);
     // Janela: início do mês, `meses` meses atrás.
     const hoje = new Date();
     const inicio = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - (meses - 1), 1));
+    const mesInicio = inicio.toISOString().slice(0, 7);
 
-    // Puxa os check-ins do NEXT (volume pequeno) paginando pra fugir do cap de 1000.
-    let linhas = [];
-    let offset = 0;
-    const page = 1000;
-    while (true) {
-      const { data, error } = await supabase
-        .from('next_inscricoes')
-        .select('id, check_in_at, evento:next_eventos(data)')
-        .not('check_in_at', 'is', null)
-        .range(offset, offset + page - 1);
-      if (error) throw error;
-      if (!data || !data.length) break;
-      linhas = linhas.concat(data);
-      if (data.length < page) break;
-      offset += page;
-    }
-
-    // Agrupa por mês (AAAA-MM) do evento; fallback pro mês do check-in.
     const porMes = {};
-    for (const l of linhas) {
-      const ref = l.evento?.data || l.check_in_at;
-      if (!ref) continue;
-      const ym = String(ref).slice(0, 7); // AAAA-MM
-      if (ym < inicio.toISOString().slice(0, 7)) continue; // fora da janela
-      porMes[ym] = (porMes[ym] || 0) + 1;
+    let avisoFonte = null;
+    {
+      const { data, error } = await supabase
+        .from('vw_next_presenca_mes')
+        .select('ano_mes, pessoas')
+        .gte('ano_mes', mesInicio);
+      if (error) {
+        // ⚠️ Falha de CONSULTA não é ausência de PRESENÇA: declara em vez de
+        // devolver zero com cara de "ninguém foi ao NEXT".
+        console.error('[DASH-SEM] vw_next_presenca_mes', error.message);
+        avisoFonte = 'Não foi possível ler a chamada dos encontros do NEXT — o automático está indisponível neste carregamento.';
+      }
+      for (const l of data || []) porMes[l.ano_mes] = l.pessoas || 0;
     }
 
     // Ajuste MANUAL por mês (lista de presença · quando o check-in não foi
@@ -1850,11 +2249,11 @@ router.get('/next-presenca-mensal', async (req, res) => {
         presentes: temManual ? manual[ym] : auto,
         auto,
         manual: temManual ? manual[ym] : null,
-        fonte: temManual ? 'manual' : 'checkin',
+        fonte: temManual ? 'manual' : 'chamada',
       });
     }
     const total = serie.reduce((s, m) => s + m.presentes, 0);
-    res.json({ serie, total });
+    res.json({ serie, total, aviso: avisoFonte });
   } catch (e) {
     console.error('[DASH-SEM] next-presenca-mensal', e.message);
     res.status(500).json({ error: 'Erro ao carregar presença do NEXT' });

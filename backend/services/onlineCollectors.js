@@ -8,7 +8,9 @@
 // ============================================================================
 
 const { supabase } = require('../utils/supabase');
+const { patchDiagOnline } = require('../utils/onlineDiag');
 const yt = require('./youtubeAnalytics');
+const dsOnline = require('../utils/dsOnline');
 
 const JANELA_LIVE_MIN_ANTES = 30;  // monitora 30 min antes do horario marcado
 const JANELA_LIVE_MIN_DEPOIS = 240; // até 4h depois (cultos longos)
@@ -19,6 +21,14 @@ const JANELA_LIVE_MIN_DEPOIS = 240; // até 4h depois (cultos longos)
 // O live-monitor já captura o pico em tempo real durante a transmissão · este
 // caminho via Analytics e so um recovery best-effort pra quando o monitor falhou.
 const PICO_ANALYTICS_DELAY_DIAS = 3;
+
+// Hora UTC do cron `/api/online/cron/ds-collect` (vercel.json · "0 10 * * *").
+// O DS de um culto so existe DEPOIS que esse cron roda em D+1. O verificador
+// (`verificarColetaOnline`) e chamado pelo cron de notificações, que roda uma
+// hora ANTES (09:00 UTC) · sem esta guarda ele cobrava o DS de ontem que ainda
+// nao tinha tido a chance de ser coletado e disparava alerta falso TODO DIA.
+// Se qualquer um dos dois horarios mudar no vercel.json, ajustar aqui tambem.
+const DS_CRON_HORA_UTC = 10;
 
 // Fallback do formulário de decisão · fora da janela ao vivo, ainda anexa a
 // decisão ao último culto online que já comecou até este limite (minutos após
@@ -101,7 +111,7 @@ async function findCultoAtual({ fallbackUltimoDoDia = false } = {}) {
 
   const { data: cultos } = await supabase
     .from('cultos')
-    .select('id, data, service_type_id, vol_service_types(name, recurrence_time, has_online), online_pico, youtube_video_id')
+    .select('id, data, service_type_id, vol_service_types(name, recurrence_time, has_online), online_pico, online_views_live, youtube_video_id')
     .in('data', [hojeStr, ontemStr])
     .order('data', { ascending: false });
 
@@ -141,8 +151,15 @@ async function findCultoAtual({ fallbackUltimoDoDia = false } = {}) {
 
 // ---------------------------------------------------------------------------
 // registrarDiagToken · grava observabilidade no token ativo (revoked_at NULL).
-// last_check_at = quando o monitor rodou de fato · last_error = motivo do skip
-// /erro (ou null em sucesso). Nunca quebra o coletor se a escrita falhar.
+// last_check_at = quando o monitor rodou de fato · last_error = SÓ o que
+// IMPEDE a coleta e exige gente.
+//
+// ⚠️⚠️ NÃO gravar estado normal aqui (18/08/2026). 'live_encerrada_ou_sem_dado'
+// é o resultado da maioria das execuções — a janela do monitor cobre horas e a
+// live dura ~1h30 — e ia parar em `last_error`, que `verificarColetaOnline` lê
+// como 'coleta degradada'. Resultado: aviso diário de erro com a coleta 100%
+// sã (medido: 17 de 17 cultos de agosto com pico e DS). Quem classifica é
+// `utils/onlineDiag.js`.
 // ---------------------------------------------------------------------------
 async function registrarDiagToken(patch) {
   try {
@@ -232,7 +249,7 @@ async function liveMonitor() {
     if (!videoId) {
       const escolha = await escolherVideoDoCulto(culto);
       if (escolha.error) {
-        await registrarDiagToken({ last_check_at: agora, last_error: escolha.error });
+        await registrarDiagToken(patchDiagOnline(escolha.error, agora));
         return { skipped: true, reason: escolha.error, culto_id: culto.id };
       }
       videoId = escolha.video_id;
@@ -241,10 +258,26 @@ async function liveMonitor() {
         .eq('id', culto.id);
     }
 
-    // Pega concurrent viewers
-    const viewers = await yt.fetchLiveConcurrentViewers(null, videoId);
+    // Pega simultâneos E views acumuladas na MESMA chamada (26/08/2026).
+    // ⚠️ `viewers` (simultâneos) e `viewCount` (acumulado) são grandezas
+    // diferentes — ver o cabeçalho de `utils/dsOnline`.
+    const snap = await yt.fetchLiveSnapshot(null, videoId);
+    const viewers = snap?.viewers ?? null;
+
+    // ⚠️ As views totais são gravadas ANTES de decidir sobre o pico e mesmo
+    // quando `viewers` já vem null (live encerrando): é justamente a ÚLTIMA
+    // amostra, com a live no fim, que produz o total mais próximo do real. Sair
+    // antes perderia exatamente o número que o indicador novo existe pra ter.
+    const viewsLive = dsOnline.maiorViewCount(culto.online_views_live, snap?.viewCount);
+    if (viewsLive !== null && viewsLive !== (culto.online_views_live ?? null)) {
+      await supabase.from('cultos')
+        .update({ online_views_live: viewsLive })
+        .eq('id', culto.id)
+        .catch(() => {});
+    }
+
     if (viewers === null) {
-      await registrarDiagToken({ last_check_at: agora, last_error: 'live_encerrada_ou_sem_dado' });
+      await registrarDiagToken(patchDiagOnline('live_encerrada_ou_sem_dado', agora));
       return { skipped: true, reason: 'live_encerrada_ou_sem_dado', culto_id: culto.id, video_id: videoId };
     }
 
@@ -266,7 +299,7 @@ async function liveMonitor() {
     // Antes esse erro era engolido (.catch(() => null)) e o pico se perdia em
     // silêncio. Agora persiste o motivo real pra debug em /online (status OAuth).
     const msg = (e?.message || String(e)).slice(0, 250);
-    await registrarDiagToken({ last_check_at: agora, last_error: `live_monitor: ${msg}` });
+    await registrarDiagToken(patchDiagOnline(`live_monitor: ${msg}`, agora));
     return { skipped: true, reason: 'erro', culto_id: culto.id, error: msg };
   }
 }
@@ -313,7 +346,7 @@ async function dsCollector() {
   const ontem = fmtData(dataMaisDias(new Date(), -1));
   const { data: cultos } = await supabase
     .from('cultos')
-    .select('id, data, youtube_video_id, online_ds, online_pico')
+    .select('id, data, youtube_video_id, online_ds, online_pico, online_views_live')
     .gte('data', seteDias).lte('data', ontem)
     .not('youtube_video_id', 'is', null)
     .or('online_ds.is.null,online_ds.eq.0');
@@ -350,7 +383,15 @@ async function dsCollector() {
       // ontem zerado). watch time / retencao seguem da Analytics (best-effort:
       // se ainda não processou, o número de views já foi gravado mesmo assim).
       const stats = await yt.fetchVideoStatistics(null, c.youtube_video_id);
-      const update = { online_ds: stats?.viewCount ?? 0 };
+      // ⚠️⚠️ DS = views DEPOIS da live (26/08/2026). Antes era o `viewCount`
+      // acumulado cru, que incluía tudo o que aconteceu DURANTE a transmissão —
+      // o "dia seguinte" inflado pelo próprio ao vivo. A régua devolve também a
+      // `regra`, porque culto sem `online_views_live` (todos os anteriores a
+      // esta data, irrecuperáveis) segue na leitura antiga.
+      const { ds, regra } = dsOnline.calcularDs({
+        viewCountD1: stats?.viewCount, viewsLive: c.online_views_live,
+      });
+      const update = { online_ds: ds ?? 0 };
       try {
         const a = await yt.fetchVideoViews(null, c.youtube_video_id, c.data, c.data);
         update.online_watch_minutes_ds = Math.round(a.watch_minutes || 0) || null;
@@ -360,7 +401,7 @@ async function dsCollector() {
       }
       await supabase.from('cultos').update(update).eq('id', c.id);
       coletados++;
-      resultados.push({ culto_id: c.id, video_id: c.youtube_video_id, online_ds: update.online_ds });
+      resultados.push({ culto_id: c.id, video_id: c.youtube_video_id, online_ds: update.online_ds, regra, views_live: c.online_views_live ?? null });
     } catch (e) {
       resultados.push({ culto_id: c.id, error: e.message });
     }
@@ -1021,6 +1062,16 @@ async function engajamentoCollector({ ano, mesesRecentes } = {}) {
   return { ok: true, ano: anoAlvo, processados: meses.length, coletados, resultados };
 }
 
+// O ds-collect de um culto do dia D roda em D+1 as DS_CRON_HORA_UTC. Antes
+// disso, DS vazio e o estado NORMAL · nao e problema pra reportar.
+function dsJaDeviaTerColetado(dataCulto, agora = new Date()) {
+  const dt = new Date(`${dataCulto}T00:00:00`);
+  const dias = Math.floor((agora.getTime() - dt.getTime()) / 86400000);
+  if (dias >= 2) return true;              // D+2 ou mais · janela ja passou
+  if (dias < 1) return false;              // culto de hoje · nem existe DS
+  return agora.getUTCHours() >= DS_CRON_HORA_UTC;  // ontem · so depois do cron
+}
+
 // ---------------------------------------------------------------------------
 // verificarColetaOnline · BLINDAGEM · confere se os cultos online já encerrados
 // dos últimos 2 dias receberam as metricas automáticas (video_id, pico, DS) e a
@@ -1070,7 +1121,12 @@ async function verificarColetaOnline() {
     const faltando = [];
     if (!c.youtube_video_id) faltando.push('video_id (live não detectada)');
     if (!c.online_pico || c.online_pico === 0) faltando.push('pico de audiencia');
-    if (!c.online_ds || c.online_ds === 0) faltando.push('views D+1 (DS)');
+    // DS so e cobrado depois que o ds-collect de D+1 teve a chance de rodar.
+    // Falha real nao escapa: no dia seguinte o culto entra como "anteontem" e
+    // o alerta sai com o dado ja podendo ser cobrado de verdade.
+    if ((!c.online_ds || c.online_ds === 0) && dsJaDeviaTerColetado(c.data)) {
+      faltando.push('views D+1 (DS)');
+    }
     if (faltando.length) {
       problemas.push({ id: c.id, nome: st.name || 'Culto', data: c.data, faltando });
     }
@@ -1100,4 +1156,5 @@ module.exports = {
   backfillCultoVideoIds, catchUpMetricas, backfillRange,
   engajamentoCollector,
   verificarColetaOnline, findCultoAtual,
+  dsJaDeviaTerColetado,
 };

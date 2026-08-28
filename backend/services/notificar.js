@@ -55,21 +55,81 @@ async function enviarEmailNotificacao(userIds, { titulo, mensagem, link, emailsE
  * 1. Verifica regras personalizadas (notificacao_regras)
  * 2. Fallback: todos admin/diretor
  */
-async function resolverDestinatarios(modulo) {
-  const { data: regras } = await supabase
+async function resolverDestinatarios(modulo, tipo = null) {
+  // ⚠️ REGRA DE TIPO VENCE REGRA DE MÓDULO (11/08/2026). Um mesmo módulo emite
+  // coisas de naturezas diferentes: `inscricoes` manda 2.146 avisos de
+  // "nova inscrição" por mês pra coordenação E o alerta técnico de webhook
+  // recusado, que é de quem MANTÉM o sistema. Sem esta dimensão, restringir um
+  // significava restringir o outro.
+  //
+  // `tipo` NULL na regra = "todos os tipos do módulo" — o comportamento
+  // histórico, e é o que as regras que já existiam continuam fazendo.
+  //
+  // ⚠️⚠️ DEGRADA SOZINHO SE A COLUNA AINDA NÃO EXISTIR (deploy em 2 etapas).
+  // Pedir coluna inexistente faz o PostgREST recusar a query INTEIRA — e aqui
+  // isso não deixaria "algumas pessoas de fora": deixaria TODO MUNDO, em módulo
+  // nenhum, até a migration rodar. Mesma lição do `is_servico` logo abaixo e do
+  // `event_id` (telemetria morta 5 dias em silêncio).
+  let regras = null;
+  const comTipo = await supabase
     .from('notificacao_regras')
-    .select('profile_id')
+    .select('profile_id, tipo')
     .eq('modulo', modulo)
     .eq('ativo', true);
 
+  if (!comTipo.error) {
+    const todas = comTipo.data || [];
+    const doTipo = tipo ? todas.filter(r => r.tipo === tipo) : [];
+    // Específica primeiro; se não há, as genéricas (tipo NULL). Regra de OUTRO
+    // tipo nunca entra — senão configurar um tipo mudaria o destino dos demais.
+    regras = doTipo.length ? doTipo : todas.filter(r => !r.tipo);
+  } else {
+    console.warn('[notificar] sem a coluna tipo em notificacao_regras — usando regra por módulo:', comTipo.error.message);
+    const { data } = await supabase
+      .from('notificacao_regras')
+      .select('profile_id')
+      .eq('modulo', modulo)
+      .eq('ativo', true);
+    regras = data || [];
+  }
+
   if (regras?.length) return regras.map(r => r.profile_id);
 
-  // Fallback: admin + diretor
+  // Fallback: admin + diretor.
+  //
+  // ⚠️⚠️ CONTA DESATIVADA E CONTA-ROBÔ FICAM FORA (10/08/2026). As contas de
+  // agente (`agente.rh@`, `agente.financeiro@`, …) têm role `diretor` porque
+  // precisam do bypass de autorização para trabalhar — e por isso recebiam o
+  // fan-out inteiro. Medido só no módulo `grupos`, em 21 dias: **4.762 das
+  // 10.914 notificações foram escritas para robôs**, que nunca abrem o sino.
+  // Não é só desperdício: infla a fila, atrasa o insert de quem é gente
+  // (`CHUNK` de 8 por vez) e mente na contagem de "não lidas".
+  //
+  // ⚠️ O filtro é a COLUNA `profiles.is_servico` (migration 20260810180000), não
+  // um padrão de e-mail: `agente.%` é convenção de nome, e regra presa a nome de
+  // e-mail quebra no dia em que alguém batizar um robô de outro jeito.
+  //
+  // ⚠️⚠️ DEGRADA SOZINHO SE A COLUNA AINDA NÃO EXISTIR (deploy em 2 etapas).
+  // Pedir coluna inexistente faz o PostgREST recusar a query INTEIRA — e aqui
+  // isso não deixaria "algumas pessoas de fora", deixaria TODO MUNDO: nenhuma
+  // notificação do sistema seria criada, em módulo nenhum, até a migration
+  // rodar. É a lição do `event_id` (telemetria morta 5 dias em silêncio).
+  const comFlag = await supabase
+    .from('profiles')
+    .select('id, is_servico')
+    .in('role', ['admin', 'diretor'])
+    .eq('active', true);
+
+  if (!comFlag.error) {
+    return (comFlag.data || []).filter(a => a.is_servico !== true).map(a => a.id);
+  }
+
+  console.warn('[notificar] sem a coluna is_servico — usando o fallback antigo:', comFlag.error.message);
   const { data: admins } = await supabase
     .from('profiles')
     .select('id')
-    .in('role', ['admin', 'diretor']);
-
+    .in('role', ['admin', 'diretor'])
+    .eq('active', true);
   return (admins || []).map(a => a.id);
 }
 
@@ -78,7 +138,7 @@ async function resolverDestinatarios(modulo) {
  * chaveDedup: string única que identifica o evento (ex: "ferias_vencendo_uuid123")
  */
 async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds, extraTargetIds, email = false, emailsExtra }) {
-  let destinatarios = targetIds || await resolverDestinatarios(modulo);
+  let destinatarios = targetIds || await resolverDestinatarios(modulo, tipo);
   if (extraTargetIds?.length) {
     destinatarios = [...new Set([...(destinatarios || []), ...extraTargetIds.filter(Boolean)])];
   }
@@ -146,12 +206,19 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
       tag: chaveDedup || `${modulo}-${Date.now()}`,
     }).catch(e => console.warn('[notificar push]', e.message));
 
-    // Push Expo pro app (CBRio Staff/membros) · best-effort, nunca quebra o
-    // fluxo — no-op gracioso pra quem não tem token em app_push_tokens.
+    // Push Expo pro app do STAFF · best-effort, nunca quebra o fluxo — no-op
+    // gracioso pra quem não tem token em app_push_tokens.
+    //
+    // ⚠️⚠️ `app: 'staff'` (20/08/2026). Isto aqui é o aviso OPERACIONAL do ERP
+    // (inscrição no Next, cadastro aprovado, falha de WhatsApp) e a linha vai
+    // pra `notificacoes`, que o app do MEMBRO não lê. Sem o alvo, a banner do
+    // push ia pra todos os tokens da pessoa e aparecia no app de membros de
+    // quem usa os dois com a mesma conta — foi o relato do Matheus.
     pushExpoParaUsers(usersInseridos, {
       title: titulo,
       body: mensagem,
       data: { tipo: tipo || modulo, modulo, link: link || null },
+      app: 'staff',
     }).catch(e => console.warn('[notificar push expo]', e.message));
   }
 

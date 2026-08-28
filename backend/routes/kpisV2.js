@@ -40,7 +40,14 @@ async function autorizaCron(req, res, next) {
 // calculados (dado_tipo · kpi_valores_calculados) — rede de segurança pros
 // gatilhos por tabela (cobre cascatas em trigger depth>1 e fontes sem gatilho).
 async function coletarERecalcular() {
-  const resultados = await coletarTodos();
+  // `fecharAnterior`: cada rodada reprocessa o período CORRENTE e o ANTERIOR.
+  //
+  // Sem isso, um mês era congelado no estado em que estivesse no dia 1º e nunca
+  // mais revisitado — e como o financeiro importa o balanço semanalmente, tudo
+  // que chegava depois da virada ficava fora do KPI para sempre. Medido em
+  // 18/08/2026: julho fechou com R$ 905.781 em 2.619 doações quando o real era
+  // R$ 948.337 em 2.688. O mesmo vale para qualquer fonte com dado atrasado.
+  const resultados = await coletarTodos({ fecharAnterior: true });
   const ok = resultados.filter(r => r.status === 'ok').length;
   // NPS → dados_brutos: re-sincroniza o agregado das pesquisas recentes ANTES
   // do recálculo geral (rede de segurança pro colapso do canal público — o
@@ -58,6 +65,20 @@ async function coletarERecalcular() {
   } catch (e) {
     recalculo = { error: e.message };
   }
+  // ⚠️ Os 22 KPIs ADM-* (SLA e NPS interno das solicitações) têm régua PRÓPRIA
+  // (`recalcular_todos_kpis_adm` · formula_config com fonte/metrica, não
+  // numerador/denominador) e `kpi_recalcular_todos` NÃO os alcança: o ramo
+  // `razao` do `calcular_kpi` devolve 'formula_config incompleto' e sai sem
+  // gravar, em silêncio. Até aqui quem os atualizava era só o trigger de
+  // `solicitacoes` — ou seja, período novo sem movimento na área ficava sem
+  // linha nenhuma, e o painel mostrava o valor do período anterior.
+  let adm = null;
+  try {
+    const { data, error } = await supabase.rpc('recalcular_todos_kpis_adm');
+    adm = error ? { error: error.message } : data;
+  } catch (e) {
+    adm = { error: e.message };
+  }
   // Backstop diário do NSM: o gatilho em cui_convertidos cobre mudanças de
   // convertido, mas sinais novos (grupo/voluntário/dízimo/devocional) não
   // disparam recalc · o cron garante que o card reflita esses até 24h.
@@ -68,7 +89,7 @@ async function coletarERecalcular() {
   } catch (e) {
     nsm = { error: e.message };
   }
-  return { ok, total: resultados.length, nps, recalculo, nsm, resultados };
+  return { ok, total: resultados.length, nps, recalculo, adm, nsm, resultados };
 }
 
 router.get('/cron/coletar', autorizaCron, async (_req, res) => {
@@ -82,6 +103,71 @@ router.get('/cron/coletar', autorizaCron, async (_req, res) => {
 router.post('/cron/coletar', autorizaCron, async (_req, res) => {
   try {
     res.json(await coletarERecalcular());
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Relatório semanal de KPI/OKR · ENVIO
+//
+// Quem ANALISA é o agent-worker (Railway · agente kpi_relatorio_semanal, no
+// scheduler de segunda 06:00 SP): ele lê o banco, monta o relatório e chama
+// aqui só pra enviar. O envio mora no backend porque é aqui que vivem as
+// credenciais do Microsoft Graph (services/email.js) — o worker não as tem, e
+// duplicá-las lá seria um 2º lugar pra rotacionar segredo.
+//
+// ⚠️ O corpo é HTML montado pelo worker a partir de dados estruturados (não é
+// texto livre de LLM): o modelo entrega JSON, o worker renderiza. Ver
+// agent-worker/src/agents/kpiRelatorioSemanal.ts.
+// ----------------------------------------------------------------------------
+const { enviarEmail, isConfigured: emailConfigurado } = require('../services/email');
+
+const RELATORIO_DESTINO_PADRAO = process.env.KPI_RELATORIO_EMAIL || 'gestao@cbrio.com.br';
+
+router.post('/cron/relatorio-email', autorizaCron, async (req, res) => {
+  try {
+    const { assunto, html, texto, para } = req.body || {};
+
+    if (!assunto || typeof assunto !== 'string' || !assunto.trim()) {
+      return res.status(400).json({ error: 'assunto obrigatório' });
+    }
+    if (!html || typeof html !== 'string' || !html.trim()) {
+      return res.status(400).json({ error: 'html obrigatório' });
+    }
+    // Teto defensivo: relatório é resumo. Corpo gigante é sinal de que algo
+    // saiu do controle (loop no render), e cliente de e-mail trunca sozinho.
+    if (html.length > 400_000) {
+      return res.status(400).json({ error: 'html excede 400k caracteres' });
+    }
+
+    if (!emailConfigurado()) {
+      // 503 e não 200: sem canal, NADA foi enviado — responder ok faria o
+      // worker marcar a rodada como entregue e ninguém saberia do silêncio.
+      return res.status(503).json({ error: 'nenhum canal de e-mail configurado' });
+    }
+
+    const destinatarios = (Array.isArray(para) ? para : [para || RELATORIO_DESTINO_PADRAO])
+      .filter((e) => typeof e === 'string' && e.includes('@'))
+      .slice(0, 20);
+
+    if (!destinatarios.length) {
+      return res.status(400).json({ error: 'nenhum destinatário válido' });
+    }
+
+    const r = await enviarEmail({
+      to: destinatarios,
+      subject: assunto.trim().slice(0, 200),
+      html,
+      text: typeof texto === 'string' ? texto.slice(0, 100_000) : undefined,
+      fromName: 'Painel KPI/OKR · CBRio',
+    });
+
+    if (!r?.ok) {
+      return res.status(502).json({ error: r?.error || 'falha no envio', destinatarios });
+    }
+
+    res.json({ ok: true, destinatarios, id: r.id || null });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const painelCache = require('../services/painelCache');
 const { computeJornada, agregar, normalizaJanela } = require('../services/jornadaEngajamento');
@@ -31,6 +31,27 @@ router.get('/cron/refresh-papeis', autorizaCron, refreshPapeis);
 router.post('/cron/refresh-papeis', autorizaCron, refreshPapeis);
 
 router.use(authenticate);
+
+// ⚠️⚠️ TRAVA DE PII · achada em 20/08/2026, e o buraco era ANTIGO.
+// Este arquivo não tinha NENHUM `authorize`: só `authenticate`. Ou seja
+// `/membros`, `/membro/:id` e `/cruzar` — que devolvem LISTA DE PESSOAS com
+// nome, e-mail, telefone e status — respondiam a QUALQUER conta autenticada,
+// incluindo as ~100 contas `is_membro_only` do app de membros. O único guard
+// era no FRONTEND (`isAdmin` dentro de CruzamentosPessoas.jsx), que não protege
+// a API.
+//
+// ⚠️ E a leva de 20/08 PIOROU: ao acrescentar critérios de batismo/NEXT/conversão
+// ao `cruzar_pessoas`, a RPC passou a devolver `is_batizado`, `batizado_em`,
+// `fez_next` e `convertido_em` — data de batismo e de conversão são convicção
+// religiosa, categoria especial da LGPD (art. 11).
+//
+// Medido antes de fechar: 163 contas ativas alcançavam o endpoint (100 delas do
+// app de membros). Com o guard: 26.
+//
+// ⚠️ A trava é POR ROTA, nunca no `router.use`: `/dashboard` e `/visao` são
+// AGREGADOS e alimentam a estrela do `/painel`, que é lido por qualquer
+// autenticado de propósito. Guardar o router inteiro quebraria o painel.
+const soQuemCuidaDeGente = authorizeModule('membresia', 2);
 
 /**
  * Calcula os 5 valores para cada membro:
@@ -93,7 +114,7 @@ router.get('/visao', async (req, res) => {
 });
 
 // ── GET /api/jornada/membros ──
-router.get('/membros', async (req, res) => {
+router.get('/membros', soQuemCuidaDeGente, async (req, res) => {
   try {
     const { search, valor, janela: janelaQ, page = 1, limit = 50 } = req.query;
 
@@ -121,7 +142,7 @@ router.get('/membros', async (req, res) => {
 });
 
 // ── GET /api/jornada/membro/:id ──
-router.get('/membro/:id', async (req, res) => {
+router.get('/membro/:id', soQuemCuidaDeGente, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -191,7 +212,7 @@ router.get('/membro/:id', async (req, res) => {
 // Escala até 100k+ pessoas (antes carregava 50k linhas em memória JS).
 //
 // Body: { critérios: { seguir: 'tem'|'nao_tem'|null, ... }, limit, offset }
-router.post('/cruzar', async (req, res) => {
+router.post('/cruzar', soQuemCuidaDeGente, async (req, res) => {
   try {
     const criterios = req.body?.criterios || {};
     const limit = Math.min(Number(req.body?.limit) || 200, 500);
@@ -205,8 +226,13 @@ router.post('/cruzar', async (req, res) => {
     if (error) throw error;
 
     // Set de critérios ativos pra retornar pro client (debug/exibicao)
+    // ⚠️ Espelha as chaves que a RPC `cruzar_pessoas` aceita. Chave nova que
+    // fique fora daqui NÃO deixa de filtrar (quem filtra é a RPC) — só não volta
+    // no `criterios_ativos`, e a tela passa a mostrar filtro ativo a menos do
+    // que aplicou. Foi o que aconteceu com batizado/fez_next/convertido em 20/08.
     const VALIDOS = ['seguir', 'conectar', 'investir', 'servir', 'generosidade',
-                     'voluntario', 'visitante', 'inscrito_next', 'grupo_ativo', 'contribuinte'];
+                     'voluntario', 'visitante', 'inscrito_next', 'grupo_ativo', 'contribuinte',
+                     'batizado', 'fez_next', 'convertido'];
     const ativos = {};
     for (const k of VALIDOS) {
       if (criterios[k] === 'tem' || criterios[k] === 'nao_tem') ativos[k] = criterios[k];
@@ -222,7 +248,7 @@ router.post('/cruzar', async (req, res) => {
 // ── POST /api/jornada/refresh-papeis (manual · admin/diretor) ──
 // Refresh forcado da view materializada. Quando você acabou de inserir
 // dados e quer ver no /cruzamentos sem esperar o cron horario.
-router.post('/refresh-papeis', async (req, res) => {
+router.post('/refresh-papeis', soQuemCuidaDeGente, async (req, res) => {
   if (!['admin', 'diretor'].includes(req.user?.role)) {
     return res.status(403).json({ error: 'Apenas admin/diretor pode forcar refresh' });
   }

@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel, bustPermissionCaches } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const atividadeVol = require('../utils/atividadeVoluntario');
 const { acharOuCriarGuardado, acharMembroGuardado, normalizarTelefone } = require('../services/membroMatch');
 const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
 const { cpfValido } = require('../utils/cpf');
@@ -10,9 +11,29 @@ const { resolverVoluntarioPorQr } = require('../services/volCheckinResolver');
 const { notificar } = require('../services/notificar');
 const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 const { requireCron } = require('../utils/cronAuth');
+// Régua pura da exclusão em lote — a MESMA do módulo de Inscrições (normaliza
+// ids, relê o que está vivo, monta o resumo). Uma cópia local divergiria no
+// primeiro ajuste, e é ela que garante que o payload não decide nada.
+const {
+  normalizarIds: normalizarIdsExclusao,
+  separarExclusaoLote: separarExclusaoLoteInsc,
+  resumoDoLote: resumoDoLoteInsc,
+} = require('../utils/exclusaoInscricaoLote');
+const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
+const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../utils/volRodizio');
+const { montarCobertura, contarStatus } = require('../utils/volCobertura');
+const { podeGerarCulto } = require('../utils/volSyncIntegrity');
+const { filtrarVigentes } = require('../utils/vigenciaTipoCulto');
+const { proximoCursor } = require('../utils/cursorLote');
+const { chavePco } = require('../utils/pcoChave');
+const { diaIntegracaoBRT } = require('../utils/volIntegradoEm');
+const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
+const { responderEscala } = require('../services/escalaResposta');
 const antecedentes = require('../services/antecedentesCriminais');
 const { executarSyncCompleto } = require('../services/voluntariadoSync');
+const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
 const multer = require('multer');
+const { mapaDeFotos, fotoDoPerfil } = require('../utils/fotoVoluntario');
 const uploadCsv = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
 // ── Cron (sem login · CRON_SECRET) ──────────────────────────────────────────
@@ -38,7 +59,26 @@ router.get('/cron/sync', requireCron, async (req, res) => {
       sync_type: 'automatic', services_synced: r.services, schedules_synced: r.schedules,
       qrcodes_generated: r.qrCodesGenerated, status: 'success',
     });
-    res.json({ ok: true, ...r });
+
+    // ── CARONA · rastreio dos pedidos do Mercado Livre ──────────────────────
+    // ⚠️ SEM SLOT NOVO no vercel.json: são 46 crons e o teto já é problema
+    // conhecido neste projeto (mesma decisão da retenção de mídia do inbox,
+    // 12/08). A rota /solicitacoes/cron/atualizar-ml existe desde sempre e
+    // NUNCA foi agendada — o tracker, o notificarSolicitante e os textos por
+    // status estavam prontos e ninguém puxava o gatilho: quem vinculava um
+    // pedido recebia o 1º aviso e depois silêncio até a entrega.
+    // ⚠️ Bloco protegido: falhar aqui NÃO pode derrubar o sync do voluntariado,
+    // que é o dono desta execução.
+    let ml = null;
+    try {
+      const mlTracker = require('../services/solicitacoesMlTracker');
+      ml = await mlTracker.processarUpdates({ batchSize: 30, throttleMs: 200 });
+    } catch (e) {
+      console.error('[vol/cron/sync] carona ml-tracker:', e.message);
+      ml = { ok: false, erro: e.message };
+    }
+
+    res.json({ ok: true, ...r, ml });
   } catch (e) {
     console.error('[vol/cron/sync]', e.message);
     res.status(500).json({ error: 'Erro no cron de sync do voluntariado' });
@@ -69,7 +109,7 @@ router.use('/emails', require('./volEmails'));
 // CONFIG · régua do Termômetro (limiares de check-ins por categoria)
 // GET aberto (herda membresia>=1) · PUT exige voluntariado>=3.
 // ══════════════════════════════════════════════════════════════
-const VOL_CONFIG_DEFAULT = { muito_ativo_min: 8, regular_min: 4, pouco_ativo_min: 1, sobrecarga_limite: 8 };
+const VOL_CONFIG_DEFAULT = { muito_ativo_min: 8, regular_min: 4, pouco_ativo_min: 1, sobrecarga_limite: 8, pco_ativo: true };
 
 router.get('/config', async (req, res) => {
   try {
@@ -78,6 +118,50 @@ router.get('/config', async (req, res) => {
   } catch (e) {
     console.error('[vol/config get]', e.message);
     res.json(VOL_CONFIG_DEFAULT); // degrada pros defaults · o termômetro nunca quebra
+  }
+});
+
+// GET /api/voluntariado/kpis/taticos — KPI TÁTICO OFICIAL da área 'voluntariado'
+// (kpi_indicadores_taticos + vw_kpi_trajetoria_atual), mesmo padrão de
+// backend/routes/painelArea.js e do piloto em grupos.js. Antes deste bloco,
+// "Minha Área" era a ÚNICA tela que mostrava este valor pra Voluntariado.
+router.get('/kpis/taticos', async (req, res) => {
+  try {
+    const { data: kpisRaw, error: kpisErr } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, descricao, meta_descricao, meta_valor, unidade, periodicidade, lider_funcionario_id')
+      .eq('ativo', true)
+      .ilike('area', 'voluntariado')
+      .order('indicador', { ascending: true });
+    if (kpisErr) throw kpisErr;
+    const kpis = kpisRaw || [];
+    const kpiIds = kpis.map(k => k.id);
+
+    let trajByKpi = {};
+    if (kpiIds.length > 0) {
+      const { data: traj, error: trajErr } = await supabase
+        .from('vw_kpi_trajetoria_atual')
+        .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, checkpoint_meta, percentual_meta')
+        .in('kpi_id', kpiIds);
+      if (trajErr) console.error('[voluntariado kpis/taticos] trajetoria falhou:', trajErr.message);
+      (traj || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
+    }
+
+    const enriched = kpis.map(k => ({
+      id: k.id,
+      indicador: k.indicador,
+      descricao: k.descricao,
+      meta_descricao: k.meta_descricao,
+      meta_valor: k.meta_valor,
+      unidade: k.unidade,
+      periodicidade: k.periodicidade,
+      trajetoria: trajByKpi[k.id] || null,
+    }));
+
+    res.json({ area: 'voluntariado', total: enriched.length, kpis: enriched });
+  } catch (e) {
+    console.error('[voluntariado kpis/taticos]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar KPIs táticos de voluntariado' });
   }
 });
 
@@ -93,6 +177,11 @@ router.put('/config', authorizeModule('voluntariado', 3), async (req, res) => {
       pouco_ativo_min: toInt(req.body?.pouco_ativo_min, VOL_CONFIG_DEFAULT.pouco_ativo_min),
       sobrecarga_limite: toInt(req.body?.sobrecarga_limite, VOL_CONFIG_DEFAULT.sobrecarga_limite),
     };
+    // ⚠️ `pco_ativo` só entra no update quando vem EXPLÍCITO no corpo. O
+    // formulário do Termômetro manda os quatro limiares e mais nada; se a chave
+    // fosse montada com default como os outros campos, salvar o Termômetro
+    // religaria o Planning Center sem ninguém pedir.
+    if (typeof req.body?.pco_ativo === 'boolean') cfg.pco_ativo = req.body.pco_ativo;
     // Ordem coerente: muito_ativo_min >= regular_min >= pouco_ativo_min >= 1.
     if (!(cfg.muito_ativo_min >= cfg.regular_min && cfg.regular_min >= cfg.pouco_ativo_min && cfg.pouco_ativo_min >= 1)) {
       return res.status(400).json({ error: 'Os limites devem ser decrescentes: Muito Ativo ≥ Regular ≥ Pouco Ativo ≥ 1.' });
@@ -976,20 +1065,42 @@ router.get('/my-schedules', async (req, res) => {
 });
 
 // Respond to schedule (accept/decline)
+//
+// ⚠️⚠️ ISTO NÃO CONFERIA DE QUEM ERA A ESCALA (achado em 14/08/2026): o handler
+// dava `update ... .eq('id', req.params.id)` e pronto, então QUALQUER pessoa
+// autenticada podia recusar a escala de QUALQUER outra sabendo só o id — e
+// agora, com o aviso automático, uma recusa forjada ainda acordaria a
+// coordenação e o supervisor. A rota chama `my-schedules`; passou a cumprir o
+// "my".
+//
+// ⚠️ O efeito (atualizar + avisar quem precisa) é do serviço `escalaResposta`,
+// o MESMO que o link público do WhatsApp usa. Duas implementações divergiriam
+// como "recusou pelo app e ninguém foi avisado".
 router.post('/my-schedules/:id/respond', async (req, res) => {
   try {
     const { status } = req.body;
-    if (!['confirmed', 'declined'].includes(status)) {
-      return res.status(400).json({ error: 'Status deve ser confirmed ou declined' });
-    }
 
-    const { data, error } = await supabase.from('vol_schedules')
-      .update({ confirmation_status: status })
-      .eq('id', req.params.id)
-      .select().single();
+    const { data: escala } = await supabase.from('vol_schedules')
+      .select('id, volunteer_id, planning_center_person_id').eq('id', req.params.id).maybeSingle();
+    if (!escala) return res.status(404).json({ error: 'Escala não encontrada' });
 
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    const { data: meuPerfil } = await supabase.from('vol_profiles')
+      .select('id, planning_center_id').eq('auth_user_id', req.user.userId).maybeSingle();
+
+    const minha = !!meuPerfil && (
+      (escala.volunteer_id && escala.volunteer_id === meuPerfil.id) ||
+      (escala.planning_center_person_id && escala.planning_center_person_id === meuPerfil.planning_center_id)
+    );
+    // Coordenação (voluntariado >= 3) também responde por alguém — é o caso
+    // real de "a pessoa me avisou por telefone".
+    const podeGerir = getEffectiveLevel(req, 'voluntariado') >= 3;
+    if (!minha && !podeGerir) return res.status(403).json({ error: 'Esta escala não é sua.' });
+
+    const r = await responderEscala(req.params.id, status, {
+      origem: minha ? 'app' : 'sistema', porUserId: req.user.userId,
+    });
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.erro });
+    res.json(r.escala);
   } catch (e) { res.status(500).json({ error: 'Erro ao responder escala' }); }
 });
 
@@ -1176,11 +1287,13 @@ router.get('/profiles/:id/detalhe', async (req, res) => {
     const ultimaAtividade = [ultimoServico, ultimoCheckin].filter(Boolean).sort().pop() || null;
     let diasDesde = Infinity;
     if (ultimaAtividade) diasDesde = Math.floor((Date.now() - new Date(ultimaAtividade).getTime()) / 86400000);
-    let nivel, label;
-    if (diasDesde <= 30 && serv4m >= 4) { nivel = 'muito_ativo'; label = 'Muito ativo'; }
-    else if (diasDesde <= 45) { nivel = 'ativo'; label = 'Ativo'; }
-    else if (diasDesde <= 90) { nivel = 'pouco_ativo'; label = 'Pouco ativo'; }
-    else { nivel = 'inativo'; label = 'Inativo'; }
+    // ⚠️ Régua ÚNICA em `utils/atividadeVoluntario` (27/08). Ela nasceu aqui e
+    // saiu porque a LISTA passou a precisar da mesma resposta — duas cópias
+    // divergiriam, e o sintoma seria a lista dizer "inativo" e a ficha "pouco
+    // ativo" sobre a mesma pessoa.
+    const { nivel, label } = atividadeVol.nivelPorDias(
+      Number.isFinite(diasDesde) ? diasDesde : null, serv4m,
+    );
     const termometro = {
       nivel, label,
       dias_desde_ultima_atividade: Number.isFinite(diasDesde) ? diasDesde : null,
@@ -1262,6 +1375,20 @@ router.post('/aniversariantes/:volProfileId/parabenizar', async (req, res) => {
     if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
 
     const primeiro = String(vp.full_name || '').trim().split(/\s+/)[0] || '';
+
+    // ⚠️ O cron das 9h já pode ter parabenizado hoje — a tela mostra a SEMANA,
+    // então o clique da coordenação e o automático se cruzam. O `parabenizado`
+    // que a tela exibe vem de `vol_parabens`, e o cron antigo não gravava lá:
+    // quem o automático alcançou aparecia como "não parabenizado". A guarda é no
+    // SERVIDOR porque a decisão de não mandar 2× não pode depender da tela.
+    const { jaParabenizado, registrarParabens } = require('../services/aniversarioVoluntario');
+    if (await jaParabenizado({ membroId: vp.membresia_id, volProfileId: volId })) {
+      return res.status(409).json({
+        ok: false, resultado: 'ja_parabenizado',
+        error: 'Esta pessoa já foi parabenizada este ano (pela equipe ou pelo envio automático do dia). Se quiser falar de novo, use o botão de abrir no WhatsApp.',
+      });
+    }
+
     let resultado = 'sem_cadastro';
     let sent = false;
     if (vp.membresia_id) {
@@ -1272,11 +1399,15 @@ router.post('/aniversariantes/:volProfileId/parabenizar', async (req, res) => {
     }
 
     if (sent) {
-      const ano = new Date().getFullYear();
-      await supabase.from('vol_parabens').upsert({
-        vol_profile_id: volId, ano, enviado_em: new Date().toISOString(),
-        enviado_por: req.user.userId || req.user.id, resultado,
-      }, { onConflict: 'vol_profile_id,ano' });
+      // Registro pelo helper compartilhado: o ano é calculado em BRT nos dois
+      // caminhos (`getFullYear()` no relógio UTC do servidor já virou o ano
+      // seguinte na noite de 31/12, e aí o dedup do ano novo não encontraria o
+      // parabéns dado horas antes).
+      await registrarParabens({
+        volProfileId: volId,
+        porUserId: req.user.userId || req.user.id,
+        resultado,
+      });
       return res.json({ ok: true, resultado });
     }
     return res.status(400).json({ ok: false, resultado, error: MSG_RESULTADO[resultado] || 'Não foi possível enviar pela API. Use o WhatsApp manual.' });
@@ -1516,7 +1647,9 @@ router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res)
   try {
     const { data, error } = await supabase
       .from('vol_area_supervisores')
-      .select('id, area, created_at, membro:mem_membros(id, nome, telefone, foto_url)')
+      // ⚠️ `position` é a SUBÁREA (Ofertório, Estacionamento…). Vem embutida
+      // pra tela não precisar de um segundo round-trip por linha.
+      .select(SELECT_SUPERVISOR)
       .order('area', { ascending: true });
     if (error) throw error;
     res.json(data || []);
@@ -1526,23 +1659,241 @@ router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res)
   }
 });
 
+/**
+ * Valida o ESCOPO de uma concessão de supervisão (área, subárea, rodízio).
+ *
+ * ⚠️ Compartilhada entre POST e PATCH de propósito. Duas cópias divergiriam no
+ * primeiro ajuste, e a regra aqui não é cosmética: ela é o que impede conceder
+ * "Integração + Recepção do KIDS" mandando o id cru no corpo, e o que traduz o
+ * CHECK do banco em 400 com mensagem em vez de um 23514 cru.
+ */
+async function validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana }) {
+  // Subárea tem que PERTENCER à área concedida (nome de posição repete entre
+  // áreas: "Recepção" existe em Integração E em KIDS).
+  let posId = position_id || null;
+  if (posId) {
+    const { data: pos } = await supabase.from('vol_positions')
+      .select('id, name, team:vol_teams(id, area)').eq('id', posId).maybeSingle();
+    const areaDaPos = Array.isArray(pos?.team) ? pos.team[0]?.area : pos?.team?.area;
+    const norm = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    if (!pos || norm(areaDaPos) !== norm(area)) {
+      return { erro: 'Essa subárea não pertence à área escolhida.' };
+    }
+  }
+
+  // Rodízio · a lista da Ariel: semana × dia × período. null = curinga.
+  const DIAS = ['domingo', 'quarta'];
+  const PERIODOS = ['manha', 'noite'];
+  const dia = culto_dia ? String(culto_dia).trim().toLowerCase() : null;
+  const per = culto_periodo ? String(culto_periodo).trim().toLowerCase() : null;
+  const sem = (culto_semana === 0 || culto_semana) ? Number(culto_semana) : null;
+  if (dia && !DIAS.includes(dia)) return { erro: 'Dia do culto invalido (domingo|quarta).' };
+  if (per && !PERIODOS.includes(per)) return { erro: 'Periodo invalido (manha|noite).' };
+  if (sem !== null && !(Number.isInteger(sem) && sem >= 1 && sem <= 4)) {
+    return { erro: 'Semana do rodizio invalida (1 a 4).' };
+  }
+  // ⚠️ Período SEM dia não existe no modelo da casa ("manhã" sozinho não diz se
+  // é domingo ou quarta), e a quarta é culto ÚNICO (decisão do Matheus).
+  if (per && !dia) return { erro: 'Escolha o dia do culto antes do periodo.' };
+  if (per && dia === 'quarta') return { erro: 'A quarta e culto unico — nao tem manha/noite.' };
+
+  return { posId, dia, per, sem };
+}
+
+const SELECT_SUPERVISOR = 'id, area, position_id, culto_dia, culto_periodo, culto_semana, created_at, membro:mem_membros(id, nome, telefone, foto_url), position:vol_positions(id, name, team_id)';
+
+// GET /supervisores/candidatos?vol_profile_id=… — POR QUE a pessoa não aparece.
+//
+// ⚠️⚠️ ISTO EXISTE PORQUE A MINHA MENSAGEM ANTERIOR MENTIA (26/08/2026). A tela
+// dizia *"resolva em Entradas → Identidade e a pessoa passa a aparecer aqui"* —
+// e o Matheus foi lá e não achou ninguém. Duas coisas erradas:
+//
+//  1. A fila de `/entradas` é de INSCRIÇÃO órfã (`inscricao_sem_vinculo`), não de
+//     perfil de voluntário sem `membresia_id`. São problemas diferentes.
+//  2. Na maioria dos casos NÃO HÁ o que vincular: medido em 26/08, dos 148
+//     perfis ativos sem vínculo, **101 (68%) não têm cadastro nenhum** na
+//     membresia — o caso do "Fabinho Marques", que motivou o relato.
+//
+// ⇒ Em vez de mandar pra um lugar que não resolve, a tela passa a DIZER qual dos
+// dois casos é, e mostrar o candidato quando existe.
+//
+// ⚠️ Ordem dos sinais = a do matcher canônico: CPF → e-mail → nome exato. E o
+// resultado NUNCA é aplicado sozinho: e-mail é sinal que a FAMÍLIA compartilha
+// (a lição do caso Palladino, em que o e-mail do perfil do filho era o do
+// cadastro do pai). Quem decide é gente, vendo o candidato.
+router.get('/supervisores/candidatos', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const volId = String(req.query.vol_profile_id || '').trim();
+    if (!volId) return res.status(400).json({ error: 'vol_profile_id obrigatório' });
+
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, email, cpf, membresia_id').eq('id', volId).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+    if (vp.membresia_id) return res.json({ ja_vinculado: true, candidatos: [] });
+
+    const digitos = (v) => String(v || '').replace(/\D/g, '');
+    const semAcento = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const cpf = digitos(vp.cpf);
+    const email = (vp.email || '').trim().toLowerCase();
+
+    const achados = new Map();   // membro_id -> { ...membro, sinal }
+    const guardar = (m, sinal) => {
+      if (!m?.id || achados.has(m.id)) return;
+      achados.set(m.id, {
+        id: m.id, nome: m.nome, status: m.status,
+        tem_cpf: !!m.cpf, data_nascimento: m.data_nascimento || null,
+        email: m.email || null, telefone: m.telefone || null,
+        sinal,
+      });
+    };
+    const COLS = 'id, nome, cpf, email, telefone, data_nascimento, status';
+
+    if (cpf.length === 11) {
+      const { data } = await supabase.from('mem_membros').select(COLS)
+        .eq('cpf', cpf).is('deleted_at', null).limit(3);
+      (data || []).forEach((m) => guardar(m, 'cpf'));
+    }
+    if (email) {
+      const { data } = await supabase.from('mem_membros').select(COLS)
+        .ilike('email', email).is('deleted_at', null).limit(5);
+      (data || []).forEach((m) => guardar(m, 'email'));
+    }
+    if (vp.full_name) {
+      // Nome exato (sem acento/caixa) — o `ilike` cobre a caixa; o acento é
+      // conferido aqui, porque `unaccent` não está exposto no PostgREST.
+      const { data } = await supabase.from('mem_membros').select(COLS)
+        .ilike('nome', vp.full_name.trim()).is('deleted_at', null).limit(5);
+      (data || []).filter((m) => semAcento(m.nome) === semAcento(vp.full_name))
+        .forEach((m) => guardar(m, 'nome'));
+    }
+
+    res.json({
+      ja_vinculado: false,
+      perfil: { id: vp.id, full_name: vp.full_name, email: vp.email || null, tem_cpf: !!cpf },
+      candidatos: [...achados.values()],
+    });
+  } catch (e) {
+    console.error('[voluntariado] supervisores candidatos:', e.message);
+    res.status(500).json({ error: 'Erro ao procurar cadastro da pessoa' });
+  }
+});
+
 router.post('/supervisores', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
-    const { membro_id, area } = req.body || {};
+    const { membro_id, area, position_id, culto_dia, culto_periodo, culto_semana } = req.body || {};
     if (!membro_id || !area) return res.status(400).json({ error: 'membro_id e area obrigatórios' });
+
+    const esc = await validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana });
+    if (esc.erro) return res.status(400).json({ error: esc.erro });
+
     const { data, error } = await supabase
       .from('vol_area_supervisores')
-      .insert({ membro_id, area: String(area).trim().toLowerCase(), concedido_por: req.user?.userId || null })
-      .select('id, area, created_at, membro:mem_membros(id, nome, telefone, foto_url)')
+      .insert({
+        membro_id,
+        area: String(area).trim().toLowerCase(),
+        position_id: esc.posId,
+        culto_dia: esc.dia,
+        culto_periodo: esc.per,
+        culto_semana: esc.sem,
+        concedido_por: req.user?.userId || null,
+      })
+      .select(SELECT_SUPERVISOR)
       .single();
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Essa pessoa já é supervisora dessa área' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Essa pessoa já supervisiona isso' });
       throw error;
     }
     res.status(201).json(data);
   } catch (e) {
     console.error('[voluntariado] supervisores post:', e.message);
     res.status(500).json({ error: 'Erro ao conceder supervisão' });
+  }
+});
+
+// PATCH /supervisores/:id — EDITA a concessão (área, subárea e rodízio).
+//
+// ⚠️ Pedido do Matheus (25/08): *"preciso conseguir editar os supervisores
+// também, o horário deles, área e etc"*. Antes só existia conceder e revogar —
+// trocar o turno de alguém exigia apagar e recriar, o que perdia o
+// `concedido_por` e o `created_at` (a trilha de quem deu o acesso e quando).
+//
+// ⚠️ Passa pela MESMA `validarEscopoSupervisao` do POST. Um PATCH com régua
+// própria seria o caminho pra conceder pela porta dos fundos o que o POST
+// recusa — por exemplo subárea de outra área.
+router.patch('/supervisores/:id', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { area, position_id, culto_dia, culto_periodo, culto_semana } = req.body || {};
+    if (!area) return res.status(400).json({ error: 'area obrigatória' });
+
+    const esc = await validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana });
+    if (esc.erro) return res.status(400).json({ error: esc.erro });
+
+    const { data, error } = await supabase
+      .from('vol_area_supervisores')
+      .update({
+        area: String(area).trim().toLowerCase(),
+        position_id: esc.posId,
+        culto_dia: esc.dia,
+        culto_periodo: esc.per,
+        culto_semana: esc.sem,
+      })
+      .eq('id', req.params.id)
+      .select(SELECT_SUPERVISOR)
+      .single();
+
+    if (error) {
+      // ⚠️ 23505 = a pessoa JÁ tem uma concessão com exatamente este escopo (o
+      // unique cobre membro+area+subárea+dia+período+semana). Sem esta mensagem
+      // o usuário veria erro cru e não saberia que a linha duplicada já existe.
+      if (error.code === '23505') {
+        return res.status(409).json({ error: 'Essa pessoa já tem uma supervisão com exatamente esse escopo.' });
+      }
+      throw error;
+    }
+    if (!data) return res.status(404).json({ error: 'Supervisão não encontrada' });
+    res.json(data);
+  } catch (e) {
+    console.error('[voluntariado] supervisores patch:', e.message);
+    res.status(500).json({ error: 'Erro ao editar a supervisão' });
+  }
+});
+
+// POST /supervisores/vincular — liga um PERFIL de voluntário a um CADASTRO.
+//
+// ⚠️⚠️ DECISÃO HUMANA, sempre. Não existe versão automática disto de propósito:
+// no caso Palladino (25/08) o e-mail do perfil do FILHO era o e-mail do cadastro
+// do PAI, e vincular por e-mail teria dado supervisão ao membro errado. Aqui o
+// humano vê o candidato (nome, CPF?, nascimento, e por qual sinal casou) e
+// escolhe. O servidor só recusa o que é claramente inválido.
+router.post('/supervisores/vincular', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { vol_profile_id, membro_id } = req.body || {};
+    if (!vol_profile_id || !membro_id) {
+      return res.status(400).json({ error: 'vol_profile_id e membro_id obrigatórios' });
+    }
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, membresia_id').eq('id', vol_profile_id).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+    // ⚠️ Não sobrescreve vínculo existente: trocar o cadastro de alguém por aqui
+    // seria mexer em identidade sem trilha. Desvincular é operação própria.
+    if (vp.membresia_id) {
+      return res.status(409).json({ error: 'Esse perfil já está vinculado a um cadastro.' });
+    }
+    const { data: m } = await supabase.from('mem_membros')
+      .select('id, nome').eq('id', membro_id).is('deleted_at', null).maybeSingle();
+    if (!m) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+
+    const { error } = await supabase.from('vol_profiles')
+      .update({ membresia_id: m.id }).eq('id', vp.id).is('membresia_id', null);
+    if (error) throw error;
+
+    // ⚠️ O UPDATE dispara `trg_sync_email_vol_para_membro`, que reescreve o
+    // e-mail do PERFIL com o canônico do cadastro (o do membro NÃO é tocado — o
+    // inverso só preenche vazio). É esperado; medido nos religamentos de 25/08.
+    res.json({ ok: true, vol_profile_id: vp.id, membro_id: m.id, membro_nome: m.nome });
+  } catch (e) {
+    console.error('[voluntariado] supervisores vincular:', e.message);
+    res.status(500).json({ error: 'Erro ao vincular' });
   }
 });
 
@@ -1720,6 +2071,142 @@ router.get('/waiting-allocation', async (req, res) => {
 });
 
 // POST /allocate/:id — admin assigns volunteer to a team
+// ════════════════════════════════════════════════════════════════════════════
+// FASE 1 DA SAÍDA DO PLANNING CENTER · o voluntário vira uma PESSOA do sistema
+//
+// A lei do projeto é "uma pessoa = um cadastro em `mem_membros`". O voluntariado
+// não cumpre: `vol_profiles` nasceu como espelho do Planning Center e, medido em
+// 18/08/2026, 488 dos 796 perfis ativos não apontam pra ninguém. Enquanto o PCO
+// existe isso se disfarça — o nome vem de lá. Quando ele sair, sobra um registro
+// órfão com nome e e-mail, fora da membresia, do aniversário, do WhatsApp e de
+// qualquer KPI que cruze pessoa.
+//
+// ⚠️ NÃO existe régua nova aqui. Quem decide é `acharMembroGuardado`, o matcher
+// canônico — CPF → e-mail+NOME → telefone+NOME → nascimento+NOME, com
+// `nomeAutorizaLigar`. Uma segunda régua de identidade divergiria da primeira no
+// dia em que uma das duas mudasse, e identidade é o lugar onde isso não pode
+// acontecer.
+// ════════════════════════════════════════════════════════════════════════════
+router.post('/vincular-membros', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    // ⚠️⚠️ EM LOTES, e isso não é otimização — é o que faz a rota existir.
+    // `acharMembroGuardado` faz de 4 a 8 idas ao banco por pessoa (CPF, e-mail,
+    // telefone, nascimento, mais os contatos secundários). Rodar os ~490 perfis
+    // numa requisição só passou dos 300s de `maxDuration` e morreu sem devolver
+    // NADA — nem o que já tinha casado. Quem chama percorre o cursor.
+    //
+    // ⚠️⚠️ O cursor é por CHAVE (`depois_de`), não por deslocamento, e isso é
+    // correção de um bug real (18/08, na primeira aplicação de verdade): em modo
+    // APLICAR o próprio comando ENCOLHE o conjunto — quem ganha `membresia_id`
+    // sai do filtro `is null`. Com `offset` fixo avançando de 40 em 40, a lista
+    // some por baixo do cursor, o offset passa do fim e o PostgREST responde
+    // "Requested range not satisfiable". Parou com 188 de 279 ligados.
+    // Voltar pro offset 0 também não serve: conflito e sem-pista FICAM no
+    // conjunto, e a rodada nunca terminaria. A chave é imune às duas coisas.
+    const aplicar = req.body?.aplicar === true;
+    const depoisDe = typeof req.body?.depois_de === 'string' ? req.body.depois_de : null;
+    const tamanho = Math.min(Math.max(Number(req.body?.tamanho) || 40, 1), 60);
+    // Ids de membro já reivindicados nos lotes ANTERIORES desta mesma rodada.
+    // Sem isso a simulação não enxergaria conflito entre lotes (em modo
+    // simulação nada é gravado, então o banco não conta a história) e diria um
+    // número que o "aplicar" depois não entregaria.
+    const jaTomados = new Set(Array.isArray(req.body?.ja_tomados) ? req.body.ja_tomados : []);
+
+    let q = supabase.from('vol_profiles')
+      .select('id, full_name, email, cpf, phone', { count: 'exact' })
+      .is('membresia_id', null).eq('arquivado', false)
+      .order('id').limit(tamanho);
+    if (depoisDe) q = q.gt('id', depoisDe);
+    const { data: pagina, error, count } = await q;
+    if (error) return res.status(400).json({ error: error.message });
+
+    const perfis = (pagina || []).filter(v => ehPessoaEscalavel(v.full_name));
+
+    // Uma consulta só pro lote inteiro: quais membros já têm perfil. Fazer isso
+    // por pessoa somava mais uma ida ao banco em cada uma das 490.
+    // ⚠️ Paginado: hoje são ~308 perfis com membro, mas o objetivo desta própria
+    // rota é levar isso perto de 800. No dia em que passasse de 1000 o cap do
+    // PostgREST cortaria a lista em silêncio e o conflito deixaria de ser
+    // detectado — dois voluntários no mesmo cadastro, sem aviso.
+    const donoDoMembro = new Map();
+    for (let off = 0; ; off += 1000) {
+      const { data: ocupados, error: eOcup } = await supabase.from('vol_profiles')
+        .select('membresia_id, full_name').not('membresia_id', 'is', null)
+        .order('id').range(off, off + 999);
+      if (eOcup) return res.status(400).json({ error: eOcup.message });
+      (ocupados || []).forEach(o => donoDoMembro.set(o.membresia_id, o.full_name));
+      if (!ocupados || ocupados.length < 1000) break;
+    }
+
+    // Concorrência modesta: 5 perfis por vez. Serializar levava ~1s por pessoa;
+    // abrir tudo de uma vez estrangularia o pool do PostgREST, que é o mesmo de
+    // todas as outras telas do sistema.
+    const achados = [];
+    for (let i = 0; i < perfis.length; i += 5) {
+      const grupo = perfis.slice(i, i + 5);
+      const hits = await Promise.all(grupo.map(async (v) => {
+        try {
+          return await acharMembroGuardado({
+            cpf: v.cpf, email: v.email, telefone: v.phone, nome: v.full_name,
+          });
+        } catch (e) {
+          console.error('[vincular-membros] matcher:', v.id, e.message);
+          return null;
+        }
+      }));
+      grupo.forEach((v, k) => achados.push({ v, hit: hits[k] }));
+    }
+
+    // ⚠️ A decisão de conflito é feita DEPOIS, percorrendo em ordem: dentro do
+    // grupo paralelo não há ordem estável, e "quem chegou primeiro" precisa ser
+    // sempre o mesmo em duas rodadas iguais.
+    const ligados = [], semMatch = [], conflitos = [];
+    for (const { v, hit } of achados) {
+      if (!hit?.membro_id) { semMatch.push({ id: v.id, nome: v.full_name }); continue; }
+      const dono = donoDoMembro.get(hit.membro_id);
+      if (dono || jaTomados.has(hit.membro_id)) {
+        conflitos.push({ id: v.id, nome: v.full_name, membro_id: hit.membro_id, disputa_com: dono || '(outro nesta rodada)' });
+        continue;
+      }
+      donoDoMembro.set(hit.membro_id, v.full_name);
+      ligados.push({ id: v.id, nome: v.full_name, membro_id: hit.membro_id, por: hit.matched_by });
+    }
+
+    if (aplicar && ligados.length) {
+      for (let i = 0; i < ligados.length; i += 25) {
+        const lote = ligados.slice(i, i + 25);
+        // `is('membresia_id', null)` de novo: entre simular e aplicar, outra
+        // sessão pode ter ligado o mesmo perfil.
+        await Promise.all(lote.map(l => supabase.from('vol_profiles')
+          .update({ membresia_id: l.membro_id }).eq('id', l.id).is('membresia_id', null)));
+      }
+    }
+
+    // ⚠️ O último id vem da PÁGINA CRUA, não dos perfis filtrados: se o último
+    // da página for uma conta de sistema descartada por `ehPessoaEscalavel`, o
+    // cursor pararia nela e a rodada repetiria a mesma página pra sempre.
+    res.json({
+      aplicado: aplicar,
+      proximo_cursor: proximoCursor(pagina, tamanho),
+      // Em modo aplicar o total ENCOLHE a cada lote (quem foi ligado sai do
+      // filtro). Quem chama usa o total do PRIMEIRO lote como denominador.
+      total: count ?? null,
+      analisados: perfis.length,
+      ligados: ligados.length,
+      conflitos: conflitos.length,
+      sem_match: semMatch.length,
+      por_chave: ligados.reduce((a, l) => { a[l.por] = (a[l.por] || 0) + 1; return a; }, {}),
+      membros_ligados: ligados.map(l => l.membro_id),
+      exemplos_ligados: ligados.slice(0, 8),
+      exemplos_conflitos: conflitos.slice(0, 8),
+      exemplos_sem_match: semMatch.slice(0, 8),
+    });
+  } catch (e) {
+    console.error('[vincular-membros]', e.message);
+    res.status(500).json({ error: 'Erro ao vincular voluntários a membros' });
+  }
+});
+
 router.post('/allocate/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -1734,16 +2221,30 @@ router.post('/allocate/:id', async (req, res) => {
       .maybeSingle();
     if (!vol) return res.status(404).json({ error: 'Voluntário não encontrado' });
 
-    // Add to team (upsert to avoid duplicate)
-    const { error: tmErr } = await supabase.from('vol_team_members')
-      .upsert({
+    // ⚠️ Sem `upsert`: o único `(team_id, volunteer_profile_id)` deixou de
+    // existir na migration 20260816120000 (a mesma pessoa pode ter duas funções
+    // na mesma equipe), e o que ficou no lugar é um índice PARCIAL, que o
+    // PostgREST não consegue mirar por `onConflict`. Confere e insere.
+    let qJa = supabase.from('vol_team_members')
+      .select('id')
+      .eq('team_id', team_id)
+      .eq('volunteer_profile_id', id);
+    // ⚠️ `position_id` NULO precisa de `.is`, não `.eq` — `eq('position_id',
+    // null)` no PostgREST vira `position_id=eq.null` e não casa com nada, então
+    // alocar "na equipe, sem função" inseriria uma linha nova a cada clique.
+    qJa = position_id ? qJa.eq('position_id', position_id) : qJa.is('position_id', null);
+    const { data: jaTem, error: jaErr } = await qJa.maybeSingle();
+    if (jaErr) return res.status(400).json({ error: jaErr.message });
+    if (!jaTem) {
+      const { error: tmErr } = await supabase.from('vol_team_members').insert({
         volunteer_profile_id: id,
         team_id,
         position_id: position_id || null,
         volunteer_name: vol.full_name || 'Sem nome',
         planning_center_person_id: vol.planning_center_id || null,
-      }, { onConflict: 'volunteer_profile_id,team_id', ignoreDuplicates: false });
-    if (tmErr) return res.status(400).json({ error: tmErr.message });
+      });
+      if (tmErr) return res.status(400).json({ error: tmErr.message });
+    }
 
     // Mark as active
     await supabase.from('vol_profiles').update({ allocation_status: 'active' }).eq('id', id);
@@ -1759,6 +2260,52 @@ router.post('/allocate/:id', async (req, res) => {
 // VOLUNTEERS POOL — all active vol_profiles with team memberships
 // Used by the schedule builder popup. Cached on the client (5 min staleTime).
 // ══════════════════════════════════════════════════════════════
+/**
+ * Última atividade (check-in OU serviço) por voluntário, numa janela.
+ *
+ * ⚠️ Duas consultas AGREGADAS, não uma por pessoa: são ~674 perfis, e o padrão
+ * "N+1" nesta tela seria centenas de idas ao banco a cada abertura.
+ * ⚠️ Janela curta de propósito (120 dias). Quem não aparece nela está a 90+
+ * dias sem servir — que é exatamente o que a tag precisa dizer. Varrer o
+ * histórico inteiro custaria muito para responder a mesma coisa.
+ * ⚠️ As duas leituras são best-effort: falhar aqui devolve mapa vazio e a lista
+ * sai SEM tag, nunca com todo mundo marcado como inativo. Marcar 674 pessoas
+ * como inativas por causa de um erro de consulta seria pior que não marcar.
+ */
+async function ultimaAtividadePorVoluntario() {
+  const desde = new Date(Date.now() - atividadeVol.JANELA_LISTA_DIAS * 86400000).toISOString();
+  const mapa = new Map();
+  const guarda = (chave, iso) => {
+    if (!chave || !iso) return;
+    const atual = mapa.get(chave);
+    if (!atual || iso > atual) mapa.set(chave, iso);
+  };
+  try {
+    for (let pag = 0; pag < 20; pag += 1) {
+      const { data, error } = await supabase.from('vol_check_ins')
+        .select('volunteer_id, checked_in_at')
+        .gte('checked_in_at', desde).not('volunteer_id', 'is', null)
+        .range(pag * 1000, pag * 1000 + 999);
+      if (error) throw error;
+      for (const r of data || []) guarda(r.volunteer_id, r.checked_in_at);
+      if (!data || data.length < 1000) break;
+    }
+    for (let pag = 0; pag < 20; pag += 1) {
+      const { data, error } = await supabase.from('vol_servicos_historico')
+        .select('vol_profile_id, data')
+        .gte('data', desde.slice(0, 10)).is('deleted_at', null)
+        .range(pag * 1000, pag * 1000 + 999);
+      if (error) throw error;
+      for (const r of data || []) guarda(r.vol_profile_id, r.data);
+      if (!data || data.length < 1000) break;
+    }
+  } catch (e) {
+    console.warn('[voluntariado] ultima atividade:', e.message);
+    return null; // ⚠️ null = "não deu pra saber", tratado como SEM tag
+  }
+  return mapa;
+}
+
 router.get('/volunteers-pool', async (req, res) => {
   try {
     // Arquivados (saíram do PCO na reconciliação) ficam FORA por padrão;
@@ -1771,8 +2318,9 @@ router.get('/volunteers-pool', async (req, res) => {
         .from('vol_profiles')
         .select(`
           id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado, membresia_id,
+          membro:mem_membros(foto_url),
           team_members:vol_team_members(
-            id, team_id, position_id,
+            id, team_id, position_id, is_active,
             team:vol_teams(id, name, color),
             position:vol_positions(id, name)
           )
@@ -1786,6 +2334,36 @@ router.get('/volunteers-pool', async (req, res) => {
       if (data.length < 1000) break;
       offset += 1000;
     }
+
+    // Marcadores de jornada (pedido do Arthur Serpa / Pr. Nélio · 13/08/2026 —
+    // o e-mail cita Voluntariado por nome). Liga por `membresia_id`: perfil sem
+    // vínculo com o cadastro da pessoa fica SEM marcador, e é honesto — não dá
+    // pra afirmar nada sobre a jornada de quem o sistema não conseguiu ligar
+    // a um `mem_membros` (o import do Planning Center deixou muitos assim).
+    // ⚠️ Generosidade continua gated no servidor (decisão do Matheus).
+    // ⚠️ `foto_url` RESOLVIDA no servidor: `avatar_url` está preenchido em quase
+    // todo mundo e a maioria é PLACEHOLDER DE INICIAIS do Planning Center — em
+    // 27/08, 121 dos 226 escalados. A tela que mostra `avatar_url` cru troca as
+    // iniciais desenhadas pelo tema por um PNG cinza. Régua em
+    // `utils/fotoVoluntario`; a coluna crua segue no payload pra não quebrar
+    // quem já a lê.
+    for (const v of all) v.foto_url = fotoDoPerfil(v);
+
+    await anexarMarcadores(all, (p) => p.membresia_id || null, {
+      incluirSensiveis: podeVerMarcadorSensivel(req.user),
+    });
+
+    // Termômetro de atividade na LISTA (Matheus · 27/08) — a tag "sem servir há
+    // 90+ dias" e o filtro de inativos precisam disto por linha.
+    const atividade = await ultimaAtividadePorVoluntario();
+    for (const p of all) {
+      if (!atividade) { p.atividade = null; continue; } // não deu pra saber
+      const ultima = atividade.get(p.id) || null;
+      const dias = atividadeVol.diasDesde(ultima);
+      const { nivel, label } = atividadeVol.nivelPorDias(dias);
+      p.atividade = { nivel, label, dias_desde: dias, ultima_atividade: ultima };
+    }
+
     res.json(all);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar pool de voluntários' }); }
 });
@@ -2278,11 +2856,21 @@ async function ensureServiceDoTipo(typeId, dateStr) {
 // pro check-in oferecer como checkbox. (recurrence_day=0 · antes das 14h)
 router.get('/cultos-manha', async (req, res) => {
   try {
+    // ⚠️ A vigência decide QUAIS horários existem neste domingo. Sem ela, a
+    // virada da grade em 24/08/2026 (08:30 e 10:00 encerram, 09:30 começa)
+    // deixaria o totem oferecendo quatro horários num domingo que tem dois —
+    // e um check-in no horário errado separa a presença da escala.
+    // O dia de referência é o `?dia=` do totem, ou HOJE em BRT: em UTC o dia
+    // vira às 21h e o culto de domingo à noite já cairia na segunda.
+    const dia = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.dia || ''))
+      ? String(req.query.dia)
+      : diaBRT(new Date().toISOString());
     const { data } = await supabase.from('vol_service_types')
-      .select('id, name, recurrence_time')
+      .select('id, name, recurrence_time, is_active, vigente_de, vigente_ate')
       .eq('recurrence_day', 0).eq('is_active', true).lt('recurrence_time', '14:00:00')
       .order('recurrence_time');
-    res.json((data || []).map(t => ({ id: t.id, name: t.name, recurrence_time: t.recurrence_time })));
+    res.json(filtrarVigentes(data || [], dia)
+      .map(t => ({ id: t.id, name: t.name, recurrence_time: t.recurrence_time })));
   } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos da manhã' }); }
 });
 
@@ -2808,7 +3396,12 @@ router.get('/service-types', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar tipos de culto' }); }
 });
 
-router.post('/service-types', async (req, res) => {
+// ⚠️ Escrita em tipo de culto é ADMIN do voluntariado (nível 5) — o herdado do
+// router (`membresia`, 1 = LEITURA) deixava 27 cargos alcançarem POST/PUT/DELETE
+// (achado 🔴 da varredura de cultos de domingo · docs/cultos-domingo/).
+// ⚠️ O POST NÃO cobre has_kids/has_online/presencial_label — tipo de culto NOVO
+// nasce por SQL (senão nasce sem Kids e nenhuma criança faz check-in).
+router.post('/service-types', authorizeModule('voluntariado', 5), async (req, res) => {
   try {
     const { name, description, recurrence_day, recurrence_time, color } = req.body;
     if (!name) return res.status(400).json({ error: 'name obrigatorio' });
@@ -2819,7 +3412,7 @@ router.post('/service-types', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar tipo de culto' }); }
 });
 
-router.put('/service-types/:id', async (req, res) => {
+router.put('/service-types/:id', authorizeModule('voluntariado', 5), async (req, res) => {
   try {
     const { name, description, recurrence_day, recurrence_time, color, is_active } = req.body;
     const { data, error } = await supabase.from('vol_service_types')
@@ -2830,8 +3423,20 @@ router.put('/service-types/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar tipo de culto' }); }
 });
 
-router.delete('/service-types/:id', async (req, res) => {
+router.delete('/service-types/:id', authorizeModule('voluntariado', 5), async (req, res) => {
   try {
+    // ⚠️ (docs/cultos-domingo/ · mina nº 5) DELETE de tipo anula service_type_id
+    // nos cultos (somem dos KPIs) e apaga em CASCADE roteiro de produção,
+    // checklist e vínculo de template de escala. Tipo com culto vinculado NUNCA
+    // é deletável — o caminho é ENCERRAR (is_active=false). Contagem head-only;
+    // falha na contagem BLOQUEIA (fail-closed: este é o caminho destrutivo).
+    const { count, error: cErr } = await supabase.from('cultos')
+      .select('id', { count: 'exact', head: true })
+      .eq('service_type_id', req.params.id);
+    if (cErr) return res.status(500).json({ error: 'Não deu pra conferir os cultos vinculados — exclusão bloqueada por segurança.' });
+    if ((count || 0) > 0) {
+      return res.status(409).json({ error: `Este tipo tem ${count} culto(s) vinculado(s). Encerre o tipo (desativar) em vez de excluir — excluir apagaria roteiro de produção e escalas em cascata.` });
+    }
     const { error } = await supabase.from('vol_service_types').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });
@@ -2859,18 +3464,28 @@ router.post('/service-types/:id/generate', async (req, res) => {
     const dayStartBRT = (y, m0, d) => `${y}-${pad(m0 + 1)}-${pad(d)}T00:00:00-03:00`;
     const dayEndBRT = (y, m0, d) => new Date(Date.UTC(y, m0, d + 1)).toISOString().slice(0, 10) + 'T00:00:00-03:00';
 
+    // Uma leitura só por chamada — o gerador roda o ano inteiro em loop.
+    let pcoAtivo = true;
+    try {
+      const { data: cfg } = await supabase.from('vol_config').select('pco_ativo').eq('id', 1).maybeSingle();
+      if (cfg && cfg.pco_ativo === false) pcoAtivo = false;
+    } catch (e) {
+      console.error('[vol generate] leitura de pco_ativo:', e.message);
+    }
+
     const generated = [];
 
     const makeIfAbsent = async (y, m0, d) => {
       const scheduledAt = toBRTISO(y, m0, d);
       const { data: existing } = await supabase.from('vol_services')
-        .select('id, service_type_id')
+        .select('id, service_type_id, planning_center_id')
         .gte('scheduled_at', dayStartBRT(y, m0, d))
         .lt('scheduled_at', dayEndBRT(y, m0, d));
-      // Não duplica: pula se já existe esse tipo no dia OU se já há serviço do
-      // Planning Center (service_type_id NULL) no dia — o PCO é a fonte das
-      // escalas; gerar a partir do vol_service_type criaria duplicado vazio.
-      if (existing && existing.some(s => s.service_type_id === sType.id || s.service_type_id === null)) return;
+      // Régua em `utils/volSyncIntegrity.podeGerarCulto` (pura, no gate): com o
+      // PCO ativo, qualquer culto dele no dia bloqueia (incidente 05/07); com o
+      // PCO desligado, só o MESMO tipo bloqueia — senão o culto da manhã
+      // herdado do Planning Center impediria pra sempre o da noite.
+      if (!podeGerarCulto({ servicosDoDia: existing || [], serviceTypeId: sType.id, pcoAtivo }).pode) return;
       const { data: svc, error: svcErr } = await supabase.from('vol_services')
         .insert({ name: sType.name, service_type_name: sType.name, service_type_id: sType.id, scheduled_at: scheduledAt })
         .select().single();
@@ -3133,15 +3748,72 @@ router.get('/services-availability', async (req, res) => {
       .in('service_id', serviceIds)
       .not('service_id', 'is', null);
 
+    // ⚠️⚠️ SÃO DOIS MODELOS DE INDISPONIBILIDADE NA MESMA TABELA, e este painel
+    // enxergava só um (achado em 07/08/2026):
+    //   · por CULTO   → `service_id` preenchido — é o que a coordenação marca aqui
+    //   · por PERÍODO → `unavailable_from/to` com `service_id` NULL — é o que o
+    //     APP grava quando o voluntário diz "viajo de 20 a 31/08"
+    //
+    // Ler só o primeiro fazia este painel mostrar "ninguém indisponível" pra quem
+    // tinha avisado pelo app — enquanto `POST /schedules/auto-fill` (que filtra
+    // por FAIXA DE DATA, linha ~3355) já o excluía. Ou seja: o gerador automático
+    // e a tela que a coordenação usa pra escalar NA MÃO discordavam sobre a mesma
+    // pessoa no mesmo culto, e quem escalasse pela tela não tinha como saber.
+    //
+    // ⚠️ Não é regressão: a tabela só passou a receber bloqueio por período em
+    // 07/08 (a tela do app nunca gravou nada antes — a RLS barrava e a validação
+    // recusava data futura). É porta recém-aberta cujo destino não olhava pra ela.
+    const { data: porPeriodo } = await supabase
+      .from('vol_availability')
+      .select('unavailable_from, unavailable_to, reason, volunteer_profile_id, vol_profiles(full_name, avatar_url)')
+      .is('service_id', null)
+      // Sobreposição com a janela pedida: começa antes do fim E termina depois do
+      // início. Comparar string ISO é seguro (YYYY-MM-DD ordena como data).
+      .lte('unavailable_from', to)
+      .gte('unavailable_to', from);
+
     // Agrupa por service_id
     const unavailByService = new Map();
+    const jaListado = new Map(); // service_id -> Set(profile_id)
+    const push = (serviceId, item) => {
+      if (!unavailByService.has(serviceId)) {
+        unavailByService.set(serviceId, []);
+        jaListado.set(serviceId, new Set());
+      }
+      // Quem tem bloqueio por período E por culto no mesmo dia apareceria 2×.
+      if (item.profile_id) {
+        if (jaListado.get(serviceId).has(item.profile_id)) return;
+        jaListado.get(serviceId).add(item.profile_id);
+      }
+      unavailByService.get(serviceId).push(item);
+    };
+
     for (const u of (unavail || [])) {
-      if (!unavailByService.has(u.service_id)) unavailByService.set(u.service_id, []);
-      unavailByService.get(u.service_id).push({
+      push(u.service_id, {
         profile_id: u.volunteer_profile_id,
         name: u.vol_profiles?.full_name || 'Voluntario',
         avatar_url: u.vol_profiles?.avatar_url || null,
+        origem: 'culto',
       });
+    }
+
+    // O bloqueio por período vale pra TODO culto cuja data cai dentro dele.
+    for (const s of services) {
+      const dia = String(s.scheduled_at).slice(0, 10);
+      for (const u of (porPeriodo || [])) {
+        if (u.unavailable_from <= dia && dia <= u.unavailable_to) {
+          push(s.id, {
+            profile_id: u.volunteer_profile_id,
+            name: u.vol_profiles?.full_name || 'Voluntario',
+            avatar_url: u.vol_profiles?.avatar_url || null,
+            origem: 'periodo',
+            // O motivo ("viagem", "prova") é o que deixa a coordenação decidir se
+            // cabe insistir — sem ele o painel diz "não pode" e mais nada.
+            motivo: u.reason || null,
+            periodo: { de: u.unavailable_from, ate: u.unavailable_to },
+          });
+        }
+      }
     }
 
     res.json(services.map(s => ({
@@ -3192,10 +3864,108 @@ router.delete('/availability/:id', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 
 // Create a schedule entry (assign volunteer to service)
+// ⚠️⚠️ A disponibilidade passou a ser REGRA, não enfeite de tela (13/08/2026).
+//
+// Pedido do Matheus: "quem não estiver disponível não vai aparecer para o
+// supervisor ou líder escalar". Até aqui isso era só um checkbox no front — com
+// default ligado, mas DESMARCÁVEL — e o servidor **nunca conferia nada**: dava
+// pra escalar quem marcou "não posso" por drag-and-drop, pelo botão +, pelo
+// auto-fill e pelo aplicar-template, sem nenhum aviso.
+//
+// Filtro que só existe no cliente não é regra: é sugestão. Agora o servidor
+// recusa (409 `indisponivel`), e a coordenação só passa por cima com
+// `forcar: true` — que é uma decisão consciente ("falei com ela, ela vai"),
+// não um clique acidental.
+async function _bloqueioPorIndisponibilidade({ service_id, volunteer_id, planning_center_person_id }) {
+  if (!service_id || (!volunteer_id && !planning_center_person_id)) return null;
+
+  const { data: svc, error: sErr } = await supabase
+    .from('vol_services').select('id, scheduled_at').eq('id', service_id).maybeSingle();
+  // ⚠️ Falha de CONSULTA não pode virar "está disponível" — seria a checagem
+  // falhando ABERTA justamente no caminho que ela existe pra fechar. Sem
+  // conseguir conferir, não afirmamos nada e deixamos passar com log: travar
+  // toda a montagem de escala por instabilidade de banco é pior. Mas o log
+  // existe pra isso aparecer.
+  if (sErr) { console.error('[voluntariado] disponibilidade não conferida:', sErr.message); return null; }
+  if (!svc) return null;
+
+  let q = supabase.from('vol_availability')
+    .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id');
+  q = volunteer_id
+    ? q.eq('volunteer_profile_id', volunteer_id)
+    : q.eq('planning_center_person_id', planning_center_person_id);
+  const { data: linhas, error: aErr } = await q;
+  if (aErr) { console.error('[voluntariado] disponibilidade não conferida:', aErr.message); return null; }
+
+  const v = avaliarIndisponibilidade(
+    { serviceId: service_id, dia: diaBRT(svc.scheduled_at) },
+    linhas || [],
+  );
+  return v.indisponivel ? v : null;
+}
+
+/**
+ * Versão em LOTE da checagem acima — uma consulta só de `vol_availability`.
+ *
+ * Existe porque `/schedules/bulk` e `/schedules/auto-fill` inserem várias
+ * linhas de uma vez sem passar pelo `POST /schedules`, então a trava de lá não
+ * os alcançava. É o mesmo furo que o `/copy` teve.
+ *
+ * ⚠️ Devolve os pulados NOMEADOS: quem sumiu da escala em silêncio só é notado
+ * no domingo.
+ */
+async function _separarPorDisponibilidade(service_id, pessoas) {
+  const lista = pessoas || [];
+  if (!lista.length) return { ok: [], pulados: [] };
+
+  const { data: svc, error: sErr } = await supabase
+    .from('vol_services').select('id, scheduled_at').eq('id', service_id).maybeSingle();
+  // Falha de consulta não vira "todo mundo indisponível" nem trava o lote —
+  // mesma política do bloqueio individual: passa com log.
+  if (sErr || !svc) {
+    if (sErr) console.error('[voluntariado] disponibilidade do lote não conferida:', sErr.message);
+    return { ok: lista, pulados: [] };
+  }
+
+  const { data: linhas, error: aErr } = await supabase.from('vol_availability')
+    .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id');
+  if (aErr) {
+    console.error('[voluntariado] disponibilidade do lote não conferida:', aErr.message);
+    return { ok: lista, pulados: [] };
+  }
+
+  const idx = indexarPorPessoa(linhas || []);
+  const ctx = { serviceId: service_id, dia: diaBRT(svc.scheduled_at) };
+  const ok = [];
+  const pulados = [];
+  for (const p of lista) {
+    const eventos = [
+      ...(idx.get(p.volunteer_id) || []),
+      ...(idx.get(p.planning_center_person_id) || []),
+    ];
+    const v = avaliarIndisponibilidade(ctx, eventos);
+    if (v.indisponivel) pulados.push({ nome: p.volunteer_name || 'Voluntário', motivo: textoIndisponibilidade(v) });
+    else ok.push(p);
+  }
+  return { ok, pulados };
+}
+
 router.post('/schedules', async (req, res) => {
   try {
-    const { service_id, volunteer_id, volunteer_name, team_id, team_name, position_id, position_name, planning_center_person_id, notes } = req.body;
+    const { service_id, volunteer_id, volunteer_name, team_id, team_name, position_id, position_name, planning_center_person_id, notes, forcar } = req.body;
     if (!service_id || !volunteer_name) return res.status(400).json({ error: 'service_id e volunteer_name obrigatórios' });
+
+    if (!forcar) {
+      const bloqueio = await _bloqueioPorIndisponibilidade({ service_id, volunteer_id, planning_center_person_id });
+      if (bloqueio) {
+        return res.status(409).json({
+          error: `${volunteer_name} ${textoIndisponibilidade(bloqueio)}.`,
+          codigo: 'indisponivel',
+          origem: bloqueio.origem,
+          motivo: bloqueio.motivo,
+        });
+      }
+    }
 
     const { data, error } = await supabase.from('vol_schedules')
       .insert({
@@ -3249,14 +4019,32 @@ router.delete('/schedules/:id', async (req, res) => {
 });
 
 // Bulk schedule — assign multiple volunteers to a service at once
+//
+// ⚠️ É o caminho do "escalar os N marcados" do painel lateral (13/08/2026) e,
+// como faz INSERT em lote, NÃO passava pelo `POST /schedules` — ou seja, a
+// trava de disponibilidade não o alcançava. Mesmo furo que o `/copy` teve.
 router.post('/schedules/bulk', async (req, res) => {
   try {
-    const { service_id, assignments } = req.body;
+    const { service_id, assignments, forcar } = req.body;
     if (!service_id || !Array.isArray(assignments) || !assignments.length) {
       return res.status(400).json({ error: 'service_id e assignments[] obrigatórios' });
     }
 
-    const rows = assignments.map(a => ({
+    let entrando = assignments;
+    let pulados = [];
+    if (!forcar) {
+      const sep = await _separarPorDisponibilidade(service_id, assignments);
+      entrando = sep.ok;
+      pulados = sep.pulados;
+    }
+    if (!entrando.length) {
+      return res.status(409).json({
+        error: 'Ninguém do lote está disponível neste culto.',
+        codigo: 'indisponivel', pulados,
+      });
+    }
+
+    const rows = entrando.map(a => ({
       service_id,
       volunteer_id: a.volunteer_id || null,
       volunteer_name: a.volunteer_name,
@@ -3264,6 +4052,11 @@ router.post('/schedules/bulk', async (req, res) => {
       team_name: a.team_name || null,
       position_id: a.position_id || null,
       position_name: a.position_name || null,
+      // ⚠️ Amarra a escala à VAGA que a originou. Sem isso o casamento
+      // vaga↔pessoa cai no par (equipe, função), que é ambíguo quando a
+      // composição tem duas linhas para o mesmo par — as duas passariam a
+      // exibir as mesmas pessoas e a tela subestimaria o que ainda falta.
+      escala_culto_item_id: a.escala_culto_item_id || null,
       planning_center_person_id: a.planning_center_person_id || null,
       confirmation_status: 'pending',
       source: a.source || 'manual',
@@ -3271,11 +4064,40 @@ router.post('/schedules/bulk', async (req, res) => {
     }));
 
     const { data, error } = await supabase.from('vol_schedules')
-      .upsert(rows, { onConflict: 'service_id,planning_center_person_id', ignoreDuplicates: true })
+      // A constraint atual inclui equipe, função e slot. Usar a chave antiga
+      // (só culto + pessoa) faz o Postgres recusar o ON CONFLICT antes mesmo
+      // de tentar escalar alguém.
+      .upsert(rows, { onConflict: 'service_id,planning_center_person_id,team_name,position_name,slot_seq', ignoreDuplicates: true })
       .select();
     if (error) return res.status(400).json({ error: error.message });
-    res.json({ created: data.length, schedules: data });
+    res.json({ created: data.length, schedules: data, pulados });
   } catch (e) { res.status(500).json({ error: 'Erro ao criar escalas em lote' }); }
+});
+
+/**
+ * Desfazer um lote de escalas recém-criado (auto-preencher / escalar N).
+ *
+ * O Services deixa desfazer o auto-schedule enquanto a pessoa não sai da
+ * página, e é o que torna o botão seguro de apertar: quem não confia no
+ * automático não experimenta, e quem não experimenta continua montando na mão.
+ *
+ * ⚠️ Só apaga id que pertence ao culto informado — o `service_id` no filtro
+ * não é enfeite: sem ele, um id de outro culto no payload apagaria escala que
+ * ninguém estava vendo.
+ */
+router.post('/schedules/desfazer-lote', async (req, res) => {
+  try {
+    const { service_id, ids } = req.body;
+    if (!service_id || !Array.isArray(ids) || !ids.length) {
+      return res.status(400).json({ error: 'service_id e ids[] obrigatórios' });
+    }
+    if (ids.length > 200) return res.status(400).json({ error: 'Máximo de 200 por vez' });
+
+    const { data, error } = await supabase.from('vol_schedules')
+      .delete().eq('service_id', service_id).in('id', ids).select('id');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ removidas: (data || []).length });
+  } catch (e) { res.status(500).json({ error: 'Erro ao desfazer' }); }
 });
 
 // Copy schedules from one service to another
@@ -3290,7 +4112,45 @@ router.post('/schedules/copy', async (req, res) => {
       .select('*').eq('service_id', from_service_id);
     if (!source || !source.length) return res.status(404).json({ error: 'Nenhuma escala encontrada no culto de origem' });
 
-    const rows = source.map(s => ({
+    // ⚠️ Copiar não pode furar a regra de disponibilidade. Este endpoint faz
+    // INSERT EM LOTE direto (não passa pelo POST /schedules), então a trava de
+    // lá não o alcança — e "copiar a escala do domingo passado" é justamente o
+    // caminho que traria de volta quem avisou que não pode NESTE domingo.
+    // Quem está indisponível no culto de DESTINO é pulado e DECLARADO.
+    const { data: svcDestino } = await supabase.from('vol_services')
+      .select('id, scheduled_at').eq('id', to_service_id).maybeSingle();
+    const diaDestino = diaBRT(svcDestino?.scheduled_at);
+    const idsOrigem = [...new Set(source.flatMap(s => [s.volunteer_id, s.planning_center_person_id]).filter(Boolean))];
+    let idxIndispon = new Map();
+    if (idsOrigem.length) {
+      const linhas = [];
+      for (let i = 0; i < idsOrigem.length; i += 200) {
+        const bloco = idsOrigem.slice(i, i + 200);
+        const [{ data: a }, { data: b }] = await Promise.all([
+          supabase.from('vol_availability')
+            .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id')
+            .in('volunteer_profile_id', bloco),
+          supabase.from('vol_availability')
+            .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id')
+            .in('planning_center_person_id', bloco),
+        ]);
+        linhas.push(...(a || []), ...(b || []));
+      }
+      idxIndispon = indexarPorPessoa(linhas);
+    }
+    const indispon = (s) => [s.volunteer_id, s.planning_center_person_id].filter(Boolean).some((id) =>
+      avaliarIndisponibilidade({ serviceId: to_service_id, dia: diaDestino }, idxIndispon.get(id) || []).indisponivel);
+
+    const pulados = source.filter(indispon).map(s => s.volunteer_name).filter(Boolean);
+    const copiaveis = source.filter(s => !indispon(s));
+    if (!copiaveis.length) {
+      return res.status(409).json({
+        error: 'Ninguém do culto de origem está disponível neste culto.',
+        codigo: 'todos_indisponiveis', pulados,
+      });
+    }
+
+    const rows = copiaveis.map(s => ({
       service_id: to_service_id,
       volunteer_id: s.volunteer_id,
       volunteer_name: s.volunteer_name,
@@ -3306,93 +4166,182 @@ router.post('/schedules/copy', async (req, res) => {
     const { data, error } = await supabase.from('vol_schedules')
       .insert(rows).select();
     if (error) return res.status(400).json({ error: error.message });
-    res.json({ copied: data.length, schedules: data });
+    res.json({ copied: data.length, schedules: data, pulados });
   } catch (e) { res.status(500).json({ error: 'Erro ao copiar escalas' }); }
 });
 
 // Auto-fill schedule from team roster with rotation
+/**
+ * Auto-preencher a escala do culto — rodízio, respeitando as VAGAS.
+ *
+ * ⚠️⚠️ REESCRITO EM 13/08/2026. A versão anterior fazia `available.map(...)` e
+ * inseria **todos os membros ativos da equipe**: numa equipe de 40 pessoas,
+ * escalava as 40. Ela ordenava por rodízio e depois ignorava a ordem, porque
+ * não havia teto nenhum — o número de vagas que a composição do culto pede
+ * (`vol_escala_culto_itens`) nunca era consultado.
+ *
+ * A regra agora é a mesma que o Planning Center Services escreve na tela do
+ * auto-schedule dele: preenche as posições necessárias filtrando quem tem
+ * conflito e escolhendo quem foi escalado há mais tempo. Com duas diferenças
+ * nossas, deliberadas:
+ *   · indisponível NUNCA entra (lei de 13/08 — lá o conflito é só um aviso);
+ *   · quem já serve em OUTRO culto do mesmo dia também não entra por
+ *     automação: a pessoa pode topar dobrar, mas quem pede isso é gente.
+ *
+ * A decisão de quem vai pra qual vaga é da régua PURA `utils/volRodizio`
+ * (testada no gate). Aqui só se lê o banco e se grava o resultado.
+ */
 router.post('/schedules/auto-fill', async (req, res) => {
   try {
-    const { service_id, team_id } = req.body;
-    if (!service_id || !team_id) return res.status(400).json({ error: 'service_id e team_id obrigatórios' });
+    const { service_id, team_id, team_ids } = req.body;
+    if (!service_id) return res.status(400).json({ error: 'service_id obrigatório' });
+    const filtroTeams = Array.isArray(team_ids) && team_ids.length
+      ? team_ids
+      : (team_id ? [team_id] : null);
 
-    // Get service date
     const { data: service } = await supabase.from('vol_services')
-      .select('scheduled_at').eq('id', service_id).single();
+      .select('id, scheduled_at').eq('id', service_id).single();
     if (!service) return res.status(404).json({ error: 'Culto não encontrado' });
+    const dia = diaBRT(service.scheduled_at);
 
-    const serviceDate = new Date(service.scheduled_at).toISOString().split('T')[0];
+    // 1 · As vagas. Mesma conta que a tela mostra (helper compartilhado).
+    const { itens } = await _coberturaDoCulto(service_id);
+    const vagas = itens
+      .filter(i => !filtroTeams || filtroTeams.includes(i.team_id))
+      .filter(i => i.faltam > 0);
 
-    // Get team members
-    const { data: members } = await supabase.from('vol_team_members')
-      .select('*, position:vol_positions(id, name)')
-      .eq('team_id', team_id).eq('is_active', true);
-    if (!members || !members.length) return res.status(404).json({ error: 'Nenhum membro ativo na equipe' });
+    if (!itens.length) {
+      // ⚠️ Sem composição definida não existe "número de vagas", e preencher
+      // "a equipe toda" é exatamente o defeito que esta reescrita corrige.
+      // Recusar dizendo o caminho é melhor que escalar 40 pessoas.
+      return res.status(409).json({
+        codigo: 'sem_composicao',
+        error: 'Este culto ainda não tem composição definida. Aplique um template de escala primeiro — é ele que diz quantas vagas cada área tem.',
+      });
+    }
+    if (!vagas.length) {
+      return res.json({ created: 0, schedule_ids: [], detalhe: [], sem_candidato: [], mensagem: 'Todas as vagas já estão preenchidas.' });
+    }
 
-    // Get team info
-    const { data: team } = await supabase.from('vol_teams')
-      .select('name').eq('id', team_id).single();
+    // 2 · Candidatos: membros ativos das equipes que têm vaga.
+    const teamIds = [...new Set(vagas.map(v => v.team_id).filter(Boolean))];
+    let membros = [];
+    for (let i = 0; i < teamIds.length; i += 50) {
+      const lote = teamIds.slice(i, i + 50);
+      let offset = 0;
+      for (;;) {
+        const { data, error } = await supabase.from('vol_team_members')
+          .select('id, team_id, position_id, volunteer_profile_id, planning_center_person_id, volunteer_name')
+          .in('team_id', lote).eq('is_active', true)
+          .order('id').range(offset, offset + 999);
+        if (error) return res.status(400).json({ error: error.message });
+        membros = membros.concat(data || []);
+        if (!data || data.length < 1000) break;
+        offset += 1000;
+      }
+    }
+    if (!membros.length) {
+      return res.status(409).json({ codigo: 'sem_membros', error: 'Nenhuma das áreas com vaga tem membros cadastrados.' });
+    }
 
-    // Check availability — exclude unavailable volunteers
-    const { data: unavailable } = await supabase.from('vol_availability')
-      .select('volunteer_profile_id, planning_center_person_id')
-      .lte('unavailable_from', serviceDate)
-      .gte('unavailable_to', serviceDate);
+    // 3 · Sinais por pessoa: indisponibilidade, já escalado aqui, conflito no dia.
+    const [{ data: unavail }, { data: escalasEste }, { data: outrosDia }] = await Promise.all([
+      supabase.from('vol_availability')
+        .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id'),
+      supabase.from('vol_schedules').select('volunteer_id, planning_center_person_id').eq('service_id', service_id),
+      supabase.from('vol_services').select('id')
+        .gte('scheduled_at', `${dia}T00:00:00-03:00`).lte('scheduled_at', `${dia}T23:59:59-03:00`)
+        .neq('id', service_id),
+    ]);
 
-    const unavailableIds = new Set(
-      (unavailable || []).map(u => u.volunteer_profile_id || u.planning_center_person_id)
-    );
+    const indisponIdx = indexarPorPessoa(unavail || []);
+    const ctxIndispon = { serviceId: service_id, dia };
+    const jaAqui = new Set();
+    for (const s of escalasEste || []) { if (s.volunteer_id) jaAqui.add(s.volunteer_id); if (s.planning_center_person_id) jaAqui.add(s.planning_center_person_id); }
 
-    // Check who's already scheduled for this service
-    const { data: existing } = await supabase.from('vol_schedules')
-      .select('volunteer_id, planning_center_person_id').eq('service_id', service_id);
-    const alreadyScheduled = new Set(
-      (existing || []).map(e => e.volunteer_id || e.planning_center_person_id)
-    );
+    const conflito = new Set();
+    const idsOutros = (outrosDia || []).map(o => o.id);
+    if (idsOutros.length) {
+      const { data: escOutros } = await supabase.from('vol_schedules')
+        .select('volunteer_id, planning_center_person_id').in('service_id', idsOutros);
+      for (const s of escOutros || []) { if (s.volunteer_id) conflito.add(s.volunteer_id); if (s.planning_center_person_id) conflito.add(s.planning_center_person_id); }
+    }
 
-    // Get recent schedule counts for rotation (last 4 weeks)
-    const fourWeeksAgo = new Date();
-    fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
-    const { data: recentSchedules } = await supabase.from('vol_schedules')
-      .select('volunteer_id, planning_center_person_id, service:vol_services!inner(scheduled_at)')
-      .eq('team_name', team?.name)
-      .gte('service.scheduled_at', fourWeeksAgo.toISOString());
+    // 4 · Rodízio.
+    const chavesAlvo = new Set();
+    for (const m of membros) { if (m.volunteer_profile_id) chavesAlvo.add(m.volunteer_profile_id); if (m.planning_center_person_id) chavesAlvo.add(m.planning_center_person_id); }
+    const rodizio = await _ultimaEscalaPorPessoa({ antesISO: service.scheduled_at, chavesAlvo });
 
-    const scheduleCount = new Map();
-    (recentSchedules || []).forEach(s => {
-      const key = s.volunteer_id || s.planning_center_person_id;
-      scheduleCount.set(key, (scheduleCount.get(key) || 0) + 1);
+    // 5 · Uma linha por PESSOA, com todos os vínculos dela (serve em N áreas).
+    const porPessoa = new Map();
+    for (const m of membros) {
+      const chave = m.volunteer_profile_id || m.planning_center_person_id;
+      if (!chave) continue;
+      // ⚠️ Conta de sistema fora — a mesma régua do pool de escalar. O print
+      // do Matheus mostrava ". f" e "ADM CBRio" entre os candidatos.
+      if (!ehPessoaEscalavel(m.volunteer_name)) continue;
+      if (!porPessoa.has(chave)) {
+        const eventos = [
+          ...(indisponIdx.get(m.volunteer_profile_id) || []),
+          ...(indisponIdx.get(m.planning_center_person_id) || []),
+        ];
+        const ultimas = [rodizio.mapa.get(m.volunteer_profile_id), rodizio.mapa.get(m.planning_center_person_id)].filter(Boolean);
+        const ultima = ultimas.length ? ultimas.sort().pop() : null;
+        porPessoa.set(chave, {
+          id: chave,
+          nome: m.volunteer_name,
+          volunteer_id: m.volunteer_profile_id || null,
+          planning_center_person_id: m.planning_center_person_id || null,
+          indisponivel: avaliarIndisponibilidade(ctxIndispon, eventos).indisponivel,
+          jaEscalado: jaAqui.has(m.volunteer_profile_id) || jaAqui.has(m.planning_center_person_id),
+          conflito: conflito.has(m.volunteer_profile_id) || conflito.has(m.planning_center_person_id),
+          semanas: semanasSemServir(ultima, service.scheduled_at),
+          equipes: [],
+        });
+      }
+      porPessoa.get(chave).equipes.push({ team_id: m.team_id, position_id: m.position_id || null });
+    }
+
+    const { atribuicoes, vagasSemCandidato } = distribuirVagas({
+      vagas, candidatos: [...porPessoa.values()],
     });
 
-    // Filter available members and sort by least recently scheduled (rotation)
-    const available = members.filter(m => {
-      const id = m.volunteer_profile_id || m.planning_center_person_id;
-      return !unavailableIds.has(id) && !alreadyScheduled.has(id);
-    }).sort((a, b) => {
-      const countA = scheduleCount.get(a.volunteer_profile_id || a.planning_center_person_id) || 0;
-      const countB = scheduleCount.get(b.volunteer_profile_id || b.planning_center_person_id) || 0;
-      return countA - countB;
-    });
+    if (!atribuicoes.length) {
+      return res.json({
+        created: 0, schedule_ids: [], detalhe: [],
+        sem_candidato: vagasSemCandidato.map(v => ({ equipe: v.team, funcao: v.position, restantes: v.restantes })),
+        mensagem: 'Ninguém disponível para as vagas em aberto.',
+      });
+    }
 
-    if (!available.length) return res.json({ created: 0, schedules: [], message: 'Todos os membros estão indisponiveis ou já escalados' });
-
-    const rows = available.map(m => ({
+    const rows = atribuicoes.map(({ vaga, candidato }) => ({
       service_id,
-      volunteer_id: m.volunteer_profile_id || null,
-      volunteer_name: m.volunteer_name,
-      team_id,
-      team_name: team?.name || null,
-      position_id: m.position_id || null,
-      position_name: m.position?.name || null,
-      planning_center_person_id: m.planning_center_person_id || null,
+      volunteer_id: candidato.volunteer_id,
+      volunteer_name: candidato.nome,
+      team_id: vaga.team_id,
+      team_name: vaga.team || null,
+      position_id: vaga.position_id || null,
+      position_name: vaga.position || null,
+      escala_culto_item_id: vaga.id,
+      planning_center_person_id: candidato.planning_center_person_id,
       confirmation_status: 'pending',
       source: 'auto_rotation',
     }));
 
-    const { data: created, error } = await supabase.from('vol_schedules')
-      .insert(rows).select();
+    const { data: created, error } = await supabase.from('vol_schedules').insert(rows).select();
     if (error) return res.status(400).json({ error: error.message });
-    res.json({ created: created.length, schedules: created });
+
+    res.json({
+      created: created.length,
+      // Os ids voltam pro botão "Desfazer" da tela — sem eles, quem apertou
+      // por engano teria que remover pessoa por pessoa.
+      schedule_ids: created.map(c => c.id),
+      detalhe: atribuicoes.map(({ vaga, candidato }) => ({
+        equipe: vaga.team, funcao: vaga.position, nome: candidato.nome,
+        rotulo: rotuloTempoSemServir(candidato.semanas),
+      })),
+      sem_candidato: vagasSemCandidato.map(v => ({ equipe: v.team, funcao: v.position, restantes: v.restantes })),
+    });
   } catch (e) { res.status(500).json({ error: 'Erro ao auto-preencher escala' }); }
 });
 
@@ -3427,14 +4376,25 @@ router.post('/teams-manage/import-from-schedules', async (req, res) => {
       if (s.team_name) s.team_name.split(',').forEach(t => { const trimmed = t.trim(); if (trimmed) teamNames.add(trimmed); });
     });
 
-    // 3. Upsert em vol_teams
-    const created = [];
-    for (const name of teamNames) {
-      const { data, error } = await supabase.from('vol_teams')
-        .upsert({ name }, { onConflict: 'name', ignoreDuplicates: true }).select().single();
-      if (data && !error) created.push(data);
-    }
-    res.json({ imported: created.length, teams: created });
+    // 3. ⚠️⚠️ NÃO cria mais equipe por nome do PCO.
+    // Era ISTO que produzia as 129 equipes: cada "team" do Planning Center
+    // (Vocal, Câmeras, Recepção — que aqui são FUNÇÕES) virava um `vol_teams`.
+    // Rodar este endpoint depois da migration 20260816120000 desfaria o
+    // remapeamento inteiro em um clique. Agora ele CONFERE e devolve o que
+    // ainda não tem destino no `vol_pco_mapa`, sem escrever nada.
+    const { data: mapa, error: mapaErr } = await supabase.from('vol_pco_mapa').select('pco_chave');
+    if (mapaErr) return res.status(400).json({ error: mapaErr.message });
+    const conhecidas = new Set((mapa || []).map(m => m.pco_chave));
+    const pendentes = [...teamNames].filter(n => !conhecidas.has(chavePco(n))).sort();
+
+    res.json({
+      conferidos: teamNames.size,
+      pendentes,
+      // Mantém a chave antiga pra não quebrar quem lê a resposta; agora ela
+      // significa "nada foi criado", que é a verdade.
+      imported: 0,
+      teams: [],
+    });
   } catch (e) { res.status(500).json({ error: 'Erro ao importar equipes' }); }
 });
 
@@ -3450,6 +4410,99 @@ router.post('/teams-manage/sync-members-from-schedules', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
+// De-para PCO → (equipe, função) · `vol_pco_mapa`
+//
+// ⚠️ O "team" do Planning Center é a nossa FUNÇÃO. Enquanto o sync criava uma
+// equipe por nome recebido, o banco chegou a 129 equipes (113 espelho bruto,
+// com "Cameras"/"Câmeras" e "Bazar 8:30"/"Bazar 10h" separadas) e as equipes
+// que a montagem de escala usa ficaram com 0 a 7 membros. Agora nome novo do
+// PCO NÃO vira equipe: vira PENDÊNCIA aqui, pra alguém dizer onde ele entra.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Nomes de time que chegam nas escalas e ainda não têm destino no mapa.
+router.get('/teams-manage/pendencias-pco', async (req, res) => {
+  try {
+    // Os nomes vivem em vol_schedules.team_name (texto, separado por vírgula).
+    // ⚠️ Paginado: vol_schedules passa de 5 mil linhas e o cap de 1000 do
+    // PostgREST esconderia justamente os nomes mais recentes — que são os que
+    // interessam numa lista de pendências.
+    const contagem = new Map();
+    let offset = 0;
+    for (;;) {
+      const { data, error } = await supabase.from('vol_schedules')
+        .select('team_name').not('team_name', 'is', null)
+        .order('id').range(offset, offset + 999);
+      if (error) return res.status(400).json({ error: error.message });
+      if (!data || !data.length) break;
+      for (const s of data) {
+        for (const parte of String(s.team_name).split(',')) {
+          const nome = parte.trim();
+          if (nome) contagem.set(nome, (contagem.get(nome) || 0) + 1);
+        }
+      }
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+
+    const { data: mapa, error: mapaErr } = await supabase.from('vol_pco_mapa').select('pco_chave');
+    if (mapaErr) return res.status(400).json({ error: mapaErr.message });
+    const conhecidas = new Set((mapa || []).map(m => m.pco_chave));
+
+    const pendentes = [...contagem.entries()]
+      .filter(([nome]) => !conhecidas.has(chavePco(nome)))
+      .map(([nome, escalas]) => ({ nome, escalas }))
+      .sort((a, b) => b.escalas - a.escalas);
+
+    res.json({ pendentes, total: pendentes.length });
+  } catch (e) {
+    console.error('[pendencias-pco]', e.message);
+    res.status(500).json({ error: 'Erro ao listar pendências do Planning Center' });
+  }
+});
+
+router.get('/teams-manage/mapa-pco', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('vol_pco_mapa')
+      .select('id, pco_nome, pco_chave, ignorar, observacao, team:vol_teams(id, name), position:vol_positions(id, name)')
+      .order('pco_nome');
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar o de-para do Planning Center' }); }
+});
+
+// Dá destino a um nome do PCO (ou marca pra ignorar).
+// ⚠️ `authorizeModule(...)` inline, NÃO a const `authEscalaEscrita`: ela é
+// declarada ~800 linhas abaixo e o argumento do `router.post` é avaliado no
+// carregamento do módulo — seria a armadilha de TDZ que já mordeu neste repo.
+router.post('/teams-manage/mapa-pco', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { pco_nome, team_id, position_id, ignorar, observacao } = req.body || {};
+    if (!pco_nome) return res.status(400).json({ error: 'pco_nome obrigatorio' });
+    // ⚠️ Ou tem destino, ou é explicitamente ignorado. Um mapeamento sem
+    // team_id e sem `ignorar` seria uma linha que promete resolver a pendência
+    // e não resolve: ela sairia da lista e o voluntário continuaria sem equipe.
+    if (!team_id && !ignorar) {
+      return res.status(400).json({ error: 'Escolha a equipe de destino ou marque para ignorar' });
+    }
+    const { data, error } = await supabase.from('vol_pco_mapa')
+      .upsert({
+        pco_nome,
+        pco_chave: chavePco(pco_nome),
+        team_id: ignorar ? null : team_id,
+        position_id: ignorar ? null : (position_id || null),
+        ignorar: !!ignorar,
+        observacao: observacao || null,
+      }, { onConflict: 'pco_chave' })
+      .select().single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data);
+  } catch (e) {
+    console.error('[mapa-pco]', e.message);
+    res.status(500).json({ error: 'Erro ao gravar o de-para' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
 // Inscrições (form Google) · funil recebidas vs alocadas
 // Le da tabela vol_inscricoes (linha por pessoa) para suportar cruzamentos.
 // ════════════════════════════════════════════════════════════════════════════
@@ -3458,18 +4511,31 @@ router.get('/inscricoes-summary', async (req, res) => {
     const ano = req.query.ano ? String(req.query.ano) : null;
     const area = req.query.area ? String(req.query.area).toLowerCase() : null;
 
-    let query = supabase
-      .from('vol_inscricoes')
-      .select('data_inscricao, status, area')
-      .is('deleted_at', null);
-    if (ano) {
-      query = query
-        .gte('data_inscricao', `${ano}-01-01`)
-        .lt('data_inscricao', `${Number(ano) + 1}-01-01`);
+    // ⚠️ PAGINADO: o PostgREST capa em 1000 linhas server-side e sem `ano` esta
+    // consulta varre a base inteira (829 vivas em 17/08/2026, subindo). Sem o
+    // laço, a partir da milésima inscrição os cards e o gráfico congelariam
+    // SEM erro — contador truncado mente em silêncio.
+    const data = [];
+    const PAGINA = 1000;
+    for (let inicio = 0; ; inicio += PAGINA) {
+      let query = supabase
+        .from('vol_inscricoes')
+        .select('data_inscricao, status, area')
+        .is('deleted_at', null)
+        .order('data_inscricao', { ascending: false })
+        .order('id', { ascending: false })
+        .range(inicio, inicio + PAGINA - 1);
+      if (ano) {
+        query = query
+          .gte('data_inscricao', `${ano}-01-01`)
+          .lt('data_inscricao', `${Number(ano) + 1}-01-01`);
+      }
+      if (area) query = query.eq('area', area);
+      const { data: pagina, error } = await query;
+      if (error) throw error;
+      data.push(...(pagina || []));
+      if (!pagina || pagina.length < PAGINA) break;
     }
-    if (area) query = query.eq('area', area);
-    const { data, error } = await query;
-    if (error) throw error;
 
     // Considera "alocada" status integrado ou enviado_ministerio (em processo final)
     const isAlocada = (s) => s === 'integrado';
@@ -3529,9 +4595,30 @@ router.get('/inscricoes', async (req, res) => {
     const area = req.query.area ? String(req.query.area).toLowerCase() : null;
     const status = req.query.status ? String(req.query.status) : null;
     const mes = req.query.mes ? String(req.query.mes) : null; // YYYY-MM
+    const de = req.query.de ? String(req.query.de) : null;    // YYYY-MM-DD (inclusivo)
+    const ate = req.query.ate ? String(req.query.ate) : null; // YYYY-MM-DD (inclusivo)
     const search = req.query.search ? String(req.query.search).trim() : null;
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     const offset = Number(req.query.offset) || 0;
+
+    // ⚠️ Formato NÃO basta: `2026-02-31` casa a regex, e `new Date` do Node faz
+    // ROLLOVER (vira 03/03) — o limite exclusivo do `ate` se abriria em silêncio
+    // e o relatório sairia com linhas de março sob o rótulo "até 31/fev". Do
+    // lado do `de` a string ia crua ao Postgres, que recusa com 22008 e o
+    // handler respondia 500 genérico. Aqui a data é conferida de verdade.
+    const diaValido = (s) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+      const [y, m, d] = s.split('-').map(Number);
+      if (y < 1900 || y > 2200 || m < 1 || m > 12 || d < 1 || d > 31) return false;
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+    };
+    if ((de && !diaValido(de)) || (ate && !diaValido(ate))) {
+      return res.status(400).json({ error: 'Período inválido — use datas reais no formato AAAA-MM-DD' });
+    }
+    if (de && ate && de > ate) {
+      return res.status(400).json({ error: 'Período inválido — a data inicial vem depois da final' });
+    }
 
     let q = supabase
       .from('vol_inscricoes')
@@ -3543,6 +4630,12 @@ router.get('/inscricoes', async (req, res) => {
       `, { count: 'exact' })
       .is('deleted_at', null)
       .order('data_inscricao', { ascending: false })
+      // ⚠️ Desempate obrigatório: `data_inscricao` NÃO é única (o import da
+      // planilha gravou centenas de linhas com o mesmo timestamp) e o
+      // relatório pagina em requisições SEPARADAS — sem tiebreaker, a
+      // ordenação dos empates pode mudar entre páginas e a mesma pessoa sai
+      // duas vezes na folha enquanto outra desaparece.
+      .order('id', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (ano) {
@@ -3552,6 +4645,16 @@ router.get('/inscricoes', async (req, res) => {
       const [y, m] = mes.split('-');
       const nextMonth = new Date(Number(y), Number(m), 1);
       q = q.gte('data_inscricao', `${mes}-01`).lt('data_inscricao', nextMonth.toISOString().slice(0, 10));
+    }
+    // Período por DIA com fronteira em BRT: `data_inscricao` é timestamptz e o
+    // dia de operação da igreja é America/Sao_Paulo — comparar contra a
+    // meia-noite UTC deslocaria a borda em 3h (inscrição de domingo 22h
+    // cairia na segunda). `ate` é inclusivo → limite = dia seguinte, exclusivo.
+    if (de) q = q.gte('data_inscricao', `${de}T00:00:00-03:00`);
+    if (ate) {
+      const fim = new Date(`${ate}T12:00:00Z`);
+      fim.setUTCDate(fim.getUTCDate() + 1);
+      q = q.lt('data_inscricao', `${fim.toISOString().slice(0, 10)}T00:00:00-03:00`);
     }
     if (area) q = q.eq('area', area);
     if (status) q = q.eq('status', status);
@@ -3661,12 +4764,15 @@ router.patch('/inscricoes/:id', async (req, res) => {
 
     const patch = { status, updated_at: new Date().toISOString() };
     if (status === 'enviado_ministerio') patch.enviado_lider_em = new Date().toISOString();
-    if (status === 'integrado') patch.integrado_em = new Date().toISOString().slice(0, 10);
+    // Dia no fuso da igreja: às 22h BRT o `toISOString()` já virou o dia
+    // seguinte, e o carimbo (agora exibido na lista e impresso no relatório)
+    // diria uma data em que a pessoa não foi integrada.
+    if (status === 'integrado') patch.integrado_em = diaIntegracaoBRT();
     if (feedback !== undefined) patch.feedback = feedback || null;
 
-    const { data, error } = await supabase.from('vol_inscricoes')
-      .update(patch).eq('id', req.params.id).select().single();
-    if (error) throw error;
+    // Sair de 'integrado' limpa o carimbo — invariante garantido pelo escritor
+    // único (UPDATE condicionado ao estado de origem, sem corrida).
+    const data = await atualizarStatusInscricao(req.params.id, patch);
 
     // Notifica a pessoa (se tiver login vinculado)
     (async () => {
@@ -3840,14 +4946,123 @@ router.post('/inscricoes/:id/desistiu', async (req, res) => {
     const nota = motivo ? `Desistiu de servir: ${motivo}` : 'Desistiu de servir.';
     const feedback = atual?.feedback ? `${atual.feedback}\n${nota}` : nota;
 
-    const { data, error } = await supabase.from('vol_inscricoes')
-      .update({ status: 'desistente', feedback, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id).select().single();
-    if (error) throw error;
+    // Mesmo escritor único do PATCH: "desistente" ao lado de "Integrado em
+    // 15/08" é contradição na ficha e no relatório impresso.
+    const data = await atualizarStatusInscricao(req.params.id, {
+      status: 'desistente', feedback, updated_at: new Date().toISOString(),
+    });
     res.json(data);
   } catch (e) {
     console.error('[inscricao desistiu]', e.message);
     res.status(500).json({ error: 'Erro ao registrar a desistência' });
+  }
+});
+
+// ── Excluir inscrição de servir (soft delete) ────────────────────────────────
+//
+// Pedido do Matheus (17/08/2026): "na aba de inscrições para o voluntariado,
+// onde as pessoas se inscrevem querendo servir, ali tem que ter opção de
+// excluir uma inscrição" — as de teste inflam o funil.
+//
+// ⚠️ Excluir ≠ "desistiu". Desistente é FATO da pessoa e continua no funil
+// (status). Excluída some do funil, dos KPIs de solicitações de servir e do
+// relatório — é pra linha que não deveria existir (teste, duplicata).
+//
+// ⚠️ Mesma régua de permissão do PATCH e do desistiu (admin OU nível 3 em
+// voluntariado/membresia): quem já pode mudar o status é quem opera essa fila.
+// Duas réguas na mesma tela divergiriam no primeiro ajuste de cargo.
+function podeOperarInscricaoVol(req) {
+  if (['admin', 'diretor'].includes(req.user.role)) return true;
+  const lvl = Math.max(getEffectiveLevel(req, 'voluntariado') || 0, getEffectiveLevel(req, 'membresia') || 0);
+  return lvl >= 3;
+}
+
+// DELETE /inscricoes/:id — exclui uma.
+router.delete('/inscricoes/:id', async (req, res) => {
+  try {
+    if (!podeOperarInscricaoVol(req)) {
+      return res.status(403).json({ error: 'Sem permissão para excluir a inscrição' });
+    }
+    const { data: atual } = await supabase.from('vol_inscricoes')
+      .select('id').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada' });
+
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'vol_inscricoes', p_row_id: req.params.id, p_deleted_by: req.user?.id ?? null,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[inscricao excluir]', e.message);
+    // ⚠️ O motivo vai junto: foi um 500 genérico que escondeu por meses que a
+    // tabela tinha caído da whitelist do soft-delete.
+    res.status(500).json({ error: 'Erro ao excluir a inscrição', detalhe: e.message });
+  }
+});
+
+// POST /inscricoes/excluir-lote — exclui as marcadas na lista.
+// ⚠️ O payload diz QUAIS, nunca SE PODE: o servidor relê as linhas vivas e
+// reavalia (régua pura compartilhada com o módulo de Inscrições).
+router.post('/inscricoes/excluir-lote', async (req, res) => {
+  try {
+    if (!podeOperarInscricaoVol(req)) {
+      return res.status(403).json({ error: 'Sem permissão para excluir inscrições' });
+    }
+    const { ids, ignorados, acimaDoTeto } = normalizarIdsExclusao(req.body?.ids);
+    if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos uma inscrição' });
+
+    const { data: vivas, error: eVivas } = await supabase.from('vol_inscricoes')
+      .select('id, nome_completo, status').is('deleted_at', null).in('id', ids);
+    if (eVivas) throw eVivas;
+
+    // ⚠️ Nada é BLOQUEADO aqui (diferente do lote de eventos, onde pagamento
+    // barra): inscrição de servir não move dinheiro. A integrada é DECLARADA na
+    // resposta porque apagá-la mexe no KPI de solicitações alocadas — quem
+    // decide é quem está olhando, não o servidor.
+    const plano = separarExclusaoLoteInsc(ids, vivas || [], []);
+    const integradas = (vivas || [])
+      .filter((v) => plano.excluir.includes(v.id) && ['integrado', 'enviado_ministerio'].includes(v.status))
+      .map((v) => ({ id: v.id, nome: v.nome_completo || null, status: v.status }));
+
+    // Grava o efeito DURANTE (lei de 04/08) — morte no meio deixa apagado o que
+    // já saiu, e a resposta diz exatamente o que aconteceu.
+    const excluidas = [];
+    const falhas = [];
+    const motivos = new Set();
+    const BLOCO = 8;
+    for (let i = 0; i < plano.excluir.length; i += BLOCO) {
+      const fatia = plano.excluir.slice(i, i + BLOCO);
+      const r = await Promise.all(fatia.map(async (id) => {
+        const { error } = await supabase.rpc('app_soft_delete', {
+          p_table_name: 'vol_inscricoes', p_row_id: id, p_deleted_by: req.user?.id ?? null,
+        });
+        return { id, erro: error?.message || null };
+      }));
+      for (const item of r) {
+        (item.erro ? falhas : excluidas).push(item.id);
+        if (item.erro) motivos.add(item.erro);
+      }
+      if (r.some((x) => x.erro)) console.error('[inscricao excluir-lote falhas]', r.filter((x) => x.erro));
+    }
+
+    res.json({
+      ok: true,
+      excluidas,
+      integradas,
+      nao_encontradas: plano.naoEncontradas,
+      falhas,
+      falhas_motivo: [...motivos],
+      ignorados,
+      acima_do_teto: acimaDoTeto,
+      resumo: resumoDoLoteInsc({
+        excluidas: excluidas.length,
+        naoEncontradas: plano.naoEncontradas.length,
+        falhas: falhas.length,
+      }),
+    });
+  } catch (e) {
+    console.error('[inscricao excluir-lote]', e.message);
+    res.status(500).json({ error: 'Erro ao excluir as inscrições', detalhe: e.message });
   }
 });
 
@@ -4251,11 +5466,14 @@ async function carregarTemplate(id) {
   const { data: tpl } = await supabase.from('vol_escala_templates')
     .select('*').eq('id', id).is('deleted_at', null).maybeSingle();
   if (!tpl) return null;
-  const [{ data: itens }, { data: tipos }] = await Promise.all([
+  const [{ data: itens }, { data: tipos }, { data: liderancas }] = await Promise.all([
     supabase.from('vol_escala_template_itens')
-      .select('*, team:vol_teams(id,name), position:vol_positions(id,name)')
+      .select('*, team:vol_teams(id,name,area), position:vol_positions(id,name)')
       .eq('template_id', id).order('sort_order'),
     supabase.from('vol_escala_template_tipos').select('service_type_id').eq('template_id', id),
+    supabase.from('vol_escala_template_liderancas')
+      .select('team_id, responsavel_profile_id, responsavel:profiles(id,name,email)')
+      .eq('template_id', id),
   ]);
   const itemIds = (itens || []).map(i => i.id);
   let pessoasPorItem = {};
@@ -4269,11 +5487,12 @@ async function carregarTemplate(id) {
     ...tpl,
     service_type_ids: (tipos || []).map(t => t.service_type_id),
     itens: (itens || []).map(i => ({ ...i, pessoas: pessoasPorItem[i.id] || [] })),
+    liderancas: liderancas || [],
   };
 }
 
 // Substitui itens (+pessoas) e tipos de um template (usado no create/update).
-async function gravarItensETipos(templateId, itens, serviceTypeIds) {
+async function gravarItensETipos(templateId, itens, serviceTypeIds, liderancas) {
   if (Array.isArray(serviceTypeIds)) {
     await supabase.from('vol_escala_template_tipos').delete().eq('template_id', templateId);
     const rows = serviceTypeIds.filter(Boolean).map(st => ({ template_id: templateId, service_type_id: st }));
@@ -4300,6 +5519,18 @@ async function gravarItensETipos(templateId, itens, serviceTypeIds) {
         .filter(Boolean)
         .map(vid => ({ item_id: novo.id, volunteer_id: vid }));
       if (pRows.length) await supabase.from('vol_escala_template_item_pessoas').insert(pRows);
+    }
+  }
+  // Liderança pertence à subárea (equipe) dentro deste template. Nunca à
+  // função: repetir o líder em cada posição permitiria divergências.
+  if (Array.isArray(liderancas)) {
+    await supabase.from('vol_escala_template_liderancas').delete().eq('template_id', templateId);
+    const rows = liderancas
+      .filter(l => l?.team_id && l?.responsavel_profile_id)
+      .map(l => ({ template_id: templateId, team_id: l.team_id, responsavel_profile_id: l.responsavel_profile_id }));
+    if (rows.length) {
+      const { error } = await supabase.from('vol_escala_template_liderancas').insert(rows);
+      if (error) throw new Error(error.message);
     }
   }
 }
@@ -4332,13 +5563,13 @@ router.get('/schedule-templates/:id', async (req, res) => {
 // Cria template (cabeçalho + itens + pessoas + tipos de culto).
 router.post('/schedule-templates', authEscalaEscrita, async (req, res) => {
   try {
-    const { nome, descricao, ativo, sort_order, service_type_ids, itens } = req.body || {};
+    const { nome, descricao, ativo, sort_order, service_type_ids, itens, liderancas } = req.body || {};
     if (!nome || !nome.trim()) return res.status(400).json({ error: 'nome obrigatório' });
     const { data: tpl, error } = await supabase.from('vol_escala_templates')
       .insert({ nome: nome.trim(), descricao: descricao || null, ativo: ativo !== false, sort_order: sort_order || 0 })
       .select('id').single();
     if (error) return res.status(400).json({ error: error.message });
-    await gravarItensETipos(tpl.id, itens, service_type_ids);
+    await gravarItensETipos(tpl.id, itens, service_type_ids, liderancas);
     res.json(await carregarTemplate(tpl.id));
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao criar template' }); }
 });
@@ -4346,7 +5577,7 @@ router.post('/schedule-templates', authEscalaEscrita, async (req, res) => {
 // Atualiza template (cabeçalho e, se enviados, substitui itens/tipos).
 router.put('/schedule-templates/:id', authEscalaEscrita, async (req, res) => {
   try {
-    const { nome, descricao, ativo, sort_order, service_type_ids, itens } = req.body || {};
+    const { nome, descricao, ativo, sort_order, service_type_ids, itens, liderancas } = req.body || {};
     const patch = {};
     if (nome !== undefined) patch.nome = String(nome).trim();
     if (descricao !== undefined) patch.descricao = descricao || null;
@@ -4357,7 +5588,7 @@ router.put('/schedule-templates/:id', authEscalaEscrita, async (req, res) => {
         .update(patch).eq('id', req.params.id).is('deleted_at', null);
       if (error) return res.status(400).json({ error: error.message });
     }
-    await gravarItensETipos(req.params.id, itens, service_type_ids);
+    await gravarItensETipos(req.params.id, itens, service_type_ids, liderancas);
     res.json(await carregarTemplate(req.params.id));
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao atualizar template' }); }
 });
@@ -4392,8 +5623,25 @@ router.post('/schedule-templates/:id/apply', authEscalaEscrita, async (req, res)
     if (!service_id) return res.status(400).json({ error: 'service_id obrigatório' });
     const tpl = await carregarTemplate(req.params.id);
     if (!tpl) return res.status(404).json({ error: 'Template não encontrado' });
-    const { data: svc } = await supabase.from('vol_services').select('id').eq('id', service_id).maybeSingle();
+    const { data: svc } = await supabase.from('vol_services').select('id, scheduled_at').eq('id', service_id).maybeSingle();
     if (!svc) return res.status(404).json({ error: 'Culto não encontrado' });
+
+    // Ausências das pessoas-padrão deste template, lidas UMA vez (uma consulta
+    // por pessoa dentro do laço faria dezenas de round-trips por clique).
+    const diaServico = diaBRT(svc.scheduled_at);
+    const idsPadrao = [...new Set(tpl.itens.flatMap((i) => (i.pessoas || []).map((p) => p.volunteer_id)).filter(Boolean))];
+    let indisponPorPessoa = new Map();
+    if (idsPadrao.length) {
+      const linhas = [];
+      for (let i = 0; i < idsPadrao.length; i += 200) {
+        const { data } = await supabase.from('vol_availability')
+          .select('service_id, unavailable_from, unavailable_to, reason, volunteer_profile_id, planning_center_person_id')
+          .in('volunteer_profile_id', idsPadrao.slice(i, i + 200));
+        linhas.push(...(data || []));
+      }
+      indisponPorPessoa = indexarPorPessoa(linhas);
+    }
+    const pulados = [];
 
     // Escalas já existentes no culto: pra não re-escalar a mesma pessoa e pra
     // achar o próximo slot_seq livre por função (o índice pc_unique inclui slot_seq).
@@ -4445,6 +5693,20 @@ router.post('/schedule-templates/:id/apply', authEscalaEscrita, async (req, res)
         const chave = `${p.volunteer_id}:${it.team_id}`;
         if (escaladoChave.has(chave)) { usadas += 1; continue; }
         const nome = p.volunteer?.full_name || null;
+        // ⚠️ Pessoa-padrão do template NÃO passa por cima de ausência declarada.
+        // O template diz "normalmente é a Ana nesta função"; a Ana dizendo "não
+        // posso nesse domingo" é mais recente e mais específico. Antes, aplicar
+        // o template escalava a Ana em silêncio, e a coordenação só descobria no
+        // domingo. A vaga fica ABERTA (não consome `usadas`) e o pulo é
+        // DECLARADO na resposta — some da tela seria trocar um erro por outro.
+        const bloqueio = avaliarIndisponibilidade(
+          { serviceId: service_id, dia: diaServico },
+          indisponPorPessoa.get(p.volunteer_id) || [],
+        );
+        if (bloqueio.indisponivel) {
+          pulados.push({ volunteer_id: p.volunteer_id, nome, equipe: it.team?.name || null, motivo: textoIndisponibilidade(bloqueio) });
+          continue;
+        }
         const { error: sErr } = await supabase.from('vol_schedules').insert({
           service_id,
           volunteer_id: p.volunteer_id,
@@ -4461,46 +5723,444 @@ router.post('/schedule-templates/:id/apply', authEscalaEscrita, async (req, res)
         if (!sErr) { escaladoChave.add(chave); usadas += 1; preenchidas += 1; }
       }
     }
-    res.json({ ok: true, itens: itensCriados, vagas: vagasTotais, preenchidas });
+    res.json({ ok: true, itens: itensCriados, vagas: vagasTotais, preenchidas, pulados });
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao aplicar template' }); }
 });
 
-// Cobertura da escala de um culto: alvo (vol_escala_culto_itens) × preenchidas
-// (vol_schedules com voluntário). Agrupado por equipe.
+// Contexto de montagem de escala: tudo que a tela "Montar Escala" precisa numa
+// única chamada — pool de voluntários (mesmo shape do /volunteers-pool) anotado
+// com (a) indisponibilidade pro DIA do culto (por culto `vol_availability.
+// service_id` E por período que cobre a data — os DOIS modelos coexistem na
+// tabela, ver comentário em /services-availability), (b) se a pessoa já está
+// escalada NESTE culto e (c) os outros cultos do MESMO DIA em que ela já serve
+// (sobreposição — quem monta escala precisa ver se o voluntário não vai ficar
+// dobrado no domingo de manhã). Evita 3 chamadas no front e centraliza a lógica
+// de "quem pode ser escalado".
+// ── Rodízio · quando cada pessoa serviu pela última vez ─────────────────────
+//
+// O Services mostra isso ao lado de cada candidato (-7w, -5w, -4w…) e ORDENA a
+// lista por esse número. É o que faz uma lista de centenas de nomes ser útil
+// sem digitar nada — e é o que faltava aqui: a nossa era alfabética, então o
+// topo era sempre a mesma gente e o rodízio ficava no olho do supervisor.
+//
+// ⚠️ A varredura é do culto mais RECENTE pro mais antigo, em blocos, com teto.
+// Não é a base inteira: `vol_schedules` de um ano passa de 10 mil linhas e o
+// cap de 1000 do PostgREST obrigaria a dezenas de round-trips numa tela que a
+// pessoa abre o tempo todo. Quem não aparece na janela varrida fica com `null`
+// — que a régua trata como "há mais tempo que todos" e a tela mostra como "sem
+// escala recente", NUNCA como "nunca serviu".
+//
+// ⚠️ A janela EFETIVA volta na resposta (`rodizio.desde`), calculada do culto
+// mais antigo que realmente foi varrido. Prometer "12 meses" e varrer 3 seria
+// a tela afirmando o que não foi medido.
+const RODIZIO_CULTOS_POR_BLOCO = 10;
+const RODIZIO_MAX_BLOCOS = 12;
+
+async function _ultimaEscalaPorPessoa({ antesISO, chavesAlvo }) {
+  const vazio = { mapa: new Map(), desde: null, completo: false };
+  const { data: cultos, error } = await supabase.from('vol_services')
+    .select('id, scheduled_at')
+    .lt('scheduled_at', antesISO)
+    .order('scheduled_at', { ascending: false })
+    .limit(RODIZIO_CULTOS_POR_BLOCO * RODIZIO_MAX_BLOCOS);
+  if (error) { console.error('[voluntariado] rodízio não apurado:', error.message); return vazio; }
+
+  const lista = cultos || [];
+  const mapa = new Map();
+  const alvo = chavesAlvo instanceof Set && chavesAlvo.size ? chavesAlvo : null;
+  let ultimoVarrido = null;
+  let completo = false;
+
+  for (let i = 0; i < lista.length; i += RODIZIO_CULTOS_POR_BLOCO) {
+    const bloco = lista.slice(i, i + RODIZIO_CULTOS_POR_BLOCO);
+    const quando = Object.fromEntries(bloco.map(c => [c.id, c.scheduled_at]));
+    // Paginado: um domingo grande sozinho já passa de 100 escalas, e 10 cultos
+    // podem passar do cap de 1000 — truncar aqui faria a pessoa aparecer como
+    // "sem escala recente" logo depois de servir.
+    let offset = 0;
+    for (;;) {
+      const { data, error: sErr } = await supabase.from('vol_schedules')
+        .select('volunteer_id, planning_center_person_id, service_id')
+        .in('service_id', bloco.map(c => c.id))
+        .order('id').range(offset, offset + 999);
+      if (sErr) { console.error('[voluntariado] rodízio não apurado:', sErr.message); return { mapa, desde: ultimoVarrido, completo: false }; }
+      for (const s of data || []) {
+        const dt = quando[s.service_id];
+        if (!dt) continue;
+        for (const k of [s.volunteer_id, s.planning_center_person_id]) {
+          if (!k) continue;
+          const atual = mapa.get(k);
+          if (!atual || dt > atual) mapa.set(k, dt);
+        }
+      }
+      if (!data || data.length < 1000) break;
+      offset += 1000;
+    }
+    ultimoVarrido = bloco[bloco.length - 1].scheduled_at;
+    // Achou todo mundo que interessa? Não precisa cavar mais fundo.
+    if (alvo && [...alvo].every(k => mapa.has(k))) { completo = true; break; }
+  }
+
+  return { mapa, desde: ultimoVarrido, completo };
+}
+
+router.get('/services/:serviceId/contexto-montagem', async (req, res) => {
+  try {
+    const sid = req.params.serviceId;
+    const { data: service } = await supabase
+      .from('vol_services').select('id, name, service_type_name, scheduled_at').eq('id', sid).single();
+    if (!service) return res.status(404).json({ error: 'Culto não encontrado' });
+
+    // Dia local BRT do culto (scheduled_at vem com offset -03:00 → UTC == BRT).
+    const d = new Date(service.scheduled_at);
+    const y = d.getUTCFullYear();
+    const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(d.getUTCDate()).padStart(2, '0');
+    const dia = `${y}-${mm}-${dd}`;
+
+    // Pool de voluntários paginado (cap 1000 do PostgREST · 1 a 1 com o pool).
+    let all = []; let offset = 0;
+    while (true) {
+      let q = supabase
+        .from('vol_profiles')
+        .select(`
+          id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado, membresia_id,
+          membro:mem_membros(foto_url),
+          team_members:vol_team_members(
+            id, team_id, position_id, is_active,
+            team:vol_teams(id, name, color),
+            position:vol_positions(id, name)
+          )
+        `)
+        // ⚠️ `arquivado = false` — o `/volunteers-pool` já filtrava e esta query
+        // (nascida no PR do pool anotado) não, então a tela de montar escala
+        // oferecia voluntário ARQUIVADO pra escalar. Arquivar tem que significar
+        // "sumiu de todos os lugares onde se escolhe gente".
+        .eq('arquivado', false)
+        .order('full_name').range(offset, offset + 999);
+      const { data, error } = await q;
+      if (error) return res.status(400).json({ error: error.message });
+      if (!data || !data.length) break;
+      all = all.concat(data);
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+    // ⚠️ Conta de SISTEMA e nome-não-pessoa fora da lista de escalar. O print do
+    // Matheus (13/08) mostrava ". f" e "ADM CBRio" entre os 860 candidatos.
+    // Espelha `ehNomePlaceholder` do matcher: nenhum fluxo de PESSOAS deve
+    // exibir isso — muito menos um em que se escolhe quem serve no culto.
+    all = all.filter((v) => ehPessoaEscalavel(v.full_name));
+
+    // Foto do CANDIDATO no painel de escalar (27/08). Vem do embed, sem consulta
+    // extra. ⚠️ Só foto de verdade — ver `utils/fotoVoluntario`.
+    for (const v of all) v.foto_url = fotoDoPerfil(v);
+
+    // Indisponibilidade: por culto específico + por período que cobre a data.
+    const chave = (pid, pcid) => `${pid || ''}::${pcid || ''}`;
+    const [{ data: unavCulto }, { data: unavPeriodo }] = await Promise.all([
+      supabase.from('vol_availability')
+        .select('volunteer_profile_id, planning_center_person_id, reason')
+        .eq('service_id', sid),
+      supabase.from('vol_availability')
+        .select('volunteer_profile_id, planning_center_person_id, reason, unavailable_from, unavailable_to')
+        .is('service_id', null)
+        .lte('unavailable_from', dia)
+        .gte('unavailable_to', dia),
+    ]);
+    const unavCultoMap = new Map();
+    (unavCulto || []).forEach(u => unavCultoMap.set(chave(u.volunteer_profile_id, u.planning_center_person_id), u.reason));
+    const unavPeriodoMap = new Map();
+    (unavPeriodo || []).forEach(u => {
+      const k = chave(u.volunteer_profile_id, u.planning_center_person_id);
+      if (!unavPeriodoMap.has(k)) unavPeriodoMap.set(k, u);
+    });
+
+    // Outros cultos do MESMO DIA (exclui o atual) e suas escalas.
+    const [{ data: outrosCultosDia }, { data: escalasEste }] = await Promise.all([
+      supabase.from('vol_services').select('id, name, scheduled_at')
+        .gte('scheduled_at', `${dia}T00:00:00-03:00`)
+        .lte('scheduled_at', `${dia}T23:59:59-03:00`)
+        .neq('id', sid).order('scheduled_at'),
+      supabase.from('vol_schedules')
+        .select('volunteer_id, planning_center_person_id').eq('service_id', sid),
+    ]);
+    const escaladoEste = new Set((escalasEste || []).map(s => chave(s.volunteer_id, s.planning_center_person_id)));
+    const servicoPorId = Object.fromEntries((outrosCultosDia || []).map(o => [o.id, o]));
+    const escaladoOutrosMap = new Map();
+    if (outrosCultosDia && outrosCultosDia.length) {
+      const { data: escalasOutros } = await supabase.from('vol_schedules')
+        .select('volunteer_id, planning_center_person_id, service_id')
+        .in('service_id', outrosCultosDia.map(o => o.id));
+      (escalasOutros || []).forEach(s => {
+        const k = chave(s.volunteer_id, s.planning_center_person_id);
+        const o = servicoPorId[s.service_id];
+        if (!escaladoOutrosMap.has(k)) escaladoOutrosMap.set(k, []);
+        escaladoOutrosMap.get(k).push({ service_id: s.service_id, name: o?.name || 'Outro culto', scheduled_at: o?.scheduled_at || null });
+      });
+    }
+
+    // Rodízio: última escala de cada pessoa ANTES deste culto.
+    const chavesAlvo = new Set();
+    for (const v of all || []) { if (v.id) chavesAlvo.add(v.id); if (v.planning_center_id) chavesAlvo.add(v.planning_center_id); }
+    const rodizio = await _ultimaEscalaPorPessoa({ antesISO: service.scheduled_at, chavesAlvo });
+
+    const pool = (all || []).map(v => {
+      const k = chave(v.id, v.planning_center_id);
+      const uPeriodo = unavPeriodoMap.get(k);
+      const uCulto = unavCultoMap.get(k);
+      const motivo = uPeriodo?.reason || uCulto || null;
+      // A última escala pode estar gravada pelo id do perfil OU pelo id do
+      // Planning Center — a mesma pessoa aparece pelos dois lados na base.
+      const ultimas = [rodizio.mapa.get(v.id), rodizio.mapa.get(v.planning_center_id)].filter(Boolean);
+      const ultima = ultimas.length ? ultimas.sort().pop() : null;
+      const semanas = semanasSemServir(ultima, service.scheduled_at);
+      return {
+        ...v,
+        indisponivel: !!(uPeriodo || uCulto),
+        indisponivelMotivo: motivo,
+        indisponivelOrigem: uPeriodo ? 'periodo' : (uCulto ? 'culto' : null),
+        jaEscalado: escaladoEste.has(k),
+        escaladoEm: escaladoOutrosMap.get(k) || [],
+        ultimaEscala: ultima,
+        semanasSemServir: semanas,
+        rotuloRodizio: rotuloTempoSemServir(semanas),
+      };
+    });
+
+    res.json({
+      service, pool, outrosCultosDia: outrosCultosDia || [],
+      // Janela EFETIVAMENTE varrida — a tela usa isto pra explicar o "sem
+      // escala recente" em vez de deixar o supervisor adivinhar o alcance.
+      rodizio: { desde: rodizio.desde, completo: rodizio.completo },
+    });
+  } catch (e) { res.status(500).json({ error: 'Erro ao montar contexto da escala' }); }
+});
+
+/**
+ * Cobertura da escala de um culto: alvo (`vol_escala_culto_itens`) ×
+ * preenchidas (`vol_schedules` com voluntário), por item.
+ *
+ * ⚠️ Extraída em 13/08/2026 porque o auto-preencher passou a decidir sobre as
+ * MESMAS vagas que a tela mostra. Duas cópias desta conta divergiriam, e a
+ * divergência apareceria como "a tela diz que falta 1 e o automático não
+ * preenche nada".
+ */
+async function _coberturaDoCulto(sid) {
+  const [{ data: alvo, error: aErr }, { data: sched, error: sErr }] = await Promise.all([
+    supabase.from('vol_escala_culto_itens')
+      .select('*, team:vol_teams(id,name), position:vol_positions(id,name)')
+      .eq('service_id', sid).is('deleted_at', null).order('sort_order'),
+    supabase.from('vol_schedules')
+      .select('id, volunteer_id, volunteer_name, team_id, position_id, confirmation_status, escala_culto_item_id')
+      .eq('service_id', sid),
+  ]);
+  if (aErr || sErr) throw new Error((aErr || sErr).message);
+
+  // Foto de quem está escalado (27/08) — os cards de área do builder mostram
+  // avatar. Anexa ANTES da cobertura pra a foto viajar junto da pessoa em
+  // `itens[].pessoas` e em `sobrando`, sem o front precisar cruzar duas listas.
+  // ⚠️ Best-effort: `mapaDeFotos` não lança; sem foto a tela cai nas iniciais.
+  const fotos = await mapaDeFotos(supabase, (sched || []).map(s => s.volunteer_id));
+  const comFoto = (sched || []).map(s => ({
+    ...s,
+    foto_url: s.volunteer_id ? (fotos[s.volunteer_id] || null) : null,
+  }));
+
+  // ⚠️ A conta em si é da régua PURA `utils/volCobertura` (no gate), a MESMA
+  // que a visão matriz usa para N cultos. Reimplementar aqui faria a grade e a
+  // tela do culto discordarem sobre o que ainda falta.
+  const { itens, sobrando, resumo } = montarCobertura(alvo || [], comFoto);
+  return { itens, sobrando, escalas: comFoto, resumo };
+}
+
+/**
+ * MATRIZ da escala — várias semanas de uma vez.
+ *
+ * É a visão "Matrix" do Planning Center Services (vista ao vivo em 13/08/2026,
+ * a pedido do Matheus): linhas = área × função, colunas = datas. O supervisor
+ * abre o mês da área dele e enxerga os buracos em fila, em vez de abrir culto
+ * por culto pra descobrir onde falta gente.
+ *
+ * ⚠️ A conta de cobertura é a MESMA da tela de um culto (`montarCobertura`, em
+ * `utils/volCobertura`, no gate). Se a grade tivesse régua própria, ela e a
+ * tela do culto discordariam sobre o que ainda falta — e quem monta escala
+ * confiaria na que estivesse mais à mão.
+ *
+ * Parâmetros: `service_type_id` (opcional), `desde` (YYYY-MM-DD, default hoje
+ * em BRT) e `semanas` (1–8, default 4).
+ */
+// ⚠️ Teto de colunas. Subiu de 24 para 40 em 14/08/2026 ("deixe o que for
+// melhor para o usuário"): 4 semanas SEM filtro de tipo rendem ~28 cultos, e
+// com 24 a visão padrão já vinha truncada — o usuário pedia 4 semanas e recebia
+// 3 e meia, com um aviso. 40 cobre a visão padrão inteira; 8 semanas sem filtro
+// ainda estoura, e aí o aviso diz o caminho (filtrar por tipo de culto), que é
+// o recorte que o supervisor quer de qualquer forma.
+const MATRIZ_MAX_CULTOS = 40;
+
+router.get('/escala-matriz', async (req, res) => {
+  try {
+    const semanas = Math.min(8, Math.max(1, parseInt(req.query.semanas, 10) || 4));
+    // ⚠️ O "hoje" é o dia da IGREJA (BRT). Em UTC, das 21h em diante o dia já
+    // virou e a grade começaria no dia seguinte, escondendo o culto de hoje.
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.desde || ''))
+      ? req.query.desde
+      : diaBRT(new Date());
+    const fim = new Date(new Date(`${desde}T12:00:00-03:00`).getTime() + semanas * 7 * 86400000);
+
+    let q = supabase.from('vol_services')
+      .select('id, name, scheduled_at, service_type_id, service_type_name')
+      .gte('scheduled_at', `${desde}T00:00:00-03:00`)
+      .lte('scheduled_at', fim.toISOString())
+      .order('scheduled_at')
+      .limit(MATRIZ_MAX_CULTOS + 1);
+    if (req.query.service_type_id) q = q.eq('service_type_id', req.query.service_type_id);
+    // A tela de montagem pode pedir a matriz de uma seleção explícita (por
+    // exemplo, "Quarta, 19/08 · Templo"). Filtrar no servidor evita que a
+    // grade carregue outros cultos e depois esconda colunas só no navegador.
+    const serviceIds = String(req.query.service_ids || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id));
+    if (serviceIds.length) q = q.in('id', serviceIds.slice(0, MATRIZ_MAX_CULTOS));
+    const { data: cultosBrutos, error: cErr } = await q;
+    if (cErr) return res.status(400).json({ error: cErr.message });
+
+    // ⚠️ Teto DECLARADO: uma grade de 40 colunas não se lê, e cortar em
+    // silêncio faria o supervisor concluir que não há culto marcado depois.
+    const cultos = (cultosBrutos || []).slice(0, MATRIZ_MAX_CULTOS);
+    const truncado = (cultosBrutos || []).length > MATRIZ_MAX_CULTOS;
+    if (!cultos.length) {
+      return res.json({ cultos: [], linhas: [], resumo: { alvo: 0, preenchidas: 0, faltam: 0 }, truncado: false });
+    }
+
+    const ids = cultos.map(c => c.id);
+    const emLotes = async (tabela, select) => {
+      let todos = [];
+      for (let i = 0; i < ids.length; i += 20) {
+        const lote = ids.slice(i, i + 20);
+        let offset = 0;
+        for (;;) {
+          let qq = supabase.from(tabela).select(select).in('service_id', lote).order('id').range(offset, offset + 999);
+          if (tabela === 'vol_escala_culto_itens') qq = qq.is('deleted_at', null);
+          const { data, error } = await qq;
+          if (error) throw new Error(error.message);
+          todos = todos.concat(data || []);
+          if (!data || data.length < 1000) break;
+          offset += 1000;
+        }
+      }
+      return todos;
+    };
+
+    const [itens, escalas] = await Promise.all([
+      emLotes('vol_escala_culto_itens', 'id, service_id, team_id, position_id, quantidade, fixo, sort_order, team:vol_teams(id,name,area,color), position:vol_positions(id,name)'),
+      emLotes('vol_schedules', 'id, service_id, volunteer_id, volunteer_name, team_id, position_id, confirmation_status, escala_culto_item_id, planning_center_person_id'),
+    ]);
+
+    const porCulto = new Map(ids.map(id => [id, { itens: [], escalas: [] }]));
+    for (const i of itens) porCulto.get(i.service_id)?.itens.push(i);
+    for (const s of escalas) porCulto.get(s.service_id)?.escalas.push(s);
+
+    // Uma LINHA por (área, função) — a identidade atravessa os cultos, mas o
+    // item da composição é de cada culto (cada um tem os seus).
+    const linhas = new Map();
+    const chaveLinha = (t, p) => `${t || ''}::${p || ''}`;
+    const garanteLinha = (team_id, team, area, cor, position_id, position, ordem) => {
+      const k = chaveLinha(team_id, position_id);
+      if (!linhas.has(k)) {
+        linhas.set(k, {
+          chave: k, team_id, team: team || 'Sem equipe', area: area || 'Sem área', cor: cor || null,
+          position_id: position_id || null, position: position || null,
+          ordem: ordem ?? 999, celulas: {},
+        });
+      }
+      const l = linhas.get(k);
+      if (ordem != null && ordem < l.ordem) l.ordem = ordem;
+      if (!l.position && position) l.position = position;
+      if (!l.cor && cor) l.cor = cor;
+      return l;
+    };
+
+    let alvoTotal = 0, preenchTotal = 0, faltamTotal = 0;
+    // Foto de quem está escalado (pedido do Matheus em 27/08: "na funcionalidade
+    // de montar escala tbm deve ter a foto dos voluntários").
+    // ⚠️ UMA consulta em lote pra toda a grade — por pessoa seriam centenas numa
+    // tela que se abre o tempo todo. Quem não tem foto DE VERDADE fica `null` e
+    // a tela desenha as iniciais; ver a régua em `utils/fotoVoluntario`.
+    const fotoPorVol = await mapaDeFotos(supabase, escalas.map(e => e.volunteer_id));
+    const pessoaDaEscala = s => ({
+      id: s.id, nome: s.volunteer_name, status: s.confirmation_status || 'pending',
+      volunteer_id: s.volunteer_id, planning_center_person_id: s.planning_center_person_id,
+      foto_url: s.volunteer_id ? (fotoPorVol[s.volunteer_id] || null) : null,
+    });
+
+    for (const culto of cultos) {
+      const { itens: it, escalas: es } = porCulto.get(culto.id);
+      const cob = montarCobertura(it, es);
+      alvoTotal += cob.resumo.alvo;
+      preenchTotal += cob.resumo.preenchidas;
+      faltamTotal += cob.resumo.faltam;
+
+      for (const item of cob.itens) {
+        const bruto = it.find(x => x.id === item.id);
+        const l = garanteLinha(item.team_id, item.team, bruto?.team?.area, bruto?.team?.color, item.position_id, item.position, bruto?.sort_order);
+        l.celulas[culto.id] = {
+          item_id: item.id, alvo: item.alvo, faltam: item.faltam,
+          pessoas: item.pessoas.map(pessoaDaEscala),
+        };
+      }
+
+      // ⚠️ Quem está escalado fora da composição entra na grade com alvo 0 —
+      // uma pessoa que não aparece na matriz é uma pessoa que a coordenação
+      // escala em duplicidade.
+      for (const s of cob.sobrando) {
+        const l = garanteLinha(s.team_id, null, null, null, s.position_id, null, 998);
+        const c = (l.celulas[culto.id] ||= { item_id: null, alvo: 0, faltam: 0, pessoas: [] });
+        c.pessoas.push(pessoaDaEscala(s));
+      }
+    }
+
+    // Nomes de equipe/função que só apareceram pelo lado das escalas soltas.
+    const semNome = [...linhas.values()].filter(l => !l.team || l.team === 'Sem equipe');
+    if (semNome.length) {
+      const teamIds = [...new Set(semNome.map(l => l.team_id).filter(Boolean))];
+      if (teamIds.length) {
+        const { data: ts } = await supabase.from('vol_teams').select('id, name, area, color').in('id', teamIds);
+        const mapa = Object.fromEntries((ts || []).map(t => [t.id, t]));
+        for (const l of semNome) {
+          const t = mapa[l.team_id];
+          if (t) { l.team = t.name; l.area = l.area === 'Sem área' ? (t.area || 'Sem área') : l.area; l.cor = l.cor || t.color; }
+        }
+      }
+    }
+
+    const ordenadas = [...linhas.values()].sort((a, b) =>
+      a.area.localeCompare(b.area, 'pt-BR') ||
+      a.team.localeCompare(b.team, 'pt-BR') ||
+      a.ordem - b.ordem ||
+      String(a.position || '').localeCompare(String(b.position || ''), 'pt-BR'));
+
+    res.json({
+      cultos: cultos.map(c => ({
+        ...c,
+        status: contarStatus(porCulto.get(c.id).escalas),
+      })),
+      linhas: ordenadas,
+      resumo: { alvo: alvoTotal, preenchidas: preenchTotal, faltam: faltamTotal },
+      truncado,
+      janela: { desde, semanas },
+    });
+  } catch (e) {
+    console.error('[voluntariado] matriz:', e.message);
+    res.status(500).json({ error: 'Erro ao montar a matriz da escala' });
+  }
+});
+
 router.get('/services/:serviceId/escala-cobertura', async (req, res) => {
   try {
     const sid = req.params.serviceId;
-    const [{ data: alvo }, { data: sched }] = await Promise.all([
-      supabase.from('vol_escala_culto_itens')
-        .select('*, team:vol_teams(id,name), position:vol_positions(id,name)')
-        .eq('service_id', sid).is('deleted_at', null).order('sort_order'),
-      supabase.from('vol_schedules')
-        .select('id, volunteer_id, volunteer_name, team_id, position_id, confirmation_status, escala_culto_item_id')
-        .eq('service_id', sid),
-    ]);
-    const preenchidasPorItem = {};
-    const chave = (t, p) => `${t || ''}:${p || ''}`;
-    for (const s of sched || []) {
-      if (!s.volunteer_id) continue;
-      const k = s.escala_culto_item_id ? `item:${s.escala_culto_item_id}` : chave(s.team_id, s.position_id);
-      (preenchidasPorItem[k] ||= []).push(s);
-    }
-    const itens = (alvo || []).map(a => {
-      const pessoas = preenchidasPorItem[`item:${a.id}`] || preenchidasPorItem[chave(a.team_id, a.position_id)] || [];
-      return {
-        id: a.id, team_id: a.team_id, team: a.team?.name, position_id: a.position_id,
-        position: a.position?.name, fixo: a.fixo, alvo: a.quantidade,
-        preenchidas: pessoas.length, faltam: Math.max(0, a.quantidade - pessoas.length),
-        pessoas,
-      };
-    });
-    const totalAlvo = itens.reduce((s, i) => s + i.alvo, 0);
-    const totalPreench = itens.reduce((s, i) => s + i.preenchidas, 0);
-    res.json({
-      service_id: sid, itens,
-      resumo: { alvo: totalAlvo, preenchidas: totalPreench, faltam: Math.max(0, totalAlvo - totalPreench),
-        cobertura_pct: totalAlvo ? Math.round((totalPreench / totalAlvo) * 100) : null },
-    });
+    const { itens, resumo } = await _coberturaDoCulto(sid);
+    res.json({ service_id: sid, itens, resumo });
   } catch (e) { res.status(500).json({ error: 'Erro ao calcular cobertura da escala' }); }
 });
 

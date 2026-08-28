@@ -16,6 +16,7 @@ const MODULOS = [
   { id: 'eventos', label: 'Eventos', desc: 'Novo evento criado, tarefas atrasadas', color: '#6366f1' },
   { id: 'eventos-externos', label: 'Eventos Externos', desc: 'Novas inscrições no formulário público de eventos externos', color: '#6366f1' },
   { id: 'projetos', label: 'Projetos', desc: 'Marcos atrasados, tarefas pendentes', color: '#ec4899' },
+  { id: 'planejamento-anual', label: 'Planejamento Anual', desc: 'Propostas enviadas, quórum completo, decisões do Pastor, devolutivas', color: '#00B39D' },
   { id: 'kpis', label: 'KPIs e Indicadores', desc: 'Metas atingidas, registros de culto e batismo', color: '#f97316' },
   { id: 'cuidados', label: 'Cuidados', desc: 'Novos acompanhamentos, alertas Jornada 180 e capelania', color: '#ef476f' },
   { id: 'next', label: 'NEXT', desc: 'Novas inscrições, indicações de batismo/servir/grupo/dízimo', color: '#06b6d4' },
@@ -35,6 +36,7 @@ const MODULOS = [
 
 export default function NotificacaoRegras() {
   const [regras, setRegras] = useState([]);
+  const [addTipo, setAddTipo] = useState('');
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [addModulo, setAddModulo] = useState('');
@@ -62,8 +64,8 @@ export default function NotificacaoRegras() {
   async function addRegra() {
     if (!addModulo || !addProfile) return;
     try {
-      await notificacoes.regras.create({ modulo: addModulo, profile_id: addProfile });
-      setAddModulo(''); setAddProfile('');
+      await notificacoes.regras.create({ modulo: addModulo, profile_id: addProfile, tipo: addTipo.trim() || null });
+      setAddModulo(''); setAddProfile(''); setAddTipo('');
       load();
     } catch (e) { alert(e.message); }
   }
@@ -80,7 +82,7 @@ export default function NotificacaoRegras() {
     <div style={{ maxWidth: 1600, margin: '0 auto', padding: '0 24px' }}>
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Regras de Notificação</div>
-        <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>Configure quem recebe notificações de cada módulo. Se nenhuma regra for definida, todos admin/diretor recebem.</div>
+        <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>Configure quem recebe notificações de cada módulo. Sem regra, todos admin/diretor recebem. O campo \u0022tipo\u0022 é opcional: preenchido, a regra vale só para aquele aviso — e vence a regra geral do módulo.</div>
       </div>
 
       {/* Adicionar regra */}
@@ -95,6 +97,15 @@ export default function NotificacaoRegras() {
           <option value="">Selecione usuário...</option>
           {profiles.map(p => <option key={p.id} value={p.id}>{p.name} ({p.role}){p.email ? ` — ${p.email}` : ''}</option>)}
         </select>
+        <input
+          value={addTipo}
+          onChange={e => setAddTipo(e.target.value)}
+          placeholder="tipo (opcional)"
+          title={'Deixe vazio para valer em TODOS os avisos do módulo (é o padrão).\n'
+            + 'Preencha com um tipo (ex.: webhook_pagamento_recusado) para uma regra só daquele aviso — '
+            + 'útil quando o módulo mistura alerta técnico com aviso operacional.'}
+          style={{ padding: '8px 12px', borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, background: 'var(--cbrio-input-bg)', color: C.text, width: 210 }}
+        />
         <Button onClick={addRegra} disabled={!addModulo || !addProfile}>+ Adicionar Regra</Button>
       </div>
 
@@ -117,6 +128,11 @@ export default function NotificacaoRegras() {
                     <div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{r.profiles?.name || 'Usuário'}</div>
                       <div style={{ fontSize: 11, color: C.text3 }}>{r.profiles?.email || ''}</div>
+                      {/* ⚠️ Sem isto a regra de tipo fica INVISÍVEL: a tela diria
+                          "recebe tudo do módulo" pra quem só recebe um aviso. */}
+                      <div style={{ fontSize: 11, marginTop: 2, color: r.tipo ? '#00B39D' : C.text3, fontWeight: r.tipo ? 700 : 400 }}>
+                        {r.tipo ? `só o aviso: ${r.tipo}` : 'todos os avisos do módulo'}
+                      </div>
                     </div>
                     <Button variant="ghost" size="xs" className="text-red-500" onClick={() => removeRegra(r.id)}>Remover</Button>
                   </div>

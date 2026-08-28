@@ -67,6 +67,11 @@ agent-worker/
 | `SCHEDULER_ENABLED` | nao | `1` pra ligar cron · `0` desliga |
 | `FINANCEIRO_MODEL` | nao | Default `claude-sonnet-4-6` |
 | `AGENT_MAX_TURNS` | nao | Default 20 |
+| `CRON_SECRET` | **para o relatorio** | Mesmo segredo do Vercel · autentica o POST de envio do relatorio no backend |
+| `APP_BASE_URL` | **para o relatorio** | Ex. `https://cbrio.org` · sem ela o relatorio e montado mas NAO enviado (a rodada fica `failed`) |
+| `KPI_RELATORIO_EMAIL` | nao | Destinatario · default `gestao@cbrio.com.br` |
+| `KPI_RELATORIO_MODEL` | nao | Default `claude-sonnet-4-6` |
+| `KPI_RELATORIO_MAX_TURNS` | nao | Default 60 (o relatorio le muito mais que um watcher) |
 
 No Vercel, configure:
 - `AGENT_WORKER_URL` · ex: `https://cbrio-agent-worker.up.railway.app`

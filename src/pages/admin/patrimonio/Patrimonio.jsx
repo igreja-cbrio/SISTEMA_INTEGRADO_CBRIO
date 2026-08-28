@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Tag, ClipboardList, Trash2, Archive, Pencil, MapPin, ScanLine } from 'lucide-react';
+import { Tag, ClipboardList, Trash2, Archive, Pencil, MapPin, ScanLine, ChevronDown } from 'lucide-react';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, LabelList,
@@ -32,6 +33,16 @@ const STATUS_BEM = {
   extraviado: { c: C.red, bg: C.redBg, label: 'Extraviado' },
 };
 
+// Doação recebida (pedido do usuário 2026-07-31, via conselho deliberativo):
+// origem de aquisição é fato permanente do CADASTRO do bem, não uma
+// movimentação — "comprado" (default) segue com os campos de NF/valor de
+// aquisição já existentes; "doado" pede quem doou.
+const DOADOR_TIPO_LABELS = {
+  pessoa_fisica: 'Pessoa física',
+  empresa: 'Empresa',
+  outro_ministerio: 'Outro ministério',
+};
+
 // "mmm/aa" em vez de "aa/mm" (pedido do usuário 2026-07-31: o formato
 // anterior lia como se fosse dia/mês, no padrão brasileiro — confuso, e sem
 // jeito de distinguir de cara "13/07" (ano) de um dia 13 de julho).
@@ -54,22 +65,41 @@ const ORDENACOES_BENS = [
   { key: 'valor_asc', label: 'Menor valor' },
   { key: 'categoria_asc', label: 'Categoria A-Z' },
 ];
+// "Editar em massa"/"Renomear em massa" só fazem sentido pra um LOTE de itens
+// idênticos (mesmo produto) — nunca pra uma seleção heterogênea, onde mexer
+// em categoria/localização/nome de todos de uma vez seria arriscado (pedido
+// do usuário 2026-08-10). Campos que legitimamente VARIAM dentro de um lote
+// (nº de série, valor, data de aquisição, NF, origem/doador, garantia,
+// responsável) ficam de fora da comparação — são exatamente os que o cadastro
+// em lote já deixa variar por unidade.
+const CAMPOS_MESMO_LOTE = ['nome', 'descricao', 'categoria_id', 'localizacao_id', 'marca', 'modelo', 'status', 'observacoes'];
+function mesmoLote(itens) {
+  if (itens.length < 2) return false;
+  const base = itens[0];
+  return itens.every(it => CAMPOS_MESMO_LOTE.every(campo => (it[campo] ?? null) === (base[campo] ?? null)));
+}
+
 function ordenarBens(lista, chave) {
   if (chave === 'padrao') return lista;
   const arr = [...lista];
-  const porValor = (a, b) => {
+  // desc só inverte a comparação NUMÉRICA — "sem valor" fica no fim nas 2
+  // direções (negar o comparador inteiro, como era antes, também invertia
+  // essa regra e jogava os sem-valor pro topo do "Maior valor" · achado do
+  // usuário 2026-08-10).
+  const porValor = (a, b, desc) => {
     const va = a.valor_aquisicao, vb = b.valor_aquisicao;
     if (va == null && vb == null) return 0;
     if (va == null) return 1; // sem valor sempre no fim, nas 2 direções
     if (vb == null) return -1;
-    return Number(va) - Number(vb);
+    const diff = Number(va) - Number(vb);
+    return desc ? -diff : diff;
   };
   switch (chave) {
     case 'recentes': return arr.sort((a, b) => (b.data_aquisicao || '').localeCompare(a.data_aquisicao || ''));
     case 'nome_asc': return arr.sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
     case 'nome_desc': return arr.sort((a, b) => (b.nome || '').localeCompare(a.nome || '', 'pt-BR'));
-    case 'valor_asc': return arr.sort(porValor);
-    case 'valor_desc': return arr.sort((a, b) => -porValor(a, b));
+    case 'valor_asc': return arr.sort((a, b) => porValor(a, b, false));
+    case 'valor_desc': return arr.sort((a, b) => porValor(a, b, true));
     case 'categoria_asc': return arr.sort((a, b) => (a.pat_categorias?.nome || 'zzz').localeCompare(b.pat_categorias?.nome || 'zzz', 'pt-BR'));
     default: return lista;
   }
@@ -173,7 +203,10 @@ const fmtCodigo = (c) => {
 // exibidas na tabela; não pagina (exporta tudo que passou no filtro, não só
 // a página visível de 25 — o backend também não pagina mais em 1000, então
 // isso cobre o parque inteiro que bater no filtro).
-const BENS_EXPORT_HEADERS = ['Código', 'Nome', 'Categoria', 'Localização', 'Marca/Modelo', 'Valor de Aquisição', 'Status'];
+const BENS_EXPORT_HEADERS = ['Número', 'Nome', 'Categoria', 'Localização', 'Marca/Modelo', 'Valor de Aquisição', '% Depreciado', 'Valor Atual Estimado', 'Status', 'Origem', 'Doador'];
+function origemParaExportar(b) {
+  return b.origem_aquisicao === 'doado' ? 'Doado' : 'Comprado';
+}
 function bensParaExportar(lista) {
   return lista.map((b) => [
     fmtCodigo(b.codigo_barras),
@@ -182,7 +215,11 @@ function bensParaExportar(lista) {
     b.pat_localizacoes?.nome || '',
     [b.marca, b.modelo].filter(Boolean).join(' '),
     b.valor_aquisicao != null ? fmtMoney(b.valor_aquisicao) : '',
+    b.depreciacao ? `${b.depreciacao.percentual_depreciado}%` : '',
+    b.depreciacao ? fmtMoney(b.depreciacao.valor_atual_estimado) : '',
     STATUS_BEM[b.status]?.label || b.status || '',
+    origemParaExportar(b),
+    b.origem_aquisicao === 'doado' ? (b.doador || '') : '',
   ]);
 }
 function exportarBensCSV(lista) {
@@ -194,7 +231,11 @@ function exportarBensCSV(lista) {
     b.pat_localizacoes?.nome || '',
     [b.marca, b.modelo].filter(Boolean).join(' '),
     b.valor_aquisicao ?? '',
+    b.depreciacao ? b.depreciacao.percentual_depreciado : '',
+    b.depreciacao ? b.depreciacao.valor_atual_estimado : '',
     STATUS_BEM[b.status]?.label || b.status || '',
+    origemParaExportar(b),
+    b.origem_aquisicao === 'doado' ? (b.doador || '') : '',
   ]);
   exportCSV(BENS_EXPORT_HEADERS, rows, 'patrimonio_bens');
 }
@@ -249,6 +290,8 @@ export default function Patrimonio() {
   const [filtroLoc, setFiltroLoc] = useState('');
   const [busca, setBusca] = useState('');
   const [modalBem, setModalBem] = useState(null);
+  const [modalLote, setModalLote] = useState(false);
+  const [loteSaving, setLoteSaving] = useState(false);
   const [modalDetail, setModalDetail] = useState(null);
   const [modalMov, setModalMov] = useState(null);
   const [newCat, setNewCat] = useState('');
@@ -310,9 +353,30 @@ export default function Patrimonio() {
   async function saveBem(data) {
     try { if (data.id) await patrimonio.bens.update(data.id, data); else await patrimonio.bens.create(data); setModalBem(null); loadBens(); loadDash(); } catch (e) { setError(e.message); }
   }
-  async function baixarBem(id) {
-    if (!confirm('Dar baixa neste bem? Ele sai de "ativo" (fica marcado como baixado), mas o cadastro e o histórico de movimentações são preservados — dá pra reativar depois editando o status.')) return;
-    try { await patrimonio.bens.remove(id); loadBens(); loadDash(); setModalDetail(null); } catch (e) { setError(e.message); }
+  // Cadastro em massa (pedido do usuário 2026-07-31): mesmo tipo/categoria,
+  // distribuído por N localizações — cada unidade recebe um número de
+  // patrimônio sequencial (ver backend pat_proximo_codigo_barras).
+  async function saveLote(data) {
+    try {
+      setLoteSaving(true);
+      const r = await patrimonio.bens.criarLote(data);
+      setModalLote(false); loadBens(); loadDash();
+      alert(`${r.criados} bens cadastrados — números ${fmtCodigo(r.codigo_inicial)} a ${fmtCodigo(r.codigo_final)}.`);
+    } catch (e) { setError(e.message); } finally { setLoteSaving(false); }
+  }
+  // Dar baixa pede o motivo por escrito (pedido do usuário 2026-08-07: o
+  // confirm() nativo não deixava registrar por quê — igual à movimentação,
+  // que já tem esse campo) — o motivo vai pra pat_movimentacoes via backend.
+  const [modalBaixaId, setModalBaixaId] = useState(null);
+  const [baixaBusy, setBaixaBusy] = useState(false);
+  function baixarBem(id) { setModalBaixaId(id); }
+  async function confirmarBaixa(motivo) {
+    if (!modalBaixaId) return;
+    setBaixaBusy(true);
+    try {
+      await patrimonio.bens.remove(modalBaixaId, { motivo });
+      setModalBaixaId(null); loadBens(); loadDash(); setModalDetail(null);
+    } catch (e) { setError(e.message); } finally { setBaixaBusy(false); }
   }
   async function openDetail(id) { try { setModalDetail(await patrimonio.bens.get(id)); } catch (e) { setError(e.message); } }
   async function openDetailPorCodigo(codigo) {
@@ -374,12 +438,16 @@ export default function Patrimonio() {
           filtroStatus={filtroStatus} setFiltroStatus={setFiltroStatus}
           filtroCat={filtroCat} setFiltroCat={setFiltroCat} filtroLoc={filtroLoc} setFiltroLoc={setFiltroLoc}
           categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} responsaveis={responsaveis}
-          onNew={() => setModalBem({})} onDetail={openDetail} onDetailPorCodigo={openDetailPorCodigo}
+          onNew={() => setModalBem({})} onNewLote={() => setModalLote(true)} onDetail={openDetail} onDetailPorCodigo={openDetailPorCodigo}
           onBaixar={baixarBem} isDiretor={podeEditar}
           onReload={() => { loadBens(); loadDash(); loadIndicadores(); }}
         />
       )}
-      {tab === 2 && <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={podeEditar} podeExcluir={podeExcluir} />}
+      {tab === 2 && (
+        <CatLocTab categorias={categorias} localizacoes={localizacoes} locOptions={locOptions} newCat={newCat} setNewCat={setNewCat} addCat={addCat} removeCat={removeCat} updateCat={updateCat} addLoc={addLoc} removeLoc={removeLoc} updateLoc={updateLoc} isDiretor={podeEditar} podeExcluir={podeExcluir}
+          onIrParaBens={(localizacaoId) => { setFiltroStatus(''); setFiltroCat(''); setFiltroLoc(localizacaoId); setTab(1); }}
+        />
+      )}
       {tab === 3 && (
         <RevisaoTab ciclos={revisaoCiclos} indicadores={revisaoIndic}
           onNovoCiclo={() => setModalNovoCiclo(true)} onAbrirConvocacao={abrirConvocacao}
@@ -397,10 +465,15 @@ export default function Patrimonio() {
       )}
 
       <BemFormModal open={!!modalBem} data={modalBem} categorias={categorias} locOptions={locOptions} responsaveis={responsaveis} onClose={() => setModalBem(null)} onSave={saveBem} />
+      <BemLoteModal open={modalLote} categorias={categorias} locOptions={locOptions} busy={loteSaving} onClose={() => setModalLote(false)} onSave={saveLote} />
       <BemDetailModal open={!!modalDetail} data={modalDetail} onClose={() => setModalDetail(null)} onEdit={(b) => { setModalDetail(null); setModalBem(b); }} onBaixar={baixarBem} onMov={(bemId) => setModalMov({ bem_id: bemId })} onDispensarAlerta={dispensarAlerta} isDiretor={podeEditar} />
       <MovFormModal open={!!modalMov} data={modalMov} locOptions={locOptions} onClose={() => setModalMov(null)} onSave={saveMov} />
       <NovoCicloModal open={modalNovoCiclo} responsaveis={responsaveis} onClose={() => setModalNovoCiclo(false)} onSave={criarCiclo} />
       <ConvocacaoModal open={!!modalConvocacao} data={modalConvocacao} locOptions={locOptions} onClose={() => setModalConvocacao(null)} onIniciar={iniciarConvocacao} onAtualizarItem={atualizarItemRevisao} onConcluir={concluirConvocacao} isDiretor={isCoordenadorRevisao} />
+      <BaixaMotivoModal open={!!modalBaixaId} title="Dar baixa"
+        message='Dar baixa neste bem? Ele sai de "ativo" (fica marcado como baixado), mas o cadastro e o histórico de movimentações são preservados — dá pra reativar depois editando o status.'
+        busy={baixaBusy} onCancel={() => setModalBaixaId(null)} onConfirm={confirmarBaixa}
+      />
     </div>
   );
 }
@@ -451,6 +524,33 @@ function PatStatCard({ label, value, bg, svg, onClick }) {
 }
 
 function DashboardTab({ dash, indicadores, depreciacaoIndic, atividadeRecente, localizacoes, onNavigate, onNavigateFiltro, onAbrirBem }) {
+  // Agrupa pelo mesmo pai_id que o usuário já organizou em Categorias/
+  // Localizações (ex.: "CBKids" pai de "Sala 9/10/11") — em vez de 1 barra por
+  // sala final, soma tudo no nome do ancestral raiz. Localização sem
+  // correspondência na árvore (ou "Sem localização") mantém o próprio nome.
+  //
+  // ⚠️ TEM QUE FICAR ANTES do `if (!dash) return` abaixo. Este useMemo vivia
+  // depois do early return: enquanto o dashboard carregava o componente saía
+  // com ZERO hooks e, quando o dado chegava, passava a chamar UM — que é o
+  // "Minified React error #310: Rendered more hooks than during the previous
+  // render". Mesmo defeito que derrubou a tela do voluntariado em 16/08/2026.
+  // Ele só depende de `localizacoes`, nunca de `dash`, então subir é seguro.
+  const raizPorNomeLocalizacao = useMemo(() => {
+    const lista = localizacoes || [];
+    const byId = new Map(lista.map(l => [l.id, l]));
+    const raizes = new Map();
+    for (const l of lista) {
+      let cur = l;
+      const visitados = new Set([cur.id]);
+      while (cur.pai_id && byId.has(cur.pai_id) && !visitados.has(cur.pai_id)) {
+        cur = byId.get(cur.pai_id);
+        visitados.add(cur.id);
+      }
+      raizes.set(l.nome, cur.nome);
+    }
+    return raizes;
+  }, [localizacoes]);
+
   if (!dash) return <div style={styles.empty}>Carregando dashboard...</div>;
   // Tab 1 = Bens; filtra por status quando aplicável
   const kpis = [
@@ -483,25 +583,6 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, atividadeRecente, l
   const barrasCategoria = Object.entries(dash.porCategoria || {})
     .map(([name, value]) => ({ name, value, sem: SEM_LABELS.has(name) }))
     .sort((a, b) => b.value - a.value);
-  // Agrupa pelo mesmo pai_id que o usuário já organizou em Categorias/
-  // Localizações (ex.: "CBKids" pai de "Sala 9/10/11") — em vez de 1 barra por
-  // sala final, soma tudo no nome do ancestral raiz. Localização sem
-  // correspondência na árvore (ou "Sem localização") mantém o próprio nome.
-  const raizPorNomeLocalizacao = useMemo(() => {
-    const lista = localizacoes || [];
-    const byId = new Map(lista.map(l => [l.id, l]));
-    const raizes = new Map();
-    for (const l of lista) {
-      let cur = l;
-      const visitados = new Set([cur.id]);
-      while (cur.pai_id && byId.has(cur.pai_id) && !visitados.has(cur.pai_id)) {
-        cur = byId.get(cur.pai_id);
-        visitados.add(cur.id);
-      }
-      raizes.set(l.nome, cur.nome);
-    }
-    return raizes;
-  }, [localizacoes]);
   const barrasLocalizacao = Object.entries(
     Object.entries(dash.porLocalizacao || {}).reduce((acc, [name, value]) => {
       const raiz = raizPorNomeLocalizacao.get(name) || name;
@@ -765,7 +846,7 @@ function DashboardTab({ dash, indicadores, depreciacaoIndic, atividadeRecente, l
   );
 }
 
-function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, locOptions, responsaveis, onNew, onDetail, onDetailPorCodigo, onBaixar, isDiretor, onReload }) {
+function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus, filtroCat, setFiltroCat, filtroLoc, setFiltroLoc, categorias, locOptions, responsaveis, onNew, onNewLote, onDetail, onDetailPorCodigo, onBaixar, isDiretor, onReload }) {
   const [ordenarAberto, setOrdenarAberto] = useState(false);
   const [ordenacao, setOrdenacao] = useState('padrao');
   const bensOrdenados = useMemo(() => ordenarBens(bens, ordenacao), [bens, ordenacao]);
@@ -786,6 +867,8 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
 
   const idsFiltrados = useMemo(() => bens.map(b => b.id), [bens]);
   const todosPaginaMarcados = bensPag.length > 0 && bensPag.every(b => selecionados.has(b.id));
+  const bensSelecionados = useMemo(() => bens.filter(b => selecionados.has(b.id)), [bens, selecionados]);
+  const mesmoLoteSelecionado = useMemo(() => mesmoLote(bensSelecionados), [bensSelecionados]);
 
   function toggleSelecionado(id) {
     setSelecionados(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -846,9 +929,28 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         <Button variant="outline" onClick={() => setOrdenarAberto(o => !o)}>
           Ordenar {ordenacao !== 'padrao' ? `· ${ORDENACOES_BENS.find(o => o.key === ordenacao)?.label}` : ''} {ordenarAberto ? '▴' : '▾'}
         </Button>
-        <Button variant="outline" onClick={() => exportarBensCSV(bensOrdenados)}>Exportar CSV</Button>
-        <Button variant="outline" onClick={() => exportarBensPDF(bensOrdenados)}>Exportar PDF</Button>
-        {isDiretor && <div style={{ marginLeft: 'auto' }}><Button onClick={onNew}>+ Novo Bem</Button></div>}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">Exportar <ChevronDown style={{ width: 14, height: 14, marginLeft: 4 }} /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => exportarBensCSV(bensOrdenados)}>Exportar CSV</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => exportarBensPDF(bensOrdenados)}>Exportar PDF</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {isDiretor && (
+          <div style={{ marginLeft: 'auto' }}>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button>+ Novo Bem <ChevronDown style={{ width: 14, height: 14, marginLeft: 4 }} /></Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={onNew}>Cadastro individual</DropdownMenuItem>
+                <DropdownMenuItem onClick={onNewLote}>Cadastro em massa (lote)</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
       </div>
 
       {/* Ordenação por "pills" (pedido do usuário 2026-07-31, inspirado num
@@ -886,19 +988,29 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
       )}
 
       {/* Barra de ação em massa (pedido do usuário 2026-07-31) — some quando
-          não há seleção; some por completo pra quem não edita (isDiretor). */}
+          não há seleção; some por completo pra quem não edita (isDiretor).
+          "Mover em massa" pede >1 item (mover 1 é o fluxo individual do bem).
+          "Editar em massa" (que por dentro também cobre "renomear") só
+          aparece pra um LOTE de itens idênticos — ver mesmoLote() (pedido do
+          usuário 2026-08-10: heterogêneo não deveria oferecer editar/renomear
+          em massa, só mover/dar baixa, que fazem sentido pra qualquer seleção). */}
       {isDiretor && selecionados.size > 0 && (
         <div style={{ ...styles.card, marginBottom: 16, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: C.primaryBg, border: `1px solid ${C.primary}` }}>
           <span style={{ fontSize: 13, fontWeight: 700 }}>{selecionados.size} selecionado{selecionados.size > 1 ? 's' : ''}</span>
           {selecionados.size < idsFiltrados.length && (
             <Button variant="ghost" size="xs" onClick={selecionarTodosFiltrados}>Selecionar todos os {idsFiltrados.length} filtrados</Button>
           )}
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <Button variant="outline" size="xs" onClick={() => setModalBulkEditar(true)}>Editar em massa</Button>
-            <Button variant="outline" size="xs" onClick={() => setModalBulkMov(true)}>Mover em massa</Button>
-            <Button variant="outline" size="xs" onClick={() => setModalBulkBaixa(true)}>Dar baixa em massa</Button>
-            <Button variant="ghost" size="xs" onClick={limparSelecao}>Limpar</Button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {mesmoLoteSelecionado && <Button variant="outline" size="xs" style={{ background: C.card, borderColor: C.primary, padding: '5px 12px', height: 'auto' }} onClick={() => setModalBulkEditar(true)}>Editar em massa</Button>}
+            {selecionados.size > 1 && <Button variant="outline" size="xs" style={{ background: C.card, borderColor: C.primary, padding: '5px 12px', height: 'auto' }} onClick={() => setModalBulkMov(true)}>Mover em massa</Button>}
+            <Button variant="outline" size="xs" style={{ background: C.card, borderColor: C.primary, padding: '5px 12px', height: 'auto' }} onClick={() => setModalBulkBaixa(true)}>Dar baixa em massa</Button>
+            <Button variant="ghost" size="xs" style={{ background: C.card, padding: '5px 12px', height: 'auto' }} onClick={limparSelecao}>Limpar</Button>
           </div>
+          {selecionados.size > 1 && !mesmoLoteSelecionado && (
+            <div style={{ width: '100%', fontSize: 11, color: C.text2 }}>
+              Editar/renomear em massa aparece só quando os selecionados são o mesmo item (nome, categoria, localização, marca/modelo, status e observações iguais) — nº de série, valor, data, NF, origem, garantia e responsável podem variar.
+            </div>
+          )}
         </div>
       )}
 
@@ -920,13 +1032,15 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
           <table style={styles.table}>
             <thead><tr>
               {isDiretor && <th style={{ ...styles.th, width: 32 }}><input type="checkbox" checked={todosPaginaMarcados} onChange={toggleTodosPagina} onClick={e => e.stopPropagation()} /></th>}
-              <th style={styles.th}>Código</th><th style={styles.th}>Nome</th><th style={styles.th}>Categoria</th>
-              <th style={styles.th}>Localização</th><th style={styles.th}>Marca/Modelo</th><th style={styles.th}>Valor</th><th style={styles.th}>Status</th>
+              <th style={styles.th}>Número</th><th style={styles.th}>Nome</th><th style={styles.th}>Categoria</th>
+              <th style={styles.th}>Localização</th><th style={styles.th}>Marca/Modelo</th><th style={styles.th}>Valor</th>
+              <th style={styles.th} title="Depreciação (indicador gerencial) · cálculo linear interno, não é avaliação contábil oficial">% Deprec.</th>
+              <th style={styles.th}>Status</th>
               {isDiretor && <th style={styles.th}></th>}
             </tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={9}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
-              {!loading && bens.length === 0 && <tr><td colSpan={9}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum bem encontrado</span></div></td></tr>}
+              {loading && <tr><td colSpan={10}><div className="flex items-center justify-center py-6 gap-2"><div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/25 border-t-primary" /><span className="text-xs text-muted-foreground">Carregando...</span></div></td></tr>}
+              {!loading && bens.length === 0 && <tr><td colSpan={10}><div className="flex flex-col items-center py-10 gap-2"><div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center mb-1"><svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg></div><span className="text-sm font-medium text-foreground">Nenhum bem encontrado</span></div></td></tr>}
               {bensPag.map(b => (
                 <tr key={b.id} className="cbrio-row" onClick={() => onDetail(b.id)}>
                   {isDiretor && <td style={styles.td} onClick={e => e.stopPropagation()}><input type="checkbox" checked={selecionados.has(b.id)} onChange={() => toggleSelecionado(b.id)} /></td>}
@@ -940,6 +1054,11 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
                   </td>
                   <td style={styles.td}>{[b.marca, b.modelo].filter(Boolean).join(' ') || '—'}</td>
                   <td style={styles.td}>{fmtMoney(b.valor_aquisicao)}</td>
+                  <td style={styles.td}>
+                    {b.depreciacao
+                      ? <span title={`Valor atual estimado: ${fmtMoney(b.depreciacao.valor_atual_estimado)}`} style={{ color: b.depreciacao.percentual_depreciado >= 80 ? C.amber : C.text2 }}>{b.depreciacao.percentual_depreciado}%</span>
+                      : <span style={{ color: C.text3 }}>—</span>}
+                  </td>
                   <td style={styles.td}><Badge status={b.status} map={STATUS_BEM} /></td>
                   {isDiretor && <td style={styles.td}>{b.status !== 'baixado' && <Button variant="ghost" size="xs" title="Dar baixa" onClick={e => { e.stopPropagation(); onBaixar(b.id); }}><Archive style={{ width: 14, height: 14 }} /></Button>}</td>}
                 </tr>
@@ -959,10 +1078,10 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
         onClose={() => setModalBulkMov(false)}
         onSave={(campos) => executarBulk(() => patrimonio.bens.bulkMovimentar({ ids: [...selecionados], ...campos })).then(() => setModalBulkMov(false))}
       />
-      <ConfirmDialog open={modalBulkBaixa} title="Dar baixa em massa"
+      <BaixaMotivoModal open={modalBulkBaixa} title="Dar baixa em massa"
         message={`Confirma dar baixa em ${selecionados.size} bem(ns)? Essa ação registra a movimentação de baixa e marca o status — não é uma exclusão.`}
         busy={bulkBusy} onCancel={() => setModalBulkBaixa(false)}
-        onConfirm={() => executarBulk(() => patrimonio.bens.bulkBaixa({ ids: [...selecionados] })).then(() => setModalBulkBaixa(false))}
+        onConfirm={(motivo) => executarBulk(() => patrimonio.bens.bulkBaixa({ ids: [...selecionados], motivo })).then(() => setModalBulkBaixa(false))}
       />
     </>
   );
@@ -970,13 +1089,20 @@ function BensTab({ bens, loading, busca, setBusca, filtroStatus, setFiltroStatus
 
 // Nó da árvore de localizações (expandir/colapsar filhas · pedido do usuário
 // 2026-07-29: "clique na localização-pai expande pra mostrar as salas").
-function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, podeExcluir, onEdit, removeLoc }) {
+// Localização FINAL (sem filhas) navega pra aba Bens já filtrada nela — pedido
+// do usuário 2026-08-08: achar rápido o que tem numa sala, sem passar pelo
+// select de filtro manual.
+function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, podeExcluir, onEdit, removeLoc, onIrParaBens }) {
   const temFilhas = node.children.length > 0;
   const aberto = expanded.has(node.id);
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', paddingLeft: depth * 18, borderBottom: `1px solid ${C.border}` }}>
-        <span style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: temFilhas ? 'pointer' : 'default' }} onClick={() => temFilhas && toggleExpanded(node.id)}>
+        <span
+          style={{ fontSize: 13, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+          title={temFilhas ? undefined : 'Ver bens desta localização'}
+          onClick={() => (temFilhas ? toggleExpanded(node.id) : onIrParaBens?.(node.id))}
+        >
           {temFilhas ? <span style={{ width: 14, display: 'inline-block', fontSize: 11, color: C.text3 }}>{aberto ? '▾' : '▸'}</span> : <MapPin style={{ width: 14, height: 14, color: '#00B39D' }} />}
           {node.nome}
           {temFilhas && <span style={{ fontSize: 11, color: C.text3 }}>({node.children.length})</span>}
@@ -989,13 +1115,13 @@ function LocTreeNode({ node, depth, expanded, toggleExpanded, isDiretor, podeExc
         )}
       </div>
       {temFilhas && aberto && node.children.map(c => (
-        <LocTreeNode key={c.id} node={c} depth={depth + 1} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={onEdit} removeLoc={removeLoc} />
+        <LocTreeNode key={c.id} node={c} depth={depth + 1} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={onEdit} removeLoc={removeLoc} onIrParaBens={onIrParaBens} />
       ))}
     </div>
   );
 }
 
-function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, addCat, removeCat, updateCat, addLoc, removeLoc, updateLoc, isDiretor, podeExcluir }) {
+function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, addCat, removeCat, updateCat, addLoc, removeLoc, updateLoc, isDiretor, podeExcluir, onIrParaBens }) {
   const [novoNomeLoc, setNovoNomeLoc] = useState('');
   const [novoPaiLoc, setNovoPaiLoc] = useState('');
   const [editLoc, setEditLoc] = useState(null); // { id, nome, pai_id }
@@ -1011,7 +1137,11 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
   }
   function salvarEdicaoLoc() {
     if (!editLoc.nome.trim()) return;
-    updateLoc(editLoc.id, { nome: editLoc.nome, pai_id: editLoc.pai_id || null });
+    updateLoc(editLoc.id, {
+      nome: editLoc.nome, pai_id: editLoc.pai_id || null,
+      revisao_intervalo_dias: editLoc.revisao_intervalo_dias === '' ? null : editLoc.revisao_intervalo_dias,
+      revisao_prazo_dias: editLoc.revisao_prazo_dias === '' ? null : editLoc.revisao_prazo_dias,
+    });
     setEditLoc(null);
   }
   function salvarEdicaoCat() {
@@ -1063,7 +1193,7 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
           )}
           {localizacoes.length === 0 && <div style={styles.empty}>Nenhuma localização</div>}
           {tree.map(node => (
-            <LocTreeNode key={node.id} node={node} depth={0} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={setEditLoc} removeLoc={removeLoc} />
+            <LocTreeNode key={node.id} node={node} depth={0} expanded={expanded} toggleExpanded={toggleExpanded} isDiretor={isDiretor} podeExcluir={podeExcluir} onEdit={setEditLoc} removeLoc={removeLoc} onIrParaBens={onIrParaBens} />
           ))}
         </div>
       </div>
@@ -1075,6 +1205,13 @@ function CatLocTab({ categorias, localizacoes, locOptions, newCat, setNewCat, ad
               <option value="">— Nenhuma (raiz) —</option>
               {locOptions.filter(l => l.id !== editLoc.id).map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
             </Select>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <Input label="Tempo de análise (dias)" type="number" min="1" placeholder="padrão do ciclo" value={editLoc.revisao_prazo_dias ?? ''} onChange={e => setEditLoc(p => ({ ...p, revisao_prazo_dias: e.target.value }))} />
+              <Input label="Intervalo até a próxima revisão (dias)" type="number" min="1" placeholder="todo ciclo" value={editLoc.revisao_intervalo_dias ?? ''} onChange={e => setEditLoc(p => ({ ...p, revisao_intervalo_dias: e.target.value }))} />
+            </div>
+            <div style={{ fontSize: 11, color: C.text3 }}>
+              Deixe em branco pra manter o padrão: entra em todo ciclo de revisão, com prazo distribuído dentro do período do ciclo.
+            </div>
           </>
         )}
       </Modal>
@@ -1150,7 +1287,21 @@ function MovimentacoesTab({ list, total, page, pageSize, loading, onPageChange, 
 function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClose, onSave }) {
   const [f, setF] = useState({});
   const [formError, setFormError] = useState('');
-  useEffect(() => { if (data) { setF({ ...data }); setFormError(''); } }, [data]);
+  const [codigoSugerido, setCodigoSugerido] = useState(false);
+  useEffect(() => { if (data) { setF({ ...data }); setFormError(''); setCodigoSugerido(false); } }, [data]);
+  // Regra do usuário 2026-07-31: todo bem novo segue a ordem dos números de
+  // patrimônio (último 4433 → sugestão automática 4434). Só pra CADASTRO NOVO
+  // (bem sem id) — editar um bem existente nunca mexe no código já gravado.
+  // Sugestão fica editável (o campo continua um <Input> normal), pra cobrir a
+  // exceção de reaproveitar um código de etiqueta física já impressa.
+  useEffect(() => {
+    if (!open || data?.id) return;
+    let cancelado = false;
+    patrimonio.bens.proximoCodigo().then(r => {
+      if (!cancelado && r?.proximo) { setF(p => ({ ...p, codigo_barras: p.codigo_barras || r.proximo })); setCodigoSugerido(true); }
+    }).catch(() => {});
+    return () => { cancelado = true; };
+  }, [open, data]);
   const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
   // Sugestão automática do responsável (pedido do usuário 2026-07-29, item 4):
   // ao escolher a localização, se ainda não há responsável definido, sugere
@@ -1160,8 +1311,9 @@ function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClos
   }
   function handleSave() {
     if (!f.nome || !f.nome.trim()) { setFormError('Nome é obrigatório.'); return; }
-    if (!f.codigo_barras || !f.codigo_barras.trim()) { setFormError('Código de barras é obrigatório.'); return; }
+    if (!f.codigo_barras || !f.codigo_barras.trim()) { setFormError('Número do patrimônio é obrigatório.'); return; }
     if (f.valor_aquisicao !== undefined && f.valor_aquisicao !== '' && Number(f.valor_aquisicao) < 0) { setFormError('Valor de aquisição deve ser >= 0.'); return; }
+    if (f.origem_aquisicao === 'doado' && (!f.doador || !f.doador.trim())) { setFormError('Informe quem doou o bem.'); return; }
     setFormError('');
     onSave(f);
   }
@@ -1175,7 +1327,10 @@ function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClos
         </div>
       )}
       <div style={styles.formRow}>
-        <Input label="Código de Barras *" value={f.codigo_barras || ''} onChange={e => upd('codigo_barras', e.target.value)} />
+        <div style={styles.formGroup}>
+          <Input label="Número do Patrimônio *" value={f.codigo_barras || ''} onChange={e => upd('codigo_barras', e.target.value)} />
+          {!f.id && codigoSugerido && <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Sugerido automaticamente pela ordem do patrimônio — editável se precisar reaproveitar um código já impresso.</div>}
+        </div>
         <Input label="Nome *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} />
       </div>
       <div style={styles.formRow}>
@@ -1198,8 +1353,23 @@ function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClos
       </div>
       <div style={styles.formRow}>
         <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Aquisição</label><DatePicker value={f.data_aquisicao || ''} onChange={v => upd('data_aquisicao', v)} /></div>
-        <Input label="Nº da NF" value={f.numero_nf || ''} onChange={e => upd('numero_nf', e.target.value)} />
+        <Input label="Nº da NF" value={f.numero_nf || ''} onChange={e => upd('numero_nf', e.target.value)} placeholder={f.origem_aquisicao === 'doado' ? 'Geralmente não há, na doação' : ''} />
       </div>
+      <div style={styles.formRow}>
+        <Select label="Origem" value={f.origem_aquisicao || 'comprado'} onChange={e => upd('origem_aquisicao', e.target.value)}>
+          <option value="comprado">Comprado</option>
+          <option value="doado">Doado</option>
+        </Select>
+        {f.origem_aquisicao === 'doado' && (
+          <Select label="Tipo de doador" value={f.doador_tipo || ''} onChange={e => upd('doador_tipo', e.target.value)}>
+            <option value="">Selecionar</option>
+            {Object.entries(DOADOR_TIPO_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </Select>
+        )}
+      </div>
+      {f.origem_aquisicao === 'doado' && (
+        <Input label="Doador *" value={f.doador || ''} onChange={e => upd('doador', e.target.value)} placeholder="Nome de quem doou" />
+      )}
       <div style={styles.formRow}>
         <Select label="Responsável pelo bem" value={f.responsavel_id || ''} onChange={e => upd('responsavel_id', e.target.value)}>
           <option value="">Selecionar</option>
@@ -1234,6 +1404,107 @@ function BemFormModal({ open, data, categorias, locOptions, responsaveis, onClos
   );
 }
 
+// Cadastro em massa (pedido do usuário 2026-07-31): bens do MESMO tipo/
+// categoria, não necessariamente no mesmo local — ex.: 10 lâmpadas iguais
+// distribuídas em salas diferentes. Cada linha da distribuição é uma
+// localização + quantidade; o total soma quantas unidades nascem. Os números
+// de patrimônio saem em sequência (item 4 · integrado com a regra do item 2).
+function BemLoteModal({ open, categorias, locOptions, busy, onClose, onSave }) {
+  const [f, setF] = useState({});
+  const [dist, setDist] = useState([{ localizacao_id: '', quantidade: 1 }]);
+  const [formError, setFormError] = useState('');
+  const [preview, setPreview] = useState(null);
+  useEffect(() => { if (open) { setF({}); setDist([{ localizacao_id: '', quantidade: 1 }]); setFormError(''); setPreview(null); } }, [open]);
+  const upd = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+  const totalQtd = dist.reduce((s, d) => s + (Number(d.quantidade) || 0), 0);
+
+  // Prévia dos números que SERIAM usados (não reserva nada — o número real é
+  // calculado de novo no momento do salvar, na mesma transação do insert).
+  useEffect(() => {
+    if (!open || totalQtd <= 0) { setPreview(null); return; }
+    let cancelado = false;
+    patrimonio.bens.proximoCodigo(totalQtd).then(r => {
+      if (!cancelado && r?.codigos?.length) setPreview({ inicio: r.codigos[0], fim: r.codigos[r.codigos.length - 1] });
+    }).catch(() => {});
+    return () => { cancelado = true; };
+  }, [open, totalQtd]);
+
+  function updDist(i, k, v) { setDist(p => p.map((d, idx) => idx === i ? { ...d, [k]: v } : d)); }
+  function addDist() { setDist(p => [...p, { localizacao_id: '', quantidade: 1 }]); }
+  function removeDist(i) { setDist(p => p.filter((_, idx) => idx !== i)); }
+
+  function handleSave() {
+    if (!f.nome || !f.nome.trim()) { setFormError('Nome é obrigatório.'); return; }
+    if (totalQtd <= 0) { setFormError('Informe ao menos uma quantidade maior que zero.'); return; }
+    if (f.origem_aquisicao === 'doado' && (!f.doador || !f.doador.trim())) { setFormError('Informe quem doou os bens.'); return; }
+    setFormError('');
+    onSave({ ...f, distribuicao: dist.filter(d => Number(d.quantidade) > 0).map(d => ({ localizacao_id: d.localizacao_id || null, quantidade: Number(d.quantidade) })) });
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Cadastrar bens em massa"
+      footer={<Button disabled={busy} onClick={handleSave}>{busy ? 'Cadastrando...' : `Cadastrar ${totalQtd || ''} bens`}</Button>}>
+      {formError && (
+        <div style={{ background: '#ef444418', border: '1px solid #ef4444', borderRadius: 8, padding: '10px 14px', marginBottom: 14, color: '#ef4444', fontSize: 13 }}>{formError}</div>
+      )}
+      <div style={{ fontSize: 12, color: C.text2, marginBottom: 12 }}>
+        Pra bens iguais (mesmo tipo/categoria) cadastrados de uma vez — cada unidade recebe seu próprio número de patrimônio em sequência e pode ir pra uma localização diferente.
+      </div>
+      <div style={styles.formRow}>
+        <Input label="Nome *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} placeholder="ex.: Lâmpada LED 9W" />
+        <Select label="Categoria" value={f.categoria_id || ''} onChange={e => upd('categoria_id', e.target.value)}>
+          <option value="">Selecionar</option>
+          {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+        </Select>
+      </div>
+      <div style={styles.formRow}>
+        <Input label="Marca" value={f.marca || ''} onChange={e => upd('marca', e.target.value)} />
+        <Input label="Modelo" value={f.modelo || ''} onChange={e => upd('modelo', e.target.value)} />
+      </div>
+      <div style={styles.formRow}>
+        <Input label="Valor Aquisição (R$) por unidade" type="number" value={f.valor_aquisicao || ''} onChange={e => upd('valor_aquisicao', e.target.value)} />
+        <div style={styles.formGroup}><label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Data Aquisição</label><DatePicker value={f.data_aquisicao || ''} onChange={v => upd('data_aquisicao', v)} /></div>
+      </div>
+      <Input label="Nº da NF" value={f.numero_nf || ''} onChange={e => upd('numero_nf', e.target.value)} placeholder={f.origem_aquisicao === 'doado' ? 'Geralmente não há, na doação' : ''} />
+      <div style={styles.formRow}>
+        <Select label="Origem" value={f.origem_aquisicao || 'comprado'} onChange={e => upd('origem_aquisicao', e.target.value)}>
+          <option value="comprado">Comprado</option>
+          <option value="doado">Doado</option>
+        </Select>
+        {f.origem_aquisicao === 'doado' && (
+          <Select label="Tipo de doador" value={f.doador_tipo || ''} onChange={e => upd('doador_tipo', e.target.value)}>
+            <option value="">Selecionar</option>
+            {Object.entries(DOADOR_TIPO_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </Select>
+        )}
+      </div>
+      {f.origem_aquisicao === 'doado' && (
+        <Input label="Doador *" value={f.doador || ''} onChange={e => upd('doador', e.target.value)} placeholder="Nome de quem doou (mesmo doador pra todo o lote)" />
+      )}
+
+      <div style={{ marginTop: 16, marginBottom: 8, fontSize: 12, fontWeight: 700, color: C.text2, textTransform: 'uppercase' }}>Distribuir por localização</div>
+      {dist.map((d, i) => (
+        <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginBottom: 6 }}>
+          <Select label={i === 0 ? 'Localização' : undefined} value={d.localizacao_id} onChange={e => updDist(i, 'localizacao_id', e.target.value)} style={{ flex: 2 }}>
+            <option value="">— Sem localização —</option>
+            {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
+          </Select>
+          <Input label={i === 0 ? 'Quantidade' : undefined} type="number" min={1} value={d.quantidade} onChange={e => updDist(i, 'quantidade', e.target.value)} style={{ flex: 1 }} />
+          {dist.length > 1 && <Button variant="ghost" size="xs" onClick={() => removeDist(i)}><Trash2 style={{ width: 14, height: 14 }} /></Button>}
+        </div>
+      ))}
+      <Button variant="outline" size="xs" onClick={addDist}>+ Adicionar outra localização</Button>
+
+      <div style={{ marginTop: 16, padding: '10px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, fontSize: 13 }}>
+        Total: <strong>{totalQtd}</strong> {totalQtd === 1 ? 'bem' : 'bens'}
+        {preview && <> — números {fmtCodigo(preview.inicio)} a {fmtCodigo(preview.fim)}</>}
+        <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Prévia — o número definitivo é calculado no momento do cadastro.</div>
+      </div>
+    </Modal>
+  );
+}
+
 function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, onDispensarAlerta, isDiretor }) {
   if (!data) return null;
   return (
@@ -1247,7 +1518,7 @@ function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, onDispen
         </div>
       )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', marginBottom: 20 }}>
-        <div><span style={{ fontSize: 11, color: C.text2 }}>Código:</span><div style={{ fontSize: 14, fontFamily: 'monospace' }}>{fmtCodigo(data.codigo_barras)}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Número:</span><div style={{ fontSize: 14, fontFamily: 'monospace' }}>{fmtCodigo(data.codigo_barras)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Status:</span><div><Badge status={data.status} map={STATUS_BEM} /></div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Categoria:</span><div style={{ fontSize: 14 }}>{data.pat_categorias?.nome || '—'}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Localização:</span><div style={{ fontSize: 14 }}>{data.pat_localizacoes?.nome || '—'}{data.localizacao_pendente && <div style={{ fontSize: 11, color: C.amber, marginTop: 2 }}>⚠ virou grupamento — realocar pra uma sala final</div>}</div></div>
@@ -1256,16 +1527,21 @@ function BemDetailModal({ open, data, onClose, onEdit, onBaixar, onMov, onDispen
         <div><span style={{ fontSize: 11, color: C.text2 }}>Valor Aquisição:</span><div style={{ fontSize: 14, fontWeight: 600 }}>{fmtMoney(data.valor_aquisicao)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Data Aquisição:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_aquisicao)}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Nº da NF:</span><div style={{ fontSize: 14 }}>{data.numero_nf || '—'}</div></div>
+        <div><span style={{ fontSize: 11, color: C.text2 }}>Origem:</span><div style={{ fontSize: 14 }}>{data.origem_aquisicao === 'doado' ? `Doado${data.doador ? ` — ${data.doador}` : ''}${data.doador_tipo ? ` (${DOADOR_TIPO_LABELS[data.doador_tipo] || data.doador_tipo})` : ''}` : 'Comprado'}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Garantia:</span><div style={{ fontSize: 14 }}>{data.tem_garantia ? `Sim${data.garantia_ate ? ` (até ${fmtDate(data.garantia_ate)})` : ''}` : 'Não'}</div></div>
         <div><span style={{ fontSize: 11, color: C.text2 }}>Responsável:</span><div style={{ fontSize: 14 }}>{data.responsavel?.name || '—'}</div></div>
         {data.status === 'baixado' && <div><span style={{ fontSize: 11, color: C.text2 }}>Data da baixa:</span><div style={{ fontSize: 14 }}>{fmtDate(data.data_baixa)}</div></div>}
       </div>
-      {data.depreciacao && (
+      {data.depreciacao ? (
         <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
             <span>Depreciação (indicador gerencial): <strong>{data.depreciacao.percentual_depreciado}%</strong> · valor atual estimado <strong style={{ color: C.primary }}>{fmtMoney(data.depreciacao.valor_atual_estimado)}</strong></span>
           </div>
           <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>Cálculo linear interno — não é avaliação contábil oficial</div>
+        </div>
+      ) : data.valor_aquisicao != null && (
+        <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13, color: C.amber }}>
+          Sem vida útil configurada pra esta categoria — depreciação não calculada. Configure em Categorias e Localizações.
         </div>
       )}
       {data.descricao && <div style={{ padding: '8px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, marginBottom: 12, fontSize: 13, color: C.text2 }}>{data.descricao}</div>}
@@ -1307,7 +1583,10 @@ function MovFormModal({ open, data, locOptions, onClose, onSave }) {
       <Select label="Tipo *" value={f.tipo} onChange={e => upd('tipo', e.target.value)}>
         {Object.entries(TIPO_MOV).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
       </Select>
-      {(f.tipo === 'transferencia' || f.tipo === 'saida') && (
+      {/* Doação (tipo='saida' no banco): só motivo — o bem sai do patrimônio
+          de vez, não faz sentido pedir localização de origem/destino (pedido
+          do usuário 2026-07-31). */}
+      {f.tipo === 'transferencia' && (
         <Select label="Localização Origem" value={f.localizacao_origem_id || ''} onChange={e => upd('localizacao_origem_id', e.target.value)}>
           <option value="">Selecionar</option>
           {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
@@ -1419,7 +1698,8 @@ function BulkMovModal({ open, qtd, locOptions, busy, onClose, onSave }) {
       <Select label="Tipo *" value={f.tipo} onChange={e => upd('tipo', e.target.value)}>
         {Object.entries(TIPO_MOV).filter(([k]) => k !== 'baixa').map(([k, v]) => <option key={k} value={k}>{v}</option>)}
       </Select>
-      {(f.tipo === 'transferencia' || f.tipo === 'saida') && (
+      {/* Doação (tipo='saida' no banco): só motivo — ver MovFormModal acima. */}
+      {f.tipo === 'transferencia' && (
         <Select label="Localização Origem" value={f.localizacao_origem_id || ''} onChange={e => upd('localizacao_origem_id', e.target.value)}>
           <option value="">Selecionar</option>
           {locOptions.map(l => <option key={l.id} value={l.id}>{locIndent(l.depth)}{l.nome}</option>)}
@@ -1439,11 +1719,24 @@ function BulkMovModal({ open, qtd, locOptions, busy, onClose, onSave }) {
   );
 }
 
-function ConfirmDialog({ open, title, message, busy, onCancel, onConfirm }) {
+// Baixa de bem com motivo por escrito (pedido do usuário 2026-08-07) — mesmo
+// padrão de campo de texto da movimentação, mas numa ação dedicada porque
+// 'baixa' é excluída do select de tipo da movimentação manual (fluxo próprio).
+function BaixaMotivoModal({ open, title, message, busy, onCancel, onConfirm }) {
+  const [motivo, setMotivo] = useState('');
+  useEffect(() => { if (open) setMotivo(''); }, [open]);
   return (
     <Modal open={open} onClose={onCancel} title={title}
-      footer={<><Button variant="outline" onClick={onCancel} disabled={busy}>Cancelar</Button><Button variant="destructive" onClick={onConfirm} disabled={busy}>{busy ? 'Processando...' : 'Confirmar'}</Button></>}>
-      <div style={{ fontSize: 13, color: C.text2 }}>{message}</div>
+      footer={<><Button variant="outline" onClick={onCancel} disabled={busy}>Cancelar</Button><Button variant="destructive" onClick={() => onConfirm(motivo.trim() || null)} disabled={busy}>{busy ? 'Processando...' : 'Confirmar baixa'}</Button></>}>
+      <div style={{ fontSize: 13, color: C.text2, marginBottom: 12 }}>{message}</div>
+      <label style={{ fontSize: 12, fontWeight: 600, color: C.text2, display: 'block', marginBottom: 4 }}>Motivo da baixa (opcional)</label>
+      <textarea
+        value={motivo}
+        onChange={e => setMotivo(e.target.value)}
+        placeholder="Ex.: quebrado sem conserto viável, extraviado, doado, substituído..."
+        rows={3}
+        style={{ width: '100%', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, padding: '8px 10px', fontSize: 13, resize: 'vertical', fontFamily: 'inherit' }}
+      />
     </Modal>
   );
 }
@@ -1517,7 +1810,7 @@ function NovoCicloModal({ open, responsaveis, onClose, onSave }) {
   return (
     <Modal open={open} onClose={onClose} title="Novo ciclo de revisão" footer={<Button onClick={handleSave}>Criar ciclo</Button>}>
       <div style={{ fontSize: 13, color: C.text2, marginBottom: 12 }}>
-        Cria um ciclo trimestral (3 meses) e gera automaticamente uma convocação por localização com bens ativos, com prazos distribuídos ao longo do período.
+        Cria um ciclo trimestral (3 meses) e gera automaticamente uma convocação por localização com bens ativos. Localização sem intervalo/prazo próprios configurados (aba Categorias/Localizações) entra em todo ciclo, com prazo distribuído ao longo do período; localização com intervalo configurado só entra quando já passou o número de dias definido desde a última revisão concluída, com o prazo próprio dela.
       </div>
       <Select label="Responsável pelas revisões *" value={f.responsavel_id || ''} onChange={e => upd('responsavel_id', e.target.value)}>
         <option value="">Selecionar</option>

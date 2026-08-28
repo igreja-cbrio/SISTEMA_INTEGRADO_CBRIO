@@ -6,6 +6,10 @@ const { enqueueSync } = require('../services/cerebroSync');
 const { mountWhatsappAuto } = require('./whatsappAutoRoutes');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { registrarPedidoCuidado } = require('../services/cuidadosPedidos');
+const { podeVerFinanceiroDePessoa } = require('../utils/dadosSensiveisPessoa');
+const { resolverJanelaPeriodo } = require('../utils/janelaPeriodo');
+const jt = require('../utils/jornadaTempo');
+const { carregarSinaisConvertidos } = require('../services/marcosConvertido');
 
 router.use(authenticate);
 
@@ -123,10 +127,13 @@ function dashBucket(dataIso, gran) {
   }
   return s;
 }
-// Todos os buckets de [inicio, hoje] · preenche períodos vazios pra o gráfico ter eixo contínuo
-function dashBucketsIntervalo(inicioIso, gran) {
+// Todos os buckets de [inicio, fim] · preenche períodos vazios pra o gráfico ter
+// eixo contínuo. ⚠️ `fimIso` existe por causa do filtro POR ANO (24/08/2026):
+// sem ele o eixo de "2024" iria de jan/2024 até HOJE, desenhando 20 meses vazios
+// depois do fim do ano — a janela fechada tem que fechar no gráfico também.
+function dashBucketsIntervalo(inicioIso, gran, fimIso = null) {
   const out = [];
-  const hoje = new Date();
+  const hoje = fimIso ? new Date(fimIso + 'T12:00:00') : new Date();
   let cur = new Date(inicioIso + 'T12:00:00');
   if (gran === 'mes') cur = new Date(cur.getFullYear(), cur.getMonth(), 1, 12);
   else if (gran === 'semana') { const dow = (cur.getDay() + 6) % 7; cur.setDate(cur.getDate() - dow); }
@@ -140,13 +147,62 @@ function dashBucketsIntervalo(inicioIso, gran) {
   return [...new Set(out)];
 }
 
+// GET /api/cuidados/kpis/taticos — KPI TÁTICO OFICIAL da área 'cuidados'
+// (kpi_indicadores_taticos + vw_kpi_trajetoria_atual), mesmo padrão de
+// backend/routes/painelArea.js e do piloto em grupos.js/voluntariado.js.
+router.get('/kpis/taticos', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const { data: kpisRaw, error: kpisErr } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, descricao, meta_descricao, meta_valor, unidade, periodicidade, lider_funcionario_id')
+      .eq('ativo', true)
+      .ilike('area', 'cuidados')
+      .order('indicador', { ascending: true });
+    if (kpisErr) throw kpisErr;
+    const kpis = kpisRaw || [];
+    const kpiIds = kpis.map(k => k.id);
+
+    let trajByKpi = {};
+    if (kpiIds.length > 0) {
+      const { data: traj, error: trajErr } = await supabase
+        .from('vw_kpi_trajetoria_atual')
+        .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, checkpoint_meta, percentual_meta')
+        .in('kpi_id', kpiIds);
+      if (trajErr) console.error('[cuidados kpis/taticos] trajetoria falhou:', trajErr.message);
+      (traj || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
+    }
+
+    const enriched = kpis.map(k => ({
+      id: k.id,
+      indicador: k.indicador,
+      descricao: k.descricao,
+      meta_descricao: k.meta_descricao,
+      meta_valor: k.meta_valor,
+      unidade: k.unidade,
+      periodicidade: k.periodicidade,
+      trajetoria: trajByKpi[k.id] || null,
+    }));
+
+    res.json({ area: 'cuidados', total: enriched.length, kpis: enriched });
+  } catch (e) {
+    console.error('[cuidados kpis/taticos]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar KPIs táticos de cuidados' });
+  }
+});
+
 router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res) => {
   try {
-    let dias = parseInt(req.query.dias, 10);
-    if (!DASH_DIAS_VALIDOS.includes(dias)) dias = 90;
-    const inicio = dashInicioJanela(dias);
-    const granTrend = dias <= 90 ? 'semana' : 'mes';
-    const granDevoc = dias <= 90 ? 'dia' : (dias <= 730 ? 'semana' : 'mes');
+    // Régua ÚNICA da janela (aceita `dias` OU `ano` · ver backend/utils/janelaPeriodo.js).
+    const janela = resolverJanelaPeriodo({
+      dias: req.query.dias, ano: req.query.ano,
+      diasValidos: DASH_DIAS_VALIDOS, diasPadrao: 90,
+    });
+    const { inicio, fim, dias, ano } = janela;
+    // ⚠️ `ate` só existe na janela de ANO. Toda leitura abaixo aplica o
+    // `.lte(...)` junto com o `.gte(...)` — sem isso "2024" traria 2024→hoje.
+    const ateFiltro = (q, col) => (fim ? q.lte(col, fim) : q);
+    const granTrend = janela.gran;
+    const granDevoc = ano ? 'mes' : (dias <= 90 ? 'dia' : (dias <= 730 ? 'semana' : 'mes'));
 
     // Paginação genérica (PostgREST capa em 1000 linhas server-side)
     const fetchAll = async (table, columns, applyFilter) => {
@@ -166,23 +222,33 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     // ── Convertidos na janela (bucket pela data do culto) ──
     const convertidos = await fetchAll(
       'cui_convertidos',
-      'id, data_culto, primeiro_contato_em, primeiro_contato_status, responsavel_atendimento, area, telefone',
-      (q) => q.is('deleted_at', null).gte('data_culto', inicio),
+      // membro_id/cpf/nome entram só pra CASAR identidade no servidor — nada
+      // disso sai na resposta, que é 100% agregada.
+      'id, data_culto, primeiro_contato_em, primeiro_contato_status, responsavel_atendimento, area, telefone, membro_id, cpf, nome',
+      (q) => ateFiltro(q.is('deleted_at', null).gte('data_culto', inicio), 'data_culto'),
     );
 
-    // engajados = convertido com >=1 encaminhamento status='engajou' (consulta em lotes de 100)
+    // ── "Engajados +1 valor" = SEGUIU pra outro valor, medido pelos FATOS ──
+    //
+    // ⚠️⚠️ Até 24/08/2026 esta linha lia só `jornada_encaminhamentos` com
+    // status='engajou' — a devolutiva do encaminhamento pastoral. Medido
+    // naquele dia: a tabela tem **4 linhas na história inteira** (1 engajou,
+    // 3 pendentes) e NENHUMA é dos 131 convertidos dos últimos 90 dias, então
+    // a linha vivia colada no zero. Não era falta de identidade — os 131 têm
+    // `membro_id`. Era a régua perguntando pro lugar errado: media o
+    // PREENCHIMENTO de uma fila em vez do FATO de a pessoa ter se movido.
+    // A fila continua existindo e alimentando o /cuidados; ela só deixou de
+    // ser a única prova de engajamento.
+    //
+    // ⚠️ `podeGenerosidade: false` é FIXO e não é descuido: o gráfico é
+    // agregado e compartilhado, e número que muda conforme quem olha é número
+    // que ninguém consegue citar numa reunião. O subtítulo declara quais
+    // valores entram.
+    const sinais = await carregarSinaisConvertidos(convertidos, { podeGenerosidade: false });
     const engajadosSet = new Set();
-    const convIds = convertidos.map(c => c.id);
-    for (let i = 0; i < convIds.length; i += 100) {
-      const lote = convIds.slice(i, i + 100);
-      const { data: encs, error: eEnc } = await supabase
-        .from('jornada_encaminhamentos')
-        .select('convertido_id')
-        .eq('status', 'engajou')
-        .in('convertido_id', lote)
-        .is('deleted_at', null);
-      if (eEnc) throw eEnc;
-      (encs || []).forEach(e => engajadosSet.add(e.convertido_id));
+    for (const c of convertidos) {
+      const marcos = sinais.marcosDe(c, { contatoFeito: contatoFoiFeito(c) });
+      if (jt.engajouEmOutroValor({ marcos })) engajadosSet.add(c.id);
     }
 
     // Funil por bucket (mesmo bucket = mesma coorte de conversão)
@@ -197,7 +263,7 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
       if (engajadosSet.has(c.id)) o.engajados++;
       funilMap.set(b, o);
     }
-    const funil = dashBucketsIntervalo(inicio, granTrend).map(b => ({
+    const funil = dashBucketsIntervalo(inicio, granTrend, fim).map(b => ({
       periodo: b, ...(funilMap.get(b) || { convertidos: 0, contato: 0, atendido: 0, engajados: 0 }),
     }));
 
@@ -244,7 +310,7 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     // ── Visitas e atendimentos por tipo (cui_visitas) · substitui o antigo "processos"/Jornada 180 ──
     const VIS_TIPOS = ['visita_domiciliar', 'visita_hospitalar', 'funeral', 'casamento', 'aconselhamento', 'outro'];
     const zeroVis = () => Object.fromEntries(VIS_TIPOS.map(t => [t, 0]));
-    const vis = await fetchAll('cui_visitas', 'id, data_visita, tipo', (q) => q.is('deleted_at', null).gte('data_visita', inicio));
+    const vis = await fetchAll('cui_visitas', 'id, data_visita, tipo', (q) => ateFiltro(q.is('deleted_at', null).gte('data_visita', inicio), 'data_visita'));
     const visMap = new Map();
     for (const v of vis) {
       const b = dashBucket(v.data_visita, granTrend);
@@ -253,10 +319,10 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
       o[VIS_TIPOS.includes(v.tipo) ? v.tipo : 'outro']++;
       visMap.set(b, o);
     }
-    const visitas = dashBucketsIntervalo(inicio, granTrend).map(b => ({ periodo: b, ...(visMap.get(b) || zeroVis()) }));
+    const visitas = dashBucketsIntervalo(inicio, granTrend, fim).map(b => ({ periodo: b, ...(visMap.get(b) || zeroVis()) }));
 
     // ── Devocional · leitores distintos por bucket ──
-    const devoc = await fetchAll('mem_devocionais', 'membro_id, data_devocional', (q) => q.gte('data_devocional', inicio));
+    const devoc = await fetchAll('mem_devocionais', 'membro_id, data_devocional', (q) => ateFiltro(q.gte('data_devocional', inicio), 'data_devocional'));
     const devMap = new Map();
     for (const d of devoc) {
       const b = dashBucket(d.data_devocional, granDevoc);
@@ -265,11 +331,11 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
       set.add(d.membro_id);
       devMap.set(b, set);
     }
-    const devocional = dashBucketsIntervalo(inicio, granDevoc).map(b => ({
+    const devocional = dashBucketsIntervalo(inicio, granDevoc, fim).map(b => ({
       periodo: b, leitores: devMap.get(b) ? devMap.get(b).size : 0,
     }));
 
-    res.json({ dias, gran_trend: granTrend, gran_devoc: granDevoc, funil, cards, visitas, devocional, statusDist, porResponsavel });
+    res.json({ dias, ano, inicio, fim, gran_trend: granTrend, gran_devoc: granDevoc, funil, cards, visitas, devocional, statusDist, porResponsavel });
   } catch (e) {
     console.error('[CUIDADOS] dashboard-series:', e.message);
     res.status(500).json({ error: e.message });
@@ -389,10 +455,19 @@ router.delete('/acompanhamentos/:id', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// Pedidos de Cuidados vindos do app (aconselhamento / oração / SOS)
+// Pedidos de Cuidados vindos do app (aconselhamento / oração / SOS / contato)
 // Fila pra equipe pastoral · alimentada por POST /api/app/inscricoes.
 // ─────────────────────────────────────────────────────────────
-const TIPOS_PEDIDO_APP = ['aconselhamento', 'oracao', 'sos'];
+// ⚠️ `contato` (Fale Conosco do app) entrou em 06/08/2026 por auditoria: o app
+// gravava a mensagem em `app_inscricoes` e prometia "nossa equipe vai te
+// responder em breve", mas esta é a ÚNICA fila que lê essa tabela — e o tipo
+// ficava fora dela. Medido: 2 mensagens reais (02 e 03/08) paradas sem nenhuma
+// tela onde ler, responder ou marcar como tratada.
+// ⚠️ `contato` NÃO é tipo de `cui_pedidos` (o CHECK de lá é
+// aconselhamento|capelania|oracao|sos|visita|outro): ele existe só como tipo de
+// `app_inscricoes`. Então aparece na fila e no filtro, mas NUNCA na lista de
+// "registrar pedido manual" — ali o insert violaria o CHECK.
+const TIPOS_PEDIDO_APP = ['aconselhamento', 'oracao', 'sos', 'contato'];
 const TRATAMENTO_STATUS = ['pendente', 'em_andamento', 'concluido'];
 
 function extrairMensagemPedido(d) {
@@ -983,6 +1058,7 @@ router.patch('/responsaveis/:id', authorizeModule('cuidados', 3), async (req, re
     if (error) throw error;
 
     let renomeados = 0;
+    let renomeadosVisitas = 0;
     if (renomeando) {
       const { count, error: e3 } = await supabase
         .from('cui_convertidos')
@@ -995,9 +1071,37 @@ router.patch('/responsaveis/:id', authorizeModule('cuidados', 3), async (req, re
         throw e3;
       }
       renomeados = count || 0;
+
+      // ⚠️ `cui_visitas.responsavel` guarda LISTA separada por vírgula (visita em
+      // dupla), então não dá pra fazer `.eq()` como no convertido: "Wesley Ramos"
+      // aparece dentro de "Wesley Ramos, Nélio Paiva". A troca é por TOKEN exato,
+      // read-modify-write — `replace()` de substring renomearia "Léia" dentro de
+      // "Léia Serpa", que é outra pessoa.
+      try {
+        const { data: visitas } = await supabase
+          .from('cui_visitas')
+          .select('id, responsavel')
+          .is('deleted_at', null)
+          .ilike('responsavel', `%${atual.nome}%`);
+        for (const v of visitas || []) {
+          const partes = String(v.responsavel || '').split(/\s*,\s*/).map(s => s.trim()).filter(Boolean);
+          if (!partes.includes(atual.nome)) continue; // só substring, não é a pessoa
+          const novos = [...new Set(partes.map(p => (p === atual.nome ? nomeNovo : p)))];
+          const { error: eV } = await supabase
+            .from('cui_visitas')
+            .update({ responsavel: novos.join(', ') })
+            .eq('id', v.id);
+          if (!eV) renomeadosVisitas += 1;
+        }
+      } catch (eV) {
+        // Best-effort: o catálogo e os convertidos já foram renomeados com sucesso.
+        // Derrubar aqui deixaria a resposta em erro com a maior parte do trabalho
+        // feita; o número devolvido diz o que de fato mudou.
+        console.error('[CUIDADOS] rename cascade visitas:', eV.message);
+      }
     }
 
-    res.json({ ...data, renomeados });
+    res.json({ ...data, renomeados, renomeados_visitas: renomeadosVisitas });
   } catch (e) {
     console.error('[CUIDADOS] responsaveis update:', e.message);
     res.status(500).json({ error: e.message });
@@ -1833,7 +1937,6 @@ router.get('/jornada-convertidos', async (req, res) => {
     const { area } = req.query;
     const DIA = 86400000;
     const agora = Date.now();
-    const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
 
     const fetchAll = async (table, columns, applyFilter) => {
       const out = []; let from = 0; const page = 1000;
@@ -1851,58 +1954,37 @@ router.get('/jornada-convertidos', async (req, res) => {
 
     const convertidos = await fetchAll(
       'cui_convertidos',
-      'id, nome, telefone, cpf, membro_id, data_culto, area, primeiro_contato_em, primeiro_contato_status, encontro_status, encontro_responsavel_nome',
+      'id, nome, telefone, cpf, membro_id, data_culto, culto_id, area, primeiro_contato_em, primeiro_contato_status, encontro_status, encontro_responsavel_nome',
       (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; },
     );
-    const batismos = await fetchAll('batismo_inscricoes', 'status, membro_id, cpf, nome', (q) => q.is('deleted_at', null));
-    const nextMats = await fetchAll('next_matriculas', 'membro_id, cpf, nome', (q) => q.is('deleted_at', null)); // matrícula = "inscrito"
-    const nextFormados = await fetchAll('vw_next_formado_pessoa', 'membro_id, cpf, nome', (q) => q); // "fez Next" POR PESSOA (cross-turma)
 
-    // índices de batismo (realizado > inscrito) e de Next (fez check-in > só inscrito)
-    const bM = new Map(), bC = new Map(), bN = new Map();
-    const putB = (m, k, real) => { if (!k) return; const c = m.get(k); const r = real ? 2 : 1; if (!c || r > c.r) m.set(k, { r, real }); };
-    for (const b of batismos) {
-      const real = b.status === 'realizado';
-      putB(bM, b.membro_id, real);
-      putB(bC, onlyDigits(b.cpf).length === 11 ? onlyDigits(b.cpf) : null, real);
-      putB(bN, String(b.nome || '').trim().toLowerCase() || null, real);
-    }
-    const batOf = (c) => {
-      // Com membro_id/CPF, casa SÓ por chave forte — cruzar por nome aqui gera
-      // falso positivo (homônimo) e super-conta. Nome só quando não há identificação.
-      const temCpf = onlyDigits(c.cpf).length === 11;
-      if (c.membro_id || temCpf) {
-        const cs = [c.membro_id ? bM.get(c.membro_id) : null, temCpf ? bC.get(onlyDigits(c.cpf)) : null].filter(Boolean);
-        return cs.length ? { real: cs.some(x => x.real) } : null;
+    // ⚠️⚠️ DECISÃO VINDA DE VÍDEO ANTIGO. Quando alguém assiste a gravação de um
+    // culto de meses atrás e decide, a jornada começa NO DIA EM QUE PREENCHEU
+    // (é o que `data_culto` guarda), e o culto fica em `culto_id` como ORIGEM.
+    // Sem dizer isso na tela, quem acompanha vê a data do culto lá atrás e lê
+    // como "atrasado há mil dias" — quando a pessoa decidiu ontem.
+    //
+    // ⚠️ É DERIVADO, não guardado: `data_culto` diferente da data do culto de
+    // origem = veio de replay. Coluna para isto seria coluna que um dia
+    // dessincroniza e passa a mentir.
+    const cultoIds = [...new Set(convertidos.map((c) => c.culto_id).filter(Boolean))];
+    const cultoPorId = new Map();
+    for (let i = 0; i < cultoIds.length; i += 200) {
+      const { data: cs } = await supabase
+        .from('cultos')
+        .select('id, data, vol_service_types(name)')
+        .in('id', cultoIds.slice(i, i + 200));
+      for (const c of cs || []) {
+        cultoPorId.set(c.id, { data: c.data, nome: c.vol_service_types?.name || 'Culto' });
       }
-      const hit = bN.get(String(c.nome || '').trim().toLowerCase());
-      return hit ? { real: hit.real } : null;
-    };
-    // "fez Next" = formado POR PESSOA (fonte única vw_next_formado_pessoa · cross-turma);
-    // "inscrito" = tem matrícula (qualquer). Casa por chave forte (membro/CPF); nome só sem id.
-    const insM = new Set(), insC = new Set(), insN = new Set();
-    for (const m of nextMats) {
-      if (m.membro_id) insM.add(m.membro_id);
-      const cc = onlyDigits(m.cpf); if (cc.length === 11) insC.add(cc);
-      const nn = String(m.nome || '').trim().toLowerCase(); if (nn) insN.add(nn);
     }
-    const fezM = new Set(), fezC = new Set(), fezN = new Set();
-    for (const v of nextFormados) {
-      if (v.membro_id) fezM.add(v.membro_id);
-      const cc = onlyDigits(v.cpf); if (cc.length === 11) fezC.add(cc);
-      const nn = String(v.nome || '').trim().toLowerCase(); if (nn) fezN.add(nn);
-    }
-    const matchPessoa = (c, M, C, N) => {
-      const temCpf = onlyDigits(c.cpf).length === 11;
-      if (c.membro_id || temCpf) return (c.membro_id && M.has(c.membro_id)) || (temCpf && C.has(onlyDigits(c.cpf)));
-      const nn = String(c.nome || '').trim().toLowerCase();
-      return !!nn && N.has(nn);
-    };
-    const nextOf = (c) => {
-      if (matchPessoa(c, fezM, fezC, fezN)) return { fez: true };
-      if (matchPessoa(c, insM, insC, insN)) return { fez: false };
-      return null;
-    };
+
+    // ⚠️ RÉGUA ÚNICA com o gráfico do /cuidados (services/marcosConvertido):
+    // as duas telas respondem "esse convertido seguiu pra outro valor?" e
+    // duas implementações divergiriam sobre as MESMAS pessoas.
+    const podeGenerosidade = podeVerFinanceiroDePessoa(req.user);
+    const { batOf, nextOf, marcosDe, datasImport } =
+      await carregarSinaisConvertidos(convertidos, { podeGenerosidade });
 
     const itens = convertidos.map((c) => {
       const ddesde = Math.floor((agora - new Date(c.data_culto + 'T12:00:00').getTime()) / DIA);
@@ -1926,8 +2008,30 @@ router.get('/jornada-convertidos', async (req, res) => {
       const nxt = n && n.fez ? { feito: true, status: 'feito' }
         : n ? { feito: false, status: 'inscrito' }
         : { feito: false, status: ddesde > 90 ? 'atrasado' : (ddesde > 75 ? 'vencendo' : 'no_prazo') };
-      return { id: c.id, nome: c.nome, telefone: c.telefone, area: c.area, data_culto: c.data_culto, dias_desde_conversao: ddesde, membro_id: c.membro_id, encontro_responsavel_nome: c.encontro_responsavel_nome, contato, batismo, next: nxt };
+      // marcos COM DATA (o "quanto tempo levou"). Chave ausente = sem registro.
+      const marcos = marcosDe(c, { contatoFeito: contato.feito });
+
+      const origem = c.culto_id ? cultoPorId.get(c.culto_id) : null;
+      const origemReplay = !!(origem?.data && c.data_culto && origem.data !== c.data_culto);
+      return {
+        id: c.id, nome: c.nome, telefone: c.telefone, area: c.area, data_culto: c.data_culto,
+        dias_desde_conversao: ddesde, membro_id: c.membro_id,
+        encontro_responsavel_nome: c.encontro_responsavel_nome,
+        origem_replay: origemReplay,
+        culto_origem: origemReplay
+          ? `${origem.nome} de ${String(origem.data).split('-').reverse().join('/')}`
+          : null,
+        contato, batismo, next: nxt, marcos,
+      };
     });
+
+    // derivados de tempo (pura · `hoje` injetado, nunca lido dentro da régua)
+    const hojeBRT = jt.diaBRT(new Date().toISOString());
+    for (const i of itens) {
+      i.data_decisao = i.data_culto; // nome do campo na régua de tempo
+      i.dias_parado = jt.diasParado(i, hojeBRT);
+      i.total_marcos = jt.totalMarcos(i);
+    }
 
     const total = itens.length;
     const pct = (n) => total ? Math.round((n / total) * 100) : 0;
@@ -1945,6 +2049,20 @@ router.get('/jornada-convertidos', async (req, res) => {
         contato_atrasados: total - contatoFeitos, // compat: agora = pendentes
         batismo_feitos: batOk, batismo_pct: pct(batOk),
         next_feitos: nextOk, next_pct: pct(nextOk),
+      },
+      // "quanto tempo levou" · aditivo (o resumo acima não mudou)
+      tempo: {
+        marcos: jt.MARCOS_TEMPO
+          .filter((m) => podeGenerosidade || !m.sensivel)
+          .map((m) => ({ ...m, ...jt.estatisticaMarco(itens, m.chave) })),
+        // ⚠️ DECLARADO: a tela precisa poder dizer que a mediana de grupo é
+        // calculada sobre poucos, e por quê. Silêncio aqui faz um número
+        // frágil parecer sólido.
+        datas_de_importacao: [...datasImport].sort(),
+        engajaram: itens.filter((i) => i.total_marcos > 0).length,
+        sem_nenhum_marco: itens.filter((i) => i.total_marcos === 0).length,
+        // marcador sensível fora da resposta ⇒ a tela declara que está incompleta
+        sensiveis_ocultos: !podeGenerosidade,
       },
       itens,
     });

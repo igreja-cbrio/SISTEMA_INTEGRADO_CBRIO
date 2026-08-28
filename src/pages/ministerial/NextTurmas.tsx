@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import {
   Loader2, Plus, Users, GraduationCap, CalendarDays, Search,
   CheckCircle2, AlertTriangle, X, UserPlus, UserCheck, Sparkles, RotateCcw,
-  Share2, Copy, MessageCircle, Monitor, ArrowRightLeft, Trash2,
+  Share2, Copy, MessageCircle, Monitor, ArrowRightLeft, Trash2, Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
@@ -29,7 +29,7 @@ function msgTurma(nome: string, turmaNome: string, encontros?: { data?: string |
   const datas = (encontros || []).map(e => e.data).filter(Boolean)
     .map(d => { const [, m, day] = String(d).split('-'); return `${day}/${m}`; });
   const quando = datas.length
-    ? ` Os encontros são no dia ${datas.join(' e ')} (confirme o horário com a gente).`
+    ? ` O encontro é no dia ${datas.join(' e ')}, no culto de 9h30.`
     : '';
   return `Olá, ${nome}! 🎉 Você foi alocado(a) na turma do Next "${turmaNome}".${quando} Qualquer dúvida, é só chamar por aqui. Te esperamos!`;
 }
@@ -59,6 +59,12 @@ const STATUS_COLOR: Record<Status, string> = {
 // Direcionamento pros valores DENTRO do Next (Fase 1B · Marcos · 2026-06-25). Os flags
 // indicou_* vivem na matrícula. Grupos/Voluntários → caixa da área; Batismo → inscrição
 // pendente; Devocional → registra a escolha. Sem Dízimo (decisão do Marcos).
+// Horários do batismo · catálogo que a Integração gerencia na aba Batismos.
+type BatismoInfoNext = {
+  data_batismo?: string | null;
+  horarios: { horario: string; label: string; vagas_restantes: number | null }[];
+};
+
 const NEXT_VALORES: { v: string; flag: keyof Matricula; l: string }[] = [
   { v: 'grupos',      flag: 'indicou_grupo',      l: 'Grupos' },
   { v: 'voluntarios', flag: 'indicou_servir',     l: 'Voluntários' },
@@ -124,7 +130,7 @@ export default function NextTurmas() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// TURMAS (mensais · 2 encontros · presença)
+// TURMAS (uma por domingo · 1 encontro · presença)
 // ──────────────────────────────────────────────────────────────────────────
 function TurmasView() {
   const [turmas, setTurmas] = useState<Turma[]>([]);
@@ -158,7 +164,7 @@ function TurmasView() {
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground mx-auto my-12" />
       ) : turmas.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
-          Nenhuma turma ainda. Abra a primeira turma (2 encontros).
+          Nenhuma turma ainda. As turmas de cada domingo abrem automaticamente; use "Abrir turma" para um domingo fora da regra.
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -241,16 +247,19 @@ function FilaEspera({ pessoas, turmasAbertas, onChanged }: { pessoas: any[]; tur
   );
 }
 
+// Turma = UM domingo, UM encontro, culto de 09:30 (26/08/2026 · era 2 encontros).
+// ⚠️ As turmas do mês são abertas AUTOMATICAMENTE pela rotina diária. Este modal
+// serve para o caso fora da regra (domingo extra, turma de reposição).
 function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [nome, setNome] = useState(nomeMesAtual());
   const [data1, setData1] = useState('');
-  const [data2, setData2] = useState('');
   const [saving, setSaving] = useState(false);
   const salvar = async () => {
     if (!nome.trim()) { toast.error('Informe o nome da turma'); return; }
+    if (!data1) { toast.error('Informe a data do encontro'); return; }
     setSaving(true);
     try {
-      const r = await nextApi.turmas.create({ nome: nome.trim(), encontros: [{ numero: 1, data: data1 || null }, { numero: 2, data: data2 || null }] });
+      const r = await nextApi.turmas.create({ nome: nome.trim(), encontros: [{ numero: 1, data: data1 }] });
       const n = r?.puxados_da_espera || 0;
       toast.success(n > 0 ? `Turma aberta · ${n} da lista de espera incluído(s)` : 'Turma aberta');
       onCreated();
@@ -265,11 +274,12 @@ function NovaTurmaModal({ onClose, onCreated }: { onClose: () => void; onCreated
           <div>
             <Label>Nome *</Label>
             <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex.: Julho 2026 · Turma 1" />
-            <p className="text-[11px] text-muted-foreground mt-1">Pode ter mais de uma turma aberta (ex.: 2 por mês — 1º/2º domingo e 3º/4º domingo). A lista de espera entra automaticamente só quando esta for a única turma aberta; com mais de uma, você organiza quem vai em cada uma.</p>
+            <p className="text-[11px] text-muted-foreground mt-1">As turmas de cada domingo são abertas <strong>automaticamente</strong> — use este formulário só para um domingo fora da regra ou uma turma de reposição. Quem se inscreve escolhe o domingo no próprio formulário público.</p>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div><Label>1º encontro</Label><DatePicker value={data1} onChange={setData1} /></div>
-            <div><Label>2º encontro</Label><DatePicker value={data2} onChange={setData2} /></div>
+          <div>
+            <Label>Data do encontro (domingo) *</Label>
+            <DatePicker value={data1} onChange={setData1} />
+            <p className="text-[11px] text-muted-foreground mt-1">O Next acontece no culto de <strong>09:30</strong>.</p>
           </div>
         </div>
         <DialogFooter>
@@ -302,6 +312,10 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
   const [qrSatisfacaoOpen, setQrSatisfacaoOpen] = useState(false);
   const [transferir, setTransferir] = useState<Matricula | null>(null);
   const [ordem, setOrdem] = useState<'nome' | 'recentes'>('nome');
+  // Renomear turma (lápis no título) · o backend já aceita `nome` no PATCH /turmas/:id.
+  const [editandoNome, setEditandoNome] = useState(false);
+  const [nomeEdit, setNomeEdit] = useState('');
+  const [salvandoNome, setSalvandoNome] = useState(false);
   const load = useCallback(async () => {
     setLoading(true);
     try { setDet(await nextApi.turmas.get(turmaId)); } catch (e: any) { toast.error(e?.message || 'Erro'); }
@@ -353,6 +367,20 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
     try { await nextApi.turmas.update(turmaId, { status: 'aberta' }); toast.success('Turma reaberta'); await load(); onChanged(); }
     catch (e: any) { toast.error(e?.message || 'Erro'); }
   };
+  const salvarNome = async () => {
+    const nome = nomeEdit.trim();
+    if (!nome) { toast.error('Informe o nome da turma.'); return; }
+    if (nome === det?.nome) { setEditandoNome(false); return; }
+    setSalvandoNome(true);
+    try {
+      await nextApi.turmas.update(turmaId, { nome });
+      setDet(d => d ? { ...d, nome } : d);
+      setEditandoNome(false);
+      toast.success('Nome da turma atualizado.');
+      onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao renomear a turma'); }
+    setSalvandoNome(false);
+  };
   const setData = async (encId: string, data: string) => {
     try { await nextApi.encontros.update(encId, { data: data || null }); await load(); } catch (e: any) { toast.error(e?.message); }
   };
@@ -366,8 +394,43 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
           <>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 flex-wrap">
-                {det.nome}
-                {det.status !== 'aberta' && <Badge variant="outline" className="text-[9px] uppercase">{det.status}</Badge>}
+                {editandoNome ? (
+                  <>
+                    <Input
+                      value={nomeEdit}
+                      onChange={e => setNomeEdit(e.target.value)}
+                      autoFocus
+                      disabled={salvandoNome}
+                      placeholder="Nome da turma"
+                      className="h-8 w-[220px] text-sm"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { e.preventDefault(); salvarNome(); }
+                        if (e.key === 'Escape') { e.preventDefault(); setEditandoNome(false); }
+                      }}
+                    />
+                    <Button size="sm" className="h-8" onClick={salvarNome} disabled={salvandoNome}
+                      style={{ background: C.primary, color: '#fff' }}>
+                      {salvandoNome ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Salvar'}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-8" onClick={() => setEditandoNome(false)} disabled={salvandoNome}>
+                      Cancelar
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {det.nome}
+                    <button
+                      type="button"
+                      onClick={() => { setNomeEdit(det.nome); setEditandoNome(true); }}
+                      title="Renomear turma"
+                      aria-label="Renomear turma"
+                      className="text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    {det.status !== 'aberta' && <Badge variant="outline" className="text-[9px] uppercase">{det.status}</Badge>}
+                  </>
+                )}
               </DialogTitle>
             </DialogHeader>
             <div className="flex-1 overflow-y-auto min-h-0">
@@ -391,7 +454,7 @@ function TurmaDetalheModal({ turmaId, onClose, onChanged }: { turmaId: string; o
                   })}
                   <StatCard label="Vieram ao menos 1x" value={unicos} sub={`${pct(unicos)}% dos inscritos`}
                     color={C.warn} icon={CheckCircle2} />
-                  <StatCard label="Formados" value={formados} sub={`${pct(formados)}% dos inscritos · presentes nos 2 encontros`}
+                  <StatCard label="Formados" value={formados} sub={`${pct(formados)}% dos inscritos · presentes no encontro`}
                     color={C.primary} icon={GraduationCap} />
                 </div>
               );
@@ -692,14 +755,30 @@ function DirecionarValoresModal({ m, onClose, onDone }: { m: { id: string; nome:
   const jaFeito = (flag: string) => !!(m as any)[flag];
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
+  // Horários do batismo · catálogo da Integração (aba Batismos). Carregado só
+  // quando o modal abre — a lista muda de ocupação a cada inscrição.
+  const [batismo, setBatismo] = useState<BatismoInfoNext>({ horarios: [] });
+  const [horarioBatismo, setHorarioBatismo] = useState('');
   const nomeC = `${m.nome} ${m.sobrenome || ''}`.trim();
+
+  useEffect(() => {
+    nextApi.batismoHorarios()
+      .then((r: BatismoInfoNext) => setBatismo(r && Array.isArray(r.horarios) ? r : { horarios: [] }))
+      .catch(() => setBatismo({ horarios: [] }));
+  }, []);
+
+  const batismoIndisponivel = batismo.horarios.length === 0;
 
   async function save() {
     const destinos = NEXT_VALORES.filter(x => sel[x.v] && !jaFeito(x.flag)).map(x => x.v);
     if (destinos.length === 0) { toast.error('Escolha ao menos um destino novo'); return; }
+    // ⚠️ O servidor recusa batismo sem horário (a inscrição sem horário some da
+    // contagem por culto e do lembrete de véspera). Aviso aqui pra não gastar
+    // round-trip nem mostrar erro cru.
+    if (destinos.includes('batismo') && !horarioBatismo) { toast.error('Escolha o horário do batismo'); return; }
     setSaving(true);
     try {
-      await nextApi.matriculas.direcionar(m.id, destinos);
+      await nextApi.matriculas.direcionar(m.id, destinos, [], horarioBatismo || null);
       toast.success('Direcionado');
       onDone();
     } catch (e: any) { toast.error(e?.message || 'Erro ao direcionar'); }
@@ -712,18 +791,47 @@ function DirecionarValoresModal({ m, onClose, onDone }: { m: { id: string; nome:
         <DialogHeader><DialogTitle>Direcionar — {nomeC}</DialogTitle></DialogHeader>
         <p className="text-xs text-muted-foreground">
           Pra onde a pessoa segue ao fim do Next. Grupos/Voluntários caem na caixa da área;
-          Batismo vira inscrição pendente; Devocional registra a escolha.
+          Batismo vira inscrição pendente no horário escolhido; Devocional registra a escolha.
         </p>
         <div className="space-y-2 py-1">
           {NEXT_VALORES.map(x => {
             const feito = jaFeito(x.flag);
+            const bloqueado = x.v === 'batismo' && batismoIndisponivel;
             return (
-              <label key={x.v} className={`flex items-center gap-2 text-sm rounded-md border border-border p-2 ${feito ? 'opacity-60' : 'cursor-pointer'}`}>
-                <input type="checkbox" disabled={feito} checked={feito || !!sel[x.v]}
-                  onChange={e => setSel(s => ({ ...s, [x.v]: e.target.checked }))}
-                  className="h-4 w-4 accent-[#00B39D]" />
-                {x.l}{feito && <span className="text-[10px] text-muted-foreground">· já direcionado</span>}
-              </label>
+              <div key={x.v}>
+                <label className={`flex items-center gap-2 text-sm rounded-md border border-border p-2 ${feito || bloqueado ? 'opacity-60' : 'cursor-pointer'}`}>
+                  <input type="checkbox" disabled={feito || bloqueado} checked={feito || !!sel[x.v]}
+                    onChange={e => setSel(s => ({ ...s, [x.v]: e.target.checked }))}
+                    className="h-4 w-4 accent-[#00B39D]" />
+                  {x.l}
+                  {feito && <span className="text-[10px] text-muted-foreground">· já direcionado</span>}
+                  {!feito && bloqueado && (
+                    <span className="text-[10px] text-muted-foreground">· nenhum horário aberto (abra na aba Batismos)</span>
+                  )}
+                </label>
+
+                {/* Horário do batismo — obrigatório: é ele que faz a inscrição
+                    entrar na contagem por culto e no lembrete de véspera. */}
+                {x.v === 'batismo' && !feito && !bloqueado && sel.batismo && (
+                  <div className="mt-1.5 ml-6 space-y-1">
+                    <p className="text-[11px] text-muted-foreground">
+                      Horário do batismo
+                      {batismo.data_batismo ? ` (${new Date(batismo.data_batismo + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })})` : ''}
+                    </p>
+                    {batismo.horarios.map(h => (
+                      <label key={h.horario} className="flex items-center gap-2 text-xs rounded-md border border-border p-1.5 cursor-pointer">
+                        <input type="radio" name="horario-batismo" className="h-3.5 w-3.5 accent-[#00B39D]"
+                          checked={horarioBatismo === h.horario}
+                          onChange={() => setHorarioBatismo(h.horario)} />
+                        <span className="flex-1">{h.label}</span>
+                        {h.vagas_restantes != null && (
+                          <span className="text-[10px] text-muted-foreground">{h.vagas_restantes} vaga{h.vagas_restantes === 1 ? '' : 's'}</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>

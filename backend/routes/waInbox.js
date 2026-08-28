@@ -7,6 +7,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const wpp = require('../services/whatsappService');
 const waInbox = require('../services/waInbox');
+const { escapePostgrestValue } = require('../utils/sanitize');
 const { notificar } = require('../services/notificar');
 
 // profile_id[] de todos os usuários da área (mesma fn usada pelo bot de triagem)
@@ -18,9 +19,21 @@ async function profilesDaArea(areaNome) {
 }
 
 // Anexos: imagem (jpg/png/webp) ou documento (pdf/doc/xls). Cap 16MB (limite Meta).
+const TIPOS_ANEXO = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'application/pdf',
+  'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+]);
 const uploadAnexo = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 16 * 1024 * 1024 },
+  // O comentário acima sempre prometeu jpg/png/webp/pdf/doc/xls — mas não havia
+  // fileFilter: .exe/.zip subiam pro bucket PÚBLICO antes de a Meta recusar.
+  fileFilter: (req, file, cb) => {
+    if (TIPOS_ANEXO.has(file.mimetype)) return cb(null, true);
+    req.anexoRecusado = file.mimetype || 'desconhecido';
+    cb(null, false);
+  },
 });
 
 router.use(authenticate);
@@ -126,40 +139,78 @@ router.get('/resumo-areas', authorizeModule('conversas', 1), async (req, res) =>
 // GET /setores — lista (todos, p/ admin) · usado pelo painel e pela config
 router.get('/setores', authorizeModule('conversas', 1), async (req, res) => {
   try {
+    // select('*'): os campos de FLUXO entram quando a migration existir —
+    // pedi-los nominalmente derrubaria a rota antes dela.
     const { data } = await supabase.from('conversas_setores')
-      .select('id, ordem, rotulo, area, ativo').order('ordem', { ascending: true });
+      .select('*').order('ordem', { ascending: true });
     res.json({ setores: data || [] });
   } catch (e) {
     console.error('[wa-inbox] setores get:', e.message);
     res.status(500).json({ error: 'Erro ao listar setores' });
   }
 });
+// Campos do FLUXO da opção (F3 · migration 20260813150000). Devolve
+// { fluxo, erro } — o erro cobre a única combinação inválida.
+function camposFluxoSetor(body) {
+  const b = body || {};
+  const fluxo = {};
+  if ('mensagem_resposta' in b) fluxo.mensagem_resposta = b.mensagem_resposta ? String(b.mensagem_resposta).slice(0, 1000) : null;
+  if ('pedir_nome' in b) fluxo.pedir_nome = b.pedir_nome !== false;
+  if ('destino_tipo' in b) fluxo.destino_tipo = b.destino_tipo === 'atendente' ? 'atendente' : 'area';
+  if ('atendente_id' in b) fluxo.atendente_id = b.atendente_id || null;
+  if (fluxo.destino_tipo === 'atendente' && !fluxo.atendente_id) {
+    return { fluxo, erro: 'Destino "atendente" exige escolher o atendente.' };
+  }
+  return { fluxo };
+}
+
 // POST /setores — cria (admin do módulo)
 router.post('/setores', authorizeModule('conversas', 3), async (req, res) => {
   try {
     const { rotulo, area, ordem, ativo } = req.body || {};
     if (!rotulo || !area) return res.status(400).json({ error: 'Rótulo e área são obrigatórios.' });
-    const { data, error } = await supabase.from('conversas_setores')
-      .insert({ rotulo: String(rotulo).trim(), area: String(area).trim(), ordem: Number(ordem) || 0, ativo: ativo !== false })
-      .select().single();
+    const { fluxo, erro: erroFluxo } = camposFluxoSetor(req.body);
+    if (erroFluxo) return res.status(400).json({ error: erroFluxo });
+    const base = { rotulo: String(rotulo).trim(), area: String(area).trim(), ordem: Number(ordem) || 0, ativo: ativo !== false };
+    let aviso;
+    let { data, error } = await supabase.from('conversas_setores')
+      .insert({ ...base, ...fluxo }).select().single();
+    if (error && error.code === '42703' && Object.keys(fluxo).length) {
+      // Migration do fluxo ainda não aplicada → salva o básico e AVISA
+      // (silêncio aqui viraria "salvei o fluxo" que não existe).
+      aviso = 'Campos de fluxo ignorados — a migration 20260813150000 ainda não foi aplicada.';
+      ({ data, error } = await supabase.from('conversas_setores').insert(base).select().single());
+    }
     if (error) throw error;
-    res.json(data);
+    res.json(aviso ? { ...data, aviso } : data);
   } catch (e) {
     console.error('[wa-inbox] setores post:', e.message);
     res.status(500).json({ error: 'Erro ao criar setor' });
   }
 });
-// PUT /setores/:id — edita
+// PUT /setores/:id — edita (inclui os campos de FLUXO da opção)
 router.put('/setores/:id', authorizeModule('conversas', 3), async (req, res) => {
   try {
     const patch = {};
     for (const k of ['rotulo', 'area']) if (k in (req.body || {})) patch[k] = String(req.body[k] || '').trim();
     if ('ordem' in (req.body || {})) patch.ordem = Number(req.body.ordem) || 0;
     if ('ativo' in (req.body || {})) patch.ativo = !!req.body.ativo;
-    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada para atualizar' });
-    const { data, error } = await supabase.from('conversas_setores').update(patch).eq('id', req.params.id).select().single();
+    const { fluxo, erro: erroFluxo } = camposFluxoSetor(req.body);
+    if (erroFluxo) return res.status(400).json({ error: erroFluxo });
+    if (!Object.keys(patch).length && !Object.keys(fluxo).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    let aviso;
+    let { data, error } = await supabase.from('conversas_setores')
+      .update({ ...patch, ...fluxo }).eq('id', req.params.id).select().single();
+    if (error && error.code === '42703' && Object.keys(fluxo).length) {
+      aviso = 'Campos de fluxo ignorados — a migration 20260813150000 ainda não foi aplicada.';
+      if (Object.keys(patch).length) {
+        ({ data, error } = await supabase.from('conversas_setores').update(patch).eq('id', req.params.id).select().single());
+      } else {
+        return res.status(409).json({ error: aviso });
+      }
+    }
     if (error) throw error;
-    res.json(data);
+    res.json(aviso ? { ...data, aviso } : data);
   } catch (e) {
     console.error('[wa-inbox] setores put:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar setor' });
@@ -253,8 +304,26 @@ router.get('/conversas/:id/perfil', authorizeModule('conversas', 1), async (req,
     const { data: conv } = await supabase.from('wa_conversas')
       .select('membro_id, telefone').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
+
+    // ── DE QUAL DISPARO ELA VEIO (Matheus · 12/08/2026) ──────────────────
+    // Com o bot calado, quem responde é gente — e responder sem saber o que a
+    // igreja mandou antes é responder no escuro. Medido: 88 das 110 conversas
+    // (80%) têm um disparo que as explica.
+    // ⚠️ Best-effort e SEPARADO do resto: falha aqui não pode derrubar o perfil
+    // da pessoa. `origem_erro` diz que não deu pra ler — a tela não pode mostrar
+    // "não veio de disparo" quando a consulta falhou.
+    let origem = [];
+    let origemErro = null;
+    try {
+      const { disparosDoTelefone } = require('../services/whatsappOrigemConversa');
+      origem = await disparosDoTelefone(conv.telefone);
+    } catch (e) {
+      console.error('[wa-inbox] origem do disparo:', e.message);
+      origemErro = 'Não foi possível ler os disparos anteriores.';
+    }
+
     const mid = conv.membro_id;
-    if (!mid) return res.json({ membro: null, telefone: conv.telefone });
+    if (!mid) return res.json({ membro: null, telefone: conv.telefone, origem, origem_erro: origemErro });
 
     const { data: m } = await supabase.from('mem_membros')
       .select('id, nome, foto_url, telefone, email, data_nascimento, status, batizado')
@@ -304,6 +373,8 @@ router.get('/conversas/:id/perfil', authorizeModule('conversas', 1), async (req,
       serve: ministerios.length > 0,
       ministerios,
       fez_next: fezNext,
+      origem,
+      origem_erro: origemErro,
     });
   } catch (e) {
     console.error('[wa-inbox] perfil:', e.message);
@@ -325,7 +396,13 @@ router.get('/conversas', authorizeModule('conversas', 1), async (req, res) => {
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(200);
     if (status === 'abertas') query = query.eq('resolvida', false);
-    if (q) query = query.or(`nome.ilike.%${q}%,telefone.ilike.%${q}%`);
+    // escapePostgrestValue: vírgula/parêntese cru no .or() quebra a query
+    // inteira do PostgREST e o catch da UI virava "Nenhuma conversa aqui"
+    // (buscar "Silva, Maria" = inbox falsamente vazio).
+    if (q) {
+      const qe = escapePostgrestValue(q);
+      query = query.or(`nome.ilike.%${qe}%,telefone.ilike.%${qe}%`);
+    }
 
     // Visibilidade (não-admin): Entrada (área nula) OU área do usuário OU atribuída a ele.
     if (!ehAdmin(req)) {
@@ -356,11 +433,96 @@ router.get('/conversas/:id/mensagens', authorizeModule('conversas', 1), async (r
     const { data: conv } = await supabase.from('wa_conversas')
       .select('*, membro:mem_membros(foto_url)').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
+    // ⚠️ desc + reverse: a conversa é 1 por telefone PRA SEMPRE — com asc+limit,
+    // um histórico >500 devolvia as 500 mais ANTIGAS e a mensagem de HOJE nunca
+    // aparecia na thread (a prévia da lista subia e o time respondia no escuro).
+    // select('*'): os recibos (delivered_at/read_at/failed_at · migration
+    // 20260813190000) entram quando existirem — pedi-los nominalmente
+    // derrubaria a thread antes dela (lição do parcelas_max).
     const { data: msgs } = await supabase.from('wa_mensagens')
-      .select('id, direcao, tipo, texto, media_url, autor_id, criado_em')
-      .eq('conversa_id', conv.id).order('criado_em', { ascending: true }).limit(500);
+      .select('*')
+      .eq('conversa_id', conv.id).order('criado_em', { ascending: false }).limit(500);
+    (msgs || []).reverse();
+    // Mídia RECEBIDA vive em bucket PRIVADO e a linha guarda o PATH (não URL):
+    // assina em LOTE por 15 min só pra esta leitura. URL http (outbound público
+    // + histórico anterior à migração) passa direto. Arquivo já expurgado pela
+    // retenção → ponteiro vira null e o front mostra o placeholder [tipo].
+    const paths = (msgs || []).filter(m => m.media_url && !/^https?:\/\//i.test(m.media_url)).map(m => m.media_url);
+    if (paths.length) {
+      try {
+        const { data: assinadas } = await supabase.storage.from('wa-inbox-privado').createSignedUrls(paths, 900);
+        const porPath = new Map((assinadas || []).filter(s => s.signedUrl).map(s => [s.path, s.signedUrl]));
+        for (const m of msgs) {
+          if (m.media_url && !/^https?:\/\//i.test(m.media_url)) {
+            m.media_url = porPath.get(m.media_url) || null;
+          }
+        }
+      } catch (e) {
+        console.warn('[wa-inbox] assinar mídia:', e.message);
+        for (const m of msgs) if (m.media_url && !/^https?:\/\//i.test(m.media_url)) m.media_url = null;
+      }
+    }
+    // ── Mensagens AUTOMÁTICAS do sistema intercaladas na thread (13/08 ·
+    // caso da Júlia: ela agradeceu um template de aprovação de grupo que NÃO
+    // aparecia na conversa — o atendente ficava sem o contexto). Merge SÓ NA
+    // LEITURA: nada é gravado, o inbox não ganha conversa nova por isso.
+    let automaticas = [];
+    try {
+      const suf = String(conv.telefone || '').replace(/\D+/g, '').slice(-8);
+      if (suf.length === 8) {
+        const { data: envs } = await supabase.from('whatsapp_envios')
+          .select('id, template, texto, tipo, params, status, criado_em, enviado_em, message_id, delivered_at, read_at, failed_at, erro_status, contexto')
+          .ilike('telefone', `%${suf}%`)
+          .in('status', ['enviado', 'erro'])
+          .order('criado_em', { ascending: false }).limit(60);
+        // corpo legível: exemplo do catálogo de templates com os {{n}} preenchidos
+        const nomes = [...new Set((envs || []).map(e => e.template).filter(Boolean))];
+        const corpo = new Map();
+        if (nomes.length) {
+          const { data: tpls } = await supabase.from('wa_templates')
+            .select('nome, exemplo').in('nome', nomes.slice(0, 60));
+          (tpls || []).forEach(t => { if (t.exemplo) corpo.set(t.nome, t.exemplo); });
+        }
+        automaticas = (envs || []).map(e => {
+          let texto;
+          if (e.tipo === 'texto' && e.texto) texto = e.texto;
+          else {
+            const ex = corpo.get(e.template);
+            const params = Array.isArray(e.params) ? e.params : [];
+            texto = ex
+              ? ex.replace(/\{\{(\d+)\}\}/g, (_, n) => String(params[Number(n) - 1] ?? `{{${n}}}`))
+              : `[template: ${e.template || '—'}]`;
+          }
+          return {
+            id: `fila-${e.id}`, direcao: 'out', tipo: 'automatica', texto,
+            media_url: null, autor_id: null,
+            criado_em: e.enviado_em || e.criado_em,
+            delivered_at: e.delivered_at, read_at: e.read_at,
+            failed_at: e.failed_at || (e.status === 'erro' ? e.criado_em : null),
+            erro_status: e.erro_status || (e.status === 'erro' ? 'a fila desistiu do envio' : null),
+            contexto_fila: e.contexto || null,
+            wa_message_id: e.message_id || null,
+          };
+        });
+      }
+    } catch (eAuto) { console.warn('[wa-inbox] automaticas na thread:', eAuto.message); }
+    const timeline = [...(msgs || []), ...automaticas]
+      .sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
+
+    // ── Citações (reply): resolve o trecho citado pelo wamid — inclusive
+    // quando o alvo é um template da fila (o caso real do "Esse aqui").
+    const porWaId = new Map(timeline.filter(x => x.wa_message_id).map(x => [x.wa_message_id, x]));
+    for (const x of timeline) {
+      if (x.reply_to_wa_id) {
+        const alvo = porWaId.get(x.reply_to_wa_id);
+        x.reply_para = alvo
+          ? { texto: String(alvo.texto || (alvo.media_url ? '[mídia]' : alvo.tipo)).slice(0, 140), de: alvo.direcao === 'out' ? 'igreja' : 'pessoa' }
+          : { texto: 'mensagem antiga (fora do histórico carregado)', de: null };
+      }
+    }
+
     if (conv.nao_lidas > 0) await supabase.from('wa_conversas').update({ nao_lidas: 0 }).eq('id', conv.id);
-    res.json({ conversa: comJanela({ ...conv, nao_lidas: 0 }), mensagens: msgs || [] });
+    res.json({ conversa: comJanela({ ...conv, nao_lidas: 0 }), mensagens: timeline });
   } catch (e) {
     console.error('[wa-inbox] mensagens:', e.message);
     res.status(500).json({ error: 'Erro ao carregar conversa' });
@@ -394,12 +556,15 @@ router.post('/conversas/nova', authorizeModule('conversas', 2), async (req, res)
     if (!conv) return res.status(400).json({ error: 'Telefone inválido.' });
 
     const dentro = waInbox.dentroJanela24h(conv.last_inbound_at);
+    // Multi-número: responde pelo número da CONVERSA (institucional × CBZap).
+    // conv vem de select('*') — a coluna flui quando a migration existir.
+    const numOpts = conv.phone_number_id ? { phoneNumberId: conv.phone_number_id } : {};
     let r, tipo, textoLog;
     if (dentro && texto && String(texto).trim()) {
-      r = await wpp.sendText(conv.telefone, String(texto).trim());
+      r = await wpp.sendText(conv.telefone, String(texto).trim(), numOpts);
       tipo = 'text'; textoLog = String(texto).trim();
     } else if (template_name) {
-      r = await wpp.sendTemplate(conv.telefone, template_name, 'pt_BR', Array.isArray(template_params) ? template_params : []);
+      r = await wpp.sendTemplate(conv.telefone, template_name, 'pt_BR', Array.isArray(template_params) ? template_params : [], numOpts);
       tipo = 'template'; textoLog = `[template: ${template_name}]`;
     } else {
       return res.status(400).json({
@@ -409,7 +574,7 @@ router.post('/conversas/nova', authorizeModule('conversas', 2), async (req, res)
     }
     if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o envio.', detail: r?.reason || r?.detail || null });
 
-    await waInbox.registrarOutbound({ telefone: conv.telefone, texto: textoLog, tipo, autorId: uid(req) });
+    await waInbox.registrarOutbound({ telefone: conv.telefone, texto: textoLog, tipo, autorId: uid(req), waMessageId: r.messageId || null });
     if (area && String(area).trim()) await supabase.from('wa_conversas').update({ area: String(area).trim() }).eq('id', conv.id);
 
     const { data: fresh } = await supabase.from('wa_conversas').select('*').eq('id', conv.id).maybeSingle();
@@ -424,17 +589,20 @@ router.post('/conversas/nova', authorizeModule('conversas', 2), async (req, res)
 router.post('/conversas/:id/responder', authorizeModule('conversas', 2), async (req, res) => {
   try {
     const { texto, template_name, template_params } = req.body || {};
+    // select('*'): o phone_number_id (multi-número) entra quando a migration
+    // existir — pedir a coluna nominalmente derrubaria a rota antes dela.
     const { data: conv } = await supabase.from('wa_conversas')
-      .select('id, telefone, last_inbound_at').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
 
     const dentro = waInbox.dentroJanela24h(conv.last_inbound_at);
+    const numOpts = conv.phone_number_id ? { phoneNumberId: conv.phone_number_id } : {};
     let r, tipo, textoLog;
     if (dentro && texto && String(texto).trim()) {
-      r = await wpp.sendText(conv.telefone, String(texto).trim());
+      r = await wpp.sendText(conv.telefone, String(texto).trim(), numOpts);
       tipo = 'text'; textoLog = String(texto).trim();
     } else if (template_name) {
-      r = await wpp.sendTemplate(conv.telefone, template_name, 'pt_BR', Array.isArray(template_params) ? template_params : []);
+      r = await wpp.sendTemplate(conv.telefone, template_name, 'pt_BR', Array.isArray(template_params) ? template_params : [], numOpts);
       tipo = 'template'; textoLog = `[template: ${template_name}]`;
     } else {
       return res.status(400).json({
@@ -443,7 +611,7 @@ router.post('/conversas/:id/responder', authorizeModule('conversas', 2), async (
       });
     }
     if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o envio.', detail: r?.reason || r?.detail || null });
-    await waInbox.registrarOutbound({ telefone: conv.telefone, texto: textoLog, tipo, autorId: uid(req) });
+    await waInbox.registrarOutbound({ telefone: conv.telefone, texto: textoLog, tipo, autorId: uid(req), waMessageId: r.messageId || null });
     res.json({ ok: true, messageId: r.messageId || null });
   } catch (e) {
     console.error('[wa-inbox] responder:', e.message);
@@ -454,9 +622,15 @@ router.post('/conversas/:id/responder', authorizeModule('conversas', 2), async (
 // POST /conversas/:id/anexo — envia imagem/documento (multipart campo 'arquivo')
 router.post('/conversas/:id/anexo', authorizeModule('conversas', 2), uploadAnexo.single('arquivo'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'Arquivo obrigatório.' });
+    if (!req.file) {
+      return res.status(400).json({
+        error: req.anexoRecusado
+          ? `Tipo de arquivo não aceito (${req.anexoRecusado}) — envie imagem (jpg/png/webp), PDF, Word ou Excel.`
+          : 'Arquivo obrigatório.',
+      });
+    }
     const { data: conv } = await supabase.from('wa_conversas')
-      .select('id, telefone, last_inbound_at').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!conv) return res.status(404).json({ error: 'Conversa não encontrada' });
     if (!waInbox.dentroJanela24h(conv.last_inbound_at)) {
       return res.status(400).json({ error: 'Fora da janela de 24h — anexos só dentro da janela.', code: 'fora_janela' });
@@ -466,11 +640,15 @@ router.post('/conversas/:id/anexo', authorizeModule('conversas', 2), uploadAnexo
     // sobe pro bucket público → o WhatsApp busca pelo link
     const urlPub = await waInbox.subirMedia({ buffer: req.file.buffer, mime, conversaId: conv.id, origem: 'out', filename: req.file.originalname });
     if (!urlPub) return res.status(500).json({ error: 'Falha ao subir o arquivo.' });
-    const r = await wpp.sendMedia(conv.telefone, kind, urlPub, { filename: req.file.originalname });
+    const r = await wpp.sendMedia(conv.telefone, kind, urlPub, {
+      filename: req.file.originalname,
+      ...(conv.phone_number_id ? { phoneNumberId: conv.phone_number_id } : {}),
+    });
     if (!r?.sent) return res.status(502).json({ error: 'O WhatsApp não aceitou o anexo.', detail: r?.reason || r?.detail || null });
     await waInbox.registrarOutbound({
       telefone: conv.telefone, tipo: kind, autorId: uid(req), mediaUrl: urlPub,
       texto: kind === 'document' ? (req.file.originalname || '[documento]') : null,
+      waMessageId: r.messageId || null,
     });
     res.json({ ok: true, media_url: urlPub, messageId: r.messageId || null });
   } catch (e) {
@@ -493,7 +671,7 @@ router.post('/conversas/:id/ler', authorizeModule('conversas', 1), async (req, r
 router.patch('/conversas/:id', authorizeModule('conversas', 2), async (req, res) => {
   try {
     const { data: antes } = await supabase.from('wa_conversas')
-      .select('id, telefone, protocolo, resolvida, last_inbound_at').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!antes) return res.status(404).json({ error: 'Conversa não encontrada' });
 
     const patch = {};
@@ -505,20 +683,40 @@ router.patch('/conversas/:id', authorizeModule('conversas', 2), async (req, res)
 
     // Ao FINALIZAR (resolvida: false → true): manda a pesquisa de satisfação 0-5
     // com o protocolo. Só dá pra mandar texto livre dentro da janela de 24h.
+    // ⚠️ CLAIM ATÔMICO primeiro: duplo-clique no Finalizar (ou dois atendentes ao
+    // mesmo tempo) fazia as DUAS requisições lerem resolvida=false e a pessoa
+    // recebia a pesquisa 2×. Só quem realmente transiciona (o UPDATE guardado
+    // por .eq('resolvida', false) devolve linha) envia.
     let pesquisaEnviada = false;
-    if (patch.resolvida === true && !antes.resolvida && waInbox.dentroJanela24h(antes.last_inbound_at)) {
-      const msg = `Sua conversa foi finalizada! 🙏\nProtocolo: *${antes.protocolo || '—'}*\n\nDe *0 a 5*, como você avalia nosso atendimento? Responda só com o número (0 = péssimo · 5 = excelente).`;
-      const r = await wpp.sendText(antes.telefone, msg).catch(() => ({ sent: false }));
-      if (r?.sent) {
-        pesquisaEnviada = true;
-        patch.pesquisa_estado = 'aguardando';
-        patch.pesquisa_em = new Date().toISOString();
-        await waInbox.registrarOutbound({ telefone: antes.telefone, texto: msg, tipo: 'pesquisa' }).catch(() => {});
+    if (patch.resolvida === true && !antes.resolvida) {
+      const { data: claim } = await supabase.from('wa_conversas')
+        .update({ resolvida: true }).eq('id', req.params.id)
+        .eq('resolvida', false).select('id');
+      delete patch.resolvida; // já aplicada (ou o concorrente aplicou)
+      if (claim?.length && waInbox.dentroJanela24h(antes.last_inbound_at)) {
+        const msg = `Sua conversa foi finalizada! 🙏\nProtocolo: *${antes.protocolo || '—'}*\n\nDe *0 a 5*, como você avalia nosso atendimento? Responda só com o número (0 = péssimo · 5 = excelente).`;
+        const r = await wpp.sendText(antes.telefone, msg,
+          antes.phone_number_id ? { phoneNumberId: antes.phone_number_id } : {}).catch(() => ({ sent: false }));
+        if (r?.sent) {
+          pesquisaEnviada = true;
+          patch.pesquisa_estado = 'aguardando';
+          patch.pesquisa_em = new Date().toISOString();
+          await waInbox.registrarOutbound({ telefone: antes.telefone, texto: msg, tipo: 'pesquisa', waMessageId: r.messageId || null }).catch(() => {});
+        }
       }
     }
 
-    const { data, error } = await supabase.from('wa_conversas').update(patch).eq('id', req.params.id).select().single();
-    if (error) throw error;
+    let data;
+    if (Object.keys(patch).length) {
+      const r2 = await supabase.from('wa_conversas').update(patch).eq('id', req.params.id).select().single();
+      if (r2.error) throw r2.error;
+      data = r2.data;
+    } else {
+      // patch era só o resolvida (já aplicado no claim) → relê o estado atual
+      const r2 = await supabase.from('wa_conversas').select('*').eq('id', req.params.id).single();
+      if (r2.error) throw r2.error;
+      data = r2.data;
+    }
     res.json({ ...comJanela(data), pesquisa_enviada: pesquisaEnviada });
   } catch (e) {
     console.error('[wa-inbox] patch:', e.message);
@@ -551,7 +749,7 @@ router.post('/conversas/:id/transferir', authorizeModule('conversas', 2), async 
         modulo: 'conversas', tipo: 'conversa_transferida',
         titulo: `Conversa transferida · ${area}`,
         mensagem: `${conv.nome || conv.telefone} (${conv.protocolo || '—'}) foi transferida pra ${area}.`,
-        link: `/conversas?area=${encodeURIComponent(area)}`,
+        link: `/comunicacao?tab=conversas&area=${encodeURIComponent(area)}`,
         chaveDedup: `conversa_transf_${conv.id}_${area}`,
         targetIds: alvos.length ? alvos : undefined,
       });

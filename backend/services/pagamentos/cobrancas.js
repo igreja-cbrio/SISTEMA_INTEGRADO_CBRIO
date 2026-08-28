@@ -16,8 +16,10 @@
 const { supabase } = require('../../utils/supabase');
 const providers = require('./providers');
 const handlers = require('./handlers');
-const { STATUS, TIPO_PAGAMENTO, STATUS_ABERTOS } = require('./tipos');
-const { aplicarTransicao, statusPorValor, podeExpirar, estaTerminal } = require('./maquinaEstados');
+const { STATUS, TIPO_PAGAMENTO, STATUS_ABERTOS, METODOS } = require('./tipos');
+const {
+  aplicarTransicao, statusPorValor, podeExpirar, estaTerminal, estaAberta,
+} = require('./maquinaEstados');
 
 const SELECT_COBRANCA = `
   id, public_token, origem_tipo, origem_id, referencia, idempotency_key,
@@ -27,6 +29,7 @@ const SELECT_COBRANCA = `
   checkout_url, pix_payload, pix_qrcode_base64, boleto_linha_digitavel, boleto_url,
   vencimento, status, expira_em, pago_em,
   pagador_nome, pagador_cpf, pagador_email, pagador_telefone, membro_id,
+  estacao_id,
   cartao_brand, cartao_last4, descricao, metadata, ultimo_erro,
   criado_por, created_at, updated_at
 `.replace(/\s+/g, ' ').trim();
@@ -69,11 +72,66 @@ async function porProviderId(provider, providerCobrancaId) {
 }
 
 /**
+ * Cobranças da MESMA chave de negócio: a `referencia` exata mais as versionadas
+ * (`<referencia>:bolsa:<ts>`, `<referencia>:r<ts>`).
+ *
+ * Existe porque reemitir cria uma linha com referência NOVA — e a partir daí
+ * `porReferencia(referencia)` sozinho passa a enxergar só a cobrança morta. Sem
+ * olhar a família, o 2º reenvio do formulário emitiria uma TERCEIRA cobrança
+ * enquanto a segunda ainda está em aberto: duas cobranças pagáveis pela mesma
+ * inscrição, que é exatamente o que a UNIQUE de `referencia` existe pra impedir.
+ *
+ * ⚠️ O `like` do PostgREST traduz `*` em `%`, então o padrão pode trazer linha a
+ * mais — o filtro exato em JS logo abaixo é quem decide. Ele só não pode deixar
+ * candidato de FORA, e `%`/`_`/`*` no valor apenas alargam a busca.
+ */
+async function familiaReferencia(referencia) {
+  if (!referencia) return [];
+  const { data, error } = await supabase.from('pag_cobrancas')
+    .select(SELECT_COBRANCA)
+    .like('referencia', `${referencia}%`)
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (error) throw error;
+  return (data || []).filter((c) => {
+    const r = String(c.referencia || '');
+    return r === referencia || r.startsWith(`${referencia}:`);
+  });
+}
+
+/**
+ * Estados terminais em que reemitir é o comportamento CERTO: a cobrança morreu
+ * sem dinheiro nenhum dentro.
+ *
+ * ⚠️ `estornado`/`chargeback` ficam de fora de propósito, mesmo podendo zerar a
+ * soma (liquidação − estorno = 0): ali o dinheiro entrou e voltou por decisão de
+ * alguém, e reemitir sozinho transformaria uma devolução em cobrança nova sem
+ * ninguém mandar.
+ */
+const STATUS_REEMITIVEIS = Object.freeze([STATUS.EXPIRADA, STATUS.CANCELADA, STATUS.FALHOU]);
+
+function podeReemitir(c) {
+  return !!c
+    && STATUS_REEMITIVEIS.includes(c.status)
+    && Number(c.valor_pago_centavos || 0) === 0;
+}
+
+/**
  * Cria (ou recupera) uma cobrança.
  *
  * `referencia` é a chave de NEGÓCIO idempotente (ex.: `inscricao:<uuid>`):
  * reenvio de formulário e duplo clique devolvem a MESMA cobrança em vez de
  * criar uma segunda — que é como a pessoa acabaria pagando duas vezes.
+ *
+ * ⚠️ Cobrança TERMINAL sem dinheiro dentro é a exceção: ela não pode ser
+ * devolvida como se ainda servisse. `expirada`/`cancelada`/`falhou` são estados
+ * ABSORVENTES — nada os reabre —, então entregá-la de volta deixa a pessoa sem
+ * NENHUM caminho de pagamento (medido na re-inscrição de CBR-2026-000141: a
+ * inscrição voltava a `recebida`, ocupando vaga, com uma cobrança expirada na
+ * mão). Aqui ela é REEMITIDA com referência versionada, a mesma técnica da
+ * bolsa — `inscricao:<id>` é UNIQUE e é ela que impede pagar duas vezes.
+ * Cobrança COM dinheiro segue intocada: reemitir ali seria cobrar de novo.
  *
  * Ordem deliberada: grava a linha ANTES de falar com o PSP. Se a chamada
  * externa falhar no meio, a cobrança existe em `criada` com `ultimo_erro` e o
@@ -88,6 +146,11 @@ async function criarCobranca({
   expira_em, vencimento,
   pagador_nome, pagador_cpf, pagador_email, pagador_telefone, membro_id,
   metadata, criado_por,
+  // Estação de autoatendimento que originou a cobrança (NULL = veio da web).
+  // ⚠️ Quem preenche é o SERVIDOR, a partir da conta de quiosque logada
+  // (`totemEstacao.estacaoDaConta`) — nunca o corpo do request. É o que faz a
+  // conciliação do presencial saber qual totem/maquininha cobrou.
+  estacao_id,
 }) {
   if (!origem_tipo) throw new Error('origem_tipo é obrigatório');
   const valor = centavos(valor_centavos);
@@ -95,24 +158,11 @@ async function criarCobranca({
 
   const adapter = providers.obter(providerNome);
 
-  const existente = await porReferencia(referencia);
-  if (existente) {
-    // ⚠️ Cobrança MEIO-CRIADA: a linha existe mas a chamada ao PSP falhou, então
-    // ela não tem `provider_cobranca_id` nem checkout. Devolvê-la como está
-    // seria um beco sem saída — a pessoa reenviaria o formulário pra sempre e
-    // receberia a mesma cobrança sem link de pagamento (e o cron de
-    // reconciliação também não a pega, porque filtra por provider_cobranca_id).
-    // Aqui retomamos: chama o PSP de novo sobre a MESMA linha.
-    const incompleta = !existente.provider_cobranca_id && existente.status === STATUS.CRIADA;
-    if (!incompleta) return { cobranca: existente, reaproveitada: true };
-    const retomada = await pedirAoProvider(adapter, existente);
-    return { cobranca: retomada, reaproveitada: true, retomada: true };
-  }
-
-  const { data: nova, error: eIns } = await supabase.from('pag_cobrancas').insert({
+  // Campos da linha, sem a `referencia` — ela varia entre a criação normal e a
+  // reemissão, e é a ÚNICA diferença entre as duas.
+  const camposLinha = {
     origem_tipo,
     origem_id: origem_id || null,
-    referencia: referencia || null,
     valor_centavos: valor,
     descricao: descricao || null,
     provider: adapter.nome,
@@ -127,10 +177,47 @@ async function criarCobranca({
     pagador_email: pagador_email || null,
     pagador_telefone: pagador_telefone || null,
     membro_id: membro_id || null,
+    estacao_id: estacao_id || null,
     metadata: metadata || {},
     criado_por: criado_por || null,
     status: STATUS.CRIADA,
-  }).select(SELECT_COBRANCA).single();
+  };
+
+  /** Retoma a linha meio-criada, ou devolve a que já serve. */
+  async function devolver(c) {
+    // ⚠️ Cobrança MEIO-CRIADA: a linha existe mas a chamada ao PSP falhou, então
+    // ela não tem `provider_cobranca_id` nem checkout. Devolvê-la como está
+    // seria um beco sem saída — a pessoa reenviaria o formulário pra sempre e
+    // receberia a mesma cobrança sem link de pagamento (e o cron de
+    // reconciliação também não a pega, porque filtra por provider_cobranca_id).
+    // Aqui retomamos: chama o PSP de novo sobre a MESMA linha.
+    const incompleta = !c.provider_cobranca_id && c.status === STATUS.CRIADA;
+    if (!incompleta) return { cobranca: c, reaproveitada: true };
+    const retomada = await pedirAoProvider(adapter, c);
+    return { cobranca: retomada, reaproveitada: true, retomada: true };
+  }
+
+  const existente = await porReferencia(referencia);
+
+  // Caminho comum: a cobrança da referência existe e ainda serve (aberta, paga
+  // ou estornada). Uma consulta só, como sempre foi.
+  if (existente && !podeReemitir(existente)) return devolver(existente);
+
+  if (existente) {
+    // Terminal e sem dinheiro. Antes de reemitir, olha a FAMÍLIA: se uma
+    // reemissão anterior (ou a cobrança da bolsa) ainda está viva, é ela que
+    // vale — emitir outra deixaria duas cobranças pagáveis pela mesma coisa.
+    const familia = await familiaReferencia(referencia);
+    const comDinheiro = familia.find((c) => Number(c.valor_pago_centavos || 0) > 0);
+    if (comDinheiro) return { cobranca: comDinheiro, reaproveitada: true };
+    const aberta = familia.find((c) => estaAberta(c.status));
+    if (aberta) return devolver(aberta);
+    return reemitir({ adapter, camposLinha, referencia, anterior: existente });
+  }
+
+  const { data: nova, error: eIns } = await supabase.from('pag_cobrancas')
+    .insert({ ...camposLinha, referencia: referencia || null })
+    .select(SELECT_COBRANCA).single();
 
   if (eIns) {
     // Corrida na UNIQUE de `referencia`: outra requisição criou primeiro.
@@ -144,6 +231,60 @@ async function criarCobranca({
 
   const atualizada = await pedirAoProvider(adapter, nova);
   return { cobranca: atualizada, reaproveitada: false };
+}
+
+/**
+ * Emite uma cobrança NOVA no lugar de uma terminal sem dinheiro, com referência
+ * versionada (`<referencia>:r<ts>`).
+ *
+ * ⚠️ A anterior é cancelada NO PROVEDOR antes: terminal aqui não significa
+ * terminal lá. O nosso cron marca `expirada` pelo `expira_em`, mas o QR do Pix e
+ * o boleto podem continuar pagáveis no PSP — e com a cobrança nova no ar seriam
+ * dois objetos cobráveis pela mesma inscrição. Best-effort: cobrança que o PSP
+ * mantém aberta e a gente fechou é conciliável; o inverso não é (mesmo racional
+ * do `cancelar` da fachada).
+ */
+async function reemitir({ adapter, camposLinha, referencia, anterior }) {
+  if (anterior.provider_cobranca_id && typeof adapter.cancelarCobranca === 'function') {
+    try {
+      await adapter.cancelarCobranca(anterior);
+    } catch (e) {
+      console.error(`[pagamentos] cancelar anterior ${anterior.id} no provider:`, e.message);
+    }
+  }
+
+  // ⚠️ Base36 em vez do epoch cru: o `external_reference` do Mercado Pago tem
+  // teto de 64 caracteres, e `inscricao:<uuid>` já usa 46. Com 13 dígitos de
+  // timestamp o total passaria do teto na próxima reemissão; com 8 (base36),
+  // sobra folga. Segue estritamente crescente, então continua ordenável.
+  const novaRef = `${referencia}:r${Date.now().toString(36)}`;
+  const { data, error } = await supabase.from('pag_cobrancas')
+    .insert({
+      ...camposLinha,
+      referencia: novaRef,
+      // Rastro de qual cobrança morta originou esta. É o que responde "por que
+      // existem 3 cobranças para uma inscrição?" sem depender do log.
+      metadata: {
+        ...(camposLinha.metadata || {}),
+        reemitida_de: anterior.id,
+        reemitida_de_status: anterior.status,
+      },
+    })
+    .select(SELECT_COBRANCA).single();
+
+  if (error) {
+    // Duas re-inscrições no mesmo milissegundo. Relê a família e devolve a que
+    // a outra requisição criou — o objetivo segue sendo UMA cobrança viva.
+    if (error.code === '23505') {
+      const familia = await familiaReferencia(referencia);
+      const viva = familia.find((c) => estaAberta(c.status));
+      if (viva) return { cobranca: viva, reaproveitada: true };
+    }
+    throw error;
+  }
+
+  const atualizada = await pedirAoProvider(adapter, data);
+  return { cobranca: atualizada, reaproveitada: false, reemitida: true, anterior_id: anterior.id };
 }
 
 /**
@@ -193,6 +334,17 @@ async function pedirAoProvider(adapter, linha) {
 }
 
 /**
+ * O método pedido já está fixado NESTA cobrança com o artefato que o prova?
+ * Cartão não tem artefato próprio aqui (o checkout é montado na hora), então
+ * ele nunca conta como "já existe" — não há custo em rechamar o adapter.
+ */
+function artefatoJaExiste(c, metodo) {
+  if (metodo === METODOS.PIX) return !!c.pix_payload;
+  if (metodo === METODOS.BOLETO) return !!c.boleto_linha_digitavel;
+  return false;
+}
+
+/**
  * Registra a forma de pagamento ESCOLHIDA pelo pagador e guarda o artefato que
  * o PSP devolveu (QR do Pix, linha digitável, checkout).
  *
@@ -211,6 +363,17 @@ async function definirMetodo(cobrancaOuId, metodo, opcoes = {}) {
     return { cobranca: c, alterada: false, motivo: 'cobranca_nao_editavel' };
   }
 
+  // Reenvio do mesmo clique (duplo clique, retry de rede, nova aba): a forma
+  // já está fixada E o artefato que a prova (QR/checkout/linha) já existe —
+  // não chamar o provider de novo. Reenviar a mesma criação pro PSP não é
+  // seguro em geral: idempotência de HTTP não garante replay idêntico (o
+  // Mercado Pago RECUSA a 2ª chamada com a mesma X-Idempotency-Key em vez de
+  // devolver o resultado cacheado — ver providers/mercadopago.js). Devolver o
+  // estado atual é o que a pessoa espera: continuar vendo o MESMO QR/link.
+  if (c.metodo === metodo && artefatoJaExiste(c, metodo)) {
+    return { cobranca: c, alterada: true };
+  }
+
   const adapter = providers.obter(c.provider);
   if (!adapter.capacidades.metodos.includes(metodo)) {
     throw new Error(`Forma de pagamento "${metodo}" não é oferecida por ${adapter.nome}.`);
@@ -226,7 +389,15 @@ async function definirMetodo(cobrancaOuId, metodo, opcoes = {}) {
 
   let r;
   try {
-    r = await adapter.definirMetodo(c, metodo, opcoes);
+    // `tentativa` amarra a chave de idempotência do adapter a ESTA versão da
+    // linha (ver mercadopago.js) — sem isso, uma retentativa genuína após uma
+    // falha real (a linha morreu antes de guardar o artefato, então o guard
+    // acima não a pegou) reusaria a mesma chave e o PSP recusaria a chamada
+    // por "idempotency key already used" em vez de tentar de novo. Cada
+    // falha grava `ultimo_erro` (mais abaixo), o que já avança `updated_at`
+    // — então a PRÓXIMA tentativa nasce com uma chave nova, sem precisar de
+    // um contador dedicado.
+    r = await adapter.definirMetodo(c, metodo, { ...opcoes, tentativa: c.updated_at });
   } catch (e) {
     // Guarda o motivo e propaga: aqui a pessoa PEDIU esta forma, então engolir
     // o erro em silêncio a deixaria olhando uma aba vazia sem explicação.
@@ -240,6 +411,13 @@ async function definirMetodo(cobrancaOuId, metodo, opcoes = {}) {
     metodo: r.metodo || metodo,
     ultimo_erro: null,
   };
+  // ⚠️ Há PSP em que o objeto cobrável do provider só NASCE quando a forma é
+  // escolhida: no Mercado Pago a criação rende uma *preference* (que não tem
+  // estado de pagamento consultável) e a *order* — o que `consultarStatus` e a
+  // reconciliação precisam — só existe a partir daqui. Sem repontar, o cron
+  // ficaria consultando um objeto que nunca muda de estado.
+  // Só reponta quando o adapter devolve algo; o Asaas não devolve e segue igual.
+  if (r.provider_cobranca_id) patch.provider_cobranca_id = String(r.provider_cobranca_id);
   // Parcelas CONFIRMADAS pelo provedor (1 = à vista). Diferente dos artefatos
   // abaixo, este campo é sobrescrito sempre: voltar de 6x pra 1x tem que
   // aparecer, senão a tela e o comprovante seguem falando em 6 parcelas.
@@ -452,10 +630,44 @@ async function tocarReconciliacao(cobrancaId) {
   if (error) console.error('[pagamentos] tocar reconciliação:', error.message);
 }
 
+/**
+ * Guarda o último erro da cobrança sem tocar no status. Usado quando o provedor
+ * recusou (cartão negado, por exemplo): quem investiga depois precisa do motivo,
+ * e mexer no status faria uma recusa parecer fim de linha — `falhou` é terminal
+ * e a pessoa não poderia nem tentar outro cartão.
+ */
+async function registrarErro(cobrancaId, mensagem) {
+  const { error } = await supabase.from('pag_cobrancas')
+    .update({ ultimo_erro: String(mensagem || '').slice(0, 500) })
+    .eq('id', cobrancaId);
+  if (error) throw error;
+  return { ok: true };
+}
+
+/**
+ * Campos informativos que não são estado nem dinheiro (bandeira e últimos 4 do
+ * cartão). ⚠️ Whitelist fechada de propósito: é a barreira que impede um dia
+ * alguém passar PAN, CVV ou validade por aqui (lei nº 4).
+ */
+const EXTRAS_PERMITIDOS = new Set(['cartao_brand', 'cartao_last4', 'parcelas_total']);
+
+async function aplicarExtras(cobrancaId, extras = {}) {
+  const patch = {};
+  for (const [k, v] of Object.entries(extras)) {
+    if (EXTRAS_PERMITIDOS.has(k) && v !== undefined && v !== null) patch[k] = v;
+  }
+  if (!Object.keys(patch).length) return { ok: true, semMudanca: true };
+  const { error } = await supabase.from('pag_cobrancas').update(patch).eq('id', cobrancaId);
+  if (error) throw error;
+  return { ok: true };
+}
+
 module.exports = {
   SELECT_COBRANCA,
-  porId, porToken, porReferencia, porProviderId,
+  porId, porToken, porReferencia, porProviderId, familiaReferencia,
   criarCobranca,
+  podeReemitir,
+  STATUS_REEMITIVEIS,
   definirMetodo,
   aplicarStatus,
   registrarPagamento,
@@ -463,4 +675,7 @@ module.exports = {
   listarParaExpirar,
   listarParaReconciliar,
   tocarReconciliacao,
+  registrarErro,
+  aplicarExtras,
+  EXTRAS_PERMITIDOS,
 };

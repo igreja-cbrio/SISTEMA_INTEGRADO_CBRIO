@@ -1,7 +1,7 @@
 const router = require('express').Router();
 const multer = require('multer');
 const crypto = require('crypto');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
 // Fotos do dia do batismo — bucket 'batismos', pasta YYYY-MM-DD/.
@@ -22,7 +22,25 @@ const BUCKET = 'batismos';
 const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
 const EXTS = { 'image/png': 'png', 'image/webp': 'webp', 'image/jpeg': 'jpg' };
 
-router.use(authenticate, authorize('admin', 'diretor'));
+// ⚠️ AUTORIZAÇÃO (18/08/2026 · decisão do Marcos): *"Pedro deve poder publicar,
+// alterar fotos, alterar destaques... mexer no app por esse módulo."*
+// O guard era `authorize('admin','diretor')` e o Pedro Paiva tem role
+// **`assistente`** (medido) — ele coordena o Marketing e não passava. Agora quem
+// manda é o MÓDULO: leitura 1 (quem abre a aba App já tem isso) e escrita 3, o
+// nível que a matriz JÁ dá a `coordenador-marketing` e `assistente-marketing`.
+// ⚠️ `admin`/`diretor` continuam passando (bypass dentro do authorizeModule), então
+// ninguém que publicava ontem perdeu acesso.
+// ⚠️ O nível 3 vale também pro DELETE, e é decisão: aqui apagar é curadoria
+// rotineira (trocar destaque, tirar foto ruim), não destruição de registro — e com
+// 4 o acesso passaria a depender de a pessoa estar em `usuario_areas` (o boost de
+// área dá 5), o que separaria a equipe por acidente de cadastro, não por decisão.
+// ⚠️ O guard fica no `router.use` de propósito: rota nova neste arquivo nasce
+// protegida sem ninguém precisar lembrar.
+const podeVer = authorizeModule('marketing', 1);
+const podeEditar = authorizeModule('marketing', 3);
+router.use(authenticate, (req, res, next) => (
+  ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? podeEditar : podeVer
+)(req, res, next));
 
 function validarData(req, res, next) {
   if (!DATA_RE.test(req.params.data)) return res.status(400).json({ error: 'Data inválida (use YYYY-MM-DD)' });

@@ -18,8 +18,12 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { buscarCandidatos, acharOuCriar, acharOuCriarGuardado } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade, nomesPodemSerMesmaPessoa, tokensNome } = require('../services/duplicidadePolicy');
+const { similaridadeNome } = require('../services/identidadeProgressiva');
+const { avaliarCadastroPessoa } = require('../utils/prontidaoCadastro');
+const censoDisparo = require('../services/censoDisparo');
 const { avaliarRelacaoFamiliar } = require('../services/familiaPolicy');
 const { montarPatchFusao } = require('../services/fusaoCampos');
+const { parKey, dedupPorParKey } = require('../utils/paresDuplicados');
 
 router.use(authenticate);
 
@@ -180,6 +184,59 @@ function chaveEndereco(membro) {
   return `${cep}|${endereco}`;
 }
 
+// contatoComumDoPar · devolve O DADO que motivou a sugestão de família, dito de
+// forma explícita ("Mesmo telefone: (21) 96412-4838"). É evidência, não contato
+// de exibição — um valor só, o compartilhado, e nada além dele.
+// kidsEmComum · crianças de que os DOIS lados são responsáveis, com o
+// parentesco declarado de cada um. Vazio é o caso comum; quando não é, decide.
+function kidsEmComum(vinculosA, vinculosB) {
+  if (!vinculosA?.length || !vinculosB?.length) return [];
+  const porCrianca = new Map(vinculosB.map((v) => [v.crianca_id, v]));
+  return vinculosA
+    .filter((v) => porCrianca.has(v.crianca_id))
+    .map((v) => ({
+      crianca_id: v.crianca_id,
+      crianca_nome: v.crianca_nome,
+      crianca_nascimento: v.crianca_nascimento,
+      parentesco_pessoa: v.parentesco,
+      parentesco_referencia: porCrianca.get(v.crianca_id).parentesco,
+    }));
+}
+
+// procedenciaDoContato · as portas que trouxeram O CONTATO COMPARTILHADO pra
+// este cadastro (não o histórico inteiro, que seria ruído). Sem telefone em
+// comum — caso do par por endereço — devolve as 3 portas mais recentes, que
+// ainda respondem "de onde vem este cadastro?".
+function procedenciaDoContato(observacoes, evidencias = [], a, b) {
+  const lista = observacoes || [];
+  if (!lista.length) return [];
+  const tel = evidencias.includes('Mesmo telefone') ? digitos(a?.telefone) : null;
+  const relevantes = tel ? lista.filter((o) => digitos(o.telefone) === tel) : lista;
+  const base = relevantes.length ? relevantes : lista;
+  // Uma linha por PORTA (a mesma porta repetida N vezes não informa nada novo),
+  // guardando a 1ª vez que ela trouxe o dado.
+  const porPorta = new Map();
+  for (const o of base) {
+    if (!porPorta.has(o.origem)) porPorta.set(o.origem, o.quando);
+  }
+  return [...porPorta.entries()].slice(-4).map(([origem, quando]) => ({ origem, quando }));
+}
+
+function contatoComumDoPar(a, b, evidencias = []) {
+  if (evidencias.includes('Mesmo telefone')) {
+    const tel = digitos(a?.telefone);
+    if (tel && tel === digitos(b?.telefone)) return { tipo: 'telefone', valor: tel };
+  }
+  if (evidencias.includes('Mesmo endereço e CEP')) {
+    // Vale o endereço do lado que o tem escrito por extenso — a chave de
+    // agrupamento é normalizada e ilegível.
+    const end = a?.endereco || b?.endereco;
+    const cep = digitos(a?.cep) || digitos(b?.cep);
+    if (end) return { tipo: 'endereco', valor: [end, cep].filter(Boolean).join(' · CEP ') };
+  }
+  return null;
+}
+
 const MOTIVO_POR_EVIDENCIA = {
   'CPF igual': 'cpf_igual',
   'Nome e nascimento compatíveis': 'nome_e_nascimento',
@@ -202,10 +259,10 @@ function linhaDuplicidade(a, b, avaliacao) {
   };
 }
 
-let triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null, promessa: null };
+let triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null, membros: null, promessa: null };
 
 function invalidarTriagemPessoas() {
-  triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null, promessa: null };
+  triagemFamiliasCache = { ate: 0, familias: null, duplicatas: null, membros: null, promessa: null };
 }
 
 async function carregarTriagemFamilias() {
@@ -318,11 +375,16 @@ async function carregarTriagemFamilias() {
         }
         if (a.familia_id && b.familia_id) continue;
         if (relacao.destino !== 'familia') continue;
-        const atual = paresFamilia.get(chave) || { a, b, evidencias: [] };
+        const atual = paresFamilia.get(chave) || { a, b, evidencias: [], alertas: [] };
+        if (!atual.alertas) atual.alertas = [];
         if (!atual.evidencias.includes(evidencia)) atual.evidencias.push(evidencia);
         if (relacao.sobrenomes.length && !atual.evidencias.some((e) => e.startsWith('Sobrenome em comum:'))) {
           atual.evidencias.push(`Sobrenome em comum: ${relacao.sobrenomes.join(', ')}`);
         }
+        // Alerta ≠ evidência: evidência sustenta a sugestão, alerta a QUESTIONA.
+        // Misturar os dois faria "pode ser a mesma pessoa" parecer motivo pra
+        // vincular família.
+        if (relacao.alerta && !atual.alertas.includes(relacao.alerta)) atual.alertas.push(relacao.alerta);
         paresFamilia.set(chave, atual);
       }
     }
@@ -346,6 +408,67 @@ async function carregarTriagemFamilias() {
   // Família: somente cadastros ativos entram na fila operacional.
   for (const grupo of porTelefone.values()) considerarGrupo(grupo.filter((m) => m.active !== false), 'Mesmo telefone');
   for (const grupo of porEndereco.values()) considerarGrupo(grupo, 'Mesmo endereço e CEP');
+
+  // ── Evidência POR EXTENSO + os sinais que decidem o parentesco ──────────────
+  // Reclamação do Marcos (14/08): "a aba de vincular famílias está confuso, não
+  // dá pra saber COMO essa pessoa está sendo vinculada na família — tem Angela
+  // Alvarenga e José Benício de Alvarenga com o mesmo telefone e sobrenomes
+  // parecidos, eu não sei o que faria nesses casos, pois não sei POR QUE tem o
+  // mesmo telefone." O caso dele se resolvia com dado que o banco já tinha e a
+  // tela não mostrava: os dois são responsáveis da MESMA criança no Kids (um
+  // como "mae"), e a criança se chama igual a um dos cadastros — ou seja não é
+  // família, é a mesma pessoa com o nome do filho.
+  //
+  // ⚠️ `kids_responsaveis` em comum é a evidência de convivência mais FORTE que
+  // este sistema tem (vínculo de MENOR passa por documento + aprovação da equipe
+  // Kids) e a fila não a usava nem a exibia.
+  const idsFamilia = [...new Set([...paresFamilia.values()].flatMap((p) => [p.a.id, p.b.id]))];
+  const kidsPorMembro = new Map();
+  const procedenciaPorMembro = new Map();
+  if (idsFamilia.length) {
+    // Best-effort: falha aqui NÃO derruba a fila (o par continua exibido, só sem
+    // o enriquecimento). Fila que desaparece por causa de um enfeite é pior.
+    try {
+      const vinculos = [];
+      for (let i = 0; i < idsFamilia.length; i += 200) {
+        const { data, error } = await supabase.from('kids_responsaveis')
+          .select('membro_id, crianca_id, parentesco, kids_criancas(nome, data_nascimento)')
+          .in('membro_id', idsFamilia.slice(i, i + 200));
+        if (error) throw error;
+        vinculos.push(...(data || []));
+      }
+      for (const v of vinculos) {
+        if (!kidsPorMembro.has(v.membro_id)) kidsPorMembro.set(v.membro_id, []);
+        kidsPorMembro.get(v.membro_id).push({
+          crianca_id: v.crianca_id,
+          crianca_nome: v.kids_criancas?.nome || null,
+          crianca_nascimento: v.kids_criancas?.data_nascimento || null,
+          parentesco: v.parentesco || null,
+        });
+      }
+    } catch (e) {
+      console.warn('[entradas/familias] vínculo Kids não carregado:', e.message);
+    }
+    try {
+      const obs = [];
+      for (let i = 0; i < idsFamilia.length; i += 100) {
+        const { data, error } = await supabase.from('mem_identidade_observacoes')
+          .select('membro_id, origem, telefone, observado_em')
+          .in('membro_id', idsFamilia.slice(i, i + 100))
+          .order('observado_em', { ascending: true }).limit(3000);
+        if (error) throw error;
+        obs.push(...(data || []));
+      }
+      for (const o of obs) {
+        if (!procedenciaPorMembro.has(o.membro_id)) procedenciaPorMembro.set(o.membro_id, []);
+        procedenciaPorMembro.get(o.membro_id).push({
+          origem: o.origem, telefone: o.telefone, quando: o.observado_em,
+        });
+      }
+    } catch (e) {
+      console.warn('[entradas/familias] procedência não carregada:', e.message);
+    }
+  }
 
   let decisoes;
   try {
@@ -378,8 +501,27 @@ async function carregarTriagemFamilias() {
     return {
       par_id: parId,
       evidencias: par.evidencias,
+      alertas: par.alertas || [],
       pessoa,
       referencia,
+      // QUAL sinal disparou e com QUE valor, explícito. O card já mostrava o
+      // telefone de cada lado (`maskTelefone` FORMATA, não mascara), mas exigia
+      // que quem tria comparasse dois rodapés — e no par por ENDEREÇO o valor
+      // compartilhado costuma ficar invisível, porque o card só cai no endereço
+      // quando não há telefone.
+      contato_comum: contatoComumDoPar(par.a, par.b, par.evidencias),
+      // A evidência de convivência mais forte que o sistema tem: os dois
+      // responsáveis pela MESMA criança. Se aparecer aqui, a decisão está
+      // praticamente tomada — e o `parentesco` de cada lado é o que separa
+      // "casal/irmãos" de "é a mesma pessoa com o nome trocado".
+      kids_em_comum: kidsEmComum(kidsPorMembro.get(pessoa.id), kidsPorMembro.get(referencia.id)),
+      // De QUAL porta e QUANDO veio o contato compartilhado — a resposta pra
+      // "por que essas duas pessoas têm o mesmo telefone?". A aba de duplicatas
+      // já mostra fontes; a de famílias não mostrava.
+      procedencia: {
+        pessoa: procedenciaDoContato(procedenciaPorMembro.get(pessoa.id), par.evidencias, par.a, par.b),
+        referencia: procedenciaDoContato(procedenciaPorMembro.get(referencia.id), par.evidencias, par.a, par.b),
+      },
       destino: referencia.familia_id
         ? { tipo: 'existente', id: referencia.familia_id, nome: referencia.familia?.nome || 'Família existente' }
         : { tipo: 'nova', id: null, nome: null },
@@ -391,7 +533,11 @@ async function carregarTriagemFamilias() {
   const duplicatas = [...paresDuplicidade.entries()]
     .filter(([parId]) => !paresDuplicidadeIgnorados.has(parId))
     .map(([, linha]) => linha);
-  triagemFamiliasCache = { ate: Date.now() + 10 * 60_000, familias, duplicatas, promessa: null };
+  // ⚠️ `membros` fica no cache porque o endpoint de VIZINHOS precisa da base
+  // inteira pra comparar nome, e recarregar 4 mil linhas a cada abertura de card
+  // seria pagar de novo o que a triagem acabou de pagar. Mesma janela de 10 min e
+  // a MESMA invalidação — assim vizinho não sobrevive a uma fusão.
+  triagemFamiliasCache = { ate: Date.now() + 10 * 60_000, familias, duplicatas, membros, promessa: null };
   return triagemFamiliasCache;
   };
 
@@ -446,7 +592,6 @@ async function carregarDuplicadosProgressivos() {
 // do momento do adiamento. Formulário completo (CPF+nascimento) empurra o par.
 const MARGEM_REATIVA = 10;
 const ORDEM_PRIORIDADE = { quase_confirmado: 0, alta: 1, media: 2, descoberta: 3 };
-function parKey(a, b) { return [a, b].sort().join('_'); }
 function ordenarPares(a, b) {
   if (a.prioridade !== b.prioridade) return (ORDEM_PRIORIDADE[a.prioridade] ?? 9) - (ORDEM_PRIORIDADE[b.prioridade] ?? 9);
   if ((a.confianca || 0) !== (b.confianca || 0)) return (b.confianca || 0) - (a.confianca || 0);
@@ -485,10 +630,23 @@ async function montarDuplicados() {
   const [triagem, progressivos, adiados] = await Promise.all([
     carregarTriagemFamilias(), carregarDuplicadosProgressivos(), carregarAdiados(),
   ]);
-  const porPar = new Map(reshapeDuplicados(triagem.duplicatas || []).map((p) => [p.par_id, p]));
+  // ⚠️⚠️ A chave do mapa é o par ORDENADO (`parKey`), NUNCA o `par_id` cru: a
+  // triagem grava os ids na ordem em que varreu os blocos e a progressiva grava
+  // sempre (menor, maior). Chaveando pelo cru, o MESMO par sobrevivia duas vezes
+  // — a fila mostrava o par em duplicidade e o "Adiar todos" mandava duas linhas
+  // com o mesmo `par_key` no mesmo upsert (erro 21000). Ver utils/paresDuplicados.
+  const porPar = new Map();
+  for (const p of reshapeDuplicados(triagem.duplicatas || [])) {
+    const chave = parKey(p.membro_a_id, p.membro_b_id);
+    if (chave) porPar.set(chave, p);
+  }
   // A identidade progressiva conhece várias portas e prevalece sobre o retrato
-  // atual de mem_membros para o mesmo par.
-  for (const p of progressivos) porPar.set(p.par_id, p);
+  // atual de mem_membros para o mesmo par — e só prevalece de verdade porque a
+  // chave é ordenada dos dois lados.
+  for (const p of progressivos) {
+    const chave = parKey(p.membro_a_id, p.membro_b_id);
+    if (chave) porPar.set(chave, p);
+  }
 
   const ativos = [];
   const adiadosLista = [];
@@ -610,6 +768,112 @@ router.get('/familias-pendentes', authorizeModule('next-batismo', 1), async (req
 });
 
 // ── GET /duplicados · pares suspeitos do funil novo ──────────────────────────
+// ── GET /duplicados/vizinhos · os OUTROS cadastros parecidos com um par ───────
+// Pedido do Marcos (17/08): "a questão de junção e limpeza de pares triplicados
+// ou quadruplicados precisa seguir".
+//
+// ⚠️⚠️ POR QUE NÃO É UM AGRUPAMENTO AUTOMÁTICO DA FILA. Medi antes de escrever, e
+// a fila não tem grupos pra mostrar: dos 89 pares com evidência de NOME, **todos
+// os 89 são pares isolados** — zero grupos de 3+. Os 10 grupos de 3+ que existem
+// pelo componente conexo estão contaminados por transitividade (telefone
+// compartilhado): "Kevyn de Oliveira | Kevyn Teste | Nêlio Paiva", "Elisa | Elisa
+// Marques | Erick". E exigir clique não salva — três pessoas da mesma casa
+// compartilham o telefone e formam clique perfeito com score 30, o piso.
+//
+// O caso real (Andrea Palladino, 4 perfis) é outro: 2 cadastros COM par, 1 SEM
+// par nenhum (sem telefone, e-mail, CPF ou nascimento — a fila é incremental e
+// nunca vai alcançá-lo) e 1 soft-deletado. Agrupar a fila não mostraria a 3ª.
+//
+// ⇒ Então isto NÃO decide nada: dado um par que a pessoa está resolvendo, mostra
+// os outros cadastros que PARECEM ser a mesma pessoa, para a resolução ser feita
+// de uma vez. A régua aqui é DELIBERADAMENTE mais frouxa que a de ligar
+// automaticamente, porque quem decide é gente olhando — e por isso nada vem
+// pré-selecionado e as contradições vêm escritas.
+//
+// ⚠️⚠️ A RÉGUA É `nomesPodemSerMesmaPessoa`, e NÃO "Dice ≥ 0,80". Medi as duas:
+//   frouxa (Dice ≥0,80 ou contido): 29 pares com vizinho · 36 vizinhos
+//   estreita (só a régua canônica): 21 pares com vizinho · 24 vizinhos
+// A frouxa traz 12 sugestões a mais e traz **ruído perigoso**: "Patrícia Machado"
+// ao lado de "Patrick Machado" (Dice 0,83) e "Lara Melchiades Palladino" ao lado
+// da Andrea (0,84) — pessoas diferentes, e nenhuma das duas tem contradição de
+// CPF/nascimento pra a tela sinalizar. A estreita recusa as duas e **mantém todos
+// os casos reais**: Andrea (0,73), Tatiane Dib (0,59), Calebe (0,76), Marcus (1,00).
+// Perder 12 sugestões é aceitável; oferecer parente pra fundir não é — fusão é
+// hard delete do absorvido, e o terceiro cadastro que escapa continua na fila
+// como par próprio.
+const VIZINHOS_MAX = 8;
+
+function contradicoesEntre(a, b) {
+  const fora = [];
+  const ca = String(a.cpf || '').replace(/\D/g, '');
+  const cb = String(b.cpf || '').replace(/\D/g, '');
+  if (ca.length === 11 && cb.length === 11 && ca !== cb) fora.push('CPFs diferentes');
+  if (a.data_nascimento && b.data_nascimento && a.data_nascimento !== b.data_nascimento) fora.push('Nascimentos diferentes');
+  if (a.genero && b.genero && a.genero !== b.genero) fora.push('Gêneros diferentes');
+  return fora;
+}
+
+router.get('/duplicados/vizinhos', authorizeModule('next-batismo', 1), async (req, res) => {
+  try {
+    const ids = String(req.query.ids || '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 0) return res.status(400).json({ error: 'ids obrigatório (uuids separados por vírgula)' });
+    if (ids.length > 6) return res.status(400).json({ error: 'no máximo 6 ids' });
+
+    const cache = await carregarTriagemFamilias();
+    const membros = cache.membros || [];
+    if (!membros.length) return res.json({ vizinhos: [], aviso: 'base de pessoas não carregada' });
+
+    const base = ids.map((id) => membros.find((m) => m.id === id)).filter(Boolean);
+    if (!base.length) return res.status(404).json({ error: 'nenhum dos ids foi encontrado na base viva' });
+
+    const doPar = new Set(ids);
+    const achados = [];
+    for (const m of membros) {
+      if (doPar.has(m.id) || m.deleted_at) continue;
+      let melhor = 0; let mesmaPessoa = false;
+      for (const b of base) {
+        const sim = similaridadeNome(m.nome, b.nome);
+        if (sim > melhor) melhor = sim;
+        if (nomesPodemSerMesmaPessoa(m.nome, b.nome)) mesmaPessoa = true;
+      }
+      if (!mesmaPessoa) continue;   // a similaridade só INFORMA; quem filtra é a régua
+      // Contradição contra QUALQUER um do par: se o CPF dele conflita com um dos
+      // dois, fundir junto é decisão que precisa da contradição à vista.
+      const contradicoes = [...new Set(base.flatMap((b) => contradicoesEntre(m, b)))];
+      achados.push({
+        id: m.id,
+        nome: m.nome,
+        cpf: m.cpf || null,
+        telefone: m.telefone || null,
+        email: m.email || null,
+        data_nascimento: m.data_nascimento || null,
+        genero: m.genero || null,
+        status: m.status || null,
+        origem_cadastro: m.origem_cadastro || null,
+        criado_em: m.created_at || null,
+        similaridade: Number(melhor.toFixed(2)),
+        nome_contido: true,
+        contradicoes,
+      });
+    }
+
+    // Mais parecido primeiro; quem tem contradição vai pro fim (é o mais provável
+    // de ser outra pessoa, e não deve ocupar o topo da lista).
+    achados.sort((x, y) => (x.contradicoes.length - y.contradicoes.length) || (y.similaridade - x.similaridade));
+    const truncado = achados.length > VIZINHOS_MAX;
+    res.json({
+      vizinhos: achados.slice(0, VIZINHOS_MAX),
+      total: achados.length,
+      truncado,
+      // ⚠️ Truncamento DECLARADO: lista cortada em silêncio se lê como "não há mais".
+      ...(truncado ? { aviso: `${achados.length} cadastros parecidos; mostrando os ${VIZINHOS_MAX} mais próximos` } : {}),
+    });
+  } catch (error) {
+    console.error('[next-batismo/duplicados/vizinhos]', error.message);
+    res.status(500).json({ error: 'Erro ao buscar cadastros parecidos' });
+  }
+});
+
 router.get('/duplicados', authorizeModule('next-batismo', 1), async (req, res) => {
   try {
     if (req.query.refresh === '1') invalidarTriagemPessoas();
@@ -1014,16 +1278,28 @@ router.post('/adiar-em-lote', authorizeModule('next-batismo', 2), async (req, re
     const alvo = ativos.filter(soBateNome);
     if (!alvo.length) return res.json({ ok: true, total: 0 });
     const agora = new Date().toISOString();
-    const rows = alvo.map((par) => {
-      const [a, b] = [par.membro_a_id, par.membro_b_id].sort();
-      return {
-        par_key: `${a}_${b}`, membro_a_id: a, membro_b_id: b,
-        confianca_no_adiamento: Number.isFinite(Number(par.confianca)) ? Number(par.confianca) : 0,
-        prioridade_no_adiamento: par.prioridade || null,
-        adiado_por: req.user?.id || null, adiado_em: agora,
-        reativado_em: null, reativado_motivo: null,
-      };
-    });
+    // ⚠️⚠️ DEDUP OBRIGATÓRIO: `ON CONFLICT` recusa o statement INTEIRO quando a
+    // mesma linha-alvo aparece 2× no mesmo INSERT (21000 · "cannot affect row a
+    // second time") — não é "a última vence". Hoje o mapa da fila já é chaveado
+    // pelo par ordenado, então em tese não chegam repetidos aqui; esta é a 2ª
+    // camada, pra que fonte de par nova não derrube o lote inteiro em silêncio.
+    const { linhas: rows, duplicadas, semChave } = dedupPorParKey(
+      alvo.map((par) => {
+        const [a, b] = [par.membro_a_id, par.membro_b_id].sort();
+        return {
+          par_key: parKey(a, b), membro_a_id: a, membro_b_id: b,
+          confianca_no_adiamento: Number.isFinite(Number(par.confianca)) ? Number(par.confianca) : 0,
+          prioridade_no_adiamento: par.prioridade || null,
+          adiado_por: req.user?.id || null, adiado_em: agora,
+          reativado_em: null, reativado_motivo: null,
+        };
+      }),
+      (linha) => linha.par_key,
+    );
+    if (duplicadas || semChave) {
+      console.warn('[next-batismo/adiar-em-lote] descartadas', { duplicadas, semChave });
+    }
+    if (!rows.length) return res.json({ ok: true, total: 0, duplicadas, sem_chave: semChave });
     for (let i = 0; i < rows.length; i += 500) {
       const { error } = await supabase.from('entradas_pares_adiados')
         .upsert(rows.slice(i, i + 500), { onConflict: 'par_key' });
@@ -1035,11 +1311,11 @@ router.post('/adiar-em-lote', authorizeModule('next-batismo', 2), async (req, re
     await registrarResolucao({
       tipo: 'duplicidade', acao: 'adiado',
       origem: 'entradas_pares_adiados', origem_id: `lote:${agora}`,
-      detalhe: { criterio: 'nome_apenas', total: rows.length },
+      detalhe: { criterio: 'nome_apenas', total: rows.length, duplicadas, sem_chave: semChave },
       resolvido_por: req.user?.id || null,
     });
     invalidarTriagemPessoas();
-    res.json({ ok: true, total: rows.length });
+    res.json({ ok: true, total: rows.length, duplicadas, sem_chave: semChave });
   } catch (e) {
     console.error('[next-batismo/adiar-em-lote]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao adiar em lote' });
@@ -1064,10 +1340,19 @@ router.get('/pessoa/:id', authorizeModule('next-batismo', 1), async (req, res) =
     const id = req.params.id;
     const { data: pessoa, error: pErr } = await supabase
       .from('mem_membros')
-      .select('id, nome, cpf, telefone, email, status, foto_url, data_nascimento, familia_id, created_at')
+      // ⚠️ `genero` entra SÓ pra decidir se o cadastro está completo (o VALOR não
+      // é devolvido abaixo). Régua: `avaliarCadastroPessoa`, o espelho JS de
+      // `fn_membro_cadastro_completo` — a MESMA que a aba Pessoas dos Grupos usa,
+      // porque duas réguas de "cadastro completo" divergiriam e a equipe deixaria
+      // de confiar nas duas.
+      .select('id, nome, cpf, telefone, email, status, foto_url, data_nascimento, genero, familia_id, created_at')
       .eq('id', id).is('deleted_at', null).maybeSingle();
     if (pErr) throw pErr;
     if (!pessoa) return res.status(404).json({ error: 'Pessoa não encontrada' });
+
+    // O que FALTA pro cadastro fechar. Vai como lista de campos e rótulos —
+    // nunca os valores de CPF/e-mail, que têm gate próprio na Membresia.
+    const cadastro = avaliarCadastroPessoa(pessoa);
 
     const toques = [];
     const quemPerguntar = [];
@@ -1218,12 +1503,48 @@ router.get('/pessoa/:id', authorizeModule('next-batismo', 1), async (req, res) =
     });
 
     res.json({
-      pessoa: { ...pessoa, criado_em: pessoa.created_at },
+      // ⚠️ `genero` sai do payload: ele entrou na leitura só pra decidir a
+      // completude, e a ficha de Entradas não é tela de dado sensível.
+      pessoa: { ...pessoa, genero: undefined, criado_em: pessoa.created_at },
+      cadastro,
       primeiro_toque, toques, conexoes, quem_perguntar: quemPerguntar, contatos,
     });
   } catch (e) {
     console.error('[next-batismo/pessoa]', e.message);
     res.status(500).json({ error: e.message || 'Erro ao montar ficha' });
+  }
+});
+
+// ── POST /pessoa/:id/pedir-dados · a PRÓPRIA pessoa completa o cadastro ───────
+//
+// Decisão do Marcos (18/08): "todas as pessoas que entram em algum lugar do
+// sistema exceto conversões a partir de agora devem ter todos os dados
+// completos." Onde há formulário, a porta passou a exigir. Onde o atendimento
+// NÃO pode parar — o totem do Kids no domingo, com fila e criança no colo — a
+// pessoa entra e a fila cobra depois. Este é o "depois".
+//
+// ⚠️ NÃO é endpoint novo de disparo: delega ao MESMO `censoDisparo.convidarPessoa`
+// que a aba Pessoas dos Grupos usa desde 13/08 — mesma fila, mesmo template,
+// mesmo registro em `mem_censo_convites` (que é o que impede repetir convite da
+// mesma rodada). Um segundo caminho de convite gastaria a cota do TIER_250 duas
+// vezes sem ninguém perceber.
+//
+// ⚠️⚠️ Quem envia é o SERVIDOR, e o link NUNCA passa por quem clicou: ele abre o
+// cadastro da pessoa preenchido E editável, então entregá-lo a um terceiro daria
+// leitura e escrita no cadastro alheio sem trilha de quem alterou.
+//
+// ⚠️ Nível 3 (não 4): é UMA mensagem para UMA pessoa — mesma ordem de risco de
+// editar um cadastro. O disparo em massa do censo é que é nível 4.
+router.post('/pessoa/:id/pedir-dados', authorizeModule('next-batismo', 3), async (req, res) => {
+  try {
+    const r = await censoDisparo.convidarPessoa(req.params.id, { por: req.user?.id || null });
+    // 409 (não 500) quando a régua recusou: não é erro do servidor, é resposta —
+    // sem telefone/e-mail alcançável, ou convite já enviado nesta rodada.
+    if (r.ok === false) return res.status(409).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error('[next-batismo/pedir-dados]', e.message);
+    res.status(500).json({ error: 'Não foi possível enviar o pedido de dados agora.' });
   }
 });
 

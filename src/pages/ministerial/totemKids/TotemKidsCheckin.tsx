@@ -57,7 +57,17 @@ type Crianca = {
 };
 
 type Sala = { id: string; nome: string; cor: string; capacidade: number; faixa_etaria_min_meses: number; faixa_etaria_max_meses: number };
-type Sessao = { id: string; culto: { id: string; nome: string; data: string } | null };
+type Sessao = {
+  id: string;
+  culto: {
+    id: string; nome: string; data: string;
+    // Vem de `culto:cultos(..., service_type:vol_service_types(...))` em
+    // backend/routes/totemKids.js. É o que dá o rótulo "Domingo Manhã";
+    // sem declarar, o acesso caía sempre no fallback do nome do culto.
+    service_type?: { id: string; name: string; color: string | null;
+                     has_kids: boolean | null; recurrence_time: string | null } | null;
+  } | null;
+};
 
 // Confete comemorativo ao concluir o check-in da criança.
 function dispararConfete() {
@@ -70,29 +80,24 @@ function dispararConfete() {
 }
 
 import { KidsZoneShell, KidsZoneRelogio, KidsZoneToggle } from './KidsZoneShell';
+// Culto de AGORA pelo relógio (BRT) com antecedência + buraco zero na grade
+// nova de domingo (corte 24/08/2026) — régua PURA testada no gate.
+import { escolherCultoPorRelogio, periodoKey as _periodoKey } from '@/lib/cultoRelogioKids';
 
-// Culto de AGORA pelo relógio (BRT) COM ANTECEDÊNCIA (Marcos 2026-07-19): o
-// check-in nos minutos ANTES de um culto já conta pra ele. Abre 30 min antes
-// (60 no ÚLTIMO do dia · filho de voluntário chega cedo) e fecha quando o culto
-// acaba (~60 min) ou quando o próximo abre. Fora de qualquer janela (ex.: tarde
-// de domingo, entre 12:30 e 18:00) NÃO há culto de agora → sem sessão.
-function _horaMin(h: string) { const [hh, mm] = String(h || '').split(':').map(Number); return (hh || 0) * 60 + (mm || 0); }
-function escolherCultoPorRelogio(cultos: any[]): { atual: any | null; visiveis: any[] } {
-  const lista = (cultos || []).filter((c) => c.hora).sort((a, b) => _horaMin(a.hora) - _horaMin(b.hora));
-  if (!lista.length) return { atual: null, visiveis: [] };
-  const ultimoI = lista.length - 1;
-  const comFim = lista.map((c, i) => {
-    const ini = _horaMin(c.hora), ult = i === ultimoI;
-    return { ...c, _abre: ini - (ult ? 60 : 30), _fim: ini + (ult ? 180 : 60) };
-  });
-  // a janela fecha, no máximo, quando o PRÓXIMO culto abre (sem sobreposição)
-  for (let i = 0; i < ultimoI; i++) comFim[i]._fim = Math.min(comFim[i]._fim, comFim[i + 1]._abre);
-  const agoraStr = new Date().toLocaleTimeString('en-GB', { timeZone: 'America/Sao_Paulo', hour12: false, hour: '2-digit', minute: '2-digit' });
-  const agora = _horaMin(agoraStr);
-  const visiveis = comFim.filter((c) => agora < c._fim);                          // esconde os que já acabaram
-  let atual = visiveis.find((c) => agora >= c._abre && agora < c._fim) || null;
-  if (!atual && comFim.length && agora < comFim[0]._abre) atual = comFim[0]; // antes de tudo → 1º culto (early birds)
-  return { atual, visiveis };
+// (docs/cultos-domingo/ · F1) Sessão ÚNICA aberta só é adotada SEM escolha
+// quando ela é o culto de AGORA do relógio. Sessão vencida (manhã ainda aberta
+// à tarde) ou ensaio exigem escolha ativa — antes o check-in adotava a única
+// sessão em silêncio, e com a grade nova isso viraria criança no culto errado.
+function seletorCultosNecessario(sessoesAbertas: any[], cultoAtualId: string | null): boolean {
+  if (sessoesAbertas.length > 1) return true;
+  return sessoesAbertas.length === 1 && sessoesAbertas[0].culto_id !== cultoAtualId;
+}
+// Falta escolher o culto? (trava o confirmar) — destino resolvido = algum culto
+// ABERTO marcado, ou a única sessão aberta é o culto de agora (auto-adota).
+function faltaEscolherCulto(sessoesAbertas: any[], cultosSel: Set<string>, cultoAtualId: string | null): boolean {
+  if (!sessoesAbertas.length) return false; // sem sessão aberta, quem trava é o "check-in fechado"
+  if (sessoesAbertas.some((c: any) => cultosSel.has(c.culto_id))) return false;
+  return seletorCultosNecessario(sessoesAbertas, cultoAtualId);
 }
 // Período do dia (manhã/tarde/noite) a partir do horário (HH:MM).
 function _periodoDia(hora?: string): string {
@@ -110,12 +115,6 @@ function rotuloPeriodo(data?: string, hora?: string): string {
 function hojeBRTStr(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
 }
-// Chave de período pra agrupar cultos no seletor (manhã <12h · tarde <18h · noite).
-function _periodoKey(hora?: string): 'manha' | 'tarde' | 'noite' {
-  const h = Number(String(hora || '').slice(0, 2)) || 0;
-  return h < 12 ? 'manha' : h < 18 ? 'tarde' : 'noite';
-}
-
 // Sobrenome = tudo depois do 1º nome.
 function _sobrenome(nome?: string): string {
   const p = String(nome || '').trim().split(/\s+/).filter(Boolean);
@@ -274,6 +273,68 @@ function DispensaCpfInline({ dispensado, onDispensar, onCancelar }: {
   );
 }
 
+// Reimpressão de etiqueta = credencial de RETIRADA (Milena, 2026-08-24). Com o
+// check-in já feito, QUALQUER pessoa que digitasse o nome da criança chegava na
+// família e tirava a 2ª via do recibo do responsável — que é justamente o que a
+// equipe confere pra entregar a criança. Agora as duas reimpressões (só da
+// criança / kit completo) pedem senha: o pai precisa chamar um voluntário do
+// Kids pra digitar. Vale o PIN do supervisor (0000, o mesmo da dispensa de CPF)
+// e também a senha do Kids da liderança (a da edição de ficha), pra Mari/Milena
+// não ficarem presas ao PIN fixo. Pedida TODA vez de propósito: "lembrar" a
+// liberação por sessão devolveria o buraco no tablet que fica aberto o culto
+// inteiro.
+function ModalSenhaReimpressao({ titulo, onLiberar, onCancelar }: {
+  titulo: string;
+  onLiberar: () => void;
+  onCancelar: () => void;
+}) {
+  const [senha, setSenha] = useState('');
+  const [erro, setErro] = useState('');
+  const [verificando, setVerificando] = useState(false);
+
+  async function confirmar() {
+    const typed = senha.trim();
+    if (!typed || verificando) return;
+    // PIN fixo primeiro: resolve local, sem rede — o totem não pode depender da
+    // internet pra liberar uma 2ª via no meio da fila.
+    if (typed === DISPENSA_PIN) { onLiberar(); return; }
+    setVerificando(true); setErro('');
+    try {
+      const r: any = await totemKids.editSenha.verificar(typed);
+      if (r?.ok) { onLiberar(); return; }
+    } catch { /* rede caiu · cai no erro abaixo (o PIN do supervisor segue valendo) */ }
+    setErro('Senha incorreta — chame um voluntário do Kids.');
+    setSenha('');
+    setVerificando(false);
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onCancelar(); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Lock className="h-5 w-5 text-pink-600" /> Senha pra reimprimir</DialogTitle>
+          <DialogDescription>
+            {titulo} — a 2ª via serve pra <b>retirar a criança</b>, então só um <b>voluntário do Kids</b> libera.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <Input type="password" inputMode="numeric" autoComplete="off" autoFocus placeholder="Senha do Kids"
+            value={senha} onChange={(e) => { setSenha(e.target.value); setErro(''); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') confirmar(); }}
+            className="h-12 text-center text-lg tracking-widest" />
+          {!!erro && <p className="text-xs text-red-500">{erro}</p>}
+          <div className="flex gap-2">
+            <Button variant="outline" className="flex-1" onClick={onCancelar}>Cancelar</Button>
+            <Button className="flex-1 bg-pink-600 hover:bg-pink-700" disabled={!senha.trim() || verificando} onClick={confirmar}>
+              {verificando ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Printer className="h-4 w-4 mr-1" /> Liberar</>}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // Pager no balcão (sugestão da equipe · 2026-07-22): criança pequena (< 4 anos =
 // < 48 meses) OU com espectro/limitação física → a equipe entrega um pager ao
 // responsável. Ao concluir o check-in, o totem avisa pra pegar no balcão.
@@ -281,6 +342,17 @@ function precisaPager(c: { idade_meses?: number | null; tem_espectro?: boolean |
   const menor4 = c.idade_meses != null && c.idade_meses < 48;
   return menor4 || !!c.tem_espectro || !!c.tem_limitacao_fisica;
 }
+
+// Modo totem persiste entre reloads (pedido do Diego 2026-08-23): a tela fica
+// dias abertas sem ninguém olhar, e um reload (deploy novo, "Atualizar" do
+// AvisoNovaVersao, Ctrl+Shift+R) resetava totemMode pro estado inicial — o
+// tablet voltava DESTRAVADO até alguém passar de novo e reativar na mão. O PIN
+// já sobrevivia ao reload (localStorage); só a flag "está travado agora" não.
+// Mesmo padrão do TotemMembro.tsx (lá o kiosk também nasce 'locked' por
+// default). requestFullscreen() no mount pode falhar sem gesto do usuário —
+// o .catch(() => {}) já cobre isso; o que importa pra "voltar bloqueado" é a
+// tela de check-in ficar presa (sem navegação), não o Fullscreen API real.
+const TOTEM_KIDS_ATIVO_KEY = 'cbrio-totem-kids-ativo';
 
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
@@ -363,7 +435,9 @@ export default function TotemKidsCheckin() {
   const [preCheckinIds, setPreCheckinIds] = useState<string[]>([]); // checkins já criados
 
   // Modo totem · trava o tablet em tela cheia; sair exige PIN (como no totem de membros)
-  const [totemMode, setTotemMode] = useState(false);
+  const [totemMode, setTotemMode] = useState(() => {
+    try { return localStorage.getItem(TOTEM_KIDS_ATIVO_KEY) === '1'; } catch { return false; }
+  });
   const [pinModal, setPinModal] = useState(false);
   const [pinSetup, setPinSetup] = useState(false);
   const [pinInput, setPinInput] = useState('');
@@ -379,14 +453,26 @@ export default function TotemKidsCheckin() {
 
   // Última etiqueta impressa · permite REIMPRIMIR sem novo check-in (se borrou/falhou).
   const [ultimaEtiqueta, setUltimaEtiqueta] = useState<Parameters<typeof imprimirEtiquetas>[0] | null>(null);
+  // Faixa some sozinha depois de 10s (pedido do usuário 2026-08-09): em culto
+  // com fila, deixar a opção de reimprimir disponível o tempo todo é risco de
+  // alguém mal-intencionado reimprimir a etiqueta de uma criança que não é sua
+  // enquanto o operador atende a próxima família.
+  useEffect(() => {
+    if (!ultimaEtiqueta) return;
+    const t = setTimeout(() => setUltimaEtiqueta(null), 10000);
+    return () => clearTimeout(t);
+  }, [ultimaEtiqueta]);
   // Fluxo do PAGER (gate mole · Mari 2026-07-22): criança obrigada de pager
   // (< 4 anos / espectro / limitação) → a IMPRESSÃO espera o voluntário digitar
   // o número do pager entregue. O check-in JÁ está salvo (presença nunca é
   // bloqueada); só a impressão fica pendente até o número — ou até o "sem pager".
+  // ⚠️ INCLUSÃO (espectro/limitação física · Mari 2026-08-03): o pager é
+  // OBRIGATÓRIO — a válvula "sem pager" some e o diálogo não fecha sem número.
   type PagerFluxo = {
     etiquetas: { dados: Parameters<typeof imprimirEtiquetas>[0]; precisa: boolean }[];
     checkinId: string;   // representante da família — o PATCH propaga por checkin_grupo_id
     nomes: string[];     // 1º nomes das obrigadas (texto do diálogo)
+    inclusao: boolean;   // alguma obrigada é de inclusão → sem válvula de escape
   };
   const [pagerFluxo, setPagerFluxo] = useState<PagerFluxo | null>(null);
   const [pagerInput, setPagerInput] = useState('');
@@ -447,7 +533,8 @@ export default function TotemKidsCheckin() {
   // Válvula de escape: imprime SEM "Pager X" (pager acabou/quebrou). A criança
   // fica marcada como "pager pendente" no painel ao vivo (deriva de sem número).
   async function concluirSemPager() {
-    if (!pagerFluxo || salvandoPager) return;
+    // Inclusão exige pager (Mari 2026-08-03) — a válvula não existe pra ela.
+    if (!pagerFluxo || salvandoPager || pagerFluxo.inclusao) return;
     setSalvandoPager(true);
     await imprimirEtiquetasComPager(pagerFluxo.etiquetas, undefined);
     setSalvandoPager(false);
@@ -471,6 +558,11 @@ export default function TotemKidsCheckin() {
   const [checkinAberto, setCheckinAberto] = useState<any>(null);
   const [reimprimindoAberto, setReimprimindoAberto] = useState(false);
   const [reimprimindoCompletoId, setReimprimindoCompletoId] = useState<string | null>(null);
+  // Gate de senha das reimpressões (Milena 2026-08-24) · ver ModalSenhaReimpressao.
+  const [gateReimpressao, setGateReimpressao] = useState<{ titulo: string; executar: () => void } | null>(null);
+  function pedirSenhaReimpressao(titulo: string, executar: () => void) {
+    setGateReimpressao({ titulo, executar });
+  }
   // Check-ins abertos em OUTRAS sessões (culto anterior sem check-out) — não
   // impedem o novo check-in; o totem avisa e oferece regularizar.
   const [abertosAnteriores, setAbertosAnteriores] = useState<any[]>([]);
@@ -641,6 +733,7 @@ export default function TotemKidsCheckin() {
       // a impressão da família inteira espera o número (imprimirEtiquetasComPager).
       const etiquetas: { dados: Parameters<typeof imprimirEtiquetas>[0]; precisa: boolean }[] = [];
       const nomesPager: string[] = [];
+      let temInclusao = false;
       let checkinRepId = '';
       for (const s of saidas) {
         if (s?.ok) {
@@ -653,7 +746,10 @@ export default function TotemKidsCheckin() {
             });
             const precisa = precisaPager(cr);
             etiquetas.push({ dados, precisa });
-            if (precisa) nomesPager.push(cr.nome.split(' ')[0]);
+            if (precisa) {
+              nomesPager.push(cr.nome.split(' ')[0]);
+              if (cr.tem_espectro || cr.tem_limitacao_fisica) temInclusao = true;
+            }
             if (!checkinRepId) checkinRepId = s.checkin.id;
           }
           ok++;
@@ -662,7 +758,7 @@ export default function TotemKidsCheckin() {
       }
       if (nomesPager.length > 0 && etiquetas.length > 0) {
         // Família com criança(s) obrigada(s): a impressão inteira espera o pager.
-        fluxoPager = { etiquetas, checkinId: checkinRepId, nomes: nomesPager };
+        fluxoPager = { etiquetas, checkinId: checkinRepId, nomes: nomesPager, inclusao: temInclusao };
       } else {
         // Ninguém obrigado → imprime tudo na hora (recibo 1×).
         await imprimirEtiquetasComPager(etiquetas, undefined);
@@ -687,7 +783,11 @@ export default function TotemKidsCheckin() {
 
   // Reimprime SÓ a etiqueta da criança do check-in ABERTO (perdeu/borrou) ·
   // mesmo código · a do responsável não precisa (decisão do Matheus 2026-07-07).
-  async function reimprimirCheckinAberto() {
+  function reimprimirCheckinAberto() {
+    if (!crianca || !checkinAberto) return;
+    pedirSenhaReimpressao(`Etiqueta de ${crianca.nome.split(' ')[0]}`, executarReimprimirCheckinAberto);
+  }
+  async function executarReimprimirCheckinAberto() {
     if (!crianca || !checkinAberto) return;
     setReimprimindoAberto(true);
     try {
@@ -702,7 +802,7 @@ export default function TotemKidsCheckin() {
         cultoNome: checkinAberto.sessao?.culto?.nome || null,
         cultoData: checkinAberto.sessao?.culto?.data || null,
       });
-      await reimprimirEtiqueta(dados, 'crianca', 'Etiqueta perdida — reimpressão pelo totem');
+      await reimprimirEtiqueta(dados, 'crianca', 'Etiqueta perdida — reimpressão pelo totem (liberada com senha)');
       toast.success(`Etiqueta da criança reimpressa · mesmo código ${checkinAberto.codigo_seguranca}`);
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro ao reimprimir a etiqueta');
@@ -711,7 +811,10 @@ export default function TotemKidsCheckin() {
 
   // Reimprime a etiqueta de um membro da família que JÁ está com check-in aberto
   // (mesmo helper/código · `ck` vem de abertosFamilia).
-  async function reimprimirMembroFamilia(ck: any, cr: Crianca) {
+  function reimprimirMembroFamilia(ck: any, cr: Crianca) {
+    pedirSenhaReimpressao(`Etiqueta de ${cr.nome.split(' ')[0]}`, () => executarReimprimirMembroFamilia(ck, cr));
+  }
+  async function executarReimprimirMembroFamilia(ck: any, cr: Crianca) {
     try {
       const dados = montarDadosEtiqueta(cr, {
         checkinId: ck.id, salaNome: ck.sala?.nome || '', salaCor: ck.sala?.cor || null,
@@ -719,7 +822,7 @@ export default function TotemKidsCheckin() {
         codigo: ck.codigo_seguranca, codigoBarras: ck.codigo_barras,
         cultoNome: ck.sessao?.culto?.nome || null, cultoData: ck.sessao?.culto?.data || null,
       });
-      await reimprimirEtiqueta(dados, 'crianca', 'Etiqueta perdida — reimpressão pelo totem (família)');
+      await reimprimirEtiqueta(dados, 'crianca', 'Etiqueta perdida — reimpressão pelo totem (família · liberada com senha)');
       toast.success(`Etiqueta de ${cr.nome.split(' ')[0]} reimpressa · código ${ck.codigo_seguranca}`);
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro ao reimprimir');
@@ -728,7 +831,11 @@ export default function TotemKidsCheckin() {
 
   // Opção adicional: mantém a reimpressão rápida acima e permite refazer o kit
   // completo (duas etiquetas da criança + recibo/QR do responsável).
-  async function reimprimirCompleto(ck: any, cr: Crianca) {
+  function reimprimirCompleto(ck: any, cr: Crianca) {
+    if (!ck?.id || reimprimindoCompletoId) return;
+    pedirSenhaReimpressao(`Kit completo de ${cr.nome.split(' ')[0]}`, () => executarReimprimirCompleto(ck, cr));
+  }
+  async function executarReimprimirCompleto(ck: any, cr: Crianca) {
     if (!ck?.id || reimprimindoCompletoId) return;
     setReimprimindoCompletoId(ck.id);
     try {
@@ -738,7 +845,7 @@ export default function TotemKidsCheckin() {
         codigo: ck.codigo_seguranca, codigoBarras: ck.codigo_barras,
         cultoNome: ck.sessao?.culto?.nome || null, cultoData: ck.sessao?.culto?.data || null,
       });
-      await reimprimirEtiquetasCompletas(dados, 'Kit completo perdido — reimpressão pelo totem');
+      await reimprimirEtiquetasCompletas(dados, 'Kit completo perdido — reimpressão pelo totem (liberado com senha)');
       toast.success(`Kit completo de ${cr.nome.split(' ')[0]} reimpresso · código ${ck.codigo_seguranca}`);
     } catch (e: unknown) {
       toast.error((e as { message?: string })?.message || 'Erro ao reimprimir o kit completo');
@@ -839,9 +946,13 @@ export default function TotemKidsCheckin() {
   // extras. Primário = o culto de agora se marcado, senão o mais cedo marcado.
   function resolverSessaoCultos(): { sessao_id: string | null; cultos_extras: string[] } {
     let marcados = [...cultosSel];
-    // Culto ÚNICO aberto (Quarta/AMI/Bridge/Domingo à noite) → não precisa escolher:
-    // usa o único (o seletor "em qual culto" só aparece quando há +de um horário).
-    if (!marcados.length && sessoesAbertas.length === 1) marcados = [sessoesAbertas[0].culto_id];
+    // Culto ÚNICO aberto (Quarta/AMI/Bridge/Domingo à noite) → não precisa
+    // escolher — MAS só quando ele é o culto de AGORA do relógio: sessão única
+    // VENCIDA (ou de ensaio) nunca é adotada em silêncio; o seletor aparece e
+    // a escolha é da pessoa (docs/cultos-domingo/ · F1).
+    if (!marcados.length && sessoesAbertas.length === 1 && sessoesAbertas[0].culto_id === cultoAtualId) {
+      marcados = [sessoesAbertas[0].culto_id];
+    }
     if (!marcados.length) return { sessao_id: null, cultos_extras: [] };
     // Ordena por DATA+hora (sessões abertas podem incluir culto futuro · ensaio)
     const chaveDe = (id: string) => {
@@ -905,7 +1016,8 @@ export default function TotemKidsCheckin() {
     const nomeDe = (c: any) => `${c.nome}${c.hora ? ` · ${c.hora}` : ''}`;
     const marcados = sessoesAbertas.filter((c: any) => cultosSel.has(c.culto_id));
     if (marcados.length) return marcados.map(nomeDe).join('  +  ');
-    if (sessoesAbertas.length === 1) return nomeDe(sessoesAbertas[0]);
+    // única sessão só é o destino implícito quando é o culto de AGORA (F1)
+    if (sessoesAbertas.length === 1 && sessoesAbertas[0].culto_id === cultoAtualId) return nomeDe(sessoesAbertas[0]);
     const agora = sessoesAbertas.find((c: any) => c.culto_id === cultoAtualId);
     if (agora) return `${nomeDe(agora)} (pré-marcado)`;
     return 'escolha o culto no check-in';
@@ -936,6 +1048,7 @@ export default function TotemKidsCheckin() {
   function ativarTotem() {
     document.documentElement.requestFullscreen?.().catch(() => {});
     setTotemMode(true);
+    try { localStorage.setItem(TOTEM_KIDS_ATIVO_KEY, '1'); } catch { /* storage indisponível · segue */ }
   }
   function iniciarModoTotem() {
     let stored = '';
@@ -962,6 +1075,7 @@ export default function TotemKidsCheckin() {
       if (!stored || typed === stored) {
         setPinModal(false); setPinInput(''); setPinErro('');
         setTotemMode(false);
+        try { localStorage.removeItem(TOTEM_KIDS_ATIVO_KEY); } catch { /* storage indisponível · segue */ }
         if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
       } else { setPinErro('PIN incorreto'); setPinInput(''); }
     }
@@ -989,7 +1103,9 @@ export default function TotemKidsCheckin() {
       const { atual } = escolherCultoPorRelogio(cultosDoDia);
       const aberto = atual && sessoesAbertas.some((c: any) => c.culto_id === atual.id) ? atual.id : null;
       setCultosSel(aberto ? new Set([aberto]) : new Set());
-      if (atual?.id) setCultoAtualId(atual.id);
+      // fora de qualquer janela o "agora" é LIMPO (não fica um chip velho
+      // pré-marcando culto que já acabou · F1)
+      setCultoAtualId(atual?.id || null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crianca?.id]);
@@ -1227,6 +1343,13 @@ export default function TotemKidsCheckin() {
           etiquetas: [{ dados: dadosEtiqueta, precisa: true }],
           checkinId: r.checkin.id,
           nomes: [crianca.nome.split(' ')[0]],
+          // ⚠️ Faltava, e o campo é o que TRANCA a válvula de escape.
+          // Inclusão exige pager (Mari, 2026-08-03). O caminho de FAMÍLIA
+          // calculava isto certo; o de uma criança só deixava `undefined`, que
+          // é falso — então uma criança com espectro ou limitação física
+          // conseguia sair sem pager por aqui. Mesmo critério do caminho de
+          // família: inclusão é espectro/limitação, não idade.
+          inclusao: !!(crianca.tem_espectro || crianca.tem_limitacao_fisica),
         });
       } else {
         await imprimirEtiquetas(dadosEtiqueta);
@@ -1416,10 +1539,12 @@ export default function TotemKidsCheckin() {
 
       {/* Pager no balcão (Mari 2026-07-22 · gate mole): criança < 4 anos ou com
           espectro/limitação → a impressão espera o número do pager. Fechar por
-          fora = "sem pager" (nunca deixa a criança sem etiqueta). */}
+          fora = "sem pager" (nunca deixa a criança sem etiqueta).
+          ⚠️ INCLUSÃO (Mari 2026-08-03): com criança de inclusão na família o
+          pager é OBRIGATÓRIO — sem válvula de escape e sem fechar por fora. */}
       {pagerFluxo && (
-        <Dialog open onOpenChange={(o) => { if (!o && !salvandoPager) concluirSemPager(); }}>
-          <DialogContent className="max-w-md">
+        <Dialog open onOpenChange={(o) => { if (!o && !salvandoPager && !pagerFluxo.inclusao) concluirSemPager(); }}>
+          <DialogContent className="max-w-md" onInteractOutside={(e) => { if (pagerFluxo.inclusao) e.preventDefault(); }} onEscapeKeyDown={(e) => { if (pagerFluxo.inclusao) e.preventDefault(); }}>
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-amber-600">
                 <BellRing className="h-6 w-6" /> Pegue o pager no balcão
@@ -1456,14 +1581,20 @@ export default function TotemKidsCheckin() {
             >
               {salvandoPager ? 'Imprimindo…' : 'Concluir e imprimir'}
             </Button>
-            <button
-              type="button"
-              className="w-full text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground disabled:opacity-50"
-              disabled={salvandoPager}
-              onClick={concluirSemPager}
-            >
-              Sem pager disponível — imprimir mesmo assim
-            </button>
+            {pagerFluxo.inclusao ? (
+              <p className="text-sm text-center font-medium text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 rounded-lg px-3 py-2.5">
+                Criança de inclusão — o pager é <b>obrigatório</b> pra concluir este check-in.
+              </p>
+            ) : (
+              <button
+                type="button"
+                className="w-full text-sm text-muted-foreground underline underline-offset-4 hover:text-foreground disabled:opacity-50"
+                disabled={salvandoPager}
+                onClick={concluirSemPager}
+              >
+                Sem pager disponível — imprimir mesmo assim
+              </button>
+            )}
           </DialogContent>
         </Dialog>
       )}
@@ -1766,6 +1897,14 @@ export default function TotemKidsCheckin() {
         />
       )}
 
+      {gateReimpressao && (
+        <ModalSenhaReimpressao
+          titulo={gateReimpressao.titulo}
+          onLiberar={() => { const acao = gateReimpressao.executar; setGateReimpressao(null); acao(); }}
+          onCancelar={() => setGateReimpressao(null)}
+        />
+      )}
+
       {/* Modo totem · cria/pede PIN */}
       <Dialog open={pinModal} onOpenChange={(o) => { if (!o) { setPinModal(false); setPinInput(''); setPinErro(''); } }}>
         <DialogContent className="max-w-xs">
@@ -1927,7 +2066,7 @@ function PainelFamilia(props: {
   const todosEntraram = membros.length > 0 && membros.every(m => jaEntrou(m.id));
   const semSala = selecionados.filter(m => !salaPor[m.id]);
   const respOk = manual ? (!!manualNome.trim() && !!manualTel.trim()) : !!respId;
-  const semCulto = sessoesAbertas.length > 1 && cultosSel.size === 0;
+  const semCulto = faltaEscolherCulto(sessoesAbertas, cultosSel, cultoAtualId);
   const podeConfirmar = selecionados.length > 0 && semSala.length === 0 && respOk && !semCulto && !imprimindo;
   // Tem telefone pra oferecer o WhatsApp de retirada? (manual ≥10 díg · ou o selecionado tem tel)
   const temTelefoneResp = manual
@@ -1975,7 +2114,7 @@ function PainelFamilia(props: {
         </div>
 
         {/* Em quais cultos a família vai ficar? (mesmo padrão do card individual) */}
-        {sessoesAbertas.length > 1 && (
+        {seletorCultosNecessario(sessoesAbertas, cultoAtualId) && (
           <div>
             <label className="text-sm font-medium block mb-1">Em quais cultos a família vai ficar?</label>
             <p className="text-xs text-muted-foreground mb-2">Escolha o culto — vale pra todos os irmãos marcados. (a etiqueta "agora" é só uma dica do horário atual)</p>
@@ -2825,7 +2964,7 @@ function CheckinSelecao(props: {
             agora (relógio · ou o 1º do período) vem pré-marcado; a pessoa confirma
             ou troca, e pode marcar mais de um (extras). A criança entra na sessão
             de cada culto marcado · 1 etiqueta só. */}
-        {sessoesAbertas.length > 1 && (
+        {seletorCultosNecessario(sessoesAbertas, cultoAtualId) && (
           <div>
             <label className="text-sm font-medium block mb-1">Em quais cultos a criança vai ficar?</label>
             <p className="text-xs text-muted-foreground mb-2">Escolha o culto. Marque mais de um só se a criança realmente ficar em mais de um. (a etiqueta "agora" é só uma dica do horário atual)</p>
@@ -3024,7 +3163,7 @@ function CheckinSelecao(props: {
           {(() => {
             // Trava a impressão: precisa de culto + sala + responsável (da lista OU manual completo).
             const faltaResp = !usarRespManual ? !responsavelSelecionado : (!respManualNome.trim() || !respManualTel.trim());
-            const faltaCulto = sessoesAbertas.length > 1 && cultosSel.size === 0;
+            const faltaCulto = faltaEscolherCulto(sessoesAbertas, cultosSel, cultoAtualId);
             const bloqueado = !checkinAberto && (!salaSelecionada || faltaResp || faltaCulto);
             return (
           <>

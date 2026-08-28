@@ -15,7 +15,7 @@ import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ScrollArea } from '../components/ui/scroll-area';
-import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil, Lock, Info } from 'lucide-react';
+import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil, Lock, Info, Download } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
 
@@ -42,7 +42,7 @@ const URGENCIAS = [
 const KANBAN_COLUMNS = [
   { key: 'aguardando_aprovacao', label: 'Aguardando aprovação', icon: Clock, color: 'border-b-violet-500', match: ['aguardando_aprovacao_origem', 'aguardando_merito'], readOnly: true },
   { key: 'em_cotacao',     label: 'Em cotação',   icon: ClipboardList, color: 'border-b-cyan-500',    match: ['em_cotacao'] },
-  { key: 'no_financeiro',  label: 'No financeiro', icon: Clock,       color: 'border-b-orange-500',  match: ['aguardando_aprovacao_financeira'], readOnly: true, hint: 'Aguardando aprovação do financeiro (Alberto) — a decisão é feita na tela do Financeiro.' },
+  { key: 'no_financeiro',  label: 'No financeiro', icon: Clock,       color: 'border-b-orange-500',  match: ['aguardando_aprovacao_financeira'], readOnly: true, hint: 'Aguardando aprovação financeira — a decisão é feita na tela do Financeiro. Compra dentro da sua alçada você aprova abrindo o card.' },
   { key: 'pendente',       label: 'Pendente',     icon: Clock,        color: 'border-b-amber-500',   match: ['pendente', 'aguardando_ajuste'] },
   { key: 'em_analise',     label: 'Em Análise',   icon: SearchIcon,   color: 'border-b-blue-500',    match: ['em_analise'] },
   { key: 'em_atendimento', label: 'Em Andamento', icon: CheckCircle2, color: 'border-b-green-500',   match: ['aprovado', 'em_atendimento', 'aguardando_entrega'] },
@@ -75,6 +75,10 @@ const KANBAN_MACRO = [
     desc: 'Solicitações entregues/finalizadas nos últimos 90 dias. As rejeitadas e canceladas ficam no bloco "Não aprovadas", separado, no rodapé.' },
 ];
 const MACRO_REJEITADO_MATCH = ['rejeitado', 'cancelado'];
+// Estados terminais · usado pra tirar item já encerrado da fila "Para Atender"
+// (Foco/Lista) por padrão. Espelha os matches de concluído (KANBAN_MACRO) +
+// não aprovado (MACRO_REJEITADO_MATCH) num Set só, pra checagem O(1).
+const STATUS_ENCERRADO_ATENDER = new Set(['concluido', 'avaliado', ...MACRO_REJEITADO_MATCH]);
 
 // Cor de acento por categoria (borda-esquerda + pontinho do card macro). Poucas
 // cores, semânticas (a paleta que o Matheus curtiu na referência): a categoria é
@@ -159,9 +163,14 @@ export default function Solicitacoes() {
   const [busca, setBusca] = useState('');
   const [slaOnly, setSlaOnly] = useState(false);
   const [periodo, setPeriodo] = useState('365'); // dias · 'tudo' remove o bound
-  const [atenderLayout, setAtenderLayout] = useState('foco'); // 'foco' | 'kanban' | 'lista' | 'solicitante'
-  const [aprovarLayout, setAprovarLayout] = useState('foco'); // aba Aprovar · 'foco' | 'kanban' | 'historico'
-  const [minhasLayout, setMinhasLayout] = useState('lista'); // aba Minhas · 'lista' | 'kanban' (read-only)
+  // ⚠️ Kanban é a abertura PADRÃO das três abas (pedido do Matheus · 2026-08-14):
+  // o quadro mostra o pedido na ETAPA em que ele está, que é a pergunta que se
+  // faz ao abrir o módulo. Foco/Lista/Histórico continuam a um clique.
+  // Na aba Aprovar o Kanban usa o MESMO card do Foco (AprovacaoOrigemCard), só
+  // agrupado por categoria — o aprovar/rejeitar de um clique não se perde.
+  const [atenderLayout, setAtenderLayout] = useState('kanban'); // 'foco' | 'kanban' | 'lista' | 'solicitante'
+  const [aprovarLayout, setAprovarLayout] = useState('kanban'); // aba Aprovar · 'foco' | 'kanban' | 'historico'
+  const [minhasLayout, setMinhasLayout] = useState('kanban'); // aba Minhas · 'lista' | 'kanban' (read-only)
 
   // Quem ve a fila "Para Atender": admin/diretor OU responsável cadastrado de
   // alguma área (area_solicitacoes_responsaveis). Fonte de verdade no backend
@@ -457,6 +466,18 @@ export default function Solicitacoes() {
     [filtered]);
   const [showRejeitados, setShowRejeitados] = useState(false);
   const [infoCol, setInfoCol] = useState(null); // qual etapa está com o "izinho" aberto
+
+  // Fila "Para Atender" (Foco/Lista) · esconde o que já foi ENCERRADO (concluído/
+  // avaliado/rejeitado/cancelado) por padrão — não pende mais de ação de ninguém
+  // (bug reportado 2026-08-03: solicitações concluídas apareciam misturadas na
+  // fila, sem nenhuma indicação de que já tinham terminado). O Kanban mantém a
+  // coluna própria "Concluído" + o bloco "Não aprovadas" (por isso ele segue
+  // usando `filtered` cru, sem este corte). Filtro explícito de Status (ex.:
+  // escolher "Concluído" no dropdown) sempre vence e mostra normalmente.
+  const filaAtender = useMemo(() => {
+    if (filterStatus !== 'todos') return filtered;
+    return filtered.filter(i => !STATUS_ENCERRADO_ATENDER.has(i.status));
+  }, [filtered, filterStatus]);
 
   // Kanban do solicitante (aba Minhas) · colunas macro read-only.
   const colunasSolicitante = useMemo(() => {
@@ -785,12 +806,12 @@ export default function Solicitacoes() {
         <>
         <TermometroRefeitas />
         {atenderLayout === 'foco' ? (
-          <AtenderFoco items={filtered} onOpen={setDetailItem} selectedId={detailItem?.id} />
+          <AtenderFoco items={filaAtender} onOpen={setDetailItem} selectedId={detailItem?.id} />
         ) : atenderLayout === 'lista' ? (
-          <ListaSolicitacoes items={filtered} onOpen={setDetailItem} profileId={profile?.id}
+          <ListaSolicitacoes items={filaAtender} onOpen={setDetailItem} profileId={profile?.id}
             emptyMsg="Nenhuma solicitação na fila para os filtros atuais." />
         ) : atenderLayout === 'solicitante' ? (
-          <PainelPorSolicitante items={filtered} onOpen={setDetailItem} />
+          <PainelPorSolicitante items={filaAtender} onOpen={setDetailItem} />
         ) : (
         /* ── Board macro · 4 etapas (redesign 2026-07-24) ── */
         <div className="space-y-4">
@@ -972,13 +993,24 @@ function etapasDoItem(item) {
   // (dispensada ou nula = fluxo sem o portão · linhas antigas).
   const passaAprovacao = !!item.aprovacao_origem_status && item.aprovacao_origem_status !== 'dispensada';
   const temCotacao = ['compras', 'servico'].includes(item.categoria);
-  const temFinanceiro = !!item.precisa_aprovacao_financeira;
+  // O portão financeiro aparece quando ele é exigido OU quando foi
+  // explicitamente DISPENSADO por valor (≤ R$ 1.000 · 12/08). Some-lo no caso
+  // da dispensa faria a linha do tempo parecer incompleta, quando na verdade o
+  // portão foi pulado de propósito — e isso precisa ficar visível.
+  const financeiroDispensado = !!item.financeiro_dispensado_em;
+  const temFinanceiro = !!item.precisa_aprovacao_financeira || financeiroDispensado;
   const temEntrega = item.categoria === 'compras';
 
   const etapas = [{ key: 'enviada', label: 'Enviada', data: item.created_at }];
   if (passaAprovacao) etapas.push({ key: 'aprovacao', label: 'Aprovação', data: item.aprovacao_origem_em });
   if (temCotacao) etapas.push({ key: 'cotacao', label: 'Cotação', data: item.cotacao_em });
-  if (temFinanceiro) etapas.push({ key: 'financeiro', label: 'Financeiro', data: item.aprovado_financeiro_em });
+  if (temFinanceiro) {
+    etapas.push({
+      key: 'financeiro',
+      label: financeiroDispensado ? 'Financeiro · dispensado' : 'Financeiro',
+      data: financeiroDispensado ? item.financeiro_dispensado_em : item.aprovado_financeiro_em,
+    });
+  }
   etapas.push({ key: 'atendimento', label: 'Atendimento', data: item.respondido_em });
   if (temEntrega) etapas.push({ key: 'entrega', label: 'Entrega', data: null });
   etapas.push({ key: 'concluida', label: 'Concluída', data: item.concluido_em });
@@ -990,7 +1022,13 @@ function etapasDoItem(item) {
   // cotação · o status já avançou).
   let atualIdx = etapas.findIndex(e => e.key === ETAPA_DO_STATUS[item.status]);
   if (atualIdx < 0) {
-    const gates = { aprovacao: item.aprovacao_origem_em, cotacao: item.cotacao_em, financeiro: item.aprovado_financeiro_em };
+    // Dispensado conta como portão CUMPRIDO — senão a solicitação ficaria
+    // eternamente "parada no financeiro" numa etapa que ela nunca vai ter.
+    const gates = {
+      aprovacao: item.aprovacao_origem_em,
+      cotacao: item.cotacao_em,
+      financeiro: item.aprovado_financeiro_em || item.financeiro_dispensado_em,
+    };
     atualIdx = etapas.findIndex(e => e.key in gates && !gates[e.key]);
     if (atualIdx < 0) atualIdx = etapas.findIndex(e => e.key === 'atendimento');
   }
@@ -2065,7 +2103,11 @@ function CardMacro({ item, canAgir, concluido = false, rejeitado = false, onStat
   // status que caia num portão do fluxo · o backend recusa em_cotacao/financeiro/
   // origem/mérito/sobrestada). Compra pós-aprovação-financeira: cartão → o Amaury
   // marca "comprado"; demais → o financeiro marca "pago"; depois confirma entrega.
-  const posAprov = ['compras', 'servico'].includes(item.categoria) && !!item.aprovado_financeiro_em;
+  // "Passou do portão financeiro" = o financeiro aprovou OU a regra dispensou
+  // (compra de até R$ 1.000 · 12/08). Sem o segundo caso, a compra dispensada
+  // ficaria em 'pendente' na fila do Amaury sem o botão de comprar — travada.
+  const posAprov = ['compras', 'servico'].includes(item.categoria)
+    && (!!item.aprovado_financeiro_em || !!item.financeiro_dispensado_em);
   const ehAguardandoCompra = posAprov && item.status === 'pendente' && item.area_responsavel === 'logistica_compras';
   const ehAguardandoPagamento = posAprov && item.status === 'em_atendimento' && item.area_responsavel === 'financeiro';
   const acao = !canAgir ? null
@@ -2179,9 +2221,17 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
         </div>
       </div>
       {aguardandoFin && (
-        <div className="mt-2 flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
-          <Clock className="h-3 w-3 shrink-0" /> Aguardando aprovação do financeiro
-        </div>
+        // Dentro da alçada, quem atende a área não precisa esperar o financeiro —
+        // o selo tem que dizer isso no card, senão ele só descobriria abrindo.
+        item.pode_aprovar_alcada ? (
+          <div className="mt-2 flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded px-2 py-1">
+            <CheckCircle2 className="h-3 w-3 shrink-0" /> Você pode aprovar · dentro da sua alçada
+          </div>
+        ) : (
+          <div className="mt-2 flex items-center gap-1 text-[10px] text-amber-700 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1">
+            <Clock className="h-3 w-3 shrink-0" /> Aguardando aprovação do financeiro
+          </div>
+        )
       )}
       {item.status === 'aguardando_aprovacao_origem' && (() => {
         const pend = (Array.isArray(item.aprovacao_pendente_de) && item.aprovacao_pendente_de.length
@@ -2536,12 +2586,12 @@ function ComboboxContabil({ items, value, onChange, placeholder = 'Selecione…'
 
 // Cotação (compras/serviço) · o Amaury (logística) registra VÁRIAS cotações de
 // fornecedores e, com um botão dedicado reenviável, dispara um e-mail rico ao
-// financeiro (Yago) com todas as cotações + a sugerida + total, pra aprovar o
+// financeiro com todas as cotações + a sugerida + total, pra aprovar o
 // pagamento. Marcos (2026-06-16): "primeiro vem a cotação, depois a aprovação
 // do financeiro". Compatível com a cotação inline antiga (valor_cotado) quando
 // ainda não há linhas na tabela nova.
 function CotacaoBlock({ item, canCotar, onChanged }) {
-  // Amaury pode gerenciar/reenviar cotações enquanto o financeiro (Yago) ainda
+  // Amaury pode gerenciar/reenviar cotações enquanto o financeiro ainda
   // não aprovou e a solicitação não é terminal — não só durante em_cotacao.
   const podeEditar = canCotar
     && !item.aprovado_financeiro_em
@@ -2637,12 +2687,24 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
     catch (e) { toast.error(e.message || 'Erro ao marcar sugerida'); }
   }
 
-  async function enviarFinanceiro(comEmail = false) {
+  async function enviarFinanceiro(comEmail = false, forcarFinanceiro = false) {
     // Fluxo "um botão": sem cotação formal na lista, manda o valor digitado
     // direto (o servidor cria a cotação na hora · fornecedor opcional).
     // Principal = PELO SISTEMA (chega na fila do financeiro/Alberto). O e-mail
     // é opcional (botão discreto) via comEmail.
-    const payload = { plano_contas_id: planoId || undefined, centro_custo_id: centroId || undefined, enviar_email: comEmail };
+    //
+    // ⚠️ Compra/serviço cotado até R$ 1.000 NÃO vai pro financeiro — a logística
+    // executa direto (12/08). Quem decide é o SERVIDOR, sobre o valor cotado; o
+    // rótulo do botão aqui é só antecipação. `forcarFinanceiro` é a válvula:
+    // manda pro Alberto mesmo sendo compra pequena (não vai no cartão, quer
+    // segunda opinião). O botão de e-mail força, porque pedir aprovação por
+    // e-mail de algo que o sistema liberou sozinho não faz sentido.
+    const payload = {
+      plano_contas_id: planoId || undefined,
+      centro_custo_id: centroId || undefined,
+      enviar_email: comEmail,
+      forcar_financeiro: (comEmail || forcarFinanceiro) ? true : undefined,
+    };
     if (!cotacoes.length) {
       const v = Number(form.valor);
       if (form.valor === '' || Number.isNaN(v) || v < 0) { toast.error('Informe o valor pra enviar ao financeiro.'); return; }
@@ -2658,7 +2720,10 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
     setEnviando(true);
     try {
       const r = await api.enviarCotacoesFinanceiro(item.id, payload);
-      if (!comEmail) {
+      // A verdade é a do servidor (`destino`), não a do rótulo que o botão tinha.
+      if (r?.destino === 'compra_direta') {
+        toast.success('Liberado pra compra — dentro do limite, não precisa do financeiro. Compre e marque como comprado.');
+      } else if (!comEmail) {
         toast.success('Enviado ao financeiro — o Alberto vai aprovar na fila do sistema.');
       } else if (r?.email_ok) {
         toast.success('E-mail enviado ao financeiro.');
@@ -2788,6 +2853,30 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
         const vNum = Number(form.valor);
         const valorInlineValido = !cotacoes.length && form.valor !== '' && !Number.isNaN(vNum) && vNum >= 0;
         const podeEnviar = cotacoes.length > 0 || valorInlineValido;
+
+        // Espelho de LEITURA da régua do servidor (backend/utils/alcadaCompra.js),
+        // só pra o botão não prometer o destino errado. Quem decide é o servidor:
+        // se este espelho divergir, o toast conta a verdade e nada é liberado por
+        // engano — a decisão nunca vem do cliente.
+        const LIMITE_COMPRA_DIRETA = 1000;
+        const refValor = cotacoes.length
+          ? Number((cotacoes.find(c => c.sugerida)
+              || [...cotacoes].sort((a, b) => (Number(a.valor) || 0) - (Number(b.valor) || 0))[0])?.valor)
+          : vNum;
+        // Só a 1ª ida dispensa — reenvio de algo que já está no financeiro fica lá.
+        const etapaQueDispensa = ['compras', 'servico'].includes(item.categoria)
+          && item.status === 'em_cotacao';
+        const dispensaProvavel = etapaQueDispensa
+          && podeEnviar
+          && Number.isFinite(refValor) && refValor >= 0 && refValor <= LIMITE_COMPRA_DIRETA;
+        // ⚠️ ANTES de digitar o valor, a única frase da tela era "Enviar ao
+        // financeiro" — o oposto do que vai acontecer numa compra pequena, e foi
+        // por isso que a compra de R$ 60 pareceu "parada" (caso do Matheus ·
+        // 14/08). Aqui a REGRA é enunciada; nada é prometido sobre ESTA linha,
+        // porque quem decide é o valor COTADO, que ainda não existe. Enunciar a
+        // partir do valor_estimado seria o pecado que a régua do servidor evita.
+        const explicarRegra = etapaQueDispensa && !podeEnviar;
+
         return (
           <div className="space-y-1.5">
             <Button
@@ -2796,8 +2885,27 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
               className="w-full bg-teal-600 hover:bg-teal-700 text-white"
             >
               <ArrowRight className="h-4 w-4 mr-2" />
-              {enviando ? 'Enviando...' : jaEnviado ? 'Reenviar ao financeiro' : 'Enviar ao financeiro'}
+              {enviando ? 'Enviando...'
+                : dispensaProvavel ? 'Registrar cotação e liberar pra compra'
+                : jaEnviado ? 'Reenviar ao financeiro' : 'Enviar ao financeiro'}
             </Button>
+            {dispensaProvavel && (
+              <p className="text-[11px] text-muted-foreground text-center">
+                Até {LIMITE_COMPRA_DIRETA.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} você
+                compra direto, sem passar pelo financeiro. O financeiro é avisado.
+              </p>
+            )}
+            {/* Válvula: compra pequena que, mesmo assim, deve ir pro Alberto. */}
+            {dispensaProvavel && (
+              <button
+                type="button"
+                onClick={() => enviarFinanceiro(false, true)}
+                disabled={enviando}
+                className="w-full text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center justify-center gap-1 py-1 disabled:opacity-50"
+              >
+                <ArrowRight className="h-3 w-3" /> Prefiro enviar ao financeiro mesmo assim
+              </button>
+            )}
             {/* Discreto: além do sistema, avisar por e-mail também */}
             <button
               type="button"
@@ -2805,14 +2913,24 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
               disabled={enviando || !podeEnviar}
               className="w-full text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center justify-center gap-1 py-1 disabled:opacity-50"
             >
-              <Mail className="h-3 w-3" /> {jaEnviado ? 'Reenviar avisando por e-mail' : 'Enviar avisando por e-mail também'}
+              <Mail className="h-3 w-3" /> {jaEnviado ? 'Reenviar avisando por e-mail' : 'Enviar ao financeiro avisando por e-mail'}
             </button>
             {jaEnviado && (
               <p className="text-[11px] text-muted-foreground text-center">
                 Enviado em {new Date(item.cotacoes_email_em).toLocaleString('pt-BR')}
               </p>
             )}
-            {!podeEnviar && <p className="text-[11px] text-muted-foreground text-center">Informe o valor acima e clique em enviar ao financeiro.</p>}
+            {!podeEnviar && (
+              explicarRegra ? (
+                <p className="text-[11px] text-muted-foreground text-center">
+                  Informe o <strong>valor cotado</strong> acima pra seguir. Até{' '}
+                  {LIMITE_COMPRA_DIRETA.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} você
+                  libera a compra direto, sem passar pelo financeiro.
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground text-center">Informe o valor acima e clique no botão pra seguir.</p>
+              )
+            )}
           </div>
         );
       })()}
@@ -2913,6 +3031,90 @@ function SobrestarBlock({ item, onChanged }) {
   );
 }
 
+// Bloco da ALÇADA · aparece só quando o servidor marcou `pode_aprovar_alcada`.
+// A forma de pagamento é obrigatória porque é ela que decide quem EXECUTA:
+// cartão volta pra área comprar; as demais vão pro financeiro pagar (a alçada
+// dispensa o financeiro de APROVAR, não de PAGAR).
+const FORMAS_PAGAMENTO_ALCADA = [
+  { v: 'cartao_credito',        label: 'Cartão de crédito · eu mesmo compro' },
+  { v: 'pix',                   label: 'PIX · o financeiro paga' },
+  { v: 'boleto',                label: 'Boleto · o financeiro paga' },
+  { v: 'transferencia_bancaria', label: 'Transferência · o financeiro paga' },
+  { v: 'dinheiro',              label: 'Dinheiro · o financeiro paga' },
+];
+
+function AprovarNaAlcadaBloco({ item, onAprovado }) {
+  const [forma, setForma] = useState('');
+  const [obs, setObs] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+
+  const valor = Number(item.valor_cotado);
+  const valorFmt = Number.isFinite(valor)
+    ? valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+    : '—';
+
+  async function aprovar() {
+    if (!forma) { setErro('Escolha a forma de pagamento.'); return; }
+    setSalvando(true); setErro(null);
+    try {
+      await api.aprovarNaAlcada(item.id, { forma_pagamento: forma, observacao: obs.trim() || undefined });
+      playSuccessSound();
+      toast.success('Compra aprovada · seguiu pro atendimento.');
+      onAprovado?.();
+    } catch (e) {
+      setErro(e.message || 'Não foi possível aprovar.');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div className="p-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 space-y-3">
+      <div className="flex items-start gap-2 text-sm text-emerald-800 dark:text-emerald-300">
+        <CheckCircle2 className="h-4 w-4 shrink-0 mt-0.5" />
+        <div>
+          <span className="font-medium">Você pode aprovar esta compra sem o financeiro.</span>
+          <p className="text-xs mt-0.5 opacity-90">
+            Cotação de <strong>{valorFmt}</strong>, dentro da sua alçada. Ao aprovar, ela segue direto pra
+            execução.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-1">
+        <Label className="block text-xs">Forma de pagamento *</Label>
+        <Select value={forma} onValueChange={setForma}>
+          <SelectTrigger className="h-9"><SelectValue placeholder="Como vai ser pago?" /></SelectTrigger>
+          <SelectContent className="z-[1200]">
+            {FORMAS_PAGAMENTO_ALCADA.map(f => (
+              <SelectItem key={f.v} value={f.v}>{f.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[11px] text-muted-foreground">
+          Só no cartão a compra volta pra você. Nas outras formas, o financeiro ainda executa o pagamento —
+          ele só não precisa mais aprovar.
+        </p>
+      </div>
+
+      <Textarea
+        rows={2}
+        placeholder="Observação (opcional)"
+        value={obs}
+        onChange={e => setObs(e.target.value)}
+        className="text-sm"
+      />
+
+      {erro && <p className="text-xs text-destructive">{erro}</p>}
+
+      <Button size="sm" onClick={aprovar} disabled={salvando}>
+        {salvando ? 'Aprovando…' : 'Aprovar compra'}
+      </Button>
+    </div>
+  );
+}
+
 function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh, asSheet = false }) {
   const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
@@ -2964,6 +3166,14 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
           </TitleW>
         </HeaderW>
         <div className="space-y-4 mt-2 flex-1 overflow-y-auto min-h-0">
+          {/* Alçada · quem atende a área aprova a compra dentro do teto */}
+          {item.pode_aprovar_alcada && (
+            <AprovarNaAlcadaBloco
+              item={item}
+              onAprovado={() => { onItemRefresh?.(); onClose(); }}
+            />
+          )}
+
           {/* Devolvida pra ajuste · atalho pro solicitante editar e reenviar */}
           {item.status === 'aguardando_ajuste' && item.solicitante_id === currentUserId && (
             <div className="flex flex-wrap items-center gap-2 justify-between p-3 rounded-lg border border-amber-500/40 bg-amber-500/10">
@@ -3252,7 +3462,9 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             // COMPRA; demais → financeiro (Cristina) PAGA; depois confirma entrega.
             // Comprado e pago caem no MESMO marco (aguardando_entrega).
             const ehCompraServico = ['compras', 'servico'].includes(item.categoria);
-            const posAprov = ehCompraServico && !!item.aprovado_financeiro_em;
+            // Aprovado pelo financeiro OU dispensado por valor (≤ R$ 1.000 · 12/08).
+            const posAprov = ehCompraServico
+              && (!!item.aprovado_financeiro_em || !!item.financeiro_dispensado_em);
             const ehAguardandoCompra = posAprov && item.status === 'pendente' && item.area_responsavel === 'logistica_compras';
             const ehAguardandoPagamento = posAprov && item.status === 'em_atendimento' && item.area_responsavel === 'financeiro';
             const ehAguardandoEntrega = item.status === 'aguardando_entrega';
@@ -3445,12 +3657,46 @@ function MarketingCampanhaBlock({ campanha, onChanged }) {
             <span className="text-[11px] text-muted-foreground shrink-0">{feitos}/{ents.length} prontos</span>
           </div>
           {ents.map(e => (
-            <div key={e.id} className="flex items-center justify-between gap-2 text-xs bg-muted/30 rounded px-2 py-1.5">
-              <span className="truncate flex-1 flex items-center gap-1.5">
-                {e.estado === 'concluido' && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />}
-                {e.titulo}
-              </span>
-              <span className="text-muted-foreground shrink-0">{EST_ENTREGAVEL_LABEL[e.estado] || e.estado}</span>
+            <div key={e.id} className="bg-muted/30 rounded px-2 py-1.5 space-y-1">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="truncate flex-1 flex items-center gap-1.5">
+                  {e.estado === 'concluido' && <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />}
+                  {e.titulo}
+                </span>
+                <span className="text-muted-foreground shrink-0">{EST_ENTREGAVEL_LABEL[e.estado] || e.estado}</span>
+              </div>
+
+              {/* ⚠️ O ARQUIVO FINAL, que antes NÃO existia nesta tela: o download só
+                  vivia no bloco legado, então quem pediu pelo fluxo em uso nunca
+                  conseguia baixar. Só chega aqui `tipo='entregavel'` — referência é
+                  material interno da equipe (filtrado no servidor). */}
+              {(e.arquivos || []).map(a => (
+                <a
+                  key={a.id}
+                  href={marketingApi.entregaveis.download(a.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center gap-2 text-xs bg-card border border-border/60 rounded px-2 py-1.5 hover:bg-accent/50 transition-colors"
+                >
+                  <FileText className="h-3.5 w-3.5 text-primary shrink-0" />
+                  <span className="truncate flex-1">{a.nome_arquivo}</span>
+                  {a.tamanho_bytes > 0 && (
+                    <span className="text-muted-foreground text-[10px] shrink-0 tabular-nums">
+                      {Math.round(a.tamanho_bytes / 1024)} KB
+                    </span>
+                  )}
+                  <Download className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                </a>
+              ))}
+
+              {/* Entregável pronto e sem arquivo é estado LEGÍTIMO (arte aprovada
+                  em reunião, peça publicada direto) — dizer isso evita a pessoa
+                  achar que o download quebrou. */}
+              {e.estado === 'concluido' && (e.arquivos || []).length === 0 && (
+                <p className="text-[10px] text-muted-foreground italic">
+                  Concluído sem arquivo anexado · fale com a equipe se precisar do material.
+                </p>
+              )}
             </div>
           ))}
         </div>
@@ -3492,6 +3738,9 @@ function MarketingCardBlock({ card, onChanged }) {
   const [entregaveis, setEntregaveis] = useState([]);
   const [posicao, setPosicao] = useState(null);
   const [loading, setLoading] = useState(true);
+  // ⚠️ Erro NUNCA se disfarça de "nenhum arquivo": o `.catch(() => [])` fazia um
+  // 403 parecer entrega vazia, e a pessoa concluía que a equipe não anexou nada.
+  const [erroArquivos, setErroArquivos] = useState(null);
   const [revisaoOpen, setRevisaoOpen] = useState(false);
   const [motivo, setMotivo] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -3499,11 +3748,13 @@ function MarketingCardBlock({ card, onChanged }) {
   useEffect(() => {
     if (!card?.id) return;
     setLoading(true);
+    setErroArquivos(null);
     Promise.all([
-      marketingApi.entregaveis.list(card.id).catch(() => []),
+      marketingApi.entregaveis.list(card.id).catch(e => ({ __erro: e?.message || 'falhou' })),
       marketingApi.fila.posicao(card.id).catch(() => null),
     ]).then(([ent, pos]) => {
-      setEntregaveis(ent || []);
+      if (ent && ent.__erro) { setEntregaveis([]); setErroArquivos(ent.__erro); }
+      else setEntregaveis(ent || []);
       setPosicao(pos);
     }).finally(() => setLoading(false));
   }, [card?.id]);
@@ -3581,6 +3832,11 @@ function MarketingCardBlock({ card, onChanged }) {
       {/* Entregáveis · preview/download */}
       {loading ? (
         <p className="text-xs text-muted-foreground">Carregando arquivos...</p>
+      ) : erroArquivos ? (
+        <p className="text-xs text-amber-700 dark:text-amber-400">
+          Não foi possível carregar os arquivos desta entrega ({erroArquivos}). Recarregue a página
+          ou avise a equipe — isto não significa que não há arquivo.
+        </p>
       ) : entregaveis.length > 0 ? (
         <div className="space-y-1">
           <p className="text-xs font-medium text-foreground">Arquivos ({entregaveis.length})</p>

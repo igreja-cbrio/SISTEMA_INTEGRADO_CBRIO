@@ -24,6 +24,12 @@ import { idadeEmAnos, faixaLabel, sexoLabel } from '../lib/faixaEtaria';
 // Máscara/validação de CPF do canônico do Contrato de Inscrição — não recriar.
 import { mascaraCpf, cpfValido, soDigitos } from '../lib/inscricao';
 import { imprimirListaInscritos, type Agrupamento } from '../lib/imprimirListaInscritos';
+// Filtro pelos campos extras do form-builder (ex.: "Em qual ministério você
+// serve?" do Celebra). ⚠️ As opções são o catálogo do evento ∪ o que está
+// respondido — o porquê está no cabeçalho da lib.
+import {
+  camposFiltraveis, aplicarFiltroCampos, contarFiltrosAtivos, SEM_RESPOSTA, TODOS,
+} from '../lib/filtroCampoInscricao';
 
 const METODO_LABEL: Record<string, string> = {
   pix: 'Pix', cartao: 'Cartão', boleto: 'Boleto', apple_pay: 'Apple Pay',
@@ -83,10 +89,16 @@ export default function InscricaoEventoDetalhe() {
   const [editOpen, setEditOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [busca, setBusca] = useState('');
+  // { [key do campo]: valor cru escolhido } · vazio = não filtra por ele
+  const [filtrosCampo, setFiltrosCampo] = useState<Record<string, string>>({});
   const [inscSel, setInscSel] = useState<any>(null);
   // Cards recolhidos (só a linha principal) — melhora a visualização com
   // muitas inscrições. Set com os ids recolhidos + botão recolher/expandir todos.
   const [recolhidos, setRecolhidos] = useState<Set<string>>(new Set());
+  // Inscrições marcadas pra excluir em lote (pedido do Matheus · 17/08: as de
+  // teste inflam o placar e apagar uma a uma não é caminho com 241 inscritos).
+  const [selecionadas, setSelecionadas] = useState<Set<string>>(new Set());
+  const [excluindoLote, setExcluindoLote] = useState(false);
   const toggleRecolhido = (rid: string) => setRecolhidos(prev => {
     const s = new Set(prev);
     if (s.has(rid)) s.delete(rid); else s.add(rid);
@@ -134,16 +146,25 @@ export default function InscricaoEventoDetalhe() {
     () => (ev?.inscritos || []).filter((i: any) => i.status !== 'cancelada'),
     [ev],
   );
+  // Filtros pelos campos extras do evento. As contagens de cada opção são do
+  // evento INTEIRO (não do recorte atual) de propósito: número que muda a cada
+  // letra digitada na busca não serve pra decidir por qual opção filtrar.
+  const camposFiltro = useMemo(
+    () => camposFiltraveis(ev?.campos || [], ev?.inscritos || []),
+    [ev],
+  );
+  const filtrosAtivos = contarFiltrosAtivos(filtrosCampo);
+
   const inscritos = useMemo(() => {
-    const lista = ev?.inscritos || [];
+    const porCampo = aplicarFiltroCampos(ev?.inscritos || [], filtrosCampo);
     const q = busca.trim().toLowerCase();
-    if (!q) return lista;
-    return lista.filter((i: any) =>
+    if (!q) return porCampo;
+    return porCampo.filter((i: any) =>
       String(i.nome_completo || '').toLowerCase().includes(q)
       || String(i.telefone || '').includes(q.replace(/\D/g, '') || ' ')
       || String(i.numero_sorte || '') === q,
     );
-  }, [ev, busca]);
+  }, [ev, busca, filtrosCampo]);
 
   const premiosGanhos = (inscricaoId: string) =>
     (ev?.sorteios || []).filter((s: any) => s.inscricao_id === inscricaoId);
@@ -217,7 +238,72 @@ export default function InscricaoEventoDetalhe() {
       await api.excluirInscricao(id, i.id);
       toast.success('Inscrição excluída');
       setEv((prev: any) => (prev ? { ...prev, inscritos: (prev.inscritos || []).filter((x: any) => x.id !== i.id) } : prev));
-    } catch (e: any) { toast.error(e?.message || 'Erro ao excluir a inscrição'); }
+      setSelecionadas(prev => { const s = new Set(prev); s.delete(i.id); return s; });
+      // ⚠️ O motivo técnico do servidor vai junto: "Erro ao excluir" sozinho foi
+      // o que escondeu por meses que a tabela não estava na whitelist do
+      // soft-delete (o log tinha a resposta, a tela não).
+    } catch (e: any) { toast.error([e?.message, e?.detalhe].filter(Boolean).join(' · ') || 'Erro ao excluir a inscrição'); }
+  }
+
+  function alternarSelecao(inscricaoId: string) {
+    setSelecionadas(prev => {
+      const s = new Set(prev);
+      if (s.has(inscricaoId)) s.delete(inscricaoId); else s.add(inscricaoId);
+      return s;
+    });
+  }
+
+  // "Selecionar todos" marca o RECORTE VISÍVEL (filtro + busca), não a base
+  // inteira — o botão fica embaixo dos filtros, e marcar 241 pessoas quando a
+  // tela mostra 3 é o caminho mais curto pra um estrago em massa.
+  function selecionarVisiveis() {
+    setSelecionadas(prev => {
+      const s = new Set(prev);
+      inscritos.forEach((i: any) => s.add(i.id));
+      return s;
+    });
+  }
+
+  async function excluirSelecionadas() {
+    if (!id || !selecionadas.size || excluindoLote) return;
+    const ids = [...selecionadas];
+    const nomes = (ev?.inscritos || [])
+      .filter((i: any) => selecionadas.has(i.id))
+      .map((i: any) => i.nome_completo)
+      .slice(0, 8);
+    // ⚠️ Confirmação COM OS NOMES (até 8): exclusão em massa é o clique em que
+    // "12 selecionadas" não diz quem vai sumir — mesma régua da renovação de
+    // grupos e da "confira a lista".
+    const lista = nomes.join('\n· ');
+    const resto = ids.length > nomes.length ? `\n… e mais ${ids.length - nomes.length}` : '';
+    const ok = window.confirm(
+      `Excluir ${ids.length === 1 ? 'esta inscrição' : `estas ${ids.length} inscrições`}?\n\n· ${lista}${resto}\n\n`
+      + 'Elas somem da lista, do placar e dos sorteios (reversível por super-admin).',
+    );
+    if (!ok) return;
+    setExcluindoLote(true);
+    try {
+      const r: any = await api.excluirInscricoesLote(id, ids);
+      const excluidas = new Set<string>(r?.excluidas || []);
+      // Some da tela SÓ o que o servidor confirmou ter excluído — quem foi
+      // barrado por pagamento continua na lista, que é o estado real.
+      setEv((prev: any) => (prev
+        ? { ...prev, inscritos: (prev.inscritos || []).filter((x: any) => !excluidas.has(x.id)) }
+        : prev));
+      setSelecionadas(new Set());
+      if (r?.com_pagamento?.length || r?.falhas?.length) {
+        // Falha traz o motivo do banco junto — "3 falharam" sozinho manda a
+        // pessoa tentar de novo pra sempre.
+        const motivo = (r?.falhas_motivo || []).join(' · ');
+        toast.warning([r?.resumo || 'Exclusão parcial', motivo].filter(Boolean).join(' — '));
+      }
+      else toast.success(r?.resumo || 'Inscrições excluídas');
+      if (r?.contadores) setEv((prev: any) => (prev ? { ...prev, contadores: r.contadores } : prev));
+    } catch (e: any) {
+      toast.error([e?.message, e?.detalhe].filter(Boolean).join(' · ') || 'Erro ao excluir as inscrições');
+    } finally {
+      setExcluindoLote(false);
+    }
   }
 
   // CSV com os campos padrão + uma coluna por campo extra do form-builder
@@ -231,7 +317,11 @@ export default function InscricaoEventoDetalhe() {
       'Pagamento', 'Forma', 'Nº da sorte', 'Status', 'Inscrição em',
       ...campos.map((c: any) => c.label),
     ];
-    const linhas = (ev.inscritos || []).map((i: any) => [
+    // ⚠️ Exporta o RECORTE VISÍVEL (filtro + busca), não a base inteira: o botão
+    // fica ao lado dos filtros e "exportar" logo depois de filtrar significa
+    // "leva isto". Quando há recorte, o nome do arquivo diz que é um recorte —
+    // planilha parcial com nome de completa é a que engana meses depois.
+    const linhas = inscritos.map((i: any) => [
       i.codigo || '', i.nome_completo, i.telefone || '', i.email || '',
       i.data_nascimento ? new Date(`${i.data_nascimento}T00:00:00`).toLocaleDateString('pt-BR') : '',
       idadeEmAnos(i.data_nascimento) ?? '',
@@ -249,7 +339,8 @@ export default function InscricaoEventoDetalhe() {
     const csv = '﻿' + [header, ...linhas].map(l => l.map(esc).join(';')).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
-    a.href = url; a.download = `inscritos-${ev.slug}.csv`; a.click();
+    const recorte = (filtrosAtivos > 0 || busca.trim()) ? '-recorte' : '';
+    a.href = url; a.download = `inscritos-${ev.slug}${recorte}.csv`; a.click();
     URL.revokeObjectURL(url);
   }
 
@@ -307,7 +398,11 @@ export default function InscricaoEventoDetalhe() {
     {imprimirOpen && (
       <ImprimirListaDialog
         evento={ev}
-        inscritos={ev.inscritos || []}
+        // Imprime o recorte visível — filtrar por ministério e imprimir é
+        // justamente o caso de uso (a folha de um ministério só).
+        inscritos={inscritos}
+        recorte={filtrosAtivos > 0 || !!busca.trim()}
+        totalEvento={(ev.inscritos || []).length}
         onClose={() => setImprimirOpen(false)}
       />
     )}
@@ -507,17 +602,83 @@ export default function InscricaoEventoDetalhe() {
                   </Button>
                 );
               })()}
+              {/* Um filtro por campo de escolha do formulário deste evento. */}
+              {camposFiltro.map(c => (
+                <select
+                  key={c.key}
+                  value={filtrosCampo[c.key] ?? TODOS}
+                  onChange={e => setFiltrosCampo(prev => ({ ...prev, [c.key]: e.target.value }))}
+                  title={c.label}
+                  aria-label={c.label}
+                  className={`h-8 rounded-md border bg-[var(--cbrio-input-bg)] text-sm px-2 max-w-[15rem] ${
+                    (filtrosCampo[c.key] ?? TODOS) !== TODOS ? 'border-primary text-primary' : 'border-border'
+                  }`}
+                >
+                  <option value={TODOS}>{c.label} · todos</option>
+                  {c.opcoes.map(o => (
+                    <option key={o.valor} value={o.valor}>
+                      {o.rotulo} ({o.total}){o.foraDoCatalogo ? ' · fora da lista' : ''}
+                    </option>
+                  ))}
+                  {c.semResposta > 0 && (
+                    <option value={SEM_RESPOSTA}>Sem resposta ({c.semResposta})</option>
+                  )}
+                </select>
+              ))}
+              {filtrosAtivos > 0 && (
+                <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setFiltrosCampo({})}>
+                  Limpar {filtrosAtivos === 1 ? 'filtro' : 'filtros'}
+                </Button>
+              )}
               <div className="relative">
                 <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input placeholder="Buscar por nome, telefone ou nº" value={busca} onChange={e => setBusca(e.target.value)} className="h-8 pl-8 text-sm w-64 max-w-full" />
               </div>
             </div>
           )}
+          {/* Quantos o recorte atual mostra — sem isso o filtro muda a lista e
+              não diz o tamanho do resultado, que é o número que a pessoa quer. */}
+          {(filtrosAtivos > 0 || busca.trim()) && (ev.inscritos || []).length > 0 && (
+            <p className="text-xs text-muted-foreground">
+              Mostrando <strong className="text-foreground">{inscritos.length}</strong> de {(ev.inscritos || []).length} inscritos.
+            </p>
+          )}
         </div>
+        {/* Barra de seleção — só pra quem pode excluir (nível 3, a mesma régua
+            do backend). Fica ACIMA da lista pra a ação existir na tela mesmo
+            sem nada marcado: o botão de lixeira por linha é discreto demais e
+            não resolvia "excluir várias". */}
+        {podeEditar && inscritos.length > 0 && (
+          <div className="flex items-center gap-2 flex-wrap text-xs mb-2">
+            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+              onClick={selecionadas.size ? () => setSelecionadas(new Set()) : selecionarVisiveis}>
+              {selecionadas.size ? 'Limpar seleção' : `Selecionar ${inscritos.length === (ev.inscritos || []).length ? 'todos' : `os ${inscritos.length} do filtro`}`}
+            </Button>
+            {selecionadas.size > 0 && (
+              <>
+                <span className="text-muted-foreground">
+                  {selecionadas.size} selecionada{selecionadas.size > 1 ? 's' : ''}
+                </span>
+                <Button size="sm" variant="ghost" disabled={excluindoLote} onClick={excluirSelecionadas}
+                  className="h-7 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-500/10">
+                  {excluindoLote
+                    ? <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> Excluindo…</>
+                    : <><Trash2 className="h-3.5 w-3.5 mr-1" /> Excluir selecionadas</>}
+                </Button>
+              </>
+            )}
+          </div>
+        )}
         {(ev.inscritos || []).length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">Ninguém se inscreveu ainda.</p>
         ) : inscritos.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4 text-center">Nenhum inscrito bate com a busca.</p>
+          <p className="text-sm text-muted-foreground py-4 text-center">
+            {filtrosAtivos > 0 && busca.trim()
+              ? 'Nenhum inscrito bate com o filtro e a busca.'
+              : filtrosAtivos > 0
+                ? 'Nenhum inscrito neste filtro.'
+                : 'Nenhum inscrito bate com a busca.'}
+          </p>
         ) : (
           <div className="space-y-2">
             {inscritos.map((i: any) => {
@@ -531,10 +692,23 @@ export default function InscricaoEventoDetalhe() {
               const cancelada = i.status === 'cancelada';
               return (
                 <div key={i.id} onClick={() => setInscSel(i)}
-                  className={`rounded-lg border border-border p-3 cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-colors ${cancelada ? 'opacity-60' : ''}`}>
+                  className={`rounded-lg border p-3 cursor-pointer transition-colors ${cancelada ? 'opacity-60' : ''} ${
+                    selecionadas.has(i.id)
+                      ? 'border-primary/60 bg-primary/10'
+                      : 'border-border hover:border-primary/40 hover:bg-primary/5'}`}>
                   {/* Linha principal: nº + nome + contato + quando + recolher */}
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-2 min-w-0">
+                      {/* Seleção pra excluir em lote. ⚠️ `stopPropagation` no
+                          clique: sem ele, marcar a caixa abriria a ficha por
+                          cima da própria seleção. */}
+                      {podeEditar && (
+                        <input type="checkbox" checked={selecionadas.has(i.id)}
+                          onClick={e => e.stopPropagation()}
+                          onChange={() => alternarSelecao(i.id)}
+                          title="Selecionar para excluir"
+                          className="h-4 w-4 shrink-0 accent-[#00B39D] cursor-pointer" />
+                      )}
                       {i.numero_sorte != null && (
                         <span className="inline-flex items-center rounded-full bg-primary/15 text-primary text-xs font-bold px-2 py-0.5 tabular-nums shrink-0">
                           Nº {i.numero_sorte}
@@ -652,6 +826,55 @@ export default function InscricaoEventoDetalhe() {
                       })}
                     </div>
                   )}
+                  {/* RESPONSÁVEL do menor (17/08) — bloco PRÓPRIO, fora das
+                      respostas do formulário, e SEMPRE visível (não recolhe com
+                      elas): é o telefone que a equipe liga se um adolescente
+                      passar mal no retiro, não uma resposta a mais.
+                      ⚠️ CPF fica FORA da lista pela mesma régua do CPF da pessoa
+                      (`INSCRITOS_COLS` no backend): identificação sensível se vê
+                      no cadastro, não numa lista aberta na portaria. */}
+                  {i.responsavel && (
+                    <div className="mt-2.5 pt-2.5 border-t border-amber-500/40 rounded-md">
+                      <div className="text-[11px] font-semibold text-amber-600 uppercase tracking-wide">
+                        Menor de idade · responsável
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-1 mt-1">
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-muted-foreground">Nome</div>
+                          <div className="text-sm break-words">{i.responsavel.nome}</div>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-muted-foreground">Parentesco</div>
+                          <div className="text-sm">{i.responsavel.parentesco || '—'}</div>
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-muted-foreground">Celular</div>
+                          {i.responsavel.telefone ? (
+                            <a href={`tel:+55${i.responsavel.telefone}`} onClick={e => e.stopPropagation()}
+                              className="text-sm text-primary hover:underline">{i.responsavel.telefone}</a>
+                          ) : <div className="text-sm">—</div>}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-[11px] text-muted-foreground">E-mail</div>
+                          <div className="text-sm break-all line-clamp-1" title={i.responsavel.email || ''}>
+                            {i.responsavel.email || '—'}
+                          </div>
+                        </div>
+                      </div>
+                      {/* ⚠️ Três estados, e confundi-los é grave: autorizado ·
+                          NÃO autorizado · não respondeu. NULL nunca é "pode". */}
+                      <div className="text-[11px] mt-1">
+                        <span className="text-muted-foreground">Batismo no evento: </span>
+                        {i.responsavel.autoriza_batismo === true ? (
+                          <span className="text-primary font-semibold">autorizado pelo responsável</span>
+                        ) : i.responsavel.autoriza_batismo === false ? (
+                          <span className="text-red-600 font-semibold">NÃO autorizado</span>
+                        ) : (
+                          <span className="text-muted-foreground">não respondido — perguntar antes de incluir</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -667,26 +890,52 @@ export default function InscricaoEventoDetalhe() {
 }
 
 // Escolha do agrupamento + colunas antes de mandar pra impressora.
+// ⚠️ A ordem alfabética vem PRIMEIRO e é o padrão. Antes o padrão era "faixa
+// de idade", que parte a folha em até 5 blocos (Criança · Adolescente · Jovem ·
+// Adulto · Sem data de nascimento) com o total só no rodapé da última página —
+// e foi assim que uma lista de 64 pessoas do Kids foi lida como "40 e poucas"
+// (37 no bloco Adulto, 17 num bloco separado no fim). Agrupar continua a um
+// clique, para quem precisa da folha dividida.
 const AGRUPAMENTOS: { key: Agrupamento; label: string; dica: string }[] = [
-  { key: 'faixa', label: 'Faixa de idade', dica: 'Criança · Adolescente · Jovem · Adulto' },
-  { key: 'sexo', label: 'Sexo', dica: 'Feminino · Masculino' },
+  { key: 'nenhum', label: 'Ordem alfabética (A–Z)', dica: 'Uma lista só, do A ao Z — todo mundo na mesma tabela' },
+  { key: 'faixa', label: 'Faixa de idade', dica: 'Criança · Adolescente · Jovem · Adulto (folha dividida em blocos)' },
+  { key: 'sexo', label: 'Sexo', dica: 'Feminino · Masculino (folha dividida em blocos)' },
   { key: 'status', label: 'Status', dica: 'Confirmadas · Aguardando pagamento' },
   { key: 'pagamento', label: 'Pagamento', dica: 'Pago · Aguardando · Sem cobrança' },
-  { key: 'nenhum', label: 'Sem agrupar', dica: 'Uma lista só, em ordem alfabética' },
 ];
 
-function ImprimirListaDialog({ evento, inscritos, onClose }: {
-  evento: any; inscritos: any[]; onClose: () => void;
+function ImprimirListaDialog({ evento, inscritos, recorte, totalEvento, onClose }: {
+  evento: any; inscritos: any[]; recorte?: boolean; totalEvento?: number; onClose: () => void;
 }) {
-  const [ag, setAg] = useState<Agrupamento>('faixa');
+  const [ag, setAg] = useState<Agrupamento>('nenhum');
   const [contato, setContato] = useState(false);
   const [pagamento, setPagamento] = useState<boolean>(!!evento?.pagamento_ativo);
   const [presenca, setPresenca] = useState(true);
   const [incluirCanceladas, setIncluirCanceladas] = useState(false);
 
-  const total = inscritos.filter((i: any) => incluirCanceladas || i.status !== 'cancelada').length;
-  const semNascimento = inscritos.filter((i: any) => !i.data_nascimento
-    && (incluirCanceladas || i.status !== 'cancelada')).length;
+  const naFolha = inscritos.filter((i: any) => incluirCanceladas || i.status !== 'cancelada');
+  const total = naFolha.length;
+  const semNascimento = naFolha.filter((i: any) => !i.data_nascimento).length;
+
+  // Prévia dos BLOCOS que a folha vai ter. Sem isso, quem agrupa não sabe que a
+  // lista sai partida — e conta um bloco achando que é o total.
+  const blocos = useMemo(() => {
+    if (ag === 'nenhum') return [];
+    const contagem = new Map<string, number>();
+    for (const i of naFolha) {
+      const k = ag === 'faixa'
+        ? (i.data_nascimento ? faixaLabel(i.data_nascimento, true) : 'Sem data de nascimento')
+        : ag === 'sexo'
+          ? (i.sexo ? sexoLabel(i.sexo) : 'Sexo não informado')
+          : ag === 'status'
+            ? (i.status || 'sem status')
+            : (i.pagamento?.status_pagamento
+              ? (PAG_LABEL[i.pagamento.status_pagamento] || i.pagamento.status_pagamento)
+              : 'Sem cobrança');
+      contagem.set(k, (contagem.get(k) || 0) + 1);
+    }
+    return [...contagem.entries()].sort((a, b) => b[1] - a[1]);
+  }, [ag, naFolha]);
 
   function imprimir() {
     imprimirListaInscritos(
@@ -743,11 +992,35 @@ function ImprimirListaDialog({ evento, inscritos, onClose }: {
 
           <div className="rounded-lg border border-border bg-foreground/[0.03] p-2.5 text-[12px] space-y-1">
             <div><strong>{total}</strong> participante{total === 1 ? '' : 's'} na lista.</div>
+            {recorte && (
+              <div className="rounded-md border border-[var(--warning,#E0A24E)]/40 bg-[var(--warning,#E0A24E)]/10 px-2 py-1.5 text-[11px]">
+                Esta folha é o <strong>recorte que está na tela</strong> (filtro/busca ativos)
+                {typeof totalEvento === 'number' ? ` — o evento tem ${totalEvento} inscritos no total` : ''}.
+                Limpe o filtro antes de imprimir se quiser a lista completa.
+              </div>
+            )}
             {semNascimento > 0 && ag === 'faixa' && (
               // Sem nascimento não há faixa — dizer isso antes evita a pessoa
               // achar que a folha veio incompleta.
               <div className="text-amber-600">
                 {semNascimento} sem data de nascimento — {semNascimento === 1 ? 'vai' : 'vão'} para um grupo "Sem data de nascimento" no fim.
+              </div>
+            )}
+            {/* ⚠️ A folha agrupada sai PARTIDA em blocos, e o total geral fica
+                só no rodapé da última página — quem confere conta um bloco e
+                acha que sumiu gente. A prévia mostra a divisão antes de imprimir. */}
+            {blocos.length > 1 && (
+              <div className="pt-1 border-t border-border/60">
+                <div className="text-muted-foreground">
+                  A folha sai dividida em <strong className="text-foreground">{blocos.length} blocos</strong>, somando {total}:
+                </div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {blocos.map(([nome, n]) => (
+                    <span key={nome} className="rounded-full border border-border px-2 py-0.5 text-[11px]">
+                      {nome}: <strong>{n}</strong>
+                    </span>
+                  ))}
+                </div>
               </div>
             )}
           </div>

@@ -45,6 +45,7 @@
 
 const crypto = require('crypto');
 const { STATUS, METODOS } = require('../tipos');
+const { resilientFetch } = require('../../../utils/resilientFetch');
 
 const nome = 'asaas';
 
@@ -115,7 +116,7 @@ function paraCentavos(reais) {
 // ── HTTP ──────────────────────────────────────────────────────────────────
 
 async function req(metodo, caminho, corpo) {
-  const resp = await fetch(`${baseUrl()}${caminho}`, {
+  const resp = await resilientFetch(`${baseUrl()}${caminho}`, {
     method: metodo,
     headers: {
       'Content-Type': 'application/json',
@@ -124,6 +125,10 @@ async function req(metodo, caminho, corpo) {
       access_token: apiKey(),
     },
     body: corpo ? JSON.stringify(corpo) : undefined,
+  }, {
+    dependency: 'Asaas',
+    timeoutMs: 8_000,
+    maxRetries: 1,
   });
 
   const texto = await resp.text();
@@ -594,6 +599,26 @@ function normalizarEvento(payload) {
   };
 }
 
+/**
+ * Sonda de saúde da CREDENCIAL (não do pagamento).
+ *
+ * Existe porque o Asaas desabilita chave sem uso em 3 meses e a expira em 6 —
+ * e nós só chamamos a API quando há cobrança. Sem isto, um intervalo grande
+ * entre eventos pagos mata a chave em silêncio.
+ *
+ * ⚠️ Usa `GET /customers?limit=1` DE PROPÓSITO: é endpoint que este adapter já
+ * exercita em `acharOuCriarCliente`, então sabemos que existe e que responde
+ * com esta credencial. A alternativa (`/myAccount`) seria chutar rota nunca
+ * testada — e sonda de saúde que falha por si mesma é pior que sonda nenhuma.
+ *
+ * Read-only e barata: não cria, não altera, não move dinheiro.
+ */
+async function verificarChave() {
+  const t0 = Date.now();
+  await req('GET', '/customers?limit=1');
+  return { ok: true, latencia_ms: Date.now() - t0 };
+}
+
 module.exports = {
   nome,
   capacidades,
@@ -604,6 +629,7 @@ module.exports = {
   estornar,
   verificarAssinatura,
   normalizarEvento,
+  verificarChave,
   // exportados pra teste
   _internos: {
     paraReais, paraCentavos, taxaCentavos, last4,

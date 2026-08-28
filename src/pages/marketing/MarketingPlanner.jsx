@@ -2,11 +2,11 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { marketing as api } from '../../api';
-import MarketingNav from './MarketingNav';
+import MarketingPagina from './MarketingPagina';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import {
-  Megaphone, ChevronLeft, ChevronRight, Loader2, Users, AlertCircle, GripHorizontal,
+  ChevronLeft, ChevronRight, Loader2, Users, AlertCircle, GripHorizontal
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -62,6 +62,8 @@ export default function MarketingPlanner() {
   const [ref, setRef] = useState(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1); });
   const [membros, setMembros] = useState([]);
   const [cards, setCards] = useState([]);
+  const [semPlano, setSemPlano] = useState([]);
+  const [semRaia, setSemRaia] = useState([]);
   const [loading, setLoading] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [filtro, setFiltro] = useState('');
@@ -77,6 +79,11 @@ export default function MarketingPlanner() {
       const r = await api.planner(ymd(dias[0]), ymd(dias[dias.length - 1]));
       setMembros(r?.membros || []);
       setCards(r?.cards || []);
+      // ⚠️ Atribuído que NÃO ocupa dia nenhum é DECLARADO, não some: era
+      // exatamente isso que acontecia com 83 de 83 cards ("coloquei a tarefa
+      // pra alguém e não ocupou o trabalho da pessoa").
+      setSemPlano(r?.sem_plano || []);
+      setSemRaia(r?.sem_raia || []);
     } catch (e) { toast.error(e.message || 'Erro ao carregar planner'); }
     finally { setLoading(false); }
   }, [dias]);
@@ -93,6 +100,13 @@ export default function MarketingPlanner() {
     if (!podeEditar) return;
     const card = cards.find(c => c.id === cardId);
     if (!card || !dias[colIdx]) return;
+    // ⚠️ Barra do CICLO CRIATIVO não se arrasta: o intervalo dela é a data
+    // prevista da FASE (vem do /eventos), não um plano desenhado aqui. Arrastar
+    // gravaria data própria no card e ele passaria a discordar da própria fase.
+    if (card.plano === 'fase') {
+      toast.info('Esta é uma tarefa do ciclo criativo · o período vem da fase, no módulo Eventos.');
+      return;
+    }
     const novoIni = dias[colIdx];
     const dur = contaDiasUteis(parseYmd(card.data_inicio), parseYmd(card.data_fim));
     const novoFim = addDiasUteis(novoIni, dur);
@@ -110,20 +124,10 @@ export default function MarketingPlanner() {
   const irHoje = () => { const n = new Date(); setRef(new Date(n.getFullYear(), n.getMonth(), 1)); };
 
   return (
-    <div className="p-4 md:p-6 space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Megaphone className="h-6 w-6 text-primary" /> Marketing
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Planner de capacidade · {podeEditar ? 'arraste os entregáveis' : 'somente leitura'}
-            {salvando && <span className="ml-2 inline-flex items-center gap-1 text-primary"><Loader2 className="h-3 w-3 animate-spin" /> salvando…</span>}
-          </p>
-        </div>
-        <MarketingNav />
-      </div>
-
+    <MarketingPagina subtitulo={`Planner de capacidade · ${podeEditar ? 'arraste os entregáveis' : 'somente leitura'}${salvando ? ' · salvando…' : ''}`}>
+      {/* Navegação de mês + filtro de equipe. ⚠️ Isto NÃO é cabeçalho: ficou
+          dentro do conteúdo de propósito — só o título e o menu do módulo vivem
+          no MarketingPagina. */}
       <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-muted/30 rounded-lg border border-border">
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => navega(-1)}><ChevronLeft className="h-4 w-4" /></Button>
@@ -181,11 +185,51 @@ export default function MarketingPlanner() {
         </div>
       )}
 
+      {/* ⚠️ Atribuído sem período não ocupa dia nenhum — e some do Planner. Isso
+          precisa ser DITO: era a reclamação de origem ("coloquei a tarefa pra
+          alguém e não ocupou o trabalho da pessoa"). */}
+      {semPlano.length > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
+          <p className="font-medium text-amber-800 dark:text-amber-300">
+            {semPlano.length} tarefa{semPlano.length > 1 ? 's' : ''} com dono mas SEM período — não ocupa a agenda de ninguém
+          </p>
+          <p className="text-muted-foreground mt-1">
+            Elas não aparecem nas raias abaixo. Defina quando começa e quantos dias ocupa
+            (na triagem, ao criar o entregável) pra que entrem no planejamento.
+          </p>
+          <ul className="mt-2 space-y-0.5 text-muted-foreground">
+            {semPlano.slice(0, 6).map(t => <li key={t.id} className="truncate">· {t.titulo}</li>)}
+            {semPlano.length > 6 && <li>· e outras {semPlano.length - 6}</li>}
+          </ul>
+        </div>
+      )}
+
+      {/* ⚠️ Tarefa com período mas cujo dono NÃO tem raia (o coordenador fica
+          fora delas por decisão: ele distribui, não executa). Medido em 17/08: as
+          10 tarefas do ciclo de agosto estavam TODAS no coordenador — sem este
+          aviso, o Planner pareceria vazio e ninguém saberia por quê. */}
+      {semRaia.length > 0 && (
+        <div className="rounded-lg border border-sky-500/30 bg-sky-500/10 p-3 text-xs">
+          <p className="font-medium text-sky-800 dark:text-sky-300">
+            {semRaia.length} tarefa{semRaia.length > 1 ? 's' : ''} ainda no coordenador — sem raia, não ocupa a agenda de ninguém
+          </p>
+          <p className="text-muted-foreground mt-1">
+            Parte delas é de coordenação mesmo (reunião, alinhamento) e pode ficar assim.
+            As que forem de execução: distribua no calendário do dashboard (clique na
+            fase) se forem do ciclo criativo, ou no card do Kanban.
+          </p>
+          <ul className="mt-2 space-y-0.5 text-muted-foreground">
+            {semRaia.slice(0, 6).map(t => <li key={t.id} className="truncate">· {t.titulo}</li>)}
+            {semRaia.length > 6 && <li>· e outras {semRaia.length - 6}</li>}
+          </ul>
+        </div>
+      )}
+
       <p className="text-xs text-muted-foreground flex items-center gap-1.5">
         <GripHorizontal className="h-3.5 w-3.5 shrink-0" />
-        Arraste uma barra pra outro dia ou outra pessoa (mantém a duração em dias úteis). Dias em excesso ({'>'} slots) ficam em vermelho · 🎯 = foco (sem paralela). Fim de semana não aparece.
+        Arraste uma barra pra outro dia ou outra pessoa (mantém a duração em dias úteis). Dias em excesso ({'>'} slots) ficam em vermelho · 🎯 = foco (sem paralela) · barra tracejada = tarefa do ciclo criativo (período vem da fase, não se arrasta). Fim de semana não aparece.
       </p>
-    </div>
+    </MarketingPagina>
   );
 }
 
@@ -253,14 +297,19 @@ function RaiaMembro({ membro, cards, dias, hojeStr, podeEditar, onDragStartCard,
         {/* Barras */}
         {items.map(it => {
           const cor = it.cor || '#6366f1';
+          // Tarefa do ciclo criativo: o período é a data prevista da FASE, então
+          // ela OCUPA a agenda (senão o Planner mentiria sobre a capacidade) mas
+          // não se arrasta — quem manda no prazo é o ciclo, no /eventos.
+          const doCiclo = it.plano === 'fase';
+          const arrastavel = podeEditar && !doCiclo;
           return (
             <div
               key={it.id}
-              draggable={podeEditar}
-              onDragStart={podeEditar ? () => onDragStartCard(it.id, it.durUteis) : undefined}
+              draggable={arrastavel}
+              onDragStart={arrastavel ? () => onDragStartCard(it.id, it.durUteis) : undefined}
               onClick={() => onClickCard(it)}
-              title={`${it.titulo} · ${it.durUteis} dia(s) úteis${it.pode_paralelo ? '' : ' · foco'}`}
-              className={`absolute rounded px-1.5 flex items-center text-[10px] font-medium truncate border ${podeEditar ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
+              title={`${it.titulo} · ${it.durUteis} dia(s) úteis${it.pode_paralelo ? '' : ' · foco'}${doCiclo ? ' · ciclo criativo (período da fase)' : ''}`}
+              className={`absolute rounded px-1.5 flex items-center text-[10px] font-medium truncate ${doCiclo ? 'border-2 border-dashed' : 'border'} ${arrastavel ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
               style={{
                 left: it.s * COL_W + 2,
                 width: (it.e - it.s + 1) * COL_W - 4,

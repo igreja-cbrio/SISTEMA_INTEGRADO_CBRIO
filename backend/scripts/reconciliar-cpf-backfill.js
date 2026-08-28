@@ -64,6 +64,12 @@ async function main() {
     { tabela: 'batismo_inscricoes', cols: 'id, cpf, membro_id, nome, sobrenome, data_nascimento', temDeletedAt: true, origem: 'backfill_batismo' },
     { tabela: 'vol_inscricoes', cols: 'id, cpf, membro_id, nome_completo, data_nascimento', temDeletedAt: false, origem: 'backfill_vol' },
     { tabela: 'next_matriculas', cols: 'id, cpf, membro_id, nome, sobrenome, data_nascimento', temDeletedAt: true, origem: 'backfill_next' },
+    // ⚠️ `inscricoes` é a ESPINHA das inscrições em evento (Celebra, retiros,
+    // camps) e estava FORA desta lista — a tabela onde a porta pública grava
+    // hoje, que é justamente a que mais coleta CPF. Achado em 24/08/2026: no
+    // Celebra 2026, 18 CPFs ficaram presos na linha da inscrição porque a
+    // política 'ligar' não consolidava (ver inscricaoContrato.processarIdentidade).
+    { tabela: 'inscricoes', cols: 'id, cpf, membro_id, nome_completo, data_nascimento', temDeletedAt: true, origem: 'backfill_inscricoes' },
   ];
 
   for (const sat of SATELITES) {

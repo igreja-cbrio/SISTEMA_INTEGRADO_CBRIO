@@ -17,6 +17,7 @@ import KpiCard from './KpiCard';
 import OcupacaoGauge from './OcupacaoGauge';
 import { ChartGradients, gradFill } from '../charts/ChartGradients';
 import { ResumoSemanaCard } from './ResumoCards';
+import ComparativoAnualCard from './ComparativoAnualCard';
 
 const C = { primary: '#00B39D', media: '#7BAEC2', taxa: '#E97A3F' };
 
@@ -33,6 +34,23 @@ function isoWeekOf(date) {
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
   const week = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
   return { ano: d.getUTCFullYear(), semana: week };
+}
+
+// Rótulo de vigência do culto no seletor. Só acrescenta quando há algo a dizer:
+// culto encerrado ("· encerrado em dd/mm") e culto que ainda não começou
+// ("· a partir de dd/mm"). Datas são fatiadas da string 'YYYY-MM-DD' de
+// propósito — `new Date('2026-08-24')` é meia-noite UTC, que no Rio é dia 23.
+function sufixoVigencia(c) {
+  if (!c) return '';
+  const ddmm = (iso) => (typeof iso === 'string' && iso.length >= 10
+    ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : null);
+  const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+  const ate = typeof c.vigente_ate === 'string' ? c.vigente_ate.slice(0, 10) : null;
+  const de = typeof c.vigente_de === 'string' ? c.vigente_de.slice(0, 10) : null;
+  if (ate && ate < hoje) return ` · encerrado em ${ddmm(ate)}`;
+  if (de && de > hoje) return ` · a partir de ${ddmm(de)}`;
+  if (c.is_active === false) return ' · encerrado';
+  return '';
 }
 
 export default function DashSemanalAba() {
@@ -339,8 +357,13 @@ export default function DashSemanalAba() {
               <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="todos">Todos</SelectItem>
+                {/* ⚠️ O seletor mostra TAMBÉM culto encerrado e culto que ainda vai
+                    começar — este filtro é de ANÁLISE HISTÓRICA. Sem isso, o corte
+                    de 24/08 (docs/cultos-domingo/) tiraria o 08:30 e o 10:00 daqui
+                    e o histórico deles ficaria inalcançável pelo nome. O sufixo
+                    existe pra ninguém achar que um culto encerrado ainda acontece. */}
                 {(cultos || []).map(c => (
-                  <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                  <SelectItem key={c.id} value={c.id}>{c.name}{sufixoVigencia(c)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -403,6 +426,12 @@ export default function DashSemanalAba() {
       <div className="col-span-12 lg:col-span-10 space-y-4">
         {/* Resumo da semana · números consolidados */}
         <ResumoSemanaCard ano={ano} semana={semana} />
+
+        {/* Comparativo do ano (frequência · decisões · batismos) com botão de
+            copiar pro WhatsApp. Fica na aba PADRÃO de propósito: o bloco
+            detalhado da aba Mensal existe desde 03/08 e o Matheus não o
+            alcançava — pedia os números por fora. Mesmo endpoint, mesma conta. */}
+        <ComparativoAnualCard />
 
         {/* Filtros topo */}
         <div className="flex flex-wrap items-end gap-3">

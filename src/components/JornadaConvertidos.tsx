@@ -10,8 +10,10 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { cuidados as cuidadosApi } from '../api';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
-import { Loader2, HeartHandshake, Droplets, Sparkles, Phone } from 'lucide-react';
+import { Loader2, HeartHandshake, Droplets, Sparkles, Phone, MessageCircle } from 'lucide-react';
+import { hrefWhatsapp } from '../lib/conversas';
 import { toast } from 'sonner';
+import JornadaTimeline from './jornada/JornadaTimeline';
 
 const AREA_LABEL: Record<string, string> = { ami: 'AMI', bridge: 'Bridge', online: 'Online', sede: 'Sede', cba: 'CBA' };
 const AREAS = ['ami', 'bridge', 'online', 'sede'];
@@ -58,6 +60,10 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
   const [loading, setLoading] = useState(true);
   const [areaFiltro, setAreaFiltro] = useState<string>(area || 'todas');
   const [statusFiltro, setStatusFiltro] = useState<'todos' | 'pendentes' | 'atrasados'>(view === 'next' ? 'pendentes' : 'todos');
+  // A linha do tempo é a visão padrão do acompanhamento (pedido do Matheus ·
+  // 14/08): ela responde "quanto tempo levou" e "quem parou". A aba Next segue
+  // na tabela — ali a pergunta é cobertura do Next, não trajetória.
+  const [vista, setVista] = useState<'linha' | 'tabela'>(view === 'next' ? 'tabela' : 'linha');
 
   const efetivaArea = area || (areaFiltro === 'todas' ? undefined : areaFiltro);
 
@@ -92,8 +98,8 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
 
   return (
     <div className="space-y-4">
-      {/* Resumo */}
-      {r && (
+      {/* Resumo · na linha do tempo os tiles próprios já respondem isso */}
+      {r && vista === 'tabela' && (
         <div className={`grid gap-3 ${view === 'next' ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'}`}>
           {view !== 'next' && (
             <ResumoCard icon={Phone} color="#00B39D" titulo="Contato feito"
@@ -123,17 +129,48 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
             </SelectContent>
           </Select>
         )}
-        <Select value={statusFiltro} onValueChange={(v: any) => setStatusFiltro(v)}>
-          <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos</SelectItem>
-            <SelectItem value="pendentes">{view === 'next' ? 'Ainda sem Next' : 'Com pendência'}</SelectItem>
-            <SelectItem value="atrasados">Atrasados</SelectItem>
-          </SelectContent>
-        </Select>
+        {vista === 'tabela' && (
+          <Select value={statusFiltro} onValueChange={(v: any) => setStatusFiltro(v)}>
+            <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              <SelectItem value="pendentes">{view === 'next' ? 'Ainda sem Next' : 'Com pendência'}</SelectItem>
+              <SelectItem value="atrasados">Atrasados</SelectItem>
+            </SelectContent>
+          </Select>
+        )}
+
+        {view !== 'next' && (
+          <div className="ml-auto inline-flex rounded-lg border border-border p-0.5">
+            {([['linha', 'Linha do tempo'], ['tabela', 'Tabela']] as const).map(([v, rotulo]) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setVista(v)}
+                className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                  vista === v ? 'bg-primary text-primary-foreground font-medium' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {rotulo}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Tabela */}
+      {vista === 'linha' ? (
+        loading ? (
+          <div className="rounded-[16px] border border-border bg-card py-12 text-center">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground inline" />
+          </div>
+        ) : !data ? (
+          <div className="rounded-[16px] border border-amber-500/40 bg-amber-500/10 p-4 text-sm">
+            Não foi possível carregar o acompanhamento. Tente recarregar a página.
+          </div>
+        ) : (
+          <JornadaTimeline data={data} />
+        )
+      ) : (
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         <Table>
           <TableHeader>
@@ -168,7 +205,45 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
                       </span>
                     );
                   })()}
-                  {i.telefone && <div className="text-xs text-muted-foreground">{i.telefone}</div>}
+                  {i.telefone && (
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-xs text-muted-foreground">{i.telefone}</span>
+                      {/* ⚠️ `wa.me` = abre o WhatsApp de QUEM CLICA, não o número
+                          institucional. Pedido do Matheus (27/08/2026): quem
+                          acompanha essas pessoas é o time do Online, e é do
+                          aparelho de cada um que a conversa sai. Mesma decisão
+                          já registrada na Apresentação de Crianças.
+                          ⚠️ `hrefWhatsapp` devolve null quando o telefone não dá
+                          pra discar — e aí o botão SOME, em vez de abrir uma
+                          conversa com um número que não existe. */}
+                      {(() => {
+                        const wpp = hrefWhatsapp(i.telefone);
+                        return wpp ? (
+                          <a
+                            href={wpp}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="Falar no WhatsApp"
+                            className="inline-flex items-center gap-1 text-[11px] text-emerald-600 hover:underline"
+                          >
+                            <MessageCircle className="h-3 w-3" /> WhatsApp
+                          </a>
+                        ) : null;
+                      })()}
+                    </div>
+                  )}
+                  {/* ⚠️ Só quando a decisão veio de um vídeo ANTIGO. Aqui o
+                      prazo de contato conta do dia em que a pessoa preencheu,
+                      não do culto — e sem dizer isso na tela, quem acompanha
+                      olha a data do culto e acha que está mil dias atrasado. */}
+                  {i.origem_replay && (
+                    <div
+                      className="text-[11px] text-muted-foreground mt-0.5"
+                      title="Assistiu a gravação. O prazo de contato conta de quando ela preencheu."
+                    >
+                      assistiu gravação{i.culto_origem ? ` · ${i.culto_origem}` : ''}
+                    </div>
+                  )}
                 </TableCell>
                 {!area && <TableCell className="text-sm">{AREA_LABEL[i.area] || '—'}</TableCell>}
                 <TableCell className="text-sm whitespace-nowrap">{i.dias_desde_conversao}d</TableCell>
@@ -189,6 +264,7 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
           </TableBody>
         </Table>
       </div>
+      )}
     </div>
   );
 }

@@ -9,6 +9,11 @@
 // e-mail do responsável obrigatório; endereço opcional. Linhas antigas nunca
 // são alteradas nem re-validadas.
 const router = require('express').Router();
+const kidsVisitante = require('../utils/kidsVisitante');
+// Dia BRT — dia de operação da igreja nunca é UTC (das 21h o dia já virou).
+function hojeBRTKids() {
+  return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
@@ -17,6 +22,10 @@ const {
   processarIdentidade, registrarConsentimentos, normalizarCpf, normalizarEmail,
   emailValido,
 } = require('../services/inscricaoContrato');
+// ⚠️ As 3 perguntas de saúde são a régua ÚNICA das duas portas de apresentação
+// (esta e a do app). Duas listas fariam a criança entrar com dado diferente
+// conforme a porta — o desalinhamento que o Marcos mandou consertar.
+const { normalizarSaude } = require('../utils/saudeCrianca');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): Wi-Fi único da
 // igreja — 10/15min por IP dava 429 na 11ª família (sweep 28/07).
@@ -111,6 +120,10 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         nascimento: validarNascimento(c?.data_nascimento),
         sexo: SEXOS.includes(String(c?.sexo || '').toLowerCase()) ? String(c.sexo).toLowerCase() : null,
         idade: c?.idade ? String(c.idade).trim().slice(0, 60) : null,
+        // ⚠️ Régua ÚNICA com a porta do app (`utils/saudeCrianca`): as 3 perguntas
+        // que MOVEM a operação de domingo. Não perguntada ⇒ chave ausente ⇒ o
+        // campo fica NULO, que é diferente de "respondeu que não".
+        saude: normalizarSaude(c),
       }))
       .filter(c => c.nome.length >= 2);
 
@@ -176,13 +189,24 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       try {
         const { data: kidDup } = await supabase
           .from('kids_criancas')
-          .select('id')
+          .select('id, tem_alergia, alergia_qual, tem_espectro, espectro_qual, tem_limitacao_fisica, limitacao_fisica_qual')
           .ilike('nome', c.nome)
           .eq('data_nascimento', c.nascimento)
           .eq('ativo', true)
           .limit(1);
         if (kidDup && kidDup.length) {
           criancaId = kidDup[0].id;
+          // ⚠️ SÓ-ONDE-VAZIO (política do censo e do CPF tardio): a criança já
+          // existe e a família acabou de responder sobre alergia/TEA/limitação.
+          // Preenche o que está NULO e **nunca** sobrescreve — o que está lá
+          // pode ter sido corrigido pela equipe do Kids no atendimento.
+          const patch = {};
+          for (const [k, v] of Object.entries(c.saude)) {
+            if (kidDup[0][k] === null || kidDup[0][k] === undefined) patch[k] = v;
+          }
+          if (Object.keys(patch).length) {
+            await supabase.from('kids_criancas').update(patch).eq('id', criancaId);
+          }
         } else {
           const obsInterna = `Cadastrado via formulário de Apresentação de Crianças (${dataApresentacao}). `
             + `Pais: ${nomePaiT || '—'} / ${nomeMaeT || '—'}.`;
@@ -193,7 +217,14 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
               data_nascimento: c.nascimento,
               sexo: c.sexo === 'masculino' ? 'M' : 'F', // vocabulário local do Kids
               visitante: true,
+        // ⚠️⚠️ `data_limite` OBRIGATÓRIO em toda visitante criada (20/08/2026).
+        // Os 5 pontos que criam criança visitante gravavam sem prazo, e a
+        // varredura `inativarVisitantesVencidos` só pega quem tem prazo VENCIDO
+        // — então essas viravam VISITANTES ETERNAS: nunca promovidas (sem
+        // check-in) e nunca inativadas. Medido: 23 assim em produção.
+        data_limite: kidsVisitante.prazoDe(hojeBRTKids()),
               observacoes_internas: obsInterna,
+              ...c.saude,
             })
             .select('id').single();
           criancaId = kid?.id || null;
@@ -291,25 +322,33 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       }).catch((err) => console.error('[publicApresentacao] identidade:', err.message));
 
       const nomes = lista.map(c => c.nome).join(', ');
-      // Notifica diretamente a líder do Kids (Mariane Gaia) e a Milena. Se não
-      // achar (e-mail mudou), cai no módulo 'kids'.
-      let alvosKids;
-      try {
-        const { data: alvos } = await supabase
-          .from('profiles').select('id')
-          .in('email', ['mariane.gaia@cbrio.org', 'milena.rochet@cbrio.org']);
-        alvosKids = (alvos || []).map(a => a.id);
-      } catch { /* fallback no módulo kids */ }
-
+      // ⚠️ Quem recebe vem de `notificacao_regras` (modulo kids, tipo
+      // nova_apresentacao_crianca), NÃO de e-mail cravado aqui.
+      //
+      // Até 16/08/2026 este bloco resolvia dois e-mails fixos e os passava em
+      // `targetIds` — e targetIds SOBREPÕE resolverDestinatarios(). Efeito: as
+      // duas recebiam, mas acrescentar alguém pela tela /admin de regras não
+      // fazia efeito nenhum, e não havia como descobrir por quê olhando a tela.
+      // É a LEI "nunca nomear pessoa como dono de fluxo": quem recebe muda sem
+      // PR, e o lugar disso é o banco.
+      //
+      // Sem `targetIds`, o notificar() resolve a regra específica do tipo; não
+      // havendo, cai nas genéricas do módulo kids; não havendo nenhuma, no
+      // fallback de admin/diretor. Nenhum caminho fica sem destinatário.
       notificar({
         modulo: 'kids',
         tipo: 'nova_apresentacao_crianca',
         titulo: criados.length > 1 ? 'Nova apresentação de crianças' : 'Nova apresentação de criança',
         mensagem: `${nomes} — inscriç${criados.length > 1 ? 'ões' : 'ão'} para a apresentação de ${dataApresentacao}. Entrar em contato com a família para agendar o horário.`,
-        link: '/ministerial/totem-kids/apresentacao',
+        // ⚠️ O `?id=` é o que faz o toque na notificação abrir A INSCRIÇÃO em
+        // vez da lista inteira (app do staff · `destinoDoPush`). Só vai quando
+        // é UMA criança: com várias, apontar para a primeira seria arbitrário
+        // e esconderia as outras — aí a lista é o destino certo.
+        link: criados.length === 1
+          ? `/ministerial/totem-kids/apresentacao?id=${criados[0]}`
+          : '/ministerial/totem-kids/apresentacao',
         severidade: 'info',
         chaveDedup: `apresentacao_crianca_${criados[0]}`,
-        targetIds: alvosKids && alvosKids.length ? alvosKids : undefined,
       }).catch(err => console.error('[publicApresentacao] notificacao falhou:', err.message));
     }
 

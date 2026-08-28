@@ -16,7 +16,11 @@ function fmtData(iso) {
   return new Date(a, m - 1, d).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
-export default function FotosBatismo() {
+// `embutido` = montado na aba "App" do Marketing · ver o comentário em Destaques.
+// `podeEditar` (18/08) espelha o guard do servidor (`marketing` escrita >= 3).
+// Quem só LÊ enxerga o álbum e não vê upload nem o ✕ de excluir — botão que
+// devolve 403 é pior que botão ausente.
+export default function FotosBatismo({ embutido = false, podeEditar = true }) {
   const [datas, setDatas] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selecionada, setSelecionada] = useState(null);
@@ -96,13 +100,15 @@ export default function FotosBatismo() {
   }
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 24px' }}>
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Fotos de Batismo</div>
-        <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>
-          Álbum de cada dia de batismo. Quem se batizou naquele dia vê as fotos na aba Batismo do app — e pode salvar no celular.
+    <div style={embutido ? undefined : { maxWidth: 1100, margin: '0 auto', padding: '0 24px' }}>
+      {!embutido && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ fontSize: 28, fontWeight: 800, color: C.text, letterSpacing: -0.5 }}>Fotos de Batismo</div>
+          <div style={{ fontSize: 13, color: C.text2, marginTop: 2 }}>
+            Álbum de cada dia de batismo. Quem se batizou naquele dia vê as fotos na aba Batismo do app — e pode salvar no celular.
+          </div>
         </div>
-      </div>
+      )}
 
       {!selecionada ? (
         loading ? (
@@ -141,10 +147,14 @@ export default function FotosBatismo() {
             <Button variant="outline" size="sm" onClick={() => { setSelecionada(null); setFotos([]); }}>← Voltar</Button>
             <div style={{ fontSize: 16, fontWeight: 700, color: C.text, textTransform: 'capitalize' }}>{fmtData(selecionada.data)}</div>
             <div style={{ flex: 1 }} />
-            <Button onClick={() => fileRef.current?.click()} disabled={enviando}>
-              {enviando ? 'Enviando...' : '+ Adicionar fotos'}
-            </Button>
-            <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={enviar} style={{ display: 'none' }} />
+            {podeEditar && (
+              <>
+                <Button onClick={() => fileRef.current?.click()} disabled={enviando}>
+                  {enviando ? 'Enviando...' : '+ Adicionar fotos'}
+                </Button>
+                <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={enviar} style={{ display: 'none' }} />
+              </>
+            )}
           </div>
 
           {fotosLoading ? (
@@ -153,7 +163,9 @@ export default function FotosBatismo() {
             <div style={{ background: C.card, borderRadius: 12, border: `1px dashed ${C.border}`, padding: 48, textAlign: 'center' }}>
               <div style={{ fontSize: 15, fontWeight: 600, color: C.text }}>Álbum vazio</div>
               <div style={{ fontSize: 13, color: C.text3, marginTop: 4 }}>
-                Adicione as fotos do dia — pode selecionar várias de uma vez (JPG, PNG ou WebP, até 10 MB cada).
+                {podeEditar
+                  ? 'Adicione as fotos do dia — pode selecionar várias de uma vez (JPG, PNG ou WebP, até 10 MB cada).'
+                  : 'Nenhuma foto publicada para esta data ainda.'}
               </div>
             </div>
           ) : (
@@ -161,17 +173,19 @@ export default function FotosBatismo() {
               {fotos.map((f) => (
                 <div key={f.nome} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.border}`, aspectRatio: '1' }}>
                   <img src={f.url} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  <button
-                    onClick={() => excluir(f)}
-                    title="Excluir foto"
-                    style={{
-                      position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: 13,
-                      background: 'rgba(0,0,0,0.55)', color: '#fff', border: 'none', cursor: 'pointer',
-                      fontSize: 13, lineHeight: '26px',
-                    }}
-                  >
-                    ✕
-                  </button>
+                  {podeEditar && (
+                    <button
+                      onClick={() => excluir(f)}
+                      title="Excluir foto"
+                      style={{
+                        position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: 13,
+                        background: 'rgba(0,0,0,0.55)', color: '#fff', border: 'none', cursor: 'pointer',
+                        fontSize: 13, lineHeight: '26px',
+                      }}
+                    >
+                      ✕
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

@@ -1,0 +1,66 @@
+# Trava de qualidade nos PRs.
+#
+# Por que ela existe: em 08/08 dois bugs chegaram em produção — o botão
+# "Recoletar tudo" do Online estourando por variável fora de escopo, e a tela
+# /links inteira caindo por passar string onde se espera array — e NENHUMA rede
+# pegaria os dois. O Vite não checa tipos (só remove as anotações), o eslint não
+# executa o componente, e o comando de tipos que se usava (`tsc -p tsconfig.json`)
+# não checava arquivo nenhum: esse tsconfig tem `files: []` e só aponta
+# references. O comando certo é `tsc -b`, que é o que `npm run typecheck` roda.
+#
+# Ordem deliberada: `typecheck` PRIMEIRO. É o mais rápido e o que pega a classe
+# de erro que passou batido; falhar cedo devolve a resposta mais útil antes.
+
+name: Qualidade (tipos e testes)
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  qualidade:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # `npm ci` porque instalação reprodutível é o ponto de uma trava: se as
+      # versões mudassem a cada execução, um verde aqui não diria nada sobre o
+      # que vai para produção.
+      - run: npm ci
+
+      # A checagem que faltava. `tsc -b --noEmit` segue as references do
+      # tsconfig — sem o `-b`, passa sem checar nada.
+      - name: Tipos
+        run: npm run typecheck
+
+      - name: Testes
+        run: npm test
+
+      # ⚠️ O LINT COMPLETO CONTINUA FORA DA TRAVA, e a ausência é decisão, não
+      # esquecimento: `npm run lint` acusa ~1.700 erros no repositório hoje (a
+      # esmagadora maioria `no-explicit-any` acumulado). Uma trava que nasce
+      # vermelha bloqueia o primeiro push de todo mundo e é desligada na semana
+      # seguinte — aí não sobra trava nenhuma, nem a de tipos, que hoje está em
+      # ZERO e vale a pena proteger.
+      #
+      # O que entra é UMA regra, com config próprio (eslint.hooks.config.js) e
+      # hoje com ZERO violações: a ordem dos hooks do React. Em 16/08/2026 um
+      # `useState` colocado depois de um `return null` no
+      # AgenteVoluntariadoPainel derrubou a tela inteira do voluntariado em
+      # produção — "Minified React error #310: Rendered more hooks than during
+      # the previous render". Nem `tsc` nem os testes pegam isso: só quebra
+      # quando o componente PASSA do early return, então atravessou review,
+      # preview e vários dias de produção.
+      #
+      # Fica DEPOIS dos testes de propósito: é o passo mais barato dos três, mas
+      # o mais raro de falhar. Falhar cedo só ajuda quando a falha é provável.
+      - name: Ordem dos hooks do React (react-hooks/rules-of-hooks)
+        run: npm run lint:hooks

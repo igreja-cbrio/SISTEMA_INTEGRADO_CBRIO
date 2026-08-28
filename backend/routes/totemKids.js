@@ -16,6 +16,7 @@
 // ============================================================================
 
 const router = require('express').Router();
+const kidsVisitante = require('../utils/kidsVisitante');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
@@ -24,8 +25,11 @@ const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
 const { traduzErroUmPaiUmaMae } = require('../utils/kidsResponsavel');
-const { enviarTexto: enviarTextoWpp, enviarTemplate: enviarTemplateWpp } = require('../services/whatsappSend');
+// (templates deste arquivo migraram pra FILA no C2 · lote 5 — só o texto livre segue direto)
+const { enviarTexto: enviarTextoWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado, ehNomePlaceholder } = require('../services/membroMatch');
+const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
+const { frequentaNaJanela, avaliarFrequencia } = require('../utils/kidsFrequencia');
 // O Planning Center Check-Ins saiu do código (Marcos 2026-07-20): a frequência
 // do Kids é 100% do nosso totem (kids_checkins). Sobrou só a coluna legada
 // kids_criancas.planning_center_id e a tabela kids_pco_presencas (histórico
@@ -144,6 +148,37 @@ function cpfValido(cpf) {
   return dig(d.slice(0, 9), 10) === +d[9] && dig(d.slice(0, 10), 11) === +d[10];
 }
 
+// Lê TODAS as crianças que casam com o filtro, respeitando o cap de 1000 do
+// PostgREST (que é server-side e trunca em SILÊNCIO).
+// ⚠️ Motivo real: em 03/08 havia 1.023 crianças ativas com data de nascimento, e o
+// `/dashboard` lia com `.range(0, 999)` — 23 crianças simplesmente não entravam na
+// lista de aniversariantes da semana, sem nenhum sinal.
+async function fetchCriancasPaginado(select, aplicarFiltros) {
+  const PAGINA = 1000;
+  const tudo = [];
+  for (let offset = 0; ; offset += PAGINA) {
+    let q = supabase.from('kids_criancas').select(select);
+    q = aplicarFiltros(q);
+    const { data, error } = await q.order('nome').range(offset, offset + PAGINA - 1);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    tudo.push(...data);
+    if (data.length < PAGINA) break;
+  }
+  return tudo;
+}
+
+// Sala pela idade em meses, a partir de um catálogo JÁ carregado — mesma régua do
+// `sugerirSala` (min <= meses <= max, primeira por `ordem`), mas sem uma consulta
+// por criança. ⚠️ As faixas têm BURACOS (Berçário acaba em 21 meses e Maternal
+// começa em 24), então devolver null é resultado NORMAL, não erro: quem chama tem
+// que ter um grupo "sem sala".
+function salaDaIdade(salas, idadeMeses) {
+  if (idadeMeses == null) return null;
+  return (salas || []).find(s =>
+    Number(s.faixa_etaria_min_meses) <= idadeMeses && Number(s.faixa_etaria_max_meses) >= idadeMeses) || null;
+}
+
 // Sala sugerida pra idade em meses
 async function sugerirSala(idadeMeses) {
   if (idadeMeses == null) return null;
@@ -256,6 +291,28 @@ router.post('/sessoes/garantir', authorizeModule('kids', 2), async (req, res) =>
   try {
     const { culto_id } = req.body;
     if (!culto_id) return res.status(400).json({ error: 'culto_id obrigatorio' });
+    // (docs/cultos-domingo/ · F1) não abre/reabre sessão de culto que não deve
+    // ter check-in: culto apagado, tipo ENCERRADO (is_active=false — 08:30 e
+    // 10:00 pós-corte) ou tipo sem Kids. Front antigo/aba velha não ressuscita
+    // fantasma. Falha de LEITURA não bloqueia (a recusa exige o banco DIZER que
+    // o culto não vale — instabilidade não pode travar o culto · lição do 503
+    // do totem de estação).
+    {
+      const { data: cultoAlvo, error: cultoErr } = await supabase.from('cultos')
+        .select('id, deleted_at, service_type:vol_service_types(is_active, has_kids)')
+        .eq('id', culto_id).maybeSingle();
+      if (!cultoErr) {
+        if (!cultoAlvo || cultoAlvo.deleted_at) {
+          return res.status(404).json({ error: 'Culto não encontrado (apagado ou inexistente).' });
+        }
+        if (cultoAlvo.service_type && cultoAlvo.service_type.is_active === false) {
+          return res.status(409).json({ error: 'Este tipo de culto foi encerrado — o check-in não abre sessão pra ele.' });
+        }
+        if (cultoAlvo.service_type && cultoAlvo.service_type.has_kids === false) {
+          return res.status(409).json({ error: 'Este culto não tem Kids — sem sessão de check-in.' });
+        }
+      }
+    }
     const sel = `id, culto_id, status, abrir_em, fechar_em, encerrada_at,
         culto:cultos(id, data, nome, service_type_id, presencial_kids, decisoes_kids,
                      service_type:vol_service_types(id, name, color, has_kids, recurrence_time))`;
@@ -290,10 +347,11 @@ function _hojeBRT() {
 
 // Data-limite de uma criança visitante = hoje (BRT) + 28 dias (4 domingos · o
 // dia + 3 semanas · Marcos 2026-07-20). Passou disso, ela inativa sozinha.
+// ⚠️ Delega para `utils/kidsVisitante` — a régua de prazo e de promoção vive lá
+// (pura, no gate). Duas cópias divergiriam no dia em que o prazo mudasse, e é
+// justamente o prazo que torna a régua de 3 check-ins viável.
 function _dataLimiteVisitante() {
-  const d = new Date(_hojeBRT() + 'T12:00:00Z');
-  d.setUTCDate(d.getUTCDate() + 28);
-  return d.toISOString().slice(0, 10);
+  return kidsVisitante.prazoDe(_hojeBRT());
 }
 
 // ── Ensaio (Marcos 2026-07-21/22 · design v5) ────────────────────────────────
@@ -436,25 +494,48 @@ async function inativarVisitantesVencidos() {
   return (data || []).length;
 }
 
-// Visitante que VOLTA (Marcos 2026-07-20): um novo check-in com check-in anterior
-// de OUTRO dia promove a criança a FREQUENTADOR na hora — definitivo (limpa prazo
-// e relação; nada volta a marcá-la visitante sozinho). Roda DEPOIS do insert do
-// check-in, best-effort: nunca trava nem atrasa o check-in.
+// Visitante que VOLTA · régua de 20/08/2026 (Matheus): promove no **3º dia** com
+// check-in — era o 2º (Marcos, 20/07). E o prazo de 4 semanas passa a ser
+// RENOVADO a cada check-in.
+//
+// ⚠️⚠️ O prazo rolante NÃO é detalhe: visitante que passa do `data_limite` é
+// INATIVADA automaticamente. Medido em 20/08, a mediana entre o 1º e o 2º
+// check-in é 7 dias, então o 3º cai por volta do 28º–30º dia para quem vem de
+// 15 em 15 — com prazo FIXO, exigir 3 check-ins DESATIVARIA a criança antes de
+// ela poder ser promovida. Com o prazo rolando, a régua é "3 visitas, com no
+// máximo 4 semanas entre elas".
+//
+// ⚠️ Conta DIAS DISTINTOS, não linhas de `kids_checkins`: são 4 horários de
+// culto no domingo, e contar linha promoveria numa única manhã.
+//
+// Roda DEPOIS do insert do check-in, best-effort: nunca trava nem atrasa o
+// check-in. Devolve true só quando PROMOVEU (o chamador loga).
 async function promoverVisitanteRecorrente(criancaId) {
   try {
     const { data: cr } = await supabase.from('kids_criancas')
       .select('id, visitante').eq('id', criancaId).maybeSingle();
     if (!cr || cr.visitante !== true) return false;
-    // Já veio em outro dia? (o check-in de agora é de hoje · compara em BRT)
-    const { data: prev } = await supabase.from('kids_checkins')
-      .select('id').eq('crianca_id', criancaId).is('deleted_at', null)
-      .lt('checkin_at', `${_hojeBRT()}T00:00:00-03:00`).limit(1);
-    if (!prev || !prev.length) return false;
+
+    // Dias DISTINTOS com check-in, o de hoje incluído.
+    const { data: todos, error: eCk } = await supabase.from('kids_checkins')
+      .select('checkin_at').eq('crianca_id', criancaId).is('deleted_at', null)
+      .order('checkin_at', { ascending: false }).limit(50);
+    // ⚠️ Falha de LEITURA não promove nem renova: não sabemos quantos dias são,
+    // e promover no escuro é definitivo (nada rebaixa depois).
+    if (eCk) { console.error('[totemKids/promoverVisitanteRecorrente]', eCk.message); return false; }
+    const dias = new Set((todos || []).map((c) => String(c.checkin_at).slice(0, 10))).size;
+
+    const patch = kidsVisitante.patchAposCheckin({
+      eVisitante: true, diasComCheckin: dias, hojeISO: _hojeBRT(),
+    });
+    if (!patch) return false;
+    const { promovida, ...campos } = patch;
+
     const { error } = await supabase.from('kids_criancas')
-      .update({ visitante: false, data_limite: null, visitante_relacao: null, updated_at: new Date().toISOString() })
+      .update({ ...campos, updated_at: new Date().toISOString() })
       .eq('id', criancaId).eq('visitante', true);
     if (error) { console.error('[totemKids/promoverVisitanteRecorrente]', error.message); return false; }
-    return true;
+    return promovida === true;
   } catch (e) {
     console.error('[totemKids/promoverVisitanteRecorrente]', e.message);
     return false;
@@ -829,7 +910,12 @@ router.post('/criancas/merge', authorizeModule('kids', 3), async (req, res) => {
     const { error } = await supabase.rpc('merge_kids_criancas', { p_keep: keep_id, p_merge: merge_ids });
     if (error) throw error;
     res.json({ ok: true, fundidas: merge_ids.length });
-  } catch (e) { console.error('[totemKids] merge criancas:', e.message); res.status(500).json({ error: e.message || 'Erro ao fundir' }); }
+  } catch (e) {
+    const t = traduzErroUmPaiUmaMae(e);
+    if (t) return res.status(t.status).json({ error: t.error });
+    console.error('[totemKids] merge criancas:', e.message);
+    res.status(500).json({ error: 'Erro ao fundir crianças' });
+  }
 });
 
 // GET /api/totem-kids/criancas/:id · detalhe completo
@@ -1379,6 +1465,11 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
           responsaveis:kids_responsaveis(membro:mem_membros(id, nome, telefone))
         `)
         .eq('ativo', ativo)
+        // ⚠️ Criança soft-deletada NÃO aparece na gestão: sem este filtro a
+        // lista mostrava 1.142 onde existem 1.087 (medido em 17/08/2026 — 55
+        // apagadas contando como ativas), e `app_soft_delete` deixava de ter
+        // efeito visível justamente na tela onde a equipe confere a base.
+        .is('deleted_at', null)
         .order('nome')
         .range(from, from + pageSize - 1);
       if (error) throw error;
@@ -1387,11 +1478,95 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
       if (page.length < pageSize) break;
       from += pageSize;
     }
-    res.json((await anexarFotosEmLote(data)).map(c => ({
-      ...c,
-      idade_meses: calcIdadeMeses(c.data_nascimento),
-      idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
-    })));
+    // Frequência por criança (quantos check-ins e quando foi o último). É o que
+    // sustenta a régua "ativa = veio pelo menos 1× em 12 meses" e o filtro por
+    // quantidade de check-in. Best-effort: se falhar, a lista abre sem os
+    // números em vez de não abrir — mas o aviso vai no payload, porque 0
+    // check-in silencioso se lê como "essa criança nunca veio".
+    let checkinsPorCrianca = new Map();
+    let coletaDesde = null;
+    let avisoFrequencia = null;
+    try {
+      // Paginado: kids_checkins cresce ~600/mês e o PostgREST capa em 1000.
+      const linhas = [];
+      for (let off = 0; off < 200000; off += 1000) {
+        const { data: pag, error } = await supabase
+          .from('kids_checkins')
+          .select('crianca_id, created_at')
+          .order('created_at', { ascending: true })
+          .range(off, off + 999);
+        if (error) throw error;
+        linhas.push(...(pag || []));
+        if (!pag || pag.length < 1000) break;
+      }
+
+      // ⚠️ `kids_pco_presencas` também é PRESENÇA e ficou sem leitor quando o
+      // Planning Center saiu do código (20/07/2026). São 178 registros de
+      // 05–12/07/2026 cobrindo 161 crianças — 26 delas NÃO têm nenhum check-in
+      // no totem, e sem esta fonte apareceriam como "nunca veio". Ignorar dado
+      // real de presença por ele estar na tabela antiga subestima quem
+      // frequenta, que é justamente o número em discussão.
+      // Best-effort dentro do best-effort: se a tabela sumir numa limpeza
+      // futura, a frequência segue com o totem em vez de derrubar a lista.
+      try {
+        for (let off = 0; off < 200000; off += 1000) {
+          const { data: pag, error } = await supabase
+            .from('kids_pco_presencas')
+            .select('crianca_id, data')
+            .order('data', { ascending: true })
+            .range(off, off + 999);
+          if (error) throw error;
+          // `data` é DATE — vira meio-dia UTC pra não cair no dia anterior em
+          // BRT quando comparado com os timestamps do totem.
+          for (const p of pag || []) {
+            if (p?.crianca_id && p?.data) {
+              linhas.push({ crianca_id: p.crianca_id, created_at: `${p.data}T12:00:00.000Z` });
+            }
+          }
+          if (!pag || pag.length < 1000) break;
+        }
+        linhas.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
+      } catch (e2) {
+        console.warn('[totemKids/criancas] presenças do PCO:', e2.message);
+      }
+
+      for (const l of linhas) {
+        const atual = checkinsPorCrianca.get(l.crianca_id) || { total: 0, ultimo: null };
+        atual.total += 1;
+        if (!atual.ultimo || l.created_at > atual.ultimo) atual.ultimo = l.created_at;
+        checkinsPorCrianca.set(l.crianca_id, atual);
+      }
+      coletaDesde = linhas.length ? linhas[0].created_at : null;
+    } catch (e) {
+      console.error('[totemKids/criancas] frequência:', e.message);
+      avisoFrequencia = 'Não consegui carregar os check-ins — os números de frequência estão indisponíveis nesta lista.';
+      checkinsPorCrianca = new Map();
+    }
+
+    const itens = (await anexarFotosEmLote(data)).map(c => {
+      const f = checkinsPorCrianca.get(c.id) || { total: 0, ultimo: null };
+      return {
+        ...c,
+        idade_meses: calcIdadeMeses(c.data_nascimento),
+        idade_label: formatIdade(calcIdadeMeses(c.data_nascimento)),
+        checkins_total: avisoFrequencia ? null : f.total,
+        ultimo_checkin: avisoFrequencia ? null : f.ultimo,
+        frequenta: avisoFrequencia ? null : frequentaNaJanela(f.ultimo),
+      };
+    });
+
+    // ⚠️ Formato de resposta preservado (array) — o app do Staff e a ficha
+    // consomem esta rota. Os metadados vão em `?meta=1`, que só a gestão pede.
+    if (req.query.meta === '1') {
+      return res.json({
+        itens,
+        frequencia: {
+          ...avaliarFrequencia(itens, { coletaDesde }),
+          aviso: avisoFrequencia,
+        },
+      });
+    }
+    res.json(itens);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao listar crianças' });
   }
@@ -1771,7 +1946,16 @@ async function gerarResumoKids(sessaoId, { exemplo = false } = {}) {
 // janela de 24h). pt_BR por padrão (configurável por WHATSAPP_TEMPLATE_KIDS_RESUMO_LANG).
 async function enviarResumoWpp(telefone, { texto, params }) {
   const tpl = process.env.WHATSAPP_TEMPLATE_KIDS_RESUMO;
-  if (tpl) return enviarTemplateWpp(telefone, tpl, process.env.WHATSAPP_TEMPLATE_KIDS_RESUMO_LANG || 'pt_BR', params);
+  if (tpl) {
+    // C2 (lote 5 · 14/08): template pela FILA — registro + retry + recibos.
+    const { enfileirar } = require('../services/whatsappFila');
+    const r = await enfileirar({
+      telefone, template: tpl, params,
+      idioma: process.env.WHATSAPP_TEMPLATE_KIDS_RESUMO_LANG || 'pt_BR',
+      contexto: 'kids.resumo_dia',
+    });
+    return { ok: !!(r.sent || r.queued), message_id: r.messageId || null, error: r.sent || r.queued ? null : (r.reason || 'erro') };
+  }
   return enviarTextoWpp(telefone, texto);
 }
 
@@ -2120,7 +2304,12 @@ router.patch('/batismos/:id', authorizeModule('kids', 3), async (req, res) => {
 router.get('/apresentacoes', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data } = await supabase.from('apresentacao_criancas')
-      .select('id, nome_pai, nome_mae, crianca_nome, crianca_idade, telefone, data_apresentacao, status, observacoes, origem, crianca_id, created_at')
+      // ⚠️ `crianca_data_nascimento` (22/08/2026): `crianca_idade` é SNAPSHOT do dia
+      // da inscrição e envelhece sozinho — "8 meses" de maio segue 8 meses em
+      // setembro. Com a data, o app calcula a idade de HOJE.
+      // ⚠️ Nada de CPF, e-mail ou endereço aqui: a lista é PII na tela de um
+      // celular, e nada disso é preciso pra contatar a família.
+      .select('id, nome_pai, nome_mae, crianca_nome, crianca_idade, crianca_data_nascimento, telefone, data_apresentacao, status, observacoes, origem, crianca_id, created_at')
       .is('deleted_at', null)
       .order('data_apresentacao', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
@@ -2177,9 +2366,10 @@ router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
       .select('id, crianca_nome, solicitante_nome, solicitante_parentesco, created_at')
       .eq('status', 'pendente').is('deleted_at', null)
       .order('created_at', { ascending: false }).limit(8);
-    const { data: kids } = await supabase.from('kids_criancas')
-      .select('id, nome, data_nascimento, foto_url')
-      .eq('ativo', true).is('deleted_at', null).not('data_nascimento', 'is', null).range(0, 999);
+    // ⚠️ Era `.range(0, 999)` e a base passou de 1000 (1.023 ativas com nascimento
+    // em 03/08): 23 crianças ficavam de fora da lista da semana, em silêncio.
+    const kids = await fetchCriancasPaginado('id, nome, data_nascimento, foto_url', q => q
+      .eq('ativo', true).is('deleted_at', null).not('data_nascimento', 'is', null));
     const hoje = new Date();
     const dias = [];
     for (let i = 0; i < 7; i++) {
@@ -2587,6 +2777,66 @@ router.delete('/responsaveis/:id', authorizeModule('kids', 3), async (req, res) 
 // CHECK-IN / CHECK-OUT
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ── GET /api/totem-kids/sem-checkin · crianças ATIVAS que nunca fizeram um
+// único check-in no totem ────────────────────────────────────────────────────
+// ⚠️⚠️ POR QUE É UMA LISTA SEPARADA, e não parte do radar de ausentes.
+// `fn_kids_ausentes_consecutivos` faz `JOIN` com a presença para calcular
+// quantos cultos a criança perdeu — quem NUNCA teve check-in não tem de onde
+// contar e sai do resultado. Medido em 20/08/2026: **554 crianças ativas** nesse
+// estado, invisíveis em qualquer tela. São "não estão vindo" tanto quanto as 270
+// do radar, mas por outro motivo, e o encaminhamento é outro: a maioria veio do
+// import do Planning Center e provavelmente é cadastro a desativar, enquanto o
+// ausente é criança que vinha e parou (e se liga para ela).
+// Juntar os dois num número só (decisão do Matheus · 20/08) faria o radar saltar
+// de 270 para ~824 e a fila de acompanhamento pastoral virar limpeza de base.
+//
+// ⚠️ Só criança ATIVA: desativar tira daqui, que é o pedido dele.
+router.get('/sem-checkin', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const limite = Math.min(Math.max(Number(req.query.limit) || 500, 1), 2000);
+
+    const { data: comCheckin, error: eCk } = await supabase
+      .from('kids_checkins').select('crianca_id').is('deleted_at', null).limit(100000);
+    // ⚠️ Falha de LEITURA não vira "ninguém fez check-in": isso listaria as
+    // 1.076 ativas como se nunca tivessem vindo, e alguém desativaria em massa.
+    if (eCk) throw new Error(`Não foi possível ler os check-ins: ${eCk.message}`);
+    const jaVeio = new Set((comCheckin || []).map((c) => c.crianca_id));
+
+    const { data: ativas, error: eAt } = await supabase
+      .from('kids_criancas')
+      .select('id, nome, data_nascimento, sexo, visitante, created_at, planning_center_id')
+      .eq('ativo', true).is('deleted_at', null)
+      .order('created_at', { ascending: true }).limit(5000);
+    if (eAt) throw eAt;
+
+    const semCheckin = (ativas || []).filter((c) => !jaVeio.has(c.id));
+
+    const itens = semCheckin.slice(0, limite).map((c) => ({
+      crianca_id: c.id,
+      nome: c.nome,
+      idade_meses: c.data_nascimento ? calcIdadeMeses(c.data_nascimento) : null,
+      idade_label: c.data_nascimento ? formatIdade(calcIdadeMeses(c.data_nascimento)) : null,
+      sexo: c.sexo || null,
+      visitante: c.visitante === true,
+      cadastrada_em: c.created_at ? String(c.created_at).slice(0, 10) : null,
+      // ⚠️ Distingue quem veio do import do PCO de quem foi cadastrada aqui: são
+      // encaminhamentos diferentes (limpeza de base × criança que não apareceu).
+      do_import: !!c.planning_center_id,
+    }));
+
+    res.json({
+      total: semCheckin.length,
+      do_import: semCheckin.filter((c) => c.planning_center_id).length,
+      cadastradas_aqui: semCheckin.filter((c) => !c.planning_center_id).length,
+      truncado: semCheckin.length > itens.length,
+      itens,
+    });
+  } catch (e) {
+    console.error('[totemKids/sem-checkin]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao listar crianças sem check-in' });
+  }
+});
+
 // GET /api/totem-kids/ausentes?min=3 · crianças ativas faltando N cultos seguidos
 // (aba dedicada · mesma régua do alerta) + contato dos responsáveis pra ação.
 router.get('/ausentes', authorizeModule('kids', 1), async (req, res) => {
@@ -2597,11 +2847,33 @@ router.get('/ausentes', authorizeModule('kids', 1), async (req, res) => {
     if (error) throw error;
     const ids = (ausentes || []).map(a => a.crianca_id);
     let respPorCrianca = {};
+    // Idade e sexo NÃO vêm da fn_kids_ausentes_consecutivos (ela devolve só
+    // crianca_id/nome/ultima_presenca/cultos_perdidos) — enriquecemos aqui, do
+    // mesmo jeito que já era feito com os responsáveis.
+    let dadosPorCrianca = {};
+    // "Contatado" reusa kids_atendimentos tipo='contato' (a ficha da criança já
+    // registra contato assim) — sem coluna nem tabela nova. Só conta contato
+    // FEITO DEPOIS da última presença: um telefonema de três meses atrás não
+    // resolve a ausência de agora.
+    let contatoPorCrianca = {};
     if (ids.length) {
-      const { data: resps } = await supabase
-        .from('kids_responsaveis')
-        .select('crianca_id, parentesco, autorizado_buscar, membro:mem_membros(nome, telefone)')
-        .in('crianca_id', ids);
+      const [{ data: resps }, { data: cris }, { data: contatos }] = await Promise.all([
+        supabase
+          .from('kids_responsaveis')
+          .select('crianca_id, parentesco, autorizado_buscar, membro:mem_membros(nome, telefone)')
+          .in('crianca_id', ids),
+        supabase
+          .from('kids_criancas')
+          .select('id, data_nascimento, sexo')
+          .in('id', ids),
+        supabase
+          .from('kids_atendimentos')
+          .select('crianca_id, data, registrado_por_nome')
+          .eq('tipo', 'contato')
+          .is('deleted_at', null)
+          .in('crianca_id', ids)
+          .order('data', { ascending: false }),
+      ]);
       for (const r of resps || []) {
         (respPorCrianca[r.crianca_id] = respPorCrianca[r.crianca_id] || []).push({
           nome: r.membro?.nome || null,
@@ -2610,14 +2882,159 @@ router.get('/ausentes', authorizeModule('kids', 1), async (req, res) => {
           autorizado_buscar: r.autorizado_buscar || false,
         });
       }
+      for (const c of cris || []) dadosPorCrianca[c.id] = c;
+      // Ordenado por data desc → o primeiro de cada criança é o contato mais recente
+      for (const ct of contatos || []) {
+        if (!contatoPorCrianca[ct.crianca_id]) contatoPorCrianca[ct.crianca_id] = ct;
+      }
     }
-    res.json((ausentes || []).map(a => ({
-      ...a,
-      responsaveis: respPorCrianca[a.crianca_id] || [],
-    })));
+    res.json((ausentes || []).map(a => {
+      const c = dadosPorCrianca[a.crianca_id] || {};
+      const meses = calcIdadeMeses(c.data_nascimento);
+      const ct = contatoPorCrianca[a.crianca_id];
+      // Contato só vale se for igual ou posterior à última presença. Sem última
+      // presença registrada, qualquer contato conta.
+      const contatoValido = !!ct && (!a.ultima_presenca || String(ct.data) >= String(a.ultima_presenca));
+      return {
+        ...a,
+        data_nascimento: c.data_nascimento || null,
+        sexo: c.sexo || null,
+        idade_meses: meses,
+        idade_label: formatIdade(meses),
+        contatado: contatoValido,
+        contatado_em: contatoValido ? ct.data : null,
+        contatado_por: contatoValido ? (ct.registrado_por_nome || null) : null,
+        responsaveis: respPorCrianca[a.crianca_id] || [],
+      };
+    }));
   } catch (e) {
     console.error('[totemKids/ausentes]', e.message);
     res.status(500).json({ error: 'Erro ao listar crianças faltantes' });
+  }
+});
+
+// GET /api/totem-kids/aniversariantes?mes=1..12 · lista do MÊS inteiro, pra impressão.
+// Devolve por criança: idade atual, idade que COMPLETA no mês, sala pela faixa de
+// idade e o contato dos responsáveis (nome + telefone), ordenada por dia.
+router.get('/aniversariantes', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const hoje = new Date();
+    const mes = Math.min(12, Math.max(1, Number(req.query.mes) || (hoje.getMonth() + 1)));
+    const mm = String(mes).padStart(2, '0');
+
+    const [kids, { data: salas }] = await Promise.all([
+      fetchCriancasPaginado('id, nome, data_nascimento, sexo', q => q
+        .eq('ativo', true).is('deleted_at', null).not('data_nascimento', 'is', null)),
+      supabase.from('kids_salas')
+        .select('id, nome, faixa_etaria_min_meses, faixa_etaria_max_meses, ordem')
+        .eq('ativo', true).order('ordem'),
+    ]);
+
+    const doMes = (kids || []).filter(k => String(k.data_nascimento).slice(5, 7) === mm);
+
+    // Contato dos responsáveis · mãe → pai → demais (é o que vai pro papel).
+    // .in() em lotes de 200: URL do PostgREST estoura com lista grande.
+    const porCrianca = {};
+    const ids = doMes.map(k => k.id);
+    for (let i = 0; i < ids.length; i += 200) {
+      const lote = ids.slice(i, i + 200);
+      const { data: resps } = await supabase.from('kids_responsaveis')
+        .select('crianca_id, parentesco, membro:mem_membros(nome, telefone)')
+        .in('crianca_id', lote);
+      for (const r of resps || []) {
+        (porCrianca[r.crianca_id] = porCrianca[r.crianca_id] || []).push({
+          nome: r.membro?.nome || null,
+          telefone: r.membro?.telefone || null,
+          parentesco: r.parentesco || null,
+        });
+      }
+    }
+    const PESO = { mae: 0, pai: 1 };
+    for (const k of Object.keys(porCrianca)) {
+      porCrianca[k].sort((a, b) => (PESO[a.parentesco] ?? 9) - (PESO[b.parentesco] ?? 9));
+    }
+
+    const lista = doMes.map(k => {
+      const meses = calcIdadeMeses(k.data_nascimento);
+      const sala = salaDaIdade(salas, meses);
+      const dia = Number(String(k.data_nascimento).slice(8, 10));
+      // Idade que COMPLETA neste aniversário. Se o dia já passou no ano corrente,
+      // a próxima vez que ela faz aniversário é no ano que vem — é isso que a
+      // equipe precisa escrever no bolo, não a idade de hoje.
+      const anoBase = (mes < hoje.getMonth() + 1 || (mes === hoje.getMonth() + 1 && dia < hoje.getDate()))
+        ? hoje.getFullYear() + 1
+        : hoje.getFullYear();
+      return {
+        id: k.id,
+        nome: k.nome,
+        sexo: k.sexo || null,
+        data_nascimento: k.data_nascimento,
+        dia,
+        idade_meses: meses,
+        idade_label: formatIdade(meses),
+        completa_anos: anoBase - Number(String(k.data_nascimento).slice(0, 4)),
+        sala_id: sala?.id || null,
+        sala_nome: sala?.nome || null,
+        sala_ordem: sala?.ordem ?? 999,
+        responsaveis: porCrianca[k.id] || [],
+      };
+    }).sort((a, b) => a.dia - b.dia || a.nome.localeCompare(b.nome, 'pt-BR'));
+
+    res.json({ mes, total: lista.length, aniversariantes: lista });
+  } catch (e) {
+    console.error('[totemKids/aniversariantes]', e.message);
+    res.status(500).json({ error: 'Erro ao listar aniversariantes do mês' });
+  }
+});
+
+// POST/DELETE /api/totem-kids/ausentes/:criancaId/contato · marca/desmarca
+// "família contatada" na lista de faltantes.
+//
+// ⚠️ Grava em `kids_atendimentos` tipo='contato' de propósito — é a MESMA tabela
+// que a ficha da criança usa. Coluna `contatada` em kids_criancas seria um 2º
+// lugar guardando o mesmo fato, e a ficha deixaria de mostrar o contato feito
+// aqui. Efeito colateral desejado: o contato aparece no histórico da criança.
+router.post('/ausentes/:criancaId/contato', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const descricao = String(req.body?.descricao || '').trim()
+      || 'Família contatada sobre as faltas seguidas (marcado na lista de faltantes).';
+    const { data: criado, error } = await supabase
+      .from('kids_atendimentos')
+      .insert({
+        crianca_id: req.params.criancaId,
+        tipo: 'contato',
+        descricao: descricao.slice(0, 2000),
+        data: hoje,
+        registrado_por: req.user?.userId || null,
+        registrado_por_nome: req.user?.name || req.user?.email || null,
+      })
+      .select('id, data, registrado_por_nome').single();
+    if (error) throw error;
+    res.status(201).json({ ok: true, contatado: true, contatado_em: criado.data, contatado_por: criado.registrado_por_nome });
+  } catch (e) {
+    console.error('[totemKids/ausentes/contato]', e.message);
+    res.status(500).json({ error: 'Erro ao marcar contato' });
+  }
+});
+
+// Desmarcar = soft-delete dos contatos DESTA ausência (a partir da última
+// presença). Não apaga histórico antigo — desfaz só o clique errado de agora.
+router.delete('/ausentes/:criancaId/contato', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const desde = /^\d{4}-\d{2}-\d{2}$/.test(req.query?.desde || '') ? req.query.desde : null;
+    let q = supabase.from('kids_atendimentos')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('crianca_id', req.params.criancaId)
+      .eq('tipo', 'contato')
+      .is('deleted_at', null);
+    if (desde) q = q.gte('data', desde);
+    const { error } = await q;
+    if (error) throw error;
+    res.json({ ok: true, contatado: false });
+  } catch (e) {
+    console.error('[totemKids/ausentes/contato del]', e.message);
+    res.status(500).json({ error: 'Erro ao desmarcar contato' });
   }
 });
 
@@ -2627,11 +3044,16 @@ router.get('/cultos-do-dia', authorizeModule('kids', 2), async (req, res) => {
   try {
     const data = req.query.data;
     if (!data) return res.json([]);
+    // (docs/cultos-domingo/ · F1) deleted_at: culto apagado (o corte de 24/08
+    // mexe nos 72 futuros) não pode reaparecer no seletor do totem. is_active:
+    // tipo ENCERRADO (08:30/10:00 pós-corte) sai da grade — `!== false` tolera
+    // NULL de tipo antigo sem a flag.
     const { data: cultos } = await supabase.from('cultos')
-      .select('id, nome, vol_service_types(has_kids, recurrence_time)')
-      .eq('data', data);
+      .select('id, nome, vol_service_types(has_kids, is_active, recurrence_time)')
+      .eq('data', data)
+      .is('deleted_at', null);
     const lista = (cultos || [])
-      .filter(c => c.vol_service_types?.has_kids)
+      .filter(c => c.vol_service_types?.has_kids && c.vol_service_types?.is_active !== false)
       .map(c => ({ id: c.id, nome: c.nome, hora: (c.vol_service_types?.recurrence_time || '').slice(0, 5) }))
       .sort((a, b) => (a.hora || '').localeCompare(b.hora || ''));
     res.json(lista);
@@ -2748,7 +3170,7 @@ async function fetchCheckinsAbertosPager() {
   const pageSize = 1000;
   for (let offset = 0; ; offset += pageSize) {
     const { data, error } = await supabase.from('kids_checkins')
-      .select('id, crianca_id, checkin_at, pager_numero, responsavel_checkin_nome, crianca:kids_criancas(nome, data_nascimento, tem_espectro, tem_limitacao_fisica), sala:kids_salas(nome)')
+      .select('id, crianca_id, checkin_at, pager_numero, responsavel_checkin_nome, crianca:kids_criancas(nome, data_nascimento, tem_espectro, tem_limitacao_fisica), sala:kids_salas(nome), sessao:kids_sessoes(culto:cultos(nome))')
       .is('checkout_at', null).is('deleted_at', null)
       .range(offset, offset + pageSize - 1);
     if (error) throw error;
@@ -2822,6 +3244,8 @@ router.get('/pagers-em-uso', authorizeModule('kids', 1), async (req, res) => {
         crianca_nome: (c.crianca && c.crianca.nome) || '—',
         sala_nome: (c.sala && c.sala.nome) || null,
         responsavel_nome: c.responsavel_checkin_nome || null,
+        // Em qual CULTO o pager está sendo usado (Mari 2026-08-03)
+        culto_nome: (c.sessao && c.sessao.culto && c.sessao.culto.nome) || null,
       };
       if (c.pager_numero) em_uso.push({ pager_numero: c.pager_numero, ...base });
       else if (precisaPagerServer(c.crianca)) pendentes.push(base);
@@ -2851,7 +3275,27 @@ router.patch('/checkin/:id/pager-devolvido', authorizeModule('kids', 2), async (
     q = alvo.checkin_grupo_id ? q.eq('checkin_grupo_id', alvo.checkin_grupo_id) : q.eq('id', alvo.id);
     const { error } = await q;
     if (error) throw error;
-    res.json({ ok: true, devolvido });
+
+    // Devolveu o pager = a família SAIU (Mari/Marcos 2026-08-03): o botão
+    // "Devolvido" da conferência também dá a baixa (check-out) nas linhas ainda
+    // abertas da família — senão o pager ficava "em uso" no painel e o número
+    // travado pro próximo. Desfazer a devolução NÃO reabre check-out (pra isso
+    // existe o "reabrir" da ficha).
+    let baixados = 0;
+    if (devolvido) {
+      let qOut = supabase.from('kids_checkins').update({
+        checkout_at: new Date().toISOString(),
+        checkout_metodo: 'painel',
+        responsavel_checkout_nome: 'Devolução do pager (conferência)',
+        checkout_por: req.user?.userId || null,
+      }).is('checkout_at', null).is('deleted_at', null);
+      qOut = alvo.checkin_grupo_id ? qOut.eq('checkin_grupo_id', alvo.checkin_grupo_id) : qOut.eq('id', alvo.id);
+      const { data: fechados, error: eOut } = await qOut.select('id');
+      if (eOut) console.warn('[totemKids] devolução: baixa não aplicada:', eOut.message);
+      else baixados = (fechados || []).length;
+    }
+
+    res.json({ ok: true, devolvido, baixados });
   } catch (e) {
     console.error('[totemKids] pager devolvido:', e.message);
     res.status(500).json({ error: 'Erro ao registrar devolução do pager' });
@@ -3272,9 +3716,14 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
         const primeiroNome = String(crianca?.nome || '').trim().split(/\s+/)[0] || 'sua criança';
         const base = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
         const link = `${base}/kids/retirada/${codigoFinal}`;
-        const lang = process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA_LANG || 'pt_BR';
-        enviarTemplateWpp(respTel, template, lang, [primeiroNome, codigoFinal, link])
-          .then((r) => { if (!r?.ok) console.warn('[totemKids/checkin] wpp retirada pulado:', r?.error); })
+        // C2 (lote 5 · 14/08): pela FILA — o código de retirada não pode se
+        // perder no teto da Meta (retry) e ganha recibo de entrega.
+        require('../services/whatsappFila').enfileirar({
+          telefone: respTel, template, params: [primeiroNome, codigoFinal, link],
+          idioma: process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA_LANG || 'pt_BR',
+          contexto: 'kids.retirada_codigo',
+        })
+          .then((r) => { if (!r?.sent && !r?.queued) console.warn('[totemKids/checkin] wpp retirada pulado:', r?.reason); })
           .catch((e) => console.warn('[totemKids/checkin] wpp retirada erro:', e?.message));
       } else {
         console.warn('[totemKids/checkin] WHATSAPP_TEMPLATE_KIDS_RETIRADA não configurado · envio pulado');
@@ -3476,8 +3925,11 @@ router.post('/checkin/lote', authorizeModule('kids', 2), async (req, res) => {
           const primeiroNome = String(crianca?.nome || '').trim().split(/\s+/)[0] || 'sua criança';
           const base = (process.env.FRONTEND_URL || '').replace(/\/$/, '');
           const link = `${base}/kids/retirada/${codigoFinal}`;
-          const lang = process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA_LANG || 'pt_BR';
-          enviarTemplateWpp(respTel, template, lang, [primeiroNome, codigoFinal, link]).then(() => {}, () => {});
+          require('../services/whatsappFila').enfileirar({
+            telefone: respTel, template, params: [primeiroNome, codigoFinal, link],
+            idioma: process.env.WHATSAPP_TEMPLATE_KIDS_RETIRADA_LANG || 'pt_BR',
+            contexto: 'kids.retirada_codigo',
+          }).then(() => {}, () => {});
         }
       }
       return {
@@ -3647,6 +4099,24 @@ router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
     const { data, error } = await q.select(`*, crianca:kids_criancas(id, nome), sala:kids_salas(id, nome)`);
     if (error) throw error;
     if (!data || !data.length) return res.status(409).json({ error: 'Check-in já foi feito checkout' });
+
+    // Check-out individual = pager DEVOLVIDO (Mari/Marcos 2026-08-03): a equipe
+    // só faz check-out no balcão quando a família entrega o pager — os dois
+    // registros andavam desacoplados e a conferência acusava "não devolvido" de
+    // pager que já estava na mão da equipe. A baixa em massa (checkout_forcado,
+    // outro endpoint) NÃO passa por aqui de propósito: ela não prova devolução
+    // (é o que sustenta o alerta "foi pra casa"). Best-effort: falha não
+    // derruba o check-out.
+    if (data.some((r) => r.pager_numero)) {
+      let qDev = supabase.from('kids_checkins')
+        .update({ pager_devolvido_at: new Date().toISOString(), pager_devolvido_por: req.user.userId })
+        .not('pager_numero', 'is', null).is('pager_devolvido_at', null).is('deleted_at', null);
+      qDev = alvo.checkin_grupo_id ? qDev.eq('checkin_grupo_id', alvo.checkin_grupo_id) : qDev.eq('id', checkin_id);
+      await qDev.then(({ error: eDev }) => {
+        if (eDev) console.warn('[totemKids/checkout] pager devolvido não carimbado:', eDev.message);
+      });
+    }
+
     res.json({ ...data[0], cultos_encerrados: data.length });
   } catch (e) {
     console.error('[totemKids/checkout]', e.message);
@@ -3669,6 +4139,9 @@ router.post('/checkin/:id/reabrir', authorizeModule('kids', 2), async (req, res)
     const patch = {
       checkout_at: null, responsavel_checkout_id: null, responsavel_checkout_nome: null,
       checkout_metodo: null, checkout_por: null, override_motivo: null, override_aprovado_por: null,
+      // Reabrir = criança volta pra sala e o pager volta pra mão da família →
+      // limpa a devolução carimbada pelo check-out desfeito (2026-08-03).
+      pager_devolvido_at: null, pager_devolvido_por: null,
       updated_at: new Date().toISOString(),
     };
     let q = supabase.from('kids_checkins').update(patch).not('checkout_at', 'is', null);
@@ -4542,6 +5015,10 @@ async function processarLinhaImport(row, colMap, dryRun, userId) {
       observacoes_medicas: alergia,
       observacoes_internas: obs,
       visitante: true,
+      // ⚠️⚠️ `data_limite` OBRIGATÓRIO: sem prazo a visitante nunca é promovida
+      // (não tem check-in) nem inativada (a varredura exige prazo vencido) —
+      // vira VISITANTE ETERNA. Eram 23 assim em produção (20/08/2026).
+      data_limite: _dataLimiteVisitante(),
       ativo: true,
       created_by: userId,
     }).select('id').single();
@@ -4877,6 +5354,10 @@ router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), asy
           observacoes_medicas: s.observacoes_medicas || null,
           familia_id: familiaId,
           visitante: true,
+      // ⚠️⚠️ `data_limite` OBRIGATÓRIO: sem prazo a visitante nunca é promovida
+      // (não tem check-in) nem inativada (a varredura exige prazo vencido) —
+      // vira VISITANTE ETERNA. Eram 23 assim em produção (20/08/2026).
+      data_limite: _dataLimiteVisitante(),
           created_by: req.user?.id || null,
         })
         .select('id')
@@ -5026,9 +5507,10 @@ router.patch('/voluntariado-inscricoes/:id', authorizeModule('kids', 2), async (
       if (status === 'enviado_ministerio') patch.enviado_lider_em = new Date().toISOString();
     }
     if (feedback !== undefined) patch.feedback = feedback ? String(feedback).slice(0, 2000) : null;
-    const { data, error } = await supabase.from('vol_inscricoes')
-      .update(patch).eq('id', req.params.id).select('*').single();
-    if (error) throw error;
+    // Escritor único: devolver a linha pra triagem por aqui também limpa o
+    // carimbo `integrado_em` (a lista do Voluntariado e o relatório impresso
+    // mostrariam "Inscrito (triagem)" ao lado de "Integrado em 15/08").
+    const data = await atualizarStatusInscricao(req.params.id, patch);
     res.json(data);
   } catch (e) {
     console.error('[TOTEM-KIDS] patch voluntariado-inscricoes:', e.message);

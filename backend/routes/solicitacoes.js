@@ -6,15 +6,35 @@ const { enviarEmail } = require('../services/email');
 const painelCache = require('../services/painelCache');
 const mlTracker = require('../services/solicitacoesMlTracker');
 const solicFluxo = require('../services/solicFluxo');
+const { podeVincular, candidatas } = require('../utils/vinculoMlSolicitacao');
+const { rotuloStatusSolicitacao } = require('../utils/solicitacaoStatusLabel');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
 const wpp = require('../services/whatsappService');
 const multer = require('multer');
 const crypto = require('crypto');
+// ⚠️ Bucket `solicitacoes` é PRIVADO desde 16/08/2026 — os anexos são assinados
+// na LEITURA (o dado guarda URL pública antiga e o app do Staff ainda grava
+// assim). Ver o cabeçalho do serviço para o porquê.
+const { assinarAnexosSolicitacoes } = require('../services/anexosSolicitacao');
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
 const { lancarDespesaConciliando } = require('../services/finLancamento');
 const { aprenderClassificacao } = require('../services/financeiroClassificador');
+// ⚠️ SÃO DUAS RÉGUAS, em MOMENTOS diferentes do mesmo fluxo — não são cópias:
+//   `alcadaCompra`  (singular) decide no ENVIO DA COTAÇÃO se a compra precisa ir
+//                   ao financeiro. Dentro do teto, ela nem vai.
+//   `alcadaCompras` (plural)  decide, pra compra que JÁ ESTÁ no portão financeiro,
+//                   se quem atende a área pode aprovar sem esperar o financeiro.
+// A segunda é a rede pro que chegou ao portão por outro caminho (compra antiga,
+// cotação enviada antes desta regra existir).
+const {
+  COMPRA_DIRETA_LIMITE,
+  DESTINO_COMPRA_DIRETA,
+  decidirDestinoCotacao,
+  motivoDispensaTexto,
+} = require('../utils/alcadaCompra');
+const { elegivelAlcada, LIMITE_ALCADA_PADRAO } = require('../utils/alcadaCompras');
 const uploadNfSolic = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 // Dispara o WhatsApp pro solicitante quando a solicitação muda de status
@@ -442,7 +462,7 @@ const CATEGORIA_MODULO = {
   compras: 'logistica',
   servico: 'logistica',     // contratação de fornecedor · logística negocia (Amaury)
   reembolso: 'financeiro',
-  pagamento: 'financeiro',  // pagar boleto/NF de fornecedor · contas a pagar (Yago)
+  pagamento: 'financeiro',  // pagar boleto/NF de fornecedor · contas a pagar
   reserva_espaco: 'administrativo',
   espaco: 'administrativo', // legado
   infraestrutura: 'administrativo',
@@ -483,7 +503,7 @@ function linkFilaFinanceira(solicitacaoId) {
 // ORIGEM é do diretor do Criativo (Pedro Paulo), por CATEGORIA — não pelo setor
 // de quem pede (pula Arthur Serpa/diretor do setor). Também pula o 2º carimbo de
 // Gestão (Eduardo/Juliana) e o julgamento de mérito. COM custo (valor>0) o pedido
-// vira uma compra cotada pela logística (Amaury) → financeiro (Yago); sem custo
+// vira uma compra cotada pela logística (Amaury) → financeiro; sem custo
 // segue direto pra execução do criativo.
 const CRIATIVO_CATEGORIAS = ['marketing', 'producao'];
 
@@ -646,10 +666,12 @@ const SETOR_GESTAO = 'Gestao';
 
 // Compra de até R$ 1.000 vai DIRETO pra cotação (decisão do Matheus · 2026-07-15):
 // dispensa aprovação de origem, carimbo de Gestão e mérito, planejada ou não.
-// O controle acontece DEPOIS, sobre o valor REAL: a logística (Amaury) cota e o
-// financeiro (Yago) aprova sobre o valor cotado (registrar-cotacao/enviar-cotacoes).
 // Valor nulo/zero NÃO é elegível (fail-closed · segue o fluxo normal).
-const COMPRA_COTACAO_DIRETA_LIMITE = 1000;
+//
+// ⚠️ Desde 2026-08-12 a MESMA cifra também dispensa o SEGUNDO portão (o
+// financeiro), agora sobre o valor COTADO — a régua vive em utils/alcadaCompra.js
+// e o número vem de lá, pra não existirem dois "mil reais" que podem divergir.
+const COMPRA_COTACAO_DIRETA_LIMITE = COMPRA_DIRETA_LIMITE;
 const COMPRA_COTACAO_DIRETA_MOTIVO = 'Compra de até R$ 1.000 · direto para cotação';
 
 // Override do 2º portão POR CATEGORIA (migration 20260708180000). Ex.: TI →
@@ -741,7 +763,7 @@ async function aprovadoresMeritoIds() {
 
 // Próximo status quando os portões liberam (carimbos completos e/ou mérito
 // aprovado) · mesma régua histórica do aprovar-origem:
-//   compras/servico → em_cotacao (logística cota antes do Yago)
+//   compras/servico → em_cotacao (logística cota antes do financeiro)
 //   precisa financeira → aguardando_aprovacao_financeira
 //   senão → pendente (fila da área alvo)
 function proximoStatusPosAprovacao(sol) {
@@ -1063,9 +1085,41 @@ router.get('/', async (req, res) => {
           }
           donoMap = Object.fromEntries((ms || []).map(m => [m.id, pmap[m.profile_id] || m.nome_display || null]));
         }
+        // ⚠️⚠️ OS ARQUIVOS · sem isto o solicitante nunca via o entregável: a tela
+        // dele listava os cards e o progresso, e o link de download só existia no
+        // bloco LEGADO (card com solicitacao_id direto). Pergunta do Marcos
+        // (14/08): "quando ele sobe um arquivo de entregável, a pessoa pode baixar
+        // lá no módulo de solicitações?" — passou a poder.
+        // ⚠️ SÓ `tipo='entregavel'`: referência é briefing/inspiração INTERNA da
+        // equipe e não pode aparecer pra quem pediu.
+        const arquivoMap = {};
+        const cardIds = (ents || []).map(e => e.id);
+        if (cardIds.length) {
+          for (let i = 0; i < cardIds.length; i += 200) {
+            const { data: arqs, error: eArq } = await supabase
+              .from('marketing_entregaveis')
+              .select('id, card_id, nome_arquivo, tipo_mime, tamanho_bytes, enviado_em, tipo')
+              .in('card_id', cardIds.slice(i, i + 200))
+              .eq('tipo', 'entregavel')
+              .is('deleted_at', null)
+              .order('enviado_em', { ascending: false });
+            // Falha aqui não derruba a solicitação — mas fica auditável em vez de
+            // virar "não tem arquivo" em silêncio.
+            if (eArq) { console.error('[SOLICITACOES] entregaveis (não-bloqueante):', eArq.message); break; }
+            for (const a of arqs || []) {
+              if (!arquivoMap[a.card_id]) arquivoMap[a.card_id] = [];
+              arquivoMap[a.card_id].push(a);
+            }
+          }
+        }
         for (const e of (ents || [])) {
           if (!entregMap[e.campanha_id]) entregMap[e.campanha_id] = [];
-          entregMap[e.campanha_id].push({ id: e.id, titulo: e.titulo, estado: e.estado, dono_nome: donoMap[e.atribuido_a] || null, data_fim: e.data_fim, tem_revisao: e.tem_revisao });
+          entregMap[e.campanha_id].push({
+            id: e.id, titulo: e.titulo, estado: e.estado,
+            dono_nome: donoMap[e.atribuido_a] || null, data_fim: e.data_fim,
+            tem_revisao: e.tem_revisao,
+            arquivos: arquivoMap[e.id] || [],
+          });
         }
       }
       campanhaMap = Object.fromEntries((camps || []).map(c => [c.solicitacao_id, { ...c, entregaveis: entregMap[c.id] || [] }]));
@@ -1114,8 +1168,32 @@ router.get('/', async (req, res) => {
       return [];
     };
 
+    // ── Alçada · "esta linha eu mesmo posso aprovar?" ────────────────────────
+    // ⚠️ DUAS consultas pra página inteira (as áreas de quem pede + a tabela de
+    // limites, que tem 6 linhas), nunca uma por linha. Best-effort: falha =
+    // flag false, e a tela só deixa de oferecer o atalho.
+    // ⚠️ É DICA de UI, não autorização — quem decide é o servidor no POST.
+    let alcadaFlag = () => false;
+    try {
+      const [{ data: minhasAreas }, { data: limites }] = await Promise.all([
+        supabase.from('area_solicitacoes_responsaveis').select('area').eq('profile_id', req.user.userId),
+        supabase.from('area_alcadas').select('area_cliente, limite_aprovacao'),
+      ]);
+      const areas = new Set((minhasAreas || []).map(r => r.area));
+      const limitePorArea = Object.fromEntries(
+        (limites || []).map(l => [l.area_cliente, Number(l.limite_aprovacao)]).filter(([, v]) => Number.isFinite(v))
+      );
+      if (areas.size) {
+        alcadaFlag = (d) => areas.has(d.area_responsavel)
+          && elegivelAlcada(d, limitePorArea[d.area_cliente] ?? LIMITE_ALCADA_PADRAO).ok;
+      }
+    } catch (e) {
+      console.warn('[SOLICITACOES] flag de alçada indisponível:', e.message);
+    }
+
     const enriched = (data || []).map(d => ({
       ...d,
+      pode_aprovar_alcada: alcadaFlag(d),
       solicitante: profileMap[d.solicitante_id] || null,
       responsavel: profileMap[d.responsavel_id] || null,
       aprovacao_origem_diretor: profileMap[d.aprovacao_origem_diretor_id] || null,
@@ -1129,7 +1207,19 @@ router.get('/', async (req, res) => {
       marketing_campanha: campanhaMap[d.id] || null,
     }));
 
-    res.json(enriched);
+    // ⚠️ O bucket `solicitacoes` é PRIVADO (16/08/2026). As linhas antigas guardam
+    // a URL pública (que deixou de abrir) e o app do Staff CONTINUA gravando URL
+    // pública no upload — por isso a assinatura acontece na LEITURA, derivando o
+    // caminho da URL, em vez de migrar o dado e exigir release do app.
+    // Best-effort: falhar aqui não pode derrubar a lista de solicitações.
+    let saida = enriched;
+    try {
+      saida = await assinarAnexosSolicitacoes(enriched);
+    } catch (err) {
+      console.warn('[SOLICITACOES] assinatura de anexos falhou:', err.message);
+    }
+
+    res.json(saida);
   } catch (e) {
     console.error('[SOLICITACOES] list error:', e.message);
     res.status(500).json({ error: 'Erro ao listar solicitações' });
@@ -1443,7 +1533,7 @@ router.post('/', async (req, res) => {
 
     // Criativo (marketing/producao): origem aprova o diretor do Criativo (Pedro
     // Paulo) por CATEGORIA. COM custo (valor>0) vira compra cotada pela logística
-    // (Amaury) → financeiro (Yago); SEM custo segue pra execução do criativo.
+    // (Amaury) → financeiro; SEM custo segue pra execução do criativo.
     const ehCriativo = CRIATIVO_CATEGORIAS.includes(categoria);
     const criativoComCusto = ehCriativo && Number(valorEstimadoFinal) > 0;
 
@@ -1487,12 +1577,38 @@ router.post('/', async (req, res) => {
     // caso, o trigger só dispensa. O trigger continua de rede de segurança (só
     // age quando ninguém setou aprovacao_origem_status · ex.: RPC falhou).
     try {
+      // ⚠️ `p_categoria` é o que dispensa serviço/manutenção do diretor de
+      // origem (decisão do Matheus · 05/08: conserto vai direto pro Amaury). A
+      // lista fica em `fn_solicitacoes_categoria_dispensa_origem`, fonte única
+      // compartilhada com o trigger — não repetir a régua aqui em JS, senão o
+      // POST e a rede de segurança podem discordar e a solicitação sai da fila
+      // de alguém sem ninguém notar.
       const { data: r, error: rErr } = await supabase
-        .rpc('fn_solicitacoes_rotear_origem', { p_solicitante_id: userId, p_setor_hint: setorHint });
+        .rpc('fn_solicitacoes_rotear_origem', {
+          p_solicitante_id: userId, p_setor_hint: setorHint, p_categoria: categoria,
+        });
       if (rErr) throw rErr;
       rota = r;
     } catch (rerr) {
       console.error('[SOLICITAÇÕES] roteamento de origem falhou (fallback trigger):', rerr.message);
+    }
+
+    // ⚠️ Serviço/manutenção não depende de diretor NENHUM — nem do de origem
+    // (05/08) nem do 2º carimbo de Gestão (decisão do Matheus · 17/08, vendo o
+    // pedido "Lava-Pés" parado: "não precisa passar pela Juliana ou Eduardo,
+    // eles podem até ficar cientes, mas pode ir direto pro Amaury"). A régua
+    // vem da MESMA função do banco que decide a origem — uma lista só, senão
+    // as duas metades da mesma decisão divergem quando alguém editar uma.
+    // Falha da consulta mantém o carimbo antigo (fail-closed): o pedido espera
+    // um humano em vez de pular um portão por causa de instabilidade.
+    let categoriaVaiDiretoPraOperacao = false;
+    try {
+      const { data: disp, error: dErr } = await supabase
+        .rpc('fn_solicitacoes_categoria_dispensa_origem', { p_categoria: categoria });
+      if (dErr) throw dErr;
+      categoriaVaiDiretoPraOperacao = disp === true;
+    } catch (derr) {
+      console.error('[SOLICITAÇÕES] dispensa por categoria falhou (mantém carimbo de Gestão):', derr.message);
     }
 
     // ── COMPRAS · fluxo por valor + planejado (2026-07-22, Matheus) ───────────
@@ -1565,6 +1681,13 @@ router.post('/', async (req, res) => {
       // atende — sem 2º carimbo de Gestão (decisão do Matheus · 2026-07-21).
       gestaoStatus = 'dispensada';
       gestaoMotivo = 'Origem aprovada pelo responsável da categoria (Amaury) · sem carimbo de Gestão';
+    } else if (categoriaVaiDiretoPraOperacao && !planejado) {
+      // Serviço/manutenção: vai direto pra operação (Amaury). Dispensar só a
+      // origem, como estava desde 05/08, deixava o pedido preso no 2º carimbo
+      // com a tela dizendo "aguardando aprovação de Eduardo ou Juliana" — a
+      // metade do portão que sobrou segurava o pedido inteiro.
+      gestaoStatus = 'dispensada';
+      gestaoMotivo = 'Servico/manutencao vai direto para operacao (decisao 17/08) · Gestao fica ciente, nao aprova';
     } else if (!planejado && categoria !== 'reserva_espaco') {
       // 2º carimbo · Gestão (ou aprovadores específicos da categoria · ex.: TI →
       // Diego/Matheus). Best-effort · lista vazia degrada.
@@ -1605,7 +1728,7 @@ router.post('/', async (req, res) => {
         // Fluxo BPMN · origem SEMPRE (inclusive planejado); Gestão só no não-planejado.
         eh_planejado: planejado,
         ...(planejado && { planejado_por: userId }),
-        // Criativo COM custo precisa do financeiro (Yago) depois da cotação do
+        // Criativo COM custo precisa do financeiro depois da cotação do
         // Amaury. O trigger não marca marketing/producao, então setamos aqui (ele
         // nunca desmarca). O status vem de 'aguardando_aprovacao_origem' no insert,
         // então o trigger de SLA não mexe no status.
@@ -1854,6 +1977,29 @@ router.post('/', async (req, res) => {
       }).catch(err => console.error('[SOLICITACOES] notify triagem:', err.message));
     }
 
+    // Serviço/manutenção · a Gestão fica CIENTE, não aprova (decisão 17/08).
+    // Aviso informativo, sem link pra fila de aprovação: se apontasse pra
+    // "?aba=aprovar" a pessoa abriria uma fila onde este pedido não está, e o
+    // aviso viraria trabalho fantasma. Sem e-mail — ciência não é cobrança.
+    // Volume medido em 17/08: ~5 pedidos/mês nessas categorias.
+    if (categoriaVaiDiretoPraOperacao && gestaoStatus === 'dispensada') {
+      aprovadoresGestaoIds(categoria)
+        .then(ids => {
+          if (!ids.length) return;
+          return notificar({
+            modulo: 'administrativo',
+            tipo: 'solicitacao_servico_ciencia',
+            titulo: `Serviço pedido à manutenção: ${titulo}`,
+            mensagem: `${userName || 'Um funcionário'} pediu um serviço/manutenção. Foi direto para a operação (Amaury) — você não precisa aprovar, é só para ciência.`,
+            link: '/solicitacoes',
+            severidade: 'info',
+            chaveDedup: `solicitacao_servico_ciencia_${data.id}`,
+            targetIds: ids,
+          });
+        })
+        .catch(err => console.error('[SOLICITACOES] notify ciência serviço:', err.message));
+    }
+
     res.status(201).json(data);
   } catch (e) {
     console.error('[SOLICITACOES] create error:', e.message);
@@ -1970,7 +2116,7 @@ async function aprovarOrigemHandler(req, res) {
     // Próximo passo quando completo:
     //   TEM CUSTO (não-planejado do fluxo novo) → julgamento de mérito.
     //   Sem custo → fluxo normal: compras/servico → EM_COTACAO (a logística
-    //   levanta valor+fornecedor ANTES do Yago) · precisa financeira →
+    //   levanta valor+fornecedor ANTES do financeiro) · precisa financeira →
     //   aguardando_aprovacao_financeira · resto → fila da área (pendente).
     const vaiPraMerito = completo && precisaMerito(atual);
     const ehCotacao = ['compras', 'servico'].includes(atual.categoria);
@@ -2108,7 +2254,7 @@ router.patch('/:id/aprovar-origem', aprovarOrigemHandler);
 
 // ── COTACAO (compras/servico) · a logistica levanta valor+fornecedor ANTES do ──
 // financeiro. Marcos (2026-06-16): "primeiro vem a cotacao, depois a aprovacao do
-// financeiro" · o Yago decide sobre o valor real, nao sobre uma estimativa cega.
+// financeiro" · o financeiro decide sobre o valor real, nao sobre uma estimativa cega.
 async function podeCotar(req, sol) {
   if (['admin', 'diretor'].includes(req.user.role)) return true;
   const mp = req.user.granular?.modulePerms || {};
@@ -2124,6 +2270,15 @@ async function podeCotar(req, sol) {
   return !!data;
 }
 
+// ⚠️ DORMENTE: nenhuma tela chama este endpoint (conferido em 2026-08-12 —
+// `api.registrarCotacao` existe em src/api.js e não tem um único chamador; o
+// caminho vivo é POST /:id/enviar-cotacoes-financeiro, disparado pelo botão
+// "Enviar ao financeiro" do Amaury).
+// Por isso a dispensa de até R$ 1.000 (utils/alcadaCompra.js) NÃO foi replicada
+// aqui: ele manda tudo pro financeiro, que é o lado SEGURO da régua — mais
+// estrito, nunca mais frouxo. Se um dia alguém ligar este endpoint numa tela,
+// tem que trazer `decidirDestinoCotacao` junto, senão a compra pequena volta a
+// cair na fila do financeiro sem ninguém entender por quê.
 router.post('/:id/registrar-cotacao', async (req, res) => {
   try {
     const { valor_cotado, fornecedor, observacao } = req.body || {};
@@ -2142,7 +2297,7 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
       return res.status(403).json({ error: 'Apenas a logística (ou admin) pode registrar a cotação.' });
     }
 
-    // Grava a cotacao e manda pro financeiro · o Yago aprova sobre o valor cotado.
+    // Grava a cotacao e manda pro financeiro, que aprova sobre o valor cotado.
     // valor_estimado passa a refletir o cotado (alcada/relatorios usam o valor real).
     const updates = {
       valor_cotado: valor,
@@ -2167,7 +2322,7 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
 
     // A dispensa ≤ R$ 1.000 foi decidida sobre a ESTIMATIVA — se a cotação real
     // estourou o limite, o financeiro precisa saber que o pedido pulou os
-    // carimbos (a aprovação segue com o Yago, sobre o valor cotado).
+    // carimbos (a aprovação segue com o financeiro, sobre o valor cotado).
     const dispensadaPorBaixoValor = atual.aprovacao_origem_motivo === COMPRA_COTACAO_DIRETA_MOTIVO;
     const cotacaoAcimaDaDispensa = dispensadaPorBaixoValor && valor > COMPRA_COTACAO_DIRETA_LIMITE;
     if (cotacaoAcimaDaDispensa) {
@@ -2214,7 +2369,7 @@ router.post('/:id/registrar-cotacao', async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 // COTAÇÕES MÚLTIPLAS (compras/serviço) · o Amaury registra VÁRIAS cotações de
 // fornecedores e, com um botão reenviável, dispara um e-mail rico ao financeiro
-// (Yago) com todas as cotações separadas + a sugerida + total, pra aprovar o
+// com todas as cotações separadas + a sugerida + total, pra aprovar o
 // pagamento. Tabela `solicitacao_cotacoes`. A cotação inline antiga segue
 // preenchida com a de referência (retrocompat com telas/KPIs que a leem).
 // ══════════════════════════════════════════════════════════════════════════
@@ -2265,6 +2420,8 @@ router.get('/:id/cotacoes', async (req, res) => {
     if (!podeVer && aguardandoAprovacaoFinanceira(sol)) {
       podeVer = await podeAprovarFinanceiro(req, sol.categoria);
     }
+    // Quem vai decidir pela alçada precisa VER as cotações antes de aprovar.
+    if (!podeVer) podeVer = await podeAprovarNaAlcada(req, sol);
     if (!podeVer) {
       return res.status(403).json({ error: 'Sem permissão para ver as cotações desta solicitação.' });
     }
@@ -2560,11 +2717,26 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
       }
     }
 
+    // ── Compra pequena executa sem o financeiro (decisão do Matheus · 12/08) ──
+    // A régua é pura e vive em utils/alcadaCompra.js. Quem decide é o SERVIDOR
+    // sobre o valor COTADO — o corpo do POST diz quanto custa, nunca "se pode".
+    //
+    // ⚠️ Só na PRIMEIRA ida (status em_cotacao). Reenvio de uma solicitação que
+    // já está na fila do financeiro NÃO a puxa de volta: ela já apareceu pro
+    // Alberto, e sumir de lá porque o valor caiu é o tipo de mudança que faz o
+    // aprovador achar que perdeu um pedido.
+    const decisao = decidirDestinoCotacao({
+      categoria: sol.categoria,
+      valorCotado: refCot.valor,
+      forcarFinanceiro: req.body?.forcar_financeiro === true || sol.status !== 'em_cotacao',
+    });
+    const vaiExecutarDireto = decisao.destino === DESTINO_COMPRA_DIRETA;
+
     // Atualiza a solicitação (retrocompat inline + carimbo do e-mail).
     const updates = {
       valor_cotado: Number(refCot.valor),
       valor_estimado: Number(refCot.valor),
-      precisa_aprovacao_financeira: true,
+      precisa_aprovacao_financeira: !vaiExecutarDireto,
       cotacao_fornecedor: refCot.fornecedor || null,
       cotacao_observacao: refCot.observacao || null,
       cotacao_em: new Date().toISOString(),
@@ -2574,22 +2746,57 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     };
     if (planoId) updates.plano_contas_id = planoId;
     if (centroId) updates.centro_custo_id = centroId;
-    // Só muda o status na 1ª ida (em_cotacao); reenvio mantém o status atual.
-    if (sol.status === 'em_cotacao') updates.status = 'aguardando_aprovacao_financeira';
+    if (vaiExecutarDireto) {
+      // Volta pra própria logística executar. É o MESMO destino do ramo
+      // "cartão" do aprovar-financeiro (área logistica_compras + pendente), que
+      // é o que faz o botão "Marcar como comprado" aparecer pro Amaury.
+      updates.status = 'pendente';
+      updates.area_responsavel = 'logistica_compras';
+      updates.forma_pagamento = 'cartao_credito';
+      updates.financeiro_dispensado_em = new Date().toISOString();
+      updates.financeiro_dispensa_motivo = motivoDispensaTexto(decisao.limite);
+      updates.financeiro_dispensa_limite = decisao.limite;
+    } else if (sol.status === 'em_cotacao') {
+      // Só muda o status na 1ª ida (em_cotacao); reenvio mantém o status atual.
+      updates.status = 'aguardando_aprovacao_financeira';
+    }
 
-    const { data: solAtualizada, error: upErr } = await supabase
+    const aplicar = (payload) => supabase
       .from('solicitacoes')
-      .update(updates)
+      .update(payload)
       .eq('id', sol.id)
       .in('status', ['em_cotacao', 'aguardando_aprovacao_financeira'])
       .is('aprovado_financeiro_em', null)
       .is('deleted_at', null)
       .select('*')
       .maybeSingle();
+
+    let { data: solAtualizada, error: upErr } = await aplicar(updates);
+
+    // ⚠️ Deploy em 2 etapas: sem a migration 20260812210000 as 3 colunas da
+    // dispensa não existem e o PostgREST recusa o UPDATE INTEIRO (42703/PGRST204),
+    // derrubando o envio da cotação — a lição do `parcelas_max`. Aqui a queda é
+    // pro lado seguro: sem onde REGISTRAR a dispensa, não se dispensa. A compra
+    // segue pro financeiro, como antes, e ninguém perde a cotação.
+    let dispensaIndisponivel = false;
+    if (upErr && vaiExecutarDireto && /financeiro_dispensa|42703|PGRST204|schema cache/i.test(upErr.message || '')) {
+      console.warn('[SOLICITACOES] dispensa financeira indisponível (migration 20260812210000 ausente):', upErr.message);
+      dispensaIndisponivel = true;
+      const semDispensa = { ...updates };
+      delete semDispensa.financeiro_dispensado_em;
+      delete semDispensa.financeiro_dispensa_motivo;
+      delete semDispensa.financeiro_dispensa_limite;
+      semDispensa.precisa_aprovacao_financeira = true;
+      semDispensa.status = sol.status === 'em_cotacao' ? 'aguardando_aprovacao_financeira' : sol.status;
+      delete semDispensa.area_responsavel;
+      delete semDispensa.forma_pagamento;
+      ({ data: solAtualizada, error: upErr } = await aplicar(semDispensa));
+    }
     if (upErr) throw upErr;
     if (!solAtualizada) {
       return res.status(409).json({ error: 'Esta solicitação foi alterada por outra pessoa. Atualize antes de reenviar as cotações.' });
     }
+    const executouDireto = vaiExecutarDireto && !dispensaIndisponivel;
 
     // Itens do pedido (opcional no e-mail).
     const { data: itens } = await supabase
@@ -2635,7 +2842,11 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     // E-mail é OPCIONAL (botão discreto). O caminho principal é PELO SISTEMA:
     // status aguardando_aprovacao_financeira + notificação (o Alberto aprova na
     // fila do financeiro). Só manda e-mail quando explicitamente pedido.
-    const querEmail = req.body?.enviar_email === true;
+    // ⚠️ Compra dispensada não manda o e-mail "cotações para aprovação": seria
+    // pedir ao Alberto que aprovasse algo que o sistema acabou de liberar. Na
+    // prática a tela nem chega aqui (o botão de e-mail força o financeiro), mas
+    // a guarda fica no servidor, que é quem decide.
+    const querEmail = req.body?.enviar_email === true && !executouDireto;
     let emailResultado = { ok: false, error: 'nao_solicitado' };
     if (querEmail && to.length) {
       emailResultado = await enviarEmail({
@@ -2646,11 +2857,19 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
     }
 
     // Notificação no sistema (email:false · o e-mail rico já foi enviado acima).
+    // ⚠️ Compra dispensada NÃO pede aprovação — mas o financeiro é AVISADO
+    // (decisão do Matheus · 12/08): ele continua enxergando o dinheiro que sai,
+    // sem virar gargalo. Silenciar aqui esconderia o gasto miúdo até a
+    // conciliação do cartão.
     notificar({
       modulo: 'financeiro',
       tipo: 'cotacao_financeiro',
-      titulo: 'Cotações prontas para aprovação',
-      mensagem: `${cotacoes.length} ${cotacoes.length === 1 ? 'cotação' : 'cotações'} de "${sol.titulo}" · sugerida ${fmtBRLServer(refCot.valor)} (${refCot.fornecedor}).`,
+      titulo: executouDireto
+        ? 'Compra liberada sem aprovação financeira'
+        : 'Cotações prontas para aprovação',
+      mensagem: executouDireto
+        ? `"${sol.titulo}" · ${fmtBRLServer(refCot.valor)} (${refCot.fornecedor}) · dentro do limite de ${fmtBRLServer(decisao.limite)}, a logística executa direto. Você não precisa aprovar — este aviso é só pra você saber do gasto.`
+        : `${cotacoes.length} ${cotacoes.length === 1 ? 'cotação' : 'cotações'} de "${sol.titulo}" · sugerida ${fmtBRLServer(refCot.valor)} (${refCot.fornecedor}).`,
       link: linkFilaFinanceira(sol.id),
       severidade: 'info',
       chaveDedup: `solicitacao_cotacoes_${sol.id}`,
@@ -2658,9 +2877,47 @@ router.post('/:id/enviar-cotacoes-financeiro', async (req, res) => {
       email: false,
     }).catch(err => console.error('[SOLICITACOES] notify cotacoes:', err.message));
 
+    if (executouDireto) {
+      // Timeline com o ator certo: quem dispensou foi a REGRA, e quem cotou foi
+      // a logística. Sem este evento, a solicitação pularia do "em cotação" pro
+      // "pendente" sem explicar por que o financeiro não aparece no histórico.
+      registrarEvento(solAtualizada.id, {
+        statusAnterior: 'em_cotacao',
+        statusNovo: 'pendente',
+        atorId: req.user.userId,
+        observacao: `${motivoDispensaTexto(decisao.limite)} · cotado ${fmtBRLServer(refCot.valor)}`,
+      });
+      // Avisa quem pediu que a compra já foi liberada (não vai esperar o financeiro).
+      notificar({
+        modulo: CATEGORIA_MODULO[sol.categoria] || 'logistica',
+        tipo: 'solicitacao_status',
+        titulo: `Liberado pra compra: ${sol.titulo}`,
+        mensagem: `Cotado em ${fmtBRLServer(refCot.valor)} · dentro do limite de ${fmtBRLServer(decisao.limite)}, então a logística compra direto, sem passar pelo financeiro.`,
+        link: '/solicitacoes',
+        severidade: 'info',
+        chaveDedup: `solicitacao_compra_direta_${sol.id}`,
+        extraTargetIds: [sol.solicitante_id].filter(Boolean),
+      }).catch(err => console.error('[SOLICITACOES] notify compra direta:', err.message));
+
+      return res.json({
+        ok: true,
+        destino: 'compra_direta',
+        limite: decisao.limite,
+        email_solicitado: false,
+        solicitacao: solAtualizada,
+      });
+    }
+
     // Caminho principal (sistema): sem e-mail solicitado → já está com o financeiro.
     if (!querEmail) {
-      return res.json({ ok: true, email_solicitado: false, solicitacao: solAtualizada });
+      return res.json({
+        ok: true,
+        destino: 'financeiro',
+        motivo_destino: decisao.motivo,
+        dispensa_indisponivel: dispensaIndisponivel || undefined,
+        email_solicitado: false,
+        solicitacao: solAtualizada,
+      });
     }
     if (!to.length) {
       return res.json({
@@ -3349,7 +3606,7 @@ router.patch('/:id', async (req, res) => {
     // Notify solicitante + área managers about status change
     if (status && data) {
       const modulo = CATEGORIA_MODULO[data.categoria] || 'administrativo';
-      const statusLabel = status.replace('_', ' ');
+      const statusLabel = rotuloStatusSolicitacao(status);
       const obsNote = observacoes ? ` — "${observacoes}"` : '';
 
       // Conclusão · pede avaliação NPS pro solicitante (alimenta KPIs ADM-*-Q)
@@ -3944,6 +4201,69 @@ router.put('/area-responsaveis', async (req, res) => {
 // VINCULO COM PEDIDO DO MERCADO LIVRE
 // ─────────────────────────────────────────────────────────────────────────
 
+// GET /api/solicitacoes/vinculaveis-ml
+// Solicitações de compra que ESTE usuário pode vincular a um pedido do ML.
+// Serve o seletor da aba Compras ML — antes disso, vincular exigia copiar o id
+// do pedido e colar dentro da solicitação (medido em 19/08/2026: 1 vínculo em
+// toda a história, com 21 candidatas em aberto).
+//
+// ⚠️⚠️ A régua é a MESMA do POST abaixo (utils/vinculoMlSolicitacao). Listar por
+// um critério e decidir por outro faria a tela oferecer opção que o servidor
+// recusa com 403 — erro de permissão que a própria tela causou.
+router.get('/vinculaveis-ml', async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const role = req.user.role;
+
+    // Áreas em que a pessoa é responsável (um dos quatro caminhos de permissão).
+    const { data: areasRows, error: areasErr } = await supabase
+      .from('area_solicitacoes_responsaveis')
+      .select('area').eq('profile_id', userId);
+    // ⚠️ Falha aqui NÃO pode virar "não é responsável por área nenhuma": a lista
+    // sairia curta e a pessoa concluiria que a solicitação dela sumiu.
+    if (areasErr) throw new Error(`Não foi possível conferir suas áreas: ${areasErr.message}`);
+    const areasResponsavel = (areasRows || []).map((r) => r.area).filter(Boolean);
+
+    const { data, error } = await supabase
+      .from('solicitacoes')
+      .select('id, titulo, status, categoria, area_responsavel, area_cliente, valor_estimado, '
+        + 'solicitante_id, responsavel_id, created_at, deleted_at, ml_order_id, ml_item_title')
+      .eq('categoria', 'compras')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (error) throw error;
+
+    const lista = candidatas(data || [], { userId, role, areasResponsavel });
+
+    // Nome de quem pediu, só para a lista ser reconhecível.
+    const ids = [...new Set(lista.map((s) => s.solicitante_id).filter(Boolean))];
+    const nomes = new Map();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: profs } = await supabase.from('profiles')
+        .select('id, name').in('id', ids.slice(i, i + 200));
+      for (const p of profs || []) nomes.set(p.id, p.name);
+    }
+
+    res.json(lista.map((s) => ({
+      id: s.id,
+      titulo: s.titulo,
+      status: s.status,
+      area_responsavel: s.area_responsavel,
+      area_cliente: s.area_cliente,
+      valor_estimado: s.valor_estimado,
+      created_at: s.created_at,
+      solicitante_nome: nomes.get(s.solicitante_id) || null,
+      // Já tem pedido? A tela avisa antes de trocar, em vez de sobrescrever calada.
+      ml_order_id: s.ml_order_id || null,
+      ml_item_title: s.ml_item_title || null,
+    })));
+  } catch (e) {
+    console.error('[SOLICITACOES] vinculaveis-ml error:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao listar solicitações.' });
+  }
+});
+
 // POST /api/solicitacoes/:id/vincular-ml
 // Body: { ml_input } · URL ou ID do pedido do Mercado Livre
 // Apenas o solicitante, responsável ou admin/diretor podem vincular.
@@ -3964,19 +4284,21 @@ router.post('/:id/vincular-ml', async (req, res) => {
       .maybeSingle();
     if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
 
-    const isAdmin = ['admin', 'diretor'].includes(role);
-    const isMine = sol.solicitante_id === userId || sol.responsavel_id === userId;
-    let isAreaResp = false;
-    if (!isAdmin && !isMine && sol.area_responsavel) {
+    // ⚠️ MESMA régua que monta a lista do seletor (utils/vinculoMlSolicitacao).
+    // A consulta de áreas só roda quando os caminhos baratos não resolveram.
+    let areasResponsavel = [];
+    const atalho = ['admin', 'diretor'].includes(role)
+      || sol.solicitante_id === userId || sol.responsavel_id === userId;
+    if (!atalho && sol.area_responsavel) {
       const { data: respRow } = await supabase
         .from('area_solicitacoes_responsaveis')
-        .select('profile_id')
+        .select('area')
         .eq('area', sol.area_responsavel)
         .eq('profile_id', userId)
         .maybeSingle();
-      isAreaResp = !!respRow;
+      if (respRow?.area) areasResponsavel = [respRow.area];
     }
-    if (!isAdmin && !isMine && !isAreaResp) {
+    if (!podeVincular(sol, { userId, role, areasResponsavel })) {
       return res.status(403).json({ error: 'Sem permissão para vincular o pedido.' });
     }
 
@@ -4094,7 +4416,7 @@ router.post('/:id/atualizar-ml', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// APROVAÇÃO FINANCEIRA · Yago aprova compras/reembolsos antes de virar pra
+// APROVAÇÃO FINANCEIRA · o financeiro aprova compras/reembolsos antes de virar pra
 // logística comprar / financeiro pagar
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -4181,6 +4503,66 @@ function cotacaoObrigatoriaRegistrada(solicitacao) {
   return !!solicitacao?.cotacao_em && Number.isFinite(valor) && valor >= 0;
 }
 
+// ── Alçada de compras · quem atende a área aprova até o teto ────────────────
+// A régua de ELEGIBILIDADE (categoria, estado, valor cotado × teto) é PURA e
+// vive em `utils/alcadaCompras.js`. Aqui só se resolve o que precisa do banco:
+// o teto da área e se quem está pedindo é responsável por atendê-la.
+
+// Teto configurável por área em `area_alcadas.limite_aprovacao`.
+// ⚠️ Best-effort: sem linha (ou com a consulta falhando) cai no padrão de
+// R$ 1.000. Falhar fechado aqui só empurraria a compra pro financeiro, que é
+// o comportamento antigo — nunca aprova a mais.
+async function limiteAlcadaDaArea(areaCliente) {
+  if (!areaCliente) return LIMITE_ALCADA_PADRAO;
+  try {
+    const { data, error } = await supabase
+      .from('area_alcadas')
+      .select('limite_aprovacao')
+      .eq('area_cliente', areaCliente)
+      .maybeSingle();
+    if (error) throw error;
+    const limite = Number(data?.limite_aprovacao);
+    return Number.isFinite(limite) && limite >= 0 ? limite : LIMITE_ALCADA_PADRAO;
+  } catch (e) {
+    console.warn('[SOLICITACOES] falha ao ler alçada da área:', e.message);
+    return LIMITE_ALCADA_PADRAO;
+  }
+}
+
+// ⚠️ Quem pode usar a alçada é quem ATENDE a área da solicitação — lido de
+// `area_solicitacoes_responsaveis` (LEI de 2026-08-05: pessoa nunca fica
+// hardcoded; o papel vive no banco e muda sem PR).
+// ⚠️ De propósito NÃO reusa `podeCotar`, que também aceita quem tem logística
+// nível ≥3: registrar cotação é operar, aprovar dinheiro é decidir.
+async function ehResponsavelDaArea(req, area) {
+  if (!area || !req?.user?.userId) return false;
+  const { data, error } = await supabase
+    .from('area_solicitacoes_responsaveis')
+    .select('profile_id')
+    .eq('area', area)
+    .eq('profile_id', req.user.userId)
+    .maybeSingle();
+  if (error) {
+    console.warn('[SOLICITACOES] falha ao checar responsável da área:', error.message);
+    return false;
+  }
+  return !!data;
+}
+
+// Devolve o veredito completo (serve pro gate E pro flag da lista).
+async function avaliarAlcada(req, sol) {
+  const limite = await limiteAlcadaDaArea(sol?.area_cliente);
+  const eleg = elegivelAlcada(sol, limite);
+  if (!eleg.ok) return { ...eleg, responsavel: false };
+  const responsavel = await ehResponsavelDaArea(req, sol.area_responsavel);
+  return { ...eleg, responsavel, ok: responsavel, motivo: responsavel ? null : 'nao_responsavel' };
+}
+
+async function podeAprovarNaAlcada(req, sol) {
+  const r = await avaliarAlcada(req, sol);
+  return r.ok;
+}
+
 router.get('/pendentes-financeiro', async (req, res) => {
   try {
     if (!(await podeAprovarFinanceiro(req))) {
@@ -4228,10 +4610,12 @@ router.get('/pendentes-financeiro', async (req, res) => {
   }
 });
 
-// Formas de pagamento que o Alberto escolhe ao aprovar compra/serviço · decide
-// quem executa: cartão → Amaury COMPRA; demais → Cristina PAGA.
+// Formas de pagamento escolhidas na aprovação · decidem quem EXECUTA:
+// cartão → volta pra quem atende compras (compra no cartão); demais formas →
+// vão pro financeiro efetuar o pagamento.
 const FORMAS_PAGAMENTO_VALIDAS = ['boleto', 'pix', 'transferencia_bancaria', 'dinheiro', 'cartao_credito'];
-// Cristina (subordinada ao Alberto) executa os pagamentos não-cartão.
+// Quem executa os pagamentos não-cartão no financeiro (snapshot de id · trocar
+// a pessoa é mudar esta linha, e o papel real vive em area_solicitacoes_responsaveis).
 const EXECUTOR_FINANCEIRO_ID = '7ab43fe2-cf03-45e1-b193-3c5f4d96f9a5';
 
 router.post('/:id/aprovar-financeiro', async (req, res) => {
@@ -4241,9 +4625,25 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
     const { data: atual } = await supabase
       .from('solicitacoes').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (!atual) return res.status(404).json({ error: 'Solicitação não encontrada' });
+
+    // Dois caminhos pra aprovar, na MESMA porta (um 2º endpoint criaria uma
+    // segunda régua de dinheiro): o portão financeiro de sempre, ou a ALÇADA
+    // de quem atende a área quando a compra cotada cabe no teto.
+    let viaAlcada = false;
+    let limiteAlcada = LIMITE_ALCADA_PADRAO;
     if (!(await podeAprovarFinanceiro(req, atual.categoria))) {
-      return res.status(403).json({ error: 'Você não pode aprovar esta categoria de solicitação.' });
+      const alc = await avaliarAlcada(req, atual);
+      limiteAlcada = alc.limite;
+      if (!alc.ok) {
+        return res.status(403).json({
+          error: alc.motivo === 'acima_do_limite'
+            ? `Compras acima de R$ ${alc.limite.toLocaleString('pt-BR')} precisam da aprovação do financeiro.`
+            : 'Você não pode aprovar esta categoria de solicitação.',
+        });
+      }
+      viaAlcada = true;
     }
+
     if (!aguardandoAprovacaoFinanceira(atual)) {
       return res.status(400).json({ error: 'Esta solicitação não está aguardando aprovação financeira.' });
     }
@@ -4257,13 +4657,15 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       return res.status(400).json({ error: 'Forma de pagamento inválida.' });
     }
     if (ehCompraServico && !formaPagamento) {
-      return res.status(400).json({ error: 'Escolha a forma de pagamento (define se volta pro Amaury comprar ou vai pro financeiro pagar).' });
+      return res.status(400).json({ error: 'Escolha a forma de pagamento (define se a compra volta pra área comprar no cartão ou vai pro financeiro pagar).' });
     }
 
-    // Pra onde vai depois do OK do Alberto:
-    //   compra/serviço + CARTÃO  -> logistica_compras (Amaury COMPRA no cartão) · pendente
-    //   compra/serviço + demais  -> financeiro (Cristina PAGA) · em_atendimento
-    //   reembolso/pagamento      -> financeiro (Cristina paga) · em_atendimento
+    // Pra onde vai depois do OK:
+    //   compra/serviço + CARTÃO  -> logistica_compras (a área COMPRA no cartão) · pendente
+    //   compra/serviço + demais  -> financeiro (financeiro PAGA) · em_atendimento
+    //   reembolso/pagamento      -> financeiro (financeiro paga) · em_atendimento
+    // ⚠️ A alçada dispensa o financeiro de APROVAR, não de PAGAR: com forma
+    // não-cartão alguém com acesso à conta ainda precisa executar o pagamento.
     const noCartao = formaPagamento === 'cartao_credito';
     const vaiProFinanceiro = !ehCompraServico || !noCartao;
     const novaAreaResp = vaiProFinanceiro ? 'financeiro' : 'logistica_compras';
@@ -4276,12 +4678,20 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       status: novoStatus,
     };
     if (formaPagamento) updates.forma_pagamento = formaPagamento;
-    // Pagamento não-cartão vai pro executor (Cristina) — ela vê e marca como pago.
+    // Pagamento não-cartão vai pro executor do financeiro — ele vê e marca como pago.
     if (vaiProFinanceiro && EXECUTOR_FINANCEIRO_ID) updates.responsavel_id = EXECUTOR_FINANCEIRO_ID;
-    if (observacao) {
+
+    // ⚠️ Aprovação por alçada fica REGISTRADA na observação. `aprovado_financeiro_por`
+    // sozinho não distingue "o financeiro aprovou" de "a área aprovou dentro do
+    // teto", e essa distinção é o que se audita seis meses depois.
+    const carimbo = viaAlcada
+      ? `[Aprovação por alçada · até R$ ${limiteAlcada.toLocaleString('pt-BR')} · sem passar pelo financeiro]`
+      : '[Aprovação financeira]';
+    const linhaObs = observacao ? `${carimbo} ${observacao}` : (viaAlcada ? carimbo : null);
+    if (linhaObs) {
       updates.observacoes = atual.observacoes
-        ? `${atual.observacoes}\n[Aprovação financeira] ${observacao}`
-        : `[Aprovação financeira] ${observacao}`;
+        ? `${atual.observacoes}\n${linhaObs}`
+        : linhaObs;
     }
 
     const { data, error } = await supabase
@@ -4298,7 +4708,7 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
     if (!data) return res.status(409).json({ error: 'Esta solicitação foi alterada por outra pessoa. Atualize a fila antes de decidir.' });
 
     const acaoMsg = (noCartao && ehCompraServico)
-      ? 'liberado pro Amaury comprar no cartão'
+      ? 'liberado pra compra no cartão'
       : {
           compras:   'enviado pro financeiro pagar a compra',
           servico:   'enviado pro financeiro pagar o serviço',
@@ -4309,7 +4719,9 @@ router.post('/:id/aprovar-financeiro', async (req, res) => {
       modulo: vaiProFinanceiro ? 'financeiro' : (CATEGORIA_MODULO[atual.categoria] || 'logistica'),
       tipo: 'solicitacao_status',
       titulo: `Solicitação aprovada: ${atual.titulo}`,
-      mensagem: `${req.user.name || 'O financeiro'} aprovou financeiramente · ${acaoMsg}`,
+      mensagem: viaAlcada
+        ? `${req.user.name || 'A área responsável'} aprovou dentro da alçada (até R$ ${limiteAlcada.toLocaleString('pt-BR')}) · ${acaoMsg}`
+        : `${req.user.name || 'O financeiro'} aprovou financeiramente · ${acaoMsg}`,
       link: '/solicitacoes',
       severidade: 'info',
       chaveDedup: `solicitacao_aprovada_fin_${data.id}`,

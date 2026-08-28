@@ -95,7 +95,8 @@ async function processarImagem(sessao, m, telefone) {
   const path = `compras/whatsapp/${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
   let url = null;
   const { error: upErr } = await supabase.storage.from('log-arquivos').upload(path, media.buffer, { contentType: media.mime, upsert: false });
-  if (!upErr) url = supabase.storage.from('log-arquivos').getPublicUrl(path).data.publicUrl;
+  // ⚠️ CAMINHO, não URL pública — a leitura assina (anexosLogArquivos).
+  if (!upErr) url = path;
 
   let extraido = null;
   try { ({ extraido } = await extrairNotaFiscal(media.buffer, media.mime, MODELO)); }

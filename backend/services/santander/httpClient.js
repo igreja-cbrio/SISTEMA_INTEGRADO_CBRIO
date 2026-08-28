@@ -6,6 +6,7 @@
 // a request vai sem mTLS e a Akamai do Santander rejeita com 403 Access Denied.
 const { Agent, fetch: undiciFetch } = require('undici');
 const { supabase } = require('../../utils/supabase');
+const { resilientFetch } = require('../../utils/resilientFetch');
 
 const AMBIENTE = (process.env.SANTANDER_AMBIENTE || 'homologacao').toLowerCase();
 const IS_PROD = AMBIENTE === 'producao';
@@ -100,11 +101,17 @@ async function fetchNewToken() {
   const url = `${BASE_URL}${OAUTH_PATH}`;
   const start = Date.now();
 
-  const res = await undiciFetch(url, {
+  const res = await resilientFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
     dispatcher: agent,
+  }, {
+    dependency: 'Santander OAuth',
+    timeoutMs: 8_000,
+    maxRetries: 1,
+    retrySafe: true,
+    fetchImpl: undiciFetch,
   });
 
   const duration = Date.now() - start;
@@ -183,11 +190,16 @@ async function callApi(path, { method = 'GET', query, body, retries = 1, userId 
   const start = Date.now();
   let res;
   try {
-    res = await undiciFetch(url.toString(), {
+    res = await resilientFetch(url.toString(), {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
       dispatcher: agent,
+    }, {
+      dependency: 'Santander API',
+      timeoutMs: 10_000,
+      maxRetries: 1,
+      fetchImpl: undiciFetch,
     });
   } catch (err) {
     await logCall({ endpoint: path, method, error_message: err.message, user_id: userId });
@@ -255,7 +267,11 @@ async function callApi(path, { method = 'GET', query, body, retries = 1, userId 
 
 // Download binario de URL externa (link assinado da Azure pelo Santander)
 async function downloadBinary(url) {
-  const res = await fetch(url);
+  const res = await resilientFetch(url, { method: 'GET' }, {
+    dependency: 'Download Santander',
+    timeoutMs: 15_000,
+    maxRetries: 1,
+  });
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
     throw new Error(`Falha ao baixar arquivo: ${res.status} ${txt.slice(0, 200)}`);

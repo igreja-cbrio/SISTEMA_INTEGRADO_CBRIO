@@ -9,10 +9,14 @@
 //      sem CPF/nascimento · revisão humana · NUNCA auto-funde).
 //   2. Vincular famílias · só mostra pessoas sem família quando existe evidência
 //      de convivência com outro cadastro (telefone ou endereço completo iguais).
-//   3. Conflitos de CPF · fila temporária de identidade para revisão humana.
+//   3. Conflitos de identidade · dado forte dos dois lados e o CPF não bate.
+//   4. CPF a confirmar · CPF que chegou por sinal fraco (wifi / telefone da casa).
+//   5. Inscrição sem cadastro · inscrição órfã com candidato na base.
+//   ⚠️ 3, 4 e 5 saíram da MESMA aba ("Conflitos de CPF") em 14/08 — a régua do
+//   corte e o porquê estão em FILTROS_FILA, no fim deste arquivo.
 // ============================================================================
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link as RouterLink } from 'react-router-dom';
 import { nextBatismo as api, membresia as membresiaApi } from '../../api';
@@ -88,7 +92,26 @@ export default function Entradas() {
     queryFn: () => membresiaApi.identidade.list({ status: 'pendente' }),
     ...FILA_CACHE,
   });
-  const pendenciasIdentidade = Object.values(identidade?.resumo?.pendente || {}).reduce((a, b) => a + b, 0);
+  // ⚠️ `resumo.pendente` vem do SERVIDOR e é keyed por TIPO — as contagens dos 3
+  // chips saem dele, não de `items.filter(...)`: a lista é capada e contar o que
+  // veio na página faria o chip mentir quando a fila crescer.
+  const porTipo = identidade?.resumo?.pendente || {};
+  const somaTipos = (lista) => lista.reduce((a, t) => a + (porTipo[t] || 0), 0);
+  const pendenciasIdentidade = Object.values(porTipo).reduce((a, b) => a + b, 0);
+  // ⚠️ Tipo NOVO em `identidade_pendencias` (o CHECK da tabela pode crescer sem
+  // este arquivo saber) cai na fila de conflitos, que é a que gente lê. Sem esta
+  // sobra ele contaria no total do cabeçalho e não apareceria em seção nenhuma —
+  // trabalho pendente invisível, que é pior que trabalho na aba errada.
+  const tiposDeIdentidade = useMemo(() => {
+    const cobertos = new Set([...TIPOS_IDENTIDADE, ...TIPOS_CPF_CONFIRMAR, ...TIPOS_INSCRICAO_ORFA]);
+    const sobrando = Object.keys(porTipo).filter((t) => !cobertos.has(t));
+    return [...TIPOS_IDENTIDADE, ...sobrando];
+  }, [identidade]);
+  const contagensIdentidade = {
+    identidade: somaTipos(tiposDeIdentidade),
+    cpf_confirmar: somaTipos(TIPOS_CPF_CONFIRMAR),
+    inscricao_orfa: somaTipos(TIPOS_INSCRICAO_ORFA),
+  };
   const totalPendentes = (resumo?.duplicatas || 0) + (resumo?.familias_pendentes || 0) + pendenciasIdentidade;
 
   const escolherFiltro = (valor) => {
@@ -118,12 +141,29 @@ export default function Entradas() {
           <div className="rounded-xl border p-3">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Base com CPF</div>
             <div className="text-2xl font-bold text-foreground">{resumo.saude.pct_cpf}%</div>
-            <div className="text-xs text-muted-foreground">{resumo.saude.com_cpf} de {resumo.saude.pessoas} pessoas vivas</div>
+            {/* ⚠️ O verbo é obrigatório aqui. "1722 de 3891 pessoas vivas" lê
+                como um SEGUNDO total de gente, e o Matheus comparou esse número
+                com os 1699 membros ativos da Membresia achando que um dos dois
+                estava errado (20/08). Eles medem coisas diferentes e a
+                proximidade dos valores torna a frase incompleta uma armadilha:
+                dos 1722 com CPF, 571 nem são membros. */}
+            <div className="text-xs text-muted-foreground">
+              {resumo.saude.com_cpf} das {resumo.saude.pessoas} pessoas vivas têm CPF
+            </div>
           </div>
           <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => escolherFiltro('identidade')}>
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Fila de identidade</div>
-            <div className="text-2xl font-bold text-foreground">{pendenciasIdentidade}</div>
-            <div className="text-xs text-muted-foreground">conflitos de CPF aguardando triagem</div>
+            {/* ⚠️ O card mostra o número da fila em que ele CAI (conflitos), não o
+                total das 3 — clicar e ver um número menor do que o card prometia
+                é a divergência que fez o Marcos duvidar do retrato dos grupos
+                (03/08). O total da aba continua no chip "Pendentes". */}
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Conflitos de identidade</div>
+            <div className="text-2xl font-bold text-foreground">{contagensIdentidade.identidade}</div>
+            <div className="text-xs text-muted-foreground">
+              CPF divergente ou já em uso
+              {pendenciasIdentidade > contagensIdentidade.identidade
+                ? ` · +${pendenciasIdentidade - contagensIdentidade.identidade} em triagem nas outras filas`
+                : ''}
+            </div>
           </button>
           <button className="rounded-xl border p-3 text-left hover:border-primary transition-colors" onClick={() => escolherFiltro('duplicidade')}>
             <div className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Duplicatas possíveis</div>
@@ -142,7 +182,7 @@ export default function Entradas() {
       </div>
 
       <FiltrosFila visao={visao} filtro={filtro} onChange={setFiltro}
-        contagens={{ duplicidade: resumo?.duplicatas || 0, sem_vinculo: resumo?.familias_pendentes || 0, identidade: pendenciasIdentidade }} />
+        contagens={{ duplicidade: resumo?.duplicatas || 0, sem_vinculo: resumo?.familias_pendentes || 0, ...contagensIdentidade }} />
 
       {visao === 'pendentes' ? (
         <div className="space-y-7">
@@ -157,8 +197,22 @@ export default function Entradas() {
             </SecaoFila>
           )}
           {filtro === 'identidade' && (
-            <SecaoFila titulo="Conflitos de CPF" descricao="Situações em que o CPF precisa de confirmação humana antes de virar identidade.">
-              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros />
+            <SecaoFila titulo="Conflitos de identidade"
+              descricao="Os casos difíceis: dado forte dos dois lados e o CPF não bate. Alguém tem que dizer qual é o certo — o sistema não decide.">
+              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros tipos={tiposDeIdentidade} />
+            </SecaoFila>
+          )}
+          {filtro === 'cpf_confirmar' && (
+            <SecaoFila titulo="CPF a confirmar"
+              descricao="Triagem de sinal fraco: o CPF chegou por wi‑fi ou telefone da família, sem nascimento conferível. A pergunta é se ele é mesmo dessa pessoa.">
+              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros tipos={TIPOS_CPF_CONFIRMAR} />
+            </SecaoFila>
+          )}
+          {filtro === 'inscricao_orfa' && (
+            <SecaoFila titulo="Inscrição sem cadastro"
+              descricao="A inscrição não aponta pra cadastro nenhum e existe um candidato na base. Não é conflito de CPF — a pergunta é se esse cadastro é essa pessoa."
+            >
+              <IdentidadePendenciasPanel statusFixo="pendente" ocultarFiltros tipos={TIPOS_INSCRICAO_ORFA} />
             </SecaoFila>
           )}
         </div>
@@ -169,11 +223,44 @@ export default function Entradas() {
   );
 }
 
+// ⚠️ A antiga aba "Conflitos de CPF" virou TRÊS filas (14/08 · Marcos: "deveriam
+// ser pessoas que possuem dados fortíssimos mas estão com CPF diferente, só os
+// casos mais difíceis; ela não foi feita para juntar possíveis duplicatas
+// quaisquer"). Ele estava certo: `identidade_pendencias` guarda 5 tipos com
+// TRABALHOS diferentes na mesma lista, e o de maior volume — os
+// `cpf_para_confirmar`, que são triagem de sinal FRACO (wifi / telefone da
+// família) — soterrava justamente os casos difíceis. Medido em 05/08: 218
+// `cpf_para_confirmar` contra 67 `inscricao_sem_vinculo` e um punhado de
+// conflitos reais.
+//
+// O recorte é por PERGUNTA, não por tabela:
+//   · identidade      → "qual CPF é o certo?" · dado forte dos dois lados
+//   · cpf_confirmar   → "esse CPF é mesmo dessa pessoa?" · sinal fraco
+//   · inscricao_orfa  → "esse cadastro é essa pessoa?" · nem é conflito de CPF
+const TIPOS_IDENTIDADE = ['cpf_divergente', 'vinculo_divergente', 'cpf_conflito'];
+const TIPOS_CPF_CONFIRMAR = ['cpf_para_confirmar'];
+const TIPOS_INSCRICAO_ORFA = ['inscricao_sem_vinculo'];
+
 const FILTROS_FILA = [
   ['duplicidade', 'Possíveis duplicidades'],
   ['sem_vinculo', 'Vincular famílias'],
-  ['identidade', 'Conflitos de CPF'],
+  ['identidade', 'Conflitos de identidade'],
+  ['cpf_confirmar', 'CPF a confirmar'],
+  ['inscricao_orfa', 'Inscrição sem cadastro'],
 ];
+
+// ⚠️ `entradas_resolucoes.tipo` só conhece as 3 FILAS originais
+// (duplicidade | sem_vinculo | identidade) — as chaves novas são recorte de
+// EXIBIÇÃO. Sem este mapa, o histórico da aba nova iria pro servidor com
+// `tipo=cpf_confirmar`, o `.eq()` não casaria linha nenhuma e a tela diria
+// "Nenhuma resolução neste filtro" — erro se disfarçando de fila vazia.
+const RESOLUCAO_TIPO = {
+  duplicidade: 'duplicidade',
+  sem_vinculo: 'sem_vinculo',
+  identidade: 'identidade',
+  cpf_confirmar: 'identidade',
+  inscricao_orfa: 'identidade',
+};
 
 function FiltrosFila({ visao, filtro, onChange, contagens }) {
   return (
@@ -214,7 +301,7 @@ const ACAO_RESOLVIDA = {
 };
 
 function ResolvidosTab({ filtro, onVerFicha }) {
-  const tipo = filtro;
+  const tipo = RESOLUCAO_TIPO[filtro] || filtro;
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['next-batismo', 'resolucoes', tipo],
     queryFn: () => api.resolucoes(tipo ? { tipo } : {}),
@@ -306,6 +393,11 @@ function DuplicadosTab({ onVerFicha }) {
     ...FILA_CACHE,
   });
   const [mergeDialog, setMergeDialog] = useState(null); // { par, keep_id }
+  // Vizinhos marcados pra entrar na MESMA fusão (triplicata/quadruplicata).
+  // ⚠️ Zerado sempre que o diálogo abre ou fecha: marcação de um par não pode
+  // vazar pro próximo, senão a pessoa funde alguém que nem viu.
+  const [vizinhosSel, setVizinhosSel] = useState([]);
+  const abrirFusao = (dados) => { setVizinhosSel([]); setMergeCampos({}); setMergeDialog(dados); };
   const [mergeCampos, setMergeCampos] = useState({}); // overrides "melhor de cada"
   const [busca, setBusca] = useState('');
   const [prioridade, setPrioridade] = useState('todas');
@@ -328,30 +420,73 @@ function DuplicadosTab({ onVerFicha }) {
     onError: (e) => toast.error(e?.message || 'Erro ao recarregar'),
   });
 
-  const invalida = () => {
-    qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados'] });
-    qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados-adiados'] });
-    qc.invalidateQueries({ queryKey: ['next-batismo', 'resumo'] });
+  // ⚠️ AÇÃO NÃO REFAZ A BUSCA. Era `invalidateQueries` nas três chaves, e cada
+  // clique custava ~10s: o GET /duplicados RECALCULA a fila inteira (pagina a base
+  // viva, forma candidatos por CPF/telefone/e-mail/nascimento/blocos de nome e
+  // aplica a duplicidadePolicy), e as ações de resolução invalidam também o cache
+  // de 10 min do backend — então nem o /resumo voltava barato. Reclamação do
+  // Matheus em 04/08: "demora pra atualizar, quero algo fluido".
+  //
+  // A ação já foi confirmada pelo servidor. O par só precisa SAIR da lista, e o
+  // contador do topo desce 1. Recálculo de verdade continua existindo no botão
+  // "Recarregar", que é explícito.
+  const removerPares = (chave, deveSair) => {
+    let removidos = 0;
+    qc.setQueryData(['next-batismo', chave], (old) => {
+      if (!old?.items) return old;
+      const items = old.items.filter((it) => !deveSair(it));
+      removidos = old.items.length - items.length;
+      return removidos ? { ...old, items, total: items.length } : old;
+    });
+    return removidos;
   };
+  const ajustarContador = (delta) => {
+    if (!delta) return;
+    qc.setQueryData(['next-batismo', 'resumo'], (old) => (
+      old ? { ...old, duplicatas: Math.max(0, (old.duplicatas || 0) + delta) } : old
+    ));
+  };
+  // A fila OPOSTA pode ter mudado, mas recalcular agora pagaria os ~10s que
+  // estamos evitando: marca stale e deixa o refetch pro momento em que ela abrir.
+  const marcarStale = (chave) => qc.invalidateQueries({
+    queryKey: ['next-batismo', chave], refetchType: 'none',
+  });
 
   const ignorarMut = useMutation({
     mutationFn: (par) => api.ignorarDuplicata({ membro_a_id: par.membro_a_id, membro_b_id: par.membro_b_id }),
-    onSuccess: () => { toast.success('Marcado como pessoas distintas · não aparece mais'); invalida(); },
+    onSuccess: (_r, par) => {
+      toast.success('Marcado como pessoas distintas · não aparece mais');
+      ajustarContador(-removerPares('duplicados', (it) => it.par_id === par.par_id));
+    },
     onError: (e) => toast.error(e?.message || 'Erro ao ignorar'),
   });
   const adiarMut = useMutation({
     mutationFn: (par) => api.adiarDuplicata({ membro_a_id: par.membro_a_id, membro_b_id: par.membro_b_id, confianca: par.confianca, prioridade: par.prioridade }),
-    onSuccess: () => { toast.success('Adiada · volta sozinha quando aparecer um cadastro completo'); invalida(); },
+    onSuccess: (_r, par) => {
+      toast.success('Adiada · volta sozinha quando aparecer um cadastro completo');
+      ajustarContador(-removerPares('duplicados', (it) => it.par_id === par.par_id));
+      marcarStale('duplicados-adiados');
+    },
     onError: (e) => toast.error(e?.message || 'Erro ao adiar'),
   });
   const reativarMut = useMutation({
     mutationFn: (par) => api.reativarDuplicata({ membro_a_id: par.membro_a_id, membro_b_id: par.membro_b_id }),
-    onSuccess: () => { toast.success('De volta pra fila'); invalida(); },
+    onSuccess: (_r, par) => {
+      toast.success('De volta pra fila');
+      removerPares('duplicados-adiados', (it) => it.par_id === par.par_id);
+      ajustarContador(+1);
+      marcarStale('duplicados');
+    },
     onError: (e) => toast.error(e?.message || 'Erro ao trazer de volta'),
   });
   const adiarLoteMut = useMutation({
     mutationFn: () => api.adiarEmLote({ criterio: 'nome_apenas' }),
-    onSuccess: (r) => { toast.success(`${r?.total || 0} par(es) adiados · voltam quando um cadastro completo confirmar`); setLoteDialog(false); setVista('adiados'); setPrioridade('todas'); setBusca(''); setLimiteVisivel(100); invalida(); },
+    onSuccess: (r) => { toast.success(`${r?.total || 0} par(es) adiados · voltam quando um cadastro completo confirmar`); setLoteDialog(false); setVista('adiados'); setPrioridade('todas'); setBusca(''); setLimiteVisivel(100);
+      // Move ~91 pares de uma vez: remove localmente os "só nome" da fila e busca
+      // os adiados de verdade (a tela acabou de trocar pra essa aba).
+      ajustarContador(-removerPares('duplicados', soNome));
+      qc.invalidateQueries({ queryKey: ['next-batismo', 'duplicados-adiados'] });
+    },
     onError: (e) => toast.error(e?.message || 'Erro ao adiar em lote'),
   });
   const mergeMut = useMutation({
@@ -366,7 +501,13 @@ function DuplicadosTab({ onVerFicha }) {
       } else {
         toast.success(`Fundido · ${res?.merged || 1} cadastro(s) absorvido(s)${aplicados.length ? ` · ${aplicados.length} campo(s) do melhor de cada` : ''}`);
       }
-      invalida(); setMergeDialog(null); setMergeCampos({});
+      // ⚠️ Fundir A em B faz A DEIXAR DE EXISTIR: todo outro par que cite A ficou
+      // órfão e tem que sair junto — clicar num deles daria erro no servidor.
+      const absorvidos = new Set(vars?.merge_ids || []);
+      const citaAbsorvido = (it) => absorvidos.has(it.membro_a_id) || absorvidos.has(it.membro_b_id);
+      ajustarContador(-removerPares('duplicados', citaAbsorvido));
+      removerPares('duplicados-adiados', citaAbsorvido);
+      setMergeDialog(null); setMergeCampos({});
     },
     onError: (e) => toast.error(e?.message || 'Erro ao fundir'),
   });
@@ -492,7 +633,7 @@ function DuplicadosTab({ onVerFicha }) {
           <div className="text-xs text-muted-foreground">{filtrados.length} de {items.length} par(es) · exibindo {visiveis.length}</div>
           {visiveis.map((par) => (
             <ParCard key={par.par_id} par={par} onVerFicha={onVerFicha} emAdiados={emAdiados}
-              onMerge={(keep_id) => setMergeDialog({ par, keep_id })}
+              onMerge={(keep_id) => abrirFusao({ par, keep_id })}
               onIgnorar={() => ignorarMut.mutate(par)} ignorando={ignorarMut.isPending}
               onAdiar={() => adiarMut.mutate(par)} adiando={adiarMut.isPending}
               onReativar={() => reativarMut.mutate(par)} reativando={reativarMut.isPending} />
@@ -507,9 +648,17 @@ function DuplicadosTab({ onVerFicha }) {
         </div>
       )}
 
-      <Dialog open={!!mergeDialog} onOpenChange={(o) => { if (!o) { setMergeDialog(null); setMergeCampos({}); } }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
+      <Dialog open={!!mergeDialog} onOpenChange={(o) => { if (!o) { setMergeDialog(null); setMergeCampos({}); setVizinhosSel([]); } }}>
+        {/* ⚠️ PADRÃO DE MODAL ALTO (lei da casa · 25/06): o DialogContent vira
+            `flex flex-col` com teto de altura e SEM overflow próprio; quem rola é
+            o CORPO, com `flex-1 overflow-y-auto min-h-0`. O `min-h-0` não é
+            enfeite — sem ele o filho não encolhe abaixo do conteúdo e o modal
+            CORTA em vez de rolar. Aqui o corpo cresce de verdade: o
+            MergeFieldPicker rende uma linha por campo divergente e o VizinhosDoPar
+            lista N cadastros parecidos, então o rodapé com "Confirmar fusão" saía
+            da tela e a fusão ficava inalcançável. */}
+        <DialogContent className="max-w-lg max-h-[85vh] flex flex-col">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Confirmar fusão</DialogTitle>
             <DialogDescription>
               Esta ação é <strong>permanente</strong> · só dá pra auditar pelo log, não desfazer pela tela.
@@ -519,7 +668,7 @@ function DuplicadosTab({ onVerFicha }) {
             const keep = mergeDialog.par.membro_a_id === mergeDialog.keep_id ? mergeDialog.par.membro_a : mergeDialog.par.membro_b;
             const drop = mergeDialog.par.membro_a_id === mergeDialog.keep_id ? mergeDialog.par.membro_b : mergeDialog.par.membro_a;
             return (
-              <div className="space-y-3 text-sm">
+              <div className="flex-1 overflow-y-auto min-h-0 space-y-3 text-sm pr-1">
                 <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 p-3">
                   <div className="text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300 mb-1">Manter este</div>
                   <div className="font-semibold text-foreground">{keep.nome}</div>
@@ -534,24 +683,130 @@ function DuplicadosTab({ onVerFicha }) {
                   Todos os vínculos do cadastro absorvido (inscrições, decisões, grupos, contribuições, NSM) passam pro mantido. Snapshot vai pro log.
                 </p>
                 <MergeFieldPicker key={`${keep.id}_${drop.id}`} keep={keep} drop={drop} onCampos={setMergeCampos} />
+                <VizinhosDoPar
+                  ids={[keep.id, drop.id]}
+                  selecionados={vizinhosSel}
+                  onToggle={(id) => setVizinhosSel((atual) => (atual.includes(id) ? atual.filter((x) => x !== id) : [...atual, id]))}
+                />
+                {vizinhosSel.length > 0 && (
+                  <p className="text-xs text-violet-700 dark:text-violet-400">
+                    <strong>{vizinhosSel.length + 1} cadastros</strong> serão absorvidos em <strong>{keep.nome}</strong> nesta fusão.
+                  </p>
+                )}
               </div>
             );
           })()}
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <Button variant="outline" onClick={() => setMergeDialog(null)} disabled={mergeMut.isPending}>Cancelar</Button>
             <Button
               onClick={() => {
                 if (!mergeDialog) return;
                 const drop_id = mergeDialog.par.membro_a_id === mergeDialog.keep_id ? mergeDialog.par.membro_b_id : mergeDialog.par.membro_a_id;
-                mergeMut.mutate({ keep_id: mergeDialog.keep_id, merge_ids: [drop_id], campos: mergeCampos });
+                // ⚠️ `merge_membros` já aceita N ids num só comando (p_merge_ids
+                // uuid[]), então os vizinhos marcados entram na MESMA transação —
+                // fundir em duas chamadas deixaria estado intermediário se a
+                // segunda falhasse. O `keep_id` nunca entra na lista.
+                const ids = [drop_id, ...vizinhosSel.filter((id) => id !== mergeDialog.keep_id && id !== drop_id)];
+                mergeMut.mutate({ keep_id: mergeDialog.keep_id, merge_ids: ids, campos: mergeCampos });
               }}
               disabled={mergeMut.isPending} className="gap-1.5"
             >
-              {mergeMut.isPending ? <><Loader2 className="size-3.5 animate-spin" /> Fundindo...</> : <><GitMerge className="size-3.5" /> Confirmar fusão</>}
+              {mergeMut.isPending
+                ? <><Loader2 className="size-3.5 animate-spin" /> Fundindo...</>
+                : <><GitMerge className="size-3.5" /> Confirmar fusão{vizinhosSel.length ? ` de ${vizinhosSel.length + 2} cadastros` : ''}</>}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// ⚠️ Bloco de VIZINHOS: os outros cadastros que parecem ser a mesma pessoa.
+// Vive DENTRO do diálogo de fusão, não no card, porque é aqui que o `merge_ids`
+// é montado e onde a pessoa já escolheu qual cadastro fica.
+//
+// ⚠️⚠️ NADA VEM MARCADO, e é decisão: a régua daqui é mais frouxa que a de ligar
+// automaticamente (Dice ≥0,80 ou nome contido) justamente porque um humano está
+// olhando. Medido em 17/08: traz triplicata real ("Tatiane Dib" × "Tatiane
+// Youssef Fares Dib" + a "Tatiane Dib" do login) e traz ruído junto ("Patrícia
+// Machado" ao lado de "Patrick Machado"). Marcar sozinha transformaria a
+// sugestão em fusão de gente diferente.
+function VizinhosDoPar({ ids, selecionados, onToggle }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['next-batismo', 'vizinhos', ...ids],
+    queryFn: () => api.vizinhosDoPar(ids),
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  // ⚠️ Erro NÃO vira "nenhum parecido": as duas leituras levam a decisões
+  // opostas (fundir só o par × fundir os três).
+  if (isError) {
+    return (
+      <div className="rounded-lg border border-amber-300/60 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400">
+        Não foi possível verificar se existem outros cadastros parecidos. Funda só este par ou tente de novo.
+      </div>
+    );
+  }
+  if (isLoading) {
+    return <div className="text-xs text-muted-foreground flex items-center gap-1.5"><Loader2 className="size-3 animate-spin" /> procurando outros cadastros parecidos...</div>;
+  }
+  const lista = data?.vizinhos || [];
+  if (!lista.length) return null;
+
+  return (
+    <div className="rounded-lg border border-violet-300/60 bg-violet-500/5 p-3 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-violet-700 dark:text-violet-400">
+            Outros cadastros parecidos ({data?.total ?? lista.length})
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Se alguma dessas linhas for a mesma pessoa, marque para absorver na mesma fusão.
+            {' '}<strong>Confira o que cada uma tem antes</strong> — nomes parecidos também são de parentes.
+          </p>
+        </div>
+      </div>
+      {data?.aviso && <p className="text-[11px] text-amber-700 dark:text-amber-400">{data.aviso}</p>}
+      <div className="space-y-1.5">
+        {lista.map((v) => {
+          const marcado = selecionados.includes(v.id);
+          const temContra = (v.contradicoes || []).length > 0;
+          return (
+            <label
+              key={v.id}
+              className={`flex items-start gap-2 rounded-md border p-2 cursor-pointer transition-colors ${
+                marcado ? 'border-violet-400 bg-violet-500/10' : temContra ? 'border-red-300/60' : 'border-border hover:border-violet-300'
+              }`}
+            >
+              <input type="checkbox" className="mt-0.5" checked={marcado} onChange={() => onToggle(v.id)} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-semibold text-foreground">{v.nome}</span>
+                  {v.status && <Badge variant="outline" className="text-[10px]">{v.status}</Badge>}
+                  
+                  <span className="text-[10px] text-muted-foreground">semelhança de texto {Math.round(v.similaridade * 100)}%</span>
+                </div>
+                <div className="text-[11px] text-muted-foreground mt-0.5 flex flex-wrap gap-x-2">
+                  <span>{v.cpf ? `CPF ${maskCpf(v.cpf)}` : 'sem CPF'}</span>
+                  <span>·</span>
+                  <span>{v.telefone ? maskTelefone(v.telefone) : 'sem telefone'}</span>
+                  <span>·</span>
+                  <span>{v.data_nascimento ? fmtData(v.data_nascimento) : 'sem nascimento'}</span>
+                  {v.origem_cadastro && <><span>·</span><span>veio de {v.origem_cadastro}</span></>}
+                  {v.criado_em && <><span>·</span><span>criado {fmtData(v.criado_em)}</span></>}
+                </div>
+                {temContra && (
+                  <div className="text-[11px] text-red-600 dark:text-red-400 mt-1">
+                    ⚠️ {v.contradicoes.join(' · ')} — provavelmente <strong>outra pessoa</strong>. Só marque se souber que o dado divergente está errado.
+                  </div>
+                )}
+              </div>
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -763,6 +1018,8 @@ function FamiliasPendentesTab({ onVerFicha }) {
           Esta fila mantém os cadastros separados e apenas organiza as pessoas na mesma família.
           Telefone compartilhado exige também sobrenome em comum; endereço completo + CEP pode sugerir famílias com sobrenomes diferentes.
           <strong> Nomes abreviados ou muito semelhantes vão para Possíveis duplicidades.</strong>
+          {' '}Cada par mostra o contato compartilhado, a idade dos dois, de qual porta veio o dado e — quando existe — o
+          vínculo com a mesma criança no Kids, que é a evidência de convivência mais forte que o sistema tem.
         </p>
         <Button onClick={() => recarregarMut.mutate()} disabled={isFetching || recarregarMut.isPending} variant="outline" size="sm" className="gap-1.5">
           <RefreshCw className={`size-3.5 ${isFetching || recarregarMut.isPending ? 'animate-spin' : ''}`} /> Recarregar
@@ -800,12 +1057,63 @@ function FamiliasPendentesTab({ onVerFicha }) {
                     {item.destino.tipo === 'existente' ? item.destino.nome : 'Nova família'}
                   </span>
                 </div>
+                {/* Alerta ≠ evidência: evidência sustenta a sugestão, alerta a
+                    QUESTIONA. Fica em âmbar, acima de tudo. */}
+                {!!item.alertas?.length && item.alertas.map((al) => (
+                  <div key={al} className="rounded-md border border-amber-400/60 bg-amber-500/5 px-2.5 py-2 text-[11px] text-amber-800 dark:text-amber-200">
+                    {al} — se for a mesma pessoa, o caminho é <strong>Possíveis duplicidades</strong>, não vincular família.
+                  </div>
+                ))}
+
+                {/* O DADO que motivou a sugestão, dito com todas as letras.
+                    No par por endereço ele costumava ficar invisível: o card só
+                    cai no endereço quando a pessoa não tem telefone. */}
+                {item.contato_comum && (
+                  <div className="text-[11px] text-muted-foreground">
+                    {item.contato_comum.tipo === 'telefone' ? 'Telefone compartilhado: ' : 'Endereço compartilhado: '}
+                    <span className="font-mono text-foreground">
+                      {item.contato_comum.tipo === 'telefone'
+                        ? maskTelefone(item.contato_comum.valor)
+                        : item.contato_comum.valor}
+                    </span>
+                  </div>
+                )}
+
+                {/* ⚠️ A evidência de convivência mais forte que o sistema tem:
+                    os dois são responsáveis da MESMA criança (vínculo de menor
+                    passa por documento + aprovação da equipe Kids). Quando
+                    aparece, a decisão está praticamente tomada — e o parentesco
+                    de cada lado é o que separa "casal/irmãos" de "é a mesma
+                    pessoa com o nome trocado". */}
+                {!!item.kids_em_comum?.length && (
+                  <div className="rounded-md border border-emerald-400/50 bg-emerald-500/5 p-2.5 space-y-1">
+                    <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                      Responsáveis pela mesma criança no Kids
+                    </div>
+                    {item.kids_em_comum.map((k) => (
+                      <div key={k.crianca_id} className="text-[11px] text-muted-foreground">
+                        <span className="text-foreground">{k.crianca_nome || 'Criança sem nome no cadastro'}</span>
+                        {k.crianca_nascimento ? ` (${fmtData(k.crianca_nascimento)})` : ''}
+                        {' — '}
+                        {item.pessoa.nome?.split(' ')[0]}: {k.parentesco_pessoa || 'sem parentesco'}
+                        {' · '}
+                        {item.referencia.nome?.split(' ')[0]}: {k.parentesco_referencia || 'sem parentesco'}
+                      </div>
+                    ))}
+                    <div className="text-[10px] text-muted-foreground/80">
+                      Confira se o nome da criança não é o mesmo de um dos cadastros — nesse caso não é família, é o
+                      nome do filho gravado no lugar do responsável, e o caminho é Possíveis duplicidades.
+                    </div>
+                  </div>
+                )}
+
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-                  <PessoaFamilia pessoa={item.pessoa} rotulo="Sem família" onVerFicha={onVerFicha} />
+                  <PessoaFamilia pessoa={item.pessoa} rotulo="Sem família" onVerFicha={onVerFicha}
+                    procedencia={item.procedencia?.pessoa} />
                   <ArrowRight className="size-4 text-muted-foreground mx-auto rotate-90 sm:rotate-0" />
                   <PessoaFamilia pessoa={item.referencia}
                     rotulo={item.destino.tipo === 'existente' ? item.destino.nome : 'Referência para nova família'}
-                    onVerFicha={onVerFicha} />
+                    onVerFicha={onVerFicha} procedencia={item.procedencia?.referencia} />
                 </div>
                 <div className="flex justify-end gap-2 flex-wrap">
                   <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5"
@@ -854,7 +1162,22 @@ function FamiliasPendentesTab({ onVerFicha }) {
   );
 }
 
-function PessoaFamilia({ pessoa, rotulo, onVerFicha }) {
+// idadeDe · idade em anos completos, pra decidir parentesco. Data parseada como
+// LOCAL (`+T12:00:00`): `new Date('1981-08-01')` é meia-noite UTC = 31/07 no Rio,
+// e a idade sairia 1 dia deslocada perto do aniversário.
+function idadeDe(nascimento) {
+  if (!nascimento) return null;
+  const d = new Date(String(nascimento).slice(0, 10) + 'T12:00:00');
+  if (Number.isNaN(d.getTime())) return null;
+  const hoje = new Date();
+  let anos = hoje.getFullYear() - d.getFullYear();
+  const m = hoje.getMonth() - d.getMonth();
+  if (m < 0 || (m === 0 && hoje.getDate() < d.getDate())) anos -= 1;
+  return anos >= 0 && anos < 120 ? anos : null;
+}
+
+function PessoaFamilia({ pessoa, rotulo, onVerFicha, procedencia }) {
+  const idade = idadeDe(pessoa.data_nascimento);
   return (
     <button type="button" onClick={() => onVerFicha?.(pessoa.id)}
       className="rounded-lg border bg-muted/15 p-3 text-left hover:border-primary transition-colors min-w-0">
@@ -868,8 +1191,25 @@ function PessoaFamilia({ pessoa, rotulo, onVerFicha }) {
           <div className="text-[10px] text-muted-foreground truncate">
             {pessoa.telefone ? maskTelefone(pessoa.telefone) : pessoa.endereco || pessoa.status}
           </div>
+          {/* A diferença de idade é o que separa cônjuge de pai/filho — era o
+              dado que faltava pra decidir. "Sem nascimento" é dito, não omitido:
+              ausência de dado não pode parecer dado. */}
+          <div className="text-[10px] text-muted-foreground truncate">
+            {idade != null
+              ? `${idade} anos · ${fmtData(pessoa.data_nascimento)}`
+              : 'sem nascimento no cadastro'}
+          </div>
         </div>
       </div>
+      {!!procedencia?.length && (
+        <div className="mt-2 pt-2 border-t text-[10px] text-muted-foreground space-y-0.5">
+          {procedencia.map((p) => (
+            <div key={`${p.origem}-${p.quando}`} className="truncate">
+              {p.origem} · {fmtData(p.quando)}
+            </div>
+          ))}
+        </div>
+      )}
     </button>
   );
 }
@@ -887,6 +1227,63 @@ const TOQUE_META = {
   identidade: { icon: Network,  cor: '#059669', label: 'Identidade' },
   cadastro: { icon: UserPlus,   cor: '#6B7280', label: 'Cadastro' },
 };
+
+// ⚠️ O que FALTA pro cadastro da pessoa fechar, e o caminho de resolver.
+//
+// Decisão do Marcos (18/08): "todas as pessoas que entram em algum lugar do
+// sistema exceto conversões a partir de agora devem ter todos os dados
+// completos." Onde há formulário, a porta passou a exigir. Onde o atendimento
+// não pode parar — o totem do Kids no domingo — a pessoa entra e a fila cobra:
+// é este bloco.
+//
+// ⚠️ A régua vem do SERVIDOR (`avaliarCadastroPessoa`, o espelho de
+// `fn_membro_cadastro_completo`). A tela não recalcula nada: uma segunda régua de
+// "completo" divergiria e a equipe deixaria de confiar nas duas.
+//
+// ⚠️ Mostra o que falta, NUNCA o valor de CPF/e-mail — o payload nem os traz.
+function CadastroIncompleto({ id, cadastro }) {
+  const [enviando, setEnviando] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+  if (!cadastro || cadastro.completo) return null;
+  const faltam = cadastro.rotulos || cadastro.faltando || [];
+
+  const pedir = async () => {
+    setEnviando(true);
+    try {
+      const r = await api.pedirDados(id);
+      setEnviado(true);
+      toast.success(r?.canal ? `Pedido enviado por ${r.canal}` : 'Pedido de dados enviado');
+    } catch (e) {
+      // 409 = a régua recusou (sem contato alcançável, ou convite já enviado na
+      // rodada). Não é erro do servidor, então o texto tem que dizer o motivo.
+      toast.error(e?.message || 'Não foi possível enviar agora');
+    } finally { setEnviando(false); }
+  };
+
+  return (
+    <div className="rounded-lg border border-amber-300/60 bg-amber-500/5 p-3 mb-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase font-bold tracking-wide text-amber-700 dark:text-amber-400">
+            Cadastro incompleto
+          </div>
+          <div className="text-sm text-foreground mt-0.5">
+            Falta: <strong>{faltam.join(' · ')}</strong>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-1">
+            O pedido vai <strong>pra própria pessoa</strong>, pelo contato dela, com o cadastro já
+            preenchido pra ela completar. Ninguém digita dado de terceiro.
+          </p>
+        </div>
+        <Button size="sm" variant="outline" className="h-8 text-xs shrink-0 gap-1.5"
+          onClick={pedir} disabled={enviando || enviado}>
+          {enviando ? <Loader2 className="size-3.5 animate-spin" /> : <Mail className="size-3.5" />}
+          {enviado ? 'Enviado' : 'Pedir os dados'}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function FichaEntrada({ id, onClose, onVerFicha }) {
   const open = !!id;
@@ -939,6 +1336,7 @@ function FichaEntrada({ id, onClose, onVerFicha }) {
             </DialogHeader>
 
             <div className="flex-1 overflow-y-auto min-h-0">
+            <CadastroIncompleto id={id} cadastro={data?.cadastro} />
             {pm && (
               <div className="rounded-lg border p-3 flex items-center gap-3" style={{ borderLeft: `3px solid ${pm.cor}` }}>
                 <div className="size-9 rounded-lg flex items-center justify-center shrink-0" style={{ background: pm.cor + '1A' }}>

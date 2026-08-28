@@ -46,10 +46,6 @@
       "schedule": "30 3 * * *"
     },
     {
-      "path": "/api/kpis/youtube/sync",
-      "schedule": "0 13 * * *"
-    },
-    {
       "path": "/api/governanca/cron/lembrete",
       "schedule": "0 10 * * 1"
     },
@@ -68,10 +64,6 @@
     {
       "path": "/api/jornada/cron/refresh-papeis",
       "schedule": "0 5 * * *"
-    },
-    {
-      "path": "/api/wifi/cron/sync",
-      "schedule": "0 2 * * 0,1,4"
     },
     {
       "path": "/api/online/cron/sync",
@@ -174,6 +166,10 @@
       "schedule": "0 13 * * 1"
     },
     {
+      "path": "/api/notificacoes/cron",
+      "schedule": "0 9 * * *"
+    },
+    {
       "path": "/api/monitor-automacoes/cron/checar",
       "schedule": "0 11 * * *"
     },
@@ -188,12 +184,22 @@
     {
       "path": "/api/agente-batismo-next/cron/enfileirar",
       "schedule": "15 11 * * *"
+    },
+    {
+      "path": "/api/sistema/cron/push-receipts",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/sistema/cron/incident-triage",
+      "schedule": "*/5 * * * *"
     }
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.js" },
+    { "source": "/r/(.*)", "destination": "/api/index.js" },
     { "source": "/privacidade", "destination": "/privacidade.html" },
-    { "source": "/((?!api/|assets/|_vercel/).*)", "destination": "/index.html" }
+    { "source": "/aplicativo", "destination": "/aplicativo.html" },
+    { "source": "/((?!api/|r/|assets/|_vercel/).*)", "destination": "/index.html" }
   ],
   "headers": [
     {

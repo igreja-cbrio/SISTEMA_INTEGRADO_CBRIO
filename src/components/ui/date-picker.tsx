@@ -110,7 +110,7 @@ export function DatePicker({
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start" collisionPadding={12}>
+      <PopoverContent className="w-auto p-0 z-[1200]" align="start" collisionPadding={12}>
         <Calendar
           mode="single"
           locale={ptBR}

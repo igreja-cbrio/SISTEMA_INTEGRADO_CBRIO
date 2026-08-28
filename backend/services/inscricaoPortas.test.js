@@ -88,6 +88,8 @@ const ROTAS_INTERNAS = new Set([
   '/admin/grupos/qrcode-inscricao',
   '/ministerial/totem-kids/apresentacao',
   '/ministerial/totem-kids/voluntariado-inscricoes',
+  // Gestão das estações de totem (equipamento, não porta de gente).
+  '/inscricoes/totens',
 ]);
 const rotasDoCatalogo = new Set(PORTAS_INSCRICAO.flatMap((p) => p.rotasPublicas));
 const PADRAO_PORTA = /inscri|inscrever|apresentacao/i;

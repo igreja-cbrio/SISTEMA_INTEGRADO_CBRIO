@@ -14,14 +14,16 @@
 // Montado ANTES do publicLimiter global (evento presencial em massa = 1 IP).
 // ============================================================================
 const express = require('express');
+const { semCache } = require('../middleware/semCache');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
-const { notificar } = require('../services/notificar');
+const { notificar, resolverDestinatarios } = require('../services/notificar');
+const { moduloDaAreaEvento } = require('../utils/moduloDaAreaEvento');
 const {
   validarCamposPadrao, processarIdentidade, registrarConsentimentos,
-  honeypotPreenchido, TEXTOS,
+  honeypotPreenchido, TEXTOS, normalizarCpf,
 } = require('../services/inscricaoContrato');
 const { nomesMesmaPessoa } = require('../services/membroMatch');
 const {
@@ -36,6 +38,19 @@ const {
 // Fachada do núcleo de pagamentos. ⚠️ NUNCA importar `providers/*` aqui — é o
 // que faz trocar de PSP custar 1 arquivo + 1 env (ver services/pagamentos/tipos.js).
 const pagamentos = require('../services/pagamentos');
+const checkoutExterno = require('../utils/checkoutExterno');
+// Perguntas condicionais e bloco do responsável (menor de idade) · 17/08.
+// ⚠️ Réguas PURAS e ÚNICAS: a tela pública usa os espelhos de `src/lib/`, e há
+// teste no gate amarrando os dois lados. Não reimplementar aqui.
+const camposCondicionais = require('../utils/camposCondicionais');
+const inscricaoMenor = require('../utils/inscricaoMenor');
+const lotesEvento = require('../utils/lotesEvento');
+// Régua ÚNICA da tela pública de pagamento (compartilhada com a doação). É onde
+// vivem as leis do parcelado e da forma que o provedor CONFIRMOU — uma segunda
+// cópia dessa lógica seria a garantia de que uma das duas telas ia divergir.
+const {
+  estadoBasePagamento, escolherFormaPagamento, sincronizarSeParada,
+} = require('../services/pagamentos/telaPublica');
 
 // Limiter próprio generoso (mesma lógica do publicGrupos/publicNps): o evento
 // inteiro sai por 1 IP de Wi-Fi — sem teto prático de inscrições (D9).
@@ -77,9 +92,153 @@ const EXT_COMPROVANTE = {
 // aparecem (encerrado mostra "inscrições encerradas" em vez de sumir o link).
 async function eventoEspinhaPorSlug(slug) {
   const { data } = await supabase.from('insc_eventos')
-    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status')
+    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, checkout_externo_url, checkout_externo_nome')
     .eq('slug', slug).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
+  await anexarConfigMenor(data);
+  await anexarExtrasEvento(data);
+  await anexarLotesEvento(data);
+  await anexarWhatsappDuvidas(data);
+  await anexarValorCartaoExterno(data);
+  return data;
+}
+
+/**
+ * ⚠️⚠️ SELECT ISOLADO e BEST-EFFORT das colunas da migration 20260817160000.
+ *
+ * Pedir coluna inexistente faz o PostgREST recusar a query INTEIRA (42703) — e
+ * a query acima é a que abre a página pública de TODO evento ao vivo. Num deploy
+ * em duas etapas (código antes da migration), juntá-las derrubaria o Celebra e o
+ * Patrocinadores por causa de um campo do retiro. Lição do `parcelas_max`.
+ *
+ * Ausente ⇒ os defaults reproduzem o comportamento de antes: endereço opcional,
+ * sem bloco de menor, sem aceite extra.
+ */
+async function anexarConfigMenor(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('exigir_endereco, exige_dados_menor, termos_extra')
+      .eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    ev.exigir_endereco = !!data?.exigir_endereco;
+    ev.exige_dados_menor = !!data?.exige_dados_menor;
+    ev.termos_extra = Array.isArray(data?.termos_extra) ? data.termos_extra : [];
+  } catch (e) {
+    console.warn('[publicEvento espinha] config de menor/endereço indisponível:', e.message);
+    ev.exigir_endereco = false;
+    ev.exige_dados_menor = false;
+    ev.termos_extra = [];
+  }
+  return ev;
+}
+
+/**
+ * ⚠️ Coluna da migration 20260821150000 (grupo de WhatsApp de dúvidas), em
+ * select PRÓPRIO e best-effort — isolada dos outros anexadores porque cada um
+ * cobre uma migration: a falha de uma coluna nova não pode apagar da tela o
+ * que as migrations já aplicadas entregam. Só sai https.
+ */
+async function anexarWhatsappDuvidas(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('whatsapp_duvidas_url').eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    ev.whatsapp_duvidas_url = /^https:\/\//.test(String(data?.whatsapp_duvidas_url || ''))
+      ? data.whatsapp_duvidas_url : null;
+  } catch (e) {
+    console.warn('[publicEvento espinha] whatsapp de dúvidas indisponível:', e.message);
+    ev.whatsapp_duvidas_url = null;
+  }
+  return ev;
+}
+
+/**
+ * ⚠️ Coluna da migration 20260821190000 (preço do cartão na plataforma
+ * externa), em select PRÓPRIO e best-effort — um anexador por coorte de
+ * migration, pela mesma razão dos outros: deploy antes da migration não pode
+ * derrubar o que já está em produção. Ausente ⇒ `null` = a tela não anuncia
+ * preço de cartão, o comportamento de antes.
+ *
+ * ⚠️ Valor só de EXIBIÇÃO: quem paga cartão sai daqui antes de existir
+ * inscrição nossa. Nenhuma cobrança lê este número.
+ */
+async function anexarValorCartaoExterno(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('checkout_externo_valor_centavos').eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    const n = Number(data?.checkout_externo_valor_centavos);
+    ev.checkout_externo_valor_centavos = Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+  } catch (e) {
+    console.warn('[publicEvento espinha] valor do cartão externo indisponível:', e.message);
+    ev.checkout_externo_valor_centavos = null;
+  }
+  return ev;
+}
+
+/**
+ * ⚠️ Coluna da migration 20260821120000 (lotes de preço), em select PRÓPRIO e
+ * best-effort — separada dos outros dois anexadores pra falha aqui não levar
+ * junto o bloco de menor nem o período/instruções. Ausente ⇒ `lotes = []` =
+ * preço único (valor_centavos), o comportamento de sempre.
+ */
+async function anexarLotesEvento(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('lotes').eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    ev.lotes = lotesEvento.sanitizarLotes(data?.lotes) || [];
+  } catch (e) {
+    console.warn('[publicEvento espinha] lotes indisponíveis:', e.message);
+    ev.lotes = [];
+  }
+  return ev;
+}
+
+/**
+ * ⚠️ Colunas da migration 20260820120000 (data_fim + instruções gerais), em
+ * SELECT PRÓPRIO e best-effort — separado do `anexarConfigMenor` de propósito:
+ * se fosse na mesma query, um deploy antes desta migration derrubaria também o
+ * bloco de menor e os aceites, que já estão em produção. Ausente ⇒ evento de um
+ * dia, sem arquivo de instruções (o comportamento de antes).
+ */
+async function anexarExtrasEvento(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('data_fim, instrucoes_url, instrucoes_nome')
+      .eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    ev.data_fim = data?.data_fim || null;
+    ev.instrucoes_url = /^https:\/\//.test(String(data?.instrucoes_url || '')) ? data.instrucoes_url : null;
+    ev.instrucoes_nome = data?.instrucoes_nome || null;
+  } catch (e) {
+    console.warn('[publicEvento espinha] período/instruções indisponíveis:', e.message);
+    ev.data_fim = null;
+    ev.instrucoes_url = null;
+    ev.instrucoes_nome = null;
+  }
+  return ev;
+}
+
+// Mesmo SELECT/régua do por-slug, mas por ID: o app de membros já tem o id do
+// evento (veio do catálogo `GET /api/app/eventos`) e não precisa do slug.
+// ⚠️ Reusar este loader é o que garante que o app veja EXATAMENTE o mesmo
+// evento que a página pública — rascunho/arquivado não abrem em lugar nenhum.
+async function eventoEspinhaPorId(id) {
+  const { data } = await supabase.from('insc_eventos')
+    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, no_totem, checkout_externo_url, checkout_externo_nome')
+    .eq('id', id).is('deleted_at', null).maybeSingle();
+  if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
+  await anexarConfigMenor(data);
+  await anexarExtrasEvento(data);
+  await anexarLotesEvento(data);
+  await anexarWhatsappDuvidas(data);
+  await anexarValorCartaoExterno(data);
   return data;
 }
 
@@ -139,14 +298,30 @@ function mesclarDados(atuais, novas) {
 
 function validarExtras(evCampos, dadosBody) {
   const campos = Array.isArray(evCampos) ? evCampos : [];
+  // ⚠️⚠️ A visibilidade é decidida com a MESMA régua da tela
+  // (`utils/camposCondicionais.js`). Critério divergente dá um de dois estragos,
+  // e os dois já morderam este sistema (o `exige_dados_menor` do voluntariado,
+  // 28/07): formulário INSUBMISSÍVEL (400 citando campo que a tela não mostrou)
+  // ou resposta gravada de pergunta que a pessoa nunca viu.
+  //
+  // ⚠️ Avaliada sobre o que o CLIENTE mandou, porque é disso que a condição
+  // depende (a resposta da pergunta-mãe). Campo escondido não é exigido **e a
+  // resposta dele é DESCARTADA**: quem marcou "tenho alergia", escreveu o
+  // medicamento e depois voltou pra "não tenho" não pode deixar o remédio
+  // gravado — a equipe leria como fato clínico.
+  const visiveis = camposCondicionais.keysVisiveis(campos, dadosBody || {});
   const respostas = {};
   for (const c of campos) {
-    const v = dadosBody && c.key ? dadosBody[c.key] : undefined;
+    if (!c.key || !visiveis.has(String(c.key))) continue;
+    const v = dadosBody ? dadosBody[c.key] : undefined;
     const preenchido = v !== undefined && v !== null && String(v).trim() !== '';
     if (c.obrigatorio && !preenchido) return { erro: `Preencha: ${c.label}` };
     if (preenchido) respostas[c.key] = String(v).slice(0, 500);
   }
-  return { respostas, temCampoImagem: campos.some((c) => c.tipo === 'imagem') };
+  // ⚠️ O consentimento de imagem segue a MESMA visibilidade: um campo de foto
+  // escondido não pode exigir autorização de uso de imagem.
+  const temCampoImagem = campos.some((c) => c.tipo === 'imagem' && c.key && visiveis.has(String(c.key)));
+  return { respostas, temCampoImagem };
 }
 
 function gerarSorteio() { return Math.floor(Math.random() * 9000) + 1000; } // 1000-9999
@@ -157,11 +332,19 @@ function gerarSorteio() { return Math.floor(Math.random() * 9000) + 1000; } // 1
 function metodosDoEvento(ev) {
   const desejados = Array.isArray(ev.pagamento_metodos) && ev.pagamento_metodos.length
     ? ev.pagamento_metodos : null;
+  let lista;
   try {
-    return pagamentos.metodosDisponiveis(desejados);
+    lista = pagamentos.metodosDisponiveis(desejados);
   } catch {
-    return desejados || [];
+    lista = desejados || [];
   }
+  // ⚠️⚠️ Cartão terceirizado sai daqui — e é ESTE campo que vira
+  // `metodos_ofertados` da cobrança, que o servidor confere em `decidirForma`
+  // ("forma fora da lista não é oferecida nem por chamada direta"). Esconder o
+  // botão só na tela deixaria o app, um link antigo de /pagamento/<token> ou uma
+  // chamada direta cobrando cartão por dentro — e a mesma inscrição poderia ser
+  // paga nos DOIS lugares.
+  return checkoutExterno.metodosProprios(lista, ev);
 }
 
 /**
@@ -172,6 +355,11 @@ function metodosDoEvento(ev) {
  */
 function bloqueioPagamento(ev) {
   if (!ev.pagamento_ativo) return null;
+  // ⚠️ Evento 100% no checkout externo (sobrou ZERO método nosso) não depende
+  // do nosso PSP pra nada: quem cobra é a outra plataforma. Exigir PSP aqui
+  // fecharia um evento que está perfeitamente configurado — e a inscrição por
+  // dentro nem acontece (o POST recusa e aponta o link).
+  if (checkoutExterno.temCheckoutExterno(ev) && !metodosDoEvento(ev).length) return null;
   if (!(Number(ev.valor_centavos) > 0)) {
     return 'Este evento está marcado como pago mas ainda não tem valor definido. A equipe já foi avisada.';
   }
@@ -190,6 +378,39 @@ function avisoPagamento(ev) {
 
 /** Referência idempotente da cobrança: reenvio do form devolve a MESMA. */
 const refCobranca = (inscricaoId) => `inscricao:${inscricaoId}`;
+
+/**
+ * O LOTE desta inscrição, pela POSIÇÃO dela na ordem de chegada — nunca pelo
+ * "lote atual" da tela, que pode ter virado entre abrir o formulário e enviar.
+ *
+ * Posição = quantas inscrições vivas NÃO-canceladas chegaram antes (ou junto,
+ * desempatadas pelo id) — a MESMA régua de ocupação da `fn_insc_inscrever`, e
+ * DETERMINÍSTICA: duas pessoas cruzando a fronteira do lote no mesmo segundo
+ * recebem posições distintas, então uma paga o lote velho e a outra o novo, sem
+ * depender da ordem em que as consultas rodaram.
+ *
+ * ⚠️ Fail-soft PRO VALOR DE TABELA (null ⇒ o chamador cobra `ev.valor_centavos`,
+ * que com lotes é o preço FINAL): errar pra cima é a equipe devolvendo diferença
+ * a uma pessoa; errar pra baixo é desconto silencioso que ninguém revisa.
+ */
+async function valorLoteDaInscricao(ev, inscricaoId) {
+  if (!Array.isArray(ev?.lotes) || !ev.lotes.length || !inscricaoId) return null;
+  try {
+    const { data: eu, error: e1 } = await supabase.from('inscricoes')
+      .select('created_at').eq('id', inscricaoId).maybeSingle();
+    if (e1 || !eu?.created_at) return null;
+    const { count, error: e2 } = await supabase.from('inscricoes')
+      .select('id', { count: 'exact', head: true })
+      .eq('evento_id', ev.id).is('deleted_at', null).neq('status', 'cancelada')
+      .or(`created_at.lt.${eu.created_at},and(created_at.eq.${eu.created_at},id.lte.${inscricaoId})`);
+    if (e2 || !(count > 0)) return null;
+    const lote = lotesEvento.loteDaPosicao(ev.lotes, count);
+    return lote ? { valor_centavos: lote.valor_centavos, nome: lote.nome } : null;
+  } catch (e) {
+    console.error('[publicEvento espinha] lote da inscrição:', e.message);
+    return null;
+  }
+}
 
 /**
  * Benefício (gratuidade/desconto) pré-autorizado pra este CPF neste evento.
@@ -256,9 +477,9 @@ async function aplicarBeneficio(beneficio, inscricaoId) {
  * Cria (ou recupera) a cobrança da inscrição e espelha em `insc_pagamentos`,
  * que é a linha que a UI de inscrições lê. O estado canônico vive no motor.
  */
-async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos }) {
+async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos, estacaoId, lote }) {
   const horas = Number(ev.pagamento_expira_horas) > 0 ? Number(ev.pagamento_expira_horas) : 48;
-  const { cobranca } = await pagamentos.criarCobranca({
+  const { cobranca, reemitida } = await pagamentos.criarCobranca({
     origem_tipo: pagamentos.ORIGENS.INSCRICAO,
     origem_id: inscricaoId,
     referencia: refCobranca(inscricaoId),
@@ -278,8 +499,32 @@ async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos }
     pagador_email: val.email,
     pagador_telefone: val.telefone,
     membro_id: membroId || null,
-    metadata: { evento_id: ev.id, evento_slug: ev.slug, evento_nome: ev.nome },
+    // Totem: atribuído pelo SERVIDOR a partir da conta de quiosque logada.
+    // NULL = veio da web (o caso normal).
+    estacao_id: estacaoId || null,
+    // `lote` é REGISTRO de qual lote precificou (a conciliação lê daqui por que
+    // duas cobranças do mesmo evento têm valores diferentes) — nunca decide nada.
+    metadata: { evento_id: ev.id, evento_slug: ev.slug, evento_nome: ev.nome, ...(lote ? { lote } : {}) },
   });
+
+  // ⚠️ Reemissão (a cobrança anterior morreu sem dinheiro): o espelho tem
+  // `uq_insc_pag_inscricao_ativa` — UMA linha por inscrição em
+  // pendente/aguardando/pago. Sem aposentar a antiga, o insert abaixo bate 23505,
+  // é engolido como "já existe", e o painel/`vw_insc_pagamento_estado` seguiriam
+  // apontando pra cobrança MORTA enquanto a nova é a que a pessoa vai pagar.
+  // Mesma manobra que o botão "Dar bolsa" já faz. Só linha `aguardando`/
+  // `pendente`: `pago` nunca é mexido (e ali nem se reemite).
+  if (reemitida) {
+    const { error: eVelha } = await supabase.from('insc_pagamentos')
+      .update({ status: 'expirado' })
+      // Sem filtrar pela cobrança nova: ela ACABOU de nascer, então não tem
+      // espelho ainda — e `neq` deixaria de fora linha legada com
+      // `cobranca_id` nulo (NULL não compara), que é justamente uma das que
+      // travariam a UNIQUE.
+      .eq('inscricao_id', inscricaoId)
+      .in('status', ['pendente', 'aguardando']);
+    if (eVelha) console.error('[publicEvento espinha] aposentar espelho anterior:', eVelha.message);
+  }
 
   // Espelho pro painel. Best-effort e idempotente pela UNIQUE de cobranca_id —
   // reenvio do formulário não cria segunda linha.
@@ -298,6 +543,24 @@ async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos }
   });
   if (error && error.code !== '23505') {
     console.error('[publicEvento espinha] espelho insc_pagamentos:', error.message);
+  }
+
+  // ⚠️ O PREÇO DESTA INSCRIÇÃO (23/08/2026). `valor_cobrado_centavos` só era
+  // escrito pela `aplicarBeneficio` — quem paga o valor CHEIO ficava com a
+  // coluna NULL, e ela é lida pela lista de inscritos (INSCRITOS_COLS), pelo
+  // e-mail e pela conciliação. Medido na 1ª inscrição paga real do AMI CAMP
+  // 2027: cobrança de R$ 830 (lote 1) e inscrição em branco.
+  // Fica AQUI, e não no chamador, porque este é o único ponto que conhece o
+  // valor efetivamente cobrado — inclusive o fallback pro valor de tabela
+  // quando o evento não tem lote — e por ele passam os TRÊS caminhos de
+  // cobrança (nova, re-inscrição e quem perdeu a corrida do lock).
+  // Best-effort e DEPOIS da cobrança: o dinheiro já foi decidido, e uma coluna
+  // de leitura não pode derrubar a inscrição de quem já tem vaga reservada.
+  if (Number(cobranca?.valor_centavos) > 0) {
+    const { error: eValor } = await supabase.from('inscricoes')
+      .update({ valor_cobrado_centavos: Number(cobranca.valor_centavos) })
+      .eq('id', inscricaoId);
+    if (eValor) console.error('[publicEvento espinha] valor cobrado na inscrição:', eValor.message);
   }
 
   // E-mail com o LINK DE PAGAMENTO (decisão do Marcos · 31/07). Sem ele, quem
@@ -341,6 +604,9 @@ function emailConfirmadaBestEffort({ ev, inscricaoId, val, comprovanteToken }) {
       .eq('id', inscricaoId).maybeSingle();
     await enviarEmailInscricaoConfirmada({
       inscricao: {
+        // O id vai junto: é ele que deixa o e-mail saber se a inscrição é de
+        // menor (pra anexar a autorização de embarque do responsável).
+        id: inscricaoId,
         codigo: data?.codigo || null,
         nome_completo: data?.nome_completo || val?.nomeCompleto,
         email: data?.email || val?.email,
@@ -368,12 +634,31 @@ function respostaCobranca(cobranca, ev) {
   };
 }
 
+// ⚠️ Estas duas famílias devolvem ESTADO e são consultadas em POLLING: a tela de
+// pagamento pergunta de 6 em 6 segundos "já caiu?", e o comprovante é o que a
+// portaria lê na entrada. Resposta cacheada aqui mostra o estado de ANTES do
+// pagamento — a mesma classe do incidente do app em 05/08 (ver
+// `middleware/semCache.js`).
+//
+// ⚠️ Escopo por PREFIXO, não no router inteiro, e isso é decisão: `GET /:slug`
+// (a página do evento) é o endereço que leva a multidão no lançamento, e ali um
+// pouco de cache AJUDA. O `vagas_restantes` dela já é declaradamente aproximado
+// — quem decide a vaga é o advisory lock da RPC, não o número na tela.
+router.use('/pagamento', semCache);
+router.use('/comprovante', semCache);
+
 // GET /textos — textos canônicos de consentimento (o front EXIBE estes; o
 // snapshot gravado vem sempre do backend, então tela e registro nunca divergem)
 router.get('/textos', (_req, res) => {
   res.json({
     termos_lgpd: TEXTOS.termos_lgpd,
     imagem: TEXTOS.imagem,
+    // Autorização do responsável de menor (LGPD art. 14 §1º). ⚠️ O texto é o
+    // `_inscricao`, NÃO o da apresentação de crianças (que fala explicitamente
+    // de "apresentação de crianças"). Sem esta chave a tela cairia no fallback
+    // local e o snapshot gravado — que vem do servidor — diria uma coisa
+    // diferente do que a pessoa leu.
+    menor_responsavel: TEXTOS.menor_responsavel_inscricao,
     aviso_optin: TEXTOS.aviso_optin,
   });
 });
@@ -412,6 +697,42 @@ async function comprovantesDaInscricao(inscricaoId) {
   } catch { return []; }
 }
 
+/**
+ * Instruções gerais do EVENTO desta inscrição — pra página de pagamento
+ * oferecer o download quando o pagamento confirma ("a tela de sucesso do
+ * formulário ficou pra trás quando a pessoa foi pro checkout"). Isolada e
+ * fail-soft: colunas da migration 20260820120000.
+ */
+async function instrucoesDaInscricao(inscricaoId) {
+  if (!inscricaoId) return null;
+  try {
+    const { data, error } = await supabase.from('inscricoes')
+      .select('evento:insc_eventos(instrucoes_url, instrucoes_nome)')
+      .eq('id', inscricaoId).maybeSingle();
+    if (error) return null;
+    const url = data?.evento?.instrucoes_url;
+    if (!/^https:\/\//.test(String(url || ''))) return null;
+    return { url, nome: data.evento.instrucoes_nome || 'Instruções gerais' };
+  } catch { return null; }
+}
+
+/**
+ * Grupo de WhatsApp de dúvidas do EVENTO desta inscrição — a página de
+ * pagamento é o "depois de se inscrever" (quem paga nunca volta na tela de
+ * sucesso do formulário). Isolada e fail-soft (coluna da 20260821150000).
+ */
+async function whatsappDuvidasDaInscricao(inscricaoId) {
+  if (!inscricaoId) return null;
+  try {
+    const { data, error } = await supabase.from('inscricoes')
+      .select('evento:insc_eventos(whatsapp_duvidas_url)')
+      .eq('id', inscricaoId).maybeSingle();
+    if (error) return null;
+    const url = data?.evento?.whatsapp_duvidas_url;
+    return /^https:\/\//.test(String(url || '')) ? url : null;
+  } catch { return null; }
+}
+
 /** Código legível da inscrição. Consulta isolada e fail-soft (a coluna é nova). */
 async function codigoDaInscricao(inscricaoId) {
   if (!inscricaoId) return null;
@@ -430,23 +751,11 @@ async function respostaPagamento(cobranca) {
   const comprovantes = daInscricao ? await comprovantesDaInscricao(daInscricao) : [];
   const ofertados = Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [];
   return {
-    status: cobranca.status,
-    pago: cobranca.status === 'pago',
-    valor_centavos: cobranca.valor_centavos,
-    valor_pago_centavos: cobranca.valor_pago_centavos,
-    metodo: cobranca.metodo || null,
-    parcelas: cobranca.parcelas_total || null,
-    // Quais formas a tela deve oferecer. Config do evento cruzada com a
-    // capacidade do provider — não é PII. Sem isto a página teria que chutar
-    // os três e poderia oferecer boleto num evento que não aceita boleto.
-    metodos: ofertados,
-    parcelas_max: cobranca.parcelas_max || null,
-    checkout_url: cobranca.checkout_url || null,
-    pix_payload: cobranca.pix_payload || null,
-    boleto_linha_digitavel: cobranca.boleto_linha_digitavel || null,
-    boleto_url: cobranca.boleto_url || null,
-    expira_em: cobranca.expira_em || null,
-    pago_em: cobranca.pago_em || null,
+    // Campos comuns a TODA tela pública de pagamento (status, valor, forma,
+    // formas ofertadas, artefatos, prazos) vêm da régua única em
+    // `services/pagamentos/telaPublica.js` — a doação usa a MESMA. Só o que é
+    // específico de INSCRIÇÃO fica aqui embaixo.
+    ...estadoBasePagamento(cobranca),
     evento_nome: cobranca.metadata?.evento_nome || null,
     evento_slug: cobranca.metadata?.evento_slug || null,
     // Código legível da inscrição (CBR-AAAA-NNNNNN) — é o que a pessoa cita
@@ -457,6 +766,12 @@ async function respostaPagamento(cobranca) {
     // AQUI — a tela de sucesso do formulário já ficou pra trás quando a
     // pessoa foi pro checkout, e esta é a página que ela reabre.
     comprovante_token: comprovanteToken,
+    // Instruções gerais do evento: só com `pago` (inscrição concluída). O
+    // mesmo arquivo vai anexado no e-mail de confirmação — o download aqui é
+    // o "quer baixar agora?".
+    instrucoes: cobranca.status === 'pago' ? await instrucoesDaInscricao(daInscricao) : null,
+    // Grupo de dúvidas: SEMPRE (antes e depois de pagar — é pra tirar dúvida).
+    whatsapp_duvidas: await whatsappDuvidasDaInscricao(daInscricao),
 
     // ── Comprovante de Pix/transferência (fila humana) ──
     // Só faz sentido oferecer enquanto NÃO está pago e em forma que pode ter
@@ -568,54 +883,77 @@ router.post('/pagamento/:token/comprovante', uploadComprovante.single('arquivo')
  *
  * Não mexe em valor, status nem vaga. Trocar de forma não é pagar nem cancelar.
  */
+/**
+ * POST /pagamento/:token/cartao — cobra o cartão SEM sair da nossa página.
+ *
+ * O corpo é o `formData` que o Card Payment Brick monta no navegador. ⚠️ O que
+ * chega aqui é **token**, nunca número de cartão: é isso que mantém o PAN fora
+ * do nosso servidor (lei nº 5) e ainda assim tira o redirecionamento pro site do
+ * provedor — que era a única razão do salto existir.
+ *
+ * ⚠️ O `transaction_amount` que o Brick manda é IGNORADO. Quem diz o valor é a
+ * cobrança no banco; o formulário roda no navegador da pessoa, e aceitar o valor
+ * dele seria deixar qualquer um escolher quanto pagar pela inscrição.
+ */
+router.post('/pagamento/:token/cartao', async (req, res) => {
+  try {
+    const cobranca = await pagamentos.consultarPorToken(req.params.token);
+    if (!cobranca) return res.status(404).json({ error: 'Cobrança não encontrada' });
+
+    const b = req.body || {};
+    if (!b.token) return res.status(400).json({ error: 'Não recebemos os dados do cartão. Tente de novo.' });
+
+    const r = await pagamentos.pagarComCartao(cobranca, {
+      token: b.token,
+      installments: b.installments,
+      payment_method_id: b.payment_method_id,
+      issuer_id: b.issuer_id,
+      payment_method_option_id: b.payment_method_option_id,
+      payer: b.payer,
+    });
+
+    // Estado atual SEMPRE no corpo, inclusive em erro: sem isso a tela regride
+    // pra vazio e a pessoa não sabe se pagou (mesma régua do /metodo).
+    const pagamento = await respostaPagamento(r.cobranca || cobranca);
+
+    if (!r.ok) {
+      if (r.recusado) {
+        // 402: o pedido estava correto, o emissor recusou. A cobrança segue viva
+        // pra ela tentar outro cartão ou o Pix.
+        return res.status(402).json({ error: r.motivo || 'Pagamento não aprovado.', recusado: true, pagamento });
+      }
+      if (r.motivo === 'cobranca_nao_editavel') {
+        return res.status(409).json({ error: 'Esta cobrança já foi paga ou encerrada.', pagamento });
+      }
+      if (r.motivo === 'provider_sem_tokenizacao') {
+        return res.status(503).json({ error: 'Pagamento com cartão nesta tela está indisponível agora.', pagamento });
+      }
+      return res.status(400).json({ error: r.motivo || 'Não foi possível cobrar o cartão.', pagamento });
+    }
+
+    return res.json(pagamento);
+  } catch (e) {
+    console.error('[publicEvento] cartao:', e.message);
+    // ⚠️ Mensagem genérica pra fora: erro do provedor pode citar detalhe de
+    // conta/credencial, e isso não vai pra tela de quem está pagando.
+    res.status(502).json({ error: 'Não foi possível processar o cartão agora. Tente de novo em instantes.' });
+  }
+});
+
 router.post('/pagamento/:token/metodo', async (req, res) => {
   try {
     const cobranca = await pagamentos.consultarPorToken(req.params.token);
     if (!cobranca) return res.status(404).json({ error: 'Cobrança não encontrada' });
 
-    const metodo = String(req.body?.metodo || '').trim();
-    const ofertados = Array.isArray(cobranca.metodos_ofertados) ? cobranca.metodos_ofertados : [];
-    // Respeita a configuração do EVENTO: forma fora da lista não é oferecida
-    // nem por chamada direta. Lista vazia = cobrança antiga, antes do seletor.
-    if (ofertados.length && !ofertados.includes(metodo)) {
-      return res.status(400).json({ error: 'Esta forma de pagamento não está disponível para este evento.' });
-    }
-    if (cobranca.status === 'pago') return res.json(await respostaPagamento(cobranca));
-
-    // Parcelas: teto validado NO SERVIDOR contra o do evento. Confiar no número
-    // que vem da tela deixaria alguém parcelar em 21x um retiro configurado
-    // para 3x — e o teto existe porque ele é a data em que a igreja paga o local.
-    // `parcelas_max` NULL = vale o teto da conta do PSP (decisão registrada), e
-    // não 1 — tratar NULL como 1x tiraria o parcelado de todo evento que não
-    // configurou teto.
-    const tetoEvento = Number(cobranca.parcelas_max) > 0
-      ? Number(cobranca.parcelas_max)
-      : (pagamentos.capacidades(cobranca.provider)?.parcelas_max || 1);
-    const pedidas = Math.floor(Number(req.body?.parcelas) || 1);
-    const parcelas = metodo === 'cartao' && pedidas > 1
-      ? Math.min(pedidas, tetoEvento) : 1;
-
-    try {
-      const r = await pagamentos.definirMetodo(cobranca, metodo, { parcelas });
-      // `alterada: false` = a cobrança não aceita mais troca de forma (já tem
-      // dinheiro dentro ou está terminal). Era um 200 SILENCIOSO: a aba mudava,
-      // o servidor não, e a tela ficava mostrando duas verdades sem dizer nada.
-      if (r.alterada === false) {
-        return res.status(409).json({
-          error: 'Esta cobrança não aceita mais troca de forma de pagamento.',
-          pagamento: await respostaPagamento(r.cobranca),
-        });
-      }
-      return res.json(await respostaPagamento(r.cobranca));
-    } catch (e) {
-      console.error('[publicEvento] definir forma de pagamento:', e.message);
-      // 502: o problema é do outro lado (conta do provedor sem aquele meio
-      // habilitado, por exemplo). A tela mostra a alternativa que existe.
-      return res.status(502).json({
-        error: 'Não conseguimos preparar esta forma de pagamento agora.',
-        pagamento: await respostaPagamento(cobranca),
-      });
-    }
+    // Validação da forma, teto de parcelas no SERVIDOR, `definirMetodo` e o
+    // mapeamento de erro (400 forma indisponível · 409 cobrança travada · 502
+    // provedor recusou) vivem em `telaPublica.escolherFormaPagamento`.
+    const r = await escolherFormaPagamento(cobranca, {
+      metodo: req.body?.metodo, parcelas: req.body?.parcelas,
+    });
+    const pagamento = await respostaPagamento(r.cobranca);
+    if (r.error) return res.status(r.status).json({ error: r.error, pagamento });
+    return res.json(pagamento);
   } catch (e) {
     console.error('[publicEvento] metodo do pagamento:', e.message);
     res.status(500).json({ error: 'Erro ao escolher a forma de pagamento.' });
@@ -629,16 +967,9 @@ router.get('/pagamento/:token', async (req, res) => {
 
     // Rede de segurança nº 1: parado há mais de 2 min sem resolver → consulta o
     // PSP na hora. O webhook é otimização de latência; ninguém deve ficar
-    // olhando "aguardando" porque uma entrega se perdeu.
-    const paradaHa = Date.now() - new Date(cobranca.updated_at).getTime();
-    if (['criada', 'aguardando_pagamento'].includes(cobranca.status) && paradaHa > 120000) {
-      try {
-        const r = await pagamentos.sincronizar(cobranca);
-        if (r?.cobranca) cobranca = r.cobranca;
-      } catch (e) {
-        console.error('[publicEvento] sincronizar cobrança:', e.message);
-      }
-    }
+    // olhando "aguardando" porque uma entrega se perdeu. Régua compartilhada com
+    // a doação (`telaPublica.sincronizarSeParada`).
+    cobranca = await sincronizarSeParada(cobranca);
 
     res.json(await respostaPagamento(cobranca));
   } catch (e) {
@@ -697,34 +1028,98 @@ router.get('/:slug', async (req, res) => {
   try {
   const esp = await eventoEspinhaPorSlug(req.params.slug);
   if (esp) {
+    const pago = !!esp.pagamento_ativo && Number(esp.valor_centavos) > 0;
+    const temLotes = pago && Array.isArray(esp.lotes) && esp.lotes.length > 0;
     // Evento pago ABRE desde a F3.3 — o curto-circuito `pago ||` saiu. O de
     // vagas continua: evento sem limite (o Celebra migrou com vagas=null) não
-    // gasta a RPC.
-    const ocup = esp.vagas == null ? null : await ocupacaoEspinha(esp.id);
+    // gasta a RPC — a menos que haja LOTES, cuja exibição depende da ocupação.
+    const ocup = (esp.vagas != null || temLotes) ? await ocupacaoEspinha(esp.id) : null;
+    // Lote ATUAL só com a ocupação em mãos: sem ela (RPC soluçou), a tela cai
+    // no valor de tabela (o preço FINAL) em vez de prometer um desconto que a
+    // cobrança pode não dar. Quem decide o preço cobrado é o POST, pela POSIÇÃO
+    // da inscrição — esta exibição é o convite, não a decisão.
+    const lote = temLotes && ocup ? lotesEvento.loteAtual(esp.lotes, ocup.ocupadas || 0) : null;
     // ⚠️ Evento pago MAL CONFIGURADO conta como fechado, senão a pessoa preenche
     // o formulário inteiro e só então leva 503 do POST. O aviso explica por quê.
     const bloqueio = bloqueioPagamento(esp);
     const encerradas = !!bloqueio || await espinhaEncerrada(esp);
-    const pago = !!esp.pagamento_ativo && Number(esp.valor_centavos) > 0;
     return res.json({
       fonte: 'espinha',
       nome: esp.nome, slug: esp.slug, data: esp.data, hora: esp.hora, local: esp.local,
+      // Último dia (retiro de vários dias) — a tela mostra "5 a 10 de fevereiro".
+      data_fim: esp.data_fim || null,
+      // Instruções gerais: a tela de sucesso oferece o download depois de
+      // concluir (quem paga por Pix recebe na página de pagamento, quando paga).
+      instrucoes: esp.instrucoes_url
+        ? { url: esp.instrucoes_url, nome: esp.instrucoes_nome || 'Instruções gerais' }
+        : null,
       descricao: esp.descricao, form_ativo: !encerradas, tem_sorteio: esp.tem_sorteio,
       campos: Array.isArray(esp.campos) ? esp.campos : [], capa_url: esp.capa_url || null,
       inscricoes_encerram_em: esp.inscricoes_encerram_em || null,
       inscricoes_encerradas: encerradas,
       vagas: esp.vagas ?? null,
-      vagas_restantes: ocup ? ocup.restantes : null, // null = ilimitado
-      // Pagamento: a tela mostra o valor ANTES de a pessoa preencher.
+      // null = ilimitado — E TAMBÉM evento com LOTES: ali a contagem de quem já
+      // entrou não sai nem pela API (pedido do Arthur · 21/08). Zerar aqui, e
+      // não só na tela, é o que cala o placar pra bundle velho em cache e pra
+      // quem abre o JSON na mão. O teto continua valendo: quem decide vaga é a
+      // RPC do POST, dentro do lock.
+      vagas_restantes: temLotes || !ocup ? null : ocup.restantes,
+      // Pagamento: a tela mostra o valor ANTES de a pessoa preencher — e com
+      // lotes é o preço do LOTE ATUAL (bundle antigo mostra o número certo sem
+      // saber o que é lote).
       pagamento_ativo: pago,
-      valor_centavos: pago ? Number(esp.valor_centavos) : null,
+      valor_centavos: pago ? (lote ? lote.valor_centavos : Number(esp.valor_centavos)) : null,
+      // Lote atual por extenso, pra tela rotular ("Lote 1 · R$ 830 no Pix").
+      // null = evento sem lotes, ou ocupação indisponível.
+      // ⚠️ SÓ nome e preço de HOJE: `restantes_no_lote` e `proximo` NÃO saem no
+      // payload público (pedido do Arthur · 21/08) — anunciar quanto falta e
+      // quanto vai custar depois entrega o placar de inscritos pra qualquer um
+      // que abra a API. O preço de cada inscrição continua decidido no POST,
+      // pela posição, com a régua inteira do `lotesEvento` no servidor.
+      lote_atual: lote ? { nome: lote.nome, valor_centavos: lote.valor_centavos } : null,
+      // Grupo de WhatsApp pra dúvidas (21/08): link de ENTRADA exibido no
+      // cabeçalho — cobre escolha de forma, formulário e tela de sucesso.
+      whatsapp_duvidas: esp.whatsapp_duvidas_url || null,
       pagamento_metodos: pago ? metodosDoEvento(esp) : [],
+      // Cartão numa plataforma externa (e-Inscrição): a tela pergunta a forma
+      // ANTES do formulário e manda pra lá quem escolher cartão. `null` = o
+      // cartão é cobrado aqui, e a tela nem faz a pergunta.
+      checkout_externo: pago && checkoutExterno.temCheckoutExterno(esp) ? {
+        url: checkoutExterno.linkExternoValido(esp.checkout_externo_url),
+        nome: checkoutExterno.nomeExterno(esp.checkout_externo_nome),
+        // Não sobrou método nosso ⇒ TODA inscrição acontece lá fora, e a tela
+        // não pergunta nada: pergunta de uma alternativa só é atrito puro.
+        exclusivo: !metodosDoEvento(esp).length,
+        // Preço do cartão LÁ (migration 20260821190000) — pedido do Arthur pro
+        // AMI CAMP 2027: "R$ 850 no cartão, valor normal · R$ 830 de desconto
+        // no Pix". null = não anunciar preço de cartão (a tela só fala do Pix).
+        // ⚠️ Configurado na tela do evento, não derivado: é preço de OUTRA
+        // plataforma, e derivar seria a nossa tela chutando o número deles.
+        valor_centavos: esp.checkout_externo_valor_centavos || null,
+      } : null,
       pagamento_expira_horas: pago ? (esp.pagamento_expira_horas || 48) : null,
       // ⚠️ Evento marcado como pago mas sem valor (ou sem PSP configurado) NÃO
       // pode receber inscrição gratuita por acidente — avisa e não abre.
       aviso: avisoPagamento(esp),
       msg_sucesso_titulo: esp.msg_sucesso_titulo || null,
       msg_sucesso_texto: esp.msg_sucesso_texto || null,
+      // Retiro/viagem (17/08). ⚠️ Os textos dos aceites vão SEM o `url` cru se
+      // ele não for https — a coluna já filtra, mas a tela transforma isto em
+      // `href` e não pode confiar no que está gravado.
+      exigir_endereco: !!esp.exigir_endereco,
+      exige_dados_menor: !!esp.exige_dados_menor,
+      maioridade: inscricaoMenor.MAIORIDADE,
+      parentescos: esp.exige_dados_menor ? inscricaoMenor.PARENTESCOS : [],
+      termos_extra: (Array.isArray(esp.termos_extra) ? esp.termos_extra : [])
+        .filter((t) => t && t.chave && t.texto)
+        .map((t) => ({
+          chave: String(t.chave),
+          titulo: String(t.titulo || 'Termo do evento'),
+          texto: String(t.texto),
+          // A tela mostra este aceite só quando o bloco de menor aparece.
+          ...(t.so_menor ? { so_menor: true } : {}),
+          ...(/^https:\/\//.test(String(t.url || '')) ? { url: String(t.url) } : {}),
+        })),
     });
   }
 
@@ -749,8 +1144,22 @@ router.get('/:slug', async (req, res) => {
 });
 
 // ── POST /:slug/inscrever · ESPINHA ────────────────────────────────────────
-async function inscreverEspinha(req, res, ev) {
+/**
+ * ⚠️ FUNÇÃO ÚNICA de inscrição na espinha — usada pela porta pública E pelo app
+ * de membros (`POST /api/app/eventos/:id/inscrever`, que a importa). O app é um
+ * CLIENTE novo desta régua, não uma porta nova: validação do contrato, benefício
+ * por CPF, RPC atômica de vaga, consentimentos, cobrança e WhatsApp são os
+ * MESMOS. Duplicar isso no app seria o "segundo caminho de escrita de pessoa"
+ * que o Contrato de porta existe pra impedir.
+ * @param opts.origem  rótulo gravado em `inscricoes.origem` ('app' quando vem do
+ *   app · a coluna é TEXT sem CHECK, conferido no banco).
+ */
+async function inscreverEspinha(req, res, ev, opts = {}) {
   const body = req.body || {};
+  const origemInscricao = opts.origem || 'formulario_publico';
+  // Estação do totem (quando a inscrição vem do quiosque). Chega SEMPRE do
+  // servidor — ver routes/inscricoes.js `/totem/eventos/:id/inscrever`.
+  const estacaoId = opts.estacaoId || null;
   if (await espinhaEncerrada(ev)) {
     return res.status(403).json({ error: 'As inscrições deste evento estão encerradas.' });
   }
@@ -758,6 +1167,16 @@ async function inscreverEspinha(req, res, ev) {
   // e sobretudo não vira inscrição gratuita por acidente.
   const bloqueio = bloqueioPagamento(ev);
   if (bloqueio) return res.status(503).json({ error: bloqueio });
+  // ⚠️ Evento 100% no checkout externo: recusa com o LINK na resposta, nunca um
+  // "não pode" seco. Quem chega aqui é bundle antigo ou chamada direta — a
+  // pessoa não tem culpa e precisa saber para onde ir.
+  if (checkoutExterno.temCheckoutExterno(ev) && !metodosDoEvento(ev).length) {
+    const op = checkoutExterno.opcoesPagamento(ev);
+    return res.status(409).json({
+      error: `A inscrição deste evento é feita pelo ${op.externo_nome}.`,
+      checkout_externo: { url: op.externo_url, nome: op.externo_nome },
+    });
+  }
   const ehPago = !!ev.pagamento_ativo;
 
   // Campos padrão do contrato (D1–D9 + 28/07)
@@ -765,10 +1184,58 @@ async function inscreverEspinha(req, res, ev) {
   const campoErro = Object.keys(erros)[0];
   if (campoErro) return res.status(400).json({ error: erros[campoErro], campo: campoErro });
   if (!body.aceita_termos) return res.status(400).json({ error: 'É preciso aceitar os termos para se inscrever.', campo: 'aceita_termos' });
+  // Endereço é fixo-OPCIONAL no Contrato (28/07); retiro e viagem ligam a
+  // exigência POR EVENTO. ⚠️ Conferido aqui, depois do contrato, pra a mensagem
+  // sair no mesmo formato dos outros campos (`campo` aponta o input na tela).
+  if (ev.exigir_endereco && !val.endereco) {
+    return res.status(400).json({ error: 'Informe o endereço completo.', campo: 'endereco' });
+  }
 
   const ex = validarExtras(ev.campos, body.dados);
   if (ex.erro) return res.status(400).json({ error: ex.erro });
   const optin = Boolean(body.whatsapp_optin);
+
+  // ── Bloco do responsável (menor de idade · LGPD art. 14 §1º) ─────────────
+  // ⚠️ Quem decide é o SERVIDOR, com o nascimento que ele acabou de validar —
+  // nunca uma flag do cliente. `exige_dados_menor` do evento + menor de 18 na
+  // data da inscrição (régua e o porquê da data em utils/inscricaoMenor.js).
+  const precisaResponsavel = inscricaoMenor.exigeResponsavel(ev, val.dataNascimento);
+  let resp = null;
+  if (precisaResponsavel) {
+    const r = inscricaoMenor.validarResponsavel(body);
+    const respErro = Object.keys(r.erros)[0];
+    if (respErro) return res.status(400).json({ error: r.erros[respErro], campo: respErro });
+    // ⚠️ O consentimento do responsável é EXIGÊNCIA LEGAL, não caixinha
+    // opcional: sem ele não há base para tratar dado de menor de 18.
+    if (!body.consent_menor) {
+      return res.status(400).json({
+        error: 'É preciso a autorização do responsável para inscrever menor de idade.',
+        campo: 'consent_menor',
+      });
+    }
+    resp = r.valores;
+  }
+
+  // ── Aceites próprios do evento (`termos_extra`) ──────────────────────────
+  // Todos são OBRIGATÓRIOS: a lista existe justamente pra o que a igreja precisa
+  // que a pessoa leia (regulamento, termo de responsabilidade). Aceite opcional
+  // seria um texto que ninguém marca e que não prova nada.
+  // ⚠️ `so_menor` filtra o aceite que só vale pra menor (o "Termos de
+  // Responsabilidade — Menor de idade" do retiro): exigir de adulto seria pedir
+  // que ele aceite um termo sobre si mesmo como menor de idade. A decisão usa o
+  // MESMO `precisaResponsavel` que o servidor acabou de calcular.
+  const termosEvento = (Array.isArray(ev.termos_extra) ? ev.termos_extra : [])
+    .filter((t) => t && t.chave && t.texto)
+    .filter((t) => !t.so_menor || precisaResponsavel);
+  const aceitesBody = (body.aceites && typeof body.aceites === 'object') ? body.aceites : {};
+  for (const t of termosEvento) {
+    if (aceitesBody[t.chave] !== true) {
+      return res.status(400).json({
+        error: `É preciso aceitar: ${t.titulo || 'termo do evento'}.`,
+        campo: `aceite_${t.chave}`,
+      });
+    }
+  }
 
   // Benefício PRÉ-AUTORIZADO pra este CPF (gratuidade ou desconto que o líder
   // cadastrou antes). Consultado ANTES da RPC porque decide o `p_status`:
@@ -791,6 +1258,24 @@ async function inscreverEspinha(req, res, ev) {
       { tipo: 'termos_lgpd', aceito: true },
       { tipo: 'whatsapp', aceito: optin },
       ...(ex.temCampoImagem ? [{ tipo: 'imagem', aceito: Boolean(body.consent_imagem) }] : []),
+      // Autorização do responsável (LGPD art. 14 §1º) — só quando o SERVIDOR
+      // decidiu que a pessoa é menor. Chega aqui sempre `aceito: true`, porque a
+      // inscrição foi RECUSADA acima sem ele.
+      // ⚠️ `texto` explícito: o default de `registrarConsentimentos` é
+      // `TEXTOS[tipo]`, que fala de "apresentação de crianças" — gravaria uma
+      // prova legal descrevendo outra porta.
+      ...(precisaResponsavel
+        ? [{ tipo: 'menor_responsavel', aceito: true, texto: TEXTOS.menor_responsavel_inscricao }]
+        : []),
+      // ⚠️ Cada aceite do evento é linha PRÓPRIA, com o texto EXIBIDO como
+      // snapshot: é o que permite responder "qual versão do regulamento esta
+      // pessoa aceitou?" depois que a equipe editar o texto. O título vai junto
+      // porque o `tipo` é o mesmo pros N termos.
+      ...termosEvento.map((t) => ({
+        tipo: 'evento_termo',
+        aceito: true,
+        texto: `[${t.chave}] ${t.titulo || 'Termo do evento'}\n\n${t.texto}`,
+      })),
     ],
   });
 
@@ -802,14 +1287,24 @@ async function inscreverEspinha(req, res, ev) {
   //      um SEGUNDO número da sorte pro palco. A guarda de nome
   //      (nomesMesmaPessoa) evita colar na inscrição de um parente que usa o
   //      mesmo telefone — nome divergente segue criando inscrição própria.
+  // ⚠️⚠️ As colunas do responsável entram no SELECT **só quando o evento pede o
+  // bloco de menor** — e `exige_dados_menor` só pode ser true depois da migration
+  // 20260817160000 (sem ela, `anexarConfigMenor` devolve false). Pôr as 6 colunas
+  // fixas aqui faria o PostgREST recusar a query INTEIRA (42703) num deploy em
+  // duas etapas, e esta é a consulta de dedup de TODA re-inscrição: o Celebra
+  // passaria a dar 500 por causa de um campo do retiro. Lição do `parcelas_max`.
+  const COLS_DEDUP = 'id, numero_sorte, dados, membro_id, whatsapp_optin, status, nome_completo, cpf, email, data_nascimento, sexo, endereco, telefone';
+  const colsDedup = ev.exige_dados_menor
+    ? `${COLS_DEDUP}, responsavel_nome, responsavel_cpf, responsavel_parentesco, responsavel_telefone, responsavel_email, responsavel_autoriza_batismo`
+    : COLS_DEDUP;
   const { data: dups, error: eDup } = await supabase.from('inscricoes')
-    .select('id, numero_sorte, dados, membro_id, whatsapp_optin, status, nome_completo, cpf, email, data_nascimento, sexo, endereco, telefone')
+    .select(colsDedup)
     .eq('evento_id', ev.id).eq('cpf', val.cpf).is('deleted_at', null).limit(2);
   if (eDup) throw eDup;
   let existente = (dups || []).find(d => d.status !== 'cancelada') || (dups || [])[0] || null;
   if (!existente && val.telefone) {
     const { data: legadas, error: eLeg } = await supabase.from('inscricoes')
-      .select('id, numero_sorte, dados, membro_id, whatsapp_optin, status, nome_completo, cpf, email, data_nascimento, sexo, endereco, telefone')
+      .select(colsDedup)
       .eq('evento_id', ev.id).eq('telefone', val.telefone).is('cpf', null).is('deleted_at', null).limit(5);
     if (eLeg) throw eLeg;
     existente = (legadas || []).find(d => nomesMesmaPessoa(d.nome_completo, val.nomeCompleto) && d.status !== 'cancelada')
@@ -832,6 +1327,21 @@ async function inscreverEspinha(req, res, ev) {
     if (!existente.sexo && val.sexo) patch.sexo = val.sexo;
     if (!existente.endereco && val.endereco) patch.endereco = val.endereco;
     if (!existente.telefone && val.telefone) patch.telefone = val.telefone;
+    // Responsável do menor na re-inscrição: preenche só o que está VAZIO, a
+    // MESMA política das linhas acima. ⚠️ Corrigir um contato JÁ gravado é ato de
+    // gente na ficha da inscrição — reescrever aqui deixaria um reenvio
+    // acidental (ou um bundle antigo sem os campos) apagar o telefone de
+    // emergência que a equipe já conferiu.
+    if (resp) {
+      if (!existente.responsavel_nome && resp.responsavelNome) patch.responsavel_nome = resp.responsavelNome;
+      if (!existente.responsavel_cpf && resp.responsavelCpf) patch.responsavel_cpf = resp.responsavelCpf;
+      if (!existente.responsavel_parentesco && resp.responsavelParentesco) patch.responsavel_parentesco = resp.responsavelParentesco;
+      if (!existente.responsavel_telefone && resp.responsavelTelefone) patch.responsavel_telefone = resp.responsavelTelefone;
+      if (!existente.responsavel_email && resp.responsavelEmail) patch.responsavel_email = resp.responsavelEmail;
+      if (existente.responsavel_autoriza_batismo == null && resp.responsavelAutorizaBatismo != null) {
+        patch.responsavel_autoriza_batismo = resp.responsavelAutorizaBatismo;
+      }
+    }
     if (existente.status === 'cancelada') {
       // Voltou atrás → reativa. ⚠️ Em evento PAGO reativa como `recebida`, não
       // `confirmada`: confirmar aqui daria a vaga a quem não pagou.
@@ -861,8 +1371,13 @@ async function inscreverEspinha(req, res, ev) {
       // Quem já pagou vê o comprovante; quem não pagou recebe o MESMO link
       // (a `referencia` idempotente devolve a cobrança existente em vez de
       // criar uma segunda — é assim que ninguém paga duas vezes).
+      // ⚠️ O valor do lote vai junto pro caso de REEMISSÃO (cobrança anterior
+      // morta sem dinheiro): a nova precisa nascer com o preço da POSIÇÃO da
+      // pessoa, não com o valor de tabela.
+      const loteExistente = await valorLoteDaInscricao(ev, existente.id);
       const cobranca = await cobrarInscricao({
         ev, inscricaoId: existente.id, val, membroId: existente.membro_id,
+        valorCentavos: loteExistente?.valor_centavos, lote: loteExistente?.nome,
       });
       return res.json({ ...respostaCobranca(cobranca, ev), ja_inscrito: true });
     }
@@ -895,7 +1410,7 @@ async function inscreverEspinha(req, res, ev) {
     // pagamento a esperar, e deixá-la `recebida` faria o cron de expiração
     // tirar a vaga de quem a igreja decidiu isentar.
     p_status: vaiCobrar ? 'recebida' : 'confirmada',
-    p_origem: 'formulario_publico',
+    p_origem: origemInscricao,
     p_com_sorteio: !!ev.tem_sorteio,
     p_whatsapp_optin: optin,
   });
@@ -909,7 +1424,11 @@ async function inscreverEspinha(req, res, ev) {
       // da cobrança que já existe (a `referencia` idempotente garante que é a
       // mesma, então ninguém paga duas vezes).
       if (ehPago && rpc.id) {
-        const cobranca = await cobrarInscricao({ ev, inscricaoId: rpc.id, val, membroId: null });
+        const loteCorrida = await valorLoteDaInscricao(ev, rpc.id);
+        const cobranca = await cobrarInscricao({
+          ev, inscricaoId: rpc.id, val, membroId: null, estacaoId,
+          valorCentavos: loteCorrida?.valor_centavos, lote: loteCorrida?.nome,
+        });
         return res.json({ ...respostaCobranca(cobranca, ev), ja_inscrito: true });
       }
       // Busca a linha vencedora pra devolver o número da sorte — sem isso a
@@ -939,14 +1458,88 @@ async function inscreverEspinha(req, res, ev) {
   }
   const ins = { id: rpc.id, numero_sorte: rpc.numero_sorte };
 
+  // ── Dados do responsável, gravados DEPOIS do insert atômico ──────────────
+  // ⚠️ A `fn_insc_inscrever` não tem parâmetro pra eles, e NÃO os acrescentei:
+  // ela é o ÚNICO caminho de criação de inscrição do sistema, `CREATE OR REPLACE`
+  // com assinatura nova cria OVERLOAD (a antiga continua viva e o PostgREST
+  // escolhe qualquer uma), e reescrevê-la a partir do arquivo do repo reverteria
+  // em silêncio qualquer ajuste que exista só em produção. Trocar o risco de
+  // quebrar a inscrição de TODO evento pelo de um UPDATE a mais não se paga.
+  //
+  // ⚠️⚠️ Mas aqui, DIFERENTE da estação do totem logo abaixo, o UPDATE é AWAITED
+  // e com uma retentativa: aquilo é atribuição (perder é inofensivo), isto é o
+  // CONTATO DE EMERGÊNCIA de um adolescente que vai passar dias fora. Se mesmo
+  // assim falhar, a inscrição VALE (o consentimento do responsável está
+  // registrado) e a equipe é avisada pra pedir o contato — nunca se devolve erro
+  // pra quem já tem vaga reservada, e nunca se finge que gravou.
+  if (resp) {
+    const patchResp = {
+      responsavel_nome: resp.responsavelNome,
+      responsavel_cpf: resp.responsavelCpf,
+      responsavel_parentesco: resp.responsavelParentesco,
+      responsavel_telefone: resp.responsavelTelefone,
+      responsavel_email: resp.responsavelEmail,
+      responsavel_autoriza_batismo: resp.responsavelAutorizaBatismo,
+    };
+    let erroResp = null;
+    for (let tentativa = 0; tentativa < 2; tentativa++) {
+      const { error: eResp } = await supabase.from('inscricoes').update(patchResp).eq('id', ins.id);
+      if (!eResp) { erroResp = null; break; }
+      erroResp = eResp;
+    }
+    if (erroResp) {
+      console.error('[publicEvento espinha] responsavel do menor:', erroResp.message);
+      // ⚠️ O aviso NÃO leva o contato do responsável: notificação é lida por
+      // quem a regra do módulo alcançar, e este é dado de menor de idade.
+      notificar({
+        modulo: 'inscricoes', tipo: 'nova_inscricao',
+        titulo: `Contato do responsável não gravou · ${ev.nome}`,
+        mensagem: `A inscrição de ${val.nomeCompleto} é de menor de idade e os dados do responsável NÃO foram gravados. Abra a inscrição e peça o contato antes do evento.`,
+        link: `/inscricoes/evento/${ev.id}`,
+        chaveDedup: `insc_resp_falhou_${ins.id}`,
+      }).catch((err) => console.error('[publicEvento espinha] avisar responsavel:', err.message));
+    }
+  }
+
+  // Estação do totem na própria inscrição. Separado da cobrança de propósito:
+  // evento GRATUITO não tem cobrança e a gente ainda quer saber onde a pessoa
+  // se inscreveu (e onde o consentimento foi colhido).
+  // ⚠️ Best-effort e DEPOIS do insert: a `fn_insc_inscrever` não tem parâmetro
+  // pra isso (acrescentar exigiria DROP+CREATE da função, que é o caminho de
+  // risco pra uma coluna de atribuição). Falhar aqui deixa a inscrição sem
+  // origem — exatamente o estado de quem se inscreve pela web —, nunca sem
+  // inscrição.
+  if (estacaoId) {
+    supabase.from('inscricoes').update({ totem_estacao_id: estacaoId }).eq('id', ins.id)
+      .then(({ error: eEst }) => {
+        if (eEst) console.error('[publicEvento espinha] estacao na inscricao:', eEst.message);
+      });
+  }
+
   // Benefício autorizado pra este CPF: grava o preço DESTA inscrição e queima a
   // autorização. Antes da cobrança, porque é ele que define o valor cobrado.
   await aplicarBeneficio(beneficio, ins.id);
 
-  // Funil de identidade (matcher read-only + observação) + consentimentos.
+  // Funil de identidade (matcher + observação) + consentimentos.
+  //
+  // ⚠️⚠️ COM CPF, ESTA PORTA CRIA (23/08/2026). Ela era `ligar` puro — só
+  // ACHAVA cadastro existente —, então toda pessoa NOVA que se inscrevia ficava
+  // com `membro_id` NULL: fora da membresia, fora dos cruzamentos, invisível
+  // pra qualquer área. Medido na 1ª inscrição paga real do AMI CAMP 2027: a
+  // pessoa pagou R$ 830 e não existia no cadastro da igreja.
+  //
+  // Isto NÃO reabre o que a #2170 fechou. Aquilo proibiu fabricar cadastro
+  // *sem chave* (o import financeiro criava pessoa por NOME EXATO — 3.441
+  // registros sem CPF/telefone/e-mail). Aqui a criação é condicionada ao CPF
+  // válido, que é a chave FORTE do matcher: sem CPF continua `ligar` e a
+  // inscrição segue sem vínculo, pra decisão humana. O contrato de porta já
+  // exige CPF em toda inscrição (D5), então o caminho normal é sempre o
+  // `criar` — e `acharOuCriarGuardado` liga no cadastro existente quando o CPF
+  // bate, só criando quando a pessoa é mesmo nova.
+  const politicaIdentidade = normalizarCpf(val.cpf) ? 'criar' : 'ligar';
   processarIdentidade({
     nomeCompleto: val.nomeCompleto, cpf: val.cpf, email: val.email, telefone: val.telefone,
-    dataNascimento: val.dataNascimento, politica: 'ligar',
+    dataNascimento: val.dataNascimento, genero: val.sexo, politica: politicaIdentidade,
     origem: 'inscricoes_formulario', origemId: ins.id,
   }).then((ident) => {
     if (ident.membroId) {
@@ -957,6 +1550,21 @@ async function inscreverEspinha(req, res, ev) {
     return consentimentos(ins.id, null);
   }).catch((err) => console.error('[publicEvento espinha] identidade/consentimentos:', err.message));
 
+  // ⚠️ Quem cuida da ÁREA do evento também é avisado (17/08/2026). O aviso sai
+  // pelo módulo `inscricoes`, que não tem regra pra `nova_inscricao` e cai no
+  // fallback de admin/diretor — então o Celebra, que é o formulário dos
+  // VOLUNTÁRIOS, nunca chegava a quem cuida do voluntariado. A régua é a ÁREA
+  // do evento (`utils/moduloDaAreaEvento`); as PESSOAS continuam vindo de
+  // `notificacao_regras` (/admin), nunca de lista no código.
+  // ⚠️ Best-effort: falhar aqui não pode tirar o aviso de quem já recebe.
+  let avisarTambem = [];
+  try {
+    const moduloArea = moduloDaAreaEvento(ev.area);
+    if (moduloArea) avisarTambem = await resolverDestinatarios(moduloArea, 'nova_inscricao');
+  } catch (err) {
+    console.error('[publicEvento espinha] destinatarios da area:', err.message);
+  }
+
   notificar({
     modulo: 'inscricoes', tipo: 'nova_inscricao',
     titulo: `Nova inscrição · ${ev.nome}`,
@@ -966,6 +1574,7 @@ async function inscreverEspinha(req, res, ev) {
       ? `${val.nomeCompleto} reservou vaga em "${ev.nome}" (${ev.area}) e está aguardando o pagamento.`
       : `${val.nomeCompleto} se inscreveu em "${ev.nome}" (${ev.area}).`,
     link: '/inscricoes',
+    extraTargetIds: avisarTambem,
   }).catch((err) => console.error('[publicEvento espinha] notificar:', err.message));
 
   // Confirmação por WhatsApp (SPEC-07) — SÓ evento gratuito: nasce
@@ -987,8 +1596,15 @@ async function inscreverEspinha(req, res, ev) {
     // falhar aqui, a inscrição fica pendente e o cron de expiração devolve a
     // vaga — melhor que o inverso (cobrar sem vaga garantida).
     try {
+      // LOTES (20/08): o preço é o do lote da POSIÇÃO desta inscrição. O
+      // benefício por CPF (autorização individual do líder) VENCE o lote — as
+      // duas coisas não se somam. Sem lote resolvido, vale o valor de tabela.
+      const loteInsc = valorComBeneficio == null ? await valorLoteDaInscricao(ev, ins.id) : null;
       const cobranca = await cobrarInscricao({
-        ev, inscricaoId: ins.id, val, membroId: null, valorCentavos: valorComBeneficio,
+        ev, inscricaoId: ins.id, val, membroId: null,
+        valorCentavos: valorComBeneficio ?? loteInsc?.valor_centavos,
+        lote: loteInsc?.nome,
+        estacaoId,
       });
       return res.status(201).json({ ...respostaCobranca(cobranca, ev), beneficio: beneficio ? 'parcial' : null });
     } catch (e) {
@@ -1186,3 +1802,13 @@ router.post('/:slug/upload-imagem', uploadImg.single('arquivo'), async (req, res
 });
 
 module.exports = router;
+// Reuso pelo app de membros (routes/app.js) — ver o cabeçalho de inscreverEspinha.
+module.exports.inscreverEspinha = inscreverEspinha;
+module.exports.eventoEspinhaPorId = eventoEspinhaPorId;
+module.exports.ocupacaoEspinha = ocupacaoEspinha;
+// ⚠️ Leitura BEST-EFFORT das colunas da migration 20260817160000, exportada pra
+// o app usar a MESMA (routes/app.js decide `so_web` com ela). Duas cópias
+// divergiriam no dia em que uma coluna nova entrasse — e o efeito seria o app
+// inscrevendo por dentro num evento que exige o bloco de menor, levando 400 numa
+// tela sem os campos pra corrigir.
+module.exports.anexarConfigMenor = anexarConfigMenor;

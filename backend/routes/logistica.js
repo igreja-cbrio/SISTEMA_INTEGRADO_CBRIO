@@ -4,6 +4,10 @@ const crypto = require('crypto');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { getMLConfig, mlFetch, ensureUserId, searchOrders } = require('../services/mercadoLivreService');
+const { lerNfe } = require('../utils/nfeXml');
+const { pedidoDoNome, lerNomeArquivo } = require('../utils/nfeArquivo');
+const { assinarLinhas } = require('../services/anexosLogArquivos');
+const { caminhoNoBucket } = require('../utils/storagePath');
 const { extrairNotaFiscal, sugerirCategoria } = require('../services/nfScanner');
 const { importar: importarComprasPlanilha } = require('../services/comprasImporter');
 const { sugerirSaidas } = require('../services/comprasMatch');
@@ -72,11 +76,11 @@ router.get('/dashboard', async (req, res) => {
       const mlConfig = await getMLConfig();
       mlDebug.hasConfig = !!mlConfig;
       mlDebug.hasToken = !!mlConfig?.access_token;
-      mlDebug.hasUserIdSaved = !!mlConfig?.ml_user_id;
+      mlDebug.hasUserIdSaved = !!mlConfig?.user_id;
 
       if (mlConfig?.access_token) {
         // Resolver user_id (usa o salvo ou busca via /users/me — mesma lógica de ml.js)
-        let userId = mlConfig.ml_user_id;
+        let userId = mlConfig.user_id;
         if (!userId) {
           mlDebug.stage = 'ensure_user_id';
           try {
@@ -279,14 +283,43 @@ router.put('/pedidos/:id', async (req, res) => {
   try {
     const { descricao, valor_total, data_prevista, status, codigo_rastreio, transportadora } = req.body;
     const { data: antigo } = await supabase.from('log_pedidos').select('status, solicitacao_id').eq('id', req.params.id).maybeSingle();
-    const { data, error } = await supabase.from('log_pedidos')
+    // ⚠️⚠️ UPDATE CONDICIONADO ao status anterior (26/08/2026), e é ele que
+    // decide se HOUVE transição. Sem isso, N chamadas quase simultâneas (duplo
+    // clique, retry do cliente) leem o mesmo `antigo`, todas passam no
+    // `status !== antigo.status` e todas notificam.
+    //
+    // Foi exatamente o que aconteceu: a Mariane recebeu SETE mensagens do
+    // mesmo pedido ("Ar condicionado recepção", mesmo `ref_id`), QUATRO delas
+    // no mesmo minuto, todas com os mesmos params — assinatura de corrida, não
+    // de mudanças reais de status. Isso alimentou o `Spam Rate limit hit` que
+    // bloqueou o número inteiro da igreja no mesmo dia.
+    //
+    // ⚠️ Só condiciona quando o status está mudando: PUT que mexe em descrição
+    // ou rastreio sem tocar no status continua passando normalmente.
+    let q = supabase.from('log_pedidos')
       .update({ descricao, valor_total, data_prevista, status, codigo_rastreio, transportadora })
-      .eq('id', req.params.id).select().single();
+      .eq('id', req.params.id);
+    const mudandoStatus = !!(status && antigo && status !== antigo.status);
+    if (mudandoStatus) q = q.eq('status', antigo.status);
+    const { data, error } = await q.select().maybeSingle();
     if (error) return res.status(400).json({ error: error.message });
+    // ⚠️ 0 linhas com status mudando = OUTRA chamada chegou primeiro. Relê e
+    // devolve o estado real em vez de 404: o pedido existe e foi atualizado —
+    // só não por esta requisição. Erro aqui faria a tela dizer que falhou algo
+    // que deu certo.
+    if (!data) {
+      const { data: atual } = await supabase.from('log_pedidos')
+        .select('*').eq('id', req.params.id).maybeSingle();
+      if (!atual) return res.status(404).json({ error: 'Pedido não encontrado' });
+      return res.json(atual);
+    }
     // WhatsApp pro solicitante quando o status de ENTREGA muda (template
     // pedido_atualizado · {{4}} = rastreio). No-op se sem env/sem telefone.
-    if (status && antigo && status !== antigo.status && data.solicitacao_id) {
-      (async () => {
+    // ⚠️ AWAITED: em serverless o container congela na resposta e o disparo
+    // se perderia (lei de 31/07). O `try` interno garante que falhar aqui não
+    // derruba a atualização do pedido, que já está commitada.
+    if (mudandoStatus && data.solicitacao_id) {
+      await (async () => {
         try {
           const { data: sol } = await supabase.from('solicitacoes').select('titulo, solicitante_id').eq('id', data.solicitacao_id).maybeSingle();
           if (!sol?.solicitante_id) return;
@@ -339,7 +372,9 @@ router.get('/notas', async (req, res) => {
     if (status) query = query.eq('status', status);
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    // ⚠️ `storage_path` guarda o arquivo fiscal (NF escaneada ou DANFE oficial).
+    // Assinar na leitura é o que permite fechar o bucket sem migrar dado.
+    res.json(await assinarLinhas(data || [], ['storage_path']));
   } catch (e) { res.status(500).json({ error: 'Erro ao listar notas fiscais' }); }
 });
 
@@ -368,7 +403,9 @@ router.post('/notas/escanear', uploadNf.single('arquivo'), async (req, res) => {
     const { error: upErr } = await supabase.storage.from('log-arquivos')
       .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
     if (upErr) return res.status(500).json({ error: `Erro ao salvar arquivo: ${upErr.message}` });
-    const storagePath = supabase.storage.from('log-arquivos').getPublicUrl(path).data.publicUrl;
+    // ⚠️ CAMINHO, não URL pública (o bucket guarda documento fiscal e vai
+    // fechar). A leitura assina — ver services/anexosLogArquivos.
+    const storagePath = path;
 
     // 2. Extração via IA (falha não derruba o fluxo · usuário completa na revisão)
     let extraido = null;
@@ -431,6 +468,245 @@ router.post('/notas/escanear', uploadNf.single('arquivo'), async (req, res) => {
   }
 });
 
+// ── IMPORTAR NF-e por XML ────────────────────────────────────────────────────
+// Lê o XML REAL da nota (chave de acesso, CNPJ do emitente, valor, itens) — ao
+// contrário do pedido do Mercado Livre, que não é documento fiscal.
+//
+// ⚠️ O ZIP é descompactado NO NAVEGADOR (jszip já é dependência do front) e o
+// cliente manda os XMLs em lotes. Motivo: `backend/package.json` entra no bundle
+// da função serverless, com teto de 250 MB na Vercel — a lei do repo é não somar
+// dependência lá sem necessidade comprovada. E o corpo JSON é limitado a 1 MB,
+// daí o teto por requisição.
+const MAX_XML_POR_LOTE = 25;
+
+router.post('/notas/importar-xml', async (req, res) => {
+  try {
+    const arquivos = Array.isArray(req.body?.arquivos) ? req.body.arquivos : [];
+    if (!arquivos.length) return res.status(400).json({ error: 'Nenhum XML enviado.' });
+    if (arquivos.length > MAX_XML_POR_LOTE) {
+      return res.status(400).json({ error: `Máximo de ${MAX_XML_POR_LOTE} XMLs por envio.` });
+    }
+
+    // Mesmo padrão do SANTANDER_CNPJ_TITULAR, que já existe no repo.
+    const cnpjIgreja = process.env.CNPJ_IGREJA
+      || process.env.SANTANDER_CNPJ_TITULAR || '07023068000135';
+
+    const lidas = [];
+    const recusadas = [];
+    for (const arq of arquivos) {
+      const nome = String(arq?.nome || 'sem-nome.xml');
+      const r = lerNfe(arq?.xml, { cnpjDestinatario: cnpjIgreja });
+      // ⚠️ Recusa é CONTADA, não lançada: num lote de 1.500 vai haver XML de
+      // outro CNPJ, nota cancelada e arquivo corrompido, e o importador precisa
+      // seguir e DIZER o que ficou de fora — não morrer no primeiro.
+      if (!r.ok) { recusadas.push({ nome, erro: r.erro, detalhe: r.detalhe || null }); continue; }
+      // ⚠️ O pedido do ML vem do NOME do arquivo (invoice-<id>.xml) — o XML não
+      // o traz. É isso que liga a nota ao pedido e casa o PDF depois.
+      lidas.push({ nome, nota: r.nota, xml: arq.xml, mlOrderId: pedidoDoNome(nome) });
+    }
+
+    // Idempotência pela chave de acesso (a coluna tem UNIQUE) — reenviar o mesmo
+    // arquivo não duplica. Confere no banco E dentro do próprio lote.
+    const chaves = [...new Set(lidas.map((l) => l.nota.chave_acesso))];
+    const jaExistem = new Set();
+    for (let i = 0; i < chaves.length; i += 200) {
+      const { data, error } = await supabase.from('log_notas_fiscais')
+        .select('chave_acesso').in('chave_acesso', chaves.slice(i, i + 200));
+      // ⚠️ Falha de LEITURA não pode virar "não existe" — reimportaria tudo e a
+      // UNIQUE derrubaria o lote inteiro.
+      if (error) throw new Error(`Não foi possível conferir o que já está importado: ${error.message}`);
+      for (const r of data || []) if (r.chave_acesso) jaExistem.add(r.chave_acesso);
+    }
+
+    let importadas = 0;
+    let repetidas = 0;
+    let vinculadas = 0;   // repetidas que GANHARAM o número do pedido agora
+    let semPedidoNoNome = 0; // repetidas cujo nome de arquivo não traz o pedido
+    const noLote = new Set();
+    const falhas = [];
+    for (const l of lidas) {
+      const ch = l.nota.chave_acesso;
+      if (jaExistem.has(ch) || noLote.has(ch)) {
+        repetidas += 1;
+        // ⚠️ BACKFILL: as notas importadas ANTES desta versão entraram sem
+        // ml_order_id (o importador não lia o nome). Reimportar o mesmo ZIP
+        // preenche o vínculo — só onde está nulo, nunca sobrescreve.
+        //
+        // ⚠️⚠️ O RESULTADO É CONTADO, e isso não é enfeite: sem contar, um
+        // reenvio que não vinculou NADA (nome fora do padrão, ou o pedido já
+        // preenchido) é indistinguível de um que vinculou tudo — os dois
+        // aparecem como "N nota(s) já estavam". Foi exatamente esse silêncio
+        // que deixou 110 notas sem pedido e 45 DANFEs órfãos sem ninguém saber
+        // por quê.
+        if (!l.mlOrderId) { semPedidoNoNome += 1; continue; }
+        const { data: vinc, error: eVinc } = await supabase.from('log_notas_fiscais')
+          .update({ ml_order_id: l.mlOrderId })
+          .eq('chave_acesso', ch).is('ml_order_id', null)
+          .select('id');
+        // ⚠️ Falha aqui não derruba a importação (a nota já existe e está boa),
+        // mas VAI para `falhas` — vínculo que não gravou precisa aparecer.
+        if (eVinc) falhas.push({ nome: l.nome, erro: `vínculo com o pedido: ${eVinc.message}` });
+        else vinculadas += (vinc?.length || 0);
+        continue;
+      }
+      noLote.add(ch);
+      const { error } = await supabase.from('log_notas_fiscais').insert({
+        numero: l.nota.numero,
+        serie: l.nota.serie,
+        chave_acesso: ch,
+        valor: l.nota.valor,
+        data_emissao: l.nota.data_emissao,
+        emitente_nome: l.nota.emitente_fantasia || l.nota.emitente_nome,
+        emitente_cnpj: l.nota.emitente_cnpj,
+        descricao: l.nota.descricao,
+        itens: l.nota.itens?.length ? l.nota.itens : null,
+        xml_content: l.xml,
+        ml_order_id: l.mlOrderId,
+        origem: (l.nota.via_mercadolivre || l.mlOrderId) ? 'mercadolivre' : 'xml',
+        status: 'registrada',
+        created_by: req.user.userId,
+      });
+      if (error) {
+        // 23505 = alguém importou a mesma nota entre a leitura e agora.
+        if (/duplicate key|23505/i.test(error.message)) { repetidas += 1; continue; }
+        falhas.push({ nome: l.nome, erro: error.message });
+        continue;
+      }
+      importadas += 1; // grava o efeito DURANTE (lei de 04/08)
+    }
+
+    res.json({ importadas, repetidas, vinculadas, semPedidoNoNome, recusadas, falhas, lidas: arquivos.length });
+  } catch (e) {
+    console.error('[LOG] importar-xml:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao importar XML' });
+  }
+});
+
+// ── IMPORTAR o DANFE (PDF) e casar com a nota que o XML já criou ───────────
+// ⚠️ O DANFE OFICIAL é este PDF, gerado pela SEFAZ/emissor — não o espelho que
+// o sistema desenha a partir do XML.
+//
+// ⚠️⚠️ SÃO DOIS FORMATOS DE NOME, e o do LOTE é o que vale no uso real:
+//   · unitário (tela do ML):  invoice-<pedido>.xml   ·  invoice-<pedido>.pdf
+//   · LOTE ("Baixar NF-e disponíveis" · ZIP do período):
+//       xml/<id>_<chave 44 dígitos>-procNFe.xml
+//       pdf/<id>_<chave 44 dígitos>-DANFE.pdf
+//
+// O casamento é pela CHAVE DE ACESSO quando ela está no nome, e pelo pedido só
+// no unitário. A chave é melhor por construção: identificador canônico da NF-e,
+// UNIQUE na tabela, preenchida pelo próprio XML — não depende de nome de
+// arquivo para existir. Ver `utils/nfeArquivo`.
+const MAX_PDF_POR_LOTE = 6; // PDF em base64 infla ~33% · corpo do Express é 1 MB
+
+router.post('/notas/importar-danfe', async (req, res) => {
+  try {
+    const arquivos = Array.isArray(req.body?.arquivos) ? req.body.arquivos : [];
+    if (!arquivos.length) return res.status(400).json({ error: 'Nenhum PDF enviado.' });
+    if (arquivos.length > MAX_PDF_POR_LOTE) {
+      return res.status(400).json({ error: `Máximo de ${MAX_PDF_POR_LOTE} PDFs por envio.` });
+    }
+
+    let anexados = 0, jaTinham = 0;
+    const semNota = [], falhas = [];
+
+    for (const arq of arquivos) {
+      const nome = String(arq?.nome || 'sem-nome.pdf');
+      const { orderId: pedido, chaveAcesso: chave } = lerNomeArquivo(nome) || {};
+      if (!chave && !pedido) { semNota.push({ nome, motivo: 'nome_sem_pedido' }); continue; }
+
+      // ⚠️⚠️ A CHAVE DE ACESSO MANDA. Ela é o identificador canônico da NF-e
+      // (44 dígitos da SEFAZ), vem preenchida pelo próprio XML e é UNIQUE na
+      // tabela — casa exato e não depende de `ml_order_id`, que só existe
+      // quando o arquivo veio do download unitário do ML. Foi tentar casar só
+      // pelo pedido que deixou 45 de 45 DANFEs órfãos no primeiro uso real.
+      let busca = supabase.from('log_notas_fiscais').select('id, storage_path');
+      busca = chave ? busca.eq('chave_acesso', chave) : busca.eq('ml_order_id', pedido);
+      const { data: nota, error: eBusca } = await busca.limit(1).maybeSingle();
+      // ⚠️ Falha de LEITURA não vira "nota não existe": diria pra pessoa que o
+      // XML não foi importado quando o problema é o banco.
+      if (eBusca) throw new Error(`Não foi possível procurar a nota de ${chave || pedido}: ${eBusca.message}`);
+      if (!nota) { semNota.push({ nome, motivo: 'sem_xml_importado', pedido: pedido || chave }); continue; }
+      if (nota.storage_path) { jaTinham += 1; continue; }
+
+      let buffer;
+      try {
+        buffer = Buffer.from(String(arq.base64 || ''), 'base64');
+      } catch { falhas.push({ nome, erro: 'base64 inválido' }); continue; }
+      if (!buffer.length) { falhas.push({ nome, erro: 'arquivo vazio' }); continue; }
+
+      // ⚠️ A pasta é a CHAVE quando ela existe: é única por nota (o pedido do ML
+      // pode ter mais de uma NF-e, e duas notas do mesmo pedido se
+      // sobrescreveriam no mesmo caminho, com `upsert: true`).
+      const caminho = `notas-fiscais/${chave || pedido}/danfe.pdf`;
+      const { error: eUp } = await supabase.storage.from('log-arquivos')
+        .upload(caminho, buffer, { contentType: 'application/pdf', upsert: true });
+      if (eUp) { falhas.push({ nome, erro: eUp.message }); continue; }
+
+      // ⚠️ Guarda o CAMINHO, não a URL pública. `log-arquivos` é público HOJE, e
+      // documento fiscal em bucket público é dívida — guardando o caminho, o dia
+      // em que ele fechar a leitura só passa a assinar, sem migrar dado nenhum
+      // (é exatamente o que utils/storagePath existe pra permitir).
+      const { error: eUpd } = await supabase.from('log_notas_fiscais')
+        .update({ storage_path: caminho }).eq('id', nota.id).is('storage_path', null);
+      if (eUpd) { falhas.push({ nome, erro: eUpd.message }); continue; }
+      anexados += 1;
+    }
+
+    res.json({ anexados, jaTinham, semNota, falhas, lidos: arquivos.length });
+  } catch (e) {
+    console.error('[LOG] importar-danfe:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao importar DANFE' });
+  }
+});
+
+// GET /logistica/notas/:id/nfe · devolve a NF-e JÁ INTERPRETADA para o espelho
+// impresso. ⚠️ Reusa o MESMO `lerNfe` da importação — um 2º leitor no cliente
+// divergiria do que foi gravado, e a folha passaria a mostrar número diferente
+// do que está na lista.
+// ⚠️ `xml_content` NÃO entra na listagem (são ~8 KB por linha); só aqui, sob
+// demanda, para uma nota.
+router.get('/notas/:id/nfe', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('log_notas_fiscais')
+      .select('id, numero, xml_content, chave_acesso').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Nota não encontrada' });
+    if (!data.xml_content) {
+      return res.status(409).json({ error: 'Esta nota não tem XML guardado — só notas importadas por XML têm o documento.' });
+    }
+    const r = lerNfe(data.xml_content);
+    if (!r.ok) return res.status(422).json({ error: `XML guardado não pôde ser lido (${r.erro}).` });
+    res.json({ nota: r.nota });
+  } catch (e) {
+    console.error('[LOG] notas/:id/nfe:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao ler a NF-e' });
+  }
+});
+
+// GET /logistica/notas/:id/danfe · devolve URL ASSINADA do PDF (15 min).
+// ⚠️ Assinar mesmo com o bucket público hoje: quando `log-arquivos` fechar
+// (documento fiscal não deveria estar em bucket aberto), esta leitura já
+// funciona sem mudar nada. Padrão do utils/storagePath.
+router.get('/notas/:id/danfe', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('log_notas_fiscais')
+      .select('id, storage_path').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!data?.storage_path) return res.status(404).json({ error: 'Esta nota não tem DANFE anexado.' });
+
+    const caminho = caminhoNoBucket(data.storage_path, 'log-arquivos');
+    if (!caminho) return res.status(422).json({ error: 'Caminho do arquivo não reconhecido.' });
+
+    const { data: assinada, error: eSign } = await supabase.storage
+      .from('log-arquivos').createSignedUrl(caminho, 900);
+    if (eSign) throw eSign;
+    res.json({ url: assinada.signedUrl });
+  } catch (e) {
+    console.error('[LOG] notas/:id/danfe:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao abrir o DANFE' });
+  }
+});
+
 router.post('/notas', async (req, res) => {
   try {
     const { numero, serie, fornecedor_id, pedido_id, valor, data_emissao, chave_acesso, emitente_nome, emitente_cnpj, descricao, observacoes, storage_path } = req.body;
@@ -466,7 +742,8 @@ router.put('/notas/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar nota fiscal' }); }
 });
 
-// Enviar pro financeiro lançar (notifica a equipe do Yago)
+// Enviar pro financeiro lançar (notifica a equipe do financeiro ·
+// area_solicitacoes_responsaveis decide QUEM, não este comentário)
 router.post('/notas/:id/enviar-financeiro', async (req, res) => {
   try {
     const { data: nota, error: errNota } = await supabase.from('log_notas_fiscais')
@@ -561,7 +838,9 @@ router.get('/compras', async (req, res) => {
     if (busca) q = q.or(`fornecedor.ilike.%${busca}%,materiais.ilike.%${busca}%,n_pedido.ilike.%${busca}%`);
     const { data, error } = await q.order('data_compra', { ascending: false, nullsFirst: false }).limit(1000);
     if (error) return res.status(400).json({ error: error.message });
-    res.json(data || []);
+    // ⚠️ `storage_path` é a foto/PDF da nota da compra — assinada na leitura
+    // para o bucket poder fechar (ver services/anexosLogArquivos).
+    res.json(await assinarLinhas(data || [], ['storage_path']));
   } catch (e) { console.error('[LOG] listar compras:', e); res.status(500).json({ error: 'Erro ao listar compras' }); }
 });
 
@@ -644,7 +923,9 @@ router.post('/compras/escanear', uploadNf.single('arquivo'), async (req, res) =>
     const { error: upErr } = await supabase.storage.from('log-arquivos')
       .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
     if (upErr) return res.status(500).json({ error: `Erro ao salvar arquivo: ${upErr.message}` });
-    const storagePath = supabase.storage.from('log-arquivos').getPublicUrl(path).data.publicUrl;
+    // ⚠️ CAMINHO, não URL pública (o bucket guarda documento fiscal e vai
+    // fechar). A leitura assina — ver services/anexosLogArquivos.
+    const storagePath = path;
 
     let extraido = null; let raw = null;
     try { ({ extraido, raw } = await extrairNotaFiscal(req.file.buffer, req.file.mimetype)); }

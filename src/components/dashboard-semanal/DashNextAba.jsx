@@ -14,8 +14,13 @@ import { ChartGradients, gradFill } from '../charts/ChartGradients';
 
 const C = { primary: '#00B39D' };
 
-// Aba simples: quantas pessoas estiveram PRESENTES no NEXT, por mês.
-// Presença = inscrição do NEXT com check-in (mesma régua do módulo /next).
+// Aba simples: quantas PESSOAS estiveram presentes no NEXT, por mês.
+//
+// ⚠️ A fonte é a CHAMADA dos encontros (next_presencas · vw_next_presenca_mes),
+// não mais o check-in da inscrição — aquele é o modelo anterior ao cutover de
+// turmas (17/06/2026) e parou em abr/2026, o que fazia os meses novos nascerem
+// "sem dado" e obrigava a digitar na mão. Conta PESSOA: quem foi aos 2 encontros
+// do mês conta 1 (o legado contava 2, e é por isso que o histórico diminuiu).
 export default function DashNextAba() {
   const [meses, setMeses] = useState(12);
   const { isAdmin } = useAuth();
@@ -60,7 +65,7 @@ export default function DashNextAba() {
         <div>
           <h2 className="text-lg font-bold tracking-tight">Presença no NEXT · por mês</h2>
           <p className="text-sm text-muted-foreground">
-            Quantas pessoas estiveram presentes no NEXT (check-in) em cada mês.
+            Quantas pessoas estiveram presentes no NEXT em cada mês, pela chamada dos encontros.
           </p>
         </div>
         <div>
@@ -75,6 +80,12 @@ export default function DashNextAba() {
           </Select>
         </div>
       </div>
+
+      {data?.aviso && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          {data.aviso}
+        </div>
+      )}
 
       {/* Cards de resumo */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -114,7 +125,7 @@ export default function DashNextAba() {
             </div>
           ) : total === 0 ? (
             <div className="h-[360px] flex items-center justify-center text-sm text-muted-foreground text-center px-4">
-              Nenhum check-in de NEXT no período. A presença é registrada no módulo NEXT (check-in da inscrição).
+              Nenhuma presença de NEXT no período. A chamada é feita no módulo NEXT, no encontro da turma.
             </div>
           ) : (
             <div className="h-[360px]">
@@ -159,8 +170,8 @@ export default function DashNextAba() {
         </CardHeader>
         <CardContent>
           <p className="text-[11px] text-muted-foreground mb-2">
-            O número vem do check-in do NEXT. {isAdmin
-              ? 'Onde a lista de presença foi contada à mão (sem check-in), digite o total — o manual substitui o automático naquele mês.'
+            O número vem da chamada dos encontros do NEXT. {isAdmin
+              ? 'Onde a lista de presença foi contada à mão (sem chamada no sistema), digite o total — o manual substitui o automático naquele mês.'
               : 'Meses lançados à mão pela lista de presença aparecem marcados como “manual”.'}
           </p>
           <div className="divide-y divide-border/60 rounded-lg border">
@@ -210,11 +221,17 @@ export default function DashNextAba() {
                       {m.presentes.toLocaleString('pt-BR')}
                       <span className="ml-2 text-[10px] font-normal align-middle">
                         {m.fonte === 'manual' ? (
-                          <span className="rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2 py-0.5">manual</span>
+                          <>
+                            <span className="rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 px-2 py-0.5">manual</span>
+                            {/* ⚠️ O automático fica À VISTA para se poder decidir se o
+                                manual ainda é necessário — sem isso ele vira número
+                                que ninguém revisita. */}
+                            <span className="ml-2 text-muted-foreground">chamada: {m.auto}</span>
+                          </>
                         ) : m.auto > 0 ? (
-                          <span className="text-muted-foreground">check-in</span>
+                          <span className="text-muted-foreground">chamada</span>
                         ) : (
-                          <span className="text-muted-foreground">sem dado</span>
+                          <span className="text-muted-foreground">sem chamada</span>
                         )}
                       </span>
                     </span>

@@ -7,12 +7,22 @@ Documentação de arquitetura e execução do command center técnico do CBRio.
 | Etapa | Estado | Entrega |
 |---|---|---|
 | 0 · Contrato e inventário | concluída tecnicamente | fronteiras, mapa funcional, taxonomia, SLOs propostos, segurança e inventário |
-| 1 · Fundação | concluída em código · ativação pendente | acesso, catálogo, correlação, releases, execução canônica e adapters |
-| 2 · Sistema v1 | migration aplicada · publicação pendente | visão geral, incidentes, automações e Web/API básico |
-| 3 · Web completa | migration aplicada · publicação pendente | performance, segurança, releases e testes sintéticos |
-| 4 · Android/iOS | implementada em código · migration pendente | telemetria segura, releases, falhas e operação por plataforma |
-| 5 · Dados, facial e Wi-Fi | implementada em código · migration pendente | governança, integridade, consentimento, retenção e espelhos sanitizados |
-| 6 · Custos e prestação de contas | não iniciada | FinOps e relatórios executivos |
+| 1 · Fundação | concluída | acesso, catálogo, correlação, releases, execução canônica e adapters |
+| 2 · Sistema v1 | concluída | visão geral, incidentes, automações e Web/API básico |
+| 3 · Web completa | concluída | performance, segurança, releases e testes sintéticos |
+| 4 · Android/iOS | concluída | telemetria segura, releases, falhas e operação por plataforma |
+| 5 · Dados, facial e Wi-Fi | concluída | governança, integridade, consentimento, retenção e espelhos sanitizados |
+| 6 · Custos e prestação de contas | concluída em código · publicação pendente | FinOps e relatórios executivos auditáveis |
+
+## Automação de incidentes
+
+| Etapa | Estado | Entrega |
+|---|---|---|
+| 1 · Triagem | publicada | agrupa erros e feedbacks, abre incidentes e inicia investigação sem ação corretiva |
+| 2 · Diagnóstico consultivo | publicada | especialistas por fonte, evidências sanitizadas, hipótese estruturada e trilha auditável |
+| 3 · Correção assistida | concluída em código · publicação pendente | elegibilidade restrita, aprovação humana, sandbox de escrita, PR e CI sem merge/deploy automático |
+
+Detalhes e limites da etapa atual: [Agente de incidentes · Etapa 3](./agente-incidentes-etapa-3.md).
 
 ## Artefatos da Etapa 0
 
@@ -30,6 +40,7 @@ Documentação de arquitetura e execução do command center técnico do CBRio.
 ## Artefatos da Etapa 3
 
 - [Web completa e ordem segura de ativação](./etapa-3-web-completa.md)
+- [Agente de incidentes · correção assistida](./agente-incidentes-etapa-3.md)
 
 ## Artefatos da Etapa 4
 
@@ -38,6 +49,10 @@ Documentação de arquitetura e execução do command center técnico do CBRio.
 ## Artefatos da Etapa 5
 
 - [Governança de dados, Wi-Fi e reconhecimento facial](./etapa-5-governanca-dados.md)
+
+## Artefatos da Etapa 6
+
+- [FinOps e relatórios executivos](./etapa-6-finops-relatorios.md)
 
 ## Convenção de migrations
 

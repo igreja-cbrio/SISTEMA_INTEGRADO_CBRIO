@@ -9,8 +9,57 @@ const SERVICES = [
   { id: 'observability', name: 'Erros e performance', surface: 'observability', runtime: 'Sentry', state: 'external_pending' },
 ];
 
+const ALERT_POLICY_DEFAULT = Object.freeze({
+  enabled: true,
+  threshold: 3,
+  recoveryThreshold: 2,
+  severity: 'warning',
+  ownerLabel: 'Tecnologia e responsavel do modulo',
+  runbook: 'Abra Sistema, correlacione o request ID com o Sentry e valide a dependencia da rotina antes de reexecutar.',
+  runbookUrl: '/sistema?view=incidents',
+});
+
+const ALERT_POLICY_BY_CATEGORY = Object.freeze({
+  platform: {
+    threshold: 3, severity: 'critical', ownerLabel: 'Tecnologia',
+    runbook: 'Valide API, Vercel, Supabase e o release atual; use o request ID para localizar a causa no Sentry.',
+  },
+  payments: {
+    threshold: 2, severity: 'error', ownerLabel: 'Financeiro e Tecnologia',
+    runbook: 'Confira Asaas e Mercado Pago, identifique a etapa que falhou e nao reenvie cobrancas sem reconciliar o estado.',
+  },
+  finance: {
+    threshold: 2, severity: 'error', ownerLabel: 'Financeiro e Tecnologia',
+    runbook: 'Confira credenciais e disponibilidade bancaria; antes de repetir, valide se os lancamentos ja foram importados.',
+  },
+  data: {
+    threshold: 3, severity: 'error', ownerLabel: 'Tecnologia e Dados',
+    runbook: 'Valide Supabase e a origem dos dados; confira contagens e duplicidade antes de repetir a rotina.',
+  },
+  agents: {
+    threshold: 3, severity: 'warning', ownerLabel: 'Tecnologia e dono do agente',
+    runbook: 'Valide a fila, o worker Railway e o provedor de IA; confirme idempotencia antes de reprocessar.',
+  },
+});
+
+function alertPolicyFor(path, category) {
+  const categoryPolicy = ALERT_POLICY_BY_CATEGORY[category] || {};
+  const healthOverride = path === '/api/health'
+    ? { threshold: 3, severity: 'critical', ownerLabel: 'Tecnologia' }
+    : {};
+  return { ...ALERT_POLICY_DEFAULT, ...categoryPolicy, ...healthOverride };
+}
+
 const JOBS = [
   ['/api/health', '*/5 * * * *', 'platform'],
+  // ⚠️ ENTROU NO CATÁLOGO EM 11/08/2026 e o motivo é a lição do próprio caso:
+  // este cron existia no vercel.json, era interceptado pelo `authenticate` do
+  // `routes/sistema.js` e levava 401 a cada 15 minutos — invisível, porque cron
+  // fora do catálogo não tem política de alerta e não abre incidente. Resultado
+  // medido: 0 de 4.509 tickets de push com `receipt_status`, dois meses depois
+  // de um conserto que acreditou ter resolvido isso.
+  ['/api/sistema/cron/push-receipts', '*/15 * * * *', 'platform'],
+  ['/api/sistema/cron/incident-triage', '*/5 * * * *', 'agents'],
   ['/api/voluntariado/cron/emails', '*/5 * * * *', 'volunteers'],
   ['/api/pagamentos-webhook/cron/tick', '*/10 * * * *', 'payments'],
   ['/api/totem-kids/cron/age-out', '0 5 * * *', 'kids'],
@@ -19,13 +68,20 @@ const JOBS = [
   ['/api/integracao/cron/gerar-cultos-recorrentes', '0 4 1 * *', 'ministry'],
   ['/api/cerebro/processar', '0 3 * * *', 'data'],
   ['/api/cerebro/sync-erp', '30 3 * * *', 'data'],
-  ['/api/kpis/youtube/sync', '0 13 * * *', 'online'],
   ['/api/governanca/cron/lembrete', '0 10 * * 1', 'governance'],
   ['/api/public/grupos/cron/frequencia-mensal', '0 15 28 * *', 'groups'],
   ['/api/kpis/cultos/auto-create', '5 3 * * 0', 'ministry'],
   ['/api/processos/cron/coletar', '0 4 * * *', 'data'],
   ['/api/jornada/cron/refresh-papeis', '0 5 * * *', 'data'],
-  ['/api/wifi/cron/sync', '0 2 * * 0,1,4', 'wifi'],
+  // ⚠️ `/api/wifi/cron/sync` SAIU em 13/08/2026 junto com o cron do
+  // vercel.json (o portal cativo foi desativado · última conexão 26/06). Ele
+  // vinha FALHANDO 3×/semana desde 02/08 com 42P10 — `ON CONFLICT (tipo,
+  // membro_id, membro_conflito_id) WHERE status='pendente'` de
+  // `fn_wifi_processar_vinculos` deixou de casar quando a migration
+  // 20260731120000 acrescentou `AND tipo <> 'inscricao_sem_vinculo'` ao índice
+  // `uniq_identidade_pendencia_aberta`. Conferido no catálogo: aquela função é
+  // a ÚNICA viva com esse ON CONFLICT, então o defeito morre com o cron.
+  // ⚠️ Reativar o WiFi exige consertar o predicado ANTES de repor o cron aqui.
   ['/api/online/cron/sync', '0 6 * * *', 'online'],
   ['/api/online/cron/ds-collect', '0 10 * * *', 'online'],
   ['/api/online/cron/ddus-collect', '30 10 * * *', 'online'],
@@ -55,6 +111,16 @@ const JOBS = [
   ['/api/agente-primeiro-contato/cron/enfileirar', '5 11 * * *', 'agents'],
   ['/api/agente-voluntariado/cron/checar', '10 11 * * *', 'agents'],
   ['/api/agente-batismo-next/cron/enfileirar', '15 11 * * *', 'agents'],
+  // ⚠️ NÃO é cron da Vercel (não está no vercel.json). Quem dispara é o
+  // agent-worker do Railway, segunda 06:00 SP, depois de montar o relatório.
+  // Entra no catálogo pra que falha de ENVIO abra incidente — job fora daqui
+  // falha em silêncio, e "o relatório não chegou" ninguém percebe na segunda.
+  ['/api/kpis/v2/cron/relatorio-email', '0 9 * * 1', 'agents'],
+  // ⚠️ Também NÃO é cron da Vercel. Quem dispara é o agent-worker do Railway,
+  // seg/qua/sex 07:00 SP (10:00 UTC), depois de montar o bloco do dia da rotina
+  // de gestão. Entra no catálogo pra que falha de ENVIO abra incidente — job
+  // fora daqui falha em silêncio, e a rotina inteira depende de o bloco chegar.
+  ['/api/governanca/cron/rotina-email', '0 10 * * 1,3,5', 'agents'],
 ].map(([path, schedule, category]) => ({
   id: `vercel:${path}`,
   name: path.split('?')[0].split('/').filter(Boolean).slice(-2).join(' · '),
@@ -62,6 +128,7 @@ const JOBS = [
   path,
   schedule,
   category,
+  alertPolicy: alertPolicyFor(path, category),
   executionState: 'awaiting_canonical_runs',
 }));
 
@@ -90,6 +157,10 @@ const INTEGRATIONS = [
   ['github', 'GitHub', 'platform', 'external_pending'],
   ['sentry', 'Sentry', 'observability', 'external_pending'],
   ['railway', 'Railway', 'platform', 'external_pending'],
+  // ⚠️ Credenciais seguem válidas e o sync MANUAL (`POST /api/wifi/sync`,
+  // superadmin) continua sendo a porta de reativação — mas a COLETA AUTOMÁTICA
+  // está desligada desde 13/08/2026 e a integração não alimenta mais nada
+  // sozinha. Ver o comentário do cron removido em JOBS.
   ['wifi-supabase', 'Supabase externo do Wi-Fi', 'wifi', 'connected'],
   ['meta-whatsapp', 'WhatsApp Cloud API / Meta', 'communication', 'connected'],
   ['microsoft-graph', 'Microsoft Graph / SharePoint', 'communication', 'connected'],
@@ -156,6 +227,9 @@ module.exports = {
   JOBS,
   WORKFLOWS,
   INTEGRATIONS,
+  ALERT_POLICY_DEFAULT,
+  ALERT_POLICY_BY_CATEGORY,
+  alertPolicyFor,
   getReleaseInfo,
   getFoundationPayload,
 };

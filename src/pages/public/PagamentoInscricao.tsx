@@ -18,6 +18,8 @@ import { useParams, Link } from 'react-router-dom';
 import QRCode from 'qrcode';
 import confetti from 'canvas-confetti';
 import { eventoPublico } from '../../api';
+import CartaoBrick from '../../components/pagamento/CartaoBrick';
+import BaixarInstrucoes from './BaixarInstrucoes';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 
 interface Pagamento {
@@ -30,6 +32,8 @@ interface Pagamento {
   metodos: string[] | null;
   parcelas_max: number | null;
   checkout_url: string | null;
+  cartao_na_pagina?: boolean;
+  cartao_public_key?: string | null;
   pix_payload: string | null;
   boleto_linha_digitavel: string | null;
   boleto_url: string | null;
@@ -46,6 +50,10 @@ interface Pagamento {
   // ter sido paga por fora.
   aceita_comprovante?: boolean;
   comprovantes?: ComprovanteEnviado[] | null;
+  // Instruções gerais do evento (só vem com `pago` — inscrição concluída).
+  instrucoes?: { url: string; nome?: string | null } | null;
+  // Grupo de WhatsApp pra dúvidas do evento (antes e depois de pagar).
+  whatsapp_duvidas?: string | null;
 }
 
 interface ComprovanteEnviado {
@@ -96,6 +104,31 @@ const CSS_MOBILE = `
        nome do evento e o título quando o cartão ocupa a largura toda. */
     .pgto-head { padding-right: 46px; }
     .pgto-qr { width: min(200px, 62vw); height: auto; aspect-ratio: 1; }
+  }
+
+  /* ── Formulário de cartão (Brick do provedor) ──
+     ⚠️ O Brick renderiza a árvore dele dentro deste container e alguns campos
+     são IFRAMES. Iframe tem largura intrínseca e NÃO encolhe sozinho: sem o
+     \`max-width: 100%\` abaixo, num celular estreito o formulário empurra a
+     página e cria rolagem horizontal — que é o defeito clássico de checkout no
+     celular, e o celular é onde a maioria se inscreve.
+     Estilo aqui é só CAIXA (largura/overflow); cor, raio e fonte vão pelas
+     \`customVariables\` do SDK, que é o canal suportado. */
+  .pgto-cartao { width: 100%; max-width: 100%; }
+  .pgto-cartao iframe,
+  .pgto-cartao form,
+  .pgto-cartao input,
+  .pgto-cartao select { max-width: 100%; }
+  /* O container não pode CORTAR conteúdo (a lista de parcelas do Brick abre
+     pra fora); só impedir que ele empurre a página. */
+  .pgto-cartao { overflow-x: clip; }
+
+  /* Alvo de toque de 48px (guia de acessibilidade) nas abas de forma — no
+     celular elas são o primeiro controle que a pessoa encosta. */
+  .pgto-metodos > button { min-height: 48px; }
+  @media (max-width: 380px) {
+    /* Com 3 formas em tela de 320px, 15px estoura o botão. */
+    .pgto-metodos > button { font-size: 14px; padding-left: 4px; padding-right: 4px; }
   }
 `;
 
@@ -251,7 +284,7 @@ function AnexarComprovante({ token, pag, C, onEnviado }: {
 
 export default function PagamentoInscricao() {
   const { token = '' } = useParams();
-  const { C } = usePublicTheme();
+  const { C, isDark } = usePublicTheme();
   const [pag, setPag] = useState<Pagamento | null>(null);
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(true);
@@ -276,66 +309,103 @@ export default function PagamentoInscricao() {
   // Confete só uma vez, e só quando o SERVIDOR disse pago.
   const festejou = useRef(false);
 
+  // ⚠️ TODO caminho que traz estado novo do servidor passa por aqui — polling,
+  // carga inicial e o pagamento com cartão na própria página. Antes o confete
+  // vivia só dentro do `carregar()`, e o cartão (que atualiza o estado direto da
+  // resposta do POST, sem repassar pelo GET) confirmava a inscrição SEM festejar.
+  // ⚠️ A LEI continua intacta: só festeja com `pago === true` LIDO DO SERVIDOR —
+  // o gatilho é a resposta, nunca o clique.
+  const aplicarPagamento = useCallback((r: Pagamento) => {
+    setPag(r);
+    if (r?.pago && !festejou.current) {
+      festejou.current = true;
+      confetti({ particleCount: 120, spread: 90, origin: { y: 0.6 }, colors: ['#00B39D', '#00d9bd', '#ffd166', '#ffffff'] });
+      // Segunda salva pelos cantos: a inscrição paga é o fim de uma jornada
+      // longa (formulário + pagamento) e a tela é a única confirmação imediata.
+      setTimeout(() => {
+        confetti({ particleCount: 60, angle: 60, spread: 70, origin: { x: 0, y: 0.7 }, colors: ['#00B39D', '#00d9bd', '#ffd166'] });
+        confetti({ particleCount: 60, angle: 120, spread: 70, origin: { x: 1, y: 0.7 }, colors: ['#00B39D', '#00d9bd', '#ffd166'] });
+      }, 220);
+    }
+  }, []);
+
   const carregar = useCallback(async (primeira = false) => {
     try {
       const r = await eventoPublico.pagamento(token);
-      setPag(r);
+      aplicarPagamento(r);
       setErro('');
-      if (r.pago && !festejou.current) {
-        festejou.current = true;
-        confetti({ particleCount: 120, spread: 90, origin: { y: 0.6 }, colors: ['#00B39D', '#00d9bd', '#ffd166', '#ffffff'] });
-      }
     } catch (e: any) {
       if (primeira) setErro(e?.message || 'Não encontramos este pagamento.');
     } finally {
       if (primeira) setCarregando(false);
     }
-  }, [token]);
+  }, [token, aplicarPagamento]);
 
   useEffect(() => { carregar(true); }, [carregar]);
 
   // Polling enquanto está em aberto. Para sozinho quando resolve — e o backend
   // consulta o provedor quando a cobrança está parada há mais de 2 min, então
   // não dependemos do webhook chegar.
-  // ⚠️ Backoff progressivo, não 6s pra sempre. Uma aba esquecida aberta a 6s
-  // dava 10 requisições/min; no lançamento, com dezenas de pessoas esperando o
-  // Pix cair no WiFi da igreja (1 IP), isso saturava o limiter por IP e ainda
-  // batia na API key do provedor. O Pix cai em segundos — quem não pagou nos
-  // primeiros minutos não precisa de 6s de resolução.
+  //
+  // ⚠️⚠️ O QUE DECIDE O RITMO É "TEM ALGUÉM OLHANDO?", não o tempo decorrido
+  // (11/08/2026 · pedido do Matheus: *"na hora que o Pix for feito, a página da
+  // pessoa tem que atualizar o mais rápido possível, sem ela ficar
+  // recarregando"*). A versão anterior degradava até 60s **mesmo com a pessoa
+  // na frente da tela** e continuava consultando **de aba escondida**: era
+  // lento justamente pra quem estava esperando e caro justamente pra quem tinha
+  // ido embora. Agora:
+  //   · aba ESCONDIDA  → polling PARADO (0 requisição). É onde mora a aba
+  //     esquecida que motivou o backoff original — e também o minuto em que a
+  //     pessoa está DENTRO do app do banco pagando.
+  //   · aba VISÍVEL    → 3s no primeiro minuto (a janela em que o Pix cai),
+  //     depois 8s, com teto de 20s.
+  // No total isso gera MENOS carga que antes (aba escondida era o grosso do
+  // volume) e resolve em ~3s pra quem está com o QR na frente.
+  //
+  // ⚠️ O caminho mais comum no celular nem depende disso: sair pro app do banco
+  // esconde a aba, e voltar dispara consulta IMEDIATA no `visibilitychange`. O
+  // ritmo de 3s existe pra quem paga em OUTRO aparelho (QR no computador), em
+  // que a aba nunca perde o foco e nada avisaria a página.
   const tentativas = useRef(0);
   // ⚠️ Depende do STATUS, não do objeto `pag`: cada poll troca a referência de
-  // `pag`, o effect re-rodaria e o backoff seria zerado a cada volta — ficando
-  // em 6s pra sempre, que é exatamente o que estamos consertando.
+  // `pag`, o effect re-rodaria e o ritmo seria zerado a cada volta.
   const statusAberto = pag && ABERTOS.includes(pag.status) ? pag.status : null;
   useEffect(() => {
     if (!statusAberto) return;
     tentativas.current = 0;
     let vivo = true;
-    let timer: ReturnType<typeof setTimeout>;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const parar = () => { if (timer) { clearTimeout(timer); timer = null; } };
     const proximo = () => {
+      parar();
+      // ⚠️ Não agenda nada com a aba escondida. Sem isto, uma aba deixada aberta
+      // no fim do dia seguiria consultando o provedor a noite inteira.
+      if (!vivo || document.visibilityState !== 'visible') return;
       const n = tentativas.current;
-      // 6s nos 10 primeiros (1 min, cobre o Pix), depois 15s, 30s e teto de 60s.
-      const espera = n < 10 ? 6000 : n < 20 ? 15000 : n < 30 ? 30000 : 60000;
+      const espera = n < 20 ? 3000 : n < 40 ? 8000 : 20000;
       timer = setTimeout(async () => {
         if (!vivo) return;
         tentativas.current += 1;
         await carregar();
-        if (vivo) proximo();
+        proximo();
       }, espera);
     };
     proximo();
-    // Voltar do checkout dispara uma consulta na hora e RESETA o backoff — é
-    // sinal de que a pessoa está ativa, e é o momento mais provável de ter pago.
-    const aoVoltar = () => {
-      if (document.visibilityState !== 'visible') return;
+
+    // Voltar pra aba dispara uma consulta na hora e RESETA o ritmo — é sinal de
+    // que a pessoa está ativa, e é o momento mais provável de ter acabado de
+    // pagar. Sair da aba PARA o laço.
+    const aoTrocarVisibilidade = () => {
+      if (document.visibilityState !== 'visible') { parar(); return; }
       tentativas.current = 0;
-      carregar();
+      carregar().finally(proximo);
     };
-    document.addEventListener('visibilitychange', aoVoltar);
+    document.addEventListener('visibilitychange', aoTrocarVisibilidade);
     return () => {
       vivo = false;
-      clearTimeout(timer);
-      document.removeEventListener('visibilitychange', aoVoltar);
+      parar();
+      document.removeEventListener('visibilitychange', aoTrocarVisibilidade);
     };
   }, [statusAberto, carregar]);
 
@@ -516,12 +586,38 @@ export default function PagamentoInscricao() {
               </p>
             )}
 
+            {/* Informação prévia exigida pelo CDC: fica junto do valor, visível
+                antes e depois de pagar. Nova aba pra não interromper o pagamento. */}
+            <p style={{ fontSize: 12, color: C.text3, marginTop: 8 }}>
+              <a href="/politica-reembolso" target="_blank" rel="noreferrer"
+                style={{ color: C.text3, textDecoration: 'underline' }}>
+                Política de reembolso e cancelamento
+              </a>
+            </p>
+
+            {/* Grupo de dúvidas do evento (21/08): visível pago ou não — dúvida
+                acontece antes E depois de pagar. Link real, nova aba. */}
+            {pag.whatsapp_duvidas && (
+              <a href={pag.whatsapp_duvidas} target="_blank" rel="noopener noreferrer" style={{
+                display: 'inline-block', marginTop: 10, padding: '8px 14px', borderRadius: 999,
+                background: 'rgba(37,211,102,0.10)', border: '1px solid rgba(37,211,102,0.35)',
+                color: '#1da851', fontSize: 12.5, fontWeight: 700, textDecoration: 'none',
+              }}>
+                Dúvidas? Entre no grupo do WhatsApp
+              </a>
+            )}
+
             {/* Comprovante do check-in (SPEC-06): pagou → o QR da entrada
                 aparece AQUI (a tela de sucesso do formulário ficou pra trás
                 quando a pessoa foi pro checkout). Sem `pago`, sem QR. */}
             {pag.pago && pag.comprovante_token && (
               <ComprovanteCheckin token={pag.comprovante_token} corTexto={C.text3} />
             )}
+
+            {/* Instruções gerais do evento: a inscrição CONCLUIU aqui (quem
+                pagou por Pix nunca volta na tela de sucesso do formulário).
+                O servidor só manda `instrucoes` com `pago`. */}
+            {pag.pago && <BaixarInstrucoes instrucoes={pag.instrucoes} C={C} />}
 
             {emAberto && (
               <>
@@ -532,7 +628,7 @@ export default function PagamentoInscricao() {
                 )}
 
                 {metodos.length > 1 && (
-                  <div style={{ display: 'flex', gap: 6, marginTop: 16 }}>
+                  <div className="pgto-metodos" style={{ display: 'flex', gap: 6, marginTop: 16 }}>
                     {metodos.map(m => (
                       <button key={m} onClick={() => escolherMetodo(m, m === 'cartao' ? parcelasSel : 1)} disabled={!!preparando}
                         // Forma já recusada fica marcada: sem isso a pessoa tenta
@@ -674,6 +770,44 @@ export default function PagamentoInscricao() {
                         )}
                       </div>
                     )}
+                    {/* ⚠️ Com o Brick, quem escolhe as parcelas é o próprio
+                        formulário do provedor (ele mostra os juros de cada
+                        opção). Manter TAMBÉM o nosso seletor daria duas
+                        verdades na mesma tela — por isso o bloco acima só
+                        aparece quando o Brick NÃO está no ar. */}
+                    {pag.cartao_na_pagina && pag.cartao_public_key ? (
+                      <CartaoBrick
+                        publicKey={pag.cartao_public_key}
+                        valorCentavos={pag.valor_centavos}
+                        parcelasMax={pag.parcelas_max}
+                        checkoutUrl={pag.checkout_url}
+                        corTexto={C.text2}
+                        corTextoFraco={C.textDim}
+                        escuro={isDark}
+                        corBorda={C.inputBorder}
+                        // ⚠️ Sem isto o Brick pinta o fundo dos campos com o
+                        // cinza-azulado do tema escuro DELE, que não é o da
+                        // página — era isso que fazia o bloco do formulário
+                        // parecer colado de outro site no modo escuro. A prop
+                        // existia e nunca tinha sido passada daqui.
+                        corFundoInput={C.optionBg}
+                        onPagar={async (formData) => {
+                          // ⚠️ LANÇAR em erro é contrato do Brick: é o que faz
+                          // ele sair do estado "processando" e deixar a pessoa
+                          // corrigir. Resolver sem pagar deixaria a tela
+                          // parecendo que deu certo.
+                          try {
+                            const r = await eventoPublico.pagamentoCartao(token!, formData);
+                            aplicarPagamento(r);
+                            if (!r?.pago) throw new Error('Pagamento não confirmado.');
+                          } catch (e: any) {
+                            if (e?.pagamento) aplicarPagamento(e.pagamento);
+                            throw e;
+                          }
+                        }}
+                      />
+                    ) : (
+                      <>
                     <p style={{ fontSize: 13, color: C.text2, marginTop: 14 }}>
                       Você digita os dados do cartão no ambiente seguro do provedor de pagamento.
                     </p>
@@ -690,6 +824,8 @@ export default function PagamentoInscricao() {
                           Pagar com cartão
                         </button>
                       </a>
+                    )}
+                      </>
                     )}
                   </>
                 )}

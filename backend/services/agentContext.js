@@ -943,11 +943,59 @@ async function fetchGovernancaContext() {
 
 /**
  * Serializa contexto para incluir no prompt (controla tamanho).
+ *
+ * ⚠️ O corte NÃO pode ser um slice() cego no JSON inteiro, e por dois motivos
+ * que se somam:
+ *
+ *   1. Ele corta por ORDEM DE INSERÇÃO. `cerebro_vault` é o último campo
+ *      adicionado em buildContext, então a busca no Cérebro rodava, gastava
+ *      consulta — e era a primeira coisa jogada fora. O resultado da busca
+ *      frequentemente nem chegava ao modelo.
+ *   2. Cortar JSON no meio produz JSON INVÁLIDO: o modelo recebe um objeto com
+ *      chaves desbalanceadas e, junto, a instrução "responda SOMENTE com base no
+ *      contexto". Ele adivinha o resto.
+ *
+ * A correção mantém intactos os campos pequenos e de alto valor (documento do
+ * sistema, conhecimento curado, resultado da busca) e trunca apenas
+ * `ctx.modulos`, que é o que de fato ocupa espaço — removendo módulos INTEIROS,
+ * de trás para frente, para o JSON continuar válido.
  */
 function serializeContext(ctx, maxChars = 24000) {
   const json = JSON.stringify(ctx, null, 2);
   if (json.length <= maxChars) return json;
-  return json.slice(0, maxChars) + '\n... (contexto truncado por limite de tamanho)';
+
+  // Sem os campos de busca não há o que preservar: é o caminho dos auditores
+  // (systemAuditor/moduleAuditor chamam buildContext SEM options.query, então
+  // não têm cerebro_vault nem conhecimento_sistema). Comportamento idêntico ao
+  // anterior, por construção — zero regressão para eles.
+  if (!ctx || (!ctx.cerebro_vault && !ctx.conhecimento_sistema)) {
+    return json.slice(0, maxChars) + '\n... (contexto truncado por limite de tamanho)';
+  }
+
+  const { modulos, ...preservado } = ctx;
+  const base = JSON.stringify({ ...preservado, modulos: {} }, null, 2);
+  const orcamentoModulos = maxChars - base.length;
+
+  // Nem o preservado cabe: devolve só ele, ainda como JSON válido.
+  if (orcamentoModulos <= 0) {
+    return JSON.stringify(preservado, null, 2)
+      + '\n... (dados dos módulos omitidos por limite de tamanho)';
+  }
+
+  const mantidos = {};
+  let usado = 0;
+  let cortados = 0;
+  for (const [mod, dados] of Object.entries(modulos || {})) {
+    const tamanho = JSON.stringify({ [mod]: dados }, null, 2).length;
+    if (usado + tamanho > orcamentoModulos) { cortados++; continue; }
+    mantidos[mod] = dados;
+    usado += tamanho;
+  }
+
+  const saida = JSON.stringify({ ...preservado, modulos: mantidos }, null, 2);
+  return cortados
+    ? `${saida}\n... (${cortados} módulo(s) omitido(s) por limite de tamanho — pergunte sobre um módulo específico para vê-lo)`
+    : saida;
 }
 
 module.exports = { buildContext, serializeContext, canSeeModule, MODULE_ROUTE_KEY };

@@ -1,3 +1,9 @@
+// ⚠️ APOSENTADA como TELA (13/08/2026 · decisão do Marcos): as abas Coletas
+// ("os líderes de integração não compraram a ideia") e Avisos (broadcast que
+// nem persistia resultado — substituído pelas Programadas do /comunicacao)
+// saíram da UI; a gestão de Líderes virou a aba CONTATOS do /comunicacao.
+// Deste arquivo, só a AbaConfig segue montada (export WhatsappBotConfig, usada
+// na aba Bot do /comunicacao). O default export fica dormante pra reativação.
 import { useState, useEffect, useCallback } from 'react';
 import { whatsapp as api, users as usersApi, grupos as gruposApi } from '../../api';
 import { Card } from '../../components/ui/card';
@@ -592,6 +598,7 @@ function AbaConfig() {
       const inst = d?.institucional || {};
       setCfg({
         ia_ativa: d?.ia_ativa !== false,
+        respostas_automaticas: d?.respostas_automaticas !== false,
         missao: inst.missao || '',
         visao: inst.visao || '',
         valores: Array.isArray(inst.valores) ? inst.valores.join('\n') : (inst.valores || ''),
@@ -611,6 +618,7 @@ function AbaConfig() {
     try {
       await api.saveConfig({
         ia_ativa: cfg.ia_ativa,
+        respostas_automaticas: cfg.respostas_automaticas,
         institucional: {
           missao: cfg.missao,
           visao: cfg.visao,
@@ -631,10 +639,31 @@ function AbaConfig() {
 
   return (
     <div className="space-y-5 mt-4">
+      {/* ⚠️ DOIS interruptores, e a diferença importa (12/08/2026):
+          · "Responder sozinho" = o bot responde quem escreve (menu de setores +
+            institucional). Desligado, a mensagem CONTINUA chegando na aba
+            Conversas e a equipe atende na mão.
+          · "Bot ativo" (ia_ativa) corta o webhook INTEIRO, inclusive o registro
+            no inbox — é freio de emergência, não jeito de calar o bot. */}
+      <Card className="p-4 flex items-center justify-between">
+        <div>
+          <p className="font-medium text-foreground">Responder sozinho a quem escreve</p>
+          <p className="text-xs text-muted-foreground">
+            Desligado, ninguém recebe o menu de setores nem resposta automática — as mensagens
+            continuam chegando em Conversas para a equipe responder. Os disparos (grupos, censo,
+            inscrições, batismo…) <b>não</b> são afetados.
+          </p>
+        </div>
+        <Switch checked={cfg.respostas_automaticas} onCheckedChange={v => set('respostas_automaticas', v)} />
+      </Card>
+
       <Card className="p-4 flex items-center justify-between">
         <div>
           <p className="font-medium text-foreground">Bot ativo</p>
-          <p className="text-xs text-muted-foreground">Desligue pra pausar o bot sem mexer no webhook.</p>
+          <p className="text-xs text-muted-foreground">
+            Freio de emergência: para o webhook inteiro. ⚠️ Com isso desligado as mensagens que
+            chegam <b>deixam de aparecer em Conversas</b> — para só calar o bot, use a chave acima.
+          </p>
         </div>
         <Switch checked={cfg.ia_ativa} onCheckedChange={v => set('ia_ativa', v)} />
       </Card>
@@ -693,3 +722,8 @@ function Campo({ label, v, onChange, rows }) {
     </div>
   );
 }
+
+// A Configuração do bot (IA on/off · respostas automáticas · institucional ·
+// teste de disparo) é a única parte VIVA desta tela — montada na aba Bot do
+// módulo Comunicação.
+export const WhatsappBotConfig = AbaConfig;

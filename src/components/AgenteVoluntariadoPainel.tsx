@@ -14,7 +14,7 @@ import { Button } from './ui/button';
 import { Sparkles, MessageCircle, Loader2, CalendarClock, UserX, AlertTriangle, Copy, Download, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 
-type Pendente = { schedule_id: string; nome: string; funcao: string; servico: string | null; quando: string; telefone: string | null; whatsapp: string | null };
+type Pendente = { schedule_id: string; nome: string; funcao: string; servico: string | null; quando: string; telefone: string | null; whatsapp: string | null; telefone_fonte?: string | null; telefone_origem?: string | null };
 type Reposicao = { schedule_id: string; nome: string; funcao: string; servico: string | null; quando: string };
 type NoShow = { schedule_id: string; nome: string; funcao: string; servico: string | null; quando: string };
 type Dados = { confirmacoes_pendentes: Pendente[]; reposicoes: Reposicao[]; no_shows: NoShow[] };
@@ -22,8 +22,28 @@ type Dados = { confirmacoes_pendentes: Pendente[]; reposicoes: Reposicao[]; no_s
 export default function AgenteVoluntariadoPainel() {
   const [d, setD] = useState<Dados | null>(null);
   const [loading, setLoading] = useState(true);
-  const [aberto, setAberto] = useState(true);
+  // Nasce RECOLHIDO (pedido do Matheus · 13/08/2026): o painel abre no topo do
+  // dashboard de voluntariado e a lista aberta empurrava o resto da tela pra
+  // baixo. O cabeçalho já carrega o total e o resumo por categoria, então a
+  // informação de que existe trabalho pendente não se perde ao recolher.
+  const [aberto, setAberto] = useState(false);
   const [enviando, setEnviando] = useState(false);
+  // ⚠️ TEM QUE FICAR AQUI, junto dos outros hooks e ANTES dos `return null`
+  // abaixo. Este useState vivia no meio do corpo, depois dos três early
+  // returns — e como o componente sai cedo enquanto carrega (e quando não há
+  // pendência), a primeira renderização contava 6 hooks e a seguinte 7,
+  // estourando "Minified React error #310: Rendered more hooks than during the
+  // previous render" e derrubando a tela inteira do voluntariado.
+  //
+  // Só quebrava quando havia trabalho pendente de verdade (o `total === 0`
+  // segurava antes), por isso apareceu junto com o opt-out da escala, que
+  // começou a gerar recusas e confirmações pendentes.
+  //
+  // O aviso da semana já roda sozinho no cron diário (8h10 BRT). Este botão
+  // existe pro caso de escalar DEPOIS da rodada do dia — quem for escalado à
+  // tarde para o culto de amanhã seria avisado só na manhã seguinte, às vezes
+  // depois do culto. É idempotente: quem já foi avisado não recebe de novo.
+  const [avisando, setAvisando] = useState(false);
 
   const carregar = useCallback(() => {
     setLoading(true);
@@ -58,6 +78,32 @@ export default function AgenteVoluntariadoPainel() {
       secao('Recusadas — precisam de reposição', d.reposicoes) +
       secao('Faltaram sem avisar no último culto', d.no_shows);
   };
+  const avisarSemana = async () => {
+    setAvisando(true);
+    try {
+      const r: any = await api.avisarSemana();
+      // Relatório HONESTO: "0 enviados" com motivo é diferente de sucesso, e
+      // caixa verde para envio que não aconteceu foi o erro do disparo do censo.
+      const extras = [
+        r.app_avisados ? `${r.app_avisados} pelo app` : null,
+        r.ja_avisados ? `${r.ja_avisados} já avisado(s)` : null,
+        r.sem_telefone ? `${r.sem_telefone} sem telefone` : null,
+        r.adiados ? `${r.adiados} para a próxima rodada` : null,
+      ].filter(Boolean).join(' · ');
+      if (r.enfileirados > 0) {
+        toast.success(`${r.enfileirados} aviso(s) na fila do WhatsApp${extras ? ` · ${extras}` : ''}`);
+      } else if (r.app_avisados > 0) {
+        // Avisou pelo app mas não pelo WhatsApp: é meio caminho, e a tela tem
+        // que dizer qual metade — senão o coordenador acha que todos souberam.
+        toast.warning(`${r.app_avisados} avisado(s) pelo app. ${r.motivo || ''}`.trim(), { duration: 12000 });
+      } else {
+        toast.warning(r.motivo || 'Nada foi enviado.', { duration: 10000 });
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Erro ao avisar os escalados da semana');
+    } finally { setAvisando(false); }
+  };
+
   const copiar = async () => {
     try { await navigator.clipboard.writeText(textoListas().trim()); toast.success('Listas copiadas — é só colar.'); }
     catch { toast.error('Não consegui copiar. Tente o "Baixar".'); }
@@ -69,10 +115,20 @@ export default function AgenteVoluntariadoPainel() {
     setEnviando(true);
     try {
       const r: any = await api.lembrar(); // todos os pendentes com telefone
-      if (!r.template_configurado) {
-        toast.warning('Template de escala ainda não aprovado na Meta (WHATSAPP_TEMPLATE_ESCALA) — nada foi enviado. Use o "Lembrar" por pessoa, ou aprove o template.');
+      // ⚠️ Envio que não enfileirou NINGUÉM não pode aparecer como sucesso
+      // (lição do disparo do censo, 05/08: caixa verde para envio que não
+      // aconteceu, com o motivo real escondido como slug). O motivo vem do
+      // servidor como frase inteira.
+      if (!r.enfileirados) {
+        toast.warning(r.motivo || 'Nada foi enviado — nenhum lembrete foi enfileirado.', { duration: 10000 });
       } else {
-        toast.success(`${r.enviados} lembrete(s) enviado(s)${r.sem_telefone ? ` · ${r.sem_telefone} sem telefone` : ''}${r.falhas ? ` · ${r.falhas} falha(s)` : ''}`);
+        const extras = [
+          r.sem_telefone ? `${r.sem_telefone} sem telefone` : '',
+          r.adiados ? `${r.adiados} ficaram para a próxima rodada` : '',
+        ].filter(Boolean);
+        // "Enfileirado", não "enviado": a entrega é da fila (cron horário, com
+        // retry). Dizer "enviado" prometeria o que este clique não garante.
+        toast.success(`${r.enfileirados} lembrete(s) na fila de envio${extras.length ? ` · ${extras.join(' · ')}` : ''}`);
       }
     } catch (e: any) { toast.error(e.message); } finally { setEnviando(false); }
   };
@@ -103,6 +159,10 @@ export default function AgenteVoluntariadoPainel() {
               {enviando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircle className="h-3.5 w-3.5" />} Lembrar todos ({comTelefone.length})
             </Button>
           )}
+          <Button size="sm" variant="outline" onClick={avisarSemana} disabled={avisando} className="h-8 gap-1.5"
+            title="Avisa quem serve nos próximos 7 dias. Roda sozinho todo dia de manhã; use aqui quando escalar alguém depois disso.">
+            {avisando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarClock className="h-3.5 w-3.5" />} Avisar a semana
+          </Button>
           <Button size="sm" variant="outline" onClick={copiar} className="h-8 gap-1.5">
             <Copy className="h-3.5 w-3.5" /> Copiar
           </Button>
@@ -134,12 +194,20 @@ export default function AgenteVoluntariadoPainel() {
               <div className="min-w-0">
                 <div className="text-sm font-medium truncate">{p.nome}</div>
                 <div className="text-xs text-muted-foreground truncate">{[p.funcao, p.servico, p.quando].filter(Boolean).join(' · ')}</div>
+                {/* De onde veio o telefone. Só aparece quando NÃO é o cadastro
+                    do próprio voluntariado — número recuperado do cadastro da
+                    pessoa ou de um formulário antigo merece ser conferido antes
+                    de mandar, e sem o rótulo ele é indistinguível de um
+                    digitado aqui dentro. */}
+                {p.telefone && p.telefone_fonte && p.telefone_origem !== 'perfil' && (
+                  <div className="text-[11px] text-muted-foreground/80 truncate">telefone do {p.telefone_fonte}</div>
+                )}
               </div>
               {p.whatsapp ? (
                 <a href={p.whatsapp} target="_blank" rel="noopener noreferrer">
                   <Button size="sm"><MessageCircle className="h-4 w-4 mr-1" /> Lembrar</Button>
                 </a>
-              ) : <span className="text-xs text-amber-600">sem telefone</span>}
+              ) : <span className="text-xs text-amber-600">sem telefone cadastrado</span>}
             </div>
           ))}
         </div>

@@ -6,6 +6,7 @@ const { supabase } = require('../utils/supabase');
 const { sanitizeObj, isValidUUID } = require('../utils/sanitize');
 const { ENVIRONMENT_ID, getAgentId, listModulesForUser, canUseAgent } = require('../config/managedAgents');
 const { buildContext, serializeContext } = require('../services/agentContext');
+const { resilientFetch } = require('../utils/resilientFetch');
 
 // Persistência via cliente supabase (REST · service_role). O pool pg direto não
 // conecta no serverless do Vercel, então toda a leitura/escrita aqui usa REST.
@@ -40,7 +41,7 @@ const ttsLimiter = rateLimit({
 
 // Devs (auditoria só pra eles · você + Marcos Paulo). Allowlist por e-mail,
 // sobrescritível via env DEV_EMAILS (CSV). Matheus/outros: adicionar aqui ou no env.
-const DEV_EMAILS = (process.env.DEV_EMAILS || 'gestao@cbrio.com.br,infra@cbrio.com.br,matheus.toscano@cbrio.org')
+const DEV_EMAILS = (process.env.DEV_EMAILS || 'gestao@cbrio.com.br,infra@cbrio.com.br,matheus.toscano@cbrio.org,diego.assis@cbrio.org')
   .split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
 function requireDev(req, res, next) {
   const email = (req.user?.email || '').toLowerCase();
@@ -764,14 +765,31 @@ router.post('/worker/trigger', authorize('admin', 'diretor'), async (req, res) =
     const { sign } = require('../utils/workerHmac');
     const sig = sign(body);
 
-    const resp = await fetch(`${workerUrl.replace(/\/$/, '')}/run/${agentType}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Agent-Signature': sig,
-      },
-      body,
-    });
+    // ⚠️ O worker do Railway pode devolver 502/503/504 quando o container está
+    // reiniciando/redeployando (a app ainda não subiu para o proxy da Railway
+    // rotear) — nesse caso o /run/:agentType NUNCA chegou a ser executado
+    // (ele responde 202 assim que recebe, antes de rodar o agente de verdade),
+    // então repetir é seguro e resolve a indisponibilidade transitória em vez
+    // de só reportá-la. `retrySafe: true` porque é exatamente essa a garantia.
+    let resp;
+    try {
+      resp = await resilientFetch(
+        `${workerUrl.replace(/\/$/, '')}/run/${agentType}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Agent-Signature': sig,
+          },
+          body,
+        },
+        { timeoutMs: 8000, maxRetries: 2, retrySafe: true, dependency: 'Worker de agentes (Railway)' },
+      );
+    } catch (fetchErr) {
+      const status = Number(fetchErr?.status) || 503;
+      console.error('[AGENTS] /worker/trigger indisponível após retries:', fetchErr.message);
+      return res.status(status).json({ error: fetchErr.message || 'Worker de agentes indisponível' });
+    }
     if (!resp.ok) {
       const txt = await resp.text().catch(() => '');
       return res.status(502).json({ error: `Worker respondeu ${resp.status}: ${txt.slice(0, 200)}` });
@@ -780,7 +798,7 @@ router.post('/worker/trigger', authorize('admin', 'diretor'), async (req, res) =
     res.json({ accepted: true, worker: data });
   } catch (e) {
     console.error('[AGENTS] /worker/trigger error:', e.message);
-    res.status(500).json({ error: e.message || 'Erro ao chamar worker' });
+    res.status(e.status || 500).json({ error: e.message || 'Erro ao chamar worker' });
   }
 });
 
@@ -847,6 +865,32 @@ router.post('/run', authorize('admin', 'diretor'), aiLimiter, async (req, res) =
   } catch (e) {
     console.error('[AGENTS] /run error:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao iniciar agente' });
+  }
+});
+
+// GET /api/agents/diagnosticos — o que os agentes acharam, com PLANO DE AÇÃO
+//
+// ⚠️ Existe porque o diagnóstico dos agentes de incidente não aparecia em tela
+// nenhuma: a notificação apontava pra `/assistente-ia?run=<id>`, e a página não
+// lia `agent_runs`. Ver o cabeçalho de `utils/agentDiagnostico.js`.
+//
+// ⚠️ Guardado por admin/diretor: o corpo descreve falha interna, rota e release.
+// (O `GET /runs` abaixo é mais antigo e só tem `authenticate` — estreitá-lo é
+// mudança de autorização e fica pra decisão de quem opera, não efeito colateral
+// desta leva.)
+router.get('/diagnosticos', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { listarDiagnosticos } = require('../services/agentDiagnosticos');
+    const r = await listarDiagnosticos({
+      limite: req.query.limite,
+      agentType: req.query.agentType,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('[AGENTS] /diagnosticos error:', e.message);
+    // ⚠️ Erro NÃO vira lista vazia: "nenhum diagnóstico" e "a consulta falhou"
+    // levam a decisões opostas — e a aba nasceu justamente de um silêncio.
+    res.status(500).json({ error: 'Erro ao carregar os diagnósticos dos agentes.' });
   }
 });
 

@@ -31,6 +31,49 @@ router.get('/cron/gerar-cultos-recorrentes', async (req, res) => {
 
 router.use(authenticate);
 
+// GET /api/integracao/kpis/taticos — KPI TÁTICO OFICIAL da área 'integracao'
+// (kpi_indicadores_taticos + vw_kpi_trajetoria_atual), mesmo padrão de
+// backend/routes/painelArea.js e do piloto em grupos.js/voluntariado.js/cuidados.js.
+router.get('/kpis/taticos', authorizeModule('integracao', 1), async (req, res) => {
+  try {
+    const { data: kpisRaw, error: kpisErr } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, descricao, meta_descricao, meta_valor, unidade, periodicidade, lider_funcionario_id')
+      .eq('ativo', true)
+      .ilike('area', 'integracao')
+      .order('indicador', { ascending: true });
+    if (kpisErr) throw kpisErr;
+    const kpis = kpisRaw || [];
+    const kpiIds = kpis.map(k => k.id);
+
+    let trajByKpi = {};
+    if (kpiIds.length > 0) {
+      const { data: traj, error: trajErr } = await supabase
+        .from('vw_kpi_trajetoria_atual')
+        .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, checkpoint_meta, percentual_meta')
+        .in('kpi_id', kpiIds);
+      if (trajErr) console.error('[integracao kpis/taticos] trajetoria falhou:', trajErr.message);
+      (traj || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
+    }
+
+    const enriched = kpis.map(k => ({
+      id: k.id,
+      indicador: k.indicador,
+      descricao: k.descricao,
+      meta_descricao: k.meta_descricao,
+      meta_valor: k.meta_valor,
+      unidade: k.unidade,
+      periodicidade: k.periodicidade,
+      trajetoria: trajByKpi[k.id] || null,
+    }));
+
+    res.json({ area: 'integracao', total: enriched.length, kpis: enriched });
+  } catch (e) {
+    console.error('[integracao kpis/taticos]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar KPIs táticos de integração' });
+  }
+});
+
 // ── GET /dashboard — cards do header de /integracao ─────────────────────────
 // Reformulado em 2026-05-14 · visitantes/acompanhamentos descontinuados (PR
 // #399) e o CRUD órfão removido em 2026-06-25 (limpeza Atlas). Retorna dados
@@ -381,6 +424,21 @@ router.post('/coleta/:id/aprovar', authorizeModule('integracao', 3), async (req,
     if (errFetch || !sub) return res.status(404).json({ error: 'Submissao não encontrada' });
     if (sub.status !== 'pendente') {
       return res.status(409).json({ error: `Submissao já esta ${sub.status}` });
+    }
+
+    // (docs/cultos-domingo/ · F1) Submissão de KIDS só aplica em culto cujo tipo
+    // TEM Kids — em has_kids=false ela gravaria presencial_kids fantasma num
+    // culto que o totem nunca alimenta. Leitura isolada e best-effort: só recusa
+    // quando o banco DIZ has_kids=false (falha de leitura não bloqueia a fila).
+    if (sub.ambiente !== 'templo') {
+      try {
+        const { data: cultoAlvo } = await supabase.from('cultos')
+          .select('id, service_type:vol_service_types(has_kids)')
+          .eq('id', sub.culto_id).maybeSingle();
+        if (cultoAlvo?.service_type && cultoAlvo.service_type.has_kids === false) {
+          return res.status(409).json({ error: 'Este culto não tem Kids — a submissão de kids não pode ser aplicada nele.' });
+        }
+      } catch { /* não bloqueia por falha de leitura */ }
     }
 
     // A submissão mobile traz presencial + decisões do ambiente · marca as duas

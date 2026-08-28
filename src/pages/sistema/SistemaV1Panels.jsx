@@ -99,6 +99,7 @@ export function OperationsPanel() {
   if (error || !data) return <ErrorState error={error} retry={load} />;
 
   const runs = data.runs?.data || {};
+  const slo = runs.slo || {};
   const incidents = data.incidents?.data || {};
   const errors = data.errors?.data || {};
   const feedback = data.feedback?.data || {};
@@ -139,6 +140,38 @@ export function OperationsPanel() {
           </div>
         ))}
       </div>
+
+      {runs.slo && (
+        <div className="border-t p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold">Confiabilidade e cobertura das automações</h3>
+              <p className="mt-1 text-xs text-muted-foreground">Janela de {slo.windowHours}h. Sucesso só conta quando há prova do efeito esperado.</p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs">
+              <Badge variant="outline">Confiabilidade: {slo.successRatePct ?? '—'}%</Badge>
+              <Badge variant="outline">Cobertura de prova: {slo.proofCoveragePct ?? '—'}%</Badge>
+              <Badge variant="outline" className={slo.jobsBreached ? SEVERITY_STYLE.critical : SEVERITY_STYLE.info}>{slo.jobsBreached || 0} metas violadas</Badge>
+              <Badge variant="outline" className={slo.jobsMissing ? SEVERITY_STYLE.error : SEVERITY_STYLE.info}>{slo.jobsMissing || 0} atrasadas</Badge>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-2 lg:grid-cols-2">
+            {(slo.items || []).slice(0, 8).map((item) => {
+              const stateLabel = { breached: 'meta violada', missing: 'atrasada', at_risk: 'atenção', unproven: 'sem prova', healthy: 'saudável' }[item.state] || item.state;
+              const stateStyle = { breached: SEVERITY_STYLE.critical, missing: SEVERITY_STYLE.error, at_risk: SEVERITY_STYLE.warning, unproven: SEVERITY_STYLE.warning, healthy: SEVERITY_STYLE.info }[item.state];
+              return (
+                <div key={item.jobId} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{item.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{item.ownerLabel || 'Responsável não definido'} · {item.runs} execuções · {item.successRatePct ?? '—'}%</p>
+                  </div>
+                  <Badge variant="outline" className={stateStyle}>{stateLabel}</Badge>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="border-t p-5">
         <h3 className="text-sm font-semibold">Sinais legados de recência</h3>
@@ -212,6 +245,15 @@ export function AutomationRunsPanel() {
             <div className="min-w-0">
               <p className="truncate font-mono text-xs">{run.job_id}</p>
               <p className="mt-1 text-xs text-muted-foreground">{relativeTime(run.started_at)}</p>
+              {run.owner_label && <p className="mt-1 text-xs text-muted-foreground">Responsavel: {run.owner_label}</p>}
+              {(run.error_code || run.request_id) && (
+                <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
+                  {[run.error_code, run.request_id].filter(Boolean).join(' / ')}
+                </p>
+              )}
+              {run.runbook_url && (
+                <a href={run.runbook_url} className="mt-1 inline-block text-xs text-primary hover:underline">Abrir runbook operacional</a>
+              )}
             </div>
             <Badge variant="outline">{run.status}</Badge>
             <span className="text-xs text-muted-foreground">efeito: {run.effect_status}</span>
@@ -291,12 +333,67 @@ function IncidentForm({ onCreated }) {
   );
 }
 
+/**
+ * Diagnóstico estruturado que o agente especialista registrou no evento.
+ *
+ * ⚠️ Renderiza NADA quando não há diagnóstico (evento de triagem, nota humana) —
+ * bloco vazio com título faria toda nota parecer diagnóstico faltando.
+ * ⚠️ Só LEITURA: decidir o incidente é o `select` de status ao lado; a versão
+ * completa desta análise, com filtros, é a aba Diagnósticos do /assistente-ia.
+ */
+function DiagnosticoDoAgente({ diagnosis }) {
+  if (!diagnosis || typeof diagnosis !== 'object') return null;
+  const acoes = Array.isArray(diagnosis.recommended_actions) ? diagnosis.recommended_actions.filter(Boolean) : [];
+  const validacao = Array.isArray(diagnosis.validation_steps) ? diagnosis.validation_steps.filter(Boolean) : [];
+  const evidencias = Array.isArray(diagnosis.evidence) ? diagnosis.evidence.filter(Boolean) : [];
+  const pergunta = diagnosis.decision_required === true ? String(diagnosis.decision_question || '').trim() : '';
+
+  return (
+    <div className="mt-2 space-y-3 rounded-lg border bg-background/60 p-3">
+      {diagnosis.probable_cause && (
+        <p className="text-sm"><span className="font-semibold">Causa provável · </span>{diagnosis.probable_cause}</p>
+      )}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        {diagnosis.classification && <span>tipo: <strong>{diagnosis.classification}</strong></span>}
+        {diagnosis.confidence && <span>confiança: <strong>{diagnosis.confidence}</strong></span>}
+        {diagnosis.risk_level && <span>risco: <strong>{diagnosis.risk_level}</strong></span>}
+      </div>
+      {acoes.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Plano de ação sugerido</p>
+          <ol className="mt-1 list-decimal space-y-1 pl-5 text-sm">{acoes.map((a, i) => <li key={i}>{a}</li>)}</ol>
+        </div>
+      )}
+      {validacao.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Como validar antes de mexer</p>
+          <ol className="mt-1 list-decimal space-y-1 pl-5 text-sm">{validacao.map((a, i) => <li key={i}>{a}</li>)}</ol>
+        </div>
+      )}
+      {evidencias.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Evidências</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5 text-sm">{evidencias.map((a, i) => <li key={i}>{a}</li>)}</ul>
+        </div>
+      )}
+      {pergunta && (
+        <div className="rounded-md border border-primary/40 bg-primary/10 p-2 text-sm">
+          <span className="font-semibold">O agente precisa de uma decisão: </span>{pergunta}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function IncidentsPanel() {
   const [items, setItems] = useState([]);
   const [filter, setFilter] = useState('ativos');
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(null);
+  const [expanded, setExpanded] = useState(null);
+  const [eventsByIncident, setEventsByIncident] = useState({});
+  const [loadingEvents, setLoadingEvents] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -326,6 +423,24 @@ export function IncidentsPanel() {
     }
   };
 
+  const toggleTimeline = async (incident) => {
+    if (expanded === incident.id) {
+      setExpanded(null);
+      return;
+    }
+    setExpanded(incident.id);
+    if (eventsByIncident[incident.id]) return;
+    setLoadingEvents(incident.id);
+    try {
+      const events = await sistemaApi.incidentEvents(incident.id);
+      setEventsByIncident((current) => ({ ...current, [incident.id]: events }));
+    } catch (err) {
+      toast.error(err.message || 'Erro ao carregar a analise do incidente');
+    } finally {
+      setLoadingEvents(null);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -333,7 +448,10 @@ export function IncidentsPanel() {
           <h2 className="text-xl font-semibold">Incidentes</h2>
           <p className="mt-1 text-sm text-muted-foreground">Do primeiro sinal ao monitoramento pós-resolução.</p>
         </div>
-        <IncidentForm onCreated={load} />
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="border-cyan-500/40 bg-cyan-500/10 text-cyan-700">Agente ativo · 5 min</Badge>
+          <IncidentForm onCreated={load} />
+        </div>
       </div>
 
       <div className="flex gap-2 overflow-x-auto">
@@ -381,6 +499,9 @@ export function IncidentsPanel() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Button variant="ghost" size="sm" onClick={() => toggleTimeline(incident)}>
+                        {expanded === incident.id ? 'Ocultar análise' : 'Ver análise'}
+                      </Button>
                       {NEXT_STATUS[incident.status]?.length > 0 && (
                         <select
                           aria-label={`Atualizar status de ${incident.title}`}
@@ -398,6 +519,34 @@ export function IncidentsPanel() {
                       {updating === incident.id && <Loader2 className="h-4 w-4 animate-spin" />}
                     </div>
                   </div>
+                  {expanded === incident.id && (
+                    <div className="mt-4 rounded-xl border bg-muted/30 p-4">
+                      <div className="grid gap-3 text-sm sm:grid-cols-2">
+                        <div><span className="text-muted-foreground">Impacto</span><p className="mt-1">{incident.impact_summary || 'Em avaliação'}</p></div>
+                        <div><span className="text-muted-foreground">Responsável</span><p className="mt-1">{incident.owner_email || 'Tecnologia · triagem automática'}</p></div>
+                      </div>
+                      <div className="mt-4 border-t pt-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Linha do tempo</p>
+                        {loadingEvents === incident.id ? <Loader2 className="mt-3 h-4 w-4 animate-spin" /> : (
+                          <div className="mt-3 space-y-3">
+                            {(eventsByIncident[incident.id] || []).map((event) => (
+                              <div key={event.id} className="flex gap-3 text-sm">
+                                <CircleDot className="mt-0.5 h-4 w-4 shrink-0 text-cyan-500" />
+                                <div className="min-w-0 flex-1">
+                                  <p>{event.message || (String(event.from_status || '') + ' → ' + String(event.to_status || ''))}</p>
+                                  <p className="mt-0.5 text-xs text-muted-foreground">{event.actor_email || 'sistema'} · {relativeTime(event.created_at)}</p>
+                                  {/* ⚠️ O diagnóstico do agente vinha nesta resposta e era
+                                      DESCARTADO — a tela mostrava só a 1ª frase do `message`
+                                      e o plano de ação nunca chegava a ninguém (27/08/2026). */}
+                                  <DiagnosticoDoAgente diagnosis={event.metadata?.diagnosis} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </article>
               ))}
             </div>

@@ -20,8 +20,11 @@ import { Input } from '../../components/ui/input';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
 import { toast } from 'sonner';
-import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus } from 'lucide-react';
+import { Search, Users, GraduationCap, Star, Crown, Eye, UserMinus, ChevronRight } from 'lucide-react';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
+import MarcadoresJornada from '../../components/MarcadoresJornada';
+import VinculosDuplicadosBloco from '../../components/grupos/VinculosDuplicadosBloco';
+import CompletarSexoBloco from '../../components/grupos/CompletarSexoBloco';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -35,8 +38,9 @@ const PAPEIS = {
   coordenador: { label: 'Coordenador', plural: 'Coordenadores', cor: '#8b5cf6', Icon: Crown },
   supervisor: { label: 'Supervisor', plural: 'Supervisores', cor: '#3b82f6', Icon: Eye },
   lider: { label: 'Líder', plural: 'Líderes', cor: '#00B39D', Icon: Star },
-  co_lider: { label: 'Co-líder', plural: 'Co-líderes', cor: '#0ea5e9', Icon: Star },
-  lider_treinamento: { label: 'Em treinamento', plural: 'Em treinamento', cor: '#f59e0b', Icon: GraduationCap },
+  // ⚠️ só pra LER dado histórico — ver a nota do TIPO_PAPEL em Grupos.jsx.
+  co_lider: { label: 'Líder em treinamento', plural: 'Líderes em treinamento', cor: '#f59e0b', Icon: GraduationCap },
+  lider_treinamento: { label: 'Líder em treinamento', plural: 'Líderes em treinamento', cor: '#f59e0b', Icon: GraduationCap },
   frequentador: { label: 'Membro', plural: 'Membros', cor: '#10b981', Icon: Users },
   visitante: { label: 'Visitante', plural: 'Visitantes', cor: '#94a3b8', Icon: Users },
 };
@@ -93,10 +97,21 @@ function FichaCampo({ rotulo, valor, onChange, type = 'text', inputMode }) {
 
 // Grupos da pessoa pra exibir/filtrar: participações; se não tiver, cai pros
 // grupos que lidera/supervisiona (pra líder/supervisor não ficar sem grupo).
+// ⚠️ DEDUPLICA por `grupo_id`. `p.grupos` é uma linha por PARTICIPAÇÃO, e desde
+// que a UNIQUE de vínculo ativo foi dropada (20260721170000, pra formalizar o
+// multi-grupo) a mesma pessoa pode ter VÁRIAS linhas ativas no MESMO grupo — aí
+// a coluna repetia "JOVENS - ESTUDO DA MENSAGEM DO CULTO AMI" 5 vezes na mesma
+// pessoa (caso real, 13/08/2026). `gruposDetalhados` já deduplicava com um Map;
+// era só esta função que não, então a lista e o modal discordavam da contagem.
 function gruposDe(p) {
-  if (p.grupos?.length) return p.grupos.map(g => ({ id: g.grupo_id, nome: g.grupo_nome || 'Grupo' }));
-  const fallback = [...(p.lidera || []), ...(p.supervisiona || [])];
-  return fallback.map(g => ({ id: g.id, nome: g.nome || 'Grupo' }));
+  const map = new Map();
+  (p.grupos || []).forEach(g => {
+    if (g.grupo_id && !map.has(g.grupo_id)) map.set(g.grupo_id, { id: g.grupo_id, nome: g.grupo_nome || 'Grupo' });
+  });
+  [...(p.lidera || []), ...(p.supervisiona || [])].forEach(g => {
+    if (g.id && !map.has(g.id)) map.set(g.id, { id: g.id, nome: g.nome || 'Grupo' });
+  });
+  return [...map.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
 }
 
 // Detalhe de CADA grupo da pessoa (participações + grupos que lidera/supervisiona),
@@ -124,7 +139,7 @@ function gruposDetalhados(p) {
 // ============================================================================
 // Aba Pessoas
 // ============================================================================
-export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas, podeEditarDados = false, podeEditar = false }) {
+export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDuplicatas, podeEditarDados = false, podeEditar = false, podeRemoverVinculo = false }) {
   const [dados, setDados] = useState(null);
   const [loading, setLoading] = useState(true);
   // Etiqueta "possível duplicata" (Marcos · 14/07): ids que caíram em algum
@@ -145,6 +160,9 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
   const [filtro, setFiltro] = useState('todos');     // função: todos | <papel> | lideres
   const [filtroGrupo, setFiltroGrupo] = useState('todos');
   const [filtroStatus, setFiltroStatus] = useState('todos');
+  // ⚠️ Declarado AQUI, antes do useMemo que o usa nas deps: array de deps de
+  // hook avalia NO RENDER (fix TDZ do reporte do Ariel · PR #2113).
+  const [soIncompletos, setSoIncompletos] = useState(false);
   const [busca, setBusca] = useState('');
   // Import do consolidado de participantes (pessoas × grupos)
   const [importOpen, setImportOpen] = useState(false);
@@ -227,6 +245,30 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
     return () => { vivo = false; };
   }, [selected?.membro_id]);
 
+  // Manda pra PRÓPRIA pessoa o link do censo. O servidor decide o canal (a régua
+  // e as travas são as mesmas da campanha) e devolve o motivo quando não dá.
+  const [pedindoDados, setPedindoDados] = useState(false);
+  const pedirDados = async () => {
+    if (!selected?.membro_id) return;
+    setPedindoDados(true);
+    try {
+      const r = await api.pedirDadosPessoa(selected.membro_id);
+      toast.success(`Pedido enviado por ${(r.canais || []).join(' e ')} — ela completa o cadastro pelo link.`);
+    } catch (e) {
+      // ⚠️ Motivo em PORTUGUÊS, não slug: "sem_canal" no rodapé de um toast verde
+      // foi exatamente o que fez o disparo do censo parecer bem-sucedido em 05/08.
+      const MOTIVOS = {
+        sem_canal: 'Essa pessoa não tem telefone nem e-mail utilizável no cadastro — preencha um contato primeiro.',
+        ja_convidado: 'Ela já foi convidada nesta rodada — aguarde a resposta antes de insistir.',
+        template_nao_configurado: 'O canal de WhatsApp não está configurado e ela não tem e-mail.',
+        canal_nao_configurado: 'Nenhum canal de envio está configurado no servidor.',
+        pessoa_nao_encontrada: 'Cadastro não encontrado.',
+      };
+      const m = e?.motivo || e?.body?.motivo;
+      toast.error(MOTIVOS[m] || e?.detalhe || e?.message || 'Não foi possível enviar o pedido.');
+    } finally { setPedindoDados(false); }
+  };
+
   const abrirEdicaoFicha = () => {
     setFichaForm({
       nome: ficha?.nome || '',
@@ -234,6 +276,7 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
       email: ficha?.email || '',
       cpf: ficha?.cpf || '',
       data_nascimento: ficha?.data_nascimento || '',
+      genero: ficha?.genero || '',
       observacoes: ficha?.observacoes || '',
     });
     setFichaEditando(true);
@@ -246,7 +289,12 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
       setFicha(r);
       setFichaEditando(false);
       toast.success('Ficha atualizada');
-      if (r.nome !== selected.nome) { setSelected(s => ({ ...s, nome: r.nome })); carregar(); }
+      if (r.nome !== selected.nome) setSelected(s => ({ ...s, nome: r.nome }));
+      // ⚠️ Recarrega SEMPRE (antes só quando o nome mudava): completar CPF ou
+      // sexo muda o selo "faltam dados" e pode ter promovido a pessoa de
+      // visitante a participante pelo trigger. Sem isto a tela continuaria
+      // cobrando um dado que acabou de ser preenchido.
+      carregar();
     } catch (e) {
       if (e.codigo === 'cpf_em_uso' && e.outro?.id) setFichaConflito({ outroId: e.outro.id, outroNome: e.outro.nome });
       else toast.error(e.message || 'Erro ao salvar a ficha');
@@ -308,7 +356,10 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
       c[p.papel] = (c[p.papel] || 0) + 1;
       if (p.ultima_frequencia) freq++; else visit++;
     }
-    c.lideres_total = (c.lider || 0) + (c.co_lider || 0);
+    // ⚠️ "Liderança" passou a ser QUEM GERENCIA o grupo (25/08/2026): líder +
+    // líder em treinamento. O `co_lider` entra na soma só pra não perder linha
+    // de dado histórico que alguém restaure.
+    c.lideres_total = (c.lider || 0) + (c.lider_treinamento || 0) + (c.co_lider || 0);
     c.frequentadores = freq;
     c.visitantes = visit;
     c.com_presenca = freq > 0; // a frequência já começou a ser preenchida?
@@ -324,14 +375,23 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
         p.nome?.toLowerCase().includes(s) ||
         gruposDe(p).some(g => g.nome?.toLowerCase().includes(s)));
     }
-    if (filtro === 'lideres') lista = lista.filter(p => p.papel === 'lider' || p.papel === 'co_lider');
+    if (filtro === 'lideres') lista = lista.filter(p => ['lider', 'lider_treinamento', 'co_lider'].includes(p.papel));
     else if (filtro === 'frequentadores') lista = lista.filter(p => !!p.ultima_frequencia);
     else if (filtro === 'visitantes') lista = lista.filter(p => !p.ultima_frequencia);
     else if (filtro !== 'todos') lista = lista.filter(p => p.papel === filtro);
     if (filtroGrupo !== 'todos') lista = lista.filter(p => gruposDe(p).some(g => g.id === filtroGrupo));
     if (filtroStatus !== 'todos') lista = lista.filter(p => statusDe(p) === filtroStatus);
+    // ⚠️ `=== false` (não `!p.cadastro_completo`): bundle novo contra backend
+    // antigo traz o campo `undefined`, e a negação simples marcaria TODO MUNDO
+    // como incompleto. Ausência de informação não é "faltam dados".
+    if (soIncompletos) lista = lista.filter(p => p.cadastro_completo === false);
     return lista;
-  }, [pessoas, busca, filtro, filtroGrupo, filtroStatus]);
+  }, [pessoas, busca, filtro, filtroGrupo, filtroStatus, soIncompletos]);
+
+  const totalIncompletos = useMemo(
+    () => pessoas.filter(p => p.cadastro_completo === false).length,
+    [pessoas],
+  );
 
   const { pageItems: filtradasPag, paginacaoProps: gruposPessoasPagProps } = usePaginacaoLocal(filtradas, 25);
 
@@ -353,7 +413,7 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
   ];
 
   const opcoesGrupo = [...gruposOptions].sort((a, b) => (a.nome || '').localeCompare(b.nome || ''));
-  const temFiltro = filtro !== 'todos' || filtroGrupo !== 'todos' || filtroStatus !== 'todos' || !!busca;
+  const temFiltro = filtro !== 'todos' || filtroGrupo !== 'todos' || filtroStatus !== 'todos' || soIncompletos || !!busca;
 
   return (
     <div>
@@ -500,14 +560,42 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
             {Object.entries(STATUS).map(([k, s]) => <SelectItem key={k} value={k}>{s.label}</SelectItem>)}
           </SelectContent>
         </ShadSelect>
+        {/* Fila de trabalho do cadastro. Só aparece quando há o que fazer —
+            chip permanente marcando zero vira ruído. */}
+        {totalIncompletos > 0 && (
+          <button
+            type="button"
+            onClick={() => setSoIncompletos(v => !v)}
+            title="Pessoas sem os dados que a inscrição pede (nome completo, CPF, telefone, e-mail, nascimento, sexo)"
+            style={{
+              background: soIncompletos ? '#64748b' : C.card,
+              color: soIncompletos ? '#fff' : C.text,
+              border: `1px solid ${soIncompletos ? '#64748b' : C.border}`,
+              borderRadius: 10, padding: '0 14px', height: 36,
+              fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+            }}>
+            Faltam dados · {totalIncompletos}
+          </button>
+        )}
       </div>
+
+      {/* Saneamento: a MESMA pessoa com 2+ linhas ativas no MESMO grupo.
+          Bloco recolhível aqui em cima (não aba nova · a Caixa de entrada dos
+          Grupos já provou que separar em aba faz ninguém achar). O cabeçalho
+          carrega a contagem, então recolhido não esconde que há trabalho. */}
+      <VinculosDuplicadosBloco podeResolver={podeRemoverVinculo} onResolvido={carregar} />
+
+      {/* Completar o sexo (Matheus · 14/08): fica ao lado do selo "faltam dados"
+          porque é a mesma fila de trabalho. Nasce RECOLHIDO — quem abre a aba
+          quer ver as pessoas, não uma ferramenta de saneamento. */}
+      {totalIncompletos > 0 && <CompletarSexoBloco onAplicado={carregar} />}
 
       {/* Lista */}
       <div style={{ background: C.card, borderRadius: 12, border: `1px solid ${C.border}`, overflow: 'hidden' }}>
         <div style={{ padding: '8px 16px', borderBottom: `1px solid ${C.border}`, fontSize: 11, color: C.t3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>{filtradas.length} pessoa{filtradas.length !== 1 ? 's' : ''}</span>
           {temFiltro && (
-            <button onClick={() => { setFiltro('todos'); setFiltroGrupo('todos'); setFiltroStatus('todos'); setBusca(''); }}
+            <button onClick={() => { setFiltro('todos'); setFiltroGrupo('todos'); setFiltroStatus('todos'); setSoIncompletos(false); setBusca(''); }}
               style={{ background: 'none', border: 'none', color: C.primary, cursor: 'pointer', fontSize: 11, fontWeight: 600 }}>
               Limpar filtros
             </button>
@@ -520,7 +608,7 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 720 }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}`, background: C.bg }}>
-                  {['Pessoa', 'Função', 'Status', 'Grupo', 'Última frequência', 'Último envio', 'Presenças'].map((h, i, arr) => (
+                  {['Pessoa', 'Função', 'Status', 'Jornada', 'Grupo', 'Última frequência', 'Último envio', 'Presenças'].map((h, i, arr) => (
                     <th key={h} style={{ textAlign: i === arr.length - 1 ? 'right' : 'left', padding: '8px 16px', fontSize: 10, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.4, whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -548,6 +636,19 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                               Possível duplicata
                             </span>
                           )}
+                          {/* ⚠️ É esta a fila de trabalho do "pegar os dados
+                              dele" (Matheus · 13/08). Sem o selo, ninguém sabe
+                              de quem cobrar — e o visitante fica visitante pra
+                              sempre porque o cadastro nunca fecha. O que falta
+                              vem do SERVIDOR (mesma régua do trigger que
+                              promove); os VALORES não trafegam. */}
+                          {p.cadastro_completo === false && (
+                            <span
+                              title={`Falta: ${(p.cadastro_rotulos || []).join(' · ')}`}
+                              style={{ fontSize: 9.5, padding: '2px 8px', borderRadius: 99, background: '#64748b20', color: '#64748b', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                              Faltam dados
+                            </span>
+                          )}
                         </button>
                       </td>
                       <td style={{ padding: '10px 16px' }}>
@@ -560,13 +661,43 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                           <span style={{ width: 6, height: 6, borderRadius: '50%', background: st.cor }} /> {st.label}
                         </span>
                       </td>
-                      <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2 }}>
-                        {gs.length > 0 ? gs.map((g, i) => (
-                          <span key={g.id || i}>
-                            {i > 0 && ', '}
-                            <button onClick={() => onOpenGrupo?.(g.id)} style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>{g.nome}</button>
-                          </span>
-                        )) : <span style={{ color: C.t3 }}>Sem grupo</span>}
+                      {/* Jornada — é ESTA a coluna do pedido do Pr. Nélio via
+                          Arthur Serpa: o líder olha a turma e vê em que etapa
+                          cada um está. Generosidade não vem pra quem só tem o
+                          módulo `grupos` (o servidor decide). */}
+                      <td style={{ padding: '10px 16px', maxWidth: 210 }}>
+                        <MarcadoresJornada marcadores={p.marcadores} />
+                      </td>
+                      {/* Coluna Grupo · CONSOLIDADA (pedido do Matheus, 13/08/2026:
+                          "tem pessoas que estão em mais de um grupo e a lista fica
+                          feia"). Quem está em 1 grupo já aparece de cara; quem está
+                          em vários vira um chip "N grupos" que abre no clique.
+                          ⚠️ Nomes de grupo são longos ("ONLINE - MULHER ÚNICA") e
+                          juntá-los com vírgula fazia a linha da pessoa quebrar em
+                          3-4 alturas — a tabela deixava de ser varrível, que é a
+                          única coisa que esta aba faz. */}
+                      <td style={{ padding: '10px 16px', fontSize: 12, color: C.t2, maxWidth: 260 }}>
+                        {gs.length === 0 ? (
+                          <span style={{ color: C.t3 }}>Sem grupo</span>
+                        ) : gs.length === 1 ? (
+                          <button onClick={() => onOpenGrupo?.(gs[0].id)} title={gs[0].nome}
+                            style={{ background: 'none', border: 'none', padding: 0, color: C.t2, cursor: 'pointer', fontSize: 12, fontWeight: 600, textAlign: 'left' }}>
+                            {gs[0].nome}
+                          </button>
+                        ) : (
+                          // ⚠️ ABRE O MODAL DA PESSOA, não expande na linha
+                          // (Matheus, 13/08/2026: "queria que abrisse um pop up,
+                          // acho mais amigável"). A 1ª versão expandia inline e a
+                          // linha virava uma coluna de nomes quebrados de 700px
+                          // de altura. O modal já existe, já deduplica e ainda
+                          // mostra função, desde quando e frequência POR GRUPO —
+                          // não valia construir um segundo popup ao lado dele.
+                          <button onClick={() => setSelected(p)}
+                            title={gs.map(g => g.nome).join(' · ')}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: `${C.primary}14`, border: `1px solid ${C.primary}33`, borderRadius: 99, padding: '2px 9px', color: C.primary, cursor: 'pointer', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                            {gs.length} grupos <ChevronRight size={12} />
+                          </button>
+                        )}
                       </td>
                       <td style={{ padding: '10px 16px', fontSize: 12, color: p.ultima_frequencia ? C.t2 : C.t3, whiteSpace: 'nowrap' }}>
                         {p.ultima_frequencia ? fmtData(p.ultima_frequencia) : '—'}
@@ -616,6 +747,10 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                       </span>
                     </div>
                   ); })()}
+                  {/* Jornada por extenso · aqui cabe o rótulo completo */}
+                  <div style={{ marginTop: 7 }}>
+                    <MarcadoresJornada marcadores={selected.marcadores} variante="ficha" />
+                  </div>
                 </div>
                 <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', fontSize: 22, lineHeight: 1, color: C.t3, cursor: 'pointer' }}>×</button>
               </div>
@@ -655,11 +790,34 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                       </div>
                     </div>
                   ) : !fichaEditando ? (
+                    <>
+                    {/* ⚠️ "O líder deve ter o papel de pegar os dados dele"
+                        (Matheus · 13/08). Quem PREENCHE é a própria pessoa, pelo
+                        link pessoal do censo enviado ao contato DELA — o link
+                        abre o cadastro preenchido e editável, então ele nunca
+                        passa por quem clica aqui. Quando o cadastro fecha, o
+                        trigger promove visitante → participante sozinho. */}
+                    {selected?.cadastro_completo === false && (
+                      <div style={{ marginBottom: 12, padding: 10, borderRadius: 10, background: '#64748b12', border: `1px solid ${C.border}` }}>
+                        <div style={{ fontSize: 12, color: C.text, fontWeight: 600, marginBottom: 2 }}>
+                          Faltam dados: {(selected.cadastro_rotulos || []).join(' · ')}
+                        </div>
+                        <div style={{ fontSize: 11, color: C.t3, lineHeight: 1.5, marginBottom: 8 }}>
+                          Preencha na ficha se você já tem os dados. Se não tiver, peça — a pessoa
+                          recebe um link pessoal e completa o cadastro dela mesma.
+                        </div>
+                        <button onClick={pedirDados} disabled={pedindoDados}
+                          style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, padding: '7px 12px', fontSize: 12, fontWeight: 600, color: C.text, cursor: pedindoDados ? 'wait' : 'pointer' }}>
+                          {pedindoDados ? 'Enviando…' : 'Pedir os dados à pessoa'}
+                        </button>
+                      </div>
+                    )}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px 16px', fontSize: 12.5 }}>
                       <FichaItem rotulo="Telefone" valor={ficha.telefone} />
                       <FichaItem rotulo="E-mail" valor={ficha.email} />
                       <FichaItem rotulo="CPF" valor={ficha.cpf} />
                       <FichaItem rotulo="Nascimento" valor={ficha.data_nascimento ? fmtData(ficha.data_nascimento) : null} />
+                      <FichaItem rotulo="Sexo" valor={ficha.genero} />
                       {ficha.observacoes && (
                         <div style={{ gridColumn: '1 / -1' }}>
                           <div style={{ fontSize: 10.5, color: C.t3, fontWeight: 700 }}>Observações</div>
@@ -667,6 +825,7 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                         </div>
                       )}
                     </div>
+                    </>
                   ) : (
                     <div>
                       <p style={{ fontSize: 11.5, color: C.amber, margin: '0 0 10px', lineHeight: 1.5 }}>
@@ -680,6 +839,24 @@ export default function GruposPessoas({ onOpenGrupo, gruposOptions = [], onVerDu
                         <div>
                           <div style={{ fontSize: 10.5, color: C.t3, fontWeight: 700, marginBottom: 4 }}>Nascimento</div>
                           <BirthDatePicker value={fichaForm.data_nascimento || ''} onChange={v => setFichaForm(f => ({ ...f, data_nascimento: v }))} />
+                        </div>
+                        {/* ⚠️ Sexo ENTROU em 13/08: o GET da ficha já o trazia e
+                            o PATCH o descartava, então era impossível fechar um
+                            cadastro por aqui — e é um dos 6 campos que a régua
+                            exige. `masculino|feminino`, nunca "outro" (canônico
+                            do Contrato de Inscrição em todas as 7 portas). */}
+                        <div>
+                          <div style={{ fontSize: 10.5, color: C.t3, fontWeight: 700, marginBottom: 4 }}>Sexo</div>
+                          <select
+                            value={String(fichaForm.genero || '').toLowerCase() === 'm' ? 'masculino'
+                              : String(fichaForm.genero || '').toLowerCase() === 'f' ? 'feminino'
+                                : (fichaForm.genero || '')}
+                            onChange={e => setFichaForm(f => ({ ...f, genero: e.target.value }))}
+                            style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', borderRadius: 8, border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 12.5, fontFamily: 'inherit' }}>
+                            <option value="">Não informado</option>
+                            <option value="masculino">Masculino</option>
+                            <option value="feminino">Feminino</option>
+                          </select>
                         </div>
                       </div>
                       <div style={{ marginTop: 10 }}>

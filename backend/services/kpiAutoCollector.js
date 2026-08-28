@@ -86,10 +86,15 @@ function isBridgeCulto(c) {
   return n.includes('bridge');
 }
 
-// Sede · 4 horarios de domingo + Quarta com Deus
+// Sede · horarios de domingo (o "Domingo 09:30" do corte de 24/08 entra pelo
+// prefixo) + Quarta com Deus. Fallback por NOME espelha isAmi/isBridge: culto
+// sem service_type (avulso, ou tipo anulado por engano) não pode sumir dos
+// KPIs em silêncio (docs/cultos-domingo/ · F1).
 function isSedeCulto(c) {
   const t = (c.service_type_name || '').toLowerCase();
-  return t.startsWith('domingo') || t === 'quarta com deus';
+  if (t) return t.startsWith('domingo') || t === 'quarta com deus';
+  const n = (c.nome || '').toLowerCase();
+  return n.startsWith('domingo') || n.includes('quarta');
 }
 
 // Mantido por compat retroativa: cultos AMI ou Bridge (consolidacao antiga).
@@ -625,6 +630,128 @@ const COLLECTORS = {
     };
   },
 
+  // NEXT-04: NPS do NEXT · lê as respostas da pesquisa canônica de satisfação.
+  // A pesquisa do Next é PERPÉTUA (uma só, `contexto_kpi='nps_next'`, provisionada
+  // por GET /api/next/satisfacao) e o QR é mostrado por TURMA (`?turma=<id>`).
+  // ⚠️ Por isso NÃO dá pra ler de `dados_brutos` como os outros KPIs de NPS:
+  // `npsKpiSync` carimba o agregado da pesquisa com a `data_inicio` DELA, então
+  // numa pesquisa perpétua toda resposta — de qualquer mês, de qualquer turma —
+  // colapsa num único ponto do mês em que a pesquisa nasceu (medido em prod
+  // 18/08/2026: a resposta de 09/08 estava gravada em 2026-07-22). Lendo
+  // `nps_respostas` direto com a janela do período, cada mês fica com o seu.
+  // Difere do `nps.culto_area` de propósito em duas coisas:
+  //   · janela do MÊS, não média acumulada — cada turma é mensal e a meta do
+  //     NEXT-04 é mensal; acumular esconderia uma turma ruim atrás do histórico;
+  //   · devolve o NPS SCORE (-100 a 100), que é o que a meta ≥70 mede — não a
+  //     média 0-10 (essa vai junto na observação).
+  // Amostra pequena entra assim mesmo (esconder dado é pior), mas o `n` vem na
+  // frente da observação e ganha aviso abaixo de 5 — com 1 resposta o score dá
+  // 100 e um card verde mentiria pra quem lê de longe.
+  'next.nps': async ({ inicio, fim }) => {
+    const { data: pesquisas } = await supabase
+      .from('nps_pesquisas')
+      .select('id')
+      .eq('contexto_kpi', 'nps_next')
+      .is('deleted_at', null);
+    const ids = (pesquisas || []).map(p => p.id);
+    if (!ids.length) return null;
+    const rows = await fetchAll('nps_respostas', 'score',
+      q => q.in('pesquisa_id', ids).gte('created_at', inicio).lt('created_at', fim));
+    if (!rows.length) return null;
+    const total = rows.length;
+    const promotores = rows.filter(r => Number(r.score) >= 9).length;
+    const detratores = rows.filter(r => Number(r.score) <= 6).length;
+    const nps = Math.round(((promotores - detratores) / total) * 1000) / 10;
+    const media = rows.reduce((s, r) => s + Number(r.score || 0), 0) / total;
+    const alerta = total < 5 ? ` · ATENCAO amostra pequena (n=${total})` : '';
+    return {
+      valor: nps,
+      observacao: `${total} resposta(s) · NPS ${nps} · media ${media.toFixed(1)} (0-10) · ${promotores} promotor(es)/${detratores} detrator(es)${alerta}`,
+    };
+  },
+
+  // NEXT-05: frequência do Next · PESSOAS presentes no mês
+  // ⚠️⚠️ Lê a fonte VIVA por RPC (`fn_next_frequencia_periodo`), não
+  // `next_inscricoes.check_in_at` — essa camada morreu no cutover de 17/06/2026
+  // e a última presença nela é de 13/05. A régua vive na função SQL pra não
+  // existirem duas contagens de "frequência do Next" que possam divergir.
+  // ⚠️ Conta PESSOA distinta, não linha de presença: a mesma pessoa nos 2
+  // encontros do mês é UMA pessoa (lei da casa, a mesma da `vw_next_presenca_mes`).
+  'next.frequencia': async ({ inicio, fim }) => {
+    const { data, error } = await supabase.rpc('fn_next_frequencia_periodo', {
+      p_inicio: inicio,
+      p_fim: fim,
+    });
+    // ⚠️ Falha de consulta devolve null (= "não medido"), NUNCA 0: "ninguém foi
+    // ao Next" e "a consulta falhou" levam a decisões opostas.
+    if (error) {
+      console.warn('[kpi next.frequencia]', error.message);
+      return null;
+    }
+    const pessoas = Number(data || 0);
+    return {
+      valor: pessoas,
+      observacao: `${pessoas} pessoa(s) distinta(s) presente(s) em encontro do Next no periodo`,
+    };
+  },
+
+  // NEXT-06: % dos que FIZERAM o Next engajados em >=1 valor da Jornada
+  // ⚠️ É o "next × valor" REAL, diferente de NEXT-01/02/03, que medem a INTENÇÃO
+  // marcada no fim do encontro (`indicou_*`). Aqui o numerador é sinal de vida.
+  // ⚠️⚠️ Quem diz "fez o Next" é `vw_next_formado_pessoa`, a fonte ÚNICA (decisão
+  // de 14/08: 1 encontro basta). Os VALORES vêm de `vw_pessoas_papeis_mat`, a
+  // MESMA matview do Índice da Base — se um dia divergirem, é porque alguém criou
+  // uma segunda régua de "engajado". Conferido em 25/08: as duas concordam (884
+  // pessoas na matview × 888 na canônica; 56,9% × 56,6%).
+  // ⚠️ O denominador é ACUMULADO (quem fez o Next até o fim do período), porque
+  // engajamento é ESTADO ATUAL: recortar o denominador pelo mês compararia quem
+  // fez o Next em agosto com engajamento medido hoje — janela contra estoque.
+  'next.engajados_valor': async ({ fim }) => {
+    const formados = await fetchAll('vw_next_formado_pessoa', 'membro_id, formado_em',
+      q => q.lt('formado_em', fim));
+    const ids = [...new Set(formados.map(f => f.membro_id).filter(Boolean))];
+    const semCadastro = formados.filter(f => !f.membro_id).length;
+    if (!ids.length) return null;
+
+    // ⚠️ `.in()` em lotes de 200: lista longa estoura a URL do PostgREST e o erro
+    // voltaria como "não achou ninguém", que aqui viraria 0% em vez de erro.
+    // ⚠️ A COLUNA de pessoa na matview é `membresia_id`, não `membro_id` — pedir
+    // a errada faz o PostgREST recusar a query inteira.
+    let engajados = 0;
+    let medidos = 0;
+    for (let i = 0; i < ids.length; i += 200) {
+      const lote = ids.slice(i, i + 200);
+      const { data, error } = await supabase
+        .from('vw_pessoas_papeis_mat')
+        .select('membresia_id, valor_seguir, valor_conectar, valor_investir, valor_servir, valor_generosidade')
+        .in('membresia_id', lote);
+      if (error) {
+        console.warn('[kpi next.engajados_valor]', error.message);
+        return null;
+      }
+      medidos += (data || []).length;
+      engajados += (data || []).filter(p => p.valor_seguir || p.valor_conectar
+        || p.valor_investir || p.valor_servir || p.valor_generosidade).length;
+    }
+    if (!medidos) return null;
+
+    const pct = Math.round((engajados / medidos) * 1000) / 10;
+    // ⚠️ O denominador são os MEDÍVEIS, não todos os formados: quem fez o Next e
+    // não está na base viva (cadastro inativo/apagado) não pode ser contado como
+    // "não engajado" — isso deflacionaria o número. Quem ficou de fora é
+    // DECLARADO, senão cobertura parcial passa por total.
+    const foraBase = ids.length - medidos;
+    const fora = [
+      semCadastro ? `${semCadastro} sem cadastro ligado` : null,
+      foraBase > 0 ? `${foraBase} fora da base viva` : null,
+    ].filter(Boolean).join(' · ');
+    return {
+      valor: pct,
+      observacao: `${engajados} de ${medidos} pessoas que fizeram o Next tem sinal em >=1 valor `
+        + `(estado ATUAL; denominador acumulado ate ${fim})${fora ? ` · ${fora}` : ''}`,
+    };
+  },
+
   // ── Batismos por área (alimentados pela coluna area_kpi adicionada em
   //    20260514180000_batismo_area_kpi.sql). Filtra status='realizado' e
   //    usa COALESCE(data_batismo, created_at) pra contar a data real.
@@ -984,7 +1111,44 @@ const COLLECTORS = {
 // Isso garante que editar um culto do mês passado recalcula o registro do
 // mês passado, não o período atual. Sem o param, comporta como cron diario
 // (recalcula sempre o período corrente).
-async function coletarTodos({ dryRun = false, fontes = null, areas = null, referenceDate = null } = {}) {
+// Desloca a data de referência para DENTRO do período anterior.
+//
+// ⚠️ `setUTCDate(1)` ANTES de mexer no mês, sempre: em 31/03, um
+// `setUTCMonth(mes-1)` direto cai em 31/02, que o JS normaliza para 03/03 — o
+// mês anterior escaparia justamente nos dias 29, 30 e 31.
+function inicioDoPeriodoAnterior(periodicidade, date) {
+  const d = new Date(date);
+  switch (periodicidade) {
+    case 'semanal':    d.setUTCDate(d.getUTCDate() - 7); break;
+    case 'trimestral': d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 3); break;
+    case 'semestral':  d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 6); break;
+    case 'anual':      d.setUTCFullYear(d.getUTCFullYear() - 1); break;
+    default:           d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1); break; // mensal
+  }
+  return d;
+}
+
+// Períodos que uma rodada de coleta deve escrever.
+//
+// ⚠️ POR QUE O PERÍODO ANTERIOR TAMBÉM ENTRA:
+// o coletor só olhava o período CORRENTE, então um mês era congelado no estado
+// em que estivesse no dia 1º e nunca mais revisitado. Como o financeiro importa
+// o balanço semanalmente, tudo que chegava depois da virada ficava fora do KPI
+// para sempre. Medido em 18/08/2026: julho fechou com R$ 905.781 em 2.619
+// doações, mas tinha R$ 948.337 em 2.688 — 69 lançamentos entraram depois do
+// dia 31 e nunca foram contados. O mesmo vale para qualquer fonte que receba
+// dado com atraso (frequência lançada na terça, classificação financeira, etc).
+//
+// Um período fechado leva algumas semanas para assentar; reprocessá-lo a cada
+// rodada faz ele se corrigir sozinho, sem ninguém precisar lembrar.
+function periodosAlvo(periodicidade, dataRef, incluirAnterior) {
+  const atual = periodoAtual(periodicidade, dataRef);
+  if (!incluirAnterior) return [atual];
+  const anterior = periodoAtual(periodicidade, inicioDoPeriodoAnterior(periodicidade, dataRef));
+  return anterior === atual ? [atual] : [atual, anterior];
+}
+
+async function coletarTodos({ dryRun = false, fontes = null, areas = null, referenceDate = null, fecharAnterior = false } = {}) {
   let query = supabase
     .from('kpi_indicadores_taticos')
     .select('id, periodicidade, fonte_auto, indicador, area')
@@ -1015,7 +1179,10 @@ async function coletarTodos({ dryRun = false, fontes = null, areas = null, refer
       continue;
     }
 
-    const periodo = periodoAtual(ind.periodicidade, dataRef);
+    // Laço por período (corrente e, com `fecharAnterior`, também o anterior).
+    // A indentação do corpo abaixo foi mantida de propósito: reindentar 100
+    // linhas esconderia a mudança real num diff de formatação.
+    for (const periodo of periodosAlvo(ind.periodicidade, dataRef, fecharAnterior)) {
     const range = periodoRange(periodo, ind.periodicidade);
 
     try {
@@ -1112,9 +1279,10 @@ async function coletarTodos({ dryRun = false, fontes = null, areas = null, refer
     } catch (e) {
       resultados.push({ id: ind.id, status: 'erro', erro: e.message });
     }
+    } // fim do laço de períodos
   }
 
   return resultados;
 }
 
-module.exports = { coletarTodos, COLLECTORS, periodoAtual, periodoRange };
+module.exports = { coletarTodos, COLLECTORS, periodoAtual, periodoRange, periodosAlvo, inicioDoPeriodoAnterior };

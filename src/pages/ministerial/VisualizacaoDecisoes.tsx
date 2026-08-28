@@ -10,7 +10,7 @@ import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { Button } from '../../components/ui/button';
 import {
   Heart, Sparkles, Loader2, BarChart3, Calendar, Users, Search, UserPlus,
-  ChevronDown, ChevronRight, Trash2,
+  ChevronDown, ChevronRight, Trash2, Link2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -81,6 +81,46 @@ export default function VisualizacaoDecisoes() {
     return { presenciais, online, total, mediaPorCulto, totalCultos: cultos.length, cultosComDecisao };
   }, [cultos]);
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // COBERTURA NOMINAL · quantas decisões declaradas têm NOME
+  //
+  // Medido em 14/08/2026: os cultos declaravam 137 decisões presenciais no
+  // período e havia 125 pessoas com nome — mas os dois números viviam em telas
+  // diferentes, e por isso ninguém via o buraco (2 cultos da AMI com decisão
+  // declarada e ZERO nomes passaram meses despercebidos).
+  //
+  // ⚠️ NÃO uso `resumo.total_sem_dados` do endpoint: ele soma erro COM SINAL.
+  // O culto de 12/07 tem 11 declaradas e 19 nomes → `sem_dados = -8`, e esse
+  // -8 CANCELA a falta real de outro culto, fazendo o total parecer saudável.
+  // Pior: a view marca esse culto como `gap_status = 'completo'`.
+  //
+  // ⚠️ E não publico percentual: N > D acontece de verdade, e uma "cobertura"
+  // de 173% ensina a equipe a ignorar o card. O que vai na cara é o GAP
+  // ABSOLUTO (uma tarefa), com a divergência contada à parte (outra tarefa).
+  //
+  // ⚠️ Janela declarada no subtítulo: estes números vêm de `nsmSemDados` com
+  // `dias: 365` FIXO, enquanto os 4 cards ao lado seguem o seletor de período.
+  // Sem dizer isso a tela mostraria dois períodos como se fossem um.
+  const { data: semDados } = useQuery({
+    // Mesma queryKey do VisaoPessoas — o react-query desduplica, então o card
+    // não custa uma requisição a mais.
+    queryKey: ['painel', 'nsm-sem-dados', 365],
+    queryFn: () => painelApi.nsmSemDados({ dias: 365 }),
+    staleTime: 30_000,
+  });
+
+  const cobertura = useMemo(() => {
+    const items = semDados?.items || [];
+    let faltam = 0, cultosComFalta = 0, cultosDivergentes = 0;
+    items.forEach((c: any) => {
+      const d = c.total_decisoes || 0;
+      const n = c.total_registradas || 0;
+      if (n < d) { faltam += d - n; cultosComFalta++; }
+      else if (n > d) { cultosDivergentes++; }
+    });
+    return { faltam, cultosComFalta, cultosDivergentes };
+  }, [semDados]);
+
   const porMes = useMemo(() => {
     const map = new Map<string, { mes: string; presenciais: number; online: number }>();
     cultos.forEach(c => {
@@ -140,7 +180,7 @@ export default function VisualizacaoDecisoes() {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <StatisticsCard
           title="Total decisões"
           value={totais.total.toLocaleString('pt-BR')}
@@ -164,6 +204,19 @@ export default function VisualizacaoDecisoes() {
           value={totais.mediaPorCulto}
           icon={BarChart3}
           iconColor={C.primary}
+        />
+        <StatisticsCard
+          title="Nomes faltando"
+          value={cobertura.faltam.toLocaleString('pt-BR')}
+          subtitle={
+            `${cobertura.cultosComFalta} culto${cobertura.cultosComFalta === 1 ? '' : 's'}` +
+            (cobertura.cultosDivergentes > 0
+              ? ` · ${cobertura.cultosDivergentes} com divergência`
+              : '') +
+            ' · 12 meses'
+          }
+          icon={Heart}
+          iconColor={cobertura.faltam > 0 ? C.warn : C.primary}
         />
       </div>
 
@@ -733,17 +786,59 @@ function CultoPessoas({ cultoId, totalEsperado, onChanged }: { cultoId: string; 
       {adicionando ? (
         <FormPessoa cultoId={cultoId} onSaved={() => { setAdicionando(false); refetch(); onChanged(); }} onCancel={() => setAdicionando(false)} />
       ) : (
-        <Button
-          onClick={() => setAdicionando(true)}
-          size="sm" variant="outline"
-          className="w-full h-8 gap-1.5"
-          style={faltando > 0 ? { borderColor: C.purple, color: C.purple } : undefined}
-        >
-          <UserPlus className="h-3.5 w-3.5" />
-          Adicionar pessoa {faltando > 0 ? `(faltam ${faltando})` : ''}
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => setAdicionando(true)}
+            size="sm" variant="outline"
+            className="flex-1 h-8 gap-1.5"
+            style={faltando > 0 ? { borderColor: C.purple, color: C.purple } : undefined}
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            Adicionar pessoa {faltando > 0 ? `(faltam ${faltando})` : ''}
+          </Button>
+          <BotaoLinkVoluntario cultoId={cultoId} />
+        </div>
       )}
     </div>
+  );
+}
+
+// Botão que entrega ao conferente o link assinado daquele culto, pra ele mandar
+// no grupo dos voluntários. Sem um caminho de distribuição a porta não existe:
+// o formulário do online está no ar desde junho, nunca teve link divulgado, e
+// registrou ZERO decisões em 3 meses.
+function BotaoLinkVoluntario({ cultoId }: { cultoId: string }) {
+  const [ocupado, setOcupado] = useState(false);
+
+  const copiar = async () => {
+    setOcupado(true);
+    try {
+      const r = await kpisApi.cultos.linkDecisoes(cultoId);
+      if (!r?.link) {
+        // fail-closed: sem segredo configurado não existe link válido pra dar.
+        toast.error('Link indisponível · segredo de token não configurado no servidor.');
+        return;
+      }
+      await navigator.clipboard.writeText(r.link);
+      toast.success('Link copiado · pode mandar antes. Abre no dia do culto e vale por mais 2 dias.');
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível gerar o link');
+    } finally {
+      setOcupado(false);
+    }
+  };
+
+  return (
+    <Button
+      onClick={copiar}
+      disabled={ocupado}
+      size="sm" variant="outline"
+      className="h-8 gap-1.5"
+      title="Link pro voluntário lançar as decisões pelo celular, na hora"
+    >
+      <Link2 className="h-3.5 w-3.5" />
+      Link do voluntário
+    </Button>
   );
 }
 

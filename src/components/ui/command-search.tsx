@@ -7,7 +7,7 @@ import {
   Search, Users, DollarSign, Truck, Tag, CalendarDays,
   FolderKanban, BookOpen, ClipboardList, Bot, User,
   LayoutDashboard, Map, UserCheck, UsersRound, Heart,
-  HandHelping, Megaphone, Sparkles, Settings,
+  HandHelping, Megaphone, Sparkles, Settings, Filter,
 } from 'lucide-react'
 
 interface SearchItem {
@@ -33,16 +33,21 @@ const PAGES: SearchItem[] = [
   { label: 'Financeiro', description: 'Contas, transações e reembolsos', path: '/admin/financeiro', icon: DollarSign, category: 'Administrativo', perm: 'canFinanceiro' },
   { label: 'Logística', description: 'Fornecedores, compras e pedidos', path: '/admin/logistica', icon: Truck, category: 'Administrativo', perm: 'canLogistica' },
   { label: 'Patrimônio', description: 'Bens, localizações e inventário', path: '/admin/patrimonio', icon: Tag, category: 'Administrativo', perm: 'canPatrimonio' },
-  { label: 'Assistente IA', description: 'Agentes de auditoria e análise', path: '/assistente-ia', icon: Bot, category: 'Administrativo', perm: 'canIA' },
+  { label: 'Assistente IA', description: 'Time de agentes: equipe, fila de aprovação e job descriptions', path: '/assistente-ia', icon: Bot, category: 'Administrativo', superAdminOnly: true },
   { label: 'Sistema', description: 'Command center técnico e governança', path: '/sistema', icon: Settings, category: 'Administrativo', superAdminOnly: true },
   { label: 'Eventos', description: 'Gestão de eventos da igreja', path: '/eventos', icon: CalendarDays, category: 'Projetos e Eventos', perm: 'canAgenda' },
   { label: 'Projetos', description: 'Acompanhamento de projetos', path: '/projetos', icon: FolderKanban, category: 'Projetos e Eventos', perm: 'canProjetos' },
   { label: 'Gestão Anual', description: 'Próximo ano e resultados · eventos e projetos', path: '/planejamento', icon: FolderKanban, category: 'Projetos e Eventos' },
+  { label: 'Planejamento Anual', description: 'Propostas do ciclo · avaliação pelas diretorias · decisão do Pastor', path: '/planejamento-anual', icon: FolderKanban, category: 'Projetos e Eventos' },
   { label: 'Planejamento Estratégico', description: 'Plano plurianual · Expansão 2026–2029', path: '/expansao', icon: Map, category: 'Projetos e Eventos', module: 'expansao' },
   { label: 'Membresia', description: 'Cadastro e trilha dos valores', path: '/ministerial/membresia', icon: BookOpen, category: 'Ministerial', perm: 'canMembresia' },
   { label: 'Cuidados', description: 'Capelania, aconselhamento e Jornada 180', path: '/ministerial/cuidados', icon: Heart, category: 'Ministerial', module: 'cuidados' },
   { label: 'Entradas', description: 'Porta de entrada · liga inscrição ao membro e funde duplicados', path: '/entradas', icon: Users, category: 'Ministerial', module: 'next-batismo' },
   { label: 'Jornada da Igreja', description: 'Profundidade · 5 valores · Membro Modelo (≥2 valores)', path: '/jornada', icon: Sparkles, category: 'Inteligência' },
+  { label: 'Censo', description: 'Perfil demográfico e engajamento da comunidade · pesquisas próprias', path: '/censo', icon: ClipboardList, category: 'Inteligência', module: 'censo' },
+  // ⚠️ Mesma entrada do mega-menu (AppShell). As duas listas são espelhos: item
+  // que só existe numa delas fica achável por um caminho e invisível pelo outro.
+  { label: 'Cruzamentos', description: 'Cruza batismo, NEXT, conversão, grupos e voluntariado · quem está onde', path: '/admin/cruzamentos', icon: Filter, category: 'Inteligência', module: 'membresia' },
 ]
 
 export function CommandSearch() {

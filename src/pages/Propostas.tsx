@@ -13,10 +13,10 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import { Plus, Trash2, Save, ClipboardCheck, Settings2, Loader2, Send, ArrowLeft, Check, X, RotateCcw, Paperclip, History, FileText } from 'lucide-react';
 
-type Aux = { ciclos: any[]; areas: { id: number; nome: string }[]; lideres: { id: string; name: string }[]; diretor_de: number[]; me: string; nivel: number };
+type Aux = { ciclos: any[]; areas: { id: number; nome: string }[]; diretor_de: number[]; me: string; nivel: number };
 const money = (v: number) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const ESTADO_LABEL: Record<string, string> = {
-  RASCUNHO: 'Rascunho', AGUARDANDO_VALIDACAO_LIDER: 'Aguardando líder', AGUARDANDO_DIRETOR_AREA: 'Aguardando diretor',
+  RASCUNHO: 'Rascunho',
   EM_AJUSTE: 'Em ajuste', REPROVADO_AREA: 'Reprovada (área)', EM_AVALIACAO: 'Em avaliação', CANCELADO: 'Cancelada',
   EM_DELIBERACAO: 'Em deliberação', APROVADO: 'Aprovada', EM_ADEQUACAO: 'Em adequação (ressalvas)',
   EM_VERIFICACAO_RESSALVAS: 'Verificando ressalvas', AGUARDANDO_RECURSO: 'Aguardando recurso',
@@ -28,8 +28,6 @@ const estadoCor = (e: string) => ['REPROVADO_AREA', 'CANCELADO', 'REPROVADO'].in
 
 const TABS = [
   { id: 'minhas', label: 'Minhas propostas' },
-  { id: 'lider', label: 'Fila do líder' },
-  { id: 'diretor', label: 'Fila do diretor' },
   { id: 'avaliar', label: 'Avaliar', diretor: true },
   { id: 'mural', label: 'Mural da reunião', diretor: true },
   { id: 'config', label: 'Configuração', admin: true },
@@ -107,11 +105,10 @@ function ListaPropostas({ fila, cicloId, onAbrir }: { fila: string; cicloId: str
     setLoading(true);
     const params: any = {};
     if (cicloId) params.ciclo_id = cicloId;
-    if (fila === 'lider' || fila === 'diretor') params.fila = fila;
     propostas.list(params).then(setLista).catch((e: any) => toast.error(e?.message || 'Erro')).finally(() => setLoading(false));
   }, [fila, cicloId]);
   if (loading) return <div className="py-8 text-center text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin inline mr-2" />Carregando…</div>;
-  if (!lista.length) return <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma proposta {fila === 'lider' ? 'aguardando sua validação' : fila === 'diretor' ? 'aguardando seu 1º filtro' : 'aqui ainda'}.</p>;
+  if (!lista.length) return <p className="py-8 text-center text-sm text-muted-foreground">Nenhuma proposta aqui ainda.</p>;
   return (
     <div className="space-y-2">
       {lista.map(p => (
@@ -135,19 +132,19 @@ function ListaPropostas({ fila, cicloId, onAbrir }: { fila: string; cicloId: str
 
 // ── Formulário (criar/editar) ──────────────────────────────────────────────
 const OBRIG: Record<string, string[]> = {
-  comum: ['titulo', 'equipe_envolvida', 'ano_execucao', 'descricao_motivacao', 'justificativa_geral', 'explicacao_alinhamento', 'como_gera_unidade', 'objetivo_geral', 'objetivos_especificos', 'publico_alvo', 'participantes_estimados', 'complexidade', 'impacto_esperado', 'recursos_materiais', 'suporte_equipes', 'retorno_esperado', 'justificativa_ourico'],
+  comum: ['titulo', 'area_id', 'descricao_motivacao', 'publico_alvo', 'relevancia', 'pertencimento', 'transformacao', 'impacto_esperado', 'participantes_estimados', 'espacos_necessarios', 'equipes_necessarias', 'custo_total'],
   projeto: ['data_inicio_prevista', 'data_termino_prevista'],
   evento: ['data_realizacao_prevista'],
   rotina: ['frequencia', 'periodo_do_ano'],
 };
 const FORM0 = () => ({
-  tipo: 'projeto', area_id: '', lider_usuario_id: '', titulo: '', equipe_envolvida: '', ano_execucao: String(new Date().getFullYear() + 1),
-  data_inicio_prevista: '', data_termino_prevista: '', data_realizacao_prevista: '', frequencia: '', periodo_do_ano: '', periodo_previsto: '',
-  descricao_motivacao: '', justificativa_geral: '', colabora_plano_expansao: false, explicacao_alinhamento: '', como_gera_unidade: '',
-  objetivo_geral: '', objetivos_especificos: '', publico_alvo: '', participantes_estimados: '', complexidade: '', impacto_esperado: '',
-  custo_total: '', arrecadacao_prevista: '', recursos_materiais: '', recursos_patrimoniais: '', suporte_equipes: '', retorno_esperado: '',
-  passa_no_ourico: false, justificativa_ourico: '', observacoes: '',
-  indicadores: [] as any[], atividades: [] as any[], riscos: [] as any[], desembolsos: [] as any[],
+  tipo: 'projeto', area_id: '', lider_usuario_id: '', titulo: '',
+  data_inicio_prevista: '', data_termino_prevista: '', data_realizacao_prevista: '', frequencia: '', periodo_do_ano: '',
+  descricao_motivacao: '', publico_alvo: '',
+  relevancia: '', pertencimento: '', transformacao: '',
+  contribui_visao_cbrio: false, explicacao_visao_cbrio: '',
+  impacto_esperado: '', participantes_estimados: '', espacos_necessarios: '', equipes_necessarias: '',
+  custo_total: '', arrecadacao_prevista: '',
 });
 
 function PropostaForm({ aux, cicloId, propostaId, onVoltar }: { aux: Aux; cicloId: string; propostaId?: string; onVoltar: () => void }) {
@@ -160,8 +157,7 @@ function PropostaForm({ aux, cicloId, propostaId, onVoltar }: { aux: Aux; cicloI
     if (!propostaId) return;
     propostas.get(propostaId).then((p: any) => {
       setF({ ...FORM0(), ...p, area_id: p.area_id ? String(p.area_id) : '', lider_usuario_id: p.lider_usuario_id || '',
-        ano_execucao: p.ano_execucao ?? '', participantes_estimados: p.participantes_estimados ?? '', custo_total: p.custo_total ?? '', arrecadacao_prevista: p.arrecadacao_prevista ?? '',
-        indicadores: p.indicadores || [], atividades: p.atividades || [], riscos: p.riscos || [], desembolsos: p.desembolsos || [] });
+        participantes_estimados: p.participantes_estimados ?? '', custo_total: p.custo_total ?? '', arrecadacao_prevista: p.arrecadacao_prevista ?? '' });
     }).catch((e: any) => toast.error(e?.message || 'Erro')).finally(() => setLoading(false));
   }, [propostaId]);
 
@@ -169,14 +165,14 @@ function PropostaForm({ aux, cicloId, propostaId, onVoltar }: { aux: Aux; cicloI
   const pendentes = useMemo(() => {
     const req = [...OBRIG.comum, ...(OBRIG[f.tipo] || [])];
     const faltando = req.filter(k => { const v = f[k]; return v === '' || v == null; });
-    if (!f.indicadores.length) faltando.push('indicadores');
-    if (!f.atividades.length) faltando.push('atividades');
-    if (!f.riscos.length) faltando.push('riscos');
-    if (!f.desembolsos.length) faltando.push('desembolsos');
+    if (f.contribui_visao_cbrio && !String(f.explicacao_visao_cbrio || '').trim()) faltando.push('explicacao_visao_cbrio');
     return faltando.length;
   }, [f]);
 
-  const payload = () => ({ ...f, ciclo_id: cicloId, area_id: f.area_id ? Number(f.area_id) : null, lider_usuario_id: f.lider_usuario_id || null });
+  const payload = () => ({
+    ...f, ciclo_id: cicloId, area_id: f.area_id ? Number(f.area_id) : null, lider_usuario_id: f.lider_usuario_id || null,
+    explicacao_visao_cbrio: f.contribui_visao_cbrio ? f.explicacao_visao_cbrio : null,
+  });
 
   const salvar = async () => {
     if (!f.titulo.trim()) { toast.error('Título é obrigatório'); return; }
@@ -204,132 +200,86 @@ function PropostaForm({ aux, cicloId, propostaId, onVoltar }: { aux: Aux; cicloI
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
-        {[['projeto', 'Projeto', 'Tem começo, fim e entregas'], ['evento', 'Evento', 'Acontece numa data/período'], ['rotina', 'Rotina', 'Se repete ao longo do ano']].map(([v, t, d]) => (
-          <button key={v} onClick={() => set('tipo', v)} className={`text-left rounded-lg border p-3 transition ${f.tipo === v ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'}`}>
-            <div className="font-semibold text-sm">{t}</div><div className="text-[11px] text-muted-foreground">{d}</div>
-          </button>
-        ))}
-      </div>
-
-      <Secao titulo="Identificação">
-        <Campo label="Título *"><Input value={f.titulo} onChange={e => set('titulo', e.target.value)} /></Campo>
-        <div className="flex gap-3 flex-wrap">
-          <Campo label="Área responsável" cls="flex-1 min-w-[180px]">
+      <Etapa titulo="Apresentação do Projeto">
+        <Secao titulo="Apresentação do Projeto">
+          <Campo label="Nome do evento/projeto/rotina *"><Input value={f.titulo} onChange={e => set('titulo', e.target.value)} /></Campo>
+          <div className="grid grid-cols-3 gap-2">
+            {[['projeto', 'Projeto', 'Tem começo, fim e entregas'], ['evento', 'Evento', 'Acontece numa data/período'], ['rotina', 'Rotina', 'Se repete ao longo do ano']].map(([v, t, d]) => (
+              <button key={v} onClick={() => set('tipo', v)} className={`text-left rounded-lg border p-3 transition ${f.tipo === v ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'}`}>
+                <div className="font-semibold text-sm">{t}</div><div className="text-[11px] text-muted-foreground">{d}</div>
+              </button>
+            ))}
+          </div>
+          <Campo label="Área do projeto">
             <Select value={f.area_id || '__none__'} onValueChange={v => set('area_id', v === '__none__' ? '' : v)}>
               <SelectTrigger><SelectValue placeholder="Área" /></SelectTrigger>
               <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem>{aux.areas.map(a => <SelectItem key={a.id} value={String(a.id)}>{a.nome}</SelectItem>)}</SelectContent>
             </Select>
           </Campo>
-          <Campo label="Líder da área" cls="flex-1 min-w-[180px]">
-            <Select value={f.lider_usuario_id || '__none__'} onValueChange={v => set('lider_usuario_id', v === '__none__' ? '' : v)}>
-              <SelectTrigger><SelectValue placeholder="Líder (valida a proposta)" /></SelectTrigger>
-              <SelectContent className="z-[1001]"><SelectItem value="__none__">— sem líder (vai direto ao diretor) —</SelectItem>{aux.lideres.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
-            </Select>
-          </Campo>
-          <Campo label="Ano de execução" cls="w-32"><Input value={f.ano_execucao} onChange={e => set('ano_execucao', e.target.value.replace(/\D/g, '').slice(0, 4))} /></Campo>
-        </div>
-        <Campo label="Equipe envolvida"><Textarea rows={2} value={f.equipe_envolvida} onChange={e => set('equipe_envolvida', e.target.value)} placeholder="Nomes e o que cada um faz" /></Campo>
-        {isP && <div className="flex gap-3 flex-wrap">
-          <Campo label="Início previsto" cls="flex-1 min-w-[150px]"><DatePicker value={f.data_inicio_prevista} onChange={(v: string) => set('data_inicio_prevista', v)} /></Campo>
-          <Campo label="Término previsto" cls="flex-1 min-w-[150px]"><DatePicker value={f.data_termino_prevista} onChange={(v: string) => set('data_termino_prevista', v)} /></Campo>
-        </div>}
-        {isE && <Campo label="Data prevista"><DatePicker value={f.data_realizacao_prevista} onChange={(v: string) => set('data_realizacao_prevista', v)} /></Campo>}
-        {isR && <div className="flex gap-3 flex-wrap">
-          <Campo label="Frequência" cls="flex-1 min-w-[150px]">
-            <Select value={f.frequencia || '__none__'} onValueChange={v => set('frequencia', v === '__none__' ? '' : v)}>
-              <SelectTrigger><SelectValue placeholder="Frequência" /></SelectTrigger>
-              <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem>{['mensal', 'bimestral', 'trimestral', 'semestral', 'anual', 'durante o ano todo'].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
-            </Select>
-          </Campo>
-          <Campo label="Período do ano" cls="flex-1 min-w-[150px]"><Input value={f.periodo_do_ano} onChange={e => set('periodo_do_ano', e.target.value)} placeholder="Ex.: março a novembro" /></Campo>
-        </div>}
-      </Secao>
+          {isP && <div className="flex gap-3 flex-wrap">
+            <Campo label="Começa em" cls="flex-1 min-w-[150px]"><DatePicker value={f.data_inicio_prevista} onChange={(v: string) => set('data_inicio_prevista', v)} /></Campo>
+            <Campo label="Termina em" cls="flex-1 min-w-[150px]"><DatePicker value={f.data_termino_prevista} onChange={(v: string) => set('data_termino_prevista', v)} /></Campo>
+          </div>}
+          {isE && <Campo label="Data"><DatePicker value={f.data_realizacao_prevista} onChange={(v: string) => set('data_realizacao_prevista', v)} /></Campo>}
+          {isR && <div className="flex gap-3 flex-wrap">
+            <Campo label="Frequência (qtd. de ocorrências)" cls="flex-1 min-w-[150px]">
+              <Select value={f.frequencia || '__none__'} onValueChange={v => set('frequencia', v === '__none__' ? '' : v)}>
+                <SelectTrigger><SelectValue placeholder="Frequência" /></SelectTrigger>
+                <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem>{['mensal', 'bimestral', 'trimestral', 'semestral', 'anual', 'durante o ano todo'].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
+              </Select>
+            </Campo>
+            <Campo label="Período do ano *" cls="flex-1 min-w-[150px]"><Input value={f.periodo_do_ano} onChange={e => set('periodo_do_ano', e.target.value)} placeholder="Ex.: março a novembro" /></Campo>
+          </div>}
+          <Campo label="Conte sobre o projeto"><Textarea rows={3} value={f.descricao_motivacao} onChange={e => set('descricao_motivacao', e.target.value)} /></Campo>
+          <Campo label="Público-alvo"><Input value={f.publico_alvo} onChange={e => set('publico_alvo', e.target.value)} /></Campo>
+        </Secao>
+      </Etapa>
 
-      <Secao titulo="Contexto e justificativa">
-        <Campo label="Descrição e motivação"><Textarea rows={3} value={f.descricao_motivacao} onChange={e => set('descricao_motivacao', e.target.value)} /></Campo>
-        <Campo label="Justificativa geral"><Textarea rows={2} value={f.justificativa_geral} onChange={e => set('justificativa_geral', e.target.value)} placeholder="Que necessidade concreta isso atende" /></Campo>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={f.colabora_plano_expansao} onChange={e => set('colabora_plano_expansao', e.target.checked)} /> Colabora com o Plano de Expansão</label>
-        <Campo label="Explique o alinhamento com o Plano de Expansão"><Textarea rows={2} value={f.explicacao_alinhamento} onChange={e => set('explicacao_alinhamento', e.target.value)} /></Campo>
-        <Campo label="Como a proposta gera unidade"><Textarea rows={2} value={f.como_gera_unidade} onChange={e => set('como_gera_unidade', e.target.value)} /></Campo>
-      </Secao>
+      <Etapa titulo="Critérios de avaliação">
+        <Secao titulo="Ouriço">
+          <Campo label="Relevância"><Textarea rows={2} value={f.relevancia} onChange={e => set('relevancia', e.target.value)} /></Campo>
+          <Campo label="Pertencimento"><Textarea rows={2} value={f.pertencimento} onChange={e => set('pertencimento', e.target.value)} /></Campo>
+          <Campo label="Transformação (contribuição para algum dos 5 valores)"><Textarea rows={2} value={f.transformacao} onChange={e => set('transformacao', e.target.value)} /></Campo>
+        </Secao>
 
-      <Secao titulo="Objetivos e resultados">
-        <Campo label="Objetivo geral"><Textarea rows={2} value={f.objetivo_geral} onChange={e => set('objetivo_geral', e.target.value)} /></Campo>
-        <Campo label="Objetivos específicos"><Textarea rows={2} value={f.objetivos_especificos} onChange={e => set('objetivos_especificos', e.target.value)} placeholder="Um por linha" /></Campo>
-        <div className="flex gap-3 flex-wrap">
-          <Campo label="Público-alvo" cls="flex-1 min-w-[180px]"><Input value={f.publico_alvo} onChange={e => set('publico_alvo', e.target.value)} /></Campo>
-          <Campo label="Nº estimado de participantes" cls="w-48"><Input value={f.participantes_estimados} onChange={e => set('participantes_estimados', e.target.value.replace(/\D/g, ''))} /></Campo>
-        </div>
-        <div className="flex gap-3 flex-wrap">
-          <Campo label="Complexidade" cls="flex-1 min-w-[150px]">
-            <Select value={f.complexidade || '__none__'} onValueChange={v => set('complexidade', v === '__none__' ? '' : v)}>
-              <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-              <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem>{['baixa', 'media', 'alta'].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
-            </Select>
-          </Campo>
-          <Campo label="Impacto esperado" cls="flex-1 min-w-[150px]">
-            <Select value={f.impacto_esperado || '__none__'} onValueChange={v => set('impacto_esperado', v === '__none__' ? '' : v)}>
-              <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-              <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem>{['baixo', 'medio', 'alto'].map(x => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent>
-            </Select>
-          </Campo>
-        </div>
-        <TabelaFilha titulo="Indicadores" cols={[['indicador', 'Indicador'], ['meta', 'Meta'], ['forma_medicao', 'Como será medido']]} rows={f.indicadores} onChange={v => set('indicadores', v)} />
-        <TabelaFilha titulo="Plano operacional (atividades)" cols={[['etapa', 'Etapa'], ['responsavel', 'Responsável'], ['prazo', 'Prazo']]} rows={f.atividades} onChange={v => set('atividades', v)} />
-        <TabelaFilha titulo="Riscos" cols={[['risco', 'Risco'], ['mitigacao', 'Mitigação']]} rows={f.riscos} onChange={v => set('riscos', v)} />
-      </Secao>
+        <Secao titulo="Cultura">
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={f.contribui_visao_cbrio} onChange={e => set('contribui_visao_cbrio', e.target.checked)} /> Esse projeto contribui para a visão CBRio?</label>
+          {f.contribui_visao_cbrio && <Campo label="Explique"><Textarea rows={2} value={f.explicacao_visao_cbrio} onChange={e => set('explicacao_visao_cbrio', e.target.value)} /></Campo>}
+        </Secao>
 
-      <Secao titulo="Recursos e orçamento">
-        <div className="flex gap-3 flex-wrap items-end">
-          <Campo label="Custo total (R$)" cls="flex-1 min-w-[140px]"><Input type="number" value={f.custo_total} onChange={e => set('custo_total', e.target.value)} /></Campo>
-          <Campo label="Arrecadação prevista (R$)" cls="flex-1 min-w-[140px]"><Input type="number" value={f.arrecadacao_prevista} onChange={e => set('arrecadacao_prevista', e.target.value)} /></Campo>
-          <div className="flex-1 min-w-[140px] text-sm"><div className="text-xs text-muted-foreground">Custo líquido p/ a igreja</div><div className="text-lg font-bold">{money(custoLiquido)}</div></div>
-        </div>
-        <Campo label="Recursos materiais"><Textarea rows={2} value={f.recursos_materiais} onChange={e => set('recursos_materiais', e.target.value)} placeholder="Um item por linha" /></Campo>
-        <Campo label="Recursos patrimoniais"><Textarea rows={2} value={f.recursos_patrimoniais} onChange={e => set('recursos_patrimoniais', e.target.value)} placeholder="Espaços, equipamentos, veículos" /></Campo>
-        <Campo label="Suporte de equipes"><Textarea rows={2} value={f.suporte_equipes} onChange={e => set('suporte_equipes', e.target.value)} placeholder="Produção, limpeza, mídia…" /></Campo>
-        <Campo label="Retorno esperado"><Textarea rows={2} value={f.retorno_esperado} onChange={e => set('retorno_esperado', e.target.value)} placeholder="Financeiro, social ou espiritual" /></Campo>
-        <TabelaFilha titulo="Cronograma de desembolso" cols={[['referencia', 'Mês ou etapa'], ['valor', 'Valor (R$)']]} rows={f.desembolsos} onChange={v => set('desembolsos', v)} numeric={['valor']} />
-      </Secao>
-
-      <Secao titulo="Teste do Ouriço e observações">
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={f.passa_no_ourico} onChange={e => set('passa_no_ourico', e.target.checked)} /> Passa no Teste do Ouriço</label>
-        <Campo label="Justificativa do Ouriço"><Textarea rows={2} value={f.justificativa_ourico} onChange={e => set('justificativa_ourico', e.target.value)} /></Campo>
-        <Campo label="Observações"><Textarea rows={2} value={f.observacoes} onChange={e => set('observacoes', e.target.value)} /></Campo>
-      </Secao>
+        <Secao titulo="Operacional">
+          <div className="flex gap-3 flex-wrap">
+            <Campo label="Impacto" cls="flex-1 min-w-[150px]">
+              <Select value={f.impacto_esperado || '__none__'} onValueChange={v => set('impacto_esperado', v === '__none__' ? '' : v)}>
+                <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                <SelectContent className="z-[1001]"><SelectItem value="__none__">—</SelectItem>{[['baixo', 'Baixo'], ['medio', 'Médio'], ['alto', 'Alto']].map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}</SelectContent>
+              </Select>
+            </Campo>
+            <Campo label="Público esperado" cls="flex-1 min-w-[150px]"><Input value={f.participantes_estimados} onChange={e => set('participantes_estimados', e.target.value.replace(/\D/g, ''))} /></Campo>
+          </div>
+          <Campo label="Espaços necessários"><Textarea rows={2} value={f.espacos_necessarios} onChange={e => set('espacos_necessarios', e.target.value)} /></Campo>
+          <Campo label="Equipes necessárias"><Textarea rows={2} value={f.equipes_necessarias} onChange={e => set('equipes_necessarias', e.target.value)} /></Campo>
+          <div className="flex gap-3 flex-wrap items-end">
+            <Campo label="Custo (R$)" cls="flex-1 min-w-[140px]"><Input type="number" value={f.custo_total} onChange={e => set('custo_total', e.target.value)} /></Campo>
+            <Campo label="Expectativa de arrecadação (R$)" cls="flex-1 min-w-[140px]"><Input type="number" value={f.arrecadacao_prevista} onChange={e => set('arrecadacao_prevista', e.target.value)} /></Campo>
+            <div className="flex-1 min-w-[140px] text-sm"><div className="text-xs text-muted-foreground">Custo líquido p/ a igreja</div><div className="text-lg font-bold">{money(custoLiquido)}</div></div>
+          </div>
+        </Secao>
+      </Etapa>
 
       {propostaId && <AnexosPanel propostaId={propostaId} />}
     </div>
   );
 }
 
+function Etapa({ titulo, children }: { titulo: string; children: any }) {
+  return <div className="space-y-3"><div className="text-sm font-bold text-foreground border-b border-border pb-1.5">{titulo}</div>{children}</div>;
+}
 function Secao({ titulo, children }: { titulo: string; children: any }) {
   return <div className="rounded-lg border border-border p-4 space-y-3"><div className="text-xs font-semibold uppercase tracking-wide text-primary">{titulo}</div>{children}</div>;
 }
 function Campo({ label, cls, children }: { label: string; cls?: string; children: any }) {
   return <div className={cls}><label className="text-xs text-muted-foreground block mb-0.5">{label}</label>{children}</div>;
-}
-
-function TabelaFilha({ titulo, cols, rows, onChange, numeric = [] }: { titulo: string; cols: [string, string][]; rows: any[]; onChange: (v: any[]) => void; numeric?: string[] }) {
-  const add = () => onChange([...rows, Object.fromEntries(cols.map(([k]) => [k, numeric.includes(k) ? 0 : '']))]);
-  const upd = (i: number, k: string, v: any) => onChange(rows.map((r, j) => j === i ? { ...r, [k]: v } : r));
-  const del = (i: number) => onChange(rows.filter((_, j) => j !== i));
-  return (
-    <div className="border border-border/60 rounded-md p-2.5 space-y-1.5">
-      <div className="flex items-center justify-between"><span className="text-xs font-semibold">{titulo}</span><button onClick={add} className="text-primary text-xs inline-flex items-center gap-1"><Plus className="h-3 w-3" /> adicionar</button></div>
-      {rows.length === 0 && <p className="text-[11px] text-muted-foreground">Nenhuma linha (obrigatório ao menos uma).</p>}
-      {rows.map((r, i) => (
-        <div key={i} className="flex gap-1.5 items-center">
-          {cols.map(([k, ph]) => (
-            <Input key={k} className="h-8 text-xs" placeholder={ph} value={r[k] ?? ''}
-              onChange={e => upd(i, k, numeric.includes(k) ? e.target.value.replace(/[^\d.,]/g, '') : e.target.value)} />
-          ))}
-          <button onClick={() => del(i)} className="text-red-500 shrink-0 p-1"><Trash2 className="h-3.5 w-3.5" /></button>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function AnexosPanel({ propostaId }: { propostaId: string }) {
@@ -372,7 +322,6 @@ function PropostaDetalhe({ id, aux, onVoltar, onEditar }: { id: string; aux: Aux
 
   const me = aux.me; const admin = aux.nivel >= 5;
   const souAutorLider = p.criado_por_usuario_id === me || p.lider_usuario_id === me;
-  const souLider = p.lider_usuario_id === me;
   const souDiretor = admin || (p.area_id && aux.diretor_de.includes(p.area_id));
 
   const acao = async (a: string, precisaMotivo = false) => {
@@ -385,8 +334,6 @@ function PropostaDetalhe({ id, aux, onVoltar, onEditar }: { id: string; aux: Aux
 
   const acoes: any[] = [];
   if (p.estado === 'RASCUNHO' && (souAutorLider || admin)) { acoes.push(['enviar', 'Enviar', Send, false]); acoes.push(['descartar', 'Descartar', X, false]); }
-  if (p.estado === 'AGUARDANDO_VALIDACAO_LIDER' && (souLider || admin)) { acoes.push(['validar', 'Validar e enviar', Check, false]); acoes.push(['devolver_lider', 'Devolver', RotateCcw, true]); }
-  if (p.estado === 'AGUARDANDO_DIRETOR_AREA' && souDiretor) { acoes.push(['aprovar', 'Aprovar (1º filtro)', Check, false]); acoes.push(['devolver_area', 'Devolver p/ ajuste', RotateCcw, true]); acoes.push(['negar', 'Negar', X, true]); }
   if (p.estado === 'EM_AJUSTE' && (souAutorLider || admin)) { acoes.push(['reenviar', 'Reenviar', Send, false]); }
   // Fase 3 · ressalvas + recurso
   if (p.estado === 'EM_ADEQUACAO' && (souAutorLider || admin)) { acoes.push(['enviar_adequacao', 'Enviar adequação', Send, false]); }
@@ -412,13 +359,13 @@ function PropostaDetalhe({ id, aux, onVoltar, onEditar }: { id: string; aux: Aux
         <div className="text-lg font-bold">{p.codigo ? `${p.codigo} · ` : ''}{p.titulo}</div>
         <div className="text-xs text-muted-foreground capitalize">{p.tipo} · {p.area?.nome || 'sem área'} · versão {p.versao}</div>
         <div className="grid md:grid-cols-2 gap-1 pt-2">
-          {linha('Objetivo geral', p.objetivo_geral)}
+          {linha('Conte sobre o projeto', p.descricao_motivacao)}
           {linha('Público-alvo', p.publico_alvo)}
-          {linha('Custo total', money(p.custo_total))}
-          {linha('Arrecadação', money(p.arrecadacao_prevista))}
+          {linha('Público esperado', p.participantes_estimados)}
+          {linha('Custo', money(p.custo_total))}
+          {linha('Expectativa de arrecadação', money(p.arrecadacao_prevista))}
           {linha('Custo líquido', money(p.custo_liquido))}
           {linha('Classificação', p.classificacao_custo)}
-          {linha('Complexidade', p.complexidade)}
           {linha('Impacto', p.impacto_esperado)}
         </div>
         {(p.indicadores?.length > 0 || p.anexos?.length > 0) && <div className="text-xs text-muted-foreground pt-1">{p.indicadores?.length || 0} indicador(es) · {p.atividades?.length || 0} atividade(s) · {p.riscos?.length || 0} risco(s) · {p.desembolsos?.length || 0} desembolso(s) · {p.anexos?.length || 0} anexo(s)</div>}
@@ -671,8 +618,8 @@ function MuralTab({ cicloId }: { cicloId: string }) {
     catch (e: any) { toast.error(e?.message || 'Erro'); } finally { setBusy(''); }
   };
   const exportCsv = () => {
-    const head = ['Pos', 'Codigo', 'Titulo', 'Area', 'Tipo', 'CustoLiquido', 'Classificacao', 'NotaOutros', 'NotaDiretorArea', 'Avaliadores', 'Complexidade', 'Impacto', 'Ourico', 'Estado'];
-    const rows = d.propostas.map((p: any) => [p.posicao ?? '', p.codigo ?? '', (p.titulo || '').replace(/;/g, ','), p.area || '', p.tipo, p.custo_liquido, p.classificacao_custo || '', p.nota_outros ?? '', p.nota_area ?? '', p.n_avaliadores, p.complexidade || '', p.impacto || '', p.passa_no_ourico ? 'sim' : 'nao', p.estado]);
+    const head = ['Pos', 'Código', 'Título', 'Área', 'Tipo', 'CustoLíquido', 'Classificação', 'NotaOutros', 'NotaDiretorÁrea', 'Avaliadores', 'Complexidade', 'Impacto', 'Ouriço', 'Estado'];
+    const rows = d.propostas.map((p: any) => [p.posicao ?? '', p.codigo ?? '', (p.titulo || '').replace(/;/g, ','), p.area || '', p.tipo, p.custo_liquido, p.classificacao_custo || '', p.nota_outros ?? '', p.nota_area ?? '', p.n_avaliadores, p.complexidade || '', p.impacto || '', p.passa_no_ourico ? 'sim' : 'não', p.estado]);
     const csv = [head, ...rows].map(r => r.join(';')).join('\n');
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `mural-propostas-${cicloId}.csv`; a.click();

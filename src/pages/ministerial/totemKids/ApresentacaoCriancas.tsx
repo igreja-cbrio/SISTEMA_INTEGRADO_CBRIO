@@ -2,8 +2,8 @@
 // por turma (data_apresentacao · 2º domingo do mês), estilo batismo. A equipe
 // contata a família pra agendar o horário e atualiza o status.
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { hrefConversa } from '@/lib/conversas';
+import { useNavigate } from 'react-router-dom';
+import { hrefWhatsapp } from '@/lib/conversas';
 import { totemKids as api } from '../../../api';
 import { Card } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
@@ -236,7 +236,17 @@ export default function ApresentacaoCriancas() {
                           {STATUS_OPCOES.map(s => <SelectItem key={s} value={s} className="text-xs capitalize">{s}</SelectItem>)}
                         </SelectContent>
                       </Select>
-                      {b.telefone && <Link to={hrefConversa(b.telefone)} className="text-emerald-600" title="Falar com a família no WhatsApp"><Phone className="h-4 w-4" /></Link>}
+                      {hrefWhatsapp(b.telefone) && (
+                        <a
+                          href={hrefWhatsapp(b.telefone)!}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-emerald-600"
+                          title="Falar com a família no seu WhatsApp"
+                        >
+                          <Phone className="h-4 w-4" />
+                        </a>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2 justify-end border-t border-border/50 pt-2">

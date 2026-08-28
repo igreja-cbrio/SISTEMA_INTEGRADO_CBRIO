@@ -13,6 +13,7 @@ import { batismoPublico } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
+import { disseSim } from '@/lib/acessibilidadeBatismo';
 
 // ── Helpers de mascara ──
 function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -186,12 +187,17 @@ export default function InscricaoBatismo() {
     tamanho_camisa: '',
     fez_next: '', // '' não informado | 'sim' | 'nao'
     limitacao_mobilidade: '',
+    deficiencia_descricao: '',
     motivo: '',
     observacoes: '',
     horario_culto: '',
     area_kpi: '', // opcional · 'sede' (default) | 'ami' | 'bridge' | 'online'
     website: '', // honeypot
   });
+  // Mesma condição para MOSTRAR e para EXIGIR o campo — régua única com o
+  // servidor (`src/lib/acessibilidadeBatismo.js`).
+  const pedeLimitacao = disseSim(form.limitacao_mobilidade);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
@@ -249,6 +255,12 @@ export default function InscricaoBatismo() {
     if (!SEXOS.includes(form.sexo)) return setError('Selecione o sexo.');
     if (!form.tamanho_camisa) return setError('Escolha o tamanho da camisa.');
     if (horarios.length && !form.horario_culto) return setError('Escolha o horário do batismo.');
+    // ⚠️ Exigido só quando a pessoa AFIRMOU — a mesma condição que mostrou o
+    // campo (régua única). Exigir campo que a tela não mostrou deixa o
+    // formulário insubmissível sem a pessoa entender o porquê.
+    if (pedeLimitacao && !form.deficiencia_descricao.trim()) {
+      return setError('Conte qual é a limitação, para a equipe de batismo se preparar.');
+    }
     if (!aceitaTermos) return setError('É preciso aceitar os termos para se inscrever.');
 
     submittingRef.current = true;
@@ -266,6 +278,7 @@ export default function InscricaoBatismo() {
         tamanho_camisa: form.tamanho_camisa || null,
         fez_next: form.fez_next === 'sim' ? true : form.fez_next === 'nao' ? false : null,
         limitacao_mobilidade: form.limitacao_mobilidade || null,
+        deficiencia_descricao: form.deficiencia_descricao.trim() || null,
         motivo: form.motivo || null,
         observacoes: form.observacoes || null,
         horario_culto: form.horario_culto || null,
@@ -504,12 +517,39 @@ export default function InscricaoBatismo() {
                 id="limitacao_mobilidade"
                 label="Possui alguma limitação de mobilidade?"
                 value={form.limitacao_mobilidade}
-                onChange={set('limitacao_mobilidade') as any}
+                onChange={(e: any) => {
+                  const v = String(e?.target?.value ?? e ?? '');
+                  // ⚠️ Voltar pra "Não" APAGA a descrição. Sem isto o texto
+                  // continuava no formulário e o servidor marcava deficiência
+                  // em quem acabou de dizer que não tem (a régua também
+                  // descarta no servidor — aqui é pra pessoa VER que apagou).
+                  setForm(f => ({
+                    ...f,
+                    limitacao_mobilidade: v,
+                    deficiencia_descricao: disseSim(v) ? f.deficiencia_descricao : '',
+                  }));
+                }}
                 options={[
                   { value: 'Não', label: 'Não' },
                   { value: 'Sim', label: 'Sim' },
                 ]}
               />
+              {pedeLimitacao && (
+                <>
+                  <Field
+                    id="deficiencia_descricao"
+                    label="Qual é a limitação?"
+                    as="textarea" rows={2}
+                    value={form.deficiencia_descricao}
+                    onChange={set('deficiencia_descricao')}
+                    required
+                  />
+                  <p style={{ marginTop: -12, marginBottom: 20, fontSize: 12.5, lineHeight: 1.5, color: 'var(--cbrio-text3)' }}>
+                    Ex.: cadeirante, deficiência auditiva, autismo, baixa visão. A equipe
+                    de batismo usa isso para preparar o acesso ao batistério e o apoio no dia.
+                  </p>
+                </>
+              )}
               <Field
                 id="motivo"
                 label="Quero ser batizado(a) na CBRio porque..."

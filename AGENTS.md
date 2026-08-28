@@ -501,6 +501,24 @@ regras. **Quebrar qualquer uma delas é regressão crítica.**
    sem usar SECURITY DEFINER no helper.** Causa stack overflow.
    Padrão: helper SQL `STABLE SECURITY DEFINER SET search_path = public`.
 
+10. ⚠️⚠️ **NUNCA dar `GRANT` de nível de TABELA em `public.profiles` para
+    `anon` ou `authenticated`** (migration `20260816194649` · incidente de
+    16/08/2026). **RLS não é por coluna**: a policy diz qual LINHA pode ser
+    escrita, nunca qual COLUNA. Com `GRANT UPDATE` nas 23 colunas + a anon key
+    embutida no bundle do app de membros, **qualquer pessoa que baixasse o app
+    e criasse conta virava `diretor` do ERP** com
+    `update profiles set role='diretor' where id = auth.uid()` — confirmado ao
+    vivo. Hoje `authenticated` só escreve em `(name, telefone)` e `anon` não
+    escreve nada.
+    - ⚠️ **O furo nº 1 é reabrir por engano**: `GRANT UPDATE ON profiles` de
+      TABELA cobre todas as colunas, e revogar coluna a coluna depois **não tem
+      efeito** — só `REVOKE` de tabela + `GRANT` por coluna conserta.
+    - ⚠️ **Coluna nova nasce sem grant** (fail-closed, desejado).
+    - ⚠️ **Statement misto falha inteiro**: `.update({ name, avatar_url })` dá
+      403 inclusive na parte do `name`. Um update por coluna, ou rota no backend.
+    - Vale para qualquer tabela onde uma COLUNA decide permissão: conceder por
+      coluna desde o início.
+
 ## Inventário de helpers SQL (usar SEMPRE em policies novas)
 
 | Função | Retorna | Uso típico |
@@ -2601,6 +2619,180 @@ Migration de referência: `20260515520000_normalizar_meta_periodicidade.sql`.
    (a view só normaliza quando `meta_valor_absoluto IS NOT NULL`)
 4. KPIs com checkpoints granulares em `kpi_trajetoria` continuam com a meta
    do checkpoint (não passam pela normalização) · checkpoint já é por período
+
+## ⚠️ KPIs de doação · a fonte estava errada e o filtro de área zerava tudo (2026-08-14 · migration `20260814170000`)
+
+Varredura de alimentação dos 168 KPIs táticos ativos de 2026. Nenhum é manual no
+papel (48 têm `fonte_auto`, 120 são calculados em SQL) e os dois crons rodam —
+mas **o último valor calculado era NULL em 62 e zero em 37**. O que foi corrigido:
+
+1. **`doacoes_valor` lia `mem_contribuicoes`**, que parou em 16/06/2026 (aguarda
+   a planilha nominal). O valor arrecadado já vive atualizado em
+   `vw_doacoes_unificada`/`fin_transacoes` — a MESMA fonte do coletor
+   `generosidade.valor_total`. Eram duas fontes para o mesmo número, com
+   resultados diferentes no painel. Agora `doacoes_valor` vem de
+   `fin_transacoes`. **`doadores_count`/`doadores_recorrentes` continuam em
+   `mem_contribuicoes`**: contam PESSOAS distintas e `fin_transacoes` tem
+   `membro_id` NULL em 100% das linhas — voltam a andar sozinhos quando a base
+   nominal for atualizada (hoje param em 06/2026, e o delta de julho marca -100%,
+   que é o sinal correto de fonte parada).
+
+2. **`_kpi_agregar_dado` filtrava doação por `area`**, mas `mem_contribuicoes.area`
+   é NULL nas 20.196 linhas — doação na CBRio não é segmentada por área. Os 15
+   KPIs de doação por área (AMI-07/23/24, BRG-06/22/23, KIDS-06/21/22,
+   ONL-22/23/24, SED-01/24/25) nunca calcularam nada por causa disso. Filtro
+   removido nesses 3 `dado_tipo`: cada área acompanha o total da igreja.
+
+3. **`doadores_recorrentes` exigia 3 meses distintos DENTRO do período**, que é
+   mensal → 0 por construção. Agora usa janela dos 3 meses corridos que terminam
+   no período. Maio/2026: 178 de 352 doadores (50,6% · meta 30%).
+
+4. **Os 5 KPIs "% Crescimento do valor total de entradas vs ano anterior" eram
+   `soma_periodo`/`{periodo:ano}`** — que devolve R$ e **ignora o período de
+   referência** (usa sempre `current_date`). Davam R$ 6,9 mi repetido em todo mês
+   do histórico contra meta de 30%, travando o score do OKR em 100%. Viraram
+   `delta_pct`/`ano_anterior`, que é o que o nome e a meta dizem: +36,6% (abr),
+   +40,8% (mai), +47,1% (jun), +26,6% (jul).
+
+5. **`vw_okr_score_composto` somava `delta_pct` negativo sem piso** (tinha
+   `LEAST(x,1)`, faltava `GREATEST(x,0)`) → objetivos com score de -174%.
+
+⚠️ **Pendente e conhecido**: `soma_periodo` ignorar o período de referência
+afeta os outros ~26 KPIs que usam esse tipo — o histórico deles repete o valor
+corrente em todo período. Consertar muda a semântica de KPIs de várias áreas;
+é chamada do Marcos/Yago, não conserto de bug isolado.
+
+⚠️ **Não era bug**: `lideres_treinados` retorna 0 porque **ninguém está marcado**
+com `funcao='lider_treinamento'` em `mem_grupo_membros` — o valor existe no enum
+`grupo_funcao`. Idem `cui_acompanhamentos` (0 linhas), `cui_j180_turma_membros`
+(0), `mem_grupo_encontros` (2), `grupo_supervisao_visitas` (1): são módulos sem
+uso, não código quebrado. 31 KPIs e 6 OKRs dependem deles.
+
+### KPIs que dependiam de `dados_brutos` passam a ler o ERP (migration `20260814180000`)
+
+Dos 23 KPIs que caíam no fallback manual `dados_brutos` (**3 lançamentos na
+história toda**), estes tinham a fonte pronta no banco e só faltava a fiação:
+
+| KPI | fonte ligada | resultado hoje |
+|---|---|---|
+| FIN-03 % prazos de pagamento | `fin_contas_pagar` (4.116 linhas) | 65,0% mai · 74,8% jun · 71,3% jul (meta 90) |
+| RH-03 Rotatividade | `rh_funcionarios` (67 ativos) | 1,6% · 8,0% · 0% (teto 10) |
+| FIN-02 % reserva de caixa | 10% da arrecadação ordinária × centro de custo FUNDO DE RESERVA | **0%** — o alvo existe (R$ 94.833 em jul), o lançado é zero |
+| RH-02 Engajamento em treinamentos | `rh_treinamentos` | **NULL** (tabela vazia — "não medido", não 0%) |
+| AMI-25/BRG-24/KIDS-23/ONL-25/SED-26 · NPS do Next | `dados_brutos` sem filtro de área | W29 = 10 (era null sempre) |
+
+⚠️⚠️ **Os 4 primeiros eram `soma_periodo`, que IGNORA o período de referência**
+(usa sempre `current_date`) — ligar a fonte sem trocar isso faria o histórico
+deles nascer repetindo o valor corrente em todo período. Passaram a **`razao`**,
+que já chama `_kpi_agregar_dado` com as datas do período certo, já multiplica por
+100 e já devolve NULL quando o denominador é zero. **Nada muda para os outros
+~26 KPIs que usam `soma_periodo`** — aquele conserto continua sendo decisão do
+Marcos/Yago.
+
+⚠️ **O NPS do Next não precisou de KPI nem de coletor novo**: `npsKpiSync` já
+grava em `dados_brutos` usando `nps_pesquisas.contexto_kpi`, e a pesquisa existe.
+O que travava era o **FILTRO DE ÁREA** — o sync grava `area='next'` (é UMA
+pesquisa única da igreja, por desenho · `routes/next.js:561`) e os 5 KPIs são das
+áreas ami/bridge/kids/online/sede, então nunca casava. Mesmo caso das doações:
+**a régua de área estava certa para o dado que não existe e errada para o que
+existe.**
+
+⚠️ **`nps_lideres` e `nps_voluntarios` NÃO foram tocados** — já funcionam pelo
+mesmo caminho. Falta a PESQUISA existir com o `contexto_kpi` e a **área** certos
+(a do AMI existe e alimenta AMI-17; as outras 4 áreas precisam da própria). É
+operação, não código.
+
+⚠️ **`financeiro_prazos_pagamento_pct` conta só o que FOI PAGO** com vencimento
+no período. Conta pendente vencida fica de fora de propósito: ~44% dos títulos de
+qualquer mês seguem `pendente` meses depois (jun/2026 ainda tem 203) — é previsão
+que não se concretiza, não atraso, e incluí-los faria o KPI marcar ~40% para
+sempre por higiene de dado.
+
+⚠️ **`financeiro_reserva_caixa_pct` mostra 0% e isso é a verdade**: o centro de
+custo `0.01.05 FUNDO DE RESERVA` existe e **não tem nenhum lançamento em 2026**.
+Para acender, o financeiro precisa lançar a transferência mensal nele. ⚠️ A conta
+Poupança CEF **não serve como fonte** — ela recebe doação nominal e paga
+transferências/tarifas (entradas de R$ 2,8–4,3 mil/mês contra arrecadação de
+~R$ 950 mil), então usá-la daria ~0,3% contra meta de 10%, um número falso.
+
+⚠️ **`infra_cronogramas_pct` ficou de fora**: não existe tabela de projeto ou
+cronograma de infra em lugar nenhum do banco. `plan_orcamentos` e
+`rh_treinamentos` existem e estão **vazias** — os KPIs ligados a elas acendem
+sozinhos quando alguém cadastrar.
+
+⚠️ O patch de `_kpi_agregar_dado` é **dinâmico e guardado por idempotência**: o
+bloco injetado termina com a própria âncora, então rodar de novo duplicaria os
+ramos. A guarda procura `pagamentos_no_prazo` no corpo vivo e encerra sem tocar
+em nada.
+
+### ⚠️⚠️ O score do OKR não enxergava os KPIs alimentados por COLETOR (migration `20260814190000`)
+
+`vw_okr_score_composto` lia **só** `kpi_valores_calculados`. Os KPIs com
+`tipo_calculo='manual'` + `fonte_auto` são alimentados pelos coletores todo dia e
+gravam em **`kpi_registros`**, nunca em `kpi_valores_calculados`.
+
+**Medido: 30 KPIs alimentados diariamente eram invisíveis para o score, 18 deles
+ligados a um objetivo.** O OKR aparecia com "0 KPIs com dado" enquanto o coletor
+rodava sem falha — o pior tipo de número errado, porque parece falta de operação
+e é falta de leitura.
+
+⚠️ Além da fonte, isso corrigiu a **meta**: a view fazia `valor / k.meta_valor`,
+ignorando `meta_valor_absoluto` e a normalização por periodicidade (a LEI "Meta
+absoluta × periodicidade") — comparava valor de UMA semana contra meta ANUAL.
+
+⚠️⚠️ **ZERO CONTA COMO DADO, e é por isso que a view NÃO lê
+`vw_kpi_trajetoria_atual` direto** (foi a 1ª tentativa desta sessão e está
+registrada como erro): aquela view descarta valor `<= 0` de propósito, para o
+SEMÁFORO do painel. No score, "o número de grupos não cresceu" é desempenho
+medido, não ausência de medição — e tratá-lo como "sem dado" esconde justamente o
+objetivo que precisa de atenção. Na tentativa intermediária, "Aumentar numero de
+grupos" caiu de 4 KPIs com dado para 0.
+
+**Efeito medido**: OKRs com nenhum KPI alimentado **10 → 7**; batismos de 4 para
+**9 de 10** KPIs medidos; devocionais de 4 para **7 de 7**; "voluntários em
+treinamento" de 0 para **5 de 5**.
+
+### ⚠️ Os 22 KPIs ADM-* têm régua PRÓPRIA e ficavam fora do cron
+
+`recalcular_todos_kpis_adm()` (SLA e NPS interno das solicitações · migration
+`20260519140000`) usa `formula_config` com `fonte`/`metrica`, **não**
+`numerador`/`denominador`. Por isso `kpi_recalcular_todos` não os alcança: o ramo
+`razao` do `calcular_kpi` devolve `{'erro': 'formula_config incompleto'}` e sai
+**sem gravar, em silêncio** — e ainda assim conta como "recalculado" no total.
+
+Até 14/08 quem os atualizava era **só o trigger de `solicitacoes`**: período novo
+sem movimento na área ficava sem linha, e o painel mostrava o valor do período
+anterior. `coletarERecalcular` (o cron das 07:00) passou a chamar a RPC.
+
+### Estado final medido (14/08/2026)
+
+**119 dos 168 KPIs ativos alimentados** (89 por cálculo + 30 por coletor). Os 41
+restantes **não têm fiação faltando** — têm fonte ligada e o dado é que não
+existe:
+
+| grupo | KPIs | por quê |
+|---|---|---|
+| ADM-* (SLA + NPS interno) | 14 | não houve solicitação naquela área no período · **só 6 respostas de NPS em toda a base** |
+| capelania + aconselhamento | 10 | `cui_acompanhamentos` **vazia** |
+| Recuperar voluntários inativos | 5 | ver abaixo |
+| líderes treinados / acompanhados | 8 | ninguém marcado · 1 visita registrada |
+| frequência de grupos | 3 | `mem_grupo_encontros` = 2 linhas |
+| INFRA-01/02 · FIN-01 · RH-02 | 4 | `plan_orcamentos` e `rh_treinamentos` vazias; infra não tem tabela |
+| CBA-02 · BRG-19 · BRG-BAT90/NEXT90 · ONL-19 | 5 | área sem o fato no período |
+
+⚠️ **"Recuperar voluntários inativos" (5 KPIs · 1 OKR inteiro) é o único
+tecnicamente automatizável, e eu NÃO automatizei.** A régua lê
+`mem_voluntarios.ate`, e **`ate` está preenchido em 0 de 311 linhas** — ninguém
+nunca deu baixa. A definição da casa é "inativo = sem servir há 90+ dias", que se
+derivaria de `vol_schedules` (5.545 linhas reais). O que impede: **`vol_teams.area`
+está vazia em 129 de 129** e só **313 dos 930 `vol_profiles` têm `membresia_id`**
+— os KPIs são POR ÁREA, então a derivação cobriria ~1/3 dos voluntários e nasceria
+**subestimada sem ninguém perceber**. É o mesmo vínculo perfil↔membro do
+follow-up de 13/08. Fazer isso exige antes preencher a área das equipes.
+
+⚠️ **CBA-02**: `_kpi_agregar_dado` não reconhece a área `cba` no ramo `conversoes`
+(só kids/ami/bridge/sede/online) — cai no fallback e devolve NULL sempre. Medir
+conversão do CBA exige definir de onde ela sai; não há tipo de culto CBA.
 
 ## Sistema OKR/NSM 2026 (arquitetura consolidada · fases 1-6 mergeadas em maio)
 

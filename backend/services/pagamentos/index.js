@@ -16,6 +16,7 @@ const webhooks = require('./webhooks');
 const handlers = require('./handlers');
 const tipos = require('./tipos');
 const maquina = require('./maquinaEstados');
+const saude = require('./saude');
 
 const { STATUS, TIPO_PAGAMENTO } = tipos;
 
@@ -65,6 +66,99 @@ async function definirMetodo(cobrancaOuId, metodo, opcoes = {}) {
 const consultar = cobrancas.porId;
 const consultarPorToken = cobrancas.porToken;
 const consultarPorReferencia = cobrancas.porReferencia;
+
+/**
+ * Cobra o cartão com o token que o Brick gerou NO NAVEGADOR — é o caminho que
+ * mantém a pessoa na nossa página em vez de mandá-la pro site do provedor.
+ *
+ * ⚠️ O `dados` vem do CLIENTE e por isso quase nada dele é confiável. Só o
+ * token, o meio/emissor (que o próprio Brick resolve) e o nº de parcelas
+ * atravessam — e as parcelas passam pelo teto da cobrança. O VALOR é sempre o
+ * do banco: aceitar o `transaction_amount` do formulário seria deixar qualquer
+ * um escolher quanto pagar.
+ *
+ * ⚠️ Recusa do emissor NÃO mexe no status da cobrança. `falhou` é terminal e
+ * tornaria a cobrança irrecuperável — a pessoa não poderia nem tentar outro
+ * cartão. Devolve `{recusado, motivo}` pra tela explicar e deixar tentar.
+ */
+/**
+ * Chave publicável do provider desta cobrança (para o SDK dele no navegador).
+ * `null` quando o provider não sabe tokenizar ou não está configurado — e aí a
+ * tela cai no checkout hospedado, que é o comportamento antigo.
+ */
+function chavePublica(providerNome) {
+  try {
+    const a = providers.obter(providerNome);
+    return typeof a.chavePublica === 'function' ? a.chavePublica() : null;
+  } catch { return null; }
+}
+
+async function pagarComCartao(cobrancaOuId, dados = {}) {
+  if (!habilitado()) throw new Error('Pagamentos estão desligados (PAG_ENABLED=0).');
+
+  const c = typeof cobrancaOuId === 'string' ? await cobrancas.porId(cobrancaOuId) : cobrancaOuId;
+  if (!c) return { ok: false, motivo: 'cobrança não encontrada' };
+  if (c.valor_pago_centavos > 0 || maquina.estaTerminal(c.status)) {
+    // Já tem dinheiro dentro (ou está encerrada): cobrar de novo seria cobrar
+    // duas vezes a mesma inscrição.
+    return { ok: false, motivo: 'cobranca_nao_editavel', cobranca: c };
+  }
+
+  const adapter = providers.obter(c.provider);
+  if (typeof adapter.pagarComToken !== 'function' || !adapter.capacidades.tokenizacao) {
+    return { ok: false, motivo: 'provider_sem_tokenizacao' };
+  }
+
+  // Teto de parcelas: o da cobrança, que veio do evento. O número que a tela
+  // manda é PEDIDO, não decisão.
+  // ⚠️⚠️ SEM teto gravado = **1x**, nunca o do provider (11/08/2026 · mesma
+  // correção do `telaPublica.tetoParcelas`, e tem que ser IDÊNTICA aqui: é o
+  // caminho do cartão na nossa página, e réguas diferentes fariam a mesma
+  // cobrança aceitar 36x por um caminho e 1x pelo outro).
+  const teto = Number(c.parcelas_max) > 0 ? Number(c.parcelas_max) : 1;
+  const pedidas = Number(dados.installments) > 0 ? Math.floor(Number(dados.installments)) : 1;
+  if (pedidas > teto) {
+    return { ok: false, motivo: `Este evento aceita no máximo ${teto}x.` };
+  }
+
+  let r;
+  try {
+    r = await adapter.pagarComToken(c, { ...dados, installments: pedidas });
+  } catch (e) {
+    await cobrancas.registrarErro(c.id, e.message).catch(() => {});
+    throw e;
+  }
+
+  if (r.recusado || !(Number(r.valor_pago_centavos) > 0)) {
+    // Registra o motivo pra quem for investigar depois, sem mexer no status.
+    await cobrancas.registrarErro(c.id, `cartão recusado: ${r.motivo_recusa || 'sem detalhe'}`)
+      .catch(() => {});
+    return { ok: false, recusado: true, motivo: r.motivo_recusa || 'Pagamento não aprovado.', cobranca: c };
+  }
+
+  // Dinheiro entrou → razão auxiliar primeiro; é ela que redefine o status.
+  const reg = await cobrancas.registrarPagamento(c, {
+    tipo: TIPO_PAGAMENTO.LIQUIDACAO,
+    valor_centavos: r.valor_pago_centavos,
+    liquido_centavos: r.liquido_centavos,
+    taxa_centavos: r.taxa_centavos,
+    metodo: r.metodo, parcelas: r.parcelas,
+    provider_pagamento_id: r.provider_pagamento_id,
+    repassado_em: r.repassado_em,
+    payload: r.payload || null,
+  });
+
+  // Bandeira e últimos 4 são o que a UI e o comprovante mostram — e é TUDO o
+  // que a gente guarda de cartão (lei nº 4).
+  const extra = {};
+  if (r.cartao_brand) extra.cartao_brand = r.cartao_brand;
+  if (r.cartao_last4) extra.cartao_last4 = r.cartao_last4;
+  if (Object.keys(extra).length) {
+    await cobrancas.aplicarExtras(reg.cobranca.id, extra).catch(() => {});
+  }
+
+  return { ok: true, pago: true, cobranca: reg.cobranca, duplicado: reg.duplicado };
+}
 
 /**
  * Consulta o PSP e sincroniza. **É a verdade** — o webhook é só otimização de
@@ -269,6 +363,8 @@ module.exports = {
   consultarPorToken,
   consultarPorReferencia,
   sincronizar,
+  pagarComCartao,
+  chavePublica,
   marcarPagoManual,
   cancelar,
   estornar,
@@ -276,6 +372,11 @@ module.exports = {
   // crons
   expirarVencidas,
   reconciliar,
+
+  // Saúde da credencial do PSP (não do pagamento). Chave do Asaas expira por
+  // desuso — ver services/pagamentos/saude.js.
+  verificarSaude: saude.verificar,
+  saudeAtual: saude.atual,
 
   // webhook (usado só pela rota /api/pagamentos-webhook)
   processarWebhook: webhooks.processar,

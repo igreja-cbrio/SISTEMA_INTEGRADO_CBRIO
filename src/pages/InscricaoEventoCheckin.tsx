@@ -11,13 +11,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Html5Qrcode } from 'html5-qrcode';
+import { QRCodeSVG } from 'qrcode.react';
 import { inscricoesApi as api } from '../api';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import {
   ArrowLeft, Camera, CameraOff, CheckCircle2, Loader2, Maximize2, Minimize2,
-  Search, UserPlus, Users, Undo2, AlertTriangle, History,
+  Search, UserPlus, Users, Undo2, AlertTriangle, History, QrCode,
 } from 'lucide-react';
 
 type ItemLista = {
@@ -196,6 +197,23 @@ export default function InscricaoEventoCheckin() {
     setHistorico({ disponivel: true, items: [] });
     carregarHistorico();
   }
+
+  // ── QR de AUTOATENDIMENTO (a pessoa faz o próprio check-in) ─────────────
+  // ⚠️ Carregado só quando o operador pede: o link É a credencial da porta, e
+  // não precisa trafegar em toda abertura da tela.
+  const [qrAuto, setQrAuto] = useState<string | null>(null);
+  const [qrAberto, setQrAberto] = useState(false);
+  const [qrErro, setQrErro] = useState<string | null>(null);
+  const abrirQrAuto = async () => {
+    setQrAberto(true); setQrErro(null);
+    if (qrAuto) return;
+    try {
+      const r = await api.checkinQrAutoatendimento(id!);
+      setQrAuto(r.url);
+    } catch (e: any) {
+      setQrErro(e?.message || 'Não foi possível gerar o QR.');
+    }
+  };
 
   // ── Leitor de QR (contínuo) ──────────────────────────────────────────────
   async function ligarCamera() {
@@ -410,6 +428,50 @@ export default function InscricaoEventoCheckin() {
           </Card>
 
           <div className="space-y-4">
+            {/* QR de autoatendimento — para a pessoa fazer o próprio check-in */}
+            <div className="mb-3">
+              <Button variant="outline" className="w-full gap-2" onClick={abrirQrAuto}>
+                <QrCode className="h-4 w-4" />
+                QR de autoatendimento
+              </Button>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Mostre numa tela ou imprima na porta: a pessoa lê, digita CPF e
+                nascimento e faz o próprio check-in.
+              </p>
+            </div>
+
+            {qrAberto && (
+              <div
+                className="fixed inset-0 z-[1100] bg-black/90 flex flex-col items-center justify-center p-6"
+                onClick={() => setQrAberto(false)}
+              >
+                {qrErro ? (
+                  <p className="text-white text-center max-w-sm">{qrErro}</p>
+                ) : qrAuto ? (
+                  <>
+                    <div className="bg-white p-6 rounded-2xl">
+                      <QRCodeSVG value={qrAuto} size={320} level="M" />
+                    </div>
+                    <p className="text-white/90 text-lg font-semibold mt-6">
+                      Faça seu check-in
+                    </p>
+                    <p className="text-white/60 text-sm mt-1 text-center max-w-sm">
+                      Aponte a câmera do celular · informe CPF e data de nascimento
+                    </p>
+                    {estado && !estado.evento.checkin_ativo && (
+                      <p className="text-amber-300 text-sm mt-4 text-center max-w-sm">
+                        ⚠️ O check-in deste evento está DESLIGADO — o QR não vai
+                        funcionar até você ativá-lo nas configurações do evento.
+                      </p>
+                    )}
+                    <p className="text-white/40 text-xs mt-6">toque para fechar</p>
+                  </>
+                ) : (
+                  <Loader2 className="h-8 w-8 animate-spin text-white" />
+                )}
+              </div>
+            )}
+
             {/* Leitor de QR */}
             <Card className="glass-solid p-4">
               <div className="text-sm font-semibold mb-2">Ler QR do comprovante</div>

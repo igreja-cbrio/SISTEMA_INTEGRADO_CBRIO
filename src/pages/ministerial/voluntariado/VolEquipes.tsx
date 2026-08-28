@@ -12,7 +12,9 @@ import {
   useImportTeamsFromSchedules, useSyncTeamMembersFromSchedules, useVolTeamMembers, useAddTeamMember,
   useRemoveTeamMember, useVolPositions, useCreatePosition, useDeletePosition,
 } from './hooks';
-import { Plus, Users, Trash2, Edit2, UserPlus, X, Download, Briefcase } from 'lucide-react';
+import { Plus, Users, Trash2, Edit2, UserPlus, X, Download, Briefcase, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
+import { voluntariado } from '@/api';
 import { toast } from 'sonner';
 import type { VolTeam, VolPosition } from './types';
 
@@ -32,10 +34,21 @@ export default function VolEquipes() {
     [teams],
   );
 
+  // ⚠️ Ativas e inativas em listas SEPARADAS. Depois do remapeamento de 16/08
+  // as 113 equipes-espelho do Planning Center ficaram inativas (não foram
+  // apagadas — DELETE cascatearia em `vol_positions` e daí em itens de
+  // template). Misturadas, elas afogariam as ~13 equipes que a escala usa.
+  const ativas = useMemo(() => teams.filter(t => t.is_active), [teams]);
+  const inativas = useMemo(
+    () => teams.filter(t => !t.is_active).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR')),
+    [teams],
+  );
+  const [verInativas, setVerInativas] = useState(false);
+
   // Equipes agrupadas por área · "Sem área" sempre por último
   const grupos = useMemo(() => {
     const map = new Map<string, VolTeam[]>();
-    for (const t of teams) {
+    for (const t of ativas) {
       const key = (t.area || '').trim() || 'Sem área';
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(t);
@@ -45,7 +58,7 @@ export default function VolEquipes() {
       if (b[0] === 'Sem área') return -1;
       return a[0].localeCompare(b[0]);
     });
-  }, [teams]);
+  }, [ativas]);
 
   if (isLoading) {
     return <div className="flex items-center justify-center py-20"><div className="h-6 w-6 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-primary" /></div>;
@@ -63,6 +76,8 @@ export default function VolEquipes() {
           </Button>
         </div>
       </div>
+
+      <PendenciasPcoCard teams={teams} />
 
       {teams.length === 0 ? (
         <Card>
@@ -137,6 +152,38 @@ export default function VolEquipes() {
               </div>
             </div>
           ))}
+
+          {inativas.length > 0 && (
+            <div>
+              <button
+                type="button"
+                className="flex items-center gap-2 mb-2 px-1 text-sm font-semibold text-muted-foreground hover:text-foreground"
+                onClick={() => setVerInativas(v => !v)}
+              >
+                {verInativas ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                Arquivadas do Planning Center
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{inativas.length}</Badge>
+              </button>
+              {verInativas && (
+                <>
+                  <p className="px-1 pb-2 text-xs text-muted-foreground">
+                    Nomes de time do Planning Center que viraram <strong>função</strong> dentro das
+                    equipes acima. Ficam aqui como histórico — ninguém novo entra nelas.
+                  </p>
+                  <div className="rounded-lg border bg-muted/30 divide-y">
+                    {inativas.map(team => (
+                      <div key={team.id} className="flex items-center gap-3 px-4 py-2">
+                        <span className="text-sm text-muted-foreground truncate flex-1">{team.name}</span>
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {team.members?.length ?? 0} vínculo(s)
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -150,6 +197,137 @@ export default function VolEquipes() {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Times do Planning Center que ainda não têm destino aqui.
+ *
+ * ⚠️ Existe porque o sync PAROU de criar equipe por nome novo (era assim que o
+ * banco chegou a 129 equipes). O preço de não criar mais é que um nome novo
+ * precisa aparecer em algum lugar — senão o voluntário some da escala e
+ * ninguém entende por quê. Este card é esse lugar.
+ */
+function PendenciasPcoCard({ teams }: { teams: VolTeam[] }) {
+  const qc = useQueryClient();
+  const { data } = useQuery<{ pendentes: { nome: string; escalas: number }[] }>({
+    queryKey: ['vol-pendencias-pco'],
+    queryFn: () => voluntariado.teamsManage.pendenciasPco(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const [alvo, setAlvo] = useState<string | null>(null);
+  const pendentes = data?.pendentes || [];
+  if (!pendentes.length) return null;
+
+  return (
+    <Card className="border-amber-500/40 bg-amber-500/5">
+      <CardContent className="p-4 space-y-3">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium">
+              {pendentes.length} time(s) do Planning Center sem destino aqui
+            </p>
+            <p className="text-xs text-muted-foreground">
+              No Planning Center, "time" é o que aqui chamamos de <strong>função</strong>.
+              Enquanto um nome não tiver destino, quem serve nele não entra em nenhuma equipe
+              — e não aparece pro supervisor na hora de escalar.
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {pendentes.slice(0, 30).map(p => (
+            <Button key={p.nome} variant="outline" size="sm" className="h-7 text-xs"
+              onClick={() => setAlvo(p.nome)}>
+              {p.nome}
+              <Badge variant="secondary" className="ml-1.5 text-[10px] px-1 py-0">{p.escalas}</Badge>
+            </Button>
+          ))}
+          {pendentes.length > 30 && (
+            <span className="self-center text-xs text-muted-foreground">
+              +{pendentes.length - 30} — resolva estes primeiro
+            </span>
+          )}
+        </div>
+      </CardContent>
+      {alvo && (
+        <MapearPcoDialog
+          pcoNome={alvo}
+          teams={teams.filter(t => t.is_active)}
+          onClose={() => setAlvo(null)}
+          onGravado={() => {
+            qc.invalidateQueries({ queryKey: ['vol-pendencias-pco'] });
+            setAlvo(null);
+          }}
+        />
+      )}
+    </Card>
+  );
+}
+
+function MapearPcoDialog({ pcoNome, teams, onClose, onGravado }: {
+  pcoNome: string; teams: VolTeam[]; onClose: () => void; onGravado: () => void;
+}) {
+  const [teamId, setTeamId] = useState('');
+  const [posId, setPosId] = useState('__none__');
+  const { data: positions = [] } = useVolPositions(teamId || undefined);
+  const mut = useMutation({
+    mutationFn: (body: {
+      pco_nome: string; team_id?: string; position_id?: string | null; ignorar?: boolean;
+    }) => voluntariado.teamsManage.mapearPco(body),
+    onSuccess: () => { toast.success(`"${pcoNome}" mapeado`); onGravado(); },
+    onError: (e: Error) => toast.error(e?.message || 'Erro ao mapear'),
+  });
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-base">Onde entra "{pcoNome}"?</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label className="text-xs">Equipe</Label>
+            <Select value={teamId} onValueChange={v => { setTeamId(v); setPosId('__none__'); }}>
+              <SelectTrigger><SelectValue placeholder="Escolher equipe" /></SelectTrigger>
+              <SelectContent>
+                {teams.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs">Função (opcional)</Label>
+            <Select value={posId} onValueChange={setPosId} disabled={!teamId}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Sem função específica</SelectItem>
+                {positions.map((p: VolPosition) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <DialogFooter className="gap-2 sm:gap-2">
+          {/* "Ignorar" não é o mesmo que deixar pendente: é dizer que aquele
+              nome NÃO deve gerar vínculo (time administrativo, teste no PCO).
+              Sem essa saída, um nome desses ficaria no card pra sempre. */}
+          <Button variant="ghost" onClick={() => mut.mutate({ pco_nome: pcoNome, ignorar: true })}
+            disabled={mut.isPending}>
+            Ignorar este nome
+          </Button>
+          <Button
+            disabled={!teamId || mut.isPending}
+            className="bg-[#00B39D] hover:bg-[#00B39D]/90"
+            onClick={() => mut.mutate({
+              pco_nome: pcoNome,
+              team_id: teamId,
+              position_id: posId === '__none__' ? null : posId,
+            })}
+          >
+            Salvar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -1,0 +1,423 @@
+# Módulo `membresia`
+<!-- GERADO por backend/scripts/gerar-mapa.cjs — NÃO editar à mão. -->
+
+> ⚠️ **Este mapa responde ONDE algo mora, nunca SE está certo.** Ele é derivado do
+> código, então não mente sobre caminho de arquivo, rota ou endpoint. Mas continua
+> obrigatório MEDIR: número do banco, se um cron roda, se uma coluna existe, o que a
+> definição **viva** de uma função SQL diz, e o formato real de arquivo de terceiro.
+>
+> ⚠️ É regenerado sem travar deploy, então pode estar algumas horas atrás. Se citar
+> arquivo que não existe, **vale o código**.
+
+## Backend
+- `backend/routes/jornada.js`
+- `backend/routes/lgpd.js`
+- `backend/routes/membresia.js`
+- `backend/routes/voluntariado.js`
+Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
+<details><summary>Endpoints (231)</summary>
+- `DELETE /api/membresia/cadastros/:id`
+- `DELETE /api/membresia/checkins/:id`
+- `DELETE /api/membresia/contribuicoes/:id`
+- `DELETE /api/membresia/escalas/:id`
+- `DELETE /api/membresia/familias/:id`
+- `DELETE /api/membresia/grupos/:id`
+- `DELETE /api/membresia/membros/:id`
+- `DELETE /api/membresia/ministerios/:id`
+- `DELETE /api/membresia/vinculos/:id`
+- `DELETE /api/voluntariado/1x1/:id`
+- `DELETE /api/voluntariado/availability/:id`
+- `DELETE /api/voluntariado/inscricoes/:id`
+- `DELETE /api/voluntariado/positions/:id`
+- `DELETE /api/voluntariado/roles/:profileId/:role`
+- `DELETE /api/voluntariado/schedule-templates/:id`
+- `DELETE /api/voluntariado/schedules/:id`
+- `DELETE /api/voluntariado/service-types/:id`
+- `DELETE /api/voluntariado/services/:id`
+- `DELETE /api/voluntariado/supervisores/:id`
+- `DELETE /api/voluntariado/team-members/:id`
+- `DELETE /api/voluntariado/teams-manage/:id`
+- `GET /api/jornada/cron/refresh-papeis`
+- `GET /api/jornada/dashboard`
+- `GET /api/jornada/membro/:id`
+- `GET /api/jornada/membros`
+- `GET /api/jornada/visao`
+- `GET /api/lgpd/historico-solicitacoes`
+- `GET /api/lgpd/membro/:id/exportar`
+- `GET /api/membresia/cadastros`
+- `GET /api/membresia/cadastros/kpis`
+- `GET /api/membresia/cadastros/pode-aprovar`
+- `GET /api/membresia/censo/cobertura`
+- `GET /api/membresia/censo/disparo/preview`
+- `GET /api/membresia/censo/disparo/preview-email`
+- `GET /api/membresia/censo/disparo/resultado`
+- `GET /api/membresia/censo/faltantes`
+- `GET /api/membresia/checkins`
+- `GET /api/membresia/contribuicoes`
+- `GET /api/membresia/contribuicoes/kpis`
+- `GET /api/membresia/cpf-lookup/:cpf`
+- `GET /api/membresia/duplicados`
+- `GET /api/membresia/escalas`
+- `GET /api/membresia/exclusoes`
+- `GET /api/membresia/familias`
+- `GET /api/membresia/geocode-cep`
+- `GET /api/membresia/grupos`
+- `GET /api/membresia/grupos/:id`
+- `GET /api/membresia/identidade-pendencias`
+- `GET /api/membresia/kpis`
+- `GET /api/membresia/membros`
+- `GET /api/membresia/membros/:id`
+- `GET /api/membresia/membros/:id/censo`
+- `GET /api/membresia/membros/:id/inscricoes`
+- `GET /api/membresia/membros/:id/possiveis-duplicados`
+- `GET /api/membresia/membros/:id/reconhecimento-facial`
+- `GET /api/membresia/membros/:id/timeline`
+- `GET /api/membresia/membros/:id/vinculos`
+- `GET /api/membresia/membros/:id/wifi`
+- `GET /api/membresia/membros/pagina`
+- `GET /api/membresia/merge-log`
+- `GET /api/membresia/ministerios`
+- `GET /api/membresia/ministerios/:id`
+- `GET /api/membresia/orfaos-stats`
+- `GET /api/membresia/perfil`
+- `GET /api/membresia/perfil/bairros`
+- `GET /api/membresia/perfil/ceps`
+- `GET /api/membresia/qr-lookup/:token`
+- `GET /api/membresia/totem/apresentacao-bebe/status`
+- `GET /api/membresia/totem/next/status`
+- `GET /api/voluntariado/acessos`
+- `GET /api/voluntariado/acessos/cargos`
+- `GET /api/voluntariado/antecedentes/pendentes`
+- `GET /api/voluntariado/availability`
+- `GET /api/voluntariado/check-ins`
+- `GET /api/voluntariado/config`
+- `GET /api/voluntariado/cron/antecedentes`
+- `GET /api/voluntariado/cron/emails`
+- `GET /api/voluntariado/cron/sync`
+- `GET /api/voluntariado/cultos-manha`
+- `GET /api/voluntariado/escala-matriz`
+- `GET /api/voluntariado/frequencia`
+- `GET /api/voluntariado/frequencia/detalhe`
+- `GET /api/voluntariado/frequencia/perfis`
+- `GET /api/voluntariado/inscricoes`
+- `GET /api/voluntariado/inscricoes-summary`
+- `GET /api/voluntariado/inscricoes/:id/antecedentes`
+- `GET /api/voluntariado/inscricoes/por-direcionada`
+- `GET /api/voluntariado/kpis/taticos`
+- `GET /api/voluntariado/my-check-ins`
+- `GET /api/voluntariado/positions`
+- `GET /api/voluntariado/relatorio-dados`
+- `GET /api/voluntariado/roles`
+- `GET /api/voluntariado/schedule-templates`
+- `GET /api/voluntariado/schedule-templates/:id`
+- `GET /api/voluntariado/schedule-templates/por-tipo/:serviceTypeId`
+- `GET /api/voluntariado/schedules`
+- `GET /api/voluntariado/service-types`
+- `GET /api/voluntariado/services`
+- `GET /api/voluntariado/services-availability`
+- `GET /api/voluntariado/services/:serviceId/contexto-montagem`
+- `GET /api/voluntariado/services/:serviceId/escala-cobertura`
+- `GET /api/voluntariado/services/checkin-window`
+- `GET /api/voluntariado/services/today`
+- `GET /api/voluntariado/services/upcoming`
+- `GET /api/voluntariado/supervisores/candidatos`
+- `GET /api/voluntariado/sync-logs`
+- `GET /api/voluntariado/team-members`
+- `GET /api/voluntariado/team/:teamId/members`
+- `GET /api/voluntariado/teams`
+- `GET /api/voluntariado/teams-manage`
+- `GET /api/voluntariado/teams-manage/mapa-pco`
+- `GET /api/voluntariado/teams-manage/pendencias-pco`
+- `GET /api/voluntariado/training-checkins`
+- `GET /api/voluntariado/vol-by-membro/:membroId`
+- `GET /api/voluntariado/volunteer-qrcodes`
+- `GET /api/voluntariado/volunteers-pool`
+- `GET /api/voluntariado/waiting-allocation`
+- `PATCH /api/membresia/cadastros/:id`
+- `PATCH /api/membresia/grupo-membros/:id/sair`
+- `PATCH /api/membresia/membros/:id/familia`
+- `PATCH /api/membresia/perfil/bairros/:norm`
+- `PATCH /api/membresia/trilha/:id`
+- `PATCH /api/membresia/voluntarios/:id/sair`
+- `PATCH /api/voluntariado/antecedentes/:id`
+- `PATCH /api/voluntariado/inscricoes/:id`
+- `PATCH /api/voluntariado/inscricoes/:id/dados`
+- `PATCH /api/voluntariado/supervisores/:id`
+- `POST /api/jornada/cron/refresh-papeis`
+- `POST /api/jornada/cruzar`
+- `POST /api/jornada/refresh-papeis`
+- `POST /api/membresia/cadastros/:id/aprovar`
+- `POST /api/membresia/cadastros/:id/confirmar-whatsapp`
+- `POST /api/membresia/cadastros/:id/rejeitar`
+- `POST /api/membresia/cadastros/aprovar-lote`
+- `POST /api/membresia/censo/disparo`
+- `POST /api/membresia/checkins`
+- `POST /api/membresia/contribuicoes`
+- `POST /api/membresia/duplicados/ignorar`
+- `POST /api/membresia/escalas`
+- `POST /api/membresia/familias`
+- `POST /api/membresia/grupos`
+- `POST /api/membresia/grupos/:id/membros`
+- `POST /api/membresia/historico`
+- `POST /api/membresia/identidade-pendencias/:id/confirmar-cpf`
+- `POST /api/membresia/identidade-pendencias/:id/ligar-inscricao`
+- `POST /api/membresia/identidade-pendencias/:id/status`
+- `POST /api/membresia/identidade-pendencias/ligar-lote`
+- `POST /api/membresia/membros`
+- `POST /api/membresia/membros/:id/desativar`
+- `POST /api/membresia/membros/:id/foto`
+- `POST /api/membresia/membros/:id/mesma-familia`
+- `POST /api/membresia/membros/:id/reativar`
+- `POST /api/membresia/membros/:id/vinculos`
+- `POST /api/membresia/membros/merge`
+- `POST /api/membresia/ministerios`
+- `POST /api/membresia/perfil/bairros/geocode`
+- `POST /api/membresia/perfil/ceps/geocode`
+- `POST /api/membresia/promover-orfaos`
+- `POST /api/membresia/totem/apresentacao-bebe`
+- `POST /api/membresia/totem/grupos/:id/entrar`
+- `POST /api/membresia/totem/membros/:id/foto`
+- `POST /api/membresia/totem/next/informacoes`
+- `POST /api/membresia/totem/next/inscrever`
+- `POST /api/membresia/trilha`
+- `POST /api/membresia/voluntarios`
+- `POST /api/voluntariado/1x1`
+- `POST /api/voluntariado/acessos/criar-login`
+- `POST /api/voluntariado/allocate/:id`
+- `POST /api/voluntariado/availability`
+- `POST /api/voluntariado/check-ins`
+- `POST /api/voluntariado/check-ins/manha`
+- `POST /api/voluntariado/check-ins/rematch`
+- `POST /api/voluntariado/face/match`
+- `POST /api/voluntariado/face/save-profile`
+- `POST /api/voluntariado/face/save-qrcode`
+- `POST /api/voluntariado/frequencia/importar`
+- `POST /api/voluntariado/frequencia/revincular`
+- `POST /api/voluntariado/frequencia/saiu-igreja`
+- `POST /api/voluntariado/frequencia/sugerir-vinculos`
+- `POST /api/voluntariado/frequencia/sync-pco`
+- `POST /api/voluntariado/frequencia/vincular`
+- `POST /api/voluntariado/frequencia/vincular-lote`
+- `POST /api/voluntariado/inscricoes/:id/antecedentes/consultar`
+- `POST /api/voluntariado/inscricoes/:id/desistiu`
+- `POST /api/voluntariado/inscricoes/excluir-lote`
+- `POST /api/voluntariado/pc/get-person`
+- `POST /api/voluntariado/pc/search-people`
+- `POST /api/voluntariado/positions`
+- `POST /api/voluntariado/qr-lookup`
+- `POST /api/voluntariado/quero-servir`
+- `POST /api/voluntariado/roles`
+- `POST /api/voluntariado/schedule-templates`
+- `POST /api/voluntariado/schedule-templates/:id/apply`
+- `POST /api/voluntariado/schedules`
+- `POST /api/voluntariado/schedules/auto-fill`
+- `POST /api/voluntariado/schedules/bulk`
+- `POST /api/voluntariado/schedules/copy`
+- `POST /api/voluntariado/schedules/desfazer-lote`
+- `POST /api/voluntariado/self-checkin`
+- `POST /api/voluntariado/service-types`
+- `POST /api/voluntariado/service-types/:id/generate`
+- `POST /api/voluntariado/services`
+- `POST /api/voluntariado/services/limpar-vazios`
+- `POST /api/voluntariado/supervisores`
+- `POST /api/voluntariado/supervisores/vincular`
+- `POST /api/voluntariado/team-members`
+- `POST /api/voluntariado/teams-manage`
+- `POST /api/voluntariado/teams-manage/import-from-schedules`
+- `POST /api/voluntariado/teams-manage/mapa-pco`
+- `POST /api/voluntariado/teams-manage/sync-members-from-schedules`
+- `POST /api/voluntariado/training-checkins`
+- `POST /api/voluntariado/vincular-membros`
+- `POST /api/voluntariado/volunteer-qrcodes`
+- `PUT /api/membresia/contribuicoes/:id`
+- `PUT /api/membresia/escalas/:id`
+- `PUT /api/membresia/familias/:id`
+- `PUT /api/membresia/grupos/:id`
+- `PUT /api/membresia/membros/:id`
+- `PUT /api/membresia/ministerios/:id`
+- `PUT /api/membresia/totem/membros/:id`
+- `PUT /api/membresia/voluntarios/:id`
+- `PUT /api/voluntariado/config`
+- `PUT /api/voluntariado/frequencia/inatividade`
+- `PUT /api/voluntariado/positions/:id`
+- `PUT /api/voluntariado/profiles/:id/contact`
+- `PUT /api/voluntariado/schedule-templates/:id`
+- `PUT /api/voluntariado/schedules/:id`
+- `PUT /api/voluntariado/service-types/:id`
+- `PUT /api/voluntariado/services/:id`
+- `PUT /api/voluntariado/team-members/:id`
+- `PUT /api/voluntariado/teams-manage/:id`
+</details>
+
+**Réguas puras (backend/utils)**
+
+- `backend/utils/atividadeVoluntario.js`
+- `backend/utils/cpf.js`
+- `backend/utils/criancaApresentacao.js`
+- `backend/utils/cronAuth.js`
+- `backend/utils/cursorLote.js`
+- `backend/utils/dadosSensiveisPessoa.js`
+- `backend/utils/desativarMembro.js`
+- `backend/utils/exclusaoInscricaoLote.js`
+- `backend/utils/fotoVoluntario.js`
+- `backend/utils/kidsVisitante.js`
+- `backend/utils/membrosPagina.js`
+- `backend/utils/pcoChave.js`
+- `backend/utils/prontidaoCadastro.js`
+- `backend/utils/sanitize.js`
+- `backend/utils/supabase.js`
+- `backend/utils/trechoCep.js`
+- `backend/utils/vigenciaTipoCulto.js`
+- `backend/utils/volCobertura.js`
+- `backend/utils/volDisponibilidade.js`
+- `backend/utils/volIntegradoEm.js`
+- `backend/utils/volRodizio.js`
+- `backend/utils/volSyncIntegrity.js`
+
+**Serviços**
+
+- `backend/services/antecedentesCriminais.js`
+- `backend/services/bairroCanonico.js`
+- `backend/services/censoDisparo.js`
+- `backend/services/cerebroSync.js`
+- `backend/services/cpfReconciliar.js`
+- `backend/services/duplicidadePolicy.js`
+- `backend/services/escalaResposta.js`
+- `backend/services/fusaoCampos.js`
+- `backend/services/geoBrasil.js`
+- `backend/services/grupoPedidoEventos.js`
+- `backend/services/gruposAvisoApp.js`
+- `backend/services/gruposDestinatarios.js`
+- `backend/services/identidadeProgressiva.js`
+- `backend/services/inscricaoContrato.js`
+- `backend/services/inscricaoOrfas.js`
+- `backend/services/jornadaEngajamento.js`
+- `backend/services/jornadaMarcadores.js`
+- `backend/services/membroMatch.js`
+- `backend/services/notificar.js`
+- `backend/services/painelCache.js`
+- `backend/services/planningCenter.js`
+- `backend/services/solicitacoesMlTracker.js`
+- `backend/services/storageService.js`
+- `backend/services/volCheckinResolver.js`
+- `backend/services/volEmailSender.js`
+- `backend/services/volInscricaoStatus.js`
+- `backend/services/volNomeFiltro.js`
+- `backend/services/volVinculoIA.js`
+- `backend/services/voluntariadoFreqPCO.js`
+- `backend/services/voluntariadoSync.js`
+- `backend/services/waInbox.js`
+- `backend/services/whatsappFila.js`
+
+**Tabelas que estas rotas tocam**
+
+- `app_audit_log`
+- `app_solicitacoes_exclusao`
+- `apresentacao_bebes`
+- `batismo_inscricoes`
+- `cargos`
+- `cen_acesso_sensivel`
+- `cen_resposta`
+- `cen_resposta_item`
+- `cui_acompanhamentos`
+- `cui_convertidos`
+- `cui_jornada180`
+- `cultos`
+- `cultos_decisoes_pessoas`
+- `dem_bairro_geo`
+- `dem_cep_geo`
+- `entradas_resolucoes`
+- `ext_inscricoes`
+- `face_presencas`
+- `identidade_pendencias`
+- `inscricoes`
+- `int_visitantes`
+- `jornada_encaminhamentos`
+- `kids_criancas`
+- `kids_responsaveis`
+- `kpi_indicadores_taticos`
+- `mem_cadastros_pendentes`
+- `mem_censo_convites`
+- `mem_checkins`
+- `mem_contribuicoes`
+- `mem_devocionais`
+- `mem_duplicados_ignorados`
+- `mem_escalas`
+- `mem_familias`
+- `mem_grupo_encontro_presencas`
+- `mem_grupo_membros`
+- `mem_grupo_pedidos`
+- `mem_grupos`
+- `mem_historico`
+- `mem_membros`
+- `mem_merge_log`
+- `mem_ministerios`
+- `mem_qrcodes`
+- `mem_temporadas`
+- `mem_trilha_valores`
+- `mem_vinculos_familiares`
+- `mem_voluntarios`
+- `membresia_aprovadores`
+- `next_encontros`
+- `next_inscricoes`
+- `next_matriculas`
+- `next_turmas`
+- `nsm_eventos`
+- `profiles`
+- `usuarios`
+- `vol_1x1_meetings`
+- `vol_area_supervisores`
+- `vol_availability`
+- `vol_background_checks`
+- `vol_check_ins`
+- `vol_config`
+- `vol_escala_culto_itens`
+- `vol_escala_template_item_pessoas`
+- `vol_escala_template_itens`
+- `vol_escala_template_liderancas`
+- `vol_escala_template_tipos`
+- `vol_escala_templates`
+- `vol_inatividade`
+- `vol_inscricoes`
+- `vol_inscritos`
+- `vol_pco_mapa`
+- `vol_positions`
+- `vol_profiles`
+- `vol_schedules`
+- `vol_service_types`
+- `vol_services`
+- `vol_servicos_historico`
+- `vol_sync_logs`
+- `vol_team_members`
+- `vol_teams`
+- `vol_training_checkins`
+- `vol_user_roles`
+- `vol_volunteer_qrcodes`
+- `vw_censo_campanha`
+- `vw_insc_pagamento_estado`
+- `vw_kpi_trajetoria_atual`
+- `vw_membros_duplicados`
+- `vw_membros_orfaos_stats`
+- `vw_pessoas_papeis`
+- `vw_vol_frequencia`
+- `wifi_conexoes`
+- `wifi_visitantes`
+
+**RPCs**
+
+- `app_soft_delete`
+- `cruzar_pessoas`
+- `fn_dem_perfil`
+- `fn_dem_semear_bairros`
+- `fn_dem_semear_ceps`
+- `fn_membro_tem_atividade`
+- `merge_membros`
+- `refresh_vw_pessoas_papeis_mat`
+- `vol_find_face_match`
+- `vol_save_profile_face_descriptor`
+- `vol_save_qrcode_face_descriptor`
+
+**Namespace no front (src/api.js)**
+
+- `membresia`
+

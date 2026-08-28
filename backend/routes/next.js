@@ -31,6 +31,14 @@ const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { direcionarMatricula, signDirecionarToken } = require('../services/nextDirecionar');
+// Horários do batismo · o MESMO catálogo que a Integração gerencia na aba
+// Batismos (`batismo_horarios`) e a MESMA régua do formulário público.
+const { horariosDisponiveis } = require('../utils/batismoHorario');
+const {
+  horariosConfigurados: batismoHorariosConfigurados,
+  ocupacaoPorHorario: batismoOcupacaoPorHorario,
+  dataProximoBatismo,
+} = require('../services/batismoHorarios');
 
 // Re-calcula KPIs do NEXT em background (não bloqueia a resposta).
 // Chamado após qualquer mudança em inscrições ou indicacoes.
@@ -391,12 +399,38 @@ router.post('/matriculas/:id/direcionar', async (req, res) => {
       matriculaId: req.params.id,
       destinos: b.destinos || [],
       areas: b.areas || [], // "Servir" abre a escolha de áreas (Totem / self-service)
+      // "Batismo" abre a escolha do HORÁRIO (obrigatório · 13/08) — mesma
+      // mecânica das áreas do "Servir".
+      horarioBatismo: b.horario_batismo || null,
       userId: req.user?.id || null,
     });
     recalcularKpisNext();
     res.json(r);
   } catch (e) {
-    res.status(e.status || 500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message, codigo: e.codigo, campo: e.campo });
+  }
+});
+
+// GET /batismo-horarios — horários ABERTOS e COM VAGA pro próximo batismo.
+// Alimenta o seletor que aparece ao marcar "Quero me batizar" no direcionamento
+// (aba Pessoas e Totem do Next). ⚠️ Lê o MESMO catálogo que a Integração
+// gerencia (`batismo_horarios`) pela MESMA régua do formulário público — uma 2ª
+// lista aqui ofereceria horário que o servidor recusa no envio.
+router.get('/batismo-horarios', async (_req, res) => {
+  try {
+    const dataBatismo = await dataProximoBatismo();
+    const configurados = await batismoHorariosConfigurados();
+    // ⚠️ Falha FECHADA e DECLARADA: sem catálogo/data devolve lista vazia com
+    // `indisponivel`, nunca "não há horário" — a tela precisa distinguir "a
+    // equipe fechou tudo" de "não conseguimos ler agora".
+    if (!dataBatismo || configurados === null) {
+      return res.json({ data_batismo: dataBatismo || null, horarios: [], indisponivel: true });
+    }
+    const ocup = await batismoOcupacaoPorHorario(dataBatismo);
+    res.json({ data_batismo: dataBatismo, horarios: horariosDisponiveis(configurados, ocup) });
+  } catch (e) {
+    console.error('[next] batismo-horarios:', e.message);
+    res.json({ data_batismo: null, horarios: [], indisponivel: true });
   }
 });
 
@@ -467,8 +501,9 @@ router.get('/dashboard', async (_req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// TURMAS · Next como coorte de 2 encontros com presença
-//   "formado" = presente em TODOS os encontros da turma.
+// TURMAS · Next como coorte de UM encontro com presença (desde 26/08/2026 ·
+// era 2 encontros). Uma turma por domingo, sempre no culto de 09:30.
+//   "formado" = presente em TODOS os encontros da turma (hoje: no único).
 //   turma_id NULL numa matrícula = fila de espera (encaixe manual depois).
 // ----------------------------------------------------------------------------
 
@@ -649,7 +684,7 @@ router.get('/lista-espera', async (req, res) => {
   res.json({ count: (data || []).length, pessoas: data || [] });
 });
 
-// POST /turmas — cria turma (+ os encontros · default 2)
+// POST /turmas — cria turma (+ o encontro · default 1 desde 26/08/2026)
 router.post('/turmas', async (req, res) => {
   const { nome, responsavel_id, observacoes, encontros } = req.body || {};
   if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'nome obrigatório' });
@@ -662,7 +697,10 @@ router.post('/turmas', async (req, res) => {
     .insert({ nome: String(nome).trim(), responsavel_id: responsavel_id || null, observacoes: observacoes || null })
     .select().single();
   if (error) return res.status(500).json({ error: error.message });
-  const base = Array.isArray(encontros) && encontros.length ? encontros : [{ numero: 1 }, { numero: 2 }];
+  // ⚠️ UM encontro por turma desde 26/08/2026 (era 2 — aula 1 + aula 2). A turma
+  // agora é o domingo: 1 encontro, culto de 09:30, uma turma por domingo do mês.
+  // Régua e horário em backend/utils/nextTurmas.js.
+  const base = Array.isArray(encontros) && encontros.length ? encontros : [{ numero: 1 }];
   const rows = base.map((e, i) => ({ turma_id: turma.id, numero: e.numero || (i + 1), data: e.data || null, tema: e.tema || null }));
   const { error: encErr } = await supabase.from('next_encontros').insert(rows);
   if (encErr) return res.status(500).json({ error: encErr.message });
@@ -1051,23 +1089,59 @@ router.get('/pessoas', async (req, res) => {
       (q) => q.is('deleted_at', null));
     const turmas = await fetchAllNext('next_turmas', 'id, nome', (q) => q.is('deleted_at', null));
     const turmaNome = new Map(turmas.map(t => [t.id, t.nome]));
+    // ⚠️ "Fez o Next" vem da FONTE ÚNICA `vw_next_formado_pessoa` (régua de
+    // 14/08/2026: UM encontro basta), não de `next_matriculas.status`. O status
+    // é POR TURMA e diz "não formou" para quem esteve num encontro de outra
+    // turma — era isso que fazia a tela discordar da NSM, do /painel e dos KPIs,
+    // que já leem a view.
+    const formadosPessoa = await fetchAllNext('vw_next_formado_pessoa', 'membro_id, cpf');
+    const fMembro = new Set(), fCpf = new Set();
+    for (const f of formadosPessoa) {
+      if (f.membro_id) fMembro.add(f.membro_id);
+      const c = digits(f.cpf); if (c.length === 11) fCpf.add(c);
+    }
+    const fezNext = (p) => {
+      if (p && p.membro_id && fMembro.has(p.membro_id)) return true;
+      const c = digits(p && p.cpf); return c.length === 11 && fCpf.has(c);
+    };
     // Direcionamento (pra onde a pessoa vai ao fim do Next) · vem da matrícula
     const dirFlags = (mm) => ({
       indicou_grupo: !!(mm && mm.indicou_grupo), indicou_servir: !!(mm && mm.indicou_servir),
       indicou_batismo: !!(mm && mm.indicou_batismo), indicou_devocional: !!(mm && mm.indicou_devocional),
     });
 
-    // índice de matrículas por identidade (membro_id > cpf > nome completo)
-    const mByMembro = new Map(), mByCpf = new Map(), mByNome = new Map();
+    // índice de matrículas por identidade (membro_id > cpf > nome completo >
+    // telefone + PRIMEIRO NOME)
+    //
+    // ⚠️ O ramo do telefone entrou em 14/08/2026: sem ele, 22 convertidos que
+    // TÊM matrícula apareciam como "Sem Next" na tela — 11 deles com presença
+    // registrada em pelo menos um encontro. A causa é o convertido chegar sem
+    // CPF (o cadastro da decisão do culto exige só nome + telefone) e o nome
+    // estar escrito diferente das duas portas.
+    //
+    // ⚠️⚠️ Telefone SOZINHO nunca identifica (lei do Contrato de porta: família
+    // compartilha o número). Por isso o ramo exige o PRIMEIRO NOME igual. Medido
+    // no dia: 22 casam por telefone, 14 têm o primeiro nome igual e 8 NÃO —
+    // esses 8 seguem sem casar, que é o comportamento correto.
+    const primeiroNome = (s) => nomeKey(String(s || '').trim().split(/\s+/)[0]);
+    const tel8 = (v) => { const d = digits(v); return d.length >= 10 ? d.slice(-8) : null; };
+    const mByMembro = new Map(), mByCpf = new Map(), mByNome = new Map(), mByTel = new Map();
     for (const m of matriculas) {
       if (m.membro_id && !mByMembro.has(m.membro_id)) mByMembro.set(m.membro_id, m);
       const c = digits(m.cpf); if (c.length === 11 && !mByCpf.has(c)) mByCpf.set(c, m);
       const nk = nomeKey(`${m.nome || ''} ${m.sobrenome || ''}`); if (nk && !mByNome.has(nk)) mByNome.set(nk, m);
+      const t = tel8(m.telefone);
+      if (t) { if (!mByTel.has(t)) mByTel.set(t, []); mByTel.get(t).push(m); }
     }
     const matchMatricula = (cv) => {
       if (cv.membro_id && mByMembro.has(cv.membro_id)) return mByMembro.get(cv.membro_id);
       const c = digits(cv.cpf); if (c.length === 11 && mByCpf.has(c)) return mByCpf.get(c);
       const nk = nomeKey(cv.nome); if (nk && mByNome.has(nk)) return mByNome.get(nk);
+      const t = tel8(cv.telefone), pn = primeiroNome(cv.nome);
+      if (t && pn && mByTel.has(t)) {
+        const m = mByTel.get(t).find((x) => primeiroNome(x.nome) === pn);
+        if (m) return m;
+      }
       return null;
     };
 
@@ -1080,7 +1154,7 @@ router.get('/pessoas', async (req, res) => {
       const dias = cv.data_culto ? Math.floor((agora - new Date(cv.data_culto + 'T12:00:00').getTime()) / DIA) : null;
       let next_status; let bucket = null;
       if (cv.next_resolucao) next_status = 'resolvido';
-      else if (m && m.status === 'formado') next_status = 'formado';
+      else if (fezNext(cv) || fezNext(m) || (m && m.status === 'formado')) next_status = 'formado';
       else if (m) next_status = 'matriculado';
       else { next_status = 'nao_inscrito'; bucket = dias == null ? 'no_prazo' : dias > 90 ? 'fora_prazo' : dias > 75 ? 'vencendo' : 'no_prazo'; }
       itens.push({
@@ -1100,7 +1174,7 @@ router.get('/pessoas', async (req, res) => {
         nome: `${m.nome || ''}${m.sobrenome ? ' ' + m.sobrenome : ''}`.trim(), telefone: m.telefone, email: m.email, membro_id: m.membro_id,
         area: null, data_nsm: null, dias_desde_conversao: null,
         turma_id: m.turma_id, turma_nome: m.turma_id ? (turmaNome.get(m.turma_id) || null) : null,
-        next_status: m.status === 'formado' ? 'formado' : 'matriculado', bucket: null, next_resolucao: null, next_resolucao_em: null,
+        next_status: (fezNext(m) || m.status === 'formado') ? 'formado' : 'matriculado', bucket: null, next_resolucao: null, next_resolucao_em: null,
         ...dirFlags(m),
       });
     }

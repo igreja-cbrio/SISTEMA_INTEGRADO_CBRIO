@@ -28,6 +28,16 @@ const ROUTE_MODULE_MAP = {
   'expansion':    ['expansao'],
   'solicitacoes': ['solicitacoes'],
   'propostas':    ['propostas'],
+  // Campanhas de arrecadação. ⚠️ Sem esta entrada, `authorizeModule('campanhas',
+  // N)` recebe `undefined` e cai no nível PADRÃO DO CARGO — a matriz de
+  // permissões deixa de valer em silêncio, nos dois sentidos (ninguém toma 403 e
+  // a tela de Permissões desenha uma régua que o servidor não aplica). É a LEI de
+  // 17/08, e o módulo `links` caiu nela por 9 dias. Guardado por
+  // `src/test/routeModuleMap.test.ts`.
+  // ⚠️ Escrita é 3 e ativar/agendar disparo é 4: publicar a barrinha e mandar
+  // pedido de doação pra milhares de pessoas não é a mesma decisão que corrigir
+  // o texto de um marco do cronograma.
+  'campanhas':    ['campanhas'],
   // ministeriais
   'integracao':   ['integracao'],
   'relatorios':   ['relatorios'],
@@ -40,6 +50,21 @@ const ROUTE_MODULE_MAP = {
   'next-batismo': ['next-batismo'],
   'voluntariado': ['voluntariado'],
   'membresia':    ['membresia'],
+  // Censo/pesquisas. Nível 1 = agregado; 2 = resposta nominal (mesma régua da
+  // membresia). Sem esta entrada, moduleNames viria vazio e o guard cairia no
+  // nível padrão do cargo — liberando o módulo pra quem não deveria ver.
+  'censo':        ['censo'],
+  // Links e QR. Esta entrada FALTAVA desde que o módulo nasceu (08/08) e é a
+  // armadilha que o comentário do `censo` acima descreve: `authorizeModule
+  // ('links', 4)` buscava aqui, recebia `undefined`, e caía no nível padrão do
+  // CARGO — então a tela de Permissões mostrava uma coisa e a API aplicava
+  // outra. Medido em prod (17/08): a matriz dizia 2 cargos podendo escrever e a
+  // API deixava 10; a matriz marcava 1 cargo como "sem acesso" e a API deixava
+  // os 45 lerem. O bloqueio explícito por usuário (`modulosBloqueados`) também
+  // era pulado, porque aquele `if` é guardado por `moduleNames.length`.
+  // ⚠️ Escrever link é nível 4 de propósito: repontar um destino redireciona em
+  // silêncio TODO cartaz já impresso. Ver `src/test/routeModuleMap.test.ts`.
+  'links':        ['links'],
   // Leitura de dados de PESSOA (nome/CPF/telefone) é legítima em vários módulos
   // ministeriais que trabalham com gente. Quem tem QUALQUER um destes em leitura
   // passa; quem não tem (ex.: conta só de logística/financeiro/produção/marketing,
@@ -53,6 +78,13 @@ const ROUTE_MODULE_MAP = {
   // endpoints do fluxo do totem (ex.: cpf-lookup).
   'membros-totem': ['membresia','grupos','cuidados','integracao','next','next-batismo','voluntariado','kids','ami','bridge','online','face','totem-membro'],
   'totem-membro': ['totem-membro'],
+  // Fluxo de inscrição em evento DENTRO do Totem Membro. A conta de quiosque só
+  // tem `totem-membro` (matriz zerada + override), então `authorizeModule
+  // ('inscricoes')` a bloquearia — e é o próprio totem que precisa inscrever.
+  // Mesmo padrão de `membros-totem`. ⚠️ Usar SÓ nos endpoints `/inscricoes/totem/*`:
+  // o que essas rotas fazem é o equivalente da porta pública (a pessoa se
+  // inscreve), não gestão do módulo.
+  'inscricoes-totem': ['inscricoes','totem-membro'],
   'face':         ['face'],
   'grupos':       ['grupos'],
   'kids':         ['kids'],
@@ -67,6 +99,7 @@ const ROUTE_MODULE_MAP = {
   // estrategicos
   'gestao':       ['gestao'],
   'planejamento': ['planejamento'],
+  'planejamento-anual': ['planejamento-anual'],
   'governanca':   ['governanca'],
   'painel':       ['painel-cbrio'],
   'revisoes':    ['revisao-estrategica'],

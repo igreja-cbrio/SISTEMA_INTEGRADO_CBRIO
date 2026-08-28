@@ -44,6 +44,95 @@ jobs:
       - name: Inscrições QR signature and inventory hash
         run: npm run test:inscricao-qr
 
+      - name: Contrato do censo (politica de recadastramento)
+        run: npm run test:censo
+
+      - name: Contrato do detector de nome derivado do e-mail
+        run: npm run test:nome-email
+
+      - name: Contrato do nome mais completo (promoção no matcher)
+        run: npm run test:nome-completo
+
+      - name: Politica de duplicidade (fila das Entradas)
+        run: npm run test:duplicidade
+
+      - name: Pontuacao da fila progressiva (nascimento corrobora, genero veta)
+        run: npm run test:identidade-pares
+
+      # Gate estreito: SO a regra de ordem dos hooks do React. O lint completo
+      # tem ~1.714 problemas de codigo legado (quase todos no-explicit-any) e
+      # ficaria vermelho pra sempre — gate que ninguem mantem verde e removido
+      # na primeira urgencia. Esta regra tem ZERO violacoes e pega a classe de
+      # bug que derrubou a tela do voluntariado em producao (16/08/2026):
+      # useState depois de um early return -> React #310.
+      - name: Ordem dos hooks do React (react-hooks/rules-of-hooks)
+        run: npm run lint:hooks
+
+      - name: Politica de familia (fila Vincular familias)
+        run: npm run test:familia
+
+      # Trava o conserto de 18/08: a coleta precisa reprocessar o periodo
+      # anterior, senao o mes fecha subcontado (julho perdeu R$ 42 mil).
+      - name: Periodos da coleta de KPI (fecha o periodo anterior)
+        run: npm run test:kpi-periodos
+
+      - name: Matcher grava nascimento e sexo na criacao
+        run: npm run test:matcher-insert
+
+      # Trava o conserto de 24/08: o verificador cobrava o DS do culto de ontem
+      # as 09:00 UTC, uma hora ANTES do ds-collect (10:00 UTC) que preenche o
+      # campo. Resultado: alerta falso "Culto online sem dados" todo dia, para
+      # todo culto online, com a coleta funcionando.
+      - name: Janela do DS online (nao cobrar antes do coletor rodar)
+        run: npm run test:online-ds-janela
+
+      # Trava o conserto de 24/08: o alerta de segunda pro Marcelo nunca rodou
+      # (selecionava cultos.decisoes, coluna inexistente) e olhava numeros em vez
+      # das flags — lancar 0 e lancar, regra do Marcos.
+      - name: Alerta de culto sem dados (flags, nao numeros)
+        run: npm run test:alerta-culto
+
+      # Trava de 24/08: interruptor de disparo so funciona se remetente, catalogo
+      # e validacao do PATCH concordarem no mesmo id. `wa_templates.ativo` e o
+      # exemplo do que da errado — switch na tela que ninguem le.
+      - name: Interruptor dos disparos automaticos (id casado ponta a ponta)
+        run: npm run test:disparo-interruptor
+
+      # Trava de 24/08: a politica 'ligar' do contrato de porta nao consolidava
+      # CPF nem acumulava contato — 18 CPFs e 14 telefones presos na linha da
+      # inscricao no Celebra 2026, com o cadastro ao lado sem CPF.
+      - name: Politica 'ligar' cumpre o contrato de porta (CPF + mem_contatos)
+        run: npm run test:porta-ligar
+
+      # PERMISSAO. A supervisao passou a recortar por area E subarea (25/08); a
+      # licao de 18/08 e que a trava existia so como PORTA e todo supervisor
+      # montava escala de tudo. Cada regra do recorte tem um caso aqui.
+      - name: Supervisao recorta por area e subarea (permissao)
+        run: npm run test:supervisor-subarea
+
+      # Janela do check-in pelo supervisor: DIA DO CULTO EM BRT. Culto de domingo
+      # 19h e 22h UTC — comparar em UTC fecha a janela no meio do culto da noite,
+      # justamente quando o supervisor esta batendo os check-ins.
+      - name: Janela do check-in do supervisor (dia do culto em BRT)
+        run: npm run test:checkin-janela
+
+      # PERMISSAO. O rodizio da casa e semana do mes x dia x periodo (lista da
+      # Ariel), NAO horario de culto — medido no PCO: 102 dos 110 escalados tem so
+      # horario de ensaio e os 8 restantes tem as QUATRO horas.
+      - name: Rodizio de supervisao (semana x dia x periodo)
+        run: npm run test:rodizio-culto
+
+      # DINHEIRO. O digito verificador de campanha JA MORREU UMA VEZ: a regra do
+      # centavo foi escrita so no JS e o caminho vivo era o trigger SQL, entao
+      # 205 creditos (R$ 42 mil so no digito 25) ficaram 3 meses sem ser
+      # classificados e `fin_transacoes.identificador_centavo` estava em ZERO
+      # linhas. Este teste guarda a regra nos DOIS caminhos (JS + espelho SQL) e
+      # trava o deploy se eles divergirem. Tambem guarda: WhatsApp sem opt-in
+      # fora do publico, agradecimento sem nome nem valor, e a barrinha nao
+      # somar camadas que geram dupla contagem (LEI No 6 do nucleo).
+      - name: Digito verificador de campanha (JS x espelho SQL)
+        run: npm run test:campanha-digito
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
@@ -55,6 +144,31 @@ jobs:
 
       - name: Deploy to Production
         run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+
+  # ⚠️ Job SEPARADO com `if: failure()`, não um step dentro do deploy. Um step
+  # com `if: failure()` só roda se o job chegou até ele; se a falha for no
+  # checkout, no npm install ou num dos contratos de teste lá em cima, o step
+  # nunca é alcançado e o aviso não sai — justamente nos casos em que ele mais
+  # importa. Como job com `needs`, ele dispara para QUALQUER falha do deploy.
+  avisar-falha:
+    needs: deploy
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Avisar que o deploy falhou
+        env:
+          MICROSOFT_TENANT_ID: ${{ secrets.MICROSOFT_TENANT_ID || secrets.AZURE_TENANT_ID }}
+          MICROSOFT_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+          MICROSOFT_CLIENT_SECRET: ${{ secrets.MICROSOFT_CLIENT_SECRET || secrets.AZURE_CLIENT_SECRET }}
+          MERGE_MAIL_SENDER: ${{ secrets.MERGE_MAIL_SENDER || secrets.GRAPH_MAIL_SENDER || 'noreply@cbrio.org' }}
+          DEPLOY_ALERTA_TO: ${{ secrets.DEPLOY_ALERTA_TO || vars.DEPLOY_ALERTA_TO || 'matheus.toscano@cbrio.org' }}
+          COMMIT_MENSAGEM: ${{ github.event.head_commit.message }}
+          COMMIT_AUTOR: ${{ github.event.head_commit.author.name }}
+        run: node scripts/alerta-deploy-falhou.mjs
 
 # NOTA (2026-06-23): o job 'notify-email' (e-mail "Produção no ar" a CADA deploy
 # de produção, enviado pro MERGE_NOTIFY_TO via Microsoft Graph) foi REMOVIDO —

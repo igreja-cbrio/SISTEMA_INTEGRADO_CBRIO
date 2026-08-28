@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { tirarCodigoPais, mascaraTelefone, soDigitos } from '../lib/inscricao';
+// A mesma régua no BACKEND: `camposContato.js` re-exporta pra `profiles.telefone`
+// (app de membros / staff / /perfil). Se uma das duas divergir, o teste quebra.
+import {
+  mascaraTelefone as backendMascara,
+  tirarCodigoPaisTelefone as backendTirarCodigoPais,
+} from '../../backend/utils/camposContato';
 
 // Regra criada em 31/07 depois de achar 15 cadastros em produção com o DDD
 // comido: colar "+55 21 99999-8888" (o formato que sai dos contatos do celular)
@@ -56,5 +62,39 @@ describe('mascaraTelefone tira o país ANTES de truncar', () => {
       expect(d.length, `${entrada} gravou ${d}`).toBeGreaterThanOrEqual(10);
       expect(d.length, `${entrada} gravou ${d}`).toBeLessThanOrEqual(11);
     }
+  });
+});
+
+describe('camposContato (backend) · máscara do profiles.telefone', () => {
+  // Sync do PUT /membro/perfil: o app manda o que o usuário digitou CRU
+  // ("+55 21 …"), o backend espelha em profiles.telefone o formato canônico
+  // "(21) 99999-9999". É o mesmo contrato do tirarCodigoPais do front.
+  const gravado = (v: string) => backendMascara(v);
+
+  it('tem o MESMO comportamento do front (mascaraTelefone)', () => {
+    for (const entrada of [
+      '+55 21 99999-8888', '5521999998888', '(55) 99999-8888',
+      '+55 55 99999-8888', '(21) 99999-8888', '21 3333-4444', '552133334444',
+    ]) {
+      expect(backendMascara(entrada), `front vs backend para ${entrada}`)
+        .toBe(mascaraTelefone(entrada));
+    }
+  });
+
+  it('+55 colado do contato vira máscara canônica de 11 dígitos', () => {
+    expect(gravado('+55 21 99999-8888')).toBe('(21) 99999-8888');
+    expect(gravado('5521999998888')).toBe('(21) 99999-8888');
+    expect(gravado('552133334444')).toBe('(21) 3333-4444');
+  });
+
+  it('DDD 55 legítimo (Santa Maria/RS) não é comido', () => {
+    expect(gravado('+55 55 99999-8888')).toBe('(55) 99999-8888');
+    expect(gravado('(55) 99999-8888')).toBe('(55) 99999-8888');
+  });
+
+  it('null/vazio → string vazia (nunca "null" gravado em profiles)', () => {
+    expect(backendMascara('')).toBe('');
+    expect(backendMascara(null as unknown as string)).toBe('');
+    expect(backendTirarCodigoPais('')).toBe('');
   });
 });

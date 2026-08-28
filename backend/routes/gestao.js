@@ -142,17 +142,50 @@ router.get('/saude', async (req, res) => {
     const sem_objetivo = kpisAreas.filter(k => !k.objetivo_geral_id);
     const sem_valores = kpisAreas.filter(k => !Array.isArray(k.valores) || k.valores.length === 0);
 
-    // Sem registro nos últimos 60 dias
+    // Sem dado nos últimos 60 dias
+    // ⚠️ São DUAS fontes de valor e ler só uma faz a tela mentir: KPI manual
+    // grava em `kpi_registros`; KPI com fórmula (razao, delta_pct, soma_periodo,
+    // delta_abs) grava em `kpi_valores_calculados`. Lendo só a primeira, a tela
+    // acusava ~127 "sem registro" quando o número real de KPIs sem dado em lugar
+    // nenhum era ~23 — e cobrar líder com base nisso queima a credibilidade da
+    // cobrança. É o mesmo bug que o #2486 consertou no farol/score, espelhado.
     const dataLimite = new Date();
     dataLimite.setDate(dataLimite.getDate() - 60);
     const dataLimiteStr = dataLimite.toISOString().slice(0, 10);
 
-    const { data: regs } = await supabase
-      .from('kpi_registros')
-      .select('indicador_id')
-      .gte('data_preenchimento', dataLimiteStr);
-    const ativosRecentes = new Set((regs || []).map(r => r.indicador_id));
-    const sem_registro_60d = (kpis || []).filter(k => !ativosRecentes.has(k.id));
+    const [regsRes, calcRes] = await Promise.all([
+      supabase
+        .from('kpi_registros')
+        .select('indicador_id')
+        .gte('data_preenchimento', dataLimiteStr),
+      supabase
+        .from('kpi_valores_calculados')
+        .select('kpi_id, valor_calculado')
+        .gte('periodo_referencia', dataLimiteStr),
+    ]);
+
+    // ⚠️ Falha de consulta NÃO pode virar "esse KPI não tem dado" — seria
+    // transformar instabilidade de banco em fila de cobrança indevida. Quando
+    // uma das fontes falha, o bloco é DECLARADO como incompleto e não afirma.
+    const fonteRegistrosOk = !regsRes.error;
+    const fonteCalculadosOk = !calcRes.error;
+
+    const comDado = new Set();
+    (regsRes.data || []).forEach(r => comDado.add(r.indicador_id));
+    // ⚠️ `valor_calculado IS NULL` NÃO conta como dado: a fórmula rodou e não
+    // devolveu nada. Contar como "tem dado" esconderia o problema real (~66
+    // KPIs que calculam nulo porque ninguém registra o evento de origem).
+    const calculamNulo = new Set();
+    (calcRes.data || []).forEach(v => {
+      if (v.valor_calculado === null || v.valor_calculado === undefined) calculamNulo.add(v.kpi_id);
+      else comDado.add(v.kpi_id);
+    });
+
+    const semDadoNenhum = (kpis || []).filter(k => !comDado.has(k.id));
+    // Os que calculam nulo saem da lista de "ninguém preenche" — o problema
+    // deles é a FONTE do dado (processo que não gera evento), não a cobrança.
+    const sem_registro_60d = semDadoNenhum.filter(k => !calculamNulo.has(k.id));
+    const calculam_nulo = semDadoNenhum.filter(k => calculamNulo.has(k.id));
 
     // Áreas com cobertura incompleta na matriz
     const VALORES = ['seguir', 'conectar', 'investir', 'servir', 'generosidade'];
@@ -218,6 +251,19 @@ router.get('/saude', async (req, res) => {
       sem_registro_60d: {
         total: sem_registro_60d.length,
         items: summarize(sem_registro_60d, ['id', 'indicador', 'descricao', 'area']),
+        janela_dias: 60,
+        fontes_lidas: ['kpi_registros', 'kpi_valores_calculados'],
+        // Bloco incompleto é DECLARADO: número sem a ressalva ao lado vira
+        // cobrança errada, e cobrança errada só se gasta uma vez.
+        incompleto: !fonteRegistrosOk || !fonteCalculadosOk,
+        aviso: (!fonteRegistrosOk || !fonteCalculadosOk)
+          ? `Contagem incompleta: falha ao ler ${[!fonteRegistrosOk && 'kpi_registros', !fonteCalculadosOk && 'kpi_valores_calculados'].filter(Boolean).join(' e ')}.`
+          : null,
+      },
+      calculam_nulo: {
+        total: calculam_nulo.length,
+        items: summarize(calculam_nulo, ['id', 'indicador', 'descricao', 'area']),
+        janela_dias: 60,
       },
       matriz_cobertura: matrizCobertura,
       objetivos_sem_kpis: {

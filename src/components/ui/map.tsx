@@ -60,6 +60,10 @@ const DefaultLoader = () => (
 export function Map({ children, className, styles, theme = "dark", ...props }: MapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreGL.Map | null>(null);
+  // ⚠️ Declarado AQUI, junto dos outros refs: é usado pelo efeito de criação do
+  // mapa, que aparece antes no arquivo. Array de deps e corpo de efeito avaliam
+  // depois do render, mas manter a ordem evita a armadilha de TDZ.
+  const temaAplicadoRef = useRef<"light" | "dark" | null>(null);
   const [isMounted, setIsMounted] = useState(false);
   const [isLoaded, setIsLoaded] = useState(false);
   const [isStyleLoaded, setIsStyleLoaded] = useState(false);
@@ -80,6 +84,10 @@ export function Map({ children, className, styles, theme = "dark", ...props }: M
     if (!isMounted || !containerRef.current) return;
 
     const mapStyle = theme === "dark" ? mapStyles.dark : mapStyles.light;
+    // ⚠️ Registra o tema com que o mapa NASCEU: sem isto o efeito de tema
+    // dispara um `setStyle` redundante no primeiro commit depois do mount — e
+    // `setStyle` apaga as camadas do consumidor.
+    temaAplicadoRef.current = theme === "dark" ? "dark" : "light";
 
     const mapInstance = new MapLibreGL.Map({
       container: containerRef.current,
@@ -94,10 +102,23 @@ export function Map({ children, className, styles, theme = "dark", ...props }: M
 
     mapInstance.on("load", loadHandler);
     mapInstance.on("styledata", styleDataHandler);
+    // ⚠️⚠️ `load` NÃO é garantia. Ele exige o primeiro quadro completo, e um
+    // container que nasce com altura 0 (mapa dentro de aba/toggle, que é o caso
+    // do mapa de grupos e do da membresia) pode nunca chegar lá — o mapa
+    // desenha, o estilo carrega, e `load` simplesmente não vem. Sem esta rede,
+    // todo consumidor que espera `isLoaded` fica parado para sempre: foi assim
+    // que as duas telas ficaram com ZERO marcadores (medido em 23/08/2026).
+    // `idle` dispara sempre que o mapa termina de acomodar, então serve de
+    // fallback; e se o mapa JÁ estiver carregado quando chegamos aqui, marcamos
+    // na hora.
+    const idleHandler = () => setIsLoaded(true);
+    mapInstance.on("idle", idleHandler);
+    if (mapInstance.loaded()) setIsLoaded(true);
     mapRef.current = mapInstance;
 
     return () => {
       mapInstance.off("load", loadHandler);
+      mapInstance.off("idle", idleHandler);
       mapInstance.off("styledata", styleDataHandler);
       mapInstance.remove();
       mapRef.current = null;
@@ -105,14 +126,23 @@ export function Map({ children, className, styles, theme = "dark", ...props }: M
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMounted]);
 
+  // ⚠️⚠️ `setStyle` DESCARTA toda camada criada por `addLayer` — medido em
+  // produção em 24/08/2026 trocando o tema com o mapa de calor da Membresia na
+  // tela: o basemap troca e as camadas somem, sem voltar. Por isso este efeito
+  // só roda quando o tema EFETIVO mudou de verdade; sem a guarda ele disparava
+  // um `setStyle` logo depois do mount (o `[data-theme]` do ERP é aplicado
+  // depois do primeiro render), apagando as camadas que o consumidor acabara de
+  // criar e deixando o mapa vazio até alguém mexer na câmera.
   useEffect(() => {
-    if (mapRef.current) {
-      setIsStyleLoaded(false);
-      mapRef.current.setStyle(
-        (theme === "dark" ? mapStyles.dark : mapStyles.light) as any,
-        { diff: true }
-      );
-    }
+    if (!mapRef.current) return;
+    const efetivo = theme === "dark" ? "dark" : "light";
+    if (temaAplicadoRef.current === efetivo) return;
+    temaAplicadoRef.current = efetivo;
+    setIsStyleLoaded(false);
+    mapRef.current.setStyle(
+      (efetivo === "dark" ? mapStyles.dark : mapStyles.light) as any,
+      { diff: true }
+    );
   }, [theme, mapStyles]);
 
   const isLoading = !isMounted || !isLoaded || !isStyleLoaded;
@@ -169,10 +199,26 @@ export function MapMarker({
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    if (!isLoaded || !map) return;
+    // ⚠️ Depende só do MAPA, nunca de `isLoaded`: marcador é nó DOM ancorado
+    // por coordenada, não precisa do estilo pronto — e amarrá-lo ao `load` foi
+    // o que sumiu com os pinos das duas telas.
+    if (!map) return;
 
+    // ⚠⚠ DOIS nós DE PROPÓSITO. `container` é do MAPLIBRE (ele insere e
+    // REMOVE do documento em `marker.remove()`); `interno` é do REACT — o portal
+    // do `MarkerContent` monta dentro dele. Com um nó só, o maplibre arranca do
+    // DOM justamente o pai que o React ainda vai desmontar, e aí o desmonte
+    // estoura `NotFoundError: removeChild` e derruba TODOS os marcadores da
+    // tela — não só o que saiu. Medido em produção (23/08/2026): o mapa da
+    // Membresia E o mapa público de Grupos ficaram com ZERO pinos por isto.
+    // Mesma lição do arrasto do Kanban (14/08): nó renderizado pelo React nunca
+    // pode ser removido por terceiro. Com o nó interno, o vínculo
+    // `interno.parentNode === container` sobrevive à saída do documento e o
+    // React desmonta em paz.
     const container = document.createElement("div");
-    markerElementRef.current = container;
+    const interno = document.createElement("div");
+    container.appendChild(interno);
+    markerElementRef.current = interno;
 
     const marker = new MapLibreGL.Marker({
       ...markerOptions,
@@ -250,8 +296,12 @@ export function MarkerPopup({
   useEffect(() => {
     if (!isReady || !markerRef.current) return;
 
+    // Mesma razão do MapMarker acima: o pop-up também é desmontado pelo
+    // maplibre, então o React precisa de um nó próprio lá dentro.
     const container = document.createElement("div");
-    containerRef.current = container;
+    const interno = document.createElement("div");
+    container.appendChild(interno);
+    containerRef.current = interno;
 
     const popup = new MapLibreGL.Popup({
       offset: 24,

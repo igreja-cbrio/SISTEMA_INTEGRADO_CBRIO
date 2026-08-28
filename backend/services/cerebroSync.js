@@ -29,6 +29,64 @@ const AREA_VAULT_BY_ENTITY = {
   funcionario:     '08-administrativo/rh',
 };
 
+/**
+ * ⚠️ LEI · ALLOWLIST do que pode virar nota no vault (2026-08-03 · decisão do Marcos).
+ *
+ * O vault é uma biblioteca do SharePoint que o OneDrive ESPELHA no disco de quem
+ * tem acesso. Isso tem duas consequências que o banco não tem:
+ *
+ *  1. NÃO existe permissão por linha. Quem tem a biblioteca tem TODOS os
+ *     arquivos dela — não dá para dizer "essa nota só o RH vê".
+ *  2. É IRREVOGÁVEL. Tirar o acesso à biblioteca depois não apaga a cópia que já
+ *     sincronizou no laptop de alguém. No banco, revogar permissão funciona na
+ *     hora e retroativamente; aqui, não.
+ *
+ * Por isso a régua é allowlist (fail-closed), não denylist: entidade nova só vai
+ * pro vault quando alguém decidir explicitamente que pode.
+ *
+ * ⚠️⚠️ `acompanhamento` está FORA DE PROPÓSITO — NÃO é esquecimento, e não é
+ * inconsistência a ser "consertada". É a fila pastoral (aconselhamento e
+ * capelania): a coisa mais sensível que a igreja guarda, categoria especial na
+ * LGPD (art. 11 · convicção religiosa) e sigilo pastoral antes de ser questão
+ * legal. Ela vive em `cui_acompanhamentos`, onde a RLS por módulo funciona, e o
+ * assistente já a alcança por lá.
+ *
+ * Contexto que torna esta guarda necessária: até 03/08 as rotas
+ * POST/PATCH/DELETE /cuidados/acompanhamentos chamavam `enqueueSync` de verdade.
+ * Nenhuma nota pastoral chegou ao vault, mas por ACIDENTE — aquelas rotas ficaram
+ * dormentes no refactor de 22/07 (o AcompanhamentoModal saiu de tela; criar
+ * aconselhamento passou a ser pelo "Atender" da Caixa de entrada, que grava em
+ * cui_acompanhamentos sem enfileirar). Ou seja: a proteção era um efeito
+ * colateral, e o mapa AREA_VAULT_BY_ENTITY continuava dizendo que ia.
+ * Quem olhasse o fluxo novo veria "falta o enqueueSync" e consertaria por
+ * simetria — parece consistência, é vazamento. Esta lista é o que impede isso.
+ *
+ * `contribuicao-mes` PODE: é agregado mensal (total por tipo e forma de
+ * pagamento), sem doador nominal. `funcionario` PODE porque o renderer exclui
+ * salário de propósito — se algum dia ele passar a incluir, revisar aqui.
+ *
+ * Guarda de regressão: src/test/cerebroVault.test.ts (mutation-testado).
+ */
+const ENTIDADES_PERMITIDAS_NO_VAULT = new Set([
+  'membro',
+  'evento',
+  'projeto',
+  'voluntario',
+  'funcionario',
+  'contribuicao-mes',
+]);
+
+/**
+ * Uma entidade pode ser MATERIALIZADA como nota no vault?
+ *
+ * ⚠️ Vale só para `upsert`. `delete` NUNCA é bloqueado: se uma nota já existe
+ * (de antes desta guarda, ou de um backfill manual), impedir o delete a deixaria
+ * órfã no vault para sempre — o oposto do que a allowlist quer.
+ */
+function podeIrProVault(entityType) {
+  return ENTIDADES_PERMITIDAS_NO_VAULT.has(String(entityType || ''));
+}
+
 let _vaultDriveCache = null;
 let _vaultDriveCacheAt = 0;
 const VAULT_DRIVE_TTL_MS = 10 * 60 * 1000;
@@ -61,6 +119,18 @@ async function getVaultDriveId() {
  */
 async function enqueueSync(entityType, entityId, action = 'upsert', payload = null) {
   if (!entityType || !entityId) return;
+
+  // Allowlist (ver ENTIDADES_PERMITIDAS_NO_VAULT). Barra aqui pra nem sujar a
+  // fila, e AVISA — bloqueio silencioso viraria "por que essa nota não aparece?"
+  // seis meses depois. `delete` passa sempre: ver podeIrProVault.
+  if (action !== 'delete' && !podeIrProVault(entityType)) {
+    console.warn(
+      `[CEREBRO SYNC] "${entityType}" não vai pro vault por decisão de privacidade `
+      + '(ENTIDADES_PERMITIDAS_NO_VAULT em cerebroSync.js) — ignorado, não é erro.',
+    );
+    return;
+  }
+
   try {
     // Dedup: se já existe item pendente/processando para a mesma entidade, não enfileira de novo.
     const { data: existing } = await supabase
@@ -86,6 +156,32 @@ async function enqueueSync(entityType, entityId, action = 'upsert', payload = nu
 }
 
 // ─── Processador da fila ───────────────────────────────────────────────
+
+/** Máximo de tentativas antes de a fila desistir de uma falha passageira. */
+const MAX_TENTATIVAS_SYNC = 4;
+
+/**
+ * Decide se o item volta pra fila ou vira erro terminal. PURA — testada.
+ *
+ * ⚠️ Antes, QUALQUER erro marcava `status='erro'` na 1ª tentativa, e `erro` nunca
+ * é relido (a fila só busca `pendente`). O campo `tentativas` era incrementado e
+ * jamais consultado. Resultado: uma falha de 30 segundos em 22/04 tirou os 50
+ * eventos da igreja do vault por 3 meses — mesma lição da fila do WhatsApp
+ * ("acabar as tentativas não é motivo pra desistir" · 31/07), aqui com um agravante:
+ * lá havia 5 tentativas, aqui havia UMA.
+ *
+ * Só é retentável o que o `umaLinha` marcou como falha de CONSULTA. Entidade
+ * realmente ausente segue terminal na hora — re-tentar não a faz existir.
+ */
+function decidirRetrySync({ tentativas = 0, retentavel = false } = {}) {
+  if (retentavel && tentativas < MAX_TENTATIVAS_SYNC) {
+    return { status: 'pendente', motivo: 'retentavel' };
+  }
+  return {
+    status: 'erro',
+    motivo: retentavel ? 'tentativas_esgotadas' : 'permanente',
+  };
+}
 
 /**
  * Consome até `limit` itens pendentes da fila e sincroniza com o vault.
@@ -140,12 +236,23 @@ async function processSyncFila(limit = 8) {
 
       processados++;
     } catch (e) {
-      console.error(`[CEREBRO SYNC] erro em ${item.entity_type}:${item.entity_id}:`, e.message);
-      erros++;
+      // `tentativas` do item vem de ANTES do incremento desta rodada — o UPDATE
+      // no topo do loop já somou 1 no banco, então a conta aqui usa +1.
+      const tentativas = (item.tentativas || 0) + 1;
+      const decisao = decidirRetrySync({ tentativas, retentavel: !!e.retentavel });
+
+      console.error(
+        `[CEREBRO SYNC] erro em ${item.entity_type}:${item.entity_id} `
+        + `(tentativa ${tentativas}, ${decisao.motivo}):`, e.message,
+      );
+      if (decisao.status === 'erro') erros++;
+
       await supabase.from('cerebro_sync_fila').update({
-        status: 'erro',
+        status: decisao.status,
         erro_mensagem: e.message.slice(0, 500),
-        processado_em: new Date().toISOString(),
+        // Só carimba conclusão quando desistiu — item que volta pra fila não foi
+        // processado, e datar isso faria o reset de travados de 5 min errar a conta.
+        processado_em: decisao.status === 'erro' ? new Date().toISOString() : null,
       }).eq('id', item.id);
     }
   }
@@ -156,6 +263,16 @@ async function processSyncFila(limit = 8) {
 // ─── Upsert de uma entidade → nota no vault ────────────────────────────
 
 async function upsertNoteForEntity(entityType, entityId) {
+  // 2ª camada da allowlist, de propósito: `routes/cerebro.js` importa esta função
+  // DIRETO (endpoint de backfill), sem passar por enqueueSync. Barrar só no
+  // enfileiramento deixaria esse segundo caminho aberto.
+  if (!podeIrProVault(entityType)) {
+    throw new Error(
+      `"${entityType}" não pode virar nota no vault por decisão de privacidade `
+      + '(ENTIDADES_PERMITIDAS_NO_VAULT em cerebroSync.js)',
+    );
+  }
+
   const loader = ENTITY_LOADERS[entityType];
   if (!loader) throw new Error(`entity_type não suportado: ${entityType}`);
 
@@ -245,13 +362,42 @@ async function saveNoteToVault(relativePath, content) {
 
 // ─── Loaders: buscam dados frescos de cada entidade ────────────────────
 
+/**
+ * ⚠️ "Não encontrada" ≠ "a consulta falhou" — e confundir as duas custou 3 meses.
+ *
+ * Todos os loaders faziam `const { data } = await supabase...` e DESCARTAVAM o
+ * `error`. Quando a query falhava (coluna que ainda não existia no schema, RLS,
+ * timeout), `data` vinha null e o chamador concluía "Entidade X não encontrada" —
+ * que a fila trata como PERMANENTE. Em 22/04 isso marcou os 50 eventos da igreja
+ * como erro terminal: eles existem, a query funciona hoje, e ficaram fora do
+ * vault até 03/08 sem ninguém saber. Pior: a mensagem real do PostgREST foi
+ * substituída pela genérica, então nem sabemos qual coluna faltava — o bug apagou
+ * a própria evidência.
+ *
+ * Este helper separa os dois casos. Erro de consulta vira `retentavel = true` e a
+ * fila tenta de novo; linha ausente de verdade devolve null e segue permanente
+ * (aí "não encontrada" está correto — a entidade foi apagada).
+ */
+async function umaLinha(tabela, colunas, coluna, valor) {
+  const { data, error } = await supabase
+    .from(tabela)
+    .select(colunas)
+    .eq(coluna, valor)
+    .maybeSingle();
+
+  if (error) {
+    const e = new Error(`Consulta a ${tabela} falhou: ${error.message}`);
+    e.retentavel = true;
+    throw e;
+  }
+  return data || null;
+}
+
 const ENTITY_LOADERS = {
   membro: async (id) => {
-    const { data } = await supabase
-      .from('mem_membros')
-      .select('id, nome, status, email, telefone, data_nascimento, estado_civil, cidade, profissao, familia_id, created_at, active')
-      .eq('id', id)
-      .maybeSingle();
+    const data = await umaLinha('mem_membros',
+      'id, nome, status, email, telefone, data_nascimento, estado_civil, cidade, profissao, familia_id, created_at, active',
+      'id', id);
     if (!data) return null;
     // Enriquece com nome da família
     if (data.familia_id) {
@@ -261,27 +407,18 @@ const ENTITY_LOADERS = {
     return data;
   },
   evento: async (id) => {
-    const { data } = await supabase
-      .from('events')
-      .select('id, name, description, date, status, location, responsible, recurrence, budget_planned, budget_spent, expected_attendance, actual_attendance, created_at')
-      .eq('id', id)
-      .maybeSingle();
-    return data;
+    return umaLinha('events',
+      'id, name, description, date, status, location, responsible, recurrence, budget_planned, budget_spent, expected_attendance, actual_attendance, created_at',
+      'id', id);
   },
   projeto: async (id) => {
-    const { data } = await supabase
-      .from('projects')
-      .select('id, name, description, year, status, responsible, area, date_start, date_end, budget_planned, budget_spent, priority, notes, created_at')
-      .eq('id', id)
-      .maybeSingle();
-    return data;
+    return umaLinha('projects',
+      'id, name, description, year, status, responsible, area, date_start, date_end, budget_planned, budget_spent, priority, notes, created_at',
+      'id', id);
   },
   voluntario: async (id) => {
-    const { data } = await supabase
-      .from('vol_profiles')
-      .select('id, full_name, email, planning_center_id, created_at')
-      .eq('id', id)
-      .maybeSingle();
+    const data = await umaLinha('vol_profiles',
+      'id, full_name, email, planning_center_id, created_at', 'id', id);
     if (!data) return null;
     // Contagens auxiliares para enriquecer a nota
     const d90 = new Date(Date.now() - 90 * 86400000).toISOString();
@@ -299,20 +436,14 @@ const ENTITY_LOADERS = {
     return data;
   },
   acompanhamento: async (id) => {
-    const { data } = await supabase
-      .from('cui_acompanhamentos')
-      .select('id, nome, telefone, motivo, status, data_inicio, data_encerramento, observacoes, membro_id, created_at')
-      .eq('id', id)
-      .maybeSingle();
-    return data;
+    return umaLinha('cui_acompanhamentos',
+      'id, nome, telefone, motivo, status, data_inicio, data_encerramento, observacoes, membro_id, created_at',
+      'id', id);
   },
   funcionario: async (id) => {
-    const { data } = await supabase
-      .from('rh_funcionarios')
-      .select('id, nome, email, telefone, cargo, area, tipo_contrato, data_admissao, data_demissao, status, observacoes, created_at')
-      .eq('id', id)
-      .maybeSingle();
-    return data;
+    return umaLinha('rh_funcionarios',
+      'id, nome, email, telefone, cargo, area, tipo_contrato, data_admissao, data_demissao, status, observacoes, created_at',
+      'id', id);
   },
   // Agregado mensal de contribuições. entity_id = 'YYYY-MM'.
   'contribuicao-mes': async (yyyymm) => {
@@ -824,10 +955,20 @@ function makeSlug(title, fallbackId) {
 }
 
 /**
- * Lista entity_types suportados (útil para o endpoint de backfill).
+ * Lista entity_types que o backfill pode enfileirar.
+ *
+ * ⚠️ Filtra pela allowlist de propósito — 3ª camada. `POST /cerebro/backfill/:tipo`
+ * valida contra ESTA lista, e ele enfileira TODAS as linhas do tipo de uma vez:
+ * sem o filtro, um `POST /cerebro/backfill/acompanhamento` de qualquer
+ * admin/diretor tentaria despejar a fila pastoral inteira no vault. O `enqueueSync`
+ * recusaria uma por uma, mas o certo é o endpoint responder 400 dizendo que o tipo
+ * não é suportado, em vez de "aceitei" seguido de N avisos no log.
+ *
+ * O loader de `acompanhamento` continua existindo (é o que permite reativar se
+ * algum dia a decisão mudar) — só não é oferecido.
  */
 function getSupportedEntityTypes() {
-  return Object.keys(ENTITY_LOADERS);
+  return Object.keys(ENTITY_LOADERS).filter(podeIrProVault);
 }
 
 module.exports = {
@@ -837,4 +978,8 @@ module.exports = {
   getSupportedEntityTypes,
   // Exportados pra testes/backfill
   AREA_VAULT_BY_ENTITY,
+  ENTIDADES_PERMITIDAS_NO_VAULT,
+  podeIrProVault,
+  decidirRetrySync,
+  MAX_TENTATIVAS_SYNC,
 };

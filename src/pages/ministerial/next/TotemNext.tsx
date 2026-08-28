@@ -28,11 +28,20 @@ const DESTINOS = [
 type Enc = { id: string; numero: number; data?: string | null };
 type Mat = { id: string; nome: string; sobrenome?: string | null; indicou_grupo?: boolean; indicou_servir?: boolean; indicou_batismo?: boolean };
 type Opcao = { label: string };
+// Horários do batismo · catálogo que a Integração gerencia (aba Batismos).
+type HorarioBatismo = { horario: string; label: string; vagas_restantes: number | null };
+type BatismoInfo = { data_batismo?: string | null; horarios: HorarioBatismo[]; indisponivel?: boolean };
 
 function nomeCompleto(m: Mat) { return `${m.nome || ''}${m.sobrenome ? ' ' + m.sobrenome : ''}`.trim(); }
 function ymd(d?: string | null) {
   if (!d) return '';
   try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }); } catch { return ''; }
+}
+// ⚠️ Meio-dia local: `new Date('2026-08-23')` é meia-noite UTC = 21h do dia
+// ANTERIOR no Rio, e mostraria a data do batismo errada.
+function fmtDataBatismo(d?: string | null) {
+  if (!d) return '';
+  try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' }); } catch { return ''; }
 }
 function computePresentes(det: any, encId: string): Set<string> {
   const s = new Set<string>();
@@ -55,6 +64,7 @@ export default function TotemNext({ onClose }: { onClose: () => void }) {
   const [presentes, setPresentes] = useState<Set<string>>(new Set());
   const [aba, setAba] = useState<'presenca' | 'direc'>('presenca');
   const [opcoes, setOpcoes] = useState<Opcao[]>([]);
+  const [batismo, setBatismo] = useState<BatismoInfo>({ horarios: [] });
 
   // pin
   const [pinModal, setPinModal] = useState<null | 'setup' | 'exit'>(null);
@@ -65,6 +75,12 @@ export default function TotemNext({ onClose }: { onClose: () => void }) {
       .catch(() => setTurmas([]))
       .finally(() => setLoadingTurmas(false));
     publicVoluntariado.formOpcoes().then((o: any) => setOpcoes(Array.isArray(o) ? o : [])).catch(() => setOpcoes([]));
+    // ⚠️ Falha aqui NÃO quebra o totem: sem horários o destino "Quero me batizar"
+    // fica desligado com o motivo à vista — a mesma falha fechada do servidor,
+    // que também recusaria a inscrição sem horário.
+    nextApi.batismoHorarios()
+      .then((r: BatismoInfo) => setBatismo(r && Array.isArray(r.horarios) ? r : { horarios: [], indisponivel: true }))
+      .catch(() => setBatismo({ horarios: [], indisponivel: true }));
   }, []);
 
   async function escolherTurma(t: any) {
@@ -205,7 +221,7 @@ export default function TotemNext({ onClose }: { onClose: () => void }) {
                   setPresentes(prev => { const n = new Set(prev); if (isPres) n.delete(m.id); else n.add(m.id); return n; });
                 }}
                 onRefresh={refresh} />
-            : <AbaDirec mats={mats} opcoes={opcoes} onRefresh={refresh} />}
+            : <AbaDirec mats={mats} opcoes={opcoes} batismo={batismo} onRefresh={refresh} />}
         </div>
       </div>
 
@@ -316,17 +332,21 @@ function WalkinForm({ turmaId, onCancel, onDone }: { turmaId: string; onCancel: 
 }
 
 // ── Aba Direcionamento ───────────────────────────────────────────────────────
-function AbaDirec({ mats, opcoes, onRefresh }: { mats: Mat[]; opcoes: Opcao[]; onRefresh: () => Promise<void> }) {
+function AbaDirec({ mats, opcoes, batismo, onRefresh }: { mats: Mat[]; opcoes: Opcao[]; batismo: BatismoInfo; onRefresh: () => Promise<void> }) {
   const [busca, setBusca] = useState('');
   const [sel, setSel] = useState<Mat | null>(null);
   const [destinos, setDestinos] = useState<Record<string, boolean>>({});
   const [areas, setAreas] = useState<string[]>([]);
+  const [horarioBatismo, setHorarioBatismo] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [pronto, setPronto] = useState(false);
 
   const jaFeito = (m: Mat, v: string) => (v === 'grupos' && m.indicou_grupo) || (v === 'voluntarios' && m.indicou_servir) || (v === 'batismo' && m.indicou_batismo);
+  // Sem horário aberto o servidor recusaria — o destino fica desligado DIZENDO
+  // o motivo, em vez de aceitar e gravar inscrição sem horário.
+  const batismoIndisponivel = batismo.horarios.length === 0;
 
-  function voltar() { setSel(null); setDestinos({}); setAreas([]); setPronto(false); }
+  function voltar() { setSel(null); setDestinos({}); setAreas([]); setHorarioBatismo(''); setPronto(false); }
   function toggleArea(label: string) {
     setAreas(a => a.includes(label) ? a.filter(x => x !== label) : (a.length >= MAX_AREAS ? a : [...a, label]));
   }
@@ -336,9 +356,10 @@ function AbaDirec({ mats, opcoes, onRefresh }: { mats: Mat[]; opcoes: Opcao[]; o
     const escolhidos = DESTINOS.filter(d => destinos[d.v] && !jaFeito(sel, d.v)).map(d => d.v);
     if (escolhidos.length === 0) { toast.error('Escolha pra onde você quer ir'); return; }
     if (escolhidos.includes('voluntarios') && areas.length === 0) { toast.error('Escolha ao menos uma área pra servir'); return; }
+    if (escolhidos.includes('batismo') && !horarioBatismo) { toast.error('Escolha o horário do batismo'); return; }
     setSalvando(true);
     try {
-      await nextApi.matriculas.direcionar(sel.id, escolhidos, areas);
+      await nextApi.matriculas.direcionar(sel.id, escolhidos, areas, horarioBatismo || null);
       setPronto(true);
       await onRefresh();
     } catch (e: any) { toast.error(e?.message || 'Não deu pra enviar'); }
@@ -393,21 +414,50 @@ function AbaDirec({ mats, opcoes, onRefresh }: { mats: Mat[]; opcoes: Opcao[]; o
       <div className="space-y-2">
         {DESTINOS.map(d => {
           const feito = jaFeito(sel, d.v);
+          const bloqueado = d.v === 'batismo' && batismoIndisponivel;
           const on = feito || !!destinos[d.v];
           const Icon = d.Icon;
           return (
             <div key={d.v}>
-              <button disabled={feito} onClick={() => setDestinos(s => ({ ...s, [d.v]: !s[d.v] }))}
-                className={`w-full flex items-center gap-3 rounded-2xl border-2 px-4 py-4 text-left transition-colors ${on ? 'border-[#00B39D] bg-[#00B39D]/10' : 'border-slate-200 bg-white'} ${feito ? 'opacity-60' : ''}`}>
+              <button disabled={feito || bloqueado} onClick={() => setDestinos(s => ({ ...s, [d.v]: !s[d.v] }))}
+                className={`w-full flex items-center gap-3 rounded-2xl border-2 px-4 py-4 text-left transition-colors ${on ? 'border-[#00B39D] bg-[#00B39D]/10' : 'border-slate-200 bg-white'} ${feito || bloqueado ? 'opacity-60' : ''}`}>
                 <span className="h-11 w-11 rounded-2xl flex items-center justify-center shrink-0" style={{ background: d.color + '1f', color: d.color }}>
                   <Icon className="h-5 w-5" />
                 </span>
                 <span className="flex-1">
                   <span className="block font-semibold">{d.l}</span>
-                  <span className="block text-xs text-slate-500">{feito ? 'já escolhido' : d.desc}</span>
+                  <span className="block text-xs text-slate-500">
+                    {feito ? 'já escolhido'
+                      : bloqueado ? 'sem horário aberto agora — fale com a equipe'
+                      : d.desc}
+                  </span>
                 </span>
                 {on && <Check className="h-5 w-5 text-[#00B39D]" />}
               </button>
+
+              {/* Horário do batismo — obrigatório (vai gravado na inscrição) */}
+              {d.v === 'batismo' && !feito && !bloqueado && destinos.batismo && (
+                <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500 mb-2">
+                    Em qual culto você quer se batizar
+                    {batismo.data_batismo ? ` (${fmtDataBatismo(batismo.data_batismo)})` : ''}?
+                  </p>
+                  <div className="space-y-1.5">
+                    {batismo.horarios.map(h => (
+                      <button key={h.horario} onClick={() => setHorarioBatismo(h.horario)}
+                        className={`w-full flex items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-sm transition-colors ${horarioBatismo === h.horario ? 'border-[#00B39D] bg-[#00B39D]/10 font-medium' : 'border-slate-200 bg-white'}`}>
+                        <span className="flex-1">{h.label}</span>
+                        {h.vagas_restantes != null && (
+                          <span className="text-[11px] text-slate-400">
+                            {h.vagas_restantes} vaga{h.vagas_restantes === 1 ? '' : 's'}
+                          </span>
+                        )}
+                        {horarioBatismo === h.horario && <Check className="h-4 w-4 text-[#00B39D]" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {d.v === 'voluntarios' && !feito && destinos.voluntarios && (
                 <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50 p-3">

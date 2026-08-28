@@ -5,6 +5,7 @@ const multer = require('multer');
 const router = express.Router();
 const { supabase } = require('../utils/supabase');
 const { authenticate, authorizeModule } = require('../middleware/auth');
+const { assinarLinhas } = require('../services/anexosLogArquivos');
 let notificar; try { ({ notificar } = require('../services/notificar')); } catch { notificar = async () => {}; }
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -154,7 +155,10 @@ const CAMPOS = ['tipo', 'area_id', 'lider_usuario_id', 'titulo', 'equipe_envolvi
   'como_gera_unidade', 'objetivo_geral', 'objetivos_especificos', 'publico_alvo', 'participantes_estimados',
   'complexidade', 'impacto_esperado', 'custo_total', 'arrecadacao_prevista', 'recursos_materiais',
   'recursos_patrimoniais', 'suporte_equipes', 'retorno_esperado', 'centro_de_custo', 'informacoes_contabeis',
-  'passa_no_ourico', 'justificativa_ourico', 'observacoes'];
+  'passa_no_ourico', 'justificativa_ourico', 'observacoes',
+  // Critérios de avaliação (reformulação do formulário · 2026-08-05)
+  'relevancia', 'pertencimento', 'transformacao', 'contribui_visao_cbrio', 'explicacao_visao_cbrio',
+  'espacos_necessarios', 'equipes_necessarias'];
 const DATA_FIELDS = ['data_inicio_prevista', 'data_termino_prevista', 'data_realizacao_prevista'];
 const NUM_FIELDS = ['ano_execucao', 'participantes_estimados', 'custo_total', 'arrecadacao_prevista'];
 const FILHAS = {
@@ -200,17 +204,16 @@ async function salvarFilhas(propostaId, body) {
   }
 }
 
-// Contexto do usuário (ciclos abertos, áreas, líderes possíveis, minhas áreas de diretor)
+// Contexto do usuário (ciclos abertos, áreas, minhas áreas de diretor)
 router.get('/aux', authorizeModule('propostas', 1), async (req, res) => {
   const me = meuId(req);
-  const [ciclos, areas, lideres, dirAreas] = await Promise.all([
+  const [ciclos, areas, dirAreas] = await Promise.all([
     supabase.from('prop_ciclo').select('*').order('ano', { ascending: false }),
     supabase.from('areas').select('id, nome').eq('ativo', true).order('nome'),
-    supabase.from('profiles').select('id, name').eq('active', true).order('name'),
     supabase.from('prop_area_diretor').select('area_id').eq('diretor_usuario_id', me),
   ]);
   res.json({
-    ciclos: ciclos.data || [], areas: areas.data || [], lideres: lideres.data || [],
+    ciclos: ciclos.data || [], areas: areas.data || [],
     diretor_de: (dirAreas.data || []).map(d => d.area_id),
     me, nivel: nivelProp(req),
   });
@@ -221,31 +224,39 @@ router.get('/', authorizeModule('propostas', 1), async (req, res) => {
   try {
     const me = meuId(req);
     const admin = nivelProp(req) >= 5;
-    const { ciclo_id, estado, fila } = req.query;
+    const { ciclo_id, estado } = req.query;
     let q = supabase.from('prop_proposta')
       .select('id, codigo, tipo, area_id, titulo, estado, versao, custo_liquido, classificacao_custo, lider_usuario_id, criado_por_usuario_id, updated_at, ' +
               'area:areas(id, nome)')
       .is('deleted_at', null).order('updated_at', { ascending: false });
     if (ciclo_id) q = q.eq('ciclo_id', ciclo_id);
     if (estado) q = q.eq('estado', estado);
-    if (fila === 'lider') q = q.eq('estado', 'AGUARDANDO_VALIDACAO_LIDER').eq('lider_usuario_id', me);
-    else if (fila === 'diretor') {
-      const { data: minhas } = await supabase.from('prop_area_diretor').select('area_id').eq('diretor_usuario_id', me);
-      const ids = (minhas || []).map(m => m.area_id);
-      if (!ids.length && !admin) return res.json([]);
-      q = q.eq('estado', 'AGUARDANDO_DIRETOR_AREA');
-      if (!admin) q = q.in('area_id', ids);
-    } else if (!admin) {
-      q = q.or(`criado_por_usuario_id.eq.${me},lider_usuario_id.eq.${me}`);
-    }
+    if (!admin) q = q.or(`criado_por_usuario_id.eq.${me},lider_usuario_id.eq.${me}`);
     const { data, error } = await q.limit(1000);
     if (error) return res.status(400).json({ error: error.message });
     res.json(data || []);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ⚠️ INCIDENTE 2026-08-03 · `/:id` engolia `/avaliar` e `/mural`.
+// No Express o primeiro match vence, e estas duas rotas LITERAIS são declaradas
+// depois daqui (linhas ~411 e ~468). Resultado: `GET /propostas/avaliar` caía neste
+// handler com `id='avaliar'`, o PostgREST recusava a comparação contra a coluna uuid
+// (22P02) e a resposta era 400 — as abas "Avaliar" e "Mural da reunião" não abriam.
+// Em cascata, nada chegava a APROVADO/CONSOLIDADO, então deliberação, ressalvas,
+// recurso, pós-evento e a consolidação do ciclo ficavam inalcançáveis, mesmo com o
+// backend inteiro pronto. É a mesma armadilha já registrada no CLAUDE.md para o
+// Grupos ("rota /kpis declarada ANTES de /:id").
+//
+// A guarda de UUID resolve E previne recaída: qualquer rota literal acrescentada
+// depois desta passa a ser alcançada sozinha, sem depender de alguém lembrar de
+// declará-la acima. Preferida a mover 60 linhas de bloco, onde o erro nasce.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Detalhe + filhas
-router.get('/:id', authorizeModule('propostas', 1), async (req, res) => {
+router.get('/:id', authorizeModule('propostas', 1), async (req, res, next) => {
+  // Não é id de proposta → é uma rota literal declarada abaixo. Segue o baile.
+  if (!UUID_RE.test(String(req.params.id || ''))) return next();
   const { data: p, error } = await supabase.from('prop_proposta').select('*, area:areas(id, nome)').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
   if (error) return res.status(400).json({ error: error.message });
   if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
@@ -256,7 +267,11 @@ router.get('/:id', authorizeModule('propostas', 1), async (req, res) => {
     supabase.from('prop_desembolso').select('*').eq('proposta_id', p.id).order('ordem'),
     supabase.from('prop_anexo').select('*').eq('proposta_id', p.id).order('ordem'),
   ]);
-  res.json({ ...p, indicadores: ind.data || [], atividades: ati.data || [], riscos: ris.data || [], desembolsos: des.data || [], anexos: anx.data || [] });
+  // ⚠️ `prop_anexo.storage_path` já guardava o CAMINHO (nunca a URL pública),
+  // então o front montava o link por conta própria. Com o bucket privado quem
+  // entrega o link é o servidor, assinado por 1h.
+  const anexos = await assinarLinhas(anx.data || [], ['storage_path']);
+  res.json({ ...p, indicadores: ind.data || [], atividades: ati.data || [], riscos: ris.data || [], desembolsos: des.data || [], anexos });
 });
 
 // Criar (rascunho)
@@ -298,12 +313,11 @@ router.post('/:id/transicao', authorizeModule('propostas', 2), async (req, res) 
     if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
     const me = meuId(req); const admin = nivelProp(req) >= 5;
     const souAutorOuLider = p.criado_por_usuario_id === me || p.lider_usuario_id === me;
-    const souDiretor = admin || (await diretorDaArea(p.area_id)) === me;
+    const diretorArea = await diretorDaArea(p.area_id);
+    const souDiretor = admin || diretorArea === me;
 
     const autoriza = {
       enviar: souAutorOuLider || admin, reenviar: souAutorOuLider || admin, descartar: souAutorOuLider || admin,
-      validar: p.lider_usuario_id === me || admin, devolver_lider: p.lider_usuario_id === me || admin,
-      aprovar: souDiretor, devolver_area: souDiretor, negar: souDiretor,
       // Fase 3 · ressalvas (líder/autor envia adequação; diretor da área verifica)
       enviar_adequacao: souAutorOuLider || admin,
       ressalvas_atendidas: souDiretor, ressalvas_nao_atendidas: souDiretor,
@@ -329,8 +343,7 @@ router.post('/:id/transicao', authorizeModule('propostas', 2), async (req, res) 
     // Notifica o próximo responsável + autor (best-effort · RN22)
     const alvo = [];
     if (p.criado_por_usuario_id) alvo.push(p.criado_por_usuario_id);
-    if (r.para === 'AGUARDANDO_VALIDACAO_LIDER' && p.lider_usuario_id) alvo.push(p.lider_usuario_id);
-    if (['AGUARDANDO_DIRETOR_AREA', 'EM_VERIFICACAO_RESSALVAS'].includes(r.para)) { const d = await diretorDaArea(p.area_id); if (d) alvo.push(d); }
+    if (r.para === 'EM_VERIFICACAO_RESSALVAS' && diretorArea) alvo.push(diretorArea);
     if (['EM_ADEQUACAO', 'AGUARDANDO_RECURSO'].includes(r.para) && p.lider_usuario_id) alvo.push(p.lider_usuario_id);
     if (alvo.length) {
       notificar({ modulo: 'propostas', tipo: 'proposta_transicao', titulo: `Proposta ${p.codigo || ''} · ${r.para}`,

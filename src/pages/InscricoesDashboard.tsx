@@ -13,6 +13,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
+import { anosDisponiveis } from '../lib/janelaPeriodo';
 import { Loader2, FilterX, TrendingUp, CalendarCheck2, Users, Coins, DoorOpen, Percent } from 'lucide-react';
 import {
   ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis,
@@ -46,6 +47,15 @@ const AREAS_DERIVADAS = ['Sede', 'AMI', 'Bridge', 'Online', 'KIDS', 'Next', 'Gru
 function hojeMenosDias(dias: number) {
   const d = new Date(Date.now() - dias * 86400000);
   return d.toISOString().slice(0, 10);
+}
+
+// Fim da janela do ano. ⚠️ Ano CORRENTE termina HOJE, nunca em 31/12: o `ate`
+// no futuro traria a série de inscrições com meses vazios até dezembro.
+function fimDoAno(ano: number) {
+  const hoje = new Date();
+  if (ano < hoje.getFullYear()) return `${ano}-12-31`;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${hoje.getFullYear()}-${p(hoje.getMonth() + 1)}-${p(hoje.getDate())}`;
 }
 
 function StatTile({ icon: Icon, label, valor, sub }: { icon: any; label: string; valor: React.ReactNode; sub?: string }) {
@@ -87,6 +97,13 @@ export default function InscricoesDashboard({ areas }: { areas: any[] }) {
 
   const set = (k: string) => (e: any) => setFiltros(f => ({ ...f, [k]: e?.target ? e.target.value : e }));
   const padraoDe = hojeMenosDias(180);
+  // O ano é DERIVADO de De/Até — não é estado próprio. Assim mexer numa data à
+  // mão não deixa o seletor mentindo sobre o recorte que está na tela.
+  const anoSelecionado = useMemo(() => {
+    const m = /^(\d{4})-01-01$/.exec(filtros.de || '');
+    if (!m) return '';
+    return filtros.ate === fimDoAno(Number(m[1])) ? m[1] : '';
+  }, [filtros.de, filtros.ate]);
   const temFiltro = filtros.area || filtros.porta || filtros.ate || filtros.de !== padraoDe;
 
   const serieComparador = useMemo(
@@ -111,6 +128,25 @@ export default function InscricoesDashboard({ areas }: { areas: any[] }) {
           <div>
             <label className="text-[11px] text-muted-foreground block">Até (vazio = hoje)</label>
             <DatePicker value={filtros.ate} onChange={v => set('ate')(v)} className="h-9 w-36" />
+          </div>
+          {/* ⚠️ NÃO é filtro novo: o seletor de ano PREENCHE os campos De/Até que
+              já existem (janela FECHADA · 1º de janeiro a 31/12, ou a hoje no ano
+              corrente). Uma segunda régua de período aqui daria duas respostas
+              pra "qual período estou vendo" — a lei do rótulo de 03/08. */}
+          <div>
+            <label className="text-[11px] text-muted-foreground block">Ano</label>
+            <select
+              value={anoSelecionado}
+              onChange={e => {
+                const v = e.target.value;
+                if (!v) { setFiltros(f => ({ ...f, de: padraoDe, ate: '' })); return; }
+                setFiltros(f => ({ ...f, de: `${v}-01-01`, ate: fimDoAno(Number(v)) }));
+              }}
+              className="h-9 rounded-md border border-border bg-[var(--cbrio-input-bg)] text-sm px-2"
+            >
+              <option value="">—</option>
+              {anosDisponiveis().map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
           </div>
           <div>
             <label className="text-[11px] text-muted-foreground block">Área</label>

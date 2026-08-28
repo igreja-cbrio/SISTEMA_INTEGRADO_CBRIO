@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { membresia, kpis as kpisApi, apresentacaoCriancasPublico } from '@/api';
+import { membresia, kpis as kpisApi, apresentacaoCriancasPublico, inscricoesApi, eventoPublico } from '@/api';
 import { imprimirEtiquetaBatismo } from '@/lib/imprimirEtiquetaBatismo';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -18,6 +18,8 @@ import { BirthDatePicker } from '@/components/ui/birth-date-picker';
 import { Badge } from '@/components/ui/badge';
 import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { QRCodeSVG } from 'qrcode.react';
+import { mascaraCep, cepCompleto, buscarCep } from '../lib/cepAutopreenche';
+import SeletorBairro from '../components/ui/seletor-bairro';
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
 
@@ -27,8 +29,13 @@ const MENU_OPTIONS = [
   { id: 'batismo',      label: 'Batismo',              icon: Droplets,     color: '#6366F1', desc: 'Inscrição para batismo' },
   { id: 'next',         label: 'Next',                 icon: ArrowRight,   color: '#10B981', desc: 'Jornada de membros' },
   { id: 'apresentacao_bebe', label: 'Apresentar bebê', icon: Baby,         color: '#EC4899', desc: '2º domingo do mês' },
-  // Retiro / Contribuição / Ag. Pastoral / Voluntariado saíram do menu:
-  // eram placeholders sem implementação ("Em breve") — poda do atlas 2026-07.
+  // Retiros e eventos pagos (2026-08-05): a vaga de "Retiro" existia aqui e foi
+  // podada em 07/2026 por não ter implementação. Agora tem — e a lista mostra
+  // só evento com `no_totem` marcado, porque o totem fica no hall, à vista de
+  // qualquer pessoa (retiro de liderança não se anuncia ali).
+  { id: 'eventos',      label: 'Eventos e retiros',   icon: Mountain,     color: '#F59E0B', desc: 'Inscreva-se e pague aqui' },
+  // Contribuição / Ag. Pastoral / Voluntariado seguem fora do menu: eram
+  // placeholders sem implementação ("Em breve") — poda do atlas 2026-07.
   // Voluntariado tem totem próprio em /voluntariado/totem.
 ] as const;
 
@@ -1113,6 +1120,9 @@ function OptionFlow({ optionId, member, isDark, onBack, onDone, onEndSession, on
   if (optionId === 'apresentacao_bebe') {
     return <ApresentacaoBebeFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onActivity={onActivity} />;
   }
+  if (optionId === 'eventos') {
+    return <EventosFlow opt={opt} member={member} onBack={onBack} onDone={onDone} onEndSession={onEndSession} onActivity={onActivity} />;
+  }
 
   // Demais opções — placeholder até implementação
   const Icon = opt.icon;
@@ -1277,6 +1287,30 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
     onActivity();
   };
 
+  // CEP preenche endereço/bairro/cidade. ⚠️ No totem isto vale mais que em
+  // qualquer outra tela: a pessoa preenche EM PÉ, com fila atrás — digitar 8
+  // dígitos e receber três campos é a diferença entre terminar e desistir.
+  // ⚠️ Só-onde-vazio: nunca apaga o que a pessoa acabou de escrever.
+  const [cepBuscando, setCepBuscando] = useState(false);
+  const [bairroDoCep, setBairroDoCep] = useState(false);
+  const handleCepTotem = async (valor: string) => {
+    const masked = mascaraCep(valor);
+    setForm(f => ({ ...f, cep: masked }));
+    onActivity();
+    if (!cepCompleto(masked)) return;
+    setCepBuscando(true);
+    const r = await buscarCep(masked);
+    setCepBuscando(false);
+    if (!r) return;
+    setBairroDoCep(!!r.bairro);
+    setForm(f => ({
+      ...f,
+      endereco: r.endereco && !f.endereco ? r.endereco : f.endereco,
+      bairro: r.bairro || f.bairro,
+      cidade: r.cidade || f.cidade,
+    }));
+  };
+
   const ESTADO_CIVIL_OPTS = [
     { value: 'solteiro', label: 'Solteiro(a)' },
     { value: 'casado', label: 'Casado(a)' },
@@ -1435,14 +1469,22 @@ function MeusDadosFlow({ opt, member, isDark, onBack, onDone, onActivity }: {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className={`block text-xs mb-1 ${label}`}>Bairro</label>
-                <input value={form.bairro} onChange={setField('bairro')}
+                <label className={`block text-xs mb-1 ${label}`}>
+                  CEP {cepBuscando && <span className="opacity-60">(buscando...)</span>}
+                </label>
+                <input value={form.cep} onChange={(e) => handleCepTotem(e.target.value)}
+                  inputMode="numeric" maxLength={9} autoComplete="postal-code"
                   className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
               </div>
               <div>
-                <label className={`block text-xs mb-1 ${label}`}>CEP</label>
-                <input value={form.cep} onChange={setField('cep')}
-                  className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`} />
+                <label className={`block text-xs mb-1 ${label}`}>Bairro</label>
+                <SeletorBairro
+                  value={form.bairro}
+                  onChange={(v) => { setForm(f => ({ ...f, bairro: v })); setBairroDoCep(false); onActivity(); }}
+                  doCep={bairroDoCep}
+                  placeholder="Digite ou escolha"
+                  className={`w-full px-3 py-2 rounded-xl border text-sm outline-none transition-colors ${input}`}
+                />
               </div>
             </div>
             <div>
@@ -1873,7 +1915,7 @@ function BatismoFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: 
     return `${d.slice(0,3)}.${d.slice(3,6)}.${d.slice(6,9)}-${d.slice(9)}`;
   };
 
-  const setField = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
+  const setField = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(f => ({ ...f, [k]: k === 'cpf' ? maskCpf(e.target.value) : e.target.value }));
 
   // Sessão com dados completos pula a tela de dados (pedido do redesenho):
@@ -2594,7 +2636,7 @@ function NextFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
     setEnviandoInfo(false);
   };
 
-  const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => {
+  const setField = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     let v = e.target.value;
     if (k === 'cpf') v = maskCpfInput(v);
     if (k === 'telefone') v = maskPhoneInput(v);
@@ -2935,6 +2977,9 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
   const guest = !!member.guest;
   const [loading, setLoading] = useState(true);
   const [proximaData, setProximaData] = useState<string | null>(null);
+  // Horário da cerimônia vem do SERVIDOR (régua D3 · 09:30 pós-corte de 24/08).
+  // Era "10h" hardcoded em 2 textos; sem horário do servidor, o texto é omitido.
+  const [horarioRotulo, setHorarioRotulo] = useState<string | null>(null);
   const [existente, setExistente] = useState<any>(null);
   const [step, setStep] = useState<'check' | 'form' | 'success'>('check');
   const [form, setForm] = useState({
@@ -2966,6 +3011,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
     membresia.totem.apresentacaoBebe.status(params)
       .then((r: any) => {
         setProximaData(r.proxima_data);
+        setHorarioRotulo(r.horario_rotulo ?? null);
         setExistente(r.apresentacao_existente);
       })
       .catch(() => {})
@@ -3038,7 +3084,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
           {proximaData && (
             <p className="text-white/70 mt-3 text-lg">
               {fmtDateBR(proximaData).replace(/^(\w)/, c => c.toUpperCase())}
-              {' · '}<span className="text-[#EC4899] font-semibold">às 10h</span>
+              {horarioRotulo && <>{' · '}<span className="text-[#EC4899] font-semibold">às {horarioRotulo}</span></>}
             </p>
           )}
           <p className="text-white/50 mt-2 text-sm">
@@ -3096,7 +3142,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
               <div className="rounded-2xl border border-[#EC4899]/30 bg-[#EC4899]/10 p-4">
                 <p className="text-white/60 text-xs uppercase tracking-wider">Próxima cerimônia</p>
                 <p className="text-xl font-bold text-[#EC4899] mt-1">{fmtDateBR(proximaData)}</p>
-                <p className="text-white/70 text-sm mt-1">no culto das 10h</p>
+                {horarioRotulo && <p className="text-white/70 text-sm mt-1">no culto das {horarioRotulo}</p>}
               </div>
             )}
             <Button
@@ -3220,6 +3266,386 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
             {saving ? 'Agendando...' : 'Confirmar apresentação'}
           </Button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Eventos e retiros ─────────────────────────────────────────────────────────
+//
+// Inscrição em evento pago pelo totem (Fase 1 do pagamento presencial).
+//
+// ⚠️ O POST vai pra `/inscricoes/totem/eventos/:id/inscrever`, que roda a MESMA
+// `inscreverEspinha` da porta pública e do app: vaga sob advisory lock, dedup
+// por CPF, benefício pré-autorizado, cobrança idempotente, consentimentos,
+// e-mail e WhatsApp. Nada disso é reimplementado aqui.
+//
+// ⚠️ A ESTAÇÃO (qual totem cobrou) é resolvida no SERVIDOR pela conta de
+// quiosque logada. Esta tela não manda, e não deve mandar, `estacao_id`.
+//
+// ⚠️ SUCESSO SÓ COM `pago` DO SERVIDOR (lei nº 7 do núcleo de pagamentos):
+// voltar da tela de Pix não é pagar. Quem decide é o polling.
+
+function EventosFlow({ opt, member, onBack, onDone, onEndSession, onActivity }: {
+  opt: (typeof MENU_OPTIONS)[number];
+  member: MemberData;
+  onBack: () => void;
+  onDone: () => void;
+  onEndSession: () => void;
+  onActivity: () => void;
+}) {
+  const guest = !!member.guest;
+  const memberSrc = member.raw?.membro || member.raw?.cadastro || {};
+  const [step, setStep] = useState<'lista' | 'evento' | 'dados' | 'pagamento' | 'sucesso'>('lista');
+  const [eventos, setEventos] = useState<any[]>([]);
+  const [carregando, setCarregando] = useState(true);
+  const [ev, setEv] = useState<any>(null);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [textos, setTextos] = useState<{ termos_lgpd?: string; aviso_optin?: string }>({});
+  const [resultado, setResultado] = useState<any>(null);
+
+  // Pagamento
+  const [token, setToken] = useState<string | null>(null);
+  const [pag, setPag] = useState<any>(null);
+  const [pagErro, setPagErro] = useState('');
+
+  // `genero` no cadastro é M/F; o Contrato de Inscrição exige o canônico
+  // ('masculino'/'feminino'), então converte na entrada em vez de mandar M/F e
+  // levar 400 do servidor.
+  const sexoInicial = (() => {
+    const g = String(memberSrc.genero || memberSrc.sexo || '').trim().toLowerCase();
+    if (g === 'm' || g === 'masculino') return 'masculino';
+    if (g === 'f' || g === 'feminino') return 'feminino';
+    return '';
+  })();
+
+  const [form, setForm] = useState<any>({
+    nome_completo: guest ? '' : (member.nome || ''),
+    cpf: guest ? '' : (member.cpf || ''),
+    telefone: guest ? '' : (member.telefone || ''),
+    email: guest ? '' : (member.email || ''),
+    data_nascimento: guest ? '' : (memberSrc.data_nascimento || ''),
+    sexo: guest ? '' : sexoInicial,
+    aceita_termos: false,
+    whatsapp_optin: false,
+    dados: {} as Record<string, any>,
+  });
+
+  useEffect(() => {
+    inscricoesApi.totemEventos()
+      .then((r: any) => setEventos(r.eventos || []))
+      .catch((e: any) => setError(e.message || 'Não foi possível carregar os eventos'))
+      .finally(() => setCarregando(false));
+    // Textos canônicos de consentimento vêm SEMPRE do backend — o snapshot
+    // gravado é o mesmo que a pessoa leu, então tela e prova nunca divergem.
+    eventoPublico.textos().then(setTextos).catch(() => {});
+  }, []);
+
+  // ⚠️ Polling do pagamento: o servidor é quem diz `pago`. Para sozinho ao
+  // resolver e não roda fora da tela de pagamento.
+  useEffect(() => {
+    if (step !== 'pagamento' || !token) return;
+    let vivo = true;
+    let timer: any;
+    const tick = async () => {
+      try {
+        const r: any = await eventoPublico.pagamento(token);
+        if (!vivo) return;
+        setPag(r);
+        if (r?.pago) { setStep('sucesso'); return; }
+      } catch { /* instabilidade não derruba a tela */ }
+      if (vivo) timer = setTimeout(tick, 4000);
+    };
+    timer = setTimeout(tick, 3000);
+    return () => { vivo = false; clearTimeout(timer); };
+  }, [step, token]);
+
+  const inputCls = 'w-full px-4 py-3 rounded-2xl border border-gray-700 bg-gray-800 text-white placeholder:text-gray-500 text-base outline-none focus:border-[#F59E0B] focus:ring-1 focus:ring-[#F59E0B]/30 transition-colors';
+  const setField = (k: string) => (e: any) => {
+    const v = e?.target?.value ?? e;
+    setForm((f: any) => ({
+      ...f,
+      [k]: k === 'cpf' ? maskCpfInput(String(v)) : k === 'telefone' ? maskPhoneInput(String(v)) : v,
+    }));
+  };
+  const setExtra = (key: string, v: any) => setForm((f: any) => ({ ...f, dados: { ...f.dados, [key]: v } }));
+
+  const fmtValor = (c?: number | null) =>
+    typeof c === 'number' ? (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : null;
+  const fmtData = (d?: string | null) => {
+    if (!d) return null;
+    try { return format(new Date(`${d}T12:00:00`), "d 'de' MMMM", { locale: ptBR }); } catch { return d; }
+  };
+
+  async function enviar() {
+    setError('');
+    if (!form.aceita_termos) { setError('É preciso aceitar os termos para se inscrever.'); return; }
+    setSaving(true);
+    onActivity();
+    try {
+      const r: any = await inscricoesApi.totemInscrever(ev.id, {
+        ...form,
+        // `dados` são os campos extras do form-builder daquele evento.
+        dados: form.dados,
+      });
+      setResultado(r);
+      if (r?.pagamento && r?.public_token) {
+        setToken(r.public_token);
+        setStep('pagamento');
+        // Prepara o Pix na hora: é o clique que faz o provedor gerar o QR.
+        try {
+          const m: any = await eventoPublico.pagamentoMetodo(r.public_token, 'pix', 1);
+          setPag(m?.pagamento || m);
+        } catch (e: any) {
+          setPagErro(e.message || 'Não foi possível gerar o Pix agora.');
+        }
+      } else {
+        setStep('sucesso');
+      }
+    } catch (e: any) {
+      setError(e.message || 'Não foi possível concluir. Tente de novo.');
+    }
+    setSaving(false);
+  }
+
+  const Icon = opt.icon;
+  const header = (titulo: string, voltar: () => void) => (
+    <div className="flex items-center gap-3 px-6 pt-6">
+      <button onClick={voltar} className="p-3 rounded-2xl bg-gray-800 active:bg-gray-700" aria-label="Voltar">
+        <ChevronLeft className="h-6 w-6" />
+      </button>
+      <div className="flex items-center gap-2">
+        <Icon className="h-6 w-6" style={{ color: opt.color }} />
+        <h2 className="text-2xl font-bold">{titulo}</h2>
+      </div>
+    </div>
+  );
+
+  // ── Sucesso ──
+  if (step === 'sucesso') {
+    const pago = !!pag?.pago;
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8" onClick={onActivity}>
+        <CheckCircle2 className="h-20 w-20 text-[#00B39D]" />
+        <div className="text-center max-w-lg">
+          <h2 className="text-3xl font-bold">
+            {resultado?.ja_inscrito ? 'Você já estava inscrito!' : pago ? 'Pagamento confirmado!' : 'Inscrição registrada!'}
+          </h2>
+          <p className="text-white/70 mt-3 text-lg">
+            {pago
+              ? 'Sua vaga está garantida. Enviamos o comprovante para o seu e-mail.'
+              : resultado?.pagamento
+                ? 'Enviamos o link de pagamento para o seu e-mail — sua vaga fica reservada até lá.'
+                : 'Enviamos a confirmação para o seu e-mail.'}
+          </p>
+          {resultado?.numero_sorte && (
+            <p className="mt-6 text-lg">
+              Seu número da sorte: <span className="text-3xl font-bold" style={{ color: opt.color }}>{resultado.numero_sorte}</span>
+            </p>
+          )}
+        </div>
+        <div className="flex gap-3">
+          <Button onClick={onDone} className="min-h-[56px] px-8 text-base">Concluir</Button>
+          <Button variant="ghost" onClick={onEndSession} className="min-h-[56px] px-8 text-base">Encerrar</Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Pagamento (Pix) ──
+  if (step === 'pagamento') {
+    const qr = pag?.pix_qrcode_base64 || null;
+    const copia = pag?.pix_payload || null;
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        {header('Pagar com Pix', () => setStep('dados'))}
+        <div className="flex-1 flex flex-col items-center justify-center gap-5 p-6 text-center">
+          <p className="text-xl">
+            {ev?.nome} · <span className="font-bold">{fmtValor(resultado?.valor_centavos ?? ev?.valor_centavos)}</span>
+          </p>
+          {pagErro ? (
+            <div className="max-w-md">
+              <p className="text-lg text-amber-300">{pagErro}</p>
+              <p className="mt-2 text-white/60">Enviamos o link de pagamento para o seu e-mail — você pode pagar pelo celular.</p>
+            </div>
+          ) : qr ? (
+            <img src={`data:image/png;base64,${qr}`} alt="QR Code do Pix" className="h-64 w-64 rounded-2xl bg-white p-3 mx-auto" />
+          ) : copia ? (
+            <div className="rounded-2xl bg-white p-4"><QRCodeSVG value={copia} size={256} /></div>
+          ) : (
+            <div className="flex items-center gap-3 text-white/60"><Loader2 className="h-6 w-6 animate-spin" /> Gerando o Pix…</div>
+          )}
+          <p className="text-white/60 max-w-md">
+            Abra o app do seu banco, escolha Pix e aponte a câmera para o código. A tela avisa sozinha quando o pagamento cair.
+          </p>
+          <div className="flex items-center gap-2 text-white/40 text-sm">
+            <Loader2 className="h-4 w-4 animate-spin" /> Aguardando o pagamento…
+          </div>
+          <Button variant="ghost" onClick={onDone} className="mt-2 min-h-[56px] px-8 text-base">
+            Pagar depois pelo e-mail
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Formulário ──
+  if (step === 'dados') {
+    const extras: any[] = Array.isArray(ev?.campos) ? ev.campos : [];
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        {header(ev?.nome || 'Inscrição', () => setStep('evento'))}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="mx-auto max-w-2xl space-y-3">
+            <input value={form.nome_completo} onChange={setField('nome_completo')} className={inputCls} placeholder="Nome completo" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <input value={form.cpf} onChange={setField('cpf')} className={inputCls} placeholder="CPF" inputMode="numeric" />
+              <input value={form.telefone} onChange={setField('telefone')} className={inputCls} placeholder="Celular com DDD" inputMode="numeric" />
+            </div>
+            <input value={form.email} onChange={setField('email')} className={inputCls} placeholder="E-mail" inputMode="email" />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Nunca <input type="date"> — padrão da casa é o BirthDatePicker */}
+              <BirthDatePicker value={form.data_nascimento} onChange={(v) => setField('data_nascimento')(v)} className={inputCls} />
+              <div className="flex gap-2">
+                {[['masculino', 'Masculino'], ['feminino', 'Feminino']].map(([v, l]) => (
+                  <button
+                    key={v}
+                    onClick={() => setField('sexo')(v)}
+                    className={`flex-1 min-h-[52px] rounded-2xl border text-base ${
+                      form.sexo === v ? 'border-[#F59E0B] bg-[#F59E0B]/10' : 'border-gray-700 bg-gray-800'
+                    }`}
+                  >{l}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Campos extras do evento (form-builder). Tipo desconhecido cai em
+                texto — nunca desaparece: o servidor valida obrigatoriedade e a
+                pessoa ficaria travada num campo que a tela não mostrou. */}
+            {extras.map((c: any) => {
+              const opcoes: string[] = Array.isArray(c.opcoes) ? c.opcoes : [];
+              const val = form.dados[c.key] ?? '';
+              if (opcoes.length) {
+                return (
+                  <div key={c.key}>
+                    <p className="text-sm text-white/60 mb-1">{c.label}{c.obrigatorio ? ' *' : ''}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {opcoes.map((o) => (
+                        <button
+                          key={o}
+                          onClick={() => setExtra(c.key, o)}
+                          className={`min-h-[48px] px-4 rounded-2xl border text-base ${
+                            val === o ? 'border-[#F59E0B] bg-[#F59E0B]/10' : 'border-gray-700 bg-gray-800'
+                          }`}
+                        >{o}</button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div key={c.key}>
+                  <p className="text-sm text-white/60 mb-1">{c.label}{c.obrigatorio ? ' *' : ''}</p>
+                  <input value={val} onChange={(e) => setExtra(c.key, e.target.value)} className={inputCls} placeholder={c.label} />
+                </div>
+              );
+            })}
+
+            <label className="flex items-start gap-3 pt-2 text-sm text-white/80">
+              <input type="checkbox" checked={form.aceita_termos} onChange={(e) => setField('aceita_termos')(e.target.checked)} className="mt-1 h-5 w-5" />
+              <span>{textos.termos_lgpd || 'Concordo com o uso dos meus dados para esta inscrição.'}</span>
+            </label>
+            <label className="flex items-start gap-3 text-sm text-white/80">
+              <input type="checkbox" checked={form.whatsapp_optin} onChange={(e) => setField('whatsapp_optin')(e.target.checked)} className="mt-1 h-5 w-5" />
+              <span>{textos.aviso_optin || 'Quero receber avisos deste evento pelo WhatsApp.'}</span>
+            </label>
+
+            {error && <p className="text-base text-red-400">{error}</p>}
+          </div>
+        </div>
+        <div className="px-6 pb-6">
+          <Button onClick={enviar} disabled={saving} className="w-full min-h-[64px] text-lg" style={{ backgroundColor: opt.color, color: '#000' }}>
+            {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : ev?.pagamento_ativo ? 'Continuar para o pagamento' : 'Confirmar inscrição'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Detalhe do evento ──
+  if (step === 'evento' && ev) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        {header(ev.nome, () => setStep('lista'))}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="mx-auto max-w-2xl space-y-4">
+            {ev.capa_url && <img src={ev.capa_url} alt="" className="w-full rounded-2xl object-cover max-h-64" />}
+            <div className="flex flex-wrap gap-4 text-white/70">
+              {fmtData(ev.data) && <span className="flex items-center gap-2"><CalendarDays className="h-5 w-5" /> {fmtData(ev.data)}{ev.hora ? ` · ${ev.hora}` : ''}</span>}
+              {ev.local && <span className="flex items-center gap-2"><MapPin className="h-5 w-5" /> {ev.local}</span>}
+            </div>
+            {ev.pagamento_ativo && (
+              <p className="text-2xl font-bold" style={{ color: opt.color }}>{fmtValor(ev.valor_centavos)}</p>
+            )}
+            {ev.descricao && <p className="text-lg leading-relaxed text-white/80 whitespace-pre-line">{ev.descricao}</p>}
+            {typeof ev.vagas_restantes === 'number' && ev.vagas_restantes <= 10 && (
+              <p className="text-base text-amber-300">
+                {ev.vagas_restantes === 1 ? 'Última vaga!' : `Restam ${ev.vagas_restantes} vagas`}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="px-6 pb-6">
+          <Button onClick={() => setStep('dados')} className="w-full min-h-[64px] text-lg" style={{ backgroundColor: opt.color, color: '#000' }}>
+            Quero me inscrever
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Lista ──
+  return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+      {header('Eventos e retiros', onBack)}
+      <div className="flex-1 overflow-y-auto px-6 py-4">
+        {carregando ? (
+          <div className="flex justify-center py-16"><Loader2 className="h-8 w-8 animate-spin text-white/40" /></div>
+        ) : error ? (
+          <p className="py-10 text-center text-lg text-red-400">{error}</p>
+        ) : eventos.length === 0 ? (
+          <div className="py-16 text-center">
+            <Mountain className="mx-auto mb-4 h-12 w-12 text-white/20" />
+            <p className="text-xl">Nenhum evento com inscrição aberta agora</p>
+            <p className="mt-2 text-white/50">Fique de olho nos avisos do culto e no app.</p>
+          </div>
+        ) : (
+          <div className="mx-auto grid max-w-3xl gap-3">
+            {eventos.map((e) => (
+              <button
+                key={e.id}
+                onClick={() => { setEv(e); setStep('evento'); onActivity(); }}
+                className="w-full rounded-3xl border border-gray-800 bg-gray-900 p-5 text-left active:bg-gray-800"
+              >
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <p className="truncate text-xl font-semibold">{e.nome}</p>
+                    <p className="mt-1 text-white/60">
+                      {[fmtData(e.data), e.local].filter(Boolean).join(' · ') || 'Inscrições abertas'}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    {e.pagamento_ativo
+                      ? <span className="text-lg font-bold" style={{ color: opt.color }}>{fmtValor(e.valor_centavos)}</span>
+                      : <span className="text-lg font-bold text-[#00B39D]">Gratuito</span>}
+                    <ChevronRight className="ml-auto mt-1 h-5 w-5 text-white/30" />
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

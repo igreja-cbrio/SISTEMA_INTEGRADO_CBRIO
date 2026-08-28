@@ -314,7 +314,7 @@ function FormDialog({ existing, onClose, onSuccess }) {
               type="text" value={form.descricao}
               onChange={(e) => setForm({ ...form, descricao: e.target.value })}
               className="w-full px-3 py-2 text-sm rounded-md border border-border bg-background"
-              placeholder="Ex: Aluguel · Salário Yago · Google Workspace"
+              placeholder="Ex: Aluguel · Salário · Google Workspace"
               autoFocus
             />
           </div>

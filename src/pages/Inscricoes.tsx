@@ -26,6 +26,7 @@ import { toast } from 'sonner';
 import {
   CalendarDays, ClipboardList, Plus, Loader2, ChevronLeft, ChevronRight,
   Users, Trash2, CopyPlus, Image as ImageIcon, Lock, Link2, Repeat, Megaphone,
+  MonitorSmartphone,
 } from 'lucide-react';
 
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -56,6 +57,195 @@ function mascaraHora(v: string): string {
 
 // key opaca estável (mesma regra do backend — o server regenera se inválida)
 const novaKeyCampo = () => `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+
+// chave estável do aceite — a MESMA lei da key de campo: derivar do título
+// orfanaria a prova de quem já aceitou.
+const novaChaveTermo = () => `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+
+/**
+ * Aceites PRÓPRIOS do evento (`termos_extra`) — "li e aceito o regulamento".
+ *
+ * ⚠️ NÃO é pergunta do construtor, e a diferença não é estética: consentimento é
+ * PROVA LEGAL e vai pra `inscricao_consentimentos` com o texto EXIBIDO como
+ * snapshot, junto de IP e navegador. Uma pergunta "Você aceita? (Sim/Não)"
+ * gravaria a palavra "Sim" num jsonb, sem registro do que a pessoa leu — e se
+ * alguém editasse o texto depois, ninguém saberia qual versão foi aceita.
+ */
+function TermosExtraEditor({ termos, setTermos }: { termos: any[]; setTermos: (v: any[]) => void }) {
+  const [subindo, setSubindo] = useState<number | null>(null);
+  function add() { setTermos([...termos, { chave: novaChaveTermo(), titulo: '', texto: '', url: '' }]); }
+  function upd(i: number, patch: any) { const t = [...termos]; t[i] = { ...t[i], ...patch }; setTermos(t); }
+  // Sobe o documento do termo (ex.: a autorização de embarque de menor em .docx)
+  // pro bucket público e preenche o link — a pessoa baixa na hora do aceite e,
+  // no termo de menor, recebe o arquivo anexado no e-mail de confirmação.
+  async function enviarDoc(i: number, file?: File) {
+    if (!file) return;
+    setSubindo(i);
+    try { const r: any = await api.uploadArquivoEvento(file); upd(i, { url: r.url }); toast.success('Documento anexado ao aceite'); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao enviar o documento'); }
+    finally { setSubindo(null); }
+  }
+  return (
+    <div className="rounded-lg border border-border p-3 space-y-2">
+      <div className="text-xs font-medium text-muted-foreground">Aceites deste evento (além do termo de dados)</div>
+      <p className="text-[11px] text-muted-foreground">
+        Cada aceite vira uma caixa de marcar OBRIGATÓRIA no formulário, e o texto que a pessoa lê fica
+        guardado como prova. Ex.: “Informações Sobre o Retiro”, “Termos de Responsabilidade — Menor de idade”.
+      </p>
+      {termos.map((t, i) => (
+        <div key={t.chave || i} className="rounded-lg border border-border p-2 space-y-2">
+          <div className="flex gap-2">
+            <Input placeholder="Título (ex.: Informações Sobre o Retiro)" value={t.titulo || ''}
+              onChange={e => upd(i, { titulo: e.target.value })} className="h-8 text-sm" />
+            <button onClick={() => setTermos(termos.filter((_, j) => j !== i))} className="text-red-500 px-1" title="Remover aceite">
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+          <textarea placeholder="Texto que a pessoa lê e aceita" value={t.texto || ''}
+            onChange={e => upd(i, { texto: e.target.value })}
+            className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1.5 text-xs min-h-[80px]" />
+          <div className="flex gap-2 items-center">
+            <Input placeholder="Link do documento completo (opcional · https://…)" value={t.url || ''}
+              onChange={e => upd(i, { url: e.target.value })} className="h-8 text-xs flex-1" />
+            <label className="inline-flex items-center gap-1 text-[11px] text-primary border border-primary/50 rounded-md px-2 py-1.5 cursor-pointer whitespace-nowrap">
+              {subindo === i ? 'Enviando…' : 'Enviar arquivo'}
+              <input type="file" accept=".pdf,.doc,.docx" className="hidden" disabled={subindo != null}
+                onChange={e => { enviarDoc(i, e.target.files?.[0]); e.target.value = ''; }} />
+            </label>
+          </div>
+          {t.so_menor === true && t.url && (
+            <p className="text-[11px] text-muted-foreground">
+              Como este aceite é só de menor, o documento acima vai ANEXADO no e-mail de confirmação de quem se inscrever como menor.
+            </p>
+          )}
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <input type="checkbox" checked={t.so_menor === true} onChange={e => upd(i, { so_menor: e.target.checked })} />
+            Só para menor de idade
+            <span className="text-[11px]">(aparece junto do bloco do responsável)</span>
+          </label>
+        </div>
+      ))}
+      <Button size="sm" variant="outline" onClick={add}><Plus className="h-3.5 w-3.5 mr-1" /> Adicionar aceite</Button>
+    </div>
+  );
+}
+
+/**
+ * Lotes de preço do evento (pedido do Arthur pro AMI CAMP 2027 · 20/08).
+ *
+ * As vagas de cada lote são POSIÇÕES na ordem de chegada: com 50/100/150, as
+ * inscrições 1..50 pagam o lote 1, 51..150 o lote 2, 151..300 o lote 3 — o lote
+ * vira SOZINHO quando esgota. Quem decide o preço cobrado é o servidor, pela
+ * posição da inscrição (backend/utils/lotesEvento.js).
+ *
+ * `valor` fica em REAIS na tela (como o campo Valor) e vira centavos no save.
+ */
+function LotesEditor({ lotes, setLotes, valorTabela }: {
+  lotes: any[]; setLotes: (v: any[]) => void; valorTabela: string;
+}) {
+  function add() { setLotes([...lotes, { nome: `Lote ${lotes.length + 1}`, vagas: '', valor: '' }]); }
+  function upd(i: number, patch: any) { const l = [...lotes]; l[i] = { ...l[i], ...patch }; setLotes(l); }
+  const somaVagas = lotes.reduce((s, l) => s + (Number(l.vagas) > 0 ? Number(l.vagas) : 0), 0);
+  return (
+    <div className="rounded-lg border border-dashed border-border p-3 space-y-2">
+      <div className="text-xs font-medium text-muted-foreground">Lotes de preço (opcional)</div>
+      <p className="text-[11px] text-muted-foreground">
+        O lote muda sozinho quando as vagas dele esgotam, na ordem de chegada — e a pessoa vê o lote
+        atual e o preço antes de se inscrever. Sem lotes, vale o Valor único acima.
+      </p>
+      {lotes.map((l, i) => (
+        <div key={i} className="flex gap-2 items-center">
+          <Input placeholder={`Lote ${i + 1}`} value={l.nome || ''} onChange={e => upd(i, { nome: e.target.value })} className="h-8 text-sm flex-1" />
+          <Input placeholder="Vagas" value={l.vagas} onChange={e => upd(i, { vagas: e.target.value.replace(/\D/g, '') })}
+            inputMode="numeric" className="h-8 text-sm w-20" />
+          <Input placeholder="R$" value={l.valor} onChange={e => upd(i, { valor: e.target.value })}
+            inputMode="decimal" className="h-8 text-sm w-24" />
+          <button onClick={() => setLotes(lotes.filter((_, j) => j !== i))} className="text-red-500 px-1" title="Remover lote">
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+      {lotes.length < 6 && (
+        <Button size="sm" variant="outline" onClick={add}><Plus className="h-3.5 w-3.5 mr-1" /> Adicionar lote</Button>
+      )}
+      {lotes.length > 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          Os lotes descrevem <b>{somaVagas}</b> posições. Quem limita as inscrições é o campo <b>Vagas</b> do
+          evento; inscrição além dos lotes paga o último preço. O Valor acima ({valorTabela || '—'}) é o
+          preço de tabela — se a leitura dos lotes falhar, é ele que vale (deixe-o igual ao último lote).
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * "Mostrar só quando…" de UM campo.
+ *
+ * ⚠️ Só oferece como pergunta-mãe os campos ANTERIORES a este e que têm opções
+ * (`select`/`escolha`/`multi`). Duas razões: condicionar a uma pergunta que vem
+ * DEPOIS na tela é pedir pra pessoa responder o futuro; e condicionar a texto
+ * livre exigiria a resposta digitada bater exata, o que na prática nunca casa.
+ */
+function CondicaoCampo({ campos, indice, campo, upd }: {
+  campos: any[]; indice: number; campo: any; upd: (i: number, patch: any) => void;
+}) {
+  const candidatos = campos
+    .slice(0, indice)
+    .filter((c: any) => c && c.key && (c.tipo === 'select' || c.tipo === 'escolha' || c.tipo === 'multi') && (c.opcoes || []).length);
+  const cond = campo.mostrar_se || null;
+  const mae = cond ? campos.find((c: any) => c.key === cond.key) : null;
+  if (!candidatos.length && !cond) return null;
+  return (
+    <div className="rounded-md border border-dashed border-border p-2 space-y-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+        <span>Mostrar só quando</span>
+        <select
+          value={cond?.key || ''}
+          onChange={(e) => upd(indice, { mostrar_se: e.target.value ? { key: e.target.value, valores: [] } : undefined })}
+          className="h-7 rounded-md border border-border bg-[var(--cbrio-input-bg)] text-xs px-1 max-w-[220px]">
+          <option value="">— sempre aparece —</option>
+          {candidatos.map((c: any) => (
+            <option key={c.key} value={c.key}>{(c.label || '(sem pergunta)').slice(0, 60)}</option>
+          ))}
+          {/* Condição apontando pra pergunta que não está mais na lista: mantém
+              visível pra dar pra desfazer, em vez de sumir com a configuração. */}
+          {cond && !candidatos.some((c: any) => c.key === cond.key) && (
+            <option value={cond.key}>{mae ? `${(mae.label || '').slice(0, 60)} (fora de ordem)` : 'pergunta apagada'}</option>
+          )}
+        </select>
+        <span>for</span>
+      </div>
+      {cond && (
+        <div className="flex flex-wrap gap-1.5">
+          {(mae?.opcoes || []).map((o: string) => {
+            const marcada = (cond.valores || []).includes(o);
+            return (
+              <button key={o} type="button"
+                onClick={() => upd(indice, {
+                  mostrar_se: {
+                    key: cond.key,
+                    valores: marcada ? (cond.valores || []).filter((v: string) => v !== o) : [...(cond.valores || []), o],
+                  },
+                })}
+                className={`rounded-full border px-2 py-0.5 text-[11px] ${marcada ? 'border-primary bg-primary/15 text-primary font-semibold' : 'border-border text-muted-foreground'}`}>
+                {o}
+              </button>
+            );
+          })}
+          {!(mae?.opcoes || []).length && (
+            <span className="text-[11px] text-amber-600">
+              A pergunta escolhida não tem opções — sem opção marcada, esta pergunta continua aparecendo sempre.
+            </span>
+          )}
+        </div>
+      )}
+      {cond && !(cond.valores || []).length && (mae?.opcoes || []).length ? (
+        <p className="text-[11px] text-amber-600">Marque ao menos uma resposta, senão a condição é ignorada e a pergunta aparece sempre.</p>
+      ) : null}
+    </div>
+  );
+}
 
 function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any[]) => void }) {
   function add() { setCampos([...campos, { key: novaKeyCampo(), label: '', tipo: 'texto', obrigatorio: true, opcoes: [] }]); }
@@ -92,8 +282,16 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
           {c.tipo === 'imagem' && (
             <p className="text-[11px] text-muted-foreground flex items-center gap-1"><ImageIcon className="h-3 w-3" /> Upload público — o formulário exigirá o consentimento de uso de imagem.</p>
           )}
+
+          {/* Mostrar só quando… (17/08) — as perguntas do retiro são condicionais
+              na própria redação ("Caso não seja membro, qual a sua igreja?").
+              ⚠️ Pergunta escondida NÃO é exigida e a resposta dela é DESCARTADA
+              no servidor — a MESMA régua (utils/camposCondicionais.js). */}
+          <CondicaoCampo campos={campos} indice={i} campo={c} upd={upd} />
+
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <input type="checkbox" checked={c.obrigatorio !== false} onChange={e => upd(i, { obrigatorio: e.target.checked })} /> Obrigatório
+            {c.mostrar_se ? <span className="text-[11px]">(só quando a pergunta acima aparecer)</span> : null}
           </label>
         </div>
       ))}
@@ -105,15 +303,30 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
 const EVENTO_VAZIO = {
   nome: '', area: '', periodicidade: 'unica', tipo: 'evento',
   data: '', hora: '', local: '', descricao: '', capa_url: '',
+  // Último dia (retiro/viagem de vários dias) + arquivo de instruções gerais
+  // que a pessoa baixa ao concluir e recebe anexado no e-mail (20/08).
+  data_fim: '', instrucoes_url: '', instrucoes_nome: '',
+  // Grupo de WhatsApp pra dúvidas, exibido nas telas públicas (21/08).
+  whatsapp_duvidas_url: '',
   vagas: '', inscricoes_encerram_em: '', recorre_ate: '',
   msg_sucesso_titulo: '', msg_sucesso_texto: '', msg_whatsapp: '',
   tem_sorteio: false, checkin_ativo: false,
+  // Aparece na lista do totem do lounge. false por padrão: o totem fica no hall,
+  // à vista de visitante, e publicar um evento não deve expô-lo ali por acidente.
+  no_totem: false,
   pagamento_ativo: false, valor_centavos: '',
   // Formas que ESTE evento aceita. Não é enfeite: a escolha da pessoa é o que
   // faz o provedor preparar o meio de pagamento (QR do Pix, boleto), e o que
   // não estiver aqui não é oferecido nem por chamada direta.
-  pagamento_metodos: ['pix', 'cartao'], parcelas_max: '',
+  // ⚠️ 1 = à vista. NUNCA nascer vazio: campo em branco significava "o provedor
+  // decide", que no Mercado Pago é 36x. Parcelamento é decisão da igreja.
+  pagamento_metodos: ['pix', 'cartao'], parcelas_max: 1,
   pagamento_expira_horas: '',
+  // Cartão numa plataforma externa (e-Inscrição). Vazio = cobrado aqui.
+  checkout_externo_url: '', checkout_externo_nome: '', checkout_externo_valor: '',
+  // Retiro/viagem (17/08): endereço obrigatório e bloco do responsável quando a
+  // pessoa é menor de 18 na inscrição. Default false = o Contrato de sempre.
+  exigir_endereco: false, exige_dados_menor: false,
   status: 'rascunho',
 };
 
@@ -133,7 +346,70 @@ function isoParaInputLocal(iso?: string | null): string {
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 }
 
+/**
+ * ⚠️⚠️ CARREGADOR — não juntar com o formulário (2026-08-17).
+ *
+ * `GET /inscricoes/eventos` devolve o evento PARCIAL (a lista não traz `campos`,
+ * `descricao`, `msg_*`, `pagamento_metodos`, `parcelas_max`,
+ * `pagamento_expira_horas`, `checkout_externo_*` nem `inscricoes_encerram_em`),
+ * e o "Editar" do card e do calendário abriam o modal com esse objeto. Como o
+ * `salvar()` monta o payload INTEIRO, salvar por ali **apagava** o que não tinha
+ * vindo: `campos: []` limpava TODAS as perguntas do formulário, `descricao`
+ * virava null, `pagamento_metodos` voltava pro default pix+cartão e o link do
+ * e-Inscrição era zerado. Nenhum erro aparecia — a tela dizia "Evento
+ * atualizado".
+ *
+ * Por isso o formulário só monta com o evento COMPLETO, buscado em
+ * `GET /inscricoes/eventos/:id` (que faz `select('*')`). Enquanto carrega, o
+ * formulário fica ESCONDIDO — renderizar campo vazio faria a pessoa começar a
+ * digitar e o prefill sobrescrever o que ela escreveu (lição do censo, 04/08).
+ *
+ * ⚠️ Falha de carga NÃO abre o formulário: abrir com dado pela metade é
+ * exatamente o bug que esta camada existe pra fechar.
+ */
 export function EventoModal({ evento, areas, onClose, onSaved }: {
+  evento?: any; areas: any[]; onClose: () => void; onSaved: () => void;
+}) {
+  // `campos` presente é a marca do objeto completo (a lista nunca o traz).
+  const jaCompleto = !evento || evento.campos !== undefined;
+  const [completo, setCompleto] = useState<any>(jaCompleto ? evento : null);
+  const [erroCarga, setErroCarga] = useState('');
+
+  useEffect(() => {
+    if (jaCompleto || !evento?.id) return;
+    let vivo = true;
+    api.evento(evento.id)
+      .then((e: any) => { if (vivo) setCompleto(e); })
+      .catch((e: any) => { if (vivo) setErroCarga(e?.message || 'Não foi possível carregar o evento.'); });
+    return () => { vivo = false; };
+  }, [evento?.id, jaCompleto]);
+
+  if (evento && !completo) {
+    return (
+      <Dialog open onOpenChange={(v) => { if (!v) onClose(); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>{erroCarga ? 'Erro ao abrir o evento' : 'Carregando evento…'}</DialogTitle></DialogHeader>
+          {erroCarga ? (
+            <div className="space-y-3">
+              <p className="text-sm text-red-500">{erroCarga}</p>
+              <p className="text-xs text-muted-foreground">
+                Não abrimos o formulário com dados incompletos — salvar assim apagaria as perguntas do evento.
+              </p>
+              <div className="flex justify-end"><Button variant="outline" onClick={onClose}>Fechar</Button></div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Buscando o formulário e as configurações…
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    );
+  }
+  return <EventoForm evento={completo} areas={areas} onClose={onClose} onSaved={onSaved} />;
+}
+
+function EventoForm({ evento, areas, onClose, onSaved }: {
   evento?: any; areas: any[]; onClose: () => void; onSaved: () => void;
 }) {
   const ed = !!evento;
@@ -143,12 +419,26 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
     valor_centavos: evento.valor_centavos != null ? String(evento.valor_centavos / 100) : '',
     pagamento_metodos: Array.isArray(evento.pagamento_metodos) && evento.pagamento_metodos.length
       ? evento.pagamento_metodos : ['pix', 'cartao'],
-    parcelas_max: evento.parcelas_max ?? '',
+    // Evento antigo sem teto gravado abre como À VISTA — que é o que a tela
+    // sempre dizia que ele era, e agora é também o que o servidor aplica.
+    parcelas_max: evento.parcelas_max ?? 1,
+    checkout_externo_url: evento.checkout_externo_url || '',
+    checkout_externo_nome: evento.checkout_externo_nome || '',
+    checkout_externo_valor: evento.checkout_externo_valor_centavos != null
+      ? String(evento.checkout_externo_valor_centavos / 100) : '',
+    data_fim: evento.data_fim || '',
+    instrucoes_url: evento.instrucoes_url || '',
+    instrucoes_nome: evento.instrucoes_nome || '',
+    whatsapp_duvidas_url: evento.whatsapp_duvidas_url || '',
     pagamento_expira_horas: evento.pagamento_expira_horas ?? '',
     inscricoes_encerram_em: isoParaInputLocal(evento.inscricoes_encerram_em),
   } : { ...EVENTO_VAZIO });
   const [campos, setCampos] = useState<any[]>(evento?.campos || []);
   const [premios, setPremios] = useState<string[]>(evento?.premios || []);
+  const [termos, setTermos] = useState<any[]>(Array.isArray(evento?.termos_extra) ? evento.termos_extra : []);
+  // Lotes na tela ficam em REAIS (como o campo Valor); viram centavos no save.
+  const [lotes, setLotes] = useState<any[]>(() => (Array.isArray(evento?.lotes) ? evento.lotes : [])
+    .map((l: any) => ({ nome: l.nome || '', vagas: String(l.vagas ?? ''), valor: l.valor_centavos != null ? String(l.valor_centavos / 100) : '' })));
   const [salvando, setSalvando] = useState(false);
   const [enviandoCapa, setEnviandoCapa] = useState(false);
   const set = (k: string) => (e: any) => setF((s: any) => ({ ...s, [k]: e?.target ? e.target.value : e }));
@@ -158,6 +448,16 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
     setEnviandoCapa(true);
     try { const r: any = await api.uploadCapa(file); setF((s: any) => ({ ...s, capa_url: r.url })); }
     catch (e: any) { toast.error(e?.message || 'Erro ao enviar a capa'); } finally { setEnviandoCapa(false); }
+  }
+
+  const [enviandoInstrucoes, setEnviandoInstrucoes] = useState(false);
+  async function enviarInstrucoes(file?: File) {
+    if (!file) return;
+    setEnviandoInstrucoes(true);
+    try {
+      const r: any = await api.uploadArquivoEvento(file);
+      setF((s: any) => ({ ...s, instrucoes_url: r.url, instrucoes_nome: r.nome || file.name }));
+    } catch (e: any) { toast.error(e?.message || 'Erro ao enviar o arquivo'); } finally { setEnviandoInstrucoes(false); }
   }
 
   async function salvar() {
@@ -180,6 +480,10 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
       const payload: any = {
         nome: f.nome, area: f.area, tipo: f.tipo, data: f.data || null, hora: f.hora || null,
         local: f.local || null, descricao: f.descricao || null, capa_url: f.capa_url || null,
+        data_fim: f.data_fim || null,
+        instrucoes_url: f.instrucoes_url || null,
+        instrucoes_nome: f.instrucoes_url ? (f.instrucoes_nome || null) : null,
+        whatsapp_duvidas_url: String(f.whatsapp_duvidas_url || '').trim() || null,
         campos, premios: premios.map(p => p.trim()).filter(Boolean),
         vagas: f.vagas === '' ? null : Number(f.vagas),
         inscricoes_encerram_em: f.inscricoes_encerram_em ? new Date(f.inscricoes_encerram_em).toISOString() : null,
@@ -187,12 +491,49 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
         msg_sucesso_texto: f.msg_sucesso_texto || null,
         msg_whatsapp: f.msg_whatsapp || null,
         tem_sorteio: !!f.tem_sorteio, checkin_ativo: !!f.checkin_ativo,
+        no_totem: !!f.no_totem,
         pagamento_ativo: !!f.pagamento_ativo,
         valor_centavos: f.pagamento_ativo && f.valor_centavos !== '' ? Math.round(Number(String(f.valor_centavos).replace(',', '.')) * 100) : null,
         pagamento_metodos: f.pagamento_ativo ? f.pagamento_metodos : [],
         parcelas_max: f.pagamento_ativo && f.parcelas_max !== '' ? Number(f.parcelas_max) : null,
-        pagamento_expira_horas: f.pagamento_ativo && f.pagamento_expira_horas !== '' ? Number(f.pagamento_expira_horas) : null,
+        // ⚠️ Só faz sentido com pagamento ligado — e mandar '' com o pagamento
+        // desligado LIMPA o link, que é o certo: evento que deixou de ser pago
+        // não pode manter gente sendo mandada pra um checkout.
+        checkout_externo_url: f.pagamento_ativo ? String(f.checkout_externo_url || '').trim() : '',
+        checkout_externo_nome: f.pagamento_ativo ? String(f.checkout_externo_nome || '').trim() : '',
+        // Preço do cartão LÁ, só pra tela de escolha (20260821190000). Vazio ⇒
+        // null ⇒ a tela volta a não prometer preço de cartão.
+        checkout_externo_valor_centavos: f.pagamento_ativo && String(f.checkout_externo_valor || '').trim() !== ''
+          ? Math.round(Number(String(f.checkout_externo_valor).replace(',', '.')) * 100) : null,
+        // Lotes: vazio = preço único. Linha incompleta é descartada aqui e o
+        // servidor saneia de novo (utils/lotesEvento).
+        lotes: f.pagamento_ativo ? lotes
+          .map((l: any) => ({
+            nome: String(l.nome || '').trim(),
+            vagas: Number(l.vagas),
+            valor_centavos: Math.round(Number(String(l.valor || '').replace(',', '.')) * 100),
+          }))
+          .filter((l: any) => l.vagas > 0 && l.valor_centavos > 0) : [],
+        exigir_endereco: !!f.exigir_endereco,
+        exige_dados_menor: !!f.exige_dados_menor,
+        termos_extra: termos
+          .map((t: any) => ({
+            chave: t.chave,
+            titulo: String(t.titulo || '').trim(),
+            texto: String(t.texto || '').trim(),
+            ...(t.url ? { url: String(t.url).trim() } : {}),
+            ...(t.so_menor ? { so_menor: true } : {}),
+          }))
+          .filter((t: any) => t.texto),
       };
+      // ⚠️ `pagamento_expira_horas` é NOT NULL no banco (default 48), então mandar
+      // `null` — o que acontecia com o pagamento desligado ou o campo vazio —
+      // derrubava o UPDATE inteiro e a edição de QUALQUER evento sem pagamento
+      // falhava com 500. `parcelas_max` e `valor_centavos` são nullable, esses
+      // seguem podendo ser limpos.
+      if (f.pagamento_ativo && String(f.pagamento_expira_horas) !== '') {
+        payload.pagamento_expira_horas = Number(f.pagamento_expira_horas);
+      }
       if (ed) { payload.status = f.status; await api.atualizarEvento(evento.id, payload); }
       else {
         payload.periodicidade = f.periodicidade;
@@ -226,6 +567,12 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
                 <option value="">Selecione…</option>
                 {areas.map((a: any) => <option key={a.id} value={a.nome}>{a.nome}</option>)}
               </select>
+              {/* A área não é só rótulo: quem cuida dela também recebe o aviso de
+                  cada nova inscrição (backend/utils/moduloDaAreaEvento). Sem
+                  isto, trocar a área muda quem é notificado sem ninguém saber. */}
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Quem cuida desta área também recebe o aviso de cada nova inscrição.
+              </p>
             </div>
             {!ed && (
               <div>
@@ -249,6 +596,11 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
               <label className="text-xs text-muted-foreground">Hora</label>
               <Input value={f.hora || ''} onChange={e => setF((s: any) => ({ ...s, hora: mascaraHora(e.target.value) }))}
                 placeholder="19:30" inputMode="numeric" maxLength={5} />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Termina em (retiro/viagem · opcional)</label>
+              <DatePicker value={f.data_fim || ''} onChange={set('data_fim')} />
+              <p className="mt-1 text-[11px] text-muted-foreground">A página pública mostra o período: “5 a 10 de fevereiro”.</p>
             </div>
             <div className="sm:col-span-2">
               <label className="text-xs text-muted-foreground">Local</label>
@@ -278,13 +630,76 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
                 </label>
               </div>
             </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs text-muted-foreground">Instruções gerais (PDF ou Word)</label>
+              <p className="text-[11px] text-muted-foreground mb-1.5">
+                Quem conclui a inscrição pode baixar na hora (“Deseja baixar as instruções gerais?”)
+                e recebe o arquivo anexado no e-mail de confirmação.
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                {f.instrucoes_url && (
+                  <a href={f.instrucoes_url} target="_blank" rel="noreferrer"
+                    className="text-xs text-primary underline max-w-[280px] truncate">
+                    {f.instrucoes_nome || 'Arquivo de instruções'}
+                  </a>
+                )}
+                <label className="inline-flex items-center gap-1.5 text-xs text-primary border border-primary/50 rounded-md px-2.5 py-1.5 cursor-pointer">
+                  {enviandoInstrucoes ? 'Enviando…' : (f.instrucoes_url ? 'Trocar arquivo' : 'Enviar arquivo')}
+                  <input type="file" accept=".pdf,.doc,.docx" className="hidden" disabled={enviandoInstrucoes}
+                    onChange={e => { enviarInstrucoes(e.target.files?.[0]); e.target.value = ''; }} />
+                </label>
+                {f.instrucoes_url && (
+                  <button type="button" className="text-xs text-red-500"
+                    onClick={() => setF((s: any) => ({ ...s, instrucoes_url: '', instrucoes_nome: '' }))}>
+                    Remover
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs text-muted-foreground">Grupo de WhatsApp pra dúvidas (opcional)</label>
+              <Input value={f.whatsapp_duvidas_url || ''} onChange={set('whatsapp_duvidas_url')}
+                placeholder="https://chat.whatsapp.com/…" />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Aparece como “Dúvidas? Entre no grupo do WhatsApp” na página do evento e na de pagamento —
+                antes e depois de a pessoa se inscrever. Não é a mensagem de divulgação.
+              </p>
+            </div>
           </div>
 
           <CamposEditor campos={campos} setCampos={setCampos} />
 
+          {/* Retiro/viagem (17/08) — só aparece aqui porque muda o CONTRATO de
+              campos deste evento, e o construtor acima é só das perguntas extras. */}
+          <div className="rounded-lg border border-border p-3 space-y-2">
+            <div className="text-xs font-medium text-muted-foreground">Retiro, viagem e evento com menor de idade</div>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-1" checked={!!f.exigir_endereco}
+                onChange={e => setF((s: any) => ({ ...s, exigir_endereco: e.target.checked }))} />
+              <span>Endereço completo obrigatório
+                <span className="block text-[11px] text-muted-foreground">Em todos os outros formulários o endereço é opcional. Ligue em retiro e viagem.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-1" checked={!!f.exige_dados_menor}
+                onChange={e => setF((s: any) => ({ ...s, exige_dados_menor: e.target.checked }))} />
+              <span>Pedir os dados do responsável quando a pessoa for menor de 18
+                <span className="block text-[11px] text-muted-foreground">
+                  Nome, CPF, parentesco, celular e e-mail do responsável + a autorização dele pra batismo,
+                  com o consentimento registrado (LGPD art. 14 §1º). Só aparece pra quem é menor na data da inscrição.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          <TermosExtraEditor termos={termos} setTermos={setTermos} />
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f.tem_sorteio} onChange={e => setF((s: any) => ({ ...s, tem_sorteio: e.target.checked }))} /> Sorteio (número da sorte)</label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f.checkin_ativo} onChange={e => setF((s: any) => ({ ...s, checkin_ativo: e.target.checked }))} /> Check-in no dia</label>
+            <label className="flex items-center gap-2 text-sm" title="Mostra este evento na lista do totem do lounge. O totem fica no hall, à vista de qualquer pessoa que passa.">
+              <input type="checkbox" checked={!!f.no_totem} onChange={e => setF((s: any) => ({ ...s, no_totem: e.target.checked }))} /> Aparece no totem
+            </label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!f.pagamento_ativo} onChange={e => setF((s: any) => ({ ...s, pagamento_ativo: e.target.checked }))} /> Inscrição paga</label>
             {f.pagamento_ativo && (
               <div>
@@ -316,11 +731,35 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* ⚠️ SELETOR, não campo livre: o valor daqui é política de
+                    preço do evento, e campo em branco significava "o provedor
+                    decide" (36x no Mercado Pago) enquanto o rótulo dizia "sem
+                    parcelar". Com a lista fechada não existe estado ambíguo —
+                    à vista é uma OPÇÃO, não a ausência de resposta. */}
                 <div>
-                  <label className="text-xs text-muted-foreground">Parcelas no cartão (vazio = sem parcelar)</label>
-                  <Input value={f.parcelas_max} onChange={set('parcelas_max')} placeholder="12" inputMode="numeric"
-                    disabled={!f.pagamento_metodos?.includes('cartao')} />
-                  <p className="text-[11px] text-muted-foreground mt-1">Os juros são pagos por quem se inscreve.</p>
+                  <label className="text-xs text-muted-foreground">Parcelamento no cartão</label>
+                  <select
+                    value={f.parcelas_max === '' || f.parcelas_max == null ? '1' : String(f.parcelas_max)}
+                    onChange={e => setF((s: any) => ({ ...s, parcelas_max: Number(e.target.value) }))}
+                    disabled={!f.pagamento_metodos?.includes('cartao')}
+                    className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1.5 text-sm disabled:opacity-50"
+                  >
+                    <option value="1">À vista (sem parcelar)</option>
+                    {Array.from({ length: 11 }, (_, i) => i + 2).map(n => (
+                      <option key={n} value={n}>Em até {n}x</option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    {f.pagamento_metodos?.includes('cartao')
+                      ? 'Quem se inscreve escolhe em quantas vezes, até este limite.'
+                      : 'Marque "Cartão" acima para liberar o parcelamento.'}
+                  </p>
+                  {Number(f.parcelas_max) > 3 && (
+                    <p className="text-[11px] text-amber-600 dark:text-amber-500 mt-1">
+                      ⚠️ Acima de 3x a taxa do provedor sobe bastante (chega a 13%). Confirme
+                      com o financeiro quem assume esse custo antes de publicar.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground">Reserva a vaga por (horas)</label>
@@ -328,6 +767,47 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
                   <p className="text-[11px] text-muted-foreground mt-1">Sem pagamento no prazo, a vaga volta pra fila.</p>
                 </div>
               </div>
+              {/* ⚠️ Cartão numa plataforma externa (e-Inscrição). Preenchido, o
+                  cartão deixa de existir no NOSSO checkout — não é só um link:
+                  a cobrança nasce sem 'cartao' em `metodos_ofertados`. */}
+              <div className="rounded-lg border border-dashed border-border p-3">
+                <label className="text-xs text-muted-foreground">
+                  Cartão de crédito por outra plataforma (opcional)
+                </label>
+                <Input value={f.checkout_externo_url || ''} onChange={set('checkout_externo_url')}
+                  placeholder="https://www.e-inscricao.com/… (link da inscrição deste evento)" />
+                {f.checkout_externo_url ? (
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-muted-foreground">Nome da plataforma (aparece pra pessoa)</label>
+                      <Input value={f.checkout_externo_nome || ''} onChange={set('checkout_externo_nome')}
+                        placeholder="e-Inscrição" />
+                    </div>
+                    {/* ⚠️ Preço de OUTRA plataforma: a tela só anuncia porque
+                        alguém digitou aqui. Em branco, a escolha não promete
+                        número nenhum pro cartão (o valor de lá pode mudar sem
+                        avisar, e tela errada sobre preço é reclamação). */}
+                    <div>
+                      <label className="text-xs text-muted-foreground">Valor no cartão, nessa plataforma (opcional)</label>
+                      <Input value={f.checkout_externo_valor || ''} onChange={set('checkout_externo_valor')}
+                        placeholder="850,00" inputMode="decimal" />
+                    </div>
+                  </div>
+                ) : null}
+                <p className="text-[11px] text-muted-foreground mt-1.5">
+                  {f.checkout_externo_url
+                    ? 'A página do evento vai perguntar a forma de pagamento antes do formulário: Pix segue aqui (com QR), cartão vai para este link. Enquanto ele estiver preenchido, o cartão NÃO é cobrado pelo nosso checkout. Com o valor do cartão preenchido, a tela de escolha mostra os dois preços lado a lado (e marca o Pix como desconto quando ele é menor).'
+                    : 'Em branco, o cartão é cobrado aqui mesmo, junto com o Pix.'}
+                </p>
+                {f.checkout_externo_url && !f.pagamento_metodos?.filter((m: string) => m !== 'cartao').length ? (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-500 mt-1">
+                    ⚠️ Só o cartão está marcado acima: toda a inscrição vai acontecer na outra
+                    plataforma, e quem se inscrever por lá <b>não aparece na lista deste evento</b>.
+                    Marque também o Pix se quiser receber inscrições por aqui.
+                  </p>
+                ) : null}
+              </div>
+              <LotesEditor lotes={lotes} setLotes={setLotes} valorTabela={f.valor_centavos ? `R$ ${f.valor_centavos}` : ''} />
             </div>
           )}
           {f.tem_sorteio && (
@@ -503,11 +983,78 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
   );
 }
 
+// Aviso da credencial de pagamento. ⚠️ Renderiza SÓ quando há o que dizer:
+// credencial recusada, ambiente trocado, ou sonda velha demais. Silencioso no
+// caso normal — banner permanente de "tudo ok" é o jeito mais rápido de treinar
+// a equipe a não ler avisos. Também fica quieto quando não há credencial
+// configurada, que é estado intencional (produção viveu semanas em `manual`).
+const DIAS_SONDA_VELHA = 7;
+
+function AvisoCredencialPagamento({ podeForcar }: { podeForcar: boolean }) {
+  const [s, setS] = useState<any>(null);
+  const [verificando, setVerificando] = useState(false);
+
+  useEffect(() => {
+    api.pagamentoSaude().then(setS).catch(() => setS(null));
+  }, []);
+
+  async function verificarAgora() {
+    setVerificando(true);
+    try {
+      setS(await api.pagamentoSaude(true));
+      toast.success('Credencial verificada');
+    } catch {
+      toast.error('Não foi possível verificar agora');
+    } finally { setVerificando(false); }
+  }
+
+  if (!s || s.aviso) return null;
+  if (!s.configurado) return null;              // provider manual / sem chave
+  if (s.ok === null || s.ok === undefined) return null;  // nunca sondada ainda
+
+  const diasDesde = s.verificado_em
+    ? (Date.now() - new Date(s.verificado_em).getTime()) / 86400000
+    : Infinity;
+  const velha = s.ok === true && diasDesde > DIAS_SONDA_VELHA;
+  if (s.ok === true && !velha) return null;     // saudável e recente → silêncio
+
+  const falhou = s.ok === false;
+  return (
+    <div className={`rounded-lg border p-3 mb-3 text-sm ${falhou ? 'border-red-500/40 bg-red-500/10' : 'border-amber-500/40 bg-amber-500/10'}`}>
+      <p className="font-medium mb-1">
+        {falhou
+          ? 'A credencial de pagamento não está respondendo'
+          : 'A credencial de pagamento não é verificada há alguns dias'}
+      </p>
+      <p className="text-muted-foreground text-xs">
+        {falhou ? (
+          <>
+            Evento pago pode não conseguir gerar cobrança, e pagamento feito pode não ser
+            confirmado sozinho. {s.status_http === 401 || s.status_http === 403
+              ? 'O provedor recusou a chave — ela pode ter sido revogada ou expirada por desuso.'
+              : s.erro ? `Detalhe: ${String(s.erro).slice(0, 160)}` : ''}
+          </>
+        ) : (
+          <>Vale conferir antes de abrir a venda de um evento — a chave do provedor é desabilitada após 3 meses sem uso.</>
+        )}
+      </p>
+      {podeForcar && (
+        <Button size="sm" variant="outline" className="mt-2" onClick={verificarAgora} disabled={verificando}>
+          {verificando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Verificar agora'}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export default function Inscricoes() {
   const navigate = useNavigate();
   const { getAccessLevel } = useAuth();
   // Aba Pessoas concentra PII (rollup por CPF/telefone) — SPEC-01: nível ≥2
   const podePessoas = getAccessLevel(['inscricoes']) >= 2;
+  // Forçar a sonda de credencial bate no PSP na hora — mesmo nível de quem edita
+  // evento (o backend também exige 3; a UI só evita oferecer botão que dá 403).
+  const podeEditar = getAccessLevel(['inscricoes']) >= 3;
   const [aba, setAba] = useState<'calendario' | 'eventos' | 'todas' | 'pessoas' | 'dashboard' | 'qrs' | 'emails'>('calendario');
   const [eventos, setEventos] = useState<any[]>([]);
   const [areas, setAreas] = useState<any[]>([]);
@@ -597,7 +1144,15 @@ export default function Inscricoes() {
           <h1 className="text-2xl font-extrabold flex items-center gap-2"><ClipboardList className="h-6 w-6 text-primary" /> Inscrições</h1>
           <p className="text-sm text-muted-foreground">Módulo central de inscrições · calendário, eventos e séries (Contrato de Inscrição).</p>
         </div>
-        <Button onClick={() => setModal({ tipo: 'novo' })}><Plus className="h-4 w-4 mr-1" /> Novo evento</Button>
+        <div className="flex gap-2">
+          {/* Totens é CONFIGURAÇÃO de equipamento, não uma visão de dado — por
+              isso é link no cabeçalho e não uma 8ª aba (a fila de abas já está
+              longa e ninguém procuraria "totem" ao lado de "Dashboard"). */}
+          <Button variant="outline" onClick={() => navigate('/inscricoes/totens')}>
+            <MonitorSmartphone className="h-4 w-4 mr-1" /> Totens
+          </Button>
+          <Button onClick={() => setModal({ tipo: 'novo' })}><Plus className="h-4 w-4 mr-1" /> Novo evento</Button>
+        </div>
       </div>
 
       <div className="flex gap-1.5 flex-wrap">
@@ -650,6 +1205,7 @@ export default function Inscricoes() {
 
       {aba === 'eventos' && (
         <>
+        <AvisoCredencialPagamento podeForcar={podeEditar} />
         <Card className="glass-solid p-4">
           {loading ? (
             <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>

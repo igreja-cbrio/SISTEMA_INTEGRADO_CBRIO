@@ -17,18 +17,33 @@ const {
 const {
   getMobileCommandCenter,
   refreshExpoReceipts,
+  expirarRecibosVencidos,
+  alertarSaudeDoPush,
 } = require('../services/systemMobileOps');
+const { requireCron } = require('../utils/cronAuth');
+const { setSystemJobOutcome } = require('../services/systemJobOutcome');
+const { runIncidentTriage } = require('../services/systemIncidentTriage');
+const { runIncidentDiagnosisBatch } = require('../services/systemIncidentDiagnosis');
+const { runIncidentCorrectionPlanningBatch } = require('../services/systemIncidentCorrection');
 const {
   getGovernanceCommandCenter,
   updateGovernanceControl,
 } = require('../services/systemDataGovernance');
+const {
+  getFinanceCommandCenter,
+  createCostEntry,
+  updateProvider,
+  createExecutiveReport,
+  publishExecutiveReport,
+  getExecutiveReport,
+} = require('../services/systemFinOps');
 
 const SEVERITIES = new Set(['info', 'warning', 'error', 'critical']);
 const STATUSES = new Set([
   'novo', 'reconhecido', 'investigando', 'mitigado', 'resolvido',
   'monitorado', 'duplicado', 'nao_reproduzido', 'risco_aceito',
 ]);
-const SOURCES = new Set(['manual', 'feedback', 'server_error', 'job', 'sentry', 'security']);
+const SOURCES = new Set(['manual', 'feedback', 'server_error', 'job', 'sentry', 'security', 'bug']);
 const TRANSITIONS = {
   novo: new Set(['reconhecido', 'investigando', 'duplicado', 'nao_reproduzido', 'risco_aceito']),
   reconhecido: new Set(['investigando', 'mitigado', 'duplicado', 'nao_reproduzido', 'risco_aceito']),
@@ -40,6 +55,86 @@ const TRANSITIONS = {
   nao_reproduzido: new Set([]),
   risco_aceito: new Set([]),
 };
+
+// ⚠️⚠️ CRON DOS RECIBOS DE PUSH — declarado ANTES do `authenticate`, de propósito
+// (07/08/2026 · Onda 4). O cron da Vercel não tem sessão de usuário: ele se
+// autentica pelo `CRON_SECRET` (`utils/cronAuth.js`). Pôr esta rota depois do
+// `router.use(authenticate)` faria o cron levar 401 todo dia sem ninguém notar —
+// exatamente a classe de falha silenciosa que ela existe pra matar.
+//
+// O QUE ISTO CONSERTA: `refreshExpoReceipts` já existia no código e **nunca
+// rodou** — 0 de 1.849 tickets tinham `receipt_status`. A única porta era um
+// POST atrás de `requireSuperAdmin`, e nenhum dos 46 crons apontava pra cá. Foi
+// assim que 1.801 falhas de entrega (98,9%) passaram DOIS MESES despercebidas.
+//
+// ⚠️ A ordem das 3 etapas importa: expirar os vencidos ANTES de coletar (senão
+// nunca saem da fila), e alertar DEPOIS (pra medir já com o dado do dia).
+// ⚠️ Nunca devolve 5xx por falha de UMA etapa: a Vercel marcaria o cron inteiro
+// como falho e sumiria com o resultado das outras duas. Cada etapa reporta o
+// próprio erro no corpo.
+router.get('/cron/push-receipts', requireCron, async (_req, res) => {
+  const saida = {};
+  for (const [nome, fn] of [
+    ['expirados', expirarRecibosVencidos],
+    ['recibos', refreshExpoReceipts],
+    ['alerta', alertarSaudeDoPush],
+  ]) {
+    try {
+      saida[nome] = await fn();
+    } catch (e) {
+      console.error(`[cron push-receipts · ${nome}]`, e.message);
+      saida[nome] = { erro: e.message };
+    }
+  }
+  res.json({ ok: true, ...saida });
+});
+
+// Agente de incidentes - etapa 3: triagem, diagnostico e proposta de correcao.
+// A proposta exige aprovacao humana e termina em PR; nao faz merge/deploy.
+router.get('/cron/incident-triage', requireCron, async (_req, res) => {
+  try {
+    const triage = await runIncidentTriage();
+    let diagnosis;
+    try {
+      diagnosis = await runIncidentDiagnosisBatch();
+    } catch (diagnosisError) {
+      console.error('[cron incident-triage / diagnosis]', diagnosisError.message);
+      diagnosis = { enabled: true, scanned: 0, diagnosed: 0, failed: 1, skipped: 0, error: 'Falha isolada no diagnostico.' };
+    }
+    let correction;
+    try {
+      correction = await runIncidentCorrectionPlanningBatch();
+    } catch (correctionError) {
+      console.error('[cron incident-triage / correction-planning]', correctionError.message);
+      correction = { enabled: true, scanned: 0, proposed: 0, linked: 0, skipped: 0, failed: 1, error: 'Falha isolada no planejamento da correcao.' };
+    }
+    const triagedCount = triage.errors.opened + triage.feedback.opened + triage.incidents.promoted;
+    const proposedCount = (correction.proposed || 0) + (correction.linked || 0);
+    const outputCount = triagedCount + (diagnosis.diagnosed || 0) + proposedCount;
+    const diagnosisFailed = Number(diagnosis.failed || 0) > 0;
+    const correctionFailed = Number(correction.failed || 0) > 0;
+    const partialFailure = diagnosisFailed || correctionFailed;
+    setSystemJobOutcome(res, {
+      status: partialFailure ? 'warning' : 'success',
+      effectStatus: partialFailure ? 'failed' : 'confirmed',
+      inputCount: triage.errors.scanned + triage.feedback.scanned + triage.incidents.scanned + (diagnosis.scanned || 0) + (correction.scanned || 0),
+      outputCount,
+      discardedCount: (diagnosis.failed || 0) + (correction.failed || 0),
+      ...(partialFailure ? {
+        errorCode: 'INCIDENT_AUTOMATION_PARTIAL_FAILURE',
+        errorMessage: `${diagnosis.failed || 0} diagnostico(s) e ${correction.failed || 0} planejamento(s) falharam; as demais etapas continuaram.`,
+      } : {}),
+      result: `${triagedCount} incidente(s) triado(s); ${diagnosis.diagnosed || 0} diagnosticado(s); ${proposedCount} proposta(s) de correcao`,
+    });
+    res.json({ ...triage, mode: 'triage_diagnosis_and_correction_planning', diagnosis, correction });
+  } catch (error) {
+    console.error('[cron incident-triage]', error.message);
+    setSystemJobOutcome(res, {
+      status: 'failed', effectStatus: 'failed', errorCode: 'INCIDENT_TRIAGE_FAILED', errorMessage: error.message,
+    });
+    res.status(500).json({ ok: false, error: 'Falha na triagem automatica de incidentes.' });
+  }
+});
 
 router.use(authenticate);
 router.use(requireSuperAdmin);
@@ -181,6 +276,83 @@ router.patch('/governance/controls/:controlKey', async (req, res) => {
       return res.status(400).json({ error: error.message });
     }
     res.status(500).json({ error: 'Erro ao registrar a decisão de governança.' });
+  }
+});
+
+router.get('/finance/command-center', async (req, res) => {
+  try {
+    const result = await getFinanceCommandCenter(req.query.months);
+    await auditSensitiveRead(req, 'finance-command-center');
+    res.json(result);
+  } catch (error) {
+    console.error('[sistema/finance/command-center]', error.message);
+    res.status(500).json({ error: 'Erro ao montar custos e prestação de contas.' });
+  }
+});
+
+router.post('/finance/costs', async (req, res) => {
+  try {
+    res.status(201).json(await createCostEntry(req.body || {}, {
+      ...actor(req), requestId: req.requestId,
+    }));
+  } catch (error) {
+    console.error('[sistema/finance/costs POST]', error.message);
+    if (error.code === 'INVALID_FINOPS_INPUT') return res.status(400).json({ error: error.message });
+    if (error.code === '23503') return res.status(400).json({ error: 'Fornecedor não cadastrado.' });
+    if (error.code === '23505') return res.status(409).json({ error: 'Este lançamento já foi importado.' });
+    res.status(500).json({ error: 'Erro ao registrar custo.' });
+  }
+});
+
+router.patch('/finance/providers/:providerKey', async (req, res) => {
+  try {
+    res.json(await updateProvider(req.params.providerKey, req.body || {}, {
+      ...actor(req), requestId: req.requestId,
+    }));
+  } catch (error) {
+    console.error('[sistema/finance/providers PATCH]', error.message);
+    if (error.code === 'INVALID_FINOPS_INPUT') return res.status(400).json({ error: error.message });
+    if (error.code === 'PGRST116') return res.status(404).json({ error: 'Fornecedor não encontrado.' });
+    res.status(500).json({ error: 'Erro ao atualizar fornecedor.' });
+  }
+});
+
+router.post('/finance/reports', async (req, res) => {
+  try {
+    res.status(201).json(await createExecutiveReport(req.body || {}, {
+      ...actor(req), requestId: req.requestId,
+    }));
+  } catch (error) {
+    console.error('[sistema/finance/reports POST]', error.message);
+    if (error.code === 'INVALID_FINOPS_INPUT') return res.status(400).json({ error: error.message });
+    res.status(500).json({ error: 'Erro ao gerar relatório executivo.' });
+  }
+});
+
+router.post('/finance/reports/:id/publish', async (req, res) => {
+  try {
+    res.json(await publishExecutiveReport(req.params.id, {
+      ...actor(req), requestId: req.requestId,
+    }));
+  } catch (error) {
+    console.error('[sistema/finance/reports/publish]', error.message);
+    if (error.code === 'INVALID_FINOPS_INPUT') return res.status(400).json({ error: error.message });
+    if (error.code === 'PGRST116') return res.status(404).json({ error: 'Relatório não encontrado.' });
+    res.status(500).json({ error: 'Erro ao publicar relatório executivo.' });
+  }
+});
+
+router.get('/finance/reports/:id/export', async (req, res) => {
+  try {
+    const report = await getExecutiveReport(req.params.id);
+    await auditSensitiveRead(req, `finance-report-${req.params.id}`);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="sistema-relatorio-${req.params.id}.json"`);
+    res.json(report);
+  } catch (error) {
+    console.error('[sistema/finance/reports/export]', error.message);
+    if (error.code === 'PGRST116') return res.status(404).json({ error: 'Relatório não encontrado.' });
+    res.status(500).json({ error: 'Erro ao exportar relatório executivo.' });
   }
 });
 

@@ -29,6 +29,28 @@ const express = require('express');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const pagamentos = require('../services/pagamentos');
+const { AppError, ERROR_CODES } = require('../utils/appError');
+const { captureHandledException } = require('../utils/sentry');
+const { outcomeFromSteps, setSystemJobOutcome } = require('../services/systemJobOutcome');
+
+function paymentCronError(error, publicMessage) {
+  return new AppError(error?.message || publicMessage, {
+    code: ERROR_CODES.PAYMENT_CRON_FAILED,
+    publicMessage,
+    cause: error,
+    isOperational: false,
+  });
+}
+function paymentWebhookError(error) {
+  return new AppError(error?.message || 'Falha no webhook de pagamento', {
+    code: ERROR_CODES.PAYMENT_WEBHOOK_FAILED,
+    publicMessage: 'Falha no processamento do webhook de pagamento.',
+    cause: error,
+    isOperational: false,
+  });
+}
+
+
 
 const limiter = rateLimit({
   windowMs: 60 * 1000,
@@ -57,12 +79,16 @@ router.post('/:provider', limiter, async (req, res) => {
       rawBody: req.rawBody,
       headers: req.headers,
       payload: req.body,
+      // O Mercado Pago assina um manifesto montado com o `data.id` do QUERY
+      // STRING (não do corpo) — sem isto, toda entrega dele tomaria 401.
+      query: req.query,
     });
     return res.status(http).json(corpo);
   } catch (e) {
     // Nem o serviço conseguiu registrar. Logar e devolver 200 mesmo assim:
     // reentrega não conserta bug nosso e ainda pode derrubar o webhook.
     console.error('[pagamentosWebhook] falha não tratada:', e.message);
+    captureHandledException(paymentWebhookError(e), req, 'payments.webhook.accepted_with_failure');
     return res.status(200).json({ ok: true, erro_registrado: false });
   }
 });
@@ -82,6 +108,7 @@ router.get('/cron/tick', async (req, res) => {
   } catch (e) {
     out.expirar = { erro: e.message };
     console.error('[pagamentosWebhook] tick/expirar:', e.message);
+    captureHandledException(paymentCronError(e, 'Erro ao expirar cobranças.'), req, 'payments.tick.expire');
   }
   // Reconciliar com limite menor que o avulso: roda 6x por hora, então 50 por
   // passada dá 300 consultas/h ao PSP e rotaciona a fila inteira (a ordenação
@@ -91,32 +118,46 @@ router.get('/cron/tick', async (req, res) => {
   } catch (e) {
     out.reconciliar = { erro: e.message };
     console.error('[pagamentosWebhook] tick/reconciliar:', e.message);
+    captureHandledException(paymentCronError(e, 'Erro ao reconciliar cobranças.'), req, 'payments.tick.reconcile');
   }
   try {
     out.replay = await pagamentos.reprocessarWebhooksPendentes({ limite: 20 });
   } catch (e) {
     out.replay = { erro: e.message };
     console.error('[pagamentosWebhook] tick/replay:', e.message);
+    captureHandledException(paymentCronError(e, 'Erro ao reprocessar eventos de pagamento.'), req, 'payments.tick.replay');
   }
+  // Sonda da CREDENCIAL — ela mesma se limita a 1x/dia (as outras 143 execuções
+  // diárias saem em `pulado: verificado_recentemente`, sem tocar o PSP). Está
+  // aqui, e não num cron novo, porque o projeto já tem 45 declarados. Nunca
+  // notifica quando está tudo bem; ver services/pagamentos/saude.js.
+  try {
+    out.saude = await pagamentos.verificarSaude();
+  } catch (e) {
+    out.saude = { erro: e.message };
+    console.error('[pagamentosWebhook] tick/saude:', e.message);
+    captureHandledException(paymentCronError(e, 'Erro ao verificar a credencial de pagamento.'), req, 'payments.tick.credential_health');
+  }
+  setSystemJobOutcome(res, outcomeFromSteps(out, { errorCode: ERROR_CODES.PAYMENT_CRON_FAILED }));
   res.json({ ok: true, ...out });
 });
 
 // Expira cobrança vencida e dispara o handler do domínio (que libera a vaga).
 // Nunca expira quem já pagou algo. Avulso: use pra depurar/forçar.
-router.get('/cron/expirar', async (req, res) => {
+router.get('/cron/expirar', async (req, res, next) => {
   if (!cronAutorizado(req)) return res.status(401).json({ error: 'não autorizado' });
   try {
     const r = await pagamentos.expirarVencidas({ limite: 200 });
     res.json({ ok: true, ...r });
   } catch (e) {
     console.error('[pagamentosWebhook] cron/expirar:', e.message);
-    res.status(500).json({ error: 'erro ao expirar cobranças' });
+    next(paymentCronError(e, 'Erro ao expirar cobranças.'));
   }
 });
 
 // A VERDADE do estado. O webhook é otimização de latência: se ele falhar, sumir
 // ou for desativado pelo PSP, é este cron que fecha o ciclo.
-router.get('/cron/reconciliar', async (req, res) => {
+router.get('/cron/reconciliar', async (req, res, next) => {
   if (!cronAutorizado(req)) return res.status(401).json({ error: 'não autorizado' });
   try {
     const dias = Math.min(parseInt(req.query.dias) || 30, 180);
@@ -124,20 +165,33 @@ router.get('/cron/reconciliar', async (req, res) => {
     res.json({ ok: true, ...r });
   } catch (e) {
     console.error('[pagamentosWebhook] cron/reconciliar:', e.message);
-    res.status(500).json({ error: 'erro ao reconciliar cobranças' });
+    next(paymentCronError(e, 'Erro ao reconciliar cobranças.'));
   }
 });
 
 // Reprocessa eventos que ficaram como 'erro' (replay do payload guardado, sem
 // depender de reentrega do PSP).
-router.get('/cron/replay', async (req, res) => {
+router.get('/cron/replay', async (req, res, next) => {
   if (!cronAutorizado(req)) return res.status(401).json({ error: 'não autorizado' });
   try {
     const r = await pagamentos.reprocessarWebhooksPendentes({ limite: 50 });
     res.json({ ok: true, ...r });
   } catch (e) {
     console.error('[pagamentosWebhook] cron/replay:', e.message);
-    res.status(500).json({ error: 'erro ao reprocessar eventos' });
+    next(paymentCronError(e, 'Erro ao reprocessar eventos de pagamento.'));
+  }
+});
+
+// Sonda de credencial FORÇADA (ignora o intervalo de 1x/dia). Avulso pra
+// depurar e pra conferir antes de um lançamento de evento pago.
+router.get('/cron/saude', async (req, res, next) => {
+  if (!cronAutorizado(req)) return res.status(401).json({ error: 'não autorizado' });
+  try {
+    const r = await pagamentos.verificarSaude({ forcar: true });
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[pagamentosWebhook] cron/saude:', e.message);
+    next(paymentCronError(e, 'Erro ao verificar a credencial de pagamento.'));
   }
 });
 

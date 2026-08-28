@@ -12,9 +12,16 @@ const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { escapePostgrestValue } = require('../utils/sanitize');
+const { fetchAllRows } = require('../utils/pagination');
 const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/inscricaoComprovante');
 const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../services/inscricaoPortas');
 const { elegiveisDoSorteio, motivoSemElegivel } = require('../services/inscricaoSorteio');
+// ⚠️ Contagem de inscritos NÃO usa o embed `inscricoes(count)` (não filtra
+// soft-delete — ver o cabeçalho do serviço).
+const { contarInscritosVivos } = require('../services/inscricaoContagem');
+const { normalizarIds, separarExclusaoLote, resumoDoLote } = require('../utils/exclusaoInscricaoLote');
+const checkoutExterno = require('../utils/checkoutExterno');
+const { sanitizarLotes } = require('../utils/lotesEvento');
 const {
   previewTemplate,
   esqueletoPadrao,
@@ -44,23 +51,89 @@ function slugify(s) {
 
 // key OPACA e estável dos campos extras (mesma regra do form-builder do ext:
 // gerada 1x, NUNCA re-derivada do label — senão orfana respostas antigas)
-function novaKeyCampo() {
-  return `c_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
-}
+// ⚠️ Chave de campo é PRESERVADA byte a byte quando já existe — mudar a chave é o
+// que orfana resposta já gravada. Ver o incidente do Celebra em utils/campoKey.js.
+const { keyCampoPreservada } = require('../utils/campoKey');
 
 const TIPOS_CAMPO = ['texto', 'textarea', 'email', 'select', 'escolha', 'multi', 'rede_social', 'imagem', 'numero', 'data'];
+
+/**
+ * Condição de exibição (`mostrar_se`) — a pergunta só aparece quando a
+ * pergunta-mãe foi respondida com um dos valores listados (17/08 · perguntas do
+ * retiro 2027). Régua de exibição em `utils/camposCondicionais.js`, usada pela
+ * tela E pelo servidor.
+ *
+ * ⚠️ Sanear é NORMALIZAR, não julgar: a `key` da mãe pode não existir ainda
+ * (a pessoa está montando o formulário e vai criar a pergunta depois), e recusar
+ * aqui travaria o salvamento no meio da montagem. Condição órfã é tratada como
+ * FAIL-OPEN na exibição — a pergunta aparece, que é o comportamento de antes.
+ */
+function sanitizeMostrarSe(bruto) {
+  if (!bruto || typeof bruto !== 'object') return null;
+  const key = String(bruto.key ?? '').trim().slice(0, 60);
+  if (!key) return null;
+  const brutos = Array.isArray(bruto.valores) ? bruto.valores : (bruto.valor !== undefined ? [bruto.valor] : []);
+  const valores = [...new Set(brutos.map(v => String(v ?? '').trim()).filter(Boolean))].slice(0, 20);
+  if (!valores.length) return null;
+  return { key, valores };
+}
+
 function sanitizeCampos(campos) {
   if (!Array.isArray(campos)) return [];
   return campos
     .filter(c => c && String(c.label || '').trim())
     .slice(0, 40)
-    .map(c => ({
-      key: /^c_[a-z0-9_]+$/.test(String(c.key || '')) ? String(c.key) : novaKeyCampo(),
-      label: String(c.label).trim().slice(0, 200),
-      tipo: TIPOS_CAMPO.includes(c.tipo) ? c.tipo : 'texto',
-      obrigatorio: c.obrigatorio !== false,
-      opcoes: Array.isArray(c.opcoes) ? c.opcoes.map(o => String(o).trim()).filter(Boolean).slice(0, 60) : [],
-    }));
+    .map(c => {
+      const campo = {
+        key: keyCampoPreservada(c.key),
+        label: String(c.label).trim().slice(0, 200),
+        tipo: TIPOS_CAMPO.includes(c.tipo) ? c.tipo : 'texto',
+        obrigatorio: c.obrigatorio !== false,
+        opcoes: Array.isArray(c.opcoes) ? c.opcoes.map(o => String(o).trim()).filter(Boolean).slice(0, 60) : [],
+      };
+      // ⚠️ Só grava a chave quando existe condição: `mostrar_se: null` em todo
+      // campo poluiria o jsonb dos 3 eventos que já estão no ar sem ganho nenhum.
+      const cond = sanitizeMostrarSe(c.mostrar_se);
+      if (cond) campo.mostrar_se = cond;
+      return campo;
+    });
+}
+
+/**
+ * Aceites próprios do evento (`termos_extra`).
+ *
+ * ⚠️ `chave` é o identificador ESTÁVEL do termo, e é ele que distingue um aceite
+ * do outro no ledger de consentimentos. Derivá-la do título faria renomear
+ * "Informações Sobre o Retiro" orfanar a prova de quem já aceitou — a MESMA lei
+ * do `novaKeyCampo` (ver utils/campoKey.js). Então: chave que já veio é
+ * PRESERVADA; só nasce nova quando não existe nenhuma.
+ *
+ * ⚠️ Item sem texto é DESCARTADO, nunca gravado vazio: checkbox que diz "li e
+ * aceito" sem nada pra ler é consentimento sem objeto.
+ */
+function sanitizeTermosExtra(lista) {
+  if (!Array.isArray(lista)) return null;
+  const usadas = new Set();
+  return lista
+    .map((t) => {
+      if (!t || typeof t !== 'object') return null;
+      const texto = String(t.texto ?? '').trim().slice(0, 4000);
+      if (!texto) return null;
+      let chave = String(t.chave ?? '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 40);
+      if (!chave || usadas.has(chave)) chave = `t_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      usadas.add(chave);
+      const item = { chave, titulo: String(t.titulo ?? '').trim().slice(0, 160) || 'Termo do evento', texto };
+      const url = String(t.url ?? '').trim();
+      if (/^https:\/\/[^\s/@]+\.[^\s/@]+/.test(url)) item.url = url.slice(0, 500);
+      // ⚠️ Aceite que vale SÓ pra menor de idade (ex.: "Termos de
+      // Responsabilidade — Menor de idade", do PDF do retiro). Sem esta chave,
+      // todo aceite é obrigatório pra TODO MUNDO, e um adulto de 40 anos teria
+      // que aceitar um termo de responsabilidade sobre si mesmo como menor.
+      if (t.so_menor === true) item.so_menor = true;
+      return item;
+    })
+    .filter(Boolean)
+    .slice(0, 6);
 }
 
 // Rótulo da edição a partir da data (mensal/semanal → 'YYYY-MM' · anual → 'YYYY')
@@ -100,7 +173,106 @@ const CAMPOS_EVENTO = [
   // Teto de parcelas e quem paga os juros — por EVENTO, porque quem define é a
   // data em que a igreja paga o local (migration 20260729040000).
   'parcelas_max', 'juros_repassados',
+  // Aparece na lista do totem do lounge? Default false no banco: publicar um
+  // evento NÃO o expõe no hall (migration 20260805150000).
+  'no_totem',
+  // Cartão cobrado FORA (e-Inscrição) · migration 20260811180000. Preenchido,
+  // remove 'cartao' do nosso checkout — ver backend/utils/checkoutExterno.js.
+  // `checkout_externo_valor_centavos` (20260821190000) é só EXIBIÇÃO: o preço
+  // do cartão na plataforma deles, pra tela de escolha dizer "R$ 850 no cartão
+  // · R$ 830 no Pix". Nenhuma cobrança nossa lê esse número.
+  'checkout_externo_url', 'checkout_externo_nome', 'checkout_externo_valor_centavos',
+  // Retiro/viagem (migration 20260817160000): endereço obrigatório neste evento
+  // e bloco do responsável quando a pessoa é menor de 18 na inscrição.
+  // ⚠️ `termos_extra` NÃO entra nesta lista — é jsonb e passa pelo saneador
+  // próprio (`sanitizeTermosExtra`), igual a `pagamento_metodos`.
+  'exigir_endereco', 'exige_dados_menor',
+  // Período (retiro de vários dias) + instruções gerais pra download/e-mail
+  // (migration 20260820120000). Nullable: limpar é edição legítima.
+  'data_fim', 'instrucoes_url', 'instrucoes_nome',
+  // Grupo de WhatsApp pra dúvidas, exibido nas telas públicas (20260821150000).
+  'whatsapp_duvidas_url',
 ];
+
+// ⚠️ INCIDENTE 2026-08-04 · colunas NOT NULL da whitelist acima.
+// A Ariel não conseguia salvar edição de evento: 500 com
+// `null value in column "pagamento_expira_horas" violates not-null constraint`
+// (5 ocorrências no runtime, 11:46–11:51 BRT). O form mandava `null` nesse campo
+// sempre que o pagamento estava desligado ou o campo estava vazio — então a edição
+// de QUALQUER evento sem pagamento quebrava, não era caso dela.
+//
+// A regra: nestas colunas `null` do cliente significa "não informado", NUNCA
+// "apagar" — apagar é impossível, o banco recusa e derruba o UPDATE inteiro, com
+// todos os outros campos que a pessoa editou. Então o null é DESCARTADO e o valor
+// atual permanece. Coluna nullable (valor_centavos, parcelas_max, vagas, data…)
+// segue aceitando null, porque ali limpar é uma edição legítima.
+//
+// Lista conferida no catálogo (is_nullable='NO'), não decorada.
+const CAMPOS_EVENTO_NAO_NULO = new Set([
+  'tem_sorteio', 'premios', 'checkin_ativo',
+  'pagamento_ativo', 'pagamento_expira_horas', 'juros_repassados',
+  'no_totem',
+  // migration 20260817160000 · boolean NOT NULL DEFAULT false
+  'exigir_endereco', 'exige_dados_menor',
+]);
+
+// Copia a whitelist pro patch, descartando null onde o banco não aceita.
+function aplicarCamposEvento(b, patch) {
+  for (const k of CAMPOS_EVENTO) {
+    if (b[k] === undefined) continue;
+    if (b[k] === null && CAMPOS_EVENTO_NAO_NULO.has(k)) continue;
+    patch[k] = b[k];
+  }
+  return patch;
+}
+
+/**
+ * Link do checkout externo: recusa ANTES do banco, com mensagem que diz o que
+ * fazer. O CHECK da migration é a rede de segurança; quem tem que explicar o
+ * erro é a rota — 23514 cru chega na tela como "Erro ao salvar evento".
+ *
+ * ⚠️ Limpar é edição legítima (string vazia ⇒ NULL ⇒ o cartão volta pro nosso
+ * checkout), então vazio NÃO é erro. Distinguir "não mandou o campo"
+ * (`undefined`, não mexe) de "mandou vazio" (limpa) é o que permite tirar o
+ * e-Inscrição de um evento sem ter que apagar o evento.
+ */
+function conferirCheckoutExterno(patch) {
+  if (patch.checkout_externo_url === undefined) return null;
+  const bruto = String(patch.checkout_externo_url ?? '').trim();
+  if (!bruto) { patch.checkout_externo_url = null; return null; }
+  const url = checkoutExterno.linkExternoValido(bruto);
+  if (!url) {
+    return 'O link do checkout externo precisa começar com https:// e apontar para um site '
+      + '(ex.: https://www.e-inscricao.com/…). Deixe em branco para cobrar o cartão por aqui.';
+  }
+  patch.checkout_externo_url = url;
+  if (patch.checkout_externo_nome !== undefined) {
+    const nome = String(patch.checkout_externo_nome ?? '').trim();
+    patch.checkout_externo_nome = nome ? nome.slice(0, 40) : null;
+  }
+  return null;
+}
+
+/**
+ * Preço do cartão na plataforma externa — só pra tela.
+ *
+ * ⚠️ Vazio/0/lixo ⇒ NULL (a tela volta a não prometer preço de cartão), nunca
+ * 0: "R$ 0,00 no cartão" numa tela de escolha é promessa de gratuidade. Teto
+ * igual ao do CHECK do banco pra o typo (8500000 no lugar de 85000) ser
+ * recusado com mensagem, não com 23514.
+ */
+function sanitizeValorCartaoExterno(patch) {
+  if (patch.checkout_externo_valor_centavos === undefined) return null;
+  const bruto = patch.checkout_externo_valor_centavos;
+  if (bruto === null || bruto === '') { patch.checkout_externo_valor_centavos = null; return null; }
+  const n = Math.round(Number(bruto));
+  if (!Number.isFinite(n) || n <= 0) { patch.checkout_externo_valor_centavos = null; return null; }
+  if (n > 10000000) {
+    return 'O valor do cartão na outra plataforma passou de R$ 100.000 — confira se não sobrou um zero.';
+  }
+  patch.checkout_externo_valor_centavos = n;
+  return null;
+}
 
 // `pagamento_metodos` é TEXT[] e fica FORA do loop de whitelist de propósito:
 // string crua no lugar de array quebra o insert. Só os métodos que o checkout
@@ -482,6 +654,30 @@ async function resumoPortas(fontes) {
   return mapa;
 }
 
+// GET /pagamento-saude — estado da credencial do PSP, pra tela avisar ANTES de
+// um lançamento. A chave do Asaas expira por desuso (3 meses desabilita, 6
+// expira) e o sistema só fala com o PSP quando há cobrança; ver
+// services/pagamentos/saude.js.
+//
+// `?verificar=1` força a sonda AGORA (bate no PSP) — por isso exige nível 3,
+// enquanto ler o último resultado é nível 1.
+router.get('/pagamento-saude', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    const pagamentos = require('../services/pagamentos');
+    if (req.query.verificar === '1') {
+      const nivel = req.user?.granular?.modulePerms?.inscricoes?.leitura ?? 0;
+      if (nivel < 3) return res.status(403).json({ error: 'sem permissão para forçar a verificação' });
+      await pagamentos.verificarSaude({ forcar: true });
+    }
+    res.json(await pagamentos.saudeAtual());
+  } catch (e) {
+    // Tabela ausente (migration não aplicada) ou PSP fora do ar não pode
+    // derrubar a aba — devolve aviso, não 500. Deploy em duas etapas.
+    console.error('[inscricoes] pagamento-saude:', e.message);
+    res.json({ aviso: 'não foi possível ler o estado da credencial', detalhe: e.message });
+  }
+});
+
 // GET /portas — inventário das portas públicas + contagens/edições da view
 // unificada (as séries DERIVADAS do SPEC-10 t1 já dão edição por porta:
 // batismo/apresentação = mês, next = turma, grupos = temporada).
@@ -700,11 +896,12 @@ router.patch('/qrs/:id/reativar', authorizeModule('inscricoes', 3), async (req, 
 router.get('/eventos', authorizeModule('inscricoes', 1), async (_req, res) => {
   try {
     const { data, error } = await supabase.from('insc_eventos')
-      .select('id, nome, slug, area, tipo, data, hora, local, capa_url, status, vagas, tem_sorteio, checkin_ativo, pagamento_ativo, valor_centavos, edicao_rotulo, serie_id, serie:insc_series(id, nome, periodicidade, recorre_ate, slug_base), inscritos:inscricoes(count)')
+      .select('id, nome, slug, area, tipo, data, hora, local, capa_url, status, vagas, tem_sorteio, checkin_ativo, no_totem, pagamento_ativo, valor_centavos, edicao_rotulo, serie_id, serie:insc_series(id, nome, periodicidade, recorre_ate, slug_base)')
       .is('deleted_at', null)
       .order('data', { ascending: false, nullsFirst: false });
     if (error) throw error;
-    res.json((data || []).map(e => ({ ...e, inscritos: e.inscritos?.[0]?.count ?? 0 })));
+    const contagem = await contarInscritosVivos(supabase, (data || []).map((e) => e.id));
+    res.json((data || []).map(e => ({ ...e, inscritos: contagem.get(e.id) || 0 })));
   } catch (e) {
     console.error('[inscricoes] eventos:', e.message);
     res.status(500).json({ error: 'Erro ao listar eventos' });
@@ -715,7 +912,7 @@ router.get('/eventos', authorizeModule('inscricoes', 1), async (_req, res) => {
 router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) => {
   try {
     const { data, error } = await supabase.from('insc_eventos')
-      .select('*, serie:insc_series(id, nome, periodicidade, slug_base), inscritos:inscricoes(count), sorteios:insc_sorteios(id, premio, numero_sorteado, inscricao_id, ganhador_nome, sorteado_em)')
+      .select('*, serie:insc_series(id, nome, periodicidade, slug_base), sorteios:insc_sorteios(id, premio, numero_sorteado, inscricao_id, ganhador_nome, sorteado_em)')
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Evento não encontrado' });
@@ -736,7 +933,9 @@ router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) =>
     const sorteios = (data.sorteios || [])
       .filter((s) => !substituidos.has(s.id))
       .sort((a, b) => String(b.sorteado_em).localeCompare(String(a.sorteado_em)));
-    res.json({ ...data, inscritos: data.inscritos?.[0]?.count ?? 0, sorteios });
+    // Mesmo helper da lista (o embed `inscricoes(count)` contava apagadas).
+    const contagem = await contarInscritosVivos(supabase, [data.id]);
+    res.json({ ...data, inscritos: contagem.get(data.id) || 0, sorteios });
   } catch (e) {
     console.error('[inscricoes] evento:', e.message);
     res.status(500).json({ error: 'Erro ao carregar evento' });
@@ -803,6 +1002,45 @@ async function lerInscritosDoEvento(eventoId, { busca = '', status = '', limit =
       if (!data || data.length < 1000) break;
     }
     total = inscritos.length;
+  }
+
+  // ── Contato do RESPONSÁVEL (menor de idade · migration 20260817160000) ────
+  // ⚠️ Consulta ISOLADA e best-effort, pelo mesmo motivo do bloco de pagamento
+  // abaixo: coluna ausente faz o PostgREST recusar a query INTEIRA (42703), e
+  // esta é a lista de inscritos de TODO evento — inclusive a tela de check-in.
+  // Sem a migration, a lista abre exatamente como antes.
+  //
+  // ⚠️ **Não é enfeite de tela**: é o número que a equipe liga se um adolescente
+  // passar mal no retiro. Sem trazê-lo aqui, o dado ficaria gravado e invisível.
+  try {
+    const idsResp = inscritos.map((i) => i.id);
+    const resps = [];
+    for (let i = 0; i < idsResp.length; i += 200) {
+      const { data, error } = await supabase.from('inscricoes')
+        .select('id, responsavel_nome, responsavel_cpf, responsavel_parentesco, responsavel_telefone, responsavel_email, responsavel_autoriza_batismo')
+        .in('id', idsResp.slice(i, i + 200));
+      if (error) throw error;
+      resps.push(...(data || []));
+    }
+    const porId = new Map(resps.map((r) => [r.id, r]));
+    for (const ins of inscritos) {
+      const r = porId.get(ins.id);
+      // ⚠️ Só anexa quando existe responsável: chave sempre presente com valores
+      // nulos faria a tela desenhar um bloco "Responsável: —" em toda inscrição
+      // de adulto.
+      if (r && r.responsavel_nome) {
+        ins.responsavel = {
+          nome: r.responsavel_nome,
+          cpf: r.responsavel_cpf || null,
+          parentesco: r.responsavel_parentesco || null,
+          telefone: r.responsavel_telefone || null,
+          email: r.responsavel_email || null,
+          autoriza_batismo: r.responsavel_autoriza_batismo,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[inscricoes] responsável do menor indisponível:', e.message);
   }
 
   // Best-effort: a view é recente e a lista não pode deixar de abrir se ela
@@ -1109,7 +1347,9 @@ router.post('/eventos/:id/inscricoes/:inscricaoId/bolsa', authorizeModule('inscr
         const { cobranca } = await pagamentos.criarCobranca({
           origem_tipo: pagamentos.ORIGENS.INSCRICAO,
           origem_id: insc.id,
-          referencia: `inscricao:${insc.id}:bolsa:${Date.now()}`,
+          // ⚠️ `b` + base36: o external_reference do MP tem teto de 64 chars e
+          // `inscricao:<uuid>` já usa 46 — `:bolsa:<13 dígitos>` estourava.
+          referencia: `inscricao:${insc.id}:b${Date.now().toString(36)}`,
           valor_centavos: valorCobrado,
           descricao: `Inscrição (bolsa) · ${ev.nome}`,
           // ⚠️ Cruza com a capacidade do provider, igual à porta pública faz
@@ -1448,14 +1688,17 @@ router.get('/eventos/:id/resumo', authorizeModule('inscricoes', 1), async (req, 
 router.get('/app/eventos', authorizeModule('inscricoes', 1), async (req, res) => {
   try {
     let q = supabase.from('insc_eventos')
-      .select('id, nome, slug, area, data, hora, local, status, vagas, pagamento_ativo, valor_centavos, checkin_ativo, edicao_rotulo, inscritos:inscricoes(count)')
+      .select('id, nome, slug, area, data, hora, local, status, vagas, pagamento_ativo, valor_centavos, checkin_ativo, edicao_rotulo')
       .is('deleted_at', null);
     // Rascunho e arquivado ficam fora por padrão: o app é pra acompanhar o que
     // está acontecendo, não pra ver esboço.
     if (req.query.todos !== '1') q = q.in('status', ['publicado', 'encerrado']);
     const { data, error } = await q.order('data', { ascending: false, nullsFirst: false }).limit(100);
     if (error) throw error;
-    res.json((data || []).map((e) => ({ ...e, inscritos: e.inscritos?.[0]?.count ?? 0 })));
+    // Mesmo helper da tela do sistema — o app do staff tinha o MESMO bug do
+    // embed: mostraria "14 inscritos" num evento com 14 inscrições apagadas.
+    const contagem = await contarInscritosVivos(supabase, (data || []).map((e) => e.id));
+    res.json((data || []).map((e) => ({ ...e, inscritos: contagem.get(e.id) || 0 })));
   } catch (e) {
     console.error('[inscricoes] app/eventos:', e.message);
     res.status(500).json({ error: 'Erro ao listar eventos' });
@@ -1546,7 +1789,107 @@ router.delete('/eventos/:id/inscricoes/:inscricaoId', authorizeModule('inscricoe
     res.json({ ok: true });
   } catch (e) {
     console.error('[inscricoes] excluir inscrição:', e.message);
-    res.status(500).json({ error: 'Erro ao excluir a inscrição' });
+    // ⚠️ O MOTIVO vai junto (17/08/2026). Este endpoint respondia 500 com "Erro
+    // ao excluir a inscrição" e nada mais desde a migração pra espinha, porque
+    // `inscricoes` não estava na whitelist do soft-delete — a mensagem real
+    // ("Tabela inscricoes nao esta na whitelist") existia no log da Vercel e
+    // nunca chegava a quem estava na tela. Erro genérico em ação de operador
+    // esconde defeito de configuração por meses.
+    res.status(500).json({ error: 'Erro ao excluir a inscrição', detalhe: e.message });
+  }
+});
+
+// POST /eventos/:id/inscricoes/excluir-lote — exclui as inscrições marcadas na
+// lista (soft delete). Nasceu do pedido do Matheus (17/08): as inscrições de
+// teste inflam o placar do evento e, com 241 inscritos, apagar uma a uma não é
+// caminho.
+//
+// ⚠️ O payload diz QUAIS, nunca SE PODE: o servidor relê as linhas vivas DESTE
+// evento e reavalia tudo (mesma lei da aprovação em lote da Membresia e do
+// `ligar-lote` das Entradas). A régua está em `utils/exclusaoInscricaoLote`,
+// que é pura e entra no gate.
+//
+// ⚠️⚠️ Quem tem PAGAMENTO fica de fora e é DECLARADO: apagar quem pagou some
+// com a pessoa do placar enquanto o dinheiro segue na conta da igreja. Caso a
+// caso o DELETE individual acima continua existindo.
+router.post('/eventos/:id/inscricoes/excluir-lote', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const { ids, ignorados, acimaDoTeto } = normalizarIds(req.body?.ids);
+    if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos uma inscrição' });
+
+    const { data: evento } = await supabase.from('insc_eventos')
+      .select('id').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!evento) return res.status(404).json({ error: 'Evento não encontrado' });
+
+    const { data: vivas, error: eVivas } = await supabase.from('inscricoes')
+      .select('id, nome_completo')
+      .eq('evento_id', req.params.id).is('deleted_at', null).in('id', ids);
+    if (eVivas) throw eVivas;
+
+    // Pagamento: a razão auxiliar do evento. ⚠️ Falha de CONSULTA aqui NÃO pode
+    // virar "ninguém tem pagamento" — seria a guarda falhando aberta justamente
+    // no caminho que ela existe pra fechar. Sem conseguir conferir, o lote para.
+    let comPagamento = [];
+    const { data: pagos, error: ePag } = await supabase.from('vw_insc_pagamento_estado')
+      .select('inscricao_id, status_pagamento')
+      .eq('evento_id', req.params.id).in('inscricao_id', ids);
+    if (ePag) {
+      console.error('[inscricoes] excluir-lote · pagamentos:', ePag.message);
+      return res.status(503).json({ error: 'Não deu pra conferir os pagamentos agora — tente de novo em instantes.' });
+    }
+    comPagamento = (pagos || [])
+      .filter((p) => p.status_pagamento && p.status_pagamento !== 'expirada' && p.status_pagamento !== 'cancelada')
+      .map((p) => p.inscricao_id);
+
+    const plano = separarExclusaoLote(ids, vivas || [], comPagamento);
+
+    // ⚠️ Grava o efeito DURANTE (lei de 04/08): morte no meio do laço deixa
+    // apagado o que já saiu, e a resposta declara exatamente o que aconteceu —
+    // "tente de novo" sobre uma exclusão parcial é a instrução mais cara aqui.
+    const excluidas = [];
+    const falhas = [];
+    // ⚠️ O MOTIVO das falhas volta pra tela (distinct). Sem ele, "3 falharam"
+    // manda a pessoa tentar de novo pra sempre — foi assim que a ausência de
+    // `inscricoes` na whitelist do soft-delete passou meses como "Erro ao
+    // excluir" e só apareceu quando alguém foi ler o log da Vercel.
+    const motivos = new Set();
+    const BLOCO = 8;
+    for (let i = 0; i < plano.excluir.length; i += BLOCO) {
+      const fatia = plano.excluir.slice(i, i + BLOCO);
+      const r = await Promise.all(fatia.map(async (id) => {
+        const { error } = await supabase.rpc('app_soft_delete', {
+          p_table_name: 'inscricoes', p_row_id: id, p_deleted_by: req.user?.id ?? null,
+        });
+        return { id, erro: error?.message || null };
+      }));
+      for (const item of r) {
+        (item.erro ? falhas : excluidas).push(item.id);
+        if (item.erro) motivos.add(item.erro);
+      }
+      if (r.some((x) => x.erro)) console.error('[inscricoes] excluir-lote falhas:', r.filter((x) => x.erro));
+    }
+
+    res.json({
+      ok: true,
+      excluidas,
+      com_pagamento: plano.comPagamento,
+      nao_encontradas: plano.naoEncontradas,
+      falhas,
+      falhas_motivo: [...motivos],
+      ignorados,
+      acima_do_teto: acimaDoTeto,
+      resumo: resumoDoLote({
+        excluidas: excluidas.length,
+        comPagamento: plano.comPagamento.length,
+        naoEncontradas: plano.naoEncontradas.length,
+        falhas: falhas.length,
+      }),
+      contadores: await contadoresEvento(req.params.id),
+    });
+  } catch (e) {
+    console.error('[inscricoes] excluir inscrições em lote:', e.message);
+    // Motivo junto, pelo mesmo raciocínio do DELETE individual acima.
+    res.status(500).json({ error: 'Erro ao excluir as inscrições', detalhe: e.message });
   }
 });
 
@@ -1660,49 +2003,34 @@ router.post('/eventos/:id/sortear', authorizeModule('inscricoes', 3), async (req
 // (critério de aceite da spec). O dashboard já lê `compareceu` da view
 // unificada; marcar aqui acorda o card de comparecimento sozinho.
 
-function rpcArquiteturalIndisponivel(error) {
-  return !!error && ['PGRST202', '42883'].includes(error.code);
-}
+const {
+  marcarCheckinAuditavel, desfazerCheckinAuditavel,
+} = require('../services/inscricaoCheckin');
+const { montarLinkCheckin } = require('../utils/eventoCheckinToken');
 
-async function marcarCheckinAuditavel({ inscricaoId, por, modo, overridePendente, motivo }) {
-  const { data, error } = await supabase.rpc('fn_insc_checkin_marcar', {
-    p_inscricao_id: inscricaoId,
-    p_por: por,
-    p_modo: modo,
-    p_override_pendente: !!overridePendente,
-    p_override_motivo: motivo || null,
-  });
-  if (!error) return data;
-  if (!rpcArquiteturalIndisponivel(error)) throw error;
-
-  // Compatibilidade durante deploy em duas etapas: comportamento antigo,
-  // protegido pelo UNIQUE, até a migration da trilha estar disponível.
-  const { data: marcado, error: erroLegado } = await supabase.from('insc_checkins')
-    .insert({ inscricao_id: inscricaoId, por, modo })
-    .select('em').single();
-  if (erroLegado) {
-    if (erroLegado.code !== '23505') throw erroLegado;
-    const { data: existente } = await supabase.from('insc_checkins')
-      .select('em').eq('inscricao_id', inscricaoId).maybeSingle();
-    return { ok: true, ja_checkin: true, em: existente?.em || null };
+// GET /eventos/:id/checkin/qr-autoatendimento — o link do QR da porta.
+// ⚠️ Nível 2 (quem opera check-in). O link é a credencial: quem o tem consegue
+// abrir a porta de autoatendimento, então ele não sai em rota de leitura geral.
+router.get('/eventos/:id/checkin/qr-autoatendimento', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const { data: ev } = await supabase.from('insc_eventos')
+      .select('id, nome, checkin_ativo').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    const url = montarLinkCheckin(ev.id, process.env.FRONTEND_URL);
+    // ⚠️ Sem segredo configurado é FAIL-CLOSED: devolve o motivo em vez de um
+    // link quebrado que só falharia na mão de quem estivesse na fila.
+    if (!url) {
+      return res.status(503).json({
+        error: 'O QR de autoatendimento não está configurado (falta CRON_SECRET no ambiente).',
+        motivo: 'sem_segredo',
+      });
+    }
+    res.json({ url, checkin_ativo: !!ev.checkin_ativo });
+  } catch (e) {
+    console.error('[inscricoes] qr autoatendimento:', e.message);
+    res.status(500).json({ error: 'Erro ao gerar o QR' });
   }
-  return { ok: true, ja_checkin: false, em: marcado.em };
-}
-
-async function desfazerCheckinAuditavel({ eventoId, inscricaoId, por, motivo }) {
-  const { data, error } = await supabase.rpc('fn_insc_checkin_desfazer', {
-    p_evento_id: eventoId,
-    p_inscricao_id: inscricaoId,
-    p_por: por,
-    p_motivo: motivo || null,
-  });
-  if (!error) return data;
-  if (!rpcArquiteturalIndisponivel(error)) throw error;
-  const { error: erroLegado } = await supabase.from('insc_checkins')
-    .delete().eq('inscricao_id', inscricaoId);
-  if (erroLegado) throw erroLegado;
-  return { ok: true, auditoria_disponivel: false };
-}
+});
 
 // GET /eventos/:id/checkin — estado da tela: evento + contadores + lista.
 // A tela recarrega isso em polling curto (contador ao vivo).
@@ -1984,9 +2312,22 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
       status: 'rascunho',
       created_by: req.user?.id || null,
     };
-    for (const k of CAMPOS_EVENTO) if (b[k] !== undefined && k !== 'nome') payload[k] = b[k];
+    // Descarta null onde o banco é NOT NULL (ver CAMPOS_EVENTO_NAO_NULO).
+    for (const k of CAMPOS_EVENTO) {
+      if (k === 'nome' || b[k] === undefined) continue;
+      if (b[k] === null && CAMPOS_EVENTO_NAO_NULO.has(k)) continue;
+      payload[k] = b[k];
+    }
     const metodos = sanitizeMetodos(b.pagamento_metodos);
     if (metodos) payload.pagamento_metodos = metodos;
+    const termos = sanitizeTermosExtra(b.termos_extra);
+    if (termos) payload.termos_extra = termos;
+    // Lotes de preço (20/08): jsonb com saneador próprio, como termos_extra.
+    const lotes = sanitizarLotes(b.lotes);
+    if (lotes) payload.lotes = lotes;
+    const erroCheckout = conferirCheckoutExterno(payload)
+      || sanitizeValorCartaoExterno(payload);
+    if (erroCheckout) return res.status(400).json({ error: erroCheckout });
 
     const { data, error } = await supabase.from('insc_eventos').insert(payload).select('id, slug').single();
     if (error) throw error;
@@ -2003,7 +2344,10 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
 // Best-effort · lotes p/ não estourar payload. O tap abre /evento/<slug>.
 async function notificarNovoEventoApp(evento) {
   if (!evento?.slug) return;
-  const { data: toks } = await supabase.from('app_push_tokens').select('user_id');
+  // ⚠️ PAGINADO (auditoria 06/08/2026): `select('user_id')` cru trunca em 1000
+  // linhas server-side, SEM erro — a partir de ~1.000 instalações o "inscrições
+  // abertas" alcançaria só o primeiro pedaço da igreja e nada acusaria.
+  const toks = await fetchAllRows(() => supabase.from('app_push_tokens').select('user_id'));
   const userIds = [...new Set((toks || []).map((t) => t.user_id).filter(Boolean))];
   if (!userIds.length) return;
   const payload = {
@@ -2021,7 +2365,7 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
   try {
     const b = req.body || {};
     const patch = {};
-    for (const k of CAMPOS_EVENTO) if (b[k] !== undefined) patch[k] = b[k];
+    aplicarCamposEvento(b, patch);
     if (b.nome !== undefined) {
       const nome = String(b.nome).trim();
       if (nome.length < 2) return res.status(400).json({ error: 'Informe o nome do evento' });
@@ -2037,6 +2381,20 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
       const metodos = sanitizeMetodos(b.pagamento_metodos);
       if (metodos) patch.pagamento_metodos = metodos;
     }
+    // ⚠️ `[]` é edição legítima (tirar todos os aceites), então só `undefined`
+    // significa "não mexeu" — a mesma distinção do checkout externo.
+    if (b.termos_extra !== undefined) {
+      const termos = sanitizeTermosExtra(b.termos_extra);
+      if (termos) patch.termos_extra = termos;
+    }
+    // `[]` = tirar os lotes (volta ao preço único); `undefined` = não mexeu.
+    if (b.lotes !== undefined) {
+      const lotes = sanitizarLotes(b.lotes);
+      if (lotes) patch.lotes = lotes;
+    }
+    const erroCheckout = conferirCheckoutExterno(patch)
+      || sanitizeValorCartaoExterno(patch);
+    if (erroCheckout) return res.status(400).json({ error: erroCheckout });
     if (b.status !== undefined) {
       if (!['rascunho', 'publicado', 'encerrado', 'arquivado'].includes(b.status)) {
         return res.status(400).json({ error: 'Status inválido' });
@@ -2155,6 +2513,36 @@ router.post('/upload-capa', authorizeModule('inscricoes', 3), upload.single('arq
   } catch (e) {
     console.error('[inscricoes] upload-capa:', e.message);
     res.status(500).json({ error: 'Erro ao enviar a capa' });
+  }
+});
+
+// POST /upload-arquivo — documentos do evento (orientações gerais, autorização
+// de embarque de menor). Bucket público `evento-arquivos` (migration
+// 20260820120000): o link estável é o que a tela de download e o anexo do
+// e-mail usam. ⚠️ Documento com dado de PESSOA não entra aqui — bucket público.
+const TIPOS_ARQUIVO_EVENTO = {
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+};
+router.post('/upload-arquivo', authorizeModule('inscricoes', 3), upload.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo não enviado' });
+    // Extensão sai do MIME validado, nunca do nome (lição da capa do app):
+    // .exe renomeado pra .pdf não passa, e nome sem extensão não quebra.
+    const ext = TIPOS_ARQUIVO_EVENTO[req.file.mimetype];
+    if (!ext) return res.status(400).json({ error: 'Só PDF ou Word (.doc/.docx) — este arquivo vai para download público.' });
+    const path = `espinha/arquivos/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { error } = await supabase.storage.from('evento-arquivos').upload(path, req.file.buffer, {
+      contentType: req.file.mimetype, upsert: false,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from('evento-arquivos').getPublicUrl(path);
+    // O nome original volta pra tela guardar como rótulo de exibição.
+    res.json({ url: data.publicUrl, nome: String(req.file.originalname || `arquivo.${ext}`).slice(0, 160) });
+  } catch (e) {
+    console.error('[inscricoes] upload-arquivo:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar o arquivo' });
   }
 });
 
@@ -2316,6 +2704,363 @@ router.post('/email-templates/teste', authorizeModule('inscricoes', 5), async (r
   } catch (e) {
     console.error('[inscricoes] teste email:', e.message);
     res.status(500).json({ error: 'Erro ao enviar o teste' });
+  }
+});
+
+// ============================================================================
+// TOTEM · inscrição em evento pelo quiosque (2026-08-05 · Fase 1)
+//
+// As inscrições de evento vivem DENTRO do Totem Membro (`/totem`), ao lado de
+// grupos/batismo/Next/apresentação — decisão do Matheus. O quiosque já está
+// autenticado por conta de quiosque, então:
+//
+//  · o guard é `inscricoes-totem` (routeKey que inclui `totem-membro`, senão a
+//    conta de quiosque — que só tem esse módulo — seria bloqueada);
+//  · a ESTAÇÃO sai da conta logada (`estacaoDaConta`), nunca do corpo do
+//    request. É isso que faz a cobrança saber qual totem cobrou.
+//
+// ⚠️ Inscrever roda a MESMA `inscreverEspinha` da porta pública e do app —
+// vaga sob advisory lock, dedup por CPF, benefício por CPF, cobrança
+// idempotente, consentimentos, e-mail e WhatsApp. Reimplementar aqui é como um
+// dos caminhos para de honrar `insc_beneficios` seis meses depois.
+// ============================================================================
+const { inscreverEspinha, eventoEspinhaPorId, ocupacaoEspinha } = require('./publicEventoExterno');
+const totemEstacao = require('../services/totemEstacao');
+
+// GET /inscricoes/totem/eventos — o que o totem pode oferecer AGORA.
+// `no_totem` é o filtro que impede a tela do hall de anunciar retiro de
+// liderança: publicar um evento NÃO o expõe no totem (default false).
+router.get('/totem/eventos', authorizeModule('inscricoes-totem', 1), async (req, res) => {
+  try {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, valor_centavos, pagamento_ativo, pagamento_metodos, parcelas_max, tem_sorteio, inscricoes_abrem_em, inscricoes_encerram_em')
+      .eq('status', 'publicado').eq('no_totem', true).is('deleted_at', null)
+      // Evento que já passou não fica no hall. `data` nula = sem data marcada
+      // (série em aberto), então entra — filtrar por `>= hoje` sumiria com ela.
+      .or(`data.is.null,data.gte.${hoje}`)
+      .order('data', { ascending: true, nullsFirst: false });
+    if (error) throw error;
+
+    const agora = Date.now();
+    const abertos = (data || []).filter((ev) => {
+      // Mesma régua de janela da porta pública (`espinhaEncerrada`): abrir a
+      // inscrição no totem antes/depois da janela seria oferecer o que a RPC
+      // vai recusar — a pessoa preencheria o formulário pra levar um 403.
+      if (ev.inscricoes_abrem_em && new Date(ev.inscricoes_abrem_em).getTime() > agora) return false;
+      if (ev.inscricoes_encerram_em && new Date(ev.inscricoes_encerram_em).getTime() < agora) return false;
+      return true;
+    });
+
+    // Vagas pela MESMA RPC da porta pública. Lista curta (só os do totem), e
+    // falha degrada pra "sem contagem" em vez de derrubar a tela.
+    const comVagas = await Promise.all(abertos.map(async (ev) => {
+      const ocup = ev.vagas ? await ocupacaoEspinha(ev.id) : null;
+      return { ...ev, vagas_restantes: ocup ? ocup.restantes : null };
+    }));
+
+    // Esgotado sai da lista: no hall, card que só serve pra dizer "acabou"
+    // ocupa o lugar do evento que ainda tem vaga.
+    res.json({ eventos: comVagas.filter((ev) => ev.vagas_restantes === null || ev.vagas_restantes > 0) });
+  } catch (e) {
+    console.error('[inscricoes] totem eventos:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os eventos' });
+  }
+});
+
+// POST /inscricoes/totem/eventos/:id/inscrever
+router.post('/totem/eventos/:id/inscrever', authorizeModule('inscricoes-totem', 1), async (req, res) => {
+  try {
+    const ev = await eventoEspinhaPorId(req.params.id);
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    // ⚠️ Só o que está liberado pro totem — senão bastaria alguém saber o id de
+    // um evento fechado pra inscrever por aqui.
+    if (!ev.no_totem) return res.status(403).json({ error: 'Este evento não está disponível no totem.' });
+
+    const estacao = await totemEstacao.estacaoDaConta(req.user?.id);
+    // Estação ausente NÃO bloqueia: a inscrição vale, só nasce sem origem — o
+    // mesmo estado de quem se inscreve pela web. Travar aqui faria um vínculo
+    // de cadastro esquecido virar totem que não inscreve ninguém no domingo.
+    return await inscreverEspinha(req, res, ev, {
+      origem: 'totem',
+      estacaoId: estacao?.id || null,
+    });
+  } catch (e) {
+    console.error('[inscricoes] totem inscrever:', e.message);
+    res.status(500).json({ error: 'Erro ao concluir a inscrição' });
+  }
+});
+
+// ============================================================================
+// TOTENS · estações de autoatendimento (2026-08-05 · Fase 0)
+//
+// Gestão fica AQUI e não num módulo novo: quem gerencia eventos é quem gerencia
+// os totens que os vendem, e `inscricoes` já está no ROUTE_MODULE_MAP (uma
+// coluna menos na matriz de permissões).
+//
+// Ver = nível 1 · criar/parear/revogar = nível 4. Nível 4 e não 3 de propósito:
+// aqui se decide qual equipamento pode receber dinheiro em nome da igreja.
+// ============================================================================
+// Régua PURA do cerco de rede (mesma que o middleware usa pra decidir se o
+// token vale). Importada, nunca copiada — cópia divergente aqui faria a tela
+// salvar um cerco que o middleware não reconhece.
+const { sanitizarIps } = require('../utils/totemCerco');
+
+// GET /inscricoes/totens — lista com o estado das credenciais.
+// ⚠️ Nunca devolve `token_hash`; só `prefixo` (8 chars) pra pessoa reconhecer
+// a linha na tela.
+router.get('/totens', authorizeModule('inscricoes', 1), async (req, res) => {
+  try {
+    const { data: estacoes, error } = await supabase.from('totem_estacoes')
+      .select('*').order('codigo');
+    if (error) throw error;
+
+    const ids = (estacoes || []).map((e) => e.id);
+    let tokens = [];
+    if (ids.length) {
+      const { data, error: e2 } = await supabase.from('totem_estacao_tokens')
+        .select('id, estacao_id, tipo, prefixo, rotulo, linhagem, expira_em, pareado_em, usado_em, ultimo_uso_em, revogado_em, revogado_motivo, created_at')
+        .in('estacao_id', ids).order('created_at', { ascending: false });
+      if (e2) throw e2;
+      tokens = data || [];
+    }
+
+    // E-mail da conta vinculada — é o que a tela mostra ("conta totem1@..."),
+    // e sem isso a pessoa veria um uuid. Consulta separada e best-effort: o
+    // embed do PostgREST exigiria FK declarada no schema cache, e falhar aqui
+    // não pode derrubar a lista de totens.
+    const contaIds = [...new Set((estacoes || []).map((e) => e.conta_id).filter(Boolean))];
+    const emailPorConta = new Map();
+    if (contaIds.length) {
+      const { data: profs } = await supabase.from('profiles').select('id, email, name').in('id', contaIds);
+      for (const p of profs || []) emailPorConta.set(p.id, p.email || p.name || null);
+    }
+
+    const agora = Date.now();
+    const lista = (estacoes || []).map((e) => {
+      const meus = tokens.filter((t) => t.estacao_id === e.id);
+      const vivo = (t) => !t.revogado_em && (!t.expira_em || new Date(t.expira_em).getTime() > agora);
+      return {
+        ...e,
+        conta_email: e.conta_id ? (emailPorConta.get(e.conta_id) || null) : null,
+        // "online" = bateu ponto nos últimos 2 min. O heartbeat tem throttle de
+        // 60s, então 2 min tolera uma batida perdida sem acusar queda falsa.
+        online: !!e.ultima_batida_em && (agora - new Date(e.ultima_batida_em).getTime()) < 120000,
+        dispositivo: meus.find((t) => t.tipo === 'dispositivo' && vivo(t)) || null,
+        agente: meus.find((t) => t.tipo === 'agente' && vivo(t)) || null,
+        pareamento_pendente: meus.find((t) => t.tipo === 'pareamento' && vivo(t) && !t.usado_em) || null,
+        historico: meus.slice(0, 20),
+      };
+    });
+
+    res.json({ estacoes: lista });
+  } catch (e) {
+    console.error('[inscricoes] listar totens:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar os totens' });
+  }
+});
+
+// POST /inscricoes/totens — cria estação
+router.post('/totens', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const codigo = String(req.body?.codigo || '').trim().toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{1,30}$/.test(codigo)) {
+      return res.status(400).json({ error: 'Código: minúsculas, números e hífen (ex.: hall-01).' });
+    }
+    const nome = String(req.body?.nome || '').trim();
+    if (nome.length < 3) return res.status(400).json({ error: 'Dê um nome que a equipe reconheça (ex.: Totem do Hall).' });
+
+    const finalidades = Array.isArray(req.body?.finalidades) && req.body.finalidades.length
+      ? req.body.finalidades.filter((f) => ['inscricoes', 'kids', 'membro', 'voluntariado'].includes(f))
+      : ['inscricoes'];
+    if (!finalidades.length) return res.status(400).json({ error: 'Finalidade inválida.' });
+
+    const ips = sanitizarIps(req.body?.ip_permitidos);
+    const linha = {
+      codigo, nome, finalidades,
+      local: String(req.body?.local || '').trim() || null,
+      evento_fixo_id: req.body?.evento_fixo_id || null,
+      ip_permitidos: ips.lista,
+      created_by: req.user?.id || null,
+    };
+
+    const { data, error } = await supabase.from('totem_estacoes').insert(linha).select('*').single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: `Já existe um totem com o código "${codigo}".` });
+      throw error;
+    }
+    // ⚠️ IP descartado é DECLARADO: "salvou" com o cerco vazio faria a equipe
+    // acreditar que o totem está protegido quando não está.
+    res.status(201).json({
+      ok: true,
+      estacao: data,
+      aviso: ips.descartados.length
+        ? `Não entendi como IP: ${ips.descartados.join(', ')}. ${ips.lista ? 'O resto foi salvo.' : 'O totem ficou SEM cerco de rede.'}`
+        : undefined,
+    });
+  } catch (e) {
+    console.error('[inscricoes] criar totem:', e.message);
+    res.status(500).json({ error: 'Erro ao criar o totem' });
+  }
+});
+
+// PATCH /inscricoes/totens/:id — edição (nome, local, evento fixo, cerco, TEF)
+router.patch('/totens/:id', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const patch = {};
+    if (req.body?.nome !== undefined) patch.nome = String(req.body.nome).trim();
+    if (req.body?.local !== undefined) patch.local = String(req.body.local || '').trim() || null;
+    if (req.body?.evento_fixo_id !== undefined) patch.evento_fixo_id = req.body.evento_fixo_id || null;
+    let avisoIps;
+    if (req.body?.ip_permitidos !== undefined) {
+      const ips = sanitizarIps(req.body.ip_permitidos);
+      patch.ip_permitidos = ips.lista;
+      if (ips.descartados.length) {
+        avisoIps = `Não entendi como IP: ${ips.descartados.join(', ')}. ${ips.lista ? 'O resto foi salvo.' : 'O totem ficou SEM cerco de rede.'}`;
+      }
+    }
+    if (req.body?.ativo !== undefined) patch.ativo = !!req.body.ativo;
+    // Conta de quiosque que ESTÁ neste totem — é o que faz o servidor resolver
+    // a estação a partir do usuário logado. `null` desvincula.
+    if (req.body?.conta_id !== undefined) patch.conta_id = req.body.conta_id || null;
+    if (req.body?.finalidades !== undefined && Array.isArray(req.body.finalidades)) {
+      const f = req.body.finalidades.filter((x) => ['inscricoes', 'kids', 'membro', 'voluntariado'].includes(x));
+      if (f.length) patch.finalidades = f;
+    }
+    // Campos do pinpad: entram agora pra a estação nascer completa, mas só
+    // passam a ter efeito quando o cartão presencial (Fase 2) existir.
+    for (const c of ['tef_provider', 'tef_terminal_serie', 'tef_terminal_logico']) {
+      if (req.body?.[c] !== undefined) patch[c] = String(req.body[c] || '').trim() || null;
+    }
+    if (req.body?.tef_ativo !== undefined) patch.tef_ativo = !!req.body.tef_ativo;
+    for (const c of ['printer_target', 'printer_modelo']) {
+      if (req.body?.[c] !== undefined) patch[c] = String(req.body[c] || '').trim() || null;
+    }
+
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nada a atualizar.' });
+
+    // Reativar estação revogada é ato explícito: limpa a marca de revogação
+    // (senão o middleware continuaria recusando e ninguém entenderia por quê).
+    if (patch.ativo === true) {
+      patch.revogada_em = null; patch.revogada_motivo = null; patch.revogada_por = null;
+    }
+
+    const { data, error } = await supabase.from('totem_estacoes')
+      .update(patch).eq('id', req.params.id).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Totem não encontrado' });
+
+    totemEstacao.limparCache();
+    res.json({ ok: true, estacao: data, aviso: avisoIps });
+  } catch (e) {
+    console.error('[inscricoes] editar totem:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar o totem' });
+  }
+});
+
+// POST /inscricoes/totens/:id/pareamento — código do AGENTE DO PINPAD.
+// ⚠️ NÃO é pareamento do navegador: o totem de inscrições vive dentro do Totem
+// Membro, que já está logado na conta de quiosque, e a estação sai da conta
+// (`conta_id`). Este código serve só pro agente do pinpad (Fase 3), que é
+// serviço Windows e não tem sessão.
+router.post('/totens/:id/pareamento', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const { data: est, error } = await supabase.from('totem_estacoes')
+      .select('id, codigo, nome, ativo, revogada_em').eq('id', req.params.id).maybeSingle();
+    if (error) throw error;
+    if (!est) return res.status(404).json({ error: 'Totem não encontrado' });
+    if (!est.ativo || est.revogada_em) {
+      return res.status(400).json({ error: 'Reative este totem antes de parear.' });
+    }
+
+    const r = await totemEstacao.gerarPareamento(est.id, {
+      criadoPor: req.user?.id || null,
+      rotulo: String(req.body?.rotulo || '').trim() || null,
+    });
+
+    // ⚠️ O código aparece UMA vez, aqui. Não é recuperável depois — gerar outro
+    // é o caminho (e o anterior é revogado automaticamente).
+    res.json({ ok: true, codigo: r.codigo, expira_em: r.expira_em, estacao: { id: est.id, codigo: est.codigo, nome: est.nome } });
+  } catch (e) {
+    console.error('[inscricoes] pareamento totem:', e.message);
+    res.status(500).json({ error: 'Erro ao gerar o código de pareamento' });
+  }
+});
+
+// GET /inscricoes/totens/contas — contas de quiosque que podem SER um totem.
+// Sem isso a tela pediria pra alguém digitar um uuid de profile na mão.
+// Nível 4 porque a lista é insumo de quem vincula equipamento a dinheiro.
+router.get('/totens/contas', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    // Candidata = conta com cargo de quiosque (`totem-kiosk` do Totem Membro ou
+    // `totem-kids`). O vínculo real é com `profiles.id`, mas o cargo vive em
+    // `usuarios` (id INTEGER legado, casado por e-mail) — mesma costura que o
+    // resto do sistema faz.
+    const { data: cargos, error: e0 } = await supabase.from('cargos')
+      .select('id, slug').in('slug', ['totem-kiosk', 'totem-kids']);
+    if (e0) throw e0;
+    const cargoIds = (cargos || []).map((c) => c.id);
+    if (!cargoIds.length) return res.json({ contas: [] });
+
+    const { data: us, error: e1 } = await supabase.from('usuarios')
+      .select('email, cargo_id').in('cargo_id', cargoIds);
+    if (e1) throw e1;
+    const emails = [...new Set((us || []).map((u) => String(u.email || '').toLowerCase()).filter(Boolean))];
+    if (!emails.length) return res.json({ contas: [] });
+
+    const { data: profs, error: e2 } = await supabase.from('profiles')
+      .select('id, email, name').in('email', emails);
+    if (e2) throw e2;
+
+    // Quais já estão em uso: a tela precisa mostrar isso, senão a pessoa tenta
+    // vincular uma conta ocupada e leva um 409 sem entender.
+    const { data: usadas } = await supabase.from('totem_estacoes')
+      .select('conta_id, codigo').not('conta_id', 'is', null);
+    const porConta = new Map((usadas || []).map((e) => [e.conta_id, e.codigo]));
+
+    res.json({
+      contas: (profs || []).map((p) => ({
+        id: p.id, email: p.email, nome: p.name,
+        em_uso_por: porConta.get(p.id) || null,
+      })).sort((a, b) => String(a.email).localeCompare(String(b.email))),
+    });
+  } catch (e) {
+    console.error('[inscricoes] contas de totem:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar as contas de quiosque' });
+  }
+});
+
+// POST /inscricoes/totens/:id/revogar — mata a estação e TODAS as credenciais
+router.post('/totens/:id/revogar', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const r = await totemEstacao.revogarEstacao(req.params.id, {
+      por: req.user?.id || null,
+      motivo: req.body?.motivo,
+    });
+    if (!r.ok) {
+      return res.status(400).json({ error: 'Diga o motivo da revogação (fica no registro de auditoria).' });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[inscricoes] revogar totem:', e.message);
+    res.status(500).json({ error: 'Erro ao revogar o totem' });
+  }
+});
+
+// POST /inscricoes/totens/tokens/:tokenId/revogar — revoga UMA credencial
+// (dispositivo trocado, navegador reinstalado) sem desligar a estação.
+router.post('/totens/tokens/:tokenId/revogar', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const r = await totemEstacao.revogarToken(req.params.tokenId, {
+      por: req.user?.id || null,
+      motivo: req.body?.motivo || 'revogado pela equipe',
+    });
+    if (!r.ok) return res.status(400).json({ error: 'Diga o motivo da revogação.' });
+    if (!r.revogados) return res.status(404).json({ error: 'Credencial não encontrada ou já revogada' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[inscricoes] revogar credencial:', e.message);
+    res.status(500).json({ error: 'Erro ao revogar a credencial' });
   }
 });
 

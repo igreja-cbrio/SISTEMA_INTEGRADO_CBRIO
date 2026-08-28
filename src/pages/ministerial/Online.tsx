@@ -16,6 +16,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { CultoYouTubePanel } from '@/components/online/CultoYouTubePanel';
 import { OnlineDebugPanel } from '@/components/online/OnlineDebugPanel';
 import JornadaConvertidos from '@/components/JornadaConvertidos';
+import QrCultosApelo from '@/components/online/QrCultosApelo';
+import CadastroMembresiaOnline from '@/components/online/CadastroMembresiaOnline';
 
 const VALOR_META: Record<string, { label: string; cor: string; corClara: string; icon: any }> = {
   seguir:        { label: 'Seguir a Jesus',          cor: '#8B5CF6', corClara: 'from-violet-500/15 to-violet-500/5', icon: Cross },
@@ -532,6 +534,15 @@ export default function Online() {
   const { getAccessLevel, isAdmin } = useAuth();
   const podeEditarOnline = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
 
+  // ⚠️ Este `queryClient` faltava, e "Recoletar tudo" estava quebrado por isso.
+  // Existia um `useQueryClient()` neste MESMO arquivo, mas dentro de
+  // `OAuthStatusCardInner` — outro componente. As duas chamadas lá embaixo
+  // (invalidação entre lotes e no onSuccess) liam uma variável fora de escopo:
+  // o botão mostrava "Recoleta completa" e logo depois estourava
+  // "queryClient is not defined", e uma recoleta de vários lotes abortava no
+  // meio deixando métricas pela metade.
+  const queryClient = useQueryClient();
+
   const { data, isLoading, refetch } = useQuery<DashboardData>({
     queryKey: ['online', 'dashboard'],
     queryFn: () => online.dashboard(),
@@ -670,6 +681,16 @@ export default function Online() {
           )}
         </div>
       </div>
+
+      {/* ⚠️ Bloco das ACEITAÇÕES ONLINE, logo abaixo do topo: é o trabalho
+          PASTORAL do time do Online (falar com quem decidiu em até 3 dias), e
+          fica antes das métricas do canal de propósito — gente antes de número.
+          O QR do apelo vem junto porque é o mesmo time que monta o overlay. */}
+      <QrCultosApelo />
+
+      {/* Mesmo time, mesma prateleira: o QR do apelo é para quem DECIDE hoje; o
+          cadastro de membresia é para quem já acompanha e quer entrar de vez. */}
+      <CadastroMembresiaOnline />
 
       {/* Novos convertidos online · primeiros 90 dias (acompanhamento da Renata) */}
       <Card>

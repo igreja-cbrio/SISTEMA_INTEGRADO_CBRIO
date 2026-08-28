@@ -1,9 +1,22 @@
+const crypto = require('node:crypto');
 const { supabase } = require('../utils/supabase');
+const { notificar } = require('./notificar');
 
 const PLATFORMS = new Set(['android', 'ios']);
+/**
+ * Whitelist de `props` — o que não está aqui é DESCARTADO em silêncio (é a
+ * trava de PII da telemetria). Medido em 04/08/2026: das 10 chaves que o app
+ * mandava, só `message` passava; `{grupo: id}`, `{tipo}`, `{criado}` e
+ * `{encontrado}` iam pro lixo sem erro. O app foi ajustado pra usar estas
+ * chaves e ganhou duas:
+ *  · `entity_id` — id de COISA (grupo, vídeo, comunicado). **Nunca de pessoa.**
+ *  · `label` — rótulo curto e não-identificante, de enum NOSSO (tipo de decisão,
+ *    parentesco). **Nunca texto que a pessoa digitou.**
+ * Chave nova aqui exige a mesma decisão: ela pode identificar alguém?
+ */
 const ALLOWED_PROPS = new Set([
   'message', 'fatal', 'screen', 'route', 'action', 'reason', 'status_code',
-  'endpoint', 'permission', 'notification_type', 'source',
+  'endpoint', 'permission', 'notification_type', 'source', 'entity_id', 'label',
 ]);
 
 function cleanText(value, max = 120) {
@@ -55,6 +68,30 @@ function sanitizeProps(input) {
   return Object.keys(result).length ? result : null;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * ⚠️⚠️ `event_id` SEMPRE preenchido AQUI — foi a ausência dele que matou a
+ * telemetria do app inteira (04/08/2026 · último evento gravado: 31/07, o dia
+ * em que a `20260731143000` criou a coluna).
+ *
+ * A coluna nasceu `NOT NULL DEFAULT gen_random_uuid()` e o DEFAULT existe em
+ * produção (conferido: insert cru SEM a chave → 201). O que quebrava era o
+ * CLIENTE: o app não manda `event_id`, o normalizador devolvia
+ * `event_id: undefined` e `Object.keys()` **inclui** chave com undefined →
+ * o supabase-js monta `?columns=…,event_id` → o PostgREST vê a coluna listada
+ * e ausente no JSON e insere **NULL** → 23502, todo lote descartado. E o
+ * handler responde `{ok:false}` com HTTP 200 ("telemetria não pode quebrar o
+ * app"), então falhou em silêncio por 5 dias.
+ *
+ * Régua que fica: em upsert com `onConflict`, **toda linha tem que ter a chave
+ * de conflito preenchida** — nem `undefined` (vira NULL pelo `?columns=`) nem
+ * ausente em algumas linhas (o `?columns=` é a UNIÃO das chaves do lote).
+ */
+function eventIdValido(value) {
+  return UUID_RE.test(value || '') ? value : crypto.randomUUID();
+}
+
 function normalizeMobileEvent(event, userId = null) {
   const type = ['tela', 'acao', 'erro', 'ping'].includes(event?.tipo) ? event.tipo : 'acao';
   const duration = Number.parseInt(event?.duration_ms, 10);
@@ -65,6 +102,19 @@ function normalizeMobileEvent(event, userId = null) {
     plataforma: normalizePlatform(event?.plataforma),
     app_version: cleanText(event?.app_version, 40),
     build_number: cleanText(event?.build_number, 40),
+    // ⚠️ ONDA 3 (07/08): `app_version` é a versão do BUNDLE (veio no OTA) e é
+    // '1.0.0' em 13.231 de 13.231 eventos — nunca distinguiu binário nenhum.
+    // Quem identifica o BINÁRIO é `runtime_version` (compilada no build), e
+    // `update_id` diz qual bundle está rodando. `is_embedded` responde "esta
+    // sessão roda o bundle embutido?", que é o caso da 1ª abertura de toda
+    // instalação nova — o achado irmão da versão mínima.
+    // ⚠️ Saem SEMPRE, mesmo null: o upsert usa `?columns=` como UNIÃO das
+    // chaves do lote, e chave ausente em parte das linhas quebra o INSERT
+    // inteiro (a lição do `event_id`, que deixou a telemetria 5 dias morta).
+    runtime_version: cleanText(event?.runtime_version, 40),
+    update_id: cleanText(event?.update_id, 80),
+    canal: cleanText(event?.canal, 40),
+    is_embedded: typeof event?.is_embedded === 'boolean' ? event.is_embedded : null,
     session_id: cleanText(event?.session_id, 80),
     installation_id: cleanText(event?.installation_id, 80),
     os_version: cleanText(event?.os_version, 40),
@@ -75,8 +125,8 @@ function normalizeMobileEvent(event, userId = null) {
     outcome: cleanText(event?.outcome, 30),
     is_offline: typeof event?.is_offline === 'boolean' ? event.is_offline : null,
     occurred_at: safeTimestamp(event?.occurred_at),
-    event_id: /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event?.event_id || '')
-      ? event.event_id : undefined,
+    // Id do app quando vier (dá idempotência real no reenvio); senão o nosso.
+    event_id: eventIdValido(event?.event_id),
     user_id: userId,
   };
 }
@@ -173,6 +223,107 @@ async function getMobileCommandCenter(platform, days = 14) {
   };
 }
 
+/**
+ * ⚠️⚠️ FECHA A JANELA DOS RECIBOS VENCIDOS (07/08/2026 · Onda 4).
+ *
+ * A Expo guarda recibo por ~24h, e `refreshExpoReceipts` só olha tickets dentro
+ * dessa janela (`gte sent_at, -24h`). Então ticket que passou de 24h sem ser
+ * conferido fica com `receipt_checked_at` NULL **PARA SEMPRE** — sai da fila de
+ * trabalho e nunca é fechado.
+ *
+ * Sem isto a coluna mente por omissão: NULL passa a significar duas coisas
+ * diferentes ("ainda não conferi" e "perdi o prazo"), e aí ninguém consegue
+ * medir cobertura de entrega — que é justamente o buraco que deixou 1.801
+ * falhas passarem dois meses.
+ */
+async function expirarRecibosVencidos() {
+  const corte = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('system_mobile_push_tickets')
+    .update({ receipt_status: 'expirado', receipt_checked_at: new Date().toISOString() })
+    .is('receipt_checked_at', null)
+    .not('provider_ticket_id', 'is', null)
+    .lt('sent_at', corte)
+    .select('id');
+  if (error) throw error;
+  return { expirados: data?.length || 0 };
+}
+
+/**
+ * ⚠️⚠️ O ALERTA É O QUE VALE AQUI — não o recibo (07/08/2026).
+ *
+ * O que justifica: em 07/08 mediu-se **1.801 de 1.820 tickets em erro (98,9%)**,
+ * 1.773 com `PUSH_TOO_MANY_EXPERIENCE_IDS`, acumulados por DOIS MESES. O dado
+ * estava na tabela o tempo todo. **Ninguém olhava.** Coletar recibo sem alertar
+ * repetiria exatamente o erro: encher outra coluna que ninguém lê.
+ *
+ * Dispara incidente quando:
+ *  · a taxa de ACEITE em 24h cai abaixo de 90%, com **piso de 20 tickets** —
+ *    sem o piso, um envio isolado que falha vira alarme falso e o aviso perde
+ *    credibilidade (aviso que grita à toa é desligado, e aí volta a cegueira);
+ *  · aparece **qualquer** `PUSH_TOO_MANY_EXPERIENCE_IDS`. Esse não tem limiar
+ *    aceitável: significa que a régua de agrupamento por app Expo
+ *    (`utils/pushLotes.js`) parou de funcionar, e o efeito é o request INTEIRO
+ *    ser recusado — quem estava no mesmo lote também não recebeu. Um só já é
+ *    regressão.
+ *
+ * ⚠️ `chaveDedup` fixa por DIA: o cron roda a cada 15 min e não pode virar 96
+ * avisos iguais na caixa de entrada.
+ */
+async function alertarSaudeDoPush() {
+  const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('system_mobile_push_tickets')
+    .select('ticket_status,ticket_error_code')
+    .gte('sent_at', desde);
+  if (error) throw error;
+
+  const tickets = data || [];
+  const total = tickets.length;
+  const aceitos = tickets.filter((t) => t.ticket_status === 'accepted').length;
+  const mistura = tickets.filter((t) => t.ticket_error_code === 'PUSH_TOO_MANY_EXPERIENCE_IDS').length;
+  const taxa = total ? aceitos / total : 1;
+
+  const PISO_TICKETS = 20;
+  const TAXA_MINIMA = 0.9;
+  const hoje = new Date().toISOString().slice(0, 10);
+  const alertas = [];
+
+  if (mistura > 0) {
+    alertas.push({
+      tipo: 'push_lote_misturado',
+      titulo: `Push recusado por mistura de apps (${mistura} em 24h)`,
+      mensagem:
+        `${mistura} envio(s) voltaram com PUSH_TOO_MANY_EXPERIENCE_IDS nas últimas 24h. `
+        + 'A Expo recusa o REQUEST INTEIRO quando tokens de apps Expo diferentes vão juntos, '
+        + 'então quem estava no mesmo lote também não recebeu. Conferir a régua de agrupamento '
+        + '(backend/utils/pushLotes.js) e se `app_push_tokens.projeto_id` está sendo carimbado.',
+      severidade: 'critico',
+      chaveDedup: `push_lote_misturado_${hoje}`,
+    });
+  }
+
+  if (total >= PISO_TICKETS && taxa < TAXA_MINIMA) {
+    alertas.push({
+      tipo: 'push_taxa_aceite_baixa',
+      titulo: `Push: só ${Math.round(taxa * 100)}% aceitos em 24h`,
+      mensagem:
+        `${aceitos} de ${total} envios foram aceitos pela Expo nas últimas 24h. `
+        + 'Entre junho e 07/08/2026 essa taxa ficou em 1% sem ninguém perceber, '
+        + 'porque este aviso não existia.',
+      severidade: 'aviso',
+      chaveDedup: `push_taxa_aceite_${hoje}`,
+    });
+  }
+
+  for (const a of alertas) {
+    await notificar({ modulo: 'sistema', link: '/admin/app-analytics', ...a })
+      .catch((e) => console.warn('[appPush] alerta:', e.message));
+  }
+
+  return { total, aceitos, mistura, taxa: Number(taxa.toFixed(4)), alertas: alertas.length };
+}
+
 async function refreshExpoReceipts(limit = 500) {
   const { data: pending, error } = await supabase
     .from('system_mobile_push_tickets')
@@ -224,4 +375,6 @@ module.exports = {
   normalizeMobileTelemetryBatch,
   getMobileCommandCenter,
   refreshExpoReceipts,
+  expirarRecibosVencidos,
+  alertarSaudeDoPush,
 };

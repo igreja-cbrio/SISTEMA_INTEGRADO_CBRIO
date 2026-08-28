@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
 // Serviço do backend (CommonJS) — resolve o QR do check-in de voluntário.
-// @ts-expect-error módulo JS sem tipos
 import { resolverVoluntarioPorQr } from '../../backend/services/volCheckinResolver.js';
 
 // Mock mínimo do cliente supabase usado pelo resolver.

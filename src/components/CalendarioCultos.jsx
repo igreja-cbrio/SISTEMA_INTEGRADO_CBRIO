@@ -106,7 +106,11 @@ function vistaBtn(active) {
   };
 }
 
-export default function CalendarioCultos({ pendenciaSignal = 0, pendenciaFiltro = 'pendentes' } = {}) {
+// ⚠️ `linksVoluntario` é opt-in (default false): o endpoint dos links é guardado
+// por `authorizeIntegracao`, e este componente também é montado em
+// /dados-brutos, onde o líder de área lança números e não distribui link nenhum.
+// Mostrar um botão que responde 403 é pior que não mostrar botão.
+export default function CalendarioCultos({ pendenciaSignal = 0, pendenciaFiltro = 'pendentes', linksVoluntario = false } = {}) {
   const hoje = new Date();
   const [vista, setVista] = useState('semana'); // 'semana' | 'pendencias'
   // Abre na SEMANA ATUAL por padrão (pedido do Marcos · 2026-06-16). As setas
@@ -121,6 +125,9 @@ export default function CalendarioCultos({ pendenciaSignal = 0, pendenciaFiltro 
   const [cultosPend, setCultosPend] = useState([]);
   const [loadingPend, setLoadingPend] = useState(false);
   const [filtroPend, setFiltroPend] = useState('pendentes'); // 'pendentes'|'incompletos'|'todas'
+
+  // Links do voluntário da semana à vista (distribuição ANTECIPADA · ver o modal)
+  const [verLinks, setVerLinks] = useState(false);
 
   const dias = useMemo(() => diasDaSemana(semanaInicio), [semanaInicio]);
   const ehSemanaAtual = mesmoDia(semanaInicio, inicioSemana(hoje));
@@ -272,6 +279,15 @@ export default function CalendarioCultos({ pendenciaSignal = 0, pendenciaFiltro 
                   Hoje
                 </button>
               )}
+              {/* Distribuição ANTECIPADA: a semana já está escolhida aqui, então
+                  é daqui que saem os links pros voluntários — dias antes do culto. */}
+              {linksVoluntario && <button
+                onClick={() => setVerLinks(true)}
+                title="Links pros voluntários lançarem as decisões pelo celular"
+                style={{ ...btnNav, padding: '6px 12px', fontSize: 11, fontWeight: 600, color: C.primary, borderColor: C.primary, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <LinkIcon size={12} /> Links do voluntário
+              </button>}
             </div>
           </header>
 
@@ -344,7 +360,176 @@ export default function CalendarioCultos({ pendenciaSignal = 0, pendenciaFiltro 
           onSaved={() => { setEditando(null); carregar(); if (vista === 'pendencias') carregarPend(); }}
         />
       )}
+
+      {verLinks && (
+        <ModalLinksSemana
+          semanaInicio={semanaInicio}
+          labelSemana={labelSemana}
+          onClose={() => setVerLinks(false)}
+        />
+      )}
     </section>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// ModalLinksSemana — os links do voluntário da semana escolhida, prontos pra
+// mandar no grupo ANTES do culto.
+//
+// ⚠️ Distribuição é antecipada; lançamento não é. Quem abre o link antes do dia
+// vê "o lançamento abre no dia tal" e guarda a mensagem — a janela é reconferida
+// no SERVIDOR a cada uso (`publicDecisaoCulto`), então mandar com antecedência
+// não abre nada mais cedo.
+//
+// ⚠️ O culto vai DENTRO do link assinado. É por isso que mandar os 4 links de um
+// domingo de uma vez é seguro: cada voluntário abre o dele e não existe campo
+// "qual culto" pra errar — que foi o bug de 12/07 (19 nomes no culto errado).
+// ----------------------------------------------------------------------------
+function ModalLinksSemana({ semanaInicio, labelSemana, onClose }) {
+  const [carregando, setCarregando] = useState(true);
+  const [cultos, setCultos] = useState([]);
+  const [erro, setErro] = useState('');
+
+  useEffect(() => {
+    let vivo = true;
+    const { inicio, fim } = rangeSemana(semanaInicio);
+    setCarregando(true);
+    cultosApi.linksDecisoesPeriodo(inicio, fim)
+      .then(r => { if (vivo) { setCultos(Array.isArray(r?.cultos) ? r.cultos : []); setErro(''); } })
+      .catch(e => { if (vivo) { setErro(formatErro(e, 'links')); setCultos([]); } })
+      .finally(() => { if (vivo) setCarregando(false); });
+    return () => { vivo = false; };
+  }, [semanaInicio]);
+
+  const comLink = cultos.filter(c => c.link);
+  const semLink = cultos.length - comLink.length;
+
+  // Mensagem pronta pro grupo. O texto diz o que o voluntário precisa saber e
+  // NADA além disso — o link circula em grupo de WhatsApp e vira print.
+  const mensagem = useMemo(() => {
+    if (comLink.length === 0) return '';
+    const linhas = comLink.map(c => {
+      const { dia, diaSemana } = formataDataCurta(c.data);
+      const mes = MESES_CURTO[Number(c.data.split('-')[1]) - 1];
+      const hora = c.hora ? ` ${c.hora.slice(0, 5)}` : '';
+      return `${diaSemana} ${dia}/${mes}${hora} · ${c.nome}\n${c.link}`;
+    });
+    return (
+      `*Decisões do culto — ${labelSemana}*\n\n` +
+      'Quem estiver na equipe abre o link do SEU culto e registra ali mesmo, na hora, ' +
+      'o nome e o WhatsApp de quem tomou a decisão. Dá pra lançar uma pessoa atrás da outra.\n\n' +
+      'Cada link abre no dia do culto (e vale até 2 dias depois). Guarde a mensagem até lá.\n\n' +
+      linhas.join('\n\n')
+    );
+  }, [comLink, labelSemana]);
+
+  const copiar = async (texto, ok) => {
+    try {
+      await navigator.clipboard.writeText(texto);
+      toast.success(ok);
+    } catch {
+      toast.error('Não foi possível copiar · copie o link na mão.');
+    }
+  };
+
+  const enviarWhatsapp = () => {
+    window.open(`https://wa.me/?text=${encodeURIComponent(mensagem)}`, '_blank', 'noopener');
+  };
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 1000, background: C.overlay,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+    }}>
+      <div onClick={e => e.stopPropagation()}
+        style={{ background: C.modalBg, borderRadius: 12, maxWidth: 560, width: '100%', maxHeight: '92vh', overflow: 'auto' }}
+      >
+        <header style={{ padding: 16, borderBottom: `1px solid ${C.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+          <div>
+            <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: C.text }}>Links do voluntário</h2>
+            <p style={{ fontSize: 11, color: C.t3, margin: '4px 0 0' }}>{labelSemana}</p>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: C.t3, padding: 4 }}>
+            <X size={18} />
+          </button>
+        </header>
+
+        <div style={{ padding: 16 }}>
+          <p style={{ fontSize: 12, color: C.t2, lineHeight: 1.6, margin: '0 0 14px' }}>
+            Mande com antecedência para quem vai estar na equipe. Cada link já traz o culto dentro
+            dele — o voluntário abre, digita nome e WhatsApp de quem decidiu e pronto, sem login.
+            <strong style={{ color: C.text }}> O lançamento abre no dia do culto</strong> (e continua
+            aberto por mais 2 dias); antes disso a tela avisa que ainda não chegou a hora.
+          </p>
+
+          {carregando ? (
+            <div style={{ padding: 20, textAlign: 'center', color: C.t3 }}>Gerando os links…</div>
+          ) : erro ? (
+            <div style={{ padding: 14, borderRadius: 8, background: '#EF444414', border: '1px solid #EF444440', color: '#B91C1C', fontSize: 12 }}>
+              {erro}
+            </div>
+          ) : cultos.length === 0 ? (
+            <div style={{ padding: 20, textAlign: 'center', color: C.t3, fontSize: 12 }}>
+              Nenhum culto cadastrado nesta semana.
+            </div>
+          ) : (
+            <>
+              {semLink > 0 && (
+                <div style={{ padding: 10, borderRadius: 8, marginBottom: 12, background: '#F59E0B14', border: '1px solid #F59E0B40', color: '#B45309', fontSize: 11.5, lineHeight: 1.5 }}>
+                  {semLink} culto{semLink === 1 ? '' : 's'} sem link disponível · falta configurar o
+                  segredo do token no servidor. Esses cultos ficam sem porta pro voluntário.
+                </div>
+              )}
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {cultos.map(c => {
+                  const { dia, diaSemana } = formataDataCurta(c.data);
+                  return (
+                    <div key={c.id} style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+                      borderRadius: 8, background: C.card, border: `1px solid ${C.border}`,
+                    }}>
+                      <div style={{ minWidth: 42, textAlign: 'center' }}>
+                        <div style={{ fontSize: 9, fontWeight: 700, color: C.t3, textTransform: 'uppercase', letterSpacing: 0.5 }}>{diaSemana}</div>
+                        <div style={{ fontSize: 17, fontWeight: 800, color: C.text, lineHeight: 1 }}>{dia}</div>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{c.nome}</div>
+                        <div style={{ fontSize: 11, color: C.t3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {c.hora?.slice(0, 5) || '--:--'}{c.link ? ` · ${c.link}` : ' · link indisponível'}
+                        </div>
+                      </div>
+                      {c.link && (
+                        <button
+                          onClick={() => copiar(c.link, 'Link copiado')}
+                          style={{ ...btnGhost, fontSize: 11, padding: '6px 10px', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+                        >
+                          <LinkIcon size={12} /> Copiar
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {comLink.length > 0 && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
+                  <button onClick={enviarWhatsapp} style={{ ...btnPrimary, flex: 1, minWidth: 180 }}>
+                    Enviar no WhatsApp
+                  </button>
+                  <button
+                    onClick={() => copiar(mensagem, `Mensagem com ${comLink.length} link${comLink.length === 1 ? '' : 's'} copiada`)}
+                    style={{ ...btnGhost, flex: 1, minWidth: 140 }}
+                  >
+                    Copiar mensagem
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -708,17 +893,40 @@ function ModalCulto({ culto, onClose, onSaved }) {
       // digitar o número (ou 0) de cada seção.
       const freqLancada = !!culto.frequencia_lancada
         || form.presencial_adulto !== '' || (hasKids && form.presencial_kids !== '');
+      // ⚠️ O online saiu daqui junto: ele não é mais LANÇADO por ninguém, é
+      // contado pelo formulário. Mantê-lo na condição faria um culto parecer
+      // "decisões lançadas" só porque o campo (agora somente leitura) tinha
+      // número vindo do trigger.
       const decisoesLancadas = !!culto.decisoes_lancadas
         || form.decisoes_presenciais !== ''
-        || (hasOnline && form.decisoes_online !== '')
         || (hasKids && form.decisoes_kids !== '');
 
+      // Campo que o tipo não usa é OMITIDO, não zerado (docs/cultos-domingo/ ·
+      // F1): zerar apagaria o que o totem Kids consolidou se a config do tipo
+      // estiver errada/incompleta (ex.: tipo novo antes de ligar has_kids no
+      // banco — o corte de 24/08 cria o "Domingo 09:30" por SQL). Omitir = o
+      // UPDATE não toca a coluna.
       const payload = {
         presencial_adulto:    Number(form.presencial_adulto) || 0,
-        presencial_kids:      hasKids ? (Number(form.presencial_kids) || 0) : 0,
         decisoes_presenciais: Number(form.decisoes_presenciais) || 0,
-        decisoes_online:      hasOnline ? (Number(form.decisoes_online) || 0) : 0,
-        decisoes_kids:        hasKids ? (Number(form.decisoes_kids) || 0) : 0,
+        ...(hasKids ? {
+          presencial_kids: Number(form.presencial_kids) || 0,
+          decisoes_kids:   Number(form.decisoes_kids) || 0,
+        } : {}),
+        // ⚠️⚠️ `decisoes_online` NÃO VAI NO PAYLOAD — decisão do Matheus em
+        // 27/08/2026: "no dashboard semanal, vai contabilizar apenas as pessoas
+        // que preencheram o formulário".
+        //
+        // Quem escreve essa coluna agora é o TRIGGER
+        // `fn_cultos_dec_online_form_incrementa`, que soma +1 a cada decisão
+        // registrada em cbrio.org/decisao (o QR do apelo). Mandá-la daqui
+        // SOBRESCREVERIA a contagem: o modal carrega "3", alguém preenche o
+        // formulário durante o culto e vira 5, a pessoa salva a frequência e o
+        // número volta pra 3 — perda silenciosa, no meio do culto.
+        //
+        // ⚠️ Omitir é diferente de zerar: o UPDATE simplesmente não toca a
+        // coluna (a mesma técnica que o campo do tipo que não usa Kids já
+        // usava, por causa do totem).
         observacoes:          (form.observacoes ?? '').trim() || null,
         frequencia_lancada:   freqLancada,
         decisoes_lancadas:    decisoesLancadas,
@@ -790,8 +998,19 @@ function ModalCulto({ culto, onClose, onSaved }) {
                   <input type="number" min="0" value={form.decisoes_presenciais} onChange={e => set('decisoes_presenciais', e.target.value)} style={inp} />
                 </Field>
                 {hasOnline && (
-                  <Field label="Online">
-                    <input type="number" min="0" value={form.decisoes_online} onChange={e => set('decisoes_online', e.target.value)} style={inp} />
+                  /* ⚠️ SOMENTE LEITURA · o online passou a ser CONTADO, não
+                     lançado: cada pessoa que preenche cbrio.org/decisao (o QR
+                     do apelo) soma 1 aqui, por trigger. Campo editável aqui
+                     sobrescreveria a contagem com o valor que estava na tela
+                     quando o modal abriu. */
+                  <Field label="Online (do formulário)">
+                    <input
+                      type="number"
+                      value={form.decisoes_online}
+                      readOnly
+                      title="Contado automaticamente por quem preenche cbrio.org/decisao"
+                      style={{ ...inp, opacity: 0.7, cursor: 'not-allowed' }}
+                    />
                   </Field>
                 )}
                 {hasKids && (
@@ -799,9 +1018,18 @@ function ModalCulto({ culto, onClose, onSaved }) {
                     <input type="number" min="0" value={form.decisoes_kids} onChange={e => set('decisoes_kids', e.target.value)} style={inp} />
                   </Field>
                 )}
+                {/* Sem isto, "por que não consigo digitar?" vira chamado. */}
               </div>
             );
           })()}
+          {hasOnline && (
+            <p style={{ fontSize: 11, color: C.t3, marginTop: -4, marginBottom: 12, lineHeight: 1.5 }}>
+              O número de <strong>decisões online</strong> é contado sozinho: soma 1 a cada
+              pessoa que preenche o formulário do QR do apelo (cbrio.org/decisao). Por isso
+              o campo não é editável — e por isso ele reflete pessoas com nome e contato,
+              não uma estimativa.
+            </p>
+          )}
 
           {/* Dados individuais das pessoas que decidiram */}
           <DecisoesPessoasSection

@@ -7,7 +7,7 @@ const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const {
   normalizarCpf, normalizarTelefone, normalizarEmail, nomesMesmaPessoa,
-  acharMembroGuardado, acharOuCriarGuardado,
+  acharMembroGuardado, acharOuCriarGuardado, registrarContatoDaPorta,
 } = require('../services/membroMatch');
 const {
   verificarToken, notificarLiderNovoPedido, formatarQuando, formatarOnde,
@@ -22,9 +22,18 @@ const {
   validarCamposPadrao, // régua única dos campos padrão (usada no bloco do cônjuge)
   tirarCodigoPaisTelefone, // "+55 21 9..." colado do contato não pode comer o DDD
 } = require('../services/inscricaoContrato');
+// "Dá pra falar com essa pessoa?" — telefone estrangeiro/errado manda o líder
+// pro e-mail (varredura do lançamento 02/08 · services/contatoPessoa.js).
+const { contatoParaLider } = require('../services/contatoPessoa');
 const { requireCron } = require('../utils/cronAuth');
 // Régua ÚNICA de busca (acento/caixa/espaço) · espelho de src/lib/busca.js.
 const { normalizarBusca, contemNormalizado, algumContemNormalizado } = require('../services/busca');
+// Guarda de UUID no GET /:id (deep-link ?grupo=<id> do QR/mapa/bookmark antigo):
+// sem ela, um id malformado (bot, link velho, "undefined") faz o Postgres recusar
+// `.eq('id', ...)` com 22P02 e a rota devolvia 500 — mesma lição já registrada
+// pro /:id de Propostas (CLAUDE.md). Aqui vira 404 "Grupo não encontrado", que já
+// é a resposta padrão deste handler pra id inexistente.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ── Rate limit dedicado do totem de inscrição de grupos ──
 // O formulário roda num navegador quiosque no lounge (1 IP) e, num domingo
@@ -107,6 +116,65 @@ function nomeComApelido(nome, apelido) {
   return apelido ? `${nome} (${apelido})` : nome;
 }
 
+// Régua ÚNICA de montagem das listas de líderes de um grupo (principal do
+// mem_grupos.lider_id + líderes ADICIONAIS do roster · Natasha 20/08: TODOS os
+// líderes aparecem no cartão e acham o grupo na busca). Usada pelo /buscar e
+// pelo GET /:id (deep-link ?grupo= do QR/mapa) — duplicar era o que fazia o
+// deep-link mostrar só o principal.
+// lideres_nomes / lider_nome = SÓ nomes reais (é o que a equipe cadastrou).
+// lideres_exibicao = "Nome (Apelido)" · lideres_busca = nomes + apelidos.
+function montarListaLideres({ principalNome, principalId, roster = [], apelidos = {} }) {
+  const lideresNomes = [];
+  const lideresExibicao = [];
+  const lideresBusca = [];
+  const addLider = (nome, membroId) => {
+    if (!nome || lideresNomes.includes(nome)) return;
+    const ap = membroId ? (apelidos[membroId] || null) : null;
+    lideresNomes.push(nome);
+    lideresExibicao.push(nomeComApelido(nome, ap));
+    lideresBusca.push(nome);
+    if (ap) lideresBusca.push(ap);
+  };
+  addLider(principalNome, principalId);
+  roster.forEach(r => addLider(r.nome, r.membro_id));
+  return {
+    lideres_nomes: lideresNomes,
+    lideres_exibicao: lideresExibicao,
+    lideres_busca: [...new Set(lideresBusca)],
+  };
+}
+
+// Líderes do roster de UM grupo (funcao `lider` · vínculo vivo).
+//
+// ⚠️⚠️ `lider_treinamento` NÃO entra na VITRINE, e é decisão (25/08/2026): ele
+// GERENCIA o grupo no app, mas não é anunciado como líder na página pública de
+// inscrição nem no mapa — quem está em treinamento não é a face do grupo para
+// quem procura de fora. `co_lider` saiu porque o termo foi aposentado.
+// ⚠️ Se um dia a vitrine tiver que incluir treinamento, é decisão de produto:
+// NÃO alinhar por engano com a lista de GESTÃO do `gruposPapelApp`, que é mais
+// larga de propósito.
+// Best-effort: falha aqui não pode derrubar o deep-link — devolve [] e o
+// grupo fica só com o principal (comportamento anterior).
+async function rosterLideresDoGrupo(grupoId) {
+  try {
+    const { data, error } = await supabase.from('mem_grupo_membros')
+      .select('membro_id, mem_membros!inner(nome)')
+      .eq('grupo_id', grupoId)
+      .in('funcao', ['lider'])
+      .is('saiu_em', null).is('deleted_at', null);
+    if (error) {
+      console.warn('[public grupos] roster de líderes indisponível:', error.message);
+      return [];
+    }
+    return (data || [])
+      .filter(v => v.mem_membros?.nome)
+      .map(v => ({ nome: v.mem_membros.nome, membro_id: v.membro_id || null }));
+  } catch (e) {
+    console.warn('[public grupos] roster de líderes falhou:', e.message);
+    return [];
+  }
+}
+
 // GET /api/public/grupos/temporadas
 router.get('/temporadas', async (req, res) => {
   try {
@@ -115,38 +183,81 @@ router.get('/temporadas', async (req, res) => {
   } catch { res.status(500).json({ error: 'Erro' }); }
 });
 
+// Régua ÚNICA de "grupo aberto pra inscrição" — form público (/buscar) E app
+// mobile (/app-inscricao · auditoria do app 03/08, item 1). Mudou a regra?
+// Muda AQUI, nunca numa cópia: era uma régua duplicada (o app lia mem_grupos
+// cru + a tabela paralela app_grupos_temporada) que fazia o app listar grupo
+// fechado e dizer "temporada fechada" com a temporada aberta.
+async function buscarGruposInscriveis({ categoria, bairro, temporada } = {}) {
+  let query = supabase.from('mem_grupos')
+    .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, modo_inscricao')
+    .eq('ativo', true)
+    .is('deleted_at', null) // soft-deletado some do form (a temporada aberta não o esconde)
+    .eq('aceitando_inscricoes', true) // líder pode ter parado de receber pedidos
+    .neq('modo_inscricao', 'fechado'); // por convite do líder — nunca aparece
+  // Por padrão mostra so grupos com status que aceitam novos (ativo + novo + a_confirmar)
+  query = query.in('status_temporada', ['ativo', 'novo', 'a_confirmar']);
+  if (categoria) query = query.eq('categoria', categoria);
+  if (bairro) query = query.eq('bairro', bairro);
+  if (temporada) query = query.eq('temporada', temporada);
+  query = query.order('nome');
+
+  const { data: gruposCrus, error } = await query;
+  if (error) throw error;
+
+  // Visibilidade por modo (Marcos · 15/07): 'temporada' aparece só com as
+  // inscrições da temporada abertas; 'sempre_aberto' aparece o ano todo.
+  const { data: temporadasAll } = await supabase.from('mem_temporadas')
+    .select('id, label, ano, numero, inscricoes_abertas');
+  const abertas = new Set((temporadasAll || []).filter(t => t.inscricoes_abertas).map(t => t.id));
+  const grupos = (gruposCrus || []).filter(g =>
+    g.modo_inscricao === 'sempre_aberto'
+    || (g.modo_inscricao !== 'fechado' && (!g.temporada || abertas.has(g.temporada))));
+  return { grupos, temporadas: temporadasAll || [] };
+}
+
+// GET /api/public/grupos/app-inscricao — fonte ÚNICA da tela de inscrição do
+// APP mobile. Substitui a leitura da tabela paralela `app_grupos_temporada`
+// (2 camadas pro mesmo fato: nenhuma tela do web escrevia nela, e o app dizia
+// "temporada fechada" com a T2 aberta). `aberta` deriva da LISTA — grupo
+// sempre_aberto mantém a inscrição possível mesmo fora de temporada.
+// ⚠️ Declarada ANTES de GET /:id (senão o Express casa como id).
+router.get('/app-inscricao', async (_req, res) => {
+  try {
+    const { grupos, temporadas } = await buscarGruposInscriveis();
+    const atual = temporadas
+      .filter(t => t.inscricoes_abertas)
+      .sort((a, b) => (b.ano - a.ano) || (b.numero - a.numero))[0] || null;
+    res.json({
+      aberta: grupos.length > 0,
+      titulo: atual?.label || null,
+      grupos: grupos.map(g => ({
+        id: g.id,
+        codigo: g.codigo,
+        nome: g.nome,
+        categoria: g.categoria,
+        bairro: g.bairro,
+        dia_semana: g.dia_semana,
+        horario: g.horario,
+        recorrencia: g.recorrencia,
+        modo_inscricao: g.modo_inscricao,
+      })),
+    });
+  } catch (e) {
+    console.error('[public grupos app-inscricao]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar grupos' });
+  }
+});
+
 // GET /api/public/grupos/buscar
 router.get('/buscar', async (req, res) => {
   try {
     const { lider_nome, categoria, bairro, cep, raio_km, temporada, q } = req.query;
-
-    let query = supabase.from('mem_grupos')
-      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, modo_inscricao')
-      .eq('ativo', true)
-      .is('deleted_at', null) // soft-deletado some do form (a temporada aberta não o esconde)
-      .eq('aceitando_inscricoes', true) // líder pode ter parado de receber pedidos
-      .neq('modo_inscricao', 'fechado'); // por convite do líder — nunca aparece
-    // Por padrão mostra so grupos com status que aceitam novos (ativo + novo + a_confirmar)
-    query = query.in('status_temporada', ['ativo', 'novo', 'a_confirmar']);
-    if (categoria) query = query.eq('categoria', categoria);
-    if (bairro) query = query.eq('bairro', bairro);
-    if (temporada) query = query.eq('temporada', temporada);
-    query = query.order('nome');
-
-    const { data: gruposCrus, error } = await query;
-    if (error) throw error;
-
-    // Visibilidade por modo (Marcos · 15/07): 'temporada' aparece só com as
-    // inscrições da temporada abertas; 'sempre_aberto' aparece o ano todo.
-    const { data: temporadasAll } = await supabase.from('mem_temporadas').select('id, inscricoes_abertas');
-    const abertas = new Set((temporadasAll || []).filter(t => t.inscricoes_abertas).map(t => t.id));
-    const grupos = (gruposCrus || []).filter(g =>
-      g.modo_inscricao === 'sempre_aberto'
-      || (g.modo_inscricao !== 'fechado' && (!g.temporada || abertas.has(g.temporada))));
+    const { grupos } = await buscarGruposInscriveis({ categoria, bairro, temporada });
 
     // Enriquecer com líder principal (mem_grupos.lider_id — é quem recebe a
     // aprovação por WhatsApp) + líderes ADICIONAIS do roster (funcao lider/
-    // co_lider · Marcos 15/07: grupo com dois líderes aparece na busca por
+    // Marcos 15/07: grupo com dois líderes aparece na busca por
     // QUALQUER um deles).
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     let lideresMap = {};
@@ -160,7 +271,7 @@ router.get('/buscar', async (req, res) => {
       const { data: rl } = await supabase.from('mem_grupo_membros')
         .select('grupo_id, membro_id, mem_membros!inner(nome)')
         .in('grupo_id', gIds.slice(i, i + 200))
-        .in('funcao', ['lider', 'co_lider'])
+        .in('funcao', ['lider'])
         .is('saiu_em', null).is('deleted_at', null);
       (rl || []).forEach(v => {
         if (!v.mem_membros?.nome) return;
@@ -178,29 +289,17 @@ router.get('/buscar', async (req, res) => {
 
     let resultado = (grupos || []).map(g => {
       const principal = lideresMap[g.lider_id]?.nome || null;
-      // lideres_nomes / lider_nome = SÓ nomes reais (é o que a equipe cadastrou).
-      // lideres_exibicao = "Nome (Apelido)" · lideres_busca = nomes + apelidos.
-      const lideresNomes = [];
-      const lideresExibicao = [];
-      const lideresBusca = [];
-      const addLider = (nome, membroId) => {
-        if (!nome || lideresNomes.includes(nome)) return;
-        const ap = membroId ? (apelidos[membroId] || null) : null;
-        lideresNomes.push(nome);
-        lideresExibicao.push(nomeComApelido(nome, ap));
-        lideresBusca.push(nome);
-        if (ap) lideresBusca.push(ap);
-      };
-      addLider(principal, g.lider_id);
-      (rosterLideres[g.id] || []).forEach(r => addLider(r.nome, r.membro_id));
       return {
         ...g,
         lider_nome: principal,
         lider_apelido: g.lider_id ? (apelidos[g.lider_id] || null) : null,
         lider_foto: lideresMap[g.lider_id]?.foto_url || null,
-        lideres_nomes: lideresNomes,
-        lideres_exibicao: lideresExibicao,
-        lideres_busca: [...new Set(lideresBusca)],
+        ...montarListaLideres({
+          principalNome: principal,
+          principalId: g.lider_id,
+          roster: rosterLideres[g.id] || [],
+          apelidos,
+        }),
       };
     });
 
@@ -291,6 +390,7 @@ router.get('/lideres/buscar', async (req, res) => {
 // GET /api/public/grupos/:id — usado pelo formulário público
 // quando o link vem com ?grupo=<id> (ex.: clique no mapa).
 router.get('/:id', async (req, res) => {
+  if (!UUID_RE.test(req.params.id)) return res.status(404).json({ error: 'Grupo não encontrado' });
   try {
     const { data: grupo, error } = await supabase
       .from('mem_grupos')
@@ -303,23 +403,30 @@ router.get('/:id', async (req, res) => {
 
     let lider_nome = null;
     let lider_foto = null;
-    let lider_apelido = null;
     if (grupo.lider_id) {
       const { data: lider } = await supabase.from('mem_membros').select('nome, foto_url').eq('id', grupo.lider_id).maybeSingle();
       if (lider) { lider_nome = lider.nome; lider_foto = lider.foto_url; }
-      // Apelido isolado/best-effort (deep-link ?grupo=<id> não pode quebrar se a
-      // coluna ainda não existir).
-      const ap = await buscarApelidos([grupo.lider_id]);
-      lider_apelido = ap[grupo.lider_id] || null;
     }
+    // Líderes ADICIONAIS do roster também no deep-link (?grupo=<id> do QR/mapa):
+    // sem isso, quem chegava por QR via só o principal enquanto a busca mostrava
+    // todos (Natasha 20/08 · grupo da Ana Paula tem 2 líderes). Roster e apelido
+    // são best-effort — falha degrada pro principal, nunca quebra a página.
+    const roster = await rosterLideresDoGrupo(grupo.id);
+    // Apelido isolado/best-effort (deep-link ?grupo=<id> não pode quebrar se a
+    // coluna ainda não existir).
+    const apelidos = await buscarApelidos([grupo.lider_id, ...roster.map(r => r.membro_id)]);
+    const lider_apelido = grupo.lider_id ? (apelidos[grupo.lider_id] || null) : null;
     res.json({
       ...grupo,
       lider_nome,
       lider_apelido,
       lider_foto,
-      lideres_nomes: lider_nome ? [lider_nome] : [],
-      lideres_exibicao: lider_nome ? [nomeComApelido(lider_nome, lider_apelido)] : [],
-      lideres_busca: [lider_nome, lider_apelido].filter(Boolean),
+      ...montarListaLideres({
+        principalNome: lider_nome,
+        principalId: grupo.lider_id,
+        roster,
+        apelidos,
+      }),
     });
   } catch (e) {
     console.error('[public grupos getById]', e.message);
@@ -351,6 +458,8 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
 
 // ── Inscrição publica em grupo (POST sem auth) ──
 const { notificar } = require('../services/notificar');
+const { donosDoGrupo } = require('../services/gruposDestinatarios');
+const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
 
@@ -558,19 +667,54 @@ async function processarPessoaPedido({ grupo, pessoa = {}, contexto = {}, princi
   );
   const membroId = achado?.membro_id || null;
 
-  // Já é membro: aproveita foto, sexo e data de nascimento declarados quando
-  // o cadastro ainda não os tem (enriquecimento só-onde-vazio — nunca
-  // sobrescreve o que existe). Roda ANTES do dedup de propósito: a RENOVAÇÃO
-  // (caso dominante da virada de temporada) respondia cedo e jogava fora o
-  // que a pessoa acabou de declarar (achado do sweep 28/07).
-  if (membroId && (fotoUrl || generoLimpo || dataNascimento)) {
-    const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero, data_nascimento').eq('id', membroId).maybeSingle();
+  // Já é membro: aproveita foto, sexo, data de nascimento, e-mail e telefone
+  // declarados quando o cadastro ainda não os tem (enriquecimento só-onde-vazio
+  // — nunca sobrescreve o que existe; política do censo, 03/08). Contato
+  // DIVERGENTE do principal não é conflito nem sobrescreve: acumula em
+  // mem_contatos (Contrato de porta, item 3). Roda ANTES do dedup de propósito:
+  // a RENOVAÇÃO (caso dominante da virada de temporada) respondia cedo e jogava
+  // fora o que a pessoa acabou de declarar (achado do sweep 28/07).
+  if (membroId) {
+    const { data: mem } = await supabase.from('mem_membros')
+      .select('foto_url, genero, data_nascimento, email, telefone').eq('id', membroId).maybeSingle();
     if (mem) {
       const upd = {};
       if (fotoUrl && !mem.foto_url) upd.foto_url = fotoUrl;
       if (generoLimpo && !mem.genero) upd.genero = generoLimpo;
       if (dataNascimento && !mem.data_nascimento) upd.data_nascimento = dataNascimento;
+      if (emailLimpo && !mem.email) upd.email = emailLimpo;
+      const telAtual = soDigitos(mem.telefone);
+      if (telDigitos && [10, 11].includes(telDigitos.length) && !telAtual) upd.telefone = telDigitos;
       if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
+      // Divergente → contato secundário (mem_contatos), nunca o principal.
+      const emailDiverge = emailLimpo && mem.email && String(mem.email).trim().toLowerCase() !== emailLimpo;
+      const telDiverge = telDigitos && telAtual && telAtual !== telDigitos;
+      if (emailDiverge || telDiverge) {
+        registrarContatoDaPorta(membroId, {
+          telefone: telDiverge ? telDigitos : null,
+          email: emailDiverge ? emailLimpo : null,
+        }, 'grupos_formulario');
+      }
+    }
+    // CPF tardio (Contrato de porta, item 4 · mesma correção do censo em 04/08):
+    // o CPF digitado no formulário consolida no cadastro que o matcher ligou.
+    // Confiança espelha _consolidarCpfNoMatch (membroMatch): match por
+    // nome+nascimento = 'forte'; e-mail/telefone+nome = 'fraca' (o
+    // reconciliarCpfTardio só grava com nascimento conferível dos 2 lados —
+    // que o enriquecimento acima acabou de preencher quando estava vazio).
+    // Nascimento divergente ou CPF de outra pessoa vira identidade_pendencias
+    // (fila humana), nunca fusão. Best-effort: falha aqui não derruba a porta.
+    if (cpfLimpo && achado?.matched_by !== 'cpf') {
+      try {
+        const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
+        await reconciliarCpfTardio({
+          membroId, cpf: cpfLimpo, origem: 'grupos_formulario',
+          dataNascimento,
+          confianca: achado?.matched_by === 'nome+nascimento' ? 'forte' : 'fraca',
+        });
+      } catch (e) {
+        console.warn('[public grupos inscrever] cpf tardio:', e.message);
+      }
     }
   }
 
@@ -873,14 +1017,27 @@ router.post('/inscrever', async (req, res) => {
     if (!grupo || !grupo.ativo) {
       return res.status(404).json({ error: 'Grupo não encontrado ou inativo.' });
     }
-    // Grupo por convite do líder (Marcos · 15/07): nunca aceita inscrição
-    // pública — não aparece no form, e um deep-link antigo cai aqui.
-    if (grupo.modo_inscricao === 'fechado') {
-      return res.status(403).json({
-        error: 'Este grupo é por convite do líder — fale com ele para participar.',
-        codigo: 'inscricoes_fechadas',
-      });
-    }
+    // ⚠️⚠️ 'fechado' NÃO BLOQUEIA MAIS A INSCRIÇÃO POR LINK (Marcos · 11/08/2026)
+    //
+    // A regra de 15/07 era "nunca aceita inscrição pública". Ela criava um beco:
+    // a própria mensagem mandava "fale com ele para participar", e o líder **não
+    // tinha como** trazer ninguém — o app agora gera o link do grupo (apontamento
+    // 2), e nesses grupos ele caía aqui em 403.
+    //
+    // Palavras dele: *"libera o link direto para os grupos por convite também,
+    // mesmo fechados. eles não devem ser achados na lista de grupos públicos,
+    // mas se o líder quiser convidar alguém, deve poder."*
+    //
+    // ⚠️ O QUE MANTÉM ISSO SEGURO, e foi conferido antes de mudar:
+    //  1. grupo 'fechado' **continua fora de toda lista pública** — `:132` (form
+    //     do site) e `:386` (`/buscar`, que alimenta o app) filtram com `.neq`.
+    //     Só chega quem recebeu o link do líder: o UUID não é adivinhável.
+    //  2. a inscrição **não vincula ninguém** — cria `mem_grupo_pedidos` com
+    //     status 'pendente' (`:808`), e o líder continua aprovando um a um.
+    // ⇒ ter o link é o convite; a aprovação segue sendo do líder.
+    //
+    // ⚠️ Se um dia for preciso barrar link VAZADO, o caminho é expirar/assinar o
+    // convite — não voltar o 403, que barra junto o convite legítimo.
     if (grupo.aceitando_inscricoes === false) {
       return res.status(403).json({
         error: 'Este grupo não está recebendo novas inscrições no momento.',
@@ -901,6 +1058,21 @@ router.post('/inscrever', async (req, res) => {
       }
     }
 
+    // ⚠️⚠️ ESTAS TRAVAS FORAM EXTRAÍDAS PRA `utils/entradaGrupoApp.js` (10/08/2026)
+    // O app tinha porta PRÓPRIA (`POST /api/app/inscricoes`) que não validava
+    // NADA — nem gênero, nem `ativo`, nem `aceitando_inscricoes`, nem
+    // `fechado`, nem temporada. A régua virou função pura testada (37
+    // asserções) e o app já usa dela.
+    // ⚠️ ESTE ARQUIVO AINDA TEM A CÓPIA, de propósito: ele é a porta pública
+    // principal (462 dos 463 pedidos) e trocar aqui no mesmo PR somaria risco.
+    // **AS DUAS TÊM QUE CONCORDAR.** Mudou uma, mude a outra — ou, melhor,
+    // troque este bloco pela chamada de `avaliarEntradaNoGrupo` quando houver
+    // uma janela pra testar o formulário público com calma.
+    // ⚠️ Uma diferença é DE PROPÓSITO: aqui o sexo é campo OBRIGATÓRIO do
+    // formulário (400 acima), então o caso "sexo desconhecido" não existe. No
+    // app ele existe (só 16 de 54 contas têm `genero`) e devolve
+    // `codigo='sexo_necessario'`, que pede pra completar o perfil.
+    //
     // ── Trava de compatibilidade (Marcos · 2026-07-14: SÓ GÊNERO bloqueia) ──
     // Gênero: categoria Homens/Mulheres não aceita o sexo oposto — única trava.
     // Idade fora da faixa, vários grupos ao mesmo tempo e grupos no mesmo
@@ -1025,7 +1197,15 @@ router.post('/inscrever', async (req, res) => {
         // 29/07) manda LIGAR pra pessoa antes de aceitar, então o número é o
         // dado que ele usa na mão — "(21) 99999-8888" lê e disca melhor que
         // "21999998888". O que gravamos no banco segue digits-only.
-        const contatoDe = (p) => [telefoneExibicao(p.telefone), p.email].filter(Boolean).join(' · ') || 'sem contato';
+        // Telefone que o nosso envio não alcança (estrangeiro, DDD inexistente)
+        // vira "procure por e-mail" em vez de um número que não existe — senão
+        // o líder tenta ligar, não consegue, e conclui que a pessoa desistiu.
+        // Decisão do Marcos 03/08, depois do caso do número suíço no lançamento.
+        const contatoDe = (p) => contatoParaLider({
+          telefone: p.telefone,
+          email: p.email,
+          telefoneExibicao: telefoneExibicao(p.telefone),
+        });
         await notificarLiderNovoPedido({
           grupo,
           pedidoId: criados[0].pedidoId,
@@ -1057,18 +1237,32 @@ router.post('/inscrever', async (req, res) => {
         }
       } catch (err) { console.error('[public grupos inscrever wpp]', err.message); }
 
-      // Notificação in-app da coordenação: fica fire-and-forget de propósito.
-      // Sem regra configurada em notificacao_regras, o fallback escreve pra ~16
-      // admins (1 count + 1 insert cada) — não vale segurar a resposta da pessoa
-      // por isso, e a coordenação tem a Caixa de entrada como caminho garantido.
+      // Notificação in-app de quem RESPONDE POR ESTE GRUPO (líder + supervisor),
+      // fire-and-forget de propósito — não vale segurar a resposta da pessoa que
+      // está preenchendo o formulário.
+      // ⚠️ Era aqui que estava o comentário admitindo o problema: "sem regra
+      // configurada em notificacao_regras, o fallback escreve pra ~16 admins".
+      // Agora não escreve: sem dono com conta de sistema o aviso não sai, porque
+      // o líder já recebe o link do WhatsApp e a coordenação vê no resumo diário.
+      // ⚠️⚠️ AWAITED, e só esta perna: o sino do app é o canal do líder que só
+      // tem o app do membro (74 dos 89 líderes não têm conta de sistema), e em
+      // serverless o container CONGELA na resposta — fire-and-forget aqui é
+      // aviso perdido (a lei de 31/07, que já custou o aviso da líder Jane).
+      // `avisarPedidoNovoNoApp` nunca lança, então o await não arrisca a
+      // resposta de quem está preenchendo o formulário.
+      try {
+        await avisarPedidoNovoNoApp({
+          grupoId: grupo.id,
+          pedidoId: criados[0].pedidoId,
+          grupoNome: grupo.nome,
+          pessoaNome: nomes,
+        });
+      } catch (err) { console.warn('[public grupos] aviso app:', err.message); }
+
       (async () => {
         try {
-          let liderAuthUserId = null;
-          if (grupo.lider_id) {
-            const { data: liderProf } = await supabase.from('vol_profiles')
-              .select('auth_user_id').eq('membresia_id', grupo.lider_id).maybeSingle();
-            liderAuthUserId = liderProf?.auth_user_id || null;
-          }
+          const donos = await donosDoGrupo(grupo.id);
+          if (!donos.length) return;
           await notificar({
             modulo: 'grupos',
             tipo: 'pedido_grupo',
@@ -1079,7 +1273,7 @@ router.post('/inscrever', async (req, res) => {
             link: '/grupos',
             severidade: 'aviso',
             chaveDedup: `pedido_grupo_${criados[0].pedidoId}`,
-            extraTargetIds: liderAuthUserId ? [liderAuthUserId] : [],
+            targetIds: donos,
           });
         } catch (err) { console.error('[public grupos inscrever notify]', err.message); }
       })();
@@ -1339,8 +1533,13 @@ router.post('/inscrever-lider', async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // F3 · aprovação pelo líder via link do WhatsApp (sem login).
-// Token HMAC assinado (services/gruposWhatsapp) dá acesso a UM pedido e
-// expira em 7 dias. Fail-closed: sem CRON_SECRET nenhum token valida.
+// Token HMAC assinado (services/gruposWhatsapp) dá acesso a UM pedido, com TTL
+// de 30 dias (era 7 · Natasha 12/08/2026) e, passado o TTL, validade enquanto
+// a TEMPORADA estiver aberta (Pr. Nélio + Natasha · 17/08/2026 · ver
+// `haTemporadaAberta` abaixo). Fail-closed: sem CRON_SECRET nenhum token
+// valida. ⚠️ O TTL é a 2ª camada: quem manda são as travas daqui — pedido ainda
+// 'pendente' e `payload.l` = líder ATUAL do grupo. É por isso que o link
+// vencido pode ser aceito sem abrir buraco de segurança.
 // Rota com 2 segmentos de propósito — o GET /:id (acima) captura qualquer
 // caminho de 1 segmento.
 // ─────────────────────────────────────────────────────────────
@@ -1373,11 +1572,41 @@ async function carregarParCasal(pedido) {
   return par;
 }
 
+// ⚠️ O link de aprovação fica ativo ENQUANTO A TEMPORADA ESTIVER ABERTA
+// (Pr. Nélio + Natasha · 17/08/2026 — substituiu a data fixa de 31/08 que
+// vigorou por 5 dias). O TTL de 30 dias do token é o piso; passado ele, quem
+// diz se o link ainda vale é esta consulta.
+//
+// ⚠️ FAIL-CLOSED nos dois sentidos que importam: sem temporada aberta não
+// prorroga (é o "enquanto estiver aberta"), e ERRO de consulta também não
+// prorroga — link vencido tem que provar que ainda vale, não o contrário.
+// Erro NÃO derruba o endpoint: o link dentro dos 30 dias segue abrindo normal,
+// que é o caminho de 100% do tráfego recente.
+//
+// Cache curto porque isto roda a cada abertura de link e a resposta muda no
+// máximo quando a coordenação fecha a temporada — 60s de defasagem ali é
+// irrelevante e evita uma consulta por clique.
+let _tempAbertaCache = { em: 0, valor: false };
+async function haTemporadaAberta() {
+  if (Date.now() - _tempAbertaCache.em < 60_000) return _tempAbertaCache.valor;
+  try {
+    const { data, error } = await supabase.from('mem_temporadas')
+      .select('id').eq('inscricoes_abertas', true).limit(1);
+    if (error) throw error;
+    _tempAbertaCache = { em: Date.now(), valor: !!(data && data.length) };
+  } catch (e) {
+    console.error('[public grupos temporada-aberta]', e.message);
+    return false; // fail-closed: na dúvida, não prorroga
+  }
+  return _tempAbertaCache.valor;
+}
+
 // GET /api/public/grupos/pedido/por-token?token=...
 // Dados que o líder vê na página de aprovação (o token É a credencial).
 router.get('/pedido/por-token', async (req, res) => {
   try {
-    const payload = verificarToken(req.query.token, 'aprov');
+    const payload = verificarToken(req.query.token, 'aprov', Date.now(),
+      { aceitarExpirado: await haTemporadaAberta() });
     if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado. Você ainda pode aprovar pelo sistema em /grupos.' });
 
     const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos')
@@ -1430,9 +1659,16 @@ router.get('/pedido/por-token', async (req, res) => {
 router.post('/aprovar', async (req, res) => {
   try {
     const { token, acao, motivo } = req.body || {};
-    const payload = verificarToken(token, 'aprov');
+    // Mesma régua do GET: vencido só passa com a temporada aberta (ver
+    // `haTemporadaAberta`). Tem que ser a MESMA nos dois — se o GET abrisse a
+    // página e o POST recusasse, o líder decidiria e levaria erro na cara.
+    const payload = verificarToken(token, 'aprov', Date.now(),
+      { aceitarExpirado: await haTemporadaAberta() });
     if (!payload) return res.status(401).json({ error: 'Link inválido ou expirado. Você ainda pode decidir pelo sistema em /grupos.' });
-    if (!['aprovar', 'rejeitar'].includes(acao)) return res.status(400).json({ error: 'Ação inválida.' });
+    // 'sem_contato' (Naná · 17/08): o líder LIGOU e não conseguiu falar. Não é
+    // recusa — vai pra triagem como os devolvidos, mas com desfecho próprio,
+    // que é o que a coordenação precisa distinguir.
+    if (!['aprovar', 'rejeitar', 'sem_contato'].includes(acao)) return res.status(400).json({ error: 'Ação inválida.' });
 
     const { data: pedido, error: ePed } = await supabase.from('mem_grupo_pedidos')
       .select('id, status, grupo_id, membro_id, nome').eq('id', payload.p).is('deleted_at', null).maybeSingle();
@@ -1504,10 +1740,20 @@ router.post('/aprovar', async (req, res) => {
     // TRIAGEM (Naná/Nélio · status 'devolvido') — a equipe, que está acima do
     // líder, sugere outro grupo pra pessoa ou rejeita de vez. A pessoa NÃO é
     // comunicada aqui e o motivo do líder fica interno.
-    // Guarda de corrida: só devolve se AINDA está pendente.
-    const motivoInterno = motivo ? String(motivo).trim().slice(0, 500) : null;
+    //
+    // 'sem_contato' anda pelo MESMO caminho (vai pra triagem, pessoa não é
+    // avisada) e muda só o DESFECHO registrado — o líder tentou e não
+    // conseguiu falar. ⚠️ Não é sinônimo de recusa: tratar como recusa faria a
+    // coordenação ler "o líder não quis a pessoa" onde houve só telefone que
+    // não atendeu, e é justamente essa distinção que a Naná pediu.
+    const semContato = acao === 'sem_contato';
+    const novoStatus = semContato ? 'sem_contato' : 'devolvido';
+    const tipoEvento = semContato ? 'sem_contato_lider' : 'recusado_lider';
+    // No 'sem_contato' o campo de motivo nem é oferecido na tela — o motivo é
+    // o próprio desfecho. Gravar ali um texto de recusa confundiria as duas.
+    const motivoInterno = (!semContato && motivo) ? String(motivo).trim().slice(0, 500) : null;
     const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
-      status: 'devolvido',
+      status: novoStatus,
       motivo_rejeicao: motivoInterno,
       decidido_por: null,
       decidido_por_nome: decididoPorNome,
@@ -1517,7 +1763,7 @@ router.post('/aprovar', async (req, res) => {
       return res.status(409).json({ error: 'Este pedido já foi decidido.', status: 'decidido' });
     }
 
-    registrarEventoPedido(pedido.id, 'recusado_lider', { motivo_interno: motivoInterno }, decididoPorNome);
+    registrarEventoPedido(pedido.id, tipoEvento, { motivo_interno: motivoInterno }, decididoPorNome);
 
     // Casal: a recusa devolve os DOIS pra triagem (a equipe cuida do casal
     // junto — separar o casal na triagem seria o oposto do pedido). Guarda de
@@ -1526,15 +1772,15 @@ router.post('/aprovar', async (req, res) => {
     if (par) {
       if (par.status === 'pendente') {
         const { data: parClaimed } = await supabase.from('mem_grupo_pedidos').update({
-          status: 'devolvido',
+          status: novoStatus,
           motivo_rejeicao: motivoInterno,
           decidido_por: null,
           decidido_por_nome: decididoPorNome,
           decidido_em: new Date().toISOString(),
         }).eq('id', par.id).eq('status', 'pendente').select('id');
         if (parClaimed && parClaimed.length) {
-          registrarEventoPedido(par.id, 'recusado_lider', { motivo_interno: motivoInterno, casal: true }, decididoPorNome);
-          casal = { nome: par.nome, ok: true, status: 'devolvido' };
+          registrarEventoPedido(par.id, tipoEvento, { motivo_interno: motivoInterno, casal: true }, decididoPorNome);
+          casal = { nome: par.nome, ok: true, status: novoStatus };
         } else {
           casal = { nome: par.nome, ok: false, status: 'decidido' };
         }
@@ -1544,22 +1790,31 @@ router.post('/aprovar', async (req, res) => {
     }
 
     // Avisa a TRIAGEM (módulo grupos) — mesma notificação da recusa autenticada.
+    // ⚠️ O texto diz o que REALMENTE aconteceu: "não conseguiu contato" e
+    // "recusou" pedem ações diferentes da coordenação (tentar por outro canal
+    // × realocar), e um aviso genérico apagaria a distinção logo no lugar onde
+    // ela decide.
     (async () => {
       try {
         const nomesTriagem = casal && casal.ok ? `${pedido.nome} e ${casal.nome} (casal)` : pedido.nome;
+        const alvo = casal && casal.ok ? 'eles' : 'a pessoa';
         await notificar({
           modulo: 'grupos',
-          tipo: 'pedido_devolvido',
-          titulo: `Pedido devolvido pra triagem: ${nomesTriagem}`,
-          mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido${casal && casal.ok ? ' do casal' : ''}${motivoInterno ? ` (motivo interno: ${motivoInterno.slice(0, 200)})` : ''}. Sugira outro grupo pra ${casal && casal.ok ? 'eles' : 'pessoa'} ou rejeite de vez.`,
+          tipo: semContato ? 'pedido_sem_contato' : 'pedido_devolvido',
+          titulo: semContato
+            ? `Sem contato — o líder não conseguiu falar: ${nomesTriagem}`
+            : `Pedido devolvido pra triagem: ${nomesTriagem}`,
+          mensagem: semContato
+            ? `O líder de ${grupo?.nome || 'um grupo'} tentou falar com ${alvo} e não conseguiu. Não é recusa — tente por outro canal ou encerre o pedido.`
+            : `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido${casal && casal.ok ? ' do casal' : ''}${motivoInterno ? ` (motivo interno: ${motivoInterno.slice(0, 200)})` : ''}. Sugira outro grupo pra ${casal && casal.ok ? 'eles' : 'pessoa'} ou rejeite de vez.`,
           link: '/grupos?tab=entrada',
           severidade: 'aviso',
-          chaveDedup: `pedido_devolvido_${pedido.id}`,
+          chaveDedup: `pedido_${semContato ? 'sem_contato' : 'devolvido'}_${pedido.id}`,
         });
       } catch (err) { console.error('[public grupos recusar notify]', err.message); }
     })();
 
-    res.json({ ok: true, acao: 'rejeitado', casal });
+    res.json({ ok: true, acao: semContato ? 'sem_contato' : 'rejeitado', casal });
   } catch (e) {
     console.error('[public grupos aprovar]', e.message);
     res.status(500).json({ error: 'Erro ao processar decisão.' });
@@ -2206,31 +2461,128 @@ async function contextoConferencia(token) {
   return { payload, conf, grupo };
 }
 
-// ⚠️ LIDERANÇA NÃO É REMOVÍVEL por este fluxo. Cenário real: co-líder Ana no
-// roster; o líder desmarca achando que é participante → `saiu_em` gravado → o
-// `GET /public/grupos/buscar` (que monta lideres_busca/lideres_exibicao com
-// `funcao IN ('lider','co_lider')` + `saiu_em IS NULL`) para de devolver a Ana
-// e **o grupo deixa de ser encontrável pelo nome dela** na página pública e no
-// mapa, sem ninguém ser avisado. Trocar liderança é ato de gestão (aba Pessoas
-// do /grupos · PUT /membros/:id/funcao), não efeito colateral de conferir lista.
-const FUNCOES_PROTEGIDAS = new Set(['lider', 'co_lider']);
-const RANK_FUNCAO = { coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, lider_treinamento: 3, frequentador: 2, visitante: 1 };
+// ⚠️ LIDERANÇA NÃO É REMOVÍVEL por este fluxo. Cenário real: líder Ana no
+// roster; o líder principal desmarca achando que é participante → `saiu_em`
+// gravado → o `GET /public/grupos/buscar` (que monta lideres_busca/
+// lideres_exibicao com `funcao='lider'` + `saiu_em IS NULL`) para de devolver a
+// Ana e **o grupo deixa de ser encontrável pelo nome dela** na página pública e
+// no mapa, sem ninguém ser avisado. Trocar liderança é ato de gestão (aba
+// Pessoas do /grupos · PUT /membros/:id/funcao), não efeito colateral de
+// conferir lista.
+// ⚠️⚠️ `lider_treinamento` ENTROU aqui em 25/08/2026 por um motivo DIFERENTE do
+// da vitrine: ele passou a GERENCIAR o grupo (`gruposPapelApp`), e um checklist
+// de conferência não pode tirar do roster quem administra o grupo — o gate de
+// gestão lê o vínculo vivo, então o líder em treinamento perderia o acesso.
+const FUNCOES_PROTEGIDAS = new Set(['lider', 'lider_treinamento']);
+
+// ── 4 categorias da conferência (Marcos · 04/08, fechamento com a Naná) ──
+// lideranca 🔒 · inscrito (entrou NESTA temporada, incluindo o piloto
+// pré-abertura — ver membrosInscritosPreAbertura) 🔒 · renovado (confirmou na
+// renovação) 🔒 · sem_confirmacao (roster herdado · ÚNICO removível pela tela).
+// Inscrito e renovado são somente leitura de propósito: é o que protege a
+// evidência de quem acabou de entrar/renovar. A decisão é SEMPRE re-derivada
+// no SERVIDOR (payload é do cliente).
+
+// Temporada "atual" = a com inscrições abertas (maior ano/numero). Sem
+// temporada aberta, a categoria 'inscrito' simplesmente não existe (a
+// conferência continua funcionando fora de temporada — desenho original).
+async function temporadaAtualInfo() {
+  const { data } = await supabase.from('mem_temporadas')
+    .select('id, label, data_inicio').eq('inscricoes_abertas', true)
+    .order('ano', { ascending: false }).order('numero', { ascending: false }).limit(1);
+  return (data && data[0]) || null;
+}
+
+// Vínculos que vieram da RENOVAÇÃO: a resposta de renovação registra o aceite
+// em inscricao_consentimentos com ref_id = id do VÍNCULO (porta 'grupos') —
+// só aquele fluxo usa vínculo como ref (pedido novo usa ref = pedido.id), então
+// "tem consentimento apontando pro vínculo" = renovou. É a derivação-remendo
+// documentada no handoff (o campo definitivo "confirmado pra temporada X" no
+// vínculo segue como pendência estrutural).
+async function vinculosRenovados(vincIds) {
+  const renovados = new Set();
+  for (let i = 0; i < vincIds.length; i += 150) {
+    const { data, error } = await supabase.from('inscricao_consentimentos')
+      .select('ref_id').eq('porta', 'grupos').in('ref_id', vincIds.slice(i, i + 150));
+    if (error) throw error;
+    (data || []).forEach(r => { if (r.ref_id) renovados.add(r.ref_id); });
+  }
+  return renovados;
+}
+
+// created_at (timestamptz ISO) >= data_inicio (date): comparação de string
+// funciona porque ISO ordena lexicograficamente e o date é prefixo.
+const vincNaTemporada = (createdAt, temporada) =>
+  !!(temporada?.data_inicio && createdAt && String(createdAt) >= temporada.data_inicio);
+
+// Piloto pré-abertura (Marcos · 05/08): pedido APROVADO pouco antes da
+// abertura (piloto de 26-28/07 pra T2 que abriu 01/08) é confirmação tão real
+// quanto a inscrição pós-abertura — sem isto a Nathália (pedido aprovado em
+// 28/07, vínculo de 28/07) caía em "Sem confirmação" removível na tela do
+// líder. Regra: vínculo criado na janela de 30 dias ANTES da data_inicio E
+// com pedido 'aprovado' do MESMO membro no MESMO grupo ⇒ categoria 'inscrito'
+// (travada). Exigir o pedido aprovado é o que separa confirmação real de
+// vínculo antigo de import/gestão manual, que segue 'sem_confirmacao' — e o
+// aprovarPedidoCore SEMPRE grava membro_id no claim, então a chave existe.
+const PRE_ABERTURA_DIAS = 30;
+function inicioJanelaPreAbertura(temporada) {
+  if (!temporada?.data_inicio) return null;
+  // Meio-dia UTC evita o dia escorregar na aritmética (data_inicio é DATE).
+  const d = new Date(`${temporada.data_inicio}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  d.setUTCDate(d.getUTCDate() - PRE_ABERTURA_DIAS);
+  return d.toISOString().slice(0, 10);
+}
+// vincs = linhas do roster ativo ({ membro_id, created_at }). Devolve o Set de
+// membro_id cujo vínculo nasceu na janela pré-abertura E tem pedido aprovado.
+async function membrosInscritosPreAbertura(grupoId, vincs, temporada) {
+  const inscritos = new Set();
+  const desde = inicioJanelaPreAbertura(temporada);
+  if (!desde) return inscritos;
+  const candidatos = [...new Set((vincs || [])
+    .filter(v => v.membro_id && v.created_at
+      && !vincNaTemporada(v.created_at, temporada)
+      && String(v.created_at) >= desde)
+    .map(v => v.membro_id))];
+  for (let i = 0; i < candidatos.length; i += 150) {
+    const { data, error } = await supabase.from('mem_grupo_pedidos')
+      .select('membro_id').eq('grupo_id', grupoId).eq('status', 'aprovado')
+      .is('deleted_at', null).in('membro_id', candidatos.slice(i, i + 150));
+    if (error) throw error;
+    (data || []).forEach(p => { if (p.membro_id) inscritos.add(p.membro_id); });
+  }
+  return inscritos;
+}
+// ⚠️ `co_lider` fica no mapa só como LEITURA de dado histórico: a migration
+// 20260825170000 converteu as linhas, mas ler é tolerante de propósito (um
+// backup restaurado ou uma cópia velha não pode virar `null` na tela).
+const RANK_FUNCAO = { coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, lider_treinamento: 4, frequentador: 2, visitante: 1 };
 const rotuloFuncao = (f) => ({
   coordenador: 'Coordenador', supervisor: 'Supervisor', lider: 'Líder',
-  co_lider: 'Co-líder', lider_treinamento: 'Em treinamento',
+  co_lider: 'Líder em treinamento', lider_treinamento: 'Líder em treinamento',
 }[f] || null);
 
 // Roster pra tela: vínculos ATIVOS (marcados = "faz parte") + os que ESTA
 // conferência removeu (desmarcados · pra reedição). 1 linha por pessoa, com o
 // papel de MAIOR nível entre os vínculos dela no grupo (multi-vínculo é real).
+// Cada linha sai com `categoria` (lideranca/renovado/inscrito/sem_confirmacao)
+// e `travado` (categoria ≠ sem_confirmacao ⇒ a tela não deixa desmarcar; o
+// POST re-deriva e blinda de qualquer jeito).
 async function rosterConferencia(conf) {
-  const linhas = new Map(); // membro_id → { id, nome, foto_url, marcado, funcao, papel, protegido }
+  const temporada = await temporadaAtualInfo();
+  const linhas = new Map(); // membro_id → { id, nome, foto_url, marcado, funcao, papel, protegido, categoria, travado }
   const { data: ativos, error: eA } = await supabase.from('mem_grupo_membros')
-    .select('membro_id, funcao, mem_membros!inner(id, nome, foto_url)')
+    .select('id, membro_id, funcao, created_at, mem_membros!inner(id, nome, foto_url)')
     .eq('grupo_id', conf.grupo_id).is('saiu_em', null).is('deleted_at', null)
     .limit(1000);
   if (eA) throw eA;
+  const renovadosVinc = await vinculosRenovados((ativos || []).map(v => v.id));
+  const preAbertura = await membrosInscritosPreAbertura(conf.grupo_id, ativos || [], temporada);
+  const renovadoMembro = new Set();
+  const novoMembro = new Set();
   for (const v of (ativos || [])) {
+    if (renovadosVinc.has(v.id)) renovadoMembro.add(v.membro_id);
+    if (vincNaTemporada(v.created_at, temporada) || preAbertura.has(v.membro_id)) novoMembro.add(v.membro_id);
     const atual = linhas.get(v.membro_id);
     if (!atual) {
       linhas.set(v.membro_id, {
@@ -2267,7 +2619,18 @@ async function rosterConferencia(conf) {
       });
     }
   }
-  return [...linhas.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+  for (const linha of linhas.values()) {
+    // Prioridade: liderança > renovado > inscrito > sem confirmação. Quem esta
+    // conferência já removeu só pode ter sido sem_confirmacao (as outras são
+    // blindadas), então a classificação por membro segue valendo na reedição.
+    linha.categoria = linha.protegido ? 'lideranca'
+      : renovadoMembro.has(linha.id) ? 'renovado'
+        : novoMembro.has(linha.id) ? 'inscrito'
+          : 'sem_confirmacao';
+    linha.travado = linha.categoria !== 'sem_confirmacao';
+  }
+  const membros = [...linhas.values()].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+  return { membros, temporada };
 }
 
 // GET /api/public/grupos/grupo/confira?token=...
@@ -2276,13 +2639,41 @@ router.get('/grupo/confira', async (req, res) => {
     const ctx = await contextoConferencia(req.query.token);
     if (ctx.erro) return res.status(ctx.erro.status).json({ error: ctx.erro.msg });
     const { conf, grupo } = ctx;
-    const membros = await rosterConferencia(conf);
+    const { membros, temporada } = await rosterConferencia(conf);
+
+    // Pedidos AGUARDANDO APROVAÇÃO do grupo: o líder pode devolvê-los pra
+    // triagem por aqui (X). Marcado = "segue aguardando" (o ✓ NÃO aprova —
+    // aprovação continua pelo link individual que o líder já recebeu).
+    const { data: pendentes, error: ePen } = await supabase.from('mem_grupo_pedidos')
+      .select('id, nome, created_at').eq('grupo_id', grupo.id)
+      .eq('status', 'pendente').is('deleted_at', null)
+      .order('created_at', { ascending: true }).limit(500);
+    if (ePen) throw ePen;
+
+    // Pedidos que ESTA conferência devolveu (reedição mostra read-only — a
+    // devolução é one-way: a triagem pode já ter realocado). Best-effort.
+    let pedidosDevolvidos = [];
+    try {
+      const { data: evs } = await supabase.from('mem_grupo_pedido_eventos')
+        .select('pedido_id').eq('tipo', 'recusado_lider')
+        .eq('detalhe->>conferencia_id', conf.id).limit(300);
+      const ids = [...new Set((evs || []).map(e => e.pedido_id).filter(Boolean))];
+      if (ids.length) {
+        const { data: peds } = await supabase.from('mem_grupo_pedidos')
+          .select('id, nome').in('id', ids).eq('status', 'devolvido').is('deleted_at', null);
+        pedidosDevolvidos = (peds || []).map(p => ({ id: p.id, nome: p.nome }));
+      }
+    } catch (eDev) { console.warn('[public grupos confira get] devolvidos:', eDev.message); }
+
     res.json({
       grupo: { nome: grupo.nome },
       status: conf.status,                 // enviada | respondida
       ja_respondeu: conf.status !== 'enviada',
       observacao: conf.observacao || null,
+      temporada: temporada?.label || null,
       membros,
+      pedidos_pendentes: (pendentes || []).map(p => ({ id: p.id, nome: p.nome, criado_em: p.created_at })),
+      pedidos_devolvidos: pedidosDevolvidos,
     });
   } catch (e) {
     if (schemaAusente(e)) {
@@ -2316,23 +2707,32 @@ router.post('/grupo/confira', async (req, res) => {
 
     // Roster ativo ATUAL (vínculos linha a linha — pode haver mais de um por pessoa)
     const { data: ativos, error: eAt } = await supabase.from('mem_grupo_membros')
-      .select('id, membro_id, funcao')
+      .select('id, membro_id, funcao, created_at')
       .eq('grupo_id', grupo.id).is('saiu_em', null).is('deleted_at', null)
       .limit(1000);
     if (eAt) throw eAt;
+    // Travas re-derivadas AQUI (payload é do cliente): liderança + renovados +
+    // inscritos desta temporada NUNCA saem por este fluxo — são as 3 categorias
+    // somente-leitura da tela (Marcos · 04/08).
+    const renovadosVinc = await vinculosRenovados((ativos || []).map(v => v.id));
+    const temporadaAtual = await temporadaAtualInfo();
+    const preAbertura = await membrosInscritosPreAbertura(grupo.id, ativos || [], temporadaAtual);
     const ativosPorMembro = new Map();
-    const protegidos = new Set(); // liderança do grupo — nunca sai por este fluxo
+    const travados = new Set(); // liderança/renovado/inscrito — nunca saem por aqui
     for (const v of (ativos || [])) {
       if (!ativosPorMembro.has(v.membro_id)) ativosPorMembro.set(v.membro_id, []);
       ativosPorMembro.get(v.membro_id).push(v.id);
-      if (FUNCOES_PROTEGIDAS.has(v.funcao)) protegidos.add(v.membro_id);
+      if (FUNCOES_PROTEGIDAS.has(v.funcao)
+        || renovadosVinc.has(v.id)
+        || vincNaTemporada(v.created_at, temporadaAtual)
+        || preAbertura.has(v.membro_id)) travados.add(v.membro_id);
     }
 
     const setExibidos = new Set(exibidos);
     const setMantem = new Set(mantem.filter(id => setExibidos.has(id)));
-    // A tela já bloqueia desmarcar liderança, mas a decisão é do SERVIDOR
-    // (payload é do cliente): líder/co-líder exibido conta SEMPRE como mantido.
-    for (const membroId of protegidos) {
+    // A tela já bloqueia desmarcar as categorias travadas, mas a decisão é do
+    // SERVIDOR: travado exibido conta SEMPRE como mantido.
+    for (const membroId of travados) {
       if (setExibidos.has(membroId)) setMantem.add(membroId);
     }
     const obsLimpa = String(observacao || '').trim().slice(0, 2000) || null;
@@ -2393,6 +2793,40 @@ router.post('/grupo/confira', async (req, res) => {
       }
     }
 
+    // 2b) Pedidos AGUARDANDO APROVAÇÃO que o líder devolveu (X na tela): voltam
+    //     pra TRIAGEM (status 'devolvido' · lei de 14/07 — recusa de líder nunca
+    //     é final). Guardas: só pedido do PRÓPRIO grupo, ainda pendente e
+    //     exibido na tela (payload é do cliente). A devolução é one-way por
+    //     aqui — reedição NÃO re-pendentifica (a triagem pode já ter agido).
+    const pedExibidos = Array.isArray(req.body?.pedidos_exibidos) ? req.body.pedidos_exibidos : [];
+    const pedDevolver = Array.isArray(req.body?.pedidos_devolver) ? req.body.pedidos_devolver : [];
+    let pedidosDevolvidos = [];
+    if (pedDevolver.length) {
+      const setPedExib = new Set(pedExibidos);
+      const alvo = [...new Set(pedDevolver.filter(id => setPedExib.has(id)))].slice(0, 500);
+      if (alvo.length) {
+        const quemDevolveu = `${conf.lider_nome || 'Líder'} (confira a lista)`;
+        const { data: claimed, error: eDev } = await supabase.from('mem_grupo_pedidos')
+          .update({
+            status: 'devolvido',
+            motivo_rejeicao: 'Devolvido pelo líder na conferência da lista do grupo',
+            decidido_por: null,
+            decidido_por_nome: quemDevolveu,
+            decidido_em: agora,
+          })
+          .in('id', alvo).eq('grupo_id', grupo.id)
+          .eq('status', 'pendente').is('deleted_at', null)
+          .select('id, nome');
+        if (eDev) throw eDev;
+        pedidosDevolvidos = claimed || [];
+        // Linha do tempo por pedido (nunca lança) — awaited: serverless
+        // descarta trabalho pendente depois do res.json.
+        await Promise.all(pedidosDevolvidos.map(p => registrarEventoPedido(
+          p.id, 'recusado_lider',
+          { origem: 'confira_lista', conferencia_id: conf.id }, quemDevolveu)));
+      }
+    }
+
     // 3) Resumo na linha (cache de exibição — a fonte auditável é o audit log de
     //    mem_grupo_membros + conferencia_id). Contadores refletem o estado APÓS
     //    a operação (reedição inclui quem já estava fora e continuou fora).
@@ -2415,16 +2849,18 @@ router.post('/grupo/confira', async (req, res) => {
     if (eUp) throw eUp;
 
     // A pessoa removida NÃO é notificada (decisão pastoral vigente na
-    // renovação). A COORDENAÇÃO é — o roster mudou e ela precisa saber.
-    if (foraAgoraMembros.size > 0) {
+    // renovação) e o pedido devolvido também não avisa a pessoa. A COORDENAÇÃO
+    // é — o roster mudou / tem pedido pra realocar e ela precisa saber.
+    if (foraAgoraMembros.size > 0 || pedidosDevolvidos.length > 0) {
       try {
         await notificar({
           modulo: 'grupos',
           tipo: 'confira_lista_respondida',
           titulo: `Lista conferida: ${grupo.nome}`,
           mensagem: `O líder do grupo ${grupo.nome} conferiu a lista: ${mantidosFinal.length} continua(m) e ${foraAgoraMembros.size} saiu(ram).`
+            + (pedidosDevolvidos.length ? ` ${pedidosDevolvidos.length} pedido(s) aguardando aprovação devolvido(s) pra triagem — sugira outro grupo ou rejeite de vez.` : '')
             + (obsLimpa ? ` Observação: ${obsLimpa.slice(0, 200)}` : ''),
-          link: '/grupos?tab=envios',
+          link: pedidosDevolvidos.length ? '/grupos?tab=entrada' : '/grupos?tab=envios',
           severidade: 'info',
           chaveDedup: `confira_lista_${conf.id}_${hoje}`,
         });
@@ -2436,6 +2872,7 @@ router.post('/grupo/confira', async (req, res) => {
       mantidos: mantidosFinal.length,
       removidos: foraAgoraMembros.size,
       reativados: reativarIds.length,
+      pedidos_devolvidos: pedidosDevolvidos.length,
     });
   } catch (e) {
     if (schemaAusente(e)) {
@@ -2465,6 +2902,10 @@ router.get('/cron/frequencia-mensal', requireCron, async (req, res) => {
     if (!(await enviosAutomaticosAtivos())) {
       console.log('[grupos frequencia cron] envios automáticos DESLIGADOS — nada enviado');
       return res.json({ ok: true, enviados: 0, motivo: 'envios_automaticos_desligados' });
+    }
+    // 2º interruptor: o central da aba Comunicação→Disparos (Marcos 14/08)
+    if (await require('../services/comunicacaoDisparosOff').disparoDesligado('grupos_frequencia')) {
+      return res.json({ ok: true, enviados: 0, motivo: 'desligado_na_comunicacao' });
     }
     const hoje = new Date().toISOString().slice(0, 10);
     const { data: temporadaEmCurso } = await supabase

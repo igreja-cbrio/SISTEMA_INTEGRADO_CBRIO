@@ -4,6 +4,7 @@ const router = require('express').Router();
 const { supabase } = require('../utils/supabase');
 const { requireCron } = require('../utils/cronAuth');
 const wpp = require('../services/whatsappService');
+const { jaParabenizado, volProfileDoMembro, registrarParabens } = require('../services/aniversarioVoluntario');
 
 // GET /api/whatsapp-cron/aniversarios — parabeniza os VOLUNTÁRIOS que fazem
 // aniversário hoje (Ministério do Voluntariado · template WHATSAPP_TEMPLATE_ANIVERSARIO2).
@@ -12,6 +13,10 @@ const wpp = require('../services/whatsappService');
 // (notificarMembro já exige). Roda 1x/dia.
 router.get('/aniversarios', requireCron, async (_req, res) => {
   try {
+    // Interruptor central (aba Comunicação→Disparos · decisão do Marcos 14/08)
+    if (await require('../services/comunicacaoDisparosOff').disparoDesligado('aniversario_voluntario')) {
+      return res.json({ ok: true, pulado: 'desligado_na_comunicacao' });
+    }
     const hoje = new Date(Date.now() - 3 * 3600 * 1000); // BRT
     const mmdd = `${String(hoje.getUTCMonth() + 1).padStart(2, '0')}-${String(hoje.getUTCDate()).padStart(2, '0')}`;
 
@@ -27,7 +32,7 @@ router.get('/aniversarios', requireCron, async (_req, res) => {
       if (vs.length < 1000) break;
     }
 
-    let alvo = 0, enviados = 0, offset = 0;
+    let alvo = 0, enviados = 0, jaParabenizados = 0, offset = 0;
     while (true) {
       const { data, error } = await supabase.from('mem_membros')
         .select('id, nome, data_nascimento, telefone, whatsapp_optin')
@@ -40,14 +45,28 @@ router.get('/aniversarios', requireCron, async (_req, res) => {
         if (String(m.data_nascimento).slice(5, 10) !== mmdd) continue;
         if (!voluntarios.has(m.id)) continue; // só voluntários
         alvo++;
+
+        // ⚠️ A coordenação pode ter parabenizado NA MÃO — a tela de
+        // aniversariantes mostra a SEMANA (próximos 7 dias), então o clique dela
+        // costuma vir ANTES do dia. Sem esta guarda a pessoa recebe o mesmo
+        // template de Marketing 2×, que é o padrão que a Meta lê como spam.
+        if (await jaParabenizado({ membroId: m.id })) { jaParabenizados++; continue; }
+
         const primeiroNome = (m.nome || '').trim().split(/\s+/)[0] || m.nome;
         const r = await wpp.notificarMembro(m.id, 'aniversario', [primeiroNome]);
-        if (r?.sent) enviados++;
+        if (r?.sent) {
+          enviados++;
+          // Registra pra a TELA da coordenação mostrar "parabenizado" — sem
+          // isso ela vê "não parabenizado" em quem o cron já alcançou e manda o
+          // duplicado na mão (o furo na direção inversa).
+          const volId = await volProfileDoMembro(m.id);
+          await registrarParabens({ volProfileId: volId, porUserId: null });
+        }
       }
       if (data.length < 1000) break;
       offset += 1000;
     }
-    res.json({ ok: true, voluntarios_aniversariantes: alvo, enviados });
+    res.json({ ok: true, voluntarios_aniversariantes: alvo, enviados, ja_parabenizados: jaParabenizados });
   } catch (e) {
     console.error('[wpp-cron] aniversarios:', e.message);
     res.status(500).json({ error: 'Erro no cron de aniversários' });
@@ -61,6 +80,10 @@ router.get('/aniversarios', requireCron, async (_req, res) => {
 // pessoas responderam corrigindo. Fallback: env WHATSAPP_BATISMO_HORA → 'a confirmar'.
 router.get('/batismos-lembrete', requireCron, async (_req, res) => {
   try {
+    // Interruptor central (aba Comunicação→Disparos · decisão do Marcos 14/08)
+    if (await require('../services/comunicacaoDisparosOff').disparoDesligado('batismo_lembrete')) {
+      return res.json({ ok: true, pulado: 'desligado_na_comunicacao' });
+    }
     const base = new Date(Date.now() - 3 * 3600 * 1000); // BRT
     base.setDate(base.getDate() + 1);
     const amanhaISO = base.toISOString().slice(0, 10);

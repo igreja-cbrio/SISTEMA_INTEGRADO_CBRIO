@@ -41,8 +41,16 @@ sempre que o usuário pedir explicitamente o conselho.
 
 **Pule** (responda direto, dizendo numa linha que pulou por ser trivial): tarefas
 mecânicas e fatos únicos verificáveis — rodar um comando, renomear arquivo,
-"qual o slug do módulo X", consultar uma linha de config. Acionar o conselho em
-tudo multiplica custo/latência por ~5-7× e o hábito é abandonado.
+"qual o slug do módulo X", consultar uma linha de config.
+
+⚠️ **O custo é real e vale saber a ordem de grandeza** (modelo, não fatura — não
+há telemetria de tokens por convocação). Com 4 conselheiros em Opus 5
+($5 entrada / $25 saída por 1M) e o contexto RECORTADO como manda a seção
+seguinte, uma convocação fica na casa de **R$ 3 a 8**; com cada conselheiro
+lendo o `CLAUDE.md` inteiro, sobe para **~R$ 24**. A operação inteira do sistema
+(Supabase, Vercel, WhatsApp, domínio) custa **R$ 629/mês** — então o conselho
+acionado em tudo, sem recorte, passa o custo do sistema em poucos dias. Daí a
+regra de pular o trivial não ser etiqueta: é o que mantém o hábito vivo.
 
 > O usuário pode pedir o modo **"sempre"** (conselho antes de toda resposta não
 > trivial). Respeite, mas mantenha a regra de pular o trivial — senão vira
@@ -65,21 +73,58 @@ em decisão de alto risco; caia a 2-3 em algo leve). Lentes sugeridas:
 4. **Especialista no contexto** — conhece o domínio/código do projeto.
 
 **Sempre passe o contexto do repo aos conselheiros** — subagentes começam
-"frescos", sem o `CLAUDE.md` nem o estado dos módulos. Em pergunta sobre o
-código, instrua-os a **ler o `CLAUDE.md` e pesquisar o repositório** antes de
-opinar (eles têm ferramentas de leitura); senão dão conselho genérico,
-desalinhado das leis do projeto (RLS, acentuação, cap de 1000 do PostgREST etc.).
+"frescos", sem o `CLAUDE.md` nem o estado dos módulos. Sem contexto, dão conselho
+genérico, desalinhado das leis do projeto (RLS, acentuação, cap de 1000 do
+PostgREST etc.).
 
-Prompt para cada conselheiro (preencha `{lente}` e `{pergunta}`):
+### ⚠️⚠️ Como passar contexto SEM mandar cada conselheiro ler o CLAUDE.md inteiro
+
+**O `CLAUDE.md` deste repositório tem ~159 mil tokens** (medido em 12/08/2026:
+636.311 bytes · 9.754 linhas). Mandar 4 conselheiros lerem o arquivo inteiro
+custa ~800 mil tokens de entrada **por convocação** — mais caro que tudo que a
+igreja paga de operação num mês. E é desperdício: nenhuma pergunta precisa das
+9.754 linhas.
+
+**A régua: o presidente RECORTA o contexto; o conselheiro CONSULTA sob demanda.**
+
+1. **O presidente (você) já leu o `CLAUDE.md`** — ele está no seu system prompt.
+   Antes do fan-out, **cole no prompt do conselheiro os 2-5 trechos que importam**
+   (as leis e decisões que tocam a pergunta), com o título da seção. Isso troca
+   159 mil tokens por ~3 mil, e entrega **exatamente** o que ele precisaria achar.
+2. **Para "quem depende de quem", o conselheiro usa o GRAFO, não o grep.** O
+   `graphify` já está instalado (`graphify-out/` construído · ver a seção do
+   `CLAUDE.md`): `graphify affected "<função>"` responde em 1 comando o que um
+   grep + leitura de 19 arquivos responderia em dezenas de milhares de tokens.
+3. **Ler o `CLAUDE.md` inteiro é a EXCEÇÃO**, não o padrão — só quando a pergunta
+   é sobre a arquitetura do sistema como um todo, e aí **um** conselheiro lê (o
+   "especialista no contexto"), não os quatro.
+
+Prompt para cada conselheiro (preencha `{lente}`, `{trechos}` e `{pergunta}`):
 
 > Você é um conselheiro com a lente: **{lente}**. Responda de forma independente
 > e honesta, do seu ponto de vista. Seja específico, aponte riscos, seja direto,
-> não tente agradar. Se for sobre o código deste projeto, leia o `CLAUDE.md` e
-> pesquise o repo antes. Pergunta:
+> não tente agradar.
+>
+> **Contexto do projeto** (leis e decisões já vigentes que tocam esta pergunta —
+> trate como verdade estabelecida, não re-derive):
+>
+> {trechos}
+>
+> Se precisar de MAIS contexto do código: use `graphify affected "<símbolo>"` /
+> `graphify explain <id>` para dependências, e leia **arquivos específicos**. NÃO
+> leia o `CLAUDE.md` inteiro (são ~159 mil tokens) — se sentir falta de alguma
+> lei, diga qual na resposta e o presidente completa.
+>
+> Pergunta:
 >
 > {pergunta}
 
 Colete as respostas como `resposta_A`, `resposta_B`, `resposta_C`, `resposta_D`.
+
+⚠️ **Se um conselheiro disser que faltou contexto, isso é sinal ÚTIL** — significa
+que o recorte do presidente errou. Complete o trecho e, se a lacuna for
+recorrente, é indício de que aquela seção do `CLAUDE.md` merece estar no recorte
+padrão daquele tipo de pergunta.
 
 ### Estágio 2 — Revisão por pares (anonimizada) — *opcional em decisões médias*
 

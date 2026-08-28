@@ -27,24 +27,16 @@ const router = require('express').Router();
 const { supabase } = require('../utils/supabase');
 const { authenticate } = require('../middleware/auth');
 const { sanitizePath } = require('../services/storageService');
+// Réguas únicas de contato (camposContato.js) — a MESMA que o /perfil do
+// sistema e o app de membros usam. Não duplicar mascaraTelefone aqui: duas
+// cópias é exatamente o que faz o formato canônico divergir.
+const { soDigitos, mascaraTelefone } = require('../utils/camposContato');
+const { notificar } = require('../services/notificar');
+const { APP_STAFF } = require('../utils/appPushDestino');
 
 router.use(authenticate);
 
 const FOTO_MAX_BYTES = 5 * 1024 * 1024; // 5 MB (mesmo teto do multer do sistema)
-
-function soDigitos(v) {
-  return String(v || '').replace(/\D+/g, '');
-}
-
-// Mesma máscara do /perfil do sistema (src/pages/Perfil.jsx) — mantém o
-// formato canônico de profiles.telefone consistente entre app e sistema.
-function mascaraTelefone(v) {
-  const d = soDigitos(v).slice(0, 11);
-  if (d.length <= 2) return d;
-  if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
-  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
-  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-}
 
 // Decodifica um data URL de imagem (png/jpg/webp). Retorna null se inválido.
 function parseDataUrlImagem(dataUrl) {
@@ -471,6 +463,13 @@ router.post('/push-token', async (req, res) => {
         user_id: req.user.userId,
         membro_id: req.user.membro_id || null,
         platform: typeof req.body?.platform === 'string' ? req.body.platform.slice(0, 20) : null,
+        // ⚠️⚠️ CARIMBA O APP (20/08/2026). Esta rota gravava sem `projeto_id`, e
+        // `app_push_tokens` é UMA tabela pros DOIS apps Expo — então não havia
+        // como o push do ERP saber que um token era do Staff, e o aviso
+        // operacional caía também no app de MEMBROS de quem usa os dois com a
+        // mesma conta. Quem carimba é o BACKEND, não o app: vale na próxima
+        // abertura, sem build nem OTA.
+        projeto_id: APP_STAFF,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'token' });
     if (error) return res.status(400).json({ error: error.message });
@@ -479,6 +478,72 @@ router.post('/push-token', async (req, res) => {
   } catch (e) {
     console.error('[STAFF] /push-token:', e.message);
     res.status(500).json({ error: 'Erro ao registrar token' });
+  }
+});
+
+// ── POST /api/staff/bugs — reporta um bug (vira tarefa do Agente Dev) ──
+// Cria `agent_tarefas` classe='bug' + agente_key='developer_agent' + status
+// 'nova': o dispatcher (Railway) pega automaticamente, DIAGNOSTICA sem alterar
+// nada e deixa em 'aguardando_aprovacao'. O gate único (aprovar/recusar a
+// correção) é humano, em /assistente-ia. Ao concluir, o agente notifica o
+// reportado_por ("Bug corrigido") pelo sino/push do app.
+router.post('/bugs', async (req, res) => {
+  try {
+    const titulo = String(req.body?.titulo || '').trim();
+    const descricao = String(req.body?.descricao || '').trim();
+    if (!titulo) return res.status(400).json({ error: 'Dê um título curto para o bug (obrigatório).' });
+    if (titulo.length > 80) return res.status(400).json({ error: 'Título muito longo (máx. 80 caracteres).' });
+    if (descricao.length > 5000) return res.status(400).json({ error: 'Descrição muito longa (máx. 5000 caracteres).' });
+
+    const insert = {
+      titulo,
+      descricao,
+      classe: 'bug',
+      agente_key: 'developer_agent',
+      status: 'nova',
+      origem: 'app',
+      reportado_por: req.user.id,
+      created_by: req.user.id,
+    };
+    const { data, error } = await supabase
+      .from('agent_tarefas')
+      .insert(insert)
+      .select('id, titulo, descricao, status, prioridade, created_at')
+      .single();
+    if (error) return res.status(400).json({ error: error.message });
+
+    // Avisa o time de agentes (módulo assistente-ia) que chegou um bug novo.
+    notificar({
+      modulo: 'assistente-ia',
+      tipo: 'agent_task',
+      titulo: `Bug reportado no app · ${data.titulo}`,
+      mensagem: `Colaborador reportou um bug: ${data.titulo}`,
+      link: '/assistente-ia',
+      severidade: 'info',
+      chaveDedup: `staff_bug_${data.id}`,
+    }).catch(() => {});
+
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[STAFF] POST /bugs:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar o bug' });
+  }
+});
+
+// ── GET /api/staff/bugs — bugs que EU reportei (nunca os dos outros) ──
+router.get('/bugs', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('agent_tarefas')
+      .select('id, titulo, descricao, status, prioridade, diagnostico, diagnostico_em, pull_request_url, branch, created_at, updated_at')
+      .eq('reportado_por', req.user.id)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || []);
+  } catch (e) {
+    console.error('[STAFF] GET /bugs:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar seus bugs' });
   }
 });
 

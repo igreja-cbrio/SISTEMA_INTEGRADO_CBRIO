@@ -16,6 +16,7 @@
 // como fallback.
 
 const { callApi } = require('./httpClient');
+const { parseDateBR } = require('../pixExtratoParser');
 
 const PIX_API_ENABLED = (process.env.SANTANDER_PIX_API_ENABLED || 'false').toLowerCase() === 'true';
 const PIX_API_PATH_OVERRIDE = process.env.SANTANDER_PIX_API_PATH || '';
@@ -90,7 +91,10 @@ function normalizarPix(raw) {
 
   return {
     end_to_end_id: e2eId,
-    data: decoded?.data || (raw.transactionDate || raw.data || '').slice(0, 10) || null,
+    // O Santander manda DD/MM/YYYY — nunca usar o .slice(0,10) cru aqui, senão
+    // o valor vira "06/08/2026" (não é ISO) e a mesma corrupção de dia/mês que
+    // atingiu o /cron/sync se repete neste fallback.
+    data: decoded?.data || parseDateBR(raw.transactionDate) || parseDateBR(raw.data) || null,
     hora: decoded?.hora || null,
     datetime_brt: decoded?.datetime_brt_iso || null,
     datetime_utc: decoded ? decoded.datetime_utc.toISOString() : null,

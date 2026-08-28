@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
-// @ts-expect-error módulo JS sem tipos
 import * as asaas from '../../backend/services/pagamentos/providers/asaas.js';
-// @ts-expect-error módulo JS sem tipos
 import { STATUS, METODOS, STATUS_VALIDOS } from '../../backend/services/pagamentos/tipos.js';
 
 const A = asaas as any;

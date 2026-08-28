@@ -58,6 +58,7 @@ const CSS = `
   .marca { font-size: 10.5pt; font-weight: 800; color: #00B39D; letter-spacing: .3px; }
   .nome-evento { font-size: 15pt; font-weight: 800; margin-top: 2px; }
   .meta { font-size: 9.5pt; color: #555; margin-top: 3px; }
+  .total-topo { font-size: 10.5pt; font-weight: 700; margin-top: 4px; }
   .grupo { margin-bottom: 18px; }
   /* Cabeçalho de grupo nunca fica órfão no pé da folha. */
   .grupo-titulo { font-size: 11.5pt; font-weight: 800; color: #0b6; background: #E8F8F5;
@@ -226,12 +227,23 @@ export function imprimirListaInscritos(
     status: 'agrupada por status', pagamento: 'agrupada por pagamento',
   }[ag];
 
+  // ⚠️ O total vai no TOPO, não só no rodapé: agrupada, a folha sai partida em
+  // blocos e o rodapé fica na última página — quem confere lê um bloco e conclui
+  // que faltou gente (caso real: 64 do Kids lidos como "40 e poucas", porque 17
+  // estavam num bloco "Sem data de nascimento" no fim). Quando há mais de um
+  // bloco, o topo diz em quantos a lista foi dividida.
+  const nBlocos = grupos.size;
+  const resumoTopo = ag === 'nenhum' || nBlocos <= 1
+    ? `${base.length} participante${base.length === 1 ? '' : 's'}`
+    : `${base.length} participantes, divididos em ${nBlocos} blocos nesta folha`;
+
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     <title>Participantes — ${escapeHtml(evento.nome)}</title><style>${CSS}</style></head><body>
     <div class="topo">
       <div class="marca">⛪ CB Rio · Lista de participantes</div>
       <div class="nome-evento">${escapeHtml(evento.nome)}</div>
       <div class="meta">${escapeHtml(metaPartes.join(' · '))}${rotuloAg ? `${metaPartes.length ? ' · ' : ''}${rotuloAg}` : ''}</div>
+      <div class="total-topo">${escapeHtml(resumoTopo)}</div>
     </div>
     ${secoes}
     <div class="totalgeral">
