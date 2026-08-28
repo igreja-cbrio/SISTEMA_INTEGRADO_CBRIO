@@ -17,6 +17,7 @@ import KpiCard from './KpiCard';
 import OcupacaoGauge from './OcupacaoGauge';
 import { ChartGradients, gradFill } from '../charts/ChartGradients';
 import { ResumoSemanaCard } from './ResumoCards';
+import ComparativoAnualCard from './ComparativoAnualCard';
 
 const C = { primary: '#00B39D', media: '#7BAEC2', taxa: '#E97A3F' };
 
@@ -425,6 +426,12 @@ export default function DashSemanalAba() {
       <div className="col-span-12 lg:col-span-10 space-y-4">
         {/* Resumo da semana · números consolidados */}
         <ResumoSemanaCard ano={ano} semana={semana} />
+
+        {/* Comparativo do ano (frequência · decisões · batismos) com botão de
+            copiar pro WhatsApp. Fica na aba PADRÃO de propósito: o bloco
+            detalhado da aba Mensal existe desde 03/08 e o Matheus não o
+            alcançava — pedia os números por fora. Mesmo endpoint, mesma conta. */}
+        <ComparativoAnualCard />
 
         {/* Filtros topo */}
         <div className="flex flex-wrap items-end gap-3">

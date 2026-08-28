@@ -1260,6 +1260,12 @@ router.get('/ytd', async (req, res) => {
             .from('batismo_inscricoes')
             .select('id', { count: 'exact', head: true })
             .eq('status', 'realizado')
+            // ⚠️ `deleted_at` faltava (27/08/2026): a tabela está na whitelist de
+            // soft-delete, então batismo apagado entraria na contagem. Hoje são
+            // 0 apagados nos 3 anos — era bomba armada, não estrago em curso, e
+            // sem isto a tela passaria a discordar do número no dia em que a
+            // equipe apagasse uma linha.
+            .is('deleted_at', null)
             .gte('data_batismo', `${ano}-${String(periodo.inicioMes).padStart(2, '0')}-01`)
             .lte('data_batismo', corteDoAno(ano, periodo.fimMes, periodo.dia));
           if (error) throw error;
