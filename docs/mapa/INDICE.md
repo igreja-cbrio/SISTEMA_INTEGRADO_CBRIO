@@ -65,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **122** arquivos, **113** com teste.
+`backend/utils/` tem **123** arquivos, **113** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -176,6 +176,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/saudeCrianca.js` | `src/test/portasAlinhadas.test.ts` |
 | `backend/utils/sentry.js` | `backend/middleware/errorHandler.test.js` `backend/services/systemWebOps.test.js` |
 | `backend/utils/sexoDeclarado.js` | `src/test/sexoDeclarado.test.ts` |
+| `backend/utils/solicitacaoStatusLabel.js` | — |
 | `backend/utils/storagePath.js` | `src/test/storagePath.test.ts` |
 | `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/fetchFalhaDb.test.ts` `src/test/importSupabase.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
 | `backend/utils/supervisorArea.js` | `backend/services/supervisorSubarea.test.js` `src/test/supervisorArea.test.ts` |
