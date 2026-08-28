@@ -413,6 +413,7 @@ const Doar = lazyWithRetry(() => import('./pages/public/Doar'));
 const InscricaoComprovante = lazyWithRetry(() => import('./pages/public/InscricaoComprovante'));
 const PoliticaReembolso = lazyWithRetry(() => import('./pages/public/PoliticaReembolso'));
 const InscricaoEventoCheckin = lazyWithRetry(() => import('./pages/InscricaoEventoCheckin'));
+const EventoCheckin = lazyWithRetry(() => import('./pages/public/EventoCheckin'));
 // EventosExternos/EventoExternoDetalhe (gestão do ext) saíram das rotas na
 // virada pro /inscricoes (SPEC-04 · 2026-07-28); arquivos ficam no repo até
 // 1 ciclo sem divergência (rollback = restaurar as 2 rotas).
@@ -695,6 +696,8 @@ function AppRoutes() {
       <Route path="/decisao/:token" element={<Suspense fallback={<Loading />}><DecisaoOnline /></Suspense>} />
       {/* Link ASSINADO do culto · o voluntário lança as decisões na hora, sem login */}
       <Route path="/c/:token" element={<Suspense fallback={<Loading />}><DecisaoCulto /></Suspense>} />
+      {/* Autoatendimento de check-in do evento · QR na porta (28/08/2026) */}
+      <Route path="/ec/:token" element={<Suspense fallback={<Loading />}><EventoCheckin /></Suspense>} />
       <Route path="/wallet" element={<Suspense fallback={<Loading />}><WalletPage /></Suspense>} />
       <Route path="/motion" element={<Suspense fallback={<Loading />}><Motion /></Suspense>} />
       {/* Prévia interna do novo site (redesign cbrio.com.br) · não-listada */}

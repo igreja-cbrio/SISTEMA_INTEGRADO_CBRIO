@@ -199,6 +199,11 @@ app.use('/api/public/vol-email', require('./routes/publicVolEmail'));
 // é o totem do lounge (1 IP, muitas inscrições num domingo cheio). Usa o limiter
 // próprio generoso do routes/publicGrupos.js (mesma lógica do NPS acima).
 app.use('/api/public/grupos', require('./routes/publicGrupos'));
+// AUTOATENDIMENTO de check-in do evento montado ANTES do publicLimiter
+// estrito: na porta do evento a fila inteira sai por UM IP do wi-fi da igreja,
+// e o teto de 10/15min travaria na terceira pessoa (lição do censo · 04/08).
+// Limiter próprio, em dois baldes, dentro do arquivo da rota.
+app.use('/api/public/evento-checkin', require('./routes/publicEventoCheckin'));
 // Eventos externos (Celebra etc.) montado ANTES do publicLimiter estrito:
 // evento presencial em massa = 1 IP de Wi-Fi; a 31ª pessoa era bloqueada.
 // Sem teto prático de inscrições (D9) · limiter próprio generoso no router.

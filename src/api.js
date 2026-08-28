@@ -536,6 +536,7 @@ export const inscricoesApi = {
   checkinMarcar: (eventoId, data) => post(`/inscricoes/eventos/${eventoId}/checkin`, data),
   checkinDesfazer: (eventoId, inscricaoId, motivo) => del(`/inscricoes/eventos/${eventoId}/checkin/${inscricaoId}`, { motivo }),
   checkinHistorico: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/historico`),
+  checkinQrAutoatendimento: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/qr-autoatendimento`),
 
   // Templates dos e-mails de inscrição (confirmada / pendente / expirada).
   // Sem template salvo, o e-mail sai no texto padrão do código — a tela mostra

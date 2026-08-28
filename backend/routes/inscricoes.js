@@ -1915,49 +1915,34 @@ router.post('/eventos/:id/sortear', authorizeModule('inscricoes', 3), async (req
 // (critério de aceite da spec). O dashboard já lê `compareceu` da view
 // unificada; marcar aqui acorda o card de comparecimento sozinho.
 
-function rpcArquiteturalIndisponivel(error) {
-  return !!error && ['PGRST202', '42883'].includes(error.code);
-}
+const {
+  marcarCheckinAuditavel, desfazerCheckinAuditavel,
+} = require('../services/inscricaoCheckin');
+const { montarLinkCheckin } = require('../utils/eventoCheckinToken');
 
-async function marcarCheckinAuditavel({ inscricaoId, por, modo, overridePendente, motivo }) {
-  const { data, error } = await supabase.rpc('fn_insc_checkin_marcar', {
-    p_inscricao_id: inscricaoId,
-    p_por: por,
-    p_modo: modo,
-    p_override_pendente: !!overridePendente,
-    p_override_motivo: motivo || null,
-  });
-  if (!error) return data;
-  if (!rpcArquiteturalIndisponivel(error)) throw error;
-
-  // Compatibilidade durante deploy em duas etapas: comportamento antigo,
-  // protegido pelo UNIQUE, até a migration da trilha estar disponível.
-  const { data: marcado, error: erroLegado } = await supabase.from('insc_checkins')
-    .insert({ inscricao_id: inscricaoId, por, modo })
-    .select('em').single();
-  if (erroLegado) {
-    if (erroLegado.code !== '23505') throw erroLegado;
-    const { data: existente } = await supabase.from('insc_checkins')
-      .select('em').eq('inscricao_id', inscricaoId).maybeSingle();
-    return { ok: true, ja_checkin: true, em: existente?.em || null };
+// GET /eventos/:id/checkin/qr-autoatendimento — o link do QR da porta.
+// ⚠️ Nível 2 (quem opera check-in). O link é a credencial: quem o tem consegue
+// abrir a porta de autoatendimento, então ele não sai em rota de leitura geral.
+router.get('/eventos/:id/checkin/qr-autoatendimento', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const { data: ev } = await supabase.from('insc_eventos')
+      .select('id, nome, checkin_ativo').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    const url = montarLinkCheckin(ev.id, process.env.FRONTEND_URL);
+    // ⚠️ Sem segredo configurado é FAIL-CLOSED: devolve o motivo em vez de um
+    // link quebrado que só falharia na mão de quem estivesse na fila.
+    if (!url) {
+      return res.status(503).json({
+        error: 'O QR de autoatendimento não está configurado (falta CRON_SECRET no ambiente).',
+        motivo: 'sem_segredo',
+      });
+    }
+    res.json({ url, checkin_ativo: !!ev.checkin_ativo });
+  } catch (e) {
+    console.error('[inscricoes] qr autoatendimento:', e.message);
+    res.status(500).json({ error: 'Erro ao gerar o QR' });
   }
-  return { ok: true, ja_checkin: false, em: marcado.em };
-}
-
-async function desfazerCheckinAuditavel({ eventoId, inscricaoId, por, motivo }) {
-  const { data, error } = await supabase.rpc('fn_insc_checkin_desfazer', {
-    p_evento_id: eventoId,
-    p_inscricao_id: inscricaoId,
-    p_por: por,
-    p_motivo: motivo || null,
-  });
-  if (!error) return data;
-  if (!rpcArquiteturalIndisponivel(error)) throw error;
-  const { error: erroLegado } = await supabase.from('insc_checkins')
-    .delete().eq('inscricao_id', inscricaoId);
-  if (erroLegado) throw erroLegado;
-  return { ok: true, auditoria_disponivel: false };
-}
+});
 
 // GET /eventos/:id/checkin — estado da tela: evento + contadores + lista.
 // A tela recarrega isso em polling curto (contador ao vivo).
