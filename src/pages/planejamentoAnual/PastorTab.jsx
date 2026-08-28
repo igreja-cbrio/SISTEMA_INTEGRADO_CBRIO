@@ -6,7 +6,7 @@ import {
 import { planejamentoAnual as api, users as usersApi } from '../../api';
 import {
   C, cardStyle, btn, input, hint, Badge, EstadoBadge, fmtBRL, fmtData, fmtQuando,
-  MESES, MESES_LONGOS, DIAS_SEMANA, thStyle, tdStyle,
+  MESES, MESES_LONGOS, DIAS_SEMANA, thStyle, tdStyle, rotuloArea,
 } from './comum';
 import CalendarioAno from './CalendarioAno';
 
@@ -47,7 +47,7 @@ const subBtn = (ativo) => ({
 });
 
 // ─── Decisões (ranking + lote + detalhe) ─────────────────────────────────
-function Decisoes({ ciclo, constantes, recarregarCiclo }) {
+function Decisoes({ ciclo, constantes, recarregarCiclo, areas }) {
   const [ranking, setRanking] = useState(null);
   const [sel, setSel] = useState(new Set());
   const [aberta, setAberta] = useState(null);
@@ -81,7 +81,7 @@ function Decisoes({ ciclo, constantes, recarregarCiclo }) {
   };
 
   if (aberta) {
-    return <DetalheProposta id={aberta} constantes={constantes} aoVoltar={async () => { setAberta(null); await carregar(); recarregarCiclo?.(); }} />;
+    return <DetalheProposta id={aberta} constantes={constantes} areas={areas} aoVoltar={async () => { setAberta(null); await carregar(); recarregarCiclo?.(); }} />;
   }
   if (!ranking) return <p style={{ fontSize: 13, color: C.t3 }}>Carregando…</p>;
 
@@ -107,7 +107,7 @@ function Decisoes({ ciclo, constantes, recarregarCiclo }) {
                   </td>
                   <td style={{ ...tdStyle, fontWeight: 700, color: C.primary }}>{i + 1}º</td>
                   <td style={{ ...tdStyle, fontWeight: 600 }}>{r.proposta.nome}
-                    <div style={{ fontSize: 11.5, color: C.t3 }}>{r.proposta.area} · {fmtQuando(r.proposta)}</div>
+                    <div style={{ fontSize: 11.5, color: C.t3 }}>{rotuloArea(r.proposta.area, areas)} · {fmtQuando(r.proposta)}</div>
                   </td>
                   <td style={{ ...tdStyle, fontWeight: 700 }}>{Number(r.soma).toFixed(2)}
                     <div style={{ fontSize: 11, color: C.t3 }}>{r.medias.map((m) => Number(m).toFixed(1)).join(' · ')}</div>
@@ -148,7 +148,7 @@ function Decisoes({ ciclo, constantes, recarregarCiclo }) {
 }
 
 // ─── Detalhe da proposta (consolidado + apontamentos + decisão) ──────────
-function DetalheProposta({ id, constantes, aoVoltar }) {
+function DetalheProposta({ id, constantes, aoVoltar, areas }) {
   const [p, setP] = useState(null);
   const [pessoas, setPessoas] = useState([]);
   const [apCampo, setApCampo] = useState('custo');
@@ -202,7 +202,7 @@ function DetalheProposta({ id, constantes, aoVoltar }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <div>
           <h3 style={{ margin: 0, fontSize: 16, color: C.text }}>{p.nome}</h3>
-          <span style={{ fontSize: 12, color: C.t3 }}>{p.area} · {fmtQuando(p)} · {p.custeio?.rotulo} · líquido {fmtBRL(p.liquido_exibicao)}</span>
+          <span style={{ fontSize: 12, color: C.t3 }}>{rotuloArea(p.area, areas)} · {fmtQuando(p)} · {p.custeio?.rotulo} · líquido {fmtBRL(p.liquido_exibicao)}</span>
         </div>
         <button style={btn('ghost')} onClick={aoVoltar}>Voltar ao ranking</button>
       </div>
@@ -806,14 +806,14 @@ function CicloPublicacao({ ciclo, recarregarCiclo }) {
 }
 
 // ─── Container das sub-abas do Pastor ─────────────────────────────────────
-export default function PastorTab({ ciclo, constantes, recarregarCiclo }) {
+export default function PastorTab({ ciclo, constantes, areas, recarregarCiclo }) {
   const [sub, setSub] = useState(0);
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {SUBS.map((s, i) => <button key={s} style={subBtn(sub === i)} onClick={() => setSub(i)}>{s}</button>)}
       </div>
-      {sub === 0 && <Decisoes ciclo={ciclo} constantes={constantes} recarregarCiclo={recarregarCiclo} />}
+      {sub === 0 && <Decisoes ciclo={ciclo} constantes={constantes} recarregarCiclo={recarregarCiclo} areas={areas} />}
       {sub === 1 && <Retificacoes ciclo={ciclo} recarregarCiclo={recarregarCiclo} />}
       {sub === 2 && <Ressalvas ciclo={ciclo} recarregarCiclo={recarregarCiclo} />}
       {sub === 3 && <OrcamentoPastor ciclo={ciclo} />}
