@@ -99,6 +99,7 @@ Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
 - `backend/services/inscricaoContrato.js`
 - `backend/services/inscricaoEmail.js`
 - `backend/services/inscricaoPortas.js`
+- `backend/services/inscricaoSorteio.js`
 - `backend/services/pagamentos.js`
 - `backend/services/totemEstacao.js`
 

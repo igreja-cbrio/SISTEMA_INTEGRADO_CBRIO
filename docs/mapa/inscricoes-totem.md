@@ -92,6 +92,7 @@ Guard: `authorizeModule('inscricoes-totem', 1)`
 - `backend/services/inscricaoContrato.js`
 - `backend/services/inscricaoEmail.js`
 - `backend/services/inscricaoPortas.js`
+- `backend/services/inscricaoSorteio.js`
 - `backend/services/pagamentos.js`
 - `backend/services/totemEstacao.js`
 
