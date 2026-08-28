@@ -19,7 +19,7 @@
 ## Backend
 - `backend/routes/inscricoes.js`
 Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
-<details><summary>Endpoints (54)</summary>
+<details><summary>Endpoints (55)</summary>
 - `DELETE /api/inscricoes/email-templates/:tipo`
 - `DELETE /api/inscricoes/eventos/:id`
 - `DELETE /api/inscricoes/eventos/:id/beneficios/:beneficioId`
@@ -36,6 +36,7 @@ Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
 - `GET /api/inscricoes/eventos/:id/checkin`
 - `GET /api/inscricoes/eventos/:id/checkin/buscar`
 - `GET /api/inscricoes/eventos/:id/checkin/historico`
+- `GET /api/inscricoes/eventos/:id/checkin/qr-autoatendimento`
 - `GET /api/inscricoes/eventos/:id/inscricoes`
 - `GET /api/inscricoes/eventos/:id/inscricoes/:inscricaoId/comprovantes`
 - `GET /api/inscricoes/eventos/:id/resumo`
@@ -80,6 +81,7 @@ Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
 
 - `backend/utils/campoKey.js`
 - `backend/utils/checkoutExterno.js`
+- `backend/utils/eventoCheckinToken.js`
 - `backend/utils/exclusaoInscricaoLote.js`
 - `backend/utils/lotesEvento.js`
 - `backend/utils/pagination.js`
@@ -91,6 +93,7 @@ Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
 
 - `backend/services/appPush.js`
 - `backend/services/email.js`
+- `backend/services/inscricaoCheckin.js`
 - `backend/services/inscricaoComprovante.js`
 - `backend/services/inscricaoContagem.js`
 - `backend/services/inscricaoContrato.js`
@@ -127,7 +130,5 @@ Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
 **RPCs**
 
 - `app_soft_delete`
-- `fn_insc_checkin_desfazer`
-- `fn_insc_checkin_marcar`
 - `fn_insc_portas_resumo`
 

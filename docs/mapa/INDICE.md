@@ -65,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **120** arquivos, **111** com teste.
+`backend/utils/` tem **122** arquivos, **113** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -99,6 +99,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/censoRespostaToken.js` | `src/test/censoRespostaToken.test.ts` |
 | `backend/utils/censoToken.js` | `src/test/censoRespostaToken.test.ts` `src/test/censoToken.test.ts` |
 | `backend/utils/censoVocabulario.js` | — |
+| `backend/utils/checkinAutoatendimento.js` | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/checkoutExterno.js` | `src/test/checkoutExterno.test.ts` |
 | `backend/utils/contextoFalha.js` | `src/test/fetchFalhaDb.test.ts` `src/test/telemetria500.test.ts` |
 | `backend/utils/corsPolicy.js` | `backend/middleware/errorHandler.test.js` |
@@ -107,7 +108,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/criancaApresentacao.js` | `src/test/cultoApresentacao.test.ts` |
 | `backend/utils/cronAuth.js` | — |
 | `backend/utils/cultoJanela.js` | `src/test/cultoJanela.test.ts` |
-| `backend/utils/cultoToken.js` | `src/test/cultoToken.test.ts` `src/test/decisaoToken.test.ts` |
+| `backend/utils/cultoToken.js` | `src/test/checkinAutoatendimento.test.ts` `src/test/cultoToken.test.ts` `src/test/decisaoToken.test.ts` |
 | `backend/utils/cursorLote.js` | `src/test/cursorLote.test.ts` |
 | `backend/utils/dadosDoCadastro.js` | `backend/services/membroMatchInsert.test.js` `src/test/portasAlinhadas.test.ts` |
 | `backend/utils/dadosSensiveisPessoa.js` | `src/test/dadosSensiveisPessoa.test.ts` |
@@ -120,6 +121,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/dsOnline.js` | `src/test/dsOnline.test.ts` |
 | `backend/utils/entradaGrupoApp.js` | `src/test/entradaGrupoApp.test.ts` |
 | `backend/utils/escalaToken.js` | `src/test/escalaToken.test.ts` |
+| `backend/utils/eventoCheckinToken.js` | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/exclusaoInscricaoLote.js` | `src/test/exclusaoInscricaoLote.test.ts` |
 | `backend/utils/fotoVoluntario.js` | `src/test/fotoVoluntario.test.ts` |
 | `backend/utils/freioBot.js` | `src/test/freioBot.test.ts` |

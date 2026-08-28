@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-365 arquivos.
+369 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -101,6 +101,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/publicDecisaoCulto.js` | rota backend | — | `/api/public/decisao-culto` |
 | `backend/routes/publicDecisaoOnline.js` | rota backend | — | `/api/public/decisao-online` |
 | `backend/routes/publicDevocional.js` | rota backend | — | `/api/public/devocional` |
+| `backend/routes/publicEventoCheckin.js` | rota backend | — | `/api/public/evento-checkin` |
 | `backend/routes/publicEventoExterno.js` | rota backend | — | `/api/public/evento` |
 | `backend/routes/publicFamilia.js` | rota backend | — | `/api/public/familia` |
 | `backend/routes/publicGenerosidade.js` | rota backend | — | `/api/public/generosidade` |
@@ -168,6 +169,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/censoRespostaToken.js` | régua pura | — | `src/test/censoRespostaToken.test.ts` |
 | `backend/utils/censoToken.js` | régua pura | — | `src/test/censoRespostaToken.test.ts` |
 | `backend/utils/censoVocabulario.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/checkinAutoatendimento.js` | régua pura | — | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/checkoutExterno.js` | régua pura | — | `src/test/checkoutExterno.test.ts` |
 | `backend/utils/contextoFalha.js` | régua pura | — | `src/test/fetchFalhaDb.test.ts` |
 | `backend/utils/corsPolicy.js` | régua pura | — | `backend/middleware/errorHandler.test.js` |
@@ -176,7 +178,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/criancaApresentacao.js` | régua pura | — | `src/test/cultoApresentacao.test.ts` |
 | `backend/utils/cronAuth.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/cultoJanela.js` | régua pura | — | `src/test/cultoJanela.test.ts` |
-| `backend/utils/cultoToken.js` | régua pura | — | `src/test/cultoToken.test.ts` |
+| `backend/utils/cultoToken.js` | régua pura | — | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/cursorLote.js` | régua pura | — | `src/test/cursorLote.test.ts` |
 | `backend/utils/dadosDoCadastro.js` | régua pura | — | `backend/services/membroMatchInsert.test.js` |
 | `backend/utils/dadosSensiveisPessoa.js` | régua pura | — | `src/test/dadosSensiveisPessoa.test.ts` |
@@ -189,6 +191,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/dsOnline.js` | régua pura | — | `src/test/dsOnline.test.ts` |
 | `backend/utils/entradaGrupoApp.js` | régua pura | — | `src/test/entradaGrupoApp.test.ts` |
 | `backend/utils/escalaToken.js` | régua pura | — | `src/test/escalaToken.test.ts` |
+| `backend/utils/eventoCheckinToken.js` | régua pura | — | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/exclusaoInscricaoLote.js` | régua pura | — | `src/test/exclusaoInscricaoLote.test.ts` |
 | `backend/utils/fotoVoluntario.js` | régua pura | — | `src/test/fotoVoluntario.test.ts` |
 | `backend/utils/freioBot.js` | régua pura | — | `src/test/freioBot.test.ts` |
@@ -351,6 +354,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/public/Doar` | tela ERP | — | `/doar` |
 | `src/pages/public/Doar` | tela ERP | — | `/doar/:token` |
 | `src/pages/public/EscalaResposta` | tela ERP | — | `/e/:token` |
+| `src/pages/public/EventoCheckin` | tela ERP | — | `/ec/:token` |
 | `src/pages/public/EventoExterno` | tela ERP | — | `/evento/:slug` |
 | `src/pages/public/FamiliaConvite` | tela ERP | — | `/f/a/:codigo` |
 | `src/pages/public/GrupoAprovarPedido` | tela ERP | — | `/g/a/:token` |

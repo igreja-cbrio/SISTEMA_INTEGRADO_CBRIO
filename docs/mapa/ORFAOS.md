@@ -20,7 +20,7 @@ nenhum módulo reivindica são exatamente os candidatos a esse buraco.
 guard (públicas, totens, `/perfil`). Significa que ninguém decidiu — vale
 conferir.
 
-## Telas sem ModuleGuard (77)
+## Telas sem ModuleGuard (78)
 
 | rota | arquivo | pública? |
 |---|---|---|
@@ -51,6 +51,7 @@ conferir.
 | `/decisao` | `src/pages/public/DecisaoOnline` | sim |
 | `/decisao/:token` | `src/pages/public/DecisaoOnline` | sim |
 | `/c/:token` | `src/pages/public/DecisaoCulto` | sim |
+| `/ec/:token` | `src/pages/public/EventoCheckin` | sim |
 | `/wallet` | `src/pages/public/WalletPage` | sim |
 | `/motion` | `src/pages/public/Motion` | sim |
 | `/novosite` | `src/pages/public/NovoSite` | sim |
@@ -102,7 +103,7 @@ conferir.
 | `/admin/grupos/temporadas` | `src/pages/admin/TemporadasGrupos` | sim |
 | `/suporte` | `src/pages/public/Suporte` | sim |
 
-## Arquivos de rota que nenhum módulo reivindica (78)
+## Arquivos de rota que nenhum módulo reivindica (79)
 
 - `backend/routes/agentTasks.js`
 - `backend/routes/agenteBatismoNext.js`
@@ -154,6 +155,7 @@ conferir.
 - `backend/routes/publicDecisaoCulto.js`
 - `backend/routes/publicDecisaoOnline.js`
 - `backend/routes/publicDevocional.js`
+- `backend/routes/publicEventoCheckin.js`
 - `backend/routes/publicEventoExterno.js`
 - `backend/routes/publicFamilia.js`
 - `backend/routes/publicGenerosidade.js`
