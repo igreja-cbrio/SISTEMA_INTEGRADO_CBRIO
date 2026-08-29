@@ -12,7 +12,7 @@
 ## Backend
 - `backend/routes/inscricoes.js`
 Guard: `authorizeModule('inscricoes-totem', 1)`
-<details><summary>Endpoints (59)</summary>
+<details><summary>Endpoints (61)</summary>
 - `DELETE /api/inscricoes/email-templates/:tipo`
 - `DELETE /api/inscricoes/eventos/:id`
 - `DELETE /api/inscricoes/eventos/:id/beneficios/:beneficioId`
@@ -34,6 +34,7 @@ Guard: `authorizeModule('inscricoes-totem', 1)`
 - `GET /api/inscricoes/eventos/:id/checkin/qr-autoatendimento`
 - `GET /api/inscricoes/eventos/:id/inscricoes`
 - `GET /api/inscricoes/eventos/:id/inscricoes/:inscricaoId/comprovantes`
+- `GET /api/inscricoes/eventos/:id/pessoas/buscar`
 - `GET /api/inscricoes/eventos/:id/resumo`
 - `GET /api/inscricoes/pagamento-saude`
 - `GET /api/inscricoes/portas`
@@ -56,6 +57,7 @@ Guard: `authorizeModule('inscricoes-totem', 1)`
 - `POST /api/inscricoes/eventos/:id/checkin`
 - `POST /api/inscricoes/eventos/:id/checkin/aviso-app`
 - `POST /api/inscricoes/eventos/:id/checkin/aviso-email`
+- `POST /api/inscricoes/eventos/:id/inscrever-na-hora`
 - `POST /api/inscricoes/eventos/:id/inscricoes/:inscricaoId/bolsa`
 - `POST /api/inscricoes/eventos/:id/inscricoes/:inscricaoId/comprovantes/:comprovanteId/aceitar`
 - `POST /api/inscricoes/eventos/:id/inscricoes/:inscricaoId/comprovantes/:comprovanteId/recusar`
@@ -82,6 +84,7 @@ Guard: `authorizeModule('inscricoes-totem', 1)`
 - `backend/utils/exclusaoInscricaoLote.js`
 - `backend/utils/lotesEvento.js`
 - `backend/utils/pagination.js`
+- `backend/utils/prontidaoCadastro.js`
 - `backend/utils/sanitize.js`
 - `backend/utils/supabase.js`
 - `backend/utils/totemCerco.js`
@@ -117,6 +120,7 @@ Guard: `authorizeModule('inscricoes-totem', 1)`
 - `insc_series`
 - `insc_sorteios`
 - `inscricoes`
+- `mem_membros`
 - `mem_temporadas`
 - `next_turmas`
 - `profiles`
