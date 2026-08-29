@@ -65,12 +65,13 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **125** arquivos, **115** com teste.
+`backend/utils/` tem **126** arquivos, **116** com teste.
 
 <details><summary>Lista completa</summary>
 
 | régua | teste |
 |---|---|
+| `backend/utils/acaoNotificacao.js` | `src/test/acaoNotificacao.test.ts` |
 | `backend/utils/acessibilidadeBatismo.js` | `src/test/acessibilidadeBatismo.test.ts` |
 | `backend/utils/agendaGrupo.js` | `src/test/agendaGrupo.test.ts` |
 | `backend/utils/agentDiagnostico.js` | `src/test/agentDiagnostico.test.ts` |
