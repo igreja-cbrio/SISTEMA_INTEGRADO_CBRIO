@@ -19,6 +19,7 @@ const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, ocorrenciasPas
 const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { responderEscala, STATUS_VALIDOS: STATUS_ESCALA } = require('../services/escalaResposta');
 const { acoesDaNotificacao, acaoPermitida, statusDaAcao } = require('../utils/acaoNotificacao');
+const { validarMensagem: validarMensagemSuporte, montarParams: montarParamsSuporte, digitos: digitosSuporte } = require('../utils/suporteApp');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 const { dispararAuto } = require('../services/whatsappAuto');
@@ -1838,6 +1839,94 @@ router.post('/voluntariado/escalas/:id/responder', authApp, limiterNormal, async
   } catch (e) {
     console.error('[APP vol/responder]', e.message);
     res.status(500).json({ error: 'Erro ao responder escala' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  POST /api/app/suporte — "Ajuda com o app"  { mensagem, telefone? }
+//
+//  Pedido do Matheus (29/08/2026): *"no app, no menu, tivesse um botão de ajuda
+//  com app, caso a pessoa precise tirar dúvidas em relação ao app, seus dados e
+//  etc... essas dúvidas devem chegar para o meu WhatsApp. Quero o nome da
+//  pessoa e a dúvida dela, com o número de celular dela."*
+//
+//  ⚠️⚠️ NÃO é a porta "Falar com a CBRio" (`app_inscricoes` tipo `contato`), e
+//  a diferença é de DESTINO: aquela é fila PASTORAL (Cuidados), esta é SUPORTE
+//  do produto. "Meu grupo não aparece no app" não é assunto da equipe de
+//  cuidado, e misturar encheria a fila pastoral de bug report.
+//
+//  ⚠️ O DESTINATÁRIO VIVE NO BANCO (`whatsapp_config.suporte_app_membro_id`),
+//  nunca no código — lei do projeto. Trocar quem recebe é UM update.
+// ════════════════════════════════════════════════════════════════════════════
+router.post('/suporte', authApp, limiterStrict, async (req, res) => {
+  try {
+    const v = validarMensagemSuporte(req.body?.mensagem);
+    if (!v.ok) return res.status(400).json({ error: v.erro });
+
+    const membro = await resolveMembroApp(req);
+    const nome = membro?.nome || req.user.email || 'Alguém do app';
+    // Telefone informado na tela vence o do cadastro — a pessoa pode estar
+    // corrigindo justamente porque o cadastro está errado, que é uma das
+    // dúvidas mais comuns. ⚠️ Isto NÃO sobrescreve `mem_membros.telefone`:
+    // contato divergente ACUMULA, nunca troca (Contrato de porta).
+    const telefone = digitosSuporte(req.body?.telefone) || membro?.telefone || null;
+
+    // 1) GRAVA primeiro. Canal é entrega; registro é memória — sem ele,
+    // template não aprovado (ou Meta fora do ar) = dúvida perdida pra sempre.
+    const { data: linha, error: insErr } = await supabase.from('app_suporte_mensagens').insert({
+      membro_id: membro?.id || null,
+      user_id: req.user.id,
+      nome,
+      telefone,
+      mensagem: v.mensagem,
+      app_versao: String(req.body?.app_versao || '').slice(0, 40) || null,
+      plataforma: String(req.body?.plataforma || '').slice(0, 20) || null,
+    }).select('id').single();
+    if (insErr) throw insErr;
+
+    // 2) Avisa quem cuida do app. Notificação SEMPRE; WhatsApp quando houver
+    // destinatário e template configurados.
+    let whatsapp = 'nao_configurado';
+    try {
+      const { data: cfg } = await supabase.from('whatsapp_config')
+        .select('suporte_app_membro_id').limit(1).maybeSingle();
+      const destinoId = cfg?.suporte_app_membro_id || null;
+      if (!destinoId) {
+        whatsapp = 'sem_destinatario';
+      } else {
+        const params = montarParamsSuporte({ nome, telefone, mensagem: v.mensagem });
+        const r = await wpp.notificarMembro(destinoId, 'suporte_app', params);
+        whatsapp = r?.ok ? 'enviado' : (r?.motivo || r?.reason || 'nao_enviado');
+        if (r?.ok) {
+          await supabase.from('app_suporte_mensagens')
+            .update({ enviado_em: new Date().toISOString() }).eq('id', linha.id);
+        }
+      }
+    } catch (e) {
+      // ⚠️ Falhar o WhatsApp NÃO derruba o pedido: a dúvida já está gravada e a
+      // notificação abaixo é o caminho garantido.
+      console.error('[APP suporte] whatsapp:', e.message);
+      whatsapp = 'erro';
+    }
+
+    // ⚠️ O aviso NÃO leva o telefone: notificação é lida por quem a regra do
+    // módulo alcançar, e o contato está no registro pra quem for tratar.
+    notificar({
+      modulo: 'dashboard',
+      tipo: 'suporte_app',
+      titulo: `Dúvida sobre o app: ${nome}`,
+      mensagem: v.mensagem.slice(0, 300),
+      link: '/admin/app-analytics',
+      severidade: 'info',
+      chaveDedup: `suporte_app_${linha.id}`,
+    }).catch((e) => console.error('[APP suporte] notificar:', e.message));
+
+    // ⚠️ A tela NUNCA promete WhatsApp que não saiu — ela diz "recebemos", que
+    // é verdade em todos os caminhos (a linha está gravada).
+    res.status(201).json({ ok: true, id: linha.id, whatsapp });
+  } catch (e) {
+    console.error('[APP] suporte:', e.message);
+    res.status(500).json({ error: 'Não foi possível enviar agora. Tente de novo em instantes.' });
   }
 });
 
