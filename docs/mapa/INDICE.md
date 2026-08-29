@@ -65,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **126** arquivos, **116** com teste.
+`backend/utils/` tem **127** arquivos, **117** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -183,6 +183,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/storagePath.js` | `src/test/storagePath.test.ts` |
 | `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/fetchFalhaDb.test.ts` `src/test/importSupabase.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
 | `backend/utils/supervisorArea.js` | `backend/services/supervisorSubarea.test.js` `src/test/supervisorArea.test.ts` |
+| `backend/utils/suporteApp.js` | `src/test/suporteApp.test.ts` |
 | `backend/utils/telefoneVoluntario.js` | `src/test/telefoneVoluntario.test.ts` |
 | `backend/utils/totemCerco.js` | `src/test/totemCerco.test.ts` |
 | `backend/utils/trechoCep.js` | `src/test/cepObrigatorio.test.ts` `src/test/trechoCep.test.ts` |
