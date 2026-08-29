@@ -18,8 +18,7 @@ import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import {
   ArrowLeft, Camera, CameraOff, CheckCircle2, Loader2, Maximize2, Minimize2,
-  Search, UserPlus, Users, Undo2, AlertTriangle, History, QrCode,
-} from 'lucide-react';
+  Search, UserPlus, Users, Undo2, AlertTriangle, History, QrCode, SwitchCamera } from 'lucide-react';
 
 type ItemLista = {
   id: string; nome_completo: string; telefone: string | null;
@@ -64,11 +63,18 @@ export default function InscricaoEventoCheckin() {
   const [estado, setEstado] = useState<Estado | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState('');
+  // "Presentes" existe pra CONFERIR na hora ("essa pessoa já entrou?") sem
+  // precisar procurar nome por nome. Ordenado pelo check-in mais RECENTE: na
+  // portaria a dúvida é quase sempre sobre quem acabou de passar.
+  const [aba, setAba] = useState<'todos' | 'presentes' | 'faltam'>('todos');
   const [resultadoCpf, setResultadoCpf] = useState<ItemLista[] | null>(null);
   const [buscandoCpf, setBuscandoCpf] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [marcando, setMarcando] = useState<string | null>(null);
   const [lendo, setLendo] = useState(false);
+  // Traseira por padrão (é a que aponta pro QR de quem está na fila). A frontal
+  // serve pro totem virado pra pessoa, que lê o próprio comprovante.
+  const [camera, setCamera] = useState<'environment' | 'user'>('environment');
   const [fullscreen, setFullscreen] = useState(false);
   // Trilha só carrega sob demanda — a tela do dia roda em polling curto e não
   // vale puxar o ledger a cada 15s.
@@ -118,11 +124,28 @@ export default function InscricaoEventoCheckin() {
     if (!estado) return [];
     if (buscaPorDoc) return resultadoCpf || [];
     const q = norm(busca.trim());
-    if (!q) return estado.lista;
-    return estado.lista.filter(i =>
-      norm(i.nome_completo).includes(q)
-      || String(i.numero_sorte || '') === q.replace(/\D/g, ''));
-  }, [estado, busca, buscaPorDoc, resultadoCpf]);
+    const base = q
+      ? estado.lista.filter(i =>
+          norm(i.nome_completo).includes(q)
+          || String(i.numero_sorte || '') === q.replace(/\D/g, ''))
+      : estado.lista;
+    if (aba === 'faltam') return base.filter(i => !i.checkin_em && i.status !== 'cancelada');
+    if (aba === 'presentes') {
+      return base.filter(i => !!i.checkin_em)
+        .sort((a, b) => String(b.checkin_em).localeCompare(String(a.checkin_em)));
+    }
+    return base;
+  }, [estado, busca, buscaPorDoc, resultadoCpf, aba]);
+
+  // Contadores dos chips: saem da lista INTEIRA, nunca do recorte visível —
+  // senão o número muda quando alguém digita na busca e deixa de responder
+  // "quantos entraram".
+  const totais = useMemo(() => {
+    const l = estado?.lista || [];
+    const presentes = l.filter(i => !!i.checkin_em).length;
+    const faltam = l.filter(i => !i.checkin_em && i.status !== 'cancelada').length;
+    return { todos: l.length, presentes, faltam };
+  }, [estado]);
 
   function mostrarFeedback(f: Feedback) {
     if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
@@ -216,12 +239,12 @@ export default function InscricaoEventoCheckin() {
   };
 
   // ── Leitor de QR (contínuo) ──────────────────────────────────────────────
-  async function ligarCamera() {
+  async function ligarCamera(facing: 'environment' | 'user' = camera) {
     try {
       const s = new Html5Qrcode('insc-checkin-qr');
       scannerRef.current = s;
       await s.start(
-        { facingMode: 'environment' },
+        { facingMode: facing },
         { fps: 8, qrbox: { width: 230, height: 230 } },
         (texto) => {
           const agora = Date.now();
@@ -237,6 +260,23 @@ export default function InscricaoEventoCheckin() {
       toast.error(e?.message || 'Não foi possível abrir a câmera');
     }
   }
+  // ⚠️ A lib não troca de câmera em voo: é parar e subir de novo. Se a nova
+  // falhar (aparelho sem frontal, permissão negada), VOLTA pra que estava
+  // funcionando em vez de deixar a portaria sem leitor no meio da fila.
+  async function virarCamera() {
+    const alvo = camera === 'environment' ? 'user' : 'environment';
+    const anterior = camera;
+    await desligarCamera();
+    setCamera(alvo);
+    try {
+      await ligarCamera(alvo);
+    } catch {
+      setCamera(anterior);
+      await ligarCamera(anterior).catch(() => {});
+      toast.error('Não consegui usar a outra câmera — voltei pra anterior');
+    }
+  }
+
   async function desligarCamera() {
     const scanner = scannerRef.current;
     try {
@@ -387,10 +427,36 @@ export default function InscricaoEventoCheckin() {
               </p>
             )}
 
+            <div className="mt-3 flex gap-1.5">
+              {([
+                ['todos', 'Todos', totais.todos],
+                ['presentes', 'Presentes', totais.presentes],
+                ['faltam', 'Faltam', totais.faltam],
+              ] as const).map(([k, rotulo, n]) => (
+                <button
+                  key={k}
+                  onClick={() => setAba(k)}
+                  className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
+                    aba === k
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-foreground/5 text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {rotulo} <span className="tabular-nums opacity-80">{n}</span>
+                </button>
+              ))}
+            </div>
+
             <div className="mt-3 divide-y divide-border/60 max-h-[52vh] overflow-y-auto">
               {listaFiltrada.length === 0 && (
                 <p className="text-sm text-muted-foreground py-6 text-center">
-                  {busca ? 'Ninguém encontrado com essa busca.' : 'Nenhuma inscrição ainda.'}
+                  {busca
+                    ? 'Ninguém encontrado com essa busca.'
+                    : aba === 'presentes'
+                      ? 'Ninguém fez check-in ainda.'
+                      : aba === 'faltam'
+                        ? 'Todo mundo já entrou.'
+                        : 'Nenhuma inscrição ainda.'}
                 </p>
               )}
               {listaFiltrada.map(i => {
@@ -476,9 +542,24 @@ export default function InscricaoEventoCheckin() {
             <Card className="glass-solid p-4">
               <div className="text-sm font-semibold mb-2">Ler QR do comprovante</div>
               <div id="insc-checkin-qr" className="w-full rounded-xl overflow-hidden bg-black/20" style={{ minHeight: lendo ? 260 : 0 }} />
-              <Button onClick={lendo ? desligarCamera : ligarCamera} variant={lendo ? 'destructive' : 'default'} className="w-full mt-3 gap-2">
-                {lendo ? <><CameraOff className="h-4 w-4" /> Parar leitura</> : <><Camera className="h-4 w-4" /> Ligar câmera</>}
-              </Button>
+              <div className="flex gap-2 mt-3">
+                <Button onClick={lendo ? desligarCamera : () => ligarCamera()} variant={lendo ? 'destructive' : 'default'} className="flex-1 gap-2">
+                  {lendo ? <><CameraOff className="h-4 w-4" /> Parar leitura</> : <><Camera className="h-4 w-4" /> Ligar câmera</>}
+                </Button>
+                {/* Só aparece com a câmera ligada: virar câmera desligada não
+                    tem efeito visível e se lê como botão quebrado. */}
+                {lendo && (
+                  <Button
+                    onClick={virarCamera}
+                    variant="ghost"
+                    className="gap-2 shrink-0"
+                    title={camera === 'environment' ? 'Usar a câmera frontal' : 'Usar a câmera traseira'}
+                  >
+                    <SwitchCamera className="h-4 w-4" />
+                    {camera === 'environment' ? 'Frontal' : 'Traseira'}
+                  </Button>
+                )}
+              </div>
               <p className="text-[11px] text-muted-foreground mt-2 leading-relaxed">
                 A leitura fica ligada direto — aponte um QR atrás do outro. Quem não tiver o comprovante entra pela busca ao lado.
               </p>
