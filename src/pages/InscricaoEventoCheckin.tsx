@@ -14,11 +14,12 @@ import { Html5Qrcode } from 'html5-qrcode';
 import { QRCodeSVG } from 'qrcode.react';
 import { inscricoesApi as api } from '../api';
 import { Card } from '../components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import {
   ArrowLeft, Camera, CameraOff, CheckCircle2, Loader2, Maximize2, Minimize2,
-  Search, UserPlus, Users, Undo2, AlertTriangle, History, QrCode, SwitchCamera, Bell, Mail } from 'lucide-react';
+  Search, UserPlus, Users, Undo2, AlertTriangle, History, QrCode, SwitchCamera, Bell, Mail, ExternalLink } from 'lucide-react';
 
 type ItemLista = {
   id: string; nome_completo: string; telefone: string | null;
@@ -26,7 +27,9 @@ type ItemLista = {
   checkin_em: string | null; checkin_modo?: string | null;
 };
 type Estado = {
-  evento: { id: string; nome: string; slug: string; data: string | null; hora: string | null; local: string | null; status: string; checkin_ativo: boolean; tem_sorteio: boolean; pagamento_ativo: boolean; vagas: number | null };
+  evento: { id: string; nome: string; slug: string; data: string | null; hora: string | null; local: string | null; status: string; checkin_ativo: boolean; tem_sorteio: boolean; pagamento_ativo: boolean; vagas: number | null;
+    // Perguntas do formulário do evento — a inscrição de balcão precisa fazê-las.
+    campos?: { key: string; label: string; tipo?: string; opcoes?: string[]; obrigatorio?: boolean }[] | null };
   inscritos: number; presentes: number; lista: ItemLista[];
 };
 type Feedback = {
@@ -236,6 +239,7 @@ export default function InscricaoEventoCheckin() {
   const [avisando, setAvisando] = useState(false);
   const [emailPrevia, setEmailPrevia] = useState<{ confirmados: number; com_email: number; sem_email: number; ja_enviados: number; faltam: number; canal_pronto: boolean } | null>(null);
   const [enviandoEmail, setEnviandoEmail] = useState(false);
+  const [naHoraAberto, setNaHoraAberto] = useState(false);
   useEffect(() => {
     if (!id) return;
     api.checkinAvisoAppPrevia(id).then(setAvisoPrevia).catch(() => setAvisoPrevia(null));
@@ -416,9 +420,16 @@ export default function InscricaoEventoCheckin() {
             <ArrowLeft className="h-4 w-4" /> {ev.nome}
           </button>
           <div className="flex gap-2">
+            {/* ⚠️ Abre a busca no CADASTRO em vez do formulário público em branco:
+                na porta, redigitar nome, CPF, nascimento e e-mail de quem a
+                igreja já conhece é o que trava a fila (3 casos no Celebra). */}
+            <Button size="sm" variant="outline" onClick={() => setNaHoraAberto(true)}
+                    title="Busca a pessoa no cadastro e só pede o que falta">
+              <UserPlus className="h-3.5 w-3.5 mr-1" /> Inscrever na hora
+            </Button>
             <a href={linkPublico} target="_blank" rel="noreferrer">
-              <Button size="sm" variant="outline" title="Abre o formulário público — mesma validação, nenhum atalho">
-                <UserPlus className="h-3.5 w-3.5 mr-1" /> Inscrever na hora
+              <Button size="sm" variant="ghost" title="Formulário público, em branco — para quem não está no cadastro">
+                <ExternalLink className="h-3.5 w-3.5 mr-1" /> Formulário
               </Button>
             </a>
             <Button size="sm" variant="outline" onClick={alternarTelaCheia}>
@@ -719,6 +730,229 @@ export default function InscricaoEventoCheckin() {
           </div>
         </div>
       </div>
+      <ModalInscreverNaHora
+        eventoId={id!}
+        campos={ev.campos || []}
+        aberto={naHoraAberto}
+        onFechar={() => setNaHoraAberto(false)}
+        onPronto={(nome, num) => {
+          mostrarFeedback({ tipo: 'ok', titulo: nome, detalhe: num != null ? `Inscrito · nº da sorte ${num}` : 'Inscrito' });
+          carregar();
+        }}
+      />
+
     </div>
+  );
+}
+
+// ── Inscrever na hora, a partir do CADASTRO ──────────────────────────────
+// Pedido do Matheus (29/08): buscar a pessoa na membresia e só preencher o
+// que falta. Quem inscreve é a espinha canônica — aqui é só o pré-preenchimento.
+function ModalInscreverNaHora({
+  eventoId, campos, aberto, onFechar, onPronto,
+}: {
+  eventoId: string;
+  campos: { key: string; label: string; tipo?: string; opcoes?: string[]; obrigatorio?: boolean }[];
+  aberto: boolean;
+  onFechar: () => void;
+  onPronto: (nome: string, numeroSorte: number | null) => void;
+}) {
+  const [q, setQ] = useState('');
+  const [buscando, setBuscando] = useState(false);
+  const [pessoas, setPessoas] = useState<any[] | null>(null);
+  const [sel, setSel] = useState<any | null>(null);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [dados, setDados] = useState<Record<string, string>>({});
+  const [enviando, setEnviando] = useState(false);
+
+  useEffect(() => {
+    if (!aberto) { setQ(''); setPessoas(null); setSel(null); setForm({}); setDados({}); }
+  }, [aberto]);
+
+  // Busca com respiro: digitar "maria" não dispara 5 consultas.
+  useEffect(() => {
+    if (!aberto || q.trim().length < 3) { setPessoas(null); return; }
+    const t = setTimeout(async () => {
+      setBuscando(true);
+      try { const r = await api.buscarPessoaCadastro(eventoId, q.trim()); setPessoas(r.pessoas || []); }
+      catch { setPessoas([]); }
+      finally { setBuscando(false); }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [q, aberto, eventoId]);
+
+  function escolher(p: any) {
+    setSel(p);
+    // ⚠️ Só o que o cadastro TEM entra pré-preenchido. O que falta fica vazio e
+    // marcado — é o "avise para preencher" do pedido.
+    setForm({
+      nome_completo: p.nome || '', cpf: p.cpf || '', telefone: p.telefone || '',
+      email: p.email || '', data_nascimento: p.data_nascimento || '', sexo: p.sexo || '',
+    });
+  }
+
+  const faltando = (sel?.falta || []) as string[];
+  const rotuloFalta: Record<string, string> = {
+    nome: 'nome completo', cpf: 'CPF', telefone: 'telefone',
+    email: 'e-mail', nascimento: 'nascimento', genero: 'sexo',
+  };
+
+  async function enviar() {
+    setEnviando(true);
+    try {
+      const r = await api.inscreverNaHora(eventoId, {
+        nome_completo: form.nome_completo?.trim(),
+        cpf: (form.cpf || '').replace(/\D/g, ''),
+        telefone: (form.telefone || '').replace(/\D/g, ''),
+        email: form.email?.trim(),
+        data_nascimento: form.data_nascimento,
+        sexo: form.sexo,
+        endereco: null,
+        // ⚠️ Consentimento de TERCEIRO: quem marca é o operador, no balcão. O
+        // texto gravado diz isso — registrar como aceite do titular seria
+        // fabricar prova legal (lei de 25/08).
+        aceita_termos: true,
+        whatsapp_optin: false,
+        dados,
+        website: '',
+      });
+      onPronto(form.nome_completo || sel?.nome || 'Inscrição', r?.numero_sorte ?? null);
+      onFechar();
+    } catch (e: any) {
+      toast.error([e?.message, e?.detalhe].filter(Boolean).join(' · ') || 'Erro ao inscrever');
+    } finally { setEnviando(false); }
+  }
+
+  if (!aberto) return null;
+  return (
+    <Dialog open={aberto} onOpenChange={(o) => { if (!o) onFechar(); }}>
+      <DialogContent className="max-w-lg flex flex-col max-h-[88vh]">
+        <DialogHeader><DialogTitle>Inscrever na hora</DialogTitle></DialogHeader>
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-3">
+          {!sel ? (
+            <>
+              <input
+                autoFocus value={q} onChange={(e) => setQ(e.target.value)}
+                placeholder="Nome, CPF ou telefone…"
+                className="w-full rounded-xl border border-border bg-transparent px-3 py-3 text-base outline-none focus:border-primary"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Busca no cadastro da membresia. O que já estiver lá vem preenchido.
+              </p>
+              {buscando && <p className="text-sm text-muted-foreground py-3">Procurando…</p>}
+              {pessoas && !pessoas.length && !buscando && (
+                <p className="text-sm text-muted-foreground py-3">
+                  Ninguém encontrado. Use o formulário público para cadastrar do zero.
+                </p>
+              )}
+              <div className="divide-y divide-border/60">
+                {(pessoas || []).map((p) => (
+                  <button
+                    key={p.id} onClick={() => escolher(p)} disabled={p.ja_inscrita}
+                    className={`w-full text-left py-2.5 ${p.ja_inscrita ? 'opacity-50 cursor-not-allowed' : 'hover:bg-foreground/5'}`}
+                  >
+                    <div className="font-semibold text-[15px]">{p.nome}</div>
+                    <div className="text-xs text-muted-foreground flex gap-2 flex-wrap mt-0.5">
+                      {p.ja_inscrita
+                        ? <span className="text-emerald-600 font-medium">já inscrita neste evento</span>
+                        : p.completo
+                          ? <span className="text-emerald-600">cadastro completo</span>
+                          : <span className="text-amber-600">falta: {p.falta_rotulos?.join(' · ')}</span>}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-semibold">{sel.nome}</div>
+                <Button size="sm" variant="ghost" onClick={() => setSel(null)}>Trocar</Button>
+              </div>
+              {faltando.length > 0 && (
+                <p className="text-[12px] text-amber-600">
+                  Falta preencher: {faltando.map((f) => rotuloFalta[f] || f).join(' · ')}
+                </p>
+              )}
+              {([
+                ['nome_completo', 'Nome completo', 'text', 'nome'],
+                ['cpf', 'CPF', 'text', 'cpf'],
+                ['telefone', 'Celular', 'text', 'telefone'],
+                ['email', 'E-mail', 'email', 'email'],
+                ['data_nascimento', 'Nascimento', 'date', 'nascimento'],
+              ] as const).map(([k, rotulo, tipo, chave]) => (
+                <label key={k} className="block">
+                  <span className={`text-xs ${faltando.includes(chave) ? 'text-amber-600 font-semibold' : 'text-muted-foreground'}`}>
+                    {rotulo}{faltando.includes(chave) ? ' · falta preencher' : ''}
+                  </span>
+                  <input
+                    type={tipo} value={form[k] || ''}
+                    onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))}
+                    className="w-full rounded-xl border border-border bg-transparent px-3 py-2.5 outline-none focus:border-primary"
+                  />
+                </label>
+              ))}
+              <div>
+                <span className={`text-xs ${faltando.includes('genero') ? 'text-amber-600 font-semibold' : 'text-muted-foreground'}`}>
+                  Sexo{faltando.includes('genero') ? ' · falta preencher' : ''}
+                </span>
+                <div className="flex gap-2 mt-1">
+                  {(['masculino', 'feminino'] as const).map((g) => (
+                    <button
+                      key={g} onClick={() => setForm((f) => ({ ...f, sexo: g }))}
+                      className={`flex-1 rounded-xl border px-3 py-2 text-sm capitalize ${form.sexo === g ? 'border-primary text-primary font-semibold' : 'border-border text-muted-foreground'}`}
+                    >{g}</button>
+                  ))}
+                </div>
+              </div>
+              {/* Perguntas do formulário do evento — a espinha recusa sem as obrigatórias. */}
+              {(campos || []).map((c) => (
+                <div key={c.key}>
+                  <span className="text-xs text-muted-foreground">{c.label}{c.obrigatorio ? ' *' : ''}</span>
+                  {c.opcoes?.length ? (
+                    <div className="flex flex-wrap gap-1.5 mt-1">
+                      {c.opcoes.map((o) => {
+                        const sels = String(dados[c.key] || '').split(',').map(x => x.trim()).filter(Boolean);
+                        const on = c.tipo === 'multi' ? sels.includes(o) : dados[c.key] === o;
+                        return (
+                          <button
+                            key={o}
+                            onClick={() => setDados((d) => {
+                              if (c.tipo !== 'multi') return { ...d, [c.key]: o };
+                              const s = new Set(sels);
+                              if (s.has(o)) s.delete(o); else s.add(o);
+                              return { ...d, [c.key]: [...s].join(', ') };
+                            })}
+                            className={`rounded-full border px-3 py-1.5 text-xs ${on ? 'border-primary text-primary font-semibold' : 'border-border text-muted-foreground'}`}
+                          >{o}</button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <input
+                      value={dados[c.key] || ''}
+                      onChange={(e) => setDados((d) => ({ ...d, [c.key]: e.target.value }))}
+                      className="w-full rounded-xl border border-border bg-transparent px-3 py-2.5 outline-none focus:border-primary"
+                    />
+                  )}
+                </div>
+              ))}
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                O aceite dos termos é registrado como <strong>declarado no balcão</strong>, não como
+                aceite digitado pela pessoa. O opt-in de WhatsApp não é marcado por terceiro.
+              </p>
+            </>
+          )}
+        </div>
+        {sel && (
+          <div className="flex gap-2 pt-3">
+            <Button variant="ghost" onClick={onFechar} className="flex-1">Cancelar</Button>
+            <Button onClick={enviar} disabled={enviando} className="flex-1 gap-2">
+              {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Inscrever
+            </Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

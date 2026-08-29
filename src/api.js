@@ -544,6 +544,8 @@ export const inscricoesApi = {
   checkinAvisoAppEnviar: (eventoId) => post(`/inscricoes/eventos/${eventoId}/checkin/aviso-app`, {}),
   checkinAvisoEmailPrevia: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/aviso-email`),
   checkinAvisoEmailEnviar: (eventoId) => post(`/inscricoes/eventos/${eventoId}/checkin/aviso-email`, {}),
+  buscarPessoaCadastro: (eventoId, q) => get(`/inscricoes/eventos/${eventoId}/pessoas/buscar?q=${encodeURIComponent(q)}`),
+  inscreverNaHora: (eventoId, payload) => post(`/inscricoes/eventos/${eventoId}/inscrever-na-hora`, payload),
 
   // Templates dos e-mails de inscrição (confirmada / pendente / expirada).
   // Sem template salvo, o e-mail sai no texto padrão do código — a tela mostra
