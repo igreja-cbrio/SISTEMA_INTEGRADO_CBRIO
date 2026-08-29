@@ -12,11 +12,12 @@
 ## Backend
 - `backend/routes/censo.js`
 Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
-<details><summary>Endpoints (20)</summary>
+<details><summary>Endpoints (21)</summary>
 - `DELETE /api/censo/pesquisas/:id`
 - `DELETE /api/censo/respostas/:id`
 - `GET /api/censo/aux`
 - `GET /api/censo/cobertura`
+- `GET /api/censo/cron/pos-processar`
 - `GET /api/censo/cuidado`
 - `GET /api/censo/cuidado/resumo`
 - `GET /api/censo/ia`
@@ -38,6 +39,7 @@ Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/censoPerguntas.js`
+- `backend/utils/cronAuth.js`
 - `backend/utils/supabase.js`
 
 **Serviços**
