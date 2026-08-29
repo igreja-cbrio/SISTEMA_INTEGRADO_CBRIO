@@ -65,6 +65,10 @@ const JOBS = [
   ['/api/totem-kids/cron/age-out', '0 5 * * *', 'kids'],
   ['/api/totem-kids/cron/encerrar-vencidas', '0 6 * * *', 'kids'],
   ['/api/totem-kids/cron/resumo-kids', '0 * * * *', 'kids'],
+  // ⚠️ Minuto 30 de propósito: não competir com a leva de crons do minuto 0.
+  // Sem entrada AQUI o cron roda sem política de alerta e não abre incidente —
+  // fica invisível quando falha (armadilha registrada no CLAUDE.md).
+  ['/api/censo/cron/pos-processar', '30 * * * *', 'censo'],
   ['/api/integracao/cron/gerar-cultos-recorrentes', '0 4 1 * *', 'ministry'],
   ['/api/cerebro/processar', '0 3 * * *', 'data'],
   ['/api/cerebro/sync-erp', '30 3 * * *', 'data'],
