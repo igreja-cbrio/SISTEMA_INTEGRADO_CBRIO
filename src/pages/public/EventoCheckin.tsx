@@ -246,10 +246,18 @@ export default function EventoCheckin() {
             dd/mm/aaaa E o calendário no ícone ao lado, os dois escrevendo no
             mesmo valor. Emite ISO completo ou '', que é o formato que o
             servidor exige (RE_DIA em utils/checkinAutoatendimento.js). */}
-        <label style={{ fontSize: 14, color: C.text3, display: 'block', marginTop: 18, marginBottom: 6 }}>
+        {/* ⚠️ `htmlFor` + `id` são obrigatórios aqui: o <label> antes ENVOLVIA
+            o <input type="date"> e a associação vinha de graça. Como irmão do
+            BirthDatePicker ele deixaria de rotular o campo — leitor de tela
+            anunciaria só o placeholder "dd/mm/aaaa", e tocar no rótulo não
+            focaria o campo. (Achado do Codex na revisão deste PR.) */}
+        <label
+          htmlFor="ec-nascimento"
+          style={{ fontSize: 14, color: C.text3, display: 'block', marginTop: 18, marginBottom: 6 }}
+        >
           Data de nascimento
         </label>
-        <BirthDatePicker value={nasc} onChange={setNasc} />
+        <BirthDatePicker id="ec-nascimento" value={nasc} onChange={setNasc} />
         </>
         )}
         {erro && <p style={{ color: '#ef4444', marginTop: 14, fontSize: 14, lineHeight: 1.5 }}>{erro}</p>}
