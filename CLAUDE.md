@@ -7677,11 +7677,18 @@ nem o parâmetro nem o cookie `__vdpl` (conferido por curl).
   IDÊNTICO ao de hoje — **nunca** `?dpl=undefined`, que quebraria todo asset.
   Provado nos dois modos: com env falso, 6 ocorrências no index.html + imports
   dinâmicos com o parâmetro; sem env, zero.
-- ⚠️ **Validar no PRIMEIRO deploy de produção depois do merge**: `curl -s
-  https://www.cbrio.org/ | grep dpl` tem que mostrar o parâmetro. Se NÃO
-  mostrar, o `vercel build` do GitHub Action não está expondo
-  `VERCEL_DEPLOYMENT_ID` — aí o caminho é investigar a versão do CLI/pipeline,
-  e o comportamento segue o de antes (a guarda garante).
+- ⚠️⚠️ **MEDIDO depois do 1º deploy: o fluxo `vercel build` + `deploy
+  --prebuilt` NÃO tem System Environment Variables no build** (reproduzido
+  localmente com o build idêntico ao do Action: zero `dpl`) — a doc do
+  `--prebuilt` diz isso com todas as letras. Por isso o workflow
+  `deploy-vercel.yml` passou a **buildar NO VERCEL** (`vercel deploy --prod`
+  seco): os previews sempre buildaram lá (caminho provado), os 123 envs de
+  build (Sentry etc.) já vivem no env store do Vercel, e os gates de teste
+  continuam no job antes do deploy. Validar no 1º deploy: `curl -s
+  https://www.cbrio.org/ | grep -c dpl` > 0.
+  ⚠️ `paths-ignore: .github/**` — o commit que muda o workflow NÃO dispara
+  deploy; o 1º teste real é o próximo merge de código (ou `workflow_dispatch`).
+  Reverter = `git revert` do commit do workflow.
 - ⚠️ Régua de leitura que fica: **"tela de atualização presa" NÃO significa 4
   min de sistema fora** — quem está usando segue na versão antiga durante o
   build; o corte é só na troca atômica, pra aba aberta que carrega tela nova.

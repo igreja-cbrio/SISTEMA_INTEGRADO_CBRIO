@@ -136,14 +136,20 @@ jobs:
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
-      - name: Pull Vercel Environment
-        run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
-
-      - name: Build
-        run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
-
-      - name: Deploy to Production
-        run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
+      # ⚠️ O BUILD RODA NO VERCEL, não mais aqui (2026-08-21 · pedido do Marcos:
+      # deploy sem derrubar aba aberta). O fluxo antigo (`vercel build` +
+      # `deploy --prebuilt`) não tem System Environment Variables no build —
+      # em particular o VERCEL_DEPLOYMENT_ID que o vite.config usa pra anexar
+      # `?dpl=` aos assets, que é o que faz o Skew Protection (ligado no painel,
+      # 12h) funcionar de verdade: quem está com a aba aberta segue sendo
+      # servido pela versão antiga em vez de cair na tela "uma atualização está
+      # sendo publicada". A doc do --prebuilt diz explicitamente: "If you need
+      # System Environment Variables at build time, do not use the --prebuilt
+      # flag". Os previews SEMPRE buildaram no Vercel — o build remoto deste
+      # projeto é o caminho já provado. Os gates acima continuam mandando: nada
+      # sobe sem os testes passarem NESTE job.
+      - name: Deploy to Production (build no Vercel)
+        run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
 
   # ⚠️ Job SEPARADO com `if: failure()`, não um step dentro do deploy. Um step
   # com `if: failure()` só roda se o job chegou até ele; se a falha for no
