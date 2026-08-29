@@ -18,7 +18,7 @@ import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import {
   ArrowLeft, Camera, CameraOff, CheckCircle2, Loader2, Maximize2, Minimize2,
-  Search, UserPlus, Users, Undo2, AlertTriangle, History, QrCode, SwitchCamera, Bell } from 'lucide-react';
+  Search, UserPlus, Users, Undo2, AlertTriangle, History, QrCode, SwitchCamera, Bell, Mail } from 'lucide-react';
 
 type ItemLista = {
   id: string; nome_completo: string; telefone: string | null;
@@ -234,10 +234,32 @@ export default function InscricaoEventoCheckin() {
   // deixaria quem clica achando que avisou todo mundo.
   const [avisoPrevia, setAvisoPrevia] = useState<{ inscritos_confirmados: number; com_conta_no_app: number; sem_conta_no_app: number } | null>(null);
   const [avisando, setAvisando] = useState(false);
+  const [emailPrevia, setEmailPrevia] = useState<{ confirmados: number; com_email: number; sem_email: number; ja_enviados: number; faltam: number; canal_pronto: boolean } | null>(null);
+  const [enviandoEmail, setEnviandoEmail] = useState(false);
   useEffect(() => {
     if (!id) return;
     api.checkinAvisoAppPrevia(id).then(setAvisoPrevia).catch(() => setAvisoPrevia(null));
+    api.checkinAvisoEmailPrevia(id).then(setEmailPrevia).catch(() => setEmailPrevia(null));
   }, [id]);
+
+  async function enviarComprovantesPorEmail() {
+    if (!emailPrevia?.faltam) return;
+    if (!window.confirm(
+      `Enviar o comprovante (QR + número da sorte) para ${emailPrevia.faltam} pessoa(s) por e-mail?\n\n`
+      + `Cada uma recebe o SEU — um e-mail por inscrição, com o nome dela no assunto.\n`
+      + `${emailPrevia.sem_email} inscrito(s) não têm e-mail e não recebem nada.`
+    )) return;
+    setEnviandoEmail(true);
+    try {
+      const r = await api.checkinAvisoEmailEnviar(id!);
+      const sobra = r.restantes ? ` · faltam ${r.restantes} (clique de novo pra continuar)` : '';
+      const ruim = (r.falhas || r.recusados) ? ` · ${r.falhas} falha(s)${r.recusados ? `, ${r.recusados} recusado(s)` : ''}` : '';
+      toast.success(`${r.enviados} comprovante(s) enviado(s)${sobra}${ruim}`);
+      api.checkinAvisoEmailPrevia(id!).then(setEmailPrevia).catch(() => {});
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível enviar');
+    } finally { setEnviandoEmail(false); }
+  }
 
   async function avisarNoApp() {
     if (!avisoPrevia?.com_conta_no_app) return;
@@ -611,6 +633,35 @@ export default function InscricaoEventoCheckin() {
                 >
                   {avisando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bell className="h-4 w-4" />}
                   {avisoPrevia.com_conta_no_app ? `Avisar ${avisoPrevia.com_conta_no_app} no app` : 'Ninguém tem o app'}
+                </Button>
+              </Card>
+            )}
+
+            {/* Comprovante por e-mail — o canal que realmente alcança o evento:
+                324 dos 334 inscritos têm e-mail, contra 32 com o app. */}
+            {emailPrevia && (
+              <Card className="glass-solid p-4">
+                <div className="text-sm font-semibold mb-1">Mandar o comprovante por e-mail</div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed mb-3">
+                  Cada pessoa recebe o <strong>seu</strong> QR e o número da sorte — um e-mail por
+                  inscrição, com o nome dela no assunto.
+                  {' '}<strong>{emailPrevia.com_email}</strong> de {emailPrevia.confirmados} têm e-mail
+                  {emailPrevia.ja_enviados ? ` · ${emailPrevia.ja_enviados} já receberam` : ''}
+                  {emailPrevia.sem_email ? ` · ${emailPrevia.sem_email} sem e-mail` : ''}.
+                </p>
+                {!emailPrevia.canal_pronto && (
+                  <p className="text-[11px] text-amber-600 mb-2">
+                    O canal de e-mail não está configurado — nada sai enquanto isso.
+                  </p>
+                )}
+                <Button
+                  onClick={enviarComprovantesPorEmail}
+                  disabled={enviandoEmail || !emailPrevia.faltam || !emailPrevia.canal_pronto}
+                  variant="outline"
+                  className="w-full gap-2"
+                >
+                  {enviandoEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+                  {emailPrevia.faltam ? `Enviar para ${emailPrevia.faltam}` : 'Todos já receberam'}
                 </Button>
               </Card>
             )}
