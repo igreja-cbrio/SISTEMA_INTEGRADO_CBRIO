@@ -1252,10 +1252,19 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
   const ip = req.ip || null;
   const ua = req.headers['user-agent'] || null;
 
+  // ⚠️⚠️ Consentimento de TERCEIRO (inscrição feita no balcão pelo operador) é
+  // gravado COMO TAL: o texto declara quem marcou, e nunca se apresenta como
+  // aceite digitado pelo titular — gravar assim seria fabricar prova legal
+  // (mesma decisão do link do voluntário, 14/08, e do "adicionar pessoa" dos
+  // grupos, 25/08). Sem `declaradoPor`, nada muda: é o aceite da própria pessoa.
+  const declaradoPor = String(opts.consentDeclaradoPor || '').trim();
+  const textoTermos = declaradoPor
+    ? `DECLARADO PRESENCIALMENTE POR ${declaradoPor} no balcão (não é aceite digitado pelo próprio titular) — ${TEXTOS.termos_lgpd}`
+    : undefined;
   const consentimentos = (refId, membroId) => registrarConsentimentos({
     porta: 'inscricoes', refId, membroId, ip, userAgent: ua,
     itens: [
-      { tipo: 'termos_lgpd', aceito: true },
+      { tipo: 'termos_lgpd', aceito: true, ...(textoTermos ? { texto: textoTermos } : {}) },
       { tipo: 'whatsapp', aceito: optin },
       ...(ex.temCampoImagem ? [{ tipo: 'imagem', aceito: Boolean(body.consent_imagem) }] : []),
       // Autorização do responsável (LGPD art. 14 §1º) — só quando o SERVIDOR

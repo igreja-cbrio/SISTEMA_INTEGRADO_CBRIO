@@ -37,6 +37,7 @@ const { enviarEmail } = require('../services/email');
 // Push pro app de membros quando um evento é publicado (broadcast).
 const { notificarApp } = require('../services/appPush');
 const { previaAvisoEmail, enviarAvisoEmail } = require('../services/avisoComprovanteEmail');
+const { avaliarCadastroPessoa } = require('../utils/prontidaoCadastro');
 // CPF com DV pelo canônico do Contrato de Inscrição — NÃO recriar cópia local
 // (era assim que as réguas divergiam entre as portas).
 const { cpfValido } = require('../services/inscricaoContrato');
@@ -2118,6 +2119,83 @@ router.post('/eventos/:id/checkin/aviso-app', authorizeModule('inscricoes', 4), 
   }
 });
 
+// ── Inscrever NA HORA, a partir do cadastro ─────────────────────────────────
+// Pedido do Matheus (29/08), depois de 3 pessoas chegarem sem inscrição no
+// Celebra: "buscar a pessoa no cadastro de membresia, e se tiver faltando
+// algum dado, o sistema avisar para preencher".
+//
+// ⚠️ Quem inscreve continua sendo a `inscreverEspinha` — a MESMA da porta
+// pública, do app e do totem: vaga sob advisory lock, dedup por CPF, benefício,
+// consentimentos, cobrança. Isto aqui só PRÉ-PREENCHE o formulário com o que a
+// igreja já sabe da pessoa e diz o que falta.
+router.get('/eventos/:id/pessoas/buscar', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 3) return res.json({ pessoas: [] });
+    const digitos = q.replace(/\D/g, '');
+
+    // Busca por nome (sem acento, via a régua da casa), CPF ou telefone.
+    let query = supabase.from('mem_membros')
+      .select('id, nome, cpf, telefone, email, data_nascimento, genero, status')
+      .is('deleted_at', null).limit(40);
+    query = digitos.length >= 8
+      ? query.or(`cpf.like.%${digitos}%,telefone.like.%${digitos}%`)
+      : query.ilike('nome', `%${escapePostgrestValue(q)}%`);
+    const { data, error } = await query;
+    if (error) throw error;
+
+    // Já inscrita neste evento? A tela precisa DIZER — senão o operador
+    // preenche tudo pra levar um "já inscrito" no fim.
+    const ids = (data || []).map((m) => m.id);
+    const jaInscritos = new Set();
+    if (ids.length) {
+      const { data: ins } = await supabase.from('inscricoes')
+        .select('membro_id').eq('evento_id', req.params.id)
+        .is('deleted_at', null).neq('status', 'cancelada')
+        .in('membro_id', ids);
+      for (const i of (ins || [])) jaInscritos.add(i.membro_id);
+    }
+
+    res.json({
+      pessoas: (data || []).map((m) => {
+        const p = avaliarCadastroPessoa(m);
+        return {
+          id: m.id, nome: m.nome, status: m.status,
+          // O que já temos vai pro formulário; o que falta, o operador digita.
+          cpf: m.cpf || null, telefone: m.telefone || null, email: m.email || null,
+          data_nascimento: m.data_nascimento || null, sexo: m.genero || null,
+          falta: p.faltando, falta_rotulos: p.rotulos, completo: p.completo,
+          ja_inscrita: jaInscritos.has(m.id),
+        };
+      }),
+    });
+  } catch (e) {
+    console.error('[inscricoes] buscar pessoa:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar no cadastro' });
+  }
+});
+
+// ⚠️ Nível 3 (não 2): isto CRIA inscrição, diferente de operar a portaria.
+router.post('/eventos/:id/inscrever-na-hora', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const ev = await eventoEspinhaPorId(req.params.id);
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    // ⚠️⚠️ NÃO confere a janela pública de propósito: o caso de uso É o atrasado
+    // que chega depois do prazo, e quem decide é o operador autenticado, não o
+    // relógio do formulário. A VAGA continua valendo — quem recusa é a RPC.
+    // O NOME de quem operou vai pro texto do consentimento — é o que torna a
+    // prova honesta ("declarado por fulano no balcão").
+    const quem = req.user?.nome || req.user?.name || req.user?.email || 'operador do balcão';
+    return await inscreverEspinha(req, res, ev, {
+      origem: 'balcao',
+      consentDeclaradoPor: quem,
+    });
+  } catch (e) {
+    console.error('[inscricoes] inscrever na hora:', e.message);
+    res.status(500).json({ error: 'Erro ao concluir a inscrição' });
+  }
+});
+
 // GET /eventos/:id/checkin/qr-autoatendimento — o link do QR da porta.
 // ⚠️ Nível 2 (quem opera check-in). O link é a credencial: quem o tem consegue
 // abrir a porta de autoatendimento, então ele não sai em rota de leitura geral.
@@ -2147,7 +2225,7 @@ router.get('/eventos/:id/checkin/qr-autoatendimento', authorizeModule('inscricoe
 router.get('/eventos/:id/checkin', authorizeModule('inscricoes', 2), async (req, res) => {
   try {
     const { data: ev, error: eEv } = await supabase.from('insc_eventos')
-      .select('id, nome, slug, data, hora, local, status, checkin_ativo, tem_sorteio, pagamento_ativo, vagas')
+      .select('id, nome, slug, data, hora, local, status, checkin_ativo, tem_sorteio, pagamento_ativo, vagas, campos')
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (eEv) throw eEv;
     if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
