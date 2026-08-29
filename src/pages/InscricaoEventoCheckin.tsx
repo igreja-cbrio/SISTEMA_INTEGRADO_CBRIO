@@ -18,7 +18,7 @@ import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import {
   ArrowLeft, Camera, CameraOff, CheckCircle2, Loader2, Maximize2, Minimize2,
-  Search, UserPlus, Users, Undo2, AlertTriangle, History, QrCode, SwitchCamera } from 'lucide-react';
+  Search, UserPlus, Users, Undo2, AlertTriangle, History, QrCode, SwitchCamera, Bell } from 'lucide-react';
 
 type ItemLista = {
   id: string; nome_completo: string; telefone: string | null;
@@ -227,6 +227,32 @@ export default function InscricaoEventoCheckin() {
   const [qrAuto, setQrAuto] = useState<string | null>(null);
   const [qrAberto, setQrAberto] = useState(false);
   const [qrErro, setQrErro] = useState<string | null>(null);
+
+  // ── Aviso "use o seu QR" pra quem tem o app ─────────────────────────────
+  // ⚠️ A prévia carrega ANTES de qualquer disparo porque o alcance é MENOR
+  // que "os inscritos" (só quem tem conta no app). Botão sem esse número
+  // deixaria quem clica achando que avisou todo mundo.
+  const [avisoPrevia, setAvisoPrevia] = useState<{ inscritos_confirmados: number; com_conta_no_app: number; sem_conta_no_app: number } | null>(null);
+  const [avisando, setAvisando] = useState(false);
+  useEffect(() => {
+    if (!id) return;
+    api.checkinAvisoAppPrevia(id).then(setAvisoPrevia).catch(() => setAvisoPrevia(null));
+  }, [id]);
+
+  async function avisarNoApp() {
+    if (!avisoPrevia?.com_conta_no_app) return;
+    if (!window.confirm(
+      `Avisar ${avisoPrevia.com_conta_no_app} pessoa(s) com o app que o check-in é pelo QR?\n\n`
+      + `Os outros ${avisoPrevia.sem_conta_no_app} inscritos NÃO têm conta no app e não recebem nada.`
+    )) return;
+    setAvisando(true);
+    try {
+      const r = await api.checkinAvisoAppEnviar(id!);
+      toast.success(`Aviso enviado para ${r.com_conta_no_app} no app (${r.enviados} com push)`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível enviar o aviso');
+    } finally { setAvisando(false); }
+  }
   const abrirQrAuto = async () => {
     setQrAberto(true); setQrErro(null);
     if (qrAuto) return;
@@ -564,6 +590,30 @@ export default function InscricaoEventoCheckin() {
                 A leitura fica ligada direto — aponte um QR atrás do outro. Quem não tiver o comprovante entra pela busca ao lado.
               </p>
             </Card>
+
+            {/* Avisar quem tem o app — o alcance vai DECLARADO no próprio card,
+                senão "avisar os inscritos" se lê como se chegasse aos 334. */}
+            {avisoPrevia && (
+              <Card className="glass-solid p-4">
+                <div className="text-sm font-semibold mb-1">Avisar pelo app</div>
+                <p className="text-[11px] text-muted-foreground leading-relaxed mb-3">
+                  Manda um aviso no app dizendo pra apresentar o QR na entrada. O toque
+                  abre a inscrição da pessoa, com o comprovante.
+                  {' '}<strong>{avisoPrevia.com_conta_no_app}</strong> de{' '}
+                  {avisoPrevia.inscritos_confirmados} inscritos têm conta no app — os
+                  outros {avisoPrevia.sem_conta_no_app} não recebem nada.
+                </p>
+                <Button
+                  onClick={avisarNoApp}
+                  disabled={avisando || !avisoPrevia.com_conta_no_app || !ev.checkin_ativo}
+                  variant="outline"
+                  className="w-full gap-2"
+                >
+                  {avisando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bell className="h-4 w-4" />}
+                  {avisoPrevia.com_conta_no_app ? `Avisar ${avisoPrevia.com_conta_no_app} no app` : 'Ninguém tem o app'}
+                </Button>
+              </Card>
+            )}
 
             {/* Trilha da portaria (ledger append-only) — responde "quem liberou
                 a entrada dessa pessoa com pagamento pendente?" na própria tela. */}

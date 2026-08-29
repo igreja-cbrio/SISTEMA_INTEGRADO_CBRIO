@@ -2008,6 +2008,85 @@ const {
 } = require('../services/inscricaoCheckin');
 const { montarLinkCheckin } = require('../utils/eventoCheckinToken');
 
+
+// Quem receberia o aviso de check-in: inscrição CONFIRMADA (é quem tem
+// comprovante) ligada a cadastro que tem conta no app.
+async function publicoAvisoCheckin(eventoId) {
+  const membros = new Set();
+  for (let off = 0; off < 20000; off += 1000) {
+    const { data, error } = await supabase.from('inscricoes')
+      .select('membro_id')
+      .eq('evento_id', eventoId).is('deleted_at', null)
+      .eq('status', 'confirmada').not('membro_id', 'is', null)
+      .range(off, off + 999);
+    if (error) throw error;
+    for (const i of (data || [])) membros.add(i.membro_id);
+    if (!data || data.length < 1000) break;
+  }
+  const ids = [...membros];
+  const users = new Set();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from('profiles')
+      .select('id, membro_id').in('membro_id', ids.slice(i, i + 200));
+    if (error) throw error;
+    for (const p of (data || [])) users.add(p.id);
+  }
+  return {
+    inscritos_confirmados: ids.length,
+    com_conta_no_app: users.size,
+    // Declarado de propósito: é a diferença entre "avisei os inscritos" e a
+    // verdade. A tela mostra isso antes do disparo.
+    sem_conta_no_app: Math.max(0, ids.length - users.size),
+    user_ids: [...users],
+  };
+}
+
+// ── Aviso "use o seu QR na entrada" pra quem tem o app ──────────────────────
+// Pedido do Matheus (29/08): avisar quem se inscreveu que o check-in é pelo QR
+// do comprovante, com o toque abrindo a inscrição DAQUELE evento.
+//
+// ⚠️ Alcance é MENOR do que "os inscritos": só chega a quem tem conta no app.
+// Medido no Celebra em 29/08 — 294 inscritos com cadastro, **32 com conta** e
+// **17 com push**. Por isso o GET devolve a prévia e a tela mostra o número
+// ANTES de disparar: "avisei os inscritos" seria falso.
+router.get('/eventos/:id/checkin/aviso-app', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    res.json(await publicoAvisoCheckin(req.params.id));
+  } catch (e) {
+    console.error('[inscricoes] aviso-app previa:', e.message);
+    res.status(500).json({ error: 'Erro ao calcular quem receberia o aviso' });
+  }
+});
+
+router.post('/eventos/:id/checkin/aviso-app', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const { data: ev } = await supabase.from('insc_eventos')
+      .select('id, nome, checkin_ativo').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    // ⚠️ Sem check-in ativo o aviso manda a pessoa usar um QR que a portaria
+    // ainda não lê — pior que não avisar.
+    if (!ev.checkin_ativo) {
+      return res.status(409).json({ error: 'Ative o check-in do evento antes de avisar', codigo: 'checkin_inativo' });
+    }
+    const previa = await publicoAvisoCheckin(req.params.id);
+    if (!previa.com_conta_no_app) {
+      return res.status(409).json({ error: 'Ninguém inscrito tem conta no app', codigo: 'sem_publico', ...previa });
+    }
+    const r = await notificarApp(previa.user_ids, {
+      tipo: 'inscricao_evento_checkin',
+      titulo: ev.nome,
+      body: 'Seu QR de entrada já está no app. Abra e apresente na portaria.',
+      data: { evento_id: ev.id },
+      // Amarra o aviso ao FATO (este evento): reenviar não empilha linha no sino.
+      chaveDedup: `evento_checkin:${ev.id}`,
+    });
+    res.json({ ok: true, ...previa, enviados: r?.enviados ?? 0 });
+  } catch (e) {
+    console.error('[inscricoes] aviso-app:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar o aviso' });
+  }
+});
+
 // GET /eventos/:id/checkin/qr-autoatendimento — o link do QR da porta.
 // ⚠️ Nível 2 (quem opera check-in). O link é a credencial: quem o tem consegue
 // abrir a porta de autoatendimento, então ele não sai em rota de leitura geral.
