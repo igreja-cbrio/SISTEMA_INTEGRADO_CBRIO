@@ -119,6 +119,8 @@ const TEMPLATES_APP = {
   aniversario:          process.env.WHATSAPP_TEMPLATE_ANIVERSARIO2 || process.env.WHATSAPP_TEMPLATE_ANIVERSARIO,
   pedido_atualizado:    process.env.WHATSAPP_TEMPLATE_PEDIDO,         // {{1}} nome {{2}} solicitação {{3}} status {{4}} detalhe {{5}} link
   familia_convite_aceito: process.env.WHATSAPP_TEMPLATE_FAMILIA_ACEITO, // {{1}} nome de quem aceitou
+  // Ajuda com o app (29/08): {{1}} nome · {{2}} telefone · {{3}} dúvida.
+  suporte_app:          process.env.WHATSAPP_TEMPLATE_SUPORTE_APP,
 };
 // Templates de categoria MARKETING (Meta exige opt-in · compliance).
 // O aniversário é MARKETING de forma inescapável (verificado 2026-07-16):
