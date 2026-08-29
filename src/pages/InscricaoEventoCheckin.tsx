@@ -368,6 +368,8 @@ export default function InscricaoEventoCheckin() {
 
   const ev = estado.evento;
   const pct = estado.inscritos ? Math.round((estado.presentes / estado.inscritos) * 100) : 0;
+
+
   const linkPublico = `${window.location.origin}/evento/${ev.slug}`;
 
   const FEEDBACK_COR: Record<Feedback['tipo'], { bg: string; borda: string; texto: string }> = {
@@ -376,6 +378,32 @@ export default function InscricaoEventoCheckin() {
     aviso: { bg: 'rgba(245,158,11,0.14)', borda: 'rgba(245,158,11,0.45)', texto: '#d97706' },
     erro: { bg: 'rgba(239,68,68,0.14)', borda: 'rgba(239,68,68,0.45)', texto: '#ef4444' },
   };
+
+  // ⚠️ MONTADO uma vez e RENDERIZADO em UM lugar de cada vez: com a câmera
+  // ligada vai colado no leitor (é pra lá que o operador olha na fila); sem
+  // câmera, no topo, que é o fluxo da busca pela lista. Dois iguais na tela
+  // ao mesmo tempo se leem como bug.
+  const cartaoFeedback = feedback ? (
+          <div className="rounded-2xl px-5 py-4 border" style={{ background: FEEDBACK_COR[feedback.tipo].bg, borderColor: FEEDBACK_COR[feedback.tipo].borda }}>
+            <div className="flex items-center gap-3">
+              {feedback.tipo === 'ok'
+                ? <CheckCircle2 className="h-9 w-9 shrink-0" style={{ color: FEEDBACK_COR.ok.texto }} />
+                : <AlertTriangle className="h-9 w-9 shrink-0" style={{ color: FEEDBACK_COR[feedback.tipo].texto }} />}
+              <div className="min-w-0">
+                <div className="text-xl sm:text-2xl font-extrabold break-words" style={{ color: FEEDBACK_COR[feedback.tipo].texto }}>{feedback.titulo}</div>
+                {feedback.detalhe && <div className="text-sm text-muted-foreground">{feedback.detalhe}</div>}
+              </div>
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                {feedback.pendenteId && (
+                  <Button size="sm" onClick={() => liberarPendente(feedback.pendenteId!)}>
+                    Liberar entrada mesmo assim
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={() => setFeedback(null)}>Fechar</Button>
+              </div>
+            </div>
+          </div>
+  ) : null;
 
   return (
     // bg explícito: em tela cheia o elemento fullscreen fica sobre fundo preto
@@ -432,28 +460,8 @@ export default function InscricaoEventoCheckin() {
           </Card>
         )}
 
-        {/* Feedback do último registro (grande — dá pra ler de longe na porta) */}
-        {feedback && (
-          <div className="rounded-2xl px-5 py-4 border" style={{ background: FEEDBACK_COR[feedback.tipo].bg, borderColor: FEEDBACK_COR[feedback.tipo].borda }}>
-            <div className="flex items-center gap-3">
-              {feedback.tipo === 'ok'
-                ? <CheckCircle2 className="h-9 w-9 shrink-0" style={{ color: FEEDBACK_COR.ok.texto }} />
-                : <AlertTriangle className="h-9 w-9 shrink-0" style={{ color: FEEDBACK_COR[feedback.tipo].texto }} />}
-              <div className="min-w-0">
-                <div className="text-xl sm:text-2xl font-extrabold break-words" style={{ color: FEEDBACK_COR[feedback.tipo].texto }}>{feedback.titulo}</div>
-                {feedback.detalhe && <div className="text-sm text-muted-foreground">{feedback.detalhe}</div>}
-              </div>
-              <div className="ml-auto flex items-center gap-2 shrink-0">
-                {feedback.pendenteId && (
-                  <Button size="sm" onClick={() => liberarPendente(feedback.pendenteId!)}>
-                    Liberar entrada mesmo assim
-                  </Button>
-                )}
-                <Button size="sm" variant="ghost" onClick={() => setFeedback(null)}>Fechar</Button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* No topo só quando a câmera está desligada. */}
+        {!lendo && cartaoFeedback}
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 items-start">
           {/* Busca + lista */}
@@ -585,6 +593,12 @@ export default function InscricaoEventoCheckin() {
                 )}
               </div>
             )}
+
+            {/* ⚠️ Confirmação COLADA no leitor: ela vivia só no topo da página e o
+                leitor fica na coluna da direita — na porta, o operador tinha que
+                ROLAR a tela pra ver o nome de quem acabou de passar (relato do
+                Matheus, 29/08). */}
+            {lendo && cartaoFeedback}
 
             {/* Leitor de QR */}
             <Card className="glass-solid p-4">
