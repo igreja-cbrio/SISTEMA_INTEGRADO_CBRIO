@@ -178,9 +178,33 @@ describe('autoatendimento · nome completo + telefone', () => {
   const ANA = { id: 'a', nome_completo: 'Ana Paula Leite da Silva', telefone: '21999998888', status: 'confirmada' };
   const JOAO = { id: 'b', nome_completo: 'João Márcio Conceição', telefone: '21988887777', status: 'confirmada' };
 
-  it('normaliza acento, caixa e espaço no nome', () => {
+  // ⚠️ Pedido explícito do Matheus (28/08): "a pessoa não precisa escrever
+  // exatamente com acentos e letras maiúsculas ou minúsculas". Na fila da
+  // porta, exigir grafia exata é o mesmo que não ter o caminho.
+  it('a pessoa não precisa acertar acento nem caixa', () => {
+    expect(normalizarNomeChave('JOÃO MÁRCIO CONCEIÇÃO')).toBe('joao marcio conceicao');
+    expect(normalizarNomeChave('joao marcio conceicao')).toBe('joao marcio conceicao');
     expect(normalizarNomeChave('JOSÉ  DA  Conceição')).toBe('jose da conceicao');
+  });
+
+  // Caso REAL deste projeto: o líder cadastrado como "ANTONIO MARCO PEREIRA"
+  // (sem acento) e a pessoa digitando "Antônio" — foi o que fez a Patrícia não
+  // achar o grupo dele em 30/07 e virou a régua de busca sem acento.
+  it('casa nos DOIS sentidos: cadastro sem acento × digitado com acento', () => {
+    expect(normalizarNomeChave('ANTONIO MARCO PEREIRA'))
+      .toBe(normalizarNomeChave('Antônio Marco Pereira'));
+  });
+
+  it('tolera espaço duplo, pontas e pontuação', () => {
     expect(normalizarNomeChave('  Ana   Paula ')).toBe('ana paula');
+    // 2 nomes com ponto, 1 com parênteses e 1 com apóstrofo CURVO existem de
+    // verdade entre as 332 inscrições do Celebra.
+    expect(normalizarNomeChave('João P. Silva')).toBe(normalizarNomeChave('Joao P Silva'));
+    expect(normalizarNomeChave('D’Ávila Costa')).toBe(normalizarNomeChave("D'Avila Costa"));
+    // ⚠️ Pontuação vira ESPAÇO, não vazio: senão "Maria(Ana)" viraria "mariaana".
+    expect(normalizarNomeChave('Maria(Ana) Souza')).toBe('maria ana souza');
+    // `ā` (macron) aparece numa das inscrições — NFD resolve.
+    expect(normalizarNomeChave('Renāta Lima')).toBe('renata lima');
   });
 
   it('casa o telefone com ou sem o 9, o DDD ou o +55', () => {
@@ -212,6 +236,14 @@ describe('autoatendimento · nome completo + telefone', () => {
     const r = escolherPorNomeTelefone([ANA, JOAO], { nome: 'ana paula leite da silva', telefone: '(21) 99999-8888' });
     expect(r.situacao).toBe('ok');
     expect(r.inscricao.id).toBe('a');
+  });
+
+  // Ponta a ponta: o cadastro tem acento e o dedo na fila digita sem, tudo
+  // maiúsculo e com espaço sobrando. Tem que achar.
+  it('acha mesmo digitando sem acento, em caixa alta e com espaço extra', () => {
+    const r = escolherPorNomeTelefone([ANA, JOAO], { nome: '  JOAO   MARCIO CONCEICAO ', telefone: '21988887777' });
+    expect(r.situacao).toBe('ok');
+    expect(r.inscricao.id).toBe('b');
   });
 
   // ⚠️ O SEGUNDO SINAL NÃO É ENFEITE: nome certo com telefone errado NÃO passa.

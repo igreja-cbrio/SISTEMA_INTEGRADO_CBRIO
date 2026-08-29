@@ -126,16 +126,36 @@ function resumoPublico(inscricao) {
 // ════════════════════════════════════════════════════════════════════════════
 
 /**
- * Chave de comparação do nome: sem acento, minúsculo, espaços colapsados.
+ * Chave de comparação do nome. A pessoa NÃO precisa acertar acento, caixa,
+ * pontuação nem espaço duplo — pedido do Matheus, e é o mínimo pra uma fila:
+ * "JOAO MARCIO CONCEICAO" casa com "João Márcio Conceição".
  *
- * ⚠️ Comparação EXATA do nome inteiro, nunca parcial nem por semelhança.
- * Afrouxar aqui (primeiro nome, "contém", distância de edição) é o que
- * transformaria o desempate em chute — e o nome é a metade identificadora
- * deste par.
+ * ⚠️ Isso é tolerância de GRAFIA, não de CONTEÚDO: a comparação continua sendo
+ * do nome INTEIRO, palavra por palavra. Afrouxar o conteúdo (primeiro nome,
+ * "contém", distância de edição) é o que transformaria o desempate em chute —
+ * e o nome é a metade identificadora deste par.
+ *
+ * ⚠️ Conferido no banco que a tolerância não cria ambiguidade: com esta régua,
+ * nome+telefone continua identificando UNICAMENTE as 332 do Celebra (há 3
+ * homônimos, separados pelo telefone; nome E telefone iguais viram `ambiguo` e
+ * vão pro operador).
  */
 function normalizarNomeChave(nome) {
   return String(nome || '')
-    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    // 1. Tira ACENTO: NFD separa a letra do sinal, e o range \u0300-\u036f são
+    //    os diacríticos combinantes. Pega á à â ã ä é í ó ú ç ñ ā — inclusive o
+    //    `ā` que existe de verdade numa das inscrições do Celebra.
+    //    ⚠️ Escape explícito, nunca o caractere combinante cru no código: ele é
+    //    invisível no editor e some numa cópia descuidada.
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    // 2. PONTUAÇÃO vira espaço. Medido nas 332 do Celebra: 2 nomes com ponto
+    //    ("J. Silva"), 1 com parênteses e 1 com apóstrofo CURVO (’, que o iOS
+    //    troca sozinho pelo reto). Ninguém na fila vai reproduzir isso, e o
+    //    pedido do Matheus é justamente que não precise.
+    //    ⚠️ Vira ESPAÇO, não vazio: "Maria(Ana)" tem que virar "maria ana", não
+    //    "mariaana".
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    // 3. Caixa e espaço: minúsculo, espaços colapsados, pontas limpas.
     .toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
