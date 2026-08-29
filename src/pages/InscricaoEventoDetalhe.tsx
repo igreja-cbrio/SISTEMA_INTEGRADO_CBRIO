@@ -16,8 +16,7 @@ import {
   ArrowLeft, CalendarDays, Clock, MapPin, Users, Gift, Link2, MessageCircle,
   QrCode, Pencil, Trash2, Loader2, Search, ExternalLink, Ticket, Megaphone,
   ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, Download, Repeat,
-  Printer, CreditCard, ScanLine, Paperclip,
-} from 'lucide-react';
+  Printer, CreditCard, ScanLine, Paperclip, Lock } from 'lucide-react';
 import QrLinkDialog from '../components/QrLinkDialog';
 import { EventoModal } from './Inscricoes';
 import { idadeEmAnos, faixaLabel, sexoLabel } from '../lib/faixaEtaria';
@@ -227,6 +226,43 @@ export default function InscricaoEventoDetalhe() {
       carregar();
     } catch (e: any) { toast.error(e?.message || 'Erro ao publicar'); }
   }
+  // ⚠️⚠️ São DUAS travas, e reabrir só uma não reabre nada: o formulário
+  // público exige `status='publicado'` E prazo não vencido. Em 29/08 o Celebra
+  // estava `encerrado` com o prazo a 3 minutos de vencer — mexer só no status
+  // teria "reaberto" um formulário que fecharia sozinho em seguida.
+  const prazoVencido = !!ev?.inscricoes_encerram_em
+    && Date.now() > new Date(ev.inscricoes_encerram_em).getTime();
+  const inscricoesFechadas = ev?.status === 'encerrado' || (ev?.status === 'publicado' && prazoVencido);
+
+  async function reabrirInscricoes() {
+    if (!id) return;
+    if (!window.confirm(
+      'Reabrir as inscrições deste evento?\n\n'
+      + 'O formulário público volta ao ar para QUALQUER pessoa, não só para quem está na porta.'
+      + (prazoVencido ? '\n\nO prazo já venceu, então ele será REMOVIDO — feche pelo botão quando terminar.' : '')
+    )) return;
+    try {
+      await api.atualizarEvento(id, {
+        status: 'publicado',
+        // Só mexe no prazo quando ele é o que está travando. Prazo futuro é
+        // decisão de quem configurou o evento e não se apaga por engano.
+        ...(prazoVencido ? { inscricoes_encerram_em: null } : {}),
+      });
+      toast.success('Inscrições reabertas — o formulário está no ar');
+      carregar();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao reabrir'); }
+  }
+
+  async function encerrarInscricoes() {
+    if (!id) return;
+    if (!window.confirm('Encerrar as inscrições? O formulário público para de aceitar novas inscrições.')) return;
+    try {
+      await api.atualizarEvento(id, { status: 'encerrado' });
+      toast.success('Inscrições encerradas');
+      carregar();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao encerrar'); }
+  }
+
   async function excluir() {
     if (!id || !window.confirm('Excluir este evento? (some da lista · reversível por super-admin)')) return;
     try { await api.excluirEvento(id); toast.success('Evento excluído'); navigate('/inscricoes'); }
@@ -457,6 +493,20 @@ export default function InscricaoEventoDetalhe() {
               {ev.status === 'rascunho' && (
                 <Button size="sm" onClick={publicar} title="Coloca o formulário no ar agora">
                   <Megaphone className="h-3.5 w-3.5 mr-1" /> Publicar
+                </Button>
+              )}
+              {/* ⚠️ Sem isto não existia caminho de volta: o "Publicar" só
+                  aparece em rascunho, então evento encerrado não tinha como
+                  reabrir pela tela — era edição no banco. É o caso do atrasado
+                  que chega na porta e não está inscrito. */}
+              {inscricoesFechadas && (
+                <Button size="sm" onClick={reabrirInscricoes} title="Coloca o formulário público de volta no ar">
+                  <Megaphone className="h-3.5 w-3.5 mr-1" /> Reabrir inscrições
+                </Button>
+              )}
+              {ev.status === 'publicado' && !prazoVencido && (
+                <Button size="sm" variant="outline" onClick={encerrarInscricoes} title="O formulário público para de aceitar novas inscrições">
+                  <Lock className="h-3.5 w-3.5 mr-1" /> Encerrar inscrições
                 </Button>
               )}
               <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}><Pencil className="h-3.5 w-3.5 mr-1" /> Editar</Button>
