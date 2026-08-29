@@ -36,6 +36,7 @@ const TIPOS_EDITAVEIS = [...TIPOS_EMAIL, 'assinatura'];
 const { enviarEmail } = require('../services/email');
 // Push pro app de membros quando um evento é publicado (broadcast).
 const { notificarApp } = require('../services/appPush');
+const { previaAvisoEmail, enviarAvisoEmail } = require('../services/avisoComprovanteEmail');
 // CPF com DV pelo canônico do Contrato de Inscrição — NÃO recriar cópia local
 // (era assim que as réguas divergiam entre as portas).
 const { cpfValido } = require('../services/inscricaoContrato');
@@ -2049,6 +2050,36 @@ async function publicoAvisoCheckin(eventoId) {
 // Medido no Celebra em 29/08 — 294 inscritos com cadastro, **32 com conta** e
 // **17 com push**. Por isso o GET devolve a prévia e a tela mostra o número
 // ANTES de disparar: "avisei os inscritos" seria falso.
+router.get('/eventos/:id/checkin/aviso-email', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    res.json(await previaAvisoEmail(req.params.id));
+  } catch (e) {
+    console.error('[inscricoes] aviso-email previa:', e.message);
+    res.status(500).json({ error: 'Erro ao calcular quem receberia o e-mail' });
+  }
+});
+
+// ⚠️ Nível 4: falar com centenas de pessoas pelo e-mail da igreja não é a
+// mesma permissão de operar a portaria.
+router.post('/eventos/:id/checkin/aviso-email', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const { data: ev } = await supabase.from('insc_eventos')
+      .select('id, nome, data, hora, tem_sorteio, checkin_ativo')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    const r = await enviarAvisoEmail(req.params.id, ev);
+    // ⚠️ Envio que não enviou ninguém NÃO pode aparecer como sucesso (lição do
+    // disparo do censo, 05/08): sem canal a resposta diz o motivo.
+    if (r.motivo === 'sem_canal') {
+      return res.status(503).json({ error: 'Nenhum canal de e-mail configurado', codigo: 'sem_canal' });
+    }
+    res.json(r);
+  } catch (e) {
+    console.error('[inscricoes] aviso-email:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar os comprovantes' });
+  }
+});
+
 router.get('/eventos/:id/checkin/aviso-app', authorizeModule('inscricoes', 2), async (req, res) => {
   try {
     res.json(await publicoAvisoCheckin(req.params.id));

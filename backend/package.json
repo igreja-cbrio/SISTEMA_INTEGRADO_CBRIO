@@ -29,11 +29,12 @@
     "officeparser": "^6.0.7",
     "passkit-generator": "^3.5.7",
     "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "3.11.174",
     "pg": "^8.13.0",
     "pptxgenjs": "^4.0.1",
+    "qrcode": "^1.5.4",
     "undici": "^6.25.0",
     "web-push": "^3.6.7",
-    "xlsx": "^0.18.5",
-    "pdfjs-dist": "3.11.174"
+    "xlsx": "^0.18.5"
   }
 }

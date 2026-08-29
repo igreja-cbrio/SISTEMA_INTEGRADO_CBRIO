@@ -542,6 +542,8 @@ export const inscricoesApi = {
   checkinQrAutoatendimento: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/qr-autoatendimento`),
   checkinAvisoAppPrevia: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/aviso-app`),
   checkinAvisoAppEnviar: (eventoId) => post(`/inscricoes/eventos/${eventoId}/checkin/aviso-app`, {}),
+  checkinAvisoEmailPrevia: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/aviso-email`),
+  checkinAvisoEmailEnviar: (eventoId) => post(`/inscricoes/eventos/${eventoId}/checkin/aviso-email`, {}),
 
   // Templates dos e-mails de inscrição (confirmada / pendente / expirada).
   // Sem template salvo, o e-mail sai no texto padrão do código — a tela mostra
