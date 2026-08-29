@@ -17,6 +17,8 @@ const { ehDiaDoCulto } = require('../utils/janelaCulto');
 const { classificarCulto } = require('../utils/rodizioCulto');
 const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, ocorrenciasPassadas, janelaCorrecaoPassada } = require('../utils/agendaGrupo');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
+const { responderEscala, STATUS_VALIDOS: STATUS_ESCALA } = require('../services/escalaResposta');
+const { acoesDaNotificacao, acaoPermitida, statusDaAcao } = require('../utils/acaoNotificacao');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 const { dispararAuto } = require('../services/whatsappAuto');
@@ -1780,37 +1782,152 @@ router.get('/voluntariado/escalas', authApp, limiterNormal, async (req, res) => 
   }
 });
 
-// POST /api/app/voluntariado/escalas/:id/responder — { status: 'confirmed'|'declined' }
+// ── Responder uma escala QUE É MINHA ─────────────────────────────────────────
+// Usado pela rota de responder e pelo botão da notificação. O efeito (gravar +
+// avisar coordenação e supervisor) é do `escalaResposta`; aqui fica só a
+// AUTORIZAÇÃO e a guarda de culto que já passou.
+async function responderMinhaEscala(scheduleId, status, vp, motivo) {
+  const { data: escala } = await supabase.from('vol_schedules')
+    .select('id, volunteer_id, planning_center_person_id, service:vol_services(scheduled_at)')
+    .eq('id', scheduleId).maybeSingle();
+  if (!escala) return { ok: false, status: 404, erro: 'Escala não encontrada' };
+
+  // ⚠️ A checagem é a mesma do `/my-schedules/:id/respond`: perfil OU o id do
+  // Planning Center. Só `volunteer_id` deixaria de fora quem veio do PCO e
+  // ainda não tem perfil ligado — 27% dos check-ins chegam assim.
+  const minha = (escala.volunteer_id && escala.volunteer_id === vp.id)
+    || (escala.planning_center_person_id && escala.planning_center_person_id === vp.planning_center_id);
+  if (!minha) return { ok: false, status: 403, erro: 'Esta escala não é sua.' };
+
+  // ⚠️ Recusar culto que JÁ PASSOU não é recusa, é ruído: a vaga não tem mais
+  // como ser reposta e o aviso acordaria a coordenação por nada. Confirmar
+  // segue liberado (é registro do que aconteceu).
+  if (status === 'declined') {
+    const quando = escala.service?.scheduled_at ? new Date(escala.service.scheduled_at) : null;
+    if (quando && quando.getTime() < Date.now()) {
+      return { ok: false, status: 400, erro: 'Esse culto já passou — não dá mais pra recusar.' };
+    }
+  }
+  return responderEscala(scheduleId, status, { origem: 'app', motivo });
+}
+
+// POST /api/app/voluntariado/escalas/:id/responder — { status, motivo? }
+//
+// ⚠️⚠️ ESTA ROTA FAZIA UPDATE DIRETO e NÃO AVISAVA NINGUÉM (achado de
+// 29/08/2026). O comentário do irmão `/my-schedules/:id/respond` já dizia que
+// duas implementações divergiriam "como recusou pelo app e ninguém foi
+// avisado" — e era literalmente o que acontecia: aquela rota foi corrigida em
+// 14/08 e esta, que é a que o APP chama, ficou de fora. Quem recusava pelo
+// celular deixava a vaga aberta e o supervisor não sabia.
+//
+// Agora passa pelo `responderEscala`, o caminho ÚNICO (link do WhatsApp, ERP,
+// app e o botão da notificação).
 router.post('/voluntariado/escalas/:id/responder', authApp, limiterNormal, async (req, res) => {
   try {
     const { status, motivo } = req.body || {};
-    if (!['confirmed', 'declined'].includes(status)) {
+    if (!STATUS_ESCALA.includes(status)) {
       return res.status(400).json({ error: "status deve ser 'confirmed' ou 'declined'" });
     }
     const membro = await resolveMembroApp(req);
     const vp = await resolverVolProfile(req, membro);
     if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
-    // Não dá pra RECUSAR culto que já passou (aceitar/registrar segue liberado).
-    if (status === 'declined') {
-      const { data: sched } = await supabase.from('vol_schedules')
-        .select('service:vol_services(scheduled_at)').eq('id', req.params.id).maybeSingle();
-      const quando = sched?.service?.scheduled_at ? new Date(sched.service.scheduled_at) : null;
-      if (quando && quando.getTime() < Date.now()) {
-        return res.status(400).json({ error: 'Esse culto já passou — não dá mais pra recusar.' });
-      }
-    }
-    // motivo opcional só na recusa; confirmar limpa o motivo anterior.
-    const recusa_motivo = status === 'declined' ? (String(motivo || '').trim().slice(0, 200) || null) : null;
-    // só responde escala própria
-    const { data, error } = await supabase.from('vol_schedules')
-      .update({ confirmation_status: status, recusa_motivo })
-      .eq('id', req.params.id).eq('volunteer_id', vp.id).select().maybeSingle();
-    if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Escala não encontrada' });
-    res.json(data);
+
+    const r = await responderMinhaEscala(req.params.id, status, vp, motivo);
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.erro });
+    res.json(r.escala);
   } catch (e) {
     console.error('[APP vol/responder]', e.message);
     res.status(500).json({ error: 'Erro ao responder escala' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  POST /api/app/notificacoes/:id/acao — { acao, motivo? }
+//
+//  Pedido do Matheus (29/08/2026): a notificação no app chega com BOTÃO —
+//  escala: "Confirmar presença" / "Pedir troca"; pedido de grupo: "Aprovar" /
+//  "Recusar". Tocar FORA dos botões continua abrindo a tela de sempre.
+//
+//  ⚠️⚠️ Isto NÃO é um segundo caminho de escrita: ele ROTEIA para os caminhos
+//  únicos que já existem (`responderEscala` e `aprovarPedidoCore` /
+//  `devolverPedidoParaTriagem`). O que ele acrescenta é (a) resolver o ALVO a
+//  partir da notificação e (b) carimbar o desfecho nela, pra o card não voltar
+//  a oferecer um botão de algo já decidido.
+//
+//  ⚠️ A AUTORIZAÇÃO não vem de "a notificação é minha": cada ramo refaz a sua
+//  (escala tem que ser do meu perfil; pedido de grupo exige liderar o grupo).
+//  Notificação é ENDEREÇO, não credencial.
+// ════════════════════════════════════════════════════════════════════════════
+router.post('/notificacoes/:id/acao', authApp, limiterNormal, async (req, res) => {
+  try {
+    const acao = String(req.body?.acao || '');
+    const { data: n } = await supabase.from('app_notificacoes')
+      .select('id, tipo, data, lida_em')
+      .eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle();
+    if (!n) return res.status(404).json({ error: 'Notificação não encontrada' });
+
+    const disponivel = acoesDaNotificacao(n.tipo, n.data);
+    if (!acaoPermitida(n.tipo, n.data, acao)) {
+      // Devolve o estado pra tela se corrigir sozinha (ex.: já respondida
+      // noutro aparelho) em vez de só dizer "não pode".
+      return res.status(400).json({ error: 'Ação indisponível para esta notificação', feita: disponivel.feita, acoes: disponivel.acoes });
+    }
+
+    let resultado = { ok: true };
+
+    if (n.tipo === 'escala') {
+      const membro = await resolveMembroApp(req);
+      const vp = await resolverVolProfile(req, membro);
+      if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+      const status = statusDaAcao(acao);
+
+      // ⚠️ O aviso agrupa por (pessoa, DIA): quem serve nos 4 cultos de domingo
+      // recebe UMA notificação que cobre as 4 escalas. Responder só a primeira
+      // deixaria 3 vagas mentindo. Sequencial de propósito — cada `declined`
+      // dispara aviso à coordenação, e em paralelo elas se atropelariam.
+      const ok = [];
+      const falhas = [];
+      for (const id of disponivel.escalaIds) {
+        const r = await responderMinhaEscala(id, status, vp, req.body?.motivo);
+        (r.ok ? ok : falhas).push({ id, erro: r.erro || null });
+      }
+      // ⚠️ NENHUMA deu certo ⇒ é erro, e o carimbo NÃO é gravado: carimbar aqui
+      // esconderia o botão de uma coisa que não aconteceu.
+      if (!ok.length) {
+        const primeira = falhas[0] || {};
+        return res.status(400).json({ error: primeira.erro || 'Não foi possível responder', falhas: falhas.length });
+      }
+      // Parcial é DECLARADO (lei de 04/08): "3 de 4" nunca vira "pronto".
+      resultado = { ok: true, respondidas: ok.length, falhas: falhas.length, total: disponivel.escalaIds.length };
+    }
+
+    if (n.tipo === 'grupo_pedido') {
+      const ctx = await autorizarDecisaoPedido(req, res, disponivel.pedidoId);
+      if (!ctx) return; // autorizarDecisaoPedido já respondeu 403/404
+      if (acao === 'aprovar') {
+        const user = { userId: req.user.id, name: ctx.membro?.nome || req.user.email || 'Líder' };
+        const r = await aprovarPedidoCore(disponivel.pedidoId, user);
+        if (!r.ok) return res.status(r.code || 400).json({ error: r.error });
+        resultado = { ok: true, acao: 'aprovado' };
+      } else {
+        const r = await devolverPedidoParaTriagem(disponivel.pedidoId, req, ctx, req.body?.motivo);
+        if (!r.ok) return res.status(r.status || 400).json({ error: r.erro });
+        resultado = { ok: true, acao: r.acao };
+      }
+    }
+
+    // Carimba o desfecho NA notificação (e marca lida). Best-effort: o efeito
+    // real já aconteceu, e falhar aqui não pode desfazê-lo — no pior caso o
+    // botão reaparece e a segunda tentativa é no-op nos dois ramos.
+    const agora = new Date().toISOString();
+    await supabase.from('app_notificacoes')
+      .update({ data: { ...(n.data || {}), acao, acao_em: agora }, lida_em: n.lida_em || agora })
+      .eq('id', n.id).eq('user_id', req.user.id);
+
+    res.json({ ...resultado, acao_registrada: acao });
+  } catch (e) {
+    console.error('[APP] notificacoes/acao:', e.message);
+    res.status(500).json({ error: 'Não foi possível concluir' });
   }
 });
 
@@ -4482,10 +4599,10 @@ router.get('/grupos/pedidos/count', authApp, limiterNormal, async (req, res) => 
 // Autoriza a decisão sobre um pedido: precisa gerir o grupo do pedido (líder OU
 // supervisor) OU ser admin de grupos. Devolve { pedido, membro } ou responde o
 // erro e retorna null.
-async function autorizarDecisaoPedido(req, res) {
+async function autorizarDecisaoPedido(req, res, pedidoId) {
   const { membro, adminGrupos, gruposGeridos } = await gruposPapelApp(req);
   const { data: pedido } = await supabase.from('mem_grupo_pedidos')
-    .select('id, grupo_id, status').eq('id', req.params.id).maybeSingle();
+    .select('id, grupo_id, status').eq('id', pedidoId || req.params.id).maybeSingle();
   if (!pedido) { res.status(404).json({ error: 'Pedido não encontrado' }); return null; }
   const ehGerido = gruposGeridos.some(g => g.id === pedido.grupo_id);
   if (!adminGrupos && !ehGerido) {
@@ -4518,53 +4635,62 @@ router.post('/grupos/pedidos/:id/aprovar', authApp, limiterNormal, async (req, r
 // exclusivo deste caminho — o link do WhatsApp nunca mandou; item 3 da
 // auditoria do app 03/08). Mesma semântica do ramo de recusa do
 // POST /public/grupos/aprovar.
+// Devolve o pedido pra TRIAGEM (lei de 14/07: recusa do líder não é terminal).
+// Helper porque DOIS caminhos chamam: a rota abaixo e o botão "Recusar" da
+// notificação — duas implementações divergiriam no primeiro ajuste.
+async function devolverPedidoParaTriagem(pedidoId, req, ctx, motivo) {
+  const motivoInterno = motivo ? String(motivo).trim().slice(0, 500) : null;
+  const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+    .select('id, status, grupo_id, membro_id, nome').eq('id', pedidoId).single();
+  if (!pedido) return { ok: false, status: 404, erro: 'Pedido não encontrado' };
+  if (pedido.status !== 'pendente') {
+    return { ok: false, status: 409, erro: `Pedido já foi ${pedido.status}` };
+  }
+  const decididoPorNome = ctx.membro?.nome || req.user.email || 'Líder';
+  // Guarda de corrida: só devolve se AINDA está pendente.
+  const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
+    status: 'devolvido',
+    motivo_rejeicao: motivoInterno,
+    decidido_por: req.user.id,
+    decidido_por_nome: decididoPorNome,
+    decidido_em: new Date().toISOString(),
+  }).eq('id', pedido.id).eq('status', 'pendente').select('id');
+  if (!claimed || !claimed.length) {
+    return { ok: false, status: 409, erro: 'Pedido já foi decidido por outra pessoa' };
+  }
+  // Linha do tempo (nunca lança) — awaited: serverless descarta trabalho
+  // pendente depois do res.json.
+  await registrarEventoPedido(pedido.id, 'recusado_lider',
+    { motivo_interno: motivoInterno, origem: 'app' }, decididoPorNome);
+
+  // Avisa a TRIAGEM (módulo grupos) — mesma notificação do link do WhatsApp.
+  // Fire-and-forget de propósito: a Caixa de entrada é o caminho garantido
+  // (o pedido devolvido já está na fila).
+  (async () => {
+    try {
+      const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
+      await notificar({
+        modulo: 'grupos',
+        tipo: 'pedido_devolvido',
+        titulo: `Pedido devolvido pra triagem: ${pedido.nome}`,
+        mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido pelo app${motivoInterno ? ` (motivo interno: ${motivoInterno.slice(0, 200)})` : ''}. Sugira outro grupo pra pessoa ou rejeite de vez.`,
+        link: '/grupos?tab=entrada',
+        severidade: 'aviso',
+        chaveDedup: `pedido_devolvido_${pedido.id}`,
+      });
+    } catch (e) { console.error('[APP grupos/pedidos devolver notify]', e.message); }
+  })();
+
+  return { ok: true, acao: 'devolvido' };
+}
+
 router.post('/grupos/pedidos/:id/rejeitar', authApp, limiterNormal, async (req, res) => {
   try {
     const ctx = await autorizarDecisaoPedido(req, res);
     if (!ctx) return;
-    const motivoInterno = req.body?.motivo ? String(req.body.motivo).trim().slice(0, 500) : null;
-    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
-      .select('id, status, grupo_id, membro_id, nome').eq('id', req.params.id).single();
-    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    if (pedido.status !== 'pendente') {
-      return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
-    }
-    const decididoPorNome = ctx.membro?.nome || req.user.email || 'Líder';
-    // Guarda de corrida: só devolve se AINDA está pendente.
-    const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
-      status: 'devolvido',
-      motivo_rejeicao: motivoInterno,
-      decidido_por: req.user.id,
-      decidido_por_nome: decididoPorNome,
-      decidido_em: new Date().toISOString(),
-    }).eq('id', pedido.id).eq('status', 'pendente').select('id');
-    if (!claimed || !claimed.length) {
-      return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
-    }
-    // Linha do tempo (nunca lança) — awaited: serverless descarta trabalho
-    // pendente depois do res.json.
-    await registrarEventoPedido(pedido.id, 'recusado_lider',
-      { motivo_interno: motivoInterno, origem: 'app' }, decididoPorNome);
-
-    // Avisa a TRIAGEM (módulo grupos) — mesma notificação do link do WhatsApp.
-    // Fire-and-forget de propósito: a Caixa de entrada é o caminho garantido
-    // (o pedido devolvido já está na fila).
-    (async () => {
-      try {
-        const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
-        await notificar({
-          modulo: 'grupos',
-          tipo: 'pedido_devolvido',
-          titulo: `Pedido devolvido pra triagem: ${pedido.nome}`,
-          mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido pelo app${motivoInterno ? ` (motivo interno: ${motivoInterno.slice(0, 200)})` : ''}. Sugira outro grupo pra pessoa ou rejeite de vez.`,
-          link: '/grupos?tab=entrada',
-          severidade: 'aviso',
-          chaveDedup: `pedido_devolvido_${pedido.id}`,
-        });
-      } catch (e) { console.error('[APP grupos/pedidos devolver notify]', e.message); }
-    })();
-
-    res.json({ ok: true, acao: 'devolvido' });
+    const r = await devolverPedidoParaTriagem(req.params.id, req, ctx, req.body?.motivo);
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.erro });
+    res.json({ ok: true, acao: r.acao });
   } catch (e) {
     console.error('[APP] grupos/pedidos rejeitar:', e.message);
     res.status(500).json({ error: 'Erro ao recusar pedido' });

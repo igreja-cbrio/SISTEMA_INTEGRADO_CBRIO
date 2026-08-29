@@ -14397,6 +14397,82 @@ segunda como resposta da primeira.
 
 ⇒ **Uma pergunta por chamada.** Se precisar de duas, duas chamadas.
 
+## ⚠️⚠️ NOTIFICAÇÃO DO APP COM BOTÃO · e o furo que a medição achou (2026-08-29 · SEM migration)
+
+Pedido do Matheus: *"nas notificações queria as notificações dentro do app
+chegassem com botão para confirmar ou pedir troca (quando a pessoa não puder
+ir). Pedidos para entrar em grupo também. Claro que se clicar fora dos botões,
+deve direcionar para a rota respectiva da notificação."*
+
+### ⚠️⚠️ O ACHADO: recusar escala PELO APP não avisava NINGUÉM
+
+Medindo o que existia, apareceu o que o próprio código dizia que não podia
+acontecer. `services/escalaResposta.js` é o caminho único e o comentário do
+irmão `/api/voluntariado/my-schedules/:id/respond` (corrigido em 14/08) diz
+textualmente que duas implementações divergiriam *"como recusou pelo app e
+ninguém foi avisado"*.
+
+**Era exatamente o que acontecia.** A rota que o APP chama é outra —
+`POST /api/app/voluntariado/escalas/:id/responder` — e ela fazia **UPDATE direto
+em `confirmation_status`**: a escala virava `declined`, a coordenação não sabia,
+o supervisor não sabia, e a vaga ficava aberta em silêncio até alguém abrir a
+tela de montar escala.
+
+⚠️ **Estava pouco exercitado (1 recusa com motivo em toda a base), e é por isso
+que o conserto é AGORA**: o botão na notificação torna este o caminho principal.
+
+⇒ A rota passou a chamar `responderEscala`. A autorização e a guarda de "culto
+que já passou" ficaram em `responderMinhaEscala` (helper), que o botão também
+usa. **Caminhos que hoje passam pelo serviço: link do WhatsApp · ERP · app ·
+botão da notificação.**
+
+⚠️ **`recusa_motivo` entrou no MESMO update do serviço** (`opts.motivo`), nunca
+numa 2ª escrita: fora dali ele ficaria fora da guarda de transição e
+sobrescreveria o motivo de uma recusa antiga sem nada ter mudado. Confirmar
+LIMPA o motivo — o texto era sobre a recusa que deixou de existir.
+
+### `POST /api/app/notificacoes/:id/acao` · o roteador
+
+⚠️⚠️ **Não é um segundo caminho de escrita**: ele resolve o ALVO a partir da
+notificação e chama `responderEscala` / `aprovarPedidoCore` /
+`devolverPedidoParaTriagem`. O que acrescenta é o **carimbo do desfecho** em
+`app_notificacoes.data.acao`, pra o card não voltar a oferecer botão de algo já
+decidido.
+
+- ⚠️⚠️ **Notificação é ENDEREÇO, não credencial**: cada ramo refaz a própria
+  autorização (a escala tem que ser do meu perfil; o pedido exige liderar o
+  grupo). "A notificação é minha" nunca autoriza sozinho.
+- ⚠️⚠️ **O aviso de escala agrupa por (pessoa, DIA)** — quem serve nos 4 cultos
+  de domingo recebe UMA notificação cobrindo 4 escalas. Responder só a primeira
+  deixaria 3 vagas mentindo. É **sequencial** de propósito: cada `declined`
+  dispara aviso, e em paralelo eles se atropelariam.
+- ⚠️ **Nenhuma deu certo ⇒ erro e SEM carimbo** (carimbar esconderia o botão de
+  algo que não aconteceu). Parcial é **declarado** ("3 de 4"), lei de 04/08.
+- ⚠️ **`escala_ids` passou a ir no `data`** do aviso (`escalaAviso.js`). As **79
+  notificações antigas** têm `data = {tipo:'escala'}` e **seguem sem botão de
+  propósito** — inventar um id responderia pela escala errada. `grupo_pedido` já
+  levava `pedido_id` desde sempre.
+- ⚠️ **"Pedir troca" é o RÓTULO; o fato gravado é `declined`.** O sistema **não
+  procura substituto** — ele avisa a coordenação e o supervisor pra repor, que é
+  o mecanismo real. O texto do app diz isso; prometer troca automática seria a
+  tela afirmando o que o produto não faz.
+- ⚠️ Fail-closed no corpo do POST: ação que não está na lista daquele tipo não
+  passa (`aprovar` numa notificação de escala é 400).
+- **`devolverPedidoParaTriagem` foi EXTRAÍDA** da rota `/grupos/pedidos/:id/rejeitar`
+  (a recusa continua **devolvendo pra triagem**, não rejeitando — lei de 14/07).
+
+⚠️ **Exceção legítima na guarda estática**: o check-in do supervisor grava
+`confirmation_status: 'confirmed'` literal (`app.js` ~2763) e **está certo** —
+ali a pessoa APARECEU, o fato consumado não precisa avisar ninguém pra repor
+vaga nenhuma. Por isso o teste mira `confirmation_status: status` (a resposta da
+pessoa), não o literal.
+
+Testes: `src/test/acaoNotificacao.test.ts` (13 casos · **no gate**), com guarda
+estática de que a rota do app chama `responderEscala` e de que o aviso manda os
+ids. **5 mutantes RODADOS e mortos**: escala sem ids ganhando botão → 3
+vermelhos · já respondida voltando a mostrar botão → 2 · ação de outro tipo
+passando → 2 · sem teto de ids → 2 · voltar ao UPDATE direto na rota do app → 2.
+
 ## ⚠️⚠️ MÓDULO CAMPANHAS · e o DÍGITO VERIFICADOR estava morto (2026-08-27 · migration `20260827120000`)
 
 Pedido do Matheus: *"vamos começar uma campanha para a obra do KIDS. e aí a partir

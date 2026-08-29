@@ -177,7 +177,12 @@ async function avisarEscalasDaSemana({ dias = 7, diasAlvo = null, porAntecedenci
           tipo: 'escala',
           titulo: 'Você está escalado(a)',
           body: `${g.params[0]} · ${g.params[2]}`,
-          data: { tipo: 'escala' },
+          // ⚠️ Os IDS vão no `data` porque é deles que o botão "Confirmar
+          // presença" / "Pedir troca" da notificação tira o alvo (29/08). Sem
+          // isso o card não tem no que responder — e as notificações ANTIGAS,
+          // que foram gravadas sem eles, seguem sem botão de propósito:
+          // inventar um id responderia pela escala errada.
+          data: { tipo: 'escala', escala_ids: g.escala_ids },
           chaveDedup: chaveApp(g.escala_ids[0]),
         });
         if (r?.enviados !== 0) app_avisados++;
