@@ -38,6 +38,7 @@ const { inscreverEspinha, eventoEspinhaPorId, anexarConfigMenor } = require('./p
 const { portasCompartilhaveis, linkDoEvento } = require('../utils/linkInscricaoApp');
 const { TEXTOS: TEXTOS_INSCRICAO } = require('../services/inscricaoContrato');
 const { gerarTokenComprovante } = require('../services/inscricaoComprovante');
+const { chavesDaPessoa, mesclarInscricoes } = require('../utils/inscricaoDaPessoa');
 const checkoutExterno = require('../utils/checkoutExterno');
 // Reuso: núcleo de aprovação de pedidos de grupo (claim atômico + vínculo +
 // notificação) já validado no módulo web de grupos.
@@ -6918,12 +6919,24 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
     // que sempre significou pra não quebrar bundle antigo.
     const pendentes = new Set();
     if (membro && abertos.length) {
-      const { data: minhas } = await supabase.from('inscricoes')
-        .select('evento_id, status')
-        .eq('membro_id', membro.id)
-        .in('evento_id', abertos.map((e) => e.id))
+      const chaves = chavesDaPessoa(membro);
+      const idsAbertos = abertos.map((e) => e.id);
+      const base = () => supabase.from('inscricoes')
+        .select('id, evento_id, status, membro_id, cpf')
+        .in('evento_id', idsAbertos)
         .neq('status', 'cancelada')
         .is('deleted_at', null);
+      const { data: porVinculo } = await base().eq('membro_id', membro.id);
+      // ⚠️ Inscrição ÓRFÃ com o CPF dela também é dela — senão o app oferece
+      // "inscrever-se" a quem já está inscrito (relato do Matheus, 28/08).
+      // Consulta ISOLADA: falhar aqui não pode derrubar o catálogo inteiro.
+      let porCpf = [];
+      if (chaves.cpf) {
+        const r = await base().is('membro_id', null).eq('cpf', chaves.cpf);
+        if (r.error) console.warn('[APP] eventos/inscrito por cpf:', r.error.message);
+        else porCpf = r.data || [];
+      }
+      const minhas = mesclarInscricoes(porVinculo || [], porCpf, chaves);
       (minhas || []).forEach((i) => {
         inscritos.add(i.evento_id);
         if (i.status === 'recebida') pendentes.add(i.evento_id);
@@ -7007,11 +7020,30 @@ router.get('/eventos/minhas', authApp, limiterNormal, async (req, res) => {
     const membro = await resolveMembroApp(req).catch(() => null);
     if (!membro) return res.json({ inscricoes: [] });
 
-    const { data, error } = await supabase.from('inscricoes')
-      .select('id, evento_id, status, created_at, numero_sorte, valor_cobrado_centavos, bolsa_tipo, dados, insc_eventos(id, nome, slug, data, hora, local, capa_url, tem_sorteio, pagamento_ativo, valor_centavos, checkin_ativo)')
+    const COLS_MINHAS = 'id, evento_id, status, created_at, numero_sorte, valor_cobrado_centavos, bolsa_tipo, dados, membro_id, cpf, insc_eventos(id, nome, slug, data, hora, local, capa_url, tem_sorteio, pagamento_ativo, valor_centavos, checkin_ativo)';
+    const chaves = chavesDaPessoa(membro);
+    const { data: porVinculo, error } = await supabase.from('inscricoes')
+      .select(COLS_MINHAS)
       .eq('membro_id', membro.id).is('deleted_at', null)
       .order('created_at', { ascending: false }).limit(50);
     if (error) throw error;
+    // ⚠️ Inscrição ÓRFÃ com o CPF dela é dela: sem isto ela não aparece aqui, e
+    // o comprovante (o QR que a portaria lê) fica inalcançável pra quem se
+    // inscreveu por uma porta que não conseguiu ligar o cadastro. Consulta
+    // ISOLADA e best-effort — falhar aqui volta ao comportamento de antes em
+    // vez de derrubar a lista inteira.
+    let porCpf = [];
+    if (chaves.cpf) {
+      const r = await supabase.from('inscricoes')
+        .select(COLS_MINHAS)
+        .is('membro_id', null).eq('cpf', chaves.cpf).is('deleted_at', null)
+        .order('created_at', { ascending: false }).limit(50);
+      if (r.error) console.warn('[APP] eventos/minhas por cpf:', r.error.message);
+      else porCpf = r.data || [];
+    }
+    const data = mesclarInscricoes(porVinculo || [], porCpf, chaves)
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+      .slice(0, 50);
 
     const ids = (data || []).map((i) => i.id);
     // Estado do pagamento pela view canônica (o motor manda; o espelho só cobre
