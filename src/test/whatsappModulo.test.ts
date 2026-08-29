@@ -11,6 +11,11 @@ const SLUGS_REAIS = new Set([
   // + 14/08 (C2 lote 5): 'cuidados' — conferido no catálogo (o módulo
   // /ministerial/cuidados usa authorizeModule('cuidados') há meses).
   'cuidados',
+  // + 29/08 ("Ajuda com o app"): 'dashboard' — CONFERIDO no catálogo ao vivo
+  // (select slug from modulos where slug='dashboard' → existe e ativo). É o
+  // dono de /admin/app-analytics, que já recebe o aviso de falha da telemetria
+  // do app: mesmo dono, mesma tela.
+  'dashboard',
   // + disparo em massa de onboarding do RH: 'rh' já existe no catálogo
   // (authorizeModule('rh', N) em uso em dezenas de rotas de backend/routes/rh.js).
   'rh',

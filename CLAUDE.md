@@ -14397,6 +14397,83 @@ segunda como resposta da primeira.
 
 ⇒ **Uma pergunta por chamada.** Se precisar de duas, duas chamadas.
 
+## ⚠️ AJUDA COM O APP · a dúvida do membro chega em quem cuida do app (2026-08-29 · migration `20260829140000`)
+
+Pedido do Matheus: *"no app, no menu, tivesse um botão de ajuda com app, caso a
+pessoa precise tirar dúvidas em relação ao app, seus dados e etc, de forma mais
+direta e prática. E aí essas dúvidas devem chegar para o meu WhatsApp... quero o
+nome da pessoa e a dúvida dela, com o número de celular dela."*
+
+⚠️⚠️ **NÃO é a porta "Falar com a CBRio"** (`app_inscricoes` tipo `contato`,
+lei da porta única de 11/08), e a diferença é de **DESTINO**: aquela é fila
+**PASTORAL** (Cuidados) e esta é **SUPORTE do produto**. *"Meu grupo não aparece
+no app"* não é assunto da equipe de cuidado — misturar encheria a fila pastoral
+de bug report e o suporte de pedido de oração.
+
+### ⚠️ O DONO DO FLUXO VIVE NO BANCO
+
+`whatsapp_config.suporte_app_membro_id` (FK pra `mem_membros`). Trocar quem
+recebe é **UM update, sem PR** — é a lei do projeto ("nunca nomear pessoa como
+dono de fluxo no código"), e há guarda estática de que nenhum telefone ou
+`wa.me` literal entrou na rota.
+
+```sql
+update public.whatsapp_config set suporte_app_membro_id = '<membro>'::uuid;
+```
+
+⚠️ **NULL = ninguém recebe por WhatsApp** — e a dúvida **continua sendo gravada
+e notificando o módulo**. Destinatário ausente nunca vira dúvida perdida.
+
+### O registro vem ANTES do canal
+
+**`app_suporte_mensagens`** (PII · `deleted_at` + índice parcial + whitelist ·
+sem policy pra `authenticated`) guarda nome, telefone, texto, versão do app e
+plataforma. ⚠️ **Canal é entrega; registro é memória**: sem a tabela, template
+não aprovado ou Meta fora do ar = dúvida perdida pra sempre. Por isso a ordem é
+**gravar → tentar WhatsApp → notificar**, e há teste travando essa ordem.
+
+- ⚠️ `membro_id` tem **FK** (lei nº 10 — sem ela `merge_membros` não reponta a
+  linha ao fundir duplicata). `user_id` é **snapshot SEM FK**: `on delete
+  cascade` faria apagar a conta apagar a prova de que a pessoa pediu ajuda.
+- ⚠️ **A notificação interna NÃO leva o telefone** — ela é lida por quem a regra
+  do módulo alcançar; o contato fica no registro, pra quem for tratar.
+- ⚠️ **Telefone informado na tela vence o do cadastro** (a pessoa pode estar
+  corrigindo justamente o que está errado), mas **NUNCA sobrescreve**
+  `mem_membros.telefone` — Contrato de porta: contato divergente acumula.
+
+### ⚠️⚠️ Parâmetro de template não aceita QUEBRA DE LINHA
+
+A Meta recusa a mensagem **inteira** (132000) quando um parâmetro tem `\n`, tab
+ou 4+ espaços seguidos — e gente escreve dúvida em várias linhas o tempo todo.
+Sem a normalização de `utils/suporteApp.paraParametro`, **justamente a dúvida
+mais bem escrita é a que não chega**. Mutante trava isso.
+
+- ⚠️ **Sem telefone o pedido NÃO é bloqueado**: o parâmetro vai como "sem
+  telefone no cadastro". Cadastro incompleto é o assunto de boa parte das
+  dúvidas — barrar deixaria de fora quem mais precisa.
+- ⚠️ **DDD 55 (Santa Maria/RS) sobrevive**: só remove o `55` do país quando o
+  resto ainda é telefone completo. Mutante trava.
+- O contexto é **`app.suporte` → módulo `dashboard`** (`/admin/app-analytics`,
+  o mesmo dono da telemetria do app). Sem a entrada no `whatsappModulo.MAPA` a
+  falha de entrega cairia no PADRÃO (`integracao`) e o aviso ficaria sem dono —
+  as DUAS guardas da casa pegaram isso (a do catálogo de módulos e a do rótulo
+  de origem).
+
+⏳ **PENDENTE DE GENTE: o template.** `WHATSAPP_TEMPLATE_SUPORTE_APP` precisa ser
+criado e **aprovado na Meta** (UTILITY · pt_BR · 3 variáveis) e setado em
+produção **com deploy novo**. Até lá a dúvida é **gravada e notifica o sino/app
+do staff**, e a resposta declara `whatsapp: 'nao_configurado'` — nunca "enviado".
+
+> Corpo sugerido: Nova dúvida sobre o app.
+> *{{1}}* — {{2}}
+> "{{3}}"
+
+Testes: `src/test/suporteApp.test.ts` (13 casos · no gate), com guarda estática
+de que o destinatário sai do banco e de que a gravação vem antes do envio.
+**4 mutantes RODADOS e mortos**: sem normalizar quebra de linha → 1 · comer o
+`55` sempre → 1 · telefone ausente virando string vazia → 1 · parâmetro sem
+teto → 1.
+
 ## ⚠️⚠️ NOTIFICAÇÃO DO APP COM BOTÃO · e o furo que a medição achou (2026-08-29 · SEM migration)
 
 Pedido do Matheus: *"nas notificações queria as notificações dentro do app
