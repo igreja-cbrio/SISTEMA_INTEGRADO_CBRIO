@@ -15,6 +15,7 @@ const { supabase } = require('../utils/supabase');
 const { verificarTokenCheckin } = require('../utils/eventoCheckinToken');
 const {
   validarEntrada, escolherInscricao, resumoPublico,
+  validarEntradaNome, escolherPorNomeTelefone, telefoneChave,
 } = require('../utils/checkinAutoatendimento');
 const { marcarCheckinAuditavel } = require('../services/inscricaoCheckin');
 
@@ -53,6 +54,70 @@ async function eventoDoToken(token) {
   return { evento: ev };
 }
 
+/**
+ * Resolve a inscrição a partir do que a pessoa digitou, por UM dos dois
+ * caminhos. É usado por `/buscar` E por `/confirmar`: duas cópias divergiriam,
+ * e o sintoma seria a tela achar a inscrição e a confirmação não achar.
+ *
+ * Caminho 1 — CPF + nascimento (o principal).
+ * Caminho 2 — NOME COMPLETO + TELEFONE, para as inscrições do contrato ANTIGO
+ *   (27/07 e antes), que não têm CPF nem nascimento. Medido no Celebra: 67 das
+ *   332. Ver o cabeçalho de utils/checkinAutoatendimento.js para por que nome
+ *   SOZINHO foi recusado.
+ *
+ * ⚠️ Qual caminho vale é decidido pelo que veio no corpo, não por ordem de
+ * validação: assim a mensagem de erro fala do que a pessoa preencheu.
+ */
+async function resolverInscricao(eventoId, body, campos) {
+  const b = body || {};
+  const querNome = b.nome != null || b.telefone != null;
+
+  if (querNome) {
+    const v = validarEntradaNome(b);
+    if (!v.ok) return { erro: 'entrada', via: 'nome', motivo: v.motivo };
+    // ⚠️ `chave` são 8 DÍGITOS (telefoneChave já filtrou), então o LIKE não
+    // carrega texto do usuário — injeção impossível. O casamento final é da
+    // régua pura, que confere nome E telefone.
+    const chave = telefoneChave(v.telefone);
+    if (!chave) return { erro: 'entrada', via: 'nome', motivo: 'telefone_invalido' };
+    const { data, error } = await supabase.from('inscricoes')
+      .select(`${campos}, telefone`)
+      .eq('evento_id', eventoId).like('telefone', `%${chave}`).is('deleted_at', null)
+      .limit(50);
+    if (error) throw error;
+    const vivas = (data || []).filter(i => i.status !== 'cancelada');
+    return { via: 'nome', escolha: escolherPorNomeTelefone(vivas, v) };
+  }
+
+  const v = validarEntrada(b);
+  if (!v.ok) return { erro: 'entrada', via: 'cpf', motivo: v.motivo };
+  const { data, error } = await supabase.from('inscricoes')
+    .select(campos)
+    .eq('evento_id', eventoId).eq('cpf', v.cpf).is('deleted_at', null)
+    .limit(20);
+  if (error) throw error;
+  const vivas = (data || []).filter(i => i.status !== 'cancelada');
+  return { via: 'cpf', escolha: escolherInscricao(vivas, v.nascimento) };
+}
+
+/** Mensagem de entrada inválida, por caminho. */
+function erroEntrada(via) {
+  return via === 'nome'
+    ? 'Confira o nome completo e o celular.'
+    : 'Confira o CPF e a data de nascimento.';
+}
+
+/**
+ * ⚠️⚠️ RECUSA NEUTRA: "não existe" e "o segundo sinal não confere" respondem A
+ * MESMA COISA, nos DOIS caminhos. Distinguir transformaria a porta num oráculo
+ * (CPF → nascimento, ou nome → telefone), que é dado que não se recupera.
+ */
+function erroNaoEncontrada(via) {
+  return via === 'nome'
+    ? 'Não encontramos sua inscrição com esses dados. Confira o nome completo e o celular, ou procure alguém da equipe.'
+    : 'Não encontramos sua inscrição com esses dados. Confira o CPF e a data, ou procure alguém da equipe.';
+}
+
 // ── GET /:token — o que a tela mostra antes de a pessoa digitar ─────────────
 // ⚠️ Devolve SÓ o cabeçalho do evento. Nenhuma lista, nenhum contador de
 // inscritos: o QR fica na parede e quem passa por ele é público.
@@ -79,20 +144,11 @@ router.post('/:token/buscar', limiterBusca, async (req, res) => {
     if (r.erro === 'infra') return res.status(503).json({ error: 'Não foi possível consultar agora.' });
     if (r.erro) return res.status(r.erro === 'token' ? 404 : 409).json({ error: 'Check-in indisponível.' });
 
-    const v = validarEntrada(req.body || {});
-    if (!v.ok) return res.status(400).json({ error: 'Confira o CPF e a data de nascimento.', motivo: v.motivo });
-
-    const { data, error } = await supabase.from('inscricoes')
-      .select('id, nome_completo, data_nascimento, status')
-      .eq('evento_id', r.evento.id).eq('cpf', v.cpf).is('deleted_at', null)
-      .limit(20);
-    if (error) throw error;
-
-    // ⚠️⚠️ RECUSA NEUTRA: "CPF não existe" e "nascimento não confere" respondem
-    // A MESMA COISA. Distinguir transformaria a porta num oráculo de
-    // CPF → data de nascimento, que é dado que não se recupera depois.
-    const vivas = (data || []).filter(i => i.status !== 'cancelada');
-    const escolha = escolherInscricao(vivas, v.nascimento);
+    const achado = await resolverInscricao(r.evento.id, req.body, 'id, nome_completo, data_nascimento, status');
+    if (achado.erro === 'entrada') {
+      return res.status(400).json({ error: erroEntrada(achado.via), motivo: achado.motivo });
+    }
+    const escolha = achado.escolha;
     if (escolha.situacao === 'ambiguo') {
       return res.status(409).json({
         error: 'Encontramos mais de uma inscrição com esses dados. Procure alguém da equipe na entrada.',
@@ -100,10 +156,7 @@ router.post('/:token/buscar', limiterBusca, async (req, res) => {
       });
     }
     if (escolha.situacao !== 'ok') {
-      return res.status(404).json({
-        error: 'Não encontramos sua inscrição com esses dados. Confira o CPF e a data, ou procure alguém da equipe.',
-        motivo: 'nao_encontrada',
-      });
+      return res.status(404).json({ error: erroNaoEncontrada(achado.via), motivo: 'nao_encontrada' });
     }
 
     // já fez check-in? (o resumo precisa disso pra tela não prometer novidade)
@@ -124,23 +177,19 @@ router.post('/:token/confirmar', limiterBusca, async (req, res) => {
     if (r.erro === 'infra') return res.status(503).json({ error: 'Não foi possível confirmar agora.' });
     if (r.erro) return res.status(r.erro === 'token' ? 404 : 409).json({ error: 'Check-in indisponível.' });
 
-    // ⚠️ O CPF e o nascimento vêm DE NOVO e são reconferidos: o `inscricao_id`
-    // sozinho é adivinhável e o passo anterior não deixa sessão. Quem confirma
-    // tem de provar de novo — é o mesmo par que abriu a tela.
-    const v = validarEntrada(req.body || {});
-    if (!v.ok) return res.status(400).json({ error: 'Confira o CPF e a data de nascimento.' });
-
-    const { data, error } = await supabase.from('inscricoes')
-      .select('id, nome_completo, data_nascimento, status, numero_sorte')
-      .eq('evento_id', r.evento.id).eq('cpf', v.cpf).is('deleted_at', null)
-      .limit(20);
-    if (error) throw error;
-    const vivas = (data || []).filter(i => i.status !== 'cancelada');
-    const escolha = escolherInscricao(vivas, v.nascimento);
-    if (escolha.situacao !== 'ok') {
+    // ⚠️ O par digitado vem DE NOVO e é reconferido — vale pros DOIS caminhos:
+    // o `inscricao_id` sozinho é adivinhável e o passo anterior não deixa
+    // sessão. Quem confirma tem de provar de novo, com o mesmo par que abriu a
+    // tela.
+    const achado = await resolverInscricao(
+      r.evento.id, req.body, 'id, nome_completo, data_nascimento, status, numero_sorte');
+    if (achado.erro === 'entrada') {
+      return res.status(400).json({ error: erroEntrada(achado.via) });
+    }
+    if (achado.escolha.situacao !== 'ok') {
       return res.status(404).json({ error: 'Não encontramos sua inscrição com esses dados.' });
     }
-    const ins = escolha.inscricao;
+    const ins = achado.escolha.inscricao;
 
     // ⚠️ Pagamento pendente NÃO entra sozinho — liberar quem deve é decisão de
     // gente, e a tela do operador tem o "confirmar mesmo assim" com motivo.

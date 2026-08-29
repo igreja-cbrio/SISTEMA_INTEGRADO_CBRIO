@@ -8,7 +8,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { usePublicTheme } from './publicTheme';
-import { mascaraCpf } from '../../lib/inscricao';
+import { mascaraCpf, mascaraTelefone } from '../../lib/inscricao';
+import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { resolveApiBaseUrl } from '../../lib/api-base';
 
 // ⚠️⚠️ NUNCA `VITE_API_URL || '/api'` inline (lição de 07/07, TVs do Kids,
@@ -51,6 +52,11 @@ export default function EventoCheckin() {
   const [erroAbrir, setErroAbrir] = useState('');
   const [cpf, setCpf] = useState('');
   const [nasc, setNasc] = useState('');
+  // 2º caminho, para as inscricoes do contrato ANTIGO (27/07 e antes), que nao
+  // tem CPF nem nascimento — 67 das 332 no Celebra.
+  const [via, setVia] = useState<'cpf' | 'nome'>('cpf');
+  const [nome, setNome] = useState('');
+  const [tel, setTel] = useState('');
   const [achado, setAchado] = useState<Achado | null>(null);
   const [pronto, setPronto] = useState<{ primeiro_nome: string; numero_sorte: number | null; ja_checkin: boolean } | null>(null);
   const [erro, setErro] = useState('');
@@ -63,12 +69,22 @@ export default function EventoCheckin() {
       .catch(e => setErroAbrir(e.message));
   }, [token]);
 
+  // ⚠️ O par digitado vai nos DOIS pedidos (buscar e confirmar): o servidor
+  // reconfere na confirmacao, porque o passo anterior nao deixa sessao.
+  const corpo = () => (via === 'nome'
+    ? { nome, telefone: tel }
+    : { cpf, nascimento: nasc });
+
   const buscar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (enviando.current) return;
+    // O `required` nativo saiu com o <input type="date">; o BirthDatePicker
+    // só emite ISO completo, entao vazio = data incompleta. Dizer o que falta
+    // e melhor que desabilitar o botao sem explicar.
+    if (via === 'cpf' && !nasc) { setErro('Informe sua data de nascimento.'); return; }
     enviando.current = true; setErro(''); setCarregando(true);
     try {
-      const r = await chamar(`${API}/public/evento-checkin/${token}/buscar`, { cpf, nascimento: nasc });
+      const r = await chamar(`${API}/public/evento-checkin/${token}/buscar`, corpo());
       setAchado(r.inscricao);
     } catch (err: any) { setErro(err.message); }
     finally { enviando.current = false; setCarregando(false); }
@@ -78,14 +94,15 @@ export default function EventoCheckin() {
     if (enviando.current) return;
     enviando.current = true; setErro(''); setCarregando(true);
     try {
-      const r = await chamar(`${API}/public/evento-checkin/${token}/confirmar`, { cpf, nascimento: nasc });
+      const r = await chamar(`${API}/public/evento-checkin/${token}/confirmar`, corpo());
       setPronto(r);
     } catch (err: any) { setErro(err.message); }
     finally { enviando.current = false; setCarregando(false); }
   };
 
   const recomecar = () => {
-    setCpf(''); setNasc(''); setAchado(null); setPronto(null); setErro('');
+    setCpf(''); setNasc(''); setNome(''); setTel('');
+    setAchado(null); setPronto(null); setErro('');
   };
 
   const caixa: React.CSSProperties = {
@@ -189,9 +206,32 @@ export default function EventoCheckin() {
         {evento.nome}
       </h1>
       <p style={{ color: C.text3, marginBottom: 22, lineHeight: 1.5 }}>
-        Informe seu CPF e sua data de nascimento para confirmar sua presença.
+        {via === 'nome'
+          ? 'Informe seu nome completo e o celular que você usou na inscrição.'
+          : 'Informe seu CPF e sua data de nascimento para confirmar sua presença.'}
       </p>
       <form onSubmit={buscar}>
+        {via === 'nome' ? (
+          <>
+            <label style={{ fontSize: 14, color: C.text3 }}>
+              Nome completo
+              <input
+                style={campo} autoComplete="off" required
+                placeholder="Como você se inscreveu"
+                value={nome} onChange={e => setNome(e.target.value)}
+              />
+            </label>
+            <label style={{ fontSize: 14, color: C.text3, display: 'block', marginTop: 18 }}>
+              Celular
+              <input
+                style={campo} inputMode="numeric" autoComplete="off" required
+                placeholder="(21) 99999-8888"
+                value={tel} onChange={e => setTel(mascaraTelefone(e.target.value))}
+              />
+            </label>
+          </>
+        ) : (
+        <>
         <label style={{ fontSize: 14, color: C.text3 }}>
           CPF
           <input
@@ -200,16 +240,46 @@ export default function EventoCheckin() {
             value={cpf} onChange={e => setCpf(mascaraCpf(e.target.value))}
           />
         </label>
-        <label style={{ fontSize: 14, color: C.text3, display: 'block', marginTop: 18 }}>
+        {/* ⚠️ `type="date"` nativo abre a roleta do iOS: pra chegar em 1978 são
+            dezenas de toques, na fila da porta do evento. O BirthDatePicker é
+            o padrão da casa desde 07/08 — campo de texto com máscara
+            dd/mm/aaaa E o calendário no ícone ao lado, os dois escrevendo no
+            mesmo valor. Emite ISO completo ou '', que é o formato que o
+            servidor exige (RE_DIA em utils/checkinAutoatendimento.js). */}
+        {/* ⚠️ `htmlFor` + `id` são obrigatórios aqui: o <label> antes ENVOLVIA
+            o <input type="date"> e a associação vinha de graça. Como irmão do
+            BirthDatePicker ele deixaria de rotular o campo — leitor de tela
+            anunciaria só o placeholder "dd/mm/aaaa", e tocar no rótulo não
+            focaria o campo. (Achado do Codex na revisão deste PR.) */}
+        <label
+          htmlFor="ec-nascimento"
+          style={{ fontSize: 14, color: C.text3, display: 'block', marginTop: 18, marginBottom: 6 }}
+        >
           Data de nascimento
-          <input
-            style={campo} type="date" required
-            value={nasc} onChange={e => setNasc(e.target.value)}
-          />
         </label>
+        <BirthDatePicker id="ec-nascimento" value={nasc} onChange={setNasc} />
+        </>
+        )}
         {erro && <p style={{ color: '#ef4444', marginTop: 14, fontSize: 14, lineHeight: 1.5 }}>{erro}</p>}
         <button style={botao} type="submit" disabled={carregando}>
           {carregando ? 'Procurando…' : 'Continuar'}
+        </button>
+        {/* ⚠️ As inscrições de 27/07 e antes entraram pelo contrato ANTIGO, que
+            pedia só nome e telefone — 67 das 332 no Celebra não têm CPF nem
+            nascimento e ficariam sem autoatendimento. O 2º caminho existe pra
+            elas; o de CPF continua sendo o padrão da tela. */}
+        <button
+          type="button"
+          onClick={() => { setVia(v => (v === 'cpf' ? 'nome' : 'cpf')); setErro(''); }}
+          style={{
+            width: '100%', marginTop: 14, padding: 12, fontSize: 14,
+            background: 'transparent', border: 'none', color: C.text3,
+            textDecoration: 'underline', cursor: 'pointer',
+          }}
+        >
+          {via === 'cpf'
+            ? 'Não tenho CPF nesta inscrição'
+            : 'Prefiro usar CPF e data de nascimento'}
         </button>
       </form>
     </div>

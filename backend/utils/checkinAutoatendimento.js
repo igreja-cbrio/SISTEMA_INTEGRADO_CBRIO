@@ -99,4 +99,122 @@ function resumoPublico(inscricao) {
   };
 }
 
-module.exports = { soDigitos, mascararNome, validarEntrada, escolherInscricao, resumoPublico };
+// ════════════════════════════════════════════════════════════════════════════
+// 2º CAMINHO · NOME COMPLETO + TELEFONE (2026-08-28, véspera do Celebra)
+//
+// Pedido do Matheus: as inscrições de 27/07 e antes entraram pelo contrato
+// ANTIGO, que pedia só nome e telefone — então 67 das 332 do Celebra não têm
+// CPF nem nascimento e ficavam fora do autoatendimento. Medido: 67/67 têm
+// nome completo (2+ palavras) e telefone de 10-11 dígitos.
+//
+// ⚠️⚠️ NOME SOZINHO FOI RECUSADO, e o motivo é concreto: os 67 têm número da
+// sorte, e num evento de igreja o nome é público. Nome sozinho deixaria
+// qualquer pessoa marcar presença de qualquer outra (num sorteio em que estar
+// presente vale prêmio), ver o número da sorte alheio, e — por ser adivinhável,
+// diferente de CPF+nascimento — transformaria a porta num oráculo de "fulano
+// vai ao Celebra?". Presença em evento de igreja é dado sensível (LGPD art. 11).
+//
+// O par nome+telefone mantém a MESMA estrutura do caminho do CPF: um sinal que
+// identifica + um sinal que não é público. E não é régua nova: é exatamente o
+// ramo forte que `services/inscricaoOrfas.avaliarForcaOrfa` já usa para ligar
+// inscrição órfã a cadastro — "telefone igual + NOME COMPLETO idêntico".
+//
+// ⚠️ Risco declarado: família compartilha telefone. O pior caso é um cônjuge
+// marcar presença do outro — reversível pelo operador, com motivo no ledger.
+// Medido no Celebra: nome+telefone identifica UNICAMENTE as 332 inscrições
+// (zero pares ambíguos), então o desempate por nome faz o trabalho.
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Chave de comparação do nome. A pessoa NÃO precisa acertar acento, caixa,
+ * pontuação nem espaço duplo — pedido do Matheus, e é o mínimo pra uma fila:
+ * "JOAO MARCIO CONCEICAO" casa com "João Márcio Conceição".
+ *
+ * ⚠️ Isso é tolerância de GRAFIA, não de CONTEÚDO: a comparação continua sendo
+ * do nome INTEIRO, palavra por palavra. Afrouxar o conteúdo (primeiro nome,
+ * "contém", distância de edição) é o que transformaria o desempate em chute —
+ * e o nome é a metade identificadora deste par.
+ *
+ * ⚠️ Conferido no banco que a tolerância não cria ambiguidade: com esta régua,
+ * nome+telefone continua identificando UNICAMENTE as 332 do Celebra (há 3
+ * homônimos, separados pelo telefone; nome E telefone iguais viram `ambiguo` e
+ * vão pro operador).
+ */
+function normalizarNomeChave(nome) {
+  return String(nome || '')
+    // 1. Tira ACENTO: NFD separa a letra do sinal, e o range \u0300-\u036f são
+    //    os diacríticos combinantes. Pega á à â ã ä é í ó ú ç ñ ā — inclusive o
+    //    `ā` que existe de verdade numa das inscrições do Celebra.
+    //    ⚠️ Escape explícito, nunca o caractere combinante cru no código: ele é
+    //    invisível no editor e some numa cópia descuidada.
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    // 2. PONTUAÇÃO vira espaço. Medido nas 332 do Celebra: 2 nomes com ponto
+    //    ("J. Silva"), 1 com parênteses e 1 com apóstrofo CURVO (’, que o iOS
+    //    troca sozinho pelo reto). Ninguém na fila vai reproduzir isso, e o
+    //    pedido do Matheus é justamente que não precise.
+    //    ⚠️ Vira ESPAÇO, não vazio: "Maria(Ana)" tem que virar "maria ana", não
+    //    "mariaana".
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    // 3. Caixa e espaço: minúsculo, espaços colapsados, pontas limpas.
+    .toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Chave de comparação do telefone: os 8 últimos dígitos.
+ *
+ * ⚠️ 8 dígitos porque é o que sobrevive às variações que a pessoa digita na
+ * fila — com ou sem o 9, com ou sem DDD, com ou sem +55. Comparar cru
+ * dependeria de sorte (é a mesma lição de `services/contatoPessoa.js`).
+ * A exigência de conhecer o número inteiro fica na VALIDAÇÃO da entrada
+ * (10-11 dígitos); o casamento é pelos 8 finais.
+ */
+function telefoneChave(telefone) {
+  let d = soDigitos(telefone);
+  // ⚠️ Só tira o 55 quando o resto AINDA é telefone completo: DDD 55 é Santa
+  // Maria/RS e um replace(/^55/) cego destruiria todo número legítimo de lá.
+  if (d.length >= 12 && d.length <= 13 && d.startsWith('55')) d = d.slice(2);
+  return d.length >= 8 ? d.slice(-8) : '';
+}
+
+/**
+ * Valida nome + telefone. Devolve `{ ok, nome, telefone }` ou
+ * `{ ok:false, motivo }`.
+ *
+ * ⚠️ Exige nome com 2+ palavras: "Maria" sozinho não é identificação, é
+ * categoria. E telefone com 10-11 dígitos (DDD + número), a mesma régua do
+ * Contrato de Inscrição — quem não sabe o número inteiro não passa.
+ */
+function validarEntradaNome({ nome, telefone } = {}) {
+  const n = normalizarNomeChave(nome);
+  if (n.split(' ').filter(Boolean).length < 2) return { ok: false, motivo: 'nome_incompleto' };
+  const d = soDigitos(telefone);
+  const semDdi = (d.length >= 12 && d.length <= 13 && d.startsWith('55')) ? d.slice(2) : d;
+  if (semDdi.length < 10 || semDdi.length > 11) return { ok: false, motivo: 'telefone_invalido' };
+  return { ok: true, nome: n, telefone: semDdi };
+}
+
+/**
+ * Escolhe a inscrição por nome completo + telefone.
+ *
+ * `candidatas` são as inscrições vivas DAQUELE evento (a consulta já filtrou
+ * evento e situação). O casamento exige as DUAS chaves.
+ *
+ * ⚠️ Duas com o mesmo nome e o mesmo telefone → `ambiguo`, vai pro operador.
+ * Marcar presença na linha errada é o erro que aparece só no sorteio.
+ */
+function escolherPorNomeTelefone(candidatas, { nome, telefone }) {
+  const chaveNome = normalizarNomeChave(nome);
+  const chaveTel = telefoneChave(telefone);
+  if (!chaveNome || !chaveTel) return { situacao: 'nao_encontrada' };
+  const casam = (Array.isArray(candidatas) ? candidatas : []).filter(i =>
+    i && normalizarNomeChave(i.nome_completo) === chaveNome
+      && telefoneChave(i.telefone) === chaveTel);
+  if (casam.length === 0) return { situacao: 'nao_encontrada' };
+  if (casam.length > 1) return { situacao: 'ambiguo' };
+  return { situacao: 'ok', inscricao: casam[0] };
+}
+
+module.exports = {
+  soDigitos, mascararNome, validarEntrada, escolherInscricao, resumoPublico,
+  normalizarNomeChave, telefoneChave, validarEntradaNome, escolherPorNomeTelefone,
+};
