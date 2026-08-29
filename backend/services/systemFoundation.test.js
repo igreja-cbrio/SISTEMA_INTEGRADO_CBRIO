@@ -19,7 +19,10 @@ const {
 // 46 → 45 em 13/08/2026: o cron do WiFi saiu do vercel.json junto com o portal
 // cativo desativado. O número é conferência de COBERTURA — mexer nele sem mexer
 // no vercel.json na mesma leva é o que faz o catálogo declarar cron que não roda.
-assert.equal(JOBS.length, 47, 'o catálogo deve cobrir todos os crons do vercel.json');
+// 48 desde 29/08 (censo · pos-processar). ⚠️ Cron novo SEM entrada aqui e no
+// systemCatalog roda sem política de alerta e não abre incidente — fica
+// invisível quando falha. Este número mexer sozinho é o sintoma disso.
+assert.equal(JOBS.length, 48, 'o catálogo deve cobrir todos os crons do vercel.json');
 assert.equal(WORKFLOWS.length, 10, 'o catálogo deve cobrir os workflows inventariados');
 assert.equal(new Set(JOBS.map((job) => job.id)).size, JOBS.length, 'IDs de jobs devem ser únicos');
 assert.equal(new Set(INTEGRATIONS.map((item) => item.id)).size, INTEGRATIONS.length, 'IDs de integrações devem ser únicos');
@@ -41,7 +44,7 @@ assert.equal(release.environment, 'production');
 
 const payload = getFoundationPayload({ NODE_ENV: 'test' });
 assert.equal(payload.contractVersion, 1);
-assert.equal(payload.counts.jobs, 47);
+assert.equal(payload.counts.jobs, 48);
 assert.equal(payload.boundaries.executionRegistry, 'migration_required');
 
 console.log('systemFoundation: ok');
