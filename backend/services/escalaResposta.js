@@ -9,7 +9,9 @@
 // para o membro que é supervisor da área da pessoa que disse que não vai."*
 //
 // ⚠️ Este é o CAMINHO ÚNICO da resposta. Ele serve o link público do WhatsApp
-// (`/e/<token>`) e o `POST /my-schedules/:id/respond` do app. Duas implementações
+// (`/e/<token>`), o `POST /my-schedules/:id/respond` do ERP, o
+// `POST /app/voluntariado/escalas/:id/responder` do APP e o botão da
+// notificação (`/app/notificacoes/:id/acao`). Duas implementações
 // divergiriam no dia em que uma delas mudasse — e a divergência apareceria como
 // "recusou pelo app e ninguém foi avisado".
 
@@ -156,8 +158,19 @@ async function responderEscala(scheduleId, status, opts = {}) {
   // transição. Sem isso, a pessoa abrindo o link duas vezes (ou o app e o link)
   // dispararia o aviso à coordenação de novo — o mesmo cuidado do `.select('id')`
   // nos recibos do WhatsApp: o efeito colateral fica amarrado à mudança real.
+  // ⚠️ O motivo entra no MESMO update (não numa 2ª escrita): fora daqui ele
+  // ficaria fora da guarda de transição e poderia sobrescrever o motivo de uma
+  // recusa antiga sem que nada tivesse mudado. Confirmar LIMPA o motivo — o
+  // texto era sobre a recusa que deixou de existir.
+  const patch = { confirmation_status: status };
+  if (status === 'declined') {
+    const m = String(opts.motivo || '').trim().slice(0, 200);
+    if (m) patch.recusa_motivo = m;
+  } else {
+    patch.recusa_motivo = null;
+  }
   const { data: mudadas, error: uErr } = await supabase.from('vol_schedules')
-    .update({ confirmation_status: status })
+    .update(patch)
     .eq('id', scheduleId).neq('confirmation_status', status)
     .select('id');
   if (uErr) return { ok: false, status: 400, erro: uErr.message };
