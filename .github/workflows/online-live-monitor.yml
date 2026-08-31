@@ -12,7 +12,9 @@ name: Online · Live Monitor (loop 5min)
 #
 # Janelas de execucao (UTC · BRT = UTC-3):
 #   Cultos fixos com has_online=true (BRT) → janela [-30min, +4h]:
-#     Dom 08:30 / 10:00 / 11:30 / 19:00 · Qua 20:00 · Sab 20:00 (AMI)
+#     Dom 09:30 / 11:30 / 19:00 · Qua 20:00 · Sab 20:00 (AMI)
+#     ⚠️ Grade de domingo mudou em 24/08/2026 (era 08:30/10:00/11:30/19:00).
+#     As janelas UTC abaixo continuam cobrindo — 09:30 BRT = 12:30 UTC.
 #   Cron 1 · Dom UTC 11-15 (BRT 08-12): cultos da manha de domingo.
 #   Cron 2 · diario UTC 16-23 (BRT 13-20): inicio dos cultos da noite
 #     (Dom 19h, Qua 20h, Sab 20h) + eventos atipicos.
@@ -30,7 +32,13 @@ name: Online · Live Monitor (loop 5min)
 
 on:
   schedule:
-    - cron: '0 11-15 * * 0'  # Dom · dispara a cada hora, loop cobre a hora
+    # ⚠️ DOIS disparos por hora no domingo de manha (31/08/2026). O GitHub
+    # ESTRANGULA schedule: em 30/08 os disparos de UTC 11,12,13,14 foram TODOS
+    # descartados e o culto de 09:30 (12:30 UTC) ficou sem NENHUMA amostra. O
+    # loop interno cobre ~58min, entao :00 e :30 dobram a chance de pegar a
+    # live mesmo perdendo metade dos disparos. `cancel-in-progress` faz o
+    # disparo novo substituir o loop anterior — a amostragem continua.
+    - cron: '0,30 11-15 * * 0'  # Dom · 2x/hora, loop cobre a hora
     - cron: '0 16-23 * * *'  # Diario 13:00-20:xx BRT
     - cron: '0 0-4 * * *'    # Diario 21:00-01:xx BRT
   workflow_dispatch: # permite run manual via UI
@@ -72,5 +80,11 @@ jobs:
             else
               fora_seguidas=0
             fi
-            [ "$i" -lt 12 ] && sleep 300
+            # ⚠️ `if`, NÃO `[ ... ] && sleep`: na ULTIMA volta a condição é falsa,
+            # o comando composto devolve 1, e como é o último comando do step o
+            # GitHub marcava o run como FAILURE — todo loop que rodava as 12
+            # amostras aparecia vermelho. Alarme que grita quando está tudo bem
+            # treina a equipe a ignorar o painel (a lição do alerta do DS).
+            if [ "$i" -lt 12 ]; then sleep 300; fi
           done
+          exit 0

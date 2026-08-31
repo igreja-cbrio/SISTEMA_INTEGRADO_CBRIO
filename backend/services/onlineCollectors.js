@@ -270,10 +270,28 @@ async function liveMonitor() {
     // antes perderia exatamente o número que o indicador novo existe pra ter.
     const viewsLive = dsOnline.maiorViewCount(culto.online_views_live, snap?.viewCount);
     if (viewsLive !== null && viewsLive !== (culto.online_views_live ?? null)) {
-      await supabase.from('cultos')
+      // ⚠️⚠️ NÃO ENCADEAR `.catch()` AQUI. O que o PostgREST devolve é um
+      // `PostgrestFilterBuilder`, que é THENABLE mas **não é Promise**: tem
+      // `.then` e NÃO tem `.catch` (conferido no supabase-js 2.101.1 que o
+      // `backend/` pina). `.eq(...).catch(...)` levanta
+      // `TypeError: ... .catch is not a function` ANTES do await, cai no
+      // try/catch de fora e **aborta o resto da função** — inclusive a gravação
+      // do `online_pico`, que vem depois.
+      //
+      // Foi exatamente isso que aconteceu entre 26 e 31/08/2026: o pico do AMI
+      // de 29/08 e dos TRÊS cultos de domingo 30/08 foi perdido (o YouTube só
+      // expõe `concurrentViewers` DURANTE a transmissão — número irrecuperável),
+      // e `online_views_live` nunca gravou nada em nenhum culto. O log do
+      // GitHub Actions repetia, de 5 em 5 minutos:
+      //   {"skipped":true,"reason":"erro","error":"supabase.from(...).update(...).eq(...).catch is not a function"}
+      //
+      // ⚠️ Erro de CONSULTA não vem por rejeição: vem em `error` no resultado.
+      // Por isso o `await` + checagem é o best-effort correto — e o try/catch de
+      // fora continua cobrindo falha de rede.
+      const { error: eViews } = await supabase.from('cultos')
         .update({ online_views_live: viewsLive })
-        .eq('id', culto.id)
-        .catch(() => {});
+        .eq('id', culto.id);
+      if (eViews) console.error('[live-monitor] online_views_live:', eViews.message);
     }
 
     if (viewers === null) {
