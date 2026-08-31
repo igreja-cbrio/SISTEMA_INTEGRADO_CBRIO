@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const { semFalhar } = require('../utils/semFalhar');
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
@@ -70,8 +71,8 @@ router.patch('/:id', async (req, res) => {
 // DELETE /api/occurrences/:id
 router.delete('/:id', async (req, res) => {
   try {
-    await supabase.from('occurrence_tasks').delete().eq('occurrence_id', req.params.id).catch(() => {});
-    await supabase.from('occurrence_meetings').delete().eq('occurrence_id', req.params.id).catch(() => {});
+    await semFalhar(supabase.from('occurrence_tasks').delete().eq('occurrence_id', req.params.id), '[ocorrencias]');
+    await semFalhar(supabase.from('occurrence_meetings').delete().eq('occurrence_id', req.params.id), '[ocorrencias]');
     await supabase.from('event_occurrences').delete().eq('id', req.params.id);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao excluir ocorrência' }); }

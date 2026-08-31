@@ -22,7 +22,13 @@ export function semComentariosJs(src: string): string {
   // `*/` seguinte está na linha 1101 — **1.099 linhas de código sumiam** para
   // esta guarda. Medido em toda a árvore: **84 arquivos, 8.169 linhas**.
   // ⚠️ O `(^|[^:])` preserva o `//` de URL (`https://…`), que é código real.
+  // ⚠️ PRESERVA COMPRIMENTO E LINHAS: comentário vira ESPAÇO, `\n` fica. Antes
+  // o bloco `/* */` era REMOVIDO e o número de linha reportado DERIVAVA — em
+  // 31/08/2026 isso fez uma varredura minha apontar linhas erradas em
+  // `publicWhatsapp.js` (comentários longos), e eu quase reescrevi o lugar
+  // errado. Guarda que erra a linha é guarda que manda consertar outra coisa.
+  const espacos = (m: string) => m.replace(/[^\n]/g, ' ');
   return String(src || '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+    .replace(/(^|[^:])(\/\/[^\n]*)/g, (_m, pre, com) => pre + espacos(com))
+    .replace(/\/\*[\s\S]*?\*\//g, espacos);
 }

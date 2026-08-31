@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const { semFalhar } = require('../utils/semFalhar');
 const { authenticate, authorize, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
@@ -174,7 +175,7 @@ router.post('/', authorize('diretor', 'admin'), async (req, res) => {
       if (occs.length > 0) await supabase.from('event_occurrences').insert(occs);
     }
 
-    await supabase.from('audit_log').insert({ table_name: 'events', record_id: ev.id, event_id: ev.id, action: 'create', description: `Evento criado: ${d.name}`, changed_by: req.user.userId, changed_by_name: req.user.name }).catch(() => {});
+    await semFalhar(supabase.from('audit_log').insert({ table_name: 'events', record_id: ev.id, event_id: ev.id, action: 'create', description: `Evento criado: ${d.name}`, changed_by: req.user.userId, changed_by_name: req.user.name }), '[eventos]');
 
     notificar({
       modulo: 'eventos',
@@ -574,7 +575,7 @@ router.post('/:id/tasks', async (req, res) => {
       created_by: req.user.userId,
     }).select().single();
     if (error) throw error;
-    await supabase.from('audit_log').insert({ table_name: 'event_tasks', record_id: data.id, event_id: req.params.id, action: 'create', description: `Tarefa criada: ${d.name}`, changed_by: req.user.userId, changed_by_name: req.user.name }).catch(() => {});
+    await semFalhar(supabase.from('audit_log').insert({ table_name: 'event_tasks', record_id: data.id, event_id: req.params.id, action: 'create', description: `Tarefa criada: ${d.name}`, changed_by: req.user.userId, changed_by_name: req.user.name }), '[eventos]');
     res.json(data);
   } catch (e) { console.error('[Events POST task]', e.message); res.status(500).json({ error: 'Erro ao criar tarefa' }); }
 });
@@ -612,8 +613,8 @@ router.delete('/tasks/:taskId', authorize('diretor', 'admin'), async (req, res) 
   try {
     if (!isUUID(req.params.taskId)) return res.status(400).json({ error: 'ID inválido' });
     // Cascade subtasks, comments
-    await supabase.from('event_task_subtasks').delete().eq('task_id', req.params.taskId).catch(() => {});
-    await supabase.from('event_task_comments').delete().eq('task_id', req.params.taskId).catch(() => {});
+    await semFalhar(supabase.from('event_task_subtasks').delete().eq('task_id', req.params.taskId), '[eventos]');
+    await semFalhar(supabase.from('event_task_comments').delete().eq('task_id', req.params.taskId), '[eventos]');
     await supabase.from('event_tasks').delete().eq('id', req.params.taskId);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro ao excluir tarefa' }); }
@@ -679,7 +680,7 @@ router.post('/:id/risks', async (req, res) => {
       target_date: d.target_date || null, status: 'aberto', created_by: req.user.userId,
     }).select().single();
     if (error) throw error;
-    await supabase.from('audit_log').insert({ table_name: 'event_risks', record_id: data.id, event_id: req.params.id, action: 'create', description: `Risco criado: ${d.title}`, changed_by: req.user.userId, changed_by_name: req.user.name }).catch(() => {});
+    await semFalhar(supabase.from('audit_log').insert({ table_name: 'event_risks', record_id: data.id, event_id: req.params.id, action: 'create', description: `Risco criado: ${d.title}`, changed_by: req.user.userId, changed_by_name: req.user.name }), '[eventos]');
     res.json(data);
   } catch (e) { console.error('[Events POST risk]', e.message); res.status(500).json({ error: 'Erro ao criar risco' }); }
 });
@@ -705,7 +706,7 @@ router.patch('/risks/:riskId', async (req, res) => {
     const { data, error } = await supabase.from('event_risks').update(update).eq('id', req.params.riskId).select().single();
     if (error) throw error;
     if (old && d.status && old.status !== d.status) {
-      await supabase.from('audit_log').insert({ table_name: 'event_risks', record_id: data.id, event_id: old.event_id, action: 'status_change', field_name: 'status', old_value: old.status, new_value: d.status, changed_by: req.user.userId, changed_by_name: req.user.name }).catch(() => {});
+      await semFalhar(supabase.from('audit_log').insert({ table_name: 'event_risks', record_id: data.id, event_id: old.event_id, action: 'status_change', field_name: 'status', old_value: old.status, new_value: d.status, changed_by: req.user.userId, changed_by_name: req.user.name }), '[eventos]');
     }
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar risco' }); }
@@ -737,7 +738,7 @@ router.post('/:id/retrospective', async (req, res) => {
       created_by: req.user.userId,
     }, { onConflict: 'event_id' }).select().single();
     if (error) throw error;
-    await supabase.from('audit_log').insert({ table_name: 'event_retrospectives', record_id: data.id, event_id: req.params.id, action: 'create', description: 'Retrospectiva salva', changed_by: req.user.userId, changed_by_name: req.user.name }).catch(() => {});
+    await semFalhar(supabase.from('audit_log').insert({ table_name: 'event_retrospectives', record_id: data.id, event_id: req.params.id, action: 'create', description: 'Retrospectiva salva', changed_by: req.user.userId, changed_by_name: req.user.name }), '[eventos]');
     res.json(data);
   } catch (e) { console.error('[Events POST retro]', e.message); res.status(500).json({ error: 'Erro ao salvar retrospectiva' }); }
 });

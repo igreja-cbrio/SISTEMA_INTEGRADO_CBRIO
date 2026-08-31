@@ -111,9 +111,34 @@ describe('PostgREST · .catch() encadeado no builder é TypeError', () => {
     expect(catchEmBuilder(doc)).toHaveLength(0);
   });
 
-  it('o coletor do ONLINE está limpo — é onde a coleta morreu', () => {
-    const src = fs.readFileSync(path.join(RAIZ, 'backend/services/onlineCollectors.js'), 'utf8');
-    expect(catchEmBuilder(src)).toEqual([]);
+  it('⚠️ o BACKEND INTEIRO está limpo', () => {
+    // Varredura completa: eram 25 sítios em 8 arquivos (31/08/2026), e cada um
+    // era um TypeError garantido. Vários viravam 500 na cara de quem clicava —
+    // apagar tarefa de evento, apagar ocorrência, apagar marco de expansão e o
+    // opt-out público de e-mail. O caminho best-effort correto é
+    // `utils/semFalhar`, que awaita, LÊ o `error` e registra.
+    const suspeitos: string[] = [];
+    const pilha = [path.join(RAIZ, 'backend')];
+    while (pilha.length) {
+      const atual = pilha.pop()!;
+      for (const ent of fs.readdirSync(atual, { withFileTypes: true })) {
+        const caminho = path.join(atual, ent.name);
+        if (ent.isDirectory()) { if (ent.name !== 'node_modules') pilha.push(caminho); continue; }
+        if (!ent.name.endsWith('.js')) continue;
+        for (const a of catchEmBuilder(fs.readFileSync(caminho, 'utf8'))) {
+          suspeitos.push(`${path.relative(RAIZ, caminho)}:${a.linha} :: ${a.cadeia}`);
+        }
+      }
+    }
+    expect(suspeitos).toEqual([]);
+  });
+
+  it('semFalhar existe, awaita e LÊ o error', () => {
+    // Engolir em silêncio (`.catch(() => {})`) é como o bug sobreviveu meses.
+    const src = semComentariosJs(fs.readFileSync(path.join(RAIZ, 'backend/utils/semFalhar.js'), 'utf8'));
+    expect(src).toContain('const { error } = (await consulta)');
+    expect(src).toContain('console.error');
+    expect(src).toMatch(/catch \(e\)/);
   });
 
   it('liveMonitor grava views_live conferindo o `error`, não por .catch', () => {
