@@ -88,6 +88,24 @@ const {
 } = require('../services/inscricaoContrato');
 
 // Motivos válidos da inscrição (slugs · espelham MOTIVO_OPTIONS do form)
+// ⚠️⚠️ O FORMULÁRIO NÃO PERGUNTA MAIS `motivo` NEM `observacoes` (pedido do
+// Matheus · 31/08/2026 — as duas últimas perguntas saíram da tela).
+//
+// O backend CONTINUA ACEITANDO os dois, e isso não é sobra a ser limpada:
+//   • bundle ANTIGO em cache segue mandando os campos, e recusá-los quebraria a
+//     inscrição de quem não recarregou a página;
+//   • `motivo` já veio `null` quando não é enviado (`motivoValido` devolve null
+//     fora da lista), então nada precisou mudar aqui pra o formulário novo
+//     funcionar — a obrigatoriedade era só do lado do cliente;
+//   • `next_matriculas.observacoes` continua sendo ESCRITA pela rota interna
+//     (`routes/next.js` · 634 das 672 linhas com observação medidas em 31/08),
+//     ou seja a coluna não morreu.
+//
+// ⚠️ Nada foi apagado no banco: as 40 linhas com `motivo` e as 38 com
+// `observacoes` vindas do formulário seguem lá. Medido em 31/08: NENHUMA tela do
+// sistema lê esses dois campos de `next_matriculas` — eram coletados e nunca
+// exibidos, e é por isso que remover a pergunta não deixa ninguém sem
+// informação.
 const MOTIVOS_VALIDOS = ['recem_convertido', 'prestes_batizar', 'conhecer_cbrio', 'servir_voluntario'];
 function motivoValido(m) { return MOTIVOS_VALIDOS.includes(String(m || '')) ? String(m) : null; }
 
