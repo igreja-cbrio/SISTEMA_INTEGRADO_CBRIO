@@ -54,6 +54,7 @@ const INDICADORES = {
 // (mesmo código · reusados na coleta em routes/integracao.js)
 // ─────────────────────────────────────────────────────────────────────────────
 const { isoWeekRange, isoWeekOf, fmtDateBr, semanasDoMes } = require('../utils/isoWeek');
+const { turnoPorHorario, montarTurnos } = require('../utils/turnoDomingo');
 
 const {
   hojeBrt, corteDoAno, ultimaSemanaIsoCompleta, resolverPeriodo,
@@ -390,6 +391,50 @@ router.get('/semanal', async (req, res) => {
       ? Math.round((total / CAPACIDADE_TEMPLO) * 1000) / 10
       : Math.round((totalPresencial / CAPACIDADE_TEMPLO) * 1000) / 10;
 
+    // ── TURNOS de domingo ────────────────────────────────────────────────────
+    // A aritmética (média das SOMAS SEMANAIS) mora em `utils/turnoDomingo` e é
+    // testada lá — ver o cabeçalho dela pro número que estava errado.
+    let turnos = null;
+    try {
+      // Só os cultos do TEMPLO no domingo. `presencial_label='Sede'` exclui os
+      // `CBKIDS - Manhã/Noite Domingo`; `is_active` NÃO serve — está false tanto
+      // neles quanto no 08:30/10:00, que encerraram e cujo histórico o turno
+      // PRECISA (é justamente o que a pergunta do Matheus pedia).
+      const { data: tiposDom, error: eDom } = await supabase
+        .from('vol_service_types')
+        .select('id, recurrence_time')
+        .eq('recurrence_day', 0)
+        .eq('presencial_label', 'Sede')
+        .not('recurrence_time', 'is', null);
+      if (eDom) throw eDom;
+
+      const turnoPorTipo = new Map();
+      for (const t of tiposDom || []) {
+        const tt = turnoPorHorario(t.recurrence_time);
+        if (tt) turnoPorTipo.set(t.id, tt);
+      }
+
+      turnos = montarTurnos({
+        linhasSemana: (semanaData || []).map((r) => ({
+          service_type_id: r.service_type_id,
+          valor: somaColunas(r, colunasView(indicadorKey)),
+        })),
+        linhasHist: (histData || []).map((r) => ({
+          service_type_id: r.service_type_id,
+          semana_iso: r.semana_iso,
+          valor: somaColunas(r, colunasView(indicadorKey)),
+        })),
+        turnoPorTipo,
+        capacidade: CAPACIDADE_TEMPLO,
+        usaOcupacao: !!indDef.usa_ocupacao,
+      });
+    } catch (e) {
+      // Turno é visão ADICIONAL: falhar aqui não derruba o gráfico principal.
+      // O front cai no agrupamento aproximado e AVISA na tela.
+      console.warn('[dashboardSemanal] turnos:', e.message);
+      turnos = null;
+    }
+
     // Meta semanal salva
     const { data: meta } = await supabase
       .from('dashboard_metas')
@@ -422,6 +467,8 @@ router.get('/semanal', async (req, res) => {
       rotulo: indDef.rotulo,
       capacidade_templo: CAPACIDADE_TEMPLO,
       items: itemsVisiveis,
+      // Visão por TURNO de domingo (null = não deu pra montar; o front avisa).
+      turnos,
       resumo: {
         total,
         media_geral: mediaGeral,
