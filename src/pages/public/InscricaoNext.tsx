@@ -167,15 +167,6 @@ function rotuloDomingo(data: string) {
   return `Domingo, ${dia} de ${DIA_MES[Number(m[2]) - 1]} · 9h30`;
 }
 
-// Motivo da inscrição · value = slug estável (identificador · sem acento),
-// label = texto exibido. O backend persiste o slug em next_inscricoes.motivo.
-const MOTIVO_OPTIONS = [
-  { value: 'recem_convertido', label: 'Sou recém convertido(a)' },
-  { value: 'prestes_batizar', label: 'Estou prestes a me batizar' },
-  { value: 'conhecer_cbrio', label: 'Quero conhecer a CBRio mais de perto' },
-  { value: 'servir_voluntario', label: 'Desejo servir como voluntário' },
-];
-
 const TEXTOS_FALLBACK = {
   termos_lgpd: 'Autorizo a Igreja CBRio a tratar os dados deste formulário para organizar o NEXT e me comunicar sobre ele, conforme a LGPD.',
   aviso_optin: AVISO_OPTIN,
@@ -187,9 +178,7 @@ export default function InscricaoNext() {
     nome_completo: '',
     cpf: '', telefone: '', email: '',
     data_nascimento: '', sexo: '', endereco: '',
-    motivo: '',
     turma_id: '',
-    observacoes: '',
     website: '', // honeypot
   });
   const [loading, setLoading] = useState(false);
@@ -241,7 +230,6 @@ export default function InscricaoNext() {
     if (!cpfValido(form.cpf)) return setError('CPF inválido — confira os dígitos');
     if (!validarNascimento(form.data_nascimento)) return setError('Informe sua data de nascimento');
     if (!SEXOS.includes(form.sexo)) return setError('Selecione o sexo');
-    if (!form.motivo) return setError('Selecione por que você quer participar do NEXT');
     // Só exige a escolha quando houve domingo para escolher.
     if (turmas && turmas.length > 0 && !form.turma_id) {
       return setError('Escolha o domingo em que você vai participar');
@@ -259,9 +247,7 @@ export default function InscricaoNext() {
         data_nascimento: form.data_nascimento,
         sexo: form.sexo,
         endereco: form.endereco.trim() || null,
-        motivo: form.motivo || null,
         turma_id: form.turma_id || null,
-        observacoes: form.observacoes || null,
         aceita_termos: aceitaTermos,
         whatsapp_optin: whatsappOptin,
         website: form.website,
@@ -394,26 +380,6 @@ export default function InscricaoNext() {
                 </>
               )}
 
-              <SectionTitle>Por que o NEXT?</SectionTitle>
-              <SelectField
-                id="motivo"
-                label="Por que você quer participar do NEXT?"
-                value={form.motivo}
-                onChange={set('motivo') as any}
-                options={MOTIVO_OPTIONS}
-                required
-              />
-
-              <SectionTitle>Observações</SectionTitle>
-              <Field
-                id="observacoes"
-                label="Quer compartilhar algo com a gente?"
-                as="textarea"
-                rows={3}
-                value={form.observacoes}
-                onChange={set('observacoes')}
-                placeholder="Como nos conheceu, expectativas, etc."
-              />
 
               <label style={{
                 display: 'flex', gap: 10, alignItems: 'flex-start',
