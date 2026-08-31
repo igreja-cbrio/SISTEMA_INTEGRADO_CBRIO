@@ -166,3 +166,105 @@ describe('jornada · o comJanela FECHA a janela de ano', () => {
     expect(src).toContain('recorteJanela');
   });
 });
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PERÍODO LIVRE (De/Até) · acrescentado em 31/08/2026
+//
+//  ⚠️ O que estes casos protegem, em ordem de dano:
+//    1. ADITIVIDADE — sem `inicio`/`fim` a função tem de responder EXATAMENTE
+//       o que respondia antes; ela serve 6 módulos e um desvio aqui muda número
+//       em tela que ninguém está olhando agora;
+//    2. `fim` no futuro ser CLAMPADO em hoje (senão o denominador de qualquer
+//       média inclui dias que não aconteceram);
+//    3. intervalo invertido / data inexistente NÃO virar janela vazia — zero se
+//       lê como resposta, e a pergunta foi mal digitada;
+//    4. o RÓTULO sair (número acumulado sem período ao lado é comparado errado).
+// ════════════════════════════════════════════════════════════════════════════
+describe('resolverJanelaPeriodo · período livre', () => {
+  const AGORA = Date.parse('2026-08-31T15:00:00Z');
+  const base = { diasValidos: [7, 30, 90], diasPadrao: 30, agora: AGORA };
+
+  it('⚠️⚠️ ADITIVO: sem inicio/fim, a resposta é IDÊNTICA à de antes', () => {
+    const semNada = resolverJanelaPeriodo({ ...base });
+    const comVazio = resolverJanelaPeriodo({ ...base, inicio: undefined, fim: undefined });
+    const comNulo = resolverJanelaPeriodo({ ...base, inicio: null, fim: null });
+    expect(comVazio).toEqual(semNada);
+    expect(comNulo).toEqual(semNada);
+    expect(semNada.dias).toBe(30);
+    expect(semNada.livre).toBeUndefined();
+  });
+
+  it('resolve o intervalo pedido', () => {
+    const j = resolverJanelaPeriodo({ ...base, inicio: '2026-08-01', fim: '2026-08-15' });
+    expect(j.inicio).toBe('2026-08-01');
+    expect(j.fim).toBe('2026-08-15');
+    expect(j.livre).toBe(true);
+    expect(j.dias).toBeNull();
+    expect(j.ano).toBeNull();
+  });
+
+  it('⚠️ vence o `ano` (é o recorte mais específico)', () => {
+    const j = resolverJanelaPeriodo({ ...base, ano: 2026, inicio: '2026-03-01', fim: '2026-03-31' });
+    expect(j.livre).toBe(true);
+    expect(j.inicio).toBe('2026-03-01');
+  });
+
+  it('⚠️ vence o `dias`', () => {
+    const j = resolverJanelaPeriodo({ ...base, dias: 7, inicio: '2026-01-01', fim: '2026-01-31' });
+    expect(j.livre).toBe(true);
+  });
+
+  it('⚠️⚠️ `fim` no futuro é CLAMPADO em hoje, e o ajuste é DECLARADO', () => {
+    const j = resolverJanelaPeriodo({ ...base, inicio: '2026-08-01', fim: '2026-12-31' });
+    expect(j.fim).toBe('2026-08-31');
+    expect(j.fim_ajustado).toBe(true);
+  });
+
+  it('fim que não passa de hoje não é marcado como ajustado', () => {
+    const j = resolverJanelaPeriodo({ ...base, inicio: '2026-08-01', fim: '2026-08-15' });
+    expect(j.fim_ajustado).toBe(false);
+  });
+
+  it('um único dia é período válido', () => {
+    const j = resolverJanelaPeriodo({ ...base, inicio: '2026-08-30', fim: '2026-08-30' });
+    expect(j.livre).toBe(true);
+    expect(j.inicio).toBe(j.fim);
+  });
+
+  it('⚠️⚠️ intervalo INVERTIDO cai na janela padrão, não em período vazio', () => {
+    const j = resolverJanelaPeriodo({ ...base, inicio: '2026-08-31', fim: '2026-08-01' });
+    expect(j.livre).toBeUndefined();
+    expect(j.dias).toBe(30);
+  });
+
+  it('⚠️ data inexistente (31/02) não é aceita', () => {
+    const j = resolverJanelaPeriodo({ ...base, inicio: '2026-02-31', fim: '2026-03-10' });
+    expect(j.livre).toBeUndefined();
+  });
+
+  it('⚠️ só uma das pontas não é período livre', () => {
+    expect(resolverJanelaPeriodo({ ...base, inicio: '2026-08-01' }).livre).toBeUndefined();
+    expect(resolverJanelaPeriodo({ ...base, fim: '2026-08-15' }).livre).toBeUndefined();
+  });
+
+  it('formato inválido não é aceito', () => {
+    for (const ruim of ['31/08/2026', '2026-8-1', 'hoje', '', '2026-08-01T00:00:00Z']) {
+      expect(resolverJanelaPeriodo({ ...base, inicio: ruim, fim: '2026-08-31' }).livre).toBeUndefined();
+    }
+  });
+
+  it('granularidade acompanha o TAMANHO do intervalo', () => {
+    expect(resolverJanelaPeriodo({ ...base, inicio: '2026-08-01', fim: '2026-08-31' }).gran).toBe('semana');
+    expect(resolverJanelaPeriodo({ ...base, inicio: '2025-01-01', fim: '2026-08-31' }).gran).toBe('mes');
+  });
+
+  it('⚠️ o RÓTULO diz o intervalo (nunca "últimos null dias")', () => {
+    const j = resolverJanelaPeriodo({ ...base, inicio: '2026-08-01', fim: '2026-08-15' });
+    expect(rotuloJanela(j)).toBe('01/08/2026 a 15/08/2026');
+    const umDia = resolverJanelaPeriodo({ ...base, inicio: '2026-08-30', fim: '2026-08-30' });
+    expect(rotuloJanela(umDia)).toBe('30/08/2026');
+    // e os rótulos antigos seguem iguais
+    expect(rotuloJanela(resolverJanelaPeriodo({ ...base, dias: 7 }))).toBe('últimos 7 dias');
+    expect(rotuloJanela(resolverJanelaPeriodo({ ...base, ano: 2025 }))).toBe('2025');
+  });
+});

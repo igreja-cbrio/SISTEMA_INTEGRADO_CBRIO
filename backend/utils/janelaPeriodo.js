@@ -57,7 +57,66 @@ function anoValido(ano, agora = Date.now()) {
  * @returns {{inicio:string, fim:string|null, dias:number|null, ano:number|null, gran:'semana'|'mes'}}
  *   `fim` é `null` na janela móvel (segue "até agora") e uma data na de ano.
  */
-function resolverJanelaPeriodo({ dias, ano, diasValidos, diasPadrao, agora = Date.now() } = {}) {
+/** `YYYY-MM-DD` válido? (não aceita `2026-02-31` como dia real) */
+function diaIsoValido(v) {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const [a, m, d] = v.split('-').map(Number);
+  const t = new Date(Date.UTC(a, m - 1, d));
+  // Se o dia rolou (31/02 → 03/03), a data não existe.
+  return t.getUTCFullYear() === a && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
+}
+
+/**
+ * Resolve o período LIVRE, ou `null` quando não foi pedido / é inválido.
+ *
+ * ⚠️⚠️ `fim` é CLAMPADO em hoje, pelo mesmo motivo do ramo de `ano`: pedir até
+ * 31/12 encheria a janela de dias que ainda não aconteceram, e qualquer
+ * denominador ("média por dia", "por domingo") sairia deflacionado.
+ *
+ * ⚠️ Inválido devolve `null` em vez de lançar — quem chama cai na janela móvel
+ * padrão, que é o comportamento de antes. Data digitada errada não pode
+ * derrubar a tela; ela só não filtra.
+ */
+function periodoLivre(inicio, fim, agora) {
+  if (!diaIsoValido(inicio) || !diaIsoValido(fim)) return null;
+  const hoje = diaLocal(new Date(agora));
+  // Comparação por STRING `YYYY-MM-DD` — ordem lexicográfica é ordem de data, e
+  // não passa por fuso nenhum.
+  const fimEfetivo = fim > hoje ? hoje : fim;
+  // ⚠️ Intervalo invertido é ERRO DE ENTRADA, não janela vazia: devolver um
+  // período que não contém nada faria a tela dizer "0 visitantes" para uma
+  // pergunta mal digitada — e zero se lê como resposta.
+  if (inicio > fimEfetivo) return null;
+  return {
+    inicio,
+    fim: fimEfetivo,
+    dias: null,
+    ano: null,
+    livre: true,
+    // ⚠️ Granularidade pelo TAMANHO do intervalo, não fixa: 400 pontos diários
+    // num gráfico de largura de tela viram mancha (é a régua do ramo de `dias`).
+    gran: (Date.parse(`${fimEfetivo}T12:00:00Z`) - Date.parse(`${inicio}T12:00:00Z`))
+      / 86400000 <= 90 ? 'semana' : 'mes',
+    // Diz se o fim pedido foi encurtado — a tela precisa DECLARAR, senão o
+    // número parece de um período que a pessoa não vai reconhecer.
+    fim_ajustado: fimEfetivo !== fim,
+  };
+}
+
+function resolverJanelaPeriodo({ dias, ano, inicio, fim, diasValidos, diasPadrao, agora = Date.now() } = {}) {
+  // ── Período LIVRE (De/Até) ─────────────────────────────────────────────────
+  //
+  // ⚠️ ADITIVO: sem `inicio`/`fim` este bloco não roda e o resto da função é
+  // byte a byte o que era. É o que permite estender uma régua que já serve
+  // Grupos, Cuidados, Voluntariado, Jornada, Inscrições e Governança sem mexer
+  // no comportamento de nenhum deles. Há teste exigindo essa equivalência.
+  //
+  // ⚠️ Vem ANTES do ramo de `ano` porque é o recorte MAIS ESPECÍFICO: quem
+  // mandou as duas datas escolheu exatamente o intervalo, e deixar o ano vencer
+  // faria a tela ignorar em silêncio o que a pessoa acabou de digitar.
+  const livre = periodoLivre(inicio, fim, agora);
+  if (livre) return livre;
+
   if (anoValido(ano, agora)) {
     const n = Number(ano);
     const fimDoAno = new Date(n, 11, 31, 12, 0, 0);
@@ -92,8 +151,18 @@ function resolverJanelaPeriodo({ dias, ano, diasValidos, diasPadrao, agora = Dat
 /** Rótulo curto da janela, pro texto que acompanha o número. */
 function rotuloJanela(j) {
   if (!j) return '';
+  // ⚠️ O período livre vem PRIMEIRO: com `ano: null` e `dias: null` ele cairia
+  // em "últimos null dias" — número sem rótulo é como um número correto passa a
+  // parecer errado.
+  if (j.livre) {
+    const br = (iso) => (typeof iso === 'string' && iso.length >= 10
+      ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '—');
+    return j.inicio === j.fim ? br(j.inicio) : `${br(j.inicio)} a ${br(j.fim)}`;
+  }
   if (j.ano) return String(j.ano);
   return `últimos ${j.dias} dias`;
 }
 
-module.exports = { ANO_INICIAL, diaLocal, anoValido, resolverJanelaPeriodo, rotuloJanela };
+module.exports = {
+  ANO_INICIAL, diaLocal, anoValido, diaIsoValido, resolverJanelaPeriodo, rotuloJanela,
+};
