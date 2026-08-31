@@ -3919,7 +3919,7 @@ export const comunicacao = {
   // 25/08 (Ana Cristina, Jessica, Thalya e o 98633-5326) eram a MESMA pergunta.
   // ⚠️ Só SUGERE: devolve texto pra pessoa revisar e enviar. A lei de 12/08
   // ("não quero bot; será apenas atendimento humanizado") continua valendo.
-  sugestaoGrupo: (conversaId) => get(`/comunicacao/conversas/${conversaId}/sugestao-grupo`),
+  sugestaoGrupo: (conversaId, auto) => get(`/comunicacao/conversas/${conversaId}/sugestao-grupo${auto ? '?auto=1' : ''}`),
 
   // Inventário dos disparos automáticos + o público de cada um. `pessoas=1`
   // carrega nome/telefone e o servidor só devolve com nível >= 2.

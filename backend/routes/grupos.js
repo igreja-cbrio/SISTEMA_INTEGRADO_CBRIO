@@ -4,6 +4,7 @@ const router = require('express').Router();
 // 'assistente' — o authorize() por role os bloqueava nas rotas de escrita).
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { ehGrupoOnline } = require('../utils/grupoOnline');
 const { acharOuCriarGuardado, normalizarNome, normalizarCpf, normalizarTelefone, normalizarEmail } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
 const { montarPatchFusao } = require('../services/fusaoCampos');
@@ -4407,7 +4408,7 @@ router.post('/geocode-batch', authorizeModule('grupos', 3), async (req, res) => 
 
     for (const g of grupos || []) {
       // Pula online
-      if (g.bairro === 'Online' || g.local?.toLowerCase().includes('online')) {
+      if (ehGrupoOnline(g)) {
         skip.push({ id: g.id, codigo: g.codigo, nome: g.nome, motivo: 'online' });
         continue;
       }

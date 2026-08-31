@@ -14397,6 +14397,95 @@ segunda como resposta da primeira.
 
 ⇒ **Uma pergunta por chamada.** Se precisar de duas, duas chamadas.
 
+## ⚠️ INBOX · "recebo o link por aqui?" → a sugestão manda falar com a liderança (2026-08-31 · SEM migration)
+
+Pedido do Matheus, com o print da **Ana Paula** (grupo ONLINE · Finanças na
+Ótica de Cristo · atribuída à Natasha): *"preciso que nesse tipo de pergunta, o
+agente responda dizendo que o líder vai entrar em contato."* A mensagem dela,
+logo depois das boas-vindas do grupo:
+
+> "Boa tarde. Receberemos o link por aqui? Devo fazer contato com a líder do grupo?"
+
+### ⚠️ Os casos vieram do BANCO, e um deles é a armadilha
+
+Todas as mensagens de ENTRADA com "link" em 90 dias (medido 31/08 · 5 reais,
+fora 3 de propaganda de empresa):
+
+| data | mensagem | assunto |
+|---|---|---|
+| 30/08 | "Receberemos o link por aqui? Devo fazer contato com a líder?" | link |
+| 23/08 | "Cadê o Link ?" | link |
+| 10/08 | "Vcs mandam link?" | link |
+| 10/08 | "Estou no aguardo do Link para entrar na Reunião amanhã 20:00 hs" | link |
+| 05/08 | **"Opa, consegui o link de acesso ao grupo"** | ⚠️ **nenhum** |
+
+⚠️⚠️ **O último é o que justifica a guarda `JA_RESOLVEU`**: ela está DIZENDO QUE
+JÁ TEM. Sugerir "a liderança vai te mandar o link" para quem acabou de avisar
+que conseguiu faz a igreja parecer que não leu a mensagem. Roda ANTES de tudo,
+porque a frase contém "link" e cairia no ramo errado.
+
+### ⚠️⚠️ O sistema NÃO TEM o link — e é por isso que a resposta ENCAMINHA
+
+Não existe coluna de link em `mem_grupos`: quem cria a sala e distribui é a
+liderança, encontro a encontro. Por isso o texto diz **"a \<líder\> vai entrar em
+contato com você"** e **NÃO** "o link chega por aqui" — prometer o inbox
+institucional comprometeria a igreja com um envio que ninguém vai fazer, e a
+pessoa ficaria esperando na conversa errada. Tem teste travando as duas coisas.
+
+- ⚠️ **O CONTATO da líder vai junto**, e é o coração da resposta: foi exatamente
+  o que ela perguntou ("devo fazer contato?"). **Medido em 31/08: dos 36 grupos
+  online ativos, 36 têm telefone do líder e só 2 líderes têm push no app** — o
+  caminho que realmente alcança é ela falar com a liderança, não um aviso
+  automático que chegaria a 2 de 36. **Por isso NÃO construí o aviso automático
+  ao líder** (o pedido antigo de 25/08): seria máquina para 5% do caso.
+- ⚠️ **Sem prazo.** "Vai entrar em contato", nunca "hoje" ou "em breve" —
+  prometer o tempo de uma pessoa que não foi consultada.
+- ⚠️ **Grupo PRESENCIAL não fala de link, fala de ENDEREÇO.** Falar de link para
+  quem vai a um endereço é resposta que não serve pra nada.
+- ⚠️ **Data só quando é FATO**: no texto de link, ocorrência estimada entra SEM
+  data. Sugestão de link não é lugar de arriscar data calculada (a lição do
+  grupo quinzenal da Jessica, 26/08).
+
+### A sugestão passou a APARECER SOZINHA
+
+Antes dependia do clique na lâmpada — ou seja, de alguém lembrar que ela existe.
+Agora a tela busca ao abrir a conversa, e o servidor **no modo `?auto=1` só
+responde quando a régua RECONHECEU** a pergunta (`sem_assunto` caso contrário).
+
+- ⚠️ Sem esse gate, TODA conversa aberta ganharia caixa de sugestão de agenda —
+  e sugestão que aparece sempre para de ser lida, que é o oposto do pedido.
+- ⚠️ O gatilho é estreito (a objeção de custo de 26/08 continua valendo):
+  **última mensagem é DELA** (conversa já respondida não paga nada) e **uma vez
+  por conversa** (`sugestaoAutoRef` — sem ele cada mensagem do realtime refaria
+  a consulta).
+- ⚠️ **Erro na busca automática é SILENCIOSO**, de propósito: ninguém pediu, e
+  toast vermelho ao abrir conversa treina a equipe a ignorar aviso. No clique da
+  lâmpada o erro continua aparecendo.
+- ⚠️ **Continua sendo SUGESTÃO** — "Usar este texto" preenche o campo e quem
+  envia é gente. A lei de 12/08 ("não quero bot; será apenas atendimento
+  humanizado") não foi tocada.
+
+### `ehGrupoOnline` virou régua ÚNICA
+
+⚠️ **Não existe coluna `modalidade`**: online é `bairro = 'Online'` OU `local`
+contendo "online". A régua estava só no geocodificador em massa
+(`routes/grupos.js`); foi extraída para **`backend/utils/grupoOnline.js`** e os
+dois usam a mesma — a 2ª cópia é como eles passariam a discordar sobre o mesmo
+grupo (e o sintoma seria o geocode tentando achar o endereço de um grupo online).
+
+### ⚠️ Lição de método (de novo, e é a mesma de 25/08)
+
+**Um mutante SOBREVIVEU: inverter a precedência link × agenda passou nos 14
+testes.** Meu caso de "link vence agenda" era *"Qual o link da reunião de
+amanhã?"*, que **não casa a régua de agenda** — ou seja, nenhum teste exercitava
+a precedência. Trocado por uma mensagem que casa os DOIS lados, com assert
+provando que casa. **Caso que aciona só um ramo não testa ordem nenhuma.**
+
+Testes: `src/test/assuntoGrupoConversa.test.ts` (14 casos · no gate). **4
+mutantes RODADOS e mortos** (depois da correção do teste): "consegui o link"
+virando pedido → 1 · agenda vencendo link → 1 · presencial falando de link → 1 ·
+prometer que o link chega por aqui → 1.
+
 ## ⚠️ AJUDA COM O APP · a dúvida do membro chega em quem cuida do app (2026-08-29 · migration `20260829140000`)
 
 Pedido do Matheus: *"no app, no menu, tivesse um botão de ajuda com app, caso a

@@ -204,7 +204,11 @@ router.get('/numeros', async (_req, res) => {
 // ⚠️ Nível 1 (o mesmo que abre a aba): quem lê a conversa pode ver a sugestão.
 router.get('/conversas/:id/sugestao-grupo', async (req, res) => {
   try {
-    const r = await require('../services/sugestaoGrupoAgenda').sugerirAgenda(req.params.id);
+    // ?auto=1 → a tela buscou sozinha ao abrir a conversa: só devolve quando a
+    // régua reconheceu a pergunta (link/agenda). Sem o parâmetro, é o clique da
+    // lâmpada e vale o comportamento de 26/08 (tenta a agenda).
+    const r = await require('../services/sugestaoGrupoAgenda')
+      .sugerirAgenda(req.params.id, { somenteSeReconhecer: req.query.auto === '1' });
     res.json(r);
   } catch (e) {
     // ⚠️ 500 com motivo, nunca `{disponivel:false}`: "não há sugestão" e "a
