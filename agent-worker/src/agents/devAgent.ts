@@ -6,9 +6,9 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { supabase } from "../supabase.js";
 import { montarSystemPrompt } from "../instrucoes.js";
-import { createDevBoardTools, buscarTarefa, claimTarefa, atualizarTarefa, registrarEventoTarefa, comentarTarefa, orcamentoDisponivel, notificarBugCorrigidoNoApp, isSystemIncidentCorrection } from "../tools/devBoard.js";
+import { createDevBoardTools, buscarTarefa, claimTarefa, atualizarTarefa, registrarEventoTarefa, comentarTarefa, orcamentoDisponivel, notificarBugCorrigidoNoApp, isSystemIncidentCorrection, jaRegistrouEvento } from "../tools/devBoard.js";
 import { createDevFileTools, validarCaminhoCorrecao } from "../tools/devFiles.js";
-import { prepararWorkspace, prepararDiff, commitar, push, abrirPr, aguardarChecks, diffNomeArquivos, diffConteudo, slugDaTarefa, mergearPr } from "../tools/devGit.js";
+import { prepararWorkspace, prepararDiff, commitar, push, abrirPr, aguardarChecks, diffNomeArquivos, diffConteudo, slugDaTarefa, mergearPr, gitDisponivel } from "../tools/devGit.js";
 import { aplicarMigrations } from "../tools/devDb.js";
 
 // Agente Dev · FASE 2 · runner completo (Bloco 1) + FLUXO PRÁTICO DE BUGS.
@@ -244,6 +244,35 @@ export async function runDevAgent(opts: { triggeredBy?: string | null; config?: 
   }
   const orcamentoTarefa = Number(tarefa.orcamento_usd || 0) || Number(membro.orcamento_tarefa_usd || 5);
   const tetoExecucao = Math.min(orcamento.disponivel ?? orcamentoTarefa, orcamentoTarefa);
+
+  // 4b · ⚠️⚠️ PREFLIGHT DE AMBIENTE, ANTES DO CLAIM
+  //
+  // Em 31/08, na primeira execução real do agente, três tarefas foram reservadas,
+  // marcadas `em_andamento`, falharam no `git clone` em ~5 segundos e terminaram
+  // como `falhou` — porque o binário `git` não existe no container do Railway.
+  // Na aba, `falhou` se lê como "o agente tentou consertar e não conseguiu", que
+  // é uma afirmação ERRADA sobre o código: ele nunca chegou a olhar o código.
+  //
+  // Conferir ANTES do claim faz a tarefa continuar `agendada` — ela anda sozinha
+  // quando o ambiente for corrigido, sem ninguém reenfileirar nada.
+  const git = await gitDisponivel();
+  if (!git.ok) {
+    const motivo = `Executor sem ambiente: ${git.motivo}`;
+    // ⚠️ Avisa UMA vez por tarefa: o dispatcher tenta de 10 em 10 minutos, e um
+    // comentário por tique transformaria a tarefa num diário de erro. Sem aviso
+    // nenhum, porém, a aba diria "na fila do agente" para sempre, sem dizer que
+    // a fila não anda — e fila parada em silêncio é o pior dos dois.
+    try {
+      if (!(await jaRegistrouEvento(taskId, "executor_sem_ambiente"))) {
+        await registrarEventoTarefa(taskId, "executor_sem_ambiente", { motivo: git.motivo });
+        await comentarTarefa(taskId, `${motivo}. A tarefa continua na fila e anda sozinha quando o ambiente for corrigido.`);
+      }
+    } catch (e) {
+      console.error("[devAgent] aviso de ambiente falhou:", (e as Error).message);
+    }
+    console.error(`[devAgent] ${motivo}`);
+    return { runId: null, status: "cancelled", summary: motivo, tokens_input: 0, tokens_output: 0, cost_usd: 0 };
+  }
 
   // 5 · claim atômico (status de origem depende da fase)
   const claimed = faseDiagnostico

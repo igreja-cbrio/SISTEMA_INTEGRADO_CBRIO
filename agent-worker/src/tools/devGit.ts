@@ -38,7 +38,7 @@ const SAFE_ENV: Record<string, string> = {
 export function git(
   args: string[],
   opts: { cwd?: string; timeoutMs?: number; maxOutputBytes?: number } = {}
-): Promise<{ code: number; stdout: string; stderr: string }> {
+): Promise<{ code: number | string; stdout: string; stderr: string; motivo: string }> {
   return new Promise((resolve) => {
     execFile(
       "git",
@@ -50,10 +50,18 @@ export function git(
         maxBuffer: opts.maxOutputBytes || 10 * 1024 * 1024,
       },
       (err, stdout, stderr) => {
+        const e = err as (NodeJS.ErrnoException & { code?: number | string }) | null;
         resolve({
-          code: err ? (err as NodeJS.ErrnoException & { code?: number }).code ?? 1 : 0,
+          code: e ? e.code ?? 1 : 0,
           stdout: String(stdout || ""),
           stderr: String(stderr || ""),
+          // ⚠️⚠️ `motivo` existe por causa de um incidente REAL (31/08): a
+          // primeira execução de verdade do agente falhou 3× com a mensagem
+          // `"clone falhou: "` — VAZIA. Quando o binário não existe, `execFile`
+          // devolve `err.code = 'ENOENT'` e **stderr vazio**, então quem só olha
+          // o stderr fica sem causa nenhuma. Reproduzido byte a byte:
+          // `spawn git ENOENT` com stderr "".
+          motivo: e ? String(e.message || `git terminou com código ${e.code}`) : "",
         });
       }
     );
@@ -84,6 +92,38 @@ async function gh<T = unknown>(
 
 // ─── clone / branch ──────────────────────────────────────────────────────────
 
+/**
+ * Descreve a falha de um comando git de forma UTILIZÁVEL.
+ *
+ * ⚠️ stderr primeiro (é onde o git escreve o motivo real), e o `motivo` do
+ * processo como rede — porque existe um caso em que o stderr é vazio: o binário
+ * não existir. Sem isso, a mensagem chega como "clone falhou: " e ninguém
+ * descobre nada (foi o que aconteceu em 31/08).
+ */
+function descreverFalhaGit(r: { code: number | string; stderr: string; motivo: string }): string {
+  const stderr = r.stderr.trim();
+  if (stderr) return stderr.slice(0, 500);
+  if (r.code === "ENOENT") {
+    return 'o binário `git` NÃO existe no container do worker (spawn ENOENT). '
+      + 'Instalar no Railway: `agent-worker/nixpacks.toml` com git em [phases.setup].';
+  }
+  return `${r.motivo || 'sem stderr'} (code=${r.code})`;
+}
+
+/**
+ * O `git` está utilizável neste container?
+ *
+ * ⚠️⚠️ Existe pra ser chamado ANTES de reservar a tarefa. Em 31/08 a primeira
+ * execução real gastou 3 tarefas do board (todas marcadas `falhou`) por uma
+ * dependência de AMBIENTE ausente — e `falhou` na aba se lê como "o agente
+ * tentou e não conseguiu consertar", que é uma afirmação errada sobre o código.
+ */
+export async function gitDisponivel(): Promise<{ ok: boolean; motivo?: string; versao?: string }> {
+  const r = await git(["--version"], { timeoutMs: 15_000 });
+  if (r.code === 0) return { ok: true, versao: r.stdout.trim() };
+  return { ok: false, motivo: descreverFalhaGit(r) };
+}
+
 export async function prepararWorkspace(branch: string): Promise<string> {
   const ws = path.join(WORKSPACE_ROOT, branch.replace(/[^A-Za-z0-9-_]/g, "-"));
   const guard = path.resolve(WORKSPACE_ROOT) + path.sep;
@@ -95,14 +135,14 @@ export async function prepararWorkspace(branch: string): Promise<string> {
   const r = await git(["clone", "--depth", "1", "--single-branch", "--branch", "main", tokenUrl(), ws], {
     timeoutMs: 180_000,
   });
-  if (r.code !== 0) throw new Error(`clone falhou: ${r.stderr.slice(0, 500)}`);
+  if (r.code !== 0) throw new Error(`clone falhou: ${descreverFalhaGit(r)}`);
 
   // remove a credencial do remote (o token não pode ficar no .git/config)
   const scrub = await git(["remote", "set-url", "origin", CLEAN_URL], { cwd: ws });
-  if (scrub.code !== 0) throw new Error(`falha limpando remote: ${scrub.stderr.slice(0, 300)}`);
+  if (scrub.code !== 0) throw new Error(`falha limpando remote: ${descreverFalhaGit(scrub)}`);
 
   const b = await git(["switch", "-c", branch], { cwd: ws });
-  if (b.code !== 0) throw new Error(`criar branch falhou: ${b.stderr.slice(0, 300)}`);
+  if (b.code !== 0) throw new Error(`criar branch falhou: ${descreverFalhaGit(b)}`);
 
   return ws;
 }
@@ -111,13 +151,13 @@ export async function prepararWorkspace(branch: string): Promise<string> {
 
 export async function diffNomeArquivos(ws: string): Promise<string[]> {
   const r = await git(["diff", "--cached", "--name-only", "-z"], { cwd: ws });
-  if (r.code !== 0) throw new Error(`diff falhou: ${r.stderr.slice(0, 300)}`);
+  if (r.code !== 0) throw new Error(`diff falhou: ${descreverFalhaGit(r)}`);
   return r.stdout.split("\0").filter(Boolean);
 }
 
 export async function prepararDiff(ws: string): Promise<void> {
   const add = await git(["add", "-A"], { cwd: ws });
-  if (add.code !== 0) throw new Error(`git add falhou: ${add.stderr.slice(0, 300)}`);
+  if (add.code !== 0) throw new Error(`git add falhou: ${descreverFalhaGit(add)}`);
 }
 
 export async function diffConteudo(ws: string): Promise<string> {
@@ -129,7 +169,7 @@ export async function diffConteudo(ws: string): Promise<string> {
 
 export async function commitar(ws: string, msg: string): Promise<void> {
   const add = await git(["add", "-A"], { cwd: ws });
-  if (add.code !== 0) throw new Error(`git add falhou: ${add.stderr.slice(0, 300)}`);
+  if (add.code !== 0) throw new Error(`git add falhou: ${descreverFalhaGit(add)}`);
   const r = await git(
     [
       "-c", "user.name=Agente Dev CBRio",
@@ -139,17 +179,20 @@ export async function commitar(ws: string, msg: string): Promise<void> {
     { cwd: ws }
   );
   if (r.code !== 0) {
-    const nada = /nothing to commit|no changes added/i.test(r.stderr);
-    throw new Error(nada ? "nenhuma alteração para commitar" : `commit falhou: ${r.stderr.slice(0, 300)}`);
+    // ⚠️ O git escreve "nothing to commit" no STDOUT, não no stderr — testar só
+    // o stderr fazia este ramo nunca casar, e a mensagem saía como
+    // "commit falhou: " VAZIA (a mesma classe do `clone falhou:` de 31/08).
+    const nada = /nothing to commit|no changes added/i.test(`${r.stdout}\n${r.stderr}`);
+    throw new Error(nada ? "nenhuma alteração para commitar" : `commit falhou: ${descreverFalhaGit(r)}`);
   }
 }
 
 export async function push(ws: string, branch: string): Promise<void> {
   const setUrl = await git(["remote", "set-url", "origin", tokenUrl()], { cwd: ws });
-  if (setUrl.code !== 0) throw new Error(`set-url falhou: ${setUrl.stderr.slice(0, 300)}`);
+  if (setUrl.code !== 0) throw new Error(`set-url falhou: ${descreverFalhaGit(setUrl)}`);
   try {
     const r = await git(["push", "-u", "origin", branch], { cwd: ws, timeoutMs: 180_000 });
-    if (r.code !== 0) throw new Error(`push falhou: ${r.stderr.slice(0, 500)}`);
+    if (r.code !== 0) throw new Error(`push falhou: ${descreverFalhaGit(r)}`);
   } finally {
     await git(["remote", "set-url", "origin", CLEAN_URL], { cwd: ws });
   }

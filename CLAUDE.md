@@ -15486,3 +15486,83 @@ dentro dele (com restauração no `finally`). É a mesma lição de 24/08 no
 Depois de corrigir: **5 mutantes rodados e mortos** (sem o aviso de não
 reproduzido → 1 · idade omitida → 1 · data sem fuso → 1 · `filter(Boolean)`
 comendo as linhas em branco do markdown → 2 · teto do lote sem declarar → 1).
+
+### 🔴 INCIDENTE · o PRIMEIRO clique real no "Resolver todos" (2026-08-31 · SEM migration)
+
+O Matheus clicou às **13:33**. Seis tarefas foram criadas corretamente (a régua
+acertou: só a do achado reproduzível veio com `merge_automatico = true`) e **as
+três primeiras que o executor pegou falharam em 5, 8 e 10 segundos**. Duas causas
+independentes, e as duas são de DIAGNÓSTICO SILENCIOSO.
+
+#### ⚠️⚠️ 1 · `git` não existe no container do Railway — e a mensagem vinha VAZIA
+
+Os 3 `agent_runs` registraram, literalmente, **`"clone falhou: "`**. Nada depois
+dos dois pontos.
+
+`git()` em `agent-worker/src/tools/devGit.ts` montava a mensagem só com o
+`stderr`. Quando o binário não existe, `execFile` devolve
+**`err.code = 'ENOENT'` e `stderr` VAZIO** — reproduzido byte a byte aqui antes
+de tocar em nada:
+
+```
+err.code   = "ENOENT"
+err.message= "spawn git-que-nao-existe ENOENT"
+stderr     = ""
+```
+
+⇒ Nenhuma outra falha do git produz stderr vazio (auth, repo inexistente,
+timeout — todas escrevem). Falha instantânea + stderr vazio **é** ENOENT.
+
+- **`descreverFalhaGit()`** passou a ser o único jeito de montar a mensagem: usa
+  o stderr quando existe, e **nomeia o ENOENT com o conserto na frase**. Os
+  outros **6** pontos que faziam `.stderr.slice()` cru foram convertidos —
+  incluindo um segundo caso da MESMA classe: `commitar` testava
+  `/nothing to commit/` **só no stderr**, e o git escreve isso no **stdout**, ou
+  seja aquele ramo nunca casava e a mensagem saía `"commit falhou: "` vazia.
+- **`agent-worker/nixpacks.toml`** instala o git (`nixPkgs = ["...", "git"]` ·
+  Root Directory = `agent-worker`, conforme o README). ⚠️ `"..."` é "mantenha os
+  padrões e acrescente" — lista literal derrubaria o Node.
+- ⚠️ **`gitDisponivel()` + PREFLIGHT ANTES DO CLAIM**: as 3 tarefas foram
+  reservadas, marcadas `em_andamento` e terminaram `falhou` — e na aba `falhou`
+  se lê como *"o agente tentou consertar e não conseguiu"*, afirmação **errada**
+  sobre o código (ele nunca olhou o código). Agora a tarefa continua `agendada`
+  e anda sozinha quando o ambiente for corrigido, sem ninguém reenfileirar.
+  O aviso vai **uma vez por tarefa** (`jaRegistrouEvento`): o dispatcher tenta de
+  10 em 10 min, e um comentário por tique viraria diário de erro — mas silêncio
+  total faria a aba dizer "na fila" para sempre sem dizer que a fila não anda.
+
+#### ⚠️⚠️ 2 · ENCERRADO não é "PRECISA DA SUA AÇÃO" (defeito meu, do dia anterior)
+
+Ele clicou em **Copiar prompt** e o lote saiu com **5 achados, 4 deles dizendo
+"já decidido — o plano aqui é histórico"**, e o contador prometendo "há 11
+outros". Medido: dos 5, **4 estavam `resolvido`** (26–28/08) e o 5º
+(`evento-checkin`) tinha sido corrigido **naquela mesma manhã** pelo PR #2790.
+
+Causa: a faixa `humano` cobre coisas **OPOSTAS** — *"o agente não mexe, resolva
+você"* e *"isto já foi decidido, não há nada a fazer"* — e eu mapeei as duas para
+`precisa_de_voce`. Incidente resolvido não é pendência de ninguém: é histórico, e
+entrar na fila de trabalho dele gasta atenção e credibilidade da tela.
+
+⇒ `ANDAMENTO.ENCERRADO`, cinza, **fora** da contagem "precisam de você" e fora do
+prompt em lote. Duas guardas que o teste fixa:
+- ⚠️ **`sem_incidente` NÃO entra em encerrado**: achado de auditoria é
+  constatação que ninguém decidiu ainda (43 estão fora da janela atual), e
+  mandá-lo pra "encerrado" esconderia trabalho real. Segue em "precisa da sua
+  ação" pela faixa `humano`, que é a verdade.
+- ⚠️ **Tarefa em curso VENCE o estado do incidente**: se alguém mandou consertar
+  e o agente está trabalhando, o card não pode dizer "histórico".
+
+#### O que a rodada PROVOU que funciona
+
+A régua de autonomia acertou os 6 (1 com merge automático, 5 só-PR), o vínculo
+`tarefa.id = incidente.id` não duplicou incidente nenhum, o teto de rodada e a
+declaração de "adiados" funcionaram, e o **prompt em lote saiu utilizável** — foi
+lendo o próprio prompt que o defeito nº 2 apareceu, porque ele DIZ "já decidido"
+em cada achado. Ferramenta que declara o próprio estado é o que permite achar o
+erro dela.
+
+⚠️ **E o executor está LIGADO no Railway** (`DEV_AGENT_ENABLED=1` + `GITHUB_TOKEN`
+presentes): os 3 runs existem, com 0 tokens e US$ 0. A pendência que este arquivo
+registrava como "provavelmente desligado" **está resolvida** — o que faltava era
+o `git`. Régua que fica: **medir em `agent_runs` antes de repetir que um agente
+não roda.**

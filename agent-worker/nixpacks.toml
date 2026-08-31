@@ -1,0 +1,19 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Build do worker no Railway (Root Directory = `agent-worker`, ver README)
+#
+#  ⚠️⚠️ POR QUE ESTE ARQUIVO EXISTE (31/08/2026): na PRIMEIRA execução real do
+#  `developer_agent` em produção, três tarefas falharam em ~5 segundos com a
+#  mensagem `"clone falhou: "` — vazia. A causa é que o binário `git` NÃO existe
+#  na imagem de runtime que o nixpacks monta para app Node: `execFile('git', …)`
+#  devolve `err.code = 'ENOENT'` com **stderr vazio**, então quem só lia o
+#  stderr ficava sem causa nenhuma. Reproduzido byte a byte antes de mexer aqui.
+#
+#  O agente dev existe pra clonar o repositório, escrever código, abrir PR e
+#  mergear — sem git, ele não faz nada, e falha do jeito mais silencioso.
+#
+#  ⚠️ `"..."` é a sintaxe do nixpacks para "mantenha os pacotes padrão e
+#  ACRESCENTE os meus". Trocar por uma lista literal derrubaria o Node.
+# ═══════════════════════════════════════════════════════════════════════════
+
+[phases.setup]
+nixPkgs = ["...", "git"]
