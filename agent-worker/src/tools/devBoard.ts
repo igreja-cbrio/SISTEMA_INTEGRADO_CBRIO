@@ -41,6 +41,10 @@ export interface DevTarefa {
   reportado_por: string | null;
   diagnostico: string | null;
   diagnostico_em: string | null;
+  // ⚠️ AUTORIZAÇÃO de merge, escrita só pela régua da aba Diagnósticos
+  // (backend/utils/diagnosticoAutonomia.js · faixa "auto"). Default false no
+  // banco = fail-closed: tarefa de qualquer outra origem PARA no PR.
+  merge_automatico: boolean | null;
   created_at: string;
   updated_at: string;
 }

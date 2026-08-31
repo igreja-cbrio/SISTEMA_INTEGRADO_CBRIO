@@ -15178,3 +15178,148 @@ denominador e faz o ritmo parecer mais folgado do que é. A janela passou a ser
   (`b < a`) não é observável, porque com o fim antes do início o primeiro domingo é
   sempre maior que o fim e o retorno já seria 0. Fica pela intenção; não afirmo
   cobertura que não existe (lição do mutante equivalente-por-acidente de 25/08).
+
+## ⚠️⚠️ Diagnósticos · o botão "Resolver todos" (2026-08-31 · migration `20260831120000`)
+
+Pedido do Matheus: *"preciso de um botão para resolver todos os problemas, e aí
+ele vai resolver tudo, abrir as PRs e fazer os merges. preciso acompanhar o
+andamento de cada um pela aba mesmo, para saber os que foram resolvidos, os que
+estão sendo resolvidos e os que precisarem da minha ação, só deixar
+sinalizado."*
+
+### ⚠️⚠️ A MÁQUINA DE CONSERTAR JÁ EXISTIA — e nunca havia rodado
+
+`developer_agent` (`agent-worker/src/agents/devAgent.ts`, no Railway) escreve
+código, roda o G1 local, faz commit+push, abre PR, espera o CI e **mergeia**.
+Medido em 31/08 antes de escrever uma linha:
+
+| | |
+|---|---|
+| `agent_runs` de `developer_agent` na história | **ZERO** |
+| tarefas de `developer_agent` no board | **1** (14/08, `concluida`, **sem PR**) |
+| worker vivo? | **sim** — `piloto_triage_watcher` rodou 30/08 |
+| `developer_agent` no roster | **ativo**, orçamento US$ 10/tarefa |
+
+⇒ Não faltava executor. Faltava **ligar a aba de Diagnósticos nele**. Esta leva
+é a fiação e o portão — nenhum motor novo.
+
+### ⚠️⚠️ O VÍNCULO é `agent_tarefas.id = system_incidents.id`
+
+Não é gambiarra: é a identidade que o próprio executor já usa pra reconhecer
+correção assistida (`isSystemIncidentCorrection`), e é ela que dá o
+acompanhamento na tela **sem coluna nova**. Duas consequências que não se pode
+esquecer:
+
+1. um incidente tem UMA tarefa (achados do mesmo incidente compartilham);
+2. ⚠️⚠️ **`classe` é `'dev'`, NUNCA `'bug'`.** O trigger
+   `trg_agent_tarefas_sync_incidente` dispara em `classe='bug'` e procura o
+   incidente por `source_ref = id da tarefa` — que NÃO existe, porque o
+   incidente foi aberto pelo diagnosticador com outro `source_type`. Ele
+   **criaria um SEGUNDO incidente para o mesmo problema**, e a fila do /sistema
+   passaria a contar em dobro. Provado em transação revertida contra produção:
+   com `classe='dev'`, `incidente_duplicado_pelo_trigger = 0`.
+
+### ⚠️⚠️ BUG LATENTE DESARMADO: `gate = 'aprovacao_unica'` era RECUSADO pelo banco
+
+Achado ao medir os CHECKs. `devAgent` fecha o fluxo de bug com
+`atualizarTarefa(taskId, { status:'concluida', gate:'aprovacao_unica' })`, e
+`'aprovacao_unica'` **não estava** na lista permitida (`G1|G2|execucao|revisao`).
+`atualizarTarefa` LANÇA em erro, e essa chamada é o passo **seguinte** ao
+`mergearPr`. No primeiro bug corrigido de verdade o resultado seria: **PR
+mergeado, migration aplicada em produção, deploy disparado — e a tarefa marcada
+`falhou`**, sem notificar quem reportou. O board diria o oposto do que
+aconteceu. Ninguém descobriu porque o executor nunca rodou.
+
+### As três faixas · `backend/utils/diagnosticoAutonomia.js` (régua PURA, no gate)
+
+| faixa | o que acontece | quando |
+|---|---|---|
+| **auto** | corrige · abre PR · **mergeia** com o CI verde | incidente REPRODUZÍVEL + `classification='codigo'` + plano de ação + fora de área protegida |
+| **pr** | corrige · abre PR · **para** (o merge é de gente) | `nao_reproduzido` ou confiança `baixa` |
+| **humano** | nem tenta, e **diz o motivo** | sem incidente · encerrado · sem plano · classificação que não é código · área protegida |
+
+- ⚠️⚠️ **`decision_required` NÃO é portão, e é medição que decide isso**: veio
+  **`true` em 19 de 19** diagnósticos. Se ele travasse a faixa, o botão nunca
+  resolveria nada — **para sempre**, sem ninguém entender por quê. Virou AVISO
+  no card, com a pergunta à vista. É a lição de 25/08: medir a capacidade
+  DISCRIMINANTE do eixo antes de construir em cima dele. Por isso o chip
+  "Precisam de decisão (7)" **saiu** da aba: marcava 100% dos achados.
+- ⚠️⚠️ **`nao_reproduzido` é o portão que separa `auto` de `pr`**, e é o mais
+  importante: **6 dos 7 achados abertos** estão nesse estado, todos de 12–14/08,
+  com diagnóstico da família "falha silenciosa no handler". Mergear seis
+  consertos de um defeito que ninguém conseguiu reproduzir não é resolver
+  problema — é fabricar mudança em produção, e o CI verde não prova nada ali
+  (não há caso que falhe antes e passe depois). O agente conserta e PARA no PR.
+- ⚠️ O eixo que DISCRIMINA é `classification`: `codigo` 14 · `dependencia_externa`
+  2 · `dados` 1 · `desconhecido` 1 · `experiencia_usuario` 1.
+- ⚠️ **Área protegida é HEURÍSTICA SOBRE TEXTO e está declarada como tal** (o
+  achado não carrega o caminho do arquivo). Erra pro lado seguro. **`token`
+  ficou de fora de propósito**: metade dos links assinados da casa tem "token"
+  na rota, e barrar por ele mandaria pro humano justamente o único achado
+  reproduzível de hoje. Há teste com os TEXTOS REAIS dos 7 abertos exigindo que
+  nenhum seja capturado por "banco", "dados", "middleware" ou ":token".
+
+**Distribuição medida em 31/08 (é o que o botão faz hoje): 1 auto · 5 PR · 1
+humano.** O único mergeado sozinho é o de 44 ocorrências em 15 min
+(`POST /api/public/evento-checkin/:token/confirmar`).
+
+### ⚠️ Por que mergear daqui é MAIS seguro que o fluxo de bug
+
+O caminho de correção assistida (`writePolicy: 'incident_correction'`) é o mais
+cercado que existe no executor: **≤6 arquivos**, allowlist de pastas
+(`backend/routes|services|utils|config` e `src/`), e **migrations PROIBIDAS** —
+então este caminho **não toca o banco**. O fluxo de bug, que já mergeava desde
+14/08, aplica migration em produção antes do merge.
+
+- ⚠️ **`merge_automatico` é COLUNA, não `gate` nem texto na descrição**: é
+  AUTORIZAÇÃO, e autorização escondida em texto livre é o que ninguém audita.
+  **Default `false` = fail-closed**: tarefa de qualquer outra origem (app do
+  staff, board manual, watcher) segue parando no PR sem ninguém precisar
+  lembrar.
+- ⚠️ **NUNCA mergear em `timeout`**: "não terminou de rodar" não é "passou". Só
+  `veredito === 'ok'`.
+- ⚠️ **"Nada a mudar" deixou de ser `falhou`** no caminho de correção assistida:
+  vários incidentes abertos são de semanas atrás e já foram corrigidos por outra
+  frente. Vai pra `aguardando_revisao` com o motivo escrito — chamar de `falhou`
+  faria a aba dizer que o agente errou quando ele acertou.
+
+### O andamento · as três caixas
+
+`andamentoDoAchado` (régua pura) deriva do status da TAREFA — **nunca um segundo
+campo gravado**, que envelheceria e passaria a discordar do board.
+⚠️ **`aguardando_revisao` é "precisa da sua ação", não "sendo resolvido"**: ali o
+agente já terminou e o PR espera gente; chamar de "em andamento" faria a pessoa
+esperar por um trabalho que só ela destrava. A aba se atualiza sozinha (20s)
+enquanto houver trabalho em curso.
+
+### O que a tela DECLARA (nada disso é enfeite)
+
+- **as duas contagens separadas** no diálogo de confirmação: "vão ser mergeados
+  na main" × "param no PR" são autorizações diferentes; somá-las num "6 achados"
+  esconderia o que está sendo autorizado — e o que se autoriza é deploy;
+- **o executor não confirmou início**: o dispatcher devolve `cancelled` quando
+  `DEV_AGENT_ENABLED != 1` ou falta `GITHUB_TOKEN` no Railway, e isso **não é
+  sucesso**. O recibo diz que as tarefas ficaram na fila (a lição do disparo do
+  censo: caixa verde com zero envio);
+- **o que foi PULADO e por quê**, item a item;
+- **o teto de 10 por clique** e **a janela de 60 execuções** — medido: a aba
+  mostra **19 achados de 62 na história**; os 43 de fora são de auditorias
+  antigas, todas sem incidente, que a régua manda pro humano de qualquer forma.
+
+### ⏳ PENDENTE DE GENTE (sem isto o botão enfileira e nada começa)
+
+⚠️⚠️ **`DEV_AGENT_ENABLED=1` e `GITHUB_TOKEN` no RAILWAY.** O default do
+`.env.example` é `0`, e o executor nunca rodou — muito provavelmente está
+desligado. Não dá para conferir env do Railway a partir daqui; **o recibo do
+botão diz a verdade na primeira vez que ele for clicado**. Conferir também
+`DEV_BUDGET_MENSAL_USD` (default 30) contra o orçamento de US$ 10/tarefa do
+roster: 6 tarefas não cabem em US$ 30.
+
+⏳ Follow-up: a janela de 60 execuções esconde 43 achados de auditoria. Alargar
+exige filtrar `findings <> '[]'` no PostgREST (hoje o filtro de array vazio é em
+JS) — e traria 43 itens antigos, quase todos já resolvidos, para a aba. É
+decisão de produto, não conserto.
+
+⚠️ **CORREÇÃO DE REGISTRO**: este arquivo diz em vários lugares que o gate de
+deploy tem 10/12/16 scripts. Em 31/08 são **21**. Conferir sempre no
+`.github/workflows/deploy-vercel.yml`, nunca aqui.

@@ -881,16 +881,68 @@ router.post('/run', authorize('admin', 'diretor'), aiLimiter, async (req, res) =
 router.get('/diagnosticos', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { listarDiagnosticos } = require('../services/agentDiagnosticos');
+    const { anexarAndamento } = require('../services/diagnosticoResolver');
     const r = await listarDiagnosticos({
       limite: req.query.limite,
       agentType: req.query.agentType,
     });
-    res.json(r);
+    // ⚠️ O ANDAMENTO é anexado AQUI, e não dentro do `listarDiagnosticos`: o
+    // resolver importa o listar, e chamar de volta faria dependência circular.
+    // ⚠️ Best-effort de propósito — se a leitura do board falhar, a aba continua
+    // mostrando os achados (que é a razão de ela existir) com o andamento
+    // DECLARADO como indisponível. Silêncio aqui é o que não pode: "sem tarefa"
+    // e "não deu pra saber" levam a decisões opostas (uma manda clicar em
+    // resolver, a outra manda esperar).
+    let extra = {};
+    try {
+      const a = await anexarAndamento(r.itens);
+      extra = { itens: a.itens, faixas: a.faixas, andamento: a.andamento };
+    } catch (e2) {
+      console.error('[AGENTS] /diagnosticos andamento:', e2.message);
+      extra = { andamento_indisponivel: true, aviso: 'Não conseguimos ler o andamento das correções no board dos agentes.' };
+    }
+    res.json({ ...r, ...extra });
   } catch (e) {
     console.error('[AGENTS] /diagnosticos error:', e.message);
     // ⚠️ Erro NÃO vira lista vazia: "nenhum diagnóstico" e "a consulta falhou"
     // levam a decisões opostas — e a aba nasceu justamente de um silêncio.
     res.status(500).json({ error: 'Erro ao carregar os diagnósticos dos agentes.' });
+  }
+});
+
+// GET /api/agents/diagnosticos/previa-resolucao
+// O que o botão "Resolver todos" vai fazer, sem escrever nada.
+// ⚠️ Rota LITERAL declarada antes de nenhum `/:id` deste router — não há
+// `/diagnosticos/:algo` hoje, e este comentário existe pra que continue assim
+// (é a armadilha que engoliu `/avaliar` e `/mural` nas Propostas).
+router.get('/diagnosticos/previa-resolucao', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { previa } = require('../services/diagnosticoResolver');
+    res.json(await previa({ limite: req.query.limite }));
+  } catch (e) {
+    console.error('[AGENTS] /diagnosticos/previa-resolucao error:', e.message);
+    res.status(500).json({ error: 'Erro ao montar a prévia da resolução.' });
+  }
+});
+
+// POST /api/agents/diagnosticos/resolver
+// Cria as tarefas de correção e acorda o executor do Railway.
+//
+// ⚠️⚠️ NÍVEL: `authorize('admin','diretor')` espelha o resto do módulo, e a
+// PÁGINA é `SuperAdminGuard`. Isto autoriza MERGE EM PRODUÇÃO por um agente —
+// se um dia a página abrir pra mais gente, este guard tem de ser revisto ANTES.
+router.post('/diagnosticos/resolver', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const { resolver } = require('../services/diagnosticoResolver');
+    const r = await resolver({
+      autorId: req.user?.userId || null,
+      ids: Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 100) : undefined,
+      reenfileirar: Array.isArray(req.body?.reenfileirar) ? req.body.reenfileirar.slice(0, 100) : undefined,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('[AGENTS] /diagnosticos/resolver error:', e.message);
+    res.status(500).json({ error: `Erro ao despachar as correções: ${e.message}` });
   }
 });
 

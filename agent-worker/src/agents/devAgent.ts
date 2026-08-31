@@ -22,8 +22,14 @@ import { aplicarMigrations } from "../tools/devDb.js";
 //      aprovado, após o CI verde o agente APLICA as migrations de produção
 //      (devDb · DATABASE_URL fail-closed) e MERGEA o próprio PR (deploy
 //      automático do Vercel) → 'concluida' + notifica quem reportou.
-// Regras duras em src/skills/dev/AGENTS.md. No fluxo comum (não-bug) valem as
-// regras de sempre: o agente NUNCA mergeia e NUNCA aplica migration em prod.
+//   C) CORREÇÃO ASSISTIDA (classe='dev' + `diagnostico` + o id da tarefa é o id
+//      de um `system_incidents`): vem do botão "Resolver todos" da aba
+//      Diagnósticos do /assistente-ia. Escreve em ≤6 arquivos de uma allowlist,
+//      migrations PROIBIDAS, e — quando `merge_automatico = true` — mergeia o
+//      próprio PR com o CI verde, SEM tocar o banco.
+// Regras duras em src/skills/dev/AGENTS.md. No fluxo comum (não-bug e sem
+// autorização de merge) valem as regras de sempre: o agente NUNCA mergeia e
+// NUNCA aplica migration em prod.
 // Portões de ativação: DEV_AGENT_ENABLED=1, GITHUB_TOKEN, DEV_BUDGET_MENSAL_USD.
 
 const AGENT_TYPE = "developer_agent";
@@ -403,7 +409,22 @@ export async function runDevAgent(opts: { triggeredBy?: string | null; config?: 
     const proibidos = nomes.filter((f) => /(^|\/)\.env($|\.)/.test(f) || f.includes("node_modules"));
     if (proibidos.length) throw new Error(`G1: arquivos proibidos no diff: ${proibidos.join(", ")}`);
     const temMigration = nomes.some((f) => f.startsWith("supabase/migrations/"));
-    if (!tocados.length) throw new Error("Nenhum arquivo foi alterado — nada para commitar");
+    if (!tocados.length) {
+      // ⚠️⚠️ Em correção assistida, "nada a mudar" é RESULTADO legítimo e
+      // frequente: vários incidentes abertos são de semanas atrás e já foram
+      // corrigidos por outra frente. Chamar isso de `falhou` faria a aba dizer
+      // que o agente errou quando ele acertou — e mandaria a pessoa investigar
+      // um problema inexistente. Vai pra revisão humana COM O MOTIVO, que é a
+      // caixa "precisa da sua ação".
+      if (ehCorrecaoIncidente) {
+        await atualizarTarefa(taskId, { status: "aguardando_revisao", gate: "revisao" });
+        await registrarEventoTarefa(taskId, "nada_a_corrigir", { motivo: "nenhum arquivo alterado" }).catch(() => {});
+        await comentarTarefa(taskId, "O agente NAO achou o que corrigir no codigo. Ou o defeito ja foi resolvido por outra frente, ou o diagnostico esta errado — confira antes de mandar de novo.").catch(() => {});
+        const cost = estimateCost(model, totalTokensIn, totalTokensOut);
+        return await finalizar({ runId, status: "completed", summary: "Nada a corrigir — o codigo ja nao apresenta o defeito descrito, ou o diagnostico esta errado.", branch, tokens_input: totalTokensIn, tokens_output: totalTokensOut, cost_usd: cost });
+      }
+      throw new Error("Nenhum arquivo foi alterado — nada para commitar");
+    }
     if (ehCorrecaoIncidente) {
       if (nomes.length > 6) throw new Error(`Etapa 3: limite de 6 arquivos excedido (${nomes.length})`);
       for (const nome of nomes) validarCaminhoCorrecao(nome);
@@ -495,6 +516,39 @@ export async function runDevAgent(opts: { triggeredBy?: string | null; config?: 
       ).catch(() => {});
       const cost = estimateCost(model, totalTokensIn, totalTokensOut);
       return await finalizar({ runId, status: "completed", summary: `Bug corrigido: PR ${pr.url} mergeado + ${migrationsAplicadas.length} migration(s) aplicada(s).`, pr_url: pr.url, branch, tokens_input: totalTokensIn, tokens_output: totalTokensOut, cost_usd: cost });
+    }
+
+    // 12c · CORREÇÃO ASSISTIDA COM MERGE AUTORIZADO (aba Diagnósticos · 31/08)
+    //
+    // ⚠️⚠️ Três condições, todas obrigatórias, e cada uma existe por um motivo:
+    //  1. `ehCorrecaoIncidente` — este caminho é o mais cercado que existe aqui
+    //     (≤6 arquivos · allowlist de pastas · migrations PROIBIDAS · nada de
+    //     auth/dinheiro/módulo Sistema). É por isso que mergear daqui é mais
+    //     seguro que o fluxo de bug, que aplica migration em produção.
+    //  2. `merge_automatico` — a AUTORIZAÇÃO, escrita pela régua
+    //     `backend/utils/diagnosticoAutonomia.js` só quando o incidente é
+    //     REPRODUZÍVEL, é de código e tem plano de ação. Default `false` no
+    //     banco: tarefa de qualquer outra origem para no PR sem ninguém
+    //     precisar lembrar de nada (fail-closed).
+    //  3. CI verde — `veredito === "ok"`. NUNCA mergear em timeout: "não
+    //     terminou de rodar" não é "passou", e o gate (tipos, build, testes e os
+    //     scripts) é a única prova de que o conserto não quebrou outra coisa.
+    if (ehCorrecaoIncidente && tarefa.merge_automatico === true) {
+      if (checks.veredito !== "ok") {
+        const msg = `CI nao confirmou verde (${checks.veredito}) — PR ${pr.url} ficou aberto para voce revisar. Sem merge automatico.`;
+        await comentarTarefa(taskId, msg).catch(() => {});
+        await atualizarTarefa(taskId, { status: "aguardando_revisao", gate: "G2" }).catch(() => {});
+        const cost = estimateCost(model, totalTokensIn, totalTokensOut);
+        return await finalizar({ runId, status: "completed", summary: msg, pr_url: pr.url, branch, tokens_input: totalTokensIn, tokens_output: totalTokensOut, cost_usd: cost });
+      }
+      // ⚠️ Nenhuma migration é aplicada aqui — `validarCaminhoCorrecao` já
+      // recusou `supabase/migrations/` no G1. Este caminho NÃO toca o banco.
+      await mergearPr(pr.number);
+      await atualizarTarefa(taskId, { status: "concluida", gate: "aprovacao_unica" });
+      await registrarEventoTarefa(taskId, "status_concluida", { pr_url: pr.url, merged: true, origem: "diagnostico" }).catch(() => {});
+      await comentarTarefa(taskId, `PR ${pr.url} mergeado na main (deploy automatico do Vercel). Correcao assistida a partir do achado da aba Diagnosticos — nenhuma migration foi aplicada.`).catch(() => {});
+      const cost = estimateCost(model, totalTokensIn, totalTokensOut);
+      return await finalizar({ runId, status: "completed", summary: `Incidente corrigido: PR ${pr.url} mergeado.`, pr_url: pr.url, branch, tokens_input: totalTokensIn, tokens_output: totalTokensOut, cost_usd: cost });
     }
 
     // 13 · fluxo comum (não-bug): reporta no board e aguarda revisão humana.
