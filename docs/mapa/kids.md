@@ -32,7 +32,7 @@
 ## Backend
 - `backend/routes/totemKids.js`
 Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
-<details><summary>Endpoints (115)</summary>
+<details><summary>Endpoints (116)</summary>
 - `DELETE /api/totem-kids/apresentacoes/:id`
 - `DELETE /api/totem-kids/atendimentos/:id`
 - `DELETE /api/totem-kids/ausentes/:criancaId/contato`
@@ -48,6 +48,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `GET /api/totem-kids/ausentes`
 - `GET /api/totem-kids/batismos`
 - `GET /api/totem-kids/batismos/todos`
+- `GET /api/totem-kids/cadastros-novos`
 - `GET /api/totem-kids/checkin/aberto`
 - `GET /api/totem-kids/checkin/codigo/:codigo`
 - `GET /api/totem-kids/checkins-abertos/buscar`
@@ -152,7 +153,9 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/cadastrosKids.js`
 - `backend/utils/cronAuth.js`
+- `backend/utils/janelaPeriodo.js`
 - `backend/utils/kidsFrequencia.js`
 - `backend/utils/kidsResponsavel.js`
 - `backend/utils/kidsVisitante.js`
