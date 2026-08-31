@@ -13,6 +13,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 const { supabase } = require('../utils/supabase');
+const { semFalhar } = require('../utils/semFalhar');
 const { calcularProgresso, ritmoNecessario, estaNoAr } = require('../utils/campanhaProgresso');
 const { extrairDigito } = require('../utils/digitoCampanha');
 
@@ -306,14 +307,14 @@ async function trocarDigito({ campanhaId, digitoNovo, motivo, autorId }) {
 
   // Trilha append-only: é ela que explica, meses depois, por que existe inclusão
   // manual em massa naquela data.
-  await supabase.from('camp_digito_historico').insert({
+  await semFalhar(supabase.from('camp_digito_historico').insert({
     campanha_id: campanhaId,
     digito_anterior: anterior,
     digito_novo: digitoNovo,
     lancamentos_fixados: fixados,
     motivo: motivo ? String(motivo).slice(0, 500) : null,
     created_by: autorId || null,
-  }).catch((e) => console.error('[campanhaArrecadacao] trilha do dígito:', e.message));
+  }), '[campanhaArrecadacao] trilha do dígito:');
 
   return { ok: true, anterior, novo: digitoNovo, fixados };
 }

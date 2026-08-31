@@ -10,6 +10,7 @@
 //   - Numero desconhecido -> assistente INSTITUCIONAL (missao/visao/horarios).
 //     NAO coleta dado · so responde.
 const router = require('express').Router();
+const { semFalhar } = require('../utils/semFalhar');
 const crypto = require('crypto');
 const freioBot = require('../utils/freioBot');
 const { supabase } = require('../utils/supabase');
@@ -219,9 +220,9 @@ async function tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid = nul
   const nota = /^[0-5]$/.test(t) ? Number(t) : null;
   const agora = new Date().toISOString();
   if (nota != null) {
-    await supabase.from('wa_mensagens').insert({
+    await semFalhar(supabase.from('wa_mensagens').insert({
       conversa_id: convP.id, direcao: 'in', tipo: 'avaliacao', texto: t, wa_message_id: messageId,
-    }).catch(() => {});
+    }), '[wa-webhook]');
     await supabase.from('wa_conversas').update({
       satisfacao: nota, satisfacao_em: agora, pesquisa_estado: 'respondida',
       last_message_at: agora, ultima_previa: `Avaliação: ${nota}/5`,
@@ -360,9 +361,9 @@ async function processarStatuses(statuses) {
         }
         continue;
       }
-      await supabase.from('whatsapp_status_orfaos').insert({
+      await semFalhar(supabase.from('whatsapp_status_orfaos').insert({
         message_id: messageId, status: st, status_timestamp: ts, erro: erroTxt, raw: s,
-      }).catch(() => {});
+      }), '[wa-webhook]');
     } catch (e) {
       console.error('[whatsapp webhook] status item:', e.message);
     }
@@ -456,9 +457,9 @@ async function processarRespostaEscala(m) {
   if (jaVisto) return true;
 
   const status = interpretarRespostaEscala(bruto);
-  const registrar = (raw) => supabase.from('whatsapp_coletas').insert({
+  const registrar = (raw) => semFalhar(supabase.from('whatsapp_coletas').insert({
     whatsapp_message_id: messageId, telefone, raw_text: raw, status: 'ignorado',
-  }).catch(() => {});
+  }), '[wa-webhook]');
 
   // ⚠️ Não entendeu? NÃO CHUTA. Marcar presença que a pessoa não deu é pior que
   // pedir de novo — e ela está com a janela de 24h aberta, então o texto chega.
@@ -512,9 +513,9 @@ async function processarBotaoAprovacao(m) {
   await require('../services/solicitacaoWpp')
     .tratarRespostaAprovacao({ telefone, texto: botaoId })
     .catch(err => console.error('[whatsapp webhook] botao aprovacao:', err.message));
-  await supabase.from('whatsapp_coletas').insert({
+  await semFalhar(supabase.from('whatsapp_coletas').insert({
     whatsapp_message_id: messageId, telefone, raw_text: botaoId, status: 'ignorado',
-  }).catch(() => {});
+  }), '[wa-webhook]');
 }
 
 async function processarMensagem(m, cfg, pnid = null, erroCfg = null) {
@@ -541,10 +542,10 @@ async function processarMensagem(m, cfg, pnid = null, erroCfg = null) {
     if (intencao) {
       const ligar = intencao === 'in';
       const r = await optSvc.aplicarOptOut({ telefone, ligar }).catch(err => { console.error('[whatsapp webhook] optout:', err.message); return null; });
-      await supabase.from('whatsapp_coletas').insert({
+      await semFalhar(supabase.from('whatsapp_coletas').insert({
         whatsapp_message_id: messageId, telefone, raw_text: (bruto || texto || '').slice(0, 2000),
         status: 'ignorado', parsed: { fonte: ligar ? 'opt_in' : 'opt_out', afetados: r?.afetados ?? 0 },
-      }).catch(() => {});
+      }), '[wa-webhook]');
       await enviarTexto(telefone, ligar
         ? 'Pronto! Você voltou a receber as mensagens da CBRio. 🙏'
         : 'Pronto, você não vai mais receber mensagens da CBRio por aqui. Se mudar de ideia, responda VOLTAR.'
@@ -560,9 +561,9 @@ async function processarMensagem(m, cfg, pnid = null, erroCfg = null) {
     .tratarRespostaAprovacao({ telefone, texto })
     .catch(err => { console.error('[whatsapp webhook] aprovacao:', err.message); return false; });
   if (tratadoAprov) {
-    await supabase.from('whatsapp_coletas').insert({
+    await semFalhar(supabase.from('whatsapp_coletas').insert({
       whatsapp_message_id: messageId, telefone, raw_text: texto, status: 'ignorado',
-    }).catch(() => {});
+    }), '[wa-webhook]');
     return;
   }
 
@@ -652,12 +653,12 @@ async function processarMensagem(m, cfg, pnid = null, erroCfg = null) {
     // abrindo o menu de setores contra a lei de 12/08 ("não quero bot"), que é
     // exatamente o que aconteceu com a Thalya em 25/08.
     if (!freioBot.botPodeResponder({ cfg, erroConfig: erroCfg })) {
-      await supabase.from('whatsapp_coletas').insert({
+      await semFalhar(supabase.from('whatsapp_coletas').insert({
         whatsapp_message_id: messageId, telefone, raw_text: texto,
         status: 'ignorado',
         erro: erroCfg ? 'config_indisponivel' : 'respostas_automaticas_desligadas',
         modulo_destino: 'conversas',
-      }).catch(() => {});
+      }), '[wa-webhook]');
       return;
     }
 
@@ -669,10 +670,10 @@ async function processarMensagem(m, cfg, pnid = null, erroCfg = null) {
         .tratar({ telefone, texto })
         .catch(e => { console.error('[whatsapp webhook] triagem:', e.message); return false; });
       if (assumiu) {
-        await supabase.from('whatsapp_coletas').insert({
+        await semFalhar(supabase.from('whatsapp_coletas').insert({
           whatsapp_message_id: messageId, telefone, raw_text: texto,
           status: 'ignorado', erro: 'triagem', modulo_destino: 'conversas',
-        }).catch(() => {});
+        }), '[wa-webhook]');
         return;
       }
     }
@@ -799,10 +800,10 @@ async function processarMensagem(m, cfg, pnid = null, erroCfg = null) {
 // descarta, sem processar (reativar = remover este bloco).
 async function processarFlowReply(m) {
   const telefone = normalizarTelefone(m.from);
-  await supabase.from('whatsapp_coletas').insert({
+  await semFalhar(supabase.from('whatsapp_coletas').insert({
     whatsapp_message_id: m.id, telefone, raw_text: '[nfm_reply descartado]',
     status: 'ignorado', erro: 'coleta_aposentada', modulo_destino: 'desconhecido',
-  }).catch(() => {});
+  }), '[wa-webhook]');
   return;
   // eslint-disable-next-line no-unreachable -- código dormante da persona de coleta
   // Idempotência (cobre o Flow do culto, que insere coleta com este message_id).
@@ -818,10 +819,10 @@ async function processarFlowReply(m) {
   // formulário de quem não é coordenador é registrada e descartada — não
   // vira coleta (líder comum não pode alimentar contagem oficial).
   if (!lider || lider.papel !== 'coordenador') {
-    await supabase.from('whatsapp_coletas').insert({
+    await semFalhar(supabase.from('whatsapp_coletas').insert({
       whatsapp_message_id: m.id, telefone, raw_text: '[nfm_reply descartado]',
       status: 'ignorado', erro: 'coleta_restrita', modulo_destino: 'desconhecido',
-    }).catch(() => {});
+    }), '[wa-webhook]');
     return;
   }
   await flowColeta.tratarFlowReply(m, telefone, lider);

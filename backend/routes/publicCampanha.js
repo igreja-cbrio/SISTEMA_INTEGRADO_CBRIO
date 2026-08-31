@@ -15,6 +15,7 @@
 //  teto de 30/15min a barrinha congelaria no meio do lançamento.
 // ════════════════════════════════════════════════════════════════════════════
 const express = require('express');
+const { semFalhar } = require('../utils/semFalhar');
 const rateLimit = require('express-rate-limit');
 const router = express.Router();
 const { supabase } = require('../utils/supabase');
@@ -54,10 +55,10 @@ async function descadastrar(membroId) {
   // devolvem a mesma coisa. Distinguir transformaria o endereço num oráculo de
   // "este uuid é uma pessoa da igreja?".
   if (!/^[0-9a-f-]{36}$/i.test(id)) return { ok: true };
-  await supabase.from('mem_membros')
+  await semFalhar(supabase.from('mem_membros')
     .update({ email_optout: true, email_optout_em: new Date().toISOString() })
     .eq('id', id).is('deleted_at', null)
-    .catch(() => {});
+    , '[campanha-optout]');
   return { ok: true };
 }
 
