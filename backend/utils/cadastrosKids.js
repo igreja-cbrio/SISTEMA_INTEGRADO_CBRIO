@@ -24,6 +24,19 @@ function diaBRT(iso) {
 }
 
 /**
+ * A linha veio de IMPORT (Planning Center), não de cadastro no culto?
+ *
+ * ⚠️ `planning_center_id` é o único marcador confiável. O PCO saiu do código do
+ * Kids em 20/07/2026 e a coluna ficou no banco sem leitor — este é o leitor.
+ * ⚠️ String vazia conta como ausência (a base tem as duas formas de "vazio").
+ */
+function temMarcaDeImport(linha) {
+  const id = linha?.planning_center_id;
+  if (id == null) return false;
+  return String(id).trim() !== '';
+}
+
+/**
  * O retrato do período.
  *
  * ⚠️ **APAGADAS não somem: viram contagem própria.** Cadastro feito e desfeito
@@ -43,14 +56,47 @@ function resumirCadastros(linhas = []) {
     if (l.deleted_at) { apagadas += 1; continue; }
     vivas.push(l);
   }
+
+  // ⚠️⚠️ IMPORTADAS FICAM FORA DO TOTAL, e este é o achado que mais importa
+  // nesta régua. Medido em 31/08/2026: o dia **30/06/2026 tem 3.381 cadastros
+  // num único dia** (o import do Planning Center), **3.169 deles marcados
+  // `visitante = true`** — porque o import marcou assim, não porque 3 mil
+  // crianças visitaram a igreja. Efeito no número que a tela publica:
+  //
+  //   janela      total cru   visitantes cru   visitantes REAIS
+  //   7 dias         31            21               21
+  //   30 dias        98            47               47
+  //   90 dias     3.547         3.222               53     ← 60× inflado
+  //
+  // Ou seja: o chip "90 dias" respondia "você teve 3.222 visitantes" quando a
+  // resposta é 53. "Quantos visitantes eu tive" é sobre gente que APARECEU, e
+  // linha de planilha importada não apareceu em culto nenhum.
+  //
+  // ⚠️ O marcador é `planning_center_id`, NÃO volume nem `created_by` nulo:
+  // 3.380 dos 3.381 daquele dia têm o id do PCO, e `created_by` nulo acontece
+  // todo dia (é a porta pública e o app, 1-2 por dia). Heurística de volume
+  // quebraria no primeiro domingo grande de verdade.
+  //
+  // ⚠️ Elas são CONTADAS e DECLARADAS, nunca descartadas em silêncio: some do
+  // total e apareça em `importadas`. Quem procurar uma criança do import na
+  // lista precisa entender por que ela não está no número.
+  const importadas = vivas.filter((l) => temMarcaDeImport(l));
+  const doCulto = vivas.filter((l) => !temMarcaDeImport(l));
+
   return {
-    total: vivas.length,
-    visitantes: vivas.filter((l) => l.visitante === true).length,
-    membros: vivas.filter((l) => l.visitante === false).length,
-    sem_marcacao: vivas.filter((l) => l.visitante == null).length,
+    total: doCulto.length,
+    visitantes: doCulto.filter((l) => l.visitante === true).length,
+    membros: doCulto.filter((l) => l.visitante === false).length,
+    sem_marcacao: doCulto.filter((l) => l.visitante == null).length,
+    // Quantas linhas do período vieram de import (e não de cadastro no culto).
+    importadas: importadas.length,
+    // ⚠️ Guardado à parte pra a tela poder dizer "e mais N do import, que não
+    // contam aqui" — sem o número, a diferença entre o que a pessoa vê na
+    // lista de crianças e o que vê neste card fica inexplicável.
+    importadas_visitante: importadas.filter((l) => l.visitante === true).length,
     apagadas,
-    sem_responsavel: vivas.filter((l) => l.tem_responsavel === false).length,
-    sem_nascimento: vivas.filter((l) => !l.data_nascimento).length,
+    sem_responsavel: doCulto.filter((l) => l.tem_responsavel === false).length,
+    sem_nascimento: doCulto.filter((l) => !l.data_nascimento).length,
   };
 }
 
@@ -69,6 +115,11 @@ function serieDiaria(linhas = [], inicioISO, fimISO) {
   const porDia = new Map();
   for (const l of linhas || []) {
     if (!l || l.deleted_at) continue;               // série é do que EXISTE
+    // ⚠️⚠️ Import fica FORA da série também: 3.381 num único dia (30/06/2026)
+    // achata todos os outros dias em zero visual, e o gráfico existe justamente
+    // pra mostrar que a entrada de gente acontece no DOMINGO. Com o pico, o
+    // padrão que ele deveria revelar desaparece.
+    if (temMarcaDeImport(l)) continue;
     const d = diaBRT(l.created_at);
     if (!d) continue;
     porDia.set(d, (porDia.get(d) || 0) + 1);
@@ -102,4 +153,4 @@ function limitesUtc(inicioISO, fimISO) {
   };
 }
 
-module.exports = { diaBRT, resumirCadastros, serieDiaria, limitesUtc, MS_BRT };
+module.exports = { diaBRT, resumirCadastros, serieDiaria, limitesUtc, temMarcaDeImport, MS_BRT };

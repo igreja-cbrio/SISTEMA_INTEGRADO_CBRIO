@@ -21,7 +21,7 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { resolverJanelaPeriodo, rotuloJanela } = require('../utils/janelaPeriodo');
-const { resumirCadastros, serieDiaria, limitesUtc, diaBRT } = require('../utils/cadastrosKids');
+const { resumirCadastros, serieDiaria, limitesUtc, diaBRT, temMarcaDeImport } = require('../utils/cadastrosKids');
 const { supabase } = require('../utils/supabase');
 const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
@@ -2449,6 +2449,12 @@ router.get('/cadastros-novos', authorizeModule('kids', 1), async (req, res) => {
   try {
     const janela = resolverJanelaPeriodo({
       dias: req.query.dias, ano: req.query.ano,
+      // Período LIVRE (De/Até) · pedido do Matheus 31/08/2026: "escolher um
+      // período para ver quantos visitantes tive e quais foram".
+      // ⚠️ Data inválida ou intervalo invertido NÃO derruba a tela nem devolve
+      // janela vazia — cai na janela móvel padrão (a régua decide isso), porque
+      // "0 visitantes" se lê como resposta e a pergunta foi mal digitada.
+      inicio: req.query.inicio, fim: req.query.fim,
       diasValidos: [7, 30, 90, 365], diasPadrao: 30,
     });
     // Janela móvel não tem fim: vai até HOJE (em BRT).
@@ -2459,7 +2465,7 @@ router.get('/cadastros-novos', authorizeModule('kids', 1), async (req, res) => {
     // ⚠️ Paginado: o cap de 1000 do PostgREST trunca em silêncio, e "365 dias"
     // passa disso com folga numa base que cadastra ~30 por domingo.
     const linhas = await fetchCriancasPaginado(
-      'id, nome, data_nascimento, visitante, created_at, created_by, deleted_at',
+      'id, nome, data_nascimento, visitante, created_at, created_by, deleted_at, planning_center_id',
       (q) => q.gte('created_at', lim.desde).lt('created_at', lim.ate),
     );
 
@@ -2490,11 +2496,23 @@ router.get('/cadastros-novos', authorizeModule('kids', 1), async (req, res) => {
     // ⚠️ A lista vem das mais RECENTES e é capada — e o teto é DECLARADO, senão
     // "50" se lê como "foram só 50".
     const TETO = 100;
-    const vivas = enriquecidas.filter((l) => !l.deleted_at)
+    // ⚠️⚠️ A lista é só do que foi CADASTRADO NO CULTO. Import (3.381 num único
+    // dia, 30/06/2026) entra no `resumo.importadas` e fica FORA daqui — quem
+    // pediu "quais visitantes eu tive" não quer rolar 3 mil linhas de planilha.
+    const vivas = enriquecidas.filter((l) => !l.deleted_at && !temMarcaDeImport(l))
       .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    // Só os visitantes, pra a tela responder "quais foram" sem uma 2ª consulta.
+    const visitantes = vivas.filter((l) => l.visitante === true);
 
     res.json({
-      janela: { inicio: janela.inicio, fim: fimBRT, dias: janela.dias, ano: janela.ano, rotulo: rotuloJanela(janela) },
+      janela: {
+        inicio: janela.inicio, fim: fimBRT, dias: janela.dias, ano: janela.ano,
+        livre: janela.livre === true,
+        // ⚠️ DECLARA quando o fim pedido foi encurtado pra hoje: sem isso o
+        // número parece ser de um período que a pessoa não vai reconhecer.
+        fim_ajustado: janela.fim_ajustado === true,
+        rotulo: rotuloJanela(janela),
+      },
       resumo,
       serie,
       // "ontem" e "hoje" prontos: é o que a pessoa olha na segunda de manhã.
@@ -2507,6 +2525,17 @@ router.get('/cadastros-novos', authorizeModule('kids', 1), async (req, res) => {
         tem_responsavel: l.tem_responsavel,
       })),
       truncado: vivas.length > TETO, mostrando: Math.min(vivas.length, TETO),
+      // "Quais visitantes eu tive no período" — a resposta nominal.
+      // ⚠️ Teto PRÓPRIO e DECLARADO: "53" não pode se ler como "foram só 53"
+      // quando o período tem mais.
+      visitantes: visitantes.slice(0, TETO).map((l) => ({
+        id: l.id, nome: l.nome, data_nascimento: l.data_nascimento,
+        dia: diaBRT(l.created_at),
+        criado_por: l.created_by ? (nomePorAutor[l.created_by] || 'equipe') : null,
+        tem_responsavel: l.tem_responsavel,
+      })),
+      visitantes_truncado: visitantes.length > TETO,
+      visitantes_total: visitantes.length,
     });
   } catch (e) {
     // ⚠️ 500 com motivo, nunca zero: "ninguém foi cadastrado" e "a consulta
