@@ -1,0 +1,317 @@
+import { describe, it, expect } from 'vitest';
+// Régua CommonJS de backend/utils — padrão dos testes da casa.
+import reg from '../../backend/utils/diagnosticoAutonomia.js';
+
+const { FAIXAS, avaliarAutonomia, distribuir, areaProtegida, foiReproduzido } = reg;
+
+/** Achado mínimo que PASSA na régua — cada teste degrada um campo. */
+function achado(over: Record<string, unknown> = {}) {
+  return {
+    id: 'run-1:0',
+    titulo: 'Causa provável: erro de lógica no handler da rota',
+    resumo: 'Falha crítica em rota POST /api/public/evento-checkin/:token/confirmar com erro HTTP 500.',
+    estado: 'aberto',
+    severidade: 'critico',
+    classificacao: 'codigo',
+    confianca: 'media',
+    risco: 'critico',
+    decisao_necessaria: true,
+    plano_de_acao: ['Acessar logs estruturados', 'Verificar changelog do release'],
+    incidente: { id: 'inc-1', status: 'investigando' },
+    ...over,
+  };
+}
+
+describe('autonomia · quem o agente resolve sozinho', () => {
+  it('achado reproduzível, de código e com plano vira AUTO (corrige + PR + merge)', () => {
+    const r = avaliarAutonomia(achado());
+    expect(r.faixa).toBe(FAIXAS.AUTO);
+    expect(r.motivo).toMatch(/mergeia/);
+  });
+
+  it('⚠️⚠️ `decisao_necessaria` NÃO trava — veio true em 19 de 19 diagnósticos', () => {
+    // Se ele fosse portão, o botão nunca resolveria nada, para sempre.
+    expect(avaliarAutonomia(achado({ decisao_necessaria: true })).faixa).toBe(FAIXAS.AUTO);
+    // Mas o card DECLARA a pergunta como ressalva.
+    expect(avaliarAutonomia(achado({ decisao_necessaria: true })).avisos.join(' '))
+      .toMatch(/pergunta de decisão/);
+  });
+
+  it('confiança média entra no AUTO, mas fica declarada', () => {
+    expect(avaliarAutonomia(achado({ confianca: 'media' })).avisos.join(' ')).toMatch(/média/);
+  });
+});
+
+describe('PR sem merge · conserta e para', () => {
+  it('⚠️⚠️ incidente NÃO REPRODUZIDO nunca é mergeado sozinho', () => {
+    const r = avaliarAutonomia(achado({ incidente: { id: 'inc-2', status: 'nao_reproduzido' } }));
+    expect(r.faixa).toBe(FAIXAS.PR);
+    expect(r.motivo).toMatch(/não foi reproduzido/);
+  });
+
+  it('confiança BAIXA não é mergeada sozinha', () => {
+    const r = avaliarAutonomia(achado({ confianca: 'baixa' }));
+    expect(r.faixa).toBe(FAIXAS.PR);
+  });
+
+  it('não reproduzido VENCE a confiança baixa na mensagem (o motivo mais acionável)', () => {
+    const r = avaliarAutonomia(achado({ confianca: 'baixa', incidente: { id: 'i', status: 'nao_reproduzido' } }));
+    expect(r.motivo).toMatch(/não foi reproduzido/);
+  });
+});
+
+describe('humano · nem tenta, e DIZ por quê', () => {
+  it('sem incidente (achado de auditoria) não tem chave para acompanhar', () => {
+    const r = avaliarAutonomia(achado({ incidente: null }));
+    expect(r.faixa).toBe(FAIXAS.HUMANO);
+    expect(r.motivo).toMatch(/auditoria/);
+  });
+
+  it('encerrado não é pendência', () => {
+    expect(avaliarAutonomia(achado({ estado: 'encerrado' })).faixa).toBe(FAIXAS.HUMANO);
+    expect(avaliarAutonomia(achado({ estado: 'sem_incidente' })).faixa).toBe(FAIXAS.HUMANO);
+  });
+
+  it('sem plano de ação não há o que implementar', () => {
+    expect(avaliarAutonomia(achado({ plano_de_acao: [] })).faixa).toBe(FAIXAS.HUMANO);
+  });
+
+  it('classificação que não é código sai com o motivo ESPECÍFICO de cada uma', () => {
+    const casos: Array<[string, RegExp]> = [
+      ['dados', /DADO/],
+      ['dependencia_externa', /EXTERNA/],
+      ['experiencia_usuario', /experiência de uso/],
+      ['desconhecido', /NÃO identificou a causa/],
+    ];
+    for (const [classificacao, re] of casos) {
+      const r = avaliarAutonomia(achado({ classificacao }));
+      expect(r.faixa, classificacao).toBe(FAIXAS.HUMANO);
+      expect(r.motivo, classificacao).toMatch(re);
+    }
+  });
+
+  it('classificação desconhecida pelo mapa NÃO vira faixa silenciosa — cita o valor', () => {
+    const r = avaliarAutonomia(achado({ classificacao: 'coisa_nova' }));
+    expect(r.faixa).toBe(FAIXAS.HUMANO);
+    expect(r.motivo).toMatch(/coisa_nova/);
+  });
+
+  it('classificação AUSENTE não bloqueia (achado antigo, sem diagnóstico estruturado)', () => {
+    expect(avaliarAutonomia(achado({ classificacao: null })).faixa).toBe(FAIXAS.AUTO);
+  });
+});
+
+describe('áreas protegidas · o agente não escreve nesses arquivos', () => {
+  it('dinheiro, autenticação e migration saem da automação', () => {
+    expect(areaProtegida(achado({ resumo: 'falha ao gerar cobrança no Mercado Pago' }))).toBe('pagamentos');
+    expect(areaProtegida(achado({ resumo: 'erro na conciliação do dízimo' }))).toBe('financeiro');
+    expect(areaProtegida(achado({ titulo: 'Falha no login com senha' }))).toBe('autenticação e permissão');
+    expect(areaProtegida(achado({ plano_de_acao: ['criar migration para a coluna'] }))).toBe('banco de dados');
+    expect(avaliarAutonomia(achado({ resumo: 'erro no checkout do Pix' })).faixa).toBe(FAIXAS.HUMANO);
+  });
+
+  it('⚠️⚠️ "token" em rota assinada NÃO é área protegida', () => {
+    // `/evento-checkin/:token`, `/g/a/:token`, `/e/:token` — metade dos links
+    // assinados da casa. Barrar por "token" mandaria pro humano justamente o
+    // único achado reproduzível de hoje.
+    expect(areaProtegida(achado())).toBeNull();
+    expect(areaProtegida(achado({ resumo: 'GET /e/:token respondeu 500' }))).toBeNull();
+  });
+
+  it('"checkin" não é "checkout"', () => {
+    expect(areaProtegida(achado({ resumo: 'POST /api/public/evento-checkin/:token/confirmar' }))).toBeNull();
+  });
+
+  it('achado sem texto nenhum não estoura', () => {
+    expect(areaProtegida({})).toBeNull();
+    expect(areaProtegida(null)).toBeNull();
+  });
+});
+
+describe('foiReproduzido', () => {
+  it('só `nao_reproduzido` é não-reproduzido', () => {
+    expect(foiReproduzido({ incidente: { status: 'investigando' } })).toBe(true);
+    expect(foiReproduzido({ incidente: { status: 'monitorado' } })).toBe(true);
+    expect(foiReproduzido({ incidente: { status: 'nao_reproduzido' } })).toBe(false);
+    expect(foiReproduzido({ incidente: { status: 'NAO_REPRODUZIDO' } })).toBe(false);
+    // Sem incidente, a régua de faixa já barrou antes — aqui não inventa.
+    expect(foiReproduzido({})).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ⚠️⚠️ CONTRATO CENTRAL · os 7 achados ABERTOS medidos em produção (31/08).
+//  Se este bloco ficar vermelho, a régua passou a decidir diferente sobre o
+//  que vai a produção sozinho — e isso tem de ser uma escolha, nunca um efeito
+//  colateral.
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️ `resumo` e `plano` são os TEXTOS REAIS gravados no banco (encurtados só no
+// fim). Importam porque é sobre eles que a heurística de área protegida corre —
+// uma palavra como "banco", "dados" ou "token" no meio de um plano de ação não
+// pode tirar o achado da automação.
+const ABERTOS_EM_PRODUCAO = [
+  {
+    rota: 'POST /api/public/evento-checkin/:token/confirmar',
+    status: 'investigando', classificacao: 'codigo', confianca: 'media', esperado: FAIXAS.AUTO,
+    resumo: 'Falha crítica em rota POST /api/public/evento-checkin/:token/confirmar com erro HTTP 500 e código [P0001] modo de check-in inválido. 44 ocorrências em 15 minutos em produção.',
+    plano: ['Acessar logs estruturados ou Sentry com request_id fornecido para examinar payload POST e parâmetros :token',
+            'Consultar base de dados para validar se houve alterações recentes em enums ou validações de \'modo de check-in\''],
+  },
+  {
+    rota: 'DELETE /api/events/:id',
+    status: 'nao_reproduzido', classificacao: 'codigo', confianca: 'media', esperado: FAIXAS.PR,
+    resumo: 'DELETE /api/events/:id retorna HTTP 500 sem exceção capturada. Resposta vazia indica falha silenciosa no handler ou middleware, possivelmente ligada à release em produção.',
+    plano: ['Revisar código do handler: procurar por res.status(500).send() ou res.json() sem throw',
+            'Testar DELETE /api/events/:id com ID válido e inválido em staging antes de produção'],
+  },
+  {
+    rota: 'POST /api/wa-inbox/conversas/:id/transferir',
+    status: 'nao_reproduzido', classificacao: 'codigo', confianca: 'media', esperado: FAIXAS.PR,
+    resumo: 'POST /api/wa-inbox/conversas/:id/transferir retorna HTTP 500 em produção. Rota respondendo com erro genérico sem exceção capturada.',
+    plano: ['Verificar integridade de conexões externas (filas, banco, webhooks) usadas pela rota',
+            'Revisar middleware e tratamento de erros da rota para detectar swallow de exceções'],
+  },
+  {
+    rota: 'GET /api/painel-rh/comunicados',
+    status: 'nao_reproduzido', classificacao: 'codigo', confianca: 'media', esperado: FAIXAS.PR,
+    resumo: 'GET /api/painel-rh/comunicados retorna HTTP 500 em produção sem exceção capturada. Rota responde erro silenciosamente.',
+    plano: ["Validar integridade de dados/configuração da fonte de dados de 'comunicados'",
+            'Verificar release anterior: comparar diff de código na rota e dependências'],
+  },
+  {
+    rota: 'GET /api/painel-rh/eventos',
+    status: 'nao_reproduzido', classificacao: 'codigo', confianca: 'media', esperado: FAIXAS.PR,
+    resumo: 'Rota GET /api/painel-rh/eventos respondeu com HTTP 500 em produção. Resposta de erro foi entregue sem exceção capturada.',
+    plano: ['Verificar dependências externas (BD, APIs, cache) acessadas pela rota no período do erro',
+            'Inspecionar handler em busca de try-catch que consome erro sem relançar'],
+  },
+  {
+    rota: 'GET /api/events/',
+    status: 'nao_reproduzido', classificacao: 'desconhecido', confianca: 'baixa', esperado: FAIXAS.HUMANO,
+    resumo: 'GET /api/events/ retornando HTTP 500 em produção. Rota respondendo sem exceção lançada; falha provavelmente em lógica interna ou dependência.',
+    plano: ['Consultar logs da função (handler) do endpoint GET /api/events/ usando os request_ids do Sentry'],
+  },
+  {
+    rota: 'POST /api/membresia/identidade-pendencias/:id/ligar-inscricao',
+    status: 'nao_reproduzido', classificacao: 'codigo', confianca: 'media', esperado: FAIXAS.PR,
+    resumo: 'POST /api/membresia/identidade-pendencias/:id/ligar-inscricao retorna HTTP 500 sem exceção capturada. 2 ocorrências em 15 minutos em produção.',
+    plano: ['Verificar código da rota para blocos try-catch sem logging',
+            'Revisar middlewares que podem estar interceptando exceções'],
+  },
+];
+
+describe('os 7 abertos de 31/08/2026 (dado real de produção)', () => {
+  const itens = ABERTOS_EM_PRODUCAO.map((c, i) => achado({
+    id: `real-${i}`,
+    titulo: `Causa provável: falha na rota ${c.rota}`,
+    resumo: c.resumo,
+    incidente: { id: `inc-real-${i}`, status: c.status },
+    classificacao: c.classificacao,
+    confianca: c.confianca,
+    plano_de_acao: c.plano,
+  }));
+
+  it('⚠️ nenhum deles é tirado da automação pela heurística de área protegida', () => {
+    // "banco", "dados", "release", ":token" e "middleware" aparecem nos textos
+    // reais. Se um deles passar a casar, o achado sai da fila em silêncio.
+    itens.forEach((item, i) => {
+      expect(areaProtegida(item), ABERTOS_EM_PRODUCAO[i].rota).toBeNull();
+    });
+  });
+
+  it('cada um cai na faixa esperada', () => {
+    itens.forEach((item, i) => {
+      expect(avaliarAutonomia(item).faixa, ABERTOS_EM_PRODUCAO[i].rota)
+        .toBe(ABERTOS_EM_PRODUCAO[i].esperado);
+    });
+  });
+
+  it('a distribuição do dia é 1 auto · 5 PR · 1 humano', () => {
+    const d = distribuir(itens);
+    expect(d.resumo).toMatchObject({ total: 7, auto: 1, pr: 5, humano: 1, despachaveis: 6 });
+  });
+
+  it('⚠️ o único mergeado sozinho é o reproduzível — o das 44 ocorrências', () => {
+    const d = distribuir(itens);
+    expect(d.auto).toHaveLength(1);
+    expect(d.auto[0].resumo).toMatch(/evento-checkin/);
+  });
+});
+
+describe('distribuir', () => {
+  it('anota `autonomia` em todo item, sem perder nenhum', () => {
+    const d = distribuir([achado(), achado({ estado: 'encerrado' })]);
+    expect(d.itens).toHaveLength(2);
+    expect(d.itens.every((i: any) => i.autonomia?.faixa)).toBe(true);
+    expect(d.resumo.total).toBe(2);
+  });
+
+  it('lista vazia/ausente devolve resumo zerado, nunca estoura', () => {
+    expect(distribuir([]).resumo.total).toBe(0);
+    expect(distribuir(undefined as never).resumo.total).toBe(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ANDAMENTO · as três caixas da aba
+// ═══════════════════════════════════════════════════════════════════════════
+const { ANDAMENTO, andamentoDoAchado, resumirAndamento } = reg;
+
+describe('andamento · resolvido / sendo resolvido / precisa de você', () => {
+  const auto = { autonomia: { faixa: FAIXAS.AUTO, motivo: 'm', avisos: [] } };
+
+  it('concluída com PR é RESOLVIDO e diz que foi mergeado', () => {
+    const r = andamentoDoAchado(auto, { status: 'concluida', pull_request_url: 'https://x/1' });
+    expect(r.andamento).toBe(ANDAMENTO.RESOLVIDO);
+    expect(r.motivo).toMatch(/mergeado/);
+  });
+
+  it('concluída SEM PR não afirma merge', () => {
+    expect(andamentoDoAchado(auto, { status: 'concluida' }).motivo).not.toMatch(/mergeado/);
+  });
+
+  it('agendada é fila; em_andamento é trabalho', () => {
+    expect(andamentoDoAchado(auto, { status: 'agendada' }).andamento).toBe(ANDAMENTO.NA_FILA);
+    expect(andamentoDoAchado(auto, { status: 'em_andamento' }).andamento).toBe(ANDAMENTO.TRABALHANDO);
+    expect(andamentoDoAchado(auto, { status: 'em_diagnostico' }).andamento).toBe(ANDAMENTO.TRABALHANDO);
+  });
+
+  it('⚠️⚠️ aguardando_revisao é PRECISA DE VOCÊ, não "em andamento"', () => {
+    // O agente já terminou; o PR espera gente. Chamar de "em andamento" faria a
+    // pessoa esperar por um trabalho que só ela destrava.
+    const r = andamentoDoAchado(auto, { status: 'aguardando_revisao', pull_request_url: 'https://x/2' });
+    expect(r.andamento).toBe(ANDAMENTO.PRECISA_DE_VOCE);
+    expect(r.motivo).toMatch(/revisar e mergear/);
+  });
+
+  it('falhou e bloqueada explicam o que aconteceu, sem frase genérica', () => {
+    expect(andamentoDoAchado(auto, { status: 'falhou' }).motivo).toMatch(/tentou e falhou/);
+    expect(andamentoDoAchado(auto, { status: 'bloqueada' }).motivo).toMatch(/CI ficou vermelho 3/);
+  });
+
+  it('sem tarefa: faixa humano já nasce sinalizada com o motivo da régua', () => {
+    const item = { autonomia: { faixa: FAIXAS.HUMANO, motivo: 'é dado, não código', avisos: [] } };
+    const r = andamentoDoAchado(item, null);
+    expect(r.andamento).toBe(ANDAMENTO.PRECISA_DE_VOCE);
+    expect(r.motivo).toBe('é dado, não código');
+  });
+
+  it('sem tarefa e despachável: não iniciado', () => {
+    expect(andamentoDoAchado(auto, null).andamento).toBe(ANDAMENTO.NAO_INICIADO);
+    expect(andamentoDoAchado({ autonomia: { faixa: FAIXAS.PR } }, undefined).andamento).toBe(ANDAMENTO.NAO_INICIADO);
+  });
+
+  it('status desconhecido não vira "resolvido" por acidente', () => {
+    // Fail-safe: status novo no board cai em não-iniciado, nunca em resolvido.
+    expect(andamentoDoAchado(auto, { status: 'coisa_nova' }).andamento).toBe(ANDAMENTO.NAO_INICIADO);
+  });
+
+  it('resumirAndamento soma fila + trabalhando numa caixa só', () => {
+    const r = resumirAndamento([
+      { andamento: ANDAMENTO.RESOLVIDO }, { andamento: ANDAMENTO.NA_FILA },
+      { andamento: ANDAMENTO.TRABALHANDO }, { andamento: ANDAMENTO.PRECISA_DE_VOCE },
+      { andamento: ANDAMENTO.PRECISA_DE_VOCE }, { andamento: ANDAMENTO.NAO_INICIADO },
+    ]);
+    expect(r).toEqual({ resolvidos: 1, em_andamento: 2, precisam_de_voce: 2, nao_iniciados: 1 });
+  });
+});

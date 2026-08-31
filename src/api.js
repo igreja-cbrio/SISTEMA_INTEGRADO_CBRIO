@@ -1283,6 +1283,9 @@ export const agents = {
   runs: (params) => get('/agents/runs' + (params ? '?' + new URLSearchParams(params) : '')),
   // O que os agentes acharam + plano de ação (aba Diagnósticos do /assistente-ia).
   diagnosticos: (params) => get('/agents/diagnosticos' + (params ? '?' + new URLSearchParams(params) : '')),
+  // Botão "Resolver todos" da aba Diagnósticos. A prévia NÃO escreve nada.
+  diagnosticosPrevia: (params) => get('/agents/diagnosticos/previa-resolucao' + (params ? '?' + new URLSearchParams(params) : '')),
+  diagnosticosResolver: (body) => post('/agents/diagnosticos/resolver', body || {}),
   runDetail: (id) => get(`/agents/runs/${id}`),
   runSteps: (id) => get(`/agents/runs/${id}/steps`),
   cancelRun: (id) => post(`/agents/runs/${id}/cancel`),

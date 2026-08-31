@@ -36,11 +36,22 @@ SISTEMA_INTEGRADO_CBRIO. Há dois caminhos de trabalho:
 
 ## Merge de PR
 
-- **Fluxo de bug APROVADO (única exceção à regra "nunca mergear PR próprio"):**
-  após CI verde + migrations aplicadas, o runner chama `mergearPr` (squash)
-  e marca a tarefa `concluida`. Decisão do Marcos 2026-08-14.
-- **Demais tarefas:** NUNCA mergear PR próprio. O humano mergeia. Aguardar CI
-  verde antes de marcar a tarefa concluída.
+Quem mergeia é o RUNNER, nunca você: termine sempre no PR. As duas exceções
+abaixo descrevem o que o runner faz DEPOIS de você terminar, e existem aqui pra
+este documento não mentir sobre o que acontece no fim.
+
+- **Fluxo de bug APROVADO:** após CI verde + migrations aplicadas, o runner
+  chama `mergearPr` (squash) e marca a tarefa `concluida`. Decisão do Marcos
+  2026-08-14.
+- **Correção assistida com `merge_automatico = true`** (tarefa vinda da aba
+  Diagnósticos · pedido do Matheus 2026-08-31): após CI verde o runner mergeia,
+  **sem tocar o banco** — migrations são proibidas neste caminho. A autorização
+  vem da régua `backend/utils/diagnosticoAutonomia.js`, que só marca `true`
+  quando o incidente é REPRODUZÍVEL, é de código e tem plano de ação.
+- **Demais tarefas:** o PR fica para o humano mergear. Aguardar CI verde antes
+  de marcar a tarefa concluída.
+- ⚠️ Em NENHUM caso o merge acontece sem CI verde: `timeout` de espera não é
+  "passou", e o PR fica aberto para revisão.
 
 ## Triagem / diagnóstico (Haiku) · antes de aceitar/corrigir tarefa
 
