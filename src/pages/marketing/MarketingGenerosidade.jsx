@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { marketing as api } from '../../api';
+import { avisosDaBarra, seloDoEstado, estadoDaCampanha, hojeBrt } from '../../lib/campanhaBarra';
 import MarketingPagina from './MarketingPagina';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -45,6 +46,15 @@ function fmtPercentual(valor) {
   return `${percentual.format(Number(valor || 0))}%`;
 }
 
+// ⚠️ Data formatada FATIANDO a string, nunca com `new Date(iso)`: a string sem
+// horário é meia-noite UTC, que no Rio é 21h do dia anterior — o rótulo mostraria
+// o dia errado. Mesma armadilha do rótulo do mês no calendário do Marketing.
+function fmtDataBr(iso) {
+  if (typeof iso !== 'string' || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return '—';
+  const [ano, mes, dia] = iso.slice(0, 10).split('-');
+  return `${dia}/${mes}/${ano}`;
+}
+
 function BarraGenerosidade({ titulo, subtitulo, valor, disponivel = true }) {
   const valorNumero = Number(valor || 0);
   const valorVisual = Math.max(0, Math.min(100, valorNumero));
@@ -75,6 +85,98 @@ function BarraGenerosidade({ titulo, subtitulo, valor, disponivel = true }) {
       </div>
       <p className="text-base font-semibold text-white sm:text-lg">{titulo}</p>
     </div>
+  );
+}
+
+/**
+ * Barra de progresso de uma CAMPANHA de arrecadação.
+ *
+ * ⚠️⚠️ Card PRÓPRIO, fora do herói de propósito. O herói são os "percentuais
+ * oficiais para as telas do culto"; campanha com `publica = false` ainda não é
+ * isso, e desenhá-la lá dentro sugeriria que a igreja já está vendo o número.
+ *
+ * ⚠️ Nenhum valor é calculado aqui: `pct`, `pct_barra`, `total_centavos` e
+ * `falta_centavos` vêm do servidor (régua `utils/campanhaProgresso` sobre a
+ * `vw_camp_arrecadacao`). A tela não conta dinheiro.
+ */
+function BarraCampanha({ campanha, hoje }) {
+  const avisos = avisosDaBarra(campanha, hoje);
+  const selo = seloDoEstado(campanha, hoje);
+  const arrecadando = estadoDaCampanha(campanha, hoje) === 'arrecadando';
+  const pctBarra = Number(campanha.pct_barra || 0);
+
+  return (
+    <Card className="glass-solid">
+      <CardContent className="space-y-3 p-4 sm:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">{campanha.nome}</p>
+            <p className="text-xs text-muted-foreground">
+              {/* O dígito é o que identifica a doação no extrato — quem opera a
+                  campanha precisa dele à vista pra conferir e pra divulgar. */}
+              {campanha.digito ? `Dígito ,${campanha.digito}` : 'Sem dígito definido'}
+              {campanha.data_lancamento ? ` · lança em ${fmtDataBr(campanha.data_lancamento)}` : ''}
+            </p>
+          </div>
+          <Badge variant={arrecadando ? 'default' : 'secondary'}>{selo}</Badge>
+        </div>
+
+        <div className="flex items-end justify-between gap-3">
+          <p className="text-2xl font-semibold tabular-nums tracking-tight">
+            {fmtPercentual(campanha.pct)}
+          </p>
+          <p className="text-right text-xs text-muted-foreground">
+            {fmtMoeda((campanha.total_centavos || 0) / 100)} de{' '}
+            {fmtMoeda((campanha.meta_centavos || 0) / 100)}
+          </p>
+        </div>
+
+        <div
+          className="relative h-3 overflow-hidden rounded-full bg-muted"
+          role="progressbar"
+          aria-label={`${campanha.nome}: ${fmtPercentual(campanha.pct)} da meta`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={pctBarra}
+        >
+          {/* ⚠️ A barra usa `pct_barra` (travado em 100) e o NÚMERO usa `pct` (o
+              verdadeiro, que pode passar de 100): sem isso, campanha que bateu
+              130% da meta desenharia uma barra estourando o container. */}
+          <div
+            className={`h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none ${arrecadando ? 'bg-primary' : 'bg-muted-foreground/40'}`}
+            style={{ width: `${pctBarra}%` }}
+          />
+        </div>
+
+        {campanha.falta_centavos > 0 && (
+          <p className="text-xs text-muted-foreground">
+            Faltam {fmtMoeda(campanha.falta_centavos / 100)}
+            {/* O por-domingo é o número que mobiliza: é no culto que a oferta
+                entra. Só aparece quando o servidor conseguiu calculá-lo. */}
+            {arrecadando && campanha.por_domingo_centavos
+              ? ` · ${fmtMoeda(campanha.por_domingo_centavos / 100)} por domingo`
+              : ''}
+          </p>
+        )}
+
+        {/* ⚠️ A fatia em conciliação: o dinheiro está no banco e a fila humana
+            ainda não passou. Sem dizer, o total daqui parece divergir do DRE. */}
+        {campanha.pct_conciliando > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {fmtPercentual(campanha.pct_conciliando)} do total ainda esperando conferência da fila.
+          </p>
+        )}
+
+        {avisos.map((aviso) => (
+          <p
+            key={aviso.texto}
+            className={`text-xs ${aviso.tom === 'ambar' ? 'text-amber-600' : 'text-muted-foreground'}`}
+          >
+            {aviso.texto}
+          </p>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -304,6 +406,36 @@ export default function MarketingGenerosidade() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* ── Campanhas de arrecadação em curso ────────────────────────────
+                ⚠️ `campanhas === null` = a leitura FALHOU · `[]` = não há
+                campanha em curso. Os dois são tratados diferente: o primeiro
+                avisa em âmbar, o segundo fica em silêncio. Colapsar num só faria
+                falha de consulta parecer ausência de campanha — e ninguém
+                investiga uma seção que simplesmente não aparece. */}
+            {dados.campanhas === null && (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-600">
+                Não foi possível carregar as campanhas de arrecadação — isto não significa que
+                não há campanha em curso. Recarregue a página; se persistir, avise a equipe de sistema.
+              </div>
+            )}
+            {Array.isArray(dados.campanhas) && dados.campanhas.length > 0 && (
+              <div className="space-y-3">
+                <div>
+                  <h3 className="text-sm font-semibold">Campanhas de arrecadação</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Progresso contra a meta de cada campanha. ⚠️ Não entra nos percentuais do culto
+                    acima — a campanha é contada pelo <strong>dígito dos centavos</strong>, à parte
+                    de dízimos e ofertas.
+                  </p>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {dados.campanhas.map((c) => (
+                    <BarraCampanha key={c.id} campanha={c} hoje={hojeBrt()} />
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               {/* ⚠️ "Arrecadado" se lia como TUDO que entrou, e este número é só
