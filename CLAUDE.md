@@ -15381,3 +15381,50 @@ decisão de produto, não conserto.
 ⚠️ **CORREÇÃO DE REGISTRO**: este arquivo diz em vários lugares que o gate de
 deploy tem 10/12/16 scripts. Em 31/08 são **21**. Conferir sempre no
 `.github/workflows/deploy-vercel.yml`, nunca aqui.
+
+### ⚠️ E quando o agente NÃO dá conta: "Copiar prompt" (2026-08-31 · SEM migration)
+
+Pedido do Matheus no mesmo dia: *"ou então, se não der para consertar pelo
+sistema, coloque uma funcionalidade para copiar o prompt para eu enviar por aqui
+pelo claude code mesmo, para corrigir o erro."* É o caminho que ele mais vai
+usar — dos 7 abertos, **6 não são mergeados sozinhos**.
+
+**`src/lib/promptDiagnostico.ts`** (régua pura, no gate) monta o prompt de um
+achado ou de vários. Botão **Copiar prompt** em cada card (menos nos já
+resolvidos) e **Copiar prompt (N)** no cabeçalho, com os que precisam da ação
+dele.
+
+⚠️ **NÃO é o mesmo texto que vai pro `developer_agent`.** Aquele
+(`diagnosticoResolver.montarDiagnostico`) alimenta um executor que já está dentro
+do repositório, com board e tools na mão. Este é para uma **sessão nova, que não
+sabe nada**: precisa do endereço do problema, do POR QUE a automação não pegou,
+e das leis da casa. Juntar os dois faria o texto mentir para um dos públicos.
+
+- ⚠️⚠️ **A seção mais importante do prompt é a que manda NÃO consertar.** 6 dos 7
+  abertos são de 12–14/08 e várias daquelas rotas já foram consertadas por outra
+  frente. Uma sessão que receba "conserte isto" sobre defeito inexistente **vai
+  produzir um conserto** — plausível, revisável e inútil. Então o prompt: diz a
+  IDADE em dias, manda confirmar no banco vivo que o defeito ainda existe, avisa
+  quando o incidente é `nao_reproduzido` ("é HIPÓTESE, não fato medido") e
+  **autoriza explicitamente a resposta "já está resolvido"**.
+- ⚠️ O "por que a automação não resolveu" sai da RÉGUA (`autonomia.motivo` +
+  `andamento_motivo`), nunca de texto inventado na tela: aba, prompt e board têm
+  de dar a mesma resposta. E não repete o motivo quando os dois são iguais.
+- ⚠️ Leva `system_incidents.id`, `request_id` e `release` — é por eles que a
+  sessão acha o log. E cita o PR já aberto, se houver, pra não começar do zero.
+- ⚠️ **Falha de cópia não vira silêncio**: `navigator.clipboard` exige contexto
+  seguro e pode ser recusado. No erro o texto APARECE num campo já selecionado.
+  Botão que pisca "Copiado" sem ter copiado faz colar o prompt anterior.
+- ⚠️ **Teto de 5 no lote, DECLARADO no próprio texto** ("há N outros"): prompt de
+  40 achados não é tarefa, é despejo. Corte silencioso faria achar que mandou
+  tudo.
+- ⚠️ **Data com `timeZone: 'America/Sao_Paulo'` explícito.**
+
+⚠️⚠️ **LIÇÃO DE MÉTODO (um mutante SOBREVIVEU e mostrou o furo):** tirar o
+`timeZone` da régua passou com 30 testes verdes — porque **esta máquina roda em
+BRT e o gate roda em UTC**. O caso só guarda algo forçando `process.env.TZ`
+dentro dele (com restauração no `finally`). É a mesma lição de 24/08 no
+`divisorMandala`, e ela se repetiu porque eu escrevi o teste sem forçar o fuso.
+Depois de corrigir: **5 mutantes rodados e mortos** (sem o aviso de não
+reproduzido → 1 · idade omitida → 1 · data sem fuso → 1 · `filter(Boolean)`
+comendo as linhas em branco do markdown → 2 · teto do lote sem declarar → 1).

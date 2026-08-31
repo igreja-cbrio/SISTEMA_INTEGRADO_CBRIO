@@ -26,6 +26,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { agents } from '../../api';
 import { Button } from '../../components/ui/button';
+import { montarPromptDiagnostico, montarPromptLote } from '../../lib/promptDiagnostico';
 
 const C = {
   card: 'var(--cbrio-card)', bg: 'var(--cbrio-bg)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -91,6 +92,68 @@ function Lista({ titulo, itens, numerada }) {
         {itens.map((x, i) => <li key={i} style={{ marginTop: i ? 4 : 0 }}>{x}</li>)}
       </Tag>
     </div>
+  );
+}
+
+/**
+ * Copiar o prompt para colar no Claude Code.
+ *
+ * Pedido do Matheus (31/08): *"se não der para consertar pelo sistema, coloque
+ * uma funcionalidade para copiar o prompt para eu enviar por aqui pelo claude
+ * code mesmo"*. É o caminho que hoje ele mais usa: dos 7 achados abertos, só 1
+ * é mergeado sozinho.
+ *
+ * ⚠️⚠️ FALHA DE CÓPIA NÃO PODE VIRAR SILÊNCIO. `navigator.clipboard` exige
+ * contexto seguro e pode ser recusado pelo navegador — e um botão que pisca
+ * "Copiado" sem ter copiado faz a pessoa colar o prompt anterior (ou nada) e
+ * concluir que a tela está quebrada. No erro, o texto APARECE num campo já
+ * selecionado, para Cmd+C na mão.
+ */
+function BotaoCopiarPrompt({ texto, rotulo = 'Copiar prompt', titulo }) {
+  const [estado, setEstado] = useState('idle');   // idle | copiado | manual
+  const [aberto, setAberto] = useState(false);
+
+  const copiar = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('sem clipboard');
+      await navigator.clipboard.writeText(texto);
+      setEstado('copiado');
+      // ⚠️ Volta ao normal: botão preso em "Copiado" faz a segunda cópia
+      // parecer que não aconteceu.
+      setTimeout(() => setEstado('idle'), 2500);
+    } catch {
+      setEstado('manual');
+      setAberto(true);
+    }
+  };
+
+  return (
+    <>
+      <Button size="sm" variant="ghost" title={titulo} onClick={copiar}>
+        {estado === 'copiado' ? '✓ Copiado' : rotulo}
+      </Button>
+      {aberto && (
+        <div style={{ width: '100%', marginTop: 8 }}>
+          <div style={{ fontSize: 12, color: C.amber, marginBottom: 4 }}>
+            O navegador não deixou copiar automaticamente — selecione e copie daqui:
+          </div>
+          <textarea
+            readOnly
+            value={texto}
+            onFocus={(e) => e.target.select()}
+            ref={(el) => el && el.select()}
+            style={{
+              width: '100%', minHeight: 140, fontSize: 12, fontFamily: 'ui-monospace, monospace',
+              padding: 8, borderRadius: 8, border: `1px solid ${C.border}`,
+              background: C.bg, color: C.text, resize: 'vertical',
+            }}
+          />
+          <Button size="sm" variant="ghost" style={{ paddingLeft: 0 }} onClick={() => setAberto(false)}>
+            Fechar
+          </Button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -204,6 +267,14 @@ function Card({ item, abertoInicial, onResolverUm, ocupado }) {
                       onClick={() => onResolverUm(item, true)}>
                 Tentar de novo
               </Button>
+            )}
+            {/* ⚠️ Não aparece no que já está resolvido — botão que não serve a
+                nada ali só empurra para baixo o que importa. */}
+            {item.andamento !== 'resolvido' && (
+              <BotaoCopiarPrompt
+                texto={montarPromptDiagnostico(item)}
+                titulo="Copia um prompt pronto (com o incidente, o diagnóstico e as regras da casa) para colar no Claude Code"
+              />
             )}
           </div>
         </div>
@@ -482,6 +553,16 @@ export default function TabDiagnosticos() {
     ? 'Os achados das 60 execuções de agente mais recentes. Achado de execução mais antiga não aparece nesta aba.'
     : undefined);
 
+  // Os que ficam com ele — é a lista que o prompt em lote leva.
+  const precisamDeVoce = useMemo(
+    () => itens.filter((i) => i.andamento === 'precisa_de_voce'),
+    [itens],
+  );
+  const promptDoLote = useMemo(
+    () => (precisamDeVoce.length ? montarPromptLote(precisamDeVoce) : ''),
+    [precisamDeVoce],
+  );
+
   const resolverUm = (item, tentarDeNovo) => despachar.mutate(
     tentarDeNovo ? { ids: [item.id], reenfileirar: [item.id] } : { ids: [item.id] },
   );
@@ -495,7 +576,9 @@ export default function TabDiagnosticos() {
             Cada achado com a causa provável e o plano de ação. <strong>Resolver todos</strong> manda o
             agente desenvolvedor corrigir e abrir o PR; quando o incidente é reproduzível ele também
             mergeia na main. O que ele não faz sozinho fica marcado como{' '}
-            <strong>precisa da sua ação</strong>, com o motivo. Mudar o status do incidente é em{' '}
+            <strong>precisa da sua ação</strong>, com o motivo — e nesses o botão
+            <strong> Copiar prompt</strong> monta o pedido pronto para você colar no Claude Code.
+            Mudar o status do incidente é em{' '}
             <a href="/sistema" style={{ color: C.primary }}>Sistema</a>.
           </div>
         </div>
@@ -506,6 +589,15 @@ export default function TabDiagnosticos() {
           <Button size="sm" onClick={() => previa.mutate()} disabled={previa.isPending || despachar.isPending}>
             {previa.isPending ? 'Conferindo…' : 'Resolver todos'}
           </Button>
+          {/* O caminho manual, para o que o agente não faz sozinho. Só aparece
+              quando há o que copiar — botão zerado é ruído. */}
+          {precisamDeVoce.length > 0 && (
+            <BotaoCopiarPrompt
+              texto={promptDoLote}
+              rotulo={`Copiar prompt (${precisamDeVoce.length})`}
+              titulo={`Copia um prompt pronto com ${precisamDeVoce.length === 1 ? 'o achado que precisa' : 'os achados que precisam'} da sua ação, para colar no Claude Code`}
+            />
+          )}
         </div>
       </div>
 
