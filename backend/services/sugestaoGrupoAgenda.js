@@ -9,7 +9,9 @@
 const { supabase } = require('../utils/supabase');
 const { proximoEncontro, ancoraDeInicio } = require('../utils/agendaGrupo');
 const { ancorasDeGrupos, iniciosDeGrupos } = require('./grupoAncora');
-const { montarRespostaAgenda } = require('../utils/respostaGrupoAgenda');
+const { montarRespostaAgenda, montarRespostaLink } = require('../utils/respostaGrupoAgenda');
+const { assuntoDaMensagem } = require('../utils/assuntoGrupoConversa');
+const { ehGrupoOnline } = require('../utils/grupoOnline');
 
 /**
  * O grupo de quem está na conversa.
@@ -99,6 +101,23 @@ async function liderDoGrupo(grupo) {
   return { nome: data?.nome || '', telefone: data?.telefone || '' };
 }
 
+
+/**
+ * A última coisa que a PESSOA escreveu — é ela que diz o assunto.
+ *
+ * ⚠️ Só `direcao='in'`: as mensagens de saída são nossas (incluindo os
+ * automáticos de boas-vindas, que citam "Líder:" e casariam com a régua).
+ * ⚠️ Erro de consulta devolve `null` → cai no comportamento antigo (agenda),
+ * nunca numa sugestão escolhida por acidente.
+ */
+async function ultimaMensagemDela(conversaId) {
+  const { data, error } = await supabase.from('wa_mensagens')
+    .select('texto, criado_em').eq('conversa_id', conversaId).eq('direcao', 'in')
+    .order('criado_em', { ascending: false }).limit(1).maybeSingle();
+  if (error) { console.warn('[sugestaoGrupo] ultima msg:', error.message); return null; }
+  return data?.texto || null;
+}
+
 /**
  * A sugestão pronta para o atendente revisar e enviar.
  *
@@ -106,13 +125,22 @@ async function liderDoGrupo(grupo) {
  * dá para saber o grupo. Sugestão que chuta é pior que sugestão ausente: quem
  * está com pressa envia sem ler.
  */
-async function sugerirAgenda(conversaId) {
+async function sugerirAgenda(conversaId, { somenteSeReconhecer = false } = {}) {
   const { data: conversa, error } = await supabase.from('wa_conversas')
     .select('id, nome, telefone, membro_id').eq('id', conversaId).is('deleted_at', null).maybeSingle();
   if (error || !conversa) return { disponivel: false, motivo: 'conversa_nao_encontrada' };
 
   const { grupo, motivo, candidatos } = await grupoDaConversa(conversa);
   if (!grupo) return { disponivel: false, motivo, candidatos };
+
+  const assunto = assuntoDaMensagem(await ultimaMensagemDela(conversa.id));
+
+  // ⚠️⚠️ No modo AUTOMÁTICO (a tela abre e busca sozinha) só respondemos quando
+  // a régua RECONHECEU a pergunta. Sem isso, toda conversa aberta ganharia uma
+  // caixa de sugestão de agenda — e sugestão que aparece sempre para de ser
+  // lida, que é o oposto do pedido. No clique da lâmpada segue tentando a
+  // agenda, que é o comportamento de 26/08.
+  if (somenteSeReconhecer && !assunto) return { disponivel: false, motivo: 'sem_assunto' };
 
   const { ancoraISO, estimada } = await ancoraDoGrupo(grupo);
   // ⚠️ As colunas são `nova_data` e `status` — NÃO `data_nova`/`cancelado`.
@@ -134,6 +162,29 @@ async function sugerirAgenda(conversaId) {
   });
 
   const lider = await liderDoGrupo(grupo);
+
+  // ⚠️ O ASSUNTO manda. "Recebo o link por aqui? Devo falar com a líder?" não é
+  // pergunta de agenda — responder com a data seria ignorar o que ela pediu
+  // (Matheus, 31/08). Assunto desconhecido cai na agenda, que é o
+  // comportamento que esta rota já tinha.
+  if (assunto === 'link') {
+    const r = montarRespostaLink({
+      nome: conversa.nome, grupoNome: grupo.nome,
+      online: ehGrupoOnline(grupo), local: localDoGrupo(grupo),
+      liderNome: lider.nome, liderTelefone: lider.telefone,
+      // ⚠️ Data só quando é FATO: sugestão de link não é lugar de arriscar
+      // data calculada. Estimada entra sem data, e ninguém é mandado a lugar
+      // nenhum por engano.
+      proximaISO: (estimada || prox?.ancora_incerta || prox?.data_estimada) ? null : (prox?.data || null),
+      horario: grupo.horario,
+    });
+    return {
+      disponivel: true, texto: r.texto, confianca: r.confianca, assunto: 'link',
+      grupo: { id: grupo.id, nome: grupo.nome, recorrencia: grupo.recorrencia, online: ehGrupoOnline(grupo) },
+      proxima: prox?.data || null, origem_grupo: motivo,
+    };
+  }
+
   const { texto, confianca } = montarRespostaAgenda({
     nome: conversa.nome, grupoNome: grupo.nome,
     proximaISO: prox?.data || null, horario: grupo.horario,
@@ -145,7 +196,7 @@ async function sugerirAgenda(conversaId) {
   });
 
   return {
-    disponivel: true, texto, confianca,
+    disponivel: true, texto, confianca, assunto: assunto || 'agenda',
     grupo: { id: grupo.id, nome: grupo.nome, recorrencia: grupo.recorrencia },
     proxima: prox?.data || null, origem_grupo: motivo,
   };

@@ -133,16 +133,24 @@ export default function ConversasInbox({
   const [novaOpen, setNovaOpen] = useState(false);
   const [prontas, setProntas] = useState<{ id: string; titulo: string; texto: string }[]>([]);
   const [prontasOpen, setProntasOpen] = useState(false);
-  // Sugestão de resposta para "quando é o meu grupo?" (26/08/2026).
-  // ⚠️ Buscada SOB DEMANDA, no clique — não ao abrir a conversa. Ela resolve o
-  // grupo pelo vínculo, lê a agenda e calcula o próximo encontro; pagar isso em
-  // toda conversa aberta seria custo em cima de uma tela que se navega rápido.
+  // Sugestão de resposta (26/08/2026 · agenda · 31/08/2026 · link do grupo).
+  //
+  // ⚠️ Busca AUTOMÁTICA só quando a última mensagem é DELA e ainda não foi
+  // respondida — e o servidor, no modo `auto`, só devolve quando RECONHECEU a
+  // pergunta. Foi o pedido do Matheus em 31/08 ("nesse tipo de pergunta o
+  // agente responda dizendo que o líder vai entrar em contato"): depender do
+  // clique na lâmpada é depender de alguém lembrar que ela existe.
+  //
+  // ⚠️ O custo era a objeção de 26/08 (resolve grupo + agenda + próximo
+  // encontro). Por isso o gatilho é estreito: conversa com mensagem pendente,
+  // uma vez por conversa. Conversa já respondida não paga nada.
   const [sugestao, setSugestao] = useState<{
-    disponivel: boolean; texto?: string; confianca?: string;
+    disponivel: boolean; texto?: string; confianca?: string; assunto?: string;
     motivo?: string; grupo?: { nome?: string }; candidatos?: string[];
   } | null>(null);
   const [sugerindo, setSugerindo] = useState(false);
   const fimRef = useRef<HTMLDivElement | null>(null);
+  const sugestaoAutoRef = useRef<string | null>(null);
   const selRef = useRef<string | null>(null);
   selRef.current = selId;
 
@@ -184,6 +192,24 @@ export default function ConversasInbox({
   // ofereceria o encontro do grupo de OUTRA pessoa — com o texto já pronto pra
   // enviar, que é o pior tipo de erro possível nesta tela.
   useEffect(() => { setSugestao(null); setSugerindo(false); }, [selId]);
+
+  // ⚠️ Dispara depois que a thread carregou: a decisão usa a ÚLTIMA mensagem, e
+  // sem ela em mãos o efeito rodaria em conversa que já foi respondida.
+  // ⚠️ `sugestaoAutoRef` garante UMA busca por conversa — sem isso cada
+  // mensagem nova (realtime) refaria a consulta.
+  useEffect(() => {
+    if (!selId || !msgs.length) return;
+    if (sugestaoAutoRef.current === selId) return;
+    const ultima = msgs[msgs.length - 1];
+    if (ultima?.direcao !== 'in') return;   // já respondida → nada a sugerir
+    sugestaoAutoRef.current = selId;
+    comunicacao.sugestaoGrupo(selId, true)
+      .then((r: any) => { if (selRef.current === selId && r?.disponivel) setSugestao(r); })
+      // ⚠️ Silêncio no erro é DE PROPÓSITO aqui: ninguém pediu esta busca, e um
+      // toast vermelho ao abrir conversa treinaria a equipe a ignorar avisos.
+      // No clique da lâmpada o erro continua aparecendo.
+      .catch(() => {});
+  }, [selId, msgs]);
 
   // abre direto a conversa de um telefone (vindo dos botões de WhatsApp dos módulos)
   useEffect(() => {
@@ -565,7 +591,7 @@ export default function ConversasInbox({
                             <div className="mb-1.5 flex items-center gap-2">
                               <Lightbulb className="h-3.5 w-3.5 shrink-0 text-primary" />
                               <span className="text-xs font-medium text-foreground">
-                                Sugestão · {sugestao.grupo?.nome || 'grupo'}
+                                {sugestao.assunto === 'link' ? 'Sugestão · link do encontro' : 'Sugestão'} · {sugestao.grupo?.nome || 'grupo'}
                               </span>
                               {/* ⚠️ A CONFIANÇA vai na frente do texto. Sem ela a
                                   pessoa envia uma data calculada como se fosse

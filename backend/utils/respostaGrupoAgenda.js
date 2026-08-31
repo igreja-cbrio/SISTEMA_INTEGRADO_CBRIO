@@ -129,4 +129,73 @@ function montarRespostaAgenda({
   return { texto: l.join('\n'), confianca: 'confirmada' };
 }
 
-module.exports = { montarRespostaAgenda, quandoPorExtenso, primeiroNomeDe, CADENCIA_TEXTO, DIAS };
+
+/**
+ * "Recebo o link por aqui? Devo falar com a líder?" — o texto da sugestão.
+ *
+ * Pedido do Matheus (31/08/2026): *"nesse tipo de pergunta, o agente responda
+ * dizendo que o líder vai entrar em contato."*
+ *
+ * ⚠️⚠️ O SISTEMA NÃO TEM O LINK. Ele não existe em `mem_grupos` — quem cria a
+ * sala e distribui é a liderança, encontro a encontro. Por isso a resposta
+ * ENCAMINHA em vez de prometer que "o link chega por aqui": dizer que virá pelo
+ * inbox institucional seria a igreja se comprometendo com um envio que ninguém
+ * vai fazer, e a pessoa esperaria olhando a conversa errada.
+ *
+ * ⚠️ O CONTATO DA LÍDER VAI JUNTO, e é o coração da resposta: ela perguntou
+ * exatamente isso ("devo fazer contato?"). Medido em 31/08: dos 36 grupos
+ * online ativos, **36 têm telefone do líder** e só **2 líderes têm push no
+ * app** — ou seja, o caminho que realmente alcança é ela falar com a liderança,
+ * não um aviso automático que chegaria a 2 de 36.
+ *
+ * ⚠️ Grupo PRESENCIAL não tem link: ali a resposta é o ENDEREÇO. Falar de link
+ * para quem vai a um endereço é resposta que não serve pra nada.
+ */
+function montarRespostaLink({
+  nome = '', grupoNome = '', online = false, local = '',
+  liderNome = '', liderTelefone = '', proximaISO = null, horario = '',
+} = {}) {
+  const oi = primeiroNomeDe(nome) ? `Oi, ${primeiroNomeDe(nome)}!` : 'Oi!';
+  const lider = primeiroNomeDe(String(liderNome || '').trim());
+  const tel = String(liderTelefone || '').trim();
+  const quando = quandoPorExtenso(proximaISO, horario);
+  const l = [oi, ''];
+
+  if (online) {
+    l.push(lider
+      // ⚠️ "vai falar com você" — sem PRAZO. Prometer "hoje" ou "logo" é
+      // prometer o tempo de uma pessoa que não foi consultada.
+      ? `O link do encontro é enviado pela liderança do grupo: a ${lider} vai entrar em contato com você.`
+      : 'O link do encontro é enviado pela liderança do grupo — ela vai entrar em contato com você.');
+    if (lider && tel) {
+      l.push('');
+      l.push(`Se quiser adiantar, o contato dela é ${tel}.`);
+    }
+  } else {
+    // Presencial: o que ela precisa é onde e quando, não link.
+    l.push(String(local || '').trim()
+      ? `O seu grupo é presencial, em ${String(local).trim()}.`
+      : 'O seu grupo é presencial.');
+    l.push(lider
+      ? `A ${lider} vai entrar em contato com você com os detalhes.`
+      : 'A liderança do grupo vai entrar em contato com você com os detalhes.');
+    if (lider && tel) {
+      l.push('');
+      l.push(`Se quiser adiantar, o contato dela é ${tel}.`);
+    }
+  }
+
+  if (grupoNome || quando) {
+    l.push('');
+    if (grupoNome) l.push(`👥 ${String(grupoNome).trim()}`);
+    // ⚠️ A data entra só quando existe: sugestão de link NÃO é o lugar de
+    // calcular agenda, e data ausente aqui não é problema nenhum.
+    if (quando) l.push(`📅 ${quando}`);
+  }
+
+  l.push('');
+  l.push('Qualquer coisa, é só chamar por aqui. 💚');
+  return { texto: l.join('\n'), confianca: 'confirmada' };
+}
+
+module.exports = { montarRespostaAgenda, montarRespostaLink, quandoPorExtenso, primeiroNomeDe, CADENCIA_TEXTO, DIAS };
