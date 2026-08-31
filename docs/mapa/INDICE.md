@@ -142,7 +142,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/kidsFrequencia.js` | `src/test/kidsFrequencia.test.ts` |
 | `backend/utils/kidsResponsavel.js` | `backend/routes/incidentRemediation.test.js` |
 | `backend/utils/kidsVisitante.js` | `src/test/kidsVisitante.test.ts` |
-| `backend/utils/lentesDomingo.js` | `src/test/lentesDomingo.test.ts` |
+| `backend/utils/lentesDomingo.js` | `src/test/lentesDomingo.test.ts` `src/test/turnoCulto.test.ts` |
 | `backend/utils/linkInscricaoApp.js` | `src/test/linkInscricaoApp.test.ts` |
 | `backend/utils/lotesEvento.js` | `src/test/lotesEvento.test.ts` |
 | `backend/utils/marcoAtribuicao.js` | `src/test/marcoAtribuicao.test.ts` |
