@@ -4332,6 +4332,11 @@ export const estrategia = {
   // ⚠️ LENTE VIVA — não é a base fixa de 3.000 da planilha do Pr. Juninho.
   indiceBase: () => get('/estrategia/indice-base'),
 
+  // Leitura de um ANEL do mapa do motor: 'criativo' (combustível) ou 'gestao'
+  // (carcaça). Devolve um PAR (entrega + qualidade), nunca uma média única.
+  // ⚠️ O Ministerial não é anel — é o motor, lido por NSM + Índice da Base.
+  anel: (anel, dias) => get(`/estrategia/anel/${anel}${dias ? `?dias=${dias}` : ''}`),
+
   // Linhagem = etiqueta de LEITURA do KPI tático (nsm | jornada | sistema)
   linhagem: {
     resumo: () => get('/estrategia/linhagem/resumo'),
