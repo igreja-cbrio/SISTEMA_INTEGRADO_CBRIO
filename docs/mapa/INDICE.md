@@ -65,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **127** arquivos, **117** com teste.
+`backend/utils/` tem **129** arquivos, **119** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -82,6 +82,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/appPushDestino.js` | `src/test/appPushDestino.test.ts` |
 | `backend/utils/appRateLimit.js` | `src/test/appRateLimit.test.ts` |
 | `backend/utils/apresentacaoHistorico.js` | `src/test/apresentacaoHistorico.test.ts` |
+| `backend/utils/assuntoGrupoConversa.js` | `src/test/assuntoGrupoConversa.test.ts` |
 | `backend/utils/atividadeVoluntario.js` | `src/test/atividadeVoluntario.test.ts` |
 | `backend/utils/avisoAgregado.js` | `src/test/avisoAgregado.test.ts` |
 | `backend/utils/avisoComprovante.js` | `src/test/avisoComprovante.test.ts` |
@@ -129,6 +130,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/freioBot.js` | `src/test/freioBot.test.ts` |
 | `backend/utils/grupoCapaApp.js` | `src/test/grupoCapaApp.test.ts` |
 | `backend/utils/grupoEdicaoApp.js` | `src/test/grupoEdicaoApp.test.ts` |
+| `backend/utils/grupoOnline.js` | `src/test/assuntoGrupoConversa.test.ts` |
 | `backend/utils/gruposToken.js` | `src/test/gruposToken.test.ts` |
 | `backend/utils/inscricaoDaPessoa.js` | `src/test/inscricaoDaPessoa.test.ts` |
 | `backend/utils/inscricaoMenor.js` | `src/test/inscricaoMenor.test.ts` |
@@ -169,7 +171,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/resilientFetch.js` | — |
 | `backend/utils/responderFalha.js` | `src/test/telemetria500.test.ts` |
 | `backend/utils/respostaEscala.js` | `src/test/respostaEscala.test.ts` |
-| `backend/utils/respostaGrupoAgenda.js` | `src/test/respostaGrupoAgenda.test.ts` |
+| `backend/utils/respostaGrupoAgenda.js` | `src/test/assuntoGrupoConversa.test.ts` `src/test/respostaGrupoAgenda.test.ts` |
 | `backend/utils/rhOnboardingProntidao.js` | `src/test/rhOnboardingProntidao.test.ts` |
 | `backend/utils/rodizioCulto.js` | `backend/services/rodizioCulto.test.js` |
 | `backend/utils/roteamentoDisparo.js` | `src/test/roteamentoDisparo.test.ts` |

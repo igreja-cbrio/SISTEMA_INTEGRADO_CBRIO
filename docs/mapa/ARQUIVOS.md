@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-374 arquivos.
+376 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -152,6 +152,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/appPushDestino.js` | régua pura | — | `src/test/appPushDestino.test.ts` |
 | `backend/utils/appRateLimit.js` | régua pura | — | `src/test/appRateLimit.test.ts` |
 | `backend/utils/apresentacaoHistorico.js` | régua pura | — | `src/test/apresentacaoHistorico.test.ts` |
+| `backend/utils/assuntoGrupoConversa.js` | régua pura | — | `src/test/assuntoGrupoConversa.test.ts` |
 | `backend/utils/atividadeVoluntario.js` | régua pura | — | `src/test/atividadeVoluntario.test.ts` |
 | `backend/utils/avisoAgregado.js` | régua pura | — | `src/test/avisoAgregado.test.ts` |
 | `backend/utils/avisoComprovante.js` | régua pura | — | `src/test/avisoComprovante.test.ts` |
@@ -199,6 +200,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/freioBot.js` | régua pura | — | `src/test/freioBot.test.ts` |
 | `backend/utils/grupoCapaApp.js` | régua pura | — | `src/test/grupoCapaApp.test.ts` |
 | `backend/utils/grupoEdicaoApp.js` | régua pura | — | `src/test/grupoEdicaoApp.test.ts` |
+| `backend/utils/grupoOnline.js` | régua pura | — | `src/test/assuntoGrupoConversa.test.ts` |
 | `backend/utils/gruposToken.js` | régua pura | — | `src/test/gruposToken.test.ts` |
 | `backend/utils/inscricaoDaPessoa.js` | régua pura | — | `src/test/inscricaoDaPessoa.test.ts` |
 | `backend/utils/inscricaoMenor.js` | régua pura | — | `src/test/inscricaoMenor.test.ts` |
@@ -239,7 +241,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/resilientFetch.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/responderFalha.js` | régua pura | — | `src/test/telemetria500.test.ts` |
 | `backend/utils/respostaEscala.js` | régua pura | — | `src/test/respostaEscala.test.ts` |
-| `backend/utils/respostaGrupoAgenda.js` | régua pura | — | `src/test/respostaGrupoAgenda.test.ts` |
+| `backend/utils/respostaGrupoAgenda.js` | régua pura | — | `src/test/assuntoGrupoConversa.test.ts` |
 | `backend/utils/rhOnboardingProntidao.js` | régua pura | — | `src/test/rhOnboardingProntidao.test.ts` |
 | `backend/utils/rodizioCulto.js` | régua pura | — | `backend/services/rodizioCulto.test.js` |
 | `backend/utils/roteamentoDisparo.js` | régua pura | — | `src/test/roteamentoDisparo.test.ts` |
