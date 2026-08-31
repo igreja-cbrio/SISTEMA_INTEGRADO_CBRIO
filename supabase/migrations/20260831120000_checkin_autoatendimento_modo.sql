@@ -70,7 +70,14 @@ BEGIN
       CONTINUE;
     END IF;
 
-    v_valores := substring(v_def from 'IN \((.*?)\)');
+    -- ⚠️ A forma viva aqui é `= ANY (ARRAY['busca'::text, 'qr'::text])`, não
+    -- `IN (...)` — conferido no catálogo antes de aplicar. Tenta ARRAY[...]
+    -- primeiro (padrão do `20260817140000_grupos_confira_lista`) e cai pra
+    -- IN (...) se algum dia o Postgres/versão imprimir diferente.
+    v_valores := substring(v_def from 'ARRAY\[(.*)\]');
+    IF v_valores IS NULL THEN
+      v_valores := substring(v_def from 'IN \((.*?)\)');
+    END IF;
     IF v_valores IS NULL THEN
       RAISE EXCEPTION 'PARTE 1: não consegui ler os valores do CHECK % em % (%)', v_nome, v_tabela, v_def;
     END IF;
