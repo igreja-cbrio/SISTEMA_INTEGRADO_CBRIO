@@ -158,6 +158,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `backend/utils/janelaPeriodo.js`
 - `backend/utils/kidsFrequencia.js`
 - `backend/utils/kidsResponsavel.js`
+- `backend/utils/kidsSituacao.js`
 - `backend/utils/kidsVisitante.js`
 - `backend/utils/supabase.js`
 

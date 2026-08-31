@@ -65,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **132** arquivos, **122** com teste.
+`backend/utils/` tem **133** arquivos, **123** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -143,6 +143,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/jornadaTempo.js` | `src/test/engajouOutroValor.test.ts` `src/test/jornadaTempo.test.ts` |
 | `backend/utils/kidsFrequencia.js` | `src/test/kidsFrequencia.test.ts` |
 | `backend/utils/kidsResponsavel.js` | `backend/routes/incidentRemediation.test.js` |
+| `backend/utils/kidsSituacao.js` | `src/test/kidsSituacao.test.ts` |
 | `backend/utils/kidsVisitante.js` | `src/test/kidsVisitante.test.ts` |
 | `backend/utils/lentesDomingo.js` | `src/test/lentesDomingo.test.ts` `src/test/turnoCulto.test.ts` |
 | `backend/utils/linkInscricaoApp.js` | `src/test/linkInscricaoApp.test.ts` |
