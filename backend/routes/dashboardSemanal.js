@@ -947,10 +947,55 @@ router.get('/yoy', async (req, res) => {
   }
 });
 
+
+// ── Filtro de culto que aceita TURNO de domingo ─────────────────────────────
+// Pedido do Matheus (31/08): a aba Mensal precisa poder olhar "Domingo manhã" e
+// "Domingo noite", não só um culto isolado.
+//
+// ⚠️ A fronteira das 12h é a MESMA de `utils/lentesDomingo.turnoDoTipo` e do
+// espelho do front (`src/lib/turnoCulto`) — divergir faria o 11:30 contar na
+// manhã num lugar e na noite no outro. Há teste amarrando os três.
+//
+// ⚠️ Turno SEM nenhum culto devolve lista vazia, e quem chama trata como
+// "nenhuma linha" em vez de ignorar o filtro — ignorar mostraria o total da
+// igreja com o rótulo de um turno.
+async function idsDoTurno(turno) {
+  // ⚠️⚠️ Domingo tem MAIS que os cultos do templo: existem os tipos
+  // `CBKIDS - Manhã/Noite Domingo` (medido em 31/08). Somá-los em "Domingo
+  // manhã" misturaria o Kids na frequência do templo — e o indicador de Kids
+  // já tem coluna própria, então seria dupla contagem.
+  //
+  // O discriminador é `presencial_label = 'Sede'` (os do templo) — NÃO
+  // `is_active`, que mente aqui: está `false` tanto nos CBKIDS quanto no 08:30
+  // e no 10:00, que ENCERRARAM mas cujo histórico a série precisa. Culto de
+  // domingo novo com outro rótulo tem que passar por aqui.
+  //
+  // Hoje é inofensivo (os CBKIDS têm ZERO linhas em `vw_dashboard_semanal`),
+  // mas é gatilho armado: no dia em que tiverem, o erro seria silencioso.
+  const { data, error } = await supabase
+    .from('vol_service_types')
+    .select('id, recurrence_time')
+    .eq('recurrence_day', 0)
+    .eq('presencial_label', 'Sede')
+    .not('recurrence_time', 'is', null);
+  if (error) throw error;
+  return (data || [])
+    .filter((t) => {
+      const h = String(t.recurrence_time).slice(0, 5);
+      if (!/^\d{2}:\d{2}$/.test(h)) return false;
+      return (h < '12:00' ? 'manha' : 'noite') === turno;
+    })
+    .map((t) => t.id);
+}
+
 router.get('/mensal', async (req, res) => {
   try {
     const indicadorKey = req.query.indicador || 'aceitacoes';
-    const cultoId = req.query.culto && req.query.culto !== 'todos' ? req.query.culto : null;
+    const cultoParam = req.query.culto && req.query.culto !== 'todos' ? String(req.query.culto) : null;
+    // `turno:manha` / `turno:noite` viram a LISTA de cultos daquele turno.
+    const turno = /^turno:(manha|noite)$/.exec(cultoParam || '');
+    const idsTurno = turno ? await idsDoTurno(turno[1]) : null;
+    const cultoId = turno ? null : cultoParam;
     const indDef = INDICADORES[indicadorKey];
     if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
 
@@ -968,6 +1013,9 @@ router.get('/mensal', async (req, res) => {
       .select(`ano_calendario, mes, service_type_id, ${colunasView(indicadorKey).join(', ')}`)
       .in('ano_calendario', anos);
     if (cultoId) q = q.eq('service_type_id', cultoId);
+    // ⚠️ Turno sem culto nenhum filtra por lista VAZIA de propósito: devolve
+    // zero linhas em vez de ignorar o filtro e mostrar a igreja toda.
+    else if (idsTurno) q = q.in('service_type_id', idsTurno.length ? idsTurno : ['00000000-0000-0000-0000-000000000000']);
     const { data, error } = await q;
     if (error) throw error;
 

@@ -18,6 +18,7 @@ import OcupacaoGauge from './OcupacaoGauge';
 import { ChartGradients, gradFill } from '../charts/ChartGradients';
 import { ResumoSemanaCard } from './ResumoCards';
 import ComparativoAnualCard from './ComparativoAnualCard';
+import { agruparPorTurno } from '../../lib/turnoCulto';
 
 const C = { primary: '#00B39D', media: '#7BAEC2', taxa: '#E97A3F' };
 
@@ -59,6 +60,10 @@ export default function DashSemanalAba() {
   const semanaAnterior = semanaAtual - 1 > 0 ? semanaAtual - 1 : 52;
   const anoSemAnterior = semanaAtual - 1 > 0 ? anoAtual : anoAtual - 1;
 
+  // Visão do gráfico: por culto (padrão) ou por TURNO de domingo.
+  // ⚠️ Turno junta 09:30 + 11:30 na MANHÃ — é a visão que não muda de degrau
+  // quando a grade de domingo muda (corte de 24/08).
+  const [visao, setVisao] = useState('culto');
   const [ano, setAno] = useState(anoSemAnterior);
   const [semana, setSemana] = useState(semanaAnterior);
   // Multi-select: array de slugs dos indicadores selecionados
@@ -225,7 +230,10 @@ export default function DashSemanalAba() {
   const chartData = useMemo(() => {
     if (!datasets.length) return [];
     if (isSingle) {
-      return (primario.data.items || []).map(i => {
+      const itens = visao === 'turno'
+        ? agruparPorTurno(primario.data.items || [])
+        : (primario.data.items || []);
+      return itens.map(i => {
         // Variacao por culto = (atual - media) / media * 100
         const variacao = i.media > 0
           ? Math.round(((i.valor_absoluto - i.media) / i.media) * 1000) / 10
@@ -244,7 +252,8 @@ export default function DashSemanalAba() {
     // Multi · merge por nome do culto
     const mapPorNome = new Map();
     datasets.forEach(d => {
-      (d.data.items || []).forEach(i => {
+      const itens = visao === 'turno' ? agruparPorTurno(d.data.items || []) : (d.data.items || []);
+      itens.forEach(i => {
         const k = shortLabel(i.nome, i.recurrence_day, i.recurrence_time);
         const row = mapPorNome.get(k) || {
           nome: k,
@@ -256,7 +265,7 @@ export default function DashSemanalAba() {
       });
     });
     return Array.from(mapPorNome.values()).sort((a, b) => (a._order || 0) - (b._order || 0));
-  }, [datasets, isSingle, primario]);
+  }, [datasets, isSingle, primario, visao]);
 
   const anos = useMemo(() => {
     const arr = [];
@@ -666,9 +675,26 @@ export default function DashSemanalAba() {
           <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 space-y-0">
             <CardTitle className="text-sm font-medium">
               {isSingle
-                ? `${primario?.indDef?.label || INDICADORES.find(x => x.key === indicadoresSel[0])?.label || 'Indicador'} por culto · ${primario?.data?.inicio && primario?.data?.fim ? `${formatBr(primario.data.inicio)} a ${formatBr(primario.data.fim)}` : '—'}`
+                ? `${primario?.indDef?.label || INDICADORES.find(x => x.key === indicadoresSel[0])?.label || 'Indicador'} por ${visao === 'turno' ? 'turno' : 'culto'} · ${primario?.data?.inicio && primario?.data?.fim ? `${formatBr(primario.data.inicio)} a ${formatBr(primario.data.fim)}` : '—'}`
                 : `Comparativo · ${datasets.map(d => d?.indDef?.label).filter(Boolean).join(' / ')}`}
             </CardTitle>
+            {/* ⚠️ Turno junta 09:30 + 11:30 na manhã. É a visão que atravessa a
+                mudança de grade sem degrau — por culto, tirar um culto FAZ a
+                média subir sozinha. */}
+            <div className="flex gap-1 shrink-0">
+              {[['culto', 'Por culto'], ['turno', 'Por turno']].map(([k, rot]) => (
+                <button
+                  key={k}
+                  onClick={() => setVisao(k)}
+                  title={k === 'turno'
+                    ? 'Domingo manhã (até 12h) e Domingo noite somados; os outros dias ficam como estão'
+                    : 'Cada culto em sua própria barra'}
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition ${
+                    visao === k ? 'bg-primary text-primary-foreground' : 'bg-foreground/5 text-muted-foreground hover:text-foreground'
+                  }`}
+                >{rot}</button>
+              ))}
+            </div>
             {isMulti && (
               <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1.5">
                 <GitCompare className="h-3.5 w-3.5" />Modo comparativo · só valores absolutos
