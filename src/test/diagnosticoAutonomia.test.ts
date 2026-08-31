@@ -312,6 +312,59 @@ describe('andamento · resolvido / sendo resolvido / precisa de você', () => {
       { andamento: ANDAMENTO.TRABALHANDO }, { andamento: ANDAMENTO.PRECISA_DE_VOCE },
       { andamento: ANDAMENTO.PRECISA_DE_VOCE }, { andamento: ANDAMENTO.NAO_INICIADO },
     ]);
-    expect(r).toEqual({ resolvidos: 1, em_andamento: 2, precisam_de_voce: 2, nao_iniciados: 1 });
+    expect(r).toEqual({ encerrados: 0, resolvidos: 1, em_andamento: 2, precisam_de_voce: 2, nao_iniciados: 1 });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ⚠️⚠️ ENCERRADO ≠ PRECISA DE VOCÊ
+//
+//  Defeito REAL do primeiro uso (31/08 · 13:33): o "Copiar prompt" montou um
+//  lote de 5 achados em que 4 diziam "já decidido — o plano aqui é histórico",
+//  e o contador prometia "há 11 outros". A faixa `humano` cobre coisas OPOSTAS
+//  e eu mapeei as duas para a mesma caixa.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('encerrado não é pendência de ninguém', () => {
+  const encerrado = {
+    estado: 'encerrado',
+    autonomia: { faixa: FAIXAS.HUMANO, motivo: 'já decidido (resolvido ou risco aceito) — o plano aqui é histórico', avisos: [] },
+  };
+
+  it('incidente resolvido vira ENCERRADO, não "precisa da sua ação"', () => {
+    const r = andamentoDoAchado(encerrado, null);
+    expect(r.andamento).toBe(ANDAMENTO.ENCERRADO);
+    expect(r.motivo).toMatch(/histórico/);
+  });
+
+  it('e sai da contagem de "precisam de você"', () => {
+    const r = resumirAndamento([
+      { andamento: ANDAMENTO.ENCERRADO }, { andamento: ANDAMENTO.ENCERRADO },
+      { andamento: ANDAMENTO.PRECISA_DE_VOCE },
+    ]);
+    expect(r).toMatchObject({ encerrados: 2, precisam_de_voce: 1 });
+  });
+
+  it('⚠️ achado de AUDITORIA (sem incidente) CONTINUA em "precisa da sua ação"', () => {
+    // São 43 achados fora da janela atual. Mandá-los pra "encerrado"
+    // esconderia constatação que ninguém decidiu ainda.
+    const auditoria = {
+      estado: 'sem_incidente',
+      autonomia: { faixa: FAIXAS.HUMANO, motivo: 'achado de auditoria, sem incidente aberto', avisos: [] },
+    };
+    expect(andamentoDoAchado(auditoria, null).andamento).toBe(ANDAMENTO.PRECISA_DE_VOCE);
+  });
+
+  it('⚠️ tarefa em curso VENCE o estado do incidente', () => {
+    // Se alguém mandou consertar e o agente está trabalhando, o que vale é a
+    // tarefa — senão o card diria "histórico" com trabalho em andamento.
+    expect(andamentoDoAchado(encerrado, { status: 'em_andamento' }).andamento).toBe(ANDAMENTO.TRABALHANDO);
+    expect(andamentoDoAchado(encerrado, { status: 'agendada' }).andamento).toBe(ANDAMENTO.NA_FILA);
+    expect(andamentoDoAchado(encerrado, { status: 'falhou' }).andamento).toBe(ANDAMENTO.PRECISA_DE_VOCE);
+    expect(andamentoDoAchado(encerrado, { status: 'concluida' }).andamento).toBe(ANDAMENTO.RESOLVIDO);
+  });
+
+  it('aberto segue em "precisa da sua ação" quando a faixa é humano', () => {
+    const aberto = { estado: 'aberto', autonomia: { faixa: FAIXAS.HUMANO, motivo: 'é dado, não código' } };
+    expect(andamentoDoAchado(aberto, null).andamento).toBe(ANDAMENTO.PRECISA_DE_VOCE);
   });
 });

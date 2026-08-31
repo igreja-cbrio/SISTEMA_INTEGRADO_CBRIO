@@ -219,6 +219,16 @@ const ANDAMENTO = Object.freeze({
   TRABALHANDO: 'trabalhando',
   RESOLVIDO: 'resolvido',
   PRECISA_DE_VOCE: 'precisa_de_voce',
+  // ⚠️⚠️ ENCERRADO ≠ PRECISA DE VOCÊ, e confundir os dois custou um clique.
+  //
+  // No primeiro uso real (31/08, 13:33) o botão "Copiar prompt" montou um lote
+  // de 5 achados em que **4 diziam "já decidido — o plano aqui é histórico"**, e
+  // o contador prometia "há 11 outros". Causa: a faixa `humano` cobre coisas
+  // OPOSTAS — "o agente não mexe, resolva você" e "isto já foi decidido, não há
+  // nada a fazer" — e eu mapeei as duas para a mesma caixa. Incidente resolvido
+  // não é pendência de ninguém: é histórico, e entrar na fila de trabalho dele
+  // gasta atenção e credibilidade da tela.
+  ENCERRADO: 'encerrado',
 });
 
 /**
@@ -258,6 +268,23 @@ function andamentoDoAchado(item, tarefa) {
   if (MOTIVO_STATUS[st]) {
     return { andamento: ANDAMENTO.PRECISA_DE_VOCE, motivo: MOTIVO_STATUS[st] };
   }
+
+  // ⚠️⚠️ ANTES da faixa: achado de incidente JÁ DECIDIDO (resolvido, risco
+  // aceito, duplicado) é HISTÓRICO. Vem depois dos status de tarefa de
+  // propósito — se alguém mandou consertar e a tarefa está em curso, o que vale
+  // é a tarefa.
+  //
+  // ⚠️ `sem_incidente` NÃO entra aqui: achado de auditoria é constatação que
+  // ninguém decidiu ainda, e mandá-lo para "encerrado" esconderia trabalho real
+  // (são 43 achados fora da janela atual). Ele segue em "precisa da sua ação"
+  // pela faixa `humano`, que é a verdade: o agente não mexe, alguém tem de ler.
+  if (item?.estado === 'encerrado') {
+    return {
+      andamento: ANDAMENTO.ENCERRADO,
+      motivo: 'o incidente já foi decidido — este plano é histórico',
+    };
+  }
+
   // Sem tarefa: quem decide é a faixa. `humano` já nasce sinalizado; o resto
   // ainda não foi despachado.
   if (item?.autonomia?.faixa === FAIXAS.HUMANO) {
@@ -266,10 +293,11 @@ function andamentoDoAchado(item, tarefa) {
   return { andamento: ANDAMENTO.NAO_INICIADO, motivo: 'ainda não foi despachado ao agente' };
 }
 
-/** Contagem das três caixas, pro cabeçalho da aba. */
+/** Contagem das caixas, pro cabeçalho da aba. */
 function resumirAndamento(itens = []) {
   const conta = (a) => (Array.isArray(itens) ? itens : []).filter((i) => i?.andamento === a).length;
   return {
+    encerrados: conta(ANDAMENTO.ENCERRADO),
     resolvidos: conta(ANDAMENTO.RESOLVIDO),
     em_andamento: conta(ANDAMENTO.NA_FILA) + conta(ANDAMENTO.TRABALHANDO),
     precisam_de_voce: conta(ANDAMENTO.PRECISA_DE_VOCE),

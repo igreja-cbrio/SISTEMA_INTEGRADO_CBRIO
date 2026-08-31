@@ -58,6 +58,10 @@ const ANDAMENTO_UI = {
   na_fila: { c: C.blue, bg: C.blueBg, label: 'Na fila do agente' },
   precisa_de_voce: { c: C.amber, bg: C.amberBg, label: 'Precisa da sua ação' },
   nao_iniciado: { c: C.text3, bg: 'transparent', label: 'Não despachado' },
+  // ⚠️ Incidente já decidido é HISTÓRICO, não pendência — cinza, e fora da
+  // caixa "precisa da sua ação" (era ali que ele caía até 31/08, e foi isso que
+  // encheu o prompt em lote de plano histórico).
+  encerrado: { c: C.text3, bg: 'transparent', label: 'Encerrado' },
 };
 
 const FAIXA_UI = {
