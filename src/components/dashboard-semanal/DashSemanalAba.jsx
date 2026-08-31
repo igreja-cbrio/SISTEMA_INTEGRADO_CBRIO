@@ -230,8 +230,23 @@ export default function DashSemanalAba() {
   const chartData = useMemo(() => {
     if (!datasets.length) return [];
     if (isSingle) {
+      // ⚠️⚠️ No turno, quem manda é o SERVIDOR (`data.turnos`): a média do turno
+      // é a média das SOMAS SEMANAIS, e somar as médias por culto aqui daria um
+      // número errado — 999 no lugar de 1.252 na manhã (medido em 31/08),
+      // fazendo uma semana 21% abaixo parecer "na média".
+      // `agruparPorTurno` fica como fallback pra bundle novo com backend antigo:
+      // os valores da semana ficam certos e só a média é aproximada.
       const itens = visao === 'turno'
-        ? agruparPorTurno(primario.data.items || [])
+        ? (primario.data.turnos && primario.data.turnos.length
+            ? primario.data.turnos.map((t) => ({
+                nome: t.nome, service_type_id: null,
+                valor_absoluto: t.valor_absoluto, media: t.media,
+                taxa_ocupacao: t.taxa_ocupacao,
+                recurrence_day: 0, recurrence_time: t.turno === 'manha' ? '09:00' : '19:00',
+              }))
+              // os outros dias entram como estão (turno é divisão do DOMINGO)
+              .concat((primario.data.items || []).filter((i) => Number(i.recurrence_day) !== 0))
+            : agruparPorTurno(primario.data.items || []))
         : (primario.data.items || []);
       return itens.map(i => {
         // Variacao por culto = (atual - media) / media * 100
@@ -681,6 +696,11 @@ export default function DashSemanalAba() {
             {/* ⚠️ Turno junta 09:30 + 11:30 na manhã. É a visão que atravessa a
                 mudança de grade sem degrau — por culto, tirar um culto FAZ a
                 média subir sozinha. */}
+            {visao === 'turno' && isSingle && primario?.data && !primario.data.turnos?.length && (
+              <span className="text-[10px] text-amber-600 font-medium shrink-0">
+                média aproximada
+              </span>
+            )}
             <div className="flex gap-1 shrink-0">
               {[['culto', 'Por culto'], ['turno', 'Por turno']].map(([k, rot]) => (
                 <button
