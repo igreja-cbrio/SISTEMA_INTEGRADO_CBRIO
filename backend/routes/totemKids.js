@@ -32,6 +32,7 @@ const { enviarTexto: enviarTextoWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado, ehNomePlaceholder } = require('../services/membroMatch');
 const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
 const { frequentaNaJanela, avaliarFrequencia } = require('../utils/kidsFrequencia');
+const { agruparMotivos, montarContagens, rotuloMotivo } = require('../utils/kidsSituacao');
 // O Planning Center Check-Ins saiu do código (Marcos 2026-07-20): a frequência
 // do Kids é 100% do nosso totem (kids_checkins). Sobrou só a coluna legada
 // kids_criancas.planning_center_id e a tabela kids_pco_presencas (histórico
@@ -1449,6 +1450,65 @@ router.post('/familia-revisar', authorizeModule('kids', 2), async (req, res) => 
 });
 
 // GET /api/totem-kids/criancas · listagem completa (admin)
+// Contagem das 3 situações, direto no BANCO.
+//
+// ⚠️⚠️ COUNT no banco, NUNCA contagem sobre a lista carregada: `GET /criancas`
+// traz um lado só (`?ativo=`), então contar em JS mostraria "0 inativas" sempre
+// que a tela estivesse na aba de ativos — e zero é o número que ninguém
+// investiga. Os cards têm que dizer a mesma coisa nas duas abas.
+//
+// ⚠️ `head: true` (só o cabeçalho de contagem) NÃO passa pelo cap de 1000 do
+// PostgREST que trunca `select` — é por isso que aqui não há paginação.
+//
+// ⚠️ `.is('deleted_at', null)` nas três: criança soft-deletada não conta.
+// Sem esse filtro os cards diriam 1.142 onde a lista mostra 1.087 (foi o bug
+// medido em 17/08/2026 na própria lista desta tela).
+//
+// ⚠️ Cada contagem falha SOZINHA (`allSettled`): perder as inativas não pode
+// apagar o card de visitantes. O que não vier fica `null` e a tela marca âmbar.
+async function contarSituacoesKids() {
+  const contar = async (aplicar) => {
+    let q = supabase
+      .from('kids_criancas')
+      .select('id', { count: 'exact', head: true })
+      .is('deleted_at', null);
+    q = aplicar(q);
+    const { count, error } = await q;
+    if (error) throw error;
+    return count;
+  };
+
+  const [ativas, visitantes, inativas] = await Promise.allSettled([
+    contar((q) => q.eq('ativo', true)),
+    // ⚠️ `.eq('ativo', true).eq('visitante', true)` — visitante é a EXCEÇÃO;
+    // frequentadora é derivada por subtração logo abaixo. Contar frequentadora
+    // com `.eq('visitante', false)` perderia quem tem a coluna NULA (a maioria
+    // do import antigo), e o card não fecharia com o total de ativas.
+    contar((q) => q.eq('ativo', true).eq('visitante', true)),
+    contar((q) => q.eq('ativo', false)),
+  ]);
+
+  const val = (r) => (r.status === 'fulfilled' ? r.value : undefined);
+  const nAtivas = val(ativas);
+  const nVisit = val(visitantes);
+
+  for (const r of [ativas, visitantes, inativas]) {
+    if (r.status === 'rejected') {
+      console.error('[totemKids] contagem de situação:', r.reason?.message || r.reason);
+    }
+  }
+
+  return montarContagens({
+    // Frequentadora = ativa que NÃO é visitante. Espelha o `c.visitante !== true`
+    // que a tela usa pra filtrar — as duas réguas têm que concordar, senão o
+    // card diz um número e a lista filtrada mostra outro.
+    frequentadoras:
+      typeof nAtivas === 'number' && typeof nVisit === 'number' ? nAtivas - nVisit : undefined,
+    visitantes: nVisit,
+    inativas: val(inativas),
+  });
+}
+
 router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
   try {
     const ativo = req.query.ativo !== 'false';
@@ -1462,7 +1522,7 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
         .from('kids_criancas')
         .select(`
           id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
-          necessidades_especiais, serie, consent_marketing, data_conversao, data_batismo, visitante, visitante_relacao, data_limite, ativo, inativado_em, familia_id,
+          necessidades_especiais, serie, consent_marketing, data_conversao, data_batismo, visitante, visitante_relacao, data_limite, ativo, inativado_em, motivo_inativacao, familia_id,
           familia:mem_familias(id, nome),
           responsaveis:kids_responsaveis(membro:mem_membros(id, nome, telefone))
         `)
@@ -1554,6 +1614,12 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
         checkins_total: avisoFrequencia ? null : f.total,
         ultimo_checkin: avisoFrequencia ? null : f.ultimo,
         frequenta: avisoFrequencia ? null : frequentaNaJanela(f.ultimo),
+        // ⚠️⚠️ O rótulo do motivo é normalizado AQUI, no servidor, e não na
+        // tela: um espelho da régua em `src/lib` divergiria no primeiro ajuste,
+        // e a divergência apareceria como o MESMO motivo partido em dois baldes
+        // no resumo (que é agrupado por este texto). Uma régua, um lugar.
+        // `null` = não há motivo registrado, e a tela DIZ isso.
+        motivo_inativacao_label: rotuloMotivo(c.motivo_inativacao),
       };
     });
 
@@ -1566,6 +1632,14 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
           ...avaliarFrequencia(itens, { coletaDesde }),
           aviso: avisoFrequencia,
         },
+        contagens: await contarSituacoesKids(),
+        // ⚠️ O detalhamento por motivo sai da lista JÁ CARREGADA, e só quando o
+        // lado carregado é o dos INATIVOS. Contar de novo as 3,3 mil linhas
+        // inativas só pra montar o resumo pagaria uma varredura extra em toda
+        // abertura da tela; `null` aqui é "não medido nesta aba", e a tela diz
+        // isso em vez de desenhar um resumo vazio (que se lê como "não há
+        // motivo registrado em ninguém").
+        motivos: ativo === false ? agruparMotivos(data) : null,
       });
     }
     res.json(itens);
