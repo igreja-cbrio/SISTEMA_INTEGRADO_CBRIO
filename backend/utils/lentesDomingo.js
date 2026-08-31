@@ -37,7 +37,29 @@ function tipoVigenteEm(tipo, diaISO) {
 
 // Chave da série de um tipo numa lente. Sem chave própria, o tipo é a própria
 // série (vale pras 3 lentes — 11:30/19:00 aparecem iguais em todas).
+// TURNO do culto de domingo, pelo HORÁRIO. Manhã até 12h, noite a partir dela.
+//
+// ⚠️⚠️ Esta é a lente IMUNE ao corte de 24/08: o 08:30 e o 10:00 encerraram e o
+// 09:30 nasceu, mas os três são MANHÃ — então a série do turno atravessa a
+// mudança de formato sem degrau artificial, ao contrário da visão por culto
+// (onde a média por culto sobe ~33% só porque o denominador caiu).
+//
+// ⚠️ Sem horário devolve null, nunca "manhã": chutar o turno de um tipo de
+// culto sem hora colocaria a frequência dele na série errada, e ninguém
+// perceberia. Quem não tem turno é DECLARADO na saída.
+function turnoDoTipo(tipo) {
+  const h = String((tipo && tipo.recurrence_time) || '').slice(0, 5);
+  if (!/^\d{2}:\d{2}$/.test(h)) return null;
+  return h < '12:00' ? 'manha' : 'noite';
+}
+
+const ROTULO_TURNO = { manha: 'Domingo manhã', noite: 'Domingo noite' };
+
 function chaveDaSerie(tipo, lente) {
+  if (lente === 'turno') {
+    const t = turnoDoTipo(tipo);
+    return t ? `turno:${t}` : 'turno:sem_horario';
+  }
   if (lente === 'continuidade' && tipo.linhagem_key) return `linh:${tipo.linhagem_key}`;
   if (lente === 'consolidacao' && tipo.consolidacao_key) return `cons:${tipo.consolidacao_key}`;
   return `tipo:${tipo.id}`;
@@ -88,7 +110,7 @@ function montarLentes({ tipos, linhas, capacidadeUnitaria, hoje, nSemanas = 16, 
   const tiposOrdenados = [...(tipos || [])].sort((a, b) => hora(a).localeCompare(hora(b)));
 
   const lentes = {};
-  for (const lente of ['separada', 'continuidade', 'consolidacao']) {
+  for (const lente of ['separada', 'continuidade', 'consolidacao', 'turno']) {
     const grupos = new Map();
     for (const t of tiposOrdenados) {
       const c = chaveDaSerie(t, lente);
@@ -98,7 +120,13 @@ function montarLentes({ tipos, linhas, capacidadeUnitaria, hoje, nSemanas = 16, 
 
     const series = [...grupos.entries()].map(([key, membros]) => {
       let label;
-      if (membros.length === 1) label = membros[0].name;
+      if (lente === 'turno') {
+        // ⚠️ O rótulo é o TURNO, nunca a lista de cultos: a série existe pra
+        // atravessar o corte, e "09:30 + 11:30" mudaria de nome no dia em que
+        // a grade mudar de novo.
+        const t = key.slice('turno:'.length);
+        label = ROTULO_TURNO[t] || 'Domingo · sem horário definido';
+      } else if (membros.length === 1) label = membros[0].name;
       else if (lente === 'continuidade') {
         // ordem de vigência: quem começou antes vem primeiro ("10:00 → 09:30")
         const ordenados = [...membros].sort((a, b) =>
@@ -107,7 +135,9 @@ function montarLentes({ tipos, linhas, capacidadeUnitaria, hoje, nSemanas = 16, 
       } else {
         label = membros.map((t) => t.name).join(' + ');
       }
-      return { key, label, hora: hora(membros[0]), cor: membros[0].color || null };
+      // 'sem horário' vai pro FIM (string vazia ordenaria antes de 08:30).
+      const h = lente === 'turno' && key === 'turno:sem_horario' ? '99:99' : hora(membros[0]);
+      return { key, label, hora: h, cor: membros[0].color || null };
     }).sort((a, b) => a.hora.localeCompare(b.hora));
 
     // pontos: soma POR SEMANA dos membros do grupo (é a regra da consolidação;
@@ -162,4 +192,4 @@ function montarLentes({ tipos, linhas, capacidadeUnitaria, hoje, nSemanas = 16, 
   };
 }
 
-module.exports = { CORTE_DOMINGO_0930, tipoVigenteEm, chaveDaSerie, eixoDomingos, montarLentes };
+module.exports = { CORTE_DOMINGO_0930, tipoVigenteEm, chaveDaSerie, turnoDoTipo, ROTULO_TURNO, eixoDomingos, montarLentes };

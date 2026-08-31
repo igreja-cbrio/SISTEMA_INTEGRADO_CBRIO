@@ -11,7 +11,7 @@
 // 3. CONTINUIDADE: 10:00 e 09:30 são UMA série que atravessa o corte.
 import { describe, it, expect } from 'vitest';
 import {
-  montarLentes, tipoVigenteEm, chaveDaSerie, eixoDomingos, CORTE_DOMINGO_0930,
+  montarLentes, tipoVigenteEm, chaveDaSerie, eixoDomingos, CORTE_DOMINGO_0930, turnoDoTipo,
 } from '../../backend/utils/lentesDomingo';
 
 // Grade com o cenário do corte já completo (o tipo novo criado pelo script do
@@ -154,5 +154,90 @@ describe('eixo e marcador do corte', () => {
     expect(chaveDaSerie(T1000, 'continuidade')).toBe('linh:domingo-0930');
     expect(chaveDaSerie(T1000, 'consolidacao')).toBe('cons:domingo-0930');
     expect(chaveDaSerie(T1000, 'separada')).toBe('tipo:b');
+  });
+});
+
+// ============================================================================
+// LENTE DE TURNO (pedido do Matheus, 31/08) — manhã × noite, por semana.
+//
+// Ela existe porque é a ÚNICA visão de domingo imune ao corte de 24/08: o
+// 08:30 e o 10:00 encerraram e o 09:30 nasceu, mas os três são MANHÃ.
+// ============================================================================
+describe('turnoDoTipo', () => {
+  it('manhã vai até 12h; a partir dela é noite', () => {
+    expect(turnoDoTipo(T0830)).toBe('manha');
+    expect(turnoDoTipo(T0930)).toBe('manha');
+    expect(turnoDoTipo(T1000)).toBe('manha');
+    expect(turnoDoTipo(T1130)).toBe('manha');
+    expect(turnoDoTipo(T1900)).toBe('noite');
+  });
+
+  it('⚠️ sem horário NÃO chuta manhã — devolve null', () => {
+    expect(turnoDoTipo({ id: 'x', name: 'Domingo ?', recurrence_time: null })).toBeNull();
+    expect(turnoDoTipo({ id: 'x', name: 'Domingo ?' })).toBeNull();
+    expect(turnoDoTipo({ id: 'x', recurrence_time: 'manhã' })).toBeNull();
+  });
+
+  it('meio-dia em ponto é noite (a fronteira é fechada em cima)', () => {
+    expect(turnoDoTipo({ id: 'x', recurrence_time: '12:00:00' })).toBe('noite');
+    expect(turnoDoTipo({ id: 'x', recurrence_time: '11:59:00' })).toBe('manha');
+  });
+});
+
+describe('lente de turno', () => {
+  const out = montarLentes({
+    tipos: TIPOS, linhas: LINHAS, capacidadeUnitaria: 1050,
+    hoje: '2026-08-31', nSemanas: 6,
+  });
+  const t = out.lentes.turno;
+  const serie = (k: string) => t.series.find((x: any) => x.key === k);
+  const ponto = (sem: number) => t.pontos.find((p: any) => p.semana_iso === sem);
+
+  it('tem exatamente as duas séries, manhã antes de noite', () => {
+    expect(t.series.map((x: any) => x.key)).toEqual(['turno:manha', 'turno:noite']);
+  });
+
+  it('⚠️ o rótulo é o TURNO, não a lista de cultos', () => {
+    expect(serie('turno:manha').label).toBe('Domingo manhã');
+    expect(serie('turno:noite').label).toBe('Domingo noite');
+  });
+
+  it('soma os cultos do turno POR SEMANA', () => {
+    // S33: manhã 300+500+450 · noite 400
+    expect(ponto(33).valores['turno:manha']).toBe(1250);
+    expect(ponto(33).valores['turno:noite']).toBe(400);
+  });
+
+  it('⚠️⚠️ a série do turno ATRAVESSA o corte sem buraco — é o motivo dela existir', () => {
+    // S35 é o 1º domingo do formato novo: 09:30 + 11:30 na manhã, 19:00 à noite.
+    expect(ponto(35).valores['turno:manha']).toBe(1220);
+    expect(ponto(35).valores['turno:noite']).toBe(430);
+    // as três semanas têm dado nos dois turnos, antes e depois do corte
+    for (const sem of [33, 34, 35]) {
+      expect(ponto(sem).valores['turno:manha']).toBeGreaterThan(0);
+      expect(ponto(sem).valores['turno:noite']).toBeGreaterThan(0);
+    }
+  });
+
+  it('tipo SEM horário vira série própria, declarada, e cai no fim', () => {
+    const semHora = { id: 'z', name: 'Domingo sem hora', recurrence_time: null, is_active: true };
+    const o = montarLentes({
+      tipos: [...TIPOS, semHora],
+      linhas: [...LINHAS, { ano_iso: 2026, semana_iso: 35, service_type_id: 'z', valor: 90 }],
+      capacidadeUnitaria: 1050, hoje: '2026-08-31', nSemanas: 6,
+    });
+    const keys = o.lentes.turno.series.map((x: any) => x.key);
+    expect(keys[keys.length - 1]).toBe('turno:sem_horario');
+    expect(o.lentes.turno.series.find((x: any) => x.key === 'turno:sem_horario').label)
+      .toContain('sem horário');
+    // e o valor dele NÃO foi somado na manhã
+    const p35 = o.lentes.turno.pontos.find((x: any) => x.semana_iso === 35);
+    expect(p35.valores['turno:manha']).toBe(1220);
+    expect(p35.valores['turno:sem_horario']).toBe(90);
+  });
+
+  it('as outras três lentes seguem intactas', () => {
+    expect(Object.keys(out.lentes).sort()).toEqual(['consolidacao', 'continuidade', 'separada', 'turno']);
+    expect(out.lentes.separada.series.length).toBe(5);
   });
 });

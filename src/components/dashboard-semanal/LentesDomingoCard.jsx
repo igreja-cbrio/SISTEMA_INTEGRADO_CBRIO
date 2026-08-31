@@ -9,7 +9,7 @@
 // (GET /dashboard-semanal/lentes-domingo). Sem visibilidade, o card nem
 // renderiza — é a "página teste" combinada com o Marcos em 13/08.
 //
-// Mostra as 3 lentes aprovadas (separada · continuidade · consolidação), a
+// Mostra as 4 lentes (separada · continuidade · consolidação · turno), a
 // ocupação sobre lugares OFERECIDOS (1050 × cultos vigentes no domingo) e a
 // tabela de vigência/chaves dos tipos — os dados do Lote 3 ficam visíveis aqui.
 import { useState } from 'react';
@@ -28,6 +28,11 @@ const LENTES = [
   { key: 'separada', rotulo: 'Separada', hint: 'Dado cru por culto — o 09:30 nasce como série nova e o 10:00 encerra. É a lente padrão.' },
   { key: 'continuidade', rotulo: 'Continuidade', hint: 'O 10:00 vira o 09:30: a mesma linha atravessa o corte (chave de linhagem).' },
   { key: 'consolidacao', rotulo: 'Consolidação', hint: '08:30 + 10:00 SOMADOS por semana no passado, contra o 09:30 novo — compare o bloco, não o culto.' },
+  // ⚠️ A única lente IMUNE ao corte: 08:30, 09:30, 10:00 e 11:30 são todos
+  // MANHÃ, então a linha atravessa a mudança de formato sem degrau artificial —
+  // ao contrário da visão por culto, onde a média sobe ~33% só porque o
+  // denominador caiu de 4 cultos pra 3.
+  { key: 'turno', rotulo: 'Turno', hint: 'Domingo manhã (até 12h) × Domingo noite, somados por semana. É a única lente que atravessa o corte de 24/08 sem degrau: os cultos da manhã mudaram, o turno não.' },
 ];
 
 function fmtVigencia(t) {
