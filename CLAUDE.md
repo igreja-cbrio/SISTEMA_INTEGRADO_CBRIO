@@ -14397,6 +14397,64 @@ segunda como resposta da primeira.
 
 ⇒ **Uma pergunta por chamada.** Se precisar de duas, duas chamadas.
 
+## ⚠️⚠️ CAPACIDADE DO ESPAÇO virou DADO, não regex no nome (2026-08-31 · migration `vol_service_types_capacidade_lugares`)
+
+Pedido do Matheus: *"o bridge acontece no espaço cbrio que tem capacidade para
+100 pessoas. preciso que o cálculo de taxa de ocupação dele seja diferente dos
+outros."*
+
+⚠️⚠️ **O NÚMERO JÁ ESTAVA CERTO — o problema era a FONTE.** `CAPACIDADE_BRIDGE
+= 100` existia desde **01/07** e valia por **`/bridge/i` no NOME do culto**,
+duplicado no backend (`dashboardSemanal.js`) e no front (`DashSemanalAba.jsx`).
+Renomear o tipo de culto — coisa que a equipe faz **pela tela, sem PR** — fazia
+a ocupação do Bridge voltar **em silêncio** para 1050: 46 pessoas apareceriam
+como **4,4%** em vez de **46%**, e o número só pareceria "baixo". Nada
+denunciaria.
+
+Agora é **`vol_service_types.capacidade_lugares`**, no mesmo lugar onde o tipo
+de culto já é configurado. **NULL = templo** (1050 segue como constante); só
+quem foge do padrão precisa de linha. Estado: Bridge = 100, todo o resto NULL.
+
+### A régua: `backend/utils/capacidadeCulto.js`
+
+⚠️⚠️ **`undefined` e `null` são coisas DIFERENTES, e é o coração da régua:**
+
+| `capacidade_lugares` | significa | resultado |
+|---|---|---|
+| `100` | o tipo declarou | **100** |
+| `null` | o tipo usa o padrão (decisão explícita) | 1050 |
+| **ausente** (a consulta não pediu a coluna) | não dá pra saber | **cai no regex antigo** |
+
+O regex sobrevive **só** no terceiro caso — é rede para bundle velho e consulta
+que esqueceu a coluna. Fazer `null` cair nele também **desfaria a decisão
+explícita** "este culto passou a ser no templo", e há mutante travando os dois
+sentidos.
+
+- ⚠️ **Capacidade ≤ 0 ou não-numérica NÃO vira capacidade**: dividir por zero dá
+  `Infinity`, que na tela vira número absurdo. Mutante mata (5 vermelhos).
+- ⚠️ **`capacidadeSomada([])` devolve 0**, e quem divide TEM que tratar — é o
+  denominador de "lugares oferecidos", onde a lista vazia é possível.
+
+### A tela passou a MOSTRAR a base
+
+Era isto que tornava o número ambíguo (e originou a pergunta): duas barras de
+46% podem significar 46 de 100 ou 483 de 1050. O tooltip da taxa agora diz
+**"46% (46 de 100 lugares)"**, e o gauge já dizia "de N lugares" — agora com o
+N certo, vindo do banco.
+
+⚠️ **O que NÃO mudou, de propósito:** com o filtro em "todos", o gauge segue
+dividindo a soma da semana por 1050. É conceitualmente frouxo (soma de vários
+cultos ÷ capacidade de um), mas mexer nisso **move número publicado** e é
+decisão de quem lê o painel — não efeito colateral deste conserto.
+
+⚠️ **Cuidado ao mexer:** `dashboardSemanal.js` está sendo tocado por outra
+frente (visão por TURNO, #2789/#2793). Aqui só a capacidade mudou.
+
+Testes: `src/test/capacidadeCulto.test.ts` (9 casos · no gate). **4 mutantes
+RODADOS e mortos**: regex voltando a vencer a coluna → 1 · `null` caindo no
+regex → 1 · aceitar capacidade ≤ 0 → 5 · soma de lista nula devolvendo o padrão
+→ 1.
+
 ## ⚠️ KIDS · "quantas crianças novas?" no módulo (2026-08-31 · SEM migration)
 
 O Matheus perguntou quantos cadastros de criança saíram no domingo e, com o

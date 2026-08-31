@@ -23,12 +23,12 @@ const { montarLentes, CORTE_DOMINGO_0930 } = require('../utils/lentesDomingo');
 
 router.use(authenticate);
 
-const CAPACIDADE_TEMPLO = 1050;
-// O Bridge acontece em outro espaço da igreja, com capacidade de 100 lugares.
-// A taxa de ocupação dele usa essa base (não a do templo).
-const CAPACIDADE_BRIDGE = 100;
-const ehBridge = (nome) => /bridge/i.test(nome || '');
-const capacidadeCulto = (nome) => (ehBridge(nome) ? CAPACIDADE_BRIDGE : CAPACIDADE_TEMPLO);
+// ⚠️⚠️ A capacidade agora é DADO (`vol_service_types.capacidade_lugares`), não
+// regex no nome do culto (31/08/2026). O Bridge acontece no Espaço CBRio, com
+// 100 lugares; renomear o tipo pela tela fazia a ocupação dele voltar em
+// silêncio para 1050 — 46 pessoas viravam 4,4% em vez de 46%.
+const { capacidadeDoCulto, CAPACIDADE_TEMPLO } = require('../utils/capacidadeCulto');
+const capacidadeCulto = (tipo) => capacidadeDoCulto(tipo);
 
 const INDICADORES = {
   frequencia:        { coluna: 'frequencia',        rotulo: 'Frequência',        usa_ocupacao: true },
@@ -106,7 +106,7 @@ router.get('/cultos', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('vol_service_types')
-      .select('id, name, recurrence_day, recurrence_time, color, is_active')
+      .select('id, name, recurrence_day, recurrence_time, color, is_active, capacidade_lugares')
       .order('recurrence_day', { ascending: true })
       .order('recurrence_time', { ascending: true });
     if (error) throw error;
@@ -322,6 +322,16 @@ router.get('/semanal', async (req, res) => {
       histPorTipo.set(r.service_type_id, arr);
     }
 
+    // Capacidade por tipo de culto — uma consulta, usada pelo item e pelo
+    // gauge. ⚠️ Falha aqui NÃO derruba o gráfico: cai no padrão do templo
+    // (o mapa fica vazio e `capacidadeDoCulto` usa o fallback).
+    const capPorTipo = new Map();
+    try {
+      const { data: capRows } = await supabase.from('vol_service_types')
+        .select('id, name, capacidade_lugares');
+      (capRows || []).forEach((t) => capPorTipo.set(t.id, t));
+    } catch (e) { console.warn('[dashboardSemanal] capacidades:', e.message); }
+
     const items = (semanaData || []).map(r => {
       const valores = histPorTipo.get(r.service_type_id) || [];
       const media = valores.length
@@ -337,8 +347,11 @@ router.get('/semanal', async (req, res) => {
         valor_absoluto,
         media,
         total_presencial: r.total_presencial,
+        // ⚠️ A capacidade vem do TIPO (carregado à parte): a view não tem a
+        // coluna, e passar só o nome traria de volta o regex.
+        capacidade: capacidadeCulto(capPorTipo.get(r.service_type_id) || { service_type_name: r.service_type_name }),
         taxa_ocupacao: indDef.usa_ocupacao && valor_absoluto > 0
-          ? Math.round((valor_absoluto / capacidadeCulto(r.service_type_name)) * 1000) / 10
+          ? Math.round((valor_absoluto / capacidadeCulto(capPorTipo.get(r.service_type_id) || { service_type_name: r.service_type_name })) * 1000) / 10
           : null,
       };
     });
@@ -832,13 +845,13 @@ router.get('/culto/:serviceTypeId/historico', async (req, res) => {
 
     const { data: st, error: errSt } = await supabase
       .from('vol_service_types')
-      .select('id, name, color, recurrence_day, recurrence_time, has_kids')
+      .select('id, name, color, recurrence_day, recurrence_time, has_kids, capacidade_lugares')
       .eq('id', serviceTypeId)
       .maybeSingle();
     if (errSt) throw errSt;
     if (!st) return res.status(404).json({ error: 'Culto não encontrado' });
 
-    const capacidade = capacidadeCulto(st.name);
+    const capacidade = capacidadeCulto(st);
     const base = {
       ano,
       indicador: indicadorKey,
