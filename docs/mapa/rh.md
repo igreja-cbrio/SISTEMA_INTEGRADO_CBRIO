@@ -115,6 +115,7 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 5 | padrão)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/cronAuth.js`
+- `backend/utils/semFalhar.js`
 - `backend/utils/supabase.js`
 
 **Serviços**

@@ -41,6 +41,7 @@ Guard: `authorizeModule('conversas', 1 | 2 | 3)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/sanitize.js`
+- `backend/utils/semFalhar.js`
 - `backend/utils/supabase.js`
 
 **Serviços**
