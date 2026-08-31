@@ -115,6 +115,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 
 **Serviços**
 
+- `backend/services/campanhaArrecadacao.js`
 - `backend/services/marketingGenerosidade.js`
 - `backend/services/marketingSolicitante.js`
 - `backend/services/notificar.js`
