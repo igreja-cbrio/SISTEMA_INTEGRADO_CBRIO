@@ -14397,6 +14397,64 @@ segunda como resposta da primeira.
 
 ⇒ **Uma pergunta por chamada.** Se precisar de duas, duas chamadas.
 
+## ⚠️ KIDS · "quantas crianças novas?" no módulo (2026-08-31 · SEM migration)
+
+O Matheus perguntou quantos cadastros de criança saíram no domingo e, com o
+número na mão, pediu a funcionalidade dentro do módulo. Medido em 31/08:
+
+| domingo | cadastros | visitantes | com responsável |
+|---|---|---|---|
+| 30/08 | **28** | 18 | 28/28 |
+| 23/08 | 14 | — | — |
+
+Card **"Cadastros de crianças"** no topo da Gestão do Kids (`/kids`), antes dos
+vínculos: é a leitura de segunda-feira — o que o domingo trouxe. Mostra **ontem**
+em destaque, hoje, o total do período (7/30/90 dias), a quebra
+visitante × membro, a série por dia e as mais recentes.
+
+### ⚠️⚠️ O dia é BRT, e aqui isso não é detalhe
+
+`kids_criancas.created_at` é timestamptz e o cadastro acontece **no culto** —
+inclusive o da NOITE, que passa das 21h, quando o dia UTC **já virou**. Agrupar
+em UTC jogaria as crianças cadastradas no fim do culto de domingo para a
+segunda, e o número do domingo (o único que a equipe olha) sairia menor.
+
+⚠️⚠️ **E o filtro tem a mesma armadilha, um nível abaixo**: `created_at >=
+'2026-08-30'` é meia-noite **UTC**, ou seja pega **3 horas do dia 29 em BRT** —
+justamente a faixa do culto de domingo à noite anterior. `limitesUtc` converte
+os dias BRT para o instante certo (`03:00Z` a `03:00Z` do dia seguinte). Sem
+isso, o número de um domingo vaza para o outro. Mutante trava os dois.
+
+### As três coisas que o card DECLARA em vez de esconder
+
+- ⚠️ **`visitante` é nullable e `null` NÃO é membro** — vira `sem marcação`, um
+  terceiro estado. Contar como membro inflaria o número de gente nova.
+- ⚠️ **Apagadas saem do total e viram contagem própria.** Cadastro feito e
+  desfeito no mesmo domingo é o sinal de que alguém errou e corrigiu; esconder
+  faz a equipe procurar uma criança que "foi cadastrada" e não está na lista.
+- ⚠️ **Sem responsável aparece em âmbar**: criança sem responsável **não pode
+  ser retirada por ninguém** no domingo seguinte. Era 0 de 28 em 30/08, e é
+  justamente por isso que o alerta tem valor quando aparecer.
+
+⚠️ **Dia sem cadastro é barra ZERADA, não some da série**: o padrão que o
+gráfico existe pra mostrar é que a entrada acontece no DOMINGO, e uma série só
+com os dias que tiveram cadastro esconde exatamente isso.
+
+⚠️ **Quem conta é o SERVIDOR** (`GET /totem-kids/cadastros-novos?dias=|ano=`,
+nível 1, reusando `resolverJanelaPeriodo`). Recontar na tela daria uma segunda
+régua para o mesmo número — e a divergência apareceria como "o card diz 28 e a
+lista mostra 27". A leitura é **paginada** (o cap de 1000 trunca em silêncio) e
+erro responde **500 com motivo, nunca zero**.
+
+⚠️ `created_by` NULO é o caso das portas públicas/app (gravam com service_role):
+2 dos 28 de 30/08. Não é erro — a tela diz "porta pública" em vez de deixar
+vazio.
+
+Teste: `src/test/cadastrosKids.test.ts` (13 casos · no gate). **5 mutantes
+RODADOS e mortos**: dia em UTC → 1 · limites sem o deslocamento BRT → 2 · dia
+vazio sumindo da série → 3 · `visitante` nulo virando membro → 1 · apagada
+contando no total → 1.
+
 ## ⚠️ INBOX · "recebo o link por aqui?" → a sugestão manda falar com a liderança (2026-08-31 · SEM migration)
 
 Pedido do Matheus, com o print da **Ana Paula** (grupo ONLINE · Finanças na

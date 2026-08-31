@@ -16,6 +16,7 @@ import {
   ArrowRight, Loader2, UserPlus,
 } from 'lucide-react';
 import PainelArea from './PainelArea';
+import CadastrosNovosCard from '../../components/kids/CadastrosNovosCard';
 
 const GESTAO = [
   { titulo: 'Frequência', desc: 'Check-ins das crianças por culto (totem)', icon: BarChart3, path: '/ministerial/totem-kids/frequencia', cor: '#0ea5e9' },
@@ -56,6 +57,11 @@ function GestaoKids() {
           )}
         </div>
       </div>
+
+      {/* Quantas crianças novas entraram (31/08/2026 · pedido do Matheus).
+          Fica ANTES dos vínculos porque é a leitura de segunda-feira: o que o
+          domingo trouxe. */}
+      <CadastrosNovosCard />
 
       {/* Novas solicitações de vínculo (veio do hub) */}
       <Card className="p-4">

@@ -20,6 +20,8 @@ const kidsVisitante = require('../utils/kidsVisitante');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
+const { resolverJanelaPeriodo, rotuloJanela } = require('../utils/janelaPeriodo');
+const { resumirCadastros, serieDiaria, limitesUtc, diaBRT } = require('../utils/cadastrosKids');
 const { supabase } = require('../utils/supabase');
 const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
@@ -2352,6 +2354,94 @@ router.delete('/apresentacoes/:id', authorizeModule('kids', 4), async (req, res)
 
 // GET /dashboard · resumo do Kids (cards) + solicitações de vínculo pendentes +
 // aniversariantes da semana. Alimenta o hub/dashboard do módulo.
+
+// ════════════════════════════════════════════════════════════════════════════
+//  GET /api/totem-kids/cadastros-novos?dias=|ano=  — "quantas crianças novas?"
+//
+//  Pedido do Matheus (31/08/2026): ele perguntou quantos cadastros saíram no
+//  domingo e pediu a funcionalidade dentro do módulo. Medido no dia: 28 no
+//  domingo 30/08 (18 visitantes) contra 14 no domingo anterior.
+//
+//  ⚠️⚠️ O dia é BRT. `created_at` é timestamptz e o cadastro acontece no culto
+//  — inclusive o da NOITE, que passa das 21h, quando o dia UTC já virou. A
+//  conversão dos limites está em `utils/cadastrosKids.limitesUtc`: filtrar pela
+//  data crua pegaria 3h do dia anterior, e o número de um domingo vazaria para
+//  o outro.
+//
+//  ⚠️ Nível 1 — o mesmo que abre o módulo. É contagem operacional, e a lista
+//  traz só o que a tela de Crianças já mostra pra quem tem esse nível.
+// ════════════════════════════════════════════════════════════════════════════
+router.get('/cadastros-novos', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const janela = resolverJanelaPeriodo({
+      dias: req.query.dias, ano: req.query.ano,
+      diasValidos: [7, 30, 90, 365], diasPadrao: 30,
+    });
+    // Janela móvel não tem fim: vai até HOJE (em BRT).
+    const fimBRT = janela.fim || diaBRT(new Date().toISOString());
+    const lim = limitesUtc(janela.inicio, fimBRT);
+    if (!lim) return res.status(400).json({ error: 'Período inválido' });
+
+    // ⚠️ Paginado: o cap de 1000 do PostgREST trunca em silêncio, e "365 dias"
+    // passa disso com folga numa base que cadastra ~30 por domingo.
+    const linhas = await fetchCriancasPaginado(
+      'id, nome, data_nascimento, visitante, created_at, created_by, deleted_at',
+      (q) => q.gte('created_at', lim.desde).lt('created_at', lim.ate),
+    );
+
+    // Responsável: a pergunta que importa é "ficou completo?". Uma criança sem
+    // responsável não pode ser retirada por ninguém no domingo seguinte.
+    const ids = linhas.map((l) => l.id);
+    const comResp = new Set();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data } = await supabase.from('kids_responsaveis')
+        .select('crianca_id').in('crianca_id', ids.slice(i, i + 200));
+      (data || []).forEach((r) => comResp.add(r.crianca_id));
+    }
+    const enriquecidas = linhas.map((l) => ({ ...l, tem_responsavel: comResp.has(l.id) }));
+
+    // Quem cadastrou (nome do profile). ⚠️ `created_by` NULO é o caso das
+    // portas públicas/app, que gravam com service_role — não é erro, e a tela
+    // diz "porta pública" em vez de deixar o campo vazio.
+    const autores = [...new Set(enriquecidas.map((l) => l.created_by).filter(Boolean))];
+    const nomePorAutor = {};
+    if (autores.length) {
+      const { data } = await supabase.from('profiles').select('id, name').in('id', autores.slice(0, 200));
+      (data || []).forEach((p) => { nomePorAutor[p.id] = p.name; });
+    }
+
+    const resumo = resumirCadastros(enriquecidas);
+    const serie = serieDiaria(enriquecidas, janela.inicio, fimBRT);
+
+    // ⚠️ A lista vem das mais RECENTES e é capada — e o teto é DECLARADO, senão
+    // "50" se lê como "foram só 50".
+    const TETO = 100;
+    const vivas = enriquecidas.filter((l) => !l.deleted_at)
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+
+    res.json({
+      janela: { inicio: janela.inicio, fim: fimBRT, dias: janela.dias, ano: janela.ano, rotulo: rotuloJanela(janela) },
+      resumo,
+      serie,
+      // "ontem" e "hoje" prontos: é o que a pessoa olha na segunda de manhã.
+      hoje: serie.length ? serie[serie.length - 1].total : 0,
+      ontem: serie.length > 1 ? serie[serie.length - 2].total : 0,
+      criancas: vivas.slice(0, TETO).map((l) => ({
+        id: l.id, nome: l.nome, data_nascimento: l.data_nascimento,
+        visitante: l.visitante, dia: diaBRT(l.created_at),
+        criado_por: l.created_by ? (nomePorAutor[l.created_by] || 'equipe') : null,
+        tem_responsavel: l.tem_responsavel,
+      })),
+      truncado: vivas.length > TETO, mostrando: Math.min(vivas.length, TETO),
+    });
+  } catch (e) {
+    // ⚠️ 500 com motivo, nunca zero: "ninguém foi cadastrado" e "a consulta
+    // falhou" levam a decisões opostas.
+    console.error('[kids] cadastros-novos:', e.message);
+    res.status(500).json({ error: 'Erro ao contar os cadastros', detalhe: e.message });
+  }
+});
+
 router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
   try {
     const corteBat = new Date(); corteBat.setFullYear(corteBat.getFullYear() - 13);
