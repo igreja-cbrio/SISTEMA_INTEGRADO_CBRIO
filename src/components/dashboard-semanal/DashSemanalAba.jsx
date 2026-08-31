@@ -147,12 +147,17 @@ export default function DashSemanalAba() {
   const isLoading = results.some(r => r.isLoading);
   const isFetching = results.some(r => r.isFetching);
 
-  // Capacidade de assentos p/ o gauge geral. O Bridge acontece em outro espaço
-  // (100 lugares); quando o filtro isola o Bridge, a ocupação usa essa base.
+  // Capacidade de assentos p/ o gauge geral.
+  // ⚠️⚠️ Vem do BANCO (`vol_service_types.capacidade_lugares`), não mais de
+  // regex no nome (31/08/2026): o Bridge acontece no Espaço CBRio, com 100
+  // lugares, e renomear o tipo pela tela fazia a ocupação dele voltar em
+  // silêncio pra 1050 — 46 pessoas viravam 4,4% em vez de 46%.
+  // ⚠️ `?? 1050` cobre o tipo sem capacidade declarada (o templo) E o backend
+  // antigo, que não manda o campo.
   const capacidadeFiltro = (() => {
     if (culto === 'todos') return 1050;
     const c = (cultos || []).find(x => x.id === culto);
-    return c && /bridge/i.test(c.name || '') ? 100 : 1050;
+    return Number(c?.capacidade_lugares) > 0 ? Number(c.capacidade_lugares) : 1050;
   })();
 
   // Recalcula resumo client-side aplicando o filtro `culto`
@@ -259,6 +264,10 @@ export default function DashSemanalAba() {
           valor_absoluto: i.valor_absoluto,
           media: i.media,
           taxa: i.taxa_ocupacao,
+          // ⚠️ A BASE da taxa viaja junto: sem ela, 46% e 4% saem iguais na
+          // tela e ninguém consegue conferir de onde o número veio. Foi
+          // exatamente essa dúvida que originou a mudança (31/08).
+          capacidade: i.capacidade,
           variacao,
           _order: ordemCulto(i.recurrence_day, i.recurrence_time),
         };
@@ -757,10 +766,18 @@ export default function DashSemanalAba() {
                     <Tooltip
                       cursor={{ fill: 'rgba(0,179,157,0.06)' }}
                       contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                      formatter={(v, name) => {
-                        if (name === 'Taxa de ocupação' || name === 'Variação por culto') {
-                          return [v != null ? `${v}%` : '—', name];
+                      formatter={(v, name, item) => {
+                        if (name === 'Taxa de ocupação') {
+                          if (v == null) return ['—', name];
+                          // ⚠️ A base vai JUNTO: o Bridge é no Espaço CBRio
+                          // (100 lugares) e os cultos do templo em 1050 — sem
+                          // dizer isso, duas barras de 46% significam coisas
+                          // muito diferentes.
+                          const cap = item?.payload?.capacidade;
+                          const abs = item?.payload?.valor_absoluto;
+                          return [cap ? `${v}% (${Number(abs).toLocaleString('pt-BR')} de ${Number(cap).toLocaleString('pt-BR')} lugares)` : `${v}%`, name];
                         }
+                        if (name === 'Variação por culto') return [v != null ? `${v}%` : '—', name];
                         return [Number(v).toLocaleString('pt-BR'), name];
                       }}
                     />
