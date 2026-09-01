@@ -113,4 +113,106 @@ function chaveExataNome(nome) {
   return String(nome == null ? '' : nome).replace(/\s+/g, ' ').trim();
 }
 
-module.exports = { chaveNome, chaveExataNome, chaveDaLinha, rotuloDaEquipe, areaDaLinha };
+/**
+ * Indexa as equipes para o fallback por nome.
+ *
+ * ⚠️⚠️ SÓ EQUIPE ATIVA ENTRA. É a guarda que, sozinha, teria evitado o
+ * incidente de 01/09/2026 (ver `destinoDaOrfa`): as 116 equipes-espelho do PCO
+ * estão `is_active = false` porque alguém as APOSENTOU em 16/08, e religar
+ * escala nelas desfaz essa decisão sem ninguém perceber — o sintoma é a matriz
+ * mostrando tudo sob "Sem área", já que só as 13 vivas têm área preenchida.
+ *
+ * ⚠️ Ela mora AQUI, e não no serviço, de propósito: guarda em código impuro é
+ * guarda que mutante nenhum alcança, e foi assim que ela passou sem teste na
+ * primeira versão.
+ *
+ * ⚠️ `is_active` só exclui quando é EXATAMENTE `false`: a coluna pode vir nula
+ * em equipe antiga, e tratar nulo como aposentada esconderia equipe viva.
+ */
+function indexarEquipesAtivas(equipes) {
+  const porExatoAtivas = new Map();
+  const porNomeAtivas = new Map();
+  for (const t of equipes || []) {
+    if (!t || t.is_active === false) continue;
+    const ex = chaveExataNome(t.name);
+    if (ex) {
+      if (!porExatoAtivas.has(ex)) porExatoAtivas.set(ex, []);
+      porExatoAtivas.get(ex).push(t.id);
+    }
+    const k = chaveNome(t.name);
+    if (!k) continue;
+    if (!porNomeAtivas.has(k)) porNomeAtivas.set(k, []);
+    porNomeAtivas.get(k).push(t.id);
+  }
+  return { porExatoAtivas, porNomeAtivas };
+}
+
+/**
+ * Indexa `vol_pco_mapa` (a decisão humana de 16/08) por nome normalizado.
+ * ⚠️ Linha `ignorar` ou sem destino NÃO entra: é o veto de quem cadastrou.
+ */
+function indexarMapaPco(linhas) {
+  const mapa = new Map();
+  for (const m of linhas || []) {
+    if (!m || !m.team_id || m.ignorar) continue;
+    const k = chaveNome(m.pco_nome);
+    if (k) mapa.set(k, { team_id: m.team_id, position_id: m.position_id || null });
+  }
+  return mapa;
+}
+
+/**
+ * Para ONDE vai uma escala órfã do Planning Center.
+ *
+ * ⚠️⚠️ INCIDENTE DE 01/09/2026 — a lição que esta função existe pra fixar.
+ * A 1ª versão religava por NOME contra `vol_teams`, e mandou **623 escalas
+ * para equipes-espelho DESATIVADAS**: o sync do PCO criava uma equipe por
+ * TIME do PCO (129 equipes) e o remapeamento de 16/08 (PR #2518) aposentou
+ * essas 116, porque "time do PCO" é a nossa FUNÇÃO, não a nossa EQUIPE. Casar
+ * por nome reencontra exatamente o artefato que foi aposentado — e o sintoma é
+ * a matriz mostrando tudo sob "Sem área", porque só as 13 equipes VIVAS têm
+ * área preenchida.
+ *
+ * ⇒ A fonte de verdade é **`vol_pco_mapa`** (`pco_nome` → `team_id` +
+ * `position_id`). Medido: ela resolve 623 de 623, todas para equipe ATIVA.
+ *
+ * ⚠️ E a guarda que sozinha teria evitado o estrago: **NUNCA ligar em equipe
+ * inativa.** Aposentar uma equipe é decisão humana; religar escala nela desfaz
+ * a decisão sem ninguém perceber.
+ *
+ * @param orfa   `{ team_name, position_id }` da escala
+ * @param fontes `{ mapa, porExatoAtivas, porNomeAtivas }` — Maps já indexados
+ * @returns `{ team_id, position_id, via }` ou `{ via: 'nenhum'|'ambiguo' }`
+ */
+function destinoDaOrfa(orfa, fontes) {
+  const { team_name: teamName, position_id: posAtual } = orfa || {};
+  const { mapa, porExatoAtivas, porNomeAtivas } = fontes || {};
+  const k = chaveNome(teamName);
+  // ⚠️ Guarda DEFENSIVA e declaradamente NÃO OBSERVÁVEL: `indexarEquipesAtivas`
+  // e `indexarMapaPco` já recusam chave vazia, então sem ela o resultado sairia
+  // igual por acidente. Fica pela intenção — não afirmo cobertura que não existe.
+  if (!k) return { via: 'nenhum', motivo: 'sem nome de equipe' };
+
+  // 1 · o MAPA manda (é a decisão humana registrada em 16/08).
+  const doMapa = mapa && mapa.get(k);
+  if (doMapa) {
+    return {
+      team_id: doMapa.team_id,
+      // ⚠️ Só PREENCHE função vazia — nunca sobrescreve a que alguém definiu.
+      position_id: posAtual || doMapa.position_id || null,
+      via: 'mapa_pco',
+    };
+  }
+
+  // 2 · Fallback por nome, e SÓ entre equipes ATIVAS.
+  const ex = porExatoAtivas && porExatoAtivas.get(chaveExataNome(teamName));
+  const cand = (ex && ex.length === 1) ? ex : (porNomeAtivas && porNomeAtivas.get(k));
+  if (!cand || !cand.length) return { via: 'nenhum', motivo: 'fora do mapa e sem equipe ativa de mesmo nome' };
+  if (cand.length > 1) return { via: 'ambiguo', motivo: 'duas equipes ativas com o mesmo nome' };
+  return { team_id: cand[0], position_id: posAtual || null, via: 'nome_ativa' };
+}
+
+module.exports = {
+  chaveNome, chaveExataNome, chaveDaLinha, rotuloDaEquipe, areaDaLinha,
+  indexarEquipesAtivas, indexarMapaPco, destinoDaOrfa,
+};

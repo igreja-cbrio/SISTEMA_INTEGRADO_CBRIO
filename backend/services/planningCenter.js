@@ -11,7 +11,10 @@
  */
 
 const { chavePco } = require('../utils/pcoChave');
-const { chaveNome: chaveNomeEquipe, chaveExataNome } = require('../utils/escalaLinhaEquipe');
+const {
+  chaveNome: chaveNomeEquipe, chaveExataNome, destinoDaOrfa,
+  indexarEquipesAtivas, indexarMapaPco,
+} = require('../utils/escalaLinhaEquipe');
 
 const STATUS_PRIORITY = { confirmed: 4, scheduled: 3, pending: 2, unknown: 1, declined: 0 };
 const STATUS_MAP = { C: 'confirmed', U: 'pending', D: 'declined', S: 'scheduled', P: 'pending', N: 'pending' };
@@ -514,63 +517,50 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
 // escala. Erro é logado — órfã silenciosa foi exatamente o que durou meses.
 async function resolverTeamIdDasEscalas(supabase) {
   try {
-    const { data: equipes, error: eqErr } = await supabase
-      .from('vol_teams').select('id, name');
-    if (eqErr) throw eqErr;
+    // ⚠️⚠️ O MAPA é a fonte de verdade, não o nome da equipe. Ver o incidente
+    // de 01/09/2026 no cabeçalho de `destinoDaOrfa`: casar por nome manda a
+    // escala para a equipe-espelho APOSENTADA do PCO.
+    const { data: linhasMapa, error: mErr } = await supabase
+      .from('vol_pco_mapa').select('pco_nome, team_id, position_id, ignorar');
+    if (mErr) throw mErr;
+    const mapa = indexarMapaPco(linhasMapa);
 
-    // ⚠️⚠️ DOIS índices, e a ORDEM importa: EXATO primeiro, normalizado só
-    // como desempate. A base tem 7 pares de equipe que diferem apenas por
-    // acento/caixa ("Cameras" × "Câmeras", "Liderança" × "LIDERANÇA"…), então
-    // casar só pelo normalizado torna esses nomes AMBÍGUOS e deixa de religar
-    // escala que o PCO identificou sem dúvida — medido: 555 religáveis pelo
-    // normalizado contra 681 com o exato na frente.
-    const porExato = new Map();
-    const porNome = new Map();
-    for (const t of equipes || []) {
-      const ex = chaveExataNome(t.name);
-      if (ex) {
-        if (!porExato.has(ex)) porExato.set(ex, []);
-        porExato.get(ex).push(t.id);
-      }
-      const k = chaveNomeEquipe(t.name);
-      if (!k) continue;
-      if (!porNome.has(k)) porNome.set(k, []);
-      porNome.get(k).push(t.id);
-    }
-    if (!porNome.size) return { religadas: 0 };
+    // ⚠️ Fallback SÓ com equipe ATIVA — equipe aposentada nunca recebe escala.
+    const { data: equipes, error: eqErr } = await supabase
+      .from('vol_teams').select('id, name, is_active');
+    if (eqErr) throw eqErr;
+    const { porExatoAtivas, porNomeAtivas } = indexarEquipesAtivas(equipes);
+    if (!mapa.size && !porNomeAtivas.size) return { religadas: 0 };
 
     // Só as órfãs — paginado, porque `vol_schedules` passa de 6 mil linhas.
     const orfas = [];
     for (let off = 0; ; off += 1000) {
       const { data, error } = await supabase.from('vol_schedules')
-        .select('id, team_name').is('team_id', null).order('id').range(off, off + 999);
+        .select('id, team_name, position_id').is('team_id', null).order('id').range(off, off + 999);
       if (error) throw error;
       orfas.push(...(data || []));
       if (!data || data.length < 1000) break;
     }
 
-    const porEquipe = new Map();
-    let ambiguas = 0; let semPar = 0;
-    for (const s of orfas) {
-      const k = chaveNomeEquipe(s.team_name);
-      if (!k) continue;
-      // Exato primeiro; normalizado só quando o exato não resolve sozinho.
-      const exato = porExato.get(chaveExataNome(s.team_name));
-      const cand = (exato && exato.length === 1) ? exato : porNome.get(k);
-      if (!cand) { semPar += 1; continue; }
-      // ⚠️ AMBÍGUO NÃO É RELIGADO: escolher uma das duas equipes com o mesmo
-      // nome poria a pessoa na equipe errada, e ninguém audita o que já está
-      // preenchido. Fica nulo e a tela mostra "não vinculada".
-      if (cand.length > 1) { ambiguas += 1; continue; }
-      if (!porEquipe.has(cand[0])) porEquipe.set(cand[0], []);
-      porEquipe.get(cand[0]).push(s.id);
+    // Agrupa por DESTINO (equipe + função) pra atualizar em lote.
+    const porDestino = new Map();
+    let ambiguas = 0; let semPar = 0; const vias = { mapa_pco: 0, nome_ativa: 0 };
+    for (const s2 of orfas) {
+      const d = destinoDaOrfa(s2, { mapa, porExatoAtivas, porNomeAtivas });
+      if (d.via === 'ambiguo') { ambiguas += 1; continue; }
+      if (d.via === 'nenhum') { semPar += 1; continue; }
+      vias[d.via] += 1;
+      const chave = `${d.team_id}|${d.position_id || ''}`;
+      if (!porDestino.has(chave)) porDestino.set(chave, { team_id: d.team_id, position_id: d.position_id || null, ids: [] });
+      porDestino.get(chave).ids.push(s2.id);
     }
 
     let religadas = 0;
-    for (const [teamId, ids] of porEquipe) {
+    for (const { team_id, position_id, ids } of porDestino.values()) {
       for (let i = 0; i < ids.length; i += 200) {
+        const patch = position_id ? { team_id, position_id } : { team_id };
         const { data, error } = await supabase.from('vol_schedules')
-          .update({ team_id: teamId })
+          .update(patch)
           .in('id', ids.slice(i, i + 200))
           // ⚠️ Guarda de corrida: se alguém (ou outra rodada) já ligou, não
           // sobrescrevemos a decisão dela.
@@ -582,10 +572,11 @@ async function resolverTeamIdDasEscalas(supabase) {
     }
     if (religadas || ambiguas || semPar) {
       console.log(`[PC] team_id resolvido: ${religadas} religada(s)`
+        + ` (mapa ${vias.mapa_pco} · nome ${vias.nome_ativa})`
         + (ambiguas ? ` · ${ambiguas} nome ambíguo (fica nulo)` : '')
-        + (semPar ? ` · ${semPar} sem equipe correspondente` : ''));
+        + (semPar ? ` · ${semPar} fora do mapa e sem equipe ativa` : ''));
     }
-    return { religadas, ambiguas, semPar };
+    return { religadas, ambiguas, semPar, vias };
   } catch (e) {
     console.error('[PC] resolverTeamIdDasEscalas:', e.message);
     return { religadas: 0, erro: e.message };
