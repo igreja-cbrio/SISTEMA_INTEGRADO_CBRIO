@@ -92,6 +92,7 @@ Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
 - `backend/utils/lotesEvento.js`
 - `backend/utils/pagination.js`
 - `backend/utils/prontidaoCadastro.js`
+- `backend/utils/respostaOpcoes.js`
 - `backend/utils/sanitize.js`
 - `backend/utils/supabase.js`
 - `backend/utils/totemCerco.js`

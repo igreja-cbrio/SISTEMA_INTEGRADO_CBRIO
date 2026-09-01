@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-385 arquivos.
+386 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -249,6 +249,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/responderFalha.js` | régua pura | — | `src/test/telemetria500.test.ts` |
 | `backend/utils/respostaEscala.js` | régua pura | — | `src/test/respostaEscala.test.ts` |
 | `backend/utils/respostaGrupoAgenda.js` | régua pura | — | `src/test/assuntoGrupoConversa.test.ts` |
+| `backend/utils/respostaOpcoes.js` | régua pura | — | `src/test/respostaOpcoes.test.ts` |
 | `backend/utils/rhOnboardingProntidao.js` | régua pura | — | `src/test/rhOnboardingProntidao.test.ts` |
 | `backend/utils/rodizioCulto.js` | régua pura | — | `backend/services/rodizioCulto.test.js` |
 | `backend/utils/roteamentoDisparo.js` | régua pura | — | `src/test/roteamentoDisparo.test.ts` |
