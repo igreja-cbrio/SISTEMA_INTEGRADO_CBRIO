@@ -11,6 +11,7 @@
  */
 
 const { chavePco } = require('../utils/pcoChave');
+const { chaveNome: chaveNomeEquipe, chaveExataNome } = require('../utils/escalaLinhaEquipe');
 
 const STATUS_PRIORITY = { confirmed: 4, scheduled: 3, pending: 2, unknown: 1, declined: 0 };
 const STATUS_MAP = { C: 'confirmed', U: 'pending', D: 'declined', S: 'scheduled', P: 'pending', N: 'pending' };
@@ -482,7 +483,113 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
   // Opção A: atribui voluntários às equipes com base nas escalas sincronizadas
   await assignVolunteersToTeams(supabase, memberTeamMap);
 
+  // ⚠️⚠️ RESOLVE `vol_schedules.team_id` pelo NOME. Sem este passo o sync grava
+  // só `team_name` (texto) e o `team_id` fica NULO PARA SEMPRE — medido em
+  // 01/09/2026: 694 escalas assim, e na quarta 02/09 eram as 59 do culto inteiro.
+  // O efeito na tela era a matriz dizer "SEM EQUIPE" para equipe cujo nome ela
+  // tinha na mão, e todas caírem juntas em "Sem área".
+  await resolverTeamIdDasEscalas(supabase);
+
   return { services: typeServices, schedules: typeSchedules, membersFound: typeMembersFound, membersProcessed: typeMembersProcessed, volunteers };
+}
+
+// ── Resolve `vol_schedules.team_id` a partir do `team_name` ────────────────
+//
+// ⚠️⚠️ POR QUE ISTO EXISTE: o PCO manda o nome da equipe, não o id do NOSSO
+// sistema. O upsert grava `team_name` e nunca ligou o `team_id` — então a escala
+// nasce sem equipe vinculada e, por consequência, sem área. Medido em
+// 01/09/2026: 694 escalas com `team_id` nulo e `team_name` preenchido; em 612
+// existe UMA equipe de nome idêntico, ou seja o vínculo só faltava ser feito.
+//
+// ⚠️ Como roda a cada sync, ele também FAZ O BACKFILL do que já está lá — sem
+// script separado. Religar à mão hoje seria esteira: a próxima rodada criaria
+// órfãs de novo.
+//
+// ⚠️⚠️ NOME AMBÍGUO NÃO É RESOLVIDO. Duas equipes com o mesmo nome é resíduo do
+// sync que criou uma equipe por time do PCO (67 escalas caem nisso); escolher
+// uma poria a pessoa na equipe errada, e ninguém audita o que já está
+// preenchido. Fica nulo e a tela mostra "não vinculada".
+//
+// ⚠️ Best-effort: falhar aqui NÃO pode derrubar o sync, que é o que traz a
+// escala. Erro é logado — órfã silenciosa foi exatamente o que durou meses.
+async function resolverTeamIdDasEscalas(supabase) {
+  try {
+    const { data: equipes, error: eqErr } = await supabase
+      .from('vol_teams').select('id, name');
+    if (eqErr) throw eqErr;
+
+    // ⚠️⚠️ DOIS índices, e a ORDEM importa: EXATO primeiro, normalizado só
+    // como desempate. A base tem 7 pares de equipe que diferem apenas por
+    // acento/caixa ("Cameras" × "Câmeras", "Liderança" × "LIDERANÇA"…), então
+    // casar só pelo normalizado torna esses nomes AMBÍGUOS e deixa de religar
+    // escala que o PCO identificou sem dúvida — medido: 555 religáveis pelo
+    // normalizado contra 681 com o exato na frente.
+    const porExato = new Map();
+    const porNome = new Map();
+    for (const t of equipes || []) {
+      const ex = chaveExataNome(t.name);
+      if (ex) {
+        if (!porExato.has(ex)) porExato.set(ex, []);
+        porExato.get(ex).push(t.id);
+      }
+      const k = chaveNomeEquipe(t.name);
+      if (!k) continue;
+      if (!porNome.has(k)) porNome.set(k, []);
+      porNome.get(k).push(t.id);
+    }
+    if (!porNome.size) return { religadas: 0 };
+
+    // Só as órfãs — paginado, porque `vol_schedules` passa de 6 mil linhas.
+    const orfas = [];
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('vol_schedules')
+        .select('id, team_name').is('team_id', null).order('id').range(off, off + 999);
+      if (error) throw error;
+      orfas.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+
+    const porEquipe = new Map();
+    let ambiguas = 0; let semPar = 0;
+    for (const s of orfas) {
+      const k = chaveNomeEquipe(s.team_name);
+      if (!k) continue;
+      // Exato primeiro; normalizado só quando o exato não resolve sozinho.
+      const exato = porExato.get(chaveExataNome(s.team_name));
+      const cand = (exato && exato.length === 1) ? exato : porNome.get(k);
+      if (!cand) { semPar += 1; continue; }
+      // ⚠️ AMBÍGUO NÃO É RELIGADO: escolher uma das duas equipes com o mesmo
+      // nome poria a pessoa na equipe errada, e ninguém audita o que já está
+      // preenchido. Fica nulo e a tela mostra "não vinculada".
+      if (cand.length > 1) { ambiguas += 1; continue; }
+      if (!porEquipe.has(cand[0])) porEquipe.set(cand[0], []);
+      porEquipe.get(cand[0]).push(s.id);
+    }
+
+    let religadas = 0;
+    for (const [teamId, ids] of porEquipe) {
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data, error } = await supabase.from('vol_schedules')
+          .update({ team_id: teamId })
+          .in('id', ids.slice(i, i + 200))
+          // ⚠️ Guarda de corrida: se alguém (ou outra rodada) já ligou, não
+          // sobrescrevemos a decisão dela.
+          .is('team_id', null)
+          .select('id');
+        if (error) { console.error('[PC] religar team_id:', error.message); continue; }
+        religadas += (data || []).length;
+      }
+    }
+    if (religadas || ambiguas || semPar) {
+      console.log(`[PC] team_id resolvido: ${religadas} religada(s)`
+        + (ambiguas ? ` · ${ambiguas} nome ambíguo (fica nulo)` : '')
+        + (semPar ? ` · ${semPar} sem equipe correspondente` : ''));
+    }
+    return { religadas, ambiguas, semPar };
+  } catch (e) {
+    console.error('[PC] resolverTeamIdDasEscalas:', e.message);
+    return { religadas: 0, erro: e.message };
+  }
 }
 
 // ── Batch upsert volunteer QR codes ─────────────────────────────────────────

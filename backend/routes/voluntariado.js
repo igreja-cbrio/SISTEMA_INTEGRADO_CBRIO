@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel, bustPermissionCaches } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const atividadeVol = require('../utils/atividadeVoluntario');
+const linhaEq = require('../utils/escalaLinhaEquipe');
 const { acharOuCriarGuardado, acharMembroGuardado, normalizarTelefone } = require('../services/membroMatch');
 const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
 const { cpfValido } = require('../utils/cpf');
@@ -6064,12 +6065,25 @@ router.get('/escala-matriz', async (req, res) => {
     // Uma LINHA por (área, função) — a identidade atravessa os cultos, mas o
     // item da composição é de cada culto (cada um tem os seus).
     const linhas = new Map();
-    const chaveLinha = (t, p) => `${t || ''}::${p || ''}`;
-    const garanteLinha = (team_id, team, area, cor, position_id, position, ordem) => {
-      const k = chaveLinha(team_id, position_id);
+    // ⚠️⚠️ A CHAVE agora vem da régua (`utils/escalaLinhaEquipe`). Antes era
+    // `(team_id, position_id)` — e com `team_id` NULO todas as equipes
+    // desvinculadas colapsavam na MESMA linha: Liderança, Assistentes e Vocal
+    // apareciam num bloco único chamado "SEM EQUIPE" (o print do Matheus em
+    // 01/09/2026). Medido: 694 escalas do PCO estão sem `team_id` e COM
+    // `team_name`, e na quarta 02/09 eram as 59 do culto.
+    const garanteLinha = (team_id, team, area, cor, position_id, position, ordem, team_name) => {
+      const k = linhaEq.chaveDaLinha({ team_id, team_name: team_name || team, position_id });
       if (!linhas.has(k)) {
+        // ⚠️ O rótulo distingue TRÊS estados: vinculada · conhecida e NÃO
+        // vinculada · realmente sem equipe. Colapsar os dois últimos era a tela
+        // afirmando que não sabe algo que sabe.
+        const rot = linhaEq.rotuloDaEquipe({ team_id, team_name: team_name || team, nome_do_vinculo: team });
         linhas.set(k, {
-          chave: k, team_id, team: team || 'Sem equipe', area: area || 'Sem área', cor: cor || null,
+          chave: k, team_id, team: rot.nome, equipe_vinculada: rot.vinculada,
+          // ⚠️ Área só existe com equipe VINCULADA — inventar a partir do nome
+          // seria chutar o organograma.
+          area: linhaEq.areaDaLinha({ team_id, area }) || 'Sem área',
+          cor: cor || null,
           position_id: position_id || null, position: position || null,
           ordem: ordem ?? 999, celulas: {},
         });
@@ -6114,14 +6128,20 @@ router.get('/escala-matriz', async (req, res) => {
       // uma pessoa que não aparece na matriz é uma pessoa que a coordenação
       // escala em duplicidade.
       for (const s of cob.sobrando) {
-        const l = garanteLinha(s.team_id, null, null, null, s.position_id, null, 998);
+        // ⚠️⚠️ `s.team_name` VAI JUNTO. Antes ia `null` como nome, jogando fora
+        // o texto que o Planning Center gravou — e o resgate logo abaixo
+        // procurava o nome em `vol_teams` POR `team_id`, que é justamente o que
+        // está nulo. Resultado: a tela dizia "SEM EQUIPE" para equipe conhecida.
+        const l = garanteLinha(s.team_id, null, null, null, s.position_id, s.position_name || null, 998, s.team_name);
         const c = (l.celulas[culto.id] ||= { item_id: null, alvo: 0, faltam: 0, pessoas: [] });
         c.pessoas.push(pessoaDaEscala(s));
       }
     }
 
     // Nomes de equipe/função que só apareceram pelo lado das escalas soltas.
-    const semNome = [...linhas.values()].filter(l => !l.team || l.team === 'Sem equipe');
+    // Resgate do nome pela TABELA — só alcança quem TEM `team_id`. Quem está
+    // desvinculado já recebeu o nome do `team_name` acima.
+    const semNome = [...linhas.values()].filter(l => l.team_id && (!l.team || l.team === 'Sem equipe'));
     if (semNome.length) {
       const teamIds = [...new Set(semNome.map(l => l.team_id).filter(Boolean))];
       if (teamIds.length) {
