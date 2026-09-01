@@ -81,15 +81,17 @@ COMMENT ON FUNCTION public.fn_batismo_inscricao_link_membro() IS
 -- ─────────────────────────────────────────────────────────────────────────
 -- O UPDATE dispara o trigger acima; com a trava de menor (nascida 2017),
 -- o membro_id = NULL persiste — não recria quimera nem religa na mãe.
--- Os contatos (da responsável) saem dos campos de identidade e ficam
--- registrados nas observações, pra não induzir matcher nenhum de novo.
+-- Os contatos (da responsável) saem dos campos de identidade da inscrição
+-- pra não induzir matcher nenhum de novo — sem perda: são os mesmos
+-- contatos que vivem no cadastro dela (mem_membros 725d18a1), e o nome da
+-- responsável já consta nas observações da inscrição.
 UPDATE public.batismo_inscricoes
 SET membro_id = NULL,
     cpf = NULL,
     telefone = NULL,
     email = NULL,
     observacoes = coalesce(observacoes, '')
-      || ' | [01/09/2026] Batismo infantil: vínculo com mem_membros removido (o cadastro linkado tinha o nome da criança com os dados da mãe — corrigido para Luciana Pessanha Crespo). Contato da responsável: tel 21994698993 · e-mail lcastelo.pessanha@gmail.com · CPF 11830996738.'
+      || ' | [01/09/2026] Batismo infantil: vínculo com mem_membros removido (o cadastro linkado tinha o nome da criança com os dados de contato da responsável — cadastro corrigido para o nome real da responsável). Contatos removidos das colunas de identidade; estão no cadastro da responsável (mem_membros 725d18a1).'
 WHERE id = 'd7d34f34-514f-4f1e-bbc1-501f0a9362b2'
   AND membro_id = '725d18a1-0a80-41bf-823f-fb8ea4dd515a';
 
