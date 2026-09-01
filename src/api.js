@@ -2786,6 +2786,12 @@ export const membresia = {
       status: (params = {}) => get('/membresia/totem/apresentacao-bebe/status?' + new URLSearchParams(params).toString()),
       create: (data) => post('/membresia/totem/apresentacao-bebe', data),
     },
+    // Fluxo "Novo convertido" do totem (Marcelo · 2026-09-01): decisão pela
+    // mesma porta do cadastro manual + portas de inscrição + responsável.
+    novoConvertido: {
+      contexto: () => get('/membresia/totem/novo-convertido/contexto'),
+      registrar: (data) => post('/membresia/totem/novo-convertido', data),
+    },
   },
   contribuicoes: {
     list: (params) => get('/membresia/contribuicoes' + (params ? '?' + new URLSearchParams(params) : '')),

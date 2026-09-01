@@ -98,6 +98,8 @@ export default function TotemMembro() {
   // condicionais isDark?dark:light dos componentes resolvem todas pro escuro.
   const isDark = true;
   const [showNovoCadastro, setShowNovoCadastro] = useState(false);
+  // Fluxo "Novo convertido" (Marcelo · 2026-09-01) — 4ª opção da tela inicial.
+  const [showNovoConvertido, setShowNovoConvertido] = useState(false);
 
   // PIN
   const [storedPin, setStoredPin] = useState('');
@@ -259,6 +261,7 @@ export default function TotemMembro() {
     setState('idle');
     setMember(null);
     setSelectedOption(null);
+    setShowNovoConvertido(false);
   }, [limparTimersIdle]);
 
   const resetInactivity = useCallback(() => {
@@ -277,7 +280,7 @@ export default function TotemMembro() {
   }, [limparTimersIdle, encerrarSessao]);
 
   const idleAtivo = state === 'greeting' || state === 'option' || state === 'done'
-    || state === 'cpf_input' || showNovoCadastro;
+    || state === 'cpf_input' || showNovoCadastro || showNovoConvertido;
 
   useEffect(() => {
     if (idleAtivo) {
@@ -683,6 +686,13 @@ export default function TotemMembro() {
   );
 
   // ── Idle (default) ────────────────────────────────────────────────────────
+  if (showNovoConvertido) return (
+    <>
+      <NovoConvertidoFlow onExit={() => setShowNovoConvertido(false)} onActivity={resetInactivity} />
+      {idleOverlay}
+    </>
+  );
+
   if (showNovoCadastro) return (
     <>
       <NovoCadastroScreen onBack={() => setShowNovoCadastro(false)} />
@@ -717,7 +727,18 @@ export default function TotemMembro() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full max-w-4xl">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 w-full max-w-5xl">
+          <button
+            onClick={() => setShowNovoConvertido(true)}
+            className="flex flex-col items-center gap-3 p-7 rounded-3xl border border-[#EC4899]/40 bg-[#EC4899]/10 hover:bg-[#EC4899]/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
+          >
+            <div className="h-14 w-14 rounded-2xl bg-[#EC4899]/25 flex items-center justify-center">
+              <Heart className="h-7 w-7 text-[#EC4899]" />
+            </div>
+            <p className="font-bold text-lg leading-tight">Novo convertido</p>
+            <p className="text-white/50 text-sm leading-snug">Tomou uma decisão hoje? Comece aqui</p>
+          </button>
+
           <button
             onClick={() => setShowNovoCadastro(true)}
             className="flex flex-col items-center gap-3 p-7 rounded-3xl border border-[#00B39D]/40 bg-[#00B39D]/10 hover:bg-[#00B39D]/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
@@ -1533,6 +1554,343 @@ function fmtDist(km: number) {
 // ── Grupos de Conexão flow ────────────────────────────────────────────────────
 
 const DIAS_MAP: Record<number, string> = { 0:'Dom', 1:'Seg', 2:'Ter', 3:'Qua', 4:'Qui', 5:'Sex', 6:'Sáb' };
+
+// ── Novo convertido (Marcelo · 2026-09-01) ────────────────────────────────────
+// Substitui a ficha de papel do apelo. 3 telas: (1) a PESSOA preenche nome +
+// WhatsApp + nascimento e os aceites; (2) a pessoa escolhe as portas (Next ·
+// Batismo · Grupos · Servir) — ou "prefiro não me inscrever agora"; (3) a
+// EQUIPE define quem vai contatá-la e confirma. UM submit só, no fim — a
+// decisão nasce pela mesma porta do cadastro manual (ver o endpoint).
+function NovoConvertidoFlow({ onExit, onActivity }: { onExit: () => void; onActivity: () => void }) {
+  const ROSA = '#EC4899';
+  const [step, setStep] = useState<'dados' | 'portas' | 'equipe' | 'success'>('dados');
+  const [ctx, setCtx] = useState<{ culto: any; ao_vivo: boolean; responsaveis: any[] | null } | null>(null);
+  const [ctxLoading, setCtxLoading] = useState(true);
+  const [agenda, setAgenda] = useState<{ data_batismo: string | null; horarios: any[] }>({ data_batismo: null, horarios: [] });
+
+  const [form, setForm] = useState({ nome: '', telefone: '', data_nascimento: '' });
+  const [aceiteLgpd, setAceiteLgpd] = useState(false);
+  // Opt-in de WhatsApp: explícito, default false (Contrato de Inscrição).
+  const [optin, setOptin] = useState(false);
+  const [portas, setPortas] = useState<Set<string>>(new Set());
+  const [horarioSel, setHorarioSel] = useState<any>(null);
+  const [responsavel, setResponsavel] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [resultado, setResultado] = useState<any>(null);
+
+  useEffect(() => {
+    Promise.all([
+      membresia.totem.novoConvertido.contexto().catch(() => null),
+      membresia.totem.batismoHorarios().catch(() => null),
+    ]).then(([c, b]: any[]) => {
+      setCtx(c);
+      if (b) setAgenda({ data_batismo: b.data_batismo || null, horarios: b.horarios || [] });
+    }).finally(() => setCtxLoading(false));
+  }, []);
+
+  const maskTel = (v: string) => {
+    const d = v.replace(/\D/g, '').slice(0, 11);
+    if (d.length <= 2) return d;
+    if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+    return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  };
+
+  const telDigits = form.telefone.replace(/\D/g, '');
+  const dadosOk = form.nome.trim().length >= 2 && telDigits.length >= 10 && !!form.data_nascimento && aceiteLgpd;
+
+  const togglePorta = (p: string) => {
+    setPortas((prev) => {
+      const n = new Set(prev);
+      if (n.has(p)) { n.delete(p); if (p === 'batismo') setHorarioSel(null); } else n.add(p);
+      return n;
+    });
+  };
+
+  const PORTAS_UI = [
+    { id: 'next',    label: 'Next',              desc: 'O curso de integração · próximo domingo', icon: ArrowRight, color: '#10B981' },
+    { id: 'batismo', label: 'Batismo',           desc: 'Dar o próximo passo nas águas',           icon: Droplets,   color: '#6366F1' },
+    { id: 'grupos',  label: 'Grupo de Conexão',  desc: 'Caminhar junto com outras pessoas',       icon: Users,      color: '#00B39D' },
+    { id: 'servir',  label: 'Servir',            desc: 'Fazer parte de uma equipe de voluntários', icon: HandHeart,  color: '#F59E0B' },
+  ];
+
+  const handleSubmit = async (portasEscolhidas: string[]) => {
+    setSaving(true); setError('');
+    onActivity();
+    try {
+      const r = await membresia.totem.novoConvertido.registrar({
+        nome: form.nome.trim(),
+        telefone: telDigits,
+        data_nascimento: form.data_nascimento,
+        aceite_lgpd: aceiteLgpd,
+        whatsapp_optin: optin,
+        portas: portasEscolhidas,
+        ...(portasEscolhidas.includes('batismo') && horarioSel ? { horario_batismo: horarioSel.horario } : {}),
+        ...(responsavel ? { responsavel_atendimento: responsavel } : {}),
+      });
+      setResultado(r);
+      setStep('success');
+    } catch (e: any) {
+      // Horário de batismo lotado/fechado → a pessoa corrige na tela de portas.
+      if (String(e?.codigo || '').startsWith('horario_') || e?.campo === 'horario_batismo') setStep('portas');
+      setError(e?.message || 'Não foi possível registrar. Chame alguém da equipe.');
+    }
+    setSaving(false);
+  };
+
+  const header = (titulo: string, onBack?: () => void) => (
+    <div className="flex items-center gap-3 px-6 py-4 border-b border-white/10">
+      <button onClick={onBack || onExit} className="text-white/40 hover:text-white transition-colors p-1 -ml-1">
+        <ChevronLeft className="h-6 w-6" />
+      </button>
+      <div className="flex items-center gap-2">
+        <Heart className="h-5 w-5" style={{ color: ROSA }} />
+        <h2 className="text-xl font-semibold">{titulo}</h2>
+      </div>
+      {ctx?.culto && (
+        <span className="ml-auto text-xs text-white/40">
+          Culto: <span className="text-white/70">{ctx.culto.nome}</span>
+        </span>
+      )}
+    </div>
+  );
+
+  const inputCls = 'w-full px-4 py-4 rounded-2xl border border-white/15 bg-white/5 text-white placeholder:text-white/30 text-base outline-none focus:border-[#EC4899] focus:ring-1 focus:ring-[#EC4899]/30 transition-colors';
+
+  if (ctxLoading) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
+        <Loader2 className="h-10 w-10 animate-spin" style={{ color: ROSA }} />
+      </div>
+    );
+  }
+
+  // Sem culto hoje o servidor recusa (a decisão nasce pendurada num culto) —
+  // dizer isso ANTES de a pessoa digitar é melhor que um erro no fim.
+  if (!ctx?.culto) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        {header('Novo convertido')}
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="max-w-md text-center space-y-4">
+            <Heart className="h-14 w-14 mx-auto" style={{ color: ROSA }} />
+            <h2 className="text-2xl font-bold">Hoje não há culto na agenda</h2>
+            <p className="text-white/60">Chame alguém da equipe — a decisão pode ser registrada pela Integração.</p>
+            <Button onClick={onExit} variant="outline" className="!bg-white/10 border-white/20 text-white hover:!bg-white/20">Voltar</Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'success') {
+    const criadas: Record<string, string> = resultado?.portas || {};
+    const LABEL: Record<string, string> = { next: 'Next', batismo: 'Batismo', grupos: 'Grupo de Conexão', servir: 'Servir' };
+    const OK = new Set(['inscrito', 'ja_inscrito', 'encaminhado', 'ja_encaminhado']);
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6 p-8" onClick={onActivity}>
+        <CheckCircle2 className="h-20 w-20" style={{ color: ROSA }} />
+        <div className="text-center max-w-md space-y-3">
+          <h2 className="text-3xl font-bold">Que alegria, {form.nome.trim().split(/\s+/)[0]}! 🎉</h2>
+          <p className="text-white/70 text-lg">Sua decisão foi registrada. Seja muito bem-vindo(a) à família CBRio!</p>
+          <p className="text-white/60">
+            <span className="font-semibold text-white">{responsavel || 'Alguém da nossa equipe'}</span> vai falar
+            com você pelo WhatsApp para te ajudar nos próximos passos.
+          </p>
+          {Object.keys(criadas).length > 0 && (
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-left space-y-1.5">
+              {Object.entries(criadas).map(([p, st]) => (
+                <p key={p} className="text-sm flex items-center gap-2">
+                  {OK.has(st)
+                    ? <CheckCircle2 className="h-4 w-4 text-[#00B39D] shrink-0" />
+                    : <X className="h-4 w-4 text-amber-400 shrink-0" />}
+                  <span className="text-white/80">{LABEL[p] || p}</span>
+                  <span className="text-white/40 text-xs ml-auto">
+                    {st === 'inscrito' ? 'inscrição feita' : st === 'ja_inscrito' ? 'já estava inscrito(a)'
+                      : st === 'encaminhado' ? 'a equipe vai te chamar' : st === 'ja_encaminhado' ? 'já encaminhado'
+                      : 'não deu agora — a equipe resolve'}
+                  </span>
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+        <SuccessActions onDone={onExit} onEndSession={onExit} accent={ROSA} />
+      </div>
+    );
+  }
+
+  if (step === 'dados') {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        {header('Novo convertido')}
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="w-full max-w-md space-y-4">
+            <div className="text-center space-y-1">
+              <h2 className="text-2xl font-bold">Que decisão linda! 🙌</h2>
+              <p className="text-white/50 text-sm">Deixa seu contato pra gente caminhar com você.</p>
+            </div>
+            <input className={inputCls} placeholder="Seu nome completo" value={form.nome}
+              onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))} />
+            <input className={inputCls} placeholder="Seu WhatsApp — (21) 99999-9999" inputMode="tel" value={form.telefone}
+              onChange={(e) => setForm((f) => ({ ...f, telefone: maskTel(e.target.value) }))} />
+            <div>
+              <p className="text-white/40 text-xs mb-1.5">Data de nascimento</p>
+              <BirthDatePicker value={form.data_nascimento}
+                onChange={(v) => setForm((f) => ({ ...f, data_nascimento: v }))}
+                className={`${inputCls} [color-scheme:dark]`} />
+            </div>
+            <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/5 p-3.5 cursor-pointer">
+              <input type="checkbox" checked={aceiteLgpd} onChange={(e) => setAceiteLgpd(e.target.checked)}
+                className="mt-0.5 h-5 w-5 accent-[#EC4899] shrink-0" />
+              <span className="text-white/60 text-xs leading-relaxed">
+                Autorizo a CBRio a usar meus dados para me acompanhar nos próximos passos da minha decisão, conforme a LGPD.
+              </span>
+            </label>
+            <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/5 p-3.5 cursor-pointer">
+              <input type="checkbox" checked={optin} onChange={(e) => setOptin(e.target.checked)}
+                className="mt-0.5 h-5 w-5 accent-[#EC4899] shrink-0" />
+              <span className="text-white/60 text-xs leading-relaxed">
+                Quero receber mensagens da CBRio no WhatsApp.
+              </span>
+            </label>
+            {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+            <Button onClick={() => { setError(''); setStep('portas'); }} disabled={!dadosOk}
+              className="w-full text-white py-3 text-base rounded-2xl gap-2 hover:opacity-90" style={{ backgroundColor: ROSA }}>
+              Continuar <ChevronRight className="h-5 w-5" />
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'portas') {
+    const precisaHorario = portas.has('batismo') && !horarioSel;
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+        {header('Próximos passos', () => setStep('dados'))}
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="w-full max-w-md space-y-4">
+            <div className="text-center space-y-1">
+              <h2 className="text-2xl font-bold">Já quer dar o próximo passo?</h2>
+              <p className="text-white/50 text-sm">Escolha o que faz sentido pra você — pode marcar mais de um.</p>
+            </div>
+            <div className="grid grid-cols-1 gap-3">
+              {PORTAS_UI.map((p) => {
+                const Icon = p.icon;
+                const sel = portas.has(p.id);
+                return (
+                  <button key={p.id} onClick={() => togglePorta(p.id)}
+                    className="flex items-center gap-4 px-4 py-3.5 rounded-2xl border text-left transition-all"
+                    style={sel
+                      ? { borderColor: p.color, background: `${p.color}20` }
+                      : { borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)' }}>
+                    <div className="h-11 w-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${p.color}25` }}>
+                      <Icon className="h-5 w-5" style={{ color: p.color }} />
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-semibold">{p.label}</p>
+                      <p className="text-white/40 text-xs">{p.desc}</p>
+                    </div>
+                    {sel && <CheckCircle2 className="h-5 w-5 shrink-0" style={{ color: p.color }} />}
+                  </button>
+                );
+              })}
+            </div>
+            {portas.has('batismo') && (
+              <div className="rounded-2xl border border-[#6366F1]/30 bg-[#6366F1]/10 p-3.5 space-y-2">
+                <p className="text-sm text-white/70">
+                  Horário do batismo{agenda.data_batismo ? <> · <span className="text-[#6366F1] font-semibold">{fmtDateBR(agenda.data_batismo)}</span></> : null}
+                </p>
+                {agenda.horarios.length === 0 ? (
+                  <p className="text-white/50 text-xs">As vagas deste batismo se esgotaram — desmarque e fale com a equipe pra entrar no próximo.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    {agenda.horarios.map((h: any) => {
+                      const sel = horarioSel?.horario === h.horario;
+                      return (
+                        <button key={h.horario} onClick={() => setHorarioSel(h)}
+                          className={`px-3 py-2.5 rounded-xl border text-sm font-semibold transition-all ${
+                            sel ? 'border-[#6366F1] bg-[#6366F1]/20' : 'border-white/15 bg-white/5 hover:bg-white/10'
+                          }`}>
+                          {h.label || h.horario}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+            {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+            <Button onClick={() => { setError(''); setStep('equipe'); }}
+              disabled={portas.size === 0 || precisaHorario}
+              className="w-full text-white py-3 text-base rounded-2xl gap-2 hover:opacity-90" style={{ backgroundColor: ROSA }}>
+              Continuar <ChevronRight className="h-5 w-5" />
+            </Button>
+            {precisaHorario && <p className="text-center text-white/40 text-xs">Escolha o horário do batismo pra continuar.</p>}
+            <button onClick={() => { setPortas(new Set()); setHorarioSel(null); setError(''); setStep('equipe'); }}
+              className="w-full text-white/30 hover:text-white/60 text-sm transition-colors py-1">
+              Prefiro não me inscrever agora
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // step === 'equipe' · a tela do OPERADOR (Marcelo): quem contata + confirmação.
+  const LABEL_PORTA: Record<string, string> = { next: 'Next', batismo: 'Batismo', grupos: 'Grupo de Conexão', servir: 'Servir' };
+  return (
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col" onClick={onActivity}>
+      {header('Equipe · confirmação', () => setStep('portas'))}
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="w-full max-w-md space-y-4">
+          <div className="text-center space-y-1">
+            <h2 className="text-2xl font-bold">Quem vai acompanhar?</h2>
+            <p className="text-white/50 text-sm">Esta etapa é preenchida por alguém da equipe de Próximos Passos.</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm space-y-1">
+            <p><span className="text-white/40">Nome:</span> <span className="font-semibold">{form.nome.trim()}</span></p>
+            <p><span className="text-white/40">WhatsApp:</span> {form.telefone}</p>
+            <p>
+              <span className="text-white/40">Pediu:</span>{' '}
+              {portas.size ? [...portas].map((p) => LABEL_PORTA[p]).join(' · ') : 'não quis se inscrever agora'}
+              {portas.has('batismo') && horarioSel ? ` (batismo às ${horarioSel.label || horarioSel.horario})` : ''}
+            </p>
+          </div>
+          {ctx?.responsaveis === null && (
+            <p className="text-amber-300/80 text-xs text-center">Não foi possível carregar a lista de responsáveis — dá pra confirmar sem definir agora.</p>
+          )}
+          {Array.isArray(ctx?.responsaveis) && ctx.responsaveis.length > 0 && (
+            <div className="grid grid-cols-2 gap-2">
+              {ctx.responsaveis.map((r: any) => {
+                const sel = responsavel === r.nome;
+                return (
+                  <button key={r.id} onClick={() => setResponsavel(sel ? null : r.nome)}
+                    className={`px-3 py-3 rounded-xl border text-sm font-medium transition-all ${
+                      sel ? 'border-[#EC4899] bg-[#EC4899]/20' : 'border-white/15 bg-white/5 hover:bg-white/10'
+                    }`}>
+                    {r.nome}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {error && <p className="text-red-400 text-sm text-center">{error}</p>}
+          <Button onClick={() => handleSubmit([...portas])} disabled={saving}
+            className="w-full text-white py-3 text-base rounded-2xl gap-2 hover:opacity-90" style={{ backgroundColor: ROSA }}>
+            {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : <CheckCircle2 className="h-5 w-5" />}
+            {saving ? 'Registrando...' : 'Confirmar tudo'}
+          </Button>
+          {!responsavel && (
+            <p className="text-center text-white/30 text-xs">Sem responsável definido, a coordenação distribui depois no sistema.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function GruposFlow({ opt, member, onBack, onDone, onEndSession, onNovoCadastro, onNeedIdentify, onActivity }: {
   opt: (typeof MENU_OPTIONS)[number];

@@ -4029,74 +4029,13 @@ router.get('/pense-ultimo', authApp, async (req, res) => {
   }
 });
 
-/**
- * Minutos desde a meia-noite **em BRT** (mesma convenção do `hojeBRT()`:
- * offset fixo −3h, que o Brasil não muda desde 2019).
- */
-function agoraMinutosBRT() {
-  const d = new Date(Date.now() - 3 * 3600 * 1000);
-  return d.getUTCHours() * 60 + d.getUTCMinutes();
-}
-function minutosDaHora(hora) {
-  const [hh, mm] = String(hora || '').split(':');
-  const h = Number(hh), m = Number(mm || 0);
-  return Number.isFinite(h) ? h * 60 + (Number.isFinite(m) ? m : 0) : null;
-}
-
-/**
- * O culto que a pessoa está VIVENDO agora.
- *
- * ⚠️ Isto era `order('hora', desc).limit(1)` do dia em UTC, e os dois pedaços
- * estavam errados (achado 04/08/2026):
- *  1. `new Date().toISOString()` é UTC → das 21h BRT em diante o "hoje" já é
- *     AMANHÃ. No culto de domingo 19h (que passa das 21h) o `culto` vinha nulo
- *     e a decisão de fé era gravada com o dia seguinte — o dedup de 1/dia e a
- *     fila da Integração ficavam desencontrados.
- *  2. Pegar a MAIOR hora do dia significa que, no culto das 08:30, a decisão
- *     era carimbada no culto das 19:00. Atribuição errada de culto na NSM.
- *
- * `ao_vivo` = existe culto cuja janela [hora − 30min, hora + 3h] contém o
- * agora. É o que o app usa pra mostrar (ou não) o "No culto" na Home: fora da
- * janela a tela não tem propósito. Sem janela ativa devolve o PRÓXIMO de hoje
- * (a tela consegue dizer "começa às 19h") com `ao_vivo: false`.
- */
-async function cultoDeAgora() {
-  const hoje = hojeBRT();
-  const { data } = await supabase
-    .from('cultos')
-    .select('id, nome, data, hora')
-    .eq('data', hoje).is('deleted_at', null)
-    .order('hora', { ascending: true });
-  const lista = data || [];
-  if (!lista.length) return { culto: null, ao_vivo: false };
-
-  const agora = agoraMinutosBRT();
-
-  // ⚠️ Os cultos de domingo saem de 90 em 90 min, então uma janela de 3h
-  // SOBREPÕE dois ou três. Por isso: (1) entre os que JÁ COMEÇARAM e ainda
-  // estão na janela, vale o MAIS RECENTE (às 10:30 é o das 10:00, não o das
-  // 08:30 — `find` simples pegava o primeiro e errava a atribuição do culto);
-  // (2) só quando nada começou é que a antecedência de 30 min conta (às 08:15
-  // é o das 08:30). Sem essa ordem, às 09:40 — 08:30 ainda rolando — a decisão
-  // iria pro culto das 10:00.
-  const iniciados = lista.filter((c) => {
-    const ini = minutosDaHora(c.hora);
-    return ini != null && agora >= ini && agora <= ini + 180;
-  });
-  if (iniciados.length) return { culto: iniciados[iniciados.length - 1], ao_vivo: true };
-
-  const chegando = lista.find((c) => {
-    const ini = minutosDaHora(c.hora);
-    return ini != null && agora >= ini - 30 && agora < ini;
-  });
-  if (chegando) return { culto: chegando, ao_vivo: true };
-
-  const proximo = lista.find((c) => {
-    const ini = minutosDaHora(c.hora);
-    return ini != null && ini > agora;
-  });
-  return { culto: proximo || lista[lista.length - 1], ao_vivo: false };
-}
+// "O culto que a pessoa está VIVENDO agora" virou SERVIÇO
+// (services/cultoDeAgora.js) em 2026-09-01, quando o totem de novos
+// convertidos passou a precisar da mesma régua — duas cópias divergiriam na
+// atribuição de culto da decisão de fé, que alimenta a NSM. O histórico do
+// desenho (dia em BRT · o mais recente que começou vence · achado de
+// 04/08/2026) está documentado lá.
+const { cultoDeAgora } = require('../services/cultoDeAgora');
 
 // GET /api/app/culto/agora — Modo Culto: culto de hoje + link ao vivo + se já registrou decisão.
 router.get('/culto/agora', authApp, async (req, res) => {

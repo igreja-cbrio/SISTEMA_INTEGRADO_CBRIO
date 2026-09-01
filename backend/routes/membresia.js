@@ -2258,6 +2258,120 @@ router.get('/totem/next/status', async (req, res) => {
   }
 });
 
+// ── Núcleo da inscrição do NEXT pelo totem ───────────────────────────────────
+// Extraído do POST /totem/next/inscrever em 2026-09-01, quando o fluxo de NOVO
+// CONVERTIDO do totem virou o segundo chamador — duas cópias divergiriam na
+// escolha da turma, no dedup (UNIQUE de next_matriculas) e na confirmação de
+// WhatsApp. Comportamento byte-idêntico pro caminho antigo.
+// Devolve { ok, ja_inscrito?, evento } ou lança (erro de negócio com .status).
+async function inscreverNextTotemCore({
+  membro_id, nome, sobrenome, cpf, telefone, email,
+  data_nascimento, observacoes, turma_id, sexo, userId = null,
+}) {
+  const cleanTel = String(telefone || '').replace(/\D/g, '');
+  const cleanCpf = cpf ? String(cpf).replace(/\D/g, '') : null;
+  const cleanEmail = email ? String(email).toLowerCase().trim() : null;
+
+  // Turma: a escolhida no calendário (validada contra as abertas) ou a mais próxima.
+  const turmas = await _turmasAbertasTotem();
+  if (!turmas.length) {
+    const e = new Error('Nenhuma turma do NEXT aberta no momento');
+    e.status = 400;
+    throw e;
+  }
+  const proxima = (turma_id && turmas.find((t) => t.id === turma_id)) || turmas[0];
+
+  // Porta guardada · garante membro_id (matcher forte) quando o totem não manda
+  let membroId = membro_id || null;
+  if (!membroId) {
+    try {
+      const r = await acharOuCriarGuardado({
+        cpf: cleanCpf, email: cleanEmail, telefone: cleanTel,
+        nome: [nome, sobrenome].filter(Boolean).join(' '),
+        dataNascimento: data_nascimento || null, status: 'visitante',
+        origem: 'membresia_totem_next',
+      });
+      membroId = r.membro_id;
+    } catch (e) { console.error('[TOTEM] next matcher:', e.message); }
+  }
+
+  // Snapshot pre-NEXT
+  let jaBatizado = false, jaVoluntario = false;
+  if (membroId) {
+    const { data: m } = await supabase
+      .from('mem_membros').select('batizado').eq('id', membroId).maybeSingle();
+    jaBatizado = !!m?.batizado;
+  }
+  if (cleanCpf) {
+    const { count } = await supabase
+      .from('vol_profiles')
+      .select('id', { count: 'exact', head: true })
+      .eq('cpf', cleanCpf)
+      .eq('allocation_status', 'active');
+    if (count && count > 0) jaVoluntario = true;
+  }
+
+  const { error: insErr } = await supabase
+    .from('next_matriculas')
+    .insert({
+      turma_id: proxima.id,
+      nome: String(nome).trim(),
+      sobrenome: sobrenome ? String(sobrenome).trim() : null,
+      cpf: cleanCpf,
+      telefone: cleanTel,
+      email: cleanEmail,
+      data_nascimento: data_nascimento || null,
+      observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
+      membro_id: membroId,
+      ja_batizado: jaBatizado,
+      ja_voluntario: jaVoluntario,
+      ...(sexo ? { sexo: String(sexo).trim().slice(0, 20) } : {}),
+      origem: 'manual',
+      registered_by: userId,
+    })
+    .select('id')
+    .single();
+
+  if (insErr) {
+    if (insErr.code === '23505') {
+      // Já matriculado nesta turma · idempotente
+      return { ok: true, ja_inscrito: true, evento: proxima };
+    }
+    throw insErr;
+  }
+
+  try {
+    await notificar({
+      modulo: 'next',
+      titulo: 'Nova inscrição no NEXT (via totem)',
+      mensagem: `${nome} ${sobrenome || ''} (${cleanEmail || 'sem e-mail'}) se inscreveu pelo totem.`,
+      link: '/ministerial/next',
+    });
+  } catch (e) {
+    console.error('[TOTEM] next notificar error:', e.message);
+  }
+
+  // Confirmação por WhatsApp (fila). Nome do template FIXO no código (padrão
+  // de grupos · gruposWhatsapp.js) com a env só como override — a equipe cria
+  // o template na Meta com este nome e NÃO precisa mexer no Vercel.
+  if (cleanTel) {
+    try {
+      const { enfileirar } = require('../services/whatsappFila');
+      const dataFmt = proxima.data ? String(proxima.data).split('-').reverse().join('/') : 'a confirmar';
+      enfileirar({
+        telefone: cleanTel,
+        template: process.env.WHATSAPP_TEMPLATE_NEXT_CONF || 'next_confirmacao',
+        // {{1}} nome · {{2}} data · {{3}} horário
+        params: [String(nome).split(' ')[0] || 'Olá', dataFmt, proxima.horario || 'a confirmar'],
+        contexto: 'next_totem',
+        refId: proxima.id,
+      }).catch(() => {});
+    } catch { /* fila indisponível · não bloqueia */ }
+  }
+
+  return { ok: true, evento: proxima };
+}
+
 // POST /api/membresia/totem/next/inscrever
 // Body: { membro_id?, nome, sobrenome?, cpf?, telefone, email, data_nascimento?, observações? }
 // Matricula na turma aberta do momento (next_matriculas). Porta guardada: sem
@@ -2283,106 +2397,16 @@ router.post('/totem/next/inscrever', async (req, res) => {
     if (!cleanTel || cleanTel.length < 10) {
       return res.status(400).json({ error: 'Telefone invalido' });
     }
-    const cleanCpf = cpf ? String(cpf).replace(/\D/g, '') : null;
-    const cleanEmail = email ? String(email).toLowerCase().trim() : null;
 
-    // Turma: a escolhida no calendário (validada contra as abertas) ou a mais próxima.
-    const turmas = await _turmasAbertasTotem();
-    if (!turmas.length) {
-      return res.status(400).json({ error: 'Nenhuma turma do NEXT aberta no momento' });
-    }
-    const proxima = (turma_id && turmas.find((t) => t.id === turma_id)) || turmas[0];
-
-    // Porta guardada · garante membro_id (matcher forte) quando o totem não manda
-    let membroId = membro_id || null;
-    if (!membroId) {
-      try {
-        const r = await acharOuCriarGuardado({
-          cpf: cleanCpf, email: cleanEmail, telefone: cleanTel,
-          nome: [nome, sobrenome].filter(Boolean).join(' '),
-          dataNascimento: data_nascimento || null, status: 'visitante',
-          origem: 'membresia_totem_next',
-        });
-        membroId = r.membro_id;
-      } catch (e) { console.error('[TOTEM] next matcher:', e.message); }
-    }
-
-    // Snapshot pre-NEXT
-    let jaBatizado = false, jaVoluntario = false;
-    if (membroId) {
-      const { data: m } = await supabase
-        .from('mem_membros').select('batizado').eq('id', membroId).maybeSingle();
-      jaBatizado = !!m?.batizado;
-    }
-    if (cleanCpf) {
-      const { count } = await supabase
-        .from('vol_profiles')
-        .select('id', { count: 'exact', head: true })
-        .eq('cpf', cleanCpf)
-        .eq('allocation_status', 'active');
-      if (count && count > 0) jaVoluntario = true;
-    }
-
-    const { error: insErr } = await supabase
-      .from('next_matriculas')
-      .insert({
-        turma_id: proxima.id,
-        nome: String(nome).trim(),
-        sobrenome: sobrenome ? String(sobrenome).trim() : null,
-        cpf: cleanCpf,
-        telefone: cleanTel,
-        email: cleanEmail,
-        data_nascimento: data_nascimento || null,
-        observacoes: observacoes ? String(observacoes).trim().slice(0, 1000) : null,
-        membro_id: membroId,
-        ja_batizado: jaBatizado,
-        ja_voluntario: jaVoluntario,
-        ...(sexo ? { sexo: String(sexo).trim().slice(0, 20) } : {}),
-        origem: 'manual',
-        registered_by: req.user?.id || null,
-      })
-      .select('id')
-      .single();
-
-    if (insErr) {
-      if (insErr.code === '23505') {
-        // Já matriculado nesta turma · idempotente
-        return res.json({ ok: true, ja_inscrito: true, evento: proxima });
-      }
-      throw insErr;
-    }
-
-    try {
-      await notificar({
-        modulo: 'next',
-        titulo: 'Nova inscrição no NEXT (via totem)',
-        mensagem: `${nome} ${sobrenome || ''} (${cleanEmail || 'sem e-mail'}) se inscreveu pelo totem.`,
-        link: '/ministerial/next',
-      });
-    } catch (e) {
-      console.error('[TOTEM] next notificar error:', e.message);
-    }
-
-    // Confirmação por WhatsApp (fila). Nome do template FIXO no código (padrão
-    // de grupos · gruposWhatsapp.js) com a env só como override — a equipe cria
-    // o template na Meta com este nome e NÃO precisa mexer no Vercel.
-    if (cleanTel) {
-      try {
-        const { enfileirar } = require('../services/whatsappFila');
-        const dataFmt = proxima.data ? String(proxima.data).split('-').reverse().join('/') : 'a confirmar';
-        enfileirar({
-          telefone: cleanTel,
-          template: process.env.WHATSAPP_TEMPLATE_NEXT_CONF || 'next_confirmacao',
-          // {{1}} nome · {{2}} data · {{3}} horário
-          params: [String(nome).split(' ')[0] || 'Olá', dataFmt, proxima.horario || 'a confirmar'],
-          contexto: 'next_totem',
-          refId: proxima.id,
-        }).catch(() => {});
-      } catch { /* fila indisponível · não bloqueia */ }
-    }
-
-    res.status(201).json({ ok: true, evento: proxima });
+    const r = await inscreverNextTotemCore({
+      membro_id, nome, sobrenome, cpf, telefone, email,
+      data_nascimento, observacoes, turma_id, sexo,
+      userId: req.user?.id || null,
+    });
+    if (r.ja_inscrito) return res.json(r);
+    res.status(201).json(r);
   } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
     console.error('[TOTEM] next/inscrever error:', e.message);
     res.status(500).json({ error: 'Erro ao inscrever no NEXT: ' + e.message });
   }
@@ -2458,6 +2482,397 @@ function _fmtDate(d) {
 // Regra do culto da apresentação (D3 · 09:30 primário, overflow 11:30 por
 // limite · docs/cultos-domingo §12.1) — régua PURA, no gate de deploy.
 const { escolherCultoApresentacao, rotuloHora } = require('../utils/criancaApresentacao');
+
+// ═════════════════════════════════════════════════════════════════════════════
+// TOTEM · NOVO CONVERTIDO (pedido do Marcelo, via Marcos · 2026-09-01)
+//
+// Substitui a ficha de papel do apelo: a pessoa registra a decisão no totem
+// (nome + telefone + nascimento — campos relaxados SÓ neste fluxo, decisão do
+// Marcos), já SOLICITA inscrição nas portas mais comuns (Next · Batismo ·
+// Grupos · Servir) e a 3ª tela é ASSISTIDA: a equipe define quem vai contatar
+// e confirma tudo.
+//
+// ⚠️⚠️ A decisão nasce pela MESMA porta do cadastro manual da Integração:
+// INSERT em `cultos_decisoes_pessoas` com `fonte` DEFAULT (a mesma do manual —
+// decisão do Marcos, 01/09). O trigger BEFORE resolve/cria a pessoa pelo
+// matcher canônico e o AFTER cria o convertido em `cui_convertidos` e o evento
+// da NSM — nada de tabela paralela, nada a alimentar depois.
+// O culto é o do RELÓGIO (services/cultoDeAgora · dia BRT · entre os que já
+// começaram vence o mais recente), a MESMA régua do Modo Culto do app.
+//
+// ⚠️ As portas reusam os caminhos que já existem — nunca uma 2ª régua:
+//   next    → inscreverNextTotemCore (a mesma matrícula do totem de membros)
+//   batismo → batismo_inscricoes com horário validado por avaliarHorarioBatismo
+//             (mesma régua do formulário público e do nextDirecionar · limite
+//             de 11 por horário continua valendo)
+//   grupos/servir → jornada_encaminhamentos (a fila de Encaminhados que os
+//             módulos Grupos e Voluntariado já triam, com devolutiva)
+const { cultoDeAgora: cultoDeAgoraTotem } = require('../services/cultoDeAgora');
+const { validarDecisao } = require('../utils/decisaoCampos');
+const { registrarConsentimentos, TEXTOS: TEXTOS_CONTRATO } = require('../services/inscricaoContrato');
+const { avaliarHorarioBatismo } = require('../utils/batismoHorario');
+const {
+  horariosConfigurados: batHorariosConfigurados,
+  ocupacaoPorHorario: batOcupacaoPorHorario,
+  dataProximoBatismo: batDataProxima,
+} = require('../services/batismoHorarios');
+const cryptoNode = require('crypto');
+
+// destino → meta do encaminhamento (espelha DESTINO_META de routes/cuidados.js
+// e o ramo grupos/voluntarios de services/nextDirecionar.js)
+const ENC_NOVO_CONVERTIDO = {
+  grupos: { destino: 'grupos', valor: 'conectar', modulo: 'grupos', label: 'Grupos de Conexão', link: '/grupos?tab=encaminhados' },
+  servir: { destino: 'voluntarios', valor: 'servir', modulo: 'voluntariado', label: 'Voluntariado', link: '/ministerial/voluntariado/encaminhados' },
+};
+
+// GET /api/membresia/totem/novo-convertido/contexto
+// O que a tela precisa pra abrir: o culto de agora (o registro é recusado sem
+// culto hoje) e os responsáveis ATIVOS do catálogo de Próximos passos
+// (cui_responsaveis — a mesma lista do "Gerenciar responsáveis" do Cuidados).
+// ⚠️ Endpoint próprio em vez de reusar GET /cuidados/responsaveis: aquele exige
+// o módulo `cuidados`, que a conta de quiosque do totem pode não ter.
+router.get('/totem/novo-convertido/contexto', async (_req, res) => {
+  try {
+    const [agora, resp] = await Promise.all([
+      cultoDeAgoraTotem(),
+      supabase.from('cui_responsaveis').select('id, nome').eq('ativo', true).order('nome'),
+    ]);
+    res.json({
+      culto: agora.culto ? { id: agora.culto.id, nome: agora.culto.nome, data: agora.culto.data, hora: agora.culto.hora } : null,
+      ao_vivo: agora.ao_vivo,
+      // ⚠️ null = "não deu pra saber" (a tela declara e segue sem responsável);
+      // [] = catálogo vazio de verdade. Confundir os dois faria a tela afirmar
+      // que não há equipe quando a consulta é que falhou.
+      responsaveis: resp.error ? null : (resp.data || []),
+    });
+  } catch (e) {
+    console.error('[TOTEM] novo-convertido/contexto:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o contexto' });
+  }
+});
+
+// POST /api/membresia/totem/novo-convertido
+// Body: { nome, telefone, data_nascimento, email?, aceite_lgpd: true,
+//         whatsapp_optin?: bool, portas?: ('next'|'batismo'|'grupos'|'servir')[],
+//         horario_batismo?, responsavel_atendimento? }
+router.post('/totem/novo-convertido', async (req, res) => {
+  try {
+    // ⚠️ A MESMA régua pura da porta de decisão online (utils/decisaoCampos ·
+    // no gate): nome + nascimento + telefone obrigatórios, LGPD `=== true`.
+    // Duas réguas de "o que a decisão exige" divergiriam na primeira mudança.
+    const v = validarDecisao(req.body);
+    if (!v.ok) return res.status(400).json({ error: v.erro, campo: v.campo });
+    const { nome, dataNascimento, telefone, email } = v.valores;
+
+    const portas = Array.isArray(req.body?.portas)
+      ? [...new Set(req.body.portas.filter((p) => ['next', 'batismo', 'grupos', 'servir'].includes(p)))]
+      : [];
+    const responsavel = String(req.body?.responsavel_atendimento || '').trim() || null;
+    const optin = req.body?.whatsapp_optin === true;
+
+    // O culto vem do relógio — sem culto HOJE não há onde pendurar a decisão
+    // (o trigger de cuidados exige culto; ver a lei "NÃO relaxar o RETURN NEW").
+    const { culto } = await cultoDeAgoraTotem();
+    if (!culto) {
+      return res.status(409).json({
+        error: 'sem_culto_hoje',
+        message: 'Não há culto hoje na agenda — registre a decisão pela Integração.',
+      });
+    }
+
+    // ⚠️ Batismo: horário conferido ANTES de qualquer escrita (mesma ordem do
+    // nextDirecionar — recusa = ZERO escrita, e a pessoa corrige na hora).
+    let batismo = null;
+    if (portas.includes('batismo')) {
+      const dataBat = await batDataProxima();
+      const [configurados, ocupacao] = await Promise.all([
+        batHorariosConfigurados(),
+        dataBat ? batOcupacaoPorHorario(dataBat) : Promise.resolve({}),
+      ]);
+      const av = avaliarHorarioBatismo(req.body?.horario_batismo, {
+        configurados: dataBat ? configurados : null, // sem data = falha fechada
+        ocupacao,
+        exigir: true,
+      });
+      if (!av.ok) {
+        return res.status(av.motivo === 'obrigatorio' ? 400 : 409)
+          .json({ error: av.mensagem, codigo: `horario_${av.motivo}`, campo: 'horario_batismo' });
+      }
+      batismo = { horario: av.horario, data: dataBat };
+    }
+
+    // Responsável validado contra o CATÁLOGO (cui_responsaveis · ativo): texto
+    // livre aqui recriaria a fábrica de grafias que o Cuidados já pagou pra
+    // limpar (o mesmo pastor em 4 grafias · 04/08).
+    if (responsavel) {
+      const { data: cat } = await supabase.from('cui_responsaveis')
+        .select('id').eq('nome', responsavel).eq('ativo', true).limit(1).maybeSingle();
+      if (!cat) {
+        return res.status(400).json({ error: 'Responsável fora do catálogo — escolha um nome da lista.', campo: 'responsavel_atendimento' });
+      }
+    }
+
+    // ⚠️ Idempotência de QUIOSQUE: decisão de HOJE com o mesmo telefone é
+    // REUSADA (toque duplo/retentativa não duplica convertido nem NSM) e o
+    // fluxo segue pras portas/responsável em cima dela.
+    let decisaoId = null;
+    let membroId = null;
+    let jaRegistrado = false;
+    {
+      const inicioDiaUtc = new Date(culto.data + 'T00:00:00-03:00').toISOString();
+      const { data: jaHoje } = await supabase.from('cultos_decisoes_pessoas')
+        .select('id, membro_id')
+        .eq('telefone', telefone)
+        .gte('created_at', inicioDiaUtc)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1).maybeSingle();
+      if (jaHoje) { decisaoId = jaHoje.id; membroId = jaHoje.membro_id || null; jaRegistrado = true; }
+    }
+
+    if (!decisaoId) {
+      // ⚠️ Consentimento ANTES da decisão (id pré-gerado · padrão da porta
+      // online): falha na decisão deixa linha órfã no ledger (inofensiva); a
+      // ordem inversa deixaria dado de pessoa sem prova legal. O item de
+      // WhatsApp é gravado MESMO quando a pessoa diz não — a prova de que a
+      // pergunta foi feita (lei de 25/08).
+      decisaoId = cryptoNode.randomUUID();
+      await registrarConsentimentos({
+        porta: 'decisao',
+        refId: decisaoId,
+        ip: req.ip,
+        userAgent: req.get('user-agent'),
+        itens: [
+          { tipo: 'termos_lgpd', aceito: true, texto: TEXTOS_CONTRATO.termos_lgpd },
+          { tipo: 'whatsapp', aceito: optin, texto: TEXTOS_CONTRATO.whatsapp },
+        ],
+      });
+
+      const { data: criada, error } = await supabase
+        .from('cultos_decisoes_pessoas')
+        .insert({
+          id: decisaoId,
+          culto_id: culto.id,
+          nome,
+          telefone,
+          email,
+          data_nascimento: dataNascimento,
+          tipo_decisao: 'presencial',
+          // `fonte` fica no DEFAULT — a mesma do cadastro manual (decisão do
+          // Marcos · 01/09). A proveniência vive na observação.
+          observacoes: 'Registrado no totem · fluxo novo convertido',
+          registrado_por: req.user?.id || null,
+        })
+        // membro_id é resolvido pelo trigger BEFORE INSERT (matcher canônico)
+        .select('membro_id')
+        .maybeSingle();
+      if (error) throw error;
+      membroId = criada?.membro_id || null;
+
+      // Opt-in de WhatsApp: SÓ LIGA, NUNCA DESLIGA (política de 05/08), e a
+      // data é a prova de desde quando vale — best-effort.
+      if (optin && membroId) {
+        try {
+          await supabase.from('mem_membros')
+            .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+            .eq('id', membroId)
+            .or('whatsapp_optin.is.null,whatsapp_optin.eq.false');
+        } catch (e) { console.warn('[TOTEM novo-convertido] optin:', e.message); }
+      }
+    }
+
+    // O convertido criado pelo trigger (cui_convertidos não guarda o id da
+    // decisão — o elo é culto + telefone). Best-effort: sem ele o responsável
+    // não é gravado, e a resposta DECLARA em vez de fingir sucesso.
+    let cui = null;
+    try {
+      const { data } = await supabase.from('cui_convertidos')
+        .select('id, membro_id')
+        .eq('culto_id', culto.id).eq('telefone', telefone)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1).maybeSingle();
+      cui = data || null;
+    } catch (e) { console.warn('[TOTEM novo-convertido] cui:', e.message); }
+
+    const avisos = [];
+    if (responsavel) {
+      if (cui) {
+        const { error: er } = await supabase.from('cui_convertidos')
+          .update({ responsavel_atendimento: responsavel }).eq('id', cui.id);
+        if (er) { console.warn('[TOTEM novo-convertido] responsavel:', er.message); avisos.push('responsavel_nao_gravado'); }
+      } else {
+        avisos.push('responsavel_nao_gravado');
+      }
+    }
+
+    // ── Portas ────────────────────────────────────────────────────────────────
+    const criadas = {};
+    if (portas.includes('next')) {
+      try {
+        // next_matriculas guarda o 1º nome em `nome` e o resto em `sobrenome`
+        // (convenção da tabela — o nome inteiro num campo só quebra o match).
+        const partes = nome.split(/\s+/);
+        const r = await inscreverNextTotemCore({
+          membro_id: membroId,
+          nome: partes[0],
+          sobrenome: partes.slice(1).join(' ') || null,
+          telefone,
+          email,
+          data_nascimento: dataNascimento,
+          observacoes: 'Novo convertido · totem',
+          userId: req.user?.id || null,
+        });
+        criadas.next = r.ja_inscrito ? 'ja_inscrito' : 'inscrito';
+      } catch (e) {
+        console.error('[TOTEM novo-convertido] next:', e.message);
+        criadas.next = 'falhou';
+      }
+    }
+
+    if (portas.includes('batismo') && batismo) {
+      try {
+        let ja = null;
+        if (membroId) {
+          const { data } = await supabase.from('batismo_inscricoes')
+            .select('id').eq('membro_id', membroId)
+            .in('status', ['pendente', 'confirmado'])
+            .is('deleted_at', null)
+            .limit(1).maybeSingle();
+          ja = data;
+        }
+        if (ja) {
+          criadas.batismo = 'ja_inscrito';
+        } else {
+          const partes = nome.split(/\s+/);
+          const { error: eb } = await supabase.from('batismo_inscricoes').insert({
+            nome: partes[0],
+            sobrenome: partes.slice(1).join(' ') || '',
+            telefone,
+            data_nascimento: dataNascimento,
+            email,
+            membro_id: membroId || null,
+            // Horário + data validados no topo (falha fechada) — sem os dois a
+            // inscrição some da contagem por horário e do lembrete de véspera.
+            data_batismo: batismo.data,
+            horario_culto: batismo.horario,
+            status: 'pendente',
+            origem: 'totem',
+            observacoes: 'Novo convertido · totem',
+            inscrito_por: req.user?.id || null,
+          });
+          if (eb) throw eb;
+          notificar({
+            modulo: 'integracao',
+            titulo: 'Inscrição de batismo · novo convertido (totem)',
+            mensagem: `${nome} acabou de decidir e já se inscreveu pro batismo (${batismo.horario}).`,
+            link: '/ministerial/integracao?tab=batismos',
+          }).catch(() => {});
+          criadas.batismo = 'inscrito';
+        }
+      } catch (e) {
+        console.error('[TOTEM novo-convertido] batismo:', e.message);
+        criadas.batismo = 'falhou';
+      }
+    }
+
+    for (const p of ['grupos', 'servir']) {
+      if (!portas.includes(p)) continue;
+      const meta = ENC_NOVO_CONVERTIDO[p];
+      try {
+        // Dedup por (convertido, destino) — o mesmo do desfecho do Cuidados.
+        let jaEnc = null;
+        if (cui) {
+          const { data } = await supabase.from('jornada_encaminhamentos')
+            .select('id').eq('convertido_id', cui.id).eq('destino', meta.destino)
+            .is('deleted_at', null).limit(1).maybeSingle();
+          jaEnc = data;
+        }
+        if (jaEnc) {
+          criadas[p] = 'ja_encaminhado';
+        } else {
+          const { error: ee } = await supabase.from('jornada_encaminhamentos').insert({
+            origem: 'totem',
+            convertido_id: cui?.id || null,
+            membro_id: membroId || null,
+            nome,
+            telefone,
+            destino: meta.destino,
+            valor_alvo: meta.valor,
+            observacao: 'A própria pessoa pediu no totem de novos convertidos',
+            encaminhado_por: req.user?.id || null,
+          });
+          if (ee) throw ee;
+          notificar({
+            modulo: meta.modulo,
+            tipo: 'novo_encaminhamento',
+            titulo: `Novo convertido quer ${meta.label}: ${nome}`,
+            mensagem: `${nome} acabou de decidir e pediu ${meta.label} no totem. Faça o primeiro contato e registre a devolutiva.`,
+            link: meta.link,
+            severidade: 'info',
+          }).catch(() => {});
+          criadas[p] = 'encaminhado';
+        }
+      } catch (e) {
+        console.error(`[TOTEM novo-convertido] ${p}:`, e.message);
+        criadas[p] = 'falhou';
+      }
+    }
+
+    // WhatsApp de boas-vindas citando quem vai contatar (fila · retry). Nome do
+    // template FIXO com env de override (padrão da casa). No-op gracioso até o
+    // template ser aprovado na Meta. ⚠️ Só no PRIMEIRO registro — a retentativa
+    // do quiosque não pode virar mensagem dupla (lição de 07/08).
+    if (!jaRegistrado) {
+      try {
+        const { enfileirar } = require('../services/whatsappFila');
+        enfileirar({
+          telefone,
+          template: process.env.WHATSAPP_TEMPLATE_CONVERTIDO_BOAS_VINDAS || 'novo_convertido_boas_vindas',
+          // {{1}} 1º nome · {{2}} quem vai contatar
+          params: [nome.split(/\s+/)[0] || 'Olá', responsavel || 'Alguém da nossa equipe'],
+          contexto: 'cuidados.convertido_boas_vindas',
+          refId: decisaoId,
+        }).catch(() => {});
+      } catch { /* fila indisponível · não bloqueia */ }
+    }
+
+    // Aviso ao time de Cuidados — os MESMOS destinatários do gêmeo manual
+    // (POST /kpis/cultos/:id/decisoes-pessoas · fire-and-forget · dedup por decisão).
+    (async () => {
+      try {
+        const { data: equipe } = await supabase.from('profiles')
+          .select('id').in('email', ['marcelo.soares@cbrio.org', 'wesley.ramos@cbrio.org']);
+        const ids = (equipe || []).map((p) => p.id).filter(Boolean);
+        if (!ids.length) return;
+        await notificar({
+          modulo: 'cuidados',
+          tipo: 'nova_aceitacao',
+          titulo: `🙌 Nova decisão (totem): ${nome}`,
+          mensagem: `${nome} registrou a decisão no totem${responsavel ? ` · quem contata: ${responsavel}` : ''}${portas.length ? ` · pediu: ${portas.join(', ')}` : ' · não quis se inscrever ainda'}.`,
+          link: '/ministerial/cuidados?tab=convertidos',
+          severidade: 'info',
+          chaveDedup: `nova_aceitacao_${decisaoId}`,
+          targetIds: ids,
+        });
+      } catch (e) {
+        console.error('[TOTEM novo-convertido] notif cuidados:', e.message);
+      }
+    })();
+
+    res.status(jaRegistrado ? 200 : 201).json({
+      ok: true,
+      ja_registrado: jaRegistrado,
+      culto: { nome: culto.nome, data: culto.data, hora: culto.hora },
+      portas: criadas,
+      responsavel,
+      avisos,
+    });
+  } catch (e) {
+    console.error('[TOTEM] novo-convertido POST:', e.message);
+    res.status(500).json({ error: 'Não foi possível registrar agora. Chame alguém da equipe.' });
+  }
+});
 
 // GET /api/membresia/totem/apresentacao-bebe/status?membro_id=X
 // Retorna { proxima_data, horario_previsto?, horario_rotulo?, apresentacao_existente? }
