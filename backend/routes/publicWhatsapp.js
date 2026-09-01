@@ -10,7 +10,9 @@
 //   - Numero desconhecido -> assistente INSTITUCIONAL (missao/visao/horarios).
 //     NAO coleta dado · so responde.
 const router = require('express').Router();
+const { semFalhar } = require('../utils/semFalhar');
 const crypto = require('crypto');
+const freioBot = require('../utils/freioBot');
 const { supabase } = require('../utils/supabase');
 const { enviarTexto, normalizarTelefone } = require('../services/whatsappSend');
 // Resposta do voluntário ao aviso de escala (botão de quick-reply ou texto).
@@ -43,9 +45,39 @@ router.get('/', (req, res) => {
 });
 
 // ── POST · recebimento ──────────────────────────────────────────────
-router.post('/', (req, res) => {
+// ⚠️⚠️ AWAITED ANTES DO 200 — e o `res.sendStatus` fora do fluxo era um BUG
+// silencioso de 2 anos (achado 26/08/2026).
+//
+// Em serverless o container CONGELA quando a resposta é enviada. Responder
+// primeiro e processar depois (`processarEvento(req).catch()`, sem await)
+// significava que TODO trabalho lento era descartado no meio. É a lei de
+// 31/07 — "o que não pode se perder vai AWAITED" — aplicada ao webhook
+// inteiro, que é justamente onde ninguém tinha olhado.
+//
+// O que se perdia, medido: **6 das 12 mídias recebidas em 30 dias ficaram
+// com `media_url` NULL** (o download da Meta são dois fetches + upload ao
+// Storage, segundos — o primeiro a morrer), e **`whatsapp_coletas` não
+// registrou UMA linha desde 19/08**, porque o insert dela vem depois no
+// fluxo. O texto sobrevivia porque o insert da mensagem é rápido.
+//
+// ⚠️ O 200 é GARANTIDO pelo `.catch` — nunca 4xx/5xx: a Meta reentrega em
+// erro e DESATIVA o webhook depois de N falhas (lei já registrada para os
+// webhooks de pagamento). Assinatura inválida é tratada dentro do
+// `processarEvento`, que só loga e retorna.
+//
+// ⚠️ O custo é LATÊNCIA: a Meta pode reentregar o que demorar. É inofensivo
+// aqui e por construção — `wa_mensagens.wa_message_id` e
+// `whatsapp_coletas.whatsapp_message_id` são UNIQUE, e o código já trata o
+// caso explicitamente ("provável reentrega → não incrementa"). O pior caso é
+// limitado: `waSender.baixarMedia` tem teto de 15s + 20s.
+//
+// ⚠️ NÃO usar `res.sendStatus(200)` antes com `await` depois: isso dependeria
+// de o adaptador da Vercel aguardar o handler async depois da resposta, o que
+// não é contrato documentado. Aqui a garantia é do Express, não da
+// plataforma — previsível vence elegante.
+router.post('/', async (req, res) => {
+  await processarEvento(req).catch(e => console.error('[whatsapp webhook] processar:', e.message));
   res.sendStatus(200);
-  processarEvento(req).catch(e => console.error('[whatsapp webhook] processar:', e.message));
 });
 
 // Validação HMAC · so se o APP_SECRET estiver configurado (prod).
@@ -90,11 +122,22 @@ async function processarEvento(req) {
   // existe `respostas_automaticas` (migration 20260812130000), lida em
   // `processarMensagem`, que desliga só o que o bot RESPONDE e mantém o inbox
   // recebendo.
-  const { data: cfg } = await supabase
+  // ⚠️⚠️ O `error` PRECISA ser lido (achado 26/08). Ele era descartado, e o
+  // gate de `respostas_automaticas` lá embaixo é `cfg && ...` — com `cfg` null
+  // por falha de consulta a condição vira false e O BOT VOLTA A FALAR. Era
+  // fail-OPEN: instabilidade no banco religava o bot. Assinatura no histórico:
+  // 18·7·29·21·8 respostas/dia até 11/08, o gate entrou em 12/08 e caiu pra 1
+  // no mesmo dia, e depois 1·3·1·1 em 22-25/08 — "1 a cada dois dias" é falha
+  // intermitente, não gate quebrado.
+  const { data: cfg, error: erroCfg } = await supabase
     .from('whatsapp_config')
     .select('ia_ativa, institucional, respostas_automaticas')
     .eq('id', 1).maybeSingle();
-  if (cfg && cfg.ia_ativa === false) return;
+  if (erroCfg) console.warn('[whatsapp webhook] config:', erroCfg.message);
+  // ⚠️ FAIL-OPEN aqui de propósito: este freio corta o webhook INTEIRO,
+  // inclusive o `registrarInbound`. Fechar em caso de falha faria a mensagem da
+  // pessoa não aparecer no inbox — pior que o bot falar.
+  if (freioBot.webhookDesligado({ cfg })) return;
 
   const entry = req.body?.entry || [];
   // Cap defensivo · um unico POST forjado nao deve disparar N inserts + N
@@ -147,7 +190,7 @@ async function processarEvento(req) {
           await processarBotaoAprovacao(m).catch(err =>
             console.error('[whatsapp webhook] botao:', err.message));
         } else {
-          await processarMensagem(m, cfg, pnid).catch(err =>
+          await processarMensagem(m, cfg, pnid, erroCfg).catch(err =>
             console.error('[whatsapp webhook] mensagem:', err.message));
         }
       }
@@ -177,9 +220,9 @@ async function tratarPesquisaSatisfacao({ telefone, texto, messageId, pnid = nul
   const nota = /^[0-5]$/.test(t) ? Number(t) : null;
   const agora = new Date().toISOString();
   if (nota != null) {
-    await supabase.from('wa_mensagens').insert({
+    await semFalhar(supabase.from('wa_mensagens').insert({
       conversa_id: convP.id, direcao: 'in', tipo: 'avaliacao', texto: t, wa_message_id: messageId,
-    }).catch(() => {});
+    }), '[wa-webhook]');
     await supabase.from('wa_conversas').update({
       satisfacao: nota, satisfacao_em: agora, pesquisa_estado: 'respondida',
       last_message_at: agora, ultima_previa: `Avaliação: ${nota}/5`,
@@ -318,9 +361,9 @@ async function processarStatuses(statuses) {
         }
         continue;
       }
-      await supabase.from('whatsapp_status_orfaos').insert({
+      await semFalhar(supabase.from('whatsapp_status_orfaos').insert({
         message_id: messageId, status: st, status_timestamp: ts, erro: erroTxt, raw: s,
-      }).catch(() => {});
+      }), '[wa-webhook]');
     } catch (e) {
       console.error('[whatsapp webhook] status item:', e.message);
     }
@@ -341,10 +384,35 @@ async function processarStatuses(statuses) {
 // contexto NÃO é tratada aqui — segue pro fluxo normal do bot.
 //
 // @returns {boolean} true se assumiu a mensagem.
+/**
+ * O ÚNICO disparo de escala das últimas 48h pra este telefone — ou null.
+ *
+ * ⚠️ Devolve null quando há DOIS ou mais: sem o `context.id` não dá pra saber
+ * de qual convite a pessoa está falando, e aplicar a recusa na escala errada é
+ * pior que abrir uma conversa.
+ * ⚠️ Casa pelos 8 últimos dígitos: `whatsapp_envios.telefone` guarda o que o
+ * chamador passou (uns com 55, outros sem), e comparar cru dependeria de sorte.
+ */
+async function _envioUnicoRecente(from) {
+  const alvo = String(from || '').replace(/\D/g, '').slice(-8);
+  if (alvo.length < 8) return null;
+  const desde = new Date(Date.now() - 48 * 3600000).toISOString();
+  const { data, error } = await supabase
+    .from('whatsapp_envios')
+    .select('id, ref_id, contexto, telefone, criado_em')
+    .eq('contexto', CONTEXTO_ESCALA)
+    .gte('criado_em', desde)
+    .order('criado_em', { ascending: false })
+    .limit(200);
+  if (error) return null;
+  const meus = (data || []).filter(
+    (e) => String(e.telefone || '').replace(/\D/g, '').slice(-8) === alvo && e.ref_id,
+  );
+  return meus.length === 1 ? meus[0] : null;
+}
+
 async function processarRespostaEscala(m) {
   const wamid = wamidRespondido(m);
-  if (!wamid) return false;
-
   const bruto = textoDaResposta(m);
   if (!bruto) return false;
 
@@ -357,9 +425,28 @@ async function processarRespostaEscala(m) {
     if (optSvc.intencaoOptOut(bruto, { deBotao: m.type !== 'text' })) return false;
   } catch (e) { /* sem o serviço, segue a régua da escala */ }
 
-  const { data: envio } = await supabase
-    .from('whatsapp_envios').select('id, ref_id, contexto')
-    .eq('message_id', wamid).eq('contexto', CONTEXTO_ESCALA).maybeSingle();
+  // ⚠️⚠️ SEM `context.id` TAMBÉM VALE — quando não há ambiguidade (24/08/2026).
+  //
+  // Relato do Matheus: as pessoas respondem ao disparo e a conversa fica aberta
+  // no inbox, sendo que a única resposta esperada é "não vou poder". Medido:
+  // das 67 conversas abertas, 9 vieram de resposta ao disparo — e o texto delas
+  // é "Ok", "Eu vou", "estarei lá". Nenhuma usou o "responder" do WhatsApp,
+  // então nenhuma chegava aqui: caíam no bot, que abria conversa e respondia
+  // "responderemos o mais breve possível" a quem não perguntou nada.
+  //
+  // ⚠️ O motivo de exigir o contexto CONTINUA valendo: quem serve em duas áreas
+  // teria a recusa aplicada na escala errada. Por isso o caminho sem contexto
+  // só age quando existe EXATAMENTE UM disparo de escala nas últimas 48h pra
+  // aquele telefone. Dois ou mais ⇒ devolve false e a pessoa fala com gente.
+  let envio = null;
+  if (wamid) {
+    const { data } = await supabase
+      .from('whatsapp_envios').select('id, ref_id, contexto')
+      .eq('message_id', wamid).eq('contexto', CONTEXTO_ESCALA).maybeSingle();
+    envio = data || null;
+  } else {
+    envio = await _envioUnicoRecente(m.from);
+  }
   if (!envio?.ref_id) return false;
 
   const messageId = m.id;
@@ -370,13 +457,21 @@ async function processarRespostaEscala(m) {
   if (jaVisto) return true;
 
   const status = interpretarRespostaEscala(bruto);
-  const registrar = (raw) => supabase.from('whatsapp_coletas').insert({
+  const registrar = (raw) => semFalhar(supabase.from('whatsapp_coletas').insert({
     whatsapp_message_id: messageId, telefone, raw_text: raw, status: 'ignorado',
-  }).catch(() => {});
+  }), '[wa-webhook]');
 
   // ⚠️ Não entendeu? NÃO CHUTA. Marcar presença que a pessoa não deu é pior que
   // pedir de novo — e ela está com a janela de 24h aberta, então o texto chega.
   if (!status) {
+    // ⚠️ ASSIMETRIA PROPOSITAL. Com contexto, a pessoa respondeu À NOSSA
+    // mensagem: pedir o botão de novo é o certo. SEM contexto, ela pode estar
+    // falando de outra coisa — e as respostas reais mostram que a segunda mais
+    // comum é CORREÇÃO DE HORÁRIO ("meu horário é às 10", "não sirvo as 8.30").
+    // Isso precisa de gente, então devolvemos false e o fluxo normal abre a
+    // conversa. Responder "não entendi" a quem está corrigindo a escala seria
+    // ignorar um problema real.
+    if (!wamid) return false;
     await registrar(`[escala] não interpretado: ${bruto}`.slice(0, 500));
     // ⚠️ A instrução espelha o template de UM botão (modelo opt-out): quem não
     // vai é que precisa agir. Prometer um botão "Vou sim" que não existe na
@@ -418,12 +513,12 @@ async function processarBotaoAprovacao(m) {
   await require('../services/solicitacaoWpp')
     .tratarRespostaAprovacao({ telefone, texto: botaoId })
     .catch(err => console.error('[whatsapp webhook] botao aprovacao:', err.message));
-  await supabase.from('whatsapp_coletas').insert({
+  await semFalhar(supabase.from('whatsapp_coletas').insert({
     whatsapp_message_id: messageId, telefone, raw_text: botaoId, status: 'ignorado',
-  }).catch(() => {});
+  }), '[wa-webhook]');
 }
 
-async function processarMensagem(m, cfg, pnid = null) {
+async function processarMensagem(m, cfg, pnid = null, erroCfg = null) {
   const messageId = m.id;
   const telefone = normalizarTelefone(m.from);
   // Cap de tamanho · evita mandar payload gigante pro parser (LLM) e pro banco.
@@ -447,10 +542,10 @@ async function processarMensagem(m, cfg, pnid = null) {
     if (intencao) {
       const ligar = intencao === 'in';
       const r = await optSvc.aplicarOptOut({ telefone, ligar }).catch(err => { console.error('[whatsapp webhook] optout:', err.message); return null; });
-      await supabase.from('whatsapp_coletas').insert({
+      await semFalhar(supabase.from('whatsapp_coletas').insert({
         whatsapp_message_id: messageId, telefone, raw_text: (bruto || texto || '').slice(0, 2000),
         status: 'ignorado', parsed: { fonte: ligar ? 'opt_in' : 'opt_out', afetados: r?.afetados ?? 0 },
-      }).catch(() => {});
+      }), '[wa-webhook]');
       await enviarTexto(telefone, ligar
         ? 'Pronto! Você voltou a receber as mensagens da CBRio. 🙏'
         : 'Pronto, você não vai mais receber mensagens da CBRio por aqui. Se mudar de ideia, responda VOLTAR.'
@@ -466,9 +561,9 @@ async function processarMensagem(m, cfg, pnid = null) {
     .tratarRespostaAprovacao({ telefone, texto })
     .catch(err => { console.error('[whatsapp webhook] aprovacao:', err.message); return false; });
   if (tratadoAprov) {
-    await supabase.from('whatsapp_coletas').insert({
+    await semFalhar(supabase.from('whatsapp_coletas').insert({
       whatsapp_message_id: messageId, telefone, raw_text: texto, status: 'ignorado',
-    }).catch(() => {});
+    }), '[wa-webhook]');
     return;
   }
 
@@ -551,12 +646,19 @@ async function processarMensagem(m, cfg, pnid = null) {
     // ⚠️ E é depois do `podeColetar`: o formulário de números de culto dos
     // COORDENADORES é ferramenta de trabalho, não atendimento — não é o "bot"
     // de que ele está falando.
-    if (cfg && cfg.respostas_automaticas === false) {
-      await supabase.from('whatsapp_coletas').insert({
+    // ⚠️⚠️ FAIL-CLOSED (26/08): não conseguir LER a configuração significa NÃO
+    // RESPONDER. Aqui o custo de errar fechado é uma resposta a menos numa
+    // caixa que gente atende de qualquer forma — a mensagem já foi gravada no
+    // inbox pelo `registrarInbound` acima. O custo de errar aberto é o bot
+    // abrindo o menu de setores contra a lei de 12/08 ("não quero bot"), que é
+    // exatamente o que aconteceu com a Thalya em 25/08.
+    if (!freioBot.botPodeResponder({ cfg, erroConfig: erroCfg })) {
+      await semFalhar(supabase.from('whatsapp_coletas').insert({
         whatsapp_message_id: messageId, telefone, raw_text: texto,
-        status: 'ignorado', erro: 'respostas_automaticas_desligadas',
+        status: 'ignorado',
+        erro: erroCfg ? 'config_indisponivel' : 'respostas_automaticas_desligadas',
         modulo_destino: 'conversas',
-      }).catch(() => {});
+      }), '[wa-webhook]');
       return;
     }
 
@@ -568,10 +670,10 @@ async function processarMensagem(m, cfg, pnid = null) {
         .tratar({ telefone, texto })
         .catch(e => { console.error('[whatsapp webhook] triagem:', e.message); return false; });
       if (assumiu) {
-        await supabase.from('whatsapp_coletas').insert({
+        await semFalhar(supabase.from('whatsapp_coletas').insert({
           whatsapp_message_id: messageId, telefone, raw_text: texto,
           status: 'ignorado', erro: 'triagem', modulo_destino: 'conversas',
-        }).catch(() => {});
+        }), '[wa-webhook]');
         return;
       }
     }
@@ -698,10 +800,10 @@ async function processarMensagem(m, cfg, pnid = null) {
 // descarta, sem processar (reativar = remover este bloco).
 async function processarFlowReply(m) {
   const telefone = normalizarTelefone(m.from);
-  await supabase.from('whatsapp_coletas').insert({
+  await semFalhar(supabase.from('whatsapp_coletas').insert({
     whatsapp_message_id: m.id, telefone, raw_text: '[nfm_reply descartado]',
     status: 'ignorado', erro: 'coleta_aposentada', modulo_destino: 'desconhecido',
-  }).catch(() => {});
+  }), '[wa-webhook]');
   return;
   // eslint-disable-next-line no-unreachable -- código dormante da persona de coleta
   // Idempotência (cobre o Flow do culto, que insere coleta com este message_id).
@@ -717,10 +819,10 @@ async function processarFlowReply(m) {
   // formulário de quem não é coordenador é registrada e descartada — não
   // vira coleta (líder comum não pode alimentar contagem oficial).
   if (!lider || lider.papel !== 'coordenador') {
-    await supabase.from('whatsapp_coletas').insert({
+    await semFalhar(supabase.from('whatsapp_coletas').insert({
       whatsapp_message_id: m.id, telefone, raw_text: '[nfm_reply descartado]',
       status: 'ignorado', erro: 'coleta_restrita', modulo_destino: 'desconhecido',
-    }).catch(() => {});
+    }), '[wa-webhook]');
     return;
   }
   await flowColeta.tratarFlowReply(m, telefone, lider);

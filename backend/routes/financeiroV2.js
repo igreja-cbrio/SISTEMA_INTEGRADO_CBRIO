@@ -21,6 +21,8 @@ const crypto = require('crypto');
 const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { montarGrade } = require('../utils/decendioComparativo');
+const { assinarAnexosDeObjetos, assinarLinhas } = require('../services/anexosLogArquivos');
 const { parseOfx } = require('../services/ofxParser');
 const { parsePixExtrato } = require('../services/pixExtratoParser');
 const { vincularIdentidadeOfx } = require('../services/ofxIdentidade');
@@ -780,7 +782,15 @@ router.get('/fila-classificacao', async (req, res) => {
 // ====================================================================
 router.post('/classificar/:filaId/aprovar', async (req, res) => {
   try {
-    const { plano_contas_id, centro_custo_id, membro_id, identificador_centavo, observacoes, criar_contribuinte } = req.body;
+    const { plano_contas_id, centro_custo_id, membro_id, observacoes, criar_contribuinte } = req.body;
+    // ⚠️⚠️ O DÍGITO É DERIVADO DO VALOR, não digitado. Até 27/08/2026 ele só vinha
+    // do `req.body` — ou seja, dependia do operador DIGITAR o que o próprio valor
+    // já diz. Efeito medido: `fin_transacoes.identificador_centavo` estava
+    // preenchido em ZERO linhas do sistema inteiro, então nenhuma campanha
+    // conseguia somar o que já estava na conta da igreja. É a segunda metade do
+    // dígito morto (a primeira era a régua ausente na função SQL que classifica).
+    // O `req.body` ainda vence quando vem explícito: correção humana manda.
+    let identificador_centavo = req.body?.identificador_centavo;
 
     // Busca fila + lancamento bruto
     const { data: fila, error: errFila } = await supabase
@@ -790,6 +800,23 @@ router.post('/classificar/:filaId/aprovar', async (req, res) => {
     if (errFila || !fila) return res.status(404).json({ error: 'Item não encontrado' });
 
     const lanc = fila.lancamento;
+
+    // Deriva o dígito do valor do crédito, se houver identificador ATIVO pra ele.
+    // ⚠️ Régua ÚNICA em `utils/digitoCampanha.js`, a mesma que a função SQL
+    // espelha — duas contas do centavo divergiriam no primeiro arredondamento.
+    // ⚠️ Best-effort: falha ao consultar os dígitos NÃO derruba a aprovação (o
+    // trabalho do operador vale mais que o carimbo), só deixa a coluna nula.
+    if (identificador_centavo === undefined) {
+      try {
+        const { digitoDoLancamento } = require('../utils/digitoCampanha');
+        const { data: ativos } = await supabase.rpc('camp_digitos_ativos');
+        identificador_centavo = digitoDoLancamento(lanc, ativos || []) || null;
+      } catch (e) {
+        console.error('[FIN-V2] derivar dígito:', e.message);
+        identificador_centavo = null;
+      }
+    }
+
     const finalPlanoContas = plano_contas_id || fila.sugestao_plano_contas_id;
     const finalCentroCusto = centro_custo_id !== undefined ? centro_custo_id : fila.sugestao_centro_custo_id;
     let finalMembro = membro_id !== undefined ? membro_id : fila.sugestao_membro_id;
@@ -1400,10 +1427,17 @@ router.get('/transacoes/:id/detalhe', async (req, res) => {
         .eq('fin_transacao_id', t.id).is('deleted_at', null).limit(1),
     ]);
 
+    // ⚠️ Assina os anexos do bucket `log-arquivos` (comprovante da transação e
+    // o arquivo da NF vinculada). `anexos_url` é jsonb com lista de OBJETOS
+    // `{url, nome, tipo, em}`, por isso o percurso próprio.
+    const [comAnexos] = await assinarAnexosDeObjetos(
+      [{ ...t, anexos_url: Array.isArray(t.anexos_url) ? t.anexos_url : [] }], 'anexos_url');
+    const [notaAssinada] = nf.data?.[0]
+      ? await assinarLinhas([nf.data[0]], ['storage_path']) : [null];
+
     res.json({
-      ...t,
-      anexos_url: Array.isArray(t.anexos_url) ? t.anexos_url : [],
-      nota_fiscal: nf.data?.[0] || null,
+      ...comAnexos,
+      nota_fiscal: notaAssinada,
       conta_pagar: cp.data?.[0] || null,
     });
   } catch (e) {
@@ -1433,7 +1467,10 @@ router.post('/transacoes/:id/anexos', uploadAnexo.single('arquivo'), async (req,
     const { error: upErr } = await supabase.storage.from('log-arquivos')
       .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
     if (upErr) return res.status(500).json({ error: `Erro ao salvar arquivo: ${upErr.message}` });
-    const url = supabase.storage.from('log-arquivos').getPublicUrl(path).data.publicUrl;
+    // ⚠️ Guarda o CAMINHO, não a URL pública: `log-arquivos` guarda documento
+    // fiscal e vai ser fechado. Quem lê assina na hora (anexosLogArquivos), e o
+    // helper é idempotente, então as linhas antigas com URL seguem funcionando.
+    const url = path;
 
     const anexos = [
       ...(Array.isArray(t.anexos_url) ? t.anexos_url : []),
@@ -2621,8 +2658,10 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
         .gte('mes', inicio12m.slice(0, 7)).order('mes'),
       supabase.from('vw_fin_arrecadacao_semanal').select('*')
         .gte('semana_inicio', inicio52s).order('semana_inicio'),
+      // ⚠️ Era `.eq('mes', mesAtual)` — só o mês corrente. Agora vem a série,
+      // porque comparar decêndio com decêndio dos outros meses exige tê-los.
       supabase.from('vw_fin_decendio').select('*')
-        .eq('mes', mesAtual).order('decendio'),
+        .gte('mes', inicio12m.slice(0, 7)).order('mes').order('decendio'),
       supabase.from('vw_fin_ano_acumulado').select('*')
         .in('ano', [anoAtual, anoAnterior]),
       supabase.from('vw_fin_yoy_semanal').select('*')
@@ -2665,6 +2704,15 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
       return { ...m, delta_freq_pct: dFreq, delta_receita_pct: dRec, elasticidade: elast };
     });
 
+    // ⚠️ O "hoje" é BRT: em UTC o dia vira às 21h, e no dia 10 às 22h o decêndio
+    // já seria contado como fechado um dia antes do que é.
+    const hojeBRT = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+    const decendioSerie = (decendio.data || []).map(r => ({
+      ...r,
+      receita: Number(r.receita || 0) - (semExtra ? Number(r.receita_extraordinaria || 0) : 0),
+      despesa: Number(r.despesa),
+    }));
+
     res.json({
       mes_atual: mesAtual,
       ano_atual: anoAtual,
@@ -2672,11 +2720,12 @@ router.get('/dashboard/financeiro-completo', async (req, res) => {
       sem_extra: semExtra,
       mensal: (mensal.data || []).map(ajSerie),
       semanal: (semanal.data || []).map(ajSerie),
-      decendio: (decendio.data || []).map(r => ({
-        ...r,
-        receita: Number(r.receita || 0) - (semExtra ? Number(r.receita_extraordinaria || 0) : 0),
-        despesa: Number(r.despesa),
-      })),
+      // O card do mês continua recebendo o mesmo formato de antes.
+      decendio: decendioSerie.filter(r => r.mes === mesAtual),
+      // ⚠️ A grade comparativa sai do MESMO array já ajustado pelo "sem
+      // extraordinárias": calcular de novo a partir do cru faria o comparativo
+      // discordar do card logo acima dele, com o toggle ligado.
+      decendio_comparativo: montarGrade(decendioSerie, hojeBRT),
       ytd: {
         ano_atual: {
           ano: anoAtual,

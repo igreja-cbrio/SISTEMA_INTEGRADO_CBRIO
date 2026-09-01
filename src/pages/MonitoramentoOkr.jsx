@@ -14,7 +14,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { painel as painelApi } from '../api';
-import { Compass, Target, ListChecks, RefreshCw, Info, ChevronDown, FileDown, Presentation } from 'lucide-react';
+import { Compass, Target, ListChecks, RefreshCw, Info, ChevronDown, FileDown, Presentation, AlertTriangle } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
 import { toast } from 'sonner';
@@ -318,6 +318,14 @@ function TaticoRow({ tatico, metricas }) {
           <div style={{ fontSize: 10.5, color: C.t3, marginTop: 2 }}>
             Alvo: <span style={{ color: C.t2, fontWeight: 600 }}>{tatico.alvo}</span>
           </div>
+          {/* ⚠️ O chip fica na linha FECHADA de propósito: ressalva que só
+              aparece ao expandir é ressalva que ninguém lê antes de citar o
+              número numa reunião. */}
+          {tatico.ressalva && (
+            <div style={{ marginTop: 4, display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, fontWeight: 700, color: '#92400e', background: '#fef3c7', border: '1px solid #fcd34d', borderRadius: 999, padding: '1px 7px' }}>
+              <AlertTriangle size={10} /> LEIA A RESSALVA
+            </div>
+          )}
         </div>
         <div style={{ flexShrink: 0, textAlign: 'right', minWidth: 60 }}>
           <div style={{ fontSize: 18, fontWeight: 800, color: corNum, lineHeight: 1 }}>
@@ -334,8 +342,30 @@ function TaticoRow({ tatico, metricas }) {
               <MiniBars serie={m.serie} unidade={m.unidade} alvoNum={tatico.alvoNum} cor={corNum} />
             </div>
           )}
+          {tatico.ressalva && (
+            <div style={{ display: 'flex', gap: 8, background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: '9px 11px' }}>
+              <AlertTriangle size={14} style={{ color: '#b45309', flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 11, color: '#78350f', lineHeight: 1.55 }}>{tatico.ressalva}</span>
+            </div>
+          )}
           {m && m.detalhe && (
             <div style={{ fontSize: 11, color: C.t2 }}>{m.detalhe}</div>
+          )}
+          {/* Número da planilha × número do sistema. Aparece só quando o item
+              tem `comparaLive` — a planilha e o sistema usam bases diferentes
+              (3.000 × membros ativos) e a diretoria precisa ver os dois antes de
+              decidir qual régua vale. O número exibido no topo continua sendo o
+              da planilha; aqui não se troca nada, só se mostra. */}
+          {tatico.comparaLive && metricas?.[tatico.comparaLive] && (
+            <div style={{ display: 'flex', gap: 8, background: C.bgAlt || 'transparent', border: `1px dashed ${C.border}`, borderRadius: 8, padding: '9px 11px' }}>
+              <Info size={14} style={{ color: C.t3, flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 11, color: C.t2, lineHeight: 1.5 }}>
+                <strong style={{ color: C.text }}>O sistema calcula hoje: </strong>
+                {fmt(metricas[tatico.comparaLive].valor, tatico.casas ?? 1)}{metricas[tatico.comparaLive].unidade || ''}
+                {metricas[tatico.comparaLive].detalhe ? ` · ${metricas[tatico.comparaLive].detalhe}` : ''}
+                {' — o número acima é o da planilha, com base própria.'}
+              </span>
+            </div>
           )}
           {!m && tatico.precisa && (
             <div style={{ display: 'flex', gap: 8, background: C.primaryBg, border: `1px solid ${C.primary}40`, borderRadius: 8, padding: '9px 11px' }}>

@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { fetchAllRows } = require('../utils/pagination');
+const { assinarLinhas } = require('../services/anexosLogArquivos');
 
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
@@ -203,7 +204,12 @@ router.get('/comprovantes', async (req, res) => {
     });
     if (error) return res.status(400).json({ error: error.message });
     const itens = Array.isArray(data) ? data : [];
-    res.json({ itens, total: itens.length });
+    // ⚠️ A RPC concatena a URL pública do bucket por dentro
+    // (`p_base||'/storage/v1/object/public/log-arquivos/'||storage_path`).
+    // Assinar aqui cobre os dois formatos que a coluna carrega hoje — caminho
+    // cru (DANFE) e URL pública (nota escaneada) —, porque `caminhoNoBucket` é
+    // idempotente e recorta a marca do Storage mesmo quando ela aparece 2×.
+    res.json({ itens: await assinarLinhas(itens, ['url']), total: itens.length });
   } catch (e) {
     console.error('[FIN] banco de comprovantes:', e);
     res.status(500).json({ error: 'Erro ao listar comprovantes' });
@@ -510,12 +516,67 @@ router.get('/generosidade/anonimos', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Pararam de doar · regulares (>=3 doações no histórico) sem doar há N dias.
+// 'periodo' = 2m | 3m | 6m (default 2m). Espelha a regra da vw_doadores_pararam
+// (>=3 doações · inativo 60–365d · mais recentes primeiro), mas agrega via
+// fetchAllRows: a view tem LIMIT 100 antes de QUALQUER filtro do cliente — o
+// bucket de 6m (>=180d) seria truncado pela janela 60–180d encher o top-100.
+// A view segue intacta (os alertas SQL do notificacaoGenerator dependem dela).
+const PARARAM_DIAS = { '2m': 60, '3m': 90, '6m': 180 };
 router.get('/generosidade/pararam', async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('vw_doadores_pararam').select('*');
-    if (error) throw error;
-    res.json(data || []);
+    const dias = PARARAM_DIAS[req.query.periodo] || 60;
+
+    const linhas = await fetchAllRows(() =>
+      supabase
+        .from('vw_doacoes_unificada')
+        .select('membro_id, data, valor')
+        .not('membro_id', 'is', null),
+      { max: 20000 }
+    );
+
+    const porMembro = new Map();
+    for (const l of linhas) {
+      if (!l.membro_id) continue;
+      const acc = porMembro.get(l.membro_id) || { membro_id: l.membro_id, qtd: 0, total: 0, ultima: l.data };
+      acc.qtd += 1;
+      acc.total += Number(l.valor || 0);
+      if (l.data > acc.ultima) acc.ultima = l.data;
+      porMembro.set(l.membro_id, acc);
+    }
+
+    const hoje = new Date();
+    const diasDe = (s) => Math.floor((hoje - new Date(s)) / 86400000);
+    const candidatos = Array.from(porMembro.values())
+      .filter(m => m.qtd >= 3)
+      .map(m => ({ ...m, dias_inativo: diasDe(m.ultima) }))
+      .filter(m => m.dias_inativo >= dias && m.dias_inativo <= 365)
+      .sort((a, b) => a.ultima < b.ultima ? 1 : a.ultima > b.ultima ? -1 : 0)
+      .slice(0, 100);
+
+    if (candidatos.length > 0) {
+      const { data: membros } = await supabase
+        .from('mem_membros')
+        .select('id, nome, telefone, email')
+        .in('id', candidatos.map(m => m.membro_id))
+        .is('deleted_at', null);
+      const map = new Map((membros || []).map(mm => [mm.id, mm]));
+      res.json(candidatos.map(c => {
+        const mm = map.get(c.membro_id) || {};
+        return {
+          membro_id: c.membro_id,
+          nome: mm.nome || null,
+          telefone: mm.telefone || null,
+          email: mm.email || null,
+          doacoes_total: c.qtd,
+          valor_total: c.total,
+          ultima_doacao: c.ultima,
+          dias_inativo: c.dias_inativo,
+        };
+      }));
+    } else {
+      res.json([]);
+    }
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -525,6 +586,13 @@ router.get('/generosidade/pararam', async (req, res) => {
 // por construção: a view só agrega fin_transacoes com plano 3.01% (3.02.06 = empréstimo).
 // Agregação em JS sobre fetchAllRows (cap 1000 do PostgREST subcontaria o total).
 // Período aceito: '12m' (últimos 12 meses) · 'tudo' · '<AAAA-MM>' (mês específico).
+const {
+  parsePeriodoDoacoes, parseLimite, coberturaNominal,
+} = require('../utils/periodoDoacoes');
+
+// ⚠️ MANTIDA só para não quebrar chamador que eu não tenha visto. A régua viva é
+// `parsePeriodoDoacoes` (backend/utils/periodoDoacoes.js), que entra no gate e
+// aceita também 'ano' e intervalo de datas. Não acrescentar forma nova aqui.
 function parsePeriodo(periodo) {
   if (typeof periodo === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(periodo)) {
     const [ano, mes] = periodo.split('-').map(Number);
@@ -540,7 +608,10 @@ function parsePeriodo(periodo) {
 
 router.get('/generosidade/top', async (req, res) => {
   try {
-    const { periodo, desde, ate } = parsePeriodo(req.query.periodo);
+    // Régua do período e do teto em backend/utils/periodoDoacoes.js (no gate).
+    // Aceita '12m' | 'tudo' | 'AAAA-MM' | 'ano' | 'AAAA-MM-DD:AAAA-MM-DD'.
+    const { periodo, desde, ate, rotulo } = parsePeriodoDoacoes(req.query.periodo);
+    const limite = parseLimite(req.query.limite);
     const ordem = req.query.ordem === 'asc' ? 'asc' : 'desc';
 
     const linhas = await fetchAllRows(() => {
@@ -568,7 +639,7 @@ router.get('/generosidade/top', async (req, res) => {
 
     const ordenado = Array.from(porMembro.values())
       .sort((a, b) => ordem === 'asc' ? a.total - b.total : b.total - a.total);
-    const top = ordenado.slice(0, 20);
+    const top = ordenado.slice(0, limite);
 
     if (top.length > 0) {
       const { data: membros } = await supabase
@@ -580,7 +651,34 @@ router.get('/generosidade/top', async (req, res) => {
       for (const m of top) m.nome = nomes.get(m.membro_id) || null;
     }
 
-    res.json({ periodo, ordem, top });
+    // ⚠️⚠️ COBERTURA NOMINAL — é o que impede o ranking de mentir por omissão.
+    // `vw_doacoes_unificada` tem a doação de julho e agosto de 2026 com
+    // `membro_id` NULO nas duas: o dinheiro está lançado e a identificação
+    // nominal parou em junho. Um "top 30 de janeiro até agora" somaria só até
+    // junho e pareceria completo. A tela declara a partir daqui.
+    //
+    // ⚠️ Best-effort: falhar em descobrir o último dia nominal NÃO derruba o
+    // ranking — devolve cobertura desconhecida, e a tela cala em vez de mentir
+    // nos dois sentidos.
+    let cobertura = { ultimo_dia_nominal: null, incompleto: false, fim_pedido: null };
+    try {
+      const { data: ult } = await supabase
+        .from('vw_doacoes_unificada')
+        .select('data')
+        .not('membro_id', 'is', null)
+        .order('data', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      cobertura = coberturaNominal({ desde, ate, ultimoDiaNominal: ult?.data || null });
+    } catch (e) {
+      console.error('[generosidade/top] cobertura nominal:', e.message);
+    }
+
+    res.json({
+      periodo, rotulo, ordem, limite, top,
+      pessoas_no_periodo: porMembro.size,
+      cobertura,
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -590,7 +688,7 @@ router.get('/generosidade/top/:membroId/historico', async (req, res) => {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(req.params.membroId)) {
       return res.status(400).json({ error: 'membro_id inválido' });
     }
-    const { periodo, desde, ate } = parsePeriodo(req.query.periodo);
+    const { periodo, desde, ate } = parsePeriodoDoacoes(req.query.periodo);
 
     const linhas = await fetchAllRows(() => {
       let q = supabase

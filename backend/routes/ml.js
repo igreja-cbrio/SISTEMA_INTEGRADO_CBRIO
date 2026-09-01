@@ -42,7 +42,7 @@ router.post('/config', async (req, res) => {
 
     if (existing) {
       await supabase.from('ml_config').update({
-        client_id, client_secret, access_token: null, refresh_token: null, token_expires_at: null,
+        client_id, client_secret, access_token: null, refresh_token: null, token_expires: null,
       }).eq('id', existing.id);
     } else {
       await supabase.from('ml_config').insert({ client_id, client_secret });
@@ -86,14 +86,29 @@ router.post('/auth-callback', async (req, res) => {
     }
 
     const tokens = await tokenRes.json();
+    // ⚠️⚠️ A GRAVAÇÃO DECIDE A RESPOSTA — nunca `success: true` com o token
+    // perdido. Até 19/08/2026 este bloco escrevia nas colunas `token_expires_at`
+    // e `ml_user_id`, que NÃO EXISTEM em `ml_config` (as reais são
+    // `token_expires` e `user_id`): o PostgREST recusava o UPDATE inteiro (42703),
+    // o erro ia pro console e a rota respondia sucesso. Resultado: reconectar o
+    // Mercado Livre pela tela dizia "conectado" e não gravava nada — a conexão
+    // ficou morta de 08/04 a 19/08 sem ninguém conseguir consertar clicando.
+    // ⚠️ E o refresh token do ML é de USO ÚNICO: cada tentativa queimava o token
+    // guardado sem salvar o novo, então o estrago era cumulativo.
     const { error: dbErr } = await supabase.from('ml_config').update({
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token,
-      token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-      ml_user_id: tokens.user_id?.toString() || null,
+      token_expires: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+      user_id: tokens.user_id?.toString() || null,
+      connected: true,
     }).eq('id', config.id);
 
-    if (dbErr) console.error('[ML] Erro ao salvar auth tokens:', dbErr.message);
+    if (dbErr) {
+      console.error('[ML] Erro ao salvar auth tokens:', dbErr.message);
+      return res.status(500).json({
+        error: `Autorizamos no Mercado Livre, mas não foi possível salvar o token: ${dbErr.message}. Reconecte — o código de autorização já foi consumido.`,
+      });
+    }
 
     res.json({ success: true });
   } catch (e) {
@@ -107,9 +122,16 @@ router.post('/disconnect', async (req, res) => {
   try {
     const config = await getMLConfig();
     if (config) {
-      await supabase.from('ml_config').update({
-        access_token: null, refresh_token: null, token_expires_at: null, ml_user_id: null,
+      // Mesma lei do callback: se não limpou, não desconectou — dizer "success"
+      // deixaria o token vivo com a tela afirmando que saiu.
+      const { error: dbErr } = await supabase.from('ml_config').update({
+        access_token: null, refresh_token: null, token_expires: null,
+        user_id: null, connected: false,
       }).eq('id', config.id);
+      if (dbErr) {
+        console.error('[ML] Erro ao desconectar:', dbErr.message);
+        return res.status(500).json({ error: `Não foi possível desconectar: ${dbErr.message}` });
+      }
     }
     shipmentsCache = { data: null, timestamp: 0 };
     ordersCache.clear();
@@ -138,13 +160,13 @@ router.get('/orders', async (req, res) => {
     }
 
     // Resolve user_id automatically
-    let userId = config.ml_user_id;
+    let userId = config.user_id;
     if (!userId) {
       try {
         const resolved = await ensureUserId(config);
         userId = resolved.userId;
       } catch (e) {
-        console.error('[ML] Não foi possível resolver ml_user_id:', e.message);
+        console.error('[ML] Não foi possível resolver user_id:', e.message);
         return res.status(400).json({ error: 'Não foi possível identificar o usuário do ML. Reconecte.' });
       }
     }
@@ -189,13 +211,13 @@ router.get('/shipments', async (req, res) => {
     }
 
     // Resolve user_id automatically
-    let userId = config.ml_user_id;
+    let userId = config.user_id;
     if (!userId) {
       try {
         const resolved = await ensureUserId(config);
         userId = resolved.userId;
       } catch (e) {
-        console.error('[ML] Não foi possível resolver ml_user_id para shipments:', e.message);
+        console.error('[ML] Não foi possível resolver o user_id do ML para shipments:', e.message);
         return res.status(400).json({ error: 'Não foi possível identificar o usuário do ML.' });
       }
     }

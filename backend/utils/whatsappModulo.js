@@ -28,6 +28,10 @@ const MAPA = [
   ['app.kids_precheckin', { modulo: 'kids', link: '/ministerial/totem-kids' }],
   ['app.batismo_lembrete', { modulo: 'integracao', link: '/integracao?tab=batismos' }],
   ['app.familia_convite_aceito', { modulo: 'membresia', link: '/ministerial/membresia' }],
+  // "Ajuda com o app" (29/08) — mesmo dono da telemetria do app, que é quem
+  // olha /admin/app-analytics. Sem esta entrada a falha de entrega cairia no
+  // PADRÃO (integracao) e o aviso ficaria sem dono.
+  ['app.suporte', { modulo: 'dashboard', link: '/admin/app-analytics' }],
   ['app.pedido_atualizado', { modulo: 'solicitacoes', link: '/solicitacoes' }],
   ['app.doacao_recebida', { modulo: 'financeiro', link: '/financeiro-v2' }],
   ['app.inscricao_confirmada', { modulo: 'inscricoes', link: '/inscricoes' }],

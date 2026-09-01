@@ -35,11 +35,37 @@ function remetenteGraph() {
   return process.env.GRAPH_MAIL_SENDER || process.env.MERGE_MAIL_SENDER || 'noreply@cbrio.org';
 }
 
-async function enviarViaGraph({ to, subject, html, text, from, fromName }) {
+/**
+ * Anexos no formato interno `{ nome, tipo, base64 }`. O TETO existe porque o
+ * sendMail do Graph recusa requisição acima de ~4 MB (anexo grande exige upload
+ * session, que não construímos): anexo que estoura é DESCARTADO com aviso — o
+ * e-mail sai sem ele, nunca deixa de sair. Quem anexa deve sempre pôr o LINK do
+ * arquivo no corpo também (é a rede pra este descarte).
+ */
+const TETO_ANEXOS_BYTES = 3 * 1024 * 1024; // do base64, com folga pro teto de 4 MB do Graph
+
+function anexosDentroDoTeto(attachments) {
+  if (!Array.isArray(attachments) || !attachments.length) return [];
+  const ok = [];
+  let total = 0;
+  for (const a of attachments) {
+    if (!a || !a.base64 || !a.nome) continue;
+    total += a.base64.length;
+    if (total > TETO_ANEXOS_BYTES) {
+      console.warn(`[email] anexo "${a.nome}" descartado (estourou o teto de anexos do e-mail)`);
+      continue;
+    }
+    ok.push(a);
+  }
+  return ok;
+}
+
+async function enviarViaGraph({ to, subject, html, text, from, fromName, attachments }) {
   const sender = from || remetenteGraph();
   const recipients = (Array.isArray(to) ? to : [to])
     .filter(Boolean)
     .map(address => ({ emailAddress: { address } }));
+  const anexos = anexosDentroDoTeto(attachments);
   const body = JSON.stringify({
     message: {
       subject: String(subject || '(sem assunto)'),
@@ -50,6 +76,14 @@ async function enviarViaGraph({ to, subject, html, text, from, fromName }) {
       // Automático - CBRio" — e só os poucos fluxos que passavam `fromName`
       // chegavam como "CBRio". O endereço não muda: só o nome.
       from: { emailAddress: { address: sender, name: nomeDeExibicao(fromName) } },
+      ...(anexos.length ? {
+        attachments: anexos.map(a => ({
+          '@odata.type': '#microsoft.graph.fileAttachment',
+          name: String(a.nome).slice(0, 200),
+          contentType: a.tipo || 'application/octet-stream',
+          contentBytes: a.base64,
+        })),
+      } : {}),
     },
     saveToSentItems: true,
   });
@@ -83,13 +117,14 @@ async function enviarViaGraph({ to, subject, html, text, from, fromName }) {
   return { ok: false, error: ultimoErro };
 }
 
-async function enviarViaResend({ to, subject, html, text, from, fromName }) {
+async function enviarViaResend({ to, subject, html, text, from, fromName, attachments }) {
   const key = process.env.RESEND_API_KEY;
   // `from` explícito manda (o chamador escolheu endereço e nome). Sem ele, o
   // endereço vem da env e o NOME é o nosso — senão o fallback chegaria com
   // remetente diferente do canal primário.
   const remetente = from
     || remetenteResend(process.env.RESEND_FROM || 'onboarding@resend.dev', fromName);
+  const anexos = anexosDentroDoTeto(attachments);
   try {
     const resp = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -100,6 +135,9 @@ async function enviarViaResend({ to, subject, html, text, from, fromName }) {
         subject: String(subject || '(sem assunto)'),
         ...(html ? { html } : {}),
         ...(text ? { text } : {}),
+        ...(anexos.length ? {
+          attachments: anexos.map(a => ({ filename: String(a.nome).slice(0, 200), content: a.base64 })),
+        } : {}),
       }),
     });
     const data = await resp.json().catch(() => ({}));
@@ -114,7 +152,7 @@ async function enviarViaResend({ to, subject, html, text, from, fromName }) {
   }
 }
 
-async function enviarEmail({ to, subject, html, text, from, fromName } = {}) {
+async function enviarEmail({ to, subject, html, text, from, fromName, attachments } = {}) {
   if (!to || (Array.isArray(to) && !to.length)) return { ok: false, error: 'destinatário ausente' };
 
   // ⚠️ O Resend está em MODO TESTE (sem domínio verificado) → só entrega pro
@@ -126,13 +164,13 @@ async function enviarEmail({ to, subject, html, text, from, fromName } = {}) {
   const resendFallbackAtivo = resendConfigurado() && process.env.RESEND_FALLBACK === '1';
 
   if (graphConfigurado()) {
-    const r = await enviarViaGraph({ to, subject, html, text, from, fromName }); // já tem retry + try/catch internos
+    const r = await enviarViaGraph({ to, subject, html, text, from, fromName, attachments }); // já tem retry + try/catch internos
     if (r.ok) return r;
-    if (resendFallbackAtivo) return enviarViaResend({ to, subject, html, text, from, fromName });
+    if (resendFallbackAtivo) return enviarViaResend({ to, subject, html, text, from, fromName, attachments });
     return r; // erro real do Graph (não mascara com a mensagem do Resend em teste)
   }
 
-  if (resendConfigurado()) return enviarViaResend({ to, subject, html, text, from, fromName });
+  if (resendConfigurado()) return enviarViaResend({ to, subject, html, text, from, fromName, attachments });
   return { ok: false, error: 'nenhum canal de e-mail configurado (MICROSOFT_* ou RESEND_API_KEY)' };
 }
 

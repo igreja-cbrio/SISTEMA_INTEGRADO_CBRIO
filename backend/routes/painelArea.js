@@ -621,7 +621,8 @@ router.post('/:area/nps', authorizeModule('painel-area', 3), async (req, res) =>
 // (mem_membros.frequenta_area) com faixa etária. Detalhe SEM contribuições.
 // ============================================================
 
-// Faixa etária pela data de nascimento (espelha fn_faixa_etaria do banco).
+// Faixa etária pela data de nascimento (espelha fn_faixa_etaria do banco ·
+// régua da igreja desde 19/08/2026: <13 · 13-17 · 18-25 · 26+).
 function faixaEtaria(dataNasc) {
   if (!dataNasc) return null;
   const n = new Date(dataNasc);
@@ -632,11 +633,16 @@ function faixaEtaria(dataNasc) {
   if (m < 0 || (m === 0 && h.getDate() < n.getDate())) idade--;
   if (idade < 13) return 'crianca';
   if (idade <= 17) return 'adolescente';
-  if (idade <= 30) return 'jovem';
+  if (idade <= 25) return 'jovem';
   return 'adulto';
 }
 
-// Faixa 13–30 (adolescente+jovem) → janela de data de nascimento.
+// ⚠️ Isto NÃO é a faixa etária — é a JANELA DE ALCANCE do AMI/Bridge: quem a
+// aba lista como "potencial" mesmo sem ter declarado que frequenta. Continua
+// indo até os 30 anos DE PROPÓSITO: a régua nova (jovem até 25) mudou o RÓTULO
+// da pessoa, não a quem o ministério quer alcançar, e estreitar aqui tiraria
+// ~154 pessoas de 26 a 30 da lista sem ninguém ter decidido isso. Encolher é
+// decisão do ministério, não efeito colateral do rótulo.
 function janelaJovemAdolescente() {
   const h = new Date();
   const fmt = (y) => `${y}-${String(h.getMonth() + 1).padStart(2, '0')}-${String(h.getDate()).padStart(2, '0')}`;

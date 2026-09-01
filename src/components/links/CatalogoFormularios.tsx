@@ -22,6 +22,8 @@ import { Loader2, QrCode, ExternalLink, ShieldCheck, ShieldAlert, Lock } from 'l
 
 type Item = {
   chave: string; nome: string; grupo: string; url: string; descricao: string;
+  /** Frase do cartaz do telão · vem do catálogo, só onde a igreja definiu uma. */
+  chamada_qr?: string | null;
   link_curto: { slug: string; titulo: string } | null;
 };
 type Catalogo = { base: string; itens: Item[]; excluidos_por_serem_pessoais: string[] };
@@ -32,7 +34,9 @@ export default function CatalogoFormularios({ podeEditar, onMudou }: {
   const [d, setD] = useState<Catalogo | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [convertendo, setConvertendo] = useState<string | null>(null);
-  const [qr, setQr] = useState<{ link: string; titulo: string; dinamico: boolean } | null>(null);
+  const [qr, setQr] = useState<
+    { link: string; titulo: string; dinamico: boolean; chamada?: string | null } | null
+  >(null);
 
   const carregar = useCallback(async () => {
     try { setD(await api.catalogo()); }
@@ -130,6 +134,7 @@ export default function CatalogoFormularios({ podeEditar, onMudou }: {
                         link: i.link_curto ? `${BASE_QR}${i.link_curto.slug}` : i.url,
                         titulo: i.nome,
                         dinamico: !!i.link_curto,
+                        chamada: i.chamada_qr,
                       })}>
                         <QrCode className="size-3.5 mr-1" /> QR
                       </Button>
@@ -180,6 +185,7 @@ export default function CatalogoFormularios({ podeEditar, onMudou }: {
           link={qr.link}
           titulo={qr.titulo}
           semDinamico={qr.dinamico}
+          chamada={qr.chamada || undefined}
           nomeArquivo={`qr-${qr.titulo.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
           descricao={qr.dinamico
             ? 'QR dinâmico: pode imprimir. Se o destino mudar, você troca aqui e o papel continua valendo.'

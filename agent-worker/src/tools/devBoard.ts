@@ -41,6 +41,10 @@ export interface DevTarefa {
   reportado_por: string | null;
   diagnostico: string | null;
   diagnostico_em: string | null;
+  // ⚠️ AUTORIZAÇÃO de merge, escrita só pela régua da aba Diagnósticos
+  // (backend/utils/diagnosticoAutonomia.js · faixa "auto"). Default false no
+  // banco = fail-closed: tarefa de qualquer outra origem PARA no PR.
+  merge_automatico: boolean | null;
   created_at: string;
   updated_at: string;
 }
@@ -98,6 +102,31 @@ export async function atualizarTarefa(
     .update({ ...patch, updated_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Este evento já foi registrado para esta tarefa?
+ *
+ * ⚠️ Serve pra avisar UMA vez sobre condição que se repete a cada tique do
+ * dispatcher (ambiente ausente, por exemplo). Sem isso, a tarefa vira um diário
+ * de erro com uma linha a cada 10 minutos — o padrão que treina a equipe a não
+ * ler a aba.
+ *
+ * ⚠️ Falha de consulta devolve `false` (avisa de novo) de propósito: aviso
+ * repetido é ruído, aviso ausente é silêncio — e silêncio é pior.
+ */
+export async function jaRegistrouEvento(id: string, evento: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("agent_task_events")
+    .select("id")
+    .eq("tarefa_id", id)
+    .eq("evento", evento)
+    .limit(1);
+  if (error) {
+    console.error("[devBoard] jaRegistrouEvento:", error.message);
+    return false;
+  }
+  return Boolean(data?.length);
 }
 
 export async function registrarEventoTarefa(

@@ -2,6 +2,7 @@
 // Entrada não-triada + a área do usuário + as suas), thread, responde (texto
 // livre <24h · template fora), triagem por área, atribuição e nova conversa.
 const router = require('express').Router();
+const { semFalhar } = require('../utils/semFalhar');
 const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
@@ -738,10 +739,10 @@ router.post('/conversas/:id/transferir', authorizeModule('conversas', 2), async 
     await supabase.from('wa_conversas')
       .update({ area, atribuido_a: null, resolvida: false }).eq('id', conv.id);
     // nota de sistema na thread
-    await supabase.from('wa_mensagens').insert({
+    await semFalhar(supabase.from('wa_mensagens').insert({
       conversa_id: conv.id, direcao: 'out', tipo: 'sistema', autor_id: uid(req),
       texto: `🔀 Transferida de ${conv.area || 'Entrada'} para ${area}`,
-    }).catch(() => {});
+    }), '[wa-inbox]');
     // notifica a equipe da nova área
     try {
       const alvos = await profilesDaArea(area);

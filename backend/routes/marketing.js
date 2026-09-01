@@ -25,9 +25,11 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const spMarketing = require('../services/sharepointMarketing');
+const arrecadacaoCampanhas = require('../services/campanhaArrecadacao');
 const {
   CAMPANHA_INICIO,
   agruparArrecadacaoMensal,
+  combinarComReceitaTotal,
   calcularGenerosidade,
 } = require('../services/marketingGenerosidade');
 
@@ -210,7 +212,72 @@ async function carregarGenerosidadeDoBalanco(inicio, fim) {
     if (!data || data.length < pageSize) break;
   }
 
-  return agruparArrecadacaoMensal(linhas);
+  const mensal = agruparArrecadacaoMensal(linhas);
+
+  // ⚠️⚠️ A RECEITA TOTAL VEM DA MESMA VIEW QUE O DASHBOARD SEMANAL LÊ. Recalcular
+  // aqui criaria uma TERCEIRA régua sobre "quanto entrou", e o próximo "por que
+  // os números divergem?" teria três respostas em vez de duas.
+  //
+  // ⚠️ Best-effort: se a view falhar, o painel segue mostrando a generosidade e
+  // a tela DECLARA que o total não veio. Derrubar o painel inteiro por causa do
+  // número informativo seria trocar um dado a menos por nenhum dado.
+  try {
+    const { data: totais, error } = await supabase
+      .from('vw_fin_decendio')
+      .select('mes, receita, receita_extraordinaria')
+      .gte('mes', inicio.slice(0, 7))
+      .lt('mes', fim.slice(0, 7));
+    if (error) throw error;
+    return combinarComReceitaTotal(mensal, totais || []);
+  } catch (e) {
+    console.warn('[MARKETING] receita total indisponível:', e.message);
+    return mensal;
+  }
+}
+
+// As campanhas de arrecadação em curso, pra a barrinha de progresso da tela.
+//
+// ⚠️⚠️ Lido AQUI DENTRO, e não pela tela chamando `campanhas.list()`: aquele
+// endpoint é `authorizeModule('campanhas', 1)` e esta tela é `marketing`, então
+// quem tem Marketing e não tem Campanhas tomaria 403 e a barra desapareceria —
+// sem nada explicando. A régua de leitura é a MESMA (`arrecadacao.listar`, que
+// soma pela `vw_camp_arrecadacao`): nenhuma tela recalcula dinheiro.
+//
+// ⚠️ Best-effort, igual à receita total logo acima: a generosidade é o conteúdo
+// principal desta tela, e derrubá-la porque a campanha não veio seria trocar um
+// dado a menos por nenhum dado. Falha devolve `null`, que a tela DECLARA.
+async function carregarCampanhasDaGenerosidade() {
+  try {
+    // `incluirEncerradas: false` → rascunho, ativa e pausada.
+    // ⚠️ Campanha ENCERRADA fica de fora: a tela é de acompanhamento do que está
+    // em curso, e barra de campanha que já terminou vira entulho permanente.
+    const lista = await arrecadacaoCampanhas.listar({ incluirEncerradas: false });
+    return (lista || []).map((c) => ({
+      id: c.id,
+      nome: c.nome,
+      slug: c.slug,
+      status: c.status,
+      publica: c.publica === true,
+      digito: c.digito || null,
+      data_lancamento: c.data_lancamento || null,
+      data_inicio: c.data_inicio || null,
+      data_fim: c.data_fim || null,
+      // Já vem calculado pela régua pura `utils/campanhaProgresso`.
+      meta_centavos: c.meta_centavos,
+      total_centavos: c.total_centavos,
+      falta_centavos: c.falta_centavos,
+      pct: c.pct,
+      pct_barra: c.pct_barra,
+      pct_conciliando: c.pct_conciliando,
+      bateu_meta: c.bateu_meta,
+      no_ar: c.no_ar,
+      por_domingo_centavos: c.por_domingo_centavos ?? null,
+      domingos_restantes: c.domingos_restantes ?? null,
+    }));
+  } catch (e) {
+    console.warn('[MARKETING] campanhas indisponíveis:', e.message);
+    return null;
+  }
 }
 
 router.get('/generosidade', authorizeModule('marketing', 1), async (req, res) => {
@@ -228,7 +295,7 @@ router.get('/generosidade', authorizeModule('marketing', 1), async (req, res) =>
     const inicio = `${CAMPANHA_INICIO}-01`;
     const fim = `${ano + 1}-01-01`;
 
-    const [mensalRows, uploadResult] = await Promise.all([
+    const [mensalRows, uploadResult, campanhasEmCurso] = await Promise.all([
       carregarGenerosidadeDoBalanco(inicio, fim),
       supabase
         .from('fin_uploads')
@@ -237,6 +304,7 @@ router.get('/generosidade', authorizeModule('marketing', 1), async (req, res) =>
         .eq('status', 'concluido')
         .order('concluido_em', { ascending: false })
         .limit(1),
+      carregarCampanhasDaGenerosidade(),
     ]);
     if (uploadResult.error) throw uploadResult.error;
 
@@ -250,6 +318,12 @@ router.get('/generosidade', authorizeModule('marketing', 1), async (req, res) =>
       periodo_ultimo_balanco: ultimoBalanco
         ? { inicio: ultimoBalanco.data_inicio, fim: ultimoBalanco.data_fim }
         : null,
+      // ⚠️ `null` = a leitura das campanhas FALHOU · `[]` = não há campanha em
+      // curso. A tela trata os dois diferente: "não deu pra carregar" (âmbar) e
+      // "não há campanha" (silêncio). Colapsar num só faria falha de consulta
+      // parecer ausência de campanha — o erro que este projeto já pagou várias
+      // vezes com lista vazia se disfarçando de "nada aqui".
+      campanhas: campanhasEmCurso,
       fonte: 'balanco_financeiro',
     });
   } catch (e) {

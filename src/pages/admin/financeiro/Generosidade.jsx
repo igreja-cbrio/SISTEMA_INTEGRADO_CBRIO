@@ -299,29 +299,58 @@ function AbaAnonimos() {
 const TIPO_LABEL = { dizimo: 'Dízimo', oferta: 'Oferta', campanha: 'Campanha', outro: 'Outra', doacao_pix: 'PIX' };
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 
+/** Hoje como 'AAAA-MM-DD' no fuso do navegador (o operador está no Rio). */
+function hojeLocalISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function ddmm(iso) {
+  // ⚠️ Fatia a string: `new Date('2026-01-01')` é meia-noite UTC = 31/12 no Rio.
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso || '');
+}
+
 function labelPeriodo(p) {
   if (p === 'tudo') return 'Todo o período';
   if (p === '12m') return 'Últimos 12 meses';
-  const [a, m] = p.split('-').map(Number);
+  if (p === 'ano') return 'De 1º de janeiro até hoje';
+  if (typeof p === 'string' && p.includes(':')) {
+    const [i, f] = p.split(':');
+    return `${ddmm(i)} a ${ddmm(f)}`;
+  }
+  const [a, m] = String(p).split('-').map(Number);
   return `${MESES[m - 1]} de ${a}`;
 }
 
 function AbaTopo() {
-  const [periodoMode, setPeriodoMode] = useState('12m'); // '12m' | 'tudo' | 'mes'
+  // 'ano' (1º/jan até hoje) é o padrão: é a pergunta que se faz na reunião.
+  const [periodoMode, setPeriodoMode] = useState('ano'); // 'ano' | '12m' | 'tudo' | 'mes' | 'faixa'
   const [mes, setMes] = useState(new Date().toISOString().slice(0, 7));
+  const [de, setDe] = useState(`${new Date().getFullYear()}-01-01`);
+  const [ate, setAte] = useState(hojeLocalISO());
+  const [limite, setLimite] = useState(30);
   const [ordem, setOrdem] = useState('desc'); // 'desc' = maior valor · 'asc' = menor valor
   const [items, setItems] = useState([]);
+  const [cobertura, setCobertura] = useState(null);
   const [loading, setLoading] = useState(true);
   const [selecionado, setSelecionado] = useState(null);
 
-  const periodoEfetivo = periodoMode === 'mes' && mes ? mes : periodoMode;
+  const periodoEfetivo = periodoMode === 'mes' && mes
+    ? mes
+    : periodoMode === 'faixa' && de && ate
+      ? `${de}:${ate}`
+      : periodoMode;
 
   useEffect(() => {
     setLoading(true);
-    financeiro.generosidade.top(periodoEfetivo, ordem)
-      .then(r => setItems(Array.isArray(r?.top) ? r.top : []))
+    financeiro.generosidade.top(periodoEfetivo, ordem, limite)
+      .then(r => {
+        setItems(Array.isArray(r?.top) ? r.top : []);
+        setCobertura(r?.cobertura || null);
+      })
       .finally(() => setLoading(false));
-  }, [periodoEfetivo, ordem]);
+  }, [periodoEfetivo, ordem, limite]);
 
   return (
     <>
@@ -334,17 +363,20 @@ function AbaTopo() {
                 Top contribuintes
               </h3>
               <p className="text-[11px] text-muted-foreground mt-1">
-                Membros que {ordem === 'desc' ? 'mais' : 'menos'} contribuíram, por valor total
-                no período. Considera as contribuições cadastradas (<code>mem_contribuicoes</code>)
-                — doações via PIX ainda não identificadas ficam na aba "Doadores anônimos".
+                Top {limite} · membros que {ordem === 'desc' ? 'mais' : 'menos'} contribuíram
+                em <strong>{labelPeriodo(periodoEfetivo)}</strong>. Só entra doação com
+                doador identificado — PIX ainda não identificado fica na aba
+                "Doadores anônimos".
               </p>
             </div>
             <div className="flex flex-col items-end gap-2">
               <div className="flex rounded-lg border border-border overflow-hidden">
                 {[
+                  ['ano', 'Este ano'],
                   ['12m', '12 meses'],
                   ['tudo', 'Todo período'],
                   ['mes', 'Mês'],
+                  ['faixa', 'Período'],
                 ].map(([k, label]) => (
                   <button
                     key={k}
@@ -365,6 +397,34 @@ function AbaTopo() {
                   className="h-8 rounded-lg border border-border bg-input px-2 text-xs"
                 />
               )}
+              {periodoMode === 'faixa' && (
+                <div className="flex items-center gap-1 text-xs">
+                  <input
+                    type="date" value={de} onChange={e => setDe(e.target.value)}
+                    className="h-8 rounded-lg border border-border bg-input px-2 text-xs"
+                    aria-label="Início do período"
+                  />
+                  <span className="text-muted-foreground">até</span>
+                  <input
+                    type="date" value={ate} onChange={e => setAte(e.target.value)}
+                    className="h-8 rounded-lg border border-border bg-input px-2 text-xs"
+                    aria-label="Fim do período"
+                  />
+                </div>
+              )}
+              <div className="flex rounded-lg border border-border overflow-hidden">
+                {[10, 20, 30, 50].map(n => (
+                  <button
+                    key={n}
+                    onClick={() => setLimite(n)}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      limite === n ? 'bg-primary text-white' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Top {n}
+                  </button>
+                ))}
+              </div>
               <div className="flex rounded-lg border border-border overflow-hidden">
                 {[
                   ['desc', 'Maior valor', ArrowDown],
@@ -385,11 +445,25 @@ function AbaTopo() {
             </div>
           </div>
 
+          {/* ⚠️⚠️ A JANELA VAI COLADA NO NÚMERO e a incompletude é DECLARADA.
+              A doação de julho e agosto de 2026 está lançada com `membro_id`
+              NULO — o dinheiro entrou e a identificação nominal parou em junho.
+              Sem este aviso, um "top 30 de janeiro até hoje" soma só até junho
+              e parece completo. */}
+          {cobertura?.incompleto && cobertura.ultimo_dia_nominal && (
+            <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] leading-relaxed">
+              <strong>Este ranking não cobre o período inteiro.</strong> A última
+              doação com doador identificado é de <strong>{ddmm(cobertura.ultimo_dia_nominal)}</strong>.
+              Depois dessa data existem doações lançadas, mas <strong>sem nome</strong> —
+              elas estão na aba <em>Doadores anônimos</em> e não entram aqui.
+            </div>
+          )}
+
           {loading ? (
             <div className="py-8 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" /></div>
           ) : items.length === 0 ? (
             <div className="py-10 text-center text-sm text-muted-foreground">
-              Nenhuma contribuição cadastrada no período
+              Nenhuma contribuição com doador identificado em {labelPeriodo(periodoEfetivo)}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -524,6 +598,7 @@ function HistoricoDialog({ contribuinte, periodo, onClose }) {
 }
 
 function AbaPararam() {
+  const [periodo, setPeriodo] = useState('2m'); // '2m' | '3m' | '6m'
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   // Ordenação: por valor total ou nº de doações. Default = maior valor primeiro
@@ -533,10 +608,10 @@ function AbaPararam() {
 
   useEffect(() => {
     setLoading(true);
-    financeiro.generosidade.pararam()
+    financeiro.generosidade.pararam(periodo)
       .then(r => setItems(Array.isArray(r) ? r : []))
       .finally(() => setLoading(false));
-  }, []);
+  }, [periodo]);
 
   function ordenarPor(k) {
     if (sortKey === k) setSortDir(d => (d === 'desc' ? 'asc' : 'desc'));
@@ -559,21 +634,41 @@ function AbaPararam() {
   return (
     <Card>
       <CardContent className="pt-6">
-        <div className="mb-3">
-          <h3 className="text-sm font-semibold flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-500" />
-            Membros que pararam de doar
-          </h3>
-          <p className="text-[11px] text-muted-foreground mt-1">
-            Doadores regulares (≥3 doações no histórico) que não doam há mais de 60 dias. Conversa pastoral pode reativar.
-          </p>
+        <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
+          <div>
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              Membros que pararam de doar
+            </h3>
+            <p className="text-[11px] text-muted-foreground mt-1">
+              Doadores regulares (≥3 doações no histórico) que não doam há mais de{' '}
+              {{ '2m': '2 meses', '3m': '3 meses', '6m': '6 meses' }[periodo]}. Conversa pastoral pode reativar.
+            </p>
+          </div>
+          <div className="flex rounded-lg border border-border overflow-hidden">
+            {[
+              ['2m', '2 meses'],
+              ['3m', '3 meses'],
+              ['6m', '6 meses'],
+            ].map(([k, label]) => (
+              <button
+                key={k}
+                onClick={() => setPeriodo(k)}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                  periodo === k ? 'bg-primary text-white' : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {loading ? (
           <div className="py-8 text-center"><Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" /></div>
         ) : items.length === 0 ? (
           <div className="py-10 text-center text-sm text-muted-foreground">
-            Todos os doadores regulares estão ativos · 🎉
+            Nenhum doador regular nesse período de inatividade
           </div>
         ) : (
           <div className="overflow-x-auto">

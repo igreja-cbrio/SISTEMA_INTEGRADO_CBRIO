@@ -3,12 +3,23 @@
  * Auth: Supabase JWT leve (sem sistema de permissões do ERP interno)
  */
 const router   = require('express').Router();
+const kidsVisitante = require('../utils/kidsVisitante');
+// Dia BRT — dia de operação da igreja nunca é UTC (das 21h o dia já virou).
+function hojeBRTKids() {
+  return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
 const { semCache } = require('../middleware/semCache');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
-const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior } = require('../utils/agendaGrupo');
+const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo, podeSupervisionar, subareasNaArea } = require('../utils/supervisorArea');
+const { ehDiaDoCulto } = require('../utils/janelaCulto');
+const { classificarCulto } = require('../utils/rodizioCulto');
+const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, ocorrenciasPassadas, janelaCorrecaoPassada } = require('../utils/agendaGrupo');
 const { notificar, resolverDestinatarios } = require('../services/notificar');
+const { responderEscala, STATUS_VALIDOS: STATUS_ESCALA } = require('../services/escalaResposta');
+const { acoesDaNotificacao, acaoPermitida, statusDaAcao } = require('../utils/acaoNotificacao');
+const { validarMensagem: validarMensagemSuporte, montarParams: montarParamsSuporte, digitos: digitosSuporte } = require('../utils/suporteApp');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 const { dispararAuto } = require('../services/whatsappAuto');
@@ -27,12 +38,17 @@ const { chaveMesMembro } = require('../services/nextMatricula');
 // ⚠️ Reuso da porta pública de eventos (espinha): a inscrição pelo app roda a
 // MESMA função do site. Ver o cabeçalho do bloco de eventos mais abaixo.
 const { inscreverEspinha, eventoEspinhaPorId, anexarConfigMenor } = require('./publicEventoExterno');
+const { portasCompartilhaveis, linkDoEvento } = require('../utils/linkInscricaoApp');
 const { TEXTOS: TEXTOS_INSCRICAO } = require('../services/inscricaoContrato');
 const { gerarTokenComprovante } = require('../services/inscricaoComprovante');
+const { chavesDaPessoa, mesclarInscricoes } = require('../utils/inscricaoDaPessoa');
 const checkoutExterno = require('../utils/checkoutExterno');
 // Reuso: núcleo de aprovação de pedidos de grupo (claim atômico + vínculo +
 // notificação) já validado no módulo web de grupos.
 const { aprovarPedidoCore } = require('./grupos');
+const { cadastrarPessoaNoGrupo } = require('../services/grupoPessoaDireta');
+const { ancorasDeGrupos, iniciosDeGrupos } = require('../services/grupoAncora');
+const { aplicarExcecaoAgenda } = require('../services/grupoAgendaExcecao');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const appIdentidade = require('../services/appIdentidade');
 const { acharRespostaDaPessoa } = require('../services/censoJaRespondeu');
@@ -47,7 +63,12 @@ const { precisaPagerPorInclusao } = require('../utils/saudeCrianca');
 const { gerarTokenIdentidade } = require('../utils/censoRespostaToken');
 // Reuso dos helpers de permissão granular pra resolver o nível do módulo
 // "grupos" do usuário do app (authApp é leve e não computa permissões).
-const { getModulos, getCargoMatrix, resolveEffectivePerms } = require('../middleware/auth');
+const {
+  getModulos,
+  getCargoMatrix,
+  resolveEffectivePerms,
+  isSuperAdminEmail,
+} = require('../middleware/auth');
 // Régua PURA da capa do grupo (allowlist de formato + o caminho que PODE ser
 // apagado do Storage). Testada em `src/test/grupoCapaApp.test.ts`.
 const { MIMES_CAPA, caminhoDaCapa, extensaoDaCapa, caminhoNovoDaCapa } = require('../utils/grupoCapaApp');
@@ -107,6 +128,7 @@ const {
 } = require('../services/batismoHorarios');
 // Régua PURA da edição de grupo pelo app (allowlist + categoria fechada + horário).
 const { validarEdicaoGrupoApp } = require('../utils/grupoEdicaoApp');
+const { mapaDeFotos } = require('../utils/fotoVoluntario');
 
 function limiterApp({ max, maxAnonimo, nome }) {
   const chave = (req) => chaveLimiteApp(req);
@@ -831,6 +853,26 @@ const SEV_CUIDADOS = { sos: 'urgente', aconselhamento: 'aviso', oracao: 'info' }
 function extrairMensagem(d) {
   return d.mensagem || d.message || d.texto || d.descricao || d.obs || d.observacao || null;
 }
+
+// GET /api/app/inscricoes/portas — os links públicos que o MEMBRO pode mandar
+// pra outra pessoa ("vem se inscrever"). Pedido do Matheus (20/08/2026).
+//
+// ⚠️ SÓ LEITURA e sem dado de pessoa: a resposta é o catálogo de portas com a
+// URL pública, igual pra todo mundo. Nada aqui depende de quem está pedindo.
+//
+// ⚠️ Quem monta a URL é o SERVIDOR (`utils/linkInscricaoApp`), nunca o app —
+// URL escrita no bundle é URL que ninguém valida e que só se conserta por OTA.
+// Ver o link morto de `/apresentacao-criancas` (11/08/2026).
+router.get('/inscricoes/portas', authApp, limiterNormal, async (req, res) => {
+  try {
+    res.json({ portas: portasCompartilhaveis() });
+  } catch (e) {
+    console.error('[APP] inscricoes/portas:', e.message);
+    // ⚠️ Lista vazia com 200 faria o app esconder os botões e parecer que a
+    // igreja não tem porta de inscrição nenhuma. Erro é erro.
+    res.status(500).json({ error: 'Erro ao carregar os links de inscrição' });
+  }
+});
 
 router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
   try {
@@ -1741,37 +1783,240 @@ router.get('/voluntariado/escalas', authApp, limiterNormal, async (req, res) => 
   }
 });
 
-// POST /api/app/voluntariado/escalas/:id/responder — { status: 'confirmed'|'declined' }
+// ── Responder uma escala QUE É MINHA ─────────────────────────────────────────
+// Usado pela rota de responder e pelo botão da notificação. O efeito (gravar +
+// avisar coordenação e supervisor) é do `escalaResposta`; aqui fica só a
+// AUTORIZAÇÃO e a guarda de culto que já passou.
+async function responderMinhaEscala(scheduleId, status, vp, motivo) {
+  const { data: escala } = await supabase.from('vol_schedules')
+    .select('id, volunteer_id, planning_center_person_id, service:vol_services(scheduled_at)')
+    .eq('id', scheduleId).maybeSingle();
+  if (!escala) return { ok: false, status: 404, erro: 'Escala não encontrada' };
+
+  // ⚠️ A checagem é a mesma do `/my-schedules/:id/respond`: perfil OU o id do
+  // Planning Center. Só `volunteer_id` deixaria de fora quem veio do PCO e
+  // ainda não tem perfil ligado — 27% dos check-ins chegam assim.
+  const minha = (escala.volunteer_id && escala.volunteer_id === vp.id)
+    || (escala.planning_center_person_id && escala.planning_center_person_id === vp.planning_center_id);
+  if (!minha) return { ok: false, status: 403, erro: 'Esta escala não é sua.' };
+
+  // ⚠️ Recusar culto que JÁ PASSOU não é recusa, é ruído: a vaga não tem mais
+  // como ser reposta e o aviso acordaria a coordenação por nada. Confirmar
+  // segue liberado (é registro do que aconteceu).
+  if (status === 'declined') {
+    const quando = escala.service?.scheduled_at ? new Date(escala.service.scheduled_at) : null;
+    if (quando && quando.getTime() < Date.now()) {
+      return { ok: false, status: 400, erro: 'Esse culto já passou — não dá mais pra recusar.' };
+    }
+  }
+  return responderEscala(scheduleId, status, { origem: 'app', motivo });
+}
+
+// POST /api/app/voluntariado/escalas/:id/responder — { status, motivo? }
+//
+// ⚠️⚠️ ESTA ROTA FAZIA UPDATE DIRETO e NÃO AVISAVA NINGUÉM (achado de
+// 29/08/2026). O comentário do irmão `/my-schedules/:id/respond` já dizia que
+// duas implementações divergiriam "como recusou pelo app e ninguém foi
+// avisado" — e era literalmente o que acontecia: aquela rota foi corrigida em
+// 14/08 e esta, que é a que o APP chama, ficou de fora. Quem recusava pelo
+// celular deixava a vaga aberta e o supervisor não sabia.
+//
+// Agora passa pelo `responderEscala`, o caminho ÚNICO (link do WhatsApp, ERP,
+// app e o botão da notificação).
 router.post('/voluntariado/escalas/:id/responder', authApp, limiterNormal, async (req, res) => {
   try {
     const { status, motivo } = req.body || {};
-    if (!['confirmed', 'declined'].includes(status)) {
+    if (!STATUS_ESCALA.includes(status)) {
       return res.status(400).json({ error: "status deve ser 'confirmed' ou 'declined'" });
     }
     const membro = await resolveMembroApp(req);
     const vp = await resolverVolProfile(req, membro);
     if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
-    // Não dá pra RECUSAR culto que já passou (aceitar/registrar segue liberado).
-    if (status === 'declined') {
-      const { data: sched } = await supabase.from('vol_schedules')
-        .select('service:vol_services(scheduled_at)').eq('id', req.params.id).maybeSingle();
-      const quando = sched?.service?.scheduled_at ? new Date(sched.service.scheduled_at) : null;
-      if (quando && quando.getTime() < Date.now()) {
-        return res.status(400).json({ error: 'Esse culto já passou — não dá mais pra recusar.' });
-      }
-    }
-    // motivo opcional só na recusa; confirmar limpa o motivo anterior.
-    const recusa_motivo = status === 'declined' ? (String(motivo || '').trim().slice(0, 200) || null) : null;
-    // só responde escala própria
-    const { data, error } = await supabase.from('vol_schedules')
-      .update({ confirmation_status: status, recusa_motivo })
-      .eq('id', req.params.id).eq('volunteer_id', vp.id).select().maybeSingle();
-    if (error) throw error;
-    if (!data) return res.status(404).json({ error: 'Escala não encontrada' });
-    res.json(data);
+
+    const r = await responderMinhaEscala(req.params.id, status, vp, motivo);
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.erro });
+    res.json(r.escala);
   } catch (e) {
     console.error('[APP vol/responder]', e.message);
     res.status(500).json({ error: 'Erro ao responder escala' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  POST /api/app/suporte — "Ajuda com o app"  { mensagem, telefone? }
+//
+//  Pedido do Matheus (29/08/2026): *"no app, no menu, tivesse um botão de ajuda
+//  com app, caso a pessoa precise tirar dúvidas em relação ao app, seus dados e
+//  etc... essas dúvidas devem chegar para o meu WhatsApp. Quero o nome da
+//  pessoa e a dúvida dela, com o número de celular dela."*
+//
+//  ⚠️⚠️ NÃO é a porta "Falar com a CBRio" (`app_inscricoes` tipo `contato`), e
+//  a diferença é de DESTINO: aquela é fila PASTORAL (Cuidados), esta é SUPORTE
+//  do produto. "Meu grupo não aparece no app" não é assunto da equipe de
+//  cuidado, e misturar encheria a fila pastoral de bug report.
+//
+//  ⚠️ O DESTINATÁRIO VIVE NO BANCO (`whatsapp_config.suporte_app_membro_id`),
+//  nunca no código — lei do projeto. Trocar quem recebe é UM update.
+// ════════════════════════════════════════════════════════════════════════════
+router.post('/suporte', authApp, limiterStrict, async (req, res) => {
+  try {
+    const v = validarMensagemSuporte(req.body?.mensagem);
+    if (!v.ok) return res.status(400).json({ error: v.erro });
+
+    const membro = await resolveMembroApp(req);
+    const nome = membro?.nome || req.user.email || 'Alguém do app';
+    // Telefone informado na tela vence o do cadastro — a pessoa pode estar
+    // corrigindo justamente porque o cadastro está errado, que é uma das
+    // dúvidas mais comuns. ⚠️ Isto NÃO sobrescreve `mem_membros.telefone`:
+    // contato divergente ACUMULA, nunca troca (Contrato de porta).
+    const telefone = digitosSuporte(req.body?.telefone) || membro?.telefone || null;
+
+    // 1) GRAVA primeiro. Canal é entrega; registro é memória — sem ele,
+    // template não aprovado (ou Meta fora do ar) = dúvida perdida pra sempre.
+    const { data: linha, error: insErr } = await supabase.from('app_suporte_mensagens').insert({
+      membro_id: membro?.id || null,
+      user_id: req.user.id,
+      nome,
+      telefone,
+      mensagem: v.mensagem,
+      app_versao: String(req.body?.app_versao || '').slice(0, 40) || null,
+      plataforma: String(req.body?.plataforma || '').slice(0, 20) || null,
+    }).select('id').single();
+    if (insErr) throw insErr;
+
+    // 2) Avisa quem cuida do app. Notificação SEMPRE; WhatsApp quando houver
+    // destinatário e template configurados.
+    let whatsapp = 'nao_configurado';
+    try {
+      const { data: cfg } = await supabase.from('whatsapp_config')
+        .select('suporte_app_membro_id').limit(1).maybeSingle();
+      const destinoId = cfg?.suporte_app_membro_id || null;
+      if (!destinoId) {
+        whatsapp = 'sem_destinatario';
+      } else {
+        const params = montarParamsSuporte({ nome, telefone, mensagem: v.mensagem });
+        const r = await wpp.notificarMembro(destinoId, 'suporte_app', params);
+        whatsapp = r?.ok ? 'enviado' : (r?.motivo || r?.reason || 'nao_enviado');
+        if (r?.ok) {
+          await supabase.from('app_suporte_mensagens')
+            .update({ enviado_em: new Date().toISOString() }).eq('id', linha.id);
+        }
+      }
+    } catch (e) {
+      // ⚠️ Falhar o WhatsApp NÃO derruba o pedido: a dúvida já está gravada e a
+      // notificação abaixo é o caminho garantido.
+      console.error('[APP suporte] whatsapp:', e.message);
+      whatsapp = 'erro';
+    }
+
+    // ⚠️ O aviso NÃO leva o telefone: notificação é lida por quem a regra do
+    // módulo alcançar, e o contato está no registro pra quem for tratar.
+    notificar({
+      modulo: 'dashboard',
+      tipo: 'suporte_app',
+      titulo: `Dúvida sobre o app: ${nome}`,
+      mensagem: v.mensagem.slice(0, 300),
+      link: '/admin/app-analytics',
+      severidade: 'info',
+      chaveDedup: `suporte_app_${linha.id}`,
+    }).catch((e) => console.error('[APP suporte] notificar:', e.message));
+
+    // ⚠️ A tela NUNCA promete WhatsApp que não saiu — ela diz "recebemos", que
+    // é verdade em todos os caminhos (a linha está gravada).
+    res.status(201).json({ ok: true, id: linha.id, whatsapp });
+  } catch (e) {
+    console.error('[APP] suporte:', e.message);
+    res.status(500).json({ error: 'Não foi possível enviar agora. Tente de novo em instantes.' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  POST /api/app/notificacoes/:id/acao — { acao, motivo? }
+//
+//  Pedido do Matheus (29/08/2026): a notificação no app chega com BOTÃO —
+//  escala: "Confirmar presença" / "Pedir troca"; pedido de grupo: "Aprovar" /
+//  "Recusar". Tocar FORA dos botões continua abrindo a tela de sempre.
+//
+//  ⚠️⚠️ Isto NÃO é um segundo caminho de escrita: ele ROTEIA para os caminhos
+//  únicos que já existem (`responderEscala` e `aprovarPedidoCore` /
+//  `devolverPedidoParaTriagem`). O que ele acrescenta é (a) resolver o ALVO a
+//  partir da notificação e (b) carimbar o desfecho nela, pra o card não voltar
+//  a oferecer um botão de algo já decidido.
+//
+//  ⚠️ A AUTORIZAÇÃO não vem de "a notificação é minha": cada ramo refaz a sua
+//  (escala tem que ser do meu perfil; pedido de grupo exige liderar o grupo).
+//  Notificação é ENDEREÇO, não credencial.
+// ════════════════════════════════════════════════════════════════════════════
+router.post('/notificacoes/:id/acao', authApp, limiterNormal, async (req, res) => {
+  try {
+    const acao = String(req.body?.acao || '');
+    const { data: n } = await supabase.from('app_notificacoes')
+      .select('id, tipo, data, lida_em')
+      .eq('id', req.params.id).eq('user_id', req.user.id).maybeSingle();
+    if (!n) return res.status(404).json({ error: 'Notificação não encontrada' });
+
+    const disponivel = acoesDaNotificacao(n.tipo, n.data);
+    if (!acaoPermitida(n.tipo, n.data, acao)) {
+      // Devolve o estado pra tela se corrigir sozinha (ex.: já respondida
+      // noutro aparelho) em vez de só dizer "não pode".
+      return res.status(400).json({ error: 'Ação indisponível para esta notificação', feita: disponivel.feita, acoes: disponivel.acoes });
+    }
+
+    let resultado = { ok: true };
+
+    if (n.tipo === 'escala') {
+      const membro = await resolveMembroApp(req);
+      const vp = await resolverVolProfile(req, membro);
+      if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+      const status = statusDaAcao(acao);
+
+      // ⚠️ O aviso agrupa por (pessoa, DIA): quem serve nos 4 cultos de domingo
+      // recebe UMA notificação que cobre as 4 escalas. Responder só a primeira
+      // deixaria 3 vagas mentindo. Sequencial de propósito — cada `declined`
+      // dispara aviso à coordenação, e em paralelo elas se atropelariam.
+      const ok = [];
+      const falhas = [];
+      for (const id of disponivel.escalaIds) {
+        const r = await responderMinhaEscala(id, status, vp, req.body?.motivo);
+        (r.ok ? ok : falhas).push({ id, erro: r.erro || null });
+      }
+      // ⚠️ NENHUMA deu certo ⇒ é erro, e o carimbo NÃO é gravado: carimbar aqui
+      // esconderia o botão de uma coisa que não aconteceu.
+      if (!ok.length) {
+        const primeira = falhas[0] || {};
+        return res.status(400).json({ error: primeira.erro || 'Não foi possível responder', falhas: falhas.length });
+      }
+      // Parcial é DECLARADO (lei de 04/08): "3 de 4" nunca vira "pronto".
+      resultado = { ok: true, respondidas: ok.length, falhas: falhas.length, total: disponivel.escalaIds.length };
+    }
+
+    if (n.tipo === 'grupo_pedido') {
+      const ctx = await autorizarDecisaoPedido(req, res, disponivel.pedidoId);
+      if (!ctx) return; // autorizarDecisaoPedido já respondeu 403/404
+      if (acao === 'aprovar') {
+        const user = { userId: req.user.id, name: ctx.membro?.nome || req.user.email || 'Líder' };
+        const r = await aprovarPedidoCore(disponivel.pedidoId, user);
+        if (!r.ok) return res.status(r.code || 400).json({ error: r.error });
+        resultado = { ok: true, acao: 'aprovado' };
+      } else {
+        const r = await devolverPedidoParaTriagem(disponivel.pedidoId, req, ctx, req.body?.motivo);
+        if (!r.ok) return res.status(r.status || 400).json({ error: r.erro });
+        resultado = { ok: true, acao: r.acao };
+      }
+    }
+
+    // Carimba o desfecho NA notificação (e marca lida). Best-effort: o efeito
+    // real já aconteceu, e falhar aqui não pode desfazê-lo — no pior caso o
+    // botão reaparece e a segunda tentativa é no-op nos dois ramos.
+    const agora = new Date().toISOString();
+    await supabase.from('app_notificacoes')
+      .update({ data: { ...(n.data || {}), acao, acao_em: agora }, lida_em: n.lida_em || agora })
+      .eq('id', n.id).eq('user_id', req.user.id);
+
+    res.json({ ...resultado, acao_registrada: acao });
+  } catch (e) {
+    console.error('[APP] notificacoes/acao:', e.message);
+    res.status(500).json({ error: 'Não foi possível concluir' });
   }
 });
 
@@ -1841,10 +2086,88 @@ router.delete('/voluntariado/indisponibilidade/:id', authApp, limiterNormal, asy
 // Retorna as áreas onde o membro logado é supervisor (ou [] se não for).
 async function supervisorAreasApp(req) {
   const membro = await resolveMembroApp(req).catch(() => null);
-  if (!membro) return { membro: null, areas: [] };
+  if (!membro) return { membro: null, areas: [], grants: [] };
+  // ⚠️ `grants` é a concessão INTEIRA (área + subárea). `areas` continua sendo
+  // devolvido porque é o que abre o portão do 403 e o que a tela do app exibe
+  // em `areas_supervisionadas` — mas quem decide permissão fina é `grants`.
   const { data } = await supabase
-    .from('vol_area_supervisores').select('area').eq('membro_id', membro.id);
-  return { membro, areas: [...new Set((data || []).map(r => r.area).filter(Boolean))] };
+    .from('vol_area_supervisores')
+    .select('area, position_id, culto_dia, culto_periodo, culto_semana')
+    .eq('membro_id', membro.id);
+  const grants = (data || []).filter(r => r.area);
+  return {
+    membro,
+    areas: [...new Set(grants.map(r => r.area))],
+    grants,
+  };
+}
+
+/**
+ * Resolve a subárea (vol_positions.id) a partir do nome que o cliente mandou.
+ *
+ * ⚠️ Escopado pela EQUIPE, nunca só pelo nome: "Recepção" existe em Integração
+ * e em KIDS, "Cuidados" em AMI/Bridge/Voluntariado. Buscar só por nome traria a
+ * posição de outra área e a trava aprovaria o alvo errado.
+ */
+/**
+ * O rodízio deste culto (`{ dia, periodo, semana }`) a partir do service_id.
+ *
+ * ⚠️ Sem isto a trava de rodízio não teria como saber se o culto é "1º domingo
+ * manhã". A régua é pura (`utils/rodizioCulto`, no gate); aqui só entra a
+ * leitura do `scheduled_at`.
+ *
+ * ⚠️ Culto sem data devolve `null`, e `cultoCoberto` NEGA para quem tem recorte
+ * — mesma lei da equipe sem área: liberar "porque não dá pra saber" devolve o
+ * acesso amplo bastando um campo vazio.
+ */
+async function rodizioDoServico(serviceId) {
+  if (!serviceId) return null;
+  const { data } = await supabase.from('vol_services')
+    .select('scheduled_at').eq('id', serviceId).maybeSingle();
+  return classificarCulto(data?.scheduled_at || null);
+}
+
+async function resolverPosicaoId(teamId, positionName) {
+  if (!teamId || !positionName) return null;
+  const { data } = await supabase.from('vol_positions')
+    .select('id').eq('team_id', teamId).eq('name', positionName).maybeSingle();
+  return data?.id || null;
+}
+
+/**
+ * A escala existente está numa área que esta pessoa supervisiona?
+ *
+ * ⚠️ Vale para MOVER e REMOVER, não só para adicionar. Uma trava só no POST
+ * deixa a porta aberta pelos outros verbos: bastaria o id da escala pra tirar
+ * alguém da área de outro supervisor.
+ */
+async function escalaSobSupervisao(scheduleId, areas) {
+  if (supervisionaTudo(areas)) return { ok: true };
+  const { data: sc } = await supabase.from('vol_schedules')
+    .select('id, team_id, team_name, position_id, position_name, service_id').eq('id', scheduleId).maybeSingle();
+  if (!sc) return { ok: false, motivo: 'nao_encontrada' };
+  let equipe = null;
+  if (sc.team_id) {
+    const { data } = await supabase.from('vol_teams').select('id, name, area').eq('id', sc.team_id).maybeSingle();
+    equipe = data;
+  } else if (sc.team_name) {
+    const { data } = await supabase.from('vol_teams').select('id, name, area').eq('name', sc.team_name).maybeSingle();
+    equipe = data;
+  }
+  // ⚠️ Escala sem equipe resolvível NÃO é liberada: seria a brecha por onde
+  // qualquer linha antiga do Planning Center viraria terreno de todo mundo.
+  if (!equipe) return { ok: false, motivo: 'sem_equipe' };
+  if (!equipeSupervisionada(equipe, areas)) {
+    return { ok: false, motivo: 'outra_area', equipe: equipe.name };
+  }
+  // ⚠️ Recorte de SUBÁREA (2026-08-25). Quem tem concessão só do Ofertório não
+  // pode mover/remover a linha do Estacionamento, mesmo sendo a mesma equipe.
+  // Vale pra MOVER e REMOVER, não só pra adicionar — a lição do bloco acima.
+  const alvo = { area: equipe.area, position_id: sc.position_id || null, culto: await rodizioDoServico(sc.service_id) };
+  if (!podeSupervisionar(areas, alvo)) {
+    return { ok: false, motivo: 'outra_subarea', equipe: equipe.name, subarea: sc.position_name || null };
+  }
+  return { ok: true };
 }
 
 // GET /app/voluntariado/escala/servicos — próximos cultos (para montar escala)
@@ -1853,12 +2176,21 @@ router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, 
     const { areas } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const hoje = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
+    // ⚠️ JANELA, não contagem. O teto de 60 registros era invisível e virou
+    // corte real em 18/08, quando o calendário passou a ser gerado aqui em vez
+    // de vir do Planning Center: adulto + Kids somam ~6 cultos por semana, e
+    // 62 já existiam no mesmo instante em que o limite era 60 — os dois mais
+    // distantes sumiam da lista do supervisor sem nenhum aviso.
+    // Uma janela de 90 dias é o que o supervisor consegue planejar, e o teto de
+    // 400 vira uma rede de segurança, não o corte do dia a dia.
+    const ate = new Date(Date.now() + 90 * 24 * 3600 * 1000).toISOString();
     const { data, error } = await supabase
       .from('vol_services')
       .select('id, service_type_name, scheduled_at')
       .gte('scheduled_at', hoje)
+      .lte('scheduled_at', ate)
       .order('scheduled_at', { ascending: true })
-      .limit(60);
+      .limit(400);
     if (error) throw error;
     // Contagem de escalados por culto (pro chip mostrar "N escalados").
     const ids = (data || []).map(s => s.id);
@@ -1880,12 +2212,14 @@ router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, 
 // visíveis no app, exatamente como no sistema web.
 router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const [{ data, error }, { data: composicao, error: composicaoErr }] = await Promise.all([
       supabase
       .from('vol_schedules')
-      .select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status, recusa_motivo')
+      // ⚠️ `position_id` entrou pro filtro de SUBÁREA. Sem ele o recorte fino
+      // só teria o nome, que repete entre áreas.
+      .select('id, volunteer_id, volunteer_name, team_id, team_name, position_id, position_name, confirmation_status, recusa_motivo')
       .eq('service_id', req.params.serviceId)
       .order('team_name', { ascending: true })
       .order('volunteer_name', { ascending: true }),
@@ -1898,19 +2232,104 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
     ]);
     if (error) throw error;
     if (composicaoErr) throw composicaoErr;
-    const itens = (composicao || []).map(item => {
+    const todosItens = (composicao || []).map(item => {
       const team = Array.isArray(item.team) ? item.team[0] : item.team;
       const position = Array.isArray(item.position) ? item.position[0] : item.position;
       return {
         team_id: item.team_id,
         team_name: team?.name || 'Sem equipe',
-        area: team?.area || 'Sem área',
+        area: team?.area || null,
         position_id: item.position_id || null,
         position_name: position?.name || null,
         quantidade: item.quantidade || 1,
       };
     });
-    res.json({ escalas: data || [], composicao: itens });
+    // ⚠️ O supervisor vê SÓ as áreas dele. O card no app do membro já dizia
+    // "monte e veja as escalas da sua área" — a promessa existia, o filtro não.
+    //
+    // ⚠️ Desde 25/08 o corte é por ÁREA + SUBÁREA: os itens da composição já
+    // trazem `position_id`, então quem recebeu só o Ofertório vê só a linha do
+    // Ofertório dentro da equipe Integração.
+    // ⚠️ O `culto` entra no alvo desde 25/08: quem supervisiona o 1º domingo de
+    // manhã não vê a composição do 4º domingo. A classificação é do SERVIÇO, não
+    // do item — por isso é resolvida uma vez, fora do filtro.
+    const rodizio = await rodizioDoServico(req.params.serviceId);
+    const itens = (todosItens || []).filter(i => podeSupervisionar(grants, {
+      area: i.area, position_id: i.position_id, culto: rodizio,
+    }));
+    // ⚠️ A escala também é recortada: mostrar quem está escalado em áreas que
+    // ele não supervisiona transformaria a tela num diretório de gente, e o
+    // botão de remover apagaria escala alheia.
+    const equipesVisiveis = new Set(itens.map(i => i.team_id).filter(Boolean));
+    const nomesVisiveis = new Set(itens.map(i => i.team_name));
+    // ⚠️ A subárea também recorta a ESCALA, não só a composição. Sem isto,
+    // esconder a linha "Estacionamento" da composição e ainda listar quem está
+    // escalado nela deixaria o botão de remover apagando escala alheia — o
+    // mesmo furo que o comentário acima descreve, um nível abaixo.
+    const posicoesVisiveis = new Set(itens.map(i => i.position_id).filter(Boolean));
+    const recortaSubarea = itens.some(i => i.position_id) && !supervisionaTudo(areas)
+      && (data || []).some(e => e.position_id);
+    const escalasVisiveis = supervisionaTudo(areas)
+      ? (data || [])
+      : (data || [])
+        .filter(e => equipesVisiveis.has(e.team_id) || nomesVisiveis.has(e.team_name))
+        .filter(e => !recortaSubarea || !e.position_id || posicoesVisiveis.has(e.position_id));
+    // ⚠️ ÁREA em cada linha da escala (26/08 · pedido do Matheus: "no check-in
+    // pelo app dos membros deve ter separado por área"). A área vive em
+    // `vol_teams.area`, não em `vol_schedules` — sem isto o app teria que
+    // remontar o mapa equipe→área por conta própria, criando uma SEGUNDA fonte
+    // pra divergir desta na primeira equipe que trocar de área.
+    //
+    // ⚠️ Mapa por id E por nome: linha antiga do Planning Center pode ter só
+    // `team_name` (é o mesmo motivo por que `escalaSobSupervisao` resolve a
+    // equipe pelos dois caminhos).
+    const areaPorEquipeResp = {};
+    {
+      const { data: eqs } = await supabase.from('vol_teams').select('id, name, area');
+      for (const t of eqs || []) {
+        if (t.id) areaPorEquipeResp[t.id] = t.area || null;
+        if (t.name) areaPorEquipeResp[`n:${t.name}`] = t.area || null;
+      }
+    }
+    // ⚠️⚠️ FOTO só quando é FOTO (26/08 · "se a pessoa tem foto cadastrada, deve
+    // mostrar a foto de avatar"). MEDIDO: dos 619 escalados nos últimos 60 dias,
+    // 352 têm em `vol_profiles.avatar_url` um PLACEHOLDER DE INICIAIS gerado pelo
+    // Planning Center (`/uploads/initials/MS.png`) — não uma foto. Mandar isso
+    // pro app trocaria as iniciais desenhadas pela tela por um PNG cinza do PCO,
+    // baixando bytes pra ficar pior. Só `/uploads/person/` é foto de gente.
+    //
+    // ⚠️ E o nosso cadastro tem quase nada: 10 de 619 em `mem_membros.foto_url`.
+    // Fica como preferência (é a foto que a igreja tirou), com o PCO de fallback.
+    // Resultado: 269 dos 619 (43%) mostram foto; o resto cai nas iniciais.
+    // ⚠️ A régua saiu daqui e virou `utils/fotoVoluntario` (27/08): a tela de
+    // MONTAR ESCALA no ERP passou a mostrar foto também, e duas cópias
+    // divergiriam — o sintoma seria o app e o ERP discordando sobre quem tem
+    // foto. Comportamento IDÊNTICO ao que estava inline aqui.
+    const idsVol = (escalasVisiveis || []).map(e => e.volunteer_id);
+    const fotoPorVol = await mapaDeFotos(supabase, idsVol);
+
+    const comArea = (escalasVisiveis || []).map((e) => ({
+      ...e,
+      area: areaPorEquipeResp[e.team_id] ?? areaPorEquipeResp[`n:${e.team_name}`] ?? null,
+      foto_url: e.volunteer_id ? (fotoPorVol[e.volunteer_id] || null) : null,
+    }));
+
+    res.json({
+      escalas: comArea,
+      // ⚠️ ALIAS DE COMPATIBILIDADE (22/08/2026). O app do STAFF lê `escala`
+      // (singular) e o do MEMBRO lê `escalas` — mesmo endpoint. O do staff caía
+      // no fallback `[]` e a tela de montar escala abria VAZIA em todo culto,
+      // sem erro nenhum: o card da lista anterior mostrava "107 escalados"
+      // porque vem de outro endpoint. O app foi corrigido, mas o alias faz o
+      // binário que JÁ está no celular voltar a funcionar no merge, sem
+      // esperar o OTA. Remover quando a frota do staff tiver atualizado.
+      escala: comArea,
+      composicao: itens.map(i => ({ ...i, area: i.area || 'Sem área' })),
+      areas_supervisionadas: areas,
+      // Declara o que foi escondido: uma tela que some com linhas sem dizer
+      // parece dado faltando.
+      ocultos: todosItens.length - itens.length,
+    });
   } catch (e) {
     console.error('[APP vol/escala get]', e.message);
     res.status(500).json({ error: 'Erro ao carregar a escala' });
@@ -1989,10 +2408,56 @@ router.get('/voluntariado/voluntario/:id/detalhe', authApp, limiterNormal, async
 // POST /app/voluntariado/escala — adiciona à escala { service_id, volunteer_id, team_name, position_name }
 router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const { service_id, volunteer_id, team_name, position_name } = req.body || {};
     if (!service_id || !volunteer_id) return res.status(400).json({ error: 'service_id e volunteer_id obrigatórios' });
+
+    // ⚠️⚠️ A TRAVA DE ESCRITA. Esconder a área na tela é sugestão; o que impede
+    // um supervisor de escalar na área de outro é esta checagem, porque o
+    // cliente manda `team_name` no corpo e nada impedia mandar qualquer um.
+    if (!supervisionaTudo(areas)) {
+      if (!team_name) {
+        return res.status(400).json({ error: 'Escolha a equipe: supervisor de área não escala sem equipe definida.' });
+      }
+      const { data: eq } = await supabase.from('vol_teams')
+        .select('id, name, area').eq('name', team_name).maybeSingle();
+      if (!eq || !equipeSupervisionada(eq, areas)) {
+        return res.status(403).json({
+          error: `Você não supervisiona ${team_name}. Fale com quem responde por essa área.`,
+        });
+      }
+      // ⚠️⚠️ TRAVA DE SUBÁREA + RODÍZIO (25/08/2026). O cliente manda
+      // `position_name` e `service_id` no corpo, e nada impedia mandar a subárea
+      // de outro ou o culto de outro turno. As duas checagens vivem no MESMO
+      // `podeSupervisionar` de propósito: separar em dois ifs foi a minha
+      // primeira versão e ela recusava quem tinha subárea no culto certo,
+      // porque a pré-checagem de rodízio passava `position_id: null`.
+      const rodizio = await rodizioDoServico(service_id);
+      const recorte = subareasNaArea(grants, eq.area);
+      if (recorte.length) {
+        // Supervisão de subárea específica: a subárea é obrigatória no corpo.
+        if (!position_name) {
+          return res.status(400).json({
+            error: 'Escolha a subárea: sua supervisão é de subárea específica, não da área inteira.',
+          });
+        }
+        const posId = await resolverPosicaoId(eq.id, position_name);
+        if (!posId || !podeSupervisionar(grants, { area: eq.area, position_id: posId, culto: rodizio })) {
+          return res.status(403).json({
+            error: `Você não supervisiona ${position_name} em ${team_name} neste culto.`,
+          });
+        }
+      } else if (!podeSupervisionar(grants, { area: eq.area, position_id: null, culto: rodizio })) {
+        // Supervisão da área inteira: só o rodízio pode barrar aqui (a área já
+        // passou no `equipeSupervisionada` acima).
+        return res.status(403).json({
+          error: 'Este culto não está no seu turno de supervisão.',
+          fora_do_rodizio: true,
+        });
+      }
+    }
+
     const { data: vp } = await supabase.from('vol_profiles')
       .select('id, full_name, planning_center_id, auth_user_id, membresia_id').eq('id', volunteer_id).maybeSingle();
     if (!vp) return res.status(404).json({ error: 'Voluntário não encontrado' });
@@ -2054,7 +2519,7 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
 // PATCH /app/voluntariado/escala/:id — move de equipe (drag & drop) / muda função
 router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const { team_name, position_name } = req.body || {};
     const { data: atual } = await supabase.from('vol_schedules')
@@ -2068,6 +2533,35 @@ router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res
       dupQ = (novoTeam ? dupQ.eq('team_name', novoTeam) : dupQ.is('team_name', null));
       const { data: dup } = await dupQ.maybeSingle();
       if (dup) return res.status(409).json({ error: 'Essa pessoa já está nessa equipe' });
+    }
+    // Trava de escrita no MOVER: tanto a origem quanto o destino têm que ser
+    // áreas desta pessoa — senão dá pra "mover pra fora" o que não é seu.
+    if (!supervisionaTudo(areas)) {
+      const origem = await escalaSobSupervisao(req.params.id, areas);
+      if (!origem.ok) {
+        return res.status(403).json({ error: `Essa escala é de ${origem.equipe || 'outra área'}, que você não supervisiona.` });
+      }
+      if (novoTeam) {
+        const { data: destino } = await supabase.from('vol_teams')
+          .select('id, name, area').eq('name', novoTeam).maybeSingle();
+        if (!destino || !equipeSupervisionada(destino, areas)) {
+          return res.status(403).json({ error: `Você não supervisiona ${novoTeam}.` });
+        }
+        // ⚠️ Subárea do DESTINO. Sem isto, quem só tem o Ofertório moveria a
+        // linha pra dentro do Estacionamento — saindo do próprio escopo por um
+        // caminho que a trava de equipe aprova.
+        const recorte = subareasNaArea(grants, destino.area);
+        if (recorte.length) {
+          const nomePos = position_name !== undefined ? position_name : null;
+          if (!nomePos) {
+            return res.status(400).json({ error: 'Escolha a subárea do destino: sua supervisão é de subárea específica.' });
+          }
+          const posId = await resolverPosicaoId(destino.id, nomePos);
+          if (!posId || !podeSupervisionar(grants, { area: destino.area, position_id: posId })) {
+            return res.status(403).json({ error: `Você não supervisiona ${nomePos} em ${novoTeam}.` });
+          }
+        }
+      }
     }
     const patch = { team_name: novoTeam };
     if (position_name !== undefined) patch.position_name = position_name || null;
@@ -2089,6 +2583,10 @@ router.delete('/voluntariado/escala/:id', authApp, limiterNormal, async (req, re
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     // Só remove quem foi escalado pelo app (source='manual'). Escala do Planning
     // Center é gerida lá — se apagar aqui, o próximo sync recria (remoção fantasma).
+    const sob = await escalaSobSupervisao(req.params.id, areas);
+    if (!sob.ok) {
+      return res.status(403).json({ error: `Essa escala é de ${sob.equipe || 'outra área'}, que você não supervisiona.` });
+    }
     const { data: sc } = await supabase.from('vol_schedules').select('source').eq('id', req.params.id).maybeSingle();
     if (sc && sc.source && sc.source !== 'manual') {
       return res.status(400).json({ error: 'Essa pessoa veio do Planning Center — remova por lá. Pelo app só dá pra tirar quem foi escalado aqui.' });
@@ -2102,25 +2600,120 @@ router.delete('/voluntariado/escala/:id', authApp, limiterNormal, async (req, re
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// CHECK-IN PELO SUPERVISOR · escopo + janela (2026-08-25)
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Pedido do Matheus: *"no app de membros os supervisores devem poder fazer
+// check-in dos voluntários das suas respectivas áreas, e só nos dias de culto.
+// Isso ajuda a gente não ficar refém de apenas um local de check-in (que hoje é
+// na sala de voluntários)."*
+//
+// ⚠️⚠️ O endpoint de check-in JÁ EXISTIA e tinha o furo de 18/08 intacto: ele
+// conferia `areas.length` — a PORTA — e depois registrava presença de QUALQUER
+// pessoa em QUALQUER culto de QUALQUER dia. Supervisor de Louvor podia bater
+// ponto do Kids em culto de três meses atrás.
+
+/**
+ * Hoje é o dia deste culto? (dia inteiro, em BRT · decisão do Matheus)
+ *
+ * ⚠️ A comparação é por DATA em America/Sao_Paulo, nunca por UTC: culto de
+ * domingo 19h é 22h UTC, e depois das 21h BRT o UTC já virou segunda — a janela
+ * fecharia no meio do culto da noite. É a mesma armadilha que o
+ * `periodoSP`/`dateSP` deste arquivo já trata.
+ */
+async function cultoEhHoje(serviceId) {
+  const { data: svc } = await supabase.from('vol_services')
+    .select('id, scheduled_at, name').eq('id', serviceId).maybeSingle();
+  if (!svc?.scheduled_at) return { ok: false, motivo: 'servico_sem_data' };
+  // A régua de fuso é PURA e está no gate de deploy (`utils/janelaCulto`) —
+  // aqui só entra a leitura do banco.
+  const r = ehDiaDoCulto(svc.scheduled_at);
+  return { ...r, servico: svc.name };
+}
+
+/**
+ * Esta escala está no escopo (área + subárea) desta pessoa?
+ *
+ * ⚠️ Check-in SEM escala (`is_unscheduled`) é liberado de propósito para quem
+ * tem escopo restrito — e é uma EXCEÇÃO consciente à lei de "alvo sem equipe
+ * resolvível é negado". Motivo: registrar que alguém APARECEU não concede nada
+ * a ninguém, e negar seria travar exatamente o caso que descentralizar o
+ * check-in existe para atender (chegou gente pra ajudar e não estava na
+ * escala). A janela do dia do culto é o que impede abuso.
+ */
+async function checkinSobSupervisao(scheduleId, areas) {
+  if (supervisionaTudo(areas)) return { ok: true };
+  if (!scheduleId) return { ok: true, sem_escala: true };
+  const { data: sc } = await supabase.from('vol_schedules')
+    .select('id, team_id, team_name, position_id, position_name, service_id').eq('id', scheduleId).maybeSingle();
+  if (!sc) return { ok: false, motivo: 'escala_nao_encontrada' };
+  let equipe = null;
+  if (sc.team_id) {
+    const { data } = await supabase.from('vol_teams').select('id, name, area').eq('id', sc.team_id).maybeSingle();
+    equipe = data;
+  } else if (sc.team_name) {
+    const { data } = await supabase.from('vol_teams').select('id, name, area').eq('name', sc.team_name).maybeSingle();
+    equipe = data;
+  }
+  if (!equipe) return { ok: false, motivo: 'sem_equipe' };
+  if (!podeSupervisionar(areas, { area: equipe.area, position_id: sc.position_id || null, culto: await rodizioDoServico(sc.service_id) })) {
+    return { ok: false, motivo: 'fora_do_escopo', equipe: equipe.name, subarea: sc.position_name || null };
+  }
+  return { ok: true };
+}
+
 // GET /app/voluntariado/escala/:serviceId/checkins — quem já tem presença
 // (pra UI de gestão de check-in do supervisor saber quem bateu ponto no culto).
 router.get('/voluntariado/escala/:serviceId/checkins', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    // ⚠️ A escala vem embutida com equipe e subárea porque a LISTA também é
+    // recortada: mostrar o check-in de uma área que a pessoa não supervisiona
+    // transformaria a tela num diretório — e o botão de desfazer apagaria
+    // presença alheia. Mesmo raciocínio do recorte da composição.
     const { data, error } = await supabase.from('vol_check_ins')
-      .select('id, schedule_id, volunteer_id, checked_in_at, method, volunteer_name, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')
+      .select('id, schedule_id, volunteer_id, checked_in_at, method, volunteer_name, is_unscheduled, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name, team_id, team_name, position_id, position_name)')
       .eq('service_id', req.params.serviceId)
       .order('checked_in_at', { ascending: false });
     if (error) throw error;
-    res.json((data || []).map((c) => ({
-      id: c.id,
-      schedule_id: c.schedule_id,
-      volunteer_id: c.volunteer_id,
-      volunteer_name: c.volunteer?.full_name || c.schedule?.volunteer_name || c.volunteer_name || null,
-      checked_in_at: c.checked_in_at,
-      method: c.method,
-    })));
+
+    let areaPorEquipe = {};
+    if (!supervisionaTudo(grants)) {
+      const { data: eqs } = await supabase.from('vol_teams').select('id, name, area');
+      for (const t of eqs || []) {
+        if (t.id) areaPorEquipe[t.id] = t.area;
+        if (t.name) areaPorEquipe[`n:${t.name}`] = t.area;
+      }
+    }
+    // ⚠️ O rodizio do SERVICO e resolvido UMA vez, fora do filtro.
+    const rodizioLista = supervisionaTudo(grants) ? null : await rodizioDoServico(req.params.serviceId);
+    const noEscopo = (c) => {
+      if (supervisionaTudo(grants)) return true;
+      const sch = Array.isArray(c.schedule) ? c.schedule[0] : c.schedule;
+      // Check-in avulso (sem escala) não tem área — fica visível pra quem pode
+      // criá-lo, senão o supervisor não veria o que ele mesmo acabou de marcar.
+      if (!sch) return true;
+      const area = areaPorEquipe[sch.team_id] ?? areaPorEquipe[`n:${sch.team_name}`] ?? null;
+      return podeSupervisionar(grants, { area, position_id: sch.position_id || null, culto: rodizioLista });
+    };
+    const visiveis = (data || []).filter(noEscopo);
+
+    res.json(visiveis.map((c) => {
+      const sch = Array.isArray(c.schedule) ? c.schedule[0] : c.schedule;
+      return {
+        id: c.id,
+        schedule_id: c.schedule_id,
+        volunteer_id: c.volunteer_id,
+        volunteer_name: c.volunteer?.full_name || sch?.volunteer_name || c.volunteer_name || null,
+        checked_in_at: c.checked_in_at,
+        method: c.method,
+        is_unscheduled: c.is_unscheduled || false,
+        equipe: sch?.team_name || null,
+        subarea: sch?.position_name || null,
+      };
+    }));
   } catch (e) {
     console.error('[APP vol/escala checkins]', e.message);
     res.status(500).json({ error: 'Erro ao carregar os check-ins' });
@@ -2135,11 +2728,25 @@ router.get('/voluntariado/escala/:serviceId/checkins', authApp, limiterNormal, a
 // default 'manual'. NÃO mexe em cultos/Integração — só controle do voluntariado.
 router.post('/voluntariado/checkin', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
+    const { areas, grants } = await supervisorAreasApp(req);
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const { service_id, schedule_id, volunteer_id, method } = req.body || {};
     if (!service_id) return res.status(400).json({ error: 'service_id obrigatório' });
     const metodo = ['qr_code', 'manual', 'facial', 'self_service'].includes(method) ? method : 'manual';
+
+    // ⚠️⚠️ JANELA: só no DIA do culto. Vale pra TODO MUNDO, inclusive `geral` —
+    // a restrição é da operação ("só nos dias de culto"), não do escopo de área.
+    // Sem ela, presença de um culto de três meses atrás entraria hoje e a
+    // frequência do voluntariado passaria a aceitar retroativo sem trilha.
+    const janela = await cultoEhHoje(service_id);
+    if (!janela.ok) {
+      return res.status(403).json({
+        error: janela.motivo === 'fora_do_dia'
+          ? `Check-in só no dia do culto. "${janela.servico || 'Este culto'}" é ${janela.dia?.split('-').reverse().join('/')}.`
+          : 'Este culto não tem data definida — não é possível registrar presença.',
+        fora_da_janela: true,
+      });
+    }
 
     const norm = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
     const dateSP = (iso) => { try { return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }); } catch { return (iso || '').slice(0, 10); } };
@@ -2209,6 +2816,20 @@ router.post('/voluntariado/checkin', authApp, limiterNormal, async (req, res) =>
       return res.status(400).json({ error: 'Informe o voluntário (volunteer_id) ou a escala (schedule_id) pra registrar o check-in.' });
     }
 
+    // ⚠️⚠️ A TRAVA DE ESCOPO. Fica DEPOIS da resolução da escala de propósito:
+    // é `resolvedScheduleId` (que o match acha no dia) que carrega equipe e
+    // subárea. Checar antes, no `schedule_id` cru do corpo, deixaria passar todo
+    // check-in em que o cliente manda só `volunteer_id`.
+    const escopo = await checkinSobSupervisao(resolvedScheduleId, grants);
+    if (!escopo.ok) {
+      return res.status(403).json({
+        error: escopo.motivo === 'fora_do_escopo'
+          ? `${escopo.subarea ? `${escopo.subarea} (${escopo.equipe})` : escopo.equipe} não está na sua supervisão.`
+          : 'Não foi possível confirmar que essa escala está na sua supervisão.',
+        fora_do_escopo: true,
+      });
+    }
+
     const { data, error } = await supabase.from('vol_check_ins').insert({
       schedule_id: resolvedScheduleId,
       volunteer_id: resolvedVolunteerId,
@@ -2234,6 +2855,73 @@ router.post('/voluntariado/checkin', authApp, limiterNormal, async (req, res) =>
   } catch (e) {
     console.error('[APP vol/checkin post]', e.message);
     res.status(500).json({ error: 'Erro ao registrar check-in' });
+  }
+});
+
+// DELETE /app/voluntariado/checkin/:id — supervisor DESFAZ um check-in.
+//
+// Decisão do Matheus (25/08): "sim, dentro da janela" — marcou errado, desmarca;
+// fora do dia do culto ninguém mexe.
+//
+// ⚠️ É HARD DELETE, de propósito. Os uniques de `vol_check_ins` são índices
+// PARCIAIS (`schedule_id` / `volunteer_id+service_id`); soft-delete deixaria a
+// linha morta ocupando o unique e o próximo check-in da mesma pessoa bateria
+// 409 pra sempre. A trilha vai pro `audit_log`, que é onde ela é consultável.
+//
+// ⚠️ Mesmo escopo e mesma janela do POST. Um DELETE só com o id do check-in,
+// sem essas duas checagens, seria a porta dos fundos do endpoint inteiro — a
+// lição do `escalaSobSupervisao` ("vale para MOVER e REMOVER, não só adicionar").
+router.delete('/voluntariado/checkin/:id', authApp, limiterNormal, async (req, res) => {
+  try {
+    const { areas, grants } = await supervisorAreasApp(req);
+    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+
+    const { data: ci } = await supabase.from('vol_check_ins')
+      .select('id, service_id, schedule_id, volunteer_id, volunteer_name, checked_in_at, method, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')
+      .eq('id', req.params.id).maybeSingle();
+    if (!ci) return res.status(404).json({ error: 'Check-in não encontrado' });
+
+    const janela = await cultoEhHoje(ci.service_id);
+    if (!janela.ok) {
+      return res.status(403).json({
+        error: 'Só é possível desfazer no dia do culto. Fale com a coordenação do voluntariado.',
+        fora_da_janela: true,
+      });
+    }
+
+    const escopo = await checkinSobSupervisao(ci.schedule_id, grants);
+    if (!escopo.ok) {
+      return res.status(403).json({ error: 'Esse check-in não está na sua supervisão.', fora_do_escopo: true });
+    }
+
+    const nome = ci.volunteer?.full_name
+      || (Array.isArray(ci.schedule) ? ci.schedule[0]?.volunteer_name : ci.schedule?.volunteer_name)
+      || ci.volunteer_name || null;
+
+    const { error } = await supabase.from('vol_check_ins').delete().eq('id', ci.id);
+    if (error) throw error;
+
+    // Trilha: quem desfez, de quem, quando era. Best-effort — a tabela de audit
+    // não pode derrubar a operação do culto.
+    try {
+      await supabase.from('audit_log').insert({
+        table_name: 'vol_check_ins',
+        record_id: ci.id,
+        action: 'DELETE',
+        field_name: 'checked_in_at',
+        old_value: ci.checked_in_at ? String(ci.checked_in_at) : null,
+        new_value: null,
+        description: `Check-in de ${nome || 'voluntário'} desfeito pelo supervisor no app (método ${ci.method || '—'}).`,
+        changed_by: req.user?.id || null,
+      });
+    } catch (e) {
+      console.warn('[APP vol/checkin delete] audit não gravado:', e.message);
+    }
+
+    res.json({ ok: true, id: ci.id, volunteer_name: nome });
+  } catch (e) {
+    console.error('[APP vol/checkin delete]', e.message);
+    res.status(500).json({ error: 'Erro ao desfazer o check-in' });
   }
 });
 
@@ -3550,12 +4238,263 @@ router.post('/telemetria', tryAuth, async (req, res) => {
 
 // Resolve o papel do usuário do app no domínio de grupos:
 //  - membro (mem_membros do logado, pra checar liderança e montar o nome)
-//  - grupos_liderados: grupos onde ele é lider_id
+//  - grupos_liderados: grupos onde ele é lider_id OU tem vínculo vivo no
+//    roster com funcao lider/co_lider (Natasha 21/08: os outros líderes, não
+//    só o principal, também gerenciam — o `meu-grupo.tsx` do app JÁ mostrava
+//    o botão "Gerenciar" pra funcao lider/co_lider e o servidor recusava 403;
+//    era a divergência tela × gate). ⚠️ Quem RECEBE WhatsApp do grupo segue
+//    sendo SÓ o `lider_id` (lei de 31/07 · um destinatário) — isto é gestão,
+//    não notificação.
 //  - grupos_supervisionados: grupos onde ele é supervisor_id
 //  - grupos_geridos: união (dedup por id) de liderados + supervisionados — é o
 //    ESCOPO DE GESTÃO (líder OU supervisor pode gerenciar esses grupos)
 //  - admin_grupos: role admin/diretor OU área "grupos" (boost) OU nível do
 //    módulo grupos >= 3 (via permissões granulares resolvidas por e-mail).
+// Batismo · operação pelo aplicativo. A tela pessoal e a tela de operação usam
+// a mesma porta; o servidor decide o modo por permissão real, nunca por nome.
+async function permissaoModuloApp(req, slug) {
+  const email = String(req.user?.email || '').trim().toLowerCase();
+  if (!email) return { leitura: 0, escrita: 0, superadmin: false };
+  if (await isSuperAdminEmail(email)) return { leitura: 5, escrita: 5, superadmin: true };
+
+  const { data: prof } = await supabase.from('profiles')
+    .select('role').eq('id', req.user.id).maybeSingle();
+  if (prof && ['admin', 'diretor'].includes(prof.role)) {
+    return { leitura: 5, escrita: 5, superadmin: false };
+  }
+
+  const { data: permUser } = await supabase.from('usuarios')
+    .select('id, cargo_id').eq('email', email).eq('ativo', true).maybeSingle();
+  if (!permUser) return { leitura: 0, escrita: 0, superadmin: false };
+  const [overridesRes, modulos, cargoMatrix, userAreasRes] = await Promise.all([
+    supabase.from('permissoes_modulo')
+      .select('modulo_id, nivel_leitura, nivel_escrita, pode_exportar, pode_aprovar, escopo_proprio, expira_em')
+      .eq('usuario_id', permUser.id),
+    getModulos(),
+    getCargoMatrix(permUser.cargo_id),
+    supabase.from('usuario_areas').select('areas(nome)').eq('usuario_id', permUser.id),
+  ]);
+  const agora = Date.now();
+  const overrides = (overridesRes.data || []).filter(o => !o.expira_em || new Date(o.expira_em).getTime() > agora);
+  const areas = (userAreasRes.data || []).map(ua => ua.areas?.nome).filter(Boolean);
+  const perms = resolveEffectivePerms({ overrides, cargoMatrix, cargoId: permUser.cargo_id, modulos, areas });
+  const p = perms[slug] || {};
+  return { leitura: Number(p.leitura || 0), escrita: Number(p.escrita || 0), superadmin: false };
+}
+
+async function autorizarGestaoBatismoApp(req, res, next) {
+  try {
+    const permissao = await permissaoModuloApp(req, 'batismo');
+    if (Math.max(permissao.leitura, permissao.escrita) < 2) {
+      return res.status(403).json({ error: 'Esta área é só para quem gerencia o Batismo.' });
+    }
+    req.batismoPermissao = permissao;
+    next();
+  } catch (e) {
+    console.error('[APP] batismo/permissao:', e.message);
+    res.status(500).json({ error: 'Erro ao verificar a permissão de Batismo.' });
+  }
+}
+
+function dataIsoValida(v) { return /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')); }
+function dataBatismoFutura(v) { return dataIsoValida(v) && String(v) >= hojeBRT(); }
+function limparTexto(v, max = 500) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).trim();
+  return s ? s.slice(0, max) : null;
+}
+
+const BATISMO_COLUNAS_APP = [
+  'id', 'membro_id', 'nome', 'sobrenome', 'telefone', 'email', 'cpf',
+  'data_nascimento', 'data_batismo', 'horario_culto', 'status', 'checkin_em',
+  'tamanho_camisa', 'eh_crianca', 'possui_deficiencia',
+  'deficiencia_descricao', 'observacoes', 'endereco', 'area_kpi', 'created_at',
+].join(', ');
+
+router.get('/batismo/papel', authApp, limiterNormal, async (req, res) => {
+  try {
+    const p = await permissaoModuloApp(req, 'batismo');
+    const nivel = Math.max(p.leitura, p.escrita);
+    res.json({ pode_gerenciar: nivel >= 2, nivel, superadmin: p.superadmin });
+  } catch (e) {
+    console.error('[APP] batismo/papel:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar seu acesso ao Batismo.' });
+  }
+});
+
+router.get('/batismo/gestao', authApp, autorizarGestaoBatismoApp, limiterNormal, async (req, res) => {
+  try {
+    const hoje = hojeBRT();
+    const [datasRes, proxima, horarios] = await Promise.all([
+      supabase.from('batismo_inscricoes').select('data_batismo')
+        .is('deleted_at', null).not('status', 'in', '(cancelado,rejeitado)')
+        .not('data_batismo', 'is', null),
+      dataProximoBatismo(),
+      batismoHorariosConfigurados(),
+    ]);
+    if (datasRes.error) throw datasRes.error;
+    const datasSet = new Set((datasRes.data || []).map(x => x.data_batismo).filter(dataIsoValida));
+    if (dataIsoValida(proxima)) datasSet.add(proxima);
+    // A gestão só precisa das próximas datas: históricos antigos não devem
+    // poluir o seletor nem voltar a ser selecionados por engano.
+    const datas = [...datasSet].filter(d => d >= hoje).sort().slice(0, 3);
+    const datasPermitidas = new Set(datas);
+    const pedida = dataIsoValida(req.query.data) ? String(req.query.data) : null;
+    const selecionada = pedida && datasPermitidas.has(pedida)
+      ? pedida
+      : (datas[0] || (dataIsoValida(proxima) ? proxima : hoje));
+    const [pessoasRes, aprovacoesRes] = await Promise.all([
+      supabase.from('batismo_inscricoes').select(BATISMO_COLUNAS_APP)
+        .eq('data_batismo', selecionada).is('deleted_at', null)
+        .not('status', 'in', '(cancelado,rejeitado)')
+        .order('horario_culto', { ascending: true, nullsFirst: false }).order('nome'),
+      supabase.from('batismo_inscricoes').select(BATISMO_COLUNAS_APP)
+        .eq('status', 'pendente').is('deleted_at', null).order('created_at'),
+    ]);
+    if (pessoasRes.error) throw pessoasRes.error;
+    if (aprovacoesRes.error) throw aprovacoesRes.error;
+    const pessoas = pessoasRes.data || [];
+    res.json({
+      data: selecionada, datas, hoje, pessoas, aprovacoes: aprovacoesRes.data || [],
+      resumo: {
+        previstos: pessoas.length,
+        presentes: pessoas.filter(p => !!p.checkin_em).length,
+        aguardando: (aprovacoesRes.data || []).length,
+      },
+      horarios: Array.isArray(horarios)
+        ? horarios.filter(h => h.aberto !== false).map(h => ({ horario: h.horario, label: h.label || h.horario }))
+        : [],
+    });
+  } catch (e) {
+    console.error('[APP] batismo/gestao:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a gestão do Batismo.' });
+  }
+});
+
+router.post('/batismo/gestao/pessoas', authApp, autorizarGestaoBatismoApp, limiterNormal, async (req, res) => {
+  try {
+    const nome = limparTexto(req.body?.nome, 120);
+    const sobrenome = limparTexto(req.body?.sobrenome, 120);
+    const dataBatismo = dataIsoValida(req.body?.data_batismo) ? String(req.body.data_batismo) : await dataProximoBatismo();
+    if (!nome || !sobrenome) return res.status(400).json({ error: 'Nome e sobrenome são obrigatórios.' });
+    if (!dataIsoValida(dataBatismo)) return res.status(400).json({ error: 'Selecione uma data de Batismo.' });
+    if (!dataBatismoFutura(dataBatismo)) return res.status(400).json({ error: 'A data de Batismo já passou.' });
+    const cpf = String(req.body?.cpf || '').replace(/\D/g, '') || null;
+    let membroId = null;
+    try {
+      const vinculo = await acharOuCriarGuardado({
+        cpf, email: limparTexto(req.body?.email, 180), telefone: limparTexto(req.body?.telefone, 40),
+        nome: `${nome} ${sobrenome}`,
+        dataNascimento: dataIsoValida(req.body?.data_nascimento) ? req.body.data_nascimento : null,
+        status: 'visitante', origem: 'batismo_app_gestao',
+      });
+      membroId = vinculo.membro_id || null;
+    } catch (e) { console.warn('[APP] batismo/gestao/pessoas · vínculo:', e.message); }
+    const { data, error } = await supabase.from('batismo_inscricoes').insert({
+      membro_id: membroId, nome, sobrenome,
+      telefone: limparTexto(req.body?.telefone, 40), email: limparTexto(req.body?.email, 180), cpf,
+      data_nascimento: dataIsoValida(req.body?.data_nascimento) ? req.body.data_nascimento : null,
+      data_batismo: dataBatismo, horario_culto: limparTexto(req.body?.horario_culto, 40),
+      tamanho_camisa: limparTexto(req.body?.tamanho_camisa, 12)?.toUpperCase() || null,
+      endereco: limparTexto(req.body?.endereco, 300),
+      observacoes: limparTexto(req.body?.observacoes, 1000),
+      status: 'confirmado', origem: 'app_gestao_batismo', inscrito_por: req.user.id,
+      area_kpi: ['kids', 'sede', 'bridge', 'ami', 'online'].includes(req.body?.area_kpi) ? req.body.area_kpi : 'sede',
+    }).select(BATISMO_COLUNAS_APP).single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[APP] batismo/gestao/pessoas POST:', e.message);
+    res.status(500).json({ error: 'Erro ao adicionar a pessoa ao Batismo.' });
+  }
+});
+
+router.post('/batismo/gestao/:id/aprovar', authApp, autorizarGestaoBatismoApp, limiterNormal, async (req, res) => {
+  try {
+    const { data: atual, error: buscaErr } = await supabase.from('batismo_inscricoes')
+      .select('id, status, data_batismo').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (buscaErr) throw buscaErr;
+    if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada.' });
+    if (atual.status !== 'pendente') return res.status(409).json({ error: 'Esta solicitação já foi tratada.' });
+    const dataBatismo = dataIsoValida(req.body?.data_batismo)
+      ? String(req.body.data_batismo) : (atual.data_batismo || await dataProximoBatismo());
+    if (!dataIsoValida(dataBatismo)) return res.status(400).json({ error: 'Selecione a data antes de aprovar.' });
+    if (!dataBatismoFutura(dataBatismo)) return res.status(400).json({ error: 'A data de Batismo já passou.' });
+    const update = { status: 'confirmado', data_batismo: dataBatismo, updated_at: new Date().toISOString() };
+    if (req.body?.horario_culto !== undefined) update.horario_culto = limparTexto(req.body.horario_culto, 40);
+    const { data, error } = await supabase.from('batismo_inscricoes').update(update)
+      .eq('id', req.params.id).eq('status', 'pendente').is('deleted_at', null)
+      .select(BATISMO_COLUNAS_APP).single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[APP] batismo/gestao/aprovar:', e.message);
+    res.status(500).json({ error: 'Erro ao aprovar a inscrição.' });
+  }
+});
+
+router.put('/batismo/gestao/:id', authApp, autorizarGestaoBatismoApp, limiterNormal, async (req, res) => {
+  try {
+    const update = { updated_at: new Date().toISOString() };
+    for (const [campo, max] of [
+      ['nome', 120], ['sobrenome', 120], ['telefone', 40], ['email', 180],
+      ['observacoes', 1000], ['endereco', 300], ['deficiencia_descricao', 500], ['horario_culto', 40],
+    ]) if (req.body?.[campo] !== undefined) update[campo] = limparTexto(req.body[campo], max);
+    if (req.body?.nome !== undefined && !update.nome) return res.status(400).json({ error: 'Nome é obrigatório.' });
+    if (req.body?.sobrenome !== undefined && !update.sobrenome) return res.status(400).json({ error: 'Sobrenome é obrigatório.' });
+    if (req.body?.data_batismo !== undefined) {
+      if (!dataIsoValida(req.body.data_batismo)) return res.status(400).json({ error: 'Data de Batismo inválida.' });
+      if (!dataBatismoFutura(req.body.data_batismo)) return res.status(400).json({ error: 'A data de Batismo já passou.' });
+      update.data_batismo = req.body.data_batismo;
+    }
+    if (req.body?.data_nascimento !== undefined) update.data_nascimento = dataIsoValida(req.body.data_nascimento) ? req.body.data_nascimento : null;
+    if (req.body?.tamanho_camisa !== undefined) update.tamanho_camisa = limparTexto(req.body.tamanho_camisa, 12)?.toUpperCase() || null;
+    if (req.body?.eh_crianca !== undefined) update.eh_crianca = !!req.body.eh_crianca;
+    if (req.body?.possui_deficiencia !== undefined) update.possui_deficiencia = !!req.body.possui_deficiencia;
+    if (['kids', 'sede', 'bridge', 'ami', 'online'].includes(req.body?.area_kpi)) update.area_kpi = req.body.area_kpi;
+    const { data, error } = await supabase.from('batismo_inscricoes').update(update)
+      .eq('id', req.params.id).is('deleted_at', null).select(BATISMO_COLUNAS_APP).single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[APP] batismo/gestao/pessoa PUT:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar os dados da pessoa.' });
+  }
+});
+
+router.post('/batismo/gestao/:id/checkin', authApp, autorizarGestaoBatismoApp, limiterNormal, async (req, res) => {
+  try {
+    const presente = req.body?.presente !== false;
+    const agora = new Date().toISOString();
+    const update = presente
+      ? { checkin_em: agora, checkin_por: req.user.id, updated_at: agora }
+      : { checkin_em: null, checkin_por: null, updated_at: agora };
+    const { data, error } = await supabase.from('batismo_inscricoes').update(update)
+      .eq('id', req.params.id).is('deleted_at', null).not('status', 'in', '(cancelado,rejeitado)')
+      .select(BATISMO_COLUNAS_APP).single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[APP] batismo/gestao/checkin:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar o check-in.' });
+  }
+});
+
+// Retira da lista sem apagar PII nem histórico; o cancelamento é reversível no ERP.
+router.delete('/batismo/gestao/:id', authApp, autorizarGestaoBatismoApp, limiterNormal, async (req, res) => {
+  try {
+    const agora = new Date().toISOString();
+    const { data, error } = await supabase.from('batismo_inscricoes')
+      .update({ status: 'cancelado', checkin_em: null, checkin_por: null, updated_at: agora })
+      .eq('id', req.params.id).is('deleted_at', null).select('id').single();
+    if (error) throw error;
+    res.json({ ok: true, id: data.id });
+  } catch (e) {
+    console.error('[APP] batismo/gestao/pessoa DELETE:', e.message);
+    res.status(500).json({ error: 'Erro ao retirar a pessoa deste Batismo.' });
+  }
+});
+
 async function gruposPapelApp(req) {
   const membro = await resolveMembroApp(req).catch(() => null);
 
@@ -3563,16 +4502,47 @@ async function gruposPapelApp(req) {
   let gruposLiderados = [];
   let gruposSupervisionados = [];
   if (membro?.id) {
-    const [glRes, gsRes] = await Promise.all([
+    const [glRes, gsRes, rosterRes] = await Promise.all([
       supabase.from('mem_grupos')
         .select('id, nome').eq('lider_id', membro.id).is('deleted_at', null)
         .order('nome', { ascending: true }),
       supabase.from('mem_grupos')
         .select('id, nome').eq('supervisor_id', membro.id).is('deleted_at', null)
         .order('nome', { ascending: true }),
+      // Líder ADICIONAL do roster: quem GERENCIA o grupo sem ser o `lider_id`.
+      // ⚠️⚠️ `lider_treinamento` ENTRA aqui por decisão do Marcos (25/08/2026):
+      // *"quero que quem for líder em treinamento também possa gerenciar
+      // grupo"*. E `co_lider` SAIU — o termo foi aposentado no mesmo pedido
+      // (migration 20260825170000 converteu quem tinha em lider_treinamento e
+      // o CHECK do banco recusa gravá-lo de novo).
+      // ⚠️ Esta lista é GESTÃO, e é MAIS LARGA que a da vitrine pública
+      // (`montarListaLideres` em publicGrupos só põe `lider` como líder do
+      // grupo): quem está em treinamento gerencia, mas não é anunciado como
+      // líder na página de inscrição. Se um dia as duas tiverem que coincidir,
+      // é decisão de produto — não alinhar por engano achando que divergiram.
+      // Best-effort no erro: falha aqui degrada pra "só lider_id" (fail-closed
+      // pro poder novo, nunca derruba quem já gerenciava).
+      supabase.from('mem_grupo_membros')
+        .select('grupo_id, mem_grupos!inner(id, nome)')
+        .eq('membro_id', membro.id)
+        .in('funcao', ['lider', 'lider_treinamento'])
+        .is('saiu_em', null).is('deleted_at', null)
+        .is('mem_grupos.deleted_at', null),
     ]);
     gruposLiderados = glRes.data || [];
     gruposSupervisionados = gsRes.data || [];
+    if (rosterRes.error) {
+      console.warn('[APP] gruposPapelApp · roster de líderes:', rosterRes.error.message);
+    } else {
+      const vistos = new Set(gruposLiderados.map(g => g.id));
+      for (const v of (rosterRes.data || [])) {
+        const g = v.mem_grupos;
+        if (!g?.id || vistos.has(g.id)) continue;
+        vistos.add(g.id);
+        gruposLiderados.push({ id: g.id, nome: g.nome });
+      }
+      gruposLiderados.sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
+    }
   }
 
   // Escopo de gestão = líder OU supervisor (dedup por id).
@@ -3718,10 +4688,10 @@ router.get('/grupos/pedidos/count', authApp, limiterNormal, async (req, res) => 
 // Autoriza a decisão sobre um pedido: precisa gerir o grupo do pedido (líder OU
 // supervisor) OU ser admin de grupos. Devolve { pedido, membro } ou responde o
 // erro e retorna null.
-async function autorizarDecisaoPedido(req, res) {
+async function autorizarDecisaoPedido(req, res, pedidoId) {
   const { membro, adminGrupos, gruposGeridos } = await gruposPapelApp(req);
   const { data: pedido } = await supabase.from('mem_grupo_pedidos')
-    .select('id, grupo_id, status').eq('id', req.params.id).maybeSingle();
+    .select('id, grupo_id, status').eq('id', pedidoId || req.params.id).maybeSingle();
   if (!pedido) { res.status(404).json({ error: 'Pedido não encontrado' }); return null; }
   const ehGerido = gruposGeridos.some(g => g.id === pedido.grupo_id);
   if (!adminGrupos && !ehGerido) {
@@ -3754,53 +4724,62 @@ router.post('/grupos/pedidos/:id/aprovar', authApp, limiterNormal, async (req, r
 // exclusivo deste caminho — o link do WhatsApp nunca mandou; item 3 da
 // auditoria do app 03/08). Mesma semântica do ramo de recusa do
 // POST /public/grupos/aprovar.
+// Devolve o pedido pra TRIAGEM (lei de 14/07: recusa do líder não é terminal).
+// Helper porque DOIS caminhos chamam: a rota abaixo e o botão "Recusar" da
+// notificação — duas implementações divergiriam no primeiro ajuste.
+async function devolverPedidoParaTriagem(pedidoId, req, ctx, motivo) {
+  const motivoInterno = motivo ? String(motivo).trim().slice(0, 500) : null;
+  const { data: pedido } = await supabase.from('mem_grupo_pedidos')
+    .select('id, status, grupo_id, membro_id, nome').eq('id', pedidoId).single();
+  if (!pedido) return { ok: false, status: 404, erro: 'Pedido não encontrado' };
+  if (pedido.status !== 'pendente') {
+    return { ok: false, status: 409, erro: `Pedido já foi ${pedido.status}` };
+  }
+  const decididoPorNome = ctx.membro?.nome || req.user.email || 'Líder';
+  // Guarda de corrida: só devolve se AINDA está pendente.
+  const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
+    status: 'devolvido',
+    motivo_rejeicao: motivoInterno,
+    decidido_por: req.user.id,
+    decidido_por_nome: decididoPorNome,
+    decidido_em: new Date().toISOString(),
+  }).eq('id', pedido.id).eq('status', 'pendente').select('id');
+  if (!claimed || !claimed.length) {
+    return { ok: false, status: 409, erro: 'Pedido já foi decidido por outra pessoa' };
+  }
+  // Linha do tempo (nunca lança) — awaited: serverless descarta trabalho
+  // pendente depois do res.json.
+  await registrarEventoPedido(pedido.id, 'recusado_lider',
+    { motivo_interno: motivoInterno, origem: 'app' }, decididoPorNome);
+
+  // Avisa a TRIAGEM (módulo grupos) — mesma notificação do link do WhatsApp.
+  // Fire-and-forget de propósito: a Caixa de entrada é o caminho garantido
+  // (o pedido devolvido já está na fila).
+  (async () => {
+    try {
+      const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
+      await notificar({
+        modulo: 'grupos',
+        tipo: 'pedido_devolvido',
+        titulo: `Pedido devolvido pra triagem: ${pedido.nome}`,
+        mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido pelo app${motivoInterno ? ` (motivo interno: ${motivoInterno.slice(0, 200)})` : ''}. Sugira outro grupo pra pessoa ou rejeite de vez.`,
+        link: '/grupos?tab=entrada',
+        severidade: 'aviso',
+        chaveDedup: `pedido_devolvido_${pedido.id}`,
+      });
+    } catch (e) { console.error('[APP grupos/pedidos devolver notify]', e.message); }
+  })();
+
+  return { ok: true, acao: 'devolvido' };
+}
+
 router.post('/grupos/pedidos/:id/rejeitar', authApp, limiterNormal, async (req, res) => {
   try {
     const ctx = await autorizarDecisaoPedido(req, res);
     if (!ctx) return;
-    const motivoInterno = req.body?.motivo ? String(req.body.motivo).trim().slice(0, 500) : null;
-    const { data: pedido } = await supabase.from('mem_grupo_pedidos')
-      .select('id, status, grupo_id, membro_id, nome').eq('id', req.params.id).single();
-    if (!pedido) return res.status(404).json({ error: 'Pedido não encontrado' });
-    if (pedido.status !== 'pendente') {
-      return res.status(409).json({ error: `Pedido já foi ${pedido.status}` });
-    }
-    const decididoPorNome = ctx.membro?.nome || req.user.email || 'Líder';
-    // Guarda de corrida: só devolve se AINDA está pendente.
-    const { data: claimed } = await supabase.from('mem_grupo_pedidos').update({
-      status: 'devolvido',
-      motivo_rejeicao: motivoInterno,
-      decidido_por: req.user.id,
-      decidido_por_nome: decididoPorNome,
-      decidido_em: new Date().toISOString(),
-    }).eq('id', pedido.id).eq('status', 'pendente').select('id');
-    if (!claimed || !claimed.length) {
-      return res.status(409).json({ error: 'Pedido já foi decidido por outra pessoa' });
-    }
-    // Linha do tempo (nunca lança) — awaited: serverless descarta trabalho
-    // pendente depois do res.json.
-    await registrarEventoPedido(pedido.id, 'recusado_lider',
-      { motivo_interno: motivoInterno, origem: 'app' }, decididoPorNome);
-
-    // Avisa a TRIAGEM (módulo grupos) — mesma notificação do link do WhatsApp.
-    // Fire-and-forget de propósito: a Caixa de entrada é o caminho garantido
-    // (o pedido devolvido já está na fila).
-    (async () => {
-      try {
-        const { data: grupo } = await supabase.from('mem_grupos').select('nome').eq('id', pedido.grupo_id).single();
-        await notificar({
-          modulo: 'grupos',
-          tipo: 'pedido_devolvido',
-          titulo: `Pedido devolvido pra triagem: ${pedido.nome}`,
-          mensagem: `O líder de ${grupo?.nome || 'um grupo'} recusou o pedido pelo app${motivoInterno ? ` (motivo interno: ${motivoInterno.slice(0, 200)})` : ''}. Sugira outro grupo pra pessoa ou rejeite de vez.`,
-          link: '/grupos?tab=entrada',
-          severidade: 'aviso',
-          chaveDedup: `pedido_devolvido_${pedido.id}`,
-        });
-      } catch (e) { console.error('[APP grupos/pedidos devolver notify]', e.message); }
-    })();
-
-    res.json({ ok: true, acao: 'devolvido' });
+    const r = await devolverPedidoParaTriagem(req.params.id, req, ctx, req.body?.motivo);
+    if (!r.ok) return res.status(r.status || 400).json({ error: r.erro });
+    res.json({ ok: true, acao: r.acao });
   } catch (e) {
     console.error('[APP] grupos/pedidos rejeitar:', e.message);
     res.status(500).json({ error: 'Erro ao recusar pedido' });
@@ -4352,7 +5331,12 @@ router.post('/membro/foto', authApp, limiterStrict, uploadCapaMw, async (req, re
 // continua protegido é a PESSOA que é `lider_id`.
 // ⚠️ `supervisor` e `coordenador` seguem fora: são papéis da hierarquia de
 // supervisão (grupo_supervisao_*), não do roster do grupo.
-const FUNCOES_APP = ['frequentador', 'lider_treinamento', 'co_lider', 'lider'];
+// ⚠️ `co_lider` SAIU (Marcos · 25/08/2026: *"nós não usamos o termo co-líder,
+// pode excluir esse termo"*). Quem tinha virou `lider_treinamento` na migration
+// 20260825170000, e o CHECK `chk_grupo_membros_sem_colider` recusa o valor —
+// então mandá-lo aqui de volta faria o UPDATE estourar 23514 e a tela dizer
+// "erro ao mudar a função" sem explicar nada.
+const FUNCOES_APP = ['frequentador', 'lider_treinamento', 'lider'];
 
 // PUT /api/app/grupos/:grupoId/membros/:rowId/funcao — body { funcao }
 router.put('/grupos/:grupoId/membros/:rowId/funcao', authApp, limiterNormal, async (req, res) => {
@@ -4363,7 +5347,7 @@ router.put('/grupos/:grupoId/membros/:rowId/funcao', authApp, limiterNormal, asy
     const funcao = String(req.body?.funcao || '').trim();
     if (!FUNCOES_APP.includes(funcao)) {
       return res.status(400).json({
-        error: 'Função inválida. Pelo app dá pra marcar frequentador, em treinamento, co-líder ou líder (cadastro) — supervisor e coordenador são da hierarquia de supervisão.',
+        error: 'Função inválida. Pelo app dá pra marcar frequentador, líder em treinamento ou líder (cadastro) — supervisor e coordenador são da hierarquia de supervisão.',
       });
     }
     // A linha tem que ser DESTE grupo (id de outro grupo no corpo não faz nada).
@@ -4459,12 +5443,12 @@ router.post('/meu-grupo/:grupoId/sair', authApp, limiterStrict, async (req, res)
       return res.status(409).json({ error: 'Você já não faz parte deste grupo.', codigo: 'nao_participa' });
     }
 
-    // ⚠️ CO-LÍDER também não sai por aqui. `lideres_busca` (a busca pública dos
-    // grupos) monta a lista com `funcao IN ('lider','co_lider')` — tirar um
-    // co-líder faz o grupo deixar de ser encontrável pelo nome dele, sem
-    // ninguém perceber. Trocar liderança é ato de gestão (mesma régua do
-    // "confira a lista", 31/07).
-    if (vinculos.some(v => ['lider', 'co_lider'].includes(String(v.funcao)))) {
+    // ⚠️ LÍDER EM TREINAMENTO também não sai por aqui, e o motivo mudou de
+    // lugar em 25/08/2026: ele passou a GERENCIAR o grupo (`gruposPapelApp`),
+    // então sair por este botão o deixaria com gestão de um grupo em que não
+    // está — e o gate lê o vínculo vivo. Trocar liderança é ato de gestão
+    // (mesma régua do "confira a lista", 31/07).
+    if (vinculos.some(v => ['lider', 'lider_treinamento'].includes(String(v.funcao)))) {
       return res.status(409).json({
         error: 'Você é da liderança deste grupo — fale com a coordenação para registrar a saída.',
         codigo: 'e_lideranca',
@@ -4517,132 +5501,195 @@ router.post('/meu-grupo/:grupoId/sair', authApp, limiterStrict, async (req, res)
   }
 });
 
-// POST /api/app/grupos/:grupoId/membros/:rowId/transferir — body { destino_grupo_id }
-// ⚠️ Transferência NÃO empurra ninguém pra dentro de outro grupo: cria um PEDIDO
-// no grupo de destino, pra o líder de lá aprovar (é o mesmo fluxo de quem se
-// inscreve). Um líder colocando gente no grupo do outro sem aprovação é
-// exatamente o tipo de atalho que a Caixa de entrada existe pra evitar.
-// A SAÍDA do grupo atual é um passo separado (o líder decide).
+// ============================================================================
+// POST /api/app/grupos/:grupoId/pessoas — O LÍDER CADASTRA E A PESSOA JÁ NASCE
+// DENTRO DO GRUPO (Marcos · 25/08/2026)
+//
+// ⚠️ CASCA FINA de propósito: a régua vive em `services/grupoPessoaDireta` e é a
+// MESMA que o ERP usa em `POST /grupos/:id/pessoas` — o pedido dele terminou com
+// *"alinhe todas essas mudanças com o sistema web"*, e alinhar significa uma
+// régua só, não duas telas parecidas. O porquê de cada decisão (não passar por
+// pedido, identidade pelo matcher, consentimento de terceiro, mínimo de campos)
+// está no cabeçalho do serviço.
+//
+// ⚠️ NÃO checa categoria × sexo do grupo, de propósito. A trava de
+// `utils/entradaGrupoApp` existe pra impedir que um DESCONHECIDO se inscreva
+// sozinho no grupo errado; aqui quem preenche está com a pessoa na frente. E ela
+// bloquearia caso real: o "NEW HEART - RECOMEÇO 40+" está cadastrado como
+// `categoria='Homens'` com 4 mulheres no roster (cadastro do GRUPO errado,
+// medido em 10/08) — enforcement ali impediria o líder de usar a tela.
+// ============================================================================
+router.post('/grupos/:grupoId/pessoas', authApp, limiterStrict, async (req, res) => {
+  try {
+    const gid = req.params.grupoId;
+    const g = await gateGrupoApp(req, res, gid);
+    if (!g.ok) return;
+
+    const r = await cadastrarPessoaNoGrupo({
+      grupo: g.grupo,
+      dados: req.body || {},
+      autor: { id: req.user?.id || null, nome: g.membro?.nome || req.user?.email || 'Líder (app)' },
+      origem: 'grupos_app_lider',
+      ip: req.ip || null,
+      userAgent: req.get?.('user-agent') || null,
+    });
+    if (!r.ok) return res.status(r.http || 400).json({ error: r.error, campo: r.campo });
+
+    // ⚠️ NENHUM WhatsApp — nem pra pessoa, nem pro líder (pedido explícito:
+    // *"não passa por whatsapp e confirmação nenhuma"*). A coordenação é avisada
+    // porque é ela que cuida do cadastro e da qualidade dos dados; o aviso vai
+    // pelas regras do módulo `grupos`, nunca por lista de nomes no código.
+    if (!r.ja_no_grupo) {
+      notificar({
+        modulo: 'grupos',
+        tipo: 'novo_membro_grupo',
+        titulo: `Nova pessoa no grupo ${g.grupo.nome}`,
+        mensagem: `${r.nome} foi cadastrada pelo líder no app e já entrou em "${g.grupo.nome}".`
+          + (r.sem_cpf ? ' Cadastro sem CPF — aparece na fila de "faltam dados".' : ''),
+        link: '/grupos',
+        severidade: 'info',
+        chaveDedup: `novo_membro_${gid}_${r.membro_id}`,
+      }).catch(e => console.warn('[APP] pessoas · notificar:', e.message));
+    }
+
+    const { ok, http, ...corpo } = r;
+    res.status(http || 201).json({ ok: true, ...corpo });
+  } catch (e) {
+    console.error('[APP] grupos/pessoas:', e.message);
+    res.status(500).json({ error: 'Erro ao cadastrar a pessoa' });
+  }
+});
+
+// POST /api/app/grupos/:grupoId/membros/:rowId/transferir — body { motivo? }
+//
+// ⚠️⚠️ O LÍDER NÃO ESCOLHE O DESTINO (Marcos · 25/08/2026): *"sobre a opção de
+// transferência eu quero que o líder de grupo não escolha para onde ele está
+// transferindo, eu quero que ele aperte e solicite transferência, isso vai para
+// caixa de entradas como pendente para Naná gerenciar."*
+//
+// O que MORREU aqui: o líder escolhia um grupo entre os que ELE gerencia e o
+// sistema criava um pedido lá. Duas coisas erradas nisso — o destino certo
+// raramente é outro grupo do mesmo líder (é o que estivesse mais perto da
+// pessoa, na categoria dela), e a decisão de realocar gente é da coordenação,
+// que enxerga a malha inteira. Medido: **zero uso histórico** (nenhuma linha de
+// `mem_grupo_pedidos` com observação de transferência, desde sempre), então não
+// há dado velho a migrar nem hábito a quebrar.
+//
+// ⚠️ A linha nasce em `mem_grupo_transferencias` (migration 20260825170000), NÃO
+// em `mem_grupo_pedidos`: pedido é "quero entrar NESTE grupo" e exige
+// `grupo_id`. Ver o comentário da migration pro porquê inteiro.
+//
+// ⚠️ A SAÍDA do grupo atual continua sendo um passo separado — o líder decide
+// quando (e a coordenação pode resolver a transferência antes disso). Tirar a
+// pessoa aqui a deixaria sem grupo nenhum enquanto a triagem não resolvesse.
 router.post('/grupos/:grupoId/membros/:rowId/transferir', authApp, limiterNormal, async (req, res) => {
   try {
     const gid = req.params.grupoId;
     const g = await gateGrupoApp(req, res, gid);
     if (!g.ok) return;
-    const destinoId = String(req.body?.destino_grupo_id || '').trim();
-    if (!destinoId || destinoId === gid) {
-      return res.status(400).json({ error: 'Escolha um grupo de destino diferente.' });
-    }
-    const { data: destino } = await supabase.from('mem_grupos')
-      .select('id, nome, ativo, lider_id').eq('id', destinoId).is('deleted_at', null).maybeSingle();
-    if (!destino || destino.ativo === false) {
-      return res.status(404).json({ error: 'Grupo de destino não encontrado' });
-    }
+
     const { data: linha } = await supabase.from('mem_grupo_membros')
       .select('id, membro_id').eq('id', req.params.rowId)
       .eq('grupo_id', gid).is('saiu_em', null).is('deleted_at', null).maybeSingle();
     if (!linha?.membro_id) return res.status(404).json({ error: 'Participante não encontrado neste grupo' });
 
-    // Já está no destino? Então não há o que pedir.
-    const { data: jaLa } = await supabase.from('mem_grupo_membros')
-      .select('id').eq('grupo_id', destinoId).eq('membro_id', linha.membro_id)
-      .is('saiu_em', null).is('deleted_at', null).limit(1).maybeSingle();
-    if (jaLa) return res.json({ ok: true, ja_no_destino: true, destino: destino.nome });
-
-    const { data: jaPediu } = await supabase.from('mem_grupo_pedidos')
-      .select('id').eq('grupo_id', destinoId).eq('membro_id', linha.membro_id)
-      .eq('status', 'pendente').is('deleted_at', null).limit(1).maybeSingle();
-    if (jaPediu) return res.json({ ok: true, ja_pedido: true, destino: destino.nome });
-
-    const { data: pessoa } = await supabase.from('mem_membros')
-      .select('nome, telefone, email').eq('id', linha.membro_id).is('deleted_at', null).maybeSingle();
-    const { data: novo, error } = await supabase.from('mem_grupo_pedidos').insert({
-      grupo_id: destinoId,
-      membro_id: linha.membro_id,
-      nome: pessoa?.nome || 'Participante',
-      telefone: pessoa?.telefone || null,
-      email: pessoa?.email || null,
-      status: 'pendente',
-      origem: 'app',
-      // ⚠️ A coluna é `observacao` (SINGULAR) — conferido no banco em 05/08/2026.
-      // Pedir `observacoes` faria o PostgREST recusar o INSERT inteiro.
-      observacao: `Transferência pedida pelo líder de "${g.grupo.nome}" no app.`,
-    }).select('id').single();
-    if (error) throw error;
-
-    // ⚠️⚠️ QUEM PRECISA SABER É O LÍDER DO DESTINO — e ele não era avisado por
-    // NADA (10/08/2026). O comentário no topo desta rota diz que a transferência
-    // "é o mesmo fluxo de quem se inscreve", mas só a criação do pedido foi
-    // igual: os dois avisos daquele fluxo ficaram de fora. O pedido nascia
-    // `pendente` na fila de um grupo cujo líder nunca ouvia falar dele, e a
-    // única notificação existente ia pro público do módulo — pessoas que não
-    // aprovam nada naquele grupo.
-    //
-    // ⚠️ A funcionalidade tem ZERO uso histórico (medido: nenhuma linha em
-    // `mem_grupo_pedidos` com observação de transferência, desde sempre). Então
-    // isto é gatilho armado, não incêndio — e é por isso que dá pra consertar
-    // sem migração nem varredura de dado velho.
-    (async () => {
-      const donosDestino = await donosDoGrupo(destino.id).catch(() => []);
-      if (donosDestino.length) {
-        await notificar({
-          modulo: 'grupos',
-          tipo: 'grupo_transferencia_pedida',
-          titulo: `Transferência para ${destino.nome}`,
-          mensagem: `${pessoa?.nome || 'Alguém'} foi indicada pelo líder de "${g.grupo.nome}" para o seu grupo. `
-            + 'O pedido está na sua fila, aguardando você aprovar ou recusar.',
-          link: '/grupos?tab=entrada',
-          severidade: 'aviso',
-          chaveDedup: `grupo_transf_${novo?.id}`,
-          targetIds: donosDestino,
-        });
-      }
-
-      // A coordenação continua sabendo (transferência entre grupos é assunto de
-      // triagem), MENOS quem já foi avisado como dono do destino — senão a mesma
-      // pessoa recebe duas linhas do mesmo fato, que é o defeito que esta leva
-      // de consertos existe pra tirar.
-      const coordenacao = (await resolverDestinatarios('grupos').catch(() => []))
-        .filter(id => !donosDestino.includes(id));
-      if (coordenacao.length) {
-        await notificar({
-          modulo: 'grupos',
-          tipo: 'grupo_transferencia_pedida',
-          titulo: 'Transferência pedida entre grupos',
-          mensagem: `${pessoa?.nome || 'Alguém'} foi indicada de "${g.grupo.nome}" para "${destino.nome}" pelo app. `
-            + 'O pedido está na fila do grupo de destino.',
-          link: '/grupos?tab=entrada',
-          chaveDedup: `grupo_transf_coord_${novo?.id}`,
-          targetIds: coordenacao,
-        });
-      }
-    })().catch(e => console.warn('[APP] transferir · notificar:', e.message));
-
-    // ⚠️ E O WHATSAPP, que é o canal que de fato funciona: 368 das 388 decisões
-    // de pedido dos últimos 90 dias saíram pelo link do WhatsApp do líder, não
-    // pelo sistema. Mandar só notificação in-app pra um líder que, em 86 dos 102
-    // grupos ativos, não tem conta no sistema, seria manter o pedido invisível.
-    // Mesma função dos outros caminhos de pedido — o template leva link de
-    // aprovar sem login, amarrado ao líder e ao pedido.
-    if (novo?.id) {
-      gruposWpp.notificarLiderNovoPedido({
-        grupo: destino,
-        pedidoId: novo.id,
-        pessoa: {
-          nome: pessoa?.nome || 'Participante',
-          telefone: pessoa?.telefone || null,
-          email: pessoa?.email || null,
-        },
-      }).catch(e => console.warn('[APP] transferir · wpp líder destino:', e.message));
+    // ⚠️ O líder PRINCIPAL não é transferido pelo app: sem ele o grupo fica sem
+    // destinatário dos avisos de WhatsApp (lei de 31/07). Mesma proteção que a
+    // mudança de função e a saída já têm.
+    if (linha.membro_id === g.grupo.lider_id) {
+      return res.status(400).json({
+        error: 'Esta é a líder principal do grupo — mover a liderança é com a coordenação.',
+      });
     }
 
-    res.status(201).json({ ok: true, destino: destino.nome, pedido_id: novo?.id || null });
+    const { data: pessoa } = await supabase.from('mem_membros')
+      .select('nome').eq('id', linha.membro_id).is('deleted_at', null).maybeSingle();
+    const motivo = String(req.body?.motivo || '').trim().slice(0, 500) || null;
+
+    // ⚠️ Já existe pedido pendente desta pessoa neste grupo? Devolve o MESMO,
+    // sem criar outro. O índice `uniq_grupo_transf_pendente` garante isso no
+    // banco; conferir antes é o que transforma o 23505 numa resposta amigável
+    // em vez de um 500 ("o líder tocou duas vezes" é o caso normal).
+    const { data: jaPediu } = await supabase.from('mem_grupo_transferencias')
+      .select('id, created_at').eq('membro_id', linha.membro_id)
+      .eq('grupo_origem_id', gid).eq('status', 'pendente').limit(1).maybeSingle();
+    if (jaPediu) {
+      return res.json({ ok: true, ja_pedido: true, transferencia_id: jaPediu.id });
+    }
+
+    const { data: novo, error } = await supabase.from('mem_grupo_transferencias').insert({
+      membro_id: linha.membro_id,
+      grupo_origem_id: gid,
+      vinculo_id: linha.id,
+      motivo,
+      status: 'pendente',
+      pedido_por: req.user?.id || null,
+      // Snapshot de nome: em 86 dos 102 grupos ativos o líder não tem conta no
+      // ERP, então resolver o nome depois pelo `pedido_por` não funcionaria.
+      pedido_por_nome: g.membro?.nome || req.user?.email || 'Líder (app)',
+      origem: 'app',
+    }).select('id').single();
+    if (error) {
+      // Corrida com outra aba/toque: o índice parcial pegou. Não é erro pro
+      // líder — o pedido dele está registrado.
+      if (error.code === '23505') return res.json({ ok: true, ja_pedido: true });
+      throw error;
+    }
+
+    // ⚠️⚠️ Quem precisa saber é a COORDENAÇÃO, e não o dono de nenhum grupo: é
+    // ela que vai ESCOLHER o destino, e destino é justamente o que este pedido
+    // não tem. Por isso aqui o `targetIds` não sai de `donosDoGrupo` (como em
+    // todo outro aviso de grupo) e sim de `resolverDestinatarios('grupos')` — as
+    // regras do módulo em `notificacao_regras`, nunca uma lista de nomes no
+    // código (a lei do projeto: o dono do fluxo muda sem PR).
+    //
+    // ⚠️ Lista VAZIA (nenhuma regra configurada) omite `targetIds` de propósito,
+    // pra cair no fallback de admin/diretor: transferência é rara e o custo de
+    // avisar gente demais é bem menor que o de um pedido de líder ficar parado
+    // sem ninguém saber que existe. Mandar `targetIds: []` seria SILÊNCIO.
+    (async () => {
+      const coordenacao = await resolverDestinatarios('grupos').catch(() => []);
+      await notificar({
+        modulo: 'grupos',
+        tipo: 'grupo_transferencia_pedida',
+        titulo: 'Transferência pedida por um líder',
+        mensagem: `${pessoa?.nome || 'Alguém'} do grupo "${g.grupo.nome}" precisa ser transferida. `
+          + `${motivo ? `Motivo: ${motivo}. ` : ''}O pedido está na Caixa de entrada, aguardando a coordenação escolher o grupo.`,
+        link: '/grupos?tab=entrada',
+        severidade: 'aviso',
+        chaveDedup: `grupo_transf_${novo?.id}`,
+        ...(coordenacao.length ? { targetIds: coordenacao } : {}),
+      });
+    })().catch(e => console.warn('[APP] transferir · notificar:', e.message));
+
+    res.status(201).json({ ok: true, transferencia_id: novo?.id || null });
   } catch (e) {
     console.error('[APP] grupos/transferir:', e.message);
     res.status(500).json({ error: 'Erro ao pedir a transferência' });
   }
 });
 
-// GET /api/app/grupos/:grupoId/encontros — histórico de frequência
+// GET /api/app/grupos/:grupoId/encontros — o histórico de frequência **com os
+// encontros que ficaram SEM CHAMADA à vista**.
+//
+// ⚠️⚠️ Pedido do Marcos (25/08/2026), a partir de um defeito que ele viu no
+// app: *"quando eu não preencho uma semana e preencho a outra ele dá meio que
+// um bug — ele provavelmente ficou em dúvida se eu estava registrando a
+// presença do dia 18, aí ele marcou que o encontro foi dia 24. Acho que vale a
+// pena sempre manter os encontros à vista: se a pessoa passar 1 semana e não
+// registrar, ele entra automaticamente como presença não registrada e pode ser
+// registrada posteriormente se o líder quiser."*
+//
+// ⚠️⚠️ A CAUSA não era ambiguidade do servidor: o `POST` de encontro sempre
+// aceitou `data` e caía em `hojeBRT()` quando ela não vinha — **e a tela nunca
+// mandava data nenhuma**. Registrar no dia 24 a chamada do dia 18 gravava um
+// encontro no dia 24, corretamente do ponto de vista de quem só recebeu
+// "presentes". O conserto é DOS DOIS LADOS: aqui nasce a lista de datas
+// possíveis (com o que falta), e o app passa a mandar a data escolhida.
+//
+// ⚠️ `encontros` (o histórico cru) CONTINUA na resposta, sem mudança: o binário
+// que está no celular hoje lê essa chave, e o OTA leva 2 aberturas pra aplicar.
+// A `ocorrencias` é aditiva.
 router.get('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, res) => {
   try {
     const gid = req.params.grupoId;
@@ -4660,9 +5707,111 @@ router.get('/grupos/:grupoId/encontros', authApp, limiterNormal, async (req, res
         .select('encontro_id, presente').in('encontro_id', ids);
       (pres || []).forEach(p => { if (p.presente) presentes[p.encontro_id] = (presentes[p.encontro_id] || 0) + 1; });
     }
-    res.json({
-      encontros: (encontros || []).map(e => ({ ...e, presentes: presentes[e.id] || 0 })),
-    });
+    const lista = (encontros || []).map(e => ({ ...e, presentes: presentes[e.id] || 0 }));
+
+    // ── A timeline: cada ocorrência que já passou, registrada ou não ─────────
+    // ⚠️ TODO este bloco é best-effort e ISOLADO: a aba de Encontros existe
+    // hoje e não pode sumir porque a agenda falhou (lição do `parcelas_max`).
+    // Sem `ocorrencias`, o app cai na lista crua — o comportamento de antes.
+    let ocorrencias = null;
+    let ocorrenciasAviso = null;
+    try {
+      const { data: grupo, error: eG } = await supabase.from('mem_grupos')
+        .select('dia_semana, horario, recorrencia').eq('id', gid).maybeSingle();
+      if (eG) throw eG;
+      // ⚠️ Janela de 180 dias na leitura das exceções: `ocorrenciasPassadas`
+      // devolve no máximo 12 ocorrências, e mesmo num grupo mensal isso são
+      // ~48 semanas — buscar a tabela inteira só cresceria com o tempo.
+      const desdeExcecoes = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+      const { data: exc, error: eE } = await supabase.from('mem_grupo_agenda_excecoes')
+        .select('data_original, status, nova_data, novo_horario, motivo')
+        .eq('grupo_id', gid).gte('data_original', desdeExcecoes);
+      if (eE) throw eE;
+      const [ancoras, inicios] = await Promise.all([
+        ancorasDeGrupos([gid]),
+        // ⚠️ O INÍCIO é o que permite listar o histórico de grupo quinzenal/
+        // mensal que nunca registrou encontro — 34 dos 35 não-semanais ativos,
+        // medido em 25/08. Sem ele a aba deles fica permanentemente vazia, e sem
+        // lista não há o que corrigir (o pedido do Marcos).
+        iniciosDeGrupos([gid]),
+      ]);
+      const porData = new Map(lista.map(e => [String(e.data).slice(0, 10), e]));
+      const brutas = ocorrenciasPassadas({
+        diaSemana: grupo?.dia_semana, horario: grupo?.horario,
+        recorrencia: grupo?.recorrencia, ancoraISO: ancoras[gid] || null,
+        inicioISO: inicios[gid] || null,
+        // ⚠️⚠️ PISO no início da temporada. Sem ele a lista atravessa pra trás
+        // além do começo do grupo: medido em 25/08 no grupo 00000068 (temporada
+        // aberta em 01/08), a timeline mostrava 22/06 e 06/07 como "presença não
+        // registrada" — pendência de encontro que aquele grupo não tinha por que
+        // ter feito. Cobrar chamada de antes do grupo existir é a versão nova do
+        // erro que a régua de âncora existia pra evitar.
+        // ⚠️ Encontro REGISTRADO fora do piso NÃO se perde: ele volta pela lista
+        // de avulsos logo abaixo.
+        desdeISO: inicios[gid] || null,
+        excecoes: exc || [], registradas: [...porData.keys()], quantas: 12,
+      });
+      // ⚠️⚠️ A JANELA DE CORREÇÃO É DECIDIDA AQUI, no servidor, e vai pronta pra
+      // tela (mesma lei da remarcação futura · 18/08): o app NÃO recalcula. Duas
+      // contas pra "que datas posso escolher" apareceriam como "o calendário
+      // deixou e o servidor recusou".
+      // ⚠️ Os vizinhos saem da PRÓPRIA lista (`data_original` ordenada desc),
+      // então a janela reflete a cadência real do grupo, não uma suposição.
+      ocorrencias = brutas.map((o, i) => {
+        const enc = porData.get(o.data) || null;
+        const janela = janelaCorrecaoPassada({
+          dataOriginal: o.data_original,
+          // A lista vem do mais RECENTE pro mais antigo: o índice seguinte é a
+          // ocorrência ANTERIOR no tempo, e o anterior é a SEGUINTE.
+          anteriorISO: brutas[i + 1]?.data || null,
+          proximaISO: brutas[i - 1]?.data || null,
+          hojeISO: hojeBRT(),
+          // ⚠⚠ Dia que JÁ TEM chamada sai da janela: `mem_grupo_encontros` tem
+          // UNIQUE (grupo_id, data), então escolher um deles levantaria 23505 e o
+          // líder só descobriria DEPOIS de salvar. É de graça — `porData` já foi
+          // carregado aqui em cima.
+          // ⚠ A data DESTA ocorrência não entra: a chamada dela não pode bloquear
+          // a própria linha (mover pra onde já está é no-op, não colisão).
+          ocupadas: [...porData.keys()].filter(d => d !== o.data),
+        });
+        return {
+          ...o,
+          encontro_id: enc?.id || null,
+          presentes: enc ? enc.presentes : null,
+          tema: enc?.tema || null,
+          observacoes: enc?.observacoes || null,
+          registrado_por_nome: enc?.registrado_por_nome || null,
+          pode_corrigir: !!janela?.pode,
+          corrigir_de: janela?.de || null,
+          corrigir_ate: janela?.ate || null,
+          // A tela apaga estes dias do calendário; o servidor recusa de novo,
+          // como cinto de segurança.
+          corrigir_bloqueadas: janela?.bloqueadas || [],
+        };
+      });
+      // ⚠️ Encontro REGISTRADO que não cai em ocorrência nenhuma (chamada feita
+      // num dia fora da recorrência — inclusive as gravadas com a data errada
+      // ANTES deste conserto) entra como avulso. Sumir com ele faria a chamada
+      // que a pessoa fez desaparecer da tela, que é pior que o defeito original.
+      const naTimeline = new Set(ocorrencias.map(o => o.data));
+      for (const e of lista) {
+        const d = String(e.data).slice(0, 10);
+        if (naTimeline.has(d)) continue;
+        ocorrencias.push({
+          data_original: d, data: d, horario: null, status: 'registrado',
+          motivo: null, dia_semana: null, registrado: true, avulso: true,
+          encontro_id: e.id, presentes: e.presentes, tema: e.tema,
+          observacoes: e.observacoes, registrado_por_nome: e.registrado_por_nome,
+        });
+      }
+      ocorrencias.sort((a, b) => (a.data < b.data ? 1 : a.data > b.data ? -1 : 0));
+    } catch (e) {
+      console.warn('[APP] encontros · timeline indisponível:', e.message);
+      ocorrencias = null;
+      ocorrenciasAviso = 'Não deu pra montar a agenda dos encontros agora.';
+    }
+
+    res.json({ encontros: lista, ocorrencias, ocorrencias_aviso: ocorrenciasAviso });
   } catch (e) {
     console.error('[APP] grupos/encontros:', e.message);
     res.status(500).json({ error: 'Erro ao carregar os encontros' });
@@ -4940,25 +6089,9 @@ router.get('/grupos/:grupoId/visitas', authApp, limiterNormal, async (req, res) 
 // EXCEÇÃO. Mesmo gate dos outros endpoints de gerenciar grupo.
 // ⚠️ NÃO escreve em `mem_grupo_encontros`: aquela é o registro do que
 // ACONTECEU (com presenças) e alimenta os KPIs de frequência.
-// ⚠️ ÂNCORA da cadência: quinzenal/mensal não se derivam de `dia_semana`
-// sozinho ("de 14 em 14 às terças" não diz EM QUAL terça). A única evidência no
-// banco é o último encontro REALIZADO. Sem ela a régua devolve UMA ocorrência
-// marcada como incerta, em vez de listar uma agenda inteira que é palpite.
-// Best-effort: falhar aqui não pode derrubar a tela do grupo.
-async function ancorasDeGrupos(ids) {
-  const out = {};
-  if (!ids || !ids.length) return out;
-  try {
-    for (let i = 0; i < ids.length; i += 200) {
-      const { data, error } = await supabase.from('mem_grupo_encontros')
-        .select('grupo_id, data').in('grupo_id', ids.slice(i, i + 200))
-        .order('data', { ascending: false });
-      if (error) throw error;
-      for (const e of data || []) if (e.data && !out[e.grupo_id]) out[e.grupo_id] = String(e.data).slice(0, 10);
-    }
-  } catch (e) { console.warn('[APP] ancora de agenda indisponivel:', e.message); }
-  return out;
-}
+// ⚠️ ÂNCORA da cadência: extraída pra `services/grupoAncora` em 25/08/2026,
+// quando o ERP passou a precisar da MESMA (card de encontros sem chamada). O
+// porquê inteiro — e por que sem ela a régua não inventa agenda — está lá.
 
 // Quantos dias à frente vale listar: até o fim da temporada aberta (o líder
 // pediu "todos os encontros da temporada"), com teto. Sem temporada aberta cai
@@ -5027,117 +6160,81 @@ router.post('/grupos/:grupoId/agenda', authApp, limiterStrict, async (req, res) 
     const gid = req.params.grupoId;
     const gate = await gateGrupoApp(req, res, gid);
     if (!gate.ok) return;
-    const { data_original, acao, nova_data, novo_horario, motivo } = req.body || {};
+    const {
+      data_original, acao, nova_data, novo_horario, motivo,
+      confirmar_apagar_chamada,
+    } = req.body || {};
 
-    const D = /^\d{4}-\d{2}-\d{2}$/;
-    if (!D.test(String(data_original || ''))) return res.status(400).json({ error: 'Informe a data do encontro que você quer alterar.' });
-    if (!['remarcar', 'cancelar', 'desfazer'].includes(acao)) return res.status(400).json({ error: 'Ação inválida.' });
-
-    const hojeBRT = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
-    // ⚠️ Só ocorrência FUTURA: mexer no passado não muda o que aconteceu e
-    // confundiria com o registro de presença, que é outra coisa.
-    if (data_original < hojeBRT) return res.status(400).json({ error: 'Só dá para alterar encontros que ainda vão acontecer.' });
-
-    if (acao === 'desfazer') {
-      const { error } = await supabase.from('mem_grupo_agenda_excecoes')
-        .delete().eq('grupo_id', gid).eq('data_original', data_original);
-      if (error) throw error;
-      return res.json({ ok: true, acao: 'desfeito' });
-    }
-
-    let linha = {
-      grupo_id: gid, data_original, status: acao === 'cancelar' ? 'cancelado' : 'remarcado',
-      motivo: motivo ? String(motivo).trim().slice(0, 300) : null,
-      decidido_por: gate.membro?.id || null,
-      decidido_por_nome: gate.membro?.nome || null,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (acao === 'remarcar') {
-      if (!D.test(String(nova_data || ''))) return res.status(400).json({ error: 'Informe a nova data.' });
-      if (nova_data < hojeBRT) return res.status(400).json({ error: 'A nova data não pode ser no passado.' });
-      if (novo_horario && !/^\d{2}:\d{2}$/.test(String(novo_horario))) return res.status(400).json({ error: 'Horário inválido (use HH:MM).' });
-
-      // ⚠️⚠️ A JANELA É DECIDIDA AQUI, nunca no app: o payload diz QUAL
-      // encontro, jamais SE pode (mesma lei da aprovação em lote e do
-      // `ligar-lote`). O calendário do app já limita, mas bundle antigo,
-      // requisição na mão ou tela aberta por horas passariam direto.
-      // ⚠️ Falha ao MONTAR a agenda recusa (409), nunca libera: guarda que
-      // falha aberta é enfeite.
-      let janela = null;
-      try {
-        const { data: gAg } = await supabase.from('mem_grupos')
-          .select('dia_semana, horario, recorrencia').eq('id', gid).maybeSingle();
-        const anc = await ancorasDeGrupos([gid]);
-        const lista = proximasOcorrencias({
-          diaSemana: gAg?.dia_semana, horario: gAg?.horario,
-          recorrencia: gAg?.recorrencia, ancoraISO: anc[gid] || null,
-          excecoes: [], quantas: 40, janelaDias: 200,
-        });
-        janela = lista.find(o => o.data_original === data_original) || null;
-      } catch (e) {
-        console.warn('[APP] agenda janela:', e.message);
-      }
-      if (!janela) {
-        return res.status(409).json({
-          error: 'Não consegui conferir a agenda deste grupo agora. Tente de novo em instantes.',
-          codigo: 'janela_indisponivel',
-        });
-      }
-      if (!janela.pode_remarcar) {
-        return res.status(409).json({
-          error: 'Este encontro está colado no seguinte — não dá para remarcar. Se ele não vai acontecer, cancele.',
-          codigo: 'sem_janela',
-        });
-      }
-      if (nova_data < janela.remarcar_de || nova_data > janela.remarcar_ate) {
-        return res.status(409).json({
-          error: `A nova data precisa ficar entre ${janela.remarcar_de} e ${janela.remarcar_ate}. Para mover mais que isso, cancele este encontro.`,
-          codigo: 'fora_da_janela',
-          remarcar_de: janela.remarcar_de,
-          remarcar_ate: janela.remarcar_ate,
-        });
-      }
-      linha.nova_data = nova_data;
-      linha.novo_horario = novo_horario || null;
-    } else {
-      linha.nova_data = null;
-      linha.novo_horario = null;
-    }
-
-    // Uma exceção por ocorrência: remarcar de novo ATUALIZA (o UNIQUE garante).
-    const { error } = await supabase.from('mem_grupo_agenda_excecoes')
-      .upsert(linha, { onConflict: 'grupo_id,data_original' });
-    if (error) {
-      if (/does not exist|schema cache/i.test(error.message)) {
-        return res.status(503).json({ error: 'A agenda ainda não está disponível. Avise a equipe de grupos.' });
-      }
-      throw error;
+    // ⚠️ CASCA FINA: a régua (as DUAS janelas de data, a coerência com a chamada
+    // já registrada, a tradução dos erros de banco) vive em
+    // `services/grupoAgendaExcecao` — a MESMA que o ERP usa desde 25/08. Duas
+    // cópias divergiriam, e o sintoma seria "no app deu, no web não".
+    const r = await aplicarExcecaoAgenda({
+      grupoId: gid,
+      dataOriginal: data_original,
+      acao,
+      novaData: nova_data,
+      novoHorario: novo_horario,
+      motivo,
+      autor: { id: gate.membro?.id || null, nome: gate.membro?.nome || null },
+      // ⚠⚠ `=== true` e nada mais: fail-closed. String, 1 ou objeto vindos de
+      // um cliente distraído NÃO podem apagar a chamada de um encontro real —
+      // a segunda etapa existe justamente pra isso ser uma decisão.
+      confirmarApagarChamada: confirmar_apagar_chamada === true,
+    });
+    if (!r.ok) {
+      const corpo = { error: r.error };
+      if (r.codigo) corpo.codigo = r.codigo;
+      if (r.remarcar_de) corpo.remarcar_de = r.remarcar_de;
+      if (r.remarcar_ate) corpo.remarcar_ate = r.remarcar_ate;
+      // Pra a pergunta da tela ser concreta ("isso apaga a presença de 3
+      // pessoas") em vez de abstrata. `null` = não deu pra contar.
+      if (r.presentes !== undefined) corpo.presentes = r.presentes;
+      return res.status(r.http || 400).json(corpo);
     }
 
     // ⚠️ Avisa a COORDENAÇÃO, não o grupo: quem fala com os participantes é o
     // líder, no WhatsApp dele. Disparar pra todo o roster daqui seria mensagem
     // que ninguém pediu — e o app não tem o contexto ("adiamos por causa do
     // feriado") que só ele sabe dar.
-    (async () => {
-      try {
-        await notificar({
-          modulo: 'grupos',
-          tipo: 'agenda_grupo_alterada',
-          titulo: acao === 'cancelar'
-            ? `Encontro cancelado: ${gate.grupo.nome}`
-            : `Encontro remarcado: ${gate.grupo.nome}`,
-          mensagem: acao === 'cancelar'
-            ? `${gate.membro?.nome || 'O líder'} cancelou o encontro de ${data_original}.${linha.motivo ? ` Motivo: ${linha.motivo}` : ''}`
-            : `${gate.membro?.nome || 'O líder'} remarcou o encontro de ${data_original} para ${nova_data}${novo_horario ? ` às ${novo_horario}` : ''}.${linha.motivo ? ` Motivo: ${linha.motivo}` : ''}`,
-          link: '/grupos',
-          severidade: 'info',
-          chaveDedup: `agenda_${gid}_${data_original}_${linha.status}`,
-        });
-      } catch (err) { console.error('[APP] agenda notify:', err.message); }
-    })();
+    if (r.acao !== 'desfeito') {
+      (async () => {
+        try {
+          const cancelou = r.acao === 'cancelado';
+          // ⚠️ O vocabulário muda no passado: "cancelou o encontro de amanhã" e
+          // "registrou que o encontro da semana passada não aconteceu" são fatos
+          // diferentes, e a coordenação decide coisas diferentes a partir deles.
+          const titulo = cancelou
+            ? (r.no_passado
+              ? `Encontro não aconteceu: ${gate.grupo.nome}`
+              : `Encontro cancelado: ${gate.grupo.nome}`)
+            : (r.no_passado
+              ? `Data de encontro corrigida: ${gate.grupo.nome}`
+              : `Encontro remarcado: ${gate.grupo.nome}`);
+          const quem = gate.membro?.nome || 'O líder';
+          const mensagem = cancelou
+            ? (r.no_passado
+              ? `${quem} registrou que o encontro de ${data_original} não aconteceu.${r.motivo ? ` Motivo: ${r.motivo}` : ''}`
+              : `${quem} cancelou o encontro de ${data_original}.${r.motivo ? ` Motivo: ${r.motivo}` : ''}`)
+            : (r.no_passado
+              ? `${quem} corrigiu a data do encontro de ${data_original} para ${r.nova_data}.`
+                + `${r.chamada_movida ? ' A chamada foi movida junto.' : ''}${r.motivo ? ` Motivo: ${r.motivo}` : ''}`
+              : `${quem} remarcou o encontro de ${data_original} para ${r.nova_data}`
+                + `${r.novo_horario ? ` às ${r.novo_horario}` : ''}.${r.motivo ? ` Motivo: ${r.motivo}` : ''}`);
+          await notificar({
+            modulo: 'grupos',
+            tipo: 'agenda_grupo_alterada',
+            titulo,
+            mensagem,
+            link: '/grupos',
+            severidade: 'info',
+            chaveDedup: `agenda_${gid}_${data_original}_${r.acao}`,
+          });
+        } catch (err) { console.error('[APP] agenda notify:', err.message); }
+      })();
+    }
 
-    res.json({ ok: true, acao: linha.status });
+    res.json({ ok: true, acao: r.acao, chamada_movida: r.chamada_movida });
   } catch (e) {
     console.error('[APP] agenda escrita:', e.message);
     res.status(500).json({ error: 'Erro ao alterar o encontro' });
@@ -5335,6 +6432,11 @@ const {
   pessoaDaCrianca,
   nomesDosPais,
 } = require('../utils/criancaApresentacao');
+const {
+  hojeBRT: _hojeBrtApres,
+  separar: _separarApres,
+  juntar: _juntarApres,
+} = require('../utils/apresentacaoHistorico');
 
 /**
  * Quem são os pais/mães de cada criança da lista (id → [ids dos responsáveis]).
@@ -5360,6 +6462,84 @@ async function paisDasCriancas(ids) {
   return mapa;
 }
 
+/**
+ * Todas as apresentações que são DESTA pessoa, pelos 3 caminhos possíveis.
+ *
+ * ⚠️⚠️ Buscar só por `responsavel_membro_id` devolve VAZIO pra quem apresentou:
+ * medido em 20/08, as 5 apresentações passadas têm essa coluna NULA (vieram do
+ * formulário público, que não resolve membro) e as 2 atribuíveis chegam **só**
+ * pela ficha do Kids. Um caminho só faria a tela AFIRMAR "você nunca apresentou"
+ * a quem apresentou — e campo vazio parece dado, então ninguém investigaria.
+ *
+ * Cadeia, na ordem da força da evidência:
+ *   1. `responsavel_membro_id` — o vínculo que o app/matcher gravou;
+ *   2. `cpf_responsavel` = CPF do membro — chave FORTE do Contrato de porta;
+ *   3. `crianca_id` → `kids_responsaveis` — a criança é minha (é o que alcança
+ *      o histórico hoje).
+ *
+ * ⚠️ E-MAIL E TELEFONE FICAM FORA, de propósito: família compartilha os dois, e
+ * casar por eles mostraria a apresentação do filho de OUTRA pessoa da casa como
+ * se fosse minha. Lei do Contrato de porta.
+ */
+async function apresentacoesDaPessoa(membro) {
+  const COLS = 'id, crianca_nome, data_apresentacao, status, crianca_id, created_at';
+  const vazio = { vinculo: [], cpf: [], ficha_kids: [] };
+  if (!membro?.id) return { linhas: [], incompleto: false };
+
+  const falhas = [];
+  const seguro = async (nome, fn) => {
+    try { return (await fn()) || []; }
+    catch (e) { falhas.push(nome); console.warn('[APP] apres/%s: %s', nome, e.message); return []; }
+  };
+
+  // 1 · vínculo direto
+  const porCaminho = { ...vazio };
+  porCaminho.vinculo = await seguro('vinculo', async () => {
+    const { data, error } = await supabase.from('apresentacao_criancas')
+      .select(COLS).eq('responsavel_membro_id', membro.id).is('deleted_at', null);
+    if (error) throw error;
+    return data;
+  });
+
+  // 2 · CPF (só com 11 dígitos — CPF pela metade não é chave)
+  const cpf = String(membro.cpf || '').replace(/\D/g, '');
+  if (cpf.length === 11) {
+    porCaminho.cpf = await seguro('cpf', async () => {
+      const { data, error } = await supabase.from('apresentacao_criancas')
+        .select(COLS).eq('cpf_responsavel', cpf).is('deleted_at', null);
+      if (error) throw error;
+      return data;
+    });
+  }
+
+  // 3 · a criança é minha (ficha do Kids)
+  const criancas = await seguro('kids', async () => {
+    const { data, error } = await supabase.from('kids_responsaveis')
+      .select('crianca_id').eq('membro_id', membro.id).is('deleted_at', null);
+    if (error) throw error;
+    return data;
+  });
+  const ids = [...new Set((criancas || []).map((c) => c.crianca_id).filter(Boolean))];
+  if (ids.length) {
+    porCaminho.ficha_kids = await seguro('kids_apres', async () => {
+      const out = [];
+      // ⚠️ Lotes de 200: `.in()` com lista grande estoura a URL do PostgREST.
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data, error } = await supabase.from('apresentacao_criancas')
+          .select(COLS).in('crianca_id', ids.slice(i, i + 200)).is('deleted_at', null);
+        if (error) throw error;
+        out.push(...(data || []));
+      }
+      return out;
+    });
+  }
+
+  // ⚠️ Falha de consulta é DECLARADA, nunca silenciosa: "você não apresentou
+  // ninguém" e "não consegui perguntar" levam a decisões opostas — a segunda
+  // faria a família cadastrar de novo o filho que já está inscrito.
+  return { linhas: _juntarApres(porCaminho), incompleto: falhas.length > 0 };
+}
+
 // GET /api/app/apresentacao-crianca — data da próxima cerimônia + o que já pedi
 router.get('/apresentacao-crianca', authApp, limiterNormal, async (req, res) => {
   try {
@@ -5382,21 +6562,21 @@ router.get('/apresentacao-crianca', authApp, limiterNormal, async (req, res) => 
       } catch (e) { console.warn('[APP] apres familia:', e.message); }
     }
 
-    let pedidos = [];
-    if (membro?.id) {
-      const { data: rows } = await supabase.from('apresentacao_criancas')
-        .select('id, crianca_nome, data_apresentacao, status')
-        .eq('responsavel_membro_id', membro.id)
-        .is('deleted_at', null)
-        .gte('data_apresentacao', _isoData(new Date()))
-        .order('data_apresentacao');
-      pedidos = rows || [];
-    }
+    // ⚠️ `pedidos` CONTINUA sendo só as próximas — é o que o bundle já publicado
+    // lê, e mudar o significado dele faria o app antigo listar apresentações
+    // passadas como se fossem pedidos em aberto. O histórico vai em campo NOVO.
+    const { linhas, incompleto } = await apresentacoesDaPessoa(membro);
+    const { proximas, historico } = _separarApres(linhas, _hojeBrtApres());
 
     res.json({
       proxima_data: data,
       familia,
-      pedidos,
+      pedidos: proximas,
+      // Apresentações que já aconteceram (mais recente primeiro).
+      historico,
+      // true = alguma consulta da cadeia falhou; a tela DIZ que a lista pode
+      // estar incompleta em vez de afirmar que não há histórico.
+      historico_incompleto: incompleto,
       // A tela usa isto pra decidir se pode oferecer o caminho "é meu filho".
       pode_indicar_vinculo: !!membro?.id,
     });
@@ -5587,6 +6767,12 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
             data_nascimento: p.crianca.data_nascimento,
             sexo: p.crianca.sexo || null,            // Kids fala M/F, igual ao app
             visitante: true,
+        // ⚠️⚠️ `data_limite` OBRIGATÓRIO em toda visitante criada (20/08/2026).
+        // Os 5 pontos que criam criança visitante gravavam sem prazo, e a
+        // varredura `inativarVisitantesVencidos` só pega quem tem prazo VENCIDO
+        // — então essas viravam VISITANTES ETERNAS: nunca promovidas (sem
+        // check-in) e nunca inativadas. Medido: 23 assim em produção.
+        data_limite: kidsVisitante.prazoDe(hojeBRTKids()),
             observacoes_internas: `Cadastrado pela Apresentação de Crianças no app (${dataApres}).`,
             ...(p.crianca.saude || {}),
           })
@@ -5948,12 +7134,24 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
     // que sempre significou pra não quebrar bundle antigo.
     const pendentes = new Set();
     if (membro && abertos.length) {
-      const { data: minhas } = await supabase.from('inscricoes')
-        .select('evento_id, status')
-        .eq('membro_id', membro.id)
-        .in('evento_id', abertos.map((e) => e.id))
+      const chaves = chavesDaPessoa(membro);
+      const idsAbertos = abertos.map((e) => e.id);
+      const base = () => supabase.from('inscricoes')
+        .select('id, evento_id, status, membro_id, cpf')
+        .in('evento_id', idsAbertos)
         .neq('status', 'cancelada')
         .is('deleted_at', null);
+      const { data: porVinculo } = await base().eq('membro_id', membro.id);
+      // ⚠️ Inscrição ÓRFÃ com o CPF dela também é dela — senão o app oferece
+      // "inscrever-se" a quem já está inscrito (relato do Matheus, 28/08).
+      // Consulta ISOLADA: falhar aqui não pode derrubar o catálogo inteiro.
+      let porCpf = [];
+      if (chaves.cpf) {
+        const r = await base().is('membro_id', null).eq('cpf', chaves.cpf);
+        if (r.error) console.warn('[APP] eventos/inscrito por cpf:', r.error.message);
+        else porCpf = r.data || [];
+      }
+      const minhas = mesclarInscricoes(porVinculo || [], porCpf, chaves);
       (minhas || []).forEach((i) => {
         inscritos.add(i.evento_id);
         if (i.status === 'recebida') pendentes.add(i.evento_id);
@@ -5995,8 +7193,10 @@ router.get('/eventos', authApp, limiterNormal, async (req, res) => {
       msg_sucesso_titulo: e.msg_sucesso_titulo || null,
       msg_sucesso_texto: e.msg_sucesso_texto || null,
       inscrito: inscritos.has(e.id),
-      // Link do form público — fallback (build antigo do app) e compartilhamento.
-      url: `https://www.cbrio.org/evento/${e.slug}`,
+      // Link do form público — fallback (build antigo do app) e o link que o
+      // membro COMPARTILHA. ⚠️ Vem da régua (`utils/linkInscricaoApp`), não de
+      // string aqui: é o único lugar que decide o domínio público.
+      url: linkDoEvento(e.slug),
       // ⚠️⚠️ Cartão cobrado numa plataforma externa (e-Inscrição): o app NÃO
       // reimplementa a escolha de forma. `so_web` manda a tela abrir o
       // formulário público, que é quem sabe perguntar Pix × cartão e mandar
@@ -6035,11 +7235,30 @@ router.get('/eventos/minhas', authApp, limiterNormal, async (req, res) => {
     const membro = await resolveMembroApp(req).catch(() => null);
     if (!membro) return res.json({ inscricoes: [] });
 
-    const { data, error } = await supabase.from('inscricoes')
-      .select('id, evento_id, status, created_at, numero_sorte, valor_cobrado_centavos, bolsa_tipo, dados, insc_eventos(id, nome, slug, data, hora, local, capa_url, tem_sorteio, pagamento_ativo, valor_centavos, checkin_ativo)')
+    const COLS_MINHAS = 'id, evento_id, status, created_at, numero_sorte, valor_cobrado_centavos, bolsa_tipo, dados, membro_id, cpf, insc_eventos(id, nome, slug, data, hora, local, capa_url, tem_sorteio, pagamento_ativo, valor_centavos, checkin_ativo)';
+    const chaves = chavesDaPessoa(membro);
+    const { data: porVinculo, error } = await supabase.from('inscricoes')
+      .select(COLS_MINHAS)
       .eq('membro_id', membro.id).is('deleted_at', null)
       .order('created_at', { ascending: false }).limit(50);
     if (error) throw error;
+    // ⚠️ Inscrição ÓRFÃ com o CPF dela é dela: sem isto ela não aparece aqui, e
+    // o comprovante (o QR que a portaria lê) fica inalcançável pra quem se
+    // inscreveu por uma porta que não conseguiu ligar o cadastro. Consulta
+    // ISOLADA e best-effort — falhar aqui volta ao comportamento de antes em
+    // vez de derrubar a lista inteira.
+    let porCpf = [];
+    if (chaves.cpf) {
+      const r = await supabase.from('inscricoes')
+        .select(COLS_MINHAS)
+        .is('membro_id', null).eq('cpf', chaves.cpf).is('deleted_at', null)
+        .order('created_at', { ascending: false }).limit(50);
+      if (r.error) console.warn('[APP] eventos/minhas por cpf:', r.error.message);
+      else porCpf = r.data || [];
+    }
+    const data = mesclarInscricoes(porVinculo || [], porCpf, chaves)
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+      .slice(0, 50);
 
     const ids = (data || []).map((i) => i.id);
     // Estado do pagamento pela view canônica (o motor manda; o espelho só cobre
@@ -6112,6 +7331,9 @@ router.get('/eventos/minhas', authApp, limiterNormal, async (req, res) => {
           id: ev.id, nome: ev.nome, slug: ev.slug, data: ev.data, hora: ev.hora,
           local: ev.local, capa_url: ev.capa_url, tem_sorteio: ev.tem_sorteio,
           pago: !!ev.pagamento_ativo, checkin_ativo: !!ev.checkin_ativo,
+          // Link público, pro membro CONVIDAR alguém pelo botão de compartilhar
+          // da aba "Meus eventos". Mesma régua do catálogo — o app não monta URL.
+          url: linkDoEvento(ev.slug),
         },
       };
     });
@@ -6142,7 +7364,7 @@ router.post('/eventos/:id/inscrever', authApp, limiterStrict, async (req, res) =
       return res.status(409).json({
         error: 'A inscrição deste evento é feita pelo formulário completo, no navegador.',
         so_web: true,
-        url: `https://www.cbrio.org/evento/${ev.slug}`,
+        url: linkDoEvento(ev.slug),
       });
     }
     // Vincula ao cadastro do app quando o matcher não achar por CPF/telefone.

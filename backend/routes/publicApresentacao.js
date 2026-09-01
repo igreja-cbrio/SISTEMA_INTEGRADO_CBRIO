@@ -9,6 +9,11 @@
 // e-mail do responsável obrigatório; endereço opcional. Linhas antigas nunca
 // são alteradas nem re-validadas.
 const router = require('express').Router();
+const kidsVisitante = require('../utils/kidsVisitante');
+// Dia BRT — dia de operação da igreja nunca é UTC (das 21h o dia já virou).
+function hojeBRTKids() {
+  return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
@@ -212,6 +217,12 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
               data_nascimento: c.nascimento,
               sexo: c.sexo === 'masculino' ? 'M' : 'F', // vocabulário local do Kids
               visitante: true,
+        // ⚠️⚠️ `data_limite` OBRIGATÓRIO em toda visitante criada (20/08/2026).
+        // Os 5 pontos que criam criança visitante gravavam sem prazo, e a
+        // varredura `inativarVisitantesVencidos` só pega quem tem prazo VENCIDO
+        // — então essas viravam VISITANTES ETERNAS: nunca promovidas (sem
+        // check-in) e nunca inativadas. Medido: 23 assim em produção.
+        data_limite: kidsVisitante.prazoDe(hojeBRTKids()),
               observacoes_internas: obsInterna,
               ...c.saude,
             })
@@ -329,7 +340,13 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         tipo: 'nova_apresentacao_crianca',
         titulo: criados.length > 1 ? 'Nova apresentação de crianças' : 'Nova apresentação de criança',
         mensagem: `${nomes} — inscriç${criados.length > 1 ? 'ões' : 'ão'} para a apresentação de ${dataApresentacao}. Entrar em contato com a família para agendar o horário.`,
-        link: '/ministerial/totem-kids/apresentacao',
+        // ⚠️ O `?id=` é o que faz o toque na notificação abrir A INSCRIÇÃO em
+        // vez da lista inteira (app do staff · `destinoDoPush`). Só vai quando
+        // é UMA criança: com várias, apontar para a primeira seria arbitrário
+        // e esconderia as outras — aí a lista é o destino certo.
+        link: criados.length === 1
+          ? `/ministerial/totem-kids/apresentacao?id=${criados[0]}`
+          : '/ministerial/totem-kids/apresentacao',
         severidade: 'info',
         chaveDedup: `apresentacao_crianca_${criados[0]}`,
       }).catch(err => console.error('[publicApresentacao] notificacao falhou:', err.message));

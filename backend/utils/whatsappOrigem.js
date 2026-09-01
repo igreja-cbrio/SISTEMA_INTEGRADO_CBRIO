@@ -40,6 +40,7 @@ const ROTULOS = [
   ['app.kids_precheckin', 'Kids · pré-check-in'],
   ['app.doacao_recebida', 'Generosidade · doação recebida'],
   ['app.familia_convite_aceito', 'Família · convite aceito'],
+  ['app.suporte', 'Ajuda com o app · dúvida de membro'],
   ['next', 'NEXT · convite'],
   ['voluntariado', 'Voluntariado'],
   ['batismo', 'Batismo'],

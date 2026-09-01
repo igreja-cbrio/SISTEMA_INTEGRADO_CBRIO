@@ -15,9 +15,78 @@ const {
   TIPOS, FORMATOS, CUIDADO_TIPOS, TIPOS_NUMERICOS, validarPerguntas, slugificar,
   ordenarPorOpcoes, baseSemNeutras, ehNeutra,
 } = require('../utils/censoPerguntas');
+const { requireCron } = require('../utils/cronAuth');
 const { acharMembroGuardado } = require('../services/membroMatch');
 const { reconciliarCenso } = require('../services/censoReconciliar');
 const { lerRespostasAbertas } = require('../services/censoLeituraIA');
+
+// ⚠️ AQUI EM CIMA, e não junto do handler: `const` NÃO é hoisted (TDZ), e o
+// cron abaixo a usa. Deixada lá embaixo, a linha do cron estouraria
+// `ReferenceError` — e SÓ quando o cron rodasse, porque `require()` do módulo
+// carrega sem executar. Mesma classe do bug de 26/08 (`conversaRoteamento`
+// importando o supabase errado): erro que só aparece na hora.
+const LOTE_MAX = 200;
+
+// ══════════════════════════════════════════════════════════════════════════
+//  CRON · aplicar ao cadastro o que o censo coletou
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Pedido do Matheus (29/08): *"quando uma pessoa preenche o censo, os dados do
+// app dos membros devem ser atualizados com os dados que ela preencheu"*.
+//
+// ⚠️ O app JÁ lê `mem_membros` — não faltava nada do lado dele. O que faltava
+// era o dado CHEGAR lá: o pós-processamento é MANUAL desde 17/08 e ninguém
+// clica. Medido em 29/08: **20 respostas, 7 nunca processadas**, último
+// processamento em 24/08 contra a última resposta em 25/08.
+//
+// ⚠️⚠️ E NÃO virou síncrono no envio, de propósito. Ele é manual porque o
+// matcher + reconciliação são ~7 das 8,3 idas ao banco por resposta, e no culto
+// isso é a tela travando para todo mundo. De hora em hora resolve o pedido sem
+// devolver aquele problema.
+//
+// ⚠️ Declarado ANTES do `router.use(authenticate)`: o middleware global responde
+// 401 ao cron da Vercel, que chega sem sessão. Prefixo `/cron/` + `requireCron`
+// é a forma preferida (armadilha registrada no CLAUDE.md).
+// ⚠️ `processarPendentes` é declarada mais abaixo e funciona por HOISTING de
+// `async function`. NÃO converter para `const` sem mover a declaração.
+router.get('/cron/pos-processar', requireCron, async (req, res) => {
+  try {
+    // Todas as pesquisas com fila, não só a do censo: pulso e NPS usam a mesma
+    // tabela, e deixar as outras de fora criaria "processa sozinho, menos as
+    // que você não sabe que existem".
+    const { data: pend, error } = await supabase.from('cen_resposta')
+      .select('pesquisa_id')
+      .is('pos_processado_em', null).not('concluida_em', 'is', null).is('deleted_at', null)
+      .limit(1000);
+    if (error) throw new Error(error.message);
+
+    const ids = [...new Set((pend || []).map(r => r.pesquisa_id).filter(Boolean))];
+    if (!ids.length) return res.json({ ok: true, pesquisas: 0, processadas: 0 });
+
+    let processadas = 0; let vinculadas = 0; let conflitos = 0; let falhas = 0;
+    const porPesquisa = [];
+    for (const id of ids) {
+      // ⚠️ Uma pesquisa que falha NÃO derruba as outras: o resultado dela vai no
+      // relatório e o laço segue. Sem isso, uma pesquisa com dado torto
+      // congelaria a fila de todas.
+      try {
+        const out = await processarPendentes(id, LOTE_MAX);
+        processadas += out.processadas || 0;
+        vinculadas += out.vinculadas || 0;
+        conflitos += out.conflitos || 0;
+        falhas += out.falhas || 0;
+        porPesquisa.push({ pesquisa_id: id, ...out });
+      } catch (e) {
+        falhas += 1;
+        porPesquisa.push({ pesquisa_id: id, erro: String(e.message).slice(0, 200) });
+      }
+    }
+    res.json({ ok: true, pesquisas: ids.length, processadas, vinculadas, conflitos, falhas, detalhe: porPesquisa });
+  } catch (e) {
+    console.error('[censo/cron/pos-processar]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 router.use(authenticate);
 
@@ -503,7 +572,6 @@ router.patch('/cuidado/:id', authorizeModule('censo', 2), guardaCuidado, async (
 // conflito de cadastro com calma, e o matcher acerta mais quando roda sobre o
 // lote inteiro (a mesma pessoa que respondeu duas vezes aparece junto).
 
-const LOTE_MAX = 200;
 
 router.get('/pendentes', authorizeModule('censo', 2), async (req, res) => {
   try {
@@ -524,16 +592,24 @@ router.get('/pendentes', authorizeModule('censo', 2), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/pos-processar', authorizeModule('censo', 4), async (req, res) => {
-  try {
-    const pesquisaId = String(req.body?.pesquisa_id || '').trim();
-    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
-    const limite = Math.min(Number(req.body?.limite) || LOTE_MAX, LOTE_MAX);
+/**
+ * Aplica ao CADASTRO o que a pessoa preencheu no censo.
+ *
+ * ⚠️ Extraída do handler (29/08) porque o CRON passou a precisar da mesma
+ * lógica. Duas cópias divergiriam, e o sintoma seria "processei pela tela e
+ * pelo cron e deu resultado diferente para a mesma resposta".
+ *
+ * ⚠️ Devolve objeto, NUNCA escreve em `res`: quem decide o HTTP é quem chama.
+ * Regra de negócio virando exceção é o que faz um cron ficar vermelho por algo
+ * que não é falha (pesquisa apagada, por exemplo).
+ */
+async function processarPendentes(pesquisaId, limitePedido) {
+    const limite = Math.min(Number(limitePedido) || LOTE_MAX, LOTE_MAX);
 
     const { data: pesquisa, error: e0 } = await supabase
       .from('cen_pesquisa').select('id, perguntas').eq('id', pesquisaId).maybeSingle();
-    if (e0) return res.status(400).json({ error: e0.message });
-    if (!pesquisa) return res.status(404).json({ error: 'Pesquisa não encontrada' });
+    if (e0) throw new Error(e0.message);
+    if (!pesquisa) return { erro: 'nao_encontrada', processadas: 0, vinculadas: 0, conflitos: 0, falhas: 0, restantes: 0 };
 
     const { data: fila, error: e1 } = await supabase
       .from('cen_resposta')
@@ -542,8 +618,8 @@ router.post('/pos-processar', authorizeModule('censo', 4), async (req, res) => {
       .is('pos_processado_em', null).not('concluida_em', 'is', null).is('deleted_at', null)
       .order('concluida_em', { ascending: true })
       .limit(limite);
-    if (e1) return res.status(400).json({ error: e1.message });
-    if (!fila?.length) return res.json({ processadas: 0, vinculadas: 0, conflitos: 0, restantes: 0 });
+    if (e1) throw new Error(e1.message);
+    if (!fila?.length) return { processadas: 0, vinculadas: 0, conflitos: 0, falhas: 0, restantes: 0 };
 
     // `preenche_de` diz qual pergunta guarda qual campo do cadastro.
     const campoPorPergunta = new Map();
@@ -633,11 +709,20 @@ router.post('/pos-processar', authorizeModule('censo', 4), async (req, res) => {
       .eq('pesquisa_id', pesquisaId)
       .is('pos_processado_em', null).not('concluida_em', 'is', null).is('deleted_at', null);
 
-    res.json({
+    return {
       processadas: fila.length, vinculadas, conflitos, falhas, restantes: restantes || 0,
       cadastro_aplicado: aplicadosPorCampo,
       cadastro_nao_guardado: descartadosPorMotivo,
-    });
+    };
+}
+
+router.post('/pos-processar', authorizeModule('censo', 4), async (req, res) => {
+  try {
+    const pesquisaId = String(req.body?.pesquisa_id || '').trim();
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+    const out = await processarPendentes(pesquisaId, req.body?.limite);
+    if (out.erro === 'nao_encontrada') return res.status(404).json({ error: 'Pesquisa não encontrada' });
+    res.json(out);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

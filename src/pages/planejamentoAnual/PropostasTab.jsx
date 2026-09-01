@@ -4,7 +4,7 @@ import { Plus, Send, Pencil, MessageSquareWarning } from 'lucide-react';
 import { planejamentoAnual as api, users as usersApi } from '../../api';
 import {
   C, cardStyle, btn, input, label, hint, Badge, EstadoBadge, fmtBRL, fmtData, fmtQuando,
-  NATUREZAS, RECORRENCIAS, DIAS_SEMANA, thStyle, tdStyle,
+  NATUREZAS, RECORRENCIAS, DIAS_SEMANA, thStyle, tdStyle, rotuloArea,
 } from './comum';
 
 const FORM_VAZIO = {
@@ -173,7 +173,7 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
               <span style={label}>Área *</span>
               <select style={input} value={form.area} onChange={(e) => set('area', e.target.value)}>
                 <option value="">Selecione…</option>
-                {areas.map((a) => <option key={a.area} value={a.area}>{a.area}</option>)}
+                {areas.map((a) => <option key={a.area} value={a.area}>{a.rotulo || a.area}</option>)}
               </select>
             </div>
             <div>
@@ -359,7 +359,7 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
                 <tr key={p.id}>
                   <td style={{ ...tdStyle, fontWeight: 600 }}>{p.nome}</td>
                   <td style={tdStyle}>{NATUREZAS.find((n) => n.valor === p.natureza)?.rotulo || p.natureza}</td>
-                  <td style={tdStyle}>{p.area}</td>
+                  <td style={tdStyle}>{rotuloArea(p.area, areas)}</td>
                   <td style={tdStyle}>{fmtQuando(p)}</td>
                   <td style={tdStyle}>{fmtBRL(p.custo)}</td>
                   <td style={tdStyle}>{p.avaliacoes_recebidas}/{p.quorum}</td>

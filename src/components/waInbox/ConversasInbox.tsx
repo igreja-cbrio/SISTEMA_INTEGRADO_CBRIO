@@ -3,7 +3,7 @@
 // cadastro nos avatares, atribuição a qualquer colaborador, painel-resumo da
 // pessoa (grupo/batismo/serve/NEXT) e anotações. Escopo por área.
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { waInbox } from '@/api';
+import { waInbox, comunicacao } from '@/api';
 import { supabase } from '@/supabaseClient';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -25,7 +25,7 @@ import {
   Loader2, Send, Search, Check, MessageCircle, RefreshCw, ExternalLink, Clock,
   User, CheckCheck, UserPlus, ChevronDown, UserCheck, Tag, Plus, Inbox, Filter,
   Users, Droplets, HandHelping, Sparkles, StickyNote, Paperclip, ArrowLeftRight, Hash, Star,
-  Zap, Megaphone, AlertTriangle,
+  Zap, Megaphone, AlertTriangle, Lightbulb,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -133,7 +133,24 @@ export default function ConversasInbox({
   const [novaOpen, setNovaOpen] = useState(false);
   const [prontas, setProntas] = useState<{ id: string; titulo: string; texto: string }[]>([]);
   const [prontasOpen, setProntasOpen] = useState(false);
+  // Sugestão de resposta (26/08/2026 · agenda · 31/08/2026 · link do grupo).
+  //
+  // ⚠️ Busca AUTOMÁTICA só quando a última mensagem é DELA e ainda não foi
+  // respondida — e o servidor, no modo `auto`, só devolve quando RECONHECEU a
+  // pergunta. Foi o pedido do Matheus em 31/08 ("nesse tipo de pergunta o
+  // agente responda dizendo que o líder vai entrar em contato"): depender do
+  // clique na lâmpada é depender de alguém lembrar que ela existe.
+  //
+  // ⚠️ O custo era a objeção de 26/08 (resolve grupo + agenda + próximo
+  // encontro). Por isso o gatilho é estreito: conversa com mensagem pendente,
+  // uma vez por conversa. Conversa já respondida não paga nada.
+  const [sugestao, setSugestao] = useState<{
+    disponivel: boolean; texto?: string; confianca?: string; assunto?: string;
+    motivo?: string; grupo?: { nome?: string }; candidatos?: string[];
+  } | null>(null);
+  const [sugerindo, setSugerindo] = useState(false);
   const fimRef = useRef<HTMLDivElement | null>(null);
+  const sugestaoAutoRef = useRef<string | null>(null);
   const selRef = useRef<string | null>(null);
   selRef.current = selId;
 
@@ -171,6 +188,28 @@ export default function ConversasInbox({
 
   useEffect(() => { carregarConversas(); }, [carregarConversas]);
   useEffect(() => { if (selId) carregarThread(selId); }, [selId, carregarThread]);
+  // ⚠️ A sugestão é DE UMA conversa. Sem limpar, ela sobreviveria à troca e
+  // ofereceria o encontro do grupo de OUTRA pessoa — com o texto já pronto pra
+  // enviar, que é o pior tipo de erro possível nesta tela.
+  useEffect(() => { setSugestao(null); setSugerindo(false); }, [selId]);
+
+  // ⚠️ Dispara depois que a thread carregou: a decisão usa a ÚLTIMA mensagem, e
+  // sem ela em mãos o efeito rodaria em conversa que já foi respondida.
+  // ⚠️ `sugestaoAutoRef` garante UMA busca por conversa — sem isso cada
+  // mensagem nova (realtime) refaria a consulta.
+  useEffect(() => {
+    if (!selId || !msgs.length) return;
+    if (sugestaoAutoRef.current === selId) return;
+    const ultima = msgs[msgs.length - 1];
+    if (ultima?.direcao !== 'in') return;   // já respondida → nada a sugerir
+    sugestaoAutoRef.current = selId;
+    comunicacao.sugestaoGrupo(selId, true)
+      .then((r: any) => { if (selRef.current === selId && r?.disponivel) setSugestao(r); })
+      // ⚠️ Silêncio no erro é DE PROPÓSITO aqui: ninguém pediu esta busca, e um
+      // toast vermelho ao abrir conversa treinaria a equipe a ignorar avisos.
+      // No clique da lâmpada o erro continua aparecendo.
+      .catch(() => {});
+  }, [selId, msgs]);
 
   // abre direto a conversa de um telefone (vindo dos botões de WhatsApp dos módulos)
   useEffect(() => {
@@ -329,7 +368,7 @@ export default function ConversasInbox({
           </div>
           <div className="px-3 pt-1.5 text-[11px] text-muted-foreground">Vendo: <span className="font-medium text-foreground">{filtroLabel}</span>{status === 'todas' ? ' · c/ resolvidas' : ''}{soNaoLidas ? ' · não lidas' : ''}</div>
 
-          <ScrollArea className="flex-1 mt-1">
+          <ScrollArea className="flex-1 mt-1" viewportClassName="[&>div]:!block">
             <div className="flex flex-col gap-0.5 p-2 pt-1.5">
               {conversas === null ? (
                 <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
@@ -454,7 +493,7 @@ export default function ConversasInbox({
                 </div>
               </div>
 
-              <ScrollArea className="flex-1 bg-muted/20">
+              <ScrollArea className="flex-1 bg-muted/20" viewportClassName="[&>div]:!block">
                 <div className="flex flex-col gap-2 p-5">
                   <div className="mx-auto rounded-full bg-muted px-3 py-1 text-[11px] text-muted-foreground">Conversa</div>
                   {msgs.map(m => m.tipo === 'sistema' ? (
@@ -509,6 +548,21 @@ export default function ConversasInbox({
                   else responder();
                 };
                 const usarPronta = (t: string) => { setTexto(prev => (prev.trim() ? prev + '\n' + t : t)); setProntasOpen(false); };
+                // ⚠️ Só BUSCA e MOSTRA. Quem envia é a pessoa, depois de ler —
+                // a lei de 12/08 ("não quero bot") vale aqui: uma detecção
+                // errada custa uma sugestão recusada, não uma mensagem errada
+                // saindo em nome da igreja.
+                const pedirSugestao = async () => {
+                  if (sugerindo || !conv?.id) return;
+                  setSugerindo(true);
+                  try {
+                    setSugestao(await comunicacao.sugestaoGrupo(conv.id));
+                  } catch (e: any) {
+                    // ⚠️ Erro NÃO vira "não há sugestão": as duas coisas levam a
+                    // decisões diferentes de quem está atendendo.
+                    toast.error(e?.message || 'Não deu para montar a sugestão');
+                  } finally { setSugerindo(false); }
+                };
                 return (
                   <div className="relative border-t border-border p-3">
                     {prontasOpen && (
@@ -530,6 +584,62 @@ export default function ConversasInbox({
                         </div>
                       </div>
                     )}
+                    {sugestao && (
+                      <div className="mb-2 rounded-xl border border-border bg-muted/40 p-3">
+                        {sugestao.disponivel ? (
+                          <>
+                            <div className="mb-1.5 flex items-center gap-2">
+                              <Lightbulb className="h-3.5 w-3.5 shrink-0 text-primary" />
+                              <span className="text-xs font-medium text-foreground">
+                                {sugestao.assunto === 'link' ? 'Sugestão · link do encontro' : 'Sugestão'} · {sugestao.grupo?.nome || 'grupo'}
+                              </span>
+                              {/* ⚠️ A CONFIANÇA vai na frente do texto. Sem ela a
+                                  pessoa envia uma data calculada como se fosse
+                                  fato — e o grupo quinzenal da Jessica mostrou
+                                  que o cálculo pode apontar uma terça sem
+                                  reunião. */}
+                              {sugestao.confianca === 'estimada' && (
+                                <Badge variant="outline" className="border-amber-500/40 text-[10px] text-amber-700 dark:text-amber-300">
+                                  data calculada
+                                </Badge>
+                              )}
+                              {sugestao.confianca === 'sem_data' && (
+                                <Badge variant="outline" className="border-amber-500/40 text-[10px] text-amber-700 dark:text-amber-300">
+                                  sem data
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="whitespace-pre-wrap text-[12px] leading-relaxed text-muted-foreground">{sugestao.texto}</div>
+                            <div className="mt-2 flex items-center gap-2">
+                              <Button size="sm" variant="secondary" className="h-7 text-xs"
+                                onClick={() => { usarPronta(sugestao.texto || ''); setSugestao(null); }}>
+                                Usar este texto
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground"
+                                onClick={() => setSugestao(null)}>Descartar</Button>
+                              {/* ⚠️ "Usar" preenche o campo; NÃO envia. Quem lê e
+                                  aperta enviar é gente. */}
+                              <span className="text-[10px] text-muted-foreground">preenche o campo · você revisa e envia</span>
+                            </div>
+                          </>
+                        ) : (
+                          /* ⚠️ Indisponível DIZ o motivo em vez de sumir: "não sei
+                             de qual grupo" e "a pessoa está em dois grupos" pedem
+                             coisas diferentes de quem atende. */
+                          <div className="flex items-start gap-2 text-[11px] text-muted-foreground">
+                            <Lightbulb className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>
+                              {sugestao.motivo === 'sem_cadastro' && 'Sem sugestão: esta conversa não está ligada a um cadastro.'}
+                              {sugestao.motivo === 'sem_grupo' && 'Sem sugestão: a pessoa não tem vínculo ativo em nenhum grupo.'}
+                              {sugestao.motivo === 'ambiguo' && `Sem sugestão: a pessoa está em mais de um grupo (${(sugestao.candidatos || []).join(' · ')}) e não deu pra saber qual.`}
+                              {sugestao.motivo === 'agenda_indisponivel' && 'Sem sugestão: não deu pra ler a agenda do grupo agora.'}
+                              {!['sem_cadastro','sem_grupo','ambiguo','agenda_indisponivel'].includes(sugestao.motivo || '') && 'Sem sugestão para esta conversa.'}
+                              <button className="ml-1 underline" onClick={() => setSugestao(null)}>fechar</button>
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {foraJanela && (
                       <div className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-300">
                         ⚠️ Fora da janela de 24h — a API do WhatsApp não envia texto livre. Escreva aqui e o envio abre o <b>WhatsApp da pessoa</b> com o texto pronto (ou use "Nova" pra um template aprovado).
@@ -540,6 +650,11 @@ export default function ConversasInbox({
                         onChange={e => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ''; }} />
                       <Button size="icon" variant="ghost" onClick={() => setProntasOpen(v => { const nv = !v; if (nv) recarregarProntas(); return nv; })} className={`h-9 w-9 shrink-0 ${prontasOpen ? 'text-primary' : 'text-muted-foreground'}`} title="Mensagens prontas">
                         <Zap className="h-4 w-4" />
+                      </Button>
+                      <Button size="icon" variant="ghost" disabled={sugerindo} onClick={pedirSugestao}
+                        className={`h-9 w-9 shrink-0 ${sugestao ? 'text-primary' : 'text-muted-foreground'}`}
+                        title="Sugerir resposta sobre o grupo (quando é o próximo encontro)">
+                        {sugerindo ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lightbulb className="h-4 w-4" />}
                       </Button>
                       {!foraJanela && (
                         <Button size="icon" variant="ghost" disabled={anexando} onClick={() => fileRef.current?.click()} className="h-9 w-9 shrink-0 text-muted-foreground" title="Anexar foto ou documento">
@@ -567,7 +682,7 @@ export default function ConversasInbox({
         {/* ── Detalhes ──────────────────────────────────────── */}
         {conv && (
           <div className="hidden min-w-0 max-w-full shrink flex-col overflow-hidden border-l border-border xl:flex xl:basis-[240px] 2xl:basis-[268px]">
-            <ScrollArea className="flex-1">
+            <ScrollArea className="flex-1" viewportClassName="[&>div]:!block">
               <div className="flex flex-col items-center gap-2 border-b border-border p-5">
                 <Avatar className="h-16 w-16 shrink-0">{conv.foto_url && <AvatarImage src={conv.foto_url} alt={conv.nome || ''} />}<AvatarFallback className="bg-primary/15 text-primary text-lg font-semibold">{iniciais(conv.nome, conv.telefone)}</AvatarFallback></Avatar>
                 {/* ⚠️ `break-words` e não `truncate` no NOME: nome cortado com

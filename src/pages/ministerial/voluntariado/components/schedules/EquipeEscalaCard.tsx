@@ -6,6 +6,7 @@ import {
   ChevronDown, ChevronUp, X, GripVertical, Plus, Star, CheckCircle2, XCircle, HelpCircle,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import AvatarVoluntario from './AvatarVoluntario';
 
 /**
  * Uma área na escala do culto — no formato da coluna de equipe do Planning
@@ -52,6 +53,11 @@ function LinhaEscalado({ sch, conflito, onRemover, onDragStart, onVerDetalhe }: 
     >
       <div className="flex items-center gap-2 min-w-0">
         <GripVertical className="h-3.5 w-3.5 text-muted-foreground/25 shrink-0" />
+        {/* Foto do voluntário (27/08) — o ícone de status FICA: reconhecer a
+            pessoa e saber se ela confirmou são duas leituras diferentes, e o
+            avatar colorido sozinho não distingue "recusou" de "sem resposta"
+            pra quem tem foto. */}
+        <AvatarVoluntario nome={sch.volunteer_name} fotoUrl={sch.foto_url} status={status} tamanho={26} />
         {status === 'confirmed' ? <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
           : status === 'declined' ? <XCircle className="h-4 w-4 text-red-500 shrink-0" />
           : <HelpCircle className="h-4 w-4 text-yellow-500 shrink-0" />}

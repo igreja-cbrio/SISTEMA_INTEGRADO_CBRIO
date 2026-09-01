@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const { semFalhar } = require('../utils/semFalhar');
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
@@ -266,10 +267,10 @@ router.delete('/expansao/:id', authorize('admin', 'diretor'), async (req, res) =
     const { data: tasks } = await supabase.from('expansion_tasks').select('id').eq('milestone_id', req.params.id);
     const taskIds = (tasks || []).map(t => t.id);
     if (taskIds.length > 0) {
-      await supabase.from('expansion_subtasks').delete().in('task_id', taskIds).catch(() => {});
+      await semFalhar(supabase.from('expansion_subtasks').delete().in('task_id', taskIds), '[revisoes]');
       await supabase.from('expansion_tasks').delete().eq('milestone_id', req.params.id);
     }
-    await supabase.from('expansion_milestone_dependencies').delete().or(`milestone_id.eq.${req.params.id},depends_on_id.eq.${req.params.id}`).catch(() => {});
+    await semFalhar(supabase.from('expansion_milestone_dependencies').delete().or(`milestone_id.eq.${req.params.id},depends_on_id.eq.${req.params.id}`), '[revisoes]');
     await supabase.from('expansion_milestones').delete().eq('id', req.params.id);
 
     // Log

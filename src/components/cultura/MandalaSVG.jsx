@@ -70,7 +70,7 @@ function petalValueText(key, data) {
 
 function petalSubLabel(key) {
   switch (key) {
-    case 'seguir':       return 'Pres / Online (sem)';
+    case 'seguir':       return 'Pres / Online (dom)';
     case 'conectar':     return 'em grupos';
     case 'investir':     return 'no devocional (mês)';
     case 'servir':       return 'voluntários (90d)';

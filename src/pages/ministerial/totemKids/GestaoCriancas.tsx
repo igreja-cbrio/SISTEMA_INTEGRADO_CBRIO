@@ -15,7 +15,7 @@ import { Badge } from '../../../components/ui/badge';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
 import { FAIXAS_CHECKIN, faixaCheckin, casaFaixaCheckin } from '../../../lib/kidsFrequencia';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../../components/ui/dialog';
 import { toast } from 'sonner';
 import { Baby, Search, Plus, Loader2, AlertCircle, Phone, Trash2, UserX, UserCheck, ArrowLeft, Camera, X, Copy, Sparkles, Pencil, MessageSquare } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
@@ -49,6 +49,55 @@ const TIPO_ATEND: Record<string, string> = {
 };
 const fmt = (d?: string | null) => { if (!d) return '—'; try { return new Date(d + (d.length === 10 ? 'T00:00:00' : '')).toLocaleDateString('pt-BR'); } catch { return d; } };
 
+// Motivos de desativação · pedido do Matheus (20/08/2026): ele precisa saber
+// POR QUE o cadastro saiu da conta — "saiu do país", "saiu da igreja" — e antes
+// a tela gravava sempre a string fixa "Desativado manualmente".
+//
+// ⚠️ Opção pronta + campo livre, não só texto livre: texto livre não agrupa, e o
+// mesmo motivo vira 5 grafias — foi o que aconteceu com o `responsavel` das
+// visitas pastorais (o mesmo pastor em 4 escritas, 6 cards para 4 pessoas).
+// A opção pronta dá relatório; o "Outro" evita forçar a pessoa a escolher errado.
+const MOTIVOS_DESATIVAR = [
+  'Mudou de cidade ou país',
+  'Saiu da igreja',
+  'Passou da idade do Kids',
+  'Cadastro duplicado',
+  'Nunca frequentou (cadastro de import)',
+  'Outro',
+] as const;
+
+// ⚠️ Sentinela do filtro por motivo. Não pode ser string vazia nem `null`: o
+// chip precisa de uma chave estável, e "sem motivo registrado" é um recorte
+// LEGÍTIMO (a fila de cadastro a corrigir), não a ausência de filtro.
+const MOTIVO_SEM_REGISTRO = '__sem_motivo__';
+
+// Os 3 cards de situação. Cada um é um ATALHO de filtro — clicar já põe a lista
+// no recorte que o número descreve, senão o card seria só enfeite e a pessoa
+// teria que reproduzir o filtro na mão em dois seletores.
+//
+// ⚠️ São TRÊS conceitos e dois campos diferentes: `visitante` separa
+// frequentadora de visitante (só entre as ATIVAS) e `ativo` separa cadastro
+// vivo de desativado. "Visitante inativa" existe no banco (a que venceu o prazo
+// de 4 semanas) e cai no card de inativas — de propósito: o que a equipe precisa
+// saber dela é POR QUE saiu, não que era visitante.
+const CARDS_SITUACAO = [
+  {
+    chave: 'frequentadoras', rotulo: 'Frequentadoras ativas', Icone: UserCheck,
+    cor: 'text-primary', status: 'ativos', visitanteF: 'frequentadores',
+    ajuda: 'já vieram 3 vezes ou foram promovidas',
+  },
+  {
+    chave: 'visitantes', rotulo: 'Visitantes ativas', Icone: Baby,
+    cor: 'text-amber-500', status: 'ativos', visitanteF: 'visitantes',
+    ajuda: 'com prazo de 4 semanas correndo',
+  },
+  {
+    chave: 'inativas', rotulo: 'Cadastros inativos', Icone: UserX,
+    cor: 'text-muted-foreground', status: 'inativos', visitanteF: 'todas',
+    ajuda: 'fora das contagens e do check-in',
+  },
+] as const;
+
 export default function GestaoCriancas() {
   const [lista, setLista] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,7 +114,24 @@ export default function GestaoCriancas() {
   // Center e contava mil crianças onde metade nunca apareceu no totem.
   const [checkinF, setCheckinF] = useState('todas'); // todas | zero | 1 | 2-5 | 6-10 | 11+
   const [freq, setFreq] = useState<any>(null);       // resumo do servidor
-  const [modo, setModo] = useState<'lista' | 'faltantes'>('lista');
+  // Contagem das 3 situações, vinda do BANCO (não da lista carregada): o
+  // endpoint traz um lado só, então contar aqui mostraria "0 inativas" sempre
+  // que a tela estivesse na aba de ativos.
+  const [contagens, setContagens] = useState<any>(null);
+  const [motivos, setMotivos] = useState<any[] | null>(null);
+  // Filtro por motivo da inativação (chip do resumo). `MOTIVO_SEM_REGISTRO`
+  // recorta quem foi desativado sem justificativa — que é a fila real de
+  // correção de cadastro.
+  const [motivoF, setMotivoF] = useState('todos');
+  const [modo, setModo] = useState<'lista' | 'faltantes' | 'semCheckin'>('lista');
+  // ⚠️⚠️ LISTA SEPARADA, e não parte do radar de ausentes (decisão do Matheus ·
+  // 20/08). `fn_kids_ausentes_consecutivos` faz JOIN com a presença pra contar
+  // cultos perdidos, então quem NUNCA teve check-in sai do resultado — eram 554
+  // crianças ativas invisíveis em qualquer tela. Juntar num número só levaria o
+  // radar de 270 para ~824 e a fila pastoral viraria limpeza de base: quem
+  // "vinha e parou" pede telefonema, quem "nunca apareceu" pede desativar.
+  const [semCk, setSemCk] = useState<any>(null);
+  const [semCkLoading, setSemCkLoading] = useState(false);
   const [ausentes, setAusentes] = useState<any[]>([]);
   const [ausIdade, setAusIdade] = useState('todas');   // 'todas' | '<anos>' | IDADE_SEM_DATA
   const [ausSexo, setAusSexo] = useState('todos');     // 'todos' | 'M' | 'F' | SEXO_SEM_INFO
@@ -91,6 +157,11 @@ export default function GestaoCriancas() {
       .then((d: any) => {
         setLista(Array.isArray(d) ? d : (d?.itens || []));
         setFreq(Array.isArray(d) ? null : (d?.frequencia || null));
+        setContagens(Array.isArray(d) ? null : (d?.contagens || null));
+        // ⚠️ `motivos` vem só quando o lado carregado é o dos inativos. `null` é
+        // "não medido nesta aba" — a tela DIZ isso em vez de desenhar resumo
+        // vazio, que se leria como "ninguém tem motivo registrado".
+        setMotivos(Array.isArray(d) ? null : (d?.motivos ?? null));
       })
       .catch(() => toast.error('Erro ao carregar crianças'))
       .finally(() => setLoading(false));
@@ -105,6 +176,18 @@ export default function GestaoCriancas() {
       .finally(() => setLoadingAus(false));
   }, []);
   useEffect(() => { if (modo === 'faltantes') carregarAusentes(); }, [modo, carregarAusentes]);
+
+  const carregarSemCheckin = useCallback(() => {
+    setSemCkLoading(true);
+    api.semCheckin(500)
+      .then((d: any) => setSemCk(d))
+      // ⚠️ Erro NÃO vira lista vazia: "nenhuma criança sem check-in" é conclusão
+      // oposta de "não consegui carregar", e a primeira faz parecer que a base
+      // está limpa.
+      .catch((e: any) => { toast.error(e?.message || 'Erro ao carregar'); setSemCk(null); })
+      .finally(() => setSemCkLoading(false));
+  }, []);
+  useEffect(() => { if (modo === 'semCheckin') carregarSemCheckin(); }, [modo, carregarSemCheckin]);
 
   // Idades que EXISTEM na lista carregada, com a contagem de cada uma. Montar as
   // opções a partir do dado (em vez de fixar 0..12) evita oferecer idade vazia e
@@ -195,12 +278,25 @@ export default function GestaoCriancas() {
       }
       if (jornadaF === 'convertidos' && !c.data_conversao) return false;
       if (jornadaF === 'batizados' && !c.data_batismo) return false;
+      // Motivo da inativação (chip do resumo). ⚠️ Compara contra o RÓTULO que o
+      // servidor normalizou — comparar com a coluna crua partiria o mesmo motivo
+      // em dois por causa de espaço sobrando.
+      if (motivoF !== 'todos') {
+        const m = c.motivo_inativacao_label || null;
+        if (motivoF === MOTIVO_SEM_REGISTRO ? m !== null : m !== motivoF) return false;
+      }
       if (visitanteF === 'visitantes' && c.visitante !== true) return false;
       if (visitanteF === 'frequentadores' && c.visitante === true) return false;
       if (!casaFaixaCheckin(c.checkins_total, checkinF)) return false;
       return true;
     });
-  }, [lista, idadeSel, busca, status, jornadaF, visitanteF, checkinF]);
+  }, [lista, idadeSel, busca, status, jornadaF, visitanteF, checkinF, motivoF]);
+
+  // ⚠️⚠️ Solta o filtro de motivo ao sair dos inativos. Sem isso ele fica
+  // pendurado num recorte que não existe na aba de ativos (onde o campo é
+  // resíduo) e a lista aparece VAZIA sem nada explicando — é o "a tela ficou
+  // muda" que já apareceu 4× em 25/08.
+  useEffect(() => { if (status !== 'inativos') setMotivoF('todos'); }, [status]);
 
   // Quantas crianças em cada faixa de check-in (sobre a lista carregada, não
   // sobre o recorte — contagem que muda a cada letra digitada não ajuda a
@@ -246,9 +342,96 @@ export default function GestaoCriancas() {
           className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${modo === 'faltantes' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
           <AlertCircle className="h-4 w-4" /> Faltando 3+ cultos{ausentes.length > 0 && modo !== 'faltantes' ? ` (${ausentes.length})` : ''}
         </button>
+        <button type="button" onClick={() => setModo('semCheckin')}
+          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${modo === 'semCheckin' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+          <UserX className="h-4 w-4" /> Nunca fez check-in{semCk?.total ? ` (${semCk.total})` : ''}
+        </button>
       </div>
 
-      {modo === 'faltantes' ? (
+      {/* ⚠️⚠️ Os 3 cards são CONTAGEM DO BANCO, não da lista carregada. O
+          endpoint traz um lado só (`?ativo=`), então contar aqui mostraria
+          "0 inativas" sempre que a tela estivesse na aba de ativos.
+          Antes desta leva os números existiam SÓ escondidos nos rótulos dos
+          filtros — e o das inativas não existia em lugar nenhum. */}
+      {modo === 'lista' && (
+        <div className="grid gap-3 sm:grid-cols-3">
+          {CARDS_SITUACAO.map((card) => {
+            const total = contagens ? contagens[card.chave] : null;
+            const ativo = status === card.status && visitanteF === card.visitanteF;
+            return (
+              <button
+                key={card.chave}
+                type="button"
+                onClick={() => { setStatus(card.status); setVisitanteF(card.visitanteF); }}
+                className={`rounded-lg border p-3 text-left transition-colors ${ativo ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'}`}
+              >
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <card.Icone className={`h-3.5 w-3.5 ${card.cor}`} /> {card.rotulo}
+                </div>
+                {/* ⚠️ `null` = a contagem NÃO VEIO. Mostrar 0 aqui afirmaria que
+                    não existe nenhuma criança nessa situação, que é uma
+                    conclusão oposta — e zero é o número que ninguém investiga. */}
+                <div className={`text-2xl font-bold ${total == null ? 'text-amber-600' : ''}`}>
+                  {total == null ? '—' : total.toLocaleString('pt-BR')}
+                </div>
+                <div className="text-[11px] text-muted-foreground">{card.ajuda}</div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {modo === 'lista' && contagens?.incompleto && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-600">
+          Não foi possível contar alguma das situações — o card com <strong>—</strong> não é zero,
+          é contagem que não veio. Recarregue a página; se persistir, avise a equipe de sistema.
+        </div>
+      )}
+
+      {modo === 'semCheckin' && (
+        <Card>
+          <CardContent className="p-3">
+            <p className="text-xs text-muted-foreground mb-2">
+              Crianças <strong>ativas</strong> que nunca fizeram um único check-in no totem.
+              Elas <strong>não aparecem</strong> em "Faltando 3+ cultos" — aquele radar precisa de
+              presença para contar ausência. A maioria veio do import do Planning Center e
+              provavelmente é cadastro a desativar; abra a ficha e use{' '}
+              <strong>Desativar cadastro</strong> para tirá-la das contagens.
+            </p>
+            {semCkLoading && <p className="text-sm text-muted-foreground">Carregando...</p>}
+            {!semCkLoading && !semCk && <p className="text-sm text-destructive">Não foi possível carregar.</p>}
+            {!semCkLoading && semCk && (
+              <>
+                <div className="flex flex-wrap gap-3 text-xs mb-2">
+                  <span><strong>{semCk.total}</strong> no total</span>
+                  <span className="text-muted-foreground">{semCk.do_import} do import do Planning Center</span>
+                  <span className="text-muted-foreground">{semCk.cadastradas_aqui} cadastradas aqui</span>
+                  {semCk.truncado && <span className="text-amber-600">mostrando as {semCk.itens.length} mais antigas</span>}
+                </div>
+                <div className="space-y-1 max-h-[60vh] overflow-y-auto">
+                  {semCk.itens.map((c: any) => (
+                    <button key={c.crianca_id} onClick={() => setSel({ id: c.crianca_id })}
+                      className="w-full flex items-center gap-3 rounded-lg border p-2.5 text-left hover:bg-muted/40 transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm truncate flex items-center gap-2">
+                          {c.nome}
+                          {c.idade_label && <span className="text-xs font-normal text-muted-foreground shrink-0">{c.idade_label}</span>}
+                          {c.visitante && <span className="text-xs font-normal text-amber-600 shrink-0">· visitante</span>}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          cadastrada {c.cadastrada_em ? new Date(c.cadastrada_em + 'T12:00:00').toLocaleDateString('pt-BR') : '—'}
+                          {c.do_import ? ' · veio do Planning Center' : ''}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {modo === 'semCheckin' ? null : modo === 'faltantes' ? (
         <Card>
           <CardContent className="p-3">
             <div className="flex items-start justify-between gap-2 mb-2">
@@ -337,7 +520,7 @@ export default function GestaoCriancas() {
                         <div className="text-xs text-muted-foreground">
                           <span className="text-amber-600 font-medium">{a.cultos_perdidos} cultos sem vir</span>
                           {a.ultima_presenca ? ` · última presença ${new Date(a.ultima_presenca + 'T12:00:00').toLocaleDateString('pt-BR')}` : ''}
-                          {resp?.nome ? ` · ${resp.nome}` : ''}
+                          {resp?.nome ? <> · <span className="text-muted-foreground/70">resp.:</span> {resp.nome}</> : ''}
                           {a.contatado && a.contatado_em && (
                             <span className="text-emerald-600 font-medium"> · contatada {new Date(a.contatado_em + 'T12:00:00').toLocaleDateString('pt-BR')}</span>
                           )}
@@ -442,6 +625,47 @@ export default function GestaoCriancas() {
         </div>
       )}
 
+      {/* Por que cada uma saiu · só na aba de inativos, onde a lista tem os
+          motivos carregados. ⚠️ A soma dos baldes FECHA com o total de
+          inativas: quem está sem motivo tem balde próprio em vez de ser
+          descartado, senão a conta não bateria e ninguém entenderia a
+          diferença. */}
+      {modo === 'lista' && status === 'inativos' && motivos && motivos.length > 0 && (
+        <div className="rounded-lg border border-border bg-foreground/[0.03] px-3 py-2 text-xs">
+          <div className="text-muted-foreground mb-1.5">Por que estão inativas</div>
+          <div className="flex flex-wrap gap-1.5">
+            {motivos.map((m: any) => {
+              const chave = m.motivo ?? MOTIVO_SEM_REGISTRO;
+              const marcado = motivoF === chave;
+              return (
+                <button
+                  key={chave}
+                  type="button"
+                  // Clicar filtra a lista por aquele motivo; clicar de novo solta.
+                  onClick={() => setMotivoF(marcado ? 'todos' : chave)}
+                  className={`rounded-full border px-2 py-0.5 transition-colors ${
+                    marcado ? 'border-primary bg-primary/10 text-foreground'
+                      : m.motivo === null ? 'border-amber-500/40 text-amber-600'
+                      : 'border-border text-muted-foreground hover:border-primary/40'
+                  }`}
+                  title={m.motivo ?? 'Cadastro desativado sem justificativa registrada'}
+                >
+                  {m.motivo ?? 'sem motivo registrado'} · <strong className="text-foreground">{m.total.toLocaleString('pt-BR')}</strong>
+                </button>
+              );
+            })}
+          </div>
+          {/* ⚠️⚠️ Contexto que impede a leitura errada do número grande: a
+              maioria das inativas veio de UMA varredura do Planning Center, que
+              saiu do código do Kids em 20/07/2026. Sem esta linha, 3 mil
+              cadastros inativos se leem como evasão recente. */}
+          <div className="mt-1.5 text-[11px] text-muted-foreground">
+            Boa parte veio de varreduras automáticas antigas, não de saída recente —
+            confira o motivo antes de tratar como evasão.
+          </div>
+        </div>
+      )}
+
       {/* Lista */}
       <Card>
         <CardContent className="p-3">
@@ -470,6 +694,21 @@ export default function GestaoCriancas() {
                         </span>
                       </div>
                       <div className="text-xs text-muted-foreground truncate">{resp ? resp.nome : '—'}</div>
+                      {/* ⚠️⚠️ MOTIVO da inativação, ao lado do nome (pedido do
+                          Matheus · 31/08). Só aparece na aba de inativos: numa
+                          criança ativa o campo é resíduo de uma inativação
+                          desfeita e não descreve o estado dela.
+                          ⚠️ Motivo AUSENTE é dito como ausente, em âmbar —
+                          escrever "Desativada" afirmaria uma razão que ninguém
+                          registrou, e cadastro desativado sem justificativa é
+                          justamente o que a equipe precisa achar pra corrigir. */}
+                      {c.ativo === false && (
+                        c.motivo_inativacao_label
+                          ? <div className="text-[11px] text-muted-foreground truncate" title={c.motivo_inativacao_label}>
+                              {c.motivo_inativacao_label}
+                            </div>
+                          : <div className="text-[11px] text-amber-600 truncate">sem motivo registrado</div>
+                      )}
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
                       {c.necessidades_especiais && <AlertCircle className="h-4 w-4 text-amber-500" />}
@@ -600,17 +839,37 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
     try { await api.criancas.addAtendimento(criancaId, { tipo: novoTipo, descricao: novoDesc, data: novoData }); setNovoDesc(''); load(); }
     catch (e: any) { toast.error(e?.message || 'Erro'); } finally { setSalvando(false); }
   }
+  const [motivoAberto, setMotivoAberto] = useState(false);
+  const [motivoSel, setMotivoSel] = useState<string>(MOTIVOS_DESATIVAR[0]);
+  const [motivoLivre, setMotivoLivre] = useState('');
+  const [salvandoMotivo, setSalvandoMotivo] = useState(false);
+
   async function delAtend(id: string) {
     try { await api.criancas.removeAtendimento(id); load(); } catch (e: any) { toast.error(e?.message || 'Erro'); }
   }
+  // Reativar é direto; DESATIVAR abre o diálogo que pergunta o motivo.
   async function toggleAtivo() {
-    const inativar = c.ativo;
-    if (inativar && !window.confirm('Desativar o cadastro desta criança?')) return;
+    if (c.ativo) { setMotivoAberto(true); return; }
     try {
-      await api.criancas.inativar(criancaId, inativar ? { motivo: 'Desativado manualmente' } : { ativo: true });
-      toast.success(inativar ? 'Cadastro desativado' : 'Cadastro reativado');
+      await api.criancas.inativar(criancaId, { ativo: true });
+      toast.success('Cadastro reativado');
       load(); onChanged();
     } catch (e: any) { toast.error(e?.message || 'Erro'); }
+  }
+
+  async function confirmarDesativar() {
+    // ⚠️ "Outro" exige o texto: gravar a palavra "Outro" como motivo não
+    // responde nada a quem for ler o relatório depois.
+    const texto = motivoSel === 'Outro' ? motivoLivre.trim() : motivoSel;
+    if (!texto) { toast.error('Diga o motivo da desativação'); return; }
+    setSalvandoMotivo(true);
+    try {
+      await api.criancas.inativar(criancaId, { motivo: texto });
+      toast.success('Cadastro desativado · sai das contagens de crianças');
+      setMotivoAberto(false); setMotivoLivre('');
+      load(); onChanged();
+    } catch (e: any) { toast.error(e?.message || 'Erro'); }
+    finally { setSalvandoMotivo(false); }
   }
 
   return (
@@ -755,6 +1014,54 @@ function FichaCrianca({ criancaId, onClose, onChanged }: { criancaId: string; on
               </Button>
               {!c.ativo && c.motivo_inativacao && <p className="text-xs text-muted-foreground mt-1">Motivo: {c.motivo_inativacao}</p>}
             </div>
+
+            {/* Desativar PERGUNTA o motivo. ⚠️ z-[1100]: modal dentro de modal —
+                convenção da casa (o Dialog padrão é 1000). */}
+            <Dialog open={motivoAberto} onOpenChange={(o) => !o && setMotivoAberto(false)}>
+              <DialogContent className="max-w-md z-[1100]">
+                <DialogHeader>
+                  <DialogTitle>Desativar o cadastro de {c.nome}</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground">
+                    A criança <strong>sai das contagens</strong> — some da lista de crianças
+                    ativas, do radar de ausentes e do check-in do totem. O cadastro não é
+                    apagado: dá para reativar depois.
+                  </p>
+                  <div className="space-y-1.5">
+                    {MOTIVOS_DESATIVAR.map((m) => (
+                      <label key={m} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input
+                          type="radio" name="motivo-desativar" value={m}
+                          checked={motivoSel === m}
+                          onChange={() => setMotivoSel(m)}
+                          className="h-3.5 w-3.5 accent-primary cursor-pointer"
+                        />
+                        {m}
+                      </label>
+                    ))}
+                  </div>
+                  {motivoSel === 'Outro' && (
+                    <Input
+                      autoFocus
+                      placeholder="Qual o motivo?"
+                      value={motivoLivre}
+                      onChange={(e) => setMotivoLivre(e.target.value)}
+                      maxLength={300}
+                    />
+                  )}
+                </div>
+                <DialogFooter className="gap-2">
+                  <Button variant="ghost" onClick={() => setMotivoAberto(false)}>Cancelar</Button>
+                  <Button
+                    onClick={confirmarDesativar}
+                    disabled={salvandoMotivo || (motivoSel === 'Outro' && !motivoLivre.trim())}
+                  >
+                    {salvandoMotivo ? 'Desativando...' : 'Desativar cadastro'}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
           )
         ) : aba === 'frequencia' ? (

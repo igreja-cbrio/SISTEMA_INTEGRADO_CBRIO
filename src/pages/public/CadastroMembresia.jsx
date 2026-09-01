@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cadastroPublico } from '../../api';
+import SeletorBairro from '../../components/ui/seletor-bairro';
 import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
@@ -9,6 +10,11 @@ import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import MemberWalletPass from '../../components/membresia/MemberWalletPass';
 import MemberWalletDialog from '../../components/membresia/MemberWalletDialog';
 import { QRCodeSVG } from 'qrcode.react';
+// ⚠️ Régua ÚNICA de CEP (lei de 24/08): a cópia local do ViaCEP que vivia
+// aqui era a 6ª, e a única SEM TIMEOUT — no wi-fi do templo o campo ficava
+// "buscando…" para sempre. Com o CEP agora obrigatório, esse campo está no
+// caminho crítico de toda submissão do censo presencial.
+import { mascaraCep, cepCompleto, buscarCep } from '../../lib/cepAutopreenche';
 
 // ── Helpers de máscara ──
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -29,26 +35,7 @@ function mascaraTelefone(v) {
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
 }
 
-function mascaraCep(v) {
-  const d = soDigitos(v).slice(0, 8);
-  if (d.length <= 5) return d;
-  return `${d.slice(0, 5)}-${d.slice(5)}`;
-}
 
-// ViaCEP · usado só pra sugerir o bairro a partir do CEP (fail-open · nunca bloqueia).
-async function buscarCep(cep) {
-  const d = soDigitos(cep);
-  if (d.length !== 8) return null;
-  try {
-    const res = await fetch(`https://viacep.com.br/ws/${d}/json/`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data?.erro) return null;
-    return { bairro: data.bairro || '', cidade: data.localidade || '', uf: data.uf || '' };
-  } catch {
-    return null;
-  }
-}
 
 function cpfValido(v) {
   const d = soDigitos(v);
@@ -211,13 +198,20 @@ const STEPS = [
 // vez de digitar endereço (2026-07-23). "Outro" abre campo livre — não trava
 // quem mora fora da região. Endereço completo saiu; o bairro basta pra
 // agrupar por região e a distância do mapa vem do GPS do aparelho.
-const BAIRROS = [
-  'Barra', 'Recreio', 'Freguesia', 'Anil', 'Pechincha', 'Taquara',
-  'Barra Olímpica', 'Curicica', 'Camorim', 'Vargem Grande', 'Vargem Pequena',
-];
-const BAIRRO_OUTRO = '__outro__';
-// Normaliza p/ casar o bairro devolvido pelo ViaCEP com a lista fixa (sem acento/caixa).
-const normBairro = (s) => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+// ⚠️⚠️ A LISTA FIXA DE 11 APELIDOS SAIU DAQUI (24/08/2026) — e ela era a CAUSA
+// da duplicidade de grafia na base, não um detalhe de UI.
+//
+// Ela tinha os nomes curtos ('Barra', 'Recreio', 'Freguesia') e o ViaCEP devolve
+// os oficiais ('Barra da Tijuca', 'Recreio dos Bandeirantes', 'Freguesia
+// (Jacarepaguá)'). O casamento normalizado NUNCA batia nos três bairros com
+// mais gente: quem escolhia da lista gravava o curto, quem preenchia o CEP caía
+// em "Outro" e gravava o longo. Medido em produção (23/08), em mem_membros:
+//   Barra da Tijuca 33 × Barra 22 · Recreio 15 × 14 · Freguesia 5 × 4.
+//
+// Agora o catálogo vem do servidor (`fn_dem_bairros_catalogo`), é o MESMO em
+// todos os formulários, e quem decide a grafia gravada é o backend
+// (`fn_dem_bairro_canonico`) — não esta tela.
+// ⚠️ NÃO reintroduzir lista de bairros no cliente.
 
 function Row({ children }) {
   return (
@@ -307,9 +301,10 @@ export default function CadastroMembresia() {
   // não faz ninguém membro (isso é batismo/curso/carta, decisão da igreja). Só
   // separa quem já se considera membro de quem frequenta ou está chegando.
   const [vinculoDeclarado, setVinculoDeclarado] = useState('');
-  // Bairro: guarda a chave da seleção; se "Outro", o valor real vem de bairroOutro.
+  // Bairro: um campo só, com o NOME do bairro. O "Outro" morreu junto com a
+  // lista fixa — o seletor aceita qualquer bairro e avisa quando é novo.
   const [bairroSel, setBairroSel] = useState('');
-  const [bairroOutro, setBairroOutro] = useState('');
+  const [bairroDoCep, setBairroDoCep] = useState(false);
   const [cepBuscando, setCepBuscando] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -449,7 +444,11 @@ export default function CadastroMembresia() {
     try {
       const params = new URLSearchParams(window.location.search);
       const o = params.get('origem');
-      return ['qr_code', 'evento', 'site'].includes(o) ? o : 'site';
+      // ⚠️ `online` é o link que o time do Online distribui (aba do módulo). O
+      // que ele muda não é o formulário — é a ORIGEM, que na aprovação vira
+      // `mem_membros.frequenta_area = 'online'`. Quem manda é o CHECK do banco;
+      // esta lista é espelho. Valor desconhecido cai em 'site'.
+      return ['qr_code', 'evento', 'site', 'online'].includes(o) ? o : 'site';
     } catch { return 'site'; }
   }, []);
 
@@ -460,14 +459,18 @@ export default function CadastroMembresia() {
   const handleCepChange = async (e) => {
     const masked = mascaraCep(e.target.value);
     setForm((f) => ({ ...f, cep: masked }));
-    if (soDigitos(masked).length === 8) {
+    if (cepCompleto(masked)) {
       setCepBuscando(true);
       const result = await buscarCep(masked);
       setCepBuscando(false);
+      // ⚠️ O nome vem do ViaCEP e é o OFICIAL. Não há mais lista curta para
+      // "casar": o seletor reconhece o bairro contra o catálogo do servidor, e
+      // quem canonicaliza a grafia gravada é o backend.
+      // ⚠️ Só preenche se a pessoa ainda não escolheu — corrigir o CEP não pode
+      // apagar o bairro que ela acabou de selecionar à mão.
       if (result?.bairro) {
-        const match = BAIRROS.find((b) => normBairro(b) === normBairro(result.bairro));
-        if (match) { setBairroSel(match); setBairroOutro(''); }
-        else { setBairroSel(BAIRRO_OUTRO); setBairroOutro(result.bairro); }
+        setBairroDoCep(true);
+        setBairroSel((atual) => (atual.trim() ? atual : result.bairro));
       }
     }
   };
@@ -591,6 +594,12 @@ export default function CadastroMembresia() {
       if (form.senha.length < 6) return 'A senha precisa ter ao menos 6 caracteres.';
       if (form.senha !== form.confirmar_senha) return 'As senhas não conferem.';
     }
+    // ⚠️ Exige COMPLETO, não "preenchido": CEP pela metade entra parecendo
+    // endereço e o mapa da Membresia não posiciona a pessoa. O servidor
+    // confere a MESMA régua — divergir daria formulário insubmissível.
+    if (!cepCompleto(form.cep)) {
+      return soDigitos(form.cep) ? 'CEP incompleto — informe os 8 dígitos.' : 'Informe seu CEP.';
+    }
     if (ehCenso && !vinculoDeclarado) return 'Informe seu vínculo com a igreja.';
     if (!aceitaTermos) return 'É necessário aceitar os termos para enviar o cadastro.';
     return null;
@@ -639,7 +648,7 @@ export default function CadastroMembresia() {
       }
 
       const { sobrenome, confirmar_email, confirmar_senha, ...rest } = form;
-      const bairroFinal = (bairroSel === BAIRRO_OUTRO ? bairroOutro.trim() : bairroSel) || null;
+      const bairroFinal = bairroSel.trim() || null;
       const resp = await cadastroPublico.enviar({
         ...rest,
         nome: `${form.nome.trim()} ${sobrenome.trim()}`.trim(),
@@ -1205,23 +1214,28 @@ export default function CadastroMembresia() {
                   </Row>
                   <Field
                     id="cep"
-                    label={cepBuscando ? 'CEP (buscando bairro...)' : 'CEP (opcional)'}
+                    label={cepBuscando ? 'CEP (buscando bairro...)' : 'CEP'}
                     value={form.cep}
                     onChange={handleCepChange}
                     inputMode="numeric"
                     autoComplete="postal-code"
                     maxLength={9}
                   />
-                  <SelectField
-                    id="bairro"
-                    label="Bairro"
-                    value={bairroSel}
-                    onChange={(e) => setBairroSel(e.target.value)}
-                    options={[...BAIRROS.map((b) => ({ value: b, label: b })), { value: BAIRRO_OUTRO, label: 'Outro bairro' }]}
-                  />
-                  {bairroSel === BAIRRO_OUTRO && (
-                    <Field id="bairro_outro" label="Qual bairro?" value={bairroOutro} onChange={(e) => setBairroOutro(e.target.value)} maxLength={80} />
-                  )}
+                  <div>
+                    <label htmlFor="bairro" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, marginBottom: 6, color: 'var(--cbrio-text2, #555)' }}>
+                      Bairro
+                    </label>
+                    {/* ⚠️ `atalhos`: no culto o preenchimento é em pé, com fila
+                        atrás — os bairros da região precisam estar a um toque.
+                        É o que a lista fixa dava e não podia se perder. */}
+                    <SeletorBairro
+                      id="bairro"
+                      value={bairroSel}
+                      onChange={(v) => { setBairroSel(v); setBairroDoCep(false); }}
+                      atalhos={6}
+                      doCep={bairroDoCep}
+                    />
+                  </div>
                   <Field
                     id="como_conheceu"
                     label="Como conheceu a CBRio? (opcional)"

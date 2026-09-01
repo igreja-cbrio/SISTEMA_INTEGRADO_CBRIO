@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
+import { resolveApiBaseUrl } from '@/lib/api-base';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -11,13 +12,20 @@ import {
   Users, Search, Plus, ChevronRight, X,
   Phone, Mail, MapPin, Heart, Calendar, Star,
   CheckCircle2, Circle, UserPlus, Home, Pencil,
+  UserMinus,
   AlertCircle, LogOut, MapPin as MapPinIcon, Clock, Trash2,
   DollarSign, HandCoins, Sparkles, Activity, Inbox,
   Copy, Share2, Download, QrCode, Camera, ScanLine,
   TrendingUp, ArrowRightLeft, GitMerge, ShieldCheck, Loader2, BookOpen, Flame,
-  ClipboardList, CreditCard, Ticket,
+  ClipboardList, CreditCard, Ticket, PieChart,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { mascaraCep, cepCompleto, buscarCep } from '../../lib/cepAutopreenche';
+import SeletorBairro from '../../components/ui/seletor-bairro';
+// ⚠️ LAZY de propósito: o Perfil carrega o maplibre-gl (~200 kB). Importado no
+// topo, todo mundo que abre a Membresia para procurar UMA pessoa pagaria o
+// mapa. Assim ele só desce quando a aba é aberta.
+const AbaPerfil = lazy(() => import('../../components/membresia/AbaPerfil'));
 import { Button } from '../../components/ui/button';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import { Input } from '../../components/ui/input';
@@ -25,6 +33,7 @@ import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '../../components/ui/label';
 import { Textarea } from '../../components/ui/textarea';
+import { faltandoParaSalvar, frasePendencias, pendenciasInformativas, ROTULO_CAMPO, CAMPOS_CRIACAO, CAMPOS_EDICAO } from '../../lib/camposObrigatoriosMembro';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '../../components/ui/select';
@@ -133,33 +142,11 @@ function fmtMoeda(v) {
   return (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-function soDigitosCep(v) { return (v || '').toString().replace(/\D+/g, ''); }
-
-function mascaraCep(v) {
-  const d = soDigitosCep(v).slice(0, 8);
-  if (d.length <= 5) return d;
-  return `${d.slice(0, 5)}-${d.slice(5)}`;
-}
-
-async function buscarCep(cep) {
-  const d = soDigitosCep(cep);
-  if (d.length !== 8) return null;
-  try {
-    const res = await fetch(`https://viacep.com.br/ws/${d}/json/`);
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data?.erro) return null;
-    return {
-      logradouro: data.logradouro || '',
-      bairro: data.bairro || '',
-      cidade: data.localidade || '',
-      uf: data.uf || '',
-    };
-  } catch {
-    return null;
-  }
-}
-
+// ⚠️ A cópia local do ViaCEP (e da máscara de CEP) SAIU daqui em 24/08/2026 —
+// era a 5ª do sistema. A régua vive em `lib/cepAutopreenche`, que já trata os
+// dois casos que toda cópia esquecia: `erro: true` com HTTP 200 (CEP
+// inexistente lido como sucesso) e TIMEOUT (no wi-fi do templo o campo ficava
+// "buscando..." para sempre).
 const EMPTY_FORM = {
   nome: '', sobrenome: '', apelido: '', cpf: '', email: '', telefone: '', data_nascimento: '', estado_civil: '',
   endereco: '', bairro: '', cidade: '', cep: '', profissao: '',
@@ -330,22 +317,24 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
   const set = (k, v) => setForm(prev => ({ ...prev, [k]: v }));
 
   const [cepBuscando, setCepBuscando] = useState(false);
+  const [bairroDoCep, setBairroDoCep] = useState(false);
   const handleCepChange = async (value) => {
     const masked = mascaraCep(value);
     setForm(prev => ({ ...prev, cep: masked }));
-    if (soDigitosCep(masked).length === 8) {
-      setCepBuscando(true);
-      const result = await buscarCep(masked);
-      setCepBuscando(false);
-      if (result) {
-        setForm(prev => ({
-          ...prev,
-          endereco: result.logradouro && !prev.endereco ? result.logradouro : prev.endereco,
-          bairro: result.bairro || prev.bairro,
-          cidade: result.cidade || prev.cidade,
-        }));
-      }
-    }
+    if (!cepCompleto(masked)) return;
+    setCepBuscando(true);
+    const result = await buscarCep(masked);
+    setCepBuscando(false);
+    if (!result) return;
+    // ⚠️ `cepAutopreenche` OMITE campo vazio (CEP de cidade inteira vem sem
+    // logradouro/bairro): devolver '' aqui apagaria o que a equipe digitou.
+    setBairroDoCep(!!result.bairro);
+    setForm(prev => ({
+      ...prev,
+      endereco: result.endereco && !prev.endereco ? result.endereco : prev.endereco,
+      bairro: result.bairro || prev.bairro,
+      cidade: result.cidade || prev.cidade,
+    }));
   };
 
   const handleFotoSelect = (e) => {
@@ -371,20 +360,34 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
     if (file) processarFoto(file);
   };
 
+  // ⚠️⚠️ EDITAR EXIGE SÓ O NOME (21/08/2026 · pedido do Matheus). Exigir CPF e
+  // nascimento pra salvar uma edição impedia corrigir o telefone de quem está
+  // sem esses dados — são 545 membros sem CPF — e o efeito real não é
+  // incômodo, é CHUTE: CPF inventado vira chave forte no matcher e liga a
+  // pessoa ao cadastro de outra. Criar continua exigindo os quatro (Contrato
+  // de porta). Régua e o porquê em `src/lib/camposObrigatoriosMembro`.
+  const faltando = faltandoParaSalvar(form, { edicao: isEdit });
+  const pendentesInfo = isEdit ? pendenciasInformativas(form) : [];
+  // ⚠️ O asterisco sai do MESMO catálogo que trava o salvar — decidir de novo
+  // aqui faria os dois divergirem no primeiro ajuste. Marcar como obrigatório
+  // um campo que o salvar não exige faz a pessoa preencher por obediência ao
+  // símbolo, que é exatamente onde nasce o CPF chutado. `Nome` mantém o
+  // asterisco nos dois modos, porque a coluna é NOT NULL.
+  const obrig = (campo) => ((isEdit ? CAMPOS_EDICAO : CAMPOS_CRIACAO).includes(campo) ? ' *' : '');
+
   const isStepValid = () => {
     switch (currentStep) {
       case 0:
-        return form.nome.trim() !== '' && form.sobrenome.trim() !== '' && form.cpf.trim() !== '' && !!form.data_nascimento;
+        // ⚠️ O passo 0 usa a MESMA régua do salvar — travar "Próximo" com um
+        // critério e o botão final com outro faz a pessoa não achar o bloqueio.
+        return faltando.length === 0;
       default:
         return true;
     }
   };
 
   const handleSave = async () => {
-    if (!form.nome.trim()) { toast.error('Nome é obrigatório.'); return; }
-    if (!form.sobrenome.trim()) { toast.error('Sobrenome é obrigatório.'); return; }
-    if (!form.cpf.trim()) { toast.error('CPF é obrigatório.'); return; }
-    if (!form.data_nascimento) { toast.error('Data de nascimento é obrigatória.'); return; }
+    if (faltando.length) { toast.error(frasePendencias(faltando)); return; }
     setSaving(true);
     try {
       const payload = { ...form };
@@ -475,6 +478,20 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
           {/* Step 1: Dados Pessoais */}
           {currentStep === 0 && (
             <div>
+              {/* ⚠️ Na EDIÇÃO o que falta é INFORMADO, não exigido: a equipe vê
+                  o buraco e completa quando tiver o dado. Exigir aqui só produz
+                  chute — e CPF chutado liga a pessoa ao cadastro de outra. */}
+              {pendentesInfo.length > 0 && (
+                <div style={{ marginBottom: 12, padding: '10px 12px', borderRadius: 10, border: '1px dashed rgba(245,158,11,0.5)', background: 'rgba(245,158,11,0.07)' }}>
+                  <div style={{ fontSize: 12, color: C.text, fontWeight: 600 }}>
+                    Falta no cadastro: {pendentesInfo.map(k => ROTULO_CAMPO[k] || k).join(' · ')}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.text2, marginTop: 3, lineHeight: 1.5 }}>
+                    Dá para salvar assim mesmo — preencha quando tiver o dado. Não invente CPF nem
+                    data: chute vira chave de identidade e liga esta pessoa ao cadastro de outra.
+                  </div>
+                </div>
+              )}
               {/* Foto upload */}
               <div className="flex flex-col items-center gap-2 py-4">
                 <div
@@ -506,11 +523,11 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <Label>Nome *</Label>
+                  <Label>Nome{obrig('nome')}</Label>
                   <Input value={form.nome} onChange={e => set('nome', e.target.value)} placeholder="Nome" />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Sobrenome *</Label>
+                  <Label>Sobrenome{obrig('sobrenome')}</Label>
                   <Input value={form.sobrenome} onChange={e => set('sobrenome', e.target.value)} placeholder="Sobrenome" />
                 </div>
                 <div className="space-y-1.5 sm:col-span-2">
@@ -521,11 +538,11 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
                   </p>
                 </div>
                 <div className="space-y-1.5">
-                  <Label>CPF *</Label>
+                  <Label>CPF{obrig('cpf')}</Label>
                   <Input value={form.cpf} onChange={e => set('cpf', e.target.value)} placeholder="000.000.000-00" inputMode="numeric" maxLength={14} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Data de Nascimento *</Label>
+                  <Label>Data de Nascimento{obrig('data_nascimento')}</Label>
                   <BirthDatePicker value={form.data_nascimento} onChange={v => set('data_nascimento', v)} />
                 </div>
                 <div className="space-y-1.5">
@@ -570,7 +587,14 @@ function MembroFormModal({ open, onOpenChange, editData, familias, onSaved }) {
               </div>
               <div className="space-y-1.5">
                 <Label>Bairro</Label>
-                <Input value={form.bairro} onChange={e => set('bairro', e.target.value)} />
+                {/* Sem `atalhos`: aqui quem preenche é a equipe, sentada, e
+                    chips de toque roubariam espaço de um formulário longo. */}
+                <SeletorBairro
+                  value={form.bairro}
+                  onChange={(v) => { set('bairro', v); setBairroDoCep(false); }}
+                  doCep={bairroDoCep}
+                  placeholder="Digite ou escolha"
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Cidade</Label>
@@ -869,7 +893,10 @@ export default function Membresia() {
   const [filterStatus, setFilterStatus] = useState('');
   const [filterPapel, setFilterPapel] = useState('');
   const [filterFaixa, setFilterFaixa] = useState('');
-  const [filterSemCpf, setFilterSemCpf] = useState(false);
+  // ⚠️ Um estado só, com três valores ('' | 'sem' | 'com'). Dois toggles
+  // independentes deixariam ligar "Sem CPF" e "Com CPF" ao mesmo tempo — um
+  // pedido contraditório, que a tela não deve nem permitir formular.
+  const [filtroCpf, setFiltroCpf] = useState('');
   const [selectedMembro, setSelectedMembro] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editMembro, setEditMembro] = useState(null);
@@ -887,7 +914,7 @@ export default function Membresia() {
   // não leva ao destino é pior que não ter link — gasta a confiança no sino.
   const [pageTab, setPageTab] = useState(() => {
     const t = new URLSearchParams(window.location.search).get('tab');
-    return ['membros', 'jornada', 'duplicados', 'cadastros'].includes(t) ? t : 'membros';
+    return ['membros', 'perfil', 'jornada', 'duplicados', 'cadastros'].includes(t) ? t : 'membros';
   });
   const [showShareLink, setShowShareLink] = useState(false);
   const [showContribForm, setShowContribForm] = useState(false);
@@ -1018,7 +1045,8 @@ export default function Membresia() {
       if (filterStatus) params.status = filterStatus;
       if (filterPapel) params.papel = filterPapel;
       if (filterFaixa) params.faixa = filterFaixa;
-      if (filterSemCpf) params.sem_cpf = '1';
+      if (filtroCpf === 'sem') params.sem_cpf = '1';
+      if (filtroCpf === 'com') params.com_cpf = '1';
       const m = await membresia.membros.list(Object.keys(params).length ? params : null);
       setMembros(m);
     } catch (e) {
@@ -1027,7 +1055,7 @@ export default function Membresia() {
       setLoading(false);
       setSearching(false);
     }
-  }, [busca, filterStatus, filterPapel, filterFaixa, filterSemCpf]);
+  }, [busca, filterStatus, filterPapel, filterFaixa, filtroCpf]);
 
   // Card inteligente · título muda conforme o filtro ativo
   const filtroResumo = useMemo(() => {
@@ -1035,10 +1063,11 @@ export default function Membresia() {
     if (filterFaixa) partes.push(FAIXA_LABEL[filterFaixa] || filterFaixa);
     if (filterStatus) partes.push(STATUS_MAP[filterStatus]?.label || filterStatus);
     if (filterPapel) partes.push(PAPEL_LABEL[filterPapel] || filterPapel);
-    if (filterSemCpf) partes.push('Sem CPF');
+    if (filtroCpf === 'sem') partes.push('Sem CPF');
+    if (filtroCpf === 'com') partes.push('Com CPF');
     if (busca) partes.push(`"${busca.trim()}"`);
     return { ativo: partes.length > 0, titulo: partes.join(' · ') };
-  }, [filterFaixa, filterStatus, filterPapel, filterSemCpf, busca]);
+  }, [filterFaixa, filterStatus, filterPapel, filtroCpf, busca]);
 
   // Clique nos cards de resumo · aplica o filtro correspondente (limpa os demais)
   // e rola até a lista. cfg=null = "Total de pessoas" (limpa tudo).
@@ -1047,7 +1076,7 @@ export default function Membresia() {
     setFilterFaixa('');
     setFilterStatus(cfg?.status || '');
     setFilterPapel(cfg?.papel || '');
-    setFilterSemCpf(!!cfg?.sem_cpf);
+    setFiltroCpf(cfg?.sem_cpf ? 'sem' : (cfg?.com_cpf ? 'com' : ''));
     requestAnimationFrame(() => {
       document.querySelector('[data-membros-lista]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
@@ -1121,7 +1150,10 @@ export default function Membresia() {
     if (!motivo || !motivo.trim()) return;
     try {
       toast.info('Gerando relatório LGPD...');
-      const apiBase = import.meta.env.VITE_API_URL || '/api';
+      // ⚠️ `VITE_API_URL || '/api'` inline não acrescenta `/api` quando a env
+      // não termina nele (em prod ela é `https://crmcbrio.vercel.app`): a URL cai
+      // no catch-all do SPA e volta HTML com 200. O helper é a régua única.
+      const apiBase = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
       const url = `${apiBase}/lgpd/membro/${membro.id}/exportar?motivo=${encodeURIComponent(motivo.trim())}`;
       const { data: { session } } = await supabase.auth.getSession();
       const r = await fetch(url, {
@@ -1198,6 +1230,46 @@ export default function Membresia() {
       setSelectedMembro(data);
     } catch (e) {
       setError(e.message);
+    }
+  };
+
+  // ── Desativar / reativar membro (pedido do Matheus · 21/08) ───────────────
+  // ⚠️ NÃO é o "remover" (soft-delete): aqui a pessoa CONTINUA na base, só sai
+  // das contagens e dos disparos. Quem decide é o servidor; a tela só mostra.
+  const [desativarAberto, setDesativarAberto] = useState(false);
+  const [desativarMotivo, setDesativarMotivo] = useState('');
+  const [desativando, setDesativando] = useState(false);
+
+  const confirmarDesativacao = async () => {
+    if (!selectedMembro?.id || desativando) return;
+    setDesativando(true);
+    try {
+      const r = await membresia.membros.desativar(selectedMembro.id, desativarMotivo);
+      setDesativarAberto(false);
+      setDesativarMotivo('');
+      // ⚠️ Aviso do servidor (migration pendente) é EXIBIDO: "desativou mas o
+      // motivo não foi guardado" é diferente de "deu tudo certo".
+      if (r?.aviso) setError(r.aviso);
+      await reloadDetail();
+      await fetchMembros();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDesativando(false);
+    }
+  };
+
+  const reativarMembro = async () => {
+    if (!selectedMembro?.id || desativando) return;
+    setDesativando(true);
+    try {
+      await membresia.membros.reativar(selectedMembro.id);
+      await reloadDetail();
+      await fetchMembros();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setDesativando(false);
     }
   };
 
@@ -1470,6 +1542,7 @@ export default function Membresia() {
         <TabsList className="inline-flex flex-wrap h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5" data-tour="membresia-tabs">
           {[
             { key: 'membros', label: 'Membros', icon: Users },
+            { key: 'perfil', label: 'Perfil', icon: PieChart },
             { key: 'jornada', label: 'Jornada (5 valores)', icon: TrendingUp },
             { key: 'duplicados', label: 'Duplicados', icon: GitMerge },
             { key: 'cadastros', label: 'Cadastros pendentes', icon: Inbox },
@@ -1578,26 +1651,39 @@ export default function Membresia() {
               <SelectItem value="__all__">Todas as idades</SelectItem>
               <SelectItem value="crianca">Crianças (até 12)</SelectItem>
               <SelectItem value="adolescente">Adolescentes (13–17)</SelectItem>
-              <SelectItem value="jovem">Jovens (18–30)</SelectItem>
-              <SelectItem value="adulto">Adultos (31+)</SelectItem>
+              <SelectItem value="jovem">Jovens (18–25)</SelectItem>
+              <SelectItem value="adulto">Adultos (26+)</SelectItem>
             </SelectContent>
           </Select>
         </div>
-        <button
-          type="button"
-          onClick={() => setFilterSemCpf(v => !v)}
-          title="Mostrar só quem está sem CPF cadastrado"
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 16px', borderRadius: 8,
-            fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
-            border: `1.5px solid ${filterSemCpf ? C.amber : 'var(--cbrio-border)'}`,
-            background: filterSemCpf ? C.amber : 'transparent',
-            color: filterSemCpf ? '#fff' : C.text2,
-          }}
-        >
-          <CreditCard style={{ width: 15, height: 15 }} />
-          Sem CPF
-        </button>
+        {/* Três estados num controle só: todos · com CPF · sem CPF. */}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+          <CreditCard style={{ width: 15, height: 15, color: C.text2 }} />
+          {[
+            { v: '', label: 'Todos', cor: C.text2, titulo: 'Sem filtrar por CPF' },
+            { v: 'com', label: 'Com CPF', cor: C.green || '#10b981', titulo: 'Mostrar só quem já tem CPF cadastrado' },
+            { v: 'sem', label: 'Sem CPF', cor: C.amber, titulo: 'Mostrar só quem está sem CPF cadastrado' },
+          ].map(op => {
+            const ativo = filtroCpf === op.v;
+            return (
+              <button
+                key={op.v || 'todos'}
+                type="button"
+                onClick={() => setFiltroCpf(op.v)}
+                title={op.titulo}
+                style={{
+                  padding: '0 14px', height: 38, borderRadius: 8,
+                  fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                  border: `1.5px solid ${ativo ? op.cor : 'var(--cbrio-border)'}`,
+                  background: ativo ? op.cor : 'transparent',
+                  color: ativo ? '#fff' : C.text2,
+                }}
+              >
+                {op.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Table */}
@@ -1683,6 +1769,16 @@ export default function Membresia() {
       <Paginacao {...membrosPagProps} itemLabel="membros" />
         </TabsContent>
 
+        <TabsContent value="perfil">
+          <Suspense fallback={(
+            <div className="h-64 grid place-items-center text-muted-foreground">
+              <Loader2 className="size-6 animate-spin" />
+            </div>
+          )}>
+            <AbaPerfil />
+          </Suspense>
+        </TabsContent>
+
         <TabsContent value="jornada">
           <MembersJornadaPanel />
         </TabsContent>
@@ -1735,7 +1831,7 @@ export default function Membresia() {
                       const n = new Date(dn); if (isNaN(n.getTime())) return null;
                       const h = new Date(); let i = h.getFullYear() - n.getFullYear();
                       const mo = h.getMonth() - n.getMonth(); if (mo < 0 || (mo === 0 && h.getDate() < n.getDate())) i--;
-                      const fa = i < 13 ? ['Criança', '#fce7f3', '#831843'] : i <= 17 ? ['Adolescente', '#fef3c7', '#92400e'] : i <= 30 ? ['Jovem', '#e0f2fe', '#075985'] : ['Adulto', '#f1f5f9', '#334155'];
+                      const fa = i < 13 ? ['Criança', '#fce7f3', '#831843'] : i <= 17 ? ['Adolescente', '#fef3c7', '#92400e'] : i <= 25 ? ['Jovem', '#e0f2fe', '#075985'] : ['Adulto', '#f1f5f9', '#334155'];
                       return <span title={`${i} anos`} style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: fa[1], color: fa[2], fontWeight: 700 }}>{fa[0].toUpperCase()}</span>;
                     })()}
                     {selectedMembro.frequenta_area && <span title="Ministério que declarou frequentar (cadastro do app)" style={{ fontSize: 9, padding: '2px 6px', borderRadius: 4, background: '#cffafe', color: '#155e75', fontWeight: 700 }}>{String(selectedMembro.frequenta_area).toUpperCase()}</span>}
@@ -1759,6 +1855,16 @@ export default function Membresia() {
                     <ShieldCheck style={{ width: 16, height: 16 }} />
                   </Button>
                 )}
+                {isDiretor && selectedMembro.status !== 'inativo' && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => { setDesativarMotivo(''); setDesativarAberto(true); }}
+                    title="Desativar membro · sai das contagens, continua na base"
+                  >
+                    <UserMinus style={{ width: 16, height: 16 }} />
+                  </Button>
+                )}
                 {isDiretor && (
                   <Button variant="ghost" size="icon" onClick={() => openEdit(selectedMembro)} title="Editar">
                     <Pencil style={{ width: 16, height: 16 }} />
@@ -1771,6 +1877,37 @@ export default function Membresia() {
             </div>
 
             <div style={{ padding: '20px 32px 28px' }}>
+              {selectedMembro.status === 'inativo' && (
+                <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: '1px solid rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.07)' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                    <div style={{ minWidth: 220, flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Membro desativado</div>
+                      <div style={{ fontSize: 11.5, color: C.text2, marginTop: 4, lineHeight: 1.5 }}>
+                        {selectedMembro.inativado_em
+                          ? `Desde ${new Date(selectedMembro.inativado_em).toLocaleDateString('pt-BR')}`
+                          : 'Sem data registrada'}
+                        {selectedMembro.inativado_status_anterior
+                          ? ` · era ${STATUS_MAP[selectedMembro.inativado_status_anterior]?.label || selectedMembro.inativado_status_anterior}`
+                          : ''}
+                      </div>
+                      {/* ⚠️ Motivo é OPCIONAL: dizer "não informado" é diferente
+                          de deixar em branco, que se lê como campo quebrado. */}
+                      <div style={{ fontSize: 12, color: C.text, marginTop: 6 }}>
+                        <span style={{ color: C.text3 }}>Motivo: </span>
+                        {selectedMembro.inativado_motivo || <span style={{ color: C.text3, fontStyle: 'italic' }}>não informado</span>}
+                      </div>
+                      <div style={{ fontSize: 10.5, color: C.text3, marginTop: 6 }}>
+                        Continua na base e no histórico — sai das contagens, do censo e dos disparos.
+                      </div>
+                    </div>
+                    {isDiretor && (
+                      <Button variant="outline" size="sm" onClick={reativarMembro} disabled={desativando}>
+                        {desativando ? 'Reativando…' : 'Reativar'}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
               {possiveisDupErro && (
                 <div style={{ marginBottom: 16, padding: 12, borderRadius: 12, border: '1px dashed #F09595', background: '#FCEBEB' }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível consultar duplicados</div>
@@ -1841,7 +1978,14 @@ export default function Membresia() {
                       { icon: Heart, label: 'Estado Civil', value: ESTADO_CIVIL_OPTIONS.find(e => e.value === selectedMembro.estado_civil)?.label || selectedMembro.estado_civil },
                       { icon: Home, label: 'Família', value: selectedMembro.familia?.nome },
                       { icon: Users, label: 'Ministério', value: selectedMembro.ministerio },
-                      { icon: Star, label: 'Grupo', value: selectedMembro.grupo },
+                      // ⚠️ O grupo vem do VÍNCULO (`mem_grupo_membros`), nunca da coluna
+                      // `mem_membros.grupo`: ela é texto legado e está VAZIA nas 3.995
+                      // linhas, enquanto 1.045 pessoas têm vínculo ativo (medido 26/08).
+                      // Ou seja este campo aparecia em branco pra TODO MUNDO — foi o que
+                      // o Matheus viu na ficha do William, que está em grupo desde 09/08.
+                      // O fallback pra coluna existe só pra não perder texto que alguém
+                      // tenha digitado à mão antes desta correção.
+                      { icon: Star, label: 'Grupo', value: selectedMembro.grupo_atual?.grupo?.nome || selectedMembro.grupo },
                     ].map((item, i) => (
                       <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'start' }}>
                         <item.icon style={{ width: 16, height: 16, color: C.text3, marginTop: 2, flexShrink: 0 }} />
@@ -3260,6 +3404,58 @@ export default function Membresia() {
 
       {censoAberto && (
         <CensoRespostasDialog membroId={censoAberto} onClose={() => setCensoAberto(null)} />
+      )}
+
+      {/* ⚠️ Confirmação de desativação. O texto DIZ o que acontece e o que NÃO
+          acontece: sem isso, "desativar" se lê como "apagar" e a equipe evita o
+          botão — ou pior, usa achando que apagou. */}
+      {desativarAberto && selectedMembro && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'var(--cbrio-overlay)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+          onClick={() => !desativando && setDesativarAberto(false)}
+        >
+          <div
+            className="glass-solid"
+            style={{ width: '100%', maxWidth: 460, borderRadius: 16, padding: 24, background: 'var(--cbrio-modal-bg)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 17, fontWeight: 700, color: C.text }}>Desativar {selectedMembro.nome}?</div>
+            <div style={{ fontSize: 12.5, color: C.text2, marginTop: 8, lineHeight: 1.6 }}>
+              A pessoa <strong>continua na base</strong>, com histórico, contribuições e vínculos
+              intactos — e pode ser reativada a qualquer momento. O que muda: ela sai da contagem
+              de membros ativos, dos indicadores, do censo e dos disparos.
+            </div>
+            <div style={{ fontSize: 11.5, color: C.text3, marginTop: 8, lineHeight: 1.5 }}>
+              Não desliga grupo nem voluntariado — isso continua sendo feito nos módulos deles.
+            </div>
+
+            <div style={{ marginTop: 16 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: C.text3, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                Motivo da saída (opcional)
+              </label>
+              <Textarea
+                value={desativarMotivo}
+                onChange={(e) => setDesativarMotivo(e.target.value.slice(0, 500))}
+                rows={3}
+                placeholder="Ex.: mudou de cidade, transferiu-se para outra igreja, afastou-se…"
+                style={{ marginTop: 6 }}
+                autoFocus
+              />
+              <div style={{ fontSize: 10.5, color: C.text3, marginTop: 4 }}>
+                {desativarMotivo.trim().length}/500 · fica registrado na ficha e no log de auditoria
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+              <Button variant="ghost" onClick={() => setDesativarAberto(false)} disabled={desativando}>
+                Cancelar
+              </Button>
+              <Button onClick={confirmarDesativacao} disabled={desativando} style={{ background: C.red, color: '#fff' }}>
+                {desativando ? 'Desativando…' : 'Desativar membro'}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Form Modal */}

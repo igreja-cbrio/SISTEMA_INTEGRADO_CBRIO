@@ -16,9 +16,12 @@
 // ============================================================================
 
 const router = require('express').Router();
+const kidsVisitante = require('../utils/kidsVisitante');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
+const { resolverJanelaPeriodo, rotuloJanela } = require('../utils/janelaPeriodo');
+const { resumirCadastros, serieDiaria, limitesUtc, diaBRT, temMarcaDeImport } = require('../utils/cadastrosKids');
 const { supabase } = require('../utils/supabase');
 const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
@@ -29,6 +32,7 @@ const { enviarTexto: enviarTextoWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado, ehNomePlaceholder } = require('../services/membroMatch');
 const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
 const { frequentaNaJanela, avaliarFrequencia } = require('../utils/kidsFrequencia');
+const { agruparMotivos, montarContagens, rotuloMotivo } = require('../utils/kidsSituacao');
 // O Planning Center Check-Ins saiu do código (Marcos 2026-07-20): a frequência
 // do Kids é 100% do nosso totem (kids_checkins). Sobrou só a coluna legada
 // kids_criancas.planning_center_id e a tabela kids_pco_presencas (histórico
@@ -346,10 +350,11 @@ function _hojeBRT() {
 
 // Data-limite de uma criança visitante = hoje (BRT) + 28 dias (4 domingos · o
 // dia + 3 semanas · Marcos 2026-07-20). Passou disso, ela inativa sozinha.
+// ⚠️ Delega para `utils/kidsVisitante` — a régua de prazo e de promoção vive lá
+// (pura, no gate). Duas cópias divergiriam no dia em que o prazo mudasse, e é
+// justamente o prazo que torna a régua de 3 check-ins viável.
 function _dataLimiteVisitante() {
-  const d = new Date(_hojeBRT() + 'T12:00:00Z');
-  d.setUTCDate(d.getUTCDate() + 28);
-  return d.toISOString().slice(0, 10);
+  return kidsVisitante.prazoDe(_hojeBRT());
 }
 
 // ── Ensaio (Marcos 2026-07-21/22 · design v5) ────────────────────────────────
@@ -492,25 +497,48 @@ async function inativarVisitantesVencidos() {
   return (data || []).length;
 }
 
-// Visitante que VOLTA (Marcos 2026-07-20): um novo check-in com check-in anterior
-// de OUTRO dia promove a criança a FREQUENTADOR na hora — definitivo (limpa prazo
-// e relação; nada volta a marcá-la visitante sozinho). Roda DEPOIS do insert do
-// check-in, best-effort: nunca trava nem atrasa o check-in.
+// Visitante que VOLTA · régua de 20/08/2026 (Matheus): promove no **3º dia** com
+// check-in — era o 2º (Marcos, 20/07). E o prazo de 4 semanas passa a ser
+// RENOVADO a cada check-in.
+//
+// ⚠️⚠️ O prazo rolante NÃO é detalhe: visitante que passa do `data_limite` é
+// INATIVADA automaticamente. Medido em 20/08, a mediana entre o 1º e o 2º
+// check-in é 7 dias, então o 3º cai por volta do 28º–30º dia para quem vem de
+// 15 em 15 — com prazo FIXO, exigir 3 check-ins DESATIVARIA a criança antes de
+// ela poder ser promovida. Com o prazo rolando, a régua é "3 visitas, com no
+// máximo 4 semanas entre elas".
+//
+// ⚠️ Conta DIAS DISTINTOS, não linhas de `kids_checkins`: são 4 horários de
+// culto no domingo, e contar linha promoveria numa única manhã.
+//
+// Roda DEPOIS do insert do check-in, best-effort: nunca trava nem atrasa o
+// check-in. Devolve true só quando PROMOVEU (o chamador loga).
 async function promoverVisitanteRecorrente(criancaId) {
   try {
     const { data: cr } = await supabase.from('kids_criancas')
       .select('id, visitante').eq('id', criancaId).maybeSingle();
     if (!cr || cr.visitante !== true) return false;
-    // Já veio em outro dia? (o check-in de agora é de hoje · compara em BRT)
-    const { data: prev } = await supabase.from('kids_checkins')
-      .select('id').eq('crianca_id', criancaId).is('deleted_at', null)
-      .lt('checkin_at', `${_hojeBRT()}T00:00:00-03:00`).limit(1);
-    if (!prev || !prev.length) return false;
+
+    // Dias DISTINTOS com check-in, o de hoje incluído.
+    const { data: todos, error: eCk } = await supabase.from('kids_checkins')
+      .select('checkin_at').eq('crianca_id', criancaId).is('deleted_at', null)
+      .order('checkin_at', { ascending: false }).limit(50);
+    // ⚠️ Falha de LEITURA não promove nem renova: não sabemos quantos dias são,
+    // e promover no escuro é definitivo (nada rebaixa depois).
+    if (eCk) { console.error('[totemKids/promoverVisitanteRecorrente]', eCk.message); return false; }
+    const dias = new Set((todos || []).map((c) => String(c.checkin_at).slice(0, 10))).size;
+
+    const patch = kidsVisitante.patchAposCheckin({
+      eVisitante: true, diasComCheckin: dias, hojeISO: _hojeBRT(),
+    });
+    if (!patch) return false;
+    const { promovida, ...campos } = patch;
+
     const { error } = await supabase.from('kids_criancas')
-      .update({ visitante: false, data_limite: null, visitante_relacao: null, updated_at: new Date().toISOString() })
+      .update({ ...campos, updated_at: new Date().toISOString() })
       .eq('id', criancaId).eq('visitante', true);
     if (error) { console.error('[totemKids/promoverVisitanteRecorrente]', error.message); return false; }
-    return true;
+    return promovida === true;
   } catch (e) {
     console.error('[totemKids/promoverVisitanteRecorrente]', e.message);
     return false;
@@ -1422,6 +1450,65 @@ router.post('/familia-revisar', authorizeModule('kids', 2), async (req, res) => 
 });
 
 // GET /api/totem-kids/criancas · listagem completa (admin)
+// Contagem das 3 situações, direto no BANCO.
+//
+// ⚠️⚠️ COUNT no banco, NUNCA contagem sobre a lista carregada: `GET /criancas`
+// traz um lado só (`?ativo=`), então contar em JS mostraria "0 inativas" sempre
+// que a tela estivesse na aba de ativos — e zero é o número que ninguém
+// investiga. Os cards têm que dizer a mesma coisa nas duas abas.
+//
+// ⚠️ `head: true` (só o cabeçalho de contagem) NÃO passa pelo cap de 1000 do
+// PostgREST que trunca `select` — é por isso que aqui não há paginação.
+//
+// ⚠️ `.is('deleted_at', null)` nas três: criança soft-deletada não conta.
+// Sem esse filtro os cards diriam 1.142 onde a lista mostra 1.087 (foi o bug
+// medido em 17/08/2026 na própria lista desta tela).
+//
+// ⚠️ Cada contagem falha SOZINHA (`allSettled`): perder as inativas não pode
+// apagar o card de visitantes. O que não vier fica `null` e a tela marca âmbar.
+async function contarSituacoesKids() {
+  const contar = async (aplicar) => {
+    let q = supabase
+      .from('kids_criancas')
+      .select('id', { count: 'exact', head: true })
+      .is('deleted_at', null);
+    q = aplicar(q);
+    const { count, error } = await q;
+    if (error) throw error;
+    return count;
+  };
+
+  const [ativas, visitantes, inativas] = await Promise.allSettled([
+    contar((q) => q.eq('ativo', true)),
+    // ⚠️ `.eq('ativo', true).eq('visitante', true)` — visitante é a EXCEÇÃO;
+    // frequentadora é derivada por subtração logo abaixo. Contar frequentadora
+    // com `.eq('visitante', false)` perderia quem tem a coluna NULA (a maioria
+    // do import antigo), e o card não fecharia com o total de ativas.
+    contar((q) => q.eq('ativo', true).eq('visitante', true)),
+    contar((q) => q.eq('ativo', false)),
+  ]);
+
+  const val = (r) => (r.status === 'fulfilled' ? r.value : undefined);
+  const nAtivas = val(ativas);
+  const nVisit = val(visitantes);
+
+  for (const r of [ativas, visitantes, inativas]) {
+    if (r.status === 'rejected') {
+      console.error('[totemKids] contagem de situação:', r.reason?.message || r.reason);
+    }
+  }
+
+  return montarContagens({
+    // Frequentadora = ativa que NÃO é visitante. Espelha o `c.visitante !== true`
+    // que a tela usa pra filtrar — as duas réguas têm que concordar, senão o
+    // card diz um número e a lista filtrada mostra outro.
+    frequentadoras:
+      typeof nAtivas === 'number' && typeof nVisit === 'number' ? nAtivas - nVisit : undefined,
+    visitantes: nVisit,
+    inativas: val(inativas),
+  });
+}
+
 router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
   try {
     const ativo = req.query.ativo !== 'false';
@@ -1435,7 +1522,7 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
         .from('kids_criancas')
         .select(`
           id, nome, data_nascimento, sexo, foto_url, foto_storage_path, foto_consentimento_em, observacoes_medicas,
-          necessidades_especiais, serie, consent_marketing, data_conversao, data_batismo, visitante, visitante_relacao, data_limite, ativo, inativado_em, familia_id,
+          necessidades_especiais, serie, consent_marketing, data_conversao, data_batismo, visitante, visitante_relacao, data_limite, ativo, inativado_em, motivo_inativacao, familia_id,
           familia:mem_familias(id, nome),
           responsaveis:kids_responsaveis(membro:mem_membros(id, nome, telefone))
         `)
@@ -1527,6 +1614,12 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
         checkins_total: avisoFrequencia ? null : f.total,
         ultimo_checkin: avisoFrequencia ? null : f.ultimo,
         frequenta: avisoFrequencia ? null : frequentaNaJanela(f.ultimo),
+        // ⚠️⚠️ O rótulo do motivo é normalizado AQUI, no servidor, e não na
+        // tela: um espelho da régua em `src/lib` divergiria no primeiro ajuste,
+        // e a divergência apareceria como o MESMO motivo partido em dois baldes
+        // no resumo (que é agrupado por este texto). Uma régua, um lugar.
+        // `null` = não há motivo registrado, e a tela DIZ isso.
+        motivo_inativacao_label: rotuloMotivo(c.motivo_inativacao),
       };
     });
 
@@ -1539,6 +1632,14 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
           ...avaliarFrequencia(itens, { coletaDesde }),
           aviso: avisoFrequencia,
         },
+        contagens: await contarSituacoesKids(),
+        // ⚠️ O detalhamento por motivo sai da lista JÁ CARREGADA, e só quando o
+        // lado carregado é o dos INATIVOS. Contar de novo as 3,3 mil linhas
+        // inativas só pra montar o resumo pagaria uma varredura extra em toda
+        // abertura da tela; `null` aqui é "não medido nesta aba", e a tela diz
+        // isso em vez de desenhar um resumo vazio (que se lê como "não há
+        // motivo registrado em ninguém").
+        motivos: ativo === false ? agruparMotivos(data) : null,
       });
     }
     res.json(itens);
@@ -2279,7 +2380,12 @@ router.patch('/batismos/:id', authorizeModule('kids', 3), async (req, res) => {
 router.get('/apresentacoes', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { data } = await supabase.from('apresentacao_criancas')
-      .select('id, nome_pai, nome_mae, crianca_nome, crianca_idade, telefone, data_apresentacao, status, observacoes, origem, crianca_id, created_at')
+      // ⚠️ `crianca_data_nascimento` (22/08/2026): `crianca_idade` é SNAPSHOT do dia
+      // da inscrição e envelhece sozinho — "8 meses" de maio segue 8 meses em
+      // setembro. Com a data, o app calcula a idade de HOJE.
+      // ⚠️ Nada de CPF, e-mail ou endereço aqui: a lista é PII na tela de um
+      // celular, e nada disso é preciso pra contatar a família.
+      .select('id, nome_pai, nome_mae, crianca_nome, crianca_idade, crianca_data_nascimento, telefone, data_apresentacao, status, observacoes, origem, crianca_id, created_at')
       .is('deleted_at', null)
       .order('data_apresentacao', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })
@@ -2322,6 +2428,123 @@ router.delete('/apresentacoes/:id', authorizeModule('kids', 4), async (req, res)
 
 // GET /dashboard · resumo do Kids (cards) + solicitações de vínculo pendentes +
 // aniversariantes da semana. Alimenta o hub/dashboard do módulo.
+
+// ════════════════════════════════════════════════════════════════════════════
+//  GET /api/totem-kids/cadastros-novos?dias=|ano=  — "quantas crianças novas?"
+//
+//  Pedido do Matheus (31/08/2026): ele perguntou quantos cadastros saíram no
+//  domingo e pediu a funcionalidade dentro do módulo. Medido no dia: 28 no
+//  domingo 30/08 (18 visitantes) contra 14 no domingo anterior.
+//
+//  ⚠️⚠️ O dia é BRT. `created_at` é timestamptz e o cadastro acontece no culto
+//  — inclusive o da NOITE, que passa das 21h, quando o dia UTC já virou. A
+//  conversão dos limites está em `utils/cadastrosKids.limitesUtc`: filtrar pela
+//  data crua pegaria 3h do dia anterior, e o número de um domingo vazaria para
+//  o outro.
+//
+//  ⚠️ Nível 1 — o mesmo que abre o módulo. É contagem operacional, e a lista
+//  traz só o que a tela de Crianças já mostra pra quem tem esse nível.
+// ════════════════════════════════════════════════════════════════════════════
+router.get('/cadastros-novos', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const janela = resolverJanelaPeriodo({
+      dias: req.query.dias, ano: req.query.ano,
+      // Período LIVRE (De/Até) · pedido do Matheus 31/08/2026: "escolher um
+      // período para ver quantos visitantes tive e quais foram".
+      // ⚠️ Data inválida ou intervalo invertido NÃO derruba a tela nem devolve
+      // janela vazia — cai na janela móvel padrão (a régua decide isso), porque
+      // "0 visitantes" se lê como resposta e a pergunta foi mal digitada.
+      inicio: req.query.inicio, fim: req.query.fim,
+      diasValidos: [7, 30, 90, 365], diasPadrao: 30,
+    });
+    // Janela móvel não tem fim: vai até HOJE (em BRT).
+    const fimBRT = janela.fim || diaBRT(new Date().toISOString());
+    const lim = limitesUtc(janela.inicio, fimBRT);
+    if (!lim) return res.status(400).json({ error: 'Período inválido' });
+
+    // ⚠️ Paginado: o cap de 1000 do PostgREST trunca em silêncio, e "365 dias"
+    // passa disso com folga numa base que cadastra ~30 por domingo.
+    const linhas = await fetchCriancasPaginado(
+      'id, nome, data_nascimento, visitante, created_at, created_by, deleted_at, planning_center_id',
+      (q) => q.gte('created_at', lim.desde).lt('created_at', lim.ate),
+    );
+
+    // Responsável: a pergunta que importa é "ficou completo?". Uma criança sem
+    // responsável não pode ser retirada por ninguém no domingo seguinte.
+    const ids = linhas.map((l) => l.id);
+    const comResp = new Set();
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data } = await supabase.from('kids_responsaveis')
+        .select('crianca_id').in('crianca_id', ids.slice(i, i + 200));
+      (data || []).forEach((r) => comResp.add(r.crianca_id));
+    }
+    const enriquecidas = linhas.map((l) => ({ ...l, tem_responsavel: comResp.has(l.id) }));
+
+    // Quem cadastrou (nome do profile). ⚠️ `created_by` NULO é o caso das
+    // portas públicas/app, que gravam com service_role — não é erro, e a tela
+    // diz "porta pública" em vez de deixar o campo vazio.
+    const autores = [...new Set(enriquecidas.map((l) => l.created_by).filter(Boolean))];
+    const nomePorAutor = {};
+    if (autores.length) {
+      const { data } = await supabase.from('profiles').select('id, name').in('id', autores.slice(0, 200));
+      (data || []).forEach((p) => { nomePorAutor[p.id] = p.name; });
+    }
+
+    const resumo = resumirCadastros(enriquecidas);
+    const serie = serieDiaria(enriquecidas, janela.inicio, fimBRT);
+
+    // ⚠️ A lista vem das mais RECENTES e é capada — e o teto é DECLARADO, senão
+    // "50" se lê como "foram só 50".
+    const TETO = 100;
+    // ⚠️⚠️ A lista é só do que foi CADASTRADO NO CULTO. Import (3.381 num único
+    // dia, 30/06/2026) entra no `resumo.importadas` e fica FORA daqui — quem
+    // pediu "quais visitantes eu tive" não quer rolar 3 mil linhas de planilha.
+    const vivas = enriquecidas.filter((l) => !l.deleted_at && !temMarcaDeImport(l))
+      .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    // Só os visitantes, pra a tela responder "quais foram" sem uma 2ª consulta.
+    const visitantes = vivas.filter((l) => l.visitante === true);
+
+    res.json({
+      janela: {
+        inicio: janela.inicio, fim: fimBRT, dias: janela.dias, ano: janela.ano,
+        livre: janela.livre === true,
+        // ⚠️ DECLARA quando o fim pedido foi encurtado pra hoje: sem isso o
+        // número parece ser de um período que a pessoa não vai reconhecer.
+        fim_ajustado: janela.fim_ajustado === true,
+        rotulo: rotuloJanela(janela),
+      },
+      resumo,
+      serie,
+      // "ontem" e "hoje" prontos: é o que a pessoa olha na segunda de manhã.
+      hoje: serie.length ? serie[serie.length - 1].total : 0,
+      ontem: serie.length > 1 ? serie[serie.length - 2].total : 0,
+      criancas: vivas.slice(0, TETO).map((l) => ({
+        id: l.id, nome: l.nome, data_nascimento: l.data_nascimento,
+        visitante: l.visitante, dia: diaBRT(l.created_at),
+        criado_por: l.created_by ? (nomePorAutor[l.created_by] || 'equipe') : null,
+        tem_responsavel: l.tem_responsavel,
+      })),
+      truncado: vivas.length > TETO, mostrando: Math.min(vivas.length, TETO),
+      // "Quais visitantes eu tive no período" — a resposta nominal.
+      // ⚠️ Teto PRÓPRIO e DECLARADO: "53" não pode se ler como "foram só 53"
+      // quando o período tem mais.
+      visitantes: visitantes.slice(0, TETO).map((l) => ({
+        id: l.id, nome: l.nome, data_nascimento: l.data_nascimento,
+        dia: diaBRT(l.created_at),
+        criado_por: l.created_by ? (nomePorAutor[l.created_by] || 'equipe') : null,
+        tem_responsavel: l.tem_responsavel,
+      })),
+      visitantes_truncado: visitantes.length > TETO,
+      visitantes_total: visitantes.length,
+    });
+  } catch (e) {
+    // ⚠️ 500 com motivo, nunca zero: "ninguém foi cadastrado" e "a consulta
+    // falhou" levam a decisões opostas.
+    console.error('[kids] cadastros-novos:', e.message);
+    res.status(500).json({ error: 'Erro ao contar os cadastros', detalhe: e.message });
+  }
+});
+
 router.get('/dashboard', authorizeModule('kids', 1), async (req, res) => {
   try {
     const corteBat = new Date(); corteBat.setFullYear(corteBat.getFullYear() - 13);
@@ -2746,6 +2969,66 @@ router.delete('/responsaveis/:id', authorizeModule('kids', 3), async (req, res) 
 // ═══════════════════════════════════════════════════════════════════════════
 // CHECK-IN / CHECK-OUT
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ── GET /api/totem-kids/sem-checkin · crianças ATIVAS que nunca fizeram um
+// único check-in no totem ────────────────────────────────────────────────────
+// ⚠️⚠️ POR QUE É UMA LISTA SEPARADA, e não parte do radar de ausentes.
+// `fn_kids_ausentes_consecutivos` faz `JOIN` com a presença para calcular
+// quantos cultos a criança perdeu — quem NUNCA teve check-in não tem de onde
+// contar e sai do resultado. Medido em 20/08/2026: **554 crianças ativas** nesse
+// estado, invisíveis em qualquer tela. São "não estão vindo" tanto quanto as 270
+// do radar, mas por outro motivo, e o encaminhamento é outro: a maioria veio do
+// import do Planning Center e provavelmente é cadastro a desativar, enquanto o
+// ausente é criança que vinha e parou (e se liga para ela).
+// Juntar os dois num número só (decisão do Matheus · 20/08) faria o radar saltar
+// de 270 para ~824 e a fila de acompanhamento pastoral virar limpeza de base.
+//
+// ⚠️ Só criança ATIVA: desativar tira daqui, que é o pedido dele.
+router.get('/sem-checkin', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const limite = Math.min(Math.max(Number(req.query.limit) || 500, 1), 2000);
+
+    const { data: comCheckin, error: eCk } = await supabase
+      .from('kids_checkins').select('crianca_id').is('deleted_at', null).limit(100000);
+    // ⚠️ Falha de LEITURA não vira "ninguém fez check-in": isso listaria as
+    // 1.076 ativas como se nunca tivessem vindo, e alguém desativaria em massa.
+    if (eCk) throw new Error(`Não foi possível ler os check-ins: ${eCk.message}`);
+    const jaVeio = new Set((comCheckin || []).map((c) => c.crianca_id));
+
+    const { data: ativas, error: eAt } = await supabase
+      .from('kids_criancas')
+      .select('id, nome, data_nascimento, sexo, visitante, created_at, planning_center_id')
+      .eq('ativo', true).is('deleted_at', null)
+      .order('created_at', { ascending: true }).limit(5000);
+    if (eAt) throw eAt;
+
+    const semCheckin = (ativas || []).filter((c) => !jaVeio.has(c.id));
+
+    const itens = semCheckin.slice(0, limite).map((c) => ({
+      crianca_id: c.id,
+      nome: c.nome,
+      idade_meses: c.data_nascimento ? calcIdadeMeses(c.data_nascimento) : null,
+      idade_label: c.data_nascimento ? formatIdade(calcIdadeMeses(c.data_nascimento)) : null,
+      sexo: c.sexo || null,
+      visitante: c.visitante === true,
+      cadastrada_em: c.created_at ? String(c.created_at).slice(0, 10) : null,
+      // ⚠️ Distingue quem veio do import do PCO de quem foi cadastrada aqui: são
+      // encaminhamentos diferentes (limpeza de base × criança que não apareceu).
+      do_import: !!c.planning_center_id,
+    }));
+
+    res.json({
+      total: semCheckin.length,
+      do_import: semCheckin.filter((c) => c.planning_center_id).length,
+      cadastradas_aqui: semCheckin.filter((c) => !c.planning_center_id).length,
+      truncado: semCheckin.length > itens.length,
+      itens,
+    });
+  } catch (e) {
+    console.error('[totemKids/sem-checkin]', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao listar crianças sem check-in' });
+  }
+});
 
 // GET /api/totem-kids/ausentes?min=3 · crianças ativas faltando N cultos seguidos
 // (aba dedicada · mesma régua do alerta) + contato dos responsáveis pra ação.
@@ -4925,6 +5208,10 @@ async function processarLinhaImport(row, colMap, dryRun, userId) {
       observacoes_medicas: alergia,
       observacoes_internas: obs,
       visitante: true,
+      // ⚠️⚠️ `data_limite` OBRIGATÓRIO: sem prazo a visitante nunca é promovida
+      // (não tem check-in) nem inativada (a varredura exige prazo vencido) —
+      // vira VISITANTE ETERNA. Eram 23 assim em produção (20/08/2026).
+      data_limite: _dataLimiteVisitante(),
       ativo: true,
       created_by: userId,
     }).select('id').single();
@@ -5260,6 +5547,10 @@ router.post('/vinculo-solicitacoes/:id/aprovar', authorizeModule('kids', 3), asy
           observacoes_medicas: s.observacoes_medicas || null,
           familia_id: familiaId,
           visitante: true,
+      // ⚠️⚠️ `data_limite` OBRIGATÓRIO: sem prazo a visitante nunca é promovida
+      // (não tem check-in) nem inativada (a varredura exige prazo vencido) —
+      // vira VISITANTE ETERNA. Eram 23 assim em produção (20/08/2026).
+      data_limite: _dataLimiteVisitante(),
           created_by: req.user?.id || null,
         })
         .select('id')

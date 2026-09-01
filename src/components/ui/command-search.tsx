@@ -7,7 +7,7 @@ import {
   Search, Users, DollarSign, Truck, Tag, CalendarDays,
   FolderKanban, BookOpen, ClipboardList, Bot, User,
   LayoutDashboard, Map, UserCheck, UsersRound, Heart,
-  HandHelping, Megaphone, Sparkles, Settings,
+  HandHelping, Megaphone, Sparkles, Settings, Filter,
 } from 'lucide-react'
 
 interface SearchItem {
@@ -45,6 +45,9 @@ const PAGES: SearchItem[] = [
   { label: 'Entradas', description: 'Porta de entrada · liga inscrição ao membro e funde duplicados', path: '/entradas', icon: Users, category: 'Ministerial', module: 'next-batismo' },
   { label: 'Jornada da Igreja', description: 'Profundidade · 5 valores · Membro Modelo (≥2 valores)', path: '/jornada', icon: Sparkles, category: 'Inteligência' },
   { label: 'Censo', description: 'Perfil demográfico e engajamento da comunidade · pesquisas próprias', path: '/censo', icon: ClipboardList, category: 'Inteligência', module: 'censo' },
+  // ⚠️ Mesma entrada do mega-menu (AppShell). As duas listas são espelhos: item
+  // que só existe numa delas fica achável por um caminho e invisível pelo outro.
+  { label: 'Cruzamentos', description: 'Cruza batismo, NEXT, conversão, grupos e voluntariado · quem está onde', path: '/admin/cruzamentos', icon: Filter, category: 'Inteligência', module: 'membresia' },
 ]
 
 export function CommandSearch() {

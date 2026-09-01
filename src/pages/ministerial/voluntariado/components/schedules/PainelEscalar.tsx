@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Search, Users, Clock } from 'lucide-react';
 import { format } from 'date-fns';
+import AvatarVoluntario from './AvatarVoluntario';
 
 /**
  * Painel lateral de escalar — o coração da montagem, no formato do Planning
@@ -53,11 +54,9 @@ function LinhaCandidato({ v, marcado, onToggle }: { v: any; marcado: boolean; on
   return (
     <label className="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-accent/50 cursor-pointer transition-colors">
       <Checkbox checked={marcado} onCheckedChange={onToggle} />
-      <div className="h-8 w-8 rounded-full bg-muted flex items-center justify-center text-xs font-medium shrink-0 overflow-hidden">
-        {v.avatar_url
-          ? <img data-foto-avatar="" src={v.avatar_url} alt={v.full_name} className="h-full w-full object-cover" />
-          : String(v.full_name || '?').charAt(0).toUpperCase()}
-      </div>
+      {/* ⚠️ `foto_url` (resolvida no servidor), NUNCA `avatar_url`: aquele campo
+          é placeholder de iniciais do PCO em 121 dos 226 escalados. */}
+      <AvatarVoluntario nome={v.full_name} fotoUrl={v.foto_url} tamanho={32} neutro />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium truncate">{v.full_name}</p>
         {conflito.length > 0 && (

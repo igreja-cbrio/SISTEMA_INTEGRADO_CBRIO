@@ -127,7 +127,54 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
       }
     }
 
-    res.json({ ok: true, disparados, resultados, orfaos_reconciliados, ...(faxina_midia ? { faxina_midia } : {}) });
+    // ── CAMPANHAS · de carona neste cron HORÁRIO (27/08) ────────────────────
+    //
+    // ⚠️ Sem slot novo no `vercel.json`: a Vercel está com 46 crons e o teto do
+    // plano é apertado. Este é o cron horário da Comunicação, e disparo de
+    // campanha É comunicação — é o host certo, não um atalho.
+    //
+    // ⚠️⚠️ CADA BLOCO É PROTEGIDO. Falhar no disparo da campanha NÃO pode
+    // derrubar o agendamento do WhatsApp, o sync de templates nem a
+    // reconciliação de recibos, que são o trabalho principal deste cron. É a
+    // mesma régua da abertura automática de turmas do Next.
+    let campanha_semanal = null;
+    let campanha_disparos = null;
+    let campanha_agradecimentos = null;
+    try {
+      const campanhas = require('./campanhas');
+
+      // Segunda-feira: garante o "pocket" semanal da campanha (o resumo do
+      // domingo, com o link do vídeo e o CTA). A criação é idempotente pela
+      // semana ISO, então rodar 24× na segunda cria UM disparo.
+      if (diaSemana === 1) {
+        const { data: ativas } = await supabase.from('camp_campanhas')
+          .select('id').eq('status', 'ativa').is('deleted_at', null);
+        const criados = [];
+        for (const c of ativas || []) {
+          criados.push(await campanhas.garantirSemanal(c.id).catch((e) => ({ erro: e.message })));
+        }
+        campanha_semanal = criados;
+      }
+
+      // Envia o que está agendado e vencido, com orçamento de tempo: o que não
+      // couber fica pendente e sai na próxima hora (o snapshot por destinatário
+      // é o que faz a retomada não duplicar ninguém).
+      campanha_disparos = await campanhas.enviarPendentes({ budgetMs: 120000 });
+
+      // Agradecimento ao doador: reativo, de hora em hora.
+      campanha_agradecimentos = await campanhas.rodarAgradecimentos({ limite: 40 });
+    } catch (e) {
+      console.error('[comunicacao] campanhas (carona no cron):', e.message);
+      campanha_disparos = { erro: e.message };
+    }
+
+    res.json({
+      ok: true, disparados, resultados, orfaos_reconciliados,
+      ...(faxina_midia ? { faxina_midia } : {}),
+      ...(campanha_semanal ? { campanha_semanal } : {}),
+      ...(campanha_disparos ? { campanha_disparos } : {}),
+      ...(campanha_agradecimentos ? { campanha_agradecimentos } : {}),
+    });
   } catch (e) {
     console.error('[comunicacao] cron agendamentos:', e.message);
     next(communicationError(e, 'Erro no cron de agendamentos.'));
@@ -145,6 +192,30 @@ router.get('/numeros', async (_req, res) => {
   if (error) return res.status(400).json({ error: error.message });
   // Sem cadastro ainda → mostra o número da env como "não cadastrado" (transição)
   res.json({ numeros: data || [], env_phone_number_id: process.env.WHATSAPP_PHONE_NUMBER_ID || null });
+});
+
+// Sugestão de resposta para "quando é o meu grupo?" — as 4 conversas reais de
+// 25/08 (Ana Cristina, Jessica, Thalya e o 98633-5326) eram a MESMA pergunta.
+//
+// ⚠️ É SUGESTÃO, não envio: devolve texto para o atendente revisar e mandar. A
+// lei de 12/08 ("não quero bot; será apenas atendimento humanizado") continua
+// valendo, e é ela que permite a régua ser generosa — errar aqui custa uma
+// sugestão recusada, não uma mensagem errada em nome da igreja.
+// ⚠️ Nível 1 (o mesmo que abre a aba): quem lê a conversa pode ver a sugestão.
+router.get('/conversas/:id/sugestao-grupo', async (req, res) => {
+  try {
+    // ?auto=1 → a tela buscou sozinha ao abrir a conversa: só devolve quando a
+    // régua reconheceu a pergunta (link/agenda). Sem o parâmetro, é o clique da
+    // lâmpada e vale o comportamento de 26/08 (tenta a agenda).
+    const r = await require('../services/sugestaoGrupoAgenda')
+      .sugerirAgenda(req.params.id, { somenteSeReconhecer: req.query.auto === '1' });
+    res.json(r);
+  } catch (e) {
+    // ⚠️ 500 com motivo, nunca `{disponivel:false}`: "não há sugestão" e "a
+    // consulta falhou" levam a decisões opostas na tela.
+    console.error('[comunicacao] sugestao-grupo:', e.message);
+    res.status(500).json({ error: 'Erro ao montar a sugestão', detalhe: e.message });
+  }
 });
 
 router.post('/numeros', authorizeModule('comunicacao', 5), async (req, res) => {

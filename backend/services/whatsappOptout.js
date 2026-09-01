@@ -57,6 +57,24 @@ async function aplicarOptOut({ telefone, ligar = false }) {
     }
   } catch (e) { console.warn('[optout] membros:', e.message); }
 
+  // Inscrições (2026-07-31): `inscricaoWhatsapp` gateia pelo opt-in da PRÓPRIA
+  // INSCRIÇÃO (`inscricoes.whatsapp_optin`), não pelo do membro — a maioria dos
+  // inscritos nem tem cadastro. Sem desligar aqui, quem responde SAIR continuava
+  // recebendo comprovante/confirmação de evento: opt-out pela metade.
+  // Só as inscrições ATIVAS (cancelada não recebe nada de qualquer forma).
+  try {
+    const { data: insc } = await supabase.from('inscricoes')
+      .select('id, telefone').eq('whatsapp_optin', !ligar)
+      .neq('status', 'cancelada').is('deleted_at', null).limit(5000);
+    const alvoI = (insc || []).filter((i) => tel8(i.telefone) === chave);
+    for (const i of alvoI) {
+      await supabase.from('inscricoes')
+        .update({ whatsapp_optin: ligar, whatsapp_optin_em: ligar ? new Date().toISOString() : null })
+        .eq('id', i.id);
+      afetados++;
+    }
+  } catch (e) { console.warn('[optout] inscricoes:', e.message); }
+
   // Líderes (tabela pequena · varre e casa por telefone)
   try {
     const { data: lids } = await supabase.from('whatsapp_lideres')

@@ -172,6 +172,11 @@ export default function DashMensalAba() {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="todos">Todos</SelectItem>
+                  {/* ⚠️ Turno junta os cultos de domingo por horário (manhã até
+                      12h). É a visão que não muda de degrau quando a grade de
+                      domingo muda — o servidor resolve a lista de cultos. */}
+                  <SelectItem value="turno:manha">Domingo manhã (todos)</SelectItem>
+                  <SelectItem value="turno:noite">Domingo noite (todos)</SelectItem>
                   {(cultos || []).map(c => (
                     <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                   ))}

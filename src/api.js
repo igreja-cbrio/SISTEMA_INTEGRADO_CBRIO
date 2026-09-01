@@ -257,6 +257,46 @@ export const events = {
 };
 
 // Módulo Propostas · ciclo anual (Fase 1A: configuração)
+// Campanhas de arrecadação · meta, dígito verificador, cronograma e disparos.
+// ⚠️ A soma do arrecadado vem SEMPRE do servidor (view `vw_camp_arrecadacao`) —
+// nenhuma tela recalcula dinheiro no cliente.
+export const campanhas = {
+  list: (params) => get('/campanhas' + (params ? '?' + new URLSearchParams(params) : '')),
+  get: (id) => get(`/campanhas/${id}`),
+  criar: (data) => post('/campanhas', data),
+  atualizar: (id, data) => put(`/campanhas/${id}`, data),
+  status: (id, status) => post(`/campanhas/${id}/status`, { status }),
+  remover: (id) => del(`/campanhas/${id}`),
+  digitos: () => get('/campanhas/digitos'),
+  segmentos: () => get('/campanhas/segmentos'),
+  aux: () => get('/campanhas/aux'),
+  // ⚠️ Rota PRÓPRIA (não o PUT): trocar o dígito fixa o passado em camp_vinculos
+  // pra a barrinha não perder o que já foi identificado. Ver o handler.
+  definirDigito: (id, digito, motivo) => post(`/campanhas/${id}/digito`, { digito, motivo }),
+  digitoHistorico: (id) => get(`/campanhas/${id}/digito-historico`),
+  lancamentos: (id) => get(`/campanhas/${id}/lancamentos`),
+  pendentes: (id) => get(`/campanhas/${id}/pendentes`),
+  vincular: (id, data) => post(`/campanhas/${id}/vinculo`, data),
+  desvincular: (id, vinculoId) => del(`/campanhas/${id}/vinculo/${vinculoId}`),
+  marcos: {
+    criar: (id, data) => post(`/campanhas/${id}/marcos`, data),
+    atualizar: (marcoId, data) => put(`/campanhas/marcos/${marcoId}`, data),
+    remover: (marcoId) => del(`/campanhas/marcos/${marcoId}`),
+  },
+  disparos: {
+    previa: (id, data) => post(`/campanhas/${id}/disparos/previa`, data),
+    criar: (id, data) => post(`/campanhas/${id}/disparos`, data),
+    atualizar: (disparoId, data) => put(`/campanhas/disparos/${disparoId}`, data),
+    agendar: (disparoId, agendado_para) => post(`/campanhas/disparos/${disparoId}/agendar`, { agendado_para }),
+    cancelar: (disparoId) => post(`/campanhas/disparos/${disparoId}/cancelar`, {}),
+    envios: (disparoId) => get(`/campanhas/disparos/${disparoId}/envios`),
+  },
+  agradecimentos: {
+    list: (id) => get(`/campanhas/${id}/agradecimentos`),
+    rodar: () => post('/campanhas/agradecimentos/rodar', {}),
+  },
+};
+
 export const propostas = {
   config: {
     ciclos: () => get('/propostas/config/ciclos'),
@@ -469,7 +509,10 @@ export const inscricoesApi = {
   atualizarEvento: (id, data) => put(`/inscricoes/eventos/${id}`, data),
   excluirEvento: (id) => del(`/inscricoes/eventos/${id}`),
   novaEdicao: (id, data) => post(`/inscricoes/eventos/${id}/nova-edicao`, data),
-  sortear: (id, premio, permitirRepetir) => post(`/inscricoes/eventos/${id}/sortear`, { premio, permitir_repetir: !!permitirRepetir }),
+  // O sorteio é SEMPRE entre quem fez check-in e uma pessoa nunca leva 2 prêmios
+  // no mesmo evento (decisões do Marcos · 31/07) — não há mais "permitir
+  // repetir". `substituir` = re-sorteio do MESMO prêmio (troca o ganhador).
+  sortear: (id, premio, opts) => post(`/inscricoes/eventos/${id}/sortear`, { premio, substituir: !!opts?.substituir }),
   unificadas: (qs) => get(`/inscricoes/unificadas${qs ? `?${qs}` : ''}`),
   unificadasPessoas: (qs) => get(`/inscricoes/unificadas/pessoas${qs ? `?${qs}` : ''}`),
   unificadasDashboard: (qs) => get(`/inscricoes/unificadas/dashboard${qs ? `?${qs}` : ''}`),
@@ -479,6 +522,9 @@ export const inscricoesApi = {
   // o que ficou de fora por ter pagamento e o que já não estava na lista.
   excluirInscricoesLote: (eventoId, ids) => post(`/inscricoes/eventos/${eventoId}/inscricoes/excluir-lote`, { ids }),
   uploadCapa: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-capa', fd); },
+  // Documentos do evento (orientações gerais, autorização de menor) — bucket
+  // público evento-arquivos. Devolve { url, nome }.
+  uploadArquivoEvento: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-arquivo', fd); },
   // Check-in do evento (SPEC-06) — tela fullscreen: QR do comprovante + busca
   // Inventário das portas públicas do sistema (grupos/next/batismo/…) — read-only
   portas: () => get('/inscricoes/portas'),
@@ -493,6 +539,13 @@ export const inscricoesApi = {
   checkinMarcar: (eventoId, data) => post(`/inscricoes/eventos/${eventoId}/checkin`, data),
   checkinDesfazer: (eventoId, inscricaoId, motivo) => del(`/inscricoes/eventos/${eventoId}/checkin/${inscricaoId}`, { motivo }),
   checkinHistorico: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/historico`),
+  checkinQrAutoatendimento: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/qr-autoatendimento`),
+  checkinAvisoAppPrevia: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/aviso-app`),
+  checkinAvisoAppEnviar: (eventoId) => post(`/inscricoes/eventos/${eventoId}/checkin/aviso-app`, {}),
+  checkinAvisoEmailPrevia: (eventoId) => get(`/inscricoes/eventos/${eventoId}/checkin/aviso-email`),
+  checkinAvisoEmailEnviar: (eventoId) => post(`/inscricoes/eventos/${eventoId}/checkin/aviso-email`, {}),
+  buscarPessoaCadastro: (eventoId, q) => get(`/inscricoes/eventos/${eventoId}/pessoas/buscar?q=${encodeURIComponent(q)}`),
+  inscreverNaHora: (eventoId, payload) => post(`/inscricoes/eventos/${eventoId}/inscrever-na-hora`, payload),
 
   // Templates dos e-mails de inscrição (confirmada / pendente / expirada).
   // Sem template salvo, o e-mail sai no texto padrão do código — a tela mostra
@@ -629,7 +682,9 @@ export const generosidadePublica = {
 
 // Decisão online · formulário público "Eu aceito Jesus" (sem auth)
 export const decisaoOnline = {
-  ativo: () => fetch(`${API}/public/decisao-online/ativo`).then(r => r.json()),
+  ativo: (token) => fetch(
+    `${API}/public/decisao-online/ativo${token ? `?t=${encodeURIComponent(token)}` : ''}`,
+  ).then(r => r.json()),
   registrar: (data) => fetch(`${API}/public/decisao-online`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -663,6 +718,10 @@ export const decisaoCulto = {
 export const next = {
   // Public (sem auth) — para o formulário
   publicEventos: () => fetch(`${API}/public/next/eventos`).then(r => r.json()),
+  // Domingos que a pessoa pode escolher no formulário (1 turma por domingo · 09:30)
+  publicTurmas: () => fetch(`${API}/public/next/turmas`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
   // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
   publicTextos: () => fetch(`${API}/public/next/textos`).then(async r => {
     const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
@@ -841,6 +900,16 @@ export const grupos = {
   update: (id, data) => put(`/grupos/${id}`, data),
   remove: (id) => del(`/grupos/${id}`),
   addMembro: (grupoId, data) => post(`/grupos/${grupoId}/membros`, data),
+  // Cadastrar pessoa NOVA já dentro do grupo (Marcos · 25/08/2026). ⚠️ NÃO
+  // substitui o `addMembro`, que é pra quem JÁ EXISTE na base (manda membro_id);
+  // este passa pelo matcher canônico e cria/liga a pessoa. Mesma régua do app.
+  addPessoaNova: (grupoId, data) => post(`/grupos/${grupoId}/pessoas`, data),
+  // Transferências pedidas pelo líder no app, SEM destino — a 5ª origem da
+  // Caixa de entrada. Quem escolhe o grupo é a coordenação.
+  transferencias: {
+    list: (params) => get('/grupos/transferencias' + (params ? '?' + new URLSearchParams(params) : '')),
+    resolver: (id, body) => post(`/grupos/transferencias/${id}/resolver`, body),
+  },
   // Funil de entrada pro botão "Adicionar": direcionados do Next + inscritos neste grupo
   candidatosAdicionar: (grupoId) => get(`/grupos/${grupoId}/candidatos-adicionar`),
   sairMembro: (participacaoId, data) => patch(`/grupos/participacao/${participacaoId}/sair`, data),
@@ -854,6 +923,11 @@ export const grupos = {
   removeMaterial: (docId) => del(`/grupos/materiais/${docId}`),
   encontros: (grupoId, params) => get(`/grupos/${grupoId}/encontros` + (params ? '?' + new URLSearchParams(params) : '')),
   encontro: (encontroId) => get(`/grupos/encontros/${encontroId}`),
+  // As ocorrências que já passaram e ficaram SEM chamada (espelho web do item 3
+  // do Marcos · 25/08). Endpoint próprio porque `encontros` devolve array cru.
+  encontrosPendentes: (grupoId) => get(`/grupos/${grupoId}/encontros-pendentes`),
+  // Remarcar / cancelar / desfazer UMA ocorrência da agenda. Mesma régua do app.
+  agendaExcecao: (grupoId, body) => post(`/grupos/${grupoId}/agenda`, body),
   // Histórico simples de quem entrou e saiu do grupo (leitura pura · o formato
   // foi pedido pelo Marcos: "tela pequena, com pouco destaque, sem muita
   // interação"). Aprovar pedido segue na Caixa de entrada.
@@ -1207,6 +1281,11 @@ export const agents = {
   log: () => get('/agents/log'),
   run: (data) => post('/agents/run', data),
   runs: (params) => get('/agents/runs' + (params ? '?' + new URLSearchParams(params) : '')),
+  // O que os agentes acharam + plano de ação (aba Diagnósticos do /assistente-ia).
+  diagnosticos: (params) => get('/agents/diagnosticos' + (params ? '?' + new URLSearchParams(params) : '')),
+  // Botão "Resolver todos" da aba Diagnósticos. A prévia NÃO escreve nada.
+  diagnosticosPrevia: (params) => get('/agents/diagnosticos/previa-resolucao' + (params ? '?' + new URLSearchParams(params) : '')),
+  diagnosticosResolver: (body) => post('/agents/diagnosticos/resolver', body || {}),
   runDetail: (id) => get(`/agents/runs/${id}`),
   runSteps: (id) => get(`/agents/runs/${id}/steps`),
   cancelRun: (id) => post(`/agents/runs/${id}/cancel`),
@@ -1344,9 +1423,10 @@ export const financeiro = {
   generosidade: {
     overview: () => get('/financeiro/generosidade/overview'),
     anonimos: () => get('/financeiro/generosidade/anonimos'),
-    pararam: () => get('/financeiro/generosidade/pararam'),
-    top: (periodo = '12m', ordem = 'desc') =>
-      get(`/financeiro/generosidade/top?periodo=${encodeURIComponent(periodo)}&ordem=${encodeURIComponent(ordem)}`),
+    pararam: (periodo = '2m') => get(`/financeiro/generosidade/pararam?periodo=${encodeURIComponent(periodo)}`),
+    top: (periodo = '12m', ordem = 'desc', limite) =>
+      get(`/financeiro/generosidade/top?periodo=${encodeURIComponent(periodo)}&ordem=${encodeURIComponent(ordem)}`
+        + (limite ? `&limite=${encodeURIComponent(limite)}` : '')),
     historico: (membroId, periodo = '12m') =>
       get(`/financeiro/generosidade/top/${encodeURIComponent(membroId)}/historico?periodo=${encodeURIComponent(periodo)}`),
   },
@@ -1743,6 +1823,14 @@ export const logistica = {
       fd.append('arquivo', file);
       return requestFile('/logistica/notas/escanear', fd, { timeoutMs: 120_000 });
     },
+    // Importa NF-e a partir do XML. ⚠️ Lotes de no máximo 25 — o corpo JSON do
+    // Express é limitado a 1 MB e uma NF-e com muitos itens passa de 50 KB.
+    importarXml: (arquivos) => post('/logistica/notas/importar-xml', { arquivos }),
+    // NF-e interpretada (para o espelho impresso). Só notas com XML guardado.
+    nfe: (id) => get(`/logistica/notas/${id}/nfe`),
+    // DANFE oficial (PDF do ML) · lotes menores: base64 infla ~33%
+    importarDanfe: (arquivos) => post('/logistica/notas/importar-danfe', { arquivos }),
+    danfeUrl: (id) => get(`/logistica/notas/${id}/danfe`),
     enviarFinanceiro: (id) => post(`/logistica/notas/${id}/enviar-financeiro`, {}),
     categorias: () => get('/logistica/notas/aux/categorias'),
   },
@@ -2077,6 +2165,8 @@ export const painelArea = {
 // ── Totem Kids · módulo Ministerial > Totem Kids ──
 export const totemKids = {
   dashboard: () => get('/totem-kids/dashboard'),
+  // Cadastros novos de crianças por período (card do módulo · 31/08/2026)
+  cadastrosNovos: (params) => get('/totem-kids/cadastros-novos' + (params ? '?' + new URLSearchParams(params) : '')),
   // Inscrições de voluntariado que querem servir no Kids (coordenação Kids)
   voluntariadoInscricoes: (params) => get('/totem-kids/voluntariado-inscricoes' + (params ? '?' + new URLSearchParams(params) : '')),
   voluntariadoInscricaoUpdate: (id, dados) => patch(`/totem-kids/voluntariado-inscricoes/${id}`, dados),
@@ -2180,6 +2270,9 @@ export const totemKids = {
     pagerDevolvido: (id, devolvido = true) => patch(`/totem-kids/checkin/${id}/pager-devolvido`, { devolvido }),
   },
   cultosDoDia: (data) => get(`/totem-kids/cultos-do-dia?data=${encodeURIComponent(data)}`),
+  // Crianças ativas que NUNCA fizeram check-in no totem — lista SEPARADA do
+  // radar de ausentes (aquele exige presença para calcular ausência).
+  semCheckin: (limit) => get('/totem-kids/sem-checkin' + (limit ? `?limit=${limit}` : '')),
   ausentes: (min = 3) => get(`/totem-kids/ausentes?min=${min}`),
   aniversariantesMes: (mes) => get(`/totem-kids/aniversariantes?mes=${mes}`),
   ausenteContatar: (criancaId) => post(`/totem-kids/ausentes/${criancaId}/contato`, {}),
@@ -2473,7 +2566,11 @@ export const solicitacoes = {
     criarTransicao: (payload) => post('/solicitacoes/fluxos/transicoes', payload),
     removerTransicao: (id) => del(`/solicitacoes/fluxos/transicoes/${id}`),
   },
+  // (importar XML de NF-e vive no namespace `logistica.notas`)
   // Vinculo com pedido Mercado Livre (compras)
+  // Solicitações que ESTE usuário pode vincular — alimenta o seletor da aba
+  // Compras ML. Mesma régua do POST abaixo (backend/utils/vinculoMlSolicitacao).
+  vinculaveisML: () => get('/solicitacoes/vinculaveis-ml'),
   vincularML:   (id, mlInput) => post(`/solicitacoes/${id}/vincular-ml`, { ml_input: mlInput }),
   desvincularML: (id) => del(`/solicitacoes/${id}/vincular-ml`),
   atualizarML:  (id) => post(`/solicitacoes/${id}/atualizar-ml`, {}),
@@ -2567,6 +2664,22 @@ export const nextBatismo = {
 
 export const membresia = {
   kpis: () => get('/membresia/kpis'),
+  // Perfil da Membresia (aba de análises · mapa por bairro + cortes).
+  // ⚠️ Só AGREGADO: nenhum destes endpoints devolve nome, CPF, telefone,
+  // e-mail ou endereço — é o que permite abrir a aba pra líder de área sem
+  // abrir o cadastro de gente junto.
+  perfil: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+    ).toString();
+    return get('/membresia/perfil' + (qs ? '?' + qs : ''));
+  },
+  perfilBairros: () => get('/membresia/perfil/bairros'),
+  perfilGeocode: (limite) => post('/membresia/perfil/bairros/geocode', { limite }),
+  perfilBairroPatch: (norm, campos) =>
+    patch(`/membresia/perfil/bairros/${encodeURIComponent(norm)}`, campos),
+  perfilCeps: () => get('/membresia/perfil/ceps'),
+  perfilCepsGeocode: (limite) => post('/membresia/perfil/ceps/geocode', { limite }),
   qrLookup: (token) => get(`/membresia/qr-lookup/${encodeURIComponent(token)}`),
   cpfLookup: (cpf, nascimento) => get(`/membresia/cpf-lookup/${encodeURIComponent(String(cpf).replace(/\D/g, ''))}?nascimento=${encodeURIComponent(nascimento || '')}`),
   orfaosStats: () => get('/membresia/orfaos-stats'),
@@ -2614,6 +2727,10 @@ export const membresia = {
     create: (data) => post('/membresia/membros', data),
     update: (id, data) => put(`/membresia/membros/${id}`, data),
     remove: (id) => del(`/membresia/membros/${id}`),
+    // ⚠️ Desativar NÃO é `remove` (que é soft-delete e some da base): é
+    // `status='inativo'`, reversível, com motivo opcional.
+    desativar: (id, motivo) => post(`/membresia/membros/${id}/desativar`, { motivo: motivo || null }),
+    reativar: (id, status) => post(`/membresia/membros/${id}/reativar`, status ? { status } : {}),
     uploadFoto: (id, formData) => requestFile(`/membresia/membros/${id}/foto`, formData),
     wifi: (id) => get(`/membresia/membros/${id}/wifi`),
     reconhecimentoFacial: (id) => get(`/membresia/membros/${id}/reconhecimento-facial`),
@@ -3012,6 +3129,20 @@ export const relatorios = {
 };
 
 export const cadastroPublico = {
+  // Catálogo de bairros da lista suspensa. ⚠️ PÚBLICO de propósito: nome de
+  // bairro não identifica ninguém, e a porta de cadastro não tem sessão.
+  // ⚠️ Falha devolve lista VAZIA em vez de lançar — o seletor degrada para
+  // campo de texto e a pessoa termina o cadastro. Catálogo indisponível não
+  // pode travar porta pública.
+  bairros: async () => {
+    try {
+      const res = await fetch(`${API}/public/membresia/bairros`);
+      if (!res.ok) return { bairros: [] };
+      return res.json();
+    } catch {
+      return { bairros: [] };
+    }
+  },
   uploadFoto: async (file) => {
     const fd = new FormData();
     fd.append('foto', file);
@@ -3532,7 +3663,17 @@ export const voluntariado = {
   // Supervisores de área (concedido no sistema · usado pelo app pra montar escala)
   supervisores: {
     list: () => get('/voluntariado/supervisores'),
-    grant: (membro_id, area) => post('/voluntariado/supervisores', { membro_id, area }),
+    // `position_id` = SUBÁREA (vol_positions). null/omitido = toda a área.
+    // `rodizio` = { culto_dia, culto_periodo, culto_semana } · null em cada eixo = curinga.
+    grant: (membro_id, area, position_id = null, rodizio = {}) => post('/voluntariado/supervisores', { membro_id, area, position_id, ...rodizio }),
+    // Editar área, subárea e rodízio de uma concessão que já existe (25/08).
+    // ⚠️ Preserva `concedido_por`/`created_at` — apagar e recriar perdia a
+    // trilha de quem deu o acesso e quando.
+    update: (id, body) => patch(`/voluntariado/supervisores/${id}`, body),
+    // Diz POR QUE a pessoa não aparece: tem cadastro pra vincular, ou não tem
+    // cadastro nenhum? (a mensagem anterior mandava pra Entradas, que não resolve)
+    candidatos: (volProfileId) => get(`/voluntariado/supervisores/candidatos?vol_profile_id=${encodeURIComponent(volProfileId)}`),
+    vincular: (vol_profile_id, membro_id) => post('/voluntariado/supervisores/vincular', { vol_profile_id, membro_id }),
     revoke: (id) => del(`/voluntariado/supervisores/${id}`),
   },
   // CPF / Membresia unification
@@ -3779,6 +3920,12 @@ export const waInbox = {
 
 // Módulo Comunicação (central de WhatsApp · C3 backend · rotas /comunicacao/*)
 export const comunicacao = {
+  // Sugestão de resposta para "quando é o meu grupo?" — as 4 conversas reais de
+  // 25/08 (Ana Cristina, Jessica, Thalya e o 98633-5326) eram a MESMA pergunta.
+  // ⚠️ Só SUGERE: devolve texto pra pessoa revisar e enviar. A lei de 12/08
+  // ("não quero bot; será apenas atendimento humanizado") continua valendo.
+  sugestaoGrupo: (conversaId, auto) => get(`/comunicacao/conversas/${conversaId}/sugestao-grupo${auto ? '?auto=1' : ''}`),
+
   // Inventário dos disparos automáticos + o público de cada um. `pessoas=1`
   // carrega nome/telefone e o servidor só devolve com nível >= 2.
   // ⚠️ Timeout maior: cada item resolve o próprio público paginando a base
@@ -4179,6 +4326,32 @@ export const estrategia = {
   okrsPorTipo:  () => get('/estrategia/okrs-por-tipo'),
   setOkrTipo:   (id, tipo_okr) => put(`/estrategia/objetivos/${id}/tipo`, { tipo_okr }),
   setDadoPrincipal: (id, dado_tipo_principal) => put(`/estrategia/objetivos/${id}/dado-tipo-principal`, { dado_tipo_principal }),
+
+  // ── Fase 2A (21/08/2026) · o desenho que substitui a camada de KRs ──
+  // Índice da Base = agregação DERIVADA (topo 2 da fatia da presidência).
+  // ⚠️ LENTE VIVA — não é a base fixa de 3.000 da planilha do Pr. Juninho.
+  indiceBase: () => get('/estrategia/indice-base'),
+
+  // Linhagem = etiqueta de LEITURA do KPI tático (nsm | jornada | sistema)
+  linhagem: {
+    resumo: () => get('/estrategia/linhagem/resumo'),
+    set:    (kpiId, linhagem) => put(`/estrategia/linhagem/${kpiId}`, { linhagem }),
+  },
+
+  // OKRs de ciclo · trimestrais, com dono, delta pactuado; morrem no fim.
+  // ⚠️ NÃO confundir com `krs` acima (camada kpi_krs, desativada em 21/08).
+  ciclos: {
+    list:    () => get('/estrategia/ciclos'),
+    vigente: () => get('/estrategia/ciclos/vigente'),
+    get:     (id) => get(`/estrategia/ciclos/${id}`),
+    create:  (body) => post('/estrategia/ciclos', body),
+    update:  (id, body) => patch(`/estrategia/ciclos/${id}`, body),
+    krs: {
+      create: (cicloId, body) => post(`/estrategia/ciclos/${cicloId}/krs`, body),
+      update: (id, body) => patch(`/estrategia/ciclo-krs/${id}`, body),
+      remove: (id) => del(`/estrategia/ciclo-krs/${id}`),
+    },
+  },
 };
 
 // ── Painel CBRio (mandalas, matriz, alertas, drilldown) ──
@@ -4364,6 +4537,18 @@ export const censoPublico = {
 };
 
 export const online = {
+  // Aceitações online (decisões nominais) + QRs do apelo por culto.
+  aceitacoes: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+    ).toString();
+    return get('/online/aceitacoes' + (qs ? '?' + qs : ''));
+  },
+  qrCultos: (inicio, fim) => get(`/online/qr-cultos?inicio=${inicio}&fim=${fim}`),
+  // O link do cadastro de membresia com `?origem=online`. Vem do SERVIDOR de
+  // propósito: o caminho sai do catálogo de formulários públicos e a base é
+  // única — montar a URL na tela é como link público vira link morto.
+  linkMembresia: () => get('/online/link-membresia'),
   dashboard: () => get('/online/dashboard'),
   engajamento: () => get('/online/engajamento'),
   cultosMetricas: (limit) => get('/online/cultos-metricas' + (limit ? '?limit=' + limit : '')),

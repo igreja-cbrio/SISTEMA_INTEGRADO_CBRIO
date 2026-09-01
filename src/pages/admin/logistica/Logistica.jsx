@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
-import { logistica, ml, arquivei } from '../../../api';
+import { logistica, ml, arquivei, solicitacoes as solicitacoesApi } from '../../../api';
 import { supabase } from '../../../supabaseClient';
 import { Button } from '../../../components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -8,6 +8,19 @@ import { Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import LogisticaEstoque from './LogisticaEstoque';
 import LogisticaCompras from './LogisticaCompras';
+
+
+// Motivos de recusa do importador de NF-e, em português. ⚠️ Slug cru na tela se
+// lê como erro do sistema, não como "esta nota não devia entrar".
+const MOTIVO_NF = {
+  nao_e_nfe: 'arquivo não é NF-e',
+  arquivo_vazio: 'arquivo vazio',
+  sem_chave_de_acesso: 'sem chave de acesso',
+  nao_autorizada: 'cancelada ou denegada (não vira despesa)',
+  destinatario_diferente: 'endereçada a outro CNPJ',
+  sem_valor_total: 'sem valor total legível',
+  sem_data_emissao: 'sem data de emissão',
+};
 
 // ── Tema ────────────────────────────────────────────────────
 const C = {
@@ -710,6 +723,135 @@ const NF_STATUS = {
 
 function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, scanning, onEdit, onEnviar }) {
   const scanRef = useRef(null);
+  const xmlRef = useRef(null);
+  const [impNf, setImpNf] = useState({ rodando: false, feitos: 0, total: 0 });
+
+  // ⚠️ O ZIP é aberto AQUI, no navegador (jszip já é dependência do front): o
+  // backend roda em função serverless com teto de 250 MB e a lei do repo é não
+  // somar dependência lá sem necessidade. E o corpo JSON do Express é 1 MB, daí
+  // o envio em lotes de 25.
+  async function importarXmls(fileList) {
+    const files = [...(fileList || [])];
+    if (!files.length) return;
+    setLocalError(''); setSuccessMsg('');
+
+    let arquivos = [];
+    const pdfs = [];
+    // ⚠️ PDF é BINÁRIO: vai em base64. XML é texto. Separar aqui evita mandar
+    // um pro endpoint do outro.
+    const comoBase64 = (buf) => {
+      let bin = ''; const b = new Uint8Array(buf);
+      for (let i = 0; i < b.length; i += 1) bin += String.fromCharCode(b[i]);
+      return btoa(bin);
+    };
+    try {
+      for (const f of files) {
+        if (/\.zip$/i.test(f.name)) {
+          const JSZip = (await import('jszip')).default;
+          const zip = await JSZip.loadAsync(f);
+          for (const z of Object.values(zip.files)) {
+            if (z.dir) continue;
+            if (/\.xml$/i.test(z.name)) arquivos.push({ nome: z.name, xml: await z.async('string') });
+            else if (/\.pdf$/i.test(z.name)) pdfs.push({ nome: z.name, base64: await z.async('base64') });
+          }
+        } else if (/\.pdf$/i.test(f.name)) {
+          pdfs.push({ nome: f.name, base64: comoBase64(await f.arrayBuffer()) });
+        } else {
+          arquivos.push({ nome: f.name, xml: await f.text() });
+        }
+      }
+    } catch (e) {
+      setLocalError('Não foi possível abrir o arquivo: ' + e.message);
+      return;
+    }
+    if (!arquivos.length && !pdfs.length) { setLocalError('Nenhum XML ou PDF encontrado no que você enviou.'); return; }
+
+    // ⚠️ Acumula o resultado LOTE A LOTE: se a conexão cair no meio, o que já
+    // entrou está gravado e a tela diz quanto foi (lei de 04/08 — registrar o
+    // efeito DURANTE, não no fim).
+    const LOTE = 25;
+    let importadas = 0, repetidas = 0, vinculadas = 0;
+    const recusadas = [], falhas = [];
+    setImpNf({ rodando: true, feitos: 0, total: arquivos.length + pdfs.length });
+    try {
+      for (let i = 0; i < arquivos.length; i += LOTE) {
+        const r = await logistica.notas.importarXml(arquivos.slice(i, i + LOTE));
+        importadas += r.importadas || 0;
+        repetidas += r.repetidas || 0;
+        vinculadas += r.vinculadas || 0;
+        recusadas.push(...(r.recusadas || []));
+        falhas.push(...(r.falhas || []));
+        setImpNf({ rodando: true, feitos: Math.min(i + LOTE, arquivos.length), total: arquivos.length });
+      }
+    } catch (e) {
+      setLocalError(`Importação interrompida: ${e.message}. ${importadas} nota(s) já foram gravadas.`);
+      setImpNf({ rodando: false, feitos: 0, total: 0 });
+      onReload();
+      return;
+    }
+    // ⚠️ Os PDFs vão DEPOIS dos XMLs, e a ordem importa: o PDF se encontra pela
+    // nota que o XML criou. Invertido, todo DANFE cairia em "sem XML importado".
+    let anexados = 0, jaTinham = 0;
+    const semNota = [];
+    if (pdfs.length) {
+      const LOTE_PDF = 6; // base64 infla ~33% e o corpo do Express é 1 MB
+      try {
+        for (let i = 0; i < pdfs.length; i += LOTE_PDF) {
+          const r = await logistica.notas.importarDanfe(pdfs.slice(i, i + LOTE_PDF));
+          anexados += r.anexados || 0;
+          jaTinham += r.jaTinham || 0;
+          semNota.push(...(r.semNota || []));
+          setImpNf({ rodando: true, feitos: arquivos.length + Math.min(i + LOTE_PDF, pdfs.length),
+            total: arquivos.length + pdfs.length });
+        }
+      } catch (e) {
+        setLocalError(`DANFEs interrompidos: ${e.message}. ${anexados} já foram anexados.`);
+      }
+    }
+    setImpNf({ rodando: false, feitos: 0, total: 0 });
+
+    // Declara os quatro destinos — "12 importadas" não distingue sucesso de
+    // importação parcial.
+    // ⚠️ "45 PDF sem a nota correspondente" não dizia O QUE FAZER, e os dois
+    // motivos pedem ações OPOSTAS: `sem_xml_importado` = falta importar o ZIP
+    // de XML (ou ele entrou antes desta versão, sem o número do pedido);
+    // `nome_sem_pedido` = o arquivo não se chama `invoice-<pedido>.pdf` e
+    // nenhuma reimportação resolve. Somar os dois num número só foi o que me
+    // deixou sem saber qual dos dois estava acontecendo.
+    const semXml = semNota.filter(s => s.motivo === 'sem_xml_importado').length;
+    const semPedido = semNota.filter(s => s.motivo === 'nome_sem_pedido').length;
+
+    const partes = [];
+    if (arquivos.length) partes.push(`${importadas} nota(s) importada(s)`);
+    if (vinculadas) partes.push(`${vinculadas} nota(s) ganharam o nº do pedido`);
+    if (anexados) partes.push(`${anexados} DANFE anexado(s)`);
+    if (jaTinham) partes.push(`${jaTinham} DANFE já estavam`);
+    if (semXml) partes.push(`${semXml} PDF sem o XML da nota`);
+    if (semPedido) partes.push(`${semPedido} PDF com nome fora do padrão`);
+    if (repetidas) partes.push(`${repetidas} nota(s) já estavam`);
+    if (recusadas.length) partes.push(`${recusadas.length} recusada(s)`);
+    if (falhas.length) partes.push(`${falhas.length} falhou/falharam`);
+    setSuccessMsg(partes.join(' · '));
+
+    // Diagnóstico acionável em vez de contagem seca.
+    const avisos = [];
+    if (recusadas.length) {
+      const porMotivo = {};
+      for (const r of recusadas) porMotivo[r.erro] = (porMotivo[r.erro] || 0) + 1;
+      avisos.push(Object.entries(porMotivo).map(([k, v]) => `${v}× ${MOTIVO_NF[k] || k}`).join(' · '));
+    }
+    if (semXml) {
+      avisos.push(`${semXml} DANFE não achou a nota: importe o ZIP de XML do mesmo período — é ele que traz o número do pedido que casa os dois.`);
+    }
+    if (semPedido) {
+      const exemplo = semNota.find(s => s.motivo === 'nome_sem_pedido')?.nome;
+      avisos.push(`${semPedido} PDF sem a chave de acesso nem o nº do pedido no nome${exemplo ? ` (ex.: ${exemplo})` : ''} — baixe o ZIP pelo "Baixar NF-e disponíveis" do Mercado Livre, que já nomeia certo.`);
+    }
+    if (falhas.length) avisos.push(`${falhas.length} erro(s) ao gravar`);
+    if (avisos.length) setLocalError(avisos.join(' · '));
+    onReload();
+  }
+
   const [syncing, setSyncing] = useState(false);
   const [arquiveiStatus, setArquiveiStatus] = useState(null);
   const [arquiveiForm, setArquiveiForm] = useState({ api_id: '', api_key: '', cnpj: '07023068000135' });
@@ -717,6 +859,49 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
   const [localError, setLocalError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [nfEstoque, setNfEstoque] = useState(null); // NF sendo lançada no estoque
+  const [espelhoId, setEspelhoId] = useState(null);
+
+  // DANFE oficial: pede a URL assinada e abre. ⚠️ Diferente do espelho — este
+  // é o documento que o emissor gerou, não um desenho nosso a partir do XML.
+  async function abrirDanfe(n) {
+    setEspelhoId(n.id); setLocalError('');
+    try {
+      const { logistica: apiLog } = await import('../../../api');
+      const r = await apiLog.notas.danfeUrl(n.id);
+      if (!window.open(r.url, '_blank')) {
+        setLocalError('O navegador bloqueou a janela. Libere pop-ups para este site.');
+      }
+    } catch (e) {
+      setLocalError(e?.message || 'Não foi possível abrir o DANFE.');
+    }
+    setEspelhoId(null);
+  }
+
+  // Busca a NF-e JÁ INTERPRETADA pelo backend (o mesmo `lerNfe` da importação —
+  // um 2º leitor aqui divergiria do que foi gravado) e abre a folha A4.
+  async function abrirEspelho(n) {
+    setEspelhoId(n.id); setLocalError('');
+    try {
+      // ⚠️ Usa o `logistica` do import ESTÁTICO do topo. A versão anterior fazia
+      // `await import('../../../api')` para pegar o mesmo objeto — e no bundle de
+      // produção aquilo resolvia para um namespace SEM os exports nomeados, então
+      // `m.logistica` vinha `undefined` e a tela morria com "Cannot read
+      // properties of undefined (reading 'notas')". Em dev funcionava, que é o
+      // que fez isso passar. Régua: não re-importar por `import()` o que já está
+      // no escopo — o lazy-load só se justifica para módulo que ainda não entrou.
+      const r = await logistica.notas.nfe(n.id);
+      const { imprimirNfe } = await import('../../../lib/imprimirNfe');
+      // ⚠️ Bloqueador de pop-up derruba isso em silêncio — sem avisar, a pessoa
+      // clica e nada acontece, e conclui que o botão quebrou.
+      if (!imprimirNfe(r.nota)) {
+        setLocalError('O navegador bloqueou a janela. Libere pop-ups para este site e tente de novo.');
+      }
+    } catch (e) {
+      setLocalError(e?.message || 'Não foi possível abrir a NF-e.');
+    }
+    setEspelhoId(null);
+  }
+
 
   useEffect(() => { checkArquivei(); }, []);
 
@@ -776,8 +961,17 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
         {scanning ? '⏳ Lendo a nota...' : '📷 Escanear nota fiscal'}
       </Button>
       <Button variant="outline" onClick={onNew}>+ Nova Nota Fiscal</Button>
-      <Button variant="outline" onClick={syncML} disabled={syncing}>
-        {syncing ? '⏳ Sincronizando...' : '🛒 Importar do Mercado Livre'}
+      {/* Importa a NF-e de verdade, a partir do XML. Substitui o botão antigo
+          "Importar do Mercado Livre", que chamava uma rota inexistente e sempre
+          deu 404 — e que, mesmo funcionando, traria PEDIDO e não nota fiscal.
+          O XML sai do "Baixar NF-e disponíveis" do próprio Mercado Livre. */}
+      <input ref={xmlRef} type="file" accept=".xml,.pdf,.zip" multiple style={{ display: 'none' }}
+        onChange={e => { importarXmls(e.target.files); e.target.value = ''; }} />
+      <Button variant="outline" onClick={() => xmlRef.current?.click()} disabled={impNf.rodando}
+        title="Aceita .xml, .pdf (DANFE) e .zip — o ZIP é aberto aqui no navegador">
+        {impNf.rodando
+          ? `⏳ Importando ${impNf.feitos}/${impNf.total}...`
+          : '📄 Importar NF-e (XML, DANFE ou ZIP)'}
       </Button>
       {arquiveiStatus?.connected ? (
         <Button variant="outline" onClick={syncArquiveiNFs} disabled={syncing}>
@@ -844,12 +1038,32 @@ function NotasFiscaisTab({ data, loading, onNew, onDelete, onReload, onScan, sca
           </td>
           <td style={styles.td}><Badge status={n.origem || 'manual'} map={NF_ORIGEM} /></td>
           <td style={styles.td}>
-            {n.storage_path ? (
+            {n.storage_path && !/^https?:\/\//i.test(n.storage_path) ? (
+              /* DANFE OFICIAL importado do ML. ⚠️ Guardamos o CAMINHO (não a URL
+                 pública), então a leitura pede uma URL assinada — funciona hoje
+                 e continua funcionando quando `log-arquivos` for fechado. */
+              <button onClick={() => abrirDanfe(n)} disabled={espelhoId === n.id}
+                title="Abre o DANFE oficial (PDF) desta nota"
+                style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer',
+                  color: C.primary, fontSize: 12, fontWeight: 600 }}>
+                {espelhoId === n.id ? '⏳ abrindo...' : '📕 DANFE'}
+              </button>
+            ) : n.storage_path ? (
               <span style={{ display: 'inline-flex', gap: 10, whiteSpace: 'nowrap' }}>
                 <a href={n.storage_path} target="_blank" rel="noopener noreferrer" style={{ color: C.primary }}>📄 Ver</a>
                 {/* ?download força o Content-Disposition attachment no Storage público do Supabase */}
                 <a href={`${n.storage_path}${n.storage_path.includes('?') ? '&' : '?'}download`} style={{ color: C.primary, fontSize: 12 }}>⬇ Baixar</a>
               </span>
+            ) : n.chave_acesso ? (
+              /* Nota importada por XML: monta o espelho A4 e abre a impressão
+                 (o navegador salva em PDF). ⚠️ NÃO é o DANFE oficial — a folha
+                 diz isso; o documento fiscal válido é o XML guardado. */
+              <button onClick={() => abrirEspelho(n)} disabled={espelhoId === n.id}
+                title="Abre o espelho da NF-e para imprimir ou salvar em PDF"
+                style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer',
+                  color: C.primary, fontSize: 12 }}>
+                {espelhoId === n.id ? '⏳ abrindo...' : '📄 Ver NF-e'}
+              </button>
             ) : n.origem === 'mercadolivre' && n.ml_order_id ? (
               <a href={`https://www.mercadolivre.com.br/purchases/${n.ml_order_id}`} target="_blank" rel="noopener noreferrer" style={{ color: C.primary, fontSize: 12 }}>🛒 Ver no ML</a>
             ) : '—'}
@@ -976,8 +1190,11 @@ function NotaFiscalModal({ open, data, onClose, onSave, saving, fornecedores, pe
       const filePath = `notas-fiscais/${crypto.randomUUID()}_${file.name}`;
       const { error } = await supabase.storage.from('log-arquivos').upload(filePath, file, { upsert: true });
       if (error) throw error;
-      const { data: { publicUrl } } = supabase.storage.from('log-arquivos').getPublicUrl(filePath);
-      upNota('storage_path', publicUrl);
+      // ⚠️ Guarda o CAMINHO, não a URL pública: `log-arquivos` guarda documento
+      // fiscal e é privado. Quem transforma em link é o backend, assinando por
+      // 1h na leitura (services/anexosLogArquivos) — então a lista continua
+      // abrindo o arquivo, e o histórico com URL antiga também.
+      upNota('storage_path', filePath);
     } catch (e) { setLocalError('Erro ao enviar arquivo: ' + e.message); }
     finally { setUploading(false); }
   }
@@ -1205,8 +1422,134 @@ async function copiarRastreio(codigo) {
   }
 }
 
+// ── Vincular um pedido do ML a uma solicitação de compra ────────────────────
+// Pedido do Matheus (19/08/2026): "ao invés de ter que copiar o id do pedido e
+// colar dentro da solicitação de compra". Medido no mesmo dia: 1 vínculo em toda
+// a história do sistema, com 21 solicitações de compra em aberto — o caminho
+// antigo era doloroso o bastante para ninguém usar.
+//
+// ⚠️ A LISTA vem de GET /solicitacoes/vinculaveis-ml, que usa a MESMA régua do
+// POST que grava (backend/utils/vinculoMlSolicitacao). Se a tela filtrasse por
+// conta própria, ofereceria opção que o servidor recusa com 403.
+// ⚠️ Quem grava continua sendo `linkOrder()` — ele valida o pedido na API do ML,
+// guarda o shipment e dispara a notificação. Aqui não existe 2º caminho de
+// escrita; só um jeito melhor de escolher o destino.
+function VincularSolicitacao({ order, solicitacoes: lista, carregando, erro, onVinculado, onRecarregar }) {
+  const [aberto, setAberto] = useState(false);
+  const [busca, setBusca] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  // Esta compra já está pendurada em alguma solicitação?
+  const jaVinculada = (lista || []).find(s => String(s.ml_order_id || '') === String(order.id));
+
+  const filtradas = (lista || []).filter(s => {
+    if (!busca.trim()) return true;
+    const t = busca.trim().toLowerCase();
+    return [s.titulo, s.solicitante_nome, s.area_responsavel, s.area_cliente]
+      .filter(Boolean).some(v => String(v).toLowerCase().includes(t));
+  });
+
+  async function vincular(sol) {
+    // ⚠️ Trocar um vínculo existente é ato consciente: a solicitação passa a
+    // rastrear OUTRA entrega, e o histórico dela já cita a anterior.
+    if (sol.ml_order_id && String(sol.ml_order_id) !== String(order.id)) {
+      const ok = window.confirm(
+        `"${sol.titulo}" já está vinculada ao pedido #${sol.ml_order_id}.\n\n`
+        + `Vincular ao #${order.id} substitui o anterior. Continuar?`);
+      if (!ok) return;
+    }
+    setSalvando(true);
+    try {
+      await solicitacoesApi.vincularML(sol.id, String(order.id));
+      toast.success(`Pedido vinculado a "${sol.titulo}"`);
+      setAberto(false); setBusca('');
+      onVinculado?.();
+    } catch (e) {
+      // O servidor é quem decide — mostramos o motivo dele, sem traduzir.
+      toast.error(e?.message || 'Não foi possível vincular.');
+    }
+    setSalvando(false);
+  }
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.border}` }}>
+      <div style={{ fontSize: 11, color: C.text3, textTransform: 'uppercase', fontWeight: 600, marginBottom: 6 }}>
+        Solicitação de compra
+      </div>
+
+      {jaVinculada ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, color: C.text }}>
+            ✅ Vinculado a <strong>{jaVinculada.titulo}</strong>
+          </span>
+          <a href={`/solicitacoes?id=${jaVinculada.id}`} style={{ fontSize: 12, color: C.primary }}>abrir ↗</a>
+        </div>
+      ) : !aberto ? (
+        <Button variant="outline" size="sm" onClick={() => { setAberto(true); onRecarregar?.(); }}>
+          🔗 Vincular a uma solicitação
+        </Button>
+      ) : (
+        <div>
+          <input value={busca} onChange={e => setBusca(e.target.value)} autoFocus
+            placeholder="Buscar por título, quem pediu ou área..."
+            style={{ width: '100%', padding: '8px 10px', borderRadius: 8, marginBottom: 8,
+              border: `1px solid ${C.border}`, background: 'var(--cbrio-input-bg)', color: C.text, fontSize: 13 }} />
+
+          {/* ⚠️ Erro NÃO se disfarça de lista vazia: "nenhuma solicitação" e
+              "a consulta falhou" levam a decisões opostas. */}
+          {erro ? (
+            <div style={{ fontSize: 13, color: C.red, padding: '10px 0' }}>
+              {erro} <button onClick={onRecarregar} style={{ color: C.primary, background: 'none', border: 0, cursor: 'pointer' }}>tentar de novo</button>
+            </div>
+          ) : carregando ? (
+            <div style={{ fontSize: 13, color: C.text3, padding: '10px 0' }}>Carregando solicitações...</div>
+          ) : filtradas.length === 0 ? (
+            <div style={{ fontSize: 13, color: C.text3, padding: '10px 0' }}>
+              {(lista || []).length === 0
+                ? 'Nenhuma solicitação de compra em aberto que você possa vincular.'
+                : 'Nada encontrado com esse texto.'}
+            </div>
+          ) : (
+            <div style={{ maxHeight: 260, overflowY: 'auto', border: `1px solid ${C.border}`, borderRadius: 8 }}>
+              {filtradas.map(s => (
+                <button key={s.id} onClick={() => vincular(s)} disabled={salvando}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 12px',
+                    background: 'none', border: 0, borderBottom: `1px solid ${C.border}`,
+                    cursor: salvando ? 'wait' : 'pointer', color: C.text }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{s.titulo}</div>
+                  <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
+                    {s.solicitante_nome ? `${s.solicitante_nome} · ` : ''}
+                    {s.area_responsavel || s.area_cliente || 'sem área'} · {s.status}
+                    {s.ml_order_id ? ` · ⚠️ já tem o pedido #${s.ml_order_id}` : ''}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <button onClick={() => { setAberto(false); setBusca(''); }}
+            style={{ marginTop: 8, fontSize: 12, color: C.text3, background: 'none', border: 0, cursor: 'pointer' }}>
+            cancelar
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ComprasMLTab() {
   const [mlStatus, setMlStatus] = useState(null);
+  // Solicitações vinculáveis — carregadas uma vez e reusadas por todos os
+  // pedidos da lista (é também o que diz se a compra JÁ está vinculada).
+  const [solVinc, setSolVinc] = useState([]);
+  const [solLoading, setSolLoading] = useState(false);
+  const [solErro, setSolErro] = useState('');
+  const carregarVinculaveis = useCallback(async () => {
+    setSolLoading(true); setSolErro('');
+    try { setSolVinc(await solicitacoesApi.vinculaveisML() || []); }
+    catch (e) { setSolErro(e?.message || 'Não foi possível carregar as solicitações.'); }
+    setSolLoading(false);
+  }, []);
   const [orders, setOrders] = useState([]);
   const [paging, setPaging] = useState({ total: 0, offset: 0 });
   const [loading, setLoading] = useState(true);
@@ -1266,6 +1609,9 @@ function ComprasMLTab() {
   }
 
   useEffect(() => { if (mlStatus?.connected) loadOrders(0); }, [filtroStatus]);
+  // Best-effort: falhar aqui não pode derrubar a lista de pedidos — o vínculo é
+  // um extra da tela, não o conteúdo dela.
+  useEffect(() => { if (mlStatus?.connected) carregarVinculaveis(); }, [mlStatus?.connected, carregarVinculaveis]);
 
   function handleSearch(e) {
     if (e.key === 'Enter') loadOrders(0);
@@ -1398,6 +1744,23 @@ function ComprasMLTab() {
                   <div style={{ fontSize: 14, color: C.text3, marginTop: 4, transition: 'transform 0.2s', transform: isExpanded ? 'rotate(180deg)' : '' }}>▼</div>
                 </div>
               </div>
+
+              {/* ⚠️ FICA FORA do bloco `isExpanded` (pedido do Matheus, 19/08):
+                  vincular é a ação mais frequente desta tela e exigir um clique
+                  para expandir antes escondia justamente o que se veio fazer.
+                  ⚠️ O `stopPropagation` é obrigatório: o card inteiro tem
+                  onClick de expandir, então sem ele escolher uma solicitação na
+                  lista também abriria/fecharia o pedido embaixo. */}
+              <div onClick={e => e.stopPropagation()}>
+                <VincularSolicitacao
+                  order={o}
+                  solicitacoes={solVinc}
+                  carregando={solLoading}
+                  erro={solErro}
+                  onRecarregar={carregarVinculaveis}
+                  onVinculado={carregarVinculaveis}
+                />
+              </div>
             </div>
 
             {/* Detalhes expandidos */}
@@ -1425,6 +1788,7 @@ function ComprasMLTab() {
                       style={{ fontSize: 13, color: C.primary, textDecoration: 'none' }}>Abrir compra ↗</a>
                   </div>
                 </div>
+
 
                 {/* Info de envio/rastreio */}
                 {shipDetail && (

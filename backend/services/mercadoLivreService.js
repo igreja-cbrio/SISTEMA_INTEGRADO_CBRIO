@@ -26,19 +26,29 @@ async function refreshToken(config) {
     throw new Error(`Falha ao renovar token do ML: ${res.status} ${errText}`);
   }
   const tokens = await res.json();
+  // ⚠️⚠️ O refresh token do ML é de USO ÚNICO: esta resposta já queimou o token
+  // que estava guardado. Se não conseguirmos salvar o novo par, a integração fica
+  // MORTA e nem o refresh nem a tela conseguem se recuperar — por isso falhar aqui
+  // PROPAGA, nunca vira console.error. Foi assim (gravando na coluna inexistente
+  // `token_expires_at`) que a conexão morreu em 08/04/2026 sem ninguém perceber.
   const { error: dbErr } = await supabase.from('ml_config').update({
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
-    token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+    token_expires: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+    connected: true,
   }).eq('id', config.id);
-  if (dbErr) console.error('[ML] Erro ao salvar tokens:', dbErr.message);
+  if (dbErr) {
+    console.error('[ML] Erro ao salvar tokens:', dbErr.message);
+    throw new Error(`Token do ML renovado mas NÃO salvo (${dbErr.message}). Reconecte o Mercado Livre.`);
+  }
   config.access_token = tokens.access_token;
+  config.refresh_token = tokens.refresh_token;
   return tokens.access_token;
 }
 
 async function mlFetch(config, path) {
   let token = config.access_token;
-  if (config.token_expires_at && new Date(config.token_expires_at) < new Date()) {
+  if (config.token_expires && new Date(config.token_expires) < new Date()) {
     token = await refreshToken(config);
   }
   let res = await fetch(`https://api.mercadolibre.com${path}`, {
@@ -59,17 +69,17 @@ async function mlFetch(config, path) {
 }
 
 /**
- * Resolve ml_user_id: usa o valor salvo no banco ou busca via /users/me.
+ * Resolve o user_id do ML: usa o valor salvo no banco ou busca via /users/me.
  * Persiste automaticamente quando ausente ou divergente.
  */
 async function ensureUserId(config) {
   const user = await mlFetch(config, '/users/me');
   const userId = String(user.id);
-  if (!config.ml_user_id || config.ml_user_id !== userId) {
-    console.log('[ML] Persistindo ml_user_id:', userId);
-    const { error: dbErr } = await supabase.from('ml_config').update({ ml_user_id: userId }).eq('id', config.id);
-    if (dbErr) console.error('[ML] Erro ao salvar ml_user_id:', dbErr.message);
-    config.ml_user_id = userId;
+  if (!config.user_id || config.user_id !== userId) {
+    console.log('[ML] Persistindo user_id do ML:', userId);
+    const { error: dbErr } = await supabase.from('ml_config').update({ user_id: userId }).eq('id', config.id);
+    if (dbErr) console.error('[ML] Erro ao salvar user_id do ML:', dbErr.message);
+    config.user_id = userId;
   }
   return { userId, nickname: user.nickname || user.first_name };
 }

@@ -16,8 +16,7 @@ import {
   ArrowLeft, CalendarDays, Clock, MapPin, Users, Gift, Link2, MessageCircle,
   QrCode, Pencil, Trash2, Loader2, Search, ExternalLink, Ticket, Megaphone,
   ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, Download, Repeat,
-  Printer, CreditCard, ScanLine, Paperclip,
-} from 'lucide-react';
+  Printer, CreditCard, ScanLine, Paperclip, Lock } from 'lucide-react';
 import QrLinkDialog from '../components/QrLinkDialog';
 import { EventoModal } from './Inscricoes';
 import { idadeEmAnos, faixaLabel, sexoLabel } from '../lib/faixaEtaria';
@@ -178,13 +177,19 @@ export default function InscricaoEventoDetalhe() {
 
   const sorteioDoPremio = (nome: string) => (ev?.sorteios || []).find((s: any) => (s.premio || '') === nome);
 
-  async function sortearPremio(nome: string) {
+  async function sortearPremio(nome: string, substituir = false) {
     if (anim || !id) return;
+    // Trocar o ganhador de um prêmio já sorteado é ato, não clique de rotina.
+    if (substituir) {
+      const atual = sorteioDoPremio(nome);
+      const quem = atual ? `${atual.ganhador_nome} (nº ${atual.numero_sorteado})` : 'o ganhador atual';
+      if (!window.confirm(`Sortear de novo "${nome}"?\n\n${quem} deixa de ter este prêmio e volta a concorrer nos próximos.`)) return;
+    }
     setSorteando(true);
     setAnim({ fase: 'rolando', premio: nome });
     const iv = setInterval(() => setRolNum(1000 + Math.floor(Math.random() * 9000)), 65);
     try {
-      const s: any = await api.sortear(id, nome);
+      const s: any = await api.sortear(id, nome, { substituir });
       await new Promise(r => setTimeout(r, 2400));
       clearInterval(iv);
       setRolNum(s.numero_sorteado);
@@ -199,12 +204,19 @@ export default function InscricaoEventoDetalhe() {
   async function sortearTodos() {
     if (!id) return;
     setSorteando(true);
+    const pendentes = (ev?.premios || []).filter((p: string) => !sorteioDoPremio(p));
+    let feitos = 0;
     try {
-      const pendentes = (ev?.premios || []).filter((p: string) => !sorteioDoPremio(p));
-      for (const p of pendentes) { await api.sortear(id, p); }
-      carregar();
-      toast.success(`${pendentes.length} prêmio(s) sorteado(s)`);
-    } catch (e: any) { toast.error(e?.message || 'Erro ao sortear'); } finally { setSorteando(false); }
+      // Para no 1º erro, mas conta o que JÁ foi sorteado — os prêmios anteriores
+      // estão gravados, e dizer só "erro ao sortear" faria a pessoa achar que
+      // nada aconteceu e clicar de novo.
+      for (const p of pendentes) { await api.sortear(id, p); feitos++; }
+      toast.success(`${feitos} prêmio(s) sorteado(s)`);
+    } catch (e: any) {
+      toast.error(feitos
+        ? `${feitos} de ${pendentes.length} sorteados. Parou em: ${e?.message || 'erro ao sortear'}`
+        : (e?.message || 'Erro ao sortear'));
+    } finally { carregar(); setSorteando(false); }
   }
   async function publicar() {
     if (!id) return;
@@ -214,6 +226,43 @@ export default function InscricaoEventoDetalhe() {
       carregar();
     } catch (e: any) { toast.error(e?.message || 'Erro ao publicar'); }
   }
+  // ⚠️⚠️ São DUAS travas, e reabrir só uma não reabre nada: o formulário
+  // público exige `status='publicado'` E prazo não vencido. Em 29/08 o Celebra
+  // estava `encerrado` com o prazo a 3 minutos de vencer — mexer só no status
+  // teria "reaberto" um formulário que fecharia sozinho em seguida.
+  const prazoVencido = !!ev?.inscricoes_encerram_em
+    && Date.now() > new Date(ev.inscricoes_encerram_em).getTime();
+  const inscricoesFechadas = ev?.status === 'encerrado' || (ev?.status === 'publicado' && prazoVencido);
+
+  async function reabrirInscricoes() {
+    if (!id) return;
+    if (!window.confirm(
+      'Reabrir as inscrições deste evento?\n\n'
+      + 'O formulário público volta ao ar para QUALQUER pessoa, não só para quem está na porta.'
+      + (prazoVencido ? '\n\nO prazo já venceu, então ele será REMOVIDO — feche pelo botão quando terminar.' : '')
+    )) return;
+    try {
+      await api.atualizarEvento(id, {
+        status: 'publicado',
+        // Só mexe no prazo quando ele é o que está travando. Prazo futuro é
+        // decisão de quem configurou o evento e não se apaga por engano.
+        ...(prazoVencido ? { inscricoes_encerram_em: null } : {}),
+      });
+      toast.success('Inscrições reabertas — o formulário está no ar');
+      carregar();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao reabrir'); }
+  }
+
+  async function encerrarInscricoes() {
+    if (!id) return;
+    if (!window.confirm('Encerrar as inscrições? O formulário público para de aceitar novas inscrições.')) return;
+    try {
+      await api.atualizarEvento(id, { status: 'encerrado' });
+      toast.success('Inscrições encerradas');
+      carregar();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao encerrar'); }
+  }
+
   async function excluir() {
     if (!id || !window.confirm('Excluir este evento? (some da lista · reversível por super-admin)')) return;
     try { await api.excluirEvento(id); toast.success('Evento excluído'); navigate('/inscricoes'); }
@@ -446,6 +495,20 @@ export default function InscricaoEventoDetalhe() {
                   <Megaphone className="h-3.5 w-3.5 mr-1" /> Publicar
                 </Button>
               )}
+              {/* ⚠️ Sem isto não existia caminho de volta: o "Publicar" só
+                  aparece em rascunho, então evento encerrado não tinha como
+                  reabrir pela tela — era edição no banco. É o caso do atrasado
+                  que chega na porta e não está inscrito. */}
+              {inscricoesFechadas && (
+                <Button size="sm" onClick={reabrirInscricoes} title="Coloca o formulário público de volta no ar">
+                  <Megaphone className="h-3.5 w-3.5 mr-1" /> Reabrir inscrições
+                </Button>
+              )}
+              {ev.status === 'publicado' && !prazoVencido && (
+                <Button size="sm" variant="outline" onClick={encerrarInscricoes} title="O formulário público para de aceitar novas inscrições">
+                  <Lock className="h-3.5 w-3.5 mr-1" /> Encerrar inscrições
+                </Button>
+              )}
               <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}><Pencil className="h-3.5 w-3.5 mr-1" /> Editar</Button>
               <Button size="sm" variant="ghost" onClick={excluir} className="text-red-600 hover:text-red-700"><Trash2 className="h-3.5 w-3.5 mr-1" /> Excluir</Button>
             </div>
@@ -518,7 +581,9 @@ export default function InscricaoEventoDetalhe() {
       {(ev.tem_sorteio !== false) && (
         <Card className="glass-solid p-4">
           <div className="text-sm font-semibold mb-2 flex items-center justify-between">
-            <span className="flex items-center gap-1.5"><Gift className="h-4 w-4 text-primary" /> Sorteio</span>
+            <span className="flex items-center gap-1.5"><Gift className="h-4 w-4 text-primary" /> Sorteio
+              <span className="text-[11px] font-normal text-muted-foreground">· só quem fez check-in concorre</span>
+            </span>
             {(ev.premios || []).length > 0 && (ev.premios || []).some((p: string) => !sorteioDoPremio(p)) && (
               <Button size="sm" variant="outline" onClick={sortearTodos} disabled={sorteando || !ativos.length}>
                 {sorteando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Sortear todos'}
@@ -536,7 +601,7 @@ export default function InscricaoEventoDetalhe() {
                       {s && <div className="text-xs text-primary">🎉 Nº {s.numero_sorteado} · {s.ganhador_nome}</div>}
                     </div>
                     {s ? (
-                      <Button size="sm" variant="ghost" onClick={() => sortearPremio(p)} disabled={sorteando} className="text-xs shrink-0">Re-sortear</Button>
+                      <Button size="sm" variant="ghost" onClick={() => sortearPremio(p, true)} disabled={sorteando} className="text-xs shrink-0">Re-sortear</Button>
                     ) : (
                       <Button size="sm" onClick={() => sortearPremio(p)} disabled={sorteando || !ativos.length} className="shrink-0">
                         {sorteando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Sortear'}

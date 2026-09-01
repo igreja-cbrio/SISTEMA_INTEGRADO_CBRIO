@@ -21,6 +21,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { jornada as jornadaApi } from '../api';
+import { opcoesAno } from '../lib/janelaPeriodo';
 import { ArrowLeft, Phone, Mail, Users, Check, Filter, X, Sparkles, ChevronRight } from 'lucide-react';
 
 const C = {
@@ -48,12 +49,16 @@ const VALOR_HINT = {
 };
 
 // 'atual' = estado atual (sem corte de tempo nas atividades). Padrão = 3 meses.
+// ⚠️ Os anos (`ano:2024`) vêm da régua ÚNICA (src/lib/janelaPeriodo.js) — ano
+// novo aparece sozinho em 1º de janeiro. São a única janela FECHADA daqui, e o
+// backend (services/jornadaEngajamento) aplica `.lte` junto com o `.gte`.
 const JANELAS = [
   { id: 'mes', label: 'Este mês' },
   { id: '3m', label: '3 meses' },
   { id: '6m', label: '6 meses' },
   { id: '12m', label: '12 meses' },
   { id: 'atual', label: 'Atual' },
+  ...opcoesAno().map((a) => ({ id: a.dias, label: a.label })),
 ];
 const JANELA_VALIDA = new Set(JANELAS.map((j) => j.id));
 
@@ -192,6 +197,25 @@ export default function PainelJornada() {
         totalBase={universo?.total_base}
         filtraDentro={filtraDentro}
       />
+
+      {/* ⚠️⚠️ A janela de ANO corta só o que É ATIVIDADE (devocional e
+          generosidade). Batismo/Next, grupo e servir são ESTADO ATUAL — a régua
+          do motor é essa (services/jornadaEngajamento), e afirmar "retrato de
+          2024" sem dizer isso seria publicar um número que mente. Declarado na
+          tela, não escondido. Um retrato histórico de verdade exigiria ler
+          `entrou_em/saiu_em` e `desde/ate`, que é mudança de motor. */}
+      {String(janela).startsWith('ano:') && (
+        <div style={{
+          background: '#f59e0b0d', border: '1px solid #f59e0b33', borderLeft: '3px solid #f59e0b',
+          borderRadius: 10, padding: '10px 14px', margin: '14px 0', fontSize: 12, color: C.t2, lineHeight: 1.6,
+        }}>
+          <strong style={{ color: C.text }}>Leia com atenção:</strong> em {String(janela).slice(4)} a janela
+          recorta <strong style={{ color: C.text }}>Investir</strong> (devocional) e{' '}
+          <strong style={{ color: C.text }}>Generosidade</strong> (dízimo/oferta) — são atividade.
+          Seguir, Conectar e Servir mostram o <strong style={{ color: C.text }}>estado de hoje</strong>,
+          não o de {String(janela).slice(4)}. Não é um retrato fechado do ano.
+        </div>
+      )}
 
       {/* Controles de tempo */}
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', margin: '16px 0', alignItems: 'flex-end' }}>

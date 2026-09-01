@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { semComentariosJs } from './_semComentarios';
 
 const require_ = createRequire(import.meta.url);
 const {
@@ -35,17 +36,7 @@ function todasAsMigrations(): string {
     .join('\n');
 }
 
-/**
- * Tira comentário de JS/TS antes de procurar CHAMADA.
- * ⚠️ A 1ª versão deste teste ficou vermelha por causa do comentário do PRÓPRIO
- * teste, que cita a chamada como exemplo — a mesma armadilha de 06/08, agora no
- * lado JS. Procurar comando, nunca o identificador solto.
- */
-export function semComentariosJs(src: string): string {
-  return String(src || '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-}
+
 
 /** Varre `src/` procurando chamada de RPC — o que o front executa de fato. */
 function rpcsChamadasNoFront(): Set<string> {

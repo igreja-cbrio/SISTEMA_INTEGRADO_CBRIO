@@ -4,6 +4,7 @@ const router = require('express').Router();
 // 'assistente' — o authorize() por role os bloqueava nas rotas de escrita).
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { ehGrupoOnline } = require('../utils/grupoOnline');
 const { acharOuCriarGuardado, normalizarNome, normalizarCpf, normalizarTelefone, normalizarEmail } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
 const { montarPatchFusao } = require('../services/fusaoCampos');
@@ -19,6 +20,11 @@ const { configurado: whatsappConfigurado } = require('../services/whatsappServic
 const gruposEnvios = require('../services/gruposEnvios');
 const gruposEnviosConfig = require('../services/gruposEnviosConfig');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
+const { cadastrarPessoaNoGrupo } = require('../services/grupoPessoaDireta');
+const { ocorrenciasPassadas } = require('../utils/agendaGrupo');
+const { ancorasDeGrupos, iniciosDeGrupos } = require('../services/grupoAncora');
+const { aplicarExcecaoAgenda } = require('../services/grupoAgendaExcecao');
+const { apagarEncontroGrupo } = require('../services/grupoEncontroApagar');
 const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
 const { agruparDuplicados, validarResolucao } = require('../utils/vinculosDuplicados');
 // Régua única de "dá pra falar com essa pessoa?" (varredura do lançamento 02/08)
@@ -328,6 +334,123 @@ router.get('/:id/encontros', async (req, res) => {
   } catch (e) { console.error('[Grupos encontros list]', e.message); res.status(500).json({ error: 'Erro ao buscar encontros' }); }
 });
 
+// GET /api/grupos/:id/encontros-pendentes — as ocorrências que já passaram e
+// ficaram SEM chamada (o espelho web do item 3 do Marcos · 25/08/2026:
+// *"sempre manter os encontros à vista: se a pessoa passar 1 semana e não
+// registrar, ele entra automaticamente como presença não registrada e pode ser
+// registrada posteriormente"*).
+//
+// ⚠️ Endpoint PRÓPRIO, e não um campo novo em `GET /:id/encontros`: aquele
+// devolve um ARRAY cru (`res.json([...])`), então enfiar um objeto ali quebraria
+// todos os consumidores de uma vez.
+//
+// ⚠️ A régua é a MESMA do app (`utils/agendaGrupo.ocorrenciasPassadas`) — o
+// pedido dele terminou com "alinhe todas essas mudanças com o sistema web", e
+// alinhar significa uma régua só. Sem âncora, grupo quinzenal/mensal devolve
+// vazio: cobrar chamada de encontro que talvez não tenha existido é pior que
+// não cobrar.
+router.get('/:id/encontros-pendentes', async (req, res) => {
+  try {
+    const gid = req.params.id;
+    const { data: grupo, error: eG } = await supabase.from('mem_grupos')
+      .select('dia_semana, horario, recorrencia').eq('id', gid).is('deleted_at', null).maybeSingle();
+    if (eG) throw eG;
+    if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
+
+    // Janela de 180 dias: `ocorrenciasPassadas` devolve no máximo 12, e mesmo
+    // num grupo mensal isso são ~48 semanas.
+    const desde = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10);
+    const [encRes, excRes] = await Promise.all([
+      supabase.from('mem_grupo_encontros')
+        .select('data').eq('grupo_id', gid).is('deleted_at', null).gte('data', desde),
+      supabase.from('mem_grupo_agenda_excecoes')
+        .select('data_original, status, nova_data, novo_horario, motivo')
+        .eq('grupo_id', gid).gte('data_original', desde),
+    ]);
+    if (encRes.error) throw encRes.error;
+    // ⚠️ A tabela de exceções é de 18/08 e pode não existir num ambiente antigo:
+    // falhar aqui degrada pra "sem exceção", nunca derruba a lista.
+    const excecoes = excRes.error ? [] : (excRes.data || []);
+
+    const registradas = (encRes.data || []).map(e => String(e.data).slice(0, 10));
+    const [ancoras, inicios] = await Promise.all([
+      ancorasDeGrupos([gid]).catch(() => ({})),
+      // Sem isto, grupo quinzenal/mensal que nunca registrou encontro (34 dos 35
+      // não-semanais ativos, medido em 25/08) nunca aparece como pendente aqui.
+      iniciosDeGrupos([gid]).catch(() => ({})),
+    ]);
+    const ocorrencias = ocorrenciasPassadas({
+      diaSemana: grupo.dia_semana, horario: grupo.horario,
+      recorrencia: grupo.recorrencia, ancoraISO: ancoras[gid] || null,
+      // Piso no início da temporada — ver o comentário longo em routes/app.js.
+      inicioISO: inicios[gid] || null, desdeISO: inicios[gid] || null,
+      excecoes, registradas, quantas: 12,
+    });
+
+    res.json({
+      // Só o que a coordenação precisa AGIR: pendente. Registrado já está na
+      // lista ao lado e cancelado não é pendência.
+      pendentes: ocorrencias.filter(o => o.status === 'nao_registrado'),
+      // ⚠️ Devolvido pra a tela poder DIZER que a agenda é incerta em vez de
+      // mostrar lista vazia como se estivesse tudo em dia.
+      total_avaliadas: ocorrencias.length,
+    });
+  } catch (e) {
+    console.error('[Grupos encontros-pendentes]', e.message);
+    res.status(500).json({ error: 'Erro ao apurar os encontros sem chamada' });
+  }
+});
+
+// POST /api/grupos/:id/agenda — remarcar / cancelar / desfazer UMA ocorrência
+// body { data_original, acao, nova_data?, novo_horario?, motivo? }
+//
+// ⚠️ O GÊMEO WEB do `POST /app/grupos/:id/agenda` (Marcos · 25/08/2026: o
+// encontro passado tem que ser gerenciável, e "alinhe com o sistema web"). A
+// régua é a MESMA (`services/grupoAgendaExcecao`) — as duas janelas de data, a
+// coerência com a chamada já registrada e a tradução dos erros de banco.
+//
+// ⚠️ NÃO notifica: no app quem age é o líder e a coordenação precisa saber; aqui
+// quem age É a coordenação, e avisar a si mesma é ruído (o mesmo raciocínio que
+// tirou o aviso duplicado da transferência).
+router.post('/:id/agenda', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('id, nome').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
+
+    const {
+      data_original, acao, nova_data, novo_horario, motivo,
+      confirmar_apagar_chamada,
+    } = req.body || {};
+    const r = await aplicarExcecaoAgenda({
+      grupoId: grupo.id,
+      dataOriginal: data_original,
+      acao,
+      novaData: nova_data,
+      novoHorario: novo_horario,
+      motivo,
+      autor: { id: req.user?.id || null, nome: req.user?.name || req.user?.email || 'Equipe' },
+      // ⚠⚠ `=== true` e nada mais (fail-closed): é este parâmetro que apaga
+      // uma chamada real, e só vem depois de a tela ter dito quantas presenças
+      // serão perdidas e alguém ter confirmado.
+      confirmarApagarChamada: confirmar_apagar_chamada === true,
+    });
+    if (!r.ok) {
+      const corpo = { error: r.error };
+      if (r.codigo) corpo.codigo = r.codigo;
+      if (r.remarcar_de) corpo.remarcar_de = r.remarcar_de;
+      if (r.remarcar_ate) corpo.remarcar_ate = r.remarcar_ate;
+      // Deixa a pergunta da tela concreta; `null` = não deu pra contar.
+      if (r.presentes !== undefined) corpo.presentes = r.presentes;
+      return res.status(r.http || 400).json(corpo);
+    }
+    res.json({ ok: true, acao: r.acao, chamada_movida: r.chamada_movida });
+  } catch (e) {
+    console.error('[Grupos agenda]', e.message);
+    res.status(500).json({ error: 'Erro ao alterar o encontro' });
+  }
+});
+
 // GET /api/grupos/:id/entradas-saidas — histórico simples de quem entrou e saiu
 // ⚠️ Pedido do Marcos (05/08/2026), com o formato definido por ele: "deve ser uma
 // tela pequena, com pouco destaque, como se fosse uma tela de histórico de
@@ -435,25 +558,12 @@ router.patch('/encontros/:encontroId', authorizeModule('grupos', 2), async (req,
 // DELETE /api/grupos/encontros/:encontroId — remove encontro (decrementa contadores)
 router.delete('/encontros/:encontroId', authorizeModule('grupos', 3), async (req, res) => {
   try {
-    // Buscar membros presentes para reverter contador
-    const { data: presencas } = await supabase.from('mem_grupo_encontro_presencas')
-      .select('membro_id, mem_grupo_encontros!inner(grupo_id)')
-      .eq('encontro_id', req.params.encontroId);
-
-    const grupoId = presencas?.[0]?.mem_grupo_encontros?.grupo_id;
-
-    // Delete cascateia presenças; antes decrementa contador de cada membro presente
-    if (grupoId && presencas?.length) {
-      for (const p of presencas) {
-        await supabase.rpc('decrementar_presenca_grupo_membro', {
-          p_grupo_id: grupoId, p_membro_id: p.membro_id,
-        }).catch(() => {});
-      }
-    }
-
-    const { error } = await supabase.from('mem_grupo_encontros').delete().eq('id', req.params.encontroId);
-    if (error) throw error;
-    res.json({ success: true });
+    // ⚠️ CASCA FINA: a régua (decrementar `mem_grupo_membros.presencas` de cada
+    // presente ANTES do delete) vive em `services/grupoEncontroApagar` desde
+    // 25/08 — o fluxo de "o encontro não aconteceu" passou a precisar dela, e
+    // uma 2ª cópia deixaria um dos dois caminhos inflando contador em silêncio.
+    const r = await apagarEncontroGrupo(req.params.encontroId);
+    res.json({ success: true, presentes_revertidas: r.presentes });
   } catch (e) { console.error('[Grupos encontro delete]', e.message); res.status(500).json({ error: 'Erro ao remover encontro' }); }
 });
 
@@ -1510,20 +1620,34 @@ router.get('/pedidos/list', async (req, res) => {
 // derivados da própria lista no cliente, pra não existirem duas verdades.
 router.get('/entrada/cobertura', async (req, res) => {
   try {
-    const { desde } = req.query;
+    const { desde, ate } = req.query;
     const desdeISO = desde && !Number.isNaN(new Date(desde).getTime())
       ? new Date(desde).toISOString() : null;
+    // ⚠️ `ate` existe por causa do filtro POR ANO (24/08/2026): é a primeira
+    // janela FECHADA do sistema. Sem ele, escolher "2024" contaria pedido de
+    // 2024 ATÉ HOJE e o painel diria que o grupo recebeu pedido no ano — em
+    // silêncio. Janela móvel não manda `ate` e o comportamento é o de sempre.
+    const ateISO = ate && !Number.isNaN(new Date(ate).getTime())
+      ? new Date(ate).toISOString() : null;
 
     const { data: grupos, error: eg } = await supabase.from('mem_grupos')
       .select('id, codigo, nome, bairro, modo_inscricao, temporada')
       .eq('ativo', true).is('deleted_at', null);
     if (eg) throw eg;
 
-    let q = supabase.from('mem_grupo_pedidos').select('grupo_id').is('deleted_at', null);
-    if (desdeISO) q = q.gte('created_at', desdeISO);
-    const { data: peds, error: ep } = await q.limit(1000);
-    if (ep) throw ep;
-    const comPedido = new Set((peds || []).map(p => p.grupo_id).filter(Boolean));
+    // ⚠️ PAGINADO: `.limit(1000)` truncava em silêncio, e "pedido que não veio
+    // na página" é lido como "grupo sem pedido" — o painel INFLARIA o buraco de
+    // divulgação. Com janela de um ano inteiro isso deixa de ser hipótese.
+    const comPedido = new Set();
+    for (let offset = 0; ; offset += 1000) {
+      let q = supabase.from('mem_grupo_pedidos').select('grupo_id').is('deleted_at', null);
+      if (desdeISO) q = q.gte('created_at', desdeISO);
+      if (ateISO) q = q.lte('created_at', ateISO);
+      const { data: pagina, error: ep } = await q.range(offset, offset + 999);
+      if (ep) throw ep;
+      for (const p of pagina || []) if (p.grupo_id) comPedido.add(p.grupo_id);
+      if (!pagina || pagina.length < 1000) break;
+    }
 
     // Grupo 'fechado' não recebe inscrição pelo formulário — não faz sentido
     // cobrar divulgação dele.
@@ -2124,6 +2248,185 @@ router.post('/renovacao/:renId/triar', authorizeModule('grupos', 3), async (req,
 // GET /api/grupos/confira/painel?temporada=&status=
 // Painel de triagem: resumo + 1 linha por grupo (última rodada, líder, nº de
 // membros ativos, contadores da resposta).
+// ============================================================================
+// TRANSFERÊNCIAS PEDIDAS PELO LÍDER · a 5ª origem da Caixa de entrada
+// (Marcos · 25/08/2026 · migration 20260825170000)
+//
+// O líder aperta "Solicitar transferência" no app SEM escolher destino, e a
+// linha cai aqui pendente. Quem escolhe o grupo é a coordenação, que enxerga a
+// malha inteira — ver o cabeçalho da migration pro raciocínio completo.
+//
+// ⚠️ Caminho de DOIS segmentos de propósito: `router.get('/:id')` (linha ~3800)
+// casa qualquer rota de UM segmento declarada depois dele. É a armadilha que
+// este módulo já pagou com os `/kpis/*`.
+// ============================================================================
+
+// GET /api/grupos/transferencias?status=pendente
+router.get('/transferencias', authorizeModule('grupos', 1), async (req, res) => {
+  try {
+    const status = ['pendente', 'concluida', 'recusada'].includes(String(req.query.status || ''))
+      ? String(req.query.status) : null;
+    let q = supabase.from('mem_grupo_transferencias')
+      .select('id, membro_id, grupo_origem_id, vinculo_id, motivo, status, grupo_destino_id, '
+        + 'pedido_por_nome, origem, resolvido_por_nome, resolvido_em, resolucao_obs, created_at')
+      .order('created_at', { ascending: false }).limit(300);
+    if (status) q = q.eq('status', status);
+    const { data: linhas, error } = await q;
+    // ⚠️ Tabela nova: sem a migration aplicada o PostgREST recusa a consulta
+    // inteira. Devolver lista VAZIA faria a Caixa de entrada afirmar que não há
+    // transferência pendente — resposta errada com cara de resposta. Devolve
+    // `disponivel: false` e a tela DECLARA que a origem está fora do ar.
+    if (error) {
+      console.warn('[grupos transferencias] indisponível:', error.message);
+      return res.json({ disponivel: false, rows: [], aviso: 'As transferências ainda não estão disponíveis.' });
+    }
+
+    const rows = linhas || [];
+    if (!rows.length) return res.json({ disponivel: true, rows: [] });
+
+    // Enriquecimento em LOTES de 200 (`.in()` gigante estoura a URL do PostgREST).
+    const membroIds = [...new Set(rows.map(r => r.membro_id).filter(Boolean))];
+    const grupoIds = [...new Set(rows.flatMap(r => [r.grupo_origem_id, r.grupo_destino_id]).filter(Boolean))];
+    const pessoas = {};
+    const grupos = {};
+    for (let i = 0; i < membroIds.length; i += 200) {
+      const { data } = await supabase.from('mem_membros')
+        .select('id, nome, telefone, email, genero').in('id', membroIds.slice(i, i + 200));
+      (data || []).forEach(m => { pessoas[m.id] = m; });
+    }
+    for (let i = 0; i < grupoIds.length; i += 200) {
+      const { data } = await supabase.from('mem_grupos')
+        .select('id, nome, codigo, categoria, bairro').in('id', grupoIds.slice(i, i + 200));
+      (data || []).forEach(g => { grupos[g.id] = g; });
+    }
+
+    res.json({
+      disponivel: true,
+      rows: rows.map(r => ({
+        ...r,
+        pessoa: pessoas[r.membro_id] || null,
+        origem_grupo: grupos[r.grupo_origem_id] || null,
+        destino_grupo: r.grupo_destino_id ? (grupos[r.grupo_destino_id] || null) : null,
+      })),
+    });
+  } catch (e) {
+    console.error('[grupos transferencias]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar as transferências' });
+  }
+});
+
+// POST /api/grupos/transferencias/:id/resolver
+// body { acao: 'transferir' | 'recusar', grupo_destino_id?, obs? }
+//
+// ⚠️⚠️ `transferir` MOVE a pessoa: cria o vínculo no destino e ENCERRA o da
+// origem. Não cria pedido pro líder do destino aprovar — a decisão é da
+// coordenação, e é exatamente isso que o líder pediu ao abrir a solicitação.
+// ⚠️ Encerra SÓ o vínculo da ORIGEM (nunca `.eq('membro_id')` solto): a pessoa
+// pode participar de mais de um grupo de propósito — a UNIQUE de vínculo ativo
+// foi dropada em 21/07 justamente porque multi-grupo é real. Fechar tudo tiraria
+// a pessoa de grupos que ninguém pediu pra mexer.
+router.post('/transferencias/:id/resolver', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const acao = String(req.body?.acao || '');
+    if (!['transferir', 'recusar'].includes(acao)) {
+      return res.status(400).json({ error: 'Ação inválida. Use transferir ou recusar.' });
+    }
+    const obs = String(req.body?.obs || '').trim().slice(0, 500) || null;
+
+    const { data: t, error: eT } = await supabase.from('mem_grupo_transferencias')
+      .select('id, membro_id, grupo_origem_id, vinculo_id, status').eq('id', req.params.id).maybeSingle();
+    if (eT) throw eT;
+    if (!t) return res.status(404).json({ error: 'Transferência não encontrada' });
+    if (t.status !== 'pendente') {
+      return res.status(409).json({ error: `Esta transferência já foi ${t.status === 'concluida' ? 'concluída' : 'recusada'}.` });
+    }
+
+    const quem = req.user?.name || req.user?.email || null;
+    const agora = new Date().toISOString();
+
+    if (acao === 'recusar') {
+      // ⚠️ UPDATE condicionado ao status ATUAL: duas pessoas da triagem abrindo
+      // a mesma linha não podem resolver duas vezes.
+      const { data: upd, error } = await supabase.from('mem_grupo_transferencias')
+        .update({ status: 'recusada', resolvido_por: req.user?.id || null, resolvido_por_nome: quem, resolvido_em: agora, resolucao_obs: obs })
+        .eq('id', t.id).eq('status', 'pendente').select('id');
+      if (error) throw error;
+      if (!upd?.length) return res.status(409).json({ error: 'Alguém já resolveu esta transferência.' });
+      return res.json({ ok: true, status: 'recusada' });
+    }
+
+    const destinoId = String(req.body?.grupo_destino_id || '').trim();
+    if (!destinoId) return res.status(400).json({ error: 'Escolha o grupo de destino.' });
+    if (destinoId === t.grupo_origem_id) {
+      return res.status(400).json({ error: 'O destino tem que ser diferente do grupo de origem.' });
+    }
+    const { data: destino } = await supabase.from('mem_grupos')
+      .select('id, nome, ativo').eq('id', destinoId).is('deleted_at', null).maybeSingle();
+    if (!destino || destino.ativo === false) {
+      return res.status(404).json({ error: 'Grupo de destino não encontrado ou inativo.' });
+    }
+
+    // Já está no destino? Não duplica vínculo — segue e fecha a origem.
+    const { data: jaLa } = await supabase.from('mem_grupo_membros')
+      .select('id').eq('grupo_id', destinoId).eq('membro_id', t.membro_id)
+      .is('saiu_em', null).is('deleted_at', null).limit(1).maybeSingle();
+    if (!jaLa) {
+      const { error: eIns } = await supabase.from('mem_grupo_membros').insert({
+        grupo_id: destinoId,
+        membro_id: t.membro_id,
+        // Mesma régua de 13/08: entrar por decisão da coordenação é
+        // PARTICIPAÇÃO, não visita.
+        funcao: 'frequentador',
+        entrou_em: new Date().toISOString().slice(0, 10),
+      });
+      if (eIns) throw eIns;
+    }
+
+    // ⚠️ Fecha a origem DEPOIS de garantir o destino: morrer no meio deixa a
+    // pessoa nos dois grupos (visível e corrigível), nunca em NENHUM.
+    let vinculoFechado = false;
+    const alvoVinculo = supabase.from('mem_grupo_membros')
+      .update({ saiu_em: new Date().toISOString().slice(0, 10), motivo_saida: `Transferida para "${destino.nome}" pela coordenação` })
+      .eq('grupo_id', t.grupo_origem_id).eq('membro_id', t.membro_id)
+      .is('saiu_em', null).is('deleted_at', null);
+    const { data: fechou, error: eFech } = await alvoVinculo.select('id');
+    if (eFech) throw eFech;
+    vinculoFechado = !!(fechou && fechou.length);
+
+    const { data: upd, error } = await supabase.from('mem_grupo_transferencias')
+      .update({
+        status: 'concluida', grupo_destino_id: destinoId,
+        resolvido_por: req.user?.id || null, resolvido_por_nome: quem,
+        resolvido_em: agora, resolucao_obs: obs,
+      })
+      .eq('id', t.id).eq('status', 'pendente').select('id');
+    if (error) throw error;
+    if (!upd?.length) return res.status(409).json({ error: 'Alguém já resolveu esta transferência.' });
+
+    // Avisa quem responde pelo grupo de DESTINO — ele acabou de receber gente.
+    (async () => {
+      const donos = await donosDoGrupo(destinoId).catch(() => []);
+      if (!donos.length) return;
+      const { data: p } = await supabase.from('mem_membros').select('nome').eq('id', t.membro_id).maybeSingle();
+      await notificar({
+        modulo: 'grupos',
+        tipo: 'novo_membro_grupo',
+        titulo: `Nova pessoa no grupo ${destino.nome}`,
+        mensagem: `${p?.nome || 'Alguém'} foi transferida pela coordenação e já faz parte de "${destino.nome}".`,
+        link: '/grupos',
+        severidade: 'info',
+        chaveDedup: `transf_ok_${t.id}`,
+        targetIds: donos,
+      });
+    })().catch(e => console.warn('[grupos transferencias] notificar destino:', e.message));
+
+    res.json({ ok: true, status: 'concluida', destino: destino.nome, vinculo_origem_encerrado: vinculoFechado });
+  } catch (e) {
+    console.error('[grupos transferencias resolver]', e.message);
+    res.status(500).json({ error: 'Erro ao resolver a transferência' });
+  }
+});
+
 router.get('/confira/painel', authorizeModule('grupos', 1), async (req, res) => {
   try {
     let temporadaId = req.query.temporada || null;
@@ -4105,7 +4408,7 @@ router.post('/geocode-batch', authorizeModule('grupos', 3), async (req, res) => 
 
     for (const g of grupos || []) {
       // Pula online
-      if (g.bairro === 'Online' || g.local?.toLowerCase().includes('online')) {
+      if (ehGrupoOnline(g)) {
         skip.push({ id: g.id, codigo: g.codigo, nome: g.nome, motivo: 'online' });
         continue;
       }
@@ -4307,6 +4610,61 @@ router.get('/:id/candidatos-adicionar', authorizeModule('grupos', 3), async (req
 });
 
 // POST /api/grupos/:id/membros — adicionar membro
+// POST /api/grupos/:id/pessoas — cadastrar pessoa NOVA já dentro do grupo
+//
+// ⚠️ O GÊMEO WEB do `POST /app/grupos/:id/pessoas` (Marcos · 25/08/2026:
+// *"alinhe todas essas mudanças com o sistema web"*). A régua é a MESMA
+// (`services/grupoPessoaDireta`); aqui só muda quem autoriza e o rótulo da
+// origem na observação de identidade.
+//
+// ⚠️ NÃO substitui `POST /:id/membros`, que continua sendo o caminho pra quem
+// JÁ EXISTE na base (o funil de entrada da tela escolhe uma pessoa e manda o
+// `membro_id`). Este é pra quem não existe ainda — e é por isso que passa pelo
+// matcher: se a pessoa existir mesmo assim, ele liga em vez de duplicar.
+router.post('/:id/pessoas', authorizeModule('grupos', 3), async (req, res) => {
+  try {
+    const { data: grupo } = await supabase.from('mem_grupos')
+      .select('id, nome').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
+
+    const r = await cadastrarPessoaNoGrupo({
+      grupo,
+      dados: req.body || {},
+      autor: { id: req.user?.id || null, nome: req.user?.name || req.user?.email || 'Equipe' },
+      origem: 'grupos_erp_equipe',
+      ip: req.ip || null,
+      userAgent: req.get?.('user-agent') || null,
+    });
+    if (!r.ok) return res.status(r.http || 400).json({ error: r.error, campo: r.campo });
+
+    // Mesma régua do `POST /:id/membros`: "novo membro NO GRUPO X" é assunto do
+    // grupo X, então o aviso vai pros donos dele, não pro fan-out do módulo.
+    if (!r.ja_no_grupo) {
+      (async () => {
+        const donos = await donosDoGrupo(grupo.id).catch(() => []);
+        if (!donos.length) return;
+        await notificar({
+          modulo: 'grupos',
+          tipo: 'novo_membro_grupo',
+          titulo: `Novo membro no grupo ${grupo.nome}`,
+          mensagem: `${r.nome} foi cadastrada pela equipe e entrou no grupo ${grupo.nome}.`
+            + (r.sem_cpf ? ' Cadastro sem CPF — aparece na fila de "faltam dados".' : ''),
+          link: '/grupos',
+          severidade: 'info',
+          chaveDedup: `novo_membro_${grupo.id}_${r.membro_id}`,
+          targetIds: donos,
+        });
+      })().catch(e => console.warn('[Grupos pessoas] notificar:', e.message));
+    }
+
+    const { ok, http, ...corpo } = r;
+    res.status(http || 201).json({ ok: true, ...corpo });
+  } catch (e) {
+    console.error('[Grupos pessoas]', e.message);
+    res.status(500).json({ error: 'Erro ao cadastrar a pessoa' });
+  }
+});
+
 router.post('/:id/membros', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const { membro_id } = req.body;
@@ -4563,7 +4921,8 @@ router.get('/pessoas/papeis', async (req, res) => {
       (ms || []).forEach(m => { membrosMap[m.id] = m; });
     }
 
-    const RANK = { coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, lider_treinamento: 3, frequentador: 2, visitante: 1 };
+    // `co_lider` fica no mapa só pra LER dado histórico (ver publicGrupos).
+    const RANK = { coordenador: 7, supervisor: 6, lider: 5, co_lider: 4, lider_treinamento: 4, frequentador: 2, visitante: 1 };
     const pessoas = {};
     const garante = (mid) => {
       if (!pessoas[mid]) {
@@ -5300,7 +5659,10 @@ router.put('/:id/supervisor', authorizeModule('grupos', 5), async (req, res) => 
 router.put('/membros/:membroRowId/funcao', async (req, res) => {
   try {
     const { funcao } = req.body || {};
-    const VALIDAS = ['visitante', 'frequentador', 'lider_treinamento', 'lider', 'co_lider', 'supervisor', 'coordenador'];
+    // ⚠️ `co_lider` SAIU (Marcos · 25/08/2026). O banco recusa o valor
+    // (`chk_grupo_membros_sem_colider`), então aceitá-lo aqui só produziria
+    // 23514 com mensagem de erro genérica na tela.
+    const VALIDAS = ['visitante', 'frequentador', 'lider_treinamento', 'lider', 'supervisor', 'coordenador'];
     if (!VALIDAS.includes(funcao)) {
       return res.status(400).json({ error: `função deve ser uma de: ${VALIDAS.join(', ')}` });
     }

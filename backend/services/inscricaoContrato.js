@@ -13,7 +13,7 @@ const {
   cpfValido, normalizarCpf, normalizarTelefone, normalizarEmail,
   registrarObservacaoSegura,
 } = require('./identidadeProgressiva');
-const { acharOuCriarGuardado, acharMembroGuardado } = require('./membroMatch');
+const { acharOuCriarGuardado, acharMembroGuardado, registrarContatoDaPorta } = require('./membroMatch');
 // Réguas PURAS de campo de contato (moradia nova em 06/08/2026 · ver comentário
 // mais abaixo). Espelho de tirarCodigoPais de src/lib/inscricao.js — mudou lá,
 // mude no util.
@@ -166,6 +166,57 @@ async function processarIdentidade({
     { soChaveForte },
   );
   const membroId = (r && r.membro_id) || null;
+
+  // ⚠️⚠️ O VAZAMENTO DA POLÍTICA 'ligar' (achado em 24/08/2026, medido no
+  // Celebra 2026: 18 CPFs e 14 telefones presos na linha da inscrição).
+  //
+  // `acharMembroGuardado` é SÓ-LEITURA de propósito e tem 15+ chamadores — um
+  // deles declara no cabeçalho que o match não escreve (`publicGenerosidade`).
+  // Então a escrita NÃO pode morar lá dentro: mora aqui, na camada da PORTA,
+  // que é exatamente onde o "Contrato de porta" do CLAUDE.md manda acumular
+  // contato divergente e consolidar CPF. A política 'criar' já fazia os dois
+  // (dentro de `acharOuCriarGuardado`); a 'ligar' não fazia nenhum.
+  //
+  // ⚠️ Best-effort nos dois: falha aqui NÃO derruba a inscrição (o vínculo já
+  // está resolvido). Mesma régua do resto da porta.
+  if (membroId) {
+    // 1. Contato divergente → mem_contatos. Sem isso a próxima porta não acha a
+    //    pessoa pelo telefone que ela mesma acabou de digitar.
+    try {
+      registrarContatoDaPorta(membroId, { telefone, email }, 'porta');
+    } catch (e) {
+      console.error('[inscricaoContrato] contato da porta não registrado:', e.message);
+    }
+
+    // 2. CPF tardio → cadastro. Delegado ao `cpfReconciliar`, que é quem sabe
+    //    a régua: preenche só se o membro está SEM CPF, conflito vira pendência
+    //    humana e nunca funde sozinho.
+    //
+    // ⚠️ A confiança espelha `_consolidarCpfNoMatch` (membroMatch.js) e NÃO é
+    // detalhe: e-mail e telefone+nome são sinais que a FAMÍLIA compartilha, e
+    // com homônimo (pai/filho) o CPF de um viraria a identidade permanente do
+    // outro. Por isso 'fraca' — que só consolida com o nascimento conferível
+    // dos DOIS lados. 'nome+nascimento' já conferiu por construção → 'forte'.
+    // Match por CPF não precisa de nada: o membro já tem esse CPF.
+    const matchedBy = (r && r.matched_by) || null;
+    if (cpf && matchedBy && matchedBy !== 'cpf') {
+      try {
+        const { reconciliarCpfTardio } = require('./cpfReconciliar');
+        const { normalizarCpf } = require('./membroMatch');
+        const cpf11 = normalizarCpf(cpf);
+        if (cpf11) {
+          await reconciliarCpfTardio({
+            membroId, cpf: cpf11, origem: `porta:${origem || 'inscricao'}`, origemId,
+            dataNascimento,
+            confianca: matchedBy === 'nome+nascimento' ? 'forte' : 'fraca',
+          });
+        }
+      } catch (e) {
+        console.error('[inscricaoContrato] cpf tardio não consolidado:', e.message);
+      }
+    }
+  }
+
   try {
     await registrarObservacaoSegura({
       membroId, origem, origemId, nome: nomeCompleto, cpf, telefone, email, dataNascimento,

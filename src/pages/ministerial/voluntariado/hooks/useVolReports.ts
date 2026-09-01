@@ -3,12 +3,25 @@ import { voluntariado } from '@/api';
 import { subDays, subMonths, startOfWeek, endOfWeek, format } from 'date-fns';
 import type { VolSchedule, VolCheckIn, VolService } from '../types';
 import { normName } from '../volMatch';
+import { ehAno, anoDe } from '@/lib/janelaPeriodo';
 
-type Period = 'week' | 'month' | '3months' | 'custom';
+type Period = 'week' | 'month' | '3months' | 'custom' | string;
 
+// ⚠️ `ano:2024` (pedido do Marcos · 24/08/2026) é janela FECHADA: a ponta de
+// cima é 31/12, não "hoje". Este resolvedor já devolvia {start, end}, então o
+// ano entra sem nenhum consumidor precisar aprender uma régua nova — mas o
+// `end` PRECISA continuar sendo respeitado por quem o recebe.
 function getPeriodRange(period: Period, customRange?: { start: string; end: string }) {
   const now = new Date();
   if (period === 'custom' && customRange) return { start: customRange.start, end: customRange.end };
+  if (ehAno(period)) {
+    const ano = anoDe(period) as number;
+    // Ano CORRENTE não termina no futuro (a grade de cultos é pré-agendada
+    // até dezembro com zero — ir a 31/12 encheria o relatório de nada).
+    const fimAno = new Date(ano, 11, 31, 23, 59, 59);
+    const fim = fimAno.getTime() <= now.getTime() ? fimAno : now;
+    return { start: new Date(ano, 0, 1, 0, 0, 0).toISOString(), end: fim.toISOString() };
+  }
   if (period === 'week') return { start: startOfWeek(now).toISOString(), end: endOfWeek(now).toISOString() };
   if (period === 'month') return { start: subDays(now, 30).toISOString(), end: now.toISOString() };
   return { start: subMonths(now, 3).toISOString(), end: now.toISOString() };
@@ -94,6 +107,11 @@ export function useInactiveVolunteers(period = '3months', teamName?: string, mod
         services: VolService[]; schedules: VolSchedule[]; checkIns: VolCheckIn[];
       };
 
+      // ⚠️⚠️ "Inativo" é SEMPRE relativo a HOJE (quem parou de servir e é
+      // candidato a contato). Janela de ANO não se aplica aqui: "quem não
+      // serviu em 2024" não é a pergunta desta lista, e responder com o cutoff
+      // de um ano fechado devolveria gente que voltou a servir depois. Com ano
+      // selecionado ela cai no padrão de 3 meses — e a TELA declara isso.
       const periodMonths: Record<string, number> = { week: 0.25, month: 1, '2months': 2, '3months': 3, '4months': 4, '6months': 6 };
       const months = periodMonths[period] || 3;
       const cutoff = months < 1 ? subDays(new Date(), Math.round(months * 30)) : subMonths(new Date(), months);

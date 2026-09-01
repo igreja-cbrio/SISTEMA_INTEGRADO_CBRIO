@@ -32,6 +32,7 @@ const { sanitizePath } = require('../services/storageService');
 // cópias é exatamente o que faz o formato canônico divergir.
 const { soDigitos, mascaraTelefone } = require('../utils/camposContato');
 const { notificar } = require('../services/notificar');
+const { APP_STAFF } = require('../utils/appPushDestino');
 
 router.use(authenticate);
 
@@ -462,6 +463,13 @@ router.post('/push-token', async (req, res) => {
         user_id: req.user.userId,
         membro_id: req.user.membro_id || null,
         platform: typeof req.body?.platform === 'string' ? req.body.platform.slice(0, 20) : null,
+        // ⚠️⚠️ CARIMBA O APP (20/08/2026). Esta rota gravava sem `projeto_id`, e
+        // `app_push_tokens` é UMA tabela pros DOIS apps Expo — então não havia
+        // como o push do ERP saber que um token era do Staff, e o aviso
+        // operacional caía também no app de MEMBROS de quem usa os dois com a
+        // mesma conta. Quem carimba é o BACKEND, não o app: vale na próxima
+        // abertura, sem build nem OTA.
+        projeto_id: APP_STAFF,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'token' });
     if (error) return res.status(400).json({ error: error.message });

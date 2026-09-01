@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
     || process.env.APP_RELEASE
     || "";
   const environment = process.env.SENTRY_ENV || process.env.VERCEL_ENV || mode;
+
   const sentryUploadEnabled = Boolean(
     process.env.SENTRY_AUTH_TOKEN
     && process.env.SENTRY_ORG
@@ -33,6 +34,24 @@ export default defineConfig(({ mode }) => {
   build: {
     sourcemap: sentryUploadEnabled ? "hidden" : false,
   },
+  // ⚠️⚠️ NÃO REINTRODUZIR `experimental.renderBuiltUrl` COM `?dpl=` AQUI.
+  // Ligado em 21/08/2026 para o Skew Protection da Vercel, ele quebrou o
+  // sistema inteiro em silêncio: o Vite aplica a query no HTML e nos
+  // `modulepreload`, mas os `import()` internos do rollup continuam apontando
+  // para o caminho SEM a query — então o navegador baixa CADA chunk por DUAS
+  // URLs e instancia CADA módulo DUAS VEZES.
+  //
+  // Medido no navegador em 23/08/2026, na porta pública de inscrição em grupos:
+  // 42 requisições para 21 arquivos, TODOS em dobro. Com dois módulos do React
+  // vivos, todo componente de tela `lazy` estoura
+  // `Minified React error #321 (Invalid hook call)` e, na sequência,
+  // `NotFoundError: removeChild` — que derruba a árvore. O sintoma visível era
+  // mapa sem pino nenhum (Membresia e Grupos), mas o alcance é toda tela lazy.
+  //
+  // Se o Skew Protection voltar à mesa, a versão precisa garantir UMA URL por
+  // módulo (nome de arquivo versionado, não query) e ser conferida no navegador
+  // contando `performance.getEntriesByType('resource')` — o build e o typecheck
+  // passam limpos com o defeito presente.
   plugins: [
     react(),
     mode === "development" && componentTagger(),

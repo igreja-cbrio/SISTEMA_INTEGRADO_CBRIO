@@ -100,9 +100,6 @@ const GoogleIcon = () => (
     <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
   </svg>
 );
-const PlanningCenterIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#00B39D" strokeWidth="2"/><circle cx="12" cy="12" r="4" fill="#00B39D"/></svg>
-);
 
 export default function Login() {
   const { isDark } = useTheme();
@@ -335,20 +332,6 @@ export default function Login() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <OAuthButton icon={<MicrosoftIcon />} label="Microsoft" onClick={handleMicrosoft} />
           <OAuthButton icon={<GoogleIcon />} label="Google" onClick={handleGoogle} />
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0 0' }}>
-          <div style={{ flex: 1, height: 1, background: COL.cardBorder }} />
-          <span style={{ fontSize: 12, color: COL.textDim }}>voluntários</span>
-          <div style={{ flex: 1, height: 1, background: COL.cardBorder }} />
-        </div>
-
-        <div style={{ marginTop: 12 }}>
-          <OAuthButton
-            icon={<PlanningCenterIcon />}
-            label="Entrar com Planning Center"
-            onClick={() => { window.location.href = '/api/auth/planning-center/login'; }}
-          />
         </div>
       </div>
 

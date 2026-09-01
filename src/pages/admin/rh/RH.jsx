@@ -25,6 +25,7 @@ import TabPCS from './TabPCS';
 import TabPainelRH from './TabPainelRH';
 import { DatePicker } from '@/components/ui/date-picker';
 import { mascaraCep, cepCompleto, buscarCep } from '../../../lib/cepAutopreenche';
+import SeletorBairro from '../../../components/ui/seletor-bairro';
 
 // ── Toast de feedback ───────────────────────────────────────
 function Toast({ message, type = 'error', onClose }) {
@@ -3206,7 +3207,16 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           </div>
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Bairro</label>
-            <input className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={editForm.bairro || ''} onChange={e => setEditForm(p => ({ ...p, bairro: e.target.value }))} />
+            {/* ⚠️ O RH grava em `rh_funcionarios`, não em `mem_membros`: aqui a
+                lista serve para a EQUIPE escrever o bairro do mesmo jeito que a
+                membresia, mas o backend NÃO canonicaliza esta tabela — o ganho
+                é a lista, não a régua de gravação. */}
+            <SeletorBairro
+              value={editForm.bairro || ''}
+              onChange={(v) => setEditForm(p => ({ ...p, bairro: v }))}
+              placeholder="Digite ou escolha"
+              className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-2 text-sm shadow-sm shadow-black/5 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
           </div>
           <div>
             <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1 block">Cidade</label>

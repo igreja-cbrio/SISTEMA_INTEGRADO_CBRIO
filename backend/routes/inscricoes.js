@@ -15,11 +15,13 @@ const { escapePostgrestValue } = require('../utils/sanitize');
 const { fetchAllRows } = require('../utils/pagination');
 const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/inscricaoComprovante');
 const { portasSatelites, fontesUnificadas, catalogoPublico } = require('../services/inscricaoPortas');
+const { elegiveisDoSorteio, motivoSemElegivel } = require('../services/inscricaoSorteio');
 // ⚠️ Contagem de inscritos NÃO usa o embed `inscricoes(count)` (não filtra
 // soft-delete — ver o cabeçalho do serviço).
 const { contarInscritosVivos } = require('../services/inscricaoContagem');
 const { normalizarIds, separarExclusaoLote, resumoDoLote } = require('../utils/exclusaoInscricaoLote');
 const checkoutExterno = require('../utils/checkoutExterno');
+const { sanitizarLotes } = require('../utils/lotesEvento');
 const {
   previewTemplate,
   esqueletoPadrao,
@@ -34,6 +36,8 @@ const TIPOS_EDITAVEIS = [...TIPOS_EMAIL, 'assinatura'];
 const { enviarEmail } = require('../services/email');
 // Push pro app de membros quando um evento é publicado (broadcast).
 const { notificarApp } = require('../services/appPush');
+const { previaAvisoEmail, enviarAvisoEmail } = require('../services/avisoComprovanteEmail');
+const { avaliarCadastroPessoa } = require('../utils/prontidaoCadastro');
 // CPF com DV pelo canônico do Contrato de Inscrição — NÃO recriar cópia local
 // (era assim que as réguas divergiam entre as portas).
 const { cpfValido } = require('../services/inscricaoContrato');
@@ -176,12 +180,20 @@ const CAMPOS_EVENTO = [
   'no_totem',
   // Cartão cobrado FORA (e-Inscrição) · migration 20260811180000. Preenchido,
   // remove 'cartao' do nosso checkout — ver backend/utils/checkoutExterno.js.
-  'checkout_externo_url', 'checkout_externo_nome',
+  // `checkout_externo_valor_centavos` (20260821190000) é só EXIBIÇÃO: o preço
+  // do cartão na plataforma deles, pra tela de escolha dizer "R$ 850 no cartão
+  // · R$ 830 no Pix". Nenhuma cobrança nossa lê esse número.
+  'checkout_externo_url', 'checkout_externo_nome', 'checkout_externo_valor_centavos',
   // Retiro/viagem (migration 20260817160000): endereço obrigatório neste evento
   // e bloco do responsável quando a pessoa é menor de 18 na inscrição.
   // ⚠️ `termos_extra` NÃO entra nesta lista — é jsonb e passa pelo saneador
   // próprio (`sanitizeTermosExtra`), igual a `pagamento_metodos`.
   'exigir_endereco', 'exige_dados_menor',
+  // Período (retiro de vários dias) + instruções gerais pra download/e-mail
+  // (migration 20260820120000). Nullable: limpar é edição legítima.
+  'data_fim', 'instrucoes_url', 'instrucoes_nome',
+  // Grupo de WhatsApp pra dúvidas, exibido nas telas públicas (20260821150000).
+  'whatsapp_duvidas_url',
 ];
 
 // ⚠️ INCIDENTE 2026-08-04 · colunas NOT NULL da whitelist acima.
@@ -240,6 +252,27 @@ function conferirCheckoutExterno(patch) {
     const nome = String(patch.checkout_externo_nome ?? '').trim();
     patch.checkout_externo_nome = nome ? nome.slice(0, 40) : null;
   }
+  return null;
+}
+
+/**
+ * Preço do cartão na plataforma externa — só pra tela.
+ *
+ * ⚠️ Vazio/0/lixo ⇒ NULL (a tela volta a não prometer preço de cartão), nunca
+ * 0: "R$ 0,00 no cartão" numa tela de escolha é promessa de gratuidade. Teto
+ * igual ao do CHECK do banco pra o typo (8500000 no lugar de 85000) ser
+ * recusado com mensagem, não com 23514.
+ */
+function sanitizeValorCartaoExterno(patch) {
+  if (patch.checkout_externo_valor_centavos === undefined) return null;
+  const bruto = patch.checkout_externo_valor_centavos;
+  if (bruto === null || bruto === '') { patch.checkout_externo_valor_centavos = null; return null; }
+  const n = Math.round(Number(bruto));
+  if (!Number.isFinite(n) || n <= 0) { patch.checkout_externo_valor_centavos = null; return null; }
+  if (n > 10000000) {
+    return 'O valor do cartão na outra plataforma passou de R$ 100.000 — confira se não sobrou um zero.';
+  }
+  patch.checkout_externo_valor_centavos = n;
   return null;
 }
 
@@ -885,7 +918,23 @@ router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) =>
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Evento não encontrado' });
-    const sorteios = (data.sorteios || []).sort((a, b) => String(b.sorteado_em).localeCompare(String(a.sorteado_em)));
+    // Sorteio SUBSTITUÍDO (re-sorteio do mesmo prêmio) sai da leitura — senão a
+    // tela mostraria o ganhador antigo, que não ficou com o prêmio. A linha fica
+    // no banco como trilha.
+    // ⚠️ Consulta ISOLADA e best-effort de propósito: pedir a coluna nova DENTRO
+    // do embed faria o PostgREST recusar a query INTEIRA enquanto a migration
+    // não estiver aplicada, derrubando a tela principal do evento (lição do
+    // `parcelas_max` / `apelido`). Sem a coluna, nada é filtrado — o pior caso é
+    // exibir o ganhador antigo, não perder a tela.
+    const substituidos = new Set();
+    try {
+      const { data: subs } = await supabase.from('insc_sorteios')
+        .select('id').eq('evento_id', req.params.id).not('substituido_em', 'is', null);
+      for (const s of (subs || [])) substituidos.add(s.id);
+    } catch { /* migration ainda não aplicada */ }
+    const sorteios = (data.sorteios || [])
+      .filter((s) => !substituidos.has(s.id))
+      .sort((a, b) => String(b.sorteado_em).localeCompare(String(a.sorteado_em)));
     // Mesmo helper da lista (o embed `inscricoes(count)` contava apagadas).
     const contagem = await contarInscritosVivos(supabase, [data.id]);
     res.json({ ...data, inscritos: contagem.get(data.id) || 0, sorteios });
@@ -1846,33 +1895,104 @@ router.post('/eventos/:id/inscricoes/excluir-lote', authorizeModule('inscricoes'
   }
 });
 
-// POST /eventos/:id/sortear — sorteia um inscrito (espelho do eventos-externos).
-// Body: { premio, permitir_repetir }. Pool = inscrições ativas não-canceladas
-// com número da sorte; por padrão exclui quem já ganhou neste evento.
+// POST /eventos/:id/sortear — sorteia entre quem FEZ CHECK-IN.
+// Body: { premio, substituir }.
+//
+// ⚠️ 3 decisões do Marcos (2026-07-31 · não regredir):
+//   1. **Só concorre quem fez check-in.** Sortear ausente mata o momento no
+//      palco e devolve o prêmio pro monte. Sem check-in nenhum, o endpoint
+//      RECUSA com a razão certa — não cai no bolo antigo em silêncio.
+//   2. **Inscrição migrada concorre igual** (85 das 98 do Celebra são legado e
+//      82 não têm CPF): o filtro exige só `numero_sorte` + não-cancelada.
+//   3. **Uma pessoa nunca leva 2 prêmios no mesmo evento** — dedup por PESSOA
+//      (membro_id > cpf > telefone > nome), não por linha de inscrição.
+//      `permitir_repetir` foi REMOVIDO: bundle antigo que ainda mande a flag é
+//      ignorado, porque a regra passou a ser da casa, não opção de tela.
+// Re-sortear o MESMO prêmio: `substituir: true` marca o sorteio anterior daquele
+// prêmio como substituído (o ganhador trocado volta a concorrer — ele não ficou
+// com prêmio nenhum) em vez de gravar 2 linhas pro mesmo prêmio, que era o que
+// acontecia antes (a tela mostrava o 1º e o 2º bloqueava a pessoa pra sempre).
 router.post('/eventos/:id/sortear', authorizeModule('inscricoes', 3), async (req, res) => {
   try {
-    const { premio, permitir_repetir } = req.body || {};
-    const { data: inscritos } = await supabase.from('inscricoes')
-      .select('id, nome_completo, numero_sorte')
-      .eq('evento_id', req.params.id).is('deleted_at', null)
-      .neq('status', 'cancelada').not('numero_sorte', 'is', null);
-    if (!inscritos || !inscritos.length) return res.status(400).json({ error: 'Sem inscritos pra sortear' });
-    let elegiveis = inscritos;
-    if (!permitir_repetir) {
-      const { data: jaSorteados } = await supabase.from('insc_sorteios')
-        .select('inscricao_id').eq('evento_id', req.params.id);
-      const ganhos = new Set((jaSorteados || []).map(s => s.inscricao_id));
-      elegiveis = inscritos.filter(i => !ganhos.has(i.id));
+    const { premio, substituir } = req.body || {};
+    const nomePremio = premio ? String(premio).trim().slice(0, 200) : null;
+
+    // Inscritos PAGINADOS: `.select()` cru trunca em 1000 no PostgREST e num
+    // evento grande o milésimo-primeiro não concorreria, em silêncio.
+    const inscritos = [];
+    for (let off = 0; off < 20000; off += 1000) {
+      const { data, error } = await supabase.from('inscricoes')
+        .select('id, nome_completo, numero_sorte, status, membro_id, cpf, telefone')
+        .eq('evento_id', req.params.id).is('deleted_at', null)
+        .neq('status', 'cancelada').not('numero_sorte', 'is', null)
+        .range(off, off + 999);
+      if (error) throw error;
+      inscritos.push(...(data || []));
+      if (!data || data.length < 1000) break;
     }
-    if (!elegiveis.length) return res.status(400).json({ error: 'Todos os inscritos já foram sorteados (marque "permitir repetir" pra sortear de novo)' });
+
+    // Presentes: `insc_checkins` não tem evento_id — filtra pelo embed !inner.
+    const presentesIds = [];
+    for (let off = 0; off < 20000; off += 1000) {
+      const { data, error } = await supabase.from('insc_checkins')
+        .select('inscricao_id, inscricao:inscricoes!inner(evento_id)')
+        .eq('inscricao.evento_id', req.params.id)
+        .range(off, off + 999);
+      if (error) throw error;
+      for (const c of (data || [])) presentesIds.push(c.inscricao_id);
+      if (!data || data.length < 1000) break;
+    }
+
+    // ⚠️ Se a coluna nova não existir (migration não aplicada), o PostgREST
+    // recusa a query e `data` volta null — tratar como "nenhum sorteio" faria a
+    // MESMA pessoa poder ganhar de novo, em silêncio. Então: fallback explícito
+    // pro select sem a coluna, e o dedup por pessoa continua valendo.
+    let sorteios = [];
+    {
+      const r1 = await supabase.from('insc_sorteios')
+        .select('id, inscricao_id, premio, substituido_em').eq('evento_id', req.params.id);
+      if (r1.error) {
+        const r2 = await supabase.from('insc_sorteios')
+          .select('id, inscricao_id, premio').eq('evento_id', req.params.id);
+        if (r2.error) throw r2.error;
+        sorteios = r2.data || [];
+      } else {
+        sorteios = r1.data || [];
+      }
+    }
+
+    // Re-sorteio do mesmo prêmio: aposenta o anterior ANTES de calcular o bolo.
+    if (substituir && nomePremio) {
+      const anteriores = sorteios.filter((s) => (s.premio || '') === nomePremio && !s.substituido_em);
+      if (anteriores.length) {
+        const { error: eSub } = await supabase.from('insc_sorteios')
+          .update({ substituido_em: new Date().toISOString() })
+          .in('id', anteriores.map((s) => s.id));
+        if (eSub) throw eSub;
+        const trocados = new Set(anteriores.map((s) => s.id));
+        sorteios = sorteios.map((s) => (trocados.has(s.id) ? { ...s, substituido_em: 'agora' } : s));
+      }
+    }
+
+    const elegiveis = elegiveisDoSorteio({ inscritos, presentesIds, sorteios });
+    if (!elegiveis.length) {
+      const m = motivoSemElegivel({ inscritos, presentesIds, sorteios });
+      const texto = m.motivo === 'sem_inscritos'
+        ? 'Sem inscritos com número da sorte neste evento.'
+        : m.motivo === 'ninguem_presente'
+          ? `O sorteio é entre quem fez check-in, e ninguém foi marcado ainda (${m.ativos} inscritos). Ative o check-in e marque a presença na portaria.`
+          : `As ${m.presentes} pessoas presentes já ganharam um prêmio — uma pessoa não leva dois no mesmo evento.`;
+      return res.status(400).json({ error: texto, motivo: m.motivo, presentes: m.presentes, inscritos: m.ativos });
+    }
+
     const g = elegiveis[Math.floor(Math.random() * elegiveis.length)];
     const { data: sorteio, error } = await supabase.from('insc_sorteios').insert({
-      evento_id: req.params.id, premio: premio ? String(premio).trim().slice(0, 200) : null,
+      evento_id: req.params.id, premio: nomePremio,
       numero_sorteado: g.numero_sorte, inscricao_id: g.id, ganhador_nome: g.nome_completo,
       sorteado_por: req.user?.id || null,
     }).select('*').single();
     if (error) throw error;
-    res.status(201).json(sorteio);
+    res.status(201).json({ ...sorteio, elegiveis: elegiveis.length, presentes: presentesIds.length });
   } catch (e) {
     console.error('[inscricoes] sortear:', e.message);
     res.status(500).json({ error: 'Erro ao sortear' });
@@ -1885,56 +2005,227 @@ router.post('/eventos/:id/sortear', authorizeModule('inscricoes', 3), async (req
 // (critério de aceite da spec). O dashboard já lê `compareceu` da view
 // unificada; marcar aqui acorda o card de comparecimento sozinho.
 
-function rpcArquiteturalIndisponivel(error) {
-  return !!error && ['PGRST202', '42883'].includes(error.code);
-}
+const {
+  marcarCheckinAuditavel, desfazerCheckinAuditavel,
+} = require('../services/inscricaoCheckin');
+const { montarLinkCheckin } = require('../utils/eventoCheckinToken');
 
-async function marcarCheckinAuditavel({ inscricaoId, por, modo, overridePendente, motivo }) {
-  const { data, error } = await supabase.rpc('fn_insc_checkin_marcar', {
-    p_inscricao_id: inscricaoId,
-    p_por: por,
-    p_modo: modo,
-    p_override_pendente: !!overridePendente,
-    p_override_motivo: motivo || null,
-  });
-  if (!error) return data;
-  if (!rpcArquiteturalIndisponivel(error)) throw error;
 
-  // Compatibilidade durante deploy em duas etapas: comportamento antigo,
-  // protegido pelo UNIQUE, até a migration da trilha estar disponível.
-  const { data: marcado, error: erroLegado } = await supabase.from('insc_checkins')
-    .insert({ inscricao_id: inscricaoId, por, modo })
-    .select('em').single();
-  if (erroLegado) {
-    if (erroLegado.code !== '23505') throw erroLegado;
-    const { data: existente } = await supabase.from('insc_checkins')
-      .select('em').eq('inscricao_id', inscricaoId).maybeSingle();
-    return { ok: true, ja_checkin: true, em: existente?.em || null };
+// Quem receberia o aviso de check-in: inscrição CONFIRMADA (é quem tem
+// comprovante) ligada a cadastro que tem conta no app.
+async function publicoAvisoCheckin(eventoId) {
+  const membros = new Set();
+  for (let off = 0; off < 20000; off += 1000) {
+    const { data, error } = await supabase.from('inscricoes')
+      .select('membro_id')
+      .eq('evento_id', eventoId).is('deleted_at', null)
+      .eq('status', 'confirmada').not('membro_id', 'is', null)
+      .range(off, off + 999);
+    if (error) throw error;
+    for (const i of (data || [])) membros.add(i.membro_id);
+    if (!data || data.length < 1000) break;
   }
-  return { ok: true, ja_checkin: false, em: marcado.em };
+  const ids = [...membros];
+  const users = new Set();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from('profiles')
+      .select('id, membro_id').in('membro_id', ids.slice(i, i + 200));
+    if (error) throw error;
+    for (const p of (data || [])) users.add(p.id);
+  }
+  return {
+    inscritos_confirmados: ids.length,
+    com_conta_no_app: users.size,
+    // Declarado de propósito: é a diferença entre "avisei os inscritos" e a
+    // verdade. A tela mostra isso antes do disparo.
+    sem_conta_no_app: Math.max(0, ids.length - users.size),
+    user_ids: [...users],
+  };
 }
 
-async function desfazerCheckinAuditavel({ eventoId, inscricaoId, por, motivo }) {
-  const { data, error } = await supabase.rpc('fn_insc_checkin_desfazer', {
-    p_evento_id: eventoId,
-    p_inscricao_id: inscricaoId,
-    p_por: por,
-    p_motivo: motivo || null,
-  });
-  if (!error) return data;
-  if (!rpcArquiteturalIndisponivel(error)) throw error;
-  const { error: erroLegado } = await supabase.from('insc_checkins')
-    .delete().eq('inscricao_id', inscricaoId);
-  if (erroLegado) throw erroLegado;
-  return { ok: true, auditoria_disponivel: false };
-}
+// ── Aviso "use o seu QR na entrada" pra quem tem o app ──────────────────────
+// Pedido do Matheus (29/08): avisar quem se inscreveu que o check-in é pelo QR
+// do comprovante, com o toque abrindo a inscrição DAQUELE evento.
+//
+// ⚠️ Alcance é MENOR do que "os inscritos": só chega a quem tem conta no app.
+// Medido no Celebra em 29/08 — 294 inscritos com cadastro, **32 com conta** e
+// **17 com push**. Por isso o GET devolve a prévia e a tela mostra o número
+// ANTES de disparar: "avisei os inscritos" seria falso.
+router.get('/eventos/:id/checkin/aviso-email', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    res.json(await previaAvisoEmail(req.params.id));
+  } catch (e) {
+    console.error('[inscricoes] aviso-email previa:', e.message);
+    res.status(500).json({ error: 'Erro ao calcular quem receberia o e-mail' });
+  }
+});
+
+// ⚠️ Nível 4: falar com centenas de pessoas pelo e-mail da igreja não é a
+// mesma permissão de operar a portaria.
+router.post('/eventos/:id/checkin/aviso-email', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const { data: ev } = await supabase.from('insc_eventos')
+      .select('id, nome, data, hora, tem_sorteio, checkin_ativo')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    const r = await enviarAvisoEmail(req.params.id, ev);
+    // ⚠️ Envio que não enviou ninguém NÃO pode aparecer como sucesso (lição do
+    // disparo do censo, 05/08): sem canal a resposta diz o motivo.
+    if (r.motivo === 'sem_canal') {
+      return res.status(503).json({ error: 'Nenhum canal de e-mail configurado', codigo: 'sem_canal' });
+    }
+    res.json(r);
+  } catch (e) {
+    console.error('[inscricoes] aviso-email:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar os comprovantes' });
+  }
+});
+
+router.get('/eventos/:id/checkin/aviso-app', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    res.json(await publicoAvisoCheckin(req.params.id));
+  } catch (e) {
+    console.error('[inscricoes] aviso-app previa:', e.message);
+    res.status(500).json({ error: 'Erro ao calcular quem receberia o aviso' });
+  }
+});
+
+router.post('/eventos/:id/checkin/aviso-app', authorizeModule('inscricoes', 4), async (req, res) => {
+  try {
+    const { data: ev } = await supabase.from('insc_eventos')
+      .select('id, nome, checkin_ativo').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    // ⚠️ Sem check-in ativo o aviso manda a pessoa usar um QR que a portaria
+    // ainda não lê — pior que não avisar.
+    if (!ev.checkin_ativo) {
+      return res.status(409).json({ error: 'Ative o check-in do evento antes de avisar', codigo: 'checkin_inativo' });
+    }
+    const previa = await publicoAvisoCheckin(req.params.id);
+    if (!previa.com_conta_no_app) {
+      return res.status(409).json({ error: 'Ninguém inscrito tem conta no app', codigo: 'sem_publico', ...previa });
+    }
+    const r = await notificarApp(previa.user_ids, {
+      tipo: 'inscricao_evento_checkin',
+      titulo: ev.nome,
+      body: 'Seu QR de entrada já está no app. Abra e apresente na portaria.',
+      data: { evento_id: ev.id },
+      // Amarra o aviso ao FATO (este evento): reenviar não empilha linha no sino.
+      chaveDedup: `evento_checkin:${ev.id}`,
+    });
+    res.json({ ok: true, ...previa, enviados: r?.enviados ?? 0 });
+  } catch (e) {
+    console.error('[inscricoes] aviso-app:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar o aviso' });
+  }
+});
+
+// ── Inscrever NA HORA, a partir do cadastro ─────────────────────────────────
+// Pedido do Matheus (29/08), depois de 3 pessoas chegarem sem inscrição no
+// Celebra: "buscar a pessoa no cadastro de membresia, e se tiver faltando
+// algum dado, o sistema avisar para preencher".
+//
+// ⚠️ Quem inscreve continua sendo a `inscreverEspinha` — a MESMA da porta
+// pública, do app e do totem: vaga sob advisory lock, dedup por CPF, benefício,
+// consentimentos, cobrança. Isto aqui só PRÉ-PREENCHE o formulário com o que a
+// igreja já sabe da pessoa e diz o que falta.
+router.get('/eventos/:id/pessoas/buscar', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 3) return res.json({ pessoas: [] });
+    const digitos = q.replace(/\D/g, '');
+
+    // Busca por nome (sem acento, via a régua da casa), CPF ou telefone.
+    let query = supabase.from('mem_membros')
+      .select('id, nome, cpf, telefone, email, data_nascimento, genero, status')
+      .is('deleted_at', null).limit(40);
+    query = digitos.length >= 8
+      ? query.or(`cpf.like.%${digitos}%,telefone.like.%${digitos}%`)
+      : query.ilike('nome', `%${escapePostgrestValue(q)}%`);
+    const { data, error } = await query;
+    if (error) throw error;
+
+    // Já inscrita neste evento? A tela precisa DIZER — senão o operador
+    // preenche tudo pra levar um "já inscrito" no fim.
+    const ids = (data || []).map((m) => m.id);
+    const jaInscritos = new Set();
+    if (ids.length) {
+      const { data: ins } = await supabase.from('inscricoes')
+        .select('membro_id').eq('evento_id', req.params.id)
+        .is('deleted_at', null).neq('status', 'cancelada')
+        .in('membro_id', ids);
+      for (const i of (ins || [])) jaInscritos.add(i.membro_id);
+    }
+
+    res.json({
+      pessoas: (data || []).map((m) => {
+        const p = avaliarCadastroPessoa(m);
+        return {
+          id: m.id, nome: m.nome, status: m.status,
+          // O que já temos vai pro formulário; o que falta, o operador digita.
+          cpf: m.cpf || null, telefone: m.telefone || null, email: m.email || null,
+          data_nascimento: m.data_nascimento || null, sexo: m.genero || null,
+          falta: p.faltando, falta_rotulos: p.rotulos, completo: p.completo,
+          ja_inscrita: jaInscritos.has(m.id),
+        };
+      }),
+    });
+  } catch (e) {
+    console.error('[inscricoes] buscar pessoa:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar no cadastro' });
+  }
+});
+
+// ⚠️ Nível 3 (não 2): isto CRIA inscrição, diferente de operar a portaria.
+router.post('/eventos/:id/inscrever-na-hora', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const ev = await eventoEspinhaPorId(req.params.id);
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    // ⚠️⚠️ NÃO confere a janela pública de propósito: o caso de uso É o atrasado
+    // que chega depois do prazo, e quem decide é o operador autenticado, não o
+    // relógio do formulário. A VAGA continua valendo — quem recusa é a RPC.
+    // O NOME de quem operou vai pro texto do consentimento — é o que torna a
+    // prova honesta ("declarado por fulano no balcão").
+    const quem = req.user?.nome || req.user?.name || req.user?.email || 'operador do balcão';
+    return await inscreverEspinha(req, res, ev, {
+      origem: 'balcao',
+      consentDeclaradoPor: quem,
+    });
+  } catch (e) {
+    console.error('[inscricoes] inscrever na hora:', e.message);
+    res.status(500).json({ error: 'Erro ao concluir a inscrição' });
+  }
+});
+
+// GET /eventos/:id/checkin/qr-autoatendimento — o link do QR da porta.
+// ⚠️ Nível 2 (quem opera check-in). O link é a credencial: quem o tem consegue
+// abrir a porta de autoatendimento, então ele não sai em rota de leitura geral.
+router.get('/eventos/:id/checkin/qr-autoatendimento', authorizeModule('inscricoes', 2), async (req, res) => {
+  try {
+    const { data: ev } = await supabase.from('insc_eventos')
+      .select('id, nome, checkin_ativo').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    const url = montarLinkCheckin(ev.id, process.env.FRONTEND_URL);
+    // ⚠️ Sem segredo configurado é FAIL-CLOSED: devolve o motivo em vez de um
+    // link quebrado que só falharia na mão de quem estivesse na fila.
+    if (!url) {
+      return res.status(503).json({
+        error: 'O QR de autoatendimento não está configurado (falta CRON_SECRET no ambiente).',
+        motivo: 'sem_segredo',
+      });
+    }
+    res.json({ url, checkin_ativo: !!ev.checkin_ativo });
+  } catch (e) {
+    console.error('[inscricoes] qr autoatendimento:', e.message);
+    res.status(500).json({ error: 'Erro ao gerar o QR' });
+  }
+});
 
 // GET /eventos/:id/checkin — estado da tela: evento + contadores + lista.
 // A tela recarrega isso em polling curto (contador ao vivo).
 router.get('/eventos/:id/checkin', authorizeModule('inscricoes', 2), async (req, res) => {
   try {
     const { data: ev, error: eEv } = await supabase.from('insc_eventos')
-      .select('id, nome, slug, data, hora, local, status, checkin_ativo, tem_sorteio, pagamento_ativo, vagas')
+      .select('id, nome, slug, data, hora, local, status, checkin_ativo, tem_sorteio, pagamento_ativo, vagas, campos')
       .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (eEv) throw eEv;
     if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
@@ -1993,12 +2284,24 @@ router.get('/eventos/:id/checkin/buscar', authorizeModule('inscricoes', 2), asyn
   try {
     const digits = String(req.query.q || '').replace(/\D/g, '').slice(0, 14);
     if (digits.length < 4) return res.json([]);
+    // 4 dígitos = também pode ser o CÓDIGO da inscrição (`numero_sorte`, único
+    // por evento e o que a pessoa recebe no WhatsApp/comprovante). Buscar por
+    // ele é o caminho mais rápido da portaria quando o QR não abre — e a mesma
+    // busca continua achando por CPF/telefone (o código NUNCA substitui isso).
+    const filtros = [`cpf.like.%${digits}%`, `telefone.like.%${digits}%`];
+    const comoCodigo = digits.length === 4 ? Number(digits) : null;
+    if (comoCodigo) filtros.push(`numero_sorte.eq.${comoCodigo}`);
     const { data, error } = await supabase.from('inscricoes')
       .select('id, nome_completo, telefone, numero_sorte, status')
       .eq('evento_id', req.params.id).is('deleted_at', null)
-      .or(`cpf.like.%${digits}%,telefone.like.%${digits}%`)
+      .or(filtros.join(','))
       .limit(20);
     if (error) throw error;
+    // Código exato vem PRIMEIRO: quem digitou 4 dígitos quer aquela pessoa, não
+    // os telefones que por acaso contêm a sequência.
+    if (comoCodigo && data) {
+      data.sort((a, b) => (b.numero_sorte === comoCodigo ? 1 : 0) - (a.numero_sorte === comoCodigo ? 1 : 0));
+    }
     const ids = (data || []).map((i) => i.id);
     const marcas = new Map();
     if (ids.length) {
@@ -2207,7 +2510,11 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
     if (metodos) payload.pagamento_metodos = metodos;
     const termos = sanitizeTermosExtra(b.termos_extra);
     if (termos) payload.termos_extra = termos;
-    const erroCheckout = conferirCheckoutExterno(payload);
+    // Lotes de preço (20/08): jsonb com saneador próprio, como termos_extra.
+    const lotes = sanitizarLotes(b.lotes);
+    if (lotes) payload.lotes = lotes;
+    const erroCheckout = conferirCheckoutExterno(payload)
+      || sanitizeValorCartaoExterno(payload);
     if (erroCheckout) return res.status(400).json({ error: erroCheckout });
 
     const { data, error } = await supabase.from('insc_eventos').insert(payload).select('id, slug').single();
@@ -2268,7 +2575,13 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
       const termos = sanitizeTermosExtra(b.termos_extra);
       if (termos) patch.termos_extra = termos;
     }
-    const erroCheckout = conferirCheckoutExterno(patch);
+    // `[]` = tirar os lotes (volta ao preço único); `undefined` = não mexeu.
+    if (b.lotes !== undefined) {
+      const lotes = sanitizarLotes(b.lotes);
+      if (lotes) patch.lotes = lotes;
+    }
+    const erroCheckout = conferirCheckoutExterno(patch)
+      || sanitizeValorCartaoExterno(patch);
     if (erroCheckout) return res.status(400).json({ error: erroCheckout });
     if (b.status !== undefined) {
       if (!['rascunho', 'publicado', 'encerrado', 'arquivado'].includes(b.status)) {
@@ -2388,6 +2701,36 @@ router.post('/upload-capa', authorizeModule('inscricoes', 3), upload.single('arq
   } catch (e) {
     console.error('[inscricoes] upload-capa:', e.message);
     res.status(500).json({ error: 'Erro ao enviar a capa' });
+  }
+});
+
+// POST /upload-arquivo — documentos do evento (orientações gerais, autorização
+// de embarque de menor). Bucket público `evento-arquivos` (migration
+// 20260820120000): o link estável é o que a tela de download e o anexo do
+// e-mail usam. ⚠️ Documento com dado de PESSOA não entra aqui — bucket público.
+const TIPOS_ARQUIVO_EVENTO = {
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+};
+router.post('/upload-arquivo', authorizeModule('inscricoes', 3), upload.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo não enviado' });
+    // Extensão sai do MIME validado, nunca do nome (lição da capa do app):
+    // .exe renomeado pra .pdf não passa, e nome sem extensão não quebra.
+    const ext = TIPOS_ARQUIVO_EVENTO[req.file.mimetype];
+    if (!ext) return res.status(400).json({ error: 'Só PDF ou Word (.doc/.docx) — este arquivo vai para download público.' });
+    const path = `espinha/arquivos/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { error } = await supabase.storage.from('evento-arquivos').upload(path, req.file.buffer, {
+      contentType: req.file.mimetype, upsert: false,
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from('evento-arquivos').getPublicUrl(path);
+    // O nome original volta pra tela guardar como rótulo de exibição.
+    res.json({ url: data.publicUrl, nome: String(req.file.originalname || `arquivo.${ext}`).slice(0, 160) });
+  } catch (e) {
+    console.error('[inscricoes] upload-arquivo:', e.message);
+    res.status(500).json({ error: 'Erro ao enviar o arquivo' });
   }
 });
 

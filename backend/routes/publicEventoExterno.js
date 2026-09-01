@@ -23,7 +23,7 @@ const { notificar, resolverDestinatarios } = require('../services/notificar');
 const { moduloDaAreaEvento } = require('../utils/moduloDaAreaEvento');
 const {
   validarCamposPadrao, processarIdentidade, registrarConsentimentos,
-  honeypotPreenchido, TEXTOS,
+  honeypotPreenchido, TEXTOS, normalizarCpf,
 } = require('../services/inscricaoContrato');
 const { nomesMesmaPessoa } = require('../services/membroMatch');
 const {
@@ -44,6 +44,7 @@ const checkoutExterno = require('../utils/checkoutExterno');
 // teste no gate amarrando os dois lados. Não reimplementar aqui.
 const camposCondicionais = require('../utils/camposCondicionais');
 const inscricaoMenor = require('../utils/inscricaoMenor');
+const lotesEvento = require('../utils/lotesEvento');
 // Régua ÚNICA da tela pública de pagamento (compartilhada com a doação). É onde
 // vivem as leis do parcelado e da forma que o provedor CONFIRMOU — uma segunda
 // cópia dessa lógica seria a garantia de que uma das duas telas ia divergir.
@@ -95,6 +96,10 @@ async function eventoEspinhaPorSlug(slug) {
     .eq('slug', slug).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   await anexarConfigMenor(data);
+  await anexarExtrasEvento(data);
+  await anexarLotesEvento(data);
+  await anexarWhatsappDuvidas(data);
+  await anexarValorCartaoExterno(data);
   return data;
 }
 
@@ -128,6 +133,98 @@ async function anexarConfigMenor(ev) {
   return ev;
 }
 
+/**
+ * ⚠️ Coluna da migration 20260821150000 (grupo de WhatsApp de dúvidas), em
+ * select PRÓPRIO e best-effort — isolada dos outros anexadores porque cada um
+ * cobre uma migration: a falha de uma coluna nova não pode apagar da tela o
+ * que as migrations já aplicadas entregam. Só sai https.
+ */
+async function anexarWhatsappDuvidas(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('whatsapp_duvidas_url').eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    ev.whatsapp_duvidas_url = /^https:\/\//.test(String(data?.whatsapp_duvidas_url || ''))
+      ? data.whatsapp_duvidas_url : null;
+  } catch (e) {
+    console.warn('[publicEvento espinha] whatsapp de dúvidas indisponível:', e.message);
+    ev.whatsapp_duvidas_url = null;
+  }
+  return ev;
+}
+
+/**
+ * ⚠️ Coluna da migration 20260821190000 (preço do cartão na plataforma
+ * externa), em select PRÓPRIO e best-effort — um anexador por coorte de
+ * migration, pela mesma razão dos outros: deploy antes da migration não pode
+ * derrubar o que já está em produção. Ausente ⇒ `null` = a tela não anuncia
+ * preço de cartão, o comportamento de antes.
+ *
+ * ⚠️ Valor só de EXIBIÇÃO: quem paga cartão sai daqui antes de existir
+ * inscrição nossa. Nenhuma cobrança lê este número.
+ */
+async function anexarValorCartaoExterno(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('checkout_externo_valor_centavos').eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    const n = Number(data?.checkout_externo_valor_centavos);
+    ev.checkout_externo_valor_centavos = Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
+  } catch (e) {
+    console.warn('[publicEvento espinha] valor do cartão externo indisponível:', e.message);
+    ev.checkout_externo_valor_centavos = null;
+  }
+  return ev;
+}
+
+/**
+ * ⚠️ Coluna da migration 20260821120000 (lotes de preço), em select PRÓPRIO e
+ * best-effort — separada dos outros dois anexadores pra falha aqui não levar
+ * junto o bloco de menor nem o período/instruções. Ausente ⇒ `lotes = []` =
+ * preço único (valor_centavos), o comportamento de sempre.
+ */
+async function anexarLotesEvento(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('lotes').eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    ev.lotes = lotesEvento.sanitizarLotes(data?.lotes) || [];
+  } catch (e) {
+    console.warn('[publicEvento espinha] lotes indisponíveis:', e.message);
+    ev.lotes = [];
+  }
+  return ev;
+}
+
+/**
+ * ⚠️ Colunas da migration 20260820120000 (data_fim + instruções gerais), em
+ * SELECT PRÓPRIO e best-effort — separado do `anexarConfigMenor` de propósito:
+ * se fosse na mesma query, um deploy antes desta migration derrubaria também o
+ * bloco de menor e os aceites, que já estão em produção. Ausente ⇒ evento de um
+ * dia, sem arquivo de instruções (o comportamento de antes).
+ */
+async function anexarExtrasEvento(ev) {
+  if (!ev || !ev.id) return ev;
+  try {
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('data_fim, instrucoes_url, instrucoes_nome')
+      .eq('id', ev.id).maybeSingle();
+    if (error) throw error;
+    ev.data_fim = data?.data_fim || null;
+    ev.instrucoes_url = /^https:\/\//.test(String(data?.instrucoes_url || '')) ? data.instrucoes_url : null;
+    ev.instrucoes_nome = data?.instrucoes_nome || null;
+  } catch (e) {
+    console.warn('[publicEvento espinha] período/instruções indisponíveis:', e.message);
+    ev.data_fim = null;
+    ev.instrucoes_url = null;
+    ev.instrucoes_nome = null;
+  }
+  return ev;
+}
+
 // Mesmo SELECT/régua do por-slug, mas por ID: o app de membros já tem o id do
 // evento (veio do catálogo `GET /api/app/eventos`) e não precisa do slug.
 // ⚠️ Reusar este loader é o que garante que o app veja EXATAMENTE o mesmo
@@ -138,6 +235,10 @@ async function eventoEspinhaPorId(id) {
     .eq('id', id).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   await anexarConfigMenor(data);
+  await anexarExtrasEvento(data);
+  await anexarLotesEvento(data);
+  await anexarWhatsappDuvidas(data);
+  await anexarValorCartaoExterno(data);
   return data;
 }
 
@@ -279,6 +380,39 @@ function avisoPagamento(ev) {
 const refCobranca = (inscricaoId) => `inscricao:${inscricaoId}`;
 
 /**
+ * O LOTE desta inscrição, pela POSIÇÃO dela na ordem de chegada — nunca pelo
+ * "lote atual" da tela, que pode ter virado entre abrir o formulário e enviar.
+ *
+ * Posição = quantas inscrições vivas NÃO-canceladas chegaram antes (ou junto,
+ * desempatadas pelo id) — a MESMA régua de ocupação da `fn_insc_inscrever`, e
+ * DETERMINÍSTICA: duas pessoas cruzando a fronteira do lote no mesmo segundo
+ * recebem posições distintas, então uma paga o lote velho e a outra o novo, sem
+ * depender da ordem em que as consultas rodaram.
+ *
+ * ⚠️ Fail-soft PRO VALOR DE TABELA (null ⇒ o chamador cobra `ev.valor_centavos`,
+ * que com lotes é o preço FINAL): errar pra cima é a equipe devolvendo diferença
+ * a uma pessoa; errar pra baixo é desconto silencioso que ninguém revisa.
+ */
+async function valorLoteDaInscricao(ev, inscricaoId) {
+  if (!Array.isArray(ev?.lotes) || !ev.lotes.length || !inscricaoId) return null;
+  try {
+    const { data: eu, error: e1 } = await supabase.from('inscricoes')
+      .select('created_at').eq('id', inscricaoId).maybeSingle();
+    if (e1 || !eu?.created_at) return null;
+    const { count, error: e2 } = await supabase.from('inscricoes')
+      .select('id', { count: 'exact', head: true })
+      .eq('evento_id', ev.id).is('deleted_at', null).neq('status', 'cancelada')
+      .or(`created_at.lt.${eu.created_at},and(created_at.eq.${eu.created_at},id.lte.${inscricaoId})`);
+    if (e2 || !(count > 0)) return null;
+    const lote = lotesEvento.loteDaPosicao(ev.lotes, count);
+    return lote ? { valor_centavos: lote.valor_centavos, nome: lote.nome } : null;
+  } catch (e) {
+    console.error('[publicEvento espinha] lote da inscrição:', e.message);
+    return null;
+  }
+}
+
+/**
  * Benefício (gratuidade/desconto) pré-autorizado pra este CPF neste evento.
  *
  * Só devolve o que ainda NÃO foi usado: a autorização vale uma vez, senão o
@@ -343,7 +477,7 @@ async function aplicarBeneficio(beneficio, inscricaoId) {
  * Cria (ou recupera) a cobrança da inscrição e espelha em `insc_pagamentos`,
  * que é a linha que a UI de inscrições lê. O estado canônico vive no motor.
  */
-async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos, estacaoId }) {
+async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos, estacaoId, lote }) {
   const horas = Number(ev.pagamento_expira_horas) > 0 ? Number(ev.pagamento_expira_horas) : 48;
   const { cobranca, reemitida } = await pagamentos.criarCobranca({
     origem_tipo: pagamentos.ORIGENS.INSCRICAO,
@@ -368,7 +502,9 @@ async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos, 
     // Totem: atribuído pelo SERVIDOR a partir da conta de quiosque logada.
     // NULL = veio da web (o caso normal).
     estacao_id: estacaoId || null,
-    metadata: { evento_id: ev.id, evento_slug: ev.slug, evento_nome: ev.nome },
+    // `lote` é REGISTRO de qual lote precificou (a conciliação lê daqui por que
+    // duas cobranças do mesmo evento têm valores diferentes) — nunca decide nada.
+    metadata: { evento_id: ev.id, evento_slug: ev.slug, evento_nome: ev.nome, ...(lote ? { lote } : {}) },
   });
 
   // ⚠️ Reemissão (a cobrança anterior morreu sem dinheiro): o espelho tem
@@ -407,6 +543,24 @@ async function cobrarInscricao({ ev, inscricaoId, val, membroId, valorCentavos, 
   });
   if (error && error.code !== '23505') {
     console.error('[publicEvento espinha] espelho insc_pagamentos:', error.message);
+  }
+
+  // ⚠️ O PREÇO DESTA INSCRIÇÃO (23/08/2026). `valor_cobrado_centavos` só era
+  // escrito pela `aplicarBeneficio` — quem paga o valor CHEIO ficava com a
+  // coluna NULL, e ela é lida pela lista de inscritos (INSCRITOS_COLS), pelo
+  // e-mail e pela conciliação. Medido na 1ª inscrição paga real do AMI CAMP
+  // 2027: cobrança de R$ 830 (lote 1) e inscrição em branco.
+  // Fica AQUI, e não no chamador, porque este é o único ponto que conhece o
+  // valor efetivamente cobrado — inclusive o fallback pro valor de tabela
+  // quando o evento não tem lote — e por ele passam os TRÊS caminhos de
+  // cobrança (nova, re-inscrição e quem perdeu a corrida do lock).
+  // Best-effort e DEPOIS da cobrança: o dinheiro já foi decidido, e uma coluna
+  // de leitura não pode derrubar a inscrição de quem já tem vaga reservada.
+  if (Number(cobranca?.valor_centavos) > 0) {
+    const { error: eValor } = await supabase.from('inscricoes')
+      .update({ valor_cobrado_centavos: Number(cobranca.valor_centavos) })
+      .eq('id', inscricaoId);
+    if (eValor) console.error('[publicEvento espinha] valor cobrado na inscrição:', eValor.message);
   }
 
   // E-mail com o LINK DE PAGAMENTO (decisão do Marcos · 31/07). Sem ele, quem
@@ -450,6 +604,9 @@ function emailConfirmadaBestEffort({ ev, inscricaoId, val, comprovanteToken }) {
       .eq('id', inscricaoId).maybeSingle();
     await enviarEmailInscricaoConfirmada({
       inscricao: {
+        // O id vai junto: é ele que deixa o e-mail saber se a inscrição é de
+        // menor (pra anexar a autorização de embarque do responsável).
+        id: inscricaoId,
         codigo: data?.codigo || null,
         nome_completo: data?.nome_completo || val?.nomeCompleto,
         email: data?.email || val?.email,
@@ -540,6 +697,42 @@ async function comprovantesDaInscricao(inscricaoId) {
   } catch { return []; }
 }
 
+/**
+ * Instruções gerais do EVENTO desta inscrição — pra página de pagamento
+ * oferecer o download quando o pagamento confirma ("a tela de sucesso do
+ * formulário ficou pra trás quando a pessoa foi pro checkout"). Isolada e
+ * fail-soft: colunas da migration 20260820120000.
+ */
+async function instrucoesDaInscricao(inscricaoId) {
+  if (!inscricaoId) return null;
+  try {
+    const { data, error } = await supabase.from('inscricoes')
+      .select('evento:insc_eventos(instrucoes_url, instrucoes_nome)')
+      .eq('id', inscricaoId).maybeSingle();
+    if (error) return null;
+    const url = data?.evento?.instrucoes_url;
+    if (!/^https:\/\//.test(String(url || ''))) return null;
+    return { url, nome: data.evento.instrucoes_nome || 'Instruções gerais' };
+  } catch { return null; }
+}
+
+/**
+ * Grupo de WhatsApp de dúvidas do EVENTO desta inscrição — a página de
+ * pagamento é o "depois de se inscrever" (quem paga nunca volta na tela de
+ * sucesso do formulário). Isolada e fail-soft (coluna da 20260821150000).
+ */
+async function whatsappDuvidasDaInscricao(inscricaoId) {
+  if (!inscricaoId) return null;
+  try {
+    const { data, error } = await supabase.from('inscricoes')
+      .select('evento:insc_eventos(whatsapp_duvidas_url)')
+      .eq('id', inscricaoId).maybeSingle();
+    if (error) return null;
+    const url = data?.evento?.whatsapp_duvidas_url;
+    return /^https:\/\//.test(String(url || '')) ? url : null;
+  } catch { return null; }
+}
+
 /** Código legível da inscrição. Consulta isolada e fail-soft (a coluna é nova). */
 async function codigoDaInscricao(inscricaoId) {
   if (!inscricaoId) return null;
@@ -573,6 +766,12 @@ async function respostaPagamento(cobranca) {
     // AQUI — a tela de sucesso do formulário já ficou pra trás quando a
     // pessoa foi pro checkout, e esta é a página que ela reabre.
     comprovante_token: comprovanteToken,
+    // Instruções gerais do evento: só com `pago` (inscrição concluída). O
+    // mesmo arquivo vai anexado no e-mail de confirmação — o download aqui é
+    // o "quer baixar agora?".
+    instrucoes: cobranca.status === 'pago' ? await instrucoesDaInscricao(daInscricao) : null,
+    // Grupo de dúvidas: SEMPRE (antes e depois de pagar — é pra tirar dúvida).
+    whatsapp_duvidas: await whatsappDuvidasDaInscricao(daInscricao),
 
     // ── Comprovante de Pix/transferência (fila humana) ──
     // Só faz sentido oferecer enquanto NÃO está pago e em forma que pode ter
@@ -829,27 +1028,58 @@ router.get('/:slug', async (req, res) => {
   try {
   const esp = await eventoEspinhaPorSlug(req.params.slug);
   if (esp) {
+    const pago = !!esp.pagamento_ativo && Number(esp.valor_centavos) > 0;
+    const temLotes = pago && Array.isArray(esp.lotes) && esp.lotes.length > 0;
     // Evento pago ABRE desde a F3.3 — o curto-circuito `pago ||` saiu. O de
     // vagas continua: evento sem limite (o Celebra migrou com vagas=null) não
-    // gasta a RPC.
-    const ocup = esp.vagas == null ? null : await ocupacaoEspinha(esp.id);
+    // gasta a RPC — a menos que haja LOTES, cuja exibição depende da ocupação.
+    const ocup = (esp.vagas != null || temLotes) ? await ocupacaoEspinha(esp.id) : null;
+    // Lote ATUAL só com a ocupação em mãos: sem ela (RPC soluçou), a tela cai
+    // no valor de tabela (o preço FINAL) em vez de prometer um desconto que a
+    // cobrança pode não dar. Quem decide o preço cobrado é o POST, pela POSIÇÃO
+    // da inscrição — esta exibição é o convite, não a decisão.
+    const lote = temLotes && ocup ? lotesEvento.loteAtual(esp.lotes, ocup.ocupadas || 0) : null;
     // ⚠️ Evento pago MAL CONFIGURADO conta como fechado, senão a pessoa preenche
     // o formulário inteiro e só então leva 503 do POST. O aviso explica por quê.
     const bloqueio = bloqueioPagamento(esp);
     const encerradas = !!bloqueio || await espinhaEncerrada(esp);
-    const pago = !!esp.pagamento_ativo && Number(esp.valor_centavos) > 0;
     return res.json({
       fonte: 'espinha',
       nome: esp.nome, slug: esp.slug, data: esp.data, hora: esp.hora, local: esp.local,
+      // Último dia (retiro de vários dias) — a tela mostra "5 a 10 de fevereiro".
+      data_fim: esp.data_fim || null,
+      // Instruções gerais: a tela de sucesso oferece o download depois de
+      // concluir (quem paga por Pix recebe na página de pagamento, quando paga).
+      instrucoes: esp.instrucoes_url
+        ? { url: esp.instrucoes_url, nome: esp.instrucoes_nome || 'Instruções gerais' }
+        : null,
       descricao: esp.descricao, form_ativo: !encerradas, tem_sorteio: esp.tem_sorteio,
       campos: Array.isArray(esp.campos) ? esp.campos : [], capa_url: esp.capa_url || null,
       inscricoes_encerram_em: esp.inscricoes_encerram_em || null,
       inscricoes_encerradas: encerradas,
       vagas: esp.vagas ?? null,
-      vagas_restantes: ocup ? ocup.restantes : null, // null = ilimitado
-      // Pagamento: a tela mostra o valor ANTES de a pessoa preencher.
+      // null = ilimitado — E TAMBÉM evento com LOTES: ali a contagem de quem já
+      // entrou não sai nem pela API (pedido do Arthur · 21/08). Zerar aqui, e
+      // não só na tela, é o que cala o placar pra bundle velho em cache e pra
+      // quem abre o JSON na mão. O teto continua valendo: quem decide vaga é a
+      // RPC do POST, dentro do lock.
+      vagas_restantes: temLotes || !ocup ? null : ocup.restantes,
+      // Pagamento: a tela mostra o valor ANTES de a pessoa preencher — e com
+      // lotes é o preço do LOTE ATUAL (bundle antigo mostra o número certo sem
+      // saber o que é lote).
       pagamento_ativo: pago,
-      valor_centavos: pago ? Number(esp.valor_centavos) : null,
+      valor_centavos: pago ? (lote ? lote.valor_centavos : Number(esp.valor_centavos)) : null,
+      // Lote atual por extenso, pra tela rotular ("Lote 1 · R$ 830 no Pix").
+      // null = evento sem lotes, ou ocupação indisponível.
+      // ⚠️ SÓ nome e preço de HOJE: `restantes_no_lote` e `proximo` NÃO saem no
+      // payload público (pedido do Arthur · 21/08) — anunciar quanto falta e
+      // quanto vai custar depois entrega o placar de inscritos pra qualquer um
+      // que abra a API. O preço de cada inscrição continua decidido no POST,
+      // pela posição, com a régua inteira do `lotesEvento` no servidor.
+      lote_atual: lote ? { nome: lote.nome, valor_centavos: lote.valor_centavos } : null,
+      // Grupo de WhatsApp pra dúvidas (21/08): link de ENTRADA exibido no
+      // cabeçalho — cobre escolha de forma, formulário e tela de sucesso.
+      whatsapp_duvidas: esp.whatsapp_duvidas_url || null,
       pagamento_metodos: pago ? metodosDoEvento(esp) : [],
       // Cartão numa plataforma externa (e-Inscrição): a tela pergunta a forma
       // ANTES do formulário e manda pra lá quem escolher cartão. `null` = o
@@ -860,6 +1090,12 @@ router.get('/:slug', async (req, res) => {
         // Não sobrou método nosso ⇒ TODA inscrição acontece lá fora, e a tela
         // não pergunta nada: pergunta de uma alternativa só é atrito puro.
         exclusivo: !metodosDoEvento(esp).length,
+        // Preço do cartão LÁ (migration 20260821190000) — pedido do Arthur pro
+        // AMI CAMP 2027: "R$ 850 no cartão, valor normal · R$ 830 de desconto
+        // no Pix". null = não anunciar preço de cartão (a tela só fala do Pix).
+        // ⚠️ Configurado na tela do evento, não derivado: é preço de OUTRA
+        // plataforma, e derivar seria a nossa tela chutando o número deles.
+        valor_centavos: esp.checkout_externo_valor_centavos || null,
       } : null,
       pagamento_expira_horas: pago ? (esp.pagamento_expira_horas || 48) : null,
       // ⚠️ Evento marcado como pago mas sem valor (ou sem PSP configurado) NÃO
@@ -1016,10 +1252,19 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
   const ip = req.ip || null;
   const ua = req.headers['user-agent'] || null;
 
+  // ⚠️⚠️ Consentimento de TERCEIRO (inscrição feita no balcão pelo operador) é
+  // gravado COMO TAL: o texto declara quem marcou, e nunca se apresenta como
+  // aceite digitado pelo titular — gravar assim seria fabricar prova legal
+  // (mesma decisão do link do voluntário, 14/08, e do "adicionar pessoa" dos
+  // grupos, 25/08). Sem `declaradoPor`, nada muda: é o aceite da própria pessoa.
+  const declaradoPor = String(opts.consentDeclaradoPor || '').trim();
+  const textoTermos = declaradoPor
+    ? `DECLARADO PRESENCIALMENTE POR ${declaradoPor} no balcão (não é aceite digitado pelo próprio titular) — ${TEXTOS.termos_lgpd}`
+    : undefined;
   const consentimentos = (refId, membroId) => registrarConsentimentos({
     porta: 'inscricoes', refId, membroId, ip, userAgent: ua,
     itens: [
-      { tipo: 'termos_lgpd', aceito: true },
+      { tipo: 'termos_lgpd', aceito: true, ...(textoTermos ? { texto: textoTermos } : {}) },
       { tipo: 'whatsapp', aceito: optin },
       ...(ex.temCampoImagem ? [{ tipo: 'imagem', aceito: Boolean(body.consent_imagem) }] : []),
       // Autorização do responsável (LGPD art. 14 §1º) — só quando o SERVIDOR
@@ -1135,8 +1380,13 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
       // Quem já pagou vê o comprovante; quem não pagou recebe o MESMO link
       // (a `referencia` idempotente devolve a cobrança existente em vez de
       // criar uma segunda — é assim que ninguém paga duas vezes).
+      // ⚠️ O valor do lote vai junto pro caso de REEMISSÃO (cobrança anterior
+      // morta sem dinheiro): a nova precisa nascer com o preço da POSIÇÃO da
+      // pessoa, não com o valor de tabela.
+      const loteExistente = await valorLoteDaInscricao(ev, existente.id);
       const cobranca = await cobrarInscricao({
         ev, inscricaoId: existente.id, val, membroId: existente.membro_id,
+        valorCentavos: loteExistente?.valor_centavos, lote: loteExistente?.nome,
       });
       return res.json({ ...respostaCobranca(cobranca, ev), ja_inscrito: true });
     }
@@ -1183,7 +1433,11 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
       // da cobrança que já existe (a `referencia` idempotente garante que é a
       // mesma, então ninguém paga duas vezes).
       if (ehPago && rpc.id) {
-        const cobranca = await cobrarInscricao({ ev, inscricaoId: rpc.id, val, membroId: null, estacaoId });
+        const loteCorrida = await valorLoteDaInscricao(ev, rpc.id);
+        const cobranca = await cobrarInscricao({
+          ev, inscricaoId: rpc.id, val, membroId: null, estacaoId,
+          valorCentavos: loteCorrida?.valor_centavos, lote: loteCorrida?.nome,
+        });
         return res.json({ ...respostaCobranca(cobranca, ev), ja_inscrito: true });
       }
       // Busca a linha vencedora pra devolver o número da sorte — sem isso a
@@ -1275,10 +1529,26 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
   // autorização. Antes da cobrança, porque é ele que define o valor cobrado.
   await aplicarBeneficio(beneficio, ins.id);
 
-  // Funil de identidade (matcher read-only + observação) + consentimentos.
+  // Funil de identidade (matcher + observação) + consentimentos.
+  //
+  // ⚠️⚠️ COM CPF, ESTA PORTA CRIA (23/08/2026). Ela era `ligar` puro — só
+  // ACHAVA cadastro existente —, então toda pessoa NOVA que se inscrevia ficava
+  // com `membro_id` NULL: fora da membresia, fora dos cruzamentos, invisível
+  // pra qualquer área. Medido na 1ª inscrição paga real do AMI CAMP 2027: a
+  // pessoa pagou R$ 830 e não existia no cadastro da igreja.
+  //
+  // Isto NÃO reabre o que a #2170 fechou. Aquilo proibiu fabricar cadastro
+  // *sem chave* (o import financeiro criava pessoa por NOME EXATO — 3.441
+  // registros sem CPF/telefone/e-mail). Aqui a criação é condicionada ao CPF
+  // válido, que é a chave FORTE do matcher: sem CPF continua `ligar` e a
+  // inscrição segue sem vínculo, pra decisão humana. O contrato de porta já
+  // exige CPF em toda inscrição (D5), então o caminho normal é sempre o
+  // `criar` — e `acharOuCriarGuardado` liga no cadastro existente quando o CPF
+  // bate, só criando quando a pessoa é mesmo nova.
+  const politicaIdentidade = normalizarCpf(val.cpf) ? 'criar' : 'ligar';
   processarIdentidade({
     nomeCompleto: val.nomeCompleto, cpf: val.cpf, email: val.email, telefone: val.telefone,
-    dataNascimento: val.dataNascimento, politica: 'ligar',
+    dataNascimento: val.dataNascimento, genero: val.sexo, politica: politicaIdentidade,
     origem: 'inscricoes_formulario', origemId: ins.id,
   }).then((ident) => {
     if (ident.membroId) {
@@ -1335,8 +1605,14 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
     // falhar aqui, a inscrição fica pendente e o cron de expiração devolve a
     // vaga — melhor que o inverso (cobrar sem vaga garantida).
     try {
+      // LOTES (20/08): o preço é o do lote da POSIÇÃO desta inscrição. O
+      // benefício por CPF (autorização individual do líder) VENCE o lote — as
+      // duas coisas não se somam. Sem lote resolvido, vale o valor de tabela.
+      const loteInsc = valorComBeneficio == null ? await valorLoteDaInscricao(ev, ins.id) : null;
       const cobranca = await cobrarInscricao({
-        ev, inscricaoId: ins.id, val, membroId: null, valorCentavos: valorComBeneficio,
+        ev, inscricaoId: ins.id, val, membroId: null,
+        valorCentavos: valorComBeneficio ?? loteInsc?.valor_centavos,
+        lote: loteInsc?.nome,
         estacaoId,
       });
       return res.status(201).json({ ...respostaCobranca(cobranca, ev), beneficio: beneficio ? 'parcial' : null });

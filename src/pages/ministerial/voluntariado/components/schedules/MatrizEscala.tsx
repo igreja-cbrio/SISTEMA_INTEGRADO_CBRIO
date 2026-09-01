@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle2, XCircle, HelpCircle, Plus, Star, AlertTriangle, X, Wand2 } from 'lucide-react';
+import { CheckCircle2, XCircle, HelpCircle, Plus, Star, AlertTriangle, X, Wand2, LayoutGrid, Table2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -11,6 +11,8 @@ import { useEscalaMatriz, useMontagemContexto, useBulkSchedule, useDeleteSchedul
 import { voluntariado } from '@/api';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import PainelEscalar, { type Vaga } from './PainelEscalar';
+import MatrizCards from './MatrizCards';
+import AvatarVoluntario from './AvatarVoluntario';
 import VolunteerDetailDialog from './VolunteerDetailDialog';
 
 /**
@@ -25,6 +27,8 @@ import VolunteerDetailDialog from './VolunteerDetailDialog';
  * disponibilidade, mesma gravação. Um segundo caminho de escalar teria as
  * próprias regras e divergiria do primeiro no dia em que uma delas mudasse.
  */
+
+const VISTA_KEY = 'cbrio_vol_matriz_vista';
 
 type Celula = { item_id: string | null; alvo: number; faltam: number; pessoas: any[] };
 type Linha = {
@@ -45,6 +49,18 @@ export default function MatrizEscala({ ehMinhaArea, onFixar, serviceIds, context
   contextoLabel?: string;
 }) {
   const [semanas, setSemanas] = useState(4);
+  // ⚠️ CARDS é o padrão (pedido do Matheus em 26/08: a grade "tá muito
+  // cansativa"). A tabela FICA porque é a única visão que põe as datas lado a
+  // lado — a pergunta "onde estão os buracos do mês?" só ela responde de
+  // relance. A escolha vive no aparelho de quem usa; ela é preferência de
+  // leitura, não configuração da igreja.
+  const [vista, setVista] = useState<'cards' | 'tabela'>(() => {
+    try { return localStorage.getItem(VISTA_KEY) === 'tabela' ? 'tabela' : 'cards'; } catch { return 'cards'; }
+  });
+  const trocarVista = (v: 'cards' | 'tabela') => {
+    setVista(v);
+    try { localStorage.setItem(VISTA_KEY, v); } catch { /* aparelho sem storage: só não lembra */ }
+  };
   const [tipoId, setTipoId] = useState('');
   const [soMinhas, setSoMinhas] = useState(false);
   const [celula, setCelula] = useState<{ servico: any; linha: Linha; cel: Celula } | null>(null);
@@ -171,8 +187,22 @@ export default function MatrizEscala({ ehMinhaArea, onFixar, serviceIds, context
             teamIds={soMinhas ? [...new Set(linhas.map(l => l.team_id).filter(Boolean) as string[])] : []}
             onPronto={() => qc.invalidateQueries({ queryKey: ['vol', 'escala-matriz'] })}
           />
+          <div className="ml-auto flex rounded-lg border bg-muted/40 p-0.5">
+            <button
+              type="button" onClick={() => trocarVista('cards')}
+              className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${vista === 'cards' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              <LayoutGrid className="h-3.5 w-3.5" /> Cards
+            </button>
+            <button
+              type="button" onClick={() => trocarVista('tabela')}
+              className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${vista === 'tabela' ? 'bg-card shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              <Table2 className="h-3.5 w-3.5" /> Tabela
+            </button>
+          </div>
           {data?.resumo && (
-            <span className="ml-auto text-xs">
+            <span className="text-xs">
               <span className="text-muted-foreground">no período: </span>
               <span className="font-medium">{data.resumo.preenchidas}/{data.resumo.alvo}</span>
               {data.resumo.faltam > 0 && <span className="text-red-500 font-medium"> · faltam {data.resumo.faltam}</span>}
@@ -207,6 +237,16 @@ export default function MatrizEscala({ ehMinhaArea, onFixar, serviceIds, context
             ? 'Nenhuma das suas áreas aparece nesses cultos. Desmarque "só as minhas áreas" ou fixe uma área com a estrela.'
             : 'Estes cultos ainda não têm escala nem composição. Aplique um template na tela de um culto.'}
         </CardContent></Card>
+      ) : vista === 'cards' ? (
+        <MatrizCards
+          grupos={grupos}
+          cultos={cultos}
+          ehMinhaArea={ehMinhaArea}
+          onFixar={onFixar}
+          onVaga={(servico, linha, cel) => setCelula({ servico, linha, cel })}
+          onDetalhe={setDetalhe}
+          onTirar={tirarDaEscala}
+        />
       ) : (
         <div className="border rounded-lg overflow-x-auto">
           <table className="w-full border-collapse text-sm">
@@ -271,6 +311,11 @@ export default function MatrizEscala({ ehMinhaArea, onFixar, serviceIds, context
                           <td key={c.id} className="border-b px-2 py-1.5 align-top">
                             {cel?.pessoas?.map((p: any) => (
                               <div key={p.id} className="group/p flex items-center gap-1 min-w-0" title={p.nome}>
+                                {/* Avatar também na tabela (27/08): a grade é a
+                                    outra metade da mesma tela, e reconhecer a
+                                    pessoa não pode depender de qual vista está
+                                    aberta. 20 px cabe na célula estreita. */}
+                                <AvatarVoluntario nome={p.nome} fotoUrl={p.foto_url} status={p.status} tamanho={20} />
                                 <IconeStatus status={p.status} />
                                 {/* O nome abre o detalhe da PESSOA (perfil, contato,
                                     histórico de escalas e presenças). Antes a grade

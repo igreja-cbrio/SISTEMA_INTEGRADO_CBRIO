@@ -12,6 +12,7 @@ const { supabase } = require('../utils/supabase');
 const { getMLConfig, mlFetch } = require('./mercadoLivreService');
 const { notificar } = require('./notificar');
 const wpp = require('./whatsappService');
+const { deveAvisar } = require('../utils/mlAvisoEntrega');
 
 // ML shipment status → label pt-BR + emoji + se eh transicao "interessante"
 const STATUS_LABELS = {
@@ -162,6 +163,7 @@ async function processarUpdates({ batchSize = 30, throttleMs = 200 } = {}) {
 
   let checked = 0;
   let updated = 0;
+  let silenciados = 0;
   const erros = [];
 
   for (const s of pendentes || []) {
@@ -205,7 +207,9 @@ async function processarUpdates({ batchSize = 30, throttleMs = 200 } = {}) {
           .eq('id', s.id)
           .single();
 
-        if (full) {
+        // ⚠️ O evento acima é gravado SEMPRE (a linha do tempo fica completa);
+        // o que a régua controla é o DISPARO. Ver utils/mlAvisoEntrega.
+        if (full && deveAvisar(novoStatus)) {
           await notificarSolicitante({
             solicitacao: full,
             status: novoStatus,
@@ -213,6 +217,8 @@ async function processarUpdates({ batchSize = 30, throttleMs = 200 } = {}) {
               ? `Código de rastreio: ${shipment.tracking_number}`
               : '',
           }).catch(e => console.error('[ML-TRACK] notify cron error:', e.message));
+        } else if (full) {
+          silenciados++;
         }
       }
     } catch (e) {
@@ -226,7 +232,7 @@ async function processarUpdates({ batchSize = 30, throttleMs = 200 } = {}) {
     if (throttleMs) await new Promise(r => setTimeout(r, throttleMs));
   }
 
-  return { ok: true, checked, updated, erros };
+  return { ok: true, checked, updated, silenciados, erros };
 }
 
 async function notificarSolicitante({ solicitacao, status, descricao, isFirstLink = false }) {

@@ -23,12 +23,12 @@ const { montarLentes, CORTE_DOMINGO_0930 } = require('../utils/lentesDomingo');
 
 router.use(authenticate);
 
-const CAPACIDADE_TEMPLO = 1050;
-// O Bridge acontece em outro espaço da igreja, com capacidade de 100 lugares.
-// A taxa de ocupação dele usa essa base (não a do templo).
-const CAPACIDADE_BRIDGE = 100;
-const ehBridge = (nome) => /bridge/i.test(nome || '');
-const capacidadeCulto = (nome) => (ehBridge(nome) ? CAPACIDADE_BRIDGE : CAPACIDADE_TEMPLO);
+// ⚠️⚠️ A capacidade agora é DADO (`vol_service_types.capacidade_lugares`), não
+// regex no nome do culto (31/08/2026). O Bridge acontece no Espaço CBRio, com
+// 100 lugares; renomear o tipo pela tela fazia a ocupação dele voltar em
+// silêncio para 1050 — 46 pessoas viravam 4,4% em vez de 46%.
+const { capacidadeDoCulto, CAPACIDADE_TEMPLO } = require('../utils/capacidadeCulto');
+const capacidadeCulto = (tipo) => capacidadeDoCulto(tipo);
 
 const INDICADORES = {
   frequencia:        { coluna: 'frequencia',        rotulo: 'Frequência',        usa_ocupacao: true },
@@ -42,6 +42,10 @@ const INDICADORES = {
   ao_vivo:           { coluna: 'ao_vivo',           rotulo: 'Ao vivo',           usa_ocupacao: false },
   online_ds:         { coluna: 'online_ds',         rotulo: 'Online DS',         usa_ocupacao: false },
   online_ddus:       { coluna: 'online_ddus',       rotulo: 'Online DDUS',       usa_ocupacao: false },
+  // ⚠️ Views ACUMULADAS até o fim da live — NÃO confundir com `ao_vivo`, que é
+  // o pico de espectadores SIMULTÂNEOS. Medido em 23/08 no culto das 19:00:
+  // pico 300 × 1.355 views. Existe desde 26/08; culto anterior vem 0.
+  online_views_live: { coluna: 'online_views_live', rotulo: 'Views totais da live', usa_ocupacao: false },
   voluntariado:      { coluna: 'voluntariado',      rotulo: 'Voluntariado',      usa_ocupacao: false },
 };
 
@@ -50,6 +54,7 @@ const INDICADORES = {
 // (mesmo código · reusados na coleta em routes/integracao.js)
 // ─────────────────────────────────────────────────────────────────────────────
 const { isoWeekRange, isoWeekOf, fmtDateBr, semanasDoMes } = require('../utils/isoWeek');
+const { turnoPorHorario, montarTurnos } = require('../utils/turnoDomingo');
 
 const {
   hojeBrt, corteDoAno, ultimaSemanaIsoCompleta, resolverPeriodo,
@@ -101,7 +106,7 @@ router.get('/cultos', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('vol_service_types')
-      .select('id, name, recurrence_day, recurrence_time, color, is_active')
+      .select('id, name, recurrence_day, recurrence_time, color, is_active, capacidade_lugares')
       .order('recurrence_day', { ascending: true })
       .order('recurrence_time', { ascending: true });
     if (error) throw error;
@@ -317,6 +322,16 @@ router.get('/semanal', async (req, res) => {
       histPorTipo.set(r.service_type_id, arr);
     }
 
+    // Capacidade por tipo de culto — uma consulta, usada pelo item e pelo
+    // gauge. ⚠️ Falha aqui NÃO derruba o gráfico: cai no padrão do templo
+    // (o mapa fica vazio e `capacidadeDoCulto` usa o fallback).
+    const capPorTipo = new Map();
+    try {
+      const { data: capRows } = await supabase.from('vol_service_types')
+        .select('id, name, capacidade_lugares');
+      (capRows || []).forEach((t) => capPorTipo.set(t.id, t));
+    } catch (e) { console.warn('[dashboardSemanal] capacidades:', e.message); }
+
     const items = (semanaData || []).map(r => {
       const valores = histPorTipo.get(r.service_type_id) || [];
       const media = valores.length
@@ -332,8 +347,11 @@ router.get('/semanal', async (req, res) => {
         valor_absoluto,
         media,
         total_presencial: r.total_presencial,
+        // ⚠️ A capacidade vem do TIPO (carregado à parte): a view não tem a
+        // coluna, e passar só o nome traria de volta o regex.
+        capacidade: capacidadeCulto(capPorTipo.get(r.service_type_id) || { service_type_name: r.service_type_name }),
         taxa_ocupacao: indDef.usa_ocupacao && valor_absoluto > 0
-          ? Math.round((valor_absoluto / capacidadeCulto(r.service_type_name)) * 1000) / 10
+          ? Math.round((valor_absoluto / capacidadeCulto(capPorTipo.get(r.service_type_id) || { service_type_name: r.service_type_name })) * 1000) / 10
           : null,
       };
     });
@@ -386,6 +404,50 @@ router.get('/semanal', async (req, res) => {
       ? Math.round((total / CAPACIDADE_TEMPLO) * 1000) / 10
       : Math.round((totalPresencial / CAPACIDADE_TEMPLO) * 1000) / 10;
 
+    // ── TURNOS de domingo ────────────────────────────────────────────────────
+    // A aritmética (média das SOMAS SEMANAIS) mora em `utils/turnoDomingo` e é
+    // testada lá — ver o cabeçalho dela pro número que estava errado.
+    let turnos = null;
+    try {
+      // Só os cultos do TEMPLO no domingo. `presencial_label='Sede'` exclui os
+      // `CBKIDS - Manhã/Noite Domingo`; `is_active` NÃO serve — está false tanto
+      // neles quanto no 08:30/10:00, que encerraram e cujo histórico o turno
+      // PRECISA (é justamente o que a pergunta do Matheus pedia).
+      const { data: tiposDom, error: eDom } = await supabase
+        .from('vol_service_types')
+        .select('id, recurrence_time')
+        .eq('recurrence_day', 0)
+        .eq('presencial_label', 'Sede')
+        .not('recurrence_time', 'is', null);
+      if (eDom) throw eDom;
+
+      const turnoPorTipo = new Map();
+      for (const t of tiposDom || []) {
+        const tt = turnoPorHorario(t.recurrence_time);
+        if (tt) turnoPorTipo.set(t.id, tt);
+      }
+
+      turnos = montarTurnos({
+        linhasSemana: (semanaData || []).map((r) => ({
+          service_type_id: r.service_type_id,
+          valor: somaColunas(r, colunasView(indicadorKey)),
+        })),
+        linhasHist: (histData || []).map((r) => ({
+          service_type_id: r.service_type_id,
+          semana_iso: r.semana_iso,
+          valor: somaColunas(r, colunasView(indicadorKey)),
+        })),
+        turnoPorTipo,
+        capacidade: CAPACIDADE_TEMPLO,
+        usaOcupacao: !!indDef.usa_ocupacao,
+      });
+    } catch (e) {
+      // Turno é visão ADICIONAL: falhar aqui não derruba o gráfico principal.
+      // O front cai no agrupamento aproximado e AVISA na tela.
+      console.warn('[dashboardSemanal] turnos:', e.message);
+      turnos = null;
+    }
+
     // Meta semanal salva
     const { data: meta } = await supabase
       .from('dashboard_metas')
@@ -418,6 +480,8 @@ router.get('/semanal', async (req, res) => {
       rotulo: indDef.rotulo,
       capacidade_templo: CAPACIDADE_TEMPLO,
       items: itemsVisiveis,
+      // Visão por TURNO de domingo (null = não deu pra montar; o front avisa).
+      turnos,
       resumo: {
         total,
         media_geral: mediaGeral,
@@ -781,13 +845,13 @@ router.get('/culto/:serviceTypeId/historico', async (req, res) => {
 
     const { data: st, error: errSt } = await supabase
       .from('vol_service_types')
-      .select('id, name, color, recurrence_day, recurrence_time, has_kids')
+      .select('id, name, color, recurrence_day, recurrence_time, has_kids, capacidade_lugares')
       .eq('id', serviceTypeId)
       .maybeSingle();
     if (errSt) throw errSt;
     if (!st) return res.status(404).json({ error: 'Culto não encontrado' });
 
-    const capacidade = capacidadeCulto(st.name);
+    const capacidade = capacidadeCulto(st);
     const base = {
       ano,
       indicador: indicadorKey,
@@ -943,10 +1007,55 @@ router.get('/yoy', async (req, res) => {
   }
 });
 
+
+// ── Filtro de culto que aceita TURNO de domingo ─────────────────────────────
+// Pedido do Matheus (31/08): a aba Mensal precisa poder olhar "Domingo manhã" e
+// "Domingo noite", não só um culto isolado.
+//
+// ⚠️ A fronteira das 12h é a MESMA de `utils/lentesDomingo.turnoDoTipo` e do
+// espelho do front (`src/lib/turnoCulto`) — divergir faria o 11:30 contar na
+// manhã num lugar e na noite no outro. Há teste amarrando os três.
+//
+// ⚠️ Turno SEM nenhum culto devolve lista vazia, e quem chama trata como
+// "nenhuma linha" em vez de ignorar o filtro — ignorar mostraria o total da
+// igreja com o rótulo de um turno.
+async function idsDoTurno(turno) {
+  // ⚠️⚠️ Domingo tem MAIS que os cultos do templo: existem os tipos
+  // `CBKIDS - Manhã/Noite Domingo` (medido em 31/08). Somá-los em "Domingo
+  // manhã" misturaria o Kids na frequência do templo — e o indicador de Kids
+  // já tem coluna própria, então seria dupla contagem.
+  //
+  // O discriminador é `presencial_label = 'Sede'` (os do templo) — NÃO
+  // `is_active`, que mente aqui: está `false` tanto nos CBKIDS quanto no 08:30
+  // e no 10:00, que ENCERRARAM mas cujo histórico a série precisa. Culto de
+  // domingo novo com outro rótulo tem que passar por aqui.
+  //
+  // Hoje é inofensivo (os CBKIDS têm ZERO linhas em `vw_dashboard_semanal`),
+  // mas é gatilho armado: no dia em que tiverem, o erro seria silencioso.
+  const { data, error } = await supabase
+    .from('vol_service_types')
+    .select('id, recurrence_time')
+    .eq('recurrence_day', 0)
+    .eq('presencial_label', 'Sede')
+    .not('recurrence_time', 'is', null);
+  if (error) throw error;
+  return (data || [])
+    .filter((t) => {
+      const h = String(t.recurrence_time).slice(0, 5);
+      if (!/^\d{2}:\d{2}$/.test(h)) return false;
+      return (h < '12:00' ? 'manha' : 'noite') === turno;
+    })
+    .map((t) => t.id);
+}
+
 router.get('/mensal', async (req, res) => {
   try {
     const indicadorKey = req.query.indicador || 'aceitacoes';
-    const cultoId = req.query.culto && req.query.culto !== 'todos' ? req.query.culto : null;
+    const cultoParam = req.query.culto && req.query.culto !== 'todos' ? String(req.query.culto) : null;
+    // `turno:manha` / `turno:noite` viram a LISTA de cultos daquele turno.
+    const turno = /^turno:(manha|noite)$/.exec(cultoParam || '');
+    const idsTurno = turno ? await idsDoTurno(turno[1]) : null;
+    const cultoId = turno ? null : cultoParam;
     const indDef = INDICADORES[indicadorKey];
     if (!indDef) return res.status(400).json({ error: 'indicador inválido' });
 
@@ -964,6 +1073,9 @@ router.get('/mensal', async (req, res) => {
       .select(`ano_calendario, mes, service_type_id, ${colunasView(indicadorKey).join(', ')}`)
       .in('ano_calendario', anos);
     if (cultoId) q = q.eq('service_type_id', cultoId);
+    // ⚠️ Turno sem culto nenhum filtra por lista VAZIA de propósito: devolve
+    // zero linhas em vez de ignorar o filtro e mostrar a igreja toda.
+    else if (idsTurno) q = q.in('service_type_id', idsTurno.length ? idsTurno : ['00000000-0000-0000-0000-000000000000']);
     const { data, error } = await q;
     if (error) throw error;
 
@@ -1256,6 +1368,12 @@ router.get('/ytd', async (req, res) => {
             .from('batismo_inscricoes')
             .select('id', { count: 'exact', head: true })
             .eq('status', 'realizado')
+            // ⚠️ `deleted_at` faltava (27/08/2026): a tabela está na whitelist de
+            // soft-delete, então batismo apagado entraria na contagem. Hoje são
+            // 0 apagados nos 3 anos — era bomba armada, não estrago em curso, e
+            // sem isto a tela passaria a discordar do número no dia em que a
+            // equipe apagasse uma linha.
+            .is('deleted_at', null)
             .gte('data_batismo', `${ano}-${String(periodo.inicioMes).padStart(2, '0')}-01`)
             .lte('data_batismo', corteDoAno(ano, periodo.fimMes, periodo.dia));
           if (error) throw error;

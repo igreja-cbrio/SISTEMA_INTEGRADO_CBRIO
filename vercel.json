@@ -34,6 +34,10 @@
       "schedule": "0 * * * *"
     },
     {
+      "path": "/api/censo/cron/pos-processar",
+      "schedule": "30 * * * *"
+    },
+    {
       "path": "/api/integracao/cron/gerar-cultos-recorrentes",
       "schedule": "0 4 1 * *"
     },

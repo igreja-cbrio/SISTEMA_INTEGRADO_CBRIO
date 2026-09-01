@@ -36,10 +36,57 @@ function _norm(v) {
     .toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
-// "não vou", "nao posso", "n vou", "infelizmente não consigo"…
-const NEGACAO = /\b(nao|n|nunca|infelizmente)\b[^a-z0-9]{0,12}(vou|posso|consigo|da|dara|darei|estarei|poderei|irei|vai)?|\bnao\b|\bnegativo\b|\bdesmarcar\b|\bcancelar\b|\bnao vou\b/;
+// ⚠️⚠️ A NEGAÇÃO PRECISA SER A MENSAGEM INTEIRA (24/08/2026).
+//
+// A régua antiga tinha um `|\bnao\b` solto: QUALQUER frase com "não" virava
+// recusa. Medido nas respostas REAIS ao disparo de escala:
+//
+//     "Não sirvo as 8.30"  →  declined   ← ERRADO
+//
+// Essa pessoa não está faltando: ela serve às 10h e a escala está no culto
+// errado. O sistema a tiraria da escala E travaria a disponibilidade dela
+// naquele culto — pior que a conversa aberta que o Matheus quis resolver.
+// Junto dela vieram "Meu horário é às 10" e "No services estou 10h": correção
+// de horário é o segundo caso mais comum, e nenhum deles é "não vou".
+//
+// ⚠️ A ASSIMETRIA É PROPOSITAL: a afirmação segue frouxa e a negação, estrita.
+// Confirmar errado é no-op (o padrão já é "a pessoa vai"); recusar errado tira
+// gente da escala. Os dois erros não custam o mesmo, então não têm o mesmo
+// rigor.
+const NEGACAO_INICIO = /^(?:infelizmente|desculpa|desculpe|oi|ola|bom dia|boa tarde|boa noite)?[\s,.!]*\b(?:nao|n|nunca)\b[\s,.!]*(?:vou|posso|consigo|conseguirei|poderei|irei|estarei|dara|darei|vai dar|da pra|da)?\b/;
+// O que pode sobrar DEPOIS da negação e ainda ser só "não vou": complemento
+// vazio de conteúdo novo. "sirvo", "horario", um número — não estão aqui.
+const ENCHIMENTO = new Set([
+  '', 'poder', 'ir', 'comparecer', 'servir', 'estar', 'dar', 'conseguir', 'vir',
+  'hoje', 'amanha', 'domingo', 'sabado', 'quarta', 'nesse', 'neste', 'nessa',
+  'nesta', 'dessa', 'desta', 'vez', 'culto', 'semana', 'dia', 'no', 'na', 'de',
+  'do', 'da', 'pra', 'para', 'a', 'o', 'que', 'mas', 'infelizmente', 'desculpa',
+  'desculpe', 'obrigado', 'obrigada', 'sinto', 'muito', 'agora', 'esse', 'este',
+  'e', 'eu', 'me', 'mim', 'ainda', 'oi', 'ola', 'bom', 'boa', 'tarde', 'noite',
+  'graca', 'deus', 'abraco', 'bjs', 'bj', 'valeu', 'ok',
+]);
+// ⚠️ "cancelar" e "desmarcar" valem em QUALQUER posição ("preciso cancelar"),
+// diferente de "não": eles não aparecem em correção de horário. É a diferença
+// entre uma palavra que só significa desistir e uma que significa qualquer
+// negação — foi o "não" solto que lia "Não sirvo as 8.30" como recusa.
+const CANCELAMENTO = /\b(cancelar|desmarcar|negativo)\b/;
 // "vou sim", "confirmo", "estarei lá", "ok", "pode contar comigo"
 const AFIRMACAO = /\b(vou|confirmo|confirmar|confirmado|sim|ok|okay|blz|beleza|certo|estarei|irei|posso|consigo|contar comigo|presente|to dentro|tou dentro|estou dentro)\b/;
+
+/**
+ * A mensagem É uma negação, ou apenas CONTÉM um "não"?
+ *
+ * Tira a negação da frente e olha o que sobrou: se for só enchimento, a pessoa
+ * está dizendo que não vai. Se sobrou conteúdo ("sirvo as 8.30", "horario e as
+ * 10"), ela está dizendo OUTRA coisa — e isso vai pra gente decidir.
+ */
+function ehNegacaoInteira(t) {
+  if (CANCELAMENTO.test(t)) return true;
+  const m = NEGACAO_INICIO.exec(t);
+  if (!m) return false;
+  const resto = t.slice(m[0].length).replace(/[.,!?;:]/g, ' ');
+  return resto.split(/\s+/).every((w) => ENCHIMENTO.has(w));
+}
 
 /**
  * @returns {'confirmed'|'declined'|null} `null` = não deu pra entender.
@@ -52,7 +99,7 @@ function interpretarRespostaEscala(bruto) {
   if (/^2[.\)]?$/.test(t)) return 'declined';
   if (/^1[.\)]?$/.test(t)) return 'confirmed';
   // ⚠️ Negação PRIMEIRO — ver o comentário do topo.
-  if (NEGACAO.test(t)) return 'declined';
+  if (ehNegacaoInteira(t)) return 'declined';
   if (AFIRMACAO.test(t)) return 'confirmed';
   return null;
 }
@@ -81,4 +128,5 @@ function wamidRespondido(m) {
   return m?.context?.id || null;
 }
 
-module.exports = { interpretarRespostaEscala, textoDaResposta, wamidRespondido };
+module.exports = {
+  ehNegacaoInteira, interpretarRespostaEscala, textoDaResposta, wamidRespondido };

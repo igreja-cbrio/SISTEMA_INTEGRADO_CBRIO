@@ -21,6 +21,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import QRCode from 'qrcode';
 import confetti from 'canvas-confetti';
 import { generosidadePublica } from '../../api';
+// ⚠️ DV do CPF vem da régua da casa, NUNCA de uma 4ª cópia do algoritmo nesta
+// tela (é a lei do Contrato de Inscrição: cópia local de CPF/máscara divergia).
+import { cpfValido } from '../../lib/inscricao';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 
 interface Config {
@@ -219,6 +222,18 @@ export default function DoarPage() {
     e.preventDefault();
     setErroForm(null); setCampoErro(null);
     if (!valorCentavos) { setCampoErro('valor'); setErroForm('Escolha ou digite quanto você quer doar.'); return; }
+    // ⚠️ CPF obrigatório (27/08/2026). A tela evita a ida ao servidor, mas quem
+    // DECIDE é o backend — este bloco é conveniência, não a trava.
+    if (!soDigitos(cpf)) {
+      setCampoErro('cpf');
+      setErroForm('Informe seu CPF — é o que liga a doação ao seu cadastro e ao comprovante anual.');
+      return;
+    }
+    if (!cpfValido(soDigitos(cpf))) {
+      setCampoErro('cpf');
+      setErroForm('Esse CPF não parece válido. Confira os números.');
+      return;
+    }
     setEnviando(true);
     try {
       const r = await generosidadePublica.doar({
@@ -227,7 +242,7 @@ export default function DoarPage() {
         campanha: categoria === 'campanha' ? campanha : undefined,
         nome, email,
         telefone: soDigitos(telefone) || undefined,
-        cpf: soDigitos(cpf) || undefined,
+        cpf: soDigitos(cpf),
         tentativa: tentativa.current,
         canal: 'web',
         website: honeypot,
@@ -385,14 +400,14 @@ export default function DoarPage() {
           </div>
 
           <div style={{ marginTop: 12 }}>
-            <Rotulo C={C}>CPF <span style={{ color: C.textDim, fontWeight: 400 }}>(opcional)</span></Rotulo>
+            <Rotulo C={C}>CPF</Rotulo>
             <input
               value={cpf} onChange={(ev) => setCpf(mascaraCpf(ev.target.value))}
               inputMode="numeric" placeholder="000.000.000-00" style={input(C, campoErro === 'cpf')}
             />
             <div style={{ fontSize: 12, color: C.text3, marginTop: 6, lineHeight: 1.45 }}>
-              Informar o CPF liga a doação ao seu cadastro — é o que faz ela aparecer no seu
-              comprovante anual de contribuições. Sem CPF a doação é registrada, mas fica anônima.
+              O CPF liga a doação ao seu cadastro — é o que faz ela aparecer no seu
+              comprovante anual de contribuições.
             </div>
           </div>
 

@@ -23,6 +23,11 @@ const COLUNAS_LISTA = 'id, nome, telefone, email, status, foto_url, data_nascime
 /**
  * Janelas de nascimento por faixa. Mesma régua do `GET /membros` — duas contas
  * de idade em duas telas seria pior que repetir.
+ *
+ * ⚠️ Régua da igreja desde 19/08/2026 (decisão do Matheus): criança <13 ·
+ * adolescente 13-17 · jovem 18-25 · adulto 26+. Espelho de `fn_faixa_etaria`
+ * (migration 20260819180000) e de `src/lib/faixaEtaria.ts` — mudou lá, muda
+ * aqui, senão o filtro devolve gente que a tela classifica de outro jeito.
  * @param {Date} hoje injetável: teste que lê o relógio da máquina apodrece.
  */
 function janelaDaFaixa(faixa, hoje = new Date()) {
@@ -34,8 +39,8 @@ function janelaDaFaixa(faixa, hoje = new Date()) {
   };
   if (faixa === 'crianca') return { gt: f(13) };
   if (faixa === 'adolescente') return { gt: f(18), lte: f(13) };
-  if (faixa === 'jovem') return { gt: f(31), lte: f(18) };
-  if (faixa === 'adulto') return { lte: f(31) };
+  if (faixa === 'jovem') return { gt: f(26), lte: f(18) };
+  if (faixa === 'adulto') return { lte: f(26) };
   return null;
 }
 
@@ -43,7 +48,8 @@ function janelaDaFaixa(faixa, hoje = new Date()) {
  * Traduz a query da tela num plano de consulta.
  *
  * @returns {{ limite, offset, ascending, range: [number, number],
- *            status: string|null, semCpf: boolean, faixa: object|null,
+ *            status: string|null, semCpf: boolean, comCpf: boolean,
+ *            faixa: object|null,
  *            tokens: string[] }}
  */
 function planoDaPagina(query = {}, hoje = new Date()) {
@@ -73,6 +79,12 @@ function planoDaPagina(query = {}, hoje = new Date()) {
     range: [offset, offset + limite - 1],
     status: query.status ? String(query.status) : null,
     semCpf: query.sem_cpf === '1' || query.sem_cpf === true || query.sem_cpf === 'true',
+    // ⚠️ "Com CPF" é o inverso EXATO de "sem CPF" nesta base, e isso foi
+    // medido (19/08/2026): dos 3.893 ativos, 2.173 têm `cpf` NULL e 1.720 têm
+    // 11 dígitos — zero string vazia, zero malformado, zero com pontuação.
+    // Por isso `is not null` basta. Se um dia entrar CPF vazio ou com máscara,
+    // este filtro passa a mentir e a régua tem que virar contagem de dígitos.
+    comCpf: query.com_cpf === '1' || query.com_cpf === true || query.com_cpf === 'true',
     faixa: janelaDaFaixa(query.faixa, hoje),
     tokens,
   };

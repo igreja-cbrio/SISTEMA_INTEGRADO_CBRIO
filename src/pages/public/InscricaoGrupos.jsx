@@ -695,25 +695,34 @@ export default function InscricaoGrupos() {
                 Para o grupo <strong style={{ color: C.text }}>{grupoEscolhido?.nome}</strong>
               </p>
               {/* Confirma o grupo certo: líder + dia/horário logo abaixo do nome (Nana · 23/07) */}
-              {grupoEscolhido && (grupoEscolhido.lider_nome || formatarQuando(grupoEscolhido)) && (
+              {grupoEscolhido && (grupoEscolhido.lider_nome || grupoEscolhido.lideres_exibicao?.length || formatarQuando(grupoEscolhido)) && (
                 <div style={{
                   display: 'flex', flexDirection: 'column', gap: 5,
                   padding: '10px 12px', marginBottom: 16, borderRadius: 10,
                   background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
                   border: `1px solid ${C.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)'}`,
                 }}>
-                  {grupoEscolhido.lider_nome && (
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: C.text3 }}>
-                      <User size={14} style={{ color: '#00B39D', flexShrink: 0 }} />
-                      {/* Com apelido cadastrado mostra "Nome (Apelido)" — é como a
-                          pessoa conhece o líder ("ah, é o Tuninho"). */}
-                      Líder: <strong style={{ color: C.text, fontWeight: 600 }}>
-                        {grupoEscolhido.lider_apelido
+                  {(() => {
+                    // TODOS os líderes do grupo, não só o principal (Natasha 20/08 ·
+                    // grupo com 2+ líderes confirma pelos dois nomes). O backend já
+                    // manda "Nome (Apelido)" pronto em lideres_exibicao; o fallback
+                    // cobre bundle antigo/deploy em 2 etapas.
+                    const nomes = (grupoEscolhido.lideres_exibicao?.length
+                      ? grupoEscolhido.lideres_exibicao
+                      : [grupoEscolhido.lider_apelido
                           ? `${grupoEscolhido.lider_nome} (${grupoEscolhido.lider_apelido})`
-                          : grupoEscolhido.lider_nome}
-                      </strong>
-                    </span>
-                  )}
+                          : grupoEscolhido.lider_nome]).filter(Boolean);
+                    if (!nomes.length) return null;
+                    return (
+                      <span style={{ display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: 12.5, color: C.text3 }}>
+                        <User size={14} style={{ color: '#00B39D', flexShrink: 0, marginTop: 2 }} />
+                        <span>
+                          {nomes.length > 1 ? 'Líderes: ' : 'Líder: '}
+                          <strong style={{ color: C.text, fontWeight: 600 }}>{nomes.join(' · ')}</strong>
+                        </span>
+                      </span>
+                    );
+                  })()}
                   {formatarQuando(grupoEscolhido) && (
                     <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: C.text3 }}>
                       <CalendarClock size={14} style={{ color: '#00B39D', flexShrink: 0 }} />

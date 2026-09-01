@@ -280,7 +280,11 @@ export default function MembrosDuplicadosPanel() {
 
       {/* Confirmação · 1 par */}
       <AlertDialog open={!!parMerge} onOpenChange={(o) => { if (!o) { setParMerge(null); setMergeCampos({}); } }}>
-        <AlertDialogContent>
+        {/* ⚠️ Mesmo padrão de modal alto do /entradas (lei da casa · 25/06): o
+            MergeFieldPicker rende uma linha por campo divergente, então este
+            diálogo cresce com o dado e o rodapé saía da tela. Teto + `flex
+            flex-col` no container, rolagem no CORPO com `min-h-0`. */}
+        <AlertDialogContent className="max-h-[85vh] flex flex-col">
           {parMerge && (() => {
             const keep = keepOf(parMerge.par);
             const k = keep === 'a' ? parMerge.par.membro_a : parMerge.par.membro_b;
@@ -300,8 +304,10 @@ export default function MembrosDuplicadosPanel() {
                     </div>
                   </AlertDialogDescription>
                 </AlertDialogHeader>
-                <MergeFieldPicker key={`${k.id}_${d.id}`} keep={k} drop={d} onCampos={setMergeCampos} />
-                <AlertDialogFooter>
+                <div className="flex-1 overflow-y-auto min-h-0 pr-1">
+                  <MergeFieldPicker key={`${k.id}_${d.id}`} keep={k} drop={d} onCampos={setMergeCampos} />
+                </div>
+                <AlertDialogFooter className="shrink-0">
                   <AlertDialogCancel disabled={working}>Cancelar</AlertDialogCancel>
                   <AlertDialogAction onClick={(e) => { e.preventDefault(); fundirUm(parMerge.par); }} disabled={working} className="gap-1.5">
                     {working ? <Loader2 className="size-3.5 animate-spin" /> : <GitMerge className="size-3.5" />} Confirmar fusão

@@ -73,6 +73,13 @@ describe('faixa etária', () => {
     expect(adu.lte).toBe(jov.gt);
   });
 
+  // ⚠️ A continuidade acima sobrevive a QUALQUER corte — foi por isso que o
+  // 31 antigo passou despercebido. O corte da igreja fica fixado aqui.
+  it('jovem acaba aos 25 · adulto começa aos 26 (régua da igreja, 19/08/2026)', () => {
+    expect(janelaDaFaixa('jovem', HOJE)).toEqual({ gt: '2000-08-10', lte: '2008-08-10' });
+    expect(janelaDaFaixa('adulto', HOJE)).toEqual({ lte: '2000-08-10' });
+  });
+
   it('faixa desconhecida não filtra nada (em vez de filtrar errado)', () => {
     expect(janelaDaFaixa('sei_la', HOJE)).toBeNull();
     expect(janelaDaFaixa(undefined, HOJE)).toBeNull();
@@ -111,5 +118,33 @@ describe('resposta da lista', () => {
   it('total ilegível não vira rolagem infinita', () => {
     expect(montarResposta([{ id: '1', nome: 'A' }], { total: null, offset: 0, limite: 30 }).tem_mais)
       .toBe(false);
+  });
+});
+
+describe('planoDaPagina · filtro de CPF', () => {
+  it('com_cpf liga o filtro inverso', () => {
+    expect(planoDaPagina({ com_cpf: '1' }).comCpf).toBe(true);
+    expect(planoDaPagina({ com_cpf: 'true' }).comCpf).toBe(true);
+    expect(planoDaPagina({ com_cpf: true }).comCpf).toBe(true);
+  });
+
+  it('sem nada, os dois ficam desligados', () => {
+    const p = planoDaPagina({});
+    expect(p.comCpf).toBe(false);
+    expect(p.semCpf).toBe(false);
+  });
+
+  it('valor lixo não liga o filtro', () => {
+    expect(planoDaPagina({ com_cpf: '0' }).comCpf).toBe(false);
+    expect(planoDaPagina({ com_cpf: 'sim' }).comCpf).toBe(false);
+  });
+
+  it('⚠️ os dois juntos não se anulam — a rota decide, e a régua reporta os dois', () => {
+    // Um pedido contraditório tem que chegar visível na rota, que dá
+    // precedência a "sem CPF". Se a régua zerasse um deles aqui, a rota
+    // devolveria a lista inteira como se nada tivesse sido filtrado.
+    const p = planoDaPagina({ sem_cpf: '1', com_cpf: '1' });
+    expect(p.semCpf).toBe(true);
+    expect(p.comCpf).toBe(true);
   });
 });

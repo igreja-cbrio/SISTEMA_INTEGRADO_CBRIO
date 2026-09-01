@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck, UserPlus, X, Cake, Pencil, MessageCircle } from 'lucide-react';
+import { RefreshCw, Search, Users, QrCode, Clock, CheckCircle2, UserCheck, UserPlus, X, Cake, Pencil, MessageCircle, ChevronDown } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -21,6 +21,33 @@ import VolDetalheDialog from './VolDetalheDialog';
 import MarcadoresJornada from '@/components/MarcadoresJornada';
 
 type Tab = 'todos' | 'fila';
+
+// Vínculo de equipe que VALE. ⚠️ `is_active=false` é vínculo encerrado (o
+// /team-members já filtra assim, e o botão de remover do totem Kids marca a
+// flag em vez de apagar a linha) — contá-lo faria "tem equipe" mentir. Hoje não
+// há nenhum inativo no banco, então isto é guarda contra o dia em que houver.
+function equipesDe(vol: any): any[] {
+  return ((vol?.team_members || []) as any[]).filter(tm => tm?.is_active !== false);
+}
+
+// Card de resumo que também é filtro. `ativo` só pinta a borda — quem decide o
+// recorte é o estado do pai, pra não existir uma segunda régua de "o que está
+// filtrado" (era o que fazia o card e o seletor discordarem).
+function CardFiltro({ valor, rotulo, cor, ativo, onClick }: {
+  valor: number; rotulo: string; cor?: string; ativo: boolean; onClick: () => void;
+}) {
+  return (
+    <button
+      type="button" onClick={onClick} aria-pressed={ativo}
+      className={`rounded-lg border bg-card p-3 text-center transition-colors hover:bg-accent/40 ${
+        ativo ? 'border-primary ring-1 ring-primary/30' : ''
+      }`}
+    >
+      <p className={`text-xl font-bold ${cor || ''}`}>{valor}</p>
+      <p className="text-xs text-muted-foreground">{rotulo}</p>
+    </button>
+  );
+}
 
 export default function VolLista() {
   const [tab, setTab] = useState<Tab>('todos');
@@ -71,6 +98,11 @@ function AniversariantesSemana() {
   const [msg, setMsg] = useState<string>(() => {
     try { return localStorage.getItem(BDAY_MSG_KEY) || BDAY_MSG_DEFAULT; } catch { return BDAY_MSG_DEFAULT; }
   });
+  // ⚠️ Nasce RECOLHIDA (pedido do Matheus · 27/08). Recolher só é honesto
+  // porque a CONTAGEM fica no cabeçalho: quem abre a tela continua vendo que há
+  // 10 aniversariantes na semana — o que some é a lista, não o fato. É o mesmo
+  // desenho do painel do agente de voluntariado (13/08).
+  const [aberta, setAberta] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [draft, setDraft] = useState(msg);
 
@@ -98,17 +130,28 @@ function AniversariantesSemana() {
   return (
     <Card className="border-[#00B39D]/30">
       <CardContent className="p-4">
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2">
-            <Cake className="h-4 w-4 text-[#00B39D]" />
+        <div className={`flex items-center justify-between gap-2 ${aberta ? 'mb-3' : ''}`}>
+          {/* ⚠️ O cabeçalho INTEIRO abre e fecha — alvo grande, e o chevron
+              deixa claro que há conteúdo embaixo. Ícone pequeno e sozinho não é
+              achado nem por quem pediu a funcionalidade (lição de 18/08). */}
+          <button type="button" onClick={() => setAberta(v => !v)}
+            className="flex flex-1 items-center gap-2 text-left"
+            aria-expanded={aberta}
+            title={aberta ? 'Recolher' : 'Ver os aniversariantes'}>
+            <Cake className="h-4 w-4 shrink-0 text-[#00B39D]" />
             <h3 className="font-semibold text-sm">Aniversariantes da semana</h3>
             <Badge variant="secondary">{rows.length}</Badge>
-          </div>
-          <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-xs" onClick={() => { setDraft(msg); setEditOpen(true); }}>
-            <Pencil className="h-3.5 w-3.5" /> Editar mensagem
-          </Button>
+            <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${aberta ? 'rotate-180' : ''}`} />
+          </button>
+          {/* ⚠️ "Editar mensagem" só com a lista ABERTA: editar o texto de uma
+              lista que não se vê é ruído no cabeçalho recolhido. */}
+          {aberta && (
+            <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-xs" onClick={() => { setDraft(msg); setEditOpen(true); }}>
+              <Pencil className="h-3.5 w-3.5" /> Editar mensagem
+            </Button>
+          )}
         </div>
-        {rows.length === 0 ? (
+        {!aberta ? null : rows.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhum aniversariante nos próximos 7 dias.</p>
         ) : (
           <div className="space-y-1.5">
@@ -171,6 +214,11 @@ function TodosList() {
   const [search, setSearch] = useState('');
   const [teamFilter, setTeamFilter] = useState('all');
   const [sourceFilter, setSourceFilter] = useState('all');
+  // ⚠️ "Atividade" é uma pergunta DIFERENTE de "origem" e de "arquivado".
+  // Arquivado = saiu do roster do Planning Center. Inativo = está no roster e
+  // NÃO SERVE há 90+ dias. Dá pra estar ativo no cadastro e inativo na prática
+  // — e é justamente essa lista que o Matheus quis ver (27/08).
+  const [atividadeFilter, setAtividadeFilter] = useState('all');
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({ full_name: '', email: '', phone: '', cpf: '' });
   const [detalheId, setDetalheId] = useState<string | null>(null);
@@ -198,7 +246,7 @@ function TodosList() {
   const allTeams = useMemo(() => {
     const map = new Map<string, { id: string; name: string; color?: string }>();
     for (const vol of pool as any[]) {
-      for (const tm of vol.team_members || []) {
+      for (const tm of equipesDe(vol)) {
         if (tm.team) map.set(tm.team.id, tm.team);
       }
     }
@@ -208,6 +256,14 @@ function TodosList() {
   // Ativos = roster atual do PCO + internos. Arquivados = saíram do PCO (reconciliação).
   const ativos = useMemo(() => (pool as any[]).filter(v => !v.arquivado), [pool]);
   const arquivados = useMemo(() => (pool as any[]).filter(v => v.arquivado), [pool]);
+  // Fila de trabalho da coordenação. ⚠️ Conta só o que o servidor devolve, e o
+  // embed do pool alcança a membership pelo FK do PERFIL — linha "pc-only"
+  // (ligada só pelo id do Planning Center) NÃO vinha, e a tela dizia "sem
+  // equipe" pra quem TEM equipe: em 26/08 eram 40 exibidos contra 19 reais.
+  // As 57 linhas órfãs foram religadas e o sync passou a repontar as futuras
+  // (`repontarOrfas` em services/planningCenter.js) — se este número voltar a
+  // inchar, é lá que a resposta está, não neste filtro.
+  const semEquipe = useMemo(() => ativos.filter(v => !equipesDe(v).length), [ativos]);
 
   const filtered = useMemo(() => {
     // O filtro "arquivados" mostra os que saíram do PCO; os demais operam sobre os ativos.
@@ -221,16 +277,21 @@ function TodosList() {
       );
     }
     if (teamFilter === 'none') {
-      list = list.filter(v => !((v.team_members || []).length));
+      list = list.filter(v => !equipesDe(v).length);
     } else if (teamFilter !== 'all') {
       list = list.filter(v =>
-        (v.team_members || []).some((tm: any) => tm.team_id === teamFilter)
+        equipesDe(v).some((tm: any) => tm.team_id === teamFilter)
       );
     }
     if (sourceFilter === 'pc') list = list.filter(v => !!v.planning_center_id);
     else if (sourceFilter === 'sistema') list = list.filter(v => !v.planning_center_id);
+    // ⚠️ Sem `atividade` (o servidor não conseguiu apurar) a pessoa NÃO entra
+    // nem em "inativos" nem em "servindo": filtrar por um dado que falhou
+    // produziria uma lista de cobrança errada.
+    if (atividadeFilter === 'inativos') list = list.filter(v => v.atividade?.nivel === 'inativo');
+    else if (atividadeFilter === 'servindo') list = list.filter(v => v.atividade && v.atividade.nivel !== 'inativo');
     return list;
-  }, [ativos, arquivados, search, teamFilter, sourceFilter]);
+  }, [ativos, arquivados, search, teamFilter, sourceFilter, atividadeFilter]);
 
   const { pageItems: filteredPag, paginacaoProps: volPagProps } = usePaginacaoLocal(filtered, 25);
 
@@ -300,16 +361,74 @@ function TodosList() {
             {arquivados.length > 0 && <SelectItem value="arquivados">Arquivados (saíram do PCO)</SelectItem>}
           </SelectContent>
         </Select>
+        <Select value={atividadeFilter} onValueChange={setAtividadeFilter}>
+          <SelectTrigger className="w-full sm:w-44"><SelectValue placeholder="Atividade" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Toda atividade</SelectItem>
+            <SelectItem value="servindo">Servindo (até 90 dias)</SelectItem>
+            <SelectItem value="inativos">Inativos (90+ dias sem servir)</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
+      {/* ⚠️ Os cards são BOTÕES-FILTRO, não placar (padrão que o /grupos adotou em
+          10/06 — "o Marcos não achava as pills"). O filtro "sem equipe" EXISTIA
+          desde sempre como 2ª opção do seletor "Equipe" e o Matheus não achou
+          (26/08) — é a lição do lápis de 18px: afordância escondida é afordância
+          que não existe. O card diz o número e leva ao recorte num toque. */}
       <div className={`grid gap-3 ${arquivados.length > 0 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
-        <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold">{ativos.length}</p><p className="text-xs text-muted-foreground">Total ativos</p></CardContent></Card>
-        <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold text-blue-600">{ativos.filter(v => v.planning_center_id).length}</p><p className="text-xs text-muted-foreground">Planning Center</p></CardContent></Card>
-        <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold text-[#00B39D]">{ativos.filter(v => !v.planning_center_id).length}</p><p className="text-xs text-muted-foreground">Internos</p></CardContent></Card>
+        <CardFiltro
+          valor={ativos.length} rotulo="Total ativos"
+          ativo={teamFilter === 'all' && sourceFilter === 'all'}
+          onClick={() => { setTeamFilter('all'); setSourceFilter('all'); }}
+        />
+        <CardFiltro
+          valor={ativos.filter(v => v.planning_center_id).length} rotulo="Planning Center" cor="text-blue-600"
+          ativo={sourceFilter === 'pc'}
+          onClick={() => setSourceFilter(sourceFilter === 'pc' ? 'all' : 'pc')}
+        />
+        <CardFiltro
+          valor={ativos.filter(v => !v.planning_center_id).length} rotulo="Internos" cor="text-[#00B39D]"
+          ativo={sourceFilter === 'sistema'}
+          onClick={() => setSourceFilter(sourceFilter === 'sistema' ? 'all' : 'sistema')}
+        />
         {arquivados.length > 0 && (
-          <Card><CardContent className="p-3 text-center"><p className="text-xl font-bold text-muted-foreground">{arquivados.length}</p><p className="text-xs text-muted-foreground">Arquivados</p></CardContent></Card>
+          <CardFiltro
+            valor={arquivados.length} rotulo="Arquivados" cor="text-muted-foreground"
+            ativo={sourceFilter === 'arquivados'}
+            onClick={() => setSourceFilter(sourceFilter === 'arquivados' ? 'all' : 'arquivados')}
+          />
         )}
       </div>
+
+      {/* Sem equipe: é a fila de trabalho da coordenação ("pra a equipe de
+          voluntariado ir alimentando"), então tem card próprio, âmbar (pendência,
+          não erro) e só aparece quando há o que fazer. */}
+      {semEquipe.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setTeamFilter(teamFilter === 'none' ? 'all' : 'none')}
+          className={`w-full text-left rounded-lg border px-4 py-3 transition-colors ${
+            teamFilter === 'none'
+              ? 'border-amber-500 bg-amber-500/10'
+              : 'border-amber-500/40 bg-amber-500/5 hover:bg-amber-500/10'
+          }`}
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <Users className="h-4 w-4 text-amber-600 shrink-0" />
+            <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+              {semEquipe.length} voluntário(s) ativo(s) sem equipe atribuída
+            </span>
+            <Badge variant="outline" className="text-[10px] px-1.5 py-0 border-amber-500/40 text-amber-700 dark:text-amber-400">
+              {teamFilter === 'none' ? 'filtrando — toque pra ver todos' : 'toque pra ver quem'}
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            Sem equipe eles não entram na composição de nenhuma escala. Use o botão
+            <strong> Atribuir</strong> na linha da pessoa.
+          </p>
+        </button>
+      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-16">
@@ -329,12 +448,16 @@ function TodosList() {
         <>
         <div className="space-y-1.5">
           {filteredPag.map((vol: any) => {
-            const teamsOf = (vol.team_members || []) as any[];
+            const teamsOf = equipesDe(vol);
             const hasPc = !!vol.planning_center_id;
             return (
               <div key={vol.id} onClick={() => setDetalheId(vol.id)} className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-card hover:bg-accent/40 transition-colors cursor-pointer">
                 <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-sm font-semibold shrink-0 overflow-hidden">
-                  {vol.avatar_url ? <img data-foto-avatar="" src={vol.avatar_url} alt={vol.full_name} className="h-full w-full object-cover" /> : vol.full_name.charAt(0).toUpperCase()}
+                  {/* ⚠️ `foto_url` (resolvida no servidor), não `avatar_url`:
+                      aquele campo está preenchido em quase todo mundo e a
+                      maioria é PLACEHOLDER DE INICIAIS do Planning Center — a
+                      lista mostrava um PNG cinza pra 54% das pessoas. */}
+                  {vol.foto_url ? <img data-foto-avatar="" src={vol.foto_url} alt={vol.full_name} className="h-full w-full object-cover" /> : vol.full_name.charAt(0).toUpperCase()}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -342,6 +465,19 @@ function TodosList() {
                     <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${hasPc ? 'border-blue-200 text-blue-700 dark:text-blue-300' : 'border-[#00B39D]/30 text-[#00B39D]'}`}>
                       {hasPc ? 'Planning Center' : 'Interno'}
                     </Badge>
+                    {/* ⚠️ O texto diz "sem servir há 90+ dias", não "Inativo"
+                        solto: nesta MESMA tela "ativo" já significa "não
+                        arquivado" no cabeçalho (674). Rótulo ambíguo em cima de
+                        duas réguas que convivem é como a tela discorda de si
+                        mesma. O title traz o número exato de dias. */}
+                    {vol.atividade?.nivel === 'inativo' && (
+                      <Badge variant="outline" className="border-red-300 px-1.5 py-0 text-[10px] text-red-600 dark:border-red-500/40 dark:text-red-400"
+                        title={vol.atividade?.dias_desde != null
+                          ? `Última vez que serviu: há ${vol.atividade.dias_desde} dias`
+                          : 'Nenhum serviço nem check-in nos últimos 120 dias'}>
+                        sem servir 90+ dias
+                      </Badge>
+                    )}
                     {vol.qr_code && <QrCode className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />}
                     {/* Marcadores de jornada (Arthur Serpa / Pr. Nélio · 13/08/2026).
                         ⚠️ Perfil sem `membresia_id` fica SEM marcador — não dá pra
@@ -429,7 +565,7 @@ function TodosList() {
           <div className="py-1 space-y-4">
             <div>
               <Label className="text-xs text-muted-foreground">Equipes atuais</Label>
-              {(gvol?.team_members || []).length ? (
+              {equipesDe(gvol).length ? (
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
                   {(gvol.team_members as any[]).map(tm => (
                     <span key={tm.id} className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full bg-muted">
@@ -448,7 +584,7 @@ function TodosList() {
                 <Select value={addTeam} onValueChange={setAddTeam}>
                   <SelectTrigger className="flex-1"><SelectValue placeholder="Escolher equipe" /></SelectTrigger>
                   <SelectContent>
-                    {(teamsManaged as any[]).filter(t => t.is_active && !((gvol?.team_members || []).some((tm: any) => tm.team_id === t.id))).map(t => (
+                    {(teamsManaged as any[]).filter(t => t.is_active && !(equipesDe(gvol).some((tm: any) => tm.team_id === t.id))).map(t => (
                       <SelectItem key={t.id} value={t.id}>
                         <span className="flex items-center gap-2">
                           {t.color && <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: t.color }} />}

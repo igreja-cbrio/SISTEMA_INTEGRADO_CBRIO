@@ -1,4 +1,9 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import {
+  categoriaBatismo, CATEGORIAS, CATEGORIA_COR,
+  CATEGORIA_LABEL as CATEGORIA_LABEL_LIB, CATEGORIA_LABEL_FAIXA,
+  type CategoriaEtaria as CategoriaEtariaLib,
+} from '../../lib/categoriaBatismo';
 import { useSearchParams } from 'react-router-dom';
 import { kpis as kpisApi, integracao as integracaoApi } from '../../api';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
@@ -31,7 +36,7 @@ const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5c
 
 type Status = 'pendente' | 'confirmado' | 'realizado' | 'cancelado';
 
-type CategoriaEtaria = 'crianca' | 'adolescente' | 'adulto';
+type CategoriaEtaria = CategoriaEtariaLib;   // 4 faixas · lib/categoriaBatismo
 
 type BatismoInscricao = {
   id: string;
@@ -63,33 +68,14 @@ type BatismoInscricao = {
   dias_conversao_batismo?: number | null; // data_batismo - data_conversao, em dias
 };
 
-const CATEGORIA_LABEL: Record<CategoriaEtaria, string> = {
-  crianca: 'Criança',
-  adolescente: 'Adolescente',
-  adulto: 'Adulto',
-};
-
-const CATEGORIA_COLOR: Record<CategoriaEtaria, string> = {
-  crianca: '#ec4899',      // pink
-  adolescente: '#a855f7',  // purple
-  adulto: '#0ea5e9',       // sky
-};
-
-// Calcula categoria etaria no client (espelha lógica do trigger SQL)
-function categoriaDe(b: { data_nascimento?: string | null; eh_crianca?: boolean; categoria_etaria?: CategoriaEtaria | null }): CategoriaEtaria | null {
-  if (b.categoria_etaria) return b.categoria_etaria;
-  if (b.eh_crianca) return 'crianca';
-  if (!b.data_nascimento) return null;
-  const nasc = new Date(b.data_nascimento + 'T12:00:00');
-  if (Number.isNaN(nasc.getTime())) return null;
-  const hoje = new Date();
-  let idade = hoje.getFullYear() - nasc.getFullYear();
-  const m = hoje.getMonth() - nasc.getMonth();
-  if (m < 0 || (m === 0 && hoje.getDate() < nasc.getDate())) idade -= 1;
-  if (idade < 12) return 'crianca';
-  if (idade <= 18) return 'adolescente';
-  return 'adulto';
-}
+// Faixas e régua vivem em `lib/categoriaBatismo` (espelho do trigger SQL) —
+// aqui não se recalcula idade. A categoria sai da DATA de nascimento a cada
+// leitura: a coluna do banco é snapshot do último salvamento e envelhece
+// sozinha (quem era jovem aos 25 vira adulto aos 26 sem ninguém editar).
+const CATEGORIA_LABEL = CATEGORIA_LABEL_LIB;
+const CATEGORIA_COLOR = CATEGORIA_COR;
+const categoriaDe = (b: { data_nascimento?: string | null; eh_crianca?: boolean; categoria_etaria?: CategoriaEtaria | null }) =>
+  categoriaBatismo(b);
 
 const STATUS_LABEL: Record<Status, string> = {
   pendente: 'Pendente',
@@ -716,11 +702,11 @@ export default function Batismos() {
           </SelectContent>
         </Select>
         <div className="inline-flex rounded-xl border border-border p-0.5 bg-muted/30 overflow-x-auto">
-          {(['todos', 'crianca', 'adolescente', 'adulto'] as const).map(c => {
+          {(['todos', ...CATEGORIAS] as const).map(c => {
             const count = c === 'todos'
               ? list.length
               : list.filter(b => categoriaDe(b) === c).length;
-            const label = c === 'todos' ? 'Todas idades' : CATEGORIA_LABEL[c];
+            const label = c === 'todos' ? 'Todas idades' : CATEGORIA_LABEL_FAIXA[c];
             return (
               <button
                 key={c}
@@ -915,7 +901,16 @@ export default function Batismos() {
           pessoas={turmas.find(t => t.data === turmaAberta)?.pessoas || []}
           labelHorario={labelHorario}
           onClose={() => setTurmaAberta(null)}
-          onSelectPessoa={(b) => { setTurmaAberta(null); setSelected(b); }}
+          // ⚠️ NÃO fecha a turma ao abrir a ficha de uma pessoa (pedido do
+          // Matheus · 24/08/2026: "na hora do batismo o pessoal marca quem veio
+          // e quem não veio · se eu faço o check-in de uma pessoa o pop-up fecha
+          // e atrapalha a operação"). A lista da turma É a prancheta do culto:
+          // fechá-la a cada pessoa obriga a reabrir a data e rolar até o culto
+          // certo, 17 vezes num domingo. A ficha empilha por cima (Radix trata
+          // as camadas: Esc e clique fora só dispensam a de cima) e, ao salvar,
+          // `onSaved` fecha só a ficha — a turma continua aberta ATRÁS, já
+          // atualizada, porque `pessoas` vem de `list`, que o `load()` recarrega.
+          onSelectPessoa={(b) => setSelected(b)}
           onChanged={load}
         />
       )}
@@ -953,7 +948,7 @@ function montarCultoImpressao(
     titulo: [dataFmt, hc ? labelHorario(hc) : ''].filter(Boolean).join(' · '),
     batizandos: lista.filter(b => b.status !== 'cancelado').slice()
       .sort((x, y) => `${x.nome} ${x.sobrenome}`.localeCompare(`${y.nome} ${y.sobrenome}`))
-      .map(b => ({ nome: `${b.nome} ${b.sobrenome || ''}`.trim(), categoria: b.categoria_etaria ? CATEGORIA_LABEL[b.categoria_etaria] : '', camisa: b.tamanho_camisa || '' })),
+      .map(b => ({ nome: `${b.nome} ${b.sobrenome || ''}`.trim(), categoria: categoriaDe(b) ? CATEGORIA_LABEL[categoriaDe(b)!] : '', camisa: b.tamanho_camisa || '' })),
   };
 }
 

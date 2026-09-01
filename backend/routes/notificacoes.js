@@ -62,12 +62,18 @@ router.post('/alerta-culto/testar', authorize('admin', 'diretor'), async (req, r
 // GET /api/notificacoes — listar notificações do usuário logado
 router.get('/', async (req, res) => {
   try {
+    // Não lidas SEMPRE primeiro (e com folga no limite): sem isso, uma pessoa
+    // com alto volume de notificações lidas recentes empurra as não lidas pra
+    // fora da lista — o badge (GET /count, sem limite) continua acusando "9+"
+    // enquanto a aba "Não lidas" (filtro client-side sobre esta lista) mostra
+    // vazio, porque a não lida nem chegou a ser buscada do banco.
     let query = supabase
       .from('notificacoes')
       .select('*')
       .eq('usuario_id', req.user.userId)
+      .order('lida', { ascending: true })
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(100);
 
     if (req.query.modulo) query = query.eq('modulo', req.query.modulo);
     if (req.query.severidade) query = query.eq('severidade', req.query.severidade);

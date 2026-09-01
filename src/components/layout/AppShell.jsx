@@ -15,7 +15,7 @@ import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
 import { navItemAllowed } from '../../lib/menuAccess';
 import {
-  Activity, ArrowRight, ArrowRightLeft, Baby, BarChart2, Bell, BellOff, BellRing, BookOpen, BrainCircuit, CalendarDays, Camera, Check, CheckCheck, ClipboardCheck, ClipboardList, Compass, DollarSign, Droplets, FileText, FolderKanban, GraduationCap, HandHelping, Heart, Images, Landmark, LayoutDashboard, ListChecks, LogOut, Map, Megaphone, Menu as MenuIcon, MessageSquare, MonitorSmartphone, Moon, QrCode, Search, Settings, Shield, ShoppingCart, SlidersHorizontal, Sparkles, Sun, Tag, TrendingUp, Truck, UserCheck, UserSearch, Users, UsersRound, Youtube
+  Activity, ArrowRight, ArrowRightLeft, Baby, BarChart2, Bell, BellOff, BellRing, BookOpen, BrainCircuit, CalendarDays, Camera, Check, CheckCheck, ClipboardCheck, ClipboardList, Compass, DollarSign, Droplets, FileText, FolderKanban, GraduationCap, HandHelping, Heart, Landmark, LayoutDashboard, ListChecks, LogOut, Map, Megaphone, Menu as MenuIcon, MessageSquare, MonitorSmartphone, Moon, QrCode, Search, Settings, Shield, ShoppingCart, SlidersHorizontal, Sparkles, Sun, Tag, Target, TrendingUp, Truck, UserCheck, UserSearch, Users, UsersRound, Youtube, Filter,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -96,6 +96,10 @@ const NAV_ITEMS = [
         items: [
           { label: 'Recursos Humanos', description: 'Funcionários, treinamentos e férias', icon: Users, path: '/admin/rh', perm: 'canRH' },
           { label: 'Financeiro', description: 'Contas, transações e reembolsos', icon: DollarSign, path: '/admin/financeiro', perm: 'canFinanceiro' },
+          // Campanhas fica ao lado do Financeiro (não em Planejamento): quem lê a
+          // arrecadação é quem já lê o caixa, e a matriz de permissão do módulo foi
+          // semeada da do financeiro. `module:` (não `perm:`) — quem decide é a matriz.
+          { label: 'Campanhas', description: 'Arrecadação · meta, dígito verificador, cronograma e disparos', icon: Target, path: '/campanhas', module: 'campanhas' },
           { label: 'Logística', description: 'Fornecedores, compras e pedidos', icon: Truck, path: '/admin/logistica', perm: 'canLogistica' },
           { label: 'Patrimônio', description: 'Bens, localizações e inventário', icon: Tag, path: '/admin/patrimonio', perm: 'canPatrimonio' },
         ],
@@ -118,7 +122,11 @@ const NAV_ITEMS = [
         items: [
           { label: 'Painel CBRio', description: 'NSM · 5 valores · 6 áreas — visão macro · ritual mensal', icon: Activity, path: '/painel', module: 'painel-cbrio' },
           { label: 'Monitoramento OKR', description: 'Planejamento estratégico 2026 · NSM, 9 OKRs e indicadores táticos', icon: Compass, path: '/monitoramento-okr' },
-          { label: 'Jornada da Igreja', description: 'Profundidade da igreja · 5 valores · Membro Modelo (≥2 valores)', icon: Sparkles, path: '/jornada' },
+          // ⚠️ `module: 'membresia'` acrescentado em 20/08: a tela lista PESSOAS
+          // (`GET /jornada/membros`), e aquele endpoint passou a exigir nível 2.
+          // Sem isto o item aparece pra quem depois toma 403 — item de menu que
+          // não abre é pior que item ausente.
+          { label: 'Jornada da Igreja', description: 'Profundidade da igreja · 5 valores · Membro Modelo (≥2 valores)', icon: Sparkles, path: '/jornada', module: 'membresia' },
           { label: 'Dashboard Semanal', description: 'Painel da reunião de quarta · semanal · mensal · metas · gerador IA', icon: LayoutDashboard, path: '/dashboard-semanal' },
           { label: 'ATA Semanal', description: 'Ata da reunião ministerial de segunda · redigida a partir da gravação', icon: FileText, path: '/ata-semanal' },
           { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area', module: 'minha-area' },
@@ -127,6 +135,14 @@ const NAV_ITEMS = [
       {
         title: 'Análise',
         items: [
+          // ⚠️ Entrou no menu em 20/08/2026. A tela existia desde MAIO e nunca teve
+          // item — só abria digitando /admin/cruzamentos. É a lei "tela fora do
+          // menu é tela invisível": o Matheus pediu critérios novos nela e depois
+          // perguntou onde a funcionalidade estava.
+          // `module: 'membresia'` espelha o guard do servidor (jornada.js). Fica em
+          // Inteligência (decisão dele) porque quem pergunta "quantos voluntários
+          // são batizados" procura em análise, não em Administração.
+          { label: 'Cruzamentos', description: 'Cruza batismo, NEXT, conversão, grupos e voluntariado · quem está onde', icon: Filter, path: '/admin/cruzamentos', module: 'membresia' },
           { label: 'NPS', description: 'Pesquisas de satisfação geradas por IA · análise automática', icon: MessageSquare, path: '/nps', module: 'nps' },
           { label: 'Censo', description: 'Perfil demográfico e engajamento da comunidade · pesquisas próprias', icon: ClipboardList, path: '/censo', module: 'censo' },
           { label: 'Links e QR', description: 'QR que não precisa ser reimpresso · o código fica, o destino muda', icon: QrCode, path: '/links', module: 'links' },
@@ -211,10 +227,10 @@ const NAV_ITEMS = [
         items: [
           { label: 'Marketing', description: 'Kanban de demandas criativas · capacidade · analytics', icon: Megaphone, path: '/marketing', module: 'marketing' },
           { label: 'Produção de Culto', description: 'Indicadores técnicos por culto · solicitações · desempenho', icon: SlidersHorizontal, path: '/producao', module: 'producao' },
-          // ⚠️ Destaques da Home e Fotos de Batismo SAÍRAM daqui (17/08): viraram
-          // sub-abas da aba "App" do Marketing, junto dos Comunicados — eram 3
-          // itens de menu para publicar coisa no MESMO app de membros.
-          { label: 'App de membros', description: 'Comunicados do mural · destaques da Home · fotos de batismo', icon: Images, path: '/marketing/app', module: 'marketing' },
+          // ⚠️ "App de membros" (comunicados do mural · destaques da Home · fotos
+          // de batismo) NÃO tem item de menu próprio (21/08): é só a aba "App"
+          // dentro de Marketing. A rota /marketing/app e os redirects continuam
+          // valendo — não recriar aqui.
         ],
       },
     ],

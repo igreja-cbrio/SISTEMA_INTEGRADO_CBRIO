@@ -318,6 +318,12 @@ async function fetchAllServicesPeople(credentials, { requireComplete = false } =
           volunteer_name: name,
           avatar_url: a.photo_thumbnail || a.photo_url || null,
           email: null,
+          // ⚠️ O PCO tem baixa PRÓPRIA (`archived` / `status:'inactive'`) e ela
+          // vinha sendo ignorada: a pessoa continuava no roster, então a
+          // reconciliação a via como presente e mantinha o perfil ativo aqui.
+          // Medido em 25/08: 17 pessoas inativas no PCO seguiam ativas na nossa
+          // base — e apareciam pro líder na hora de montar escala.
+          pco_inativo: a.archived === true || a.status === 'inactive',
         });
       }
     }
@@ -575,8 +581,40 @@ async function upsertVolunteerProfiles(supabase, volunteersMap) {
 // (origem<>planning_center) nunca sao tocados.
 // Guarda de seguranca: nao reconcilia se o roster veio pequeno (pull parcial/falho) —
 // exige cobrir >= metade dos ativos atuais e >= 100 pessoas.
+// Quem o sync pode DESARQUIVAR: está no roster ativo do PCO e a baixa NÃO foi
+// decisão nossa.
+//
+// ⚠️⚠️ Sem o `arquivado_manual` a limpeza de base se desfaz sozinha: essas
+// pessoas continuam no roster do PCO (768 `active` em 25/08), então o cron
+// horário as traria de volta — em silêncio, e ninguém ligaria uma coisa à
+// outra. `arquivado_manual` ausente (migration não aplicada) conta como false,
+// que é o comportamento antigo: na dúvida, o PCO manda.
+function podeDesarquivar(perfil, pcIds) {
+  if (!perfil || !perfil.planning_center_id) return false;
+  if (perfil.arquivado_manual === true) return false;
+  return pcIds.has(String(perfil.planning_center_id));
+}
+
+// Separa o roster do PCO entre quem ele considera ATIVO e o tamanho BRUTO do
+// pull. Puro de propósito: é a régua que decide desativação de gente.
+function rosterAtivoDoPco(volunteersMap) {
+  const entradas = volunteersMap instanceof Map
+    ? Array.from(volunteersMap.entries())
+    : Object.entries(volunteersMap || {});
+  const validas = entradas.filter(([id]) => !!id);
+  return {
+    rosterBruto: validas.length,
+    pcIds: new Set(validas.filter(([, v]) => !(v && v.pco_inativo)).map(([id]) => String(id))),
+  };
+}
+
 async function reconcilePlanningCenterProfiles(supabase, volunteersMap) {
-  const pcIds = new Set(Array.from(volunteersMap.keys()).filter(Boolean).map(String));
+  // ⚠️ Quem está no roster mas marcado `archived`/`inactive` LÁ é tratado como
+  // quem saiu — a baixa é deles, e ignorá-la fazia o nosso cadastro discordar
+  // da fonte. ⚠️ A guarda de roster pequeno usa o tamanho BRUTO do pull: ela
+  // existe pra detectar pull parcial, e medir pelo filtrado faria uma rodada
+  // em que muita gente foi desativada no PCO parecer um pull quebrado.
+  const { rosterBruto, pcIds } = rosterAtivoDoPco(volunteersMap);
 
   // Le os perfis PC do sistema, paginado (cap de 1000 do PostgREST).
   const fetchAll = async (arquivado) => {
@@ -599,8 +637,8 @@ async function reconcilePlanningCenterProfiles(supabase, volunteersMap) {
 
   const ativos = await fetchAll(false);
   const minRoster = Math.max(100, Math.floor(ativos.length * 0.5));
-  if (pcIds.size < minRoster) {
-    return { skipped: true, motivo: 'roster_pequeno', roster: pcIds.size, minRoster, arquivados: 0, desarquivados: 0 };
+  if (rosterBruto < minRoster) {
+    return { skipped: true, motivo: 'roster_pequeno', roster: rosterBruto, minRoster, arquivados: 0, desarquivados: 0 };
   }
 
   const nowIso = new Date().toISOString();
@@ -620,17 +658,89 @@ async function reconcilePlanningCenterProfiles(supabase, volunteersMap) {
   const arquivados = paraArquivar.length
     ? await updateInChunks(paraArquivar, { arquivado: true, arquivado_em: nowIso }) : 0;
 
-  const arquivadosDb = await fetchAll(true);
+  // ⚠️ `select('*')` de propósito: a coluna `arquivado_manual` pode não existir
+  // ainda (deploy antes da migration), e pedir coluna inexistente faz o
+  // PostgREST recusar a QUERY INTEIRA — a reconciliação morreria toda. Com `*`
+  // ela simplesmente não vem, e `podeDesarquivar` trata ausência como false.
+  const arquivadosDb = [];
+  for (let off = 0; ; off += 1000) {
+    const { data, error } = await supabase
+      .from('vol_profiles').select('*')
+      .eq('origem', 'planning_center').eq('arquivado', true)
+      .range(off, off + 999);
+    if (error) throw error;
+    arquivadosDb.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
   const paraDesarquivar = arquivadosDb
-    .filter(p => p.planning_center_id && pcIds.has(String(p.planning_center_id)))
+    .filter(p => podeDesarquivar(p, pcIds))
     .map(p => p.id);
   const desarquivados = paraDesarquivar.length
     ? await updateInChunks(paraDesarquivar, { arquivado: false, arquivado_em: null }) : 0;
 
-  return { skipped: false, roster: pcIds.size, arquivados, desarquivados };
+  return { skipped: false, roster: pcIds.size, roster_bruto: rosterBruto,
+    inativos_no_pco: rosterBruto - pcIds.size, arquivados, desarquivados };
 }
 
 // ── Sync team members from vol_schedules ────────────────────────────────────
+// ⚠️⚠️ Reponta a linha ÓRFÃ (`volunteer_profile_id` NULL) pro perfil que já
+// existe, e APAGA a que virou redundante. Sem isto a equipe da pessoa fica
+// invisível no sistema (o embed do `/volunteers-pool` só alcança pelo FK do
+// perfil) e o dedup de `withProfile` insere uma SEGUNDA linha, inflando a
+// contagem de membros da equipe.
+//
+// ⚠️ `vol_team_members` NÃO tem `deleted_at` — hard delete é o padrão da casa
+// aqui (é o que o `DELETE /team-members/:id` faz). A linha apagada é sempre
+// REDUNDANTE: o mesmo (equipe, função, pessoa) já existe ligado ao perfil.
+// ⚠️ Best-effort e SILENCIOSO no erro: falhar aqui devolve o comportamento de
+// antes, e nunca pode derrubar o sync.
+async function repontarOrfas(supabase, memberships, profByPc) {
+  const pcs = [...new Set(
+    memberships
+      .filter(m => m.planning_center_person_id && profByPc.has(m.planning_center_person_id))
+      .map(m => m.planning_center_person_id),
+  )];
+  if (!pcs.length) return { repontadas: 0, apagadas: 0 };
+
+  let orfas = [];
+  for (let i = 0; i < pcs.length; i += 200) {
+    const { data, error } = await supabase.from('vol_team_members')
+      .select('id, team_id, position_id, planning_center_person_id')
+      .is('volunteer_profile_id', null)
+      .in('planning_center_person_id', pcs.slice(i, i + 200));
+    if (error) {
+      // Não conseguir LER não pode virar "não há órfã" nem derrubar o sync.
+      console.error('[sync-members] leitura de órfãs:', error.message);
+      return { repontadas: 0, apagadas: 0 };
+    }
+    orfas = orfas.concat(data || []);
+  }
+  if (!orfas.length) return { repontadas: 0, apagadas: 0 };
+
+  let repontadas = 0; let apagadas = 0;
+  for (const o of orfas) {
+    const perfil = profByPc.get(o.planning_center_person_id);
+    if (!perfil) continue;
+    const { error } = await supabase.from('vol_team_members')
+      .update({ volunteer_profile_id: perfil })
+      .eq('id', o.id)
+      .is('volunteer_profile_id', null);   // guarda de corrida
+    if (!error) { repontadas += 1; continue; }
+    // 23505 = o vínculo já existe ligado ao perfil ⇒ a órfã é redundante.
+    if (error.code === '23505') {
+      const { error: eDel } = await supabase.from('vol_team_members').delete().eq('id', o.id);
+      if (!eDel) apagadas += 1;
+      else console.error('[sync-members] apagar órfã redundante:', eDel.message);
+    } else {
+      console.error('[sync-members] repontar órfã:', error.message);
+    }
+  }
+  if (repontadas || apagadas) {
+    console.log(`[sync-members] órfãs: ${repontadas} repontada(s), ${apagadas} redundante(s) apagada(s)`);
+  }
+  return { repontadas, apagadas };
+}
+
 // Reads vol_schedules (source of truth) and populates vol_teams, vol_positions,
 // and vol_team_members. Supports both membresia-linked (volunteer_profile_id)
 // and PC-only (planning_center_person_id) volunteers.
@@ -761,6 +871,19 @@ async function syncTeamMembersFromSchedules(supabase, restrictPersonIds = null) 
         m.volunteer_profile_id = profByPc.get(m.planning_center_person_id);
       }
     }
+    // ⚠️⚠️ REPONTAR A LINHA ÓRFÃ QUE JÁ ESTÁ NO BANCO (26/08/2026).
+    // A resolução acima só arruma o payload DESTE sync. A linha antiga — gravada
+    // como "pc-only" antes de o perfil existir — fica com `volunteer_profile_id`
+    // NULL pra sempre, e o embed `team_members:vol_team_members(...)` do
+    // `/volunteers-pool` só alcança pelo FK do perfil: a pessoa aparece SEM
+    // EQUIPE no sistema tendo equipe no Planning Center. Pior, o dedup de
+    // `withProfile` procura por `volunteer_profile_id` e NÃO acha a órfã, então
+    // insere uma linha nova — e o banco fica com as DUAS (medido em 26/08: 59
+    // órfãs, 28 delas já duplicadas assim, inflando a contagem de membros da
+    // equipe). Repontar aqui é o que faz o dedup seguinte encontrá-la e pular.
+    // ⚠️ Best-effort: falhar aqui não pode derrubar o sync — o pior caso é o
+    // comportamento de antes.
+    await repontarOrfas(supabase, memberships, profByPc);
   }
 
   // Re-dedup pós-resolução: uma membership que era "pc-only" pode ter ganhado o
@@ -1082,6 +1205,8 @@ module.exports = {
   upsertVolunteerQrCodes,
   upsertVolunteerProfiles,
   reconcilePlanningCenterProfiles,
+  rosterAtivoDoPco,
+  podeDesarquivar,
   assignVolunteersToTeams,
   syncTeamMembersFromSchedules,
   fetchPcoCpfMap,

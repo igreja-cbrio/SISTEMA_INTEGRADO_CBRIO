@@ -72,8 +72,19 @@ const novaChaveTermo = () => `t_${Date.now().toString(36)}_${Math.random().toStr
  * alguém editasse o texto depois, ninguém saberia qual versão foi aceita.
  */
 function TermosExtraEditor({ termos, setTermos }: { termos: any[]; setTermos: (v: any[]) => void }) {
+  const [subindo, setSubindo] = useState<number | null>(null);
   function add() { setTermos([...termos, { chave: novaChaveTermo(), titulo: '', texto: '', url: '' }]); }
   function upd(i: number, patch: any) { const t = [...termos]; t[i] = { ...t[i], ...patch }; setTermos(t); }
+  // Sobe o documento do termo (ex.: a autorização de embarque de menor em .docx)
+  // pro bucket público e preenche o link — a pessoa baixa na hora do aceite e,
+  // no termo de menor, recebe o arquivo anexado no e-mail de confirmação.
+  async function enviarDoc(i: number, file?: File) {
+    if (!file) return;
+    setSubindo(i);
+    try { const r: any = await api.uploadArquivoEvento(file); upd(i, { url: r.url }); toast.success('Documento anexado ao aceite'); }
+    catch (e: any) { toast.error(e?.message || 'Erro ao enviar o documento'); }
+    finally { setSubindo(null); }
+  }
   return (
     <div className="rounded-lg border border-border p-3 space-y-2">
       <div className="text-xs font-medium text-muted-foreground">Aceites deste evento (além do termo de dados)</div>
@@ -93,8 +104,20 @@ function TermosExtraEditor({ termos, setTermos }: { termos: any[]; setTermos: (v
           <textarea placeholder="Texto que a pessoa lê e aceita" value={t.texto || ''}
             onChange={e => upd(i, { texto: e.target.value })}
             className="w-full rounded-md border border-border bg-[var(--cbrio-input-bg)] px-2 py-1.5 text-xs min-h-[80px]" />
-          <Input placeholder="Link do documento completo (opcional · https://…)" value={t.url || ''}
-            onChange={e => upd(i, { url: e.target.value })} className="h-8 text-xs" />
+          <div className="flex gap-2 items-center">
+            <Input placeholder="Link do documento completo (opcional · https://…)" value={t.url || ''}
+              onChange={e => upd(i, { url: e.target.value })} className="h-8 text-xs flex-1" />
+            <label className="inline-flex items-center gap-1 text-[11px] text-primary border border-primary/50 rounded-md px-2 py-1.5 cursor-pointer whitespace-nowrap">
+              {subindo === i ? 'Enviando…' : 'Enviar arquivo'}
+              <input type="file" accept=".pdf,.doc,.docx" className="hidden" disabled={subindo != null}
+                onChange={e => { enviarDoc(i, e.target.files?.[0]); e.target.value = ''; }} />
+            </label>
+          </div>
+          {t.so_menor === true && t.url && (
+            <p className="text-[11px] text-muted-foreground">
+              Como este aceite é só de menor, o documento acima vai ANEXADO no e-mail de confirmação de quem se inscrever como menor.
+            </p>
+          )}
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <input type="checkbox" checked={t.so_menor === true} onChange={e => upd(i, { so_menor: e.target.checked })} />
             Só para menor de idade
@@ -103,6 +126,55 @@ function TermosExtraEditor({ termos, setTermos }: { termos: any[]; setTermos: (v
         </div>
       ))}
       <Button size="sm" variant="outline" onClick={add}><Plus className="h-3.5 w-3.5 mr-1" /> Adicionar aceite</Button>
+    </div>
+  );
+}
+
+/**
+ * Lotes de preço do evento (pedido do Arthur pro AMI CAMP 2027 · 20/08).
+ *
+ * As vagas de cada lote são POSIÇÕES na ordem de chegada: com 50/100/150, as
+ * inscrições 1..50 pagam o lote 1, 51..150 o lote 2, 151..300 o lote 3 — o lote
+ * vira SOZINHO quando esgota. Quem decide o preço cobrado é o servidor, pela
+ * posição da inscrição (backend/utils/lotesEvento.js).
+ *
+ * `valor` fica em REAIS na tela (como o campo Valor) e vira centavos no save.
+ */
+function LotesEditor({ lotes, setLotes, valorTabela }: {
+  lotes: any[]; setLotes: (v: any[]) => void; valorTabela: string;
+}) {
+  function add() { setLotes([...lotes, { nome: `Lote ${lotes.length + 1}`, vagas: '', valor: '' }]); }
+  function upd(i: number, patch: any) { const l = [...lotes]; l[i] = { ...l[i], ...patch }; setLotes(l); }
+  const somaVagas = lotes.reduce((s, l) => s + (Number(l.vagas) > 0 ? Number(l.vagas) : 0), 0);
+  return (
+    <div className="rounded-lg border border-dashed border-border p-3 space-y-2">
+      <div className="text-xs font-medium text-muted-foreground">Lotes de preço (opcional)</div>
+      <p className="text-[11px] text-muted-foreground">
+        O lote muda sozinho quando as vagas dele esgotam, na ordem de chegada — e a pessoa vê o lote
+        atual e o preço antes de se inscrever. Sem lotes, vale o Valor único acima.
+      </p>
+      {lotes.map((l, i) => (
+        <div key={i} className="flex gap-2 items-center">
+          <Input placeholder={`Lote ${i + 1}`} value={l.nome || ''} onChange={e => upd(i, { nome: e.target.value })} className="h-8 text-sm flex-1" />
+          <Input placeholder="Vagas" value={l.vagas} onChange={e => upd(i, { vagas: e.target.value.replace(/\D/g, '') })}
+            inputMode="numeric" className="h-8 text-sm w-20" />
+          <Input placeholder="R$" value={l.valor} onChange={e => upd(i, { valor: e.target.value })}
+            inputMode="decimal" className="h-8 text-sm w-24" />
+          <button onClick={() => setLotes(lotes.filter((_, j) => j !== i))} className="text-red-500 px-1" title="Remover lote">
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+      {lotes.length < 6 && (
+        <Button size="sm" variant="outline" onClick={add}><Plus className="h-3.5 w-3.5 mr-1" /> Adicionar lote</Button>
+      )}
+      {lotes.length > 0 && (
+        <p className="text-[11px] text-muted-foreground">
+          Os lotes descrevem <b>{somaVagas}</b> posições. Quem limita as inscrições é o campo <b>Vagas</b> do
+          evento; inscrição além dos lotes paga o último preço. O Valor acima ({valorTabela || '—'}) é o
+          preço de tabela — se a leitura dos lotes falhar, é ele que vale (deixe-o igual ao último lote).
+        </p>
+      )}
     </div>
   );
 }
@@ -231,6 +303,11 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
 const EVENTO_VAZIO = {
   nome: '', area: '', periodicidade: 'unica', tipo: 'evento',
   data: '', hora: '', local: '', descricao: '', capa_url: '',
+  // Último dia (retiro/viagem de vários dias) + arquivo de instruções gerais
+  // que a pessoa baixa ao concluir e recebe anexado no e-mail (20/08).
+  data_fim: '', instrucoes_url: '', instrucoes_nome: '',
+  // Grupo de WhatsApp pra dúvidas, exibido nas telas públicas (21/08).
+  whatsapp_duvidas_url: '',
   vagas: '', inscricoes_encerram_em: '', recorre_ate: '',
   msg_sucesso_titulo: '', msg_sucesso_texto: '', msg_whatsapp: '',
   tem_sorteio: false, checkin_ativo: false,
@@ -246,7 +323,7 @@ const EVENTO_VAZIO = {
   pagamento_metodos: ['pix', 'cartao'], parcelas_max: 1,
   pagamento_expira_horas: '',
   // Cartão numa plataforma externa (e-Inscrição). Vazio = cobrado aqui.
-  checkout_externo_url: '', checkout_externo_nome: '',
+  checkout_externo_url: '', checkout_externo_nome: '', checkout_externo_valor: '',
   // Retiro/viagem (17/08): endereço obrigatório e bloco do responsável quando a
   // pessoa é menor de 18 na inscrição. Default false = o Contrato de sempre.
   exigir_endereco: false, exige_dados_menor: false,
@@ -347,12 +424,21 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
     parcelas_max: evento.parcelas_max ?? 1,
     checkout_externo_url: evento.checkout_externo_url || '',
     checkout_externo_nome: evento.checkout_externo_nome || '',
+    checkout_externo_valor: evento.checkout_externo_valor_centavos != null
+      ? String(evento.checkout_externo_valor_centavos / 100) : '',
+    data_fim: evento.data_fim || '',
+    instrucoes_url: evento.instrucoes_url || '',
+    instrucoes_nome: evento.instrucoes_nome || '',
+    whatsapp_duvidas_url: evento.whatsapp_duvidas_url || '',
     pagamento_expira_horas: evento.pagamento_expira_horas ?? '',
     inscricoes_encerram_em: isoParaInputLocal(evento.inscricoes_encerram_em),
   } : { ...EVENTO_VAZIO });
   const [campos, setCampos] = useState<any[]>(evento?.campos || []);
   const [premios, setPremios] = useState<string[]>(evento?.premios || []);
   const [termos, setTermos] = useState<any[]>(Array.isArray(evento?.termos_extra) ? evento.termos_extra : []);
+  // Lotes na tela ficam em REAIS (como o campo Valor); viram centavos no save.
+  const [lotes, setLotes] = useState<any[]>(() => (Array.isArray(evento?.lotes) ? evento.lotes : [])
+    .map((l: any) => ({ nome: l.nome || '', vagas: String(l.vagas ?? ''), valor: l.valor_centavos != null ? String(l.valor_centavos / 100) : '' })));
   const [salvando, setSalvando] = useState(false);
   const [enviandoCapa, setEnviandoCapa] = useState(false);
   const set = (k: string) => (e: any) => setF((s: any) => ({ ...s, [k]: e?.target ? e.target.value : e }));
@@ -362,6 +448,16 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
     setEnviandoCapa(true);
     try { const r: any = await api.uploadCapa(file); setF((s: any) => ({ ...s, capa_url: r.url })); }
     catch (e: any) { toast.error(e?.message || 'Erro ao enviar a capa'); } finally { setEnviandoCapa(false); }
+  }
+
+  const [enviandoInstrucoes, setEnviandoInstrucoes] = useState(false);
+  async function enviarInstrucoes(file?: File) {
+    if (!file) return;
+    setEnviandoInstrucoes(true);
+    try {
+      const r: any = await api.uploadArquivoEvento(file);
+      setF((s: any) => ({ ...s, instrucoes_url: r.url, instrucoes_nome: r.nome || file.name }));
+    } catch (e: any) { toast.error(e?.message || 'Erro ao enviar o arquivo'); } finally { setEnviandoInstrucoes(false); }
   }
 
   async function salvar() {
@@ -384,6 +480,10 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
       const payload: any = {
         nome: f.nome, area: f.area, tipo: f.tipo, data: f.data || null, hora: f.hora || null,
         local: f.local || null, descricao: f.descricao || null, capa_url: f.capa_url || null,
+        data_fim: f.data_fim || null,
+        instrucoes_url: f.instrucoes_url || null,
+        instrucoes_nome: f.instrucoes_url ? (f.instrucoes_nome || null) : null,
+        whatsapp_duvidas_url: String(f.whatsapp_duvidas_url || '').trim() || null,
         campos, premios: premios.map(p => p.trim()).filter(Boolean),
         vagas: f.vagas === '' ? null : Number(f.vagas),
         inscricoes_encerram_em: f.inscricoes_encerram_em ? new Date(f.inscricoes_encerram_em).toISOString() : null,
@@ -401,6 +501,19 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
         // não pode manter gente sendo mandada pra um checkout.
         checkout_externo_url: f.pagamento_ativo ? String(f.checkout_externo_url || '').trim() : '',
         checkout_externo_nome: f.pagamento_ativo ? String(f.checkout_externo_nome || '').trim() : '',
+        // Preço do cartão LÁ, só pra tela de escolha (20260821190000). Vazio ⇒
+        // null ⇒ a tela volta a não prometer preço de cartão.
+        checkout_externo_valor_centavos: f.pagamento_ativo && String(f.checkout_externo_valor || '').trim() !== ''
+          ? Math.round(Number(String(f.checkout_externo_valor).replace(',', '.')) * 100) : null,
+        // Lotes: vazio = preço único. Linha incompleta é descartada aqui e o
+        // servidor saneia de novo (utils/lotesEvento).
+        lotes: f.pagamento_ativo ? lotes
+          .map((l: any) => ({
+            nome: String(l.nome || '').trim(),
+            vagas: Number(l.vagas),
+            valor_centavos: Math.round(Number(String(l.valor || '').replace(',', '.')) * 100),
+          }))
+          .filter((l: any) => l.vagas > 0 && l.valor_centavos > 0) : [],
         exigir_endereco: !!f.exigir_endereco,
         exige_dados_menor: !!f.exige_dados_menor,
         termos_extra: termos
@@ -484,6 +597,11 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
               <Input value={f.hora || ''} onChange={e => setF((s: any) => ({ ...s, hora: mascaraHora(e.target.value) }))}
                 placeholder="19:30" inputMode="numeric" maxLength={5} />
             </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Termina em (retiro/viagem · opcional)</label>
+              <DatePicker value={f.data_fim || ''} onChange={set('data_fim')} />
+              <p className="mt-1 text-[11px] text-muted-foreground">A página pública mostra o período: “5 a 10 de fevereiro”.</p>
+            </div>
             <div className="sm:col-span-2">
               <label className="text-xs text-muted-foreground">Local</label>
               <Input value={f.local || ''} onChange={set('local')} />
@@ -511,6 +629,41 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
                     onChange={e => enviarCapa(e.target.files?.[0])} />
                 </label>
               </div>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs text-muted-foreground">Instruções gerais (PDF ou Word)</label>
+              <p className="text-[11px] text-muted-foreground mb-1.5">
+                Quem conclui a inscrição pode baixar na hora (“Deseja baixar as instruções gerais?”)
+                e recebe o arquivo anexado no e-mail de confirmação.
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                {f.instrucoes_url && (
+                  <a href={f.instrucoes_url} target="_blank" rel="noreferrer"
+                    className="text-xs text-primary underline max-w-[280px] truncate">
+                    {f.instrucoes_nome || 'Arquivo de instruções'}
+                  </a>
+                )}
+                <label className="inline-flex items-center gap-1.5 text-xs text-primary border border-primary/50 rounded-md px-2.5 py-1.5 cursor-pointer">
+                  {enviandoInstrucoes ? 'Enviando…' : (f.instrucoes_url ? 'Trocar arquivo' : 'Enviar arquivo')}
+                  <input type="file" accept=".pdf,.doc,.docx" className="hidden" disabled={enviandoInstrucoes}
+                    onChange={e => { enviarInstrucoes(e.target.files?.[0]); e.target.value = ''; }} />
+                </label>
+                {f.instrucoes_url && (
+                  <button type="button" className="text-xs text-red-500"
+                    onClick={() => setF((s: any) => ({ ...s, instrucoes_url: '', instrucoes_nome: '' }))}>
+                    Remover
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs text-muted-foreground">Grupo de WhatsApp pra dúvidas (opcional)</label>
+              <Input value={f.whatsapp_duvidas_url || ''} onChange={set('whatsapp_duvidas_url')}
+                placeholder="https://chat.whatsapp.com/…" />
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Aparece como “Dúvidas? Entre no grupo do WhatsApp” na página do evento e na de pagamento —
+                antes e depois de a pessoa se inscrever. Não é a mensagem de divulgação.
+              </p>
             </div>
           </div>
 
@@ -624,15 +777,26 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
                 <Input value={f.checkout_externo_url || ''} onChange={set('checkout_externo_url')}
                   placeholder="https://www.e-inscricao.com/… (link da inscrição deste evento)" />
                 {f.checkout_externo_url ? (
-                  <div className="mt-2">
-                    <label className="text-xs text-muted-foreground">Nome da plataforma (aparece pra pessoa)</label>
-                    <Input value={f.checkout_externo_nome || ''} onChange={set('checkout_externo_nome')}
-                      placeholder="e-Inscrição" />
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-muted-foreground">Nome da plataforma (aparece pra pessoa)</label>
+                      <Input value={f.checkout_externo_nome || ''} onChange={set('checkout_externo_nome')}
+                        placeholder="e-Inscrição" />
+                    </div>
+                    {/* ⚠️ Preço de OUTRA plataforma: a tela só anuncia porque
+                        alguém digitou aqui. Em branco, a escolha não promete
+                        número nenhum pro cartão (o valor de lá pode mudar sem
+                        avisar, e tela errada sobre preço é reclamação). */}
+                    <div>
+                      <label className="text-xs text-muted-foreground">Valor no cartão, nessa plataforma (opcional)</label>
+                      <Input value={f.checkout_externo_valor || ''} onChange={set('checkout_externo_valor')}
+                        placeholder="850,00" inputMode="decimal" />
+                    </div>
                   </div>
                 ) : null}
                 <p className="text-[11px] text-muted-foreground mt-1.5">
                   {f.checkout_externo_url
-                    ? 'A página do evento vai perguntar a forma de pagamento antes do formulário: Pix segue aqui (com QR), cartão vai para este link. Enquanto ele estiver preenchido, o cartão NÃO é cobrado pelo nosso checkout.'
+                    ? 'A página do evento vai perguntar a forma de pagamento antes do formulário: Pix segue aqui (com QR), cartão vai para este link. Enquanto ele estiver preenchido, o cartão NÃO é cobrado pelo nosso checkout. Com o valor do cartão preenchido, a tela de escolha mostra os dois preços lado a lado (e marca o Pix como desconto quando ele é menor).'
                     : 'Em branco, o cartão é cobrado aqui mesmo, junto com o Pix.'}
                 </p>
                 {f.checkout_externo_url && !f.pagamento_metodos?.filter((m: string) => m !== 'cartao').length ? (
@@ -643,6 +807,7 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
                   </p>
                 ) : null}
               </div>
+              <LotesEditor lotes={lotes} setLotes={setLotes} valorTabela={f.valor_centavos ? `R$ ${f.valor_centavos}` : ''} />
             </div>
           )}
           {f.tem_sorteio && (

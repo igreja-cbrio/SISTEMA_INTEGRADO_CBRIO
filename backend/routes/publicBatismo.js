@@ -9,6 +9,7 @@ const {
   registrarConsentimentos, TEXTOS, cpfValido, emailValido,
 } = require('../services/inscricaoContrato');
 const { avaliarHorarioBatismo, horariosDisponiveis, normalizarHorario } = require('../utils/batismoHorario');
+const { acessibilidadeBatismo } = require('../utils/acessibilidadeBatismo');
 const { horariosConfigurados, ocupacaoPorHorario } = require('../services/batismoHorarios');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): o form roda em
@@ -310,16 +311,21 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
     const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
     const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
 
-    // Deficiencia/acessibilidade: flag explícito OU resposta "Sim" à pergunta de
-    // limitação de mobilidade. ⚠️ BUG ANTERIOR: tratava QUALQUER resposta como
-    // "descrição" — então "Não" (string não-vazia) marcava deficiência em todo
-    // mundo que respondia a pergunta. Agora só "Sim" (ou descrição real) marca.
-    const limitacaoSim = /^sim$/i.test(
-      limitacao_mobilidade != null ? String(limitacao_mobilidade).trim() : ''
-    );
-    const descReal = (deficiencia_descricao && String(deficiencia_descricao).trim()) || null;
-    const possuiDef = possui_deficiencia === true || limitacaoSim || !!descReal;
-    const defDescricao = descReal || (limitacaoSim ? 'Limitação de mobilidade' : null);
+    // Acessibilidade: régua ÚNICA, a mesma que a tela usa pra decidir se mostra
+    // e exige o campo "qual limitação?" (`backend/utils/acessibilidadeBatismo.js`
+    // ↔ `src/lib/acessibilidadeBatismo.js`, casados em
+    // `src/test/acessibilidadeBatismo.test.ts`).
+    // ⚠️ BUG ANTERIOR (1): tratava QUALQUER resposta como "descrição" — "Não"
+    // marcava deficiência em quem respondia a pergunta.
+    // ⚠️ BUG ANTERIOR (2), que a régua conserta agora: quem dizia "Sim",
+    // escrevia a limitação e voltava pra "Não" deixava o texto no formulário, e
+    // o `|| !!descReal` daqui MARCAVA deficiência em quem acabara de dizer que
+    // não tem. A resposta manda, não o resíduo de digitação.
+    const acess = acessibilidadeBatismo({
+      limitacao_mobilidade, possui_deficiencia, deficiencia_descricao,
+    });
+    const possuiDef = acess.possui;
+    const defDescricao = acess.descricao;
 
     const payload = {
       nome: nomeT,
@@ -344,7 +350,7 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       horario_culto: horarioEscolhido,
       eh_crianca: !!eh_crianca,
       possui_deficiencia: possuiDef,
-      deficiencia_descricao: possuiDef && defDescricao ? defDescricao.slice(0, 500) : null,
+      deficiencia_descricao: defDescricao, // já vem aparada e cortada pela régua
       // "Você já fez o NEXT?" · boolean | null (não informado)
       fez_next: typeof fez_next === 'boolean' ? fez_next : null,
       cep: cepNorm,

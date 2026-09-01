@@ -39,6 +39,7 @@ import { formatErro } from '../../lib/formatErro';
 import { useAuth } from '../../contexts/AuthContext';
 import { C, MESES, STATUS_MEETING, ymd, fmtData, diaSemana, inputStyle, DetalheReuniao, NovaReuniaoModal, BlocoMarkdownEditavel } from './compartilhado';
 import { RITUAIS, PERIODOS, ESCOPOS_OKR, ORDEM_RITUAIS } from './rituais';
+import { opcoesAno, ehAno, anoDe } from '../../lib/janelaPeriodo';
 import {
   NSM, BLOCOS, avaliar, valorTopoOkr, valorTatico, retratoIndicadores, fmt,
   VERDE, VERMELHO, CINZA,
@@ -113,8 +114,14 @@ export default function RitualPage() {
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
-      const from = ymd(new Date(Date.now() - periodo * 86400000));
-      const to = ymd(new Date(Date.now() + 120 * 86400000)); // inclui as próximas agendadas
+      // ⚠️ Janela POR ANO (24/08/2026) é FECHADA: `to` deixa de ser "hoje+120".
+      // No ano CORRENTE o +120 sobrevive limitado a 31/12 — as próximas
+      // agendadas continuam aparecendo; num ano passado, `to` é 31/12 e nada
+      // depois disso entra na linha do tempo.
+      const ano = anoDe(periodo);
+      const from = ano ? `${ano}-01-01` : ymd(new Date(Date.now() - periodo * 86400000));
+      const proximas = ymd(new Date(Date.now() + 120 * 86400000));
+      const to = ano ? (proximas > `${ano}-12-31` ? `${ano}-12-31` : proximas) : proximas;
       const [tps, mtgs, dls, ana, mem] = await Promise.all([
         gov.types.list(),
         gov.meetings.list({ sigla, from, to }),
@@ -135,7 +142,13 @@ export default function RitualPage() {
 
   // Painel vivo por sigla: OKR = vitrine do Juninho · KPI = objetivos gerais.
   // No KPI, o comparativo de 5 anos precisa de 60 meses de série (senão 12 bastam).
-  const mesesFetchKpi = periodo >= 1825 ? 60 : 12;
+  // Ano ANTIGO precisa de série que alcance jan daquele ano (senão o
+  // comparativo mostra "—" em 12 colunas e parece dado faltando).
+  const mesesFetchKpi = useMemo(() => {
+    const ano = anoDe(periodo);
+    if (ano) return Math.min(60, (new Date().getFullYear() - ano + 1) * 12);
+    return periodo >= 1825 ? 60 : 12;
+  }, [periodo]);
   useEffect(() => {
     let ativo = true;
     if (sigla === 'OKR') {
@@ -387,7 +400,7 @@ export default function RitualPage() {
         {/* Filtros: período + escopo (OKR) */}
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: C.t3 }}>Período</span>
-          {PERIODOS.map(p => (
+          {[...PERIODOS, ...opcoesAno().map(a => ({ dias: a.dias, label: a.label }))].map(p => (
             <button key={p.dias} onClick={() => setPeriodo(p.dias)}
               className="text-xs px-2.5 py-1.5 rounded-full font-medium"
               style={{
@@ -443,7 +456,7 @@ export default function RitualPage() {
 
         {/* Comparativo por mês fechado (períodos ≥ 60 dias · pedido do Marcos:
             colunas por mês, não acumulado — ex.: 90d = Maio | Junho | Julho atual) */}
-        {(sigla === 'OKR' || sigla === 'KPI') && periodo >= 60 && (
+        {(sigla === 'OKR' || sigla === 'KPI') && (ehAno(periodo) || periodo >= 60) && (
           <OkrComparativoMensal periodo={periodo} escopo={escopo} data={okrData} reunioes={naoCanceladas} cor={cor} />
         )}
 
@@ -661,10 +674,18 @@ function OkrCardCompacto({ okr, metricas, onClick }) {
           const corNum = !m ? CINZA : (aval.ok == null ? C.primary : aval.cor);
           return (
             <div key={t.ind} className="flex items-center gap-2 px-3 py-2" style={{ borderTop: `1px solid ${C.border}66` }}
-              title={m?.detalhe || (!m && t.precisa ? `Para puxar automático, preciso de: ${t.precisa}` : undefined)}>
+              title={t.ressalva || m?.detalhe || (!m && t.precisa ? `Para puxar automático, preciso de: ${t.precisa}` : undefined)}>
               <div className="flex-1 min-w-0">
                 <div className="text-xs font-medium leading-snug" style={{ color: C.text }}>{t.ind}</div>
                 <div className="text-[10.5px]" style={{ color: C.t3 }}>Alvo: {t.alvo}</div>
+                {/* ⚠️ Na reunião o número é lido em voz alta — a ressalva tem
+                    que estar VISÍVEL na linha, não só no title do mouse. */}
+                {t.ressalva && (
+                  <div className="text-[9.5px] font-bold mt-0.5 inline-block rounded-full px-1.5 py-px"
+                    style={{ color: '#92400e', background: '#fef3c7', border: '1px solid #fcd34d' }}>
+                    ⚠ LEIA A RESSALVA
+                  </div>
+                )}
               </div>
               <div className="text-base font-extrabold flex-shrink-0" style={{ color: corNum }}>
                 {m ? `${fmt(m.valor, t.casas)}${m.unidade}` : '—'}
@@ -1222,7 +1243,9 @@ function DeliberacoesSection({ delibs, cor, canEdit, onMarcar }) {
 // ────────────────────────────────────────────────────────────────────────
 // 5 · Atas e deliberações anteriores — linha do tempo do período.
 function LinhaDoTempo({ passadas, periodo, cor, onAbrir, delibsPorMeeting }) {
-  const label = PERIODOS.find(p => p.dias === periodo)?.label || `${periodo} dias`;
+  const label = anoDe(periodo)
+    ? String(anoDe(periodo))
+    : (PERIODOS.find(p => p.dias === periodo)?.label || `${periodo} dias`);
   return (
     <section className="mb-5">
       <div className="text-sm font-semibold mb-2 flex items-center gap-1.5" style={{ color: C.text }}>
@@ -1459,8 +1482,26 @@ function ultimosMeses(n) {
 }
 
 // Colunas do comparativo: mensais (com "(atual)" no mês corrente) ou anuais (5a).
+// Os 12 meses de um ano — cortados no mês corrente quando é o ano de hoje
+// (coluna de mês futuro seria coluna que nunca vai ter número).
+function mesesDoAno(ano) {
+  const hoje = new Date();
+  const ultimo = ano === hoje.getFullYear() ? hoje.getMonth() + 1 : 12;
+  const out = [];
+  for (let m = 1; m <= ultimo; m++) out.push(`${ano}-${String(m).padStart(2, '0')}`);
+  return out;
+}
+
 function colunasDoPeriodo(periodo) {
   const mesAtual = ultimosMeses(1)[0];
+  const ano = anoDe(periodo);
+  if (ano) {
+    return mesesDoAno(ano).map(mes => ({
+      key: mes, meses: [mes],
+      label: mes === mesAtual ? `${mesCurto(mes)} (atual)` : mesCurto(mes),
+      atual: mes === mesAtual,
+    }));
+  }
   if (periodo < 1825) {
     const n = COLS_MENSAIS[periodo] || 3;
     return ultimosMeses(n).map(mes => ({
@@ -1791,13 +1832,15 @@ function TaticoDetalheModal({ t, metricas }) {
         </div>
       ) : (
         <p className="text-xs p-2.5" style={{ color: C.t3 }}>
-          {m?.detalhe
-            ? m.detalhe
-            : m
-              ? 'Sem série mensal ainda — este indicador mostra o número oficial/atual.'
-              : t.precisa
-                ? `Para puxar automático, preciso de: ${t.precisa}`
-                : 'Sem fonte de dado ainda.'}
+          {t.ressalva
+            ? t.ressalva
+            : m?.detalhe
+              ? m.detalhe
+              : m
+                ? 'Sem série mensal ainda — este indicador mostra o número oficial/atual.'
+                : t.precisa
+                  ? `Para puxar automático, preciso de: ${t.precisa}`
+                  : 'Sem fonte de dado ainda.'}
         </p>
       )}
     </div>

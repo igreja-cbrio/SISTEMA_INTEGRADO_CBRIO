@@ -17,7 +17,8 @@ import KpiCard from './KpiCard';
 import OcupacaoGauge from './OcupacaoGauge';
 import { ChartGradients, gradFill } from '../charts/ChartGradients';
 import { ResumoSemanaCard } from './ResumoCards';
-import LentesDomingoCard from './LentesDomingoCard';
+import ComparativoAnualCard from './ComparativoAnualCard';
+import { agruparPorTurno } from '../../lib/turnoCulto';
 
 const C = { primary: '#00B39D', media: '#7BAEC2', taxa: '#E97A3F' };
 
@@ -59,6 +60,10 @@ export default function DashSemanalAba() {
   const semanaAnterior = semanaAtual - 1 > 0 ? semanaAtual - 1 : 52;
   const anoSemAnterior = semanaAtual - 1 > 0 ? anoAtual : anoAtual - 1;
 
+  // Visão do gráfico: por culto (padrão) ou por TURNO de domingo.
+  // ⚠️ Turno junta 09:30 + 11:30 na MANHÃ — é a visão que não muda de degrau
+  // quando a grade de domingo muda (corte de 24/08).
+  const [visao, setVisao] = useState('culto');
   const [ano, setAno] = useState(anoSemAnterior);
   const [semana, setSemana] = useState(semanaAnterior);
   // Multi-select: array de slugs dos indicadores selecionados
@@ -142,12 +147,17 @@ export default function DashSemanalAba() {
   const isLoading = results.some(r => r.isLoading);
   const isFetching = results.some(r => r.isFetching);
 
-  // Capacidade de assentos p/ o gauge geral. O Bridge acontece em outro espaço
-  // (100 lugares); quando o filtro isola o Bridge, a ocupação usa essa base.
+  // Capacidade de assentos p/ o gauge geral.
+  // ⚠️⚠️ Vem do BANCO (`vol_service_types.capacidade_lugares`), não mais de
+  // regex no nome (31/08/2026): o Bridge acontece no Espaço CBRio, com 100
+  // lugares, e renomear o tipo pela tela fazia a ocupação dele voltar em
+  // silêncio pra 1050 — 46 pessoas viravam 4,4% em vez de 46%.
+  // ⚠️ `?? 1050` cobre o tipo sem capacidade declarada (o templo) E o backend
+  // antigo, que não manda o campo.
   const capacidadeFiltro = (() => {
     if (culto === 'todos') return 1050;
     const c = (cultos || []).find(x => x.id === culto);
-    return c && /bridge/i.test(c.name || '') ? 100 : 1050;
+    return Number(c?.capacidade_lugares) > 0 ? Number(c.capacidade_lugares) : 1050;
   })();
 
   // Recalcula resumo client-side aplicando o filtro `culto`
@@ -225,7 +235,25 @@ export default function DashSemanalAba() {
   const chartData = useMemo(() => {
     if (!datasets.length) return [];
     if (isSingle) {
-      return (primario.data.items || []).map(i => {
+      // ⚠️⚠️ No turno, quem manda é o SERVIDOR (`data.turnos`): a média do turno
+      // é a média das SOMAS SEMANAIS, e somar as médias por culto aqui daria um
+      // número errado — 999 no lugar de 1.252 na manhã (medido em 31/08),
+      // fazendo uma semana 21% abaixo parecer "na média".
+      // `agruparPorTurno` fica como fallback pra bundle novo com backend antigo:
+      // os valores da semana ficam certos e só a média é aproximada.
+      const itens = visao === 'turno'
+        ? (primario.data.turnos && primario.data.turnos.length
+            ? primario.data.turnos.map((t) => ({
+                nome: t.nome, service_type_id: null,
+                valor_absoluto: t.valor_absoluto, media: t.media,
+                taxa_ocupacao: t.taxa_ocupacao,
+                recurrence_day: 0, recurrence_time: t.turno === 'manha' ? '09:00' : '19:00',
+              }))
+              // os outros dias entram como estão (turno é divisão do DOMINGO)
+              .concat((primario.data.items || []).filter((i) => Number(i.recurrence_day) !== 0))
+            : agruparPorTurno(primario.data.items || []))
+        : (primario.data.items || []);
+      return itens.map(i => {
         // Variacao por culto = (atual - media) / media * 100
         const variacao = i.media > 0
           ? Math.round(((i.valor_absoluto - i.media) / i.media) * 1000) / 10
@@ -236,6 +264,10 @@ export default function DashSemanalAba() {
           valor_absoluto: i.valor_absoluto,
           media: i.media,
           taxa: i.taxa_ocupacao,
+          // ⚠️ A BASE da taxa viaja junto: sem ela, 46% e 4% saem iguais na
+          // tela e ninguém consegue conferir de onde o número veio. Foi
+          // exatamente essa dúvida que originou a mudança (31/08).
+          capacidade: i.capacidade,
           variacao,
           _order: ordemCulto(i.recurrence_day, i.recurrence_time),
         };
@@ -244,7 +276,8 @@ export default function DashSemanalAba() {
     // Multi · merge por nome do culto
     const mapPorNome = new Map();
     datasets.forEach(d => {
-      (d.data.items || []).forEach(i => {
+      const itens = visao === 'turno' ? agruparPorTurno(d.data.items || []) : (d.data.items || []);
+      itens.forEach(i => {
         const k = shortLabel(i.nome, i.recurrence_day, i.recurrence_time);
         const row = mapPorNome.get(k) || {
           nome: k,
@@ -256,7 +289,7 @@ export default function DashSemanalAba() {
       });
     });
     return Array.from(mapPorNome.values()).sort((a, b) => (a._order || 0) - (b._order || 0));
-  }, [datasets, isSingle, primario]);
+  }, [datasets, isSingle, primario, visao]);
 
   const anos = useMemo(() => {
     const arr = [];
@@ -427,10 +460,11 @@ export default function DashSemanalAba() {
         {/* Resumo da semana · números consolidados */}
         <ResumoSemanaCard ano={ano} semana={semana} />
 
-        {/* Prévia do novo formato de domingo (corte 24/08) — ATRÁS DO VÉU:
-            o card se busca sozinho e só renderiza quando o backend diz
-            visível (flag ligada OU super-admin). docs/cultos-domingo/. */}
-        <LentesDomingoCard />
+        {/* Comparativo do ano (frequência · decisões · batismos) com botão de
+            copiar pro WhatsApp. Fica na aba PADRÃO de propósito: o bloco
+            detalhado da aba Mensal existe desde 03/08 e o Matheus não o
+            alcançava — pedia os números por fora. Mesmo endpoint, mesma conta. */}
+        <ComparativoAnualCard />
 
         {/* Filtros topo */}
         <div className="flex flex-wrap items-end gap-3">
@@ -665,9 +699,31 @@ export default function DashSemanalAba() {
           <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2 space-y-0">
             <CardTitle className="text-sm font-medium">
               {isSingle
-                ? `${primario?.indDef?.label || INDICADORES.find(x => x.key === indicadoresSel[0])?.label || 'Indicador'} por culto · ${primario?.data?.inicio && primario?.data?.fim ? `${formatBr(primario.data.inicio)} a ${formatBr(primario.data.fim)}` : '—'}`
+                ? `${primario?.indDef?.label || INDICADORES.find(x => x.key === indicadoresSel[0])?.label || 'Indicador'} por ${visao === 'turno' ? 'turno' : 'culto'} · ${primario?.data?.inicio && primario?.data?.fim ? `${formatBr(primario.data.inicio)} a ${formatBr(primario.data.fim)}` : '—'}`
                 : `Comparativo · ${datasets.map(d => d?.indDef?.label).filter(Boolean).join(' / ')}`}
             </CardTitle>
+            {/* ⚠️ Turno junta 09:30 + 11:30 na manhã. É a visão que atravessa a
+                mudança de grade sem degrau — por culto, tirar um culto FAZ a
+                média subir sozinha. */}
+            {visao === 'turno' && isSingle && primario?.data && !primario.data.turnos?.length && (
+              <span className="text-[10px] text-amber-600 font-medium shrink-0">
+                média aproximada
+              </span>
+            )}
+            <div className="flex gap-1 shrink-0">
+              {[['culto', 'Por culto'], ['turno', 'Por turno']].map(([k, rot]) => (
+                <button
+                  key={k}
+                  onClick={() => setVisao(k)}
+                  title={k === 'turno'
+                    ? 'Domingo manhã (até 12h) e Domingo noite somados; os outros dias ficam como estão'
+                    : 'Cada culto em sua própria barra'}
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-bold transition ${
+                    visao === k ? 'bg-primary text-primary-foreground' : 'bg-foreground/5 text-muted-foreground hover:text-foreground'
+                  }`}
+                >{rot}</button>
+              ))}
+            </div>
             {isMulti && (
               <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1.5">
                 <GitCompare className="h-3.5 w-3.5" />Modo comparativo · só valores absolutos
@@ -710,10 +766,18 @@ export default function DashSemanalAba() {
                     <Tooltip
                       cursor={{ fill: 'rgba(0,179,157,0.06)' }}
                       contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                      formatter={(v, name) => {
-                        if (name === 'Taxa de ocupação' || name === 'Variação por culto') {
-                          return [v != null ? `${v}%` : '—', name];
+                      formatter={(v, name, item) => {
+                        if (name === 'Taxa de ocupação') {
+                          if (v == null) return ['—', name];
+                          // ⚠️ A base vai JUNTO: o Bridge é no Espaço CBRio
+                          // (100 lugares) e os cultos do templo em 1050 — sem
+                          // dizer isso, duas barras de 46% significam coisas
+                          // muito diferentes.
+                          const cap = item?.payload?.capacidade;
+                          const abs = item?.payload?.valor_absoluto;
+                          return [cap ? `${v}% (${Number(abs).toLocaleString('pt-BR')} de ${Number(cap).toLocaleString('pt-BR')} lugares)` : `${v}%`, name];
                         }
+                        if (name === 'Variação por culto') return [v != null ? `${v}%` : '—', name];
                         return [Number(v).toLocaleString('pt-BR'), name];
                       }}
                     />

@@ -26,6 +26,7 @@ import { Heart, Users, UserCheck, UserRound, CheckCircle2, Plus, Trash2, Loader2
 import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
+import { opcoesAno, ehAno, anoDe } from '../../lib/janelaPeriodo';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f' };
 // Cor por status do 1º contato (dashboard · Próximos passos)
@@ -43,6 +44,11 @@ const DASH_PERIODOS = [
   { dias: 365, label: '1 ano' },
   { dias: 1825, label: '5 anos' },
 ];
+// ⚠️ Os anos vêm da régua ÚNICA (src/lib/janelaPeriodo.js), não de lista fixa
+// aqui — ano novo aparece sozinho em 1º de janeiro, sem PR. O valor viaja como
+// `ano:2024`, e o backend recebe `?ano=2024` (janela FECHADA · o `?dias=` segue
+// valendo byte a byte pras janelas móveis).
+const DASH_ANOS = opcoesAno();
 const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
 // Rótulo do eixo X conforme a granularidade vinda do backend (dia/semana = DD/MM · mes = mmm/AA)
 function fmtPeriodo(v: string, gran: string) {
@@ -1921,7 +1927,7 @@ export default function Cuidados() {
     setSearchParams(sp, { replace: true });
   }
   const [dashSeries, setDashSeries] = useState<any>(null);
-  const [dashDias, setDashDias] = useState(90);
+  const [dashDias, setDashDias] = useState<number | string>(90);
   const [dashLoading, setDashLoading] = useState(true);
 
   const [convertidos, setConvertidos] = useState<any[]>([]);
@@ -1988,7 +1994,7 @@ export default function Cuidados() {
   // Séries do dashboard novo · recarrega ao trocar o período ou quando os dados mudam
   useEffect(() => {
     setDashLoading(true);
-    cuidadosApi.dashboardSeries({ dias: dashDias })
+    cuidadosApi.dashboardSeries(ehAno(dashDias) ? { ano: anoDe(dashDias) } : { dias: dashDias })
       .then(setDashSeries).catch(() => setDashSeries(null)).finally(() => setDashLoading(false));
   }, [dashDias, visitasVersion]);
 
@@ -2169,7 +2175,21 @@ export default function Cuidados() {
                 {p.label}
               </Button>
             ))}
+            <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+            <span className="text-sm text-muted-foreground">Ano:</span>
+            {DASH_ANOS.map(a => (
+              <Button key={a.dias} size="sm" variant={dashDias === a.dias ? 'default' : 'outline'} onClick={() => setDashDias(a.dias)}>
+                {a.label}
+              </Button>
+            ))}
           </div>
+          {/* ⚠️ A janela vai COLADA no número (lei de 03/08): "301 pedidos" sem
+              dizer o período fez um número correto parecer errado. */}
+          {ehAno(dashDias) && (
+            <p className="text-xs text-muted-foreground -mt-3">
+              Ano fechado: 1º de janeiro a {dashSeries?.fim ? new Date(String(dashSeries.fim) + 'T12:00:00').toLocaleDateString('pt-BR') : '31/12'} de {anoDe(dashDias)}.
+            </p>
+          )}
 
           {dashLoading ? (
             <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
@@ -2191,8 +2211,18 @@ export default function Cuidados() {
               {/* Gráfico 1 · funil do cuidado (a ponte pros outros valores) */}
               <div className="rounded-lg border border-border bg-card p-4">
                 <h3 className="font-semibold text-sm mb-1">Convertidos → 1º contato → engajados em +1 valor</h3>
-                <p className="text-xs text-muted-foreground mb-3">
-                  O gargalo do cuidado: de quem se converteu, com quantos a gente falou e quantos seguiram pra outro valor (grupo, voluntário, Next).
+                <p className="text-xs text-muted-foreground mb-2">
+                  O gargalo do cuidado: de quem se converteu, com quantos a gente falou e quantos seguiram pra outro valor.
+                </p>
+                {/* ⚠️ A régua vai ESCRITA: até 24/08 esta linha lia só a
+                    devolutiva do encaminhamento pastoral (4 linhas na história
+                    inteira) e vivia em zero. Agora lê os fatos — e quem olha
+                    precisa saber quais, senão volta a discutir o número. */}
+                <p className="text-[11px] text-muted-foreground mb-3">
+                  <strong>Engajados +1 valor</strong> = entrou em grupo, virou voluntário, esteve num encontro do Next
+                  ou se batizou <em>depois</em> de decidir. Contribuição fica de fora (é dado restrito e o gráfico é
+                  aberto). Vínculo de grupo com data de importação em massa não conta — não dá pra afirmar que nasceu
+                  depois da decisão.
                 </p>
                 <ResponsiveContainer width="100%" height={300}>
                   <LineChart data={dashSeries.funil} margin={{ top: 8, right: 16, left: -10, bottom: 0 }}>

@@ -13,6 +13,7 @@ on:
     branches: [main]
     paths-ignore:
       - 'docs/system-report/**'   # evita loop (o próprio commit do report)
+      - 'docs/mapa/**'            # idem: o commit do mapa não pode se re-disparar
   workflow_dispatch:
 
 permissions:
@@ -42,21 +43,29 @@ jobs:
           REPORT_REF: origin/main
           GH_TOKEN: ${{ github.token }}   # autentica a Search API (PRs integrados)
         run: node scripts/system-report/build.mjs
+      # ⚠️ Mapa do sistema (docs/mapa/) · responde "onde mora X" e é lido por
+      # sessão de Claude Code antes de investigar. É GERADO do código, nunca
+      # escrito — por isso regenerar aqui, e não confiar em alguém lembrar.
+      # ⚠️ Os 2 repos de app NÃO são clonados neste workflow: o gerador degrada
+      # sozinho (APPS.md declara a ausência em vez de sair vazio em silêncio).
+      - name: Gerar mapa do sistema
+        run: node backend/scripts/gerar-mapa.cjs
+
       # Best-effort: commitar de volta é só pra manter o arquivo versionado.
       # Se o push falhar (ex.: main avançou, ou é um re-run de commit antigo),
       # NÃO pode travar a publicação do Pages — por isso continue-on-error.
       - name: Commitar se mudou (best-effort)
         continue-on-error: true
         run: |
-          if [[ -n "$(git status --porcelain docs/system-report/index.html)" ]]; then
+          if [[ -n "$(git status --porcelain docs/system-report/index.html docs/mapa)" ]]; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add docs/system-report/index.html docs/system-report/.nojekyll
-            git commit -m 'chore(report): atualiza dashboard de custos e atividade [skip ci]'
+            git add docs/system-report/index.html docs/system-report/.nojekyll docs/mapa
+            git commit -m 'chore(report): atualiza dashboard e mapa do sistema [skip ci]'
             git pull --rebase --autostash origin main || true
             git push || echo 'push falhou (main avancou) — Pages publica mesmo assim'
           else
-            echo 'Sem mudanças no dashboard.'
+            echo 'Sem mudanças no dashboard nem no mapa.'
           fi
       # ── Publicar no GitHub Pages (só a pasta do dashboard) ──────────────────
       # Requer, uma única vez: Settings → Pages → Source: "GitHub Actions".

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Check, Clock, X, CheckCircle2, XCircle, HelpCircle } from 'lucide-react';
 import type { VolSchedule } from '../../types';
 import VolunteerDetailDialog from './VolunteerDetailDialog';
+import AvatarVoluntario from './AvatarVoluntario';
 
 interface Props {
   schedules: VolSchedule[];
@@ -13,19 +14,6 @@ function statusDe(s: VolSchedule): Status {
   if (s.confirmation_status === 'declined') return 'declined';
   return 'pending';
 }
-
-function iniciais(nome: string): string {
-  const p = (nome || '').trim().split(/\s+/).filter(Boolean);
-  if (!p.length) return '?';
-  if (p.length === 1) return p[0].slice(0, 2).toUpperCase();
-  return (p[0][0] + p[p.length - 1][0]).toUpperCase();
-}
-
-const avatarClasse: Record<Status, string> = {
-  confirmed: 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300',
-  declined: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300',
-  pending: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
-};
 
 // Layout "Teams" (estilo Planning Center): 1 coluna por equipe, com contadores
 // confirmados/recusados/pendentes, seções por posição e pessoas com avatar.
@@ -102,9 +90,11 @@ export default function SchedulesByTeam({ schedules }: Props) {
                           onClick={() => setSelected({ id: s.volunteer_id, name: s.volunteer_name })}
                           className="w-full flex items-center gap-2 p-1.5 rounded-lg hover:bg-muted/50 text-left transition-colors"
                         >
-                          <span className={`h-7 w-7 shrink-0 rounded-full flex items-center justify-center text-[11px] font-semibold ${avatarClasse[st]}`}>
-                            {iniciais(s.volunteer_name)}
-                          </span>
+                          {/* ⚠️ `foto_url` vem RESOLVIDA do servidor quando o
+                              endpoint a manda; aqui ela ainda não vem, então
+                              cai nas iniciais — que é o comportamento de
+                              sempre desta tela. */}
+                          <AvatarVoluntario nome={s.volunteer_name} fotoUrl={(s as any).foto_url} status={st} tamanho={28} />
                           <span className="text-sm truncate flex-1">{s.volunteer_name}</span>
                           {st === 'confirmed' ? <Check className="h-3.5 w-3.5 text-green-600 shrink-0" />
                             : st === 'declined' ? <X className="h-3.5 w-3.5 text-red-600 shrink-0" />

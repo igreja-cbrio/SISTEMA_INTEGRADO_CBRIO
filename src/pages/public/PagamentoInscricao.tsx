@@ -19,6 +19,7 @@ import QRCode from 'qrcode';
 import confetti from 'canvas-confetti';
 import { eventoPublico } from '../../api';
 import CartaoBrick from '../../components/pagamento/CartaoBrick';
+import BaixarInstrucoes from './BaixarInstrucoes';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 
 interface Pagamento {
@@ -49,6 +50,10 @@ interface Pagamento {
   // ter sido paga por fora.
   aceita_comprovante?: boolean;
   comprovantes?: ComprovanteEnviado[] | null;
+  // Instruções gerais do evento (só vem com `pago` — inscrição concluída).
+  instrucoes?: { url: string; nome?: string | null } | null;
+  // Grupo de WhatsApp pra dúvidas do evento (antes e depois de pagar).
+  whatsapp_duvidas?: string | null;
 }
 
 interface ComprovanteEnviado {
@@ -590,12 +595,29 @@ export default function PagamentoInscricao() {
               </a>
             </p>
 
+            {/* Grupo de dúvidas do evento (21/08): visível pago ou não — dúvida
+                acontece antes E depois de pagar. Link real, nova aba. */}
+            {pag.whatsapp_duvidas && (
+              <a href={pag.whatsapp_duvidas} target="_blank" rel="noopener noreferrer" style={{
+                display: 'inline-block', marginTop: 10, padding: '8px 14px', borderRadius: 999,
+                background: 'rgba(37,211,102,0.10)', border: '1px solid rgba(37,211,102,0.35)',
+                color: '#1da851', fontSize: 12.5, fontWeight: 700, textDecoration: 'none',
+              }}>
+                Dúvidas? Entre no grupo do WhatsApp
+              </a>
+            )}
+
             {/* Comprovante do check-in (SPEC-06): pagou → o QR da entrada
                 aparece AQUI (a tela de sucesso do formulário ficou pra trás
                 quando a pessoa foi pro checkout). Sem `pago`, sem QR. */}
             {pag.pago && pag.comprovante_token && (
               <ComprovanteCheckin token={pag.comprovante_token} corTexto={C.text3} />
             )}
+
+            {/* Instruções gerais do evento: a inscrição CONCLUIU aqui (quem
+                pagou por Pix nunca volta na tela de sucesso do formulário).
+                O servidor só manda `instrucoes` com `pago`. */}
+            {pag.pago && <BaixarInstrucoes instrucoes={pag.instrucoes} C={C} />}
 
             {emAberto && (
               <>

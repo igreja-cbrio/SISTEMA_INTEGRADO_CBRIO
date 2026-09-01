@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Button } from '../components/ui/button';
-import { Calendar, TrendingUp, Target, Sparkles, Maximize2, Minimize2, Banknote, Activity, BarChart3, FileText, Loader2, UserCheck } from 'lucide-react';
+import { Calendar, TrendingUp, Target, Sparkles, Maximize2, Minimize2, Banknote, Activity, BarChart3, FileText, Loader2, UserCheck, FlaskConical } from 'lucide-react';
 import DashSemanalAba from '../components/dashboard-semanal/DashSemanalAba';
 import DashMensalAba from '../components/dashboard-semanal/DashMensalAba';
 import DashNextAba from '../components/dashboard-semanal/DashNextAba';
@@ -9,6 +9,8 @@ import DashMediaMovelAba from '../components/dashboard-semanal/DashMediaMovelAba
 import DashKpisAba from '../components/dashboard-semanal/DashKpisAba';
 import DashMetasAba from '../components/dashboard-semanal/DashMetasAba';
 import DashIaAba from '../components/dashboard-semanal/DashIaAba';
+import LentesDomingoCard from '../components/dashboard-semanal/LentesDomingoCard';
+import useLentesDomingo from '../components/dashboard-semanal/useLentesDomingo';
 import DashboardFinanceiroSemanal from './admin/financeiro/DashboardFinanceiroSemanal';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -25,6 +27,10 @@ export const INDICADORES = [
   { key: 'ao_vivo',           label: 'Ao vivo',           usa_ocupacao: false },
   { key: 'online_ds',         label: 'Online DS',         usa_ocupacao: false },
   { key: 'online_ddus',       label: 'Online DDUS',       usa_ocupacao: false },
+  // ⚠️ ESPELHO de INDICADORES em backend/routes/dashboardSemanal.js — as duas
+  // listas TÊM que concordar (src/test/indicadoresDashboard.test.ts trava isso):
+  // chave só no front vira 400 do servidor; só no backend fica invisível.
+  { key: 'online_views_live', label: 'Views totais da live', usa_ocupacao: false },
   { key: 'voluntariado',      label: 'Voluntariado',      usa_ocupacao: false },
 ];
 
@@ -34,7 +40,18 @@ export default function DashboardSemanal() {
   const { isAdmin, canFinanceiro, getAccessLevel } = useAuth();
   const verFinanceiro = isAdmin || canFinanceiro;
   const verRelatorios = isAdmin || getAccessLevel(['relatorios']) >= 1;
-  const nColsCls = { 7: 'grid-cols-2 sm:grid-cols-4 md:grid-cols-7', 8: 'grid-cols-2 sm:grid-cols-4 md:grid-cols-8', 9: 'grid-cols-3 sm:grid-cols-5 md:grid-cols-9' }[7 + (verFinanceiro ? 1 : 0) + (verRelatorios ? 1 : 0)] || 'grid-cols-3 sm:grid-cols-5 md:grid-cols-9';
+  // ⚠️ A aba Domingo (prévia do corte 24/08) só existe pra quem o SERVIDOR
+  // deixa ver — atrás do véu ele responde `{visivel:false}` e a aba abriria
+  // vazia. Enquanto a resposta não chega, a aba não aparece: nascer e sumir
+  // faria as outras abas pularem de lugar debaixo do clique.
+  const { data: lentesDomingo } = useLentesDomingo();
+  const verDomingo = !!lentesDomingo?.visivel;
+  const nColsCls = {
+    7: 'grid-cols-2 sm:grid-cols-4 md:grid-cols-7',
+    8: 'grid-cols-2 sm:grid-cols-4 md:grid-cols-8',
+    9: 'grid-cols-3 sm:grid-cols-5 md:grid-cols-9',
+    10: 'grid-cols-3 sm:grid-cols-5 md:grid-cols-10',
+  }[7 + (verFinanceiro ? 1 : 0) + (verRelatorios ? 1 : 0) + (verDomingo ? 1 : 0)] || 'grid-cols-3 sm:grid-cols-5 md:grid-cols-10';
   const [tab, setTab] = useState('semanal');
   const wrapperRef = useRef(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -108,6 +125,7 @@ export default function DashboardSemanal() {
           <TabsTrigger value="media-movel"><Activity className="h-4 w-4 mr-1.5" />Média Móvel</TabsTrigger>
           <TabsTrigger value="kpis"><BarChart3 className="h-4 w-4 mr-1.5" />KPIs</TabsTrigger>
           {verFinanceiro && <TabsTrigger value="financeiro"><Banknote className="h-4 w-4 mr-1.5" />Financeiro</TabsTrigger>}
+          {verDomingo && <TabsTrigger value="domingo"><FlaskConical className="h-4 w-4 mr-1.5" />Domingo</TabsTrigger>}
           <TabsTrigger value="metas"><Target className="h-4 w-4 mr-1.5" />Metas</TabsTrigger>
           {verRelatorios && <TabsTrigger value="relatorios"><FileText className="h-4 w-4 mr-1.5" />Relatórios</TabsTrigger>}
           <TabsTrigger value="ia"><Sparkles className="h-4 w-4 mr-1.5" />Criar com IA</TabsTrigger>
@@ -131,6 +149,11 @@ export default function DashboardSemanal() {
         {verFinanceiro && (
           <TabsContent value="financeiro" className="mt-4">
             <DashboardFinanceiroSemanal />
+          </TabsContent>
+        )}
+        {verDomingo && (
+          <TabsContent value="domingo" className="mt-4">
+            <LentesDomingoCard />
           </TabsContent>
         )}
         <TabsContent value="metas" className="mt-4">

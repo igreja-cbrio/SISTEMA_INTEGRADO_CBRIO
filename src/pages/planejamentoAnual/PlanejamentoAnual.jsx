@@ -193,13 +193,13 @@ export default function PlanejamentoAnual() {
               recarregarCiclo={() => carregarCiclo(ciclo.id)} />
           )}
           {aba === 1 && (ehAvaliador || ehPastor) && (
-            <AvaliacaoTab ciclo={ciclo} constantes={constantes} minhaDiretoria={minhaDiretoria} />
+            <AvaliacaoTab ciclo={ciclo} constantes={constantes} minhaDiretoria={minhaDiretoria} locais={locais} areas={areas} />
           )}
           {aba === 2 && souFinanceiro && (
             <OrcamentoTab ciclo={ciclo} souFinanceiro={minhaDiretoria === 'financeiro'} />
           )}
           {aba === 3 && ehPastor && (
-            <PastorTab ciclo={ciclo} constantes={constantes} recarregarCiclo={() => carregarCiclo(ciclo.id)} />
+            <PastorTab ciclo={ciclo} constantes={constantes} areas={areas} recarregarCiclo={() => carregarCiclo(ciclo.id)} />
           )}
         </>
       )}

@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel, bustPermissionCaches } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const atividadeVol = require('../utils/atividadeVoluntario');
 const { acharOuCriarGuardado, acharMembroGuardado, normalizarTelefone } = require('../services/membroMatch');
 const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
 const { cpfValido } = require('../utils/cpf');
@@ -32,6 +33,7 @@ const antecedentes = require('../services/antecedentesCriminais');
 const { executarSyncCompleto } = require('../services/voluntariadoSync');
 const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
 const multer = require('multer');
+const { mapaDeFotos, fotoDoPerfil } = require('../utils/fotoVoluntario');
 const uploadCsv = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024 } });
 
 // ── Cron (sem login · CRON_SECRET) ──────────────────────────────────────────
@@ -57,7 +59,26 @@ router.get('/cron/sync', requireCron, async (req, res) => {
       sync_type: 'automatic', services_synced: r.services, schedules_synced: r.schedules,
       qrcodes_generated: r.qrCodesGenerated, status: 'success',
     });
-    res.json({ ok: true, ...r });
+
+    // ── CARONA · rastreio dos pedidos do Mercado Livre ──────────────────────
+    // ⚠️ SEM SLOT NOVO no vercel.json: são 46 crons e o teto já é problema
+    // conhecido neste projeto (mesma decisão da retenção de mídia do inbox,
+    // 12/08). A rota /solicitacoes/cron/atualizar-ml existe desde sempre e
+    // NUNCA foi agendada — o tracker, o notificarSolicitante e os textos por
+    // status estavam prontos e ninguém puxava o gatilho: quem vinculava um
+    // pedido recebia o 1º aviso e depois silêncio até a entrega.
+    // ⚠️ Bloco protegido: falhar aqui NÃO pode derrubar o sync do voluntariado,
+    // que é o dono desta execução.
+    let ml = null;
+    try {
+      const mlTracker = require('../services/solicitacoesMlTracker');
+      ml = await mlTracker.processarUpdates({ batchSize: 30, throttleMs: 200 });
+    } catch (e) {
+      console.error('[vol/cron/sync] carona ml-tracker:', e.message);
+      ml = { ok: false, erro: e.message };
+    }
+
+    res.json({ ok: true, ...r, ml });
   } catch (e) {
     console.error('[vol/cron/sync]', e.message);
     res.status(500).json({ error: 'Erro no cron de sync do voluntariado' });
@@ -1266,11 +1287,13 @@ router.get('/profiles/:id/detalhe', async (req, res) => {
     const ultimaAtividade = [ultimoServico, ultimoCheckin].filter(Boolean).sort().pop() || null;
     let diasDesde = Infinity;
     if (ultimaAtividade) diasDesde = Math.floor((Date.now() - new Date(ultimaAtividade).getTime()) / 86400000);
-    let nivel, label;
-    if (diasDesde <= 30 && serv4m >= 4) { nivel = 'muito_ativo'; label = 'Muito ativo'; }
-    else if (diasDesde <= 45) { nivel = 'ativo'; label = 'Ativo'; }
-    else if (diasDesde <= 90) { nivel = 'pouco_ativo'; label = 'Pouco ativo'; }
-    else { nivel = 'inativo'; label = 'Inativo'; }
+    // ⚠️ Régua ÚNICA em `utils/atividadeVoluntario` (27/08). Ela nasceu aqui e
+    // saiu porque a LISTA passou a precisar da mesma resposta — duas cópias
+    // divergiriam, e o sintoma seria a lista dizer "inativo" e a ficha "pouco
+    // ativo" sobre a mesma pessoa.
+    const { nivel, label } = atividadeVol.nivelPorDias(
+      Number.isFinite(diasDesde) ? diasDesde : null, serv4m,
+    );
     const termometro = {
       nivel, label,
       dias_desde_ultima_atividade: Number.isFinite(diasDesde) ? diasDesde : null,
@@ -1624,7 +1647,9 @@ router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res)
   try {
     const { data, error } = await supabase
       .from('vol_area_supervisores')
-      .select('id, area, created_at, membro:mem_membros(id, nome, telefone, foto_url)')
+      // ⚠️ `position` é a SUBÁREA (Ofertório, Estacionamento…). Vem embutida
+      // pra tela não precisar de um segundo round-trip por linha.
+      .select(SELECT_SUPERVISOR)
       .order('area', { ascending: true });
     if (error) throw error;
     res.json(data || []);
@@ -1634,23 +1659,241 @@ router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res)
   }
 });
 
+/**
+ * Valida o ESCOPO de uma concessão de supervisão (área, subárea, rodízio).
+ *
+ * ⚠️ Compartilhada entre POST e PATCH de propósito. Duas cópias divergiriam no
+ * primeiro ajuste, e a regra aqui não é cosmética: ela é o que impede conceder
+ * "Integração + Recepção do KIDS" mandando o id cru no corpo, e o que traduz o
+ * CHECK do banco em 400 com mensagem em vez de um 23514 cru.
+ */
+async function validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana }) {
+  // Subárea tem que PERTENCER à área concedida (nome de posição repete entre
+  // áreas: "Recepção" existe em Integração E em KIDS).
+  let posId = position_id || null;
+  if (posId) {
+    const { data: pos } = await supabase.from('vol_positions')
+      .select('id, name, team:vol_teams(id, area)').eq('id', posId).maybeSingle();
+    const areaDaPos = Array.isArray(pos?.team) ? pos.team[0]?.area : pos?.team?.area;
+    const norm = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    if (!pos || norm(areaDaPos) !== norm(area)) {
+      return { erro: 'Essa subárea não pertence à área escolhida.' };
+    }
+  }
+
+  // Rodízio · a lista da Ariel: semana × dia × período. null = curinga.
+  const DIAS = ['domingo', 'quarta'];
+  const PERIODOS = ['manha', 'noite'];
+  const dia = culto_dia ? String(culto_dia).trim().toLowerCase() : null;
+  const per = culto_periodo ? String(culto_periodo).trim().toLowerCase() : null;
+  const sem = (culto_semana === 0 || culto_semana) ? Number(culto_semana) : null;
+  if (dia && !DIAS.includes(dia)) return { erro: 'Dia do culto invalido (domingo|quarta).' };
+  if (per && !PERIODOS.includes(per)) return { erro: 'Periodo invalido (manha|noite).' };
+  if (sem !== null && !(Number.isInteger(sem) && sem >= 1 && sem <= 4)) {
+    return { erro: 'Semana do rodizio invalida (1 a 4).' };
+  }
+  // ⚠️ Período SEM dia não existe no modelo da casa ("manhã" sozinho não diz se
+  // é domingo ou quarta), e a quarta é culto ÚNICO (decisão do Matheus).
+  if (per && !dia) return { erro: 'Escolha o dia do culto antes do periodo.' };
+  if (per && dia === 'quarta') return { erro: 'A quarta e culto unico — nao tem manha/noite.' };
+
+  return { posId, dia, per, sem };
+}
+
+const SELECT_SUPERVISOR = 'id, area, position_id, culto_dia, culto_periodo, culto_semana, created_at, membro:mem_membros(id, nome, telefone, foto_url), position:vol_positions(id, name, team_id)';
+
+// GET /supervisores/candidatos?vol_profile_id=… — POR QUE a pessoa não aparece.
+//
+// ⚠️⚠️ ISTO EXISTE PORQUE A MINHA MENSAGEM ANTERIOR MENTIA (26/08/2026). A tela
+// dizia *"resolva em Entradas → Identidade e a pessoa passa a aparecer aqui"* —
+// e o Matheus foi lá e não achou ninguém. Duas coisas erradas:
+//
+//  1. A fila de `/entradas` é de INSCRIÇÃO órfã (`inscricao_sem_vinculo`), não de
+//     perfil de voluntário sem `membresia_id`. São problemas diferentes.
+//  2. Na maioria dos casos NÃO HÁ o que vincular: medido em 26/08, dos 148
+//     perfis ativos sem vínculo, **101 (68%) não têm cadastro nenhum** na
+//     membresia — o caso do "Fabinho Marques", que motivou o relato.
+//
+// ⇒ Em vez de mandar pra um lugar que não resolve, a tela passa a DIZER qual dos
+// dois casos é, e mostrar o candidato quando existe.
+//
+// ⚠️ Ordem dos sinais = a do matcher canônico: CPF → e-mail → nome exato. E o
+// resultado NUNCA é aplicado sozinho: e-mail é sinal que a FAMÍLIA compartilha
+// (a lição do caso Palladino, em que o e-mail do perfil do filho era o do
+// cadastro do pai). Quem decide é gente, vendo o candidato.
+router.get('/supervisores/candidatos', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const volId = String(req.query.vol_profile_id || '').trim();
+    if (!volId) return res.status(400).json({ error: 'vol_profile_id obrigatório' });
+
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, email, cpf, membresia_id').eq('id', volId).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+    if (vp.membresia_id) return res.json({ ja_vinculado: true, candidatos: [] });
+
+    const digitos = (v) => String(v || '').replace(/\D/g, '');
+    const semAcento = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const cpf = digitos(vp.cpf);
+    const email = (vp.email || '').trim().toLowerCase();
+
+    const achados = new Map();   // membro_id -> { ...membro, sinal }
+    const guardar = (m, sinal) => {
+      if (!m?.id || achados.has(m.id)) return;
+      achados.set(m.id, {
+        id: m.id, nome: m.nome, status: m.status,
+        tem_cpf: !!m.cpf, data_nascimento: m.data_nascimento || null,
+        email: m.email || null, telefone: m.telefone || null,
+        sinal,
+      });
+    };
+    const COLS = 'id, nome, cpf, email, telefone, data_nascimento, status';
+
+    if (cpf.length === 11) {
+      const { data } = await supabase.from('mem_membros').select(COLS)
+        .eq('cpf', cpf).is('deleted_at', null).limit(3);
+      (data || []).forEach((m) => guardar(m, 'cpf'));
+    }
+    if (email) {
+      const { data } = await supabase.from('mem_membros').select(COLS)
+        .ilike('email', email).is('deleted_at', null).limit(5);
+      (data || []).forEach((m) => guardar(m, 'email'));
+    }
+    if (vp.full_name) {
+      // Nome exato (sem acento/caixa) — o `ilike` cobre a caixa; o acento é
+      // conferido aqui, porque `unaccent` não está exposto no PostgREST.
+      const { data } = await supabase.from('mem_membros').select(COLS)
+        .ilike('nome', vp.full_name.trim()).is('deleted_at', null).limit(5);
+      (data || []).filter((m) => semAcento(m.nome) === semAcento(vp.full_name))
+        .forEach((m) => guardar(m, 'nome'));
+    }
+
+    res.json({
+      ja_vinculado: false,
+      perfil: { id: vp.id, full_name: vp.full_name, email: vp.email || null, tem_cpf: !!cpf },
+      candidatos: [...achados.values()],
+    });
+  } catch (e) {
+    console.error('[voluntariado] supervisores candidatos:', e.message);
+    res.status(500).json({ error: 'Erro ao procurar cadastro da pessoa' });
+  }
+});
+
 router.post('/supervisores', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
-    const { membro_id, area } = req.body || {};
+    const { membro_id, area, position_id, culto_dia, culto_periodo, culto_semana } = req.body || {};
     if (!membro_id || !area) return res.status(400).json({ error: 'membro_id e area obrigatórios' });
+
+    const esc = await validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana });
+    if (esc.erro) return res.status(400).json({ error: esc.erro });
+
     const { data, error } = await supabase
       .from('vol_area_supervisores')
-      .insert({ membro_id, area: String(area).trim().toLowerCase(), concedido_por: req.user?.userId || null })
-      .select('id, area, created_at, membro:mem_membros(id, nome, telefone, foto_url)')
+      .insert({
+        membro_id,
+        area: String(area).trim().toLowerCase(),
+        position_id: esc.posId,
+        culto_dia: esc.dia,
+        culto_periodo: esc.per,
+        culto_semana: esc.sem,
+        concedido_por: req.user?.userId || null,
+      })
+      .select(SELECT_SUPERVISOR)
       .single();
     if (error) {
-      if (error.code === '23505') return res.status(409).json({ error: 'Essa pessoa já é supervisora dessa área' });
+      if (error.code === '23505') return res.status(409).json({ error: 'Essa pessoa já supervisiona isso' });
       throw error;
     }
     res.status(201).json(data);
   } catch (e) {
     console.error('[voluntariado] supervisores post:', e.message);
     res.status(500).json({ error: 'Erro ao conceder supervisão' });
+  }
+});
+
+// PATCH /supervisores/:id — EDITA a concessão (área, subárea e rodízio).
+//
+// ⚠️ Pedido do Matheus (25/08): *"preciso conseguir editar os supervisores
+// também, o horário deles, área e etc"*. Antes só existia conceder e revogar —
+// trocar o turno de alguém exigia apagar e recriar, o que perdia o
+// `concedido_por` e o `created_at` (a trilha de quem deu o acesso e quando).
+//
+// ⚠️ Passa pela MESMA `validarEscopoSupervisao` do POST. Um PATCH com régua
+// própria seria o caminho pra conceder pela porta dos fundos o que o POST
+// recusa — por exemplo subárea de outra área.
+router.patch('/supervisores/:id', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { area, position_id, culto_dia, culto_periodo, culto_semana } = req.body || {};
+    if (!area) return res.status(400).json({ error: 'area obrigatória' });
+
+    const esc = await validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana });
+    if (esc.erro) return res.status(400).json({ error: esc.erro });
+
+    const { data, error } = await supabase
+      .from('vol_area_supervisores')
+      .update({
+        area: String(area).trim().toLowerCase(),
+        position_id: esc.posId,
+        culto_dia: esc.dia,
+        culto_periodo: esc.per,
+        culto_semana: esc.sem,
+      })
+      .eq('id', req.params.id)
+      .select(SELECT_SUPERVISOR)
+      .single();
+
+    if (error) {
+      // ⚠️ 23505 = a pessoa JÁ tem uma concessão com exatamente este escopo (o
+      // unique cobre membro+area+subárea+dia+período+semana). Sem esta mensagem
+      // o usuário veria erro cru e não saberia que a linha duplicada já existe.
+      if (error.code === '23505') {
+        return res.status(409).json({ error: 'Essa pessoa já tem uma supervisão com exatamente esse escopo.' });
+      }
+      throw error;
+    }
+    if (!data) return res.status(404).json({ error: 'Supervisão não encontrada' });
+    res.json(data);
+  } catch (e) {
+    console.error('[voluntariado] supervisores patch:', e.message);
+    res.status(500).json({ error: 'Erro ao editar a supervisão' });
+  }
+});
+
+// POST /supervisores/vincular — liga um PERFIL de voluntário a um CADASTRO.
+//
+// ⚠️⚠️ DECISÃO HUMANA, sempre. Não existe versão automática disto de propósito:
+// no caso Palladino (25/08) o e-mail do perfil do FILHO era o e-mail do cadastro
+// do PAI, e vincular por e-mail teria dado supervisão ao membro errado. Aqui o
+// humano vê o candidato (nome, CPF?, nascimento, e por qual sinal casou) e
+// escolhe. O servidor só recusa o que é claramente inválido.
+router.post('/supervisores/vincular', authorizeModule('voluntariado', 3), async (req, res) => {
+  try {
+    const { vol_profile_id, membro_id } = req.body || {};
+    if (!vol_profile_id || !membro_id) {
+      return res.status(400).json({ error: 'vol_profile_id e membro_id obrigatórios' });
+    }
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, membresia_id').eq('id', vol_profile_id).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+    // ⚠️ Não sobrescreve vínculo existente: trocar o cadastro de alguém por aqui
+    // seria mexer em identidade sem trilha. Desvincular é operação própria.
+    if (vp.membresia_id) {
+      return res.status(409).json({ error: 'Esse perfil já está vinculado a um cadastro.' });
+    }
+    const { data: m } = await supabase.from('mem_membros')
+      .select('id, nome').eq('id', membro_id).is('deleted_at', null).maybeSingle();
+    if (!m) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+
+    const { error } = await supabase.from('vol_profiles')
+      .update({ membresia_id: m.id }).eq('id', vp.id).is('membresia_id', null);
+    if (error) throw error;
+
+    // ⚠️ O UPDATE dispara `trg_sync_email_vol_para_membro`, que reescreve o
+    // e-mail do PERFIL com o canônico do cadastro (o do membro NÃO é tocado — o
+    // inverso só preenche vazio). É esperado; medido nos religamentos de 25/08.
+    res.json({ ok: true, vol_profile_id: vp.id, membro_id: m.id, membro_nome: m.nome });
+  } catch (e) {
+    console.error('[voluntariado] supervisores vincular:', e.message);
+    res.status(500).json({ error: 'Erro ao vincular' });
   }
 });
 
@@ -2017,6 +2260,52 @@ router.post('/allocate/:id', async (req, res) => {
 // VOLUNTEERS POOL — all active vol_profiles with team memberships
 // Used by the schedule builder popup. Cached on the client (5 min staleTime).
 // ══════════════════════════════════════════════════════════════
+/**
+ * Última atividade (check-in OU serviço) por voluntário, numa janela.
+ *
+ * ⚠️ Duas consultas AGREGADAS, não uma por pessoa: são ~674 perfis, e o padrão
+ * "N+1" nesta tela seria centenas de idas ao banco a cada abertura.
+ * ⚠️ Janela curta de propósito (120 dias). Quem não aparece nela está a 90+
+ * dias sem servir — que é exatamente o que a tag precisa dizer. Varrer o
+ * histórico inteiro custaria muito para responder a mesma coisa.
+ * ⚠️ As duas leituras são best-effort: falhar aqui devolve mapa vazio e a lista
+ * sai SEM tag, nunca com todo mundo marcado como inativo. Marcar 674 pessoas
+ * como inativas por causa de um erro de consulta seria pior que não marcar.
+ */
+async function ultimaAtividadePorVoluntario() {
+  const desde = new Date(Date.now() - atividadeVol.JANELA_LISTA_DIAS * 86400000).toISOString();
+  const mapa = new Map();
+  const guarda = (chave, iso) => {
+    if (!chave || !iso) return;
+    const atual = mapa.get(chave);
+    if (!atual || iso > atual) mapa.set(chave, iso);
+  };
+  try {
+    for (let pag = 0; pag < 20; pag += 1) {
+      const { data, error } = await supabase.from('vol_check_ins')
+        .select('volunteer_id, checked_in_at')
+        .gte('checked_in_at', desde).not('volunteer_id', 'is', null)
+        .range(pag * 1000, pag * 1000 + 999);
+      if (error) throw error;
+      for (const r of data || []) guarda(r.volunteer_id, r.checked_in_at);
+      if (!data || data.length < 1000) break;
+    }
+    for (let pag = 0; pag < 20; pag += 1) {
+      const { data, error } = await supabase.from('vol_servicos_historico')
+        .select('vol_profile_id, data')
+        .gte('data', desde.slice(0, 10)).is('deleted_at', null)
+        .range(pag * 1000, pag * 1000 + 999);
+      if (error) throw error;
+      for (const r of data || []) guarda(r.vol_profile_id, r.data);
+      if (!data || data.length < 1000) break;
+    }
+  } catch (e) {
+    console.warn('[voluntariado] ultima atividade:', e.message);
+    return null; // ⚠️ null = "não deu pra saber", tratado como SEM tag
+  }
+  return mapa;
+}
+
 router.get('/volunteers-pool', async (req, res) => {
   try {
     // Arquivados (saíram do PCO na reconciliação) ficam FORA por padrão;
@@ -2029,8 +2318,9 @@ router.get('/volunteers-pool', async (req, res) => {
         .from('vol_profiles')
         .select(`
           id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado, membresia_id,
+          membro:mem_membros(foto_url),
           team_members:vol_team_members(
-            id, team_id, position_id,
+            id, team_id, position_id, is_active,
             team:vol_teams(id, name, color),
             position:vol_positions(id, name)
           )
@@ -2051,9 +2341,28 @@ router.get('/volunteers-pool', async (req, res) => {
     // pra afirmar nada sobre a jornada de quem o sistema não conseguiu ligar
     // a um `mem_membros` (o import do Planning Center deixou muitos assim).
     // ⚠️ Generosidade continua gated no servidor (decisão do Matheus).
+    // ⚠️ `foto_url` RESOLVIDA no servidor: `avatar_url` está preenchido em quase
+    // todo mundo e a maioria é PLACEHOLDER DE INICIAIS do Planning Center — em
+    // 27/08, 121 dos 226 escalados. A tela que mostra `avatar_url` cru troca as
+    // iniciais desenhadas pelo tema por um PNG cinza. Régua em
+    // `utils/fotoVoluntario`; a coluna crua segue no payload pra não quebrar
+    // quem já a lê.
+    for (const v of all) v.foto_url = fotoDoPerfil(v);
+
     await anexarMarcadores(all, (p) => p.membresia_id || null, {
       incluirSensiveis: podeVerMarcadorSensivel(req.user),
     });
+
+    // Termômetro de atividade na LISTA (Matheus · 27/08) — a tag "sem servir há
+    // 90+ dias" e o filtro de inativos precisam disto por linha.
+    const atividade = await ultimaAtividadePorVoluntario();
+    for (const p of all) {
+      if (!atividade) { p.atividade = null; continue; } // não deu pra saber
+      const ultima = atividade.get(p.id) || null;
+      const dias = atividadeVol.diasDesde(ultima);
+      const { nivel, label } = atividadeVol.nivelPorDias(dias);
+      p.atividade = { nivel, label, dias_desde: dias, ultima_atividade: ultima };
+    }
 
     res.json(all);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar pool de voluntários' }); }
@@ -5516,8 +5825,9 @@ router.get('/services/:serviceId/contexto-montagem', async (req, res) => {
         .from('vol_profiles')
         .select(`
           id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado, membresia_id,
+          membro:mem_membros(foto_url),
           team_members:vol_team_members(
-            id, team_id, position_id,
+            id, team_id, position_id, is_active,
             team:vol_teams(id, name, color),
             position:vol_positions(id, name)
           )
@@ -5540,6 +5850,10 @@ router.get('/services/:serviceId/contexto-montagem', async (req, res) => {
     // Espelha `ehNomePlaceholder` do matcher: nenhum fluxo de PESSOAS deve
     // exibir isso — muito menos um em que se escolhe quem serve no culto.
     all = all.filter((v) => ehPessoaEscalavel(v.full_name));
+
+    // Foto do CANDIDATO no painel de escalar (27/08). Vem do embed, sem consulta
+    // extra. ⚠️ Só foto de verdade — ver `utils/fotoVoluntario`.
+    for (const v of all) v.foto_url = fotoDoPerfil(v);
 
     // Indisponibilidade: por culto específico + por período que cobre a data.
     const chave = (pid, pcid) => `${pid || ''}::${pcid || ''}`;
@@ -5642,11 +5956,21 @@ async function _coberturaDoCulto(sid) {
   ]);
   if (aErr || sErr) throw new Error((aErr || sErr).message);
 
+  // Foto de quem está escalado (27/08) — os cards de área do builder mostram
+  // avatar. Anexa ANTES da cobertura pra a foto viajar junto da pessoa em
+  // `itens[].pessoas` e em `sobrando`, sem o front precisar cruzar duas listas.
+  // ⚠️ Best-effort: `mapaDeFotos` não lança; sem foto a tela cai nas iniciais.
+  const fotos = await mapaDeFotos(supabase, (sched || []).map(s => s.volunteer_id));
+  const comFoto = (sched || []).map(s => ({
+    ...s,
+    foto_url: s.volunteer_id ? (fotos[s.volunteer_id] || null) : null,
+  }));
+
   // ⚠️ A conta em si é da régua PURA `utils/volCobertura` (no gate), a MESMA
   // que a visão matriz usa para N cultos. Reimplementar aqui faria a grade e a
   // tela do culto discordarem sobre o que ainda falta.
-  const { itens, sobrando, resumo } = montarCobertura(alvo || [], sched || []);
-  return { itens, sobrando, escalas: sched || [], resumo };
+  const { itens, sobrando, resumo } = montarCobertura(alvo || [], comFoto);
+  return { itens, sobrando, escalas: comFoto, resumo };
 }
 
 /**
@@ -5758,9 +6082,16 @@ router.get('/escala-matriz', async (req, res) => {
     };
 
     let alvoTotal = 0, preenchTotal = 0, faltamTotal = 0;
+    // Foto de quem está escalado (pedido do Matheus em 27/08: "na funcionalidade
+    // de montar escala tbm deve ter a foto dos voluntários").
+    // ⚠️ UMA consulta em lote pra toda a grade — por pessoa seriam centenas numa
+    // tela que se abre o tempo todo. Quem não tem foto DE VERDADE fica `null` e
+    // a tela desenha as iniciais; ver a régua em `utils/fotoVoluntario`.
+    const fotoPorVol = await mapaDeFotos(supabase, escalas.map(e => e.volunteer_id));
     const pessoaDaEscala = s => ({
       id: s.id, nome: s.volunteer_name, status: s.confirmation_status || 'pending',
       volunteer_id: s.volunteer_id, planning_center_person_id: s.planning_center_person_id,
+      foto_url: s.volunteer_id ? (fotoPorVol[s.volunteer_id] || null) : null,
     });
 
     for (const culto of cultos) {

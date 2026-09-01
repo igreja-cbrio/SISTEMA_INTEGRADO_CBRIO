@@ -31,16 +31,12 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { semComentariosJs } from './_semComentarios';
 
 const RAIZ = join(__dirname, '..', '..');
 const AUTH = join(RAIZ, 'backend', 'middleware', 'auth.js');
 
-/** Tira comentário de bloco e de linha, preservando `://` de URL. */
-export function semComentariosJs(src: string): string {
-  return String(src || '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-}
+
 
 /**
  * Chaves declaradas no ROUTE_MODULE_MAP.

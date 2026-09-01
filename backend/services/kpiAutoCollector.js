@@ -670,6 +670,88 @@ const COLLECTORS = {
     };
   },
 
+  // NEXT-05: frequência do Next · PESSOAS presentes no mês
+  // ⚠️⚠️ Lê a fonte VIVA por RPC (`fn_next_frequencia_periodo`), não
+  // `next_inscricoes.check_in_at` — essa camada morreu no cutover de 17/06/2026
+  // e a última presença nela é de 13/05. A régua vive na função SQL pra não
+  // existirem duas contagens de "frequência do Next" que possam divergir.
+  // ⚠️ Conta PESSOA distinta, não linha de presença: a mesma pessoa nos 2
+  // encontros do mês é UMA pessoa (lei da casa, a mesma da `vw_next_presenca_mes`).
+  'next.frequencia': async ({ inicio, fim }) => {
+    const { data, error } = await supabase.rpc('fn_next_frequencia_periodo', {
+      p_inicio: inicio,
+      p_fim: fim,
+    });
+    // ⚠️ Falha de consulta devolve null (= "não medido"), NUNCA 0: "ninguém foi
+    // ao Next" e "a consulta falhou" levam a decisões opostas.
+    if (error) {
+      console.warn('[kpi next.frequencia]', error.message);
+      return null;
+    }
+    const pessoas = Number(data || 0);
+    return {
+      valor: pessoas,
+      observacao: `${pessoas} pessoa(s) distinta(s) presente(s) em encontro do Next no periodo`,
+    };
+  },
+
+  // NEXT-06: % dos que FIZERAM o Next engajados em >=1 valor da Jornada
+  // ⚠️ É o "next × valor" REAL, diferente de NEXT-01/02/03, que medem a INTENÇÃO
+  // marcada no fim do encontro (`indicou_*`). Aqui o numerador é sinal de vida.
+  // ⚠️⚠️ Quem diz "fez o Next" é `vw_next_formado_pessoa`, a fonte ÚNICA (decisão
+  // de 14/08: 1 encontro basta). Os VALORES vêm de `vw_pessoas_papeis_mat`, a
+  // MESMA matview do Índice da Base — se um dia divergirem, é porque alguém criou
+  // uma segunda régua de "engajado". Conferido em 25/08: as duas concordam (884
+  // pessoas na matview × 888 na canônica; 56,9% × 56,6%).
+  // ⚠️ O denominador é ACUMULADO (quem fez o Next até o fim do período), porque
+  // engajamento é ESTADO ATUAL: recortar o denominador pelo mês compararia quem
+  // fez o Next em agosto com engajamento medido hoje — janela contra estoque.
+  'next.engajados_valor': async ({ fim }) => {
+    const formados = await fetchAll('vw_next_formado_pessoa', 'membro_id, formado_em',
+      q => q.lt('formado_em', fim));
+    const ids = [...new Set(formados.map(f => f.membro_id).filter(Boolean))];
+    const semCadastro = formados.filter(f => !f.membro_id).length;
+    if (!ids.length) return null;
+
+    // ⚠️ `.in()` em lotes de 200: lista longa estoura a URL do PostgREST e o erro
+    // voltaria como "não achou ninguém", que aqui viraria 0% em vez de erro.
+    // ⚠️ A COLUNA de pessoa na matview é `membresia_id`, não `membro_id` — pedir
+    // a errada faz o PostgREST recusar a query inteira.
+    let engajados = 0;
+    let medidos = 0;
+    for (let i = 0; i < ids.length; i += 200) {
+      const lote = ids.slice(i, i + 200);
+      const { data, error } = await supabase
+        .from('vw_pessoas_papeis_mat')
+        .select('membresia_id, valor_seguir, valor_conectar, valor_investir, valor_servir, valor_generosidade')
+        .in('membresia_id', lote);
+      if (error) {
+        console.warn('[kpi next.engajados_valor]', error.message);
+        return null;
+      }
+      medidos += (data || []).length;
+      engajados += (data || []).filter(p => p.valor_seguir || p.valor_conectar
+        || p.valor_investir || p.valor_servir || p.valor_generosidade).length;
+    }
+    if (!medidos) return null;
+
+    const pct = Math.round((engajados / medidos) * 1000) / 10;
+    // ⚠️ O denominador são os MEDÍVEIS, não todos os formados: quem fez o Next e
+    // não está na base viva (cadastro inativo/apagado) não pode ser contado como
+    // "não engajado" — isso deflacionaria o número. Quem ficou de fora é
+    // DECLARADO, senão cobertura parcial passa por total.
+    const foraBase = ids.length - medidos;
+    const fora = [
+      semCadastro ? `${semCadastro} sem cadastro ligado` : null,
+      foraBase > 0 ? `${foraBase} fora da base viva` : null,
+    ].filter(Boolean).join(' · ');
+    return {
+      valor: pct,
+      observacao: `${engajados} de ${medidos} pessoas que fizeram o Next tem sinal em >=1 valor `
+        + `(estado ATUAL; denominador acumulado ate ${fim})${fora ? ` · ${fora}` : ''}`,
+    };
+  },
+
   // ── Batismos por área (alimentados pela coluna area_kpi adicionada em
   //    20260514180000_batismo_area_kpi.sql). Filtra status='realizado' e
   //    usa COALESCE(data_batismo, created_at) pra contar a data real.

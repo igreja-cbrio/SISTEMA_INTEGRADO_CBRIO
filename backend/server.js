@@ -16,7 +16,7 @@ const path = require('path');
 const { requestContext } = require('./middleware/requestContext');
 const { systemJobTracking } = require('./middleware/systemJobTracking');
 const { setSystemJobOutcome } = require('./services/systemJobOutcome');
-const { recordServerError } = require('./services/serverErrorTelemetry');
+const { criarTelemetria500 } = require('./middleware/telemetria500');
 const { createCorsOriginValidator } = require('./utils/corsPolicy');
 const { createErrorHandler, requestRoute } = require('./middleware/errorHandler');
 
@@ -78,6 +78,11 @@ app.use(rateLimit({
     // levaria 429 — e 429 aqui é resposta perdida de quem preencheu 93 campos.
     // Limiter próprio (e medido) em routes/publicCenso.js.
     || req.path.startsWith('/api/public/censo')
+    // ⚠️ A BARRINHA da campanha sai do teto por IP: ela vive nas telas laterais
+    // do culto fazendo polling, e o efeito de 429 ali é a igreja inteira vendo
+    // um progresso congelado no domingo do lançamento. É leitura de uma view
+    // agregada — nenhum dado de pessoa, nenhum custo relevante.
+    || req.path.startsWith('/api/public/campanhas')
     // ⚠️ O REDIRECIONADOR DE QR sai do teto por IP pelo mesmo motivo, e aqui a
     // falha é a mais visível de todas: 429 no /r/ é o cartaz não abrindo nada.
     // A pessoa não vê "muitas requisições", vê um QR quebrado — e conclui que o
@@ -113,30 +118,10 @@ app.use(express.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody =
 if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
 app.use(systemJobTracking);
 
-// ── Telemetria de 500 (aba "Erros do servidor" do Feedback) ──
-// O error handler global só vê exceções NÃO tratadas; a maioria dos 500 reais
-// é respondida pela própria rota (res.status(500).json(...)) e ficava
-// invisível — "nenhum erro" na tela era falso. Este hook registra QUALQUER
-// resposta >= 500 no finish; o error handler marca res.locals pra não duplicar.
-app.use((req, res, next) => {
-  res.on('finish', () => {
-    if (res.statusCode < 500 || res.locals._erro500Registrado) return;
-    try {
-      void recordServerError({
-        user_id: req.user?.id || null,
-        user_email: req.user?.email || null,
-        metodo: req.method,
-        rota: requestRoute(req),
-        mensagem: `HTTP ${res.statusCode} respondido pela rota (sem exceção · ver logs da função)`,
-        status: res.statusCode,
-        request_id: req.requestId,
-        release: process.env.VERCEL_GIT_COMMIT_SHA || null,
-        environment: process.env.VERCEL_ENV || process.env.NODE_ENV || 'unknown',
-      }).catch((e) => console.warn('[app_erros_servidor]', e.message));
-    } catch (_) { /* tabela ausente / supabase off · ignora */ }
-  });
-  next();
-});
+// ── Telemetria de 500 (alimenta a aba "Erros do servidor" e o agente) ──
+// A régua vive em `middleware/telemetria500.js` pra poder ser TESTADA — ver o
+// cabeçalho de lá (caminho 3: dar motivo real ao agente de incidente).
+app.use(criarTelemetria500());
 
 // ── Routes ──
 app.use('/api/telemetry', require('./routes/systemTelemetry')); // Web Vitals anônimos, best-effort
@@ -149,6 +134,7 @@ app.use('/api/revisoes', require('./routes/revisoes'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/propostas', require('./routes/propostas')); // Ciclo anual de propostas (projetos/eventos/rotinas)
+app.use('/api/campanhas', require('./routes/campanhas')); // Campanhas de arrecadação (dígito verificador, cronograma, disparos)
 app.use('/api/tasks', require('./routes/tasks'));  // Kanban de tarefas transversal (Projetos/Eventos) · guard por módulo dentro do router
 app.use('/api/expansion', require('./routes/expansion'));
 app.use('/api/strategic', require('./routes/strategic'));
@@ -213,6 +199,11 @@ app.use('/api/public/vol-email', require('./routes/publicVolEmail'));
 // é o totem do lounge (1 IP, muitas inscrições num domingo cheio). Usa o limiter
 // próprio generoso do routes/publicGrupos.js (mesma lógica do NPS acima).
 app.use('/api/public/grupos', require('./routes/publicGrupos'));
+// AUTOATENDIMENTO de check-in do evento montado ANTES do publicLimiter
+// estrito: na porta do evento a fila inteira sai por UM IP do wi-fi da igreja,
+// e o teto de 10/15min travaria na terceira pessoa (lição do censo · 04/08).
+// Limiter próprio, em dois baldes, dentro do arquivo da rota.
+app.use('/api/public/evento-checkin', require('./routes/publicEventoCheckin'));
 // Eventos externos (Celebra etc.) montado ANTES do publicLimiter estrito:
 // evento presencial em massa = 1 IP de Wi-Fi; a 31ª pessoa era bloqueada.
 // Sem teto prático de inscrições (D9) · limiter próprio generoso no router.
@@ -247,6 +238,12 @@ app.use('/api/public/generosidade', require('./routes/publicGenerosidade'));
 // vivem nos dois routers.
 app.use('/api/public/decisao-culto', require('./routes/publicDecisaoCulto'));
 app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
+// ⚠️ CAMPANHAS montada ANTES do publicLimiter estrito: a barrinha de progresso
+// vai para as TELAS LATERAIS DO CULTO e faz polling, com a igreja inteira atrás
+// do mesmo NAT — sob 30/15min por IP ela congelaria no meio do lançamento, e
+// barrinha travada no domingo do lançamento é o pior momento possível pra ela
+// falhar. Limiter próprio generoso em routes/publicCampanha.js.
+app.use('/api/public/campanhas', require('./routes/publicCampanha'));
 app.use('/api/public', publicLimiter);
 
 app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));
