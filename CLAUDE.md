@@ -14746,6 +14746,14 @@ canonicalizado por `canonizarBairro` — lei de 24/08).
   01/09): decisão do Marcos — só liga quando o número oficial da igreja entrar
   na plataforma, pelo switch em Comunicação → Disparos → Automáticas (sem PR).
   O template ele mesmo cria na Meta.
+  ⚠️⚠️ **E é GATED NO OPT-IN da tela 1**: o classificador da Meta acusou o texto
+  como MARKETING ("boas-vindas" está na lista de exemplos de Marketing deles),
+  e Marketing exige opt-in — a prova é o item `whatsapp` de
+  `inscricao_consentimentos`, marcado pela própria pessoa. Sem a caixa, quem
+  fala com ela é o responsável, do WhatsApp dele. Criar o template como
+  UTILITY com o aviso "categoria não corresponde" = rejeição automática; o
+  caminho recomendado ao Marcos (01/09) foi aceitar Marketing e manter o texto
+  quente que os líderes aprovaram.
 - Aviso interno: mesmos destinatários do gêmeo manual
   (`POST /kpis/cultos/:id/decisoes-pessoas`) + notificar módulo do
   encaminhamento (grupos/voluntariado) e integracao (batismo).

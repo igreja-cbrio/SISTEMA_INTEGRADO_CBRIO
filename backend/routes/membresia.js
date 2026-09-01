@@ -2861,7 +2861,13 @@ router.post('/totem/novo-convertido', async (req, res) => {
     // Marcos (01/09) — fica DESLIGADO até o número oficial da igreja entrar na
     // plataforma. O gate test:disparo-interruptor trava a tríade
     // remetente × catálogo × PATCH neste id.
-    if (!jaRegistrado && !(await disparoDesligado('convertido_boas_vindas'))) {
+    // ⚠️⚠️ GATED NO OPT-IN (2ª rodada de 01/09): o classificador da Meta acusou
+    // o texto como MARKETING ("boas-vindas" está na lista de exemplos de
+    // Marketing deles), e template de Marketing EXIGE opt-in. A caixa é marcada
+    // pela própria pessoa na tela 1 e a prova fica em inscricao_consentimentos
+    // (item `whatsapp`). Sem a caixa, ninguém fica sem contato — quem fala com
+    // ela é o responsável escolhido na tela 3, do WhatsApp dele.
+    if (!jaRegistrado && optin && !(await disparoDesligado('convertido_boas_vindas'))) {
       try {
         const { enfileirar } = require('../services/whatsappFila');
         enfileirar({

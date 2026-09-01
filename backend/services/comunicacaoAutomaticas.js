@@ -526,9 +526,11 @@ const CATALOGO = [
     id: 'convertido_boas_vindas',
     nome: 'Boas-vindas ao novo convertido (totem)',
     quando: 'Reativo · na hora em que a pessoa registra a decisão no fluxo "Novo convertido" do totem',
-    regra: 'Quem registra a própria decisão no totem — 1 mensagem por pessoa (só no primeiro '
-      + 'registro do dia; a retentativa do quiosque não duplica). A mensagem cita quem vai '
-      + 'contatar (o responsável escolhido na tela da equipe).',
+    regra: 'Quem registra a própria decisão no totem E marcou o opt-in de WhatsApp na tela 1 '
+      + '(o template pode ser da categoria Marketing pela régua da Meta — "boas-vindas" é '
+      + 'Marketing pra eles, e Marketing exige opt-in; a prova fica em inscricao_consentimentos). '
+      + '1 mensagem por pessoa (só no primeiro registro do dia; a retentativa do quiosque não '
+      + 'duplica). A mensagem cita quem vai contatar (o responsável escolhido na tela da equipe).',
     fonte: 'POST /api/membresia/totem/novo-convertido → routes/membresia.js',
     contexto: 'cuidados.convertido_boas_vindas',
     // ⚠️ `envTemplate` NULL de propósito: o nome do template é FIXO no código
