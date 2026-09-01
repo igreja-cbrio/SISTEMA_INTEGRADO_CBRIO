@@ -65,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **136** arquivos, **126** com teste.
+`backend/utils/` tem **138** arquivos, **128** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -103,7 +103,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/censoPerguntas.js` | `src/test/censoFormEspelho.test.ts` `src/test/censoPerguntas.test.ts` `src/test/censoQuestionario2026.test.ts` |
 | `backend/utils/censoPrefill.js` | `src/test/censoPrefill.test.ts` |
 | `backend/utils/censoRespostaToken.js` | `src/test/censoRespostaToken.test.ts` |
-| `backend/utils/censoToken.js` | `src/test/censoRespostaToken.test.ts` `src/test/censoToken.test.ts` |
+| `backend/utils/censoToken.js` | `src/test/censoRespostaToken.test.ts` `src/test/censoToken.test.ts` `src/test/doacaoPrefill.test.ts` |
 | `backend/utils/censoVocabulario.js` | — |
 | `backend/utils/checkinAutoatendimento.js` | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/checkoutExterno.js` | `src/test/checkoutExterno.test.ts` |
@@ -125,6 +125,8 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/diagnosticoAutonomia.js` | `src/test/diagnosticoAutonomia.test.ts` |
 | `backend/utils/digitoCampanha.js` | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/divisorMandala.js` | `src/test/divisorMandala.test.ts` |
+| `backend/utils/doacaoPrefill.js` | `src/test/doacaoPrefill.test.ts` |
+| `backend/utils/doacaoToken.js` | `src/test/doacaoPrefill.test.ts` |
 | `backend/utils/dsOnline.js` | `src/test/dsOnline.test.ts` |
 | `backend/utils/entradaGrupoApp.js` | `src/test/entradaGrupoApp.test.ts` |
 | `backend/utils/escalaToken.js` | `src/test/escalaToken.test.ts` |
