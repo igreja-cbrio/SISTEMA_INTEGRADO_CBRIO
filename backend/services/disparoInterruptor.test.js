@@ -38,3 +38,34 @@ const { CONTEXTO } = require('./escalaAviso');
 const itemEscala = CATALOGO.find(i => i.id === ESCALA_ID);
 assert.equal(itemEscala.contexto, CONTEXTO,
   `o contexto do catálogo ("${itemEscala.contexto}") tem que ser o mesmo que o remetente grava na fila ("${CONTEXTO}")`);
+
+// ── O remetente do TOTEM (novo convertido · 01/09) · checagem por TEXTO ─────
+// routes/membresia.js carrega o Express/Supabase inteiros, então a conferência
+// é ESTÁTICA — com o comentário removido dos DOIS lados (armadilha de 06/08:
+// a própria documentação do conserto cita o padrão e derrubaria o portão), e
+// `[^\n]*` em vez de `.*$` (em checkout Windows a linha termina em \r, que o
+// `.` do JS não casa — falso-vermelho do test:matcher-insert, 17/08).
+const fs = require('node:fs');
+const path = require('node:path');
+const semComentarios = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .split('\n')
+  .map((l) => l.replace(/(^|[^:"'`])\/\/[^\n]*$/, '$1'))
+  .join('\n');
+
+const TOTEM_ID = 'convertido_boas_vindas';
+const membresiaSrc = semComentarios(
+  fs.readFileSync(path.join(__dirname, '..', 'routes', 'membresia.js'), 'utf8'),
+);
+
+assert.ok(membresiaSrc.includes(`disparoDesligado('${TOTEM_ID}')`),
+  `o remetente do totem (routes/membresia.js) não consulta disparoDesligado('${TOTEM_ID}') — o switch da tela não desligaria nada (o wa_templates.ativo de novo)`);
+
+assert.ok(IDS_CATALOGO.includes(TOTEM_ID),
+  `"${TOTEM_ID}" não está no catálogo (${IDS_CATALOGO.join(', ')}) — o switch não apareceria na tela`);
+
+const itemTotem = CATALOGO.find((i) => i.id === TOTEM_ID);
+assert.ok(membresiaSrc.includes(`contexto: '${itemTotem.contexto}'`),
+  `o contexto do catálogo ("${itemTotem.contexto}") tem que ser o que o remetente grava na fila — sem isso o histórico do item vem vazio`);
+
+console.log('disparoInterruptor: OK');

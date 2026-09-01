@@ -57,7 +57,11 @@ interface MemberData {
 const PIN_KEY = 'cbrio-totem-pin';
 // Flags one-shot gravadas pelo /cadastro-membresia?from=totem (consumidas no mount):
 // RESUME = token do QR recém-criado → reabre a sessão da própria pessoa;
-// UNLOCK = só pula a tela de PIN do operador e cai na tela inicial.
+// UNLOCK = pulava a tela de PIN da entrada — SEM FUNÇÃO desde 01/09 (o PIN saiu
+// da ENTRADA por decisão do Marcos: recarregar a página no meio do culto
+// travava o totem até alguém da equipe digitar, e entrar no modo quiosque não
+// é privilégio — o privilégio é SAIR, e a saída continua exigindo o PIN).
+// A chave segue sendo consumida pra não sobrar lixo de quem ainda a grava.
 const RESUME_KEY = 'cbrio-totem-resume';
 const UNLOCK_KEY = 'cbrio-totem-unlocked';
 
@@ -105,7 +109,6 @@ export default function TotemMembro() {
   const [storedPin, setStoredPin] = useState('');
   const [pinA, setPinA] = useState('');
   const [pinB, setPinB] = useState('');
-  const [pinInput, setPinInput] = useState('');
   const [exitInput, setExitInput] = useState('');
   const [showPin, setShowPin] = useState(false);
   const [pinError, setPinError] = useState('');
@@ -129,21 +132,23 @@ export default function TotemMembro() {
     const p = localStorage.getItem(PIN_KEY) || '';
     setStoredPin(p);
     let resume: string | null = null;
-    let unlocked = false;
     try {
       resume = sessionStorage.getItem(RESUME_KEY);
-      unlocked = sessionStorage.getItem(UNLOCK_KEY) === '1';
       sessionStorage.removeItem(RESUME_KEY);
       sessionStorage.removeItem(UNLOCK_KEY);
     } catch { /* sem sessionStorage — segue o fluxo normal */ }
     if (!p) { setState('setup'); return; }
     if (resume) {
       // Volta do cadastro feito no próprio totem: reabre a sessão da pessoa
-      // sem pedir o PIN do operador (o token é one-shot e acabou de ser criado).
+      // (o token é one-shot e acabou de ser criado).
       handleQrTokenRef.current?.(resume);
       return;
     }
-    setState(unlocked ? 'idle' : 'locked');
+    // ⚠️ Com PIN já criado, a abertura cai DIRETO na tela inicial (decisão do
+    // Marcos · 01/09): a tela de PIN na entrada só travava o totem depois de um
+    // reload/queda de energia. O PIN continua protegendo a SAÍDA (exit_confirm)
+    // — é ela que impede alguém do hall de cair na sessão logada do quiosque.
+    setState('idle');
   }, []);
 
   useEffect(() => {
@@ -325,15 +330,6 @@ export default function TotemMembro() {
     setState('idle');
   };
 
-  const handleActivate = () => {
-    if (pinInput === storedPin) {
-      setPinInput(''); setPinError(''); setState('idle');
-    } else {
-      setPinError('PIN incorreto'); setPinInput('');
-      setTimeout(() => setPinError(''), 2000);
-    }
-  };
-
   const handleExit = () => {
     if (exitInput === storedPin) {
       setState('idle'); navigate('/dashboard');
@@ -485,32 +481,12 @@ export default function TotemMembro() {
     </div>
   );
 
-  // ── Locked ────────────────────────────────────────────────────────────────
+  // ── Boot ──────────────────────────────────────────────────────────────────
+  // 'locked' é só o tick inicial, antes de o efeito de init decidir setup/idle.
+  // Desde 01/09 o PIN NÃO é pedido na entrada (decisão do Marcos) — ele segue
+  // protegendo a SAÍDA (exit_confirm) e a primeira configuração (setup).
   if (state === 'locked') return (
-    <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-6">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="text-center">
-          <Lock className="h-10 w-10 mx-auto text-white/20 mb-3" />
-          <img src="/logo-cbrio-text.png" alt="CBRio" className="h-9 mx-auto object-contain brightness-0 invert mb-2" />
-          <h1 className="text-xl font-bold">Modo Totem</h1>
-          <p className="text-white/50 text-sm mt-1">Digite o PIN para ativar</p>
-        </div>
-        <Input
-          type="password"
-          inputMode="numeric"
-          placeholder="PIN"
-          value={pinInput}
-          onChange={e => setPinInput(e.target.value.replace(/\D/g, ''))}
-          onKeyDown={e => e.key === 'Enter' && handleActivate()}
-          autoFocus
-          className="bg-white/10 border-white/20 text-white placeholder:text-white/30 text-center text-2xl tracking-widest"
-          maxLength={8}
-        />
-        {pinError && <p className="text-red-400 text-sm text-center">{pinError}</p>}
-        <Button onClick={handleActivate} className="w-full bg-[#00B39D] hover:bg-[#00B39D]/90">Entrar</Button>
-        <button onClick={() => navigate('/dashboard')} className="w-full text-center text-white/30 text-sm hover:text-white/60">Voltar ao sistema</button>
-      </div>
-    </div>
+    <div className="min-h-screen bg-gray-950" />
   );
 
   // ── Exit confirm ──────────────────────────────────────────────────────────
@@ -1597,7 +1573,9 @@ function NovoConvertidoFlow({ onExit, onActivity }: { onExit: () => void; onActi
   };
 
   const telDigits = form.telefone.replace(/\D/g, '');
-  const dadosOk = form.nome.trim().length >= 2 && telDigits.length >= 10 && !!form.data_nascimento && aceiteLgpd;
+  // Nascimento é OPCIONAL neste fluxo (pedido do Marcos · 01/09) — não trava o
+  // continuar; quando vem, ajuda o dedup futuro.
+  const dadosOk = form.nome.trim().length >= 2 && telDigits.length >= 10 && aceiteLgpd;
 
   const togglePorta = (p: string) => {
     setPortas((prev) => {
@@ -1735,7 +1713,7 @@ function NovoConvertidoFlow({ onExit, onActivity }: { onExit: () => void; onActi
             <input className={inputCls} placeholder="Seu WhatsApp — (21) 99999-9999" inputMode="tel" value={form.telefone}
               onChange={(e) => setForm((f) => ({ ...f, telefone: maskTel(e.target.value) }))} />
             <div>
-              <p className="text-white/40 text-xs mb-1.5">Data de nascimento</p>
+              <p className="text-white/40 text-xs mb-1.5">Data de nascimento <span className="text-white/25">(se quiser)</span></p>
               <BirthDatePicker value={form.data_nascimento}
                 onChange={(v) => setForm((f) => ({ ...f, data_nascimento: v }))}
                 className={`${inputCls} [color-scheme:dark]`} />
