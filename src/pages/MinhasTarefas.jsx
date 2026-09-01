@@ -9,6 +9,7 @@ import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { tarefas as api } from '../api';
+import { trocarVizinho, aplicarNovaOrdem } from '../lib/ordenarTarefas';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -21,7 +22,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs';
 import {
   ListChecks, Plus, Pencil, Trash2, Loader2, CalendarDays, KanbanSquare,
-  List as ListIcon, ChevronLeft, ChevronRight, Clock, Repeat,
+  List as ListIcon, ChevronLeft, ChevronRight, Clock, Repeat, ArrowUp, ArrowDown
 } from 'lucide-react';
 
 const C = { primary: '#00B39D' };
@@ -70,6 +71,31 @@ export default function MinhasTarefas() {
     onError: (e) => toast.error(e.message || 'Erro ao atualizar'),
   });
 
+  // ⚠️ Manda o GRUPO INTEIRO na ordem nova, não "sobe esta uma": metade das
+  // tarefas tem `ordem` nula, e um swap teria que inventar valor pra vizinha —
+  // o resultado dependeria de quem foi movida primeiro. O servidor escreve
+  // 0..n-1 e o grupo fica consistente numa tacada.
+  const reordenarMut = useMutation({
+    mutationFn: (ids) => api.reordenar(ids),
+    onSuccess: invalidar,
+    onError: (e) => {
+      // Volta ao que o servidor tem: deixar a tela na ordem nova depois de a
+      // gravação falhar faria a pessoa achar que salvou.
+      invalidar();
+      toast.error(e?.codigo === 'sem_coluna'
+        ? 'Ordenação ainda não disponível — aguarde o deploy terminar'
+        : (e.message || 'Erro ao salvar a nova ordem'));
+    },
+  });
+
+  function reordenarGrupo(itensDoGrupo, idx, direcao) {
+    const ids = trocarVizinho(itensDoGrupo.map(t => t.id), idx, direcao);
+    if (!ids) return;
+    // Otimista: o clique tem que mover na hora. O `onError` desfaz.
+    qc.setQueryData(['tarefas'], (prev) => (Array.isArray(prev) ? aplicarNovaOrdem(prev, ids) : prev));
+    reordenarMut.mutate(ids);
+  }
+
   const excluirMut = useMutation({
     mutationFn: ({ id, serie }) => api.remove(id, serie),
     onSuccess: () => { toast.success('Tarefa excluída'); setExcluir(null); invalidar(); },
@@ -109,7 +135,7 @@ export default function MinhasTarefas() {
       {isLoading ? (
         <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       ) : view === 'lista' ? (
-        <VistaLista itens={itens} onToggle={(t) => statusMut.mutate({ id: t.id, status: t.status === 'concluida' ? 'a_fazer' : 'concluida' })} onEditar={setModal} onExcluir={setExcluir} />
+        <VistaLista itens={itens} onToggle={(t) => statusMut.mutate({ id: t.id, status: t.status === 'concluida' ? 'a_fazer' : 'concluida' })} onEditar={setModal} onExcluir={setExcluir} onReordenar={reordenarGrupo} />
       ) : view === 'kanban' ? (
         <VistaKanban itens={itens} onMover={(id, status) => statusMut.mutate({ id, status })} onEditar={setModal} />
       ) : (
@@ -148,7 +174,7 @@ export default function MinhasTarefas() {
 }
 
 // ── Linha de tarefa (lista) ──────────────────────────────────────────────────
-function TarefaLinha({ t, onToggle, onEditar, onExcluir }) {
+function TarefaLinha({ t, onToggle, onEditar, onExcluir, onMover, podeSubir, podeDescer }) {
   const atrasada = t.status !== 'concluida' && t.data && t.data < hojeStr();
   return (
     <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 group">
@@ -171,6 +197,21 @@ function TarefaLinha({ t, onToggle, onEditar, onExcluir }) {
         </div>
       </div>
       <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+        {/* ⚠️ Move DENTRO do grupo de prazo. Nas pontas o botão fica desabilitado
+            em vez de sumir: botão que aparece e some conforme a posição faz a
+            linha "pular" debaixo do cursor. */}
+        {onMover && (
+          <>
+            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" disabled={!podeSubir}
+                    onClick={() => onMover(t, -1)} title="Mover para cima">
+              <ArrowUp className="h-3.5 w-3.5" />
+            </Button>
+            <Button variant="ghost" size="sm" className="h-7 w-7 p-0" disabled={!podeDescer}
+                    onClick={() => onMover(t, 1)} title="Mover para baixo">
+              <ArrowDown className="h-3.5 w-3.5" />
+            </Button>
+          </>
+        )}
         <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => onEditar(t)} title="Editar">
           <Pencil className="h-3.5 w-3.5" />
         </Button>
@@ -183,7 +224,7 @@ function TarefaLinha({ t, onToggle, onEditar, onExcluir }) {
 }
 
 // ── Lista agrupada por prazo ─────────────────────────────────────────────────
-function VistaLista({ itens, onToggle, onEditar, onExcluir }) {
+function VistaLista({ itens, onToggle, onEditar, onExcluir, onReordenar }) {
   const hoje = hojeStr();
   const fimSemana = ymd(new Date(Date.now() + 6 * 86400000));
   const grupos = useMemo(() => {
@@ -214,7 +255,17 @@ function VistaLista({ itens, onToggle, onEditar, onExcluir }) {
             {g.titulo} ({g.itens.length})
           </h2>
           <div className="space-y-1.5">
-            {g.itens.map(t => <TarefaLinha key={t.id} t={t} onToggle={onToggle} onEditar={onEditar} onExcluir={onExcluir} />)}
+            {g.itens.map((t, idx) => (
+              <TarefaLinha
+                key={t.id} t={t}
+                onToggle={onToggle} onEditar={onEditar} onExcluir={onExcluir}
+                // ⚠️ Concluídas não reordenam: aquele grupo é histórico (só as
+                // 30 últimas, já invertidas) e a posição ali não significa nada.
+                onMover={g.titulo === 'Concluídas' ? null : (tar, d) => onReordenar(g.itens, idx, d)}
+                podeSubir={idx > 0}
+                podeDescer={idx < g.itens.length - 1}
+              />
+            ))}
           </div>
         </div>
       ))}

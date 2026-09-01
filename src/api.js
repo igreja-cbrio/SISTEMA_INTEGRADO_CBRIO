@@ -4136,6 +4136,8 @@ export const tarefas = {
   create: (data) => post('/tarefas', data),
   update: (id, data) => put(`/tarefas/${id}`, data),
   remove: (id, serie = false) => del(`/tarefas/${id}${serie ? '?serie=1' : ''}`),
+  // Manda o GRUPO INTEIRO na ordem nova — ver o comentario do POST /reordenar.
+  reordenar: (ids) => post('/tarefas/reordenar', { ids }),
 };
 
 export const processos = {
