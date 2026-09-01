@@ -65,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **139** arquivos, **129** com teste.
+`backend/utils/` tem **140** arquivos, **130** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -92,6 +92,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/cadastrosKids.js` | `src/test/cadastrosKids.test.ts` |
 | `backend/utils/campanhaAgradecimento.js` | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/campanhaDoacao.js` | `src/test/campanhaDoacao.test.ts` |
+| `backend/utils/campanhaIdentidade.js` | `src/test/campanhaIdentidade.test.ts` |
 | `backend/utils/campanhaProgresso.js` | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/campanhaPublico.js` | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/campoKey.js` | `src/test/campoKey.test.ts` |

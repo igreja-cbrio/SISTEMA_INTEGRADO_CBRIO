@@ -47,6 +47,7 @@ Guard: `authorizeModule('campanhas', 1 | 2 | 3 | 4)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/campanhaIdentidade.js`
 - `backend/utils/campanhaPublico.js`
 - `backend/utils/digitoCampanha.js`
 - `backend/utils/supabase.js`
