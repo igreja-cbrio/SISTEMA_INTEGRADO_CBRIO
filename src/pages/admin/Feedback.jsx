@@ -39,7 +39,7 @@ function quando(iso) {
 }
 
 export default function FeedbackAdmin() {
-  const { isAdmin } = useAuth();
+  const { isSuperAdmin } = useAuth();
   const [aba, setAba] = useState('feedback');
   const [itens, setItens] = useState([]);
   const [erros, setErros] = useState([]);
@@ -80,7 +80,16 @@ export default function FeedbackAdmin() {
     }
   }
 
-  if (!isAdmin) return <Navigate to="/dashboard" replace />;
+  // ⚠️⚠️ A régua é SUPERADMIN, não admin — alinhado com quem manda de verdade:
+  // a rota é `SuperAdminGuard` (App.tsx) e `/api/feedback` exige
+  // `requireSuperAdmin`. O `isAdmin` que estava aqui não protegia NADA que o
+  // guard da rota já não protegesse (admin comum nem chega) e só EXCLUÍA
+  // superadmin sem role admin — medido em 01/09/2026: 2 superadmins ativos com
+  // role `assistente` eram jogados pro /dashboard sem uma palavra de
+  // explicação, e passariam a ver um link no /sistema que os expulsava.
+  // Isto NÃO amplia acesso: quem não é superadmin para no guard da rota e no
+  // backend.
+  if (!isSuperAdmin) return <Navigate to="/dashboard" replace />;
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '24px 20px' }}>
