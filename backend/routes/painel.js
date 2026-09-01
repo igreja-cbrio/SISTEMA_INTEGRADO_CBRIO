@@ -2215,7 +2215,8 @@ router.get('/monitoramento-okr', async (req, res) => {
       const kNome = (v) => String(v || '').trim().toLowerCase() || null;
       const kTel = (v) => { const d = dig(v); return d.length >= 10 ? d.slice(-8) : null; };
       const kPri = (v) => kNome(v)?.split(' ')[0] || null;
-      const CONTATO_FEITO = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
+      // ⚠️ Espelho da régua de routes/cuidados.js (com 'contactada' desde 2026-09-01).
+      const CONTATO_FEITO = new Set(['contactada', 'respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
 
       const convs = await fetchPaged('cui_convertidos', 'membro_id, cpf, nome, telefone, primeiro_contato_em, primeiro_contato_status',
         (q) => q.is('deleted_at', null));

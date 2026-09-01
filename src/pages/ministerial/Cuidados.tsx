@@ -31,7 +31,7 @@ import { opcoesAno, ehAno, anoDe } from '../../lib/janelaPeriodo';
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f' };
 // Cor por status do 1º contato (dashboard · Próximos passos)
 const PP_COR: Record<string, string> = {
-  atendido_respondido: '#10b981', nao_respondeu: '#f59e0b', nao_atendido: '#64748b',
+  atendido_respondido: '#10b981', contactada: '#3b82f6', nao_respondeu: '#f59e0b', nao_atendido: '#64748b',
   numero_errado: '#94a3b8', pendente: '#ef476f',
 };
 
@@ -507,15 +507,21 @@ const DIRECIONAMENTO_LABEL: Record<string, string> = {
   batismo: 'Batismo',
 };
 
-// Status do PRIMEIRO CONTATO · 4 opções (decisão Marcos · 2026-06-30):
-// Não respondeu · Não atendido · Número errado · Atendido e respondido.
-// "Não respondeu/Não atendido/Atendido e respondido" contam como 1º CONTATO FEITO
-// (a tentativa foi realizada). "Número errado" também conta como contato RESOLVIDO
-// (a equipe tentou; o número é que estava errado) → entra no "Contato feito", mas fica
-// FORA do denominador de "Atendido e respondido" pra não penalizar a equipe por um
-// número errado. A meta é 100% contatado → o que falta pra 100% é quem está SEM
-// marcação ("—"). Ordem do pior desfecho ao melhor.
+// Status do PRIMEIRO CONTATO · 5 opções (Marcos · 2026-06-30 · "Contactada" em 2026-09-01):
+// Contactada · Não respondeu · Não atendido · Número errado · Atendido e respondido.
+// "Contactada" (pedido do Marcelo · 01/09): a mensagem FOI enviada e a pessoa ainda não
+// respondeu — é o estado real do dia seguinte ao culto. Antes ele só marcava quando havia
+// resposta, então o carimbo de 1º contato saía dias depois e bagunçava o KPI de contato ≤3d.
+// Marcar "Contactada" carimba primeiro_contato_em NA HORA (conta como contato FEITO);
+// quando a pessoa responder, troca pra "Atendido e respondido"/"Não respondeu" SEM
+// re-carimbar a data (o setPcStatus só carimba onde está vazio).
+// "Número errado" conta como contato RESOLVIDO (a equipe tentou; o número é que estava
+// errado) → entra no "Contato feito", mas fica FORA do denominador de "Atendido e
+// respondido". A meta é 100% contatado → o que falta pra 100% é quem está SEM marcação
+// ("—"). Ordem: do estado inicial ao melhor desfecho.
+// ⚠️ 'contactada' exige a migration 20260901130000 (CHECK vivo recusa valor novo).
 const PCONTATO_OPCOES: { v: string; label: string; positivo?: boolean }[] = [
+  { v: 'contactada',          label: 'Contactada (aguardando resposta)' },
   { v: 'nao_respondeu',       label: 'Não respondeu' },
   { v: 'nao_atendido',        label: 'Não atendido' },
   { v: 'numero_errado',       label: 'Número errado' },
@@ -524,6 +530,7 @@ const PCONTATO_OPCOES: { v: string; label: string; positivo?: boolean }[] = [
 // Labels de TODOS os status (inclui os legados da planilha antiga já importada) ·
 // usado só pra EXIBIR registros que vieram com esses valores (não são mais oferecidos).
 const PCONTATO_LABEL: Record<string, string> = {
+  contactada: 'Contactada (aguardando resposta)',
   nao_respondeu: 'Não respondeu',
   nao_atendido: 'Não atendido',
   atendido_respondido: 'Atendido e respondido',
@@ -535,7 +542,9 @@ const PCONTATO_LABEL: Record<string, string> = {
 // Status que indicam que o PRIMEIRO CONTATO foi feito (a pessoa recebeu a mensagem,
 // independente da resposta) → balão "Contato" verde. "sem_retorno" e "numero_errado"
 // (e vazio) NÃO contam como contato feito.
-const CONTATO_FEITO = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido']);
+// ⚠️ ESPELHOS deste Set no backend: routes/cuidados.js · routes/painel.js ·
+// routes/nextConvite.js · services/agentePrimeiroContato.js — mudou aqui, muda lá.
+const CONTATO_FEITO = new Set(['contactada', 'respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido']);
 
 // Semáforo da jornada (contato/batismo/Next) · espelha o JornadaConvertidos
 const JORNADA_ST: Record<string, { label: string; color: string }> = {
@@ -554,6 +563,43 @@ function JornadaPill({ label, m }: { label: string; m: any }) {
       style={{ background: st.color + '20', color: st.color, border: `1px solid ${st.color}40` }}>
       {label}{m?.feito ? ' ✓' : ''}
     </span>
+  );
+}
+
+// ── Culto do convertido (pedido do Marcelo · 2026-09-01) ──
+// A coluna diz a ORIGEM (Online × Presencial · vem de cui_convertidos.area) e a
+// bolha ao lado do nome diz O CULTO (Quarta/AMI/Bridge/Sede), derivado do NOME do
+// culto (culto_nome, anexado pelo GET /cuidados/convertidos via culto_id).
+// ⚠️ Só 159 dos 436 registros vivos têm culto_id (o trigger passou a gravá-lo
+// depois) — os antigos caem na `area` (sede/ami/bridge/online). Sem sinal nenhum,
+// a bolha simplesmente não aparece (nunca chutar culto).
+const CULTO_COR: Record<string, string> = {
+  Quarta: '#8b5cf6', AMI: '#f59e0b', Bridge: '#ec4899', Sede: '#00B39D', Online: '#3b82f6',
+};
+function cultoDoConvertido(c: any): { origem: 'Online' | 'Presencial'; culto: string | null } {
+  const area = String(c.area || '').toLowerCase();
+  const nome = String(c.culto_nome || '').toLowerCase();
+  let culto: string | null = null;
+  if (/quarta/.test(nome)) culto = 'Quarta';
+  else if (/bridge/.test(nome)) culto = 'Bridge';
+  else if (/\bami\b/.test(nome)) culto = 'AMI';
+  else if (nome) culto = 'Sede';
+  else if (area === 'ami') culto = 'AMI';
+  else if (area === 'bridge') culto = 'Bridge';
+  else if (area === 'online') culto = 'Online';
+  else if (area === 'sede') culto = 'Sede';
+  return { origem: area === 'online' ? 'Online' : 'Presencial', culto };
+}
+function CultoBolha({ c }: { c: any }) {
+  const { culto } = cultoDoConvertido(c);
+  if (!culto) return null;
+  const cor = CULTO_COR[culto] || '#94a3b8';
+  return (
+    <span
+      title={c.culto_nome ? `Culto: ${c.culto_nome}` : `Área: ${culto}`}
+      className="text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap align-middle"
+      style={{ background: cor + '20', color: cor, border: `1px solid ${cor}40` }}
+    >{culto}</span>
   );
 }
 
@@ -2492,7 +2538,7 @@ export default function Cuidados() {
                   <TableHead>Responsável</TableHead>
                   <TableHead>Direcionamento</TableHead>
                   <TableHead>Jornada</TableHead>
-                  <TableHead>Tags</TableHead>
+                  <TableHead>Culto</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
@@ -2502,7 +2548,6 @@ export default function Cuidados() {
                     {convertidos.length === 0 ? 'Nenhum convertido.' : 'Nenhum resultado nos filtros atuais.'}
                   </TableCell></TableRow>
                 ) : convertidosFiltrados.map(c => {
-                  const tags: string[] = Array.isArray(c.tags) ? c.tags : [];
                   return (
                     <TableRow key={c.id}>
                       <TableCell className="font-medium">
@@ -2511,7 +2556,10 @@ export default function Cuidados() {
                           onClick={() => setDetailConvert(c)}
                           className="text-left hover:text-primary transition-colors"
                         >
-                          <div className="underline-offset-2 hover:underline">{c.nome}</div>
+                          <div className="underline-offset-2 hover:underline flex items-center gap-1.5 flex-wrap">
+                            <span>{c.nome}</span>
+                            <CultoBolha c={c} />
+                          </div>
                           {c.telefone && <div className="text-xs text-muted-foreground">{c.telefone}</div>}
                         </button>
                       </TableCell>
@@ -2606,19 +2654,19 @@ export default function Cuidados() {
                         })()}
                       </TableCell>
                       <TableCell>
-                        {tags.length === 0 ? <span className="text-xs text-muted-foreground">—</span> : (
-                          <div className="flex flex-wrap gap-1">
-                            {tags.slice(0, 3).map(t => (
-                              <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{
-                                background: (TAG_COLORS[t] || '#94a3b8') + '20',
-                                color: TAG_COLORS[t] || '#94a3b8',
-                              }}>{TAG_LABELS[t] || t}</span>
-                            ))}
-                            {tags.length > 3 && (
-                              <span className="text-[10px] text-muted-foreground">+{tags.length - 3}</span>
-                            )}
-                          </div>
-                        )}
+                        {/* Origem da decisão (pedido do Marcelo · 01/09): Online × Presencial.
+                            O culto em si (Quarta/AMI/Bridge/Sede) é a bolha ao lado do nome.
+                            As TAGS continuam existindo (modal de edição + detalhe) — só a coluna saiu. */}
+                        {(() => {
+                          const { origem } = cultoDoConvertido(c);
+                          const cor = origem === 'Online' ? '#3b82f6' : '#00B39D';
+                          return (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap"
+                              style={{ background: cor + '20', color: cor, border: `1px solid ${cor}40` }}>
+                              {origem}
+                            </span>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap">
                         {(() => {

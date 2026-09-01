@@ -15,7 +15,8 @@ const { supabase } = require('../utils/supabase');
 // que estava errado · Marcos 2026-07-01.) O helper contatoFoiFeito FALTAVA —
 // o cron /cron/enfileirar quebrava com "contatoFoiFeito is not defined" todo
 // dia desde 04/07: o agente nunca enfileirou nada em produção.
-const CONTATO_FEITO_STATUS = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
+// ⚠️ Espelho da régua de routes/cuidados.js (com 'contactada' desde 2026-09-01).
+const CONTATO_FEITO_STATUS = new Set(['contactada', 'respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
 const contatoFoiFeito = (c) => !!c.primeiro_contato_em || CONTATO_FEITO_STATUS.has(c.primeiro_contato_status);
 const AGENTE_VERSAO = 'primeiro-contato-v1';
 const DIA = 86400000;
