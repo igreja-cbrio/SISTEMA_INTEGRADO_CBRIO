@@ -11,6 +11,7 @@ const router = express.Router();
 const multer = require('multer');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { camposAgrupaveis, opcoesMarcadas, resumoPorOpcao } = require('../utils/respostaOpcoes');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { fetchAllRows } = require('../utils/pagination');
 const { verificarTokenComprovanteAtivo, extrairToken } = require('../services/inscricaoComprovante');
@@ -2236,7 +2237,10 @@ router.get('/eventos/:id/checkin', authorizeModule('inscricoes', 2), async (req,
     const lista = [];
     for (let off = 0; off < 20000; off += 1000) {
       const { data, error } = await supabase.from('inscricoes')
-        .select('id, nome_completo, telefone, numero_sorte, status')
+        // ⚠️ `dados` entra pra extrair a resposta do campo agrupável — e SÓ
+        // ela sai daqui. O jsonb inteiro pode ter texto livre (PII), e a lista
+        // de check-in é, por régua, a versão sem documento.
+        .select('id, nome_completo, telefone, numero_sorte, status, dados')
         .eq('evento_id', req.params.id).is('deleted_at', null)
         .order('nome_completo')
         .range(off, off + 999);
@@ -2257,18 +2261,53 @@ router.get('/eventos/:id/checkin', authorizeModule('inscricoes', 2), async (req,
       if (!data || data.length < 1000) break;
     }
 
+    // ── Agrupamento por resposta (ex.: "Em qual ministério você serve?") ────
+    // Pedido do Matheus (01/09): filtrar os check-ins por ÁREA — "quantas
+    // pessoas da produção vieram".
+    //
+    // ⚠️ Quem escolhe o campo é o CATÁLOGO do evento (só campos com lista de
+    // opções). Evento sem campo assim simplesmente não ganha o filtro.
+    const agrupaveis = camposAgrupaveis(ev.campos);
+    const pedido = String(req.query.campo || '').trim();
+    const campo = (pedido && agrupaveis.find((c) => c.key === pedido)) || agrupaveis[0] || null;
+
+    // Valor CRU da resposta, só em memória (nunca vai pra tela).
+    const valorPorId = new Map();
+    if (campo) for (const i of lista) valorPorId.set(i.id, i.dados?.[campo.key]);
+
     const itens = lista.map((i) => ({
       id: i.id, nome_completo: i.nome_completo, telefone: i.telefone,
       numero_sorte: i.numero_sorte, status: i.status,
       checkin_em: marcas.get(i.id)?.em || null,
       checkin_modo: marcas.get(i.id)?.modo || null,
+      // ⚠️ Só as OPÇÕES casadas viajam — nunca o texto cru da resposta, que em
+      // outros eventos é campo livre.
+      opcoes: campo ? opcoesMarcadas(i.dados?.[campo.key], campo.opcoes) : [],
     }));
     const ativos = itens.filter((i) => i.status !== 'cancelada');
+
+    const agrupamento = campo ? {
+      campo: { key: campo.key, label: campo.label || campo.key, opcoes: campo.opcoes },
+      // ⚠️ O resumo é sobre os ATIVOS: inscrição cancelada não é gente que
+      // deixou de vir, é gente que saiu da lista.
+      // ⚠️ O resumo recebe o valor CRU (`valorPorId`), não as opções
+      // rejuntadas com vírgula: reconstruir a string reintroduziria justamente
+      // o separador que a régua existe pra não usar.
+      ...resumoPorOpcao(
+        ativos.map((i) => ({ valor: valorPorId.get(i.id), presente: !!i.checkin_em })),
+        campo.opcoes,
+      ),
+      // A tela precisa dizer isto: é campo de múltipla escolha.
+      multipla: String(campo.tipo || '') === 'multi',
+      opcoes_disponiveis: agrupaveis.map((c) => ({ key: c.key, label: c.label || c.key })),
+    } : null;
+
     res.json({
       evento: ev,
       inscritos: ativos.length,
       presentes: ativos.filter((i) => i.checkin_em).length,
       lista: itens,
+      agrupamento,
     });
   } catch (e) {
     console.error('[inscricoes] checkin/estado:', e.message);
