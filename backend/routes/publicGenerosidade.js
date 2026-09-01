@@ -36,6 +36,37 @@ const {
 } = require('../services/inscricaoContrato');
 const { acharMembroGuardado } = require('../services/membroMatch');
 const campDoacao = require('../utils/campanhaDoacao');
+const doacaoToken = require('../utils/doacaoToken');
+const doacaoPrefill = require('../utils/doacaoPrefill');
+
+/**
+ * Resolve o membro a partir do token de prefill (`?t=`).
+ *
+ * ⚠️⚠️ Este é o ÚNICO ponto desta rota pública que devolve dado de pessoa — e
+ * pode, porque a prova é o token ter sido emitido para a SESSÃO AUTENTICADA do
+ * app. Mesma lógica do `?t=` do censo, com prazo curto.
+ * ⚠️ NUNCA aceitar `membro_id` cru na query: seria enumerável e viraria extrator
+ * da base (lição registrada no censo).
+ * ⚠️ Recusa é NEUTRA: não distingue token torto de vencido de pessoa inexistente
+ * na resposta — senão o endpoint vira sonda de existência de cadastro.
+ */
+async function membroDoToken(tokenBruto) {
+  const lido = doacaoToken.ler(tokenBruto);
+  if (!lido.ok) return null;
+  try {
+    const { data, error } = await db
+      .from('mem_membros')
+      .select('id, nome, email, telefone, cpf')
+      .eq('id', lido.membro_id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  } catch (e) {
+    console.warn('[publicGenerosidade] prefill indisponível:', e.message);
+    return null;
+  }
+}
 const { hojeBrt: hojeBrtCamp } = require('../services/campanhaArrecadacao');
 const { supabase: db } = require('../utils/supabase');
 
@@ -206,6 +237,21 @@ router.get('/config', async (_req, res) => {
   });
 });
 
+// ── GET /prefill?t= ────────────────────────────────────────────────────────
+//
+// A tela chama isto quando abre com `?t=` na URL (a pessoa veio do app).
+//
+// ⚠️⚠️ Devolve o CPF **MASCARADO**. O valor real fica no servidor e é resolvido
+// de novo no POST, pelo mesmo token. A página é pública e a URL vive no
+// histórico, no print e no grupo — CPF ali é dado que não se despublica.
+router.get('/prefill', async (req, res) => {
+  const membro = await membroDoToken(req.query.t);
+  // ⚠️ Sem membro NÃO é erro: é o caso de token vencido/ausente, e a tela cai no
+  // formulário normal. 404 faria a tela mostrar erro para quem só precisa digitar.
+  if (!membro) return res.json({ prefill: null });
+  res.json({ prefill: doacaoPrefill.prefillDoCadastro(membro) });
+});
+
 // ── POST /doacao ───────────────────────────────────────────────────────────
 
 router.post('/doacao', async (req, res) => {
@@ -285,24 +331,42 @@ router.post('/doacao', async (req, res) => {
     // fora do comprovante anual de contribuições e ninguém consegue ligá-la à
     // pessoa depois — o dado nasce perdido. O custo é atrito real (quem não tem
     // o número em mãos desiste), e é escolha declarada.
+    // ── Quem está doando ──────────────────────────────────────────────────
+    //
+    // ⚠️⚠️ COM TOKEN (`?t=`, a pessoa veio do app) o CADASTRO VENCE o payload no
+    // CPF, e o vínculo sai do TOKEN — não de um match sobre dado digitado. É
+    // isso que faz "ficar vinculado ao cadastro" ser garantia e não palpite: com
+    // matcher, dois parentes que compartilham e-mail/telefone podem cair no
+    // cadastro errado, e a doação vai pro comprovante anual da pessoa errada.
+    const membroToken = await membroDoToken(b.t);
+    const pagador = doacaoPrefill.pagadorParaCobranca({
+      membro: membroToken, corpo: { nome, email, telefone, cpf: b.cpf },
+    });
+
     // ⚠️ DV validado no servidor: CPF errado não casa com nada e só suja o dado.
-    const cpf = normalizarCpf(b.cpf);
+    // ⚠️ Quando o CPF veio do CADASTRO ele não é re-validado por DV: a base tem
+    // CPF legado que não passa no dígito, e recusar aqui trancaria a doação de
+    // quem o sistema já aceitou como cadastro (é o grandfathering que o Contrato
+    // de porta manda aplicar).
+    const cpf = pagador.cpf_veio_do_cadastro ? pagador.cpf : normalizarCpf(b.cpf);
     if (!cpf) {
       return res.status(400).json({ error: 'Informe seu CPF — é o que liga a doação ao seu cadastro e ao comprovante anual.', campo: 'cpf' });
     }
-    if (!cpfValido(cpf)) {
+    if (!pagador.cpf_veio_do_cadastro && !cpfValido(cpf)) {
       return res.status(400).json({ error: 'Esse CPF não parece válido. Confira os números.', campo: 'cpf' });
     }
 
     // ── Match READ-ONLY. Nunca cria, nunca escreve. ──
     // Falha aqui não impede a doação: sem membro a doação segue como anônima no
     // razão nominal, e é o handler que avisa a equipe.
-    let membroId = null;
-    try {
-      const m = await acharMembroGuardado({ cpf, email, telefone, nome });
-      membroId = m?.membro_id || null;
-    } catch (e) {
-      console.error('[publicGenerosidade] match do doador:', e.message);
+    let membroId = membroToken?.id || null;
+    if (!membroId) {
+      try {
+        const m = await acharMembroGuardado({ cpf, email, telefone, nome });
+        membroId = m?.membro_id || null;
+      } catch (e) {
+        console.error('[publicGenerosidade] match do doador:', e.message);
+      }
     }
 
     const canal = ['app', 'web'].includes(String(b.canal)) ? String(b.canal) : 'web';

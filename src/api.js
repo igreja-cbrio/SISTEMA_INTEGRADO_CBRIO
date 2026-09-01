@@ -658,6 +658,11 @@ export const eventoPublico = {
 // aprovado pela Apple, e permite arrecadar fora dele ("via Safari"). Não
 // consumir estes endpoints de dentro de WebView do app.
 export const generosidadePublica = {
+  // Prefill do cadastro quando a pessoa vem do app (`?t=`).
+  // ⚠️ Devolve o CPF MASCARADO — o valor real fica no servidor.
+  prefill: (t) => fetch(`${API}/public/generosidade/prefill?t=${encodeURIComponent(t)}`)
+    .then((r) => (r.ok ? r.json() : { prefill: null }))
+    .catch(() => ({ prefill: null })),
   config: () => fetch(`${API}/public/generosidade/config`)
     .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
   doar: (dados) => fetch(`${API}/public/generosidade/doacao`, {
