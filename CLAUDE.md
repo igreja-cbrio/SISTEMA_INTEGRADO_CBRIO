@@ -14677,6 +14677,65 @@ mutantes RODADOS e mortos** (depois da correção do teste): "consegui o link"
 virando pedido → 1 · agenda vencendo link → 1 · presencial falando de link → 1 ·
 prometer que o link chega por aqui → 1.
 
+## ⚠️⚠️ TOTEM · fluxo "Novo convertido" (Marcelo/Marcos · 2026-09-01 · SEM migration)
+
+4ª opção da tela inicial do totem membro (`/totem`), substituindo a ficha de
+papel do apelo. Decisões do Marcos (01/09): campos relaxados **SÓ neste fluxo**
+(nome + WhatsApp + nascimento — "nascimento favorece duplicata no futuro, não é
+sensível e é rápido"); a pessoa já **solicita inscrição** nas portas comuns; e a
+operação é **ASSISTIDA** — tela 1 (dados) e 2 (portas) são da pessoa, a tela 3
+é da equipe (Marcelo define quem contata e confirma tudo).
+
+**Backend** (`membresia.js` · padrão dos endpoints `/totem/*`, só `authenticate`):
+- `GET /membresia/totem/novo-convertido/contexto` — culto do relógio +
+  responsáveis ativos de `cui_responsaveis` (endpoint próprio: o de
+  `/cuidados/responsaveis` exige o módulo cuidados, que a conta de quiosque pode
+  não ter). `responsaveis: null` = consulta falhou (a tela declara) ≠ `[]`.
+- `POST /membresia/totem/novo-convertido` — o registro.
+
+⚠️⚠️ **As leis do endpoint (não regredir):**
+- **A decisão nasce pela MESMA porta do cadastro manual**: INSERT em
+  `cultos_decisoes_pessoas` com `fonte` DEFAULT (decisão do Marcos — "mesma
+  fonte que um cadastro manual"). Trigger BEFORE resolve a pessoa (matcher
+  canônico), AFTER cria `cui_convertidos` + NSM. Proveniência na `observacoes`.
+- **A validação é `utils/decisaoCampos.validarDecisao`** — a MESMA régua pura da
+  porta de decisão online (nome + nascimento + telefone + LGPD `=== true`).
+- **O culto vem do RELÓGIO**: `services/cultoDeAgora.js` — **EXTRAÍDO de
+  `routes/app.js`** nesta leva (o totem virou 2º consumidor; app.js agora
+  delega). Sem culto HOJE → 409 `sem_culto_hoje` (o trigger de cuidados exige
+  culto), e a tela diz isso ANTES de a pessoa digitar.
+- **Idempotência de quiosque**: decisão de HOJE com o mesmo telefone é REUSADA
+  (toque duplo não duplica convertido/NSM) e o WhatsApp de boas-vindas só sai no
+  PRIMEIRO registro (lição da mensagem dupla de 07/08).
+- **Consentimento ANTES da decisão** (id pré-gerado · padrão da porta online),
+  itens `termos_lgpd` + `whatsapp` (gravado MESMO quando não marca — prova de que
+  perguntou). Opt-in em `mem_membros` SÓ LIGA, nunca desliga.
+- **Portas reusam os caminhos existentes, nunca 2ª régua**: next →
+  `inscreverNextTotemCore` (**extraído do POST /totem/next/inscrever**, que
+  virou casca fina — comportamento byte-idêntico) · batismo →
+  `batismo_inscricoes` com horário validado por `avaliarHorarioBatismo`
+  (exigir:true · limite de 11 continua valendo · origem `'totem'`, que está no
+  CHECK) · grupos/servir → `jornada_encaminhamentos` (aba Encaminhados dos
+  módulos, origem `'totem'` — a coluna não tem CHECK, conferido).
+- **Responsável validado contra `cui_responsaveis` ativo** — texto livre aqui
+  recriaria a fábrica de grafias que o Cuidados limpou em 04/08. Grava
+  `cui_convertidos.responsavel_atendimento` (achado por culto+telefone — o cui
+  não guarda o id da decisão); falha vira `avisos: ['responsavel_nao_gravado']`,
+  nunca sucesso mudo.
+- **WhatsApp de boas-vindas** pela fila: template **`novo_convertido_boas_vindas`**
+  fixo no código (env de override `WHATSAPP_TEMPLATE_CONVERTIDO_BOAS_VINDAS`) ·
+  {{1}} 1º nome · {{2}} quem vai contatar (fallback "Alguém da nossa equipe") ·
+  contexto `cuidados.convertido_boas_vindas`. **No-op gracioso até o template ser
+  aprovado na Meta** (⏳ pendência de GENTE — Marcos vai aprovar com o Marcelo).
+- Aviso interno: mesmos destinatários do gêmeo manual
+  (`POST /kpis/cultos/:id/decisoes-pessoas`) + notificar módulo do
+  encaminhamento (grupos/voluntariado) e integracao (batismo).
+
+**Frontend**: `NovoConvertidoFlow` em `TotemMembro.tsx` (4º card na home, grid
+virou 2×2/4). ⏳ **Fase 2 (não feita)**: aviso direto ao responsável exige ligar
+`cui_responsaveis` a `profiles` (hoje o catálogo é só nome); grupos/servir como
+inscrição real em vez de encaminhamento.
+
 ## ⚠️ Próximos passos · status "Contactada" + coluna Culto (2026-09-01 · migration `20260901130000`)
 
 Dois pedidos do Marcelo (via Marcos) na aba Próximos passos do `/ministerial/cuidados`:
