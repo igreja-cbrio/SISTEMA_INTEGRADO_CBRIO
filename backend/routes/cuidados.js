@@ -15,10 +15,13 @@ router.use(authenticate);
 
 // Contato FEITO = o contato foi realizado, independente da resposta da pessoa
 // (regra do Marcos · 2026-06-17). Vale pelo status do dropdown OU pelo
-// primeiro_contato_em legado. "sem_retorno"/"numero_errado"/vazio NÃO contam.
+// primeiro_contato_em legado. "sem_retorno"/vazio NÃO contam.
 // "Contato feito" = a mensagem foi enviada (independe da resposta). numero_errado
 // entra aqui: a equipe mandou a mensagem, o número é que estava errado (Marcos 2026-07-01).
-const CONTATO_FEITO_STATUS = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
+// "contactada" (Marcelo · 2026-09-01) = mensagem enviada, aguardando resposta — é o
+// estado real do dia seguinte ao culto; conta como contato feito.
+// ⚠️ ESPELHOS: painel.js · nextConvite.js · agentePrimeiroContato.js · Cuidados.tsx.
+const CONTATO_FEITO_STATUS = new Set(['contactada', 'respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
 const contatoFoiFeito = (c) => !!c.primeiro_contato_em || CONTATO_FEITO_STATUS.has(c.primeiro_contato_status);
 
 // Mensagem automática de WhatsApp · pedido de aconselhamento pastoral
@@ -268,8 +271,8 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     }));
 
     // ── Próximos passos · distribuição por status do 1º contato + relatório por responsável (janela toda) ──
-    const PP_STATUS_LABEL = { atendido_respondido: 'Atendido e respondido', nao_respondeu: 'Não respondeu', nao_atendido: 'Não atendido', numero_errado: 'Número errado', pendente: 'Pendente' };
-    const ppCount = { atendido_respondido: 0, nao_respondeu: 0, nao_atendido: 0, numero_errado: 0, pendente: 0 };
+    const PP_STATUS_LABEL = { atendido_respondido: 'Atendido e respondido', contactada: 'Contactada (aguardando resposta)', nao_respondeu: 'Não respondeu', nao_atendido: 'Não atendido', numero_errado: 'Número errado', pendente: 'Pendente' };
+    const ppCount = { atendido_respondido: 0, contactada: 0, nao_respondeu: 0, nao_atendido: 0, numero_errado: 0, pendente: 0 };
     const respMap = new Map();
     for (const c of convertidos) {
       const k = (c.primeiro_contato_status && ppCount[c.primeiro_contato_status] !== undefined) ? c.primeiro_contato_status : 'pendente';
@@ -1206,7 +1209,30 @@ router.get('/convertidos', async (req, res) => {
     }
     const { data, error } = await q;
     if (error) throw error;
-    res.json(data || []);
+    const linhas = data || [];
+    // ── culto_nome (pedido do Marcelo · 2026-09-01) ──
+    // A tela deriva a bolha Quarta/AMI/Bridge/Sede do NOME do culto. Consulta
+    // ISOLADA e best-effort (lição do parcelas_max: embed que falha derruba a
+    // lista inteira); falhar aqui = linhas sem culto_nome, nunca lista vazia.
+    // ⚠️ Só ~159 dos registros vivos têm culto_id (o trigger passou a gravá-lo
+    // depois) — os demais caem no fallback por `area` na tela. `.in()` em lotes
+    // de ≤200 (lei do projeto: lista longa estoura a URL do PostgREST).
+    try {
+      const ids = [...new Set(linhas.map(c => c.culto_id).filter(Boolean))];
+      const nomePorId = new Map();
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data: cultos, error: ec } = await supabase
+          .from('cultos').select('id, nome').in('id', ids.slice(i, i + 200));
+        if (ec) throw ec;
+        for (const cu of cultos || []) nomePorId.set(cu.id, cu.nome);
+      }
+      for (const c of linhas) {
+        if (c.culto_id && nomePorId.has(c.culto_id)) c.culto_nome = nomePorId.get(c.culto_id);
+      }
+    } catch (e2) {
+      console.warn('[cuidados] culto_nome indisponível:', e2.message);
+    }
+    res.json(linhas);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

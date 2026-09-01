@@ -14602,6 +14602,40 @@ mutantes RODADOS e mortos** (depois da correção do teste): "consegui o link"
 virando pedido → 1 · agenda vencendo link → 1 · presencial falando de link → 1 ·
 prometer que o link chega por aqui → 1.
 
+## ⚠️ Próximos passos · status "Contactada" + coluna Culto (2026-09-01 · migration `20260901130000`)
+
+Dois pedidos do Marcelo (via Marcos) na aba Próximos passos do `/ministerial/cuidados`:
+
+**1 · Status novo `contactada` ("Contactada · aguardando resposta").** Ele manda a
+mensagem SEMPRE no dia seguinte ao culto, mas só marcava status quando a pessoa
+respondia — e é o marcar que carimba `primeiro_contato_em`, então o KPI de contato
+≤3d media a data da RESPOSTA. "Contactada" conta como contato FEITO (carimba a data
+na hora); quando a resposta chega, trocar o status NÃO re-carimba (o `setPcStatus`
+só carimba onde está vazio).
+- ⚠️⚠️ **O CHECK vivo recusava o valor** (provado em prod: 23514). A migration
+  `20260901130000` injeta `'contactada'` por patch DINÂMICO sobre a definição viva
+  (lista estática seria remoção silenciosa · lei de 17/08). **Sem ela aplicada,
+  selecionar "Contactada" na tela dá erro (com toast + rollback otimista).**
+- ⚠️ A régua `CONTATO_FEITO` tem **5 espelhos** e todos ganharam o valor:
+  `routes/cuidados.js` · `routes/painel.js` · `routes/nextConvite.js` ·
+  `services/agentePrimeiroContato.js` · `Cuidados.tsx`. Mudou num, muda em todos.
+- **Reparo do passado APLICADO em 01/09** (pedido dele: "as datas que ele marcou
+  valem como 1 dia depois"): `backend/scripts/_reparo_pp_contato_dia_seguinte.cjs`
+  — nos vivos com status de contato feito, `primeiro_contato_em` além de
+  culto+1d virou **data_culto+1 12:00 BRT** (127 linhas) e status sem data ganhou
+  a mesma data (108 backfill). `numero_errado`/`sem_retorno` intocados. Backup em
+  `~/Downloads/_bk_20260901_pp_contato_dia_seguinte.json`. ⚠️ Isso MUDA o KPI de
+  contato ≤3d retroativamente — é o pedido, não regressão.
+
+**2 · A coluna Tags virou "Culto"**: badge **Online × Presencial** (de
+`cui_convertidos.area`) + **bolha ao lado do nome** com o culto em si
+(Quarta/AMI/Bridge/Sede), derivada do NOME do culto (`culto_nome`, anexado pelo
+`GET /cuidados/convertidos` em consulta ISOLADA best-effort por `culto_id` —
+lição do parcelas_max; falha ali nunca derruba a lista).
+- ⚠️ Só ~159 dos 436 vivos têm `culto_id` (o trigger passou a gravá-lo depois) —
+  os antigos caem na `area`; sem sinal nenhum a bolha NÃO aparece (nunca chutar).
+- As TAGS continuam existindo (modal de edição + detalhe) — só a coluna saiu.
+
 ## ⚠️ AJUDA COM O APP · a dúvida do membro chega em quem cuida do app (2026-08-29 · migration `20260829140000`)
 
 Pedido do Matheus: *"no app, no menu, tivesse um botão de ajuda com app, caso a

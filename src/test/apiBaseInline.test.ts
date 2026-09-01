@@ -34,11 +34,16 @@ function arquivosDeCodigo(dir: string, acc: string[] = []): string[] {
 // Tira comentário antes de casar: a própria explicação acima cita o padrão
 // proibido como exemplo, e sem isso a documentação derrubaria o portão
 // (mesma armadilha de 06/08 — checagem por texto ignora comentário).
+// ⚠️ `[^\n]*`, NUNCA `.*$`: em checkout Windows (autocrlf) cada linha termina
+// em `\r`, que é terminador de linha pro `.` do JS — `.*$` para antes dele e a
+// limpeza não remove NADA, derrubando o teste com os comentários de
+// Membresia.jsx/EventoCheckin.tsx que citam o padrão (o mesmo falso-vermelho
+// do test:matcher-insert, registrado em 17/08).
 function semComentarios(src: string) {
   return src
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n')
-    .map((l) => l.replace(/(^|[^:"'`])\/\/.*$/, '$1'))
+    .map((l) => l.replace(/(^|[^:"'`])\/\/[^\n]*$/, '$1'))
     .join('\n');
 }
 
