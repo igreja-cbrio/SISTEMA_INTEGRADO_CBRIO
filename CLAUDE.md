@@ -14397,6 +14397,81 @@ segunda como resposta da primeira.
 
 ⇒ **Uma pergunta por chamada.** Se precisar de duas, duas chamadas.
 
+## ⚠️⚠️ CHECK-IN por ÁREA · e o separador que destruía a resposta (2026-09-01 · SEM migration)
+
+Pedido do Matheus: *"no evento que tivemos do celebra, desse para filtrar nos
+check-ins pelas áreas. Para saber quantas pessoas por exemplo vieram que era da
+produção."*
+
+**Resposta medida no Celebra 2026** (352 inscritos vivos · **194 check-ins**):
+Produção **26 de 39 (67%)** · Kids 55/109 · Recepção 39/76 · Estacionamento
+13/17 · Batismo 8/9 (89%) · Bridge 6/19 (32%).
+
+### ⚠️⚠️ DIVIDIR POR VÍRGULA DESTRÓI O DADO — e o Celebra prova
+
+A resposta de múltipla escolha é gravada como **TEXTO**, e uma das 19 opções do
+formulário **contém vírgula**:
+
+> "Ainda não sirvo, mas tenho interesse em conhecer o voluntariado."
+
+A primeira medição, feita com `string_to_array(valor, ',')`, devolveu áreas que
+**não existem**: *"Ainda não sirvo"* (34) e *"mas tenho interesse em conhecer o
+voluntariado."* (31), além de cacos como *"mas tenho i"*.
+
+⚠️⚠️ **E existe dado sujo REAL**: uma inscrição tem a MESMA opção repetida
+**OITO vezes** e cortada no limite do campo (`…mas tenho i`) — provavelmente
+marcar/desmarcar acumulando. Sem dedup, aquela linha sozinha somaria **8** na
+contagem da área.
+
+⇒ **Quem manda é o CATÁLOGO** (`insc_eventos.campos[].opcoes`):
+`backend/utils/respostaOpcoes.js` procura as opções DENTRO do texto, **das mais
+longas para as mais curtas**, removendo o trecho que casou. Assim a vírgula
+interna, o espaço duplo (`"Check-in  - Voluntariado"` tem DOIS) e a repetição
+deixam de importar.
+
+- ⚠️ **Ordem por tamanho é regra, não estilo**: se um dia existir "Integração"
+  ao lado de "Recepção - Integração", casar a curta primeiro marcaria a área
+  errada dentro da longa. Mutante trava.
+- ⚠️ **`split(op).join(' ')` remove TODAS as repetições** de uma vez — é o que
+  neutraliza a linha das 8 ocorrências. Mutante trava.
+- ⚠️ **A ordem devolvida é a do CATÁLOGO**, não a da resposta: é o que faz a
+  tela listar as áreas sempre igual.
+
+### ⚠️ Texto livre NUNCA vira filtro
+
+`camposAgrupaveis` só aceita campo com **lista de opções**. Texto livre não
+agrupa (cada resposta é única) e é onde PII aparece — um "filtro por resposta"
+ali viraria uma lista de nomes e telefones na tela de check-in. Mutante trava.
+
+⚠️ E **só as OPÇÕES casadas viajam** para a tela: o `dados` jsonb é lido no
+servidor e o texto cru da resposta não sai de lá. A lista de check-in é, por
+régua, a versão sem documento.
+
+### O que a tela DECLARA
+
+⚠️⚠️ **A soma das áreas PASSA do total de pessoas** — o campo é múltipla
+escolha e quem marcou 2 áreas conta nas 2. A tela diz isso embaixo dos chips;
+sem essa frase, alguém soma as colunas e conclui que a conta está errada (a
+mesma lição de "participações × pessoas" dos Grupos, 23/07).
+
+- Cada chip mostra **presentes/inscritos** juntos: só o total de vindos não diz
+  se a área compareceu bem ou se é grande.
+- **`sem_resposta` e `nao_reconhecido` são estados SEPARADOS** — "não declarou"
+  e "declarou algo fora da lista" pedem ações diferentes, e nenhum dos dois é
+  uma área. Mutante trava.
+- ⚠️ Com uma área escolhida, os **chips Todos/Presentes/Faltam passam a contar
+  DENTRO dela** — senão a tela diria "39 inscritos" da Produção e "194
+  presentes" da igreja toda.
+- ⚠️ O filtro **só aparece** quando o evento tem pergunta com opções: evento sem
+  isso não ganha um filtro que não filtra nada.
+- ⚠️ O resumo é sobre os **ATIVOS**: inscrição cancelada não é gente que deixou
+  de vir, é gente que saiu da lista.
+
+Testes: `src/test/respostaOpcoes.test.ts` (17 casos · no gate), com as 19 opções
+e os valores REAIS do Celebra. **5 mutantes RODADOS e mortos**: voltar a dividir
+por vírgula → 2 vermelhos · sem dedup → 1 · casar da mais curta → 1 · texto
+livre virando agrupável → 2 · colapsar "não reconhecido" em "sem resposta" → 1.
+
 ## ⚠️⚠️ CAPACIDADE DO ESPAÇO virou DADO, não regex no nome (2026-08-31 · migration `vol_service_types_capacidade_lugares`)
 
 Pedido do Matheus: *"o bridge acontece no espaço cbrio que tem capacidade para
