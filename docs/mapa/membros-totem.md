@@ -12,7 +12,7 @@
 ## Backend
 - `backend/routes/membresia.js`
 Guard: `authorizeModule('membros-totem', 1)`
-<details><summary>Endpoints (99)</summary>
+<details><summary>Endpoints (101)</summary>
 - `DELETE /api/membresia/cadastros/:id`
 - `DELETE /api/membresia/checkins/:id`
 - `DELETE /api/membresia/contribuicoes/:id`
@@ -63,6 +63,7 @@ Guard: `authorizeModule('membros-totem', 1)`
 - `GET /api/membresia/qr-lookup/:token`
 - `GET /api/membresia/totem/apresentacao-bebe/status`
 - `GET /api/membresia/totem/next/status`
+- `GET /api/membresia/totem/novo-convertido/contexto`
 - `PATCH /api/membresia/cadastros/:id`
 - `PATCH /api/membresia/grupo-membros/:id/sair`
 - `PATCH /api/membresia/membros/:id/familia`
@@ -102,6 +103,7 @@ Guard: `authorizeModule('membros-totem', 1)`
 - `POST /api/membresia/totem/membros/:id/foto`
 - `POST /api/membresia/totem/next/informacoes`
 - `POST /api/membresia/totem/next/inscrever`
+- `POST /api/membresia/totem/novo-convertido`
 - `POST /api/membresia/trilha`
 - `POST /api/membresia/voluntarios`
 - `PUT /api/membresia/contribuicoes/:id`
@@ -116,9 +118,11 @@ Guard: `authorizeModule('membros-totem', 1)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/batismoHorario.js`
 - `backend/utils/cpf.js`
 - `backend/utils/criancaApresentacao.js`
 - `backend/utils/dadosSensiveisPessoa.js`
+- `backend/utils/decisaoCampos.js`
 - `backend/utils/desativarMembro.js`
 - `backend/utils/kidsVisitante.js`
 - `backend/utils/membrosPagina.js`
@@ -130,9 +134,11 @@ Guard: `authorizeModule('membros-totem', 1)`
 **Serviços**
 
 - `backend/services/bairroCanonico.js`
+- `backend/services/batismoHorarios.js`
 - `backend/services/censoDisparo.js`
 - `backend/services/cerebroSync.js`
 - `backend/services/cpfReconciliar.js`
+- `backend/services/cultoDeAgora.js`
 - `backend/services/duplicidadePolicy.js`
 - `backend/services/fusaoCampos.js`
 - `backend/services/geoBrasil.js`
@@ -160,6 +166,7 @@ Guard: `authorizeModule('membros-totem', 1)`
 - `cui_acompanhamentos`
 - `cui_convertidos`
 - `cui_jornada180`
+- `cui_responsaveis`
 - `cultos`
 - `cultos_decisoes_pessoas`
 - `dem_bairro_geo`

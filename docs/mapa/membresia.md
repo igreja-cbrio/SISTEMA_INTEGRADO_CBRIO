@@ -15,7 +15,7 @@
 - `backend/routes/membresia.js`
 - `backend/routes/voluntariado.js`
 Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
-<details><summary>Endpoints (231)</summary>
+<details><summary>Endpoints (233)</summary>
 - `DELETE /api/membresia/cadastros/:id`
 - `DELETE /api/membresia/checkins/:id`
 - `DELETE /api/membresia/contribuicoes/:id`
@@ -85,6 +85,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `GET /api/membresia/qr-lookup/:token`
 - `GET /api/membresia/totem/apresentacao-bebe/status`
 - `GET /api/membresia/totem/next/status`
+- `GET /api/membresia/totem/novo-convertido/contexto`
 - `GET /api/voluntariado/acessos`
 - `GET /api/voluntariado/acessos/cargos`
 - `GET /api/voluntariado/antecedentes/pendentes`
@@ -179,6 +180,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `POST /api/membresia/totem/membros/:id/foto`
 - `POST /api/membresia/totem/next/informacoes`
 - `POST /api/membresia/totem/next/inscrever`
+- `POST /api/membresia/totem/novo-convertido`
 - `POST /api/membresia/trilha`
 - `POST /api/membresia/voluntarios`
 - `POST /api/voluntariado/1x1`
@@ -252,11 +254,13 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/atividadeVoluntario.js`
+- `backend/utils/batismoHorario.js`
 - `backend/utils/cpf.js`
 - `backend/utils/criancaApresentacao.js`
 - `backend/utils/cronAuth.js`
 - `backend/utils/cursorLote.js`
 - `backend/utils/dadosSensiveisPessoa.js`
+- `backend/utils/decisaoCampos.js`
 - `backend/utils/desativarMembro.js`
 - `backend/utils/exclusaoInscricaoLote.js`
 - `backend/utils/fotoVoluntario.js`
@@ -278,9 +282,11 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 
 - `backend/services/antecedentesCriminais.js`
 - `backend/services/bairroCanonico.js`
+- `backend/services/batismoHorarios.js`
 - `backend/services/censoDisparo.js`
 - `backend/services/cerebroSync.js`
 - `backend/services/cpfReconciliar.js`
+- `backend/services/cultoDeAgora.js`
 - `backend/services/duplicidadePolicy.js`
 - `backend/services/escalaResposta.js`
 - `backend/services/fusaoCampos.js`
@@ -322,6 +328,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `cui_acompanhamentos`
 - `cui_convertidos`
 - `cui_jornada180`
+- `cui_responsaveis`
 - `cultos`
 - `cultos_decisoes_pessoas`
 - `dem_bairro_geo`
