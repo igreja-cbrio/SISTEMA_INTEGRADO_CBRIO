@@ -262,6 +262,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `backend/utils/dadosSensiveisPessoa.js`
 - `backend/utils/decisaoCampos.js`
 - `backend/utils/desativarMembro.js`
+- `backend/utils/escalaLinhaEquipe.js`
 - `backend/utils/exclusaoInscricaoLote.js`
 - `backend/utils/fotoVoluntario.js`
 - `backend/utils/kidsVisitante.js`
