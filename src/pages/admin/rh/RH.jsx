@@ -46,7 +46,7 @@ function Toast({ message, type = 'error', onClose }) {
 function ConfirmDialog({ message, onConfirm, onCancel }) {
   if (!message) return null;
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50">
       <div className="bg-popover rounded-2xl p-7 max-w-[400px] shadow-2xl text-center" style={{ animation: 'cbrio-modal-center-in 0.2s ease-out' }}>
         <AlertTriangle className="w-9 h-9 mx-auto mb-3 text-warning" />
         <div className="text-[15px] font-semibold text-foreground mb-5">{message}</div>
@@ -68,7 +68,7 @@ function DesligarModal({ func, onClose, onConfirm }) {
   useEffect(() => { if (func) { setData(hoje); setMotivo(''); } }, [func]);
   if (!func) return null;
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4">
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 p-4">
       <div className="bg-popover rounded-2xl p-6 w-full max-w-[420px] shadow-2xl" style={{ animation: 'cbrio-modal-center-in 0.2s ease-out' }}>
         <div className="flex items-center gap-3 mb-1">
           <div className="h-10 w-10 rounded-full bg-amber-500/15 text-amber-600 flex items-center justify-center"><UserMinus className="h-5 w-5" /></div>
@@ -1878,7 +1878,7 @@ function OrgChartTab({ funcs, onDetail, onChanged, onVoltar }) {
 
       {/* Prévia das mudanças sugeridas pela IA (confirmar antes de aplicar) */}
       {iaProposta && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4" onClick={() => !iaAplicando && setIaProposta(null)}>
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/50 p-4" onClick={() => !iaAplicando && setIaProposta(null)}>
           <div className="bg-popover rounded-2xl p-6 w-full max-w-[480px] shadow-2xl max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()} style={{ animation: 'cbrio-modal-center-in 0.2s ease-out' }}>
             <div className="flex items-center gap-3 mb-1">
               <div className="h-10 w-10 rounded-full bg-primary/10 text-primary flex items-center justify-center"><Sparkles className="h-5 w-5" /></div>
