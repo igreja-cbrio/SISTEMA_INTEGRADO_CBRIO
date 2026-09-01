@@ -15501,6 +15501,83 @@ denominador e faz o ritmo parecer mais folgado do que é. A janela passou a ser
   sempre maior que o fim e o retorno já seria 0. Fica pela intenção; não afirmo
   cobertura que não existe (lição do mutante equivalente-por-acidente de 25/08).
 
+## ⚠️⚠️ Escala órfã do PCO vai pelo `vol_pco_mapa`, NUNCA pelo nome (2026-09-01 · SEM migration)
+
+Pergunta do Matheus: *"esses voluntarios sem area, sao oq?? sem area significa
+sem equipe??"* — não significa, e a matriz estava dizendo "SEM EQUIPE" para gente
+cuja equipe ela conhece. Eram DOIS defeitos no endpoint (`garanteLinha` passava
+`null` como NOME, e a chave `(team_id, position_id)` colapsava TODAS as equipes
+desvinculadas numa linha só). Consertado com a régua pura
+**`backend/utils/escalaLinhaEquipe.js`** (PR #2815), que dá um TERCEIRO estado:
+equipe vinculada · **conhecida mas NÃO vinculada** · realmente sem equipe.
+
+### 🔴 INCIDENTE do mesmo dia · eu religuei 623 escalas em equipe APOSENTADA
+
+A 1ª versão do religamento casava `vol_schedules.team_name` **por NOME** contra
+`vol_teams`. Mandou **623 de 681** escalas para as **equipes-espelho do Planning
+Center**, que estão `is_active = false` porque o remapeamento de 16/08 (PR #2518)
+as APOSENTOU — *"time do PCO" é a nossa FUNÇÃO, não a nossa EQUIPE*, e o sync
+criava uma equipe por time (129).
+
+⚠️⚠️ **Casar por nome reencontra exatamente o artefato que alguém aposentou.** O
+sintoma foi a matriz mostrando tudo sob **"Sem área"**, porque só as **13 equipes
+VIVAS** têm área preenchida. Eu li isso como pendência de cadastro ("116 equipes
+sem área, preencham") e cheguei a propor uma tela de atribuição em lote — para um
+problema que não existia. **O sinal estava à vista antes de aplicar: 116 de 129
+sem área é anomalia demais para ser cadastro incompleto.**
+
+⇒ A fonte de verdade é **`vol_pco_mapa`** (`pco_nome` → `team_id` +
+`position_id`). Medido: resolve **623 de 623**, todas para equipe ATIVA, 600 com
+função. `destinoDaOrfa` põe o MAPA na frente e o nome só como fallback.
+
+⚠️⚠️ **A guarda que sozinha teria evitado o estrago é "NUNCA religar em equipe
+inativa" — e ela mora em `indexarEquipesAtivas`, na régua PURA, de propósito.**
+Na 1ª versão ela estava dentro do serviço (impuro) e **nenhum mutante a
+alcançava**: foi assim que ela passou sem teste. **Régua que fica: guarda em
+código impuro é guarda que ninguém verifica — se ela decide algo, extrair para o
+módulo puro que está no gate.**
+
+- ⚠️ **`is_active` exclui só quando é EXATAMENTE `false`**: a coluna vem nula em
+  equipe legada, e tratar nulo como aposentada esconderia equipe viva.
+- ⚠️ **`position_id` só PREENCHE vazio** — nunca sobrescreve função humana.
+- ⚠️ **`chaveExataNome` × `chaveNome`**: a base tem **7 pares** de equipe que
+  diferem só por acento/caixa (`Cameras`×`Câmeras`, `Liderança`×`LIDERANÇA`,
+  `Check-in`×`Check-In`, `preletor`×`Preletor`, `Próximos passos`×`Próximos
+  Passos`, `assistente ministerial`×`Assistente Ministerial`, `Transmissão e
+  infraestrutura`×`…Infraestrutura`). Para RELIGAR, exato primeiro (681 contra
+  555 pelo normalizado); para AGRUPAR LINHA na tela, normalizado (os dois devem
+  cair no mesmo bloco). **As duas chaves existem por razões opostas.**
+- ⚠️⚠️ **NUNCA `DELETE` em `vol_teams`**: das 7 FKs, **6 são `ON DELETE
+  CASCADE`** (`vol_positions`, `vol_escala_template_itens`,
+  `vol_escala_template_liderancas`, `vol_escala_culto_itens`, `vol_team_members`,
+  `vol_pco_mapa`) e `vol_schedules` é **`SET NULL`** — apagar a duplicata
+  desfaria o religamento E apagaria subárea e composição de template. Fusão =
+  mover os filhos + **aposentar**. Mesma lei já registrada para
+  `vol_service_types`.
+- ⚠️ **`vol_teams.is_active` mente como dado de negócio**: `Câmeras` tinha 59
+  escalas marcada como inativa. Não usar para popular seletor — usar uso real
+  (mesma ressalva já registrada para `vol_service_types.is_active`).
+
+**Estado em 01/09/2026, depois de corrigir:** 0 escalas em equipe inativa · **0
+escalas sem área** · 16 órfãs (4 nomes fora do mapa: `Câmera 8`, `Chat 9:30`,
+`Oferta 9:30`, `Pós Culto 9:30`, dos horários novos). Backups:
+`_bk_20260901_escala_team_id` (o religamento), `_bk_20260901_repoint_mapa` (o
+conserto), `_bk_20260901_fusao_equipes` (a fusão das 2 duplicatas com escala nos
+dois lados, aprovada pelo Matheus).
+
+⚠️ **Lição de MÉTODO que se repetiu 2× neste dia:** contador de UPDATE lido na
+MESMA instrução mostra o snapshot ANTERIOR (MVCC) — o `returning` dizia 681
+religadas e o `count` ao lado dizia que nada mudou. **Conferir em consulta
+SEPARADA**, sempre; é a lei "conferir no CATÁLOGO, não no `success: true`"
+aplicada a contagem.
+
+⚠️ Testes: `src/test/escalaLinhaEquipe.test.ts` (39 casos · no gate). **11
+mutantes RODADOS e mortos** nas duas levas. Um ficou **DECLARADO como não
+observável** (guarda de nome vazio em `destinoDaOrfa`): os indexadores já
+recusam chave vazia, então o mutante sobrevive por acidente — fica pela
+intenção, sem afirmar cobertura.
+
+
 ## ⚠️⚠️ Diagnósticos · o botão "Resolver todos" (2026-08-31 · migration `20260831120000`)
 
 Pedido do Matheus: *"preciso de um botão para resolver todos os problemas, e aí
