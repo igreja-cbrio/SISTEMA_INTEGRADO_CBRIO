@@ -35,6 +35,8 @@ interface Config {
   min_centavos: number;
   max_centavos: number;
   parcelas_max: number;
+  // Campanhas ATIVAS que aceitam doação online (o servidor decide).
+  campanhas?: CampanhaOfertavel[];
 }
 
 interface Pagamento {
@@ -54,6 +56,19 @@ interface Pagamento {
   pago_em: string | null;
   categoria?: string | null;
   campanha?: string | null;
+}
+
+interface CampanhaOfertavel { id: string; nome: string; descricao_curta?: string | null }
+
+// ⚠️ O CPF chega MASCARADO de propósito. O valor real fica no servidor e é
+// resolvido pelo token no POST — a página é pública e a URL vive no histórico.
+interface Prefill {
+  nome: string | null;
+  email: string | null;
+  cpf_mascarado: string | null;
+  telefone_mascarado: string | null;
+  tem_cpf: boolean;
+  tem_telefone: boolean;
 }
 
 const brl = (c: number) => (Number(c || 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -138,7 +153,11 @@ export default function DoarPage() {
 
   // ── Formulário ──
   const [categoria, setCategoria] = useState('dizimo');
-  const [campanha, setCampanha] = useState('');
+  // ⚠️ Agora guarda o ID da campanha, não o texto: é `campanha_id` que a
+  // barrinha casa (`vw_camp_arrecadacao`). Texto livre nunca alimentava nada.
+  const [campanhaId, setCampanhaId] = useState('');
+  // Dados do cadastro, quando a pessoa vem do app (`?t=` na URL).
+  const [prefill, setPrefill] = useState<Prefill | null>(null);
   const [valorSel, setValorSel] = useState<number | null>(null);
   const [valorTxt, setValorTxt] = useState('');
   const [nome, setNome] = useState('');
@@ -153,9 +172,40 @@ export default function DoarPage() {
   // ⚠️ Id da TENTATIVA, gerado UMA vez por visita. É ele que faz duplo clique e
   // retentativa devolverem a MESMA cobrança em vez de criarem duas. Não pode ser
   // por pessoa (ela doa de novo mês que vem e reaproveitaria a cobrança velha).
+  // ⚠️ O `?t=` é lido UMA vez, no mount: `useRef` e não estado, porque ele não
+  // muda durante a visita e não deve disparar re-render.
+  const tokenPrefill = useRef<string>(
+    typeof window !== 'undefined'
+      ? (new URLSearchParams(window.location.search).get('t') || '')
+      : '',
+  ).current;
+
   const tentativa = useRef<string>(
     typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : String(Date.now()),
   );
+
+  // Prefill do cadastro quando a pessoa vem do app.
+  //
+  // ⚠️ Best-effort: token vencido/ausente devolve `{prefill: null}` e a tela fica
+  // como sempre foi (formulário em branco). Erro aqui NÃO pode impedir alguém de
+  // doar digitando.
+  //
+  // ⚠️ SÓ-ONDE-VAZIO: não sobrescreve o que a pessoa já digitou. Sem isso, uma
+  // resposta lenta chegaria por cima do que ela está escrevendo — a lição do
+  // formulário do censo, que ficava escondido até o prefill chegar.
+  useEffect(() => {
+    if (!tokenPrefill) return;
+    let vivo = true;
+    generosidadePublica.prefill(tokenPrefill)
+      .then((r: any) => {
+        if (!vivo || !r?.prefill) return;
+        setPrefill(r.prefill);
+        setNome((v) => v || r.prefill.nome || '');
+        setEmail((v) => v || r.prefill.email || '');
+      })
+      .catch(() => { /* silencioso: a tela segue funcionando digitando */ });
+    return () => { vivo = false; };
+  }, [tokenPrefill]);
 
   const valorCentavos = valorSel ?? centavosDoTexto(valorTxt);
 
@@ -222,24 +272,41 @@ export default function DoarPage() {
     e.preventDefault();
     setErroForm(null); setCampoErro(null);
     if (!valorCentavos) { setCampoErro('valor'); setErroForm('Escolha ou digite quanto você quer doar.'); return; }
-    // ⚠️ CPF obrigatório (27/08/2026). A tela evita a ida ao servidor, mas quem
-    // DECIDE é o backend — este bloco é conveniência, não a trava.
-    if (!soDigitos(cpf)) {
-      setCampoErro('cpf');
-      setErroForm('Informe seu CPF — é o que liga a doação ao seu cadastro e ao comprovante anual.');
+    // ⚠️⚠️ CAMPANHA: sem escolher, não envia. O servidor também recusa, mas errar
+    // aqui é pior — a pessoa acharia que doou pra campanha e cairia em oferta.
+    if (categoria === 'campanha' && (cfg?.campanhas || []).length > 0 && !campanhaId) {
+      setCampoErro('campanha');
+      setErroForm('Escolha a campanha.');
       return;
     }
-    if (!cpfValido(soDigitos(cpf))) {
-      setCampoErro('cpf');
-      setErroForm('Esse CPF não parece válido. Confira os números.');
-      return;
+    // ⚠️ CPF obrigatório (27/08/2026). A tela evita a ida ao servidor, mas quem
+    // DECIDE é o backend — este bloco é conveniência, não a trava.
+    //
+    // ⚠️⚠️ COM PREFILL O CAMPO NÃO EXISTE, e exigir aqui deixaria o formulário
+    // INSUBMISSÍVEL: erro pedindo um CPF que a tela não mostra. Quando o cadastro
+    // tem CPF, quem o resolve é o servidor pelo token. É a mesma armadilha que
+    // mordeu ao tirar as perguntas do Next.
+    if (!prefill?.tem_cpf) {
+      if (!soDigitos(cpf)) {
+        setCampoErro('cpf');
+        setErroForm('Informe seu CPF — é o que liga a doação ao seu cadastro e ao comprovante anual.');
+        return;
+      }
+      if (!cpfValido(soDigitos(cpf))) {
+        setCampoErro('cpf');
+        setErroForm('Esse CPF não parece válido. Confira os números.');
+        return;
+      }
     }
     setEnviando(true);
     try {
       const r = await generosidadePublica.doar({
         valor_centavos: valorCentavos,
         categoria,
-        campanha: categoria === 'campanha' ? campanha : undefined,
+        campanha_id: categoria === 'campanha' ? campanhaId : undefined,
+        // ⚠️ O token vai junto: é ele que faz o servidor resolver o cadastro (e
+        // o CPF real) em vez de confiar no que foi digitado.
+        t: tokenPrefill || undefined,
         nome, email,
         telefone: soDigitos(telefone) || undefined,
         cpf: soDigitos(cpf),
@@ -338,14 +405,43 @@ export default function DoarPage() {
             })}
           </div>
 
+          {/* ⚠️⚠️ LISTA das campanhas ATIVAS, não texto livre. Antes a pessoa
+              digitava o nome e a doação não se ligava a nada — a barrinha da
+              campanha nunca somava. A lista vem do SERVIDOR (só campanha ativa,
+              na janela, com `aceita_online`). */}
           {categoria === 'campanha' && (
             <div style={{ marginTop: 12 }}>
               <Rotulo C={C}>Qual campanha?</Rotulo>
-              <input
-                value={campanha} onChange={(ev) => setCampanha(ev.target.value)}
-                placeholder="Ex.: Reforma do templo" maxLength={120}
-                style={input(C, campoErro === 'campanha')}
-              />
+              {(cfg?.campanhas || []).length === 0 ? (
+                /* ⚠️ Sem campanha ativa a tela DIZ isso e manda pra oferta, em
+                   vez de mostrar um seletor vazio (que se lê como tela quebrada). */
+                <p style={{ margin: '6px 0 0', fontSize: 13, color: C.text3 }}>
+                  Não há campanha ativa agora. Você pode contribuir como{' '}
+                  <button
+                    type="button" onClick={() => setCategoria('oferta')}
+                    style={{ background: 'none', border: 0, padding: 0, color: '#00B39D', cursor: 'pointer', font: 'inherit', textDecoration: 'underline' }}
+                  >oferta</button>.
+                </p>
+              ) : (
+                <>
+                  <select
+                    value={campanhaId}
+                    onChange={(ev) => setCampanhaId(ev.target.value)}
+                    style={input(C, campoErro === 'campanha')}
+                  >
+                    <option value="">Escolha a campanha</option>
+                    {(cfg?.campanhas || []).map((c) => (
+                      <option key={c.id} value={c.id}>{c.nome}</option>
+                    ))}
+                  </select>
+                  {(() => {
+                    const sel = (cfg?.campanhas || []).find((c) => c.id === campanhaId);
+                    return sel?.descricao_curta ? (
+                      <p style={{ margin: '6px 0 0', fontSize: 12, color: C.text3 }}>{sel.descricao_curta}</p>
+                    ) : null;
+                  })()}
+                </>
+              )}
             </div>
           )}
 
@@ -395,21 +491,49 @@ export default function DoarPage() {
             <Rotulo C={C}>Celular <span style={{ color: C.textDim, fontWeight: 400 }}>(opcional)</span></Rotulo>
             <input
               value={telefone} onChange={(ev) => setTelefone(mascaraTelefone(ev.target.value))}
-              inputMode="tel" autoComplete="tel" placeholder="(21) 99999-9999" style={input(C, false)}
+              inputMode="tel" autoComplete="tel"
+              placeholder={prefill?.telefone_mascarado || '(21) 99999-9999'}
+              style={input(C, false)}
             />
+            {/* ⚠️ O telefone do cadastro aparece MASCARADO como placeholder: a
+                pessoa reconhece que já temos e não precisa redigitar, e o número
+                completo não trafega pra uma página pública. */}
+            {prefill?.tem_telefone && !telefone && (
+              <div style={{ fontSize: 12, color: C.text3, marginTop: 6 }}>
+                Vamos usar o celular do seu cadastro. Preencha só se quiser trocar.
+              </div>
+            )}
           </div>
 
-          <div style={{ marginTop: 12 }}>
-            <Rotulo C={C}>CPF</Rotulo>
-            <input
-              value={cpf} onChange={(ev) => setCpf(mascaraCpf(ev.target.value))}
-              inputMode="numeric" placeholder="000.000.000-00" style={input(C, campoErro === 'cpf')}
-            />
-            <div style={{ fontSize: 12, color: C.text3, marginTop: 6, lineHeight: 1.45 }}>
-              O CPF liga a doação ao seu cadastro — é o que faz ela aparecer no seu
-              comprovante anual de contribuições.
+          {/* ⚠️⚠️ COM PREFILL O CPF NÃO É PEDIDO. Quem resolve o CPF é o SERVIDOR,
+              pelo token — então ele nunca chega ao navegador e a pessoa não pode
+              doar sob o CPF de outra pessoa da família por engano. */}
+          {prefill?.tem_cpf ? (
+            <div style={{ marginTop: 12 }}>
+              <Rotulo C={C}>CPF</Rotulo>
+              <div style={{ ...input(C, false), display: 'flex', alignItems: 'center', color: C.text3 }}>
+                {prefill.cpf_mascarado}
+              </div>
+              <div style={{ fontSize: 12, color: C.text3, marginTop: 6, lineHeight: 1.45 }}>
+                É o CPF do seu cadastro — a doação já entra no seu comprovante anual.
+              </div>
             </div>
-          </div>
+          ) : (
+            <div style={{ marginTop: 12 }}>
+              <Rotulo C={C}>CPF</Rotulo>
+              <input
+                value={cpf} onChange={(ev) => setCpf(mascaraCpf(ev.target.value))}
+                inputMode="numeric" placeholder="000.000.000-00" style={input(C, campoErro === 'cpf')}
+              />
+              <div style={{ fontSize: 12, color: C.text3, marginTop: 6, lineHeight: 1.45 }}>
+                {/* ⚠️ Prefill SEM CPF no cadastro é um terceiro estado, e a frase
+                    muda: a pessoa veio identificada mas o cadastro está incompleto. */}
+                {prefill
+                  ? 'Seu cadastro ainda não tem CPF — informe para a doação entrar no seu comprovante anual.'
+                  : 'O CPF liga a doação ao seu cadastro — é o que faz ela aparecer no seu comprovante anual de contribuições.'}
+              </div>
+            </div>
+          )}
 
           {erroForm && (
             <div style={{

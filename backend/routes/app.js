@@ -27,6 +27,7 @@ const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const campDoacao = require('../utils/campanhaDoacao');
+const doacaoToken = require('../utils/doacaoToken');
 const { basePublica } = require('../utils/linkInscricaoApp');
 const { hojeBrt: hojeBrtCamp } = require('../services/campanhaArrecadacao');
 // ⚠️ Só a FACHADA do núcleo (`criarCobranca`) — nenhum arquivo de provider é
@@ -7449,6 +7450,42 @@ router.get('/generosidade/config', limiterNormal, async (req, res) => {
     // ⚠️ 500, nunca `{campanhas: []}`: "não há campanha" e "não deu pra saber"
     // levam a decisões opostas, e a tela precisa poder dizer qual é.
     res.status(500).json({ error: 'Não foi possível carregar a generosidade agora.' });
+  }
+});
+
+// GET /api/app/generosidade/link
+//
+// O que o botão "Contribuir no site" abre.
+//
+// ⚠️⚠️ POR QUE UM LINK E NÃO PAGAMENTO NO APP: `FEATURES.generosidade` está
+// FALSE no app desde out/2026 — a doação saiu da submissão da App Store até a
+// aprovação da Benevity (Apple guideline 3.2.2(iv)). O repo do app registra que
+// a chave PIX apareceu ali em 05/08 e foi RETIRADA no mesmo dia. Levar a pessoa
+// pro site é o caminho que a Apple aceita, e é o que o app já faz hoje.
+//
+// ⚠️ O token de prefill vai NA URL e é CURTO (30 min): é ele que faz a tela abrir
+// com os dados da pessoa sem ela digitar nada. Ver `utils/doacaoToken.js`.
+router.get('/generosidade/link', limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    // ⚠️ Sem cadastro o link SAI IGUAL, só sem prefill — a pessoa doa digitando,
+    // como qualquer visitante. Recusar aqui tiraria a doação de quem ainda não
+    // completou o cadastro, o que é o oposto de ajudar.
+    const token = membro?.id ? doacaoToken.emitir(membro.id) : null;
+    const base = `${basePublica()}/doar`;
+    res.json({
+      url: token ? `${base}?t=${encodeURIComponent(token)}` : base,
+      prefill: Boolean(token),
+      // ⚠️ DECLARA por que não houve prefill: "sem cadastro" e "o servidor está
+      // sem o segredo do token" são coisas diferentes, e a segunda é problema de
+      // configuração que precisa aparecer em algum lugar.
+      motivo_sem_prefill: token ? null : (membro?.id ? 'sem_segredo' : 'sem_cadastro'),
+    });
+  } catch (e) {
+    console.error('[app] generosidade/link:', e.message);
+    // ⚠️ Nem aqui devolve link sem token silenciosamente: erro é erro, e o app
+    // cai no link fixo que ele já tem hoje.
+    res.status(500).json({ error: 'Não foi possível montar o link agora.' });
   }
 });
 
