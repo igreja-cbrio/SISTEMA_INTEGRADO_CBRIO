@@ -14681,10 +14681,19 @@ prometer que o link chega por aqui → 1.
 
 4ª opção da tela inicial do totem membro (`/totem`), substituindo a ficha de
 papel do apelo. Decisões do Marcos (01/09): campos relaxados **SÓ neste fluxo**
-(nome + WhatsApp obrigatórios · **nascimento OPCIONAL** — 2ª rodada do mesmo
-dia: "me pediram para deixar como opcional"); a pessoa já **solicita inscrição**
-nas portas comuns; e a operação é **ASSISTIDA** — tela 1 (dados) e 2 (portas)
-são da pessoa, a tela 3 é da equipe (Marcelo define quem contata e confirma).
+(nome + WhatsApp + **BAIRRO obrigatórios** · **nascimento OPCIONAL** — 2ª e 3ª
+rodadas do mesmo dia); a pessoa já **solicita inscrição** nas portas comuns; e a
+operação é **ASSISTIDA** — tela 1 (dados) e 2 (portas) são da pessoa, a tela 3
+é da equipe (Marcelo define quem contata e confirma).
+
+⚠️⚠️ **GRUPOS funciona como o direcionamento do Next** (3ª rodada · Marcos):
+a pessoa **NÃO escolhe grupo** — sinaliza o interesse, e quem vincula é a
+coordenação de Grupos, por BAIRRO (daí o bairro obrigatório na tela 1). O
+encaminhamento leva o bairro na observação e no aviso, e **quem recebe é a
+regra de notificação do módulo grupos** (`notificacao_regras` · conferido em
+01/09: aponta pra coordenadora de Grupos) — nome de pessoa NUNCA entra no
+código (lei do projeto). O bairro também vai pro CADASTRO (só-onde-vazio,
+canonicalizado por `canonizarBairro` — lei de 24/08).
 
 **Backend** (`membresia.js` · padrão dos endpoints `/totem/*`, só `authenticate`):
 - `GET /membresia/totem/novo-convertido/contexto` — culto do relógio +

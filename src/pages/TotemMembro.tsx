@@ -1544,7 +1544,7 @@ function NovoConvertidoFlow({ onExit, onActivity }: { onExit: () => void; onActi
   const [ctxLoading, setCtxLoading] = useState(true);
   const [agenda, setAgenda] = useState<{ data_batismo: string | null; horarios: any[] }>({ data_batismo: null, horarios: [] });
 
-  const [form, setForm] = useState({ nome: '', telefone: '', data_nascimento: '' });
+  const [form, setForm] = useState({ nome: '', telefone: '', data_nascimento: '', bairro: '' });
   const [aceiteLgpd, setAceiteLgpd] = useState(false);
   // Opt-in de WhatsApp: explícito, default false (Contrato de Inscrição).
   const [optin, setOptin] = useState(false);
@@ -1574,8 +1574,10 @@ function NovoConvertidoFlow({ onExit, onActivity }: { onExit: () => void; onActi
 
   const telDigits = form.telefone.replace(/\D/g, '');
   // Nascimento é OPCIONAL neste fluxo (pedido do Marcos · 01/09) — não trava o
-  // continuar; quando vem, ajuda o dedup futuro.
-  const dadosOk = form.nome.trim().length >= 2 && telDigits.length >= 10 && aceiteLgpd;
+  // continuar; quando vem, ajuda o dedup futuro. BAIRRO é OBRIGATÓRIO (mesma
+  // rodada): a pessoa não escolhe grupo — a coordenação vincula por bairro.
+  const dadosOk = form.nome.trim().length >= 2 && telDigits.length >= 10
+    && form.bairro.trim().length >= 2 && aceiteLgpd;
 
   const togglePorta = (p: string) => {
     setPortas((prev) => {
@@ -1588,7 +1590,11 @@ function NovoConvertidoFlow({ onExit, onActivity }: { onExit: () => void; onActi
   const PORTAS_UI = [
     { id: 'next',    label: 'Next',              desc: 'O curso de integração · próximo domingo', icon: ArrowRight, color: '#10B981' },
     { id: 'batismo', label: 'Batismo',           desc: 'Dar o próximo passo nas águas',           icon: Droplets,   color: '#6366F1' },
-    { id: 'grupos',  label: 'Grupo de Conexão',  desc: 'Caminhar junto com outras pessoas',       icon: Users,      color: '#00B39D' },
+    // ⚠️ Grupos: a pessoa NÃO escolhe grupo aqui (como no direcionamento do
+    // Next) — sinaliza o interesse e a coordenação de Grupos entra em contato
+    // e vincula num grupo perto do bairro dela (por isso o bairro é
+    // obrigatório na tela 1).
+    { id: 'grupos',  label: 'Grupo de Conexão',  desc: 'A equipe te liga e encontra um grupo perto de você', icon: Users, color: '#00B39D' },
     { id: 'servir',  label: 'Servir',            desc: 'Fazer parte de uma equipe de voluntários', icon: HandHeart,  color: '#F59E0B' },
   ];
 
@@ -1600,6 +1606,7 @@ function NovoConvertidoFlow({ onExit, onActivity }: { onExit: () => void; onActi
         nome: form.nome.trim(),
         telefone: telDigits,
         data_nascimento: form.data_nascimento,
+        bairro: form.bairro.trim(),
         aceite_lgpd: aceiteLgpd,
         whatsapp_optin: optin,
         portas: portasEscolhidas,
@@ -1712,6 +1719,15 @@ function NovoConvertidoFlow({ onExit, onActivity }: { onExit: () => void; onActi
               onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))} />
             <input className={inputCls} placeholder="Seu WhatsApp — (21) 99999-9999" inputMode="tel" value={form.telefone}
               onChange={(e) => setForm((f) => ({ ...f, telefone: maskTel(e.target.value) }))} />
+            <div>
+              <p className="text-white/40 text-xs mb-1.5">Bairro onde você mora</p>
+              <SeletorBairro
+                value={form.bairro}
+                onChange={(v: string) => setForm((f) => ({ ...f, bairro: v }))}
+                placeholder="Digite ou escolha o bairro"
+                className={inputCls}
+              />
+            </div>
             <div>
               <p className="text-white/40 text-xs mb-1.5">Data de nascimento <span className="text-white/25">(se quiser)</span></p>
               <BirthDatePicker value={form.data_nascimento}
@@ -1831,6 +1847,7 @@ function NovoConvertidoFlow({ onExit, onActivity }: { onExit: () => void; onActi
           <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm space-y-1">
             <p><span className="text-white/40">Nome:</span> <span className="font-semibold">{form.nome.trim()}</span></p>
             <p><span className="text-white/40">WhatsApp:</span> {form.telefone}</p>
+            <p><span className="text-white/40">Bairro:</span> {form.bairro.trim()}</p>
             <p>
               <span className="text-white/40">Pediu:</span>{' '}
               {portas.size ? [...portas].map((p) => LABEL_PORTA[p]).join(' · ') : 'não quis se inscrever agora'}

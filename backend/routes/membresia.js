@@ -27,7 +27,7 @@ const {
   bairroPorCep, coordenadaPorTexto, centroideDeBairro, coordenadaDeCep,
 } = require('../services/geoBrasil');
 const { trechoValido } = require('../utils/trechoCep');
-const { normalizarEnderecoDoPayload } = require('../services/bairroCanonico');
+const { normalizarEnderecoDoPayload, canonizarBairro } = require('../services/bairroCanonico');
 const { decidirDesativacao, decidirReativacao } = require('../utils/desativarMembro');
 // ⚠️⚠️ `donosDoGrupo` era CHAMADO em `/totem/grupos/:id/entrar` e NUNCA foi
 // importado neste arquivo — ReferenceError latente. O insert do pedido roda
@@ -2568,6 +2568,17 @@ router.post('/totem/novo-convertido', async (req, res) => {
     if (!v.ok) return res.status(400).json({ error: v.erro, campo: v.campo });
     const { nome, dataNascimento, telefone, email } = v.valores;
 
+    // ⚠️ BAIRRO OBRIGATÓRIO neste fluxo (Marcos · 01/09): o interesse em grupo
+    // não escolhe grupo — quem vincula é a coordenação de Grupos, e ela decide
+    // POR BAIRRO qual grupo fica perto da pessoa. Sem bairro o encaminhamento
+    // chega cego. Canonicalizado pela régua da casa (fn_dem_bairro_canonico ·
+    // lei de 24/08: a grafia gravada é decisão do backend, nunca da tela).
+    const bairroCru = String(req.body?.bairro || '').trim();
+    if (bairroCru.length < 2) {
+      return res.status(400).json({ error: 'Informe o bairro onde você mora.', campo: 'bairro' });
+    }
+    const bairro = (await canonizarBairro(bairroCru)) || bairroCru;
+
     const portas = Array.isArray(req.body?.portas)
       ? [...new Set(req.body.portas.filter((p) => ['next', 'batismo', 'grupos', 'servir'].includes(p)))]
       : [];
@@ -2685,6 +2696,19 @@ router.post('/totem/novo-convertido', async (req, res) => {
       }
     }
 
+    // Bairro no CADASTRO da pessoa: SÓ-ONDE-VAZIO (Contrato de porta —
+    // formulário não sobrescreve o que a equipe corrigiu), com string vazia
+    // contando como vazio (lição do genero = ''). Best-effort: perder o bairro
+    // no cadastro não perde o encaminhamento, que o carrega na observação.
+    if (membroId) {
+      try {
+        await supabase.from('mem_membros')
+          .update({ bairro })
+          .eq('id', membroId)
+          .or('bairro.is.null,bairro.eq.');
+      } catch (e) { console.warn('[TOTEM novo-convertido] bairro:', e.message); }
+    }
+
     // O convertido criado pelo trigger (cui_convertidos não guarda o id da
     // decisão — o elo é culto + telefone). Best-effort: sem ele o responsável
     // não é gravado, e a resposta DECLARA em vez de fingir sucesso.
@@ -2795,6 +2819,11 @@ router.post('/totem/novo-convertido', async (req, res) => {
         if (jaEnc) {
           criadas[p] = 'ja_encaminhado';
         } else {
+          // ⚠️ O BAIRRO vai na observação e no aviso: a pessoa NÃO escolhe
+          // grupo (como no direcionamento do Next) — quem vincula é a
+          // coordenação de Grupos, e é o bairro que permite achar um grupo
+          // perto (pedido do Marcos · 01/09). A regra de notificação do módulo
+          // decide QUEM recebe (hoje: a coordenação · /admin/notificacoes).
           const { error: ee } = await supabase.from('jornada_encaminhamentos').insert({
             origem: 'totem',
             convertido_id: cui?.id || null,
@@ -2803,7 +2832,7 @@ router.post('/totem/novo-convertido', async (req, res) => {
             telefone,
             destino: meta.destino,
             valor_alvo: meta.valor,
-            observacao: 'A própria pessoa pediu no totem de novos convertidos',
+            observacao: `A própria pessoa pediu no totem de novos convertidos · bairro: ${bairro}`,
             encaminhado_por: req.user?.id || null,
           });
           if (ee) throw ee;
@@ -2811,7 +2840,7 @@ router.post('/totem/novo-convertido', async (req, res) => {
             modulo: meta.modulo,
             tipo: 'novo_encaminhamento',
             titulo: `Novo convertido quer ${meta.label}: ${nome}`,
-            mensagem: `${nome} acabou de decidir e pediu ${meta.label} no totem. Faça o primeiro contato e registre a devolutiva.`,
+            mensagem: `${nome} acabou de decidir e pediu ${meta.label} no totem (mora em ${bairro}). Faça o primeiro contato e registre a devolutiva.`,
             link: meta.link,
             severidade: 'info',
           }).catch(() => {});
