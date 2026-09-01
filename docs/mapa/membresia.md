@@ -285,6 +285,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `backend/services/batismoHorarios.js`
 - `backend/services/censoDisparo.js`
 - `backend/services/cerebroSync.js`
+- `backend/services/comunicacaoDisparosOff.js`
 - `backend/services/cpfReconciliar.js`
 - `backend/services/cultoDeAgora.js`
 - `backend/services/duplicidadePolicy.js`
