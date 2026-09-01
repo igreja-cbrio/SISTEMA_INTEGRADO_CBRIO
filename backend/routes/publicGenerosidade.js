@@ -35,6 +35,35 @@ const {
   tirarCodigoPaisTelefone, temAbreviacaoNome, honeypotPreenchido,
 } = require('../services/inscricaoContrato');
 const { acharMembroGuardado } = require('../services/membroMatch');
+const campDoacao = require('../utils/campanhaDoacao');
+const { hojeBrt: hojeBrtCamp } = require('../services/campanhaArrecadacao');
+const { supabase: db } = require('../utils/supabase');
+
+// As campanhas que podem receber doação AGORA.
+//
+// ⚠️⚠️ Lê `camp_campanhas` DIRETO (não a `vw_camp_arrecadacao`): esta rota é
+// PÚBLICA, e a view carrega arrecadado, meta e nº de doadores. Uma tela de doar
+// não precisa disso, e publicar quanto a igreja já arrecadou numa rota aberta é
+// alcance que ninguém decidiu.
+//
+// ⚠️ Best-effort: falha devolve LISTA VAZIA, e o efeito é a categoria "campanha"
+// não aparecer — nunca derrubar a doação de dízimo/oferta, que é a maioria.
+// ⚠️ Erro é LOGADO: lista vazia silenciosa se leria como "não há campanha".
+async function campanhasQuePodemReceber() {
+  try {
+    const { data, error } = await db
+      .from('camp_campanhas')
+      .select('id, nome, status, data_inicio, data_fim, descricao_curta, aceita_online')
+      .eq('status', 'ativa')
+      .is('deleted_at', null)
+      .order('data_lancamento', { ascending: false });
+    if (error) throw error;
+    return campDoacao.campanhasOfertaveis(data || [], hojeBrtCamp());
+  } catch (e) {
+    console.warn('[publicGenerosidade] campanhas indisponíveis:', e.message);
+    return [];
+  }
+}
 // Fachada do núcleo de pagamentos. ⚠️ NUNCA importar `providers/*` aqui.
 const pagamentos = require('../services/pagamentos');
 const {
@@ -159,9 +188,13 @@ const TOKEN_RE = /^[0-9a-f]{32}$/i;
 // nasce protegida sem ninguém precisar lembrar. Ver `middleware/semCache.js`.
 router.use(semCache);
 
-router.get('/config', (_req, res) => {
+router.get('/config', async (_req, res) => {
   const aviso = bloqueio();
+  // ⚠️ Só id/nome/descrição curta (`paraOApp`) — nada de meta ou arrecadado numa
+  // rota pública.
+  const campanhas = aviso ? [] : (await campanhasQuePodemReceber()).map(campDoacao.paraOApp);
   res.json({
+    campanhas,
     ativo: !aviso,
     aviso,
     metodos: aviso ? [] : metodosOfertados(),
@@ -199,9 +232,38 @@ router.post('/doacao', async (req, res) => {
     }
 
     const categoria = CATEGORIAS.includes(String(b.categoria)) ? String(b.categoria) : 'oferta';
-    const campanha = categoria === 'campanha' ? String(b.campanha || '').trim().slice(0, 120) : null;
-    if (categoria === 'campanha' && !campanha) {
-      return res.status(400).json({ error: 'Diga qual é a campanha.', campo: 'campanha' });
+    // ⚠️⚠️ CAMPANHA agora é ESCOLHA de um registro, não texto digitado.
+    // `vw_camp_arrecadacao` casa a doação por `metadata->>'campanha_id'`, então
+    // texto livre (o que existia aqui) NUNCA alimentava a barrinha — medido em
+    // 01/09/2026: a única doação paga tinha `metadata.campanha = null`.
+    //
+    // ⚠️ Retrocompatível: quem manda `campanha` (nome) sem `campanha_id` segue
+    // sendo aceito — é o bundle antigo do site em cache, e recusá-lo faria a
+    // doação falhar pra quem não recarregou a página. O que ele NÃO ganha é
+    // atribuição na barra, que é exatamente o comportamento de hoje.
+    let campanhaId = null;
+    let campanha = categoria === 'campanha' ? String(b.campanha || '').trim().slice(0, 120) : null;
+    if (categoria === 'campanha') {
+      const idPedido = String(b.campanha_id || '').trim();
+      if (idPedido) {
+        const ofertaveis = await campanhasQuePodemReceber();
+        const escolha = campDoacao.validarEscolha({
+          categoria, campanha_id: idPedido, ofertaveis,
+        });
+        if (!escolha.ok) {
+          return res.status(400).json({
+            error: escolha.motivo === 'campanha_indisponivel'
+              ? 'Esta campanha não está mais recebendo doação.'
+              : 'Diga qual é a campanha.',
+            campo: 'campanha',
+          });
+        }
+        campanhaId = escolha.campanha_id;
+        campanha = escolha.campanha_nome || campanha;
+      }
+      if (!campanhaId && !campanha) {
+        return res.status(400).json({ error: 'Diga qual é a campanha.', campo: 'campanha' });
+      }
     }
 
     const nome = String(b.nome || '').trim().replace(/\s+/g, ' ');
@@ -253,7 +315,7 @@ router.post('/doacao', async (req, res) => {
       origem_id: null,
       referencia: referenciaDaTentativa(b.tentativa),
       valor_centavos: valor,
-      descricao: categoria === 'campanha' ? `Campanha: ${campanha}` : (categoria === 'dizimo' ? 'Dízimo' : 'Oferta'),
+      descricao: campDoacao.descricaoDaDoacao({ categoria, campanha_nome: campanha }),
       metodos_ofertados: metodosOfertados(),
       expira_em: new Date(Date.now() + EXPIRA_HORAS * 3600000).toISOString(),
       pagador_nome: nome,
@@ -261,7 +323,12 @@ router.post('/doacao', async (req, res) => {
       pagador_email: email,
       pagador_telefone: telefone || null,
       membro_id: membroId,
-      metadata: { categoria, campanha, canal, nome_abreviado: nomeAbreviado || undefined },
+      // ⚠️ Régua ÚNICA do metadata (app e site): é ela que garante a chave
+      // `campanha_id`, a única que a barrinha casa.
+      metadata: campDoacao.metadataDaDoacao({
+        categoria, campanha_id: campanhaId, campanha_nome: campanha, canal,
+        extra: { nome_abreviado: nomeAbreviado || undefined },
+      }),
     });
 
     res.json({ ok: true, token: cobranca.public_token, pagamento: estadoBasePagamento(cobranca) });
@@ -321,6 +388,7 @@ router.get('/:token', async (req, res) => {
       // Do domínio da doação (não é PII: quem tem o token já sabe o que doou).
       categoria: cobranca.metadata?.categoria || null,
       campanha: cobranca.metadata?.campanha || null,
+      campanha_id: cobranca.metadata?.campanha_id || null,
     });
   } catch (e) {
     console.error('[publicGenerosidade] status:', e.message);

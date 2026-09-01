@@ -26,6 +26,13 @@ const { dispararAuto } = require('../services/whatsappAuto');
 const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const campDoacao = require('../utils/campanhaDoacao');
+const { basePublica } = require('../utils/linkInscricaoApp');
+const { hojeBrt: hojeBrtCamp } = require('../services/campanhaArrecadacao');
+// ⚠️ Só a FACHADA do núcleo (`criarCobranca`) — nenhum arquivo de provider é
+// importado aqui. É o que faz trocar de PSP custar 1 env, e é a mesma fachada
+// por onde o pagamento do RETIRO passa (não mexer nela).
+const pagamentos = require('../services/pagamentos');
 // Convite de familiar pelo app · junta na mesma família + vínculo de parentesco.
 const { vincularParentesco, entrarNaFamilia, VINC_INVERSO } = require('../services/familiaVinculo');
 // `notificarLiderNovoPedido` é a MESMA função que o formulário público usa —
@@ -7374,6 +7381,167 @@ router.post('/eventos/:id/inscrever', authApp, limiterStrict, async (req, res) =
   } catch (e) {
     console.error('[APP] eventos/inscrever:', e.message);
     res.status(500).json({ error: 'Erro ao inscrever no evento' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  GENEROSIDADE NO APP · campanha ativa aparece e a doação fica vinculada
+//
+//  Pedido do Matheus (01/09/2026): *"toda vez que tivermos campanha ativa, ela
+//  deve ativar e aparecer dentro de generosidade no app dos membros também. E aí
+//  já fica tudo vinculado com o cadastro da pessoa."*
+//
+//  ⚠️⚠️ ESTA ROTA NÃO TOCA NO NÚCLEO DE PAGAMENTOS. Ela é um CHAMADOR novo de
+//  `pagamentos.criarCobranca`, exatamente como o `/doar` do site já é. O núcleo
+//  (`services/pagamentos/*`, o provider do Mercado Pago, o webhook, a máquina de
+//  estados) é o MESMO por onde o RETIRO está sendo pago agora — medido em
+//  01/09/2026: 12 cobranças de inscrição pagas, R$ 5.007, a mais recente HOJE.
+//  Mexer ali para atender a generosidade poria dinheiro de terceiro em risco.
+//
+//  ⚠️⚠️ POR QUE NÃO REUSAR O `/api/public/generosidade/doacao`: aquele é PÚBLICO
+//  e resolve o `membro_id` por MATCHER sobre nome/e-mail digitados. Aqui a pessoa
+//  está autenticada, então o vínculo vem da SESSÃO — que é o "fica tudo vinculado
+//  com o cadastro" que ele pediu, e é mais forte que qualquer match.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Campanhas que podem receber doação agora. Best-effort e LOGADO. */
+async function campanhasParaDoarNoApp() {
+  try {
+    const { data, error } = await supabase
+      .from('camp_campanhas')
+      .select('id, nome, status, data_inicio, data_fim, descricao_curta, aceita_online')
+      .eq('status', 'ativa')
+      .is('deleted_at', null)
+      .order('data_lancamento', { ascending: false });
+    if (error) throw error;
+    return campDoacao.campanhasOfertaveis(data || [], hojeBrtCamp());
+  } catch (e) {
+    // ⚠️ Lista vazia SILENCIOSA se leria como "não há campanha" — por isso o log.
+    console.warn('[app] campanhas para doar indisponíveis:', e.message);
+    return [];
+  }
+}
+
+// GET /api/app/generosidade/config
+router.get('/generosidade/config', limiterNormal, async (req, res) => {
+  try {
+    // ⚠️ `bloqueio` NÃO existe na fachada (conferido nos exports) — o freio é a
+    // combinação de `habilitado` (kill switch `PAG_ENABLED`) e `pspConfigurado`
+    // (credencial do provedor). Chamar um `pagamentos.bloqueio()` inexistente com
+    // guard devolveria `null` sempre, e o app nunca saberia que o pagamento está
+    // desligado: ofereceria doar e a pessoa levaria erro no fim.
+    const aviso = !pagamentos.habilitado()
+      ? 'A doação pelo app está temporariamente indisponível. Tente de novo em alguns minutos.'
+      : !pagamentos.pspConfigurado()
+        ? 'A doação pelo app ainda está sendo preparada.'
+        : null;
+    const campanhas = (await campanhasParaDoarNoApp()).map(campDoacao.paraOApp);
+    res.json({
+      ativo: !aviso,
+      aviso: aviso || null,
+      categorias: campDoacao.CATEGORIAS,
+      // ⚠️ Lista VAZIA é resposta legítima ("não há campanha ativa"), e a tela
+      // esconde a categoria em vez de mostrar um seletor sem opção.
+      campanhas,
+    });
+  } catch (e) {
+    console.error('[app] generosidade/config:', e.message);
+    // ⚠️ 500, nunca `{campanhas: []}`: "não há campanha" e "não deu pra saber"
+    // levam a decisões opostas, e a tela precisa poder dizer qual é.
+    res.status(500).json({ error: 'Não foi possível carregar a generosidade agora.' });
+  }
+});
+
+// POST /api/app/generosidade/doar  { valor_centavos, categoria, campanha_id? }
+router.post('/generosidade/doar', limiterStrict, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    // ⚠️ Sem cadastro não dá pra vincular, e vincular é o ponto do pedido. O
+    // portão de identidade do app já obriga a completar antes de navegar; esta
+    // guarda é o cinto de segurança, com o caminho DITO.
+    if (!membro?.id) {
+      return res.status(409).json({
+        error: 'Complete seu cadastro para doar pelo app.', codigo: 'sem_cadastro',
+      });
+    }
+
+    // ⚠️ O freio vale no POST também, não só no config: a tela pode ter sido
+    // aberta antes de alguém desligar o pagamento.
+    if (!pagamentos.habilitado() || !pagamentos.pspConfigurado()) {
+      return res.status(503).json({
+        error: 'A doação pelo app está indisponível agora.', codigo: 'pagamento_indisponivel',
+      });
+    }
+
+    const valor = Number(req.body?.valor_centavos);
+    if (!Number.isInteger(valor) || valor <= 0) {
+      return res.status(400).json({ error: 'Valor inválido.', campo: 'valor_centavos' });
+    }
+
+    const ofertaveis = await campanhasParaDoarNoApp();
+    const escolha = campDoacao.validarEscolha({
+      categoria: req.body?.categoria,
+      campanha_id: req.body?.campanha_id,
+      ofertaveis,
+    });
+    if (!escolha.ok) {
+      // ⚠️ O MOTIVO vai pra tela: "escolha a campanha" e "essa campanha não
+      // recebe mais" pedem ações diferentes de quem está com o dedo no botão.
+      const msg = {
+        campanha_nao_escolhida: 'Escolha a campanha.',
+        campanha_indisponivel: 'Esta campanha não está mais recebendo doação.',
+        categoria_invalida: 'Escolha dízimo, oferta ou campanha.',
+      }[escolha.motivo] || 'Não foi possível iniciar a doação.';
+      return res.status(400).json({ error: msg, codigo: escolha.motivo });
+    }
+
+    const { cobranca } = await pagamentos.criarCobranca({
+      origem_tipo: pagamentos.ORIGENS.GENEROSIDADE,
+      // Doação não tem linha de domínio própria — o "objeto" É a cobrança.
+      origem_id: null,
+      valor_centavos: valor,
+      descricao: campDoacao.descricaoDaDoacao({
+        categoria: escolha.categoria, campanha_nome: escolha.campanha_nome,
+      }),
+      pagador_nome: membro.nome || null,
+      pagador_cpf: membro.cpf || null,
+      pagador_email: membro.email || null,
+      pagador_telefone: membro.telefone || null,
+      // ⚠️⚠️ AQUI está o "vinculado com o cadastro": o membro vem da SESSÃO.
+      membro_id: membro.id,
+      metadata: campDoacao.metadataDaDoacao({
+        categoria: escolha.categoria,
+        campanha_id: escolha.campanha_id,
+        campanha_nome: escolha.campanha_nome,
+        canal: 'app',
+      }),
+    });
+
+    // ⚠️⚠️ A tela do app NÃO coleta cartão (LEI nº 5 do núcleo: PAN/CVV nunca
+    // entram no nosso lado). O app abre a página hospedada da COBRANÇA, que é
+    // onde vivem Pix, boleto e o checkout do provedor — a mesma do site.
+    // ⚠️⚠️ A URL COMPLETA é montada NO SERVIDOR (`basePublica()`, a mesma régua
+    // do link de inscrição do app). URL escrita no bundle é URL que ninguém
+    // valida, num aparelho que só se conserta por OTA — e a base é CONSTANTE de
+    // propósito ali (não lê env), justamente para não apontar pro domínio da
+    // Vercel sem ninguém perceber num caminho com dinheiro.
+    res.json({
+      ok: true,
+      token: cobranca.public_token,
+      pagamento_url: `${basePublica()}/pagamento/${cobranca.public_token}`,
+    });
+  } catch (e) {
+    console.error('[app] generosidade/doar:', e.message);
+    notificar({
+      modulo: 'financeiro',
+      tipo: 'doacao_falha_criar',
+      titulo: 'Falha ao criar cobrança de doação (app)',
+      mensagem: `Alguém tentou doar pelo app e a cobrança não foi criada: ${e.message}.`,
+      severidade: 'alerta',
+      link: '/campanhas',
+      chaveDedup: `doacao_falha_criar_app_${new Date().toISOString().slice(0, 10)}`,
+    }).catch(() => {});
+    res.status(502).json({ error: 'Não conseguimos iniciar a doação agora. Tente novamente em alguns minutos.' });
   }
 });
 
