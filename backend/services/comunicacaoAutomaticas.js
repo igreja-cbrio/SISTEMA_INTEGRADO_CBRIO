@@ -393,6 +393,25 @@ async function publicoCampanhaSemanal() {
  * O número aqui é quantas doações AINDA não foram agradecidas — que é a
  * pergunta útil, e a que revela fila parada.
  */
+// Boas-vindas do NOVO CONVERTIDO (totem · 01/09): disparo REATIVO — sai na hora
+// do registro. O "público" aqui é a leitura de quantas decisões o fluxo do
+// totem registrou nos últimos 30 dias (o elo é a observação que o endpoint
+// grava — a decisão não tem coluna de proveniência própria de propósito:
+// `fonte` ficou no DEFAULT do cadastro manual, decisão do Marcos).
+async function publicoConvertidoBoasVindas() {
+  const desde = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { count } = await supabase.from('cultos_decisoes_pessoas')
+    .select('id', { count: 'exact', head: true })
+    .eq('observacoes', 'Registrado no totem · fluxo novo convertido')
+    .is('deleted_at', null)
+    .gte('created_at', desde);
+  return {
+    total: count || 0,
+    pessoas: [],
+    universo: { rotulo: 'decisões registradas pelo totem nos últimos 30 dias', qtd: count || 0 },
+  };
+}
+
 async function publicoCampanhaAgradecimento() {
   const { data: campanhas } = await supabase.from('camp_campanhas')
     .select('id, nome, digito, data_inicio, data_fim')
@@ -502,6 +521,26 @@ const CATALOGO = [
     // é decisão do Matheus (24/08), e a guarda no remetente fica DEPOIS do push
     // justamente por isso. Quem espera silêncio total nesta tela se engana.
     publico: publicoEscalaVespera,
+  },
+  {
+    id: 'convertido_boas_vindas',
+    nome: 'Boas-vindas ao novo convertido (totem)',
+    quando: 'Reativo · na hora em que a pessoa registra a decisão no fluxo "Novo convertido" do totem',
+    regra: 'Quem registra a própria decisão no totem — 1 mensagem por pessoa (só no primeiro '
+      + 'registro do dia; a retentativa do quiosque não duplica). A mensagem cita quem vai '
+      + 'contatar (o responsável escolhido na tela da equipe).',
+    fonte: 'POST /api/membresia/totem/novo-convertido → routes/membresia.js',
+    contexto: 'cuidados.convertido_boas_vindas',
+    // ⚠️ `envTemplate` NULL de propósito: o nome do template é FIXO no código
+    // (`novo_convertido_boas_vindas` · env WHATSAPP_TEMPLATE_CONVERTIDO_BOAS_VINDAS
+    // só como override), então "env vazia" NÃO é bloqueio — declarar aqui
+    // pintaria de vermelho um disparo configurado (a classe de mentira que esta
+    // tela evita · mesmo caso do campanha_agradecimento).
+    envTemplate: null,
+    // ⚠️ Nasce DESLIGADO (id em whatsapp_config.disparos_off · decisão do
+    // Marcos 01/09): liga quando o número oficial da igreja entrar na
+    // plataforma. Ligar é o switch desta tela — sem PR.
+    publico: publicoConvertidoBoasVindas,
   },
   {
     id: 'campanha_semanal',

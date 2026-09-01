@@ -14681,10 +14681,10 @@ prometer que o link chega por aqui → 1.
 
 4ª opção da tela inicial do totem membro (`/totem`), substituindo a ficha de
 papel do apelo. Decisões do Marcos (01/09): campos relaxados **SÓ neste fluxo**
-(nome + WhatsApp + nascimento — "nascimento favorece duplicata no futuro, não é
-sensível e é rápido"); a pessoa já **solicita inscrição** nas portas comuns; e a
-operação é **ASSISTIDA** — tela 1 (dados) e 2 (portas) são da pessoa, a tela 3
-é da equipe (Marcelo define quem contata e confirma tudo).
+(nome + WhatsApp obrigatórios · **nascimento OPCIONAL** — 2ª rodada do mesmo
+dia: "me pediram para deixar como opcional"); a pessoa já **solicita inscrição**
+nas portas comuns; e a operação é **ASSISTIDA** — tela 1 (dados) e 2 (portas)
+são da pessoa, a tela 3 é da equipe (Marcelo define quem contata e confirma).
 
 **Backend** (`membresia.js` · padrão dos endpoints `/totem/*`, só `authenticate`):
 - `GET /membresia/totem/novo-convertido/contexto` — culto do relógio +
@@ -14699,7 +14699,11 @@ operação é **ASSISTIDA** — tela 1 (dados) e 2 (portas) são da pessoa, a te
   fonte que um cadastro manual"). Trigger BEFORE resolve a pessoa (matcher
   canônico), AFTER cria `cui_convertidos` + NSM. Proveniência na `observacoes`.
 - **A validação é `utils/decisaoCampos.validarDecisao`** — a MESMA régua pura da
-  porta de decisão online (nome + nascimento + telefone + LGPD `=== true`).
+  porta de decisão online (nome + telefone + LGPD `=== true`), com
+  `{ nascimentoObrigatorio: false }` SÓ aqui. ⚠️ O DEFAULT da flag é true e há
+  teste travando isso — afrouxar o default liberaria a porta ONLINE sem ninguém
+  decidir. Opcional segue a política do CEP: data inválida vira null, nunca
+  recusa.
 - **O culto vem do RELÓGIO**: `services/cultoDeAgora.js` — **EXTRAÍDO de
   `routes/app.js`** nesta leva (o totem virou 2º consumidor; app.js agora
   delega). Sem culto HOJE → 409 `sem_culto_hoje` (o trigger de cuidados exige
@@ -14725,8 +14729,14 @@ operação é **ASSISTIDA** — tela 1 (dados) e 2 (portas) são da pessoa, a te
 - **WhatsApp de boas-vindas** pela fila: template **`novo_convertido_boas_vindas`**
   fixo no código (env de override `WHATSAPP_TEMPLATE_CONVERTIDO_BOAS_VINDAS`) ·
   {{1}} 1º nome · {{2}} quem vai contatar (fallback "Alguém da nossa equipe") ·
-  contexto `cuidados.convertido_boas_vindas`. **No-op gracioso até o template ser
-  aprovado na Meta** (⏳ pendência de GENTE — Marcos vai aprovar com o Marcelo).
+  contexto `cuidados.convertido_boas_vindas`.
+  ⚠️⚠️ **Tem interruptor REAL** (id `convertido_boas_vindas` no catálogo
+  `comunicacaoAutomaticas` + `disparoDesligado()` no remetente + gate
+  `test:disparo-interruptor` travando a tríade) e **NASCEU DESLIGADO em
+  produção** (id em `whatsapp_config.disparos_off`, aplicado e conferido em
+  01/09): decisão do Marcos — só liga quando o número oficial da igreja entrar
+  na plataforma, pelo switch em Comunicação → Disparos → Automáticas (sem PR).
+  O template ele mesmo cria na Meta.
 - Aviso interno: mesmos destinatários do gêmeo manual
   (`POST /kpis/cultos/:id/decisoes-pessoas`) + notificar módulo do
   encaminhamento (grupos/voluntariado) e integracao (batismo).
@@ -14735,6 +14745,17 @@ operação é **ASSISTIDA** — tela 1 (dados) e 2 (portas) são da pessoa, a te
 virou 2×2/4). ⏳ **Fase 2 (não feita)**: aviso direto ao responsável exige ligar
 `cui_responsaveis` a `profiles` (hoje o catálogo é só nome); grupos/servir como
 inscrição real em vez de encaminhamento.
+
+### ⚠️ O PIN do totem saiu da ENTRADA (01/09 · decisão do Marcos)
+
+Com o PIN já criado, abrir `/totem` cai DIRETO na tela inicial — a tela "Digite
+o PIN para ativar" morreu (reload/queda de energia no meio do culto travava o
+totem até alguém da equipe digitar, e ENTRAR no modo quiosque não é privilégio).
+**O que fica e não regride**: o `setup` na primeira abertura (cria o PIN) e o
+PIN na SAÍDA (`exit_confirm`) — é ele que impede alguém do hall de sair do
+quiosque e cair na sessão logada. O one-shot `UNLOCK_KEY` do
+`/cadastro-membresia?from=totem` perdeu a função (continua sendo consumido pra
+não sobrar chave velha; quem o grava é a outra página).
 
 ## ⚠️ Próximos passos · status "Contactada" + coluna Culto (2026-09-01 · migration `20260901130000`)
 

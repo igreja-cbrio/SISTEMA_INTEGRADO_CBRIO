@@ -2517,6 +2517,8 @@ const {
   dataProximoBatismo: batDataProxima,
 } = require('../services/batismoHorarios');
 const cryptoNode = require('crypto');
+// O freio central dos disparos automáticos (whatsapp_config.disparos_off).
+const { disparoDesligado } = require('../services/comunicacaoDisparosOff');
 
 // destino → meta do encaminhamento (espelha DESTINO_META de routes/cuidados.js
 // e o ramo grupos/voluntarios de services/nextDirecionar.js)
@@ -2558,9 +2560,11 @@ router.get('/totem/novo-convertido/contexto', async (_req, res) => {
 router.post('/totem/novo-convertido', async (req, res) => {
   try {
     // ⚠️ A MESMA régua pura da porta de decisão online (utils/decisaoCampos ·
-    // no gate): nome + nascimento + telefone obrigatórios, LGPD `=== true`.
-    // Duas réguas de "o que a decisão exige" divergiriam na primeira mudança.
-    const v = validarDecisao(req.body);
+    // no gate): nome + telefone obrigatórios, LGPD `=== true`. Duas réguas de
+    // "o que a decisão exige" divergiriam na primeira mudança.
+    // Nascimento é OPCIONAL SÓ AQUI (pedido do Marcos · 01/09) — a flag é
+    // explícita e a porta online segue exigindo pelo default.
+    const v = validarDecisao(req.body, { nascimentoObrigatorio: false });
     if (!v.ok) return res.status(400).json({ error: v.erro, campo: v.campo });
     const { nome, dataNascimento, telefone, email } = v.valores;
 
@@ -2823,7 +2827,12 @@ router.post('/totem/novo-convertido', async (req, res) => {
     // template FIXO com env de override (padrão da casa). No-op gracioso até o
     // template ser aprovado na Meta. ⚠️ Só no PRIMEIRO registro — a retentativa
     // do quiosque não pode virar mensagem dupla (lição de 07/08).
-    if (!jaRegistrado) {
+    // ⚠️ Interruptor REAL em Comunicação → Disparos → Automáticas (id
+    // `convertido_boas_vindas` · catálogo comunicacaoAutomaticas): decisão do
+    // Marcos (01/09) — fica DESLIGADO até o número oficial da igreja entrar na
+    // plataforma. O gate test:disparo-interruptor trava a tríade
+    // remetente × catálogo × PATCH neste id.
+    if (!jaRegistrado && !(await disparoDesligado('convertido_boas_vindas'))) {
       try {
         const { enfileirar } = require('../services/whatsappFila');
         enfileirar({
