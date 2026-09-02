@@ -79,7 +79,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/nps.js` | rota backend | nps | `/api/nps` |
 | `backend/routes/nsm.js` | rota backend | — | `/api/nsm` |
 | `backend/routes/occurrences.js` | rota backend | — | `/api/occurrences` |
-| `backend/routes/online.js` | rota backend | — | `/api/online` |
+| `backend/routes/online.js` | rota backend | online | `/api/online` |
 | `backend/routes/pagamentosWebhook.js` | rota backend | — | `/api/pagamentos-webhook` |
 | `backend/routes/painel.js` | rota backend | — | `/api/painel` |
 | `backend/routes/painelArea.js` | rota backend | painel-area | `/api/painel-area` |

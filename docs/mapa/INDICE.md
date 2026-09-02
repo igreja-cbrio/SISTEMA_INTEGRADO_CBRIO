@@ -44,7 +44,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **membros-totem** | — | `membresia.js` | [membros-totem](membros-totem.md) |
 | **next-batismo** | `/entradas` | `nextBatismo.js` | [next-batismo](next-batismo.md) |
 | **nps** | — | `nps.js` | [nps](nps.md) |
-| **online** | `/online` | — | [online](online.md) |
+| **online** | `/online` | `online.js` | [online](online.md) |
 | **painel-area** | — | `painelArea.js` | [painel-area](painel-area.md) |
 | **patrimonio** | — | `patrimonio.js` | [patrimonio](patrimonio.md) |
 | **planejamento-anual** | `/planejamento-anual` | — | [planejamento-anual](planejamento-anual.md) |
