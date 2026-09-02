@@ -16,6 +16,7 @@ const { authenticate, authorizeModule, isSuperAdminEmail } = require('../middlew
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const PA = require('../services/planejamentoAnualRegras');
+const PAInsights = require('../services/planejamentoAnualInsights');
 
 const MOD = 'planejamento-anual';
 
@@ -761,6 +762,27 @@ router.delete('/ciclos/:id/conflitos/aceites/:aceiteId', authorizeModule(MOD, 1)
     .delete().eq('id', req.params.aceiteId).eq('ciclo_id', req.params.id);
   if (error) return res.status(500).json({ error: 'Erro ao reabrir o conflito' });
   res.json({ ok: true });
+});
+
+// Insights de IA (aba somente-leitura): conflitos de data/espaço (régua
+// pura, sem IA) + propostas parecidas/candidatas a mesclar (Claude Haiku,
+// best-effort). Mesma régua de visibilidade de CONTEÚDO das propostas
+// (decisão do Diego 2026-08-27): proponente vê a própria, mas esta aba
+// cruza propostas de todo o ciclo — só diretoria/Pastor/super-admin.
+router.get('/ciclos/:id/insights', authorizeModule(MOD, 1), async (req, res) => {
+  const ciclo = await carregarCiclo(req.params.id);
+  if (!ciclo) return res.status(404).json({ error: 'Ciclo não encontrado' });
+  if (!(ehDiretoria(req) || await ehPastorOuSuper(req))) {
+    return res.status(403).json({ error: 'Os insights de IA são visíveis só para a diretoria e o Pastor presidente' });
+  }
+  try {
+    const ctx = await contextoCalendario(ciclo.id);
+    const insights = await PAInsights.montarInsights(ctx);
+    res.json(insights);
+  } catch (e) {
+    console.error('[planejamento-anual] erro ao montar insights:', e.message);
+    res.status(500).json({ error: 'Erro ao montar os insights' });
+  }
 });
 
 const CAMPOS_DIVERGENCIA = ['data_inicio', 'precisao_inicio', 'hora_inicio', 'hora_fim', 'recorrencia', 'dia_semana'];

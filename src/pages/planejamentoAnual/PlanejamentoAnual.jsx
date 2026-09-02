@@ -9,6 +9,7 @@ import PropostasTab from './PropostasTab';
 import AvaliacaoTab from './AvaliacaoTab';
 import OrcamentoTab from './OrcamentoTab';
 import PastorTab from './PastorTab';
+import InsightsTab from './InsightsTab';
 
 const tabBtn = (ativo) => ({
   padding: '8px 16px', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer',
@@ -76,7 +77,7 @@ function ReguaEixo({ ciclos, cicloAtual, aoSelecionar, aoCriar, podeCriar }) {
 }
 
 export default function PlanejamentoAnual() {
-  const { profile } = useAuth();
+  const { profile, isSuperAdmin } = useAuth();
   const [ciclos, setCiclos] = useState([]);
   const [ciclo, setCiclo] = useState(null);
   const [constantes, setConstantes] = useState(null);
@@ -116,12 +117,16 @@ export default function PlanejamentoAnual() {
   const ehAvaliador = meuPapel === 'avaliador';
   const minhaDiretoria = ciclo?.avaliadores?.find((a) => a.profile_id === profile?.id)?.diretoria || null;
   const souFinanceiro = minhaDiretoria === 'financeiro' || ehPastor;
+  // Mesma régua de visibilidade de CONTEÚDO das propostas do backend
+  // (decisão do Diego 2026-08-27): diretoria geral + Pastor + super-admin.
+  const ehDiretoriaOuSuper = ehPastor || Boolean(profile?.is_diretoria_geral) || isSuperAdmin;
 
   const abas = [
     { rotulo: 'Propostas', visivel: true },
     { rotulo: 'Avaliação', visivel: ehAvaliador || ehPastor },
     { rotulo: 'Orçamento', visivel: souFinanceiro },
     { rotulo: 'Pastor presidente', visivel: ehPastor },
+    { rotulo: 'Insights de IA', visivel: ehDiretoriaOuSuper },
   ];
 
   return (
@@ -200,6 +205,9 @@ export default function PlanejamentoAnual() {
           )}
           {aba === 3 && ehPastor && (
             <PastorTab ciclo={ciclo} constantes={constantes} areas={areas} recarregarCiclo={() => carregarCiclo(ciclo.id)} />
+          )}
+          {aba === 4 && ehDiretoriaOuSuper && (
+            <InsightsTab ciclo={ciclo} areas={areas} />
           )}
         </>
       )}
