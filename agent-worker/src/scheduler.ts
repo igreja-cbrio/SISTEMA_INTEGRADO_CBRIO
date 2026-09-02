@@ -1,4 +1,5 @@
 import cron from "node-cron";
+import { iniciarVigia } from "./vigia.js";
 import { runFinanceiroExecutor } from "./agents/financeiroExecutor.js";
 import { runKpisWatcher } from "./agents/kpisWatcher.js";
 import { runRhExecutor } from "./agents/rhExecutor.js";
@@ -70,6 +71,13 @@ const SCHEDULED_AGENTS: Array<{
 ];
 
 export function startScheduler() {
+  // ⚠️⚠️ O VIGIA sobe ANTES do gate do SCHEDULER_ENABLED, de propósito:
+  // detectar que o sistema caiu não pode depender da mesma chave que liga os
+  // agentes de IA. Desligar os agentes (por custo, por exemplo) não pode
+  // desligar o alarme de incêndio. O vigia tem o kill switch PRÓPRIO
+  // (VIGIA_ENABLED).
+  iniciarVigia();
+
   if (process.env.SCHEDULER_ENABLED !== "1") {
     console.log("[scheduler] desabilitado (SCHEDULER_ENABLED != 1)");
     return;
