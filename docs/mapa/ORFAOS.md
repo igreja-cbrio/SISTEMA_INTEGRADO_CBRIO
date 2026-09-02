@@ -20,7 +20,7 @@ nenhum módulo reivindica são exatamente os candidatos a esse buraco.
 guard (públicas, totens, `/perfil`). Significa que ninguém decidiu — vale
 conferir.
 
-## Telas sem ModuleGuard (78)
+## Telas sem ModuleGuard (77)
 
 | rota | arquivo | pública? |
 |---|---|---|
@@ -80,7 +80,6 @@ conferir.
 | `/ministerial/reconhecimento-facial` | `src/pages/ministerial/reconhecimentoFacial/ReconhecimentoFacial` | sim |
 | `/wifi` | `src/pages/ministerial/Wifi` | sim |
 | `/ministerial/integracao` | `src/pages/ministerial/Integracao` | sim |
-| `/online` | `src/pages/ministerial/Online` | sim |
 | `/assistente-ia` | `src/pages/admin/AssistenteIA` | sim |
 | `/solicitacoes` | `src/pages/Solicitacoes` | sim |
 | `/painel` | `src/pages/Painel` | sim |

@@ -333,7 +333,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/ministerial/GruposSupervisao` | tela ERP | grupos | `/grupos/supervisao` |
 | `src/pages/ministerial/Integracao` | tela ERP | — | `/ministerial/integracao` |
 | `src/pages/ministerial/NextBatismo` | tela ERP | next-batismo | `/entradas` |
-| `src/pages/ministerial/Online` | tela ERP | — | `/online` |
+| `src/pages/ministerial/Online` | tela ERP | online | `/online` |
 | `src/pages/ministerial/PainelAmi` | tela ERP | ami | `/ami` |
 | `src/pages/ministerial/PainelBridge` | tela ERP | bridge | `/bridge` |
 | `src/pages/ministerial/PainelKids` | tela ERP | kids | `/kids` |
