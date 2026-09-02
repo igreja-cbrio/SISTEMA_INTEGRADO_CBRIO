@@ -16109,3 +16109,50 @@ Semanal já está alimentado**: ele soma `cultos.decisoes_kids` no card Decisõe
    (É a mesma lição de 31/08, agora no gate em vez do mutation test.)
 5. ⚠️ **Operação em lote sobre `cultos` custa 1–2,5 s POR LINHA** (dois triggers
    ROW de KPI/NSM) — orçar isso em qualquer reparo que toque dezenas de cultos.
+
+### 🔴 A tela nasceu quebrada por um NOME DE PARÂMETRO (2026-09-02 · mesmo dia)
+
+O Matheus abriu `/ministerial/totem-kids/decisoes-registro` e viu *"Não foi
+possível carregar"*. Causa: eu chamei `resolverJanelaPeriodo({ ..., padraoDias:
+365 })` e **o parâmetro é `diasPadrao`**. A cadeia:
+
+```
+diasPadrao = undefined  ->  lista = [undefined]
+Number('365') = 365     ->  lista.includes(365) = false  ->  d = undefined
+new Date(agora - undefined * 86400000) = Invalid Date
+inicio = "NaN-NaN-NaN"  ->  PostgREST recusa  ->  500
+```
+
+E de brinde: eu desestruturei **`rotulo`** do retorno, e ele **não existe lá** —
+o rótulo é a função `rotuloJanela(janela)` (o padrão certo está em
+`totemKids.js:2515`, que eu não olhei).
+
+⚠️⚠️ **O conserto de RAIZ não é só o call site: é a régua parar de FABRICAR data
+inválida.** `resolverJanelaPeriodo` devolvia `"NaN-NaN-NaN"` em vez de cair num
+padrão — ou seja, **erro de digitação no nome de um parâmetro virava 500 em
+produção**, e isso vale para qualquer um dos ~10 chamadores dela. Agora, `d` não
+finito ou ≤ 0 cai na 1ª opção válida de `diasValidos`, ou em 365. **Fail-safe, não
+fail-open**: nenhuma data inventada sai daquela função.
+⚠️ E `diasValidos` tem que listar **TODAS** as opções que a tela oferece — os
+`1095` (3 anos) do chip cairiam no padrão em silêncio sem isso.
+Guarda: 4 casos novos em `src/test/janelaPeriodoBackend.test.ts` · **2 mutantes
+RODADOS e mortos** (remover a guarda → 4 vermelhos · desligá-la → 4).
+
+⚠️ **O que funcionou foi a tela DIZER o erro.** Ela mostrou o card vermelho em vez
+de uma lista vazia — foi por isso que ele reportou "não carrega" e não "não tem
+decisão nenhuma". Consertado junto o resíduo: com erro, as seções ainda diziam
+**"(0)"** e *"Nenhuma decisão registrada"*, que é número não medido se passando
+por medição.
+
+### ⚠️ `/kpis/v2/coletar` só recalcula o período CORRENTE
+
+Rodei o coletor para o KIDS-02 subir e **o histórico não mexeu**: W35 seguiu 20 e
+W34 seguiu 0. Quem recoleta o passado é **`POST /kpis/v2/coletar/backfill`**
+(`?fontes=cultos.` + `{meses:N}`), que caminha de 7 em 7 dias — e o comentário
+dele já citava KIDS-02 como o caso de uso.
+⚠️ **Em `/coletar`, `fontes` é lido SÓ da query string**, nunca do body: mandar
+`{fontes:['cultos.']}` no corpo é ignorado em silêncio (a resposta devolve
+`"fontes": null` e roda os 55 coletores).
+⚠️ O backfill passa de 45s: o `fetch` do navegador estoura antes de responder.
+**Timeout de cliente não é prova** — a evidência é `kpi_registros.data_preenchimento`
+andando para trás no tempo, período a período.
