@@ -100,14 +100,22 @@ describe('⚠️ a tela mostra as duas parcelas, e diz quando não sabe', () => 
     expect(src).toMatch(/desc: '[^']*comunidade do Online/);
   });
 
-  it('⚠️ o card de input é gated por isAdmin (o endpoint é admin/diretor)', () => {
+  it('⚠️ o card de input é gated pelo MÓDULO online (nível 3)', () => {
+    // ⚠️⚠️ ESTE ASSERT MUDOU EM 02/09/2026, no mesmo dia em que nasceu.
+    // Ele exigia `if (!isAdmin) return null` — correto enquanto a tela usava o
+    // endpoint genérico `POST /kpis/cultura/mensal`, que é admin/diretor. O
+    // Matheus então pediu para liberar a equipe do Online, e a tela passou a
+    // usar uma rota ESTREITA com `authorizeModule('online', 3)`.
+    // Manter o assert antigo faria o gate voltar a trancar justamente quem
+    // sabe o número — é um teste defendendo o que o produto não quer mais.
+    // Quem guarda o desenho novo é `comunidadeOnlinePermissao.test.ts`.
     const src = semComentarios(readFileSync(join(RAIZ, 'src/pages/ministerial/Online.tsx'), 'utf8'));
     const i = src.indexOf('function ComunidadeOnlineCard');
     expect(i, 'card não encontrado').toBeGreaterThan(-1);
-    const corpo = src.slice(i, i + 1200);
-    expect(corpo).toMatch(/if \(!isAdmin\) return null;/);
-    // ⚠️ E manda SÓ as duas chaves — é o que o patch-style protege.
-    expect(corpo).toMatch(/culturaMensalUpsert\(\{\s*mes,\s*investir_comunidade_online/);
+    const corpo = src.slice(i, i + 1600);
+    expect(corpo).toMatch(/if \(!podeSalvar\) return null;/);
+    // ⚠️ E grava SÓ o número da comunidade — nunca o mês inteiro.
+    expect(corpo).toMatch(/comunidadeMensal\(mes,/);
   });
 });
 

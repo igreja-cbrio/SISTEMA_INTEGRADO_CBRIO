@@ -1,6 +1,6 @@
 const router = require('express').Router();
 const crypto = require('crypto');
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { syncCanal } = require('../services/youtubeCollector');
 const yt = require('../services/youtubeAnalytics');
@@ -693,6 +693,68 @@ router.get('/link-membresia', async (req, res) => {
     // ⚠️ Erro NUNCA vira link vazio: a tela some com o botão e diz o motivo, em
     // vez de oferecer um endereço que não existe.
     res.status(500).json({ error: 'Erro ao montar o link do cadastro de membresia' });
+  }
+});
+
+
+// ════════════════════════════════════════════════════════════════════════════
+//  POST /online/comunidade-mensal · { mes: 'YYYY-MM', valor: number|null }
+//
+//  Grava SÓ `cultura_mensal.investir_comunidade_online` — o total de pessoas
+//  na comunidade do Online no WhatsApp naquele mês. Aparece na pétala Investir
+//  da mandala, AO LADO do devocional (nunca somado · ver a migration
+//  20260902180000).
+//
+//  ⚠️⚠️ ROTA PRÓPRIA E ESTREITA, DE PROPÓSITO. O `POST /kpis/cultura/mensal`
+//  faria o mesmo trabalho, mas ele escreve TAMBÉM `qtd_dizimistas`,
+//  `qtd_ofertantes`, `freq_presencial_semanal`, `freq_online_semanal`,
+//  `decisoes_total` e `freq_grupos_total`. Abri-lo para o módulo `online`
+//  daria à equipe do Online escrita sobre número FINANCEIRO e sobre os
+//  overrides que alimentam a mandala inteira — muito além de "deixe a equipe
+//  salvar o número da comunidade". Menor privilégio: aqui não existe caminho
+//  para tocar outra coluna, nem por engano nem por payload malicioso.
+//
+//  ⚠️ `authorizeModule('online', 3)` alcança a coordenação do Online pelo BOOST
+//  DE ÁREA: a matriz dá nível 1 ao cargo "Coord Onl", mas quem tem a área
+//  "Online" em `usuario_areas` recebe `Math.max(nivel, 5)` em leitura e
+//  escrita (`AREA_MODULO_BOOST` em middleware/auth.js). Medido em 02/09/2026:
+//  renata.martins@cbrio.org tem a área e portanto escrita efetiva 5.
+//  ⚠️ Por isso NÃO foi preciso mexer na matriz de permissões — e mexer teria
+//  sido pior, porque `online >= 3` na matriz alcança hoje 11 pessoas de
+//  Dev/Assist Área/Assist Mini/Supervisor Jornada, nenhuma delas do Online.
+// ════════════════════════════════════════════════════════════════════════════
+router.post('/comunidade-mensal', authorizeModule('online', 3), async (req, res) => {
+  try {
+    const { mes, valor } = req.body || {};
+    if (!mes || !/^\d{4}-\d{2}/.test(String(mes))) {
+      return res.status(400).json({ error: 'Informe o mês no formato AAAA-MM.' });
+    }
+    // ⚠️ null LIMPA de propósito ("não informado"), e é diferente de 0
+    // ("a comunidade está vazia"). Por isso a coluna nasceu sem DEFAULT.
+    let n = null;
+    if (valor !== null && valor !== undefined && String(valor).trim() !== '') {
+      n = Number(valor);
+      if (!Number.isInteger(n) || n < 0 || n > 1000000) {
+        return res.status(400).json({ error: 'Informe um número inteiro de pessoas.' });
+      }
+    }
+    const { data, error } = await supabase
+      .from('cultura_mensal')
+      // ⚠️ Só estas chaves. O upsert do PostgREST atualiza apenas as colunas
+      // presentes no payload, então nada mais do mês é tocado.
+      .upsert({
+        mes: `${String(mes).slice(0, 7)}-01`,
+        investir_comunidade_online: n,
+        updated_at: new Date().toISOString(),
+        updated_by: req.user?.id || null,
+      }, { onConflict: 'mes' })
+      .select('mes, investir_comunidade_online')
+      .single();
+    if (error) throw error;
+    res.json({ ok: true, ...data });
+  } catch (e) {
+    console.error('[ONLINE] comunidade-mensal:', e.message);
+    res.status(500).json({ error: 'Não foi possível salvar o número da comunidade.' });
   }
 });
 

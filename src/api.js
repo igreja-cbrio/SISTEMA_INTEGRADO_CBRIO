@@ -4579,6 +4579,8 @@ export const online = {
   // propósito: o caminho sai do catálogo de formulários públicos e a base é
   // única — montar a URL na tela é como link público vira link morto.
   linkMembresia: () => get('/online/link-membresia'),
+  // Grava SO o total da comunidade do Online no WhatsApp naquele mes.
+  comunidadeMensal: (mes, valor) => post('/online/comunidade-mensal', { mes, valor }),
   dashboard: () => get('/online/dashboard'),
   engajamento: () => get('/online/engajamento'),
   cultosMetricas: (limit) => get('/online/cultos-metricas' + (limit ? '?limit=' + limit : '')),
