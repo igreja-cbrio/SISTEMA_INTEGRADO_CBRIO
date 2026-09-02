@@ -4240,4 +4240,31 @@ router.post('/conciliar-balanco-ofx/ignorar', authorizeModule('financeiro', 4), 
   }
 });
 
+// Quem JÁ foi identificado no período — a lista que responde "quem foi?".
+// ⚠️ Nível 4 como as irmãs: a resposta traz nome de pessoa + CPF parcial.
+router.get('/conciliar-balanco-ofx/identificados', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { inicio, fim } = req.query || {};
+    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim são obrigatórios (YYYY-MM-DD)' });
+    res.json(await conciliacaoOfx.listarIdentificados({ inicio, fim }));
+  } catch (e) {
+    console.error('[FIN-V2] identificados:', e.message);
+    // ⚠️ Erro NUNCA vira lista vazia: "ninguém identificado" e "a consulta
+    // falhou" levam a conclusões opostas.
+    res.status(500).json({ error: e.message || 'Erro ao listar os identificados' });
+  }
+});
+
+// Desfaz um vínculo já feito (volta a linha ao estado anterior).
+router.post('/conciliar-balanco-ofx/desfazer', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { transacao_id } = req.body || {};
+    if (!transacao_id) return res.status(400).json({ error: 'transacao_id é obrigatório' });
+    res.json(await conciliacaoOfx.desfazerVinculo({ transacaoId: transacao_id }));
+  } catch (e) {
+    console.error('[FIN-V2] desfazer vinculo:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao desfazer' });
+  }
+});
+
 module.exports = router;

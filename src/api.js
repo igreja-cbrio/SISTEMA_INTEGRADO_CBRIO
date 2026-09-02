@@ -1563,6 +1563,9 @@ export const financeiroV2 = {
     revisao: (inicio, fim) => get(`/financeiro-v2/conciliar-balanco-ofx/revisao?inicio=${inicio}&fim=${fim}`),
     confirmar: (transacao_id, bruto_id) => post('/financeiro-v2/conciliar-balanco-ofx/confirmar', { transacao_id, bruto_id }),
     ignorar: (transacao_id) => post('/financeiro-v2/conciliar-balanco-ofx/ignorar', { transacao_id }),
+  // Quem já foi identificado no período — a lista atrás dos contadores.
+  identificados: (inicio, fim) => get(`/financeiro-v2/conciliar-balanco-ofx/identificados?inicio=${inicio}&fim=${fim}`),
+  desfazer: (transacao_id) => post('/financeiro-v2/conciliar-balanco-ofx/desfazer', { transacao_id }),
   },
   // Cartões de crédito + faturas (Fase 4)
   cartoes: {

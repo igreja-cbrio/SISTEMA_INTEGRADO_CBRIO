@@ -37,6 +37,35 @@ export default function IdentificarDoadores() {
   const [revisao, setRevisao] = useState([]);
   const [escolha, setEscolha] = useState({}); // transacao_id -> bruto_id
   const [busy, setBusy] = useState(false);
+  // ⚠️ A LISTA de quem já foi identificado. Sem ela a tela só tinha contadores,
+  // e a pergunta "como vou saber quem foi?" não tinha resposta na tela.
+  const [ident, setIdent] = useState(null);
+  const [carregandoIdent, setCarregandoIdent] = useState(false);
+  const [soDivergentes, setSoDivergentes] = useState(false);
+
+  async function carregarIdentificados() {
+    setCarregandoIdent(true);
+    try {
+      setIdent(await financeiroV2.conciliacaoOfx.identificados(inicio, fim));
+    } catch (e) {
+      // ⚠️ Erro não vira lista vazia: a tela DIZ que não conseguiu carregar.
+      setIdent({ erro: e.message || 'Não consegui carregar a lista' });
+    }
+    setCarregandoIdent(false);
+  }
+
+  async function desfazer(transacaoId) {
+    if (!confirm('Desfazer este vínculo? A doação volta a ficar sem dono e pode ser reconciliada depois.')) return;
+    try {
+      await financeiroV2.conciliacaoOfx.desfazer(transacaoId);
+      toast.success('Vínculo desfeito');
+      setIdent((cur) => (cur?.itens ? {
+        ...cur,
+        total: cur.total - 1,
+        itens: cur.itens.filter((i) => i.transacao_id !== transacaoId),
+      } : cur));
+    } catch (e) { toast.error(e.message || 'Erro ao desfazer'); }
+  }
 
   async function previa() {
     setBusy(true); setStats(null); setRevisao([]);
@@ -119,6 +148,64 @@ export default function IdentificarDoadores() {
           )}
           <Stat label="Pra revisar" value={stats.revisao} cor={C.amber} />
           <Stat label="Sem match no OFX" value={stats.sem_match} cor={C.text3} />
+        </div>
+      )}
+
+      {/* ⚠️ A LISTA — o que responde "quem foi?". Fica ANTES da fila de revisão
+          porque é o resultado do trabalho; a revisão é a exceção. */}
+      <div style={{ margin: '14px 0 4px' }}>
+        <Button size="sm" variant="outline" onClick={carregarIdentificados} disabled={carregandoIdent}>
+          {carregandoIdent ? 'Carregando…' : (ident ? 'Atualizar lista de identificados' : 'Ver quem já foi identificado')}
+        </Button>
+      </div>
+
+      {ident?.erro && (
+        <div style={{ fontSize: 12.5, color: C.red || '#dc2626', padding: '8px 0' }}>{ident.erro}</div>
+      )}
+
+      {ident && !ident.erro && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+            Identificados no período · {ident.total} doações de {ident.pessoas} pessoas
+            {ident.valor_total != null && <> · {fmtMoney(ident.valor_total)}</>}
+          </div>
+          {/* ⚠️ Nome que diverge NÃO é necessariamente erro: pagamento por
+              terceiro (cônjuge, filho, sócio) é comum. Mas é o que precisa de
+              olho humano, então é contado e vem primeiro. */}
+          {ident.divergentes > 0 && (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: C.text3, marginTop: 4, cursor: 'pointer' }}>
+              <input type="checkbox" checked={soDivergentes} onChange={(e) => setSoDivergentes(e.target.checked)} style={{ accentColor: C.primary }} />
+              Mostrar só os {ident.divergentes} em que o nome do balanço não bate com o do cadastro
+              (pode ser alguém pagando por outra pessoa)
+            </label>
+          )}
+          {ident.truncado && (
+            <div style={{ fontSize: 11, color: C.text3, marginTop: 2 }}>
+              Mostrando os {ident.itens.length} primeiros — os divergentes e os de maior valor vêm antes.
+            </div>
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
+            {(soDivergentes ? ident.itens.filter((i) => i.nome_diverge) : ident.itens).map((i) => (
+              <div key={i.transacao_id} style={{
+                display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                border: `1px solid ${i.nome_diverge ? (C.amber || '#f59e0b') + '55' : C.border}`,
+                borderRadius: 10, padding: '7px 10px', fontSize: 12,
+              }}>
+                <span style={{ fontWeight: 700, color: C.text, minWidth: 180 }}>{i.membro_nome || '(sem nome)'}</span>
+                {i.nome_diverge && (
+                  <span style={{ fontSize: 10, fontWeight: 700, color: C.amber || '#b45309', background: (C.amberBg || '#fef3c7'), padding: '1px 6px', borderRadius: 6 }}>
+                    balanço diz “{i.nome_balanco}”
+                  </span>
+                )}
+                <span style={{ color: C.text3 }}>{fmtMoney(i.valor)} · {i.data.split('-').reverse().join('/')}</span>
+                {i.cpf && <span style={{ color: C.text3 }}>CPF {fmtCpf(i.cpf)}</span>}
+                <Button size="sm" variant="ghost" style={{ marginLeft: 'auto' }} onClick={() => desfazer(i.transacao_id)}>
+                  Desfazer
+                </Button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
