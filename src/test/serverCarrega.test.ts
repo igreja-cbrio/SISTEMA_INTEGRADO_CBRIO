@@ -1,46 +1,96 @@
 /**
- * ⚠️⚠️ A GUARDA QUE FALTAVA: o gate não carregava o `backend/server.js`.
+ * ⚠️⚠️ A GUARDA QUE FALTAVA: o gate não verificava o `backend/` de forma nenhuma.
  *
- * Em 02/09/2026, um `}` órfão nesse arquivo derrubou **toda a `/api`** em
- * produção por 13 minutos — e o gate inteiro tinha passado VERDE:
+ * Em 02/09/2026, um `}` órfão no `backend/server.js` derrubou **toda a `/api`**
+ * em produção por 13 min — e o gate inteiro passou VERDE:
  *
- *   | verificação            | carrega o server.js? |
- *   |------------------------|----------------------|
+ *   | verificação            | via o server.js? |
+ *   |------------------------|------------------|
  *   | `tsc -b`               | não (não checa .js do backend) |
- *   | `npm run build`        | não (é só o front)   |
- *   | `npm test` (3.165)     | não                  |
- *   | os 21 scripts do gate  | não                  |
+ *   | `npm run build`        | não (é só o front)             |
+ *   | `npm test` (3.165)     | não                            |
+ *   | os 21 scripts do gate  | não                            |
  *
- * A função morria no CARREGAMENTO do módulo, antes de rodar uma linha — então
- * nem log de aplicação saía (`FUNCTION_INVOCATION_FAILED`, sem stack).
+ * A função morria no CARREGAMENTO do módulo — `FUNCTION_INVOCATION_FAILED`,
+ * sem stack e sem log de aplicação.
  *
- * Este teste carrega pelo MESMO caminho da Vercel (`api/index.js` →
- * `require('../backend/server.js')`). É barato e fecha a classe inteira:
- * erro de sintaxe, import quebrado e `ReferenceError` de topo de módulo.
+ * ⚠️⚠️ SÃO DUAS CAMADAS, e a diferença entre elas importa:
  *
- * ⚠️ `node --check` NÃO substitui isto: ele valida sintaxe e não pega
- * `ReferenceError` de símbolo usado e não importado (a lição de 25/08, quando
- * `ancorasDeGrupos` ficou sem import e o endpoint responderia 500 pra sempre).
+ *  1. SINTAXE (`node --check`) — roda SEMPRE, inclusive no CI, porque não
+ *     precisa de dependência nenhuma. É a que pega o bug de 02/09.
+ *  2. CARREGAMENTO REAL — pega o que a sintaxe não vê: `ReferenceError` de
+ *     símbolo usado sem import (a lição de 25/08, `ancorasDeGrupos`) e import
+ *     de arquivo inexistente. **Só roda onde `backend/node_modules` existe.**
+ *
+ * ⚠️ A camada 2 PULA no CI, e isso é declarado, não escondido: o workflow roda
+ * `npm ci` só na raiz, e `backend/` tem árvore de dependências PRÓPRIA (é a
+ * armadilha já registrada em 06/08, quando `express-rate-limit` divergia entre
+ * as duas). Um teste que fingisse cobrir isso seria pior que a lacuna.
  */
 import { describe, it, expect } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 const raiz = path.resolve(__dirname, '../..');
+const temDepsBackend = existsSync(path.join(raiz, 'backend/node_modules/express'));
 
-describe('o backend CARREGA (guarda de FUNCTION_INVOCATION_FAILED)', () => {
-  it('api/index.js existe — é o entrypoint da Vercel', () => {
+function jsDoBackend(dir: string, acc: string[] = []): string[] {
+  for (const nome of readdirSync(dir)) {
+    if (nome === 'node_modules' || nome.startsWith('.')) continue;
+    const p = path.join(dir, nome);
+    if (statSync(p).isDirectory()) jsDoBackend(p, acc);
+    else if (nome.endsWith('.js') || nome.endsWith('.cjs')) acc.push(p);
+  }
+  return acc;
+}
+
+describe('o backend é sintaticamente válido (guarda de FUNCTION_INVOCATION_FAILED)', () => {
+  it('api/index.js e backend/server.js existem', () => {
     expect(existsSync(path.join(raiz, 'api/index.js'))).toBe(true);
     expect(existsSync(path.join(raiz, 'backend/server.js'))).toBe(true);
   });
 
-  it('⚠️⚠️ backend/server.js carrega sem estourar', () => {
-    // Subprocesso: o server monta o Express inteiro e faz `listen`; carregar
-    // no processo do vitest deixaria porta aberta e poluiria as outras suítes.
-    // ⚠️ PORT=0 pede porta efêmera ao SO — sem isso, a 3001 ocupada por um
-    // `npm run dev` na máquina de alguém faria este teste falhar por EADDRINUSE,
-    // que é falso vermelho (o arquivo carregou; a porta é que estava tomada).
+  it('⚠️⚠️ TODO .js do backend é sintaticamente válido', () => {
+    // Roda no CI: só precisa do parser do Node, não das dependências.
+    // ⚠️ `vm.Script` em vez de `node --check`: são ~580 arquivos, e um
+    // processo por arquivo levava 58 s — o teste estourava o timeout padrão
+    // do vitest e ficava vermelho por LENTIDÃO, não por defeito (a mesma
+    // armadilha do `mapaGerador` em 24/08). Em memória são ~2 s.
+    // ⚠️ `Module.wrap` reproduz o envelope CJS real: sem ele, `return` de topo
+    // e o próprio `module` acusariam erro em arquivo perfeitamente válido.
+    const arquivos = jsDoBackend(path.join(raiz, 'backend'));
+    expect(arquivos.length).toBeGreaterThan(300); // sanidade: achou a árvore
+
+    const quebrados: string[] = [];
+    for (const f of arquivos) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        new (require('node:vm').Script)(
+          // ⚠️ O shebang (`#!/usr/bin/env node`) é removido pelo Node ao
+          // carregar o arquivo, mas NÃO por `Module.wrap` — sem tirar aqui,
+          // os 17 scripts do backend acusariam "Invalid or unexpected token"
+          // sendo perfeitamente válidos. Falso vermelho é pior que lacuna.
+          (require('node:module') as any).wrap(
+            readFileSync(f, 'utf8').replace(/^#![^\n]*/, ''),
+          ),
+          { filename: f },
+        );
+      } catch (e: any) {
+        quebrados.push(`${path.relative(raiz, f)} · ${String(e?.message).split('\n')[0]}`);
+      }
+    }
+    expect(quebrados, `sintaxe quebrada:\n${quebrados.join('\n')}`).toEqual([]);
+  }, 60_000);
+});
+
+describe.skipIf(!temDepsBackend)('o backend CARREGA de verdade', () => {
+  it('⚠️ carrega pelo mesmo caminho da Vercel (pega ReferenceError, não só sintaxe)', () => {
+    // ⚠️ Subprocesso: o server monta o Express e faz `listen`; carregar no
+    // processo do vitest deixaria porta aberta e poluiria as outras suítes.
+    // ⚠️ PORT=0 pede porta efêmera — sem isso, a 3001 ocupada por um
+    // `npm run dev` daria falso vermelho por EADDRINUSE (o arquivo carregou;
+    // a porta é que estava tomada).
     let saida = '';
     try {
       saida = execFileSync(process.execPath, [
@@ -53,11 +103,14 @@ describe('o backend CARREGA (guarda de FUNCTION_INVOCATION_FAILED)', () => {
     } catch (e: any) {
       saida = String(e?.stdout || '') + String(e?.stderr || '');
     }
-
-    // ⚠️ A asserção é sobre a MARCA, não sobre "não deu erro": o server loga
-    // avisos legítimos (env de Supabase ausente no CI, por exemplo) e olhar
-    // stderr daria falso vermelho.
+    // ⚠️ Assertar a MARCA, não "ausência de erro": o server loga avisos
+    // legítimos (env de Supabase ausente) e olhar stderr daria falso vermelho.
     expect(saida, `o backend não carregou · saída:\n${saida}`).toContain('CARREGOU_OK');
     expect(saida).not.toContain('CARREGOU_FALHOU');
-  });
+    // ⚠️ Timeout explícito: este caso SPAWNA um processo que monta o Express
+    // inteiro (~600ms sozinho, >10s sob a carga da suíte cheia). Com o default
+    // de 5s ele fica vermelho por LENTIDÃO, não por defeito — a asserção é
+    // sobre o backend carregar, não sobre ser rápido. Mesma correção do
+    // `mapaGerador` em 24/08.
+  }, 90_000);
 });
