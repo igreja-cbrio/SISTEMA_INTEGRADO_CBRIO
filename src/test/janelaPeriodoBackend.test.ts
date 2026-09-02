@@ -268,3 +268,32 @@ describe('resolverJanelaPeriodo · período livre', () => {
     expect(rotuloJanela(resolverJanelaPeriodo({ ...base, ano: 2025 }))).toBe('2025');
   });
 });
+
+// ⚠️ Guarda do incidente de 02/09: um erro de digitação no NOME do parâmetro
+// (`padraoDias` em vez de `diasPadrao`) fazia a régua devolver
+// `inicio: "NaN-NaN-NaN"`, o PostgREST recusar e a tela de decisões do Kids
+// morrer com 500. Data inventada não pode sair daqui.
+describe('resolverJanelaPeriodo · nunca fabrica data inválida', () => {
+  it('sem diasPadrao (parâmetro escrito errado) cai num padrão, não em NaN', () => {
+    const j = resolverJanelaPeriodo({ dias: '365' } as any);
+    expect(j.inicio).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(j.dias).toBe(365);
+  });
+
+  it('sem nenhum argumento também devolve data válida', () => {
+    const j = resolverJanelaPeriodo({} as any);
+    expect(j.inicio).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(Number.isFinite(j.dias as number)).toBe(true);
+  });
+
+  it('diasPadrao não numérico não vira NaN', () => {
+    const j = resolverJanelaPeriodo({ dias: '77', diasPadrao: 'muitos' } as any);
+    expect(j.inicio).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('a 1ª opção válida de diasValidos é o socorro', () => {
+    const j = resolverJanelaPeriodo({ dias: '999', diasValidos: [90, 365] } as any);
+    expect(j.dias).toBe(90);
+    expect(j.inicio).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+});

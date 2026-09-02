@@ -139,6 +139,15 @@ function resolverJanelaPeriodo({ dias, ano, inicio, fim, diasValidos, diasPadrao
   const lista = Array.isArray(diasValidos) && diasValidos.length ? diasValidos : [diasPadrao];
   let d = Number(dias);
   if (!lista.includes(d)) d = diasPadrao;
+  // ⚠️⚠️ FAIL-SAFE, não fail-open: sem `diasPadrao` (ou com valor não numérico)
+  // isto devolvia `inicio: "NaN-NaN-NaN"`, que o PostgREST recusa — ou seja um
+  // erro de digitação no nome do parâmetro virava 500 na tela em vez de cair
+  // num padrão. Aconteceu em 02/09 na tela de decisões do Kids. Data inventada
+  // nunca sai daqui: cai na 1ª opção válida, ou em 365.
+  if (!Number.isFinite(d) || d <= 0) {
+    d = lista.find((x) => Number.isFinite(Number(x)) && Number(x) > 0) ?? 365;
+    d = Number(d);
+  }
   return {
     inicio: diaLocal(new Date(agora - d * 86400000)),
     fim: null,

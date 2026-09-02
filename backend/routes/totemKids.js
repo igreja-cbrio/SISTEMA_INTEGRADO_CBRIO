@@ -4718,9 +4718,16 @@ router.get('/decisoes/resumo-por-crianca', authorizeModule('kids', 1), async (re
 // GET /api/totem-kids/decisoes/registro · a tela inteira numa ida
 router.get('/decisoes/registro', authorizeModule('kids', 1), async (req, res) => {
   try {
-    const { fim, inicio, rotulo } = resolverJanelaPeriodo({
-      dias: req.query.dias, ano: req.query.ano, padraoDias: 365,
+    // ⚠️ o parâmetro é `diasPadrao` (não `padraoDias`) e `diasValidos` tem que
+    // listar TODAS as opções que a tela oferece — 1095 fora da lista cairia no
+    // padrão em silêncio. E o rótulo é a FUNÇÃO `rotuloJanela`: ele não vem no
+    // retorno. Errar isso fazia `inicio` virar "NaN-NaN-NaN" e a tela morrer
+    // com 500 (aconteceu em 02/09).
+    const janela = resolverJanelaPeriodo({
+      dias: req.query.dias, ano: req.query.ano,
+      diasValidos: [90, 365, 1095], diasPadrao: 365,
     });
+    const { inicio, fim } = janela;
 
     // ⚠️ Erro PROPAGA: "nenhuma decisão registrada" e "a consulta falhou"
     // levam a decisões opostas (lei: erro nunca vira fila vazia).
@@ -4764,7 +4771,7 @@ router.get('/decisoes/registro', authorizeModule('kids', 1), async (req, res) =>
     if (eNom) throw eNom;
 
     res.json({
-      janela: { inicio, fim, rotulo },
+      janela: { inicio, fim, rotulo: rotuloJanela(janela) },
       resumo: resumoFilaKids(fila),
       fila: fila.map(f => ({
         ...f,

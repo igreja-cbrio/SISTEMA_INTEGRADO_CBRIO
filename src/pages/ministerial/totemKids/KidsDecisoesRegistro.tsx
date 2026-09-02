@@ -271,7 +271,7 @@ export default function KidsDecisoesRegistro() {
       <div className="space-y-2">
         <h2 className="text-sm font-semibold flex items-center gap-2">
           <AlertTriangle className="h-4 w-4 text-amber-500" />
-          Esperando você ({aConferir.length})
+          Esperando você {erro ? '' : `(${aConferir.length})`}
         </h2>
         {carregando && !fila.length && (
           <Card><CardContent className="p-6 text-center text-muted-foreground">
@@ -281,6 +281,13 @@ export default function KidsDecisoesRegistro() {
         {!carregando && !aConferir.length && !erro && (
           <Card><CardContent className="p-6 text-center text-sm text-muted-foreground">
             Nada esperando conferência.
+          </CardContent></Card>
+        )}
+        {/* ⚠️ com erro, a seção NÃO afirma "nada pendente": vazio por falha e
+            vazio por não ter são leituras opostas (lei da ausência declarada) */}
+        {!carregando && erro && (
+          <Card><CardContent className="p-6 text-center text-sm text-muted-foreground">
+            Não deu para saber o que está pendente.
           </CardContent></Card>
         )}
         {aConferir.map(l => (
@@ -313,7 +320,7 @@ export default function KidsDecisoesRegistro() {
       <div className="space-y-2">
         <h2 className="text-sm font-semibold flex items-center gap-2">
           <Check className="h-4 w-4 text-emerald-500" />
-          Decisões registradas ({nominais.length})
+          Decisões registradas {erro ? '' : `(${nominais.length})`}
         </h2>
         <div className="flex gap-2 text-xs">
           {[90, 365, 1095].map(d => (
@@ -345,7 +352,7 @@ export default function KidsDecisoesRegistro() {
               <tbody>
                 {!nominais.length && (
                   <tr><td colSpan={4} className="p-4 text-center text-muted-foreground">
-                    {carregando ? '…' : 'Nenhuma decisão registrada nesta janela.'}
+                    {carregando ? '…' : erro ? 'Não deu para carregar as decisões.' : 'Nenhuma decisão registrada nesta janela.'}
                   </td></tr>
                 )}
                 {nominais.map(n => (
