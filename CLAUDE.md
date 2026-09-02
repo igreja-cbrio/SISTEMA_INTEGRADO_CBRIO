@@ -15938,3 +15938,174 @@ presentes): os 3 runs existem, com 0 tokens e US$ 0. A pendência que este arqui
 registrava como "provavelmente desligado" **está resolvida** — o que faltava era
 o `git`. Régua que fica: **medir em `agent_runs` antes de repetir que um agente
 não roda.**
+
+## ⚠️⚠️ KIDS · as decisões de fé da planilha viraram registro + a tela de conferência (2026-09-02 · migrations `kids_conversoes_import_fila_e_views` + escrita de dado)
+
+Pedido do Matheus: *"vou te passar uma planilha de aceitacoes de criancas,
+gostaria que vc vinculasse a cada criança se der"* → *"pode fazer, inclusive
+deixar o kids-02 subir"* → *"preciso de uma tela para gerenciar as decisoes, ve
+oq ficou para aprovacao humana"* → *"as aceitacoes ja devem alimentar o dashboard
+semanal"*. Passou pelo conselho (4 lentes) antes da régua.
+
+### ⚠️⚠️ O ACHADO PRINCIPAL: o agregado nunca foi preenchido
+
+`cultos.decisoes_kids` estava **ZERO em 26 das 27 datas** da planilha (só 30/08
+tinha 20). Ou seja **a planilha não contradizia o sistema — ela era a única fonte
+que existia**. E é esse agregado que o **KIDS-02** lê: ele publicava **`0` em 13
+das 14 últimas semanas** para a diretoria (`origem: auto`, "0 decisão(ões) kids no
+período") enquanto a equipe do Kids tinha 66 nomes num xlsx.
+
+⚠️ **`kids_checkins.fez_decisao_jesus` existe desde 21/05 e estava `true` em 0 de
+1.740 check-ins.** O ponto de captura certo (criança já identificada, sala,
+responsável presente, autor) existia e nunca foi ligado.
+
+### A régua de casamento (o conselho convergiu, a medição decidiu)
+
+**Candidato único + ≥1 corroborador INDEPENDENTE.** Corroboradores medidos:
+**check-in na data 26/26** das linhas de 26/07 em diante (o totem virou a operação
+em 19/07; antes disso não existe sessão nenhuma) · **idade exata em 51 de 51**
+linhas onde os dois lados existem — nem uma divergência de 1 ano · telefone do
+responsável em 20.
+
+⚠️⚠️ **Idade é VETO, nunca confirmador.** Faixa Kids tem ~9 valores; com
+tolerância ±1 ela passa ~1/3 dos candidatos por azar. Serve para REJEITAR. Foi
+exatamente ela que resolveu a colisão da linha 68 (duas fichas "Bernardo
+Martins", 5 × 11 anos → excluiu a errada). E **idade ausente NUNCA conta como
+compatível**.
+
+⚠️ **Nada de Dice / `nomesPodemSerMesmaPessoa` como critério de ESCRITA** — o
+próprio `duplicidadePolicy.js` registra que o ramo Dice ≥ 0,90 **ligou irmãs** na
+base viva. Só `nomeEhVersaoAbreviada` (mesmo 1º nome + ≥75% dos tokens do menor),
+e **nunca como sinal único**.
+
+**Resultado: 58 gravadas · 8 na fila · 0 sem cadastro** (fecha 66).
+⚠️ Os **40 `nome_norm` repetidos da base não tocaram esta planilha**: aqui todo
+nome tem 2+ tokens (36 com 2, 24 com 3, 6 com 4), nenhum só com o primeiro nome.
+
+### ⚠️⚠️ As armadilhas que a medição pegou (e que erram em SILÊNCIO)
+
+- **`kids_criancas.nome_norm` é coluna GERADA `lower(f_unaccent(nome))` — SEM
+  `trim` e SEM colapsar espaço interno.** Comparar sem normalizar os dois lados
+  erra calado: foi o que fez `"Abelardo De pado"` não casar com `"Abelardo
+  Depado"`. ⚠️ E existe uma **segunda `nome_norm` no sistema**, em
+  `wifi_visitantes`, com fórmula DIFERENTE (com trim e colapso).
+- **"Não casou" NÃO era "não existe".** Os 8 "sem cadastro" tinham **todos** uma
+  ficha parecida: 4 eram abreviação (entraram com a régua da casa, idade batendo
+  exata) e 4 eram grafia/espaço/duplicata (`Batista`×`Baptista`,
+  `Albuquerque`×`Alburquerque`, `Depado`×`De pado`, e duas fichas inativas do
+  mesmo nascimento) — que **ficam na fila de propósito: grafia não é abreviação**.
+- **Telefone "divergente" era AUSÊNCIA em 2 de 3 casos** (responsável com telefone
+  vazio · criança sem nenhum responsável). É o erro de 13/08 outra vez: ler do
+  satélite e concluir "não tem". Só **uma** linha tem contradição real de
+  telefone, e ela foi pra fila.
+- **`vw_kids_decisoes_historico_crianca` fazia INNER JOIN em `cultos`** → linha
+  com `culto_id` NULO **desaparecia** do histórico da criança. Virou LEFT JOIN.
+- **As duas views datavam a decisão por `registrado_em::date`** (= quando foi
+  DIGITADO) e **não liam `decidiu_em`**, criado em 27/08 para o replay da decisão
+  online. Sem o `coalesce(decidiu_em, registrado_em::date)`, as 58 decisões de
+  jan..ago apareceriam todas em 02/09 — e o replay de 27/08 seguia datado errado.
+- **`cultos_decisoes_pessoas` não tem NENHUM índice único** (a idempotência do
+  trigger é um `NOT EXISTS` em plpgsql, que não alcança INSERT direto). Rodar o
+  import 2× criaria 132 linhas ⇒ índice **parcial** desta fonte, com
+  `NULLS NOT DISTINCT` (senão as de domingo manhã, com `culto_id` nulo,
+  escapariam justamente da unicidade que precisam).
+
+### ⚠️⚠️ `tipo_decisao='kids'` é a ÚNICA barreira de LGPD
+
+`tg_cultos_dec_pessoas_resolve_membro` e `tg_cultos_dec_pessoas_jornada` **saem no
+ramo `kids`**. Valor errado num INSERT em massa criaria **58 `mem_membros` de
+menores + trilha + `nsm_eventos`** sem consentimento do responsável (art. 14 §1º)
+— e é INSERT, não DELETE: não há `_bk_` que reverta o efeito colateral limpo. Por
+isso a escrita tem invariante que **aborta** se qualquer linha importada sair sem
+`tipo_decisao='kids'`, sem `kids_crianca_id`, sem `decidiu_em` ou **com
+`membro_id`**. Conferido depois: **0 vazamentos**.
+
+### ⚠️⚠️ O agregado é `greatest`, NUNCA `=`
+
+30/08 tem **20 contados na SALA** contra **15 nomes** na planilha. Sobrescrever com
+15 apagaria 5 decisões reais que alguém contou. A divergência **fica visível e é a
+fila de trabalho** ("faltam nomes"), não um bug a esconder.
+
+⚠️ **Durabilidade medida antes:** nas 20 datas até 01/07 **não existe NENHUMA
+sessão de Kids**, então `fn_kids_sessao_consolida_culto` (que faz `SET =` **por
+sessão**, ao encerrar) **não pode disparar** nelas — o valor gravado ali é
+durável. De 26/07 em diante as sessões existem e estão todas `encerrada`, e a
+marcação de `fez_decisao_jesus` faz a recomputação reproduzir o mesmo número.
+⚠️ **Resíduo PREEXISTENTE declarado**: aquela função consolida **por sessão** com
+`SET =`, então num culto com 3 sessões o último encerramento sobrescreve o total
+do culto. Não foi consertado aqui (é trigger vivo do módulo mais sensível).
+
+### O culto vem do CHECK-IN, e domingo manhã fica NULO
+
+**27 linhas** tiveram o culto resolvido pelo **check-in da própria criança naquela
+data** (o sinal mais forte) · **18** por **turno único** (Quarta Com Deus e
+Domingo 19:00 têm 1 culto no dia) · **13** ficaram **sem culto**: domingo manhã
+tem 2 a 3 cultos candidatos e **chutar o 08:30 seria inventar fato**. As 13 contam
+no histórico da criança e **não entram no número do culto** até alguém escolher —
+o que a tela DIZ, e é o que a tela permite fazer.
+
+### A tela · `/ministerial/totem-kids/decisoes-registro`
+
+⚠️⚠️ **O card "Decisões" do `/kids` apontava para a tela do TOTEM**
+(`/ministerial/totem-kids/decisoes`), que exige **sessão aberta hoje** + o código
+de 4 caracteres da etiqueta impressa naquele dia — estruturalmente incapaz de
+mostrar registro. Quem clicava recebia *"Nenhuma sessão aberta"* e um botão
+"Abrir/criar sessão" que, num dia com culto, **cria sessão REAL** (check-in feito
+nela conta na frequência e nos KPIs do dia). O card foi repontado, e a tela do
+totem passou a **oferecer o registro primeiro**, deixando "abrir sessão" em
+segundo plano.
+
+- **`backend/utils/kidsConversaoFila.js`** = régua PURA no gate
+  (`src/test/kidsConversaoFila.test.ts`, 17 casos): transições, o que a
+  coordenação pode fazer, e o resumo que **tem que FECHAR**.
+- ⚠️ **`aplicada` é TERMINAL na fila**: desfazer vínculo de decisão de menor é ato
+  próprio, na ficha, nunca efeito colateral de mexer na fila.
+- ⚠️ **FAIL-CLOSED**: status desconhecido não permite transição nenhuma.
+- ⚠️ **Motivo OBRIGATÓRIO no descarte** — sem o porquê escrito, em um mês ninguém
+  sabe se foi engano de digitação ou criança que não está na base.
+- ⚠️ **Os candidatos são SUGESTÃO ordenada, o sistema não escolhe**: a linha caiu
+  na fila justamente por não ter candidato único. Idade divergente aparece
+  **riscada** (é veto), e a tela declara que idade ausente não confirma nada.
+- ⚠️ **Culto de outro dia é recusado (400)**: é a trava por construção contra o
+  bug de 12/07 (19 nomes lançados no culto errado).
+- ⚠️ `data_conversao` é gravada **só onde está vazia** (`.is('data_conversao', null)`)
+  — nunca sobrescreve declaração humana, e torna a reexecução idempotente.
+
+### ⚠️ `data_conversao` NÃO move indicador nenhum
+
+Medido: ela é lida por **um filtro** (`jornada=convertidos` na GestaoCriancas) e
+**um rótulo**. Nenhum KPI, view ou card a consome. Quem move o KIDS-02 e o card
+Decisões do Dashboard Semanal é **`cultos.decisoes_kids`**. Não confundir os dois
+ao ler o painel.
+
+### Estado depois (medido no catálogo, não no `success: true`)
+
+| | antes | depois |
+|---|---|---|
+| linhas nominais de decisão Kids | 1 | **59** |
+| `kids_criancas.data_conversao` preenchida | **0 de 4.386** | **58** |
+| `fez_decisao_jesus` em check-ins | **0 de 1.740** | **27** |
+| `cultos.decisoes_kids` somado em 2026 | 21 | **60** |
+| menores vazados para a membresia | — | **0** |
+
+⚠️ **KIDS-02 sobe no cron das 07:00** (`/api/kpis/v2/cron/coletar`), porque quem o
+alimenta é o **coletor JS** `cultos.kids_conv`, não SQL. **Não escrevi
+`kpi_registros` na mão** — valor escrito à mão ali não é durável. O **Dashboard
+Semanal já está alimentado**: ele soma `cultos.decisoes_kids` no card Decisões.
+
+### ⚠️ Lições de MÉTODO desta leva (duas se repetiram)
+
+1. ⚠️⚠️ **`execute_sql` devolve só o resultado do ÚLTIMO statement.** Uma pergunta
+   por chamada — foi assim que eu disse ao Matheus que `cultos_decisoes_pessoas`
+   tinha 1 linha quando tem **158 vivas**; o que está em 1 é a fatia Kids.
+2. ⚠️⚠️ **Timeout de cliente NÃO é prova de que nada aconteceu** (lei de 04/08): a
+   escrita das 58 estourou o timeout do MCP e **commitou inteira** no servidor.
+   Conferir o estado ANTES de repetir — repetir teria sido inofensivo aqui só por
+   causa do índice único que entrou junto.
+3. ⚠️ **`min(uuid)` não existe** no Postgres — usar `(array_agg(x))[1]`.
+4. ⚠️ **Em zsh, `$cmd` num `while read` NÃO é separado em palavras**: os 21
+   scripts do gate "falharam" com `command not found`. **Falha idêntica em todos é
+   assinatura de loop quebrado, não de teste quebrado** — usar `eval "$cmd"`.
+   (É a mesma lição de 31/08, agora no gate em vez do mutation test.)
+5. ⚠️ **Operação em lote sobre `cultos` custa 1–2,5 s POR LINHA** (dois triggers
+   ROW de KPI/NSM) — orçar isso em qualquer reparo que toque dezenas de cultos.

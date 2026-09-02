@@ -26,7 +26,7 @@ const GESTAO = [
   { titulo: 'Estoque por sala', desc: 'O que tem e o que deve ter em cada sala (Patrimônio)', icon: Boxes, path: '/ministerial/totem-kids/estoque', cor: '#f97316' },
   { titulo: 'Batismos (crianças)', desc: 'Crianças pra batizar · contatar a família', icon: Droplets, path: '/ministerial/totem-kids/batismos', cor: '#0ea5e9' },
   { titulo: 'Apresentação de crianças', desc: 'Inscrições do formulário · por turma (2º domingo)', icon: Baby, path: '/ministerial/totem-kids/apresentacao', cor: '#d946ef' },
-  { titulo: 'Decisões', desc: 'Decisões de fé registradas no Kids', icon: Sparkles, path: '/ministerial/totem-kids/decisoes', cor: '#8b5cf6' },
+  { titulo: 'Decisões', desc: 'Decisões de fé registradas + o que espera conferência', icon: Sparkles, path: '/ministerial/totem-kids/decisoes-registro', cor: '#8b5cf6' },
 ];
 
 function GestaoKids() {

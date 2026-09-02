@@ -312,6 +312,7 @@ const TotemKidsCheckout = lazyWithRetry(() => import('./pages/ministerial/totemK
 const TotemKidsPainel = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPainel'));
 const TotemKidsTesteEtiqueta = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsTesteEtiqueta'));
 const TotemKidsDecisoes = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDecisoes'));
+const KidsDecisoesRegistro = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsDecisoesRegistro'));
 const TotemKidsVinculos = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsVinculos'));
 const TotemKidsPortao = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPortao'));
 const MarketingDashboard = lazyWithRetry(() => import('./pages/marketing/MarketingDashboard'));
@@ -801,6 +802,7 @@ function AppRoutes() {
         <Route path="/ministerial/totem-kids/painel" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsPainel /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/teste-etiqueta" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsTesteEtiqueta /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/decisoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsDecisoes /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/totem-kids/decisoes-registro" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><KidsDecisoesRegistro /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/vinculos" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsVinculos /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/configuracoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsAdmin /></Suspense></ModuleGuard>} />
         {/* Redirects das URLs antigas (admin separado) · 2026-05-21 */}
