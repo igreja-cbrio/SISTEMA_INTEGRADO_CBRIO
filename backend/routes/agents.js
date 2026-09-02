@@ -664,10 +664,12 @@ router.get('/queue', authorize('admin', 'diretor'), async (req, res) => {
 // Mantido por backward-compat. Pra aplicar, use POST /queue/:id/apply.
 router.patch('/queue/:id/approve', authorize('admin', 'diretor'), async (req, res) => {
   try {
+    const propostaId = idFila(req.params.id);
+    if (propostaId === null) return res.status(400).json({ error: 'ID inválido' });
     const { error } = await supabase
       .from('agent_queue')
       .update({ status: 'approved', reviewed_by: req.user.userId, reviewed_at: new Date().toISOString() })
-      .eq('id', req.params.id);
+      .eq('id', propostaId);
     if (error) throw error;
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
@@ -676,10 +678,12 @@ router.patch('/queue/:id/approve', authorize('admin', 'diretor'), async (req, re
 // PATCH /api/agents/queue/:id/reject
 router.patch('/queue/:id/reject', authorize('admin', 'diretor'), async (req, res) => {
   try {
+    const propostaId = idFila(req.params.id);
+    if (propostaId === null) return res.status(400).json({ error: 'ID inválido' });
     const motivo = (req.body || {}).motivo || null;
     const patch = { status: 'rejected', reviewed_by: req.user.userId, reviewed_at: new Date().toISOString() };
     if (motivo) patch.apply_error = motivo; // COALESCE: só sobrescreve se veio motivo
-    const { error } = await supabase.from('agent_queue').update(patch).eq('id', req.params.id);
+    const { error } = await supabase.from('agent_queue').update(patch).eq('id', propostaId);
     if (error) throw error;
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
@@ -688,16 +692,22 @@ router.patch('/queue/:id/reject', authorize('admin', 'diretor'), async (req, res
 // POST /api/agents/queue/:id/apply · aprova E aplica em UMA chamada
 // Switch por action_type → handler em backend/agents/apply/*.
 const { applyQueueAction } = require('../agents/apply');
+// ⚠️ `agent_queue.id` é INTEIRO (nextval), não UUID — ver `utils/idFila`.
+const { idFila } = require('../utils/idFila');
 
 router.post('/queue/:id/apply', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID invalido' });
+    // ⚠️⚠️ `agent_queue.id` é INTEIRO (`nextval`), NUNCA uuid. A validação de
+    // UUID que morava aqui recusava TODO clique em Aprovar com 400 (medido em
+    // 02/09/2026: 440 propostas na história, ZERO aplicadas).
+    const propostaId = idFila(req.params.id);
+    if (propostaId === null) return res.status(400).json({ error: 'ID inválido' });
 
     // Carrega proposta
     const { data: row, error: errRow } = await supabase
       .from('agent_queue')
       .select('id, action_type, payload, status, reviewed_by')
-      .eq('id', req.params.id)
+      .eq('id', propostaId)
       .single();
     if (errRow || !row) return res.status(404).json({ error: 'Proposta não encontrada' });
     if (row.status !== 'pending') {
