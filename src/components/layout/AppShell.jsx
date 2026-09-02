@@ -183,14 +183,14 @@ const NAV_ITEMS = [
       {
         title: 'Áreas ministeriais',
         items: [
-          { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao', perm: 'canMembresia' },
+          { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao' },
           { label: 'Next', description: 'Turmas, matrículas e presenças do Next', icon: GraduationCap, path: '/ministerial/next', module: 'next' },
           { label: 'Batismo', description: 'Inscrições, horários, agendamento e check-in de batismo', icon: Droplets, path: '/batismo', module: 'batismo' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
           { label: 'Comunicação', description: 'Central de WhatsApp · chat, envios, templates, atendentes e relatórios', icon: MessageSquare, path: '/comunicacao', module: 'comunicacao' },
-          { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos', perm: 'canMembresia' },
-          { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
+          { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos' },
+          { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', module: 'voluntariado' },
           { label: 'Entradas', description: 'Porta de entrada · uma pessoa = um cadastro · liga inscrição ao membro e funde duplicados', icon: UserSearch, path: '/entradas', module: 'next-batismo' },
         ],
       },

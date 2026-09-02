@@ -16244,3 +16244,79 @@ ele CITA o código errado na explicação, e sem isso seria a própria evidênci
 `FUNCTION_INVOCATION_FAILED`** em produção (testado com o e-mail dela). É a
 ferramenta que existe justamente para diagnosticar "por que essa pessoa não vê
 X" — e ela está fora do ar. Diagnostiquei pelo banco e pelo código no lugar dela.
+
+## ⚠️ Aceitações Kids ganhou recorte próprio no Dashboard Semanal (2026-09-02 · SEM migration)
+
+Matheus: *"eu nao to vendo o indicador de aceitacoes kids no dashboard semanal."*
+**Não existia.** A lista de indicadores tinha `frequencia_kids` (frequência do
+Kids sempre teve recorte próprio) mas em aceitações o Kids só aparecia
+**diluído** no composto `aceitacoes_total_kids` ("Presencial + Online + Kids").
+Quem quisesse saber quantas crianças aceitaram na semana não tinha como —
+assimetria que ninguém havia notado porque o número era sempre zero.
+
+- `aceitacoes_kids` entrou em `INDICADORES` (backend) e no espelho do front,
+  mais `colunaCrua` → `decisoes_kids`.
+- ⚠️ A coluna `aceitacoes_kids` **já existia** em `vw_dashboard_semanal` (o
+  composto a usava) — nada de migration.
+- ⚠️ O `indicadorKey.includes('kids')` do backend já exclui culto com
+  `has_kids = false`, e a chave nova herda isso de graça.
+- ⚠️ **As duas listas de indicadores são espelho** e `src/test/indicadoresDashboard.test.ts`
+  trava a igualdade: chave só no front vira **400** do servidor; só no backend
+  fica **invisível**.
+- Medido depois: W35 = 29 · W34 = 3 · W32 = 1 · W31 = 4 · W30 = 3 — bate com o
+  KIDS-02, então o indicador nasce preenchido.
+
+## ⚠️⚠️ O deny por `canMembresia` saiu dos 3 itens que não são da Membresia (2026-09-02)
+
+Continuação do achado da Renata (a aba do Online gateada pela permissão da
+MEMBRESIA). O mesmo defeito estava em mais três lugares, e o Matheus autorizou
+("pode consertar então"):
+
+| item | antes | agora |
+|---|---|---|
+| Voluntariado (menu) | **sem `module` nenhum** · só `perm: 'canMembresia'` | `module: 'voluntariado'` |
+| Integração (menu) | `module: 'integracao'` **+ deny de membresia** | só `module` |
+| Grupos (menu) | `module: 'grupos'` **+ deny de membresia** | só `module` |
+| `VoluntariadoGuard` (rota) | `if (auth.canMembresia === false) → /dashboard` | nível ≥ 1 em `voluntariado` |
+
+⚠️⚠️ **MEDIDO ANTES de trocar o deny da rota: ZERO cargos têm `membresia` ≥ 2
+sem `voluntariado` ≥ 1** — então a troca **não estreita o acesso de ninguém**. O
+que ela destrava é real: **22 cargos** têm `voluntariado` ≥ 1 com `membresia` < 2
+(20 em `integracao`, 20 em `grupos`). Sem essa medição eu não teria como afirmar
+que a correção é segura, porque trocar deny é estreitar tanto quanto ampliar.
+
+⚠️ O `auth.modulePerms &&` no guard é obrigatório: sem ele, quem chega antes das
+permissões carregarem é redirecionado — a mesma lei do menu, que **não esconde
+nada enquanto carrega**.
+
+⚠️ As rotas `/ministerial/membresia` e `.../scan` **seguem** em
+`permKey="canMembresia"`, e está certo: é o módulo delas.
+
+Guarda: `src/test/painelAreaGate.test.ts` (24 casos) exige que **todo item que
+usa `canMembresia` seja da própria Membresia** e que o `VoluntariadoGuard` não
+decida por ela. **4 mutantes RODADOS e mortos.**
+
+### ⚠️⚠️ LIÇÃO · regex de comentário de bloco MULTILINHA come trecho do arquivo
+
+O guard test novo ficou vermelho na primeira rodada e a causa era **o meu
+próprio helper**: `src/App.tsx` tem `path="/ministerial/voluntariado/*"` — um
+`/*` **literal dentro de uma string de rota** — que pareia com o `*/` do próximo
+comentário JSX e faz `/\/\*[\s\S]*?\*\//g` engolir tudo no meio. Medido: as 2
+rotas da Membresia **desapareciam** do texto limpo, e um assert negativo
+(`expect(linha).not.toContain(...)`) sobre linha inexistente **passa em
+silêncio** — falso-negativo perfeito.
+
+⇒ Bloco `/* */` é removido **só quando abre e fecha na MESMA linha**. Nestes
+arquivos todo comentário de bloco é de uma linha, então basta e é seguro.
+⚠️ E o mutante que restaura o regex multilinha **é morto** pelo assert das rotas
+da Membresia — a guarda agora protege o próprio limpador.
+
+### ⚠️ CORREÇÃO DE REGISTRO · o `/permissoes/diagnostico/:email` NÃO está quebrado
+
+Este arquivo registrou em 02/09 que o endpoint responde 500
+`FUNCTION_INVOCATION_FAILED`. **Reteste no mesmo dia: 200 em todas as
+variações**, incluindo a URL idêntica que falhou (e-mail cru, encoded, sem
+arroba, sem TLD). Era **falha transitória** (cold start), não bug — não há o que
+consertar ali. ⚠️ Régua: `FUNCTION_INVOCATION_FAILED` numa única tentativa não é
+diagnóstico; repetir a chamada é mais barato que ler o handler inteiro (foi o
+que eu fiz na ordem errada).
