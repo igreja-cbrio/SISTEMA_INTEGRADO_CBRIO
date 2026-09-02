@@ -107,9 +107,15 @@ async function indexarOfx(inicio, fim) {
 
 // Escolhe o candidato OFX pra uma linha do balanço (recebe candidatos JÁ
 // deduplicados). Retorna { cand, via } ou null.
-function escolherCandidato(balNomeNorm, cands) {
+function escolherCandidato(balNomeNorm, cands, disputantes = 1) {
   if (!cands || !cands.length) return null;
-  if (cands.length === 1) return { cand: cands[0], via: 'valor_data' };
+  // ⚠️⚠️ O atalho "candidato único → é ele" só vale quando a linha do balanço
+  // TAMBÉM é única naquele (valor, data). Se duas doações de R$ 100 do mesmo
+  // domingo disputam UM único PIX de R$ 100, é matematicamente impossível que
+  // as duas sejam aquele PIX — e o código antigo atribuía o mesmo doador às
+  // duas. Medido em 02/09/2026 no período do extrato: **242 linhas** nessa
+  // situação. Com disputa, o valor+data deixa de bastar e o nome tem de mandar.
+  if (cands.length === 1 && disputantes <= 1) return { cand: cands[0], via: 'valor_data' };
   if (balNomeNorm) {
     // 1) o CPF do candidato é um membro cujo nome bate com o do balanço (alta
     //    confiança · funciona no Santander, que não tem nome no OFX).
@@ -189,17 +195,26 @@ async function conciliar({ inicio, fim, dryRun = false, userId = null, criarAvul
       .or('forma_pagamento.ilike.%pix%,forma_pagamento.is.null'),
   );
 
-  const stats = { balanco_analisado: balanco.length, ofx_creditos: [...porVD.values()].reduce((s, a) => s + a.length, 0), auto: 0, revisao: 0, sem_match: 0, avulsos_criados: 0 };
+  // Quantas linhas do BALANÇO disputam cada (valor, data) — ver o porquê em
+  // `escolherCandidato`.
+  const disputaPorVD = new Map();
+  for (const b of balanco) {
+    const k = chaveVD(b.valor, b.data_competencia);
+    disputaPorVD.set(k, (disputaPorVD.get(k) || 0) + 1);
+  }
+
+  const stats = { balanco_analisado: balanco.length, ofx_creditos: [...porVD.values()].reduce((s, a) => s + a.length, 0), auto: 0, revisao: 0, sem_match: 0, avulsos_criados: 0, casou_cpf_sem_cadastro: 0 };
   const paraVincular = []; // { transacao_id, cand }
   const revisao = [];
 
   for (const b of balanco) {
     const nomeNorm = nomeNormalizado(b.descricao || b.referencia || '');
-    const cands = dedupCandidatos(porVD.get(chaveVD(b.valor, b.data_competencia)) || []);
-    const escolha = escolherCandidato(nomeNorm, cands);
+    const chave = chaveVD(b.valor, b.data_competencia);
+    const cands = dedupCandidatos(porVD.get(chave) || []);
+    const escolha = escolherCandidato(nomeNorm, cands, disputaPorVD.get(chave) || 1);
     if (escolha) {
       paraVincular.push({ transacao_id: b.id, cand: escolha.cand, via: escolha.via });
-    } else if (cands.length > 1) {
+    } else if (cands.length >= 1) {
       // ⚠️⚠️ SÓ vai pra revisão o que um humano consegue decidir: existe ao menos
       // um candidato cujo NOME pode ser a mesma pessoa do balanço. Sem isso, a
       // tela pede uma escolha impossível e induz a atribuir dinheiro à pessoa
@@ -249,14 +264,33 @@ async function conciliar({ inicio, fim, dryRun = false, userId = null, criarAvul
   });
 
   // Grava o vínculo na LINHA DO BALANÇO (membro_id + hora + proveniência).
+  //
+  // ⚠️⚠️ CASOU ≠ TEM DONO. O casamento é balanço × extrato (valor+data+nome); o
+  // DONO só existe se aquele CPF já estiver em `mem_membros`. Medido em
+  // 02/09/2026: das 6.351 doações casadas, ~961 batem com um CPF que NÃO tem
+  // cadastro (dos 1.948 CPFs do extrato, só 786 = 40% têm ficha).
+  //
+  // Antes essas linhas eram simplesmente ABANDONADAS (`if (!membro_id) return`):
+  // não gravavam nada, então a rodada seguinte as reprocessava e elas voltavam a
+  // contar como "auto" para sempre — número que promete dono e não entrega.
+  // Agora a linha é MARCADA com o CPF e o status `sem_cadastro`: sai da fila,
+  // guarda a evidência, e no dia em que a pessoa se cadastrar dá pra religar.
   let vinculados = 0;
   await mapLimit(paraVincular, 8, async (p) => {
     const membro_id = membroPorDoc.get(p.cand.documento);
-    if (!membro_id) return;
+    const marca = { bruto_id: p.cand.bruto_id, cpf: p.cand.cpf, via: p.via, em: new Date().toISOString() };
+    if (!membro_id) {
+      const { error } = await supabase.from('fin_transacoes').update({
+        hora_real: p.cand.hora || undefined,
+        conciliacao_ofx: { ...marca, status: 'sem_cadastro' },
+      }).eq('id', p.transacao_id).is('membro_id', null).is('conciliacao_ofx', null);
+      if (!error) stats.casou_cpf_sem_cadastro++;
+      return;
+    }
     const { error } = await supabase.from('fin_transacoes').update({
       membro_id,
       hora_real: p.cand.hora || undefined,
-      conciliacao_ofx: { status: 'auto', bruto_id: p.cand.bruto_id, cpf: p.cand.cpf, via: p.via, em: new Date().toISOString() },
+      conciliacao_ofx: { ...marca, status: 'auto' },
     }).eq('id', p.transacao_id).is('membro_id', null);
     if (!error) vinculados++;
   });
