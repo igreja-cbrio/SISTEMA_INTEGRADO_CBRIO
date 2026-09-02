@@ -158,6 +158,13 @@ function resolverJanelaPeriodo({ dias, ano, inicio, fim, diasValidos, diasPadrao
 
   const lista = Array.isArray(diasValidos) && diasValidos.length ? diasValidos : [diasPadrao];
   let d = Number(dias);
+  // ⚠️⚠️ A ORDEM destas duas linhas não é estilo: `Array.prototype.includes` usa
+  // **SameValueZero**, em que NaN é igual a si mesmo. Com `diasPadrao` NaN e sem
+  // `?dias=`, `lista` vira `[NaN]`, este teste de pertinência **PASSA** e o NaN
+  // segue intacto até a data. Por isso o fail-safe fica ABAIXO — sanear antes
+  // dele não alcançaria o `diasPadrao` do chamador, que entra sem validação
+  // nenhuma. ✅ Protegido por TESTE, não por convenção: mover a guarda para cima
+  // deixa 7 casos vermelhos em `janelaPeriodoBackend.test.ts`.
   if (!lista.includes(d)) d = diasPadrao;
   // ⚠️⚠️ FAIL-SAFE, não fail-open: sem `diasPadrao` (ou com valor não numérico)
   // isto devolvia `inicio: "NaN-NaN-NaN"`, que o PostgREST recusa — ou seja um
