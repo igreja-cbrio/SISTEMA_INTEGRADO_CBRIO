@@ -14,7 +14,7 @@
 - `backend/routes/financeiroV2.js`
 - `backend/routes/santander.js`
 Guard: `authorizeModule('financeiro', 3 | 4 | 5 | padrão)`
-<details><summary>Endpoints (190)</summary>
+<details><summary>Endpoints (191)</summary>
 - `DELETE /api/financeiro-v2/centros-custo/:id`
 - `DELETE /api/financeiro-v2/contas-pagar/:id`
 - `DELETE /api/financeiro-v2/contas-pagar/:id/tornar-recorrente`
@@ -73,6 +73,7 @@ Guard: `authorizeModule('financeiro', 3 | 4 | 5 | padrão)`
 - `GET /api/financeiro-v2/metas-progresso`
 - `GET /api/financeiro-v2/notas-compras`
 - `GET /api/financeiro-v2/plano-contas`
+- `GET /api/financeiro-v2/quintas-semanas`
 - `GET /api/financeiro-v2/recorrencias`
 - `GET /api/financeiro-v2/regras-classificacao`
 - `GET /api/financeiro-v2/saude-financeira`
