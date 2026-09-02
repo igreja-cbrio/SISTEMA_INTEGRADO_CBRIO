@@ -2730,6 +2730,46 @@ casal junto** (idem recusa). A opção aparece **só** nessa categoria.
   vale no link do WhatsApp; (2) a caixa de entrada não mostra selo de "casal"
   ainda.
 
+## ⚠️⚠️ A agenda do grupo vive DENTRO da temporada — piso E teto (2026-08-28)
+
+Marcos: *"a temporada de grupos abriu 02/08, nenhum grupo reuniu antes disso.
+Inclusive coloque essa contagem para abrir junto com a temporada e fechar junto
+com ela também."*
+
+O **piso** já existia (`desdeISO`, 25/08). O que faltava era o **TETO**, e o
+efeito foi medido no grupo da Mariana: a **T2-2026 termina em 31/12/2026** e a
+agenda oferecia encontros em **16/01, 13/02 e 13/03 de 2027** — um ciclo que
+ninguém decidiu que existe. No passado, a mesma falta significa grupo de
+temporada **encerrada** acumulando "presença não registrada" para sempre.
+
+- **`janelasDeGrupos(ids)`** (`services/grupoAncora.js`) devolve
+  `{ inicio, fim }` por grupo. `iniciosDeGrupos` virou **wrapper** dela — um só
+  lugar lê o banco, então piso e teto não podem divergir.
+- **`proximasOcorrencias` e `ocorrenciasPassadas` ganharam `ateISO`.**
+  `null` = sem teto ⇒ **comportamento idêntico ao de antes** (temporada sem
+  `data_fim`, ou chamador que não sabe). Esconder agenda por falta de informação
+  seria pior que o defeito.
+- ⚠️⚠️ **O corte olha a data ORIGINAL, não a remarcada**: adiar o último
+  encontro em dois dias não pode fazê-lo sumir da agenda. Quem decide se a
+  ocorrência pertence à temporada é o dia em que ela CAIU na cadência.
+- ⚠️ **O fim vem SÓ da temporada** — `created_at` é rede para o INÍCIO, mas não
+  diz nada sobre quando o ciclo acaba, e chutar um teto esconderia agenda real.
+- ⚠️ **`janelaDaTemporada()` continua existindo e não basta**: ela é aproximação
+  em DIAS, lê a temporada com `inscricoes_abertas` (a global, não a DO GRUPO) e
+  tem piso de `Math.max(30, …)` — ou seja, **com a temporada encerrada ainda
+  devolve um mês de agenda**. O `ateISO` é por DATA e por grupo.
+- Ligado nos **4** call sites: `/meu-grupo` (lista), `GET /grupos/:id/encontros`,
+  `/grupos/:id/agenda` (app) e `/grupos/:id/encontros-pendentes` (ERP).
+
+⚠️⚠️ **CORREÇÃO DE REGISTRO / lição de método.** Ao diagnosticar o grupo da
+Mariana em 27/08 eu afirmei que o histórico dela tinha pendências em **20/06 e
+18/07**. **Não tinha.** Eu havia lido `temporada_id` (coluna que **não existe**),
+concluí "grupo sem temporada" e rodei a simulação passando o `created_at` (19/06)
+como início **na mão**. A coluna real é **`temporada`** (texto, `'T2-2026'`), e
+`iniciosDeGrupos` sempre devolveu **2026-08-01**. Régua: **simulação com
+parâmetro digitado à mão não é medição** — rodar o resolvedor de verdade contra
+o banco, que foi o que desfez o engano.
+
 ## Grupos · líder do ROSTER também GERENCIA o grupo no app (2026-08-21 · SEM migration)
 
 Segunda parte do pedido da Natasha: *"os outros líderes que não são o principal

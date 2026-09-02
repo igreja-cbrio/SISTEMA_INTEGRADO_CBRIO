@@ -22,7 +22,7 @@ const gruposEnviosConfig = require('../services/gruposEnviosConfig');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const { cadastrarPessoaNoGrupo } = require('../services/grupoPessoaDireta');
 const { ocorrenciasPassadas } = require('../utils/agendaGrupo');
-const { ancorasDeGrupos, iniciosDeGrupos } = require('../services/grupoAncora');
+const { ancorasDeGrupos, janelasDeGrupos } = require('../services/grupoAncora');
 const { aplicarExcecaoAgenda } = require('../services/grupoAgendaExcecao');
 const { apagarEncontroGrupo } = require('../services/grupoEncontroApagar');
 const { anexarMarcadores, podeVerMarcadorSensivel } = require('../services/jornadaMarcadores');
@@ -373,17 +373,22 @@ router.get('/:id/encontros-pendentes', async (req, res) => {
     const excecoes = excRes.error ? [] : (excRes.data || []);
 
     const registradas = (encRes.data || []).map(e => String(e.data).slice(0, 10));
-    const [ancoras, inicios] = await Promise.all([
+    const [ancoras, janelas] = await Promise.all([
       ancorasDeGrupos([gid]).catch(() => ({})),
       // Sem isto, grupo quinzenal/mensal que nunca registrou encontro (34 dos 35
       // não-semanais ativos, medido em 25/08) nunca aparece como pendente aqui.
-      iniciosDeGrupos([gid]).catch(() => ({})),
+      janelasDeGrupos([gid]).catch(() => ({})),
     ]);
+    const inicio = janelas[gid]?.inicio || null;
     const ocorrencias = ocorrenciasPassadas({
       diaSemana: grupo.dia_semana, horario: grupo.horario,
       recorrencia: grupo.recorrencia, ancoraISO: ancoras[gid] || null,
       // Piso no início da temporada — ver o comentário longo em routes/app.js.
-      inicioISO: inicios[gid] || null, desdeISO: inicios[gid] || null,
+      inicioISO: inicio, desdeISO: inicio,
+      // ⚠️⚠️ TETO no fim da temporada (Marcos · 28/08): sem ele, grupo de
+      // temporada ENCERRADA seguiria acumulando "presença não registrada" pra
+      // sempre — a coordenação cobraria chamada de um ciclo que já fechou.
+      ateISO: janelas[gid]?.fim || null,
       excecoes, registradas, quantas: 12,
     });
 
