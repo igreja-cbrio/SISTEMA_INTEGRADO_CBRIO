@@ -14,6 +14,7 @@ import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
 import { disseSim } from '@/lib/acessibilidadeBatismo';
+import { tirarCodigoPais } from '@/lib/inscricao';
 
 // ── Helpers de mascara ──
 function soDigitos(v: string) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -27,7 +28,11 @@ function mascaraCpf(v: string) {
 }
 
 function mascaraTelefone(v: string) {
-  const d = soDigitos(v).slice(0, 11);
+  // ⚠️⚠️ `tirarCodigoPais` ANTES do slice: truncar primeiro transforma
+  // "+55 21 99999-8888" em `55219999988` e COME os 2 últimos dígitos —
+  // irrecuperáveis. Medido em 02/09/2026: 21 cadastros assim, o mais
+  // recente do dia anterior. Ver a lei de 31/07 no CLAUDE.md.
+  const d = tirarCodigoPais(soDigitos(v)).slice(0, 11);
   if (d.length <= 2) return d.length ? `(${d}` : '';
   if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;

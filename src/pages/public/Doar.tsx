@@ -25,6 +25,7 @@ import { generosidadePublica } from '../../api';
 // tela (é a lei do Contrato de Inscrição: cópia local de CPF/máscara divergia).
 import { cpfValido } from '../../lib/inscricao';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
+import { tirarCodigoPais } from '@/lib/inscricao';
 
 interface Config {
   ativo: boolean;
@@ -128,7 +129,11 @@ function centavosDoTexto(txt: string): number {
 const soDigitos = (s: string) => String(s || '').replace(/\D/g, '');
 
 function mascaraTelefone(v: string) {
-  const d = soDigitos(v).slice(0, 11);
+  // ⚠️⚠️ `tirarCodigoPais` ANTES do slice: truncar primeiro transforma
+  // "+55 21 99999-8888" em `55219999988` e COME os 2 últimos dígitos —
+  // irrecuperáveis. Medido em 02/09/2026: 21 cadastros assim, o mais
+  // recente do dia anterior. Ver a lei de 31/07 no CLAUDE.md.
+  const d = tirarCodigoPais(soDigitos(v)).slice(0, 11);
   if (d.length <= 10) return d.replace(/(\d{2})(\d{4})(\d{0,4})/, '($1) $2-$3').replace(/[-\s()]+$/, '');
   return d.replace(/(\d{2})(\d{5})(\d{0,4})/, '($1) $2-$3').replace(/[-\s()]+$/, '');
 }

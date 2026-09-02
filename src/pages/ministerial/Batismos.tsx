@@ -31,6 +31,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import { ChartGradients, gradFill } from '@/components/charts/ChartGradients';
+import { tirarCodigoPais } from '@/lib/inscricao';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', danger: '#ef4444' };
 
@@ -1403,7 +1404,11 @@ function ModalNovaInscricao({ onClose, onCreated }: { onClose: () => void; onCre
     return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
   };
   const mascaraTel = (v: string) => {
-    const d = soDigitos(v).slice(0, 11);
+  // ⚠️⚠️ `tirarCodigoPais` ANTES do slice: truncar primeiro transforma
+  // "+55 21 99999-8888" em `55219999988` e COME os 2 últimos dígitos —
+  // irrecuperáveis. Medido em 02/09/2026: 21 cadastros assim, o mais
+  // recente do dia anterior. Ver a lei de 31/07 no CLAUDE.md.
+    const d = tirarCodigoPais(soDigitos(v)).slice(0, 11);
     if (d.length <= 2) return d.length ? `(${d}` : '';
     if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
     if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;

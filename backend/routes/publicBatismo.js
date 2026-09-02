@@ -6,7 +6,7 @@ const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 const {
   temAbreviacaoNome, splitNomeCompleto, validarNascimento, honeypotPreenchido,
-  registrarConsentimentos, TEXTOS, cpfValido, emailValido,
+  registrarConsentimentos, TEXTOS, cpfValido, emailValido, tirarCodigoPaisTelefone,
 } = require('../services/inscricaoContrato');
 const { avaliarHorarioBatismo, horariosDisponiveis, normalizarHorario } = require('../utils/batismoHorario');
 const { acessibilidadeBatismo } = require('../utils/acessibilidadeBatismo');
@@ -191,7 +191,14 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
     if (temAbreviacaoNome(`${nomeT} ${sobrenomeT}`)) {
       return res.status(400).json({ error: 'Escreva seu nome completo, sem abreviações.' });
     }
-    const telNorm = soDigitos(telefone);
+    // ⚠️⚠️ `tirarCodigoPaisTelefone` ANTES de medir o tamanho. Sem isso, quem
+    // cola "+55 21 99999-8888" (o formato que sai dos contatos do celular)
+    // chega aqui com 13 dígitos e leva "telefone inválido" — ou, pior, com 11
+    // já truncados pela máscara e os 2 últimos dígitos COMIDOS. Medido em
+    // 02/09/2026: 21 cadastros com esse padrão, o mais recente do dia anterior,
+    // por esta porta. ⚠️ O helper só tira o 55 quando o resto AINDA é telefone
+    // completo — o DDD 55 (Santa Maria/RS) fica intacto.
+    const telNorm = tirarCodigoPaisTelefone(soDigitos(telefone));
     if (telNorm.length < 10 || telNorm.length > 11) {
       return res.status(400).json({ error: 'Informe um telefone valido (com DDD).' });
     }
