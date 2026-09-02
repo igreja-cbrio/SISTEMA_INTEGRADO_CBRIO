@@ -335,6 +335,85 @@ async function confirmarVinculo({ transacaoId, brutoId, userId = null }) {
   return { ok: true, membro_id: r.membro_id, avulso: !!r.criado_novo };
 }
 
+/**
+ * O que JÁ FOI identificado no período — a lista que responde "quem foi?".
+ *
+ * ⚠️⚠️ Sem isto a tela só tinha CONTADORES e uma fila de revisão vazia, e a
+ * pergunta do Matheus (02/09/2026) foi literalmente "como vou saber quem foi?".
+ * Número sem a lista atrás não dá para conferir nem para corrigir.
+ *
+ * ⚠️ Cada linha traz o nome do BALANÇO e o nome do MEMBRO lado a lado, mais
+ * `nome_diverge` quando o primeiro nome não bate. Não é necessariamente erro —
+ * pagamento por terceiro (cônjuge, filho, sócio) é comum e legítimo — mas é
+ * exatamente o que precisa de olho humano, então vem PRIMEIRO na lista.
+ */
+async function listarIdentificados({ inicio, fim, limite = 500 } = {}) {
+  if (!inicio || !fim) throw new Error('inicio e fim são obrigatórios');
+
+  const linhas = await fetchAll(
+    'fin_transacoes',
+    'id, valor, data_competencia, descricao, referencia, membro_id, conciliacao_ofx',
+    (q) => q.not('membro_id', 'is', null).not('conciliacao_ofx', 'is', null)
+      .gte('data_competencia', inicio).lte('data_competencia', fim),
+  );
+  if (!linhas.length) return { total: 0, divergentes: 0, itens: [] };
+
+  // Nome do membro — em lotes de 200 (`.in()` longo estoura a URL do PostgREST).
+  const ids = [...new Set(linhas.map((l) => l.membro_id))];
+  const nomePorId = new Map();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await supabase.from('mem_membros')
+      .select('id, nome, status').in('id', ids.slice(i, i + 200));
+    for (const m of data || []) nomePorId.set(m.id, m);
+  }
+
+  const primeiro = (n) => nomeNormalizado(n || '').split(' ')[0] || '';
+  const itens = linhas.map((l) => {
+    const m = nomePorId.get(l.membro_id) || {};
+    const nomeBal = l.descricao || l.referencia || '';
+    const diverge = !!(nomeBal && m.nome && primeiro(nomeBal) !== primeiro(m.nome));
+    return {
+      transacao_id: l.id,
+      valor: Number(l.valor),
+      data: String(l.data_competencia).slice(0, 10),
+      nome_balanco: nomeBal,
+      membro_id: l.membro_id,
+      membro_nome: m.nome || null,
+      membro_status: m.status || null,
+      cpf: l.conciliacao_ofx?.cpf || null,
+      via: l.conciliacao_ofx?.via || null,
+      nome_diverge: diverge,
+    };
+  });
+
+  // Divergentes primeiro, depois por valor — é a ordem de quem vai conferir.
+  itens.sort((a, b) => (Number(b.nome_diverge) - Number(a.nome_diverge)) || (b.valor - a.valor));
+
+  return {
+    total: itens.length,
+    divergentes: itens.filter((i) => i.nome_diverge).length,
+    pessoas: new Set(itens.map((i) => i.membro_id)).size,
+    valor_total: Number(itens.reduce((a, i) => a + i.valor, 0).toFixed(2)),
+    truncado: itens.length > limite,
+    itens: itens.slice(0, limite),
+  };
+}
+
+/**
+ * Desfaz um vínculo já feito — tira o membro e a marca de conciliação.
+ *
+ * ⚠️ A linha volta ao estado ANTERIOR (sem dono, sem decisão), então a próxima
+ * conciliação a reavalia. Sem isto, um vínculo errado seria permanente pela
+ * tela — e a lista de identificados existiria só para dar má notícia.
+ */
+async function desfazerVinculo({ transacaoId }) {
+  const { error } = await supabase.from('fin_transacoes')
+    .update({ membro_id: null, conciliacao_ofx: null })
+    .eq('id', transacaoId).not('conciliacao_ofx', 'is', null);
+  if (error) throw new Error(error.message);
+  return { ok: true };
+}
+
 // Ignora um caso (não reaparece na fila).
 async function ignorarVinculo({ transacaoId, userId = null }) {
   const { error } = await supabase.from('fin_transacoes').update({
@@ -344,4 +423,4 @@ async function ignorarVinculo({ transacaoId, userId = null }) {
   return { ok: true };
 }
 
-module.exports = { conciliar, listarRevisao, confirmarVinculo, ignorarVinculo };
+module.exports = { conciliar, listarRevisao, confirmarVinculo, ignorarVinculo, listarIdentificados, desfazerVinculo };
