@@ -91,6 +91,28 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️ LEI · inscrição de MENOR nunca cria/linka mem_membros (2026-09-01 · migration `20260901190000`)
+
+Caso Edgar/Luciana Crespo × "Betina": a filha (9 anos, do Kids) foi batizada em
+2025 com a inscrição preenchida pela mãe (CPF/tel/e-mail DELA — padrão normal
+de formulário de menor). O backfill `20260515500000` criou um **membro-quimera**
+(nome da criança + contatos da mãe), o vínculo tardio `20260716150000` gravou
+trilha batismo + promoveu a membro_ativo, e em 01/09 o matcher do formulário de
+líderes casou a mãe com a quimera — "Betina" virou líder de grupo.
+
+**A regra (mesma das decisões kids · LGPD):** identificador em inscrição de
+menor pertence ao RESPONSÁVEL. Linkar/criar membro por ele produz quimera ou
+pendura o marco do filho no cadastro do adulto. `fn_batismo_inscricao_link_membro`
+agora pula menores (nascimento < 18 anos na data do batismo, ou observações
+com criança/responsável). **Toda porta nova que resolve identidade deve ter a
+mesma trava quando o inscrito puder ser menor.**
+
+⚠️ Passivo medido (01/09): 90 batismos com "Responsavel:" · **57 quimeras
+prováveis** (membro com nome da criança) · **32 batismos de menor linkados no
+cadastro de outra pessoa** (provavelmente o responsável). Limpeza em massa
+pendente de decisão do Marcos. O caso Betina→Luciana foi corrigido (cadastro
+`725d18a1` renomeado pra titular real + batismo deslinkado nesta migration).
+
 ## ⚠️ Contrato de Inscrição · toda porta pública de inscrição (F3.1 · 2026-07-28)
 
 Decisão do Marcos (specs completas em `docs/modulo-inscricoes/fase1-unificacao.md`
