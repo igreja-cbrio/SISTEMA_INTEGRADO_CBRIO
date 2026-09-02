@@ -14,7 +14,7 @@
 - `backend/routes/financeiroV2.js`
 - `backend/routes/santander.js`
 Guard: `authorizeModule('financeiro', 3 | 4 | 5 | padrão)`
-<details><summary>Endpoints (188)</summary>
+<details><summary>Endpoints (190)</summary>
 - `DELETE /api/financeiro-v2/centros-custo/:id`
 - `DELETE /api/financeiro-v2/contas-pagar/:id`
 - `DELETE /api/financeiro-v2/contas-pagar/:id/tornar-recorrente`
@@ -40,6 +40,7 @@ Guard: `authorizeModule('financeiro', 3 | 4 | 5 | padrão)`
 - `GET /api/financeiro-v2/categoria-transacoes`
 - `GET /api/financeiro-v2/centros-custo`
 - `GET /api/financeiro-v2/conciliacao/sugestoes`
+- `GET /api/financeiro-v2/conciliar-balanco-ofx/identificados`
 - `GET /api/financeiro-v2/conciliar-balanco-ofx/revisao`
 - `GET /api/financeiro-v2/contas-pagar`
 - `GET /api/financeiro-v2/contas-pagar/resumo`
@@ -145,6 +146,7 @@ Guard: `authorizeModule('financeiro', 3 | 4 | 5 | padrão)`
 - `POST /api/financeiro-v2/conciliacao/aplicar-seguros`
 - `POST /api/financeiro-v2/conciliar-balanco-ofx`
 - `POST /api/financeiro-v2/conciliar-balanco-ofx/confirmar`
+- `POST /api/financeiro-v2/conciliar-balanco-ofx/desfazer`
 - `POST /api/financeiro-v2/conciliar-balanco-ofx/ignorar`
 - `POST /api/financeiro-v2/contas-pagar`
 - `POST /api/financeiro-v2/contas-pagar/:id/tornar-recorrente`
