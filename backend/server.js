@@ -331,6 +331,9 @@ app.use('/api/planejamento-anual', require('./routes/planejamentoAnual'));
 app.use('/api/lgpd', require('./routes/lgpd'));
 app.use('/api/feedback', require('./routes/feedback'));
 
+// Cache do /api/health/db · a rota nao pode virar carga sobre o que ela vigia.
+let _cacheHealthDb = { em: 0, resp: null };
+
 // ── Health check ──
 // Inclui status do Supabase client pra diagnóstico de "Não autorizado" em prod
 app.get('/api/health', (req, res) => {
@@ -348,6 +351,42 @@ app.get('/api/health', (req, res) => {
     database_url_set: !!process.env.DATABASE_URL,
     node_env: process.env.NODE_ENV || 'unknown',
   });
+});
+
+// ── Health check DE VERDADE (o que faltava em 02/09/2026) ──
+// ⚠️⚠️ A rota ACIMA responde 200 `ok` com o banco MORTO: ela só olha se as env
+// vars existem. Está catalogada como `critical` e vigiada a cada 5 min — e
+// durante a queda de 1h34 respondeu "ok" o tempo todo, junto com o painel do
+// Supabase dizendo ACTIVE_HEALTHY. Dois sinais verdes medindo a coisa errada.
+// NÃO mexer nela (outros consumidores dependem do contrato); para "o sistema
+// está utilizável?", é ESTA aqui.
+//
+// ⚠️ A régua vive em `utils/saudeBanco` (pura, no gate). Aqui é casca fina.
+// ⚠️ PÚBLICA de propósito: monitor externo não carrega credencial nossa. Não
+// devolve dado nenhum — só se respondeu e em quanto tempo.
+app.get('/api/health/db', async (req, res) => {
+  const { sondar, respostaSaude, CACHE_MS } = require('./utils/saudeBanco');
+  const agora = Date.now();
+  let resp = (agora - _cacheHealthDb.em < CACHE_MS) ? _cacheHealthDb.resp : null;
+  const doCache = !!resp;
+
+  if (!resp) {
+    const { supabase } = require('./utils/supabase');
+    resp = respostaSaude(await sondar(supabase));
+    _cacheHealthDb = { em: agora, resp };
+    if (resp.status !== 200) console.error('[HEALTH/DB] banco nao respondeu:', resp.corpo.erro);
+  }
+
+  setSystemJobOutcome(res, {
+    status: resp.status === 200 ? 'success' : 'failed',
+    effectStatus: 'confirmed',
+    outputCount: resp.status === 200 ? 1 : 0,
+    result: resp.status === 200 ? 'db_healthy' : 'db_down',
+  });
+  // ⚠️ Retry-After faz monitor e cliente RECUAREM em vez de martelar um banco
+  // que esta tentando levantar.
+  if (resp.retryApos) res.set('Retry-After', String(resp.retryApos));
+  return res.status(resp.status).json({ ...resp.corpo, cache: doCache, timestamp: new Date().toISOString() });
 });
 
 // ── API 404 (evita fallback HTML para rotas inexistentes) ──
