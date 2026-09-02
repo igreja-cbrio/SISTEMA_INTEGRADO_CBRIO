@@ -65,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **141** arquivos, **131** com teste.
+`backend/utils/` tem **142** arquivos, **132** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -167,6 +167,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/nfeArquivo.js` | `src/test/nfeArquivo.test.ts` |
 | `backend/utils/nfeXml.js` | `src/test/nfeXml.test.ts` |
 | `backend/utils/onlineDiag.js` | `src/test/onlineDiag.test.ts` |
+| `backend/utils/origemRegistro.js` | `src/test/origemRegistro.test.ts` |
 | `backend/utils/pagination.js` | — |
 | `backend/utils/paresDuplicados.js` | `src/test/paresDuplicados.test.ts` |
 | `backend/utils/patrimonioDepreciacao.js` | — |

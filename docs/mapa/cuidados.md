@@ -59,6 +59,7 @@ Guard: `authorizeModule('cuidados', 1 | 2 | 3)`
 - `backend/utils/dadosSensiveisPessoa.js`
 - `backend/utils/janelaPeriodo.js`
 - `backend/utils/jornadaTempo.js`
+- `backend/utils/origemRegistro.js`
 - `backend/utils/supabase.js`
 
 **Serviços**
@@ -84,6 +85,7 @@ Guard: `authorizeModule('cuidados', 1 | 2 | 3)`
 - `cui_responsaveis`
 - `cui_visitas`
 - `cultos`
+- `cultos_decisoes_pessoas`
 - `dados_brutos`
 - `jornada_encaminhamentos`
 - `mem_membros`
