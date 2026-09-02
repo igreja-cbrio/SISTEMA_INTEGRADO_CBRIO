@@ -294,13 +294,17 @@ export default function InscricaoGrupos() {
     setErrosCampos(p => (p[k] ? { ...p, [k]: '' } : p)); // corrigiu o campo? some o vermelho
   };
 
-  // ── Cônjuge (grupo de casais) ──
-  // Gatilho: categoria do grupo escolhido. Trocar pra um grupo que não é de
-  // casais desliga o bloco (e limpa o que foi digitado nele — senão iria num
-  // payload que o backend ignoraria em silêncio).
-  const ehGrupoCasais = (grupoEscolhido?.categoria || '').toLowerCase() === 'casais';
+  // ── Cônjuge (grupo de casais OU misto · Marcos 02/09) ──
+  // Gatilho: categoria do grupo escolhido. Casais e Misto oferecem a inscrição
+  // em par; Mulheres/Homens/Jovens/Estudo NUNCA (grupo de recorte não recebe
+  // casal). Trocar pra um grupo sem a opção desliga o bloco (e limpa o que foi
+  // digitado nele — senão iria num payload que o backend ignoraria em silêncio).
+  // ⚠️ A lista tem que bater com a do backend (publicGrupos.js · querCasal).
+  const categoriaGrupo = (grupoEscolhido?.categoria || '').toLowerCase();
+  const ehGrupoCasais = categoriaGrupo === 'casais';
+  const permiteConjuge = ['casais', 'misto'].includes(categoriaGrupo);
   useEffect(() => {
-    if (ehGrupoCasais) return;
+    if (permiteConjuge) return;
     setComConjuge(false);
     setConjuge(CONJUGE_VAZIO);
     setErrosCampos(p => {
@@ -310,13 +314,13 @@ export default function InscricaoGrupos() {
       chaves.forEach(k => { delete novo[k]; });
       return novo;
     });
-  }, [ehGrupoCasais]);
+  }, [permiteConjuge]);
   const setConj = (k, masked) => (e) => {
     const valor = masked ? masked(e.target.value) : e.target.value;
     setConjuge(c => ({ ...c, [k]: valor }));
     setErrosCampos(p => (p[`conjuge.${k}`] ? { ...p, [`conjuge.${k}`]: '' } : p));
   };
-  const enviarConjuge = ehGrupoCasais && comConjuge;
+  const enviarConjuge = permiteConjuge && comConjuge;
 
   // "Tem certeza?" ao voltar/fechar/recarregar a página COM dados digitados
   // (regra de ouro do repo: sem digitar nada, não pergunta). Depois do envio
@@ -832,8 +836,8 @@ export default function InscricaoGrupos() {
                 </div>
               ) : null}
 
-              {/* ── Cônjuge (só em grupo de casais) ── */}
-              {ehGrupoCasais && !(bloqueio?.mensagem || bloqueioLocal) && (
+              {/* ── Cônjuge (grupo de casais ou misto) ── */}
+              {permiteConjuge && !(bloqueio?.mensagem || bloqueioLocal) && (
                 <div style={{
                   border: `1.5px solid ${comConjuge ? 'rgba(0,179,157,0.55)' : C.cardBorder}`,
                   background: comConjuge ? 'rgba(0,179,157,0.07)' : (C.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'),
@@ -850,8 +854,9 @@ export default function InscricaoGrupos() {
                       <Heart size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: -2, color: '#00B39D' }} />
                       <strong>Inscrever meu cônjuge junto</strong>
                       <span style={{ display: 'block', fontSize: 12, color: C.text3, marginTop: 3 }}>
-                        Este é um grupo de casais — você pode inscrever os dois de uma vez. O líder recebe um
-                        aviso só, com os dois nomes, e aprova o casal junto.
+                        {ehGrupoCasais
+                          ? 'Este é um grupo de casais — você pode inscrever os dois de uma vez. O líder recebe um aviso só, com os dois nomes, e aprova o casal junto.'
+                          : 'Casado(a)? Você pode inscrever seu cônjuge junto. O líder recebe um aviso só, com os dois nomes, e aprova o casal junto.'}
                       </span>
                     </span>
                   </label>

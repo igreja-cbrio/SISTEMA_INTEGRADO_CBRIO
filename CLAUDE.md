@@ -14419,6 +14419,59 @@ segunda como resposta da primeira.
 
 ⇒ **Uma pergunta por chamada.** Se precisar de duas, duas chamadas.
 
+## ⚠️ Grupos · CÔNJUGE no formulário de líderes + em grupo MISTO (2026-09-02 · migration `20260902130000`)
+
+Pedido do Marcos: *"gostaria de adicionar a opção de inscrever conjuge no
+formulário de líderes e anfitriões, e também em grupos categorizados mistos,
+mantenha sem a opção para grupos só de mulheres ou só de homens, ou de
+solteiros."*
+
+**Duas portas, duas mudanças:**
+
+1. **Inscrição de participante (`/inscricao-grupos`)**: o bloco de casal que já
+   existia (30/07) para `categoria='Casais'` passou a valer também em
+   **`'Misto'`** — o gate é `['casais','misto'].includes(catLower)` nos DOIS
+   lados (backend `publicGrupos.js /inscrever` + front `InscricaoGrupos.jsx`,
+   com `permiteConjuge`). ⚠️ Mulheres/Homens/Jovens/Estudo seguem SEM a opção,
+   de propósito (o pedido é literal). O texto do convite muda por categoria
+   ("grupo de casais" × "Casado(a)? Você pode inscrever seu cônjuge junto").
+2. **Candidatura de líder/anfitrião (`/inscricao-lideres`)**: opção nova de
+   inscrever o cônjuge junto. `mem_lider_inscricoes.casal_inscricao_id`
+   (migration `20260902130000` · auto-referência cruzada `ON DELETE SET NULL`
+   + índice parcial · MESMO desenho do `casal_pedido_id` de 30/07). Cada
+   cônjuge = inscrição PRÓPRIA com o contrato de porta INTEIRO
+   (`efetivarCandidaturaLider`: matcher canônico → anti-dup → enriquecimento
+   só-onde-vazio → optin só-liga → cadastro pendente → observação →
+   consentimentos porta `grupos_lider`).
+
+⚠️ **Regras que não regridem** (espelham a inscrição de casal de 30/07):
+- **CPF do cônjuge igual ao do titular é 400** (`conjuge.cpf`) — é a mesma
+  pessoa, não um casal.
+- **Falha do cônjuge NUNCA desfaz o titular**: 201 com `conjuge: {ok:false,
+  error}` e a tela de sucesso declara ("A sua está valendo").
+- **Anti-dup exclui o par** (`ignorarInscricaoIds`): casal compartilha
+  telefone/e-mail, e sem a exclusão o 2º seria engolido como "já inscrito".
+- **UM aviso ao coordenador** com "X e Y (casal)" — nunca dois.
+- **O aceite LGPD do cônjuge é PRÓPRIO** (`consentimento_conjuge_texto` +
+  checkbox dele) — o titular não aceita pelo outro.
+- ⚠️ O cross-link tolera a migration ausente (42703 em try/catch): as duas
+  inscrições valem, só o vínculo fica sem gravar. **Aplicar a migration antes
+  do merge mesmo assim** (é o que faz o badge "· casal" da triagem funcionar).
+- Na triagem (`GruposEntrada.jsx`): badge "· casal" na linha + nota no painel —
+  aceitar/recusar/vincular **continua um a um** (decisão simples; o vínculo é
+  informativo, não decide junto como o de pedidos).
+
+### ⚠️⚠️ De carona: o `ref_id` dos avisos de APROVADO era NULL
+
+Achado na auditoria da temporada T2 (a pergunta dos 957/768/11):
+`notificarPessoaAprovada` (`gruposWhatsapp.js`) **não passava `refId`** ao
+enfileirar — **671 de 676** envios de aprovação estavam com `ref_id` NULL, e o
+painel da Caixa de entrada (que deriva `avisos.pessoa` por `ref_id` + contexto)
+mostrava essas pessoas como "não avisadas" tendo recebido a mensagem. Agora o
+chamador (`grupos.js`) passa `pedidoId` e o serviço grava `refId`. **O passado
+não foi reescrito** (ref_id null antigo fica); a auditoria de 02/09 casou ~30
+por telefone pra confirmar que os envios saíram.
+
 ## ⚠️⚠️ CHECK-IN por ÁREA · e o separador que destruía a resposta (2026-09-01 · SEM migration)
 
 Pedido do Matheus: *"no evento que tivemos do celebra, desse para filtrar nos

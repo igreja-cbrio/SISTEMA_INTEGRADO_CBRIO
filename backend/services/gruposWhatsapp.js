@@ -192,7 +192,7 @@ async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
 // `optin` vem do chamador (aprovarPedidoCore lê o membro/cadastro); quando não
 // for informado, mantém o comportamento antigo pra não silenciar aviso de fluxo
 // que ainda não passa a informação.
-async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefone, optin }) {
+async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefone, optin, pedidoId = null }) {
   try {
     if (await bloqueioTotalAtivo()) return { sent: false, reason: 'bloqueio_total' };
     if (!telefone) return { sent: false, reason: 'pessoa_sem_telefone' };
@@ -208,6 +208,10 @@ async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefo
         (liderTelefone || '').trim() || 'em breve pelo WhatsApp',
       ],
       contexto: 'grupos.pedido_aprovado',
+      // ⚠️ refId é o que permite ao painel da Caixa de entrada atribuir o aviso
+      // ao pedido (auditoria 02/09: 671 de 676 envios de aprovação estavam com
+      // ref_id nulo e o contador "pessoa avisada" não os enxergava).
+      refId: pedidoId,
     });
     if (!r.sent) console.log('[GruposWPP] template aprovado não enviado:', r.reason || r.status);
     return r;

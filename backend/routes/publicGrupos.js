@@ -1090,11 +1090,13 @@ router.post('/inscrever', async (req, res) => {
     }
 
     // ── Cônjuge · inscrição em PAR (grupo de casais · Marcos 30/07) ────────
-    // A opção só existe em categoria='Casais'. Em grupo NÃO-casais o campo é
-    // ignorado em silêncio (não é erro — payload/QR antigo não pode quebrar).
+    // A opção existe em categoria='Casais' e — desde 02/09 (Marcos) — também em
+    // 'Misto'. NUNCA em Mulheres/Homens/Jovens/Estudo (grupos de recorte não
+    // recebem casal). Em grupo fora dessas 2 categorias o campo é ignorado em
+    // silêncio (não é erro — payload/QR antigo não pode quebrar).
     // A régua do cônjuge é a MESMA do titular (contrato de inscrição), e o erro
     // volta com campo='conjuge.<campo>' pro form pintar o campo certo.
-    const querCasal = Boolean(conjuge && typeof conjuge === 'object' && catLower === 'casais');
+    const querCasal = Boolean(conjuge && typeof conjuge === 'object' && ['casais', 'misto'].includes(catLower));
     const conjugeNome = querCasal ? String(conjuge.nome || '').trim() : null;
     if (querCasal) {
       const erroConj = primeiroErroConjuge(conjuge, cpfLimpo);
@@ -1325,209 +1327,320 @@ router.post('/inscrever', async (req, res) => {
   }
 });
 
+// ── Candidatura de líder/anfitrião · régua por PESSOA ───────────────────────
+// Valida os campos padrão de UM candidato (titular ou cônjuge). `prefixo`
+// prefixa o `campo` do erro ('' pro titular · 'conjuge.' pro cônjuge), pro
+// form pintar o campo certo. Devolve { erro } ou { dados } normalizados.
+function validarCandidatoLider(c, { prefixo = '', exigirEndereco = false } = {}) {
+  const campo = (k) => `${prefixo}${k}`;
+  const nome = String(c?.nome || '').trim();
+  if (!nome || nome.length < 3) return { erro: { error: 'Digite o nome completo.', campo: campo('nome') } };
+  if (nome.split(/\s+/).length < 2 || temAbreviacaoNome(nome)) {
+    return { erro: { error: 'Escreva o nome completo, sem abreviações.', campo: campo('nome') } };
+  }
+  const telDigitos = tirarCodigoPaisTelefone(soDigitos(c?.telefone));
+  if (telDigitos.length < 10 || telDigitos.length > 11) {
+    return { erro: { error: 'Digite um celular válido com DDD.', campo: campo('telefone') } };
+  }
+  if (!c?.cpf || soDigitos(c.cpf).length !== 11) return { erro: { error: 'Informe o CPF completo.', campo: campo('cpf') } };
+  if (!cpfValido(c.cpf)) return { erro: { error: 'Este CPF não é válido — confira os números.', campo: campo('cpf') } };
+  if (!c?.email || !emailValido(c.email)) return { erro: { error: 'Informe um e-mail válido.', campo: campo('email') } }; // D2: obrigatório
+  const dataNascimento = c?.data_nascimento;
+  if (!dataNascimento || !/^\d{4}-\d{2}-\d{2}$/.test(String(dataNascimento))) {
+    return { erro: { error: 'Informe a data de nascimento.', campo: campo('data_nascimento') } };
+  }
+  const nascDate = new Date(String(dataNascimento) + 'T12:00:00');
+  if (Number.isNaN(nascDate.getTime())) return { erro: { error: 'Data de nascimento inválida.', campo: campo('data_nascimento') } };
+  if (nascDate > new Date()) return { erro: { error: 'A data de nascimento não pode estar no futuro.', campo: campo('data_nascimento') } };
+  if (nascDate.getFullYear() < 1900) return { erro: { error: 'Confira o ano de nascimento.', campo: campo('data_nascimento') } };
+  const generoLimpo = ['masculino', 'feminino'].includes(String(c?.genero || '').toLowerCase())
+    ? String(c.genero).toLowerCase() : null;
+  if (!generoLimpo) return { erro: { error: 'Marque o sexo (masculino ou feminino).', campo: campo('genero') } };
+  if (exigirEndereco) {
+    if (!c?.endereco || String(c.endereco).trim().length < 5) {
+      return { erro: { error: 'Como anfitrião, informe o endereço onde o grupo aconteceria.', campo: campo('endereco') } };
+    }
+    if (!c?.bairro || String(c.bairro).trim().length < 2) {
+      return { erro: { error: 'Como anfitrião, informe o bairro.', campo: campo('bairro') } };
+    }
+  }
+  return {
+    dados: {
+      nome,
+      telefone: c?.telefone || null,
+      telDigitos,
+      cpfLimpo: soDigitos(c.cpf),
+      emailLimpo: String(c.email).trim().toLowerCase(),
+      dataNascimento,
+      generoLimpo,
+      fotoUrl: fotoUrlValida(c?.foto_url) ? String(c.foto_url).slice(0, 1000) : null,
+      optin: c?.whatsapp_optin === true, // D4 (28/07): explícito, nunca implícito
+    },
+  };
+}
+
+// Efetiva a candidatura de UMA pessoa (contrato de porta inteiro): matcher →
+// anti-duplicata → enriquecimento só-onde-vazio → opt-in → cadastro pendente
+// (quando não há membro) → observação de identidade → inscrição →
+// consentimentos. Devolve { ja_inscrito: true } ou { inscricaoId, membroId }.
+// `ignorarInscricaoIds` existe pro CASAL: marido e mulher podem compartilhar o
+// telefone, e sem excluir a inscrição recém-criada do titular o cônjuge seria
+// engolido como "já inscrito".
+async function efetivarCandidaturaLider(p) {
+  const {
+    dados, papel, motivacao, bairro, endereco, consentimentoTexto,
+    ip, userAgent, ignorarInscricaoIds = [],
+  } = p;
+  const { nome, telefone, telDigitos, cpfLimpo, emailLimpo, dataNascimento, generoLimpo, fotoUrl, optin } = dados;
+
+  // Identidade: matcher compartilhado (CPF/chaves fortes) liga ao membro
+  // existente; sem match, cria o cadastro pendente (Contrato de porta).
+  const achado = await acharMembroGuardado({
+    cpf: cpfLimpo, email: emailLimpo, telefone, nome,
+    dataNascimento: dataNascimento || null,
+  });
+  const membroId = achado?.membro_id || null;
+
+  // Anti-duplicata da CANDIDATURA: uma aberta (pendente/aceito) por pessoa —
+  // por membro, por telefone e por CPF via cadastro pendente.
+  let cadastrosMesmoCpf = [];
+  if (!membroId) {
+    const { data: cads } = await supabase.from('mem_cadastros_pendentes')
+      .select('id').eq('cpf', cpfLimpo).is('deleted_at', null).limit(100);
+    cadastrosMesmoCpf = (cads || []).map(c => c.id);
+  }
+  const { data: abertas } = await supabase.from('mem_lider_inscricoes')
+    .select('id, membro_id, cadastro_pendente_id, telefone')
+    .in('status', ['pendente', 'aceito']).is('deleted_at', null).limit(1000);
+  const jaTem = (abertas || []).some(i =>
+    !ignorarInscricaoIds.includes(i.id)
+    && ((membroId && i.membro_id === membroId)
+      || (telDigitos && soDigitos(i.telefone) === telDigitos)
+      || (i.cadastro_pendente_id && cadastrosMesmoCpf.includes(i.cadastro_pendente_id))));
+  if (jaTem) return { ja_inscrito: true };
+
+  // Enriquecimento só-onde-vazio do membro casado (mesma regra do /inscrever)
+  if (membroId && (fotoUrl || generoLimpo || dataNascimento)) {
+    const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero, data_nascimento').eq('id', membroId).maybeSingle();
+    if (mem) {
+      const upd = {};
+      if (fotoUrl && !mem.foto_url) upd.foto_url = fotoUrl;
+      if (generoLimpo && !mem.genero) upd.genero = generoLimpo;
+      if (dataNascimento && !mem.data_nascimento) upd.data_nascimento = dataNascimento;
+      if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
+    }
+  }
+
+  // Opt-in de WhatsApp EXPLÍCITO (D4): só grava se MARCOU. "Só liga, nunca desliga".
+  if (membroId && optin) {
+    try {
+      await supabase.from('mem_membros')
+        .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
+        .eq('id', membroId).is('deleted_at', null);
+    } catch (e) { console.warn('[public grupos inscrever-lider] optin membro:', e.message); }
+  }
+
+  let cadastroPendenteId = null;
+  if (!membroId) {
+    const { data: cad, error: eCad } = await supabase.from('mem_cadastros_pendentes').insert({
+      nome,
+      cpf: cpfLimpo,
+      email: emailLimpo,
+      telefone: telefone || null,
+      data_nascimento: dataNascimento || null,
+      genero: generoLimpo,
+      foto_url: fotoUrl,
+      endereco: endereco ? String(endereco).trim().slice(0, 300) : null,
+      bairro: bairro ? String(bairro).trim().slice(0, 120) : null,
+      // CHECK mem_cadastros_pendentes_origem_check só aceita
+      // site|qr_code|evento|importacao — a distinção "veio da inscrição de
+      // líder" vive em mem_lider_inscricoes, não aqui.
+      origem: 'qr_code',
+      aceita_termos: true,
+      aceita_contato: true,
+      whatsapp_optin: optin,
+      whatsapp_optin_em: optin ? new Date().toISOString() : null,
+      consentimento_texto: consentimentoTexto || null,
+      status: 'pendente',
+      ip_origem: ip,
+      user_agent: userAgent,
+    }).select('id').single();
+    if (eCad) {
+      console.error('[public grupos inscrever-lider] cadastro pendente:', eCad.message);
+      const err = new Error('Erro ao registrar cadastro.');
+      err.publico = 'Erro ao registrar cadastro.';
+      throw err;
+    }
+    cadastroPendenteId = cad.id;
+  }
+
+  await registrarObservacaoSegura({
+    membroId, origem: 'grupos_lider_formulario', origemId: cadastroPendenteId,
+    nome, cpf: cpfLimpo, email: emailLimpo,
+    telefone, dataNascimento: dataNascimento || null,
+  });
+
+  const { data: insc, error: eInsc } = await supabase.from('mem_lider_inscricoes').insert({
+    membro_id: membroId,
+    cadastro_pendente_id: membroId ? null : cadastroPendenteId,
+    nome,
+    telefone: telefone || null,
+    email: emailLimpo,
+    bairro: bairro ? String(bairro).trim().slice(0, 120) : null,
+    endereco: endereco ? String(endereco).trim().slice(0, 300) : null,
+    quer_lider: papel.querLider,
+    quer_anfitriao: papel.querAnfitriao,
+    motivacao: motivacao ? String(motivacao).trim().slice(0, 500) : null,
+    status: 'pendente',
+    origem: 'formulario_publico',
+  }).select('id').single();
+  if (eInsc) {
+    console.error('[public grupos inscrever-lider] inscricao:', eInsc.message);
+    const err = new Error('Erro ao registrar inscrição.');
+    err.publico = 'Erro ao registrar inscrição.';
+    throw err;
+  }
+
+  // Atos de consentimento na satélite (Contrato de Inscrição) — o snapshot é o
+  // texto que a pessoa VIU. Best-effort: a inscrição nunca se perde por falha aqui.
+  registrarConsentimentos({
+    porta: 'grupos_lider', refId: insc.id, membroId,
+    ip, userAgent,
+    itens: [
+      { tipo: 'termos_lgpd', aceito: true, texto: consentimentoTexto || undefined },
+      { tipo: 'whatsapp', aceito: optin },
+    ],
+  }).catch((err) => console.error('[public grupos inscrever-lider] consentimentos:', err.message));
+
+  return { inscricaoId: insc.id, membroId };
+}
+
 // POST /api/public/grupos/inscrever-lider
 // Candidatura pública a NOVO LÍDER / ANFITRIÃO (form /inscricao-lideres ·
 // Marcos 17/07). Mesma fundação de identidade do /inscrever (matcher forte →
 // membro existente OU mem_cadastros_pendentes), mas SEM grupo (a equipe
 // decide na caixa de entrada) e SEM WhatsApp em nenhuma etapa — o processo é
 // assistido: a equipe sempre fala com a pessoa antes de qualquer decisão.
+//
+// CASAL (Marcos 02/09 · caso Edgar/Luciana): `conjuge` opcional inscreve os
+// dois de uma vez — cada um vira UMA inscrição própria (contrato de porta),
+// cruzadas por `casal_inscricao_id`. Papel/motivação/endereço valem pros dois.
 router.post('/inscrever-lider', async (req, res) => {
   try {
     const {
       nome, cpf, email, telefone, data_nascimento, genero,
       quer_lider, quer_anfitriao, motivacao, bairro, endereco,
       foto_url, aceita_termos, consentimento_texto, whatsapp_optin,
+      conjuge, consentimento_conjuge_texto,
       website, // honeypot
     } = req.body || {};
 
     if (website && String(website).trim() !== '') return res.status(201).json({ ok: true });
 
-    if (!nome || nome.trim().length < 3) return res.status(400).json({ error: 'Digite o nome completo.', campo: 'nome' });
-    if (nome.trim().split(/\s+/).length < 2 || temAbreviacaoNome(nome)) {
-      return res.status(400).json({ error: 'Escreva o nome completo, sem abreviações.', campo: 'nome' });
-    }
-    const telDigitos = tirarCodigoPaisTelefone(soDigitos(telefone));
-    if (telDigitos.length < 10 || telDigitos.length > 11) return res.status(400).json({ error: 'Digite um celular válido com DDD.', campo: 'telefone' });
-    if (!cpf || soDigitos(cpf).length !== 11) return res.status(400).json({ error: 'Informe o CPF completo.', campo: 'cpf' });
-    if (!cpfValido(cpf)) return res.status(400).json({ error: 'Este CPF não é válido — confira os números.', campo: 'cpf' });
-    if (!email || !emailValido(email)) return res.status(400).json({ error: 'Informe um e-mail válido.', campo: 'email' }); // D2: obrigatório
+    const vTitular = validarCandidatoLider(
+      { nome, cpf, email, telefone, data_nascimento, genero, foto_url, whatsapp_optin, endereco, bairro },
+      { exigirEndereco: quer_anfitriao === true },
+    );
+    if (vTitular.erro) return res.status(400).json(vTitular.erro);
     if (!aceita_termos) return res.status(400).json({ error: 'É necessário aceitar os termos.', campo: 'aceita_termos' });
-    if (!data_nascimento || !/^\d{4}-\d{2}-\d{2}$/.test(String(data_nascimento))) {
-      return res.status(400).json({ error: 'Informe a data de nascimento.', campo: 'data_nascimento' });
-    }
-    const nascDate = new Date(String(data_nascimento) + 'T12:00:00');
-    if (Number.isNaN(nascDate.getTime())) return res.status(400).json({ error: 'Data de nascimento inválida.', campo: 'data_nascimento' });
-    if (nascDate > new Date()) return res.status(400).json({ error: 'A data de nascimento não pode estar no futuro.', campo: 'data_nascimento' });
-    if (nascDate.getFullYear() < 1900) return res.status(400).json({ error: 'Confira o ano de nascimento.', campo: 'data_nascimento' });
-    const generoLimpo = ['masculino', 'feminino'].includes(String(genero || '').toLowerCase())
-      ? String(genero).toLowerCase() : null;
-    if (!generoLimpo) return res.status(400).json({ error: 'Marque o sexo (masculino ou feminino).', campo: 'genero' });
 
     const querLider = quer_lider === true;
     const querAnfitriao = quer_anfitriao === true;
     if (!querLider && !querAnfitriao) {
       return res.status(400).json({ error: 'Marque pelo menos uma opção: líder e/ou anfitrião.', campo: 'papel' });
     }
-    // Anfitrião = quem cede a casa · o endereço É o dado (Marcos 17/07).
-    if (querAnfitriao) {
-      if (!endereco || String(endereco).trim().length < 5) {
-        return res.status(400).json({ error: 'Como anfitrião, informe o endereço onde o grupo aconteceria.', campo: 'endereco' });
+
+    // Cônjuge · mesma régua do titular, erros com campo='conjuge.<campo>'.
+    // CPF igual ao do titular é a mesma pessoa, não um casal (regra do /inscrever).
+    const querCasal = Boolean(conjuge && typeof conjuge === 'object');
+    let vConj = null;
+    if (querCasal) {
+      vConj = validarCandidatoLider(conjuge, { prefixo: 'conjuge.' });
+      if (vConj.erro) return res.status(400).json(vConj.erro);
+      if (vConj.dados.cpfLimpo === vTitular.dados.cpfLimpo) {
+        return res.status(400).json({ error: 'O CPF do cônjuge é o mesmo do titular — confira os números.', campo: 'conjuge.cpf' });
       }
-      if (!bairro || String(bairro).trim().length < 2) {
-        return res.status(400).json({ error: 'Como anfitrião, informe o bairro.', campo: 'bairro' });
+      // LGPD: o titular DECLARA que o cônjuge está ciente e concorda (mesmo
+      // desenho do /inscrever de grupos) — sem a declaração, só o titular entra.
+      if (conjuge.aceita_termos !== true) {
+        return res.status(400).json({ error: 'Confirme que seu cônjuge está ciente e concorda com a inscrição.', campo: 'conjuge.aceita_termos' });
       }
     }
 
-    const cpfLimpo = soDigitos(cpf);
-    const emailLimpo = email.trim().toLowerCase();
-    const fotoUrl = fotoUrlValida(foto_url) ? String(foto_url).slice(0, 1000) : null;
-    const optin = whatsapp_optin === true; // D4 (28/07): explícito, nunca implícito
     const ip = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim() || req.ip || null;
     const userAgent = (req.headers['user-agent'] || '').toString().slice(0, 500);
+    const consentimentoTexto = consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null;
+    const papel = { querLider, querAnfitriao };
+    const base = { papel, motivacao, bairro, endereco, ip, userAgent };
 
-    // Identidade: matcher compartilhado (CPF/chaves fortes) liga ao membro
-    // existente; sem match, cria o cadastro pendente (Contrato de porta).
-    const achado = await acharMembroGuardado({
-      cpf: cpfLimpo, email: emailLimpo, telefone, nome: nome.trim(),
-      dataNascimento: data_nascimento || null,
-    });
-    const membroId = achado?.membro_id || null;
-
-    // Anti-duplicata da CANDIDATURA: uma aberta (pendente/aceito) por pessoa —
-    // por membro, por telefone e (novo) por CPF via cadastro pendente, pra
-    // pegar quem se reinscreve com telefone diferente antes de virar membro.
-    const telDig = telDigitos;
-    let cadastrosMesmoCpf = [];
-    if (!membroId) {
-      const { data: cads } = await supabase.from('mem_cadastros_pendentes')
-        .select('id').eq('cpf', cpfLimpo).is('deleted_at', null).limit(100);
-      cadastrosMesmoCpf = (cads || []).map(c => c.id);
-    }
-    const { data: abertas } = await supabase.from('mem_lider_inscricoes')
-      .select('id, membro_id, cadastro_pendente_id, telefone')
-      .in('status', ['pendente', 'aceito']).is('deleted_at', null).limit(1000);
-    const jaTem = (abertas || []).some(i =>
-      (membroId && i.membro_id === membroId)
-      || (telDig && soDigitos(i.telefone) === telDig)
-      || (i.cadastro_pendente_id && cadastrosMesmoCpf.includes(i.cadastro_pendente_id)));
-    if (jaTem) {
+    const rt = await efetivarCandidaturaLider({ ...base, dados: vTitular.dados, consentimentoTexto });
+    if (rt.ja_inscrito && !querCasal) {
       return res.json({ ok: true, ja_inscrito: true, mensagem: 'Já recebemos a sua inscrição — a equipe de Grupos vai falar com você em breve.' });
     }
 
-    // Enriquecimento só-onde-vazio do membro casado (mesma regra do /inscrever)
-    if (membroId && (fotoUrl || generoLimpo || data_nascimento)) {
-      const { data: mem } = await supabase.from('mem_membros').select('foto_url, genero, data_nascimento').eq('id', membroId).maybeSingle();
-      if (mem) {
-        const upd = {};
-        if (fotoUrl && !mem.foto_url) upd.foto_url = fotoUrl;
-        if (generoLimpo && !mem.genero) upd.genero = generoLimpo;
-        if (data_nascimento && !mem.data_nascimento) upd.data_nascimento = data_nascimento;
-        if (Object.keys(upd).length) await supabase.from('mem_membros').update(upd).eq('id', membroId);
-      }
-    }
-
-    // Opt-in de WhatsApp EXPLÍCITO (D4 · 2026-07-28, substitui o implícito de
-    // 24/07): só grava se a pessoa MARCOU o checkbox. "Só liga, nunca desliga".
-    if (membroId && optin) {
+    // Cônjuge: falha dele NUNCA desfaz o titular (mesma política do /inscrever).
+    let rc = null;
+    if (querCasal) {
       try {
-        await supabase.from('mem_membros')
-          .update({ whatsapp_optin: true, whatsapp_optin_em: new Date().toISOString() })
-          .eq('id', membroId).is('deleted_at', null);
-      } catch (e) { console.warn('[public grupos inscrever-lider] optin membro:', e.message); }
-    }
-
-    let cadastroPendenteId = null;
-    if (!membroId) {
-      const { data: cad, error: eCad } = await supabase.from('mem_cadastros_pendentes').insert({
-        nome: nome.trim(),
-        cpf: cpfLimpo,
-        email: emailLimpo,
-        telefone: telefone || null,
-        data_nascimento: data_nascimento || null,
-        genero: generoLimpo,
-        foto_url: fotoUrl,
-        endereco: endereco ? String(endereco).trim().slice(0, 300) : null,
-        bairro: bairro ? String(bairro).trim().slice(0, 120) : null,
-        // CHECK mem_cadastros_pendentes_origem_check só aceita
-        // site|qr_code|evento|importacao — a distinção "veio da inscrição de
-        // líder" vive em mem_lider_inscricoes, não aqui (mesmo 'qr_code' do
-        // /inscrever de grupos).
-        origem: 'qr_code',
-        aceita_termos: !!aceita_termos,
-        aceita_contato: true,
-        // D4 (28/07): opt-in explícito do checkbox — propaga pro membro na
-        // aprovação do cadastro pendente só quando a pessoa marcou.
-        whatsapp_optin: optin,
-        whatsapp_optin_em: optin ? new Date().toISOString() : null,
-        consentimento_texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : null,
-        status: 'pendente',
-        ip_origem: ip,
-        user_agent: userAgent,
-      }).select('id').single();
-      if (eCad) {
-        console.error('[public grupos inscrever-lider] cadastro pendente:', eCad.message);
-        return res.status(500).json({ error: 'Erro ao registrar cadastro.' });
+        rc = await efetivarCandidaturaLider({
+          ...base,
+          dados: vConj.dados,
+          consentimentoTexto: consentimento_conjuge_texto
+            ? String(consentimento_conjuge_texto).slice(0, 2000) : consentimentoTexto,
+          ignorarInscricaoIds: rt.inscricaoId ? [rt.inscricaoId] : [],
+        });
+      } catch (e) {
+        console.error('[public grupos inscrever-lider] conjuge:', e.message);
+        rc = { erro: e.publico || 'Não conseguimos registrar a inscrição do seu cônjuge.' };
       }
-      cadastroPendenteId = cad.id;
+      // Vínculo CRUZADO do par (as duas linhas apontam uma pra outra) — só
+      // quando as DUAS inscrições nasceram agora. Best-effort: sem a migration
+      // aplicada (42703) o par segue registrado, só sem o elo.
+      if (rt.inscricaoId && rc?.inscricaoId) {
+        try {
+          await supabase.from('mem_lider_inscricoes')
+            .update({ casal_inscricao_id: rc.inscricaoId }).eq('id', rt.inscricaoId);
+          await supabase.from('mem_lider_inscricoes')
+            .update({ casal_inscricao_id: rt.inscricaoId }).eq('id', rc.inscricaoId);
+        } catch (e) { console.warn('[public grupos inscrever-lider] casal vínculo:', e.message); }
+      }
     }
-
-    await registrarObservacaoSegura({
-      membroId, origem: 'grupos_lider_formulario', origemId: cadastroPendenteId,
-      nome: nome.trim(), cpf: cpfLimpo, email: emailLimpo,
-      telefone, dataNascimento: data_nascimento || null,
-    });
-
-    const { data: insc, error: eInsc } = await supabase.from('mem_lider_inscricoes').insert({
-      membro_id: membroId,
-      cadastro_pendente_id: membroId ? null : cadastroPendenteId,
-      nome: nome.trim(),
-      telefone: telefone || null,
-      email: emailLimpo,
-      bairro: bairro ? String(bairro).trim().slice(0, 120) : null,
-      endereco: endereco ? String(endereco).trim().slice(0, 300) : null,
-      quer_lider: querLider,
-      quer_anfitriao: querAnfitriao,
-      motivacao: motivacao ? String(motivacao).trim().slice(0, 500) : null,
-      status: 'pendente',
-      origem: 'formulario_publico',
-    }).select('id').single();
-    if (eInsc) {
-      console.error('[public grupos inscrever-lider] inscricao:', eInsc.message);
-      return res.status(500).json({ error: 'Erro ao registrar inscrição.' });
-    }
-
-    // Atos de consentimento na satélite (Contrato de Inscrição) — o snapshot é
-    // o texto que a pessoa VIU (enviado pelo form e também gravado no cadastro
-    // pendente). Best-effort: a inscrição nunca é perdida por falha aqui.
-    registrarConsentimentos({
-      porta: 'grupos_lider', refId: insc.id, membroId,
-      ip, userAgent,
-      itens: [
-        { tipo: 'termos_lgpd', aceito: true, texto: consentimento_texto ? String(consentimento_texto).slice(0, 2000) : undefined },
-        { tipo: 'whatsapp', aceito: optin },
-      ],
-    }).catch((err) => console.error('[public grupos inscrever-lider] consentimentos:', err.message));
 
     // Só notificação in-app pra equipe — SEM WhatsApp (processo assistido).
-    (async () => {
-      try {
-        const papel = [querLider && 'líder', querAnfitriao && 'anfitrião'].filter(Boolean).join(' e ');
-        await notificar({
-          modulo: 'grupos',
-          tipo: 'lider_inscricao',
-          titulo: 'Nova inscrição de líder/anfitrião',
-          mensagem: `${nome.trim()} se inscreveu como ${papel}.`,
-          link: '/grupos?tab=entrada',
-          severidade: 'aviso',
-          chaveDedup: `lider_inscricao_${insc.id}`,
-        });
-      } catch (err) { console.error('[public grupos inscrever-lider notify]', err.message); }
-    })();
+    // UM aviso pro par (dois avisos do mesmo casal é ruído na caixa de entrada).
+    const inscricaoIdAviso = rt.inscricaoId || rc?.inscricaoId || null;
+    if (inscricaoIdAviso) {
+      (async () => {
+        try {
+          const papelTxt = [querLider && 'líder', querAnfitriao && 'anfitrião'].filter(Boolean).join(' e ');
+          const nomes = rc?.inscricaoId
+            ? `${vTitular.dados.nome} e ${vConj.dados.nome} (casal)`
+            : vTitular.dados.nome;
+          await notificar({
+            modulo: 'grupos',
+            tipo: 'lider_inscricao',
+            titulo: 'Nova inscrição de líder/anfitrião',
+            mensagem: `${nomes} se inscreveu como ${papelTxt}.`,
+            link: '/grupos?tab=entrada',
+            severidade: 'aviso',
+            chaveDedup: `lider_inscricao_${inscricaoIdAviso}`,
+          });
+        } catch (err) { console.error('[public grupos inscrever-lider notify]', err.message); }
+      })();
+    }
 
-    res.status(201).json({ ok: true, inscricao_id: insc.id });
+    const corpo = { ok: true };
+    if (rt.inscricaoId) corpo.inscricao_id = rt.inscricaoId;
+    if (rt.ja_inscrito) { corpo.ja_inscrito = true; corpo.mensagem = 'Já recebemos a sua inscrição — a equipe de Grupos vai falar com você em breve.'; }
+    if (querCasal) {
+      corpo.conjuge = rc?.erro
+        ? { ok: false, nome: vConj.dados.nome, error: rc.erro }
+        : { ok: true, nome: vConj.dados.nome, ja_inscrito: rc?.ja_inscrito === true, inscricao_id: rc?.inscricaoId || null };
+    }
+    res.status(rt.inscricaoId || rc?.inscricaoId ? 201 : 200).json(corpo);
   } catch (e) {
     console.error('[public grupos inscrever-lider]', e.message);
-    res.status(500).json({ error: 'Erro ao processar inscrição.' });
+    res.status(500).json({ error: e.publico || 'Erro ao processar inscrição.' });
   }
 });
 

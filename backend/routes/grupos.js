@@ -3206,6 +3206,7 @@ async function aprovarPedidoCore(pedidoId, user) {
           liderNome,
           liderTelefone,
           optin: optinPessoa,
+          pedidoId: pedido.id,
         });
       } catch (e) { console.error('[Pedido aprovar notify]', e.message); }
     })();

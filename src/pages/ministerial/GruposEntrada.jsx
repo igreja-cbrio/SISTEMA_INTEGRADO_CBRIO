@@ -1172,6 +1172,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
                           ) : r.tipo === 'lider' ? (
                             <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.primaryBg, color: C.primary, fontWeight: 700 }}>
                               {[r.raw.quer_lider && 'Líder', r.raw.quer_anfitriao && 'Anfitrião'].filter(Boolean).join(' + ')}
+                              {r.raw.casal_inscricao_id ? ' · casal' : ''}
                             </span>
                           ) : r.veioNext ? (
                             <span style={{ fontSize: 10.5, padding: '2px 9px', borderRadius: 99, background: C.violetBg, color: C.violet, fontWeight: 700 }}>Next</span>
@@ -1676,6 +1677,13 @@ function PainelLider({
         Quer servir como <strong>{papeis}</strong> — inscrição do formulário público de líderes.
         Converse com a pessoa antes de decidir: <strong>nada é enviado automaticamente</strong> (nem no aceite, nem na recusa).
       </p>
+
+      {insc.casal_inscricao_id && (
+        <div style={{ fontSize: 11.5, color: C.t2, marginBottom: 10, padding: '6px 10px', background: C.primaryBg, borderRadius: 6, lineHeight: 1.5 }}>
+          <strong style={{ color: C.primary }}>Candidatura de CASAL</strong> — o cônjuge tem inscrição
+          própria nesta caixa (procure pelo sobrenome). Aceitar/recusar/vincular continua um a um.
+        </div>
+      )}
 
       <div style={{ fontSize: 12, color: C.t2, display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 8 }}>
         {insc.bairro && <span>Bairro: <strong style={{ color: C.text }}>{insc.bairro}</strong></span>}
