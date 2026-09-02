@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
+import { tirarCodigoPais } from '@/lib/inscricao';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ec4899' };
 
@@ -988,7 +989,11 @@ function maskCpf(v: string): string {
 
 // Telefone BR · 11 digitos (DDD + 9 + número) → (21) 99999-0000
 function maskTelefone(v: string): string {
-  const d = String(v || '').replace(/\D/g, '').slice(0, 11);
+  // ⚠️⚠️ `tirarCodigoPais` ANTES do slice: truncar primeiro transforma
+  // "+55 21 99999-8888" em `55219999988` e COME os 2 últimos dígitos —
+  // irrecuperáveis. Medido em 02/09/2026: 21 cadastros assim, o mais
+  // recente do dia anterior. Ver a lei de 31/07 no CLAUDE.md.
+  const d = tirarCodigoPais(String(v || '').replace(/\D/g, '')).slice(0, 11);
   if (d.length === 0) return '';
   if (d.length <= 2) return `(${d}`;
   if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;

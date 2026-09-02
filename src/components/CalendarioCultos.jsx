@@ -12,6 +12,7 @@ const cultosApi = kpisApi.cultos;
 import { Calendar, CalendarClock, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, AlertTriangle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatErro } from '../lib/formatErro';
+import { tirarCodigoPais } from '@/lib/inscricao';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', text: 'var(--cbrio-text)',
@@ -1349,7 +1350,11 @@ function maskCpfBr(v) {
 }
 
 function maskTelefoneBr(v) {
-  const d = String(v || '').replace(/\D/g, '').slice(0, 11);
+  // ⚠️⚠️ `tirarCodigoPais` ANTES do slice: truncar primeiro transforma
+  // "+55 21 99999-8888" em `55219999988` e COME os 2 últimos dígitos —
+  // irrecuperáveis. Medido em 02/09/2026: 21 cadastros assim, o mais
+  // recente do dia anterior. Ver a lei de 31/07 no CLAUDE.md.
+  const d = tirarCodigoPais(String(v || '').replace(/\D/g, '')).slice(0, 11);
   if (d.length === 0) return '';
   if (d.length <= 2) return `(${d}`;
   if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;

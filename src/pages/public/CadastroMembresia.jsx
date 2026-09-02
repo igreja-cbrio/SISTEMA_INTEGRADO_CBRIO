@@ -15,6 +15,7 @@ import { QRCodeSVG } from 'qrcode.react';
 // "buscando…" para sempre. Com o CEP agora obrigatório, esse campo está no
 // caminho crítico de toda submissão do censo presencial.
 import { mascaraCep, cepCompleto, buscarCep } from '../../lib/cepAutopreenche';
+import { tirarCodigoPais } from '@/lib/inscricao';
 
 // ── Helpers de máscara ──
 function soDigitos(v) { return (v || '').toString().replace(/\D+/g, ''); }
@@ -28,7 +29,11 @@ function mascaraCpf(v) {
 }
 
 function mascaraTelefone(v) {
-  const d = soDigitos(v).slice(0, 11);
+  // ⚠️⚠️ `tirarCodigoPais` ANTES do slice: truncar primeiro transforma
+  // "+55 21 99999-8888" em `55219999988` e COME os 2 últimos dígitos —
+  // irrecuperáveis. Medido em 02/09/2026: 21 cadastros assim, o mais
+  // recente do dia anterior. Ver a lei de 31/07 no CLAUDE.md.
+  const d = tirarCodigoPais(soDigitos(v)).slice(0, 11);
   if (d.length <= 2) return d.length ? `(${d}` : '';
   if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;

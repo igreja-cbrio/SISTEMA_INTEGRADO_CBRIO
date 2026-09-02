@@ -20,6 +20,7 @@ import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { QRCodeSVG } from 'qrcode.react';
 import { mascaraCep, cepCompleto, buscarCep } from '../lib/cepAutopreenche';
 import SeletorBairro from '../components/ui/seletor-bairro';
+import { tirarCodigoPais } from '@/lib/inscricao';
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
 
@@ -1566,7 +1567,11 @@ function NovoConvertidoFlow({ onExit, onActivity }: { onExit: () => void; onActi
   }, []);
 
   const maskTel = (v: string) => {
-    const d = v.replace(/\D/g, '').slice(0, 11);
+  // ⚠️⚠️ `tirarCodigoPais` ANTES do slice: truncar primeiro transforma
+  // "+55 21 99999-8888" em `55219999988` e COME os 2 últimos dígitos —
+  // irrecuperáveis. Medido em 02/09/2026: 21 cadastros assim, o mais
+  // recente do dia anterior. Ver a lei de 31/07 no CLAUDE.md.
+    const d = tirarCodigoPais(v.replace(/\D/g, '')).slice(0, 11);
     if (d.length <= 2) return d;
     if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
     return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
@@ -2933,7 +2938,11 @@ function maskCpfInput(v: string): string {
 }
 
 function maskPhoneInput(v: string): string {
-  const d = v.replace(/\D/g, '').slice(0, 11);
+  // ⚠️⚠️ `tirarCodigoPais` ANTES do slice: truncar primeiro transforma
+  // "+55 21 99999-8888" em `55219999988` e COME os 2 últimos dígitos —
+  // irrecuperáveis. Medido em 02/09/2026: 21 cadastros assim, o mais
+  // recente do dia anterior. Ver a lei de 31/07 no CLAUDE.md.
+  const d = tirarCodigoPais(v.replace(/\D/g, '')).slice(0, 11);
   if (d.length <= 2) return d;
   if (d.length <= 7) return `(${d.slice(0,2)}) ${d.slice(2)}`;
   return `(${d.slice(0,2)}) ${d.slice(2,7)}-${d.slice(7)}`;
