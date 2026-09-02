@@ -1,4 +1,5 @@
 const { supabase } = require('../utils/supabase');
+const { respostaDeFalhaAuth, ehFalhaDeInfra } = require('../utils/falhaInfra');
 
 // LEGADO · ROLE_MAP é usado apenas internamente por `authorizeCycle` (cycles.js).
 // Manter até `authorizeCycle` migrar pra autorizacao por módulo (`authorizeModule`).
@@ -271,10 +272,21 @@ async function authenticate(req, res, next) {
   const { data: { user }, error } = await supabase.auth.getUser(token);
 
   if (error || !user) {
-    console.warn('[AUTH] Token rejeitado pelo Supabase:', error?.message || 'usuario null');
-    return res.status(401).json({
-      error: 'Token inválido ou expirado',
-      reason: 'invalid_token',
+    // ⚠️⚠️ BANCO FORA NÃO É TOKEN INVÁLIDO (incidente de 02/09/2026).
+    // Durante a queda do Supabase, `getUser` falha por REDE e o código antigo
+    // devolvia 401 — 442 pessoas leram "sessão expirada" com o token perfeito,
+    // e a instrução implícita ("faça login de novo") era justamente a que não
+    // funcionava, porque o login fala direto com o Auth que estava fora.
+    // ⚠️ FAIL-CLOSED: só vira 503 com SINAL de infra; na dúvida segue 401.
+    const { status, corpo } = respostaDeFalhaAuth(error);
+    if (status === 503) {
+      console.error('[AUTH] Auth indisponível (infra):', error?.message);
+      res.set('Retry-After', '30');
+    } else {
+      console.warn('[AUTH] Token rejeitado pelo Supabase:', error?.message || 'usuario null');
+    }
+    return res.status(status).json({
+      ...corpo,
       detail: error?.message || 'getUser retornou null · token pode ser de outro projeto Supabase',
     });
   }
@@ -288,6 +300,15 @@ async function authenticate(req, res, next) {
 
   if (profileError) {
     console.error('[AUTH] Erro ao buscar profile:', profileError.message);
+    // ⚠️ Mesma distinção: banco fora é 503 (o cliente espera e volta), não 500
+    // (que o front trata como defeito permanente e não retenta).
+    if (ehFalhaDeInfra(profileError)) {
+      res.set('Retry-After', '30');
+      return res.status(503).json({
+        error: 'O sistema está temporariamente indisponível. Aguarde um instante.',
+        reason: 'banco_indisponivel', retry_apos_seg: 30, detail: profileError.message,
+      });
+    }
     return res.status(500).json({ error: 'Erro ao carregar perfil', reason: 'profile_query_error', detail: profileError.message });
   }
 

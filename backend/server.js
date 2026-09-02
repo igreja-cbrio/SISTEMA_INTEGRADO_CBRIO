@@ -332,7 +332,16 @@ app.use('/api/lgpd', require('./routes/lgpd'));
 app.use('/api/feedback', require('./routes/feedback'));
 
 // ── Health check ──
+// ⚠️⚠️ ESTA ROTA NÃO SABE SE O BANCO ESTÁ VIVO — e isso é de propósito.
+// Ela responde "o processo Node subiu e tem env". Durante a queda de
+// 02/09/2026 (banco morto por 1h34) ela respondeu **200 `ok` a cada 5 minutos**,
+// porque `!!supabase` só diz que um objeto foi construído. Somado ao painel do
+// Supabase dizendo ACTIVE_HEALTHY, foram DOIS sinais verdes medindo a coisa
+// errada — e ninguém foi avisado.
+// ⇒ Para "o sistema está utilizável?", use **`/api/health/db`** logo abaixo.
+// NÃO mexer nesta aqui: outros consumidores dependem do contrato dela.
 // Inclui status do Supabase client pra diagnóstico de "Não autorizado" em prod
+
 app.get('/api/health', (req, res) => {
   const { supabase } = require('./utils/supabase');
   setSystemJobOutcome(res, {
@@ -348,6 +357,47 @@ app.get('/api/health', (req, res) => {
     database_url_set: !!process.env.DATABASE_URL,
     node_env: process.env.NODE_ENV || 'unknown',
   });
+});
+
+// ── Health check DE VERDADE (o que faltava em 02/09/2026) ──
+// Faz uma consulta REAL e devolve **503** quando o banco não responde. É a
+// rota que um monitor externo deve vigiar: ela compartilha o destino do que
+// está sendo medido, que é o requisito de um health check honesto.
+//
+// ⚠️ PÚBLICA de propósito: monitor externo (UptimeRobot/BetterStack) não
+// carrega credencial nossa. Não devolve NENHUM dado — só se respondeu e em
+// quanto tempo.
+// ⚠️ Cache curto: a rota não pode virar carga sobre o banco que ela vigia.
+// ⚠️ A régua vive em `utils/saudeBanco` (pura, no gate). Aqui é casca fina:
+// duas cópias da decisão "o banco está vivo?" divergiriam, e a divergência
+// apareceria como monitor dizendo uma coisa e a tela outra.
+let _cacheHealthDb = { em: 0, resp: null };
+const { sondar, respostaSaude, CACHE_MS } = require('./utils/saudeBanco');
+
+app.get('/api/health/db', async (req, res) => {
+  const agora = Date.now();
+  let resp = (agora - _cacheHealthDb.em < CACHE_MS) ? _cacheHealthDb.resp : null;
+  const doCache = !!resp;
+
+  if (!resp) {
+    const { supabase } = require('./utils/supabase');
+    resp = respostaSaude(await sondar(supabase));
+    _cacheHealthDb = { em: agora, resp };
+    if (resp.status !== 200) console.error('[HEALTH/DB] banco não respondeu:', resp.corpo.erro);
+  }
+
+  setSystemJobOutcome(res, {
+    status: resp.status === 200 ? 'success' : 'failed',
+    effectStatus: 'confirmed',
+    outputCount: resp.status === 200 ? 1 : 0,
+    result: resp.status === 200 ? 'db_healthy' : 'db_down',
+  });
+  // ⚠️ Retry-After faz monitor e cliente RECUAREM em vez de martelar um banco
+  // que está tentando levantar.
+  if (resp.retryApos) res.set('Retry-After', String(resp.retryApos));
+  return res.status(resp.status).json({ ...resp.corpo, cache: doCache, timestamp: new Date().toISOString() });
+});
+  }
 });
 
 // ── API 404 (evita fallback HTML para rotas inexistentes) ──
