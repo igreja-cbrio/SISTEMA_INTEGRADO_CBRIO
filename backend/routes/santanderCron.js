@@ -11,6 +11,7 @@
 //   7. Retorna resumo
 
 const router = require('express').Router();
+const { extrairDocumentoDoMemo } = require('../utils/documentoBr');
 const { supabase } = require('../utils/supabase');
 const {
   AMBIENTE, AGENCIA, CONTA, CNPJ_TITULAR,
@@ -219,10 +220,10 @@ async function handlerSync(req, res, next) {
       // Preferência: doc da Santander (partieDoc), fallback regex no memo
       let documento = t.partieDoc || null;
       if (!documento) {
-        const cnpjM = memo.match(/\d{14}/);
-        const cpfM = memo.match(/\d{11}/);
-        if (cnpjM) documento = cnpjM[0];
-        else if (cpfM) documento = cpfM[0];
+        // ⚠️ Régua ÚNICA em utils/documentoBr (a mesma do ofxParser): a versão
+        // antiga colapsava o memo em dígitos, colava a data no CPF e fabricava
+        // CNPJ inexistente — 5.921 casos num único extrato.
+        documento = extrairDocumentoDoMemo(memo)?.documento || null;
       }
 
       const payload = {
@@ -383,11 +384,8 @@ router.post('/pix-sync', async (req, res, next) => {
 
     for (const t of creditos) {
       const memo = t.descricao || t.memo || '';
-      let documento = null;
-      const cnpjM = memo.match(/\d{14}/);
-      const cpfM = memo.match(/\d{11}/);
-      if (cnpjM) documento = cnpjM[0];
-      else if (cpfM) documento = cpfM[0];
+      // ⚠️ Régua ÚNICA em utils/documentoBr — ver o comentário acima.
+      const documento = extrairDocumentoDoMemo(memo)?.documento || null;
 
       const payload = {
         fonte: 'santander_api',

@@ -15,6 +15,8 @@ const iconv = require('iconv-lite');
 /**
  * Decodifica buffer respeitando encoding declarado no header
  */
+const { extrairDocumentoDoMemo } = require('../utils/documentoBr');
+
 function decodeBuffer(buffer) {
   const headerEnd = buffer.indexOf('\n\n') > 0 ? buffer.indexOf('\n\n') : buffer.indexOf('\r\n\r\n');
   const headerRaw = buffer.slice(0, Math.max(headerEnd, 0)).toString('ascii');
@@ -80,29 +82,17 @@ function parseAmount(raw) {
 }
 
 /**
- * Extrai CPF/CNPJ do MEMO de uma transacao
- * Aceita 11 digitos (CPF) ou 14 (CNPJ), com ou sem formatacao
+ * Extrai CPF/CNPJ do MEMO de uma transacao.
+ *
+ * ⚠️ A RÉGUA VIVE EM `backend/utils/documentoBr.js` — aqui é casca fina. Ela
+ * estava copiada em 5 lugares com o MESMO bug (colapsar o memo em dígitos colava
+ * a data no CPF e fabricava CNPJ), e o bug só apareceu com um extrato bom: dos
+ * 5.921 créditos com CPF do arquivo de 90 dias, a versão antiga acertou ZERO.
  */
 function extractDocumento(memo) {
-  if (!memo) return null;
-  const onlyDigits = memo.replace(/\D/g, '');
-  // Procura sequencias de 14 (CNPJ) primeiro, depois 11 (CPF)
-  const cnpj = onlyDigits.match(/\d{14}/);
-  if (cnpj) return cnpj[0];
-  // CPF: procura sequencia exata de 11 digitos
-  const sequencias = memo.match(/\d{11}/g);
-  if (sequencias && sequencias.length > 0) {
-    // Retorna a primeira que não faz parte de um número maior
-    for (const seq of sequencias) {
-      const idx = memo.indexOf(seq);
-      const before = idx > 0 ? memo[idx - 1] : '';
-      const after = memo[idx + 11] || '';
-      if (!/\d/.test(before) && !/\d/.test(after)) {
-        return seq;
-      }
-    }
-  }
-  return null;
+  const r = extrairDocumentoDoMemo(memo);
+  // Contrato preservado: os chamadores esperam string de dígitos ou null.
+  return r?.documento || null;
 }
 
 /**
