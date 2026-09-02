@@ -16320,3 +16320,110 @@ arroba, sem TLD). Era **falha transitória** (cold start), não bug — não há
 consertar ali. ⚠️ Régua: `FUNCTION_INVOCATION_FAILED` numa única tentativa não é
 diagnóstico; repetir a chamada é mais barato que ler o handler inteiro (foi o
 que eu fiz na ordem errada).
+
+## ⚠️⚠️ WORKER · o builder da Railway é RAILPACK, e o relógio dos agentes não é confiável (2026-09-02 · SEM migration)
+
+Dois defeitos que o log de runtime do Railway revelou, e nenhum deles era a
+hipótese que este arquivo carregava ("o nixpacks quebrou o build" ou "faltam
+`DEV_AGENT_ENABLED`/`GITHUB_TOKEN`"). **As duas hipóteses estavam erradas**: o
+build passa, as envs estão certas, e os outros 17 agentes rodam.
+
+### 1 · ⚠️⚠️ `nixpacks.toml` é IGNORADO — o builder padrão da Railway é o Railpack
+
+Medido no log de **02/09 14:00:07 UTC**: aparece a mensagem de diagnóstico
+criada no **mesmo commit** que criou o `nixpacks.toml` (`bc838d10`, 31/08 13:49)
+dizendo `spawn ENOENT`. Ou seja **o código subiu e a config foi ignorada**, sem
+erro nenhum — o pior modo de falha possível, porque o arquivo commitado parece
+resolver o problema.
+
+⚠️ **Confirmado na doc oficial, não deduzido**: *"Railway uses Railpack to build
+your code"* (https://docs.railway.com/guides/build-configuration). O Railpack
+**não lê `nixpacks.toml`**.
+
+⇒ Quem instala pacote de sistema hoje é **`agent-worker/railpack.json`**:
+
+```json
+{ "deploy": { "aptPackages": ["git"] } }
+```
+
+`deploy.aptPackages` = *"List of Apt packages to install in the final image"*
+(https://railpack.com/config/file) — é a imagem de **RUNTIME** que precisa do
+git, porque o agente clona ao EXECUTAR, não ao buildar. Há também
+`buildAptPackages` (build) e as envs `RAILPACK_DEPLOY_APT_PACKAGES` /
+`RAILPACK_BUILD_APT_PACKAGES`, que resolvem o mesmo pelo dashboard.
+
+- ⚠️ **O `nixpacks.toml` FICA, marcado como INERTE** com o motivo escrito nele.
+  Ele volta a valer se alguém trocar o builder para Nixpacks — mas quem o ler
+  hoje não pode concluir que o git está resolvido por ali.
+- ⚠️⚠️ **Dockerfile foi DESCARTADO de propósito.** A doc confirma que a Railway
+  o prefere quando existe, então funcionaria — e ele **substitui a imagem
+  inteira**: se o `@anthropic-ai/claude-agent-sdk` depender de algo de runtime
+  que hoje está na imagem e ninguém sabe, o build **PASSA** e os 18 agentes
+  quebram em produção. `railpack.json` só ACRESCENTA um pacote, e config
+  malformada falha no BUILD — alto, sem substituir o deployment saudável.
+  **Régua: entre duas correções, prefira a de modo de falha barulhento.**
+- ⚠️ A frase do `descreverFalhaGit` mandava instalar via `nixpacks.toml`. Ela é
+  **lida por gente** (vai pro comentário da tarefa e pro log) e estava dando
+  conselho errado — foi assim que o git ficou ausente 2 dias com a config
+  "certa" commitada. Instrução em mensagem de erro também envelhece.
+
+### 2 · ⚠️⚠️ O container NÃO fica de pé — e todo o relógio dos agentes está dentro dele
+
+`scheduler.ts` registra, com `node-cron` DENTRO do processo: semanal
+`0 6 * * 1` (16 agentes) · diário `0 7 * * *` (`piloto_triage_watcher`) ·
+`0 7 * * 1,3,5` (`rotina_gestor`) · dispatcher dev `*/10`.
+
+Em **25 h de log** o `[devDispatcher]` aparece **2 vezes**, sempre no primeiro
+tique depois de um `Starting Container`; o container abre e fecha em janelas de
+5–13 min, com `SIGTERM` e **no mesmo deployment** (assinatura de App Sleeping —
+acorda por request HTTP). Medido em `agent_runs`:
+
+| agente | agenda | realidade |
+|---|---|---|
+| `piloto_triage_watcher` | 07:00 diário | 05→10/07 **07:00 cravado** · 11/07→18/08 **nada (39 dias)** · 19→26/08 07:12–07:24 · 27/08→02/09 17:03, 18:01, 11:47, 11:33, 16:45, 11:23, 10:56 |
+| `rotina_gestor` | seg/qua/sex 07:00 | **1 execução na história** (24/08), de ~8 esperadas |
+| `kpi_relatorio_semanal` | seg 06:00 | 2, ambas em 18/08 (uma terça — foram manuais) |
+
+⚠️⚠️ **A régua que sai disto: o padrão que SOBREVIVE ao sleeping é "a Vercel
+manda, o worker executa"; "o worker se agenda sozinho" não sobrevive.** É por
+isso que o botão "Resolver todos" dispara em segundos — o `POST /run/...` com
+HMAC **acorda** o container — enquanto o `*/10` interno só roda por acaso.
+
+### O empurrão da Vercel · carona no cron de incidentes
+
+`acordarSeHouverTrabalho` (em `diagnosticoResolver`) pega carona no cron
+`*/5` `/api/sistema/cron/incident-triage`, **depois** do planejamento de
+correção: a tarefa nasce e é despachada no mesmo tique.
+
+- ⚠️⚠️ **NÃO é keepalive.** A decisão é pura, em `utils/acordarDispatcher.js`
+  (no gate): só acorda quando há tarefa que o dispatcher REALMENTE pegaria.
+  Acordar de 5 em 5 min sem olhar o board deixaria o container ligado 24/7 e
+  mudaria a conta do Railway **sem ninguém ter decidido isso**.
+- ⚠️⚠️ **Tarefa bloqueada por ambiente NÃO acorda ninguém.** Ela fica `agendada`
+  para sempre (o preflight do `devAgent` registra `executor_sem_ambiente` uma
+  vez por tarefa), e sem essa guarda cada tique acordaria o container por
+  trabalho que não pode andar — o keepalive permanente pela porta dos fundos. O
+  custo fica em **no máximo um despertar por tarefa**. E se auto-cura sem
+  código: consertar o ambiente exige REDEPLOY, o redeploy sobe o container, e o
+  `*/10` interno pega a fila no primeiro tique.
+- ⚠️ **O filtro de tarefa é ESPELHO do `devDispatcher.ts`** (`developer_agent` ·
+  `agendada` OU `nova`+`classe='bug'` · não apagada). Divergir acorda por tarefa
+  que ele não pega (custo à toa) ou não acorda por tarefa que ele pegaria (a
+  retentativa some). Há guard estático no gate, com **comentário removido dos
+  dois lados** — os dois arquivos CITAM o filtro na explicação.
+- ⚠️ **Board ilegível NÃO é "não há trabalho"**: declara e sai sem acordar. Já
+  eventos ilegíveis **não impedem** o despertar (ali o desconhecido é "quais
+  estão bloqueadas", e tratar tudo como bloqueada faria a retentativa nunca
+  acontecer) — a ignorância vai declarada em `bloqueadas_desconhecidas`.
+- ⚠️ **Bloco protegido**: falhar aqui não derruba a triagem de incidentes, que é
+  o trabalho principal daquele cron. E `vercel.json` está com **47 crons**, no
+  teto do plano — disparo novo pega carona, não ganha slot.
+
+⏳ **A carona conserta 1 das 4 agendas.** As outras três (semanal com 16
+agentes, diário, `rotina_gestor`) seguem dependendo de o container estar acordado
+no minuto exato — **o conserto das quatro é desligar o App Sleeping no dashboard
+da Railway**, que é decisão de custo do Matheus, não de código.
+
+⚠️ **Régua de leitura**: antes de dizer que um agente "não roda", conferir
+`agent_runs` — o histórico de HORÁRIOS denuncia sleeping (agenda cravada virando
+horário espalhado) muito antes de qualquer log.
