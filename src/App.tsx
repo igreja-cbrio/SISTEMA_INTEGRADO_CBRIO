@@ -850,7 +850,7 @@ function AppRoutes() {
         <Route path="/governanca/:sigla" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><GovernancaRitual /></Suspense></ModuleGuard>} />
         <Route path="/next-batismo" element={<Navigate to="/entradas" replace />} />
         {/* Cultos · rotas na raiz (sem prefixo /ministerial) · 2026-05-21 */}
-        <Route path="/online" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Online /></Suspense></ModuleGuard>} />
+        <Route path="/online" element={<ModuleGuard moduleSlug="online"><Suspense fallback={<Loading />}><Online /></Suspense></ModuleGuard>} />
         <Route path="/kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><PainelKids /></Suspense></ModuleGuard>} />
         <Route path="/ami" element={<ModuleGuard moduleSlug="ami"><Suspense fallback={<Loading />}><PainelAmi /></Suspense></ModuleGuard>} />
         <Route path="/bridge" element={<ModuleGuard moduleSlug="bridge"><Suspense fallback={<Loading />}><PainelBridge /></Suspense></ModuleGuard>} />

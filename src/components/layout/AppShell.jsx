@@ -210,7 +210,7 @@ const NAV_ITEMS = [
       {
         title: 'Visualização por culto',
         items: [
-          { label: 'Online', description: 'Visão do canal YouTube e séries de pregação', icon: Youtube, path: '/online', perm: 'canMembresia' },
+          { label: 'Online', description: 'Visão do canal YouTube e séries de pregação', icon: Youtube, path: '/online', module: 'online' },
           { label: 'Kids · Indicadores', description: 'Gestão do ministério (vínculos, equipe, estoque...) + KPIs e saúde', icon: Baby, path: '/kids', module: 'kids' },
           { label: 'AMI', description: 'Indicadores do culto AMI', icon: GraduationCap, path: '/ami', module: 'ami' },
           { label: 'Bridge', description: 'Indicadores do culto Bridge', icon: ArrowRightLeft, path: '/bridge', module: 'bridge' },

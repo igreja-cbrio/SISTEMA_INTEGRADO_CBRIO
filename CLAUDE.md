@@ -16172,3 +16172,75 @@ dele já citava KIDS-02 como o caso de uso.
 ⚠️ O backfill passa de 45s: o `fetch` do navegador estoura antes de responder.
 **Timeout de cliente não é prova** — a evidência é `kpi_registros.data_preenchimento`
 andando para trás no tempo, período a período.
+
+## ⚠️⚠️ A aba do ONLINE era gateada pela permissão da MEMBRESIA (2026-09-02 · SEM migration)
+
+Matheus: *"a renata bispo nao ta vendo a aba do online, de acesso a ela por
+favor."* — e **não era permissão dela que faltava**.
+
+Medido: **Renata Cristina Martins Bispo** (`renata.martins@cbrio.org`) é
+`coordenador-online` (níveis padrão 3/3), tem a **área Online** em
+`usuario_areas` (id 10) e `online` = 1 na matriz — ou seja, com o
+`AREA_MODULO_BOOST` ela está em **nível 5 no módulo `online`**. Mesmo assim não
+via o item.
+
+**A causa, nos DOIS lugares:**
+
+```js
+// src/App.tsx           <Route path="/online" element={<ModuleGuard permKey="canMembresia">
+// src/.../AppShell.jsx  { label: 'Online', path: '/online', perm: 'canMembresia' }
+```
+
+O painel do Online era gateado por **`canMembresia`** — a permissão do módulo
+**MEMBRESIA**, outro módulo. E:
+
+```js
+// AuthContext.jsx:338
+function canAccessModule(moduleNames, tipo = 'leitura', nivelMinimo = 2) { ... }
+const canMembresia = canAccessModule(['membresia', 'Membresia']);   // exige >= 2
+```
+
+⚠️ **O mínimo padrão do `canAccessModule` é 2.** Ela tem `membresia` = **1**,
+então `canMembresia === false`, e no menu `perm` é **DENY ESTRITO**
+(`if (item.perm && auth[item.perm] === false) return false`) — o item era
+escondido. A rota barrava pelo mesmo motivo.
+
+⚠️⚠️ **O Online era o ÚNICO dos quatro painéis de área fora do padrão:**
+`/kids`, `/ami` e `/bridge` sempre usaram `moduleSlug`/`module` do próprio
+módulo. Corrigido para `module: 'online'` nos dois lugares.
+
+⚠️⚠️ **E o conserto NÃO podia ser dar `membresia >= 2` para ela**: isso
+entregaria à coordenadora do Online a leitura da **membresia inteira** (nome,
+CPF, telefone de toda a igreja) para ela ver um painel de YouTube. Consertar o
+gate errado é mais estreito que ampliar a permissão errada.
+
+⚠️ **Ampliação declarada:** 31 cargos têm `online >= 1`, então mais gente passa
+a alcançar `/online` por URL do que antes (que exigia `membresia >= 2`). O
+declutter do menu **contém a maior parte** — `/online` é
+`{ dom: 'area', slug: 'online' }`, então quem tem área ministerial que não é
+`online` continua sem o item. E o conteúdo é leitura de estatística do canal do
+YouTube, sem PII. ⚠️ O **backend nunca barrou nada**: `backend/routes/online.js`
+só tem `router.use(authenticate)` — o gate por módulo existia **apenas no
+front**.
+
+### ⏳ O mesmo defeito em MAIS DOIS itens (não corrigido · é decisão)
+
+`perm: 'canMembresia'` aparece em 5 itens do menu. **`Voluntariado` também não
+tem `module` nenhum** (só o deny de membresia), e `Integração` e `Grupos` têm o
+módulo certo **mas o deny de membresia continua** — então coordenador de
+Grupos/Integração com `membresia < 2` também não vê o item dele. Não mexi porque
+ampliar acesso de quem o Matheus não pediu é chamada dele.
+
+Guarda: **`src/test/painelAreaGate.test.ts`** (20 casos · exige que os 4 painéis
+de área sejam gateados pelo próprio módulo, na rota E no menu, e que nenhum use
+`canMembresia`). **2 mutantes RODADOS e mortos** (voltar a rota → 2 vermelhos ·
+voltar o menu → 2). ⚠️ O teste limpa comentário dos dois lados antes de casar —
+ele CITA o código errado na explicação, e sem isso seria a própria evidência
+(armadilha de 06/08).
+
+### ⚠️ Achado de carona, NÃO corrigido
+
+`GET /api/permissoes/diagnostico/:email` responde **500
+`FUNCTION_INVOCATION_FAILED`** em produção (testado com o e-mail dela). É a
+ferramenta que existe justamente para diagnosticar "por que essa pessoa não vê
+X" — e ela está fora do ar. Diagnostiquei pelo banco e pelo código no lugar dela.
