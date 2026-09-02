@@ -26,9 +26,16 @@ const shell = readFileSync(resolve(raiz, 'src/components/layout/AppShell.jsx'), 
 // explicação acima, e sem limpar o comentário ele seria a própria evidência
 // (armadilha de 06/08, que já mordeu duas vezes nesta casa).
 function semComentarios(src: string) {
+  // ⚠️⚠️ Bloco `/* */` é removido SÓ quando abre e fecha na MESMA linha.
+  // Um regex multilinha (`/\/\*[\s\S]*?\*\//g`) COME TRECHOS DO ARQUIVO aqui:
+  // `App.tsx` tem `path="/ministerial/voluntariado/*"` — um `/*` literal dentro
+  // de uma string de rota — que pareia com o `*/` do próximo comentário JSX e
+  // engole tudo no meio (medido em 02/09: as 2 rotas da Membresia
+  // desapareciam e o assert virava falso-negativo). Nestes dois arquivos todo
+  // comentário de bloco é de uma linha, então isto basta e é seguro.
   return src
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .split('\n')
+    .map((l) => l.replace(/\/\*.*?\*\//g, ' '))
     .map((l) => l.replace(/(^|[^:])\/\/[^\n]*$/, '$1'))
     .join('\n');
 }
@@ -76,4 +83,53 @@ describe('painéis de área · item de menu', () => {
       expect(linha).not.toContain("perm: 'canMembresia'");
     });
   }
+});
+
+// ============================================================================
+// ⚠️⚠️ `canMembresia` só pode gatear a MEMBRESIA (2026-09-02)
+// ============================================================================
+// `perm` no menu é DENY ESTRITO e `canAccessModule(nomes,'leitura',2)` tem
+// mínimo 2 — então apontar `canMembresia` num item de OUTRO módulo esconde o
+// item de quem tem o módulo daquele item e `membresia` < 2. Foi o que escondeu
+// a aba do Online da coordenadora do Online, e o que mandava coordenador de
+// voluntariado pro /dashboard.
+// ⚠️ Medido em 02/09: 22 cargos têm `voluntariado` >= 1 com `membresia` < 2
+// (20 em integracao, 20 em grupos) — e ZERO cargos têm `membresia` >= 2 sem
+// `voluntariado`, então trocar o deny não estreitou o acesso de ninguém.
+// ============================================================================
+describe('canMembresia só gateia a Membresia', () => {
+  const linhasComPerm = SHELL.split('\n').filter((l) => l.includes("perm: 'canMembresia'"));
+
+  it('todo item que usa canMembresia é da própria Membresia', () => {
+    const forasteiros = linhasComPerm.filter((l) => !l.includes("path: '/ministerial/membresia"));
+    expect(forasteiros).toEqual([]);
+  });
+
+  it('os itens de área declaram o próprio módulo', () => {
+    for (const [path, slug] of [
+      ['/ministerial/voluntariado', 'voluntariado'],
+      ['/ministerial/integracao', 'integracao'],
+      ['/grupos', 'grupos'],
+    ] as Array<[string, string]>) {
+      const linha = SHELL.split('\n').find((l) => l.includes(`path: '${path}'`)) || '';
+      expect(linha, path).toContain(`module: '${slug}'`);
+      expect(linha, path).not.toContain("perm: 'canMembresia'");
+    }
+  });
+
+  it('⚠️ o VoluntariadoGuard não decide por canMembresia', () => {
+    const i = APP.indexOf('function VoluntariadoGuard');
+    expect(i).toBeGreaterThan(-1);
+    const corpo = APP.slice(i, i + 900);
+    expect(corpo).not.toContain('canMembresia');
+    expect(corpo).toContain("'voluntariado'");
+    // não pode redirecionar antes das permissões carregarem
+    expect(corpo).toContain('auth.modulePerms');
+  });
+
+  it('as rotas da Membresia SEGUEM em canMembresia (é o módulo delas)', () => {
+    const linhas = APP.split('\n').filter((l) => l.includes('path="/ministerial/membresia'));
+    expect(linhas.length).toBeGreaterThan(0);
+    for (const l of linhas) expect(l).toContain('permKey="canMembresia"');
+  });
 });

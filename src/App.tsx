@@ -575,7 +575,20 @@ function VoluntariadoGuard({ children }: { children: ReactNode }) {
   const auth = useAuth();
   if (auth.loading) return <Loading />;
   if (auth.isVoluntario) return <>{children}</>;
-  if (auth.canMembresia === false) return <Navigate to="/dashboard" replace />;
+  // ⚠️⚠️ Era `auth.canMembresia === false` — a permissão do módulo MEMBRESIA.
+  // E `canAccessModule(nomes, 'leitura', 2)` tem MÍNIMO 2 por padrão, então
+  // coordenador de voluntariado com `membresia` = 1 era mandado pro /dashboard
+  // (é a mesma causa que escondia a aba do Online da Renata, em 02/09).
+  // ⚠️ Medido antes de trocar: ZERO cargos têm membresia >= 2 sem voluntariado
+  // >= 1, então isto não estreita o acesso de ninguém — só destrava os 22
+  // cargos que têm voluntariado e não tinham membresia >= 2.
+  // ⚠️ O `auth.modulePerms &&` é obrigatório: sem ele, quem chega antes das
+  // permissões carregarem é redirecionado (a mesma lei do menu, que não esconde
+  // nada enquanto carrega).
+  if (auth.modulePerms && !auth.isAdmin
+      && !auth.canAccessModule(['voluntariado', 'Voluntariado'], 'leitura', 1)) {
+    return <Navigate to="/dashboard" replace />;
+  }
   return <>{children}</>;
 }
 
