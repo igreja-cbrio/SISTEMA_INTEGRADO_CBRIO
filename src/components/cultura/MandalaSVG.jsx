@@ -56,7 +56,18 @@ function petalValueText(key, data) {
       return `${formatNumber(p ?? 0)} / ${formatNumber(o ?? 0)}`;
     }
     case 'conectar':     return formatNumber(data.conectar_pessoas);
-    case 'investir':     return formatNumber(data.investir_deus);
+    case 'investir': {
+      // ⚠️⚠️ DUAS PARCELAS, NUNCA a soma — mesmo padrão da Generosidade logo
+      // abaixo (dizimistas / ofertantes). Devocional é FLUXO (quem fez no mês)
+      // e comunidade é ESTOQUE (só sobe): somar enterraria a variação do
+      // devocional, que é o que mostra o trabalho dando certo. Decisão de
+      // 02/09/2026 · ver a migration 20260902180000.
+      const c = data.investir_comunidade_online;
+      // ⚠️ Sem o número da comunidade, mostra só o devocional — nunca "14 / 0",
+      // que se leria como comunidade vazia. NULL é "não informado".
+      if (c == null) return formatNumber(data.investir_deus);
+      return `${formatNumber(data.investir_deus)} / ${formatNumber(c)}`;
+    }
     case 'servir':       return formatNumber(data.servir_comunidade);
     case 'generosidade': {
       const d = data.generosidade?.dizimistas;
@@ -68,11 +79,16 @@ function petalValueText(key, data) {
   }
 }
 
-function petalSubLabel(key) {
+function petalSubLabel(key, data) {
   switch (key) {
     case 'seguir':       return 'Pres / Online (dom)';
     case 'conectar':     return 'em grupos';
-    case 'investir':     return 'no devocional (mês)';
+    // ⚠️ O rótulo acompanha o que está sendo mostrado: sem o número da
+    // comunidade seriam duas grandezas com um rótulo só, e o leitor não
+    // saberia qual é qual.
+    case 'investir':     return data?.investir_comunidade_online == null
+      ? 'no devocional (mês)'
+      : 'devocional / comunidade';
     case 'servir':       return 'voluntários (90d)';
     case 'generosidade': return 'dizim / ofert';
     default: return '';
@@ -161,7 +177,7 @@ export default function MandalaSVG({ data, loading, onPetalClick, onCenterClick 
                   {loading ? '…' : petalValueText(s.key, data)}
                 </div>
                 <div className="text-[9px] opacity-80 leading-tight">
-                  {petalSubLabel(s.key)}
+                  {petalSubLabel(s.key, data)}
                 </div>
               </div>
             </foreignObject>

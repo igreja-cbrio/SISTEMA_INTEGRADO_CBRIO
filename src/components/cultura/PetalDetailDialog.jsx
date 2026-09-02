@@ -15,7 +15,7 @@ const META = {
   },
   investir: {
     title: 'Investir Tempo com Deus',
-    desc: 'Pessoas que fizeram devocional no app neste mês.',
+    desc: 'Pessoas que fizeram devocional no app neste mês, e o alcance da comunidade do Online no WhatsApp. Os dois são mostrados separados: devocional é o que aconteceu no mês, comunidade é o total acumulado.',
     color: '#008B7A',
   },
   servir: {
@@ -58,6 +58,11 @@ export default function PetalDetailDialog({ open, onClose, petalKey, data }) {
           <>
             <Row label="Pessoas no devocional (mês)" value={fmt(data.investir_deus)} accent={meta.color} />
             <Row label="Check-ins de devocional (mês)" value={fmt(data.investir_deus_total)} />
+            {/* ⚠️⚠️ Parcela SEPARADA, nunca somada acima. Ver 20260902180000. */}
+            <Row
+              label="Na comunidade do Online (WhatsApp)"
+              value={data.investir_comunidade_online == null ? 'não informado' : fmt(data.investir_comunidade_online)}
+            />
           </>
         );
       case 'servir':
