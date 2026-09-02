@@ -34,7 +34,27 @@ const ANO_INICIAL = 2022;
  * ano FECHADO vazaria pro ano seguinte. Mesma armadilha do dia da curva do
  * censo, do "culto de agora" e do totem Kids.
  */
+/**
+ * ⚠️⚠️ ÚLTIMA LINHA DE DEFESA CONTRA `"NaN-NaN-NaN"` (02/09/2026).
+ *
+ * `new Date(NaN)` formatado à mão devolve a string `"NaN-NaN-NaN"`, que **parece
+ * uma data** e atravessa a aplicação inteira até o Postgres recusar com 22007 —
+ * longe da causa, como um 500 sem explicação. Foi assim que a tela de registro
+ * de decisões do Kids caiu (ver a seção do incidente neste CLAUDE.md).
+ *
+ * ⚠️ O conserto daquele incidente é o fail-safe de `resolverJanelaPeriodo`, que
+ * já está no ar (#2826) e faz esta função nunca receber data inválida por aquele
+ * caminho. Esta guarda é DEFESA EM PROFUNDIDADE: `diaLocal` é exportado, e o
+ * próximo chamador não passa pelo fail-safe. Data inválida aqui é bug de
+ * PROGRAMAÇÃO, não dado de usuário — então lança, com o nome da função e o valor
+ * recebido. Erro na hora, com endereço, é melhor que string inválida viajando
+ * para o banco.
+ */
 function diaLocal(d) {
+  const t = d instanceof Date ? d.getTime() : NaN;
+  if (!Number.isFinite(t)) {
+    throw new Error(`janelaPeriodo.diaLocal: data inválida (${String(d)}) — nunca produzir "NaN-NaN-NaN"`);
+  }
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }

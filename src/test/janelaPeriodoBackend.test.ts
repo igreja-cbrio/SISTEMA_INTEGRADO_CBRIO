@@ -297,3 +297,24 @@ describe('resolverJanelaPeriodo · nunca fabrica data inválida', () => {
     expect(j.inicio).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 });
+
+describe('🔴 diaLocal · a última linha de defesa contra "NaN-NaN-NaN"', () => {
+  // ⚠️ O conserto do incidente de 02/09 é o fail-safe de `resolverJanelaPeriodo`
+  // (#2826), que já está no ar. Esta guarda é defesa em profundidade: `diaLocal`
+  // é EXPORTADO, e o próximo chamador não passa por aquele fail-safe.
+  it('LANÇA em data inválida em vez de formatar "NaN-NaN-NaN"', () => {
+    expect(() => diaLocal(new Date(NaN))).toThrow(/NaN-NaN-NaN/);
+    expect(() => diaLocal(new Date('data que não existe'))).toThrow(/data inválida/);
+  });
+
+  it('recusa o que não é Date — string parece data e não é', () => {
+    expect(() => diaLocal('2026-01-01' as never)).toThrow(/data inválida/);
+    expect(() => diaLocal(undefined as never)).toThrow(/data inválida/);
+    expect(() => diaLocal(null as never)).toThrow(/data inválida/);
+  });
+
+  it('data válida segue formatando exatamente igual', () => {
+    expect(diaLocal(new Date(2026, 8, 2, 12, 0, 0))).toBe('2026-09-02');
+    expect(diaLocal(new Date(2026, 0, 1, 0, 0, 0))).toBe('2026-01-01');
+  });
+});
