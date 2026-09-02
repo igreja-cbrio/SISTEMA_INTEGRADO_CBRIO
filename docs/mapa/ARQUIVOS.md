@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-389 arquivos.
+391 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -217,6 +217,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/janelaPeriodo.js` | régua pura | — | `src/test/janelaPeriodoBackend.test.ts` |
 | `backend/utils/jornadaMarcadores.js` | régua pura | — | `src/test/jornadaMarcadores.test.ts` |
 | `backend/utils/jornadaTempo.js` | régua pura | — | `src/test/engajouOutroValor.test.ts` |
+| `backend/utils/kidsConversaoFila.js` | régua pura | — | `src/test/kidsConversaoFila.test.ts` |
 | `backend/utils/kidsFrequencia.js` | régua pura | — | `src/test/kidsFrequencia.test.ts` |
 | `backend/utils/kidsResponsavel.js` | régua pura | — | `backend/routes/incidentRemediation.test.js` |
 | `backend/utils/kidsSituacao.js` | régua pura | — | `src/test/kidsSituacao.test.ts` |
@@ -341,6 +342,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/ministerial/totemKids/BatismosKids` | tela ERP | kids | `/ministerial/totem-kids/batismos` |
 | `src/pages/ministerial/totemKids/EstoqueKids` | tela ERP | kids | `/ministerial/totem-kids/estoque` |
 | `src/pages/ministerial/totemKids/GestaoCriancas` | tela ERP | kids | `/ministerial/totem-kids/criancas` |
+| `src/pages/ministerial/totemKids/KidsDecisoesRegistro` | tela ERP | kids | `/ministerial/totem-kids/decisoes-registro` |
 | `src/pages/ministerial/totemKids/KidsFrequencia` | tela ERP | kids | `/ministerial/totem-kids/frequencia` |
 | `src/pages/ministerial/totemKids/KidsHub` | tela ERP | kids | `/ministerial/kids` |
 | `src/pages/ministerial/totemKids/TotemKidsCheckin` | tela ERP | kids | `/ministerial/totem-kids` |

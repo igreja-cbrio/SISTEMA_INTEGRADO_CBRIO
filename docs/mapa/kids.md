@@ -26,13 +26,14 @@
 | `/ministerial/totem-kids/painel` | `src/pages/ministerial/totemKids/TotemKidsPainel` | — |
 | `/ministerial/totem-kids/teste-etiqueta` | `src/pages/ministerial/totemKids/TotemKidsTesteEtiqueta` | — |
 | `/ministerial/totem-kids/decisoes` | `src/pages/ministerial/totemKids/TotemKidsDecisoes` | — |
+| `/ministerial/totem-kids/decisoes-registro` | `src/pages/ministerial/totemKids/KidsDecisoesRegistro` | — |
 | `/ministerial/totem-kids/vinculos` | `src/pages/ministerial/totemKids/TotemKidsVinculos` | — |
 | `/ministerial/totem-kids/configuracoes` | `src/pages/admin/totemKids/TotemKidsAdmin` | — |
 | `/kids` | `src/pages/ministerial/PainelKids` | — |
 ## Backend
 - `backend/routes/totemKids.js`
 Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
-<details><summary>Endpoints (116)</summary>
+<details><summary>Endpoints (119)</summary>
 - `DELETE /api/totem-kids/apresentacoes/:id`
 - `DELETE /api/totem-kids/atendimentos/:id`
 - `DELETE /api/totem-kids/ausentes/:criancaId/contato`
@@ -68,7 +69,9 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `GET /api/totem-kids/cron/resumo-kids`
 - `GET /api/totem-kids/cultos-do-dia`
 - `GET /api/totem-kids/dashboard`
+- `GET /api/totem-kids/decisoes/fila/:id/candidatos`
 - `GET /api/totem-kids/decisoes/historico/:criancaId`
+- `GET /api/totem-kids/decisoes/registro`
 - `GET /api/totem-kids/decisoes/resumo-por-crianca`
 - `GET /api/totem-kids/edit-senha/status`
 - `GET /api/totem-kids/estoque`
@@ -104,6 +107,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `PATCH /api/totem-kids/criancas/:criancaId/responsaveis/:membroId`
 - `PATCH /api/totem-kids/criancas/:id`
 - `PATCH /api/totem-kids/criancas/:id/inativar`
+- `PATCH /api/totem-kids/decisoes/fila/:id`
 - `PATCH /api/totem-kids/estoque/:id`
 - `PATCH /api/totem-kids/membro/:id`
 - `PATCH /api/totem-kids/salas/:id`
@@ -156,6 +160,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `backend/utils/cadastrosKids.js`
 - `backend/utils/cronAuth.js`
 - `backend/utils/janelaPeriodo.js`
+- `backend/utils/kidsConversaoFila.js`
 - `backend/utils/kidsFrequencia.js`
 - `backend/utils/kidsResponsavel.js`
 - `backend/utils/kidsSituacao.js`
@@ -176,8 +181,10 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `apresentacao_criancas`
 - `batismo_inscricoes`
 - `cultos`
+- `cultos_decisoes_pessoas`
 - `kids_atendimentos`
 - `kids_checkins`
+- `kids_conversoes_import`
 - `kids_criancas`
 - `kids_estoque`
 - `kids_etiqueta_config`
