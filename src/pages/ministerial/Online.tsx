@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { online, kpis } from '@/api';
+import { online } from '@/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -544,13 +544,19 @@ function OAuthStatusCardInner() {
 // quem tem `online` nível 3 sem ser diretor veria o botão e levaria 403 —
 // botão que sempre falha é pior que botão ausente.
 function ComunidadeOnlineCard() {
-  const { isAdmin } = useAuth();
+  // ⚠️ Gate do MÓDULO, não `isAdmin`: a rota nova é `authorizeModule('online', 3)`
+  // e a coordenação do Online chega lá pelo BOOST DE ÁREA (quem tem a área
+  // "Online" recebe Math.max(nivel,5)). Medido em 02/09/2026: renata.martins
+  // tem a área, logo escrita efetiva 5 — e por isso não foi preciso mexer na
+  // matriz de permissões.
+  const { getAccessLevel, isAdmin } = useAuth();
+  const podeSalvar = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
   const [mes, setMes] = useState(() => new Date().toISOString().slice(0, 7));
   const [valor, setValor] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [salvo, setSalvo] = useState<string | null>(null);
 
-  if (!isAdmin) return null;
+  if (!podeSalvar) return null;
 
   const salvar = async () => {
     // ⚠️ Vazio LIMPA (grava null = "não informado"); não é o mesmo que 0.
@@ -564,7 +570,11 @@ function ComunidadeOnlineCard() {
       // ⚠️ Manda SÓ estas duas chaves. O endpoint virou patch-style em
       // 02/09/2026 justamente por isso — antes ele montava o payload inteiro e
       // apagaria frequência, decisões e grupos daquele mês.
-      await kpis.culturaMensalUpsert({ mes, investir_comunidade_online: limpo === '' ? null : Number(limpo) });
+      // ⚠️ Rota ESTREITA: o endpoint genérico de cultura_mensal escreve também
+      // dizimistas, ofertantes, frequências, decisões e grupos — abri-lo ao
+      // módulo daria à equipe do Online escrita sobre o financeiro e sobre a
+      // mandala inteira. Aqui não há caminho para tocar outra coluna.
+      await online.comunidadeMensal(mes, limpo === '' ? null : Number(limpo));
       setSalvo(new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
       toast.success(limpo === '' ? 'Valor limpo.' : 'Comunidade registrada.');
     } catch (e: any) {
