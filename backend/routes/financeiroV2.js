@@ -2865,7 +2865,9 @@ const ASSISTENTE_ABAS = {
   resumo:        { label: 'Resumo',          foco: 'foto da semana: receita, presença, ticket médio e variação vs. a semana anterior' },
   por_culto:     { label: 'Por Culto',       foco: 'como a arrecadação se distribuiu entre Quarta com Deus, Final de Semana e Durante a Semana, e dízimos vs. ofertas' },
   performance:   { label: 'Performance',     foco: 'a relação entre frequência presencial e arrecadação (ticket médio) na semana' },
-  tendencias:    { label: 'Tendências',      foco: 'a tendência da arrecadação no ano (acumulado) vs. o ano anterior' },
+  // ⚠️ Chave 'tendencias' preservada (o front ainda a envia); só o rótulo mudou
+  // para "Mensal" em 02/09/2026, acompanhando o nome da aba na tela.
+  tendencias:    { label: 'Mensal',           foco: 'a média de arrecadação mensal e a tendência da arrecadação no ano (acumulado) vs. o ano anterior' },
   saude:         { label: 'Saúde',           foco: 'saúde financeira: resultado do mês, comprometimento com a folha e concentração dos doadores (risco)' },
   comparativos:  { label: 'Comparativos',    foco: 'receita, despesa e resultado acumulados no ano (YTD) vs. o ano anterior' },
   dizimo_oferta: { label: 'Dízimo × Oferta', foco: 'a proporção entre dízimos e ofertas na semana' },
