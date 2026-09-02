@@ -232,6 +232,16 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
                       })()}
                     </div>
                   )}
+                  {/* ⚠️⚠️ O rótulo muda com a FONTE: `form_publico`/`app`/`chat`
+                      é a pessoa preenchendo; `manual`/`link_culto` é a equipe
+                      lançando POR ela. Dizer "preencheu" no lançamento manual
+                      afirmaria autoria falsa e lavaria o atraso do lançamento.
+                      Fonte desconhecida cai no neutro "Registrado". */}
+                  {i.registro && (
+                    <div className="text-[11px] text-muted-foreground/80 mt-0.5 tabular-nums">
+                      {i.registro.texto}
+                    </div>
+                  )}
                   {/* ⚠️ Só quando a decisão veio de um vídeo ANTIGO. Aqui o
                       prazo de contato conta do dia em que a pessoa preencheu,
                       não do culto — e sem dizer isso na tela, quem acompanha

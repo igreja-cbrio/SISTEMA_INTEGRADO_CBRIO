@@ -34,6 +34,7 @@ type Item = {
   id: string; nome: string; area?: string; data_culto: string;
   dias_desde_conversao: number; dias_parado?: number | null; total_marcos?: number;
   marcos?: Record<string, Marco>;
+  registro?: { texto: string; porPessoa: boolean | null; atrasoDias: number | null } | null;
 };
 type EstatMarco = {
   chave: string; label: string; meta_dias: number | null;
@@ -130,6 +131,21 @@ function LinhaPessoa({ item, escala, hoje }: { item: Item; escala: number; hoje:
         <p className="text-[11px] text-muted-foreground tabular-nums">
           decidiu {fmtDia(item.data_culto)}
         </p>
+        {/* ⚠️⚠️ Quando o registro entrou — e por QUEM. O rótulo muda com a
+            fonte porque `registrado_em` é o instante em que a LINHA nasceu:
+            no formulário público é a pessoa preenchendo; no lançamento manual
+            é a EQUIPE digitando, às vezes dias depois. Escrever "preencheu"
+            nos dois casos afirmaria autoria que não existe E esconderia o
+            atraso do lançamento — que é o que faz o SLA de contato nascer
+            vencido (atraso médio de 3 dias, medido em 14/08). */}
+        {item.registro && (
+          <p
+            className="text-[11px] text-muted-foreground/80 tabular-nums truncate"
+            title={item.registro.texto}
+          >
+            {item.registro.texto}
+          </p>
+        )}
       </div>
 
       <div className="flex-1 min-w-0 relative h-8">
