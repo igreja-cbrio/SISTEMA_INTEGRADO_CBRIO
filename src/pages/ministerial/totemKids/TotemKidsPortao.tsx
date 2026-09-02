@@ -14,6 +14,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { totemKids } from '@/api';
+import { ehFalhaDeRedeOuServidor } from '@/lib/falhaDeRede';
 import { ScanLine, CheckCircle2, AlertTriangle, DoorOpen } from 'lucide-react';
 
 type ScanResposta = {
@@ -28,7 +29,7 @@ type Tela =
   | { estado: 'validando' }
   | { estado: 'ok'; r: ScanResposta }
   | { estado: 'anomalia'; r: ScanResposta }
-  | { estado: 'offline' };
+  | { estado: 'offline'; desde: number; tentativas: number };
 
 const MSG_ANOMALIA: Record<string, string> = {
   ja_retirada: 'Este código já foi usado numa retirada',
@@ -125,11 +126,26 @@ export default function TotemKidsPortao() {
         setTela({ estado: 'anomalia', r });
         agendarVolta(6000);
       }
-    } catch {
-      // Sem rede/erro: portão NUNCA trava a fila — degrada pro fluxo manual
+    } catch (e) {
+      // ⚠️ Portão NUNCA trava a fila — degrada pro fluxo manual. Isso não muda.
       beep('alerta');
-      setTela({ estado: 'offline' });
-      agendarVolta(5000);
+      // ⚠️⚠️ O QUE MUDOU (02/09/2026): o modo offline agora é PEGAJOSO.
+      // Antes, `agendarVolta(5000)` devolvia a tela para "Aproxime a etiqueta"
+      // 5 s depois da falha — e o voluntário seguia bipando um leitor que não
+      // validava nada, achando que estava funcionando. A tela MENTIA.
+      // Agora ela fica, contando as tentativas, até um scan dar certo.
+      // ⚠️ O campo continua ativo: quem bipar de novo tenta de novo. Ficar
+      // preso seria trocar uma mentira por uma trava.
+      setTela((t) => ({
+        estado: 'offline',
+        desde: t.estado === 'offline' ? t.desde : Date.now(),
+        tentativas: t.estado === 'offline' ? t.tentativas + 1 : 1,
+      }));
+      // ⚠️ Sem `agendarVolta`: é justamente o que fazia a tela voltar a mentir.
+      if (voltarTimer.current) clearTimeout(voltarTimer.current);
+      // Erro de NEGÓCIO (4xx) não é queda — vale registrar no console pra
+      // diagnóstico, mas a tela é a mesma: a conferência é na sala.
+      if (!ehFalhaDeRedeOuServidor(e)) console.warn('[portao] recusa do servidor:', e);
     }
   }, [agendarVolta]);
 
@@ -212,11 +228,25 @@ export default function TotemKidsPortao() {
       )}
 
       {tela.estado === 'offline' && (
-        <div className="flex-1 flex flex-col items-center justify-center gap-6 px-6 text-center bg-slate-800">
-          <AlertTriangle className="h-28 w-28 text-slate-300" />
+        <div className="flex-1 flex flex-col items-center justify-center gap-5 px-6 text-center bg-amber-950">
+          <AlertTriangle className="h-24 w-24 text-amber-300" />
           <div>
-            <h1 className="text-4xl font-black">Sem conexão agora</h1>
-            <p className="text-slate-300 mt-4 text-2xl">Pode seguir — a conferência na sala continua normal.</p>
+            <h1 className="text-4xl font-black text-amber-100">SEM SISTEMA</h1>
+            {/* ⚠️ A frase tem que dizer a PRÓXIMA AÇÃO. Voluntário rotaciona
+                toda semana — não há o que ele "lembre" do treinamento. */}
+            <p className="text-amber-50 mt-4 text-3xl font-bold">
+              A conferência é na sala, com o recibo.
+            </p>
+            <p className="text-amber-200/90 mt-3 text-xl">
+              Pode seguir com a fila normalmente. Nada é perdido — a equipe do Kids registra depois.
+            </p>
+            <p className="text-amber-300/70 mt-6 text-base tabular-nums">
+              {tela.tentativas} tentativa{tela.tentativas > 1 ? 's' : ''} sem resposta ·
+              {' '}desde {new Date(tela.desde).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+            </p>
+            <p className="text-amber-300/70 mt-1 text-base">
+              Bipe outra etiqueta para tentar de novo. Esta tela sai sozinha quando o sistema voltar.
+            </p>
           </div>
         </div>
       )}
