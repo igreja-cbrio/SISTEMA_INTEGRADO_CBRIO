@@ -12,6 +12,7 @@ import { Badge } from '../../../components/ui/badge';
 import { financeiroV2 } from '../../../api';
 import KpiTaticoOficial from '../../../components/kpi/KpiTaticoOficial';
 import { NIVEIS_ZOOM, ZOOM_PADRAO, lerZoomSalvo, salvarZoom, rotuloZoom } from '@/lib/zoomTela';
+import { calcularMediaMensal, mediaPuxadaPorUmMes, textoBase } from '@/lib/mediaMensal';
 import { useAuth } from '../../../contexts/AuthContext';
 import MetaGauge from '../../../components/dashboard-semanal/MetaGauge';
 import DoadoresListDialog from '../../../components/financeiro/DoadoresListDialog';
@@ -173,7 +174,11 @@ const SLIDES = [
   { key: 'por_culto',    label: 'Por Culto',      icon: Calendar,   desc: 'Quarta · final de semana · durante a semana · acumulada' },
   { key: 'performance',  label: 'Performance',    icon: Activity,   desc: 'Frequência × arrecadação semanal' },
   // Bloco 2 · ano · saúde financeira
-  { key: 'tendencias',   label: 'Tendências',     icon: TrendingUp, desc: 'Arrecadação anual + acumulado mês a mês' },
+  // ⚠️ A CHAVE continua 'tendencias' de propósito — só o RÓTULO virou "Mensal"
+  // (pedido do Matheus em 02/09/2026). A chave alimenta a narração da IA em
+  // `financeiroV2.js` (ASSISTENTE_ABAS) e os dois `case` do gerador de fatos;
+  // renomeá-la deixaria esta aba muda no assistente.
+  { key: 'tendencias',   label: 'Mensal',         icon: TrendingUp, desc: 'Média mensal + arrecadação anual mês a mês' },
   { key: 'saude',        label: 'Saúde',          icon: Activity,   desc: 'Resultado · folha · concentração de doadores' },
   { key: 'comparativos', label: 'Comparativos',   icon: BarChart3,  desc: 'YTD · YoY · decêndio' },
   { key: 'dizimo_oferta',label: 'Dízimo×Oferta',  icon: TrendingUp, desc: 'Proporção da base de contribuição' },
@@ -3107,6 +3112,49 @@ function MetaCardFiltrado({ meta, idx, prog, periodOverride, semanasOpcoes, anoA
 // ============================================================
 // NOVO · Arrecadação anual (Tendências) · filtro de ano + click → cards
 // ============================================================
+/**
+ * Média de arrecadação mensal — o card que dá nome à aba "Mensal".
+ *
+ * ⚠️ Vive DENTRO do ArrecadacaoAnualChart de propósito: usa o mesmo `meses` que
+ * o gráfico já buscou, então herda sem código o seletor de ano E o filtro
+ * global "sem extraordinárias". Um componente próprio refazendo a busca
+ * poderia mostrar média com extraordinária ao lado de um gráfico sem — que é
+ * exatamente o tipo de número discordante que esta tela existe para evitar.
+ *
+ * ⚠️ A BASE anda sempre junto do número (lei da casa), e a mediana só aparece
+ * quando diverge da média — aí ela está dizendo algo.
+ */
+function MediaMensalCards({ anos, dadosPorAno, corDoAno }) {
+  const linhas = anos
+    .map((a, i) => ({ ano: a, cor: corDoAno(i), r: calcularMediaMensal(dadosPorAno[a]?.meses) }))
+    .filter((l) => l.r.media != null);
+  if (linhas.length === 0) return null;
+
+  return (
+    <div className="mb-4 grid gap-2" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(220px, 1fr))` }}>
+      {linhas.map(({ ano, cor, r }) => (
+        <div key={ano} className="rounded-lg border border-border bg-muted/40 px-3.5 py-3">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              Média mensal{linhas.length > 1 ? '' : ' de arrecadação'}
+            </span>
+            {linhas.length > 1 && (
+              <span className="text-[11px] font-semibold" style={{ color: cor }}>{ano}</span>
+            )}
+          </div>
+          <div className="text-2xl font-bold tabular-nums mt-0.5">{fmtMoney(r.media)}</div>
+          <div className="text-[11px] text-muted-foreground mt-0.5">{textoBase(r)}</div>
+          {mediaPuxadaPorUmMes(r) && (
+            <div className="text-[11px] mt-1.5 pt-1.5 border-t border-border/60 text-amber-700 dark:text-amber-300">
+              mediana {fmtMoney(r.mediana)} · <strong>{r.maiorMes}</strong> puxa a média
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ArrecadacaoAnualChart() {
   const anoAtual = new Date().getFullYear();
   // Multi-seleção de anos: 1 ano = visão clássica (barras + acumulado);
@@ -3223,6 +3271,13 @@ function ArrecadacaoAnualChart() {
             <span className="text-[10px] text-muted-foreground">selecione mais de um ano pra comparar</span>
           </div>
         </div>
+        {!loading && algumDado && (
+          <MediaMensalCards
+            anos={multi ? anosSel : [ano]}
+            dadosPorAno={dadosPorAno}
+            corDoAno={corDoAno}
+          />
+        )}
         {loading ? (
           <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
         ) : !algumDado ? (
