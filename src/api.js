@@ -4621,6 +4621,7 @@ export const planejamentoAnual = {
     propostas: (id, params) => get(`/planejamento-anual/ciclos/${id}/propostas` + (params ? '?' + new URLSearchParams(params) : '')),
     ranking: (id) => get(`/planejamento-anual/ciclos/${id}/ranking`),
     conflitos: (id) => get(`/planejamento-anual/ciclos/${id}/conflitos`),
+    insights: (id) => get(`/planejamento-anual/ciclos/${id}/insights`),
     aceitarConflito: (id, corpo) => post(`/planejamento-anual/ciclos/${id}/conflitos/aceitar`, corpo),
     reabrirConflito: (id, aceiteId) => del(`/planejamento-anual/ciclos/${id}/conflitos/aceites/${aceiteId}`),
     calendario: (id) => get(`/planejamento-anual/ciclos/${id}/calendario`),
