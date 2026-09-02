@@ -268,3 +268,79 @@ describe('resolverJanelaPeriodo · período livre', () => {
     expect(rotuloJanela(resolverJanelaPeriodo({ ...base, ano: 2025 }))).toBe('2025');
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  🔴 INCIDENTE 02/09/2026 · `"NaN-NaN-NaN"` chegando ao Postgres
+//
+//  `GET /api/totem-kids/decisoes/registro` respondia 500 em produção com
+//  `[22007] invalid input syntax for type date: "NaN-NaN-NaN"` — 4 ocorrências
+//  em 15 min. O handler chamava a régua com `padraoDias` em vez de `diasPadrao`:
+//  a lista de dias válidos ficava `[undefined]`, nenhum número casava, `d` virava
+//  `undefined` e `new Date(NaN)` formatado à mão produzia a string que PARECE
+//  data e atravessa tudo até o banco recusar.
+//
+//  ⚠️ A régua serve 7 módulos. Ela não pode devolver data inválida por causa de
+//  um erro de digitação em um deles.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('🔴 nunca devolver "NaN-NaN-NaN"', () => {
+  const AGORA = new Date('2026-09-02T12:00:00Z').getTime();
+
+  it('⚠️⚠️ nome ERRADO do parâmetro não produz data inválida (o caso do incidente)', () => {
+    // ⚠️ `padraoDias` não existe na assinatura — é exatamente o erro cometido.
+    // Sem `@ts-expect-error`: a régua é JS puro e o TS não reclama de
+    // propriedade extra, então a diretiva viraria TS2578 e um deploy vermelho
+    // (a armadilha que o CLAUDE.md registra desde 14/08).
+    const r = resolverJanelaPeriodo({ dias: undefined, ano: undefined, padraoDias: 365, agora: AGORA });
+    expect(r.inicio).not.toContain('NaN');
+    expect(r.inicio).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(Number.isFinite(r.dias)).toBe(true);
+  });
+
+  it('e também com ?dias= na query (quebrava nos dois casos)', () => {
+    const r = resolverJanelaPeriodo({ dias: '90', padraoDias: 365, agora: AGORA });
+    expect(r.inicio).not.toContain('NaN');
+  });
+
+  it('nenhum padrão utilizável cai no piso global, com data válida', () => {
+    const r = resolverJanelaPeriodo({ agora: AGORA });
+    expect(r.dias).toBe(90);
+    expect(r.inicio).toBe('2026-06-04');
+  });
+
+  it('padrão inválido explícito (0, negativo, texto) não vira NaN', () => {
+    for (const ruim of [0, -30, 'abc', null, NaN]) {
+      const r = resolverJanelaPeriodo({ diasPadrao: ruim as never, agora: AGORA });
+      expect(r.inicio, String(ruim)).not.toContain('NaN');
+      expect(r.dias, String(ruim)).toBeGreaterThan(0);
+    }
+  });
+
+  it('⚠️ `diasValidos` continua mandando quando existe — nada de chamador mudou', () => {
+    expect(resolverJanelaPeriodo({ diasValidos: [30, 90, 180], diasPadrao: 180, agora: AGORA }).dias).toBe(180);
+    expect(resolverJanelaPeriodo({ dias: '30', diasValidos: [30, 90, 180], diasPadrao: 180, agora: AGORA }).dias).toBe(30);
+  });
+
+  it('sem `diasPadrao` mas com `diasValidos`, o piso é o PRIMEIRO da lista', () => {
+    // É a intenção declarada do chamador; o piso global é o último recurso.
+    expect(resolverJanelaPeriodo({ diasValidos: [7, 30], agora: AGORA }).dias).toBe(7);
+  });
+
+  it('o caso CERTO do handler do Kids devolve a janela de 365 dias', () => {
+    const r = resolverJanelaPeriodo({ dias: undefined, ano: undefined, diasPadrao: 365, agora: AGORA });
+    expect(r).toMatchObject({ inicio: '2025-09-02', fim: null, dias: 365 });
+  });
+});
+
+describe('🔴 diaLocal · a última linha de defesa', () => {
+  it('LANÇA em data inválida em vez de produzir "NaN-NaN-NaN"', () => {
+    // Data inválida aqui é bug de programação, não dado de usuário: erro na
+    // hora, com endereço, é melhor que string inválida viajando para o banco.
+    expect(() => diaLocal(new Date(NaN))).toThrow(/NaN-NaN-NaN/);
+    expect(() => diaLocal(undefined as never)).toThrow(/data inválida/);
+    expect(() => diaLocal('2026-01-01' as never)).toThrow(/data inválida/);
+  });
+
+  it('data válida segue formatando igual', () => {
+    expect(diaLocal(new Date(2026, 8, 2, 12, 0, 0))).toBe('2026-09-02');
+  });
+});

@@ -16109,3 +16109,70 @@ Semanal já está alimentado**: ele soma `cultos.decisoes_kids` no card Decisõe
    (É a mesma lição de 31/08, agora no gate em vez do mutation test.)
 5. ⚠️ **Operação em lote sobre `cultos` custa 1–2,5 s POR LINHA** (dois triggers
    ROW de KPI/NSM) — orçar isso em qualquer reparo que toque dezenas de cultos.
+
+### 🔴 `"NaN-NaN-NaN"` chegando ao Postgres · o nome do parâmetro (2026-09-02 · SEM migration)
+
+`GET /api/totem-kids/decisoes/registro` respondia **500** em produção com
+`[22007] invalid input syntax for type date: "NaN-NaN-NaN"` — 4 ocorrências em
+15 minutos, na tela de registro de decisões do Kids.
+
+**A cadeia, reproduzida byte a byte antes de tocar em nada:** o handler chamava
+`resolverJanelaPeriodo({ …, padraoDias: 365 })` e a régua espera **`diasPadrao`**.
+
+```
+diasPadrao          → undefined        (nome errado)
+lista               → [undefined]
+Number(req.query.dias) → NaN           (sem ?dias= · o caso padrão da tela)
+[undefined].includes(NaN) → false      → d = undefined
+new Date(agora - undefined*86400000)   → Invalid Date
+diaLocal(Invalid Date)                 → "NaN-NaN-NaN"
+.gte('data_decisao', "NaN-NaN-NaN")    → 22007
+```
+
+⚠️ **Quebrava com OU sem `?dias=`**: a lista `[undefined]` nunca contém número
+nenhum. A tela só funcionava quando se escolhia um ANO (aquele ramo retorna
+antes). Era o **único** chamador com o nome errado (varredura na main).
+
+#### As duas guardas, e por que nesta ordem
+
+1. **O chamador** passa `diasPadrao` (a causa direta, uma palavra).
+2. ⚠️⚠️ **`diaLocal` LANÇA em data inválida.** `new Date(NaN)` formatado à mão
+   produz uma string que **parece uma data** e atravessa a aplicação inteira até
+   o banco recusar — longe da causa, como um 500 sem explicação. Data inválida
+   ali é bug de programação, não dado de usuário: erro na hora, com o nome da
+   função e o valor recebido, é melhor que string inválida viajando pro Postgres.
+3. **Fail-safe do padrão** na régua: `padraoSeguro` = primeiro finito e > 0 entre
+   `diasPadrao`, `diasValidos[0]` e `DIAS_PADRAO_GLOBAL = 90`. A régua serve
+   **7 módulos** — ela não pode devolver data inválida por causa de um erro de
+   digitação em um deles.
+
+#### ⚠️⚠️ `[NaN].includes(NaN)` é `true` — o furo que o teste achou na guarda
+
+`Array.prototype.includes` usa **SameValueZero**, em que NaN é igual a si mesmo.
+Com `diasPadrao` NaN e sem `?dias=`, a lista virava `[NaN]`, **o teste de
+pertinência PASSAVA** e o NaN seguia intacto. Por isso o saneamento fica **DEPOIS
+do `includes`**, não antes e não no lugar dele: antes não alcança o `diasPadrao`
+do chamador, que entra sem validação nenhuma.
+
+⚠️ **E uma guarda SÓ, no ponto que decide.** A primeira versão saneava nas duas
+linhas — e um mutante que estragava a primeira **SOBREVIVEU**, porque a segunda
+cobria. Guarda duplicada faz a proteção *parecer* testada sem estar: a
+redundância saiu. Depois disso, **5 mutantes rodados e mortos** (sem a guarda → 5
+vermelhos · guarda antes do `includes` → 4 · `diaLocal` sem lançar → 1 · piso
+aceitando 0 → 1 · piso sem o último recurso → 4).
+
+#### Duas lições de MÉTODO desta sessão (as duas já estavam escritas aqui)
+
+1. ⚠️ **Eu grepei o WORKING TREE e concluí que a rota não existia** — estava na
+   branch de ontem, e o código vivia na `main`. Para achado de produção, `git grep
+   origin/main`, nunca o checkout. (A régua "ler da worktree, não do main" de
+   31/07, agora ao contrário.)
+2. ⚠️ **`TS2578: Unused '@ts-expect-error'`**, de novo. A régua é JS puro, então
+   o TS não reclama de propriedade extra e a diretiva fica sem erro para
+   suprimir. É o mesmo erro que custou um deploy vermelho em 14/08 — pegou no
+   `npm run typecheck`, não no vitest.
+
+⚠️ O título do achado (`GET /api/totem-kids/decisoes/registro`) é montado pelo
+diagnosticador a partir da telemetria; quem tem o stack real é o
+`get_runtime_logs` da Vercel, e foi ele que deu o prefixo `[totemKids/decisoes/registro]`
+e o valor `"NaN-NaN-NaN"` em 4 linhas.

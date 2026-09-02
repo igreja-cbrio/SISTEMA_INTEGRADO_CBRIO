@@ -28,13 +28,39 @@
 const ANO_INICIAL = 2022;
 
 /**
+ * Último piso da janela, quando o chamador não deixou nenhum padrão utilizável.
+ *
+ * ⚠️ Existe só como rede: o normal é o chamador passar `diasPadrao`. 90 dias é
+ * o recorte mais comum da casa e é curto o bastante para não fingir histórico
+ * que ninguém pediu — mas o ponto não é o número, é **nunca devolver `NaN`**.
+ */
+const DIAS_PADRAO_GLOBAL = 90;
+
+/**
  * Dia no formato `YYYY-MM-DD` a partir dos componentes LOCAIS.
  * ⚠️⚠️ NUNCA `toISOString().slice(0,10)`: o banco roda em UTC e às 21h do Rio
  * o dia UTC já virou — o fim de 31/12 às 23:59 sairia como 01/01, ou seja o
  * ano FECHADO vazaria pro ano seguinte. Mesma armadilha do dia da curva do
  * censo, do "culto de agora" e do totem Kids.
  */
+/**
+ * ⚠️⚠️ ÚLTIMA LINHA DE DEFESA CONTRA `"NaN-NaN-NaN"` (incidente de 02/09/2026).
+ *
+ * `new Date(NaN)` formatado à mão devolve a string `"NaN-NaN-NaN"`, que **parece
+ * uma data** e atravessa tudo até o Postgres recusar com 22007 — longe da causa,
+ * como um 500 sem explicação. Foi o que derrubou a tela de registro de decisões
+ * do Kids: um chamador passou o parâmetro com o nome errado (`padraoDias` em vez
+ * de `diasPadrao`), a régua virou `NaN` e o banco levou a string.
+ *
+ * Data inválida aqui é BUG DE PROGRAMAÇÃO, não dado de usuário — então LANÇA,
+ * com o nome da função e o valor recebido. Erro na hora, com endereço, é melhor
+ * que string inválida viajando para o banco.
+ */
 function diaLocal(d) {
+  const t = d instanceof Date ? d.getTime() : NaN;
+  if (!Number.isFinite(t)) {
+    throw new Error(`janelaPeriodo.diaLocal: data inválida (${String(d)}) — nunca produzir "NaN-NaN-NaN"`);
+  }
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
@@ -136,9 +162,34 @@ function resolverJanelaPeriodo({ dias, ano, inicio, fim, diasValidos, diasPadrao
     };
   }
 
+  // ⚠️⚠️ FAIL-SAFE do padrão (incidente de 02/09/2026): antes, chamador que
+  // errasse o NOME do parâmetro (`padraoDias` em vez de `diasPadrao`) fazia
+  // `lista = [undefined]`, nenhum número casava, `d` virava `undefined` e a
+  // janela saía como `"NaN-NaN-NaN"` — 500 do Postgres em TODO recorte que não
+  // fosse "por ano". A régua serve 7 módulos; ela não pode devolver data
+  // inválida por causa de um erro de digitação em um deles.
+  //
+  // ⚠️ O piso é o PRIMEIRO da lista de dias válidos quando ela existe (é a
+  // intenção declarada do chamador) e só então o padrão global — nunca `NaN`.
   const lista = Array.isArray(diasValidos) && diasValidos.length ? diasValidos : [diasPadrao];
+  const padraoSeguro = [diasPadrao, lista[0], DIAS_PADRAO_GLOBAL]
+    .map(Number).find((n) => Number.isFinite(n) && n > 0);
   let d = Number(dias);
   if (!lista.includes(d)) d = diasPadrao;
+  // ⚠️⚠️ ESTA é a guarda que impede `"NaN-NaN-NaN"`, e ela precisa vir DEPOIS do
+  // `includes` — não antes, e não no lugar dele:
+  //
+  //  · `Array.prototype.includes` usa SameValueZero, em que **`[NaN].includes(NaN)`
+  //    é `true`**. Com `diasPadrao` NaN e sem `?dias=`, a lista virava `[NaN]`, o
+  //    teste de pertinência PASSAVA e o NaN seguia intacto. É a mesma família da
+  //    pegadinha que causou o incidente, e foi o teste que a achou.
+  //  · saneiar só antes do `includes` não bastaria: o `diasPadrao` do chamador
+  //    entra aqui sem passar por validação nenhuma.
+  //
+  // ⚠️ Uma guarda só, no ponto que decide. A tentação é repetir o saneamento nas
+  // duas linhas — aí um mutante que estrague uma delas sobrevive, e a proteção
+  // passa a parecer testada sem estar.
+  if (!Number.isFinite(d) || d <= 0) d = padraoSeguro;
   return {
     inicio: diaLocal(new Date(agora - d * 86400000)),
     fim: null,

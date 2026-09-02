@@ -4719,7 +4719,11 @@ router.get('/decisoes/resumo-por-crianca', authorizeModule('kids', 1), async (re
 router.get('/decisoes/registro', authorizeModule('kids', 1), async (req, res) => {
   try {
     const { fim, inicio, rotulo } = resolverJanelaPeriodo({
-      dias: req.query.dias, ano: req.query.ano, padraoDias: 365,
+      // ⚠️ `diasPadrao`, NUNCA `padraoDias`: com o nome errado a régua não achava
+      // padrão nenhum, a janela virava "NaN-NaN-NaN" e o Postgres recusava com
+      // 22007 — 500 nesta tela em TODO recorte que não fosse "por ano" (incidente
+      // de 02/09/2026). A régua agora também tem fail-safe, mas o nome certo é aqui.
+      dias: req.query.dias, ano: req.query.ano, diasPadrao: 365,
     });
 
     // ⚠️ Erro PROPAGA: "nenhuma decisão registrada" e "a consulta falhou"
