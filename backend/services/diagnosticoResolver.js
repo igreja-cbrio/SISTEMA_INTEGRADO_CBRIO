@@ -22,6 +22,7 @@
 // ============================================================================
 const { supabase } = require('../utils/supabase');
 const { listarDiagnosticos } = require('./agentDiagnosticos');
+const { decidirAcordar } = require('../utils/acordarDispatcher');
 const {
   FAIXAS, distribuir, andamentoDoAchado, resumirAndamento,
 } = require('../utils/diagnosticoAutonomia');
@@ -289,7 +290,7 @@ async function resolver({ autorId, ids, reenfileirar } = {}) {
  * aparecer como sucesso. Por isso `chamado: false` + motivo em português sobem
  * pra tela (a lição do disparo do censo, 05/08 — caixa verde com nada enviado).
  */
-async function acordarExecutor() {
+async function acordarExecutor({ trigger = 'manual', origem = 'diagnosticos' } = {}) {
   const url = process.env.AGENT_WORKER_URL;
   const segredo = process.env.AGENT_WORKER_HMAC_SECRET;
   if (!url || !segredo) {
@@ -297,7 +298,7 @@ async function acordarExecutor() {
   }
   try {
     const { sign } = require('../utils/workerHmac');
-    const body = JSON.stringify({ config: { trigger: 'manual', origem: 'diagnosticos' } });
+    const body = JSON.stringify({ config: { trigger, origem } });
     const resp = await fetch(`${url.replace(/\/$/, '')}/run/dev_dispatcher`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Agent-Signature': sign(body) },
@@ -326,6 +327,67 @@ async function acordarExecutor() {
   }
 }
 
+/**
+ * O cron acorda o dispatcher QUANDO HÁ TRABALHO — e só então.
+ *
+ * ⚠️⚠️ O FILTRO DE TAREFA AQUI É ESPELHO do `devDispatcher.ts` do worker
+ * (`agente_key='developer_agent'` · `agendada` OU `nova`+`classe='bug'` · não
+ * apagada). Divergir produz os dois estragos silenciosos: acordar o container
+ * por tarefa que o dispatcher não pega (custo à toa) ou não acordar por tarefa
+ * que ele pegaria (a retentativa que esta função existe pra criar). Mudou lá,
+ * muda aqui.
+ *
+ * ⚠️ A DECISÃO é pura e mora em `utils/acordarDispatcher` (entra no gate). Aqui
+ * só se lê o banco — guarda que decide algo e vive no serviço é guarda que
+ * nenhum mutante alcança.
+ */
+async function acordarSeHouverTrabalho({ origem = 'cron' } = {}) {
+  const { data, error } = await supabase
+    .from('agent_tarefas')
+    .select('id')
+    .eq('agente_key', 'developer_agent')
+    .or('and(status.eq.agendada),and(status.eq.nova,classe.eq.bug)')
+    .is('deleted_at', null)
+    .limit(50);
+  // ⚠️ Não deu pra LER o board não é "não há trabalho": declara e sai sem
+  // acordar (a leitura volta no tique seguinte). Erro nunca vira fila vazia.
+  if (error) {
+    return { acordado: false, motivo: 'board_ilegivel', detalhe: error.message, elegiveis: [], adiadas: [] };
+  }
+  const ids = (data || []).map((t) => t.id);
+  if (!ids.length) return { acordado: false, ...decidirAcordar({ tarefas: [] }) };
+
+  // ⚠️ Falha ao ler os eventos NÃO impede o despertar, ao contrário do board:
+  // aqui o desconhecido é "quais estão bloqueadas", e tratar tudo como bloqueada
+  // faria a retentativa nunca acontecer — o silêncio que esta função combate. O
+  // custo de acordar à toa é um POST; o de nunca acordar é o recurso não existir.
+  // A ignorância vai DECLARADA (`bloqueadas_desconhecidas`) pra não virar hábito.
+  let bloqueadas = [];
+  let bloqueadasDesconhecidas = false;
+  const ev = await supabase
+    .from('agent_task_events')
+    .select('tarefa_id')
+    .eq('evento', 'executor_sem_ambiente')
+    .in('tarefa_id', ids);
+  if (ev.error) {
+    bloqueadasDesconhecidas = true;
+    console.error('[acordarSeHouverTrabalho] eventos ilegíveis:', ev.error.message);
+  } else {
+    bloqueadas = (ev.data || []).map((e) => e.tarefa_id);
+  }
+
+  const decisao = decidirAcordar({ tarefas: ids, bloqueadas });
+  if (!decisao.acordar) return { acordado: false, bloqueadas_desconhecidas: bloqueadasDesconhecidas, ...decisao };
+
+  const r = await acordarExecutor({ trigger: 'cron', origem });
+  return {
+    acordado: r.chamado === true && r.executando === true,
+    bloqueadas_desconhecidas: bloqueadasDesconhecidas,
+    ...decisao,
+    worker: r,
+  };
+}
+
 module.exports = {
   TETO_RODADA,
   NAO_REENFILEIRA,
@@ -334,4 +396,5 @@ module.exports = {
   previa,
   resolver,
   acordarExecutor,
+  acordarSeHouverTrabalho,
 };
