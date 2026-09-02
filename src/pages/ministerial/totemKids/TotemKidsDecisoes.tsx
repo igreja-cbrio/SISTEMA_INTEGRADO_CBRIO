@@ -208,9 +208,20 @@ export default function TotemKidsDecisoes() {
           <CardContent className="p-8 text-center">
             <Sparkles className="h-12 w-12 text-pink-500 mx-auto mb-3" />
             <p>Nenhuma sessão aberta no momento.</p>
-            <Button className="mt-3" onClick={() => navigate('/ministerial/totem-kids/configuracoes?aba=sessoes')}>
-              Abrir/criar sessão
+            <p className="mt-2 text-sm text-muted-foreground">
+              Esta tela marca a decisão <strong>no dia do culto</strong>, com a etiqueta na mão.
+              Para ver o histórico ou conferir o que está pendente, use o registro.
+            </p>
+            <Button className="mt-3" onClick={() => navigate('/ministerial/totem-kids/decisoes-registro')}>
+              Ver decisões registradas
             </Button>
+            {/* ⚠️ abrir sessão cria sessão REAL: o check-in feito nela conta na
+                frequência e nos KPIs do dia. Fica em segundo plano de propósito. */}
+            <div className="mt-3">
+              <Button variant="outline" size="sm" onClick={() => navigate('/ministerial/totem-kids/configuracoes?aba=sessoes')}>
+                Abrir/criar sessão do culto de hoje
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>

@@ -33,6 +33,7 @@ const { acharOuCriarGuardado, ehNomePlaceholder } = require('../services/membroM
 const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
 const { frequentaNaJanela, avaliarFrequencia } = require('../utils/kidsFrequencia');
 const { agruparMotivos, montarContagens, rotuloMotivo } = require('../utils/kidsSituacao');
+const { avaliarResolucao: avaliarResolucaoKids, resumoFila: resumoFilaKids } = require('../utils/kidsConversaoFila');
 // O Planning Center Check-Ins saiu do código (Marcos 2026-07-20): a frequência
 // do Kids é 100% do nosso totem (kids_checkins). Sobrou só a coluna legada
 // kids_criancas.planning_center_id e a tabela kids_pco_presencas (histórico
@@ -4699,6 +4700,269 @@ router.get('/decisoes/resumo-por-crianca', authorizeModule('kids', 1), async (re
     res.json(data || []);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar resumo de decisões' });
+  }
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DECISÕES DE FÉ · REGISTRO E CONFERÊNCIA (gerencial · 2026-09-02)
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️ Isto NÃO é a tela do totem (`/ministerial/totem-kids/decisoes`), que exige
+// sessão ABERTA hoje + o código de 4 chars da etiqueta impressa naquele dia e
+// é estruturalmente incapaz de registrar decisão de culto passado. Aqui é o
+// gerencial: o que já está registrado e o que espera conferência humana.
+//
+// ⚠️ Dado sensível de MENOR (LGPD art. 5º II + art. 14 §1º). Leitura exige
+// nível 1 em kids; decidir exige 3. Nenhuma policy para anon.
+
+// GET /api/totem-kids/decisoes/registro · a tela inteira numa ida
+router.get('/decisoes/registro', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { fim, inicio, rotulo } = resolverJanelaPeriodo({
+      dias: req.query.dias, ano: req.query.ano, padraoDias: 365,
+    });
+
+    // ⚠️ Erro PROPAGA: "nenhuma decisão registrada" e "a consulta falhou"
+    // levam a decisões opostas (lei: erro nunca vira fila vazia).
+    const { data: filaRaw, error: eFila } = await supabase
+      .from('kids_conversoes_import')
+      .select('id, lote, linha, nome_planilha, idade_planilha, tel_planilha, data_decisao, periodo, culto_txt, obs_planilha, faixa, motivo, crianca_id, culto_id, culto_origem, decisao_id, status, decidido_em, decisao_nota')
+      .is('deleted_at', null)
+      .order('status')
+      .order('data_decisao');
+    if (eFila) throw eFila;
+    const fila = filaRaw || [];
+
+    // nomes das crianças e dos cultos, em lote (≤200 por ida · lei do .in())
+    const criancaIds = [...new Set(fila.map(f => f.crianca_id).filter(Boolean))];
+    const nomePorCrianca = new Map();
+    for (let i = 0; i < criancaIds.length; i += 200) {
+      const { data, error } = await supabase.from('kids_criancas')
+        .select('id, nome, ativo, data_nascimento, data_conversao')
+        .in('id', criancaIds.slice(i, i + 200));
+      if (error) throw error;
+      (data || []).forEach(k => nomePorCrianca.set(k.id, k));
+    }
+
+    const cultoIds = [...new Set(fila.map(f => f.culto_id).filter(Boolean))];
+    const cultoPorId = new Map();
+    for (let i = 0; i < cultoIds.length; i += 200) {
+      const { data, error } = await supabase.from('cultos')
+        .select('id, nome, data, hora, decisoes_kids')
+        .in('id', cultoIds.slice(i, i + 200));
+      if (error) throw error;
+      (data || []).forEach(c => cultoPorId.set(c.id, c));
+    }
+
+    // o que já está registrado como decisão nominal do Kids, na janela
+    let q = supabase
+      .from('vw_kids_decisoes_historico_crianca')
+      .select('decisao_id, crianca_id, crianca_nome, culto_id, culto_nome, data_culto, data_decisao, sequencia_decisao, total_decisoes_crianca')
+      .gte('data_decisao', inicio);
+    if (fim) q = q.lte('data_decisao', fim);
+    const { data: nominaisRaw, error: eNom } = await q.order('data_decisao', { ascending: false }).limit(500);
+    if (eNom) throw eNom;
+
+    res.json({
+      janela: { inicio, fim, rotulo },
+      resumo: resumoFilaKids(fila),
+      fila: fila.map(f => ({
+        ...f,
+        crianca: f.crianca_id ? (nomePorCrianca.get(f.crianca_id) || null) : null,
+        culto: f.culto_id ? (cultoPorId.get(f.culto_id) || null) : null,
+      })),
+      nominais: nominaisRaw || [],
+      // ⚠️ teto DECLARADO: corte silencioso se lê como "é tudo que existe"
+      nominais_teto: 500,
+      nominais_truncado: (nominaisRaw || []).length === 500,
+    });
+  } catch (e) {
+    console.error('[totemKids/decisoes/registro]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o registro de decisões', detalhe: e.message });
+  }
+});
+
+// GET /api/totem-kids/decisoes/fila/:id/candidatos · SUGESTÃO para a linha pendente
+// ⚠️ É sugestão ORDENADA, nunca decisão: quem escolhe é a coordenação. A linha
+// caiu na fila justamente por não ter candidato único.
+router.get('/decisoes/fila/:id/candidatos', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data: linha, error: eL } = await supabase
+      .from('kids_conversoes_import')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (eL) throw eL;
+    if (!linha) return res.status(404).json({ error: 'Linha não encontrada' });
+
+    const tokens = String(linha.nome_norm_planilha || '')
+      .split(/\s+/).filter(t => t.length >= 3 && !['de','da','do','das','dos','e'].includes(t));
+    if (!tokens.length) return res.json({ linha, candidatos: [] });
+
+    // busca por QUALQUER token do nome (a base tem 4.386 · sem cap de 1000 aqui
+    // porque o filtro por token deixa o conjunto em dezenas)
+    const vistos = new Map();
+    for (const t of tokens) {
+      const { data, error } = await supabase.from('kids_criancas')
+        .select('id, nome, nome_norm, ativo, data_nascimento, data_conversao, visitante')
+        .ilike('nome_norm', `%${t}%`)
+        .is('deleted_at', null)
+        .limit(60);
+      if (error) throw error;
+      (data || []).forEach(k => vistos.set(k.id, k));
+    }
+
+    const idadeNa = (nasc) => {
+      if (!nasc) return null;
+      const d = new Date(`${nasc}T12:00:00`);
+      const ref = new Date(`${linha.data_decisao}T12:00:00`);
+      let a = ref.getFullYear() - d.getFullYear();
+      const m = ref.getMonth() - d.getMonth();
+      if (m < 0 || (m === 0 && ref.getDate() < d.getDate())) a -= 1;
+      return a;
+    };
+
+    const candidatos = [...vistos.values()].map(k => {
+      const tk = String(k.nome_norm || '').split(/\s+/).filter(Boolean);
+      const comuns = tokens.filter(t => tk.some(x => x === t)).length;
+      const ina = idadeNa(k.data_nascimento);
+      // ⚠️ idade é VETO, nunca confirmador: só serve pra REJEITAR
+      const idadeVeta = linha.idade_planilha != null && ina != null && Math.abs(linha.idade_planilha - ina) > 1;
+      return {
+        ...k, idade_na_data: ina, tokens_comuns: comuns, idade_veta: idadeVeta,
+        idade_confere: linha.idade_planilha != null && ina != null && Math.abs(linha.idade_planilha - ina) <= 1,
+      };
+    }).sort((a, b) =>
+      (a.idade_veta ? 1 : 0) - (b.idade_veta ? 1 : 0) ||
+      b.tokens_comuns - a.tokens_comuns ||
+      (b.idade_confere ? 1 : 0) - (a.idade_confere ? 1 : 0) ||
+      (b.ativo ? 1 : 0) - (a.ativo ? 1 : 0) ||
+      String(a.nome).localeCompare(String(b.nome))
+    ).slice(0, 10);
+
+    res.json({ linha, candidatos, total_examinados: vistos.size });
+  } catch (e) {
+    console.error('[totemKids/decisoes/candidatos]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar candidatos', detalhe: e.message });
+  }
+});
+
+// PATCH /api/totem-kids/decisoes/fila/:id · a coordenação decide
+router.patch('/decisoes/fila/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { acao, crianca_id: criancaId, culto_id: cultoId, nota } = req.body || {};
+
+    const { data: linha, error: eL } = await supabase
+      .from('kids_conversoes_import')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (eL) throw eL;
+    if (!linha) return res.status(404).json({ error: 'Linha não encontrada' });
+
+    // ⚠️ A régua que DECIDE é pura e está no gate (kidsConversaoFila).
+    const v = avaliarResolucaoKids({ linha, acao, criancaId, nota });
+    if (!v.ok) return res.status(v.codigo === 'transicao_invalida' ? 409 : 400).json({ error: v.mensagem, codigo: v.codigo });
+
+    const patch = {
+      status: v.statusNovo,
+      decidido_por: req.user?.id ?? null,
+      decidido_em: new Date().toISOString(),
+      decisao_nota: typeof nota === 'string' && nota.trim() ? nota.trim().slice(0, 500) : linha.decisao_nota,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (v.vincula) {
+      // a criança tem que existir, estar viva, e ser criança de verdade
+      const { data: k, error: eK } = await supabase.from('kids_criancas')
+        .select('id, nome, data_conversao').eq('id', criancaId).is('deleted_at', null).maybeSingle();
+      if (eK) throw eK;
+      if (!k) return res.status(400).json({ error: 'Criança não encontrada', codigo: 'crianca_inexistente' });
+
+      // culto: aceita o que a coordenação escolher; sem escolha, mantém o resolvido
+      let cultoFinal = linha.culto_id;
+      if (cultoId) {
+        const { data: c, error: eC } = await supabase.from('cultos')
+          .select('id, data').eq('id', cultoId).maybeSingle();
+        if (eC) throw eC;
+        if (!c) return res.status(400).json({ error: 'Culto não encontrado', codigo: 'culto_inexistente' });
+        // ⚠️ o culto tem que ser DO DIA da decisão — senão a decisão entraria no
+        // culto errado, que é o bug de 12/07 (19 nomes no culto errado)
+        if (c.data !== linha.data_decisao) {
+          return res.status(400).json({ error: 'O culto escolhido não é do dia desta decisão.', codigo: 'culto_de_outro_dia' });
+        }
+        cultoFinal = cultoId;
+      }
+
+      // ⚠️ tipo_decisao='kids' é a ÚNICA barreira que mantém a criança fora da
+      // membresia (os triggers saem no ramo 'kids'). Valor errado aqui criaria
+      // cadastro de menor + trilha + NSM sem consentimento do responsável.
+      const { data: dec, error: eD } = await supabase
+        .from('cultos_decisoes_pessoas')
+        .insert({
+          culto_id: cultoFinal,
+          tipo_decisao: 'kids',
+          nome: linha.nome_planilha,
+          idade: linha.idade_planilha,
+          kids_crianca_id: criancaId,
+          decidiu_em: linha.data_decisao,
+          fonte: 'importacao_planilha_kids',
+          responsavel_telefone: linha.tel_planilha,
+          observacoes: `Conferido na tela · planilha CONVERSOES_CBKIDS 2026 linha ${linha.linha} · ${linha.culto_txt}`
+            + (nota ? ` · nota: ${String(nota).slice(0, 200)}` : ''),
+        })
+        .select('id')
+        .maybeSingle();
+      if (eD && eD.code !== '23505') throw eD;
+
+      let decisaoId = dec?.id || null;
+      if (!decisaoId) {
+        // já existia (unique parcial) — reencontra em vez de duplicar
+        const { data: ja } = await supabase.from('cultos_decisoes_pessoas')
+          .select('id').eq('fonte', 'importacao_planilha_kids')
+          .eq('kids_crianca_id', criancaId).eq('decidiu_em', linha.data_decisao)
+          .is('deleted_at', null).limit(1).maybeSingle();
+        decisaoId = ja?.id || null;
+      }
+
+      patch.crianca_id = criancaId;
+      patch.culto_id = cultoFinal;
+      patch.decisao_id = decisaoId;
+      patch.data_conversao_antes = k.data_conversao;
+      patch.status = 'aplicada';
+
+      // ⚠️ SÓ-ONDE-VAZIA: nunca sobrescreve declaração humana (política do censo)
+      if (!k.data_conversao) {
+        const { error: eU } = await supabase.from('kids_criancas')
+          .update({ data_conversao: linha.data_decisao })
+          .eq('id', criancaId).is('data_conversao', null);
+        if (eU) console.error('[decisoes/fila] data_conversao:', eU.message);
+      }
+
+      // agregado do culto · ⚠️ greatest, nunca "=": a contagem da SALA pode ser
+      // maior que os nomes registrados, e sobrescrever apagaria decisão real
+      if (cultoFinal) {
+        const { count } = await supabase.from('cultos_decisoes_pessoas')
+          .select('id', { count: 'exact', head: true })
+          .eq('culto_id', cultoFinal).eq('tipo_decisao', 'kids').is('deleted_at', null);
+        const { data: cAtual } = await supabase.from('cultos')
+          .select('decisoes_kids').eq('id', cultoFinal).maybeSingle();
+        const novo = Math.max(Number(cAtual?.decisoes_kids || 0), Number(count || 0));
+        if (novo !== Number(cAtual?.decisoes_kids || 0)) {
+          const { error: eAg } = await supabase.from('cultos')
+            .update({ decisoes_kids: novo }).eq('id', cultoFinal);
+          if (eAg) console.error('[decisoes/fila] agregado:', eAg.message);
+        }
+      }
+    }
+
+    const { data: fim, error: eF } = await supabase
+      .from('kids_conversoes_import')
+      .update(patch).eq('id', linha.id).is('deleted_at', null)
+      .select('*').maybeSingle();
+    if (eF) throw eF;
+    if (!fim) return res.status(409).json({ error: 'A linha mudou enquanto você decidia. Recarregue.' });
+
+    res.json({ ok: true, linha: fim });
+  } catch (e) {
+    console.error('[totemKids/decisoes/fila PATCH]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a decisão', detalhe: e.message });
   }
 });
 

@@ -2324,6 +2324,18 @@ export const totemKids = {
     historicoCrianca: (criancaId) => get(`/totem-kids/decisoes/historico/${criancaId}`),
     // Ranking de crianças com mais decisões
     resumoPorCrianca: () => get('/totem-kids/decisoes/resumo-por-crianca'),
+    // Gerencial (2026-09-02): o que está registrado + a fila de conferência.
+    // ⚠️ NÃO confundir com a tela do totem (`/ministerial/totem-kids/decisoes`),
+    // que exige sessão aberta HOJE e não registra culto passado.
+    registro: (p = {}) => {
+      const q = new URLSearchParams();
+      if (p.dias) q.set('dias', String(p.dias));
+      if (p.ano) q.set('ano', String(p.ano));
+      const s = q.toString();
+      return get(`/totem-kids/decisoes/registro${s ? `?${s}` : ''}`);
+    },
+    candidatos: (id) => get(`/totem-kids/decisoes/fila/${id}/candidatos`),
+    resolver: (id, body) => patch(`/totem-kids/decisoes/fila/${id}`, body),
   },
   salas: {
     list: () => get('/totem-kids/salas'),
