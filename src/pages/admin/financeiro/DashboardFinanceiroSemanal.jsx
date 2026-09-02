@@ -11,6 +11,7 @@ import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { financeiroV2 } from '../../../api';
 import KpiTaticoOficial from '../../../components/kpi/KpiTaticoOficial';
+import { NIVEIS_ZOOM, ZOOM_PADRAO, lerZoomSalvo, salvarZoom, rotuloZoom } from '@/lib/zoomTela';
 import { useAuth } from '../../../contexts/AuthContext';
 import MetaGauge from '../../../components/dashboard-semanal/MetaGauge';
 import DoadoresListDialog from '../../../components/financeiro/DoadoresListDialog';
@@ -202,6 +203,18 @@ const SAIDAS_ALLOWLIST = new Set([
 
 export default function DashboardSemanal() {
   const { user, profile } = useAuth();
+  // ⚠️ Escala de leitura · esta tela vai ESPELHADA NA TV (pedido do Matheus,
+  // 02/09/2026). Fica só aqui de propósito: um zoom global deixaria os portais
+  // do Radix a 100% dentro de uma UI escalada — nesta página não há nenhum.
+  const [zoom, setZoom] = useState(ZOOM_PADRAO);
+  useEffect(() => { setZoom(lerZoomSalvo()); }, []);
+  useEffect(() => {
+    // ⚠️ A variável vai no documentElement porque o modal de drilldown portala
+    // para o `body` e NÃO herda o zoom do container da página.
+    document.documentElement.style.setProperty('--dash-zoom', String(zoom));
+    return () => { document.documentElement.style.removeProperty('--dash-zoom'); };
+  }, [zoom]);
+  const trocarZoom = (n) => { setZoom(n); salvarZoom(n); };
   const emailUser = String(profile?.email || user?.email || '').toLowerCase();
   const podeVerSaidas = SAIDAS_ALLOWLIST.has(emailUser);
   // Slides visíveis · esconde "Saídas" (controle) de quem não está na allowlist.
@@ -275,7 +288,13 @@ export default function DashboardSemanal() {
   const { semana, kpis, cultos, buckets, historico, top_contribuintes } = data;
 
   return (
-    <div className={`cbrio-glass-scope space-y-4 transition-opacity ${loading ? 'opacity-60' : 'opacity-100'}`}>
+    <div
+      className={`cbrio-glass-scope space-y-4 transition-opacity ${loading ? 'opacity-60' : 'opacity-100'}`}
+      // ⚠️ `zoom` (não `transform: scale`): ele REFLUI o layout e escala px e
+      // rem juntos. `scale` criaria containing block, quebraria o sticky da
+      // barra de abas e rasterizaria o texto — o oposto de legibilidade.
+      style={{ zoom }}
+    >
       {/* HEADER · navegação semana (sticky · sempre visível) */}
       <div className="sticky top-0 z-20 pb-2 -mx-1 px-1 bg-gradient-to-b from-background via-background to-transparent backdrop-blur-sm">
         <Card className="overflow-hidden border-primary/30">
@@ -316,7 +335,32 @@ export default function DashboardSemanal() {
 
         {/* SlideNav · botões de navegação entre slides */}
         <SlideNav slides={slides} current={slide} onChange={setSlide} />
-        <FiltrosFinanceiroBar />
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <FiltrosFinanceiroBar />
+          {/* ⚠️ Escala de leitura · esta tela vai espelhada na TV. O "A" cresce
+              junto para o controle dizer o que faz sem precisar de legenda.
+              ⚠️ Fica FORA do container escalado? Não — ele escala junto, e é
+              isso que se quer: a pessoa continua achando o controle no mesmo
+              lugar relativo, e o botão ativo fica maior, que é a pista de que
+              já está ampliado. O caminho de volta nunca some porque o 100%
+              é sempre o primeiro. */}
+          <div className="inline-flex items-center gap-1 rounded-lg border border-border p-0.5" title="Tamanho da tela · fica salvo neste aparelho">
+            {NIVEIS_ZOOM.map((n) => (
+              <button
+                key={n}
+                onClick={() => trocarZoom(n)}
+                aria-pressed={zoom === n}
+                className={`px-2 py-1 rounded-md transition leading-none ${
+                  zoom === n ? 'bg-primary text-primary-foreground font-semibold' : 'hover:bg-muted text-muted-foreground'
+                }`}
+                style={{ fontSize: 10 + (n - 1) * 12 }}
+              >
+                A
+              </button>
+            ))}
+            <span className="px-1.5 text-[10px] text-muted-foreground tabular-nums">{rotuloZoom(zoom)}</span>
+          </div>
+        </div>
       </div>
 
       {/* Assistente financeiro · leitura automática por aba */}
@@ -3541,6 +3585,10 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
           className="fixed inset-0 z-[1000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          // ⚠️ Este modal portala para o `body`, então NÃO herda o zoom do
+          // container da página — sem isto ele apareceria a 100% dentro de uma
+          // tela a 125%, que é exatamente a falha que o conselho apontou.
+          style={{ zoom: 'var(--dash-zoom, 1)' }}
           onClick={onClose}
         >
           <motion.div
