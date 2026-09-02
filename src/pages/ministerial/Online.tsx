@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { online } from '@/api';
+import { online, kpis } from '@/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -530,6 +530,89 @@ function OAuthStatusCardInner() {
   );
 }
 
+
+// ⚠️⚠️ Alcance da comunidade do Online no WhatsApp · input MENSAL.
+//
+// Pedido do Matheus (02/09/2026). Ele pediu SOMADO ao "Investir tempo com Deus"
+// da mandala; a medição mostrou que somar enterraria a variação do devocional
+// (2→14 pessoas de jul→ago, contra uma comunidade de ordem de grandeza maior)
+// e misturaria ESTOQUE com FLUXO. Decisão: as duas parcelas aparecem lado a
+// lado na pétala, nunca somadas. Ver `supabase/migrations/20260902180000`.
+//
+// ⚠️ Gate por `isAdmin`, e não pelo `podeEditarOnline` do resto da tela: o
+// endpoint `POST /kpis/cultura/mensal` é `authorize('admin','diretor')`, então
+// quem tem `online` nível 3 sem ser diretor veria o botão e levaria 403 —
+// botão que sempre falha é pior que botão ausente.
+function ComunidadeOnlineCard() {
+  const { isAdmin } = useAuth();
+  const [mes, setMes] = useState(() => new Date().toISOString().slice(0, 7));
+  const [valor, setValor] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [salvo, setSalvo] = useState<string | null>(null);
+
+  if (!isAdmin) return null;
+
+  const salvar = async () => {
+    // ⚠️ Vazio LIMPA (grava null = "não informado"); não é o mesmo que 0.
+    const limpo = valor.trim();
+    if (limpo !== '' && !/^\d{1,7}$/.test(limpo)) {
+      toast.error('Informe só números (ou deixe vazio para limpar).');
+      return;
+    }
+    setSalvando(true);
+    try {
+      // ⚠️ Manda SÓ estas duas chaves. O endpoint virou patch-style em
+      // 02/09/2026 justamente por isso — antes ele montava o payload inteiro e
+      // apagaria frequência, decisões e grupos daquele mês.
+      await kpis.culturaMensalUpsert({ mes, investir_comunidade_online: limpo === '' ? null : Number(limpo) });
+      setSalvo(new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
+      toast.success(limpo === '' ? 'Valor limpo.' : 'Comunidade registrada.');
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível salvar.');
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <Card className="mb-6">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex-1 min-w-[200px]">
+            <h3 className="text-sm font-semibold text-foreground">Comunidade do Online no WhatsApp</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Total de pessoas na comunidade neste mês. Aparece na pétala <strong>Investir</strong> da
+              mandala <strong>ao lado</strong> do devocional — os dois não são somados, porque medem
+              coisas diferentes (a comunidade é acumulada, o devocional é do mês).
+            </p>
+          </div>
+          <div>
+            <label className="block text-[11px] text-muted-foreground mb-1">Mês</label>
+            <input
+              type="month" value={mes} onChange={(e) => setMes(e.target.value)}
+              className="h-9 rounded-md border bg-background px-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] text-muted-foreground mb-1">Pessoas</label>
+            <input
+              type="text" inputMode="numeric" value={valor} placeholder="ex.: 800"
+              onChange={(e) => setValor(e.target.value)}
+              className="h-9 w-28 rounded-md border bg-background px-2 text-sm"
+            />
+          </div>
+          <Button onClick={salvar} disabled={salvando} size="sm">
+            {salvando ? 'Salvando…' : 'Salvar'}
+          </Button>
+        </div>
+        {salvo && (
+          <p className="text-[11px] text-muted-foreground mt-2">Salvo em {salvo}.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Online() {
   const { getAccessLevel, isAdmin } = useAuth();
   const podeEditarOnline = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
@@ -892,6 +975,7 @@ export default function Online() {
       <CultoYouTubePanel />
 
       {/* Diagnóstico · so admin · pra investigar zeros nas metricas */}
+      <ComunidadeOnlineCard />
       {isAdmin && <OnlineDebugPanel />}
 
       {/* Footer info */}

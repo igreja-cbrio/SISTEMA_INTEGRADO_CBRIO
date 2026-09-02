@@ -1638,6 +1638,14 @@ router.get('/cultura', async (req, res) => {
       conectar_pessoas: conectarMes,
       investir_deus: investirDeus,
       investir_deus_total: devCheckins,
+      // ⚠️⚠️ PARCELA SEPARADA, NUNCA SOMADA em `investir_deus`. Pedido do
+      // Matheus era somar; a medição de 02/09/2026 mostrou que a soma
+      // enterraria a variação do devocional (2→14 pessoas de jul→ago, contra
+      // uma comunidade de ordem de grandeza maior) e misturaria ESTOQUE com
+      // FLUXO. A pétala mostra as duas lado a lado. Ver a migration
+      // `20260902180000` e o precedente do Marcos na `20260514140000`.
+      // ⚠️ `?? null` e não `|| 0`: não informado ≠ comunidade vazia.
+      investir_comunidade_online: cm?.investir_comunidade_online ?? null,
       servir_comunidade: servirComunidade,
       generosidade,
       decisoes: decisoesMes,
@@ -1661,28 +1669,38 @@ router.get('/cultura', async (req, res) => {
 
 // POST /kpis/cultura/mensal — upsert (mês, qtd_dizimistas, qtd_ofertantes, observações)
 router.post('/cultura/mensal', authorize('admin', 'diretor'), async (req, res) => {
-  const {
-    mes, qtd_dizimistas, qtd_ofertantes, observacoes,
-    freq_presencial_semanal, freq_online_semanal, decisoes_total, freq_grupos_total,
-  } = req.body || {};
+  const corpo = req.body || {};
+  const { mes } = corpo;
   if (!mes || !/^\d{4}-\d{2}/.test(mes)) {
     return res.status(400).json({ error: 'Campo "mês" obrigatório no formato YYYY-MM' });
   }
   // Sempre dia 01
   const mesDate = `${mes.slice(0, 7)}-01`;
   const intOrNull = (v) => v == null || v === '' ? null : Number(v);
-  const payload = {
-    mes: mesDate,
-    qtd_dizimistas: Number(qtd_dizimistas) || 0,
-    qtd_ofertantes: Number(qtd_ofertantes) || 0,
-    freq_presencial_semanal: intOrNull(freq_presencial_semanal),
-    freq_online_semanal:     intOrNull(freq_online_semanal),
-    decisoes_total:          intOrNull(decisoes_total),
-    freq_grupos_total:       intOrNull(freq_grupos_total),
-    observacoes: observacoes || null,
-    updated_at: new Date().toISOString(),
-    updated_by: req.user?.id || null,
-  };
+
+  // ⚠️⚠️ PATCH: só grava a chave que VEIO no corpo. Antes o payload era montado
+  // INTEIRO, então uma tela que salvasse um campo só NULIFICAVA os outros —
+  // `freq_presencial_semanal`, `freq_online_semanal`, `decisoes_total` e
+  // `freq_grupos_total` iam a NULL e dizimistas/ofertantes a ZERO (o
+  // `Number(x) || 0`). A tabela tem 1 linha por mês, então isso apagaria em
+  // silêncio o consolidado daquele mês. Achado em 02/09/2026, ao construir a
+  // primeira tela que escreve aqui — o endpoint existia desde maio e NENHUMA
+  // tela o chamava (os valores foram postos por SQL), então a bomba nunca
+  // tinha sido armada.
+  // ⚠️ `Object.prototype.hasOwnProperty` e não `!== undefined`: mandar
+  // `{ decisoes_total: null }` é a forma de LIMPAR o campo de propósito, e
+  // isso tem que continuar possível.
+  const tem = (k) => Object.prototype.hasOwnProperty.call(corpo, k);
+  const payload = { mes: mesDate, updated_at: new Date().toISOString(), updated_by: req.user?.id || null };
+  // ⚠️ dizimistas/ofertantes são NOT NULL com default 0 — por isso o `|| 0`
+  // fica, mas SÓ quando a chave veio.
+  if (tem('qtd_dizimistas')) payload.qtd_dizimistas = Number(corpo.qtd_dizimistas) || 0;
+  if (tem('qtd_ofertantes')) payload.qtd_ofertantes = Number(corpo.qtd_ofertantes) || 0;
+  for (const k of ['freq_presencial_semanal', 'freq_online_semanal', 'decisoes_total',
+    'freq_grupos_total', 'investir_comunidade_online']) {
+    if (tem(k)) payload[k] = intOrNull(corpo[k]);
+  }
+  if (tem('observacoes')) payload.observacoes = corpo.observacoes || null;
   const { data, error } = await supabase
     .from('cultura_mensal')
     .upsert(payload, { onConflict: 'mes' })
