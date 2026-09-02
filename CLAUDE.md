@@ -16138,6 +16138,22 @@ fail-open**: nenhuma data inventada sai daquela função.
 Guarda: 4 casos novos em `src/test/janelaPeriodoBackend.test.ts` · **2 mutantes
 RODADOS e mortos** (remover a guarda → 4 vermelhos · desligá-la → 4).
 
+
+⚠️ **Complemento (mesmo dia · PR próprio):** `diaLocal` passou a **LANÇAR** em
+data inválida em vez de formatar `"NaN-NaN-NaN"`. Não é conserto do incidente —
+o fail-safe acima já o resolve — é **defesa em profundidade**: `diaLocal` é
+EXPORTADO, e o próximo chamador não passa pelo fail-safe. Data inválida ali é bug
+de PROGRAMAÇÃO, não dado de usuário, então erro na hora com o nome da função e o
+valor recebido é melhor que string inválida viajando pro banco. 2 mutantes
+rodados e mortos (sem a guarda → 2 vermelhos · aceitar não-Date → 1).
+
+⚠️⚠️ **E uma lição de MÉTODO que custou um PR inteiro:** duas sessões
+diagnosticaram e consertaram este mesmo bug em paralelo, com 13 minutos de
+diferença (#2826 mergeado, #2828 fechado). Antes de investigar achado da aba de
+Diagnósticos, **conferir se já há PR aberto/mergeado sobre a mesma rota** —
+`gh pr list --search "<rota>"` e `git log origin/main --oneline -15`. O sinal de
+que outra sessão está no mesmo assunto aparece na main, não no board de agentes.
+
 ⚠️ **O que funcionou foi a tela DIZER o erro.** Ela mostrou o card vermelho em vez
 de uma lista vazia — foi por isso que ele reportou "não carrega" e não "não tem
 decisão nenhuma". Consertado junto o resíduo: com erro, as seções ainda diziam
