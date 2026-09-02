@@ -4,13 +4,14 @@ import { motion, AnimatePresence, useSpring, useTransform, animate } from 'frame
 import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Users, Banknote,
   Sparkles, ArrowUp, ArrowDown, Minus, Award, Calendar,
-  BarChart3, Activity, Target, FileText, Loader2, Filter, X, MousePointer2,
+  BarChart3, Activity, Target, FileText, Loader2, Filter, X, MousePointer2, CalendarDays,
 } from 'lucide-react';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { financeiroV2 } from '../../../api';
 import KpiTaticoOficial from '../../../components/kpi/KpiTaticoOficial';
+import { NIVEIS_ZOOM, ZOOM_PADRAO, lerZoomSalvo, salvarZoom, rotuloZoom } from '@/lib/zoomTela';
 import { useAuth } from '../../../contexts/AuthContext';
 import MetaGauge from '../../../components/dashboard-semanal/MetaGauge';
 import DoadoresListDialog from '../../../components/financeiro/DoadoresListDialog';
@@ -176,6 +177,10 @@ const SLIDES = [
   { key: 'saude',        label: 'Saúde',          icon: Activity,   desc: 'Resultado · folha · concentração de doadores' },
   { key: 'comparativos', label: 'Comparativos',   icon: BarChart3,  desc: 'YTD · YoY · decêndio' },
   { key: 'dizimo_oferta',label: 'Dízimo×Oferta',  icon: TrendingUp, desc: 'Proporção da base de contribuição' },
+  // ⚠️ ACRESCENTADA, não substitui a Saúde — decisão do Matheus em 02/09/2026.
+  // Trocar apagaria resultado do mês/YTD/12 meses, folha e concentração de
+  // doadores, que não têm outra tela.
+  { key: 'quinta_semana', label: '5ª semana',     icon: CalendarDays, desc: 'Meses com 5 semanas · as 5ªs comparadas entre si' },
   // Bloco 3 · despesa + futuro
   { key: 'controle',     label: 'Saídas',         icon: Target,     desc: 'Despesas detalhadas · drilldown' },
   { key: 'metas',        label: 'Metas',          icon: Award,      desc: 'Alvos financeiros com filtros' },
@@ -198,6 +203,18 @@ const SAIDAS_ALLOWLIST = new Set([
 
 export default function DashboardSemanal() {
   const { user, profile } = useAuth();
+  // ⚠️ Escala de leitura · esta tela vai ESPELHADA NA TV (pedido do Matheus,
+  // 02/09/2026). Fica só aqui de propósito: um zoom global deixaria os portais
+  // do Radix a 100% dentro de uma UI escalada — nesta página não há nenhum.
+  const [zoom, setZoom] = useState(ZOOM_PADRAO);
+  useEffect(() => { setZoom(lerZoomSalvo()); }, []);
+  useEffect(() => {
+    // ⚠️ A variável vai no documentElement porque o modal de drilldown portala
+    // para o `body` e NÃO herda o zoom do container da página.
+    document.documentElement.style.setProperty('--dash-zoom', String(zoom));
+    return () => { document.documentElement.style.removeProperty('--dash-zoom'); };
+  }, [zoom]);
+  const trocarZoom = (n) => { setZoom(n); salvarZoom(n); };
   const emailUser = String(profile?.email || user?.email || '').toLowerCase();
   const podeVerSaidas = SAIDAS_ALLOWLIST.has(emailUser);
   // Slides visíveis · esconde "Saídas" (controle) de quem não está na allowlist.
@@ -271,7 +288,13 @@ export default function DashboardSemanal() {
   const { semana, kpis, cultos, buckets, historico, top_contribuintes } = data;
 
   return (
-    <div className={`cbrio-glass-scope space-y-4 transition-opacity ${loading ? 'opacity-60' : 'opacity-100'}`}>
+    <div
+      className={`cbrio-glass-scope space-y-4 transition-opacity ${loading ? 'opacity-60' : 'opacity-100'}`}
+      // ⚠️ `zoom` (não `transform: scale`): ele REFLUI o layout e escala px e
+      // rem juntos. `scale` criaria containing block, quebraria o sticky da
+      // barra de abas e rasterizaria o texto — o oposto de legibilidade.
+      style={{ zoom }}
+    >
       {/* HEADER · navegação semana (sticky · sempre visível) */}
       <div className="sticky top-0 z-20 pb-2 -mx-1 px-1 bg-gradient-to-b from-background via-background to-transparent backdrop-blur-sm">
         <Card className="overflow-hidden border-primary/30">
@@ -312,7 +335,32 @@ export default function DashboardSemanal() {
 
         {/* SlideNav · botões de navegação entre slides */}
         <SlideNav slides={slides} current={slide} onChange={setSlide} />
-        <FiltrosFinanceiroBar />
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <FiltrosFinanceiroBar />
+          {/* ⚠️ Escala de leitura · esta tela vai espelhada na TV. O "A" cresce
+              junto para o controle dizer o que faz sem precisar de legenda.
+              ⚠️ Fica FORA do container escalado? Não — ele escala junto, e é
+              isso que se quer: a pessoa continua achando o controle no mesmo
+              lugar relativo, e o botão ativo fica maior, que é a pista de que
+              já está ampliado. O caminho de volta nunca some porque o 100%
+              é sempre o primeiro. */}
+          <div className="inline-flex items-center gap-1 rounded-lg border border-border p-0.5" title="Tamanho da tela · fica salvo neste aparelho">
+            {NIVEIS_ZOOM.map((n) => (
+              <button
+                key={n}
+                onClick={() => trocarZoom(n)}
+                aria-pressed={zoom === n}
+                className={`px-2 py-1 rounded-md transition leading-none ${
+                  zoom === n ? 'bg-primary text-primary-foreground font-semibold' : 'hover:bg-muted text-muted-foreground'
+                }`}
+                style={{ fontSize: 10 + (n - 1) * 12 }}
+              >
+                A
+              </button>
+            ))}
+            <span className="px-1.5 text-[10px] text-muted-foreground tabular-nums">{rotuloZoom(zoom)}</span>
+          </div>
+        </div>
       </div>
 
       {/* Assistente financeiro · leitura automática por aba */}
@@ -369,6 +417,7 @@ export default function DashboardSemanal() {
             />
           )}
           {slides[slide].key === 'dizimo_oferta' && <SlideDizimoOferta />}
+          {slides[slide].key === 'quinta_semana' && <SlideQuintaSemana />}
           {slides[slide].key === 'controle' && (
             <Slide5Controle
               saidas={saidas}
@@ -3536,6 +3585,10 @@ function TransacoesDrilldownDialog({ open, onClose, titulo, subtitulo, color = C
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
           className="fixed inset-0 z-[1000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          // ⚠️ Este modal portala para o `body`, então NÃO herda o zoom do
+          // container da página — sem isto ele apareceria a 100% dentro de uma
+          // tela a 125%, que é exatamente a falha que o conselho apontou.
+          style={{ zoom: 'var(--dash-zoom, 1)' }}
           onClick={onClose}
         >
           <motion.div
@@ -4049,6 +4102,135 @@ function TooltipLupa({ active, payload, label }) {
         clique na barra para fixar
       </div>
     </div>
+  );
+}
+
+
+// ⚠️ Aba "5ª semana" · pedido do Matheus (02/09/2026): "comparar as quintas
+// semanas de cada mês que tem cinco semanas". Ele escolheu, entre três
+// leituras, comparar AS 5ªs ENTRE SI.
+//
+// ⚠️⚠️ A extraordinária vai SEPARADA por medição, não por gosto: a 5ª de
+// julho/26 teve R$ 2.439.594 dos quais R$ 2.096.222 são extraordinária.
+// Somada, ela vira uma barra gigante e as outras (~R$ 300-570 mil) somem.
+function SlideQuintaSemana() {
+  const [filtros] = useFiltrosGlobais();
+  const semExtra = !!filtros.sem_extra;
+  const [anos, setAnos] = useState(4);
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let vivo = true;
+    setLoading(true);
+    financeiroV2.quintasSemanas(anos, semExtra)
+      .then(d => { if (vivo) setDados(d); })
+      .catch(() => { if (vivo) setDados({ erro: true }); })
+      .finally(() => { if (vivo) setLoading(false); });
+    return () => { vivo = false; };
+  }, [anos, semExtra]);
+
+  const quintas = dados?.quintas || [];
+  const fechadas = quintas.filter(q => q.fechada);
+  // Só as fechadas vão pro gráfico — barra de altura zero para semana que não
+  // aconteceu se lê como "arrecadou nada", que é outra afirmação.
+  const serie = fechadas.map(q => ({
+    label: q.rotulo,
+    Receita: Number(q.receita || 0),
+    Extraordinária: Number(q.extraordinaria || 0),
+  }));
+  const media = dados?.media;
+  const melhor = fechadas.reduce((a, b) => (!a || b.receita > a.receita ? b : a), null);
+
+  return (
+    <Card className="relative overflow-hidden">
+      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500 to-rose-500" />
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between flex-wrap gap-3 mb-4">
+          <div>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-primary" />
+              5ª semana · meses com 5 semanas
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              A semana financeira é <strong>quarta a terça</strong>, então alguns meses têm cinco.
+              Aqui elas são comparadas <strong>entre si</strong>
+              {semExtra ? ' · sem as extraordinárias' : ' · incluindo as extraordinárias'}.
+            </p>
+          </div>
+          <div className="flex gap-1">
+            {[2, 4, 6].map(a => (
+              <button key={a} onClick={() => setAnos(a)}
+                className={`px-2.5 py-1 text-xs rounded-md font-medium transition ${anos === a ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>
+                {a} anos
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loading && !dados ? (
+          <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : dados?.erro ? (
+          // ⚠️ Erro NUNCA se disfarça de "não há 5ª semana".
+          <div className="py-12 text-center text-sm text-amber-600">
+            Não foi possível carregar as quintas semanas.
+          </div>
+        ) : fechadas.length === 0 ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            Nenhuma 5ª semana fechada no período.
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', marginBottom: 18 }}>
+              <div style={{ padding: '16px 18px', borderRadius: 14, border: '1px solid var(--cbrio-border)' }}>
+                <div style={{ fontSize: 12.5, color: 'var(--cbrio-text3)', marginBottom: 6 }}>Média das 5ªs semanas</div>
+                <div style={{ fontSize: 26, fontWeight: 800, lineHeight: 1.1 }}>{media == null ? '—' : fmtMoney(media)}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--cbrio-text3)', marginTop: 4 }}>{fechadas.length} semana(s) fechada(s)</div>
+              </div>
+              {melhor && (
+                <div style={{ padding: '16px 18px', borderRadius: 14, border: '1px solid var(--cbrio-border)' }}>
+                  <div style={{ fontSize: 12.5, color: 'var(--cbrio-text3)', marginBottom: 6 }}>Maior 5ª semana</div>
+                  <div style={{ fontSize: 26, fontWeight: 800, color: C.primary, lineHeight: 1.1 }}>{fmtMoney(melhor.receita)}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--cbrio-text3)', marginTop: 4 }}>{melhor.rotulo}</div>
+                </div>
+              )}
+              {dados?.abertas > 0 && (
+                <div style={{ padding: '16px 18px', borderRadius: 14, border: '1px solid var(--cbrio-border)' }}>
+                  <div style={{ fontSize: 12.5, color: 'var(--cbrio-text3)', marginBottom: 6 }}>Ainda não fecharam</div>
+                  <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--cbrio-text3)', lineHeight: 1.1 }}>{dados.abertas}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--cbrio-text3)', marginTop: 4 }}>fora da média, de propósito</div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ width: '100%', height: 300 }}>
+              <ResponsiveContainer>
+                <BarChart data={serie} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis dataKey="label" tick={{ fontSize: 13 }} />
+                  <YAxis tick={{ fontSize: 12 }} width={64} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <Tooltip
+                    formatter={(v, n) => [fmtMoney(v), n]}
+                    contentStyle={{ borderRadius: 12, fontSize: 13, border: '1px solid var(--cbrio-border)' }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 13 }} iconSize={12} />
+                  <Bar dataKey="Receita" fill={C.primary} radius={[6, 6, 0, 0]} />
+                  {/* ⚠️ Barra separada — nunca empilhada dentro da receita. */}
+                  <Bar dataKey="Extraordinária" fill={C.amber} radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {dados?.abertas > 0 && (
+              <p className="text-xs text-muted-foreground mt-3">
+                ⚠️ {dados.abertas} quinta(s) semana(s) ainda não terminaram e ficam fora do gráfico e da média —
+                mostrá-las como zero diria que não se arrecadou nada.
+              </p>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
