@@ -55,7 +55,13 @@ export default function IdentificarDoadores() {
       const r = await financeiroV2.conciliacaoOfx.rodar(inicio, fim, false);
       setStats({ ...r.stats, modo: 'aplicado' });
       setRevisao(r.revisao || []);
-      toast.success(`${r.stats.vinculados || 0} vinculados · ${r.stats.avulsos_criados || 0} novos contribuintes · ${r.stats.revisao} p/ revisar`);
+      // ⚠️ O toast diz o que SOBROU, não só o que deu certo — número solto de
+      // sucesso esconde que boa parte casou e ficou sem dono por falta de ficha.
+      toast.success(
+        `${r.stats.vinculados || 0} doações ganharam dono`
+        + (r.stats.casou_cpf_sem_cadastro ? ` · ${r.stats.casou_cpf_sem_cadastro} casaram mas o CPF não tem cadastro` : '')
+        + (r.stats.revisao ? ` · ${r.stats.revisao} p/ revisar` : ''),
+      );
     } catch (e) { toast.error(e.message || 'Erro ao conciliar'); }
     setBusy(false);
   }
@@ -104,7 +110,13 @@ export default function IdentificarDoadores() {
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
           <Stat label="Balanço analisado" value={stats.balanco_analisado} />
           <Stat label={stats.modo === 'aplicado' ? 'Vinculados' : 'Auto (inequívoco)'} value={stats.modo === 'aplicado' ? (stats.vinculados ?? stats.auto) : stats.auto} cor={C.green} />
-          <Stat label="Novos contribuintes" value={stats.avulsos_criados || 0} cor={C.blue} />
+          {/* ⚠️ CASOU ≠ TEM DONO. O casamento é balanço × extrato; o dono só
+              existe se aquele CPF já tiver ficha. Sem este card, "auto" promete
+              dono para doação cujo CPF ninguém cadastrou — medido em 02/09/2026:
+              dos 1.948 CPFs do extrato, só 786 (40%) têm cadastro. */}
+          {stats.modo === 'aplicado' && (
+            <Stat label="CPF sem cadastro" value={stats.casou_cpf_sem_cadastro || 0} cor={C.blue} />
+          )}
           <Stat label="Pra revisar" value={stats.revisao} cor={C.amber} />
           <Stat label="Sem match no OFX" value={stats.sem_match} cor={C.text3} />
         </div>
