@@ -358,13 +358,33 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
       console.error('[FIN-V2] identidade OFX:', e.message);
     }
 
-    // Insere lancamentos brutos (ignora duplicados via UNIQUE)
+    // ── Insere os lançamentos brutos ─────────────────────────────────────────
+    //
+    // ⚠️⚠️ EM LOTE, e não mais um-a-um. O laço antigo fazia UM insert por
+    // transação: com o extrato de 90 dias (7.297 linhas) isso levou a função
+    // além do `maxDuration` de 300s e ela MORREU no meio — 1.985 linhas
+    // gravadas, o resto perdido, e o upload preso em "processando" para sempre
+    // (02/09/2026, medido). Em lotes de 500 são ~15 idas ao banco em vez de
+    // 7.297.
+    //
+    // ⚠️⚠️ NÃO dá pra usar `upsert({onConflict})`: o UNIQUE é PARCIAL
+    // (`fin_lanc_brutos_fitid_conta_uq ... WHERE fitid IS NOT NULL`) e o
+    // PostgREST não expressa o predicado — o ON CONFLICT não inferiria o índice
+    // e o statement inteiro falharia (a lei de 04/08/2026, caso
+    // `mem_censo_convites`). Então: pré-filtra o que já existe e, se ainda
+    // assim um lote colidir, refaz AQUELE lote linha a linha.
     let inseridos = 0;
     let duplicados = 0;
+    let interrompido = false;
 
-    for (const t of parsed.transactions) {
+    const LOTE = 500;
+    const ORCAMENTO_MS = 210_000; // ~3,5 min dos 300s; o resto fica pras etapas seguintes
+    const comecou = Date.now();
+    const estourou = () => Date.now() - comecou > ORCAMENTO_MS;
+
+    const linhaPayload = (t) => {
       const docLimpo = t.documento_contraparte ? String(t.documento_contraparte).replace(/\D/g, '') : null;
-      const payload = {
+      return {
         fonte: 'ofx',
         conta_id,
         data_lancamento: t.data_lancamento,
@@ -381,12 +401,83 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
         upload_id: uploadRow.id,
         created_by: req.user.userId,
       };
-      const { error: insErr } = await supabase.from('fin_lancamentos_brutos').insert(payload);
-      if (insErr) {
-        if (insErr.code === '23505') duplicados++;
-      } else {
-        inseridos++;
+    };
+
+    // Quais fitids desta conta JÁ existem — mata a duplicata antes do insert.
+    // ⚠️ `.in()` em lotes de 200: lista longa estoura a URL do PostgREST.
+    const fitidsExistentes = new Set();
+    try {
+      const todos = parsed.transactions.map((t) => t.fitid).filter(Boolean);
+      for (let i = 0; i < todos.length; i += 200) {
+        const { data, error } = await supabase
+          .from('fin_lancamentos_brutos')
+          .select('fitid')
+          .eq('conta_id', conta_id)
+          .in('fitid', todos.slice(i, i + 200));
+        if (error) throw error;
+        for (const r of data || []) fitidsExistentes.add(r.fitid);
       }
+    } catch (e) {
+      // ⚠️ Falhar aqui NÃO pode virar "nada é duplicado" em silêncio: sem a
+      // pré-filtragem, o caminho de fallback linha-a-linha ainda protege, mas o
+      // import fica lento. Loga e segue.
+      console.warn('[FIN-V2] pré-filtragem de fitid falhou:', e.message);
+    }
+
+    const novas = [];
+    for (const t of parsed.transactions) {
+      if (t.fitid && fitidsExistentes.has(t.fitid)) duplicados++;
+      else novas.push(t);
+    }
+
+    for (let i = 0; i < novas.length; i += LOTE) {
+      if (estourou()) { interrompido = true; break; }
+      const lote = novas.slice(i, i + LOTE).map(linhaPayload);
+      const { error: insErr } = await supabase.from('fin_lancamentos_brutos').insert(lote);
+      if (!insErr) {
+        inseridos += lote.length;
+      } else if (insErr.code === '23505') {
+        // Colisão que a pré-filtragem não pegou (outro upload correndo junto).
+        // Refaz SÓ este lote linha a linha pra não perder as boas.
+        for (const payload of lote) {
+          const { error: e1 } = await supabase.from('fin_lancamentos_brutos').insert(payload);
+          if (e1) { if (e1.code === '23505') duplicados++; }
+          else inseridos++;
+        }
+      } else {
+        throw insErr;
+      }
+
+      // ⚠️ LEI da casa: em operação longa, gravar o efeito DURANTE, não no fim.
+      // Era exatamente isto que faltava — a função morria e o upload ficava
+      // "processando" sem nunca dizer quanto tinha entrado.
+      await supabase.from('fin_uploads')
+        .update({ total_novos: inseridos, total_duplicados: duplicados })
+        .eq('id', uploadRow.id);
+    }
+
+    // Morreu de tempo: fecha com o que entrou e DIZ como retomar. O arquivo é
+    // idempotente por (conta_id, fitid), então subir de novo continua daqui.
+    if (interrompido) {
+      await supabase.from('fin_uploads')
+        .update({
+          total_novos: inseridos,
+          total_duplicados: duplicados,
+          status: 'erro',
+          erro_msg: `Interrompido por tempo: ${inseridos} de ${novas.length} lançamentos novos entraram. `
+            + 'Suba o MESMO arquivo de novo — o que já entrou é reconhecido como duplicado e o import continua de onde parou.',
+          concluido_em: new Date().toISOString(),
+        })
+        .eq('id', uploadRow.id);
+      return res.json({
+        upload_id: uploadRow.id,
+        total, inseridos, duplicados,
+        parcial: true,
+        faltam: novas.length - inseridos,
+        aviso: 'O arquivo é grande e o import parou no meio do caminho. Suba o mesmo arquivo de novo para continuar — nada duplica.',
+        identidade: identidadeStats,
+        periodo: { inicio: parsed.header.dtStart, fim: parsed.header.dtEnd },
+      });
     }
 
     // Roda matching com PIX detalhe (se houver)

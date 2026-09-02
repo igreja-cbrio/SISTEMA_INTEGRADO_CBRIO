@@ -14,6 +14,7 @@
 // no dashboard. Conflito de CPF → identidade_pendencias (via matcher).
 
 const { supabase } = require('../utils/supabase');
+const { nomesPodemSerMesmaPessoa } = require('./duplicidadePolicy');
 const { extractNomeContraparte } = require('./ofxParser');
 const { nomeNormalizado, normalizarCpf, registrarObservacaoSegura } = require('./identidadeProgressiva');
 const { resolverMembroPorDocumento } = require('./financeiroClassificador');
@@ -117,8 +118,36 @@ function escolherCandidato(balNomeNorm, cands) {
     // 2) nome limpo extraído do próprio OFX bate (Itaú traz nome no memo).
     const porNome = cands.filter((c) => c.nome_norm && c.nome_norm === balNomeNorm);
     if (porNome.length === 1) return { cand: porNome[0], via: 'valor_data_nome' };
+
+    // 3) nome PARECIDO — "versão abreviada" do mesmo nome. O balanço guarda o
+    //    nome civil completo e o banco costuma trazer a forma curta (ou o
+    //    contrário), então a igualdade exata deixa passar muita gente.
+    //    ⚠️ A régua é `duplicidadePolicy.nomesPodemSerMesmaPessoa` (mesmo
+    //    PRIMEIRO nome + ≥75% dos tokens do menor) — a mesma que resolveu o
+    //    telefone do voluntário em 13/08. NÃO afrouxar para similaridade solta:
+    //    aqui um acerto errado atribui DINHEIRO à pessoa errada.
+    const parecidos = candidatosParecidos(balNomeNorm, cands);
+    if (parecidos.length === 1) return { cand: parecidos[0], via: 'valor_data_nome_parecido' };
   }
   return null; // ambíguo → revisão
+}
+
+/**
+ * Candidatos cujo nome pode ser a mesma pessoa do balanço.
+ *
+ * ⚠️⚠️ É ISTO que decide se vale PERGUNTAR. Medido em 02/09/2026 no período que
+ * tinha extrato: dos 627 casos que iam para revisão, **428 (68%) não tinham
+ * NENHUM candidato parecido com o nome do balanço** — a tela mostrava, por
+ * exemplo, "Ana Magalhaes da Veiga Ribeiro · R$ 1.000" e oferecia Carlos, Sonia
+ * e Juliana. Não há como um humano responder isso, e qualquer clique atribui a
+ * doação de uma pessoa a outra. Perguntar ali é pior que não perguntar.
+ */
+function candidatosParecidos(balNomeNorm, cands) {
+  if (!balNomeNorm) return [];
+  return (cands || []).filter((c) => {
+    const alvo = c.membro_nome || c.nome_limpo || '';
+    return alvo && nomesPodemSerMesmaPessoa(balNomeNorm, alvo);
+  });
 }
 
 /**
@@ -171,13 +200,27 @@ async function conciliar({ inicio, fim, dryRun = false, userId = null, criarAvul
     if (escolha) {
       paraVincular.push({ transacao_id: b.id, cand: escolha.cand, via: escolha.via });
     } else if (cands.length > 1) {
+      // ⚠️⚠️ SÓ vai pra revisão o que um humano consegue decidir: existe ao menos
+      // um candidato cujo NOME pode ser a mesma pessoa do balanço. Sem isso, a
+      // tela pede uma escolha impossível e induz a atribuir dinheiro à pessoa
+      // errada (ver `candidatosParecidos`). O resto conta como `sem_match` — e é
+      // DECLARADO com motivo próprio, nunca sumindo em silêncio.
+      const parecidos = candidatosParecidos(nomeNorm, cands);
+      if (!parecidos.length) {
+        stats.sem_match++;
+        stats.sem_match_nome_nao_bate = (stats.sem_match_nome_nao_bate || 0) + 1;
+        continue;
+      }
       stats.revisao++;
       if (revisao.length < 500) revisao.push({
         transacao_id: b.id, nome: b.descricao || b.referencia, valor: Number(b.valor), data: String(b.data_competencia).slice(0, 10),
-        candidatos: cands.map((c) => ({
+        // ⚠️ Os PARECIDOS primeiro e marcados: a tela precisa dizer POR QUE
+        // aquele nome está ali, senão o operador escolhe o primeiro da lista.
+        candidatos: [...parecidos, ...cands.filter((c) => !parecidos.includes(c))].map((c) => ({
           bruto_id: c.bruto_id, cpf: c.cpf,
           nome: c.membro_nome || c.nome_limpo || null, // nome do membro (base) > nome do OFX
           ja_membro: !!c.membro_nome, hora: c.hora,
+          nome_parecido: parecidos.includes(c),
         })),
       });
     } else {

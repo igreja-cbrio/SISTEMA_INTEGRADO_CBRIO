@@ -112,8 +112,19 @@ export default function IdentificarDoadores() {
 
       {revisao.length > 0 && (
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, margin: '4px 0 8px' }}>
-            Revisão · escolha qual PIX corresponde a cada doação ({revisao.length})
+          <div style={{ margin: '4px 0 8px' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+              Revisão · escolha qual PIX corresponde a cada doação ({revisao.length})
+            </div>
+            {/* ⚠️ Sem esta frase o operador não sabe o que está decidindo: só
+                chegam aqui os casos em que ALGUM candidato tem nome que pode ser
+                a mesma pessoa. Quando nenhum bate, o caso não é perguntado — vira
+                "sem correspondência", porque escolher ali atribuiria a doação de
+                uma pessoa a outra. */}
+            <div style={{ fontSize: 11.5, color: C.text3, marginTop: 3 }}>
+              Só aparece aqui o que tem candidato com <strong>nome compatível</strong>. Na dúvida,
+              use <strong>Ignorar</strong> — a doação continua no balanço, só fica sem dono.
+            </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             {revisao.map(r => (
@@ -130,6 +141,10 @@ export default function IdentificarDoadores() {
                         {c.nome || 'CPF não cadastrado'}
                       </span>
                       {c.ja_membro && <span style={{ fontSize: 10, fontWeight: 700, color: C.green, background: C.greenBg, padding: '1px 6px', borderRadius: 6 }}>membro</span>}
+                      {/* ⚠️ DIZ por que este candidato está na lista. Sem o selo,
+                          todos parecem igualmente prováveis e o operador escolhe
+                          o primeiro. */}
+                      {c.nome_parecido && <span style={{ fontSize: 10, fontWeight: 700, color: C.primary, background: C.primaryBg, padding: '1px 6px', borderRadius: 6 }}>nome compatível</span>}
                       <span style={{ color: C.text3 }}>CPF {fmtCpf(c.cpf)}{c.hora ? ` · ${String(c.hora).slice(0, 5)}` : ''}</span>
                     </label>
                   ))}
