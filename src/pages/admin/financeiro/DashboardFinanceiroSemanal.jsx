@@ -3998,8 +3998,66 @@ function SaudeResultadoCard({ label, valor, sub, destaque }) {
 // ============================================================
 // SlideDizimoOferta · proporção dízimo/oferta mês a mês
 // ============================================================
+
+// ⚠️ Tooltip "lupa" · pedido do Matheus (02/09/2026): "o tooltip queria que
+// fosse estilo uma lupa". Em vez de listar os valores em corpo 12, ele AMPLIA
+// o ponto sob o cursor: mês em destaque, valores em 20px, anel e sombra para
+// destacar do gráfico atrás.
+//
+// ⚠️ `active` e `payload` chegam nulos entre transições do recharts — sem a
+// guarda o componente estoura no meio do movimento do mouse.
+function TooltipLupa({ active, payload, label }) {
+  if (!active || !Array.isArray(payload) || payload.length === 0) return null;
+  const valor = (chave) => payload.find((p) => p?.dataKey === chave)?.value;
+  const diz = Number(valor('Dízimo') || 0);
+  const of = Number(valor('Oferta') || 0);
+  const pct = valor('pct');
+  const total = diz + of;
+  return (
+    <div
+      style={{
+        background: 'var(--cbrio-card)',
+        border: '2px solid var(--cbrio-border)',
+        borderRadius: 16,
+        padding: '14px 18px',
+        boxShadow: '0 12px 40px rgba(0,0,0,.28)',
+        minWidth: 230,
+      }}
+    >
+      <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 10, letterSpacing: '.02em' }}>{label}</div>
+      <div style={{ display: 'grid', gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 12, color: 'var(--cbrio-text3)' }}>Dízimo</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.primary, lineHeight: 1.15 }}>{fmtMoney(diz)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 12, color: 'var(--cbrio-text3)' }}>Oferta</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: C.blue, lineHeight: 1.15 }}>{fmtMoney(of)}</div>
+        </div>
+        {pct != null && (
+          <div style={{ borderTop: '1px solid var(--cbrio-border)', paddingTop: 8 }}>
+            <div style={{ fontSize: 12, color: 'var(--cbrio-text3)' }}>
+              Total {fmtMoney(total)}
+            </div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: C.purple }}>
+              {Number(pct).toFixed(1)}% dízimo
+            </div>
+          </div>
+        )}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginTop: 10 }}>
+        clique na barra para fixar
+      </div>
+    </div>
+  );
+}
+
 function SlideDizimoOferta() {
   const [filtros] = useFiltrosGlobais();
+  // ⚠️ Mês clicado na barra · pedido do Matheus (02/09/2026): "quero clicar nas
+  // barras e aparecer os dados grandes em cards". O tooltip é passageiro e
+  // pequeno; o card fica na tela e dá pra ler de longe numa reunião.
+  const [mesSel, setMesSel] = useState(null);
   const semExtra = !!filtros.sem_extra;
   const anoAtual = new Date().getFullYear();
   const [ano, setAno] = useState(anoAtual);
@@ -4062,7 +4120,18 @@ function SlideDizimoOferta() {
         ) : (
           <div style={{ width: '100%', height: 340 }}>
             <ResponsiveContainer>
-              <ComposedChart data={formatado} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <ComposedChart
+                data={formatado}
+                margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+                style={{ cursor: 'pointer' }}
+                // ⚠️ Clicar de novo no mesmo mês FECHA — sem isso o card fica
+                // preso e a pessoa procura um X que não existe.
+                onClick={(e) => {
+                  const l = e?.activeLabel;
+                  if (!l) return;
+                  setMesSel((atual) => (atual === l ? null : l));
+                }}
+              >
                 <defs>
                   <linearGradient id="gradDiz" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={C.primary} stopOpacity={0.95} />
@@ -4074,16 +4143,18 @@ function SlideDizimoOferta() {
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                <YAxis yAxisId="left" tick={{ fontSize: 10 }} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
-                <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}%`} />
-                <Tooltip
-                  formatter={(v, n) => n === '% dízimo' ? [`${Number(v).toFixed(1)}%`, n] : [fmtMoney(v), n]}
-                  contentStyle={{ borderRadius: 10, fontSize: 12, border: '1px solid var(--cbrio-border)' }}
-                />
+                {/* Fontes dos eixos e da legenda subidas a pedido do Matheus
+                    (02/09/2026) — 10/11px era ilegível de longe. */}
+                <XAxis dataKey="label" tick={{ fontSize: 13 }} />
+                <YAxis yAxisId="left" tick={{ fontSize: 12 }} width={64} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                <YAxis yAxisId="right" orientation="right" domain={[0, 100]} tick={{ fontSize: 12 }} tickFormatter={(v) => `${v}%`} />
+                {/* ⚠️ Tooltip "lupa" (pedido do Matheus): ele AMPLIA o ponto em vez
+                    de listar em corpo 12. Valores em 20px, rótulo do mês em
+                    destaque e anel para separar do gráfico atrás. */}
+                <Tooltip cursor={{ fill: 'var(--cbrio-text)', fillOpacity: 0.06 }} content={<TooltipLupa />} />
                 <Legend
-                  wrapperStyle={{ fontSize: 11 }}
-                  iconSize={10}
+                  wrapperStyle={{ fontSize: 13 }}
+                  iconSize={12}
                   payload={[
                     { value: 'Dízimo', type: 'square', id: 'Dízimo', color: C.primary },
                     { value: 'Oferta', type: 'square', id: 'Oferta', color: C.blue },
@@ -4097,6 +4168,47 @@ function SlideDizimoOferta() {
             </ResponsiveContainer>
           </div>
         )}
+
+        {/* ⚠️ Cards GRANDES do mês clicado (pedido do Matheus). Ficam abaixo do
+            gráfico e só aparecem depois do clique — sempre visíveis, ocupariam
+            a tela sem ninguém ter pedido. Clicar de novo na mesma barra fecha. */}
+        {mesSel && (() => {
+          const m = formatado.find((x) => x.label === mesSel);
+          if (!m) return null;
+          const total = m['Dízimo'] + m.Oferta;
+          const cards = [
+            { rotulo: 'Dízimo', valor: fmtMoney(m['Dízimo']), cor: C.primary },
+            { rotulo: 'Oferta', valor: fmtMoney(m.Oferta), cor: C.blue },
+            { rotulo: 'Total do mês', valor: fmtMoney(total), cor: 'var(--cbrio-text)' },
+            { rotulo: '% dízimo', valor: `${Number(m.pct || 0).toFixed(1)}%`, cor: C.purple },
+          ];
+          return (
+            <div style={{ marginTop: 18, borderTop: '1px solid var(--cbrio-border)', paddingTop: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>{mesSel} · {ano}</div>
+                <button
+                  onClick={() => setMesSel(null)}
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                >
+                  fechar
+                </button>
+              </div>
+              <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+                {cards.map((c) => (
+                  <div key={c.rotulo} style={{
+                    padding: '16px 18px', borderRadius: 14,
+                    border: '1px solid var(--cbrio-border)', background: 'var(--cbrio-card)',
+                  }}>
+                    <div style={{ fontSize: 12.5, color: 'var(--cbrio-text3)', marginBottom: 6 }}>{c.rotulo}</div>
+                    <div style={{ fontSize: 28, fontWeight: 800, color: c.cor, lineHeight: 1.1, letterSpacing: '-.02em' }}>
+                      {c.valor}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
       </CardContent>
     </Card>
   );
