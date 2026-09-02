@@ -1,6 +1,7 @@
 // Rotas REST de integração com Santander Open APIs
 // Saldo + extrato (bank_account_information v1) + comprovantes (consult_payment_receipts v2)
 const router = require('express').Router();
+const { extrairDocumentoDoMemo } = require('../utils/documentoBr');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const {
@@ -934,10 +935,9 @@ router.post('/sync-extrato-fila', authorizeModule('santander', 3), async (req, r
       let doc = t.partieDocumentNumber || null;
       const memo = t.transactionName || '';
       if (!doc) {
-        const cnpjM = memo.match(/\d{14}/);
-        const cpfM = memo.match(/\d{11}/);
-        if (cnpjM) doc = cnpjM[0];
-        else if (cpfM) doc = cpfM[0];
+        // ⚠️ Régua ÚNICA em utils/documentoBr: colapsar o memo em dígitos colava
+        // a data no CPF e fabricava CNPJ inexistente (5.921 casos num extrato só).
+        doc = extrairDocumentoDoMemo(memo)?.documento || null;
       }
       const { error } = await supabase.from('fin_lancamentos_brutos').insert({
         fonte: 'santander_api', conta_id: contaLocal.id,
@@ -1033,10 +1033,9 @@ router.post('/importar-historico', authorizeModule('santander', 3), async (req, 
       let doc = t.partieDocumentNumber || null;
       const memo = t.transactionName || '';
       if (!doc) {
-        const cnpjM = memo.match(/\d{14}/);
-        const cpfM = memo.match(/\d{11}/);
-        if (cnpjM) doc = cnpjM[0];
-        else if (cpfM) doc = cpfM[0];
+        // ⚠️ Régua ÚNICA em utils/documentoBr: colapsar o memo em dígitos colava
+        // a data no CPF e fabricava CNPJ inexistente (5.921 casos num extrato só).
+        doc = extrairDocumentoDoMemo(memo)?.documento || null;
       }
       const { error } = await supabase.from('fin_lancamentos_brutos').insert({
         fonte: 'santander_api', conta_id: contaLocal.id,

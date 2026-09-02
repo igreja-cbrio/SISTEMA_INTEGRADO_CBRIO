@@ -125,7 +125,14 @@ function escolherCandidato(balNomeNorm, cands) {
  * Roda a conciliação num período. dryRun=true não grava nada (só relatório).
  * @returns { stats, revisao? }
  */
-async function conciliar({ inicio, fim, dryRun = false, userId = null } = {}) {
+// ⚠️⚠️ `criarAvulso` nasce FALSE — e isto é decisão, não descuido. Esta função
+// roda AUTOMATICAMENTE no fim de todo upload de OFX (`financeiroV2.js`), sobre o
+// período inteiro do arquivo. Enquanto o parser estava quebrado ela quase nunca
+// achava CPF; consertado o parser (02/09/2026), um extrato de 90 dias entrega
+// 1.948 CPFs distintos COM nome — e com o default antigo o upload cadastraria
+// centenas de pessoas de uma vez, sem ninguém decidir. Ligar quem já existe é
+// ganho puro; cadastrar é decisão humana depois de ver o número.
+async function conciliar({ inicio, fim, dryRun = false, userId = null, criarAvulso = false } = {}) {
   if (!inicio || !fim) throw new Error('inicio e fim são obrigatórios');
 
   const porVD = await indexarOfx(inicio, fim);
@@ -181,13 +188,13 @@ async function conciliar({ inicio, fim, dryRun = false, userId = null } = {}) {
 
   if (dryRun) return { stats, revisao };
 
-  // Resolve membro por CPF ÚNICO (dedup) — cria contribuinte_avulso p/ novo.
+  // Resolve membro por CPF ÚNICO (dedup). Cadastra só se `criarAvulso` — ver o topo.
   const cpfsUnicos = [...new Set(paraVincular.map((p) => p.cand.documento))];
   const membroPorDoc = new Map();
   await mapLimit(cpfsUnicos, 8, async (doc) => {
     const cand = paraVincular.find((p) => p.cand.documento === doc)?.cand;
     try {
-      const r = await resolverMembroPorDocumento(doc, cand?.nome_limpo || null, { criarSemNome: false });
+      const r = await resolverMembroPorDocumento(doc, cand?.nome_limpo || null, { criarSemNome: false, criar: criarAvulso });
       if (r?.membro_id) {
         membroPorDoc.set(doc, r.membro_id);
         if (r.criado_novo) stats.avulsos_criados++;

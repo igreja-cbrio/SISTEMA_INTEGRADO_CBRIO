@@ -347,7 +347,11 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
     let identidadeStats = null;
     let mapaDoc = new Map();
     try {
-      const r = await vincularIdentidadeOfx(parsed.transactions, { criarAvulso: true });
+      // ⚠️ `false`: o upload LIGA no cadastro que já existe e NÃO cadastra
+      // ninguém. O CPF observado fica em `mem_identidade_observacoes`, então
+      // nada se perde — no dia em que a pessoa entrar por qualquer porta, o
+      // matcher a encontra. Ver o topo de `conciliacaoBalancoOfx.conciliar`.
+      const r = await vincularIdentidadeOfx(parsed.transactions, { criarAvulso: false });
       mapaDoc = r.mapaDoc;
       identidadeStats = r.stats;
     } catch (e) {
@@ -4092,9 +4096,16 @@ router.delete('/contas-pagar/:id/tornar-recorrente', async (req, res) => {
 // ════════════════════════════════════════════════════════════════════
 router.post('/conciliar-balanco-ofx', authorizeModule('financeiro', 4), async (req, res) => {
   try {
-    const { inicio, fim, dry_run } = req.body || {};
+    const { inicio, fim, dry_run, criar_avulso } = req.body || {};
     if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim são obrigatórios (YYYY-MM-DD)' });
-    const r = await conciliacaoOfx.conciliar({ inicio, fim, dryRun: !!dry_run, userId: req.user.userId });
+    // ⚠️ Cadastrar quem ainda não existe é ATO EXPLÍCITO, e só por aqui (nível 4).
+    // O upload de OFX nunca cadastra — ele liga no que já existe. `=== true`
+    // (fail-closed): `'false'`, `1` ou objeto de um cliente distraído não podem
+    // valer como decisão de criar centenas de pessoas.
+    const r = await conciliacaoOfx.conciliar({
+      inicio, fim, dryRun: !!dry_run, userId: req.user.userId,
+      criarAvulso: criar_avulso === true,
+    });
     res.json(r);
   } catch (e) {
     console.error('[FIN-V2] conciliar balanco×ofx:', e.message);
