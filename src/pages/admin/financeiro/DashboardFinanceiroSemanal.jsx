@@ -4,7 +4,7 @@ import { motion, AnimatePresence, useSpring, useTransform, animate } from 'frame
 import {
   ChevronLeft, ChevronRight, TrendingUp, TrendingDown, Users, Banknote,
   Sparkles, ArrowUp, ArrowDown, Minus, Award, Calendar,
-  BarChart3, Activity, Target, FileText, Loader2, Filter, X, MousePointer2,
+  BarChart3, Activity, Target, FileText, Loader2, Filter, X, MousePointer2, CalendarDays,
 } from 'lucide-react';
 import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -176,6 +176,10 @@ const SLIDES = [
   { key: 'saude',        label: 'Saúde',          icon: Activity,   desc: 'Resultado · folha · concentração de doadores' },
   { key: 'comparativos', label: 'Comparativos',   icon: BarChart3,  desc: 'YTD · YoY · decêndio' },
   { key: 'dizimo_oferta',label: 'Dízimo×Oferta',  icon: TrendingUp, desc: 'Proporção da base de contribuição' },
+  // ⚠️ ACRESCENTADA, não substitui a Saúde — decisão do Matheus em 02/09/2026.
+  // Trocar apagaria resultado do mês/YTD/12 meses, folha e concentração de
+  // doadores, que não têm outra tela.
+  { key: 'quinta_semana', label: '5ª semana',     icon: CalendarDays, desc: 'Meses com 5 semanas · as 5ªs comparadas entre si' },
   // Bloco 3 · despesa + futuro
   { key: 'controle',     label: 'Saídas',         icon: Target,     desc: 'Despesas detalhadas · drilldown' },
   { key: 'metas',        label: 'Metas',          icon: Award,      desc: 'Alvos financeiros com filtros' },
@@ -369,6 +373,7 @@ export default function DashboardSemanal() {
             />
           )}
           {slides[slide].key === 'dizimo_oferta' && <SlideDizimoOferta />}
+          {slides[slide].key === 'quinta_semana' && <SlideQuintaSemana />}
           {slides[slide].key === 'controle' && (
             <Slide5Controle
               saidas={saidas}
@@ -4049,6 +4054,135 @@ function TooltipLupa({ active, payload, label }) {
         clique na barra para fixar
       </div>
     </div>
+  );
+}
+
+
+// ⚠️ Aba "5ª semana" · pedido do Matheus (02/09/2026): "comparar as quintas
+// semanas de cada mês que tem cinco semanas". Ele escolheu, entre três
+// leituras, comparar AS 5ªs ENTRE SI.
+//
+// ⚠️⚠️ A extraordinária vai SEPARADA por medição, não por gosto: a 5ª de
+// julho/26 teve R$ 2.439.594 dos quais R$ 2.096.222 são extraordinária.
+// Somada, ela vira uma barra gigante e as outras (~R$ 300-570 mil) somem.
+function SlideQuintaSemana() {
+  const [filtros] = useFiltrosGlobais();
+  const semExtra = !!filtros.sem_extra;
+  const [anos, setAnos] = useState(4);
+  const [dados, setDados] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let vivo = true;
+    setLoading(true);
+    financeiroV2.quintasSemanas(anos, semExtra)
+      .then(d => { if (vivo) setDados(d); })
+      .catch(() => { if (vivo) setDados({ erro: true }); })
+      .finally(() => { if (vivo) setLoading(false); });
+    return () => { vivo = false; };
+  }, [anos, semExtra]);
+
+  const quintas = dados?.quintas || [];
+  const fechadas = quintas.filter(q => q.fechada);
+  // Só as fechadas vão pro gráfico — barra de altura zero para semana que não
+  // aconteceu se lê como "arrecadou nada", que é outra afirmação.
+  const serie = fechadas.map(q => ({
+    label: q.rotulo,
+    Receita: Number(q.receita || 0),
+    Extraordinária: Number(q.extraordinaria || 0),
+  }));
+  const media = dados?.media;
+  const melhor = fechadas.reduce((a, b) => (!a || b.receita > a.receita ? b : a), null);
+
+  return (
+    <Card className="relative overflow-hidden">
+      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500 to-rose-500" />
+      <CardContent className="pt-6">
+        <div className="flex items-start justify-between flex-wrap gap-3 mb-4">
+          <div>
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              <CalendarDays className="h-4 w-4 text-primary" />
+              5ª semana · meses com 5 semanas
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              A semana financeira é <strong>quarta a terça</strong>, então alguns meses têm cinco.
+              Aqui elas são comparadas <strong>entre si</strong>
+              {semExtra ? ' · sem as extraordinárias' : ' · incluindo as extraordinárias'}.
+            </p>
+          </div>
+          <div className="flex gap-1">
+            {[2, 4, 6].map(a => (
+              <button key={a} onClick={() => setAnos(a)}
+                className={`px-2.5 py-1 text-xs rounded-md font-medium transition ${anos === a ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}>
+                {a} anos
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loading && !dados ? (
+          <div className="py-16 flex justify-center"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : dados?.erro ? (
+          // ⚠️ Erro NUNCA se disfarça de "não há 5ª semana".
+          <div className="py-12 text-center text-sm text-amber-600">
+            Não foi possível carregar as quintas semanas.
+          </div>
+        ) : fechadas.length === 0 ? (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            Nenhuma 5ª semana fechada no período.
+          </div>
+        ) : (
+          <>
+            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', marginBottom: 18 }}>
+              <div style={{ padding: '16px 18px', borderRadius: 14, border: '1px solid var(--cbrio-border)' }}>
+                <div style={{ fontSize: 12.5, color: 'var(--cbrio-text3)', marginBottom: 6 }}>Média das 5ªs semanas</div>
+                <div style={{ fontSize: 26, fontWeight: 800, lineHeight: 1.1 }}>{media == null ? '—' : fmtMoney(media)}</div>
+                <div style={{ fontSize: 11.5, color: 'var(--cbrio-text3)', marginTop: 4 }}>{fechadas.length} semana(s) fechada(s)</div>
+              </div>
+              {melhor && (
+                <div style={{ padding: '16px 18px', borderRadius: 14, border: '1px solid var(--cbrio-border)' }}>
+                  <div style={{ fontSize: 12.5, color: 'var(--cbrio-text3)', marginBottom: 6 }}>Maior 5ª semana</div>
+                  <div style={{ fontSize: 26, fontWeight: 800, color: C.primary, lineHeight: 1.1 }}>{fmtMoney(melhor.receita)}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--cbrio-text3)', marginTop: 4 }}>{melhor.rotulo}</div>
+                </div>
+              )}
+              {dados?.abertas > 0 && (
+                <div style={{ padding: '16px 18px', borderRadius: 14, border: '1px solid var(--cbrio-border)' }}>
+                  <div style={{ fontSize: 12.5, color: 'var(--cbrio-text3)', marginBottom: 6 }}>Ainda não fecharam</div>
+                  <div style={{ fontSize: 26, fontWeight: 800, color: 'var(--cbrio-text3)', lineHeight: 1.1 }}>{dados.abertas}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--cbrio-text3)', marginTop: 4 }}>fora da média, de propósito</div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ width: '100%', height: 300 }}>
+              <ResponsiveContainer>
+                <BarChart data={serie} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
+                  <XAxis dataKey="label" tick={{ fontSize: 13 }} />
+                  <YAxis tick={{ fontSize: 12 }} width={64} tickFormatter={(v) => fmtCompact(v).replace('R$ ', '')} />
+                  <Tooltip
+                    formatter={(v, n) => [fmtMoney(v), n]}
+                    contentStyle={{ borderRadius: 12, fontSize: 13, border: '1px solid var(--cbrio-border)' }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 13 }} iconSize={12} />
+                  <Bar dataKey="Receita" fill={C.primary} radius={[6, 6, 0, 0]} />
+                  {/* ⚠️ Barra separada — nunca empilhada dentro da receita. */}
+                  <Bar dataKey="Extraordinária" fill={C.amber} radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            {dados?.abertas > 0 && (
+              <p className="text-xs text-muted-foreground mt-3">
+                ⚠️ {dados.abertas} quinta(s) semana(s) ainda não terminaram e ficam fora do gráfico e da média —
+                mostrá-las como zero diria que não se arrecadou nada.
+              </p>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -3751,6 +3751,90 @@ router.get('/doador/transacoes', async (req, res) => {
 // ====================================================================
 // DÍZIMO VS OFERTA mensal · 2026-05-29
 // ====================================================================
+// ════════════════════════════════════════════════════════════════════════════
+//  GET /financeiro-v2/quintas-semanas?anos=4&sem_extra=1
+//
+//  Compara as QUINTAS semanas entre si. Pedido do Matheus (02/09/2026), que
+//  escolheu esta leitura entre três: "comparar as quintas semanas de cada mês
+//  que tem cinco semanas".
+//
+//  ⚠️ A semana financeira é QUARTA→TERÇA (lei do projeto · `fin_semana_qua_ter`),
+//  então "mês com 5 semanas" = mês em que caem 5 inícios de semana. Em 2026
+//  são quatro: abril, julho, setembro e dezembro.
+//
+//  ⚠️⚠️ A RECEITA EXTRAORDINÁRIA VAI SEPARADA, e isso não é enfeite: medido em
+//  02/09/2026, a 5ª semana de julho/26 teve R$ 2.439.594 dos quais
+//  R$ 2.096.222 são extraordinária. Somada, ela esmaga as outras (~R$ 300-570
+//  mil) e o gráfico vira uma barra gigante com sete formiguinhas. O toggle
+//  global "Sem extraordinárias" continua mandando (`sem_extra`).
+//
+//  ⚠️ Semana que AINDA NÃO ACONTECEU volta com `fechada: false` e receita
+//  `null` — nunca 0. "Não aconteceu" e "arrecadou zero" são coisas diferentes,
+//  e as 5ªs de 30/09 e 30/12 de 2026 estão nesse estado hoje.
+// ════════════════════════════════════════════════════════════════════════════
+router.get('/quintas-semanas', async (req, res) => {
+  try {
+    const anos = Math.min(Math.max(parseInt(req.query.anos, 10) || 4, 1), 10);
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const desde = `${new Date().getFullYear() - anos + 1}-01-01`;
+
+    const { data, error } = await supabase
+      .from('vw_fin_semana_resumo')
+      .select('semana_inicio, semana_fim, semana_label, receita_total, receita_extraordinaria, total_presencial, qtd_cultos')
+      .gte('semana_inicio', desde)
+      .order('semana_inicio', { ascending: true });
+    if (error) throw error;
+
+    // Agrupa por mês do INÍCIO da semana e marca a 5ª.
+    const porMes = new Map();
+    for (const r of data || []) {
+      const mes = String(r.semana_inicio).slice(0, 7);
+      if (!porMes.has(mes)) porMes.set(mes, []);
+      porMes.get(mes).push(r);
+    }
+
+    const hoje = new Date().toISOString().slice(0, 10);
+    const MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+    const quintas = [];
+    for (const [mes, semanas] of porMes) {
+      if (semanas.length < 5) continue;
+      const q = semanas[4];
+      const extra = Number(q.receita_extraordinaria || 0);
+      const bruto = Number(q.receita_total || 0);
+      // ⚠️ `fechada` olha o FIM da semana: a 5ª de setembro começa em 30/09 e
+      // só termina em 06/10 — enquanto não terminar, o número está incompleto.
+      const fechada = String(q.semana_fim) < hoje;
+      quintas.push({
+        mes,
+        rotulo: `${MES[Number(mes.slice(5, 7)) - 1]}/${mes.slice(2, 4)}`,
+        semana_inicio: q.semana_inicio,
+        semana_fim: q.semana_fim,
+        fechada,
+        // ⚠️ null quando não fechou — nunca 0.
+        receita: fechada ? (semExtra ? bruto - extra : bruto) : null,
+        extraordinaria: fechada ? extra : null,
+        presencial: fechada ? Number(q.total_presencial || 0) : null,
+        cultos: Number(q.qtd_cultos || 0),
+      });
+    }
+
+    const fechadas = quintas.filter((q) => q.fechada);
+    const soma = fechadas.reduce((s, q) => s + q.receita, 0);
+    res.json({
+      quintas,
+      sem_extra: semExtra,
+      // ⚠️ A média só conta semana FECHADA — incluir as que não aconteceram
+      // puxaria a média para baixo e ninguém entenderia por quê.
+      media: fechadas.length ? soma / fechadas.length : null,
+      fechadas: fechadas.length,
+      abertas: quintas.length - fechadas.length,
+    });
+  } catch (e) {
+    console.error('[FIN-V2] quintas-semanas:', e);
+    res.status(500).json({ error: 'Erro ao carregar as quintas semanas' });
+  }
+});
+
 router.get('/dizimo-oferta', async (req, res) => {
   try {
     const ano = Number(req.query.ano) || new Date().getFullYear();
