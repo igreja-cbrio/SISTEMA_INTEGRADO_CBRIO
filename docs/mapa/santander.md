@@ -53,6 +53,7 @@ Guard: `authorizeModule('santander', 3 | padrão)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/documentoBr.js`
 - `backend/utils/supabase.js`
 
 **Serviços**

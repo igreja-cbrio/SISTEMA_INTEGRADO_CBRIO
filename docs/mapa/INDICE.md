@@ -65,7 +65,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **143** arquivos, **133** com teste.
+`backend/utils/` tem **144** arquivos, **134** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -128,6 +128,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/divisorMandala.js` | `src/test/divisorMandala.test.ts` |
 | `backend/utils/doacaoPrefill.js` | `src/test/doacaoPrefill.test.ts` |
 | `backend/utils/doacaoToken.js` | `src/test/doacaoPrefill.test.ts` |
+| `backend/utils/documentoBr.js` | `src/test/documentoBr.test.ts` |
 | `backend/utils/dsOnline.js` | `src/test/dsOnline.test.ts` |
 | `backend/utils/entradaGrupoApp.js` | `src/test/entradaGrupoApp.test.ts` |
 | `backend/utils/escalaLinhaEquipe.js` | `src/test/escalaLinhaEquipe.test.ts` |

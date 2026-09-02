@@ -210,6 +210,7 @@ Guard: `authorizeModule('financeiro', 3 | 4 | 5 | padrão)`
 - `backend/utils/cronAuth.js`
 - `backend/utils/decendioComparativo.js`
 - `backend/utils/digitoCampanha.js`
+- `backend/utils/documentoBr.js`
 - `backend/utils/pagination.js`
 - `backend/utils/periodoDoacoes.js`
 - `backend/utils/supabase.js`
