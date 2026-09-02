@@ -9,6 +9,7 @@ const { registrarPedidoCuidado } = require('../services/cuidadosPedidos');
 const { podeVerFinanceiroDePessoa } = require('../utils/dadosSensiveisPessoa');
 const { resolverJanelaPeriodo } = require('../utils/janelaPeriodo');
 const jt = require('../utils/jornadaTempo');
+const reg = require('../utils/origemRegistro');
 const { carregarSinaisConvertidos } = require('../services/marcosConvertido');
 
 router.use(authenticate);
@@ -1980,7 +1981,7 @@ router.get('/jornada-convertidos', async (req, res) => {
 
     const convertidos = await fetchAll(
       'cui_convertidos',
-      'id, nome, telefone, cpf, membro_id, data_culto, culto_id, area, primeiro_contato_em, primeiro_contato_status, encontro_status, encontro_responsavel_nome',
+      'id, nome, telefone, cpf, membro_id, data_culto, culto_id, area, created_at, primeiro_contato_em, primeiro_contato_status, encontro_status, encontro_responsavel_nome',
       (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; },
     );
 
@@ -2003,6 +2004,34 @@ router.get('/jornada-convertidos', async (req, res) => {
       for (const c of cs || []) {
         cultoPorId.set(c.id, { data: c.data, nome: c.vol_service_types?.name || 'Culto' });
       }
+    }
+
+    const agoraMs = Date.now();
+    // ── Quando o registro entrou, e por quem (pedido do Matheus · 02/09/2026) ──
+    // ⚠️⚠️ `cui_convertidos.created_at` É o instante do registro: medido em
+    // produção, ele bate com `cultos_decisoes_pessoas.registrado_em` ao SEGUNDO
+    // (o trigger copia). O que falta ali é a FONTE — e é ela que decide se o
+    // carimbo é "a pessoa preencheu" ou "a equipe lançou por ela".
+    //
+    // ⚠️ Não há FK entre as duas tabelas, então o casamento é por (culto, 8
+    // últimos dígitos do telefone). É BEST-EFFORT de propósito: quem não casar
+    // cai no rótulo NEUTRO ("Registrado"), que é verdade em qualquer caso —
+    // nunca em "Preencheu", que seria afirmar autoria sem base.
+    const fontePorChave = new Map();
+    try {
+      const chave = (cultoId, tel) => `${cultoId || ''}|${String(tel || '').replace(/\D/g, '').slice(-8)}`;
+      for (let i = 0; i < cultoIds.length; i += 200) {
+        const { data: decs, error: eDec } = await supabase
+          .from('cultos_decisoes_pessoas')
+          .select('culto_id, telefone, fonte')
+          .in('culto_id', cultoIds.slice(i, i + 200))
+          .is('deleted_at', null);
+        if (eDec) throw eDec;
+        for (const d of decs || []) fontePorChave.set(chave(d.culto_id, d.telefone), d.fonte);
+      }
+    } catch (e) {
+      // Falhar aqui NÃO derruba a lista: sem fonte, todo mundo vira "Registrado".
+      console.warn('[cuidados/jornada] fonte da decisão:', e.message);
     }
 
     // ⚠️ RÉGUA ÚNICA com o gráfico do /cuidados (services/marcosConvertido):
@@ -2042,6 +2071,12 @@ router.get('/jornada-convertidos', async (req, res) => {
       return {
         id: c.id, nome: c.nome, telefone: c.telefone, area: c.area, data_culto: c.data_culto,
         dias_desde_conversao: ddesde, membro_id: c.membro_id,
+        registro: reg.textoRegistro({
+          registradoEm: c.created_at,
+          fonte: fontePorChave.get(`${c.culto_id || ''}|${String(c.telefone || '').replace(/\D/g, '').slice(-8)}`),
+          dataCulto: c.data_culto,
+          agora: agoraMs,
+        }),
         encontro_responsavel_nome: c.encontro_responsavel_nome,
         origem_replay: origemReplay,
         culto_origem: origemReplay
