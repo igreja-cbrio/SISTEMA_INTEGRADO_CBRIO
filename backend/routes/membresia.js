@@ -2634,14 +2634,21 @@ router.post('/totem/novo-convertido', async (req, res) => {
     let membroId = null;
     let jaRegistrado = false;
     {
+      // ⚠️⚠️ A coluna é `registrado_em` — cultos_decisoes_pessoas NÃO TEM
+      // created_at. A 1ª versão usava created_at e o PostgREST recusava a query
+      // INTEIRA (42703) com o `error` descartado: o dedup nunca funcionou e
+      // ninguém viu (achado na auditoria do teste do Marcus Joao, 02/09 — a
+      // lição de sempre: conferir o error, não a contagem). Por isso o error
+      // agora é LOGADO — dedup mudo de novo tem que aparecer.
       const inicioDiaUtc = new Date(culto.data + 'T00:00:00-03:00').toISOString();
-      const { data: jaHoje } = await supabase.from('cultos_decisoes_pessoas')
+      const { data: jaHoje, error: eDedup } = await supabase.from('cultos_decisoes_pessoas')
         .select('id, membro_id')
         .eq('telefone', telefone)
-        .gte('created_at', inicioDiaUtc)
+        .gte('registrado_em', inicioDiaUtc)
         .is('deleted_at', null)
-        .order('created_at', { ascending: false })
+        .order('registrado_em', { ascending: false })
         .limit(1).maybeSingle();
+      if (eDedup) console.error('[TOTEM novo-convertido] dedup falhou (segue sem):', eDedup.message);
       if (jaHoje) { decisaoId = jaHoje.id; membroId = jaHoje.membro_id || null; jaRegistrado = true; }
     }
 

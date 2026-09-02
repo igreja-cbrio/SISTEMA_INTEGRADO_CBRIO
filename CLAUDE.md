@@ -14708,6 +14708,20 @@ rodadas do mesmo dia); a pessoa já **solicita inscrição** nas portas comuns; 
 operação é **ASSISTIDA** — tela 1 (dados) e 2 (portas) são da pessoa, a tela 3
 é da equipe (Marcelo define quem contata e confirma).
 
+⚠️⚠️ **Testado ponta a ponta em produção (02/09, teste "Marcus Joao" do Marcos —
+removido com backup em `Downloads\_bk_20260902_teste_marcus_joao_totem.json`)**:
+decisão→matcher→cui→NSM→trilha→consentimentos→encaminhamento c/ bairro→
+notificações (Natasha + Marcelo/Wesley) tudo ✓ · fila de WhatsApp vazia
+(interruptor desligado funcionando) ✓. **O teste achou um bug real**: o dedup de
+quiosque filtrava por `created_at`, e **`cultos_decisoes_pessoas` NÃO TEM
+created_at — a coluna é `registrado_em`** (o PostgREST recusava a query inteira
+com o error descartado; corrigido em 02/09, com o error logado). Ajustes do
+mesmo dia: atalho **"Moro fora do Rio de Janeiro"** no campo de bairro (quem é
+do online pode ser de qualquer lugar; vira valor literal — no mapa do Perfil a
+equipe pode marcá-lo como `ignorar`) e o **BirthDatePicker forçado campo BRANCO
++ texto PRETO** (o `<input>` interno usa `bg-background`, que no tema claro é
+branco, e herdava o text-white do fluxo → branco no branco).
+
 ⚠️⚠️ **GRUPOS funciona como o direcionamento do Next** (3ª rodada · Marcos):
 a pessoa **NÃO escolhe grupo** — sinaliza o interesse, e quem vincula é a
 coordenação de Grupos, por BAIRRO (daí o bairro obrigatório na tela 1). O

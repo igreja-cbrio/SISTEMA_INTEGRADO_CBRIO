@@ -1727,12 +1727,30 @@ function NovoConvertidoFlow({ onExit, onActivity }: { onExit: () => void; onActi
                 placeholder="Digite ou escolha o bairro"
                 className={inputCls}
               />
+              {/* Quem assiste online pode ser de qualquer lugar (pedido do
+                  Marcos · 02/09): atalho de um toque pra quem não é do Rio.
+                  Qualquer outra cidade/bairro segue valendo digitado livre. */}
+              <button
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, bairro: f.bairro === 'Fora do Rio de Janeiro' ? '' : 'Fora do Rio de Janeiro' }))}
+                className={`mt-2 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                  form.bairro === 'Fora do Rio de Janeiro'
+                    ? 'border-[#EC4899] bg-[#EC4899]/20 text-white'
+                    : 'border-white/15 bg-white/5 text-white/60 hover:bg-white/10'
+                }`}
+              >
+                Moro fora do Rio de Janeiro
+              </button>
             </div>
             <div>
               <p className="text-white/40 text-xs mb-1.5">Data de nascimento <span className="text-white/25">(se quiser)</span></p>
+              {/* ⚠️ O <input> interno do BirthDatePicker usa `bg-background` (BRANCO
+                  no tema claro) e herdava o text-white do estilo do fluxo →
+                  branco no branco (reporte do Marcos · 02/09). Campo forçado
+                  BRANCO com texto PRETO, independente do tema do navegador. */}
               <BirthDatePicker value={form.data_nascimento}
                 onChange={(v) => setForm((f) => ({ ...f, data_nascimento: v }))}
-                className={`${inputCls} [color-scheme:dark]`} />
+                className="w-full [&>input]:h-[52px] [&>input]:rounded-2xl [&>input]:bg-white [&>input]:text-gray-900 [&>input]:placeholder:text-gray-400 [&>input]:border-white/20 [&>input]:px-4 [&>input]:text-base" />
             </div>
             <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/5 p-3.5 cursor-pointer">
               <input type="checkbox" checked={aceiteLgpd} onChange={(e) => setAceiteLgpd(e.target.checked)}
