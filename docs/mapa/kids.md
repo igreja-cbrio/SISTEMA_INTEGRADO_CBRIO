@@ -33,7 +33,7 @@
 ## Backend
 - `backend/routes/totemKids.js`
 Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
-<details><summary>Endpoints (119)</summary>
+<details><summary>Endpoints (120)</summary>
 - `DELETE /api/totem-kids/apresentacoes/:id`
 - `DELETE /api/totem-kids/atendimentos/:id`
 - `DELETE /api/totem-kids/ausentes/:criancaId/contato`
@@ -118,6 +118,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `POST /api/totem-kids/checkin/:id/reabrir`
 - `POST /api/totem-kids/checkin/lote`
 - `POST /api/totem-kids/checkout`
+- `POST /api/totem-kids/codigos-reservados`
 - `POST /api/totem-kids/criancas`
 - `POST /api/totem-kids/criancas/:id/atendimentos`
 - `POST /api/totem-kids/criancas/:id/foto`
@@ -184,6 +185,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `cultos_decisoes_pessoas`
 - `kids_atendimentos`
 - `kids_checkins`
+- `kids_codigos_reservados`
 - `kids_conversoes_import`
 - `kids_criancas`
 - `kids_estoque`
@@ -223,6 +225,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `app_soft_delete`
 - `fn_kids_ausentes_consecutivos`
 - `fn_kids_gerar_codigo_seguranca`
+- `fn_kids_reservar_codigos`
 - `fn_registrar_contato`
 - `merge_kids_criancas`
 
