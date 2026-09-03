@@ -126,12 +126,80 @@ endpoint novo nasce coberto por definição. A régua de nível é pura e mora e
 `backend/utils/nextGuardNivel.js` (porta que decide acesso não fica solta na
 tela — mesma lei do `integracaoAbas.ts`). Testes: `src/test/nextGuardNivel.test.ts`.
 
-⚠️ **Consumidor de fora que degrada de propósito:** `src/pages/Nps.jsx:1165`
-chama `nextApi.turmas.list()` só pra resolver nome de turma no seletor, e já
-tinha `.catch()` com fallback "Turma (sem nome)". Quem tem `nps` sem `next`/
-`integracao` passa a cair no fallback — a página do NPS segue funcionando.
+⚠️ **Consumidor de fora:** `src/pages/Nps.jsx` chamava `nextApi.turmas.list()` só
+pra resolver nome de turma no seletor. **Já foi CONSERTADO na mesma data** — ver a
+seção seguinte; não "degrada de propósito" mais.
 Os fluxos públicos (`/api/public/next/*`: inscrição, direcionar por token,
 check-in do totem, walk-in) são **outro router** e não foram tocados.
+
+## ⚠️ O NPS resolve o nome da turma sozinho · e o CRLF que fazia teste do Kids mentir (2026-09-03 · SEM migration)
+
+Fallout do guard acima, mais um achado de ambiente que apareceu ao rodar o gate.
+
+### 1 · O nome da turma passou a vir COM as respostas
+
+A tela do NPS resolvia `turma_id → nome` com um **2º request** pra
+`next.turmas.list()` (`GET /api/next/turmas`). Com o guard do `/api/next`, esse
+request passou a exigir `next` ou `integracao` — e quem cuida do NPS sem ser do
+Next caía no fallback **"Turma (sem nome)"** no seletor.
+
+⚠️⚠️ **A falha era SILENCIOSA**: o `.catch()` daquele request era vazio de
+propósito, então nada aparecia no console e a tela só ficava com o rótulo
+genérico. Quem visse isso concluiria que o seletor de turma quebrou.
+
+⚠️⚠️ **Alargar o guard do Next pra acomodar o NPS seria o conserto ERRADO.** O NPS
+já é dono da linha (é ele que grava `nps_respostas.turma_id`), então resolve no
+backend dele, com o service role, e **ninguém precisa de permissão em módulo
+alheio**. `GET /nps/:id/respostas` passou a devolver `turma_nome` por linha
+(`anexarNomeDaTurma`) e a tela deriva o mapa por `useMemo` — **zero request**.
+
+- ⚠️ **O anexo NUNCA derruba a lista de respostas**: turma apagada ou erro de
+  leitura só deixa `turma_nome` ausente, e a tela volta ao fallback de antes.
+  Perder o rótulo da turma é aceitável; perder a lista de respostas de uma
+  pesquisa não é.
+- ⚠️ **O fallback "Turma (sem nome)" FICA** — turma soft-deletada existe.
+- ⚠️ **`GET /:id/respostas` NÃO é aberto**: segue gateado por
+  admin/diretor OU criador OU área (`podeNaArea`). O guard do Next não mudou
+  quem vê nota de NPS; mudou só o rótulo da turma.
+
+⚠️ **A porta PÚBLICA da pesquisa nunca dependeu disso** (conferido): o
+`publicNps.js` lê `next_turmas` **direto com o service role**, então quem
+responde pelo QR por turma continua vendo o nome da turma e salvando normalmente.
+
+### 2 · ⚠️⚠️ `.` do JS NÃO casa `\r` — e isso fazia uma guarda estática mentir
+
+`src/test/kidsCodigosReservados.test.ts` limpava comentário SQL com
+`.split('\n').map(l => l.replace(/--.*$/, ''))`. Em checkout **Windows** o arquivo
+vem com CRLF, `split('\n')` deixa um `\r` no fim de cada linha, e em JS o `\r` é
+**LINE TERMINATOR**: `.` não o casa, `.*` para antes dele e o `$` (âncora de fim
+de STRING) não casa ali. **A limpeza não removia NADA.**
+
+Resultado: a explicação do bug no cabeçalho da migration
+(`20260902200000_kids_codigos_reservados.sql`, que CITA `WHERE r.codigo = codigo`
+como o padrão errado) era acusada **como se fosse o defeito**, e o teste ficava
+vermelho **só no Windows** — verde no CI, que usa LF. Conserto de 1 caractere:
+`/--.*/` (sem o `$`) limpa do primeiro `--` até antes do terminador, nos dois
+formatos de linha.
+
+⚠️⚠️ **É a MESMA armadilha já registrada em `membroMatchInsert.test.js` (17/08)** —
+e ali ela segue **NÃO corrigida**. Régua: **guarda estática que limpa comentário
+por linha usa `[^\n]*` ou `/--.*/`, NUNCA `.*$`.** `_semComentarios.ts` (o helper
+único das guardas novas) já é CRLF-safe, porque usa `[^\n]*`.
+
+⚠️ **Antes de acusar `npm test` de vermelho, conferir com `git stash -u` no main
+limpo**: foi assim que este ficou provado como ambiente, não regressão.
+
+### ⚠️ Flake de CARGA (não é regressão, e o arquivo MUDA de rodada)
+
+Na suíte cheia, UM caso estoura o timeout de 5s por contenção — nesta leva foi
+`postgrestCatch.test.ts` (**9.667 ms** na suíte, **123 ms** isolado; 2ª rodada da
+suíte inteira: **3.441 verdes, exit 0**). Já aconteceu com `cronAlcancavel`,
+`ConstrutorPerguntas`, `rpcsCliente` e `mapaGerador`. **Timeout num caso que passa
+isolado é carga; assert vermelho é regressão** — não confundir os dois.
+
+Testes: `src/test/npsNomeTurma.test.ts` (7 casos · no `npm test`). **3 mutantes
+RODADOS e mortos**: a tela voltando a importar a api do Next → 1 vermelho · o
+backend deixando de anexar → 1 · o `catch` do anexo derrubando a lista → 1.
 
 ## ⚠️ LEI · inscrição de MENOR nunca cria/linka mem_membros (2026-09-01 · migration `20260901190000`)
 

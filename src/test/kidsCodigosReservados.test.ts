@@ -22,9 +22,16 @@ const rota = semComentarios(readFileSync(path.join(raiz, 'backend/routes/totemKi
 // ⚠️ Comentário FORA antes de casar: o próprio cabeçalho da migration explica
 // o bug citando `codigo`, e sem isto o teste acusaria a explicação como se
 // fosse o defeito. É a armadilha de 06/08, agora no SQL.
+// ⚠️⚠️ SEM o `$` de propósito (achado 03/09/2026). Em checkout Windows o arquivo
+// vem com CRLF, `split('\n')` deixa um `\r` no fim de cada linha, e em JS o `\r`
+// é LINE TERMINATOR — `.` não casa `\r`, então `/--.*$/` (âncora de fim de
+// string) NÃO casava e o comentário ficava inteiro. Resultado: a explicação do
+// bug no cabeçalho da migration era acusada como se fosse o bug, e este teste
+// ficava vermelho só no Windows (verde no CI, que usa LF). `/--.*/` limpa do
+// primeiro `--` até antes do terminador, nos dois formatos de linha.
 const migration = readFileSync(
   path.join(raiz, 'supabase/migrations/20260902200000_kids_codigos_reservados.sql'), 'utf8')
-  .split('\n').map((l) => l.replace(/--.*$/, '')).join('\n');
+  .split('\n').map((l) => l.replace(/--.*/, '')).join('\n');
 
 describe('⚠️⚠️ código já IMPRESSO é imutável', () => {
   it('o retry NÃO roda quando o código veio de reserva', () => {
