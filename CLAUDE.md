@@ -91,6 +91,79 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️⚠️ ESCALA POR CULTO · `vol_schedules.culto_id` (2026-09-03 · migration `20260903180000`)
+
+Pedido do Marcos comparando a nossa "Montar escala" com o Planning Center Services:
+*"o importante é o horário ficar vinculado a culto pra não ter problema de mudança de
+horário não alterar nomes de times"*. Gatilho real: **o culto da manhã era 08:30 e
+virou 09:30 na semana de 24/08**.
+
+### ⚠️⚠️ O ACOPLAMENTO QUE ISTO ATACA
+
+A escala estava pendurada no **PLANO DO PLANNING CENTER**
+(`vol_schedules.service_id` → `vol_services`), não no NOSSO culto. Medido em 03/09:
+**6.526 escalas e 100% delas em serviços com nome do PCO** — `Domingo - Manhã` 1.626,
+`Quarta Com Deus` 1.520, `CBKIDS - Manhã Domingo` 964, `Domingo - Noite` 930,
+`CBKIDS - Noite Domingo` 445, `Culto AMI` 399, `Culto BRIDGE` 346,
+`CBKIDS - Quarta-feira` 230, `AMI` 54, `GC 12 HORAS` 12. **ZERO** nos nossos tipos por
+horário. Era o acoplamento mais profundo com o Services — mais que times ou posições.
+
+### A SEMÂNTICA DO NULL É O DESENHO
+
+- **NULL** = a escala vale para **todos os horários do bloco** (caso "não-split").
+- **`culto_id` setado** = vale só para aquele horário.
+
+É o **`Split Team`** do Services numa coluna: João fica NULL (toca nos dois cultos da
+manhã), Maria fica no 11:30. ⇒ **dispensa criar a dimensão `service_times`** e evita
+duplicar a LITURGIA — o domingo de manhã é o MESMO culto repetido (mesma ordem de
+culto, mesmo template), e duplicá-lo faria os dois roteiros divergirem no 1º ajuste.
+
+⚠️ Nosso modelo já resolvia metade disso e ninguém tinha notado: `vol_service_types`
+tem **vigência** — `Domingo 08:30` e `Domingo 10:00` estão INATIVOS com
+`vigente_ate = 2026-08-23` e `Domingo 09:30` ativo com `vigente_de = 2026-08-24`. A
+troca de horário é um **fato datado** e o passado não se reescreve. Também já existem
+`bloco_servico` (`dom_manha`) e `consolidacao_key` (`domingo-0930`) preenchidos, e
+`cultos` já tem **uma linha por horário**. ⚠️ `Domingo - Manhã` (o tipo consolidado do
+PCO) **não existe** em `vol_service_types` — os dois modelos que convivem são as duas
+FONTES, não uma migração pela metade.
+
+### ⚠️⚠️ O BACKFILL É NULL EM 100% — E É A VERDADE, NÃO PREGUIÇA
+
+Existe um casamento tentador: **299 dos 343 `vol_services` batem EXATO em data+hora
+(BRT) com uma linha de `cultos`**. Usá-lo seria erro silencioso: `Domingo - Manhã`
+está gravado com o horário do PRIMEIRO culto (12:30Z = 09:30 BRT), então o casamento
+afirmaria "esta escala é das 09:30" quando o plano cobre a manhã INTEIRA —
+**mentiria em 1.626 escalas com cara de acerto**. Nenhuma escala existente foi feita
+para um horário específico ⇒ NULL descreve exatamente o que elas são.
+
+### ⚠️ A CONSTRAINT NÃO MUDA, de propósito
+
+`vol_schedules_pc_unique` é `UNIQUE NULLS NOT DISTINCT (service_id,
+planning_center_person_id, team_name, position_name, slot_seq)`. `culto_id` fica
+**fora** dela: "serve os dois horários" se expressa com NULL, e duas linhas explícitas
+da mesma pessoa/posição em horários diferentes já são resolvidas pelo `slot_seq`, que
+está na chave. Entrar na chave quebraria o `ON CONFLICT` de 5 colunas do sync do PCO
+(`routes/voluntariado.js`, `services/planningCenter.js`) — o vínculo que precisa
+continuar vivo enquanto a migração é **time a time** (decisão do Marcos: o check-in
+depende dele).
+
+⚠️ `ON DELETE SET NULL`, nunca CASCADE: culto apagado não apaga histórico de quem
+serviu — a escala volta a valer pro bloco, que é o comportamento de hoje.
+⚠️ O check-in sobrevive sem tocar em nada: `vol_check_ins` (2.375 linhas) tem
+`schedule_id` e herda o culto pela escala; só o `is_unscheduled` fica em nível de
+bloco (e ele já não tem escala para herdar).
+⚠️ `vol_pco_mapa` (124 linhas) é a tradução PCO→nosso `team_id`/`position_id` **por
+ID**; o casamento por NOME em `planningCenter.js` (`indexarEquipesAtivas`) é só o
+fallback de escalas órfãs.
+
+### ⏳ O PASSO SEGUINTE (não entrou aqui · uma tabela por colagem)
+
+O mesmo `culto_id` em **`vol_escala_culto_itens`** (o ALVO/denominador, 1.447 linhas).
+Sem ele a **cobertura por horário** ainda não existe — o alvo continua por bloco, que
+é o caso "não-split" e está correto. Depois disso: posição **"Líder" por time** no
+template (`vol_escala_template_item_pessoas` tem **0 linhas** — o mecanismo existe e
+nunca foi usado) e elegibilidade por tipo de culto em `vol_team_members`.
+
 ## ⚠️⚠️ `/api/next` ganhou guard de módulo — rodava só com `authenticate` (2026-09-03 · SEM migration)
 
 `backend/routes/next.js` nasceu em 28/04/2026 e ficou **~4 meses montado em
