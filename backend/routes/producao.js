@@ -189,6 +189,8 @@ router.get('/semana', authorizeModule('producao', 1), async (req, res) => {
           duracao_prevista_min: prod?.duracao_prevista_seg != null ? Math.round(prod.duracao_prevista_seg / 60) : null,
           pontualidade_obs: prod?.pontualidade_obs ?? null,
           observacoes: prod?.observacoes ?? null,
+          // ⚠️ 'HH:MM' — a âncora que alinha as etapas com a curva do YouTube.
+          inicio_real: prod?.inicio_real ? String(prod.inicio_real).slice(0, 5) : null,
           meta_duracao_min: c.meta_duracao_min ?? 60,
         },
         ocorrencias: ocorr,
@@ -321,20 +323,48 @@ router.get('/culto/:id', authorizeModule('producao', 1), async (req, res) => {
 
 // ── Salvar observações (upsert PARCIAL do satélite) ──────────────────────────
 // A duração NÃO entra mais aqui — vem da soma das etapas (PUT /culto/:id/etapas).
-// Upsert parcial: só toca pontualidade_obs/observacoes, preservando os totais
-// (duracao_segundos etc.) já gravados pelas etapas.
+// Upsert PARCIAL DE VERDADE: só toca a chave que veio no corpo, preservando os
+// totais (duracao_segundos etc.) já gravados pelas etapas.
+//
+// ⚠️⚠️ ANTES ELE NÃO ERA PARCIAL. O payload trazia `pontualidade_obs` e
+// `observacoes` incondicionalmente, então salvar só um dos dois apagava o
+// outro — e passaria a apagar também `inicio_real`, que é a âncora da curva de
+// audiência. É a mesma armadilha corrigida em `POST /kpis/cultura/mensal` em
+// 02/09/2026: uma tabela de 1 linha por culto onde cada tela grava um pedaço.
+// 'HH:MM' (24h) -> 'HH:MM:00' · qualquer outra coisa vira null.
+// ⚠️ Nulo é "não informado". Não existe hora padrão plausível: um palpite aqui
+// desalinharia a curva de audiência inteira e ninguém saberia que foi palpite.
+function horaOuNulo(v) {
+  if (typeof v !== 'string') return null;
+  const m = v.trim().match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+  return m ? `${m[1]}:${m[2]}:00` : null;
+}
+
 router.put('/culto/:id', authorizeModule('producao', 2), async (req, res) => {
   try {
     const cultoId = req.params.id;
-    const { pontualidade_obs, observacoes } = req.body || {};
+    const corpo = req.body || {};
+    const tem = (k) => Object.prototype.hasOwnProperty.call(corpo, k);
     const payload = {
       culto_id: cultoId,
-      pontualidade_obs: pontualidade_obs ? String(pontualidade_obs).slice(0, 1000) : null,
-      observacoes: observacoes ? String(observacoes).slice(0, 2000) : null,
       preenchido_por: req.user?.id || null,
       preenchido_em: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    if (tem('pontualidade_obs')) {
+      payload.pontualidade_obs = corpo.pontualidade_obs
+        ? String(corpo.pontualidade_obs).slice(0, 1000) : null;
+    }
+    if (tem('observacoes')) {
+      payload.observacoes = corpo.observacoes ? String(corpo.observacoes).slice(0, 2000) : null;
+    }
+    if (tem('inicio_real')) {
+      const h = horaOuNulo(corpo.inicio_real);
+      if (corpo.inicio_real && !h) {
+        return res.status(400).json({ error: 'inicio_real deve ser HH:MM (24h)' });
+      }
+      payload.inicio_real = h;
+    }
     const { data, error } = await supabase
       .from('culto_producao')
       .upsert(payload, { onConflict: 'culto_id' })
