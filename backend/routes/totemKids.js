@@ -3641,6 +3641,41 @@ router.get('/checkins-abertos/buscar', authorizeModule('kids', 2), async (req, r
 });
 
 // POST /api/totem-kids/checkin · cria check-in + gera código + retorna pra impressão
+// ── Bloco de códigos para o totem usar OFFLINE ──────────────────────────────
+// ⚠️⚠️ É o que torna o check-in offline SEGURO. O código de retirada tem 20
+// bits e a unicidade vem de um TRIGGER NO INSERT — offline não há INSERT, logo
+// gerar no cliente é sorte, não garantia: medido, 50 check-ins offline num
+// namespace curto dão **70% de colisão**. Aqui quem sorteia e arbitra continua
+// sendo o SERVIDOR; o totem só consome o que já foi reservado.
+// ⚠️ Chamado enquanto HÁ REDE (na abertura da sessão e periodicamente). Pedir
+// isto offline não faz sentido e não funciona — é esse o ponto.
+router.post('/codigos-reservados', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const estacaoRef = String(req.body?.estacao_ref || '').trim();
+    if (!estacaoRef) return res.status(400).json({ error: 'estacao_ref obrigatório' });
+    const sessaoId = req.body?.sessao_id || null;
+    // ⚠️ Teto de 200 espelha o da função SQL: bloco gigante esgota o espaço de
+    // 1 M de códigos e faz o gerador online começar a falhar por exaustão.
+    const qtd = Math.min(Math.max(parseInt(req.body?.quantidade, 10) || 60, 1), 200);
+
+    const { data, error } = await supabase.rpc('fn_kids_reservar_codigos', {
+      p_estacao_ref: estacaoRef,
+      p_sessao_id: sessaoId,
+      p_quantidade: qtd,
+      p_estacao_id: req.body?.estacao_id || null,
+    });
+    if (error) throw error;
+
+    const codigos = (data || []).map((r) => (typeof r === 'string' ? r : r.codigo)).filter(Boolean);
+    return res.json({ codigos, total: codigos.length, estacao_ref: estacaoRef });
+  } catch (e) {
+    console.error('[totemKids/codigos-reservados]', e?.message);
+    // ⚠️ Falhar aqui NÃO pode travar o totem: sem bloco ele segue online
+    // normalmente, e é só a rede de segurança do offline que não existe.
+    return res.status(503).json({ error: 'Não foi possível reservar códigos agora.', detalhe: e?.message });
+  }
+});
+
 router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
   try {
     const {
@@ -3826,11 +3861,39 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
 
     // INSERT primário. Se dois totens sortearem o mesmo código no mesmo instante,
     // o trigger do banco rejeita um deles e aqui geramos outro automaticamente.
+    // ⚠️⚠️ CÓDIGO JÁ IMPRESSO É IMUTÁVEL (02/09/2026).
+    // Quando o check-in vem da FILA OFFLINE, a etiqueta JÁ SAIU da impressora
+    // com um código reservado — e o pai está com ela no bolso. Se a
+    // sincronização gerar outro código, o banco fica consistente e o PAPEL
+    // FICA INVÁLIDO: ninguém percebe até a hora da retirada. Por isso o retry
+    // abaixo NÃO pode rodar para código reservado; ele é só para o caminho
+    // online, onde nada foi impresso ainda.
+    const codigoReservado = typeof req.body?.codigo_reservado === 'string'
+      ? req.body.codigo_reservado.toUpperCase().trim() : null;
+    let reservaOk = false;
+    if (codigoReservado) {
+      // ⚠️ A reserva PRECISA existir e estar livre. Aceitar um código que o
+      // cliente inventou seria abrir a porta que a pré-alocação fecha.
+      const { data: r } = await supabase
+        .from('kids_codigos_reservados')
+        .select('codigo, status')
+        .eq('codigo', codigoReservado)
+        .maybeSingle();
+      reservaOk = !!r && r.status === 'reservado';
+      if (!reservaOk) {
+        return res.status(409).json({
+          error: 'Código offline não reconhecido ou já usado. Confira a etiqueta com a coordenação do Kids.',
+          codigo_invalido: true,
+        });
+      }
+    }
+
     let codigoFinal = null;
     let checkin = null;
     let errIns = null;
-    for (let tentativa = 0; tentativa < 5; tentativa++) {
-      codigoFinal = await gerarCodigo();
+    const maxTentativas = reservaOk ? 1 : 5;  // reservado: NUNCA troca
+    for (let tentativa = 0; tentativa < maxTentativas; tentativa++) {
+      codigoFinal = reservaOk ? codigoReservado : await gerarCodigo();
       const insercao = await supabase.from('kids_checkins').insert({
         sessao_id,
         crianca_id,
@@ -3850,6 +3913,16 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       if (!colisaoCodigo(errIns)) break;
     }
     if (colisaoCodigo(errIns)) {
+      // ⚠️⚠️ Com código RESERVADO isto não deveria acontecer (a reserva é única
+      // e o gerador a respeita). Se acontecer, é EXCEÇÃO PARA HUMANO — jamais
+      // trocar o código de uma etiqueta impressa em silêncio.
+      if (reservaOk) {
+        console.error('[totemKids/checkin] colisão em código RESERVADO:', codigoReservado);
+        return res.status(409).json({
+          error: 'Este código já está em uso. NÃO reimprima: leve a etiqueta à coordenação do Kids.',
+          codigo_conflito: true, codigo: codigoReservado,
+        });
+      }
       return res.status(503).json({ error: 'Não foi possível reservar um código livre. Tente novamente.', pode_tentar_novamente: true });
     }
     // 23505 = índice único (check-in aberto) — corrida entre 2 totens ou
@@ -3858,6 +3931,16 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       return res.status(409).json({ error: 'Criança já está com check-in nessa sessão. Perdeu a etiqueta? Use "Imprimir etiqueta de novo".' });
     }
     if (errIns) throw errIns;
+
+    // ⚠️ Queima a reserva. Best-effort: o check-in JÁ está gravado e a etiqueta
+    // impressa — falhar aqui não pode desfazer nada. O custo de não queimar é
+    // um código a menos no bloco, e o gerador online já não o sorteia.
+    if (reservaOk) {
+      supabase.from('kids_codigos_reservados')
+        .update({ status: 'usado', usado_em: new Date().toISOString(), checkin_id: checkin.id })
+        .eq('codigo', codigoFinal).eq('status', 'reservado')
+        .then(() => {}, (e) => console.error('[totemKids/checkin] queimar reserva:', e?.message));
+    }
 
     // Fez check-in → a criança está ativa de novo. Reativa se tinha sido
     // inativada (visitante vencido, age-out, depuração antiga).
