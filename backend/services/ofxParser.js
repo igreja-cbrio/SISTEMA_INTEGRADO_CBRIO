@@ -137,6 +137,49 @@ function extractNomeContraparte(memo) {
 /**
  * Parseia conteúdo completo do OFX
  */
+/**
+ * ⚠️⚠️ HORA IDÊNTICA EM TODO O ARQUIVO É CARIMBO DO BANCO, NÃO HORA DA TRANSAÇÃO.
+ *
+ * Medido no extrato de 90 dias do Santander (02/09/2026): as **7.297**
+ * transações do arquivo têm `<DTPOSTED>` terminando em `100000` — 10:00:00,
+ * exatamente igual, do primeiro ao último lançamento. Não existe extrato real
+ * em que 7 mil transações caiam no mesmo segundo: é campo preenchido com
+ * constante.
+ *
+ * O estrago de gravar assim mesmo não é estético:
+ *
+ * 1. **Bloqueia o casamento com o PIX.** `financeiroClassificador.matchOfxPix`
+ *    só age onde `hora_lancamento IS NULL` — e é ele que traz a hora REAL, o
+ *    `end_to_end_id` e o `pagador_nome` do extrato PIX. Com a hora falsa
+ *    gravada, aquele caminho nunca mais alcança a linha.
+ * 2. **`hora_origem: 'ofx'` afirma que foi MEDIDO.** Precisão inventada que se
+ *    lê como fato é a classe de erro que este projeto trata como pior que a
+ *    ausência do dado (mesma lei do centróide que nunca vira `lat/lng` de
+ *    pessoa).
+ * 3. `fin_identifica_culto` decide de qual CULTO é a oferta pela hora. Hoje o
+ *    estrago não se materializa (o banco não processa em domingo, e 10:00 só
+ *    cai em slot no domingo), mas é bomba armada.
+ *
+ * ⚠️ O piso de 3 transações existe porque num arquivo de 1 ou 2 lançamentos a
+ * igualdade é trivial e pode ser hora real. Descartar hora é seguro (o PIX
+ * preenche depois); gravar hora falsa não é — por isso, na dúvida, descarta.
+ *
+ * ⚠️ RESÍDUO DECLARADO: banco que carimbe uma hora DIFERENTE por dia escapa
+ * desta régua. Ela é deliberadamente simples e determinística — sem limiar de
+ * percentual — porque régua de carimbo com heurística é régua que ninguém
+ * consegue conferir depois.
+ */
+const MIN_TRN_PARA_DETECTAR_CARIMBO = 3;
+
+function horaEhCarimbo(horas) {
+  const comHora = horas.filter(Boolean);
+  if (comHora.length < MIN_TRN_PARA_DETECTAR_CARIMBO) return null;
+  if (comHora.length !== horas.length) return null; // parte sem hora ⇒ não é carimbo uniforme
+  const distintas = new Set(comHora);
+  if (distintas.size !== 1) return null;
+  return { hora: comHora[0], transacoes: comHora.length };
+}
+
 function parseOfx(buffer) {
   const content = typeof buffer === 'string' ? buffer : decodeBuffer(buffer);
 
@@ -192,12 +235,23 @@ function parseOfx(buffer) {
     });
   }
 
+  // ⚠️ Hora igual no arquivo inteiro é carimbo do banco — ver `horaEhCarimbo`.
+  const carimbo = horaEhCarimbo(transactions.map((t) => t.hora_lancamento));
+  if (carimbo) {
+    for (const t of transactions) {
+      t.hora_lancamento = null;
+      t.hora_origem = null;
+    }
+    header.horaDescartada = { motivo: 'carimbo_fixo', ...carimbo };
+  }
+
   return { header, transactions };
 }
 
 module.exports = {
   parseOfx,
   parseDtPosted,
+  horaEhCarimbo,
   parseAmount,
   extractDocumento,
   extractNomeContraparte,
