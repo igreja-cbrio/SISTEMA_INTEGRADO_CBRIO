@@ -16495,3 +16495,129 @@ inteiro não é medição — é preenchimento. Antes de gravar qualquer campo v
 arquivo externo como se fosse fato, conferir se ele VARIA. `hora_origem`,
 `fonte`, `origem` e afins existem exatamente para essa distinção, e preenchê-los
 com a fonte do ARQUIVO quando o valor é constante é afirmar que foi medido.
+## ⚠️⚠️ SANTANDER · a paginação do extrato NUNCA funcionou, e o dia ruim derrubava os bons (2026-09-03 · SEM migration)
+
+O cron `/api/santander/cron/sync` (2×/dia · janela `hoje − 3 dias`) falhou 4×
+seguidas em 01–02/09, sempre em **~60 s**, com
+`[BANK_SYNC_FAILED] Limite de paginacao do extrato Santander excedido`.
+
+### ⚠️ O que MEDIU o caso (e derrubou dois palpites meus)
+
+`santander_sync_log` guarda os parâmetros de cada chamada. Por dia pedido:
+
+| dia | chamadas | `_offset` | HTTP |
+|---|---|---|---|
+| 28/08 | 2 | 0 | 200 |
+| 29/08 | 4 | 0 | 200 |
+| 30/08 | 6 | 0 | 200 |
+| **31/08** | **402** | **0 … 4950** | **200 em TODAS** |
+
+⚠️⚠️ 5.000 lançamentos num dia é absurdo (o recorde da igreja é 564, em outro
+banco) e a **latência é PLANA** (449–482 ms) do offset 0 ao 4950 — varredura
+real de offset profundo não é plana. ⇒ **a página não avança**: o gateway
+devolve 200 com página cheia para sempre.
+
+**Dois erros meus, registrados:**
+1. Eu disse que a janela era de 3 dias. **`fatiarPeriodo` fatia por DIA** — o
+   corpo faz `proxFim.setDate(proxFim.getDate())`, que é **NO-OP**, enquanto o
+   comentário dizia "janelas de max 30 dias". O teto de 50 é **por dia**.
+   ⚠️ **NÃO "consertar" para 30 dias antes de a paginação estar provada**: isso
+   tornaria a página 2 a norma e trocaria falha rara por falha diária.
+2. Eu usei `input_count` como prova de que a página 2 nunca foi exercitada. Ele
+   é `reconciliation.candidates.length` — **o que é novo depois do dedup**, não
+   o tamanho da página. Quem prova é o log de offsets.
+
+⚠️ **Alarme do conselho que NÃO se sustentou** (registrado de propósito): um
+conselheiro comparou "API 45 créditos × OFX 282" nos domingos e concluiu
+truncagem de ~R$ 60 mil. **É outro banco** — as 282–312 linhas são do **Itaú
+via OFX**. E nesses dias o sync teve SUCESSO, logo a página veio abaixo de 50 e
+encerrou normalmente. Consenso não é evidência; a consulta desmentiu.
+
+### O estrago medido (conta Santander)
+
+| 27/08 | 28/08 | 29/08 sáb | 30/08 dom | 31/08 seg | 01/09 | 02/09 |
+|---|---|---|---|---|---|---|
+| 7 | 4 | **0** | **0** | 45 (parcial) | **0** | **0** |
+
+O PIX do fim de semana liquida em **D+1**, então o domingo aparece no 31/08 —
+que é justamente o dia envenenado. Falta o rabo do 31/08 (o dia passa de 50) e
+os dias 01 e 02/09 inteiros.
+
+⚠️⚠️ **E há um CRONÔMETRO**: a janela é `hoje − 3d`. Em **04/09 o dia 31/08 sai
+da janela**, o cron fica verde e aquele dia **nunca mais entra por caminho
+automático**. O mesmo já aconteceu com **10/08** (falha de 11/08, mesma
+mensagem) — e ninguém percebeu.
+
+### O que entrou
+
+- **`backend/utils/paginacaoExtrato.js`** = régua PURA no gate. `avaliarPagina`
+  devolve `encerrar` (página parcial = fim, o caminho de 100% dos sucessos
+  históricos) e **`travou`** (página CHEIA que não trouxe nenhum lançamento
+  novo DENTRO da janela). 2 chamadas em vez de 100, e a mensagem **nomeia o
+  gateway** em vez de culpar o nosso teto.
+- ⚠️⚠️ **ELA NUNCA DESCARTA LANÇAMENTO** — decide QUANDO PARAR, não o que entra.
+  `content` continua recebendo a **página inteira**; o dedup serve só para medir
+  progresso. Filtrar ali faria dois PIX idênticos de R$ 50 sem `transactionId`
+  virarem um — perda silenciosa de linha de extrato, o pior caso da lei
+  contábil da casa. Há teste ESTÁTICO exigindo `content.push(...pageContent)`.
+- ⚠️ **Item fora da janela não é descartado — apenas não conta como progresso.**
+  Cobre a 2ª hipótese (o gateway ignorando o filtro de data no offset profundo,
+  em que os itens DIFEREM e o dedup sozinho não pegaria).
+- ⚠️ **Sem `transactionId`, a chave é impressão digital do ITEM**, nunca "sem id
+  é sempre novo" — que desarmaria a guarda justamente nessa hipótese.
+- ⚠️ **Data ilegível conta como DENTRO** (fail-safe): tratar como fora abortaria
+  um sync que estava funcionando.
+- **QUARENTENA POR DIA, opt-in** (`tolerarDiaIncompleto`): as fatias são de um
+  dia e independentes, e sem isso um dia envenenado descarta os sãos. ⚠️ O
+  default é **false** — rotas manuais e pix-sync seguem recebendo exceção, byte
+  a byte como antes. Extrato parcial devolvido em silêncio a quem não pediu é a
+  importação parcial silenciosa que a lei proíbe.
+- ⚠️⚠️ **Quem liga a tolerância É OBRIGADO A DECLARAR**: o cron reporta
+  `status: 'failed'` + `BANK_SYNC_DIA_INCOMPLETO` nomeando o dia, mesmo tendo
+  importado os outros. Lacuna que ninguém lê é importação parcial com uma etapa
+  a mais.
+- ⚠️⚠️ **O ramo `sem_transacoes_no_periodo` deixou de poder mentir**: com dia em
+  quarentena, zero transação não é período vazio — é extrato que não foi lido, e
+  antes os dois reportavam `success`.
+- ⚠️ **Extrato com buraco NÃO é cacheado** (seriam 10 min servindo um extrato
+  truncado com cara de autoridade).
+
+⚠️⚠️ **E o CI pegou o que a máquina de quem escreveu escondia** — a lição que
+JÁ estava neste arquivo, repetida: a 1ª versão importava `parseDateBR` de
+`services/pixExtratoParser`, que requer **`xlsx`** (dependência de
+`backend/package.json`). Gate local verde, CI vermelho com
+`Cannot find module 'xlsx'`. ⇒ a régua de data virou
+**`backend/utils/dataBr.js`** (puro) e o parser **RE-EXPORTA**, então nenhum
+dos 4 importadores muda. É o mesmo padrão de `utils/camposContato`. **Régua do
+gate não pode depender da árvore de `backend/`** — provado com
+`require.cache` (zero módulos de `services/` ou `node_modules`) e travado por
+guard estático.
+
+Teste: `src/test/paginacaoExtrato.test.ts` (15 casos · no gate). **7 mutantes
+RODADOS e mortos**: travar em página parcial → 1 vermelho · item sem id sempre
+novo → 2 · fora da janela contando como progresso → 1 · data ilegível como fora
+→ 1 · o laço passando a filtrar o que importa → 1 · quarentena deixando de ser
+opt-in → 1 · a régua voltando a importar de `services/` → 2.
+
+### ⏳ O que NÃO foi feito, e é decisão de gente
+
+1. ⚠️⚠️ **A CAUSA não está PROVADA.** Falta o probe de 2 chamadas read-only no
+   dia 31/08 (`_offset: 0` × `_offset: 50`, comparando os `transactionId`): id
+   igual ⇒ o gateway ignora o `_offset`; vazio ⇒ teto do gateway; distinto ⇒ a
+   paginação funciona e o problema é outro. **A guarda vale sob as duas
+   hipóteses**, mas o conserto DEFINITIVO depende de saber qual é. Exige
+   credencial do banco — não dá pra rodar de fora da Vercel.
+2. **O backfill do 31/08 (e do 10/08) não foi feito** — e o 31/08 sai da janela
+   em 04/09. Caminhos: `POST /cron/sync` com `{ dias: 10 }` (só funciona agora
+   que a quarentena existe; antes morria no primeiro dia ruim) **ou** upload do
+   OFX, que a equipe já usa para o Itaú.
+   ⚠️⚠️ **ANTES do backfill, cruzar com o que foi lançado À MÃO no período**: o
+   dedup só reconhece `fitid`, e lançamento manual não guarda o `transactionId`
+   do banco — reimportar duplicaria receita de oferta. Rodar com
+   `{ dry_run: true }` primeiro.
+3. **Investigar 14–26/08**: há indício de 13 dias com ZERO inserção reportando
+   `success` (caminho `todos_lancamentos_ja_existentes`, que devolve
+   `output_count: 0` como sucesso) enquanto a conta não estava parada. **Não
+   confirmei** — fica como suspeita medida por um conselheiro, não como fato.
+4. `fatiarPeriodo` continua fatiando por dia com o comentário corrigido; mudar o
+   comportamento depende do item 1.

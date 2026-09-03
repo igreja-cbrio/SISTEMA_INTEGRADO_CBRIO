@@ -2,6 +2,7 @@
 // Endpoints cobertos: lista contas, saldo, extrato (com fatia automática de 30d)
 const { callApi, BANK_ID, AGENCIA, CONTA } = require('./httpClient');
 const { supabase } = require('../../utils/supabase');
+const { avaliarPagina } = require('../../utils/paginacaoExtrato');
 
 const BASE = '/bank_account_information/v1';
 
@@ -136,7 +137,13 @@ async function historicoSaldo({ dias = 30 } = {}) {
   return data || [];
 }
 
-// Fatiar período em janelas de max 30 dias (limite da API)
+// ⚠️ NOME MENTE: o corpo faz `proxFim.setDate(proxFim.getDate())`, que é NO-OP
+// — as fatias são de UM DIA, não de 30. Medido no log de chamadas (uma janela
+// de 3 dias produz 4 chamadas, uma por dia). NÃO "consertar" pra 30 dias sem
+// antes provar que a paginação funciona: hoje a página 2 é o caminho quebrado,
+// e fatia de 30 dias tornaria a página 2 a norma — trocaria falha rara por
+// falha diária.
+// Fatiar período (o comentário histórico dizia 30 dias)
 function fatiarPeriodo(inicio, fim) {
   const fatias = [];
   let cursor = new Date(inicio);
@@ -159,6 +166,10 @@ async function buscarExtratoSantander({ inicio, fim, userId }) {
   const limit = 50;
   let offset = 0;
   const content = [];
+  // ⚠️ O Set serve SÓ pra decidir se a página trouxe novidade. O que entra em
+  // `content` continua sendo a página inteira: a régua decide QUANDO PARAR,
+  // nunca o que é importado (ver o cabeçalho de `utils/paginacaoExtrato`).
+  const vistos = new Set();
 
   for (let page = 0; page < 100; page += 1) {
     const response = await callApi(transactionsPath(), {
@@ -170,16 +181,26 @@ async function buscarExtratoSantander({ inicio, fim, userId }) {
 
     // O gateway nem sempre sinaliza _moreElements corretamente. Uma pagina
     // cheia exige consultar o proximo offset; pagina parcial encerra o lote.
-    if (pageContent.length < limit) {
+    const { encerrar, travou, motivo } = avaliarPagina({
+      itens: pageContent, vistos, limite: limit, inicio, fim,
+    });
+    if (encerrar) {
       return { ...response, _content: content };
+    }
+    // ⚠️⚠️ MEDIDO em 01–02/09: o gateway devolve 200 com página CHEIA até o
+    // offset 4950, latência plana. Sem esta guarda são 100 chamadas e ~60 s pra
+    // então culpar o "limite de paginação" (nosso teto) em vez do gateway.
+    // Agora são 2 chamadas e a mensagem nomeia a causa.
+    if (travou) {
+      throw new Error(motivo);
     }
     offset += pageContent.length;
   }
 
-  throw new Error('Limite de paginacao do extrato Santander excedido');
+  throw new Error('Limite de paginacao do extrato Santander excedido (100 páginas cheias e ainda com lançamento novo)');
 }
 
-async function consultarExtrato({ inicio, fim, usarCache = true, userId } = {}) {
+async function consultarExtrato({ inicio, fim, usarCache = true, userId, tolerarDiaIncompleto = false } = {}) {
   if (!inicio || !fim) throw new Error('início e fim obrigatórios (YYYY-MM-DD)');
 
   // Cache curto · 10min · valido apenas pra janelas exatas
@@ -197,9 +218,28 @@ async function consultarExtrato({ inicio, fim, usarCache = true, userId } = {}) 
 
   const fatias = fatiarPeriodo(inicio, fim);
   const respostas = [];
+  // ⚠️⚠️ QUARENTENA POR DIA, E SÓ QUANDO O CHAMADOR PEDE (`tolerarDiaIncompleto`).
+  //
+  // As fatias são de UM DIA e independentes. Sem isto, um dia envenenado
+  // descarta os outros: medido em 01–02/09, o dia 31/08 derrubou 4 execuções
+  // seguidas e os dias 01 e 02/09 — que não têm defeito nenhum — não entraram.
+  //
+  // ⚠️ O default é FALSE de propósito: as rotas manuais e o pix-sync continuam
+  // recebendo exceção, byte a byte como antes. Extrato parcial devolvido em
+  // silêncio a quem não pediu é a importação parcial silenciosa que a lei
+  // contábil da casa proíbe.
+  //
+  // ⚠️⚠️ E quem LIGA a tolerância É OBRIGADO A DECLARAR: `_diasIncompletos` volta
+  // na resposta, e o cron reporta a execução como FALHA nomeando o dia. Lacuna
+  // que ninguém lê é importação parcial com uma etapa a mais.
+  const diasIncompletos = [];
   for (const f of fatias) {
-    const res = await buscarExtratoSantander({ inicio: f.inicio, fim: f.fim, userId });
-    respostas.push(res);
+    try {
+      respostas.push(await buscarExtratoSantander({ inicio: f.inicio, fim: f.fim, userId }));
+    } catch (e) {
+      if (!tolerarDiaIncompleto) throw e;
+      diasIncompletos.push({ dia: f.inicio, motivo: e.message });
+    }
   }
 
   // Concatena _content das fatias preservando estrutura
@@ -207,9 +247,12 @@ async function consultarExtrato({ inicio, fim, usarCache = true, userId } = {}) 
     _content: respostas.flatMap((r) => Array.isArray(r?._content) ? r._content : []),
     _pageable: { _moreElements: false },
     _fatias: fatias.length,
+    _diasIncompletos: diasIncompletos,
   };
 
-  if (usarCache && supabase) {
+  // ⚠️ NUNCA cachear extrato com buraco: seriam 10 minutos servindo um extrato
+  // truncado com cara de autoridade pra quem abrir a tela.
+  if (usarCache && supabase && !diasIncompletos.length) {
     await supabase
       .from('santander_extrato_cache')
       .upsert({
