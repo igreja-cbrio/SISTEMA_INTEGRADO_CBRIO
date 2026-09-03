@@ -2265,6 +2265,11 @@ export const totemKids = {
   },
   checkin: {
     criar: (data) => post('/totem-kids/checkin', data),
+    // ⚠️ Bloco de códigos para o totem usar OFFLINE. Chamado enquanto HÁ REDE —
+    // é o servidor que sorteia e arbitra a unicidade; o totem só consome.
+    // Ver PR #2849: gerar código no cliente daria 70% de colisão com 50
+    // check-ins, e colisão aqui é duas crianças com a mesma credencial.
+    reservarCodigos: (data) => post('/totem-kids/codigos-reservados', data),
     // Check-in de vários irmãos numa requisição só (resolve responsável 1×)
     lote: (data) => post('/totem-kids/checkin/lote', data),
     // Check-in aberto da criança na sessão (pra reimprimir etiqueta perdida)
