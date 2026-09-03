@@ -260,6 +260,30 @@ function andamentoDoAchado(item, tarefa) {
     };
   }
   if (st === 'agendada') {
+    // ⚠️⚠️ FILA QUE NÃO ANDA TEM DE DIZER QUE NÃO ANDA (02/09/2026).
+    //
+    // Esta linha prometeu "o executor pega em até 10 minutos" por DOIS DIAS
+    // enquanto a fila estava parada: faltava o binário `git` no container do
+    // worker, o preflight do `devAgent` registrava `executor_sem_ambiente` e a
+    // tarefa ficava `agendada` para sempre. O comentário na tarefa dizia a
+    // verdade; o resumo do card continuava prometendo 10 minutos — ou seja o
+    // código que eu escrevi PARA evitar fila parada em silêncio era o que
+    // sustentava a promessa falsa. É a lei da casa: tela que promete o que não
+    // acontece é bug, não detalhe.
+    //
+    // ⚠️ Continua em NA_FILA de propósito, e NÃO vira "precisa da sua ação": a
+    // tarefa está mesmo na fila, e a causa é UMA para N tarefas. Promover cada
+    // uma inflaria o contador com N cópias do mesmo problema — a lição dos 77
+    // KPIs sem dono, que viraram 9 conversas por ÁREA em vez de 77 cobranças.
+    // Quem declara a causa UMA vez é `resumirAndamento` (`fila_travada`).
+    const bloqueio = typeof tarefa?.bloqueio_ambiente === 'string' ? tarefa.bloqueio_ambiente.trim() : '';
+    if (bloqueio) {
+      return {
+        andamento: ANDAMENTO.NA_FILA,
+        motivo: `a fila NÃO está andando — ${bloqueio}`,
+        fila_travada: bloqueio,
+      };
+    }
     return { andamento: ANDAMENTO.NA_FILA, motivo: 'na fila do agente — o executor pega em até 10 minutos' };
   }
   if (st === 'em_andamento' || st === 'em_diagnostico') {
@@ -295,8 +319,15 @@ function andamentoDoAchado(item, tarefa) {
 
 /** Contagem das caixas, pro cabeçalho da aba. */
 function resumirAndamento(itens = []) {
-  const conta = (a) => (Array.isArray(itens) ? itens : []).filter((i) => i?.andamento === a).length;
+  const lista = Array.isArray(itens) ? itens : [];
+  const conta = (a) => lista.filter((i) => i?.andamento === a).length;
+  // ⚠️ A causa da fila parada é UMA para N tarefas: declara-se no cabeçalho, com
+  // a contagem, em vez de repetir a mesma frase em cada card.
+  const travadas = lista.filter((i) => typeof i?.fila_travada === 'string' && i.fila_travada.trim());
   return {
+    fila_travada: travadas.length
+      ? { qtd: travadas.length, motivo: travadas[0].fila_travada }
+      : null,
     encerrados: conta(ANDAMENTO.ENCERRADO),
     resolvidos: conta(ANDAMENTO.RESOLVIDO),
     em_andamento: conta(ANDAMENTO.NA_FILA) + conta(ANDAMENTO.TRABALHANDO),

@@ -312,7 +312,7 @@ describe('andamento · resolvido / sendo resolvido / precisa de você', () => {
       { andamento: ANDAMENTO.TRABALHANDO }, { andamento: ANDAMENTO.PRECISA_DE_VOCE },
       { andamento: ANDAMENTO.PRECISA_DE_VOCE }, { andamento: ANDAMENTO.NAO_INICIADO },
     ]);
-    expect(r).toEqual({ encerrados: 0, resolvidos: 1, em_andamento: 2, precisam_de_voce: 2, nao_iniciados: 1 });
+    expect(r).toEqual({ fila_travada: null, encerrados: 0, resolvidos: 1, em_andamento: 2, precisam_de_voce: 2, nao_iniciados: 1 });
   });
 });
 
@@ -366,5 +366,57 @@ describe('encerrado não é pendência de ninguém', () => {
   it('aberto segue em "precisa da sua ação" quando a faixa é humano', () => {
     const aberto = { estado: 'aberto', autonomia: { faixa: FAIXAS.HUMANO, motivo: 'é dado, não código' } };
     expect(andamentoDoAchado(aberto, null).andamento).toBe(ANDAMENTO.PRECISA_DE_VOCE);
+  });
+});
+
+// ⚠️⚠️ FILA QUE NÃO ANDA TEM DE DIZER QUE NÃO ANDA (02/09/2026).
+// A linha do `agendada` prometeu "o executor pega em até 10 minutos" por DOIS
+// DIAS com a fila parada (faltava o `git` no worker). O comentário na tarefa
+// dizia a verdade; o resumo do card, não.
+describe('fila travada por ambiente', () => {
+  const achado = { estado: 'aberto', autonomia: { faixa: 'auto', motivo: '' } };
+  const BLOQ = 'o binário `git` NÃO existe no container do worker (spawn ENOENT).';
+
+  it('agendada SEM bloqueio mantém o texto de sempre', () => {
+    const r = andamentoDoAchado(achado, { status: 'agendada' });
+    expect(r.andamento).toBe('na_fila');
+    expect(r.motivo).toContain('10 minutos');
+    expect(r.fila_travada).toBeFalsy();
+  });
+
+  it('agendada COM bloqueio para de prometer prazo e diz o motivo', () => {
+    const r = andamentoDoAchado(achado, { status: 'agendada', bloqueio_ambiente: BLOQ });
+    expect(r.motivo).not.toContain('10 minutos');
+    expect(r.motivo).toContain('NÃO está andando');
+    expect(r.motivo).toContain('git');
+    expect(r.fila_travada).toBe(BLOQ);
+  });
+
+  // ⚠️ NÃO vira "precisa da sua ação": a causa é UMA para N tarefas, e promover
+  // cada uma inflaria o contador com N cópias do mesmo problema.
+  it('travada CONTINUA na fila — não infla "precisa da sua ação"', () => {
+    const r = andamentoDoAchado(achado, { status: 'agendada', bloqueio_ambiente: BLOQ });
+    expect(r.andamento).toBe('na_fila');
+    expect(r.andamento).not.toBe('precisa_de_voce');
+  });
+
+  it('bloqueio vazio ou de tipo errado NÃO inventa aviso', () => {
+    for (const ruim of ['', '   ', null, undefined, 42, {}]) {
+      const r = andamentoDoAchado(achado, { status: 'agendada', bloqueio_ambiente: ruim as never });
+      expect(r.motivo).toContain('10 minutos');
+      expect(r.fila_travada).toBeFalsy();
+    }
+  });
+
+  it('o resumo declara a causa UMA vez, com a contagem', () => {
+    const t = { andamento: 'na_fila', fila_travada: BLOQ };
+    const r = resumirAndamento([t, { ...t }, { andamento: 'resolvido' }]);
+    expect(r.fila_travada).toEqual({ qtd: 2, motivo: BLOQ });
+    expect(r.em_andamento).toBe(2);
+  });
+
+  it('sem nada travado, o resumo devolve null (a faixa não aparece)', () => {
+    expect(resumirAndamento([{ andamento: 'na_fila' }]).fila_travada).toBeNull();
+    expect(resumirAndamento([]).fila_travada).toBeNull();
   });
 });
