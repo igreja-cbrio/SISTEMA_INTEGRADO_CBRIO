@@ -91,6 +91,82 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️⚠️ O PRODUTOR do split · `utils/blocoCulto.js` + o `apply` (2026-09-03 · migrations `20260903200000` + `20260903200100`)
+
+As três colunas das levas anteriores eram schema sem produtor. Agora o
+`POST /schedule-templates/:id/apply` materializa **um alvo por celebração** nos times
+com `split_por_horario`. **Com a bandeira false — o default, e o estado de 100% dos
+times em 03/09 — o comportamento é byte a byte o de antes.**
+
+### `backend/utils/blocoCulto.js` · régua PURA (14 casos · `src/test/blocoCulto.test.ts`)
+
+`tiposDoBloco` · `cultosDoBloco` · `blocoTemHorarios`. O **BLOCO** é o conjunto de
+celebrações do dia que rodam a MESMA liturgia — o domingo de manhã é UM bloco com
+DUAS (09:30 e 11:30). É o que permite template/ordem de culto únicos por bloco e
+escala por celebração.
+
+⚠️⚠️ **A chave é `vol_service_types.bloco_servico`, E SÓ ELA.** `linhagem_key` e
+`consolidacao_key` **não servem** e confundi-las corromperia relatório: as duas são
+**série temporal**, não simultaneidade — `linhagem_key` = "o 10:00 VIROU 09:30"
+(lente do Matheus) · `consolidacao_key` = "08:30 + 10:00 no passado × o 09:30 novo,
+somados por SEMANA" (lente do Pr. Juninho). As duas têm consumidor vivo em
+`utils/lentesDomingo.js` + `routes/dashboardSemanal.js`.
+
+⚠️ Vigência **reusa `tipoVigenteEm` de `lentesDomingo`** em vez de reimplementar — sem
+ela o bloco `dom_manha` traria o 08:30 e o 10:00, encerrados em 23/08, e o alvo seria
+materializado pra celebração que não acontece mais.
+⚠️⚠️ **LIMITAÇÃO MEDIDA e aceita:** `tipoVigenteEm` reprova `is_active === false`
+INDEPENDENTE da data, então **bloco de data PASSADA com tipo extinto não é
+reconstruível**. Pro produtor é indiferente (template só se aplica a culto FUTURO) e
+consertar lá quebraria a lente do domingo. Tem caso de teste nomeando isto.
+⚠️ FAIL-SAFE em tudo: sem tipo resolvível, sem bloco, sem culto no dia, ou erro de
+leitura ⇒ **lista vazia ⇒ comportamento de hoje** (alvo único de bloco). Aplicar
+template nunca falha por causa disto.
+
+### ⚠️⚠️ O BLOQUEADOR QUE ESTAVA ESCONDIDO NO `onConflict` (migration `20260903200000`)
+
+`vol_escala_culto_itens` nasceu com `UNIQUE NULLS NOT DISTINCT (service_id, team_id,
+position_id)` e o `apply` faz upsert nessas três. **Pro time split, as linhas de 09:30
+e 11:30 têm o MESMO trio e diferem só no `culto_id` ⇒ a segunda sobrescreveria a
+primeira em silêncio**, e a cobertura da manhã mostraria uma celebração só. A
+constraint virou `(service_id, team_id, position_id, culto_id)`, ainda
+`NULLS NOT DISTINCT` — que é o que **preserva a idempotência do caso não-split** (com
+NULLS DISTINCT, dois alvos de bloco seriam permitidos e reaplicar duplicaria a vaga).
+⚠️ A original era INLINE no CREATE TABLE (nome gerado), então a migration **descobre o
+nome pelo conjunto de colunas** em vez de chutar.
+⚠️ **Registro de erro meu:** a `20260903190000` apontou este risco nas colunas
+ERRADAS (`service_id, template_item_id`). A constraint real é a de cima.
+
+⚠️⚠️ **`upsertAlvoEscala` é RESILIENTE À ORDEM DO ROLLOUT** (padrão que
+`planningCenter.js` já usa): tenta `onConflict` de 4 colunas e cai pro de 3 no
+**42P10**, então deploy e migration chegam em qualquer ordem sem quebrar. ⚠️ O
+fallback só vale pro alvo de BLOCO — com `culto_id` preenchido, cair pra chave de 3
+colapsaria as celebrações numa linha, pior que falhar; aí é erro explícito.
+
+### `Domingo 09:30` estava FORA do bloco (migration `20260903200100` · conserto de dado)
+
+`bloco_servico = 'dom_manha'` estava em `Domingo 08:30`, `Domingo 10:00` e
+`Domingo 11:30` — **não** no `Domingo 09:30`, criado no corte de 24/08
+(`backend/scripts/corte-cultos-domingo-20260824.sql`). Com a vigência, o bloco da
+manhã sobrava só o 11:30: **a régua veria UMA celebração onde há DUAS**, e o split
+nunca funcionaria. ⚠️ Risco zero: `bloco_servico` **não tinha nenhum consumidor** no
+código (git grep zero em `backend/` e `src/`) — era coluna dormente e passa a ser a
+chave do bloco.
+
+### ⚠️ Pessoa-padrão NÃO é pré-preenchida em time split
+
+O template não tem dimensão de horário, então não sabe em QUAL celebração a pessoa
+serve — e um time split existe justamente porque as duas têm gente diferente. Escalar
+nas duas afirmaria o que ninguém disse. O líder preenche no montador, onde vê os dois
+horários lado a lado. A resposta do `apply` DECLARA a divisão (`horarios`,
+`alvos_por_horario`) — sem isso o supervisor veria o dobro de vagas sem saber por quê.
+
+### ⏳ Falta
+
+Leitura por horário em `GET /services/:id/escala-cobertura` (hoje ela soma o bloco, o
+que está correto pro não-split) · toggle de `split_por_horario` em `VolEquipes` · e o
+app (`escala-supervisor.tsx`) mostrando o horário acima do time.
+
 ## ⚠️⚠️ COBERTURA POR HORÁRIO · o alvo e a bandeira do split (2026-09-03 · migrations `20260903190000` + `20260903190100`)
 
 Passo 2 e 3 do desenho de escala por culto. O passo 1 (abaixo) deu horário ao **quem
