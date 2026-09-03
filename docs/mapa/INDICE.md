@@ -66,7 +66,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **150** arquivos, **140** com teste.
+`backend/utils/` tem **151** arquivos, **141** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -170,6 +170,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/mlAvisoEntrega.js` | `src/test/mlAvisoEntrega.test.ts` |
 | `backend/utils/moduloDaAreaEvento.js` | `src/test/moduloDaAreaEvento.test.ts` |
 | `backend/utils/motivoFalha.js` | `src/test/motivoFalha.test.ts` |
+| `backend/utils/nextGuardNivel.js` | `src/test/nextGuardNivel.test.ts` |
 | `backend/utils/nextTurmas.js` | `src/test/nextTurmas.test.ts` |
 | `backend/utils/nfeArquivo.js` | `src/test/nfeArquivo.test.ts` |
 | `backend/utils/nfeXml.js` | `src/test/nfeXml.test.ts` |
@@ -204,7 +205,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/sexoDeclarado.js` | `src/test/sexoDeclarado.test.ts` |
 | `backend/utils/solicitacaoStatusLabel.js` | — |
 | `backend/utils/storagePath.js` | `src/test/storagePath.test.ts` |
-| `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/fetchFalhaDb.test.ts` `src/test/importSupabase.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
+| `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/fetchFalhaDb.test.ts` `src/test/importSupabase.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/nextGuardNivel.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
 | `backend/utils/supervisorArea.js` | `backend/services/supervisorSubarea.test.js` `src/test/supervisorArea.test.ts` |
 | `backend/utils/suporteApp.js` | `src/test/suporteApp.test.ts` |
 | `backend/utils/telefoneVoluntario.js` | `src/test/telefoneVoluntario.test.ts` |
