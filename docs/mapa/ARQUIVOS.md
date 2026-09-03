@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-396 arquivos.
+398 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -168,7 +168,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/campanhaPublico.js` | régua pura | — | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/campoKey.js` | régua pura | — | `src/test/campoKey.test.ts` |
 | `backend/utils/camposCondicionais.js` | régua pura | — | `src/test/camposCondicionais.test.ts` |
-| `backend/utils/camposContato.js` | régua pura | — | `src/test/saneamentoInscricaoApp.test.ts` |
+| `backend/utils/camposContato.js` | régua pura | — | `src/test/paginacaoExtrato.test.ts` |
 | `backend/utils/capacidadeCulto.js` | régua pura | — | `src/test/capacidadeCulto.test.ts` |
 | `backend/utils/censoCampoCadastro.js` | régua pura | — | `src/test/censoCampoCadastro.test.ts` |
 | `backend/utils/censoConvite.js` | régua pura | — | `src/test/censoConvite.test.ts` |
@@ -190,6 +190,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/cursorLote.js` | régua pura | — | `src/test/cursorLote.test.ts` |
 | `backend/utils/dadosDoCadastro.js` | régua pura | — | `backend/services/membroMatchInsert.test.js` |
 | `backend/utils/dadosSensiveisPessoa.js` | régua pura | — | `src/test/dadosSensiveisPessoa.test.ts` |
+| `backend/utils/dataBr.js` | régua pura | — | `src/test/paginacaoExtrato.test.ts` |
 | `backend/utils/decendioComparativo.js` | régua pura | — | `src/test/decendioComparativo.test.ts` |
 | `backend/utils/decisaoCampos.js` | régua pura | — | `src/test/decisaoCampos.test.ts` |
 | `backend/utils/decisaoToken.js` | régua pura | — | `src/test/decisaoToken.test.ts` |
@@ -243,6 +244,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/nfeXml.js` | régua pura | — | `src/test/nfeXml.test.ts` |
 | `backend/utils/onlineDiag.js` | régua pura | — | `src/test/onlineDiag.test.ts` |
 | `backend/utils/origemRegistro.js` | régua pura | — | `src/test/origemRegistro.test.ts` |
+| `backend/utils/paginacaoExtrato.js` | régua pura | — | `src/test/paginacaoExtrato.test.ts` |
 | `backend/utils/pagination.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/paresDuplicados.js` | régua pura | — | `src/test/paresDuplicados.test.ts` |
 | `backend/utils/patrimonioDepreciacao.js` | régua pura | — | `SEM TESTE` |

@@ -66,7 +66,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **148** arquivos, **138** com teste.
+`backend/utils/` tem **150** arquivos, **140** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -99,7 +99,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/campanhaPublico.js` | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/campoKey.js` | `src/test/campoKey.test.ts` |
 | `backend/utils/camposCondicionais.js` | `src/test/camposCondicionais.test.ts` |
-| `backend/utils/camposContato.js` | `src/test/saneamentoInscricaoApp.test.ts` `src/test/telefoneCodigoPais.test.ts` |
+| `backend/utils/camposContato.js` | `src/test/paginacaoExtrato.test.ts` `src/test/saneamentoInscricaoApp.test.ts` `src/test/telefoneCodigoPais.test.ts` |
 | `backend/utils/capacidadeCulto.js` | `src/test/capacidadeCulto.test.ts` |
 | `backend/utils/censoCampoCadastro.js` | `src/test/censoCampoCadastro.test.ts` |
 | `backend/utils/censoConvite.js` | `src/test/censoConvite.test.ts` |
@@ -121,6 +121,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/cursorLote.js` | `src/test/cursorLote.test.ts` |
 | `backend/utils/dadosDoCadastro.js` | `backend/services/membroMatchInsert.test.js` `src/test/portasAlinhadas.test.ts` |
 | `backend/utils/dadosSensiveisPessoa.js` | `src/test/dadosSensiveisPessoa.test.ts` |
+| `backend/utils/dataBr.js` | `src/test/paginacaoExtrato.test.ts` |
 | `backend/utils/decendioComparativo.js` | `src/test/decendioComparativo.test.ts` |
 | `backend/utils/decisaoCampos.js` | `src/test/decisaoCampos.test.ts` |
 | `backend/utils/decisaoToken.js` | `src/test/decisaoToken.test.ts` |
@@ -174,6 +175,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/nfeXml.js` | `src/test/nfeXml.test.ts` |
 | `backend/utils/onlineDiag.js` | `src/test/onlineDiag.test.ts` |
 | `backend/utils/origemRegistro.js` | `src/test/origemRegistro.test.ts` |
+| `backend/utils/paginacaoExtrato.js` | `src/test/paginacaoExtrato.test.ts` |
 | `backend/utils/pagination.js` | — |
 | `backend/utils/paresDuplicados.js` | `src/test/paresDuplicados.test.ts` |
 | `backend/utils/patrimonioDepreciacao.js` | — |
