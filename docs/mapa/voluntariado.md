@@ -181,6 +181,7 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/atividadeVoluntario.js`
+- `backend/utils/blocoCulto.js`
 - `backend/utils/cpf.js`
 - `backend/utils/cronAuth.js`
 - `backend/utils/cursorLote.js`

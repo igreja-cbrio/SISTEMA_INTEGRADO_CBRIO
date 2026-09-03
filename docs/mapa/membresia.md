@@ -255,6 +255,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 
 - `backend/utils/atividadeVoluntario.js`
 - `backend/utils/batismoHorario.js`
+- `backend/utils/blocoCulto.js`
 - `backend/utils/cpf.js`
 - `backend/utils/criancaApresentacao.js`
 - `backend/utils/cronAuth.js`
