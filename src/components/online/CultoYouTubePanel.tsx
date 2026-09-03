@@ -10,6 +10,10 @@ import {
 } from 'lucide-react';
 import { online as onlineApi } from '../../api';
 import { lerCurva as lerCurvaBase } from '../../lib/curvaRetencao';
+import {
+  compararComAnteriores, acharQuedas, serieDoTipo,
+  type CultoBase,
+} from '../../lib/analiseCulto';
 import { Card, CardContent } from '../ui/card';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
@@ -143,6 +147,7 @@ export function CultoYouTubePanel() {
             <CultoCard
               key={c.id}
               c={c}
+              todos={data}
               expanded={expandedId === c.id}
               onToggle={() => setExpandedId(expandedId === c.id ? null : c.id)}
             />
@@ -153,7 +158,7 @@ export function CultoYouTubePanel() {
   );
 }
 
-function CultoCard({ c, expanded, onToggle }: { c: CultoMetrica; expanded: boolean; onToggle: () => void }) {
+function CultoCard({ c, todos, expanded, onToggle }: { c: CultoMetrica; todos: CultoMetrica[]; expanded: boolean; onToggle: () => void }) {
   const totalViews = (c.online_ds || 0) + (c.online_ddus || 0);
   const totalSubsViews = (c.online_views_inscritos || 0) + (c.online_views_nao_inscritos || 0);
   const pctNaoInscritos = totalSubsViews > 0
@@ -202,7 +207,7 @@ function CultoCard({ c, expanded, onToggle }: { c: CultoMetrica; expanded: boole
         {expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
       </button>
 
-      {expanded && <CultoDetalhe c={c} />}
+      {expanded && <CultoDetalhe c={c} todos={todos} />}
     </div>
   );
 }
@@ -219,7 +224,7 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
   );
 }
 
-function CultoDetalhe({ c }: { c: CultoMetrica }) {
+function CultoDetalhe({ c, todos }: { c: CultoMetrica; todos: CultoMetrica[] }) {
   const dur = duracaoMin(c.actual_start_time, c.actual_end_time);
   return (
     <div className="border-t border-border p-4 bg-muted/30 space-y-5">
@@ -243,6 +248,13 @@ function CultoDetalhe({ c }: { c: CultoMetrica }) {
           <span className="text-[10px] text-muted-foreground/70 italic">horário Brasília</span>
         </div>
       )}
+
+      {/* Comparação · evolução · onde caiu */}
+      <ComparacaoComAnteriores c={c} todos={todos} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <EvolucaoDoTipo c={c} todos={todos} />
+        <OndeCaiu c={c} dur={dur} />
+      </div>
 
       {/* Linha 1: números detalhados em grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
@@ -417,5 +429,118 @@ function SubStatusChart({ c }: { c: CultoMetrica }) {
         />
       </PieChart>
     </ResponsiveContainer>
+  );
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Como este culto foi contra os anteriores DO MESMO TIPO.
+// ⚠️ Só o mesmo tipo, e só cultos ANTERIORES — ver analiseCulto.ts.
+function ComparacaoComAnteriores({ c, todos }: { c: CultoMetrica; todos: CultoMetrica[] }) {
+  const r = compararComAnteriores(c as CultoBase, todos as CultoBase[]);
+  if (r.linhas.length === 0) {
+    return (
+      <div className="rounded-lg bg-card border border-border p-3 text-[11px] text-muted-foreground">
+        Ainda não há cultos anteriores de <strong>{r.tipo || 'mesmo tipo'}</strong> suficientes
+        para comparar ({r.base} {r.base === 1 ? 'culto' : 'cultos'}) — a régua começa com 3.
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-lg bg-card border border-border p-3">
+      <h4 className="text-xs font-semibold mb-0.5 flex items-center gap-1.5">
+        <Activity className="h-3 w-3 text-primary" />
+        Contra os {r.base} cultos anteriores de {r.tipo}
+      </h4>
+      <p className="text-[10.5px] text-muted-foreground mb-2">
+        Só o mesmo tipo de culto, e só os que vieram antes deste.
+      </p>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+        {r.linhas.map((l) => (
+          <div key={l.chave} className="rounded-md border border-border/70 px-2.5 py-1.5">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground leading-none">{l.rotulo}</div>
+            <div className="flex items-baseline gap-1.5 mt-1">
+              <span className="font-semibold text-sm tabular-nums">{l.valor == null ? '—' : fmtNum(Math.round(l.valor))}</span>
+              {l.difPct != null && (
+                <span className={`text-[11px] font-semibold ${l.difPct >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {l.difPct >= 0 ? '+' : ''}{l.difPct.toFixed(0)}%
+                </span>
+              )}
+            </div>
+            <div className="text-[10px] text-muted-foreground tabular-nums">
+              média {l.media == null ? '—' : fmtNum(Math.round(l.media))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Série histórica do mesmo tipo de culto — tendência, não foto.
+function EvolucaoDoTipo({ c, todos }: { c: CultoMetrica; todos: CultoMetrica[] }) {
+  const serie = serieDoTipo(c as CultoBase, todos as CultoBase[]);
+  return (
+    <div className="rounded-lg bg-card border border-border p-3">
+      <h4 className="text-xs font-semibold mb-0.5 flex items-center gap-1.5">
+        <TrendingUp className="h-3 w-3 text-primary" />
+        Evolução · {c.service_type_name || 'este culto'}
+      </h4>
+      <p className="text-[10.5px] text-muted-foreground mb-2">Pico ao vivo, culto a culto · o mais recente à direita.</p>
+      {serie.length < 2 ? (
+        <p className="text-[11px] text-muted-foreground py-6 text-center">Sem histórico suficiente ainda.</p>
+      ) : (
+        <ResponsiveContainer width="100%" height={150}>
+          <LineChart data={serie} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--cbrio-border)" />
+            <XAxis dataKey="rotulo" tick={{ fontSize: 9 }} stroke="var(--cbrio-text3)" />
+            <YAxis tick={{ fontSize: 9 }} stroke="var(--cbrio-text3)" />
+            <Tooltip
+              formatter={(v: number, n: string) => [fmtNum(v), n === 'pico' ? 'Pico ao vivo' : n]}
+              contentStyle={{ background: 'var(--cbrio-card)', border: '1px solid var(--cbrio-border)', fontSize: 11 }}
+            />
+            <Line type="monotone" dataKey="pico" stroke="#00B39D" strokeWidth={2} dot={{ r: 2 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+// Onde a audiência caiu — com a hora real, pra achar o trecho no vídeo.
+// ⚠️ A abertura fica de fora: a maior queda de toda live é a saída da tela de
+// espera, e ela seria a resposta de todo culto.
+function OndeCaiu({ c, dur }: { c: CultoMetrica; dur: number | null }) {
+  const r = lerCurva(c);
+  const inicioPct = r.inicioCulto != null && dur ? (r.inicioCulto / dur) * 100 : 0;
+  const quedas = acharQuedas(c.retencao_curva, {
+    inicioAposPct: inicioPct, duracaoMin: dur, inicioIso: c.actual_start_time, quantas: 3,
+  });
+  return (
+    <div className="rounded-lg bg-card border border-border p-3">
+      <h4 className="text-xs font-semibold mb-0.5 flex items-center gap-1.5">
+        <TrendingDown className="h-3 w-3 text-primary" />
+        Onde a audiência mais caiu
+      </h4>
+      <p className="text-[10.5px] text-muted-foreground mb-2">
+        Depois da abertura e antes do encerramento — os dois caem em todo culto.
+      </p>
+      {quedas.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground py-6 text-center">Sem curva de retenção ainda.</p>
+      ) : (
+        <ol className="space-y-1.5">
+          {quedas.map((q, i) => (
+            <li key={i} className="flex items-baseline gap-2 text-[11px]">
+              <span className="text-muted-foreground tabular-nums w-4">{i + 1}.</span>
+              <span className="font-semibold tabular-nums">{r.fmtEixo(q.x)}</span>
+              {q.hora && <span className="text-muted-foreground">({q.hora})</span>}
+              <span className="text-red-600 dark:text-red-400 font-semibold tabular-nums ml-auto">
+                −{Math.round(q.tamanho * 100)} pts
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }
