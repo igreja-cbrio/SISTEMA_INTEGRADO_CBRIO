@@ -201,6 +201,129 @@ Testes: `src/test/npsNomeTurma.test.ts` (7 casos · no `npm test`). **3 mutantes
 RODADOS e mortos**: a tela voltando a importar a api do Next → 1 vermelho · o
 backend deixando de anexar → 1 · o `catch` do anexo derrubando a lista → 1.
 
+## ⚠️⚠️ NEXT no APP · a gestão era INALCANÇÁVEL, e o gate virou PERMISSÃO (2026-09-03 · SEM migration)
+
+Decisão do Marcos, ao desenhar as 3 superfícies do Next (FUNCIONÁRIO na aba Next
+da Integração, com tudo · **VOLUNTÁRIO no app** · INSCRITO no totem): *"gate =
+permissão, não posse"* e *"1ª entrega = tudo de uma vez"* — aceitações, ver datas,
+presença, direcionamento e walk-in.
+
+### ⚠️⚠️ A MEDIÇÃO QUE VIROU A MESA: a tela existia e ninguém alcançava
+
+`app/(app)/next-turma.tsx` (presença por encontro, marca E desmarca) está escrita
+desde o cutover e **era inalcançável em produção**. Os 3 endpoints `/app/next/*`
+gateavam por POSSE (`next_turmas.responsavel_id = membro.id`) e as **44 turmas
+vivas têm `responsavel_id` NULO** (medido em 03/09) — a rotina que abre as turmas
+do mês (`services/nextTurmasAuto.js`) **não preenche o campo**. Logo
+`GET /app/next/papel` respondia `responsavel: false` pra TODO MUNDO, a seção
+"Turmas que você conduz" nunca renderizava, e **não existia gestão do Next no
+mobile**. O código existia e estava morto.
+
+⚠️ **Régua de leitura que sai disto: "o endpoint existe" não é "o caminho
+funciona".** O gate por posse dependia de um campo que nenhuma rotina preenche —
+e o sintoma era uma seção que simplesmente não aparecia, sem erro, sem log.
+
+### A régua é PURA e mora em `backend/utils/nextGestaoApp.js`
+
+Porta que decide acesso não fica solta na rota (mesma lei do `integracaoAbas.ts`
+no front e do `nextGuardNivel.js` no backend). `src/test/nextGestaoApp.test.ts`
+(28 casos · no gate).
+
+- ⚠️⚠️ **MATRIZ ∪ POSSE, nunca em substituição.** Módulo `next` ≥ 2 entra; **o
+  responsável de uma turma entra MESMO sem nível**. Trocar união por substituição
+  tiraria o acesso de quem hoje o tem por posse — e no dia em que alguém preencher
+  `responsavel_id` (a tela do web permite) aquela pessoa esperaria entrar.
+  `AREA_MODULO_BOOST['next']='next'` já dá nível 5 a quem tem a área (medido:
+  Thiago Nogueira, sem cargo, tem `next` 5/5 só pelo boost).
+- ⚠️⚠️ **LEITURA e ESCRITA são separadas, e isso NÃO é invenção** — é o que o
+  `authorizeModule` do web já faz (GET usa `leitura`, escrita usa `escrita`).
+  Medido em 03/09: **12 pessoas passam por `max(leitura,escrita) >= 2` e 11 por
+  `escrita >= 2`**; a única diferença é a conta **"Revisor App Store (Staff)"**
+  (leitura 3 · escrita 0). Sem a separação, ela marcaria presença e cadastraria
+  walk-in na base VIVA do Next tendo escrita 0 na matriz.
+- ⚠️⚠️ **`null === null` é `true` em JS**, e é o acidente que a guarda de
+  `podeGerenciarTurmaApp` impede: turma **sem dono** + membro que o
+  `resolveMembroApp` não resolveu liberaria **todas as turmas sem dono de uma
+  vez** — que é literalmente o estado da base hoje. Dono ausente OU membro
+  ausente ⇒ recusa.
+- ⚠️ **O default de `escrever` é LEITURA**: quem esquecer o parâmetro não escala
+  poder. Turma ausente é fail-closed. Nível ilegível vale ZERO.
+
+### O que a resposta CARREGA (e por que cada campo existe)
+
+- ⚠️⚠️ **`escreve` VIAJA no `GET /next/gestao`.** Sem ele a tela mostraria os
+  botões de presença/walk-in pra quem só tem leitura, e o toque voltaria 403.
+  Quem só lê vê a chamada e não vê os botões — a régua do servidor continua sendo
+  a que decide.
+- ⚠️⚠️ **`por_permissao` sai de `Math.max(ctx.leitura, ctx.escrita)`, NUNCA de um
+  `ctx.nivel`** — esse campo **não existe** no contexto (separar leitura de
+  escrita é o ponto), e ler um campo inexistente dava `undefined >= 2` = false: o
+  app concluiria que TODO MUNDO entrou por posse, quando **ninguém** entra por
+  posse (as 44 turmas estão sem dono). Guarda estática no gate proíbe
+  `ctx.nivel`/`nextCtx.nivel` no arquivo.
+- ⚠️ **`GET /next/gestao` responde 200 com `gerencia: false`, não 403**: é a
+  PERGUNTA "eu alcanço isso?", e o app usa a resposta pra decidir se mostra o
+  cartão. Os dois ramos devolvem o MESMO shape (`escreve`, `por_permissao`,
+  `eh_responsavel`, `turmas`, `espera`) — shape assimétrico faz a tela ler
+  `undefined` como `false` num ramo e não no outro.
+- ⚠️ **`GET /next/papel` fica INTOCADO** (`{ responsavel, turmas }`): o binário
+  publicado lê essas duas chaves, e mudá-las quebraria quem não recebeu o OTA.
+  Ali `responsavel` continua significando POSSE, que é o que o nome diz.
+
+### As portas novas · nenhuma é 2ª régua
+
+| endpoint | reusa |
+|---|---|
+| `POST /next/matriculas/:id/direcionar` | **`services/nextDirecionar.direcionarMatricula`** — a MESMA do totem e da aba Pessoas |
+| `GET /next/direcionar-opcoes` | `services/batismoHorarios` + `utils/batismoHorario.horariosDisponiveis` + `vol_form_opcoes` |
+| `POST /next/turmas/:id/matriculas` (walk-in) | `acharOuCriarGuardado` + `registrarObservacaoSegura` + `cpfValido`/`emailValido` do contrato |
+| presença | `marcarPresencaNextApp`, **extraída** porque o walk-in também marca |
+
+- ⚠️⚠️ **O direcionamento propaga o `status`/`codigo` que a régua LANÇA** (horário
+  do batismo ausente = 400 · lotado = 409): é isso que faz a tela pedir o horário
+  em vez de dizer "erro". `permitir: ['grupos','voluntarios','batismo']` espelha o
+  TOTEM — devocional segue fora, igual ao `publicNext`.
+- ⚠️ **Alocar é superfície ESTREITA de propósito**: NÃO é o `PATCH
+  /next/matriculas/:id` do web (que edita nome, cpf, status, indicações). Aqui só
+  `turma_id`, e só de quem está REALMENTE na fila — mover quem já tem turma é
+  **transferir**, outra ação, que segue sendo do funcionário (409 `ja_tem_turma`).
+  A guarda `.is('turma_id', null)` no UPDATE é o que faz dois toques (ou duas
+  pessoas alocando junto) não sobrescreverem a alocação que já valeu.
+- ⚠️ **Direcionar quem está na FILA é 409 com o caminho** ("aloque numa turma
+  antes"), não um "não pode" sem saída.
+- ⚠️ **Presença confere que a matrícula é DESTA turma**: sem isso, um id de outra
+  turma no corpo marcaria presença de gente que quem gerencia ali não alcança.
+- ⚠️ **Walk-in grava `registered_by`** (como o web): é cadastro feito POR ALGUÉM
+  na correria do encontro, e sem a assinatura a única forma de achar quem digitou
+  seria adivinhar pelo horário. `origem: 'app'` (o mesmo valor que o self-enroll
+  do app já usa) e a política do totem: **só o NOME é obrigatório** — CPF/e-mail
+  são opcionais **mas validados se vierem** (dado errado é pior que ausente).
+- ⚠️ **Falha de leitura das turmas próprias PROPAGA**, nunca vira "não tem turma
+  própria": seria uma instabilidade de banco tirando o acesso de quem entra POR
+  POSSE.
+- ⚠️ `limiterStrict` no walk-in é por PESSOA e tem balde próprio ('strict'), então
+  marcar presença não come dele — ver o comentário na rota.
+
+### Estado
+
+Endpoint chega por **MERGE**; a tela do app é **OTA**. Aditivo: nenhum campo
+obrigatório novo, e bundle antigo segue funcionando pelo `/next/papel`.
+⏳ **A metade do app ainda não existe** — `next-turma.tsx` cobre só presença; as
+telas de aceitações, datas, direcionamento e walk-in são trabalho no repo do app.
+
+**5 mutantes RODADOS e mortos**: guarda do nulo REMOVIDA → 1 vermelho ·
+`escrever` default virando escrita → 2 · leitura alta escrevendo → 2 ·
+`ctx.nivel` de volta → 1 · `escreve` fora da resposta → 1.
+
+⚠️⚠️ **LIÇÃO DE MÉTODO (a de 25/08 outra vez):** o 1º mutante que eu escrevi pra
+guarda do nulo foi trocar `||` por `&&` — e ele **SOBREVIVEU aos 28 testes**.
+Não por teste fraco: `String(null)` é `'null'`, que nunca casa com um uuid real,
+então com **exatamente um** dos lados nulo as duas versões respondem igual **por
+acidente**, e com os dois nulos o `&&` também recusa. O mutante FIEL é **apagar a
+guarda** — aí `String(null) === String(null)` libera, e o teste fica vermelho.
+**Mutante que troca operador pode ser equivalente por acidente; mutar para a
+AUSÊNCIA da guarda é o que prova que ela guarda algo.**
+
 ## ⚠️ LEI · inscrição de MENOR nunca cria/linka mem_membros (2026-09-01 · migration `20260901190000`)
 
 Caso Edgar/Luciana Crespo × "Betina": a filha (9 anos, do Kids) foi batizada em
