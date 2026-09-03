@@ -5,7 +5,7 @@
 // imprime 2 etiquetas (criança + responsável). Equivalente ao PC Check-Ins.
 // ============================================================================
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Baby, Users, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X, BellRing } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,8 @@ import EditarEtiquetaModal from './EditarEtiquetaModal';
 import QrScanner from '@/pages/ministerial/voluntariado/components/checkin/QrScanner';
 import { calcIdadeMeses, formatIdade, formatIdadeShort } from './lib/idade';
 import { imprimirEtiquetas, imprimirEtiquetasLote, reimprimirEtiqueta, reimprimirEtiquetasCompletas } from './lib/imprimir';
+import * as off from './lib/offlineKids';
+import { ehFalhaDeRedeOuServidor } from '@/lib/falhaDeRede';
 import DataNascimentoPicker from './DataNascimentoPicker';
 import useConfirmarSaida from '@/hooks/useConfirmarSaida';
 import confetti from 'canvas-confetti';
@@ -356,6 +358,7 @@ const TOTEM_KIDS_ATIVO_KEY = 'cbrio-totem-kids-ativo';
 
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
+
   const [sessao, setSessao] = useState<Sessao | null>(null);
   const [salas, setSalas] = useState<Sala[]>([]);
   const [carregando, setCarregando] = useState(true);
@@ -373,6 +376,75 @@ export default function TotemKidsCheckin() {
   const [respManualTel, setRespManualTel] = useState('');
   const [usarRespManual, setUsarRespManual] = useState(false);
   const [imprimindo, setImprimindo] = useState(false);
+  // ── Offline (02/09/2026) ──────────────────────────────────────────────────
+  const [filaOffline, setFilaOffline] = useState(0);
+  const [codigosOffline, setCodigosOffline] = useState(0);
+  const [sincronizando, setSincronizando] = useState(false);
+
+  // ⚠️⚠️ O BLOCO É BAIXADO ENQUANTO HÁ REDE — é esse o ponto. Quem sorteia e
+  // garante a unicidade do código de retirada é o SERVIDOR; o totem só
+  // consome. Pedir isto offline não funciona, e não deve funcionar.
+  const recarregarBloco = useCallback(async (sessaoId?: string | null) => {
+    try {
+      const r: any = await totemKids.reservarCodigos({
+        estacao_ref: off.estacaoRef(),
+        sessao_id: sessaoId || null,
+        quantidade: 60,   // domingo tem pico de 125 simultâneos entre TODAS as estações
+      });
+      off.guardarCodigos(r?.codigos || []);
+      setCodigosOffline(off.codigosDisponiveis().length);
+    } catch {
+      // ⚠️ Falhar aqui NÃO trava o totem: ele segue online normalmente. O que
+      // não existe é a rede de segurança do offline — e a barra diz isso.
+      setCodigosOffline(off.codigosDisponiveis().length);
+    }
+  }, []);
+
+  // ⚠️ Sincroniza quando a rede volta. `navigator.onLine` NÃO basta (ele só vê
+  // a placa de rede, e o incidente de 02/09 foi o BANCO fora com WiFi ok) —
+  // por isso também tenta de tempos em tempos.
+  const sincronizarFila = useCallback(async (silencioso = true) => {
+    if (off.filaCount() === 0 || sincronizando) return;
+    setSincronizando(true);
+    try {
+      const r = await off.sincronizar((payload) => totemKids.checkin.criar(payload as any));
+      setFilaOffline(off.filaCount());
+      if (r.enviados || r.duplicados) {
+        toast.success(`${r.enviados + r.duplicados} check-in(s) offline sincronizado(s).`);
+      }
+      // ⚠️⚠️ Conflito de código NUNCA é silencioso: a etiqueta já está impressa
+      // e precisa chegar em gente ANTES de a criança sair.
+      if (r.conflitoDeCodigo.length) {
+        toast.error(
+          `⚠️ ${r.conflitoDeCodigo.length} etiqueta(s) com código recusado: ${r.conflitoDeCodigo.map(i => `${i.crianca_nome} (${i.codigo})`).join(', ')}. NÃO reimprima — leve à coordenação do Kids.`,
+          { duration: 60000 },
+        );
+      }
+      if (!silencioso && !r.enviados && !r.duplicados && r.pendentes) {
+        toast.warning(`Ainda sem sistema — ${r.pendentes} na fila.`);
+      }
+    } finally { setSincronizando(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sincronizando]);
+
+  useEffect(() => {
+    setFilaOffline(off.filaCount());
+    setCodigosOffline(off.codigosDisponiveis().length);
+  }, []);
+
+  useEffect(() => {
+    if (!sessao?.id) return;
+    recarregarBloco(sessao.id);
+    sincronizarFila();
+    // ⚠️ Recarrega o bloco periodicamente: um domingo de 4 cultos consome
+    // códigos, e bloco vazio na hora da queda é o mesmo que não ter offline.
+    const t = setInterval(() => { recarregarBloco(sessao.id); sincronizarFila(); }, 5 * 60_000);
+    const aoVoltar = () => { recarregarBloco(sessao.id); sincronizarFila(); };
+    window.addEventListener('online', aoVoltar);
+    return () => { clearInterval(t); window.removeEventListener('online', aoVoltar); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessao?.id]);
+
   const [enviarWpp, setEnviarWpp] = useState(WPP_RETIRADA_ATIVO); // código+QR de retirada por WhatsApp (oculto por enquanto)
 
   // Sessões ABERTAS que o SELETOR mostra (design v5 · Marcos 2026-07-22): só os
@@ -1316,7 +1388,60 @@ export default function TotemKidsCheckin() {
       if (cpfRes.cpf) payload.responsavel_cpf = cpfRes.cpf;
       if (cpfRes.dispensado) payload.permitir_sem_cpf = true;
 
-      const r = await totemKids.checkin.criar(payload);
+      // ⚠️⚠️ CHECK-IN OFFLINE (02/09/2026). O sistema caiu 1h34 numa quarta; num
+      // domingo isso é fila de pais na porta. Se o servidor não responde, o
+      // check-in NÃO se perde: saca um código do bloco RESERVADO, imprime a
+      // etiqueta igual e enfileira para sincronizar depois.
+      // ⚠️ Só cai na fila em falha de INFRA. Recusa de negócio (4xx: sem CPF,
+      // criança já com check-in, responsável errado) tem que aparecer para o
+      // voluntário — enfileirar isso esconderia a decisão do servidor.
+      let r: any;
+      let modoOffline = false;
+      try {
+        r = await totemKids.checkin.criar(payload);
+      } catch (e) {
+        if (!ehFalhaDeRedeOuServidor(e)) throw e;
+
+        const codigo = off.sacarCodigo();
+        // ⚠️⚠️ SEM BLOCO NÃO HÁ CHECK-IN OFFLINE, e isso é um NÃO honesto.
+        // Gerar código aqui daria 70% de colisão com 50 check-ins — duas
+        // crianças com a MESMA credencial de retirada.
+        if (!codigo) {
+          setImprimindo(false);
+          toast.error('Sem sistema e sem códigos reservados. Use a ficha de papel e avise a coordenação do Kids.', { duration: 10000 });
+          return;
+        }
+
+        const agoraIso = new Date().toISOString();
+        const item = off.enfileirar({
+          codigo,
+          crianca_id: crianca.id,
+          crianca_nome: crianca.nome,
+          sala_id: salaSelecionada,
+          sessao_id: String(sessao_id),
+          responsavel_nome: usarRespManual
+            ? respManualNome.trim()
+            : (crianca.responsaveis.find(x => x.membro_id === responsavelSelecionado)?.membro?.nome || 'Responsável'),
+          responsavel_telefone: usarRespManual ? respManualTel.trim() : null,
+          checkin_at: agoraIso,   // ⚠️ quando ACONTECEU, não quando sincronizar
+        });
+        off.marcarImpresso(item.local_id);
+        setFilaOffline(off.filaCount());
+        modoOffline = true;
+
+        // Resposta no MESMO formato do servidor — a etiqueta é idêntica, e é
+        // esse papel que o pai leva. A sala confere igual.
+        const salaEscolhida = salas.find((x: any) => x.id === salaSelecionada);
+        r = {
+          checkin: { id: item.local_id },
+          crianca: { nome: crianca.nome },
+          sala: { nome: salaEscolhida?.nome || '', cor: salaEscolhida?.cor || null, logo_url: (salaEscolhida as any)?.logo_url || null },
+          responsavel: { nome: item.responsavel_nome },
+          codigo_seguranca: codigo,
+          codigo_barras: codigo,
+          sessao: { culto: { nome: sessao?.culto?.nome || null, data: sessao?.culto?.data || null } },
+        };
+      }
 
       // Monta os dados da etiqueta e imprime. Guarda pra permitir REIMPRIMIR
       // (se a impressão falhar/borrar) sem criar outro check-in.
@@ -1333,8 +1458,16 @@ export default function TotemKidsCheckin() {
       });
       setUltimaEtiqueta(dadosEtiqueta);
 
-      toast.success(`${r.crianca.nome} · check-in OK · código ${r.codigo_seguranca}`, { duration: 4000 });
-      dispararConfete();
+      if (modoOffline) {
+        // ⚠️ NÃO diz "OK" nem solta confete: o check-in ainda não chegou ao
+        // servidor. A etiqueta vale (o código é reservado), mas prometer que
+        // está tudo certo seria a tela mentindo — foi assim que o portão
+        // enganou o voluntário por meses.
+        toast.warning(`${r.crianca.nome} · SEM SISTEMA · código ${r.codigo_seguranca} · a etiqueta vale, o registro sincroniza depois`, { duration: 9000 });
+      } else {
+        toast.success(`${r.crianca.nome} · check-in OK · código ${r.codigo_seguranca}`, { duration: 4000 });
+        dispararConfete();
+      }
       // Criança obrigada de pager (< 4 anos / espectro / limitação): a IMPRESSÃO
       // espera o número do pager (gate mole — o check-in já está salvo). Senão,
       // imprime na hora, como sempre.
@@ -1442,6 +1575,55 @@ export default function TotemKidsCheckin() {
     // TotemKidsAdmin (dialog aninhado + select), que é consistente entre si.
     <div className={totemMode ? 'fixed inset-0 z-[40] overflow-y-auto' : ''}>
     <KidsZoneShell fullscreen={totemMode}>
+      {/* ⚠️⚠️ ESTADO DO OFFLINE, DECLARADO (02/09/2026).
+          O voluntário rotaciona toda semana — não há o que ele "lembre" de um
+          treinamento. A barra tem que dizer o que está acontecendo e o que
+          fazer, na hora. Só aparece quando há algo a dizer. */}
+      {(filaOffline > 0 || codigosOffline < off.PISO_ALERTA_CODIGOS) && (
+        <div className={`mb-4 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 border ${
+          filaOffline > 0
+            ? 'bg-amber-50 border-amber-300 dark:bg-amber-950 dark:border-amber-700'
+            : 'bg-slate-50 border-slate-200 dark:bg-slate-900 dark:border-slate-700'
+        }`}>
+          <div className="flex items-center gap-3">
+            <AlertTriangle className={`h-6 w-6 shrink-0 ${filaOffline > 0 ? 'text-amber-600' : 'text-slate-400'}`} />
+            <div>
+              {filaOffline > 0 ? (
+                <>
+                  <p className="font-bold text-amber-900 dark:text-amber-100">
+                    {filaOffline} check-in{filaOffline > 1 ? 's' : ''} esperando o sistema voltar
+                  </p>
+                  {/* ⚠️ A etiqueta VALE: o código veio do bloco reservado pelo
+                      servidor, então é único de verdade. Dizer isso evita que
+                      alguém reimprima "por segurança" e crie confusão. */}
+                  <p className="text-sm text-amber-800 dark:text-amber-200">
+                    As etiquetas já impressas valem normalmente. Nada se perde — sincroniza sozinho.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-bold text-slate-700 dark:text-slate-200">
+                    Poucos códigos de reserva ({codigosOffline})
+                  </p>
+                  <p className="text-sm text-slate-500">
+                    Sem eles, o totem não consegue fazer check-in se o sistema cair.
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground tabular-nums">{codigosOffline} códigos</span>
+            <Button
+              size="sm" variant="outline" disabled={sincronizando}
+              onClick={() => { recarregarBloco(sessao?.id); sincronizarFila(false); }}
+            >
+              {sincronizando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Tentar agora'}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Barra do topo · logo, sessão, relógio e alternância check-in/check-out */}
       <div className="flex flex-wrap items-center justify-between gap-4 pb-5 mb-6 border-b border-dashed border-slate-200">
         <div className="flex items-center gap-3">
