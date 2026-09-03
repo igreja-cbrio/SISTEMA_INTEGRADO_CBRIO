@@ -146,6 +146,13 @@ export interface VolTeam {
   leader_profile_id: string | null;
   is_active: boolean;
   sort_order: number;
+  /**
+   * Este time usa PESSOAS DIFERENTES em cada horário do bloco (03/09/2026).
+   * true ⇒ o template materializa um alvo por celebração e a escala é por
+   * culto; false (default) ⇒ o time serve o bloco todo com a mesma gente.
+   * É o Split Team do Planning Center.
+   */
+  split_por_horario?: boolean;
   created_at: string;
   updated_at: string;
   leader?: { id: string; full_name: string; avatar_url: string | null } | null;

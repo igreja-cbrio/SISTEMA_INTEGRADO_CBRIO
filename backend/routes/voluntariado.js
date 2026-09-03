@@ -3596,10 +3596,13 @@ router.get('/teams-manage', async (req, res) => {
 
 router.post('/teams-manage', async (req, res) => {
   try {
-    const { name, description, color, leader_profile_id, sort_order, area } = req.body;
+    const { name, description, color, leader_profile_id, sort_order, area, split_por_horario } = req.body;
     if (!name) return res.status(400).json({ error: 'name obrigatorio' });
     const { data, error } = await supabase.from('vol_teams')
-      .insert({ name, description, color, leader_profile_id, sort_order: sort_order || 0, area: area || null }).select().single();
+      // ⚠️ `split_por_horario` normalizado com `=== true`: o corpo vem de JSON e
+      // a string "false" é truthy — ligar o split por engano faria o template
+      // materializar alvo por celebração numa equipe que serve o bloco todo.
+      .insert({ name, description, color, leader_profile_id, sort_order: sort_order || 0, area: area || null, split_por_horario: split_por_horario === true }).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao criar equipe' }); }
@@ -3607,9 +3610,14 @@ router.post('/teams-manage', async (req, res) => {
 
 router.put('/teams-manage/:id', async (req, res) => {
   try {
-    const { name, description, color, leader_profile_id, is_active, sort_order, area } = req.body;
+    const { name, description, color, leader_profile_id, is_active, sort_order, area, split_por_horario } = req.body;
+    // ⚠️ `undefined` é descartado pelo JSON.stringify do supabase-js, então
+    // corpo parcial segue sendo update parcial. Só normaliza quando VEIO —
+    // `=== true` cru transformaria "campo ausente" em "desliga o split".
+    const patch = { name, description, color, leader_profile_id, is_active, sort_order, area };
+    if (split_por_horario !== undefined) patch.split_por_horario = split_por_horario === true;
     const { data, error } = await supabase.from('vol_teams')
-      .update({ name, description, color, leader_profile_id, is_active, sort_order, area })
+      .update(patch)
       .eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
@@ -6041,7 +6049,11 @@ async function _coberturaDoCulto(sid) {
       .select('*, team:vol_teams(id,name), position:vol_positions(id,name)')
       .eq('service_id', sid).is('deleted_at', null).order('sort_order'),
     supabase.from('vol_schedules')
-      .select('id, volunteer_id, volunteer_name, team_id, position_id, confirmation_status, escala_culto_item_id')
+      // ⚠️ `culto_id` (03/09) é o eixo do HORÁRIO. Sem ele aqui, a régua
+      // `cultoCompativel` receberia undefined em toda escala e voltaria a casar
+      // a pessoa do 09:30 na vaga do 11:30 — o alvo já traz o campo porque usa
+      // `select('*')`, então a assimetria passaria calada.
+      .select('id, volunteer_id, volunteer_name, team_id, position_id, confirmation_status, escala_culto_item_id, culto_id')
       .eq('service_id', sid),
   ]);
   if (aErr || sErr) throw new Error((aErr || sErr).message);
