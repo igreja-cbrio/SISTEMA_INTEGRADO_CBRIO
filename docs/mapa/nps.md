@@ -40,6 +40,7 @@ Guard: `authorizeModule('nps', 1)`
 
 **Tabelas que estas rotas tocam**
 
+- `next_turmas`
 - `nps_pesquisas`
 - `nps_respostas`
 - `profiles`
