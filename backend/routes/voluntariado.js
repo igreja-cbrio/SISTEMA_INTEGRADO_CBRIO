@@ -23,6 +23,7 @@ const {
 const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
 const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../utils/volRodizio');
 const { montarCobertura, contarStatus } = require('../utils/volCobertura');
+const { cultosDoBloco } = require('../utils/blocoCulto');
 const { podeGerarCulto } = require('../utils/volSyncIntegrity');
 const { filtrarVigentes } = require('../utils/vigenciaTipoCulto');
 const { proximoCursor } = require('../utils/cursorLote');
@@ -5615,16 +5616,53 @@ router.get('/schedule-templates/por-tipo/:serviceTypeId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao sugerir templates' }); }
 });
 
+// Upsert do ALVO, RESILIENTE À ORDEM DO ROLLOUT.
+//
+// ⚠️⚠️ A unique de `vol_escala_culto_itens` ganhou `culto_id` na migration
+// `20260903200000` (sem ele, as linhas de 09:30 e 11:30 de um time split têm o
+// mesmo (service_id, team_id, position_id) e a segunda sobrescreveria a
+// primeira em silêncio). Enquanto a migration não estiver aplicada, o
+// `ON CONFLICT` de 4 colunas devolve **42P10** ("no unique or exclusion
+// constraint matching the ON CONFLICT specification") — o mesmo erro que o
+// projeto já levou em `20260527150000`. Então tentamos 4 colunas e caímos pra
+// 3, como `services/planningCenter.js` faz com o índice do PCO: assim deploy e
+// migration podem chegar em qualquer ordem sem quebrar.
+//
+// ⚠️ O fallback só vale pro alvo de BLOCO (`culto_id` nulo). Com `culto_id`
+// preenchido, cair pra chave de 3 colunas faria as celebrações colapsarem numa
+// linha — pior que falhar. Aí é erro explícito, dizendo o que falta.
+async function upsertAlvoEscala(linha) {
+  let r = await supabase.from('vol_escala_culto_itens')
+    .upsert(linha, { onConflict: 'service_id,team_id,position_id,culto_id' })
+    .select('id').single();
+  if (r.error && String(r.error.code) === '42P10') {
+    if (linha.culto_id) {
+      throw new Error('Escala por horário exige a migration 20260903200000 (unique do alvo com culto_id).');
+    }
+    const { culto_id: _ignora, ...semCulto } = linha;
+    r = await supabase.from('vol_escala_culto_itens')
+      .upsert(semCulto, { onConflict: 'service_id,team_id,position_id' })
+      .select('id').single();
+  }
+  if (r.error) throw new Error(r.error.message);
+  return r.data;
+}
+
 // Aplica um template a um culto: materializa a composição esperada
 // (vol_escala_culto_itens) e pré-preenche vol_schedules com as pessoas-padrão.
 // Idempotente: reaplica sem duplicar itens nem re-escalar quem já está.
+//
+// ⚠️ Time `vol_teams.split_por_horario` materializa UM ALVO POR CELEBRAÇÃO do
+// bloco (o domingo de manhã tem duas: 09:30 e 11:30). Com a bandeira false — o
+// default, e o estado de 100% dos times em 03/09 — o comportamento é
+// byte a byte o de antes desta mudança.
 router.post('/schedule-templates/:id/apply', authEscalaEscrita, async (req, res) => {
   try {
     const { service_id } = req.body || {};
     if (!service_id) return res.status(400).json({ error: 'service_id obrigatório' });
     const tpl = await carregarTemplate(req.params.id);
     if (!tpl) return res.status(404).json({ error: 'Template não encontrado' });
-    const { data: svc } = await supabase.from('vol_services').select('id, scheduled_at').eq('id', service_id).maybeSingle();
+    const { data: svc } = await supabase.from('vol_services').select('id, scheduled_at, service_type_id').eq('id', service_id).maybeSingle();
     if (!svc) return res.status(404).json({ error: 'Culto não encontrado' });
 
     // Ausências das pessoas-padrão deste template, lidas UMA vez (uma consulta
@@ -5664,26 +5702,67 @@ router.post('/schedule-templates/:id/apply', authEscalaEscrita, async (req, res)
       let n = 0; while (set.has(n)) n += 1; set.add(n); return n;
     };
 
-    let itensCriados = 0, preenchidas = 0, vagasTotais = 0;
+    // ── As celebrações do BLOCO (09:30 e 11:30 são a MESMA liturgia repetida) ──
+    // Régua pura em `utils/blocoCulto`, chaveada por `vol_service_types.
+    // bloco_servico`. Só o time `split_por_horario` vira uma linha de alvo por
+    // celebração; o resto segue com `culto_id = NULL` (vale pro bloco todo).
+    //
+    // ⚠️⚠️ FAIL-SAFE em tudo: serviço sem tipo resolvível, tipo sem bloco, dia
+    // sem culto ou qualquer erro de leitura ⇒ lista vazia ⇒ **comportamento de
+    // hoje** (alvo único de bloco). Nunca inventa celebração, e aplicar template
+    // nunca falha por causa disto.
+    let cultosBloco = [];
+    const splitPorTime = new Map();
+    try {
+      const idsTimes = [...new Set(tpl.itens.map((i) => i.team_id).filter(Boolean))];
+      const [tiposRes, cultosRes, timesRes] = await Promise.all([
+        supabase.from('vol_service_types').select('id, bloco_servico, is_active, vigente_de, vigente_ate'),
+        supabase.from('cultos').select('id, data, hora, service_type_id').eq('data', diaServico).is('deleted_at', null),
+        idsTimes.length
+          ? supabase.from('vol_teams').select('id, split_por_horario').in('id', idsTimes)
+          : Promise.resolve({ data: [] }),
+      ]);
+      for (const t of timesRes.data || []) splitPorTime.set(t.id, t.split_por_horario === true);
+      const tipos = tiposRes.data || [];
+      const tipo = tipos.find((t) => t.id === svc.service_type_id) || null;
+      cultosBloco = cultosDoBloco({ tipo, tipos, cultos: cultosRes.data || [], diaISO: diaServico });
+    } catch {
+      cultosBloco = [];
+    }
+    // Uma celebração só não é bloco de horários — o NULL diz a mesma coisa.
+    const podeDividir = cultosBloco.length > 1;
+
+    let itensCriados = 0, preenchidas = 0, vagasTotais = 0, alvosPorHorario = 0;
     for (const it of tpl.itens) {
-      // 1) Composição esperada (alvo). Upsert por (service, team, position).
-      const { data: cItem, error: cErr } = await supabase.from('vol_escala_culto_itens')
-        .upsert({
+      // 1) Composição esperada (alvo). Time `split_por_horario` ganha UMA LINHA
+      // POR CELEBRAÇÃO do bloco; o resto, uma linha de bloco (`culto_id` NULL).
+      const dividir = podeDividir && splitPorTime.get(it.team_id) === true;
+      let cItem = null;
+      for (const cultoId of dividir ? cultosBloco.map((c) => c.id) : [null]) {
+        cItem = cItem || await upsertAlvoEscala({
           service_id,
           template_id: tpl.id,
           template_item_id: it.id,
           team_id: it.team_id,
           position_id: it.position_id || null,
+          culto_id: cultoId,
           quantidade: it.quantidade,
           fixo: it.fixo,
           sort_order: it.sort_order,
           deleted_at: null,
           updated_at: new Date().toISOString(),
-        }, { onConflict: 'service_id,team_id,position_id' })
-        .select('id').single();
-      if (cErr) throw new Error(cErr.message);
-      itensCriados += 1;
-      vagasTotais += it.quantidade;
+        });
+        if (cItem && dividir) alvosPorHorario += 1;
+        itensCriados += 1;
+        vagasTotais += it.quantidade;
+      }
+
+      // ⚠️⚠️ 2) Pessoa-padrão NÃO é pré-preenchida em time split. O template não
+      // tem dimensão de horário, então não sabe em QUAL celebração a pessoa
+      // serve — e um time split existe justamente porque as duas têm gente
+      // diferente. Escalar nas duas afirmaria o que ninguém disse; o líder
+      // preenche no montador, que é onde ele vê os dois horários lado a lado.
+      if (dividir) continue;
 
       // 2) Pré-preencher pessoas-padrão (respeitando a quantidade de vagas).
       const teamName = it.team?.name || null;
@@ -5724,7 +5803,17 @@ router.post('/schedule-templates/:id/apply', authEscalaEscrita, async (req, res)
         if (!sErr) { escaladoChave.add(chave); usadas += 1; preenchidas += 1; }
       }
     }
-    res.json({ ok: true, itens: itensCriados, vagas: vagasTotais, preenchidas, pulados });
+    // `horarios`/`alvos_por_horario` DECLARAM que houve divisão — sem isso o
+    // supervisor veria o dobro de vagas e não saberia por quê.
+    res.json({
+      ok: true,
+      itens: itensCriados,
+      vagas: vagasTotais,
+      preenchidas,
+      pulados,
+      horarios: cultosBloco.map((c) => ({ culto_id: c.id, hora: c.hora })),
+      alvos_por_horario: alvosPorHorario,
+    });
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao aplicar template' }); }
 });
 
