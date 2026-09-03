@@ -611,6 +611,22 @@ export default function TabDiagnosticos() {
         </Faixa>
       )}
 
+      {and.fila_travada?.qtd > 0 && (
+        /* ⚠️⚠️ A CAUSA É UMA PARA N TAREFAS, e vai declarada UMA vez.
+           Repetir a mesma frase em N cards, ou promover cada tarefa para
+           "precisa da sua ação", inflaria a fila de trabalho com N cópias do
+           mesmo problema — a lição dos 77 KPIs sem dono, que viraram 9
+           conversas por área em vez de 77 cobranças. */
+        <Faixa cor={C.amber} fundo={C.amberBg}>
+          <strong>
+            A fila do agente não está andando
+            {and.fila_travada.qtd > 1 ? ` (${and.fila_travada.qtd} tarefas esperando).` : '.'}
+          </strong>{' '}
+          {and.fila_travada.motivo} Enquanto isso, os achados seguem na fila e andam
+          sozinhos quando o ambiente for corrigido — nada precisa ser reenfileirado.
+        </Faixa>
+      )}
+
       {data?.andamento_indisponivel && (
         /* ⚠️ "não deu pra saber o andamento" nunca se disfarça de "não há
            correção em curso": as duas coisas levam a decisões opostas. */
