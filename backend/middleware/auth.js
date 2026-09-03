@@ -48,6 +48,11 @@ const ROUTE_MODULE_MAP = {
   'online':       ['online'],
   'wifi':         ['wifi'],
   'next':         ['next'],
+  // Gestão do Next (`/api/next`) · 03/09/2026. Aceita `next` OU `integracao`
+  // porque a aba Next vive DENTRO da página de Integração desde o #2856:
+  // gatear só por ['next'] daria 403 pra quem tem apenas `integracao` (medido:
+  // 2 pessoas ativas, ambas nível 5) numa tela que elas sempre puderam abrir.
+  'next-gestao':  ['next', 'integracao'],
   'next-batismo': ['next-batismo'],
   'voluntariado': ['voluntariado'],
   'membresia':    ['membresia'],
