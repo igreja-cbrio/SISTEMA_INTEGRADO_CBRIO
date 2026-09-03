@@ -471,13 +471,32 @@ router.get('/cultos-metricas', async (req, res) => {
     }
 
     // Curva de retencao por vídeo
-    const { data: curvaRows } = await supabase
-      .from('online_video_retencao_curva')
-      .select('video_id, ratio_pct, audience_watch_ratio')
-      .in('video_id', videoIds)
-      .order('ratio_pct', { ascending: true });
+    //
+    // ⚠️⚠️ ESTA CONSULTA PRECISA PAGINAR. Cada vídeo tem ~100 pontos (1%..100%),
+    // então 24 cultos são ~2.400 linhas — acima do teto de 1.000 do PostgREST.
+    // E o `.order('ratio_pct')` ordena ENTRE OS VÍDEOS, então o corte não
+    // derrubava um vídeo inteiro: derrubava a segunda metade de TODOS eles, no
+    // mesmo ponto. Medido em 02/09/2026: 21 vídeos com curva ⇒ 1000/21 = 47%,
+    // exatamente onde o gráfico parava. Ninguém via o vídeo depois da metade —
+    // e é justamente lá que mora o platô (a mensagem), a parte boa da curva.
+    // ⚠️ Piorava sozinho: com `?limit=100` o corte cairia para 10% do vídeo.
+    const curvaRows = [];
+    const PAGINA = 1000;
+    for (let de = 0; ; de += PAGINA) {
+      const { data: pagina, error: erroCurva } = await supabase
+        .from('online_video_retencao_curva')
+        .select('video_id, ratio_pct, audience_watch_ratio')
+        .in('video_id', videoIds)
+        .order('video_id', { ascending: true })
+        .order('ratio_pct', { ascending: true })
+        .range(de, de + PAGINA - 1);
+      if (erroCurva) throw erroCurva;
+      if (!pagina?.length) break;
+      curvaRows.push(...pagina);
+      if (pagina.length < PAGINA) break;
+    }
     const curvaByVideo = {};
-    for (const r of (curvaRows || [])) {
+    for (const r of curvaRows) {
       if (!curvaByVideo[r.video_id]) curvaByVideo[r.video_id] = [];
       curvaByVideo[r.video_id].push({ ratio_pct: r.ratio_pct, audience_watch_ratio: Number(r.audience_watch_ratio) });
     }
