@@ -248,9 +248,12 @@ const NAV_ITEMS = [
       {
         title: 'Áreas ministeriais',
         items: [
-          { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao' },
-          { label: 'Next', description: 'Turmas, matrículas e presenças do Next', icon: GraduationCap, path: '/ministerial/next', module: 'next' },
-          { label: 'Batismo', description: 'Inscrições, horários, agendamento e check-in de batismo', icon: Droplets, path: '/batismo', module: 'batismo' },
+          // ⚠️ 'Next' e 'Batismo' SAÍRAM daqui em 03/09/2026 (pedido do Matheus): os dois
+          // já vivem como ABA desta página — `/ministerial/next` era só um redirect pra
+          // `?tab=next`, e `/batismo` renderiza o MESMO componente `Batismos` que a aba.
+          // ⚠️ As ROTAS ficam (link salvo, push e deep link continuam abrindo). Tirar do
+          // menu é tirar do NAV_ITEMS, nunca da rota — quem decide acesso é o ModuleGuard.
+          { label: 'Integração', description: 'Cultos, decisões, batismos e Next', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
           { label: 'Comunicação', description: 'Central de WhatsApp · chat, envios, templates, atendentes e relatórios', icon: MessageSquare, path: '/comunicacao', module: 'comunicacao' },
