@@ -91,6 +91,54 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️⚠️ A COBERTURA aprendeu HORÁRIO · e o toggle na tela (2026-09-03 · SEM migration)
+
+Fecha o ciclo do split na web: o produtor já materializava alvo por celebração, mas
+**a conta de cobertura não sabia disso** e o líder não tinha como ligar a bandeira.
+
+### `utils/volCobertura.cultoCompativel` · o eixo do horário
+
+⚠️⚠️ **O bug que isto impede:** um time split tem DUAS vagas do mesmo
+(equipe, função) — 09:30 e 11:30. O fallback por par casaria a pessoa do 09:30 na
+vaga do 11:30 e a tela mostraria **coberto um horário vazio**.
+
+**NULL de qualquer lado é curinga**, e as duas direções importam:
+- escala NULL (serve as duas celebrações) **preenche** a vaga do 09:30;
+- vaga NULL (a equipe precisa de N na manhã) **é preenchida** por quem serve só o
+  09:30 — parcialmente, mas é gente presente; não contar faria a tela pedir reposição
+  de quem já está escalado.
+
+⚠️⚠️ **Vale SÓ no fallback por (equipe, função).** O vínculo explícito
+(`escala_culto_item_id`) é declaração de quem escalou e **manda** — filtrar por horário
+ali jogaria em `sobrando` uma escala que alguém amarrou de propósito. Tem caso de teste.
+
+⚠️ `montarCobertura` passou a devolver `culto_id` no item (é o que a tela usa pra
+agrupar por celebração) e `_coberturaDoCulto` passou a **selecionar `culto_id` em
+`vol_schedules`**. O alvo já trazia (usa `select('*')`), então a assimetria passaria
+calada: toda escala chegaria com `undefined` e a régua voltaria a casar errado.
+
+### O toggle · `VolEquipes` → "Cada horário tem gente diferente"
+
+Checkbox no form da equipe, com o rótulo dizendo o **efeito** e não o nome técnico —
+o líder decide olhando a equipe dele, não o schema. O texto de apoio nomeia o caso
+concreto ("o domingo de manhã tem duas"), porque *bloco* não é palavra que alguém use
+na igreja.
+
+⚠️ `POST/PUT /teams-manage` normalizam com **`=== true`**: o corpo vem de JSON e a
+string `"false"` é truthy — ligar o split por engano faria o template materializar alvo
+por celebração numa equipe que serve o bloco todo.
+⚠️ No PUT o campo só entra no patch **quando veio** (`!== undefined`): `=== true` cru
+transformaria "campo ausente" em "desliga o split", e o front manda corpo parcial.
+
+**Verificação:** typecheck limpo · **231/231 arquivos, 3.505 testes** · 11 casos novos
+em `src/test/volCobertura.test.ts` (27 no arquivo).
+
+### ⏳ Falta só o APP
+
+`escala-supervisor.tsx`: agrupar por time, carrossel horizontal, seleção em duas
+etapas e o horário acima do time (o `culto_id` já vem na cobertura). ⚠️ Bloqueado pela
+catraca do OTA até as lojas receberem iOS 42 / Android vc 8.
+
 ## ⚠️⚠️ O PRODUTOR do split · `utils/blocoCulto.js` + o `apply` (2026-09-03 · migrations `20260903200000` + `20260903200100`)
 
 As três colunas das levas anteriores eram schema sem produtor. Agora o

@@ -27,6 +27,31 @@
  *
  * ⚠️ Linha sem `volunteer_id` NÃO preenche vaga: é lugar reservado, não gente.
  */
+/**
+ * A escala serve esta vaga, no eixo do HORÁRIO? (03/09/2026)
+ *
+ * Entrou com o split por celebração: um time `vol_teams.split_por_horario` tem
+ * DUAS vagas do mesmo (equipe, função) no domingo de manhã — uma do 09:30 e uma
+ * do 11:30 — e sem esta régua o fallback por par casaria a pessoa do 09:30 na
+ * vaga do 11:30, mostrando coberto um horário que está vazio.
+ *
+ * **NULL de qualquer lado = "todos os horários do bloco"**, então casa:
+ *  · escala NULL (a pessoa serve as duas celebrações) preenche a vaga do 09:30;
+ *  · vaga NULL (a equipe precisa de N na manhã) é preenchida por quem serve só
+ *    o 09:30 — parcialmente, mas é gente presente naquela função, e não contar
+ *    faria a tela pedir reposição de quem já está escalado.
+ * Só NÃO casa quando os dois estão setados e são celebrações diferentes.
+ *
+ * ⚠️⚠️ Vale SÓ no fallback por (equipe, função). O vínculo explícito
+ * (`escala_culto_item_id`) é declaração de quem escalou e MANDA — filtrar por
+ * horário ali faria a tela ignorar escala que alguém amarrou de propósito, e a
+ * pessoa cairia em `sobrando` como se estivesse fora de qualquer vaga.
+ */
+function cultoCompativel(escalaCulto, alvoCulto) {
+  if (!escalaCulto || !alvoCulto) return true;
+  return String(escalaCulto) === String(alvoCulto);
+}
+
 function montarCobertura(itens, escalas) {
   const lista = Array.isArray(escalas) ? escalas : [];
   const porItemId = new Map();
@@ -64,7 +89,8 @@ function montarCobertura(itens, escalas) {
     const querFaltando = Math.max(0, (a.quantidade || 0) - diretas.filter(contaVaga).length);
     const doPar = querFaltando > 0
       ? (porPar.get(chavePar(a.team_id, a.position_id)) || [])
-        .filter(s => !usadas.has(s.id)).slice(0, querFaltando)
+        .filter(s => !usadas.has(s.id) && cultoCompativel(s.culto_id, a.culto_id))
+        .slice(0, querFaltando)
       : [];
     const pessoas = [...diretas, ...doPar];
     for (const s of pessoas) usadas.add(s.id);
@@ -75,6 +101,9 @@ function montarCobertura(itens, escalas) {
       team: a.team?.name || a.team || null,
       position_id: a.position_id,
       position: a.position?.name || a.position || null,
+      // O horário desta vaga. NULL = vale pro bloco todo (time não-split). É o
+      // que a tela usa pra agrupar as colunas por celebração.
+      culto_id: a.culto_id ?? null,
       fixo: a.fixo,
       alvo: a.quantidade || 0,
       preenchidas: pessoas.filter(contaVaga).length,
@@ -117,4 +146,4 @@ function contarStatus(escalas) {
   return r;
 }
 
-module.exports = { montarCobertura, contarStatus };
+module.exports = { montarCobertura, contarStatus, cultoCompativel };

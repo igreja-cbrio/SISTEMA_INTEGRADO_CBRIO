@@ -380,10 +380,11 @@ function TeamFormDialog({ team, areas = [], onClose }: { team: VolTeam | null; a
   const [description, setDescription] = useState(team?.description || '');
   const [color, setColor] = useState(team?.color || TEAM_COLORS[0]);
   const [area, setArea] = useState(team?.area || '');
+  const [split, setSplit] = useState(team?.split_por_horario === true);
 
   const handleSave = () => {
     if (!name.trim()) return toast.error('Nome obrigatório');
-    const data = { name: name.trim(), description: description.trim() || null, color, area: area.trim() || null };
+    const data = { name: name.trim(), description: description.trim() || null, color, area: area.trim() || null, split_por_horario: split };
     if (team) {
       updateTeam.mutate({ id: team.id, data }, { onSuccess: () => { toast.success('Equipe atualizada'); onClose(); }, onError: () => toast.error('Erro ao atualizar') });
     } else {
@@ -424,6 +425,29 @@ function TeamFormDialog({ team, areas = [], onClose }: { team: VolTeam | null; a
           <div>
             <Label>Descrição</Label>
             <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Descrição da equipe (opcional)" />
+          </div>
+          {/* Split por horário (03/09/2026) · o Split Team do Planning Center.
+              ⚠️ O rótulo diz o EFEITO, não o nome técnico: o líder decide olhando
+              a equipe dele, não o schema. E o texto de apoio nomeia o caso
+              concreto (a manhã de domingo tem duas celebrações) porque "bloco"
+              não é palavra que alguém use na igreja. */}
+          <div className="rounded-md border border-border p-3">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={split}
+                onChange={e => setSplit(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-[#00B39D]"
+              />
+              <span>
+                <span className="block text-sm font-medium text-foreground">Cada horário tem gente diferente</span>
+                <span className="block text-[11px] text-muted-foreground mt-0.5">
+                  Marque quando a equipe troca de pessoas entre as celebrações do mesmo dia — o domingo de manhã
+                  tem duas (09:30 e 11:30). A escala e as vagas passam a ser por horário. Desmarcado, a equipe
+                  serve o dia todo com a mesma gente.
+                </span>
+              </span>
+            </label>
           </div>
           <div>
             <Label>Cor</Label>
