@@ -91,6 +91,67 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️⚠️ COBERTURA POR HORÁRIO · o alvo e a bandeira do split (2026-09-03 · migrations `20260903190000` + `20260903190100`)
+
+Passo 2 e 3 do desenho de escala por culto. O passo 1 (abaixo) deu horário ao **quem
+está escalado**; estes dão horário ao **quantos preciso** e criam **quem decide**.
+
+### `vol_escala_culto_itens.culto_id` (migration `20260903190000`)
+
+`vol_escala_culto_itens` (1.447 linhas) é o **ALVO** — o denominador da cobertura,
+materializado por `POST /schedule-templates/:id/apply`, que copia `quantidade`/`fixo`
+do template e guarda linhagem em `template_id` + `template_item_id`.
+
+⚠️⚠️ **Sem esta coluna, "faltam 2 no 9:30" é INEXPRIMÍVEL.** Com o passo 1 a escala já
+sabe o horário, mas o alvo não — então a cobertura só compara contra alvo de BLOCO.
+Pro time não-split isso está certo; pro split (`Chat 9:30` precisa de 2 e `Chat 11:30`
+de 2) os dois horários dividiriam a mesma vaga e a tela mentiria nos dois.
+
+⚠️⚠️ **Mesma semântica de NULL do passo 1, de propósito:** NULL = vale pro bloco todo ·
+setado = daquele horário. ⇒ **a cobertura de um culto soma os alvos daquele culto MAIS
+os de bloco (NULL)** e confronta as escalas pela mesma régua. Semânticas diferentes nas
+duas colunas contariam vaga a mais ou a menos em silêncio.
+
+⚠️ Backfill NULL nas 1.447 (todas materializadas de planos do PCO; nenhuma era de
+horário específico) · `ON DELETE SET NULL` nunca CASCADE (CASCADE apagaria o
+denominador e faria relatório antigo mentir).
+⚠️ **Registrado porque é o erro natural:** se um dia existir unicidade por
+`(service_id, template_item_id)`, ela precisa ganhar `culto_id` — senão um time split
+não materializa duas linhas do MESMO item de template, uma por horário.
+
+### `vol_teams.split_por_horario` (migration `20260903190100`)
+
+Desenho do Marcos: *"por padrão deve-se usar split teams caso tenham dois times
+diferentes servindo em cada culto (mantendo a definição de culto como domingo manhã,
+já que fazemos a mesma liturgia) … 1 culto, times split aparecem com horário acima nos
+times que isso for habilitado"*.
+
+⚠️⚠️ **É o PRODUTOR das duas colunas `culto_id`.** Sem a bandeira, o `apply` teria que
+adivinhar se um time gera uma linha de bloco ou uma por culto — e adivinhar aqui
+produz cobertura errada em silêncio.
+
+- **DEFAULT `false`**, que descreve a frota como ela é: nenhuma das 6.526 escalas nem
+  dos 1.447 alvos é por horário hoje. Ligar é ato do líder, **time a time** — a mesma
+  estratégia de migração que o Marcos definiu pro vínculo com o Services.
+- ⚠️ A bandeira é do **TIME**, não do tipo de culto: quem repete gente entre as
+  celebrações é a EQUIPE (a Banda toca as duas; a Integração troca). No tipo de culto
+  forçaria todos os times do domingo à mesma regra.
+- ⚠️ **Não decide se a LITURGIA duplica.** Ordem de culto e template seguem **um por
+  bloco**; o agrupamento vive em `vol_service_types.bloco_servico` /
+  `consolidacao_key`, já preenchidos (`dom_manha`, `domingo-0930`).
+- Referência medida no Services em 03/09: o flag `Split Team` existe lá e está
+  **desligado em todos os times** — e é por isso que o horário acabou no NOME da
+  posição deles. **Do nosso lado, 0 de 78 posições têm horário no nome**, e a decisão é
+  que continue assim.
+
+### ⏳ O QUE AINDA NÃO TEM PRODUTOR (próximo passo)
+
+As três colunas são **schema puro**: nada escreve nelas ainda. Falta
+`POST /schedule-templates/:id/apply` ler `split_por_horario` e materializar **uma linha
+de alvo por culto do bloco** quando true (e uma linha NULL quando false), mais o toggle
+em `VolEquipes` e a leitura em `GET /services/:id/escala-cobertura`. Deploy em 2
+etapas de propósito: schema aditivo primeiro, produtor depois.
+
 ## ⚠️⚠️ ESCALA POR CULTO · `vol_schedules.culto_id` (2026-09-03 · migration `20260903180000`)
 
 Pedido do Marcos comparando a nossa "Montar escala" com o Planning Center Services:
