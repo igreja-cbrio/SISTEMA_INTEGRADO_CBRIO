@@ -91,6 +91,48 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️⚠️ `/api/next` ganhou guard de módulo — rodava só com `authenticate` (2026-09-03 · SEM migration)
+
+`backend/routes/next.js` nasceu em 28/04/2026 e ficou **~4 meses montado em
+`/api/next` com ~40 endpoints e só `router.use(authenticate)`** — nenhum
+`authorizeModule`. Qualquer usuário autenticado do ERP escrevia no Next.
+`POST /matriculas` chega a criar pessoa em `mem_membros` pelo matcher forte.
+O único endpoint do arquivo que olhava permissão era
+`POST /matriculas/backfill-membros` (`podeBackfillNext`, nível 3 · segue valendo
+por cima do guard novo).
+
+**Medido em produção ANTES de fechar** (103 usuários ativos, via
+`resolveEffectivePerms` real):
+
+| corte | pessoas |
+|---|---|
+| `next >= 1` **ou** `integracao >= 1` (continuam entrando) | 47 |
+| sem nenhum dos dois (escreviam e param) | 56 |
+| só `integracao` (Marcelo Soares, Jessica Salviano · L5/E5) | 2 |
+| só `next` (Thiago Nogueira · sem cargo, nível 5 pelo boost da área) | 1 |
+
+⚠️⚠️ **O routeKey é `next-gestao` → `['next', 'integracao']`, nunca `['next']`
+sozinho.** A aba Next vive DENTRO da página de Integração desde o #2856 — gatear
+só por `next` daria 403 pras 2 pessoas acima numa tela que elas sempre puderam
+abrir. `batismo` **não** entra: quem só tem batismo cai no `soBatismo` do
+`lib/integracaoAbas.ts`, que nem renderiza a aba Next.
+
+⚠️ **DELETE fica em nível 2, não 3.** Os 4 DELETEs do arquivo são `app_soft_delete`
+(reversível) ou desfazer (`/inscricoes/:id/checkin`, `/convertidos/:id/resolver`).
+Subir pra 3 tiraria do operador de domingo o direito de corrigir o próprio erro.
+
+⚠️ O guard é pendurado **no router**, não rota a rota: são ~40 endpoints e
+endpoint novo nasce coberto por definição. A régua de nível é pura e mora em
+`backend/utils/nextGuardNivel.js` (porta que decide acesso não fica solta na
+tela — mesma lei do `integracaoAbas.ts`). Testes: `src/test/nextGuardNivel.test.ts`.
+
+⚠️ **Consumidor de fora que degrada de propósito:** `src/pages/Nps.jsx:1165`
+chama `nextApi.turmas.list()` só pra resolver nome de turma no seletor, e já
+tinha `.catch()` com fallback "Turma (sem nome)". Quem tem `nps` sem `next`/
+`integracao` passa a cair no fallback — a página do NPS segue funcionando.
+Os fluxos públicos (`/api/public/next/*`: inscrição, direcionar por token,
+check-in do totem, walk-in) são **outro router** e não foram tocados.
+
 ## ⚠️ LEI · inscrição de MENOR nunca cria/linka mem_membros (2026-09-01 · migration `20260901190000`)
 
 Caso Edgar/Luciana Crespo × "Betina": a filha (9 anos, do Kids) foi batizada em
