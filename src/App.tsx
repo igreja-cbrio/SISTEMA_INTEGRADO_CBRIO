@@ -840,7 +840,11 @@ function AppRoutes() {
         <Route path="/wifi" element={<SuperAdminGuard><Suspense fallback={<Loading />}><WifiModulo /></Suspense></SuperAdminGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
-        <Route path="/ministerial/integracao" element={<ModuleGuard anyOf={['integracao', 'next']}><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
+        {/* ⚠️ `batismo` entrou no anyOf em 03/09/2026: com o item 'Batismo' fora do
+            menu, esta página virou a porta de quem tem SÓ aquele módulo (cargo
+            'Responsável de Batismo' · 1 pessoa). Não amplia nada — ela já via este
+            mesmo componente em /batismo; o modo restrito esconde o resto. */}
+        <Route path="/ministerial/integracao" element={<ModuleGuard anyOf={['integracao', 'next', 'batismo']}><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
         <Route path="/batismo" element={<ModuleGuard moduleSlug="batismo"><Suspense fallback={<Loading />}><Batismo /></Suspense></ModuleGuard>} />
         {/* Relatórios virou aba dentro do Dashboard Semanal · mantém link antigo */}
         <Route path="/ministerial/relatorios" element={<Navigate to="/dashboard-semanal" replace />} />
