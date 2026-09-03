@@ -16427,3 +16427,71 @@ da Railway**, que é decisão de custo do Matheus, não de código.
 ⚠️ **Régua de leitura**: antes de dizer que um agente "não roda", conferir
 `agent_runs` — o histórico de HORÁRIOS denuncia sleeping (agenda cravada virando
 horário espalhado) muito antes de qualquer log.
+
+## ⚠️⚠️ LEI · hora IDÊNTICA no arquivo inteiro é CARIMBO do banco (2026-09-03 · SEM migration)
+
+Pergunta do Matheus: *"no OFX vem dia ou horário da contribuição?"*.
+
+| | |
+|---|---|
+| **DIA** | vem, e é confiável — é o que o extrato garante |
+| **HORA** | o campo vem, e o VALOR é carimbo do banco |
+
+As **7.297** transações do extrato de 90 dias do Santander têm `<DTPOSTED>`
+terminando em `100000` — **10:00:00 em todas**, do primeiro ao último
+lançamento. Não existe extrato real em que 7 mil transações caiam no mesmo
+segundo.
+
+E estava sendo gravado como se fosse medido: **11.716 linhas** de
+`fin_lancamentos_brutos` com `hora_lancamento = 10:00:00` e
+`hora_origem = 'ofx'`, contra **112** com hora real (93 horas distintas) vinda
+do `pix_match`.
+
+### ⚠️⚠️ O dano: a hora falsa TRANCA o casamento com o PIX
+
+`financeiroClassificador.matchOfxPix` só age onde `hora_lancamento IS NULL` — e
+é ele que traz a hora REAL, o `end_to_end_id` e o **`pagador_nome`**. Ou seja, a
+precisão inventada estava atrapalhando exatamente a frente de **identificar quem
+doou**. A migration original (`20260521160200`) já dizia que a coluna é
+*"preenchida via matching com PIX detalhe"*; o parser é que passou por cima.
+
+⚠️ **A bomba do CULTO não se materializou, e o registro é honesto sobre isso**:
+`fin_identifica_culto` decide o culto da oferta pela hora, e 10:00 num domingo
+cai no slot `Domingo 9:30` (06:00–11:00). Mas o banco **não processa em
+domingo** (ZERO créditos com `dow=0`, medido — bate com a régua já registrada de
+que domingo é 0,1% da arrecadação por data e segunda 43,7%) e em dia útil nenhum
+slot contém 10:00. `culto_slot_id` está NULL nas 160.515 transações. Era bomba
+armada, não estrago em curso.
+
+### A régua · `ofxParser.horaEhCarimbo`
+
+**Hora idêntica em TODAS as transações do arquivo, com piso de 3 transações, é
+carimbo → descarta.**
+
+- ⚠️ **Piso de 3** porque num arquivo de 1 ou 2 lançamentos a igualdade é trivial
+  e pode ser hora real. **Descartar hora é seguro** (o PIX preenche depois);
+  gravar hora falsa não é — na dúvida, descarta.
+- ⚠️ **Zera hora E `hora_origem`.** Zerar só uma deixaria a linha sem hora
+  **afirmando** origem `'ofx'`.
+- ⚠️ **O descarte é DECLARADO** em `header.horaDescartada` — sumir em silêncio é
+  o outro erro.
+- ⚠️ **RESÍDUO DECLARADO**: banco que carimbe uma hora DIFERENTE por dia escapa.
+  A régua é deliberadamente simples e determinística, **sem limiar de
+  percentual**, porque régua de carimbo com heurística é régua que ninguém
+  consegue conferir depois.
+
+**Reparo aplicado em 03/09** (backup em `_bk_20260903_hora_ofx`): as 11.716
+voltaram a NULL, desbloqueando o `matchOfxPix`. Conferido ANTES de escrever: **1
+hora distinta** nas 11.716, ou seja não havia nenhuma hora real a preservar.
+Depois: 12.764 sem hora + 112 com hora real do `pix_match`, intactas.
+
+⚠️ Teste: `src/test/ofxHoraCarimbo.test.ts` (10 casos · no gate via `npm test`).
+**5 mutantes RODADOS e mortos**: piso 3→1 → 1 vermelho · não zerar `hora_origem`
+→ 1 · descartar sem declarar → 1 · aceitar carimbo com linhas sem hora → 1 ·
+descartar mesmo com horas distintas → 2.
+
+⚠️⚠️ **A régua generaliza**: campo de terceiro que vem CONSTANTE no arquivo
+inteiro não é medição — é preenchimento. Antes de gravar qualquer campo vindo de
+arquivo externo como se fosse fato, conferir se ele VARIA. `hora_origem`,
+`fonte`, `origem` e afins existem exatamente para essa distinção, e preenchê-los
+com a fonte do ARQUIVO quando o valor é constante é afirmar que foi medido.
