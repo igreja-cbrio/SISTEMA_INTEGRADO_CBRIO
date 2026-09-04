@@ -3248,6 +3248,18 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
     aguardando_entrega: 'Confirmar',
   };
 
+  // Pendente aqui NÃO é decisão de aprovação — é o pedido já aprovado na origem
+  // chegando na fila de quem vai executar. "Aprovar"/"Rejeitar" nesse ponto lê
+  // como se a área estivesse decidindo se autoriza o pedido (que já foi decidido
+  // pelo diretor de origem), quando na verdade é "vou atender" / "não vou atender".
+  function actionLabel(target) {
+    if (item.status === 'pendente') {
+      if (target === 'aprovado') return 'Iniciar atendimento';
+      if (target === 'rejeitado') return 'Recusar atendimento';
+    }
+    return ACTION_LABELS[target];
+  }
+
   function confirmAction() {
     if (!actionPending) return;
     onStatusChange(item.id, actionPending, obsText.trim() || undefined);
@@ -3595,7 +3607,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                   {ehAguardandoPagamento && <Button size="sm" className="bg-teal-600 hover:bg-teal-700" onClick={() => setActionPending('aguardando_entrega')}>Marcar como pago</Button>}
                   {ehAguardandoEntrega && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setActionPending('concluido')}>Confirmar entrega</Button>}
                   {!fluxoCompra && podeAprovar && (
-                    <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('aprovado')}>Aprovar</Button>
+                    <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('aprovado')}>{actionLabel('aprovado')}</Button>
                   )}
                   {!fluxoCompra && item.status === 'aprovado' && <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('concluido')}>Concluir</Button>}
                   {!fluxoCompra && item.status === 'pendente' && <Button size="sm" variant="outline" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
@@ -3610,7 +3622,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                     <span className="inline-flex items-center gap-1 text-xs text-emerald-600 self-center font-medium">✓ Lançado{item.fin_vinculo_status === 'conciliado' ? ' · conciliado' : ' · pendente'}</span>
                   )}
                   {podeRejeitar && (
-                    <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>Rejeitar</Button>
+                    <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>{actionLabel('rejeitado')}</Button>
                   )}
                 </div>
               </div>
@@ -3675,7 +3687,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
           {actionPending && (
             <div className="space-y-3 pt-2 border-t border-border">
               <p className="text-sm font-medium text-foreground">
-                Confirmar ação: <span className="text-primary">{ACTION_LABELS[actionPending]}</span>
+                Confirmar ação: <span className="text-primary">{actionLabel(actionPending)}</span>
               </p>
               <div className="space-y-2">
                 <Label className="text-sm">Comentário (opcional · fica no histórico)</Label>
@@ -3688,7 +3700,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
               </div>
               <div className="flex gap-2 justify-end">
                 <Button size="sm" variant="outline" onClick={cancelAction}>Cancelar</Button>
-                <Button size="sm" onClick={confirmAction}>{ACTION_LABELS[actionPending]}</Button>
+                <Button size="sm" onClick={confirmAction}>{actionLabel(actionPending)}</Button>
               </div>
             </div>
           )}
