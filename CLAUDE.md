@@ -4319,7 +4319,12 @@ sistema inteiro: **a operação dos módulos ministeriais alimenta a NSM e os
 **Núcleo estratégico (OKR/NSM):**
 - `/painel` · NSM + mandalas + matriz 6 áreas × 5 valores + alertas · diretoria
   e qualquer autenticado (leitura) · **é o destino final de todos os dados**.
-- `/minha-area` · KPIs da própria área agrupados por valor · líderes de área.
+- ~~`/minha-area`~~ · **REMOVIDA em 2026-09-04** (Marcos: "não tem
+  necessidade, estamos colocando dashboards em todos os módulos" · o papel de
+  avaliar KPI/OKR passa a ser do `/gestao`, que vai ser refeito como PMO).
+  Saiu do menu Inteligência, do card da home (`MeusKpisResumo`, deletado) e do
+  tour · `/minha-area` e `/meus-kpis` redirecionam pro `/painel`. O módulo de
+  permissão `minha-area` continua no banco (deriva `canKPIs`) · sem tela.
 - `/gestao` · configurar OKRs/metas/saúde do sistema · Marcos, Matheus, Eduardo.
 - `/ritual` · fluxo guiado da reunião mensal (causa-decisão-responsável) ·
   diretoria geral (5 nominais).
@@ -10946,7 +10951,7 @@ reset `.ns a{color:inherit}` vence classes simples — menu branco exige
   UUID do profile, atualiza `profiles` direto). Mudança exige logout/login.
 - **Cargo `supervisor-jornada` (Marcelo Soares)**: rede de segurança da jornada
   — nível 3 SEM `escopo_proprio` em integracao/cuidados/online/kids/ami/bridge/
-  next/voluntariado/membresia/grupos/dados-brutos/minha-area (vê TODAS as
+  next/voluntariado/membresia/grupos/dados-brutos (vê TODAS as
   áreas, diferente do assistente-ministerial que só vê a sua).
 - **`/perfil` mostra o cargo do sistema granular** (`granular.cargoNome` via
   my-permissions), não o `profile.role` legado — o role continua usado em
@@ -12234,9 +12239,9 @@ virou **"Sede"** no banco. Narrativa fase a fase no legado; o que vale saber:
   role='diretor'). Recalculo: `SELECT public.recalcular_nsm();` (cron horário).
 - **Telas**: `/painel` (NSM + carrossel de 6 mandalas + carrossel de tendências
   + matriz 6×5 + top 3 alertas → drilldown modal célula → `/painel/kpi/:id` →
-  `/painel/nsm/pessoas`) · `/minha-area` (KPIs da área por valor) · `/gestao` ·
-  `/ritual` · `/dados-brutos`. Telas legadas (`/painel-kpis`, `/kpis`,
-  `/admin/cultura`, `/meus-kpis`) removidas com redirect.
+  `/painel/nsm/pessoas`) · `/gestao` · `/ritual` · `/dados-brutos`. Telas
+  legadas (`/painel-kpis`, `/kpis`, `/admin/cultura`, `/meus-kpis`,
+  `/minha-area` — esta em 2026-09-04) removidas com redirect pro `/painel`.
 - **Endpoints**: `/api/nsm/{painel,eventos,recalcular}` ·
   `/api/painel/{mandalas,matriz,celula/:a/:v,alertas,kpi/:id,nsm/pessoas,
   serie-temporal[...]}`. Componentes em `src/components/painel/`.
@@ -12251,8 +12256,8 @@ virou **"Sede"** no banco. Narrativa fase a fase no legado; o que vale saber:
   contagem_janela/soma_periodo · config em `formula_config`) →
   `kpi_valores_calculados` (cache) → `vw_kpi_trajetoria_atual` (calculado
   primeiro, `kpi_registros` como fallback manual).
-- **Permissões**: leitura geral pra autenticado; `/minha-area` e
-  `/dados-brutos` filtram por `profile.kpi_areas`/`kpi_valores` (admin/diretor
+- **Permissões**: leitura geral pra autenticado; `/dados-brutos` filtra
+  por `profile.kpi_areas`/`kpi_valores` (admin/diretor
   e sem-config veem tudo · fallback MVP); escrita em `/integracao` exige
   admin/diretor OU `kpi_areas` com 'integracao'.
 - **Definições**: voluntário inativo = sem servir há 90+ dias. Módulos
