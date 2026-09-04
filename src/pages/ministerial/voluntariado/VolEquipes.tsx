@@ -11,8 +11,9 @@ import {
   useVolTeamsManaged, useCreateTeam, useUpdateTeam, useDeleteTeam,
   useImportTeamsFromSchedules, useSyncTeamMembersFromSchedules, useVolTeamMembers, useAddTeamMember,
   useRemoveTeamMember, useVolPositions, useCreatePosition, useDeletePosition,
+  useUpdateTeamMember, useVolServiceTypes,
 } from './hooks';
-import { Plus, Users, Trash2, Edit2, UserPlus, X, Download, Briefcase, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Plus, Users, Trash2, Edit2, UserPlus, X, Download, Briefcase, ChevronDown, ChevronRight, AlertTriangle, CalendarCheck } from 'lucide-react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { voluntariado } from '@/api';
 import { toast } from 'sonner';
@@ -609,14 +610,134 @@ function TeamMembersList({ teamId, members, loading, positions }: { teamId: stri
                   {m.position && <p className="text-xs text-muted-foreground">{m.position.name}</p>}
                 </div>
               </div>
-              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleRemove(m.id, m.volunteer_name)}>
-                <X className="h-3.5 w-3.5" />
-              </Button>
+              <div className="flex items-center gap-1">
+                <CultosDoMembro membro={m} />
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleRemove(m.id, m.volunteer_name)}>
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Em quais cultos esta pessoa aceita ser escalada, NESTE time (04/09/2026).
+ *
+ * Pedido do Marcos: *"pessoas podem querer apenas servir no time da banda
+ * quarta-feira, mas não quererem ou poderem ser escalados no domingo"*.
+ *
+ * ⚠️⚠️ O botão diz o ESTADO, não abre um formulário anônimo: "Todos os cultos"
+ * ou "Quarta, AMI". O líder precisa ver a restrição SEM clicar — se ela ficar
+ * escondida atrás de um ícone, ninguém descobre por que a pessoa não aparece
+ * na escala do domingo.
+ *
+ * ⚠️ Marcar TODOS grava NULL (não a lista) e desmarcar TODOS também — é a régua
+ * `normalizarEscolha`/`elegibilidadeVol` do servidor, e a tela DIZ isso em vez
+ * de fingir que salvou "nenhum". Congelar a lista inteira deixaria a pessoa
+ * fora do próximo culto que a igreja criar.
+ *
+ * ⚠️ A gravação vale pra PESSOA neste time (o servidor espalha por todas as
+ * linhas dela) — 155 dos 832 pares têm mais de uma função, e repetir 9 vezes
+ * produziria configuração pela metade.
+ */
+function CultosDoMembro({ membro }: { membro: any }) {
+  const { data: tipos = [] } = useVolServiceTypes();
+  const atualizar = useUpdateTeamMember();
+  const [aberto, setAberto] = useState(false);
+  const ativos = useMemo(
+    () => (tipos as any[]).filter(t => t.is_active !== false),
+    [tipos],
+  );
+  const restricao: string[] | null = Array.isArray(membro.service_type_ids) && membro.service_type_ids.length
+    ? membro.service_type_ids.map(String)
+    : null;
+  const [sel, setSel] = useState<string[]>(restricao ?? ativos.map((t: any) => String(t.id)));
+
+  function abrir() {
+    // Sempre reabre refletindo o dado atual — sem isso, fechar e reabrir mostra
+    // a última edição abandonada como se fosse o que está salvo.
+    setSel(restricao ?? ativos.map((t: any) => String(t.id)));
+    setAberto(true);
+  }
+
+  const rotulo = !restricao
+    ? 'Todos os cultos'
+    : ativos.filter((t: any) => restricao.includes(String(t.id))).map((t: any) => t.name).join(', ') || 'Nenhum culto ativo';
+
+  function salvar() {
+    atualizar.mutate(
+      { id: membro.id, data: { service_type_ids: sel } as any },
+      {
+        onSuccess: () => { toast.success('Cultos atualizados'); setAberto(false); },
+        onError: () => toast.error('Erro ao atualizar os cultos'),
+      },
+    );
+  }
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={abrir}
+        className={`h-7 gap-1.5 px-2 text-xs ${restricao ? 'text-[#8f5a0e] dark:text-[#e0a24e]' : 'text-muted-foreground'}`}
+        title="Em quais cultos esta pessoa pode ser escalada"
+      >
+        <CalendarCheck className="h-3.5 w-3.5 shrink-0" />
+        <span className="max-w-[9rem] truncate">{rotulo}</span>
+      </Button>
+
+      {aberto && (
+        <Dialog open onOpenChange={o => { if (!o) setAberto(false); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-base">Cultos de {membro.volunteer_name}</DialogTitle>
+            </DialogHeader>
+            <p className="text-xs text-muted-foreground">
+              Desmarque os cultos em que esta pessoa não pode ser escalada nesta equipe. Vale para todas as
+              funções dela aqui.
+            </p>
+            <div className="space-y-1.5 py-1 max-h-64 overflow-y-auto">
+              {ativos.map((t: any) => {
+                const id = String(t.id);
+                const marcado = sel.includes(id);
+                return (
+                  <label key={id} className="flex items-center gap-2.5 rounded-md p-1.5 cursor-pointer hover:bg-accent">
+                    <input
+                      type="checkbox"
+                      checked={marcado}
+                      onChange={e => setSel(e.target.checked ? [...sel, id] : sel.filter(x => x !== id))}
+                      className="h-4 w-4 accent-[#00B39D]"
+                    />
+                    <span className="text-sm">{t.name}</span>
+                    {t.recurrence_time && (
+                      <span className="text-[11px] text-muted-foreground">{String(t.recurrence_time).slice(0, 5)}</span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+            {(sel.length === 0 || sel.length === ativos.length) && (
+              <p className="text-[11px] text-muted-foreground border-l-2 border-[#00B39D] pl-2">
+                {sel.length === 0
+                  ? 'Sem nenhum marcado, a pessoa volta a poder ser escalada em qualquer culto — a escala nunca esconde ninguém por engano.'
+                  : 'Com todos marcados, a pessoa serve em qualquer culto, inclusive nos que a igreja criar depois.'}
+              </p>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAberto(false)}>Cancelar</Button>
+              <Button onClick={salvar} disabled={atualizar.isPending} className="bg-[#00B39D] hover:bg-[#00B39D]/90">
+                {atualizar.isPending ? 'Salvando…' : 'Salvar'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
   );
 }
 

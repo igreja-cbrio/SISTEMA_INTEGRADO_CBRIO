@@ -3237,7 +3237,9 @@ router.get('/team/:teamId/members', async (req, res) => {
     // Voluntários da equipe
     const { data: members, error: e1 } = await supabase
       .from('vol_team_members')
-      .select('id, volunteer_profile_id, volunteer_name, position_id, position:vol_positions(id, name)')
+      // ⚠️ `service_type_ids` (04/09) é a elegibilidade por tipo de culto; sem
+      // ele aqui a tela de membros não tem como MOSTRAR a restrição que existe.
+      .select('id, volunteer_profile_id, volunteer_name, position_id, service_type_ids, position:vol_positions(id, name)')
       .eq('team_id', teamId);
     if (e1) return res.status(400).json({ error: e1.message });
 
@@ -3713,7 +3715,55 @@ router.post('/team-members', async (req, res) => {
 
 router.put('/team-members/:id', async (req, res) => {
   try {
-    const { position_id, is_active } = req.body;
+    const { position_id, is_active, service_type_ids } = req.body;
+
+    // ⚠️⚠️ A ELEGIBILIDADE É POR (PESSOA, TIME), NÃO POR LINHA — de propósito.
+    // Medido em 04/09: **155 dos 832 pares (pessoa, time) têm mais de uma linha
+    // de vínculo, com máximo de 9** (uma por função). O líder marcando "não
+    // serve no domingo" para alguém está falando da PESSOA naquele time, e
+    // obrigá-lo a repetir 9 vezes garante configuração pela metade — que aqui
+    // significa a pessoa sumindo de metade das escalas sem ninguém entender.
+    // A coluna segue sendo por linha (permite "baixo na quarta, vocal no
+    // domingo" se um dia a tela quiser); é a ESCRITA que se espalha.
+    // ⚠️ `position_id` e `is_active` continuam sendo da LINHA: função e ativação
+    // são do vínculo, não da pessoa.
+    if (service_type_ids !== undefined) {
+      const lista = Array.isArray(service_type_ids)
+        ? [...new Set(service_type_ids.filter(Boolean).map(String))]
+        : [];
+      // ⚠️ Vazio grava NULL (= serve todos), nunca `{}`. Mesma lei de
+      // `utils/elegibilidadeVol`: array vazio não pode significar "não serve em
+      // lugar nenhum", senão desmarcar tudo apaga a pessoa de toda escala.
+      const valor = lista.length ? lista : null;
+
+      const { data: alvo } = await supabase.from('vol_team_members')
+        .select('team_id, volunteer_profile_id, planning_center_person_id')
+        .eq('id', req.params.id).maybeSingle();
+      if (!alvo) return res.status(404).json({ error: 'Vínculo não encontrado' });
+
+      let q = supabase.from('vol_team_members')
+        .update({ service_type_ids: valor })
+        .eq('team_id', alvo.team_id);
+      // ⚠️⚠️ Casa pela chave de pessoa QUE A LINHA TEM. Vínculo só-PCO não tem
+      // `volunteer_profile_id`, e filtrar por perfil NULO casaria TODOS os
+      // vínculos sem perfil daquele time — restringindo gente que ninguém tocou.
+      if (alvo.volunteer_profile_id) q = q.eq('volunteer_profile_id', alvo.volunteer_profile_id);
+      else if (alvo.planning_center_person_id) q = q.eq('planning_center_person_id', alvo.planning_center_person_id);
+      else q = q.eq('id', req.params.id);
+
+      const { error: eEleg } = await q;
+      if (eEleg) return res.status(400).json({ error: eEleg.message });
+    }
+
+    // ⚠️ Corpo que só traz elegibilidade não faz UPDATE vazio (o PostgREST
+    // recusaria): devolve a linha como ela ficou.
+    if (position_id === undefined && is_active === undefined) {
+      const { data: atual, error: eGet } = await supabase.from('vol_team_members')
+        .select('*').eq('id', req.params.id).single();
+      if (eGet) return res.status(400).json({ error: eGet.message });
+      return res.json(atual);
+    }
+
     const { data, error } = await supabase.from('vol_team_members')
       .update({ position_id, is_active }).eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
