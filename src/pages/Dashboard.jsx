@@ -13,7 +13,6 @@ import {
   Activity, LayoutGrid, HandHelping, Heart,
 } from 'lucide-react';
 import MandalaCultura from '../components/cultura/MandalaCultura';
-import MeusKpisResumo from '../components/MeusKpisResumo';
 import PainelRH from '../components/rh/PainelRH';
 
 // path='VOLUNTARIADO_DYNAMIC' e tratado no click handler (vai para painel do
@@ -170,8 +169,6 @@ export default function Dashboard() {
       {/* Mandala Cultura CBRio */}
       <MandalaCultura />
 
-      {/* Resumo dos KPIs da minha área — link para /meus-kpis */}
-      <MeusKpisResumo />
 
       {/* KPI Cards */}
       <section>

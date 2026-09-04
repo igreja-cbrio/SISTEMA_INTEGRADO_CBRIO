@@ -194,7 +194,6 @@ const NAV_ITEMS = [
           { label: 'Jornada da Igreja', description: 'Profundidade da igreja · 5 valores · Membro Modelo (≥2 valores)', icon: Sparkles, path: '/jornada', module: 'membresia' },
           { label: 'Dashboard Semanal', description: 'Painel da reunião de quarta · semanal · mensal · metas · gerador IA', icon: LayoutDashboard, path: '/dashboard-semanal' },
           { label: 'ATA Semanal', description: 'Ata da reunião ministerial de segunda · redigida a partir da gravação', icon: FileText, path: '/ata-semanal' },
-          { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area', module: 'minha-area' },
         ],
       },
       {

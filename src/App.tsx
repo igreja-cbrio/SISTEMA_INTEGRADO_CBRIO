@@ -279,7 +279,6 @@ const PermissoesAdmin = lazyWithRetry(() => import('./pages/admin/Permissoes'));
 const FeedbackAdmin = lazyWithRetry(() => import('./pages/admin/Feedback'));
 const AppAnalytics = lazyWithRetry(() => import('./pages/admin/AppAnalytics'));
 const Sistema = lazyWithRetry(() => import('./pages/sistema/Sistema'));
-const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
 const Painel = lazyWithRetry(() => import('./pages/Painel'));
 // /painel/kpi/:id removido na Fase 2.5F — agora detalhe abre como modal (KpiDetalheModal)
 const PainelNsmPessoas = lazyWithRetry(() => import('./pages/PainelNsmPessoas'));
@@ -287,7 +286,6 @@ const PainelJornada = lazyWithRetry(() => import('./pages/PainelJornada'));
 const EstruturaOkr = lazyWithRetry(() => import('./pages/admin/EstruturaOkr'));
 const Ritual = lazyWithRetry(() => import('./pages/Ritual'));
 const Gestao = lazyWithRetry(() => import('./pages/Gestao'));
-const MinhaArea = lazyWithRetry(() => import('./pages/MinhaArea'));
 const DadosBrutos = lazyWithRetry(() => import('./pages/DadosBrutos'));
 const DashboardSemanal = lazyWithRetry(() => import('./pages/DashboardSemanal'));
 const MonitoramentoOkr = lazyWithRetry(() => import('./pages/MonitoramentoOkr'));
@@ -905,7 +903,7 @@ function AppRoutes() {
         <Route path="/kpis/guia" element={<Navigate to="/painel" replace />} />
         <Route path="/painel-kpis" element={<Navigate to="/painel" replace />} />
         <Route path="/admin/cultura" element={<Navigate to="/painel" replace />} />
-        <Route path="/meus-kpis" element={<Navigate to="/minha-area" replace />} />
+        <Route path="/meus-kpis" element={<Navigate to="/painel" replace />} />
         <Route path="/painel" element={<Suspense fallback={<Loading />}><Painel /></Suspense>} />
         <Route path="/painel/kpi/:id" element={<Navigate to="/painel" replace />} />
         <Route path="/painel/nsm/pessoas" element={<Suspense fallback={<Loading />}><PainelNsmPessoas /></Suspense>} />
@@ -930,8 +928,8 @@ function AppRoutes() {
         <Route path="/permissoes" element={<Navigate to="/admin/permissoes" replace />} />
         <Route path="/ritual" element={<Suspense fallback={<Loading />}><Ritual /></Suspense>} />
         <Route path="/gestao" element={<Suspense fallback={<Loading />}><Gestao /></Suspense>} />
-        <Route path="/minha-area" element={<Suspense fallback={<Loading />}><MinhaArea /></Suspense>} />
-        {/* Redirects · /minha-area virou so visualizador · /dados-brutos so admin */}
+        {/* /minha-area saiu do sistema (2026-09-04) · dashboard por modulo + /painel + /gestao (PMO) cobrem o papel */}
+        <Route path="/minha-area" element={<Navigate to="/painel" replace />} />
         <Route path="/dados-brutos" element={<Suspense fallback={<Loading />}><DadosBrutos /></Suspense>} />
         <Route path="/dashboard-semanal" element={<Suspense fallback={<Loading />}><DashboardSemanal /></Suspense>} />
         <Route path="/monitoramento-okr" element={<Suspense fallback={<Loading />}><MonitoramentoOkr /></Suspense>} />
