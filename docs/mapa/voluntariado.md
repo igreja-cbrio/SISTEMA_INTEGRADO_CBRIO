@@ -185,6 +185,7 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
 - `backend/utils/cpf.js`
 - `backend/utils/cronAuth.js`
 - `backend/utils/cursorLote.js`
+- `backend/utils/elegibilidadeVol.js`
 - `backend/utils/escalaLinhaEquipe.js`
 - `backend/utils/exclusaoInscricaoLote.js`
 - `backend/utils/fotoVoluntario.js`
