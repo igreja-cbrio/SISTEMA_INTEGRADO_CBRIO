@@ -24,6 +24,7 @@ const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPess
 const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../utils/volRodizio');
 const { montarCobertura, contarStatus } = require('../utils/volCobertura');
 const { cultosDoBloco } = require('../utils/blocoCulto');
+const { podeServirNoTipo, pessoaServeNoTipo } = require('../utils/elegibilidadeVol');
 const { podeGerarCulto } = require('../utils/volSyncIntegrity');
 const { filtrarVigentes } = require('../utils/vigenciaTipoCulto');
 const { proximoCursor } = require('../utils/cursorLote');
@@ -2322,7 +2323,7 @@ router.get('/volunteers-pool', async (req, res) => {
           id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado, membresia_id,
           membro:mem_membros(foto_url),
           team_members:vol_team_members(
-            id, team_id, position_id, is_active,
+            id, team_id, position_id, is_active, service_type_ids,
             team:vol_teams(id, name, color),
             position:vol_positions(id, name)
           )
@@ -5906,7 +5907,11 @@ router.get('/services/:serviceId/contexto-montagem', async (req, res) => {
   try {
     const sid = req.params.serviceId;
     const { data: service } = await supabase
-      .from('vol_services').select('id, name, service_type_name, scheduled_at').eq('id', sid).single();
+      // ⚠️ `service_type_id` (04/09) é o que a elegibilidade por tipo de culto
+      // compara. Sem ele aqui, `podeServirNoTipo` receberia undefined e — pela
+      // lei do fail-open — devolveria "serve" pra todo mundo: a restrição
+      // existiria no banco e não valeria na tela, calada.
+      .from('vol_services').select('id, name, service_type_name, service_type_id, scheduled_at').eq('id', sid).single();
     if (!service) return res.status(404).json({ error: 'Culto não encontrado' });
 
     // Dia local BRT do culto (scheduled_at vem com offset -03:00 → UTC == BRT).
@@ -5925,7 +5930,7 @@ router.get('/services/:serviceId/contexto-montagem', async (req, res) => {
           id, full_name, email, avatar_url, planning_center_id, qr_code, phone, cpf, arquivado, membresia_id,
           membro:mem_membros(foto_url),
           team_members:vol_team_members(
-            id, team_id, position_id, is_active,
+            id, team_id, position_id, is_active, service_type_ids,
             team:vol_teams(id, name, color),
             position:vol_positions(id, name)
           )
@@ -5952,6 +5957,23 @@ router.get('/services/:serviceId/contexto-montagem', async (req, res) => {
     // Foto do CANDIDATO no painel de escalar (27/08). Vem do embed, sem consulta
     // extra. ⚠️ Só foto de verdade — ver `utils/fotoVoluntario`.
     for (const v of all) v.foto_url = fotoDoPerfil(v);
+
+    // ── Elegibilidade por TIPO DE CULTO (04/09 · régua em utils/elegibilidadeVol)
+    //
+    // ⚠️⚠️ ANOTA, NUNCA FILTRA. Sumir com a pessoa da lista é o modo de falha que
+    // a régua existe pra evitar: o supervisor não procura quem ele não sabe que
+    // faltou — escala outra ou deixa a vaga aberta. A tela mostra e marca, e
+    // quem decide é ele.
+    // ⚠️ Anota nos DOIS níveis: por vínculo (`team_members[].serve_este_tipo`),
+    // que é o que o painel de uma vaga específica usa, e por pessoa
+    // (`serve_este_tipo`), pra a lista geral ordenar/marcar sem recalcular.
+    for (const v of all) {
+      v.team_members = (v.team_members || []).map((tm) => ({
+        ...tm,
+        serve_este_tipo: podeServirNoTipo(tm, service.service_type_id),
+      }));
+      v.serve_este_tipo = pessoaServeNoTipo(v.team_members, service.service_type_id);
+    }
 
     // Indisponibilidade: por culto específico + por período que cobre a data.
     const chave = (pid, pcid) => `${pid || ''}::${pcid || ''}`;
