@@ -11966,6 +11966,162 @@ silêncio.** Ajustado pra **47**.
 ⏳ **Follow-up**: ligar `systemFoundation.test.js` ao gate. Não fiz aqui porque
 mexer no pipeline de deploy afeta os dois devs e pede alinhamento.
 
+## ⚠️⚠️ PMO · a régua de PONTUALIDADE, e o farol que era UMA luz pra DUAS perguntas (2026-09-04 · SEM migration)
+
+Pedido do Marcos, depois de eu auditar o `/gestao`: *"vamos resolver esses pontos
+mais simples que você encontrou então"*. Primeira leva do redesenho do PMO — **é
+código, não migration** (a `DATABASE_URL` está vazia nesta máquina, então view
+nova não teria como ser aplicada; a régua ficou em JS, testada, e a view fica pra
+quando ele puder aplicar).
+
+### ⚠️⚠️ A LEI: fonte · pontualidade · desempenho são TRÊS perguntas com donos DIFERENTES
+
+| selo | pergunta | dono |
+|---|---|---|
+| **fonte** | o KPI tem de onde vir? | engenharia (nós) |
+| **pontualidade** | o período fechou e tem valor? | o líder da área |
+| **desempenho** | com valor confiável, bateu a meta? | diretoria / PMO |
+
+`status_trajetoria` respondia as três numa luz só, e a do MEIO era invisível:
+`sem_dado` significa **"nunca teve valor na vida"**, não "está atrasado". Medido
+em 04/09: **6 KPIs com farol aceso a partir de dado de 2+ períodos atrás, 6 deles
+VERDES** (AMI-05 "no alvo" com dado de MAIO; 4 NPS trimestrais com 3 trimestres de
+atraso). Quem parou de preencher desaparecia **justamente quando o último número
+dele foi bom**.
+
+⇒ **`backend/utils`-style régua PURA em `backend/services/kpiPontualidade.js`**
+(`npm run test:kpi-pontualidade`, no gate · 19 casos · **8 mutantes RODADOS e
+mortos**). ⚠️ Ela vive em `services/` e **não** em `utils/` porque reusa
+`periodoAtual` do `kpiAutoCollector` — o rótulo de período NÃO é reinventado aqui,
+é o da casa (`_kpi_periodo_corrente`): `2026-W36` · `2026-09` · `2026-Q3` ·
+`2026-S2` · `2026`.
+
+⚠️⚠️ **E foi exatamente esse rótulo que derrubou a MINHA primeira medição**: contei
+trimestral e semestral como `YYYY-MM` e os **27 KPIs** dessas periodicidades
+apareceram com **0% de cobertura** só porque o rótulo não casava com o que está
+gravado. Régua errada acusa gente inocente — o teste trava os cinco formatos.
+
+### O que a régua decide (e as guardas que não regridem)
+
+- **Períodos ESPERADOS são os do PRÓPRIO KPI** (3 meses pro mensal, 3 semanas pro
+  semanal, 3 trimestres pro trimestral). Substitui a janela FIXA de 60 dias, que
+  era alarme garantido pros 28 trimestrais/semestrais/anual e **silêncio de 8
+  semanas** pros 21 semanais.
+- ⚠️ **O período CORRENTE fica fora**: cobrar o mês que não fechou é a cobrança que
+  faz o líder parar de olhar a tela.
+- ⚠️ **Data ancorada no DIA 15** — `setUTCMonth(mes-1)` num dia 31 cai em "31/02",
+  que o JS normaliza pra março, e o mês anterior **escaparia nos dias 29, 30 e 31**
+  (a armadilha que o teste de `periodosAlvo` já registrava).
+- ⚠️⚠️ **Rótulo FUTURO não conta como preenchimento**: há **144 registros** de
+  `2026-W37` a `W52`, todos `valor=0`, gravados por um backfill em **24/08**. Sem
+  esse filtro, 9 KPIs semanais apareceriam "em dia" com dado de semana que ainda
+  não aconteceu. A view do farol já se protege (`periodo_referencia <` corrente);
+  o `/saude` **não** (ele lê `data_preenchimento`, e o backfill é recente).
+- ⚠️⚠️ **`nunca` × `atrasado` são estados DIFERENTES.** A view antiga chamava os
+  dois de `sem_dado`, e por isso "parou de preencher" era indistinguível de "nunca
+  começou" — são 47 e 29 hoje, e pedem ações opostas.
+- ⚠️⚠️ **NÃO se pinta desempenho sem pontualidade**: dado de 2+ períodos atrás vira
+  **`nao_julgavel`**, nunca verde.
+- ⚠️ **ZERO é dado** (lei de 18/08): `!= null`, nunca truthy — zero preenchido é
+  preenchimento, e zero contra meta 10 é desempenho ruim, não falta de dado.
+- ⚠️ **Crônico é HISTÓRICO**: os DOIS últimos períodos fechados abaixo da meta. O
+  card dizia "cronicamente vermelhos" mostrando quem está vermelho AGORA — o
+  próprio comentário do código admitia (*"refinamos depois com histórico"*).
+- ⚠️ `atingiuMeta` espelha `public._kpi_atingiu`: **direção da meta** vale aqui
+  também, senão o crônico de lead time/churn ficaria verde ao estourar.
+
+### ⚠️⚠️ O ganho medido: a fila de cobrança caiu de 78 para 23
+
+| antes (farol) | agora |
+|---|---|
+| 78 "críticos" | **23 vencidos** (cobráveis) + **53 sem fonte viva** (engenharia) |
+| 55 `sem_dado` | 47 `nunca` + 29 `atrasado` |
+| 31 `no_alvo` | 25 no alvo · 68 abaixo · **26 não julgáveis** · 9 sem meta |
+
+**53 dos 76 "fora de dia" são fonte morta** — ou seja **mais de dois terços da
+cobrança que a tela sugeria era cobrança errada**, e cobrança errada só se gasta
+uma vez. Cobertura global dos 3 períodos fechados: **51,8% (272/525)**.
+
+### O que mudou nas rotas
+
+`GET /gestao/pulso` passou a devolver, **de forma aditiva** (o nome antigo
+`cronicamente_vermelhos` continua na resposta):
+
+- `cobertura` (slots/preenchidos/pct + **`incompleto` DECLARADO**: falha de leitura
+  não pode virar "esse líder não preencheu"),
+- `pontualidade` / `desempenho` / `fonte` (os totais),
+- **`vencidos`** — a fila de cobrança: último período fechado sem valor **E** fonte
+  viva, com dono e atraso em períodos,
+- **`fonte_morta`** — a fila de ENGENHARIA, fora da cobrança de propósito,
+- **`cronicos`** e **`abaixo_da_meta`** separados,
+- por líder e por área: **`percentual_cobertura`** (preencheu) ao lado de
+  **`percentual_no_alvo`** (bateu). ⚠️ O `percentual_em_dia` antigo media
+  DESEMPENHO e se chamava "em dia" — era o nome que enganava.
+
+⚠️ `acumular()` existe pra as três contagens (líder, área, total) saírem da MESMA
+régua: três laços parecidos é como eles passariam a discordar entre si.
+⚠️ `kpi_registros` já passou de 2.700 linhas e o cap do supabase-js é 1.000 —
+**as duas leituras são paginadas**, senão a cobertura sairia subestimada e a tela
+acusaria líder que preencheu.
+
+`GET /gestao/saude` ganhou **`meta_so_texto`** (os 10 KPIs com meta escrita e sem
+número — o painel dizia "0 sem meta" porque contava descrição como meta, enquanto
+o farol não consegue julgar descrição) e **DECLARA** que a janela de 60 dias é
+FIXA, apontando pra `vencidos` como a fila que respeita a periodicidade.
+
+### ⚠️⚠️ O lembrete semanal media o campo ERRADO e avisava UMA pessoa
+
+`notificacaoGenerator` (regra de quarta) tinha DOIS defeitos somados:
+
+1. **`data_preenchimento` em vez de `periodo_referencia`** — um backfill de março
+   lançado nesta semana "cumpria" a semana corrente, e quem lançou a semana
+   passada no domingo aparecia como pendente. Agora cobra o último período
+   **FECHADO** (`periodosFechados('semanal', 1)`) e lê **as duas fontes** de valor.
+2. **Sem `targetIds`**, o destinatário saía de `notificacao_regras` do módulo
+   `kpis` — que tem **UMA linha** configurada (o Matheus). O texto dizia "VOCÊ tem
+   N pendentes" pra quem não responde por nenhum deles, e **os donos não sabiam de
+   nada**. Agora avisa **cada dono** com o que é dele (funcionário → profile por
+   e-mail, o mesmo caminho da cobrança do PMO) e cai na fila geral só pro que não
+   tem dono.
+
+⚠️ A `chaveDedup` amarra o aviso ao **período cobrado + destinatário**: chave por
+"semana de hoje" repetiria o aviso quando a régua já mudou de período.
+⚠️ **Falha de leitura pula a rodada** em vez de acusar todo mundo.
+
+### ⚠️ O destino da cobrança (regressão de 04/09, do PR anterior)
+
+`cobrar` e o lembrete apontavam pra **`/meus-kpis`**, que virou redirect pro
+`/painel` quando a Minha Área saiu (#2869). Enquanto não existir a tela do líder,
+o destino honesto é o `/painel` — nunca uma rota que não mostra o que falta. E a
+UI passou a mandar **`mensagem`** (o backend aceitava desde sempre e a tela nunca
+mandava, então toda cobrança saía com o texto genérico).
+
+### ⚠️ CORREÇÃO DE REGISTRO · o menu do /gestao NÃO está desalinhado
+
+Eu havia reportado que o item usa `module: 'gestao'` enquanto a página exige
+`role in (admin,diretor)`. **Na `main` o item é `perm: 'isAdmin'`**, e
+`isAdmin = ['admin','diretor']` — exatamente o gate da página e o
+`authorize('admin','diretor')` do backend. **Não há mismatch**; eu li a linha numa
+worktree em outra branch. Nada a consertar ali.
+
+### ⏳ O que NÃO entrou (e é o próximo passo)
+
+- **`kpi_cobrancas`** (o rastro: quem cobrou, quando, resolvido em) — hoje o
+  histórico de cobrança não existe, e **0 cobranças foram disparadas em 5 meses**.
+- **A tela do LÍDER** (o vazio que a saída da Minha Área deixou).
+- **A view `vw_kpi_cobertura_periodo`** — a régua vive em JS porque migration não
+  é aplicável nesta máquina.
+- **Os 84 KPIs sem dono (48%)**: enquanto isso não for atribuído, o ranking de
+  pontualidade mede 4 pessoas e um buraco. **Não é problema de tela.**
+- **`okr_revisoes` com 0 linhas** e `dados_brutos` com 90 na história inteira —
+  são fatos de OPERAÇÃO, não de código.
+
+⚠️ **Flake de carga conhecido**: na suíte cheia, `src/test/rpcsCliente.test.ts`
+estourou o timeout de 5s nos 2 casos que varrem migrations + `src/`; **7/7 passam
+isolados em ~1,5s cada**. É a família já registrada (`cronAlcancavel`,
+`ConstrutorPerguntas`, `mapaGerador`) — timeout num caso que passa isolado é
+carga, assert vermelho é regressão.
+
 ## ⚠️⚠️ `/gestao/saude` media "sem registro" numa fonte só (2026-08-17 · SEM migration)
 
 Levantamento de 14/08 a pedido do Marcos, corrigido agora que ele vai apoiar a

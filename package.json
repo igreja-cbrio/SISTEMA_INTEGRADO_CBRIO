@@ -22,6 +22,7 @@
     "test:duplicidade": "node backend/services/duplicidadePolicy.test.js",
     "test:identidade-pares": "node backend/services/identidadeProgressiva.test.js",
     "test:kpi-periodos": "node backend/services/kpiPeriodos.test.js",
+    "test:kpi-pontualidade": "node backend/services/kpiPontualidade.test.js",
     "test:familia": "node backend/services/familiaPolicy.test.js",
     "test:matcher-insert": "node backend/services/membroMatchInsert.test.js",
     "test:online-ds-janela": "node backend/services/onlineDsJanela.test.js",
