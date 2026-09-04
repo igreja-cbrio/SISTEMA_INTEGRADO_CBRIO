@@ -91,6 +91,42 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️ A UI da elegibilidade · "Cultos de X" no membro da equipe (2026-09-04 · SEM migration)
+
+Fecha o item: a régua e a anotação existiam, mas **nada gravava `service_type_ids`**.
+Agora cada membro na aba **Membros** da equipe tem um botão que diz o estado —
+`Todos os cultos` ou `Quarta, AMI` — e abre a lista de tipos ativos pra marcar.
+
+⚠️⚠️ **O botão MOSTRA a restrição sem clicar.** Se ela ficasse atrás de um ícone
+anônimo, ninguém descobriria por que a pessoa não aparece na escala do domingo — que é
+exatamente o modo de falha que a régua fail-open existe pra evitar.
+
+### ⚠️⚠️ A GRAVAÇÃO É POR (PESSOA, TIME), e o SERVIDOR espalha
+
+`PUT /team-members/:id` ganhou `service_type_ids` e, ao recebê-lo, **atualiza todas as
+linhas daquela pessoa naquele time**. Medido: **155 dos 832 pares (pessoa, time) têm
+mais de uma linha, máximo 9** — obrigar o líder a repetir 9 vezes garante configuração
+pela metade, que aqui significa a pessoa sumindo de metade das escalas sem ninguém
+entender. `position_id` e `is_active` seguem sendo da LINHA (função e ativação são do
+vínculo, não da pessoa).
+
+⚠️⚠️ **Casa pela chave de pessoa QUE A LINHA TEM.** Vínculo só-PCO não tem
+`volunteer_profile_id`, e filtrar por perfil NULO casaria **todos** os vínculos sem
+perfil do time — restringindo gente que ninguém tocou. Ordem: `volunteer_profile_id`
+→ `planning_center_person_id` → o próprio `id`.
+⚠️ Vazio grava **NULL** (= serve todos), nunca `{}` — e a tela DIZ isso em vez de
+fingir que salvou "nenhum". Marcar todos também grava NULL, senão a pessoa fica
+congelada nos tipos de hoje e sai do próximo culto que a igreja criar.
+⚠️ Corpo que só traz elegibilidade **não faz UPDATE vazio** (o PostgREST recusaria):
+devolve a linha como ficou.
+⚠️ `GET /team/:teamId/members` passou a selecionar `service_type_ids`; o
+`GET /team-members` já usava `select('*')`.
+
+**Verificação:** typecheck limpo · 231 arquivos verdes. ⚠️ `pagamentosNucleo` e
+`postgrestCatch` falharam por **timeout de 5s** sob contenção da máquina (varredura do
+backend / import dinâmico); **19/19 passam isolados em 3,2s** — o `qualidade` do CI
+confirma.
+
 ## ⚠️⚠️ ELEGIBILIDADE POR TIPO DE CULTO + posição de LÍDER (2026-09-04 · migrations `20260904120000` + `20260904120100`)
 
 ### `vol_team_members.service_type_ids` · o pedido original do vídeo
