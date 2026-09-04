@@ -91,6 +91,89 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️⚠️ ELEGIBILIDADE POR TIPO DE CULTO + posição de LÍDER (2026-09-04 · migrations `20260904120000` + `20260904120100`)
+
+### `vol_team_members.service_type_ids` · o pedido original do vídeo
+
+Marcos (03/09): *"pessoas podem querer apenas servir no time da banda quarta-feira, mas
+não quererem ou poderem ser escalados no domingo"*. Era **a única peça de modelo que
+faltava** — medido em 04/09, `vol_team_members` não tinha nenhum eixo de tipo de culto
+e não existia tabela de ligação (3 nomes candidatos conferidos, nenhum existe).
+
+⚠️⚠️ **NULL = serve TODOS.** Preserva os **1.050 vínculos ativos** sem backfill, e é a
+leitura honesta: ninguém declarou restrição, então não há. **Array vazio também vale
+como todos** — esvaziar na tela por acidente não pode significar "não serve em lugar
+nenhum", porque o efeito é a pessoa desaparecer de toda escala em silêncio.
+
+⚠️ **ARRAY e não tabela de ligação:** com tabela, "zero linhas" seria ambíguo entre
+*não configurado* e *não serve em nada* — exatamente a distinção que decide se a pessoa
+aparece pra ser escalada. Com `NULL` × `{...}` a diferença é explícita no dado.
+
+⚠️ A elegibilidade é **por LINHA** de vínculo (pessoa × time × função). Medido: **155
+dos 832 pares (pessoa, time) têm mais de uma linha — 18,6%, máximo 9** — então a
+granularidade fina existe de fato e permite "toca baixo na quarta, canta no domingo".
+A TELA deve editar por (pessoa, time) e escrever em todas as linhas, pra o líder não
+repetir 9 vezes.
+
+### `utils/elegibilidadeVol.js` · régua PURA (18 casos no gate)
+
+`podeServirNoTipo` · `pessoaServeNoTipo` · `normalizarEscolha`.
+
+⚠️⚠️ **FAIL-OPEN é a lei, pelo modo de falha:** um falso negativo faz a pessoa
+**desaparecer** da lista de quem pode ser escalado, sem erro e sem aviso — o supervisor
+não procura quem ele não sabe que faltou. NULL, array vazio, tipo do culto nulo, valor
+que não é array ⇒ **serve**.
+⚠️ `pessoaServeNoTipo` usa **`some`, não `every`**: quem toca baixo só na quarta e canta
+no domingo tem dois vínculos com listas diferentes e continua servindo no domingo.
+`every` excluiria justamente a pessoa mais versátil.
+⚠️⚠️ `normalizarEscolha`: **marcar TODOS grava NULL, não a lista** — a lista inteira
+congelaria a pessoa nos tipos de hoje e ela ficaria fora do próximo culto que a igreja
+criar. Desmarcar tudo também grava NULL.
+
+⚠️ O consumidor **ANOTA, nunca filtra** (`/services/:id/contexto-montagem`): anota nos
+dois níveis (`team_members[].serve_este_tipo` pro painel de uma vaga, e
+`serve_este_tipo` na pessoa pra a lista geral). Sumir com a pessoa é o modo de falha que
+a régua existe pra evitar.
+⚠️ O `service` do contexto passou a selecionar **`service_type_id`** — sem ele a régua
+recebe undefined e, pelo fail-open, devolve "serve" pra todo mundo: a restrição
+existiria no banco e não valeria na tela, **calada**.
+
+### Posição `Líder` em cada time (migration `20260904120100`)
+
+Decisão dele: *"vamos criar uma posição de líder para cada time, aí fica no template,
+muitas vezes os líderes inclusive já ficam pré escalados por serem recorrentes"*.
+Medido: **1 de 13 times ativos tinha** — e era o próprio time `Liderança`.
+
+⚠️ `sort_order = -1` (os times usam 0 ou 1 como primeiro) põe o líder no topo **sem
+renumerar nada** · `min_volunteers = 1` é o "1 Needed" · idempotente e conservador (só
+cria onde não há posição começando por "líder"/"lideranç", via `~*`).
+⚠️⚠️ **O histórico NÃO é migrável e isto não tenta:** as 580 escalas do time `Liderança`
+têm `position_name` NULL em 100% e `team_name` com **8 variantes** — não há como derivar
+de qual time era cada liderança. O time `Liderança` fica com o passado.
+⚠️⚠️ **Pré-escalar o líder é IMPOSSÍVEL por migration:** `vol_teams.leader_profile_id`
+é **NULL em todos os 13 times ativos**. Quem lidera cada time não existe no banco — é
+passo de gente, na tela de Templates (`vol_escala_template_item_pessoas`, 0 linhas).
+
+### ⏳ FALTA A UI DE CONFIGURAÇÃO (declarado, não escondido)
+
+A régua e a anotação existem; **nada grava `service_type_ids`** ainda. Falta
+`PATCH /team-members/:id` + hook + o controle em `TeamMembersList` (VolEquipes), que
+deve editar por (pessoa, time) e escrever em todas as linhas dela naquele time.
+
+### ⚠️⚠️ ITEM BLOQUEADO · o Kids não pode dividir por horário
+
+Medido em 04/09: as **1.136 escalas do time Kids** vivem em serviços CBKIDS próprios
+(824 Manhã · 279 Noite · 33 Quarta), **os 3 tipos CBKIDS estão INATIVOS**, e existem
+**ZERO linhas de `cultos` com "kids"** — a frequência do Kids é COLUNA do culto
+principal (`cultos.presencial_kids`).
+⇒ Dar `bloco_servico` ao tipo CBKIDS resolveria (os cultos do bloco viriam do
+`Domingo 09:30`/`11:30`, que já existem), **mas exige ativar o tipo** — e
+`utils/lentesDomingo.js:175` conta `tipoVigenteEm` no **denominador da ocupação**
+(`vigentes * capacidade`). Ativar um tipo CBKIDS de domingo (`recurrence_day = 0`)
+**infla a capacidade e desinfla a taxa de ocupação** — a métrica que o Marcos aprovou
+em 11/08. `is_active` está fazendo dois trabalhos: "está em operação" e "conta na
+ocupação do templo". **Decisão do Marcos, não minha.**
+
 ## ⚠️⚠️ A COBERTURA aprendeu HORÁRIO · e o toggle na tela (2026-09-03 · SEM migration)
 
 Fecha o ciclo do split na web: o produtor já materializava alvo por celebração, mas
