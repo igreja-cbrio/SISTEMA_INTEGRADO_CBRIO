@@ -18,6 +18,10 @@ import { ScrollArea } from '../components/ui/scroll-area';
 import { Plus, ClipboardList, Clock, CheckCircle2, XCircle, Search as SearchIcon, ArrowRight, List, Upload, FileText, X, Users, Star, Trash2, Image as ImageIcon, Check, ChevronDown, Mail, Pencil, Lock, Info, Download } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 import { toast } from 'sonner';
+import {
+  ehImagem, nomeDoArquivo, rotuloTipo,
+  validarAnexos, caminhoDeUpload, ACCEPT_ANEXOS, LIMITE_ARQUIVO_MB,
+} from '@/lib/anexoSolicitacao';
 
 // CATEGORIAS/CATEGORIA_HINT + o form de criação vivem em
 // src/components/solicitacoes/NovaSolicitacaoForm.jsx (form oficial reusável ·
@@ -1693,6 +1697,37 @@ function AprovacaoOrigemCard({ item, onApprove, onReject, onClick }) {
         <p className="text-xs text-red-700 dark:text-red-400 mb-2"><span className="font-medium">Urgência:</span> {item.justificativa_urgencia}</p>
       )}
 
+      {/* ⚠️ ANEXO NO CARD DE APROVAR (03/09/2026) · este card tem
+          aprovar/rejeitar de UM CLIQUE e não mostrava anexo nenhum: o diretor
+          decidia sem saber que existia orçamento anexado. Anexo que não
+          aparece onde a decisão acontece não muda decisão nenhuma.
+          `stopPropagation` porque o card inteiro é clicável (abre o detalhe). */}
+      {(() => {
+        const anexos = [
+          ...(Array.isArray(item.imagens_url) ? item.imagens_url : []),
+          ...(item.documento_url ? [item.documento_url] : []),
+        ].filter(Boolean);
+        if (!anexos.length) return null;
+        return (
+          <div className="flex flex-wrap items-center gap-1.5 mb-2">
+            {anexos.slice(0, 4).map((url, i) => (
+              <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                onClick={e => e.stopPropagation()}
+                title={nomeDoArquivo(url)}
+                className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] text-foreground hover:border-primary/50 max-w-[170px]">
+                {ehImagem(url)
+                  ? <ImageIcon className="h-3 w-3 shrink-0 text-muted-foreground" />
+                  : <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />}
+                <span className="truncate">{nomeDoArquivo(url)}</span>
+              </a>
+            ))}
+            {anexos.length > 4 && (
+              <span className="text-[11px] text-muted-foreground">+{anexos.length - 4}</span>
+            )}
+          </div>
+        );
+      })()}
+
       {/* Etiquetas Marketing (Spec 010) · so quando categoria=marketing */}
       {item.categoria === 'marketing' && (item.marketing_tipo || item.marketing_destino) && (
         <div className="flex flex-wrap gap-1 mb-2">
@@ -2604,6 +2639,13 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
   const [salvando, setSalvando] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({ fornecedor: '', valor: '', prazo: '', link: '', observacao: '' });
+  // ⚠️ O ORÇAMENTO EM PDF da cotação. A coluna `solicitacao_cotacoes.anexo_url`
+  // e a API existem desde sempre e NUNCA tiveram tela (0 anexos em 19 cotações
+  // · medido em 03/09/2026) — o arquivo é o documento que justifica o valor, e
+  // é aqui que ele nasce: quem cota é quem recebe a proposta do fornecedor.
+  const [anexoFile, setAnexoFile] = useState(null);
+  const [anexoUrlAtual, setAnexoUrlAtual] = useState('');
+  const anexoInputRef = useRef(null);
   // Classificação contábil (loop financeiro) — o Amaury preenche na cotação.
   const [planos, setPlanos] = useState([]);
   const [centros, setCentros] = useState([]);
@@ -2648,20 +2690,41 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
     finally { setEscaneando(false); }
   }
 
-  function resetForm() { setForm({ fornecedor: '', valor: '', prazo: '', link: '', observacao: '' }); setEditId(null); }
+  function resetForm() {
+    setForm({ fornecedor: '', valor: '', prazo: '', link: '', observacao: '' });
+    setEditId(null);
+    setAnexoFile(null);
+    setAnexoUrlAtual('');
+    if (anexoInputRef.current) anexoInputRef.current.value = '';
+  }
 
   async function salvar() {
     const nome = form.fornecedor.trim();
     const v = Number(form.valor);
     if (!nome) { toast.error('Informe o fornecedor.'); return; }
     if (form.valor === '' || Number.isNaN(v) || v < 0) { toast.error('Informe o valor da cotação.'); return; }
+    // ⚠️ Valida ANTES de subir: arquivo recusado depois do upload deixa órfão
+    // no bucket e a cotação não é salva.
+    if (anexoFile) {
+      const ok = validarAnexos([anexoFile], { max: 1 });
+      if (!ok.ok) { toast.error(ok.erro); return; }
+    }
     setSalvando(true);
     try {
+      let anexo_url = anexoUrlAtual || undefined;
+      if (anexoFile && supabase) {
+        const path = caminhoDeUpload('orcamentos', anexoFile.name);
+        const { error: upErr } = await supabase.storage
+          .from('solicitacoes').upload(path, anexoFile, { upsert: false });
+        if (upErr) throw new Error('Erro ao enviar o orçamento: ' + upErr.message);
+        anexo_url = supabase.storage.from('solicitacoes').getPublicUrl(path).data.publicUrl;
+      }
       const payload = {
         fornecedor: nome, valor: v,
         prazo: form.prazo.trim() || undefined,
         link: form.link.trim() || undefined,
         observacao: form.observacao.trim() || undefined,
+        ...(anexo_url ? { anexo_url } : {}),
       };
       if (editId) { await api.editarCotacao(editId, payload); toast.success('Cotação atualizada.'); }
       else { await api.adicionarCotacao(item.id, payload); toast.success('Cotação adicionada.'); }
@@ -2674,6 +2737,9 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
   function iniciarEdicao(c) {
     setEditId(c.id);
     setForm({ fornecedor: c.fornecedor || '', valor: c.valor ?? '', prazo: c.prazo || '', link: c.link || '', observacao: c.observacao || '' });
+    setAnexoFile(null);
+    setAnexoUrlAtual(c.anexo_url || '');
+    if (anexoInputRef.current) anexoInputRef.current.value = '';
   }
 
   async function remover(c) {
@@ -2776,6 +2842,16 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
                   {c.link && (
                     <a href={c.link} target="_blank" rel="noopener noreferrer" className="text-xs text-primary hover:underline break-all">{c.link}</a>
                   )}
+                  {/* Orçamento anexado · o documento que justifica o valor.
+                      A URL chega ASSINADA (validade 1h) pelo GET /:id/cotacoes. */}
+                  {c.anexo_url && (
+                    <a href={c.anexo_url} target="_blank" rel="noopener noreferrer"
+                       title={nomeDoArquivo(c.anexo_url)}
+                       className="inline-flex items-center gap-1 mt-0.5 rounded border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] text-foreground hover:border-primary/50 max-w-[240px]">
+                      <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+                      <span className="truncate">{nomeDoArquivo(c.anexo_url)}</span>
+                    </a>
+                  )}
                   {c.observacao && <p className="text-xs text-muted-foreground whitespace-pre-wrap mt-0.5">{c.observacao}</p>}
                 </div>
                 {podeEditar && (
@@ -2816,6 +2892,35 @@ function CotacaoBlock({ item, canCotar, onChanged }) {
           <div>
             <Label className="text-xs">Observação</Label>
             <Textarea rows={2} value={form.observacao} onChange={e => setForm(f => ({ ...f, observacao: e.target.value }))} placeholder="Condições, forma de pagamento, garantia..." />
+          </div>
+          <div>
+            <Label className="text-xs">Orçamento do fornecedor (PDF ou imagem)</Label>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" size="sm" variant="outline" onClick={() => anexoInputRef.current?.click()}>
+                <Upload className="h-3.5 w-3.5 mr-1.5" />
+                {anexoFile || anexoUrlAtual ? 'Trocar arquivo' : 'Anexar arquivo'}
+              </Button>
+              {anexoFile ? (
+                <span className="inline-flex items-center gap-1 text-xs text-foreground max-w-[240px]">
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{anexoFile.name}</span>
+                  <button type="button" className="text-muted-foreground hover:text-red-500"
+                    onClick={() => { setAnexoFile(null); if (anexoInputRef.current) anexoInputRef.current.value = ''; }}>
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </span>
+              ) : anexoUrlAtual ? (
+                <a href={anexoUrlAtual} target="_blank" rel="noopener noreferrer"
+                   className="inline-flex items-center gap-1 text-xs text-primary hover:underline max-w-[240px]">
+                  <FileText className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">{nomeDoArquivo(anexoUrlAtual)}</span>
+                </a>
+              ) : (
+                <span className="text-[11px] text-muted-foreground">até {LIMITE_ARQUIVO_MB} MB</span>
+              )}
+              <input ref={anexoInputRef} type="file" className="hidden" accept={ACCEPT_ANEXOS}
+                onChange={e => { const f = e.target.files[0]; if (f) setAnexoFile(f); }} />
+            </div>
           </div>
           <div className="flex justify-end gap-2">
             {editId && <Button size="sm" variant="outline" onClick={resetForm} disabled={salvando}>Cancelar</Button>}
@@ -3325,17 +3430,28 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             </div>
           )}
 
-          {/* Fotos anexadas no intake (Serviços/Serviço externo) · quem
-              atende/cota avalia pela imagem · clicar abre em tamanho real */}
+          {/* Anexos do intake · foto OU documento (orçamento/proposta em PDF).
+              ⚠️ Arquivo que não é imagem NUNCA vira <img>: o navegador desenha
+              um quadrado vazio e o anexo some da tela em silêncio. */}
           {Array.isArray(item.imagens_url) && item.imagens_url.length > 0 && (
             <div className="space-y-2 pt-3 border-t border-border">
-              <p className="text-sm font-semibold text-foreground">Fotos anexadas</p>
+              <p className="text-sm font-semibold text-foreground">Anexos</p>
               <div className="flex flex-wrap gap-2">
-                {item.imagens_url.map((url, i) => (
-                  <a key={i} href={url} target="_blank" rel="noopener noreferrer" title="Abrir foto em tamanho real">
-                    <img src={url} alt={`Foto ${i + 1}`} className="h-24 w-24 rounded-md object-cover border border-border hover:opacity-80 transition-opacity" />
+                {item.imagens_url.map((url, i) => (ehImagem(url) ? (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer" title="Abrir imagem em tamanho real">
+                    <img src={url} alt={`Anexo ${i + 1}`} className="h-24 w-24 rounded-md object-cover border border-border hover:opacity-80 transition-opacity" />
                   </a>
-                ))}
+                ) : (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                    title={nomeDoArquivo(url)}
+                    className="h-24 w-36 rounded-md border border-border bg-muted/40 px-2 flex flex-col items-center justify-center gap-1 hover:border-primary/50 transition-colors">
+                    <FileText className="h-6 w-6 text-muted-foreground" />
+                    <span className="text-[10px] leading-tight text-center text-foreground line-clamp-2 break-all">
+                      {nomeDoArquivo(url)}
+                    </span>
+                    <span className="text-[9px] text-muted-foreground">{rotuloTipo(url)}</span>
+                  </a>
+                )))}
               </div>
             </div>
           )}

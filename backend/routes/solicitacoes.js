@@ -2433,7 +2433,12 @@ router.get('/:id/cotacoes', async (req, res) => {
       .order('ordem', { ascending: true })
       .order('created_at', { ascending: true });
     if (error) throw error;
-    res.json(data || []);
+    // ⚠️ `anexo_url` (o orçamento em PDF) aponta pro bucket PRIVADO e é gravado
+    // como URL /public/ — sem assinar, o link abre 400. O serviço trabalha sobre
+    // SOLICITAÇÕES, então a lista é embrulhada e desembrulhada aqui em vez de
+    // ganhar uma 2ª régua de assinatura (que divergiria da primeira).
+    const [envelope] = await assinarAnexosSolicitacoes([{ solicitacao_cotacoes: data || [] }]);
+    res.json(envelope?.solicitacao_cotacoes || data || []);
   } catch (e) {
     console.error('[SOLICITACOES] listar-cotacoes:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao listar cotações' });
@@ -2593,8 +2598,18 @@ function montarHtmlCotacoes({ sol, cotacoes, itens, refCot, solicitanteNome, cat
     const fw = eSug ? 'font-weight:700;' : '';
     const bg = eSug ? 'background:#e8faf6;' : '';
     const estrela = eSug ? '★ ' : '';
+    // ⚠️⚠️ O ORÇAMENTO ANEXADO É SINALIZADO, MAS O ARQUIVO NÃO VAI NO E-MAIL.
+    // A URL assinada vale 1h e o e-mail costuma ser lido no dia seguinte: o
+    // link chegaria morto. E arquivo por link em e-mail é exatamente o
+    // vazamento que fechou o bucket em 16/08 (encaminhar o e-mail entrega o
+    // documento a quem não tem acesso). Quem quer ver abre no sistema, pelo
+    // botão que este e-mail já tem — e lá o link é assinado na hora.
+    const temAnexo = !!c.anexo_url;
     const linkHtml = c.link
       ? `<a href="${escapeHtmlCot(c.link)}" style="color:#00857a">abrir</a>`
+      : '<span style="color:#bbb">—</span>';
+    const anexoHtml = temAnexo
+      ? '<span style="color:#00857a">✓ no sistema</span>'
       : '<span style="color:#bbb">—</span>';
     const obs = c.observacao
       ? `<div style="color:#666;font-size:12px;margin-top:2px">${escapeHtmlCot(c.observacao)}</div>` : '';
@@ -2603,6 +2618,7 @@ function montarHtmlCotacoes({ sol, cotacoes, itens, refCot, solicitanteNome, cat
       <td style="padding:8px 10px;border-bottom:1px solid #eee;text-align:right;${fw}">${fmtBRLServer(c.valor)}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #eee;">${escapeHtmlCot(c.prazo || '—')}</td>
       <td style="padding:8px 10px;border-bottom:1px solid #eee;">${linkHtml}</td>
+      <td style="padding:8px 10px;border-bottom:1px solid #eee;">${anexoHtml}</td>
     </tr>`;
   }).join('');
 
@@ -2639,6 +2655,7 @@ function montarHtmlCotacoes({ sol, cotacoes, itens, refCot, solicitanteNome, cat
         <th style="padding:8px 10px;text-align:right">Valor</th>
         <th style="padding:8px 10px">Prazo</th>
         <th style="padding:8px 10px">Link</th>
+        <th style="padding:8px 10px">Orçamento</th>
       </tr></thead>
       <tbody>${linhasCot}</tbody>
     </table>
@@ -3971,6 +3988,17 @@ router.patch('/:id/editar', async (req, res) => {
     if (b.documento_url !== undefined) {
       update.documento_url = b.documento_url ? String(b.documento_url).slice(0, 2000) : null;
     }
+    // ⚠️⚠️ `imagens_url` FALTAVA nesta whitelist (03/09/2026). Este endpoint
+    // existe exatamente porque "enviou e esqueceu o anexo" — e o anexo geral
+    // era **descartado em silêncio**: a pessoa editava, anexava o PDF, o
+    // backend ignorava e a tela dizia sucesso. Mesma sanitização do POST
+    // (só string, teto de 5, 2000 chars) — duas réguas divergiriam.
+    if (b.imagens_url !== undefined) {
+      update.imagens_url = (Array.isArray(b.imagens_url) ? b.imagens_url : [])
+        .filter(u => typeof u === 'string' && u.trim())
+        .slice(0, 5)
+        .map(u => u.trim().slice(0, 2000));
+    }
     if (b.link_referencia !== undefined) {
       update.link_referencia = b.link_referencia ? String(b.link_referencia).trim().slice(0, 1000) : null;
     }
@@ -4603,7 +4631,15 @@ router.get('/pendentes-financeiro', async (req, res) => {
       solicitante_avatar: byId[s.solicitante_id]?.avatar_url || null,
     }));
 
-    res.json(enriched);
+    // ⚠️⚠️ ASSINAR É OBRIGATÓRIO AQUI, e faltava (achado de 03/09/2026).
+    // O bucket é PRIVADO desde a auditoria de 16/08, e o que está gravado na
+    // coluna é a URL /public/ — provado em produção: HTTP 400 "Bucket not
+    // found". Esta tela é a ÚNICA em que o financeiro decide, e ela renderiza
+    // `documento_url`/`nota_fiscal_url` como link (SolicitacoesFinanceiro.jsx).
+    // Ou seja: o aprovador clicava em "Ver documento" e levava link morto,
+    // justamente nas 2 categorias em que o anexo é apresentado como obrigatório.
+    // Ficou invisível porque quase não há anexo — o desuso escondia o defeito.
+    res.json(await assinarAnexosSolicitacoes(enriched));
   } catch (e) {
     console.error('[SOLICITACOES] pendentes-financeiro:', e.message);
     res.status(500).json({ error: e.message });
