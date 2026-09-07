@@ -174,3 +174,38 @@ describe('montarMarcadores · dobra dos sinais', () => {
     expect(r.chaves).toEqual([]);
   });
 });
+
+// ⚠️⚠️ Marcos · 27/08/2026: *"ela se batizou na igreja, mas não tem opção de
+// marcar isso; como não temos o histórico de batismo antigo, pode colocar essa
+// opção de já me batizei na CBRio."* Quem se batizou AQUI antes de o sistema
+// existir não tem `batismo_inscricoes` e não pode se declarar "de outra igreja"
+// — isso gravaria a própria igreja como se fosse outra.
+describe('batismo declarado na CBRio · a 3ª fonte do marcador', () => {
+  it('a declaração sozinha já marca "batizado"', () => {
+    const m = montarMarcadores({ batismo_cbrio_declarado: true });
+    expect(m.chaves).toContain('batismo');
+  });
+
+  // ⚠️ O detalhe diz de ONDE veio: "registrado" é fato da igreja, "declarado" é
+  // a pessoa dizendo — e a equipe pode querer conferir e criar o registro.
+  it('declaração e registro produzem DETALHES diferentes', () => {
+    expect(montarMarcadores({ batismo_cbrio_declarado: true }).detalhes.batismo)
+      .toBe('declarado pela pessoa (sem registro)');
+    expect(montarMarcadores({ batismo_outra: true }).detalhes.batismo)
+      .toBe('em outra igreja');
+    // registro da CBRio não ganha detalhe: é o caso canônico
+    expect(montarMarcadores({ batismo_cbrio: true }).detalhes.batismo).toBeUndefined();
+  });
+
+  // ⚠️ O registro VENCE a declaração no rótulo: quem tem batismo registrado na
+  // CBRio não pode aparecer como "sem registro" só porque também declarou.
+  it('registro tem precedência sobre a declaração no detalhe', () => {
+    const m = montarMarcadores({ batismo_cbrio: true, batismo_cbrio_declarado: true });
+    expect(m.chaves).toContain('batismo');
+    expect(m.detalhes.batismo).toBeUndefined();
+  });
+
+  it('sem nenhuma das três fontes, não há marcador de batismo', () => {
+    expect(montarMarcadores({}).chaves).not.toContain('batismo');
+  });
+});

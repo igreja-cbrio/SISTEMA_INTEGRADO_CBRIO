@@ -80,8 +80,17 @@ async function idsPresentes(tabela, filtro, ids) {
   return alvo;
 }
 
-/** `mem_membros.batizado_outra_igreja` — SELECT ISOLADO, ver comentário abaixo. */
-async function idsBatizadoOutraIgreja(ids) {
+/**
+ * Declaração de batismo guardada em `mem_membros` — SELECT ISOLADO, ver abaixo.
+ *
+ * ⚠️ São DUAS declarações e elas NÃO são a mesma coisa:
+ *  · `batizado_outra_igreja` (bool) — batizou-se em outra igreja;
+ *  · `batismo_cbrio_declarado_em` (timestamptz, 27/08) — batizou-se AQUI, antes
+ *    de o sistema existir (o caso da Mariana: batismo real, sem registro).
+ * As duas valem como "já é batizada" pro marcador, e **nenhuma das duas conta
+ * como batismo REALIZADO nos KPIs** — quem conta é `batismo_inscricoes`.
+ */
+async function idsDeclaracaoBatismo(ids, coluna, filtro) {
   // ⚠️ A coluna nasceu no repo do APP (`supabase/batismo_anterior.sql`), não nas
   // migrations deste repo — pedir uma coluna inexistente faz o PostgREST recusar
   // a QUERY INTEIRA (42703). Isolado + best-effort: sem a coluna, o marcador
@@ -89,8 +98,7 @@ async function idsBatizadoOutraIgreja(ids) {
   const alvo = new Set();
   const varrer = async (lote) => {
     for (let from = 0; ; from += PAGINA) {
-      let q = supabase.from('mem_membros').select('id')
-        .eq('batizado_outra_igreja', true).is('deleted_at', null);
+      let q = filtro(supabase.from('mem_membros').select('id').is('deleted_at', null));
       if (lote) q = q.in('id', lote);
       const { data, error } = await q.range(from, from + PAGINA - 1);
       if (error) throw error;
@@ -126,7 +134,13 @@ async function marcadoresDeMembros(membroIds, opts = {}) {
   const sinais = [
     ['batismo_cbrio', () => idsPresentes('batismo_inscricoes',
       (q) => q.is('deleted_at', null).eq('status', 'realizado'), alvo)],
-    ['batismo_outra', () => idsBatizadoOutraIgreja(alvo)],
+    ['batismo_outra', () => idsDeclaracaoBatismo(alvo, 'batizado_outra_igreja',
+      (q) => q.eq('batizado_outra_igreja', true))],
+    // ⚠️ Sem isto, quem declarou que se batizou na CBRio continuaria aparecendo
+    // como NÃO batizada na lista do líder — e seria cobrada a se inscrever num
+    // batismo que já aconteceu.
+    ['batismo_cbrio_declarado', () => idsDeclaracaoBatismo(alvo, 'batismo_cbrio_declarado_em',
+      (q) => q.not('batismo_cbrio_declarado_em', 'is', null))],
     // A view já é "1 linha por pessoa formada" — sem filtro adicional.
     ['next', () => idsPresentes('vw_next_formado_pessoa', (q) => q, alvo)],
     ['grupo', () => idsPresentes('mem_grupo_membros',
@@ -161,6 +175,7 @@ async function marcadoresDeMembros(membroIds, opts = {}) {
     porMembro.set(id, montarMarcadores({
       batismo_cbrio: sets.batismo_cbrio?.has(id),
       batismo_outra: sets.batismo_outra?.has(id),
+      batismo_cbrio_declarado: sets.batismo_cbrio_declarado?.has(id),
       next: sets.next?.has(id),
       grupo: sets.grupo?.has(id),
       servir: sets.servir?.has(id),
@@ -169,9 +184,16 @@ async function marcadoresDeMembros(membroIds, opts = {}) {
     }, { incluirSensiveis }));
   }
 
-  // Sinal do BATISMO tem duas fontes: só é "indisponível" se as duas caíram.
-  const idx = indisponiveis.indexOf('batismo_outra');
-  if (idx >= 0 && !indisponiveis.includes('batismo_cbrio')) indisponiveis.splice(idx, 1);
+  // Sinal do BATISMO tem TRÊS fontes (registro · outra igreja · declarado
+  // aqui): só é "indisponível" se TODAS caíram. Declarar incompleto porque uma
+  // consulta best-effort falhou faria a tela dizer "não sei" com o dado na mão.
+  const fontesBatismo = ['batismo_cbrio', 'batismo_outra', 'batismo_cbrio_declarado'];
+  if (!fontesBatismo.every((f) => indisponiveis.includes(f))) {
+    for (const f of fontesBatismo) {
+      const i = indisponiveis.indexOf(f);
+      if (i >= 0) indisponiveis.splice(i, 1);
+    }
+  }
 
   return { porMembro, indisponiveis: [...new Set(indisponiveis)] };
 }
