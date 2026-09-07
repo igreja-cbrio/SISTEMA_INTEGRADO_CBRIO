@@ -211,6 +211,21 @@ function janelaCorrecaoPassada({ dataOriginal, anteriorISO = null, proximaISO = 
 function proximasOcorrencias({
   diaSemana, horario, recorrencia = 'semanal', ancoraISO = null,
   excecoes = [], agora = new Date(), quantas = 8, janelaDias = 180,
+  /**
+   * ⚠️⚠️ TETO: o último dia da TEMPORADA do grupo (Marcos · 28/08/2026 —
+   * *"coloque essa contagem para abrir junto com a temporada e fechar junto com
+   * ela também"*).
+   *
+   * Sem ele a agenda propunha encontro DEPOIS do fim da temporada — medido no
+   * grupo da Mariana: T2 termina em 31/12/2026 e a lista oferecia 16/01, 13/02
+   * e 13/03 de **2027**, um ciclo que ninguém decidiu que existe. Temporada é
+   * justamente o período em que o grupo se reúne; propor fora dela é o sistema
+   * inventando calendário.
+   *
+   * `null` = sem teto (temporada sem `data_fim`, ou chamador que não sabe) —
+   * cai no comportamento de antes em vez de esconder a agenda inteira.
+   */
+  ateISO = null,
 }) {
   const n = agoraBRT(agora);
   const hojeISO = iso(n.ano, n.mes, n.dia);
@@ -237,6 +252,10 @@ function proximasOcorrencias({
     const passou = dataFinal < hojeISO
       || (dataFinal === hojeISO && (n.hora * 60 + n.min) > (parseInt(horaFinal.slice(0, 2), 10) * 60 + parseInt(horaFinal.slice(3, 5), 10)));
     if (passou) continue;
+    // ⚠️ Compara a data ORIGINAL, não a remarcada: adiar o último encontro em
+    // dois dias não pode fazê-lo sumir da agenda. Quem decide se aquela data
+    // pertence à temporada é o dia em que ela CAIU na cadência.
+    if (ateISO && dataOrig > ateISO) break;
 
     const janela = janelaRemarcacao({
       dataOriginal: dataOrig,
@@ -441,6 +460,8 @@ function ocorrenciasPassadas({
   diaSemana, horario, recorrencia = 'semanal', ancoraISO = null,
   excecoes = [], registradas = [], agora = new Date(), quantas = 12, desdeISO = null,
   inicioISO = null,
+  /** TETO da temporada — ver o comentário longo em `proximasOcorrencias`. */
+  ateISO = null,
 }) {
   const n = agoraBRT(agora);
   const hojeISO = iso(n.ano, n.mes, n.dia);
@@ -472,6 +493,10 @@ function ocorrenciasPassadas({
   const out = [];
   for (const dataOrig of originais) {
     if (out.length >= quantas) break;
+    // ⚠️ Temporada ENCERRADA para de contar no dia em que acabou: sem isto, um
+    // grupo da T1 (que terminou em 31/07) seguiria acumulando "presença não
+    // registrada" para sempre, cobrando chamada de encontro que ninguém marcou.
+    if (ateISO && dataOrig > ateISO) continue;
     const ex = porData.get(dataOrig);
     const cancelado = ex?.status === 'cancelado';
     const remarcado = ex?.status === 'remarcado';

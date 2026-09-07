@@ -58,6 +58,33 @@ async function ancorasDeGrupos(ids) {
  * vazio no não-semanal), nunca derruba a tela.
  */
 async function iniciosDeGrupos(ids) {
+  const janelas = await janelasDeGrupos(ids);
+  const out = {};
+  for (const [id, j] of Object.entries(janelas)) if (j.inicio) out[id] = j.inicio;
+  return out;
+}
+
+/**
+ * `{ [grupoId]: { inicio, fim } }` — a JANELA da temporada do grupo.
+ *
+ * ⚠️⚠️ Existe por decisão do Marcos (28/08/2026): *"a temporada de grupos abriu
+ * 02/08, nenhum grupo reuniu antes disso; coloque essa contagem para abrir junto
+ * com a temporada e fechar junto com ela também."*
+ *
+ * O PISO já valia (`iniciosDeGrupos`, 25/08). O que faltava era o TETO: medido
+ * no grupo da Mariana, a T2 termina em **31/12/2026** e a agenda oferecia
+ * encontros em **16/01, 13/02 e 13/03 de 2027** — um ciclo que ninguém decidiu
+ * que existe. E, no passado, grupo de temporada ENCERRADA seguiria acumulando
+ * "presença não registrada" para sempre.
+ *
+ * Precedência do início: temporada → `created_at` (rede pra grupo sem
+ * temporada). O FIM não tem rede: sem temporada não há teto, e inventar um
+ * esconderia agenda legítima.
+ *
+ * ⚠️ Best-effort: falha devolve `{}` e as duas réguas voltam ao comportamento
+ * de antes (sem piso e sem teto), nunca derrubam a tela.
+ */
+async function janelasDeGrupos(ids) {
   const out = {};
   if (!ids || !ids.length) return out;
   try {
@@ -69,19 +96,27 @@ async function iniciosDeGrupos(ids) {
       grupos.push(...(data || []));
     }
     const tempIds = [...new Set(grupos.map(g => g.temporada).filter(Boolean))];
-    const inicioTemp = {};
+    const temp = {};
     for (let i = 0; i < tempIds.length; i += 200) {
       const { data } = await supabase.from('mem_temporadas')
-        .select('id, data_inicio').in('id', tempIds.slice(i, i + 200));
-      (data || []).forEach(t => { if (t.data_inicio) inicioTemp[t.id] = String(t.data_inicio).slice(0, 10); });
+        .select('id, data_inicio, data_fim').in('id', tempIds.slice(i, i + 200));
+      (data || []).forEach(t => {
+        temp[t.id] = {
+          inicio: t.data_inicio ? String(t.data_inicio).slice(0, 10) : null,
+          fim: t.data_fim ? String(t.data_fim).slice(0, 10) : null,
+        };
+      });
     }
     for (const g of grupos) {
-      const ini = (g.temporada && inicioTemp[g.temporada])
-        || (g.created_at ? String(g.created_at).slice(0, 10) : null);
-      if (ini) out[g.id] = ini;
+      const t = (g.temporada && temp[g.temporada]) || null;
+      const inicio = t?.inicio || (g.created_at ? String(g.created_at).slice(0, 10) : null);
+      // ⚠️ O fim vem SÓ da temporada: `created_at` não diz nada sobre quando o
+      // ciclo acaba, e chutar um teto esconderia agenda legítima.
+      const fim = t?.fim || null;
+      if (inicio || fim) out[g.id] = { inicio, fim };
     }
   } catch (e) { console.warn('[grupoAncora] inicio de grupo indisponivel:', e.message); }
   return out;
 }
 
-module.exports = { ancorasDeGrupos, iniciosDeGrupos };
+module.exports = { ancorasDeGrupos, iniciosDeGrupos, janelasDeGrupos };
