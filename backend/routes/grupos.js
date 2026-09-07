@@ -291,7 +291,14 @@ router.patch('/participacao/:id/sair', authorizeModule('grupos', 3), async (req,
 });
 
 // PATCH /api/grupos/participacao/:id/presenca — incrementar presença atomicamente
-router.patch('/participacao/:id/presenca', async (req, res) => {
+// ⚠️ Estava SÓ com `authenticate` (achado de 07/09/2026): qualquer conta logada
+// — e o auth é compartilhado com o app de membros — incrementava a presença de
+// QUALQUER linha de participação sabendo só o id. `presencas` é o contador que
+// promove visitante → frequentador (lei de 14/08), então era corrupção de dado
+// gravável de fora. Nível 2 = "lançar", a mesma régua de encontro/material.
+// ⚠️ Zero consumidores hoje (`api.registrarPresenca` não é chamado por tela
+// nenhuma) — fechar não quebra fluxo existente.
+router.patch('/participacao/:id/presenca', authorizeModule('grupos', 2), async (req, res) => {
   try {
     const { data, error } = await supabase.rpc('incrementar_presenca_grupo', { p_id: req.params.id });
     if (error) throw error;
@@ -1344,7 +1351,13 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
 
 // POST /api/grupos/:id/pedidos — pessoa (logada como staff/totem) cria pedido em nome de um membro
 // Body: { membro_id?, cadastro_pendente_id?, nome, email?, telefone?, origem?, observação? }
-router.post('/:id/pedidos', async (req, res) => {
+// ⚠️ Estava SÓ com `authenticate` (achado de 07/09/2026): o comentário acima diz
+// "logada como staff/totem" e nada verificava isso — qualquer conta autenticada
+// criava pedido EM NOME DE OUTRA PESSOA, enfileirando trabalho na coordenação.
+// Nível 3 porque isto cria vínculo de PESSOA com grupo (CRUD, não lançamento).
+// ⚠️ Zero consumidores hoje (`api.criarPedido` não é chamado por tela nenhuma).
+// A porta pública de inscrição é outra (`publicGrupos`), e não passa por aqui.
+router.post('/:id/pedidos', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const grupoId = req.params.id;
     const b = req.body || {};
@@ -1425,7 +1438,14 @@ router.post('/:id/pedidos', async (req, res) => {
 // mine=true, desde=ISO). Pagina internamente além do cap de 1000 do PostgREST
 // (o volume de uma temporada passa de 1000 e cortaria linhas em silêncio) e
 // marca `veio_next` — a label de origem da caixa de entrada unificada.
-router.get('/pedidos/list', async (req, res) => {
+// ⚠️⚠️ Estava SÓ com `authenticate` (achado de 07/09/2026, testando um login
+// novo restrito a Solicitações): devolvia 133 pedidos com NOME, E-MAIL e
+// TELEFONE para qualquer conta autenticada — incluindo as ~113 contas do app de
+// membros, já que o auth do Supabase é compartilhado app + ERP.
+// ⚠️ Nível 1 (leitura) é exatamente o que a ÚNICA tela consumidora já exige:
+// `GruposEntrada.jsx` vive sob `/grupos`, que é `ModuleGuard moduleSlug="grupos"`.
+// Nenhum dos dois apps chama este endpoint — conferido antes de fechar.
+router.get('/pedidos/list', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { status, grupo_id, mine, desde } = req.query;
 
