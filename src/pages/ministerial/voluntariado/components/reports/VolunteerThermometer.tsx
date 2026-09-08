@@ -7,7 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { SlidersHorizontal } from 'lucide-react';
 import { voluntariado } from '@/api';
-import { useAuth } from '@/contexts/AuthContext';
+// varredura 2026-09: B08 — espelha a régua de escrita do servidor.
+import { useVolPodeEscrever } from '../../hooks/useVolPodeEscrever';
 import { toast } from 'sonner';
 
 interface ThermometerEntry {
@@ -60,8 +61,10 @@ function faixaTexto(level: Level, cfg: VolConfig): string {
 }
 
 export default function VolunteerThermometer({ data, period = 'month' }: { data: ThermometerEntry[]; period?: string }) {
-  const { getAccessLevel } = useAuth();
-  const podeEditar = getAccessLevel(['voluntariado']) >= 3;
+  // varredura 2026-09: B08 — era `getAccessLevel(['voluntariado']) >= 3`, que lê o
+  // nível de LEITURA (AuthContext.jsx:349). Quem salva a régua bate em
+  // PUT /voluntariado/config, que o servidor decide por `escrita >= 3`.
+  const podeEditar = useVolPodeEscrever();
   const qc = useQueryClient();
 
   const { data: cfgRaw } = useQuery({

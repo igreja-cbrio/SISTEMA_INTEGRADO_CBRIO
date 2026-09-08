@@ -7,9 +7,14 @@ import { QrCode, Search, Plus, Loader2, Eye } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useVolunteersQrCodes, useCreateVolunteerQrCode, useSearchPlanningCenter } from './hooks';
 import QrCodeModal from './components/qrcodes/QrCodeModal';
+// varredura 2026-09: B08 — espelha a régua de escrita do servidor.
+import { useVolPodeEscrever } from './hooks/useVolPodeEscrever';
 import { toast } from 'sonner';
 
 export default function VolQrCodes() {
+  // varredura 2026-09: B08 — POST /volunteer-qrcodes e POST /pc/search-people
+  // passaram a pedir voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   const { data, isLoading } = useVolunteersQrCodes();
   const createQr = useCreateVolunteerQrCode();
   const pcSearch = useSearchPlanningCenter();
@@ -107,6 +112,9 @@ export default function VolQrCodes() {
       {!isLoading && filtered.length === 0 && <p className="text-center text-muted-foreground py-8">Nenhum QR code encontrado</p>}
 
       {/* Add from Planning Center */}
+      {/* varredura 2026-09: B08 — o bloco inteiro é escrita (busca no PC + emissão
+          do QR); esconder é mais honesto que deixar dois botões dando 403. */}
+      {podeEscrever && (
       <Card id="pc-search-section">
         <CardHeader><CardTitle className="text-lg">Adicionar do Planning Center</CardTitle></CardHeader>
         <CardContent className="space-y-3">
@@ -132,6 +140,7 @@ export default function VolQrCodes() {
           ))}
         </CardContent>
       </Card>
+      )}
 
       {selectedQr && <QrCodeModal open={!!selectedQr} onClose={() => setSelectedQr(null)} qrCode={selectedQr.qrCode} volunteerName={selectedQr.name} />}
     </div>

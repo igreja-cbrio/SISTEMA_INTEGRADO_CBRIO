@@ -54,6 +54,15 @@ const ROUTE_MODULE_MAP = {
   // 2 pessoas ativas, ambas nível 5) numa tela que elas sempre puderam abrir.
   'next-gestao':  ['next', 'integracao'],
   'next-batismo': ['next-batismo'],
+  // varredura 2026-09 · LEITURA das inscrições de batismo (GET /kpis/batismos e
+  // /batismos/cobertura-convertidos). Espelha o `authorizeBatismo` da ESCRITA em
+  // modo leitura: a tela `/batismo` é gateada pelo módulo `batismo` e a aba
+  // Batismos da Integração pelo `integracao` (src/App.tsx:845-846), então as
+  // DUAS portas valem — gatear só por uma daria 403 numa tela que a pessoa
+  // sempre pôde abrir. Chave PRÓPRIA de propósito: o slug `batismo` nunca teve
+  // entrada aqui, e criá-la mudaria em silêncio o `getEffectiveLevel(req,
+  // 'batismo')` que os guards de ESCRITA já usam.
+  'batismo-leitura': ['integracao', 'batismo'],
   'voluntariado': ['voluntariado'],
   'membresia':    ['membresia'],
   // Censo/pesquisas. Nível 1 = agregado; 2 = resposta nominal (mesma régua da
